@@ -1,0 +1,9 @@
+# Development overlay: load the locally built plugin without installing a profile.
+#   dsh web --patch E:/dsh-houdini/cordis.dev.yml
+# The plugin path must be absolute. Run `npm run build` first so lib/ exists.
+- insert:
+    - id: houdini
+      name: 'file:///E:/dsh-houdini/lib/index.js'
+      config:
+        bridgeUrl: http://127.0.0.1:8765
+        requestTimeoutMs: 120000

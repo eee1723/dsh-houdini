@@ -1,0 +1,10 @@
+node_modules/
+lib/
+*.tgz
+.npm-cache/
+.dsh-web.log
+__pycache__/
+
+# Local research scratch: decompressed session traces (private conversation
+# data) and fetched docs — never commit.
+.research/

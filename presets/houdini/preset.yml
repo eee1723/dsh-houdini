@@ -1,0 +1,2 @@
+name: Houdini 模式
+description: 驱动正在运行的 SideFX Houdini 会话：通过 dsh-houdini 工具建节点、设参数、模拟、渲染，并保留完整编码能力以编写 VEX/脚本、修复场景。

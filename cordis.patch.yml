@@ -1,0 +1,8 @@
+# Bundle layer applied when a profile lists dsh-houdini in dsh.profile.bundles.
+# Plugin rows reference the package by name so Node resolution finds the installed code.
+- insert:
+    - id: houdini
+      name: dsh-houdini
+      config:
+        bridgeUrl: http://127.0.0.1:8765
+        requestTimeoutMs: 120000
