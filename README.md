@@ -6,6 +6,7 @@
 
 ## 文档
 
+- **[`docs/setup.md`](docs/setup.md)** — 新机安装步骤（换电脑/重装照做）。
 - **[`docs/tool-design.md`](docs/tool-design.md)** — 设计宪法：动词词表、两轴模型、铁律、帮助文档三阶段、动词追踪。
 - **[`docs/development.md`](docs/development.md)** — 开发进度与卡点（随开发同步维护）。
 
