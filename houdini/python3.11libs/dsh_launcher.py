@@ -6,7 +6,9 @@ Single action: restart BOTH ends to pick up code changes, then open the UI.
      dsh_bridge / dsh_hou_helpers → start), so the latest Python helpers are live
   2. restart the dsh web frontend (kill the node process on :3081 → relaunch),
      so the latest compiled plugin (lib/) is live
-  3. open the embedded web UI (dsh_webview), falling back to the browser
+  3. WAIT until the frontend listens on :3081 (GUI: cancellable progress
+     dialog; a cold npx cache downloads the whole dsh CLI and takes minutes),
+     then open the embedded web UI (dsh_webview), falling back to the browser
 
 This is the dev-loop button: click it after `npm run build` or after editing
 any Houdini-side Python and both ends refresh without restarting Houdini.
@@ -188,7 +190,7 @@ def start_frontend() -> str:
 
     with open(FRONTEND_LOG, "ab") as log:
         kwargs["stdout"] = log
-        subprocess.Popen(cmd, **kwargs)
+        _PENDING["proc"] = subprocess.Popen(cmd, **kwargs)
     return f"frontend starting on {FRONTEND_URL} (log: {FRONTEND_LOG})"
 
 
@@ -207,16 +209,106 @@ def open_ui() -> str:
         return open_browser()
 
 
+# --- wait-for-readiness ------------------------------------------------------
+
+# A first-ever launch downloads the whole dsh CLI into NPM_CACHE and can take
+# many minutes; opening the UI before the port listens shows
+# ERR_CONNECTION_REFUSED. There is deliberately NO time cap on the wait: the
+# GUI dialog's cancel button is the escape hatch, and both paths bail out as
+# soon as the frontend process dies without ever listening.
+FRONTEND_WAIT_INTERVAL = 0.5     # seconds
+
+# Keeps the spawned frontend process / QTimer / QProgressDialog alive across
+# event-loop turns (GC would kill them).
+_PENDING: dict = {}
+
+
+def _report(detail: str) -> None:
+    print("[dsh-houdini]\n" + detail)
+    hou.ui.displayMessage(detail, title="dsh-houdini", severity=hou.severityType.Message)
+
+
+def _wait_for_frontend_blocking() -> bool:
+    """Poll until the frontend listens on FRONTEND_PORT (headless path)."""
+    proc = _PENDING.get("proc")
+    while True:
+        if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+            return True
+        if proc is not None and proc.poll() is not None:
+            return False  # process died without ever listening
+        time.sleep(FRONTEND_WAIT_INTERVAL)
+
+
+def open_ui_when_ready(detail: str) -> None:
+    """Open the UI only once the frontend actually listens on FRONTEND_PORT.
+
+    No time cap: the GUI shows a cancellable busy dialog driven by a QTimer
+    (Houdini stays responsive while a cold npx cache downloads the dsh CLI);
+    headless polls inline. Both paths stop waiting the moment the spawned
+    frontend process exits without ever listening.
+    """
+    try:
+        from hutil.Qt import QtCore, QtWidgets
+        parent = hou.qt.mainWindow()
+    except Exception:
+        # hython: no Qt — wait inline, then fall back to the system browser.
+        if _wait_for_frontend_blocking():
+            _report(detail + "\n" + open_ui())
+        else:
+            _report(
+                detail
+                + f"\nfrontend exited without listening on {FRONTEND_URL}; "
+                + f"see log: {FRONTEND_LOG}"
+            )
+        return
+
+    dialog = QtWidgets.QProgressDialog(parent)
+    dialog.setWindowTitle("dsh-houdini")
+    dialog.setLabelText("正在启动 dsh 前端…\n（首次运行需下载 dsh CLI，可能需要几分钟）\n随时可以取消，稍后在浏览器打开 " + FRONTEND_URL)
+    dialog.setRange(0, 0)  # busy indicator — no time cap, cancel is the escape hatch
+    dialog.setCancelButtonText("取消")
+    dialog.setWindowModality(QtCore.Qt.NonModal)
+    dialog.setMinimumDuration(0)
+    dialog.show()
+
+    proc = _PENDING.get("proc")
+
+    def finish(status: str) -> None:
+        timer.stop()
+        dialog.close()
+        _PENDING.clear()
+        _report(detail + "\n" + status)
+
+    def tick() -> None:
+        if dialog.wasCanceled():
+            timer.stop()
+            dialog.close()
+            _PENDING.clear()
+            print(f"[dsh-houdini] wait cancelled; frontend may still come up on {FRONTEND_URL}")
+            return
+        if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+            finish(open_ui())
+            return
+        if proc is not None and proc.poll() is not None:
+            finish(f"前端进程已退出且未监听 {FRONTEND_URL}，请查看日志：\n{FRONTEND_LOG}")
+            return
+
+    timer = QtCore.QTimer(parent)
+    timer.timeout.connect(tick)
+    _PENDING["timer"] = timer
+    _PENDING["dialog"] = dialog
+    timer.start(int(FRONTEND_WAIT_INTERVAL * 1000))
+
+
 def launch() -> None:
-    """Restart both ends and open the UI; reported through a Houdini message box."""
+    """Restart both ends, then open the UI once the frontend is listening."""
     detail = "\n".join([
         restart_bridge(),
         restart_frontend(),
         start_frontend(),
-        open_ui(),
     ])
     print("[dsh-houdini]\n" + detail)
-    hou.ui.displayMessage(detail, title="dsh-houdini", severity=hou.severityType.Message)
+    open_ui_when_ready(detail)
 
 
 if __name__ == "__main__":
