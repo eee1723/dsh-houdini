@@ -21,6 +21,10 @@
 > `dsh` CLI 无需全局安装：全文用 `npx --yes @deepseek-ai/dsh …` 即可（首次自动拉取）。
 > 想固定版本可 `npm i -g @deepseek-ai/dsh`。
 
+> Windows 上 `python` 可能是 Microsoft Store 占位 stub（报错 "Python was not found;
+> run without arguments to install from the Microsoft Store"）：改用 `py -3`，
+> 全文 `python xxx` 换成 `py -3 xxx`。
+
 ---
 
 ## 1. 拉代码
@@ -92,7 +96,8 @@ Copy-Item -Recurse -Force presets\houdini "$env:USERPROFILE\.dsh\.agent-presets\
 
 ## 6. 启动 + 选模式
 
-1. 打开 Houdini，点菜单 **`dsh` → `启动 / 重启 dsh`**（= 起桥 + 起前端 + 开内嵌 UI）。
+1. 打开 Houdini，点菜单 **`dsh` → `启动 / 重启 dsh`**（= 起桥 + 起前端 + 等前端就绪后开内嵌 UI；
+   首次运行 npx 需拉取 CLI，会显示进度对话框，可能要等几分钟）。
 2. 在 Web UI **新建会话**时，模式选择器里选 **「Houdini 模式」**。
 
 > 前端用 `npx @deepseek-ai/dsh web --port 3081`（profile 模式，无 `--patch`）；
