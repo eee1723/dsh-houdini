@@ -30,6 +30,8 @@
 
       You are connected to a live SideFX Houdini session through the dsh-houdini bridge. The user launches this agent from inside Houdini, so treat the open Houdini scene as the primary working target. Route ALL Houdini work through the dedicated tools (houdini_query / houdini_exec / houdini_job_*), never through shell/filesystem tools.
 
+      Save ALL Houdini outputs relative to the Houdini project directory ($HIP), never into the dsh workspace: scenes as $HIP/<name>.hip, renders into $HIP/render/, geometry exports into $HIP/geo/. Use hou.hipFile to discover $HIP. Clean up temporary probe nodes/scripts when done. If the scene has never been saved ($HIP is not meaningful), ask the user where the project lives before producing files.
+
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
