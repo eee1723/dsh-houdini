@@ -12,12 +12,17 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ | 13 个动词 + `_resolve` |
-| 动词追踪 tracer（Phase 1） | ✅ 已实现、待激活 | `verbs` 字段 + `[verb]` stdout 行 |
-| Houdini Trace 视图（Phase 2） | ✅ 代码完成 | `client.js` + `dsh.client` 声明 |
+| 动词词表（bridge namespace） | ✅ | 19 个动词 + `_resolve`（node/parm/geometry/render/viewport 五域，§2.9/§2.11/§2.12） |
+| 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
+| 裸 hou advisory | ✅ | AST 扫描 → `advisory` 字段 + `hint:` 渲染（§2.8） |
+| launcher：preset 自动同步 + 无窗进程 + spinner + worker 等待 | ✅ | `dsh_launcher.py`（§2.8 / §3.2） |
+| Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
 | plugin persona 中性化 | ✅ | GUIDANCE 只讲工具用法，persona 移入 preset |
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |
+| houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
+| webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
+| 视觉闭环（vision-toolkit + qwen-vl-max） | ✅ 全流程实测通过（2026-08-18，§2.13） | viewport_screenshot → 百炼识图 |
 
 ---
 
@@ -35,9 +40,11 @@
 ### 2.2 动词词表（bridge namespace）
 
 `houdini/python3.11libs/dsh_hou_helpers.py` 定义、`dsh_bridge.py` 注入 exec 命名空间：
-13 个动词 = 类型目录（`search_tab_menu`/`resolve_latest_type`）+ node 域
-（`tab_create`/`find_nodes`/`graph`/`describe`/`connect`/`rename_node`/`delete_node`/`cook_node`）
-+ parm 域（`list_parms`/`read_parms`/`set_parm`）。
+19 个动词 = 类型目录（`search_tab_menu`/`resolve_latest_type`）+ node 域
+（`tab_create`/`find_nodes`/`graph`/`describe`/`connect`/`rename_node`/`delete_node`/`cook_node`/`set_display`/`display_node`）
++ parm 域（`list_parms`/`read_parms`/`set_parm`）
++ geometry 域（`geo_attrib_stats`）+ render/sim 域（`render_frame`/`render_check`）
++ viewport 域（`viewport_screenshot`）。
 
 ### 2.3 动词追踪 tracer（Phase 1）—— 已实现，待激活
 
@@ -102,7 +109,277 @@
    client-modules 的 `require.resolve(包名/package.json)` 抛 `ERR_PACKAGE_PATH_NOT_EXPORTED`
    → client 半静默 404。已修（见附录）。
 
+### 2.8 动词采用率收尾 + launcher UX（2026-08-17）
+
+trace 复盘（10:04 会话 `session-b49fe7e4`，「做193个颜色不同的圆锥」，4 次工具调用）：
+探测阶段用了 `search_tab_menu`/`resolve_latest_type`，但**建场阶段 100% 裸 `hou`**
+（193 次 `createNode` + `parm().set` + `setInput`），且 193 个独立 geo 对象本身就是
+反程序化模式。针对性改动：
+
+1. **GUIDANCE 强化**（`src/index.ts`）：动词词表 = PRIMARY interface，裸 `hou` 只是
+   逃生舱，并写明逃生舱边界（hip I/O、渲染、UI、底层几何属性操作）。
+2. **persona 加程序化生成原则**（`presets/houdini/agent.cordis.yml`）：重复/变化/规模
+   类需求用小型程序化网络（Copy to Points / For-Each / 实例化 + 属性驱动变化），
+   留下的场景应是可重煮的「配方」，不是烤死的节点堆。
+3. **裸 hou advisory**（`dsh_bridge.py`）：AST 扫描每次 exec 的代码，完全没走动词却
+   用了词表覆盖的裸调用时在 envelope 附 `advisory`；`src/tools.ts` 渲染为 `hint:` 段。
+4. **launcher UX**（`dsh_launcher.py`）：`sync_presets()` 每次启动自动同步 preset；
+   netstat/taskkill/前端进程树全部 `CREATE_NO_WINDOW`（原 `DETACHED_PROCESS` 会让
+   每个控制台子进程各弹一个可见终端窗口）；控制台输出压成单行、去掉完成弹窗；
+   等待对话框换 QPainter 手绘圆弧 spinner（30ms tick 手动驱动）。
+5. **webview 置前**（`dsh_webview.py`）：`_bring_to_front()`（raise/activate + 短暂
+   置顶再取消），修复内嵌 UI 被 Houdini 主窗口压住。
+6. **依赖失踪根因（npm/pnpm 混管）**：前端两次 `ERR_MODULE_NOT_FOUND`（缺
+   `@deepseek-ai/schemastery`）。第一次确实是 `git pull` 引入新依赖后未 `npm install`；
+   但补装后复发——实锤根因：本仓库 node_modules 历史上由 pnpm 安装（留有 `.ignored`
+   目录），pnpm 再次在该目录操作时会触发 **hideAlienModules**——把「别的包管理器装
+   的包」**挪进** `node_modules/.ignored/`（不是删除），npm 补装的 devDeps 集体失踪。
+   修复：从 `.ignored` 挪回 + launcher 新增 `ensure_dependencies()` 自检（优先从
+   `.ignored` 挪回，仍缺再 `npm install`），每次启动前端前在 worker 线程执行。
+   **教训：本仓库 node_modules 只用 npm 管，不要跑 pnpm。**
+
+### 2.9 trace 复盘第二轮：视觉闭环断裂 + display 旗标事故（2026-08-17 下午）
+
+复盘 13:21 会话 `session-798b48dd`（「动态循环霓虹灯灯泡」，41 分钟，171 次工具调用，
+preset 误选 houdini-dev，模型 deepseek-v4-flash）发现的问题与修复：
+
+**发现**：
+
+1. **视觉闭环断了**：`read_image` 报错「deepseek-v4-flash 不支持图像输入」，agent 此后再
+   没看过任何渲染图，改用文件大小启发式 + exec 里手写 PNG 解码器（zlib+struct）盲验，
+   导致 ~20 分钟盲调渲染（10+ 组 A/B 测试帧），并得出存疑结论「该 Karma build obj→stage
+   不应用 shop 材质」。
+2. **advisory 触发 59 次全被无视**：机制正常（含 job 结果内），模型不遵从——纯提示对
+   deepseek-v4-flash 约束力不够。
+3. **job 状态误导**：job 报 done 时渲染实际失败（ROP 参数错 / 输出文件缺失），agent
+   转而用 pwsh `Start-Sleep` 45~70s + 文件轮询，26 次 pwsh 约 13 分钟纯等待；一次
+   mantra 挂死靠 agent 手动 `Stop-Process` 收场。
+4. **display 旗标事故**（用户实机发现）：geo 里建了完整 SOP 链，但 display/render 旗标
+   停在一个 circle 上，所有测试渲染只出一个圆环——「最后建的节点」≠「被渲染的节点」。
+5. **houdinitrace 视图过滤缺陷**：`client.js` 只抽 `verbs (` 段，纯裸 hou 会话显示空白，
+   恰好漏掉最该监控的信号。
+
+**修复**（本次）：
+
+1. **houdinitrace 视图重写**（`client.js`）：显示全部 houdini_* 调用，顶部统计条
+   「N 次调用 · X 次用动词（共 M 个）· Y 条裸 hou hint」，每卡标 `verbs ×N` / `raw hou` 标签。
+2. **新增动词** `set_display(node, render=True)` / `display_node(parent)`
+   （`dsh_hou_helpers.py`，后者在旗标不在链尾时带 `note` 提醒）；advisory 映射补
+   `setDisplayFlag`/`setRenderFlag`→`set_display`；GUIDANCE 动词清单同步。
+3. **persona 三条新规**（`presets/houdini/agent.cordis.yml`）：① 渲染/截图前必须用
+   `set_display` + `display_node` 核对旗标；② 无特殊需求时在 /stage（LOPs）用 Karma
+   做渲染测试，不默认走 /out Mantra 或 obj 级 shop 材质；③ 交付物不明确时先用
+   ask_user_question 确认「只建场景还是要渲染」，不擅自烧时间做测试渲染。
+
+**待办**：~~job_status 加 wait 长轮询~~（已完成，§2.11）；视觉闭环需换
+有视觉能力的模型或桥侧出图描述（`render_check` 已提供无视觉盲验，§2.11）；
+动词遵从度是否上硬机制（拦截/升级措辞）待决策。
+
+### 2.10 houdini 模式对话窗口水印（2026-08-17）
+
+`client.js` 新增 preset 感知的水印层：会话 `agentPreset` 以 "houdini" 开头时，
+对话窗口铺居中 Houdini 旋涡（`assets/houdini_swirl.png`，由 SideFX Labs 官方
+badge 的镂空旋涡**反相提取**——badge 本体是满幅橙色方块，直接低透明度铺会是一坨
+色块）+ 右下角橙色径向氛围光，淡入动画。实现要点：
+
+- 水印组件挂在 `conversation.composer.dock`（会话作用域插槽），`display:contents`
+  零占位，本体是 `position:fixed` 覆盖层（`pointer-events:none`）；
+- preset 读法用标准 kit：`props.useSessions(s => s.byId[sessionId]?.agentPreset)`，
+  ui-agent-preset 已把 `agent-preset/selected` 事件写回该 store，切换实时生效；
+- 旋涡图 2.6 KB，base64 内联进 client.js（webserver 只 serve `/plugins/<id>/client.js`，
+  不 serve 插件静态目录；将来图多了可走 host 半 `ctx.webServer.register` 开路由）；
+- CSS 在 factory 体注入（`data-plugin-css` 去重），与官方 ui-agent-preset 同一先例。
+
 ---
+
+### 2.11 trace 驱动的工具面扩展：render 验证 + 属性统计 + job wait（2026-08-17 晚）
+
+对 `session-798b48dd` 做 AST 级复盘（171 次调用的代码体统计），按「重复手写样板 =
+该收编进工具」原则定位到三类缺口并补齐：
+
+**证据 → 改动**：
+
+1. **18 个渲染 job 全是同构样板**（设 picture → setFrame → try render → sleep 轮询文件
+   → 报大小），且 `render()` 不报错 ≠ 产物存在（两次假成功）→ 新动词
+   **`render_frame(rop, picture, frame, timeout=110)`**：输出参数按常见名自动解析
+   （`picture`/`vm_picture`/`sopoutput`/…），等产物落盘非空 + 采集 ROP 错误，
+   静默失败在 `errors` 里明说。同步语义，>110s 走 job 通道（host 桥超时 120s）。
+2. **10 次手写 PNG 解码器**（deepseek-v4-flash 无视觉，agent 用 zlib+struct 盲验渲染：
+   亮度/非黑像素/帧间一致性）→ 新动词 **`render_check(path, ref=None)`**：亮度统计、
+   非黑像素占比、主色、内容 bbox；传 ref 算两图 diff（循环帧验证）。QImage 优先，
+   hython 退回纯 Python PNG 解码（8-bit，含 Paeth 反滤镜）。
+3. **26 次 geometry()/attribValue 手工循环**（验证 @Cd/@curveu 驱动数据）→ 新动词
+   **`geo_attrib_stats(node, name, attrib_class)`**：min/max/mean/count，
+   point/prim/vertex/detail，多分量按分量给；detail 类无批量 API 用 `attribValue` 特判
+   （H21 实测 `globalFloatAttribValue` 不存在）。
+4. **37 次 job 轮询 + 26 次 pwsh sleep（~13 分钟）**→ `houdini_job_status` 加
+   **`wait` 参数**（秒，上限 600）：桥侧 handler 线程长轮询到终态一次返回。
+   **坑**：第一版把等待循环写进了 `with _jobs_lock:` 块内——plain Lock 内层再取同锁
+   立刻自死锁（handler 挂死，实测复现）；修复为锁外等待、锁内只读状态。
+   host 侧（`src/bridge.ts`）长轮询请求自动延长超时（wait×1000+10s）。
+5. **12 次裸 `setExpression`** 未被 advisory 点名 → 映射补 `setExpression`→`set_parm`
+   （`set_parm` 本就支持表达式路由）。
+6. **11 次手写 bbox 循环** → GUIDANCE 注明 `describe` 已给 bbox/点数/属性清单。
+
+验证：hython 回归 17 项全过（新增 geo_attrib_stats/render_frame/render_check 三组和
+detail 特判）；桥端 HTTP 实测 wait 三种场景（即时返回/长轮询到 done/超时返回现状）+
+cancel 不受影响。词表现在 **18 个**。
+
+### 2.12 视觉能力：viewport_screenshot + 社区 vision-toolkit（2026-08-17 晚）
+
+路线决策：**「社区的眼睛 + 我们的视神经」**——通用「看图」能力不自研（dsh 生态
+已有完整品类：Anionex/YYTbit 的 vision-toolkit、dsh-vision-LMstudio 等，全都走
+「视觉模型转文字」绕过 deepseek-v4-flash 的图像预检拦截），Houdini 特有的视口
+采集自己做。
+
+1. **新动词 `viewport_screenshot(path=None, frame=None)`**（viewport 域首个动词，
+   词表 19 个）：走 `SceneViewer.flipbook` 单帧通道（不进 MPlay），所见即所得；
+   GUI 限定，headless（hython）抛明确错误指向 `render_frame`。默认落盘
+   `$HIP/screenshots/`。**注意**：GUI 捕获路径 hython 无法覆盖，只有 headless
+   错误分支进了回归（#18），实机效果需在 Houdini GUI 里验证。
+2. **安装 `@anionex/dsh-vision-toolkit` 0.1.7**（`dsh plugin --profile web add`，
+   进 profile 的 cordis patch insert 层；profile 的 node_modules 由 dsh CLI 自己用
+   pnpm 管——那是 profile 目录，与本仓库「只用 npm」的约束无关）。
+3. **视觉提供方配百炼**（`~/.dsh/profiles/web/cordis.patch.yml` 同 id 覆盖）：
+   `baseUrl=https://dashscope.aliyuncs.com/compatible-mode/v1`、`model=qwen-vl-max`、
+   `protocol=openai`、`credential=VISION_API_KEY`。DashScope 密钥不落盘在 patch 里，
+   需用户在 Settings → Plugins → Vision Toolkit 的只写密钥框粘贴（或预置
+   `$DSH_HOME/.credentials.yaml`）。插件自带 vision-tools skill 会教 agent 何时用
+   看图工具，无需改 preset。
+
+目标闭环：`render_frame`（出图）→ `render_check`（客观指标）→ vision-toolkit
+（语义验证：霓虹亮没亮/构图对不对）→ `viewport_screenshot`（视口侧对照）。
+
+`viewport_screenshot` 实机踩坑与收尾（2026-08-17 晚，GUI 实测三轮）：
+
+1. `FlipbookSettings.copy()` 是 `copy(from_settings)`（拷入），且类是**抽象无构造**
+   ——settings 只能取自 `viewer.flipbookSettings()`；`flipbook(viewport=None,
+   settings=None, ...)` 的 settings 是一次性覆盖，帧范围走 `settings.frameRange()`。
+   第一轮 traceback 行号指着注释行报错 = Python Shell 缓存旧模块的指纹（
+   `sys.modules` 不随 exec 重跑刷新），手动脚本必须 `importlib.reload`。
+2. 视口装饰没有独立开关，全是 `hou.viewportGuide` 枚举 + `enableGuide/guideEnabled`；
+   参考平面网格 = `XZPlane`（Y-up）。`clean=True`（默认）隐藏 13 种装饰 +
+   强制开纹理，截完逐项恢复；`frame_target` 用 `frameBoundingBox` 取景，
+   相机经 `defaultCamera()` 存/恢复变换（`setViewTransform` 不存在）。
+3. uv* 系列设置属于 UV 编辑器视口，与 3D 视口无关；背面 tint 颜色 HOM 未暴露
+   （只有 `removeBackfaces` 剔除），保持默认不动。
+4. **flipbook 是异步渲染**：第一版 clean 在 `finally` 里立刻还原视口设置，还原
+   发生在 flipbook 真正渲染之前——截图里网格/装饰一个都没少（2026-08-17 实机
+   确认）。修复：所有还原挪到产物文件落盘确认**之后**。新增旋钮
+   `textures`（None 不动 / True / False——模型 UV 贴图不想入镜传 False）和
+   `backface_cull`（True = 临时背面剔除）。E:\edini 调研结论：其
+   `media_manager.py` 只做三条捕获路径 fallback（saveImage/grabFrameBuffer/
+   flipbook），**未做任何显示清理**，无可借鉴的网格处理；其
+   `flipbookSettings().saveImage(buf,"JPEG")` 直出 JPEG 是将来免落盘的候选。
+5. **地面网格的真凶是 `hou.ReferencePlane`**（H21 实机定位）：它**不是**
+   `viewportGuide` 枚举（`XZPlane` 默认就是 False 网格照画）、不是
+   `displayOrthoGrid`、也不在 viewopt* hscript 族（那是用户自定义显示选项的）。
+   真身：`SceneViewer.referencePlane()` → `setIsVisible(False)`（hou.py:85795，
+   "The reference grid (a.k.a. reference plane)"）。已收编进 clean 模式（隐藏+恢复）。
+   排障过程中确认的两条死路：QWidget.grab() 对 Houdini GL 视口（RE_GLDrawable，
+   非 QOpenGLWidget）只拿到黑图；viewopt* 族管的是用户自定义 option。
+
+### 2.13 webview 设置页卡顿根因 + 视觉全流程实测（2026-08-18）
+
+**Settings 页卡顿**。症状：内嵌 webview 里设置页点击/滚动都卡，对话页正常。
+排查路径与结论：
+
+1. 先排除前端应用本身：headless Chrome（CDP 探针）里设置页 DOM 仅 ~490 节点、
+   idle 62 FPS，各 tab 都流畅——应用很轻，问题出在 Houdini 的 QWebEngineView
+   环境（QtWebEngine 6.5.3 / Chrome 108，WebGL 上下文都建不起来 = 软件光栅路径）。
+2. **在真实环境里测量**（关键方法）：经桥的 `/exec` 在 Houdini 主线程拿到
+   `dsh_webview._view.page().runJavaScript(js, 0, callback)`，直接驱动用户面前的
+   那个 webview 跑 rAF/滚动探针。注意 PySide6 签名是 `runJavaScript(str, int,
+   object)`（worldId 在回调前）；JS 对象不回传（得 `JSON.stringify`）；桥 exec
+   回值走 `__result__`。实测：idle 61 FPS，**滚动设置页（scrollBody 高 6018px）
+   只有 6 FPS**，滚动期间 DOM mutation 仅 2 次 = 纯光栅瓶颈，不是 JS 重渲染。
+3. 逐项 CSS 二分：box-shadow 无关；**`backdrop-filter` 一关即 45→61 FPS**。
+   根因：设置弹窗遮罩的全屏毛玻璃（`--dsw-mask-blur: blur(2px)`）在 Chrome 108
+   软件光栅下每帧重算整屏模糊。对话页无遮罩所以不卡。
+4. 修复：`dsh_webview.py` 在 `loadFinished` 注入
+   `* { backdrop-filter: none !important }`（SPA 注入一次即可；遮罩保留半透明
+   底色，观感几乎无损）。实机复测 6 → **61 FPS**。
+
+**视觉全流程实测通过**：桥 `viewport_screenshot`（clean 出图 1280x720）→
+读 `~/.dsh/.credentials.yaml` 的 `VISION_API_KEY`（用户已在 Settings 凭据框配置）
+→ DashScope `qwen-vl-max` 识图：模型对霓虹灯泡场景的描述（灰色中柱、弹簧线圈、
+棋盘格底座、彩虹软管、无网格干扰）与图像逐项核对**准确**。约 921 prompt tokens
+（图 882）。密钥明文不落任何仓库文件；测试脚本只在进程内读取使用。
+（排障备注：Git Bash 里直接 print 中文响应会 GBK 乱码，`PYTHONIOENCODING=utf-8`
+即可——纯显示问题，与链路无关。）
+
+### 2.14 trace 复盘第三轮 + 截图窗口事故（2026-08-18 下午）
+
+session-38bc1fdf（「看看我视窗中有什么」）复盘：
+
+- **符合预期**：`viewport_screenshot`×2 + `render_check` + vision-tools skill +
+  `vision_glance` 全链路走通；verb tracer 正常回传；最终回答把识图语义、场景
+  结构、几何数据（2154 点/2150 面）综合得很好；agent 事后自觉清理临时文件。
+- **动词采用率回退**：前 4 个 `houdini_query` 全是裸 hou 探索——手写枚举
+  display 旗标踩 `'OpNode' object has no attribute 'isDisplayFlagSet'`（动词
+  `display_node` 直接覆盖）、猜 `SceneViewer.currentViewport`（正确是
+  `curViewport()`，异常被 try/except 吞掉继续跑）、手写节点树枚举（`find_nodes`/
+  `graph` 可覆盖）。词表 19 个但「查询场景结构」场景 agent 仍首选裸 hou，
+  guidance/preset 的约束对 deepseek-v4-flash 依旧偏弱（老问题，§2.9）。
+- **API  usability 事故（已修）**：agent 直觉地传 `frame_target=True`（=取景到
+  当前显示对象）直接报错——`viewport_screenshot` 现已接受 `True` = 「/obj 下
+  当前挂 display 旗标的对象」。
+- **产出落点**：一张截图被写进本仓库根目录（`E:/dsh-houdini/_viewport_check.png`，
+  违反「产出锚定 $HIP」约束；agent 随后自己清理了）。低频，先观察。
+
+**截图时 agent 窗口最小化**：桥驱动复现 3 轮（含激活窗口后截图）窗口状态均无
+变化，窗口事件探针（QApplication eventFilter 记 WindowStateChange/Activate/Hide/
+Show → `.window-events.log`）在截图期间**零事件**——`viewport_screenshot` 本身
+不碰窗口。已上两道措施：① `viewport_screenshot` 收尾调
+`_restore_webview_window()`，webview 若处于最小化则 showNormal + 置前（仅
+isMinimized 才动，不抢正常焦点）；② 探针常驻，等真实 agent flow 再复现一次拿
+实锤（根因嫌疑：Houdini 主窗口最大化盖住 webview 被感知为「最小化」）。
+
+**热更新注意**：桥 exec 里 `importlib.reload(dsh_bridge)` 不安全（module 重载
+重建 `_work_queue`，旧 pump 只 drain 旧队列 → 新请求挂死）。代码生效走
+launcher 菜单重启（`restart_bridge` 先 stop 再 reload 再 start）。
+
+**trace 复盘管道：`tools/trace-report.mjs`（2026-08-18，双向钢人论证后的决策）**。
+目标是「观察 → 归因 → 词表进化」闭环；论证结论：复盘场景的重点是**分析逻辑**
+而非展示层，静态词表 UI 面板会与本仓库 `tool-design.md` 漂移（否决），实时
+webview 视图后置。实现：
+
+1. 桥 verb ledger 加绝对时间戳 `ts`（epoch 秒）——单个 exec 内多个动词共享
+   一条工具调用，没有 ts 无法跨 exec 重建真实调用顺序（trace 报告目前用
+   工具结果时间 + ledger 顺序，ts 留给将来的实时视图/houdinitrace）。
+2. `node tools/trace-report.mjs [sessionDir|file] [--out <file>]`：缺省取
+   `~/.dsh/sessions` 最新 session，生成单文件 HTML 到 `tools/out/`（已
+   gitignore）。内容：词表目录（**解析 `docs/tool-design.md` 生成**，按域
+   分组 + 本次会话命中次数/未用标注，目录解析坑：「类型目录」标题无「域」
+   字、返回列含空格——正则都要覆盖）、调用时间线（时间戳 + 耗时 + 折叠
+   详情）、概览卡片（动词命中 x/19、纯裸 hou、失败、advisory）、纯裸 hou
+   段落与失败调用专节（词表改进的直接输入）。
+3. 排版验证方法：headless Chrome `--screenshot` 渲染产物再读图（HTML/CSS
+   改动不要盲信）。
+
+### 2.15 houdinitrace 实时视图重写：目录 + 时序（2026-08-18 晚）
+
+把 §2.14 复盘报告验证过的信息架构搬进 client.js 的 Houdini Trace 视图
+（实时第二落点）：
+
+1. **目录数据通道的选型**：静态 client bundle 的 `require` 只认平台 seed
+   word（`getStaticModules()`：react/cordis/ui-slots 等，**没有 host RPC
+   符号**——`host.call` 只存在于动态 client-half 的 `new Function` 闭包
+   参数里），webserver 也不 serve 插件目录 → 目录只能内联。方案：
+   `tools/gen-client-catalog.mjs` 构建期从 `docs/tool-design.md` 解析并
+   重写 client.js 的 `>>> houdini-catalog` 标记区（同 base64 旋涡的先例：
+   内联的是机械派生物，不是手抄副本），挂进 `npm run build` 第一步。
+   解析逻辑收敛在 `tools/catalog-lib.mjs`，trace-report 与生成器共用。
+2. **视图重写**：左栏词表目录（按域分组，命中计数 ×N 随会话推进实时点亮，
+   未用灰标），右栏真实时序时间线（结果事件时间戳 + 失败/裸 hou/advisory/
+   动词徽章 + 动词 chip 带耗时，code 与完整返回折叠进 `<details>`），顶部
+   统计条（houdini 调用数 / 动词命中 x/19 / 纯裸 hou / 失败 / advisory）。
+   会话节点自带 `time`/`callTime`/`call.argsRaw`，数据全在 snapshot 里。
+3. **验证路径**：前端页面重载即加载新 client.js（webserver 按请求读盘，
+   不必重启前端）；`QWidget.grab()` 对 QWebEngineView 只拿黑图（合成器
+   外渲染，同 Houdini GL 视口的死路）——视觉核对走 headless Chrome CDP
+   （`Page.captureScreenshot`）连同一前端截图，DOM 断言走桥
+   `runJavaScript`（§2.13 的探针法）。
 
 ## 3. 卡点（blockers）
 
@@ -137,6 +414,13 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 未监听 = 启动失败，报日志路径）。headless 退化为阻塞轮询（同样检测进程死亡）。
 前端日志在项目根 `.dsh-web.log`。
 
+**2026-08-17 二次修复（等待期间卡顿的根因）**：spinner 和拖动窗口都卡——实测本机
+`connect()` 到**关闭**的 localhost 端口不会立即 RST，而是阻塞到超时（~300ms）。
+原实现在 GUI 线程的 tick 里同步探测（30ms 一轮、每轮堵 ~300ms），事件循环被堵死。
+修复：前端重启 + 端口轮询整体挪进 worker 线程（`_start_and_wait_frontend`），
+GUI 线程的 tick 只转动画 + 读标志位；`QProgressDialog` 同时换自绘 `QDialog` +
+QPainter 圆弧 spinner。
+
 ---
 
 ## 4. 决策记录
@@ -156,6 +440,10 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 | 11 | 图片结果走 `ctx.attachments.saveImage` + 模态校验 | 规范禁止裸 base64；会话日志只存 `sha256:` 引用（§6） |
 | 12 | Skill 走 `ctx.skills.register()` 编程注册 | npm 包目录不在 skill 默认发现根，文件发现路走不通（§6） |
 | 13 | agent 产出锚定 `$HIP`（Houdini 工程目录），不用 dsh workspace，也不造 `dsh-houdini/` 混合子目录 | workspace 只是 shell/fs 工具的 cwd，不该污染插件仓库；`render/`/`geo/` 子目录是 Houdini 工程惯例，与管道预期一致；规则写进 preset persona（2026-08-16，自行车会话把 hip/png 存进了插件仓库的教训） |
+| 14 | 动词 = PRIMARY interface，裸 `hou` 仅逃生舱，边界写进 GUIDANCE | 「prefer」措辞约束力不足（§2.7-1、§2.8 trace 复盘）；明示分工边界才有效 |
+| 15 | 裸 hou 检测走 AST 静态扫描，不走正则 | 注释/字符串里的同名文本会误报；语法错误可静默跳过 |
+| 16 | GUI 线程零阻塞：socket 探测 / 进程等待 / netstat 全在 worker 线程 | 实测本机 connect 关闭端口阻塞 ~300ms，GUI tick 里探测 = 事件循环堵死（§3.2 二次修复） |
+| 17 | preset 同步收进 launcher（`sync_presets`），不再靠手动 Copy-Item | 提示词迭代是高频动作，手动步骤必被遗忘（2026-08-17 改 persona 后未生效的实测） |
 
 ---
 
@@ -170,7 +458,7 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 2. ✅ 端到端验证（自行车会话，见 §2.7）：preset 身份正确、工具链路全通、
    `houdinitrace` 未显示的根因已修（exports 缺 `./package.json`）；verbs 缺席的根因
    是**模型不用动词**（guidance 已注入但被忽略），非管道断裂——转化为 Phase 1 第 8 项。
-3. ⏳ 新增 `houdini-dev` preset（standard + dsh-houdini + coding persona，用于开发/测试）。
+3. ✅ 新增 `houdini-dev` preset（`presets/houdini-dev/`：standard 工具集 + dsh-houdini + coding persona，用于开发/测试；已 `standingKeyFor('houdini-dev')` 校验通过）。
 4. ⏳ 「Houdini 菜单打开默认切到 houdini 模式」：查 default preset / 深链（`dsh web` 无 `--preset` flag）。
 
 ### Phase 1 — 合规对齐（不改行为，只贴规范）
@@ -179,8 +467,8 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 6. ⏳ 5 个工具补 `presentCall`/`presentResult`（terminal/generic 卡片）+ `presentationMeta`
    （§6 硬约束：必须是 args 的纯函数，UI 格式不进模型结果）。
 7. ⏳ TS 侧最小测试（现状仅 Python 侧 `houdini/tests/regress_verbs.py`）。
-8. ⏳ 提升动词采用率（§2.7-1）：preset persona 强化「优先动词」+ 桥侧检测到裸
-   `createNode(` 时在结果追加提示。
+8. ✅ 提升动词采用率（§2.8，2026-08-17）：GUIDANCE 改「动词 = 主接口 / hou = 逃生舱」
+   + persona 程序化生成原则 + 桥侧 AST 裸 hou advisory（比原设想的 createNode 检测更通用）。
 
 ### Phase 2 — 视觉反馈闭环（README 路线 #1）
 
@@ -236,16 +524,20 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 | 文件 | 职责 |
 |---|---|
 | `src/index.ts` | host 入口：注册工具 + systemPrompt guidance |
-| `src/tools.ts` | 5 个工具定义 + `verbs` 渲染 |
-| `src/bridge.ts` | HTTP client（`ExecResult.verbs`） |
-| `client.js` | **client 半**：手写 factory，注册 `houdinitrace` 视图 |
+| `src/tools.ts` | 5 个工具定义 + `verbs`/`advisory` 渲染 |
+| `src/bridge.ts` | HTTP client（`ExecResult.verbs`/`advisory`） |
+| `client.js` | **client 半**：手写 factory，注册 `houdinitrace` 视图（词表目录 + 实时时序，目录由生成器注入） |
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 13 个动词 + `_resolve` |
-| `houdini/python3.11libs/dsh_launcher.py` | 一键启动/重启/WebView |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 19 个动词 + `_resolve` |
+| `houdini/python3.11libs/dsh_launcher.py` | 一键启动/重启 + preset 同步 + spinner 等待（worker 线程探测） |
+| `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + backdrop-filter 性能修复注入（§2.13） |
 | `docs/tool-design.md` | 设计宪法 |
 | `docs/development.md` | 本文：进度 + 卡点 |
+| `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |
+| `tools/catalog-lib.mjs` | 词表目录解析唯一实现（trace-report 与生成器共用） |
+| `tools/gen-client-catalog.mjs` | 构建期把目录注入 client.js（`npm run build` 第一步，§2.15） |
 | `presets/houdini/` | houdini 模式 preset 模板（persona + dsh-houdini 行） |
 
 ---

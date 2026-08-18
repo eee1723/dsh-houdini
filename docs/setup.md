@@ -92,12 +92,25 @@ Copy-Item -Recurse -Force presets\houdini "$env:USERPROFILE\.dsh\.agent-presets\
 作用：注册一个名为 **「Houdini 模式」** 的 agent preset（persona = Houdini automation agent +
 挂 dsh-houdini），与 `标准/创造/极简` 并列，互不覆盖。
 
+开发/测试插件本身时，另复制开发模式（工具集与 houdini 完全相同，仅 persona 换成 coding/development）：
+
+```sh
+# Windows (PowerShell)
+Copy-Item -Recurse -Force presets\houdini-dev "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
+```
+
+作用：注册 **「Houdini 开发模式」**（persona = 仓库为主目标、Houdini 会话仅作端到端测试目标），
+改 `src/`、`client.js`、`houdini/python3.11libs/` 时保留 houdini 工具做验证。
+
+> 注：首次安装后无需再手动复制——每次点 `dsh` 菜单启动时，`dsh_launcher.sync_presets()`
+> 会自动把 `presets/` 全量同步到 `~/.dsh/.agent-presets/`（覆盖同名文件、不删多余文件）。
+
 ---
 
 ## 6. 启动 + 选模式
 
-1. 打开 Houdini，点菜单 **`dsh` → `启动 / 重启 dsh`**（= 起桥 + 起前端 + 等前端就绪后开内嵌 UI；
-   首次运行 npx 需拉取 CLI，会显示进度对话框，可能要等几分钟）。
+1. 打开 Houdini，点菜单 **`dsh` → `启动 / 重启 dsh`**（= 同步 preset + 起桥 + 起前端 + 等前端就绪后开内嵌 UI；
+   首次运行 npx 需拉取 CLI，加载动画对话框会转几分钟）。
 2. 在 Web UI **新建会话**时，模式选择器里选 **「Houdini 模式」**。
 
 > 前端用 `npx @deepseek-ai/dsh web --port 3081`（profile 模式，无 `--patch`）；

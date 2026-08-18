@@ -21,7 +21,8 @@ Endpoints:
     POST /jobs/<id>/cancel    {}            -> JobStatus
 
 ExecResult: {"ok": bool, "stdout": str, "stderr": str,
-             "result": <JSON value bound to `__result__`>, "error": <traceback>}
+             "result": <JSON value bound to `__result__`>, "error": <traceback>,
+             "advisory": <hint when raw hou calls bypassed the verb vocabulary>}
 
 Threading note: `hou` is not thread-safe and must be called from Houdini's
 main thread, so ALL code execution is marshaled onto the main thread through
@@ -40,6 +41,7 @@ without bound.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -129,13 +131,80 @@ _VERBS: dict[str, object] = {
     "rename_node": dsh_hou_helpers.rename_node,
     "delete_node": dsh_hou_helpers.delete_node,
     "cook_node": dsh_hou_helpers.cook_node,
+    "set_display": dsh_hou_helpers.set_display,
+    "display_node": dsh_hou_helpers.display_node,
     "list_parms": dsh_hou_helpers.list_parms,
     "read_parms": dsh_hou_helpers.read_parms,
     "set_parm": dsh_hou_helpers.set_parm,
+    "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
+    "render_frame": dsh_hou_helpers.render_frame,
+    "render_check": dsh_hou_helpers.render_check,
+    "viewport_screenshot": dsh_hou_helpers.viewport_screenshot,
 }
 
 _VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
 _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
+
+# --- raw-hou advisory ---------------------------------------------------------
+# 动词词表是主接口，裸 hou 只是逃生手段。对每次 exec 的代码做 AST 扫描：统计
+# 那些动词已覆盖的裸 hou 调用；一旦代码完全没走动词却用了这些调用，就在返回
+# 里附一条 advisory，点明对应的动词——让 agent 从结果里直接看到可替代方案。
+_RAW_HOU_VERB_MAP = {
+    "createNode": "tab_create",
+    "setInput": "connect",
+    "setFirstInput": "connect",
+    "connectInputs": "connect",
+    "setName": "rename_node",
+    "destroy": "delete_node",
+    "cook": "cook_node",
+    "setDisplayFlag": "set_display",
+    "setRenderFlag": "set_display",
+    "parm().set": "set_parm",   # 由 _raw_hou_calls 特判 parm(...).set(...) 模式
+    "setExpression": "set_parm",  # set_parm 收到字符串值即走表达式路由
+}
+
+
+def _raw_hou_calls(code: str) -> dict[str, int]:
+    """Count raw hou calls a verb already covers (AST-based; {} when unparseable)."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        func = node.func
+        if func.attr in _RAW_HOU_VERB_MAP:
+            key = func.attr
+        elif (
+            func.attr == "set"
+            and isinstance(func.value, ast.Call)
+            and isinstance(func.value.func, ast.Attribute)
+            and func.value.func.attr in ("parm", "parmTuple")
+        ):
+            key = "parm().set"
+        else:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
+    """Advisory text when code bypassed the verb vocabulary with raw hou calls."""
+    if verb_ledger:
+        return None
+    counts = _raw_hou_calls(code)
+    if not counts:
+        return None
+    verbs = sorted({_RAW_HOU_VERB_MAP[key] for key in counts})
+    detail = ", ".join(f"{key}x{n}" for key, n in sorted(counts.items()))
+    return (
+        f"{sum(counts.values())} raw hou call(s) bypassed the verb vocabulary "
+        f"({detail}). These are covered by verbs: {', '.join(verbs)}. "
+        "Prefer the verbs next time — raw hou is the escape hatch for what the "
+        "vocabulary does not cover."
+    )
 
 
 def _verb_value(value, _depth: int = 0):
@@ -184,6 +253,7 @@ def _make_tracer(name: str, fn, ledger: list):
             result = fn(*args, **kwargs)
             entry = {
                 "verb": name,
+                "ts": round(start, 3),  # 绝对时间戳（epoch 秒）：跨 exec 重建真实调用顺序
                 "args": args_json,
                 "kwargs": kwargs_json,
                 "ok": True,
@@ -196,6 +266,7 @@ def _make_tracer(name: str, fn, ledger: list):
         except BaseException as e:  # 记录失败调用并原样抛出，不改变原语义
             ledger.append({
                 "verb": name,
+                "ts": round(start, 3),
                 "args": args_json,
                 "kwargs": kwargs_json,
                 "ok": False,
@@ -235,6 +306,9 @@ def run_code(code: str) -> dict:
     }
     if verb_ledger:
         envelope["verbs"] = verb_ledger
+    advisory = _raw_hou_advisory(code, verb_ledger)
+    if advisory:
+        envelope["advisory"] = advisory
     if error is not None:
         envelope["error"] = error
     if "__result__" in namespace:
@@ -428,15 +502,30 @@ class _Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "jobs":
             with _jobs_lock:
                 job = _jobs.get(parts[1])
-                if job is None:
-                    self._send({"ok": False, "error": f"unknown job {parts[1]}"}, status=404)
-                    return
-                if parts[2] == "cancel" and job["status"] in ("queued", "running"):
+                if job is not None and parts[2] == "cancel" and job["status"] in ("queued", "running"):
                     job["status"] = "cancelled"
                     _job_meta[parts[1]] = time.time()
-                if parts[2] in ("status", "cancel"):
+            if job is None:
+                self._send({"ok": False, "error": f"unknown job {parts[1]}"}, status=404)
+                return
+            if parts[2] == "status":
+                # 长轮询：body 带 wait（秒，上限 600）时在本 handler 线程里
+                # 等到终态或超时一次返回——调用方不必 sleep 循环刷状态。
+                # 注意必须在 _jobs_lock 之外等待：持锁等待会把 _run_job
+                # 标记终态的路堵死（plain Lock，且内层再取同锁即自死锁）。
+                wait = body.get("wait")
+                if isinstance(wait, (int, float)) and wait > 0:
+                    deadline = time.time() + min(float(wait), 600.0)
+                    while time.time() < deadline:
+                        with _jobs_lock:
+                            terminal = job["status"] not in ("queued", "running")
+                        if terminal:
+                            break
+                        time.sleep(0.25)
+            if parts[2] in ("status", "cancel"):
+                with _jobs_lock:
                     self._send(dict(job))
-                    return
+                return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
 

@@ -3,6 +3,8 @@ lib/
 *.tgz
 .npm-cache/
 .dsh-web.log
+.window-events.log
+tools/out/
 __pycache__/
 
 # Local research scratch: decompressed session traces (private conversation

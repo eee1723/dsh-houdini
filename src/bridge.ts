@@ -17,6 +17,8 @@ export interface ExecResult {
   verbs?: JsonValue
   /** Python traceback, present when `ok` is false. */
   error?: string
+  /** Advisory hint, present when the code bypassed the verb vocabulary with raw hou calls. */
+  advisory?: string
 }
 
 /** Handle returned when a background job is accepted by the bridge. */
@@ -52,9 +54,15 @@ export class HoudiniBridge {
     return this.post('/jobs', { code }, signal)
   }
 
-  /** Poll a bridge-side background job. */
-  jobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
-    return this.post(`/jobs/${encodeURIComponent(jobId)}/status`, {}, signal)
+  /** Poll a bridge-side background job. Pass `wait` (seconds) to long-poll:
+   *  the bridge holds the request until the job reaches a terminal state or
+   *  the wait elapses, so callers get the outcome in one round trip. */
+  jobStatus(jobId: string, wait?: number, signal?: AbortSignal): Promise<JobStatus> {
+    const body = wait && wait > 0 ? { wait } : {}
+    // Long polls must outlive the wait itself — extend the per-request
+    // timeout past it (bridge caps the wait at 600s).
+    const extraMs = wait && wait > 0 ? Math.min(wait, 600) * 1000 + 10000 : 0
+    return this.post(`/jobs/${encodeURIComponent(jobId)}/status`, body, signal, extraMs)
   }
 
   /** Cooperatively cancel a queued or running bridge-side job. */
@@ -62,19 +70,19 @@ export class HoudiniBridge {
     return this.post(`/jobs/${encodeURIComponent(jobId)}/cancel`, {}, signal)
   }
 
-  private withTimeout(signal?: AbortSignal): AbortSignal {
-    const timeout = AbortSignal.timeout(this.timeoutMs)
+  private withTimeout(signal: AbortSignal | undefined, extraMs = 0): AbortSignal {
+    const timeout = AbortSignal.timeout(this.timeoutMs + extraMs)
     return signal ? AbortSignal.any([signal, timeout]) : timeout
   }
 
-  private async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  private async post<T>(path: string, body: unknown, signal?: AbortSignal, extraMs = 0): Promise<T> {
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-        signal: this.withTimeout(signal),
+        signal: this.withTimeout(signal, extraMs),
       })
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)

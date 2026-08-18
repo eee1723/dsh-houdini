@@ -33,7 +33,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
+import traceback
 import webbrowser
 
 import hou
@@ -74,6 +76,72 @@ NPM_CACHE = os.path.join(_PROJECT_ROOT, ".npm-cache")
 NODE = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
 DSH_BIN = ""
 
+# Agent presets live in this repo as templates (presets/<name>/); the dsh host
+# reads them from ~/.dsh/.agent-presets/<name>/. launch() syncs them so prompt
+# or config edits take effect from the menu — no manual Copy-Item step.
+PRESET_SRC = os.path.join(_PROJECT_ROOT, "presets")
+PRESET_DST = os.path.join(os.path.expanduser("~"), ".dsh", ".agent-presets")
+
+# Helper processes (netstat / taskkill / frontend tree) must never pop a
+# visible terminal window when launched from Houdini's GUI.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# Runtime deps the compiled plugin (lib/) imports; the frontend resolves them
+# from THIS repo's node_modules. 2026-08-17 根因实录：node_modules 被 npm 和
+# pnpm 混管时，pnpm 会把「别的包管理器装的包」挪进 node_modules/.ignored/
+# （hideAlienModules），前端随即 ERR_MODULE_NOT_FOUND。每次启动自检：优先从
+# .ignored 挪回（免费），仍缺再 npm install。
+REQUIRED_PACKAGES = ["@deepseek-ai/schemastery", "@deepseek-ai/dsh-tools"]
+
+
+def ensure_dependencies() -> str:
+    """Make sure the plugin's runtime deps are resolvable from node_modules."""
+    nm = os.path.join(_PROJECT_ROOT, "node_modules")
+    restored = []
+    for pkg in REQUIRED_PACKAGES:
+        dest = os.path.join(nm, *pkg.split("/"))
+        if os.path.isdir(dest):
+            continue
+        hidden = os.path.join(nm, ".ignored", *pkg.split("/"))
+        if os.path.isdir(hidden):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.move(hidden, dest)
+            restored.append(pkg)
+    missing = [
+        pkg for pkg in REQUIRED_PACKAGES
+        if not os.path.isdir(os.path.join(nm, *pkg.split("/")))
+    ]
+    if missing:
+        try:
+            proc = subprocess.run(
+                "npm install --no-audit --no-fund --loglevel=error",
+                cwd=_PROJECT_ROOT, capture_output=True, timeout=600, shell=True,
+                creationflags=_CREATE_NO_WINDOW,
+                env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
+            )
+            ok = proc.returncode == 0
+        except Exception:
+            ok = False
+        if not ok:
+            return "dependency restore FAILED (missing: " + ", ".join(missing) + ")"
+        restored.extend(missing)
+    if restored:
+        return "dependencies restored: " + ", ".join(restored)
+    return "dependencies ok"
+
+
+def sync_presets() -> str:
+    """Copy repo presets over ~/.dsh/.agent-presets/ (adds/overwrites, never deletes)."""
+    if not os.path.isdir(PRESET_SRC):
+        return "no presets/ directory in repo"
+    synced = []
+    for name in sorted(os.listdir(PRESET_SRC)):
+        src = os.path.join(PRESET_SRC, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, os.path.join(PRESET_DST, name), dirs_exist_ok=True)
+            synced.append(name)
+    return "presets synced: " + (", ".join(synced) if synced else "(none)")
+
 
 def _port_open(host: str, port: int) -> bool:
     """Return True when something is already listening on host:port."""
@@ -96,6 +164,7 @@ def _port_pid(port: int) -> int | None:
         proc = subprocess.run(
             ["netstat", "-ano"],
             capture_output=True, timeout=10,
+            creationflags=_CREATE_NO_WINDOW,
         )
     except Exception:
         return None
@@ -127,6 +196,7 @@ def _kill_port_process(port: int) -> bool:
         subprocess.run(
             ["taskkill", "/F", "/PID", str(pid)],
             capture_output=True, timeout=10,
+            creationflags=_CREATE_NO_WINDOW,
         )
         return True
     except Exception:
@@ -186,7 +256,10 @@ def start_frontend() -> str:
         "env": dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
     }
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        # DETACHED_PROCESS would leave the cmd/npx/node tree console-less, and
+        # every console-subsystem child then allocates its OWN visible terminal
+        # window. CREATE_NO_WINDOW gives the whole tree a single hidden console.
+        kwargs["creationflags"] = _CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 
     with open(FRONTEND_LOG, "ab") as log:
         kwargs["stdout"] = log
@@ -216,7 +289,8 @@ def open_ui() -> str:
 # ERR_CONNECTION_REFUSED. There is deliberately NO time cap on the wait: the
 # GUI dialog's cancel button is the escape hatch, and both paths bail out as
 # soon as the frontend process dies without ever listening.
-FRONTEND_WAIT_INTERVAL = 0.5     # seconds
+FRONTEND_WAIT_INTERVAL = 0.5     # seconds (headless poll cadence)
+DIALOG_TICK_MS = 30              # GUI tick — drives the progress sweep smoothly
 
 # Keeps the spawned frontend process / QTimer / QProgressDialog alive across
 # event-loop turns (GC would kill them).
@@ -224,35 +298,54 @@ _PENDING: dict = {}
 
 
 def _report(detail: str) -> None:
-    print("[dsh-houdini]\n" + detail)
-    hou.ui.displayMessage(detail, title="dsh-houdini", severity=hou.severityType.Message)
+    """最终状态只输出到 Houdini 控制台（右下角），不再弹模态窗口。"""
+    print("[dsh-houdini] " + detail.replace("\n", "; "))
 
 
-def _wait_for_frontend_blocking() -> bool:
-    """Poll until the frontend listens on FRONTEND_PORT (headless path)."""
-    proc = _PENDING.get("proc")
-    while True:
-        if _port_open(FRONTEND_HOST, FRONTEND_PORT):
-            return True
-        if proc is not None and proc.poll() is not None:
-            return False  # process died without ever listening
-        time.sleep(FRONTEND_WAIT_INTERVAL)
+def _start_and_wait_frontend(state: dict) -> None:
+    """Worker thread: restart the frontend, then poll until it listens or dies.
+
+    MUST run off the main thread: on this machine a connect() to a closed
+    localhost port blocks until the timeout (~300ms — no instant RST), so
+    probing on the GUI thread freezes Houdini's event loop between ticks.
+    Writes into `state`: "detail" (restart/start status lines), then "result"
+    as "ready" / "dead" / "error". Exits early when state["canceled"] is set.
+    """
+    try:
+        state["detail"] = "\n".join([ensure_dependencies(), restart_frontend(), start_frontend()])
+        proc = _PENDING.get("proc")
+        while not state["canceled"]:
+            if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+                state["result"] = "ready"
+                return
+            if proc is not None and proc.poll() is not None:
+                state["result"] = "dead"  # died without ever listening
+                return
+            time.sleep(FRONTEND_WAIT_INTERVAL)
+    except Exception:
+        state["error"] = traceback.format_exc()
+        state["result"] = "error"
 
 
 def open_ui_when_ready(detail: str) -> None:
-    """Open the UI only once the frontend actually listens on FRONTEND_PORT.
+    """Restart the frontend, then open the UI once it listens on FRONTEND_PORT.
 
-    No time cap: the GUI shows a cancellable busy dialog driven by a QTimer
-    (Houdini stays responsive while a cold npx cache downloads the dsh CLI);
-    headless polls inline. Both paths stop waiting the moment the spawned
-    frontend process exits without ever listening.
+    The frontend restart AND the port polling run on a worker thread (the
+    connect-to-closed-port probe blocks ~300ms on this machine — on the GUI
+    thread it froze the dialog animation and even window dragging). The main
+    thread only spins the loading animation and checks a state flag. No time
+    cap: cancel is the escape hatch; both paths stop waiting the moment the
+    spawned frontend process exits without ever listening.
     """
     try:
-        from hutil.Qt import QtCore, QtWidgets
+        from hutil.Qt import QtCore, QtGui, QtWidgets
         parent = hou.qt.mainWindow()
     except Exception:
-        # hython: no Qt — wait inline, then fall back to the system browser.
-        if _wait_for_frontend_blocking():
+        # hython: no Qt — run the same worker inline, then open the browser.
+        headless: dict = {"canceled": False, "result": None, "detail": ""}
+        _start_and_wait_frontend(headless)
+        detail += "\n" + headless["detail"]
+        if headless["result"] == "ready":
             _report(detail + "\n" + open_ui())
         else:
             _report(
@@ -262,52 +355,105 @@ def open_ui_when_ready(detail: str) -> None:
             )
         return
 
-    dialog = QtWidgets.QProgressDialog(parent)
+    class _Spinner(QtWidgets.QWidget):
+        """无限循环的圆弧旋转加载动画（QPainter 手绘，按 tick 推进角度）。"""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._angle = 0
+            self.setFixedSize(30, 30)
+
+        def advance(self, step: int = 10) -> None:
+            self._angle = (self._angle + step) % 360
+            self.update()
+
+        def paintEvent(self, _event) -> None:  # noqa: N802 (Qt naming)
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            pen = QtGui.QPen(QtGui.QColor("#5b9dff"))
+            pen.setWidthF(3.0)
+            pen.setCapStyle(QtCore.Qt.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(self.rect().adjusted(3, 3, -3, -3), -self._angle * 16, 270 * 16)
+            painter.end()
+
+    dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("dsh-houdini")
-    dialog.setLabelText("正在启动 dsh 前端…\n（首次运行需下载 dsh CLI，可能需要几分钟）\n随时可以取消，稍后在浏览器打开 " + FRONTEND_URL)
-    dialog.setRange(0, 0)  # busy indicator — no time cap, cancel is the escape hatch
-    dialog.setCancelButtonText("取消")
     dialog.setWindowModality(QtCore.Qt.NonModal)
-    dialog.setMinimumDuration(0)
+    dialog.setMinimumWidth(400)
+    dialog.setStyleSheet(
+        "QDialog { background: #26272b; }"
+        "QLabel#main { color: #f0f0f0; font-size: 15px; font-weight: 700; }"
+        "QLabel#sub { color: #9a9ba2; font-size: 12px; }"
+        "QPushButton { color: #e8e8e8; background: #3a3b41; border: none;"
+        " border-radius: 4px; padding: 5px 18px; }"
+        "QPushButton:hover { background: #4a4b52; }"
+    )
+    main_label = QtWidgets.QLabel("正在启动 dsh 前端…")
+    main_label.setObjectName("main")
+    sub_label = QtWidgets.QLabel(
+        "首次运行需下载 dsh CLI，可能需要几分钟。\n"
+        "随时可以取消，稍后在浏览器打开 " + FRONTEND_URL
+    )
+    sub_label.setObjectName("sub")
+    sub_label.setAlignment(QtCore.Qt.AlignCenter)
+    spinner = _Spinner(dialog)
+    cancel_btn = QtWidgets.QPushButton("取消")
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.setContentsMargins(16, 18, 16, 16)
+    layout.setSpacing(8)
+    layout.addWidget(spinner, alignment=QtCore.Qt.AlignCenter)
+    layout.addWidget(main_label, alignment=QtCore.Qt.AlignCenter)
+    layout.addWidget(sub_label, alignment=QtCore.Qt.AlignCenter)
+    layout.addWidget(cancel_btn, alignment=QtCore.Qt.AlignRight)
     dialog.show()
 
-    proc = _PENDING.get("proc")
+    # 主线程只转动画 + 查标志位；前端重启和端口探测全在 worker 线程。
+    state: dict = {"canceled": False, "result": None, "detail": ""}
+    cancel_btn.clicked.connect(lambda: state.update(canceled=True))
+    threading.Thread(target=_start_and_wait_frontend, args=(state,), daemon=True).start()
 
     def finish(status: str) -> None:
         timer.stop()
         dialog.close()
         _PENDING.clear()
-        _report(detail + "\n" + status)
+        _report(detail + "\n" + state["detail"] + "\n" + status)
 
     def tick() -> None:
-        if dialog.wasCanceled():
+        spinner.advance()
+        if state["canceled"]:
             timer.stop()
             dialog.close()
             _PENDING.clear()
             print(f"[dsh-houdini] wait cancelled; frontend may still come up on {FRONTEND_URL}")
             return
-        if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+        result = state["result"]
+        if result == "ready":
             finish(open_ui())
-            return
-        if proc is not None and proc.poll() is not None:
+        elif result == "dead":
             finish(f"前端进程已退出且未监听 {FRONTEND_URL}，请查看日志：\n{FRONTEND_LOG}")
-            return
+        elif result == "error":
+            finish(f"前端启动等待线程出错：\n{state.get('error', 'unknown')}")
 
     timer = QtCore.QTimer(parent)
     timer.timeout.connect(tick)
     _PENDING["timer"] = timer
     _PENDING["dialog"] = dialog
-    timer.start(int(FRONTEND_WAIT_INTERVAL * 1000))
+    timer.start(DIALOG_TICK_MS)
 
 
 def launch() -> None:
-    """Restart both ends, then open the UI once the frontend is listening."""
+    """Restart the bridge, then restart the frontend and open the UI when ready.
+
+    The frontend restart/poll happens on a worker thread inside
+    open_ui_when_ready (blocking probes must not touch the GUI thread);
+    only the bridge restart — which touches `hou` — runs here.
+    """
     detail = "\n".join([
+        sync_presets(),
         restart_bridge(),
-        restart_frontend(),
-        start_frontend(),
     ])
-    print("[dsh-houdini]\n" + detail)
+    print("[dsh-houdini] " + detail.replace("\n", "; "))
     open_ui_when_ready(detail)
 
 

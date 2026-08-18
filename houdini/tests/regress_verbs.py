@@ -139,6 +139,144 @@ def t11():
 check("11 PySide6.QtWebEngineWidgets present on H21", t11)
 
 
+# 12) display_node reports a mid-chain flag with note
+def t12():
+    tail = geo.createNode("null", "OUT")
+    tail.setInput(0, box)          # box 在链中，tail 是链尾
+    box.setDisplayFlag(True)       # 事故形态：旗标停在链中间
+    box.setRenderFlag(True)
+    tail.setDisplayFlag(False)
+    info = H.display_node(geo)
+    assert info["display"] == box.path(), info
+    assert info["is_leaf"] is False and "note" in info, info
+check("12 display_node mid-chain flag + note", t12)
+
+
+# 13) set_display moves the flag to the requested node
+def t13():
+    tail = hou.node("/obj/regr_geo/OUT")
+    r = H.set_display(tail)
+    assert r == {"node": tail.path(), "display": True, "render": True}, r
+    info = H.display_node(geo)
+    assert info["display"] == tail.path() and info["is_leaf"] is True, info
+    assert "note" not in info, info
+check("13 set_display moves flag to leaf", t13)
+
+
+# 14) set_display(render=False) leaves the render flag untouched
+def t14():
+    box2 = geo.createNode("box", "b2")
+    box2.setDisplayFlag(False)
+    tail = hou.node("/obj/regr_geo/OUT")  # 当前持 display+render 旗标
+    H.set_display(box2, render=False)
+    assert box2.isDisplayFlagSet() and not box2.isRenderFlagSet()
+    assert tail.isRenderFlagSet()  # render 旗标没被动过
+    H.set_display(tail)            # 还原，别影响后续用例
+check("14 set_display render=False untouched render flag", t14)
+
+
+# 15) geo_attrib_stats: vector P stats + bad name suggestions + string attrib error
+def t15():
+    fresh = geo.createNode("box", "b15")  # 前面的用例改过 b 的尺寸/位移，用新 box
+    s = H.geo_attrib_stats(fresh, "P")
+    assert s["size"] == 3 and s["count"] == 8, s  # box 8 个点
+    assert abs(s["min"][0] + 0.5) < 1e-6 and abs(s["max"][0] - 0.5) < 1e-6, s
+    try:
+        H.geo_attrib_stats(fresh, "nope")
+    except ValueError as e:
+        assert "相似属性" in str(e), e
+    else:
+        raise AssertionError("no error for unknown attrib")
+    wr = geo.createNode("attribwrangle", "w15")
+    wr.setInput(0, fresh)
+    H.set_parm(wr, "snippet", 's@name = "hello";')
+    H.cook_node(wr)
+    try:
+        H.geo_attrib_stats(wr, "name")
+    except ValueError as e:
+        assert "字符串属性" in str(e), e
+    else:
+        raise AssertionError("no error for string attrib")
+    # detail 类（attribValue 特判路径）
+    H.set_parm(wr, "class", "detail")
+    H.set_parm(wr, "snippet", "f@total = 3.5;")
+    H.cook_node(wr)
+    d = H.geo_attrib_stats(wr, "total", attrib_class="detail")
+    assert d["count"] == 1 and d["min"] == 3.5 and d["max"] == 3.5, d
+check("15 geo_attrib_stats vector/suggest/string", t15)
+
+
+# 16) render_frame: geometry ROP writes output; missing input = error not silent success
+def t16():
+    import os
+    rop = hou.node("/out").createNode("geometry", "regr_rop")
+    rop.parm("soppath").set(box.path())
+    out = "/tmp/regr_render.$F4.bgeo.sc"
+    if os.path.exists("/tmp/regr_render.0001.bgeo.sc"):
+        os.remove("/tmp/regr_render.0001.bgeo.sc")
+    r = H.render_frame(rop, picture=out, frame=1)
+    assert r["file_bytes"] and r["file_bytes"] > 0, r
+    assert r["errors"] == [] and r["output"].endswith("regr_render.0001.bgeo.sc"), r
+    # 静默失败形态：soppath 指向不存在节点 → errors 非空，而不是假成功
+    rop.parm("soppath").set("/obj/regr_geo/nonexistent")
+    os.remove("/tmp/regr_render.0001.bgeo.sc")
+    r2 = H.render_frame(rop, picture=out, frame=1, timeout=3)
+    assert r2["file_bytes"] is None and r2["errors"], r2
+    rop.destroy()
+check("16 render_frame verifies output / catches silent failure", t16)
+
+
+# 17) render_check: stats + two-image diff (pure-python PNG fixtures)
+def t17():
+    import struct, zlib
+
+    def write_png(path, w, h, fill, rect=None):
+        rows = []
+        for y in range(h):
+            row = bytearray(b"\x00")
+            for x in range(w):
+                px = fill
+                if rect and rect[0] <= x < rect[2] and rect[1] <= y < rect[3]:
+                    px = (255, 128, 0)
+                row += bytes(px)
+            rows.append(bytes(row))
+        raw = b"".join(rows)
+        def chunk(typ, data):
+            c = struct.pack(">I", len(data)) + typ + data
+            return c + struct.pack(">I", zlib.crc32(typ + data) & 0xFFFFFFFF)
+        png = (b"\x89PNG\r\n\x1a\n"
+               + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(raw))
+               + chunk(b"IEND", b""))
+        open(path, "wb").write(png)
+
+    p1, p2, p3 = "/tmp/regr_img1.png", "/tmp/regr_img2.png", "/tmp/regr_img3.png"
+    write_png(p1, 64, 64, (0, 0, 0), rect=(16, 16, 48, 48))  # 黑底橙块
+    write_png(p2, 64, 64, (0, 0, 0), rect=(16, 16, 48, 48))  # 与 p1 相同
+    write_png(p3, 64, 64, (0, 0, 0), rect=(8, 8, 24, 24))    # 块位置不同
+    s = H.render_check(p1)
+    assert (s["width"], s["height"]) == (64, 64), s
+    assert 20 < s["nonblack_pct"] < 30, s           # 32x32 / 64x64 = 25%
+    assert s["dominant"][0] == 255 and s["content_bbox"] == [16, 16, 47, 47], s
+    d_same = H.render_check(p1, ref=p2)["diff_vs_ref"]
+    assert d_same["identical"] is True, d_same
+    d_diff = H.render_check(p1, ref=p3)["diff_vs_ref"]
+    assert d_diff["identical"] is False and d_diff["max_abs_diff"] > 100, d_diff
+check("17 render_check stats + diff", t17)
+
+
+# 18) viewport_screenshot: headless raises a clear error pointing at render_frame
+def t18():
+    assert not hou.isUIAvailable()  # 回归在 hython 跑，必为 headless
+    try:
+        H.viewport_screenshot()
+    except ValueError as e:
+        assert "render_frame" in str(e), e
+        return
+    raise AssertionError("no error for headless viewport_screenshot")
+check("18 viewport_screenshot headless clear error", t18)
+
+
 geo.destroy()
 print()
 print("FAILED:" if failures else "ALL PASS", failures if failures else "")

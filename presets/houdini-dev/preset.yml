@@ -1,0 +1,2 @@
+name: Houdini 开发模式
+description: 开发/测试 dsh-houdini 插件本身：以插件仓库为主目标，用编码工具修改 src/client/Python 桥，并通过 dsh-houdini 工具对运行中的 Houdini 会话做端到端验证。

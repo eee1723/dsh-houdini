@@ -38,11 +38,11 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 |---|---|---|
 | **node / network**（场景图） | ✅ 已实现 | network box / sticky note / layout（本质都是网络对象） |
 | **parm**（依附 node） | ✅ 已实现 | 表达式 / keyframe / spare parm / lock |
-| **geometry**（几何数据） | 预留 | `geo_summary` `geo_attrs` `geo_bbox` `geo_export` |
+| **geometry**（几何数据） | ✅ 部分实现（`geo_attrib_stats`） | `geo_summary` `geo_attrs` `geo_bbox` `geo_export` |
 | **scene**（工程/会话） | 预留 | `scene_save` `scene_info` `scene_load` `context` |
-| **viewport**（视口/UI） | 预留 | `viewport_screenshot` `viewport_frame` `viewport_camera` |
+| **viewport**（视口/UI） | ✅ 部分实现（`viewport_screenshot`） | `viewport_frame` `viewport_camera` |
 | **asset**（HDA） | 预留 | `hda_create` `hda_install` `hda_list` |
-| **render / sim**（重型） | ✅ job 通道已有 | `render_start` `sim_step`（走 job） |
+| **render / sim**（重型） | ✅ job 通道 + `render_frame`/`render_check` | `render_start` `sim_step`（走 job） |
 | **code**（逃生舱） | ✅ `houdini_exec` | — |
 
 ### 命名约定
@@ -87,6 +87,8 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | `rename_node(node, name)` | 重命名 | 新 path |
 | `delete_node(node)` | 删除（返回被表达式引用的上游） | dict |
 | `cook_node(node)` | cook + 采集 error/warning | dict |
+| `set_display(node, render=True)` | 把 display（默认连同 render）旗标移到指定节点——视口/渲染只认旗标节点 | dict |
+| `display_node(parent)` | 报告旗标当前挂在哪个节点；旗标不在链尾时带 `note` 提醒 | dict |
 
 ### parm 域（依附 node）
 
@@ -95,6 +97,25 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助（导航用，不给值） | list |
 | `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by` | list |
 | `set_parm(node, name, value)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠） | dict |
+
+### geometry 域（几何数据）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `geo_attrib_stats(node, name, attrib_class='point')` | 属性**值**统计：min/max/mean/count（`describe` 只给属性名清单）；point/prim/vertex/detail，多分量按分量给 | dict |
+
+### render / sim 域（渲染产物）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染单帧并**验证产物**：输出参数按常见名自动解析（picture/vm_picture/sopoutput…），等文件落盘非空，采集 ROP 错误；`render()` 不报错 ≠ 产物存在。>110s 的渲染走 job 通道 | dict |
+| `render_check(path, ref=None)` | 渲染产物**客观验证**（无视觉模型的盲验）：亮度统计/非黑像素占比/主色/内容 bbox；传 ref 算两图 diff（循环帧一致性、A/B 对比）。QImage 解码，hython 退回纯 Python PNG | dict |
+
+### viewport 域（视口/UI）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False)` | 抓当前场景视口截图（所见即所得，走 SceneViewer flipbook 单帧通道，**异步**——还原设置必须等产物落盘后）；GUI 限定，headless 抛错指向 `render_frame`。`clean` 隐藏视口装饰（地面参考网格走 `SceneViewer.referencePlane().setIsVisible(False)`——它**不是** viewportGuide 枚举；外加坐标指示器/手柄/标签/遮幅/HUD，见 `_CLEAN_GUIDES`）；`frame_target` 取景到节点显示几何 bbox，**也接受 `True`** = 「/obj 下当前挂 display 旗标的对象」（agent 直觉写法，2026-08-18 trace 实测）；`textures=False` 临时关纹理（UV 贴图不入镜）；`backface_cull=True` 临时背面剔除。收尾自动还原被最小化的内嵌 web UI 窗口（`_restore_webview_window`，仅 isMinimized 时才动）。截图前先用 `display_node` 核对旗标 | dict |
 
 ### 拆分决策：`list_parms` vs `read_parms`
 
@@ -166,7 +187,22 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 这是 **houdinitrace 视图的数据层**。Phase 2（已实现）：dsh-houdini 的 client 半
 （`client.js`，手写 CJS factory，免 bundler）在 `conversation.view` 上注册
 `id="houdinitrace"` 标签页（与 `chat`/`trajectory` 并列），从 `useSession(snapshot.nodes)`
-里过滤 `houdini_*` 的 `ToolResultNode`、抽取 `verbs (...)` 段渲染成调用卡。
+里过滤 `houdini_*` 的 `ToolResultNode` 渲染成调用卡。视图展示**全部** houdini_* 调用
+（2026-08-17 修正：原先只抽 `verbs (...)` 段，纯裸 hou 的会话会显示成空白，恰好漏掉
+最该监控的信号）：顶部统计条给出「N 次调用 · X 次用了动词（共 M 个）· Y 条裸 hou hint」，
+每张卡标注 `verbs ×N` / `raw hou` 标签并展示 verbs 段与 hint 段（无动词时退化为
+stdout 摘要）。
+
+### 裸 hou advisory（2026-08-17）
+
+铁律 3（`hou` 是逃生舱）的配套 observability：光声明原则无法知道 agent 是否真的在逃。
+bridge 对每次 exec 的代码做 **AST 静态扫描**（`_raw_hou_calls`），统计动词已覆盖的
+裸调用（`createNode`→`tab_create`、`setInput`/`connectInputs`→`connect`、
+`parm(...).set`→`set_parm`、`setName`→`rename_node`、`destroy`→`delete_node`、
+`cook`→`cook_node`、`setDisplayFlag`/`setRenderFlag`→`set_display`、
+`setExpression`→`set_parm`）；当代码**完全没走动词**却用了这些调用时，envelope 附
+`advisory` 字段（文本，点明对应动词），工具渲染为 `hint:` 段。用 AST 而非正则：
+注释和字符串里的同名文本不会误报；语法错误时静默跳过。
 
 > 注：dsh 里用户说的「trace」即 `dsh-client-ui-trajectory` 的「轨迹」视图，本质是
 > `conversation.view` 上的一个注册项；「并列」= 同 Slot 再注册一个 id。

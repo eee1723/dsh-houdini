@@ -24,11 +24,13 @@
 
 每次 exec 还会在结果里带一个 **`verbs` 字段**（动词追踪）：bridge 给每个动词包了运行时 tracer，记录每次动词调用的 `{verb, args, kwargs, ok, result/error, ms}`，`hou.Node` 自动转 path，失败以 `ok:false` 记录。stdout 同时打印 `[verb] ...` 摘要行。这是将来 `houdinitrace` 视图的数据层（见 `docs/tool-design.md` §8）。
 
+反过来，如果代码**完全没走动词**却用了动词已覆盖的裸 `hou` 调用（`createNode`/`setInput`/`parm().set`/`destroy` 等），bridge 会对代码做 AST 扫描并在结果里附 **`advisory`** 字段，工具渲染为 `hint:` 段，点明可替代的动词（见 `docs/tool-design.md` §8）。
+
 ## Houdini 侧 helper（动词词表）
 
 bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外可直接用）。它们把 Houdini 的
-惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`；
-`hou` 本身仍是逃生舱，复杂场景可直接裸写。
+惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`。
+**动词是主接口**；`hou` 只是逃生舱，只在词表覆盖不了时（hip 文件 I/O、渲染、UI、底层几何属性操作）才直接裸写。
 
 > 完整设计（两轴模型、铁律、帮助文档三阶段、后续路线）见 **[`docs/tool-design.md`](docs/tool-design.md)** —— 那是唯一真相源，本表只是速查。
 
@@ -96,7 +98,7 @@ dsh web
 
 ## 一键启动（Houdini 菜单）
 
-`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI。改完 `npm run build` 或改了 Houdini 侧 Python 后，点它即可让前后端都刷新，无需重启 Houdini。
+`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等前端就绪时显示可取消的加载动画对话框（前端重启与端口探测在 worker 线程，不卡 GUI）；辅助进程全部隐藏控制台窗口，状态只输出到 Houdini 控制台。
 
 用 Houdini package 安装（给顶部菜单栏追加 `dsh` 菜单，同时通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`——不用 `pythonX.Ylibs` 目录约定是因为 Houdini 只自动加载匹配自身 Python 版本的目录：H21=3.11、H22=3.13，而本插件是纯 Python、与版本无关）。脚本会把本机仓库的绝对路径烘焙进 package 文件（Houdini package 的相对路径不按 package 文件位置解析，必须用绝对路径），并自动装入检测到的**每个** Houdini 版本的 pref 目录（package 按版本隔离，H21/H22 各装一份）：
 
@@ -126,11 +128,13 @@ dsh-houdini 是**插件（能力层）**，挂到 **agent preset（模式层）*
 ```sh
 npm run build
 dsh plugin --profile web add E:/dsh-houdini            # pnpm link，让包名可解析（client 半依赖）
-# 把 presets/houdini/ 复制到 ~/.dsh/.agent-presets/houdini/
+# 把 presets/houdini/ 复制到 ~/.dsh/.agent-presets/houdini/（仅首次；之后每次点 dsh 菜单自动同步）
 dsh web                                                 # 起前端（profile 模式）
 ```
 
 在 UI 新建会话时选 **「Houdini 模式」**。`dsh plugin` 用 pnpm link 本地目录，改代码后 `npm run build` 即可（HMR 热重载）。卸载：`dsh plugin --profile web remove dsh-houdini`。
+
+仓库另带一个 **`houdini-dev` 模式 preset**（`presets/houdini-dev/`）：工具集与 `houdini` 完全相同，仅 persona 换成 coding/development——以插件仓库为主目标、把运行中的 Houdini 会话当**测试目标**（改 `src/`/`client.js`/`houdini/python3.11libs/` 时用 `houdini_*` 工具做端到端验证）。开发/测试插件本身时选 **「Houdini 开发模式」**，复制方式同上（`presets/houdini-dev/` → `~/.dsh/.agent-presets/houdini-dev/`）。
 
 > 为何用 preset 而不是 `--patch` overlay：dsh 的 client 模块系统靠 `require.resolve(包名/package.json)` 发现插件的 client 半，`file://` overlay 无法被解析；preset 用包名加载，client 半（`houdinitrace` 视图）才生效。
 

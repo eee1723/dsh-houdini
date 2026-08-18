@@ -17,6 +17,7 @@ const execOutputSchema = {
     result: { type: 'json' },
     verbs: { type: 'json' },
     error: { type: 'string' },
+    advisory: { type: 'string' },
   },
   additionalProperties: false,
 } as const
@@ -51,6 +52,7 @@ function renderStreams(value: ExecResult): string[] {
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
   if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
   parts.push(...renderVerbs(value))
+  if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   return parts
 }
 
@@ -95,6 +97,7 @@ const jobStatusOutputSchema = {
     result: { type: 'json' },
     verbs: { type: 'json' },
     error: { type: 'string' },
+    advisory: { type: 'string' },
   },
   additionalProperties: false,
 } as const
@@ -136,7 +139,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     name: 'houdini_job_submit',
     description:
       'Submit long-running Python code (renders, simulations, heavy cooks) to Houdini as a '
-      + 'background job and return immediately with a job id. Poll with houdini_job_status. '
+      + 'background job and return immediately with a job id. Then call houdini_job_status '
+      + 'with wait=<seconds> to collect the outcome in ONE call — do not poll in a loop. '
       + 'Prefer this over houdini_exec for anything that may take minutes.',
     parameters: {
       code: { type: 'string', required: true, description: 'Long-running Python code with `hou` available' },
@@ -147,7 +151,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
         properties: { jobId: { type: 'string', required: true } },
         additionalProperties: false,
       },
-      render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Poll it with houdini_job_status.` }],
+      render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` }],
     },
     async execute(args, exec) {
       return bridge.submitJob(args.code, exec.signal)
@@ -156,9 +160,13 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
 
   ctx.tools.register(defineTool({
     name: 'houdini_job_status',
-    description: 'Poll a Houdini background job submitted with houdini_job_submit.',
+    description:
+      'Check a Houdini background job submitted with houdini_job_submit. Pass wait (seconds) '
+      + 'to long-poll: the call returns as soon as the job finishes or the wait elapses — '
+      + 'the standard way to collect a job outcome in one call instead of polling.',
     parameters: {
       jobId: { type: 'string', required: true, description: 'Job id returned by houdini_job_submit' },
+      wait: { type: 'number', description: 'Long-poll seconds (max 600): hold the call until the job reaches done/failed/cancelled or this elapses' },
     },
     output: {
       schema: jobStatusOutputSchema,
@@ -167,7 +175,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       },
     },
     async execute(args, exec) {
-      return bridge.jobStatus(args.jobId, exec.signal)
+      return bridge.jobStatus(args.jobId, args.wait, exec.signal)
     },
   }))
 

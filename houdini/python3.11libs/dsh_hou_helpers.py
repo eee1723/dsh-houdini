@@ -27,7 +27,11 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import os
 import re
+import struct
+import time
+import zlib
 from typing import Any
 
 import hou
@@ -529,6 +533,54 @@ def cook_node(node) -> dict:
     }
 
 
+def set_display(node, render: bool = True) -> dict:
+    """把 display（默认连同 render）旗标移到指定节点。
+
+    视口和渲染只认挂旗标的那个节点——「最后建的节点」不等于「被显示的
+    节点」。搭完/改完 SOP 链后、渲染或截图前，必须把旗标移到最终输出
+    节点，否则画面里只有链上某一个中间节点（典型事故：渲染出来只有
+    第一个 circle，后面整串 polywire/merge 都不可见）。
+    """
+    n = _resolve(node)
+    n.setDisplayFlag(True)
+    if render:
+        n.setRenderFlag(True)
+    return {"node": n.path(), "display": True, "render": bool(render)}
+
+
+def display_node(parent) -> dict:
+    """报告网络里 display / render 旗标当前挂在哪个节点（渲染前核对用）。
+
+    返回里附 `is_leaf`：旗标节点还有下游时标 False 并带 `note`——下游
+    节点不会出现在视口/渲染里，多半意味着旗标忘了移到链尾。
+    """
+    p = _resolve(parent)
+
+    def _flag(getter):
+        try:
+            return getter()
+        except Exception:  # 非 SOP 网络 / 无旗标节点等
+            return None
+
+    d = _flag(p.displayNode)
+    r = _flag(p.renderNode)
+    result: dict = {
+        "parent": p.path(),
+        "display": d.path() if d is not None else None,
+        "render": r.path() if r is not None else None,
+    }
+    if d is not None:
+        downstream = [o.path() for o in d.outputs()]
+        result["is_leaf"] = not downstream
+        if downstream:
+            result["note"] = (
+                f"display 旗标不在链尾，下游 {len(downstream)} 个节点 "
+                f"({', '.join(downstream[:5])}) 不会显示/渲染；"
+                "如需以链尾为输出，用 set_display 把旗标移过去"
+            )
+    return result
+
+
 # --- parm 域 ---------------------------------------------------------------
 
 def list_parms(node) -> list:
@@ -661,3 +713,547 @@ def set_parm(node, name: str, value) -> dict:
     raise ValueError(
         f"节点 '{n.path()}' 没有参数 '{name}'。相似参数：{suggestions}"
     )
+
+
+# --- geometry 域 -------------------------------------------------------------
+
+def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
+    """属性**值**统计：min/max/mean/count（`describe` 只给属性名清单，不给值）。
+
+    用于验证驱动数据（@Cd/@curveu/@pscale…）是否符合预期，不用手写逐点循环。
+    attrib_class: "point" / "prim" / "vertex" / "detail"。数值属性支持多分量
+    （vector 按分量给 min/max/mean）；字符串属性报明确错误。
+    """
+    n = _resolve(node)
+    g = n.geometry()
+    finders = {
+        "point": (g.findPointAttrib, g.pointFloatAttribValues, g.pointIntAttribValues),
+        "prim": (g.findPrimAttrib, g.primFloatAttribValues, g.primIntAttribValues),
+        "vertex": (g.findVertexAttrib, g.vertexFloatAttribValues, g.vertexIntAttribValues),
+        # detail 属性只有一个值，没有批量取值 API，用 attribValue 特判
+        "detail": (g.findGlobalAttrib, None, None),
+    }
+    if attrib_class not in finders:
+        raise ValueError(f"attrib_class 只能是 {sorted(finders)}，收到 {attrib_class!r}")
+    find, floats, ints = finders[attrib_class]
+    attrib = find(name)
+    if attrib is None:
+        pool = {
+            "point": [a.name() for a in g.pointAttribs()],
+            "prim": [a.name() for a in g.primAttribs()],
+            "vertex": [a.name() for a in g.vertexAttribs()],
+            "detail": [a.name() for a in g.globalAttribs()],
+        }[attrib_class]
+        suggestions = difflib.get_close_matches(name, pool, n=5, cutoff=0.4)
+        raise ValueError(
+            f"节点 '{n.path()}' 没有 {attrib_class} 属性 '{name}'。相似属性：{suggestions}"
+        )
+    data_type = attrib.dataType()
+    size = attrib.size()
+    if data_type == hou.attribData.String:
+        raise ValueError(f"属性 '{name}' 是字符串属性，geo_attrib_stats 只统计数值属性")
+    if attrib_class == "detail":
+        v = g.attribValue(name)
+        values = list(v) if isinstance(v, (tuple, list)) else [v]
+    else:
+        values = list(floats(name) if data_type == hou.attribData.Float else ints(name))
+    count = len(values) // size if size else 0
+    mins, maxs, means = [], [], []
+    for comp in range(size):
+        col = values[comp::size]
+        if not col:
+            mins.append(None); maxs.append(None); means.append(None)
+            continue
+        mins.append(min(col)); maxs.append(max(col))
+        means.append(sum(col) / len(col))
+    def _collapse(v):
+        return v[0] if size == 1 else v
+    return {
+        "node": n.path(),
+        "attrib": name,
+        "class": attrib_class,
+        "data_type": "float" if data_type == hou.attribData.Float else "int",
+        "size": size,
+        "count": count,
+        "min": _collapse(mins),
+        "max": _collapse(maxs),
+        "mean": _collapse(means),
+    }
+
+
+# --- render / sim 域 ---------------------------------------------------------
+
+def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
+    """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
+
+    固化「设 picture → setFrame → rop.render() → 等产物 → 报大小」的样板：
+    ``render()`` 不抛异常**不等于**产物存在（ROP 参数错、输出目录不可写、
+    渲染器挂起都是静默失败），所以本动词等到文件落盘且非空才返回
+    ``file_bytes``，否则在 ``errors`` 里说明。
+
+    - rop：ROP 节点（hou.Node 或 path）。输出参数按常见名自动解析
+      （picture / vm_picture / sopoutput / lopoutput / outputimage / dopoutput /
+      copoutput / choutput），Karma/Mantra/geometry 等 ROP 都覆盖。
+    - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
+    - frame：帧号；None = 当前帧。
+    - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
+      （host 侧桥请求超时 120s），本动词面向单帧测试渲染。
+    """
+    n = _resolve(rop)
+    p = None
+    for pname in ("picture", "vm_picture", "sopoutput", "lopoutput",
+                  "outputimage", "dopoutput", "copoutput", "choutput"):
+        p = n.parm(pname)
+        if p is not None:
+            break
+    if p is None:
+        raise ValueError(
+            f"节点 '{n.path()}' 找不到输出路径参数（试过 picture/vm_picture/"
+            "sopoutput/lopoutput/outputimage/dopoutput/copoutput/choutput）——"
+            "它不是 ROP？（非常规输出参数请裸写 hou，词表不覆盖）"
+        )
+    if picture is not None:
+        p.set(picture)
+    f = hou.frame() if frame is None else float(frame)
+    hou.setFrame(f)
+    target = hou.text.expandString(p.unexpandedString())
+    out_dir = os.path.dirname(target)
+    if out_dir and not os.path.isdir(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
+    t0 = time.time()
+    render_err = None
+    try:
+        n.render(frame_range=(f, f))
+    except Exception as e:  # hou.Error 等
+        render_err = str(e)
+
+    file_bytes = None
+    deadline = t0 + float(timeout)
+    while not render_err and time.time() < deadline:
+        if os.path.exists(target) and os.path.getsize(target) > 0:
+            file_bytes = os.path.getsize(target)
+            break
+        time.sleep(1)
+
+    errors: list[str] = []
+    if render_err:
+        errors.append(render_err)
+    try:
+        for e in n.errors():
+            if e and e not in errors:
+                errors.append(e)
+    except Exception:
+        pass
+    if not render_err and file_bytes is None:
+        errors.append(f"render() 未报错但产物缺失或为空：{target}")
+    return {
+        "path": n.path(),
+        "output": target,
+        "frame": f,
+        "file_bytes": file_bytes,
+        "errors": errors,
+        "ms": int((time.time() - t0) * 1000),
+    }
+
+
+def _read_pixels_qt(path: str):
+    """QImage 读像素（Houdini GUI/hython 均带 PySide6）；失败返回 None。"""
+    try:
+        from PySide6.QtGui import QImage
+        img = QImage(path)
+        if img.isNull():
+            return None
+        img = img.convertToFormat(QImage.Format.Format_RGB888)
+        w, h = img.width(), img.height()
+        pixels = []
+        for y in range(h):
+            row = []
+            for x in range(w):
+                c = img.pixelColor(x, y)
+                row.append((c.red(), c.green(), c.blue()))
+            pixels.append(row)
+        return w, h, pixels
+    except Exception:
+        return None
+
+
+def _paeth(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+
+
+def _read_pixels_png(path: str):
+    """纯标准库 PNG 解码（8-bit grey/RGB/RGBA，无交错）——hython 无 GUI 时的
+    fallback。返回 (w, h, pixels)；不支持的格式返回 None。"""
+    try:
+        data = open(path, "rb").read()
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        pos = 8
+        idat = b""
+        w = h = bitd = colort = None
+        while pos < len(data):
+            ln = struct.unpack(">I", data[pos:pos+4])[0]
+            typ = data[pos+4:pos+8]
+            chunk = data[pos+8:pos+8+ln]
+            if typ == b"IHDR":
+                w, h, bitd, colort = struct.unpack(">IIBB", chunk[:10])
+            elif typ == b"IDAT":
+                idat += chunk
+            elif typ == b"IEND":
+                break
+            pos += 12 + ln
+        if bitd != 8 or colort not in (0, 2, 6):
+            return None
+        channels = {0: 1, 2: 3, 6: 4}[colort]
+        raw = zlib.decompress(idat)
+        stride = w * channels
+        pixels = []
+        prev = bytearray(stride)
+        off = 0
+        for _y in range(h):
+            filt = raw[off]
+            line = bytearray(raw[off+1:off+1+stride])
+            off += 1 + stride
+            for i in range(stride):
+                a = line[i-channels] if i >= channels else 0
+                b = prev[i]
+                c = prev[i-channels] if i >= channels else 0
+                if filt == 1:
+                    line[i] = (line[i] + a) & 0xFF
+                elif filt == 2:
+                    line[i] = (line[i] + b) & 0xFF
+                elif filt == 3:
+                    line[i] = (line[i] + (a + b) // 2) & 0xFF
+                elif filt == 4:
+                    line[i] = (line[i] + _paeth(a, b, c)) & 0xFF
+            row = []
+            for x in range(w):
+                base = x * channels
+                if channels == 1:
+                    row.append((line[base],) * 3)
+                else:
+                    row.append((line[base], line[base+1], line[base+2]))
+            pixels.append(row)
+            prev = line
+        return w, h, pixels
+    except Exception:
+        return None
+
+
+def _read_pixels(path: str):
+    return _read_pixels_qt(path) or _read_pixels_png(path)
+
+
+def _image_stats(w: int, h: int, pixels, max_samples: int = 512) -> dict:
+    """从像素矩阵算客观指标（大图先按网格抽样，上限 max_samples 边长）。"""
+    step = max(1, int(max(w, h) / max_samples) + 1)
+    lumas = []
+    rs = gs = bs = nb = 0
+    bbox = None
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            r, g, b = pixels[y][x]
+            luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            lumas.append(luma)
+            if luma > 8:  # 非黑
+                nb += 1
+                rs += r; gs += g; bs += b
+                if bbox is None:
+                    bbox = [x, y, x, y]
+                else:
+                    bbox[0] = min(bbox[0], x); bbox[1] = min(bbox[1], y)
+                    bbox[2] = max(bbox[2], x); bbox[3] = max(bbox[3], y)
+    total = len(lumas) or 1
+    return {
+        "mean_luma": round(sum(lumas) / total, 2),
+        "max_luma": round(max(lumas), 2) if lumas else 0,
+        "nonblack_pct": round(nb * 100.0 / total, 2),
+        "dominant": [rs // nb, gs // nb, bs // nb] if nb else None,
+        "content_bbox": bbox,
+    }
+
+
+def render_check(path: str, ref=None) -> dict:
+    """渲染产物的**客观验证**——无视觉模型时的盲验手段。
+
+    返回亮度统计 / 非黑像素占比 / 主色 / 内容 bbox，回答「渲染是不是黑的、
+    有没有内容、内容在哪」；传 ``ref``（另一张图路径）再算两图差异
+    （``identical`` / ``mean_abs_diff``），用于循环帧一致性、A/B 对比。
+
+    解码优先 PySide6 QImage（PNG/JPEG/BMP/TGA），hython 无 GUI 时退回纯
+    Python PNG 解码（8-bit）；EXR 等 HDR 格式不在覆盖范围（裸 hou 逃生舱）。
+    """
+    result = _read_pixels(path)
+    if result is None:
+        raise ValueError(
+            f"无法解码 '{path}'（支持 PNG/JPEG/BMP/TGA，EXR 等请裸写 hou.image）"
+        )
+    w, h, pixels = result
+    out: dict[str, Any] = {
+        "path": path,
+        "width": w,
+        "height": h,
+        "bytes": os.path.getsize(path),
+    }
+    out.update(_image_stats(w, h, pixels))
+
+    if ref is not None:
+        result2 = _read_pixels(ref)
+        if result2 is None:
+            raise ValueError(f"无法解码 ref 图 '{ref}'")
+        w2, h2, pixels2 = result2
+        if (w2, h2) != (w, h):
+            out["diff_vs_ref"] = {"comparable": False, "ref_size": [w2, h2]}
+        else:
+            step = max(1, int(max(w, h) / 512) + 1)
+            diffs = []
+            for y in range(0, h, step):
+                for x in range(0, w, step):
+                    p1, p2 = pixels[y][x], pixels2[y][x]
+                    diffs.append(max(abs(p1[i] - p2[i]) for i in range(3)))
+            out["diff_vs_ref"] = {
+                "comparable": True,
+                "identical": max(diffs) == 0 if diffs else True,
+                "mean_abs_diff": round(sum(diffs) / len(diffs), 3) if diffs else 0,
+                "max_abs_diff": max(diffs) if diffs else 0,
+            }
+    return out
+
+
+# --- viewport 域 -------------------------------------------------------------
+
+# clean 模式要隐藏的视口装饰（hou.viewportGuide 枚举名）：参考平面网格、
+# 坐标指示器、手柄、物体标签、相机遮幅/安全框、性能 HUD、视图中心点。
+# 网格线横穿模型会给图像识别（VLM 或 render_check 的 bbox）注入大量杂边，
+# 隐藏后主体更突出；纹理（displayTextures）保留并强制开启——材质是识别线索。
+_CLEAN_GUIDES = (
+    "XYPlane", "YZPlane", "XZPlane",
+    "OriginGnomon", "FloatingGnomon",
+    "NodeHandles", "NodeGuides",
+    "ObjectNames", "ObjectPaths",
+    "CameraMask", "SafeArea",
+    "ShowDrawTime", "ViewPivot",
+)
+
+
+def _display_bbox(n):
+    """节点的显示几何 bbox：obj 级取其 displayNode，SOP 直接取。"""
+    try:
+        d = n.displayNode()
+        if d is not None:
+            return d.geometry().boundingBox()
+    except Exception:
+        pass
+    return n.geometry().boundingBox()
+
+
+def _restore_webview_window() -> None:
+    """截图后还原被最小化的内嵌 web UI 窗口（dsh_webview）。
+
+    用户报告（2026-08-18）：agent 截图时 agent 窗口会最小化，要手动从
+    任务栏点回。只在确实处于最小化状态时还原——用户只是切去 Houdini
+    干活（失焦/被遮）时不抢焦点。可选依赖：webview 未开过/导入失败就静默。
+    """
+    try:
+        import dsh_webview
+    except Exception:
+        return
+    win = getattr(dsh_webview, "_window", None)
+    if win is None:
+        return
+    try:
+        if win.isMinimized():
+            win.showNormal()
+            dsh_webview._bring_to_front(win)
+    except Exception:
+        pass
+
+
+def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
+                        textures=None, backface_cull=False) -> dict:
+    """抓取当前场景视口截图（所见即所得）——**GUI 模式限定**。
+
+    视觉验证的另一半：``render_frame``/``render_check`` 管渲染产物，本动词
+    回答「用户现在在视口里看到什么」。无 UI（hython/批渲染）时抛明确错误，
+    请改用 ``render_frame``。
+
+    - path：保存路径；None = ``$HIP/screenshots/viewport_f<帧>_<时间>.png``
+      （hip 未保存时落在当前目录的 ``screenshots/`` 下）。
+    - frame：抓哪一帧；None = 当前帧。
+    - clean：True（默认）时临时隐藏视口装饰（参考平面网格/坐标指示器/手柄/
+      标签/相机遮幅/性能 HUD 等，见 ``_CLEAN_GUIDES``），截完恢复原设置。
+    - frame_target：节点（hou.Node 或 path），或 ``True`` = 「/obj 下当前挂
+      display 旗标的对象」。给了就把视口取景到该节点的显示几何 bbox
+      （`frameBoundingBox`），主体占满画面；视图变换尽力恢复
+      （ViewportCamera 支持 setTransform 时），恢复不了则停留在取景位置。
+    - textures：None（默认）不动纹理显示；True/False 临时强制开/关纹理
+      （模型上的 UV 贴图/棋盘格不想入镜就传 False），截完恢复。
+    - backface_cull：True 时临时开启背面剔除（`removeBackfaces`）——HOM 只
+      暴露剔除开关，背面 tint 颜色没有 API；默认 False 不动。
+
+    实现走 SceneViewer 的 flipbook 通道（单帧、不进 MPlay），因此视口显示
+    什么就抓什么——包括 display 旗标位置错误造成的「只显示一个圆环」这类
+    事故，截图前先用 ``display_node`` 核对旗标。
+
+    注意：flipbook 是**异步**渲染——所有视口设置的恢复都必须等到产物文件
+    落盘确认之后，否则截图时设置已被还原（2026-08-17 实测踩坑）。
+    """
+    if not hou.isUIAvailable():
+        raise ValueError(
+            "viewport_screenshot 需要 Houdini GUI（当前无 UI）；"
+            "headless 环境请用 render_frame"
+        )
+    viewer = hou.ui.curDesktop().paneTabOfType(hou.paneTabType.SceneViewer)
+    if viewer is None:
+        raise ValueError("当前桌面没有 Scene Viewer 面板——请先打开一个场景视口")
+    f = hou.frame() if frame is None else float(frame)
+    if path is None:
+        hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
+        stamp = time.strftime("%H%M%S")
+        path = os.path.join(hip, "screenshots", f"viewport_f{int(f)}_{stamp}.png")
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    hou.setFrame(f)
+    vp = viewer.curViewport()
+    if vp is None:
+        raise ValueError("Scene Viewer 没有活动视口")
+
+    st = vp.settings()
+    saved_guides = []
+    saved_textures = None
+    saved_backface = None
+    refplane = None
+    refplane_was = False
+    if clean:
+        # 地面参考网格不是 viewportGuide 枚举，是 SceneViewer 的
+        # hou.ReferencePlane 对象（setIsVisible）——H21 实测 XZPlane guide
+        # 默认就是 False 但网格照画，真正的开关在这里。
+        try:
+            refplane = viewer.referencePlane()
+            refplane_was = bool(refplane.isVisible())
+            if refplane_was:
+                refplane.setIsVisible(False)
+        except Exception:
+            refplane = None
+        for name in _CLEAN_GUIDES:
+            g = getattr(hou.viewportGuide, name, None)
+            if g is None:
+                continue
+            try:
+                if st.guideEnabled(g):
+                    st.enableGuide(g, False)
+                    saved_guides.append(g)
+            except Exception:
+                continue
+    if textures is not None:
+        try:
+            saved_textures = st.displayTextures()
+            st.setDisplayTextures(bool(textures))
+        except Exception:
+            saved_textures = None
+    if backface_cull:
+        try:
+            saved_backface = st.removeBackfaces()
+            st.setRemoveBackfaces(True)
+        except Exception:
+            saved_backface = None
+
+    # 取景：frame_target=True 表示「/obj 下当前挂 display 旗标的对象」
+    # （agent 的直觉写法——2026-08-18 trace 实测 agent 这么传然后报错）。
+    if frame_target is True:
+        try:
+            frame_target = next(
+                (c for c in hou.node("/obj").children() if c.isDisplayFlagSet()),
+                None,
+            )
+        except Exception:
+            frame_target = None
+    cam_restore = None
+    framed = None
+    if frame_target is not None:
+        tn = _resolve(frame_target)
+        framed = tn.path()
+        try:
+            cam = vp.defaultCamera()
+            cam_restore = (cam, cam.transform())
+        except Exception:
+            cam_restore = None
+        vp.frameBoundingBox(_display_bbox(tn))
+
+    # FlipbookSettings 是抽象类（无构造），唯一来源是 viewer.flipbookSettings()；
+    # flipbook(viewport=None, settings=None, ...) 的 settings 是**一次性覆盖**，
+    # 不改对话框设置。但 flipbookSettings() 可能返回对话框的活对象，所以改完
+    # 恢复现场，两边都安全。
+    settings = viewer.flipbookSettings()
+    saved = (settings.output(), settings.outputToMPlay(), settings.frameRange())
+    settings.output(path)
+    settings.outputToMPlay(False)
+    settings.frameRange((f, f))
+    try:
+        viewer.flipbook(settings=settings)
+
+        actual = path
+        deadline = time.time() + 15  # flipbook 异步落盘，等确认
+        import glob as _glob
+        stem, ext = os.path.splitext(path)
+        while time.time() < deadline:
+            if os.path.exists(actual) and os.path.getsize(actual) > 0:
+                break
+            # flipbook 可能给文件名补帧号后缀，按 stem 找最新产物
+            candidates = _glob.glob(stem + "*" + ext) or _glob.glob(stem + "*")
+            candidates = [c for c in candidates if os.path.getsize(c) > 0]
+            if candidates:
+                actual = max(candidates, key=os.path.getmtime)
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f"flipbook 未产出截图：{path}")
+    finally:
+        # 恢复必须在文件落盘之后（flipbook 异步）：先恢复 flipbook 对话框设置，
+        # 再恢复相机，最后恢复视口显示设置。
+        settings.output(saved[0])
+        settings.outputToMPlay(saved[1])
+        settings.frameRange(saved[2])
+        if cam_restore is not None:
+            try:
+                cam_restore[0].setTransform(cam_restore[1])
+            except Exception:
+                pass
+        if refplane is not None and refplane_was:
+            try:
+                refplane.setIsVisible(True)
+            except Exception:
+                pass
+        for g in saved_guides:
+            try:
+                st.enableGuide(g, True)
+            except Exception:
+                pass
+        if saved_textures is not None:
+            try:
+                st.setDisplayTextures(saved_textures)
+            except Exception:
+                pass
+        if saved_backface is not None:
+            try:
+                st.setRemoveBackfaces(saved_backface)
+            except Exception:
+                pass
+
+    result: dict[str, Any] = {
+        "path": actual,
+        "viewer": viewer.name(),
+        "viewport": vp.name(),
+        "frame": f,
+        "bytes": os.path.getsize(actual),
+        "clean": bool(clean),
+    }
+    if framed is not None:
+        result["framed"] = framed
+    _restore_webview_window()
+    return result

@@ -21,7 +21,7 @@
     "houdini"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node tools/gen-client-catalog.mjs && tsc -p tsconfig.json",
     "prepare": "tsc -p tsconfig.json"
   },
   "dsh": {

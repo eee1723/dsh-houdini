@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import socket
 
-from PySide6.QtCore import QCoreApplication, QThread, QTimer, QUrl
+from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -24,6 +24,20 @@ FRONTEND_PORT = 3081
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 
 _RETRY_INTERVAL_MS = 2000
+
+# 性能实测（2026-08-18，经桥在真实 Houdini webview 里测）：设置弹窗的遮罩用
+# backdrop-filter 全屏毛玻璃，Houdini 的 QtWebEngine 6.5.3（Chrome 108）走软件
+# 光栅，每次滚动都对整屏背景重新模糊 —— 滚动 FPS 6 → 关闭后 45。遮罩仍保留
+# 半透明底色，只是没有模糊，观感几乎无损。SPA 单页注入一次即可。
+_DISABLE_BACKDROP_FILTER_JS = """
+(function(){
+  if (document.getElementById('dsh-perf-no-backdrop-filter')) return;
+  var s = document.createElement('style');
+  s.id = 'dsh-perf-no-backdrop-filter';
+  s.textContent = '* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }';
+  document.head.appendChild(s);
+})()
+"""
 
 _window: QWidget | None = None
 _view: QWebEngineView | None = None
@@ -56,6 +70,20 @@ def _retry_load() -> None:
         QTimer.singleShot(_RETRY_INTERVAL_MS, _retry_load)
 
 
+def _bring_to_front(win: QWidget) -> None:
+    """把窗口带到 Houdini 主窗口之上。
+
+    Windows 的焦点策略下，新顶层窗口常被已在前台的主窗口压住；短暂开一下
+    置顶再立刻取消，是最可靠的提神方式（不会常驻置顶）。
+    """
+    win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+    win.show()
+    win.raise_()
+    win.activateWindow()
+    win.setWindowFlag(Qt.WindowStaysOnTopHint, False)
+    win.show()
+
+
 def show_webview() -> str:
     """打开（或唤起）内嵌的 dsh web UI 窗口；幂等，须在主线程调用。"""
     if QCoreApplication.instance() is None:
@@ -70,14 +98,15 @@ def show_webview() -> str:
 
     global _window, _view
     if _window is not None and _window.isVisible():
-        _window.raise_()
-        _window.activateWindow()
+        _bring_to_front(_window)
         return "webview already open"
 
     if _window is None:
         win = QWidget()
         win.setWindowTitle("dsh")
         view = QWebEngineView()
+        # 每次整页加载后注入性能修复 CSS（SPA 路由切换不重载页面，注入一次生效）。
+        view.loadFinished.connect(lambda _ok: view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS))
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(view)
@@ -85,7 +114,7 @@ def show_webview() -> str:
         _window = win
         _view = view
 
-    _window.show()
+    _bring_to_front(_window)
     _view.load(QUrl(FRONTEND_URL))
     if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
         QTimer.singleShot(_RETRY_INTERVAL_MS, _retry_load)
