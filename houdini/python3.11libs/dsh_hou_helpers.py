@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import math
 import os
 import re
 import struct
@@ -190,13 +191,14 @@ def tab_create(
 ) -> hou.Node | None:
     """按 Tab Menu 语义创建节点：最新版本 + 完整初始化，返回创建的节点。
 
-    - ``parent``：目标父节点（如 hou.node('/obj') 或某个 geo）。
+    - ``parent``：目标父节点（hou.Node 或 path 字符串，如 '/obj'）。
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
     - ``inputs``：可选，创建后按序连到 input 0..n（节点或路径均可；
       连接失败会抛错，不会静默跳过）。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
     """
+    parent = _resolve(parent)  # 铁律 1：hou.Node 或 path 字符串均可
     cat = parent.childTypeCategory()
     ctx = context_name(cat)
     latest = resolve_latest_type(cat, type_name)
@@ -438,13 +440,52 @@ def describe(node) -> dict:
     except Exception:
         info["warnings"] = []
 
-    # 几何摘要（仅 SOP 有 geometry()）
-    if t.category().name() == "sop":
+    # 几何摘要（仅 SOP 有 geometry()）。用类别对象比较而非名字字符串：
+    # category().name() 返回 'Sop'（首字母大写），== 'sop' 永不成立——这个
+    # 大小写 bug 让 describe 长期静默不返回 geometry（2026-08-19 实证：草地
+    # trace 里 agent 在 describe 之后仍手写 bbox/点数循环，就是因为拿不到）。
+    if t.category() == hou.sopNodeTypeCategory():
+        geo = None
         try:
             geo = n.geometry()
             info["geometry"] = _geo_summary(geo) if geo is not None else None
         except Exception:
             info["geometry"] = None
+
+        # 属性增量（attrib_delta）：本节点相对 input 0 增/删了哪些属性——
+        # MMB 节点信息里美术心算的那一步（「这个节点对数据干了什么」），
+        # 固化为动词输出。只对 input 0 做 diff（merge 类多输入节点的语义
+        # 是合并，diff 无意义）；只报名称增删，不报值变化（贵且误导）。
+        # cook 本节点已拉起上游 cook，两个几何体都在缓存里，代价≈集合运算。
+        if geo is not None:
+            try:
+                inputs = n.inputs()
+                up = inputs[0] if inputs else None
+                if up is not None and up.type().category() == hou.sopNodeTypeCategory():
+                    up_geo = up.geometry()
+                    if up_geo is not None:
+                        delta: dict[str, Any] = {}
+                        for intrinsic, cls in (
+                            ("pointattributes", "point"),
+                            ("primitiveattributes", "prim"),
+                            ("vertexattributes", "vertex"),
+                            ("detailattributes", "detail"),
+                        ):
+                            try:
+                                before = set(up_geo.intrinsicValue(intrinsic) or [])
+                                after = set(geo.intrinsicValue(intrinsic) or [])
+                            except Exception:
+                                continue
+                            added = sorted(after - before)
+                            removed = sorted(before - after)
+                            if added:
+                                delta.setdefault("added", {})[cls] = added
+                            if removed:
+                                delta.setdefault("removed", {})[cls] = removed
+                        if delta:
+                            info["attrib_delta"] = delta
+            except Exception:
+                pass
 
     # 帮助元数据（Stage 1：免费元数据，完整帮助见 tool-design.md 三阶段）
     help_meta: dict = {}
@@ -783,6 +824,26 @@ def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
 
 # --- render / sim 域 ---------------------------------------------------------
 
+# --- 图片产出登记（media relay 数据源） --------------------------------------
+# 动词产出的图片路径登记在这里；bridge 在每次 exec 结束后把它放进 envelope
+# 的 `images` 字段，host 侧经 /media 端点把字节拉回会话工作区——vision/fs
+# 工具被沙箱限制在工作区内，直接读不到 $HIP 下的产物（2026-08-19 草地任务
+# trace：vision_glance 被 "image escapes the allowed directories" 拦截）。
+_PRODUCED_IMAGES: list = []
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"}
+
+
+def report_image(path: str) -> str:
+    """登记一张本次 exec 产出的图片（返回绝对路径）。动词外手写的产出也可登记。
+
+    只登记图片扩展名——geometry ROP 的 .bgeo 等产物不该进 media relay。
+    """
+    p = os.path.abspath(path)
+    if os.path.splitext(p)[1].lower() in _IMAGE_EXTS and p not in _PRODUCED_IMAGES:
+        _PRODUCED_IMAGES.append(p)
+    return p
+
+
 def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
 
@@ -847,6 +908,8 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         pass
     if not render_err and file_bytes is None:
         errors.append(f"render() 未报错但产物缺失或为空：{target}")
+    if file_bytes:
+        report_image(target)
     return {
         "path": n.path(),
         "output": target,
@@ -1255,5 +1318,150 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     }
     if framed is not None:
         result["framed"] = framed
+    report_image(actual)
     _restore_webview_window()
     return result
+
+
+def _try_set(node: hou.Node, name: str, value) -> bool:
+    """防御性设参：参数存在才设，返回是否成功（跨版本参数名可能不同）。"""
+    p = node.parm(name)
+    if p is None:
+        return False
+    try:
+        p.set(value)
+        return True
+    except Exception:
+        return False
+
+
+# render_view 的命名视角（direction 接受这些字符串）：意图层词汇，
+# top 故意不沿正 Y（与 up 向量共线会导致 lookat 退化）。
+_NAMED_DIRECTIONS = {
+    "iso": (1.0, 0.7, 1.0),
+    "front": (0.0, 0.25, 1.0),
+    "side": (1.0, 0.25, 0.0),
+    "top": (0.001, 1.0, 0.001),
+}
+
+
+def render_view(node, direction=(1.0, 0.7, 1.0), frame=None,
+                width: int = 1280, height: int = 720, picture=None) -> dict:
+    """验证渲染一步到位：专用相机取景 → OpenGL ROP 离屏渲染 → render_check。
+
+    「副驾驶」定位下的视觉验证主干：视口是用户的草稿纸（随时可能被用户
+    移动/最小化），验证不碰它——本动词用 agent 自己拥有的相机
+    （``/obj/dsh_cam`` + ``/obj/dsh_cam_target``，复用不重复创建）和
+    ``/out/dsh_opengl`` ROP 离屏出图，质量≈视口（实时 GL 光栅化），
+    确定性≈渲染管线。构图（取景角度/距离/焦距）想精细控制时，拆开来用
+    裸 hou 调 ``/obj/dsh_cam`` 再 ``render_frame``。
+
+    - ``node``：取景目标（SOP 或 OBJ），按显示几何 bbox 取景。
+    - ``direction``：视线方向（从目标指向相机的偏移向量），默认 3/4 俯视。
+      也接受命名视角：``'iso'``（3/4 俯视）、``'front'``、``'side'``、
+      ``'top'``（草地重跑 trace：agent 直觉写法就是 ``'iso'``——命名视角
+      是意图，向量是实现）。
+    - ``frame``：帧号；None = 当前帧。
+    - ``picture``：输出路径；None = ``$HIP/render/dsh_view_<时间>.png``。
+    - 返回含 ``check``（render_check 结果）与取景参数；产物自动登记进
+      ``images``（host 回传到工作区，vision 工具可读）。
+
+    需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
+    走 CPU 渲染器。注意 GL 渲染在 Windows 锁屏/远程桌面断开时可能失败，
+    失败会体现在返回的 ``errors`` 里。
+    """
+    if not hou.isUIAvailable():
+        raise ValueError(
+            "render_view 需要 Houdini GUI（OpenGL ROP 要 GL 上下文）；"
+            "headless 环境请用 render_frame 走 CPU 渲染器"
+        )
+    target = _resolve(node)
+    bb = _display_bbox(target)
+    center = bb.center()
+    extents = bb.sizevec()
+    size = max(float(extents[0]), float(extents[1]), float(extents[2]))
+
+    # --- 相机与目标点（复用，不重复创建） ---
+    cam = hou.node("/obj/dsh_cam") or tab_create("/obj", "cam", "dsh_cam")
+    aim = hou.node("/obj/dsh_cam_target") or tab_create("/obj", "null", "dsh_cam_target")
+    aim.parmTuple("t").set([float(center[0]), float(center[1]), float(center[2])])
+
+    # --- 取景：距离按相机视场角反推，保证主体完整入镜并留边距 ---
+    focal, aperture = 50.0, 41.4214
+    try:
+        focal = float(cam.parm("focal").eval())
+        aperture = float(cam.parm("aperture").eval())
+    except Exception:
+        pass
+    fov_h = 2.0 * math.atan(aperture / (2.0 * focal))
+    fov_v = 2.0 * math.atan(math.tan(fov_h / 2.0) * float(height) / float(width))
+    fov = min(fov_h, fov_v)
+    dist = (max(size, 1e-3) / 2.0) / math.tan(fov / 2.0) * 1.4  # 1.4 = 边距
+
+    if isinstance(direction, str):
+        named = _NAMED_DIRECTIONS.get(direction.strip().lower())
+        if named is None:
+            raise ValueError(
+                f"direction 收到未知名称 {direction!r}；可用："
+                f"{sorted(_NAMED_DIRECTIONS)} 或三分量向量 [x, y, z]"
+            )
+        direction = named
+    d = hou.Vector3(*[float(x) for x in direction])
+    if d.length() < 1e-6:
+        raise ValueError(f"direction 不能是零向量：{direction!r}")
+    d = d.normalized()
+    eye = center + d * dist
+    cam.parmTuple("t").set([float(eye[0]), float(eye[1]), float(eye[2])])
+    if not _try_set(cam, "lookat", aim.path()):
+        # 无 lookat 参数（非常规相机）时的回退：直接写世界变换。
+        # Houdini 约定：相机看向局部 -Z，Matrix4 行主序，
+        # 行 0/1/2 = 相机局部 X/Y/Z 轴的世界方向，行 3 = 平移。
+        up = hou.Vector3(0, 1, 0)
+        fwd = (center - eye).normalized()
+        right = fwd.cross(up).normalized()
+        up2 = right.cross(fwd).normalized()
+        m = hou.Matrix4((
+            right[0], right[1], right[2], 0.0,
+            up2[0], up2[1], up2[2], 0.0,
+            -fwd[0], -fwd[1], -fwd[2], 0.0,
+            eye[0], eye[1], eye[2], 1.0,
+        ))
+        cam.setWorldTransform(m)
+
+    # --- OpenGL ROP（复用） ---
+    # 分辨率开关在不同版本叫 tres / override_camerares——两个都试（幂等）。
+    rop = hou.node("/out/dsh_opengl") or tab_create("/out", "opengl", "dsh_opengl")
+    _try_set(rop, "camera", cam.path())
+    _try_set(rop, "tres", True)
+    _try_set(rop, "override_camerares", True)
+    _try_set(rop, "res1", int(width))
+    _try_set(rop, "res2", int(height))
+
+    if picture is None:
+        hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
+        picture = os.path.join(
+            hip, "render", f"dsh_view_{time.strftime('%H%M%S')}.png")
+
+    f = hou.frame() if frame is None else float(frame)
+    r = render_frame(rop, picture=picture, frame=f)
+    check = None
+    if r.get("file_bytes"):
+        try:
+            check = render_check(r["output"])
+        except Exception as e:
+            check = {"error": str(e)}
+    return {
+        "target": target.path(),
+        "camera": cam.path(),
+        "rop": rop.path(),
+        "output": r["output"],
+        "frame": f,
+        "file_bytes": r["file_bytes"],
+        "errors": r["errors"],
+        "framing": {
+            "center": [float(x) for x in center],
+            "size": float(size),
+            "dist": round(float(dist), 3),
+        },
+        "check": check,
+    }

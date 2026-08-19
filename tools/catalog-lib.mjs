@@ -6,7 +6,7 @@ import fs from 'node:fs';
 export function loadCatalog(docFile) {
   const domains = [];
   let cur = null;
-  for (const line of fs.readFileSync(docFile, 'utf8').split('\n')) {
+  for (const line of fs.readFileSync(docFile, 'utf8').split(/\r?\n/)) {
     // 域标题：### node 域（场景图）/ ### render / sim 域（…）/ ### 类型目录（…）
     // （「8 个域」是章节标题不是动词域，按「个域」排除）
     const h = line.match(/^###\s+(.+?)\s*$/);

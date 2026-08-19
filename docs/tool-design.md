@@ -79,10 +79,10 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：最新版 + shelf 初始化 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：最新版 + shelf 初始化；parent 接受 `hou.Node` 或 path 字符串 | `hou.Node` |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs | dict |
-| `describe(node)` | 状态 + 几何摘要 + 帮助元数据 | dict |
+| `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `connect(src, dst, index=0)` | 连线（src 输出 → dst 输入）；落口与请求不一致时返回里带 `note` | dict |
 | `rename_node(node, name)` | 重命名 | 新 path |
 | `delete_node(node)` | 删除（返回被表达式引用的上游） | dict |
@@ -109,13 +109,14 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染单帧并**验证产物**：输出参数按常见名自动解析（picture/vm_picture/sopoutput…），等文件落盘非空，采集 ROP 错误；`render()` 不报错 ≠ 产物存在。>110s 的渲染走 job 通道 | dict |
+| `render_view(node, direction=(1,0.7,1), frame=None, width=1280, height=720, picture=None)` | **视觉验证主干**（「共享屏幕副驾驶」定位，2026-08-19）：agent 自有的 `/obj/dsh_cam` + `/obj/dsh_cam_target` + `/out/dsh_opengl`（复用不重建）按目标显示几何 bbox 取景，OpenGL ROP 离屏渲染（视口质量、实时、确定性、不碰用户视口），返回里带 `render_check` 结果与取景参数。`direction` 接受三分量向量或命名视角 `'iso'/'front'/'side'/'top'`（草地重跑 trace：agent 直觉写法就是 `'iso'`）。分辨率开关跨版本兼容（`tres`/`override_camerares` 都试——H21 实测前者才是真开关）。GUI 限定（GL 上下文）；headless 用 render_frame 走 CPU 渲染器；Karma 是交付渲染器，不进验证闭环 | dict |
 | `render_check(path, ref=None)` | 渲染产物**客观验证**（无视觉模型的盲验）：亮度统计/非黑像素占比/主色/内容 bbox；传 ref 算两图 diff（循环帧一致性、A/B 对比）。QImage 解码，hython 退回纯 Python PNG | dict |
 
 ### viewport 域（视口/UI）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False)` | 抓当前场景视口截图（所见即所得，走 SceneViewer flipbook 单帧通道，**异步**——还原设置必须等产物落盘后）；GUI 限定，headless 抛错指向 `render_frame`。`clean` 隐藏视口装饰（地面参考网格走 `SceneViewer.referencePlane().setIsVisible(False)`——它**不是** viewportGuide 枚举；外加坐标指示器/手柄/标签/遮幅/HUD，见 `_CLEAN_GUIDES`）；`frame_target` 取景到节点显示几何 bbox，**也接受 `True`** = 「/obj 下当前挂 display 旗标的对象」（agent 直觉写法，2026-08-18 trace 实测）；`textures=False` 临时关纹理（UV 贴图不入镜）；`backface_cull=True` 临时背面剔除。收尾自动还原被最小化的内嵌 web UI 窗口（`_restore_webview_window`，仅 isMinimized 时才动）。截图前先用 `display_node` 核对旗标 | dict |
+| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False)` | **诊断工具**（定位调整 2026-08-19）：回答「用户屏幕上现在是什么」，**不是**验证自己工作的手段（那是 render_view）——视口是用户的草稿纸，会被移动/遮挡/最小化，草地任务 trace 里三连全黑截图即窗口状态污染。抓当前场景视口截图（所见即所得，走 SceneViewer flipbook 单帧通道，**异步**——还原设置必须等产物落盘后）；GUI 限定，headless 抛错指向 `render_frame`。`clean` 隐藏视口装饰（地面参考网格走 `SceneViewer.referencePlane().setIsVisible(False)`——它**不是** viewportGuide 枚举；外加坐标指示器/手柄/标签/遮幅/HUD，见 `_CLEAN_GUIDES`）；`frame_target` 取景到节点显示几何 bbox，**也接受 `True`** = 「/obj 下当前挂 display 旗标的对象」（agent 直觉写法，2026-08-18 trace 实测）；`textures=False` 临时关纹理（UV 贴图不入镜）；`backface_cull=True` 临时背面剔除。收尾自动还原被最小化的内嵌 web UI 窗口（`_restore_webview_window`，仅 isMinimized 时才动）。截图前先用 `display_node` 核对旗标 | dict |
 
 ### 拆分决策：`list_parms` vs `read_parms`
 
@@ -203,6 +204,58 @@ bridge 对每次 exec 的代码做 **AST 静态扫描**（`_raw_hou_calls`），
 `setExpression`→`set_parm`）；当代码**完全没走动词**却用了这些调用时，envelope 附
 `advisory` 字段（文本，点明对应动词），工具渲染为 `hint:` 段。用 AST 而非正则：
 注释和字符串里的同名文本不会误报；语法错误时静默跳过。
+
+### raw-hou gate：拦 + 豁免通道（实验开关，2026-08-19）
+
+advisory 的下一步：软提示被模型无视的天花板已反复实证（deepseek-v4-flash 读
+完 advisory 继续裸写），gate 把它升级为**执行前拦截**，但带显式豁免通道
+（软硬结合——纯硬墙会把「词表真缺口」变成任务卡死，并诱发 getattr/exec 等
+更隐蔽的逃逸）。
+
+- **开关**：桥模块级 `_raw_gate`，默认**关**；用户侧在 Houdini Python Shell
+  `dsh_bridge.set_raw_gate(True)` 开启（不进 exec 命名空间）；`/health` 带
+  `rawGate` 状态。桥重启（launcher 菜单）后复位为关。
+- **拦截集**（AST，`_gate_message`）：①动词已覆盖的裸调用（`_RAW_HOU_VERB_MAP`
+  全集 + `parm().set` 特判）→ 报错逐一点明对应动词；②疑似修改场景的方法
+  调用（`set*/add*/create*/delete*/save*/render*` 等前缀启发式）→ 报错列出。
+  拒绝发生在**执行前**，零副作用；语法错误放行给 exec 自己报。已知误伤面
+  （python 侧的 `set.add`/`dict.setdefault` 形状相同）在 houdini exec 里罕见，
+  报错信息自带豁免指引。
+- **豁免通道**：工具参数 `allow_raw="为什么动词覆盖不了"`（exec/query/
+  job_submit 都有）——同一段代码带豁免重发即放行，桥打印
+  `[gate] raw-hou exemption: <理由>` 进 stdout（进结果、进 trace）。
+  **每条豁免 = 一份带理由的词表缺口记录**，这是实验的核心产出。
+- **不拦**：纯读取/引用（`hou.node`/`hou.hipFile`/`print` 等）——词表不
+  打算覆盖「取引用」这种语言级操作。
+- 实验期望的首个产出：`create_parm`（spare parm 创建——自行车 trace 实证
+  的真缺口，程序化工作流的核心操作）。
+
+### 图片 media relay（2026-08-19，草地任务 trace 的直接产出）
+
+「共享屏幕副驾驶」定位的管道地基：产图的动词（`render_frame` / `render_view` /
+`viewport_screenshot`）把产物路径登记进 `dsh_hou_helpers._PRODUCED_IMAGES`
+（`report_image()`，agent 手写产出也可登记），bridge 在 exec envelope 里带
+`images` 字段；host 侧对每个路径 `GET /media?path=...`（桥新端点：只读、限
+图片扩展名、64MB 上限）拉回字节，写进 `<工作区>/.dsh-houdini-media/`，并在
+工具结果里渲染 `media` 段（from → to 映射）。**vision/fs 工具用右侧的工作区
+路径**——$HIP 原路径对它们不可读（沙箱）。这修掉了草地 trace 里
+`vision_glance` 被 "image escapes the allowed directories" 拦截的根因，也让
+workspace note 从「每次调用都重复」降为「每会话一次」（alarm fatigue 实证：
+同一条 note 重复 30+ 次后模型完全无视 hint）。
+
+### 「共享屏幕副驾驶」定位（2026-08-19，经双向钢人论证 + 用户拍板）
+
+视口是**用户的**领地：漂移（移动/遮挡/最小化）是要共存的现实，不是要对抗的
+噪声。由此确定的分工：
+
+- **验证/交付走 agent 自己的渲染管线**：`render_view`（OpenGL ROP 离屏）是默认
+  视觉验证路径；Karma 是用户明确要成片时的交付渲染器，不进验证闭环。
+- **`viewport_screenshot` 降级为诊断**：只回答「用户屏幕上现在是什么」。
+- **不新增编程用户视口的动词**（不做 `viewport_look_at`）：草地 trace 里 40 分钟
+  的相机矩阵挣扎，根因是「试图编程一个不属于自己的东西」，正确解法是根本不碰它。
+- **词表按意图而非 API 表面增长**：新动词的门槛是「一个 Houdini 用户会当成
+  一个动作的事」（render_view 合格：取景+渲染+验证=一个意图；viewport_state /
+  parm_menu 这类 API 碎片不合格，折进现有动词或不做）。
 
 > 注：dsh 里用户说的「trace」即 `dsh-client-ui-trajectory` 的「轨迹」视图，本质是
 > `conversation.view` 上的一个注册项；「并列」= 同 Slot 再注册一个 id。

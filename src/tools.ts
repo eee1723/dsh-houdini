@@ -5,6 +5,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus } from './bridge.js'
 
 /** Canonical value shared by the exec-shaped tools. */
@@ -18,6 +20,8 @@ const execOutputSchema = {
     verbs: { type: 'json' },
     error: { type: 'string' },
     advisory: { type: 'string' },
+    images: { type: 'json' },
+    media: { type: 'json' },
   },
   additionalProperties: false,
 } as const
@@ -52,6 +56,16 @@ function renderStreams(value: ExecResult): string[] {
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
   if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
   parts.push(...renderVerbs(value))
+  if (Array.isArray(value.media) && value.media.length) {
+    const lines = (value.media as Array<Record<string, unknown>>).map((m) =>
+      m.error
+        ? `- ${String(m.from)} -> RELAY FAILED: ${String(m.error)}`
+        : `- ${String(m.from)} -> ${String(m.to)} (${Math.round(Number(m.bytes) / 1024)} KB)`)
+    parts.push(
+      `media (relayed into the session workspace — readable by fs/vision tools; `
+      + `use the workspace path on the right with vision_glance etc.):\n${lines.join('\n')}`,
+    )
+  }
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   return parts
 }
@@ -66,6 +80,75 @@ function renderExec(value: ExecResult) {
   }
   parts.push(...renderStreams(value))
   return [{ type: 'text' as const, text: parts.join('\n\n') }]
+}
+
+/** Normalize a Windows-ish path for comparison (case, slashes, trailing sep). */
+function normPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** Session workspace (the dsh sandbox root for fs/vision tools), when known. */
+function workspaceOf(execInput: unknown): string | null {
+  const cwd = (execInput as { agent?: { session?: { header?: { cwd?: unknown } } } })
+    .agent?.session?.header?.cwd
+  return typeof cwd === 'string' && cwd ? cwd : null
+}
+
+/**
+ * Media relay (2026-08-19, grass-task trace): image-producing verbs register
+ * their outputs in the envelope's `images`; those live under $HIP, which
+ * dsh-side vision/fs tools cannot read when the session workspace differs.
+ * Copy the bytes through the bridge (`GET /media`) into
+ * `<workspace>/.dsh-houdini-media/` so the vision loop works regardless of
+ * where the hip lives. The model gets the mapping in the `media` section.
+ */
+async function relayMedia<T extends ExecResult>(value: T, execInput: unknown, bridge: HoudiniBridge): Promise<T> {
+  const images = Array.isArray(value.images) ? value.images.filter((p): p is string => typeof p === 'string') : []
+  if (!images.length) return value
+  const cwd = workspaceOf(execInput)
+  if (!cwd) return value
+  const dir = path.join(cwd, '.dsh-houdini-media')
+  const media: Array<Record<string, unknown>> = []
+  for (const from of images) {
+    try {
+      const bytes = await bridge.fetchMedia(from)
+      const to = path.join(dir, path.basename(from.replace(/\\/g, '/')))
+      await fs.mkdir(dir, { recursive: true })
+      await fs.writeFile(to, bytes)
+      media.push({ from, to, bytes: bytes.length })
+    } catch (cause) {
+      media.push({ from, error: cause instanceof Error ? cause.message : String(cause) })
+    }
+  }
+  return { ...value, media }
+}
+
+/**
+ * Append a note when the session workspace does not match $HIP. dsh-side file
+ * tools (pwsh/fs/vision) are sandboxed to the session workspace — a mismatch
+ * means they cannot exchange files with Houdini (images are exempt: the media
+ * relay above handles them). Shown ONCE per (workspace, $HIP) pair — the
+ * grass-task trace (2026-08-19) showed the repeated note training the model
+ * to ignore hints entirely (alarm fatigue).
+ */
+const _workspaceNoteShown = new Set<string>()
+
+async function withWorkspaceNote(value: ExecResult, execInput: unknown, bridge: HoudiniBridge): Promise<ExecResult> {
+  const cwd = workspaceOf(execInput)
+  if (!cwd) return value
+  const hip = await bridge.hipDir()
+  if (!hip || normPath(hip) === normPath(cwd)) return value
+  const key = `${normPath(cwd)}|${normPath(hip)}`
+  if (_workspaceNoteShown.has(key)) return value
+  _workspaceNoteShown.add(key)
+  const note = [
+    `workspace note: this session's workspace is "${cwd}", but $HIP (the live Houdini project directory) is "${hip}".`,
+    'Anchor all Houdini outputs at $HIP. Images produced by render/screenshot verbs are auto-relayed into the',
+    'workspace (see the media section), so vision tools work as-is; for OTHER files dsh-side tools must read,',
+    'relaunch via Houdini menu "dsh → 启动 / 重启 dsh" to seed the workspace from the current hip.',
+    'Never work around this by writing into the dsh-houdini plugin repository. (This note is shown once per session.)',
+  ].join(' ')
+  return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
 }
 
 /**
@@ -98,8 +181,18 @@ const jobStatusOutputSchema = {
     verbs: { type: 'json' },
     error: { type: 'string' },
     advisory: { type: 'string' },
+    images: { type: 'json' },
+    media: { type: 'json' },
   },
   additionalProperties: false,
+} as const
+
+const ALLOW_RAW_PARAM = {
+  type: 'string',
+  description:
+    'One-time raw-hou exemption, ONLY after the bridge raw-hou gate rejects code and no verb '
+    + 'covers the operation: re-issue the SAME code with this set to WHY no verb fits. '
+    + 'Exemptions are recorded in the trace as vocabulary-gap documentation.',
 } as const
 
 /** Register every Houdini tool; disposal of the plugin unregisters them. */
@@ -113,10 +206,12 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'value to the variable `__result__` to return structured data.',
     parameters: {
       code: { type: 'string', required: true, description: 'Python source executed in Houdini with `hou` available' },
+      allow_raw: ALLOW_RAW_PARAM,
     },
     output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
     async execute(args, exec) {
-      return bridge.exec(args.code, exec.signal)
+      const result = await bridge.exec(args.code, exec.signal, args.allow_raw)
+      return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
   }))
 
@@ -128,10 +223,12 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them.',
     parameters: {
       code: { type: 'string', required: true, description: 'Read-only Python inspection code with `hou` available' },
+      allow_raw: ALLOW_RAW_PARAM,
     },
     output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
     async execute(args, exec) {
-      return bridge.exec(args.code, exec.signal)
+      const result = await bridge.exec(args.code, exec.signal, args.allow_raw)
+      return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
   }))
 
@@ -144,6 +241,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'Prefer this over houdini_exec for anything that may take minutes.',
     parameters: {
       code: { type: 'string', required: true, description: 'Long-running Python code with `hou` available' },
+      allow_raw: ALLOW_RAW_PARAM,
     },
     output: {
       schema: {
@@ -154,7 +252,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` }],
     },
     async execute(args, exec) {
-      return bridge.submitJob(args.code, exec.signal)
+      return bridge.submitJob(args.code, exec.signal, args.allow_raw)
     },
   }))
 
@@ -175,7 +273,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       },
     },
     async execute(args, exec) {
-      return bridge.jobStatus(args.jobId, args.wait, exec.signal)
+      const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
+      return relayMedia(status, exec, bridge)
     },
   }))
 

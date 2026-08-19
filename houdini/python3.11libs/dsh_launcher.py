@@ -82,6 +82,35 @@ DSH_BIN = ""
 PRESET_SRC = os.path.join(_PROJECT_ROOT, "presets")
 PRESET_DST = os.path.join(os.path.expanduser("~"), ".dsh", ".agent-presets")
 
+
+# hip 未保存时的中立工作区（仓库的兄弟目录，按需创建）：产出永不落仓库。
+_FALLBACK_WORKSPACE = os.path.join(os.path.dirname(_PROJECT_ROOT), "dsh-houdini-workspace")
+
+
+def _hip_dir() -> str:
+    """当前 hip 文件的目录——前端工作区种子。
+
+    dsh 的默认工作区 = 前端进程的启动目录（"the invoking directory is the
+    default workspace root"）。工作区决定 workspace-write 沙箱的边界和
+    vision 等 dsh 侧工具的可读范围，所以它必须对准 $HIP，而不是插件仓库
+    （2026-08-18 复盘：工作区=仓库时，agent 为让 vision 工具读到截图被迫
+    把产出写进仓库根目录）。hip 从未保存过时用中立的后备工作区目录，
+    再失败才回退项目根。注意：访问 hou —— 只能在主线程调用本函数。
+    """
+    try:
+        p = hou.hipFile.path()
+        if p and os.path.basename(p).lower() != "untitled.hip":
+            d = os.path.dirname(os.path.abspath(p))
+            if os.path.isdir(d):
+                return d
+    except Exception:
+        pass
+    try:
+        os.makedirs(_FALLBACK_WORKSPACE, exist_ok=True)
+        return _FALLBACK_WORKSPACE
+    except Exception:
+        return _PROJECT_ROOT
+
 # Helper processes (netstat / taskkill / frontend tree) must never pop a
 # visible terminal window when launched from Houdini's GUI.
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -231,10 +260,16 @@ def restart_frontend() -> str:
     return "frontend not running"
 
 
-def start_frontend() -> str:
-    """Boot the dsh web frontend if it is not already up; returns status text."""
+def start_frontend(workspace_dir: str | None = None) -> str:
+    """Boot the dsh web frontend if it is not already up; returns status text.
+
+    workspace_dir = 前端进程 cwd = dsh 默认工作区根（应对准 $HIP 目录，
+    由调用方在主线程用 _hip_dir() 解析后传入；None 回退项目根）。
+    """
     if _port_open(FRONTEND_HOST, FRONTEND_PORT):
         return f"frontend already running on {FRONTEND_URL}"
+
+    cwd = workspace_dir or _PROJECT_ROOT
 
     if SHELL:
         cmd: list[str] | str = FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT)
@@ -250,7 +285,7 @@ def start_frontend() -> str:
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
-        "cwd": _PROJECT_ROOT,
+        "cwd": cwd,
         "close_fds": True,
         "shell": SHELL,
         "env": dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
@@ -264,7 +299,7 @@ def start_frontend() -> str:
     with open(FRONTEND_LOG, "ab") as log:
         kwargs["stdout"] = log
         _PENDING["proc"] = subprocess.Popen(cmd, **kwargs)
-    return f"frontend starting on {FRONTEND_URL} (log: {FRONTEND_LOG})"
+    return f"frontend starting on {FRONTEND_URL} (workspace: {cwd}; log: {FRONTEND_LOG})"
 
 
 def open_browser() -> str:
@@ -312,7 +347,11 @@ def _start_and_wait_frontend(state: dict) -> None:
     as "ready" / "dead" / "error". Exits early when state["canceled"] is set.
     """
     try:
-        state["detail"] = "\n".join([ensure_dependencies(), restart_frontend(), start_frontend()])
+        state["detail"] = "\n".join([
+            ensure_dependencies(),
+            restart_frontend(),
+            start_frontend(state.get("frontend_cwd")),
+        ])
         proc = _PENDING.get("proc")
         while not state["canceled"]:
             if _port_open(FRONTEND_HOST, FRONTEND_PORT):
@@ -327,7 +366,7 @@ def _start_and_wait_frontend(state: dict) -> None:
         state["result"] = "error"
 
 
-def open_ui_when_ready(detail: str) -> None:
+def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     """Restart the frontend, then open the UI once it listens on FRONTEND_PORT.
 
     The frontend restart AND the port polling run on a worker thread (the
@@ -336,13 +375,16 @@ def open_ui_when_ready(detail: str) -> None:
     thread only spins the loading animation and checks a state flag. No time
     cap: cancel is the escape hatch; both paths stop waiting the moment the
     spawned frontend process exits without ever listening.
+
+    frontend_cwd = 前端进程 cwd（= dsh 默认工作区根），由调用方在主线程经
+    _hip_dir() 解析（worker 线程禁止碰 hou）。
     """
     try:
         from hutil.Qt import QtCore, QtGui, QtWidgets
         parent = hou.qt.mainWindow()
     except Exception:
         # hython: no Qt — run the same worker inline, then open the browser.
-        headless: dict = {"canceled": False, "result": None, "detail": ""}
+        headless: dict = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
         _start_and_wait_frontend(headless)
         detail += "\n" + headless["detail"]
         if headless["result"] == "ready":
@@ -409,7 +451,7 @@ def open_ui_when_ready(detail: str) -> None:
     dialog.show()
 
     # 主线程只转动画 + 查标志位；前端重启和端口探测全在 worker 线程。
-    state: dict = {"canceled": False, "result": None, "detail": ""}
+    state: dict = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
     cancel_btn.clicked.connect(lambda: state.update(canceled=True))
     threading.Thread(target=_start_and_wait_frontend, args=(state,), daemon=True).start()
 
@@ -447,14 +489,16 @@ def launch() -> None:
 
     The frontend restart/poll happens on a worker thread inside
     open_ui_when_ready (blocking probes must not touch the GUI thread);
-    only the bridge restart — which touches `hou` — runs here.
+    only the bridge restart — which touches `hou` — runs here. The frontend
+    cwd is resolved here too (main thread): it seeds the dsh default
+    workspace, which must track the current hip directory.
     """
     detail = "\n".join([
         sync_presets(),
         restart_bridge(),
     ])
     print("[dsh-houdini] " + detail.replace("\n", "; "))
-    open_ui_when_ready(detail)
+    open_ui_when_ready(detail, _hip_dir())
 
 
 if __name__ == "__main__":

@@ -10,3 +10,4 @@ __pycache__/
 # Local research scratch: decompressed session traces (private conversation
 # data) and fetched docs — never commit.
 .research/
+.dsh-houdini-media/

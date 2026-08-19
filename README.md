@@ -41,13 +41,20 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | node | `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：**永远最新版本 + shelf 初始化** |
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
-| node | `describe(node)` | 状态 + 几何摘要 + 帮助元数据 |
+| node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
 | node | `connect(src, dst, index=0)` | 连线 |
 | node | `rename_node(node, name)` / `delete_node(node)` | 重命名 / 删除（返回被表达式引用的上游） |
 | node | `cook_node(node)` | cook + 采集 error/warning |
 | parm | `list_parms(node)` | 参数**目录**（名字/标签/类型/帮助，不给值） |
 | parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 带表达式 + 被引用的；表达式附 `referenced_parm`） |
 | parm | `set_parm(node, name, value)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠） |
+| geometry | `geo_attrib_stats(node, name, attrib_class=)` | 属性值统计（min/max/mean/count） |
+| render | `render_view(node, direction=, frame=, width=, height=)` | **视觉验证主干**：agent 自有相机 + OpenGL ROP 离屏渲染 + render_check 一步到位（不碰用户视口；direction 接受 `'iso'/'front'/'side'/'top'` 或向量） |
+| render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染单帧并验证产物 / 图像客观统计（盲验） |
+| viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
+
+产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
+结果里带 `media` 段（from→to 映射）——vision/fs 工具用工作区路径，与 $HIP 位置解耦。
 
 ```python
 geo = tab_create(hou.node('/obj'), 'geo', name='my_geo')
@@ -147,7 +154,7 @@ dsh web                                                 # 起前端（profile �
 
 ## 健壮性
 
-桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。桥还提供 `GET /health`（返回 `{"ok": true, "houVersion": "..."}`）用于诊断。
+桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。桥还提供 `GET /health`（返回 `{"ok": true, "houVersion": "..."}`）用于诊断，以及 `GET /media?path=`（只读、限图片扩展名、64MB 上限）把产图动词的图片字节回传给 host。
 
 ## 已知限制
 
@@ -158,7 +165,7 @@ dsh web                                                 # 起前端（profile �
 
 ## 后续路线（按价值排序）
 
-1. **视觉反馈闭环**：桥加 `/screenshot`（viewport 截屏或 flipbook 帧），工具返回 image 内容块——原生插件路线相对 MCP 的核心优势
+1. ~~视觉反馈闭环~~ ✅ 2026-08-19 已实现且实测走通：`render_view`（OpenGL ROP 离屏验证）+ media relay（图片字节经 `/media` 回传工作区，vision/fs 工具可读）——草地任务重跑 4.5 分钟完成（旧 trace 2.5 小时未收尾），见 `docs/development.md` §2.18
 2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh 的 jobs 服务，获得 `job_kill` 等通用控制工具（参考 `docs/cookbook/adding-a-tool.md` 的 Long-running work）
 3. **UI 卡片**：`presentCall`/`presentResult` 声明渲染意图（比如参数修改的 diff 卡）
 4. **权限分层**：`tools/pre-execute` 监听器实现"query 自动允许、exec 需审批"（参考 `docs/cookbook/extension-cookbook.md` 的 permission-gate 示例）

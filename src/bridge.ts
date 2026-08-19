@@ -19,6 +19,10 @@ export interface ExecResult {
   error?: string
   /** Advisory hint, present when the code bypassed the verb vocabulary with raw hou calls. */
   advisory?: string
+  /** Absolute paths of images produced during this exec (render/screenshot verbs). */
+  images?: JsonValue
+  /** Media relay outcome, filled host-side: bridge paths copied into the session workspace. */
+  media?: JsonValue
 }
 
 /** Handle returned when a background job is accepted by the bridge. */
@@ -44,14 +48,19 @@ export class HoudiniBridge {
     this.baseUrl = normalizeBaseUrl(baseUrl)
   }
 
-  /** Run Python code in the Houdini session and wait for completion. */
-  exec(code: string, signal?: AbortSignal): Promise<ExecResult> {
-    return this.post('/exec', { code }, signal)
+  /** Run Python code in the Houdini session and wait for completion.
+   *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
+  exec(code: string, signal?: AbortSignal, allowRaw?: string): Promise<ExecResult> {
+    const body: Record<string, string> = { code }
+    if (allowRaw) body.allow_raw = allowRaw
+    return this.post('/exec', body, signal)
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
-  submitJob(code: string, signal?: AbortSignal): Promise<JobHandle> {
-    return this.post('/jobs', { code }, signal)
+  submitJob(code: string, signal?: AbortSignal, allowRaw?: string): Promise<JobHandle> {
+    const body: Record<string, string> = { code }
+    if (allowRaw) body.allow_raw = allowRaw
+    return this.post('/jobs', body, signal)
   }
 
   /** Poll a bridge-side background job. Pass `wait` (seconds) to long-poll:
@@ -68,6 +77,48 @@ export class HoudiniBridge {
   /** Cooperatively cancel a queued or running bridge-side job. */
   cancelJob(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
     return this.post(`/jobs/${encodeURIComponent(jobId)}/cancel`, {}, signal)
+  }
+
+  /**
+   * Fetch image bytes from the bridge's `/media` endpoint. The bridge process
+   * can read $HIP-side outputs that dsh-side tools (sandboxed to the session
+   * workspace) cannot; the caller writes the bytes into the workspace.
+   */
+  async fetchMedia(path: string, signal?: AbortSignal): Promise<Buffer> {
+    const url = `${this.baseUrl}/media?path=${encodeURIComponent(path)}`
+    let res: Response
+    try {
+      res = await fetch(url, { signal: this.withTimeout(signal) })
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(`cannot reach the Houdini bridge at ${this.baseUrl} (${reason})`)
+    }
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`bridge /media returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`)
+    }
+    return Buffer.from(await res.arrayBuffer())
+  }
+
+  private hipCache: { dir: string | null; at: number } | null = null
+
+  /** Directory of the live hip file ($HIP), 60s cache; null when unreachable
+   *  or the scene was never saved (untitled.hip — no meaningful $HIP, the
+   *  preset persona already tells the agent to ask the user first).
+   *  Used to detect sessions whose workspace does not match the live scene. */
+  async hipDir(): Promise<string | null> {
+    if (this.hipCache && Date.now() - this.hipCache.at < 60_000) return this.hipCache.dir
+    let dir: string | null = null
+    try {
+      const r = await this.exec(
+        "import os, hou\n_p = hou.hipFile.path()\n__result__ = '' if os.path.basename(_p).lower() == 'untitled.hip' else os.path.dirname(_p)",
+      )
+      if (r.ok && typeof r.result === 'string' && r.result) dir = r.result
+    } catch {
+      // bridge down — the exec itself already reported that; no note needed
+    }
+    this.hipCache = { dir, at: Date.now() }
+    return dir
   }
 
   private withTimeout(signal: AbortSignal | undefined, extraMs = 0): AbortSignal {

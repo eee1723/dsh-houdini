@@ -277,6 +277,107 @@ def t18():
 check("18 viewport_screenshot headless clear error", t18)
 
 
+# 19-22) raw-hou gate：拦动词已覆盖的裸 hou、放只读、豁免通道、拦疑似场景修改
+import dsh_bridge
+
+def t19():
+    dsh_bridge.set_raw_gate(True)
+    r = dsh_bridge.run_code("hou.node('/obj').createNode('geo', '__gate_t19')")
+    assert not r["ok"], r
+    assert "raw-hou gate" in r["error"] and "tab_create" in r["error"], r["error"]
+    assert hou.node("/obj/__gate_t19") is None  # 执行前拦截，无副作用
+check("19 gate blocks verb-covered raw hou", t19)
+
+def t20():
+    r = dsh_bridge.run_code("n = hou.node('/obj')\nprint(n.path())")
+    assert r["ok"], r
+check("20 gate allows read-only hou", t20)
+
+def t21():
+    r = dsh_bridge.run_code(
+        "hou.node('/obj').createNode('geo', '__gate_t21')",
+        allow_raw="regress: exemption channel",
+    )
+    assert r["ok"], r
+    assert "[gate] raw-hou exemption" in r["stdout"], r["stdout"]
+    n = hou.node("/obj/__gate_t21")
+    assert n is not None
+    n.destroy()
+check("21 gate allow_raw exemption passes + traced", t21)
+
+def t22():
+    r = dsh_bridge.run_code("hou.node('/obj/regr_geo').setComment('x')")
+    assert not r["ok"] and "setComment" in r["error"], r
+check("22 gate blocks mutating-but-uncovered call", t22)
+
+dsh_bridge.set_raw_gate(False)
+
+
+# 23) tab_create parent 接受 path 字符串（铁律 1 的实现漏洞修复，2026-08-19
+# 草地 trace：agent 传 '/obj' 收到 'str' object has no attribute 报错）
+def t23():
+    n = H.tab_create("/obj/regr_geo", "null", name="n23")
+    assert n is not None and n.path() == "/obj/regr_geo/n23", n
+check("23 tab_create parent as path string", t23)
+
+
+# 24) describe attrib_delta：color SOP 加 @Cd → added.point 含 Cd；
+# 无输入节点不出 attrib_delta 字段（用 color SOP 而非 attribwrangle：
+# 本机 hython 编译 VEX 栈溢出（0xC00000FD，HEAD 原生问题，见 t15））
+def t24():
+    src = geo.createNode("box", "b24")
+    col = geo.createNode("color", "c24")
+    col.setInput(0, src)
+    H.cook_node(col)
+    d = H.describe(col)
+    delta = d.get("attrib_delta") or {}
+    assert "Cd" in (delta.get("added", {}).get("point", [])), d
+    d2 = H.describe(src)
+    assert "attrib_delta" not in d2, d2  # 无 input 0，无字段
+check("24 describe attrib_delta added/removed", t24)
+
+
+# 25) media 登记：非图片产物（.bgeo）不登记（不污染 media relay）
+def t25():
+    import os
+    rop = hou.node("/out").createNode("geometry", "regr_rop25")
+    rop.parm("soppath").set(box.path())
+    out = "/tmp/regr25.$F4.bgeo.sc"
+    if os.path.exists("/tmp/regr25.0001.bgeo.sc"):
+        os.remove("/tmp/regr25.0001.bgeo.sc")
+    code = (
+        "r = render_frame(hou.node('/out/regr_rop25'), "
+        f"picture={out!r}, frame=1)\n"
+        "__result__ = r['file_bytes']"
+    )
+    r = dsh_bridge.run_code(code)
+    assert r["ok"] and r["result"], r
+    assert "images" not in r, r.get("images")  # .bgeo.sc 不是图片，不登记
+    rop.destroy()
+check("25 render_frame bgeo not registered as image", t25)
+
+
+# 26) render_view: headless 抛明确错误（GL 上下文），指向 render_frame
+def t26():
+    assert not hou.isUIAvailable()
+    try:
+        H.render_view(box)
+    except ValueError as e:
+        assert "render_frame" in str(e), e
+        return
+    raise AssertionError("no error for headless render_view")
+check("26 render_view headless clear error", t26)
+
+
+# 27) describe 对 SOP 必须返回 geometry（2026-08-19 修的大小写 bug：
+# category().name() == 'Sop'，旧的 == 'sop' 比较让几何摘要长期静默缺失）
+def t27():
+    d = H.describe(box)
+    g = d.get("geometry")
+    assert g and g["points"] == 8 and g["bbox_min"] and g["bbox_max"], d
+check("27 describe returns geometry for SOP", t27)
+
+
 geo.destroy()
 print()
 print("FAILED:" if failures else "ALL PASS", failures if failures else "")

@@ -381,6 +381,133 @@ webview 视图后置。实现：
    （`Page.captureScreenshot`）连同一前端截图，DOM 断言走桥
    `runJavaScript`（§2.13 的探针法）。
 
+### 2.16 产出落点：结构性纠正（2026-08-19）
+
+**问题**：agent 产出反复写进插件仓库根目录（`_viewport_check.png`、
+`_bike_preview.png`）。双向钢人论证 + dsh 源码调研后的结论：**根因不是
+agent 不守规矩，是结构错位**——前端以 `cwd=仓库` 启动 → 会话工作区=仓库
+→ workspace-write 沙箱（Windows ACL 受限令牌，**OS 级硬约束**，不止 fs
+工具，pwsh 写工作区外直接 Access Denied）把仓库变成唯一合法写入点；
+vision-toolkit 只能读会话工作区内文件（`sessionWorkspace(exec)` =
+`exec.agent.session.header.cwd`，另有自有 `allowedDirs` 白名单）——agent
+为让 `vision_glance` 读到截图，被迫把截图写进仓库。软规则（persona 的
+「锚定 $HIP」）敌不过结构。
+
+**调研确认的机制事实**（dsh 源码）：工作区注册可走
+`ctx.workspaceRegistry.create(path)` / RPC `workspace.create`；
+`workspace.json` 运行中手改无效（内存态权威，每次变更整文件原子写回）；
+**preset 不能绑定工作区**（schema 无此字段；会话 cwd 创建时定、不可变）；
+「前端启动目录 = 默认工作区根」。
+
+**四层落地**（用户选定「结构性纠正」档，不建硬拦截）：
+
+1. **launcher**：前端 cwd = `_hip_dir()`（当前 hip 目录；`untitled.hip`
+   未保存 → 中立后备 `E:/dsh-houdini-workspace`（按需创建），再失败才回退
+   项目根）。主线程解析后经 state 传给 worker 线程（hou 不碰 worker）。
+   点 dsh 菜单重启即重新对准当前 hip。
+2. **host 侧**（`tools.ts`）：exec/query 结果经 `withWorkspaceNote`——
+   会话工作区 ≠ $HIP 时往 advisory 通道追加提示（复用 `hint:` 渲染，
+   trace 视图/复盘报告自动可见）；`bridge.hipDir()` 60s 缓存，untitled
+   场景返回 null（不打搅，persona 已有「未保存先问用户」规则）。
+3. **桥 advisory**：`_repo_write_advisory`——代码含仓库根路径字面量 +
+   写语义关键词时附警告（纯 advisory，逃生舱不硬拦）。坑：`open(` 不能
+   算写关键词（读文件也用它，误报），可靠信号是 `.write`/`save` 等。
+4. **preset persona**：补「工作区 ≠ $HIP 时」的应对——别写仓库，请用户
+   点 dsh 菜单重 seed 或在 hip 目录工作区建会话。
+
+**效果**：新会话默认落在 hip 目录工作区 → pwsh/fs 写仓库被 OS 级拒绝、
+vision 直接读 `$HIP` 截图、桥 exec 裸写仓库有 advisory。存量会话（仓库
+工作区）保持原样，可在侧栏切换。
+
+### 2.17 自行车 trace 归因 + raw-hou gate（2026-08-19）
+
+**session-4885627f「做一个程序化自行车」复盘**（7215 事件、25 次 houdini
+调用、31 次动词调用、9 次失败）。对「词表设计有问题还是约束不够」的数据
+回答：
+
+- **采用率趋势其实在涨**：8-14/15 的早期 session 近 100% 裸 hou；自行车
+  session 动词调用 31 次（resolve_latest_type×18、list_parms×8、
+  viewport_screenshot×3…）。
+- **裸 hou 三分归因**：①真缺口——spare parm 创建（FloatParmTemplate/
+  IntParmTemplate），程序化工作流核心操作，parm 域无 create 动词；②已覆盖
+  但模型不知道——裸写 setExpression（set_parm 字符串即表达式）、探测性
+  createNode（tab_create 覆盖），advisory 触发但照旧被无视；③探测性试错
+  噪音（猜节点类型/参数名的 9 次失败大半是这类）。
+- **动词自身毛边**（顺手记下）：`resolve_latest_type` 不容忍大小写
+  （"Object" 被拒）；obj 级节点无 setRenderFlag 引起的困惑。
+
+**raw-hou gate**（软硬结合，用户拍板）：桥执行前 AST 拦截动词已覆盖 +
+疑似改场景的裸 hou，真缺口走 `allow_raw="理由"` 豁免通道（豁免打印
+[gate] 行进 trace，每条豁免=一份带理由的词表缺口记录）。设计细节与开关
+方式见 `docs/tool-design.md`「raw-hou gate」节。hython 回归 19-22 覆盖
+（拦截/只读放行/豁免放行+留痕/拦疑似修改）。**实验用法**：点 dsh 菜单
+重启桥后，Python Shell `import dsh_bridge; dsh_bridge.set_raw_gate(True)`；
+观察豁免记录 → 补缺口（首个候选 `create_parm`）→ 逐步收紧。
+
+### 2.18 草地 trace 复盘 → 「共享屏幕副驾驶」定位 + media relay + render_view（2026-08-19）
+
+**session-f6689f05「做一片草地」复盘**（5571 事件、51 次工具调用、70 次动词
+调用、11/19 命中）。核心事实：**搭建 15 分钟就成功了**（11:35 前网络完成、
+#16 截图 dominant=[138,213,106] 明显是绿草地），失败全部发生在**验证与呈现**
+环节——后 2 小时烧在：①视觉闭环两端断裂（read_image 被模型模态预检拦截；
+vision_glance 被 "image escapes the allowed directories" 拦截——截图在
+$HIP、vision 沙箱在工作区）；②徒手编程用户视口相机 4 次（Matrix4 猜错、
+相机钻进地底 y=-9.8，~15 次调用）；③用户离开 110 分钟后视口状态漂移，
+截图三连全黑（窗口状态污染），agent 无漂移感知。
+
+经**双向钢人论证 + 用户拍板**，定位确定为「**共享屏幕的副驾驶**」：视口是
+用户的领地，漂移是要共存的现实而非要对抗的噪声。由此落地：
+
+- **media relay（P0）**：产图动词（render_frame/render_view/viewport_screenshot）
+  经 `report_image()` 登记 → bridge envelope 带 `images` → host `GET /media`
+  （新端点：只读、限图片扩展名、64MB 上限）拉回字节写进
+  `<工作区>/.dsh-houdini-media/`，结果里渲染 `media` 段（from→to 映射，
+  vision 工具用右侧工作区路径）。vision 通路与 $HIP 位置彻底解耦。
+- **`render_view(node)` 新动词（P0，词表 19→20）**：agent 自有的
+  `/obj/dsh_cam` + `/obj/dsh_cam_target` + `/out/dsh_opengl`（复用不重建）
+  按显示几何 bbox 取景（距离按相机视场角反推），OpenGL ROP 离屏渲染 +
+  render_check 一步到位。OpenGL ROP 而非 Karma（交付渲染器，不进验证闭环）、
+  而非固定相机+视口截图（侵入用户视口/依赖窗口状态/分辨率绑面板）。
+- **`describe` 加 `attrib_delta`**：相对 input 0 的属性增删（MMB 节点信息
+  里美术心算的那一步；草地 #13 的 pscale 困惑自此自文档化）。
+- **顺藤摸出的存量 bug**：`describe` 的几何摘要因 `category().name() == 'sop'`
+  大小写比较（实际返回 'Sop'）**长期静默缺失**——草地 trace 里 agent 在
+  describe 后仍手写 bbox/点数循环（6 次），根因在此。改为类别对象比较。
+  （同类环境坑：本机 hython 编译 VEX 即栈溢出 0xC00000FD，HEAD 原生问题，
+  t15 起回归跑不通，新回归用 color SOP 规避。）
+- **卫生项**：workspace note 每会话一次（原实现每次调用重复——30+ 次后
+  alarm fatigue，模型对 hint 完全免疫的实证）；`tab_create` parent 兼容
+  path 字符串（铁律 1 的实现漏洞补全）；persona 写入主干流程
+  「搭建 → set_display → render_view 验证 → 迭代」与视口禁令，Karma 段
+  重新定位为「用户要成片时的交付渲染器」。
+- **明确不做**：`viewport_look_at`（编程用户视口=错误抽象）、按使用率删动词
+  （render_frame 零使用恰是该用没用的解药）、viewport_state/parm_menu 独立
+  动词（API 碎片，折进现有动词）。
+
+hython 新回归 23-27 全绿（tab_create 路径 parent / attrib_delta / 非图片
+不登记 / envelope.images / render_view headless 报错 / describe geometry
+回归）。host 侧 `npm run build` 通过，词表目录 20 个已注入 client.js。
+
+**重跑对比（session-be6367cd，同日「做一片草地」）——终局裁判**：
+
+| 指标 | 旧（f6689f05） | 新（be6367cd） |
+|---|---|---|
+| 墙钟时间 | ~2.5h（含 110min 用户离开） | **4.5 分钟** |
+| 工具调用 | 51 | **11** |
+| 硬失败 | 4 + 动词 FAIL 若干 | 2，均一步自愈 |
+| 视觉验证 | 全断（模态拦截 + 沙箱拦截） | render_view ×4 + read_image 直读回传图 |
+| 视口编程 | 4 次徒手矩阵，1 次钻地底 | **0 次** |
+| 手写几何循环 | 6 次 | **0 次** |
+| 结局 | 未验证、疑似失败收尾 | 模型亲眼看图迭代一轮后交付，vision 复核确认是草地 |
+
+仅有的两次失败直接产出两个修复：①`direction='iso'`（agent 的直觉词汇）
+→ render_view 支持命名视角（iso/front/side/top）；②960×540 请求渲出
+1280×720 → 分辨率开关真名是 `tres` 而非 `override_camerares`（两 parm
+都试做版本兼容）。另顺手修：tracer stdout 行补 kwargs（原来只打位置参数）；
+catalog 解析器容忍 CRLF（文件被转成 CRLF 后 `$` 锚点全不命中，报告 0/0）。
+桥重载技巧：`importlib.reload(dsh_hou_helpers)` → `reload(dsh_bridge)` →
+`dsh_bridge.start()` 可经 exec 完成，不必每次都点菜单。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -472,8 +599,10 @@ QPainter 圆弧 spinner。
 
 ### Phase 2 — 视觉反馈闭环（README 路线 #1）
 
-8. ⏳ 桥加 `/screenshot`（viewport 截屏 / flipbook 帧）；经 `ctx.attachments.saveImage()`
-   返回 image 内容块；执行前校验模型路由声明 image 输入模态（§6 约束，写进文档）。
+8. ✅ 2026-08-19 已实现且实测走通，形态与原设想不同：`render_view`（OpenGL ROP
+   离屏验证，不碰用户视口）+ media relay（图片字节经桥 `/media` 回传工作区，
+   vision/fs 可读）——比 `/screenshot` + image 内容块更简单且对有/无视觉模型
+   都成立。草地重跑 4.5min/11 调用收尾（§2.18）。
 
 ### Phase 3 — 迁移官方 jobs 服务（README 路线 #2）
 
@@ -530,7 +659,7 @@ QPainter 圆弧 spinner。
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 19 个动词 + `_resolve` |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 20 个动词 + `_resolve` |
 | `houdini/python3.11libs/dsh_launcher.py` | 一键启动/重启 + preset 同步 + spinner 等待（worker 线程探测） |
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + backdrop-filter 性能修复注入（§2.13） |
 | `docs/tool-design.md` | 设计宪法 |

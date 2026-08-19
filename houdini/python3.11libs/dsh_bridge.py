@@ -46,10 +46,12 @@ import contextlib
 import io
 import json
 import math
+import os
 import queue
 import threading
 import time
 import traceback
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -69,6 +71,14 @@ _exec_lock = threading.Lock()
 _jobs: dict[str, dict] = {}              # API-visible job payloads (schema-exact)
 _job_meta: dict[str, float] = {}         # jobId -> created/finished timestamp
 _jobs_lock = threading.Lock()
+
+# /media 端点（图片字节回传）的限制
+_MEDIA_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"}
+_MEDIA_MAX_BYTES = 64 * 1024 * 1024
+_MEDIA_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".bmp": "image/bmp", ".tga": "image/x-tga", ".webp": "image/webp",
+}
 
 
 class _CappedStringIO(io.StringIO):
@@ -139,6 +149,7 @@ _VERBS: dict[str, object] = {
     "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
     "render_frame": dsh_hou_helpers.render_frame,
     "render_check": dsh_hou_helpers.render_check,
+    "render_view": dsh_hou_helpers.render_view,
     "viewport_screenshot": dsh_hou_helpers.viewport_screenshot,
 }
 
@@ -207,6 +218,108 @@ def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
     )
 
 
+# --- repo-write advisory ------------------------------------------------------
+# agent 产出锚定 $HIP，不写插件仓库。dsh 侧（pwsh/fs/vision）由工作区沙箱
+# 强制（工作区对准 $HIP 目录后仓库天然是禁区）；桥 exec 是逃生舱不做硬拦，
+# 只对「代码里出现仓库根路径字面量 + 写语义关键词」附一条 advisory。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_REPO_WRITE_HINTS = (
+    ".write", "shutil.copy", "save", "screenshot", "render",
+    "dump", "export", "makedirs", "mkdir", "touch",
+)
+
+
+def _repo_write_advisory(code: str) -> str | None:
+    """exec 代码疑似往插件仓库写文件时返回警告文本；否则 None。
+
+    纯文本启发式（提醒层，不是安全边界）：路径由变量间接拼出的写检不到。
+    """
+    norm = code.replace("/", "\\").lower()
+    root = _REPO_ROOT.replace("/", "\\").lower()
+    if root not in norm:
+        return None
+    if not any(hint in norm for hint in _REPO_WRITE_HINTS):
+        return None
+    return (
+        f"code appears to write into the dsh-houdini plugin repository ({_REPO_ROOT}). "
+        "Agent outputs must anchor at $HIP (the directory of hou.hipFile.path()), "
+        "never the plugin repo — write under $HIP instead (e.g. $HIP/screenshots, "
+        "$HIP/render). If this write is truly intentional, explain why to the user."
+    )
+
+
+# --- raw-hou gate（实验开关，默认关） ------------------------------------------
+# 软硬结合的硬实验层（2026-08-19，经双向钢人论证选定）：开启后，exec 代码里
+# 「动词已覆盖的裸 hou 调用」与「疑似修改场景的裸 hou 调用」在执行前被拒，
+# 报错指明对应动词；词表真覆盖不了的操作可用 allow_raw="理由" 一次性豁免，
+# 豁免打印 [gate] 行进结果（进 trace 可审计）——每条豁免都是一份带理由的
+# 词表缺口记录。开启方式（用户侧）：Houdini Python Shell 里
+# `import dsh_bridge; dsh_bridge.set_raw_gate(True)`。
+_raw_gate = False
+
+
+def set_raw_gate(on: bool) -> str:
+    """开关 raw-hou gate（不进 exec 命名空间，用户从 Python Shell 调）。"""
+    global _raw_gate
+    _raw_gate = bool(on)
+    return f"raw-hou gate {'ON' if _raw_gate else 'OFF'}"
+
+
+# 疑似修改场景的方法名前缀。AST 只能看形状不能解析接收者，这是启发式：
+# python 侧的误伤（set.add / dict.setdefault 等）在 houdini exec 代码里罕见，
+# 且报错信息会指明豁免方式。
+_GATE_MUTATING_PREFIXES = (
+    "set", "add", "create", "delete", "destroy", "remove", "rename",
+    "save", "cook", "render", "bake", "lock", "unlock", "install",
+    "copy", "move", "enable", "disable",
+)
+
+
+def _gate_message(code: str) -> str | None:
+    """gate 开启时的执行前检查；返回 None = 放行，否则返回拒绝理由。"""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None  # 语法错误交给 exec 自己报
+    covered: dict[str, int] = {}
+    mutating: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        attr = node.func.attr
+        if attr in _RAW_HOU_VERB_MAP:
+            covered[attr] = covered.get(attr, 0) + 1
+        elif (
+            attr == "set"
+            and isinstance(node.func.value, ast.Call)
+            and isinstance(node.func.value.func, ast.Attribute)
+            and node.func.value.func.attr in ("parm", "parmTuple")
+        ):
+            covered["parm().set"] = covered.get("parm().set", 0) + 1
+        elif attr.startswith(_GATE_MUTATING_PREFIXES):
+            mutating[attr] = mutating.get(attr, 0) + 1
+    if not covered and not mutating:
+        return None
+    lines = [
+        "raw-hou gate: blocked BEFORE execution (experiment mode — the verb "
+        "vocabulary is the primary interface, raw hou is gated)."
+    ]
+    if covered:
+        pairs = ", ".join(f"{a} -> {_RAW_HOU_VERB_MAP[a]}" for a in sorted(covered))
+        lines.append(f"verb-covered raw call(s): {pairs} — use the verbs instead.")
+    if mutating:
+        lines.append(
+            "possibly scene-mutating raw call(s) with no direct verb: "
+            + ", ".join(sorted(mutating)) + "."
+        )
+    lines.append(
+        "If no verb genuinely covers the operation, re-issue the SAME call with "
+        "allow_raw=\"<why no verb fits>\" — a one-time exemption that is recorded "
+        "in the trace (each exemption documents a vocabulary gap)."
+    )
+    return "\n".join(lines)
+
+
 def _verb_value(value, _depth: int = 0):
     """把动词的入参/出参转成紧凑 JSON 安全形式（hou.Node → path，逐层递归）。"""
     if _depth > 8:
@@ -261,7 +374,8 @@ def _make_tracer(name: str, fn, ledger: list):
                 "ms": round((time.time() - start) * 1000, 1),
             }
             ledger.append(entry)
-            print(f"[verb] {name}({_clip(args_json)}) -> {_clip(entry['result'])}  ({entry['ms']}ms)")
+            kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
+            print(f"[verb] {name}({_clip(args_json)}{kw}) -> {_clip(entry['result'])}  ({entry['ms']}ms)")
             return result
         except BaseException as e:  # 记录失败调用并原样抛出，不改变原语义
             ledger.append({
@@ -273,18 +387,22 @@ def _make_tracer(name: str, fn, ledger: list):
                 "error": str(e),
                 "ms": round((time.time() - start) * 1000, 1),
             })
-            print(f"[verb] {name}({_clip(args_json)}) -> ERROR: {e}")
+            kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
+            print(f"[verb] {name}({_clip(args_json)}{kw}) -> ERROR: {e}")
             raise
     return wrapped
 
 
-def run_code(code: str) -> dict:
+def run_code(code: str, allow_raw: str | None = None) -> dict:
     """Execute code with `hou` available; capture stdout/stderr and `__result__`.
 
     Must run on Houdini's main thread (see module docstring) — callers route
     through `_execute`. BaseException is caught so agent code calling
     `sys.exit()` or raising KeyboardInterrupt cannot kill a handler/job thread
     or leave a job stuck in `running` forever.
+
+    allow_raw：raw-hou gate 开启时的一次性豁免理由（见 _gate_message）；
+    豁免会打印 [gate] 行进 stdout，进结果与 trace。
     """
     verb_ledger: list = []
     namespace = {"hou": hou}
@@ -296,7 +414,13 @@ def run_code(code: str) -> dict:
     with _exec_lock:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
-                exec(compile(code, "<dsh-houdini>", "exec"), namespace)
+                if _raw_gate and not allow_raw:
+                    error = _gate_message(code)  # None = 放行
+                if error is None:
+                    if _raw_gate and allow_raw:
+                        print(f"[gate] raw-hou exemption: {allow_raw}")
+                    dsh_hou_helpers._PRODUCED_IMAGES.clear()
+                    exec(compile(code, "<dsh-houdini>", "exec"), namespace)
             except BaseException:
                 error = traceback.format_exc()
     envelope = {
@@ -304,11 +428,17 @@ def run_code(code: str) -> dict:
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
     }
+    # 本次 exec 产出的图片（render_frame/render_view/viewport_screenshot 登记）：
+    # host 侧经 /media 端点把字节拉回会话工作区，vision/fs 工具才读得到
+    # （工作区沙箱；2026-08-19 草地 trace：vision_glance 读 $HIP 截图被拒）。
+    images = [p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
+    if images:
+        envelope["images"] = images
     if verb_ledger:
         envelope["verbs"] = verb_ledger
-    advisory = _raw_hou_advisory(code, verb_ledger)
-    if advisory:
-        envelope["advisory"] = advisory
+    advisories = [a for a in (_raw_hou_advisory(code, verb_ledger), _repo_write_advisory(code)) if a]
+    if advisories:
+        envelope["advisory"] = "\n".join(advisories)
     if error is not None:
         envelope["error"] = error
     if "__result__" in namespace:
@@ -409,7 +539,7 @@ def _prune_jobs() -> None:
                 _job_meta.pop(job_id, None)
 
 
-def _job_body(job_id: str, code: str) -> dict | None:
+def _job_body(job_id: str, code: str, allow_raw: str | None = None) -> dict | None:
     """Job work item, run on the main thread via `_execute`.
 
     Re-checks cancellation AT execution time: a job cancelled while waiting in
@@ -420,11 +550,11 @@ def _job_body(job_id: str, code: str) -> dict | None:
         if job is None or job["status"] == "cancelled":
             return None
         job["status"] = "running"
-    return run_code(code)
+    return run_code(code, allow_raw)
 
 
-def _run_job(job_id: str, code: str) -> None:
-    outcome = _execute(lambda: _job_body(job_id, code))
+def _run_job(job_id: str, code: str, allow_raw: str | None = None) -> None:
+    outcome = _execute(lambda: _job_body(job_id, code, allow_raw))
     if outcome is None:
         return  # cancelled while queued: code never ran, scene untouched
     with _jobs_lock:
@@ -461,7 +591,39 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
         if self.path == "/health":
             try:
-                self._send({"ok": True, "houVersion": hou.applicationVersionString()})
+                self._send({
+                    "ok": True,
+                    "houVersion": hou.applicationVersionString(),
+                    "rawGate": _raw_gate,
+                })
+            except Exception:
+                self._send({"ok": False, "error": traceback.format_exc()}, status=500)
+            return
+        # /media?path=<abs>：把桥进程读得到的图片字节回传给 host——host 再写进
+        # 会话工作区，弥合「$HIP 产物」与「工作区沙箱的 vision/fs 工具」之间的
+        # 路径断层。只读、限图片扩展名、限大小；不碰 hou，handler 线程安全。
+        if self.path.startswith("/media"):
+            try:
+                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                target = os.path.abspath(params.get("path", [""])[0])
+                ext = os.path.splitext(target)[1].lower()
+                if ext not in _MEDIA_EXTS:
+                    self._send({"ok": False, "error": f"media type not allowed: {ext or '(none)'}"}, status=403)
+                    return
+                if not os.path.isfile(target):
+                    self._send({"ok": False, "error": f"no such file: {target}"}, status=404)
+                    return
+                size = os.path.getsize(target)
+                if size > _MEDIA_MAX_BYTES:
+                    self._send({"ok": False, "error": f"file too large ({size} > {_MEDIA_MAX_BYTES})"}, status=413)
+                    return
+                with open(target, "rb") as fh:
+                    data = fh.read()
+                self.send_response(200)
+                self.send_header("content-type", _MEDIA_MIME.get(ext, "application/octet-stream"))
+                self.send_header("content-length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             except Exception:
                 self._send({"ok": False, "error": traceback.format_exc()}, status=500)
             return
@@ -484,7 +646,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _route(self, body: dict) -> None:
         if self.path == "/exec":
             code = str(body.get("code", ""))
-            self._send(_execute(lambda: run_code(code)))
+            allow_raw = body.get("allow_raw")
+            allow_raw = str(allow_raw) if allow_raw else None
+            self._send(_execute(lambda: run_code(code, allow_raw)))
             return
         if self.path == "/jobs":
             job_id = uuid.uuid4().hex[:12]
@@ -494,7 +658,11 @@ class _Handler(BaseHTTPRequestHandler):
                     "ok": False, "stdout": "", "stderr": "",
                 }
                 _job_meta[job_id] = time.time()
-            threading.Thread(target=_run_job, args=(job_id, str(body.get("code", ""))), daemon=True).start()
+            allow_raw = body.get("allow_raw")
+            allow_raw = str(allow_raw) if allow_raw else None
+            threading.Thread(
+                target=_run_job, args=(job_id, str(body.get("code", "")), allow_raw), daemon=True
+            ).start()
             _prune_jobs()
             self._send({"jobId": job_id})
             return
