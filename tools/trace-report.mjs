@@ -17,8 +17,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { loadCatalog } from './catalog-lib.mjs';
+import { loadSessionEvents } from './trace-session-lib.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const DOC_PATH = path.join(REPO_ROOT, 'docs', 'tool-design.md');
@@ -59,33 +59,11 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
   process.exit(1);
 }
 
-// ---------- decompress multi-frame zstd ----------
-function loadEvents(file) {
-  const buf = fs.readFileSync(file);
-  const starts = [];
-  for (let i = 0; i + 4 <= buf.length; i++) {
-    if (buf[i] === 0x28 && buf[i + 1] === 0xb5 && buf[i + 2] === 0x2f && buf[i + 3] === 0xfd) starts.push(i);
-  }
-  const events = [];
-  for (let i = 0; i < starts.length; i++) {
-    const end = i + 1 < starts.length ? starts[i + 1] : buf.length;
-    try {
-      const out = zlib.zstdDecompressSync(buf.subarray(starts[i], end));
-      for (const line of out.toString('utf8').split('\n')) {
-        const t = line.trim();
-        if (!t) continue;
-        try { events.push(JSON.parse(t)); } catch {}
-      }
-    } catch {}
-  }
-  return events;
-}
-
 // ---------- catalog from tool-design.md ----------
 // 解析逻辑在 tools/catalog-lib.mjs（与 gen-client-catalog.mjs 共用）。
 
 // ---------- parse trace ----------
-const events = loadEvents(sessionFile);
+const { events } = loadSessionEvents(sessionFile);
 const calls = new Map();
 for (const e of events) {
   if (e.type === 'tool/call') calls.set(e.data.callId, e.data);
@@ -113,7 +91,9 @@ for (const e of events) {
   const text = (msg.content?.[0]?.content || [])
     .filter((c) => c.type === 'text').map((c) => c.text).join('\n');
 
-  const failed = text.startsWith('Execution failed');
+  const failed = Boolean(msg.content?.some((item) => item.isError))
+    || text.startsWith('Execution failed')
+    || text.startsWith('Error:');
   const isHoudini = (call.name || '').startsWith('houdini_');
 
   // verbs (N): 块 —— renderVerbs 的渲染行：`i. [ok|FAIL] verb(args, kwargs) -> detail (Xms)`

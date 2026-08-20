@@ -12,11 +12,12 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ | 19 个动词 + `_resolve`（node/parm/geometry/render/viewport 五域，§2.9/§2.11/§2.12） |
+| 动词词表（bridge namespace） | ✅ | 39 个主目录动词 + 2 个 display 兼容入口 + `_resolve`（九域，§2.22） |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 扫描 → `advisory` 字段 + `hint:` 渲染（§2.8） |
 | launcher：preset 自动同步 + 无窗进程 + spinner + worker 等待 | ✅ | `dsh_launcher.py`（§2.8 / §3.2） |
 | Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
+| Houdini trace 审计 skill | ✅（§2.20） | `houdini-trace-analysis` + evidence JSON + 审计量表/模式库 |
 | plugin persona 中性化 | ✅ | GUIDANCE 只讲工具用法，persona 移入 preset |
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
@@ -40,11 +41,15 @@
 ### 2.2 动词词表（bridge namespace）
 
 `houdini/python3.11libs/dsh_hou_helpers.py` 定义、`dsh_bridge.py` 注入 exec 命名空间：
-19 个动词 = 类型目录（`search_tab_menu`/`resolve_latest_type`）+ node 域
-（`tab_create`/`find_nodes`/`graph`/`describe`/`connect`/`rename_node`/`delete_node`/`cook_node`/`set_display`/`display_node`）
-+ parm 域（`list_parms`/`read_parms`/`set_parm`）
-+ geometry 域（`geo_attrib_stats`）+ render/sim 域（`render_frame`/`render_check`）
-+ viewport 域（`viewport_screenshot`）。
+39 个主目录动词 = vocabulary（`verb_help`）+ scene（info/timeline/bookmark 5 个）+ 类型目录（`search_tab_menu`/`resolve_latest_type`）+ node 域
+（原 node CRUD + SOP output/OBJ visibility 拆分 + `layout_nodes` + 兼容 display wrappers）
++ parm 域（`list_parms`/`read_parms`/`set_parm`/`set_parms`/`create_spare_parms`）
++ asset 域（`hda_create`/`hda_info`/`hda_get_section`/`hda_set_section`/
+`hda_patch_section`/`hda_set_interface`）
++ geometry 域（`geo_attrib_stats`/`geo_piece_stats`/`geo_frame_diff`）+ render/sim 域（`render_frame`/`render_check`）
++ viewport 域（`viewport_screenshot`）+ 视觉验证主干（`render_view`）。
+bridge 另保留旧 `set_display/display_node` 两个兼容 wrapper：不进 guidance 主词表，
+但留在独立 compatibility catalog 域以诚实回放历史 trace。
 
 ### 2.3 动词追踪 tracer（Phase 1）—— 已实现，待激活
 
@@ -508,6 +513,167 @@ catalog 解析器容忍 CRLF（文件被转成 CRLF 后 `$` 锚点全不命中�
 桥重载技巧：`importlib.reload(dsh_hou_helpers)` → `reload(dsh_bridge)` →
 `dsh_bridge.start()` 可经 exec 完成，不必每次都点菜单。
 
+### 2.19 project_init OTL trace 复盘 → HDA authoring 域（2026-08-20）
+
+复盘 `session-f608bfab`（17 turn、75 次 exec）确认「造工具」是继造内容后的
+第二类高频任务：59/75 exec 完全绕过动词，`HDADefinition` / `ParmTemplateGroup`
+相关裸调用约 55 次；参数组增量修补曾连续 6 次越修越乱，PythonModule 全文重发
+5 次约 55KB，conditional 被 `setParmTemplateGroup` 静默吞掉又浪费 5 次调用和
+1 个用户回合。基于真实失败面新增 7 个动词，词表 **20→27**：
+
+- parm：`set_parms`（逐项容错的批量赋值）；`set_parm` 对数值赋值先清表达式/
+  关键帧并在 `note` 回报，修复 `$FEND` 把 `parm.set` 静默架空。
+- asset：`hda_create`（默认 `$HIP/otls`，显式同名 replace；原生类型永不覆盖）、
+  `hda_info`（definition/section/递归参数树自省）、`hda_get_section` /
+  `hda_set_section` / `hda_patch_section`（PythonModule 语法预检 + 写后读回；局部
+  修改不用全文重发）、`hda_set_interface`（JSON-safe 声明式整组重建）。
+- `hda_set_interface` 遵循 Houdini 参数面板语义：subnet 标准页从原生 subnet
+  类型重取；custom 模板打 managed tag；Float 菜单按 HOM 明确拒绝；Int 菜单
+  `default` 强制为索引，避免服务器实跑出现 1 fps；folder conditional 明确拒绝；
+  `hide_when` 提交后逐项读回，Houdini 若吞掉则自动补 DialogScript `hidewhen`；
+  标准页隐藏走公开 `ParmTemplateGroup.hide`，生成用户 GUI 同构的 `invisibletab`。
+- `search_tab_menu` 类别支持 Object/Driver/Stage 等 UI 别名，错误列完整合法类别；
+  raw-hou advisory/gate 新增 `createDigitalAsset`、`setParmTemplateGroup`、
+  `addSection`、`setConditional` 映射；GUIDANCE 同步暴露新词表。
+
+验证：新增 `houdini/tests/regress_hda_verbs.py`，H21 hython **11/11 全绿**，覆盖
+HDA 创建/显式替换/原生类型防误删、动画清除、批量容错、完整 spec、标准页隐藏、
+conditional 与真实 DialogScript 兜底修复、菜单陷阱、整组重建、section 唯一锚点补丁、Python 语法失败零污染、
+桥注册/advisory 映射。GUI H21.0.440 另跑一次真实临时 HDA 全链路，随后删除临时
+node/definition/file；桥热重启后确认 27 个动词已注入、无 probe 残留。
+
+### 2.20 新草地 trace → 标准审计 skill（2026-08-20）
+
+`session-40054277`（用户目标：程序化草地 + 风吹麦浪）共 8,939 事件、77 次工具、
+183 次动词（按当前目录 13/27；会话实际只曝光旧 20 动词，即 13/20），从请求到最后工具约
+43.4 分钟（工具 span 39.3 分钟）；13 次硬失败、2 次 verb 失败、
+26 段无动词 Houdini 调用、9 段一次 `set_parm` 3–18 次。会话最终仍有 2 个 todo
+未完成且结束于 tool result，无交付。最严重的因果链：classic Copy + PolyWire 后手写
+instance transform，把 PolyWire 前的中心线 `lp` 当最终 rest，导致每株草截面塌为零；
+全场 bbox/点数掩盖局部退化，agent 在用户纠正前花约 20 分钟调 display、灯光、相机、
+gamma 和视觉 prompt。frame 1/12 最终 diff `mean_abs_diff=0`、`max_abs_diff=1`，
+动画目标也未证明。
+
+本次不直接按单 trace 删除动词，而是建立三层 trace 体系：
+
+1. `houdinitrace`：会话内实时观察调用。
+2. `tools/trace-report.mjs`：确定性 HTML 事实报告。
+3. 随包 `houdini-trace-analysis`：审计任务契约、阶段门、该用未用/误用/缺失/
+   拆并、Houdini 模块/属性/cook/显示/渲染/动画，并维护跨 trace 模式库。
+
+实现内容：
+
+- `tools/trace-session-lib.mjs` 成为多帧 zstd session 读取共用实现，HTML 报告改用它。
+- 修正 HTML 报告硬失败口径：除 `Execution failed` 外也读取 tool-result `isError`/
+  `Error:`，补回手写相机阶段 5 次 lossless-JSON 失败（旧报告误报 8，正确为 13）。
+- `extract-trace-evidence.mjs` 输出 user/assistant、tool/verb、硬失败、裸方法、无动词
+  修改、exec/query 边界、batch 机会、render/vision、todo/terminal、多个 trace 聚合；
+  另记录 request-header capability snapshot，避免用当前 27 动词倒查旧会话、把当时未曝光的
+  `set_parms` 错判为漏用（本次草地唯一 snapshot 确认只曝光旧 20 动词）。
+- skill 审计量表规定模块验证阶梯、动画 A/B 完成门、warning 零忽略、视觉中性 prompt、
+  工具机会唯一标签和 S1/S2/S3 证据强度；删除工具需 ≥3 个多样 trace + 替代/反例。
+- `known-patterns.md` 初始固化 9 个跨 trace 模式；每次新分析只追加可复用证据，
+  不把 task-specific 节点写成通用规则。
+- 插件通过 `ctx.skills.register()` 注册正文与目录 resource base；`skills` 已是 Houdini/
+  Houdini-dev preset 的现有服务，故不引入与旧 `0.0.x` 工具族冲突的 dsh-skill npm
+  代际依赖。`npm pack --dry-run` 验证 skill、references、scripts、catalog/doc 均随包。
+
+验证：skill-creator `quick_validate.py` 在 `PYTHONUTF8=1` 下通过（Windows 默认 GBK 会
+误读中文 UTF-8）；单 trace、compact、三草地 trace 聚合均通过；`trace-report.mjs`
+重构前后事件/调用保持 8,939/77/183、硬失败 13；catalog 分母随词表演化，
+capability snapshot 固定保留当时曝光 20；注册 stub 读到正文和正确 resource base；
+`npm run build` 通过。
+
+### 2.21 新草地 trace 全量修复：显式 SOP 视觉隔离 + 领域完成门（2026-08-20）
+
+用户确认后按 HTA-001..010 和「用户随机切 display/render 节点」扩展问题实施。核心
+决策：用户 viewport 允许漂移，agent 不争夺；`render_view` 必须绑定显式 SOP，通过
+隐藏 agent proxy 渲染；用户改 display/visibility 要隔离，改真实 target 要 fingerprint
+检测并标 stale。
+
+**视觉主干 v2**：
+
+- 新建 agent-owned `__dsh_houdini_render_proxy`，内部 Object Merge 直接指向显式 SOP；
+  即使源 OBJ 隐藏、display/render 指向空 Null，也能 cook 指定几何。OpenGL ROP
+  `forceobjects/vobjects` 只指 proxy，proxy 自身 display 关闭，不进入用户 viewport。
+- agent camera/target/ROP 路径带 owner userData；同名用户节点不接管、不删除、明确报冲突。
+- 保存/恢复用户 OBJ visibility、selection 和 frame；render_frame 自身也 finally 恢复 frame。
+- ROP 固定 camera/object filter、排除 scene lights、smooth/usegeocolor、colorcorrect none、
+  gamma 1、分辨率；`framing=full|detail` + `coverage` 取代手写 Matrix4。
+- preflight 用显式 SOP `geometryAtFrame` 拒绝空/error；返回 source fingerprint 前后、
+  `stale`、proxy/camera/ROP、eye/direction、实际 ROP 设置和 truthful restore 状态。
+- 默认图片名用 `time_ns + frame`，避免同秒覆盖；Object Merge `xformtype=Into This Object`
+  保留源 OBJ 世界变换。
+
+**SOP/OBJ 状态拆分**：新增 `sop_set_output/sop_output_node`（singular SOP output）、
+`set_object_visible/visible_objects`（plural OBJ visibility），旧 `set_display/display_node`
+按 context 兼容路由；`display_node('/obj')` 不再调用不存在的 `displayNode()`。新增
+`layout_nodes`。
+
+**几何/时间/场景完成门**：
+
+- `scene_info` 只读且不移动 playbar；`set_timeline` 管 fps/ranges/current frame，bookmark
+  按 list/create/delete 拆分，关闭 OTL trace 的 6 次 API 考古缺口。
+- `geo_piece_stats` 用内存 Connectivity SOP Verb，不污染网络；返回 piece local bbox/extent/
+  area/degenerate。真实 9000 株、306k prim 草地压测 10.5s，识别 9000 pieces、0 退化。
+- `geo_frame_diff` 用冻结 `geometryAtFrame` 比较 point 属性，不移动 playbar；旧草地 wind
+  frame 1/12 被客观判定 100% unchanged。
+- 进一步发现 HTA-011：wind snippet 引用了 amp/speed/wavenum/dir*，节点无 spare parms，
+  agent 的 `if parm exists` 赋值全部跳过。新增 `create_spare_parms` 扫 `ch/chf/chi/chv/chs`
+  创建类型化参数并应用显式 defaults；临时 Wrangle frame 1/12 mean delta=0.483。
+- `render_check` diff 增加 8 位 mean、mean max-channel、RMSE、changed/meaningful pixel %；
+  `cook_node(force=...)` 增加 `ok/warning_free/healthy`。
+
+**失败原子性**：bridge GUI exec 用唯一 `hou.undos.group`；异常且栈顶 label 精确匹配才
+`performUndo()`，envelope 回报 `rollback`。现场“建 geo 后主动 raise”返回 applied=true，
+节点不存在。headless undo disabled 明确 unsupported；文件/HDA 库等非 undoable 副作用
+不伪称回滚。
+
+**工作流层**：新增随包 `houdini-sop-workflow` skill，固化 Tab 类型选择、Copy to Points、
+deform-before-skin、属性 class/传播、piece/多帧模块验证、warning 完成门、显式 SOP 视觉
+与交付卫生；trace skill 在 SOP 任务时要求联用。模式库扩展至 HTA-011 并把已修项标状态。
+
+验证：
+
+- headless `regress_scene_geometry_verbs.py` 8/8：scene/timeline/bookmark/display/piece/frame/layout/diff/spare。
+- GUI `regress_visual_gui.py`：源 OBJ 隐藏且 output=empty、另有 8× 红色可见干扰物；
+  两次显式绿色 GOOD_OUT 图像完全一致（dominant `[1,73,1]`），世界中心 X=2 保留，
+  proxy hidden，frame/selection/flags 恢复；显式空 SOP 在渲染前拒绝。
+- GUI rollback 与 spare-parameter animation probe 通过；这些 probe node/temp dir 已清理。
+- 同类草地 disposable workflow：ribbon + Copy to Points + typed spare wind，625 pieces、
+  0 退化、cook healthy；frame 1/12 geometry mean/max delta 0.0516/0.1636，0% unchanged；
+  render changed/meaningful pixels 10.09%/8.80%。用户 output=empty、OBJ hidden 时两帧仍
+  `stale=false`、state restored。Probe OBJ 自动删除；两张系统 TEMP 回归 PNG 因宿主删除
+  策略拒绝保留为 54KB 一次性残留，不属于仓库/$HIP。
+- H21.0.440 已验证；H22 同代码路径保留待有 H22 GUI 环境时复跑。
+
+### 2.22 第二次草地 trace：可信时序证据与契约自发现（2026-08-20）
+
+复盘 `session-71d76525`：50 次工具、135 次动词、8 次硬失败，结构/cook/piece/
+spare/time dependency/保存均完成，但 frame 25/55 分别按动态 bbox 自动取景，camera
+center/size/dist 不同，21.1% pixel diff 混入相机漂移；视觉 A/B 又判断“没有明显
+行进波浪”，agent 却把 todo 与最终文本写成全部通过。另有 4 次动词签名/返回形状
+误读和 2 次 `-0.0` 导致的 lossless JSON 整体拒绝。
+
+本轮修复：
+
+- bridge JSON-safe 边界把所有有限负零规范化为正零；`__result__`、verb ledger、
+  hou Vector/Color/Matrix 与 job 共用，NaN/Infinity 仍转字符串；回归要求最终 envelope
+  可被 `json.dumps(..., allow_nan=False)` 接受。
+- 新增 `verb_help(name)`，返回准确 signature/docstring、未知名相似建议；无需先失败或
+  读取仓库源码。主目录 38→39，两个 display compatibility wrapper 不变。
+- `render_view(..., framing_frame=)` 可把 A/B 多帧锁到同一参考 bbox；返回 framing
+  frame/source signature。空闲 proxy 仍清空真实 Object Merge 引用，避免隐形依赖，
+  但保留 state/last target/frame/output userData 和 source comment，解释“为何现在为空但
+  刚才可以渲染”。
+- `geo_frame_diff` 增加 p50/p90/p99 和逐分量 min/max/mean，明确数值只证明时间依赖，
+  不自动证明审美语义。
+- guidance 明确 `graph(OUT, direction='up')`、`cook_node`/`describe` 字段边界、单属性
+  `geo_attrib_stats` 和固定 framing。节点/数据/时间语义通过而静帧视觉难以裁定细微动态
+  时，允许诚实交付“视觉力度待用户播放判断”，禁止无限追图，也禁止伪称视觉确认。
+- trace evidence 修复 skill catalog 缺失时误报空列表、记录真实 skill activations，
+  并补 exact `save()` 与 mixed verb/raw mutation 检测。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -571,13 +737,17 @@ QPainter 圆弧 spinner。
 | 15 | 裸 hou 检测走 AST 静态扫描，不走正则 | 注释/字符串里的同名文本会误报；语法错误可静默跳过 |
 | 16 | GUI 线程零阻塞：socket 探测 / 进程等待 / netstat 全在 worker 线程 | 实测本机 connect 关闭端口阻塞 ~300ms，GUI tick 里探测 = 事件循环堵死（§3.2 二次修复） |
 | 17 | preset 同步收进 launcher（`sync_presets`），不再靠手动 Copy-Item | 提示词迭代是高频动作，手动步骤必被遗忘（2026-08-17 改 persona 后未生效的实测） |
+| 18 | HDA 参数面板走声明式整组重建，不做增量 merge | OTL trace 中增量 remove/append 造成 folder_init2、残参散落，6 次调用后只能推倒重建 |
+| 19 | HDA conditional 必须提交后读回验证，丢失才补 DialogScript | H21 实测 API `setConditional` 可在 `setParmTemplateGroup` 后静默消失；只信“调用成功”会把返工推给用户 |
+| 20 | HDA replace 永不覆盖原生类型，definition 用 `destroy()` 精确删除 | uninstall 整个 HDA 文件会连带同库其它定义；原生 subnet 的 instances 更绝不能按同名 HDA 替换语义销毁 |
+| 21 | trace 审计走“确定性 evidence + Houdini 领域裁判”，不按调用频率直接改词表 | 频率分不清不适用和该用未用；节点模块、局部几何、cook/显示/动画需要语义证据，删除工具还需跨 trace 反例分析 |
 
 ---
 
 ## 5. 下一步（分阶段计划，2026-08-16 按 dsh 官方规范重排）
 
 > 规范依据见 §6；与 `tool-design.md` §7 的技术项（batch 端点、undo group、
-> `scene_*`/`viewport_*`/`hda_*` 域）互补，可穿插进行。
+> `scene_*`/`viewport_*` 域；`hda_*` 已于 §2.19 落地）互补，可穿插进行。
 
 ### Phase 0 — 收尾与稳定性
 
@@ -587,6 +757,12 @@ QPainter 圆弧 spinner。
    是**模型不用动词**（guidance 已注入但被忽略），非管道断裂——转化为 Phase 1 第 8 项。
 3. ✅ 新增 `houdini-dev` preset（`presets/houdini-dev/`：standard 工具集 + dsh-houdini + coding persona，用于开发/测试；已 `standingKeyFor('houdini-dev')` 校验通过）。
 4. ⏳ 「Houdini 菜单打开默认切到 houdini 模式」：查 default preset / 深链（`dsh web` 无 `--preset` flag）。
+5. ✅ P0 修 `render_view`（§2.21）：proxy isolation + 保存/恢复 OBJ 可见性，agent camera/target 不抢用户对象；
+   确定性 headlight/geometry color；增加 detail/coverage 构图并返回 eye/direction。
+6. ✅ P0 修 display 契约（§2.21）：SOP 是 singular display child，OBJ 是 plural visibility；
+   `display_node('/obj')` 不得调用不存在的 `displayNode()`。
+7. ✅ P1 几何自省补 local/piece extent（§2.21，识别“全场 bbox 正常但每个实例宽度为 0”）；
+   动画任务 guidance 增加 A/B 完成门，`render_check` diff 提高精度并给非零像素比例。
 
 ### Phase 1 — 合规对齐（不改行为，只贴规范）
 
@@ -618,7 +794,8 @@ QPainter 圆弧 spinner。
 
 11. ⏳ houdinitrace 视图升级：纯文本块 → 结构化表格（状态色标 + 展开入参/出参）；
     优先 host 半渲染意图，不够再写 client 半 keyed renderer（`'tool.call.toolview'` slot）。
-12. ⏳ `ctx.skills.register()` 打包 Houdini 工作流 skill（SOPs/VEX 惯例、hou API 陷阱）。
+12. ✅ `ctx.skills.register()` 打包首个 `houdini-trace-analysis`（§2.20）。
+13. ✅ `houdini-sop-workflow`（§2.21：SOP/VEX/Copy/属性/模块验证）；与 trace 审计量表分离。
 
 ---
 
@@ -655,18 +832,25 @@ QPainter 圆弧 spinner。
 | `src/index.ts` | host 入口：注册工具 + systemPrompt guidance |
 | `src/tools.ts` | 5 个工具定义 + `verbs`/`advisory` 渲染 |
 | `src/bridge.ts` | HTTP client（`ExecResult.verbs`/`advisory`） |
+| `src/skill.ts` | 随包注册 trace-analysis + SOP-workflow 两个 skill/resource base |
 | `client.js` | **client 半**：手写 factory，注册 `houdinitrace` 视图（词表目录 + 实时时序，目录由生成器注入） |
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 20 个动词 + `_resolve` |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 38 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help` |
+| `houdini/tests/regress_hda_verbs.py` | HDA authoring 独立回归（不经过已知会触发 VEX 栈溢出的旧 t15） |
+| `houdini/tests/regress_scene_geometry_verbs.py` | scene/display/piece/frame/layout/diff/spare headless 回归 |
+| `houdini/tests/regress_visual_gui.py` | explicit SOP proxy、用户 display 漂移与状态恢复 GUI 回归 |
 | `houdini/python3.11libs/dsh_launcher.py` | 一键启动/重启 + preset 同步 + spinner 等待（worker 线程探测） |
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + backdrop-filter 性能修复注入（§2.13） |
 | `docs/tool-design.md` | 设计宪法 |
 | `docs/development.md` | 本文：进度 + 卡点 |
 | `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |
 | `tools/catalog-lib.mjs` | 词表目录解析唯一实现（trace-report 与生成器共用） |
+| `tools/trace-session-lib.mjs` | session.jsonl.zstd 多帧解压/事件读取唯一实现 |
 | `tools/gen-client-catalog.mjs` | 构建期把目录注入 client.js（`npm run build` 第一步，§2.15） |
+| `skills/houdini-trace-analysis/` | 标准 trace 审计 skill：证据脚本 + 量表 + 累积模式库 |
+| `skills/houdini-sop-workflow/` | SOP/VEX/Copy/属性/模块验证与多帧交付工作流 skill |
 | `presets/houdini/` | houdini 模式 preset 模板（persona + dsh-houdini 行） |
 
 ---

@@ -9,6 +9,8 @@
 - **[`docs/setup.md`](docs/setup.md)** — 新机安装步骤（换电脑/重装照做）。
 - **[`docs/tool-design.md`](docs/tool-design.md)** — 设计宪法：动词词表、两轴模型、铁律、帮助文档三阶段、动词追踪。
 - **[`docs/development.md`](docs/development.md)** — 开发进度与卡点（随开发同步维护）。
+- **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
+- **[`skills/houdini-sop-workflow/SKILL.md`](skills/houdini-sop-workflow/SKILL.md)** — 程序化 SOP/VEX/Copy/属性/模块验证和动画交付工作流。
 
 ## 工具
 
@@ -38,23 +40,48 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 |---|---|---|
 | 类型目录 | `search_tab_menu(category, query)` | 只读：列出某 context 下匹配的节点族 + 最新版（查不猜，别猜类型名） |
 | 类型目录 | `resolve_latest_type(category, base)` | 某节点族的最新版全名（内部为主） |
+| scene | `scene_info()` | 只读 HIP/version/fps/frame/playback range，不移动时间线 |
+| scene | `set_timeline` / `list_bookmarks` / `create_bookmark` / `delete_bookmark` | 时间线字段与 bookmark 明确意图，不再猜 playbar/HOM API |
 | node | `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：**永远最新版本 + shelf 初始化** |
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
 | node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
 | node | `connect(src, dst, index=0)` | 连线 |
 | node | `rename_node(node, name)` / `delete_node(node)` | 重命名 / 删除（返回被表达式引用的上游） |
-| node | `cook_node(node)` | cook + 采集 error/warning |
+| node | `cook_node(node, force=False)` | cook + error/warning + `healthy`（warning 未解释不能算完成） |
+| node | `sop_set_output` / `sop_output_node` | SOP singular display/render 输出（用户 viewport/交付） |
+| node | `set_object_visible` / `visible_objects` | OBJ plural visibility |
+| node | `layout_nodes(parent, nodes=)` | 原生网络布局 |
 | parm | `list_parms(node)` | 参数**目录**（名字/标签/类型/帮助，不给值） |
 | parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 带表达式 + 被引用的；表达式附 `referenced_parm`） |
-| parm | `set_parm(node, name, value)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠） |
-| geometry | `geo_attrib_stats(node, name, attrib_class=)` | 属性值统计（min/max/mean/count） |
-| render | `render_view(node, direction=, frame=, width=, height=)` | **视觉验证主干**：agent 自有相机 + OpenGL ROP 离屏渲染 + render_check 一步到位（不碰用户视口；direction 接受 `'iso'/'front'/'side'/'top'` 或向量） |
+| parm | `set_parm(node, name, value)` / `set_parms(node, values)` | 单项设参 / 逐项容错批量设参；普通数值赋值会清掉旧动画并回报 |
+| parm | `create_spare_parms(node, code_parm='snippet', defaults={...})` | 从 ch/chf/chi/chv/chs 引用创建缺失 spare parameters，避免驱动静默为 0 |
+| asset | `hda_create` / `hda_info` / `hda_get_section` / `hda_set_section` / `hda_patch_section` / `hda_set_interface` | HDA 创建、自省、section 安全修改和声明式参数面板 |
+| geometry | `geo_attrib_stats` / `geo_piece_stats` / `geo_frame_diff` | 属性值、局部 piece extent/面积退化、无 playbar 副作用跨帧差异 |
+| render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；动画 A/B 用同一 framing_frame 锁相机 |
 | render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染单帧并验证产物 / 图像客观统计（盲验） |
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
 
 产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
 结果里带 `media` 段（from→to 映射）——vision/fs 工具用工作区路径，与 $HIP 位置解耦。
+
+## Houdini trace 分析 skill
+
+插件通过 `ctx.skills.register()` 随包发布 `houdini-trace-analysis` 和 `houdini-sop-workflow`，在 Houdini / Houdini-dev
+模式的 skill 目录中按需加载。它不是另一个 trace UI，而是 `houdinitrace`（实时观察）和
+`trace-report.mjs`（事实报告）之上的审计规范：重建用户任务契约，检查工具该用未用/
+误用/缺失/冗余/拆并，审计节点模块、属性数据流、cook warning、显示、渲染和多帧动画，
+并要求所有产品建议带步骤证据和跨 trace 强度。
+
+```powershell
+node skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs <session.jsonl.zstd> `
+  --out tools/out/trace-evidence.json
+node tools/trace-report.mjs <session.jsonl.zstd>
+```
+
+证据脚本支持一次传多个 session 做纵向对比；审计量表和累积模式库位于 trace skill 的
+`references/`；SOP skill 固化 Copy to Points、deform-before-skin、属性契约、piece/多帧完成门。调用方式：让 agent「使用 houdini-trace-analysis 分析最新 trace」，
+或显式调用 `/houdini-trace-analysis`。
 
 ```python
 geo = tab_create(hou.node('/obj'), 'geo', name='my_geo')
@@ -169,4 +196,4 @@ dsh web                                                 # 起前端（profile �
 2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh 的 jobs 服务，获得 `job_kill` 等通用控制工具（参考 `docs/cookbook/adding-a-tool.md` 的 Long-running work）
 3. **UI 卡片**：`presentCall`/`presentResult` 声明渲染意图（比如参数修改的 diff 卡）
 4. **权限分层**：`tools/pre-execute` 监听器实现"query 自动允许、exec 需审批"（参考 `docs/cookbook/extension-cookbook.md` 的 permission-gate 示例）
-5. **Skill 文档**：随插件发布 Houdini 工作流知识（SOPs/VEX 惯例、hou API 陷阱），按需加载而非占用系统提示词
+5. ~~**Skills**~~ ✅ `houdini-trace-analysis` + `houdini-sop-workflow` 已随插件注册；后续按新 trace 扩充模式/领域参考，不把所有知识塞进永久 guidance

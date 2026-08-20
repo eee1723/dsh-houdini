@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import difflib
 import io
+import inspect
 import json
 import math
 import os
@@ -110,7 +112,13 @@ def _jsonable(value, _depth: int = 0):
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        return value if math.isfinite(value) else repr(value)
+        if not math.isfinite(value):
+            return repr(value)
+        # dsh-tools requires lossless JSON and deliberately rejects -0 because a
+        # normal JSON snapshot may collapse it to +0. Houdini vectors/matrices and
+        # quaternion probes commonly produce -0.0, so normalize it at the single
+        # bridge boundary used by __result__ and the verb ledger.
+        return 0.0 if value == 0.0 else value
     if isinstance(value, (list, tuple)):
         if len(value) > _MAX_RESULT_ITEMS:
             return repr(value)
@@ -130,7 +138,34 @@ def _jsonable(value, _depth: int = 0):
 # 每个动词（verb）的运行时调用都会被记录：动词名 / 入参 / 出参 / 是否成功 / 耗时。
 # 记录随 exec 结果返回（`verbs` 字段），供 agent 和将来的 houdinitrace 视图
 # 消费——让动词词表的调用情况「是否成功 + 具体输入输出」清晰可见。
+def _verb_help(name: str) -> dict:
+    """返回一个已注入动词的 signature/docstring，避免靠失败或仓库源码猜契约。"""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name 必须是非空动词名")
+    key = name.strip()
+    registry = globals().get("_VERBS", {})
+    fn = registry.get(key)
+    if fn is None:
+        suggestions = difflib.get_close_matches(key, sorted(registry), n=8, cutoff=0.35)
+        raise ValueError(f"未知动词 {key!r}；相似动词：{suggestions}")
+    try:
+        signature = str(inspect.signature(fn))
+    except Exception:
+        signature = None
+    return {
+        "name": key,
+        "signature": signature,
+        "doc": inspect.getdoc(fn) or "",
+    }
+
+
 _VERBS: dict[str, object] = {
+    "verb_help": _verb_help,
+    "scene_info": dsh_hou_helpers.scene_info,
+    "set_timeline": dsh_hou_helpers.set_timeline,
+    "list_bookmarks": dsh_hou_helpers.list_bookmarks,
+    "create_bookmark": dsh_hou_helpers.create_bookmark,
+    "delete_bookmark": dsh_hou_helpers.delete_bookmark,
     "search_tab_menu": dsh_hou_helpers.search_tab_menu,
     "resolve_latest_type": dsh_hou_helpers.resolve_latest_type,
     "tab_create": dsh_hou_helpers.tab_create,
@@ -143,10 +178,25 @@ _VERBS: dict[str, object] = {
     "cook_node": dsh_hou_helpers.cook_node,
     "set_display": dsh_hou_helpers.set_display,
     "display_node": dsh_hou_helpers.display_node,
+    "sop_set_output": dsh_hou_helpers.sop_set_output,
+    "sop_output_node": dsh_hou_helpers.sop_output_node,
+    "set_object_visible": dsh_hou_helpers.set_object_visible,
+    "visible_objects": dsh_hou_helpers.visible_objects,
+    "layout_nodes": dsh_hou_helpers.layout_nodes,
     "list_parms": dsh_hou_helpers.list_parms,
     "read_parms": dsh_hou_helpers.read_parms,
     "set_parm": dsh_hou_helpers.set_parm,
+    "set_parms": dsh_hou_helpers.set_parms,
+    "create_spare_parms": dsh_hou_helpers.create_spare_parms,
+    "hda_create": dsh_hou_helpers.hda_create,
+    "hda_info": dsh_hou_helpers.hda_info,
+    "hda_get_section": dsh_hou_helpers.hda_get_section,
+    "hda_set_section": dsh_hou_helpers.hda_set_section,
+    "hda_patch_section": dsh_hou_helpers.hda_patch_section,
+    "hda_set_interface": dsh_hou_helpers.hda_set_interface,
     "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
+    "geo_piece_stats": dsh_hou_helpers.geo_piece_stats,
+    "geo_frame_diff": dsh_hou_helpers.geo_frame_diff,
     "render_frame": dsh_hou_helpers.render_frame,
     "render_check": dsh_hou_helpers.render_check,
     "render_view": dsh_hou_helpers.render_view,
@@ -168,10 +218,18 @@ _RAW_HOU_VERB_MAP = {
     "setName": "rename_node",
     "destroy": "delete_node",
     "cook": "cook_node",
-    "setDisplayFlag": "set_display",
-    "setRenderFlag": "set_display",
+    "setDisplayFlag": "sop_set_output or set_object_visible",
+    "setRenderFlag": "sop_set_output",
+    "layoutChildren": "layout_nodes",
+    "moveToGoodPosition": "layout_nodes",
+    "setPosition": "layout_nodes",
     "parm().set": "set_parm",   # 由 _raw_hou_calls 特判 parm(...).set(...) 模式
     "setExpression": "set_parm",  # set_parm 收到字符串值即走表达式路由
+    "createDigitalAsset": "hda_create",
+    "setParmTemplateGroup": "hda_set_interface or create_spare_parms",
+    "addSpareParmTuple": "create_spare_parms",
+    "addSection": "hda_set_section",
+    "setConditional": "hda_set_interface",
 }
 
 
@@ -330,11 +388,13 @@ def _verb_value(value, _depth: int = 0):
         except Exception:
             return {"node": repr(value)}
     if isinstance(value, (hou.Vector2, hou.Vector3, hou.Vector4)):
-        return [float(x) for x in value]
+        return [_jsonable(float(x)) for x in value]
     if isinstance(value, hou.Color):
-        return [float(value.r()), float(value.g()), float(value.b()), float(value.a())]
+        return [_jsonable(float(x)) for x in (
+            value.r(), value.g(), value.b(), value.a(),
+        )]
     if isinstance(value, (hou.Matrix3, hou.Matrix4)):
-        return [[float(x) for x in row] for row in value]
+        return [[_jsonable(float(x)) for x in row] for row in value]
     if isinstance(value, (list, tuple)):
         if len(value) > 50:
             return repr(value)
@@ -411,6 +471,7 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
     stdout = _CappedStringIO(_MAX_STREAM_BYTES)
     stderr = _CappedStringIO(_MAX_STREAM_BYTES)
     error = None
+    rollback = None
     with _exec_lock:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
@@ -420,9 +481,50 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
                     if _raw_gate and allow_raw:
                         print(f"[gate] raw-hou exemption: {allow_raw}")
                     dsh_hou_helpers._PRODUCED_IMAGES.clear()
-                    exec(compile(code, "<dsh-houdini>", "exec"), namespace)
+                    compiled = compile(code, "<dsh-houdini>", "exec")
+                    undo_enabled = bool(hou.undos.areEnabled())
+                    if undo_enabled:
+                        label = f"dsh-houdini exec {uuid.uuid4().hex}"
+                        try:
+                            with hou.undos.group(label):
+                                exec(compiled, namespace)
+                        except BaseException:
+                            original_error = traceback.format_exc()
+                            applied = False
+                            rollback_error = None
+                            try:
+                                labels = list(hou.undos.undoLabels())
+                                if labels and labels[0] == label:
+                                    hou.undos.performUndo()
+                                    applied = True
+                            except BaseException as undo_error:
+                                rollback_error = str(undo_error)
+                            rollback = {
+                                "supported": True,
+                                "applied": applied,
+                                "scope": "Houdini undoable scene edits only",
+                            }
+                            if not applied and rollback_error is None:
+                                rollback["note"] = (
+                                    "exec failed but produced no matching undo group；"
+                                    "file I/O/HDA library edits and non-undoable effects cannot roll back"
+                                )
+                            if rollback_error is not None:
+                                rollback["error"] = rollback_error
+                            error = original_error
+                    else:
+                        try:
+                            exec(compiled, namespace)
+                        except BaseException:
+                            rollback = {
+                                "supported": False,
+                                "applied": False,
+                                "scope": "Houdini undo stack disabled (commonly headless)",
+                            }
+                            error = traceback.format_exc()
             except BaseException:
-                error = traceback.format_exc()
+                if error is None:
+                    error = traceback.format_exc()
     envelope = {
         "ok": error is None,
         "stdout": stdout.getvalue(),
@@ -439,9 +541,11 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
     advisories = [a for a in (_raw_hou_advisory(code, verb_ledger), _repo_write_advisory(code)) if a]
     if advisories:
         envelope["advisory"] = "\n".join(advisories)
+    if rollback is not None:
+        envelope["rollback"] = rollback
     if error is not None:
         envelope["error"] = error
-    if "__result__" in namespace:
+    if error is None and "__result__" in namespace:
         result = _jsonable(namespace["__result__"])
         try:
             if len(json.dumps(result, allow_nan=False)) > _MAX_RESULT_BYTES:

@@ -11,6 +11,7 @@ dsh-houdini：DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运�
 - 验证：Web UI 新建会话选「Houdini 模式」，发「用 houdini_query 列出 /obj 下所有节点」。
 - 测试：`houdini/tests/`（Python 侧回归，如 `regress_verbs.py`）。
 - trace 复盘：`node tools/trace-report.mjs`（缺省取最新 session）→ 单文件 HTML 到 `tools/out/`：词表目录（解析 `tool-design.md`）+ 真实时序调用线 + 裸 hou/失败分析。
+- 标准 trace 审计：加载 `houdini-trace-analysis` skill；先跑其 `scripts/extract-trace-evidence.mjs` 得到确定性 JSON，再按量表分析任务契约、工具机会、Houdini 模块与词表演化。
 
 ## 技术栈
 
@@ -23,6 +24,8 @@ TypeScript（ESM，tsc 直出无 bundler），Cordis 插件形状 `{name, inject
 - `presets/houdini/`、`presets/houdini-dev/`：agent preset 模板；点 dsh 菜单时自动同步到 `~/.dsh/.agent-presets/`。
 - `tools/trace-report.mjs`：trace 复盘报告生成器（session.jsonl.zstd → 单文件 HTML），产物在 `tools/out/`（已 gitignore）。
 - `tools/catalog-lib.mjs` + `tools/gen-client-catalog.mjs`：词表目录解析（唯一实现）+ 构建期注入 client.js 标记区；改动词后跑 `npm run build` 刷新视图目录。
+- `skills/houdini-trace-analysis/`：随插件经 `ctx.skills.register()` 发布的 trace 审计 skill；`references/known-patterns.md` 随新 trace 追加跨任务证据。
+- `skills/houdini-sop-workflow/`：SOP/VEX/Copy/属性契约、模块验证阶梯和多帧完成门；复杂 SOP 任务按需加载。
 - `docs/tool-design.md` 是动词词表**唯一真相源**——改动词必须同步改它；`docs/development.md` 是进度日志——改代码顺手更新。
 
 ## 关键约束
@@ -34,6 +37,6 @@ TypeScript（ESM，tsc 直出无 bundler），Cordis 插件形状 `{name, inject
 - `node_modules` 只用 npm 管：本仓库若被 pnpm 操作，pnpm 会把 npm 装的包挪进 `node_modules/.ignored/`（hideAlienModules），前端随即 ERR_MODULE_NOT_FOUND；launcher 的 `ensure_dependencies()` 可自愈，但根源上别在本仓库跑 pnpm。
 - agent 的 Houdini 产出锚定 `$HIP`，不写进 dsh workspace 或本仓库。机制保证（2026-08-19 结构性纠正）：前端启动目录=会话工作区=dsh 沙箱边界，launcher 把它对准当前 hip 目录（未保存时用 `E:/dsh-houdini-workspace`）；工作区 ≠ $HIP 时 host 在结果里附 workspace note；桥 exec 裸写仓库触发 `_repo_write_advisory`（advisory 层，不硬拦）。
 
-## 当前状态（2026-08-19）
+## 当前状态（2026-08-20）
 
-端到端链路可用；动词追踪、裸 hou advisory、houdinitrace 视图（词表观察台：左栏目录按域分组 + 命中计数点亮，右栏时序时间线，目录由 `tools/gen-client-catalog.mjs` 构建期注入，见 `docs/development.md` §2.15）、houdini 模式对话窗口水印已实现；另有事后复盘报告 `tools/trace-report.mjs`（§2.14）。**系统定位为「共享屏幕的副驾驶」（§2.18，经双向钢人论证 + 用户拍板）**：视口是用户的领地（漂移是常态，不对抗），验证/交付走 agent 自有的渲染管线。动词词表 20 个：**视觉验证主干是 `render_view(node)`**（自有 `/obj/dsh_cam` + `/out/dsh_opengl` 离屏渲染 + render_check，不碰用户视口），`viewport_screenshot` 只是「用户屏幕上现在是什么」的诊断工具；`describe` 带 `attrib_delta`（属性增删，MMB 语义的固化）。**media relay 已打通视觉闭环**：产图动词登记 `report_image()` → envelope `images` → 桥 `GET /media` 回传字节 → host 写 `<工作区>/.dsh-houdini-media/` → 结果带 `media` 段，vision/fs 工具与 $HIP 位置解耦。产出落点结构性纠正（§2.16）、raw-hou gate 实验层（§2.17，默认关）、workspace note 每会话一次（alarm fatigue 实证）。草地任务同口径重跑：旧 2.5h/51 调用未收尾 → 新 4.5min/11 调用完成并经 vision 复核（§2.18 对比表）。已知坑：deepseek-v4-flash 无视觉能力（read_image 被 host 预检拦截，客观验证用 `render_check`、语义验证走 vision-toolkit）；本机 hython 编译 VEX 即栈溢出（0xC00000FD，HEAD 原生问题，`regress_verbs.py` t15 起跑不通，新用例用 color SOP 规避）；桥热重载可经 exec：`importlib.reload(dsh_hou_helpers)` → `reload(dsh_bridge)` → `start()`。下一步见 `docs/development.md` §5（jobs 迁 `ctx.jobs`、权限分层）。
+端到端链路可用；动词追踪、裸 hou advisory、houdinitrace、HTML/evidence trace 报告与两个随包 skills 已实现。**系统定位为「共享屏幕的副驾驶」**：用户 viewport/display/selection/frame 可漂移，不对抗；视觉验证必须 `render_view(EXPLICIT_SOP)`，经隐藏 Object Merge proxy + OpenGL ROP forceobjects 只渲染显式输出，保存/恢复用户 OBJ visibility、selection、frame，并返回 fingerprint/stale/render_check；动画 A/B 用相同 `framing_frame` 锁相机。`viewport_screenshot` 只诊断用户屏幕。主目录 39 个明确动词（新增 `verb_help`），bridge 另保留旧 `set_display/display_node` 两个兼容入口；覆盖 vocabulary、scene、类型目录、node、parm、asset、geometry、render、viewport，含 SOP/OBJ display 拆分、piece/frame 验证、spare 参数创建和 layout。HDA authoring 见 §2.19；trace skill 见 §2.20；全量修复与 SOP workflow 见 §2.21。GUI exec 异常自动 undo 并回报 rollback（仅 Houdini undoable scene edits）。已知环境坑：deepseek-v4-flash 无视觉能力；本机 hython 编译 VEX 栈溢出 0xC00000FD；GUI 回归走 H21 桥。下一步见 `docs/development.md` §5（jobs 迁 `ctx.jobs`、权限分层、卡片）。

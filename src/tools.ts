@@ -19,6 +19,7 @@ const execOutputSchema = {
     result: { type: 'json' },
     verbs: { type: 'json' },
     error: { type: 'string' },
+    rollback: { type: 'json' },
     advisory: { type: 'string' },
     images: { type: 'json' },
     media: { type: 'json' },
@@ -55,6 +56,7 @@ function renderStreams(value: ExecResult): string[] {
   if (value.stdout) parts.push(`stdout:\n${value.stdout}`)
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
   if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
+  if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
   parts.push(...renderVerbs(value))
   if (Array.isArray(value.media) && value.media.length) {
     const lines = (value.media as Array<Record<string, unknown>>).map((m) =>
@@ -180,6 +182,7 @@ const jobStatusOutputSchema = {
     result: { type: 'json' },
     verbs: { type: 'json' },
     error: { type: 'string' },
+    rollback: { type: 'json' },
     advisory: { type: 'string' },
     images: { type: 'json' },
     media: { type: 'json' },

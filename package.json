@@ -18,7 +18,11 @@
     "lib",
     "client.js",
     "cordis.patch.yml",
-    "houdini"
+    "houdini",
+    "skills",
+    "docs/tool-design.md",
+    "tools/catalog-lib.mjs",
+    "tools/trace-session-lib.mjs"
   ],
   "scripts": {
     "build": "node tools/gen-client-catalog.mjs && tsc -p tsconfig.json",

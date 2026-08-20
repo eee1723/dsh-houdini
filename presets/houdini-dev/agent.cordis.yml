@@ -42,8 +42,10 @@
 # ── houdini ─────────────────────────────────────────────────────────────────
 
 # dsh-houdini registers its tools (houdini_exec / houdini_query /
-# houdini_job_submit / houdini_job_status / houdini_job_cancel) and a
-# system-prompt guidance section. It provides no service, so it needs no realm.
+# houdini_job_submit / houdini_job_status / houdini_job_cancel), a
+# system-prompt guidance section, and the packaged houdini-trace-analysis /
+# houdini-sop-workflow skills
+# into this preset's skill layer. It provides no service, so it needs no realm.
 # The Houdini-side bridge (an HTTP server inside Houdini) is external to dsh and
 # addressed by `bridgeUrl`.
 - id: houdini

@@ -6,10 +6,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PromptSection } from '@deepseek-ai/dsh-system-prompt'
 import Schema from '@deepseek-ai/schemastery'
 import { HoudiniBridge } from './bridge.js'
+import { registerBundledSkills } from './skill.js'
 import { registerHoudiniTools } from './tools.js'
 
 export const name = 'dsh-houdini'
-export const inject = ['tools', 'systemPrompt']
+export const inject = ['tools', 'systemPrompt', 'skills']
 
 export interface Config {
   /** Base URL of the Houdini-side bridge. */
@@ -33,20 +34,25 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    'The `houdini_*` tools drive a running SideFX Houdini session over the bridge. The executed code runs with `hou` pre-imported; `print(...)` output comes back as stdout, and assigning a JSON-serializable value to `__result__` returns structured data. Inspect the scene with houdini_query before mutating it.',
+    'The `houdini_*` tools drive a running SideFX Houdini session over the bridge. The executed code runs with `hou` pre-imported; `print(...)` output comes back as stdout, and assigning a JSON-serializable value to `__result__` returns structured data. Inspect the scene with houdini_query before mutating it. GUI exec failures automatically undo their Houdini-undoable scene edits and report `rollback`; file/HDA-library I/O is not undoable.',
     '',
-    'A pre-imported verb vocabulary is the PRIMARY interface for scene operations; raw `hou` is only the escape hatch for what the vocabulary does not cover (hip-file I/O, rendering, UI, low-level geometry attribute work). For node creation, wiring, parameters, inspection, and deletion, reach for a verb FIRST and drop to raw `hou` only when no verb can do the job — the verbs handle validation, latest-version resolution, and error correction:',
+    'A pre-imported verb vocabulary is the PRIMARY interface for scene operations; raw `hou` is only the escape hatch for what the vocabulary does not cover (hip-file I/O, UI, low-level geometry attribute work). For node creation, wiring, parameters, HDA authoring, inspection, and deletion, reach for a verb FIRST and drop to raw `hou` only when no verb can do the job — the verbs handle validation, latest-version resolution, and error correction:',
+    '- If a verb signature or return shape is unclear, call `verb_help(name)` before trying it; do not spend a failure or read repository source code to discover the contract.',
+    '- For non-trivial procedural SOP/VEX/Copy/animation tasks, load `houdini-sop-workflow` before building; it defines the required module invariants and completion gates.',
     '- `tab_create(parent, type_name, name=..., inputs=[...])` — create a node with full Tab-Menu initialization AND the latest version (prefer over raw createNode).',
-    '- `search_tab_menu(category, query)` / `resolve_latest_type(category, base)` — look up node types; never guess type names (e.g. there is no `cone` SOP — use `tube` with top radius 0).',
-    '- `find_nodes(pattern="*", category=, node_type=, root=)` — find existing nodes; `graph(node)` — topology (inputs/outputs/parm_refs); `describe(node)` — status + geometry + attribute list + `attrib_delta` (which attributes the node adds/removes vs its input — the MMB-info answer to "what did this node do to the data") + help URL.',
-    '- `list_parms(node)` — parameter directory (names/types); `read_parms(node)` — changed/expression parameters with reference info; `set_parm(node, name, value)` — set a parameter (a string value on a numeric parm sets an expression; lists similar names on failure).',
-    '- `connect(src, dst, index=0)` / `rename_node` / `delete_node` / `cook_node` — wire (reports the actual input used), rename, delete (reports expression refs), cook+report errors.',
-    '- `set_display(node)` / `display_node(parent)` — move / inspect the display+render flag: the viewport and renders show ONLY the flagged node, which is not automatically the last one created.',
-    '- `geo_attrib_stats(node, name, attrib_class="point")` — attribute VALUE stats (min/max/mean/count) for verifying driven data like @Cd; `describe(node)` already gives point/prim counts, bbox, and the attribute name list — do not hand-write geometry loops for those.',
-    '- `render_frame(rop, picture=, frame=)` — render one frame AND verify the output: waits for the file to land non-empty and collects ROP errors, so a silent render failure cannot pass as success (renders over ~2 min: use houdini_job_submit + houdini_job_status(wait=...)).',
-    '- `render_view(node, direction=, frame=, width=, height=)` — the DEFAULT visual-verification path: frames the node\'s displayed geometry with the agent-owned `/obj/dsh_cam` and renders offscreen via the `/out/dsh_opengl` OpenGL ROP (viewport-quality, real-time, deterministic), then runs render_check. Reuses the camera/ROP across calls. NEVER program the user\'s interactive viewport for verification — it is the user\'s scratch space and may be moved, covered, or minimized at any time.',
-    '- `render_check(path, ref=)` — objective image verification without vision: luma stats, non-black pixel %, dominant color, content bbox, and an optional two-image diff (loop-frame equality, A/B comparison). Run it on every render output before claiming it looks right.',
-    '- `viewport_screenshot(path=, frame=, clean=, frame_target=, textures=, backface_cull=)` — DIAGNOSTIC ONLY: captures the scene viewer exactly as the user sees it right now (GUI only), to answer "what is on the user\'s screen" — not for verifying your work (use render_view; the viewport reflects the user\'s actions, not just yours). clean (default on) temporarily hides viewport decorations; textures=False keeps UV textures/checkers out of the shot; frame_target frames the node\'s displayed geometry.',
+    '- `scene_info()` reads HIP/version/fps/frame/ranges without moving the playbar; `set_timeline` updates explicit fields; `list/create/delete_bookmark` own bookmark intents. `search_tab_menu(category, query)` looks up node types before creation; never guess legacy/type names. (`resolve_latest_type` is mostly internal.)',
+    '- `find_nodes(pattern="*", category=, node_type=, root=)` — find existing nodes; `graph(node)` — topology around THAT data node (for final SOP networks query `graph(OUT, depth=..., direction="up")`, not the parent OBJ container); `describe(node)` — status + geometry + attribute list + `attrib_delta` (which attributes the node adds/removes vs its input — the MMB-info answer to "what did this node do to the data") + help URL. `cook_node` owns `ok/healthy`; do not assume `describe` has those keys.',
+    '- `list_parms(node)` — parameter directory; `read_parms(node)` — actual values/references; `set_parm` / `set_parms` — scalar/batch assignment. After writing VEX/Python snippets with `ch/chf/chi/chv/chs`, call `create_spare_parms(node, defaults={...})`; a channel reference does NOT create its parameter by itself, and missing controls commonly make animation silently zero.',
+    '- `hda_create(node, name, hda_file=, replace=)` — convert a subnet to an HDA, defaulting to `$HIP/otls`; same-name replacement is explicit and reports destroyed instances. `hda_info(node)` — inspect the definition, sections, and recursive parameter-template tree.',
+    '- `hda_get_section` / `hda_set_section` / `hda_patch_section` — read, replace, or anchor-patch HDA sections. PythonModule writes are syntax-checked and read back; use patch for local edits instead of resending a large module.',
+    '- `hda_set_interface(node, spec, keep_std=True, hide_builtin_tabs=False)` — declaratively rebuild the custom HDA interface from JSON-safe folder/separator/toggle/int/float/string/button/menu entries. hide_when is verified after commit and repaired through DialogScript if Houdini drops it.',
+    '- `connect(src, dst, index=0)` / `rename_node` / `delete_node` / `cook_node` — wire, rename, delete, cook. A cook warning is unresolved work unless you explicitly explain why it is harmless; "no errors" does not erase warnings. `layout_nodes(parent, nodes=)` tidies the network for handoff.',
+    '- `sop_set_output` / `sop_output_node` own the singular SOP display+render output for the USER viewport/handoff; `set_object_visible` / `visible_objects` own plural OBJ visibility. Compatibility `set_display`/`display_node` routes by context. Agent visual verification does NOT require changing these flags.',
+    '- `geo_attrib_stats` verifies ONE numeric attribute (`name`, then `attrib_class`); `geo_piece_stats` verifies per-piece local extent/area and catches zero-width/zero-area instances hidden by a healthy whole-scene bbox; `geo_frame_diff` compares numeric point attributes across frames without moving the playbar and returns percentiles/component displacement. Do not hand-write geometry loops for these.',
+    '- `render_frame(rop, picture=, frame=)` — render one frame and verify the file, restoring the user\'s original frame afterward (renders over ~2 min: use houdini_job_submit + houdini_job_status(wait=...)).',
+    '- `render_view(EXPLICIT_SOP, direction="iso", frame=, width=, height=, framing="full|detail", coverage=, framing_frame=)` — the DEFAULT visual-verification path. It object-merges the exact SOP into a hidden agent-owned proxy and forces the OpenGL ROP to render ONLY that proxy with deterministic geometry-color/headlight settings. User selection, viewport camera, SOP output flags, OBJ visibility, scene lights, and playbar do not select the render source and are restored. For animation A/B pass the SAME `framing_frame` to both calls so camera metadata is identical. Check `errors`, `warnings`, `stale`, fingerprints, and `check`; never claim success when stale or empty.',
+    '- `render_check(path, ref=)` — luma/content stats plus high-precision A/B mean/RMSE/changed-pixel metrics. Animation work MUST prove time dependency with `geo_frame_diff` or a meaningful fixed-camera render diff. If node/data semantics pass but still images cannot settle subtle motion or aesthetics, hand off honestly as "visual strength pending user playback judgement" instead of looping indefinitely or claiming vision passed.',
+    '- `viewport_screenshot(...)` — DIAGNOSTIC ONLY: captures the user\'s screen. If the user displays an empty node, an empty screenshot is correct evidence about their viewport, not proof that the explicit output SOP is empty. Compare it with `render_view(EXPLICIT_SOP)` to separate viewport drift from geometry failure.',
     '',
     'Images produced by render_frame/render_view/viewport_screenshot are automatically relayed into the session workspace (`.dsh-houdini-media/`) and listed in a `media` section of the tool result — use the workspace path from that section with vision tools (vision_glance etc.); the original $HIP path is NOT readable by them.',
     '',
@@ -57,5 +63,6 @@ const GUIDANCE: PromptSection = {
 export function apply(ctx: Context, config: Config) {
   const bridge = new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs)
   registerHoudiniTools(ctx, bridge)
+  registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)
 }

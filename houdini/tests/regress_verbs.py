@@ -156,7 +156,8 @@ check("12 display_node mid-chain flag + note", t12)
 def t13():
     tail = hou.node("/obj/regr_geo/OUT")
     r = H.set_display(tail)
-    assert r == {"node": tail.path(), "display": True, "render": True}, r
+    assert r["context"] == "sop" and r["node"] == tail.path(), r
+    assert r["display"] is True and r["render"] is True, r
     info = H.display_node(geo)
     assert info["display"] == tail.path() and info["is_leaf"] is True, info
     assert "note" not in info, info

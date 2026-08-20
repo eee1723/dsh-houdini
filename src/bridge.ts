@@ -17,6 +17,8 @@ export interface ExecResult {
   verbs?: JsonValue
   /** Python traceback, present when `ok` is false. */
   error?: string
+  /** Failure-time Houdini undo rollback outcome, when execution reached Python. */
+  rollback?: JsonValue
   /** Advisory hint, present when the code bypassed the verb vocabulary with raw hou calls. */
   advisory?: string
   /** Absolute paths of images produced during this exec (render/screenshot verbs). */

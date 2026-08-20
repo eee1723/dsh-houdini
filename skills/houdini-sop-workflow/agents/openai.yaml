@@ -1,0 +1,4 @@
+interface:
+  display_name: "Houdini SOP Workflow"
+  short_description: "Build and verify robust procedural SOP networks"
+  default_prompt: "Use $houdini-sop-workflow to design, build, and validate this procedural Houdini SOP task with explicit module invariants."

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import hashlib
 import math
 import os
 import re
@@ -55,6 +56,15 @@ _CATEGORIES = {
     "lop": hou.lopNodeTypeCategory,
 }
 
+# UI 名/常见写法 → 内部名（2026-08-20 OTL 会话：agent 连猜 'Object'/'driver' 两次才蒙对）
+_CATEGORY_ALIASES = {
+    "object": "obj", "objects": "obj", "geometry": "sop", "sops": "sop",
+    "driver": "rop", "drivers": "rop", "out": "rop", "dops": "dop",
+    "chops": "chop", "vops": "vop", "tops": "top", "lops": "lop",
+    "stage": "lop", "material": "shop", "materials": "shop",
+    "shopnet": "shop", "cop": "cop2", "cops": "cop2", "img": "cop2",
+}
+
 _VERSION_RE = re.compile(r"^(.*)::(\d+(?:\.\d+)*)$")
 
 
@@ -62,16 +72,141 @@ def _category(category):
     if isinstance(category, hou.NodeTypeCategory):
         return category
     if isinstance(category, str):
-        factory = _CATEGORIES.get(category.strip().lower())
+        key = category.strip().lower()
+        key = _CATEGORY_ALIASES.get(key, key)
+        factory = _CATEGORIES.get(key)
         if factory is None:
-            raise ValueError(f"unknown node type category: {category!r}")
+            valid = ", ".join(sorted(_CATEGORIES))
+            alias = ", ".join(f"{a}→{b}" for a, b in sorted(_CATEGORY_ALIASES.items()))
+            raise ValueError(
+                f"unknown node type category: {category!r}；"
+                f"合法类别：{valid}；别名：{alias}"
+            )
         return factory()
-    raise ValueError(f"unknown node type category: {category!r}")
+    raise ValueError(f"unknown node type category: {category!r}（合法：{', '.join(sorted(_CATEGORIES))}）")
 
 
 def context_name(category) -> str:
     """hou.sopNodeTypeCategory() -> 'sop'（用于构造 shelf tool 名）。"""
     return _category(category).name().lower()
+
+
+# --- scene 域 ---------------------------------------------------------------
+
+def scene_info() -> dict:
+    """只读场景/时间线摘要；不移动 playbar、不遍历整张节点图。"""
+    hip_path = hou.hipFile.path()
+    return {
+        "hip_path": hip_path,
+        "hip_name": hou.hipFile.name(),
+        "hip_saved": os.path.basename(hip_path).lower() != "untitled.hip",
+        "version": hou.applicationVersionString(),
+        "fps": float(hou.fps()),
+        "frame": float(hou.frame()),
+        "time": float(hou.time()),
+        "frame_range": [float(v) for v in hou.playbar.frameRange()],
+        "playback_range": [float(v) for v in hou.playbar.playbackRange()],
+        "range_restricted": bool(hou.playbar.isRangeRestricted()),
+        "playing": bool(hou.playbar.isPlaying()),
+        "ui_available": bool(hou.isUIAvailable()),
+    }
+
+
+def _frame_pair(value, label: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{label} 必须是 [start, end]")
+    start, end = float(value[0]), float(value[1])
+    if end < start:
+        raise ValueError(f"{label} end 不能小于 start：{start}, {end}")
+    return start, end
+
+
+def set_timeline(fps=None, frame_range=None, playback_range=None,
+                 current_frame=None) -> dict:
+    """设置时间线；四项均可选，但至少提供一项。"""
+    if all(value is None for value in (fps, frame_range, playback_range, current_frame)):
+        raise ValueError("至少提供 fps/frame_range/playback_range/current_frame 一项")
+    changed = {}
+    if fps is not None:
+        value = float(fps)
+        if value <= 0:
+            raise ValueError("fps 必须大于 0")
+        hou.setFps(value)
+        changed["fps"] = value
+    if frame_range is not None:
+        start, end = _frame_pair(frame_range, "frame_range")
+        hou.playbar.setFrameRange(start, end)
+        changed["frame_range"] = [start, end]
+    if playback_range is not None:
+        start, end = _frame_pair(playback_range, "playback_range")
+        hou.playbar.setPlaybackRange(start, end)
+        changed["playback_range"] = [start, end]
+    if current_frame is not None:
+        value = float(current_frame)
+        hou.setFrame(value)
+        changed["current_frame"] = value
+    return {"changed": changed, "scene": scene_info()}
+
+
+def list_bookmarks() -> list:
+    """列出动画时间线 bookmarks。"""
+    return [
+        {
+            "id": bookmark.sessionId(),
+            "name": bookmark.name(),
+            "start": float(bookmark.startFrame()),
+            "end": float(bookmark.endFrame()),
+            "enabled": bool(bookmark.isEnabled()),
+            "visible": bool(bookmark.visible()),
+            "temporary": bool(bookmark.isTemporary()),
+            "comment": bookmark.comment(),
+        }
+        for bookmark in hou.anim.bookmarks()
+    ]
+
+
+def create_bookmark(name: str, start, end, replace: bool = False) -> dict:
+    """创建 bookmark；同名默认拒绝，``replace=True`` 精确替换同名项。"""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("bookmark name 必须是非空字符串")
+    name = name.strip()
+    start_frame, end_frame = _frame_pair((start, end), "bookmark range")
+    if not start_frame.is_integer() or not end_frame.is_integer():
+        raise ValueError("bookmark start/end 必须是整数帧")
+    existing = [bookmark for bookmark in hou.anim.bookmarks() if bookmark.name() == name]
+    if existing and not replace:
+        raise ValueError(f"bookmark {name!r} 已存在；确认替换时传 replace=True")
+    if existing:
+        hou.anim.removeBookmarks(existing)
+    bookmark = hou.anim.newBookmark(name, int(start_frame), int(end_frame))
+    return {
+        "id": bookmark.sessionId(),
+        "name": bookmark.name(),
+        "start": float(bookmark.startFrame()),
+        "end": float(bookmark.endFrame()),
+        "replaced": len(existing),
+    }
+
+
+def delete_bookmark(name_or_id) -> dict:
+    """按精确名称或 session id 删除 bookmark。"""
+    matches = []
+    for bookmark in hou.anim.bookmarks():
+        if isinstance(name_or_id, int) and bookmark.sessionId() == name_or_id:
+            matches.append(bookmark)
+        elif isinstance(name_or_id, str) and bookmark.name() == name_or_id:
+            matches.append(bookmark)
+    if not matches:
+        raise ValueError(
+            f"找不到 bookmark {name_or_id!r}；现有："
+            f"{[(item['id'], item['name']) for item in list_bookmarks()]}"
+        )
+    deleted = [
+        {"id": bookmark.sessionId(), "name": bookmark.name()}
+        for bookmark in matches
+    ]
+    hou.anim.removeBookmarks(matches)
+    return {"deleted": deleted}
 
 
 def _version_key(version: str):
@@ -556,56 +691,75 @@ def delete_node(node) -> dict:
     return result
 
 
-def cook_node(node) -> dict:
-    """cook 节点并采集 errors/warnings（不强制重 cook）。"""
+def cook_node(node, force: bool = False) -> dict:
+    """cook 节点并采集 errors/warnings；``healthy`` 要求两者都为空。"""
     n = _resolve(node)
     cook_error = None
     try:
-        n.cook(force=False)
+        n.cook(force=bool(force))
     except Exception as e:  # hou.OperationFailed 等
         cook_error = str(e)
     errors = list(n.errors())
     if cook_error and cook_error not in errors:
         errors.insert(0, cook_error)
+    warnings = list(n.warnings())
     return {
         "path": n.path(),
         "errors": errors,
-        "warnings": list(n.warnings()),
+        "warnings": warnings,
+        "ok": not errors,
+        "warning_free": not warnings,
+        "healthy": not errors and not warnings,
+        "forced": bool(force),
     }
 
 
-def set_display(node, render: bool = True) -> dict:
-    """把 display（默认连同 render）旗标移到指定节点。
+def sop_set_output(node, render: bool = True) -> dict:
+    """把 SOP display（默认连同 render）旗标移到指定输出节点。
 
-    视口和渲染只认挂旗标的那个节点——「最后建的节点」不等于「被显示的
-    节点」。搭完/改完 SOP 链后、渲染或截图前，必须把旗标移到最终输出
-    节点，否则画面里只有链上某一个中间节点（典型事故：渲染出来只有
-    第一个 circle，后面整串 polywire/merge 都不可见）。
+    这是用户 viewport/交付状态，不是 ``render_view`` 的前置条件；agent 的
+    离屏验证会从显式 SOP 建 proxy，不依赖这里的旗标。
     """
     n = _resolve(node)
+    if n.type().category() != hou.sopNodeTypeCategory():
+        raise ValueError(
+            f"sop_set_output 只接受 SOP，收到 {n.path()} "
+            f"({n.type().category().name()})；OBJ 可见性请用 set_object_visible"
+        )
     n.setDisplayFlag(True)
     if render:
         n.setRenderFlag(True)
-    return {"node": n.path(), "display": True, "render": bool(render)}
+    return {
+        "context": "sop",
+        "node": n.path(),
+        "display": True,
+        "render": bool(render),
+    }
 
 
-def display_node(parent) -> dict:
-    """报告网络里 display / render 旗标当前挂在哪个节点（渲染前核对用）。
-
-    返回里附 `is_leaf`：旗标节点还有下游时标 False 并带 `note`——下游
-    节点不会出现在视口/渲染里，多半意味着旗标忘了移到链尾。
-    """
+def sop_output_node(parent) -> dict:
+    """报告 SOP 网络的 singular display/render 输出节点。"""
     p = _resolve(parent)
+    try:
+        child_category = p.childTypeCategory()
+    except Exception:
+        child_category = None
+    if child_category != hou.sopNodeTypeCategory():
+        raise ValueError(
+            f"sop_output_node 需要包含 SOP 的父网络，收到 {p.path()}；"
+            "OBJ 层是 plural visibility，请用 visible_objects('/obj')"
+        )
 
-    def _flag(getter):
+    def _flag(name):
         try:
-            return getter()
-        except Exception:  # 非 SOP 网络 / 无旗标节点等
+            return getattr(p, name)()
+        except Exception:
             return None
 
-    d = _flag(p.displayNode)
-    r = _flag(p.renderNode)
+    d = _flag("displayNode")
+    r = _flag("renderNode")
     result: dict = {
+        "context": "sop",
         "parent": p.path(),
         "display": d.path() if d is not None else None,
         "render": r.path() if r is not None else None,
@@ -620,6 +774,123 @@ def display_node(parent) -> dict:
                 "如需以链尾为输出，用 set_display 把旗标移过去"
             )
     return result
+
+
+def set_object_visible(node, visible: bool = True) -> dict:
+    """设置单个 OBJ 的 viewport 可见性；OBJ 没有 SOP 式 render flag。"""
+    n = _resolve(node)
+    if n.type().category() != hou.objNodeTypeCategory():
+        raise ValueError(
+            f"set_object_visible 只接受 OBJ，收到 {n.path()} "
+            f"({n.type().category().name()})；SOP 输出请用 sop_set_output"
+        )
+    n.setDisplayFlag(bool(visible))
+    effective = None
+    try:
+        effective = bool(n.isObjectDisplayed())
+    except Exception:
+        pass
+    return {
+        "context": "obj",
+        "node": n.path(),
+        "visible": bool(n.isDisplayFlagSet()),
+        "effective_visible": effective,
+    }
+
+
+def visible_objects(root="/obj") -> dict:
+    """列出 OBJ 层所有对象的 plural visibility 状态。"""
+    p = _resolve(root)
+    try:
+        child_category = p.childTypeCategory()
+    except Exception:
+        child_category = None
+    if child_category != hou.objNodeTypeCategory():
+        raise ValueError(
+            f"visible_objects 需要 OBJ manager（通常 /obj），收到 {p.path()}"
+        )
+    objects = []
+    for child in p.children():
+        try:
+            visible = bool(child.isDisplayFlagSet())
+        except Exception:
+            continue
+        try:
+            effective = bool(child.isObjectDisplayed())
+        except Exception:
+            effective = None
+        objects.append({
+            "path": child.path(),
+            "type": child.type().name(),
+            "visible": visible,
+            "effective_visible": effective,
+            "agent_owned": child.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE,
+        })
+    return {"context": "obj", "root": p.path(), "objects": objects}
+
+
+def set_display(node, render: bool = True) -> dict:
+    """兼容入口：SOP → sop_set_output；OBJ → set_object_visible。
+
+    新代码请使用语义明确的新动词。OBJ 没有独立 render flag，``render`` 在
+    OBJ 分支被忽略并回报 note。
+    """
+    n = _resolve(node)
+    if n.type().category() == hou.sopNodeTypeCategory():
+        return sop_set_output(n, render=render)
+    if n.type().category() == hou.objNodeTypeCategory():
+        result = set_object_visible(n, True)
+        result["note"] = "OBJ 没有 SOP 式 render flag；render 参数已忽略"
+        return result
+    raise ValueError(
+        f"set_display 不支持 {n.path()} ({n.type().category().name()})；"
+        "请用 sop_set_output 或 set_object_visible"
+    )
+
+
+def display_node(parent) -> dict:
+    """兼容入口：SOP 网络 → sop_output_node；OBJ manager → visible_objects。"""
+    p = _resolve(parent)
+    try:
+        child_category = p.childTypeCategory()
+    except Exception:
+        child_category = None
+    if child_category == hou.sopNodeTypeCategory():
+        return sop_output_node(p)
+    if child_category == hou.objNodeTypeCategory():
+        return visible_objects(p)
+    raise ValueError(
+        f"display_node 无法判断 {p.path()} 的显示语义；"
+        "请用 sop_output_node 或 visible_objects"
+    )
+
+
+def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
+                 vertical_spacing: float = -1.0) -> dict:
+    """按 Houdini 原生 layoutChildren 布局全部或显式指定的网络项。"""
+    p = _resolve(parent)
+    items = []
+    if nodes is not None:
+        if not isinstance(nodes, (list, tuple)):
+            raise ValueError("nodes 必须是 Node/path 列表或 None（None = 全部子项）")
+        for item in nodes:
+            n = _resolve(item)
+            if n.parent() != p:
+                raise ValueError(f"节点 {n.path()} 不属于父网络 {p.path()}")
+            items.append(n)
+    p.layoutChildren(
+        items=tuple(items),
+        horizontal_spacing=float(horizontal_spacing),
+        vertical_spacing=float(vertical_spacing),
+    )
+    affected = items or list(p.children())
+    return {
+        "parent": p.path(),
+        "nodes": [
+            {"path": n.path(), "position": [float(v) for v in n.position()]}
+            for n in affected
+        ],
+    }
 
 
 # --- parm 域 ---------------------------------------------------------------
@@ -665,6 +936,7 @@ def read_parms(node, changed_only: bool = True) -> list:
 
     带表达式的参数会顺带解析引用目标（``referenced_parm``），被其他参数引用的
     参数会标 ``referenced_by``——两个方向的依赖对 agent 判断「动谁会波及谁」都需要。
+    返回 ``list[dict]``，每项至少有 ``name/value``；不是 name→value 字典。
     """
     n = _resolve(node)
     out = []
@@ -716,12 +988,37 @@ def read_parms(node, changed_only: bool = True) -> list:
     return out
 
 
+def _clear_animation(p) -> str | None:
+    """参数上有表达式/关键帧时清除并返回描述；没有则返回 None。
+
+    2026-08-20 OTL 会话（seq 28944）：``parm.set`` 被 ``$FEND`` 表达式静默架空，
+    eval 纹丝不动但无报错。「set 就是 set」——清掉再设，并在返回里告知清了什么。
+    """
+    try:
+        expr = p.expression()
+    except Exception:
+        expr = None
+    keys = []
+    try:
+        keys = list(p.keyframes())
+    except Exception:
+        pass
+    if expr is None and not keys:
+        return None
+    desc = f"expression {expr!r}" if expr is not None else f"{len(keys)} keyframe(s)"
+    p.deleteAllKeyframes()
+    return desc
+
+
 def set_parm(node, name: str, value) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
 
     数值型参数收到字符串值时按**表达式**处理（H21/H22 实测 ``Parm.set(str)``
     对数值参数直接抛 TypeError，必须走 ``setExpression``）——这让
     ``set_parm(n, 'tx', 'ch(\"ty\")')`` 这类最高频操作可用。
+
+    参数上已有表达式/关键帧时**自动清除再设值**（2026-08-20 拍板），返回带
+    ``note`` 说明清掉了什么；想保留动画请显式传字符串表达式。
     """
     n = _resolve(node)
     p = n.parm(name)
@@ -735,14 +1032,22 @@ def set_parm(node, name: str, value) -> dict:
             if tpl_type in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
                 p.setExpression(value)
                 return {"parm": p.name(), "expression": value, "value": _val(p.eval())}
+        cleared = _clear_animation(p)
         p.set(value)
-        return {"parm": p.name(), "value": _val(p.eval())}
+        out = {"parm": p.name(), "value": _val(p.eval())}
+        if cleared:
+            out["note"] = f"cleared {cleared}"
+        return out
 
     pt = n.parmTuple(name)
     if pt is not None:
         if isinstance(value, (list, tuple)):
+            cleared = [c for pp in pt for c in [_clear_animation(pp)] if c]
             pt.set(value)
-            return {"parm": pt.name(), "value": [_val(v) for v in pt.eval()]}
+            out = {"parm": pt.name(), "value": [_val(v) for v in pt.eval()]}
+            if cleared:
+                out["note"] = f"cleared {', '.join(cleared)}"
+            return out
         comps = [pp.name() for pp in n.parms() if pp.tuple().name() == name]
         raise ValueError(
             f"'{name}' 在 '{n.path()}' 上是 {len(comps)} 分量元组 "
@@ -754,6 +1059,811 @@ def set_parm(node, name: str, value) -> dict:
     raise ValueError(
         f"节点 '{n.path()}' 没有参数 '{name}'。相似参数：{suggestions}"
     )
+
+
+def set_parms(node, values: dict) -> dict:
+    """批量设参：``{name: value}`` 逐项走 ``set_parm`` 同一套语义（含表达式/关键帧清除）。
+
+    **逐项容错**：单项失败不中断，返回分 ``set``/``failed`` 两组——收尾恢复默认值、
+    测试摆场景这类「一串赋值」不用再手写 ``parm().set`` 循环。
+    """
+    n = _resolve(node)
+    if not isinstance(values, dict) or not values:
+        raise ValueError("values 必须是非空 dict：{参数名: 值}")
+    done, failed, notes = {}, {}, {}
+    for key, value in values.items():
+        try:
+            r = set_parm(n, key, value)
+            done[r["parm"]] = r.get("value", r.get("expression"))
+            if "note" in r:
+                notes[r["parm"]] = r["note"]
+        except Exception as e:
+            failed[key] = str(e)
+    out = {"node": n.path(), "set": done}
+    if notes:
+        out["notes"] = notes
+    if failed:
+        out["failed"] = failed
+    return out
+
+
+def create_spare_parms(node, code_parm: str = "snippet",
+                       defaults: dict | None = None) -> dict:
+    """从代码参数的 ch/chf/chi/chv/chs 引用创建缺失 spare parameters。
+
+    对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
+    已存在参数不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
+    或裸 hou 处理。
+    """
+    n = _resolve(node)
+    defaults = {} if defaults is None else defaults
+    if not isinstance(defaults, dict):
+        raise ValueError("defaults 必须是 dict：{参数名: 默认值}")
+    code_parameter = n.parm(code_parm)
+    if code_parameter is None:
+        raise ValueError(
+            f"节点 {n.path()} 没有代码参数 {code_parm!r}；"
+            "先用 list_parms 找真实代码参数名"
+        )
+    code = code_parameter.evalAsString()
+    pattern = re.compile(
+        r"\b(?P<func>ch|chf|chi|chv|chs)\s*\(\s*['\"](?P<name>[A-Za-z_]\w*)['\"]"
+    )
+    references = {}
+    for match in pattern.finditer(code):
+        references.setdefault(match.group("name"), match.group("func"))
+    unsupported = sorted(set(
+        match.group(1) for match in re.finditer(
+            r"\b(chramp|chdict|chsop|chsoplist)\s*\(", code
+        )
+    ))
+    if not references:
+        return {
+            "node": n.path(), "code_parm": code_parm,
+            "created": [], "existing": [], "unsupported": unsupported,
+        }
+    group = n.parmTemplateGroup()
+    templates = []
+    created_names = []
+    existing = []
+    for name, func in references.items():
+        if n.parm(name) is not None or n.parmTuple(name) is not None:
+            existing.append(name)
+            continue
+        label = name.replace("_", " ").title()
+        default = defaults.get(name)
+        if func == "chi":
+            value = int(0 if default is None else default)
+            template = hou.IntParmTemplate(name, label, 1, default_value=(value,))
+        elif func == "chv":
+            if default is None:
+                values = (0.0, 0.0, 0.0)
+            elif isinstance(default, (list, tuple)) and len(default) == 3:
+                values = tuple(float(value) for value in default)
+            else:
+                raise ValueError(f"chv 参数 {name!r} 的默认值必须是 3 分量 list/tuple")
+            template = hou.FloatParmTemplate(name, label, 3, default_value=values)
+        elif func == "chs":
+            value = "" if default is None else str(default)
+            template = hou.StringParmTemplate(name, label, 1, default_value=(value,))
+        else:  # ch / chf
+            value = float(0.0 if default is None else default)
+            template = hou.FloatParmTemplate(name, label, 1, default_value=(value,))
+        templates.append(template)
+        created_names.append(name)
+    for template in templates:
+        group.append(template)
+    if templates:
+        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+    applied = {}
+    for name in created_names:
+        if name in defaults:
+            result = set_parm(n, name, defaults[name])
+            applied[name] = result.get("value", result.get("expression"))
+    return {
+        "node": n.path(),
+        "code_parm": code_parm,
+        "references": references,
+        "created": created_names,
+        "existing": existing,
+        "defaults_applied": applied,
+        "unsupported": unsupported,
+    }
+
+
+# --- asset 域（HDA / 数字资产） ---------------------------------------------
+
+_HDA_MANAGED_TAG = "dsh_houdini::managed"
+_PARM_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _hda_definition(node) -> tuple[hou.Node, hou.HDADefinition]:
+    n = _resolve(node)
+    definition = n.type().definition()
+    if definition is None:
+        raise ValueError(
+            f"节点 '{n.path()}' 不是数字资产（node.type().definition() 为 None）；"
+            "请先用 hda_create 把 subnet 转为 HDA"
+        )
+    return n, definition
+
+
+def _default_hda_file(name: str) -> str:
+    hip_path = hou.hipFile.path()
+    hip_dir = os.path.dirname(hip_path)
+    if not hip_dir or os.path.basename(hip_path).lower() == "untitled.hip":
+        raise ValueError(
+            "当前 hip 尚未保存，无法推导默认 HDA 位置；请先保存 hip，"
+            "或显式传 hda_file"
+        )
+    file_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "asset"
+    return os.path.join(hip_dir, "otls", file_stem + ".hda")
+
+
+def hda_create(
+    node,
+    name: str,
+    description: str | None = None,
+    hda_file: str | None = None,
+    min_inputs: int = 0,
+    max_inputs: int = 0,
+    replace: bool = False,
+) -> dict:
+    """把已有节点（通常 subnet）转为 HDA；默认写到 ``$HIP/otls``。
+
+    ``replace=False`` 遇到同名已安装类型会报错且零修改。``replace=True`` 会先
+    销毁同类型的全部现有实例，再逐一定义 ``destroy()``（只删目标定义，不会粗暴
+    uninstall 整个多资产库），最后从传入的源节点重建。传入源节点本身不能已经是
+    待替换类型，否则销毁实例后就没有可供重建的源节点。
+    """
+    n = _resolve(node)
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name 必须是非空 HDA 类型名")
+    name = name.strip()
+    if not isinstance(min_inputs, int) or not isinstance(max_inputs, int):
+        raise ValueError("min_inputs/max_inputs 必须是整数")
+    if min_inputs < 0 or max_inputs < min_inputs:
+        raise ValueError(
+            f"输入数不合法：需要 0 <= min_inputs <= max_inputs，"
+            f"收到 {min_inputs}/{max_inputs}"
+        )
+
+    category = n.type().category()
+    existing_type = category.nodeTypes().get(name)
+    definitions = []
+    instances = []
+    if existing_type is not None:
+        try:
+            definitions = list(existing_type.allInstalledDefinitions())
+        except Exception:
+            d = existing_type.definition()
+            definitions = [d] if d is not None else []
+        try:
+            instances = list(existing_type.instances())
+        except Exception:
+            instances = []
+
+    # 不能用 replace 抢占 Houdini 原生/编译节点类型；否则 instances() 会把场景里
+    # 所有同类原生节点都列出来，按“替换 HDA”语义销毁将造成灾难性误删。
+    if existing_type is not None and not definitions:
+        raise ValueError(
+            f"类型名 '{name}' 已被 Houdini 原生/无可编辑 definition 的节点类型占用；"
+            "replace 也不会覆盖它，请换一个带项目/工作室命名空间的 HDA 类型名"
+        )
+
+    if (definitions or instances) and not replace:
+        files = sorted({d.libraryFilePath() for d in definitions})
+        paths = sorted(i.path() for i in instances)
+        raise ValueError(
+            f"HDA 类型 '{name}' 已存在；definitions={files}，instances={paths}。"
+            "确认要整体重建时传 replace=True"
+        )
+    if replace and existing_type is n.type():
+        raise ValueError(
+            f"源节点 '{n.path()}' 本身就是待替换类型 '{name}'；"
+            "请先建一个普通 subnet 作为重建源，避免 replace 销毁源节点"
+        )
+
+    target = _default_hda_file(name) if hda_file is None else hou.expandString(str(hda_file))
+    target = os.path.abspath(target)
+    parent_dir = os.path.dirname(target)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    destroyed = []
+    removed_definitions = []
+    if replace:
+        # 子实例先删，避免父实例删除后子路径失效。
+        for inst in sorted(instances, key=lambda x: x.path().count("/"), reverse=True):
+            path = inst.path()
+            inst.destroy()
+            destroyed.append(path)
+        for definition in definitions:
+            file_path = definition.libraryFilePath()
+            definition.destroy()
+            removed_definitions.append(file_path)
+
+    created = n.createDigitalAsset(
+        name=name,
+        hda_file_name=target,
+        description=description,
+        min_num_inputs=min_inputs,
+        max_num_inputs=max_inputs,
+        change_node_type=True,
+        create_backup=not replace,
+    )
+    definition = created.type().definition()
+    if definition is None:
+        raise RuntimeError(f"createDigitalAsset 返回后类型 '{name}' 没有 definition")
+    return {
+        "node": created.path(),
+        "type": created.type().name(),
+        "description": created.type().description(),
+        "hda_file": definition.libraryFilePath(),
+        "min_inputs": definition.minNumInputs(),
+        "max_inputs": definition.maxNumInputs(),
+        "replaced": bool(replace),
+        "destroyed_instances": destroyed,
+        "removed_definitions": removed_definitions,
+    }
+
+
+def _enum_name(value) -> str:
+    try:
+        return value.name()
+    except Exception:
+        return str(value).split(".")[-1]
+
+
+def _template_info(template, depth: int, max_depth: int) -> dict:
+    entry = {
+        "name": template.name(),
+        "label": template.label(),
+        "type": _enum_name(template.type()),
+    }
+    for key, getter in (
+        ("hidden", "isHidden"),
+        ("join_next", "joinsWithNext"),
+        ("help", "help"),
+        ("default", "defaultValue"),
+        ("menu_items", "menuItems"),
+        ("menu_labels", "menuLabels"),
+    ):
+        try:
+            value = getattr(template, getter)()
+        except Exception:
+            continue
+        if value not in (None, "", (), [], {}):
+            entry[key] = _val(value)
+    try:
+        conditions = {
+            _enum_name(k): v for k, v in template.conditionals().items()
+        }
+        if conditions:
+            entry["conditionals"] = conditions
+    except Exception:
+        pass
+    try:
+        tags = template.tags()
+        if tags:
+            entry["tags"] = dict(tags)
+    except Exception:
+        pass
+    if isinstance(template, hou.FolderParmTemplate):
+        entry["folder_type"] = _enum_name(template.folderType())
+        children = list(template.parmTemplates())
+        if depth < max_depth:
+            entry["parms"] = [
+                _template_info(child, depth + 1, max_depth) for child in children
+            ]
+        elif children:
+            entry["parms_omitted"] = len(children)
+    return entry
+
+
+def hda_info(node, max_depth: int = 6) -> dict:
+    """只读自省 HDA 定义与参数模板树；普通节点也可查看参数树。"""
+    n = _resolve(node)
+    if not isinstance(max_depth, int) or max_depth < 0 or max_depth > 20:
+        raise ValueError("max_depth 必须是 0..20 的整数")
+    definition = n.type().definition()
+    out = {
+        "node": n.path(),
+        "category": n.type().category().name(),
+        "type": n.type().name(),
+        "description": n.type().description(),
+        "definition": None,
+        "interface": [
+            _template_info(entry, 0, max_depth)
+            for entry in n.parmTemplateGroup().entries()
+        ],
+    }
+    if definition is not None:
+        sections = []
+        for name, section in sorted(definition.sections().items()):
+            try:
+                size = len(section.contents())
+            except Exception:
+                size = None
+            sections.append({"name": name, "chars": size})
+        out["definition"] = {
+            "library_file": definition.libraryFilePath(),
+            "node_type": definition.nodeTypeName(),
+            "description": definition.description(),
+            "version": definition.version(),
+            "min_inputs": definition.minNumInputs(),
+            "max_inputs": definition.maxNumInputs(),
+            "sections": sections,
+        }
+    return out
+
+
+def _section_contents(definition: hou.HDADefinition, section: str) -> str:
+    if not isinstance(section, str) or not section.strip():
+        raise ValueError("section 必须是非空字符串")
+    section = section.strip()
+    sections = definition.sections()
+    if section not in sections:
+        raise ValueError(
+            f"HDA 没有 section {section!r}；现有：{sorted(sections)}"
+        )
+    return sections[section].contents()
+
+
+def hda_get_section(node, section: str = "PythonModule") -> dict:
+    """读取 HDA section 全文；不存在时列出现有 section 名。"""
+    n, definition = _hda_definition(node)
+    code = _section_contents(definition, section)
+    return {
+        "node": n.path(),
+        "section": section,
+        "code": code,
+        "chars": len(code),
+        "sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+    }
+
+
+def _validate_section_code(section: str, code: str) -> None:
+    if not isinstance(code, str):
+        raise ValueError("code 必须是字符串")
+    if section.lower().endswith("pythonmodule"):
+        try:
+            compile(code, f"<HDA:{section}>", "exec")
+        except SyntaxError as e:
+            source = (e.text or "").strip()
+            where = f"line {e.lineno}" + (f", column {e.offset}" if e.offset else "")
+            raise ValueError(
+                f"{section} Python 语法错误（{where}）：{e.msg}"
+                + (f"；{source}" if source else "")
+            ) from e
+
+
+def _write_hda_section(definition: hou.HDADefinition, section: str, code: str) -> dict:
+    _validate_section_code(section, code)
+    before = None
+    existing = definition.sections().get(section)
+    if existing is not None:
+        before = existing.contents()
+    definition.addSection(section, code)
+    actual = _section_contents(definition, section)
+    if actual != code:
+        raise RuntimeError(
+            f"HDA section {section!r} 写后读回不一致："
+            f"expected {len(code)} chars, got {len(actual)}"
+        )
+    return {
+        "section": section,
+        "changed": before != code,
+        "chars": len(code),
+        "lines": code.count("\n") + (1 if code else 0),
+        "sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+    }
+
+
+def hda_set_section(node, section: str, code: str) -> dict:
+    """全量写 HDA section；PythonModule 写前编译、写后逐字读回校验。"""
+    n, definition = _hda_definition(node)
+    if not isinstance(section, str) or not section.strip():
+        raise ValueError("section 必须是非空字符串")
+    out = _write_hda_section(definition, section.strip(), code)
+    out["node"] = n.path()
+    return out
+
+
+def hda_patch_section(
+    node,
+    section: str,
+    old: str,
+    new: str,
+    count: int = 1,
+) -> dict:
+    """按唯一锚点局部替换 HDA section，拒绝缺失或歧义锚点。"""
+    n, definition = _hda_definition(node)
+    if not isinstance(old, str) or not old:
+        raise ValueError("old 必须是非空字符串（空锚点会产生歧义）")
+    if not isinstance(new, str):
+        raise ValueError("new 必须是字符串")
+    if not isinstance(count, int) or count <= 0:
+        raise ValueError("count 必须是正整数")
+    source = _section_contents(definition, section)
+    actual_count = source.count(old)
+    if actual_count != count:
+        raise ValueError(
+            f"section {section!r} 中锚点期望出现 {count} 次，实际 {actual_count} 次；"
+            "0 次说明锚点过期，多于期望说明锚点不唯一，请扩大 old 上下文"
+        )
+    patched = source.replace(old, new, count)
+    out = _write_hda_section(definition, section, patched)
+    out.update({"node": n.path(), "replacements": count})
+    return out
+
+
+def _spec_name(item: dict, path: str) -> str:
+    name = item.get("name")
+    if not isinstance(name, str) or not _PARM_NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"{path}.name 必须匹配 {_PARM_NAME_RE.pattern!r}，收到 {name!r}"
+        )
+    return name
+
+
+def _menu_data(item: dict, path: str) -> tuple[list[str], list[str]]:
+    menu = item.get("menu")
+    if not isinstance(menu, dict):
+        raise ValueError(f"{path}.menu 必须是 {{items:[...], labels:[...]}}")
+    items = menu.get("items")
+    labels = menu.get("labels", items)
+    if not isinstance(items, (list, tuple)) or not items:
+        raise ValueError(f"{path}.menu.items 必须是非空 list")
+    if not isinstance(labels, (list, tuple)) or len(labels) != len(items):
+        raise ValueError(f"{path}.menu.labels 必须与 items 等长")
+    return [str(x) for x in items], [str(x) for x in labels]
+
+
+def _normalize_hide_when(value, path: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path}.hide_when 必须是非空字符串")
+    value = value.strip()
+    if not (value.startswith("{") and value.endswith("}")):
+        value = "{ " + value + " }"
+    return value
+
+
+def _apply_template_common(template, item: dict, path: str, conditions: dict) -> None:
+    help_text = item.get("help")
+    if help_text is not None:
+        template.setHelp(str(help_text))
+    if item.get("join_next"):
+        template.setJoinWithNext(True)
+    hide_when = _normalize_hide_when(item.get("hide_when"), path)
+    if hide_when is not None:
+        if isinstance(template, hou.FolderParmTemplate):
+            raise ValueError(
+                f"{path}.hide_when 不能设在 folder 上；Houdini 不支持 folder conditional，"
+                "隐藏整页请用 hide_builtin_tabs 或调整具体参数"
+            )
+        template.setConditional(hou.parmCondType.HideWhen, hide_when)
+        conditions[template.name()] = hide_when
+    tags = dict(template.tags())
+    user_tags = item.get("tags", {})
+    if not isinstance(user_tags, dict):
+        raise ValueError(f"{path}.tags 必须是 dict")
+    tags.update({str(k): str(v) for k, v in user_tags.items()})
+    tags[_HDA_MANAGED_TAG] = "1"
+    template.setTags(tags)
+
+
+def _build_interface_template(
+    item: dict,
+    path: str,
+    names: set,
+    conditions: dict,
+):
+    if not isinstance(item, dict):
+        raise ValueError(f"{path} 必须是 dict")
+    kind = str(item.get("type", "")).strip().lower()
+    if kind not in {
+        "folder", "separator", "toggle", "int", "float", "string", "button", "menu"
+    }:
+        raise ValueError(
+            f"{path}.type 不支持 {kind!r}；可用 folder/separator/toggle/int/float/"
+            "string/button/menu"
+        )
+    name = _spec_name(item, path)
+    if name in names:
+        raise ValueError(f"参数/文件夹名 {name!r} 重复（Houdini 参数名全局唯一）")
+    names.add(name)
+    label = str(item.get("label", name))
+
+    if kind == "folder":
+        folder_type = str(item.get("folder_type", "simple")).strip().lower()
+        folder_types = {
+            "simple": hou.folderType.Simple,
+            "tabs": hou.folderType.Tabs,
+            "collapsible": hou.folderType.Collapsible,
+        }
+        if folder_type not in folder_types:
+            raise ValueError(f"{path}.folder_type 只能是 {sorted(folder_types)}")
+        children = item.get("parms", [])
+        if not isinstance(children, (list, tuple)):
+            raise ValueError(f"{path}.parms 必须是 list")
+        template = hou.FolderParmTemplate(
+            name, label, folder_type=folder_types[folder_type]
+        )
+        for index, child in enumerate(children):
+            template.addParmTemplate(
+                _build_interface_template(
+                    child, f"{path}.parms[{index}]", names, conditions
+                )
+            )
+    elif kind == "separator":
+        template = hou.SeparatorParmTemplate(name, label)
+    elif kind == "toggle":
+        template = hou.ToggleParmTemplate(
+            name, label, default_value=bool(item.get("default", False))
+        )
+    elif kind in ("int", "float"):
+        default = item.get("default", 0)
+        minimum = item.get("min", 0)
+        maximum = item.get("max", 10)
+        if kind == "float" and "menu" in item:
+            raise ValueError(
+                f"{path}: Houdini FloatParmTemplate 不支持菜单；"
+                "需要菜单请用 int+menu（值为索引）或 string"
+            )
+        kwargs = {
+            "default_value": (float(default),) if kind == "float" else (int(default),),
+            "min": float(minimum) if kind == "float" else int(minimum),
+            "max": float(maximum) if kind == "float" else int(maximum),
+            "min_is_strict": bool(item.get("min_strict", False)),
+            "max_is_strict": bool(item.get("max_strict", False)),
+        }
+        if kind == "int" and "menu" in item:
+            items, labels = _menu_data(item, path)
+            index = int(default)
+            if not 0 <= index < len(items):
+                raise ValueError(
+                    f"{path}.default={index} 超出菜单索引 0..{len(items) - 1}；"
+                    "Houdini 的 Int 菜单存索引，不存 item token"
+                )
+            kwargs.update(menu_items=items, menu_labels=labels)
+        cls = hou.FloatParmTemplate if kind == "float" else hou.IntParmTemplate
+        template = cls(name, label, 1, **kwargs)
+    elif kind == "string":
+        default = str(item.get("default", ""))
+        file_kind = item.get("file")
+        kwargs = {"default_value": (default,)}
+        if file_kind is not None:
+            file_key = str(file_kind).strip().lower()
+            file_types = {
+                "dir": hou.fileType.Directory,
+                "geo": hou.fileType.Geometry,
+                "alembic": hou.fileType.Geometry,
+                "image": hou.fileType.Image,
+                "any": hou.fileType.Any,
+            }
+            if file_key not in file_types:
+                raise ValueError(f"{path}.file 只能是 {sorted(file_types)}")
+            kwargs.update(
+                string_type=hou.stringParmType.FileReference,
+                file_type=file_types[file_key],
+            )
+        template = hou.StringParmTemplate(name, label, 1, **kwargs)
+    elif kind == "button":
+        callback = item.get("callback")
+        if not isinstance(callback, str) or not callback.strip():
+            raise ValueError(f"{path}.callback 必须是非空 Python 回调字符串")
+        template = hou.ButtonParmTemplate(name, label)
+        template.setScriptCallback(callback)
+        template.setScriptCallbackLanguage(hou.scriptLanguage.Python)
+    else:  # menu
+        items, labels = _menu_data(item, path)
+        default = int(item.get("default", 0))
+        if not 0 <= default < len(items):
+            raise ValueError(f"{path}.default 必须是菜单索引 0..{len(items) - 1}")
+        template = hou.MenuParmTemplate(
+            name, label, items, menu_labels=labels, default_value=default
+        )
+
+    _apply_template_common(template, item, path, conditions)
+    return template
+
+
+def _template_has_managed(template) -> bool:
+    try:
+        if template.tags().get(_HDA_MANAGED_TAG) == "1":
+            return True
+    except Exception:
+        pass
+    if isinstance(template, hou.FolderParmTemplate):
+        return any(_template_has_managed(c) for c in template.parmTemplates())
+    return False
+
+
+def _standard_interface_entries(node: hou.Node) -> list:
+    """取 HDA 源 subnet 的标准界面；找不到基型时保留未受本动词管理的旧条目。"""
+    source_name = _enum_name(node.type().source()).lower()
+    if source_name == "subnet":
+        base_type = node.type().category().nodeTypes().get("subnet")
+        if base_type is not None and base_type is not node.type():
+            return [entry.clone() for entry in base_type.parmTemplateGroup().entries()]
+    return [
+        entry.clone() for entry in node.parmTemplateGroup().entries()
+        if not _template_has_managed(entry)
+    ]
+
+
+def _all_template_names(templates) -> set:
+    names = set()
+    for template in templates:
+        names.add(template.name())
+        if isinstance(template, hou.FolderParmTemplate):
+            names.update(_all_template_names(template.parmTemplates()))
+    return names
+
+
+def _balanced_block_end(text: str, start: int) -> int:
+    brace = text.find("{", start)
+    if brace < 0:
+        raise ValueError("DialogScript parm 块缺少 '{'")
+    depth = 0
+    quote = None
+    escaped = False
+    for index in range(brace, len(text)):
+        ch = text[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    raise ValueError("DialogScript parm 块大括号不平衡")
+
+
+def _patch_dialog_hide_when(dialog: str, name: str, condition: str) -> str:
+    block_re = re.compile(r"(?m)^[ \t]*parm[ \t]*\{[ \t]*$")
+    name_re = re.compile(r"(?m)^[ \t]*name[ \t]+\"" + re.escape(name) + r"\"[ \t]*$")
+    for match in block_re.finditer(dialog):
+        end = _balanced_block_end(dialog, match.start())
+        block = dialog[match.start():end]
+        name_match = name_re.search(block)
+        if name_match is None:
+            continue
+        escaped = condition.replace("\\", "\\\\").replace('"', '\\"')
+        hide_re = re.compile(r"(?m)^(?P<indent>[ \t]*)hidewhen[ \t]+\".*\"[ \t]*$")
+        existing = hide_re.search(block)
+        if existing is not None:
+            replacement = existing.group("indent") + f'hidewhen "{escaped}"'
+            block = block[:existing.start()] + replacement + block[existing.end():]
+        else:
+            indent = re.match(r"[ \t]*", block[name_match.start():]).group(0)
+            close_line = block.rfind("\n", 0, len(block) - 1) + 1
+            newline = "\r\n" if "\r\n" in block else "\n"
+            insertion = indent + f'hidewhen "{escaped}"' + newline
+            block = block[:close_line] + insertion + block[close_line:]
+        return dialog[:match.start()] + block + dialog[end:]
+    raise ValueError(f"DialogScript 中找不到参数 {name!r} 的 parm 块")
+
+
+def hda_set_interface(
+    node,
+    spec: list,
+    keep_std: bool = True,
+    hide_builtin_tabs: bool = False,
+) -> dict:
+    """按 JSON 安全 spec 声明式重建 HDA 参数面板并验证 conditional。
+
+    自定义部分是**整组重建**，不是 merge。``keep_std`` 对 subnet HDA 从原生
+    subnet 类型重新取得 Transform/Subnet 等标准页，避免把旧自定义参数夹带回来；
+    ``hide_builtin_tabs`` 通过公开的 ParmTemplateGroup.hide 隐藏这些页。所有
+    ``hide_when`` 在提交后读回验证，Houdini 若吞掉 conditional，则自动补丁
+    DialogScript 的 ``hidewhen`` 并再次验证。
+    """
+    n, definition = _hda_definition(node)
+    if not isinstance(spec, (list, tuple)):
+        raise ValueError("spec 必须是参数条目 list")
+    names: set = set()
+    conditions: dict[str, str] = {}
+    custom = [
+        _build_interface_template(item, f"spec[{index}]", names, conditions)
+        for index, item in enumerate(spec)
+    ]
+
+    standard = _standard_interface_entries(n) if keep_std else []
+    conflicts = names & _all_template_names(standard)
+    if conflicts:
+        raise ValueError(
+            f"自定义 spec 与 Houdini 标准参数重名：{sorted(conflicts)}；"
+            "请改自定义 name（不要覆盖 tx/rx 等内置参数）"
+        )
+
+    group = hou.ParmTemplateGroup()
+    # 自定义界面优先：顶层按钮会自然出现在最上方，标准页排在其后。
+    for template in custom:
+        group.append(template)
+    standard_names = []
+    for template in standard:
+        group.append(template)
+        standard_names.append(template.name())
+    if hide_builtin_tabs:
+        for name in standard_names:
+            try:
+                group.hide(name, True)
+            except Exception as e:
+                raise ValueError(f"隐藏标准页 {name!r} 失败：{e}") from e
+
+    definition.setParmTemplateGroup(group, rename_conflicting_parms=False)
+
+    # H21 实测 setParmTemplateGroup 会吞一部分 API setConditional：先读回，
+    # 只对丢失项走 DialogScript 兜底，避免无谓改写定义源码。
+    after = n.parmTemplateGroup()
+    missing = {}
+    for name, expected in conditions.items():
+        template = after.find(name)
+        actual = None
+        if template is not None:
+            actual = template.conditionals().get(hou.parmCondType.HideWhen)
+        if actual != expected:
+            missing[name] = expected
+    patched = []
+    if missing:
+        sections = definition.sections()
+        if "DialogScript" not in sections:
+            raise RuntimeError(
+                f"conditional 被 Houdini 吞掉，但定义没有 DialogScript section：{sorted(missing)}"
+            )
+        dialog = sections["DialogScript"].contents()
+        for name, condition in missing.items():
+            dialog = _patch_dialog_hide_when(dialog, name, condition)
+            patched.append(name)
+        definition.addSection("DialogScript", dialog)
+
+    verified = {}
+    final_group = n.parmTemplateGroup()
+    for name, expected in conditions.items():
+        template = final_group.find(name)
+        actual = None if template is None else template.conditionals().get(
+            hou.parmCondType.HideWhen
+        )
+        if actual != expected:
+            raise RuntimeError(
+                f"参数 {name!r} hide_when 写后验证失败：expected={expected!r}, actual={actual!r}"
+            )
+        verified[name] = actual
+
+    hidden_std = []
+    if hide_builtin_tabs:
+        final_group = n.parmTemplateGroup()
+        for template in final_group.entries():
+            try:
+                if template.isHidden() and template.label() in {
+                    t.label() for t in standard
+                }:
+                    hidden_std.append(template.label())
+            except Exception:
+                pass
+    return {
+        "node": n.path(),
+        "custom_entries": [t.name() for t in custom],
+        "custom_parms": sorted(names),
+        "standard_kept": bool(keep_std),
+        "standard_entries": standard_names,
+        "hidden_standard_tabs": sorted(hidden_std),
+        "hide_when_verified": verified,
+        "dialogscript_patched": patched,
+    }
 
 
 # --- geometry 域 -------------------------------------------------------------
@@ -822,6 +1932,272 @@ def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
     }
 
 
+def _summary(values: list) -> dict:
+    if not values:
+        return {"min": None, "max": None, "mean": None}
+    return {
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / len(values),
+    }
+
+
+def geo_piece_stats(node, piece_attrib: str | None = None,
+                    sample: int = 16) -> dict:
+    """按 primitive piece 报局部 bbox/面积，识别整体 bbox 掩盖的局部退化。
+
+    ``piece_attrib=None`` 时用原生 Connectivity SOP Verb 在内存副本上生成临时
+    primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
+    piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
+    """
+    n = _resolve(node)
+    if n.type().category() != hou.sopNodeTypeCategory():
+        raise ValueError("geo_piece_stats 只接受 SOP 节点")
+    if not isinstance(sample, int) or sample <= 0 or sample > 256:
+        raise ValueError("sample 必须是 1..256 的整数")
+    source = n.geometry()
+    if source is None:
+        raise ValueError(f"节点 {n.path()} 没有 geometry")
+    geometry = source
+    generated = False
+    attrib_name = piece_attrib
+    attrib_class = "prim"
+    if attrib_name is None:
+        generated = True
+        attrib_name = "__dsh_piece"
+        verb = hou.sopNodeTypeCategory().nodeVerb("connectivity")
+        if verb is None:
+            raise RuntimeError("当前 Houdini 没有 Connectivity SOP Verb")
+        verb.setParms({"attribname": attrib_name, "attribtype": 0, "connecttype": 0})
+        geometry = hou.Geometry()
+        verb.execute(geometry, [source])
+        attrib_class = "point"
+    else:
+        attrib = geometry.findPrimAttrib(attrib_name)
+        if attrib is None:
+            attrib = geometry.findPointAttrib(attrib_name)
+            attrib_class = "point"
+        if attrib is None:
+            raise ValueError(
+                f"节点 {n.path()} 没有 primitive/point piece 属性 {attrib_name!r}；"
+                "省略 piece_attrib 可按连接性自动生成"
+            )
+        if attrib.size() != 1:
+            raise ValueError("piece_attrib 必须是单分量 primitive 属性")
+
+    pieces = {}
+    for prim in geometry.iterPrims():
+        try:
+            if attrib_class == "prim":
+                piece_id = prim.attribValue(attrib_name)
+            else:
+                points = prim.points()
+                if not points:
+                    continue
+                piece_id = points[0].attribValue(attrib_name)
+        except Exception as error:
+            raise ValueError(f"无法读取 {attrib_class} 属性 {attrib_name!r}: {error}") from error
+        key = str(piece_id)
+        record = pieces.get(key)
+        if record is None:
+            record = {
+                "id": piece_id,
+                "prims": 0,
+                "vertices": 0,
+                "surface_prims": 0,
+                "area": 0.0,
+                "min": [math.inf, math.inf, math.inf],
+                "max": [-math.inf, -math.inf, -math.inf],
+            }
+            pieces[key] = record
+        record["prims"] += 1
+        points = prim.points()
+        record["vertices"] += len(points)
+        try:
+            closed = bool(prim.intrinsicValue("closed"))
+        except Exception:
+            closed = False
+        if closed and len(points) >= 3:
+            try:
+                area = float(prim.intrinsicValue("measuredarea"))
+                record["area"] += max(0.0, area)
+                record["surface_prims"] += 1
+            except Exception:
+                pass
+        for point in points:
+            position = point.position()
+            for axis in range(3):
+                value = float(position[axis])
+                record["min"][axis] = min(record["min"][axis], value)
+                record["max"][axis] = max(record["max"][axis], value)
+
+    records = []
+    for record in pieces.values():
+        extents = [record["max"][i] - record["min"][i] for i in range(3)]
+        records.append({
+            "id": _val(record["id"]),
+            "prims": record["prims"],
+            "vertices": record["vertices"],
+            "surface_prims": record["surface_prims"],
+            "area": record["area"],
+            "bbox_min": record["min"],
+            "bbox_max": record["max"],
+            "extents": extents,
+            "min_extent": min(extents),
+            "max_extent": max(extents),
+        })
+    records.sort(key=lambda item: (
+        0, float(item["id"])
+    ) if isinstance(item["id"], (int, float)) else (1, str(item["id"])))
+    source_bbox = source.boundingBox()
+    source_scale = max(float(v) for v in source_bbox.sizevec()) if records else 1.0
+    area_epsilon = max(source_scale * source_scale * 1e-12, 1e-16)
+    degenerate = sum(
+        1 for item in records
+        if item["surface_prims"] > 0 and item["area"] <= area_epsilon
+    )
+    if len(records) <= sample:
+        sampled = records
+    elif sample == 1:
+        sampled = [records[0]]
+    else:
+        indices = sorted({
+            round(i * (len(records) - 1) / (sample - 1)) for i in range(sample)
+        })
+        sampled = [records[i] for i in indices]
+    axis_extents = [[item["extents"][axis] for item in records] for axis in range(3)]
+    return {
+        "node": n.path(),
+        "piece_attrib": attrib_name,
+        "piece_attrib_class": attrib_class,
+        "piece_attrib_generated": generated,
+        "piece_count": len(records),
+        "degenerate_surface_pieces": degenerate,
+        "area_epsilon": area_epsilon,
+        "area": _summary([item["area"] for item in records]),
+        "extent_x": _summary(axis_extents[0]),
+        "extent_y": _summary(axis_extents[1]),
+        "extent_z": _summary(axis_extents[2]),
+        "sampled_pieces": sampled,
+    }
+
+
+def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
+                   sample: int = 4096, tolerance: float = 1e-6) -> dict:
+    """比较 SOP 两帧的 point 数值属性，不移动用户 playbar。
+
+    使用 ``geometryAtFrame`` 取得冻结几何；拓扑一致时返回抽样点的 mean/max delta、
+    p50/p90/p99、逐分量位移统计与 unchanged 百分比。适合区分“真实几何静止”和
+    “ROP/图片缓存”；这些数值证明数据在动，不自动证明运动的审美语义。
+    """
+    n = _resolve(node)
+    if n.type().category() != hou.sopNodeTypeCategory():
+        raise ValueError("geo_frame_diff 只接受 SOP 节点")
+    if not isinstance(sample, int) or sample <= 0 or sample > 1_000_000:
+        raise ValueError("sample 必须是 1..1000000 的整数")
+    if tolerance < 0:
+        raise ValueError("tolerance 不能为负")
+    fa, fb = float(frame_a), float(frame_b)
+    ga = n.geometryAtFrame(fa)
+    gb = n.geometryAtFrame(fb)
+    if ga is None or gb is None:
+        raise ValueError(f"节点 {n.path()} 在指定帧没有 geometry")
+    counts_a = {"points": len(ga.points()), "prims": len(ga.prims())}
+    counts_b = {"points": len(gb.points()), "prims": len(gb.prims())}
+    bbox_a, bbox_b = ga.boundingBox(), gb.boundingBox()
+    base = {
+        "node": n.path(),
+        "attrib": attrib,
+        "frame_a": fa,
+        "frame_b": fb,
+        "counts_a": counts_a,
+        "counts_b": counts_b,
+        "bbox_a": {
+            "min": [float(v) for v in bbox_a.minvec()],
+            "max": [float(v) for v in bbox_a.maxvec()],
+        },
+        "bbox_b": {
+            "min": [float(v) for v in bbox_b.minvec()],
+            "max": [float(v) for v in bbox_b.maxvec()],
+        },
+    }
+    if counts_a != counts_b:
+        base.update({"comparable": False, "reason": "topology counts differ"})
+        return base
+    aa, ab = ga.findPointAttrib(attrib), gb.findPointAttrib(attrib)
+    if aa is None or ab is None:
+        raise ValueError(f"两帧都必须有 point 属性 {attrib!r}")
+    if aa.size() != ab.size() or aa.dataType() != ab.dataType():
+        base.update({"comparable": False, "reason": "attribute type/size differs"})
+        return base
+    if aa.dataType() == hou.attribData.String:
+        raise ValueError("geo_frame_diff 只支持数值 point 属性")
+    getter = "pointFloatAttribValues" if aa.dataType() == hou.attribData.Float else "pointIntAttribValues"
+    values_a = list(getattr(ga, getter)(attrib))
+    values_b = list(getattr(gb, getter)(attrib))
+    size = aa.size()
+    point_count = counts_a["points"]
+    if point_count <= sample:
+        indices = range(point_count)
+    elif sample == 1:
+        indices = [0]
+    else:
+        indices = sorted({
+            round(i * (point_count - 1) / (sample - 1)) for i in range(sample)
+        })
+    deltas = []
+    component_deltas = [[] for _ in range(size)]
+    for index in indices:
+        offset = index * size
+        components = [
+            float(values_b[offset + c]) - float(values_a[offset + c])
+            for c in range(size)
+        ]
+        deltas.append(math.sqrt(sum(value * value for value in components)))
+        for component, value in enumerate(components):
+            component_deltas[component].append(value)
+    unchanged = sum(1 for value in deltas if value <= tolerance)
+    ordered = sorted(deltas)
+
+    def percentile(fraction: float) -> float:
+        if not ordered:
+            return 0.0
+        if len(ordered) == 1:
+            return ordered[0]
+        position = fraction * (len(ordered) - 1)
+        lower = int(math.floor(position))
+        upper = int(math.ceil(position))
+        if lower == upper:
+            return ordered[lower]
+        weight = position - lower
+        return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+    base.update({
+        "comparable": True,
+        "data_type": "float" if aa.dataType() == hou.attribData.Float else "int",
+        "size": size,
+        "sampled_points": len(deltas),
+        "tolerance": float(tolerance),
+        "mean_delta": sum(deltas) / len(deltas) if deltas else 0.0,
+        "max_delta": max(deltas) if deltas else 0.0,
+        "delta_percentiles": {
+            "p50": percentile(0.50),
+            "p90": percentile(0.90),
+            "p99": percentile(0.99),
+        },
+        "component_delta": {
+            "min": [min(values) if values else 0.0 for values in component_deltas],
+            "max": [max(values) if values else 0.0 for values in component_deltas],
+            "mean": [
+                sum(values) / len(values) if values else 0.0
+                for values in component_deltas
+            ],
+        },
+        "unchanged_pct": unchanged * 100.0 / len(deltas) if deltas else 100.0,
+    })
+    return base
+
+
 # --- render / sim 域 ---------------------------------------------------------
 
 # --- 图片产出登记（media relay 数据源） --------------------------------------
@@ -876,26 +2252,35 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     if picture is not None:
         p.set(picture)
     f = hou.frame() if frame is None else float(frame)
-    hou.setFrame(f)
-    target = hou.text.expandString(p.unexpandedString())
-    out_dir = os.path.dirname(target)
-    if out_dir and not os.path.isdir(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
-
+    original_frame = float(hou.frame())
+    target = None
     t0 = time.time()
     render_err = None
-    try:
-        n.render(frame_range=(f, f))
-    except Exception as e:  # hou.Error 等
-        render_err = str(e)
-
     file_bytes = None
-    deadline = t0 + float(timeout)
-    while not render_err and time.time() < deadline:
-        if os.path.exists(target) and os.path.getsize(target) > 0:
-            file_bytes = os.path.getsize(target)
-            break
-        time.sleep(1)
+    try:
+        hou.setFrame(f)
+        target = hou.text.expandString(p.unexpandedString())
+        out_dir = os.path.dirname(target)
+        if out_dir and not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+        try:
+            n.render(frame_range=(f, f))
+        except Exception as e:  # hou.Error 等
+            render_err = str(e)
+
+        deadline = t0 + float(timeout)
+        while not render_err and time.time() < deadline:
+            if os.path.exists(target) and os.path.getsize(target) > 0:
+                file_bytes = os.path.getsize(target)
+                break
+            time.sleep(1)
+    finally:
+        # 渲染帧属于 agent 验证状态，不占用用户 playbar；即使 ROP 失败也还原。
+        if float(hou.frame()) != original_frame:
+            try:
+                hou.setFrame(original_frame)
+            except Exception:
+                pass
 
     errors: list[str] = []
     if render_err:
@@ -1073,15 +2458,35 @@ def render_check(path: str, ref=None) -> dict:
         else:
             step = max(1, int(max(w, h) / 512) + 1)
             diffs = []
+            squared = 0.0
+            channel_abs = 0.0
+            changed = meaningful = 0
             for y in range(0, h, step):
                 for x in range(0, w, step):
                     p1, p2 = pixels[y][x], pixels2[y][x]
-                    diffs.append(max(abs(p1[i] - p2[i]) for i in range(3)))
+                    channels = [abs(p1[i] - p2[i]) for i in range(3)]
+                    pixel_diff = max(channels)
+                    diffs.append(pixel_diff)
+                    channel_abs += sum(channels)
+                    squared += sum(value * value for value in channels)
+                    if pixel_diff > 0:
+                        changed += 1
+                    if pixel_diff > 2:
+                        meaningful += 1
+            count = len(diffs)
             out["diff_vs_ref"] = {
                 "comparable": True,
                 "identical": max(diffs) == 0 if diffs else True,
-                "mean_abs_diff": round(sum(diffs) / len(diffs), 3) if diffs else 0,
+                # 不过早舍入：40054277 草地 frame 1/12 的微小非零差异曾被
+                # round(..., 3) 压成 0，掩盖“几乎静止”的关键证据。
+                "mean_abs_diff": round(channel_abs / (count * 3), 8) if count else 0,
+                "mean_max_channel_diff": round(sum(diffs) / count, 8) if count else 0,
+                "rmse": round(math.sqrt(squared / (count * 3)), 8) if count else 0,
                 "max_abs_diff": max(diffs) if diffs else 0,
+                "changed_pixel_pct": round(changed * 100.0 / count, 6) if count else 0,
+                "meaningful_pixel_pct": round(meaningful * 100.0 / count, 6) if count else 0,
+                "sample_step": step,
+                "sampled_pixels": count,
             }
     return out
 
@@ -1335,6 +2740,189 @@ def _try_set(node: hou.Node, name: str, value) -> bool:
         return False
 
 
+_RENDER_OWNER_KEY = "dsh_houdini_owner"
+_RENDER_OWNER_VALUE = "render_view_v2"
+_RENDER_PROXY_NAME = "__dsh_houdini_render_proxy"
+_RENDER_CAMERA_NAME = "__dsh_houdini_cam"
+_RENDER_TARGET_NAME = "__dsh_houdini_target"
+_RENDER_ROP_NAME = "__dsh_houdini_opengl"
+
+
+def _owned_node(parent: hou.Node, name: str, type_name: str) -> hou.Node:
+    node = parent.node(name)
+    if node is not None:
+        if node.userData(_RENDER_OWNER_KEY) != _RENDER_OWNER_VALUE:
+            raise ValueError(
+                f"agent render 基础设施路径 {node.path()} 已被用户节点占用；"
+                f"请重命名该节点后重试（不会自动接管/删除用户节点）"
+            )
+        return node
+    node = parent.createNode(type_name, node_name=name)
+    node.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
+    return node
+
+
+def _resolve_render_sop(node) -> tuple[hou.Node, str | None]:
+    target = _resolve(node)
+    category = target.type().category()
+    if category == hou.sopNodeTypeCategory():
+        return target, None
+    if category == hou.objNodeTypeCategory():
+        resolved = None
+        for getter in ("renderNode", "displayNode"):
+            try:
+                resolved = getattr(target, getter)()
+            except Exception:
+                resolved = None
+            if resolved is not None:
+                break
+        if resolved is None:
+            raise ValueError(
+                f"OBJ {target.path()} 没有可解析的 render/display SOP；"
+                "为确定性验证请直接传显式 SOP 输出节点"
+            )
+        return resolved, (
+            f"传入 OBJ {target.path()}，调用开始时解析为 {resolved.path()}；"
+            "用户可移动 OBJ 内旗标，确定性验证建议直接传 SOP path"
+        )
+    raise ValueError(
+        f"render_view 只接受 SOP 或 Geometry OBJ，收到 {target.path()} "
+        f"({category.name()})"
+    )
+
+
+def _geometry_fingerprint(node: hou.Node, frame: float) -> dict:
+    geometry = node.geometryAtFrame(frame)
+    if geometry is None:
+        raise ValueError(f"节点 {node.path()} 在 frame {frame} 没有 geometry")
+    points = len(geometry.points())
+    prims = len(geometry.prims())
+    if points == 0 and prims == 0:
+        raise ValueError(
+            f"节点 {node.path()} 在 frame {frame} cook 成功但没有可渲染几何；"
+            "请传非空显式输出 SOP"
+        )
+    bbox = geometry.boundingBox()
+    bbox_min = [float(v) for v in bbox.minvec()]
+    bbox_max = [float(v) for v in bbox.maxvec()]
+    signature = hashlib.sha256()
+    signature.update(f"{points}|{prims}|{bbox_min}|{bbox_max}".encode("utf-8"))
+    # 有界抽样 P：检测用户/上游在验证期间改变真实目标，不遍历百万点全量。
+    if points and geometry.findPointAttrib("P") is not None:
+        values = list(geometry.pointFloatAttribValues("P"))
+        count = min(points, 257)
+        indices = [0] if count == 1 else sorted({
+            round(i * (points - 1) / (count - 1)) for i in range(count)
+        })
+        for index in indices:
+            offset = index * 3
+            signature.update(struct.pack(
+                "<3d",
+                float(values[offset]),
+                float(values[offset + 1]),
+                float(values[offset + 2]),
+            ))
+    errors = list(node.errors())
+    warnings = list(node.warnings())
+    return {
+        "path": node.path(),
+        "session_id": node.sessionId(),
+        "type": node.type().name(),
+        "frame": float(frame),
+        "points": points,
+        "prims": prims,
+        "bbox_min": bbox_min,
+        "bbox_max": bbox_max,
+        "point_attrs": sorted(a.name() for a in geometry.pointAttribs()),
+        "prim_attrs": sorted(a.name() for a in geometry.primAttribs()),
+        "errors": errors,
+        "warnings": warnings,
+        "signature": signature.hexdigest()[:24],
+    }
+
+
+def _ensure_render_proxy(target_sop: hou.Node) -> tuple[hou.Node, hou.Node]:
+    obj = hou.node("/obj")
+    proxy = _owned_node(obj, _RENDER_PROXY_NAME, "geo")
+    if target_sop.parent() == proxy:
+        raise ValueError("render_view 不能把 agent render proxy 自身作为源")
+    source = proxy.node("source")
+    if source is None:
+        for child in list(proxy.children()):
+            child.destroy()
+        source = proxy.createNode("object_merge", node_name="source")
+        source.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
+    elif source.userData(_RENDER_OWNER_KEY) != _RENDER_OWNER_VALUE:
+        raise ValueError(f"agent proxy 内部路径 {source.path()} 被非 agent 节点占用")
+    output = proxy.node("OUT")
+    if output is None:
+        output = proxy.createNode("null", node_name="OUT")
+        output.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
+    elif output.userData(_RENDER_OWNER_KEY) != _RENDER_OWNER_VALUE:
+        raise ValueError(f"agent proxy 内部路径 {output.path()} 被非 agent 节点占用")
+    source.parm("objpath1").set(target_sop.path())
+    proxy.setUserData("dsh_render_state", "active")
+    proxy.setUserData("dsh_last_target", target_sop.path())
+    source.setComment(
+        "Temporary render_view source; bound only for the active render.\n"
+        f"Current target: {target_sop.path()}"
+    )
+    _try_set(source, "xformtype", 1)  # Into This Object：保留源 OBJ 世界变换
+    output.setInput(0, source)
+    output.setDisplayFlag(True)
+    output.setRenderFlag(True)
+    output.cook(force=True)
+    proxy.setDisplayFlag(False)  # forceobjects 仍可渲染；用户 viewport 不出现 proxy
+    return proxy, output
+
+
+def _snapshot_obj_visibility() -> dict:
+    states = {}
+    for child in hou.node("/obj").children():
+        try:
+            states[child.path()] = bool(child.isDisplayFlagSet())
+        except Exception:
+            pass
+    return states
+
+
+def _restore_obj_visibility(states: dict) -> list:
+    errors = []
+    for path, visible in states.items():
+        node = hou.node(path)
+        if node is None:
+            errors.append(f"missing object during restore: {path}")
+            continue
+        try:
+            node.setDisplayFlag(bool(visible))
+        except Exception as error:
+            errors.append(f"{path}: {error}")
+    return errors
+
+
+def _snapshot_selection() -> list:
+    try:
+        return [node.path() for node in hou.selectedNodes()]
+    except Exception:
+        return []
+
+
+def _restore_selection(paths: list) -> list:
+    errors = []
+    try:
+        hou.clearAllSelected()
+    except Exception as error:
+        return [str(error)]
+    for path in paths:
+        node = hou.node(path)
+        if node is not None:
+            try:
+                node.setSelected(True)
+            except Exception as error:
+                errors.append(f"{path}: {error}")
+    return errors
+
+
 # render_view 的命名视角（direction 接受这些字符串）：意图层词汇，
 # top 故意不沿正 Y（与 up 向量共线会导致 lookat 退化）。
 _NAMED_DIRECTIONS = {
@@ -1345,26 +2933,27 @@ _NAMED_DIRECTIONS = {
 }
 
 
-def render_view(node, direction=(1.0, 0.7, 1.0), frame=None,
-                width: int = 1280, height: int = 720, picture=None) -> dict:
-    """验证渲染一步到位：专用相机取景 → OpenGL ROP 离屏渲染 → render_check。
+def render_view(node, direction="iso", frame=None,
+                width: int = 1280, height: int = 720, picture=None,
+                framing: str = "full", coverage: float = 0.82,
+                framing_frame=None) -> dict:
+    """显式 SOP → agent proxy → OpenGL ROP → render_check 的隔离验证。
 
-    「副驾驶」定位下的视觉验证主干：视口是用户的草稿纸（随时可能被用户
-    移动/最小化），验证不碰它——本动词用 agent 自己拥有的相机
-    （``/obj/dsh_cam`` + ``/obj/dsh_cam_target``，复用不重复创建）和
-    ``/out/dsh_opengl`` ROP 离屏出图，质量≈视口（实时 GL 光栅化），
-    确定性≈渲染管线。构图（取景角度/距离/焦距）想精细控制时，拆开来用
-    裸 hou 调 ``/obj/dsh_cam`` 再 ``render_frame``。
+    用户可随时把源 OBJ 的 display/render flag 切到空节点：本动词不跟随它，
+    而是让 agent-owned Object Merge 指向传入的**具体 SOP**，OpenGL ROP 用
+    ``forceobjects`` 只渲染 proxy。用户 OBJ 可见性、selection、playbar 均恢复。
 
-    - ``node``：取景目标（SOP 或 OBJ），按显示几何 bbox 取景。
+    - ``node``：强烈建议显式 SOP；传 OBJ 时只在调用开始解析一次 render/display SOP。
     - ``direction``：视线方向（从目标指向相机的偏移向量），默认 3/4 俯视。
       也接受命名视角：``'iso'``（3/4 俯视）、``'front'``、``'side'``、
       ``'top'``（草地重跑 trace：agent 直觉写法就是 ``'iso'``——命名视角
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
-    - ``picture``：输出路径；None = ``$HIP/render/dsh_view_<时间>.png``。
-    - 返回含 ``check``（render_check 结果）与取景参数；产物自动登记进
-      ``images``（host 回传到工作区，vision 工具可读）。
+    - ``framing``：``full`` 完整入镜；``detail`` 拉近到约 55% 距离。
+    - ``coverage``：full framing 的画面覆盖率（0.1..0.95）。
+    - ``framing_frame``：用哪一帧的 bbox 计算相机；None = 跟随 ``frame``。动画
+      A/B 应给两次调用传同一个 framing_frame，确保相机 center/eye/dist 完全一致。
+    - 返回 source/proxy fingerprint；真实目标在验证期间变化时 ``stale=True``。
 
     需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
     走 CPU 渲染器。注意 GL 渲染在 Windows 锁屏/远程桌面断开时可能失败，
@@ -1375,93 +2964,206 @@ def render_view(node, direction=(1.0, 0.7, 1.0), frame=None,
             "render_view 需要 Houdini GUI（OpenGL ROP 要 GL 上下文）；"
             "headless 环境请用 render_frame 走 CPU 渲染器"
         )
-    target = _resolve(node)
-    bb = _display_bbox(target)
-    center = bb.center()
-    extents = bb.sizevec()
-    size = max(float(extents[0]), float(extents[1]), float(extents[2]))
+    if framing not in ("full", "detail"):
+        raise ValueError("framing 只能是 'full' 或 'detail'")
+    coverage = float(coverage)
+    if not 0.1 <= coverage <= 0.95:
+        raise ValueError("coverage 必须在 0.1..0.95")
+    if int(width) <= 0 or int(height) <= 0:
+        raise ValueError("width/height 必须为正整数")
 
-    # --- 相机与目标点（复用，不重复创建） ---
-    cam = hou.node("/obj/dsh_cam") or tab_create("/obj", "cam", "dsh_cam")
-    aim = hou.node("/obj/dsh_cam_target") or tab_create("/obj", "null", "dsh_cam_target")
-    aim.parmTuple("t").set([float(center[0]), float(center[1]), float(center[2])])
+    target, resolution_note = _resolve_render_sop(node)
+    f = float(hou.frame()) if frame is None else float(frame)
+    framing_f = f if framing_frame is None else float(framing_frame)
+    before = _geometry_fingerprint(target, f)
+    if before["errors"]:
+        raise ValueError(f"目标 {target.path()} cook error：{before['errors']}")
 
-    # --- 取景：距离按相机视场角反推，保证主体完整入镜并留边距 ---
-    focal, aperture = 50.0, 41.4214
+    obj_visibility = _snapshot_obj_visibility()
+    selection = _snapshot_selection()
+    proxy = proxy_out = cam = aim = rop = None
+    result_payload = None
     try:
-        focal = float(cam.parm("focal").eval())
-        aperture = float(cam.parm("aperture").eval())
-    except Exception:
-        pass
-    fov_h = 2.0 * math.atan(aperture / (2.0 * focal))
-    fov_v = 2.0 * math.atan(math.tan(fov_h / 2.0) * float(height) / float(width))
-    fov = min(fov_h, fov_v)
-    dist = (max(size, 1e-3) / 2.0) / math.tan(fov / 2.0) * 1.4  # 1.4 = 边距
-
-    if isinstance(direction, str):
-        named = _NAMED_DIRECTIONS.get(direction.strip().lower())
-        if named is None:
+        proxy, proxy_out = _ensure_render_proxy(target)
+        proxy_before = _geometry_fingerprint(proxy_out, f)
+        if proxy_before["errors"]:
             raise ValueError(
-                f"direction 收到未知名称 {direction!r}；可用："
-                f"{sorted(_NAMED_DIRECTIONS)} 或三分量向量 [x, y, z]"
+                f"agent render proxy 无法读取 {target.path()}：{proxy_before['errors']}"
             )
-        direction = named
-    d = hou.Vector3(*[float(x) for x in direction])
-    if d.length() < 1e-6:
-        raise ValueError(f"direction 不能是零向量：{direction!r}")
-    d = d.normalized()
-    eye = center + d * dist
-    cam.parmTuple("t").set([float(eye[0]), float(eye[1]), float(eye[2])])
-    if not _try_set(cam, "lookat", aim.path()):
-        # 无 lookat 参数（非常规相机）时的回退：直接写世界变换。
-        # Houdini 约定：相机看向局部 -Z，Matrix4 行主序，
-        # 行 0/1/2 = 相机局部 X/Y/Z 轴的世界方向，行 3 = 平移。
-        up = hou.Vector3(0, 1, 0)
-        fwd = (center - eye).normalized()
-        right = fwd.cross(up).normalized()
-        up2 = right.cross(fwd).normalized()
-        m = hou.Matrix4((
-            right[0], right[1], right[2], 0.0,
-            up2[0], up2[1], up2[2], 0.0,
-            -fwd[0], -fwd[1], -fwd[2], 0.0,
-            eye[0], eye[1], eye[2], 1.0,
-        ))
-        cam.setWorldTransform(m)
+        framing_fingerprint = _geometry_fingerprint(target, framing_f)
+        if framing_fingerprint["errors"]:
+            raise ValueError(
+                f"目标 {target.path()} 在 framing_frame={framing_f} cook error："
+                f"{framing_fingerprint['errors']}"
+            )
+        framing_geometry = proxy_out.geometryAtFrame(framing_f)
+        if framing_geometry is None or len(framing_geometry.points()) == 0:
+            raise ValueError(
+                f"目标 {target.path()} 在 framing_frame={framing_f} 没有可取景几何"
+            )
+        bb = framing_geometry.boundingBox()
+        center = bb.center()
+        extents = bb.sizevec()
+        size = max(float(extents[0]), float(extents[1]), float(extents[2]))
 
-    # --- OpenGL ROP（复用） ---
-    # 分辨率开关在不同版本叫 tres / override_camerares——两个都试（幂等）。
-    rop = hou.node("/out/dsh_opengl") or tab_create("/out", "opengl", "dsh_opengl")
-    _try_set(rop, "camera", cam.path())
-    _try_set(rop, "tres", True)
-    _try_set(rop, "override_camerares", True)
-    _try_set(rop, "res1", int(width))
-    _try_set(rop, "res2", int(height))
+        obj = hou.node("/obj")
+        out = hou.node("/out")
+        cam = _owned_node(obj, _RENDER_CAMERA_NAME, "cam")
+        aim = _owned_node(obj, _RENDER_TARGET_NAME, "null")
+        rop = _owned_node(out, _RENDER_ROP_NAME, "opengl")
+        for infra in (cam, aim, proxy):
+            try:
+                infra.setDisplayFlag(False)
+            except Exception:
+                pass
+        # 创建 agent 节点可能改变 OBJ flags；渲染前立即还原用户现场。
+        _restore_obj_visibility(obj_visibility)
+        aim.parmTuple("t").set([float(center[0]), float(center[1]), float(center[2])])
 
-    if picture is None:
-        hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
-        picture = os.path.join(
-            hip, "render", f"dsh_view_{time.strftime('%H%M%S')}.png")
-
-    f = hou.frame() if frame is None else float(frame)
-    r = render_frame(rop, picture=picture, frame=f)
-    check = None
-    if r.get("file_bytes"):
+        focal, aperture = 50.0, 41.4214
         try:
-            check = render_check(r["output"])
-        except Exception as e:
-            check = {"error": str(e)}
-    return {
-        "target": target.path(),
-        "camera": cam.path(),
-        "rop": rop.path(),
-        "output": r["output"],
-        "frame": f,
-        "file_bytes": r["file_bytes"],
-        "errors": r["errors"],
-        "framing": {
-            "center": [float(x) for x in center],
-            "size": float(size),
-            "dist": round(float(dist), 3),
-        },
-        "check": check,
-    }
+            focal = float(cam.parm("focal").eval())
+            aperture = float(cam.parm("aperture").eval())
+        except Exception:
+            pass
+        fov_h = 2.0 * math.atan(aperture / (2.0 * focal))
+        fov_v = 2.0 * math.atan(math.tan(fov_h / 2.0) * float(height) / float(width))
+        fov = min(fov_h, fov_v)
+        dist = (max(size, 1e-3) / 2.0) / math.tan(fov / 2.0) / coverage
+        if framing == "detail":
+            dist *= 0.55
+
+        if isinstance(direction, str):
+            named = _NAMED_DIRECTIONS.get(direction.strip().lower())
+            if named is None:
+                raise ValueError(
+                    f"direction 收到未知名称 {direction!r}；可用："
+                    f"{sorted(_NAMED_DIRECTIONS)} 或三分量向量 [x, y, z]"
+                )
+            direction = named
+        d = hou.Vector3(*[float(x) for x in direction])
+        if d.length() < 1e-6:
+            raise ValueError(f"direction 不能是零向量：{direction!r}")
+        d = d.normalized()
+        eye = center + d * dist
+        cam.parmTuple("t").set([float(eye[0]), float(eye[1]), float(eye[2])])
+        if not _try_set(cam, "lookat", aim.path()):
+            up = hou.Vector3(0, 1, 0)
+            fwd = (center - eye).normalized()
+            right = fwd.cross(up).normalized()
+            up2 = right.cross(fwd).normalized()
+            cam.setWorldTransform(hou.Matrix4((
+                right[0], right[1], right[2], 0.0,
+                up2[0], up2[1], up2[2], 0.0,
+                -fwd[0], -fwd[1], -fwd[2], 0.0,
+                eye[0], eye[1], eye[2], 1.0,
+            )))
+
+        # OpenGL ROP 完全拥有自己的对象/灯光/颜色设置，不消费用户 display/light。
+        settings = {
+            "camera": cam.path(),
+            "vobjects": proxy.path(),
+            "forceobjects": proxy.path(),
+            "excludeobjects": f"{cam.path()} {aim.path()}",
+            "alights": "",
+            "forcelights": "",
+            "excludelights": "*",
+            "shadingmode": "smooth",
+            "usegeocolor": True,
+            "colorcorrect": "none",
+            "gamma": 1.0,
+            "tres": True,
+            "override_camerares": True,
+            "res1": int(width),
+            "res2": int(height),
+        }
+        applied = {name: _try_set(rop, name, value) for name, value in settings.items()}
+
+        if picture is None:
+            hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
+            frame_tag = str(f).replace("-", "m").replace(".", "p")
+            picture = os.path.join(
+                hip, "render", f"dsh_view_{time.time_ns()}_f{frame_tag}.png")
+
+        rendered = render_frame(rop, picture=picture, frame=f)
+        check = None
+        if rendered.get("file_bytes"):
+            try:
+                check = render_check(rendered["output"])
+            except Exception as error:
+                check = {"error": str(error)}
+        after = _geometry_fingerprint(target, f)
+        proxy_after = _geometry_fingerprint(proxy_out, f)
+        stale = before["signature"] != after["signature"]
+        proxy_stale = proxy_before["signature"] != proxy_after["signature"]
+        result_payload = {
+            "target": target.path(),
+            "resolved_from": _resolve(node).path(),
+            "proxy": proxy.path(),
+            "proxy_output": proxy_out.path(),
+            "camera": cam.path(),
+            "rop": rop.path(),
+            "output": rendered["output"],
+            "frame": f,
+            "file_bytes": rendered["file_bytes"],
+            "errors": rendered["errors"],
+            "warnings": list(dict.fromkeys(before["warnings"] + proxy_before["warnings"])),
+            "stale": stale or proxy_stale,
+            "source_fingerprint_before": before,
+            "source_fingerprint_after": after,
+            "proxy_signature_before": proxy_before["signature"],
+            "proxy_signature_after": proxy_after["signature"],
+            "framing": {
+                "mode": framing,
+                "frame": framing_f,
+                "coverage": coverage,
+                "center": [float(x) for x in center],
+                "size": float(size),
+                "dist": round(float(dist), 6),
+                "eye": [float(x) for x in eye],
+                "direction": [float(x) for x in d],
+                "source_signature": framing_fingerprint["signature"],
+            },
+            "rop_settings_applied": applied,
+            "check": check,
+        }
+        if resolution_note:
+            result_payload["note"] = resolution_note
+        if result_payload["stale"]:
+            result_payload["stale_reason"] = (
+                "target/proxy geometry changed during visual verification；"
+                "不要据此宣称成功，请重新检查并渲染"
+            )
+        return result_payload
+    finally:
+        restore_errors = _restore_obj_visibility(obj_visibility)
+        restore_errors.extend(_restore_selection(selection))
+        if proxy is not None:
+            try:
+                proxy.setDisplayFlag(False)
+            except Exception as error:
+                restore_errors.append(f"{proxy.path()}: {error}")
+            # 空闲 proxy 不长期引用用户节点；下一次 render_view 会重新绑定显式 SOP。
+            try:
+                source = proxy.node("source")
+                if source is not None and source.parm("objpath1") is not None:
+                    source.parm("objpath1").set("")
+                    last_target = target.path()
+                    last_frame = result_payload.get("frame") if result_payload else f
+                    last_output = result_payload.get("output") if result_payload else None
+                    proxy.setUserData("dsh_render_state", "idle")
+                    proxy.setUserData("dsh_last_target", last_target)
+                    proxy.setUserData("dsh_last_frame", str(last_frame))
+                    if last_output:
+                        proxy.setUserData("dsh_last_output", str(last_output))
+                    source.setComment(
+                        "Temporary render_view source; objpath1 is bound only while rendering "
+                        "and cleared afterward.\n"
+                        f"Last target: {last_target}\nLast frame: {last_frame}"
+                    )
+            except Exception as error:
+                restore_errors.append(f"{proxy.path()}/source: {error}")
+        if result_payload is not None:
+            result_payload["user_state_restored"] = not restore_errors
+            if restore_errors:
+                result_payload["restore_errors"] = restore_errors

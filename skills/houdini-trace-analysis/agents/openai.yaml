@@ -1,0 +1,4 @@
+interface:
+  display_name: "Houdini Trace Analysis"
+  short_description: "Audit Houdini agent traces and evolve the verb vocabulary"
+  default_prompt: "Use $houdini-trace-analysis to audit the latest Houdini agent trace and recommend evidence-backed workflow and tool changes."
