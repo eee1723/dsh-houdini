@@ -103,7 +103,7 @@ def show_webview() -> str:
 
     if _window is None:
         win = QWidget()
-        win.setWindowTitle("dsh")
+        win.setWindowTitle("DSH-Houdini")
         view = QWebEngineView()
         # 每次整页加载后注入性能修复 CSS（SPA 路由切换不重载页面，注入一次生效）。
         view.loadFinished.connect(lambda _ok: view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS))

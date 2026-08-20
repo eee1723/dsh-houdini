@@ -132,7 +132,7 @@ dsh web
 
 ## 一键启动（Houdini 菜单）
 
-`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等前端就绪时显示可取消的加载动画对话框（前端重启与端口探测在 worker 线程，不卡 GUI）；辅助进程全部隐藏控制台窗口，状态只输出到 Houdini 控制台。
+`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等待前端时显示 `环境 → 插件 → 前端 → 服务 → 界面` 分阶段百分比、耗时与当前动作；90 秒后提示检查网络，10 分钟仍未监听则停止并提供日志入口，不再无限循环。前端重启与端口探测在 worker 线程，不阻塞 GUI。
 
 用 Houdini package 安装（给顶部菜单栏追加 `dsh` 菜单，同时通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`——不用 `pythonX.Ylibs` 目录约定是因为 Houdini 只自动加载匹配自身 Python 版本的目录：H21=3.11、H22=3.13，而本插件是纯 Python、与版本无关）。脚本会把本机仓库的绝对路径烘焙进 package 文件（Houdini package 的相对路径不按 package 文件位置解析，必须用绝对路径），并自动装入检测到的**每个** Houdini 版本的 pref 目录（package 按版本隔离，H21/H22 各装一份）：
 
@@ -144,7 +144,7 @@ python houdini/install.py
 
 > ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
 
-重启 Houdini 后，菜单栏出现 `dsh` → `启动 / 重启 dsh`。前端默认用 `npx --yes @deepseek-ai/dsh web`（即 `--profile web`，不再传 `--patch`，首次会拉取已发布的 CLI）；想改用本机固定安装，把 `dsh_launcher.py` 顶部 `SHELL` 设为 `False` 并填 `DSH_BIN`（`NODE` 会自动取 PATH 里的 `node`）。
+重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动）；`Version & Diagnostics...` 显示插件/Git/DSH 缓存/端口状态，提供 `Restart Services`、更新检查和日志入口。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端默认用 `npx --yes @deepseek-ai/dsh web`（即 `--profile web`，不再传 `--patch`，首次会拉取 CLI，之后复用 npm 缓存）。临时验证指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；注意这只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
 
 > ⚠️ 点这个按钮会杀掉当前 dsh 会话（前端进程重启），请在新 UI 里继续对话。
 
@@ -162,7 +162,7 @@ dsh-houdini 是**插件（能力层）**，挂到 **agent preset（模式层）*
 ```sh
 npm run build
 dsh plugin --profile web add E:/dsh-houdini            # pnpm link，让包名可解析（client 半依赖）
-# 把 presets/houdini/ 复制到 ~/.dsh/.agent-presets/houdini/（仅首次；之后每次点 dsh 菜单自动同步）
+# 把 presets/houdini/ 复制到 ~/.dsh/.agent-presets/houdini/（仅首次；之后从 DSH-Houdini 菜单启动时自动同步）
 dsh web                                                 # 起前端（profile 模式）
 ```
 

@@ -6,9 +6,9 @@ Single action: restart BOTH ends to pick up code changes, then open the UI.
      dsh_bridge / dsh_hou_helpers → start), so the latest Python helpers are live
   2. restart the dsh web frontend (kill the node process on :3081 → relaunch),
      so the latest compiled plugin (lib/) is live
-  3. WAIT until the frontend listens on :3081 (GUI: cancellable progress
-     dialog; a cold npx cache downloads the whole dsh CLI and takes minutes),
-     then open the embedded web UI (dsh_webview), falling back to the browser
+  3. WAIT until the frontend listens on :3081 (GUI: staged percentage dialog;
+     a cold npx cache downloads the whole dsh CLI and takes minutes),
+     then open the embedded web UI (dsh_webview); external browser fallback is disabled
 
 This is the dev-loop button: click it after `npm run build` or after editing
 any Houdini-side Python and both ends refresh without restarting Houdini.
@@ -61,12 +61,14 @@ FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
 # overlay is retired: it cannot be discovered as a package for the client half.)
 
 # How to boot the dsh web frontend.
-#   * Default (SHELL=True): `npx --yes @deepseek-ai/dsh` — portable, npx fetches
-#     the published CLI on first run.
+#   * Default (SHELL=True): use the published npm package and its normal npx
+#     cache. Set DSH_HOUDINI_DSH_SPEC to test a specific CLI release without
+#     editing this file (for example @deepseek-ai/dsh@0.1.0-rc.7).
 #   * To pin a local install instead, set SHELL=False and set DSH_BIN to your
 #     local dsh CLI's bin.js (NODE falls back to `node` on PATH).
 SHELL = True
-FRONTEND_SHELL_CMD = 'npx --yes @deepseek-ai/dsh web --port {port}'
+DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", "@deepseek-ai/dsh")
+FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port}'
 
 # npm cache for npx. The default cache is write-blocked on sandboxed machines
 # (EPERM), so point npm at a project-local cache — works everywhere.
@@ -123,7 +125,7 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REQUIRED_PACKAGES = ["@deepseek-ai/schemastery", "@deepseek-ai/dsh-tools"]
 
 
-def ensure_dependencies() -> str:
+def ensure_dependencies(on_install=None) -> str:
     """Make sure the plugin's runtime deps are resolvable from node_modules."""
     nm = os.path.join(_PROJECT_ROOT, "node_modules")
     restored = []
@@ -141,6 +143,9 @@ def ensure_dependencies() -> str:
         if not os.path.isdir(os.path.join(nm, *pkg.split("/")))
     ]
     if missing:
+        if on_install is not None:
+            on_install(missing)
+        failure_output = ""
         try:
             proc = subprocess.run(
                 "npm install --no-audit --no-fund --loglevel=error",
@@ -149,9 +154,22 @@ def ensure_dependencies() -> str:
                 env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
             )
             ok = proc.returncode == 0
+            if not ok:
+                raw = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
+                failure_output = raw.decode("utf-8", errors="replace")
         except Exception:
             ok = False
+            failure_output = traceback.format_exc()
         if not ok:
+            try:
+                with open(FRONTEND_LOG, "ab") as log:
+                    diagnostic = (
+                        "\n[dsh-houdini] plugin dependency restore failed\n"
+                        + failure_output[-12000:] + "\n"
+                    )
+                    log.write(diagnostic.encode("utf-8", errors="replace"))
+            except Exception:
+                pass
             return "dependency restore FAILED (missing: " + ", ".join(missing) + ")"
         restored.extend(missing)
     if restored:
@@ -272,7 +290,9 @@ def start_frontend(workspace_dir: str | None = None) -> str:
     cwd = workspace_dir or _PROJECT_ROOT
 
     if SHELL:
-        cmd: list[str] | str = FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT)
+        cmd: list[str] | str = FRONTEND_SHELL_CMD.format(
+            port=FRONTEND_PORT, spec=DSH_SPEC,
+        )
     else:
         if not NODE or not os.path.exists(NODE) or not DSH_BIN or not os.path.exists(DSH_BIN):
             return (
@@ -302,30 +322,35 @@ def start_frontend(workspace_dir: str | None = None) -> str:
     return f"frontend starting on {FRONTEND_URL} (workspace: {cwd}; log: {FRONTEND_LOG})"
 
 
-def open_browser() -> str:
-    webbrowser.open(FRONTEND_URL)
-    return f"opened {FRONTEND_URL}"
-
-
 def open_ui() -> str:
-    """Open the embedded web UI; fall back to the default browser."""
+    """Open only the embedded web UI; never launch an external browser."""
     _module_path_on_syspath()
     try:
         import dsh_webview
         return dsh_webview.show_webview()
-    except Exception:
-        return open_browser()
+    except Exception as exc:
+        message = f"Could not open the embedded DSH workspace: {exc}"
+        _report(message)
+        try:
+            hou.ui.displayMessage(
+                message + "\nOpen DSH-Houdini > Version & Diagnostics to inspect the log.",
+                severity=hou.severityType.Error,
+                title="DSH-Houdini",
+            )
+        except Exception:
+            pass
+        return message
 
 
 # --- wait-for-readiness ------------------------------------------------------
 
 # A first-ever launch downloads the whole dsh CLI into NPM_CACHE and can take
 # many minutes; opening the UI before the port listens shows
-# ERR_CONNECTION_REFUSED. There is deliberately NO time cap on the wait: the
-# GUI dialog's cancel button is the escape hatch, and both paths bail out as
-# soon as the frontend process dies without ever listening.
+# ERR_CONNECTION_REFUSED. The external npm/npx process can hang on a broken
+# network without exiting, so cap the wait at a diagnosable terminal state.
 FRONTEND_WAIT_INTERVAL = 0.5     # seconds (headless poll cadence)
-DIALOG_TICK_MS = 30              # GUI tick — drives the progress sweep smoothly
+FRONTEND_WAIT_TIMEOUT = 600      # seconds; cold installs normally finish sooner
+DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refresh
 
 # Keeps the spawned frontend process / QTimer / QProgressDialog alive across
 # event-loop turns (GC would kill them).
@@ -337,28 +362,87 @@ def _report(detail: str) -> None:
     print("[dsh-houdini] " + detail.replace("\n", "; "))
 
 
+def _set_startup_state(
+    state: dict, progress: int, phase: int, title: str, message: str,
+) -> None:
+    """Publish one startup snapshot from the worker thread."""
+    state.update(
+        progress=max(0, min(100, progress)),
+        phase=phase,
+        title=title,
+        message=message,
+    )
+
+
+def _terminate_pending_frontend() -> None:
+    """Stop only the frontend process tree spawned by this launch attempt."""
+    proc = _PENDING.get("proc")
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True, timeout=10,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        else:
+            proc.terminate()
+    except Exception:
+        pass
+
+
 def _start_and_wait_frontend(state: dict) -> None:
     """Worker thread: restart the frontend, then poll until it listens or dies.
 
     MUST run off the main thread: on this machine a connect() to a closed
     localhost port blocks until the timeout (~300ms — no instant RST), so
     probing on the GUI thread freezes Houdini's event loop between ticks.
-    Writes into `state`: "detail" (restart/start status lines), then "result"
-    as "ready" / "dead" / "error". Exits early when state["canceled"] is set.
+    Writes stage snapshots and `result` (ready/dead/timeout/error) into state.
+    Exits early when state["canceled"] is set.
     """
     try:
-        state["detail"] = "\n".join([
-            ensure_dependencies(),
-            restart_frontend(),
-            start_frontend(state.get("frontend_cwd")),
-        ])
+        details = []
+        _set_startup_state(state, 12, 1, "Checking plugin environment", "Verifying local dependencies")
+
+        def on_install(missing: list[str]) -> None:
+            _set_startup_state(
+                state, 18, 1, "Installing plugin dependencies",
+                "The first install may take several minutes: " + ", ".join(missing),
+            )
+
+        dependency_status = ensure_dependencies(on_install)
+        details.append(dependency_status)
+        if "FAILED" in dependency_status:
+            raise RuntimeError(dependency_status)
+
+        _set_startup_state(state, 32, 2, "Stopping previous frontend", f"Releasing port {FRONTEND_PORT}")
+        details.append(restart_frontend())
+
+        _set_startup_state(
+            state, 48, 2, "Starting DSH", f"Creating frontend process: {DSH_SPEC}",
+        )
+        details.append(start_frontend(state.get("frontend_cwd")))
+        state["detail"] = "\n".join(details)
         proc = _PENDING.get("proc")
+        if proc is None:
+            raise RuntimeError("frontend process was not created")
+
+        started_at = time.monotonic()
+        _set_startup_state(
+            state, 62, 3, "Waiting for DSH service", f"Connecting to {FRONTEND_URL}",
+        )
         while not state["canceled"]:
             if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+                _set_startup_state(state, 90, 4, "Opening Houdini workspace", "Service is ready")
                 state["result"] = "ready"
                 return
             if proc is not None and proc.poll() is not None:
                 state["result"] = "dead"  # died without ever listening
+                return
+            if time.monotonic() - started_at >= FRONTEND_WAIT_TIMEOUT:
+                state["result"] = "timeout"
+                _terminate_pending_frontend()
                 return
             time.sleep(FRONTEND_WAIT_INTERVAL)
     except Exception:
@@ -372,15 +456,14 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     The frontend restart AND the port polling run on a worker thread (the
     connect-to-closed-port probe blocks ~300ms on this machine — on the GUI
     thread it froze the dialog animation and even window dragging). The main
-    thread only spins the loading animation and checks a state flag. No time
-    cap: cancel is the escape hatch; both paths stop waiting the moment the
-    spawned frontend process exits without ever listening.
+    thread only refreshes the staged progress snapshot and checks a state flag.
+    A timeout prevents a stalled npm/network operation from spinning forever.
 
     frontend_cwd = 前端进程 cwd（= dsh 默认工作区根），由调用方在主线程经
     _hip_dir() 解析（worker 线程禁止碰 hou）。
     """
     try:
-        from hutil.Qt import QtCore, QtGui, QtWidgets
+        from hutil.Qt import QtCore, QtWidgets
         parent = hou.qt.mainWindow()
     except Exception:
         # hython: no Qt — run the same worker inline, then open the browser.
@@ -397,62 +480,117 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
             )
         return
 
-    class _Spinner(QtWidgets.QWidget):
-        """无限循环的圆弧旋转加载动画（QPainter 手绘，按 tick 推进角度）。"""
-
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self._angle = 0
-            self.setFixedSize(30, 30)
-
-        def advance(self, step: int = 10) -> None:
-            self._angle = (self._angle + step) % 360
-            self.update()
-
-        def paintEvent(self, _event) -> None:  # noqa: N802 (Qt naming)
-            painter = QtGui.QPainter(self)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
-            pen = QtGui.QPen(QtGui.QColor("#5b9dff"))
-            pen.setWidthF(3.0)
-            pen.setCapStyle(QtCore.Qt.RoundCap)
-            painter.setPen(pen)
-            painter.drawArc(self.rect().adjusted(3, 3, -3, -3), -self._angle * 16, 270 * 16)
-            painter.end()
-
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("dsh-houdini")
     dialog.setWindowModality(QtCore.Qt.NonModal)
-    dialog.setMinimumWidth(400)
+    dialog.setMinimumWidth(500)
     dialog.setStyleSheet(
-        "QDialog { background: #26272b; }"
-        "QLabel#main { color: #f0f0f0; font-size: 15px; font-weight: 700; }"
-        "QLabel#sub { color: #9a9ba2; font-size: 12px; }"
-        "QPushButton { color: #e8e8e8; background: #3a3b41; border: none;"
-        " border-radius: 4px; padding: 5px 18px; }"
-        "QPushButton:hover { background: #4a4b52; }"
+        "QDialog { background: #23262b; }"
+        "QLabel#eyebrow { color: #ff8a2a; font: 700 10px 'Segoe UI'; }"
+        "QLabel#main { color: #eef0f2; font: 600 17px 'Segoe UI'; }"
+        "QLabel#percent { color: #eef0f2; font: 700 28px 'Consolas'; }"
+        "QLabel#sub { color: #a9afb7; font: 12px 'Segoe UI'; }"
+        "QLabel#pipeline { color: #7f8791; font: 11px 'Segoe UI'; }"
+        "QLabel#elapsed { color: #7f8791; font: 11px 'Consolas'; }"
+        "QProgressBar { background: #34383f; border: none; border-radius: 3px;"
+        " height: 6px; text-align: center; color: transparent; }"
+        "QProgressBar::chunk { background: #ff8a2a; border-radius: 3px; }"
+        "QPushButton { color: #e8eaed; background: #373b42; border: 1px solid #474c55;"
+        " border-radius: 4px; padding: 6px 16px; }"
+        "QPushButton:hover { background: #444952; }"
     )
-    main_label = QtWidgets.QLabel("正在启动 dsh 前端…")
+
+    eyebrow = QtWidgets.QLabel("DSH / HOUDINI  STARTUP")
+    eyebrow.setObjectName("eyebrow")
+    main_label = QtWidgets.QLabel("Preparing startup")
     main_label.setObjectName("main")
-    sub_label = QtWidgets.QLabel(
-        "首次运行需下载 dsh CLI，可能需要几分钟。\n"
-        "随时可以取消，稍后在浏览器打开 " + FRONTEND_URL
-    )
+    percent_label = QtWidgets.QLabel("08%")
+    percent_label.setObjectName("percent")
+    header = QtWidgets.QHBoxLayout()
+    header.addWidget(main_label)
+    header.addStretch(1)
+    header.addWidget(percent_label)
+
+    progress_bar = QtWidgets.QProgressBar()
+    progress_bar.setRange(0, 100)
+    progress_bar.setValue(8)
+    progress_bar.setTextVisible(False)
+    pipeline_label = QtWidgets.QLabel()
+    pipeline_label.setObjectName("pipeline")
+
+    def pipeline_text(active: int) -> str:
+        names = ["ENV", "PLUGIN", "FRONTEND", "SERVICE", "WORKSPACE"]
+        rendered = []
+        for index, name in enumerate(names):
+            color = "#ff8a2a" if index == active else ("#d4d8dd" if index < active else "#707781")
+            marker = "[x]" if index <= active else "[ ]"
+            rendered.append(f'<span style="color:{color}">{marker} {name}</span>')
+        return "&nbsp;&nbsp;--&nbsp;&nbsp;".join(rendered)
+
+    pipeline_label.setText(pipeline_text(0))
+    sub_label = QtWidgets.QLabel("Presets synced and Houdini bridge started")
     sub_label.setObjectName("sub")
-    sub_label.setAlignment(QtCore.Qt.AlignCenter)
-    spinner = _Spinner(dialog)
-    cancel_btn = QtWidgets.QPushButton("取消")
+    sub_label.setWordWrap(True)
+    elapsed_label = QtWidgets.QLabel("00:00")
+    elapsed_label.setObjectName("elapsed")
+    log_btn = QtWidgets.QPushButton("Open Log")
+    log_btn.setVisible(False)
+    cancel_btn = QtWidgets.QPushButton("Stop")
+
+    buttons = QtWidgets.QHBoxLayout()
+    buttons.addWidget(elapsed_label)
+    buttons.addStretch(1)
+    buttons.addWidget(log_btn)
+    buttons.addWidget(cancel_btn)
     layout = QtWidgets.QVBoxLayout(dialog)
-    layout.setContentsMargins(16, 18, 16, 16)
-    layout.setSpacing(8)
-    layout.addWidget(spinner, alignment=QtCore.Qt.AlignCenter)
-    layout.addWidget(main_label, alignment=QtCore.Qt.AlignCenter)
-    layout.addWidget(sub_label, alignment=QtCore.Qt.AlignCenter)
-    layout.addWidget(cancel_btn, alignment=QtCore.Qt.AlignRight)
+    layout.setContentsMargins(22, 20, 22, 18)
+    layout.setSpacing(11)
+    layout.addWidget(eyebrow)
+    layout.addLayout(header)
+    layout.addWidget(progress_bar)
+    layout.addWidget(pipeline_label)
+    layout.addWidget(sub_label)
+    layout.addSpacing(4)
+    layout.addLayout(buttons)
     dialog.show()
 
-    # 主线程只转动画 + 查标志位；前端重启和端口探测全在 worker 线程。
-    state: dict = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
-    cancel_btn.clicked.connect(lambda: state.update(canceled=True))
+    # 主线程只刷新 worker 快照；前端重启和端口探测全在 worker 线程。
+    state: dict = {
+        "canceled": False,
+        "result": None,
+        "detail": "",
+        "frontend_cwd": frontend_cwd,
+        "progress": 8,
+        "phase": 0,
+        "title": "Preparing startup",
+        "message": "Presets synced and Houdini bridge started",
+    }
+    launched_at = time.monotonic()
+
+    def open_log() -> None:
+        try:
+            if os.name == "nt":
+                os.startfile(FRONTEND_LOG)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open("file://" + os.path.abspath(FRONTEND_LOG))
+        except Exception as exc:
+            _report(f"cannot open log: {exc}; {FRONTEND_LOG}")
+
+    def cancel() -> None:
+        state["canceled"] = True
+        _terminate_pending_frontend()
+
+    def cleanup_dialog(_code: int) -> None:
+        # Closing the window while startup is still running means cancel.
+        # A successful close must leave the now-serving frontend alive.
+        if state.get("result") != "ready":
+            state["canceled"] = True
+            _terminate_pending_frontend()
+        _PENDING.clear()
+
+    log_btn.clicked.connect(open_log)
+    cancel_btn.clicked.connect(cancel)
+    dialog.finished.connect(cleanup_dialog)
     threading.Thread(target=_start_and_wait_frontend, args=(state,), daemon=True).start()
 
     def finish(status: str) -> None:
@@ -461,21 +599,55 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         _PENDING.clear()
         _report(detail + "\n" + state["detail"] + "\n" + status)
 
+    def fail(message: str) -> None:
+        timer.stop()
+        main_label.setText("Startup failed")
+        sub_label.setText(message + "\nOpen the log to inspect Node, npm, network, or DSH configuration errors.")
+        progress_bar.setStyleSheet(
+            "QProgressBar::chunk { background: #e85d55; border-radius: 3px; }"
+        )
+        log_btn.setVisible(True)
+        cancel_btn.setText("Close")
+        try:
+            cancel_btn.clicked.disconnect(cancel)
+        except Exception:
+            pass
+        cancel_btn.clicked.connect(dialog.close)
+        _report(
+            detail + "\n" + state.get("detail", "") + "\n" + message
+            + "\nlog: " + FRONTEND_LOG
+        )
+
     def tick() -> None:
-        spinner.advance()
+        elapsed = int(time.monotonic() - launched_at)
+        elapsed_label.setText(f"{elapsed // 60:02d}:{elapsed % 60:02d}")
+        progress = state.get("progress", 8)
+        progress_bar.setValue(progress)
+        percent_label.setText(f"{progress:02d}%")
+        main_label.setText(state.get("title", "Starting"))
+        pipeline_label.setText(pipeline_text(state.get("phase", 0)))
+        message = state.get("message", "")
+        if elapsed >= 90 and state.get("phase") == 3:
+            message += "\nThis is taking longer than expected. Check the network; startup stops after 10 minutes."
+        sub_label.setText(message)
         if state["canceled"]:
             timer.stop()
             dialog.close()
             _PENDING.clear()
-            print(f"[dsh-houdini] wait cancelled; frontend may still come up on {FRONTEND_URL}")
+            print("[dsh-houdini] startup cancelled")
             return
         result = state["result"]
         if result == "ready":
+            progress_bar.setValue(100)
+            percent_label.setText("100%")
             finish(open_ui())
         elif result == "dead":
-            finish(f"前端进程已退出且未监听 {FRONTEND_URL}，请查看日志：\n{FRONTEND_LOG}")
+            fail(f"The frontend exited before listening on {FRONTEND_URL}")
+        elif result == "timeout":
+            fail("DSH did not become ready within 10 minutes. This startup was stopped.")
         elif result == "error":
-            finish(f"前端启动等待线程出错：\n{state.get('error', 'unknown')}")
+            error_tail = state.get("error", "unknown").splitlines()[-1]
+            fail("Startup error: " + error_tail)
 
     timer = QtCore.QTimer(parent)
     timer.timeout.connect(tick)
@@ -499,6 +671,26 @@ def launch() -> None:
     ])
     print("[dsh-houdini] " + detail.replace("\n", "; "))
     open_ui_when_ready(detail, _hip_dir())
+
+
+def open_workspace() -> None:
+    """Open the embedded workspace without restarting a healthy frontend.
+
+    If the web service is absent, fall back to the full launch path. Keeping
+    "open" separate from "restart" avoids destroying a live dsh session just
+    because the user wants to bring its Houdini window to the front.
+    """
+    if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
+        launch()
+        return
+
+    details = [sync_presets()]
+    if _port_open(BRIDGE_HOST, BRIDGE_PORT):
+        details.append(f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}")
+    else:
+        details.append(restart_bridge())
+    status = open_ui()
+    _report("\n".join(details + [status]))
 
 
 if __name__ == "__main__":

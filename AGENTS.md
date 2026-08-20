@@ -7,7 +7,7 @@ dsh-houdini：DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运�
 ## 怎么跑
 
 - 构建：`npm install && npm run build`（先跑 `tools/gen-client-catalog.mjs` 把词表目录从 `tool-design.md` 注入 client.js，再 tsc → `lib/`；`lib/` 是产物且已 gitignore，别手改）。
-- 启动：Houdini 菜单 `dsh` → `启动 / 重启 dsh`（= `dsh_launcher.launch()`：同步 preset → 重启桥 → 重启前端 → 开内嵌 UI）。
+- 启动：Houdini 菜单 `DSH-Houdini` → `Open Workspace`（健康服务只唤起内嵌 UI）或 `Version & Diagnostics...`；完整重启通过诊断面板的 `Restart Services`（= `dsh_launcher.launch()`：同步 preset → 重启桥 → 重启前端 → 开内嵌 UI）。
 - 验证：Web UI 新建会话选「Houdini 模式」，发「用 houdini_query 列出 /obj 下所有节点」。
 - 测试：`houdini/tests/`（Python 侧回归，如 `regress_verbs.py`）。
 - trace 复盘：`node tools/trace-report.mjs`（缺省取最新 session）→ 单文件 HTML 到 `tools/out/`：词表目录（解析 `tool-design.md`）+ 真实时序调用线 + 裸 hou/失败分析。
@@ -20,8 +20,8 @@ TypeScript（ESM，tsc 直出无 bundler），Cordis 插件形状 `{name, inject
 ## 目录与约定
 
 - `src/` → `lib/`：host 插件（工具定义 + systemPrompt guidance + HTTP client）。
-- `houdini/python3.11libs/`：桥（`dsh_bridge.py`）、动词词表（`dsh_hou_helpers.py`）、一键启动（`dsh_launcher.py`）、内嵌 UI（`dsh_webview.py`）。
-- `presets/houdini/`、`presets/houdini-dev/`：agent preset 模板；点 dsh 菜单时自动同步到 `~/.dsh/.agent-presets/`。
+- `houdini/python3.11libs/`：桥（`dsh_bridge.py`）、动词词表（`dsh_hou_helpers.py`）、启动/进度（`dsh_launcher.py`）、版本诊断（`dsh_manager.py`）、内嵌 UI（`dsh_webview.py`）。
+- `presets/houdini/`、`presets/houdini-dev/`：agent preset 模板；从 DSH-Houdini 菜单启动时自动同步到 `~/.dsh/.agent-presets/`。
 - `tools/trace-report.mjs`：trace 复盘报告生成器（session.jsonl.zstd → 单文件 HTML），产物在 `tools/out/`（已 gitignore）。
 - `tools/catalog-lib.mjs` + `tools/gen-client-catalog.mjs`：词表目录解析（唯一实现）+ 构建期注入 client.js 标记区；改动词后跑 `npm run build` 刷新视图目录。
 - `skills/houdini-trace-analysis/`：随插件经 `ctx.skills.register()` 发布的 trace 审计 skill；`references/known-patterns.md` 随新 trace 追加跨任务证据。

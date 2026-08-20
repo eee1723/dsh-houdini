@@ -60,7 +60,7 @@ python houdini/install.py
 
 - 预览不写文件：`python houdini/install.py --print`
 - 指定目录：`python houdini/install.py --packages-dir <dir>`
-- **重开 Houdini** 后，菜单栏出现顶级 `dsh` 菜单（`dsh` → `启动 / 重启 dsh`）。
+- **重开 Houdini** 后，菜单栏出现顶级 `DSH-Houdini` 菜单。
 
 > 新装/切换 Houdini 大版本后要**重跑本脚本**（H21 读 `houdini21.0/packages`、H22 读 `houdini22.0/packages`）。
 
@@ -109,8 +109,10 @@ Copy-Item -Recurse -Force presets\houdini-dev "$env:USERPROFILE\.dsh\.agent-pres
 
 ## 6. 启动 + 选模式
 
-1. 打开 Houdini，点菜单 **`dsh` → `启动 / 重启 dsh`**（= 同步 preset + 起桥 + 起前端 + 等前端就绪后开内嵌 UI；
-   首次运行 npx 需拉取 CLI，加载动画对话框会转几分钟）。
+1. 打开 Houdini，点 **`DSH-Houdini` → `Open Workspace`**。服务已运行时只唤起内嵌窗口；
+   未运行时会同步 preset、启动桥和前端，显示阶段百分比与耗时。需要加载新代码或切换
+   当前 HIP 工作区时打开 **`Version & Diagnostics...`**，点击 **`Restart Services`**。
+   启动器不会打开外部浏览器。
 2. 在 Web UI **新建会话**时，模式选择器里选 **「Houdini 模式」**。
 
 > 前端用 `npx @deepseek-ai/dsh web --port 3081`（profile 模式，无 `--patch`）；
@@ -135,11 +137,37 @@ Copy-Item -Recurse -Force presets\houdini-dev "$env:USERPROFILE\.dsh\.agent-pres
 ## 8. 日常更新（改代码后）
 
 ```sh
-git pull
+git pull --ff-only
+npm install
 npm run build
 ```
 
-然后点 Houdini 菜单 **「启动 / 重启 dsh」**（重载 bridge 的 Python + 重启前端）。
+`npm install` 只用于本仓库（不要用 pnpm），确保上游新增依赖也被安装。若本次更新改到
+`dsh_launcher.py`、Houdini package 或菜单文件，先重启一次 Houdini；普通 bridge/preset/
+前端改动通过 **`Version & Diagnostics...` → `Restart Services`** 重载。
+
+这里更新的是 **dsh-houdini 插件仓库**。普通使用不需要另行 clone 或定期 `git pull`
+DeepSeek Harness 源码仓库：启动器使用 npm 发布包，npx 会复用缓存并按 npm 的缓存
+新鲜度检查发布更新。它不保证每次启动都强制查 registry，也不等于完整依赖树 lockfile。
+
+检查 DSH 的稳定发布版和预发布版：
+
+```sh
+npm view @deepseek-ai/dsh version dist-tags --json
+```
+
+升级 DSH 时先在开发机通过环境变量指定目标版本（PowerShell 示例）：
+
+```powershell
+$env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
+```
+
+然后启动 Houdini，完成「Houdini 模式」建会话、`houdini_query`、`houdini_exec`、Trace
+视图回归。确认兼容后可以恢复默认 npm 通道；若部署必须固定根包，则把该环境变量写入
+机器启动环境。注意精确根包仍不会冻结 DSH 自身的 semver 子依赖。
+profile 中另装的第三方插件按需运行
+`npx --yes @deepseek-ai/dsh@<版本> plugin --profile web update`；本仓库通过 link 挂载，仍由
+`git pull && npm run build` 更新，不要在本仓库运行 pnpm。
 
 ---
 
@@ -166,4 +194,4 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini"
 | Houdini package（绝对路径） | `Documents/houdini*/packages/` | ❌ 重做第 3 步 |
 | 本地 preset | `~/.dsh/.agent-presets/houdini/` | ❌ 重做第 5 步 |
 | 构建产物 `lib/`、`node_modules/` | 本地（gitignore） | ❌ 重做第 2 步 |
-| Houdini 桥进程 | Houdini 进程内 | ❌ 点「启动 / 重启 dsh」 |
+| Houdini 桥进程 | Houdini 进程内 | ❌ 点 `Version & Diagnostics...` → `Restart Services` |

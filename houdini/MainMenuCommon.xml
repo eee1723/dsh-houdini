@@ -1,28 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  dsh-houdini: add a top-level "dsh" menu to Houdini's menu bar.
+  dsh-houdini: add a top-level "DSH-Houdini" menu to Houdini's menu bar.
 
   Install as a Houdini package: run `python houdini/install.py` once, then
   restart Houdini. The generated package adds this directory to HOUDINI_PATH
   (which supplies this menu) and python3.11libs to sys.path via PYTHONPATH
-  (which supplies dsh_launcher; PYTHONPATH is version-proof — H21 is Python
-  3.11, H22 is Python 3.13). The menu is ADDED to the built-in menu bar — it
+  (which supplies dsh_launcher; PYTHONPATH is version-proof: H21 is Python
+  3.11, H22 is Python 3.13). The menu is ADDED to the built-in menu bar; it
   does not replace it. Re-run install.py after upgrading Houdini: the package
   lives in the per-version pref dir (e.g. Documents/houdini22.0/packages).
 
-  The single menu item restarts BOTH ends (bridge + dsh web frontend) to pick
-  up code changes, then opens the embedded web UI — the dev-loop refresh button.
+  Opening a healthy workspace preserves its frontend/session. Restart controls
+  live in the diagnostics panel so the top-level menu stays compact.
 -->
 <mainMenu>
   <menuBar>
     <subMenu id="dsh_menu">
-      <label>dsh</label>
+      <label>DSH-Houdini</label>
 
-      <scriptItem id="dsh.launch">
-        <label>启动 / 重启 dsh</label>
+      <scriptItem id="dsh.open_workspace">
+        <label>Open Workspace</label>
         <scriptCode><![CDATA[
 import dsh_launcher
-dsh_launcher.launch()
+dsh_launcher.open_workspace()
+]]></scriptCode>
+      </scriptItem>
+
+      <scriptItem id="dsh.version_manager">
+        <label>Version &amp; Diagnostics...</label>
+        <scriptCode><![CDATA[
+import dsh_manager
+dsh_manager.show_version_manager()
 ]]></scriptCode>
       </scriptItem>
 

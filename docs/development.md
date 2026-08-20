@@ -15,7 +15,8 @@
 | 动词词表（bridge namespace） | ✅ | 39 个主目录动词 + 2 个 display 兼容入口 + `_resolve`（九域，§2.22） |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 扫描 → `advisory` 字段 + `hint:` 渲染（§2.8） |
-| launcher：preset 自动同步 + 无窗进程 + spinner + worker 等待 | ✅ | `dsh_launcher.py`（§2.8 / §3.2） |
+| launcher：preset 同步 + 分阶段百分比 + 超时/日志诊断 | ✅ | `dsh_launcher.py`（§2.23 / §3.2） |
+| 版本与诊断面板 | ✅ | `dsh_manager.py`（§2.24） |
 | Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
 | Houdini trace 审计 skill | ✅（§2.20） | `houdini-trace-analysis` + evidence JSON + 审计量表/模式库 |
 | plugin persona 中性化 | ✅ | GUIDANCE 只讲工具用法，persona 移入 preset |
@@ -409,7 +410,7 @@ vision-toolkit 只能读会话工作区内文件（`sessionWorkspace(exec)` =
 1. **launcher**：前端 cwd = `_hip_dir()`（当前 hip 目录；`untitled.hip`
    未保存 → 中立后备 `E:/dsh-houdini-workspace`（按需创建），再失败才回退
    项目根）。主线程解析后经 state 传给 worker 线程（hou 不碰 worker）。
-   点 dsh 菜单重启即重新对准当前 hip。
+   点 `DSH-Houdini → Version & Diagnostics... → Restart Services` 即重新对准当前 hip。
 2. **host 侧**（`tools.ts`）：exec/query 结果经 `withWorkspaceNote`——
    会话工作区 ≠ $HIP 时往 advisory 通道追加提示（复用 `hint:` 渲染，
    trace 视图/复盘报告自动可见）；`bridge.hipDir()` 60s 缓存，untitled
@@ -418,7 +419,7 @@ vision-toolkit 只能读会话工作区内文件（`sessionWorkspace(exec)` =
    写语义关键词时附警告（纯 advisory，逃生舱不硬拦）。坑：`open(` 不能
    算写关键词（读文件也用它，误报），可靠信号是 `.write`/`save` 等。
 4. **preset persona**：补「工作区 ≠ $HIP 时」的应对——别写仓库，请用户
-   点 dsh 菜单重 seed 或在 hip 目录工作区建会话。
+   点 `DSH-Houdini → Version & Diagnostics... → Restart Services` 重 seed 或在 hip 目录工作区建会话。
 
 **效果**：新会话默认落在 hip 目录工作区 → pwsh/fs 写仓库被 OS 级拒绝、
 vision 直接读 `$HIP` 截图、桥 exec 裸写仓库有 advisory。存量会话（仓库
@@ -445,7 +446,7 @@ vision 直接读 `$HIP` 截图、桥 exec 裸写仓库有 advisory。存量会�
 疑似改场景的裸 hou，真缺口走 `allow_raw="理由"` 豁免通道（豁免打印
 [gate] 行进 trace，每条豁免=一份带理由的词表缺口记录）。设计细节与开关
 方式见 `docs/tool-design.md`「raw-hou gate」节。hython 回归 19-22 覆盖
-（拦截/只读放行/豁免放行+留痕/拦疑似修改）。**实验用法**：点 dsh 菜单
+（拦截/只读放行/豁免放行+留痕/拦疑似修改）。**实验用法**：从 DSH-Houdini 菜单重启
 重启桥后，Python Shell `import dsh_bridge; dsh_bridge.set_raw_gate(True)`；
 观察豁免记录 → 补缺口（首个候选 `create_parm`）→ 逐步收紧。
 
@@ -674,6 +675,38 @@ center/size/dist 不同，21.1% pixel diff 混入相机漂移；视觉 A/B 又�
 - trace evidence 修复 skill catalog 缺失时误报空列表、记录真实 skill activations，
   并补 exact `save()` 与 mixed verb/raw mutation 检测。
 
+### 2.23 新机启动可观测性 + DSH 版本策略（2026-08-20）
+
+新电脑首次启动时，npx 冷下载、插件 `npm install`、端口等待原本共用一个无限 spinner；
+依赖恢复失败或前端命令未创建进程时还有继续轮询 3081 的路径，用户只能看到“永远加载”。
+
+本轮修复：
+
+- 启动面板改为 `环境 → 插件 → 前端 → 服务 → 界面` 五段管线，显示已完成阶段的
+  离散百分比、当前动作和真实耗时；npm 未提供下载字节进度，因此不伪造线性百分比。
+- worker 在依赖检查/安装、旧进程清理、进程创建、端口就绪时发布状态；依赖失败或
+  没创建出 frontend process 立即进入失败态。
+- 等待服务 90 秒提示网络诊断，600 秒停止本次进程树并显示“打开日志”；取消也停止
+  本轮创建的进程树，不再留下后台下载。
+- DSH 默认保留 `npx @deepseek-ai/dsh` 的 npm 发布通道和既有缓存；新增
+  `DSH_HOUDINI_DSH_SPEC` 环境变量用于指定待验证的 CLI 根包。2026-08-20 npm `latest`
+  为 rc.7、`next` 为 rc.8，本机 rc.7 已监听 3081 并返回 200。实测把已缓存的无版本 spec
+  改成 `@rc.7` 会创建新的 npx 缓存项并重新下载，且根包的同族子包仍按 semver 范围
+  解析到 rc.8，因此不伪称完整锁定；升级仍需整条 Houdini 链路回归。
+
+### 2.24 Houdini 菜单与版本诊断收敛（2026-08-20）
+
+- 顶级菜单从 `dsh` 改为 `DSH-Houdini`，并因 Houdini XML Unicode 标签兼容问题收敛为
+  两个纯 ASCII 子项：`Open Workspace`、`Version & Diagnostics...`。完整重启移动到
+  诊断面板的 `Restart Services` 按钮。
+- `open_workspace()` 在 3081 健康时只唤起 WebView，保留当前 dsh 会话；服务缺失才走
+  完整 launch。重新加载代码或切换 HIP 仍使用明确的重启动作。
+- `open_ui()` 移除系统浏览器 fallback：内嵌 WebView 失败时在 Houdini 报错并指向诊断页，
+  不再额外打开外部网页。
+- 新增 `dsh_manager.py` 原生非模态面板：插件版本/Git revision、DSH 启动规格与本机
+  npx 缓存、Bridge/Web 端口状态；只读检查 npm dist-tags 与 origin/main，支持复制安全
+  更新命令和打开 `.dsh-web.log`。版本入口不依赖 Web UI，启动失败时仍可用。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -713,6 +746,9 @@ GUI 下弹一个可取消的 `QProgressDialog` + `QTimer` 每 0.5s 轮询端口�
 修复：前端重启 + 端口轮询整体挪进 worker 线程（`_start_and_wait_frontend`），
 GUI 线程的 tick 只转动画 + 读标志位；`QProgressDialog` 同时换自绘 `QDialog` +
 QPainter 圆弧 spinner。
+
+**2026-08-20 三次修复（新机无限等待）**：上述“无时间上限”策略改为 600 秒上限；
+无限 spinner 改为阶段百分比面板，并为退出、超时、依赖失败提供明确错误态和日志入口。
 
 ---
 
@@ -841,7 +877,8 @@ QPainter 圆弧 spinner。
 | `houdini/tests/regress_hda_verbs.py` | HDA authoring 独立回归（不经过已知会触发 VEX 栈溢出的旧 t15） |
 | `houdini/tests/regress_scene_geometry_verbs.py` | scene/display/piece/frame/layout/diff/spare headless 回归 |
 | `houdini/tests/regress_visual_gui.py` | explicit SOP proxy、用户 display 漂移与状态恢复 GUI 回归 |
-| `houdini/python3.11libs/dsh_launcher.py` | 一键启动/重启 + preset 同步 + spinner 等待（worker 线程探测） |
+| `houdini/python3.11libs/dsh_launcher.py` | 打开/重启分流 + preset 同步 + 分阶段百分比/超时诊断（worker 线程探测） |
+| `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + npm/Git 只读更新检查 |
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + backdrop-filter 性能修复注入（§2.13） |
 | `docs/tool-design.md` | 设计宪法 |
 | `docs/development.md` | 本文：进度 + 卡点 |
