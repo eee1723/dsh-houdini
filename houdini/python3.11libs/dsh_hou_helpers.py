@@ -1,14 +1,18 @@
-"""dsh-houdini: 按 Tab Menu 语义创建 Houdini 节点。
+"""dsh-houdini: 按 Houdini 数据流与真实 Tab 语义操作/检查场景。
 
 解决两个问题：
 
-1. **通用初始化** —— 部分节点（如 ``copytopoints::2.0``）通过 Tab Menu 创建时，
+1. **通用初始化** —— 部分单节点（如 ``copytopoints::2.0``）通过 Tab Menu 创建时，
    shelf tool 脚本会做额外初始化（按初始化按钮、建配套节点、设参数等）。裸
    ``hou.Node.createNode`` 不会做这些。本模块用 ``toolutils.testTool`` 跑真实的
    shelf tool，完整保留初始化语义，且对未来 SideFX 改动脚本自动跟随——不为任何
    节点写死「按哪个按钮」。
 
-2. **永远最新版本** —— ``hou.preferredNodeType`` 实测不可靠（返回 None），这里枚举
+2. **真实菜单与 setup tool** —— node type 注册表不是用户菜单。parent-aware
+   ``search_tab_entries`` 排除 hidden/deprecated 和 builder mask 外类型；多节点
+   Karma Setup/Material Builder 走受限 ``tab_apply``，不压进单节点返回契约。
+
+3. **永远最新版本** —— ``hou.preferredNodeType`` 实测不可靠（返回 None），这里枚举
    ``nodeTypes()`` 取 ``::N`` 最大的版本，创建和自省共用同一解析。
 
 只依赖 ``hou`` / ``toolutils`` / 标准库，不导入项目 venv 任何包（进程边界）。
@@ -17,6 +21,8 @@
     geo = tab_create(hou.node('/obj'), 'geo', name='my_geo')
     cop = tab_create(geo, 'copytopoints', inputs=[box, points])
     search_tab_menu('sop', 'cone')     # 查不猜：列出匹配类型 + 最新版
+    search_tab_entries('/stage', 'karma')
+    tab_apply('/stage', 'lop_karma_setup')
 
 注意：``tab_create`` 返回 ``hou.Node``（供 agent 继续链式操作）；要回传结构化数据，
 请手动转 JSON（``__result__ = {'path': node.path()}``），不要直接把 hou 对象塞进
@@ -66,6 +72,16 @@ _CATEGORY_ALIASES = {
 }
 
 _VERSION_RE = re.compile(r"^(.*)::(\d+(?:\.\d+)*)$")
+
+# Tab tools execute arbitrary SideFX/user scripts. Start with the two deterministic,
+# network-local setup intents proven by session-71d76525 and H21's shipped shelf files;
+# expand only with a concrete trace + GUI state-restoration regression.
+_TAB_TOOL_ALLOWLIST = {
+    "lop_karma_setup",
+    "vop_karmamtlxsubnet",
+}
+_PENDING_TAB_USER_STATE = None
+_TAB_RESTORE_POSTED = False
 
 
 def _category(category):
@@ -296,6 +312,344 @@ def _run_shelf_tool(tool, parent: hou.Node, type_name: str) -> hou.Node | None:
     return created[0] if created else None
 
 
+def _tool_context(tool, parent: hou.Node) -> dict:
+    """Return Network Editor menu metadata and whether *tool* applies to parent."""
+    pane_type = hou.paneTabType.NetworkEditor
+    try:
+        categories = tuple(tool.toolMenuCategories(pane_type) or ())
+    except Exception:
+        categories = ()
+    try:
+        op_type = str(tool.toolMenuOpType(pane_type) or "")
+    except Exception:
+        op_type = ""
+    try:
+        locations = list(tool.toolMenuLocations() or ())
+    except Exception:
+        locations = []
+
+    child_category = parent.childTypeCategory()
+    category_match = child_category in categories
+    op_type_match = False
+    if op_type:
+        category_name, _, operator_name = op_type.partition("/")
+        if category_name.lower() == child_category.name().lower():
+            # Material Library presents a Vop/materialbuilder network even though its
+            # owning node is a Lop/materiallibrary. This is the shipped context for the
+            # Karma/USD Material Builder tools.
+            if operator_name == "materialbuilder":
+                op_type_match = (
+                    parent.type().category() == hou.lopNodeTypeCategory()
+                    and parent.type().name().split("::", 1)[0] == "materiallibrary"
+                )
+            else:
+                parent_type = parent.type().name().split("::", 1)[0]
+                op_type_match = parent_type == operator_name
+    return {
+        "categories": [category.name() for category in categories],
+        "op_type": op_type or None,
+        "locations": locations,
+        "matches": bool(category_match or op_type_match),
+    }
+
+
+def _visible_node_type(node_type) -> bool:
+    try:
+        if node_type.hidden() or node_type.deprecated():
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def search_tab_entries(parent, query: str = "") -> dict:
+    """列出父网络真实可见的节点/Tab tool entry，不把类型注册表冒充菜单。
+
+    返回 entry 的 ``kind`` 为 ``node_type`` 或 ``tool``。Material Library 根层只
+    暴露 builder tool；shader 应进入对应 builder 后再创建。隐藏/废弃 node type
+    不进入 entries，但计入 excluded。``executable`` 仅表示 dsh 当前安全 allowlist，
+    不是 SideFX 工具是否存在。
+    """
+    parent = _resolve(parent)
+    if not parent.isNetwork():
+        raise ValueError(f"{parent.path()} 不是可创建子节点的网络")
+    q = str(query or "").strip().lower()
+    child_category = parent.childTypeCategory()
+    entries = []
+    excluded_hidden = 0
+
+    # Since H20 the Material Library root is a builder launcher, not a free-form VOP
+    # graph. Its tool entries below are the truthful UI surface.
+    material_library_root = (
+        parent.type().category() == hou.lopNodeTypeCategory()
+        and parent.type().name().split("::", 1)[0] == "materiallibrary"
+    )
+    if not material_library_root:
+        families: dict[str, list] = {}
+        for name, node_type in child_category.nodeTypes().items():
+            label = node_type.description() or name
+            if q and q not in name.lower() and q not in label.lower():
+                continue
+            if not _visible_node_type(node_type):
+                excluded_hidden += 1
+                continue
+            match = _VERSION_RE.match(name)
+            base = match.group(1) if match else name
+            families.setdefault(base, []).append(node_type)
+        for base, node_types in families.items():
+            def version_key(node_type):
+                match = _VERSION_RE.match(node_type.name())
+                return _version_key(match.group(2)) if match else ()
+            latest = max(node_types, key=version_key)
+            entries.append({
+                "kind": "node_type",
+                "name": latest.name(),
+                "base": base,
+                "label": latest.description() or latest.name(),
+                "versions": sorted(node_type.name() for node_type in node_types),
+                "executable": True,
+            })
+
+    for tool_id, tool in hou.shelves.tools().items():
+        try:
+            label = tool.label() or tool_id
+        except Exception:
+            continue
+        if q and q not in tool_id.lower() and q not in label.lower():
+            continue
+        context = _tool_context(tool, parent)
+        if not context["matches"]:
+            continue
+        entries.append({
+            "kind": "tool",
+            "name": tool_id,
+            "label": label,
+            "locations": context["locations"],
+            "op_type": context["op_type"],
+            "executable": tool_id in _TAB_TOOL_ALLOWLIST,
+        })
+
+    entries.sort(key=lambda item: (item["label"].lower(), item["kind"], item["name"]))
+    return {
+        "parent": parent.path(),
+        "child_category": child_category.name(),
+        "query": query,
+        "entries": entries,
+        "excluded_hidden_or_deprecated": excluded_hidden,
+    }
+
+
+def _apply_karma_setup_recipe(parent: hou.Node) -> list:
+    """Non-interactive adapter for SideFX ``lop_karma_setup`` semantics."""
+    settings = parent.createNode("karmarendersettings", node_name="karmarendersettings")
+    rop = parent.createNode("usdrender_rop")
+    rop.setInput(0, settings)
+    settings_name = settings.name()
+    required = {
+        "rendersettings": f'chs("../{settings_name}/primpath")',
+        "husk_instantshutter": f'1 - ch("../{settings_name}/enablemblur")',
+        "renderer": (
+            f'"BRAY_HdKarma" + ifs(strmatch(chs("../{settings_name}/engine"), '
+            '"xpu"), "XPU", "")'
+        ),
+    }
+    for parm_name, expression in required.items():
+        parm = rop.parm(parm_name)
+        if parm is None:
+            raise RuntimeError(
+                f"当前 Houdini 的 {rop.type().name()} 缺少 Karma Setup 参数 {parm_name!r}"
+            )
+        parm.setExpression(expression, language=hou.exprLanguage.Hscript)
+    return [settings, rop]
+
+
+def _apply_karma_material_builder_recipe(parent: hou.Node) -> list:
+    """Use the installed SideFX builder initializer without its selection UI."""
+    import voptoolutils
+
+    setup = getattr(voptoolutils, "_setupMtlXBuilderSubnet", None)
+    mask = getattr(voptoolutils, "KARMAMTLX_TAB_MASK", None)
+    if setup is None or not mask:
+        raise RuntimeError(
+            "当前 Houdini 缺少 Karma Material Builder initializer；"
+            "请检查 voptoolutils 版本"
+        )
+    builder = parent.createNode("subnet", node_name="karmamaterial")
+    result = setup(
+        subnet_node=builder,
+        name="karmamaterial",
+        mask=mask,
+        folder_label="Karma Material Builder",
+        render_context="kma",
+    )
+    if result is None:
+        raise RuntimeError("SideFX Karma Material Builder initializer 返回空")
+    return [result]
+
+
+def _capture_tab_user_state(pane) -> dict:
+    selected = list(hou.selectedNodes())
+    pane_current = None
+    try:
+        pane_current = pane.currentNode() if pane is not None else None
+    except Exception:
+        pass
+    return {
+        "pane": pane,
+        "pwd": pane.pwd().path() if pane is not None and pane.pwd() is not None else None,
+        "selected": [node.path() for node in selected],
+        "current": [node.path() for node in selected if node.isCurrent()],
+        "pane_current": pane_current.path() if pane_current is not None else None,
+    }
+
+
+def _apply_tab_user_state(state: dict) -> dict:
+    pane = state.get("pane")
+    pwd_path = state.get("pwd")
+    if pane is not None and pwd_path:
+        pwd = hou.node(pwd_path)
+        if pwd is not None:
+            pane.setPwd(pwd)
+    hou.clearAllSelected()
+    for path in state.get("current", []):
+        node = hou.node(path)
+        if node is not None:
+            node.setCurrent(True)
+    pane_current = hou.node(state.get("pane_current")) if state.get("pane_current") else None
+    if pane is not None and pane_current is not None:
+        pane.setCurrentNode(pane_current)
+    for path in state.get("selected", []):
+        node = hou.node(path)
+        if node is not None:
+            node.setSelected(True)
+    actual_selected = sorted(node.path() for node in hou.selectedNodes())
+    expected_selected = sorted(
+        path for path in state.get("selected", []) if hou.node(path) is not None
+    )
+    return {
+        "network_pwd": pane is None or not pwd_path or (
+            pane.pwd() is not None and pane.pwd().path() == pwd_path
+        ),
+        "selection": actual_selected == expected_selected,
+    }
+
+
+def _finish_pending_tab_restore():
+    global _PENDING_TAB_USER_STATE, _TAB_RESTORE_POSTED
+    state = _PENDING_TAB_USER_STATE
+    _PENDING_TAB_USER_STATE = None
+    _TAB_RESTORE_POSTED = False
+    if state is not None:
+        try:
+            _apply_tab_user_state(state)
+        except Exception:
+            pass
+
+
+def _queue_final_tab_restore():
+    """Second event-loop hop: run after Houdini's deferred node-selection post."""
+    try:
+        hou.ui.postEventCallback(_finish_pending_tab_restore)
+    except Exception:
+        _finish_pending_tab_restore()
+
+
+def tab_apply(parent, tool_id: str) -> dict:
+    """应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点。
+
+    这和 ``tab_create`` 的单节点契约不同。当前只允许 H21/H22 的 Karma (Setup)
+    与 Karma Material Builder；运行时仍验证真实 tool/context，但通过 SideFX recipe
+    adapter 避开通用 shelf UI 的 selection/current/modal 副作用。未知工具明确拒绝。
+    """
+    parent = _resolve(parent)
+    if not parent.isNetwork():
+        raise ValueError(f"{parent.path()} 不是可应用 Tab tool 的网络")
+    if not isinstance(tool_id, str) or not tool_id.strip():
+        raise ValueError("tool_id 必须是非空字符串")
+    tool_id = tool_id.strip()
+    tool = hou.shelves.tool(tool_id)
+    if tool is None:
+        raise ValueError(f"找不到 Tab tool {tool_id!r}")
+    context = _tool_context(tool, parent)
+    if not context["matches"]:
+        raise ValueError(
+            f"Tab tool {tool_id!r} 不适用于 {parent.path()}"
+            f"（child category={parent.childTypeCategory().name()}, "
+            f"tool categories={context['categories']}, op_type={context['op_type']!r}）"
+        )
+    if tool_id not in _TAB_TOOL_ALLOWLIST:
+        raise ValueError(
+            f"Tab tool {tool_id!r} 存在但不在 dsh 安全 allowlist；"
+            f"当前允许：{sorted(_TAB_TOOL_ALLOWLIST)}"
+        )
+    global _PENDING_TAB_USER_STATE, _TAB_RESTORE_POSTED
+    pane = _network_editor() if hou.isUIAvailable() else None
+    if pane is not None:
+        if _PENDING_TAB_USER_STATE is None:
+            _PENDING_TAB_USER_STATE = _capture_tab_user_state(pane)
+        user_state = _PENDING_TAB_USER_STATE
+    else:
+        user_state = _capture_tab_user_state(None)
+    before = {child.sessionId() for child in parent.children()}
+    try:
+        try:
+            if tool_id == "lop_karma_setup":
+                recipe_nodes = _apply_karma_setup_recipe(parent)
+            elif tool_id == "vop_karmamtlxsubnet":
+                recipe_nodes = _apply_karma_material_builder_recipe(parent)
+            else:  # guarded by allowlist, defensive for future edits
+                raise ValueError(f"Tab tool {tool_id!r} 没有安全 recipe adapter")
+        except BaseException:
+            # GUI exec has an undo transaction, but headless does not. Clean only
+            # children created by this recipe attempt so a partial setup never leaks.
+            for child in reversed(parent.children()):
+                if child.sessionId() not in before:
+                    try:
+                        child.destroy()
+                    except Exception:
+                        pass
+            raise
+        created = [child for child in parent.children() if child.sessionId() not in before]
+        if not created:
+            raise RuntimeError(f"Tab tool {tool_id!r} 没有在 {parent.path()} 创建节点")
+        if not all(node in created for node in recipe_nodes):
+            raise RuntimeError(f"Tab tool {tool_id!r} recipe 返回了父网络外节点")
+        created.sort(key=lambda node: node.path())
+        result = {
+            "tool_id": tool_id,
+            "label": tool.label() or tool_id,
+            "parent": parent.path(),
+            "execution": "sidefx_recipe_adapter",
+            "created": [
+                {
+                    "path": node.path(),
+                    "type": node.type().name(),
+                    "category": node.type().category().name(),
+                    "inputs": [source.path() if source is not None else None for source in node.inputs()],
+                }
+                for node in created
+            ],
+        }
+    finally:
+        try:
+            immediate_state = _apply_tab_user_state(user_state)
+        except Exception:
+            immediate_state = {"network_pwd": False, "selection": False}
+        if pane is not None and not _TAB_RESTORE_POSTED:
+            try:
+                # First hop runs after the surrounding exec unwinds; it queues the
+                # actual restoration one event turn later than node creation's own
+                # deferred selection update.
+                hou.ui.postEventCallback(_queue_final_tab_restore)
+                _TAB_RESTORE_POSTED = True
+            except Exception:
+                _finish_pending_tab_restore()
+
+    result["state_restored"] = immediate_state
+    result["final_restore"] = "posted" if pane is not None else "synchronous"
+    return result
+
+
 def _tool_has_extra_init(tool) -> bool:
     """判断 shelf tool 是否在 genericTool 之外还有「实质性」初始化。
 
@@ -337,6 +691,23 @@ def tab_create(
     cat = parent.childTypeCategory()
     ctx = context_name(cat)
     latest = resolve_latest_type(cat, type_name)
+
+    node_type = hou.nodeType(cat, latest)
+    if node_type is not None and not _visible_node_type(node_type):
+        raise ValueError(
+            f"节点类型 {latest!r} 在当前 Houdini 中 hidden/deprecated；"
+            "请用 search_tab_entries(parent, query) 查真实 Tab entry，"
+            "setup 工具用 tab_apply(parent, tool_id)"
+        )
+    if (
+        parent.type().category() == hou.lopNodeTypeCategory()
+        and parent.type().name().split("::", 1)[0] == "materiallibrary"
+    ):
+        raise ValueError(
+            f"Material Library 根层不直接创建 {latest!r}；"
+            "先用 search_tab_entries(parent, query) 选择 Karma/USD/Preview Builder，"
+            "再用 tab_apply 执行对应 builder tool"
+        )
 
     tool = None
     try:
@@ -385,15 +756,27 @@ def search_tab_menu(category, query: str = "") -> dict:
     """
     cat = _category(category)
     q = query.lower().strip()
+    q_key = re.sub(r"[^a-z0-9]+", "", q)
 
     # 按族键聚合（去版本），族键 = 名字去掉末尾 ::N
     families: dict[str, list[str]] = {}
-    for name in cat.nodeTypes().keys():
-        if q and q not in name.lower():
-            continue
+    labels: dict[str, set[str]] = {}
+    for name, node_type in cat.nodeTypes().items():
         m = _VERSION_RE.match(name)
         base = m.group(1) if m else name
+        try:
+            label = node_type.description() or ""
+        except Exception:
+            label = ""
+        haystacks = (name.lower(), base.lower(), label.lower())
+        compact = tuple(re.sub(r"[^a-z0-9]+", "", value) for value in haystacks)
+        if q and not any(q in value for value in haystacks) and not (
+            q_key and any(q_key in value for value in compact)
+        ):
+            continue
         families.setdefault(base, []).append(name)
+        if label:
+            labels.setdefault(base, set()).add(label)
 
     result = []
     for base in sorted(families):
@@ -410,10 +793,246 @@ def search_tab_menu(category, query: str = "") -> dict:
     exact = None
     if q:
         for entry in result:
-            if entry["base"].lower() == q:
+            base_key = re.sub(r"[^a-z0-9]+", "", entry["base"].lower())
+            label_keys = {
+                re.sub(r"[^a-z0-9]+", "", label.lower())
+                for label in labels.get(entry["base"], set())
+            }
+            if entry["base"].lower() == q or base_key == q_key or q_key in label_keys:
                 exact = entry["latest"]
                 break
     return {"families": result, "latest_of_query": exact}
+
+
+# ---------------------------------------------------------------------------
+# Solaris / USD 只读自省
+# ---------------------------------------------------------------------------
+
+def _lop_stage(node):
+    node = _resolve(node)
+    if node.type().category() != hou.lopNodeTypeCategory() or not hasattr(node, "stage"):
+        raise ValueError(f"{node.path()} 不是可提供 USD stage 的 LOP 节点")
+    stage = node.stage()
+    if stage is None:
+        raise ValueError(f"{node.path()} 没有可用的 USD stage")
+    return node, stage
+
+
+def _usd_value_preview(value, limit: int = 8):
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return 0.0 if value == 0.0 else value
+    try:
+        if hasattr(value, "pathString"):
+            return str(value)
+    except Exception:
+        pass
+    if isinstance(value, dict):
+        items = list(value.items())
+        return {
+            "size": len(items),
+            "preview": {
+                str(key): _usd_value_preview(item, limit)
+                for key, item in items[:limit]
+            },
+        }
+    if isinstance(value, (list, tuple)):
+        return {
+            "size": len(value),
+            "preview": [_usd_value_preview(item, limit) for item in value[:limit]],
+        }
+    # Vt arrays and Gf vectors are iterable but should never dump full mesh data.
+    try:
+        size = len(value)
+        return {
+            "size": int(size),
+            "preview": [
+                _usd_value_preview(value[index], limit)
+                for index in range(min(int(size), limit))
+            ],
+        }
+    except Exception:
+        pass
+    return str(value)
+
+
+def _usd_relationships(prim) -> list:
+    result = []
+    for relationship in prim.GetRelationships():
+        result.append({
+            "name": str(relationship.GetName()),
+            "targets": [str(target) for target in relationship.GetTargets()],
+        })
+    result.sort(key=lambda item: item["name"])
+    return result
+
+
+def usd_stage_summary(node, max_paths: int = 64) -> dict:
+    """只读概览 LOP 的 USD stage：prim 类型、材质绑定、渲染和时间采样语义。"""
+    node, stage = _lop_stage(node)
+    max_paths = int(max_paths)
+    if max_paths < 1 or max_paths > 500:
+        raise ValueError("max_paths 必须在 1..500")
+
+    groups = {
+        "geometry": [],
+        "materials": [],
+        "lights": [],
+        "cameras": [],
+        "render_settings": [],
+        "render_products": [],
+        "render_vars": [],
+        "other": [],
+    }
+    group_counts = {name: 0 for name in groups}
+    material_bindings = []
+    time_sampled = []
+    time_sampled_total = 0
+    total_prims = 0
+    geometry_types = {
+        "Mesh", "BasisCurves", "NurbsCurves", "Points", "Volume", "Capsule",
+        "Cone", "Cube", "Cylinder", "Plane", "Sphere",
+    }
+
+    for prim in stage.Traverse():
+        total_prims += 1
+        path = str(prim.GetPath())
+        type_name = str(prim.GetTypeName() or "")
+        if type_name in geometry_types:
+            group = "geometry"
+        elif type_name == "Material":
+            group = "materials"
+        elif type_name.endswith("Light") or type_name == "Light":
+            group = "lights"
+        elif type_name == "Camera":
+            group = "cameras"
+        elif type_name == "RenderSettings":
+            group = "render_settings"
+        elif type_name == "RenderProduct":
+            group = "render_products"
+        elif type_name == "RenderVar":
+            group = "render_vars"
+        else:
+            group = "other"
+        group_counts[group] += 1
+        if len(groups[group]) < max_paths:
+            groups[group].append({"path": path, "type": type_name or None})
+
+        relationships = _usd_relationships(prim)
+        bindings = [
+            relationship for relationship in relationships
+            if relationship["name"].startswith("material:binding")
+        ]
+        if bindings and len(material_bindings) < max_paths:
+            material_bindings.append({"prim": path, "bindings": bindings})
+
+        for attribute in prim.GetAttributes():
+            try:
+                count = int(attribute.GetNumTimeSamples())
+            except Exception:
+                count = 0
+            if count:
+                time_sampled_total += 1
+            if count and len(time_sampled) < max_paths:
+                samples = list(attribute.GetTimeSamples())
+                time_sampled.append({
+                    "prim": path,
+                    "attribute": str(attribute.GetName()),
+                    "count": count,
+                    "samples": [float(sample) for sample in samples[:16]],
+                    "samples_truncated": len(samples) > 16,
+                })
+
+    return {
+        "node": node.path(),
+        "total_prims": total_prims,
+        "counts": group_counts,
+        "prims": groups,
+        "paths_truncated": {
+            name: group_counts[name] > len(groups[name]) for name in groups
+        },
+        "material_bindings": material_bindings,
+        "time_sampled_attributes": time_sampled,
+        "time_samples_truncated": time_sampled_total > len(time_sampled),
+        "errors": list(node.errors()),
+        "warnings": list(node.warnings()),
+    }
+
+
+def usd_prim_info(node, prim_path: str, max_properties: int = 200) -> dict:
+    """只读检查一个 USD prim 的属性、primvar、关系、绑定和 time samples。"""
+    node, stage = _lop_stage(node)
+    max_properties = int(max_properties)
+    if max_properties < 1 or max_properties > 1000:
+        raise ValueError("max_properties 必须在 1..1000")
+    prim = stage.GetPrimAtPath(str(prim_path))
+    if not prim or not prim.IsValid():
+        similar = []
+        needle = str(prim_path).lower().rsplit("/", 1)[-1]
+        for candidate in stage.Traverse():
+            path = str(candidate.GetPath())
+            if needle and needle in path.lower():
+                similar.append(path)
+            if len(similar) >= 12:
+                break
+        raise ValueError(f"找不到 USD prim {prim_path!r}；相似：{similar}")
+
+    attributes = []
+    primvars = []
+    properties = list(prim.GetProperties())
+    for prop in properties[:max_properties]:
+        if not hasattr(prop, "GetTypeName"):
+            continue
+        name = str(prop.GetName())
+        samples = list(prop.GetTimeSamples())
+        # Avoid pulling full topology/point arrays merely to answer structure.
+        heavy = name in {
+            "points", "normals", "faceVertexCounts", "faceVertexIndices",
+            "velocities", "accelerations",
+        }
+        value = None
+        if not heavy:
+            try:
+                value = _usd_value_preview(prop.Get())
+            except Exception:
+                value = None
+        item = {
+            "name": name,
+            "type": str(prop.GetTypeName()),
+            "value": value,
+            "value_omitted": heavy,
+            "time_sample_count": len(samples),
+            "time_samples": [float(sample) for sample in samples[:16]],
+            "time_samples_truncated": len(samples) > 16,
+        }
+        attributes.append(item)
+        if name.startswith("primvars:"):
+            primvars.append(item)
+
+    relationships = _usd_relationships(prim)
+    material_bindings = [
+        relationship for relationship in relationships
+        if relationship["name"].startswith("material:binding")
+    ]
+    return {
+        "node": node.path(),
+        "path": str(prim.GetPath()),
+        "name": str(prim.GetName()),
+        "type": str(prim.GetTypeName() or "") or None,
+        "active": bool(prim.IsActive()),
+        "defined": bool(prim.IsDefined()),
+        "loaded": bool(prim.IsLoaded()),
+        "instance": bool(prim.IsInstance()),
+        "instanceable": bool(prim.IsInstanceable()),
+        "kind": prim.GetMetadata("kind"),
+        "attributes": attributes,
+        "primvars": primvars,
+        "relationships": relationships,
+        "material_bindings": material_bindings,
+        "property_count": len(properties),
+        "properties_truncated": len(properties) > max_properties,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -958,7 +1577,15 @@ def read_parms(node, changed_only: bool = True) -> list:
             is_ref = bool(p.parmsReferencingThis())
         except Exception:
             is_ref = False
-        if changed_only and is_default and not has_expr and not is_ref:
+        try:
+            keys = list(p.keyframes())
+        except Exception:
+            keys = []
+        try:
+            time_dependent = bool(p.isTimeDependent())
+        except Exception:
+            time_dependent = False
+        if changed_only and is_default and not has_expr and not is_ref and not keys and not time_dependent:
             continue
         entry: dict = {"name": p.name()}
         tpl = p.parmTemplate()
@@ -984,6 +1611,26 @@ def read_parms(node, changed_only: bool = True) -> list:
                 pass
         if is_ref:
             entry["referenced_by"] = True
+        if keys or time_dependent:
+            entry["animated"] = True
+            entry["time_dependent"] = time_dependent
+        if keys:
+            frames = sorted(float(key.frame()) for key in keys)
+            curves = []
+            for key in keys:
+                try:
+                    curve = key.expression()
+                except Exception:
+                    curve = None
+                if curve and curve not in curves:
+                    curves.append(curve)
+            entry.update({
+                "key_count": len(keys),
+                "first_frame": frames[0],
+                "last_frame": frames[-1],
+            })
+            if curves:
+                entry["curves"] = curves
         out.append(entry)
     return out
 
@@ -1087,8 +1734,237 @@ def set_parms(node, values: dict) -> dict:
     return out
 
 
+_KEYFRAME_CURVES = {
+    "constant": "constant()",
+    "linear": "linear()",
+    "bezier": "bezier()",
+}
+_KEYFRAME_INPUT_LIMIT = 10_000
+_KEYFRAME_RESULT_LIMIT = 64
+_KEYFRAME_SAMPLE_LIMIT = 32
+
+
+def set_keyframes(node, channels: dict, replace: bool = True) -> dict:
+    """批量写入标量数值参数关键帧，统一使用 frame 单位并提交后回读。
+
+    ``channels`` 形如 ``{"tx": [{"frame": 1, "value": 0, "curve": "linear"}]}``。
+    curve 仅支持 ``constant/linear/bezier``；它描述从该 key 离开的 segment。
+    所有 channel 在修改前完成校验；任一写入失败会恢复本次涉及参数的原 keyframes。
+    ``replace=False`` 保留旧 keys，但拒绝覆盖同一 frame。该动词只负责 channel 数据，
+    不替代有序状态机、KineFX/APEX rig logic 或 Animation Editor。
+    """
+    n = _resolve(node)
+    if not isinstance(channels, dict) or not channels:
+        raise ValueError("channels 必须是非空 dict：{标量参数名: key spec 列表}")
+    if not isinstance(replace, bool):
+        raise ValueError("replace 必须是 bool")
+
+    prepared = {}
+    originals = {}
+    for parm_name, specs in channels.items():
+        if not isinstance(parm_name, str) or not parm_name:
+            raise ValueError(f"channel 名必须是非空字符串，收到 {parm_name!r}")
+        parm = n.parm(parm_name)
+        if parm is None:
+            if n.parmTuple(parm_name) is not None:
+                raise ValueError(
+                    f"{n.path()}/{parm_name} 是参数元组；请按组件名分别提供 channel"
+                )
+            suggestions = difflib.get_close_matches(
+                parm_name, [item.name() for item in n.parms()], n=5, cutoff=0.4
+            )
+            raise ValueError(
+                f"节点 {n.path()} 没有标量参数 {parm_name!r}；相似参数：{suggestions}"
+            )
+        template = parm.parmTemplate()
+        try:
+            template_type = template.type()
+        except Exception:
+            template_type = None
+        if template_type not in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
+            raise ValueError(
+                f"{parm.path()} 不是数值标量参数（类型={template_type}），不能写数值 keyframes"
+            )
+        if not isinstance(specs, (list, tuple)) or not specs:
+            raise ValueError(f"channels[{parm_name!r}] 必须是非空 key spec 列表")
+        if len(specs) > _KEYFRAME_INPUT_LIMIT:
+            raise ValueError(
+                f"channels[{parm_name!r}] 超过 {_KEYFRAME_INPUT_LIMIT} keys；"
+                "请拆分任务或使用缓存/clip 工作流"
+            )
+
+        existing_keys = tuple(parm.keyframes())
+        originals[parm_name] = existing_keys
+        existing_frames = {float(key.frame()) for key in existing_keys}
+        seen_frames = set()
+        keys = []
+        for index, spec in enumerate(specs):
+            path = f"channels[{parm_name!r}][{index}]"
+            if not isinstance(spec, dict):
+                raise ValueError(f"{path} 必须是 dict")
+            unknown = set(spec) - {"frame", "value", "curve"}
+            if unknown:
+                raise ValueError(f"{path} 有未知字段：{sorted(unknown)}")
+            if "frame" not in spec or "value" not in spec:
+                raise ValueError(f"{path} 必须同时提供 frame 和 value")
+            if isinstance(spec["frame"], bool) or isinstance(spec["value"], bool):
+                raise ValueError(f"{path}.frame/value 不能是 bool")
+            frame = float(spec["frame"])
+            value = float(spec["value"])
+            if not math.isfinite(frame) or not math.isfinite(value):
+                raise ValueError(f"{path}.frame/value 必须是有限数值")
+            if frame in seen_frames:
+                raise ValueError(f"{path}.frame={frame} 在同一 channel 重复")
+            if not replace and frame in existing_frames:
+                raise ValueError(
+                    f"{path}.frame={frame} 已存在；replace=False 不允许覆盖旧 key"
+                )
+            seen_frames.add(frame)
+            curve_name = str(spec.get("curve", "bezier")).strip().lower()
+            expression = _KEYFRAME_CURVES.get(curve_name)
+            if expression is None:
+                raise ValueError(
+                    f"{path}.curve={curve_name!r} 不支持；可用 {sorted(_KEYFRAME_CURVES)}"
+                )
+            key = hou.Keyframe(value)
+            key.setFrame(frame)
+            key.setExpression(expression, hou.exprLanguage.Hscript)
+            keys.append(key)
+        prepared[parm_name] = (parm, tuple(sorted(keys, key=lambda key: key.frame())))
+
+    saved_frame = float(hou.frame())
+    applied = []
+    try:
+        for parm_name, (parm, keys) in prepared.items():
+            if replace:
+                parm.deleteAllKeyframes()
+            parm.setKeyframes(keys)
+            applied.append(parm_name)
+    except Exception:
+        for parm_name, (parm, _) in prepared.items():
+            try:
+                parm.deleteAllKeyframes()
+                if originals[parm_name]:
+                    parm.setKeyframes(originals[parm_name])
+            except Exception:
+                pass
+        raise
+    finally:
+        if float(hou.frame()) != saved_frame:
+            hou.setFrame(saved_frame)
+
+    result = {}
+    for parm_name, (parm, _) in prepared.items():
+        keys = tuple(parm.keyframes())
+        frames = [float(key.frame()) for key in keys]
+        key_data = []
+        for key in keys:
+            try:
+                curve = key.expression()
+            except Exception:
+                curve = None
+            key_data.append({
+                "frame": float(key.frame()),
+                "value": float(key.value()),
+                "curve": curve,
+            })
+        if len(key_data) > _KEYFRAME_RESULT_LIMIT:
+            key_preview = (
+                key_data[:_KEYFRAME_RESULT_LIMIT // 2]
+                + key_data[-_KEYFRAME_RESULT_LIMIT // 2:]
+            )
+            keys_truncated = len(key_data) - len(key_preview)
+        else:
+            key_preview = key_data
+            keys_truncated = 0
+        sample_candidates = sorted(set([
+            frames[0],
+            frames[-1],
+            *(
+                (frames[index] + frames[index + 1]) / 2.0
+                for index in range(len(frames) - 1)
+            ),
+        ]))
+        if len(sample_candidates) > _KEYFRAME_SAMPLE_LIMIT:
+            sample_frames = (
+                sample_candidates[:_KEYFRAME_SAMPLE_LIMIT // 2]
+                + sample_candidates[-_KEYFRAME_SAMPLE_LIMIT // 2:]
+            )
+        else:
+            sample_frames = sample_candidates
+        result[parm_name] = {
+            "key_count": len(keys),
+            "first_frame": frames[0],
+            "last_frame": frames[-1],
+            "keys": key_preview,
+            "samples": {
+                str(frame): float(parm.evalAtFrame(frame)) for frame in sample_frames
+            },
+            "replaced_existing": len(originals[parm_name]) if replace else 0,
+        }
+        if keys_truncated:
+            result[parm_name]["keys_truncated"] = keys_truncated
+    return {
+        "node": n.path(),
+        "replace": replace,
+        "channels": result,
+        "frame_restored": float(hou.frame()) == saved_frame,
+    }
+
+
+def _spare_spec_template(item: dict, path: str, names: set):
+    if not isinstance(item, dict):
+        raise ValueError(f"{path} 必须是 dict")
+    kind = str(item.get("type", "")).strip().lower()
+    if kind not in {"folder", "toggle", "int", "float", "string"}:
+        raise ValueError(
+            f"{path}.type 不支持 {kind!r}；可用 folder/toggle/int/float/string"
+        )
+    name = item.get("name")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(f"{path}.name 必须是合法 Houdini 参数名")
+    if name in names:
+        raise ValueError(f"参数/文件夹名 {name!r} 重复")
+    names.add(name)
+    label = str(item.get("label", name.replace("_", " ").title()))
+    if kind == "folder":
+        children = item.get("parms", [])
+        if not isinstance(children, (list, tuple)) or not children:
+            raise ValueError(f"{path}.parms 必须是非空 list")
+        template = hou.FolderParmTemplate(name, label, folder_type=hou.folderType.Simple)
+        for index, child in enumerate(children):
+            template.addParmTemplate(
+                _spare_spec_template(child, f"{path}.parms[{index}]", names)
+            )
+    elif kind == "toggle":
+        template = hou.ToggleParmTemplate(
+            name, label, default_value=bool(item.get("default", False))
+        )
+    elif kind in ("int", "float"):
+        default = item.get("default", 0)
+        minimum = item.get("min", 0)
+        maximum = item.get("max", 10)
+        kwargs = {
+            "default_value": (float(default),) if kind == "float" else (int(default),),
+            "min": float(minimum) if kind == "float" else int(minimum),
+            "max": float(maximum) if kind == "float" else int(maximum),
+            "min_is_strict": bool(item.get("min_strict", False)),
+            "max_is_strict": bool(item.get("max_strict", False)),
+        }
+        cls = hou.FloatParmTemplate if kind == "float" else hou.IntParmTemplate
+        template = cls(name, label, 1, **kwargs)
+    else:
+        template = hou.StringParmTemplate(
+            name, label, 1, default_value=(str(item.get("default", "")),)
+        )
+    if item.get("help") is not None:
+        template.setHelp(str(item["help"]))
+    return template
+
+
 def create_spare_parms(node, code_parm: str = "snippet",
-                       defaults: dict | None = None) -> dict:
+                       defaults: dict | None = None,
+                       spec: list | None = None) -> dict:
     """从代码参数的 ch/chf/chi/chv/chs 引用创建缺失 spare parameters。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
@@ -1096,6 +1972,43 @@ def create_spare_parms(node, code_parm: str = "snippet",
     或裸 hou 处理。
     """
     n = _resolve(node)
+    if spec is not None:
+        if not isinstance(spec, (list, tuple)) or not spec:
+            raise ValueError("spec 必须是非空 list")
+        names = set()
+        templates = [
+            _spare_spec_template(item, f"spec[{index}]", names)
+            for index, item in enumerate(spec)
+        ]
+        conflicts = sorted(
+            name for name in names
+            if n.parm(name) is not None or n.parmTuple(name) is not None
+        )
+        if conflicts:
+            raise ValueError(
+                f"节点 {n.path()} 已存在同名参数/文件夹：{conflicts}；"
+                "显式 spec 不做隐式覆盖"
+            )
+        group = n.parmTemplateGroup()
+        for template in templates:
+            group.append(template)
+        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+        leaves = []
+        def collect(items):
+            for item in items:
+                if str(item.get("type", "")).strip().lower() == "folder":
+                    collect(item.get("parms", []))
+                else:
+                    leaves.append(item["name"])
+        collect(spec)
+        return {
+            "node": n.path(),
+            "mode": "spec",
+            "created": sorted(names),
+            "leaf_values": {
+                name: _val(n.parm(name).eval()) for name in leaves
+            },
+        }
     defaults = {} if defaults is None else defaults
     if not isinstance(defaults, dict):
         raise ValueError("defaults 必须是 dict：{参数名: 默认值}")
@@ -2228,37 +3141,53 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     渲染器挂起都是静默失败），所以本动词等到文件落盘且非空才返回
     ``file_bytes``，否则在 ``errors`` 里说明。
 
-    - rop：ROP 节点（hou.Node 或 path）。输出参数按常见名自动解析
-      （picture / vm_picture / sopoutput / lopoutput / outputimage / dopoutput /
-      copoutput / choutput），Karma/Mantra/geometry 等 ROP 都覆盖。
+    - rop：ROP 节点（hou.Node 或 path）。输出参数按常见名自动解析；图像参数
+      ``outputimage`` 优先于 USD ``lopoutput``，Karma/Mantra/geometry 等 ROP 都覆盖。
+      有 ``soho_foreground`` 时调用期临时等待渲染完成并在 finally 恢复。
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
       （host 侧桥请求超时 120s），本动词面向单帧测试渲染。
     """
     n = _resolve(rop)
+    if not isinstance(n, hou.RopNode) or not hasattr(n, "render"):
+        if n.type().category() == hou.lopNodeTypeCategory():
+            raise ValueError(
+                f"{n.path()} 是普通 LOP（{n.type().name()}），不是可执行 ROP；"
+                "请用 search_tab_entries('/stage', 'Karma (Setup)') + "
+                "tab_apply('/stage', 'lop_karma_setup') 创建 USD Render ROP，"
+                "再把该 usdrender_rop 传给 render_frame"
+            )
+        raise ValueError(f"{n.path()} 不是可执行 ROP，缺少 render()")
     p = None
-    for pname in ("picture", "vm_picture", "sopoutput", "lopoutput",
-                  "outputimage", "dopoutput", "copoutput", "choutput"):
+    # USD Render ROP owns both `lopoutput` (temporary/exported USD) and
+    # `outputimage` (rendered image override). Image output must win or a PNG
+    # path is accidentally assigned as the USD file and no image is produced.
+    for pname in ("picture", "vm_picture", "outputimage", "sopoutput",
+                  "lopoutput", "dopoutput", "copoutput", "choutput"):
         p = n.parm(pname)
         if p is not None:
             break
     if p is None:
         raise ValueError(
             f"节点 '{n.path()}' 找不到输出路径参数（试过 picture/vm_picture/"
-            "sopoutput/lopoutput/outputimage/dopoutput/copoutput/choutput）——"
+            "outputimage/sopoutput/lopoutput/dopoutput/copoutput/choutput）——"
             "它不是 ROP？（非常规输出参数请裸写 hou，词表不覆盖）"
         )
     if picture is not None:
         p.set(picture)
     f = hou.frame() if frame is None else float(frame)
     original_frame = float(hou.frame())
+    foreground_parm = n.parm("soho_foreground")
+    original_foreground = foreground_parm.eval() if foreground_parm is not None else None
     target = None
     t0 = time.time()
     render_err = None
     file_bytes = None
     try:
         hou.setFrame(f)
+        if foreground_parm is not None:
+            foreground_parm.set(1)
         target = hou.text.expandString(p.unexpandedString())
         out_dir = os.path.dirname(target)
         if out_dir and not os.path.isdir(out_dir):
@@ -2275,6 +3204,11 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
                 break
             time.sleep(1)
     finally:
+        if foreground_parm is not None and original_foreground is not None:
+            try:
+                foreground_parm.set(original_foreground)
+            except Exception:
+                pass
         # 渲染帧属于 agent 验证状态，不占用用户 playbar；即使 ROP 失败也还原。
         if float(hou.frame()) != original_frame:
             try:

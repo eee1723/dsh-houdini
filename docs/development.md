@@ -12,13 +12,16 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ | 39 个主目录动词 + 2 个 display 兼容入口 + `_resolve`（九域，§2.22） |
+| 动词词表（bridge namespace） | ✅ | 44 个主目录动词 + 2 个 display 兼容入口 + `_resolve`（新增 `set_keyframes`，§2.26） |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 扫描 → `advisory` 字段 + `hint:` 渲染（§2.8） |
 | launcher：preset 同步 + 分阶段百分比 + 超时/日志诊断 | ✅ | `dsh_launcher.py`（§2.23 / §3.2） |
 | 版本与诊断面板 | ✅ | `dsh_manager.py`（§2.24） |
 | Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
 | Houdini trace 审计 skill | ✅（§2.20） | `houdini-trace-analysis` + evidence JSON + 审计量表/模式库 |
+| Solaris/Karma workflow skill | ✅（§2.25） | `houdini-solaris-karma-workflow` + 版本化 Karma/MaterialX/COP 接口参考 |
+| Rig/animation workflow skill | ✅（§2.26） | channel / packed pieces / KineFX skin / APEX 路由与完成门 |
+| Houdini skill 治理 | ✅（§2.27） | `houdini-skill-governance` + evidence ingestion / lifecycle / deterministic audit |
 | plugin persona 中性化 | ✅ | GUIDANCE 只讲工具用法，persona 移入 preset |
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
@@ -34,7 +37,7 @@
 
 `src/index.ts` → `lib/index.js`，Cordis 插件形状 `{ name, inject, Config, apply }`：
 
-- `name = 'dsh-houdini'`，`inject = ['tools', 'systemPrompt']`
+- `name = 'dsh-houdini'`，`inject = ['tools', 'systemPrompt', 'skills']`
 - 注册 5 个工具：`houdini_exec` / `houdini_query` / `houdini_job_submit` /
   `houdini_job_status` / `houdini_job_cancel`（见 `src/tools.ts`）
 - 系统提示词 guidance 段（order 150，**persona 中性**）：只讲工具用法（动词词表、`hou` 预导入、桥报错），不含「你正在驱动 Houdini」的身份——身份归 preset
@@ -42,12 +45,13 @@
 ### 2.2 动词词表（bridge namespace）
 
 `houdini/python3.11libs/dsh_hou_helpers.py` 定义、`dsh_bridge.py` 注入 exec 命名空间：
-39 个主目录动词 = vocabulary（`verb_help`）+ scene（info/timeline/bookmark 5 个）+ 类型目录（`search_tab_menu`/`resolve_latest_type`）+ node 域
+44 个主目录动词 = vocabulary（`verb_help`）+ scene（info/timeline/bookmark 5 个）+ 类型目录（`search_tab_menu`/`search_tab_entries`/`resolve_latest_type`）+ node 域
 （原 node CRUD + SOP output/OBJ visibility 拆分 + `layout_nodes` + 兼容 display wrappers）
 + parm 域（`list_parms`/`read_parms`/`set_parm`/`set_parms`/`create_spare_parms`）
 + asset 域（`hda_create`/`hda_info`/`hda_get_section`/`hda_set_section`/
 `hda_patch_section`/`hda_set_interface`）
-+ geometry 域（`geo_attrib_stats`/`geo_piece_stats`/`geo_frame_diff`）+ render/sim 域（`render_frame`/`render_check`）
++ geometry 域（`geo_attrib_stats`/`geo_piece_stats`/`geo_frame_diff`）
++ stage/USD 域（`usd_stage_summary`/`usd_prim_info`）+ render/sim 域（`render_frame`/`render_check`）
 + viewport 域（`viewport_screenshot`）+ 视觉验证主干（`render_view`）。
 bridge 另保留旧 `set_display/display_node` 两个兼容 wrapper：不进 guidance 主词表，
 但留在独立 compatibility catalog 域以诚实回放历史 trace。
@@ -694,6 +698,23 @@ center/size/dist 不同，21.1% pixel diff 混入相机漂移；视觉 A/B 又�
   改成 `@rc.7` 会创建新的 npx 缓存项并重新下载，且根包的同族子包仍按 semver 范围
   解析到 rc.8，因此不伪称完整锁定；升级仍需整条 Houdini 链路回归。
 
+**2026-08-21 warm-start 超时纠正**：用户点击更新/重启后 3081 始终未监听；外层 `cmd.exe`
+和 `npx-cli.js` 都存活且无输出，launcher 因而把 npm registry/cache 解析死等误判成“仍在
+启动”，直至 600 秒。同期 `.dsh-web.log` 是追加文件，顶部/中部历史
+`Cannot find package '@deepseek-ai/schemastery'` 没有尝试边界；本次实际检查中依赖目录存在，
+从 HIP 工作区直接导入 `E:/dsh-houdini/lib/index.js` 成功，所以不能把历史错误当成本次根因。
+
+- 默认 spec 且 project-local npx cache 已有有效 `@deepseek-ai/dsh/lib/bin.js` 时，launcher
+  直接以 Node 执行该 CLI（`shell=False`），不再让 warm start 接触 npm registry；60 秒未
+  监听即停止。只有首次无缓存或显式 `DSH_HOUDINI_DSH_SPEC` 才走 npx，保留 600 秒冷下载。
+  `DSH_HOUDINI_DSH_BIN` 可显式固定已有 CLI，版本更新通道没有被取消。
+- `ensure_dependencies()` 从“两个目录存在”升级为 Node ESM 真实导入编译后插件；只有明确
+  module-resolution 失败才运行 npm install，语法/插件初始化错误直接失败，避免无意义联网。
+- `.dsh-web.log` 每次启动写 timestamp/source/cwd/timeout/command 分隔头；进程早退记录 exit
+  code，GUI 按实际 60/600 秒显示原因，不再统一报“10 分钟”。
+- 新增 `houdini/tests/regress_launcher.py`。H21 hython 十一项回归通过；实际 warm 启动约 4 秒
+  达到 ready，`3081` 持续监听，HTTP 返回 200，cwd=`E:/tmp/test3`，source=`cached-cli`。
+
 ### 2.24 Houdini 菜单与版本诊断收敛（2026-08-20）
 
 - 顶级菜单从 `dsh` 改为 `DSH-Houdini`，并因 Houdini XML Unicode 标签兼容问题收敛为
@@ -706,6 +727,266 @@ center/size/dist 不同，21.1% pixel diff 混入相机漂移；视觉 A/B 又�
 - 新增 `dsh_manager.py` 原生非模态面板：插件版本/Git revision、DSH 启动规格与本机
   npx 缓存、Bridge/Web 端口状态；只读检查 npm dist-tags 与 origin/main，支持复制安全
   更新命令和打开 `.dsh-web.log`。版本入口不依赖 Web UI，启动失败时仍可用。
+
+### 2.25 Karma 续跑 trace：Tab 菜单真实性与领域知识分层（2026-08-21，已完成）
+
+用户在 `session-71d76525` 的草地任务后追加“拿到 Karma 里去渲染”。单帧最终成功，
+但网络使用 Material Library 根层直接创建的 `principledshader` 和一体式 `karma` LOP；
+H21 用户真实 Tab 菜单中的标准入口应是 **Karma Material Builder** 与
+**Karma (Setup)**（后者同步创建 Karma Render Settings + USD Render ROP）。这次问题
+不是一句“优先 Karma”的 prompt 缺失：preset 已要求 LOP/Material Library/Karma，agent
+也在调用 #51 搜到 `karmarendersettings`，但当前目录只枚举 node type、没有 setup tool，
+`tab_create` 又会 fallback 到 `createNode()` 绕过 Material Library 的 tab mask。
+
+**确定性事实**：
+
+- 第二个渲染请求实际有 58 个唯一 tool call、97 个 verb call、5 个硬失败；整条 session
+  实际 108 个唯一 tool call。当前 evidence 报 116，是 compaction 在 seq 22231–22245
+  重放 8 个历史 `tool/result`，脚本没有按 callId 去重。
+- H21.0.440 本机 `ExtraLopTools.shelf` 的 `lop_karma_setup` 创建
+  `karmarenderproperties::2.0`（名 `karmarendersettings`）+ `usdrender_rop`，并设置
+  render settings、motion blur、CPU/XPU renderer 表达式。
+- `ExtraTools.shelf` 的 `vop_karmamtlxsubnet` 调用 `createMaskedMtlXSubnet`；内部默认有
+  MtlX Standard Surface、displacement、Karma Material Properties、outputs/AOV 节点及
+  `outputs:kma` render context。传统 Principled 即使经 preview 转换出图，也不能证明
+  XPU/当前 Material Library 工作流正确。
+- trace 只渲染 Karma frame 25；`authortimesamples=always` 和 SOP 时序数据不能替代最终
+  Karma A/B，因此最终“1–240 麦浪序列已验证”属于证据外推。
+
+**按第一性原理分层，不把整本 Karma 手册注入 system prompt**：
+
+1. P0 evidence：tool result 以 callId 去重，replay 单列 diagnostics；本 trace 固化回归。
+2. P0 Tab 地基：查询以 parent 为主、区分 node/tool；单节点 `tab_create` 与多节点 setup
+   tool 执行拆分；后者初期 allowlist 非交互工具并返回所有新增节点/连线/状态恢复。
+3. P1 USD 自省：stage summary + prim detail，覆盖 material context/binding、camera/light、
+   RenderSettings/Product/Var、time samples；停止反复猜 Pixar USD API。
+4. P1 render 边界：`render_frame` 只接受可执行 ROP；LOP 在提交 job 前报可操作错误。
+5. P1 新增 `houdini-solaris-karma-workflow`：承载 CPU/XPU/MaterialX、SOP Import、材质
+   绑定、灯光、Karma Setup、AOV/产物和动画完成门。常驻 guidance 只负责触发 skill 与
+   “不得绕过 parent Tab 过滤”的短不变量。
+6. P2 Copernicus：先复用 parent-aware Tab/setup/USD 地基；等材质、bake、slap comp 三类
+   真实 trace 后再决定 COP 专用自省/保存动词，不先堆节点名。
+
+**第一批验收**：H21 GUI 空 `/stage` 上发现并执行 `lop_karma_setup`，得到两个标准节点及
+官方表达式；Material Library 内执行 `vop_karmamtlxsubnet`，得到标准内部网络；strict
+Tab 创建拒绝当前 parent 不可见的 Principled；USD Render ROP 经 `render_frame` 出图且
+恢复 frame。H22 保留同一语义回归，允许具体 type/version/tool id 不同。
+
+**2026-08-21 首批实现进度**：
+
+- ✅ evidence/report 共享 `uniqueToolResultEvents`；当前 session 回归
+  108 calls / 232 verbs / 8 replays，另有纯事件单测。
+- ✅ 正式目录 41→45（43 主动词 + 2 compatibility）：新增 `search_tab_entries`、
+  `tab_apply`、`usd_stage_summary`、`usd_prim_info`；`tab_create` 拒绝 hidden/deprecated
+  与 Material Library 根层直建 shader；`render_frame` 普通 LOP 预检。
+- ✅ H21 headless scene/geometry 回归 11/11，HDA 回归全绿；`npm run build` 生成
+  11 domains / 45 verbs；新 Solaris/Karma skill 通过 quick_validate。
+- ✅ H21 GUI 已按两个 shipped tool 的真实 context/recipe 执行非交互 adapter：Karma Setup 创建
+  `karmarendersettings + usdrender_rop` 与三条官方表达式；Karma Material Builder
+  内部节点、tab mask、`kma` context 均通过。独立测试使用 `/obj` 下 disposable LOP
+  Network，不碰用户 `/stage`。
+- ✅ 重启后 GUI 复验完成：同一 exec 连续应用 Karma Setup + Material Builder 时共享首个
+  用户 pwd/current/selection 基线，SideFX 节点创建的 deferred selection 通过 Houdini
+  两阶段 event callback 最终恢复；`regress_solaris_gui.py` 全部通过且无 probe 残留。
+- ✅ 标准 USD Render ROP 实际出图：发现并修复 `render_frame` 先命中 `lopoutput`（USD）
+  而非 `outputimage`（图像）、以及未临时启用 `soho_foreground` 的两个契约 bug。H21 用
+  已有草地 stage 在 frame 25 渲出 88,133-byte PNG，3.77 秒、errors 空；frame 128 与
+  foreground=0 恢复，临时 settings/ROP 和测试 PNG 均已清理。
+
+### 2.26 魔方 trace：Rig / Animation 第一性原理路线（2026-08-21，计划已拍板）
+
+`session-a41c853a` 用 66 个 tool call / 251 个 verb call 创建魔方并保存 HIP；静态模型、
+54 个贴纸点、单个 R 层中间转动和固定相机 A/B 成立。但最终 wrangle 永远按初始
+`gx/gy/gz` 叠加六个绝对角度，不能表达非交换的连续魔方状态；frame 1/220 相同只是所有
+通道归零，不证明逆序还原。视觉只覆盖 frame 25/31，却外推为 16 步全部通过。
+
+本次不按魔方任务加专用补丁，也不把 KineFX/APEX 手册注入 system prompt。SideFX 官方
+资料与本机 H21 help 共同确认：channel、packed/Transform Pieces、KineFX skeleton/skin、
+APEX rig graph 分别解决不同数据模型；“绑定”必须先分类。完整事实、假设、约束、路由矩阵、
+工具预算、分阶段计划与第一验证见 [rig-animation-design.md](rig-animation-design.md)。
+
+拍板边界：
+
+1. 新增 `houdini-rig-animation-workflow` 承载领域路由/官方模式/完成门；常驻 guidance 只放
+   skill dispatch 与“路径依赖序列必须验证状态迁移/非交换转折”两个短不变量。
+2. 第一批最多新增一个通用动词：候选 `set_keyframes`；先扩展 `read_parms` 动画摘要与
+   `create_spare_parms` 显式 controller spec，修搜索、advisory、evidence，不增平行动词。
+3. 不新增 `rubik_*`、`piece_*`、`kinefx_*`、`apex_*`；KineFX/APEX 先走真实 Tab + 现有
+   primitive + skill，等多任务 trace 证明 setup 封装必要后再议。
+4. 第一验证不是再渲染当前第一步，而是 H21 disposable HIP 的 R→U 非交换 packed-piece
+   基准：第二步必须使用 R 后 logical state，inverse 后逐 piece transform 恢复。
+5. 当前 online 文档以 H22 为主；运行时类型/recipe 以 H21/H22 各自 Tab 与本机 help 为准。
+
+计划状态：Phase A/B 与 H21/H22 Phase C 三类基准已完成；正式 catalog 为 46 verbs
+（44 主动词 + 2 compatibility）。正确 Houdini session 的 46/46 verbs、5/5 skills 曝光和
+ordered 魔方固定构图 GUI A/B 和 H21/H22 APEX evaluation 均已通过；剩余发布门是更多真实用户 trace。
+
+**2026-08-21 Batch A 实现进度**：
+
+- ✅ `evidence-helpers.mjs` 统一 batch/validation coverage；同节点唯一 parm 才算 batch，
+  魔方 trace 误报清零；JSON/HTML 同时报 geometry `[1,25,31,121,220]`、render/vision
+  `[25,31]`，不再隐藏验证覆盖缺口。
+- ✅ `search_tab_menu` 同时匹配 internal name、base、operator label 的原始/紧凑 token；
+  `copy to points` 命中 `copytopoints`。Repo advisory 将过宽 `render/save/dump` 文本收窄为
+  实际写调用；relay `render_check` 只读不报警，真实 repo write 仍报警。
+- ✅ Governance `GOV-001` 建立 observable dry-run：必须 UPDATE trace/确定性 bug、保留
+  rig/`set_keyframes` 为 candidate、NO_CHANGE COP/SIM/tool catalog；本批实际副作用符合。
+- ✅ 新增 `regress_rig_state_model.py`：H21.0.440 6/6。27 个 packed pieces 显式 Attribute
+  Copy point `name` 后交给 Transform Pieces；正确 R→U 更新 logical membership，错误绝对
+  通道使用 initial membership，两者第二步分叉；两者最终都回 rest。轴心 piece 仅 orient
+  变化，证明 P diff 单独不足。
+- ✅ HTA-017 从 S1 候选升级为 S2 确认；暂不新增 piece-state verb，现有
+  `geo_frame_diff(P)` + `geo_frame_diff(orient)` 已覆盖基准。
+- Batch A 结束时，rig/animation skill 与 `set_keyframes` 尚未发布；该历史状态已由下面
+  Batch B 取代。跨批次一直未完成的是 Restart Services + 新 DSH session 曝光门。
+
+**2026-08-21 Batch B 实现进度**：
+
+- ✅ H21 channel/KineFX foundation 7/7：`constant/linear/bezier`、frame 单位、3-joint
+  name/topology/transform、Rig Pose、boneCapture、Joint Deform 多帧。
+- ✅ 正式新增 `set_keyframes`（唯一新 verb）；`read_parms` 动画摘要；
+  `create_spare_parms(spec=...)` controller interface。桥注册/raw advisory/guidance/
+  `tool-design.md`/README/catalog 同步，build 生成 11 domains / 46 verbs。
+- ✅ `houdini-rig-animation-workflow` + reference 已注册；governance audit 现为 5 skills /
+  5 registrations / 0 issue / 0 warning。
+- ✅ 原 `E:/tmp/test3/魔方.hip` 保持 212,197 bytes / 14:02:40；新副本
+  `E:/tmp/test3/魔方_ordered_rig.hip` 235,770 bytes，`OUT_ORDERED` 保存。重开验证：27
+  packed pieces；first P/orient 非零；scramble P max 2.828；loop P/orient 约 1e-32。
+- ✅ packed attribute class 规则细化：Copy-to-Points packed instances 与展开 polygon→Pack
+  的 name class 不同；Pack warning 不得忽略。
+- ✅ H22.0.368 / Python 3.13：animation foundation 7/7、rig state 6/6、scene/geometry
+  11/11；新 verb/skill 的跨 ABI 基线成立。
+- 该批结束时仍待 Restart/session/GUI/APEX；其中 Restart、46 verbs / 5 skills 曝光与 GUI
+  render/vision 与 APEX graph evaluation 已在后续验收完成，当前只剩更多真实任务。
+
+**2026-08-21 部署态 agent 验收**：
+
+- ✅ Restart 后 live bridge 的 `verb_help('set_keyframes')` 返回新签名/文档；Web 200。
+- ⚠️ 用户从 UI 新建的空 session `session-bab6df3b...` 实际 `agentPreset='cordis'`，不是
+  Houdini；确认 Phase 0“菜单打开默认切 Houdini 模式”仍是产品缺口，不能用该 session
+  验证插件。
+- ✅ 通过正式 Host RPC `session.create(cwd='E:/tmp/test3', agentPreset='houdini')` 创建
+  `session-8fe0e669...`，再用 `session.prompt` 投递只读测试；不是直接写 session 文件。
+- ✅ 新会话 system reminder 精确列出 5 个 Houdini skills；agent 成功加载
+  `houdini-rig-animation-workflow`，只调用 1 次 `houdini_query`，其中使用
+  `verb_help('set_keyframes') + scene_info()`；0 mutation / 0 failure / 0 rollback / 0 advisory，
+  最终正确解释 channel 与 ordered pieces/KineFX 边界。
+- ✅ Evidence 新增 `skillCatalogSnapshots`：skill catalog 实际位于 plugin system-reminder
+  user message，不在 request header；此前 `availableSkills=null` 只是 schema 位置未知。
+- ⚠️ 首轮 request header 精确命中 44/46 catalog names；缺的 `list_bookmarks`、
+  `create_bookmark` 是 guidance 写成缩写 `list/create/delete_bookmark`，非桥能力缺失。现已改为
+  三个完整名字并 build。
+- ✅ 第二次 Restart 后，通过 Host RPC 创建正确 Houdini preset session
+  `session-872f6d34...`，使用显式 UTF-8/ASCII 只读 prompt；request header 精确命中
+  **46/46 catalog verb names**，system reminder 精确列出 5/5 Houdini skills。
+- ✅ 第二轮 agent 再次成功加载 rig skill，只用 `skill ×1 + houdini_query ×1`；query 内
+  `scene_info + verb_help(set_keyframes/list_bookmarks/create_bookmark/delete_bookmark)` 五个 verb
+  全部 `[ok]`。0 mutation / failure / rollback / advisory，HIP/frame 保持 `魔方.hip` / 115。
+- ✅ 部署态 verb/skill/activation/只读行为门完成。ordered 魔方 GUI A/B/vision 与
+  H21/H22 APEX graph evaluation 也已完成；剩余领域门为后续真实用户任务。
+
+**Ordered 魔方 GUI 视觉结果与 HIP load 事故**：
+
+- ✅ 获得用户授权后，在 ordered 副本上逐帧 `render_view(OUT_ORDERED, framing_frame=31)`：
+  25/31/121/169/217 全部 stale=false、无 warning/error、camera/framing 完全一致。
+- ✅ render diff：25→31 meaningful 31.395% / RMSE 20.927；25→121 26.984% / 24.278；
+  121→169 29.420% / 25.149；25→217 identical=true、RMSE=0。人工中性查看确认 solved、
+  首层中间转动、scramble、recovery、最终 solved，piece/sticker 无明显丢失。
+- P0：bridge exec 内 `hou.hipFile.load()` 不能作为事务步骤。单 exec load→render→restore 丢失
+  result/images；拆分 load 的请求结果也不可靠；UTF-8 恢复 load 最终关闭连接并启动新 Houdini
+  进程，bridge 消失，无法由 finally 完成恢复确认。记录为 HTA-018。
+- 已拍板：禁止 live bridge exec 调 `hipFile.load`；不新增薄 `scene_open` verb。打开用户 HIP
+  走 UI，离线工程分析用 hython；未来自动化必须是 Host 侧可重连 handshake。
+- ✅ 桥级 P0 守卫已实现：AST 在执行前精确拒绝 `hou.hipFile.load(...)`，不受 rawGate 或
+  `allow_raw` 豁免；H21/H22 回归验证请求失败且 HIP 不变。`hipFile.save()` 不受专项守卫。
+- 文件安全：原 `魔方.hip` 与 ordered 副本均存在；渲染 PNG 已落盘；本轮未保存任何 HIP。
+  新 Houdini 进程当前场景需用户目视确认并重新启动 DSH 服务。
+- 边界：测试期间 live HIP/frame 保持 `魔方.hip` / 115；trace 无 mutation。用户共享 UI 当前
+  display 为 `normal1`，不能归因于只读 agent，符合“viewport/display 可漂移”定位。
+
+**OpenGL 环境记录（非开发项）**：本次崩溃发生在低配置、无独显的 agent 开发机；用户已
+说明实际运行 Houdini 的机器配置不会太差，因此不为这个开发机追加 GPU 探测、兼容层、开关
+或专项调试。`render_view` 保持正常设计；若开发机偶发 OpenGL 不稳定，只停止本轮视觉重试，
+保留节点语义证据。HTA-018 的 `hipFile.load` 生命周期守卫是独立、已确认的安全边界，继续保留。
+
+**APEX 非交互 evaluation 发布门（已完成）**：没有自动化 Animate State，也没有新增 APEX
+动词，而是使用两版 `$HFS` 随安装的 SideFX `APEXGraphExamples.hda` 建立 graph-engine smoke：
+
+- H21.0.440 与 H22.0.368 均发现 `apex::graph` / `apex::invokegraph`；帮助 fixture 目录分别为
+  `apex--editgraph` / `apex--graph`，证明在线最新路径不能写死到旧版本。
+- 官方 Add graph 接收 detail dict `a=2,b=3.5`，输出 `output_parms.result=5.5`；改为
+  `10,-4` 后重算为 `6.0`，两版均 0 warning/error。
+- 无 graph 输入时两版均抛 cook failure，`node.errors()` 为 `Not enough sources specified.`；
+  `errorhandlingmode` 菜单均为 `ignore/warn/abort`。
+- 新增 `houdini/tests/regress_apex_evaluation.py`，只在 disposable hython 场景安装/卸载官方
+  fixture，不碰 live HIP。该门只证明输入 binding、求值、输出和失败读取；不冒充 controls、
+  constraints、FK/IK、components 或 Animate State 已完成，也不批准 APEX setup adapter。
+
+### 2.27 Houdini skills 治理与长期自进化（2026-08-21，首版已实现）
+
+新增随包 `houdini-skill-governance`，统一未来 SOP、Solaris/Karma、rig/animation、COP、SIM、
+project-analysis 等领域 skill 的创建、更新、拆并、弃用和版本维护。所谓“自进化”不是每次
+trace 后递归改写生产知识，而是：
+
+```text
+observation → candidate → accepted → verified → released → deprecated/removed
+```
+
+任何 trace、SideFX 官方文档、本机帮助/源码、用户视频、HIP/HDA 工程都可产生 candidate，
+但必须记录 provenance、Houdini 版本、权限/隐私、适用条件、反例和下一验收。单 trace/视频/
+工程默认 E1；两个独立任务或官方资料 + 目标版本复现达到 E2；三个多样任务、跨版本和反例
+达到 E3。可复现 P0 工具 bug 可立即修，但必须有回归。
+
+结构：
+
+- `SKILL.md`：授权边界、入口路由、知识分层、受控自进化和输出契约；
+- `references/quality-standard.md`：skill 准入、标准结构、泛化、拆并/弃用和验证；
+- `references/evidence-ingestion.md`：trace/官方资料/视频/工程的来源吸收、隐私和版权；
+- `references/maintenance-lifecycle.md`：事件驱动维护、健康指标、Houdini 版本刷新、发布/回滚；
+- `scripts/audit-houdini-skills.mjs`：确定性检查 frontmatter/name、reference 可达性、孤儿资源、
+  `src/skill.ts` 注册和入口体积。
+
+长期路线：M0 治理地基；M1 标准化当前五个 skills；M2 以真实任务证据准入 COP/SIM/
+project-analysis；M3 随 Houdini 版本、trace、视频和工程持续刷新。M1 审计与版本矩阵见
+[skill-governance-m1-audit.md](skill-governance-m1-audit.md)。明确不预建空壳领域 skill，
+不把整本手册、长转录、专有 HDA/代码或项目路径复制进 bundled skills。
+
+`houdini-trace-analysis` 现区分权限：只要求分析时输出 skill delta proposal；用户明确要求
+更新/修复 skills 时才加载 governance 执行变更。插件 guidance 只新增一条稳定 dispatch，
+不注入完整治理手册。
+
+**M1 完成（2026-08-21）**：五个 skills 的触发、正反例、唯一维护位置和 H21/H22 claim
+已完成统一审计，见 `docs/skill-governance-m1-audit.md`。决策为全部 KEEP，窄 UPDATE SOP
+视觉门、Solaris H22 未验证边界、rig APEX reference 与 GOV-002；无 merge/split/deprecate。
+新 `session-83a553e7...` 发布态验证为 5/5 Houdini skills，成功激活 rig 并读取 reference，
+3 tool calls / 2 verbs / 0 failure/mutation/advisory。该 trace 另暴露并修复 HTA-019：ledger
+result 内 signature 的 `->` 不得被 greedy regex 当调用分隔；extractor/report/client 改为
+字符串与 JSON 容器感知的结构扫描，真实 evidence 回归恢复准确 args/result。
+
+### 2.28 Houdini 菜单默认 session 路由（2026-08-21，已完成）
+
+**问题**：DSH 全局默认 preset 是用户设置；Houdini 菜单只打开通用 Web UI 时，UI 的 New
+Session 会沿用 `cordis`，不能靠用户记得手工切换，也不能把 DSH 的全局默认改成 Houdini。
+
+**官方边界确认**（本机 `E:/deepseek-harness` 与当前缓存 CLI 同版本实现）：
+
+- Host `session.create` 正式接受 `agentPreset`，解析后写入 session header，resume 继续使用；
+- `session.list` 返回 `cwd/agentPreset/updatedAt`；`workspace.list` 返回 path/account；
+- client 的公开导航是 `sessions.refresh()` + `sessions.open(id)`；
+- session 文件、浏览器 store 和 profile manifest 都不是插件应直接写的接口。
+
+**实现**：完整 launch 在 3081 ready 后调用正式 `/api/session.list` 与 `workspace.list`，按
+“精确 cwd + 精确 `agentPreset='houdini'` + 未归档 + 最新 updatedAt”复用；没有才优先以
+`workspaceId + agentPreset` 创建，否则用 `cwd + agentPreset`。WebView URL 只带一次
+`dsh-houdini-session` hint；client 半等 `sessions` 服务后 refresh/open，成功才从 URL 消费。
+健康服务下的 `Open Workspace` 不带 hint，只置前窗口，因此不改变现有会话。
+
+**验收**：Python 回归覆盖错误 preset/cwd 排除、最新会话选择与 Workspace 精确匹配；Node
+VM 回归覆盖 hint 的 refresh/open/成功消费和无 hint 零导航。真实 3081 复用
+`session-872f6d34...`，未创建重复 session；WebView 初始目标 URL 携带该 id，随后恢复为根
+URL，证明 client 已完成 open 后消费。前端/bridge 分别保持 3081/8765 listening，HTTP 200。
+发布 forward-test 创建的 `session-83a553e7...` 已通过正式 `workspace.archiveSession` 归档；
+launcher 回归证明 archived session 不参与复用，WebView 已恢复原用户会话 `session-872f6d34...`。
 
 ## 3. 卡点（blockers）
 
@@ -777,6 +1058,16 @@ QPainter 圆弧 spinner。
 | 19 | HDA conditional 必须提交后读回验证，丢失才补 DialogScript | H21 实测 API `setConditional` 可在 `setParmTemplateGroup` 后静默消失；只信“调用成功”会把返工推给用户 |
 | 20 | HDA replace 永不覆盖原生类型，definition 用 `destroy()` 精确删除 | uninstall 整个 HDA 文件会连带同库其它定义；原生 subnet 的 instances 更绝不能按同名 HDA 替换语义销毁 |
 | 21 | trace 审计走“确定性 evidence + Houdini 领域裁判”，不按调用频率直接改词表 | 频率分不清不适用和该用未用；节点模块、局部几何、cook/显示/动画需要语义证据，删除工具还需跨 trace 反例分析 |
+| 22 | system prompt 只放稳定 dispatch/invariant，Solaris/Karma 细节放可版本化 skill | 当前 prompt 已要求 LOP/Karma 仍选错；长 recipe 常驻只会稀释注意力，且不能补执行能力 |
+| 23 | 真实 Tab entry = node type + context filter + tool recipe，不再等同类型注册表 | H21 Karma Setup/Material Builder 都是 tool；裸 createNode 会绕过多节点初始化和材质 tab mask |
+| 24 | 单节点创建与 setup tool 执行拆分 | 两者返回基数、副作用、状态恢复和安全边界不同；不能破坏已发布 `tab_create -> hou.Node` 契约 |
+| 25 | Karma 完成门按 USD/材质/RenderSettings/ROP/产物/时序分层 | “PNG 存在”不证明 XPU material context、标准网络或动画序列成立 |
+| 26 | Rig/animation 先按数据模型分类，不把“绑定”直接等同 KineFX/APEX | channel、刚体 piece、层级、skin、character rig、simulation 的状态和完成门不同 |
+| 27 | 领域官方知识进按需 skill，执行失败面才进动词 | 避免 system prompt 手册化和按节点堆 API；保持词表最小完备 |
+| 28 | 路径依赖动画必须验证稳定身份、更新后 membership 与非交换转折 | 首步能动、首尾相同和像素不同均不能证明整个有序序列正确 |
+| 29 | Skill 自进化走有来源、分级、可回滚的状态机，不做无门槛自改 | 单次成功/失败不能安全地产生通用规则；生产知识修改是独立副作用 |
+| 30 | 多来源只贡献 claim，不直接复制材料 | 官方文档、视频、HIP/HDA 的权威性、版本、许可和泛化强度不同 |
+| 31 | 新领域 skill 由独立数据模型/完成门准入，不按 Houdini UI 模块预建 | 控制 skill 数量、description 竞争和长期维护矩阵 |
 
 ---
 
@@ -792,13 +1083,31 @@ QPainter 圆弧 spinner。
    `houdinitrace` 未显示的根因已修（exports 缺 `./package.json`）；verbs 缺席的根因
    是**模型不用动词**（guidance 已注入但被忽略），非管道断裂——转化为 Phase 1 第 8 项。
 3. ✅ 新增 `houdini-dev` preset（`presets/houdini-dev/`：standard 工具集 + dsh-houdini + coding persona，用于开发/测试；已 `standingKeyFor('houdini-dev')` 校验通过）。
-4. ⏳ 「Houdini 菜单打开默认切到 houdini 模式」：查 default preset / 深链（`dsh web` 无 `--preset` flag）。
+4. ✅ Houdini 菜单完整启动默认进入正确模式（§2.28）：正式 Host RPC 复用/创建当前 HIP 的
+   `houdini` session，client 公开 refresh/open 导航；普通 Open Workspace 保留当前会话。
 5. ✅ P0 修 `render_view`（§2.21）：proxy isolation + 保存/恢复 OBJ 可见性，agent camera/target 不抢用户对象；
    确定性 headlight/geometry color；增加 detail/coverage 构图并返回 eye/direction。
 6. ✅ P0 修 display 契约（§2.21）：SOP 是 singular display child，OBJ 是 plural visibility；
    `display_node('/obj')` 不得调用不存在的 `displayNode()`。
 7. ✅ P1 几何自省补 local/piece extent（§2.21，识别“全场 bbox 正常但每个实例宽度为 0”）；
    动画任务 guidance 增加 A/B 完成门，`render_check` diff 提高精度并给非零像素比例。
+8. ✅ 修 trace evidence compaction replay 去重（§2.25）：callId 唯一执行，replay 单列。
+9. ✅ parent-aware Tab entry + 安全 setup recipe（§2.25）：headless/GUI 同语义；标准
+   节点、Builder、同 exec 用户状态恢复与实际 USD Render ROP 出图均通过。
+10. ✅ USD stage/prim 自省 + `render_frame` LOP/ROP 预检（§2.25）。
+11. ✅ 打包 `houdini-solaris-karma-workflow`，guidance 只加 dispatch/硬不变量（§2.25）。
+12. ✅ Rig/animation Phase A（§2.26）：审计序列门、evidence batch/覆盖、搜索/advisory、
+    governance dry-run 与 H21 R→U packed-piece 正反例均通过；未增加正式动词。
+13. ✅ Rig/animation Phase B：`set_keyframes`、`read_parms` 动画摘要、controller spec、
+    rig skill 与 ordered 魔方副本已完成 H21 回归并进入 `tool-design.md`。
+14. ⏳ Rig/animation Phase C/D：H21/H22 channel/rigid/KineFX/APEX smoke、GUI A/B 和新
+    session activation 已完成；只待更多真实用户 trace，未由单次 smoke 增加领域动词。
+15. ✅ Skill governance M0（§2.27）：治理 skill、三份 reference、确定性 audit、trace 路由、
+    注册/README/guidance 已落地。
+16. ✅ Skill governance M1：五个 skills 的 trigger、正反例、唯一维护位置和 H21/H22 claim
+    已审查；结论为 KEEP + 三处窄 UPDATE，无 merge/split/deprecate（见 M1 audit）。
+17. ⏳ Skill governance M2/M3：COP/SIM/project-analysis 按真实任务准入；Houdini 版本事件、
+    10 个新 traces 或季度兜底触发来源/触发/孤儿 reference 健康审查。
 
 ### Phase 1 — 合规对齐（不改行为，只贴规范）
 
@@ -868,18 +1177,22 @@ QPainter 圆弧 spinner。
 | `src/index.ts` | host 入口：注册工具 + systemPrompt guidance |
 | `src/tools.ts` | 5 个工具定义 + `verbs`/`advisory` 渲染 |
 | `src/bridge.ts` | HTTP client（`ExecResult.verbs`/`advisory`） |
-| `src/skill.ts` | 随包注册 trace-analysis + SOP-workflow 两个 skill/resource base |
+| `src/skill.ts` | 随包注册 trace-analysis、SOP、Solaris/Karma、rig/animation、skill-governance 五个 skill/resource base |
 | `client.js` | **client 半**：手写 factory，注册 `houdinitrace` 视图（词表目录 + 实时时序，目录由生成器注入） |
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 38 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help` |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 43 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 46 个目录入口 |
 | `houdini/tests/regress_hda_verbs.py` | HDA authoring 独立回归（不经过已知会触发 VEX 栈溢出的旧 t15） |
 | `houdini/tests/regress_scene_geometry_verbs.py` | scene/display/piece/frame/layout/diff/spare headless 回归 |
+| `houdini/tests/regress_apex_evaluation.py` | H21/H22 SideFX fixture 的 APEX Graph→Invoke Graph 输入/输出/失败 headless smoke |
 | `houdini/tests/regress_visual_gui.py` | explicit SOP proxy、用户 display 漂移与状态恢复 GUI 回归 |
+| `houdini/tests/regress_solaris_gui.py` | parent-scoped Tab、Karma Setup、Karma Material Builder 与 UI 状态恢复 GUI 回归 |
 | `houdini/python3.11libs/dsh_launcher.py` | 打开/重启分流 + preset 同步 + 分阶段百分比/超时诊断（worker 线程探测） |
 | `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + npm/Git 只读更新检查 |
-| `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + backdrop-filter 性能修复注入（§2.13） |
+| `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + 一次性 session hint + backdrop-filter 性能修复注入（§2.13/§2.28） |
+| `houdini/tests/regress_launcher.py` | launcher 依赖、缓存 CLI、超时、session/workspace 选择和日志头回归 |
+| `tools/tests/client-session-hint.test.mjs` | WebView session hint 的 refresh/open/消费与无 hint 零导航回归 |
 | `docs/tool-design.md` | 设计宪法 |
 | `docs/development.md` | 本文：进度 + 卡点 |
 | `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |
@@ -888,6 +1201,9 @@ QPainter 圆弧 spinner。
 | `tools/gen-client-catalog.mjs` | 构建期把目录注入 client.js（`npm run build` 第一步，§2.15） |
 | `skills/houdini-trace-analysis/` | 标准 trace 审计 skill：证据脚本 + 量表 + 累积模式库 |
 | `skills/houdini-sop-workflow/` | SOP/VEX/Copy/属性/模块验证与多帧交付工作流 skill |
+| `skills/houdini-solaris-karma-workflow/` | Solaris/USD/Karma CPU-XPU/MaterialX/Render Settings/COP 接口工作流 skill |
+| `skills/houdini-rig-animation-workflow/` | Channel/rigid pieces/hierarchy/KineFX skin/APEX 路由、控制器与时序完成门 |
+| `skills/houdini-skill-governance/` | Houdini skills 创建维护、多来源证据吸收、受控演化、版本发布和回滚治理 |
 | `presets/houdini/` | houdini 模式 preset 模板（persona + dsh-houdini 行） |
 
 ---

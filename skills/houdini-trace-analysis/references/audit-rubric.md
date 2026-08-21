@@ -29,6 +29,10 @@
 skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`；用当前仓库目录回看旧 trace
 时，新加入的工具必须标“当时未曝光”，不能倒果为因。
 
+长会话可能在 `compaction/prune` 后重放历史 `tool/result`。同一 callId 只代表一次执行；
+evidence 必须去重并把后续结果列为 `replayedResults`，不得让 replay 膨胀调用、动词、
+失败、耗时或阶段时间线。
+
 不要把以下内容混为一谈：
 
 - tool 返回错误。
@@ -103,6 +107,9 @@ skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`
 - 同一节点三项以上赋值：优先 `set_parms`。
 - 动词签名/返回形状不确定：先 `verb_help(name)`；若 agent 先制造一次失败或读取仓库源码才发现契约，标记为可避免的 discoverability 失败。
 - SOP 创建：`search_tab_menu`/`tab_create`；避免猜旧节点或错误版本。
+- Solaris/Material/COP 等上下文创建：优先 `search_tab_entries(actual_parent, query)`；检查
+  entry 是 node type 还是多节点 tool、是否 hidden/deprecated、是否被 parent tab mask
+  排除。`tab_create` 只建一个可见节点，setup/builder 用 `tab_apply`。
 - 显示：SOP 用 `sop_set_output/sop_output_node`，OBJ 用 `set_object_visible/visible_objects`；旧 `set_display/display_node` 只作兼容。检查是否错误混用 singular/plural context。
 - cook/状态：`cook_node` + `describe`，但不得忽略 warning。
 - 属性值：`geo_attrib_stats`；若局部形态仍不可证，记录新的几何自省缺口。
@@ -138,12 +145,39 @@ skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`
 
 ## 6. Houdini 领域逻辑
 
+### Solaris / USD / Karma
+
+- “节点类型注册表里存在”不等于“用户在当前 parent 的 Tab 菜单可见”。Material Library
+  根层、各类 Builder 与 setup recipe 必须按实际 context 审计。
+- 新 Karma 材质检查 render context（kma/mtlx/preview），不能用最终像素颜色替代；传统
+  Principled 在 CPU 能出图不证明 XPU 完整兼容。
+- 最终 Karma 交付检查 geometry/material binding/light/camera/RenderSettings/
+  RenderProduct/RenderVar/USD Render ROP。普通 LopNode 按钮成功不等于 ROP 产物成功。
+- SOP time dependency、单次 stage time sample 和最终 Karma 序列是三层证据；动画任务仍需
+  同一 USD camera 的两帧或小序列。
+
 ### 节点类型和模块
 
 - 选择节点前确认 Tab Menu 类型和最新版；优先 Houdini 语义正确的 SOP，而非熟悉但过时的 SOP。
 - Copy to Points 应承担模板点 orient/pscale/N/up 的实例变换；使用经典 Copy 后手写变换需要强证据。
 - 形变和成形的顺序必须保留数据：通常先变形中心线/曲面，再 Sweep/PolyWire 生成厚度，比生成截面后用错误 rest 坐标重建更安全。
 - 草叶等扁平对象优先 Sweep/skin/ribbon 语义；PolyWire 是管状截面，不应无理由替代叶片模块。
+
+### Rig / Animation 系统路由
+
+- 不把“绑定”直接等同 KineFX/APEX。先分类：parameter channel、rigid pieces、hierarchy/FK、
+  skeleton + skin、animator-facing character rig、simulation。
+- rigid piece 任务检查稳定 `name/piece_id`、rest transform、当前 transform 与 membership；
+  packed pieces/Copy to Points/Transform Pieces 通常比对所有展开点手写矩阵更符合数据模型。
+- 旋转轴上的 piece 可能 `P` 完全不变而 `orient/transform` 已改变；活动集合和刚体动画不能只
+  用 P diff，至少同时检查 orientation/transform。Copy/Pack 后还要确认稳定 name 真正存在于
+  Transform Pieces 用来匹配的属性 class，不能假设模板 `name` 自动传播。
+- KineFX 检查 joint `name/P/transform`、parent/local/world space；skin 另检查 `boneCapture`、
+  capture pose、animated pose 与 Joint Deform。没有 skin/层级需求时，不因“专业”而强制 KineFX。
+- APEX 面向 controls、constraints、FK/IK 与可复用 rig graph；必须证明任务需要延迟图求值和
+  animator-facing 逻辑，不能用它替代简单 piece state evaluator。
+- 路径依赖/非交换序列必须表示 ordered state transition。使用初始 membership + 独立绝对
+  通道时，除非各通道确实互不影响，否则是结构性反例。
 
 ### 数据流和属性
 
@@ -201,6 +235,12 @@ skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`
 - 几何 diff 明显非零只证明“数据随时间变化”，不证明运动符合用户语义。继续验证锚点、活动区、方向和空间传播。若固定相机 A/B 暴露明确的结构性反例（完全静止、方向相反、主体缺失），完成门失败；若节点/数据/时间语义均通过而静帧只是不足以裁定细微动态或审美力度，可停止追图并标记“视觉待用户播放判断”，但不能写成“视觉已确认通过”。
 - render A/B 必须使用完全相同的相机与构图。逐帧按动态 bbox 自动重取景时，先比较返回的 camera `center/eye/dist/direction`；任一变化都会把相机漂移混入 pixel diff，该 diff 只能证明两张图不同，不能证明几何运动。
 - 验证根部近似固定、尖端运动更大、波峰沿风向传播；不能只看“画面动了”。
+- 多 segment 或路径依赖任务不得只抽 first A/B。验证覆盖至少包括：第一段、一个会改变后续
+  membership/空间的非交换转折、sequence mid/end、recovery；报告实际覆盖帧。
+- 最终帧等于 rest 时，区分“正确 inverse 后恢复”与“所有绝对控制量归零后天然重算 rest”。
+  后者不能证明中间序列正确。
+- hidden piece 数、capture weights、joint hierarchy、constraint 和 state permutation 不能由
+  单视角视觉确认，必须使用数据/属性/transform 证据。
 
 ### Render 工具边界
 
@@ -216,7 +256,8 @@ skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`
 - 首次正确模块产物时间、首次视觉证据时间、用户纠正时间、最终交付时间。
 - 构建、几何调试、渲染调试各占多少调用/分钟。
 - 同类硬失败是否连续发生；是否在第三次前改变策略。
-- 三项以上 `set_parm` 是否可批量。
+- **同一 resolved node** 三项以上 `set_parm` 是否可批量；跨多个节点的总次数不能算 batch
+  opportunity，已经使用 `set_parms` 的字段不重复计入。
 - 是否反复全文重发 VEX/Python；能否局部 patch。
 - 是否创建并清理 test box/light/probe/camera。
 - 是否恢复 display/ROP/frame，是否保存或说明未保存。

@@ -41,6 +41,54 @@ export function loadSessionEvents(input) {
   return { file, events, frames: starts.length, frameErrors };
 }
 
+/** Return the originating call id for a tool/result event, across known schemas. */
+export function toolResultCallId(event) {
+  if (event?.type !== 'tool/result') return null;
+  const message = event.data?.message || {};
+  return message.source?.callId || message.content?.[0]?.toolCallId || null;
+}
+
+/**
+ * Keep one execution result per call id and report later history replays separately.
+ *
+ * DSH compaction can re-emit an old tool/result after `compaction/prune` so the
+ * compacted history remains self-contained. That is history reconstruction, not a
+ * second execution. Counting every result event inflates calls, verbs, failures and
+ * timing. The first observed result is the execution evidence; later events with the
+ * same call id are diagnostics only.
+ */
+export function uniqueToolResultEvents(events) {
+  const firstByCallId = new Map();
+  const uniqueResults = [];
+  const replayedResults = [];
+  for (const event of events) {
+    if (event.type !== 'tool/result') continue;
+    const callId = toolResultCallId(event);
+    if (!callId) {
+      // Consumers historically ignored uncorrelated results. Preserve them here so
+      // callers can still decide whether a future schema makes them meaningful.
+      uniqueResults.push(event);
+      continue;
+    }
+    const first = firstByCallId.get(callId);
+    if (!first) {
+      firstByCallId.set(callId, event);
+      uniqueResults.push(event);
+      continue;
+    }
+    replayedResults.push({
+      callId,
+      originalSeq: first.seq ?? null,
+      replaySeq: event.seq ?? null,
+      originalTime: first.time ?? null,
+      replayTime: event.time ?? null,
+      turn: event.data?.turn ?? null,
+      step: event.data?.step ?? null,
+    });
+  }
+  return { uniqueResults, replayedResults };
+}
+
 export function sessionIdFromFile(file) {
   return path.basename(path.dirname(resolveSessionFile(file))).replace(/^session-/, '');
 }

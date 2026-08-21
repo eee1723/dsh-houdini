@@ -29,7 +29,7 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
    - `P0`：工具自身错误、数据破坏、错误成功判定、无法完成任务。
    - `P1`：明确重复出现的缺失能力或工作流守卫。
    - `P2`：单 trace 假设、便利性或性能改进，等待更多证据。
-10. 检查本次是否发现新的通用模式。只有满足量表中的准入条件才更新 `known-patterns.md`；写明 session ID、证据步骤、反例和状态。若动词设计已拍板，再同步 `docs/tool-design.md` 与 `docs/development.md`。
+10. 检查本次是否发现新的通用模式。只有满足量表中的准入条件才更新 `known-patterns.md`；写明 session ID、证据步骤、反例和状态。若用户明确要求更新/修复 skills，先加载 `houdini-skill-governance` 决定唯一维护位置、证据等级和验证；只要求分析时输出 skill delta proposal，不静默修改生产 skill。若动词设计已拍板，再同步 `docs/tool-design.md` 与 `docs/development.md`。
 
 ## 硬规则
 

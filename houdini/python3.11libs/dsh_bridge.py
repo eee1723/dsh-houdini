@@ -167,8 +167,10 @@ _VERBS: dict[str, object] = {
     "create_bookmark": dsh_hou_helpers.create_bookmark,
     "delete_bookmark": dsh_hou_helpers.delete_bookmark,
     "search_tab_menu": dsh_hou_helpers.search_tab_menu,
+    "search_tab_entries": dsh_hou_helpers.search_tab_entries,
     "resolve_latest_type": dsh_hou_helpers.resolve_latest_type,
     "tab_create": dsh_hou_helpers.tab_create,
+    "tab_apply": dsh_hou_helpers.tab_apply,
     "find_nodes": dsh_hou_helpers.find_nodes,
     "graph": dsh_hou_helpers.graph,
     "describe": dsh_hou_helpers.describe,
@@ -187,6 +189,7 @@ _VERBS: dict[str, object] = {
     "read_parms": dsh_hou_helpers.read_parms,
     "set_parm": dsh_hou_helpers.set_parm,
     "set_parms": dsh_hou_helpers.set_parms,
+    "set_keyframes": dsh_hou_helpers.set_keyframes,
     "create_spare_parms": dsh_hou_helpers.create_spare_parms,
     "hda_create": dsh_hou_helpers.hda_create,
     "hda_info": dsh_hou_helpers.hda_info,
@@ -197,6 +200,8 @@ _VERBS: dict[str, object] = {
     "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
     "geo_piece_stats": dsh_hou_helpers.geo_piece_stats,
     "geo_frame_diff": dsh_hou_helpers.geo_frame_diff,
+    "usd_stage_summary": dsh_hou_helpers.usd_stage_summary,
+    "usd_prim_info": dsh_hou_helpers.usd_prim_info,
     "render_frame": dsh_hou_helpers.render_frame,
     "render_check": dsh_hou_helpers.render_check,
     "render_view": dsh_hou_helpers.render_view,
@@ -211,7 +216,7 @@ _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 # 那些动词已覆盖的裸 hou 调用；一旦代码完全没走动词却用了这些调用，就在返回
 # 里附一条 advisory，点明对应的动词——让 agent 从结果里直接看到可替代方案。
 _RAW_HOU_VERB_MAP = {
-    "createNode": "tab_create",
+    "createNode": "search_tab_entries + tab_create/tab_apply",
     "setInput": "connect",
     "setFirstInput": "connect",
     "connectInputs": "connect",
@@ -228,6 +233,9 @@ _RAW_HOU_VERB_MAP = {
     "createDigitalAsset": "hda_create",
     "setParmTemplateGroup": "hda_set_interface or create_spare_parms",
     "addSpareParmTuple": "create_spare_parms",
+    "setKeyframe": "set_keyframes",
+    "setKeyframes": "set_keyframes",
+    "deleteAllKeyframes": "set_keyframes or set_parm",
     "addSection": "hda_set_section",
     "setConditional": "hda_set_interface",
 }
@@ -276,14 +284,48 @@ def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
     )
 
 
+def _forbidden_hip_load_message(code: str) -> str | None:
+    """Reject direct ``hou.hipFile.load`` before execution.
+
+    Loading a HIP resets the scene/process lifecycle that owns this very bridge
+    request: H21 GUI reproduction lost results/images and eventually restarted
+    Houdini, so neither undo nor a Python ``finally`` can make it transactional.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "load":
+            continue
+        owner = node.func.value
+        if (
+            isinstance(owner, ast.Attribute)
+            and owner.attr == "hipFile"
+            and isinstance(owner.value, ast.Name)
+            and owner.value.id == "hou"
+        ):
+            return (
+                "hou.hipFile.load() is forbidden inside dsh-houdini bridge exec: "
+                "HIP loading invalidates the active exec/bridge lifecycle and can "
+                "disconnect or restart the shared Houdini process. Open the HIP in "
+                "the Houdini UI, or use a future host-level reconnecting operation."
+            )
+    return None
+
+
 # --- repo-write advisory ------------------------------------------------------
 # agent 产出锚定 $HIP，不写插件仓库。dsh 侧（pwsh/fs/vision）由工作区沙箱
 # 强制（工作区对准 $HIP 目录后仓库天然是禁区）；桥 exec 是逃生舱不做硬拦，
 # 只对「代码里出现仓库根路径字面量 + 写语义关键词」附一条 advisory。
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _REPO_WRITE_HINTS = (
-    ".write", "shutil.copy", "save", "screenshot", "render",
-    "dump", "export", "makedirs", "mkdir", "touch",
+    ".write(", ".write_text(", ".write_bytes(", "shutil.copy", "shutil.move",
+    ".save(", "hipfile.save(", "render_frame(", "render_view(",
+    "viewport_screenshot(", ".render(", "json.dump(", "pickle.dump(",
+    ".export", "makedirs(", "mkdir(", ".touch(",
 )
 
 
@@ -475,7 +517,8 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
     with _exec_lock:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
-                if _raw_gate and not allow_raw:
+                error = _forbidden_hip_load_message(code)
+                if error is None and _raw_gate and not allow_raw:
                     error = _gate_message(code)  # None = 放行
                 if error is None:
                     if _raw_gate and allow_raw:

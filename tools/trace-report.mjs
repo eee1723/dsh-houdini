@@ -18,7 +18,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadCatalog } from './catalog-lib.mjs';
-import { loadSessionEvents } from './trace-session-lib.mjs';
+import { loadSessionEvents, toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
+import {
+  collectValidationCoverage,
+  parseVerbLedgerLine,
+} from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const DOC_PATH = path.join(REPO_ROOT, 'docs', 'tool-design.md');
@@ -64,6 +68,7 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 
 // ---------- parse trace ----------
 const { events } = loadSessionEvents(sessionFile);
+const { uniqueResults, replayedResults } = uniqueToolResultEvents(events);
 const calls = new Map();
 for (const e of events) {
   if (e.type === 'tool/call') calls.set(e.data.callId, e.data);
@@ -80,10 +85,9 @@ for (const e of events) {
 }
 
 const steps = [];
-for (const e of events) {
-  if (e.type !== 'tool/result') continue;
+for (const e of uniqueResults) {
   const msg = e.data?.message || {};
-  const callId = msg.source?.callId || msg.content?.[0]?.toolCallId;
+  const callId = toolResultCallId(e);
   const call = calls.get(callId);
   if (!call) continue;
   let args = {};
@@ -101,8 +105,15 @@ for (const e of events) {
   const verbsBlock = text.match(/verbs \((\d+)\):\n([\s\S]*?)(?:\n\n|$)/);
   if (verbsBlock) {
     for (const line of verbsBlock[2].split('\n')) {
-      const m = line.match(/^(\d+)\. \[(ok|FAIL)\] (\w+)\((.*)\) -> (.*) \(([\d.]+)ms\)\s*$/);
-      if (m) verbs.push({ n: +m[1], ok: m[2] === 'ok', verb: m[3], argsText: m[4], detail: m[5], ms: +m[6] });
+      const parsed = parseVerbLedgerLine(line);
+      if (parsed) verbs.push({
+        n: parsed.ledgerIndex,
+        ok: parsed.ok,
+        verb: parsed.verb,
+        argsText: parsed.args,
+        detail: parsed.result,
+        ms: parsed.ms,
+      });
     }
   }
   const hintBlock = text.match(/hint:\n([\s\S]*?)$/);
@@ -146,6 +157,9 @@ const rawHouSteps = steps.filter((s) => s.isHoudini && s.houCalls > 0 && s.verbs
 const failedSteps = steps.filter((s) => s.failed);
 const advisorySteps = steps.filter((s) => s.advisory);
 const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);
+const validationCoverage = collectValidationCoverage(
+  steps.map((step, index) => ({ ...step, index: index + 1 })),
+);
 
 // ---------- HTML ----------
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -156,6 +170,17 @@ const fmtTime = (ms) => {
 };
 
 const chip = (text, cls) => `<span class="chip ${cls}">${esc(text)}</span>`;
+const frameList = (frames) => frames.length ? frames.map((frame) => esc(frame)).join(', ') : '无';
+
+const validationHtml = `
+  <div class="cards">
+    <div class="card"><div class="num">${validationCoverage.geometry.length}</div><div class="cap">geometry A/B</div></div>
+    <div class="card"><div class="num">${validationCoverage.renders.length}</div><div class="cap">render calls</div></div>
+    <div class="card"><div class="num">${validationCoverage.comparisons.length}</div><div class="cap">image comparisons</div></div>
+    <div class="card"><div class="num">${validationCoverage.vision.length}</div><div class="cap">vision calls</div></div>
+  </div>
+  <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉帧: ${frameList(validationCoverage.frames.vision)}</p>
+  <details><summary>验证覆盖明细</summary><pre>${esc(JSON.stringify(validationCoverage, null, 2))}</pre></details>`;
 
 const catalogHtml = catalog.map((d) => `
   <div class="domain">
@@ -289,9 +314,13 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num" style="color:${rawHouSteps.length ? 'var(--bad)' : 'var(--ok)'}">${rawHouSteps.length}</div><div class="cap">纯裸 hou 调用</div></div>
       <div class="card"><div class="num" style="color:${failedSteps.length ? 'var(--bad)' : 'var(--ok)'}">${failedSteps.length}</div><div class="cap">失败调用</div></div>
       <div class="card"><div class="num">${advisorySteps.length}</div><div class="cap">advisory 触发</div></div>
+      <div class="card"><div class="num">${replayedResults.length}</div><div class="cap">compaction replay</div></div>
     </div>
     <p class="dim-text">工具分布: ${Object.entries(toolCount).map(([k, v]) => `${esc(k)} ×${v}`).join(' ｜ ')}</p>
+    ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
+    <h2>动画 / 多帧验证覆盖</h2>
+    ${validationHtml}
     <h2>调用时间线（真实顺序）</h2>
     ${timelineHtml}
     <h2>纯裸 hou 段落（词表改进输入）</h2>
@@ -306,5 +335,6 @@ const outFile = outArg || path.join(REPO_ROOT, 'tools', 'out', `trace-${sessionI
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, html);
 console.log('session :', sessionFile);
-console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`);
+console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length);
+console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision=[' + validationCoverage.frames.vision.join(',') + ']');
 console.log('report  :', outFile);

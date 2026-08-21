@@ -9,8 +9,11 @@
 - **[`docs/setup.md`](docs/setup.md)** — 新机安装步骤（换电脑/重装照做）。
 - **[`docs/tool-design.md`](docs/tool-design.md)** — 设计宪法：动词词表、两轴模型、铁律、帮助文档三阶段、动词追踪。
 - **[`docs/development.md`](docs/development.md)** — 开发进度与卡点（随开发同步维护）。
+- **[`docs/rig-animation-design.md`](docs/rig-animation-design.md)** — Rig/animation 第一性原理、官方系统路由、最小工具预算与分阶段验收。
 - **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
 - **[`skills/houdini-sop-workflow/SKILL.md`](skills/houdini-sop-workflow/SKILL.md)** — 程序化 SOP/VEX/Copy/属性/模块验证和动画交付工作流。
+- **[`skills/houdini-rig-animation-workflow/SKILL.md`](skills/houdini-rig-animation-workflow/SKILL.md)** — Channel、刚体 pieces、机械层级、KineFX skin、APEX 路由与时序完成门。
+- **[`skills/houdini-skill-governance/SKILL.md`](skills/houdini-skill-governance/SKILL.md)** — 创建/维护 Houdini skills，多来源证据吸收、受控自进化、版本与发布治理。
 
 ## 工具
 
@@ -38,11 +41,11 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 
 | 域 | 动词 | 作用 |
 |---|---|---|
-| 类型目录 | `search_tab_menu(category, query)` | 只读：列出某 context 下匹配的节点族 + 最新版（查不猜，别猜类型名） |
+| 类型目录 | `search_tab_menu(category, query)` / `search_tab_entries(parent, query)` | 类型注册表查询 / 真实 parent 可见的 node+tool Tab entries |
 | 类型目录 | `resolve_latest_type(category, base)` | 某节点族的最新版全名（内部为主） |
 | scene | `scene_info()` | 只读 HIP/version/fps/frame/playback range，不移动时间线 |
 | scene | `set_timeline` / `list_bookmarks` / `create_bookmark` / `delete_bookmark` | 时间线字段与 bookmark 明确意图，不再猜 playbar/HOM API |
-| node | `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：**永远最新版本 + shelf 初始化** |
+| node | `tab_create(...)` / `tab_apply(parent, tool_id)` | 建一个可见节点 / 应用 allowlist 多节点 Tab recipe；GUI 恢复用户状态、headless 同语义 |
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
 | node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
@@ -53,11 +56,13 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | node | `set_object_visible` / `visible_objects` | OBJ plural visibility |
 | node | `layout_nodes(parent, nodes=)` | 原生网络布局 |
 | parm | `list_parms(node)` | 参数**目录**（名字/标签/类型/帮助，不给值） |
-| parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 带表达式 + 被引用的；表达式附 `referenced_parm`） |
+| parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 表达式/动画 + 被引用；动画附 key count/首尾帧/curve 摘要） |
 | parm | `set_parm(node, name, value)` / `set_parms(node, values)` | 单项设参 / 逐项容错批量设参；普通数值赋值会清掉旧动画并回报 |
-| parm | `create_spare_parms(node, code_parm='snippet', defaults={...})` | 从 ch/chf/chi/chv/chs 引用创建缺失 spare parameters，避免驱动静默为 0 |
+| parm | `set_keyframes(node, channels, replace=True)` | frame 单位批量关键帧，constant/linear/bezier，预检/回读/失败恢复原 keys |
+| parm | `create_spare_parms(node, code_parm='snippet', defaults={...}, spec=)` | 扫代码引用或显式创建 controller folder/参数，避免驱动静默为 0 |
 | asset | `hda_create` / `hda_info` / `hda_get_section` / `hda_set_section` / `hda_patch_section` / `hda_set_interface` | HDA 创建、自省、section 安全修改和声明式参数面板 |
 | geometry | `geo_attrib_stats` / `geo_piece_stats` / `geo_frame_diff` | 属性值、局部 piece extent/面积退化、无 playbar 副作用跨帧差异 |
+| stage/USD | `usd_stage_summary(lop)` / `usd_prim_info(lop, prim_path)` | USD 场景摘要 / 单 prim 属性、绑定和时间采样 |
 | render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；动画 A/B 用同一 framing_frame 锁相机 |
 | render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染单帧并验证产物 / 图像客观统计（盲验） |
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
@@ -65,9 +70,14 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
 结果里带 `media` 段（from→to 映射）——vision/fs 工具用工作区路径，与 $HIP 位置解耦。
 
+`render_view` 依赖 Houdini GUI/OpenGL；正常 Houdini 工作站按标准路径使用。低配置开发机若
+偶发 OpenGL 不稳定，停止本轮视觉重试并保留 cook/属性/拓扑/多帧差异等语义证据即可；
+这不是需要扩展工具或兼容层的产品开发项。
+
 ## Houdini trace 分析 skill
 
-插件通过 `ctx.skills.register()` 随包发布 `houdini-trace-analysis` 和 `houdini-sop-workflow`，在 Houdini / Houdini-dev
+插件通过 `ctx.skills.register()` 随包发布 trace、SOP、Solaris/Karma、rig/animation 和
+skill-governance 五个 skills，在 Houdini / Houdini-dev
 模式的 skill 目录中按需加载。它不是另一个 trace UI，而是 `houdinitrace`（实时观察）和
 `trace-report.mjs`（事实报告）之上的审计规范：重建用户任务契约，检查工具该用未用/
 误用/缺失/冗余/拆并，审计节点模块、属性数据流、cook warning、显示、渲染和多帧动画，
@@ -80,7 +90,9 @@ node tools/trace-report.mjs <session.jsonl.zstd>
 ```
 
 证据脚本支持一次传多个 session 做纵向对比；审计量表和累积模式库位于 trace skill 的
-`references/`；SOP skill 固化 Copy to Points、deform-before-skin、属性契约、piece/多帧完成门。调用方式：让 agent「使用 houdini-trace-analysis 分析最新 trace」，
+`references/`；SOP skill 固化 Copy to Points、deform-before-skin、属性契约、piece/多帧完成门；
+governance skill 负责把 trace、SideFX 官方文档、视频和 HIP/HDA 工程提炼为有来源、版本、
+反例和回归的受控 skill 变更。调用方式：让 agent「使用 houdini-trace-analysis 分析最新 trace」，
 或显式调用 `/houdini-trace-analysis`。
 
 ```python
@@ -132,7 +144,7 @@ dsh web
 
 ## 一键启动（Houdini 菜单）
 
-`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等待前端时显示 `环境 → 插件 → 前端 → 服务 → 界面` 分阶段百分比、耗时与当前动作；90 秒后提示检查网络，10 分钟仍未监听则停止并提供日志入口，不再无限循环。前端重启与端口探测在 worker 线程，不阻塞 GUI。
+`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等待前端时显示 `环境 → 插件 → 前端 → 服务 → 界面` 分阶段百分比、耗时与当前动作。已有 project-local npx 缓存时直接执行其中的 DSH CLI，绕开 npm registry 解析并限时 60 秒；只有首次无缓存或显式指定版本才走 npx 冷下载，限时 600 秒。前端重启、依赖真实导入和端口探测都在 worker 线程，不阻塞 GUI。`.dsh-web.log` 为每次尝试写入时间、启动源、cwd、命令和超时，旧错误不再与当前尝试混淆。
 
 用 Houdini package 安装（给顶部菜单栏追加 `dsh` 菜单，同时通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`——不用 `pythonX.Ylibs` 目录约定是因为 Houdini 只自动加载匹配自身 Python 版本的目录：H21=3.11、H22=3.13，而本插件是纯 Python、与版本无关）。脚本会把本机仓库的绝对路径烘焙进 package 文件（Houdini package 的相对路径不按 package 文件位置解析，必须用绝对路径），并自动装入检测到的**每个** Houdini 版本的 pref 目录（package 按版本隔离，H21/H22 各装一份）：
 
@@ -144,7 +156,7 @@ python houdini/install.py
 
 > ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
 
-重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动）；`Version & Diagnostics...` 显示插件/Git/DSH 缓存/端口状态，提供 `Restart Services`、更新检查和日志入口。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端默认用 `npx --yes @deepseek-ai/dsh web`（即 `--profile web`，不再传 `--patch`，首次会拉取 CLI，之后复用 npm 缓存）。临时验证指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；注意这只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
+重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 显示插件/Git/DSH 缓存/端口状态，提供 `Restart Services`、更新检查和日志入口。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
 
 > ⚠️ 点这个按钮会杀掉当前 dsh 会话（前端进程重启），请在新 UI 里继续对话。
 
@@ -196,4 +208,4 @@ dsh web                                                 # 起前端（profile �
 2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh 的 jobs 服务，获得 `job_kill` 等通用控制工具（参考 `docs/cookbook/adding-a-tool.md` 的 Long-running work）
 3. **UI 卡片**：`presentCall`/`presentResult` 声明渲染意图（比如参数修改的 diff 卡）
 4. **权限分层**：`tools/pre-execute` 监听器实现"query 自动允许、exec 需审批"（参考 `docs/cookbook/extension-cookbook.md` 的 permission-gate 示例）
-5. ~~**Skills**~~ ✅ `houdini-trace-analysis` + `houdini-sop-workflow` 已随插件注册；后续按新 trace 扩充模式/领域参考，不把所有知识塞进永久 guidance
+5. ~~**Skills**~~ ✅ trace / SOP / Solaris-Karma / rig-animation / skill-governance 已随插件注册；后续领域按治理证据门准入，不把所有知识塞进永久 guidance

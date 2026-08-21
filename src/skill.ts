@@ -19,6 +19,9 @@ type ContextWithSkills = Context & { skills: SkillRegistryLike }
 const SKILLS = [
   { name: 'houdini-trace-analysis', dir: 'houdini-trace-analysis' },
   { name: 'houdini-sop-workflow', dir: 'houdini-sop-workflow' },
+  { name: 'houdini-solaris-karma-workflow', dir: 'houdini-solaris-karma-workflow' },
+  { name: 'houdini-rig-animation-workflow', dir: 'houdini-rig-animation-workflow' },
+  { name: 'houdini-skill-governance', dir: 'houdini-skill-governance' },
 ] as const
 
 function parseSkill(markdown: string, expectedName: string): { description: string; content: string } {

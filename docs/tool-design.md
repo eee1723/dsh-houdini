@@ -32,13 +32,17 @@ agent 执行代码时，`hou` 本身可用（逃生舱）。动词层做的是�
 CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA），所以
 **「域」是扩展单元，「动词」是复用单元**。
 
-### 8 个域
+### 9 个域
+
+这里是架构层的 9 个领域族；构建期 catalog 会按工具职责把 compatibility、vocabulary 等
+独立展开，当前实际目录为 11 个 domain / 46 verbs。
 
 | 域 | 现状态 | 预留动词（将来，示意） |
 |---|---|---|
 | **node / network**（场景图） | ✅ 已实现（含 SOP/OBJ 显示语义 + layout） | network box / sticky note |
 | **parm**（依附 node） | ✅ 已实现 | 表达式 / keyframe / spare parm / lock |
 | **geometry**（几何数据） | ✅ 部分实现（属性/piece/跨帧） | `geo_export` |
+| **stage / USD**（Solaris 数据） | ✅ 只读摘要/prim 详情 | USD layer/edit（仍走裸 API） |
 | **scene**（工程/会话） | ✅ info/timeline/bookmark | `scene_save` `scene_load` |
 | **viewport**（视口/UI） | ✅ 部分实现（`viewport_screenshot`） | `viewport_frame` `viewport_camera` |
 | **asset**（HDA） | ✅ 已实现（2026-08-20，OTL 会话复盘 P0） | `hda_install` `hda_list` |
@@ -82,13 +86,48 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `search_tab_menu(category, query)` | 列出某 context 下匹配的节点族 + 最新版 | dict |
+| `search_tab_entries(parent, query)` | 按真实父网络列当前可见的 node/tool entry；排除 hidden/deprecated，Material Library 根层只暴露 Builder tool；每项标 `kind` 与 dsh 是否可安全执行 | dict |
 | `resolve_latest_type(category, base)` | 某族最新版全名（内部为主） | str |
+
+### 真实 Tab entry、Solaris/USD 自省的设计基线
+
+`session-71d76525` 暴露了一个比“节点名猜错”更底层的契约错误：Houdini 的 Tab
+菜单不等于 `NodeTypeCategory.nodeTypes()`。真实菜单同时包含节点类型、上下文过滤、
+隐藏/旧类型和会执行脚本的 setup tool；例如 H21 的 **Karma (Setup)** 是
+`lop_karma_setup`，会创建 Karma Render Settings + USD Render ROP，而 **Karma
+Material Builder** 是 `vop_karmamtlxsubnet`，会创建带 Karma/MaterialX tab mask、
+render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复现这些语义。
+
+第一批能力已按以下边界实现；GUI setup 回归和 allowlist 扩展仍按该边界推进：
+
+- 扩展 Tab 查询为 **parent-aware**：以真实父网络为主输入，返回当前上下文可见的
+  entry，并区分 `node_type` 与 `tool`；保留旧 `category + query` 形态作兼容查询，
+  但明确它只是类型注册表，不再声称等于用户菜单。
+- 单节点创建与 Tab tool 执行必须拆开：`tab_create` 保持“创建一个节点”的冻结返回
+  契约；新增的 tool 意图返回**所有**创建节点、连线和状态恢复结果，不能把多节点
+  setup 压成第一个 `hou.Node`。
+- tool 执行初期只允许当前 network context 可见、非交互、可审计的 allowlist entry；
+  通过当前安装的 SideFX recipe initializer/稳定 setup 契约适配执行，不运行会抢
+  selection/current 或打开 modal/file picker/viewport picking 的通用 shelf UI 包装。
+  GUI 保存/恢复 network editor pwd、selection/current；headless 使用同一 recipe。
+- `tab_create` 的 fallback 不得再把被 parent tab mask 排除的类型伪装成“完整 Tab
+  语义”；需要绕过 UI 过滤的专家操作必须显式走裸 `hou` 并留下理由。
+- 新增 USD stage/prim 自省意图：摘要层回答 geometry/material/light/camera/
+  RenderSettings/RenderProduct/RenderVar 与 binding；详情层回答单个 prim 的 properties、
+  primvars、relationships、material binding 和 time samples。它们替代反复猜 Pixar
+  USD Python API，但不包装任意 USD 编辑。
+- `render_frame` 保持“已有交付 ROP”的语义；传 LOP 时在渲染前明确拒绝并指向
+  Karma (Setup)/USD Render ROP，不把 `LopNode.render()` 的 AttributeError 推迟到 job。
+
+这批能力是 Solaris/Karma 和未来 Copernicus setup/bake/material 接入的共同地基；
+不为单个草地任务硬编码 `karma_setup`，也不把任意 shelf tool 暴露为无界执行入口。
 
 ### node 域（场景图）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...])` | 建节点：最新版 + shelf 初始化；parent 接受 `hou.Node` 或 path 字符串 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...])` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path | `hou.Node` |
+| `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
@@ -114,10 +153,11 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助（导航用，不给值） | list |
-| `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by` | list |
+| `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by`；动画附 `time_dependent/key_count/first_frame/last_frame/curves` 摘要，不默认倾倒全部 keys | list |
 | `set_parm(node, name, value)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠）。参数上有表达式/关键帧时**自动清除再设值**，返回带 `note` 说明清掉了什么（2026-08-20 起，OTL 会话 seq 28944：`$FEND` 表达式把 set 静默架空）；想保留动画就请显式用字符串表达式 | dict |
 | `set_parms(node, values)` | 批量设参：`{name: value}` 字典逐项走 `set_parm` 同一套语义，**逐项容错**——单项失败不中断，返回分 `set`/`failed` 两组（消灭循环裸 `parm().set` 的 advisory 噪音） | dict |
-| `create_spare_parms(node, code_parm='snippet', defaults=None)` | 扫描代码参数的 `ch/chf/chi/chv/chs` 引用，声明式创建缺失 spare parameters 并应用显式默认值；复杂 `chramp` 等列 unsupported。修复「Wrangle 引用了 amp/speed 但参数不存在，ch() 全为 0、动画静止」 | dict |
+| `set_keyframes(node, channels, replace=True)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
+| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 时显式创建 controller folder/toggle/int/float/string（同名拒绝，不隐式覆盖）。复杂 `chramp`、按钮/conditional 等继续交 HDA interface 或裸 hou | dict |
 
 ### scene 域（工程/时间线）
 
@@ -129,6 +169,12 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | `create_bookmark(name, start, end, replace=False)` | 创建整数帧 bookmark；同名默认拒绝，replace 精确替换 | dict |
 | `delete_bookmark(name_or_id)` | 按精确名称或 session id 删除，失败列现有项 | dict |
 
+**HIP open 生命周期边界**：不得在 bridge exec 中调用 `hou.hipFile.load()`。H21 GUI 实测
+load 会使当前 exec 丢失后续 result/images，恢复 load 还可能断开连接并重启 Houdini，使桥无法
+完成 finally/state restore。`scene_info` 只读、显式保存仍可走当前能力；打开/替换用户 HIP
+必须由 Houdini UI 完成，或未来设计 host-level、可确认 unsaved、可重连的独立操作，不能简单
+封装一个 `scene_open -> hipFile.load` 动词。
+
 ### geometry 域（几何数据）
 
 | 动词 | 语义 | 返回 |
@@ -136,6 +182,13 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | `geo_attrib_stats(node, name, attrib_class='point')` | 属性**值**统计：min/max/mean/count（`describe` 只给属性名清单）；point/prim/vertex/detail，多分量按分量给 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16)` | primitive piece 的局部 bbox/extent/面积与退化统计；无 piece 属性时用内存 Connectivity SOP Verb，不污染网络，能发现「全场 bbox 正常但每个实例零宽/零面积」 | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性，返回 mean/max、p50/p90/p99、逐分量位移与 unchanged%；不移动用户 playbar。证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
+
+### stage / USD 域（Solaris 只读自省）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `usd_stage_summary(node, max_paths=64)` | 概览某 LOP 输出 stage 的 geometry/material/light/camera/RenderSettings/Product/Var，材质绑定、time-sampled 属性及 cook warning；路径按组限量但计数完整 | dict |
+| `usd_prim_info(node, prim_path, max_properties=200)` | 检查单个 USD prim 的属性、primvar、relationship、material binding、time samples；points/topology 等大数组只报结构不整段拉取 | dict |
 
 ### asset 域（HDA / 数字资产，2026-08-20 落地）
 
@@ -170,7 +223,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染单帧并验证产物；调用期间切到目标帧、结束/失败后恢复用户原 frame。>110s 走 job | dict |
+| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染一个**可执行 hou.RopNode**并验证产物；USD Render ROP 优先 `outputimage` 而非其 USD `lopoutput`，调用期临时启用 foreground wait 并恢复。普通 LOP 在 job 前拒绝；切目标帧并恢复；>110s 走 job | dict |
 | `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None)` | **视觉验证主干 v2**：显式 SOP → agent-owned Object Merge proxy → agent camera/OpenGL ROP `forceobjects` 只渲染 proxy；不依赖/不改变用户 SOP output、OBJ visibility、selection、viewport 或 frame。传 OBJ 时只在调用开始解析一次 SOP并提醒。preflight 拒绝空/error 几何；返回 source fingerprint 前后、`stale`、eye/direction、ROP 设置和 render_check。动画 A/B 给所有调用传相同 `framing_frame`，用同一 bbox 锁定相机；空闲 proxy 清空真实引用但保留 last-target/frame/output userData 与解释 comment | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
@@ -336,8 +389,12 @@ Houdini 模块/属性/cook/显示/渲染/动画语义、反事实最小轨迹和
 视口是**用户的**领地：漂移（移动/遮挡/最小化）是要共存的现实，不是要对抗的
 噪声。由此确定的分工：
 
-- **验证/交付走 agent 自己的渲染管线**：`render_view`（OpenGL ROP 离屏）是默认
-  视觉验证路径；Karma 是用户明确要成片时的交付渲染器，不进验证闭环。
+- **验证/交付走 agent 自己的渲染管线**：机器的 GUI OpenGL 上下文稳定时，
+  `render_view`（OpenGL ROP 离屏）是默认视觉验证路径；Karma 是用户明确要成片时的
+  交付渲染器，不进快速验证闭环。OpenGL/驱动失败属于机器能力失败，不能推翻已通过的
+  节点语义，也不得在可能崩溃的同一环境连续重试；保留 cook/属性/拓扑/时间证据并交给
+  用户 playback 判断，或按交付需求走 Karma CPU。不能按“有无独显”全局禁用：换机、
+  驱动和远程桌面都会改变能力。
 - **`viewport_screenshot` 降级为诊断**：只回答「用户屏幕上现在是什么」。
 - **不新增编程用户视口的动词**（不做 `viewport_look_at`）：草地 trace 里 40 分钟
   的相机矩阵挣扎，根因是「试图编程一个不属于自己的东西」，正确解法是根本不碰它。

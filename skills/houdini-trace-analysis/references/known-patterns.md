@@ -68,10 +68,10 @@
 ## HTA-008：动画任务缺少时序完成门
 
 - 状态：规则已修、待新 trace 验证（客观反例阻断；静帧难裁定审美时诚实交给用户播放判断）
-- 证据：`40054277` 最后工具调用 #77 的 frame 1/12 `mean_abs_diff=0`、`max_abs_diff=1`，仍有两个未完成 todo，且无最终 assistant 交付。`71d76525` 工具调用 #40 的 geometry diff 非零、#46 的 render diff 为 21.1%，但 #47 的视觉 A/B 明确判断“没有明显变化、不像行进波浪”；agent 仍在 #50 把动画验证标 completed，并在最终文本宣称“全部验证通过”。
-- 症状：旧版本完全没有时序证据；新版本有数值差异，却把“点动了/像素不同”误当成“用户要求的运动语义成立”，甚至覆盖视觉工具的直接否定。
-- 根因：完成门只检查非零阈值，没有规定证据冲突的裁决顺序，也没有要求波峰传播、锚点/活动区分层等语义不变量。
-- 修复：geometryAtFrame 无 playbar 副作用比较；render_check 增加 RMSE、changed/meaningful pixel % 与高精度 mean。审计/workflow 现区分：完全静止、方向相反、主体缺失等客观反例必须阻断；节点/数据/时间语义通过而静帧不足以裁定细微动态或审美时，允许标记“视觉待用户播放判断”，但不得伪称视觉确认。
+- 证据：`40054277` 最后工具调用 #77 的 frame 1/12 `mean_abs_diff=0`、`max_abs_diff=1`，仍有两个未完成 todo，且无最终 assistant 交付。`71d76525` 工具调用 #40 的 geometry diff 非零、#46 的 render diff 为 21.1%，但 #47 的视觉 A/B 明确判断“没有明显变化、不像行进波浪”；agent 仍在 #50 把动画验证标 completed，并在最终文本宣称“全部验证通过”。`a41c853a` #59–#64 只验证魔方第一个 R move 的 frame 25/31，却在最终文本外推为 16 步打乱/还原；frame 1/220 相同只是六个绝对通道都回零。
+- 症状：旧版本完全没有时序证据；后续版本有数值差异，却把“点动了/像素不同/第一段通过/首尾相同”误当成整个用户运动契约成立，甚至覆盖视觉否定或缺失的中间状态。
+- 根因：完成门只检查非零阈值或单个 A/B，没有规定证据冲突的裁决顺序、承诺序列的验证覆盖，也没有要求波峰传播、锚点/活动区、稳定 piece 身份、更新后 membership 等领域语义不变量。
+- 修复：geometryAtFrame 无 playbar 副作用比较；render_check 增加 RMSE、changed/meaningful pixel % 与高精度 mean。审计/workflow 现区分：完全静止、方向相反、主体缺失等客观反例必须阻断；节点/数据/时间语义通过而静帧不足以裁定细微动态或审美时，允许标记“视觉待用户播放判断”，但不得伪称视觉确认。多 segment/路径依赖任务另需 first、非交换转折、mid/end、recovery 覆盖。
 - 边界：静态建模任务不要求多帧。
 
 ## HTA-009：重复单参调用未采用 batch primitive
@@ -122,8 +122,100 @@
 ## HTA-014：靠失败或读仓库源码发现动词契约
 
 - 状态：已修（`verb_help` + guidance/关键 docstring）
-- 证据：`71d76525` 工具调用 #3 把 `search_tab_menu` dict 当 list、#7 把 `read_parms` list 当 dict、#12 猜错 `geo_attrib_stats` keyword、#31 假设 `describe` 含 `ok`；中途 #13–#16 用 grep/read 打开插件源码才纠正。正常 Houdini 会话工作区是 `$HIP`，仓库源码不应成为运行期契约入口。
+- 证据：`71d76525` 工具调用 #3 把 `search_tab_menu` dict 当 list、#7 把 `read_parms` list 当 dict、#12 猜错 `geo_attrib_stats` keyword、#31 假设 `describe` 含 `ok`；中途 #13–#16 用 grep/read 打开插件源码才纠正。`a41c853a` 已曝光 `verb_help`，但 #8 仍把 `read_parms` list 当 dict，导致完整 exec rollback。正常 Houdini 会话工作区是 `$HIP`，仓库源码不应成为运行期契约入口。
 - 症状：一次本可只读发现的签名/结果字段，变成 exec 失败、undo、重复 batch；有时失败发生在修改之后。
 - 根因：system prompt 为控制体积只列意图，没有统一的运行期动词契约自省；Python `inspect.signature` 虽可手写，但 agent 不知道 registry 边界和结果含义。
 - 修复：新增 `verb_help(name)` 返回准确 signature/docstring、未知名相似建议；guidance 要求不确定时先查。`read_parms` doc 明确返回 `list[dict]`，guidance 明确 `cook_node` 才拥有 `ok/healthy`、`graph` 要围绕数据节点调用。H21 headless/live bridge 回归通过。
 - 边界：节点自身的 SideFX 参数/帮助仍由 `list_parms`/`describe` 和未来 `node_help` 负责；`verb_help` 不替代它们。
+
+## HTA-015：节点类型注册表被误当成真实 Tab 菜单
+
+- 状态：已修基础能力、待新 Karma 用户 trace 验证（parent-aware entry + allowlist recipe）
+- 证据：`71d76525` #51 已查到 `karmarendersettings`，#53 的 LOP `principled` 为空，
+  但 #56 通过全局 VOP registry 找到 Principled 后在 #59 强制创建；#87 又选择 hidden/
+  deprecated 的一体式 `karma` LOP。H21.0.440 shipped shelf 对照：真实入口是
+  `vop_karmamtlxsubnet`（Karma Material Builder）和 `lop_karma_setup`（创建 Render
+  Settings + USD Render ROP）。
+- 症状：图能渲染，但用户按 Tab 找不到材质节点；setup 缺配套 ROP/表达式，随后
+  `LopNode.render()` 失败并改走按钮轮询。
+- 根因：`search_tab_menu` 只枚举 nodeTypes；`tab_create` 用 `ctx_type` 猜 shelf id，失败后
+  裸 `createNode`，绕过 hidden/deprecated 和 Material Library tab mask。
+- 修复：`search_tab_entries(parent, query)` 区分可见 node/tool；`tab_create` 拒绝隐藏旧类型
+  和 Material Library 根层 shader；`tab_apply` 运行时验证真实 tool/context，再通过
+  SideFX initializer/稳定 setup 契约的非交互 adapter 创建 Karma Setup/Material Builder，
+  返回全部节点并恢复用户状态；新增 Solaris/Karma workflow 与 USD 自省。H21 标准
+  USD Render ROP 实际出图同时修复 `render_frame` 的 outputimage/foreground 契约。
+- 边界：传统 Principled/Karma CPU 旧资产不是一律非法；用户明确选择并接受限制时可用，
+  但不能作为新 XPU 工作的默认或伪称 Tab 原生路径。
+
+## HTA-016：compaction replay 膨胀 trace 统计
+
+- 状态：已修（callId 去重 + replay diagnostics）
+- 证据：`71d76525` 原报告 116 个 tool result；seq 22231–22245 在 `compaction/prune`
+  间重放 8 个旧 callId，唯一 `tool/call` 实际 108。动词原报 238，去重后 232。
+- 症状：长会话看似突然多出同一批旧代码，调用/动词/失败/耗时被重复计入，阶段顺序也被
+  replay 时间污染。
+- 根因：extractor/report 遍历每个 `tool/result`，未区分执行结果与压缩历史重放。
+- 修复：`trace-session-lib.uniqueToolResultEvents()` 以第一个 result 为执行证据，后续同
+  callId 写入 `replayedResults`；evidence/HTML 共享该实现。当前 session 回归为
+  108 calls / 232 verbs / 8 replays。
+- 边界：无 callId 的未来 schema 仍保留给调用方判断；不能仅凭内容 hash 去重两个真实的
+  相同调用。
+
+## HTA-017：把路径依赖状态压成独立绝对控制通道
+
+- 状态：确认（S2：用户 trace + H21 disposable 正反例回归；工具形态仍待更多任务）
+- 首次/最近证据：`a41c853a` #26、#58、#59、#60–#64；
+  `houdini/tests/regress_rig_state_model.py` H21.0.440 6/6。
+- 症状：单个面/关节/segment 能正确运动，参数也有 key；但 agent 用初始 membership 和若干
+  独立累计角度表达有序、非交换操作，只验证第一段和最终 rest，就宣称完整序列成立。
+- 根因：没有把 stable identity、logical state、ordered transition 当成 rig 输入/输出契约；
+  完成门也没有覆盖第二个非交换步骤和 sequence midpoint。
+- 建议：rig/animation 先按 channel、rigid pieces、hierarchy、skin、character graph、simulation
+  分类；路径依赖任务要求稳定 `name/piece_id`、每步更新 membership/transform，并验证 first、
+  非交换转折、mid/end、recovery。官方系统选择与工具预算见 `docs/rig-animation-design.md`。
+- 反例/边界：单个独立通道、互不影响的并行动画、明确只要“一层转一下”的装饰动画可以用
+  绝对参数；不能因此强制引入 KineFX/APEX。
+- 回归：27 个 packed pieces 经显式 point `name` → Transform Pieces；正确模型在 R 后更新
+  logical membership 再选 U，和初始 membership 绝对通道在第二步活动集合/最终 R→U 状态
+  分叉；两者都能在 inverse 结束回 rest，证明 endpoint equality 不足。轴心 piece 的 P 不动
+  但 orient 改变，完成门必须同时看 P + orient/transform。
+- 下一验收：再收集一个层级机械任务和一个 KineFX/skin 任务，判断是否需要 piece-state
+  自省动词；当前 `geo_frame_diff(P)` + `geo_frame_diff(orient)` 已覆盖基准，不先新增工具。
+
+## HTA-018：在 bridge exec 内加载 HIP 破坏执行与重连生命周期
+
+- 状态：确认/P0 本机可复现（不得简单封装 scene_open）
+- 首次/最近证据：2026-08-21 ordered 魔方 GUI 验收。单 exec 的 load→render→restore 返回
+  `ok=true` 空包且无产图；拆分后加载 ordered HIP 会让该次请求无 result 但场景已切换；恢复
+  原 HIP 的 UTF-8 load 关闭 HTTP 连接并启动新的 Houdini 进程，bridge 8765 消失。
+- 症状：调用方无法知道 load 是否执行、finally 无法可靠恢复、images/result 丢失；严重时
+  共享 Houdini 重启，agent 后续无法检查当前 HIP。
+- 根因：`hou.hipFile.load()` 重置当前场景/会话生命周期，与正在该 Houdini 进程内执行并等待
+  HTTP 回包的 bridge transaction 互相冲突；它不是普通 undoable scene edit。
+- 修复/守卫：guidance 禁止 bridge exec 内 `hipFile.load`。用户 HIP 打开/替换走 Houdini UI；
+  离线分析用 disposable hython。未来若自动化，必须在 Host 侧实现 unsaved confirmation、请求
+  结束前调度、bridge/process reconnect、目标 HIP 验证和失败恢复，不能新增薄 wrapper。
+- 边界：`hou.hipFile.save()` 不重置场景生命周期，但仍是不可 undo 文件写；需明确用户授权。
+- 回归：bridge 现以 AST 在执行前无条件拒绝直接 `hou.hipFile.load(...)`；`allow_raw` 也不能
+  绕过。H21/H22 scene regression 证明错误返回且当前 HIP 未切换；`hipFile.save()` 不受此
+  专项守卫影响。
+- 下一验收：设计 host-level open handshake 前不重试 live load；若未来支持 scene open，
+  必须先替换本守卫并完成进程重连/unsaved/恢复集成测试。
+
+## HTA-019：动词结果内部箭头破坏 ledger 参数/结果切分
+
+- 状态：已修（结构扫描分隔 + evidence/report/client 同语义 + 真实 trace 回归）
+- 首次证据：`83a553e7-d728-4044-b700-9a637e787d55` 的唯一 `houdini_query`；
+  `verb_help('set_keyframes')` 返回 signature `(node, ...) -> dict`。
+- 症状：verb 名和计数正确，但 evidence 把 result 内 signature 的 `->` 当成调用分隔，导致
+  args 吞入半段 result、result 从返回类型中间开始；详细工具证据不可信。
+- 根因：extractor、HTML report 和 client 各用 greedy regex 解析
+  `verb(args) -> result (Nms)`，没有识别 JSON string/array/object 边界。
+- 修复：共享 `parseVerbLedgerLine()` 从固定前后缀进入，扫描字符串 escape 与 `[]/{}` 深度，
+  只接受调用参数顶层的 `) -> `；extractor/report 共用，client 使用同算法。回归同时覆盖
+  result 中箭头和 args 字符串中的字面 `") -> "`。
+- 边界：host 为控制模型结果体积会把 detail 截断到 400 字符；截断 JSON 保持字符串是正确的，
+  不能伪装成完整对象，但 args/result 分界必须保持准确。
+- 回归：重新提取该 session 后 `verb_help.args == '["set_keyframes"]'`，detail 从
+  `{"name":"set_keyframes"...}` 开始；3 calls / 2 verbs / 0 failure/mutation/advisory 不变。

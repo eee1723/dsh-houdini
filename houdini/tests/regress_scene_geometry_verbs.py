@@ -25,6 +25,7 @@ import dsh_bridge
 failures = []
 temp_dir = tempfile.mkdtemp(prefix="dsh-scene-geometry-regress-")
 probe_name = "dsh_scene_geometry_regress"
+tab_probe_name = "dsh_tab_recipe_regress"
 
 
 def check(label, fn):
@@ -43,10 +44,28 @@ def cleanup():
             node.destroy()
         except Exception:
             pass
+    tab_probe = hou.node("/obj/" + tab_probe_name)
+    if tab_probe is not None:
+        try:
+            tab_probe.destroy()
+        except Exception:
+            pass
     if os.path.isdir(temp_dir) and os.path.basename(temp_dir).startswith(
         "dsh-scene-geometry-regress-"
     ):
         shutil.rmtree(temp_dir)
+    stage = hou.node("/stage")
+    if stage is not None:
+        for name in (
+            "dsh_regress_matlib", "dsh_regress_usd_cam", "dsh_regress_usd_light",
+            "dsh_regress_usd_settings", "dsh_regress_legacy_karma",
+        ):
+            node = stage.node(name)
+            if node is not None:
+                try:
+                    node.destroy()
+                except Exception:
+                    pass
 
 
 try:
@@ -224,7 +243,103 @@ try:
         assert contract["ok"] is True, contract
         assert contract["result"]["signature"].startswith("(node,"), contract
         assert "list[dict]" in contract["result"]["doc"], contract
+
+        repo = dsh_bridge._REPO_ROOT.replace("\\", "/")
+        read_only = (
+            "__result__ = render_check("
+            f"r'{repo}/.dsh-houdini-media/dsh_view_1_f1p0.png')"
+        )
+        assert dsh_bridge._repo_write_advisory(read_only) is None, read_only
+        writing = f"open(r'{repo}/out.txt', 'w').write('x')"
+        assert dsh_bridge._repo_write_advisory(writing), writing
+
+        blocked = dsh_bridge.run_code(
+            "hou.hipFile.load(r'E:/tmp/should-never-open.hip')",
+            allow_raw="even an exemption cannot make HIP load transactional",
+        )
+        assert blocked["ok"] is False, blocked
+        assert "forbidden inside dsh-houdini bridge exec" in blocked["error"], blocked
+        assert hou.hipFile.path() != "E:/tmp/should-never-open.hip", blocked
     check("9 bridge normalizes lossless-JSON floats everywhere", t9)
+
+    def t10():
+        copies = H.search_tab_menu("sop", "copy to points")
+        assert copies["latest_of_query"], copies
+        assert any(
+            item["base"] == "copytopoints" for item in copies["families"]
+        ), copies
+
+        stage = hou.node("/stage")
+        entries = H.search_tab_entries(stage, "karma")
+        by_name = {item["name"]: item for item in entries["entries"]}
+        assert by_name["lop_karma_setup"]["kind"] == "tool", by_name
+        assert by_name["lop_karma_setup"]["executable"] is True, by_name
+        assert by_name["karmarendersettings"]["kind"] == "node_type", by_name
+        assert "karma" not in by_name, by_name
+
+        matlib = stage.createNode("materiallibrary", "dsh_regress_matlib")
+        builders = H.search_tab_entries(matlib, "karma material")
+        assert [item["name"] for item in builders["entries"]] == [
+            "vop_karmamtlxsubnet"
+        ], builders
+        try:
+            H.tab_create(matlib, "principledshader")
+        except ValueError as error:
+            assert "Material Library" in str(error), error
+        else:
+            raise AssertionError("Material Library direct Principled was not rejected")
+        try:
+            H.tab_create(stage, "karma")
+        except ValueError as error:
+            assert "hidden/deprecated" in str(error), error
+        else:
+            raise AssertionError("legacy hidden Karma LOP was not rejected")
+        lopnet = hou.node("/obj").createNode("lopnet", tab_probe_name)
+        setup = H.tab_apply(lopnet, "lop_karma_setup")
+        created_types = {item["type"] for item in setup["created"]}
+        assert created_types == {"karmarendersettings", "usdrender_rop"}, setup
+        rop = next(
+            child for child in lopnet.children() if isinstance(child, hou.RopNode)
+        )
+        assert "primpath" in rop.parm("rendersettings").expression(), setup
+        assert "enablemblur" in rop.parm("husk_instantshutter").expression(), setup
+        assert "engine" in rop.parm("renderer").expression(), setup
+        builder = H.tab_apply(matlib, "vop_karmamtlxsubnet")
+        assert len(builder["created"]) == 1, builder
+        builder_node = hou.node(builder["created"][0]["path"])
+        assert builder_node.evalParm("shader_rendercontextname") == "kma", builder
+    check("10 parent-scoped Tab entries reject hidden and masked types", t10)
+
+    def t11():
+        stage = hou.node("/stage")
+        cam = stage.createNode("camera", "dsh_regress_usd_cam")
+        light = stage.createNode("distantlight", "dsh_regress_usd_light")
+        light.setInput(0, cam)
+        settings = stage.createNode("karmarendersettings", "dsh_regress_usd_settings")
+        settings.setInput(0, light)
+        summary = H.usd_stage_summary(settings)
+        assert summary["counts"]["cameras"] == 1, summary
+        assert summary["counts"]["lights"] == 1, summary
+        assert summary["counts"]["render_settings"] == 1, summary
+        assert summary["counts"]["render_products"] >= 1, summary
+        camera_path = summary["prims"]["cameras"][0]["path"]
+        info = H.usd_prim_info(settings, camera_path)
+        assert info["type"] == "Camera" and info["property_count"] > 0, info
+
+        legacy = stage.createNode("karma", "dsh_regress_legacy_karma")
+        try:
+            H.render_frame(legacy)
+        except ValueError as error:
+            assert "不是可执行 ROP" in str(error) and "lop_karma_setup" in str(error), error
+        else:
+            raise AssertionError("render_frame accepted a plain Karma LopNode")
+
+        for name in (
+            "search_tab_entries", "tab_apply", "usd_stage_summary", "usd_prim_info",
+            "set_keyframes",
+        ):
+            assert name in dsh_bridge._VERBS, name
+    check("11 USD introspection and render ROP preflight", t11)
 
 finally:
     cleanup()

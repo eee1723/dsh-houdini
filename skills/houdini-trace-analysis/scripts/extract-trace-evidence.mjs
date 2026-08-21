@@ -8,7 +8,15 @@ import {
   loadSessionEvents,
   resolveSessionFile,
   sessionIdFromFile,
+  toolResultCallId,
+  uniqueToolResultEvents,
 } from '../../../tools/trace-session-lib.mjs';
+import {
+  collectValidationCoverage,
+  extractAvailableSkills,
+  findBatchSetParmOpportunities,
+  parseVerbLedgerLine,
+} from './evidence-helpers.mjs';
 
 const SKILL_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const PACKAGE_ROOT = path.resolve(SKILL_ROOT, '..', '..');
@@ -99,17 +107,17 @@ function parseVerbLines(text) {
   if (!match) return [];
   const verbs = [];
   for (const line of match[2].split('\n')) {
-    const parsed = line.match(/^(\d+)\. \[(ok|FAIL)\] (\w+)\((.*)\) -> (.*) \(([\d.]+)ms\)\s*$/);
+    const parsed = parseVerbLedgerLine(line);
     if (!parsed) continue;
-    let result = parsed[5];
+    let result = parsed.result;
     try { result = JSON.parse(result); } catch {}
     verbs.push({
-      ledgerIndex: Number(parsed[1]),
-      ok: parsed[2] === 'ok',
-      verb: parsed[3],
-      args: clip(parsed[4]),
+      ledgerIndex: parsed.ledgerIndex,
+      ok: parsed.ok,
+      verb: parsed.verb,
+      args: clip(parsed.args),
       result,
-      ms: Number(parsed[6]),
+      ms: parsed.ms,
     });
   }
   return verbs;
@@ -126,6 +134,8 @@ function rawMethods(code) {
 function analyzeTrace(file) {
   const loaded = loadSessionEvents(file);
   const { events } = loaded;
+  const { uniqueResults, replayedResults } = uniqueToolResultEvents(events);
+  const uniqueResultSet = new Set(uniqueResults);
   const calls = new Map();
   for (const event of events) {
     if (event.type === 'tool/call') calls.set(event.data.callId, { ...event.data, eventSeq: event.seq, time: event.time });
@@ -134,6 +144,7 @@ function analyzeTrace(file) {
   const userMessages = [];
   const assistantMessages = [];
   const capabilitySnapshots = [];
+  const skillCatalogSnapshots = [];
   const seenCapabilityHashes = new Set();
   const steps = [];
   const toolCounts = {};
@@ -151,9 +162,21 @@ function analyzeTrace(file) {
       firstTime = Math.min(firstTime, event.time);
       lastTime = Math.max(lastTime, event.time);
     }
-    if (event.type === 'user/message' && event.data?.source?.kind === 'user') {
+    if (event.type === 'user/message') {
       const text = directText(event.data.content);
-      if (text && !text.startsWith('<system-reminder>') && !text.startsWith('Current runtime context')) {
+      const availableSkills = extractAvailableSkills(text);
+      if (availableSkills.length) {
+        skillCatalogSnapshots.push({
+          seq: event.seq,
+          time: event.time,
+          turn: event.data?.turn,
+          step: event.data?.step,
+          skills: availableSkills,
+        });
+      }
+      if (event.data?.source?.kind === 'user'
+          && text && !text.startsWith('<system-reminder>')
+          && !text.startsWith('Current runtime context')) {
         userMessages.push({ seq: event.seq, time: event.time, text });
       }
     } else if (event.type === 'assistant/message') {
@@ -187,9 +210,9 @@ function analyzeTrace(file) {
         });
       }
     }
-    if (event.type !== 'tool/result') continue;
+    if (event.type !== 'tool/result' || !uniqueResultSet.has(event)) continue;
     const message = event.data?.message || {};
-    const callId = message.source?.callId || message.content?.[0]?.toolCallId;
+    const callId = toolResultCallId(event);
     const call = calls.get(callId);
     if (!call) continue;
     const args = parseArgs(call.arguments);
@@ -278,13 +301,7 @@ function analyzeTrace(file) {
   const queryWithMutation = rawHoudiniNoVerb.filter(
     (step) => step.tool === 'houdini_query' && step.mutatingRawMethods.length,
   );
-  const batchSetParmOpportunities = steps.filter(
-    (step) => step.verbs.filter((verb) => verb.verb === 'set_parm').length >= 3,
-  ).map((step) => ({
-    index: step.index,
-    time: step.time,
-    count: step.verbs.filter((verb) => verb.verb === 'set_parm').length,
-  }));
+  const batchSetParmOpportunities = findBatchSetParmOpportunities(steps);
   const renderEvidence = steps.flatMap((step) => step.verbs
     .filter((verb) => ['render_view', 'render_frame', 'render_check'].includes(verb.verb))
     .map((verb) => ({ index: step.index, time: step.time, verb: verb.verb, ok: verb.ok, result: verb.result })));
@@ -295,6 +312,7 @@ function analyzeTrace(file) {
     args: step.args,
     resultPreview: step.resultPreview,
   }));
+  const validationCoverage = collectValidationCoverage(steps);
   const repeatedCode = Object.entries(steps.reduce((groups, step) => {
     if (!step.codeHash) return groups;
     (groups[step.codeHash] ||= []).push(step.index);
@@ -327,6 +345,7 @@ function analyzeTrace(file) {
     file: loaded.file,
     frames: loaded.frames,
     frameErrors: loaded.frameErrors,
+    replayedResults,
     eventCount: events.length,
     startTime: Number.isFinite(firstTime) ? firstTime : null,
     endTime: lastTime || null,
@@ -347,6 +366,7 @@ function analyzeTrace(file) {
     },
     userMessages,
     capabilitySnapshots,
+    skillCatalogSnapshots,
     skillActivations,
     assistantMessages: compact ? undefined : assistantMessages,
     toolCalls: steps.length,
@@ -376,6 +396,7 @@ function analyzeTrace(file) {
     batchSetParmOpportunities,
     renderEvidence,
     visionEvidence,
+    validationCoverage,
     repeatedCode,
     timelineGaps: gaps,
     totalCodeChars: steps.reduce((sum, step) => sum + step.codeChars, 0),

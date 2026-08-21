@@ -28,6 +28,7 @@ Or wire it into a menu — see MainMenuCommon.xml.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shutil
 import socket
@@ -36,6 +37,9 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.request
+import uuid
 import webbrowser
 
 import hou
@@ -52,6 +56,8 @@ BRIDGE_PORT = 8765
 FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = 3081
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
+HOUDINI_AGENT_PRESET = "houdini"
+DSH_RPC_TIMEOUT = 20
 
 # Where the frontend process writes its stdout/stderr.
 FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
@@ -61,22 +67,31 @@ FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
 # overlay is retired: it cannot be discovered as a package for the client half.)
 
 # How to boot the dsh web frontend.
-#   * Default (SHELL=True): use the published npm package and its normal npx
-#     cache. Set DSH_HOUDINI_DSH_SPEC to test a specific CLI release without
-#     editing this file (for example @deepseek-ai/dsh@0.1.0-rc.7).
-#   * To pin a local install instead, set SHELL=False and set DSH_BIN to your
-#     local dsh CLI's bin.js (NODE falls back to `node` on PATH).
+#   * Default: directly execute a valid CLI already present in the project-local
+#     npx cache. This avoids a warm launch blocking on npm registry resolution.
+#   * With no cache, fall back to npx for the first download.
+#   * Set DSH_HOUDINI_DSH_SPEC to test/update a specific CLI release through
+#     npx, or DSH_HOUDINI_DSH_BIN to pin an already-installed bin.js.
+#   * SHELL=False + DSH_BIN remains as a source-compatible developer override.
 SHELL = True
-DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", "@deepseek-ai/dsh")
+DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
+DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC)
 FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port}'
 
 # npm cache for npx. The default cache is write-blocked on sandboxed machines
 # (EPERM), so point npm at a project-local cache — works everywhere.
 NPM_CACHE = os.path.join(_PROJECT_ROOT, ".npm-cache")
 
-# Local-install fallback (used only when SHELL is False):
+# Warm starts execute a known local CLI and should fail quickly. Only the cold
+# npx fallback is allowed enough time to download the CLI and its dependency
+# graph. Both waits happen on a worker thread, never Houdini's GUI thread.
+FRONTEND_WARM_WAIT_TIMEOUT = 60
+FRONTEND_COLD_WAIT_TIMEOUT = 600
+
+# Local-install overrides:
 NODE = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
 DSH_BIN = ""
+DSH_BIN_ENV = os.environ.get("DSH_HOUDINI_DSH_BIN", "")
 
 # Agent presets live in this repo as templates (presets/<name>/); the dsh host
 # reads them from ~/.dsh/.agent-presets/<name>/. launch() syncs them so prompt
@@ -125,8 +140,53 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REQUIRED_PACKAGES = ["@deepseek-ai/schemastery", "@deepseek-ai/dsh-tools"]
 
 
+def _plugin_runtime_probe() -> tuple[bool, str]:
+    """Actually import the compiled plugin using Node's real ESM resolver."""
+    if not NODE or not os.path.exists(NODE):
+        return False, f"node executable not found: {NODE}"
+    try:
+        proc = subprocess.run(
+            [
+                NODE, "--input-type=module", "-e",
+                "await import('./lib/index.js')",
+            ],
+            cwd=_PROJECT_ROOT, capture_output=True, timeout=30,
+            creationflags=_CREATE_NO_WINDOW,
+            env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
+        )
+        raw = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
+        output = raw.decode("utf-8", errors="replace").strip()
+        if proc.returncode == 0:
+            return True, output
+        return False, output or f"node import exited with code {proc.returncode}"
+    except Exception:
+        return False, traceback.format_exc()
+
+
+def _append_dependency_failure(message: str) -> None:
+    try:
+        with open(FRONTEND_LOG, "ab") as log:
+            diagnostic = (
+                "\n[dsh-houdini] plugin dependency restore failed\n"
+                + message[-12000:] + "\n"
+            )
+            log.write(diagnostic.encode("utf-8", errors="replace"))
+    except Exception:
+        pass
+
+
+def _is_module_resolution_failure(output: str) -> bool:
+    markers = (
+        "ERR_MODULE_NOT_FOUND",
+        "Cannot find package",
+        "Cannot find module",
+        "MODULE_NOT_FOUND",
+    )
+    return any(marker in output for marker in markers)
+
+
 def ensure_dependencies(on_install=None) -> str:
-    """Make sure the plugin's runtime deps are resolvable from node_modules."""
+    """Make sure the compiled plugin is resolvable, not merely present on disk."""
     nm = os.path.join(_PROJECT_ROOT, "node_modules")
     restored = []
     for pkg in REQUIRED_PACKAGES:
@@ -142,9 +202,13 @@ def ensure_dependencies(on_install=None) -> str:
         pkg for pkg in REQUIRED_PACKAGES
         if not os.path.isdir(os.path.join(nm, *pkg.split("/")))
     ]
-    if missing:
+    probe_ok, probe_output = _plugin_runtime_probe()
+    if not probe_ok and not missing and not _is_module_resolution_failure(probe_output):
+        _append_dependency_failure(probe_output)
+        return "dependency check FAILED (compiled plugin import error)"
+    if missing or not probe_ok:
         if on_install is not None:
-            on_install(missing)
+            on_install(missing or ["runtime module resolution"])
         failure_output = ""
         try:
             proc = subprocess.run(
@@ -161,17 +225,14 @@ def ensure_dependencies(on_install=None) -> str:
             ok = False
             failure_output = traceback.format_exc()
         if not ok:
-            try:
-                with open(FRONTEND_LOG, "ab") as log:
-                    diagnostic = (
-                        "\n[dsh-houdini] plugin dependency restore failed\n"
-                        + failure_output[-12000:] + "\n"
-                    )
-                    log.write(diagnostic.encode("utf-8", errors="replace"))
-            except Exception:
-                pass
-            return "dependency restore FAILED (missing: " + ", ".join(missing) + ")"
+            _append_dependency_failure(failure_output or probe_output)
+            reason = ", ".join(missing) if missing else "runtime import failed"
+            return "dependency restore FAILED (" + reason + ")"
         restored.extend(missing)
+        probe_ok, probe_output = _plugin_runtime_probe()
+        if not probe_ok:
+            _append_dependency_failure(probe_output)
+            return "dependency restore FAILED (compiled plugin still cannot be imported)"
     if restored:
         return "dependencies restored: " + ", ".join(restored)
     return "dependencies ok"
@@ -278,6 +339,104 @@ def restart_frontend() -> str:
     return "frontend not running"
 
 
+def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
+    """Return a direct CLI path and source label without contacting npm."""
+    # A custom spec means the caller explicitly asked npx to resolve/update a
+    # version. Do not silently substitute an unrelated cached default version.
+    if DSH_SPEC != DEFAULT_DSH_SPEC:
+        return None
+
+    npx_root = os.path.join(NPM_CACHE, "_npx")
+    candidates: list[tuple[float, str]] = []
+    try:
+        entries = os.scandir(npx_root)
+    except OSError:
+        return None
+    with entries:
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            bin_path = os.path.join(
+                entry.path, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js",
+            )
+            if os.path.isfile(bin_path):
+                try:
+                    modified = os.path.getmtime(bin_path)
+                except OSError:
+                    modified = 0.0
+                candidates.append((modified, bin_path))
+    if not candidates:
+        return None
+    return max(candidates)[1], "cached-cli"
+
+
+def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
+    """Choose a deterministic warm command or the explicit cold npx path."""
+    if not NODE or not os.path.exists(NODE):
+        raise RuntimeError(f"node executable not found: {NODE}")
+
+    if DSH_BIN_ENV:
+        explicit = os.path.abspath(os.path.expanduser(DSH_BIN_ENV))
+        if not os.path.isfile(explicit):
+            raise RuntimeError(
+                "DSH_HOUDINI_DSH_BIN does not point to a file: " + explicit
+            )
+        return (
+            [NODE, explicit, "web", "--port", str(FRONTEND_PORT)],
+            False, "explicit-cli", FRONTEND_WARM_WAIT_TIMEOUT,
+        )
+
+    if not SHELL:
+        if not DSH_BIN or not os.path.isfile(DSH_BIN):
+            raise RuntimeError(
+                "frontend command not found:\n"
+                f"  NODE={NODE}\n  DSH_BIN={DSH_BIN}\n"
+                "Set SHELL=True or fix DSH_BIN in dsh_launcher.py"
+            )
+        return (
+            [NODE, DSH_BIN, "web", "--port", str(FRONTEND_PORT)],
+            False, "configured-cli", FRONTEND_WARM_WAIT_TIMEOUT,
+        )
+
+    cached = _resolve_cached_dsh_bin()
+    if cached is not None:
+        bin_path, source = cached
+        return (
+            [NODE, bin_path, "web", "--port", str(FRONTEND_PORT)],
+            False, source, FRONTEND_WARM_WAIT_TIMEOUT,
+        )
+
+    if not DSH_SPEC.strip():
+        raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
+    return (
+        FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT, spec=DSH_SPEC),
+        True, "npx-cold", FRONTEND_COLD_WAIT_TIMEOUT,
+    )
+
+
+def _command_text(cmd: list[str] | str) -> str:
+    if isinstance(cmd, str):
+        return cmd
+    return subprocess.list2cmdline(cmd)
+
+
+def _write_frontend_attempt_header(
+    log, *, source: str, cwd: str, cmd: list[str] | str, timeout: int,
+) -> None:
+    header = (
+        "\n\n===== dsh-houdini frontend attempt "
+        + time.strftime("%Y-%m-%d %H:%M:%S %z")
+        + " =====\n"
+        + f"source: {source}\n"
+        + f"cwd: {cwd}\n"
+        + f"timeout: {timeout}s\n"
+        + f"command: {_command_text(cmd)}\n"
+        + "----- frontend output -----\n"
+    )
+    log.write(header.encode("utf-8", errors="replace"))
+    log.flush()
+
+
 def start_frontend(workspace_dir: str | None = None) -> str:
     """Boot the dsh web frontend if it is not already up; returns status text.
 
@@ -288,26 +447,22 @@ def start_frontend(workspace_dir: str | None = None) -> str:
         return f"frontend already running on {FRONTEND_URL}"
 
     cwd = workspace_dir or _PROJECT_ROOT
+    # A failed command-selection attempt must never reuse the process handle
+    # from an earlier launch and misreport it as the newly created frontend.
+    for key in ("proc", "frontend_source", "wait_timeout"):
+        _PENDING.pop(key, None)
 
-    if SHELL:
-        cmd: list[str] | str = FRONTEND_SHELL_CMD.format(
-            port=FRONTEND_PORT, spec=DSH_SPEC,
-        )
-    else:
-        if not NODE or not os.path.exists(NODE) or not DSH_BIN or not os.path.exists(DSH_BIN):
-            return (
-                "frontend command not found:\n"
-                f"  NODE={NODE}\n  DSH_BIN={DSH_BIN}\n"
-                "Set SHELL=True (npx) or fix NODE/DSH_BIN at the top of dsh_launcher.py"
-            )
-        cmd = [NODE, DSH_BIN, "web", "--port", str(FRONTEND_PORT)]
+    try:
+        cmd, use_shell, source, wait_timeout = _frontend_command()
+    except RuntimeError as exc:
+        return str(exc)
 
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
         "cwd": cwd,
         "close_fds": True,
-        "shell": SHELL,
+        "shell": use_shell,
         "env": dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
     }
     if os.name == "nt":
@@ -317,17 +472,150 @@ def start_frontend(workspace_dir: str | None = None) -> str:
         kwargs["creationflags"] = _CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 
     with open(FRONTEND_LOG, "ab") as log:
+        _write_frontend_attempt_header(
+            log, source=source, cwd=cwd, cmd=cmd, timeout=wait_timeout,
+        )
         kwargs["stdout"] = log
         _PENDING["proc"] = subprocess.Popen(cmd, **kwargs)
-    return f"frontend starting on {FRONTEND_URL} (workspace: {cwd}; log: {FRONTEND_LOG})"
+    _PENDING["frontend_source"] = source
+    _PENDING["wait_timeout"] = wait_timeout
+    return (
+        f"frontend starting on {FRONTEND_URL} "
+        f"(source: {source}; workspace: {cwd}; log: {FRONTEND_LOG})"
+    )
 
 
-def open_ui() -> str:
-    """Open only the embedded web UI; never launch an external browser."""
+def _dsh_rpc(method: str, payload: dict, timeout: int = DSH_RPC_TIMEOUT) -> dict:
+    """Call one official loopback DSH Host RPC and return its value object."""
+    body = json.dumps({
+        "type": "client-request",
+        "rpcId": "dsh-houdini-" + uuid.uuid4().hex,
+        "method": method,
+        "payload": payload,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        f"{FRONTEND_URL}/api/{method}",
+        data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    try:
+        # Never send loopback control traffic through a configured HTTP proxy.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=timeout) as response:
+            decoded = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"DSH RPC {method} failed over HTTP {exc.code}: {detail[-2000:]}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"DSH RPC {method} transport failed: {exc}") from exc
+
+    result = decoded.get("result") if isinstance(decoded, dict) else None
+    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+        raise RuntimeError(f"DSH RPC {method} returned an invalid envelope")
+    if not result["ok"]:
+        error = result.get("error")
+        if isinstance(error, dict):
+            code = error.get("code", "unknown")
+            message = error.get("message", "unknown error")
+            raise RuntimeError(f"DSH RPC {method} failed: {code}: {message}")
+        raise RuntimeError(f"DSH RPC {method} failed without a structured error")
+    value = result.get("value")
+    if not isinstance(value, dict):
+        raise RuntimeError(f"DSH RPC {method} returned a non-object value")
+    return value
+
+
+def _canonical_workspace_path(path: str) -> str:
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+def _select_houdini_session(
+    items: object, workspace_dir: str, archived_session_ids: object = (),
+) -> dict | None:
+    """Pick the newest root Houdini session whose cwd exactly matches $HIP."""
+    if not isinstance(items, list):
+        return None
+    wanted = _canonical_workspace_path(workspace_dir)
+    archived = {
+        value for value in archived_session_ids
+        if isinstance(value, str)
+    } if isinstance(archived_session_ids, (list, tuple, set)) else set()
+    matches = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("agentPreset") != HOUDINI_AGENT_PRESET:
+            continue
+        cwd = item.get("cwd")
+        session_id = item.get("sessionId")
+        if not isinstance(cwd, str) or not isinstance(session_id, str):
+            continue
+        if session_id in archived:
+            continue
+        if _canonical_workspace_path(cwd) != wanted:
+            continue
+        matches.append(item)
+    if not matches:
+        return None
+    return max(
+        matches,
+        key=lambda item: item.get("updatedAt") if isinstance(item.get("updatedAt"), (int, float)) else 0,
+    )
+
+
+def _workspace_id_for_path(items: object, workspace_dir: str) -> str | None:
+    if not isinstance(items, list):
+        return None
+    wanted = _canonical_workspace_path(workspace_dir)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        workspace_id = item.get("workspaceId")
+        if isinstance(path, str) and isinstance(workspace_id, str):
+            if _canonical_workspace_path(path) == wanted:
+                return workspace_id
+    return None
+
+
+def ensure_houdini_session(workspace_dir: str) -> tuple[str, str]:
+    """Reuse or create the correct preset session through official Host RPC."""
+    sessions = _dsh_rpc("session.list", {}).get("items")
+    workspace_value = _dsh_rpc("workspace.list", {})
+    existing = _select_houdini_session(
+        sessions, workspace_dir, workspace_value.get("archivedSessionIds"),
+    )
+    if existing is not None:
+        session_id = str(existing["sessionId"])
+        return session_id, f"Houdini session reused: {session_id}"
+
+    workspaces = workspace_value.get("items")
+    workspace_id = _workspace_id_for_path(workspaces, workspace_dir)
+    create_payload = {
+        **({"workspaceId": workspace_id} if workspace_id is not None else {"cwd": workspace_dir}),
+        "agentPreset": HOUDINI_AGENT_PRESET,
+    }
+    created = _dsh_rpc("session.create", create_payload)
+    session_id = created.get("sessionId")
+    agent_preset = created.get("agentPreset")
+    if not isinstance(session_id, str) or not session_id:
+        raise RuntimeError("session.create succeeded without a sessionId")
+    if agent_preset != HOUDINI_AGENT_PRESET:
+        raise RuntimeError(
+            "session.create did not activate the Houdini preset "
+            f"(expected {HOUDINI_AGENT_PRESET!r}, got {agent_preset!r})"
+        )
+    attachment = f"workspace {workspace_id}" if workspace_id is not None else f"cwd {workspace_dir}"
+    return session_id, f"Houdini session created: {session_id} ({attachment})"
+
+
+def open_ui(session_id: str | None = None) -> str:
+    """Open the embedded UI, optionally routing one Host-resolved session."""
     _module_path_on_syspath()
     try:
         import dsh_webview
-        return dsh_webview.show_webview()
+        return dsh_webview.show_webview(session_id=session_id)
     except Exception as exc:
         message = f"Could not open the embedded DSH workspace: {exc}"
         _report(message)
@@ -349,7 +637,6 @@ def open_ui() -> str:
 # ERR_CONNECTION_REFUSED. The external npm/npx process can hang on a broken
 # network without exiting, so cap the wait at a diagnosable terminal state.
 FRONTEND_WAIT_INTERVAL = 0.5     # seconds (headless poll cadence)
-FRONTEND_WAIT_TIMEOUT = 600      # seconds; cold installs normally finish sooner
 DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refresh
 
 # Keeps the spawned frontend process / QTimer / QProgressDialog alive across
@@ -427,20 +714,37 @@ def _start_and_wait_frontend(state: dict) -> None:
         proc = _PENDING.get("proc")
         if proc is None:
             raise RuntimeError("frontend process was not created")
+        wait_timeout = int(_PENDING.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
+        source = str(_PENDING.get("frontend_source", "unknown"))
+        state["wait_timeout"] = wait_timeout
+        state["frontend_source"] = source
 
         started_at = time.monotonic()
         _set_startup_state(
-            state, 62, 3, "Waiting for DSH service", f"Connecting to {FRONTEND_URL}",
+            state, 62, 3, "Waiting for DSH service",
+            f"Connecting to {FRONTEND_URL} ({source}; limit {wait_timeout}s)",
         )
         while not state["canceled"]:
             if _port_open(FRONTEND_HOST, FRONTEND_PORT):
-                _set_startup_state(state, 90, 4, "Opening Houdini workspace", "Service is ready")
+                _set_startup_state(
+                    state, 82, 4, "Selecting Houdini session",
+                    f"Resolving the {HOUDINI_AGENT_PRESET} preset for this $HIP workspace",
+                )
+                workspace_dir = state.get("frontend_cwd") or _PROJECT_ROOT
+                session_id, session_status = ensure_houdini_session(workspace_dir)
+                state["target_session_id"] = session_id
+                state["detail"] += "\n" + session_status
+                _set_startup_state(
+                    state, 90, 4, "Opening Houdini workspace",
+                    f"Service is ready; session {session_id}",
+                )
                 state["result"] = "ready"
                 return
             if proc is not None and proc.poll() is not None:
+                state["detail"] += f"\nfrontend exit code: {proc.returncode}"
                 state["result"] = "dead"  # died without ever listening
                 return
-            if time.monotonic() - started_at >= FRONTEND_WAIT_TIMEOUT:
+            if time.monotonic() - started_at >= wait_timeout:
                 state["result"] = "timeout"
                 _terminate_pending_frontend()
                 return
@@ -471,7 +775,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         _start_and_wait_frontend(headless)
         detail += "\n" + headless["detail"]
         if headless["result"] == "ready":
-            _report(detail + "\n" + open_ui())
+            _report(detail + "\n" + open_ui(headless.get("target_session_id")))
         else:
             _report(
                 detail
@@ -627,8 +931,20 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         main_label.setText(state.get("title", "Starting"))
         pipeline_label.setText(pipeline_text(state.get("phase", 0)))
         message = state.get("message", "")
-        if elapsed >= 90 and state.get("phase") == 3:
-            message += "\nThis is taking longer than expected. Check the network; startup stops after 10 minutes."
+        wait_timeout = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
+        source = state.get("frontend_source", "unknown")
+        warning_after = 90 if source == "npx-cold" else 30
+        if elapsed >= warning_after and state.get("phase") == 3:
+            if source == "npx-cold":
+                message += (
+                    "\nThe first CLI download is taking longer than expected. "
+                    f"Check the network; this attempt stops after {wait_timeout} seconds."
+                )
+            else:
+                message += (
+                    "\nA local CLI should start quickly. This attempt will stop after "
+                    f"{wait_timeout} seconds; inspect the log for a startup deadlock."
+                )
         sub_label.setText(message)
         if state["canceled"]:
             timer.stop()
@@ -640,11 +956,16 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         if result == "ready":
             progress_bar.setValue(100)
             percent_label.setText("100%")
-            finish(open_ui())
+            finish(open_ui(state.get("target_session_id")))
         elif result == "dead":
             fail(f"The frontend exited before listening on {FRONTEND_URL}")
         elif result == "timeout":
-            fail("DSH did not become ready within 10 minutes. This startup was stopped.")
+            seconds = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
+            source = state.get("frontend_source", "unknown")
+            fail(
+                f"DSH did not become ready within {seconds} seconds "
+                f"using {source}. This startup was stopped."
+            )
         elif result == "error":
             error_tail = state.get("error", "unknown").splitlines()[-1]
             fail("Startup error: " + error_tail)
