@@ -7,7 +7,8 @@ Run on Houdini's main thread, normally through the dsh bridge:
 
 The test deliberately points the source OBJ at an empty SOP and adds a large
 visible interferer. The explicit GOOD_OUT render must remain identical before
-and after user-like display/visibility changes. Probe nodes/files are cleaned.
+and after user-like display/visibility changes. Test source nodes/files are
+cleaned; the session-scoped render service is intentionally retained.
 """
 from __future__ import annotations
 
@@ -161,6 +162,21 @@ def run():
             raise AssertionError("idle render proxy did not record its last explicit target")
         if "cleared afterward" not in proxy_source.comment():
             raise AssertionError("idle render proxy source does not explain why it is empty")
+        obj_box = hou.node("/obj").findNetworkBox(H._RENDER_OBJ_BOX_NAME)
+        out_box = hou.node("/out").findNetworkBox(H._RENDER_OUT_BOX_NAME)
+        if obj_box is None or out_box is None:
+            raise AssertionError("persistent render service Network Boxes are missing")
+        obj_members = set(obj_box.items(recurse=False))
+        out_members = set(out_box.items(recurse=False))
+        expected_obj = {
+            hou.node("/obj/__dsh_houdini_render_proxy"),
+            hou.node("/obj/__dsh_houdini_cam"),
+            hou.node("/obj/__dsh_houdini_target"),
+        }
+        if not expected_obj.issubset(obj_members):
+            raise AssertionError(f"OBJ render service box is incomplete: {obj_members}")
+        if hou.node("/out/__dsh_houdini_opengl") not in out_members:
+            raise AssertionError(f"OUT render service box is incomplete: {out_members}")
         return {
             "first": first["check"],
             "second": second["check"],
@@ -169,6 +185,9 @@ def run():
             "proxy_hidden": proxy is not None and not proxy.isDisplayFlagSet(),
             "proxy_idle": proxy.userData("dsh_render_state") == "idle",
             "proxy_last_target": proxy.userData("dsh_last_target"),
+            "render_service_boxes": {
+                "obj": obj_box.name(), "out": out_box.name(),
+            },
             "fixed_framing": moving_a["framing"],
             "frame_restored": hou.frame() == 7,
             "selection_restored": sorted(node.path() for node in hou.selectedNodes()) == before_selection,

@@ -45,6 +45,18 @@ from typing import Any
 import hou
 import toolutils
 
+
+# ``render_view`` infrastructure is session-scoped service state, not a
+# per-task probe. Deleting an OpenGL ROP (or a node it references) after a
+# successful render can make H21 enter its process-fatal GL capability path.
+# Keep these constants near the generic node verbs so ``delete_node`` can
+# enforce the ownership boundary before it asks Houdini for references.
+_RENDER_OWNER_KEY = "dsh_houdini_owner"
+_RENDER_OWNER_VALUE = "render_view_v2"
+_RENDER_OBJ_BOX_NAME = "__dsh_houdini_render_service"
+_RENDER_OUT_BOX_NAME = "__dsh_houdini_render_service"
+_RENDER_BOX_COMMENT = "DSH-Houdini Render Service (persistent; do not delete during session)"
+
 # ---------------------------------------------------------------------------
 # 分类映射与版本解析
 # ---------------------------------------------------------------------------
@@ -1299,8 +1311,14 @@ def rename_node(node, name: str) -> str:
 
 
 def delete_node(node) -> dict:
-    """删除节点，返回被删 path 及「谁曾用表达式引用它」（删除后可能断链的上游）。"""
+    """删除普通节点；持久 render_view 服务节点受生命周期守卫保护。"""
     n = _resolve(node)
+    if n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE:
+        raise ValueError(
+            f"{n.path()} belongs to the persistent dsh-houdini render service; "
+            "do not delete it during the Houdini session. render_view reuses "
+            "this infrastructure and clears its live source reference after each render."
+        )
     refs = sorted(x.path() for x in n.parmsReferencingThis())
     path = n.path()
     n.destroy()
@@ -3674,8 +3692,6 @@ def _try_set(node: hou.Node, name: str, value) -> bool:
         return False
 
 
-_RENDER_OWNER_KEY = "dsh_houdini_owner"
-_RENDER_OWNER_VALUE = "render_view_v2"
 _RENDER_PROXY_NAME = "__dsh_houdini_render_proxy"
 _RENDER_CAMERA_NAME = "__dsh_houdini_cam"
 _RENDER_TARGET_NAME = "__dsh_houdini_target"
@@ -3694,6 +3710,39 @@ def _owned_node(parent: hou.Node, name: str, type_name: str) -> hou.Node:
     node = parent.createNode(type_name, node_name=name)
     node.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
     return node
+
+
+def _render_service_box(parent: hou.Node, name: str,
+                        nodes: list[hou.Node]) -> hou.NetworkBox:
+    """Keep persistent render infrastructure grouped away from user nodes.
+
+    Only the first creation chooses a position. Subsequent calls preserve any
+    placement the user made while still repairing box membership/comment.
+    """
+    box = parent.findNetworkBox(name)
+    created = box is None
+    if box is None:
+        box = parent.createNetworkBox(name)
+
+    if created:
+        owned = set(nodes)
+        positions = [
+            child.position() for child in parent.children()
+            if child not in owned
+        ]
+        anchor_x = max((float(pos[0]) for pos in positions), default=0.0) + 6.0
+        anchor_y = max((float(pos[1]) for pos in positions), default=0.0)
+        for index, node in enumerate(nodes):
+            node.setPosition(hou.Vector2(anchor_x, anchor_y - index * 1.5))
+
+    members = set(box.items(recurse=False))
+    for node in nodes:
+        if node not in members:
+            box.addItem(node)
+    box.setComment(_RENDER_BOX_COMMENT)
+    box.setColor(hou.Color((0.16, 0.30, 0.48)))
+    box.fitAroundContents()
+    return box
 
 
 def _resolve_render_sop(node) -> tuple[hou.Node, str | None]:
@@ -3945,6 +3994,10 @@ def render_view(node, direction="iso", frame=None,
         cam = _owned_node(obj, _RENDER_CAMERA_NAME, "cam")
         aim = _owned_node(obj, _RENDER_TARGET_NAME, "null")
         rop = _owned_node(out, _RENDER_ROP_NAME, "opengl")
+        obj_service_box = _render_service_box(
+            obj, _RENDER_OBJ_BOX_NAME, [proxy, cam, aim])
+        out_service_box = _render_service_box(
+            out, _RENDER_OUT_BOX_NAME, [rop])
         for infra in (cam, aim, proxy):
             try:
                 infra.setDisplayFlag(False)
@@ -4037,6 +4090,12 @@ def render_view(node, direction="iso", frame=None,
             "proxy_output": proxy_out.path(),
             "camera": cam.path(),
             "rop": rop.path(),
+            "render_service": {
+                "persistent": True,
+                "delete_during_session": False,
+                "obj_network_box": obj_service_box.name(),
+                "out_network_box": out_service_box.name(),
+            },
             "output": rendered["output"],
             "frame": f,
             "file_bytes": rendered["file_bytes"],

@@ -63,7 +63,7 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | asset | `hda_create` / `hda_info` / `hda_get_section` / `hda_set_section` / `hda_patch_section` / `hda_set_interface` | HDA 创建、自省、section 安全修改和声明式参数面板 |
 | geometry | `geo_attrib_stats` / `geo_piece_stats` / `geo_frame_diff` | 属性值、局部 piece extent/面积退化、无 playbar 副作用跨帧差异 |
 | stage/USD | `usd_stage_summary(lop)` / `usd_prim_info(lop, prim_path)` | USD 场景摘要 / 单 prim 属性、绑定和时间采样 |
-| render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；动画 A/B 用同一 framing_frame 锁相机 |
+| render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；渲染基础设施作为带 owner tag 的持久服务收进 OBJ/OUT Network Box，任务收尾复用而不删除；动画 A/B 用同一 framing_frame 锁相机 |
 | render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染单帧并验证产物 / 图像客观统计（盲验） |
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
 
@@ -73,6 +73,11 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 `render_view` 依赖 Houdini GUI/OpenGL；正常 Houdini 工作站按标准路径使用。低配置开发机若
 偶发 OpenGL 不稳定，停止本轮视觉重试并保留 cook/属性/拓扑/多帧差异等语义证据即可；
 这不是需要扩展工具或兼容层的产品开发项。
+
+H21 已确认成功渲染后的 agent OpenGL ROP teardown 可能进入进程级 fatal，因此
+`__dsh_houdini_*` 节点不是任务残留：它们由 `render_view` 跨调用复用，分别放在 `/obj`
+和 `/out` 的 `__dsh_houdini_render_service` Network Box 中。普通任务清理不得删除这些
+owner-tagged 节点；空闲 proxy 已自动清空 live source 引用。
 
 ## Houdini trace 分析 skill
 

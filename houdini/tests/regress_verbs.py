@@ -4,9 +4,12 @@ Run:  /d/houdini/bin/hython.exe houdini/tests/regress_verbs.py
 （等价：任意 H21 hython；脚本自行把 python3.11libs 加进 sys.path）
 退出码非零即有失败项。场景内的 probe 节点在结尾统一清理。
 """
+import os
 import sys
 
-sys.path.insert(0, r"E:/dsh-houdini/houdini/python3.11libs")
+HERE = os.path.dirname(os.path.abspath(__file__))
+LIBS = os.path.abspath(os.path.join(HERE, "..", "python3.11libs"))
+sys.path.insert(0, LIBS)
 
 import hou
 import dsh_hou_helpers as H
@@ -122,6 +125,46 @@ def t9():
     r = H.delete_node(victim)
     assert any("watcher" in p for p in r.get("orphaned_parm_refs", [])), r
 check("9 delete_node orphaned_parm_refs", t9)
+
+
+# 9b) render_view service nodes are persistent and cannot enter the fatal
+# OpenGL teardown path through the generic delete verb.
+def t9b():
+    owned = geo.createNode("null", "owned_render_service")
+    owned.setUserData(H._RENDER_OWNER_KEY, H._RENDER_OWNER_VALUE)
+    try:
+        H.delete_node(owned)
+    except ValueError as e:
+        assert "persistent dsh-houdini render service" in str(e), e
+        assert hou.node(owned.path()) is not None
+    else:
+        raise AssertionError("delete_node accepted persistent render service node")
+    finally:
+        if owned is not None:
+            owned.destroy()
+check("9b delete_node guards persistent render service", t9b)
+
+
+# 9c) the service Network Box is named, labelled, and contains every item.
+def t9c():
+    first = geo.createNode("null", "service_box_first")
+    second = geo.createNode("null", "service_box_second")
+    box = None
+    try:
+        box = H._render_service_box(geo, "__dsh_render_service_test", [first, second])
+        assert box.comment() == H._RENDER_BOX_COMMENT, box.comment()
+        members = set(box.items(recurse=False))
+        assert first in members and second in members, members
+        # Reuse must return the same box rather than making numbered copies.
+        again = H._render_service_box(geo, "__dsh_render_service_test", [first, second])
+        assert again == box
+    finally:
+        if box is not None:
+            box.destroy(destroy_contents=False)
+        for node in (first, second):
+            if node is not None:
+                node.destroy()
+check("9c persistent render service Network Box", t9c)
 
 
 # 10) describe/cook_node still sane

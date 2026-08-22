@@ -988,6 +988,50 @@ URL，证明 client 已完成 open 后消费。前端/bridge 分别保持 3081/8
 发布 forward-test 创建的 `session-83a553e7...` 已通过正式 `workspace.archiveSession` 归档；
 launcher 回归证明 archived session 不参与复用，WebView 已恢复原用户会话 `session-872f6d34...`。
 
+### 2.31 OpenGL Fatal 生命周期复现（2026-08-22，结论已纠正）
+
+**确定性复现**：当前 H21.0.440 会话的 Qt global share context 为 OpenGL 4.6；新建共享
+offscreen context 直接读到 `NVIDIA Corporation / RTX 3080 / 4.6.0 NVIDIA 591.86`。
+一次 64×64 与连续五次 1280×720 `render_view` 均成功，显存稳定，首次初始化后的
+handles/threads 平台化，未见逐次线性泄漏。随后通过 `delete_node` 删除
+`/out/__dsh_houdini_opengl`，立即弹出完全相同的 OpenGL Fatal 对话框；桥 `/health`
+仍正常，但主线程 exec 被模态框阻塞。
+
+**历史 trace 对照**（session `e838ad97-a54f-4aa1-a74d-12edc3a5159f`）：
+
+- #38/#39 多帧 `render_view` 全部成功；#43 的“清理 agent 渲染残留”依次删除
+  proxy/camera/OpenGL ROP 时桥断开。
+- 重启后 #55 再次多帧成功；#57 再次删除同一组基础设施时超时。
+- 因此所谓“成功后 1-2 分钟延迟崩溃”实际包含明确的 teardown 动作，不是已经证明的
+  资源耗尽等待期。历史清理先删 proxy，本次复现先删 ROP，两端都进入同一 fatal 路径。
+
+**dump 证据纠正**：4.5GB 文件是错误对话框期间的 live dump，没有 exception stream。
+`Microsoft Corporation / GDI Generic / 1.1.0 / GL_WIN_swap_hint / ...` 完整连续字符串块
+位于 dump 的 `opengl32.dll` 映射静态数据（起始虚拟地址 `0x7ffe2ecd2658`），不能证明
+创建过软件 GL context。`dump_*.py` 只是按 8 字节扫描栈内指针并映射 DLL，不是使用
+unwind metadata/symbol 的调用栈回溯；TID 14012 只能确认 RIP 位于 `win32u.dll`。
+
+**当前根因边界**：已确认的是“成功使用 OpenGL ROP 后，删除 owner render
+infrastructure 会进入 Houdini 的进程级 GL fatal”；尚未二分 `delete_node` 的
+`parmsReferencingThis()` 与原生 `destroy()` 哪一步触发，也未证明 WDDM/GDI 降级。
+
+**落地决策**：
+
+1. `render_view` 基础设施改为会话级持久服务，OBJ/OUT 两侧放进带说明的 Network Box，
+   反复复用；任务收尾只清空 proxy live source，不删除节点。
+2. `delete_node` 拒绝删除 owner-tagged render service 节点，在进入 Houdini teardown 前失败。
+3. guidance 明示 `__dsh_houdini_*` 不是残留。用户接受这些节点随 HIP 留存；需要时可把
+   Network Box 放到网络一侧，不以“干净场景”为由冒险销毁。
+4. WER LocalDumps 继续保留；资源压力只作为可能放大因素，不再写成已证根因。
+
+**验收与稳定策略**：H21 GUI 完整回归连续两次真实 OpenGL 输出逐像素一致
+（RMSE=0、changed pixel=0%），frame/selection/visibility 全部恢复；OBJ/OUT Network Box
+成员完整且跨调用复用。随后对 ROP、proxy、camera、target 的 `delete_node` 尝试均在进入
+Houdini teardown 前被 owner guard 拒绝，普通 probe 节点仍可删除，桥 `/health` 与 GUI
+继续响应。项目据此采用“保留并复用服务节点”作为正式稳定方案，不以 CPU fallback 取代
+正常可用的 OpenGL 路径。若维护代码使用裸 `hou.Node.destroy()` 绕过动词守卫，仍须自行
+承担同一 fatal 风险；agent 任务不得这样清理服务节点。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
