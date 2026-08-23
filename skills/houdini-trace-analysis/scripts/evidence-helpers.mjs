@@ -191,14 +191,17 @@ export function collectValidationCoverage(steps) {
       }
     }
 
-    if (String(step.tool || '').startsWith('vision_')) {
-      const images = Array.isArray(step.args?.images) ? step.args.images : [];
+    if (String(step.tool || '').startsWith('vision_') || step.tool === 'read_image') {
+      const images = Array.isArray(step.args?.images)
+        ? step.args.images
+        : [step.args?.path, step.args?.image].filter(Boolean);
       vision.push({
         index: step.index,
         time: step.time,
         tool: step.tool,
         images,
         frames: uniqueFrames(images.map(frameFromPath)),
+        ok: !step.failed,
       });
     }
   }

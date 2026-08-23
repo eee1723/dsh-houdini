@@ -988,6 +988,49 @@ URL，证明 client 已完成 open 后消费。前端/bridge 分别保持 3081/8
 发布 forward-test 创建的 `session-83a553e7...` 已通过正式 `workspace.archiveSession` 归档；
 launcher 回归证明 archived session 不参与复用，WebView 已恢复原用户会话 `session-872f6d34...`。
 
+### 2.29 前端预热竞态：session 路由 RPC 可重试（2026-08-22，已完成）
+
+**问题**：`Restart Services` 偶发 `DSH RPC session.list failed over HTTP 404: not found`。
+dsh web 的 TCP 端口先于 `/api/*` 路由挂载开始监听，`_start_and_wait_frontend` 的
+`_port_open` 一探通就立刻 `ensure_houdini_session`，命中预热窗口即整次启动失败；
+同一 CLI（rc.7）稍后手动重放该 RPC 返回 200，证实是时序竞态而非版本缺失。
+
+**修复**：`_start_and_wait_frontend` 在端口已开但 session 路由 RPC 失败时，仅对
+预热类失败（HTTP 404 / transport）在同一 `wait_timeout` 预算内继续轮询，不再当场
+判死；持续不恢复则抛原始错误。结构化 RPC 错误（`ok:false`）不可重试，立即上抛——
+由 `_session_rpc_not_ready` 判定。此类失败不再杀前端进程（服务本身健康，只是接口
+尚未就绪）。
+
+**验收**：`houdini/tests/regress_launcher.py` 新增第 11 项（404/transport 可重试、
+结构化错误不可重试），H21 hython 12/12 全绿。
+
+**同轮行为统一**：前端启动命令全部加 `--no-open`（cached/configured/explicit CLI 与
+npx-cold 四处）。浏览器自动打开是 dsh web-app 的默认行为（`openBrowser` 默认 true，
+SSH 会话除外），与 launcher 的内嵌 WebView 重复；dsh-houdini 只保留内嵌窗口，
+不同机器间不再因 dsh 版本/SSH 环境差异出现「这台双开、那台单开」。回归第 4 项
+同步断言命令尾部为 `web --port 3081 --no-open`。
+
+### 2.30 WebView 发起对话报 AbortSignal.any（2026-08-22，已修复）
+
+**问题**：内嵌 WebView 里发起对话即报 `AbortSignal.any is not a function (internal)`，
+外部现代浏览器正常。
+
+**根因**（实机逐层确认）：`(internal)` 是 dsh-client-connection `transportError()` 的
+catch-all code；其 C→S `postJson` 用 `AbortSignal.any([AbortSignal.timeout(...), signal])`。
+该 client 代码跑在**浏览器侧**——H21 内嵌 QtWebEngine 6.5.3 = Chrome 108（经桥实测
+UA 确认），`AbortSignal.any` 要 Chrome 116+，因此 WebView 里必炸（`timeout` 108 已有，
+不受影响）。外部 Chrome 版本新所以正常；另一台开发机不报是因为缓存的 dsh 版本旧，
+client-connection 尚未引入 `AbortSignal.any`。
+
+**修复**：`dsh_webview.py` 在 view 创建时经 `QWebEngineScript`（DocumentCreation +
+MainWorld，先于页面脚本）注入规范语义的 `AbortSignal.any` polyfill；已存在则不覆盖。
+GUI 限定，hython 无法覆盖（同 backdrop-filter 注入）。
+
+**验收**（经桥在真实 H21 WebView 实测）：注入前 `typeof AbortSignal.any = undefined`；
+插入脚本并重载页面后为 `function`，且 `AbortSignal.any([新 signal]).aborted === false`
+语义正确。live 会话已同步热修（scripts.insert + 当前页 patch + reload），用户无需
+重启即可重试对话。
+
 ### 2.31 OpenGL Fatal 生命周期复现（2026-08-22，结论已纠正）
 
 **确定性复现**：当前 H21.0.440 会话的 Qt global share context 为 OpenGL 4.6；新建共享
@@ -1031,6 +1074,39 @@ Houdini teardown 前被 owner guard 拒绝，普通 probe 节点仍可删除，�
 继续响应。项目据此采用“保留并复用服务节点”作为正式稳定方案，不以 CPU fallback 取代
 正常可用的 OpenGL 路径。若维护代码使用裸 `hou.Node.destroy()` 绕过动词守卫，仍须自行
 承担同一 fatal 风险；agent 任务不得这样清理服务节点。
+
+### 2.32 完整 profile 依赖同步与可信验收（2026-08-23，已实现）
+
+**问题**：过去 `houdini/install.py` 只写 Houdini package，launcher 只同步 preset 和本仓库
+Node 依赖；DSH web profile 的社区插件仍依赖每台电脑手工安装。于是装有视觉路由器的机器上，
+纯文本模型可以完成视觉闭环，另一台机器上的同一 preset 却只有失败的 `read_image`，体验与
+trace 结论均随机器漂移。同时，mutation exec 捕获异常后只打印而不重新抛出会让桥误判成功，
+跳过已有的 undo rollback；`render_check` 也曾被误写成视觉语义验收。
+
+**落地**：
+
+1. 根目录新增 `dsh-profile.requirements.json`，声明完整 `web` profile 当前必需的 bundle：
+   本地 `dsh-houdini` link 与锁定版本 `dsh-vision-router@1.6.0`。这是安装依赖清单，不承载
+   任何具体 Houdini 任务策略。
+2. 新增无 `hou` 依赖的 `dsh_profile_sync.py`：只读检查 profile manifest、实际安装包版本、
+   bundle 激活状态与本地 link 目标；只有漂移时才调用官方 `dsh plugin --profile web add`，
+   调用后重新读取并强校验，绝不手写用户 profile manifest。
+3. `houdini/install.py` 默认同时安装 Houdini package 与完整 DSH profile；可显式传
+   `--skip-dsh-profile` 只装 Houdini 部分。每次 `Restart Services` 也会在前端停止后、启动前
+   运行同一幂等同步，因此升级清单可以自动补到已安装机器。
+4. 桥在同一 undo group 内检查 verb ledger：若 agent 捕获并吞掉 verb 异常，exec 仍被强制判失败，
+   从而触发 rollback；通用 guidance/preset 同时要求 mutation exec 捕获异常后重新抛出。
+   `render_check` 只证明图像有效或像素变化，没有成功的 vision tool 就必须报告视觉语义未验。
+5. trace evidence 把 `read_image` 与 `vision_*` 统一计入视觉证据，记录成功/失败，并自动输出
+   `render_without_successful_vision` / `vision_tool_failed` 完成风险。
+
+**本机验收**：profile 从仅有 `dsh-houdini` 收敛为两个 bundle，`dsh-vision-router` 实装
+1.6.0 且进入 `dsh.profile.bundles`；profile 只读复查通过。Python 标准库回归覆盖完整状态与
+“依赖存在但 bundle 未激活”状态，hython 回归确认吞掉的 verb 异常会强制失败；Node evidence
+helper 回归、TypeScript build、DSH `--dump-config` 与 vision-router doctor 均通过。
+同一 profile 在临时 3181 端口完成 runtime HTTP 200 启动，且配置中 `vision-router` row
+恰好一份；未重启用户当前 3081 会话。视觉路由器的默认免费视觉链会把选中的图像与问题发送给外部视觉服务；
+生产环境可在其设置中改为用户授权的后端。
 
 ## 3. 卡点（blockers）
 

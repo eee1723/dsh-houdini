@@ -305,13 +305,30 @@ function analyzeTrace(file) {
   const renderEvidence = steps.flatMap((step) => step.verbs
     .filter((verb) => ['render_view', 'render_frame', 'render_check'].includes(verb.verb))
     .map((verb) => ({ index: step.index, time: step.time, verb: verb.verb, ok: verb.ok, result: verb.result })));
-  const visionEvidence = steps.filter((step) => step.tool.startsWith('vision_')).map((step) => ({
+  const visionEvidence = steps.filter(
+    (step) => step.tool.startsWith('vision_') || step.tool === 'read_image',
+  ).map((step) => ({
     index: step.index,
     time: step.time,
     tool: step.tool,
+    ok: !step.failed,
     args: step.args,
     resultPreview: step.resultPreview,
   }));
+  const successfulVisionEvidence = visionEvidence.filter((item) => item.ok);
+  const completionRisks = [];
+  if (renderEvidence.length && !successfulVisionEvidence.length) {
+    completionRisks.push({
+      code: 'render_without_successful_vision',
+      detail: 'Render evidence exists, but no vision tool successfully inspected an image.',
+    });
+  }
+  if (visionEvidence.some((item) => !item.ok)) {
+    completionRisks.push({
+      code: 'vision_tool_failed',
+      detail: 'At least one attempted vision inspection failed.',
+    });
+  }
   const validationCoverage = collectValidationCoverage(steps);
   const repeatedCode = Object.entries(steps.reduce((groups, step) => {
     if (!step.codeHash) return groups;
@@ -396,6 +413,7 @@ function analyzeTrace(file) {
     batchSetParmOpportunities,
     renderEvidence,
     visionEvidence,
+    completionRisks,
     validationCoverage,
     repeatedCode,
     timelineGaps: gaps,

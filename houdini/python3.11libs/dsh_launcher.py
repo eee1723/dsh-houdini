@@ -76,7 +76,7 @@ FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
 SHELL = True
 DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
 DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC)
-FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port}'
+FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port} --no-open'
 
 # npm cache for npx. The default cache is write-blocked on sandboxed machines
 # (EPERM), so point npm at a project-local cache — works everywhere.
@@ -98,6 +98,10 @@ DSH_BIN_ENV = os.environ.get("DSH_HOUDINI_DSH_BIN", "")
 # or config edits take effect from the menu — no manual Copy-Item step.
 PRESET_SRC = os.path.join(_PROJECT_ROOT, "presets")
 PRESET_DST = os.path.join(os.path.expanduser("~"), ".dsh", ".agent-presets")
+
+# Required profile bundles are declared once at the package root and reconciled
+# through the official `dsh plugin` command before the frontend starts.
+PROFILE_REQUIREMENTS = os.path.join(_PROJECT_ROOT, "dsh-profile.requirements.json")
 
 
 # hip 未保存时的中立工作区（仓库的兄弟目录，按需创建）：产出永不落仓库。
@@ -382,7 +386,7 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
                 "DSH_HOUDINI_DSH_BIN does not point to a file: " + explicit
             )
         return (
-            [NODE, explicit, "web", "--port", str(FRONTEND_PORT)],
+            [NODE, explicit, "web", "--port", str(FRONTEND_PORT), "--no-open"],
             False, "explicit-cli", FRONTEND_WARM_WAIT_TIMEOUT,
         )
 
@@ -394,7 +398,7 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
                 "Set SHELL=True or fix DSH_BIN in dsh_launcher.py"
             )
         return (
-            [NODE, DSH_BIN, "web", "--port", str(FRONTEND_PORT)],
+            [NODE, DSH_BIN, "web", "--port", str(FRONTEND_PORT), "--no-open"],
             False, "configured-cli", FRONTEND_WARM_WAIT_TIMEOUT,
         )
 
@@ -402,7 +406,7 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
     if cached is not None:
         bin_path, source = cached
         return (
-            [NODE, bin_path, "web", "--port", str(FRONTEND_PORT)],
+            [NODE, bin_path, "web", "--port", str(FRONTEND_PORT), "--no-open"],
             False, source, FRONTEND_WARM_WAIT_TIMEOUT,
         )
 
@@ -411,6 +415,33 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
     return (
         FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT, spec=DSH_SPEC),
         True, "npx-cold", FRONTEND_COLD_WAIT_TIMEOUT,
+    )
+
+
+def _profile_sync_command() -> tuple[list[str] | str, bool, str, int]:
+    """Choose the same DSH CLI source as frontend startup, without `web`."""
+    frontend, use_shell, source, timeout = _frontend_command()
+    if isinstance(frontend, list):
+        return frontend[:-4], use_shell, source, timeout
+    suffix = f" web --port {FRONTEND_PORT} --no-open"
+    if not frontend.endswith(suffix):
+        raise RuntimeError(f"cannot derive DSH CLI command from: {frontend}")
+    return frontend[:-len(suffix)], use_shell, source, timeout
+
+
+def sync_profile_plugins(on_install=None) -> str:
+    """Install/activate every required web-profile bundle, only when needed."""
+    _module_path_on_syspath()
+    import dsh_profile_sync
+
+    prefix, use_shell, _source, timeout = _profile_sync_command()
+    return dsh_profile_sync.sync_profile_plugins(
+        prefix,
+        use_shell=use_shell,
+        project_root=dsh_profile_sync.PROJECT_ROOT,
+        env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
+        timeout=max(timeout, dsh_profile_sync.SYNC_TIMEOUT_SECONDS),
+        on_install=on_install,
     )
 
 
@@ -579,6 +610,18 @@ def _workspace_id_for_path(items: object, workspace_dir: str) -> str | None:
     return None
 
 
+def _session_rpc_not_ready(exc: RuntimeError) -> bool:
+    """True when an RPC failure means the frontend is still warming up.
+
+    The port accepts TCP before dsh mounts its /api routes, so an early
+    session.list answers 404; a mid-restart call can also hit a refused
+    connection. Structured RPC errors (validation, unknown session) are real
+    failures and must not be retried.
+    """
+    message = str(exc)
+    return "over HTTP 404" in message or "transport failed" in message
+
+
 def ensure_houdini_session(workspace_dir: str) -> tuple[str, str]:
     """Reuse or create the correct preset session through official Host RPC."""
     sessions = _dsh_rpc("session.list", {}).get("items")
@@ -703,11 +746,23 @@ def _start_and_wait_frontend(state: dict) -> None:
         if "FAILED" in dependency_status:
             raise RuntimeError(dependency_status)
 
-        _set_startup_state(state, 32, 2, "Stopping previous frontend", f"Releasing port {FRONTEND_PORT}")
+        _set_startup_state(state, 28, 2, "Stopping previous frontend", f"Releasing port {FRONTEND_PORT}")
         details.append(restart_frontend())
 
         _set_startup_state(
-            state, 48, 2, "Starting DSH", f"Creating frontend process: {DSH_SPEC}",
+            state, 38, 2, "Synchronizing DSH plugins", "Checking the complete Houdini profile",
+        )
+
+        def on_plugin_install(specs: list[str]) -> None:
+            _set_startup_state(
+                state, 42, 2, "Installing required DSH plugins",
+                "The first install may take several minutes: " + ", ".join(specs),
+            )
+
+        details.append(sync_profile_plugins(on_plugin_install))
+
+        _set_startup_state(
+            state, 52, 2, "Starting DSH", f"Creating frontend process: {DSH_SPEC}",
         )
         details.append(start_frontend(state.get("frontend_cwd")))
         state["detail"] = "\n".join(details)
@@ -731,7 +786,18 @@ def _start_and_wait_frontend(state: dict) -> None:
                     f"Resolving the {HOUDINI_AGENT_PRESET} preset for this $HIP workspace",
                 )
                 workspace_dir = state.get("frontend_cwd") or _PROJECT_ROOT
-                session_id, session_status = ensure_houdini_session(workspace_dir)
+                try:
+                    session_id, session_status = ensure_houdini_session(workspace_dir)
+                except RuntimeError as exc:
+                    # Warmup race: the port listens before /api is mounted.
+                    # Keep polling within the same readiness budget; a
+                    # persistent failure surfaces as the original error.
+                    if not _session_rpc_not_ready(exc) or (
+                        time.monotonic() - started_at >= wait_timeout
+                    ):
+                        raise
+                    time.sleep(FRONTEND_WAIT_INTERVAL)
+                    continue
                 state["target_session_id"] = session_id
                 state["detail"] += "\n" + session_status
                 _set_startup_state(

@@ -157,7 +157,17 @@ dsh web
 python houdini/install.py
 ```
 
-（可先 `python houdini/install.py --print` 预览生成内容。）
+安装脚本现在同时完成两部分：写入所有已检测 Houdini 版本的 package，并把
+`dsh-profile.requirements.json` 声明的完整能力同步到 DSH `web` profile。目前包括本地
+`dsh-houdini` bundle 和锁定版本的 `dsh-vision-router`；后者让不具备图像输入能力的主模型
+通过独立视觉后端检查渲染结果。同步只在依赖缺失、版本漂移或 bundle 未激活时运行，且始终
+通过官方 `dsh plugin` 命令修改 profile。
+
+可先 `python houdini/install.py --print` 预览 Houdini package 内容；只安装 Houdini 部分、
+不联网同步 DSH profile 时显式使用 `python houdini/install.py --skip-dsh-profile`。
+
+> 视觉路由器的默认免费链会把 agent 选中的图片和问题发送给外部视觉服务。需要私有数据边界时，
+> 请在 DSH 的视觉路由器设置中改用你授权的视觉后端。
 
 > ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
 
@@ -178,12 +188,14 @@ dsh-houdini 是**插件（能力层）**，挂到 **agent preset（模式层）*
 
 ```sh
 npm run build
-dsh plugin --profile web add E:/dsh-houdini            # pnpm link，让包名可解析（client 半依赖）
-# 把 presets/houdini/ 复制到 ~/.dsh/.agent-presets/houdini/（仅首次；之后从 DSH-Houdini 菜单启动时自动同步）
+python houdini/install.py                              # Houdini package + 完整 DSH web profile
 dsh web                                                 # 起前端（profile 模式）
 ```
 
-在 UI 新建会话时选 **「Houdini 模式」**。`dsh plugin` 用 pnpm link 本地目录，改代码后 `npm run build` 即可（HMR 热重载）。卸载：`dsh plugin --profile web remove dsh-houdini`。
+在 UI 新建会话时选 **「Houdini 模式」**。安装器用 DSH 官方插件命令 link 本地目录并同步
+所需 bundle；改代码后 `npm run build`，再从 Houdini 诊断面板执行 `Restart Services` 即可
+同步 preset 与新增依赖。卸载：`dsh plugin --profile web remove dsh-houdini`；视觉路由器作为
+共享 profile 能力独立保留，需要时另行移除。
 
 仓库另带一个 **`houdini-dev` 模式 preset**（`presets/houdini-dev/`）：工具集与 `houdini` 完全相同，仅 persona 换成 coding/development——以插件仓库为主目标、把运行中的 Houdini 会话当**测试目标**（改 `src/`/`client.js`/`houdini/python3.11libs/` 时用 `houdini_*` 工具做端到端验证）。开发/测试插件本身时选 **「Houdini 开发模式」**，复制方式同上（`presets/houdini-dev/` → `~/.dsh/.agent-presets/houdini-dev/`）。
 

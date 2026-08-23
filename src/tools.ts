@@ -65,7 +65,7 @@ function renderStreams(value: ExecResult): string[] {
         : `- ${String(m.from)} -> ${String(m.to)} (${Math.round(Number(m.bytes) / 1024)} KB)`)
     parts.push(
       `media (relayed into the session workspace — readable by fs/vision tools; `
-      + `use the workspace path on the right with vision_glance etc.):\n${lines.join('\n')}`,
+      + `use the workspace path on the right with an available vision_* tool):\n${lines.join('\n')}`,
     )
   }
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "profile": "web",
+  "plugins": [
+    {
+      "name": "dsh-houdini",
+      "source": "project"
+    },
+    {
+      "name": "dsh-vision-router",
+      "spec": "dsh-vision-router@1.6.0",
+      "version": "1.6.0"
+    }
+  ]
+}

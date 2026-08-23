@@ -18,6 +18,7 @@
     "lib",
     "client.js",
     "cordis.patch.yml",
+    "dsh-profile.requirements.json",
     "houdini",
     "skills",
     "docs/tool-design.md",

@@ -19,6 +19,7 @@ import socket
 import urllib.parse
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
+from PySide6.QtWebEngineCore import QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -40,6 +41,29 @@ _DISABLE_BACKDROP_FILTER_JS = """
   s.id = 'dsh-perf-no-backdrop-filter';
   s.textContent = '* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }';
   document.head.appendChild(s);
+})()
+"""
+
+# H21 内嵌 QtWebEngine 6.5.3 = Chrome 108：dsh-client-connection 的 postJson 用
+# AbortSignal.any（Chrome 116+），缺失时发消息即报
+# "AbortSignal.any is not a function (internal)"。在 DocumentCreation 注入
+# 规范语义的 polyfill（早于页面任何脚本执行）。AbortSignal.timeout 108 已有，
+# 不重复 polyfill。
+_POLYFILL_ABORT_SIGNAL_ANY_JS = """
+(function(){
+  if (typeof AbortSignal === 'undefined' || typeof AbortSignal.any === 'function') return;
+  AbortSignal.any = function(signals){
+    var controller = new AbortController();
+    var list = Array.from(signals || []);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].aborted) { controller.abort(list[i].reason); return controller.signal; }
+    }
+    var onAbort = function(ev){ controller.abort(ev.target.reason); };
+    for (var j = 0; j < list.length; j++) {
+      list[j].addEventListener('abort', onAbort, { once: true });
+    }
+    return controller.signal;
+  };
 })()
 """
 
@@ -95,6 +119,17 @@ def _session_url(session_id: str | None) -> str:
     return FRONTEND_URL + "?" + urllib.parse.urlencode({SESSION_HINT_PARAM: session_id})
 
 
+def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
+    """在 DocumentCreation 注入 AbortSignal.any polyfill（先于页面脚本执行）。"""
+    script = QWebEngineScript()
+    script.setName("dsh-abortsignal-any-polyfill")
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(False)
+    script.setSourceCode(_POLYFILL_ABORT_SIGNAL_ANY_JS)
+    view.page().scripts().insert(script)
+
+
 def show_webview(session_id: str | None = None) -> str:
     """打开内嵌 UI；可路由显式 session，无 id 时只唤起当前窗口。"""
     if QCoreApplication.instance() is None:
@@ -126,6 +161,7 @@ def show_webview(session_id: str | None = None) -> str:
         win = QWidget()
         win.setWindowTitle("DSH-Houdini")
         view = QWebEngineView()
+        _install_abort_signal_polyfill(view)
         # 每次整页加载后注入性能修复 CSS（SPA 路由切换不重载页面，注入一次生效）。
         view.loadFinished.connect(lambda _ok: view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS))
         lay = QVBoxLayout(win)

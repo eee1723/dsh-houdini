@@ -106,12 +106,17 @@ const coverage = collectValidationCoverage([
     index: 4, time: 4, tool: 'vision_glance', verbs: [],
     args: { images: ['E:/tmp/dsh_view_0_f25p0.png', 'E:/tmp/dsh_view_1_f31p0.png'] },
   },
+  {
+    index: 5, time: 5, tool: 'read_image', failed: true, verbs: [],
+    args: { path: 'E:/tmp/dsh_view_2_f40p0.png' },
+  },
 ]);
 assert.deepEqual(coverage.frames.geometry, [25, 31]);
 assert.deepEqual(coverage.frames.render, [31]);
 assert.deepEqual(coverage.frames.framing, [31]);
 assert.deepEqual(coverage.frames.comparison, [25, 31]);
-assert.deepEqual(coverage.frames.vision, [25, 31]);
-assert.deepEqual(coverage.frames.all, [25, 31]);
+assert.deepEqual(coverage.frames.vision, [25, 31, 40]);
+assert.deepEqual(coverage.frames.all, [25, 31, 40]);
+assert.equal(coverage.vision[1].ok, false);
 
 console.log('trace evidence helper tests passed');

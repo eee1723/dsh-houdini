@@ -495,6 +495,28 @@ def _make_tracer(name: str, fn, ledger: list):
     return wrapped
 
 
+def _raise_caught_verb_failure(verb_ledger: list) -> None:
+    """Fail an exec that caught a verb exception and continued.
+
+    The tracer records an exception before re-raising it. Agent code used to
+    catch that exception, print diagnostics, and let the outer exec commit a
+    potentially partial scene as ``ok: true``. This check runs while the same
+    undo group is still open, so the normal failure path can roll back every
+    Houdini-undoable edit in the batch.
+    """
+    failed = [entry for entry in verb_ledger if not entry.get("ok", False)]
+    if not failed:
+        return
+    names = ", ".join(str(entry.get("verb", "?")) for entry in failed[:8])
+    if len(failed) > 8:
+        names += f", +{len(failed) - 8} more"
+    raise RuntimeError(
+        "agent code caught and suppressed a verb exception "
+        f"({names}); the exec is failed so undoable scene edits can roll back. "
+        "Do not catch mutation failures unless you re-raise them."
+    )
+
+
 def run_code(code: str, allow_raw: str | None = None) -> dict:
     """Execute code with `hou` available; capture stdout/stderr and `__result__`.
 
@@ -531,6 +553,7 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
                         try:
                             with hou.undos.group(label):
                                 exec(compiled, namespace)
+                                _raise_caught_verb_failure(verb_ledger)
                         except BaseException:
                             original_error = traceback.format_exc()
                             applied = False
@@ -558,6 +581,7 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
                     else:
                         try:
                             exec(compiled, namespace)
+                            _raise_caught_verb_failure(verb_ledger)
                         except BaseException:
                             rollback = {
                                 "supported": False,
