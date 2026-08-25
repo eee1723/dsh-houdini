@@ -12,22 +12,24 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ | 44 个主目录动词 + 2 个 display 兼容入口 + `_resolve`（新增 `set_keyframes`，§2.26） |
+| 动词词表（bridge namespace） | ✅ | 47 个目录入口：45 个主动词（含 `verb_help`）+ 2 个 display 兼容入口；文档/Host/Bridge 三方契约测试 |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
-| 裸 hou advisory | ✅ | AST 扫描 → `advisory` 字段 + `hint:` 渲染（§2.8） |
+| 裸 hou advisory | ✅ | AST 观察层继续记录已覆盖裸调用与仓库写入风险 |
+| raw-hou gate | ✅ 默认开启；已覆盖调用不可旁路 | 执行前 AST 拦截 + 低层缺口单次豁免；`dict.setdefault` 只读误伤已修（§2.17 / §2.36） |
 | launcher：preset 同步 + 分阶段百分比 + 超时/日志诊断 | ✅ | `dsh_launcher.py`（§2.23 / §3.2） |
-| 版本与诊断面板 | ✅ | `dsh_manager.py`（§2.24） |
+| 版本与诊断面板 | ✅ 双通道版本状态 + 安全激活 | `dsh_manager.py`（§2.24 / §2.33） |
 | Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
-| Houdini trace 审计 skill | ✅（§2.20） | `houdini-trace-analysis` + evidence JSON + 审计量表/模式库 |
+| Houdini trace 审计 skill | ✅（§2.20 / §2.36） | evidence schema v2：真实 adoption 指标 + vision semantic outcome + 完成风险 |
 | Solaris/Karma workflow skill | ✅（§2.25） | `houdini-solaris-karma-workflow` + 版本化 Karma/MaterialX/COP 接口参考 |
 | Rig/animation workflow skill | ✅（§2.26） | channel / packed pieces / KineFX skin / APEX 路由与完成门 |
 | Houdini skill 治理 | ✅（§2.27） | `houdini-skill-governance` + evidence ingestion / lifecycle / deterministic audit |
-| plugin persona 中性化 | ✅ | GUIDANCE 只讲工具用法，persona 移入 preset |
+| plugin persona 中性化 | ✅ | GUIDANCE 只保留稳定契约，目录由 `tool-design.md` 生成；身份/工作方式归 preset，领域 recipe 归 skill |
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
 | webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
-| 视觉闭环（vision-toolkit + qwen-vl-max） | ✅ 全流程实测通过（2026-08-18，§2.13） | viewport_screenshot → 百炼识图 |
+| 视觉产图/relay/证据判定 | ✅ 轻量 fallback；🔶 实机 provider A/B | `dsh-vision-fallback` 只配 Key+模型，不发布包装模型；render_view/media 与语义失败识别可用（§2.35–§2.37） |
+| Host / Bridge 词表握手 | ✅ 代码与确定性测试 | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；现有 Houdini 进程待一次 runtime restart 激活 |
 
 ---
 
@@ -45,7 +47,7 @@
 ### 2.2 动词词表（bridge namespace）
 
 `houdini/python3.11libs/dsh_hou_helpers.py` 定义、`dsh_bridge.py` 注入 exec 命名空间：
-44 个主目录动词 = vocabulary（`verb_help`）+ scene（info/timeline/bookmark 5 个）+ 类型目录（`search_tab_menu`/`search_tab_entries`/`resolve_latest_type`）+ node 域
+45 个主目录动词 = vocabulary（`verb_help`）+ scene（info/timeline/bookmark 5 个）+ 类型目录（`search_tab_menu`/`search_tab_entries`/`resolve_latest_type`）+ node 域
 （原 node CRUD + SOP output/OBJ visibility 拆分 + `layout_nodes` + 兼容 display wrappers）
 + parm 域（`list_parms`/`read_parms`/`set_parm`/`set_parms`/`create_spare_parms`）
 + asset 域（`hda_create`/`hda_info`/`hda_get_section`/`hda_set_section`/
@@ -56,7 +58,7 @@
 bridge 另保留旧 `set_display/display_node` 两个兼容 wrapper：不进 guidance 主词表，
 但留在独立 compatibility catalog 域以诚实回放历史 trace。
 
-### 2.3 动词追踪 tracer（Phase 1）—— 已实现，待激活
+### 2.3 动词追踪 tracer（Phase 1）—— 已实现并激活
 
 `dsh_bridge.py` 给每个动词包 `_make_tracer`：
 
@@ -450,9 +452,16 @@ vision 直接读 `$HIP` 截图、桥 exec 裸写仓库有 advisory。存量会�
 疑似改场景的裸 hou，真缺口走 `allow_raw="理由"` 豁免通道（豁免打印
 [gate] 行进 trace，每条豁免=一份带理由的词表缺口记录）。设计细节与开关
 方式见 `docs/tool-design.md`「raw-hou gate」节。hython 回归 19-22 覆盖
-（拦截/只读放行/豁免放行+留痕/拦疑似修改）。**实验用法**：从 DSH-Houdini 菜单重启
-重启桥后，Python Shell `import dsh_bridge; dsh_bridge.set_raw_gate(True)`；
+（拦截/只读放行/豁免放行+留痕/拦疑似修改）。**历史实验用法**：当时从 DSH-Houdini
+菜单重启桥后，还需在 Python Shell `import dsh_bridge; dsh_bridge.set_raw_gate(True)`；
 观察豁免记录 → 补缺口（首个候选 `create_parm`）→ 逐步收紧。
+
+**2026-08-23 生产收紧**：session `c6481bf1` 在 46 个动词和两个 workflow skill
+均已曝光的前提下仍产生 20/20 纯裸 Houdini 调用；16 个 mutation exec 连续收到 advisory
+仍未切换，证明默认关闭的实验 gate 是 fail-open。桥现默认开启，重启恢复开启；
+`allow_raw` 只放行未覆盖的低层修改，不能旁路 `createNode/parm().set/cook/destroy` 等已覆盖
+调用，低层几何必须与外层 scene operation 分 batch。`setPosition` 因 receiver 可为
+GeoPoint，不再错误映射成 `layout_nodes`。工具 schema/guidance 同步真实契约。
 
 ### 2.18 草地 trace 复盘 → 「共享屏幕副驾驶」定位 + media relay + render_view（2026-08-19）
 
@@ -817,8 +826,8 @@ APEX rig graph 分别解决不同数据模型；“绑定”必须先分类。�
    基准：第二步必须使用 R 后 logical state，inverse 后逐 piece transform 恢复。
 5. 当前 online 文档以 H22 为主；运行时类型/recipe 以 H21/H22 各自 Tab 与本机 help 为准。
 
-计划状态：Phase A/B 与 H21/H22 Phase C 三类基准已完成；正式 catalog 为 46 verbs
-（44 主动词 + 2 compatibility）。正确 Houdini session 的 46/46 verbs、5/5 skills 曝光和
+计划状态：Phase A/B 与 H21/H22 Phase C 三类基准已完成；当时正式 catalog 为 46 verbs
+（44 主动词 + 2 compatibility；§2.34 后为 47）。正确 Houdini session 的 46/46 verbs、5/5 skills 曝光和
 ordered 魔方固定构图 GUI A/B 和 H21/H22 APEX evaluation 均已通过；剩余发布门是更多真实用户 trace。
 
 **2026-08-21 Batch A 实现进度**：
@@ -1108,6 +1117,127 @@ helper 回归、TypeScript build、DSH `--dump-config` 与 vision-router doctor 
 恰好一份；未重启用户当前 3081 会话。视觉路由器的默认免费视觉链会把选中的图像与问题发送给外部视觉服务；
 生产环境可在其设置中改为用户授权的后端。
 
+### 2.33 Version & Diagnostics 双更新通道（2026-08-23，已重构）
+
+**问题**：原面板虽然同时展示 npm DSH release channel 与插件 Git remote，但 `Check Updates`
+只是只读比较，唯一的 `Copy Update Commands` 又只覆盖本仓库的 `git pull → npm install → build`。
+用户很容易把“更新 Harness runtime”和“更新 dsh-houdini 插件”混成同一件事；新模型已经进入
+DSH 目录时尤其明显——更新本仓库并不会改变缓存中的 DSH CLI。
+
+**落地**：
+
+1. 主界面改成两条组件轨道，只显示 `CURRENT / LATEST / ACTION`：DeepSeek Harness 与
+   DSH-Houdini 各自一行，打开面板即自动检查；缓存列表、Git 细节、端口和日志入口移入折叠的
+   `Advanced diagnostics`，删除底部按钮条与复制命令。
+2. launcher 在 :3081 确认监听后原子写 `.dsh-runtime.json`（version/PID/source/bin），manager
+   再用 `netstat` 的监听 PID 校验。标记缺失或 PID 不符只报 `Unknown`，不会把“最近缓存候选”
+   冒充正在运行的 DSH。重启/启动失败会清理旧标记。
+3. npm 精确版本下载后 touch 对应 `bin.js`，使 launcher 的 mtime 候选确定指向刚更新的 release；
+   `DSH_HOUDINI_DSH_SPEC` / `DSH_HOUDINI_DSH_BIN` pin 仍 fail-closed。插件检查先 fetch
+   `origin/main`，读取远端 `package.json`，并区分 current/behind/ahead/diverged，不再用 HEAD
+   不相等粗暴等同“可更新”。dirty + behind 或 diverged 均禁止自动 pull。
+4. 更新动作升级为“更新并在空闲时重启”。重启前用 DSH `session.list[].running` 检查 agent turn，
+   并由 bridge `/health` 返回 `activeJobs/queuedJobs/runningJobs` 检查 Houdini job。任何活动或探测
+   失败都暂缓激活，主按钮变成 `Restart when idle`；不会强杀正在执行的任务。
+5. `Restart Services` 的能力仍保留，但降级到高级诊断中的 `Repair and restart runtime`，用途是
+   本地开发代码刷新、桥/前端异常修复，不再是正常版本更新必须手点的第二步。只有菜单 XML 或
+   安装脚本发生变化时才明确要求完整重启 Houdini。
+
+**确定性验收**：`tools/tests/dsh-manager-update.test.py` 覆盖缓存 promotion、PID 标记校验、双组件
+状态归纳、pin/dirty fail-closed、活动 session/job 重启门与空闲自动激活；H21/H22 hython 均做
+compile/import 与回归。GUI tick 只消费 worker 状态，不再同步探测 localhost。
+
+### 2.34 task-scoped 节点 provenance 与 foreign mutation guard（2026-08-23）
+
+**触发事实**：创建 10 个 box 的测试 trace 里，`copytopoints2` 是用户临时手建节点。
+它与 agent 产物处于同一父网络，但“在同一网络里”只说明拓扑位置，不说明创建者或修改授权；
+让无参 `layout_nodes(parent)` 布局全部 children 会把用户状态误当成任务产物。
+
+**落地契约**：
+
+1. host 从真实 tool execution context 取得 `agent.id`/`callId`，作为隐藏的
+   `owner_session`/`owner_call` 随 exec/job 提交给 bridge；它们不是模型参数。bridge 在唯一
+   `_exec_lock` 内安装并 finally 恢复 owner context，后台 job 继承提交时身份。
+2. `tab_create`/`tab_apply`/shelf recipe 的新增节点以进程内 `hou.Node.sessionId()` 登记；
+   userData 只作持久审计，不能作为权限依据，因为复制节点会复制 userData。新增
+   `node_provenance` 明确区分 `foreign`、当前/其他 session owner 与持久 dsh service。
+3. node/parm/HDA mutation verbs 默认要求当前 session owner；读取、检查以及把 foreign node
+   当作 connect source 仍开放。用户明确要求修改某个既有节点时，用单次
+   `allow_foreign="理由"` 放行并打印 `[ownership]` trace；这不是接管。render service 永不豁免。
+4. `layout_nodes(parent, nodes=None)` 在 host task 中只布局当前 session owner，返回
+   `foreign_nodes_skipped`；显式 nodes 逐项检查。直接 Houdini Python Shell 没有 host owner 时
+   保持原来的全布局语义，避免破坏维护/回归工作流。
+
+**确定性验收**：`tools/tests/dsh-node-ownership.test.py` 用 H21 hython 模拟两次 agent call
+之间用户手建 `copytopoints2`，并伪造相同 userData；验证 provenance 仍为 foreign、默认布局
+不移动它、默认改名拒绝、另一 session 不可写，以及明确 `allow_foreign` 后单次放行并留痕。
+
+### 2.35 视觉插件隔离 A/B：工具能力与 provider SLA 分层（2026-08-23）
+
+生产 `web` profile 继续保留 `dsh-vision-router@1.6.0`，没有边测边替换。另建
+`~/.dsh/profiles/vision-eval`，挂 `@deepseek-ai/dsh-web-app`、本仓库 link 与
+`@anionex/dsh-vision-toolkit@0.1.38`，独立启动在 :3091。该候选提供 task-aware
+glance/ground/detect/crop/OCR/pixel-diff 等契约，managed Python runtime、Pillow/Numpy/
+vtracer、Chrome、artifact 目录和 built-in credential 均通过 health，profile compose/HTTP 也正常。
+
+但真实 multimodal probe 对内置 `gemini-3.7-flash` 免费服务返回 HTTP 429
+`rate_limit_exceeded`。因此结论不是“换包即修复”：插件决定输入整形、证据结构、失败可观测性，
+provider 决定可用性/SLA。候选只进入隔离验收，不晋升生产；下一门是给它配置用户授权、
+可计费/有配额的 OpenAI-compatible vision provider，再用同一组 Houdini render 做 A/B。
+
+### 2.36 蜘蛛 trace：采用指标、版本握手与视觉完成门（2026-08-23）
+
+**触发事实**：最新“大蜘蛛绑定动画” trace 表面上只有 65/111（58.6%）Houdini 调用含动词，
+低于 10-box 的 73.9%；但它实际调用 224 个 verbs（密度 2.02），44 次无动词调用是只读几何
+探针，2 次裸修改都在执行前被 Gate 拦截，成功 exec 的动词覆盖为 48/48。原报告把
+`20/47` 目录广度和“任何无动词调用”同时当成低采用/裸修改信号，结论失真。
+
+同一 trace 还暴露三个独立缺陷：运行中 Bridge 缺 `node_provenance`、与 Host 新目录不同代；
+`dict.setdefault` 被通用 `set*` Gate 启发式误伤；`vision_bootstrap` 返回 `ok:false` 且
+`vision_describe` 明确拒绝看图，但 transport success 和后续 `vision_present` 让 evidence 错判
+视觉成功，todo 也被错误完成。
+
+**修复**：
+
+1. 构建器从 `tool-design.md` 生成 Host 动词名、摘要和 SHA-256；Bridge 从实际 `_VERBS`
+   独立计算 `/health.verbCatalog`。Host 在 `/exec`/`/jobs` 前比较，不一致 fail-closed；
+   `verb-contract.test.mjs` 与 `bridge-contract.test.mjs` 覆盖三方漂移和零执行副作用。
+2. Raw Gate 安全集排除 `dict.setdefault`，H21 hython 回归覆盖真实聚合形状。
+3. evidence schema 升到 v2：视觉分 `setup/inspection/presentation`，分别记录 transport 与
+   semantic outcome；结构化 `ok:false`、中英文拒绝看图不再算成功，完成视觉 todo 会产生风险。
+4. 新增 `verbAdoption`：目录广度、调用含动词率、密度、无动词只读、成功 exec 覆盖、
+   Gate 拦截和成功裸修改分开；HTML 报告同步改名，不再用 `used/47` 代表合规率。
+5. 常驻 GUIDANCE 从逐动词手册压缩为稳定边界，目录摘要机械生成；Houdini persona 删除重复
+   render/skill recipe，只保留身份、程序化工作方式和用户共享屏幕边界。
+
+**验证**：`npm run build`、全部 Node tests、H21 raw-gate/ownership/caught-failure 回归通过；
+蜘蛛 trace 重提取后显示成功 exec 动词覆盖 100%、成功裸修改 0，并产生
+`render_without_successful_vision`、`vision_tool_failed`、
+`completed_vision_todo_without_evidence` 三个完成风险。运行中服务尚未重启，因此 live
+Bridge 仍是旧代；这是部署状态，不再会被新 Host 静默接受。
+
+### 2.37 魔方 trace 修复与轻量视觉 fallback（2026-08-24）
+
+最新“带绑定动画的魔方” trace 完成了 ordered piece 状态、非交换 R→U、recovery、cook 与
+HIP 保存，但暴露四个可复现缺口：`verb_help(create_spare_parms)` 没给 `spec` 精确 schema；
+调用方把 `geo_frame_diff.mean_delta/max_delta` 误读成 `mean/max`；状态求值器修复后没有重跑
+完整 first/noncommutative/mid/end/recovery 证据；固定 f1 构图在 f21 的
+`render_check.content_bbox` 上下触边。evidence 的 verb ledger 摘要还会截断 render output，
+导致报告里的路径为 null。
+
+本轮修复：helper docstring 与 `tool-design.md` 写入精确参数/返回键；rig/SOP/audit 契约要求
+核心求值变更使旧序列证据失效并全量重跑，固定相机同时覆盖验收帧 bbox 包络和安全边距；
+evidence 从 tool result 的完整 `__result__` 恢复被 ledger 截断的 render 字段，并记录
+`content_bbox` 是否触边。
+
+视觉侧用随仓库发布的 `plugins/dsh-vision-fallback` 替换旧 `dsh-vision-router`。新插件在
+`设置 → 插件 → 视觉备用` 注册独立客户端页，并通过 `vision-fallback` settings namespace
+持久化 Key/模型；工具执行时读取 live settings，无需重启。新插件设置面
+只有 secret `apiKey` 与 `供应商/模型` 两项，默认 `qwen/qwen3-vl-plus`；它只注册
+`vision_describe`，不注册 adapter/provider directory、包装模型、免费链、OCR/截图工具或
+“+ 自动识图”分组。profile 同步通过官方 CLI 移除旧插件并 link 新插件；当前还需授权 Key 的
+实机同图 A/B，成功 transport 仍不等于视觉语义通过。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1220,8 +1350,9 @@ QPainter 圆弧 spinner。
     governance dry-run 与 H21 R→U packed-piece 正反例均通过；未增加正式动词。
 13. ✅ Rig/animation Phase B：`set_keyframes`、`read_parms` 动画摘要、controller spec、
     rig skill 与 ordered 魔方副本已完成 H21 回归并进入 `tool-design.md`。
-14. ⏳ Rig/animation Phase C/D：H21/H22 channel/rigid/KineFX/APEX smoke、GUI A/B 和新
-    session activation 已完成；只待更多真实用户 trace，未由单次 smoke 增加领域动词。
+14. 🔶 Rig/animation Phase C/D：历史 H21/H22 channel/rigid/KineFX/APEX smoke 与 GUI A/B
+    已完成；旧大范围回归脚本已从当前工作树删除，需按现契约选择最小重建集。继续收集真实
+    用户 trace，不由单次 smoke 增加领域动词。
 15. ✅ Skill governance M0（§2.27）：治理 skill、三份 reference、确定性 audit、trace 路由、
     注册/README/guidance 已落地。
 16. ✅ Skill governance M1：五个 skills 的 trigger、正反例、唯一维护位置和 H21/H22 claim
@@ -1234,16 +1365,21 @@ QPainter 圆弧 spinner。
 5. ⏳ devDependency `dsh-tools` 对齐运行时 `0.1.0-rc.6`（消除 schema DSL 漂移风险）。
 6. ⏳ 5 个工具补 `presentCall`/`presentResult`（terminal/generic 卡片）+ `presentationMeta`
    （§6 硬约束：必须是 args 的纯函数，UI 格式不进模型结果）。
-7. ⏳ TS 侧最小测试（现状仅 Python 侧 `houdini/tests/regress_verbs.py`）。
+7. ✅ Host/trace 侧已有 Node 最小测试：session hint、trace dedupe/evidence、目录契约与
+   Host/Bridge mismatch fail-closed；仍需为工具注册/渲染层逐步补覆盖。
 8. ✅ 提升动词采用率（§2.8，2026-08-17）：GUIDANCE 改「动词 = 主接口 / hou = 逃生舱」
-   + persona 程序化生成原则 + 桥侧 AST 裸 hou advisory（比原设想的 createNode 检测更通用）。
+   + persona 程序化生成原则 + 默认开启、可审计的桥侧 AST Raw Gate。最新 spider trace 的
+   成功 exec 动词覆盖率为 100%；只读 query 与目录广度不再混入违规率。
+9. 🔶 trace report/evidence 已共享 zstd/session 去重、最新 session 选择、raw method、vision 和
+   adoption helper；两者仍各自组装一次 normalized step，后续应抽成共享 parser，避免 schema
+   演化时双改。当前已有同 trace evidence/HTML smoke，未为消除重复而做高风险大重写。
+10. ✅ `tab_create` 的 shelf 初始化失败不再被吞掉后降级成裸 `createNode`：partial create 先清理，
+    异常继续交给 bridge rollback；H21/H22 都有注入失败回归。
 
 ### Phase 2 — 视觉反馈闭环（README 路线 #1）
 
-8. ✅ 2026-08-19 已实现且实测走通，形态与原设想不同：`render_view`（OpenGL ROP
-   离屏验证，不碰用户视口）+ media relay（图片字节经桥 `/media` 回传工作区，
-   vision/fs 可读）——比 `/screenshot` + image 内容块更简单且对有/无视觉模型
-   都成立。草地重跑 4.5min/11 调用收尾（§2.18）。
+8. 🔶 产图与 relay 已完成：`render_view`（OpenGL ROP 离屏验证）+ `/media` 回传工作区。
+   evidence 已能拒绝假视觉成功；生产 provider 替换仍待带配额凭据的隔离同图 A/B（§2.35/2.36）。
 
 ### Phase 3 — 迁移官方 jobs 服务（README 路线 #2）
 
@@ -1257,8 +1393,11 @@ QPainter 圆弧 spinner。
 
 ### Phase 5 — 卡片与知识沉淀
 
-11. ⏳ houdinitrace 视图升级：纯文本块 → 结构化表格（状态色标 + 展开入参/出参）；
-    优先 host 半渲染意图，不够再写 client 半 keyed renderer（`'tool.call.toolview'` slot）。
+11. ✅ houdinitrace 视图升级（2026-08-25）：Bridge/Host 输出结构化 `rawUsage`，页面区分
+    只读 HOM、混合动词、Gate 拦截、一次性豁免、低层修改与回滚；顶部改为真实采用指标，
+    详情按代码/判定/事务/动词/返回/输出分区，原始文本二级折叠。页面使用固定检查台高度、
+    目录/时间线独立滚动，窄屏隐藏目录。K3 自行车历史 trace 实页验证为 28/38 含动词、
+    17/18 成功修改含动词、7 只读、2 Gate、1 豁免、44 回滚 verbs。
 12. ✅ `ctx.skills.register()` 打包首个 `houdini-trace-analysis`（§2.20）。
 13. ✅ `houdini-sop-workflow`（§2.21：SOP/VEX/Copy/属性/模块验证）；与 trace 审计量表分离。
 
@@ -1295,6 +1434,7 @@ QPainter 圆弧 spinner。
 | 文件 | 职责 |
 |---|---|
 | `src/index.ts` | host 入口：注册工具 + systemPrompt guidance |
+| `src/generated-verb-contract.ts` | 构建期生成的 Host 预期动词名/hash/紧凑目录；不手改 |
 | `src/tools.ts` | 5 个工具定义 + `verbs`/`advisory` 渲染 |
 | `src/bridge.ts` | HTTP client（`ExecResult.verbs`/`advisory`） |
 | `src/skill.ts` | 随包注册 trace-analysis、SOP、Solaris/Karma、rig/animation、skill-governance 五个 skill/resource base |
@@ -1302,17 +1442,14 @@ QPainter 圆弧 spinner。
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 43 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 46 个目录入口 |
-| `houdini/tests/regress_hda_verbs.py` | HDA authoring 独立回归（不经过已知会触发 VEX 栈溢出的旧 t15） |
-| `houdini/tests/regress_scene_geometry_verbs.py` | scene/display/piece/frame/layout/diff/spare headless 回归 |
-| `houdini/tests/regress_apex_evaluation.py` | H21/H22 SideFX fixture 的 APEX Graph→Invoke Graph 输入/输出/失败 headless smoke |
-| `houdini/tests/regress_visual_gui.py` | explicit SOP proxy、用户 display 漂移与状态恢复 GUI 回归 |
-| `houdini/tests/regress_solaris_gui.py` | parent-scoped Tab、Karma Setup、Karma Material Builder 与 UI 状态恢复 GUI 回归 |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 44 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 47 个目录入口 |
 | `houdini/python3.11libs/dsh_launcher.py` | 打开/重启分流 + preset 同步 + 分阶段百分比/超时诊断（worker 线程探测） |
-| `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + npm/Git 只读更新检查 |
+| `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + DSH npm / 插件 Git 双通道检查与安全更新 |
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + 一次性 session hint + backdrop-filter 性能修复注入（§2.13/§2.28） |
-| `houdini/tests/regress_launcher.py` | launcher 依赖、缓存 CLI、超时、session/workspace 选择和日志头回归 |
 | `tools/tests/client-session-hint.test.mjs` | WebView session hint 的 refresh/open/消费与无 hint 零导航回归 |
+| `tools/tests/trace-*.test.mjs` | session replay 去重与 evidence/vision/adoption 确定性回归 |
+| `tools/tests/verb-contract.test.mjs` / `bridge-contract.test.mjs` | 文档/Host/Bridge 注册表一致性与 mismatch fail-closed |
+| `tools/tests/dsh-*.test.py` | H21 hython：Raw Gate、ownership、caught failure、manager/profile 等当前回归 |
 | `docs/tool-design.md` | 设计宪法 |
 | `docs/development.md` | 本文：进度 + 卡点 |
 | `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |

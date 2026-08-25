@@ -17,8 +17,9 @@ import dsh_profile_sync as sync
 requirements = sync.load_requirements(ROOT / "dsh-profile.requirements.json")
 assert requirements["profile"] == "web"
 assert [item["name"] for item in requirements["plugins"]] == [
-    "dsh-houdini", "dsh-vision-router",
+    "dsh-houdini", "dsh-vision-fallback",
 ]
+assert requirements["removePlugins"] == ["dsh-vision-router"]
 
 with tempfile.TemporaryDirectory() as raw_home:
     home = Path(raw_home)
@@ -27,12 +28,14 @@ with tempfile.TemporaryDirectory() as raw_home:
     manifest = {
         "dependencies": {
             "dsh-houdini": f"link:{ROOT.as_posix()}",
-            "dsh-vision-router": "1.6.0",
+            "dsh-vision-fallback": (
+                "link:" + (ROOT / "plugins" / "dsh-vision-fallback").as_posix()
+            ),
         },
-        "dsh": {"profile": {"bundles": ["dsh-houdini", "dsh-vision-router"]}},
+        "dsh": {"profile": {"bundles": ["dsh-houdini", "dsh-vision-fallback"]}},
     }
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for name, version in (("dsh-houdini", "0.1.0"), ("dsh-vision-router", "1.6.0")):
+    for name, version in (("dsh-houdini", "0.1.0"), ("dsh-vision-fallback", "0.1.0")):
         package_dir = profile / "node_modules" / name
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text(
@@ -43,20 +46,33 @@ with tempfile.TemporaryDirectory() as raw_home:
     assert status["ok"], status
     assert sync.required_install_specs(requirements, status, project_root=ROOT) == []
 
-    manifest["dsh"]["profile"]["bundles"].remove("dsh-vision-router")
+    manifest["dsh"]["profile"]["bundles"].remove("dsh-vision-fallback")
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
     missing = sync.inspect_profile(requirements, project_root=ROOT, home=home)
     assert not missing["ok"]
     assert sync.required_install_specs(requirements, missing, project_root=ROOT) == [
-        "dsh-vision-router@1.6.0",
+        str((ROOT / "plugins" / "dsh-vision-fallback").resolve()),
     ]
 
     manifest["dsh"]["profile"]["bundles"].extend([
-        "dsh-vision-router", "dsh-vision-router",
+        "dsh-vision-fallback", "dsh-vision-fallback",
     ])
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
     duplicate = sync.inspect_profile(requirements, project_root=ROOT, home=home)
     assert not duplicate["ok"]
     assert duplicate["plugins"][1]["bundleCount"] == 2
+
+    manifest["dependencies"]["dsh-vision-router"] = "1.6.0"
+    manifest["dsh"]["profile"]["bundles"].append("dsh-vision-router")
+    (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    old_package = profile / "node_modules" / "dsh-vision-router"
+    old_package.mkdir(parents=True)
+    (old_package / "package.json").write_text(
+        json.dumps({"name": "dsh-vision-router", "version": "1.6.0"}),
+        encoding="utf-8",
+    )
+    obsolete = sync.inspect_profile(requirements, project_root=ROOT, home=home)
+    assert not obsolete["ok"]
+    assert sync.required_remove_names(requirements, obsolete) == ["dsh-vision-router"]
 
 print("dsh profile sync tests passed")

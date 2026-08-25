@@ -37,7 +37,8 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
 - 区分工具调用失败、动词内部失败、执行成功但产物错误、最终未交付四种失败。
 - 区分“工具缺失”和“已有工具未使用”；先证明任务意图，再做词表建议。
 - 用 `capabilitySnapshots` 判断该步骤当时实际曝光的能力；不得用当前新词表倒查旧 trace 后指责 agent 漏用。
-- 视觉证据读取 `visionEvidence[].ok` 与 `completionRisks`：`read_image` 和 `vision_*` 的失败尝试不算视觉验收；只有 render/render_check 而没有成功 vision 时，必须保留“视觉语义未验证”的边界。
+- 视觉证据读取 `visionEvidence[].role/transportOk/semanticOk/reason` 与 `completionRisks`。只有 `role="inspection" && semanticOk=true` 才算语义识图；bootstrap、presentation、transport success、结构化 `ok:false` 或文本拒绝都不算。只有 render/render_check 而没有成功 inspection 时，必须保留“视觉语义未验证”的边界。
+- 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、无动词只读探针、成功 exec 覆盖、Gate 拦截和成功裸修改；目录广度只说明任务触达哪些能力。
 - 工具删除/合并不得由单次零使用推出。跨至少三个多样任务仍冗余、存在安全替代且无独立语义，才可列为删除候选。
 - Houdini 中先验证数据流和局部几何，再调相机、灯光、材质或视觉模型。渲染能出图不证明 SOP 结果正确。
 - 对动画任务必须做至少两个相隔帧的几何或固定相机图像 A/B 验证。客观数据完全静止必须判未完成；节点/数据/时间语义通过而静帧难以裁定细微动态或审美力度时，可标记“视觉待用户播放判断”，不得无限追图或伪称视觉确认。

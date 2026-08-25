@@ -165,8 +165,8 @@
 ## HTA-017：把路径依赖状态压成独立绝对控制通道
 
 - 状态：确认（S2：用户 trace + H21 disposable 正反例回归；工具形态仍待更多任务）
-- 首次/最近证据：`a41c853a` #26、#58、#59、#60–#64；
-  `houdini/tests/regress_rig_state_model.py` H21.0.440 6/6。
+- 首次/最近证据：`a41c853a` #26、#58、#59、#60–#64；历史上已移除的
+  `houdini/tests/regress_rig_state_model.py` 曾在 H21.0.440 通过 6/6，当前最小等价回归待重建。
 - 症状：单个面/关节/segment 能正确运动，参数也有 key；但 agent 用初始 membership 和若干
   独立累计角度表达有序、非交换操作，只验证第一段和最终 rest，就宣称完整序列成立。
 - 根因：没有把 stable identity、logical state、ordered transition 当成 rig 输入/输出契约；
@@ -219,3 +219,60 @@
   不能伪装成完整对象，但 args/result 分界必须保持准确。
 - 回归：重新提取该 session 后 `verb_help.args == '["set_keyframes"]'`，detail 从
   `{"name":"set_keyframes"...}` 开始；3 calls / 2 verbs / 0 failure/mutation/advisory 不变。
+
+## HTA-020：提示已曝光但 raw gate fail-open，模型采用率归零
+
+- 状态：已修并获新 session 正向证据（默认开启 + 已覆盖调用不可豁免）
+- 首次/最近证据：自行车 trace 已记录 deepseek-v4-flash 连续忽略 advisory；
+  `c6481bf1-3a83-4f53-9bf8-398b9c8fa151` #1–#3、#9–#24。
+- 症状：最新会话的 system snapshot 已曝光 46 个 verb，rig/SOP skills 均成功加载，但 20 个
+  Houdini 调用全部纯裸；#9–#24 连续 16 个 mutation call 收到 raw hint 后仍不切换，最终
+  7 个工具硬失败、多个被吞 cook failure、0 个 todo 完成且无交付。
+- 根因：模型路线 `deepseek-v4-flash-vision-exp` 触发了严重 instruction-following 退化，但系统
+  把安全性寄托在模型自觉：bridge `_raw_gate` 默认关闭且重启复位；旧 `allow_raw` 又能整段
+  旁路已覆盖调用，使实验 gate 即使开启也可被泛化理由降级回 advisory。
+- 修复：bridge 默认开启 gate，重启恢复安全默认；`allow_raw` 只豁免没有直接 verb 的低层
+  mutation，不能豁免 `createNode/parm().set/cook/destroy` 等明确覆盖调用；低层代码必须与
+  scene-operation batch 拆分。receiver 不唯一的 `setPosition` 降为 heuristic，避免把
+  GeoPoint 写位置误报成 `layout_nodes`。host schema/guidance 与真实边界同步。
+- 反例/边界：纯读取继续允许裸 HOM；低层 `hou.Geometry`/UI/显式 HIP save 可用带理由的独立
+  `allow_raw` batch；插件开发者仍可在 Houdini Python Shell 临时关闭 gate，但不跨桥重启持久化。
+- 回归：`tools/tests/dsh-bridge-raw-gate.test.py` 覆盖默认开启、covered call 带豁免仍零副作用、
+  read-only 放行、`dict.setdefault` 聚合放行、uncovered mutation 先拦后豁免，以及 GeoPoint
+  `setPosition` 不再假映射。蜘蛛 trace `9b7bd919` #25/#94 的 covered mutation 均在执行前拦截，
+  随后分别改用动词/移除 query mutation；成功 exec 的动词覆盖为 48/48，成功裸修改为 0。
+- 边界：调用含动词率仍会被合法只读探针稀释，不能用它单独判断 Gate 是否回归；看成功裸修改。
+
+## HTA-021：Host 目录与运行中 Bridge 不同代
+
+- 状态：P0 已修代码并有确定性测试；待 runtime restart + 新 session 部署验收
+- 首次证据：蜘蛛 trace `9b7bd919` capability snapshot 宣称 47 verbs；#12 19:19:27 的
+  `verb_help('create_spare_parms')` 返回旧签名（缺 `allow_foreign`），现场
+  `verb_help('node_provenance')` 返回未知动词。
+- 症状：模型看到新目录但执行的是旧 Bridge；ownership 等安全能力可在需要时才突然失败，
+  `used/47` 分母也不再描述真实可用能力。
+- 根因：Host/plugin 与 Houdini 进程内 Python 模块有独立 reload 生命周期，过去没有代际握手。
+- 修复：构建从 `tool-design.md` 生成 Host 名称/hash；Bridge 从实际 `_VERBS` 独立计算
+  `/health.verbCatalog`；Host 在 `/exec`/`/jobs` 前比较并 fail-closed，提示
+  `Repair and restart runtime`。静态契约与假 HTTP server 回归覆盖 mismatch 零 `/exec` 副作用。
+- 边界：同 checkout 路径、package version 或 Host catalog 都不能证明 Houdini 已 reload；
+  完整重启后旧任务节点因进程内 provenance 丢失而安全降为 foreign。
+- 下一验收：重启 runtime，新建 Houdini session，确认 `/health` hash 一致、
+  `node_provenance` 可用、capability snapshot 与 `verb_help` 同代。
+
+## HTA-022：视觉工具 transport 成功被误当成语义识图成功
+
+- 状态：P0 evidence/完成门已修；待新 session 验证 agent 不再夸大
+- 首次证据：蜘蛛 trace `9b7bd919` #122 返回
+  `ok:false/STRUCTURED_BOOTSTRAP_DISABLED`；#123 明确说模型仅接受文本、无法看图；#128/#129
+  只把图片展示给用户。旧 evidence 却把四次都记为 `ok:true`，`completionRisks=[]`，#130 仍把
+  vision todo 标 completed，最终文本声称双帧视觉确认。
+- 根因：旧提取器只看 tool transport/`isError`，且把 bootstrap、inspection、presentation
+  合并成一个成功布尔值。
+- 修复：evidence schema v2 记录 `role/transportOk/semanticOk/reason`；结构化 `ok:false` 和
+  中英文拒绝看图判 semantic failure；只有 inspection success 能满足视觉完成门。完成视觉 todo
+  而无证据另报风险。重提取该 trace 产生三个 completion risks。
+- 反例/边界：`render_view`/`render_check` 成功仍是有效文件/像素证据，但不能证明蜘蛛形态、
+  穿模或自然步态；`vision_present` 对用户交付有价值，但不是 agent 自证。
+- 下一验收：换用实际可读图的 provider 跑同图 A/B，确认成功 inspection 为 true；再用文本模型
+  重跑一次，确认 todo 保持未完成或最终明确写“视觉语义未验证”。

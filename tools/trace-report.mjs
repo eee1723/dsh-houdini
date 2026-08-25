@@ -15,13 +15,20 @@
 // 数据边界：session.jsonl.zstd 是多帧拼接，按魔数 28 B5 2F FD 切帧逐段解压；
 // 模型可见文本里的 `verbs (N):` 块是动词 ledger 的渲染（src/tools.ts renderVerbs）。
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { loadCatalog } from './catalog-lib.mjs';
-import { loadSessionEvents, toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
 import {
+  loadSessionEvents,
+  newestSessionFile,
+  toolResultCallId,
+  uniqueToolResultEvents,
+} from './trace-session-lib.mjs';
+import {
+  collectVerbAdoption,
   collectValidationCoverage,
+  mutatingRawMethodNames,
   parseVerbLedgerLine,
+  rawMethodNames,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
@@ -36,28 +43,11 @@ for (let i = 0; i < argv.length; i++) {
   else if (!argv[i].startsWith('--')) sessionArg = argv[i];
 }
 
-function newestSession() {
-  const root = path.join(os.homedir(), '.dsh', 'sessions');
-  let best = null;
-  for (const ws of fs.readdirSync(root)) {
-    const wsDir = path.join(root, ws);
-    if (!fs.statSync(wsDir).isDirectory()) continue;
-    for (const sess of fs.readdirSync(wsDir)) {
-      const f = path.join(wsDir, sess, 'session.jsonl.zstd');
-      if (fs.existsSync(f)) {
-        const m = fs.statSync(f).mtimeMs;
-        if (!best || m > best.m) best = { m, file: f };
-      }
-    }
-  }
-  return best?.file;
-}
-
 let sessionFile = sessionArg;
 if (sessionArg && fs.statSync(sessionArg).isDirectory()) {
   sessionFile = path.join(sessionArg, 'session.jsonl.zstd');
 }
-if (!sessionFile) sessionFile = newestSession();
+if (!sessionFile) sessionFile = newestSessionFile();
 if (!sessionFile || !fs.existsSync(sessionFile)) {
   console.error('session 文件不存在:', sessionFile);
   process.exit(1);
@@ -117,7 +107,8 @@ for (const e of uniqueResults) {
     }
   }
   const hintBlock = text.match(/hint:\n([\s\S]*?)$/);
-  const houCalls = args.code ? (args.code.match(/\bhou\.\w+\(/g) || []).length : 0;
+  const rawMethods = rawMethodNames(args.code || '');
+  const mutatingRawMethods = mutatingRawMethodNames(args.code || '');
   let errorTail = null;
   if (failed) {
     const lines = text.split('\n');
@@ -126,7 +117,7 @@ for (const e of uniqueResults) {
   steps.push({
     time: e.time, turn: e.data?.turn, step: e.data?.step,
     tool: call.name || '?', args, code: args.code || null,
-    houCalls, verbs, failed, errorTail,
+    rawMethods, mutatingRawMethods, verbs, failed, errorTail,
     advisory: hintBlock ? hintBlock[1].trim() : null,
     resultText: text, isHoudini,
   });
@@ -153,13 +144,16 @@ const unknownVerbs = Object.keys(verbCount).filter(
 // 概览统计
 const toolCount = {};
 for (const s of steps) toolCount[s.tool] = (toolCount[s.tool] || 0) + 1;
-const rawHouSteps = steps.filter((s) => s.isHoudini && s.houCalls > 0 && s.verbs.length === 0);
+const rawHouSteps = steps.filter((s) => s.isHoudini && s.rawMethods.length > 0 && s.verbs.length === 0);
 const failedSteps = steps.filter((s) => s.failed);
 const advisorySteps = steps.filter((s) => s.advisory);
 const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);
 const validationCoverage = collectValidationCoverage(
   steps.map((step, index) => ({ ...step, index: index + 1 })),
 );
+const verbAdoption = collectVerbAdoption(steps);
+const visionInspections = validationCoverage.vision.filter((item) => item.role === 'inspection');
+const successfulVisionInspections = visionInspections.filter((item) => item.semanticOk === true);
 
 // ---------- HTML ----------
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -177,9 +171,9 @@ const validationHtml = `
     <div class="card"><div class="num">${validationCoverage.geometry.length}</div><div class="cap">geometry A/B</div></div>
     <div class="card"><div class="num">${validationCoverage.renders.length}</div><div class="cap">render calls</div></div>
     <div class="card"><div class="num">${validationCoverage.comparisons.length}</div><div class="cap">image comparisons</div></div>
-    <div class="card"><div class="num">${validationCoverage.vision.length}</div><div class="cap">vision calls</div></div>
+    <div class="card"><div class="num">${successfulVisionInspections.length}/${visionInspections.length}</div><div class="cap">semantic vision inspections</div></div>
   </div>
-  <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉帧: ${frameList(validationCoverage.frames.vision)}</p>
+  <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉检查帧: ${frameList(validationCoverage.frames.visionInspection)}</p>
   <details><summary>验证覆盖明细</summary><pre>${esc(JSON.stringify(validationCoverage, null, 2))}</pre></details>`;
 
 const catalogHtml = catalog.map((d) => `
@@ -200,7 +194,10 @@ const timelineHtml = steps.map((s, i) => {
   ).join('');
   const badges = [
     s.failed ? chip('失败', 'fail') : '',
-    s.houCalls > 0 ? chip(`裸 hou ×${s.houCalls}`, s.verbs.length ? 'warn' : 'bad') : '',
+    s.rawMethods.length > 0 ? chip(
+      `裸 HOM ×${s.rawMethods.length}`,
+      s.mutatingRawMethods.length ? 'bad' : 'warn',
+    ) : '',
     s.advisory ? chip('advisory', 'warn') : '',
     s.verbs.length ? chip(`动词 ×${s.verbs.length}`, 'ok') : '',
   ].join('');
@@ -225,7 +222,10 @@ const timelineHtml = steps.map((s, i) => {
 const rawHouHtml = rawHouSteps.length
   ? rawHouSteps.map((s) => {
       const idx = steps.indexOf(s) + 1;
-      return `<div class="step"><div class="step-head"><span class="t">${fmtTime(s.time)}</span><span class="seq">#${idx}</span><span class="tool hou">${esc(s.tool)}</span>${chip(`裸 hou ×${s.houCalls}`, 'bad')}</div>
+      return `<div class="step"><div class="step-head"><span class="t">${fmtTime(s.time)}</span><span class="seq">#${idx}</span><span class="tool hou">${esc(s.tool)}</span>${chip(
+        s.mutatingRawMethods.length ? `裸修改 ×${s.mutatingRawMethods.length}` : `只读探针 ×${s.rawMethods.length}`,
+        s.mutatingRawMethods.length ? 'bad' : 'warn',
+      )}</div>
       <details><summary>代码</summary><pre>${esc(s.code)}</pre></details></div>`;
     }).join('')
   : '<p class="dim-text">无</p>';
@@ -301,7 +301,7 @@ const html = `<!DOCTYPE html>
 </header>
 <main>
   <div class="col left">
-    <h2>词表目录（${usedVerbs}/${catalogVerbs} 个动词本次被使用）</h2>
+    <h2>词表目录广度（${usedVerbs}/${catalogVerbs}；不是使用率或合规率）</h2>
     ${catalogHtml}
     ${unknownVerbs.length ? `<p class="dim-text">未收录进目录的动词调用: ${unknownVerbs.map(esc).join(', ')}（tool-design.md 需同步）</p>` : ''}
   </div>
@@ -310,8 +310,12 @@ const html = `<!DOCTYPE html>
     <div class="cards">
       <div class="card"><div class="num">${steps.length}</div><div class="cap">工具调用</div></div>
       <div class="card"><div class="num">${totalVerbCalls}</div><div class="cap">动词调用</div></div>
-      <div class="card"><div class="num">${usedVerbs}/${catalogVerbs}</div><div class="cap">动词命中</div></div>
-      <div class="card"><div class="num" style="color:${rawHouSteps.length ? 'var(--bad)' : 'var(--ok)'}">${rawHouSteps.length}</div><div class="cap">纯裸 hou 调用</div></div>
+      <div class="card"><div class="num">${verbAdoption.callsWithVerbs}/${verbAdoption.houdiniCalls}</div><div class="cap">Houdini 调用含动词（${verbAdoption.callCoveragePct ?? 0}%）</div></div>
+      <div class="card"><div class="num">${verbAdoption.verbDensity}</div><div class="cap">每次 Houdini 调用动词数</div></div>
+      <div class="card"><div class="num">${usedVerbs}/${catalogVerbs}</div><div class="cap">目录广度（非合规率）</div></div>
+      <div class="card"><div class="num">${verbAdoption.rawReadOnlyCalls}</div><div class="cap">无动词只读探针</div></div>
+      <div class="card"><div class="num" style="color:${verbAdoption.successfulVerblessRawMutationCalls ? 'var(--bad)' : 'var(--ok)'}">${verbAdoption.successfulVerblessRawMutationCalls}</div><div class="cap">成功的无动词裸修改</div></div>
+      <div class="card"><div class="num">${verbAdoption.blockedVerblessRawMutationCalls}</div><div class="cap">Gate 执行前拦截</div></div>
       <div class="card"><div class="num" style="color:${failedSteps.length ? 'var(--bad)' : 'var(--ok)'}">${failedSteps.length}</div><div class="cap">失败调用</div></div>
       <div class="card"><div class="num">${advisorySteps.length}</div><div class="cap">advisory 触发</div></div>
       <div class="card"><div class="num">${replayedResults.length}</div><div class="cap">compaction replay</div></div>
@@ -323,7 +327,7 @@ const html = `<!DOCTYPE html>
     ${validationHtml}
     <h2>调用时间线（真实顺序）</h2>
     ${timelineHtml}
-    <h2>纯裸 hou 段落（词表改进输入）</h2>
+    <h2>无动词 HOM 段落（区分只读探针与裸修改）</h2>
     ${rawHouHtml}
     <h2>失败调用</h2>
     ${failedHtml}
@@ -336,5 +340,5 @@ fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, html);
 console.log('session :', sessionFile);
 console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length);
-console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision=[' + validationCoverage.frames.vision.join(',') + ']');
+console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision-inspection=[' + validationCoverage.frames.visionInspection.join(',') + ']');
 console.log('report  :', outFile);

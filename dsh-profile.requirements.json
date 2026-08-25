@@ -7,9 +7,12 @@
       "source": "project"
     },
     {
-      "name": "dsh-vision-router",
-      "spec": "dsh-vision-router@1.6.0",
-      "version": "1.6.0"
+      "name": "dsh-vision-fallback",
+      "source": "project",
+      "path": "plugins/dsh-vision-fallback"
     }
+  ],
+  "removePlugins": [
+    "dsh-vision-router"
   ]
 }

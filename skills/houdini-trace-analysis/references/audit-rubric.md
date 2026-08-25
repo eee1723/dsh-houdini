@@ -29,6 +29,14 @@
 skill catalog 或能由当时工具契约合理发现时，才允许标 `MISSED`；用当前仓库目录回看旧 trace
 时，新加入的工具必须标“当时未曝光”，不能倒果为因。
 
+当 trace 出现大面积 raw-hou 绕过时，同时判断执行守卫状态：优先读取同期 `/health.rawGate`；
+若 trace 没保存 health，则用“verb-covered 裸 mutation 是否实际执行”判断 gate 当时是否 fail-open。
+system/guidance 已曝光只能证明模型收到规则，不能证明 bridge 执行了规则。
+
+若 capability snapshot 与 verb ledger/`verb_help` 返回冲突，优先怀疑 Host/Bridge generation skew。
+当前 Bridge 的 `/health.verbCatalog` 名称/hash 是运行时事实；只看到 Host 目录不能证明 Houdini
+进程已经 reload。旧 trace 无 health 时，用未知动词、旧签名或旧返回字段作为间接证据并降级强度。
+
 长会话可能在 `compaction/prune` 后重放历史 `tool/result`。同一 callId 只代表一次执行；
 evidence 必须去重并把后续结果列为 `replayedResults`，不得让 replay 膨胀调用、动词、
 失败、耗时或阶段时间线。
@@ -98,6 +106,14 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - `MISSING`：目录中没有能表达该通用意图的能力，且重复手写成本高或风险大。
 - `NOT_APPLICABLE`：本任务不需要；不能用来支持删除。
 - `REDUNDANT_CANDIDATE`、`MERGE_CANDIDATE`、`SPLIT_CANDIDATE`：只用于跨 trace 产品建议，必须附证据强度。
+
+采用统计必须分层，不能用一个百分比代替：
+
+- `catalog.used/total`：目录广度，只说明任务碰过哪些能力；大量 NOT_APPLICABLE 动词不进分母推理。
+- `verbAdoption.callCoveragePct`：Houdini 调用中含至少一个 verb 的比例，会被合法只读探针稀释。
+- `verbDensity`：每次 Houdini 调用的 verb 数，观察 batch/组合程度。
+- `successfulExecVerbCoveragePct`：成功 mutation-intent exec 的 verb 覆盖，是场景修改采用的近似指标。
+- `rawReadOnlyCalls`、`blockedVerblessRawMutationCalls`、`successfulVerblessRawMutationCalls`：分别解释逃生舱、Gate 有效性与真正安全回归。
 
 必查机会：
 
@@ -226,6 +242,8 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 3. 第一轮视觉 prompt 只问“描述可见几何、颜色、位置、异常”，不说“这是成功的草地”。
 4. 第二轮才按用户目标核验草叶、密度、风向等。
 5. 视觉结论与数值冲突时回到几何，不用 prompt 说服视觉模型。
+6. 视觉工具 transport 成功不等于看图成功。bootstrap 是 setup、present 是交付；只有 semantic
+   inspection 可作视觉结论。结构化 `ok:false`、模型声明不支持图像/图片被省略等文本拒绝必须判失败。
 
 ### 动画
 
@@ -234,9 +252,11 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - `mean_abs_diff≈0`、max diff 仅 1 灰阶时，按静态或缓存问题处理。
 - 几何 diff 明显非零只证明“数据随时间变化”，不证明运动符合用户语义。继续验证锚点、活动区、方向和空间传播。若固定相机 A/B 暴露明确的结构性反例（完全静止、方向相反、主体缺失），完成门失败；若节点/数据/时间语义均通过而静帧只是不足以裁定细微动态或审美力度，可停止追图并标记“视觉待用户播放判断”，但不能写成“视觉已确认通过”。
 - render A/B 必须使用完全相同的相机与构图。逐帧按动态 bbox 自动重取景时，先比较返回的 camera `center/eye/dist/direction`；任一变化都会把相机漂移混入 pixel diff，该 diff 只能证明两张图不同，不能证明几何运动。
+- 固定相机还必须覆盖验收帧的空间包络。检查每帧 `render_check.content_bbox` 与图像边界；触边或安全边距不足时记录为 framing clip risk，不能把“相机一致”写成“构图完整”。
 - 验证根部近似固定、尖端运动更大、波峰沿风向传播；不能只看“画面动了”。
 - 多 segment 或路径依赖任务不得只抽 first A/B。验证覆盖至少包括：第一段、一个会改变后续
   membership/空间的非交换转折、sequence mid/end、recovery；报告实际覆盖帧。
+- trace 中只要状态求值器、核心 transform 图或 membership 规则被修过，修复前的上述序列证据全部失效；审计必须要求修复后重新覆盖 first、非交换 transition、mid/end、recovery，而不是沿用旧证据拼接完成门。
 - 最终帧等于 rest 时，区分“正确 inverse 后恢复”与“所有绝对控制量归零后天然重算 rest”。
   后者不能证明中间序列正确。
 - hidden piece 数、capture weights、joint hierarchy、constraint 和 state permutation 不能由
@@ -246,6 +266,7 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 
 - `render_view(EXPLICIT_SOP)`：agent 自有快速验证，显式 SOP 经隐藏 proxy + forceobjects；检查 fingerprints、stale、状态恢复、确定性 headlight/Cd 和用户 display 漂移隔离。
 - 动画 A/B 给每次 `render_view` 传同一 `framing_frame`；不同 framing metadata 下的 pixel diff 不作纯几何运动证据。
+- 两张 render 已生成但缺 `render_check(ref=...)` 时，只能证明各自有效，不能声称固定相机 A/B 已完成客观图像比较。
 - `render_frame`：已有 ROP 的正式或自定义构图渲染，不应承担反复修复 `render_view` 的职责。
 - `viewport_screenshot`：用户屏幕诊断，不是 agent 自证成功的主路径。
 

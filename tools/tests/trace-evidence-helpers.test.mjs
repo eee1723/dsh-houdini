@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import {
   collectValidationCoverage,
+  execResultFromPreview,
+  classifyVisionEvidence,
+  collectVerbAdoption,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
+  findSuppressedCookFailures,
   frameFromPath,
   parseLedgerArgs,
   parseVerbLedgerLine,
+  renderOutputsFromPreview,
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 assert.deepEqual(parseLedgerArgs('["/obj/a","tx",1]'), {
@@ -82,6 +87,26 @@ const repeatedSameParm = [{
 }];
 assert.deepEqual(findBatchSetParmOpportunities(repeatedSameParm), []);
 
+assert.deepEqual(findSuppressedCookFailures([
+  {
+    index: 10, time: 400, tool: 'houdini_exec', isHoudini: true, failed: false,
+    resultPreview: 'Executed successfully.\n\nstdout:\nBASE cook FAILED: Error while cooking.',
+  },
+  {
+    index: 11, time: 500, tool: 'houdini_exec', isHoudini: true, failed: true,
+    resultPreview: 'Execution failed: Error while cooking.',
+  },
+  {
+    index: 12, time: 600, tool: 'houdini_exec', isHoudini: true, failed: false,
+    resultPreview: 'Executed successfully.\n\nstdout:\ncook OK',
+  },
+]), [{
+  index: 10,
+  time: 400,
+  tool: 'houdini_exec',
+  resultPreview: 'Executed successfully.\n\nstdout:\nBASE cook FAILED: Error while cooking.',
+}]);
+
 const coverage = collectValidationCoverage([
   {
     index: 1, time: 1, tool: 'houdini_query', args: {}, verbs: [{
@@ -116,7 +141,85 @@ assert.deepEqual(coverage.frames.render, [31]);
 assert.deepEqual(coverage.frames.framing, [31]);
 assert.deepEqual(coverage.frames.comparison, [25, 31]);
 assert.deepEqual(coverage.frames.vision, [25, 31, 40]);
+assert.deepEqual(coverage.frames.visionInspection, [25, 31, 40]);
 assert.deepEqual(coverage.frames.all, [25, 31, 40]);
 assert.equal(coverage.vision[1].ok, false);
+
+const recovered = execResultFromPreview([
+  'Executed successfully.',
+  '',
+  '__result__:',
+  '{"output":"E:/tmp/dsh_view_9_f52p0.png","frame":52,"framing":{"frame":1}}',
+  '',
+  'verbs (1):',
+  '1. [ok] render_view(["/obj/a/OUT"], {"frame":52}) -> {"output":"E:/tmp/dsh_view_9_f52p0.png"鈥 (10ms)',
+].join('\n'));
+assert.equal(recovered.output, 'E:/tmp/dsh_view_9_f52p0.png');
+assert.deepEqual(renderOutputsFromPreview(
+  'stdout: {"output":"E:/tmp/a_f1p0.png"} then {"output":"E:/tmp/a_f21p0.png"} and {"output":"E:/tmp/a_f1p0.png"}',
+), ['E:/tmp/a_f1p0.png', 'E:/tmp/a_f21p0.png']);
+
+const recoveredCoverage = collectValidationCoverage([{
+  index: 6,
+  time: 6,
+  tool: 'houdini_exec',
+  resultPreview: 'Executed successfully.\n\n__result__:\n{"output":"E:/tmp/dsh_view_9_f52p0.png","frame":52,"framing":{"frame":1}}\n\nverbs (1):',
+  verbs: [{
+    verb: 'render_view', ok: true,
+    args: '["/obj/a/OUT"], {"frame":52,"framing_frame":1}',
+    result: '{"output":"E:/tmp/dsh_view_9_f52p0.png"鈥',
+  }],
+}, {
+  index: 7,
+  time: 7,
+  tool: 'houdini_exec',
+  resultPreview: 'Executed successfully.\n\n__result__:\n{"path":"E:/tmp/dsh_view_9_f52p0.png","size":[1280,720],"content_bbox":[186,0,1119,717]}\n\nverbs (1):',
+  verbs: [{ verb: 'render_check', ok: true, args: '["E:/tmp/dsh_view_9_f52p0.png"]', result: '{}' }],
+}]);
+assert.equal(recoveredCoverage.renders[0].output, 'E:/tmp/dsh_view_9_f52p0.png');
+assert.equal(recoveredCoverage.renders[0].frame, 52);
+assert.equal(recoveredCoverage.renders[0].framing_frame, 1);
+assert.equal(recoveredCoverage.comparisons[0].touches_edge, true);
+
+const bootstrapFailure = classifyVisionEvidence({
+  tool: 'vision_bootstrap', failed: false, args: { paths: ['E:/tmp/a_f1p0.png'] },
+  resultPreview: '{"ok":false,"code":"STRUCTURED_BOOTSTRAP_DISABLED"}',
+});
+assert.equal(bootstrapFailure.role, 'setup');
+assert.equal(bootstrapFailure.ok, false);
+assert.equal(bootstrapFailure.reason, 'STRUCTURED_BOOTSTRAP_DISABLED');
+
+const describeRefusal = classifyVisionEvidence({
+  tool: 'vision_describe', failed: false, args: { paths: ['E:/tmp/a_f13p0.png'] },
+  resultPreview: '由于我无法查看图像（模型仅接受文本输入，且图片已被省略），无法分析。',
+});
+assert.equal(describeRefusal.role, 'inspection');
+assert.equal(describeRefusal.semanticOk, false);
+assert.equal(describeRefusal.reason, 'textual_image_access_refusal');
+
+const presentation = classifyVisionEvidence({
+  tool: 'vision_present', failed: false, args: { image: 'E:/tmp/a_f13p0.png' }, resultPreview: '{}',
+});
+assert.equal(presentation.role, 'presentation');
+assert.equal(presentation.semanticOk, null);
+
+assert.deepEqual(collectVerbAdoption([
+  { tool: 'houdini_exec', isHoudini: true, failed: false, verbs: [{ verb: 'tab_create' }], mutatingRawMethods: [] },
+  { tool: 'houdini_query', isHoudini: true, failed: false, verbs: [], mutatingRawMethods: [] },
+  { tool: 'houdini_exec', isHoudini: true, failed: true, verbs: [], mutatingRawMethods: ['cook'], resultPreview: 'raw-hou gate: blocked BEFORE execution' },
+]), {
+  houdiniCalls: 3,
+  callsWithVerbs: 1,
+  callCoveragePct: 33.3,
+  verbCalls: 1,
+  verbDensity: 0.33,
+  rawReadOnlyCalls: 1,
+  execCalls: 2,
+  successfulExecCalls: 1,
+  successfulExecWithVerbs: 1,
+  successfulExecVerbCoveragePct: 100,
+  blockedVerblessRawMutationCalls: 1,
+  successfulVerblessRawMutationCalls: 0,
+});
 
 console.log('trace evidence helper tests passed');

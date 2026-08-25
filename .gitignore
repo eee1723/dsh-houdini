@@ -3,6 +3,7 @@ lib/
 *.tgz
 .npm-cache/
 .dsh-web.log
+.dsh-runtime.json
 .window-events.log
 tools/out/
 __pycache__/
@@ -11,3 +12,4 @@ __pycache__/
 # data) and fetched docs — never commit.
 .research/
 .dsh-houdini-media/
+.dsh-vision-router/

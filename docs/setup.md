@@ -1,197 +1,129 @@
-# dsh-houdini 新机安装步骤（setup）
+# dsh-houdini 新机安装与更新
 
-> 换电脑 / 重装系统后，照本文从零复现 dsh-houdini。
-> 原则：**仓库里的代码和模板完全可移植**（无功能性硬编码路径）；但下面第 4–6 步
-> 是「机器态」（pnpm link、Houdini package、本地 preset），不跟随 Git，必须在新机上重做。
->
-> 本文假设 Windows + Houdini 20.5+（21.x 更佳）。macOS/Linux 仅路径写法不同，步骤一致。
+本文描述当前受支持的 Windows 安装路径。仓库代码可移植；Houdini package、DSH profile、preset 和构建产物属于机器态，需要每台机器生成。
 
----
+## 1. 前置条件
 
-## 0. 前置要求
+| 依赖 | 检查 |
+|---|---|
+| Git | `git --version` |
+| Node.js 18+ 与 npm/npx | `node -v`、`npm -v` |
+| Python 3（只需标准库） | `python --version`；Windows Store stub 可改用 `py -3` |
+| SideFX Houdini | 至少启动过一次，以生成 `Documents/houdini*` 用户目录 |
 
-| 依赖 | 用途 | 检查 |
-|---|---|---|
-| git | 拉代码 | `git --version` |
-| Node.js（≥18） | 构建插件 | `node -v` |
-| Python 3（任意，仅标准库） | 跑 `install.py` | `python --version` |
-| dsh CLI | `dsh plugin add` | `npx --yes @deepseek-ai/dsh --version` |
-| SideFX Houdini | 运行桥/场景 | 打开一次确认能启动 |
+本仓库的 `node_modules` 只用 npm 管理，不要运行 pnpm。
 
-> `dsh` CLI 无需全局安装：全文用 `npx --yes @deepseek-ai/dsh …` 即可（首次自动拉取）。
-> 想固定版本可 `npm i -g @deepseek-ai/dsh`。
+## 2. 拉取并构建
 
-> Windows 上 `python` 可能是 Microsoft Store 占位 stub（报错 "Python was not found;
-> run without arguments to install from the Microsoft Store"）：改用 `py -3`，
-> 全文 `python xxx` 换成 `py -3 xxx`。
-
----
-
-## 1. 拉代码
-
-```sh
+```powershell
 git clone https://github.com/eee1723/dsh-houdini.git
-cd dsh-houdini
-```
-
-> 仓库是 **private**，clone 需要你能访问该账号（gh CLI 或 SSH key 已配好）。
-
----
-
-## 2. 安装依赖 + 构建
-
-```sh
+Set-Location dsh-houdini
 npm install
-npm run build          # tsc 编译 src/ → lib/
+npm run build
 ```
 
-> `lib/`、`node_modules/` 已被 `.gitignore` 排除，构建产物本地生成、不提交。
+构建先从 `docs/tool-design.md` 生成浏览器目录和 Host 动词契约，再由 tsc 输出 `lib/`。`lib/` 和 `node_modules/` 不提交，也不要手改。
 
----
+## 3. 一次性安装机器态
 
-## 3. 安装 Houdini 侧（菜单 + python 路径）
-
-```sh
+```powershell
 python houdini/install.py
 ```
 
-作用：把**本机 checkout 的绝对路径**烘焙进 `Documents/houdini*/packages/dsh-houdini.json`，
-并给每个已检测到的 Houdini 版本各装一份（package 按 pref 目录隔离）。
+安装器会：
 
-- 预览不写文件：`python houdini/install.py --print`
-- 指定目录：`python houdini/install.py --packages-dir <dir>`
-- **重开 Houdini** 后，菜单栏出现顶级 `DSH-Houdini` 菜单。
+- 给检测到的每个 Houdini 大版本写 `Documents/houdini*/packages/dsh-houdini.json`，把本 checkout 的 Houdini 菜单和 Python 路径注入进程；
+- 按 `dsh-profile.requirements.json` 通过官方 `dsh plugin` 命令同步 `web` profile，包括本地 `dsh-houdini` 和锁定的视觉能力；
+- 后续由 launcher 把仓库中的 `presets/houdini*` 同步到 `~/.dsh/.agent-presets/`。
 
-> 新装/切换 Houdini 大版本后要**重跑本脚本**（H21 读 `houdini21.0/packages`、H22 读 `houdini22.0/packages`）。
+只预览 Houdini package：
 
----
-
-## 4. 链接插件进 profile（pnpm link，让包名可解析）
-
-```sh
-npx --yes @deepseek-ai/dsh plugin --profile web add "$(pwd)"
+```powershell
+python houdini/install.py --print
 ```
 
-作用：把本地 checkout 以 `link:` 依赖加入 `web` profile 的 `node_modules`，使 `dsh-houdini`
-这个**包名**可被 Node 解析。这一步是 client 半（`houdinitrace` 视图）能被发现的**前提**——
+只安装 Houdini package、暂不同步 DSH profile：
 
-> dsh 的 client 模块系统靠 `require.resolve(包名/package.json)` 发现插件的 client 半，
-> 只有「包名加载」才生效，`file://` overlay 不行。
-
----
-
-## 5. 复制 houdini 模式 preset
-
-把仓库里的模板复制到用户 preset 根：
-
-```sh
-# Windows (PowerShell)
-Copy-Item -Recurse -Force presets\houdini "$env:USERPROFILE\.dsh\.agent-presets\houdini"
+```powershell
+python houdini/install.py --skip-dsh-profile
 ```
 
-作用：注册一个名为 **「Houdini 模式」** 的 agent preset（persona = Houdini automation agent +
-挂 dsh-houdini），与 `标准/创造/极简` 并列，互不覆盖。
+新装或切换 Houdini 大版本后需要重跑安装器。目录名 `python3.11libs` 是历史名称；实际通过 `PYTHONPATH` 注入，同一份纯 Python 代码支持 H21 py3.11 和 H22 py3.13。
 
-开发/测试插件本身时，另复制开发模式（工具集与 houdini 完全相同，仅 persona 换成 coding/development）：
+## 4. 启动
 
-```sh
-# Windows (PowerShell)
-Copy-Item -Recurse -Force presets\houdini-dev "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
-```
+1. 完整重开 Houdini，让 package 和菜单生效。
+2. 点击 `DSH-Houdini` → `Open Workspace`。服务未运行时会同步 preset、启动 Bridge 和前端，并打开内嵌 UI；服务已健康时只唤起窗口。
+3. 在 Web UI 新建会话并选择「Houdini 模式」。开发插件本身时选择「Houdini 开发模式」。
 
-作用：注册 **「Houdini 开发模式」**（persona = 仓库为主目标、Houdini 会话仅作端到端测试目标），
-改 `src/`、`client.js`、`houdini/python3.11libs/` 时保留 houdini 工具做验证。
+加载刚修改的 Host、Bridge 或 preset 时，打开 `Version & Diagnostics...`，展开 `Advanced diagnostics`，点击 `Repair and restart runtime`。它会先检查活动 DSH turn/Houdini job，忙碌时不会强制中断。
 
-> 注：首次安装后无需再手动复制——每次点 `dsh` 菜单启动时，`dsh_launcher.sync_presets()`
-> 会自动把 `presets/` 全量同步到 `~/.dsh/.agent-presets/`（覆盖同名文件、不删多余文件）。
+## 5. 验证
 
----
+发送：
 
-## 6. 启动 + 选模式
-
-1. 打开 Houdini，点 **`DSH-Houdini` → `Open Workspace`**。服务已运行时只唤起内嵌窗口；
-   未运行时会同步 preset、启动桥和前端，显示阶段百分比与耗时。需要加载新代码或切换
-   当前 HIP 工作区时打开 **`Version & Diagnostics...`**，点击 **`Restart Services`**。
-   启动器不会打开外部浏览器。
-2. 在 Web UI **新建会话**时，模式选择器里选 **「Houdini 模式」**。
-
-> 前端用 `npx @deepseek-ai/dsh web --port 3081`（profile 模式，无 `--patch`）；
-> 桥默认 `http://127.0.0.1:8765`，跑在 Houdini 进程内。
-
----
-
-## 7. 验证
-
-选「Houdini 模式」后，随便发一句：
-
-> 用 houdini_query 列出 /obj 下的所有节点，再用 describe 看看状态
+> 用 houdini_query 调用 scene_info，并列出 /obj 下所有节点。
 
 预期：
 
-- 工具结果里出现 `verbs (N):` 段（动词追踪，来自 bridge tracer）；
-- 会话顶部标签页出现 **`Houdini Trace`**（与「对话」「轨迹」并列）；
-- agent 回复里不再混入「你在驱动 Houdini」到**其它**模式（`标准/创造` 不挂 dsh-houdini）。
+- 工具结果出现 `verbs (N):`；
+- 会话出现 `Houdini Trace` 标签页；
+- 第一次场景调用没有 Host/Bridge contract mismatch；若有，执行一次 `Repair and restart runtime` 后新建会话重试；
+- 其它不挂 dsh-houdini 的模式不会收到 Houdini persona。
 
----
+开发侧最低验证：
 
-## 8. 日常更新（改代码后）
+```powershell
+npm test
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-bridge-raw-gate.test.py
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-node-ownership.test.py
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-bridge-caught-failure.test.py
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-tab-create-failure.test.py
+```
 
-```sh
+Houdini 安装路径按本机版本调整。
+
+## 6. 日常更新
+
+```powershell
 git pull --ff-only
 npm install
 npm run build
 ```
 
-`npm install` 只用于本仓库（不要用 pnpm），确保上游新增依赖也被安装。若本次更新改到
-`dsh_launcher.py`、Houdini package 或菜单文件，先重启一次 Houdini；普通 bridge/preset/
-前端改动通过 **`Version & Diagnostics...` → `Restart Services`** 重载。
+普通代码更新随后执行 `Repair and restart runtime`。只有 `houdini/install.py`、package 或菜单 XML 改动时需要完整重开 Houdini。
 
-这里更新的是 **dsh-houdini 插件仓库**。普通使用不需要另行 clone 或定期 `git pull`
-DeepSeek Harness 源码仓库：启动器使用 npm 发布包，npx 会复用缓存并按 npm 的缓存
-新鲜度检查发布更新。它不保证每次启动都强制查 registry，也不等于完整依赖树 lockfile。
-
-检查 DSH 的稳定发布版和预发布版：
-
-```sh
-npm view @deepseek-ai/dsh version dist-tags --json
-```
-
-升级 DSH 时先在开发机通过环境变量指定目标版本（PowerShell 示例）：
+版本诊断面板分别管理 DeepSeek Harness npm 通道和 dsh-houdini Git 通道；不要把“更新 Harness”与“拉本仓库代码”混成同一动作。临时验证特定 DSH 根包版本可在启动 Houdini 前设置：
 
 ```powershell
 $env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
 ```
 
-然后启动 Houdini，完成「Houdini 模式」建会话、`houdini_query`、`houdini_exec`、Trace
-视图回归。确认兼容后可以恢复默认 npm 通道；若部署必须固定根包，则把该环境变量写入
-机器启动环境。注意精确根包仍不会冻结 DSH 自身的 semver 子依赖。
-profile 中另装的第三方插件按需运行
-`npx --yes @deepseek-ai/dsh@<版本> plugin --profile web update`；本仓库通过 link 挂载，仍由
-`git pull && npm run build` 更新，不要在本仓库运行 pnpm。
+该变量只固定 CLI 根包，不等于完整依赖 lockfile。
 
----
+## 7. 视觉能力边界
 
-## 9. 卸载
+当前安装清单仍使用锁定的 `dsh-vision-router`。它负责路由，不保证当前主模型或免费 provider 一定能读取图片。视觉工具的 transport、bootstrap 或 presentation 成功都不等于语义识图成功；插件只在 semantic inspection 真正成功后允许宣称视觉已验证。
 
-```sh
-# 从 web profile 移除插件（同时移除依赖和 patch 层）
+替代视觉插件应先在隔离 profile 用同一组 Houdini render 做 A/B，并使用用户授权、可用且有配额的 provider。当前候选与未完成验收见 `development.md` §2.35 和 §5。
+
+## 8. 卸载
+
+```powershell
 npx --yes @deepseek-ai/dsh plugin --profile web remove dsh-houdini
-
-# 删除本地 preset
 Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini"
-
-# 删除 Houdini package（删掉 Documents/houdini*/packages/dsh-houdini.json）
+Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
 ```
 
----
+再删除各 `Documents/houdini*/packages/dsh-houdini.json`。视觉插件是共享 profile 能力，不随 dsh-houdini 自动移除；确认没有其它 consumer 后再单独卸载。
 
-## 附：机器态 vs 仓库态（为什么换机要重做 4–6 步）
+## 机器态清单
 
-| 内容 | 归属 | 换机后 |
+| 内容 | 位置 | 换机处理 |
 |---|---|---|
-| `src/`、`client.js`、`houdini/python3.11libs/`、`presets/houdini/`、`docs/` | 仓库（Git） | ✅ 自动带过去 |
-| pnpm link（`dsh-houdini` 包名解析） | `~/.dsh/profiles/web/node_modules` | ❌ 重做第 4 步 |
-| Houdini package（绝对路径） | `Documents/houdini*/packages/` | ❌ 重做第 3 步 |
-| 本地 preset | `~/.dsh/.agent-presets/houdini/` | ❌ 重做第 5 步 |
-| 构建产物 `lib/`、`node_modules/` | 本地（gitignore） | ❌ 重做第 2 步 |
-| Houdini 桥进程 | Houdini 进程内 | ❌ 点 `Version & Diagnostics...` → `Restart Services` |
+| 源码、docs、presets、skills | Git 仓库 | clone/pull |
+| `lib/`、`node_modules/` | checkout | `npm install && npm run build` |
+| Houdini package | `Documents/houdini*/packages/` | 重跑安装器 |
+| DSH web profile | `~/.dsh/profiles/web/` | 重跑安装器 |
+| 本地 presets | `~/.dsh/.agent-presets/` | launcher 自动同步 |
+| 运行中 Bridge/前端 | Houdini/Node 进程 | `Repair and restart runtime` |

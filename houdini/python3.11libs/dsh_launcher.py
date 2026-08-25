@@ -61,6 +61,7 @@ DSH_RPC_TIMEOUT = 20
 
 # Where the frontend process writes its stdout/stderr.
 FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
+FRONTEND_RUNTIME_STATE = os.path.join(_PROJECT_ROOT, ".dsh-runtime.json")
 
 # The frontend boots the `web` profile without a patch overlay — the `houdini`
 # agent preset mounts dsh-houdini. (The old `--patch cordis.dev.yml` file://
@@ -142,6 +143,15 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # （hideAlienModules），前端随即 ERR_MODULE_NOT_FOUND。每次启动自检：优先从
 # .ignored 挪回（免费），仍缺再 npm install。
 REQUIRED_PACKAGES = ["@deepseek-ai/schemastery", "@deepseek-ai/dsh-tools"]
+
+
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
 
 
 def _plugin_runtime_probe() -> tuple[bool, str]:
@@ -337,19 +347,63 @@ def restart_bridge() -> str:
 
 def restart_frontend() -> str:
     """Kill the dsh web frontend process so it can be relaunched fresh."""
+    _clear_frontend_runtime_state()
     if _kill_port_process(FRONTEND_PORT):
         time.sleep(0.5)  # 让端口释放，避免 TIME_WAIT 影响重启
         return f"frontend stopped (port {FRONTEND_PORT})"
     return "frontend not running"
 
 
-def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
-    """Return a direct CLI path and source label without contacting npm."""
-    # A custom spec means the caller explicitly asked npx to resolve/update a
-    # version. Do not silently substitute an unrelated cached default version.
-    if DSH_SPEC != DEFAULT_DSH_SPEC:
+def _dsh_version_for_bin(bin_path: str | None) -> str | None:
+    """Read the CLI package version owning one dsh/lib/bin.js path."""
+    if not bin_path:
         return None
+    package = _read_json(os.path.join(os.path.dirname(os.path.dirname(bin_path)), "package.json"))
+    version = package.get("version")
+    return str(version) if version else None
 
+
+def _clear_frontend_runtime_state() -> None:
+    try:
+        os.remove(FRONTEND_RUNTIME_STATE)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _write_frontend_runtime_state(pid: int | None) -> None:
+    """Publish the verified listener identity for the diagnostics panel."""
+    if pid is None:
+        return
+    bin_path = _PENDING.get("frontend_bin")
+    version = _PENDING.get("frontend_version")
+    if not version:
+        cached = _newest_cached_dsh_bin()
+        if cached is not None:
+            bin_path = cached[0]
+            version = _dsh_version_for_bin(bin_path)
+    payload = {
+        "pid": pid,
+        "version": version,
+        "source": _PENDING.get("frontend_source", "unknown"),
+        "bin": bin_path,
+        "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    temporary = FRONTEND_RUNTIME_STATE + ".tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(temporary, FRONTEND_RUNTIME_STATE)
+    except OSError:
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+
+
+def _newest_cached_dsh_bin() -> tuple[str, str] | None:
+    """Return the most recently written cached CLI without contacting npm."""
     npx_root = os.path.join(NPM_CACHE, "_npx")
     candidates: list[tuple[float, str]] = []
     try:
@@ -372,6 +426,15 @@ def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
     if not candidates:
         return None
     return max(candidates)[1], "cached-cli"
+
+
+def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
+    """Return the default launch candidate, respecting explicit spec pins."""
+    # A custom spec means the caller explicitly asked npx to resolve/update a
+    # version. Do not silently substitute an unrelated cached default version.
+    if DSH_SPEC != DEFAULT_DSH_SPEC:
+        return None
+    return _newest_cached_dsh_bin()
 
 
 def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
@@ -480,7 +543,7 @@ def start_frontend(workspace_dir: str | None = None) -> str:
     cwd = workspace_dir or _PROJECT_ROOT
     # A failed command-selection attempt must never reuse the process handle
     # from an earlier launch and misreport it as the newly created frontend.
-    for key in ("proc", "frontend_source", "wait_timeout"):
+    for key in ("proc", "frontend_source", "frontend_bin", "frontend_version", "wait_timeout"):
         _PENDING.pop(key, None)
 
     try:
@@ -509,6 +572,9 @@ def start_frontend(workspace_dir: str | None = None) -> str:
         kwargs["stdout"] = log
         _PENDING["proc"] = subprocess.Popen(cmd, **kwargs)
     _PENDING["frontend_source"] = source
+    bin_path = cmd[1] if isinstance(cmd, list) and len(cmd) > 1 else None
+    _PENDING["frontend_bin"] = bin_path
+    _PENDING["frontend_version"] = _dsh_version_for_bin(bin_path)
     _PENDING["wait_timeout"] = wait_timeout
     return (
         f"frontend starting on {FRONTEND_URL} "
@@ -706,6 +772,7 @@ def _set_startup_state(
 
 def _terminate_pending_frontend() -> None:
     """Stop only the frontend process tree spawned by this launch attempt."""
+    _clear_frontend_runtime_state()
     proc = _PENDING.get("proc")
     if proc is None or proc.poll() is not None:
         return
@@ -781,6 +848,7 @@ def _start_and_wait_frontend(state: dict) -> None:
         )
         while not state["canceled"]:
             if _port_open(FRONTEND_HOST, FRONTEND_PORT):
+                _write_frontend_runtime_state(_port_pid(FRONTEND_PORT) or proc.pid)
                 _set_startup_state(
                     state, 82, 4, "Selecting Houdini session",
                     f"Resolving the {HOUDINI_AGENT_PRESET} preset for this $HIP workspace",

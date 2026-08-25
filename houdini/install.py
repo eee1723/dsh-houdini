@@ -29,6 +29,40 @@ import sys
 PACKAGE_ROOT = Path(__file__).resolve().parent  # houdini/
 PROJECT_ROOT = PACKAGE_ROOT.parent
 PYTHON_LIB = PACKAGE_ROOT / "python3.11libs"
+NPM_CACHE = PROJECT_ROOT / ".npm-cache"
+DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
+
+
+def dsh_command_prefix() -> tuple[list[str] | str, bool]:
+    """Prefer an already cached/explicit CLI; use npx only for a cold install."""
+    node = shutil.which("node")
+    explicit = os.environ.get("DSH_HOUDINI_DSH_BIN", "").strip()
+    if explicit:
+        target = Path(explicit).expanduser().resolve()
+        if not target.is_file():
+            raise RuntimeError(f"DSH_HOUDINI_DSH_BIN does not point to a file: {target}")
+        if not node:
+            raise RuntimeError("Node.js is required to run DSH_HOUDINI_DSH_BIN")
+        return [node, str(target)], False
+
+    dsh_spec = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC)
+    if dsh_spec == DEFAULT_DSH_SPEC and node:
+        candidates = list(NPM_CACHE.glob(
+            "_npx/*/node_modules/@deepseek-ai/dsh/lib/bin.js"
+        ))
+        if candidates:
+            latest = max(candidates, key=lambda item: item.stat().st_mtime)
+            return [node, str(latest)], False
+
+    npx = shutil.which("npx")
+    if not npx:
+        raise RuntimeError(
+            "Node.js/npx 未安装；无法同步完整 DSH profile。"
+            "安装 Node.js 后重跑，或显式使用 --skip-dsh-profile。"
+        )
+    if os.name == "nt":
+        return subprocess.list2cmdline([npx, "--yes", dsh_spec]), True
+    return [npx, "--yes", dsh_spec], False
 
 
 def build_package() -> dict:
@@ -89,26 +123,14 @@ def main() -> int:
         sys.path.insert(0, str(PYTHON_LIB))
         import dsh_profile_sync
 
-        npx = shutil.which("npx")
-        if not npx:
-            raise RuntimeError(
-                "Node.js/npx 未安装；无法同步完整 DSH profile。"
-                "安装 Node.js 后重跑，或显式使用 --skip-dsh-profile。"
-            )
-        dsh_spec = os.environ.get("DSH_HOUDINI_DSH_SPEC", "@deepseek-ai/dsh")
-        if os.name == "nt":
-            prefix = subprocess.list2cmdline([npx, "--yes", dsh_spec])
-            use_shell = True
-        else:
-            prefix = [npx, "--yes", dsh_spec]
-            use_shell = False
+        prefix, use_shell = dsh_command_prefix()
         status = dsh_profile_sync.sync_profile_plugins(
             prefix,
             use_shell=use_shell,
             project_root=PROJECT_ROOT,
             env=dict(
                 os.environ,
-                NPM_CONFIG_CACHE=str(PROJECT_ROOT / ".npm-cache"),
+                NPM_CONFIG_CACHE=str(NPM_CACHE),
             ),
         )
         print(status)

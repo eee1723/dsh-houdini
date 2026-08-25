@@ -122,9 +122,9 @@ geo_frame_diff(out, 1, 12, attrib='P')
 - frame A/B 的 topology 是否一致。
 - 用户当前 frame 在调用后未改变。
 
-全局 `mean/max delta` 非零证明时间依赖，不自动证明审美语义。若固定相机 A/B 暴露完全静止、方向相反、主体缺失等明确反例，应回到风场设计；若节点、属性、锚点/活动区和时间依赖均通过，而两张静帧只是不足以裁定细微动态或视觉力度，可诚实交付“画面待用户播放判断”，不能宣称视觉已经确认，也不必无限渲染说服视觉模型。
+全局 `mean_delta/max_delta` 非零证明时间依赖，不自动证明审美语义。若固定相机 A/B 暴露完全静止、方向相反、主体缺失等明确反例，应回到风场设计；若节点、属性、锚点/活动区和时间依赖均通过，而两张静帧只是不足以裁定细微动态或视觉力度，可诚实交付“画面待用户播放判断”，不能宣称视觉已经确认，也不必无限渲染说服视觉模型。
 
-做 render A/B 时必须锁定同一相机和构图。当前若分别调用会按每帧动态 bbox 重取景的渲染工具，应先核对返回的 `center/eye/dist/direction`；这些值不同，则 pixel diff 混入了相机变化，不能单独证明动画。
+做 render A/B 时必须锁定同一相机和构图。当前若分别调用会按每帧动态 bbox 重取景的渲染工具，应先核对返回的 `center/eye/dist/direction`；这些值不同，则 pixel diff 混入了相机变化，不能单独证明动画。固定参考帧要按整段验收帧的 bbox 包络来选，并留足 coverage；任一帧的 `render_check.content_bbox` 触到图像边缘或安全边距不足，都说明“相机固定但取景不完整”，应扩大 coverage 或更换包络更大的 `framing_frame` 后重渲染。
 
 若 geometry diff 非零但 render diff 为零，调查 proxy/ROP 缓存；若两者都为零，调查表达式、spare 参数和 time dependency。
 
@@ -142,4 +142,5 @@ geo_frame_diff(out, 1, 12, attrib='P')
 - 文件写入和 HDA 库修改不在 Houdini undo 范围内，必须另做事务/备份。
 - 把大网络拆成 checkpoint batch；每批可重复、可验证。
 - 性能以 cook time、点面数和 SideFX Performance Monitor 为证据，不用工具调用次数代替 cook 性能。
-- 结束时 `layout_nodes`，避免把杂乱网络交给用户。
+- 结束时 `layout_nodes`；缺省只整理当前 agent session 创建的节点并返回
+  `foreign_nodes_skipped`，不要为了整洁移动用户临时创建的节点。

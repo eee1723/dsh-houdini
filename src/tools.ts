@@ -7,23 +7,26 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { ExecResult, HoudiniBridge, JobStatus } from './bridge.js'
+import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
 
-/** Canonical value shared by the exec-shaped tools. */
+/** Canonical fields shared by every exec-shaped result. */
+const execOutputProperties = {
+  ok: { type: 'boolean', required: true },
+  stdout: { type: 'string', required: true },
+  stderr: { type: 'string', required: true },
+  result: { type: 'json' },
+  verbs: { type: 'json' },
+  error: { type: 'string' },
+  rollback: { type: 'json' },
+  rawUsage: { type: 'json' },
+  advisory: { type: 'string' },
+  images: { type: 'json' },
+  media: { type: 'json' },
+} as const
+
 const execOutputSchema = {
   type: 'object',
-  properties: {
-    ok: { type: 'boolean', required: true },
-    stdout: { type: 'string', required: true },
-    stderr: { type: 'string', required: true },
-    result: { type: 'json' },
-    verbs: { type: 'json' },
-    error: { type: 'string' },
-    rollback: { type: 'json' },
-    advisory: { type: 'string' },
-    images: { type: 'json' },
-    media: { type: 'json' },
-  },
+  properties: execOutputProperties,
   additionalProperties: false,
 } as const
 
@@ -57,6 +60,7 @@ function renderStreams(value: ExecResult): string[] {
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
   if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
   if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
+  if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
   parts.push(...renderVerbs(value))
   if (Array.isArray(value.media) && value.media.length) {
     const lines = (value.media as Array<Record<string, unknown>>).map((m) =>
@@ -94,6 +98,16 @@ function workspaceOf(execInput: unknown): string | null {
   const cwd = (execInput as { agent?: { session?: { header?: { cwd?: unknown } } } })
     .agent?.session?.header?.cwd
   return typeof cwd === 'string' && cwd ? cwd : null
+}
+
+/** Trusted execution identity comes from dsh's tool context, never model args. */
+function ownershipScopeOf(execInput: unknown): OwnershipScope | undefined {
+  const input = execInput as { agent?: { id?: unknown }; callId?: unknown }
+  const sessionId = input.agent?.id
+  const callId = input.callId
+  if (typeof sessionId !== 'string' || !sessionId) return undefined
+  if (typeof callId !== 'string' || !callId) return undefined
+  return { sessionId, callId }
 }
 
 /**
@@ -176,16 +190,7 @@ const jobStatusOutputSchema = {
   properties: {
     jobId: { type: 'string', required: true },
     status: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'], required: true },
-    ok: { type: 'boolean', required: true },
-    stdout: { type: 'string', required: true },
-    stderr: { type: 'string', required: true },
-    result: { type: 'json' },
-    verbs: { type: 'json' },
-    error: { type: 'string' },
-    rollback: { type: 'json' },
-    advisory: { type: 'string' },
-    images: { type: 'json' },
-    media: { type: 'json' },
+    ...execOutputProperties,
   },
   additionalProperties: false,
 } as const
@@ -193,9 +198,10 @@ const jobStatusOutputSchema = {
 const ALLOW_RAW_PARAM = {
   type: 'string',
   description:
-    'One-time raw-hou exemption, ONLY after the bridge raw-hou gate rejects code and no verb '
-    + 'covers the operation: re-issue the SAME code with this set to WHY no verb fits. '
-    + 'Exemptions are recorded in the trace as vocabulary-gap documentation.',
+    'One-time exemption for LOW-LEVEL MUTATION with no matching verb, ONLY after the default-on '
+    + 'raw-hou gate rejects it: re-issue that isolated low-level code with WHY no verb fits. '
+    + 'This never exempts verb-covered calls such as createNode/parm.set/cook/destroy; use verbs '
+    + 'for those and split them from the low-level batch. Exemptions are recorded in the trace.',
 } as const
 
 /** Register every Houdini tool; disposal of the plugin unregisters them. */
@@ -213,7 +219,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     },
     output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
     async execute(args, exec) {
-      const result = await bridge.exec(args.code, exec.signal, args.allow_raw)
+      const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
   }))
@@ -230,7 +236,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     },
     output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
     async execute(args, exec) {
-      const result = await bridge.exec(args.code, exec.signal, args.allow_raw)
+      const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
   }))
@@ -255,7 +261,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` }],
     },
     async execute(args, exec) {
-      return bridge.submitJob(args.code, exec.signal, args.allow_raw)
+      return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
     },
   }))
 

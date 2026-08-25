@@ -32,7 +32,10 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
    检查 name/transform/boneCapture/rest pose/animated pose。
 6. 路径依赖序列先验证第一步，再验证一个会改变后续 membership/空间的非交换第二步；
    然后覆盖 sequence mid/end 与 recovery。所有控制量归零不能证明 inverse 正确。
-7. 客观状态通过后才用 `render_view(EXPLICIT_SOP)`；动画 A/B 使用同一 `framing_frame`。
+   一旦修改状态求值器、核心 transform 图或 membership 规则，先前所有序列证据立即失效；必须从
+   first、非交换 transition、mid/end 到 recovery 全部重跑，不能只验证修复点后的终帧。
+7. 客观状态通过后才用 `render_view(EXPLICIT_SOP)`；动画 A/B 使用同一 `framing_frame`，且该参考
+   取景必须覆盖整个验收帧包络并留边，不能只保证参考帧本身不裁切。
 8. 清理 probe、恢复 frame/selection/visibility、布局、设置交付输出并说明尚未验证的审美项。
 
 ## 关键边界

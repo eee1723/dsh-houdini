@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { loadCatalog } from '../../../tools/catalog-lib.mjs';
 import {
   loadSessionEvents,
+  newestSessionFile,
   resolveSessionFile,
   sessionIdFromFile,
   toolResultCallId,
@@ -13,9 +13,14 @@ import {
 } from '../../../tools/trace-session-lib.mjs';
 import {
   collectValidationCoverage,
+  classifyVisionEvidence,
+  collectVerbAdoption,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
+  findSuppressedCookFailures,
+  mutatingRawMethodNames,
   parseVerbLedgerLine,
+  rawMethodNames,
 } from './evidence-helpers.mjs';
 
 const SKILL_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
@@ -51,24 +56,9 @@ if (!Number.isSafeInteger(maxPreview) || maxPreview < 200) {
   throw new Error('--max-preview must be an integer >= 200');
 }
 
-function newestSession() {
-  const root = path.join(os.homedir(), '.dsh', 'sessions');
-  let best = null;
-  for (const workspace of fs.readdirSync(root)) {
-    const workspaceDir = path.join(root, workspace);
-    if (!fs.statSync(workspaceDir).isDirectory()) continue;
-    for (const session of fs.readdirSync(workspaceDir)) {
-      const file = path.join(workspaceDir, session, 'session.jsonl.zstd');
-      if (!fs.existsSync(file)) continue;
-      const modified = fs.statSync(file).mtimeMs;
-      if (!best || modified > best.modified) best = { file, modified };
-    }
-  }
-  if (!best) throw new Error(`no session.jsonl.zstd under ${root}`);
-  return best.file;
-}
-
-const sessionFiles = (inputs.length ? inputs : [newestSession()]).map(resolveSessionFile);
+const latest = inputs.length ? null : newestSessionFile();
+if (!inputs.length && !latest) throw new Error('no session.jsonl.zstd under the DSH session store');
+const sessionFiles = (inputs.length ? inputs : [latest]).map(resolveSessionFile);
 const catalog = loadCatalog(catalogPath);
 const catalogNames = catalog.flatMap((domain) => domain.verbs.map((verb) => verb.name));
 const catalogByName = new Map();
@@ -121,14 +111,6 @@ function parseVerbLines(text) {
     });
   }
   return verbs;
-}
-
-const MUTATING_METHOD = /^(?:set|add|create|delete|destroy|remove|rename|save|cook|render|bake|lock|unlock|install|copy|move|enable|disable|press)(?:$|[A-Z_])/;
-const READ_ONLY_PREFIX_COLLISIONS = new Set(['displayNode', 'renderNode']);
-function rawMethods(code) {
-  const methods = [];
-  for (const match of code.matchAll(/\.([A-Za-z_]\w*)\s*\(/g)) methods.push(match[1]);
-  return methods;
 }
 
 function analyzeTrace(file) {
@@ -219,21 +201,31 @@ function analyzeTrace(file) {
     const text = messageText(message);
     const code = typeof args.code === 'string' ? args.code : '';
     const verbs = parseVerbLines(text);
-    const methods = rawMethods(code);
-    const mutatingMethods = methods.filter(
-      (name) => MUTATING_METHOD.test(name) && !READ_ONLY_PREFIX_COLLISIONS.has(name),
-    );
+    const methods = rawMethodNames(code);
     const isHoudini = String(call.name).startsWith('houdini_');
     const failed = Boolean(message.content?.some((item) => item.isError))
       || text.startsWith('Execution failed')
       || /\nExecution failed:/.test(text);
     const advisoryMatch = text.match(/hint:\n([\s\S]*?)$/);
     const rollbackMatch = text.match(/rollback:\n([\s\S]*?)(?:\n\n|$)/);
+    const rawUsageMatch = text.match(/raw-usage:\n([\s\S]*?)(?:\n\n|$)/);
     let rollback = null;
     if (rollbackMatch) {
       try { rollback = JSON.parse(rollbackMatch[1]); }
       catch { rollback = { _raw: clip(rollbackMatch[1]) }; }
     }
+    let rawUsage = null;
+    if (rawUsageMatch) {
+      try { rawUsage = JSON.parse(rawUsageMatch[1]); }
+      catch { rawUsage = { _raw: clip(rawUsageMatch[1]) }; }
+    }
+    // New traces carry the exact Bridge AST/Gate classification.  Prefer it
+    // over the historical receiver-agnostic scanner so Python set.add and
+    // similar read-only aggregation cannot be mislabeled as scene mutation.
+    const mutatingMethods = rawUsage && !rawUsage._raw
+      ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
+        .flatMap((item) => Array(Number(item.count) || 1).fill(String(item.name)))
+      : mutatingRawMethodNames(code);
     const step = {
       index: steps.length + 1,
       callSeq: call.eventSeq,
@@ -255,7 +247,13 @@ function analyzeTrace(file) {
       mutatingRawMethods: mutatingMethods,
       advisory: advisoryMatch ? advisoryMatch[1].trim() : null,
       rollback,
+      rawUsage,
     };
+    // Keep the unabridged result only in memory for coverage extraction. It is
+    // deliberately non-enumerable so compact/full evidence JSON does not
+    // duplicate potentially huge tool output, while render paths and nested
+    // render_check facts remain recoverable before serialization.
+    Object.defineProperty(step, 'resultText', { value: text, enumerable: false });
     steps.push(step);
     firstToolTime = Math.min(firstToolTime, event.time || Infinity);
     lastToolTime = Math.max(lastToolTime, event.time || 0);
@@ -302,6 +300,7 @@ function analyzeTrace(file) {
     (step) => step.tool === 'houdini_query' && step.mutatingRawMethods.length,
   );
   const batchSetParmOpportunities = findBatchSetParmOpportunities(steps);
+  const suppressedCookFailureSteps = findSuppressedCookFailures(steps);
   const renderEvidence = steps.flatMap((step) => step.verbs
     .filter((verb) => ['render_view', 'render_frame', 'render_check'].includes(verb.verb))
     .map((verb) => ({ index: step.index, time: step.time, verb: verb.verb, ok: verb.ok, result: verb.result })));
@@ -311,11 +310,13 @@ function analyzeTrace(file) {
     index: step.index,
     time: step.time,
     tool: step.tool,
-    ok: !step.failed,
     args: step.args,
     resultPreview: step.resultPreview,
+    ...classifyVisionEvidence(step),
   }));
-  const successfulVisionEvidence = visionEvidence.filter((item) => item.ok);
+  const successfulVisionEvidence = visionEvidence.filter(
+    (item) => item.role === 'inspection' && item.semanticOk === true,
+  );
   const completionRisks = [];
   if (renderEvidence.length && !successfulVisionEvidence.length) {
     completionRisks.push({
@@ -323,13 +324,22 @@ function analyzeTrace(file) {
       detail: 'Render evidence exists, but no vision tool successfully inspected an image.',
     });
   }
-  if (visionEvidence.some((item) => !item.ok)) {
+  if (visionEvidence.some((item) => item.transportOk === false || item.reason)) {
     completionRisks.push({
       code: 'vision_tool_failed',
       detail: 'At least one attempted vision inspection failed.',
     });
   }
   const validationCoverage = collectValidationCoverage(steps);
+  const edgeContact = validationCoverage.comparisons.filter((item) => item.touches_edge === true);
+  if (edgeContact.length) {
+    completionRisks.push({
+      code: 'render_framing_edge_contact',
+      detail: `${edgeContact.length} render_check result(s) have content touching the image edge; fixed-camera evidence may be clipped.`,
+      steps: [...new Set(edgeContact.map((item) => item.index))],
+    });
+  }
+  const verbAdoption = collectVerbAdoption(steps);
   const repeatedCode = Object.entries(steps.reduce((groups, step) => {
     if (!step.codeHash) return groups;
     (groups[step.codeHash] ||= []).push(step.index);
@@ -346,6 +356,37 @@ function analyzeTrace(file) {
   for (const step of steps) {
     if (step.tool !== 'todo_write' || !step.args?.todos) continue;
     latestTodo = step.args.todos;
+  }
+  const unfinishedTodoCount = latestTodo?.filter((item) => item.status !== 'completed').length ?? null;
+  const completedVisionTodoWithoutEvidence = Boolean(latestTodo?.some((item) => (
+    item.status === 'completed'
+    && /(?:vision|视觉|图像检查|图片检查)/i.test(String(item.content || ''))
+  ))) && successfulVisionEvidence.length === 0;
+  if (completedVisionTodoWithoutEvidence) {
+    completionRisks.push({
+      code: 'completed_vision_todo_without_evidence',
+      detail: 'A vision-related todo was marked complete without a successful semantic image inspection.',
+    });
+  }
+  const assistantAfterLastTool = lastAssistantTime > lastToolTime;
+  if (suppressedCookFailureSteps.length) {
+    completionRisks.push({
+      code: 'suppressed_cook_failure',
+      detail: `${suppressedCookFailureSteps.length} successful tool envelope(s) printed a raw cook failure.`,
+      steps: suppressedCookFailureSteps.map((item) => item.index),
+    });
+  }
+  if (unfinishedTodoCount > 0) {
+    completionRisks.push({
+      code: 'unfinished_todos',
+      detail: `${unfinishedTodoCount} todo item(s) were not completed when the trace ended.`,
+    });
+  }
+  if (lastToolTime && !assistantAfterLastTool) {
+    completionRisks.push({
+      code: 'no_final_delivery_after_last_tool',
+      detail: 'No assistant delivery message followed the final tool result.',
+    });
   }
   const initialRequest = [...userMessages].reverse().find(
     (message) => message.time <= firstToolTime,
@@ -391,6 +432,7 @@ function analyzeTrace(file) {
     verbCalls: Object.values(verbCounts).reduce((sum, count) => sum + count, 0),
     verbCounts: sortCounts(verbCounts),
     verbFailures: sortCounts(verbFailures),
+    verbAdoption,
     catalog: {
       total: catalogNames.length,
       used: usedVerbs.length,
@@ -411,6 +453,7 @@ function analyzeTrace(file) {
       index: step.index, rollback: step.rollback,
     })),
     batchSetParmOpportunities,
+    suppressedCookFailureSteps,
     renderEvidence,
     visionEvidence,
     completionRisks,
@@ -424,8 +467,8 @@ function analyzeTrace(file) {
       lastEventType: events.at(-1)?.type || null,
       lastToolTime: lastToolTime || null,
       lastAssistantTime: lastAssistantTime || null,
-      assistantAfterLastTool: lastAssistantTime > lastToolTime,
-      unfinishedTodoCount: latestTodo?.filter((item) => item.status !== 'completed').length ?? null,
+      assistantAfterLastTool,
+      unfinishedTodoCount,
     },
     steps,
   };
@@ -445,7 +488,7 @@ for (const trace of traces) {
   for (const [name, count] of Object.entries(trace.verbFailures)) addCount(aggregateVerbFailures, name, count);
 }
 const output = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   catalogPath: path.resolve(catalogPath),
   traceCount: traces.length,

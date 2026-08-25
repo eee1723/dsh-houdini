@@ -14,7 +14,7 @@ Or headless with hython:
     hython <path-to-repo>/houdini/python3.11libs/dsh_bridge.py [scene.hip]
 
 Endpoints:
-    GET  /health              {}            -> {"ok": true, "houVersion": "..."}
+    GET  /health              {}            -> version, raw gate, and active job counts
     POST /exec                {"code": str} -> ExecResult
     POST /jobs                {"code": str} -> {"jobId": str}
     POST /jobs/<id>/status    {}            -> JobStatus
@@ -44,6 +44,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import difflib
+import hashlib
 import io
 import inspect
 import json
@@ -174,6 +175,7 @@ _VERBS: dict[str, object] = {
     "find_nodes": dsh_hou_helpers.find_nodes,
     "graph": dsh_hou_helpers.graph,
     "describe": dsh_hou_helpers.describe,
+    "node_provenance": dsh_hou_helpers.node_provenance,
     "connect": dsh_hou_helpers.connect,
     "rename_node": dsh_hou_helpers.rename_node,
     "delete_node": dsh_hou_helpers.delete_node,
@@ -208,6 +210,12 @@ _VERBS: dict[str, object] = {
     "viewport_screenshot": dsh_hou_helpers.viewport_screenshot,
 }
 
+# Runtime truth, independently derived from the verbs actually injected into
+# this Houdini process. The host derives its expected hash from tool-design.md;
+# comparing the two catches a stale in-process bridge before any scene edit.
+_VERB_NAMES = tuple(sorted(_VERBS))
+_VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexdigest()
+
 _VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
 _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 
@@ -227,7 +235,6 @@ _RAW_HOU_VERB_MAP = {
     "setRenderFlag": "sop_set_output",
     "layoutChildren": "layout_nodes",
     "moveToGoodPosition": "layout_nodes",
-    "setPosition": "layout_nodes",
     "parm().set": "set_parm",   # 由 _raw_hou_calls 特判 parm(...).set(...) 模式
     "setExpression": "set_parm",  # set_parm 收到字符串值即走表达式路由
     "createDigitalAsset": "hda_create",
@@ -348,14 +355,14 @@ def _repo_write_advisory(code: str) -> str | None:
     )
 
 
-# --- raw-hou gate（实验开关，默认关） ------------------------------------------
-# 软硬结合的硬实验层（2026-08-19，经双向钢人论证选定）：开启后，exec 代码里
+# --- raw-hou gate（默认开启，可由 Python Shell 临时关闭） -----------------------
+# 软硬结合的硬边界：exec 代码里
 # 「动词已覆盖的裸 hou 调用」与「疑似修改场景的裸 hou 调用」在执行前被拒，
-# 报错指明对应动词；词表真覆盖不了的操作可用 allow_raw="理由" 一次性豁免，
-# 豁免打印 [gate] 行进结果（进 trace 可审计）——每条豁免都是一份带理由的
-# 词表缺口记录。开启方式（用户侧）：Houdini Python Shell 里
-# `import dsh_bridge; dsh_bridge.set_raw_gate(True)`。
-_raw_gate = False
+# 报错指明对应动词；词表真覆盖不了的低层操作可用 allow_raw="理由" 一次性
+# 豁免并留痕。allow_raw 不得旁路已被动词明确覆盖的调用，否则模型可以用一句
+# 泛化理由重新提交整段 createNode/parm.set/cook 代码，使 gate 退化成 advisory。
+# 高级开发调试仍可从 Houdini Python Shell 临时 set_raw_gate(False)。桥重启恢复安全默认。
+_raw_gate = True
 
 
 def set_raw_gate(on: bool) -> str:
@@ -365,22 +372,134 @@ def set_raw_gate(on: bool) -> str:
     return f"raw-hou gate {'ON' if _raw_gate else 'OFF'}"
 
 
-# 疑似修改场景的方法名前缀。AST 只能看形状不能解析接收者，这是启发式：
-# python 侧的误伤（set.add / dict.setdefault 等）在 houdini exec 代码里罕见，
-# 且报错信息会指明豁免方式。
+# 疑似修改场景的方法名前缀。AST 只能看形状不能解析接收者，所以必须把
+# 与 HOM 不重名的标准 Python 容器方法排除；否则只读聚合也会被错误拦截。
 _GATE_MUTATING_PREFIXES = (
     "set", "add", "create", "delete", "destroy", "remove", "rename",
     "save", "cook", "render", "bake", "lock", "unlock", "install",
     "copy", "move", "enable", "disable",
 )
+_GATE_SAFE_PYTHON_METHODS = {"setdefault"}
 
 
-def _gate_message(code: str) -> str | None:
-    """gate 开启时的执行前检查；返回 None = 放行，否则返回拒绝理由。"""
+def _call_path(node: ast.AST) -> str | None:
+    """Return a dotted call path rooted at ``hou`` when one is statically visible.
+
+    ``hou.node(...)`` becomes ``hou.node`` and ``hou.hipFile.save()`` becomes
+    ``hou.hipFile.save``.  Calls made through a local alias cannot be proven to
+    be HOM here and are deliberately omitted instead of being mislabeled.
+    """
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name) or current.id != "hou":
+        return None
+    return ".".join(["hou", *reversed(parts)])
+
+
+def _python_set_names(tree: ast.AST) -> set[str]:
+    """Find local names definitely initialized as Python ``set`` containers."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = node.value
+        is_set = isinstance(value, ast.Set) or (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "set"
+        )
+        if not is_set:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _is_safe_python_method(node: ast.Call, python_sets: set[str]) -> bool:
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    if node.func.attr in _GATE_SAFE_PYTHON_METHODS:
+        return True
+    # Real trace: ``names = set(); names.add(...)`` is read-only scene
+    # aggregation.  Treat only receivers statically proven to be Python sets as
+    # safe; ``hou.Geometry.addAttrib`` and other HOM ``add*`` calls remain gated.
+    return (
+        node.func.attr == "add"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in python_sets
+    )
+
+
+def _raw_usage_analysis(code: str) -> dict:
+    """Describe raw HOM syntax and gate-relevant mutations for UI/auditing.
+
+    This is structured execution evidence, not a source-code regex.  It shares
+    the same covered/suspected mutation rules as the Raw Gate so the client can
+    distinguish harmless reads, blocked writes and audited exemptions.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}
+    python_sets = _python_set_names(tree)
+    direct: dict[str, int] = {}
+    covered: dict[str, int] = {}
+    suspected: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        path = _call_path(node.func)
+        if path is not None:
+            direct[path] = direct.get(path, 0) + 1
+        attr = node.func.attr
+        if attr in _RAW_HOU_VERB_MAP:
+            covered[attr] = covered.get(attr, 0) + 1
+        elif (
+            attr == "set"
+            and isinstance(node.func.value, ast.Call)
+            and isinstance(node.func.value.func, ast.Attribute)
+            and node.func.value.func.attr in ("parm", "parmTuple")
+        ):
+            covered["parm().set"] = covered.get("parm().set", 0) + 1
+        elif (
+            not _is_safe_python_method(node, python_sets)
+            and attr.startswith(_GATE_MUTATING_PREFIXES)
+        ):
+            suspected[attr] = suspected.get(attr, 0) + 1
+    return {
+        "directCalls": [
+            {"name": name, "count": count}
+            for name, count in sorted(direct.items())
+        ],
+        "coveredMutations": [
+            {"name": name, "count": count, "verb": _RAW_HOU_VERB_MAP[name]}
+            for name, count in sorted(covered.items())
+        ],
+        "suspectedMutations": [
+            {"name": name, "count": count}
+            for name, count in sorted(suspected.items())
+        ],
+    }
+
+
+def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
+    """Return a pre-exec rejection, or ``None`` when this code may run.
+
+    Verb-covered raw calls are never exemptible: use the verb or split the
+    low-level operation into a separate, justified ``allow_raw`` call.  The
+    exemption only applies to mutating calls for which the vocabulary has no
+    direct intent-level operation.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return None  # 语法错误交给 exec 自己报
+    python_sets = _python_set_names(tree)
     covered: dict[str, int] = {}
     mutating: dict[str, int] = {}
     for node in ast.walk(tree):
@@ -396,13 +515,18 @@ def _gate_message(code: str) -> str | None:
             and node.func.value.func.attr in ("parm", "parmTuple")
         ):
             covered["parm().set"] = covered.get("parm().set", 0) + 1
-        elif attr.startswith(_GATE_MUTATING_PREFIXES):
+        elif (
+            not _is_safe_python_method(node, python_sets)
+            and attr.startswith(_GATE_MUTATING_PREFIXES)
+        ):
             mutating[attr] = mutating.get(attr, 0) + 1
     if not covered and not mutating:
         return None
+    if not covered and allow_raw:
+        return None
     lines = [
-        "raw-hou gate: blocked BEFORE execution (experiment mode — the verb "
-        "vocabulary is the primary interface, raw hou is gated)."
+        "raw-hou gate: blocked BEFORE execution (the verb vocabulary is the "
+        "primary interface; raw hou is gated)."
     ]
     if covered:
         pairs = ", ".join(f"{a} -> {_RAW_HOU_VERB_MAP[a]}" for a in sorted(covered))
@@ -412,11 +536,17 @@ def _gate_message(code: str) -> str | None:
             "possibly scene-mutating raw call(s) with no direct verb: "
             + ", ".join(sorted(mutating)) + "."
         )
-    lines.append(
-        "If no verb genuinely covers the operation, re-issue the SAME call with "
-        "allow_raw=\"<why no verb fits>\" — a one-time exemption that is recorded "
-        "in the trace (each exemption documents a vocabulary gap)."
-    )
+    if covered:
+        lines.append(
+            "allow_raw cannot exempt verb-covered calls. Split genuine low-level "
+            "work into a separate call and use verbs for the covered scene operations."
+        )
+    else:
+        lines.append(
+            "If no verb genuinely covers the operation, re-issue the SAME call with "
+            "allow_raw=\"<why no verb fits>\" — a one-time exemption that is recorded "
+            "in the trace (each exemption documents a vocabulary gap)."
+        )
     return "\n".join(lines)
 
 
@@ -517,7 +647,9 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     )
 
 
-def run_code(code: str, allow_raw: str | None = None) -> dict:
+def run_code(code: str, allow_raw: str | None = None,
+             owner_session: str | None = None,
+             owner_call: str | None = None) -> dict:
     """Execute code with `hou` available; capture stdout/stderr and `__result__`.
 
     Must run on Houdini's main thread (see module docstring) — callers route
@@ -525,8 +657,8 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
     `sys.exit()` or raising KeyboardInterrupt cannot kill a handler/job thread
     or leave a job stuck in `running` forever.
 
-    allow_raw：raw-hou gate 开启时的一次性豁免理由（见 _gate_message）；
-    豁免会打印 [gate] 行进 stdout，进结果与 trace。
+    allow_raw：词表未覆盖的低层修改的一次性豁免理由（见 _gate_message）；
+    它不能旁路已被动词覆盖的裸调用。豁免会打印 [gate] 行进 stdout，进结果与 trace。
     """
     verb_ledger: list = []
     namespace = {"hou": hou}
@@ -536,15 +668,31 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
     stderr = _CappedStringIO(_MAX_STREAM_BYTES)
     error = None
     rollback = None
-    with _exec_lock:
+    raw_usage = _raw_usage_analysis(code)
+    gate_outcome = "not_applicable"
+    with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
                 error = _forbidden_hip_load_message(code)
-                if error is None and _raw_gate and not allow_raw:
-                    error = _gate_message(code)  # None = 放行
+                if error is not None:
+                    gate_outcome = "forbidden"
+                if error is None and _raw_gate:
+                    error = _gate_message(code, allow_raw)  # None = 放行
+                    if error is not None:
+                        gate_outcome = "blocked"
                 if error is None:
-                    if _raw_gate and allow_raw:
+                    has_covered = bool(raw_usage.get("coveredMutations"))
+                    has_suspected = bool(raw_usage.get("suspectedMutations"))
+                    has_direct = bool(raw_usage.get("directCalls"))
+                    if _raw_gate and allow_raw and has_suspected and not has_covered:
+                        gate_outcome = "exempted"
                         print(f"[gate] raw-hou exemption: {allow_raw}")
+                    elif not _raw_gate and (has_covered or has_suspected):
+                        gate_outcome = "disabled"
+                    elif has_direct and not has_covered and not has_suspected:
+                        gate_outcome = "read_only"
+                    elif has_covered or has_suspected:
+                        gate_outcome = "allowed"
                     dsh_hou_helpers._PRODUCED_IMAGES.clear()
                     compiled = compile(code, "<dsh-houdini>", "exec")
                     undo_enabled = bool(hou.undos.areEnabled())
@@ -605,6 +753,16 @@ def run_code(code: str, allow_raw: str | None = None) -> dict:
         envelope["images"] = images
     if verb_ledger:
         envelope["verbs"] = verb_ledger
+    if (
+        raw_usage.get("directCalls")
+        or raw_usage.get("coveredMutations")
+        or raw_usage.get("suspectedMutations")
+        or gate_outcome not in ("not_applicable", "read_only")
+    ):
+        raw_usage["gateOutcome"] = gate_outcome
+        if allow_raw:
+            raw_usage["exemptionReason"] = allow_raw
+        envelope["rawUsage"] = raw_usage
     advisories = [a for a in (_raw_hou_advisory(code, verb_ledger), _repo_write_advisory(code)) if a]
     if advisories:
         envelope["advisory"] = "\n".join(advisories)
@@ -710,7 +868,21 @@ def _prune_jobs() -> None:
                 _job_meta.pop(job_id, None)
 
 
-def _job_body(job_id: str, code: str, allow_raw: str | None = None) -> dict | None:
+def _job_activity() -> dict:
+    """Return non-terminal job counts without exposing job payloads."""
+    with _jobs_lock:
+        queued = sum(1 for job in _jobs.values() if job.get("status") == "queued")
+        running = sum(1 for job in _jobs.values() if job.get("status") == "running")
+    return {
+        "activeJobs": queued + running,
+        "queuedJobs": queued,
+        "runningJobs": running,
+    }
+
+
+def _job_body(job_id: str, code: str, allow_raw: str | None = None,
+              owner_session: str | None = None,
+              owner_call: str | None = None) -> dict | None:
     """Job work item, run on the main thread via `_execute`.
 
     Re-checks cancellation AT execution time: a job cancelled while waiting in
@@ -721,11 +893,15 @@ def _job_body(job_id: str, code: str, allow_raw: str | None = None) -> dict | No
         if job is None or job["status"] == "cancelled":
             return None
         job["status"] = "running"
-    return run_code(code, allow_raw)
+    return run_code(code, allow_raw, owner_session, owner_call)
 
 
-def _run_job(job_id: str, code: str, allow_raw: str | None = None) -> None:
-    outcome = _execute(lambda: _job_body(job_id, code, allow_raw))
+def _run_job(job_id: str, code: str, allow_raw: str | None = None,
+             owner_session: str | None = None,
+             owner_call: str | None = None) -> None:
+    outcome = _execute(
+        lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
+    )
     if outcome is None:
         return  # cancelled while queued: code never ran, scene untouched
     with _jobs_lock:
@@ -766,6 +942,12 @@ class _Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "houVersion": hou.applicationVersionString(),
                     "rawGate": _raw_gate,
+                    "verbCatalog": {
+                        "hash": _VERB_CATALOG_HASH,
+                        "count": len(_VERB_NAMES),
+                        "names": list(_VERB_NAMES),
+                    },
+                    **_job_activity(),
                 })
             except Exception:
                 self._send({"ok": False, "error": traceback.format_exc()}, status=500)
@@ -819,7 +1001,14 @@ class _Handler(BaseHTTPRequestHandler):
             code = str(body.get("code", ""))
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
-            self._send(_execute(lambda: run_code(code, allow_raw)))
+            owner_session = body.get("owner_session")
+            owner_call = body.get("owner_call")
+            self._send(_execute(lambda: run_code(
+                code,
+                allow_raw,
+                str(owner_session) if owner_session else None,
+                str(owner_call) if owner_call else None,
+            )))
             return
         if self.path == "/jobs":
             job_id = uuid.uuid4().hex[:12]
@@ -831,8 +1020,18 @@ class _Handler(BaseHTTPRequestHandler):
                 _job_meta[job_id] = time.time()
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
+            owner_session = body.get("owner_session")
+            owner_call = body.get("owner_call")
             threading.Thread(
-                target=_run_job, args=(job_id, str(body.get("code", "")), allow_raw), daemon=True
+                target=_run_job,
+                args=(
+                    job_id,
+                    str(body.get("code", "")),
+                    allow_raw,
+                    str(owner_session) if owner_session else None,
+                    str(owner_call) if owner_call else None,
+                ),
+                daemon=True,
             ).start()
             _prune_jobs()
             self._send({"jobId": job_id})

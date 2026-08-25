@@ -29,13 +29,13 @@
 
 每次 exec 还会在结果里带一个 **`verbs` 字段**（动词追踪）：bridge 给每个动词包了运行时 tracer，记录每次动词调用的 `{verb, args, kwargs, ok, result/error, ms}`，`hou.Node` 自动转 path，失败以 `ok:false` 记录。stdout 同时打印 `[verb] ...` 摘要行。这是将来 `houdinitrace` 视图的数据层（见 `docs/tool-design.md` §8）。
 
-反过来，如果代码**完全没走动词**却用了动词已覆盖的裸 `hou` 调用（`createNode`/`setInput`/`parm().set`/`destroy` 等），bridge 会对代码做 AST 扫描并在结果里附 **`advisory`** 字段，工具渲染为 `hint:` 段，点明可替代的动词（见 `docs/tool-design.md` §8）。
+bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().set`/`cook`/`destroy` 等已有动词覆盖的修改默认直接拒绝；没有动词的低层修改只能拆成独立调用，并在 Gate 首次拒绝后用一次性 `allow_raw="具体缺口"` 留痕。只读 HOM 探针仍可直接使用；`advisory`/`hint:` 保留为观察层（见 `docs/tool-design.md` §8）。
 
 ## Houdini 侧 helper（动词词表）
 
 bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外可直接用）。它们把 Houdini 的
 惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`。
-**动词是主接口**；`hou` 只是逃生舱，只在词表覆盖不了时（hip 文件 I/O、渲染、UI、底层几何属性操作）才直接裸写。
+**动词是主接口**；`hou` 只用于词表表达不了的只读检查、UI 或底层几何操作。不得在 bridge exec 内调用 `hou.hipFile.load()`；已有动词覆盖的裸修改不能旁路 Gate。
 
 > 完整设计（两轴模型、铁律、帮助文档三阶段、后续路线）见 **[`docs/tool-design.md`](docs/tool-design.md)** —— 那是唯一真相源，本表只是速查。
 
@@ -49,12 +49,13 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
 | node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
-| node | `connect(src, dst, index=0)` | 连线 |
+| node | `node_provenance(node)` | 区分 foreign、当前/其他 DSH session owner 与持久 service；读取开放、修改受控 |
+| node | `connect(src, dst, index=0, allow_foreign=None)` | 连线；destination 是修改边界，foreign source 可读 |
 | node | `rename_node(node, name)` / `delete_node(node)` | 重命名 / 删除（返回被表达式引用的上游） |
 | node | `cook_node(node, force=False)` | cook + error/warning + `healthy`（warning 未解释不能算完成） |
 | node | `sop_set_output` / `sop_output_node` | SOP singular display/render 输出（用户 viewport/交付） |
 | node | `set_object_visible` / `visible_objects` | OBJ plural visibility |
-| node | `layout_nodes(parent, nodes=)` | 原生网络布局 |
+| node | `layout_nodes(parent, nodes=)` | 默认只布局当前 session 创建节点，并报告跳过的 foreign 节点 |
 | parm | `list_parms(node)` | 参数**目录**（名字/标签/类型/帮助，不给值） |
 | parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 表达式/动画 + 被引用；动画附 key count/首尾帧/curve 摘要） |
 | parm | `set_parm(node, name, value)` / `set_parms(node, values)` | 单项设参 / 逐项容错批量设参；普通数值赋值会清掉旧动画并回报 |
@@ -94,7 +95,7 @@ node skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs <session.j
 node tools/trace-report.mjs <session.jsonl.zstd>
 ```
 
-证据脚本支持一次传多个 session 做纵向对比；审计量表和累积模式库位于 trace skill 的
+证据脚本支持一次传多个 session 做纵向对比，并分别报告目录广度、调用含动词率、动词密度、无动词只读探针、Gate 拦截与成功裸修改；不能再把 `used/全部目录` 当作“动词使用率”。审计量表和累积模式库位于 trace skill 的
 `references/`；SOP skill 固化 Copy to Points、deform-before-skin、属性契约、piece/多帧完成门；
 governance skill 负责把 trace、SideFX 官方文档、视频和 HIP/HDA 工程提炼为有来源、版本、
 反例和回归的受控 skill 变更。调用方式：让 agent「使用 houdini-trace-analysis 分析最新 trace」，
@@ -138,14 +139,13 @@ dsh_bridge.start()          # http://127.0.0.1:8765
 
 或无头模式：`hython E:/dsh-houdini/houdini/python3.11libs/dsh_bridge.py [scene.hip]`
 
-然后用 link 插件并启动 dsh Web UI（profile 模式，不再用 `--patch` overlay）：
+推荐安装 Houdini package、DSH profile 和所需视觉 bundle：
 
 ```sh
-dsh plugin --profile web add E:/dsh-houdini
-dsh web
+python houdini/install.py
 ```
 
-新建会话时选 **「Houdini 模式」** preset（见下「安装 + Houdini 模式 preset」）。试一句：「用 houdini_query 列出当前场景 /obj 下的所有节点」。
+重启 Houdini，点击 `DSH-Houdini` → `Open Workspace`，新建会话时选 **「Houdini 模式」**。完整步骤见 [`docs/setup.md`](docs/setup.md)。
 
 ## 一键启动（Houdini 菜单）
 
@@ -159,21 +159,22 @@ python houdini/install.py
 
 安装脚本现在同时完成两部分：写入所有已检测 Houdini 版本的 package，并把
 `dsh-profile.requirements.json` 声明的完整能力同步到 DSH `web` profile。目前包括本地
-`dsh-houdini` bundle 和锁定版本的 `dsh-vision-router`；后者让不具备图像输入能力的主模型
-通过独立视觉后端检查渲染结果。同步只在依赖缺失、版本漂移或 bundle 未激活时运行，且始终
-通过官方 `dsh plugin` 命令修改 profile。
+`dsh-houdini` bundle 和随仓库发布的轻量 `dsh-vision-fallback`。后者只注册一个备用
+`vision_describe` 工具，不注册 LLM provider、包装模型或“+ 自动识图”分组；不具备图像输入
+能力的主模型可把 relayed render 交给独立视觉模型检查。同步会迁移移除旧
+`dsh-vision-router`，且始终通过官方 `dsh plugin` 命令修改 profile。
 
 可先 `python houdini/install.py --print` 预览 Houdini package 内容；只安装 Houdini 部分、
 不联网同步 DSH profile 时显式使用 `python houdini/install.py --skip-dsh-profile`。
 
-> 视觉路由器的默认免费链会把 agent 选中的图片和问题发送给外部视觉服务。需要私有数据边界时，
-> 请在 DSH 的视觉路由器设置中改用你授权的视觉后端。
+> 备用视觉工具会把 agent 明确选择的图片和问题发送给所配置的外部视觉服务。默认模型标识为
+> `qwen/qwen3-vl-plus`；请只使用你授权的数据与 API Key。
 
 > ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
 
-重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 显示插件/Git/DSH 缓存/端口状态，提供 `Restart Services`、更新检查和日志入口。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
+重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 打开即自动检查，只用两行显示 DeepSeek Harness 与 DSH-Houdini 的当前版本、最新版本和对应更新动作。DSH 从 npm 更新，插件仅在 Git 状态允许安全快进时从 `origin/main` 更新并执行 `npm install` / build。更新完成且没有运行中的 DSH turn 或 Houdini job 时会自动重启服务；忙碌时只暂存更新，按钮变为 `Restart when idle`。独立的 `Restart Services` 不再占主界面，折叠到 `Advanced diagnostics` 并改名为 `Repair and restart runtime`，只用于开发后刷新或服务修复。启动器在 :3081 真正就绪后写带监听 PID 的 `.dsh-runtime.json`，因此面板展示的是已验证的运行版本，不再把缓存候选冒充当前版本。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内最近写入的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
 
-> ⚠️ 点这个按钮会杀掉当前 dsh 会话（前端进程重启），请在新 UI 里继续对话。
+> ⚠️ 服务重启会替换前端进程；版本面板会先检查活动 turn/job，检测到忙碌就暂缓，不会强制中断。
 
 不装菜单也可以，直接在 Python Shell 里：
 
@@ -193,9 +194,9 @@ dsh web                                                 # 起前端（profile �
 ```
 
 在 UI 新建会话时选 **「Houdini 模式」**。安装器用 DSH 官方插件命令 link 本地目录并同步
-所需 bundle；改代码后 `npm run build`，再从 Houdini 诊断面板执行 `Restart Services` 即可
-同步 preset 与新增依赖。卸载：`dsh plugin --profile web remove dsh-houdini`；视觉路由器作为
-共享 profile 能力独立保留，需要时另行移除。
+所需 bundle；改代码后 `npm run build`，再从 Houdini 诊断面板展开 `Advanced diagnostics`，执行 `Repair and restart runtime` 即可
+同步 preset 与新增依赖。卸载时分别执行
+`dsh plugin --profile web remove dsh-houdini dsh-vision-fallback`。
 
 仓库另带一个 **`houdini-dev` 模式 preset**（`presets/houdini-dev/`）：工具集与 `houdini` 完全相同，仅 persona 换成 coding/development——以插件仓库为主目标、把运行中的 Houdini 会话当**测试目标**（改 `src/`/`client.js`/`houdini/python3.11libs/` 时用 `houdini_*` 工具做端到端验证）。开发/测试插件本身时选 **「Houdini 开发模式」**，复制方式同上（`presets/houdini-dev/` → `~/.dsh/.agent-presets/houdini-dev/`）。
 
@@ -208,9 +209,17 @@ dsh web                                                 # 起前端（profile �
 - `bridgeUrl`（默认 `http://127.0.0.1:8765`）— 桥的地址
 - `requestTimeoutMs`（默认 `120000`）— 单次桥调用超时；长任务用 `houdini_job_submit`，不受此限
 
+`dsh-vision-fallback` 在 Web UI 的 `设置 → 插件 → 视觉备用` 中配置，保存后立即供
+`vision_describe` 使用。配置刻意只有两项：
+
+- `apiKey` — 当前视觉服务的 Key（设置页按 secret 字段遮罩）
+- `model`（默认 `qwen/qwen3-vl-plus`）— `供应商/模型`；当前内置 `qwen`/`dashscope`、`openai`、`openrouter` 的 OpenAI-compatible 接口映射
+
+它不会复制模型目录。以后增加供应商只扩展插件内部的接口映射，不增加设置项。
+
 ## 健壮性
 
-桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。桥还提供 `GET /health`（返回 `{"ok": true, "houVersion": "..."}`）用于诊断，以及 `GET /media?path=`（只读、限图片扩展名、64MB 上限）把产图动词的图片字节回传给 host。
+桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。`GET /health` 除 Houdini 版本和 job 数外还返回运行中动词表的名称与 SHA-256 指纹；Host 在执行场景代码前与由 `tool-design.md` 生成的预期指纹比较，版本漂移时 fail-closed。`GET /media?path=` 只读、限图片扩展名和 64MB，把产图动词的图片字节回传给 Host。
 
 ## 已知限制
 
@@ -221,8 +230,8 @@ dsh web                                                 # 起前端（profile �
 
 ## 后续路线（按价值排序）
 
-1. ~~视觉反馈闭环~~ ✅ 2026-08-19 已实现且实测走通：`render_view`（OpenGL ROP 离屏验证）+ media relay（图片字节经 `/media` 回传工作区，vision/fs 工具可读）——草地任务重跑 4.5 分钟完成（旧 trace 2.5 小时未收尾），见 `docs/development.md` §2.18
-2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh 的 jobs 服务，获得 `job_kill` 等通用控制工具（参考 `docs/cookbook/adding-a-tool.md` 的 Long-running work）
-3. **UI 卡片**：`presentCall`/`presentResult` 声明渲染意图（比如参数修改的 diff 卡）
-4. **权限分层**：`tools/pre-execute` 监听器实现"query 自动允许、exec 需审批"（参考 `docs/cookbook/extension-cookbook.md` 的 permission-gate 示例）
-5. ~~**Skills**~~ ✅ trace / SOP / Solaris-Karma / rig-animation / skill-governance 已随插件注册；后续领域按治理证据门准入，不把所有知识塞进永久 guidance
+1. **视觉 provider 实机验收**：轻量 fallback、render relay 和语义失败识别已完成；仍需填入授权且有配额的 Key 做同图 A/B，不能把 transport 成功当识图成功。
+2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh jobs 服务，获得统一的 list/kill/output/通知。
+3. **UI 卡片**：为工具补纯函数 `presentCall`/`presentResult`/`presentationMeta`。
+4. **权限分层**：`tools/pre-execute` 实现 query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。
+5. **回归覆盖重建**：按当前 47 动词契约恢复最小 H21/H22/GUI smoke，不复刻已删除的历史大脚本。

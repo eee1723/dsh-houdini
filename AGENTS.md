@@ -2,41 +2,36 @@
 
 ## 项目定位
 
-dsh-houdini：DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。架构：`src/`（dsh 插件，注册 5 个 `houdini_*` 工具）→ HTTP → `houdini/python3.11libs/dsh_bridge.py`（跑在 Houdini 进程内，`hou` 只存在于那里）。
+dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。链路：`src/`（注册 5 个 `houdini_*` 工具）→ HTTP → `houdini/python3.11libs/dsh_bridge.py`（只在这里调用 `hou`）。
 
 ## 怎么跑
 
-- 构建：`npm install && npm run build`（先跑 `tools/gen-client-catalog.mjs` 把词表目录从 `tool-design.md` 注入 client.js，再 tsc → `lib/`；`lib/` 是产物且已 gitignore，别手改）。
-- 启动：Houdini 菜单 `DSH-Houdini` → `Open Workspace`（健康服务只唤起内嵌 UI）或 `Version & Diagnostics...`；完整重启通过诊断面板的 `Restart Services`（= `dsh_launcher.launch()`：同步 preset → 重启桥 → 重启前端 → 开内嵌 UI）。
-- 验证：Web UI 新建会话选「Houdini 模式」，发「用 houdini_query 列出 /obj 下所有节点」。
-- 测试：`houdini/tests/`（Python 侧回归，如 `regress_verbs.py`）。
-- trace 复盘：`node tools/trace-report.mjs`（缺省取最新 session）→ 单文件 HTML 到 `tools/out/`：词表目录（解析 `tool-design.md`）+ 真实时序调用线 + 裸 hou/失败分析。
-- 标准 trace 审计：加载 `houdini-trace-analysis` skill；先跑其 `scripts/extract-trace-evidence.mjs` 得到确定性 JSON，再按量表分析任务契约、工具机会、Houdini 模块与词表演化。
+- 构建：`npm install && npm run build`。生成器从 `docs/tool-design.md` 同时刷新 `client.js` 目录和 `src/generated-verb-contract.ts`，再由 tsc 输出 `lib/`；不要手改生成区或 `lib/`。
+- 启动：Houdini 菜单 `DSH-Houdini` → `Open Workspace`。加载新代码/修复运行时时，打开 `Version & Diagnostics...` → `Advanced diagnostics` → `Repair and restart runtime`。
+- 验证：Web UI 新建「Houdini 模式」会话，发「用 houdini_query 列出 /obj 下所有节点」。Host 会在第一次场景调用前比较自身词表指纹与运行中 Bridge；不一致会拒绝执行并要求重启服务。
+- 测试：`npm test` 跑构建和全部 Node 确定性回归；需要 HOM 的回归在 `tools/tests/*.test.py`，用 H21 `hython` 跑。至少再执行 `dsh-bridge-raw-gate`、`dsh-node-ownership`、`dsh-bridge-caught-failure`、`dsh-tab-create-failure`。
+- trace：先按 `houdini-trace-analysis` skill 跑 `extract-trace-evidence.mjs`，再跑 `node tools/trace-report.mjs`。报告必须区分目录广度、调用含动词率、动词密度、只读裸探针、被 Gate 拦截和成功裸修改。
 
-## 技术栈
+## 技术栈与目录
 
-TypeScript（ESM，tsc 直出无 bundler），Cordis 插件形状 `{name, inject, Config, apply}`；Houdini 侧纯 Python（H21=py3.11 / H22=py3.13 均可，靠 PYTHONPATH 注入）；client 半是手写 CJS factory（`client.js`，不做 TS 变换）。
-
-## 目录与约定
-
-- `src/` → `lib/`：host 插件（工具定义 + systemPrompt guidance + HTTP client）。
-- `houdini/python3.11libs/`：桥（`dsh_bridge.py`）、动词词表（`dsh_hou_helpers.py`）、启动/进度（`dsh_launcher.py`）、版本诊断（`dsh_manager.py`）、内嵌 UI（`dsh_webview.py`）。
-- `presets/houdini/`、`presets/houdini-dev/`：agent preset 模板；从 DSH-Houdini 菜单启动时自动同步到 `~/.dsh/.agent-presets/`。
-- `tools/trace-report.mjs`：trace 复盘报告生成器（session.jsonl.zstd → 单文件 HTML），产物在 `tools/out/`（已 gitignore）。
-- `tools/catalog-lib.mjs` + `tools/gen-client-catalog.mjs`：词表目录解析（唯一实现）+ 构建期注入 client.js 标记区；改动词后跑 `npm run build` 刷新视图目录。
-- `skills/houdini-trace-analysis/`：随插件经 `ctx.skills.register()` 发布的 trace 审计 skill；`references/known-patterns.md` 随新 trace 追加跨任务证据。
-- `skills/houdini-sop-workflow/`：SOP/VEX/Copy/属性契约、模块验证阶梯和多帧完成门；复杂 SOP 任务按需加载。
-- `docs/tool-design.md` 是动词词表**唯一真相源**——改动词必须同步改它；`docs/development.md` 是进度日志——改代码顺手更新。
+- TypeScript ESM（tsc 直出，无 bundler）；Cordis 形状 `{name, inject, Config, apply}`；`client.js` 是手写 CJS factory。
+- `houdini/python3.11libs/`：Bridge、动词 helper、launcher、版本诊断、WebView。纯 Python 通过 `PYTHONPATH` 同时支持 H21 py3.11 / H22 py3.13。
+- `presets/houdini*`：生产/开发 persona；launcher 自动同步到 `~/.dsh/.agent-presets/`。
+- `skills/`：trace、SOP、Solaris/Karma、rig/animation、skill-governance 五个随包 skills。
+- `docs/tool-design.md` 是动词目录唯一真相源；`docs/development.md` 记录当前进度和历史证据。
 
 ## 关键约束
 
-- `hou` 只能在 Houdini 主线程调用：桥内所有执行经工作队列编组到主线程。
-- GUI 线程禁止阻塞探测：本机 `connect()` 到关闭的 localhost 端口会阻塞 ~300ms（无即时 RST），socket/进程等待/netstat 必须放 worker 线程。
-- 插件 persona 中性：身份与工作方式（如程序化生成原则）写进 preset persona，不写进插件 guidance。
-- 动词是 exec 代码的主接口，裸 `hou` 只是逃生舱；桥对裸 hou 调用做 AST advisory。
-- `node_modules` 只用 npm 管：本仓库若被 pnpm 操作，pnpm 会把 npm 装的包挪进 `node_modules/.ignored/`（hideAlienModules），前端随即 ERR_MODULE_NOT_FOUND；launcher 的 `ensure_dependencies()` 可自愈，但根源上别在本仓库跑 pnpm。
-- agent 的 Houdini 产出锚定 `$HIP`，不写进 dsh workspace 或本仓库。机制保证（2026-08-19 结构性纠正）：前端启动目录=会话工作区=dsh 沙箱边界，launcher 把它对准当前 hip 目录（未保存时用 `E:/dsh-houdini-workspace`）；工作区 ≠ $HIP 时 host 在结果里附 workspace note；桥 exec 裸写仓库触发 `_repo_write_advisory`（advisory 层，不硬拦）。
+- `hou` 只能在 Houdini 主线程调用；所有执行经 Bridge 工作队列串行编组。GUI 线程不得做 socket/进程/netstat 阻塞探测。
+- 插件 guidance 保持 persona 中性，只放稳定执行契约；身份和程序化工作方式放 preset；领域 recipe 放按需 skill。
+- 动词是场景修改主接口，裸 `hou` 是只读/低层逃生舱。Raw Gate 默认开启；动词已覆盖的裸修改不可用 `allow_raw` 旁路。
+- 节点可读不等于可写。mutation 默认只作用于当前 DSH session 创建的节点；foreign 节点只有用户明确指定时才可用单次 `allow_foreign`。render service 永不豁免。
+- 视觉 transport、bootstrap、presentation 与语义识图是四件事。没有成功 semantic inspection 就必须写“视觉未验证”；`render_check` 只证明文件/像素事实。
+- `render_view(EXPLICIT_SOP)` 使用持久 `__dsh_houdini_*` 服务；任务收尾复用、不删除。动画 A/B 使用同一 `framing_frame`。
+- `node_modules` 只用 npm 管；不要在本仓库运行 pnpm。Houdini 产出锚定 `$HIP`，不写进 workspace 或插件仓库。
 
-## 当前状态（2026-08-20）
+## 当前状态（2026-08-23）
 
-端到端链路可用；动词追踪、裸 hou advisory、houdinitrace、HTML/evidence trace 报告与两个随包 skills 已实现。**系统定位为「共享屏幕的副驾驶」**：用户 viewport/display/selection/frame 可漂移，不对抗；视觉验证必须 `render_view(EXPLICIT_SOP)`，经隐藏 Object Merge proxy + OpenGL ROP forceobjects 只渲染显式输出，保存/恢复用户 OBJ visibility、selection、frame，并返回 fingerprint/stale/render_check；动画 A/B 用相同 `framing_frame` 锁相机。`render_view` 的 `__dsh_houdini_*` 基础设施是带 owner tag 的持久服务，分别归入 OBJ/OUT Network Box，任务收尾只复用、不得删除；空闲 proxy 会清空 live source。`viewport_screenshot` 只诊断用户屏幕。主目录 39 个明确动词（新增 `verb_help`），bridge 另保留旧 `set_display/display_node` 两个兼容入口；覆盖 vocabulary、scene、类型目录、node、parm、asset、geometry、render、viewport，含 SOP/OBJ display 拆分、piece/frame 验证、spare 参数创建和 layout。HDA authoring 见 §2.19；trace skill 见 §2.20；全量修复与 SOP workflow 见 §2.21；OpenGL 生命周期纠正见 §2.31。GUI exec 异常自动 undo 并回报 rollback（仅 Houdini undoable scene edits）。已知环境坑：deepseek-v4-flash 无视觉能力；本机 hython 编译 VEX 栈溢出 0xC00000FD；GUI 回归走 H21 桥。下一步见 `docs/development.md` §5（jobs 迁 `ctx.jobs`、权限分层、卡片）。
+端到端链路、47 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。Host/Bridge 词表握手、视觉语义失败识别、真实动词采用指标和精简生成式 guidance 已加入代码并通过本地确定性回归；加载到现有 Houdini 进程仍需执行一次 `Repair and restart runtime`。
+
+当前未完成：第三方视觉 provider 的生产替换仍待带配额凭据的隔离 A/B；Bridge jobs 迁 `ctx.jobs`；工具卡片；query/exec 权限分层；已删除的旧大范围 GUI/Houdini 回归需按当前契约决定重建哪些最小覆盖。详见 `docs/development.md` §5。

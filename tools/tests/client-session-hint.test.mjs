@@ -110,4 +110,86 @@ assert(titles.includes(
   '["set_keyframes"] -> {"name":"set_keyframes","signature":"(node, channels) -> dict"}',
 ));
 
+function textContent(node) {
+  if (node === null || node === undefined) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(textContent).join(' ');
+  if (typeof node !== 'object') return '';
+  return (node.children ?? []).map(textContent).join(' ');
+}
+
+const mixedRawUsage = {
+  directCalls: [{ name: 'hou.node', count: 1 }],
+  coveredMutations: [],
+  suspectedMutations: [],
+  gateOutcome: 'read_only',
+};
+const blockedRawUsage = {
+  directCalls: [{ name: 'hou.hipFile.save', count: 1 }],
+  coveredMutations: [],
+  suspectedMutations: [{ name: 'save', count: 1 }],
+  gateOutcome: 'blocked',
+};
+const traceTree = view({
+  useSession: (select) => select({
+    nodes: [
+      {
+        kind: 'tool-result', seq: 10, time: 1000,
+        call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "n = hou.node('/obj')\n__result__ = scene_info()" }) },
+        content: [{ type: 'text', text: [
+          'Executed successfully.',
+          'stdout:\n[verb] scene_info([]) -> {} (0ms)\ninspection complete',
+          '__result__:\n{"ok":true,"nodes":[]}',
+          `raw-usage:\n${JSON.stringify(mixedRawUsage, null, 2)}`,
+          `verbs (1):\n1. [ok] scene_info([]) -> {"ok":true} (0ms)`,
+        ].join('\n\n') }],
+      },
+      {
+        kind: 'tool-result', seq: 11, time: 2000,
+        call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: 'hou.hipFile.save()' }) },
+        content: [{ type: 'text', text: [
+          'Execution failed:\nraw-hou gate: blocked BEFORE execution (the verb vocabulary is the primary interface; raw hou is gated).',
+          `raw-usage:\n${JSON.stringify(blockedRawUsage, null, 2)}`,
+        ].join('\n\n') }],
+      },
+      {
+        kind: 'tool-result', seq: 12, time: 3000,
+        call: {
+          name: 'houdini_exec',
+          argsRaw: JSON.stringify({
+            code: 'hou.hipFile.save()',
+            allow_raw: '词表没有 HIP 保存动词',
+          }),
+        },
+        content: [{ type: 'text', text: 'Executed successfully.\n\nstdout:\n[gate] raw-hou exemption: 词表没有 HIP 保存动词' }],
+      },
+      {
+        kind: 'tool-result', seq: 13, time: 4000,
+        call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "layout_nodes('/obj')\ndisplay_node('/obj/bike/OUT')" }) },
+        content: [{ type: 'text', text: [
+          'Execution failed:\nValueError: display output is ambiguous',
+          'rollback:\n{"supported":true,"applied":true,"scope":"Houdini undoable scene edits only"}',
+          'verbs (2):\n1. [ok] layout_nodes(["/obj"]) -> {"nodes":12} (2ms)\n2. [FAIL] display_node(["/obj/bike/OUT"]) -> error: ambiguous (0ms)',
+        ].join('\n\n') }],
+      },
+    ],
+  }),
+});
+const traceText = textContent(traceTree).replace(/\s+/g, ' ');
+assert.match(traceText, /HOM 读取 ×1/);
+assert.match(traceText, /动词 ×1/);
+assert.match(traceText, /Gate 拦截/);
+assert.match(traceText, /低层豁免/);
+assert.match(traceText, /已回滚/);
+assert.match(traceText, /执行代码/);
+assert.match(traceText, /HOM \/ Raw Gate/);
+assert.match(traceText, /动词证据/);
+assert.match(traceText, /结构化返回/);
+assert.match(traceText, /程序输出/);
+assert.match(traceText, /查看原始工具结果/);
+assert(!traceText.includes('裸 hou'));
+assert.match(traceText, /成功修改含动词 · 50%/);
+assert.match(traceText, /无动词只读探针/);
+assert.match(traceText, /Raw Gate 拦截/);
+
 console.log('client launcher-session hint and ledger parser tests passed');

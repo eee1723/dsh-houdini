@@ -52,13 +52,13 @@
 
 - 状态：`PASS（执行者自评）`；
 - #1–#5 已由 helper 单测、真实 trace、H21 scene/geometry 11/11 和 build 验证；
-- #6 成立：`src/skill.ts` 仍只有四个已发布 skills；
+- #6 在当时成立：`src/skill.ts` 当时只有四个已发布 skills；当前为五个；
 - #7 已完成：H21 disposable R→U packed-piece 回归 6/6，正确/错误模型在第二步分叉且都能
   回 rest；由此确认 endpoint equality 不足和 P+orient 双层完成门；
 - 局限：尚未 Restart Services + 新建 DSH session，因此 governance description 的独立隐式
   activation/NO_CHANGE 决策仍需新会话 forward-test，不能把本次自评升级为完整 released eval。
-- 后续状态：Batch B 在独立 H21/H22 基准通过后才发布 rig skill/`set_keyframes`；新 Houdini
-  session 已确认 46/46 verbs、5/5 skills 和 rig activation。该结果完成后续发布门，不改写
+- 后续状态：Batch B 在独立 H21/H22 基准通过后才发布 rig skill/`set_keyframes`；当时的新 Houdini
+  session 已确认 46/46 verbs、5/5 skills 和 rig activation（当前目录为 47）。该结果完成后续发布门，不改写
   GOV-001 对 Batch A 当时禁止抢跑的历史判定。
 
 ## GOV-002：SideFX 版本路径变化不得覆盖共享契约或旧基线
@@ -83,8 +83,9 @@
 ### 2026-08-21 observed result
 
 - 状态：`PASS（确定性跨版本回归）`；
-- `houdini/tests/regress_apex_evaluation.py` 在 H21/H22 各 5/5，通过 SideFX fixture 实际求值；
-- catalog 仍为 46 verbs，更新只进入 rig 条件性 reference 和完成门。
+- 当时的 `houdini/tests/regress_apex_evaluation.py`（现已移除、最小等价回归待重建）在 H21/H22
+  各 5/5，通过 SideFX fixture 实际求值；
+- 当时 catalog 为 46 verbs（当前为 47），该次更新只进入 rig 条件性 reference 和完成门。
 
 ## 后续案例队列
 

@@ -68,7 +68,8 @@ source geometry 的 piece attribute class，再选择 point/primitive name，不
 - sequence mid/end；
 - inverse 逐 piece 恢复。首尾相同本身无效，因为错误绝对通道也可全部归零回 rest。
 
-参考回归：`houdini/tests/regress_rig_state_model.py`。
+历史证据来自已移除的 `houdini/tests/regress_rig_state_model.py`；当前最小等价回归尚待按
+`docs/development.md` §5 重建，不能把缺失脚本当成现行验证入口。
 
 ## 3. Hierarchy / KineFX / skin
 
@@ -86,8 +87,8 @@ Joint Capture Proximity/Biharmonic 在 rest skin 上生成 `boneCapture`。Joint
 变化且 warning 为空。只有 skeleton 动了不证明 skin 正确；只有 skin 图像动了也不证明权重、
 层级或 rest pose 正确。
 
-参考回归：`houdini/tests/regress_animation_foundations.py` 的 3-joint Rig Pose/Joint Capture/
-Joint Deform 基准。
+历史证据来自已移除的 `houdini/tests/regress_animation_foundations.py`（3-joint Rig Pose /
+Joint Capture / Joint Deform）；当前最小等价回归尚待重建。
 
 ## 4. APEX 与 simulation 边界
 
@@ -104,7 +105,8 @@ H21.0.440 / H22.0.368 的最小非交互基线已经确认：两版均提供 `ap
 
 版本差异在帮助入口而非这条求值契约：H21 fixture 位于
 `$HFS/houdini/help/examples/nodes/sop/apex--editgraph/`，H22 位于 `apex--graph/`。
-回归 `houdini/tests/regress_apex_evaluation.py` 按当前 `$HFS` 选择 SideFX fixture，仅证明
+历史回归 `houdini/tests/regress_apex_evaluation.py`（现已移除）曾按当前 `$HFS` 选择 SideFX
+fixture，仅证明
 APEX graph engine、字典 binding、输出与失败读取可用；它不证明 Animate State、control
 shape、constraint、FK/IK、component graph 或完整 character rig 已验收。真实 rig 仍需按任务
 建立 controls/pose/deform 的数据门，不能把该 smoke 外推成“APEX 已全部支持”。

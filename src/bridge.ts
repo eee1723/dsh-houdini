@@ -5,6 +5,7 @@
  * this client is the only channel the plugin uses to reach it.
  */
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
+import { EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
 export interface ExecResult {
@@ -19,6 +20,8 @@ export interface ExecResult {
   error?: string
   /** Failure-time Houdini undo rollback outcome, when execution reached Python. */
   rollback?: JsonValue
+  /** Structured Raw Gate/read-only HOM classification produced by the bridge AST. */
+  rawUsage?: JsonValue
   /** Advisory hint, present when the code bypassed the verb vocabulary with raw hou calls. */
   advisory?: string
   /** Absolute paths of images produced during this exec (render/screenshot verbs). */
@@ -38,6 +41,24 @@ export interface JobStatus extends ExecResult {
   status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 }
 
+/** Host-authenticated provenance attached to one bridge execution. */
+export interface OwnershipScope {
+  sessionId: string
+  callId: string
+}
+
+interface BridgeHealth {
+  ok: boolean
+  houVersion?: string
+  rawGate?: boolean
+  verbCatalog?: {
+    hash?: string
+    count?: number
+    names?: string[]
+  }
+  error?: string
+}
+
 /** Normalize a user-supplied base URL so path joins never produce double slashes. */
 function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '')
@@ -45,6 +66,8 @@ function normalizeBaseUrl(url: string): string {
 
 export class HoudiniBridge {
   private readonly baseUrl: string
+  private contractCheckedAt = 0
+  private contractCheck: Promise<void> | null = null
 
   constructor(baseUrl: string, private readonly timeoutMs: number) {
     this.baseUrl = normalizeBaseUrl(baseUrl)
@@ -52,17 +75,65 @@ export class HoudiniBridge {
 
   /** Run Python code in the Houdini session and wait for completion.
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
-  exec(code: string, signal?: AbortSignal, allowRaw?: string): Promise<ExecResult> {
+  async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<ExecResult> {
+    await this.ensureCompatible(signal)
     const body: Record<string, string> = { code }
     if (allowRaw) body.allow_raw = allowRaw
+    if (owner) {
+      body.owner_session = owner.sessionId
+      body.owner_call = owner.callId
+    }
     return this.post('/exec', body, signal)
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
-  submitJob(code: string, signal?: AbortSignal, allowRaw?: string): Promise<JobHandle> {
+  async submitJob(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<JobHandle> {
+    await this.ensureCompatible(signal)
     const body: Record<string, string> = { code }
     if (allowRaw) body.allow_raw = allowRaw
+    if (owner) {
+      body.owner_session = owner.sessionId
+      body.owner_call = owner.callId
+    }
     return this.post('/jobs', body, signal)
+  }
+
+  /** Refuse scene work when the host catalog and in-process bridge differ. */
+  private async ensureCompatible(signal?: AbortSignal): Promise<void> {
+    if (Date.now() - this.contractCheckedAt < 30_000) return
+    if (this.contractCheck) return this.contractCheck
+    const pending = this.checkContract(signal)
+    this.contractCheck = pending
+    try {
+      await pending
+      this.contractCheckedAt = Date.now()
+    } finally {
+      if (this.contractCheck === pending) this.contractCheck = null
+    }
+  }
+
+  private async checkContract(signal?: AbortSignal): Promise<void> {
+    const health = await this.get<BridgeHealth>('/health', signal)
+    const actual = health.verbCatalog
+    if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH) return
+
+    const expectedNames = new Set<string>(EXPECTED_VERB_NAMES)
+    const actualNames = new Set(Array.isArray(actual?.names) ? actual.names : [])
+    const missing = [...expectedNames].filter((name) => !actualNames.has(name))
+    const extra = [...actualNames].filter((name) => !expectedNames.has(name))
+    const detail = [
+      `host=${EXPECTED_VERB_CATALOG_HASH.slice(0, 12)} (${EXPECTED_VERB_NAMES.length})`,
+      `bridge=${actual?.hash?.slice(0, 12) ?? 'missing'} (${actual?.count ?? 'unknown'})`,
+      missing.length ? `missing=${missing.join(',')}` : '',
+      extra.length ? `extra=${extra.join(',')}` : '',
+      health.error ? `health=${health.error}` : '',
+    ].filter(Boolean).join('; ')
+    throw new Error(
+      `Houdini bridge contract mismatch: ${detail}. `
+      + 'The host and the running Houdini bridge are different generations; '
+      + 'open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run '
+      + 'Repair and restart runtime before retrying.',
+    )
   }
 
   /** Poll a bridge-side background job. Pass `wait` (seconds) to long-poll:
@@ -128,13 +199,28 @@ export class HoudiniBridge {
     return signal ? AbortSignal.any([signal, timeout]) : timeout
   }
 
+  private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return this.requestJson<T>(path, { method: 'GET' }, signal)
+  }
+
   private async post<T>(path: string, body: unknown, signal?: AbortSignal, extraMs = 0): Promise<T> {
+    return this.requestJson<T>(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }, signal, extraMs)
+  }
+
+  private async requestJson<T>(
+    path: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+    extraMs = 0,
+  ): Promise<T> {
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+        ...init,
         signal: this.withTimeout(signal, extraMs),
       })
     } catch (cause) {

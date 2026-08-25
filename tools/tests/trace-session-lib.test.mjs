@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { toolResultCallId, uniqueToolResultEvents } from '../trace-session-lib.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { newestSessionFile, toolResultCallId, uniqueToolResultEvents } from '../trace-session-lib.mjs';
 
 const result = (seq, callId, turn = 1, step = 1) => ({
   seq,
@@ -49,5 +52,18 @@ assert.deepEqual(deduped.replayedResults, [{
   turn: 1,
   step: 1,
 }]);
+
+const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-trace-test-'));
+const older = path.join(sessionRoot, 'workspace', 'session-old', 'session.jsonl.zstd');
+const newer = path.join(sessionRoot, 'workspace', 'session-new', 'session.jsonl.zstd');
+fs.mkdirSync(path.dirname(older), { recursive: true });
+fs.mkdirSync(path.dirname(newer), { recursive: true });
+fs.writeFileSync(older, 'old');
+fs.writeFileSync(newer, 'new');
+fs.utimesSync(older, new Date(1_000), new Date(1_000));
+fs.utimesSync(newer, new Date(2_000), new Date(2_000));
+assert.equal(newestSessionFile(sessionRoot), newer);
+assert.ok(path.resolve(sessionRoot).startsWith(path.resolve(os.tmpdir())));
+fs.rmSync(sessionRoot, { recursive: true });
 
 console.log('trace-session-lib dedupe: ok');

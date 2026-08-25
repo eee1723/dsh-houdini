@@ -19,7 +19,9 @@ description: 设计、构建、调试和交付稳健的 Houdini SOP 程序化网
 8. 所有 cook warning 必须解决或解释。Merge 的 N/uv/Cd mismatch 不能因没有 error 而忽略。
 9. 任务需要视觉证据且当前 GUI 渲染环境可用时，用 `render_view(EXPLICIT_SOP)`；用户
    viewport 漂移不影响它。用户说屏幕异常时再用 `viewport_screenshot` 诊断并与显式输出
-   对照。纯网络/数据交付或视觉难以裁定时，不为追图推翻已通过的语义门。
+   对照。动画固定构图先用 bbox/测试帧选择能覆盖验收帧包络的 `framing_frame` 和 coverage；
+   `render_check` 的 `content_bbox` 触边或安全边距不足时视为裁切风险并重新取景。纯网络/数据交付
+   或视觉难以裁定时，不为追图推翻已通过的语义门。
 10. 布局节点、把用户 SOP output 移到交付节点、恢复 frame/selection/visibility，最后说明控制参数、warning、文件和验证证据。
 
 ## 关键选择
@@ -41,6 +43,6 @@ description: 设计、构建、调试和交付稳健的 Houdini SOP 程序化网
 - 单元/piece 没有非预期零宽、零面积或属性缺失。
 - 用户目标涉及动画时，两帧 `geo_frame_diff` 或固定相机 render diff 明显非零；检查锚点/活动区等可客观语义。静帧无法可靠裁定细微动态或审美力度时，明确交给用户播放判断，不无限追图、不伪称视觉确认。
 - 若契约包含视觉交付，`render_view(EXPLICIT_SOP)` 应成功且 `stale=false`，动画 A/B 使用相同
-  `framing_frame`。纯网络/数据交付，或当前环境无法可靠视觉验证时，明确把画面/播放判断交给
+  `framing_frame`，并确认所有验收帧的 `content_bbox` 都保留安全边距。纯网络/数据交付，或当前环境无法可靠视觉验证时，明确把画面/播放判断交给
   用户且不声称视觉通过；这不阻塞已经客观证明的结构与数据完成度。
 - Probe 已清理，网络已布局，用户 viewport output 仅在交付阶段设置。

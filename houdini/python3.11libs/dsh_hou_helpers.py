@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import fnmatch
 import hashlib
@@ -56,6 +57,116 @@ _RENDER_OWNER_VALUE = "render_view_v2"
 _RENDER_OBJ_BOX_NAME = "__dsh_houdini_render_service"
 _RENDER_OUT_BOX_NAME = "__dsh_houdini_render_service"
 _RENDER_BOX_COMMENT = "DSH-Houdini Render Service (persistent; do not delete during session)"
+
+# Ordinary task nodes use runtime provenance, not their parent/path/name, as the
+# authority boundary.  A user can create or duplicate a node inside an
+# agent-created network at any time; that must not make the node agent-owned.
+# ``userData`` is durable audit metadata, while the process-local sessionId
+# registry is authoritative for automatic mutation/cleanup.  A copied node may
+# copy userData, but receives a new Houdini sessionId and therefore remains
+# foreign until the user explicitly authorizes an edit.
+_TASK_OWNER_KEY = "dsh_houdini_task_owner"
+_TASK_OWNER_CALL_KEY = "dsh_houdini_created_by_call"
+_ACTIVE_OWNER_SESSION: str | None = None
+_ACTIVE_OWNER_CALL: str | None = None
+_OWNED_NODE_SESSIONS: dict[int, dict] = {}
+
+
+def _set_execution_owner(session_id: str | None, call_id: str | None):
+    """Install trusted host provenance for one serialized bridge execution."""
+    global _ACTIVE_OWNER_SESSION, _ACTIVE_OWNER_CALL
+    previous = (_ACTIVE_OWNER_SESSION, _ACTIVE_OWNER_CALL)
+    _ACTIVE_OWNER_SESSION = str(session_id) if session_id else None
+    _ACTIVE_OWNER_CALL = str(call_id) if call_id else None
+    return previous
+
+
+def _restore_execution_owner(previous) -> None:
+    global _ACTIVE_OWNER_SESSION, _ACTIVE_OWNER_CALL
+    _ACTIVE_OWNER_SESSION, _ACTIVE_OWNER_CALL = previous
+
+
+@contextlib.contextmanager
+def _execution_owner(session_id: str | None, call_id: str | None):
+    """Scope trusted host provenance to exactly one serialized execution."""
+    previous = _set_execution_owner(session_id, call_id)
+    try:
+        yield
+    finally:
+        _restore_execution_owner(previous)
+
+
+def _register_owned_node(node) -> None:
+    """Record a verb-created node and its initialized subtree."""
+    if node is None or _ACTIVE_OWNER_SESSION is None:
+        return
+    items = [node]
+    try:
+        items.extend(node.allSubChildren())
+    except Exception:
+        pass
+    for item in items:
+        entry = {
+            "session": _ACTIVE_OWNER_SESSION,
+            "call": _ACTIVE_OWNER_CALL,
+            "path_at_creation": item.path(),
+        }
+        _OWNED_NODE_SESSIONS[int(item.sessionId())] = entry
+        item.setUserData(_TASK_OWNER_KEY, _ACTIVE_OWNER_SESSION)
+        if _ACTIVE_OWNER_CALL:
+            item.setUserData(_TASK_OWNER_CALL_KEY, _ACTIVE_OWNER_CALL)
+
+
+def node_provenance(node) -> dict:
+    """Report runtime ownership separately from durable, copyable audit tags."""
+    n = _resolve(node)
+    if n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE:
+        status = "dsh_service"
+        runtime_owner = None
+    else:
+        runtime_owner = _OWNED_NODE_SESSIONS.get(int(n.sessionId()))
+        if runtime_owner is None:
+            status = "foreign"
+        elif runtime_owner.get("session") == _ACTIVE_OWNER_SESSION:
+            status = "owned_current_session"
+        else:
+            status = "owned_other_session"
+    return {
+        "path": n.path(),
+        "session_id": int(n.sessionId()),
+        "status": status,
+        "writable": status == "owned_current_session" or _ACTIVE_OWNER_SESSION is None,
+        "runtime_owner": dict(runtime_owner) if runtime_owner else None,
+        "audit_owner_session": n.userData(_TASK_OWNER_KEY),
+        "audit_created_by_call": n.userData(_TASK_OWNER_CALL_KEY),
+    }
+
+
+def _require_owned(node, operation: str, allow_foreign: str | None = None) -> None:
+    """Guard one node mutation while preserving direct Python-shell workflows."""
+    if _ACTIVE_OWNER_SESSION is None:
+        return
+    info = node_provenance(node)
+    if info["status"] == "owned_current_session":
+        return
+    if info["status"] == "dsh_service":
+        raise ValueError(
+            f"{info['path']} belongs to the persistent dsh-houdini service; "
+            f"{operation} is not allowed"
+        )
+    reason = str(allow_foreign or "").strip()
+    if reason:
+        print(
+            f"[ownership] foreign-node exemption for {operation}: "
+            f"{info['path']} — {reason}"
+        )
+        return
+    raise ValueError(
+        f"ownership guard: {operation} refused for foreign node {info['path']}. "
+        "Nodes are not owned merely because they are inside an agent-created network. "
+        "Read/inspect it freely; mutate it only when the user explicitly requested that "
+        f"target, then retry with allow_foreign=\"<why the user authorized {operation}>\"."
+    )
 
 # ---------------------------------------------------------------------------
 # 分类映射与版本解析
@@ -304,7 +415,17 @@ def _run_shelf_tool(tool, parent: hou.Node, type_name: str) -> hou.Node | None:
                 "altclick": False,
             },
         )
-    except Exception:
+    except BaseException:
+        # A failed shelf script may already have created part of its network.
+        # Never let tab_create reinterpret that semantic failure as permission
+        # to create a weaker bare node; clean the known partial creations and
+        # re-raise so the bridge can roll back any other undoable edits.
+        for child in reversed(parent.children()):
+            if child.sessionId() not in before:
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
         raise
     finally:
         try:
@@ -314,6 +435,8 @@ def _run_shelf_tool(tool, parent: hou.Node, type_name: str) -> hou.Node | None:
             pass
 
     created = [c for c in parent.children() if c.sessionId() not in before]
+    for child in created:
+        _register_owned_node(child)
     if len(created) == 1:
         return created[0]
     # 多个新节点：优先类型完全匹配；否则取第一个（绝不回退 createNode——
@@ -624,6 +747,8 @@ def tab_apply(parent, tool_id: str) -> dict:
         created = [child for child in parent.children() if child.sessionId() not in before]
         if not created:
             raise RuntimeError(f"Tab tool {tool_id!r} 没有在 {parent.path()} 创建节点")
+        for child in created:
+            _register_owned_node(child)
         if not all(node in created for node in recipe_nodes):
             raise RuntimeError(f"Tab tool {tool_id!r} recipe 返回了父网络外节点")
         created.sort(key=lambda node: node.path())
@@ -729,13 +854,11 @@ def tab_create(
 
     node: hou.Node | None = None
     if tool is not None and _tool_has_extra_init(tool):
-        try:
-            node = _run_shelf_tool(tool, parent, latest)
-        except Exception:
-            node = None  # tool 执行失败 → 回退裸 createNode
+        node = _run_shelf_tool(tool, parent, latest)
 
     if node is None:
         node = parent.createNode(latest, node_name=name, exact_type_name=True)
+        _register_owned_node(node)
     elif name is not None:
         try:
             node.setName(name, unique_name=True)
@@ -1274,7 +1397,7 @@ def describe(node) -> dict:
 
 # --- node 域：写 -----------------------------------------------------------
 
-def connect(src, dst, index: int = 0) -> dict:
+def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
     返回 ``{"node": dst path, "input": 实际落到的输入口}``。请求的端口不存在时
@@ -1283,6 +1406,7 @@ def connect(src, dst, index: int = 0) -> dict:
     """
     s = _resolve(src)
     d = _resolve(dst)
+    _require_owned(d, "connect destination", allow_foreign)
     try:
         d.setInput(index, s)
         return {"node": d.path(), "input": index}
@@ -1303,14 +1427,15 @@ def connect(src, dst, index: int = 0) -> dict:
     }
 
 
-def rename_node(node, name: str) -> str:
+def rename_node(node, name: str, allow_foreign: str | None = None) -> str:
     """重命名节点（自动去重），返回新 path。"""
     n = _resolve(node)
+    _require_owned(n, "rename_node", allow_foreign)
     n.setName(name, unique_name=True)
     return n.path()
 
 
-def delete_node(node) -> dict:
+def delete_node(node, allow_foreign: str | None = None) -> dict:
     """删除普通节点；持久 render_view 服务节点受生命周期守卫保护。"""
     n = _resolve(node)
     if n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE:
@@ -1319,9 +1444,14 @@ def delete_node(node) -> dict:
             "do not delete it during the Houdini session. render_view reuses "
             "this infrastructure and clears its live source reference after each render."
         )
+    _require_owned(n, "delete_node", allow_foreign)
     refs = sorted(x.path() for x in n.parmsReferencingThis())
+    session_ids = [int(n.sessionId())]
+    session_ids.extend(int(child.sessionId()) for child in n.allSubChildren())
     path = n.path()
     n.destroy()
+    for session_id in session_ids:
+        _OWNED_NODE_SESSIONS.pop(session_id, None)
     result: dict = {"deleted": path}
     if refs:
         result["orphaned_parm_refs"] = refs
@@ -1351,13 +1481,15 @@ def cook_node(node, force: bool = False) -> dict:
     }
 
 
-def sop_set_output(node, render: bool = True) -> dict:
+def sop_set_output(node, render: bool = True,
+                   allow_foreign: str | None = None) -> dict:
     """把 SOP display（默认连同 render）旗标移到指定输出节点。
 
     这是用户 viewport/交付状态，不是 ``render_view`` 的前置条件；agent 的
     离屏验证会从显式 SOP 建 proxy，不依赖这里的旗标。
     """
     n = _resolve(node)
+    _require_owned(n, "sop_set_output", allow_foreign)
     if n.type().category() != hou.sopNodeTypeCategory():
         raise ValueError(
             f"sop_set_output 只接受 SOP，收到 {n.path()} "
@@ -1413,9 +1545,11 @@ def sop_output_node(parent) -> dict:
     return result
 
 
-def set_object_visible(node, visible: bool = True) -> dict:
+def set_object_visible(node, visible: bool = True,
+                       allow_foreign: str | None = None) -> dict:
     """设置单个 OBJ 的 viewport 可见性；OBJ 没有 SOP 式 render flag。"""
     n = _resolve(node)
+    _require_owned(n, "set_object_visible", allow_foreign)
     if n.type().category() != hou.objNodeTypeCategory():
         raise ValueError(
             f"set_object_visible 只接受 OBJ，收到 {n.path()} "
@@ -1462,11 +1596,13 @@ def visible_objects(root="/obj") -> dict:
             "visible": visible,
             "effective_visible": effective,
             "agent_owned": child.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE,
+            "provenance": node_provenance(child)["status"],
         })
     return {"context": "obj", "root": p.path(), "objects": objects}
 
 
-def set_display(node, render: bool = True) -> dict:
+def set_display(node, render: bool = True,
+                allow_foreign: str | None = None) -> dict:
     """兼容入口：SOP → sop_set_output；OBJ → set_object_visible。
 
     新代码请使用语义明确的新动词。OBJ 没有独立 render flag，``render`` 在
@@ -1474,9 +1610,9 @@ def set_display(node, render: bool = True) -> dict:
     """
     n = _resolve(node)
     if n.type().category() == hou.sopNodeTypeCategory():
-        return sop_set_output(n, render=render)
+        return sop_set_output(n, render=render, allow_foreign=allow_foreign)
     if n.type().category() == hou.objNodeTypeCategory():
-        result = set_object_visible(n, True)
+        result = set_object_visible(n, True, allow_foreign=allow_foreign)
         result["note"] = "OBJ 没有 SOP 式 render flag；render 参数已忽略"
         return result
     raise ValueError(
@@ -1503,10 +1639,12 @@ def display_node(parent) -> dict:
 
 
 def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
-                 vertical_spacing: float = -1.0) -> dict:
+                 vertical_spacing: float = -1.0,
+                 allow_foreign: str | None = None) -> dict:
     """按 Houdini 原生 layoutChildren 布局全部或显式指定的网络项。"""
     p = _resolve(parent)
     items = []
+    foreign_skipped = []
     if nodes is not None:
         if not isinstance(nodes, (list, tuple)):
             raise ValueError("nodes 必须是 Node/path 列表或 None（None = 全部子项）")
@@ -1514,19 +1652,29 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
             n = _resolve(item)
             if n.parent() != p:
                 raise ValueError(f"节点 {n.path()} 不属于父网络 {p.path()}")
+            _require_owned(n, "layout_nodes", allow_foreign)
             items.append(n)
-    p.layoutChildren(
-        items=tuple(items),
-        horizontal_spacing=float(horizontal_spacing),
-        vertical_spacing=float(vertical_spacing),
-    )
-    affected = items or list(p.children())
+    elif _ACTIVE_OWNER_SESSION is not None:
+        for child in p.children():
+            if node_provenance(child)["status"] == "owned_current_session":
+                items.append(child)
+            else:
+                foreign_skipped.append(child.path())
+    else:
+        items = list(p.children())
+    if items:
+        p.layoutChildren(
+            items=tuple(items),
+            horizontal_spacing=float(horizontal_spacing),
+            vertical_spacing=float(vertical_spacing),
+        )
     return {
         "parent": p.path(),
         "nodes": [
             {"path": n.path(), "position": [float(v) for v in n.position()]}
-            for n in affected
+            for n in items
         ],
+        "foreign_nodes_skipped": foreign_skipped,
     }
 
 
@@ -1675,7 +1823,8 @@ def _clear_animation(p) -> str | None:
     return desc
 
 
-def set_parm(node, name: str, value) -> dict:
+def set_parm(node, name: str, value,
+             allow_foreign: str | None = None) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
 
     数值型参数收到字符串值时按**表达式**处理（H21/H22 实测 ``Parm.set(str)``
@@ -1686,6 +1835,7 @@ def set_parm(node, name: str, value) -> dict:
     ``note`` 说明清掉了什么；想保留动画请显式传字符串表达式。
     """
     n = _resolve(node)
+    _require_owned(n, "set_parm", allow_foreign)
     p = n.parm(name)
     if p is not None:
         if isinstance(value, str):
@@ -1726,19 +1876,21 @@ def set_parm(node, name: str, value) -> dict:
     )
 
 
-def set_parms(node, values: dict) -> dict:
+def set_parms(node, values: dict,
+              allow_foreign: str | None = None) -> dict:
     """批量设参：``{name: value}`` 逐项走 ``set_parm`` 同一套语义（含表达式/关键帧清除）。
 
     **逐项容错**：单项失败不中断，返回分 ``set``/``failed`` 两组——收尾恢复默认值、
     测试摆场景这类「一串赋值」不用再手写 ``parm().set`` 循环。
     """
     n = _resolve(node)
+    _require_owned(n, "set_parms", allow_foreign)
     if not isinstance(values, dict) or not values:
         raise ValueError("values 必须是非空 dict：{参数名: 值}")
     done, failed, notes = {}, {}, {}
     for key, value in values.items():
         try:
-            r = set_parm(n, key, value)
+            r = set_parm(n, key, value, allow_foreign=allow_foreign)
             done[r["parm"]] = r.get("value", r.get("expression"))
             if "note" in r:
                 notes[r["parm"]] = r["note"]
@@ -1762,7 +1914,8 @@ _KEYFRAME_RESULT_LIMIT = 64
 _KEYFRAME_SAMPLE_LIMIT = 32
 
 
-def set_keyframes(node, channels: dict, replace: bool = True) -> dict:
+def set_keyframes(node, channels: dict, replace: bool = True,
+                  allow_foreign: str | None = None) -> dict:
     """批量写入标量数值参数关键帧，统一使用 frame 单位并提交后回读。
 
     ``channels`` 形如 ``{"tx": [{"frame": 1, "value": 0, "curve": "linear"}]}``。
@@ -1772,6 +1925,7 @@ def set_keyframes(node, channels: dict, replace: bool = True) -> dict:
     不替代有序状态机、KineFX/APEX rig logic 或 Animation Editor。
     """
     n = _resolve(node)
+    _require_owned(n, "set_keyframes", allow_foreign)
     if not isinstance(channels, dict) or not channels:
         raise ValueError("channels 必须是非空 dict：{标量参数名: key spec 列表}")
     if not isinstance(replace, bool):
@@ -1982,14 +2136,34 @@ def _spare_spec_template(item: dict, path: str, names: set):
 
 def create_spare_parms(node, code_parm: str = "snippet",
                        defaults: dict | None = None,
-                       spec: list | None = None) -> dict:
+                       spec: list | None = None,
+                       allow_foreign: str | None = None) -> dict:
     """从代码参数的 ch/chf/chi/chv/chs 引用创建缺失 spare parameters。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
     已存在参数不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
     或裸 hou 处理。
+
+    ``spec`` 的精确递归 schema：folder 条目是
+    ``{"type":"folder","name":"controls","label":"Controls","parms":[...]}``；
+    scalar 条目是 ``{"type":"toggle|int|float|string","name":"speed",
+    "label":"Speed","default":1,"min":0,"max":10,
+    "min_strict":False,"max_strict":False,"help":"..."}``。只有 folder 接受
+    ``parms``；scalar 必须有 ``name``，其余字段可选。例如::
+
+        create_spare_parms(node, spec=[
+            {"type": "folder", "name": "controls", "parms": [
+                {"type": "toggle", "name": "enabled", "default": True},
+                {"type": "float", "name": "speed", "default": 1.0,
+                 "min": 0.0, "max": 10.0},
+            ]},
+        ])
+
+    spec 模式返回 ``node/mode/created/leaf_values``；扫描模式返回
+    ``node/code_parm/references/created/existing/defaults_applied/unsupported``。
     """
     n = _resolve(node)
+    _require_owned(n, "create_spare_parms", allow_foreign)
     if spec is not None:
         if not isinstance(spec, (list, tuple)) or not spec:
             raise ValueError("spec 必须是非空 list")
@@ -2139,6 +2313,7 @@ def hda_create(
     min_inputs: int = 0,
     max_inputs: int = 0,
     replace: bool = False,
+    allow_foreign: str | None = None,
 ) -> dict:
     """把已有节点（通常 subnet）转为 HDA；默认写到 ``$HIP/otls``。
 
@@ -2148,6 +2323,7 @@ def hda_create(
     待替换类型，否则销毁实例后就没有可供重建的源节点。
     """
     n = _resolve(node)
+    _require_owned(n, "hda_create", allow_foreign)
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name 必须是非空 HDA 类型名")
     name = name.strip()
@@ -2206,8 +2382,13 @@ def hda_create(
     if replace:
         # 子实例先删，避免父实例删除后子路径失效。
         for inst in sorted(instances, key=lambda x: x.path().count("/"), reverse=True):
+            _require_owned(inst, "hda_create replace instance", allow_foreign)
             path = inst.path()
+            session_ids = [int(inst.sessionId())]
+            session_ids.extend(int(child.sessionId()) for child in inst.allSubChildren())
             inst.destroy()
+            for session_id in session_ids:
+                _OWNED_NODE_SESSIONS.pop(session_id, None)
             destroyed.append(path)
         for definition in definitions:
             file_path = definition.libraryFilePath()
@@ -2391,9 +2572,11 @@ def _write_hda_section(definition: hou.HDADefinition, section: str, code: str) -
     }
 
 
-def hda_set_section(node, section: str, code: str) -> dict:
+def hda_set_section(node, section: str, code: str,
+                    allow_foreign: str | None = None) -> dict:
     """全量写 HDA section；PythonModule 写前编译、写后逐字读回校验。"""
     n, definition = _hda_definition(node)
+    _require_owned(n, "hda_set_section", allow_foreign)
     if not isinstance(section, str) or not section.strip():
         raise ValueError("section 必须是非空字符串")
     out = _write_hda_section(definition, section.strip(), code)
@@ -2407,9 +2590,11 @@ def hda_patch_section(
     old: str,
     new: str,
     count: int = 1,
+    allow_foreign: str | None = None,
 ) -> dict:
     """按唯一锚点局部替换 HDA section，拒绝缺失或歧义锚点。"""
     n, definition = _hda_definition(node)
+    _require_owned(n, "hda_patch_section", allow_foreign)
     if not isinstance(old, str) or not old:
         raise ValueError("old 必须是非空字符串（空锚点会产生歧义）")
     if not isinstance(new, str):
@@ -2693,6 +2878,7 @@ def hda_set_interface(
     spec: list,
     keep_std: bool = True,
     hide_builtin_tabs: bool = False,
+    allow_foreign: str | None = None,
 ) -> dict:
     """按 JSON 安全 spec 声明式重建 HDA 参数面板并验证 conditional。
 
@@ -2703,6 +2889,7 @@ def hda_set_interface(
     DialogScript 的 ``hidewhen`` 并再次验证。
     """
     n, definition = _hda_definition(node)
+    _require_owned(n, "hda_set_interface", allow_foreign)
     if not isinstance(spec, (list, tuple)):
         raise ValueError("spec 必须是参数条目 list")
     names: set = set()
@@ -3020,6 +3207,12 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
     使用 ``geometryAtFrame`` 取得冻结几何；拓扑一致时返回抽样点的 mean/max delta、
     p50/p90/p99、逐分量位移统计与 unchanged 百分比。适合区分“真实几何静止”和
     “ROP/图片缓存”；这些数值证明数据在动，不自动证明运动的审美语义。
+
+    可比较结果的精确键是 ``mean_delta``、``max_delta``、
+    ``delta_percentiles``（``p50/p90/p99``）、``component_delta``
+    （``min/max/mean`` 数组）、``unchanged_pct``、``sampled_points``、
+    ``tolerance``、``data_type`` 和 ``size``；不要读取不存在的简写
+    ``mean``/``max``。所有结果另含 node/attrib/frame/counts/bbox。
     """
     n = _resolve(node)
     if n.type().category() != hou.sopNodeTypeCategory():

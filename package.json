@@ -19,15 +19,17 @@
     "client.js",
     "cordis.patch.yml",
     "dsh-profile.requirements.json",
+    "plugins",
     "houdini",
     "skills",
-    "docs/tool-design.md",
+    "docs",
     "tools/catalog-lib.mjs",
     "tools/trace-session-lib.mjs"
   ],
   "scripts": {
     "build": "node tools/gen-client-catalog.mjs && tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json"
+    "test": "npm run build && node tools/run-node-tests.mjs",
+    "prepare": "npm run build"
   },
   "dsh": {
     "bundle": {

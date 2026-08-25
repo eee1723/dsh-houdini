@@ -1,8 +1,26 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd];
+
+/** Find the most recently modified trace under the DSH session store. */
+export function newestSessionFile(root = path.join(os.homedir(), '.dsh', 'sessions')) {
+  if (!fs.existsSync(root)) return null;
+  let best = null;
+  for (const workspace of fs.readdirSync(root)) {
+    const workspaceDir = path.join(root, workspace);
+    if (!fs.statSync(workspaceDir).isDirectory()) continue;
+    for (const session of fs.readdirSync(workspaceDir)) {
+      const file = path.join(workspaceDir, session, 'session.jsonl.zstd');
+      if (!fs.existsSync(file)) continue;
+      const modified = fs.statSync(file).mtimeMs;
+      if (!best || modified > best.modified) best = { file, modified };
+    }
+  }
+  return best?.file ?? null;
+}
 
 /** Resolve either a session directory or a session.jsonl.zstd file. */
 export function resolveSessionFile(input) {
