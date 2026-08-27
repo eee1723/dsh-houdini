@@ -14,6 +14,7 @@ import {
 import {
   collectValidationCoverage,
   collectQualityLoopEvidence,
+  completedVisionTodoWithoutEvidence,
   classifyVisionEvidence,
   collectVerbAdoption,
   extractAvailableSkills,
@@ -23,6 +24,7 @@ import {
   parseVerbLedgerLine,
   qualityLoopRisks,
   rawMethodNames,
+  requestedGoalReportedUnverified,
 } from './evidence-helpers.mjs';
 
 const SKILL_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
@@ -350,6 +352,14 @@ function analyzeTrace(file) {
     });
   }
   completionRisks.push(...qualityLoopRisks(qualityLoopEvidence));
+  const unverifiedRequestedGoals = requestedGoalReportedUnverified(userMessages, assistantMessages);
+  if (unverifiedRequestedGoals.length) {
+    completionRisks.push({
+      code: 'requested_goal_reported_unverified',
+      detail: `The final delivery presents the task as complete while user-requested dimension(s) remain unverified: ${unverifiedRequestedGoals.map((item) => item.signal).join(', ')}.`,
+      items: unverifiedRequestedGoals,
+    });
+  }
   const validationCoverage = collectValidationCoverage(steps);
   const edgeContact = validationCoverage.comparisons.filter((item) => item.touches_edge === true);
   if (edgeContact.length) {
@@ -378,11 +388,11 @@ function analyzeTrace(file) {
     latestTodo = step.args.todos;
   }
   const unfinishedTodoCount = latestTodo?.filter((item) => item.status !== 'completed').length ?? null;
-  const completedVisionTodoWithoutEvidence = Boolean(latestTodo?.some((item) => (
-    item.status === 'completed'
-    && /(?:vision|视觉|图像检查|图片检查)/i.test(String(item.content || ''))
-  ))) && successfulVisionEvidence.length === 0;
-  if (completedVisionTodoWithoutEvidence) {
+  const completedVisionTodoRisk = completedVisionTodoWithoutEvidence(
+    latestTodo,
+    successfulVisionEvidence,
+  );
+  if (completedVisionTodoRisk) {
     completionRisks.push({
       code: 'completed_vision_todo_without_evidence',
       detail: 'A vision-related todo was marked complete without a successful semantic image inspection.',

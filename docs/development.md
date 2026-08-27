@@ -30,7 +30,7 @@
 | webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
 | 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
 | Host / Bridge 词表握手 | ✅ 代码与确定性测试 | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；现有 Houdini 进程待一次 runtime restart 激活 |
-| 模糊任务质量闭环 | 🔶 P1 已实现、待 runtime 重启后第三次 A/B 与第二领域（§2.41–§2.42） | 主 skill 强制合同/骨架/关系/扰动/新鲜证据；trace 确定性审计 HTA-023 |
+| 模糊任务质量闭环 | 🔶 P1 已获建模 + 程序化特效跨域正向证据；choice-first 已部署，体积形态语义门仍待复核（§2.41–§2.44） | ask schema fail-closed；主 skill 强制合同/骨架/关系/扰动/新鲜证据；trace 审计 HTA-023–025 |
 
 ---
 
@@ -1379,6 +1379,75 @@ P1 保持域中立，不加入自行车尺寸或专用 verb：
 的 raw-gate、ownership、caught-failure、tab-create-failure 四项强制回归全绿。旧 trace 重提取确认
 新版报告把 5 次 `read_image(file_path=...)` 正确记为 frame 1 semantic inspection，并稳定检出上述
 六项质量闭环风险。生产 Houdini/DSH 进程仍须 `Repair and restart runtime` 才能加载 P1。
+
+### 2.43 两模型自行车复核、选择题优先交互与审计误报修正（2026-08-27）
+
+同一原始提示在 `937bfa1e-f183-46e2-a717-d930bd701c34`（qwen3.8-max）和
+`73bc9795-d45c-4774-ae32-c2a6291dd2b8`（k3）上复核。两者都收到 P1 preset、读取 SOP 质量合同、
+建立集中控制/骨架、做关系检查，并真实执行 `wheel_radius` 改值、受影响检查、恢复和新鲜统计；
+Qwen 另执行 web 调研和 goal/todo 账本，K3 检出后胎/车架从 `-17.76mm` 穿插并修到 `+3.33mm`。
+这证明自然语言 P1 已跨模型改变实际轨迹，暂不需要把合同立即下沉 Host 阻断执行。共同剩余缺口是
+mutation 前未明确 LOD/允许简化，且视觉展示门不可靠：Qwen 四张 render 的平均灰度仅
+`0.17–1.66/255`，错误 side 轴向与近空传动特写仍被标成文件/像素 pass；K3 只查看了触顶/触右的
+viewport 局部。Qwen 视觉工具因无 image modality 和 toolkit HTTP 401，正确降级为 unverified。
+
+人工审计同时证明旧 `qualityLoopEvidence` 有五类确定性误报/漏计：只认 OBJ 根参数导致
+`CTRL/CONTROLS` 扰动漏检；只读 assistant prose 导致 mutation 前 goal/todo 的关系和证据计划漏检；
+骨架关键词固定词序漏掉“数值验证骨架”；明确 `unverified` 的已完成视觉 todo 被当成伪完成；stdout
+与 `14,189 点 / 12,510 面` 格式无法进入新鲜统计。提取器现从 `create_spare_parms` 识别声明的
+控制节点和 spec defaults，合并 pre-mutation goal/todo，双向匹配骨架 checkpoint，识别明确视觉
+失败边界并扩展中英文/逗号统计格式；两条真实 trace 重提取后，K3 只保留合同缺字段风险，Qwen
+只保留视觉失败和质量/简化缺字段，不再错误声称两者未扰动。
+
+用户补充的交互要求放在唯一正确层：生产 Houdini preset 对重大用户选择强制 choice-first，使用
+`ask_user_question` 声明 schema，每题提供 2–4 个互斥选项、推荐项和影响说明，保留 custom 文本补充
+及合理的“由 agent 决定”；最多一次组合三个相关选择，路径/节点名/精确数值等天然唯一答案才用纯
+文本。SOP skill 给 LOD、交付深度和简化的领域选项示例。视觉门另要求先声明资产轴向，读取
+`render_view.check` 或 `render_check`；近黑、内容极少、空 bbox、触边、错误轴向或目标不在特写时
+像素展示失败，不能用 `stale=false`/文件存在/无 error 代替。下一验收不再重复自行车，而用开放式
+模拟或渲染任务检查选择题、合同字段和像素降级门的跨域采用。
+
+首次部署尝试 `645cd673-b9f7-4e99-a547-d8bf7270c7e0` 进一步证明 prompt 规则不够：K3 在
+tool/call seq 262 确实生成了三题、每题三选项及完整影响说明，但把字段写成 `"header "`、
+`"options "`。上游 ask tool schema 的 `additionalProperties:true` 接受这些字段，执行器只读取精确
+key 并静默忽略，最终 UI 三题都退化为“输入你的答案”。由于 DSH 明确禁止 pre-execute 改写已记录
+参数，本轮在 dsh-houdini agent scope 加 fail-closed guard 而不 fork/覆盖上游工具：question/option
+未知字段或尾空格 key 在 UI 前被拒；选择型问句缺 2–4 options 也拒绝；精确路径/名称/数值和自由
+补充仍允许文本。反馈要求模型用精确 schema 重试，UI 不再承受静默降级。新增纯函数 fixture 后
+`npm test` 增至 7 个 Node 文件全绿。旧 pending 调用不可追溯修复，需取消后 Repair/restart 并新开
+session；该部署验收记录为 HTA-024。
+
+### 2.44 沙尘跨域部署验收与体积语义完成门候选（2026-08-27）
+
+Repair/restart 后的新会话 `bbaedb46-60f0-40c9-b59a-52795c727895`（K3）用原始提示
+“有电影感、可以调节的沙尘冲击效果，并给出可靠验证”完成了 48 次工具调用、85 个动词、约
+14.4 分钟。choice-first 的真实 UI/trace 验收通过：tool #5 / seq 216 的三题使用精确
+`header/options`，分别提供 3/2/3 个互斥选项和影响说明，result 完整记录用户选择；本次模型首次
+即生成合法 schema，因此只能证明合法 UI 路径，畸形 key 的 guard 拒绝/重试仍由纯函数回归覆盖。
+
+强完成协议也出现跨域正向采用：首个 mutation 前加载 SOP skill/质量合同，合同声明无参考、
+中远景镜头级轮廓、集中控制和多帧验证；网络用 CONTROLS → emit/turbulence → VDB/composite/
+soften → OUT，完成 `ring_speed 12→24→12` 与最终 `12→6→12` 两轮扰动恢复，末次修改后重跑
+24/60/120 帧数据、渲染、语义读图和最终 frame diff。最终 `geo_frame_diff(24→120)` 为
+`mean_delta=15.05`、`unchanged=0%`，cook 无 error/warning，HIP 成功保存。Raw Gate 对首次
+`hou.hipFile.save()` 先拦截，模型用“词表无保存 verb、文件 I/O 不回滚”的单次理由豁免，未出现
+已覆盖裸 mutation 回归。
+
+人工同图复核没有接受模型的艺术结论。f24/f60/f120 的 transport、亮度、nonblack 和 bbox 都有效，
+但三张图主要是黑底中性灰椭圆尘团；f60/f120 的环孔、沙浪墙和中心柱不足以可靠分辨。K3 在实际
+读取图片后仍把 f60 描述为“clear ring/donut”，两次返工后的 f60 仍接近实心团块。数据证据也只
+证明 source 公式半径和点位随时间变化，不能证明合成后的 VDB 密度保留承诺形态。最终报告又把用户
+原始核心“电影感（颜色/光影/体积光）”列为 `unverified`，却以“完成”开头，因此按任务契约只能判
+**部分完成**。无地面碰撞、SOP 点云近似等允许简化直到最终才披露，也是 mutation 前合同缺口。
+
+确定性审计已做窄修：开放式质量触发覆盖电影感/镜头级/可靠验证和可调效果；最终完成文本若把用户
+原始质量维度列为 `unverified`，新增 `requested_goal_reported_unverified` 风险。重新提取本 trace
+应稳定产生 `quality_contract_incomplete(simplifications)` 与
+`requested_goal_reported_unverified(cinematic)`。生产 persona 同步补齐完成状态不变量：任何用户
+核心维度仍为 fail/unverified 时只能交付 partial/incomplete，不能以“完成”开头；明确不在合同内的
+可选边界才允许保留 unverified。HTA-025 仅登记 E1 候选：体积/合成效果需要一种
+独立于整体 hero 图的形态证据（隔离层、正交/切片诊断或密度采样），但具体 `volume_*` 工具形态等待
+第二个独立模拟任务，当前不把单个沙尘 recipe 写进生产 skill。
 
 ## 3. 卡点（blockers）
 

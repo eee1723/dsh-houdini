@@ -5,6 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { PromptSection } from '@deepseek-ai/dsh-system-prompt'
 import Schema from '@deepseek-ai/schemastery'
+import { installAskUserChoiceGuard } from './ask-user-guard.js'
 import { HoudiniBridge } from './bridge.js'
 import { VERB_CATALOG_SUMMARY } from './generated-verb-contract.js'
 import { registerBundledSkills } from './skill.js'
@@ -52,6 +53,7 @@ const GUIDANCE: PromptSection = {
 
 export function apply(ctx: Context, config: Config) {
   const bridge = new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs)
+  installAskUserChoiceGuard(ctx)
   registerHoudiniTools(ctx, bridge)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)

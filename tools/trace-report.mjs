@@ -31,6 +31,7 @@ import {
   parseVerbLedgerLine,
   qualityLoopRisks,
   rawMethodNames,
+  requestedGoalReportedUnverified,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
@@ -176,6 +177,14 @@ const qualityLoopEvidence = collectQualityLoopEvidence({
   activatedSkills,
 });
 const qualityRisks = qualityLoopRisks(qualityLoopEvidence);
+const unverifiedRequestedGoals = requestedGoalReportedUnverified(userMsgs, assistantMsgs);
+if (unverifiedRequestedGoals.length) {
+  qualityRisks.push({
+    code: 'requested_goal_reported_unverified',
+    detail: `The final delivery presents the task as complete while user-requested dimension(s) remain unverified: ${unverifiedRequestedGoals.map((item) => item.signal).join(', ')}.`,
+    items: unverifiedRequestedGoals,
+  });
+}
 const verbAdoption = collectVerbAdoption(steps);
 const visionInspections = validationCoverage.vision.filter((item) => item.role === 'inspection');
 const successfulVisionInspections = visionInspections.filter((item) => item.semanticOk === true);

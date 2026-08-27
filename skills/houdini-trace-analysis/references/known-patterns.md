@@ -279,7 +279,7 @@
 
 ## HTA-023：自生成质量标准被写成外部真实性证据
 
-- 状态：S2 同领域重复；P1 强完成协议与确定性审计已实现，待重启后的第三次自行车验证及第二领域复核。
+- 状态：P1 强完成协议已获两模型建模 + 一个程序化特效的跨域正向行为证据；合同/扰动/新鲜证据门已部署验收，视觉语义完成门仍有新候选缺口。
 - 首次证据：`d6df94d7-d778-4d35-8529-a6f3e9f4e804`。#3 只确认“山地车”和
   SOP + render_view 交付；没有外部参考、目标 LOD、允许简化或程序化控制合同。#7 起把尺寸直接
   写入多个 VEX；首轮 #21/#23 看完整车远景后宣布验证通过。用户纠正后 #26 才手写四类局部检查，
@@ -288,6 +288,12 @@
   14 个控制、关系与视图计划，证明行为层生效；但 `web_search`/`read` 明明可用却均未用于参考，
   没有 LOD/允许简化，未读取 quality-contract reference，首张 render 前已创建 116 个节点，未做
   控制扰动。最终又把修改前的 5740/4561 写入报告，实际末次 render fingerprint 为 6027/4848。
+- 两模型复核：`937bfa1e-f183-46e2-a717-d930bd701c34`（qwen3.8-max）与
+  `73bc9795-d45c-4774-ae32-c2a6291dd2b8`（k3）均读取质量合同、建立集中控制/骨架、执行关系门，
+  并真实完成 `wheel_radius` 扰动、受影响验证、恢复和新鲜统计。Qwen 另做 web 调研和结构化
+  goal/todo，K3 主动检出后胎/车架 `-17.76mm` 穿插并修到 `+3.33mm`，证明 P1 已从“会说合同”
+  前进到“会按结果返工”。仍有共同缺口：mutation 前没有明确 LOD/允许简化；Qwen 四张 render
+  近黑或视角错误却只按文件成功，K3 只看被裁切的 viewport 局部。
 - 症状：产物可辨认、cook 和 render 都成功，但部件关系错误需要用户指出；agent 能补局部问题，
   却不知道还有哪些未进入自己检查清单，完成声明的证据等级高于事实。
 - 根因：P0 的 `research → clarify → contract` 只在主 preset 中可见，而骨架/扰动/新鲜证据门藏在
@@ -296,9 +302,69 @@
   扰动恢复和末次 mutation 后刷新证据六个 checkpoint；preset 要求逐项 `pass/fail/unverified`。
   evidence/report 新增 `qualityLoopEvidence` 与确定性风险：合同缺字段、未加载质量合同、可用研究未用、
   无来源真实性、过晚首次视觉、无控制扰动、关系合同无证据和最终几何统计陈旧。
+- 审计纠正：两模型 trace 暴露 `CTRL(S)` 子节点扰动、goal/todo 合同、反向词序骨架描述、明确
+  `unverified` 视觉 todo 和逗号/中文面数格式均被旧提取器漏读；这些是 evidence 假阳性/未知，
+  不是 agent 未执行。提取器与反例 fixture 已按可观察事实扩展。
+- 交互/视觉窄修：重大选择使用 2–4 个互斥选项、推荐项、影响说明和自定义文本补充；唯一
+  路径/名称/精确值才用纯文本。SOP 视觉门要求声明资产轴向，并用 render check 拒绝近黑、空白、
+  错误视角或裁切图片；语义视觉失败不等于像素展示门可跳过。
+- 跨域部署复核：`bbaedb46-60f0-40c9-b59a-52795c727895` 的沙尘任务在首次 mutation 前加载
+  SOP skill/质量合同、用三组有效选项确认形态/技术/交付，写出镜头级轮廓合同，集中 12 个控制，
+  完成 `ring_speed` 扰动/恢复及末次修改后的 cook、帧差和三帧图像证据。说明研究→澄清→合同→
+  扰动→新鲜证据已跨建模/特效生效；仍未在 mutation 前披露无地面碰撞、SOP 点云近似等允许简化，
+  且最终将用户原始“电影感”标为 `unverified` 后仍以“完成”交付。
 - 反例/边界：抽象/风格化任务、用户给出完整 recipe、简单可逆编辑不需要强制研究或问卷；用户
   明确授权 agent 自选时可以继续，但必须披露选型和未验证的真实性边界；用户已提供参考时不强制
   额外 web 搜索。regex 风险只证明可观察步骤缺失，不冒充艺术质量评分。
-- 下一验收：重启后第三次使用完全相同的模糊自行车提示，不追加用户纠错；要求在细化前加载合同、
-  形成有来源或明确授权的参考边界、完成骨架 checkpoint、至少一次控制扰动恢复，并在末次 mutation
-  后刷新证据。随后用一个开放式模拟或渲染任务验证跨域 preset，才能讨论 Host 层结构化执行守卫。
+- 下一验收：再用一个体积/模拟任务检查简化是否在 mutation 前披露，并为承诺形态提供独立于整体
+  hero 图的数值或分层诊断；不再重复验证已通过的 choice-first/扰动基础路径。
+
+## HTA-024：ask schema 近似字段静默退化成空白输入框
+
+- 状态：P0 fail-closed 修复已部署；合法 choices 真实 UI/trace 验收通过，畸形字段的现场拦截重试路径仍只有确定性回归。
+- 首次/最近证据：`645cd673-b9f7-4e99-a547-d8bf7270c7e0`，tool/call seq 262。K3 已生成三组
+  合理选择内容，但问题对象使用带尾随空格的 `"header "`、`"options "`；UI 因执行器只读取精确
+  `header/options` 而为三题都显示自由文本框。system snapshot 已含 choice-first 规则，说明仅靠提示
+  不能保证 JSON key 精确。
+- 根因：上游 `@deepseek-ai/dsh-tool-ask-user@0.1.1-rc.2` 的 question/option schema 设置
+  `additionalProperties: true`；参数校验接受近似/未知字段，执行器又静默忽略它们。DSH
+  `tools/pre-execute` 明确禁止改写已记录参数，因此不能在中间件偷偷 trim key。
+- 修复：dsh-houdini agent scope 注册 pre-execute guard。`ask_user_question` 的 question 只接受
+  `id/question/header/options/multi_select`，option 只接受 `label/description`；未知或尾空格字段在 UI
+  前拒绝并返回精确重试说明。选择型问句没有 2–4 个 options 同样拒绝；路径、名称、精确数值和
+  自由补充等天然文本问题继续放行。日志参数、展示和实际执行保持一致。
+- 反例/边界：guard 不改写参数、不替换上游工具、不把所有问题强制成选择题；合法 custom 回答由
+  原 ask 工具/UI 保留。它只在挂载 dsh-houdini 的 agent scope 生效，不影响其他 DSH agent。
+- 回归：新增 `ask-user-choice-guard.test.mjs` 覆盖合法选择、尾空格 key、无 options 的选择型问句、
+  选项数边界、option key 近似、精确路径和自由补充；`npm test` 现为 7 个 Node 测试文件全绿。
+- 部署验收：`bbaedb46-60f0-40c9-b59a-52795c727895` tool call #5 / seq 216 使用精确
+  `header/options`，三题各有 2–3 个互斥选项和影响说明；result 完整记录三项选择，用户界面不再退化
+  成空白输入框。该次模型首次即生成合法 schema，因此没有触发 guard 的拒绝分支。
+- 下一验收：未来自然出现一次近似字段时，确认畸形调用只形成工具错误、不会打开问卷，且模型用
+  精确 schema 重试；无需为制造错误专门污染用户任务。
+
+## HTA-025：整体体积预览被目标先验误读为承诺形态
+
+- 状态：候选 E1（单 trace + 人工同图复核）；先修审计漏检，不发布沙尘专用强规则或新动词。
+- 首次/最近证据：`bbaedb46-60f0-40c9-b59a-52795c727895`。#32/#33 的 f24/f60/f120
+  `render_view` 文件、像素 bbox 和亮度均有效；#34–#36 确实把三张图送入支持图像的 K3。随后
+  assistant seq 4879 把 f60 称为“clear ring/donut with raised outer rim and central column”。人工复核
+  同一原图时，f60/f120 主要呈现为黑底上的灰色扁平椭圆尘团，环孔、沙浪墙和中心柱均不足以可靠
+  分辨；两轮返工后的 f60 仍是实心团块式读法。
+- 症状：transport、像素门和 semantic access 都成功，模型也写了缺陷清单并迭代，但目标词先验使
+  它把模糊整体图升级为形态通过；`geo_frame_diff(P)` 只证明点在动，source detail 的
+  `ring_radius_now` 只证明公式半径，不证明最终 VDB 密度仍保留可见环形结构。
+- 根因候选：环形墙、中心柱与内部贴地尘被合成到同一中性灰 OpenGL 体积，iso hero 图发生遮挡和
+  投影塌缩；完成门没有要求承诺的体积分层形态用独立诊断视角、隔离分支或场采样复核。同一模型既
+  知道目标又裁判图像，弱证据容易被目标描述补全。
+- 当前修复：evidence 的开放式质量触发扩展到电影感/镜头级/可靠验证/可调效果；最终以“完成”交付
+  却把用户原始质量维度列为 `unverified` 时新增确定性风险；生产 persona 明确核心项 fail/unverified
+  只能判 partial/incomplete。重新提取本 trace 应报告
+  `quality_contract_incomplete(simplifications)` 与 `requested_goal_reported_unverified(cinematic)`。
+- 候选建议：体积/合成效果的承诺形态至少再给一种独立证据（例如隔离层、正交/切片诊断或密度
+  采样），并把结构运动预览与材质/灯光/颜色意义上的“电影感”分开签约；具体工具形态等待第二个
+  独立模拟任务，不因本例直接新增 `volume_*` 动词。
+- 反例/边界：抽象云团、只要求数据网络、用户明确接受不可判形态的中性预览时，不强制 hero 级
+  外观；正式 Karma 画面本身也不能替代隐藏层/密度关系等数值证据。
+- 下一验收：用另一类体积效果（非环形冲击）要求两个可区分的形态层，检查独立诊断能否阻止整体
+  图像的目标先验误判，再决定扩展现有 geometry/volume 自省还是新增通用动词。

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   collectValidationCoverage,
   collectQualityLoopEvidence,
+  completedVisionTodoWithoutEvidence,
   execResultFromPreview,
   classifyVisionEvidence,
   collectVerbAdoption,
@@ -13,6 +14,7 @@ import {
   parseVerbLedgerLine,
   qualityLoopRisks,
   renderOutputsFromPreview,
+  requestedGoalReportedUnverified,
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 assert.deepEqual(parseLedgerArgs('["/obj/a","tx",1]'), {
@@ -315,6 +317,43 @@ assert.deepEqual(completeQualityLoop.relations.probeSteps, [5]);
 assert.equal(completeQualityLoop.freshness.finalCountMatchesEvidence, true);
 assert.deepEqual(qualityLoopRisks(completeQualityLoop), []);
 
+const cinematicEffectQualityLoop = collectQualityLoopEvidence({
+  userMessages: [{
+    time: 1,
+    text: '请制作一个有电影感、可以调节的沙尘冲击效果，并给出可靠的验证结果。',
+  }],
+  assistantMessages: [{
+    time: 2,
+    text: '目标是中远景镜头级轮廓；无外部参考。暴露全部可调参数，并用关键帧 render 与动画数据验证。',
+  }, {
+    time: 20,
+    text: '完成。\n| 电影感（颜色/光影/体积光） | **unverified** | 仍需正式材质与灯光 |',
+  }],
+  activatedSkills: ['houdini-sop-workflow'],
+  steps: [{
+    index: 1, time: 3, tool: 'read', failed: false, verbs: [],
+    resultPreview: '# 程序化 SOP 质量合同',
+  }, {
+    index: 2, time: 4, tool: 'houdini_exec', failed: false,
+    verbs: [{ verb: 'tab_create', ok: true, args: '["/obj","geo","dust"]' }],
+  }],
+});
+assert.equal(cinematicEffectQualityLoop.applicable, true);
+assert.equal(cinematicEffectQualityLoop.contract.requirements.controls, true);
+assert.deepEqual(cinematicEffectQualityLoop.contract.missing, ['simplifications']);
+assert.deepEqual(cinematicEffectQualityLoop.reference.qualityContractLoadSteps, [1]);
+assert.deepEqual(requestedGoalReportedUnverified(
+  [{ text: '请制作一个有电影感、可以调节的沙尘冲击效果。' }],
+  [{ text: '完成。\n| 电影感（颜色/光影） | unverified |' }],
+), [{
+  signal: 'cinematic',
+  line: '| 电影感（颜色/光影） | unverified |',
+}]);
+assert.deepEqual(requestedGoalReportedUnverified(
+  [{ text: '请制作一个有电影感的效果。' }],
+  [{ text: '部分完成；电影感仍为 unverified。' }],
+), []);
+
 const userReferenceBoundary = collectQualityLoopEvidence({
   userMessages: [{ time: 1, text: '按这个参考链接做细节丰富的程序化产品：https://example.test/spec' }],
   assistantMessages: [{ time: 2, text: '目标符合该真实产品规格；产品级 LOD，不省略外壳，使用米制控制参数，验证连接关系并渲染取证。' }],
@@ -343,20 +382,88 @@ const spareParmPerturbation = collectQualityLoopEvidence({
   userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],
   assistantMessages: [{ time: 2, text: '产品级 LOD；无参考假设；不省略；暴露控制参数，验证关系并渲染。' }],
   steps: [{ index: 1, time: 3, tool: 'houdini_exec', failed: false, verbs: [{
-    verb: 'create_spare_parms', ok: true, args: '["/obj/asset"], {"spec":[]}',
+    verb: 'create_spare_parms', ok: true,
+    args: '["/obj/asset/CONTROLS"], {"spec":[{"type":"float","name":"scale","default":1}]}',
     result: { leaf_values: { scale: 1 } },
   }] }, {
     index: 2, time: 4, tool: 'houdini_exec', failed: false, verbs: [{
-      verb: 'set_parm', ok: true, args: '["/obj/asset","scale",1.25]',
+      verb: 'set_parm', ok: true, args: '["/obj/asset/CONTROLS","scale",1.25]',
     }, { verb: 'cook_node', ok: true, args: '["/obj/asset/OUT"]' }],
   }, {
     index: 3, time: 5, tool: 'houdini_query', failed: false, code: 'measure clearance distance', verbs: [],
   }, {
     index: 4, time: 6, tool: 'houdini_exec', failed: false, verbs: [{
-      verb: 'set_parm', ok: true, args: '["/obj/asset","scale",1]',
+      verb: 'set_parm', ok: true, args: '["/obj/asset/CONTROLS","scale",1]',
     }, { verb: 'cook_node', ok: true, args: '["/obj/asset/OUT"]' }],
   }],
 });
 assert.equal(spareParmPerturbation.perturbation.restored.length, 1);
+assert.equal(spareParmPerturbation.perturbation.restored[0].node, '/obj/asset/CONTROLS');
+
+const structuredContract = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '请做一个细节丰富的程序化自行车。' }],
+  assistantMessages: [{ time: 2, text: '开始建立任务合同。' }],
+  steps: [{
+    index: 1, time: 2.1, tool: 'todo_write', failed: false,
+    args: { todos: [{ content: '调研真实来源与假设', status: 'in_progress' }] }, verbs: [],
+  }, {
+    index: 2, time: 2.2, tool: 'create_goal', failed: false,
+    args: { objective: '目标是山地车，暴露控制参数；逐项验证同轴、间隙关系，并交付整体与局部特写证据。' },
+    verbs: [],
+  }, {
+    index: 3, time: 3, tool: 'houdini_exec', failed: false,
+    verbs: [{ verb: 'tab_create', ok: true, args: '["/obj","geo","bike"]' }],
+  }],
+});
+assert.equal(structuredContract.contract.fields.referenceStatus, true);
+assert.equal(structuredContract.contract.fields.relations, true);
+assert.equal(structuredContract.contract.fields.evidencePlan, true);
+assert.deepEqual(structuredContract.contract.missing, ['qualityLod', 'simplifications']);
+
+const reverseSkeletonWording = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],
+  assistantMessages: [{ time: 4, text: '锚点已经创建，接下来数值验证骨架并确认通过。' }],
+  steps: [{
+    index: 1, time: 5, tool: 'houdini_exec', failed: false,
+    verbs: Array.from({ length: 25 }, (_, index) => ({
+      verb: 'tab_create', ok: true, args: JSON.stringify(['/obj/a', 'null', `n${index}`]),
+    })),
+  }, {
+    index: 2, time: 6, tool: 'houdini_exec', failed: false,
+    verbs: [{ verb: 'render_view', ok: true, args: '["/obj/a/OUT"]', result: {} }],
+  }],
+});
+assert.equal(reverseSkeletonWording.skeleton.checkpointMentions.length, 1);
+assert.equal(
+  qualityLoopRisks(reverseSkeletonWording).some((risk) => risk.code === 'late_first_visual_validation'),
+  false,
+);
+
+const commaCountFreshness = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],
+  assistantMessages: [{ time: 4, text: '最终输出为 14,189 点 / 12,510 面。' }],
+  steps: [{
+    index: 1, time: 3, tool: 'houdini_exec', failed: false,
+    verbs: [{ verb: 'set_parm', ok: true, args: '["/obj/a/CONTROLS","scale",1]' }],
+    resultPreview: 'FINAL: pts 14189 prims 12510',
+  }],
+});
+assert.deepEqual(commaCountFreshness.freshness.latestGeometryCounts, {
+  index: 1, points: 14189, prims: 12510,
+});
+assert.deepEqual(commaCountFreshness.freshness.finalGeometryCountClaim, {
+  points: 14189, prims: 12510,
+});
+assert.equal(commaCountFreshness.freshness.finalCountMatchesEvidence, true);
+
+assert.equal(completedVisionTodoWithoutEvidence([
+  { content: '视觉检查', status: 'completed' },
+]), true);
+assert.equal(completedVisionTodoWithoutEvidence([
+  { content: '视觉服务凭据失效，语义检查标记 unverified', status: 'completed' },
+]), false);
+assert.equal(completedVisionTodoWithoutEvidence([
+  { content: '视觉检查', status: 'completed' },
+], [{ semanticOk: true }]), false);
 
 console.log('trace evidence helper tests passed');

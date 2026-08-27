@@ -309,9 +309,21 @@ export function collectVerbAdoption(steps) {
   };
 }
 
-const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|复杂(?:资产|模型)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic)/i;
+const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
 const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
 const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
+const UNVERIFIED_MARKER = /(?:unverified|未验证|无法验证|待验证)/i;
+const COMPLETION_MARKER = /(?:^|[\s：:。])(?:完成|已完成|交付|complete(?:d)?|delivered)(?:[\s：:。]|$)/i;
+const REQUESTED_GOAL_SIGNALS = [
+  ['cinematic', /(?:电影感|cinematic)/i],
+  ['quality', /(?:高质量|镜头级|产品级|high[- ]?quality|shot[- ]?quality|production[- ]?quality)/i],
+  ['realism', /(?:写实|逼真|真实感|realistic|photoreal)/i],
+  ['adjustability', /(?:可调|可以调节|参数化|adjustable|configurable|parameterized)/i],
+  ['animation', /(?:动画|动态|animation|motion)/i],
+  ['simulation', /(?:模拟|仿真|simulation)/i],
+  ['rendering', /(?:渲染|render(?:ing)?)/i],
+  ['verification', /(?:可靠(?:的)?验证|可靠(?:的)?验收|reliable (?:verification|validation))/i],
+];
 const MUTATING_VERBS = new Set([
   'tab_create', 'tab_apply', 'connect', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
   'set_keyframes', 'create_spare_parms', 'set_timeline', 'create_bookmark', 'delete_bookmark',
@@ -347,19 +359,40 @@ function isObjectRoot(node) {
   return typeof node === 'string' && /^\/obj\/[^/]+$/.test(node);
 }
 
+function specDefaults(spec, target = {}) {
+  for (const item of Array.isArray(spec) ? spec : []) {
+    if (!item || typeof item !== 'object') continue;
+    if (item.type === 'folder') specDefaults(item.parms, target);
+    else if (typeof item.name === 'string' && Object.hasOwn(item, 'default')) {
+      target[item.name] = item.default;
+    }
+  }
+  return target;
+}
+
 function setParmEvents(steps) {
   const events = new Map();
+  const controlNodes = new Set();
+  for (const step of steps) {
+    if (step.failed) continue;
+    for (const verb of step.verbs || []) {
+      if (verb.verb !== 'create_spare_parms') continue;
+      const { positional } = parseLedgerArgs(verb.args ?? verb.argsText);
+      const node = nodePath(positional[0]);
+      if (node) controlNodes.add(node);
+    }
+  }
   for (let offset = 0; offset < steps.length; offset++) {
     const step = steps[offset];
     const index = stepIndex(step, offset + 1);
     if (step.failed) continue;
     for (const verb of step.verbs || []) {
-      const { positional } = parseLedgerArgs(verb.args ?? verb.argsText);
+      const { positional, kwargs } = parseLedgerArgs(verb.args ?? verb.argsText);
       const node = nodePath(positional[0]);
-      if (!isObjectRoot(node)) continue;
+      if (!node || (!isObjectRoot(node) && !controlNodes.has(node))) continue;
       if (verb.verb === 'create_spare_parms') {
         const result = verbResult(verb.result ?? verb.detail);
-        const values = result.leaf_values;
+        const values = result.leaf_values || specDefaults(kwargs.spec);
         if (!values || Array.isArray(values) || typeof values !== 'object') continue;
         for (const [parm, value] of Object.entries(values)) {
           const key = `${node}\u0000${parm}`;
@@ -417,13 +450,23 @@ function restoredPerturbations(steps) {
 
 function latestGeometryCounts(steps, fromIndex) {
   let latest = null;
+  const patterns = [
+    /(?:"?points"?|pts|点)\s*[:=]?\s*([\d,]+)[\s,;/|，／]*(?:"?prims"?|primitives?|面)\s*[:=]?\s*([\d,]+)/ig,
+    /([\d,]+)\s*(?:点|points?)\s*(?:\/|／|,|，|和|and)\s*([\d,]+)\s*(?:面|prim(?:s|itives?)?)/ig,
+  ];
   for (let offset = 0; offset < steps.length; offset++) {
     const step = steps[offset];
     const index = stepIndex(step, offset + 1);
     if (index < fromIndex || step.failed) continue;
     const text = String(step.resultText ?? step.resultPreview ?? '');
-    for (const match of text.matchAll(/"points"\s*:\s*(\d+)\s*,\s*"prims"\s*:\s*(\d+)/g)) {
-      latest = { index, points: Number(match[1]), prims: Number(match[2]) };
+    for (const pattern of patterns) {
+      for (const match of text.matchAll(pattern)) {
+        latest = {
+          index,
+          points: Number(match[1].replaceAll(',', '')),
+          prims: Number(match[2].replaceAll(',', '')),
+        };
+      }
     }
   }
   return latest;
@@ -431,10 +474,13 @@ function latestGeometryCounts(steps, fromIndex) {
 
 function finalGeometryCountClaim(assistantMessages) {
   const final = String(assistantMessages?.at(-1)?.text || '');
-  const matches = [...final.matchAll(/(\d+)\s*(?:点|points?)\s*(?:\/|／|,|，|和)\s*(\d+)\s*(?:prim(?:s|itives?)?)/ig)];
+  const matches = [...final.matchAll(/([\d,]+)\s*(?:点|points?)\s*(?:\/|／|,|，|和|and)\s*([\d,]+)\s*(?:面|prim(?:s|itives?)?)/ig)];
   if (!matches.length) return null;
   const match = matches.at(-1);
-  return { points: Number(match[1]), prims: Number(match[2]) };
+  return {
+    points: Number(match[1].replaceAll(',', '')),
+    prims: Number(match[2].replaceAll(',', '')),
+  };
 }
 
 /**
@@ -450,9 +496,15 @@ export function collectQualityLoopEvidence({
   const indexed = steps.map((step, offset) => ({ ...step, index: stepIndex(step, offset + 1) }));
   const firstMutation = indexed.find(sceneMutation) || null;
   const firstMutationTime = firstMutation?.time ?? Infinity;
-  const preMutationText = messageText(
-    assistantMessages.filter((message) => !Number.isFinite(message.time) || message.time <= firstMutationTime),
-  );
+  const preMutationText = [
+    messageText(
+      assistantMessages.filter((message) => !Number.isFinite(message.time) || message.time <= firstMutationTime),
+    ),
+    ...indexed.filter((step) => (
+      (!firstMutation || step.index < firstMutation.index)
+      && ['create_goal', 'todo_write'].includes(String(step.tool || ''))
+    )).map((step) => JSON.stringify(step.args || {})),
+  ].filter(Boolean).join('\n');
   const contractFields = {
     target: /(?:目标|对象|效果|target|deliverable|交付)/i.test(preMutationText),
     referenceStatus: /(?:参考|来源|无外部参考|假设|reference|source)/i.test(preMutationText),
@@ -463,7 +515,7 @@ export function collectQualityLoopEvidence({
     relations: /(?:连接|共轴|轴线|端点|包含|间隙|穿插|接触|关系|relations?|clearance|intersection)/i.test(preMutationText),
     evidencePlan: /(?:验证|验收|证据|视角|特写|render|evidence|check)/i.test(preMutationText),
   };
-  const requiresControls = /(?:程序化|可调|参数化|procedural|configurable|parameterized)/i.test(request);
+  const requiresControls = /(?:程序化|可调|可以调节|参数化|procedural|adjustable|configurable|parameterized)/i.test(request);
   const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(request);
   const requiredContractFields = [
     'referenceStatus', 'qualityLod', 'simplifications',
@@ -493,9 +545,11 @@ export function collectQualityLoopEvidence({
   const tabCreatesBeforeFirstRender = indexed
     .filter((step) => !firstRender || step.index < firstRender.index)
     .reduce((sum, step) => sum + (step.verbs || []).filter((verb) => verb.verb === 'tab_create' && verb.ok !== false).length, 0);
-  const skeletonCheckpointMentions = (assistantMessages || []).filter((message) => (
-    /(?:骨架|中心线|代理体|anchors?).{0,40}(?:验证|验收|通过|check|validate)/i.test(String(message.text || ''))
-  )).map((message) => ({ time: message.time, text: String(message.text || '').slice(0, 300) }));
+  const skeletonCheckpointMentions = (assistantMessages || []).filter((message) => {
+    const text = String(message.text || '');
+    return /(?:骨架|中心线|代理体|anchors?).{0,60}(?:验证|验收|通过|成功|check|validate)/i.test(text)
+      || /(?:验证|验收|通过|成功|check|validate).{0,60}(?:骨架|中心线|代理体|anchors?)/i.test(text);
+  }).map((message) => ({ time: message.time, text: String(message.text || '').slice(0, 300) }));
 
   const relationshipProbeSteps = [];
   const relationshipKeywords = new Set();
@@ -559,6 +613,24 @@ export function collectQualityLoopEvidence({
   };
 }
 
+/**
+ * Find user-requested quality dimensions that the final delivery itself leaves
+ * unverified while also presenting the task as complete. This is an audit risk,
+ * not an automatic artistic-quality verdict.
+ */
+export function requestedGoalReportedUnverified(userMessages = [], assistantMessages = []) {
+  const request = messageText(userMessages);
+  const final = String(assistantMessages?.at(-1)?.text || '');
+  if (!COMPLETION_MARKER.test(final)) return [];
+  const unverifiedLines = final.split(/\r?\n/).filter((line) => UNVERIFIED_MARKER.test(line));
+  if (!unverifiedLines.length) return [];
+  return REQUESTED_GOAL_SIGNALS.flatMap(([signal, pattern]) => {
+    if (!pattern.test(request)) return [];
+    const line = unverifiedLines.find((candidate) => pattern.test(candidate));
+    return line ? [{ signal, line: line.trim().slice(0, 500) }] : [];
+  });
+}
+
 export function qualityLoopRisks(evidence) {
   const risks = [];
   if (!evidence) return risks;
@@ -602,7 +674,7 @@ export function qualityLoopRisks(evidence) {
   if (evidence.applicable && evidence.contract.fields.controls && !evidence.perturbation.restored.length) {
     risks.push({
       code: 'procedural_control_not_perturbed',
-      detail: 'The task promised configurable controls, but no set → validate → restore perturbation was observed on an object-level control.',
+      detail: 'The task promised configurable controls, but no set → validate → restore perturbation was observed on a declared user-control node.',
     });
   }
   if (evidence.applicable && evidence.contract.fields.relations && !evidence.relations.probeSteps.length) {
@@ -620,6 +692,16 @@ export function qualityLoopRisks(evidence) {
     });
   }
   return risks;
+}
+
+export function completedVisionTodoWithoutEvidence(latestTodo, successfulVisionEvidence = []) {
+  if ((successfulVisionEvidence || []).length > 0) return false;
+  return Boolean((latestTodo || []).some((item) => {
+    const content = String(item?.content || '');
+    return item?.status === 'completed'
+      && /(?:vision|视觉|图像检查|图片检查)/i.test(content)
+      && !/(?:unverified|未验证|无法|失败|不可用|凭据|待用户|人工确认|交给用户)/i.test(content);
+  }));
 }
 
 export function collectValidationCoverage(steps) {

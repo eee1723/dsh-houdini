@@ -41,7 +41,8 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
 - 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、无动词只读探针、成功 exec 覆盖、Gate 拦截和成功裸修改；目录广度只说明任务触达哪些能力。
 - 开放式质量任务优先读取 `qualityLoopEvidence` 与对应 `completionRisks`，核对合同缺字段、research
   可用但未用、质量合同未加载、首张 render 过晚、关系 probe、控制扰动恢复和最终统计新鲜度；
-  自动风险是可复核证据索引，不是艺术质量评分。
+  自动风险是可复核证据索引，不是艺术质量评分。合同字段可来自 mutation 前 assistant prose、
+  goal 或 todo；后二者只证明 agent 记录了计划，用户确认仍以 ask result/用户消息为准。
 - 工具删除/合并不得由单次零使用推出。跨至少三个多样任务仍冗余、存在安全替代且无独立语义，才可列为删除候选。
 - Houdini 中先验证数据流和局部几何，再调相机、灯光、材质或视觉模型。渲染能出图不证明 SOP 结果正确。
 - 任务声称符合真实对象、行业范围或外部质量标准时，必须找到用户提供或 agent 实际检索的来源证据；自生成尺寸的内部一致、模型记忆和“看起来合理”只能标假设。风格化、用户授权自选或无需外部真实性的任务是边界，不强迫无意义研究。
