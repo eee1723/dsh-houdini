@@ -28,8 +28,9 @@
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
 | webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
-| 视觉产图/relay/证据判定 | ✅ 轻量 fallback；🔶 实机 provider A/B | `dsh-vision-fallback` 只配 Key+模型，不发布包装模型；render_view/media 与语义失败识别可用（§2.35–§2.37） |
+| 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
 | Host / Bridge 词表握手 | ✅ 代码与确定性测试 | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；现有 Houdini 进程待一次 runtime restart 激活 |
+| 模糊任务质量闭环 | 🔶 P1 已实现、待 runtime 重启后第三次 A/B 与第二领域（§2.41–§2.42） | 主 skill 强制合同/骨架/关系/扰动/新鲜证据；trace 确定性审计 HTA-023 |
 
 ---
 
@@ -1218,6 +1219,9 @@ Bridge 仍是旧代；这是部署状态，不再会被新 Host 静默接受。
 
 ### 2.37 魔方 trace 修复与轻量视觉 fallback（2026-08-24）
 
+> 2026-08-26 纠正：本节的 fallback 生产决策已由 §2.39 撤销；保留本节只作为当时实验与错误
+> 方向的历史记录。
+
 最新“带绑定动画的魔方” trace 完成了 ordered piece 状态、非交换 R→U、recovery、cook 与
 HIP 保存，但暴露四个可复现缺口：`verb_help(create_spare_parms)` 没给 `spec` 精确 schema；
 调用方把 `geo_frame_diff.mean_delta/max_delta` 误读成 `mean/max`；状态求值器修复后没有重跑
@@ -1237,6 +1241,144 @@ evidence 从 tool result 的完整 `__result__` 恢复被 ledger 截断的 rende
 `vision_describe`，不注册 adapter/provider directory、包装模型、免费链、OCR/截图工具或
 “+ 自动识图”分组。profile 同步通过官方 CLI 移除旧插件并 link 新插件；当前还需授权 Key 的
 实机同图 A/B，成功 transport 仍不等于视觉语义通过。
+
+### 2.38 DSH 更新取消总时限并公开真实下载进度（2026-08-26）
+
+**触发事实**：`Version & Diagnostics` 更新 DSH `0.1.1-rc.2` 时，冷 npm cache 实际从
+10:08:35 运行到 10:29:43 并以 exit 0 完成；manager 的固定 600 秒 `subprocess.run`
+先报超时，Windows 外层 `cmd.exe` 被结束后 npm 子进程仍继续下载，形成“界面失败、缓存稍后成功”的
+假失败。等待期间 UI 又因 `busy` 分支不渲染而没有任何包数、字节或速度证据。
+
+**落地契约**：
+
+1. DSH 精确版本下载改为流式 `Popen`，取消总时限；npm 进程正常退出、CLI 回报目标版本，或明确
+   非零退出才形成终态，耗时长本身不再等于失败。
+2. npm 使用无颜色 `silly` 输出。tracker 以待拉取 tarball URL 集合作为总数，以成功 fetch 的唯一
+   tarball URL 集合作为已完成数；依赖图尚未解析完时显示 `已完成/?` 和不定进度条，避免伪造百分比。
+3. 接收字节按 project-local npm `_cacache/content-v2` 相对启动基线的实际增长统计；速度使用最近
+   5 秒样本的滑动平均，同时显示阶段、当前包与累计耗时。该口径是本地缓存实收量，不冒充 registry
+   的 `Content-Length`。
+4. npm stdout/stderr 由独立 reader 持续排空，worker 每 0.5 秒发布快照；Qt timer 在 `busy` 时仍只
+   读取状态并刷新专用进度条，不做网络、磁盘遍历或进程等待。错误只保留有界输出尾部，避免大日志
+   占满内存。
+
+**确定性验收**：`tools/tests/dsh-manager-update.test.py` 覆盖两个待下载 tarball/一个完成 tarball
+的计数、MiB/速度/耗时格式及更新状态收口；H21 hython 回归通过。另以真实已缓存 rc.2 执行流式
+路径，CLI 返回目标版本并产生多帧进度快照。
+
+### 2.39 生产视觉回归 vision-toolkit，退役轻量 fallback（2026-08-26）
+
+**本机实测事实**：`~/.dsh/profiles/web/package.json` 同时激活了
+`@anionex/dsh-vision-toolkit@0.1.7` 与本地 `dsh-vision-fallback`；用户明确反馈当前 toolkit
+更好用。toolkit 的已安装 manifest 和中文 README 证明它不是单一描述接口：默认只暴露
+`vision_toolkit_activate`，加载 `vision-tools` skill 后按当前 agent 挂载 `vision_glance`、
+ground/detect、crop/trace、pixel diff、长图 OCR、前景提取、主色和 HTML screenshot 共 10 个
+独立 schema，并提供受控 Artifact 目录与 Web 预览。
+
+当前 `web/cordis.patch.yml` 把 provider 指向 DashScope OpenAI-compatible endpoint、模型
+`qwen-vl-max`、凭据引用 `VISION_API_KEY`。审计只读取了 endpoint/model/credential 名称，没有读取
+或输出密钥值；用户对当前体验的确认成为生产选择证据。版本先精确锁定 0.1.7，避免第三方包升级
+无声改变 schema、runtime 或 provider 行为。
+
+**替换契约**：
+
+1. `dsh-profile.requirements.json` 的第二个生产 bundle 改为
+   `@anionex/dsh-vision-toolkit@0.1.7`；`removePlugins` 同时列出旧
+   `dsh-vision-router` 和 `dsh-vision-fallback`。同步只通过官方 `dsh plugin` 修改 manifest，
+   不覆盖用户 profile patch 或 DSH Credential。
+2. 删除仓库自带的 `plugins/dsh-vision-fallback` host/client、设置页和专属测试；package 发布清单
+   不再携带 `plugins/`。旧 fallback 不再与 toolkit 重复注册视觉入口，也不再维护另一套 provider
+   映射与 secret 存储。
+3. profile-sync 回归改为验证 scoped npm 包、精确版本、缺失/重复 bundle，以及 router/fallback
+   双迁移；trace semantic refusal fixture 改用生产 inspection 工具 `vision_glance`。
+4. 当前机同步后应只保留 `dsh-houdini + @anionex/dsh-vision-toolkit` 两个项目管理的生产能力，
+   同时原 DashScope patch 保持不变。视觉完成门不放宽：transport、bootstrap、Artifact
+   presentation 均不能替代 `role=inspection && semanticOk=true`。
+
+**本机部署验收**：官方 profile sync 返回 `removed dsh-vision-fallback`；同步后依赖只有
+`dsh-houdini` 与 `@anionex/dsh-vision-toolkit:^0.1.7`，bundle 层为 base/web-app 加这两个能力。
+同步前后 `cordis.patch.yml` SHA-256 相同，证明 DashScope `qwen-vl-max` 配置与 Credential 引用
+未被覆盖。用 rc.2 CLI 在临时 :3099 启动真实 `web` profile，端口持续监听且首页 HTTP 200，随后
+正常停止测试进程；生产 :3081 留给 Houdini launcher 启动。
+
+### 2.40 DSH rc.2 类型对齐与五工具展示卡片（2026-08-27）
+
+生产 runtime marker 当前指向 DSH `0.1.1-rc.2`，其 `dsh-tools` 与 `dsh-system-prompt` 也都是
+`0.1.1-rc.2`；仓库原开发图仍混用 `dsh-tools 0.0.1-rc.1` 与
+`dsh-system-prompt 0.0.1-rc.5`，旧的 Phase 1 `0.1.0-rc.6` 目标已经过时。本轮把两个直接接口
+依赖及 `dsh-system-prompt` peer 范围统一到 `^0.1.1-rc.2`，lockfile 中由 `dsh-tools` 引入的
+开发期 peer 类型图也统一到 rc.2。首次编译立即抓到 `presentationMeta` 必须是可持久化
+`JsonValue`、不能是宽泛 `Record<string, unknown>`，证明对齐不是纯版本号整理。
+
+五个 `houdini_*` 工具均补纯函数展示契约：exec 为 `generic/edit`，query/status 为
+`generic/read`，job submit/cancel 为 `generic/execute`；调用卡展示 Python 代码或 job id，结果卡
+保留原模型内容，只用最小 `presentationMeta`（`ok`、`jobId/status`、verb/media 数量）恢复语义
+标题。presenter 不读取 Houdini、时钟、会话或文件，非法/旧 schema 回放参数由 `defineTool`
+安全退回通用卡片。新增 `houdini-tool-presentation.test.mjs` 直接审计五个注册定义、成功/失败/
+running 状态、非法回放与重复纯投影；`npm test` 现为 6 个 Node 测试文件全绿。现有 Houdini/DSH
+进程仍需 `Repair and restart runtime` 后才会加载新 host 代码；本轮未把“代码契约通过”冒充已在
+当前 WebView 完成视觉验收。
+
+### 2.41 模糊任务前置合同与程序化资产质量门（2026-08-27）
+
+最新 baseline `d6df94d7-d778-4d35-8529-a6f3e9f4e804` 的原始请求只有“细节丰富的程序化
+自行车”。Agent #3 正确询问并确认山地车与 SOP + render_view 交付，但没有外部参考、LOD、允许
+简化或参数化完成门；随后把共享位置硬编码进多个 VEX。首轮 cook、piece 与整车语义读图通过后
+即宣布完成，用户纠正才触发 #26 的局部检查并发现前叉脱开、63% 胎齿位于内圈/侧壁、链条不绕
+导轮和 BB 间隙。修复证明现有 bridge/动词/rollback/视觉链路足以支持局部迭代，也证明主要缺口
+位于 build 前的外部质量模型和 build 后的部件关系门，而不是继续扩节点创建 API。
+
+按 governance E1 边界做窄修：生产 Houdini preset 仅对会实质改变方案的开放式歧义要求
+`research/clarify/contract`，简单规格完整任务直接执行；`houdini-sop-workflow` 新增按需
+`procedural-quality-contract.md`，定义参考/LOD/允许简化、共享尺寸与 anchor、模块关系、局部
+特写和关键控制扰动门，不写入自行车专用尺寸或节点 recipe；trace rubric 扩展前置阶段，并把
+“自生成规格再凭模型记忆证明真实”登记为 HTA-023 候选。没有新增 skill 或 verb，`hip_save`、
+通用关系自省仍只是后续候选，等待重复任务证据。
+
+当前状态是 **verified（结构/构建/打包），未 released**：skill quick validation、strict governance
+audit、`npm test`、`npm pack --dry-run`，以及 H21.0.440 的 raw-gate / ownership /
+caught-failure / tab-create-failure 四项强制回归均通过；仍需要 `Repair and restart runtime` 后新建
+Houdini session，用完全相同原始提示词跑 A/B，不能追加“检查比例/连接”的用户提醒。首个验收看
+是否在大 batch 前形成参考/质量/关系合同，首次完成前是否主动发现同类结构问题；第二个开放式
+模拟或渲染任务复核后，HTA-023 才能从 E1 升 E2 并讨论更强执行守卫或结构化合同工具。
+
+### 2.42 自行车 A/B 后的 P1 强完成协议与 HTA-023 确定性审计（2026-08-27）
+
+新 session `e0bc309b-ab8b-4a40-b636-14217cd2b91f` 用与 baseline 完全相同的“细节丰富的程序化
+自行车”提示，system hash 从 `f5d00dee1ea6eb96` 变为 `b8d90bbae480fd78`，证明 P0 preset 已加载。
+Agent 确实在 mutation 前选择山地车、披露无参考假设、建立 14 个对象级控制和 6 个 named anchors，
+模块结构也比 baseline 更集中；但可用工具中已有 `web_search`/`read`，它仍未检索参考或读取
+`procedural-quality-contract.md`，没有质量/LOD 与允许简化，首张 render 前创建 116 个节点，未做
+任何对象级控制的扰动恢复。最终报告又复用了牙盘修改前的 5740 点/4561 prim；末次 render 的
+真实 fingerprint 已是 6027 点/4848 prim。五次 render/read_image 证明视觉链路可用，但远景可辨认
+仍被升级成局部关系和总体质量通过。
+
+这次同领域重复把 HTA-023 从单 trace 候选提升为 S2 同领域证据，且说明主因不是缺 Houdini 动词：
+P0 让 agent 会复述合同，强制 checkpoint 却藏在“按需阅读”的 reference，因而没有进入执行上下文。
+P1 保持域中立，不加入自行车尺寸或专用 verb：
+
+1. `houdini-sop-workflow/SKILL.md` 对开放式、质量敏感、机械关系复杂或可调资产强制在大规模 mutation
+   前读取质量合同，并内联研究/合同、骨架、关系账本、视觉批评、扰动恢复和新鲜证据六个 checkpoint。
+2. 生产 preset 把合同改为持续证据账本；完成前逐项标 `pass/fail/unverified`，可调交付要扰动并恢复
+   一个关键控制，最后一次 mutation 后刷新依赖证据。节点数、primitive 数、无 warning、成功 render
+   或完成 todo 均不能补足质量证据。
+3. evidence schema v2 新增 `qualityLoopEvidence`，并从 request header 保留真实 available tools；
+   HTA-023 确定性风险覆盖合同缺字段、质量合同未加载、可用 research 未用、无来源外部真实性、
+   首次视觉过晚、无控制扰动、关系合同无 probe 和最终点数/prim 陈旧。用户已给参考是明确反例。
+4. `trace-report.mjs` 增加质量闭环卡片与风险明细；`read_image.file_path` 纳入帧提取，修复实际完成
+   5 次语义 inspection 而 HTML 仍显示 `vision-inspection=[]` 的报告缺口。
+
+确定性 fixture 同时覆盖缺门 trace 与完整 trace：完整路径必须包含 web/reference、质量合同加载、
+对象级 `set → cook/query → restore`、关系 probe 和末次修改后的匹配统计。下一次仍先重启 runtime，
+再用相同自行车提示做第三次无追加纠错 A/B；之后用开放式模拟或渲染任务验证跨域行为。两者仍跳门
+时才把合同状态下沉 Host/工具层，不继续无上限堆 prompt。
+
+当前 P1 状态为 **verified locally，未 released/未完成行为 A/B**：两个目标 skill 均通过 UTF-8
+`quick_validate.py`，strict governance audit 为 5 registrations / 0 issue / 0 warning；`npm test`
+完成构建并通过 6 个 Node 测试文件，`npm pack --dry-run` 包含质量合同和 trace 资源；H21.0.440
+的 raw-gate、ownership、caught-failure、tab-create-failure 四项强制回归全绿。旧 trace 重提取确认
+新版报告把 5 次 `read_image(file_path=...)` 正确记为 frame 1 semantic inspection，并稳定检出上述
+六项质量闭环风险。生产 Houdini/DSH 进程仍须 `Repair and restart runtime` 才能加载 P1。
 
 ## 3. 卡点（blockers）
 
@@ -1362,9 +1504,10 @@ QPainter 圆弧 spinner。
 
 ### Phase 1 — 合规对齐（不改行为，只贴规范）
 
-5. ⏳ devDependency `dsh-tools` 对齐运行时 `0.1.0-rc.6`（消除 schema DSL 漂移风险）。
-6. ⏳ 5 个工具补 `presentCall`/`presentResult`（terminal/generic 卡片）+ `presentationMeta`
-   （§6 硬约束：必须是 args 的纯函数，UI 格式不进模型结果）。
+5. ✅ 开发期 `dsh-tools` / `dsh-system-prompt` 与生产 DSH `0.1.1-rc.2` 对齐（§2.40）；
+   lockfile peer 类型图同步升级，编译已实际捕获并修正 `presentationMeta` 的 `JsonValue` 约束。
+6. ✅ 5 个工具补纯函数 `presentCall`/`presentResult` + `presentationMeta`（§2.40）：全部使用
+   语义正确的 generic 卡片与 read/edit/execute kind，UI 格式不进入模型结果；新增注册/回放回归。
 7. ✅ Host/trace 侧已有 Node 最小测试：session hint、trace dedupe/evidence、目录契约与
    Host/Bridge mismatch fail-closed；仍需为工具注册/渲染层逐步补覆盖。
 8. ✅ 提升动词采用率（§2.8，2026-08-17）：GUIDANCE 改「动词 = 主接口 / hou = 逃生舱」
@@ -1378,8 +1521,9 @@ QPainter 圆弧 spinner。
 
 ### Phase 2 — 视觉反馈闭环（README 路线 #1）
 
-8. 🔶 产图与 relay 已完成：`render_view`（OpenGL ROP 离屏验证）+ `/media` 回传工作区。
-   evidence 已能拒绝假视觉成功；生产 provider 替换仍待带配额凭据的隔离同图 A/B（§2.35/2.36）。
+8. ✅ 产图、relay 与生产工具链已收口：`render_view`（OpenGL ROP 离屏验证）+ `/media` 回传
+   工作区，evidence 能拒绝假视觉成功，生产固定 vision-toolkit 0.1.7（§2.39）。未来升级 toolkit、
+   model 或 provider 仍须带配额凭据做隔离同图 A/B，不能把 transport 成功当识图成功。
 
 ### Phase 3 — 迁移官方 jobs 服务（README 路线 #2）
 
@@ -1387,7 +1531,7 @@ QPainter 圆弧 spinner。
    + 完成通知；桥侧 job 端点退役。迁移前的小改：`houdini_job_status` 加
    `wait`/`timeout_ms` 长轮询参数（§2.7-3 的 loop guard 误报，对齐 `job_output` 形态）。
 
-### Phase 4 — 权限分层（README 路线 #4）
+### Phase 4 — 权限分层（README 路线 #3）
 
 10. ⏳ `tools/pre-execute` 小插件：`houdini_query*` → `next()`，`houdini_exec*` → `ask`（§6 约束）。
 
@@ -1420,7 +1564,7 @@ QPainter 圆弧 spinner。
 
 | 主题 | 规范要点 | 出处 |
 |---|---|---|
-| 展示意图 | `presentCall`/`presentResult`/`presentationMeta` 必须是 args 的**纯函数**（无 I/O/时钟/会话状态，否则破坏日志回放）；UI 格式不进模型结果；卡片类型只有 generic/terminal/diff/search/web，**无 image 卡片** | `cookbook/adding-a-tool.zh.md`、`packages/core/tools/src/presentation.ts` |
+| 展示意图 | `presentCall`/`presentResult`/`presentationMeta` 必须是 args/持久化结果的**纯函数**（无 I/O/时钟/会话状态，否则破坏日志回放）；UI 格式不进模型结果；调用卡为 generic/terminal/diff，结果卡另有 search/read/web，**无 image 卡片** | `cookbook/adding-a-tool.zh.md`、`packages/core/tools/src/presentation.ts` |
 | 图片结果 | 不能塞裸 base64：先 `ctx.attachments.saveImage()` 拿内容寻址引用，`output.render` 返回 `{type:'image', attachment}` 块；执行前校验模型路由 `inputModalities` 含 image，否则拒绝（**DeepSeek 官方模型目前多为纯文本路由**，此限制要写进插件文档） | `packages/fs/tool-fs/src/read-image.ts` |
 | jobs 迁移 | 软依赖 `ctx.get('jobs')`，缺失时响亮报错；`declare module` 合并 `JobKindMap` 加 `'houdini'`；`start()` 发布 id 后用任务自己的取消信号，**不再用 `exec.signal`**；组合需 `dsh-jobs-local` + `dsh-tool-jobs`（后者才提供 `job_list`/`job_kill`/`job_output`，缺它 agent 无法启动后台工作） | `packages/jobs/*/README`、`cookbook/adding-a-tool.zh.md` |
 | 权限分层 | `tools/pre-execute` 是 waterfall：放行必须 `return next()`（直接 return 会短路全链）；审批请求只带工具名/原因**不带参数** → 分层按工具名做；只有一次性授权（allowed-once），无 allow-always；要单调拒绝用 `ctx.tools.guard()` | `cookbook/extension-cookbook.zh.md`、`packages/interaction/user-approval/README` |

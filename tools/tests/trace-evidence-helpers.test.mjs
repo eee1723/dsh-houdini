@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   collectValidationCoverage,
+  collectQualityLoopEvidence,
   execResultFromPreview,
   classifyVisionEvidence,
   collectVerbAdoption,
@@ -10,6 +11,7 @@ import {
   frameFromPath,
   parseLedgerArgs,
   parseVerbLedgerLine,
+  qualityLoopRisks,
   renderOutputsFromPreview,
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
@@ -190,7 +192,7 @@ assert.equal(bootstrapFailure.ok, false);
 assert.equal(bootstrapFailure.reason, 'STRUCTURED_BOOTSTRAP_DISABLED');
 
 const describeRefusal = classifyVisionEvidence({
-  tool: 'vision_describe', failed: false, args: { paths: ['E:/tmp/a_f13p0.png'] },
+  tool: 'vision_glance', failed: false, args: { images: ['E:/tmp/a_f13p0.png'] },
   resultPreview: '由于我无法查看图像（模型仅接受文本输入，且图片已被省略），无法分析。',
 });
 assert.equal(describeRefusal.role, 'inspection');
@@ -202,6 +204,12 @@ const presentation = classifyVisionEvidence({
 });
 assert.equal(presentation.role, 'presentation');
 assert.equal(presentation.semanticOk, null);
+
+const readImageFilePath = classifyVisionEvidence({
+  tool: 'read_image', failed: false, args: { file_path: 'E:/tmp/a_f21p0.png' }, resultPreview: '<type>image</type>',
+});
+assert.deepEqual(readImageFilePath.images, ['E:/tmp/a_f21p0.png']);
+assert.deepEqual(readImageFilePath.frames, [21]);
 
 assert.deepEqual(collectVerbAdoption([
   { tool: 'houdini_exec', isHoudini: true, failed: false, verbs: [{ verb: 'tab_create' }], mutatingRawMethods: [] },
@@ -221,5 +229,134 @@ assert.deepEqual(collectVerbAdoption([
   blockedVerblessRawMutationCalls: 1,
   successfulVerblessRawMutationCalls: 0,
 });
+
+const incompleteQualityLoop = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '请做一个细节丰富的程序化自行车。' }],
+  assistantMessages: [{
+    time: 2,
+    text: '目标是山地车；无外部参考，按典型尺寸假设。暴露控制参数，并检查连接关系和整体渲染证据。',
+  }, {
+    time: 20,
+    text: '完成：20 点 / 10 prim，视觉验证通过。',
+  }],
+  availableTools: ['web_search', 'read'],
+  activatedSkills: ['houdini-sop-workflow'],
+  steps: [{
+    index: 1, time: 3, tool: 'skill', failed: false, args: { name: 'houdini-sop-workflow' },
+    resultPreview: 'Load referenced resources only as needed: procedural-quality-contract.md', verbs: [],
+  }, {
+    index: 2, time: 4, tool: 'houdini_exec', failed: false, verbs: Array.from({ length: 25 }, (_, index) => ({
+      verb: 'tab_create', ok: true, args: JSON.stringify(['/obj/bike', 'null', `n${index}`]),
+    })),
+  }, {
+    index: 3, time: 5, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'render_view', ok: true, args: '["/obj/bike/OUT"]', result: { output: 'E:/tmp/bike_f1p0.png' },
+    }], resultText: '{"points":25,"prims":12}',
+  }],
+});
+assert.equal(incompleteQualityLoop.applicable, true);
+assert.deepEqual(incompleteQualityLoop.contract.missing, ['qualityLod', 'simplifications']);
+assert.equal(incompleteQualityLoop.reference.qualityContractRequired, true);
+assert.deepEqual(incompleteQualityLoop.reference.qualityContractLoadSteps, []);
+assert.equal(incompleteQualityLoop.reference.unsupportedExternalTruthClaims.length, 0);
+assert.equal(incompleteQualityLoop.skeleton.tabCreatesBeforeFirstRender, 25);
+assert.deepEqual(incompleteQualityLoop.perturbation.restored, []);
+assert.equal(incompleteQualityLoop.freshness.finalCountMatchesEvidence, false);
+assert.deepEqual(qualityLoopRisks(incompleteQualityLoop).map((risk) => risk.code), [
+  'quality_contract_incomplete',
+  'quality_contract_reference_not_loaded',
+  'external_reference_available_but_unused',
+  'late_first_visual_validation',
+  'procedural_control_not_perturbed',
+  'relationship_contract_without_evidence',
+  'stale_final_geometry_counts',
+]);
+
+const completeQualityLoop = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: 'Create a detailed procedural product asset.' }],
+  assistantMessages: [{
+    time: 2,
+    text: 'Target and deliverable: product-level LOD from a sourced reference. Simplifications: omit internals. Units and dimensions are in meters. Expose controls. Validate axis clearance relations with query evidence and local render views.',
+  }, {
+    time: 20,
+    text: 'Final output: 100 points / 50 prims; remaining external claims are unverified.',
+  }],
+  availableTools: ['web_search', 'read'],
+  activatedSkills: ['houdini-sop-workflow'],
+  steps: [{ index: 1, time: 2.1, tool: 'web_search', failed: false, args: {}, verbs: [] }, {
+    index: 2, time: 2.2, tool: 'read', failed: false, args: {}, verbs: [],
+    resultPreview: '# 程序化 SOP 质量合同',
+  }, {
+    index: 3, time: 3, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'set_parms', ok: true, args: '["/obj/product",{"scale":1}]',
+    }],
+  }, {
+    index: 4, time: 4, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'set_parms', ok: true, args: '["/obj/product",{"scale":1.2}]',
+    }, { verb: 'cook_node', ok: true, args: '["/obj/product/OUT"]' }],
+  }, {
+    index: 5, time: 5, tool: 'houdini_query', failed: false,
+    code: 'measure axis distance and clearance', verbs: [],
+  }, {
+    index: 6, time: 6, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'set_parms', ok: true, args: '["/obj/product",{"scale":1}]',
+    }, { verb: 'cook_node', ok: true, args: '["/obj/product/OUT"]' }],
+  }, {
+    index: 7, time: 7, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'render_view', ok: true, args: '["/obj/product/OUT"]', result: { output: 'E:/tmp/product_f1p0.png' },
+    }], resultText: '{"points":100,"prims":50}',
+  }],
+});
+assert.deepEqual(completeQualityLoop.contract.missing, []);
+assert.deepEqual(completeQualityLoop.reference.researchSteps, [1]);
+assert.deepEqual(completeQualityLoop.reference.qualityContractLoadSteps, [2]);
+assert.equal(completeQualityLoop.perturbation.restored.length, 1);
+assert.deepEqual(completeQualityLoop.relations.probeSteps, [5]);
+assert.equal(completeQualityLoop.freshness.finalCountMatchesEvidence, true);
+assert.deepEqual(qualityLoopRisks(completeQualityLoop), []);
+
+const userReferenceBoundary = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '按这个参考链接做细节丰富的程序化产品：https://example.test/spec' }],
+  assistantMessages: [{ time: 2, text: '目标符合该真实产品规格；产品级 LOD，不省略外壳，使用米制控制参数，验证连接关系并渲染取证。' }],
+  availableTools: ['web_search'],
+  steps: [],
+});
+assert.equal(userReferenceBoundary.reference.userProvidedReference, true);
+assert.equal(
+  qualityLoopRisks(userReferenceBoundary).some((risk) => risk.code === 'external_reference_available_but_unused'),
+  false,
+);
+
+const delegatedStyleBoundary = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '做一个高质量的风格化模型，不需要外部参考，比例你决定。' }],
+  assistantMessages: [{ time: 2, text: '采用典型比例作为未验证的风格假设。' }],
+  availableTools: ['web_search'],
+  steps: [],
+});
+assert.equal(delegatedStyleBoundary.reference.userAuthorizedNoResearch, true);
+assert.equal(
+  qualityLoopRisks(delegatedStyleBoundary).some((risk) => risk.code === 'external_reference_available_but_unused'),
+  false,
+);
+
+const spareParmPerturbation = collectQualityLoopEvidence({
+  userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],
+  assistantMessages: [{ time: 2, text: '产品级 LOD；无参考假设；不省略；暴露控制参数，验证关系并渲染。' }],
+  steps: [{ index: 1, time: 3, tool: 'houdini_exec', failed: false, verbs: [{
+    verb: 'create_spare_parms', ok: true, args: '["/obj/asset"], {"spec":[]}',
+    result: { leaf_values: { scale: 1 } },
+  }] }, {
+    index: 2, time: 4, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'set_parm', ok: true, args: '["/obj/asset","scale",1.25]',
+    }, { verb: 'cook_node', ok: true, args: '["/obj/asset/OUT"]' }],
+  }, {
+    index: 3, time: 5, tool: 'houdini_query', failed: false, code: 'measure clearance distance', verbs: [],
+  }, {
+    index: 4, time: 6, tool: 'houdini_exec', failed: false, verbs: [{
+      verb: 'set_parm', ok: true, args: '["/obj/asset","scale",1]',
+    }, { verb: 'cook_node', ok: true, args: '["/obj/asset/OUT"]' }],
+  }],
+});
+assert.equal(spareParmPerturbation.perturbation.restored.length, 1);
 
 console.log('trace evidence helper tests passed');

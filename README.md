@@ -159,20 +159,22 @@ python houdini/install.py
 
 安装脚本现在同时完成两部分：写入所有已检测 Houdini 版本的 package，并把
 `dsh-profile.requirements.json` 声明的完整能力同步到 DSH `web` profile。目前包括本地
-`dsh-houdini` bundle 和随仓库发布的轻量 `dsh-vision-fallback`。后者只注册一个备用
-`vision_describe` 工具，不注册 LLM provider、包装模型或“+ 自动识图”分组；不具备图像输入
-能力的主模型可把 relayed render 交给独立视觉模型检查。同步会迁移移除旧
-`dsh-vision-router`，且始终通过官方 `dsh plugin` 命令修改 profile。
+`dsh-houdini` bundle 和锁定的 `@anionex/dsh-vision-toolkit@0.1.7`。后者按需加载
+`vision-tools` skill，并提供 `vision_glance`、ground/detect、crop/trace、pixel diff、长图 OCR、
+前景提取、主色分析和本地 HTML 截图共 10 个独立工具。同步会迁移移除旧
+`dsh-vision-router` 和已退役的本地 `dsh-vision-fallback`，且始终通过官方 `dsh plugin`
+命令修改 profile。
 
 可先 `python houdini/install.py --print` 预览 Houdini package 内容；只安装 Houdini 部分、
 不联网同步 DSH profile 时显式使用 `python houdini/install.py --skip-dsh-profile`。
 
-> 备用视觉工具会把 agent 明确选择的图片和问题发送给所配置的外部视觉服务。默认模型标识为
-> `qwen/qwen3-vl-plus`；请只使用你授权的数据与 API Key。
+> `vision_glance`、ground/detect 和非 split-only 的长图 OCR 会把 agent 明确选择的图片与问题
+> 发送给所配置的外部视觉服务；crop/trace/pixel diff/前景提取/主色/HTML 截图走本地流水线。
+> 请只使用你授权的数据、端点与 DSH Credential。
 
 > ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
 
-重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 打开即自动检查，只用两行显示 DeepSeek Harness 与 DSH-Houdini 的当前版本、最新版本和对应更新动作。DSH 从 npm 更新，插件仅在 Git 状态允许安全快进时从 `origin/main` 更新并执行 `npm install` / build。更新完成且没有运行中的 DSH turn 或 Houdini job 时会自动重启服务；忙碌时只暂存更新，按钮变为 `Restart when idle`。独立的 `Restart Services` 不再占主界面，折叠到 `Advanced diagnostics` 并改名为 `Repair and restart runtime`，只用于开发后刷新或服务修复。启动器在 :3081 真正就绪后写带监听 PID 的 `.dsh-runtime.json`，因此面板展示的是已验证的运行版本，不再把缓存候选冒充当前版本。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内最近写入的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
+重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 打开即自动检查，只用两行显示 DeepSeek Harness 与 DSH-Houdini 的当前版本、最新版本和对应更新动作。DSH 从 npm 更新；精确版本下载没有总时限，面板持续显示需下载包的“已完成/总数”、本地内容缓存实际接收量、5 秒滑动平均速度、耗时和当前包，依赖解析期间总数未知时使用不定进度条。插件仅在 Git 状态允许安全快进时从 `origin/main` 更新并执行 `npm install` / build。更新完成且没有运行中的 DSH turn 或 Houdini job 时会自动重启服务；忙碌时只暂存更新，按钮变为 `Restart when idle`。独立的 `Restart Services` 不再占主界面，折叠到 `Advanced diagnostics` 并改名为 `Repair and restart runtime`，只用于开发后刷新或服务修复。启动器在 :3081 真正就绪后写带监听 PID 的 `.dsh-runtime.json`，因此面板展示的是已验证的运行版本，不再把缓存候选冒充当前版本。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内最近写入的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
 
 > ⚠️ 服务重启会替换前端进程；版本面板会先检查活动 turn/job，检测到忙碌就暂缓，不会强制中断。
 
@@ -196,7 +198,7 @@ dsh web                                                 # 起前端（profile �
 在 UI 新建会话时选 **「Houdini 模式」**。安装器用 DSH 官方插件命令 link 本地目录并同步
 所需 bundle；改代码后 `npm run build`，再从 Houdini 诊断面板展开 `Advanced diagnostics`，执行 `Repair and restart runtime` 即可
 同步 preset 与新增依赖。卸载时分别执行
-`dsh plugin --profile web remove dsh-houdini dsh-vision-fallback`。
+`dsh plugin --profile web remove dsh-houdini @anionex/dsh-vision-toolkit`。
 
 仓库另带一个 **`houdini-dev` 模式 preset**（`presets/houdini-dev/`）：工具集与 `houdini` 完全相同，仅 persona 换成 coding/development——以插件仓库为主目标、把运行中的 Houdini 会话当**测试目标**（改 `src/`/`client.js`/`houdini/python3.11libs/` 时用 `houdini_*` 工具做端到端验证）。开发/测试插件本身时选 **「Houdini 开发模式」**，复制方式同上（`presets/houdini-dev/` → `~/.dsh/.agent-presets/houdini-dev/`）。
 
@@ -209,13 +211,15 @@ dsh web                                                 # 起前端（profile �
 - `bridgeUrl`（默认 `http://127.0.0.1:8765`）— 桥的地址
 - `requestTimeoutMs`（默认 `120000`）— 单次桥调用超时；长任务用 `houdini_job_submit`，不受此限
 
-`dsh-vision-fallback` 在 Web UI 的 `设置 → 插件 → 视觉备用` 中配置，保存后立即供
-`vision_describe` 使用。配置刻意只有两项：
+`@anionex/dsh-vision-toolkit` 在 Web UI 的 `设置 → 视觉工具` 中配置。远程视觉工具需要
+OpenAI-compatible 或 Anthropic 视觉端点、模型和 DSH Credential，并应在设置页显式执行
+“测试连接”；本地工具不需要视觉 API Credential。会生成文件的工具只写入当前工作区的
+`.dsh-vision-toolkit/artifacts`，并返回可预览、下载或继续复用的 Artifact 描述。
 
-- `apiKey` — 当前视觉服务的 Key（设置页按 secret 字段遮罩）
-- `model`（默认 `qwen/qwen3-vl-plus`）— `供应商/模型`；当前内置 `qwen`/`dashscope`、`openai`、`openrouter` 的 OpenAI-compatible 接口映射
-
-它不会复制模型目录。以后增加供应商只扩展插件内部的接口映射，不增加设置项。
+模型上下文默认只暴露轻量的 `vision_toolkit_activate` 引导；agent 加载 `vision-tools` skill 后，
+10 个 `vision_*` 执行工具才进入该 agent 的 schema，避免每轮提示词无条件膨胀。视觉 transport、
+runtime bootstrap、Artifact presentation 与语义识图仍是四层独立证据；只有 inspection 工具返回了
+真实图像语义，才能声称“视觉已验证”。
 
 ## 健壮性
 
@@ -226,12 +230,11 @@ dsh web                                                 # 起前端（profile �
 - `hou` 只能在 Houdini 主线程调用：桥把全部执行编组到主线程（GUI 下是 QTimer 泵，headless 下是 `__main__` 主循环泵），因此严格串行——后台 job 是排队异步而非并行，且代码执行期间 GUI 会像原生 cook 一样冻结；取消是协作式的——排队中的 job 在执行前被丢弃（零场景副作用），运行中的杀不掉
 - 桥绑定 `127.0.0.1`，未做鉴权——不要在不可信网络上暴露端口
 - 客户端超时/取消不会中断 Houdini 内已在执行的代码：调用方看到失败或取消时，场景可能已经被改——重试前先用 `houdini_query` 确认场景状态
-- `dsh-tools` 的 npm 发布版本落后于 dsh 源码仓库：本包 devDependency 是 `^0.0.1-rc.1`，而当前 dsh 运行时用 `0.1.0-rc.6`。二者的 `defineTool`/输出 schema DSL 已实测一致（必填字段按属性写 `required: true`，而不是 JSON-Schema 的 `required` 数组）；若未来对不上，按你实际安装的 dsh 版本对齐 devDependency
+- 开发期 `dsh-tools` / `dsh-system-prompt` 已与当前生产 DSH `0.1.1-rc.2` 对齐；升级 DSH 时须同步审计这两个直接接口依赖并跑 `npm test`，避免 schema DSL、输出 metadata 或 presenter 类型静默漂移
 
 ## 后续路线（按价值排序）
 
-1. **视觉 provider 实机验收**：轻量 fallback、render relay 和语义失败识别已完成；仍需填入授权且有配额的 Key 做同图 A/B，不能把 transport 成功当识图成功。
+1. **视觉 provider 持续验收**：生产 profile 已固定本机验证好用的 vision-toolkit 0.1.7；升级 toolkit、模型或 provider 前仍需用同一组 Houdini render 做同图 A/B，不能把 transport 成功当识图成功。
 2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh jobs 服务，获得统一的 list/kill/output/通知。
-3. **UI 卡片**：为工具补纯函数 `presentCall`/`presentResult`/`presentationMeta`。
-4. **权限分层**：`tools/pre-execute` 实现 query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。
-5. **回归覆盖重建**：按当前 47 动词契约恢复最小 H21/H22/GUI smoke，不复刻已删除的历史大脚本。
+3. **权限分层**：`tools/pre-execute` 实现 query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。
+4. **回归覆盖重建**：按当前 47 动词契约恢复最小 H21/H22/GUI smoke，不复刻已删除的历史大脚本。

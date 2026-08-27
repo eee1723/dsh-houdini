@@ -20,8 +20,8 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
    多会话对比时向 evidence 脚本连续传多个 session 路径。不得只读 HTML 摘要；必须保留原始事件证据。
 3. 完整阅读 [references/audit-rubric.md](references/audit-rubric.md)，按其中的强制量表审计。分析工具演化或重复问题时再读 [references/known-patterns.md](references/known-patterns.md)。
    若 trace 是 SOP 构建/动画任务，同时加载 `houdini-sop-workflow`，用其模块契约检查 agent 路径。
-4. 从用户消息重建任务契约：产物、视觉目标、时间/动画目标、交互约束、保存/交付要求。不要用 agent 自己的 todo 替代用户契约。
-5. 给轨迹划分真实阶段：检查 → 设计 → 分模块构建 → 模块验证 → 集成 → 静态视觉验证 → 时序验证 → 清理/交付。阶段以证据和状态跃迁为准，不按 assistant 宣称划分。
+4. 从用户消息重建任务契约：产物、参考状态、质量/LOD、已确认选择、agent 假设、视觉目标、时间/动画目标、交互约束、保存/交付要求。不要用 agent 自己的 todo 替代用户契约；把“未询问”“用户授权自选”和“已有可信来源”分开。
+5. 给轨迹划分真实阶段：接收/判歧义 → 研究 → 澄清 → 合同 → 现场检查 → 设计 → 分模块构建 → 模块验证 → 集成 → 静态视觉验证 → 时序验证 → 修订 → 清理/交付。不适用的前置阶段可省略，但开放式任务不能把基于模型记忆的暗中选型伪装成已确认合同。阶段以证据和状态跃迁为准，不按 assistant 宣称划分。
 6. 建立工具机会矩阵。对目录中每个相关动词标记 `已正确使用`、`该用未用`、`误用/工具缺陷`、`不适用`；另列 `能力缺失`。未使用不等于应删除。
 7. 对每个关键 Houdini 模块检查输入、输出、属性契约、局部几何不变量、cook 错误/警告、帧依赖、显示/渲染状态。整体 bbox/点数不能替代局部拓扑和模块语义验证。
 8. 重建一条最小反事实轨迹：如果从头正确执行，阶段和工具顺序应是什么；用它量化绕路、重复探测和过早完成声明。
@@ -39,8 +39,12 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
 - 用 `capabilitySnapshots` 判断该步骤当时实际曝光的能力；不得用当前新词表倒查旧 trace 后指责 agent 漏用。
 - 视觉证据读取 `visionEvidence[].role/transportOk/semanticOk/reason` 与 `completionRisks`。只有 `role="inspection" && semanticOk=true` 才算语义识图；bootstrap、presentation、transport success、结构化 `ok:false` 或文本拒绝都不算。只有 render/render_check 而没有成功 inspection 时，必须保留“视觉语义未验证”的边界。
 - 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、无动词只读探针、成功 exec 覆盖、Gate 拦截和成功裸修改；目录广度只说明任务触达哪些能力。
+- 开放式质量任务优先读取 `qualityLoopEvidence` 与对应 `completionRisks`，核对合同缺字段、research
+  可用但未用、质量合同未加载、首张 render 过晚、关系 probe、控制扰动恢复和最终统计新鲜度；
+  自动风险是可复核证据索引，不是艺术质量评分。
 - 工具删除/合并不得由单次零使用推出。跨至少三个多样任务仍冗余、存在安全替代且无独立语义，才可列为删除候选。
 - Houdini 中先验证数据流和局部几何，再调相机、灯光、材质或视觉模型。渲染能出图不证明 SOP 结果正确。
+- 任务声称符合真实对象、行业范围或外部质量标准时，必须找到用户提供或 agent 实际检索的来源证据；自生成尺寸的内部一致、模型记忆和“看起来合理”只能标假设。风格化、用户授权自选或无需外部真实性的任务是边界，不强迫无意义研究。
 - 对动画任务必须做至少两个相隔帧的几何或固定相机图像 A/B 验证。客观数据完全静止必须判未完成；节点/数据/时间语义通过而静帧难以裁定细微动态或审美力度时，可标记“视觉待用户播放判断”，不得无限追图或伪称视觉确认。
 - `cook_node` 返回 warning 不能被“无 error”覆盖；必须解决或解释其可接受性。
 - 视觉提问先用中性描述，再做目标核验；不要在 prompt 中预设“这是草地/已经成功”。

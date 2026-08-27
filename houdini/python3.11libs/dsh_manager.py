@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import collections
 import glob
 import importlib
 import json
 import os
+import queue
 import re
 import shutil
 import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -25,6 +29,11 @@ _FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
 _RUNTIME_STATE = os.path.join(_PROJECT_ROOT, ".dsh-runtime.json")
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _PACKAGE_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+-]*$")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_NPM_TARBALL_PENDING_RE = re.compile(
+    r"no local data for .*?@(https?://\S+?\.tgz)\. Extracting by manifest"
+)
+_NPM_TARBALL_FETCH_RE = re.compile(r"http fetch GET 200 (https?://\S+?\.tgz)(?:\s|$)")
 _DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
 _FRONTEND_PORT = 3081
 _BRIDGE_PORT = 8765
@@ -283,25 +292,209 @@ def _runtime_activity() -> dict:
     }
 
 
-def _run_npx_dsh(version: str) -> str:
+def _directory_size(path: str) -> int:
+    """Best-effort recursive byte count for the project-local npm content cache."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def _format_bytes(value: float) -> str:
+    value = max(0.0, float(value))
+    units = ("B", "KiB", "MiB", "GiB")
+    for unit in units[:-1]:
+        if value < 1024.0:
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{value:.1f} {units[-1]}"
+
+
+def _format_elapsed(seconds: float) -> str:
+    whole = max(0, int(seconds))
+    hours, remainder = divmod(whole, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def _download_progress_message(progress: dict) -> str:
+    stage = str(progress.get("stage") or "Preparing download")
+    done = int(progress.get("packages_done") or 0)
+    total = int(progress.get("packages_total") or 0)
+    package_count = f"{done}/{total} packages" if total else f"{done}/? packages"
+    received = _format_bytes(float(progress.get("bytes_downloaded") or 0))
+    speed = _format_bytes(float(progress.get("speed_bps") or 0)) + "/s"
+    elapsed = _format_elapsed(float(progress.get("elapsed") or 0))
+    parts = [stage, package_count, f"{received} received", speed, elapsed]
+    current = str(progress.get("current") or "").strip()
+    if current:
+        parts.append(current)
+    return "  ·  ".join(parts)
+
+
+class _NpmDownloadTracker:
+    """Extract deterministic package counts and stages from streamed npm output."""
+
+    def __init__(self) -> None:
+        self.pending: set[str] = set()
+        self.downloaded: set[str] = set()
+        self.stage = "Starting npm"
+        self.current = ""
+
+    @staticmethod
+    def _package_label(url: str) -> str:
+        filename = urllib.parse.unquote(url.rsplit("/", 1)[-1])
+        return filename[:-4] if filename.endswith(".tgz") else filename
+
+    def feed(self, raw_line: str) -> None:
+        line = _ANSI_ESCAPE_RE.sub("", raw_line).strip()
+        if not line:
+            return
+        if "idealTree buildDeps" in line or "fetch manifest" in line:
+            self.stage = "Resolving dependency graph"
+        pending = _NPM_TARBALL_PENDING_RE.search(line)
+        if pending:
+            url = pending.group(1)
+            self.pending.add(url)
+            self.stage = "Preparing package downloads"
+            self.current = self._package_label(url)
+        fetched = _NPM_TARBALL_FETCH_RE.search(line)
+        if fetched:
+            url = fetched.group(1)
+            self.pending.add(url)
+            self.downloaded.add(url)
+            self.stage = "Downloading packages"
+            self.current = self._package_label(url)
+        if " info run " in f" {line} " or line.startswith("npm info run "):
+            self.stage = "Installing package scripts"
+            self.current = line.split(" run ", 1)[-1][:160]
+        if line.startswith("npm info ok") or line == "info ok":
+            self.stage = "Verifying DSH CLI"
+            self.current = ""
+
+    def snapshot(self) -> dict:
+        return {
+            "stage": self.stage,
+            "packages_done": len(self.downloaded),
+            "packages_total": len(self.pending),
+            "current": self.current,
+        }
+
+
+def _run_npx_dsh(version: str, on_progress=None) -> str:
     if not _PACKAGE_VERSION_RE.fullmatch(version):
         raise RuntimeError(f"refusing invalid DSH version: {version!r}")
     npx = shutil.which("npx")
     if not npx:
         raise RuntimeError("npx was not found; check the Node.js installation")
-    args = [npx, "--yes", f"@deepseek-ai/dsh@{version}", "--version"]
-    env = dict(os.environ, NPM_CONFIG_CACHE=_NPM_CACHE)
+    args = [npx, "--yes", "--loglevel=silly", f"@deepseek-ai/dsh@{version}", "--version"]
+    env = dict(
+        os.environ,
+        NPM_CONFIG_CACHE=_NPM_CACHE,
+        NPM_CONFIG_PROGRESS="false",
+        FORCE_COLOR="0",
+    )
+    command: list[str] | str = args
+    use_shell = False
     if os.name == "nt":
-        proc = subprocess.run(
-            subprocess.list2cmdline(args), cwd=_PROJECT_ROOT, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=600,
-            creationflags=_CREATE_NO_WINDOW, env=env, shell=True,
-        )
-        if proc.returncode != 0:
-            message = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-            raise RuntimeError(message[-4000:])
-        return proc.stdout.strip()
-    return _run(args, 600, env=env)
+        # .CMD launchers require cmd.exe. There is deliberately no total
+        # timeout: large first-time DSH installs can legitimately take tens of
+        # minutes. The UI remains live because output and cache growth stream
+        # through the progress callback below.
+        command = subprocess.list2cmdline(args)
+        use_shell = True
+    content_cache = os.path.join(_NPM_CACHE, "_cacache", "content-v2")
+    baseline_bytes = _directory_size(content_cache)
+    proc = subprocess.Popen(
+        command,
+        cwd=_PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        creationflags=_CREATE_NO_WINDOW if os.name == "nt" else 0,
+        env=env,
+        shell=use_shell,
+    )
+    output_queue: queue.Queue[str | None] = queue.Queue()
+    output_tail: collections.deque[str] = collections.deque(maxlen=400)
+    tracker = _NpmDownloadTracker()
+
+    def read_output() -> None:
+        try:
+            if proc.stdout is not None:
+                for line in proc.stdout:
+                    output_queue.put(line)
+        finally:
+            output_queue.put(None)
+
+    threading.Thread(target=read_output, daemon=True).start()
+    started_at = time.monotonic()
+    samples: collections.deque[tuple[float, int]] = collections.deque()
+    reader_finished = False
+    last_emit = 0.0
+
+    while True:
+        lines: list[str | None] = []
+        try:
+            lines.append(output_queue.get(timeout=0.2))
+        except queue.Empty:
+            pass
+        while True:
+            try:
+                lines.append(output_queue.get_nowait())
+            except queue.Empty:
+                break
+        for line in lines:
+            if line is None:
+                reader_finished = True
+                continue
+            clean = _ANSI_ESCAPE_RE.sub("", line).rstrip()
+            if clean:
+                output_tail.append(clean)
+            tracker.feed(clean)
+
+        now = time.monotonic()
+        if on_progress is not None and (
+            now - last_emit >= 0.5 or (proc.poll() is not None and reader_finished)
+        ):
+            current_bytes = max(0, _directory_size(content_cache) - baseline_bytes)
+            samples.append((now, current_bytes))
+            while len(samples) > 1 and now - samples[0][0] > 5.0:
+                samples.popleft()
+            speed_bps = 0.0
+            if len(samples) > 1:
+                duration = samples[-1][0] - samples[0][0]
+                if duration > 0:
+                    speed_bps = max(0.0, (samples[-1][1] - samples[0][1]) / duration)
+            progress = tracker.snapshot()
+            progress.update(
+                bytes_downloaded=current_bytes,
+                speed_bps=speed_bps,
+                elapsed=now - started_at,
+            )
+            try:
+                on_progress(progress)
+            except Exception:
+                pass
+            last_emit = now
+
+        if proc.poll() is not None and reader_finished and output_queue.empty():
+            break
+
+    if proc.returncode != 0:
+        message = "\n".join(output_tail).strip() or f"exit {proc.returncode}"
+        raise RuntimeError(message[-12000:])
+    reported = next((line.strip() for line in reversed(output_tail) if line.strip() == version), "")
+    if not reported:
+        raise RuntimeError(f"DSH {version} installed but its CLI did not report the expected version")
+    return reported
 
 
 def _summary_for_state(state: dict) -> str:
@@ -418,16 +611,30 @@ def _update_dsh(state: dict) -> None:
         override = _dsh_launch_override()
         if override:
             raise RuntimeError(f"launcher is pinned by {override}; remove that override before updating")
-        output = _run_npx_dsh(latest)
+
+        def publish_progress(progress: dict) -> None:
+            message = _download_progress_message(progress)
+            state.update(
+                download_progress=progress,
+                message=message,
+                dsh_note=message,
+            )
+
+        output = _run_npx_dsh(latest, on_progress=publish_progress)
         _promote_cached_dsh(latest)
         state.update(
             dsh_latest=latest, dsh_target=latest, dsh_status="staged",
             dsh_action="Restart when idle", dsh_can_update=True,
             dsh_note=f"DSH {latest} downloaded and verified ({output or 'ok'})",
+            download_progress=None,
         )
         _stage_or_activate(state, "dsh", f"DSH {latest} is ready.")
     except Exception as exc:
-        state.update(busy=False, result="render", message=f"DSH update failed: {exc}")
+        message = f"DSH update failed: {exc}"
+        state.update(
+            busy=False, result="render", message=message,
+            dsh_status="error", dsh_note=message, download_progress=None,
+        )
 
 
 _HOUDINI_RESTART_FILES = {"houdini/MainMenuCommon.xml", "houdini/install.py"}
@@ -502,6 +709,9 @@ def show_version_manager() -> None:
         "QPushButton#update { background: #C85F19; border-color: #E97824; color: white; }"
         "QPushButton#update:hover { background: #DE6D21; }"
         "QPushButton#quiet { background: transparent; border-color: transparent; color: #A8AFB6; }"
+        "QProgressBar { background: #343940; border: none; border-radius: 3px;"
+        " height: 7px; color: transparent; }"
+        "QProgressBar::chunk { background: #E97824; border-radius: 3px; }"
     )
 
     layout = QtWidgets.QVBoxLayout(dialog)
@@ -564,6 +774,20 @@ def show_version_manager() -> None:
 
     dsh_current, dsh_latest, dsh_action, dsh_note = component_rail("DeepSeek Harness")
     plugin_current, plugin_latest, plugin_action, plugin_note = component_rail("DSH-Houdini")
+    download_panel = QtWidgets.QFrame()
+    download_panel.setObjectName("rail")
+    download_layout = QtWidgets.QVBoxLayout(download_panel)
+    download_layout.setContentsMargins(14, 10, 14, 11)
+    download_layout.setSpacing(7)
+    download_bar = QtWidgets.QProgressBar()
+    download_bar.setTextVisible(False)
+    download_label = QtWidgets.QLabel("")
+    download_label.setObjectName("note")
+    download_label.setWordWrap(True)
+    download_layout.addWidget(download_bar)
+    download_layout.addWidget(download_label)
+    download_panel.setVisible(False)
+    layout.addWidget(download_panel)
     advanced_toggle = QtWidgets.QPushButton("Advanced diagnostics  ▸")
     advanced_toggle.setObjectName("quiet")
     advanced_toggle.setCheckable(True)
@@ -600,7 +824,8 @@ def show_version_manager() -> None:
     def set_busy(message: str) -> bool:
         if state["busy"]:
             return False
-        state.update(busy=True, result=None, message=message)
+        state.update(busy=True, result=None, message=message, download_progress=None)
+        download_panel.setVisible(False)
         summary_label.setText(message)
         for button in (refresh_btn, dsh_action, plugin_action, repair_btn):
             button.setEnabled(False)
@@ -619,6 +844,8 @@ def show_version_manager() -> None:
         answer = QtWidgets.QMessageBox.question(
             dialog, "Update DeepSeek Harness",
             f"Download DSH {target} and restart services when the runtime is idle?\n\n"
+            "Package count, received bytes, and download speed remain visible throughout. "
+            "There is no automatic total timeout.\n\n"
             "If an agent turn or Houdini job is active, the restart will be deferred.",
         )
         if answer == QtWidgets.QMessageBox.Yes and set_busy(f"Downloading and verifying DSH {target}…"):
@@ -670,6 +897,7 @@ def show_version_manager() -> None:
         dsh_launcher.launch()
 
     def render_state() -> None:
+        download_panel.setVisible(False)
         summary_label.setText(state.get("message") or _summary_for_state(state))
         dsh_current.setText(str(state.get("dsh_current", "Unknown")))
         dsh_latest.setText(str(state.get("dsh_latest", "Unknown")))
@@ -702,8 +930,31 @@ def show_version_manager() -> None:
             f"DSH: {dsh_detail}\nDSH-Houdini: {plugin_detail}\n{state.get('message', '')}"
         )
 
+    def render_download_progress() -> None:
+        progress = state.get("download_progress")
+        if not isinstance(progress, dict):
+            download_panel.setVisible(False)
+            summary_label.setText(state.get("message") or "Working…")
+            return
+        total = int(progress.get("packages_total") or 0)
+        done = int(progress.get("packages_done") or 0)
+        if total:
+            download_bar.setRange(0, total)
+            download_bar.setValue(min(done, total))
+        else:
+            download_bar.setRange(0, 0)
+        message = _download_progress_message(progress)
+        download_label.setText(message)
+        summary_label.setText(message)
+        dsh_note.setText(message)
+        dsh_note.setVisible(True)
+        download_panel.setVisible(True)
+
     def tick() -> None:
-        if state.get("busy") or state.get("result") is None:
+        if state.get("busy"):
+            render_download_progress()
+            return
+        if state.get("result") is None:
             return
         result = state.pop("result", None)
         if result == "activate" and state.pop("activation", None) == "services":

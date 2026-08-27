@@ -24,10 +24,12 @@ import {
   uniqueToolResultEvents,
 } from './trace-session-lib.mjs';
 import {
+  collectQualityLoopEvidence,
   collectVerbAdoption,
   collectValidationCoverage,
   mutatingRawMethodNames,
   parseVerbLedgerLine,
+  qualityLoopRisks,
   rawMethodNames,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
@@ -65,13 +67,25 @@ for (const e of events) {
 }
 
 const userMsgs = [];
+const assistantMsgs = [];
+const availableTools = new Set();
 for (const e of events) {
-  if (e.type !== 'user/message') continue;
-  const d = e.data || {};
-  if (d.source?.kind !== 'user') continue;
-  const text = (d.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
-  if (!text || text.startsWith('<system-reminder>') || text.startsWith('Current runtime context')) continue;
-  userMsgs.push({ time: e.time, text });
+  if (e.type === 'request/header') {
+    for (const tool of e.data?.header?.tools || []) {
+      const name = tool?.name || tool?.function?.name;
+      if (name) availableTools.add(name);
+    }
+  } else if (e.type === 'user/message') {
+    const d = e.data || {};
+    if (d.source?.kind !== 'user') continue;
+    const text = (d.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+    if (!text || text.startsWith('<system-reminder>') || text.startsWith('Current runtime context')) continue;
+    userMsgs.push({ time: e.time, text });
+  } else if (e.type === 'assistant/message') {
+    const text = (e.data?.message?.content || [])
+      .filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+    if (text.trim()) assistantMsgs.push({ time: e.time, text });
+  }
 }
 
 const steps = [];
@@ -151,6 +165,17 @@ const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);
 const validationCoverage = collectValidationCoverage(
   steps.map((step, index) => ({ ...step, index: index + 1 })),
 );
+const indexedSteps = steps.map((step, index) => ({ ...step, index: index + 1 }));
+const activatedSkills = indexedSteps.filter((step) => step.tool === 'skill' && !step.failed)
+  .map((step) => step.args?.name).filter(Boolean);
+const qualityLoopEvidence = collectQualityLoopEvidence({
+  steps: indexedSteps,
+  userMessages: userMsgs,
+  assistantMessages: assistantMsgs,
+  availableTools: [...availableTools],
+  activatedSkills,
+});
+const qualityRisks = qualityLoopRisks(qualityLoopEvidence);
 const verbAdoption = collectVerbAdoption(steps);
 const visionInspections = validationCoverage.vision.filter((item) => item.role === 'inspection');
 const successfulVisionInspections = visionInspections.filter((item) => item.semanticOk === true);
@@ -175,6 +200,21 @@ const validationHtml = `
   </div>
   <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉检查帧: ${frameList(validationCoverage.frames.visionInspection)}</p>
   <details><summary>验证覆盖明细</summary><pre>${esc(JSON.stringify(validationCoverage, null, 2))}</pre></details>`;
+
+const qualityLoopHtml = `
+  <div class="cards">
+    <div class="card"><div class="num">${qualityLoopEvidence.applicable ? '是' : '否'}</div><div class="cap">开放式质量任务</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.contract.missing.length}</div><div class="cap">合同缺失字段</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.reference.researchSteps.length}</div><div class="cap">research/web 调用</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.skeleton.tabCreatesBeforeFirstRender}</div><div class="cap">首张 render 前建节点</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.relations.probeSteps.length}</div><div class="cap">关系 probe</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.perturbation.restored.length}</div><div class="cap">控制扰动并恢复</div></div>
+    <div class="card"><div class="num" style="color:${qualityRisks.length ? 'var(--bad)' : 'var(--ok)'}">${qualityRisks.length}</div><div class="cap">质量闭环风险</div></div>
+  </div>
+  ${qualityRisks.length
+    ? `<pre class="err">${esc(JSON.stringify(qualityRisks, null, 2))}</pre>`
+    : '<p class="dim-text">未检测到确定性质量闭环风险；这不等于主观艺术质量已经通过。</p>'}
+  <details><summary>质量闭环证据明细</summary><pre>${esc(JSON.stringify(qualityLoopEvidence, null, 2))}</pre></details>`;
 
 const catalogHtml = catalog.map((d) => `
   <div class="domain">
@@ -325,6 +365,8 @@ const html = `<!DOCTYPE html>
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
     <h2>动画 / 多帧验证覆盖</h2>
     ${validationHtml}
+    <h2>开放式任务质量闭环（HTA-023）</h2>
+    ${qualityLoopHtml}
     <h2>调用时间线（真实顺序）</h2>
     ${timelineHtml}
     <h2>无动词 HOM 段落（区分只读探针与裸修改）</h2>
@@ -341,4 +383,5 @@ fs.writeFileSync(outFile, html);
 console.log('session :', sessionFile);
 console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length);
 console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision-inspection=[' + validationCoverage.frames.visionInspection.join(',') + ']');
+console.log('quality : applicable=' + qualityLoopEvidence.applicable + ' missing=[' + qualityLoopEvidence.contract.missing.join(',') + '] risks=[' + qualityRisks.map((risk) => risk.code).join(',') + ']');
 console.log('report  :', outFile);

@@ -4,7 +4,12 @@
  * writes and in the bridge that executes it.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import {
+  defineTool,
+  type GenericResultView,
+  type JsonValue,
+  type ToolResult,
+} from '@deepseek-ai/dsh-tools'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
@@ -29,6 +34,60 @@ const execOutputSchema = {
   properties: execOutputProperties,
   additionalProperties: false,
 } as const
+
+type PresentationMeta = Record<string, JsonValue>
+
+function asPresentationMeta(value: unknown): PresentationMeta | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as PresentationMeta
+    : undefined
+}
+
+function codePresentationInput(args: { code: string; allow_raw?: string }): unknown {
+  return args.allow_raw === undefined
+    ? args.code
+    : { code: args.code, allow_raw: args.allow_raw }
+}
+
+function execPresentationMeta(value: ExecResult): PresentationMeta {
+  return {
+    ok: value.ok,
+    verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
+    mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+  }
+}
+
+function jobPresentationMeta(value: JobStatus): PresentationMeta {
+  return {
+    ok: value.ok,
+    jobId: value.jobId,
+    status: value.status,
+    verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
+    mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+  }
+}
+
+function resultTitle(label: string, result: ToolResult): string {
+  if (result.isError) return `${label} failed`
+  const meta = asPresentationMeta(result.meta)
+  if (meta?.ok === true) return `${label} succeeded`
+  if (meta?.ok === false) return `${label} failed`
+  return `${label} complete`
+}
+
+function genericResult(title: string, result: ToolResult): GenericResultView {
+  return { card: 'generic', title, content: result.content }
+}
+
+function jobResultTitle(action: string, result: ToolResult): string {
+  if (result.isError) return `${action} failed`
+  const meta = asPresentationMeta(result.meta)
+  const jobId = typeof meta?.jobId === 'string' ? meta.jobId : undefined
+  const status = typeof meta?.status === 'string' ? meta.status : undefined
+  if (jobId !== undefined && status !== undefined) return `Houdini job ${jobId}: ${status}`
+  if (jobId !== undefined) return `${action} ${jobId}`
+  return `${action} complete`
+}
 
 function truncate(text: string, max = 400): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`
@@ -217,7 +276,18 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       code: { type: 'string', required: true, description: 'Python source executed in Houdini with `hou` available' },
       allow_raw: ALLOW_RAW_PARAM,
     },
-    output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
+    output: {
+      schema: execOutputSchema,
+      render: (_args, value) => renderExec(value),
+      presentationMeta: (_args, value) => execPresentationMeta(value),
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Execute Houdini Python',
+      kind: 'edit',
+      rawInput: codePresentationInput(args),
+    }),
+    presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
@@ -234,7 +304,18 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       code: { type: 'string', required: true, description: 'Read-only Python inspection code with `hou` available' },
       allow_raw: ALLOW_RAW_PARAM,
     },
-    output: { schema: execOutputSchema, render: (_args, value) => renderExec(value) },
+    output: {
+      schema: execOutputSchema,
+      render: (_args, value) => renderExec(value),
+      presentationMeta: (_args, value) => execPresentationMeta(value),
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Inspect Houdini scene',
+      kind: 'read',
+      rawInput: codePresentationInput(args),
+    }),
+    presentResult: (_args, result) => genericResult(resultTitle('Houdini inspection', result), result),
     async execute(args, exec) {
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
@@ -259,7 +340,15 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
         additionalProperties: false,
       },
       render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` }],
+      presentationMeta: (_args, value) => ({ jobId: value.jobId }),
     },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Start Houdini background job',
+      kind: 'execute',
+      rawInput: codePresentationInput(args),
+    }),
+    presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
       return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
     },
@@ -280,7 +369,15 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => {
         return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, ...renderJobStatus(value).map((b) => b.text)].join('\n\n') }]
       },
+      presentationMeta: (_args, value) => jobPresentationMeta(value),
     },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: `Inspect Houdini job ${args.jobId}`,
+      kind: 'read',
+      rawInput: args.wait === undefined ? args.jobId : { jobId: args.jobId, wait: args.wait },
+    }),
+    presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
     async execute(args, exec) {
       const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
       return relayMedia(status, exec, bridge)
@@ -301,7 +398,15 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => {
         return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, ...renderJobStatus(value).map((b) => b.text)].join('\n\n') }]
       },
+      presentationMeta: (_args, value) => jobPresentationMeta(value),
     },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: `Cancel Houdini job ${args.jobId}`,
+      kind: 'execute',
+      rawInput: args.jobId,
+    }),
+    presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job cancellation', result), result),
     async execute(args, exec) {
       return bridge.cancelJob(args.jobId, exec.signal)
     },

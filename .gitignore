@@ -13,3 +13,5 @@ __pycache__/
 .research/
 .dsh-houdini-media/
 .dsh-vision-router/
+.dsh-vision-toolkit/
+session/

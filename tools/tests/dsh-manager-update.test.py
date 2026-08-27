@@ -23,6 +23,29 @@ import dsh_bridge as bridge
 assert manager._PACKAGE_VERSION_RE.fullmatch("0.1.1-rc.2")
 assert not manager._PACKAGE_VERSION_RE.fullmatch("0.1.1 && whoami")
 
+
+# Streamed npm output yields a deterministic missing-package denominator and
+# completed tarball numerator. Byte/s formatting is independent of Qt.
+tracker = manager._NpmDownloadTracker()
+tarballs = (
+    "https://registry.example.test/foo/-/foo-1.0.0.tgz",
+    "https://registry.example.test/bar/-/bar-2.0.0.tgz",
+)
+for url in tarballs:
+    tracker.feed(f"npm silly tarball no local data for pkg@{url}. Extracting by manifest.")
+tracker.feed(f"npm http fetch GET 200 {tarballs[0]} 125ms (cache miss)")
+snapshot = tracker.snapshot()
+assert snapshot["packages_done"] == 1 and snapshot["packages_total"] == 2, snapshot
+assert snapshot["stage"] == "Downloading packages", snapshot
+message = manager._download_progress_message({
+    **snapshot,
+    "bytes_downloaded": 3 * 1024 * 1024,
+    "speed_bps": 1.5 * 1024 * 1024,
+    "elapsed": 65,
+})
+assert "1/2 packages" in message and "3.0 MiB received" in message, message
+assert "1.5 MiB/s" in message and "01:05" in message, message
+
 with bridge._jobs_lock:
     original_jobs = dict(bridge._jobs)
     bridge._jobs.clear()
@@ -169,11 +192,25 @@ try:
     manager._stage_or_activate(state, "dsh", "Ready.")
     assert state["result"] == "activate" and state["activation"] == "services", state
 
-    manager._run_npx_dsh = lambda version: version
+    def fake_run_npx(version, on_progress=None):
+        if on_progress is not None:
+            on_progress({
+                "stage": "Downloading packages",
+                "packages_done": 2,
+                "packages_total": 4,
+                "bytes_downloaded": 1024,
+                "speed_bps": 512,
+                "elapsed": 2,
+                "current": "fixture",
+            })
+        return version
+
+    manager._run_npx_dsh = fake_run_npx
     manager._promote_cached_dsh = lambda version: None
     state = {"busy": True, "dsh_target": "0.1.1-rc.2"}
     manager._update_dsh(state)
     assert state["result"] == "activate", state
+    assert state["download_progress"] is None, state
 finally:
     manager._dsh_release_info = originals["release"]
     manager._selected_cached_dsh_version = originals["selected"]

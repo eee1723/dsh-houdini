@@ -1,7 +1,0 @@
-# A fallback tool, not an LLM provider. It never adds model-directory aliases.
-- insert:
-    - id: vision-fallback
-      name: dsh-vision-fallback
-      config:
-        apiKey: ''
-        model: qwen/qwen3-vl-plus

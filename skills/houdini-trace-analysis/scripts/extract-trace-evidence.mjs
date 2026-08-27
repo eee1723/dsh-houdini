@@ -13,6 +13,7 @@ import {
 } from '../../../tools/trace-session-lib.mjs';
 import {
   collectValidationCoverage,
+  collectQualityLoopEvidence,
   classifyVisionEvidence,
   collectVerbAdoption,
   extractAvailableSkills,
@@ -20,6 +21,7 @@ import {
   findSuppressedCookFailures,
   mutatingRawMethodNames,
   parseVerbLedgerLine,
+  qualityLoopRisks,
   rawMethodNames,
 } from './evidence-helpers.mjs';
 
@@ -184,6 +186,10 @@ function analyzeTrace(file) {
           mentionedCatalogVerbs: catalogNames.filter(
             (name) => new RegExp(`\\b${name}\\b`).test(system),
           ),
+          availableTools: (event.data?.header?.tools || [])
+            .map((tool) => tool?.name || tool?.function?.name)
+            .filter(Boolean)
+            .sort(),
           // Some dsh runtimes expose the skill loader without embedding a skill catalog in
           // the request header. `[]` would falsely mean "no skills were available"; null means
           // "the header did not declare availability". Actual successful loads are reported
@@ -317,6 +323,19 @@ function analyzeTrace(file) {
   const successfulVisionEvidence = visionEvidence.filter(
     (item) => item.role === 'inspection' && item.semanticOk === true,
   );
+  const skillActivations = steps.filter((step) => step.tool === 'skill').map((step) => ({
+    index: step.index,
+    time: step.time,
+    name: typeof step.args?.name === 'string' ? step.args.name : null,
+    succeeded: !step.failed,
+  }));
+  const qualityLoopEvidence = collectQualityLoopEvidence({
+    steps,
+    userMessages,
+    assistantMessages,
+    availableTools: capabilitySnapshots.flatMap((snapshot) => snapshot.availableTools || []),
+    activatedSkills: skillActivations.filter((item) => item.succeeded).map((item) => item.name),
+  });
   const completionRisks = [];
   if (renderEvidence.length && !successfulVisionEvidence.length) {
     completionRisks.push({
@@ -330,6 +349,7 @@ function analyzeTrace(file) {
       detail: 'At least one attempted vision inspection failed.',
     });
   }
+  completionRisks.push(...qualityLoopRisks(qualityLoopEvidence));
   const validationCoverage = collectValidationCoverage(steps);
   const edgeContact = validationCoverage.comparisons.filter((item) => item.touches_edge === true);
   if (edgeContact.length) {
@@ -391,13 +411,6 @@ function analyzeTrace(file) {
   const initialRequest = [...userMessages].reverse().find(
     (message) => message.time <= firstToolTime,
   ) || null;
-  const skillActivations = steps.filter((step) => step.tool === 'skill').map((step) => ({
-    index: step.index,
-    time: step.time,
-    name: typeof step.args?.name === 'string' ? step.args.name : null,
-    succeeded: !step.failed,
-  }));
-
   return {
     sessionId: sessionIdFromFile(file),
     file: loaded.file,
@@ -457,6 +470,7 @@ function analyzeTrace(file) {
     renderEvidence,
     visionEvidence,
     completionRisks,
+    qualityLoopEvidence,
     validationCoverage,
     repeatedCode,
     timelineGaps: gaps,

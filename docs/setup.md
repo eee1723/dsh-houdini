@@ -103,9 +103,15 @@ $env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
 
 ## 7. 视觉能力边界
 
-当前安装清单仍使用锁定的 `dsh-vision-router`。它负责路由，不保证当前主模型或免费 provider 一定能读取图片。视觉工具的 transport、bootstrap 或 presentation 成功都不等于语义识图成功；插件只在 semantic inspection 真正成功后允许宣称视觉已验证。
+当前安装清单固定 `@anionex/dsh-vision-toolkit@0.1.7`，并主动移除旧
+`dsh-vision-router` 与 `dsh-vision-fallback`。在会话中先加载 `vision-tools` skill；需要时
+`vision_toolkit_activate` 会为当前 agent 挂载 10 个独立的 `vision_*` 工具。远程视觉工具使用
+`设置 → 视觉工具` 里配置的 provider/model/DSH Credential，本地 crop/trace/pixel diff/
+前景提取/主色/HTML 截图无需视觉 API Key。
 
-替代视觉插件应先在隔离 profile 用同一组 Houdini render 做 A/B，并使用用户授权、可用且有配额的 provider。当前候选与未完成验收见 `development.md` §2.35 和 §5。
+视觉工具的 transport、runtime bootstrap 或 Artifact presentation 成功都不等于语义识图成功；
+只有 semantic inspection 真正成功后才允许宣称视觉已验证。升级 toolkit、模型或 provider 前，
+应先在隔离 profile 用同一组 Houdini render 做 A/B，并使用用户授权、可用且有配额的服务。
 
 ## 8. 卸载
 

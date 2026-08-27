@@ -7,12 +7,13 @@
       "source": "project"
     },
     {
-      "name": "dsh-vision-fallback",
-      "source": "project",
-      "path": "plugins/dsh-vision-fallback"
+      "name": "@anionex/dsh-vision-toolkit",
+      "spec": "@anionex/dsh-vision-toolkit@0.1.7",
+      "version": "0.1.7"
     }
   ],
   "removePlugins": [
-    "dsh-vision-router"
+    "dsh-vision-router",
+    "dsh-vision-fallback"
   ]
 }

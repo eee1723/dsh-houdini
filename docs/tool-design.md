@@ -306,7 +306,7 @@ load 会使当前 exec 丢失后续 result/images，恢复 load 还可能断开�
 ## 7. 后续路线（与 README 对齐）
 
 1. 把 Bridge job registry 迁到 `ctx.jobs`，统一 list/kill/output/通知；Houdini 主线程执行仍保持串行。
-2. 工具卡片与权限分层：展示函数保持 args 纯函数，query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。
+2. 权限分层：query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。五工具纯函数卡片已于 2026-08-27 完成。
 3. 视觉 provider 隔离 A/B：只在 semantic inspection 成功后晋升生产，不以 transport/bootstrap/presentation 成功替代。
 4. 按真实 trace 评估过滤式 geometry/frame invariant；不为一次性只读探针追求 100% 动词覆盖。
 5. 依据当前契约重建最小 H21/H22/GUI 回归覆盖，不复刻已删除的历史大脚本。

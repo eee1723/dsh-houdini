@@ -254,7 +254,7 @@ export function classifyVisionEvidence(step) {
     ? step.args.images
     : Array.isArray(step.args?.paths)
       ? step.args.paths
-      : [step.args?.path, step.args?.image].filter(Boolean);
+      : [step.args?.path, step.args?.file_path, step.args?.image].filter(Boolean);
   return {
     role,
     transportOk,
@@ -307,6 +307,319 @@ export function collectVerbAdoption(steps) {
     blockedVerblessRawMutationCalls: blockedRawMutation.length,
     successfulVerblessRawMutationCalls: successfulRawMutation.length,
   };
+}
+
+const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|复杂(?:资产|模型)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic)/i;
+const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
+const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
+const MUTATING_VERBS = new Set([
+  'tab_create', 'tab_apply', 'connect', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
+  'set_keyframes', 'create_spare_parms', 'set_timeline', 'create_bookmark', 'delete_bookmark',
+  'hda_create', 'hda_set_section', 'hda_patch_section', 'hda_set_interface', 'sop_set_output',
+  'set_object_visible', 'set_display',
+]);
+const VALIDATION_VERBS = new Set([
+  'cook_node', 'describe', 'geo_piece_stats', 'geo_attrib_stats', 'geo_frame_diff', 'render_view',
+  'render_frame', 'render_check',
+]);
+const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚点|端点|distance|距离|clearance|间隙|intersection|相交|穿插|contact|接触|contain(?:ed)?|包含|insert(?:ed)?|插入|tangent|切线|deviation|偏差)/ig;
+
+function messageText(messages) {
+  return (messages || []).map((message) => String(message?.text || '')).filter(Boolean).join('\n');
+}
+
+function stepIndex(step, fallback) {
+  return Number.isFinite(step?.index) ? step.index : fallback;
+}
+
+function sceneMutation(step) {
+  if (step.failed) return false;
+  if ((step.verbs || []).some((verb) => MUTATING_VERBS.has(verb.verb))) return true;
+  return (step.mutatingRawMethods || []).some((name) => !['save', 'render'].includes(String(name)));
+}
+
+function stableValue(value) {
+  try { return JSON.stringify(value); }
+  catch { return String(value); }
+}
+
+function isObjectRoot(node) {
+  return typeof node === 'string' && /^\/obj\/[^/]+$/.test(node);
+}
+
+function setParmEvents(steps) {
+  const events = new Map();
+  for (let offset = 0; offset < steps.length; offset++) {
+    const step = steps[offset];
+    const index = stepIndex(step, offset + 1);
+    if (step.failed) continue;
+    for (const verb of step.verbs || []) {
+      const { positional } = parseLedgerArgs(verb.args ?? verb.argsText);
+      const node = nodePath(positional[0]);
+      if (!isObjectRoot(node)) continue;
+      if (verb.verb === 'create_spare_parms') {
+        const result = verbResult(verb.result ?? verb.detail);
+        const values = result.leaf_values;
+        if (!values || Array.isArray(values) || typeof values !== 'object') continue;
+        for (const [parm, value] of Object.entries(values)) {
+          const key = `${node}\u0000${parm}`;
+          const list = events.get(key) || [];
+          list.push({ index, node, parm, value, stable: stableValue(value), source: 'default' });
+          events.set(key, list);
+        }
+        continue;
+      }
+      if (!['set_parm', 'set_parms'].includes(verb.verb)) continue;
+      const values = verb.verb === 'set_parm'
+        ? { [positional[1]]: positional[2] }
+        : positional[1];
+      if (!values || Array.isArray(values) || typeof values !== 'object') continue;
+      for (const [parm, value] of Object.entries(values)) {
+        if (!parm || parm === 'undefined') continue;
+        const key = `${node}\u0000${parm}`;
+        const list = events.get(key) || [];
+        list.push({ index, node, parm, value, stable: stableValue(value) });
+        events.set(key, list);
+      }
+    }
+  }
+  return events;
+}
+
+function restoredPerturbations(steps) {
+  const validations = steps.map((step, offset) => ({
+    index: stepIndex(step, offset + 1),
+    valid: !step.failed && (
+      step.tool === 'houdini_query'
+      || (step.verbs || []).some((verb) => VALIDATION_VERBS.has(verb.verb))
+    ),
+  })).filter((item) => item.valid).map((item) => item.index);
+  const restored = [];
+  for (const list of setParmEvents(steps).values()) {
+    if (list.length < 3 || list[0].stable !== list.at(-1).stable) continue;
+    const changed = list.slice(1, -1).find((item) => item.stable !== list[0].stable);
+    if (!changed) continue;
+    const restore = list.at(-1);
+    const validationSteps = validations.filter((index) => index >= changed.index && index <= restore.index);
+    if (!validationSteps.length) continue;
+    restored.push({
+      node: list[0].node,
+      parm: list[0].parm,
+      original: list[0].value,
+      changed: changed.value,
+      restored: restore.value,
+      setSteps: list.map((item) => item.index),
+      validationSteps,
+    });
+  }
+  return restored;
+}
+
+function latestGeometryCounts(steps, fromIndex) {
+  let latest = null;
+  for (let offset = 0; offset < steps.length; offset++) {
+    const step = steps[offset];
+    const index = stepIndex(step, offset + 1);
+    if (index < fromIndex || step.failed) continue;
+    const text = String(step.resultText ?? step.resultPreview ?? '');
+    for (const match of text.matchAll(/"points"\s*:\s*(\d+)\s*,\s*"prims"\s*:\s*(\d+)/g)) {
+      latest = { index, points: Number(match[1]), prims: Number(match[2]) };
+    }
+  }
+  return latest;
+}
+
+function finalGeometryCountClaim(assistantMessages) {
+  const final = String(assistantMessages?.at(-1)?.text || '');
+  const matches = [...final.matchAll(/(\d+)\s*(?:点|points?)\s*(?:\/|／|,|，|和)\s*(\d+)\s*(?:prim(?:s|itives?)?)/ig)];
+  if (!matches.length) return null;
+  const match = matches.at(-1);
+  return { points: Number(match[1]), prims: Number(match[2]) };
+}
+
+/**
+ * Deterministic evidence for the open-ended quality loop (HTA-023 family).
+ * It reports observable gates; it does not pretend regexes can judge artistic quality.
+ */
+export function collectQualityLoopEvidence({
+  steps = [], userMessages = [], assistantMessages = [], availableTools = [], activatedSkills = [],
+} = {}) {
+  const request = messageText(userMessages);
+  const assistant = messageText(assistantMessages);
+  const applicable = OPEN_ENDED_QUALITY_REQUEST.test(request);
+  const indexed = steps.map((step, offset) => ({ ...step, index: stepIndex(step, offset + 1) }));
+  const firstMutation = indexed.find(sceneMutation) || null;
+  const firstMutationTime = firstMutation?.time ?? Infinity;
+  const preMutationText = messageText(
+    assistantMessages.filter((message) => !Number.isFinite(message.time) || message.time <= firstMutationTime),
+  );
+  const contractFields = {
+    target: /(?:目标|对象|效果|target|deliverable|交付)/i.test(preMutationText),
+    referenceStatus: /(?:参考|来源|无外部参考|假设|reference|source)/i.test(preMutationText),
+    qualityLod: /(?:质量(?:标准|门|级别)|LOD|轮廓级|镜头级|产品级|预览级|观察距离|quality bar|quality level)/i.test(preMutationText),
+    simplifications: /(?:简化|省略|不做|允许.*(?:略|省)|边界|simplif|omit|out of scope)/i.test(preMutationText),
+    unitsDimensions: /(?:单位|尺寸|范围|半径|长度|角度|米|厘米|mm|cm|\bm\b|units?|dimensions?)/i.test(preMutationText),
+    controls: /(?:控制参数|可调参数|需要暴露|spare parm|HDA interface|controls?)/i.test(preMutationText),
+    relations: /(?:连接|共轴|轴线|端点|包含|间隙|穿插|接触|关系|relations?|clearance|intersection)/i.test(preMutationText),
+    evidencePlan: /(?:验证|验收|证据|视角|特写|render|evidence|check)/i.test(preMutationText),
+  };
+  const requiresControls = /(?:程序化|可调|参数化|procedural|configurable|parameterized)/i.test(request);
+  const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(request);
+  const requiredContractFields = [
+    'referenceStatus', 'qualityLod', 'simplifications',
+    ...(requiresControls ? ['controls'] : []),
+    ...(requiresRelations ? ['relations'] : []),
+    'evidencePlan',
+  ];
+  const missingContractFields = requiredContractFields.filter((name) => !contractFields[name]);
+
+  const researchSteps = indexed.filter((step) => /(?:web_search|browser|research)/i.test(String(step.tool || '')))
+    .map((step) => step.index);
+  const userProvidedReference = /(?:https?:\/\/|参考(?:图|文件|链接|如下)|规格表|用户提供|attached reference|reference (?:image|file|link))/i.test(request);
+  const userAuthorizedNoResearch = /(?:不要|无需|不需要|不用).{0,12}(?:外部)?参考|(?:风格化|抽象).{0,12}(?:即可|就行)|(?:比例|尺寸|造型).{0,12}(?:你决定|自行决定)|no (?:external )?reference|do not research/i.test(request);
+  const qualityContractLoadSteps = indexed.filter((step) => (
+    /#\s*程序化 SOP 质量合同/i.test(String(step.resultText ?? step.resultPreview ?? ''))
+    || /#\s*Procedural SOP Quality Contract/i.test(String(step.resultText ?? step.resultPreview ?? ''))
+  )).map((step) => step.index);
+  const externalTruthClaims = (assistantMessages || []).filter((message) => EXTERNAL_TRUTH_SIGNAL.test(String(message.text || '')));
+  const unsupportedExternalTruthClaims = externalTruthClaims.filter(
+    (message) => !ASSUMPTION_BOUNDARY.test(String(message.text || '')),
+  ).map((message) => ({ time: message.time, text: String(message.text || '').slice(0, 500) }));
+  const assumptionBoundaryDisclosed = ASSUMPTION_BOUNDARY.test(preMutationText) || ASSUMPTION_BOUNDARY.test(assistant);
+
+  const firstRender = indexed.find((step) => (
+    !step.failed && (step.verbs || []).some((verb) => ['render_view', 'render_frame'].includes(verb.verb))
+  )) || null;
+  const tabCreatesBeforeFirstRender = indexed
+    .filter((step) => !firstRender || step.index < firstRender.index)
+    .reduce((sum, step) => sum + (step.verbs || []).filter((verb) => verb.verb === 'tab_create' && verb.ok !== false).length, 0);
+  const skeletonCheckpointMentions = (assistantMessages || []).filter((message) => (
+    /(?:骨架|中心线|代理体|anchors?).{0,40}(?:验证|验收|通过|check|validate)/i.test(String(message.text || ''))
+  )).map((message) => ({ time: message.time, text: String(message.text || '').slice(0, 300) }));
+
+  const relationshipProbeSteps = [];
+  const relationshipKeywords = new Set();
+  for (const step of indexed) {
+    const code = String(step.code || '');
+    const hits = [...code.matchAll(RELATION_PATTERN)].map((match) => match[0].toLowerCase());
+    if (!hits.length || step.failed || sceneMutation(step)) continue;
+    relationshipProbeSteps.push(step.index);
+    for (const hit of hits) relationshipKeywords.add(hit);
+  }
+
+  const perturbations = restoredPerturbations(indexed);
+  const lastMutation = [...indexed].reverse().find(sceneMutation) || null;
+  const latestCounts = latestGeometryCounts(indexed, lastMutation?.index ?? 0);
+  const finalCountClaim = finalGeometryCountClaim(assistantMessages);
+  const finalCountMatchesEvidence = !finalCountClaim || !latestCounts
+    ? null
+    : finalCountClaim.points === latestCounts.points && finalCountClaim.prims === latestCounts.prims;
+
+  return {
+    applicable,
+    requestSignals: [...new Set(request.match(OPEN_ENDED_QUALITY_REQUEST) || [])],
+    available: {
+      webSearch: availableTools.some((name) => /web_search|browser/i.test(String(name))),
+      tools: [...new Set(availableTools)].sort(),
+    },
+    contract: {
+      firstMutationIndex: firstMutation?.index ?? null,
+      requirements: { controls: requiresControls, relations: requiresRelations },
+      fields: contractFields,
+      missing: missingContractFields,
+    },
+    reference: {
+      researchSteps,
+      userProvidedReference,
+      userAuthorizedNoResearch,
+      qualityContractRequired: applicable && activatedSkills.includes('houdini-sop-workflow'),
+      qualityContractLoadSteps,
+      externalTruthClaimCount: externalTruthClaims.length,
+      unsupportedExternalTruthClaims,
+      assumptionBoundaryDisclosed,
+    },
+    skeleton: {
+      firstRenderIndex: firstRender?.index ?? null,
+      tabCreatesBeforeFirstRender,
+      checkpointMentions: skeletonCheckpointMentions,
+    },
+    relations: {
+      probeSteps: [...new Set(relationshipProbeSteps)],
+      keywords: [...relationshipKeywords].sort(),
+    },
+    perturbation: {
+      restored: perturbations,
+    },
+    freshness: {
+      lastMutationIndex: lastMutation?.index ?? null,
+      latestGeometryCounts: latestCounts,
+      finalGeometryCountClaim: finalCountClaim,
+      finalCountMatchesEvidence,
+    },
+  };
+}
+
+export function qualityLoopRisks(evidence) {
+  const risks = [];
+  if (!evidence) return risks;
+  if (evidence.applicable && evidence.contract.missing.length) {
+    risks.push({
+      code: 'quality_contract_incomplete',
+      detail: `Open-ended quality contract is missing: ${evidence.contract.missing.join(', ')}.`,
+    });
+  }
+  if (evidence.reference.qualityContractRequired && !evidence.reference.qualityContractLoadSteps.length) {
+    risks.push({
+      code: 'quality_contract_reference_not_loaded',
+      detail: 'houdini-sop-workflow was active for an open-ended quality task, but its procedural quality contract was not loaded.',
+    });
+  }
+  if (evidence.available.webSearch
+      && evidence.reference.externalTruthClaimCount
+      && !evidence.reference.userProvidedReference
+      && !evidence.reference.userAuthorizedNoResearch
+      && !evidence.reference.researchSteps.length) {
+    risks.push({
+      code: 'external_reference_available_but_unused',
+      detail: 'External-truth language was used while web/research capability was available, but no research call was recorded.',
+    });
+  }
+  if (evidence.reference.unsupportedExternalTruthClaims.length) {
+    risks.push({
+      code: 'external_truth_without_source',
+      detail: `${evidence.reference.unsupportedExternalTruthClaims.length} external-truth claim(s) lack a source or an assumption boundary.`,
+    });
+  }
+  if (evidence.applicable
+      && evidence.skeleton.firstRenderIndex
+      && evidence.skeleton.tabCreatesBeforeFirstRender >= 20
+      && !evidence.skeleton.checkpointMentions.length) {
+    risks.push({
+      code: 'late_first_visual_validation',
+      detail: `${evidence.skeleton.tabCreatesBeforeFirstRender} nodes were created before the first render without an explicit skeleton/proxy checkpoint.`,
+    });
+  }
+  if (evidence.applicable && evidence.contract.fields.controls && !evidence.perturbation.restored.length) {
+    risks.push({
+      code: 'procedural_control_not_perturbed',
+      detail: 'The task promised configurable controls, but no set → validate → restore perturbation was observed on an object-level control.',
+    });
+  }
+  if (evidence.applicable && evidence.contract.fields.relations && !evidence.relations.probeSteps.length) {
+    risks.push({
+      code: 'relationship_contract_without_evidence',
+      detail: 'The pre-mutation contract promised module relationships, but no relationship-oriented probe was observed.',
+    });
+  }
+  if (evidence.freshness.finalCountMatchesEvidence === false) {
+    risks.push({
+      code: 'stale_final_geometry_counts',
+      detail: 'The final points/prims claim does not match the latest post-mutation geometry evidence.',
+      claim: evidence.freshness.finalGeometryCountClaim,
+      evidence: evidence.freshness.latestGeometryCounts,
+    });
+  }
+  return risks;
 }
 
 export function collectValidationCoverage(steps) {
