@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-protocol-manifest.v1.json",
+  "title": "dsh-houdini benchmark protocol manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "createdAt",
+    "baselineCommit",
+    "agentSurfaceSha256",
+    "environment",
+    "execution",
+    "evaluation",
+    "sealedInstances"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocolVersion": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "baselineCommit": { "$ref": "#/$defs/gitSha" },
+    "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["houdini", "dsh", "plugin", "visionToolkit"],
+      "properties": {
+        "houdini": { "type": "string", "minLength": 1 },
+        "dsh": { "type": "string", "minLength": 1 },
+        "plugin": { "type": "string", "minLength": 1 },
+        "visionToolkit": { "type": "string", "minLength": 1 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["models", "budget", "additionalCorrectionLimit"],
+      "properties": {
+        "models": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wallMinutes", "maxTurns"],
+          "properties": {
+            "wallMinutes": { "type": "integer", "minimum": 1 },
+            "maxTurns": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "additionalCorrectionLimit": { "const": 0 }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deterministicEvaluator", "blindVisualEvaluator", "targetEvaluator", "blindPromptSha256", "targetPromptSha256"],
+      "properties": {
+        "deterministicEvaluator": { "type": "string", "minLength": 1 },
+        "blindVisualEvaluator": { "type": "string", "minLength": 1 },
+        "targetEvaluator": { "type": "string", "minLength": 1 },
+        "blindPromptSha256": { "$ref": "#/$defs/sha256" },
+        "targetPromptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sealedInstances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mechanical", "simulation", "lookdev"],
+      "properties": {
+        "mechanical": { "$ref": "#/$defs/instanceSet" },
+        "simulation": { "$ref": "#/$defs/instanceSet" },
+        "lookdev": { "$ref": "#/$defs/instanceSet" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "instanceSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calibration", "holdout", "counterexample"],
+      "properties": {
+        "calibration": { "$ref": "#/$defs/sha256" },
+        "holdout": { "$ref": "#/$defs/sha256" },
+        "counterexample": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

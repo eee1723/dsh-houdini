@@ -8,6 +8,11 @@ lib/
 tools/out/
 __pycache__/
 
+# Evaluator-only benchmark material and per-run manifests must not enter the
+# production repository or npm package. Track only schemas and generic tooling.
+benchmark/sealed/
+benchmark/runs/
+
 # Local research scratch: decompressed session traces (private conversation
 # data) and fetched docs — never commit.
 .research/

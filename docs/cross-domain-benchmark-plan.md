@@ -41,6 +41,11 @@ agent-native 检查动词和新领域 skill 的正式形态。
 surfaces，拒绝已登记的 benchmark 标识或唯一对象短语。该扫描是最低门槛，不替代人工 diff 审查：
 换个说法写入同一答案仍然算泄漏。
 
+B0 的通用管理资产位于仓库顶层 `benchmark/`，但该目录不进入 npm `files`：只跟踪 baseline、JSON
+Schema 和无题目内容的协议工具。具体题面、evaluator spec 与逐 run manifest 分别放在被 Git 忽略的
+`benchmark/sealed/`、`benchmark/runs/` 或独立评测存储中。`tools/benchmark-manifest.mjs` 只计算规范化
+agent-surface hash、sealed file hash 和关键 manifest 不变量，不生成任务内容。
+
 ### 2.2 实例分层
 
 每个能力族至少分三类实例：
@@ -160,6 +165,12 @@ sealed manifest hash、能力标签、普通 brief schema 和解封规则，运�
 - 为每个能力族预登记校准实例、未见留出实例和跨域反例；仓库只记录未见材料的 sealed hash 与解封规则；
 - 用非评分 smoke 验证三个校准实例都能启动、保存到 `$HIP`、采集 trace 和生成评审输入；
 - 固定模型/provider/version 后生成 protocol version；smoke 结果不得混入主矩阵。
+
+已建立的通用底座：`benchmark/baseline.json`、protocol/run 两份 JSON Schema、agent-surface 规范化
+SHA-256、sealed file SHA-256、关键不变量 CLI 校验和确定性回归。baseline commit 为
+`df22e49636e57794b0d7b17cc26e6f0f3a994e98`，当前 agent-surface hash 为
+`3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457`。在 Houdini runtime repair、
+模型/provider 和 sealed 实例齐备前，不生成看似完整的 protocol manifest。
 
 ### Phase B1：跑 3 × 2 校准/发现矩阵
 

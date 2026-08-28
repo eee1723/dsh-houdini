@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-run-manifest.v1.json",
+  "title": "dsh-houdini benchmark run manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "protocolVersion",
+    "protocolManifestSha256",
+    "baselineCommit",
+    "agentSurfaceSha256",
+    "phase",
+    "capabilityFamily",
+    "instanceRole",
+    "model",
+    "instanceSealedSha256",
+    "evaluatorSpecSha256",
+    "agentExposure",
+    "startedAt",
+    "status"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "string", "minLength": 1 },
+    "protocolManifestSha256": { "$ref": "#/$defs/sha256" },
+    "baselineCommit": { "$ref": "#/$defs/gitSha" },
+    "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
+    "phase": { "enum": ["smoke", "discovery", "regression", "generalization"] },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "model": { "type": "string", "minLength": 1 },
+    "instanceSealedSha256": { "$ref": "#/$defs/sha256" },
+    "evaluatorSpecSha256": { "$ref": "#/$defs/sha256" },
+    "agentExposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicBriefSha256", "allowedAnswersSha256", "seedSceneSha256", "resourceSha256", "evaluatorMaterialExposed"],
+      "properties": {
+        "publicBriefSha256": { "$ref": "#/$defs/sha256" },
+        "allowedAnswersSha256": { "$ref": "#/$defs/sha256" },
+        "seedSceneSha256": { "$ref": "#/$defs/sha256" },
+        "resourceSha256": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
+        "evaluatorMaterialExposed": { "const": false }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["running", "completed", "failed", "invalidated"] },
+    "terminationReason": { "type": "string" },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trace": { "type": "string" },
+        "hip": { "type": "string", "pattern": "^\\$HIP(?:/|$)" },
+        "cache": { "type": "array", "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
+        "render": { "type": "array", "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
+        "finalNodes": { "type": "array", "items": { "type": "string", "pattern": "^/" } }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hardFailure", "score", "claimLevel"],
+      "properties": {
+        "hardFailure": { "type": "boolean" },
+        "score": { "type": "number", "minimum": 0, "maximum": 100 },
+        "claimLevel": { "enum": ["none", "local-regression", "within-family", "cross-domain"] },
+        "blindResultSha256": { "$ref": "#/$defs/sha256" },
+        "targetResultSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

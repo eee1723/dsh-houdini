@@ -1482,10 +1482,16 @@ ledger。
 与隐藏检查不进入会话或 `$HIP` workspace。
 
 新增 `benchmark-generalization-policy.test.mjs`，扫描 `AGENTS.md`、`client.js`、`src/`、`presets/`、
-`skills/` 与当前路线文档中的已登记实例标识和唯一短语，Node 测试增至 9 个；同时更新
+`skills/` 与当前路线文档中的已登记实例标识和唯一短语；同时更新
 skill-governance，把 benchmark 派生规则的发布门
 改为“原失败回归 + 未见同族实例 + 跨域反例”。B4 不再用原题改善直接宣称通用能力：原题只证明局部
 修复；只有冻结改进后解封的未见留出改善，且反例无误触发，才支持有限泛化或跨域能力主张。
+
+随后提交干净基线 `df22e49636e57794b0d7b17cc26e6f0f3a994e98`，并建立不含题目的 B0 管理底座：
+`benchmark/baseline.json`、protocol/run JSON Schema、`tools/benchmark-manifest.mjs` 的 surface/seal hash
+与关键不变量校验，以及对应确定性测试。agent-surface hash 固定为
+`3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457`；`benchmark/` 不进入 npm
+生产包，具体 sealed 题面和 run manifest 目录也由 `.gitignore` 排除。Node 测试现为 10 个。
 
 ## 3. 卡点（blockers）
 
@@ -1581,15 +1587,15 @@ QPainter 圆弧 spinner。
 1. ✅ 完成代码、当前文档、preset、skills、生成契约、打包清单和忽略目录审计（§2.45）。
 2. ✅ 修复旧菜单/launcher 语义漂移，收紧 ask choice fail-closed，并新增当前文档一致性回归。
 3. ✅ 当前 checkout 的 Node、skill、pack、Python、四项 H21 强制回归及 manager/profile 回归全绿。
-4. ⏳ 提交本轮清理并在运行中 Houdini 执行一次 `Repair and restart runtime`；将提交 hash 和运行时版本
-   写入 B0 protocol，才开始评分 smoke。
+4. 🔶 干净基线已提交为 `df22e49`；仍需在运行中 Houdini 执行一次 `Repair and restart runtime`，将
+   实际运行时版本写入 B0 protocol，才开始评分 smoke。
 
 ### Phase B0 — 冻结评测协议
 
 1. ✅ 冻结反过拟合原则：agent-visible surfaces 不含实例答案；实例分为校准/发现、未见留出和
    跨域反例；原题改善不能单独证明通用能力。
-2. 🔶 建立 protocol/run manifest schema、普通用户 brief 模板、预设回答边界、seed/fixture 校验、
-   agent-surface hash、sealed holdout hash、评分 schema 和 protocol version。
+2. 🔶 protocol/run manifest schema、agent-surface hash、sealed file hash、Git/npm 隔离和关键校验已完成；
+   普通用户 brief 模板、预设回答边界、seed/fixture、评分 schema 与最终 protocol version 待环境冻结。
 3. ⏳ 建立只生成 `$HIP` 产物的 smoke/fixture 校验；仓库不接收 HIP/cache/render 或未解封留出正文。
 4. ⏳ 固定两个模型与独立视觉 provider，验证盲描述和目标核验确实是两次独立输入。
 
