@@ -29,7 +29,9 @@ export function validateAskUserQuestionArgs(args: unknown): string | null {
 
   for (let index = 0; index < root.questions.length; index++) {
     const question = record(root.questions[index])
-    if (!question) continue
+    if (!question) {
+      return `ask_user_question question[${index}] must be an object. Retry using exact {id, question, header, options, multi_select} fields.`
+    }
     const unknown = invalidKeys(question, QUESTION_KEYS)
     if (unknown.length) {
       const aliases = unknown
@@ -54,7 +56,9 @@ export function validateAskUserQuestionArgs(args: unknown): string | null {
     }
     for (let optionIndex = 0; optionIndex < question.options.length; optionIndex++) {
       const option = record(question.options[optionIndex])
-      if (!option) continue
+      if (!option) {
+        return `ask_user_question question[${index}].options[${optionIndex}] must be an object. Retry using exact {label, description} fields.`
+      }
       const optionUnknown = invalidKeys(option, OPTION_KEYS)
       if (optionUnknown.length) {
         return `ask_user_question question[${index}].options[${optionIndex}] has unsupported key(s): ${optionUnknown.join(', ')}. Retry using only exact option keys: label, description.`

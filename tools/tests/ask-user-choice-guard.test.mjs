@@ -27,6 +27,16 @@ const trailing = validateAskUserQuestionArgs({
 assert.match(trailing, /unsupported key\(s\): header , options /)
 assert.match(trailing, /trim to valid names: header, options/)
 
+assert.match(validateAskUserQuestionArgs({ questions: ['not-an-object'] }), /must be an object/)
+assert.match(validateAskUserQuestionArgs({
+  questions: [{
+    id: 'shape',
+    question: '选择哪种形态？',
+    header: '形态',
+    options: [{ label: 'A', description: 'A' }, 'not-an-object'],
+  }],
+}), /options\[1\] must be an object/)
+
 assert.match(validateAskUserQuestionArgs({
   questions: [{ id: 'mode', question: '实现方式偏好？' }],
 }), /is a user choice but has no options/)

@@ -202,7 +202,8 @@ async function relayMedia<T extends ExecResult>(value: T, execInput: unknown, br
  * Append a note when the session workspace does not match $HIP. dsh-side file
  * tools (pwsh/fs/vision) are sandboxed to the session workspace — a mismatch
  * means they cannot exchange files with Houdini (images are exempt: the media
- * relay above handles them). Shown ONCE per (workspace, $HIP) pair — the
+ * relay above handles them). Shown ONCE per Host process and (workspace,
+ * $HIP) pair — the
  * grass-task trace (2026-08-19) showed the repeated note training the model
  * to ignore hints entirely (alarm fatigue).
  */
@@ -220,8 +221,9 @@ async function withWorkspaceNote(value: ExecResult, execInput: unknown, bridge: 
     `workspace note: this session's workspace is "${cwd}", but $HIP (the live Houdini project directory) is "${hip}".`,
     'Anchor all Houdini outputs at $HIP. Images produced by render/screenshot verbs are auto-relayed into the',
     'workspace (see the media section), so vision tools work as-is; for OTHER files dsh-side tools must read,',
-    'relaunch via Houdini menu "dsh → 启动 / 重启 dsh" to seed the workspace from the current hip.',
-    'Never work around this by writing into the dsh-houdini plugin repository. (This note is shown once per session.)',
+    'open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run Repair and restart runtime',
+    'to seed a Houdini session from the current $HIP. Never work around this by writing into the dsh-houdini',
+    'plugin repository. (This note is shown once per Host process and workspace/$HIP pair.)',
   ].join(' ')
   return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
 }

@@ -38,7 +38,7 @@ description: 创建、审查、维护和演化 dsh-houdini 的领域 skills。�
    - verb/tool：跨任务执行意图、校验、事务和状态恢复；
    - trace pattern/development docs：证据历史、候选和路线，不冒充已发布能力。
 8. 做最小 diff，清除重复规则，保留反例和适用边界。单个项目节点名、艺术偏好、视频作者
-   个人习惯或模型臆测不得升级为通用硬规则。
+   个人习惯、benchmark ID、实例对象/目标参数、评分答案或模型臆测不得升级为通用硬规则。
 9. 验证后才标记完成：目标 skill 的结构校验、治理审计、引用/注册、必要构建、当前 Houdini
    版本实验、真实行为用例和反例。新 session 才能验证新的 skill catalog/guidance 是否曝光。
 
@@ -70,6 +70,8 @@ released → superseded/deprecated → removed
   Solaris 的操作手册。
 - 不以文档更新冒充能力实现。若工具/skill 尚未注册、构建、部署和用新 session 验证，状态
   必须写“计划/候选”，不能写“已完成”。
+- 不用训练/发现实例本身验证泛化。实例修复必须再过未见同族任务和跨域反例；只在原题变好时
+  记录为局部回归通过，不发布为通用能力提升。
 
 ## 输出契约
 

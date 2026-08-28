@@ -30,8 +30,10 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 - `render_view(EXPLICIT_SOP)` 使用持久 `__dsh_houdini_*` 服务；任务收尾复用、不删除。动画 A/B 使用同一 `framing_frame`。
 - `node_modules` 只用 npm 管；不要在本仓库运行 pnpm。Houdini 产出锚定 `$HIP`，不写进 workspace 或插件仓库。
 
-## 当前状态（2026-08-27）
+## 当前状态（2026-08-28）
 
 端到端链路、47 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。Host/Bridge 词表握手、视觉语义失败识别、真实动词采用指标和精简生成式 guidance 已加入代码并通过本地确定性回归；加载到现有 Houdini 进程仍需执行一次 `Repair and restart runtime`。
 
-生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。当前未完成：Bridge jobs 迁 `ctx.jobs`；query/exec 权限分层；已删除的旧大范围 GUI/Houdini 回归需按当前契约决定重建哪些最小覆盖。详见 `docs/development.md` §5。
+生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
+
+下一阶段已选择能力证据优先：按 `docs/cross-domain-benchmark-plan.md` 在机械程序化资产、真实 solver/cache 模拟和 Solaris/Karma lookdev 三个能力族中运行双模型发现矩阵，并用未见留出实例验证泛化。生产 guidance、preset、skills 和工具不得出现 benchmark ID、对象配方、目标参数或评分答案；同类失败跨独立实例重复前不新增动词、不写新大 skill、不先实现生产级结构化合同。Bridge jobs 迁 `ctx.jobs`、query/exec 权限分层和最小 GUI/H21/H22 回归保留为 benchmark 后的工程 backlog。

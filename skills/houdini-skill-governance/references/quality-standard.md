@@ -109,6 +109,12 @@ project-specific choice
 
 规则必须写适用条件和反例。没有反例的绝对规则通常尚未完成设计。
 
+Benchmark 只提供证据，不提供可复制进生产 skill 的答案。不得把 benchmark ID、实例对象名、
+目标数值、评分 rubric、固定节点网络或针对某次失败的补丁措辞写进 description、SKILL.md、reference、
+preset 或 system guidance。候选规则要先改写成与对象无关的数据模型、状态转换、检查意图或完成门，
+再同时验证：原失败实例、一个未见同族实例和一个不应触发该规则的跨域反例。只在原实例上改善属于
+局部修复，不构成通用 skill 发布证据。
+
 知识放置优先级：
 
 1. 已存在的唯一维护位置；
@@ -142,6 +148,7 @@ project-specific choice
 - description 用正例/相邻反例做触发检查。
 - 至少一个真实行为用例验证决策和完成门，不只匹配文字。
 - 强制规则有来源、版本、边界和反例。
+- benchmark 派生规则不含实例标识、对象配方、目标参数或评分答案，并有未见同族实例和跨域反例。
 - 与现有 skills/system guidance/tool-design 无冲突或重复真相源。
 - 变更状态、证据强度、下一验收写入 development/模式库；没有把计划写成已完成。
 - 发布后用新 session 检查 skill catalog/activation，旧 session 不能作为曝光证据。

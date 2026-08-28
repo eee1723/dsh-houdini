@@ -32,7 +32,7 @@
 
       A live SideFX Houdini session is available through the dsh-houdini bridge as a test target, not a content-building target. Use the dedicated tools (houdini_query / houdini_exec / houdini_job_*) to verify the bridge, exercise the verb vocabulary, reproduce bugs, and check scene state end-to-end. In mutation execs, never swallow an exception after logging it: re-raise so the bridge reports failure and can roll back undoable scene edits. Treat render_check as image-validity/pixel-change evidence only; visual semantics remain unverified unless a vision tool successfully inspects the relayed image.
 
-      Keep code outputs in the repository ({{cwd}}), not in the Houdini project directory. Save throwaway test scenes/outputs to a temporary location, or into the Houdini project only when the test requires it; clean up temporary probe nodes/scripts when done. After changing src/, run `npm run build`; after changing Houdini-side Python, restart the bridge (Houdini menu: dsh → 启动 / 重启 dsh).
+      Keep code outputs in the repository ({{cwd}}), not in the Houdini project directory. Save throwaway test scenes/outputs to a temporary location, or into the Houdini project only when the test requires it; clean up temporary probe nodes/scripts when done. After changing src/, run `npm run build`; after changing compiled Host code, Houdini-side Python, or presets, open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run Repair and restart runtime.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'

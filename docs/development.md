@@ -2,6 +2,8 @@
 
 > 本文是 dsh-houdini 的**开发进度日志**，随开发同步维护（改了代码就顺手更新本文）。
 > 设计宪法见 [`tool-design.md`](./tool-design.md)（动词词表、两轴模型、铁律、帮助文档三阶段）。
+> §2 与 §4 保留当时的版本号、菜单名和实验结论作为历史证据；当前运行方式以 §1、§5、
+> [`README.md`](../README.md) 与 [`setup.md`](./setup.md) 为准，不把历史措辞当作现行操作说明。
 >
 > 状态图例：✅ 完成 · 🔶 进行中 · ⛔ 卡点 · ⏳ 待办
 
@@ -30,7 +32,7 @@
 | webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
 | 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
 | Host / Bridge 词表握手 | ✅ 代码与确定性测试 | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；现有 Houdini 进程待一次 runtime restart 激活 |
-| 模糊任务质量闭环 | 🔶 P1 已获建模 + 程序化特效跨域正向证据；choice-first 已部署，体积形态语义门仍待复核（§2.41–§2.44） | ask schema fail-closed；主 skill 强制合同/骨架/关系/扰动/新鲜证据；trace 审计 HTA-023–025 |
+| 跨域质量闭环 | 🔶 P1 行为原型已部署；反过拟合协议已冻结，下一阶段建立 B0 资产（§2.41–§2.46） | 三个能力族的发现实例 + 未见留出 + 跨域反例；确定性检查 + 独立视觉评审 |
 
 ---
 
@@ -1449,6 +1451,42 @@ soften → OUT，完成 `ring_speed 12→24→12` 与最终 `12→6→12` 两轮
 独立于整体 hero 图的形态证据（隔离层、正交/切片诊断或密度采样），但具体 `volume_*` 工具形态等待
 第二个独立模拟任务，当前不把单个沙尘 recipe 写进生产 skill。
 
+### 2.45 仓库基线清理与跨域 benchmark 决策（2026-08-28）
+
+进入下一轮前对 78 个非依赖/非生成文件、Host TypeScript、Houdini Python、两个 preset、五个 skills、
+打包清单和当前文档完成一致性盘点。工作树起点与 `origin/main` 一致；`npm test`、skill governance、
+`npm pack --dry-run`、Python compile 与 profile sync 基线通过。审计发现并修正的都是可直接证明的
+事实漂移：README 同时描述旧“一键全重启”和新 `Open Workspace` 语义，Host/preset/install/launcher
+仍引用退役菜单，launcher 顶层 docstring 与实际双路径不一致，README 漏列 Solaris skill，choice guard
+对非对象 question/option 没有兑现 fail-closed。新增 current-docs consistency 回归，Node 测试增至 8 个。
+最终验证为：8 个 Node 文件、5/5 skill 注册治理、npm pack（含新计划文档）、7 个 Python 源文件
+compile、H21 raw-gate/ownership/caught-failure/tab-create-failure、manager update 与 profile sync 全部通过。
+
+本地忽略目录分成三类处理：当前 runtime marker/log 不动；trace、session、media 与 `tools/out` 作为
+仍可复核证据保留；只删除孤儿 `__pycache__`、空退役 plugin/artifact 目录和 2026-08-18 的窗口调试日志。
+历史开发记录保留当时菜单名/版本号，并在文首声明不能当作当前操作说明，避免为了表面整洁破坏证据链。
+
+路线选择为能力证据优先，不先实现生产级结构化任务合同。新建
+[`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md) 作为唯一评测计划：在程序化机械资产、
+真实 solver/cache 模拟和 Solaris/Karma lookdev 三个能力族运行双模型发现矩阵；执行 agent 与评委分离，
+先确定性检查，再做无目标词盲语义描述，最后目标核验。主矩阵前冻结 protocol/fixture/评分，不并行迁移
+jobs、权限层或大范围 GUI 回归；只有跨任务重复证据达到 governance 门才新增动词、skill 或最小结构化
+ledger。
+
+### 2.46 Benchmark 反过拟合与信息防火墙（2026-08-28）
+
+用户进一步明确：目标是通用 agent，不能为校准矩阵中的个别建模、模拟或 lookdev 任务增加额外提示。
+因此原“三道固定题 + 原题复测”设计被收紧为三层实例：校准/发现、未见留出、跨域反例。生产
+`GUIDANCE`、preset、skills、verb/tool 和错误提示在全部实例间保持相同，不得出现 benchmark ID、
+对象配方、目标参数、评分 rubric 或失败补丁；执行 agent 只收到正常用户 brief，evaluator-only 合同
+与隐藏检查不进入会话或 `$HIP` workspace。
+
+新增 `benchmark-generalization-policy.test.mjs`，扫描 `AGENTS.md`、`client.js`、`src/`、`presets/`、
+`skills/` 与当前路线文档中的已登记实例标识和唯一短语，Node 测试增至 9 个；同时更新
+skill-governance，把 benchmark 派生规则的发布门
+改为“原失败回归 + 未见同族实例 + 跨域反例”。B4 不再用原题改善直接宣称通用能力：原题只证明局部
+修复；只有冻结改进后解封的未见留出改善，且反例无误触发，才支持有限泛化或跨域能力主张。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1532,87 +1570,56 @@ QPainter 圆弧 spinner。
 
 ---
 
-## 5. 下一步（分阶段计划，2026-08-16 按 dsh 官方规范重排）
+## 5. 下一步（跨域能力证据优先，2026-08-28）
 
-> 规范依据见 §6；与 `tool-design.md` §7 的技术项（batch 端点、undo group、
-> `scene_*`/`viewport_*` 域；`hda_*` 已于 §2.19 落地）互补，可穿插进行。
+> benchmark、评分和准入规则只在
+> [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md) 维护；本节只记录执行状态，
+> 不复制任务合同或评分细节。
 
-### Phase 0 — 收尾与稳定性
+### Phase B-Prep — 干净基线
 
-1. ✅ 修 launcher 冷启动竞态（§3.2）：等 3081 就绪再开 UI（QProgressDialog + QTimer）。
-2. ✅ 端到端验证（自行车会话，见 §2.7）：preset 身份正确、工具链路全通、
-   `houdinitrace` 未显示的根因已修（exports 缺 `./package.json`）；verbs 缺席的根因
-   是**模型不用动词**（guidance 已注入但被忽略），非管道断裂——转化为 Phase 1 第 8 项。
-3. ✅ 新增 `houdini-dev` preset（`presets/houdini-dev/`：standard 工具集 + dsh-houdini + coding persona，用于开发/测试；已 `standingKeyFor('houdini-dev')` 校验通过）。
-4. ✅ Houdini 菜单完整启动默认进入正确模式（§2.28）：正式 Host RPC 复用/创建当前 HIP 的
-   `houdini` session，client 公开 refresh/open 导航；普通 Open Workspace 保留当前会话。
-5. ✅ P0 修 `render_view`（§2.21）：proxy isolation + 保存/恢复 OBJ 可见性，agent camera/target 不抢用户对象；
-   确定性 headlight/geometry color；增加 detail/coverage 构图并返回 eye/direction。
-6. ✅ P0 修 display 契约（§2.21）：SOP 是 singular display child，OBJ 是 plural visibility；
-   `display_node('/obj')` 不得调用不存在的 `displayNode()`。
-7. ✅ P1 几何自省补 local/piece extent（§2.21，识别“全场 bbox 正常但每个实例宽度为 0”）；
-   动画任务 guidance 增加 A/B 完成门，`render_check` diff 提高精度并给非零像素比例。
-8. ✅ 修 trace evidence compaction replay 去重（§2.25）：callId 唯一执行，replay 单列。
-9. ✅ parent-aware Tab entry + 安全 setup recipe（§2.25）：headless/GUI 同语义；标准
-   节点、Builder、同 exec 用户状态恢复与实际 USD Render ROP 出图均通过。
-10. ✅ USD stage/prim 自省 + `render_frame` LOP/ROP 预检（§2.25）。
-11. ✅ 打包 `houdini-solaris-karma-workflow`，guidance 只加 dispatch/硬不变量（§2.25）。
-12. ✅ Rig/animation Phase A（§2.26）：审计序列门、evidence batch/覆盖、搜索/advisory、
-    governance dry-run 与 H21 R→U packed-piece 正反例均通过；未增加正式动词。
-13. ✅ Rig/animation Phase B：`set_keyframes`、`read_parms` 动画摘要、controller spec、
-    rig skill 与 ordered 魔方副本已完成 H21 回归并进入 `tool-design.md`。
-14. 🔶 Rig/animation Phase C/D：历史 H21/H22 channel/rigid/KineFX/APEX smoke 与 GUI A/B
-    已完成；旧大范围回归脚本已从当前工作树删除，需按现契约选择最小重建集。继续收集真实
-    用户 trace，不由单次 smoke 增加领域动词。
-15. ✅ Skill governance M0（§2.27）：治理 skill、三份 reference、确定性 audit、trace 路由、
-    注册/README/guidance 已落地。
-16. ✅ Skill governance M1：五个 skills 的 trigger、正反例、唯一维护位置和 H21/H22 claim
-    已审查；结论为 KEEP + 三处窄 UPDATE，无 merge/split/deprecate（见 M1 audit）。
-17. ⏳ Skill governance M2/M3：COP/SIM/project-analysis 按真实任务准入；Houdini 版本事件、
-    10 个新 traces 或季度兜底触发来源/触发/孤儿 reference 健康审查。
+1. ✅ 完成代码、当前文档、preset、skills、生成契约、打包清单和忽略目录审计（§2.45）。
+2. ✅ 修复旧菜单/launcher 语义漂移，收紧 ask choice fail-closed，并新增当前文档一致性回归。
+3. ✅ 当前 checkout 的 Node、skill、pack、Python、四项 H21 强制回归及 manager/profile 回归全绿。
+4. ⏳ 提交本轮清理并在运行中 Houdini 执行一次 `Repair and restart runtime`；将提交 hash 和运行时版本
+   写入 B0 protocol，才开始评分 smoke。
 
-### Phase 1 — 合规对齐（不改行为，只贴规范）
+### Phase B0 — 冻结评测协议
 
-5. ✅ 开发期 `dsh-tools` / `dsh-system-prompt` 与生产 DSH `0.1.1-rc.2` 对齐（§2.40）；
-   lockfile peer 类型图同步升级，编译已实际捕获并修正 `presentationMeta` 的 `JsonValue` 约束。
-6. ✅ 5 个工具补纯函数 `presentCall`/`presentResult` + `presentationMeta`（§2.40）：全部使用
-   语义正确的 generic 卡片与 read/edit/execute kind，UI 格式不进入模型结果；新增注册/回放回归。
-7. ✅ Host/trace 侧已有 Node 最小测试：session hint、trace dedupe/evidence、目录契约与
-   Host/Bridge mismatch fail-closed；仍需为工具注册/渲染层逐步补覆盖。
-8. ✅ 提升动词采用率（§2.8，2026-08-17）：GUIDANCE 改「动词 = 主接口 / hou = 逃生舱」
-   + persona 程序化生成原则 + 默认开启、可审计的桥侧 AST Raw Gate。最新 spider trace 的
-   成功 exec 动词覆盖率为 100%；只读 query 与目录广度不再混入违规率。
-9. 🔶 trace report/evidence 已共享 zstd/session 去重、最新 session 选择、raw method、vision 和
-   adoption helper；两者仍各自组装一次 normalized step，后续应抽成共享 parser，避免 schema
-   演化时双改。当前已有同 trace evidence/HTML smoke，未为消除重复而做高风险大重写。
-10. ✅ `tab_create` 的 shelf 初始化失败不再被吞掉后降级成裸 `createNode`：partial create 先清理，
-    异常继续交给 bridge rollback；H21/H22 都有注入失败回归。
+1. ✅ 冻结反过拟合原则：agent-visible surfaces 不含实例答案；实例分为校准/发现、未见留出和
+   跨域反例；原题改善不能单独证明通用能力。
+2. 🔶 建立 protocol/run manifest schema、普通用户 brief 模板、预设回答边界、seed/fixture 校验、
+   agent-surface hash、sealed holdout hash、评分 schema 和 protocol version。
+3. ⏳ 建立只生成 `$HIP` 产物的 smoke/fixture 校验；仓库不接收 HIP/cache/render 或未解封留出正文。
+4. ⏳ 固定两个模型与独立视觉 provider，验证盲描述和目标核验确实是两次独立输入。
 
-### Phase 2 — 视觉反馈闭环（README 路线 #1）
+### Phase B1 — 3 × 2 校准/发现矩阵
 
-8. ✅ 产图、relay 与生产工具链已收口：`render_view`（OpenGL ROP 离屏验证）+ `/media` 回传
-   工作区，evidence 能拒绝假视觉成功，生产固定 vision-toolkit 0.1.7（§2.39）。未来升级 toolkit、
-   model 或 provider 仍须带配额凭据做隔离同图 A/B，不能把 transport 成功当识图成功。
+1. ⏳ 六次运行使用全新 scene/session、相同版本与零追加纠错；模型之间交错执行。
+2. ⏳ 每次归档 run manifest、trace、最终节点、cache/render 路径和 evaluator 原始结论。
+3. ⏳ 除使整批失效的基础设施 P0 外，不在矩阵中途修改 persona、skill、动词或评分线。
 
-### Phase 3 — 迁移官方 jobs 服务（README 路线 #2）
+### Phase B2 — 独立评审与归因
 
-9. ⏳ `houdini_job_*` 迁到 `ctx.jobs`（§6 红线），获得 `job_list`/`job_kill`/`job_output`
-   + 完成通知；桥侧 job 端点退役。迁移前的小改：`houdini_job_status` 加
-   `wait`/`timeout_ms` 长轮询参数（§2.7-3 的 loop guard 误报，对齐 `job_output` 形态）。
+1. ⏳ 依次完成确定性检查、无目标词盲语义描述、目标合同核验和必要的人工抽检。
+2. ⏳ 统计 core success、self-detected defect、effective repair、false completion 与 reviewer agreement。
+3. ⏳ 把失败分为模型波动、任务 recipe、公共工作流、工具缺口和 evaluator 不可靠，不混为“agent 不行”。
 
-### Phase 4 — 权限分层（README 路线 #3）
+### Phase B3/B4 — 证据准入改进与复测
 
-10. ⏳ `tools/pre-execute` 小插件：`houdini_query*` → `next()`，`houdini_exec*` → `ask`（§6 约束）。
+1. ⏳ 同一 probe 跨至少两个独立任务重复才设计通用动词；领域知识按 governance E2 进入 skill，
+   不把实例 ID、对象配方、目标参数或评分答案写回生产 surface。
+2. ⏳ 仅在外部评分/自然语言状态无法稳定比较或约束结论时设计最小结构化 ledger。
+3. ⏳ 原失败实例只走回归通道；冻结改进后才解封未见同族实例并跑跨域反例。只有留出表现、实际
+   成功、自主发现与有效返工上升，且 false-completion 和误触发不恶化，才宣布能力提升。
 
-### Phase 5 — 卡片与知识沉淀
+### Benchmark 后恢复的工程 backlog
 
-11. ✅ houdinitrace 视图升级（2026-08-25）：Bridge/Host 输出结构化 `rawUsage`，页面区分
-    只读 HOM、混合动词、Gate 拦截、一次性豁免、低层修改与回滚；顶部改为真实采用指标，
-    详情按代码/判定/事务/动词/返回/输出分区，原始文本二级折叠。页面使用固定检查台高度、
-    目录/时间线独立滚动，窄屏隐藏目录。K3 自行车历史 trace 实页验证为 28/38 含动词、
-    17/18 成功修改含动词、7 只读、2 Gate、1 豁免、44 回滚 verbs。
-12. ✅ `ctx.skills.register()` 打包首个 `houdini-trace-analysis`（§2.20）。
-13. ✅ `houdini-sop-workflow`（§2.21：SOP/VEX/Copy/属性/模块验证）；与 trace 审计量表分离。
+- `houdini_job_*` 迁到 `ctx.jobs`；
+- query/exec 权限分层；
+- trace report/evidence normalized step 共享 parser；
+- 按当前契约重建最小 H21/H22/GUI smoke；
+- skill governance M2/M3 的 COP/SIM/project-analysis 准入和周期审计。
 
 ---
 
@@ -1661,9 +1668,11 @@ QPainter 圆弧 spinner。
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + 一次性 session hint + backdrop-filter 性能修复注入（§2.13/§2.28） |
 | `tools/tests/client-session-hint.test.mjs` | WebView session hint 的 refresh/open/消费与无 hint 零导航回归 |
 | `tools/tests/trace-*.test.mjs` | session replay 去重与 evidence/vision/adoption 确定性回归 |
+| `tools/tests/current-docs-consistency.test.mjs` | 当前菜单/repair 名称与五个 packaged skill 的 README 注册一致性回归 |
 | `tools/tests/verb-contract.test.mjs` / `bridge-contract.test.mjs` | 文档/Host/Bridge 注册表一致性与 mismatch fail-closed |
 | `tools/tests/dsh-*.test.py` | H21 hython：Raw Gate、ownership、caught failure、manager/profile 等当前回归 |
 | `docs/tool-design.md` | 设计宪法 |
+| `docs/cross-domain-benchmark-plan.md` | 下一阶段 benchmark、评分、停止条件与工具/skill 准入的唯一维护位置 |
 | `docs/development.md` | 本文：进度 + 卡点 |
 | `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |
 | `tools/catalog-lib.mjs` | 词表目录解析唯一实现（trace-report 与生成器共用） |

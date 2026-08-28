@@ -50,9 +50,11 @@ Git 历史是本地 skill 的版本与回滚基础；OpenAI hosted Skills API �
 1. 运行治理 audit、目标 skill quick validation 和 build；
 2. 检查注册/打包资源；
 3. 跑每个变更 skill 的 canonical positive + counterexample；
-4. 检查 system guidance 重复和 skill description 冲突；
-5. 新 session 验证 catalog、implicit activation 与资源可读；
-6. development 记录实际状态、测试和回滚点。
+4. 若变更来自 benchmark，另跑未见同族实例，并确认 agent-visible surfaces 没有泄漏实例标识、
+   对象配方、目标参数或评分答案；
+5. 检查 system guidance 重复和 skill description 冲突；
+6. 新 session 验证 catalog、implicit activation 与资源可读；
+7. development 记录实际状态、测试和回滚点。
 
 ### 定期健康审查
 

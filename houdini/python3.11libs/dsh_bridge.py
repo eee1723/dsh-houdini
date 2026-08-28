@@ -20,9 +20,10 @@ Endpoints:
     POST /jobs/<id>/status    {}            -> JobStatus
     POST /jobs/<id>/cancel    {}            -> JobStatus
 
-ExecResult: {"ok": bool, "stdout": str, "stderr": str,
-             "result": <JSON value bound to `__result__`>, "error": <traceback>,
-             "advisory": <hint when raw hou calls bypassed the verb vocabulary>}
+ExecResult includes ``ok/stdout/stderr/result/error`` plus the verb ledger,
+Raw Gate classification, rollback outcome, advisory text and produced image
+paths. The Host adds the final media-relay mapping after it copies images into
+the DSH session workspace.
 
 Threading note: `hou` is not thread-safe and must be called from Houdini's
 main thread, so ALL code execution is marshaled onto the main thread through

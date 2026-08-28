@@ -6,7 +6,7 @@
 - 幂等：重复调用唤起已有窗口，不重复创建。
 - 完整启动可传 session_id；URL hint 由 dsh-houdini client 半通过公开
   sessions.refresh/open 消费。无 id 的 Open Workspace 不重载、不切换当前会话。
-- 前端未就绪时每 2s 自动重试加载，直到连上（配合 launcher 的一键启动）。
+- 前端未就绪时每 2s 自动重试加载，直到连上（配合 launcher 的完整启动路径）。
 
 用法（Houdini GUI 菜单或 Python Shell，主线程）：
     import dsh_webview

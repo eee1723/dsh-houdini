@@ -12,6 +12,7 @@
 - **[`docs/rig-animation-design.md`](docs/rig-animation-design.md)** — Rig/animation 第一性原理、官方系统路由、最小工具预算与分阶段验收。
 - **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
 - **[`skills/houdini-sop-workflow/SKILL.md`](skills/houdini-sop-workflow/SKILL.md)** — 程序化 SOP/VEX/Copy/属性/模块验证和动画交付工作流。
+- **[`skills/houdini-solaris-karma-workflow/SKILL.md`](skills/houdini-solaris-karma-workflow/SKILL.md)** — Solaris/USD、MaterialX、Karma 与正式渲染交付工作流。
 - **[`skills/houdini-rig-animation-workflow/SKILL.md`](skills/houdini-rig-animation-workflow/SKILL.md)** — Channel、刚体 pieces、机械层级、KineFX skin、APEX 路由与时序完成门。
 - **[`skills/houdini-skill-governance/SKILL.md`](skills/houdini-skill-governance/SKILL.md)** — 创建/维护 Houdini skills，多来源证据吸收、受控自进化、版本与发布治理。
 
@@ -27,7 +28,7 @@
 
 执行的代码自带 `hou`；把 JSON 可序列化的值赋给 `__result__` 可返回结构化数据，`print` 的内容随 stdout 回传。
 
-每次 exec 还会在结果里带一个 **`verbs` 字段**（动词追踪）：bridge 给每个动词包了运行时 tracer，记录每次动词调用的 `{verb, args, kwargs, ok, result/error, ms}`，`hou.Node` 自动转 path，失败以 `ok:false` 记录。stdout 同时打印 `[verb] ...` 摘要行。这是将来 `houdinitrace` 视图的数据层（见 `docs/tool-design.md` §8）。
+每次 exec 还会在结果里带一个 **`verbs` 字段**（动词追踪）：bridge 给每个动词包了运行时 tracer，记录每次动词调用的 `{verb, args, kwargs, ok, result/error, ms}`，`hou.Node` 自动转 path，失败以 `ok:false` 记录。stdout 同时打印 `[verb] ...` 摘要行。这是当前 `Houdini Trace` 视图和离线 trace evidence 的数据层（见 `docs/tool-design.md` §8）。
 
 bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().set`/`cook`/`destroy` 等已有动词覆盖的修改默认直接拒绝；没有动词的低层修改只能拆成独立调用，并在 Gate 首次拒绝后用一次性 `allow_raw="具体缺口"` 留痕。只读 HOM 探针仍可直接使用；`advisory`/`hint:` 保留为观察层（见 `docs/tool-design.md` §8）。
 
@@ -147,11 +148,16 @@ python houdini/install.py
 
 重启 Houdini，点击 `DSH-Houdini` → `Open Workspace`，新建会话时选 **「Houdini 模式」**。完整步骤见 [`docs/setup.md`](docs/setup.md)。
 
-## 一键启动（Houdini 菜单）
+## Houdini 菜单与运行时刷新
 
-`houdini/python3.11libs/dsh_launcher.py` 提供一个**开发循环刷新按钮**：点一次 = 同步 preset（`presets/` → `~/.dsh/.agent-presets/`）+ 重启 bridge（停 → reload 模块 → 起）+ 重启 dsh web 前端（杀 3081 上的 node → 重拉）+ 打开内嵌 UI（自动置于 Houdini 窗口之上）。改完 `npm run build`、改了 Houdini 侧 Python 或改了 preset 后，点它即可全部生效，无需重启 Houdini。等待前端时显示 `环境 → 插件 → 前端 → 服务 → 界面` 分阶段百分比、耗时与当前动作。已有 project-local npx 缓存时直接执行其中的 DSH CLI，绕开 npm registry 解析并限时 60 秒；只有首次无缓存或显式指定版本才走 npx 冷下载，限时 600 秒。前端重启、依赖真实导入和端口探测都在 worker 线程，不阻塞 GUI。`.dsh-web.log` 为每次尝试写入时间、启动源、cwd、命令和超时，旧错误不再与当前尝试混淆。
+顶部 `DSH-Houdini` 菜单只保留两个入口，职责明确分开：
 
-用 Houdini package 安装（给顶部菜单栏追加 `dsh` 菜单，同时通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`——不用 `pythonX.Ylibs` 目录约定是因为 Houdini 只自动加载匹配自身 Python 版本的目录：H21=3.11、H22=3.13，而本插件是纯 Python、与版本无关）。脚本会把本机仓库的绝对路径烘焙进 package 文件（Houdini package 的相对路径不按 package 文件位置解析，必须用绝对路径），并自动装入检测到的**每个** Houdini 版本的 pref 目录（package 按版本隔离，H21/H22 各装一份）：
+- `Open Workspace`：健康服务存在时只唤起内嵌窗口，不重载页面、不切换当前会话；缺少前端时才执行完整启动。
+- `Version & Diagnostics...`：检查 DSH npm 通道与 dsh-houdini Git 通道。开发后加载新 Host、Bridge 或 preset，展开 `Advanced diagnostics` 并执行 `Repair and restart runtime`。
+
+显式 repair 会同步 preset、重载 Houdini 内 Bridge、替换 DSH 前端，并通过正式 Host RPC 复用或创建与当前 `$HIP` 工作区匹配的 `houdini` preset session。诊断面板会先检查活动 DSH turn/Houdini job，忙碌时不强制中断；普通 `Open Workspace` 不承担 repair 或工作区重建。等待前端期间会显示分阶段进度；日常启动直接使用 project-local npx cache 中已验证的 CLI，首次无缓存或显式指定版本才走 npx。启动来源、cwd、命令和错误写入 `.dsh-web.log`，就绪后 `.dsh-runtime.json` 记录实际监听 PID 与版本。
+
+安装脚本给顶部菜单栏追加 `DSH-Houdini` 菜单，并通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`。目录名不依赖 Houdini 当前 Python 小版本：同一份纯 Python 代码支持 H21 py3.11 与 H22 py3.13。脚本把本机 checkout 的绝对路径写入 package，并安装到检测到的每个 Houdini 版本 pref 目录：
 
 ```sh
 python houdini/install.py
@@ -172,11 +178,9 @@ python houdini/install.py
 > 发送给所配置的外部视觉服务；crop/trace/pixel diff/前景提取/主色/HTML 截图走本地流水线。
 > 请只使用你授权的数据、端点与 DSH Credential。
 
-> ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 装在用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。目录名 `python3.11libs` 只是历史名字，靠 `PYTHONPATH` 注入，与 Python 版本无关（H21=3.11 / H22=3.13 均可）。
+> ⚠️ **新装/切换 Houdini 大版本后要重跑本脚本**——package 位于版本隔离的用户 pref 目录（如 `Documents/houdini21.0/packages`），各版本互不可见。
 
-重启 Houdini 后，菜单栏出现 `DSH-Houdini`，只保留两个纯 ASCII 子项：`Open Workspace` 只唤起已运行的内嵌窗口（服务未启动时才走完整启动），不创建或切换用户当前会话；`Version & Diagnostics...` 打开即自动检查，只用两行显示 DeepSeek Harness 与 DSH-Houdini 的当前版本、最新版本和对应更新动作。DSH 从 npm 更新；精确版本下载没有总时限，面板持续显示需下载包的“已完成/总数”、本地内容缓存实际接收量、5 秒滑动平均速度、耗时和当前包，依赖解析期间总数未知时使用不定进度条。插件仅在 Git 状态允许安全快进时从 `origin/main` 更新并执行 `npm install` / build。更新完成且没有运行中的 DSH turn 或 Houdini job 时会自动重启服务；忙碌时只暂存更新，按钮变为 `Restart when idle`。独立的 `Restart Services` 不再占主界面，折叠到 `Advanced diagnostics` 并改名为 `Repair and restart runtime`，只用于开发后刷新或服务修复。启动器在 :3081 真正就绪后写带监听 PID 的 `.dsh-runtime.json`，因此面板展示的是已验证的运行版本，不再把缓存候选冒充当前版本。完整启动通过正式 Host RPC 复用当前 `$HIP` 目录最近、未归档的 `houdini` preset session，没有才创建并优先挂入已有 Workspace；WebView 用一次性 hint 调公开的 `sessions.refresh/open` 导航，绝不直接写 session 文件。启动器只打开 Houdini 内嵌 WebView，不再 fallback 到外部浏览器。前端首次无缓存时用 `npx --yes @deepseek-ai/dsh web` 拉取 CLI；日常启动直接用缓存内最近写入的 `lib/bin.js`，不再次等待 npx 联网解析。临时验证或更新指定版本可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，例如 `@deepseek-ai/dsh@0.1.0-rc.7`；这会明确走 npx。也可用 `DSH_HOUDINI_DSH_BIN` 指定本机已有的 CLI。注意 SPEC 只指定 CLI 根包，DSH 子包仍按其 semver 范围解析，不等于完整 lockfile。
-
-> ⚠️ 服务重启会替换前端进程；版本面板会先检查活动 turn/job，检测到忙碌就暂缓，不会强制中断。
+版本面板中的 DSH 更新从 npm 获取；插件更新只在 Git 状态允许安全快进时从 `origin/main` 更新并执行 `npm install` / build。更新完成且运行时空闲时自动激活；忙碌时暂存为 `Restart when idle`。临时验证特定 DSH 根包可在启动 Houdini 前设置 `DSH_HOUDINI_DSH_SPEC`，也可用 `DSH_HOUDINI_DSH_BIN` 指向已有 CLI；前者只固定 CLI 根包，不等于完整依赖 lockfile。
 
 不装菜单也可以，直接在 Python Shell 里：
 
@@ -232,9 +236,15 @@ runtime bootstrap、Artifact presentation 与语义识图仍是四层独立证�
 - 客户端超时/取消不会中断 Houdini 内已在执行的代码：调用方看到失败或取消时，场景可能已经被改——重试前先用 `houdini_query` 确认场景状态
 - 开发期 `dsh-tools` / `dsh-system-prompt` 已与当前生产 DSH `0.1.1-rc.2` 对齐；升级 DSH 时须同步审计这两个直接接口依赖并跑 `npm test`，避免 schema DSL、输出 metadata 或 presenter 类型静默漂移
 
-## 后续路线（按价值排序）
+## 后续路线
 
-1. **视觉 provider 持续验收**：生产 profile 已固定本机验证好用的 vision-toolkit 0.1.7；升级 toolkit、模型或 provider 前仍需用同一组 Houdini render 做同图 A/B，不能把 transport 成功当识图成功。
-2. **`ctx.jobs` 后台运行时**：把 job 管理从桥侧迁移到 dsh jobs 服务，获得统一的 list/kill/output/通知。
-3. **权限分层**：`tools/pre-execute` 实现 query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。
-4. **回归覆盖重建**：按当前 47 动词契约恢复最小 H21/H22/GUI smoke，不复刻已删除的历史大脚本。
+下一阶段已选择“跨域能力证据优先”：在机械程序化资产、真实 solver/cache 模拟和
+Solaris/Karma lookdev 三个能力族中，以两个模型完成发现矩阵，并用确定性检查、盲语义描述和
+目标核验三层独立评审衡量实际成功、自主发现缺陷和有效返工。评测实例与生产 agent 信息严格隔离：
+常驻 guidance、preset、skills 和工具不写 benchmark ID、对象配方、目标参数或评分答案；改进后必须
+通过未见同族实例和跨域反例，原题回归只证明没有退化。主矩阵完成前不先扩成结构化任务本体，也不
+并行迁移 jobs/权限层来改变实验底座。
+
+完整任务、评分、停止条件和工具/skill 准入门见
+[`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)。`ctx.jobs` 迁移、query/exec
+权限分层和最小 H21/H22/GUI 回归仍保留为工程 backlog，在 benchmark 基线稳定后恢复。

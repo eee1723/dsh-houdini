@@ -8,7 +8,7 @@ export function loadCatalog(docFile) {
   let cur = null;
   for (const line of fs.readFileSync(docFile, 'utf8').split(/\r?\n/)) {
     // 域标题：### node 域（场景图）/ ### render / sim 域（…）/ ### 类型目录（…）
-    // （「8 个域」是章节标题不是动词域，按「个域」排除）
+    // （「N 个域」是章节标题而不是动词域，按「个域」排除）
     const h = line.match(/^###\s+(.+?)\s*$/);
     if (h && ((h[1].includes('域') && !h[1].includes('个域')) || h[1].includes('类型目录'))) {
       cur = { domain: h[1].replace(/（.*?）/g, '').trim(), note: h[1], verbs: [] };

@@ -4,7 +4,7 @@
 不依赖提前 setx 环境变量（setx 需要新开进程才生效，容易踩空）。Houdini package
 文件里的相对路径不是相对 package 文件位置解析，所以必须用绝对路径——这里经
 `$DSH_HOUDINI_PATH` 展开。生成的 `dsh-houdini.json` 会被写进本机 Houdini packages
-目录，供 Houdini 启动时加载（追加顶级 `dsh` 菜单、把 python3.11libs 加进 sys.path）。
+目录，供 Houdini 启动时加载（追加顶级 `DSH-Houdini` 菜单、把 python3.11libs 加进 sys.path）。
 
 用法（仅需标准库）：
     python houdini/install.py                # 装到本机所有已检测到的 Houdini 版本的 packages 目录

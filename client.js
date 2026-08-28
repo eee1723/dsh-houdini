@@ -11,7 +11,7 @@
 //  2. a preset-aware watermark on the conversation window: sessions whose
 //     agentPreset starts with "houdini" get the Houdini swirl + an orange
 //     ambient glow, so the mode is recognizable at a glance.
-//  3. a one-shot launcher session hint: after an explicit Restart Services,
+//  3. a one-shot launcher session hint: after an explicit Repair and restart runtime,
 //     refresh the public session list and open the Host-created/reused
 //     Houdini-preset session. Plain Open Workspace supplies no hint and keeps
 //     the user's current conversation untouched.

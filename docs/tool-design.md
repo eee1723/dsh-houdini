@@ -305,11 +305,18 @@ load 会使当前 exec 丢失后续 result/images，恢复 load 还可能断开�
 
 ## 7. 后续路线（与 README 对齐）
 
-1. 把 Bridge job registry 迁到 `ctx.jobs`，统一 list/kill/output/通知；Houdini 主线程执行仍保持串行。
-2. 权限分层：query 自动允许、exec 审批；ownership guard 继续作为 Houdini 内第二层边界。五工具纯函数卡片已于 2026-08-27 完成。
-3. 视觉 provider 隔离 A/B：只在 semantic inspection 成功后晋升生产，不以 transport/bootstrap/presentation 成功替代。
-4. 按真实 trace 评估过滤式 geometry/frame invariant；不为一次性只读探针追求 100% 动词覆盖。
-5. 依据当前契约重建最小 H21/H22/GUI 回归覆盖，不复刻已删除的历史大脚本。
+下一阶段先执行 [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md)，不预设需要新增动词：
+
+1. 在机械资产、真实 solver/cache 模拟和 Solaris/Karma lookdev 的双模型发现矩阵中记录重复 probe、
+   自主返工和独立评审差异；执行 agent 只接收普通用户任务，不接收 benchmark ID、隐藏评分维度或
+   为实例定制的节点/参数 recipe；
+2. 同一通用意图在至少两个独立任务重复、现有动词无法安全表达时，才进入 agent-native 动词设计；
+3. 视觉 provider 只在盲语义、目标核验和人工抽检的核心维度一致率足够时作为 ground truth，
+   不以 transport/bootstrap/presentation 成功替代；
+4. `ctx.jobs` 迁移、query/exec 权限分层与最小 H21/H22/GUI 回归保留为工程 backlog，主矩阵前不改
+   实验底座；Houdini 主线程执行仍保持串行，ownership guard 继续作为内部安全边界；
+5. 不为一次性只读探针、单个 benchmark 对象或目录覆盖率新增动词；任何改进必须在未见同族实例与
+   跨域反例上验证，原失败任务回归不能单独证明通用能力提升。
 
 ---
 

@@ -1,17 +1,15 @@
-"""One-click launcher for the dsh-houdini dev loop.
+"""Launcher and runtime-refresh paths for dsh-houdini.
 
-Single action: restart BOTH ends to pick up code changes, then open the UI.
+``open_workspace()`` is the normal menu action. It preserves a healthy DSH
+frontend and current browser session, starts only missing services, and brings
+the embedded UI forward.
 
-  1. restart the Houdini bridge INSIDE this Houdini session (stop → reload
-     dsh_bridge / dsh_hou_helpers → start), so the latest Python helpers are live
-  2. restart the dsh web frontend (kill the node process on :3081 → relaunch),
-     so the latest compiled plugin (lib/) is live
-  3. WAIT until the frontend listens on :3081 (GUI: staged percentage dialog;
-     a cold npx cache downloads the whole dsh CLI and takes minutes),
-     then open the embedded web UI (dsh_webview); external browser fallback is disabled
-
-This is the dev-loop button: click it after `npm run build` or after editing
-any Houdini-side Python and both ends refresh without restarting Houdini.
+``launch()`` is the explicit repair/development path used by the diagnostics
+panel. It synchronizes presets, restarts the in-process Houdini bridge, restarts
+the DSH frontend, waits until :3081 and Host RPC are ready, then reuses or
+creates the newest Houdini-preset session whose workspace matches the current
+``$HIP``. Use it after ``npm run build``, Houdini-side Python changes, or when
+the runtime/workspace needs repair; it intentionally replaces the frontend.
 
 The frontend boots the `web` profile WITHOUT a patch overlay; the `houdini`
 agent preset mounts dsh-houdini (by package name, after
@@ -22,7 +20,7 @@ Use it from Houdini's Python Shell (after installing the package):
     import dsh_launcher
     dsh_launcher.launch()
 
-Or wire it into a menu — see MainMenuCommon.xml.
+The menu wiring is defined in ``MainMenuCommon.xml``.
 """
 
 from __future__ import annotations
