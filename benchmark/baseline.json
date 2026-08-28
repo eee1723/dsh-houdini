@@ -2,5 +2,20 @@
   "schemaVersion": 1,
   "createdAt": "2026-08-28T03:12:18.7496724Z",
   "baselineCommit": "df22e49636e57794b0d7b17cc26e6f0f3a994e98",
-  "agentSurfaceSha256": "3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457"
+  "agentSurfaceSha256": "3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457",
+  "runtimeVerification": {
+    "verifiedAt": "2026-08-28T03:19:01.2874779Z",
+    "loadedRepositoryCommit": "dea0ec85b2a5faa87b98ee6f30748df4689710df",
+    "houdini": "21.0.440",
+    "dsh": "0.1.1-rc.2",
+    "plugin": "0.1.0",
+    "visionToolkit": "0.1.7",
+    "rawGate": true,
+    "verbCatalogCount": 47,
+    "verbCatalogSha256": "eca1b1669acdc07c4acb0bb4525151c96936f6d92ee689fad98f676fa68fd3fb",
+    "activeJobs": 0,
+    "queuedJobs": 0,
+    "runningJobs": 0,
+    "webStatus": 200
+  }
 }

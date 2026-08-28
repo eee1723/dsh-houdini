@@ -1493,6 +1493,12 @@ skill-governance，把 benchmark 派生规则的发布门
 `3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457`；`benchmark/` 不进入 npm
 生产包，具体 sealed 题面和 run manifest 目录也由 `.gitignore` 排除。Node 测试现为 10 个。
 
+在 Houdini 21.0.440 的诊断面板从管理提交 `dea0ec8` 执行 `Repair and restart runtime`：idle check
+通过后 Bridge、DSH frontend 和 preset 正常重启，新 DSH PID 26608，Web 3081 返回 200；Bridge health
+为 `ok=true`、Raw Gate 开启、active/queued/running jobs 均为 0，47 个动词指纹为
+`eca1b1669acdc07c4acb0bb4525151c96936f6d92ee689fad98f676fa68fd3fb`。运行时事实写入
+`benchmark/baseline.json`；该管理提交没有改变已封存的 agent-surface hash。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1587,8 +1593,9 @@ QPainter 圆弧 spinner。
 1. ✅ 完成代码、当前文档、preset、skills、生成契约、打包清单和忽略目录审计（§2.45）。
 2. ✅ 修复旧菜单/launcher 语义漂移，收紧 ask choice fail-closed，并新增当前文档一致性回归。
 3. ✅ 当前 checkout 的 Node、skill、pack、Python、四项 H21 强制回归及 manager/profile 回归全绿。
-4. 🔶 干净基线已提交为 `df22e49`；仍需在运行中 Houdini 执行一次 `Repair and restart runtime`，将
-   实际运行时版本写入 B0 protocol，才开始评分 smoke。
+4. ✅ 干净基线已提交为 `df22e49`；已从 `dea0ec8` 在运行中 Houdini 完成一次安全
+   `Repair and restart runtime`，runtime/Bridge/Web/词表状态已写入 baseline。评分 smoke 仍须等模型、
+   evaluator 和 sealed 实例全部冻结。
 
 ### Phase B0 — 冻结评测协议
 

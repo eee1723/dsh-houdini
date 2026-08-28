@@ -172,6 +172,10 @@ SHA-256、sealed file SHA-256、关键不变量 CLI 校验和确定性回归。b
 `3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457`。在 Houdini runtime repair、
 模型/provider 和 sealed 实例齐备前，不生成看似完整的 protocol manifest。
 
+2026-08-28 已从管理提交 `dea0ec8` 执行一次安全 repair：idle gate 通过，Houdini 21.0.440、DSH
+0.1.1-rc.2、vision toolkit 0.1.7、Raw Gate、47 个动词及词表指纹均已复核；Bridge 无 active/queued/
+running job，Web 返回 200。管理提交只增加未打包的 B0 工具，没有改变上述 agent-surface hash。
+
 ### Phase B1：跑 3 × 2 校准/发现矩阵
 
 - 每次运行结束立即归档 manifest 和原始证据，不先修改 persona、skill 或动词；
