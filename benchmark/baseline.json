@@ -1,9 +1,11 @@
 {
   "schemaVersion": 1,
-  "createdAt": "2026-08-28T03:12:18.7496724Z",
-  "baselineCommit": "df22e49636e57794b0d7b17cc26e6f0f3a994e98",
-  "agentSurfaceSha256": "3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457",
+  "createdAt": "2026-08-31T09:09:32.7508696Z",
+  "baselineCommit": "5428a2b0c4ce7cc45f28024cab7e685f0bfd56d3",
+  "agentSurfaceSha256": "7ea472268230959c95e3a0f8437e0ece33dee8d14f6c460aa061bb85201ab06f",
   "runtimeVerification": {
+    "matchesBaseline": false,
+    "note": "Historical pre-P0 runtime snapshot; Repair and restart runtime is required before refreshing this block.",
     "verifiedAt": "2026-08-28T03:19:01.2874779Z",
     "loadedRepositoryCommit": "dea0ec85b2a5faa87b98ee6f30748df4689710df",
     "houdini": "21.0.440",
