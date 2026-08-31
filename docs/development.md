@@ -1547,10 +1547,12 @@ Codex + `JTCHE/houdini-mcp` 的机械运行保留为**后续参考校准**，不
 完整外部报告、manifest 与冻结 HIP 留在 `E:/tmp/mcp-evaluator/`；生产仓库只保留这份去任务配方的
 工程摘要。后续若恢复，只做同模型同 harness、禁用任意代码的隔离比较。
 
-当前本地验证：构建生成 49 动词指纹 `4f3516dec006…`；9 个非基线 Node 文件通过；H21.0.440 与
+当前本地验证：构建生成 49 动词指纹 `4f3516dec006…`；完整 `npm test` 的 10 个 Node 文件通过；H21.0.440 与
 H22.0.368 的 Raw Gate、ownership、caught failure、tab-create failure 及新增 scene/network/render
-合同各 5 项回归通过。agent-visible surface 的旧封存 hash 预期失配，须在代码/文档最终审计和完整测试之后重封，
-不能提前修改基线掩盖漂移；运行中 Houdini 仍需一次 `Repair and restart runtime` 才能加载本轮代码。
+合同各 5 项回归通过；5/5 skill governance 严格审计、Python compile 与 `npm pack --dry-run` 也通过。
+agent-visible surface 已在实现提交 `004d305` 后重封为 `7ea472268230…`；baseline 中旧 47 动词 runtime
+快照明确标记 `matchesBaseline=false`，运行中 Houdini 仍需一次 `Repair and restart runtime` 才能加载
+本轮代码并刷新为 49 动词事实，不能用文件基线冒充运行时已经更新。
 
 ## 3. 卡点（blockers）
 
