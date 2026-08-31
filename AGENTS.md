@@ -32,7 +32,7 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 
 ## 当前状态（2026-08-28）
 
-端到端链路、47 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。Host/Bridge 词表握手、视觉语义失败识别、真实动词采用指标和精简生成式 guidance 已加入代码并通过本地确定性回归；加载到现有 Houdini 进程仍需执行一次 `Repair and restart runtime`。
+端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。Host/Bridge 词表握手、视觉语义失败识别、真实动词采用指标和精简生成式 guidance 已加入代码并通过本地确定性回归；加载到现有 Houdini 进程仍需执行一次 `Repair and restart runtime`。
 
 生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
 

@@ -120,6 +120,10 @@ export function findBatchSetParmOpportunities(steps, threshold = 3) {
 const MUTATING_METHOD = /^(?:set|add|create|delete|destroy|remove|rename|save|cook|render|bake|lock|unlock|install|copy|move|enable|disable|press)(?:$|[A-Z_])/;
 const READ_ONLY_PREFIX_COLLISIONS = new Set(['displayNode', 'renderNode']);
 
+export function isMutatingRawMethodName(name) {
+  return MUTATING_METHOD.test(String(name || '')) && !READ_ONLY_PREFIX_COLLISIONS.has(name);
+}
+
 export function rawMethodNames(code) {
   const methods = [];
   for (const match of String(code || '').matchAll(/\.([A-Za-z_]\w*)\s*\(/g)) methods.push(match[1]);
@@ -127,9 +131,7 @@ export function rawMethodNames(code) {
 }
 
 export function mutatingRawMethodNames(code) {
-  return rawMethodNames(code).filter(
-    (name) => MUTATING_METHOD.test(name) && !READ_ONLY_PREFIX_COLLISIONS.has(name),
-  );
+  return rawMethodNames(code).filter(isMutatingRawMethodName);
 }
 
 const SUPPRESSED_COOK_FAILURE = /(?:^|\n)(?:[A-Z][A-Z ]{0,24} )?cook FAIL(?:ED)?(?=[:\s]|$)/i;
@@ -239,11 +241,17 @@ const VISION_REFUSAL = [
 /** Distinguish tool transport, image delivery, setup, and actual semantic inspection. */
 export function classifyVisionEvidence(step) {
   const tool = String(step.tool || '');
+  const semanticTools = new Set([
+    'read_image', 'vision_glance', 'vision_ground', 'vision_detect',
+    'vision_long_screenshot_ocr',
+  ]);
   const role = tool === 'vision_present'
     ? 'presentation'
     : tool === 'vision_bootstrap'
       ? 'setup'
-      : 'inspection';
+      : semanticTools.has(tool)
+        ? 'inspection'
+        : 'pixel';
   const transportOk = !step.failed;
   const text = String(step.resultPreview ?? step.resultText ?? '').trim();
   const structured = tryJson(text);
@@ -309,7 +317,7 @@ export function collectVerbAdoption(steps) {
   };
 }
 
-const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
+const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|真实\s*solver|有效缓存|可重算|产品视觉开发|正式(?:的)?\s*(?:Karma\s*)?渲染|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|real solver|valid cache|recomputable|product lookdev|final Karma render|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
 const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
 const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
 const UNVERIFIED_MARKER = /(?:unverified|未验证|无法验证|待验证)/i;
@@ -325,16 +333,39 @@ const REQUESTED_GOAL_SIGNALS = [
   ['verification', /(?:可靠(?:的)?验证|可靠(?:的)?验收|reliable (?:verification|validation))/i],
 ];
 const MUTATING_VERBS = new Set([
-  'tab_create', 'tab_apply', 'connect', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
+  'scene_save', 'tab_create', 'tab_apply', 'connect', 'disconnect_input', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
   'set_keyframes', 'create_spare_parms', 'set_timeline', 'create_bookmark', 'delete_bookmark',
   'hda_create', 'hda_set_section', 'hda_patch_section', 'hda_set_interface', 'sop_set_output',
-  'set_object_visible', 'set_display',
+  'set_object_visible', 'set_display', 'layout_nodes',
+]);
+const QUERY_SIDE_EFFECT_VERBS = new Set([
+  ...MUTATING_VERBS,
+  'cook_node', 'render_frame', 'render_view', 'viewport_screenshot',
 ]);
 const VALIDATION_VERBS = new Set([
   'cook_node', 'describe', 'geo_piece_stats', 'geo_attrib_stats', 'geo_frame_diff', 'render_view',
   'render_frame', 'render_check',
 ]);
 const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚点|端点|distance|距离|clearance|间隙|intersection|相交|穿插|contact|接触|contain(?:ed)?|包含|insert(?:ed)?|插入|tangent|切线|deviation|偏差)/ig;
+
+export function findQueryMutationSteps(steps) {
+  return (steps || []).filter((step) => (
+    step.tool === 'houdini_query'
+    && (
+      (step.mutatingRawMethods || []).length > 0
+      || (step.verbs || []).some((verb) => QUERY_SIDE_EFFECT_VERBS.has(verb.verb))
+    )
+  )).map((step) => ({
+    index: step.index,
+    time: step.time,
+    tool: step.tool,
+    codePreview: step.codePreview,
+    mutatingRawMethods: step.mutatingRawMethods || [],
+    mutatingVerbs: [...new Set(
+      (step.verbs || []).map((verb) => verb.verb).filter((name) => QUERY_SIDE_EFFECT_VERBS.has(name)),
+    )],
+  }));
+}
 
 function messageText(messages) {
   return (messages || []).map((message) => String(message?.text || '')).filter(Boolean).join('\n');

@@ -75,7 +75,7 @@ export class HoudiniBridge {
 
   /** Run Python code in the Houdini session and wait for completion.
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
-  async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<ExecResult> {
+  async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope, readOnly = false): Promise<ExecResult> {
     await this.ensureCompatible(signal)
     const body: Record<string, string> = { code }
     if (allowRaw) body.allow_raw = allowRaw
@@ -83,6 +83,7 @@ export class HoudiniBridge {
       body.owner_session = owner.sessionId
       body.owner_call = owner.callId
     }
+    if (readOnly) body.read_only = 'true'
     return this.post('/exec', body, signal)
   }
 

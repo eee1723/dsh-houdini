@@ -42,6 +42,52 @@ assert read_only["rawUsage"]["directCalls"] == [
     {"name": "hou.node", "count": 1}
 ], read_only["rawUsage"]
 
+# HOM getters whose names begin with a mutating prefix are still read-only.
+# Old trace evidence incorrectly labeled renderNode() as a render side effect.
+getter_analysis = dsh_bridge._raw_usage_analysis("hou.node('/obj').renderNode()")
+assert getter_analysis["suspectedMutations"] == [], getter_analysis
+assert dsh_bridge._gate_message("hou.node('/obj').renderNode()") is None
+
+# The query tool is enforced at the bridge boundary, not only by its prompt.
+query_read = dsh_bridge.run_code(
+    "__result__ = scene_info()['frame']",
+    read_only=True,
+)
+assert query_read["ok"] is True, query_read
+original_frame = float(hou.frame())
+query_mutation = dsh_bridge.run_code(
+    f"__result__ = set_timeline(current_frame={original_frame + 1!r})",
+    read_only=True,
+)
+assert query_mutation["ok"] is False, query_mutation
+assert "houdini_query is read-only" in query_mutation["error"], query_mutation
+assert float(hou.frame()) == original_frame, query_mutation
+
+query_alias = dsh_bridge.run_code(
+    f"mutate = set_timeline\n__result__ = mutate(current_frame={original_frame + 1!r})",
+    read_only=True,
+)
+assert query_alias["ok"] is False, query_alias
+assert "set_timeline" in query_alias["error"], query_alias
+assert float(hou.frame()) == original_frame, query_alias
+
+query_button = dsh_bridge.run_code(
+    "hou.node('/obj').parm('does_not_matter').pressButton()",
+    read_only=True,
+)
+assert query_button["ok"] is False, query_button
+assert "pressButton" in query_button["error"], query_button
+
+# Scene lifecycle resets cannot be made safe by allow_raw.
+original_hip = hou.hipFile.path()
+clear_blocked = dsh_bridge.run_code(
+    "hou.hipFile.clear(suppress_save_prompt=True)",
+    allow_raw="regression attempts to bypass the scene lifecycle guard",
+)
+assert clear_blocked["ok"] is False, clear_blocked
+assert "hou.hipFile.clear() is forbidden" in clear_blocked["error"], clear_blocked
+assert hou.hipFile.path() == original_hip, clear_blocked
+
 # Python-only aggregation is read-only even though setdefault starts with
 # "set". This exact shape occurred in a real geometry diagnostic trace.
 container_query = dsh_bridge.run_code(
@@ -95,9 +141,10 @@ save_analysis = dsh_bridge._raw_usage_analysis("hou.hipFile.save()")
 assert save_analysis["directCalls"] == [
     {"name": "hou.hipFile.save", "count": 1}
 ], save_analysis
-assert save_analysis["suspectedMutations"] == [
-    {"name": "save", "count": 1}
+assert save_analysis["coveredMutations"] == [
+    {"name": "hipFile.save", "count": 1, "verb": "scene_save"}
 ], save_analysis
+assert save_analysis["suspectedMutations"] == [], save_analysis
 
 # setPosition is receiver-ambiguous (NetworkMovableItem vs GeoPoint), so it is
 # deliberately heuristic-only rather than falsely advertised as layout_nodes.

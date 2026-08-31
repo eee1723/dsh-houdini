@@ -196,10 +196,11 @@
 - 修复/守卫：guidance 禁止 bridge exec 内 `hipFile.load`。用户 HIP 打开/替换走 Houdini UI；
   离线分析用 disposable hython。未来若自动化，必须在 Host 侧实现 unsaved confirmation、请求
   结束前调度、bridge/process reconnect、目标 HIP 验证和失败恢复，不能新增薄 wrapper。
-- 边界：`hou.hipFile.save()` 不重置场景生命周期，但仍是不可 undo 文件写；需明确用户授权。
-- 回归：bridge 现以 AST 在执行前无条件拒绝直接 `hou.hipFile.load(...)`；`allow_raw` 也不能
-  绕过。H21/H22 scene regression 证明错误返回且当前 HIP 未切换；`hipFile.save()` 不受此
-  专项守卫影响。
+- 边界：`hou.hipFile.save()` 不重置场景生命周期，但仍是不可 undo 文件写；现由只保存当前已命名
+  HIP 的 `scene_save` 覆盖并回报文件/dirty 证据。
+- 回归：bridge 现以 AST 在执行前无条件拒绝直接 `hou.hipFile.load(...)` 与
+  `hou.hipFile.clear(...)`；`allow_raw` 也不能绕过。H21 scene regression 证明错误返回且当前
+  HIP 未切换；裸 `hipFile.save()` 由 Raw Gate 指向 `scene_save`，不能再用豁免旁路。
 - 下一验收：设计 host-level open handshake 前不重试 live load；若未来支持 scene open，
   必须先替换本守卫并完成进程重连/unsaved/恢复集成测试。
 
@@ -368,3 +369,67 @@
   外观；正式 Karma 画面本身也不能替代隐藏层/密度关系等数值证据。
 - 下一验收：用另一类体积效果（非环形冲击）要求两个可区分的形态层，检查独立诊断能否阻止整体
   图像的目标先验误判，再决定扩展现有 geometry/volume 自省还是新增通用动词。
+
+## HTA-026：query/exec 只靠提示分工，query 实际包含副作用
+
+- 状态：P0 Bridge 边界已修；待 Repair/restart 后真实 session 验收。
+- 证据：2026-08-28～31 discovery session 中，多个 `houdini_query` 调用了 `set_timeline`、
+  `cook_node`、`set_parm(s)`、`tab_create/delete_node`、`render_view` 或裸 `pressButton/parm().set`；
+  旧 evidence 只检查裸方法，进一步漏掉了动词 ledger 中的副作用。
+- 根因：Host 只用 description 要求“read-only”，Bridge 的 `/exec` 对 query/exec 使用同一权限；审计器
+  又把“没有裸 mutation”误当成“没有 mutation”。
+- 修复：query 不再暴露 `allow_raw`，Host 发送 `read_only=true`；Bridge 不向 query namespace 注入修改
+  动词，并在执行前拒绝修改动词、cook、render、viewport capture 和裸修改。evidence 同时检查裸方法
+  与 side-effect verb ledger。
+- 反例/边界：`scene_info`、`describe`、`read_parms`、几何/USD 统计和真正只读 HOM getter 可继续在
+  query；需要改变 frame/cook/render 的验证不是“读”，必须转 exec/job 并接受其回滚/审计语义。
+
+## HTA-027：Houdini undo 成功但 Bridge ownership provenance 未回滚
+
+- 状态：P0 修复并通过 H21 regression。
+- 证据：在同一 mutation exec 中删除当前 session 所有节点后故意抛错，Houdini `performUndo()` 能把
+  节点恢复；旧 `_OWNED_NODE_SESSIONS` 已在 `delete_node` 时移除条目，恢复节点随后被误判为 foreign。
+- 根因：事务只覆盖 Houdini undo stack，没有把 Bridge 进程内的所有权注册表视为同一事务状态。
+- 修复：mutation 前快照 registry；只有 `performUndo()` 成功时同步恢复快照。回归检查节点存在且
+  `node_provenance` 仍为 `owned_current_session`。
+- 反例/边界：Houdini 进程重启后 registry 有意丢失，旧节点应安全降为 foreign；不能跨进程伪造
+  ownership。若 undo 本身失败，也不能恢复 registry 冒充场景已回滚。
+
+## HTA-028：像素工具被当作语义识图，掩盖 inspection 失败
+
+- 状态：P0 evidence 修复；旧 trace 已重提取。
+- 证据：第二模型机械 session 的 `read_image` 与 `vision_glance` 均失败，只有
+  `vision_pixel_diff` 成功；旧报告仍把它列为 `semanticOk=true`，从而没有报告 render 缺少成功识图。
+- 根因：旧分类把所有 `vision_*` 统一当作 semantic inspection，没有区分 transport、像素事实、
+  presentation 与内容理解。
+- 修复：只有 `read_image`、glance/ground/detect/OCR 等 inspection 能提供 semantic success；
+  pixel diff、crop、dominant colors 等归 `pixel`，只证明客观像素/派生事实。该 session 现在稳定产生
+  `render_without_successful_vision`。
+- 反例/边界：像素证据仍可证明新鲜度、差异、亮度、bbox 或颜色，不应删除；它只是不能回答对象
+  是什么、关系是否合理、画面是否满足语义目标。
+
+## HTA-029：provider/额度终止被压扁成普通未完成
+
+- 状态：P0 evidence 修复；真实 quota 与 network error 已复核。
+- 证据：一条模拟 session 的最终 `turn/end` 明确含 `insufficient_quota`，旧 terminal 只有
+  `lastEventType=turn/end`；另一条 session 在无任何 assistant/tool 工作前因 `network_error` 终止，
+  旧报告仍误报质量合同缺失。
+- 根因：提取器没有解析 `turn/end.reason`，完成风险也没有“工作是否实际开始”的前置条件。
+- 修复：terminal 记录 completed/quota/external error 的 category/code/message；quota 单列
+  `quota_exhausted`。零 assistant、零 tool 的外部启动失败不运行质量闭环判定。
+- 反例/边界：quota 不等于 agent 能力失败，也不等于产物无价值；若已有工具执行，仍保留未完成 todo、
+  无最终交付、质量门缺失等可观察风险，不能用 provider 原因洗掉执行事实。
+
+## HTA-030：保存状态与渲染成功缺少可审计的新鲜度
+
+- 状态：P0 工具合同已修；H21 headless regression 通过，待 GUI runtime 验收。
+- 证据：真实任务用裸 `hou.hipFile.save()` 逃生，旧 `scene_info.hip_saved` 不能区分已命名和已落盘；
+  MCP 参考运行也出现 save 返回成功但 live scene 仍 dirty。旧 `render_frame` 只验证目标存在/非空，
+  预先存在的旧文件可能被误当成新渲染，临时 picture 覆盖还会泄漏到 ROP。
+- 根因：合同用单布尔压缩了 path、dirty reliability 与磁盘事实；render 没有 pre/post fingerprint，
+  也没有把临时参数纳入恢复状态。
+- 修复：`scene_info` 拆为 `has_named_path/has_unsaved_changes/dirty_reliable/clean_on_disk`；
+  `scene_save` 只保存已命名场景并返回 dirty/bytes/mtime。`render_frame` 比较前后 bytes、mtime 与有界
+  内容摘要，只有新建或变化才 fresh，并 finally 恢复 picture/frame/foreground。
+- 反例/边界：H21 `hython` 保存后 dirty flag 仍不可靠，必须返回 null/false 边界，不能硬说 clean；
+  文件指纹证明本次产物变化，不等于渲染内容语义正确。

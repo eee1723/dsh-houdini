@@ -272,7 +272,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     description:
       'Execute Python code inside the running Houdini session. The code runs with the `hou` '
       + 'module pre-imported and may modify the scene: create or edit nodes, set parameters, '
-      + 'cook, save the hip file. Print what the agent needs to know; assign a JSON-serializable '
+      + 'and cook. Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
+      + 'is verb-covered. Print what the agent needs to know; assign a JSON-serializable '
       + 'value to the variable `__result__` to return structured data.',
     parameters: {
       code: { type: 'string', required: true, description: 'Python source executed in Houdini with `hou` available' },
@@ -304,7 +305,6 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them.',
     parameters: {
       code: { type: 'string', required: true, description: 'Read-only Python inspection code with `hou` available' },
-      allow_raw: ALLOW_RAW_PARAM,
     },
     output: {
       schema: execOutputSchema,
@@ -319,7 +319,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(resultTitle('Houdini inspection', result), result),
     async execute(args, exec) {
-      const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
+      const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
   }))

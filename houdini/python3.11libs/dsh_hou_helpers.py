@@ -235,10 +235,16 @@ def context_name(category) -> str:
 def scene_info() -> dict:
     """只读场景/时间线摘要；不移动 playbar、不遍历整张节点图。"""
     hip_path = hou.hipFile.path()
+    has_named_path = os.path.basename(hip_path).lower() != "untitled.hip"
+    has_unsaved_changes = bool(hou.hipFile.hasUnsavedChanges())
+    ui_available = bool(hou.isUIAvailable())
     return {
         "hip_path": hip_path,
         "hip_name": hou.hipFile.name(),
-        "hip_saved": os.path.basename(hip_path).lower() != "untitled.hip",
+        "has_named_path": has_named_path,
+        "has_unsaved_changes": has_unsaved_changes,
+        "dirty_reliable": ui_available,
+        "clean_on_disk": has_named_path and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
         "fps": float(hou.fps()),
         "frame": float(hou.frame()),
@@ -247,7 +253,34 @@ def scene_info() -> dict:
         "playback_range": [float(v) for v in hou.playbar.playbackRange()],
         "range_restricted": bool(hou.playbar.isRangeRestricted()),
         "playing": bool(hou.playbar.isPlaying()),
-        "ui_available": bool(hou.isUIAvailable()),
+        "ui_available": ui_available,
+    }
+
+
+def scene_save(expected_path: str | None = None) -> dict:
+    """保存当前已命名 HIP，并回报真实 dirty/file 状态；不承担 Save As。"""
+    path = os.path.abspath(hou.hipFile.path())
+    if os.path.basename(path).lower() == "untitled.hip":
+        raise ValueError("当前 HIP 尚未命名；请先在 Houdini UI 中 Save As，再调用 scene_save")
+    if expected_path is not None:
+        expected = os.path.abspath(hou.expandString(str(expected_path)))
+        if os.path.normcase(expected) != os.path.normcase(path):
+            raise ValueError(f"expected_path 与当前 HIP 不一致：expected={expected!r}, current={path!r}")
+    dirty_before = bool(hou.hipFile.hasUnsavedChanges())
+    hou.hipFile.save()
+    dirty_after = bool(hou.hipFile.hasUnsavedChanges())
+    dirty_reliable = bool(hou.isUIAvailable())
+    if not os.path.isfile(path):
+        raise RuntimeError(f"hou.hipFile.save() 返回后文件不存在：{path}")
+    stat = os.stat(path)
+    return {
+        "path": path,
+        "dirty_before": dirty_before,
+        "dirty_after": dirty_after,
+        "dirty_reliable": dirty_reliable,
+        "clean_on_disk": not dirty_after if dirty_reliable else None,
+        "bytes": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
     }
 
 
@@ -1424,6 +1457,22 @@ def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
         "node": d.path(),
         "input": used[-1] if used else None,
         "note": f"请求的输入口 {index} 不可用，已退化为下一个可用输入",
+    }
+
+
+def disconnect_input(dst, index: int = 0, allow_foreign: str | None = None) -> dict:
+    """断开 ``dst`` 的一个输入口；mutation/ownership 边界在 destination。"""
+    d = _resolve(dst)
+    _require_owned(d, "disconnect_input", allow_foreign)
+    index = int(index)
+    if index < 0 or index >= len(d.inputConnectors()):
+        raise ValueError(f"输入口 {index} 超出 {d.path()} 的有效范围 0..{len(d.inputConnectors()) - 1}")
+    previous = d.input(index)
+    d.setInput(index, None)
+    return {
+        "node": d.path(),
+        "input": index,
+        "disconnected": previous.path() if previous is not None else None,
     }
 
 
@@ -3385,6 +3434,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
             "outputimage/sopoutput/lopoutput/dopoutput/copoutput/choutput）——"
             "它不是 ROP？（非常规输出参数请裸写 hou，词表不覆盖）"
         )
+    original_output = p.unexpandedString()
     if picture is not None:
         p.set(picture)
     f = hou.frame() if frame is None else float(frame)
@@ -3395,11 +3445,31 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     t0 = time.time()
     render_err = None
     file_bytes = None
+    pre_fingerprint = None
+    post_fingerprint = None
+
+    def fingerprint(path):
+        if not path or not os.path.isfile(path):
+            return None
+        stat = os.stat(path)
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            digest.update(handle.read(64 * 1024))
+            if stat.st_size > 64 * 1024:
+                handle.seek(max(0, stat.st_size - 64 * 1024))
+                digest.update(handle.read(64 * 1024))
+        return {
+            "bytes": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "sample_sha256": digest.hexdigest(),
+        }
+
     try:
         hou.setFrame(f)
         if foreground_parm is not None:
             foreground_parm.set(1)
         target = hou.text.expandString(p.unexpandedString())
+        pre_fingerprint = fingerprint(target)
         out_dir = os.path.dirname(target)
         if out_dir and not os.path.isdir(out_dir):
             os.makedirs(out_dir, exist_ok=True)
@@ -3410,11 +3480,17 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
 
         deadline = t0 + float(timeout)
         while not render_err and time.time() < deadline:
-            if os.path.exists(target) and os.path.getsize(target) > 0:
-                file_bytes = os.path.getsize(target)
+            post_fingerprint = fingerprint(target)
+            if post_fingerprint is not None and post_fingerprint != pre_fingerprint:
+                file_bytes = post_fingerprint["bytes"]
                 break
             time.sleep(1)
     finally:
+        if picture is not None:
+            try:
+                p.set(original_output)
+            except Exception:
+                pass
         if foreground_parm is not None and original_foreground is not None:
             try:
                 foreground_parm.set(original_foreground)
@@ -3437,7 +3513,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     except Exception:
         pass
     if not render_err and file_bytes is None:
-        errors.append(f"render() 未报错但产物缺失或为空：{target}")
+        errors.append(f"render() 未报错但产物缺失、为空或与渲染前指纹相同：{target}")
     if file_bytes:
         report_image(target)
     return {
@@ -3445,6 +3521,10 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         "output": target,
         "frame": f,
         "file_bytes": file_bytes,
+        "preexisting": pre_fingerprint is not None,
+        "fresh": file_bytes is not None,
+        "pre_fingerprint": pre_fingerprint,
+        "post_fingerprint": post_fingerprint,
         "errors": errors,
         "ms": int((time.time() - t0) * 1000),
     }

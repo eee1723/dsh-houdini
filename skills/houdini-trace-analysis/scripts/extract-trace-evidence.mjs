@@ -19,7 +19,9 @@ import {
   collectVerbAdoption,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
+  findQueryMutationSteps,
   findSuppressedCookFailures,
+  isMutatingRawMethodName,
   mutatingRawMethodNames,
   parseVerbLedgerLine,
   qualityLoopRisks,
@@ -232,6 +234,7 @@ function analyzeTrace(file) {
     // similar read-only aggregation cannot be mislabeled as scene mutation.
     const mutatingMethods = rawUsage && !rawUsage._raw
       ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
+        .filter((item) => isMutatingRawMethodName(item.name))
         .flatMap((item) => Array(Number(item.count) || 1).fill(String(item.name)))
       : mutatingRawMethodNames(code);
     const step = {
@@ -304,9 +307,7 @@ function analyzeTrace(file) {
   const execUsedForReadOnly = rawHoudiniNoVerb.filter(
     (step) => step.tool === 'houdini_exec' && !step.mutatingRawMethods.length,
   );
-  const queryWithMutation = rawHoudiniNoVerb.filter(
-    (step) => step.tool === 'houdini_query' && step.mutatingRawMethods.length,
-  );
+  const queryWithMutation = findQueryMutationSteps(steps);
   const batchSetParmOpportunities = findBatchSetParmOpportunities(steps);
   const suppressedCookFailureSteps = findSuppressedCookFailures(steps);
   const renderEvidence = steps.flatMap((step) => step.verbs
@@ -339,6 +340,26 @@ function analyzeTrace(file) {
     activatedSkills: skillActivations.filter((item) => item.succeeded).map((item) => item.name),
   });
   const completionRisks = [];
+  const turnEnd = [...events].reverse().find((event) => event.type === 'turn/end') || null;
+  const terminalReason = turnEnd?.data?.reason || null;
+  const terminalMessage = String(
+    terminalReason?.error?.message
+    || terminalReason?.failure?.message
+    || terminalReason?.message
+    || '',
+  );
+  const terminalCode = terminalReason?.error?.code || terminalReason?.failure?.code || terminalReason?.code || null;
+  const terminalCategory = /insufficient_quota|quota has been exhausted/i.test(terminalMessage)
+    ? 'quota_exhausted'
+    : terminalReason?.kind === 'error'
+      ? 'external_error'
+      : terminalReason?.kind || null;
+  if (terminalCategory === 'quota_exhausted') {
+    completionRisks.push({
+      code: 'quota_exhausted',
+      detail: 'The run ended because the model/provider quota was exhausted, not because the task reached delivery.',
+    });
+  }
   if (renderEvidence.length && !successfulVisionEvidence.length) {
     completionRisks.push({
       code: 'render_without_successful_vision',
@@ -351,7 +372,8 @@ function analyzeTrace(file) {
       detail: 'At least one attempted vision inspection failed.',
     });
   }
-  completionRisks.push(...qualityLoopRisks(qualityLoopEvidence));
+  const workStarted = steps.length > 0 || assistantMessages.length > 0;
+  if (workStarted) completionRisks.push(...qualityLoopRisks(qualityLoopEvidence));
   const unverifiedRequestedGoals = requestedGoalReportedUnverified(userMessages, assistantMessages);
   if (unverifiedRequestedGoals.length) {
     completionRisks.push({
@@ -489,6 +511,9 @@ function analyzeTrace(file) {
     latestTodo,
     terminal: {
       lastEventType: events.at(-1)?.type || null,
+      reason: terminalCategory,
+      reasonCode: terminalCode,
+      reasonMessage: terminalMessage || null,
       lastToolTime: lastToolTime || null,
       lastAssistantTime: lastAssistantTime || null,
       assistantAfterLastTool,

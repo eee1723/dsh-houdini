@@ -35,7 +35,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 ### 9 个域
 
 这里是架构层的 9 个领域族；构建期 catalog 会按工具职责把 compatibility、vocabulary 等
-独立展开，当前实际目录为 11 个 domain / 47 verbs。
+独立展开，当前实际目录为 11 个 domain / 49 verbs。
 
 | 域 | 现状态 | 预留动词（将来，示意） |
 |---|---|---|
@@ -43,7 +43,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | **parm**（依附 node） | ✅ 已实现 | 表达式 / keyframe / spare parm / lock |
 | **geometry**（几何数据） | ✅ 部分实现（属性/piece/跨帧） | `geo_export` |
 | **stage / USD**（Solaris 数据） | ✅ 只读摘要/prim 详情 | USD layer/edit（仍走裸 API） |
-| **scene**（工程/会话） | ✅ info/timeline/bookmark | `scene_save` `scene_load` |
+| **scene**（工程/会话） | ✅ info/save/timeline/bookmark | `scene_open`（仅未来 Host 生命周期握手） |
 | **viewport**（视口/UI） | ✅ 部分实现（`viewport_screenshot`） | `viewport_frame` `viewport_camera` |
 | **asset**（HDA） | ✅ 已实现（2026-08-20，OTL 会话复盘 P0） | `hda_install` `hda_list` |
 | **render / sim**（重型） | ✅ job 通道 + `render_frame`/`render_check` | `render_start` `sim_step`（走 job） |
@@ -137,6 +137,7 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
 | `connect(src, dst, index=0, allow_foreign=None)` | 连线（src 输出 → dst 输入）；mutation 边界在 dst；落口与请求不一致时返回里带 `note` | dict |
+| `disconnect_input(dst, index=0, allow_foreign=None)` | 断开 destination 的一个输入口；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除（返回被表达式引用的上游）；拒绝删除 owner-tagged `render_view` 会话级基础设施，避免进入 H21 OpenGL teardown fatal 路径 | dict |
 | `cook_node(node, force=False)` | cook + error/warning；另给 `ok/warning_free/healthy`，warning 未解释不得当完成 | dict |
@@ -176,16 +177,18 @@ registry 只在当前 Houdini 进程内有效；完整重启后无法在不信�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `scene_info()` | 只读 HIP/version/fps/current frame/time/frame range/playback range/UI 状态；不移动 playbar、不遍历整张节点图 | dict |
+| `scene_info()` | 只读 HIP/version/fps/current frame/time/frame range/playback range/UI 状态；明确区分 `has_named_path`、`has_unsaved_changes`、`dirty_reliable`、`clean_on_disk`，不再用路径存在冒充保存完成；hython 的 dirty 不可靠时 clean=null；不移动 playbar、不遍历整张节点图 | dict |
+| `scene_save(expected_path=None)` | 只保存当前已命名 HIP，不承担 Save As/open/new；可选 expected_path 作防串场断言，返回 dirty before/after/reliable、clean（headless=null）、bytes、mtime_ns | dict |
 | `set_timeline(fps=None, frame_range=None, playback_range=None, current_frame=None)` | 设置明确的时间线字段；至少一项，范围校验后回读 scene_info | dict |
 | `list_bookmarks()` | 列出 bookmark id/name/start/end/enabled/visible/comment | list |
 | `create_bookmark(name, start, end, replace=False)` | 创建整数帧 bookmark；同名默认拒绝，replace 精确替换 | dict |
 | `delete_bookmark(name_or_id)` | 按精确名称或 session id 删除，失败列现有项 | dict |
 
-**HIP open 生命周期边界**：不得在 bridge exec 中调用 `hou.hipFile.load()`。H21 GUI 实测
-load 会使当前 exec 丢失后续 result/images，恢复 load 还可能断开连接并重启 Houdini，使桥无法
+**HIP open/new 生命周期边界**：不得在 bridge exec 中调用 `hou.hipFile.load()` 或
+`hou.hipFile.clear()`。H21 GUI 实测 load/clear 会使当前 exec 丢失后续 result/images，恢复或
+新场景重置还可能断开连接并重启 Houdini，使桥无法
 完成 finally/state restore。`scene_info` 只读、显式保存仍可走当前能力；打开/替换用户 HIP
-必须由 Houdini UI 完成，或未来设计 host-level、可确认 unsaved、可重连的独立操作，不能简单
+或 File > New 必须由 Houdini UI 完成，或未来设计 host-level、可确认 unsaved、可重连的独立操作，不能简单
 封装一个 `scene_open -> hipFile.load` 动词。
 
 ### geometry 域（几何数据）
@@ -236,7 +239,7 @@ load 会使当前 exec 丢失后续 result/images，恢复 load 还可能断开�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染一个**可执行 hou.RopNode**并验证产物；USD Render ROP 优先 `outputimage` 而非其 USD `lopoutput`，调用期临时启用 foreground wait 并恢复。普通 LOP 在 job 前拒绝；切目标帧并恢复；>110s 走 job | dict |
+| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染一个**可执行 hou.RopNode**并验证产物；USD Render ROP 优先 `outputimage` 而非其 USD `lopoutput`。调用期临时启用 foreground wait；`picture` 覆盖和目标 frame 均在 `finally` 恢复。渲染前后记录 bytes/mtime/有界内容摘要，只有目标新建或指纹变化才算 `fresh=true`，沿用旧文件会失败。普通 LOP 在 job 前拒绝；>110s 走 job | dict |
 | `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None)` | **视觉验证主干 v2**：显式 SOP → agent-owned Object Merge proxy → agent camera/OpenGL ROP `forceobjects` 只渲染 proxy；不依赖/不改变用户 SOP output、OBJ visibility、selection、viewport 或 frame。基础设施是会话级持久服务，OBJ/OUT 两侧分别收进带说明的 Network Box，任务收尾不得删除；空闲 proxy 会清空真实引用。传 OBJ 时只在调用开始解析一次 SOP并提醒。preflight 拒绝空/error 几何；返回 source fingerprint 前后、`stale`、eye/direction、ROP 设置、service metadata 和 render_check。动画 A/B 给所有调用传相同 `framing_frame`，用同一 bbox 锁定相机 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 

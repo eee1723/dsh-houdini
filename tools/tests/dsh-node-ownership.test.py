@@ -41,6 +41,25 @@ try:
     owned = hou.node(owned_path)
     assert parent is not None and owned is not None
 
+    # Undo restores Houdini nodes; the bridge must restore its process-local
+    # ownership registry in the same transaction.
+    rolled_back = dsh_bridge.run_code(
+        f"delete_node({owned_path!r})\nraise RuntimeError('intentional ownership rollback')",
+        owner_session=session_a,
+        owner_call="call-rollback",
+    )
+    assert rolled_back["ok"] is False, rolled_back
+    assert rolled_back["rollback"]["applied"] is True, rolled_back
+    owned = hou.node(owned_path)
+    assert owned is not None, rolled_back
+    restored_owner = dsh_bridge.run_code(
+        f"__result__ = node_provenance({owned_path!r})",
+        owner_session=session_a,
+        owner_call="call-after-rollback",
+    )
+    assert restored_owner["ok"] is True, restored_owner
+    assert restored_owner["result"]["status"] == "owned_current_session", restored_owner
+
     # Simulate a user-created/copied node.  Even a copied/forged durable tag is
     # audit metadata only; a fresh Houdini sessionId is not runtime-owned.
     foreign = parent.createNode("null", "copytopoints2")

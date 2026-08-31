@@ -8,14 +8,20 @@ import {
   collectVerbAdoption,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
+  findQueryMutationSteps,
   findSuppressedCookFailures,
   frameFromPath,
+  isMutatingRawMethodName,
   parseLedgerArgs,
   parseVerbLedgerLine,
   qualityLoopRisks,
   renderOutputsFromPreview,
   requestedGoalReportedUnverified,
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
+
+assert.equal(isMutatingRawMethodName('renderNode'), false);
+assert.equal(isMutatingRawMethodName('displayNode'), false);
+assert.equal(isMutatingRawMethodName('render'), true);
 
 assert.deepEqual(parseLedgerArgs('["/obj/a","tx",1]'), {
   positional: ['/obj/a', 'tx', 1], kwargs: {},
@@ -213,6 +219,15 @@ const readImageFilePath = classifyVisionEvidence({
 assert.deepEqual(readImageFilePath.images, ['E:/tmp/a_f21p0.png']);
 assert.deepEqual(readImageFilePath.frames, [21]);
 
+const pixelDiff = classifyVisionEvidence({
+  tool: 'vision_pixel_diff', failed: false,
+  args: { original: 'E:/tmp/a.png', rebuilt: 'E:/tmp/b.png' },
+  resultPreview: '{"overallDifferencePct":8.05}',
+});
+assert.equal(pixelDiff.role, 'pixel');
+assert.equal(pixelDiff.semanticOk, null);
+assert.equal(pixelDiff.ok, true);
+
 assert.deepEqual(collectVerbAdoption([
   { tool: 'houdini_exec', isHoudini: true, failed: false, verbs: [{ verb: 'tab_create' }], mutatingRawMethods: [] },
   { tool: 'houdini_query', isHoudini: true, failed: false, verbs: [], mutatingRawMethods: [] },
@@ -231,6 +246,26 @@ assert.deepEqual(collectVerbAdoption([
   blockedVerblessRawMutationCalls: 1,
   successfulVerblessRawMutationCalls: 0,
 });
+
+assert.deepEqual(findQueryMutationSteps([
+  { index: 1, time: 1, tool: 'houdini_query', verbs: [{ verb: 'scene_info' }], mutatingRawMethods: [] },
+  { index: 2, time: 2, tool: 'houdini_query', verbs: [{ verb: 'set_timeline' }, { verb: 'cook_node' }], mutatingRawMethods: [] },
+  { index: 3, time: 3, tool: 'houdini_query', verbs: [], mutatingRawMethods: ['pressButton'] },
+]), [{
+  index: 2,
+  time: 2,
+  tool: 'houdini_query',
+  codePreview: undefined,
+  mutatingRawMethods: [],
+  mutatingVerbs: ['set_timeline', 'cook_node'],
+}, {
+  index: 3,
+  time: 3,
+  tool: 'houdini_query',
+  codePreview: undefined,
+  mutatingRawMethods: ['pressButton'],
+  mutatingVerbs: [],
+}]);
 
 const incompleteQualityLoop = collectQualityLoopEvidence({
   userMessages: [{ time: 1, text: '请做一个细节丰富的程序化自行车。' }],

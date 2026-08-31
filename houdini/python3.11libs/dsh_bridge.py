@@ -62,6 +62,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
 import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
 
+# Cached while this module is imported on Houdini's owning thread. HTTP handler
+# threads must not call HOM, including for seemingly harmless health metadata.
+_HOU_VERSION = hou.applicationVersionString()
+
 # --- limits (kept small so a runaway agent cannot exhaust Houdini) ----------
 _MAX_STREAM_BYTES = 1024 * 1024          # cap captured stdout/stderr per exec
 _MAX_RESULT_BYTES = 4 * 1024 * 1024      # cap the serialized __result__
@@ -164,6 +168,7 @@ def _verb_help(name: str) -> dict:
 _VERBS: dict[str, object] = {
     "verb_help": _verb_help,
     "scene_info": dsh_hou_helpers.scene_info,
+    "scene_save": dsh_hou_helpers.scene_save,
     "set_timeline": dsh_hou_helpers.set_timeline,
     "list_bookmarks": dsh_hou_helpers.list_bookmarks,
     "create_bookmark": dsh_hou_helpers.create_bookmark,
@@ -178,6 +183,7 @@ _VERBS: dict[str, object] = {
     "describe": dsh_hou_helpers.describe,
     "node_provenance": dsh_hou_helpers.node_provenance,
     "connect": dsh_hou_helpers.connect,
+    "disconnect_input": dsh_hou_helpers.disconnect_input,
     "rename_node": dsh_hou_helpers.rename_node,
     "delete_node": dsh_hou_helpers.delete_node,
     "cook_node": dsh_hou_helpers.cook_node,
@@ -217,6 +223,16 @@ _VERBS: dict[str, object] = {
 _VERB_NAMES = tuple(sorted(_VERBS))
 _VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexdigest()
 
+_MUTATING_VERB_NAMES = {
+    "scene_save", "set_timeline", "create_bookmark", "delete_bookmark",
+    "tab_create", "tab_apply", "connect", "disconnect_input", "rename_node",
+    "delete_node", "cook_node", "set_display", "sop_set_output",
+    "set_object_visible", "layout_nodes", "set_parm", "set_parms",
+    "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
+    "hda_patch_section", "hda_set_interface", "render_frame", "render_view",
+    "viewport_screenshot",
+}
+
 _VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
 _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 
@@ -225,9 +241,10 @@ _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 # 那些动词已覆盖的裸 hou 调用；一旦代码完全没走动词却用了这些调用，就在返回
 # 里附一条 advisory，点明对应的动词——让 agent 从结果里直接看到可替代方案。
 _RAW_HOU_VERB_MAP = {
+    "hipFile.save": "scene_save",
     "createNode": "search_tab_entries + tab_create/tab_apply",
-    "setInput": "connect",
-    "setFirstInput": "connect",
+    "setInput": "connect or disconnect_input",
+    "setFirstInput": "connect or disconnect_input",
     "connectInputs": "connect",
     "setName": "rename_node",
     "destroy": "delete_node",
@@ -260,7 +277,10 @@ def _raw_hou_calls(code: str) -> dict[str, int]:
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         func = node.func
-        if func.attr in _RAW_HOU_VERB_MAP:
+        path = _call_path(func)
+        if path == "hou.hipFile.save":
+            key = "hipFile.save"
+        elif func.attr in _RAW_HOU_VERB_MAP:
             key = func.attr
         elif (
             func.attr == "set"
@@ -292,8 +312,8 @@ def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
     )
 
 
-def _forbidden_hip_load_message(code: str) -> str | None:
-    """Reject direct ``hou.hipFile.load`` before execution.
+def _forbidden_hip_lifecycle_message(code: str) -> str | None:
+    """Reject direct HIP replacement/reset calls before execution.
 
     Loading a HIP resets the scene/process lifecycle that owns this very bridge
     request: H21 GUI reproduction lost results/images and eventually restarted
@@ -306,7 +326,7 @@ def _forbidden_hip_load_message(code: str) -> str | None:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
-        if node.func.attr != "load":
+        if node.func.attr not in ("load", "clear"):
             continue
         owner = node.func.value
         if (
@@ -315,11 +335,13 @@ def _forbidden_hip_load_message(code: str) -> str | None:
             and isinstance(owner.value, ast.Name)
             and owner.value.id == "hou"
         ):
+            method = node.func.attr
             return (
-                "hou.hipFile.load() is forbidden inside dsh-houdini bridge exec: "
-                "HIP loading invalidates the active exec/bridge lifecycle and can "
+                f"hou.hipFile.{method}() is forbidden inside dsh-houdini bridge exec: "
+                "HIP replacement/reset invalidates the active exec/bridge lifecycle and can "
                 "disconnect or restart the shared Houdini process. Open the HIP in "
-                "the Houdini UI, or use a future host-level reconnecting operation."
+                "the Houdini UI (including File > New), or use a future host-level "
+                "reconnecting operation."
             )
     return None
 
@@ -378,9 +400,10 @@ def set_raw_gate(on: bool) -> str:
 _GATE_MUTATING_PREFIXES = (
     "set", "add", "create", "delete", "destroy", "remove", "rename",
     "save", "cook", "render", "bake", "lock", "unlock", "install",
-    "copy", "move", "enable", "disable",
+    "copy", "move", "enable", "disable", "press",
 )
 _GATE_SAFE_PYTHON_METHODS = {"setdefault"}
+_GATE_READ_ONLY_PREFIX_COLLISIONS = {"displayNode", "renderNode"}
 
 
 def _call_path(node: ast.AST) -> str | None:
@@ -424,7 +447,7 @@ def _python_set_names(tree: ast.AST) -> set[str]:
 def _is_safe_python_method(node: ast.Call, python_sets: set[str]) -> bool:
     if not isinstance(node.func, ast.Attribute):
         return False
-    if node.func.attr in _GATE_SAFE_PYTHON_METHODS:
+    if node.func.attr in _GATE_SAFE_PYTHON_METHODS or node.func.attr in _GATE_READ_ONLY_PREFIX_COLLISIONS:
         return True
     # Real trace: ``names = set(); names.add(...)`` is read-only scene
     # aggregation.  Treat only receivers statically proven to be Python sets as
@@ -458,7 +481,9 @@ def _raw_usage_analysis(code: str) -> dict:
         if path is not None:
             direct[path] = direct.get(path, 0) + 1
         attr = node.func.attr
-        if attr in _RAW_HOU_VERB_MAP:
+        if path == "hou.hipFile.save":
+            covered["hipFile.save"] = covered.get("hipFile.save", 0) + 1
+        elif attr in _RAW_HOU_VERB_MAP:
             covered[attr] = covered.get(attr, 0) + 1
         elif (
             attr == "set"
@@ -507,7 +532,10 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         attr = node.func.attr
-        if attr in _RAW_HOU_VERB_MAP:
+        path = _call_path(node.func)
+        if path == "hou.hipFile.save":
+            covered["hipFile.save"] = covered.get("hipFile.save", 0) + 1
+        elif attr in _RAW_HOU_VERB_MAP:
             covered[attr] = covered.get(attr, 0) + 1
         elif (
             attr == "set"
@@ -549,6 +577,36 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
             "in the trace (each exemption documents a vocabulary gap)."
         )
     return "\n".join(lines)
+
+
+def _query_mutation_message(code: str) -> str | None:
+    """Reject mutation intent before a ``houdini_query`` reaches Houdini."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    verbs = sorted({
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in _MUTATING_VERB_NAMES
+    })
+    usage = _raw_usage_analysis(code)
+    raw = [item["name"] for item in usage.get("coveredMutations", [])]
+    raw += [item["name"] for item in usage.get("suspectedMutations", [])]
+    if not verbs and not raw:
+        return None
+    detail = []
+    if verbs:
+        detail.append("mutating verb(s): " + ", ".join(verbs))
+    if raw:
+        detail.append("raw/suspected mutation(s): " + ", ".join(sorted(set(raw))))
+    return (
+        "houdini_query is read-only and rejected this code BEFORE execution ("
+        + "; ".join(detail)
+        + "). Use houdini_exec for scene changes and cooks."
+    )
 
 
 def _verb_value(value, _depth: int = 0):
@@ -650,7 +708,8 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
 
 def run_code(code: str, allow_raw: str | None = None,
              owner_session: str | None = None,
-             owner_call: str | None = None) -> dict:
+             owner_call: str | None = None,
+             read_only: bool = False) -> dict:
     """Execute code with `hou` available; capture stdout/stderr and `__result__`.
 
     Must run on Houdini's main thread (see module docstring) — callers route
@@ -664,6 +723,8 @@ def run_code(code: str, allow_raw: str | None = None,
     verb_ledger: list = []
     namespace = {"hou": hou}
     for _name, _fn in _VERBS.items():
+        if read_only and _name in _MUTATING_VERB_NAMES:
+            continue
         namespace[_name] = _make_tracer(_name, _fn, verb_ledger)
     stdout = _CappedStringIO(_MAX_STREAM_BYTES)
     stderr = _CappedStringIO(_MAX_STREAM_BYTES)
@@ -674,9 +735,13 @@ def run_code(code: str, allow_raw: str | None = None,
     with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call):
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
-                error = _forbidden_hip_load_message(code)
+                error = _forbidden_hip_lifecycle_message(code)
                 if error is not None:
                     gate_outcome = "forbidden"
+                if error is None and read_only:
+                    error = _query_mutation_message(code)
+                    if error is not None:
+                        gate_outcome = "read_only_blocked"
                 if error is None and _raw_gate:
                     error = _gate_message(code, allow_raw)  # None = 放行
                     if error is not None:
@@ -699,6 +764,7 @@ def run_code(code: str, allow_raw: str | None = None,
                     undo_enabled = bool(hou.undos.areEnabled())
                     if undo_enabled:
                         label = f"dsh-houdini exec {uuid.uuid4().hex}"
+                        ownership_before = dict(dsh_hou_helpers._OWNED_NODE_SESSIONS)
                         try:
                             with hou.undos.group(label):
                                 exec(compiled, namespace)
@@ -712,6 +778,8 @@ def run_code(code: str, allow_raw: str | None = None,
                                 if labels and labels[0] == label:
                                     hou.undos.performUndo()
                                     applied = True
+                                    dsh_hou_helpers._OWNED_NODE_SESSIONS.clear()
+                                    dsh_hou_helpers._OWNED_NODE_SESSIONS.update(ownership_before)
                             except BaseException as undo_error:
                                 rollback_error = str(undo_error)
                             rollback = {
@@ -941,7 +1009,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 self._send({
                     "ok": True,
-                    "houVersion": hou.applicationVersionString(),
+                    "houVersion": _HOU_VERSION,
                     "rawGate": _raw_gate,
                     "verbCatalog": {
                         "hash": _VERB_CATALOG_HASH,
@@ -1004,11 +1072,14 @@ class _Handler(BaseHTTPRequestHandler):
             allow_raw = str(allow_raw) if allow_raw else None
             owner_session = body.get("owner_session")
             owner_call = body.get("owner_call")
+            read_only_value = body.get("read_only")
+            read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
             self._send(_execute(lambda: run_code(
                 code,
                 allow_raw,
                 str(owner_session) if owner_session else None,
                 str(owner_call) if owner_call else None,
+                read_only,
             )))
             return
         if self.path == "/jobs":

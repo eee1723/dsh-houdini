@@ -14,7 +14,7 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ | 47 个目录入口：45 个主动词（含 `verb_help`）+ 2 个 display 兼容入口；文档/Host/Bridge 三方契约测试 |
+| 动词词表（bridge namespace） | ✅ | 49 个目录入口：47 个主动词（含 `verb_help`）+ 2 个 display 兼容入口；文档/Host/Bridge 三方契约测试 |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 观察层继续记录已覆盖裸调用与仓库写入风险 |
 | raw-hou gate | ✅ 默认开启；已覆盖调用不可旁路 | 执行前 AST 拦截 + 低层缺口单次豁免；`dict.setdefault` 只读误伤已修（§2.17 / §2.36） |
@@ -1499,6 +1499,59 @@ skill-governance，把 benchmark 派生规则的发布门
 `eca1b1669acdc07c4acb0bb4525151c96936f6d92ee689fad98f676fa68fd3fb`。运行时事实写入
 `benchmark/baseline.json`；该管理提交没有改变已封存的 agent-surface hash。
 
+### 2.47 跨模型 trace 结论、MCP 参考暂停与首轮通用 P0（2026-08-31）
+
+发现矩阵实际留下 7 条 session：K3 三个能力族均完成；第二模型完成机械任务，模拟任务因周额度
+耗尽中止；第三模型完成剩余 lookdev；另有一条在任何工具/assistant 工作开始前即因 provider
+`network_error` 结束的空启动，不能当作能力失败。六条有实际执行的 session 合计 529 次工具调用、
+2,410 次动词调用；高频主干是 `set_timeline`、`set_parms`、`tab_create`、`cook_node` 和 `connect`。
+这批运行不满足原计划中完全冻结的正式 3×2 协议，因此定位为 discovery evidence，而不是可用于
+排名或显著性主张的正式 benchmark。额度耗尽的模拟任务按用户要求原样记为未完成，不补跑、不把
+provider 限额混写成 agent 自主失败。
+
+跨 trace 的公共结论优先于单题 recipe：工具批处理和目录动词已有高采用，但只读/修改边界过去只是
+提示语；`houdini_query` 中真实出现 timeline、cook、参数写入和按钮副作用。失败回滚能恢复 Houdini
+节点，却没有同步恢复 Bridge 的会话所有权表。保存只能裸调 `hou.hipFile.save()`，而 `scene_info` 的
+旧 `hip_saved` 又把“路径已命名”和“已干净落盘”混为一谈。网络接口缺显式断连，`setInput(None)`
+还会被 Raw Gate 当成已覆盖连接。`render_frame` 只检查文件存在，可能把旧产物误报为本次成功，且
+临时覆盖 ROP 输出参数不恢复。`/health` 在 HTTP handler 线程直接读取 HOM，违反主线程约束。审计侧
+又把像素 diff/crop/颜色统计当成语义识图、漏记调用了修改动词的 query，也不能区分 quota、外部
+网络错误和正常完成。
+
+本轮只修跨任务、可确定性复现的最小公共合同，没有把机械、模拟或 lookdev 的对象配方、目标参数、
+评分答案或 benchmark ID 写入生产 guidance/preset/skills：
+
+1. 新增 `scene_save(expected_path=None)`，只保存已命名的当前 HIP，返回 dirty 前后、可靠性、bytes 与
+   mtime；H21 `hython` 的 dirty flag 保存后仍不可靠，因此显式返回 `dirty_reliable=false`、
+   `clean_on_disk=null`，不伪造“已干净”。裸 `hipFile.save` 现在是不可用 `allow_raw` 绕过的已覆盖
+   mutation；`hipFile.load/clear` 都是 bridge 生命周期禁区。
+2. 新增 `disconnect_input`；回滚同时快照并恢复 `_OWNED_NODE_SESSIONS`，删除后抛错再 undo 的节点仍
+   保持当前 session provenance。目录增至 49 个动词。
+3. Host 对 `houdini_query` 发送 `read_only=true`；Bridge 不向其 namespace 注入修改动词，并在执行前
+   拒绝修改动词、渲染/cook 和裸修改，`allow_raw` 不再暴露给 query。`renderNode()`/`displayNode()`
+   这类只读 getter 从前缀启发式中排除。
+4. `render_frame` 记录渲染前后文件指纹，只有新建或内容/mtime/大小变化才接受，并在 `finally` 恢复
+   frame、foreground wait 和临时 picture 参数；`/health` 改读 Bridge 初始化时缓存的 Houdini 版本。
+5. evidence v2 只把真正 inspection 工具计作 semantic success；pixel/crop/color 留在客观像素证据层。
+   query 副作用同时看裸方法和动词 ledger；terminal 记录 completed/quota/external error。完全未开始的
+   provider 启动错误不再误报质量合同缺失。重提取后，额度中止 session 明确为 `quota_exhausted`，
+   第二模型机械 session 的唯一 pixel diff 不再补足失败的语义视觉，历史 `renderNode()` 假阳性清零。
+
+Codex + `JTCHE/houdini-mcp` 的机械运行保留为**后续参考校准**，不继续扩展。固定上游 commit
+`001a247dc55dd091323a62f46e2945636ae78ef4`；该栈 10.4 分钟、35 次 MCP 调用完成可辨认且可调资产，
+但 166 个工具并未成为主要 authoring interface：11 次任意代码调用承担主体构建，35 次调用都触发
+独立 approval reviewer，总计报告约 303 万 token。独立检查发现姿态变化时名义刚性叉架会伸缩、
+验证与生成同源、异常后不自动回滚、无节点所有权、危险开关由 agent 自己设置、viewport 状态未恢复，
+且三次 H21 语义失败仍以协议成功返回。它同时证明 typed save/disconnect、快速整段 Python 和宽目录
+有参考价值。由于模型、harness、approval 和 connector 都同时变化，这不是严格 dsh-vs-MCP A/B。
+完整外部报告、manifest 与冻结 HIP 留在 `E:/tmp/mcp-evaluator/`；生产仓库只保留这份去任务配方的
+工程摘要。后续若恢复，只做同模型同 harness、禁用任意代码的隔离比较。
+
+当前本地验证：构建生成 49 动词指纹 `4f3516dec006…`；9 个非基线 Node 文件通过；H21.0.440 与
+H22.0.368 的 Raw Gate、ownership、caught failure、tab-create failure 及新增 scene/network/render
+合同各 5 项回归通过。agent-visible surface 的旧封存 hash 预期失配，须在代码/文档最终审计和完整测试之后重封，
+不能提前修改基线掩盖漂移；运行中 Houdini 仍需一次 `Repair and restart runtime` 才能加载本轮代码。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1608,31 +1661,36 @@ QPainter 圆弧 spinner。
 
 ### Phase B1 — 3 × 2 校准/发现矩阵
 
-1. ⏳ 六次运行使用全新 scene/session、相同版本与零追加纠错；模型之间交错执行。
-2. ⏳ 每次归档 run manifest、trace、最终节点、cache/render 路径和 evaluator 原始结论。
-3. ⏳ 除使整批失效的基础设施 P0 外，不在矩阵中途修改 persona、skill、动词或评分线。
+1. 🔶 discovery 执行已结束：K3 三族完成；第二模型机械完成、模拟因 quota 中止；第三模型完成
+   剩余 lookdev；另有一次零工作量 network-error 启动。由于模型替换、额度和 protocol 未完全冻结，
+   这批证据不冒充正式 3×2 排名。
+2. ✅ 原始 session、trace HTML/evidence、HIP/cache/render 与 evaluator 结果保留；额度中止按未完成记录。
+3. ✅ 执行期间未把题目 recipe/答案写回生产面；本轮公共 P0 在整批结束后才实施。
 
 ### Phase B2 — 独立评审与归因
 
-1. ⏳ 依次完成确定性检查、无目标词盲语义描述、目标合同核验和必要的人工抽检。
-2. ⏳ 统计 core success、self-detected defect、effective repair、false completion 与 reviewer agreement。
-3. ⏳ 把失败分为模型波动、任务 recipe、公共工作流、工具缺口和 evaluator 不可靠，不混为“agent 不行”。
+1. 🔶 discovery 的确定性检查、trace 审计和人工视觉抽检已完成；因 blind/target evaluator 输入隔离未
+   完全冻结，不宣称正式 reviewer agreement。
+2. ✅ 已把 quota/network、模型执行、公共工具缺口、视觉/evaluator 误判和任务特有缺陷分开记录。
+3. ✅ Codex+JTCHE MCP 仅记为 product-stack calibration；模型/harness/connector 同时变化，不作严格 A/B。
 
 ### Phase B3/B4 — 证据准入改进与复测
 
-1. ⏳ 同一 probe 跨至少两个独立任务重复才设计通用动词；领域知识按 governance E2 进入 skill，
-   不把实例 ID、对象配方、目标参数或评分答案写回生产 surface。
+1. 🔶 首轮公共 P0 已落地：scene save、disconnect、query read-only、rollback provenance、render freshness、
+   health 主线程边界和 evidence terminal/vision/query 分类；均来自通用契约或跨 trace 缺口，不含题目 recipe。
 2. ⏳ 仅在外部评分/自然语言状态无法稳定比较或约束结论时设计最小结构化 ledger。
-3. ⏳ 原失败实例只走回归通道；冻结改进后才解封未见同族实例并跑跨域反例。只有留出表现、实际
+3. ⏳ 重封 agent surface、Repair/restart 和 GUI smoke 后，使用未见实例验证本轮 P0 无误阻；只有留出表现、实际
    成功、自主发现与有效返工上升，且 false-completion 和误触发不恶化，才宣布能力提升。
 
 ### Benchmark 后恢复的工程 backlog
 
 - `houdini_job_*` 迁到 `ctx.jobs`；
-- query/exec 权限分层；
+- ✅ query/exec Bridge 只读边界已完成；后续再接 DSH approval 层，不放宽当前 fail-closed；
 - trace report/evidence normalized step 共享 parser；
 - 按当前契约重建最小 H21/H22/GUI smoke；
-- skill governance M2/M3 的 COP/SIM/project-analysis 准入和周期审计。
+- skill governance M2/M3 的 COP/SIM/project-analysis 准入和周期审计；
+- 等未见任务重复证据后再评估 `press_parm_button`、frame-range cook/cache 和 volume/solver 统计；当前
+  不因单个模拟 recipe 先扩词表或大 skill。
 
 ---
 
@@ -1675,7 +1733,7 @@ QPainter 圆弧 spinner。
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
 | `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
-| `houdini/python3.11libs/dsh_hou_helpers.py` | 44 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 47 个目录入口 |
+| `houdini/python3.11libs/dsh_hou_helpers.py` | 46 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 49 个目录入口 |
 | `houdini/python3.11libs/dsh_launcher.py` | 打开/重启分流 + preset 同步 + 分阶段百分比/超时诊断（worker 线程探测） |
 | `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + DSH npm / 插件 Git 双通道检查与安全更新 |
 | `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + 一次性 session hint + backdrop-filter 性能修复注入（§2.13/§2.28） |
