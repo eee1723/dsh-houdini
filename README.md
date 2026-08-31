@@ -4,11 +4,24 @@
 
 架构：`dsh-houdini`（dsh 插件，注册模型可见工具）→ HTTP → `houdini/python3.11libs/dsh_bridge.py`（跑在 Houdini 内部 Python 的桥，`hou` 模块只存在于那里）。
 
+## 当前状态
+
+截至 2026-08-31，项目包含 5 个 `houdini_*` 工具、49 个意图级动词和 5 个按需 skills。Host/Bridge
+词表指纹握手、Raw Gate、session ownership、失败 rollback、隔离 `render_view`、media relay、
+Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨能力族 discovery 已完成并用于
+修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
+生产 guidance、preset、skills 或工具。
+
+当前源码和确定性回归已升级到 49 动词；已有 Houdini 进程若仍加载旧版本，需要从
+`DSH-Houdini` → `Version & Diagnostics...` → `Advanced diagnostics` 执行
+`Repair and restart runtime`。`/health` 返回 49 个动词且词表指纹一致后，才代表运行时完成升级。
+
 ## 文档
 
 - **[`docs/setup.md`](docs/setup.md)** — 新机安装步骤（换电脑/重装照做）。
 - **[`docs/tool-design.md`](docs/tool-design.md)** — 设计宪法：动词词表、两轴模型、铁律、帮助文档三阶段、动词追踪。
 - **[`docs/development.md`](docs/development.md)** — 开发进度与卡点（随开发同步维护）。
+- **[`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)** — 跨域发现、留出验证、反过拟合防火墙和能力准入协议。
 - **[`docs/rig-animation-design.md`](docs/rig-animation-design.md)** — Rig/animation 第一性原理、官方系统路由、最小工具预算与分阶段验收。
 - **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
 - **[`skills/houdini-sop-workflow/SKILL.md`](skills/houdini-sop-workflow/SKILL.md)** — 程序化 SOP/VEX/Copy/属性/模块验证和动画交付工作流。
@@ -20,8 +33,8 @@
 
 | 工具 | 用途 |
 |---|---|
-| `houdini_exec` | 在 Houdini 里执行 Python（可改场景：建节点、设参数、cook、存 hip） |
-| `houdini_query` | 只读检查代码（列节点、读参数、查错误），约定不修改场景 |
+| `houdini_exec` | 在 Houdini 里执行可修改场景的 Python；建节点、设参数、cook，已命名 HIP 用 `scene_save` 保存 |
+| `houdini_query` | Bridge 强制只读检查：不注入修改动词，并在执行前拒绝修改、cook、render 和按钮副作用 |
 | `houdini_job_submit` | 提交长任务（渲染/模拟/重 cook），立即返回 jobId |
 | `houdini_job_status` | 轮询后台任务状态 |
 | `houdini_job_cancel` | 协作式取消：排队中的 job 直接丢弃（代码不会执行），运行中的杀不掉 |
@@ -30,13 +43,18 @@
 
 每次 exec 还会在结果里带一个 **`verbs` 字段**（动词追踪）：bridge 给每个动词包了运行时 tracer，记录每次动词调用的 `{verb, args, kwargs, ok, result/error, ms}`，`hou.Node` 自动转 path，失败以 `ok:false` 记录。stdout 同时打印 `[verb] ...` 摘要行。这是当前 `Houdini Trace` 视图和离线 trace evidence 的数据层（见 `docs/tool-design.md` §8）。
 
-bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().set`/`cook`/`destroy` 等已有动词覆盖的修改默认直接拒绝；没有动词的低层修改只能拆成独立调用，并在 Gate 首次拒绝后用一次性 `allow_raw="具体缺口"` 留痕。只读 HOM 探针仍可直接使用；`advisory`/`hint:` 保留为观察层（见 `docs/tool-design.md` §8）。
+bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().set`/`cook`/`destroy`/
+`hou.hipFile.save` 等已有动词覆盖的修改默认直接拒绝；没有动词的低层修改只能拆成独立 exec，
+并在 Gate 首次拒绝后用一次性 `allow_raw="具体缺口"` 留痕。query 不暴露 `allow_raw`。只读 HOM
+探针仍可直接使用；`advisory`/`hint:` 保留为观察层（见 `docs/tool-design.md` §8）。
 
 ## Houdini 侧 helper（动词词表）
 
 bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外可直接用）。它们把 Houdini 的
 惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`。
-**动词是主接口**；`hou` 只用于词表表达不了的只读检查、UI 或底层几何操作。不得在 bridge exec 内调用 `hou.hipFile.load()`；已有动词覆盖的裸修改不能旁路 Gate。
+**动词是主接口**；`hou` 只用于词表表达不了的只读检查、UI 或底层几何操作。当前目录为
+11 个 domain / 49 个 verbs。不得在 bridge exec 内调用 `hou.hipFile.load()` 或
+`hou.hipFile.clear()`；已有动词覆盖的裸修改不能旁路 Gate。
 
 > 完整设计（两轴模型、铁律、帮助文档三阶段、后续路线）见 **[`docs/tool-design.md`](docs/tool-design.md)** —— 那是唯一真相源，本表只是速查。
 
@@ -44,14 +62,14 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 |---|---|---|
 | 类型目录 | `search_tab_menu(category, query)` / `search_tab_entries(parent, query)` | 类型注册表查询 / 真实 parent 可见的 node+tool Tab entries |
 | 类型目录 | `resolve_latest_type(category, base)` | 某节点族的最新版全名（内部为主） |
-| scene | `scene_info()` | 只读 HIP/version/fps/frame/playback range，不移动时间线 |
+| scene | `scene_info()` / `scene_save(expected_path=None)` | 只读场景状态；明确区分 named/dirty/reliable/clean。保存只作用于当前已命名 HIP，并回报 dirty、bytes、mtime |
 | scene | `set_timeline` / `list_bookmarks` / `create_bookmark` / `delete_bookmark` | 时间线字段与 bookmark 明确意图，不再猜 playbar/HOM API |
 | node | `tab_create(...)` / `tab_apply(parent, tool_id)` | 建一个可见节点 / 应用 allowlist 多节点 Tab recipe；GUI 恢复用户状态、headless 同语义 |
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
 | node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
 | node | `node_provenance(node)` | 区分 foreign、当前/其他 DSH session owner 与持久 service；读取开放、修改受控 |
-| node | `connect(src, dst, index=0, allow_foreign=None)` | 连线；destination 是修改边界，foreign source 可读 |
+| node | `connect(src, dst, index=0, allow_foreign=None)` / `disconnect_input(dst, index=0, allow_foreign=None)` | 连线/断开指定输入；destination 是修改边界，foreign source 可读 |
 | node | `rename_node(node, name)` / `delete_node(node)` | 重命名 / 删除（返回被表达式引用的上游） |
 | node | `cook_node(node, force=False)` | cook + error/warning + `healthy`（warning 未解释不能算完成） |
 | node | `sop_set_output` / `sop_output_node` | SOP singular display/render 输出（用户 viewport/交付） |
@@ -66,7 +84,7 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | geometry | `geo_attrib_stats` / `geo_piece_stats` / `geo_frame_diff` | 属性值、局部 piece extent/面积退化、无 playbar 副作用跨帧差异 |
 | stage/USD | `usd_stage_summary(lop)` / `usd_prim_info(lop, prim_path)` | USD 场景摘要 / 单 prim 属性、绑定和时间采样 |
 | render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；渲染基础设施作为带 owner tag 的持久服务收进 OBJ/OUT Network Box，任务收尾复用而不删除；动画 A/B 用同一 framing_frame 锁相机 |
-| render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染单帧并验证产物 / 图像客观统计（盲验） |
+| render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染前后比较 bytes/mtime/有界内容摘要，只接受新鲜产物并恢复临时输出参数；另做图像客观统计 |
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
 
 产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
@@ -96,21 +114,30 @@ node skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs <session.j
 node tools/trace-report.mjs <session.jsonl.zstd>
 ```
 
-证据脚本支持一次传多个 session 做纵向对比，并分别报告目录广度、调用含动词率、动词密度、无动词只读探针、Gate 拦截与成功裸修改；不能再把 `used/全部目录` 当作“动词使用率”。审计量表和累积模式库位于 trace skill 的
-`references/`；SOP skill 固化 Copy to Points、deform-before-skin、属性契约、piece/多帧完成门；
-governance skill 负责把 trace、SideFX 官方文档、视频和 HIP/HDA 工程提炼为有来源、版本、
-反例和回归的受控 skill 变更。调用方式：让 agent「使用 houdini-trace-analysis 分析最新 trace」，
-或显式调用 `/houdini-trace-analysis`。
+证据脚本支持一次传多个 session 做纵向对比，并分别报告目录广度、调用含动词率、动词密度、
+无动词只读探针、query 副作用、Gate 拦截与成功裸修改；不能再把 `used/全部目录` 当作“动词使用率”。
+terminal 会区分正常完成、provider/network error 与 quota exhaustion。视觉证据也明确分层：
+pixel diff、crop、主色等只证明客观像素事实，不能补足失败的 semantic inspection。
+
+审计量表和累积模式库位于 trace skill 的 `references/`；SOP skill 固化 Copy to Points、
+deform-before-skin、属性契约、piece/多帧完成门；governance skill 负责把 trace、SideFX 官方文档、
+视频和 HIP/HDA 工程提炼为有来源、版本、反例和回归的受控 skill 变更。调用方式：让 agent
+「使用 houdini-trace-analysis 分析最新 trace」，或显式调用 `/houdini-trace-analysis`。
 
 ```python
 geo = tab_create(hou.node('/obj'), 'geo', name='my_geo')
 box = tab_create(geo, 'box')
+xform = tab_create(geo, 'xform', inputs=[box])
 set_parm(box, 'size', [2, 2, 2])          # 元组名 + list 值
 set_parm(box, 'divrate1', 4)              # 组件名
 find_nodes(category='sop', node_type='box')  # -> ['/obj/geo1/box1']
 graph(box)                                # -> inputs/outputs/parm_refs
 describe(box)                             # -> 状态 + 点数 + bbox + 帮助 URL
 read_parms(box)                           # -> 只看改过的参数
+disconnect_input(xform, 0)                # -> 显式断开 input 0，并返回原 source path
+info = scene_info()
+if info['has_named_path']:
+    scene_save(info['hip_path'])           # 只保存当前已命名 HIP；expected_path 防串场
 ```
 
 ### 节点创建语义（`tab_create`）
@@ -225,26 +252,70 @@ OpenAI-compatible 或 Anthropic 视觉端点、模型和 DSH Credential，并应
 runtime bootstrap、Artifact presentation 与语义识图仍是四层独立证据；只有 inspection 工具返回了
 真实图像语义，才能声称“视觉已验证”。
 
+## 开发与验证
+
+构建会从 `docs/tool-design.md` 同时刷新 `client.js` 中的目录和
+`src/generated-verb-contract.ts`，再由 TypeScript 输出 `lib/`；不要手改生成区或 `lib/`：
+
+```sh
+npm install
+npm test
+npm pack --dry-run
+```
+
+`npm test` 当前运行构建和 10 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
+封存、Host/Bridge 词表握手、工具展示纯函数、trace replay/evidence 和当前文档一致性。
+
+涉及真实 HOM 的回归用目标 Houdini 版本的 `hython` 分别执行。最低回归集合为：
+
+```text
+tools/tests/dsh-bridge-raw-gate.test.py
+tools/tests/dsh-node-ownership.test.py
+tools/tests/dsh-bridge-caught-failure.test.py
+tools/tests/dsh-tab-create-failure.test.py
+tools/tests/dsh-scene-network-render-contract.test.py
+```
+
+当前集合已在 Houdini 21.0.440 / Python 3.11 与 Houdini 22.0.368 / Python 3.13 各通过一次。
+skills 的严格审计命令为：
+
+```sh
+node skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs --root . --strict
+```
+
 ## 健壮性
 
-桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。`GET /health` 除 Houdini 版本和 job 数外还返回运行中动词表的名称与 SHA-256 指纹；Host 在执行场景代码前与由 `tool-design.md` 生成的预期指纹比较，版本漂移时 fail-closed。`GET /media?path=` 只读、限图片扩展名和 64MB，把产图动词的图片字节回传给 Host。
+桥对失控 agent 做了资源上限：stdout/stderr 各截断到 1 MiB、`__result__` 序列化超过 4 MiB 时丢弃、
+请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。
+`GET /health` 除初始化时缓存的 Houdini 版本和 job 数外，还返回运行中动词表的名称与 SHA-256 指纹；
+HTTP handler 不直接调用 HOM。Host 在执行场景代码前与由 `tool-design.md` 生成的预期指纹比较，
+版本漂移时 fail-closed。`GET /media?path=` 只读、限图片扩展名和 64MB，把产图动词的图片字节回传给 Host。
 
 ## 已知限制
 
 - `hou` 只能在 Houdini 主线程调用：桥把全部执行编组到主线程（GUI 下是 QTimer 泵，headless 下是 `__main__` 主循环泵），因此严格串行——后台 job 是排队异步而非并行，且代码执行期间 GUI 会像原生 cook 一样冻结；取消是协作式的——排队中的 job 在执行前被丢弃（零场景副作用），运行中的杀不掉
 - 桥绑定 `127.0.0.1`，未做鉴权——不要在不可信网络上暴露端口
+- exec rollback 只覆盖 Houdini undo stack 中可撤销的场景修改；`scene_save`、render/cache 文件、HDA library 等外部副作用不能靠 undo 回滚，调用前应使用 expected path、独立输出目录和新鲜度证据
 - 客户端超时/取消不会中断 Houdini 内已在执行的代码：调用方看到失败或取消时，场景可能已经被改——重试前先用 `houdini_query` 确认场景状态
+- `houdini_query` 的只读边界由受限动词 namespace 与 AST 预检实现，面向正常 agent 执行轨迹；它不是针对恶意 Python 反射代码的安全沙箱。Bridge 仍只应绑定 loopback 并由可信本机 agent 使用
 - 开发期 `dsh-tools` / `dsh-system-prompt` 已与当前生产 DSH `0.1.1-rc.2` 对齐；升级 DSH 时须同步审计这两个直接接口依赖并跑 `npm test`，避免 schema DSL、输出 metadata 或 presenter 类型静默漂移
 
 ## 后续路线
 
-下一阶段已选择“跨域能力证据优先”：在机械程序化资产、真实 solver/cache 模拟和
-Solaris/Karma lookdev 三个能力族中，以两个模型完成发现矩阵，并用确定性检查、盲语义描述和
-目标核验三层独立评审衡量实际成功、自主发现缺陷和有效返工。评测实例与生产 agent 信息严格隔离：
-常驻 guidance、preset、skills 和工具不写 benchmark ID、对象配方、目标参数或评分答案；改进后必须
-通过未见同族实例和跨域反例，原题回归只证明没有退化。主矩阵完成前不先扩成结构化任务本体，也不
-并行迁移 jobs/权限层来改变实验底座。
+跨能力族 discovery 已结束并完成 trace/人工归因，但因模型替换、额度中止和评审输入未完全冻结，
+只作为能力发现证据，不作为正式模型排名。它支持了本轮最小公共 P0：保存、断连、query 只读边界、
+rollback provenance、render freshness、health 主线程边界和 evidence 分类；没有支持把单个任务 recipe
+写入生产面。
 
-完整任务、评分、停止条件和工具/skill 准入门见
-[`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)。`ctx.jobs` 迁移、query/exec
-权限分层和最小 H21/H22/GUI 回归仍保留为工程 backlog，在 benchmark 基线稳定后恢复。
+下一阶段顺序是：
+
+1. 在运行中的 Houdini 执行 Repair/restart，并完成 49 动词、词表握手和新合同 GUI smoke；
+2. 设计 Host/agent 层的最小结构化任务合同 v0，先做 ledger、证据失效和完成状态检查，不立即硬阻断所有 mutation；
+3. 将视觉评价拆成中性描述与目标核验两阶段，减少执行 agent 自证；
+4. 只在未见独立任务再次重复手写同类 probe 后，才评估新的 cache/solver/volume/关系检查动词；
+5. 继续 `houdini_job_*` → `ctx.jobs`、normalized trace parser 和最小 GUI/H21/H22 smoke 工程化。
+
+评测实例与生产 agent 信息继续严格隔离：常驻 guidance、preset、skills 和工具不得写 benchmark ID、
+对象配方、目标参数或评分答案；原题改善只证明回归，泛化结论必须来自冻结后的未见同族实例和跨域反例。
+完整协议和准入门见 [`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)，
+当前实现与 MCP 架构参考的边界见 [`docs/development.md` §2.47](docs/development.md#247-跨模型-trace-结论mcp-参考暂停与首轮通用-p02026-08-31)。其他 Houdini MCP 方案目前只作为后续架构对照，不是本项目的安装依赖或生产执行路径。
