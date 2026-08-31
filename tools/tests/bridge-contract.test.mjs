@@ -8,6 +8,7 @@ import {
 
 let stale = true;
 let execCalls = 0;
+let lastExecBody = null;
 const server = http.createServer((request, response) => {
   response.setHeader('content-type', 'application/json');
   if (request.url === '/health') {
@@ -24,8 +25,19 @@ const server = http.createServer((request, response) => {
     return;
   }
   if (request.url === '/exec') {
-    execCalls++;
-    response.end(JSON.stringify({ ok: true, stdout: '', stderr: '' }));
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      execCalls++;
+      lastExecBody = JSON.parse(body);
+      response.end(JSON.stringify({
+        ok: true,
+        stdout: '',
+        stderr: '',
+        ...(lastExecBody.code.includes('hou.hipFile.path()') ? { result: 'C:/project' } : {}),
+      }));
+    });
     return;
   }
   response.statusCode = 404;
@@ -45,9 +57,12 @@ try {
   assert.equal(execCalls, 0, 'mismatch must fail before scene code reaches /exec');
 
   stale = false;
-  const result = await new HoudiniBridge(url, 1000).exec('__result__ = 1');
+  const bridge = new HoudiniBridge(url, 1000);
+  const result = await bridge.exec('__result__ = 1');
   assert.equal(result.ok, true);
   assert.equal(execCalls, 1);
+  assert.equal(await bridge.hipDir(), 'C:/project');
+  assert.equal(lastExecBody.read_only, 'true', 'internal $HIP inspection must use the read-only bridge boundary');
 } finally {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }

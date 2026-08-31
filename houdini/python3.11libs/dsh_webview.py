@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import socket
 import urllib.parse
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
@@ -69,6 +68,7 @@ _POLYFILL_ABORT_SIGNAL_ANY_JS = """
 
 _window: QWidget | None = None
 _view: QWebEngineView | None = None
+_retry_timer: QTimer | None = None
 _target_url = FRONTEND_URL
 
 
@@ -77,26 +77,24 @@ def _on_main_thread() -> bool:
     return app is not None and QThread.currentThread() is app.thread()
 
 
-def _port_open(host: str, port: int) -> bool:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(0.3)
-        sock.connect((host, port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
-
-
 def _retry_load() -> None:
-    """前端端口没就绪时，每 2s 重试一次，直到连上或窗口被关闭。"""
+    """QWebEngine 异步加载失败后重试；GUI 线程不做 socket 探测。"""
     if _view is None or _window is None or not _window.isVisible():
         return
-    if _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        _view.load(QUrl(_target_url))
-    else:
-        QTimer.singleShot(_RETRY_INTERVAL_MS, _retry_load)
+    _view.load(QUrl(_target_url))
+
+
+def _load_finished(ok: bool) -> None:
+    """Run the page patch on success, or schedule one cancellable async retry."""
+    if ok:
+        if _retry_timer is not None:
+            _retry_timer.stop()
+        if _view is not None:
+            _view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS)
+        return
+    if (_retry_timer is not None and _window is not None
+            and _window.isVisible() and not _retry_timer.isActive()):
+        _retry_timer.start(_RETRY_INTERVAL_MS)
 
 
 def _bring_to_front(win: QWidget) -> None:
@@ -142,7 +140,7 @@ def show_webview(session_id: str | None = None) -> str:
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _target_url
+    global _window, _view, _retry_timer, _target_url
     target_url = _session_url(session_id)
     if _window is not None and _window.isVisible():
         # A full service restart carries an explicit Host-created/reused
@@ -162,20 +160,23 @@ def show_webview(session_id: str | None = None) -> str:
         win.setWindowTitle("DSH-Houdini")
         view = QWebEngineView()
         _install_abort_signal_polyfill(view)
-        # 每次整页加载后注入性能修复 CSS（SPA 路由切换不重载页面，注入一次生效）。
-        view.loadFinished.connect(lambda _ok: view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS))
+        # QWebEngine 的网络加载是异步的：成功后注入性能修复 CSS，失败则由
+        # cancellable QTimer 重试。主线程不再同步探测 localhost 端口。
+        retry_timer = QTimer(view)
+        retry_timer.setSingleShot(True)
+        retry_timer.timeout.connect(_retry_load)
+        view.loadFinished.connect(_load_finished)
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(view)
         win.resize(1200, 800)
         _window = win
         _view = view
+        _retry_timer = retry_timer
 
     _target_url = target_url
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))
-    if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        QTimer.singleShot(_RETRY_INTERVAL_MS, _retry_load)
     return f"opened {_target_url}"
 
 

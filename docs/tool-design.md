@@ -310,15 +310,17 @@ registry 只在当前 Houdini 进程内有效；完整重启后无法在不信�
 
 下一阶段先执行 [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md)，不预设需要新增动词：
 
-1. 在机械资产、真实 solver/cache 模拟和 Solaris/Karma lookdev 的双模型发现矩阵中记录重复 probe、
-   自主返工和独立评审差异；执行 agent 只接收普通用户任务，不接收 benchmark ID、隐藏评分维度或
-   为实例定制的节点/参数 recipe；
-2. 同一通用意图在至少两个独立任务重复、现有动词无法安全表达时，才进入 agent-native 动词设计；
-3. 视觉 provider 只在盲语义、目标核验和人工抽检的核心维度一致率足够时作为 ground truth，
+1. discovery 只作为归因证据；launcher/WebView GUI 主线程阻塞 preflight 已修，正式 protocol freeze 前
+   完整重启 Houdini并重跑 49 动词 query/Trace/WebView smoke；
+2. 完成通用 seed generator，冻结模型/provider/protocol 后再解封未见实例；执行 agent 只接收普通
+   用户任务，不接收 benchmark ID、隐藏评分维度或为实例定制的节点/参数 recipe；
+3. 同一通用意图在至少两个独立任务重复、现有动词无法安全表达时，才进入 agent-native 动词设计；
+4. 视觉 provider 只在盲语义、目标核验和人工抽检的核心维度一致率足够时作为 ground truth，
    不以 transport/bootstrap/presentation 成功替代；
-4. `ctx.jobs` 迁移、query/exec 权限分层与最小 H21/H22/GUI 回归保留为工程 backlog，主矩阵前不改
+5. `ctx.jobs` 迁移、query/exec approval 层、helper 按域拆分与自动化 H21/H22/GUI 回归保留为工程
+   backlog，正式证据阶段中途不改
    实验底座；Houdini 主线程执行仍保持串行，ownership guard 继续作为内部安全边界；
-5. 不为一次性只读探针、单个 benchmark 对象或目录覆盖率新增动词；任何改进必须在未见同族实例与
+6. 不为一次性只读探针、单个 benchmark 对象或目录覆盖率新增动词；任何改进必须在未见同族实例与
    跨域反例上验证，原失败任务回归不能单独证明通用能力提升。
 
 ---
@@ -406,7 +408,8 @@ advisory 的下一步：软提示被模型无视的天花板已反复实证（�
 `viewport_screenshot`）把产物路径登记进 `dsh_hou_helpers._PRODUCED_IMAGES`
 （`report_image()`，agent 手写产出也可登记），bridge 在 exec envelope 里带
 `images` 字段；host 侧对每个路径 `GET /media?path=...`（桥新端点：只读、限
-图片扩展名、64MB 上限）拉回字节，写进 `<工作区>/.dsh-houdini-media/`，并在
+图片扩展名、64MB 上限）拉回字节，以内容 SHA-256 短前缀 + 原 basename 写进
+`<工作区>/.dsh-houdini-media/`，避免不同目录/帧的同名图互相覆盖，并在
 工具结果里渲染 `media` 段（from → to 映射）。**vision/fs 工具用右侧的工作区
 路径**——$HIP 原路径对它们不可读（沙箱）。这修掉了草地 trace 里
 `vision_glance` 被 "image escapes the allowed directories" 拦截的根因，也让

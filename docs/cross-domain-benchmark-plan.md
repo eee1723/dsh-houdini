@@ -1,6 +1,7 @@
 # dsh-houdini 跨域能力评测计划
 
-> 状态：2026-08-28 路线与反过拟合硬约束已拍板，B0 协议资产待执行。
+> 状态：2026-08-31 路线与反过拟合硬约束已拍板；B0 schema、交叉 hash 与 smoke 产物门禁已实现，
+> 实际 seed generator、模型/provider 和最终 protocol version 待冻结。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 
@@ -43,8 +44,9 @@ surfaces，拒绝已登记的 benchmark 标识或唯一对象短语。该扫描�
 
 B0 的通用管理资产位于仓库顶层 `benchmark/`，但该目录不进入 npm `files`：只跟踪 baseline、JSON
 Schema 和无题目内容的协议工具。具体题面、evaluator spec 与逐 run manifest 分别放在被 Git 忽略的
-`benchmark/sealed/`、`benchmark/runs/` 或独立评测存储中。`tools/benchmark-manifest.mjs` 只计算规范化
-agent-surface hash、sealed file hash 和关键 manifest 不变量，不生成任务内容。
+`benchmark/sealed/`、`benchmark/runs/` 或独立评测存储中。`tools/benchmark-manifest.mjs` 计算规范化
+agent-surface hash、sealed file hash、关键 manifest 不变量，并验证 completed smoke 的真实产物没有逃出
+`$HIP`、trace 没有落进插件仓库；它不生成任务内容。
 
 ### 2.2 实例分层
 
@@ -166,15 +168,51 @@ sealed manifest hash、能力标签、普通 brief schema 和解封规则，运�
 - 用非评分 smoke 验证三个校准实例都能启动、保存到 `$HIP`、采集 trace 和生成评审输入；
 - 固定模型/provider/version 后生成 protocol version；smoke 结果不得混入主矩阵。
 
+completed smoke 的产物门禁已实现：
+
+```sh
+node tools/benchmark-manifest.mjs validate-smoke benchmark/runs/<run>.json --hip-root <实际HIP目录>
+```
+
+它要求 `finishedAt`、仓库外的绝对 trace、非空 HIP、至少一份非空 render 和至少一个最终节点；HIP、cache、
+render 的每条 `$HIP/...` 路径都会解析真实文件并拒绝 `..`/symlink 逃逸。该门禁只验证启动与证据管线，
+不读取 evaluator 答案，也不把 smoke 计入评分矩阵。
+
+B0 的普通 brief、预设回答、seed fixture 和独立评分结果均已有通用 JSON Schema 与确定性 validator：
+
+```sh
+node tools/benchmark-manifest.mjs validate-brief <brief.json>
+node tools/benchmark-manifest.mjs validate-answers <answers.json> --brief-sha <brief-file-sha256>
+node tools/benchmark-manifest.mjs validate-seed <seed.json> --hip-root <实际HIP目录>
+node tools/benchmark-manifest.mjs validate-inputs <run.json> --brief <brief.json> --answers <answers.json> --seed <seed.json> --hip-root <实际HIP目录>
+node tools/benchmark-manifest.mjs validate-evaluation <evaluation.json> --run <run.json>
+```
+
+brief envelope 的 `briefId`、能力族和实例角色只供 evaluator/run 管理；执行 agent payload 只能取普通
+`agentMessage` 与公开资源，不能暴露 calibration/holdout 身份。answers 只允许用户偏好、资产位置、输出格式
+和执行约束，逐项声明不含实现指导/evaluator 材料且最多使用一次。run 单向绑定 brief、answers、seed HIP
+和资源 hash，避免双向 hash 环。评分固定 40/25/25/10 四维求和，并检查 blind/target 输入独立封存、
+hard-fail、core-success 和 run 结论一致。
+
 已建立的通用底座：`benchmark/baseline.json`、protocol/run 两份 JSON Schema、agent-surface 规范化
-SHA-256、sealed file SHA-256、关键不变量 CLI 校验和确定性回归。baseline commit 为
-`df22e49636e57794b0d7b17cc26e6f0f3a994e98`，当前 agent-surface hash 为
-`3cd0d24a6ec008ad6220ae2015d9cca41fd89b9263d986e7d33897bee14d0457`。在 Houdini runtime repair、
-模型/provider 和 sealed 实例齐备前，不生成看似完整的 protocol manifest。
+SHA-256、sealed file SHA-256、关键不变量 CLI 校验和确定性回归。首轮公共 P0 与 trace normalized-step
+共享解析器落地后，baseline commit 更新为 `ce794177b449e9259f369040cd387d027bc764c1`，当前
+agent-surface hash 为 `24ac8552f4ec537dd39719377f0665b0cf4bcf7ecea51032f3de6d32648b3c7c`。在模型/provider 和 sealed
+实例齐备前，不生成看似完整的 protocol manifest。
 
 2026-08-28 已从管理提交 `dea0ec8` 执行一次安全 repair：idle gate 通过，Houdini 21.0.440、DSH
 0.1.1-rc.2、vision toolkit 0.1.7、Raw Gate、47 个动词及词表指纹均已复核；Bridge 无 active/queued/
 running job，Web 返回 200。管理提交只增加未打包的 B0 工具，没有改变上述 agent-surface hash。
+
+2026-08-31 已对当前工作树再次执行安全 repair：Houdini 21.0.440 Bridge 返回 49 个动词、指纹
+`4f3516dec006…`，Raw Gate 开启且 job 计数全零，Web 返回 200。新 Houdini 模式会话成功执行
+`houdini_query` 列举空 `/obj`；Host/Bridge 握手通过，Houdini Trace 将其记为只读 HOM probe，未误报
+mutation 或 Gate block。该 smoke 证明当前通用合同已 live loaded，不代替未见实例的泛化评测。
+
+同日全项目 review 后，Host read-only/media relay 与 launcher/WebView GUI 线程边界又有通用修复，因此
+上述 smoke 已降级为历史 live 证据，`baseline.runtimeVerification.matchesBaseline=false`。阻塞 preflight
+已全部迁到 worker；正式 protocol freeze 前完整重启 Houdini并重跑同一 smoke。这是修复已存在的执行
+边界，不是按某个 benchmark 实例扩写 GUI 能力。
 
 ### Phase B1：跑 3 × 2 校准/发现矩阵
 

@@ -186,6 +186,10 @@ export class HoudiniBridge {
     try {
       const r = await this.exec(
         "import os, hou\n_p = hou.hipFile.path()\n__result__ = '' if os.path.basename(_p).lower() == 'untitled.hip' else os.path.dirname(_p)",
+        undefined,
+        undefined,
+        undefined,
+        true,
       )
       if (r.ok && typeof r.result === 'string' && r.result) dir = r.result
     } catch {

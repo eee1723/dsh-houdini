@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-seed-fixture.v1.json",
+  "title": "dsh-houdini deterministic seed fixture manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fixtureId",
+    "capabilityFamily",
+    "instanceRole",
+    "generator",
+    "output",
+    "evaluatorMaterialExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "fixtureId": { "type": "string", "minLength": 1 },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "scriptSha256", "parametersSha256", "deterministic"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "scriptSha256": { "$ref": "#/$defs/sha256" },
+        "parametersSha256": { "$ref": "#/$defs/sha256" },
+        "deterministic": { "const": true }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hip", "sha256", "houdini"],
+      "properties": {
+        "hip": { "type": "string", "pattern": "^\\$HIP/.+\\.hip(?:lc|nc)?(?:\\.gz)?$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "houdini": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evaluatorMaterialExposed": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

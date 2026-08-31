@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { registerHoudiniTools } from '../../lib/tools.js';
 
 const definitions = new Map();
@@ -111,5 +114,35 @@ assert.equal(
 // and do not mutate the durable args/result payloads.
 const frozenArgs = Object.freeze({ jobId: 'job-7', wait: 1 });
 assert.deepEqual(status.presentCall(frozenArgs), status.presentCall(frozenArgs));
+
+// Relay names are content-addressed so same-basename images from different
+// $HIP directories or frames cannot overwrite each other in the workspace.
+const relayDefinitions = new Map();
+const relayRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-media-relay-'));
+registerHoudiniTools({ tools: { register(definition) { relayDefinitions.set(definition.name, definition); } } }, {
+  async exec() {
+    return {
+      ok: true,
+      stdout: '',
+      stderr: '',
+      images: ['C:/first/review.png', 'D:/second/review.png'],
+    };
+  },
+  async fetchMedia(from) {
+    return Buffer.from(from.includes('first') ? 'first-image' : 'second-image');
+  },
+  async hipDir() { return relayRoot; },
+});
+const relayed = await relayDefinitions.get('houdini_exec').execute(
+  { code: '__result__ = 1' },
+  { agent: { id: 'session-1', session: { header: { cwd: relayRoot } } }, callId: 'call-1' },
+);
+assert.equal(relayed.media.length, 2);
+assert.notEqual(relayed.media[0].to, relayed.media[1].to);
+for (const item of relayed.media) {
+  assert.match(path.basename(item.to), /^[0-9a-f]{12}-review\.png$/);
+  assert.equal(fs.statSync(item.to).size > 0, true);
+}
+fs.rmSync(relayRoot, { recursive: true });
 
 console.log('houdini tool presentation tests passed');

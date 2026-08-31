@@ -12,9 +12,10 @@ Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨
 修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
 生产 guidance、preset、skills 或工具。
 
-当前源码和确定性回归已升级到 49 动词；已有 Houdini 进程若仍加载旧版本，需要从
-`DSH-Houdini` → `Version & Diagnostics...` → `Advanced diagnostics` 执行
-`Repair and restart runtime`。`/health` 返回 49 个动词且词表指纹一致后，才代表运行时完成升级。
+当前源码和 49 动词合同已通过 Node、H21/H22 回归；本机 live runtime 仍在线并返回正确目录指纹，但本轮
+Host media/read-only 与 WebView 异步重试修复尚未加载。Host/Bridge/preset 改动用 `Repair and restart runtime`；
+`dsh_webview.py`、菜单或安装 package 改动需要完整重启 Houdini。重载后再以 `/health`、新 Houdini 模式
+`houdini_query` 和 Houdini Trace smoke 确认，不能用静态构建替代 live 结论。
 
 ## 文档
 
@@ -88,7 +89,8 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
 
 产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
-结果里带 `media` 段（from→to 映射）——vision/fs 工具用工作区路径，与 $HIP 位置解耦。
+目标名使用内容 SHA-256 短前缀 + 原 basename，避免不同目录/帧的同名图覆盖；结果里带 `media` 段
+（from→to 映射）——vision/fs 工具用工作区路径，与 $HIP 位置解耦。
 
 `render_view` 依赖 Houdini GUI/OpenGL；正常 Houdini 工作站按标准路径使用。低配置开发机若
 偶发 OpenGL 不稳定，停止本轮视觉重试并保留 cook/属性/拓扑/多帧差异等语义证据即可；
@@ -263,8 +265,9 @@ npm test
 npm pack --dry-run
 ```
 
-`npm test` 当前运行构建和 10 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
-封存、Host/Bridge 词表握手、工具展示纯函数、trace replay/evidence 和当前文档一致性。
+`npm test` 当前运行构建和 12 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
+封存、Host/Bridge 词表握手、工具展示纯函数、WebView GUI 线程边界、trace replay/normalized-step/
+evidence 和当前文档一致性；测试文件数由一致性门禁反向核对，新增回归后不能只改代码不改 README。
 
 涉及真实 HOM 的回归用目标 Houdini 版本的 `hython` 分别执行。最低回归集合为：
 
@@ -309,11 +312,20 @@ rollback provenance、render freshness、health 主线程边界和 evidence 分�
 
 下一阶段顺序是：
 
-1. 在运行中的 Houdini 执行 Repair/restart，并完成 49 动词、词表握手和新合同 GUI smoke；
-2. 设计 Host/agent 层的最小结构化任务合同 v0，先做 ledger、证据失效和完成状态检查，不立即硬阻断所有 mutation；
-3. 将视觉评价拆成中性描述与目标核验两阶段，减少执行 agent 自证；
-4. 只在未见独立任务再次重复手写同类 probe 后，才评估新的 cache/solver/volume/关系检查动词；
-5. 继续 `houdini_job_*` → `ctx.jobs`、normalized trace parser 和最小 GUI/H21/H22 smoke 工程化。
+49 动词 runtime repair、Host/Bridge 词表握手和 `houdini_query` GUI smoke 已于 2026-08-31 完成。接下来：
+
+1. launcher/WebView GUI 主线程阻塞探测迁移已完成；完整重启 Houdini验证本轮 Host/media/UI 修复，刷新
+   live baseline；
+2. 普通 brief、预设回答、seed fixture 和评分结果的通用 schema/validator 已完成；随后实现通用 seed
+   generator，冻结模型/provider/protocol version；
+3. 用冻结后的未见实例验证首轮公共 P0 没有误阻或 false-completion 回退；completed smoke 的 `$HIP`/
+   trace/评审输入真实文件门禁已完成；
+4. 只有未见证据表明自然语言状态无法稳定比较时，才设计最小结构化任务 ledger；
+5. 将视觉评价拆成中性描述与目标核验两阶段，减少执行 agent 自证；只在未见独立任务再次重复手写同类
+   probe 后，才评估新的 cache/solver/volume/关系检查动词；
+6. 证据阶段结束后再做 `houdini_job_*` → `ctx.jobs`、approval 层和 `dsh_hou_helpers.py` 按域拆分；
+   trace report/evidence 已共用
+   normalized-step parser。
 
 评测实例与生产 agent 信息继续严格隔离：常驻 guidance、preset、skills 和工具不得写 benchmark ID、
 对象配方、目标参数或评分答案；原题改善只证明回归，泛化结论必须来自冻结后的未见同族实例和跨域反例。

@@ -56,7 +56,7 @@ python houdini/install.py --skip-dsh-profile
 2. 点击 `DSH-Houdini` → `Open Workspace`。服务未运行时会同步 preset、启动 Bridge 和前端，并打开内嵌 UI；服务已健康时只唤起窗口。
 3. 在 Web UI 新建会话并选择「Houdini 模式」。开发插件本身时选择「Houdini 开发模式」。
 
-加载刚修改的 Host、Bridge 或 preset 时，打开 `Version & Diagnostics...`，展开 `Advanced diagnostics`，点击 `Repair and restart runtime`。它会先检查活动 DSH turn/Houdini job，忙碌时不会强制中断。
+加载刚修改的 Host、Bridge、helper 或 preset 时，打开 `Version & Diagnostics...`，展开 `Advanced diagnostics`，点击 `Repair and restart runtime`。它会先检查活动 DSH turn/Houdini job，忙碌时不会强制中断。`dsh_webview.py`、菜单 XML、安装 package 等由 Houdini 进程缓存的 UI/安装层改动需要完整重启 Houdini。
 
 ## 5. 验证
 
@@ -79,9 +79,10 @@ npm test
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-node-ownership.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-bridge-caught-failure.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-tab-create-failure.test.py
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-scene-network-render-contract.test.py
 ```
 
-Houdini 安装路径按本机版本调整。
+Houdini 安装路径按本机版本调整；发布前对支持的 H21/H22 各跑一遍。
 
 ## 6. 日常更新
 
@@ -91,7 +92,7 @@ npm install
 npm run build
 ```
 
-普通代码更新随后执行 `Repair and restart runtime`。只有 `houdini/install.py`、package 或菜单 XML 改动时需要完整重开 Houdini。
+Host/Bridge/helper/preset 更新随后执行 `Repair and restart runtime`。`dsh_webview.py`、`houdini/install.py`、package 或菜单 XML 改动需要完整重开 Houdini；不要用 Bridge health 冒充 WebView 新代码已加载。
 
 版本诊断面板分别管理 DeepSeek Harness npm 通道和 dsh-houdini Git 通道；不要把“更新 Harness”与“拉本仓库代码”混成同一动作。临时验证特定 DSH 根包版本可在启动 Houdini 前设置：
 
@@ -132,4 +133,4 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
 | Houdini package | `Documents/houdini*/packages/` | 重跑安装器 |
 | DSH web profile | `~/.dsh/profiles/web/` | 重跑安装器 |
 | 本地 presets | `~/.dsh/.agent-presets/` | launcher 自动同步 |
-| 运行中 Bridge/前端 | Houdini/Node 进程 | `Repair and restart runtime` |
+| 运行中 Bridge/前端 | Houdini/Node 进程 | Host/Bridge 用 repair；WebView/UI 模块改动完整重启 Houdini |

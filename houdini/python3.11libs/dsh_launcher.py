@@ -330,13 +330,12 @@ def _module_path_on_syspath() -> None:
 
 
 def restart_bridge() -> str:
-    """Stop the old bridge, reload the Python modules, start a fresh bridge."""
+    """Main thread: stop/reload/start the in-process bridge without probing ports."""
     _module_path_on_syspath()
     import dsh_bridge
     import dsh_hou_helpers
 
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
-    _kill_port_process(BRIDGE_PORT)        # 若 8765 被外部 hython 占用则杀掉
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(BRIDGE_PORT, BRIDGE_HOST)
@@ -749,6 +748,83 @@ DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refr
 # Keeps the spawned frontend process / QTimer / QProgressDialog alive across
 # event-loop turns (GC would kill them).
 _PENDING: dict = {}
+_MAIN_DISPATCHES: list = []
+_SERVICE_PREFLIGHT_ACTIVE = False
+
+
+def _service_preflight(clear_external_bridge: bool = False) -> dict:
+    """Worker only: inspect listener state and clear an external bridge owner."""
+    frontend_online = _port_open(FRONTEND_HOST, FRONTEND_PORT)
+    bridge_online = _port_open(BRIDGE_HOST, BRIDGE_PORT)
+    bridge_pid = _port_pid(BRIDGE_PORT) if bridge_online else None
+    external_bridge_cleared = False
+    if clear_external_bridge and bridge_pid is not None and bridge_pid != os.getpid():
+        external_bridge_cleared = _kill_port_process(BRIDGE_PORT)
+        if external_bridge_cleared:
+            bridge_online = False
+    return {
+        "frontend_online": frontend_online,
+        "bridge_online": bridge_online,
+        "bridge_pid": bridge_pid,
+        "external_bridge_cleared": external_bridge_cleared,
+    }
+
+
+def _dispatch_service_preflight(callback, *, clear_external_bridge: bool = False) -> None:
+    """Run blocking listener/process checks off-GUI, then invoke callback on main."""
+    global _SERVICE_PREFLIGHT_ACTIVE
+    if _SERVICE_PREFLIGHT_ACTIVE:
+        _report("a service preflight is already running")
+        return
+    _SERVICE_PREFLIGHT_ACTIVE = True
+    try:
+        ui_available = bool(hou.isUIAvailable())
+    except Exception:
+        ui_available = False
+    if not ui_available:
+        try:
+            callback(_service_preflight(clear_external_bridge), None)
+        except Exception as exc:
+            _report(f"service startup failed: {exc}")
+        finally:
+            _SERVICE_PREFLIGHT_ACTIVE = False
+        return
+    try:
+        from hutil.Qt import QtCore
+        parent = hou.qt.mainWindow()
+    except Exception as exc:
+        _SERVICE_PREFLIGHT_ACTIVE = False
+        _report(f"cannot schedule non-blocking service preflight: {exc}")
+        return
+
+    state: dict = {"done": False, "result": None, "error": None}
+    timer = QtCore.QTimer(parent)
+
+    def worker() -> None:
+        try:
+            state["result"] = _service_preflight(clear_external_bridge)
+        except Exception:
+            state["error"] = traceback.format_exc()
+        finally:
+            state["done"] = True
+
+    def tick() -> None:
+        global _SERVICE_PREFLIGHT_ACTIVE
+        if not state["done"]:
+            return
+        timer.stop()
+        if timer in _MAIN_DISPATCHES:
+            _MAIN_DISPATCHES.remove(timer)
+        _SERVICE_PREFLIGHT_ACTIVE = False
+        try:
+            callback(state["result"], state["error"])
+        except Exception as exc:
+            _report(f"service startup failed: {exc}")
+
+    timer.timeout.connect(tick)
+    _MAIN_DISPATCHES.append(timer)
+    threading.Thread(target=worker, daemon=True).start()
+    timer.start(50)
 
 
 def _report(detail: str) -> None:
@@ -1014,14 +1090,14 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
 
     def cancel() -> None:
         state["canceled"] = True
-        _terminate_pending_frontend()
+        threading.Thread(target=_terminate_pending_frontend, daemon=True).start()
 
     def cleanup_dialog(_code: int) -> None:
         # Closing the window while startup is still running means cancel.
         # A successful close must leave the now-serving frontend alive.
         if state.get("result") != "ready":
             state["canceled"] = True
-            _terminate_pending_frontend()
+            threading.Thread(target=_terminate_pending_frontend, daemon=True).start()
         _PENDING.clear()
 
     log_btn.clicked.connect(open_log)
@@ -1118,12 +1194,22 @@ def launch() -> None:
     cwd is resolved here too (main thread): it seeds the dsh default
     workspace, which must track the current hip directory.
     """
-    detail = "\n".join([
-        sync_presets(),
-        restart_bridge(),
-    ])
-    print("[dsh-houdini] " + detail.replace("\n", "; "))
-    open_ui_when_ready(detail, _hip_dir())
+    frontend_cwd = _hip_dir()
+
+    def after_preflight(preflight: dict | None, error: str | None) -> None:
+        if error:
+            _report("service preflight failed: " + error.splitlines()[-1])
+            return
+        facts = preflight or {}
+        detail = "\n".join([
+            sync_presets(),
+            "external bridge listener cleared" if facts.get("external_bridge_cleared") else "bridge listener checked",
+            restart_bridge(),
+        ])
+        print("[dsh-houdini] " + detail.replace("\n", "; "))
+        open_ui_when_ready(detail, frontend_cwd)
+
+    _dispatch_service_preflight(after_preflight, clear_external_bridge=True)
 
 
 def open_workspace() -> None:
@@ -1133,17 +1219,32 @@ def open_workspace() -> None:
     "open" separate from "restart" avoids destroying a live dsh session just
     because the user wants to bring its Houdini window to the front.
     """
-    if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        launch()
-        return
+    frontend_cwd = _hip_dir()
 
-    details = [sync_presets()]
-    if _port_open(BRIDGE_HOST, BRIDGE_PORT):
-        details.append(f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}")
-    else:
-        details.append(restart_bridge())
-    status = open_ui()
-    _report("\n".join(details + [status]))
+    def after_preflight(preflight: dict | None, error: str | None) -> None:
+        if error:
+            _report("service preflight failed: " + error.splitlines()[-1])
+            return
+        facts = preflight or {}
+        if not facts.get("frontend_online"):
+            bridge_status = (
+                f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}"
+                if facts.get("bridge_online") else restart_bridge()
+            )
+            detail = "\n".join([sync_presets(), bridge_status])
+            print("[dsh-houdini] " + detail.replace("\n", "; "))
+            open_ui_when_ready(detail, frontend_cwd)
+            return
+
+        details = [sync_presets()]
+        if facts.get("bridge_online"):
+            details.append(f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}")
+        else:
+            details.append(restart_bridge())
+        status = open_ui()
+        _report("\n".join(details + [status]))
+
+    _dispatch_service_preflight(after_preflight)
 
 
 if __name__ == "__main__":

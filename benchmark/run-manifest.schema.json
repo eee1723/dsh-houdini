@@ -4,6 +4,40 @@
   "title": "dsh-houdini benchmark run manifest",
   "type": "object",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["completed", "failed", "invalidated"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["finishedAt", "terminationReason"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": { "const": "smoke" },
+          "status": { "const": "completed" }
+        },
+        "required": ["phase", "status"]
+      },
+      "then": {
+        "required": ["finishedAt", "evidence"],
+        "properties": {
+          "evidence": {
+            "required": ["trace", "hip", "render", "finalNodes"],
+            "properties": {
+              "render": { "minItems": 1 },
+              "finalNodes": { "minItems": 1 }
+            }
+          }
+        }
+      }
+    }
+  ],
   "required": [
     "schemaVersion",
     "runId",
@@ -58,11 +92,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "trace": { "type": "string" },
+        "trace": { "type": "string", "minLength": 1 },
         "hip": { "type": "string", "pattern": "^\\$HIP(?:/|$)" },
-        "cache": { "type": "array", "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
-        "render": { "type": "array", "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
-        "finalNodes": { "type": "array", "items": { "type": "string", "pattern": "^/" } }
+        "cache": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
+        "render": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^\\$HIP(?:/|$)" } },
+        "finalNodes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } }
       }
     },
     "evaluation": {

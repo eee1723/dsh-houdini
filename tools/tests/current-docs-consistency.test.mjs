@@ -24,6 +24,13 @@ for (const relative of currentSurfaces) {
 }
 
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+const nodeTestCount = fs.readdirSync(path.join(root, 'tools', 'tests'))
+  .filter((name) => name.endsWith('.test.mjs')).length
+assert.match(
+  readme,
+  new RegExp(`${nodeTestCount} 个 Node 确定性测试文件`),
+  `README must report the current ${nodeTestCount}-file Node suite`,
+)
 for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
   const skillFile = `skills/${skill}/SKILL.md`
   if (!fs.existsSync(path.join(root, skillFile))) continue

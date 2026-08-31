@@ -10,6 +10,7 @@ import {
   type JsonValue,
   type ToolResult,
 } from '@deepseek-ai/dsh-tools'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
@@ -187,7 +188,8 @@ async function relayMedia<T extends ExecResult>(value: T, execInput: unknown, br
   for (const from of images) {
     try {
       const bytes = await bridge.fetchMedia(from)
-      const to = path.join(dir, path.basename(from.replace(/\\/g, '/')))
+      const contentId = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
+      const to = path.join(dir, `${contentId}-${path.basename(from.replace(/\\/g, '/'))}`)
       await fs.mkdir(dir, { recursive: true })
       await fs.writeFile(to, bytes)
       media.push({ from, to, bytes: bytes.length })

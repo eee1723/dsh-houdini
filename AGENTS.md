@@ -2,14 +2,14 @@
 
 ## 项目定位
 
-dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。链路：`src/`（注册 5 个 `houdini_*` 工具）→ HTTP → `houdini/python3.11libs/dsh_bridge.py`（只在这里调用 `hou`）。
+dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。链路：`src/`（注册 5 个 `houdini_*` 工具）→ HTTP → `dsh_bridge.py`（主线程工作队列）→ `dsh_hou_helpers.py`（49 动词）。`hou` 只存在于 Houdini 侧 Python 模块，Node Host 不直接调用 HOM。
 
 ## 怎么跑
 
 - 构建：`npm install && npm run build`。生成器从 `docs/tool-design.md` 同时刷新 `client.js` 目录和 `src/generated-verb-contract.ts`，再由 tsc 输出 `lib/`；不要手改生成区或 `lib/`。
 - 启动：Houdini 菜单 `DSH-Houdini` → `Open Workspace`。加载新代码/修复运行时时，打开 `Version & Diagnostics...` → `Advanced diagnostics` → `Repair and restart runtime`。
 - 验证：Web UI 新建「Houdini 模式」会话，发「用 houdini_query 列出 /obj 下所有节点」。Host 会在第一次场景调用前比较自身词表指纹与运行中 Bridge；不一致会拒绝执行并要求重启服务。
-- 测试：`npm test` 跑构建和全部 Node 确定性回归；需要 HOM 的回归在 `tools/tests/*.test.py`，用 H21 `hython` 跑。至少再执行 `dsh-bridge-raw-gate`、`dsh-node-ownership`、`dsh-bridge-caught-failure`、`dsh-tab-create-failure`。
+- 测试：`npm test` 跑构建和全部 Node 确定性回归；需要 HOM 的回归在 `tools/tests/*.test.py`，目标版本用 `hython` 跑。至少再执行 raw-gate、node-ownership、caught-failure、tab-create-failure 和 scene/network/render contract；发布前同时跑 H21/H22。
 - trace：先按 `houdini-trace-analysis` skill 跑 `extract-trace-evidence.mjs`，再跑 `node tools/trace-report.mjs`。报告必须区分目录广度、调用含动词率、动词密度、只读裸探针、被 Gate 拦截和成功裸修改。
 
 ## 技术栈与目录
@@ -30,10 +30,10 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 - `render_view(EXPLICIT_SOP)` 使用持久 `__dsh_houdini_*` 服务；任务收尾复用、不删除。动画 A/B 使用同一 `framing_frame`。
 - `node_modules` 只用 npm 管；不要在本仓库运行 pnpm。Houdini 产出锚定 `$HIP`，不写进 workspace 或插件仓库。
 
-## 当前状态（2026-08-28）
+## 当前状态（2026-08-31）
 
-端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。Host/Bridge 词表握手、视觉语义失败识别、真实动词采用指标和精简生成式 guidance 已加入代码并通过本地确定性回归；加载到现有 Houdini 进程仍需执行一次 `Repair and restart runtime`。
+端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。2026-08-31 live smoke 曾验证 H21 Bridge 49 动词/指纹 `4f3516dec006…`、Web 200、`houdini_query` 与 Trace 只读分类。当前工作树又收紧了 Host 内部只读探测、media relay 同名覆盖，并把 WebView/launcher 的 socket/netstat/process preflight 全部移出 GUI 主线程；12 个 Node 回归及 H21/H22 核心 HOM/launcher/manager/profile 回归已通过。这些新改动尚未加载进当前 Houdini，Host/Bridge 用 repair，WebView/launcher 修复需完整重启 Houdini后复核。
 
 生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
 
-下一阶段已选择能力证据优先：按 `docs/cross-domain-benchmark-plan.md` 在机械程序化资产、真实 solver/cache 模拟和 Solaris/Karma lookdev 三个能力族中运行双模型发现矩阵，并用未见留出实例验证泛化。生产 guidance、preset、skills 和工具不得出现 benchmark ID、对象配方、目标参数或评分答案；同类失败跨独立实例重复前不新增动词、不写新大 skill、不先实现生产级结构化合同。Bridge jobs 迁 `ctx.jobs`、query/exec 权限分层和最小 GUI/H21/H22 回归保留为 benchmark 后的工程 backlog。
+跨能力族 discovery 已完成，但因模型替换、额度中止和 evaluator 输入未完全冻结，只作为发现证据。B0 smoke/brief/answers/seed/evaluation schema、真实产物与跨文件 hash validator 已实现。下一顺位：完整重启 Houdini并重跑 49 动词/query/Trace/WebView smoke，再实现通用 seed generator、冻结模型/provider/protocol version，最后运行未见留出。生产面不得写 benchmark 实例答案；`ctx.jobs`、approval 层和大规模模块拆分继续放在证据阶段之后。

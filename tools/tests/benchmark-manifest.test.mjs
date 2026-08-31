@@ -1,18 +1,30 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   agentSurfaceHash,
   canonicalJson,
   listAgentSurfaceFiles,
+  publicBriefAgentPayload,
+  resolveHipArtifactPath,
+  sha256File,
   sha256Json,
+  validateAllowedAnswers,
+  validateEvaluationResult,
   validateProtocolManifest,
+  validatePublicBrief,
+  validateRunInputs,
   validateRunManifest,
+  validateSeedFixture,
+  validateSeedFixtureManifest,
+  validateSmokeRun,
 } from '../benchmark-manifest.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const hash = 'a'.repeat(64)
+const hash2 = 'c'.repeat(64)
 const git = 'b'.repeat(40)
 
 assert.equal(canonicalJson({ z: 1, a: { d: 2, c: 3 } }), '{"a":{"c":3,"d":2},"z":1}')
@@ -47,7 +59,7 @@ const protocol = {
     blindVisualEvaluator: 'blind-v1',
     targetEvaluator: 'target-v1',
     blindPromptSha256: hash,
-    targetPromptSha256: hash,
+    targetPromptSha256: hash2,
   },
   sealedInstances: Object.fromEntries(
     ['mechanical', 'simulation', 'lookdev'].map((family) => [family, {
@@ -58,6 +70,11 @@ const protocol = {
   ),
 }
 assert.equal(validateProtocolManifest(protocol), protocol)
+assert.throws(() => validateProtocolManifest({
+  ...protocol,
+  evaluation: { ...protocol.evaluation, targetPromptSha256: hash },
+}), /independently sealed/)
+assert.throws(() => validateProtocolManifest({ ...protocol, unexpected: true }), /unsupported field/)
 assert.throws(() => validateProtocolManifest({ ...protocol, execution: { models: ['model-a', 'model-a'], additionalCorrectionLimit: 0 } }), /two distinct/)
 
 const run = {
@@ -84,15 +101,242 @@ const run = {
   status: 'running',
 }
 assert.equal(validateRunManifest(run), run)
+assert.throws(() => validateRunManifest({ ...run, unexpected: true }), /unsupported field/)
 assert.throws(() => validateRunManifest({
   ...run,
   agentExposure: { ...run.agentExposure, evaluatorMaterialExposed: true },
 }), /invalidate contaminated runs/)
+assert.throws(() => validateRunManifest({
+  ...run,
+  startedAt: '2026-08-29T00:00:00.000Z',
+  finishedAt: '2026-08-28T00:00:00.000Z',
+}), /finishedAt must not be earlier/)
+assert.throws(() => validateRunManifest({ ...run, status: 'failed' }), /terminal run requires finishedAt/)
 
-for (const schema of ['protocol-manifest.schema.json', 'run-manifest.schema.json']) {
+const brief = {
+  schemaVersion: 1,
+  briefId: 'sealed-brief',
+  capabilityFamily: 'mechanical',
+  instanceRole: 'calibration',
+  language: 'zh-CN',
+  agentMessage: 'A normal user request lives in the sealed store.',
+  resources: [{ resourceId: 'reference-1', sha256: hash2, mediaType: 'image/png' }],
+  evaluatorMaterialExposed: false,
+}
+assert.equal(validatePublicBrief(brief), brief)
+assert.throws(() => validatePublicBrief({ ...brief, evaluatorHint: 'hidden' }), /unsupported field/)
+assert.deepEqual(publicBriefAgentPayload(brief), {
+  message: brief.agentMessage,
+  resources: brief.resources,
+})
+assert.equal('instanceRole' in publicBriefAgentPayload(brief), false)
+assert.throws(() => validatePublicBrief({ ...brief, evaluatorMaterialExposed: true }), /must not expose evaluator material/)
+assert.throws(() => validatePublicBrief({
+  ...brief,
+  resources: [...brief.resources, { ...brief.resources[0] }],
+}), /resourceId values must be unique/)
+
+const answers = {
+  schemaVersion: 1,
+  answerSetId: 'sealed-answers',
+  publicBriefSha256: hash,
+  entries: [{
+    questionKey: 'output-format',
+    questionPatternSha256: hash2,
+    category: 'output-format',
+    answer: 'Use the format stated by the user.',
+    maxUses: 1,
+    containsImplementationGuidance: false,
+    containsEvaluatorMaterial: false,
+  }],
+}
+assert.equal(validateAllowedAnswers(answers, { publicBriefSha256: hash }), answers)
+assert.throws(() => validateAllowedAnswers(answers, { publicBriefSha256: hash2 }), /does not match/)
+assert.throws(() => validateAllowedAnswers({
+  ...answers,
+  entries: [{ ...answers.entries[0], containsImplementationGuidance: true }],
+}), /must not contain implementation guidance/)
+
+const evaluation = {
+  schemaVersion: 1,
+  runId: run.runId,
+  evaluatorSpecSha256: hash,
+  inputs: {
+    deterministicEvidenceSha256: hash,
+    blindVisualInputSha256: hash,
+    targetInputSha256: hash2,
+  },
+  hardFailures: [],
+  scores: {
+    coreDelivery: 32,
+    objectiveEvidence: 20,
+    independentVisual: 20,
+    honestDelivery: 8,
+  },
+  total: 80,
+  hardFailure: false,
+  coreSuccess: true,
+  claimLevel: 'local-regression',
+  blindResultSha256: hash,
+  targetResultSha256: hash2,
+}
+const completedRun = {
+  ...run,
+  status: 'completed',
+  finishedAt: '2026-08-28T00:01:00.000Z',
+  terminationReason: 'completed',
+}
+assert.equal(validateEvaluationResult(evaluation, { runManifest: completedRun }), evaluation)
+const evaluatedRun = {
+  ...completedRun,
+  evaluation: {
+    hardFailure: false,
+    score: 80,
+    claimLevel: 'local-regression',
+    blindResultSha256: hash,
+    targetResultSha256: hash2,
+  },
+}
+assert.equal(validateEvaluationResult(evaluation, { runManifest: evaluatedRun }), evaluation)
+assert.throws(() => validateEvaluationResult(evaluation, {
+  runManifest: { ...evaluatedRun, evaluation: { ...evaluatedRun.evaluation, score: 81 } },
+}), /total does not match/)
+assert.throws(() => validateEvaluationResult({ ...evaluation, total: 79 }, { runManifest: completedRun }), /total must equal/)
+assert.throws(() => validateEvaluationResult({
+  ...evaluation,
+  inputs: { ...evaluation.inputs, targetInputSha256: hash },
+}), /independently sealed/)
+assert.throws(() => validateEvaluationResult({
+  ...evaluation,
+  hardFailures: ['core-output-missing'],
+}), /hardFailure must match/)
+
+const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-smoke-fixture-'))
+const repositoryRoot = path.join(smokeRoot, 'repo')
+const hipRoot = path.join(smokeRoot, 'hip')
+const traceRoot = path.join(smokeRoot, 'trace')
+fs.mkdirSync(repositoryRoot, { recursive: true })
+fs.mkdirSync(path.join(hipRoot, 'render'), { recursive: true })
+fs.mkdirSync(path.join(hipRoot, 'cache'), { recursive: true })
+fs.mkdirSync(traceRoot, { recursive: true })
+fs.writeFileSync(path.join(hipRoot, 'smoke.hip'), 'hip')
+fs.writeFileSync(path.join(hipRoot, 'render', 'review.png'), 'png')
+fs.writeFileSync(path.join(hipRoot, 'cache', 'frame.bgeo.sc'), 'cache')
+const traceFile = path.join(traceRoot, 'session.jsonl.zstd')
+fs.writeFileSync(traceFile, 'trace')
+
+const seed = {
+  schemaVersion: 1,
+  fixtureId: 'seed-test',
+  capabilityFamily: 'mechanical',
+  instanceRole: 'calibration',
+  generator: {
+    id: 'empty-scene-generator',
+    version: '1',
+    scriptSha256: hash,
+    parametersSha256: hash2,
+    deterministic: true,
+  },
+  output: {
+    hip: '$HIP/smoke.hip',
+    sha256: sha256File(path.join(hipRoot, 'smoke.hip')),
+    houdini: '21.0.440',
+  },
+  evaluatorMaterialExposed: false,
+}
+assert.equal(validateSeedFixtureManifest(seed), seed)
+assert.equal(validateSeedFixture(seed, { hipRoot }).fixtureId, 'seed-test')
+assert.throws(() => validateSeedFixture({
+  ...seed,
+  output: { ...seed.output, sha256: hash },
+}, { hipRoot }), /sha256 does not match/)
+assert.throws(() => validateSeedFixtureManifest({
+  ...seed,
+  generator: { ...seed.generator, deterministic: false },
+}), /deterministic must be true/)
+
+const sealedRoot = path.join(smokeRoot, 'sealed')
+fs.mkdirSync(sealedRoot, { recursive: true })
+const briefFile = path.join(sealedRoot, 'brief.json')
+fs.writeFileSync(briefFile, JSON.stringify(brief))
+const linkedAnswers = { ...answers, publicBriefSha256: sha256File(briefFile) }
+const answersFile = path.join(sealedRoot, 'answers.json')
+fs.writeFileSync(answersFile, JSON.stringify(linkedAnswers))
+const inputRun = {
+  ...run,
+  agentExposure: {
+    ...run.agentExposure,
+    publicBriefSha256: sha256File(briefFile),
+    allowedAnswersSha256: sha256File(answersFile),
+    seedSceneSha256: seed.output.sha256,
+    resourceSha256: brief.resources.map((resource) => resource.sha256),
+  },
+}
+const inputSummary = validateRunInputs({
+  runManifest: inputRun,
+  publicBrief: brief,
+  publicBriefSha256: sha256File(briefFile),
+  allowedAnswers: linkedAnswers,
+  allowedAnswersSha256: sha256File(answersFile),
+  seedFixture: seed,
+  hipRoot,
+})
+assert.equal(inputSummary.seedSceneSha256, seed.output.sha256)
+assert.throws(() => validateRunInputs({
+  runManifest: { ...inputRun, agentExposure: { ...inputRun.agentExposure, resourceSha256: [] } },
+  publicBrief: brief,
+  publicBriefSha256: sha256File(briefFile),
+  allowedAnswers: linkedAnswers,
+  allowedAnswersSha256: sha256File(answersFile),
+  seedFixture: seed,
+  hipRoot,
+}), /resourceSha256 does not exactly match/)
+
+const smoke = {
+  ...run,
+  runId: 'smoke-test',
+  phase: 'smoke',
+  status: 'completed',
+  finishedAt: '2026-08-28T00:01:00.000Z',
+  terminationReason: 'smoke completed',
+  evidence: {
+    trace: traceFile,
+    hip: '$HIP/smoke.hip',
+    cache: ['$HIP/cache/frame.bgeo.sc'],
+    render: ['$HIP/render/review.png'],
+    finalNodes: ['/obj/SMOKE_OUT'],
+  },
+}
+const smokeSummary = validateSmokeRun(smoke, { hipRoot, repositoryRoot })
+assert.equal(smokeSummary.runId, 'smoke-test')
+assert.equal(smokeSummary.hip.bytes, 3)
+assert.equal(smokeSummary.render.length, 1)
+assert.equal(resolveHipArtifactPath('$HIP/render/review.png', hipRoot), fs.realpathSync.native(path.join(hipRoot, 'render', 'review.png')))
+assert.throws(() => resolveHipArtifactPath('$HIP/../escape.hip', hipRoot), /escapes \$HIP/)
+assert.throws(() => validateSmokeRun({
+  ...smoke,
+  evidence: { ...smoke.evidence, render: [] },
+}, { hipRoot, repositoryRoot }), /evidence.render must be an array with at least 1/)
+const repositoryTrace = path.join(repositoryRoot, 'trace.jsonl.zstd')
+fs.writeFileSync(repositoryTrace, 'trace')
+assert.throws(() => validateSmokeRun({
+  ...smoke,
+  evidence: { ...smoke.evidence, trace: repositoryTrace },
+}, { hipRoot, repositoryRoot }), /trace must stay outside/)
+fs.rmSync(smokeRoot, { recursive: true })
+
+for (const schema of [
+  'protocol-manifest.schema.json',
+  'run-manifest.schema.json',
+  'public-brief.schema.json',
+  'allowed-answers.schema.json',
+  'seed-fixture.schema.json',
+  'evaluation-result.schema.json',
+]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))
   assert.equal(parsed.$schema, 'https://json-schema.org/draft/2020-12/schema')
   assert.equal(parsed.additionalProperties, false)
+  if (schema === 'run-manifest.schema.json') assert.ok(Array.isArray(parsed.allOf))
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))

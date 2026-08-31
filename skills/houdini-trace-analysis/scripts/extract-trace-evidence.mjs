@@ -8,9 +8,8 @@ import {
   newestSessionFile,
   resolveSessionFile,
   sessionIdFromFile,
-  toolResultCallId,
-  uniqueToolResultEvents,
 } from '../../../tools/trace-session-lib.mjs';
+import { normalizeTraceSteps } from '../../../tools/normalized-trace-steps.mjs';
 import {
   collectValidationCoverage,
   collectQualityLoopEvidence,
@@ -21,11 +20,7 @@ import {
   findBatchSetParmOpportunities,
   findQueryMutationSteps,
   findSuppressedCookFailures,
-  isMutatingRawMethodName,
-  mutatingRawMethodNames,
-  parseVerbLedgerLine,
   qualityLoopRisks,
-  rawMethodNames,
   requestedGoalReportedUnverified,
 } from './evidence-helpers.mjs';
 
@@ -82,52 +77,15 @@ const sortCounts = (counts) => Object.fromEntries(
 );
 const digest = (text) => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 
-function messageText(message) {
-  return (message?.content?.[0]?.content || [])
-    .filter((item) => item.type === 'text')
-    .map((item) => item.text)
-    .join('\n');
-}
-
 function directText(content) {
   return (content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
-}
-
-function parseArgs(value) {
-  try { return typeof value === 'string' ? JSON.parse(value) : (value || {}); }
-  catch { return { _raw: String(value) }; }
-}
-
-function parseVerbLines(text) {
-  const match = text.match(/verbs \((\d+)\):\n([\s\S]*?)(?:\n\n|$)/);
-  if (!match) return [];
-  const verbs = [];
-  for (const line of match[2].split('\n')) {
-    const parsed = parseVerbLedgerLine(line);
-    if (!parsed) continue;
-    let result = parsed.result;
-    try { result = JSON.parse(result); } catch {}
-    verbs.push({
-      ledgerIndex: parsed.ledgerIndex,
-      ok: parsed.ok,
-      verb: parsed.verb,
-      args: clip(parsed.args),
-      result,
-      ms: parsed.ms,
-    });
-  }
-  return verbs;
 }
 
 function analyzeTrace(file) {
   const loaded = loadSessionEvents(file);
   const { events } = loaded;
-  const { uniqueResults, replayedResults } = uniqueToolResultEvents(events);
-  const uniqueResultSet = new Set(uniqueResults);
-  const calls = new Map();
-  for (const event of events) {
-    if (event.type === 'tool/call') calls.set(event.data.callId, { ...event.data, eventSeq: event.seq, time: event.time });
-  }
+  const normalized = normalizeTraceSteps(events);
+  const { replayedResults, unmatchedResults } = normalized;
 
   const userMessages = [];
   const assistantMessages = [];
@@ -202,74 +160,51 @@ function analyzeTrace(file) {
         });
       }
     }
-    if (event.type !== 'tool/result' || !uniqueResultSet.has(event)) continue;
-    const message = event.data?.message || {};
-    const callId = toolResultCallId(event);
-    const call = calls.get(callId);
-    if (!call) continue;
-    const args = parseArgs(call.arguments);
-    const text = messageText(message);
-    const code = typeof args.code === 'string' ? args.code : '';
-    const verbs = parseVerbLines(text);
-    const methods = rawMethodNames(code);
-    const isHoudini = String(call.name).startsWith('houdini_');
-    const failed = Boolean(message.content?.some((item) => item.isError))
-      || text.startsWith('Execution failed')
-      || /\nExecution failed:/.test(text);
-    const advisoryMatch = text.match(/hint:\n([\s\S]*?)$/);
-    const rollbackMatch = text.match(/rollback:\n([\s\S]*?)(?:\n\n|$)/);
-    const rawUsageMatch = text.match(/raw-usage:\n([\s\S]*?)(?:\n\n|$)/);
-    let rollback = null;
-    if (rollbackMatch) {
-      try { rollback = JSON.parse(rollbackMatch[1]); }
-      catch { rollback = { _raw: clip(rollbackMatch[1]) }; }
-    }
-    let rawUsage = null;
-    if (rawUsageMatch) {
-      try { rawUsage = JSON.parse(rawUsageMatch[1]); }
-      catch { rawUsage = { _raw: clip(rawUsageMatch[1]) }; }
-    }
-    // New traces carry the exact Bridge AST/Gate classification.  Prefer it
-    // over the historical receiver-agnostic scanner so Python set.add and
-    // similar read-only aggregation cannot be mislabeled as scene mutation.
-    const mutatingMethods = rawUsage && !rawUsage._raw
-      ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
-        .filter((item) => isMutatingRawMethodName(item.name))
-        .flatMap((item) => Array(Number(item.count) || 1).fill(String(item.name)))
-      : mutatingRawMethodNames(code);
+  }
+
+  for (const source of normalized.steps) {
+    const code = source.code;
+    const verbs = source.verbs.map((verb) => ({
+      ledgerIndex: verb.ledgerIndex,
+      ok: verb.ok,
+      verb: verb.verb,
+      args: clip(verb.args),
+      result: verb.result,
+      ms: verb.ms,
+    }));
     const step = {
-      index: steps.length + 1,
-      callSeq: call.eventSeq,
-      resultSeq: event.seq,
-      time: event.time,
-      turn: event.data?.turn,
-      step: event.data?.step,
-      tool: call.name || '?',
-      isHoudini,
-      failed,
-      args: compact && code ? { ...args, code: undefined } : args,
+      index: source.index,
+      callSeq: source.callSeq,
+      resultSeq: source.resultSeq,
+      time: source.time,
+      turn: source.turn,
+      step: source.step,
+      tool: source.tool,
+      isHoudini: source.isHoudini,
+      failed: source.failed,
+      args: compact && code ? { ...source.args, code: undefined } : source.args,
       codeChars: code.length,
       codeHash: code ? digest(code) : null,
       code: compact ? undefined : code,
       codePreview: code ? clip(code.replace(/\s+/g, ' '), 800) : null,
-      resultPreview: clip(text),
+      resultPreview: clip(source.resultText),
       verbs,
-      rawMethods: methods,
-      mutatingRawMethods: mutatingMethods,
-      advisory: advisoryMatch ? advisoryMatch[1].trim() : null,
-      rollback,
-      rawUsage,
+      rawMethods: source.rawMethods,
+      mutatingRawMethods: source.mutatingRawMethods,
+      advisory: source.advisory,
+      rollback: source.rollback?._raw ? { _raw: clip(source.rollback._raw) } : source.rollback,
+      rawUsage: source.rawUsage?._raw ? { _raw: clip(source.rawUsage._raw) } : source.rawUsage,
     };
     // Keep the unabridged result only in memory for coverage extraction. It is
     // deliberately non-enumerable so compact/full evidence JSON does not
     // duplicate potentially huge tool output, while render paths and nested
     // render_check facts remain recoverable before serialization.
-    Object.defineProperty(step, 'resultText', { value: text, enumerable: false });
+    Object.defineProperty(step, 'resultText', { value: source.resultText, enumerable: false });
     steps.push(step);
-    firstToolTime = Math.min(firstToolTime, event.time || Infinity);
-    lastToolTime = Math.max(lastToolTime, event.time || 0);
+    firstToolTime = Math.min(firstToolTime, source.time || Infinity);
+    lastToolTime = Math.max(lastToolTime, source.time || 0);
     addCount(toolCounts, step.tool);
-    for (const method of methods) addCount(rawMethodCounts, method);
+    for (const method of source.rawMethods) addCount(rawMethodCounts, method);
     for (const verb of verbs) {
       addCount(verbCounts, verb.verb);
       if (!verb.ok) addCount(verbFailures, verb.verb);
@@ -449,6 +384,7 @@ function analyzeTrace(file) {
     frames: loaded.frames,
     frameErrors: loaded.frameErrors,
     replayedResults,
+    unmatchedResults,
     eventCount: events.length,
     startTime: Number.isFinite(firstTime) ? firstTime : null,
     endTime: lastTime || null,

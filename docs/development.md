@@ -29,10 +29,11 @@
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
-| webview 设置页卡顿修复 | ✅ 6→61 FPS（2026-08-18，§2.13） | `dsh_webview.py` 注入禁 backdrop-filter |
+| GUI 启动线程边界 | 🔶 WebView/launcher 阻塞 preflight 已迁 worker；待完整重启 GUI smoke | QWebEngine async retry + launcher worker listener/PID preflight；普通 Open 不杀现有 Bridge |
 | 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
-| Host / Bridge 词表握手 | ✅ 代码与确定性测试 | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；现有 Houdini 进程待一次 runtime restart 激活 |
-| 跨域质量闭环 | 🔶 P1 行为原型已部署；反过拟合协议已冻结，下一阶段建立 B0 资产（§2.41–§2.46） | 三个能力族的发现实例 + 未见留出 + 跨域反例；确定性检查 + 独立视觉评审 |
+| Host / Bridge 词表握手 | ✅ 49 动词 live 验证；当前 Host 小修待 reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
+| B0 评测协议 | 🔶 schema/hash/真实 smoke 产物门禁已完成 | brief/answers/seed/evaluation + run 交叉校验；实际 seed generator、模型/provider/protocol 待冻结 |
+| 跨域质量闭环 | 🔶 discovery 已归因，不冒充正式排名 | 下一步先清 GUI 主线程边界，再跑三族 smoke/未见留出；确定性检查 + 独立视觉评审 |
 
 ---
 
@@ -1554,6 +1555,87 @@ agent-visible surface 已在实现提交 `004d305` 后重封为 `7ea472268230…
 快照明确标记 `matchesBaseline=false`，运行中 Houdini 仍需一次 `Repair and restart runtime` 才能加载
 本轮代码并刷新为 49 动词事实，不能用文件基线冒充运行时已经更新。
 
+### 2.48 trace normalized-step parser 收敛（2026-08-31）
+
+`tools/trace-report.mjs` 与 `houdini-trace-analysis` evidence 提取器过去各自实现 tool call/result 关联、
+compaction replay 去重、参数与结果文本解析、失败识别、动词 ledger、rollback/raw-usage 和裸 HOM 分类；
+两者已经出现 `Error:` / 内嵌 `Execution failed:` 覆盖不一致，报告侧也没有优先使用 Bridge 的精确
+Raw Gate 分类。现新增打包内共享的 `tools/normalized-trace-steps.mjs`：统一输出一次执行对应一个 step，
+replay 与无匹配 call 的 result 单列 diagnostics，并保留完整结果供下游内存分析。report 只负责 HTML
+展示，evidence 只负责裁剪、hash、统计和质量归因。
+
+新增确定性回归覆盖 replay、orphan result、损坏参数、ledger JSON、rollback、精确 raw-usage 次数和
+失败前缀；Node 测试增至 11 个。因 evidence 提取脚本属于随包 skill，agent surface 已按协议重封为
+`a09efffc8c79…`；runtime 快照仍是旧 47 动词事实，继续保持 `matchesBaseline=false`，没有用本地文件
+重封冒充 Houdini runtime 已更新。
+
+### 2.49 当前 49 动词 runtime repair 与 GUI smoke（2026-08-31）
+
+用户从 Houdini 21.0.440 诊断面板执行 `Repair and restart runtime` 后，Bridge `/health` 实测
+`ok=true`、Raw Gate 开启、49 个动词、指纹 `4f3516dec006…`，active/queued/running jobs 均为 0，
+DSH Web 返回 200。随后在 Web UI 的 `dsh-houdini` workspace 新建 Houdini 模式会话，发送“用
+`houdini_query` 列出 `/obj` 下所有节点”：Host/Bridge 词表握手通过，工具成功返回空场景的 0 个子节点。
+
+Houdini Trace 显示 49 项目录，将这次调用归为 1 次“无动词只读探针”，0 mutation、0 Raw Gate block、
+0 rollback，证明 query 只读边界与工具展示在 live runtime 上工作。`benchmark/baseline.json` 已刷新为
+`matchesBaseline=true`，同时明确记录当前工作树尚未提交；本 smoke 只验证 transport、加载、握手、查询和
+Trace 分类，不冒充未见任务泛化或 H21/H22 自动化回归。
+
+### 2.50 B0 smoke/fixture 产物门禁（2026-08-31）
+
+`run-manifest.schema.json` 现在对 completed smoke 条件要求 `finishedAt` 与 evidence 的 trace/HIP/render/
+finalNodes；cache/render/finalNodes 同时去重。`tools/benchmark-manifest.mjs validate-smoke` 再把声明式
+`$HIP/...` 映射到调用方给出的真实 HIP 根，检查 HIP、cache、render 与 trace 都存在、是普通文件且非空，
+拒绝 `..` 和 symlink 逃逸，并拒绝把私有 trace 写进插件仓库。smoke 必须至少产生一份独立评审输入图和
+一个最终 Houdini 节点；running/failed run 不会被伪装成完成。
+
+确定性回归使用临时 HIP/repository/trace 三个隔离根，覆盖合法机械 smoke、路径逃逸、空 render、仓库内
+trace 和时间倒序。该门禁不包含题面、对象 recipe、评分答案或 evaluator spec，因此不改变 agent-visible
+surface；也不声称已建立真实三族 seed fixture。下一项仍是普通 brief/预设回答/seed/评分 schema 的通用
+模板与 validator，之后才冻结模型/provider/protocol version 并执行未见验证。
+
+### 2.51 B0 brief/answers/seed/evaluation 通用合同（2026-08-31）
+
+新增四份只存在于 `benchmark/`、不进入 npm production package 的 JSON Schema：public brief envelope、
+pre-registered answers、deterministic seed fixture 和 independent evaluation result。对应 validator 与 CLI
+已并入 `tools/benchmark-manifest.mjs`。brief 的 evaluator 元数据与 agent payload 显式分离；agent payload
+只返回普通消息与公开资源，不暴露 brief id、能力族或 calibration/holdout 角色。answers 类别限于用户偏好、
+资产位置、输出格式和执行约束，禁止实现指导/evaluator 材料且每项最多使用一次。
+
+`validate-inputs` 以实际文件 bytes hash 单向绑定 run → brief/answers，并把 seed scene hash 对到真实 `$HIP`
+HIP；公开资源 hash 必须与 brief 完全集合相等。设计过程中删除了 brief→answers 的反向 hash，避免与
+answers→brief 形成不可生成的密码学环。evaluation 固定 40/25/25/10 四维上限，total 必须精确等于分项，
+hardFailure 必须与 hardFailures 是否为空一致，coreSuccess 只允许“无硬失败且总分 ≥75”；blind 与 target
+输入 hash 必须不同，结果 hash、总分、hard-fail 和 claim level 可与 run manifest 交叉核验。
+
+确定性回归覆盖 agent payload 去元数据、资源/问题键唯一、禁止泄漏标志、brief-answer/seed/resource hash
+错配、seed 非确定性或内容 hash 错误、盲/目标输入相同、分数求和错误及 run/evaluation 结论漂移。当前仍未
+生成任何具体题面、预设答案或评分答案；下一项是实现通用空场景/固定 seed generator 与 validator identity，
+再冻结两模型、视觉 provider 和 protocol version。
+
+### 2.52 全项目 review：边界修复与现役事实收敛（2026-08-31）
+
+完整代码/文档/规则审计发现并修复三项可确定问题：
+
+1. `dsh_webview.py` 曾在 `show_webview()` 和 QTimer retry 的 GUI 主线程同步 `socket.connect(0.3s)`；
+   launcher 的 `open_workspace()`/`restart_bridge()` 也在主线程做 socket/netstat/taskkill preflight，均
+   违反“GUI 线程零阻塞探测”。WebView 现为 QWebEngine async load + `loadFinished` + single-shot timer；
+   launcher 现用 worker 做 listener/PID/外部占用者检查，再由主线程 timer callback 做 `hou`/module reload。
+   普通 Open Workspace 保留已有 Bridge listener，只有显式 repair 可清理外部占用进程；取消启动时 taskkill
+   也改走 worker。Node 静态回归和 H21/H22 launcher 纯 preflight 回归共同固定该边界。
+2. Host 内部 `hipDir()` 只读探测原走普通 exec，现显式发送 `read_only=true`；media relay 原按 basename
+   写工作区，同名图会覆盖动画 A/B 或不同目录证据，现改为内容 SHA-256 短前缀 + basename，并用两份
+   同名不同内容图片做真实文件回归。
+3. benchmark JSON Schema 均为 `additionalProperties:false`，但手写 CLI validator 原会放行未知字段；
+   现 protocol/run/brief/answers/seed/evaluation 及嵌套对象全部 fail-closed。另强制 blind/target prompt
+   hash 不同，避免协议层口头要求“独立输入”但 manifest 可登记同一 prompt。
+
+依赖盘点发现 `node_modules` 的 `dsh-system-prompt`/`dsh-tools` 仍是旧 `0.0.1-rc.*`，与 lockfile 和文档
+声明的 `0.1.1-rc.2` 不符；已用 npm 恢复锁定版本，`npm ls` 无 invalid，`npm audit --omit=dev` 为 0
+漏洞。12 个 Node 文件、skill strict audit、pack、Markdown 本地链接、H21/H22 五项核心 HOM 及
+manager/profile 回归均通过。当前 live Bridge 仍健康且返回 49 动词，但新 Host/WebView 代码未加载；
+baseline 因此标 `matchesBaseline=false`，WebView 需完整重启 Houdini 后才能刷新 live 结论。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1637,7 +1719,7 @@ QPainter 圆弧 spinner。
 
 ---
 
-## 5. 下一步（跨域能力证据优先，2026-08-28）
+## 5. 下一步（按依赖顺序，2026-08-31 review）
 
 > benchmark、评分和准入规则只在
 > [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md) 维护；本节只记录执行状态，
@@ -1651,14 +1733,17 @@ QPainter 圆弧 spinner。
 4. ✅ 干净基线已提交为 `df22e49`；已从 `dea0ec8` 在运行中 Houdini 完成一次安全
    `Repair and restart runtime`，runtime/Bridge/Web/词表状态已写入 baseline。评分 smoke 仍须等模型、
    evaluator 和 sealed 实例全部冻结。
+5. 🔶 当前 review 修复已通过静态/H21/H22 回归，但工作树未提交、live Host/launcher/WebView 未重载；
+   需完整重启 Houdini并重跑 query/Trace/WebView smoke，故当前不是新的干净/live-verified baseline。
 
 ### Phase B0 — 冻结评测协议
 
 1. ✅ 冻结反过拟合原则：agent-visible surfaces 不含实例答案；实例分为校准/发现、未见留出和
    跨域反例；原题改善不能单独证明通用能力。
-2. 🔶 protocol/run manifest schema、agent-surface hash、sealed file hash、Git/npm 隔离和关键校验已完成；
-   普通用户 brief 模板、预设回答边界、seed/fixture、评分 schema 与最终 protocol version 待环境冻结。
-3. ⏳ 建立只生成 `$HIP` 产物的 smoke/fixture 校验；仓库不接收 HIP/cache/render 或未解封留出正文。
+2. 🔶 protocol/run/brief/answers/seed/evaluation schema、agent-surface hash、跨文件 hash、Git/npm 隔离和
+   关键校验已完成；实际 seed generator、模型/provider 与最终 protocol version 待环境冻结。
+3. 🔶 completed smoke 的 `$HIP`/trace/评审输入真实文件门禁已完成；三个能力族的通用 seed fixture 仍待建立。
+   仓库不接收 HIP/cache/render 或未解封留出正文。
 4. ⏳ 固定两个模型与独立视觉 provider，验证盲描述和目标核验确实是两次独立输入。
 
 ### Phase B1 — 3 × 2 校准/发现矩阵
@@ -1681,15 +1766,17 @@ QPainter 圆弧 spinner。
 1. 🔶 首轮公共 P0 已落地：scene save、disconnect、query read-only、rollback provenance、render freshness、
    health 主线程边界和 evidence terminal/vision/query 分类；均来自通用契约或跨 trace 缺口，不含题目 recipe。
 2. ⏳ 仅在外部评分/自然语言状态无法稳定比较或约束结论时设计最小结构化 ledger。
-3. ⏳ 重封 agent surface、Repair/restart 和 GUI smoke 后，使用未见实例验证本轮 P0 无误阻；只有留出表现、实际
-   成功、自主发现与有效返工上升，且 false-completion 和误触发不恶化，才宣布能力提升。
+3. 🔶 agent surface 重封、Repair/restart 和手工 GUI smoke 已完成；仍须使用未见实例验证本轮 P0 无误阻。
+   只有留出表现、实际成功、自主发现与有效返工上升，且 false-completion 和误触发不恶化，才宣布能力提升。
 
 ### Benchmark 后恢复的工程 backlog
 
 - `houdini_job_*` 迁到 `ctx.jobs`；
 - ✅ query/exec Bridge 只读边界已完成；后续再接 DSH approval 层，不放宽当前 fail-closed；
-- trace report/evidence normalized step 共享 parser；
-- 按当前契约重建最小 H21/H22/GUI smoke；
+- ✅ trace report/evidence normalized step 已共用 parser；
+- 把当前手工证据工程化为可重复的最小 H21/H22/GUI smoke；
+- `dsh_hou_helpers.py`（约 4.4k 行）按 scene/node/parm/asset/geometry/render 域拆模块；在 protocol freeze
+  或正式矩阵中途不做该大重构，避免改变实验底座；
 - skill governance M2/M3 的 COP/SIM/project-analysis 准入和周期审计；
 - 等未见任务重复证据后再评估 `press_parm_button`、frame-range cook/cache 和 volume/solver 统计；当前
   不因单个模拟 recipe 先扩词表或大 skill。
@@ -1734,14 +1821,15 @@ QPainter 圆弧 spinner。
 | `client.js` | **client 半**：手写 factory，注册 `houdinitrace` 视图（词表目录 + 实时时序，目录由生成器注入） |
 | `package.json` | `exports["./client"]` + `dsh.client` + `dsh.bundle.patch` |
 | `cordis.patch.yml` | 组合包 patch 层（`dsh.bundle.patch`，包名加载） |
-| `houdini/python3.11libs/dsh_bridge.py` | 桥 + 动词注入 + tracer |
+| `houdini/python3.11libs/dsh_bridge.py` | HTTP/主线程工作队列 + 动词注入 + tracer/Raw Gate/ownership |
 | `houdini/python3.11libs/dsh_hou_helpers.py` | 46 个 helper 主动词 + 2 display 兼容入口 + `_resolve`；bridge 另注入 `verb_help`，合计 49 个目录入口 |
 | `houdini/python3.11libs/dsh_launcher.py` | 打开/重启分流 + preset 同步 + 分阶段百分比/超时诊断（worker 线程探测） |
 | `houdini/python3.11libs/dsh_manager.py` | Houdini 原生版本/端口诊断 + DSH npm / 插件 Git 双通道检查与安全更新 |
-| `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI（QWebEngineView）+ 窗口置前 + 一次性 session hint + backdrop-filter 性能修复注入（§2.13/§2.28） |
+| `houdini/python3.11libs/dsh_webview.py` | 内嵌 Web UI + session hint + CSS 性能修复 + 无 socket 的异步 load retry（§2.13/§2.28/§2.52） |
 | `tools/tests/client-session-hint.test.mjs` | WebView session hint 的 refresh/open/消费与无 hint 零导航回归 |
 | `tools/tests/trace-*.test.mjs` | session replay 去重与 evidence/vision/adoption 确定性回归 |
-| `tools/tests/current-docs-consistency.test.mjs` | 当前菜单/repair 名称与五个 packaged skill 的 README 注册一致性回归 |
+| `tools/tests/current-docs-consistency.test.mjs` | 当前菜单/repair、Node 测试文件数与五个 packaged skill 的 README 一致性回归 |
+| `tools/tests/gui-thread-boundary.test.mjs` | WebView 不得重新引入 GUI 主线程 socket probe 的静态回归 |
 | `tools/tests/verb-contract.test.mjs` / `bridge-contract.test.mjs` | 文档/Host/Bridge 注册表一致性与 mismatch fail-closed |
 | `tools/tests/dsh-*.test.py` | H21 hython：Raw Gate、ownership、caught failure、manager/profile 等当前回归 |
 | `docs/tool-design.md` | 设计宪法 |
@@ -1750,6 +1838,8 @@ QPainter 圆弧 spinner。
 | `tools/trace-report.mjs` | trace 复盘报告生成器（session → 单文件 HTML，§2.14） |
 | `tools/catalog-lib.mjs` | 词表目录解析唯一实现（trace-report 与生成器共用） |
 | `tools/trace-session-lib.mjs` | session.jsonl.zstd 多帧解压/事件读取唯一实现 |
+| `tools/normalized-trace-steps.mjs` | report/evidence 共用的 call/result/replay/ledger/Raw Gate 标准化 step parser |
+| `tools/benchmark-manifest.mjs` / `benchmark/*.schema.json` | B0 surface/seal、brief/answers/seed/run/evaluation 与真实 smoke 产物门禁；不进 npm 包 |
 | `tools/gen-client-catalog.mjs` | 构建期把目录注入 client.js（`npm run build` 第一步，§2.15） |
 | `skills/houdini-trace-analysis/` | 标准 trace 审计 skill：证据脚本 + 量表 + 累积模式库 |
 | `skills/houdini-sop-workflow/` | SOP/VEX/Copy/属性/模块验证与多帧交付工作流 skill |

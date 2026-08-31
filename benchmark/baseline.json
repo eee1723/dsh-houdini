@@ -1,23 +1,31 @@
 {
   "schemaVersion": 1,
-  "createdAt": "2026-08-31T09:09:32.7508696Z",
-  "baselineCommit": "5428a2b0c4ce7cc45f28024cab7e685f0bfd56d3",
-  "agentSurfaceSha256": "7ea472268230959c95e3a0f8437e0ece33dee8d14f6c460aa061bb85201ab06f",
+  "createdAt": "2026-08-31T15:55:00.7677771Z",
+  "baselineCommit": "ce794177b449e9259f369040cd387d027bc764c1",
+  "agentSurfaceSha256": "24ac8552f4ec537dd39719377f0665b0cf4bcf7ecea51032f3de6d32648b3c7c",
   "runtimeVerification": {
     "matchesBaseline": false,
-    "note": "Historical pre-P0 runtime snapshot; Repair and restart runtime is required before refreshing this block.",
-    "verifiedAt": "2026-08-28T03:19:01.2874779Z",
-    "loadedRepositoryCommit": "dea0ec85b2a5faa87b98ee6f30748df4689710df",
+    "note": "The live H21 process still reports the correct 49-verb contract, but the current working tree adds Host read-only/media fixes and GUI-thread-safe launcher/WebView startup that have not been loaded. Fully restart Houdini before refreshing this block.",
+    "verifiedAt": "2026-08-31T13:39:13.9160018Z",
+    "loadedRepositoryCommit": "ce794177b449e9259f369040cd387d027bc764c1",
+    "workingTreeDirty": true,
+    "pendingReload": ["Host read-only HIP probe", "content-addressed media relay", "GUI-thread-safe launcher/WebView startup"],
     "houdini": "21.0.440",
     "dsh": "0.1.1-rc.2",
     "plugin": "0.1.0",
     "visionToolkit": "0.1.7",
     "rawGate": true,
-    "verbCatalogCount": 47,
-    "verbCatalogSha256": "eca1b1669acdc07c4acb0bb4525151c96936f6d92ee689fad98f676fa68fd3fb",
+    "verbCatalogCount": 49,
+    "verbCatalogSha256": "4f3516dec0067daf5a76d1726fb258d9d015f03cdaa5faa5d749529afd330af1",
     "activeJobs": 0,
     "queuedJobs": 0,
     "runningJobs": 0,
-    "webStatus": 200
+    "webStatus": 200,
+    "guiSmoke": {
+      "mode": "Houdini",
+      "query": "用 houdini_query 列出 /obj 下所有节点",
+      "result": "success; /obj contained 0 child nodes",
+      "traceClassification": "read-only HOM probe; 0 mutations; 0 Raw Gate blocks"
+    }
   }
 }

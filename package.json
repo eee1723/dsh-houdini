@@ -23,6 +23,7 @@
     "skills",
     "docs",
     "tools/catalog-lib.mjs",
+    "tools/normalized-trace-steps.mjs",
     "tools/trace-session-lib.mjs"
   ],
   "scripts": {

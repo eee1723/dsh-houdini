@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-public-brief.v1.json",
+  "title": "dsh-houdini sealed public brief envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "briefId",
+    "capabilityFamily",
+    "instanceRole",
+    "language",
+    "agentMessage",
+    "resources",
+    "evaluatorMaterialExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "briefId": { "type": "string", "minLength": 1 },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "language": { "type": "string", "minLength": 2 },
+    "agentMessage": { "type": "string", "minLength": 1 },
+    "resources": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resourceId", "sha256", "mediaType"],
+        "properties": {
+          "resourceId": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "mediaType": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "evaluatorMaterialExposed": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

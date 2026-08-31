@@ -20,17 +20,13 @@ import { loadCatalog } from './catalog-lib.mjs';
 import {
   loadSessionEvents,
   newestSessionFile,
-  toolResultCallId,
-  uniqueToolResultEvents,
 } from './trace-session-lib.mjs';
+import { normalizeTraceSteps } from './normalized-trace-steps.mjs';
 import {
   collectQualityLoopEvidence,
   collectVerbAdoption,
   collectValidationCoverage,
-  mutatingRawMethodNames,
-  parseVerbLedgerLine,
   qualityLoopRisks,
-  rawMethodNames,
   requestedGoalReportedUnverified,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
@@ -61,11 +57,8 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 
 // ---------- parse trace ----------
 const { events } = loadSessionEvents(sessionFile);
-const { uniqueResults, replayedResults } = uniqueToolResultEvents(events);
-const calls = new Map();
-for (const e of events) {
-  if (e.type === 'tool/call') calls.set(e.data.callId, e.data);
-}
+const normalized = normalizeTraceSteps(events);
+const { replayedResults, unmatchedResults } = normalized;
 
 const userMsgs = [];
 const assistantMsgs = [];
@@ -89,54 +82,11 @@ for (const e of events) {
   }
 }
 
-const steps = [];
-for (const e of uniqueResults) {
-  const msg = e.data?.message || {};
-  const callId = toolResultCallId(e);
-  const call = calls.get(callId);
-  if (!call) continue;
-  let args = {};
-  try { args = JSON.parse(call.arguments || '{}'); } catch {}
-  const text = (msg.content?.[0]?.content || [])
-    .filter((c) => c.type === 'text').map((c) => c.text).join('\n');
-
-  const failed = Boolean(msg.content?.some((item) => item.isError))
-    || text.startsWith('Execution failed')
-    || text.startsWith('Error:');
-  const isHoudini = (call.name || '').startsWith('houdini_');
-
-  // verbs (N): 块 —— renderVerbs 的渲染行：`i. [ok|FAIL] verb(args, kwargs) -> detail (Xms)`
-  const verbs = [];
-  const verbsBlock = text.match(/verbs \((\d+)\):\n([\s\S]*?)(?:\n\n|$)/);
-  if (verbsBlock) {
-    for (const line of verbsBlock[2].split('\n')) {
-      const parsed = parseVerbLedgerLine(line);
-      if (parsed) verbs.push({
-        n: parsed.ledgerIndex,
-        ok: parsed.ok,
-        verb: parsed.verb,
-        argsText: parsed.args,
-        detail: parsed.result,
-        ms: parsed.ms,
-      });
-    }
-  }
-  const hintBlock = text.match(/hint:\n([\s\S]*?)$/);
-  const rawMethods = rawMethodNames(args.code || '');
-  const mutatingRawMethods = mutatingRawMethodNames(args.code || '');
-  let errorTail = null;
-  if (failed) {
-    const lines = text.split('\n');
-    errorTail = lines.slice(-3).join('\n');
-  }
-  steps.push({
-    time: e.time, turn: e.data?.turn, step: e.data?.step,
-    tool: call.name || '?', args, code: args.code || null,
-    rawMethods, mutatingRawMethods, verbs, failed, errorTail,
-    advisory: hintBlock ? hintBlock[1].trim() : null,
-    resultText: text, isHoudini,
-  });
-}
+const steps = normalized.steps.map((step) => ({
+  ...step,
+  code: step.code || null,
+  errorTail: step.failed ? step.resultText.split('\n').slice(-3).join('\n') : null,
+}));
 steps.sort((a, b) => a.time - b.time);
 
 // 动词使用统计 → 回填目录
@@ -239,7 +189,7 @@ const catalogHtml = catalog.map((d) => `
 
 const timelineHtml = steps.map((s, i) => {
   const verbChips = s.verbs.map((v) =>
-    `<span class="chip verb-chip ${v.ok ? '' : 'fail'}" title="${esc(v.argsText)} -> ${esc(v.detail)}">${esc(v.verb)} <span class="ms">${v.ms}ms</span></span>`,
+    `<span class="chip verb-chip ${v.ok ? '' : 'fail'}" title="${esc(v.args)} -> ${esc(v.resultText)}">${esc(v.verb)} <span class="ms">${v.ms}ms</span></span>`,
   ).join('');
   const badges = [
     s.failed ? chip('失败', 'fail') : '',
@@ -368,9 +318,11 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num" style="color:${failedSteps.length ? 'var(--bad)' : 'var(--ok)'}">${failedSteps.length}</div><div class="cap">失败调用</div></div>
       <div class="card"><div class="num">${advisorySteps.length}</div><div class="cap">advisory 触发</div></div>
       <div class="card"><div class="num">${replayedResults.length}</div><div class="cap">compaction replay</div></div>
+      <div class="card"><div class="num" style="color:${unmatchedResults.length ? 'var(--bad)' : 'var(--ok)'}">${unmatchedResults.length}</div><div class="cap">无匹配 call 的 result</div></div>
     </div>
     <p class="dim-text">工具分布: ${Object.entries(toolCount).map(([k, v]) => `${esc(k)} ×${v}`).join(' ｜ ')}</p>
     ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
+    ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
     <h2>动画 / 多帧验证覆盖</h2>
     ${validationHtml}
@@ -390,7 +342,7 @@ const outFile = outArg || path.join(REPO_ROOT, 'tools', 'out', `trace-${sessionI
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, html);
 console.log('session :', sessionFile);
-console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length);
+console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length, '| unmatched:', unmatchedResults.length);
 console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision-inspection=[' + validationCoverage.frames.visionInspection.join(',') + ']');
 console.log('quality : applicable=' + qualityLoopEvidence.applicable + ' missing=[' + qualityLoopEvidence.contract.missing.join(',') + '] risks=[' + qualityRisks.map((risk) => risk.code).join(',') + ']');
 console.log('report  :', outFile);

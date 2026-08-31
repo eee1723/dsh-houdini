@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-allowed-answers.v1.json",
+  "title": "dsh-houdini pre-registered clarification answers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "answerSetId", "publicBriefSha256", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "answerSetId": { "type": "string", "minLength": 1 },
+    "publicBriefSha256": { "$ref": "#/$defs/sha256" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "questionKey",
+          "questionPatternSha256",
+          "category",
+          "answer",
+          "maxUses",
+          "containsImplementationGuidance",
+          "containsEvaluatorMaterial"
+        ],
+        "properties": {
+          "questionKey": { "type": "string", "minLength": 1 },
+          "questionPatternSha256": { "$ref": "#/$defs/sha256" },
+          "category": {
+            "enum": ["user-preference", "asset-location", "output-format", "execution-constraint"]
+          },
+          "answer": { "type": "string", "minLength": 1 },
+          "maxUses": { "const": 1 },
+          "containsImplementationGuidance": { "const": false },
+          "containsEvaluatorMaterial": { "const": false }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

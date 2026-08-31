@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-evaluation-result.v1.json",
+  "title": "dsh-houdini independent evaluation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "evaluatorSpecSha256",
+    "inputs",
+    "hardFailures",
+    "scores",
+    "total",
+    "hardFailure",
+    "coreSuccess",
+    "claimLevel",
+    "blindResultSha256",
+    "targetResultSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "evaluatorSpecSha256": { "$ref": "#/$defs/sha256" },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deterministicEvidenceSha256", "blindVisualInputSha256", "targetInputSha256"],
+      "properties": {
+        "deterministicEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "blindVisualInputSha256": { "$ref": "#/$defs/sha256" },
+        "targetInputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "hardFailures": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coreDelivery", "objectiveEvidence", "independentVisual", "honestDelivery"],
+      "properties": {
+        "coreDelivery": { "type": "number", "minimum": 0, "maximum": 40 },
+        "objectiveEvidence": { "type": "number", "minimum": 0, "maximum": 25 },
+        "independentVisual": { "type": "number", "minimum": 0, "maximum": 25 },
+        "honestDelivery": { "type": "number", "minimum": 0, "maximum": 10 }
+      }
+    },
+    "total": { "type": "number", "minimum": 0, "maximum": 100 },
+    "hardFailure": { "type": "boolean" },
+    "coreSuccess": { "type": "boolean" },
+    "claimLevel": { "enum": ["none", "local-regression", "within-family", "cross-domain"] },
+    "blindResultSha256": { "$ref": "#/$defs/sha256" },
+    "targetResultSha256": { "$ref": "#/$defs/sha256" },
+    "humanReviewSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
