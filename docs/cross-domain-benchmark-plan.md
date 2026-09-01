@@ -2,8 +2,9 @@
 
 > 状态：2026-09-01 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
 > B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
-> 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针，独立 evaluator prompt、sealed 实例、
-> 最终 protocol version 和三族任务级非评分 smoke 待冻结/执行。
+> 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
+> blind/target prompt 与两阶段 smoke 已冻结/通过。sealed 实例、最终 protocol version 和三族任务级
+> 非评分 smoke 待冻结/执行。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 
@@ -210,6 +211,14 @@ PNG、同一中性 prompt、零工具直连两条 provider：K3 一次完成并�
 两条当前 provider 路径的 native image transport/semantic 均已验证，但 GLM 的正式运行预算不得低于已验证
 的 1500 max tokens。hash 与判定摘要记录在 `benchmark/model-capability-baseline.json`，不保存图片或凭据。
 该探针只验证直接图片输入，不替代独立 evaluator；执行期 Vision Toolkit 仍固定为 0.1.7 + qwen-vl-max。
+
+独立 evaluator 固定为 DashScope `qwen-vl-max`。通用 `blind-visual-v1` 与
+`target-verification-v1` 分别封存为 canonical SHA-256 `51a96b85…` 与 `07bd7cc2…`；blind 只收匿名图并
+禁止 pass/fail，target 才收 public goal、criteria、确定性证据和已冻结 blind result。2026-09-01 用同一
+UI 图做两阶段 smoke：第一次 blind 在 TLS 建连前 `ECONNRESET`，不计模型失败；相同输入重试返回严格 JSON，
+只描述可见布局与不确定性。target 一次返回三个 criterion 的完整集合，均引用图片与确定性 evidence，
+hardFailures 为空并保留单图 limitations。完整输入 hash `64cacba9…` / `b97ce4bd…` 不同，结果 hash
+`dbb05f3c…` / `f59170d1…`；基线在 `benchmark/evaluator-prompt-baseline.json` 标为 `verified`。
 
 brief envelope 的 `briefId`、能力族和实例角色只供 evaluator/run 管理；执行 agent payload 只能取普通
 `agentMessage` 与公开资源，不能暴露 calibration/holdout 身份。answers 只允许用户偏好、资产位置、输出格式

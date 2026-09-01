@@ -334,6 +334,8 @@ for (const schema of [
   'seed-fixture.schema.json',
   'seed-generator-input.schema.json',
   'model-capability-smoke.schema.json',
+  'evaluator-prompt.schema.json',
+  'evaluator-prompt-baseline.schema.json',
   'evaluation-result.schema.json',
 ]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))
@@ -353,6 +355,23 @@ assert.ok(modelCapability.models.every((item) => item.transportOk && item.semant
 assert.equal(modelCapability.models[0].adapterImageDeclared, true)
 assert.equal(modelCapability.models[1].adapterImageDeclared, null)
 assert.equal(modelCapability.models[1].minimumVerifiedMaxTokens, 1500)
+
+const evaluatorBaseline = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompt-baseline.json'), 'utf8'))
+const blindPrompt = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompts', 'blind-visual-v1.json'), 'utf8'))
+const targetPrompt = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompts', 'target-verification-v1.json'), 'utf8'))
+assert.equal(evaluatorBaseline.evaluator.model, 'qwen-vl-max')
+assert.equal(evaluatorBaseline.prompts.blind.canonicalSha256, sha256Json(blindPrompt))
+assert.equal(evaluatorBaseline.prompts.target.canonicalSha256, sha256Json(targetPrompt))
+assert.notEqual(evaluatorBaseline.prompts.blind.canonicalSha256, evaluatorBaseline.prompts.target.canonicalSha256)
+assert.equal(evaluatorBaseline.status, 'verified')
+assert.notEqual(evaluatorBaseline.smoke.blindInputSha256, evaluatorBaseline.smoke.targetInputSha256)
+assert.equal(evaluatorBaseline.smoke.blindSemanticOk, true)
+assert.equal(evaluatorBaseline.smoke.targetSemanticOk, true)
+assert.equal(evaluatorBaseline.smoke.blindTransportFailures, 1)
+assert.equal(blindPrompt.stage, 'blind')
+assert.equal(targetPrompt.stage, 'target')
+assert.equal(blindPrompt.executionAgentExposed, false)
+assert.equal(targetPrompt.executionAgentExposed, false)
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.ok(!packageJson.files.includes('benchmark'), 'sealed benchmark administration must not ship in the production npm package')

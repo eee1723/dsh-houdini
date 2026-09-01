@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/evaluator-prompt-baseline.v1.json",
+  "title": "dsh-houdini independent evaluator prompt baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "verifiedAt", "evaluator", "prompts", "independentInputs", "executionAgentExposed", "status", "smoke"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "protocol"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "protocol": { "enum": ["openai", "anthropic"] }
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blind", "target"],
+      "properties": {
+        "blind": { "$ref": "#/$defs/prompt" },
+        "target": { "$ref": "#/$defs/prompt" }
+      }
+    },
+    "independentInputs": { "const": true },
+    "executionAgentExposed": { "const": false },
+    "status": { "const": "verified" },
+    "smoke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cliVersion", "skillVersion", "imageSha256", "blindInputSha256", "targetInputSha256",
+        "blindResultSha256", "targetResultSha256", "blindAttempts", "targetAttempts",
+        "blindTransportFailures", "blindSemanticOk", "targetSemanticOk"
+      ],
+      "properties": {
+        "cliVersion": { "type": "string", "minLength": 1 },
+        "skillVersion": { "type": "string", "minLength": 1 },
+        "imageSha256": { "$ref": "#/$defs/sha256" },
+        "blindInputSha256": { "$ref": "#/$defs/sha256" },
+        "targetInputSha256": { "$ref": "#/$defs/sha256" },
+        "blindResultSha256": { "$ref": "#/$defs/sha256" },
+        "targetResultSha256": { "$ref": "#/$defs/sha256" },
+        "blindAttempts": { "type": "integer", "minimum": 1 },
+        "targetAttempts": { "type": "integer", "minimum": 1 },
+        "blindTransportFailures": { "type": "integer", "minimum": 0 },
+        "blindSemanticOk": { "const": true },
+        "targetSemanticOk": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promptId", "canonicalSha256"],
+      "properties": {
+        "promptId": { "type": "string", "minLength": 1 },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

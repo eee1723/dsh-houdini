@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/evaluator-prompt.v1.json",
+  "title": "dsh-houdini generic independent evaluator prompt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "promptId",
+    "stage",
+    "language",
+    "system",
+    "instruction",
+    "responseSchemaVersion",
+    "executionAgentExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "promptId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "stage": { "enum": ["blind", "target"] },
+    "language": { "const": "zh-CN" },
+    "system": { "type": "string", "minLength": 1 },
+    "instruction": { "type": "string", "minLength": 1 },
+    "responseSchemaVersion": { "const": 1 },
+    "executionAgentExposed": { "const": false }
+  }
+}

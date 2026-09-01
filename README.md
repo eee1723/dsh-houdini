@@ -319,7 +319,8 @@ rollback provenance、render freshness、health 主线程边界和 evidence 分�
 1. 普通 brief、预设回答、seed fixture 和评分结果的通用 schema/validator 已完成；通用 seed generator
    已支持空场景与固定 shaderball，三族 calibration 输入的重复结构 identity 和真实 HIP hash 已通过；
    执行模型已选 `kimi-coding/k3` 与 `apikeyfun/glm-5.3-flash`，同图无工具探针验证两条当前 provider
-   路径均可直接看图；下一步冻结独立视觉 evaluator prompt、sealed 实例和最终 protocol version；
+   路径均可直接看图；独立 evaluator 已固定为 DashScope `qwen-vl-max`，blind/target prompt 和同图
+   两阶段 smoke 已通过；下一步封存三族实例并生成最终 protocol version；
 2. 用已生成的机械、模拟和 lookdev seed 运行三族任务级非评分 smoke，通过 `$HIP`/trace/评审输入
    真实文件门禁；
 3. 用冻结后的未见实例验证首轮公共 P0 没有误阻或 false-completion 回退；completed smoke 的 `$HIP`/

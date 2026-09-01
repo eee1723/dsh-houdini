@@ -1708,6 +1708,30 @@ adapter image 声明，但 provider 接受 data-URL PNG，返回 `responseModel=
 验证 500 tokens，GLM 最低已验证 1500 tokens。它不证明所有图片任务质量，也不允许执行模型充当独立评委；
 Vision Toolkit 的 qwen-vl-max 与 blind/target evaluator 仍须分层记录。
 
+### 2.56 qwen-vl-max 独立 blind/target evaluator 冻结（2026-09-01）
+
+新增 benchmark-only `blind-visual-v1` 与 `target-verification-v1`：blind 明确不知道任务目标、执行过程、
+agent 自评或评分答案，只输出逐图可见事实/缺陷/不确定性，禁止 pass/fail；target 只在 blind 结果冻结后
+接收 public goal、criteria、references、deterministic evidence 与匿名图，逐 criterion 输出
+`pass/fail/unverified`、置信度、证据引用和可反驳理由。两份 canonical prompt hash 分别为
+`51a96b85…` 与 `07bd7cc2…`，测试强制不同且 `executionAgentExposed=false`。
+
+远程 smoke 前按 Bailian skill 强制预检发现 `bl`/skill 1.13.1 低于 npm 1.18.1；经用户确认运行
+`bl update`，CLI 与 Codex 使用的 skill 均对齐 1.18.1。更新器对不支持全局 skill 安装的 Eve/PromptScript
+报告 12 项非本任务失败，但 Codex 的完整 Bailian skill family 安装成功。CLI 未持久登录；每次命令只从
+DSH credential store 读取 `VISION_API_KEY` 注入子进程 `DASHSCOPE_API_KEY`，未把 key 写进参数、输出或仓库。
+
+`bl vision describe --model qwen-vl-max` 的 blind 首次调用在 TLS 建连前 `ECONNRESET`，无模型结果；同输入
+重试成功，返回严格 JSON，只描述执行证据 UI、状态栏、左右分栏及单图局限，未输出通过/失败。target 输入
+新增公开目标、三个 criterion、确定性 trace 摘要和 blind result，一次成功返回三个 criterion 完全集合：
+无动词只读探针 1、Raw Gate 拦截 0、回滚 0 均为 pass，hardFailures 为空，同时保留“单图/上下文有限”
+limitations。blind/target 完整输入 hash `64cacba9…` / `b97ce4bd…`，结果 hash `dbb05f3c…` /
+`f59170d1…`；阶段隔离已由真实调用兑现，`benchmark/evaluator-prompt-baseline.json` 标记 `verified`。
+
+该 smoke 只证明 evaluator transport、严格 JSON、阶段隔离和简单 criterion 核验，不把 qwen-vl-max 晋升为
+所有 Houdini 审美的 ground truth。正式三族 run 仍须计算 reviewer agreement、保留与人工抽检的分歧，并在
+证据不足时输出 unverified。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1818,8 +1842,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型已选 K3/GLM，当前 provider 原生图片 transport/semantic 已验证；独立视觉 evaluator、
-   blind/target prompt 与 sealed 实例仍待冻结，并须验证两次输入确实独立。
+4. 🔶 执行模型 K3/GLM 的当前 provider 原生图片已验证；独立 qwen-vl-max evaluator、blind/target prompt
+   和不同输入 hash 已由真实 smoke 验证。三族 sealed 实例与正式 reviewer agreement 仍待完成。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 
