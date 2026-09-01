@@ -33,10 +33,11 @@
     "output": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hip", "sha256", "houdini"],
+      "required": ["hip", "sha256", "identitySha256", "houdini"],
       "properties": {
         "hip": { "type": "string", "pattern": "^\\$HIP/.+\\.hip(?:lc|nc)?(?:\\.gz)?$" },
         "sha256": { "$ref": "#/$defs/sha256" },
+        "identitySha256": { "$ref": "#/$defs/sha256" },
         "houdini": { "type": "string", "minLength": 1 }
       }
     },

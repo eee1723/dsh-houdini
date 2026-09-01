@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "generic-lookdev-calibration-v1",
+  "capabilityFamily": "lookdev",
+  "instanceRole": "calibration",
+  "generatorVersion": "1",
+  "output": {
+    "hip": "$HIP/benchmark-seeds/generic-lookdev-calibration-v1.hip"
+  },
+  "scene": {
+    "mode": "fixed-geometry",
+    "geometryPreset": "shaderball",
+    "clearExisting": true,
+    "fps": 24,
+    "frameRange": { "start": 1, "end": 120 },
+    "playbackRange": { "start": 1, "end": 120 },
+    "currentFrame": 1
+  },
+  "evaluatorMaterialExposed": false
+}

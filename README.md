@@ -6,16 +6,17 @@
 
 ## 当前状态
 
-截至 2026-08-31，项目包含 5 个 `houdini_*` 工具、49 个意图级动词和 5 个按需 skills。Host/Bridge
+截至 2026-09-01，项目包含 5 个 `houdini_*` 工具、49 个意图级动词和 5 个按需 skills。Host/Bridge
 词表指纹握手、Raw Gate、session ownership、失败 rollback、隔离 `render_view`、media relay、
 Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨能力族 discovery 已完成并用于
 修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
 生产 guidance、preset、skills 或工具。
 
-当前源码和 49 动词合同已通过 Node、H21/H22 回归；本机 live runtime 仍在线并返回正确目录指纹，但本轮
-Host media/read-only 与 WebView 异步重试修复尚未加载。Host/Bridge/preset 改动用 `Repair and restart runtime`；
-`dsh_webview.py`、菜单或安装 package 改动需要完整重启 Houdini。重载后再以 `/health`、新 Houdini 模式
-`houdini_query` 和 Houdini Trace smoke 确认，不能用静态构建替代 live 结论。
+当前源码和 49 动词合同已通过 Node、H21/H22 回归；2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
+Host media/read-only、content-addressed media relay、WebView 异步重试与 launcher worker preflight 均已加载。
+`/health` 返回 49 动词和指纹 `4f3516dec006…`，Web 200；真实 Houdini 模式 session
+`45798bd2-41a6-4b12-9dfa-fb62b25faa45` 的 `houdini_query` 与 Houdini Trace smoke 通过，分类为 1 次
+无动词只读 HOM probe、0 mutation、0 Raw Gate block、0 rollback。Windows CRLF 静态回归也已补齐。
 
 ## 文档
 
@@ -265,7 +266,7 @@ npm test
 npm pack --dry-run
 ```
 
-`npm test` 当前运行构建和 12 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
+`npm test` 当前运行构建和 13 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
 封存、Host/Bridge 词表握手、工具展示纯函数、WebView GUI 线程边界、trace replay/normalized-step/
 evidence 和当前文档一致性；测试文件数由一致性门禁反向核对，新增回归后不能只改代码不改 README。
 
@@ -312,18 +313,22 @@ rollback provenance、render freshness、health 主线程边界和 evidence 分�
 
 下一阶段顺序是：
 
-49 动词 runtime repair、Host/Bridge 词表握手和 `houdini_query` GUI smoke 已于 2026-08-31 完成。接下来：
+49 动词 runtime、Host/Bridge 词表握手、WebView 完整冷启动和 `houdini_query`/Trace GUI smoke 已于
+2026-09-01 完成。接下来：
 
-1. launcher/WebView GUI 主线程阻塞探测迁移已完成；完整重启 Houdini验证本轮 Host/media/UI 修复，刷新
-   live baseline；
-2. 普通 brief、预设回答、seed fixture 和评分结果的通用 schema/validator 已完成；随后实现通用 seed
-   generator，冻结模型/provider/protocol version；
+1. 普通 brief、预设回答、seed fixture 和评分结果的通用 schema/validator 已完成；通用 seed generator
+   已支持空场景与固定 shaderball，三族 calibration 输入的重复结构 identity 和真实 HIP hash 已通过；
+   下一步冻结两个模型、视觉 provider 和最终 protocol version；
+2. 用已生成的机械、模拟和 lookdev seed 运行三族任务级非评分 smoke，通过 `$HIP`/trace/评审输入
+   真实文件门禁；
 3. 用冻结后的未见实例验证首轮公共 P0 没有误阻或 false-completion 回退；completed smoke 的 `$HIP`/
    trace/评审输入真实文件门禁已完成；
 4. 只有未见证据表明自然语言状态无法稳定比较时，才设计最小结构化任务 ledger；
 5. 将视觉评价拆成中性描述与目标核验两阶段，减少执行 agent 自证；只在未见独立任务再次重复手写同类
    probe 后，才评估新的 cache/solver/volume/关系检查动词；
-6. 证据阶段结束后再做 `houdini_job_*` → `ctx.jobs`、approval 层和 `dsh_hou_helpers.py` 按域拆分；
+6. `houdini_query`/`houdini_exec` 暂时保留两个工具，只按正式 trace 的误选率、额外调用和安全收益
+   决定是否改为单工具 `mode`；
+7. 证据阶段结束后再做 `houdini_job_*` → `ctx.jobs`、approval 层和 `dsh_hou_helpers.py` 按域拆分；
    trace report/evidence 已共用
    normalized-step parser。
 

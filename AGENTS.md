@@ -30,10 +30,10 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 - `render_view(EXPLICIT_SOP)` 使用持久 `__dsh_houdini_*` 服务；任务收尾复用、不删除。动画 A/B 使用同一 `framing_frame`。
 - `node_modules` 只用 npm 管；不要在本仓库运行 pnpm。Houdini 产出锚定 `$HIP`，不写进 workspace 或插件仓库。
 
-## 当前状态（2026-08-31）
+## 当前状态（2026-09-01）
 
-端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。2026-08-31 live smoke 曾验证 H21 Bridge 49 动词/指纹 `4f3516dec006…`、Web 200、`houdini_query` 与 Trace 只读分类。当前工作树又收紧了 Host 内部只读探测、media relay 同名覆盖，并把 WebView/launcher 的 socket/netstat/process preflight 全部移出 GUI 主线程；12 个 Node 回归及 H21/H22 核心 HOM/launcher/manager/profile 回归已通过。这些新改动尚未加载进当前 Houdini，Host/Bridge 用 repair，WebView/launcher 修复需完整重启 Houdini后复核。
+端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，Bridge 49 动词/指纹 `4f3516dec006…`、Web 200、异步 WebView、Host/Bridge 握手与真实 Houdini 模式 `houdini_query`/Trace 只读分类均通过；session `45798bd2-41a6-4b12-9dfa-fb62b25faa45` 为 1 次无动词只读 HOM probe，0 mutation、0 Gate block、0 rollback。13 个 Node 回归已兼容 Windows CRLF，H21/H22 核心 HOM/launcher/manager/profile/seed 回归也重新通过，当前没有待加载的运行时修复。
 
 生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
 
-跨能力族 discovery 已完成，但因模型替换、额度中止和 evaluator 输入未完全冻结，只作为发现证据。B0 smoke/brief/answers/seed/evaluation schema、真实产物与跨文件 hash validator 已实现。下一顺位：完整重启 Houdini并重跑 49 动词/query/Trace/WebView smoke，再实现通用 seed generator、冻结模型/provider/protocol version，最后运行未见留出。生产面不得写 benchmark 实例答案；`ctx.jobs`、approval 层和大规模模块拆分继续放在证据阶段之后。
+跨能力族 discovery 已完成，但因模型替换、额度中止和 evaluator 输入未完全冻结，只作为发现证据。B0 smoke/brief/answers/seed/evaluation schema、真实产物与跨文件 hash validator 已实现；通用 seed generator 已支持空场景和固定 shaderball，三族 calibration seed 输入已用 H21 重复生成并通过结构 identity/真实 HIP hash 校验，H21/H22 HOM 回归通过。下一顺位：冻结模型/provider/protocol version，再运行三族非评分 smoke 与未见留出。生产面不得写 benchmark 实例答案；`ctx.jobs`、approval 层和大规模模块拆分继续放在证据阶段之后。`houdini_query`/`houdini_exec` 暂时保留为两个工具，是否合并只按后续误选率、额外调用与安全收益证据评估。

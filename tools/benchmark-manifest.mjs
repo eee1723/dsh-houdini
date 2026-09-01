@@ -224,12 +224,13 @@ export function validateSeedFixtureManifest(manifest) {
   requireHash(manifest.generator.parametersSha256, 'generator.parametersSha256')
   if (manifest.generator.deterministic !== true) throw new Error('generator.deterministic must be true')
   requireObject(manifest.output, 'output')
-  requireExactKeys(manifest.output, ['hip', 'sha256', 'houdini'], 'output')
+  requireExactKeys(manifest.output, ['hip', 'sha256', 'identitySha256', 'houdini'], 'output')
   requireHipArtifact(manifest.output.hip, 'output.hip')
   if (!/\.hip(?:lc|nc)?(?:\.gz)?$/i.test(manifest.output.hip)) {
     throw new Error('output.hip must name a .hip, .hiplc, or .hipnc scene file')
   }
   requireHash(manifest.output.sha256, 'output.sha256')
+  requireHash(manifest.output.identitySha256, 'output.identitySha256')
   requireString(manifest.output.houdini, 'output.houdini')
   if (manifest.evaluatorMaterialExposed !== false) throw new Error('seed fixture must not expose evaluator material')
   return manifest

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-seed-generator-input.v1.json",
+  "title": "dsh-houdini generic seed generator input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fixtureId",
+    "capabilityFamily",
+    "instanceRole",
+    "generatorVersion",
+    "output",
+    "scene",
+    "evaluatorMaterialExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "fixtureId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "generatorVersion": { "const": "1" },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hip"],
+      "properties": {
+        "hip": { "type": "string", "pattern": "^\\$HIP/.+\\.hip(?:lc|nc)?$" }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "geometryPreset", "clearExisting", "fps", "frameRange", "playbackRange", "currentFrame"],
+      "properties": {
+        "mode": { "enum": ["empty", "fixed-geometry"] },
+        "geometryPreset": { "enum": ["none", "shaderball"] },
+        "clearExisting": { "const": true },
+        "fps": { "type": "number", "exclusiveMinimum": 0, "maximum": 240 },
+        "frameRange": { "$ref": "#/$defs/range" },
+        "playbackRange": { "$ref": "#/$defs/range" },
+        "currentFrame": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "empty" } } },
+          "then": { "properties": { "geometryPreset": { "const": "none" } } }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "fixed-geometry" } } },
+          "then": { "properties": { "geometryPreset": { "const": "shaderball" } } }
+        }
+      ]
+    },
+    "evaluatorMaterialExposed": { "const": false }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" }
+      }
+    }
+  }
+}

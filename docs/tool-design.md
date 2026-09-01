@@ -310,10 +310,11 @@ registry 只在当前 Houdini 进程内有效；完整重启后无法在不信�
 
 下一阶段先执行 [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md)，不预设需要新增动词：
 
-1. discovery 只作为归因证据；launcher/WebView GUI 主线程阻塞 preflight 已修，正式 protocol freeze 前
-   完整重启 Houdini并重跑 49 动词 query/Trace/WebView smoke；
-2. 完成通用 seed generator，冻结模型/provider/protocol 后再解封未见实例；执行 agent 只接收普通
-   用户任务，不接收 benchmark ID、隐藏评分维度或为实例定制的节点/参数 recipe；
+1. discovery 只作为归因证据；launcher/WebView GUI 主线程阻塞 preflight 已修，2026-09-01 已从
+   `cf1f1e8` 完整冷启动 Houdini并重跑 49 动词 query/Trace/WebView smoke，当前 runtime baseline 通过；
+2. 通用 seed generator 与三族 calibration 输入已完成；冻结模型/provider/protocol 并通过三族任务级
+   非评分 smoke 后再解封未见实例。执行 agent 只接收普通用户任务，不接收 benchmark ID、隐藏评分
+   维度或为实例定制的节点/参数 recipe；
 3. 同一通用意图在至少两个独立任务重复、现有动词无法安全表达时，才进入 agent-native 动词设计；
 4. 视觉 provider 只在盲语义、目标核验和人工抽检的核心维度一致率足够时作为 ground truth，
    不以 transport/bootstrap/presentation 成功替代；

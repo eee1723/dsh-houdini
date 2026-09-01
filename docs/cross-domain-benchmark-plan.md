@@ -1,7 +1,8 @@
 # dsh-houdini 跨域能力评测计划
 
-> 状态：2026-08-31 路线与反过拟合硬约束已拍板；B0 schema、交叉 hash 与 smoke 产物门禁已实现，
-> 实际 seed generator、模型/provider 和最终 protocol version 待冻结。
+> 状态：2026-09-01 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
+> B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
+> 模型/provider、最终 protocol version 和三族任务级非评分 smoke 待冻结/执行。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 
@@ -188,6 +189,20 @@ node tools/benchmark-manifest.mjs validate-inputs <run.json> --brief <brief.json
 node tools/benchmark-manifest.mjs validate-evaluation <evaluation.json> --run <run.json>
 ```
 
+2026-09-01 已加入不进入 npm production package 的通用 seed generator：
+
+```sh
+node tools/benchmark-seed.mjs generate benchmark/seed-inputs/<family>-calibration.json \
+  --hip-root <实际HIP目录> --hython <目标版本hython> --manifest <输出manifest.json>
+```
+
+generator 只允许空场景或固定 shaderball、FPS、帧范围和当前帧，不接收题目、材质、灯光、相机、目标参数
+或 evaluator 答案。manifest 同时记录实际 HIP 字节 SHA-256 与规范化结构 identity SHA-256；同版本重复
+生成必须结构 identity 一致，HIP 字节 hash 只绑定该次真实文件，不伪称 Houdini 二进制存档跨运行逐字节相同。
+机械/模拟使用空场景，lookdev 使用固定 shaderball 以隔离建模差异；三份 calibration 输入已在 H21 实际
+重复生成并通过 `validate-seed`，H21/H22 HOM 重复 identity 回归通过。它们只完成 seed fixture 基础，不等于
+三个能力族的任务级 smoke、sealed 实例或评分协议已经完成。
+
 brief envelope 的 `briefId`、能力族和实例角色只供 evaluator/run 管理；执行 agent payload 只能取普通
 `agentMessage` 与公开资源，不能暴露 calibration/holdout 身份。answers 只允许用户偏好、资产位置、输出格式
 和执行约束，逐项声明不含实现指导/evaluator 材料且最多使用一次。run 单向绑定 brief、answers、seed HIP
@@ -196,8 +211,9 @@ hard-fail、core-success 和 run 结论一致。
 
 已建立的通用底座：`benchmark/baseline.json`、protocol/run 两份 JSON Schema、agent-surface 规范化
 SHA-256、sealed file SHA-256、关键不变量 CLI 校验和确定性回归。首轮公共 P0 与 trace normalized-step
-共享解析器落地后，baseline commit 更新为 `ce794177b449e9259f369040cd387d027bc764c1`，当前
-agent-surface hash 为 `24ac8552f4ec537dd39719377f0665b0cf4bcf7ecea51032f3de6d32648b3c7c`。在模型/provider 和 sealed
+共享解析器落地并完成 M1 冷启动复核后，runtime baseline commit 更新为
+`cf1f1e80affa08c13db79294e78a49ee9a945d85`；路线状态同步后的 agent-surface hash 为
+`b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa`。在模型/provider 和 sealed
 实例齐备前，不生成看似完整的 protocol manifest。
 
 2026-08-28 已从管理提交 `dea0ec8` 执行一次安全 repair：idle gate 通过，Houdini 21.0.440、DSH
@@ -209,10 +225,11 @@ running job，Web 返回 200。管理提交只增加未打包的 B0 工具，没
 `houdini_query` 列举空 `/obj`；Host/Bridge 握手通过，Houdini Trace 将其记为只读 HOM probe，未误报
 mutation 或 Gate block。该 smoke 证明当前通用合同已 live loaded，不代替未见实例的泛化评测。
 
-同日全项目 review 后，Host read-only/media relay 与 launcher/WebView GUI 线程边界又有通用修复，因此
-上述 smoke 已降级为历史 live 证据，`baseline.runtimeVerification.matchesBaseline=false`。阻塞 preflight
-已全部迁到 worker；正式 protocol freeze 前完整重启 Houdini并重跑同一 smoke。这是修复已存在的执行
-边界，不是按某个 benchmark 实例扩写 GUI 能力。
+同日全项目 review 后，Host read-only/media relay 与 launcher/WebView GUI 线程边界又有通用修复，旧
+smoke 一度降级为历史证据。2026-09-01 已从 `cf1f1e8` 完整冷启动 H21：Bridge 49 动词/指纹、Web 200、
+异步 WebView 与 Host 握手通过；真实 Houdini 模式 session `45798bd2-41a6-4b12-9dfa-fb62b25faa45`
+的 query/Trace 记为 1 次只读 HOM probe，0 mutation、0 Gate block、0 rollback，baseline 恢复
+`matchesBaseline=true`。这只封口 transport/runtime/分类基线，不代替三个能力族 seed smoke 或未见泛化。
 
 ### Phase B1：跑 3 × 2 校准/发现矩阵
 

@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "createdAt": "2026-08-31T15:55:00.7677771Z",
-  "baselineCommit": "ce794177b449e9259f369040cd387d027bc764c1",
-  "agentSurfaceSha256": "24ac8552f4ec537dd39719377f0665b0cf4bcf7ecea51032f3de6d32648b3c7c",
+  "createdAt": "2026-09-01T03:09:20.6500652Z",
+  "baselineCommit": "cf1f1e80affa08c13db79294e78a49ee9a945d85",
+  "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "runtimeVerification": {
-    "matchesBaseline": false,
-    "note": "The live H21 process still reports the correct 49-verb contract, but the current working tree adds Host read-only/media fixes and GUI-thread-safe launcher/WebView startup that have not been loaded. Fully restart Houdini before refreshing this block.",
-    "verifiedAt": "2026-08-31T13:39:13.9160018Z",
-    "loadedRepositoryCommit": "ce794177b449e9259f369040cd387d027bc764c1",
-    "workingTreeDirty": true,
-    "pendingReload": ["Host read-only HIP probe", "content-addressed media relay", "GUI-thread-safe launcher/WebView startup"],
+    "matchesBaseline": true,
+    "note": "A fresh H21 process loaded cf1f1e8 after a full Houdini restart. Host/Bridge contract checking, asynchronous WebView startup, query read-only enforcement, and Houdini Trace classification passed. Subsequent committed changes contain only tests, status documentation, and benchmark-only seed infrastructure; no runtime file differs from the loaded baseline.",
+    "verifiedAt": "2026-09-01T03:30:08.6570559Z",
+    "loadedRepositoryCommit": "cf1f1e80affa08c13db79294e78a49ee9a945d85",
+    "workingTreeDirty": false,
+    "pendingReload": [],
     "houdini": "21.0.440",
     "dsh": "0.1.1-rc.2",
     "plugin": "0.1.0",
@@ -23,9 +23,10 @@
     "webStatus": 200,
     "guiSmoke": {
       "mode": "Houdini",
+      "sessionId": "45798bd2-41a6-4b12-9dfa-fb62b25faa45",
       "query": "用 houdini_query 列出 /obj 下所有节点",
-      "result": "success; /obj contained 0 child nodes",
-      "traceClassification": "read-only HOM probe; 0 mutations; 0 Raw Gate blocks"
+      "result": "success; /obj contained /obj/geo1 (geo) with no cook errors",
+      "traceClassification": "read-only HOM probe; 0 mutations; 0 Raw Gate blocks; 0 rollbacks"
     }
   }
 }

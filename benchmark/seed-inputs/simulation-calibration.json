@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "generic-simulation-calibration-v1",
+  "capabilityFamily": "simulation",
+  "instanceRole": "calibration",
+  "generatorVersion": "1",
+  "output": {
+    "hip": "$HIP/benchmark-seeds/generic-simulation-calibration-v1.hip"
+  },
+  "scene": {
+    "mode": "empty",
+    "geometryPreset": "none",
+    "clearExisting": true,
+    "fps": 24,
+    "frameRange": { "start": 1, "end": 240 },
+    "playbackRange": { "start": 1, "end": 240 },
+    "currentFrame": 1
+  },
+  "evaluatorMaterialExposed": false
+}

@@ -240,6 +240,7 @@ const seed = {
   output: {
     hip: '$HIP/smoke.hip',
     sha256: sha256File(path.join(hipRoot, 'smoke.hip')),
+    identitySha256: hash2,
     houdini: '21.0.440',
   },
   evaluatorMaterialExposed: false,
@@ -331,6 +332,7 @@ for (const schema of [
   'public-brief.schema.json',
   'allowed-answers.schema.json',
   'seed-fixture.schema.json',
+  'seed-generator-input.schema.json',
   'evaluation-result.schema.json',
 ]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))

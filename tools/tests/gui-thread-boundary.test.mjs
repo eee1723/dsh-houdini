@@ -9,7 +9,10 @@ assert.match(webview, /retry_timer\.setSingleShot\(True\)/);
 
 const launcher = fs.readFileSync('houdini/python3.11libs/dsh_launcher.py', 'utf8');
 const functionBody = (name) => {
-  const match = launcher.match(new RegExp(`^def ${name}\\([^\\n]*\\)[^\\n]*:\\n([\\s\\S]*?)(?=^def |^if __name__|\\Z)`, 'm'));
+  const match = launcher.match(new RegExp(
+    `^def ${name}\\([^\\r\\n]*\\)[^\\r\\n]*:\\r?\\n([\\s\\S]*?)(?=^def |^if __name__|(?![\\s\\S]))`,
+    'm',
+  ));
   assert.ok(match, `missing launcher function ${name}`);
   return match[1];
 };
