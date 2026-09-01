@@ -3,8 +3,13 @@
 > 状态：2026-09-01 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
 > B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
 > 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
-> blind/target prompt 与两阶段 smoke 已冻结/通过。sealed 实例、最终 protocol version 和三族任务级
-> 非评分 smoke 待冻结/执行。
+> blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 已封存；独立
+> holdout hash、最终 protocol version 和三族任务级非评分 smoke 待冻结/执行。
+
+2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
+counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
+三个 holdout 槽保持 `null` 且 `finalProtocolGenerated=false`。独立 holdout authoring request 只允许未参与
+当前实现的设计者返回三个 sealed hash，正文在 production freeze 前不得进入本线程或执行 workspace。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 

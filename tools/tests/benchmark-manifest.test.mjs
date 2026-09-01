@@ -336,6 +336,9 @@ for (const schema of [
   'model-capability-smoke.schema.json',
   'evaluator-prompt.schema.json',
   'evaluator-prompt-baseline.schema.json',
+  'evaluator-spec.schema.json',
+  'sealed-instance-manifest.schema.json',
+  'protocol-freeze-status.schema.json',
   'evaluation-result.schema.json',
 ]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))
@@ -372,6 +375,14 @@ assert.equal(blindPrompt.stage, 'blind')
 assert.equal(targetPrompt.stage, 'target')
 assert.equal(blindPrompt.executionAgentExposed, false)
 assert.equal(targetPrompt.executionAgentExposed, false)
+
+const freezeStatus = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-freeze-status.json'), 'utf8'))
+assert.equal(freezeStatus.status, 'awaiting-independent-holdouts')
+assert.equal(freezeStatus.finalProtocolGenerated, false)
+assert.deepEqual(freezeStatus.execution.models, ['kimi-coding/k3', 'apikeyfun/glm-5.3-flash'])
+assert.ok(Object.values(freezeStatus.instances).every((entry) => entry.holdout === null))
+assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.calibration)))
+assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.counterexample)))
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.ok(!packageJson.files.includes('benchmark'), 'sealed benchmark administration must not ship in the production npm package')

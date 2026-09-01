@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/protocol-freeze-status.v1.json",
+  "title": "dsh-houdini pre-protocol freeze status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "productionSurfaceCommit", "agentSurfaceSha256", "execution", "evaluation", "instances", "finalProtocolGenerated"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "const": "awaiting-independent-holdouts" },
+    "productionSurfaceCommit": { "$ref": "#/$defs/gitSha" },
+    "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["models", "wallMinutes", "maxTurns", "additionalCorrectionLimit"],
+      "properties": {
+        "models": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "wallMinutes": { "const": 120 }, "maxTurns": { "const": 1 }, "additionalCorrectionLimit": { "const": 0 }
+      }
+    },
+    "evaluation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evaluator", "blindPromptSha256", "targetPromptSha256"],
+      "properties": {
+        "evaluator": { "const": "dashscope/qwen-vl-max" },
+        "blindPromptSha256": { "$ref": "#/$defs/sha256" },
+        "targetPromptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "instances": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mechanical", "simulation", "lookdev"],
+      "properties": {
+        "mechanical": { "$ref": "#/$defs/instance" },
+        "simulation": { "$ref": "#/$defs/instance" },
+        "lookdev": { "$ref": "#/$defs/instance" }
+      }
+    },
+    "finalProtocolGenerated": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "instance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["calibration", "holdout", "counterexample"],
+      "properties": {
+        "calibration": { "$ref": "#/$defs/sha256" },
+        "holdout": { "type": "null" },
+        "counterexample": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

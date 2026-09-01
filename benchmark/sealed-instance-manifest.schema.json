@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-sealed-instance-manifest.v1.json",
+  "title": "dsh-houdini sealed benchmark instance bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "instanceId", "capabilityFamily", "instanceRole", "files",
+    "releasePolicy", "evaluatorMaterialExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "instanceId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicBriefSha256", "allowedAnswersSha256", "seedFixtureSha256", "evaluatorSpecSha256", "resourceSha256"],
+      "properties": {
+        "publicBriefSha256": { "$ref": "#/$defs/sha256" },
+        "allowedAnswersSha256": { "$ref": "#/$defs/sha256" },
+        "seedFixtureSha256": { "$ref": "#/$defs/sha256" },
+        "evaluatorSpecSha256": { "$ref": "#/$defs/sha256" },
+        "resourceSha256": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "releasePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productionSurfaceCommit", "revealAfterSurfaceFreeze", "becomesCalibrationAfterReveal"],
+      "properties": {
+        "productionSurfaceCommit": { "$ref": "#/$defs/gitSha" },
+        "revealAfterSurfaceFreeze": { "const": true },
+        "becomesCalibrationAfterReveal": { "const": true }
+      }
+    },
+    "evaluatorMaterialExposed": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

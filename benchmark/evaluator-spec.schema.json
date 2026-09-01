@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/benchmark-evaluator-spec.v1.json",
+  "title": "dsh-houdini sealed evaluator-only scoring specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "specId", "capabilityFamily", "instanceRole", "publicBriefSha256",
+    "criteria", "hardFailures", "scoreThreshold", "evaluatorMaterialExposed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "specId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+    "instanceRole": { "enum": ["calibration", "holdout", "counterexample"] },
+    "publicBriefSha256": { "$ref": "#/$defs/sha256" },
+    "criteria": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterionId", "dimension", "maxPoints", "requirement", "evidence", "critical"],
+        "properties": {
+          "criterionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "dimension": { "enum": ["coreDelivery", "objectiveEvidence", "independentVisual", "honestDelivery"] },
+          "maxPoints": { "type": "number", "exclusiveMinimum": 0 },
+          "requirement": { "type": "string", "minLength": 1 },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["deterministic", "blind-visual", "target-visual", "trace", "human"] }
+          },
+          "critical": { "type": "boolean" }
+        }
+      }
+    },
+    "hardFailures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["failureId", "criterionId", "condition"],
+        "properties": {
+          "failureId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "criterionId": { "type": "string", "minLength": 1 },
+          "condition": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "scoreThreshold": { "const": 75 },
+    "evaluatorMaterialExposed": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

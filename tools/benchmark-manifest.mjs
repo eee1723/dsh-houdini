@@ -23,6 +23,12 @@ const STATUSES = ['running', 'completed', 'failed', 'invalidated']
 const ANSWER_CATEGORIES = ['user-preference', 'asset-location', 'output-format', 'execution-constraint']
 const CLAIM_LEVELS = ['none', 'local-regression', 'within-family', 'cross-domain']
 const HIP_ARTIFACT = /^\$HIP(?:\/|$)/
+const SCORE_LIMITS = Object.freeze({
+  coreDelivery: 40,
+  objectiveEvidence: 25,
+  independentVisual: 25,
+  honestDelivery: 10,
+})
 
 function walkFiles(absolute, root) {
   const stat = fs.statSync(absolute)
@@ -243,6 +249,97 @@ export function validateSeedFixture(manifest, { hipRoot } = {}) {
   const actualSha256 = sha256File(output.path)
   if (actualSha256 !== manifest.output.sha256) throw new Error('seed HIP sha256 does not match fixture manifest')
   return { ...output, sha256: actualSha256, fixtureId: manifest.fixtureId }
+}
+
+export function validateEvaluatorSpec(manifest, { publicBriefSha256 } = {}) {
+  requireSchemaVersion(manifest, 'evaluator spec')
+  requireExactKeys(manifest, [
+    'schemaVersion', 'specId', 'capabilityFamily', 'instanceRole', 'publicBriefSha256',
+    'criteria', 'hardFailures', 'scoreThreshold', 'evaluatorMaterialExposed',
+  ], 'evaluator spec')
+  requireString(manifest.specId, 'specId')
+  requireEnum(manifest.capabilityFamily, FAMILIES, 'capabilityFamily')
+  requireEnum(manifest.instanceRole, ROLES, 'instanceRole')
+  requireHash(manifest.publicBriefSha256, 'publicBriefSha256')
+  if (publicBriefSha256 !== undefined && manifest.publicBriefSha256 !== publicBriefSha256) {
+    throw new Error('evaluator spec publicBriefSha256 does not match the public brief file')
+  }
+  if (!Array.isArray(manifest.criteria) || manifest.criteria.length < 4) {
+    throw new Error('criteria must contain at least four items')
+  }
+  const criterionIds = new Set()
+  const dimensionTotals = Object.fromEntries(Object.keys(SCORE_LIMITS).map((key) => [key, 0]))
+  for (const [index, criterion] of manifest.criteria.entries()) {
+    requireObject(criterion, `criteria[${index}]`)
+    requireExactKeys(criterion, [
+      'criterionId', 'dimension', 'maxPoints', 'requirement', 'evidence', 'critical',
+    ], `criteria[${index}]`)
+    requireString(criterion.criterionId, `criteria[${index}].criterionId`)
+    if (criterionIds.has(criterion.criterionId)) throw new Error('criterionId values must be unique')
+    criterionIds.add(criterion.criterionId)
+    requireEnum(criterion.dimension, Object.keys(SCORE_LIMITS), `criteria[${index}].dimension`)
+    requireNumber(criterion.maxPoints, `criteria[${index}].maxPoints`, Number.MIN_VALUE, SCORE_LIMITS[criterion.dimension])
+    requireString(criterion.requirement, `criteria[${index}].requirement`)
+    requireStringArray(criterion.evidence, `criteria[${index}].evidence`, { minItems: 1 })
+    for (const [evidenceIndex, evidence] of criterion.evidence.entries()) {
+      requireEnum(evidence, ['deterministic', 'blind-visual', 'target-visual', 'trace', 'human'], `criteria[${index}].evidence[${evidenceIndex}]`)
+    }
+    requireBoolean(criterion.critical, `criteria[${index}].critical`)
+    dimensionTotals[criterion.dimension] += criterion.maxPoints
+  }
+  for (const [dimension, expected] of Object.entries(SCORE_LIMITS)) {
+    if (Math.abs(dimensionTotals[dimension] - expected) > 1e-9) {
+      throw new Error(`${dimension} criteria must total exactly ${expected} points`)
+    }
+  }
+  if (!Array.isArray(manifest.hardFailures)) throw new Error('hardFailures must be an array')
+  const failureIds = new Set()
+  const criteriaById = new Map(manifest.criteria.map((item) => [item.criterionId, item]))
+  for (const [index, failure] of manifest.hardFailures.entries()) {
+    requireObject(failure, `hardFailures[${index}]`)
+    requireExactKeys(failure, ['failureId', 'criterionId', 'condition'], `hardFailures[${index}]`)
+    requireString(failure.failureId, `hardFailures[${index}].failureId`)
+    requireString(failure.criterionId, `hardFailures[${index}].criterionId`)
+    requireString(failure.condition, `hardFailures[${index}].condition`)
+    if (failureIds.has(failure.failureId)) throw new Error('failureId values must be unique')
+    failureIds.add(failure.failureId)
+    const criterion = criteriaById.get(failure.criterionId)
+    if (!criterion) throw new Error(`hard failure references unknown criterionId: ${failure.criterionId}`)
+    if (criterion.critical !== true) throw new Error(`hard failure criterion must be critical: ${failure.criterionId}`)
+  }
+  if (manifest.scoreThreshold !== 75) throw new Error('scoreThreshold must be 75')
+  if (manifest.evaluatorMaterialExposed !== false) throw new Error('evaluator material must not be exposed to the execution agent')
+  return manifest
+}
+
+export function validateSealedInstanceManifest(manifest) {
+  requireSchemaVersion(manifest, 'sealed instance manifest')
+  requireExactKeys(manifest, [
+    'schemaVersion', 'instanceId', 'capabilityFamily', 'instanceRole', 'files',
+    'releasePolicy', 'evaluatorMaterialExposed',
+  ], 'sealed instance manifest')
+  requireString(manifest.instanceId, 'instanceId')
+  requireEnum(manifest.capabilityFamily, FAMILIES, 'capabilityFamily')
+  requireEnum(manifest.instanceRole, ROLES, 'instanceRole')
+  requireObject(manifest.files, 'files')
+  requireExactKeys(manifest.files, [
+    'publicBriefSha256', 'allowedAnswersSha256', 'seedFixtureSha256',
+    'evaluatorSpecSha256', 'resourceSha256',
+  ], 'files')
+  for (const field of ['publicBriefSha256', 'allowedAnswersSha256', 'seedFixtureSha256', 'evaluatorSpecSha256']) {
+    requireHash(manifest.files[field], `files.${field}`)
+  }
+  requireStringArray(manifest.files.resourceSha256, 'files.resourceSha256')
+  for (const [index, hash] of manifest.files.resourceSha256.entries()) requireHash(hash, `files.resourceSha256[${index}]`)
+  requireObject(manifest.releasePolicy, 'releasePolicy')
+  requireExactKeys(manifest.releasePolicy, [
+    'productionSurfaceCommit', 'revealAfterSurfaceFreeze', 'becomesCalibrationAfterReveal',
+  ], 'releasePolicy')
+  requireHash(manifest.releasePolicy.productionSurfaceCommit, 'releasePolicy.productionSurfaceCommit', GIT_SHA)
+  if (manifest.releasePolicy.revealAfterSurfaceFreeze !== true) throw new Error('revealAfterSurfaceFreeze must be true')
+  if (manifest.releasePolicy.becomesCalibrationAfterReveal !== true) throw new Error('becomesCalibrationAfterReveal must be true')
+  if (manifest.evaluatorMaterialExposed !== false) throw new Error('sealed evaluator material must not be exposed')
+  return manifest
 }
 
 export function validateEvaluationResult(manifest, { runManifest } = {}) {
@@ -584,6 +681,8 @@ function usage() {
     '  validate-protocol <file> | validate-run <file> | validate-brief <file>',
     '  validate-answers <file> [--brief-sha <sha256>]',
     '  validate-seed <file> --hip-root <dir>',
+    '  validate-evaluator-spec <file> [--brief-sha <sha256>]',
+    '  validate-instance <file>',
     '  validate-inputs <run.json> --brief <file> --answers <file> --seed <file> --hip-root <dir>',
     '  validate-evaluation <file> --run <run.json>',
     '  validate-smoke <run.json> --hip-root <dir> [--repo-root <dir>]',
@@ -616,6 +715,12 @@ if (isMain) {
   } else if (command === 'validate-seed' && argument) {
     const summary = validateSeedFixture(loadJson(path.resolve(argument)), { hipRoot: option('--hip-root') })
     console.log(JSON.stringify(summary, null, 2))
+  } else if (command === 'validate-evaluator-spec' && argument) {
+    validateEvaluatorSpec(loadJson(path.resolve(argument)), { publicBriefSha256: option('--brief-sha') })
+    console.log('evaluator spec valid')
+  } else if (command === 'validate-instance' && argument) {
+    validateSealedInstanceManifest(loadJson(path.resolve(argument)))
+    console.log('sealed instance manifest valid')
   } else if (command === 'validate-inputs' && argument
       && option('--brief') && option('--answers') && option('--seed')) {
     const briefFile = path.resolve(option('--brief'))

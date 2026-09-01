@@ -1732,6 +1732,25 @@ limitations。blind/target 完整输入 hash `64cacba9…` / `b97ce4bd…`，结
 所有 Houdini 审美的 ground truth。正式三族 run 仍须计算 reviewer agreement、保留与人工抽检的分歧，并在
 证据不足时输出 unverified。
 
+### 2.57 Sealed instance 合同、六个已知 bundle 与 holdout 空槽（2026-09-01）
+
+新增 `evaluator-spec.schema.json`、`sealed-instance-manifest.schema.json` 和
+`tools/benchmark-instance.mjs`。Evaluator spec 的 criterion 必须覆盖固定四维并分别精确合计
+40/25/25/10；hard failure 只能引用已存在且 `critical=true` 的 criterion。Seal 工具交叉验证 brief、
+allowed answers、seed、evaluator 的 family/role 与单向 hash，公开资源必须与 brief 完全集合相等；bundle
+记录 production surface commit、冻结后才解封以及解封即转 calibration，不含自引用 hash。
+
+当前 agent只在 Git 忽略的 `benchmark/sealed/` 中创建了三族 calibration 与 counterexample，共六个
+bundle；它们可被当前线程查看，因此绝不占用 holdout。Tracked `protocol-freeze-status.json` 只记录六个
+canonical sealed hash：mechanical `ffe8dd91…`/`4f391e64…`，simulation `aa09467f…`/`66ae4a35…`，
+lookdev `b741e23c…`/`051b21e2…`。三个 holdout 明确为 null，状态为
+`awaiting-independent-holdouts`，`finalProtocolGenerated=false`，防止占位 hash 冒充正式协议。
+
+`holdout-authoring-request.md` 要求未参与实现/评分设计的人分别制作三族不同任务，只在 freeze 前返回
+sealedInstanceSha256，实际 brief/evaluator/answers/resources 保持在仓库和 `$HIP` 外。当前线程不得查看或
+生成 holdout 正文；一旦解封/运行，该实例自动转下一轮 calibration。新增确定性回归后 Node suite 为
+14 个文件。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1842,8 +1861,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型 K3/GLM 的当前 provider 原生图片已验证；独立 qwen-vl-max evaluator、blind/target prompt
-   和不同输入 hash 已由真实 smoke 验证。三族 sealed 实例与正式 reviewer agreement 仍待完成。
+4. 🔶 执行模型 K3/GLM 与独立 qwen-vl-max evaluator 已验证；三族 calibration/counterexample 已封存，
+   三个 holdout 槽保持 null。收到独立 holdout hash 后才能生成 final protocol 和运行 smoke。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 

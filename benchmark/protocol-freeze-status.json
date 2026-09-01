@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "status": "awaiting-independent-holdouts",
+  "productionSurfaceCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
+  "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
+  "execution": {
+    "models": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"],
+    "wallMinutes": 120,
+    "maxTurns": 1,
+    "additionalCorrectionLimit": 0
+  },
+  "evaluation": {
+    "evaluator": "dashscope/qwen-vl-max",
+    "blindPromptSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64",
+    "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
+  },
+  "instances": {
+    "mechanical": { "calibration": "ffe8dd91481c882231d16804f073f446c22f0ee72e4784208d5fb35426e3fc14", "holdout": null, "counterexample": "4f391e64e4fd8e7e104060ead51c040691865286253ae122f9e482912561fc10" },
+    "simulation": { "calibration": "aa09467fdca6b03bcbc6c9f439f87bf0614816800d8ce2b0a3942e5d0420808f", "holdout": null, "counterexample": "66ae4a35c173203efaa423661d3cae61dab65f89cc154b7a080046975c892d12" },
+    "lookdev": { "calibration": "b741e23c23f56b78d216bd1d6fe05debc3d836e2cdba64b9ae4b792b9b9fcd29", "holdout": null, "counterexample": "051b21e279b53a150fe6d30a18dcfdc4dafdc2f412c154f4a8e25e48d80bf8a2" }
+  },
+  "finalProtocolGenerated": false
+}
