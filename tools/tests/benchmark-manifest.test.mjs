@@ -52,6 +52,12 @@ const protocol = {
   execution: {
     models: ['model-a', 'model-b'],
     budget: { wallMinutes: 1, maxTurns: 1 },
+    workspace: {
+      mode: 'isolated-run-directory',
+      seedHandling: 'copy-exact-bytes-to-work.hip',
+      agentVisibleFiles: ['agent-message.txt', 'work.hip'],
+      evaluatorMaterialAccessible: false,
+    },
     additionalCorrectionLimit: 0,
   },
   evaluation: {
@@ -105,7 +111,15 @@ assert.throws(() => validateRunManifest({ ...run, unexpected: true }), /unsuppor
 assert.throws(() => validateRunManifest({
   ...run,
   agentExposure: { ...run.agentExposure, evaluatorMaterialExposed: true },
-}), /invalidate contaminated runs/)
+}), /must have status="invalidated"/)
+const contaminatedRun = {
+  ...run,
+  status: 'invalidated',
+  finishedAt: '2026-08-28T00:01:00.000Z',
+  terminationReason: 'wrong execution workspace exposed evaluator-only material',
+  agentExposure: { ...run.agentExposure, evaluatorMaterialExposed: true },
+}
+assert.equal(validateRunManifest(contaminatedRun), contaminatedRun)
 assert.throws(() => validateRunManifest({
   ...run,
   startedAt: '2026-08-29T00:00:00.000Z',

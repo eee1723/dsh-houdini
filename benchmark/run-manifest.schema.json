@@ -36,6 +36,21 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "agentExposure": {
+            "properties": { "evaluatorMaterialExposed": { "const": true } },
+            "required": ["evaluatorMaterialExposed"]
+          }
+        },
+        "required": ["agentExposure"]
+      },
+      "then": {
+        "properties": { "status": { "const": "invalidated" } },
+        "required": ["status", "finishedAt", "terminationReason"]
+      }
     }
   ],
   "required": [
@@ -81,7 +96,7 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/sha256" }
         },
-        "evaluatorMaterialExposed": { "const": false }
+        "evaluatorMaterialExposed": { "type": "boolean" }
       }
     },
     "startedAt": { "type": "string", "format": "date-time" },

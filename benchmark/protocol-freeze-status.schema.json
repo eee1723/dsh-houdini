@@ -12,10 +12,21 @@
     "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
     "execution": {
       "type": "object", "additionalProperties": false,
-      "required": ["models", "wallMinutes", "maxTurns", "additionalCorrectionLimit"],
+      "required": ["models", "wallMinutes", "maxTurns", "workspace", "additionalCorrectionLimit"],
       "properties": {
         "models": { "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "wallMinutes": { "const": 120 }, "maxTurns": { "const": 1 }, "additionalCorrectionLimit": { "const": 0 }
+        "wallMinutes": { "const": 120 }, "maxTurns": { "const": 1 },
+        "workspace": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "seedHandling", "agentVisibleFiles", "evaluatorMaterialAccessible"],
+          "properties": {
+            "mode": { "const": "isolated-run-directory" },
+            "seedHandling": { "const": "copy-exact-bytes-to-work.hip" },
+            "agentVisibleFiles": { "const": ["agent-message.txt", "work.hip"] },
+            "evaluatorMaterialAccessible": { "const": false }
+          }
+        },
+        "additionalCorrectionLimit": { "const": 0 }
       }
     },
     "evaluation": {

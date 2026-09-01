@@ -1768,6 +1768,25 @@ canonical/file SHA-256 为 `a39d7c0e…`/`3fd34d49…`。Freeze status 同步为
 这一步只授权三族 calibration 的任务级非评分 smoke；holdout 不解封、不运行、不进执行 workspace。Smoke
 通过前仍不得启动正式 3×2，任一基础设施 P0 修复都必须升级 protocol version 并重跑受影响 smoke。
 
+### 2.59 Mechanical smoke attempt 1 失效与隔离 workspace P0（2026-09-01）
+
+用户提供 session `957b69ff…`，标准 evidence 只含 4 个事件/3ms、0 用户消息/工具/模型 token，实际是 HIP
+workspace 自动创建的空白会话；session cache 进一步定位真实执行为 repo workspace 的 `fb4b7294…`：1 turn、
+42 tools、136 verbs、24.6 分钟、terminal completed。Houdini scene 与独立 H21 hython 证明交付 HIP 可打开，
+`OUT_STAND` 为 392 points/218 prims/9 parts、6 控制默认值正确、0 error/warning；整体/特写 PNG 均非空。
+
+功能成功不能覆盖实验污染：真实 cwd 是 `E:/dsh-houdini`，被忽略的 calibration evaluator 文件理论可由
+workspace agent 读取，违反 `evaluatorMaterialExposed=false`。Trace 显示 agent 实际只读 workflow skills，
+但“没用到”不等于“没暴露”。Run 记录为 `invalidated`；run schema 改为只在 status=invalidated 时允许
+`evaluatorMaterialExposed=true`，否则 fail-closed。
+
+第二个 P0 是直接打开 sealed seed：`scene_save` 只保存当前已命名 HIP，不能另存 `monitor_stand.hip`；agent
+经历 scene_save 拒绝、Raw Gate 拦截 setName/save、saveAsBackup API 猜错后，最终用低层 exemption + shell
+copy 交付。新增 `tools/benchmark-smoke.mjs`：每次创建全新隔离 execution 目录，将 sealed seed 精确复制为
+当前 `work.hip`，只复制公开 `agent-message.txt`；preflight 要求 agent 可见文件精确为这两项并把 operator
+证据留在 sibling 目录。Protocol v2 新增同一 workspace policy，canonical/file hash 重新封存；新增回归后
+Node suite 为 15 个文件。Attempt 1 只作为基础设施发现证据，不评分 K3、不进入 smoke success 计数。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1878,8 +1897,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. ✅ 执行模型 K3/GLM、独立 qwen-vl-max evaluator 与九个 sealed hash 已冻结；final protocol
-   `b0-2026-09-01-v1` 已生成。下一步只运行三族 calibration 的任务级非评分 smoke。
+4. 🔶 执行模型/evaluator/九个 hash 已冻结；mechanical attempt 1 因 workspace 污染 invalidated，protocol
+   升为 `b0-2026-09-01-v2` 并加入隔离 workspace/`work.hip` policy。下一步重跑 mechanical smoke。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 

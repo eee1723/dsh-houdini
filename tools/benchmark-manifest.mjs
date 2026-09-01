@@ -481,7 +481,7 @@ export function validateProtocolManifest(manifest) {
     requireString(manifest.environment[field], `environment.${field}`)
   }
   requireObject(manifest.execution, 'execution')
-  requireExactKeys(manifest.execution, ['models', 'budget', 'additionalCorrectionLimit'], 'execution')
+  requireExactKeys(manifest.execution, ['models', 'budget', 'workspace', 'additionalCorrectionLimit'], 'execution')
   if (!Array.isArray(manifest.execution.models) || manifest.execution.models.length !== 2 || new Set(manifest.execution.models).size !== 2) {
     throw new Error('execution.models must contain exactly two distinct model identifiers')
   }
@@ -490,6 +490,18 @@ export function validateProtocolManifest(manifest) {
   requireExactKeys(manifest.execution.budget, ['wallMinutes', 'maxTurns'], 'execution.budget')
   requirePositiveInteger(manifest.execution.budget.wallMinutes, 'execution.budget.wallMinutes')
   requirePositiveInteger(manifest.execution.budget.maxTurns, 'execution.budget.maxTurns')
+  requireObject(manifest.execution.workspace, 'execution.workspace')
+  requireExactKeys(manifest.execution.workspace, [
+    'mode', 'seedHandling', 'agentVisibleFiles', 'evaluatorMaterialAccessible',
+  ], 'execution.workspace')
+  if (manifest.execution.workspace.mode !== 'isolated-run-directory') throw new Error('execution.workspace.mode is invalid')
+  if (manifest.execution.workspace.seedHandling !== 'copy-exact-bytes-to-work.hip') throw new Error('execution.workspace.seedHandling is invalid')
+  if (JSON.stringify(manifest.execution.workspace.agentVisibleFiles) !== JSON.stringify(['agent-message.txt', 'work.hip'])) {
+    throw new Error('execution.workspace.agentVisibleFiles must be exactly agent-message.txt and work.hip')
+  }
+  if (manifest.execution.workspace.evaluatorMaterialAccessible !== false) {
+    throw new Error('execution workspace must not expose evaluator material')
+  }
   if (manifest.execution.additionalCorrectionLimit !== 0) throw new Error('additionalCorrectionLimit must be 0')
   requireObject(manifest.evaluation, 'evaluation')
   requireExactKeys(manifest.evaluation, [
@@ -547,8 +559,9 @@ export function validateRunManifest(manifest) {
   for (const [index, hash] of manifest.agentExposure.resourceSha256.entries()) {
     requireHash(hash, `agentExposure.resourceSha256[${index}]`)
   }
-  if (manifest.agentExposure.evaluatorMaterialExposed !== false) {
-    throw new Error('agentExposure.evaluatorMaterialExposed must be false; invalidate contaminated runs')
+  requireBoolean(manifest.agentExposure.evaluatorMaterialExposed, 'agentExposure.evaluatorMaterialExposed')
+  if (manifest.agentExposure.evaluatorMaterialExposed === true && manifest.status !== 'invalidated') {
+    throw new Error('a run with evaluator material exposed must have status="invalidated"')
   }
   requireDateTime(manifest.startedAt, 'startedAt')
   if (!STATUSES.includes(manifest.status)) throw new Error('status is invalid')

@@ -4,7 +4,8 @@
 > B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
 > 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
 > blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 与独立 holdout hash
-> 已封存，final protocol `b0-2026-09-01-v1` 已生成；三族任务级非评分 smoke 待执行。
+> 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，final protocol 已升为
+> `b0-2026-09-01-v2`；三族任务级非评分 smoke 待重跑。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
@@ -16,6 +17,13 @@ counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked 
 `3fd34d49…`；`protocol-freeze-status.json` 已变为 `ready-for-smoke`，三个 family 的 calibration/holdout/
 counterexample 均为非空 hash，`finalProtocolGenerated=true`。Holdout 正文继续保持未见，正式 3×2 前只运行
 calibration 的非评分基础设施 smoke，不解封 holdout。
+
+Mechanical smoke attempt 1 实际构建、保存和渲染成功，但消息被发送到 `E:/dsh-houdini` workspace，而
+HIP workspace 对应的 session 为空；repo workspace 中 evaluator-only calibration 文件理论可访问，因此该
+run 必须 `invalidated`，不能因 agent 未实际读取就降级污染事实。另因直接打开 sealed seed，`scene_save` 不能
+Save As，agent 只能 `saveAsBackup + shell copy`。V2 协议现强制 `isolated-run-directory`，将 seed 精确字节
+复制为当前 `work.hip`，execution workspace 只允许 `agent-message.txt` 和 `work.hip`，evaluator material
+不可访问。污染 run 只有在 status=`invalidated` 时才允许记录 `evaluatorMaterialExposed=true`。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 

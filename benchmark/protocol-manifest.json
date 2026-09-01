@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "protocolVersion": "b0-2026-09-01-v1",
-  "createdAt": "2026-09-01T05:09:18.8034057Z",
+  "protocolVersion": "b0-2026-09-01-v2",
+  "createdAt": "2026-09-01T07:50:27.6106897Z",
   "baselineCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
   "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "environment": {
@@ -13,6 +13,12 @@
   "execution": {
     "models": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"],
     "budget": { "wallMinutes": 120, "maxTurns": 1 },
+    "workspace": {
+      "mode": "isolated-run-directory",
+      "seedHandling": "copy-exact-bytes-to-work.hip",
+      "agentVisibleFiles": ["agent-message.txt", "work.hip"],
+      "evaluatorMaterialAccessible": false
+    },
     "additionalCorrectionLimit": 0
   },
   "evaluation": {

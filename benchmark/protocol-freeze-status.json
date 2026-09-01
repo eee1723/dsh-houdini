@@ -7,6 +7,12 @@
     "models": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"],
     "wallMinutes": 120,
     "maxTurns": 1,
+    "workspace": {
+      "mode": "isolated-run-directory",
+      "seedHandling": "copy-exact-bytes-to-work.hip",
+      "agentVisibleFiles": ["agent-message.txt", "work.hip"],
+      "evaluatorMaterialAccessible": false
+    },
     "additionalCorrectionLimit": 0
   },
   "evaluation": {
@@ -21,8 +27,8 @@
   },
   "finalProtocolGenerated": true,
   "protocol": {
-    "version": "b0-2026-09-01-v1",
-    "canonicalSha256": "a39d7c0ea3d28215f4fb020617f35ade44e3a1f1a2d8cd9cb07cd7149d7461a8",
-    "fileSha256": "3fd34d492b65cbfb747f8471d6a0adf09a7896d3c5af67161f761d6080f10c7b"
+    "version": "b0-2026-09-01-v2",
+    "canonicalSha256": "d82ed6ecb3bcf37852828814f53b816f177aacf2afbee6a6d445dca8f011557e",
+    "fileSha256": "5b07321c99ec98c3218f05b0d06c8af9377bd2f6ab2186cafb04f6dbe6039087"
   }
 }

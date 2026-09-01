@@ -35,7 +35,7 @@
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["models", "budget", "additionalCorrectionLimit"],
+      "required": ["models", "budget", "workspace", "additionalCorrectionLimit"],
       "properties": {
         "models": {
           "type": "array",
@@ -51,6 +51,17 @@
           "properties": {
             "wallMinutes": { "type": "integer", "minimum": 1 },
             "maxTurns": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "seedHandling", "agentVisibleFiles", "evaluatorMaterialAccessible"],
+          "properties": {
+            "mode": { "const": "isolated-run-directory" },
+            "seedHandling": { "const": "copy-exact-bytes-to-work.hip" },
+            "agentVisibleFiles": { "const": ["agent-message.txt", "work.hip"] },
+            "evaluatorMaterialAccessible": { "const": false }
           }
         },
         "additionalCorrectionLimit": { "const": 0 }
