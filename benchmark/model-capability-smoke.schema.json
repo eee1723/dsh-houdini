@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/model-capability-smoke.v1.json",
+  "title": "dsh-houdini execution-model native image capability smoke",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "testedAt", "input", "models"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "testedAt": { "type": "string", "format": "date-time" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["imageSha256", "imageBytes", "promptSha256", "toolsAvailable"],
+      "properties": {
+        "imageSha256": { "$ref": "#/$defs/sha256" },
+        "imageBytes": { "type": "integer", "minimum": 1 },
+        "promptSha256": { "$ref": "#/$defs/sha256" },
+        "toolsAvailable": { "const": false }
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider", "model", "api", "adapterImageDeclared", "transportOk",
+          "semanticOk", "responseModel", "attempts", "minimumVerifiedMaxTokens",
+          "notes"
+        ],
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "model": { "type": "string", "minLength": 1 },
+          "api": { "enum": ["anthropic-messages", "openai-completions"] },
+          "adapterImageDeclared": { "type": ["boolean", "null"] },
+          "transportOk": { "const": true },
+          "semanticOk": { "const": true },
+          "responseModel": { "type": "string", "minLength": 1 },
+          "attempts": { "type": "integer", "minimum": 1 },
+          "minimumVerifiedMaxTokens": { "type": "integer", "minimum": 1 },
+          "notes": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

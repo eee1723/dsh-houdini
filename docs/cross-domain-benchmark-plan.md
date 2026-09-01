@@ -2,7 +2,8 @@
 
 > 状态：2026-09-01 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
 > B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
-> 模型/provider、最终 protocol version 和三族任务级非评分 smoke 待冻结/执行。
+> 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针，独立 evaluator prompt、sealed 实例、
+> 最终 protocol version 和三族任务级非评分 smoke 待冻结/执行。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 
@@ -202,6 +203,13 @@ generator 只允许空场景或固定 shaderball、FPS、帧范围和当前帧�
 机械/模拟使用空场景，lookdev 使用固定 shaderball 以隔离建模差异；三份 calibration 输入已在 H21 实际
 重复生成并通过 `validate-seed`，H21/H22 HOM 重复 identity 回归通过。它们只完成 seed fixture 基础，不等于
 三个能力族的任务级 smoke、sealed 实例或评分协议已经完成。
+
+执行模型冻结候选现为 `kimi-coding/k3` 与 `apikeyfun/glm-5.3-flash`。2026-09-01 使用同一 47,120-byte
+PNG、同一中性 prompt、零工具直连两条 provider：K3 一次完成并正确描述图片；GLM 的 500-token 首次尝试
+因 482 reasoning tokens 挤占正文而 `finish_reason=length`，1500-token 重试完成并正确描述同一内容。因此
+两条当前 provider 路径的 native image transport/semantic 均已验证，但 GLM 的正式运行预算不得低于已验证
+的 1500 max tokens。hash 与判定摘要记录在 `benchmark/model-capability-baseline.json`，不保存图片或凭据。
+该探针只验证直接图片输入，不替代独立 evaluator；执行期 Vision Toolkit 仍固定为 0.1.7 + qwen-vl-max。
 
 brief envelope 的 `briefId`、能力族和实例角色只供 evaluator/run 管理；执行 agent payload 只能取普通
 `agentMessage` 与公开资源，不能暴露 calibration/holdout 身份。answers 只允许用户偏好、资产位置、输出格式

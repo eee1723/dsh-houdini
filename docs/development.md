@@ -1689,6 +1689,25 @@ suite 增至 13 个文件。
 三份 HIP 当作已完成的能力族 smoke：后者仍需普通 public brief、全新 DSH session、真实 trace、至少一份
 评审输入和 final node，并通过 completed smoke 产物门禁。
 
+### 2.55 K3/GLM 当前 provider 原生图片探针（2026-09-01）
+
+用户选择正式执行模型为 `kimi-coding/k3` 与 `apikeyfun/glm-5.3-flash`。冻结前以同一张 47,120-byte
+Houdini Trace UI PNG（SHA-256 `b09ebe94…`）、同一中性中文 prompt（SHA-256 `9c0e3463…`）做无工具直连；
+prompt 明确禁止按文件名/上下文猜测，并要求未收到图片时如实回答。凭据仅从 DSH credential store 在进程
+内读取，没有写入命令输出、仓库或证据文件。
+
+K3 走当前 `kimi-coding` Anthropic Messages 路径；本机 pi-ai catalog 同时明确声明 `input=[text,image]`。
+一次请求即返回 `responseModel=k3`/`end_turn`，准确描述左上“执行证据”、横向指标条和下方左右分栏，
+故 transport/semantic 均通过。GLM 走第三方 `apikeyfun` OpenAI Completions 路径；自定义 settings 没有
+adapter image 声明，但 provider 接受 data-URL PNG，返回 `responseModel=glm-5.3-flash`。首轮
+`max_tokens=500` 中 482 为 reasoning token，正文仅到“1”且 `finish_reason=length`，只能判 transport 成功；
+同图同 prompt 提高至 1500 后以 `stop` 结束并准确描述标题、指标和左右面板，semantic 通过。
+
+`benchmark/model-capability-baseline.json` 只保存输入 hash、provider/model/API、尝试次数、最低已验证输出
+预算和判定摘要；不跟踪图片或响应全文。结论限定为“当前 provider/API 路径原生图片可用”：K3 最低已
+验证 500 tokens，GLM 最低已验证 1500 tokens。它不证明所有图片任务质量，也不允许执行模型充当独立评委；
+Vision Toolkit 的 qwen-vl-max 与 blind/target evaluator 仍须分层记录。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1799,7 +1818,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. ⏳ 固定两个模型与独立视觉 provider，验证盲描述和目标核验确实是两次独立输入。
+4. 🔶 执行模型已选 K3/GLM，当前 provider 原生图片 transport/semantic 已验证；独立视觉 evaluator、
+   blind/target prompt 与 sealed 实例仍待冻结，并须验证两次输入确实独立。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 

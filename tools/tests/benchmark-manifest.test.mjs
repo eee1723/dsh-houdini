@@ -333,6 +333,7 @@ for (const schema of [
   'allowed-answers.schema.json',
   'seed-fixture.schema.json',
   'seed-generator-input.schema.json',
+  'model-capability-smoke.schema.json',
   'evaluation-result.schema.json',
 ]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))
@@ -340,6 +341,18 @@ for (const schema of [
   assert.equal(parsed.additionalProperties, false)
   if (schema === 'run-manifest.schema.json') assert.ok(Array.isArray(parsed.allOf))
 }
+
+const modelCapability = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'model-capability-baseline.json'), 'utf8'))
+assert.equal(modelCapability.schemaVersion, 1)
+assert.equal(modelCapability.input.toolsAvailable, false)
+assert.deepEqual(
+  modelCapability.models.map((item) => `${item.provider}/${item.model}`),
+  ['kimi-coding/k3', 'apikeyfun/glm-5.3-flash'],
+)
+assert.ok(modelCapability.models.every((item) => item.transportOk && item.semanticOk))
+assert.equal(modelCapability.models[0].adapterImageDeclared, true)
+assert.equal(modelCapability.models[1].adapterImageDeclared, null)
+assert.equal(modelCapability.models[1].minimumVerifiedMaxTokens, 1500)
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.ok(!packageJson.files.includes('benchmark'), 'sealed benchmark administration must not ship in the production npm package')

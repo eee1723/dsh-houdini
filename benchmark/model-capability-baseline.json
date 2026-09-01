@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "testedAt": "2026-09-01T03:46:30.9415291Z",
+  "input": {
+    "imageSha256": "b09ebe94e282884339a23be15ee3b7426664eafb206bb19afef85a8afe315d17",
+    "imageBytes": 47120,
+    "promptSha256": "9c0e34635d2cd1c5534e91a40395d0fb830f9d838a2be09e2fa6691418048ac8",
+    "toolsAvailable": false
+  },
+  "models": [
+    {
+      "provider": "kimi-coding",
+      "model": "k3",
+      "api": "anthropic-messages",
+      "adapterImageDeclared": true,
+      "transportOk": true,
+      "semanticOk": true,
+      "responseModel": "k3",
+      "attempts": 1,
+      "minimumVerifiedMaxTokens": 500,
+      "notes": "The current pi-ai catalog declares text+image input. The provider accepted the base64 PNG and K3 correctly described the title, metrics row, and left/right panels without tools."
+    },
+    {
+      "provider": "apikeyfun",
+      "model": "glm-5.3-flash",
+      "api": "openai-completions",
+      "adapterImageDeclared": null,
+      "transportOk": true,
+      "semanticOk": true,
+      "responseModel": "glm-5.3-flash",
+      "attempts": 2,
+      "minimumVerifiedMaxTokens": 1500,
+      "notes": "The custom provider accepted the data-URL PNG. A 500-token attempt ended by length after 482 reasoning tokens and was semantically incomplete; a 1500-token retry correctly described the same title, metrics row, and left/right panels."
+    }
+  ]
+}
