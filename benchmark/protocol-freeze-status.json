@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "awaiting-independent-holdouts",
+  "status": "ready-for-smoke",
   "productionSurfaceCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
   "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "execution": {
@@ -15,9 +15,14 @@
     "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
   },
   "instances": {
-    "mechanical": { "calibration": "ffe8dd91481c882231d16804f073f446c22f0ee72e4784208d5fb35426e3fc14", "holdout": null, "counterexample": "4f391e64e4fd8e7e104060ead51c040691865286253ae122f9e482912561fc10" },
-    "simulation": { "calibration": "aa09467fdca6b03bcbc6c9f439f87bf0614816800d8ce2b0a3942e5d0420808f", "holdout": null, "counterexample": "66ae4a35c173203efaa423661d3cae61dab65f89cc154b7a080046975c892d12" },
-    "lookdev": { "calibration": "b741e23c23f56b78d216bd1d6fe05debc3d836e2cdba64b9ae4b792b9b9fcd29", "holdout": null, "counterexample": "051b21e279b53a150fe6d30a18dcfdc4dafdc2f412c154f4a8e25e48d80bf8a2" }
+    "mechanical": { "calibration": "ffe8dd91481c882231d16804f073f446c22f0ee72e4784208d5fb35426e3fc14", "holdout": "c3df4d532661af2bf79971f34a76336aa429a40d2429c4d768fd339aca862fde", "counterexample": "4f391e64e4fd8e7e104060ead51c040691865286253ae122f9e482912561fc10" },
+    "simulation": { "calibration": "aa09467fdca6b03bcbc6c9f439f87bf0614816800d8ce2b0a3942e5d0420808f", "holdout": "416511062f2a20b33ce72240934562c591d4532901ec9420ce7b34b4c9a7fcbf", "counterexample": "66ae4a35c173203efaa423661d3cae61dab65f89cc154b7a080046975c892d12" },
+    "lookdev": { "calibration": "b741e23c23f56b78d216bd1d6fe05debc3d836e2cdba64b9ae4b792b9b9fcd29", "holdout": "5be7a4ff9e9b56be1396f5797c4cfc29fae51b4e998b10d60001a02539054b93", "counterexample": "051b21e279b53a150fe6d30a18dcfdc4dafdc2f412c154f4a8e25e48d80bf8a2" }
   },
-  "finalProtocolGenerated": false
+  "finalProtocolGenerated": true,
+  "protocol": {
+    "version": "b0-2026-09-01-v1",
+    "canonicalSha256": "a39d7c0ea3d28215f4fb020617f35ade44e3a1f1a2d8cd9cb07cd7149d7461a8",
+    "fileSha256": "3fd34d492b65cbfb747f8471d6a0adf09a7896d3c5af67161f761d6080f10c7b"
+  }
 }

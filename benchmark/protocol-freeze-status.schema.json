@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dsh-houdini.local/schemas/protocol-freeze-status.v1.json",
-  "title": "dsh-houdini pre-protocol freeze status",
+  "title": "dsh-houdini final protocol freeze status",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "status", "productionSurfaceCommit", "agentSurfaceSha256", "execution", "evaluation", "instances", "finalProtocolGenerated"],
+  "required": ["schemaVersion", "status", "productionSurfaceCommit", "agentSurfaceSha256", "execution", "evaluation", "instances", "finalProtocolGenerated", "protocol"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "status": { "const": "awaiting-independent-holdouts" },
+    "status": { "const": "ready-for-smoke" },
     "productionSurfaceCommit": { "$ref": "#/$defs/gitSha" },
     "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
     "execution": {
@@ -36,7 +36,16 @@
         "lookdev": { "$ref": "#/$defs/instance" }
       }
     },
-    "finalProtocolGenerated": { "const": false }
+    "finalProtocolGenerated": { "const": true },
+    "protocol": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "canonicalSha256", "fileSha256"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "canonicalSha256": { "$ref": "#/$defs/sha256" },
+        "fileSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -46,7 +55,7 @@
       "required": ["calibration", "holdout", "counterexample"],
       "properties": {
         "calibration": { "$ref": "#/$defs/sha256" },
-        "holdout": { "type": "null" },
+        "holdout": { "$ref": "#/$defs/sha256" },
         "counterexample": { "$ref": "#/$defs/sha256" }
       }
     }

@@ -1751,6 +1751,23 @@ sealedInstanceSha256，实际 brief/evaluator/answers/resources 保持在仓库�
 生成 holdout 正文；一旦解封/运行，该实例自动转下一轮 calibration。新增确定性回归后 Node suite 为
 14 个文件。
 
+### 2.58 独立 holdout hash 接收与 final protocol（2026-09-01）
+
+独立设计任务只返回 mechanical `c3df4d53…`、simulation `41651106…`、lookdev `5be7a4ff…` 三个
+sealedInstanceSha256；当前线程没有读取、列举或 diff `E:/tmp/dsh-houdini-independent-holdouts-v1/`
+正文。对方报告 production surface `4316620`、agent surface `b9bee29b…`、H21 repeat identity、四件合同、
+反向验证和 clean Git 全部通过；该报告作为独立 provenance 保存，但真正内容仍待 freeze 后由运行操作者
+解封，撞题残余风险只能在解封时审计。
+
+新增 tracked `benchmark/protocol-manifest.json`：版本 `b0-2026-09-01-v1`，固定 H21.0.440、DSH
+0.1.1-rc.2、plugin 0.1.0、Vision Toolkit 0.1.7、K3/GLM、120 分钟、单用户 turn、0 追加纠错、
+evidence-v2/hython evaluator 与 qwen-vl-max blind/target。九个 sealed instance hash 已齐全；protocol
+canonical/file SHA-256 为 `a39d7c0e…`/`3fd34d49…`。Freeze status 同步为 `ready-for-smoke`、
+`finalProtocolGenerated=true`，测试逐 family 要求 status 与 final protocol 完全相等。
+
+这一步只授权三族 calibration 的任务级非评分 smoke；holdout 不解封、不运行、不进执行 workspace。Smoke
+通过前仍不得启动正式 3×2，任一基础设施 P0 修复都必须升级 protocol version 并重跑受影响 smoke。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1861,8 +1878,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型 K3/GLM 与独立 qwen-vl-max evaluator 已验证；三族 calibration/counterexample 已封存，
-   三个 holdout 槽保持 null。收到独立 holdout hash 后才能生成 final protocol 和运行 smoke。
+4. ✅ 执行模型 K3/GLM、独立 qwen-vl-max evaluator 与九个 sealed hash 已冻结；final protocol
+   `b0-2026-09-01-v1` 已生成。下一步只运行三族 calibration 的任务级非评分 smoke。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 

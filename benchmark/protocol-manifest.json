@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "b0-2026-09-01-v1",
+  "createdAt": "2026-09-01T05:09:18.8034057Z",
+  "baselineCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
+  "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
+  "environment": {
+    "houdini": "21.0.440",
+    "dsh": "0.1.1-rc.2",
+    "plugin": "0.1.0",
+    "visionToolkit": "0.1.7"
+  },
+  "execution": {
+    "models": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"],
+    "budget": { "wallMinutes": 120, "maxTurns": 1 },
+    "additionalCorrectionLimit": 0
+  },
+  "evaluation": {
+    "deterministicEvaluator": "dsh-houdini-evidence-v2+hython-21.0.440",
+    "blindVisualEvaluator": "dashscope/qwen-vl-max",
+    "targetEvaluator": "dashscope/qwen-vl-max",
+    "blindPromptSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64",
+    "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
+  },
+  "sealedInstances": {
+    "mechanical": {
+      "calibration": "ffe8dd91481c882231d16804f073f446c22f0ee72e4784208d5fb35426e3fc14",
+      "holdout": "c3df4d532661af2bf79971f34a76336aa429a40d2429c4d768fd339aca862fde",
+      "counterexample": "4f391e64e4fd8e7e104060ead51c040691865286253ae122f9e482912561fc10"
+    },
+    "simulation": {
+      "calibration": "aa09467fdca6b03bcbc6c9f439f87bf0614816800d8ce2b0a3942e5d0420808f",
+      "holdout": "416511062f2a20b33ce72240934562c591d4532901ec9420ce7b34b4c9a7fcbf",
+      "counterexample": "66ae4a35c173203efaa423661d3cae61dab65f89cc154b7a080046975c892d12"
+    },
+    "lookdev": {
+      "calibration": "b741e23c23f56b78d216bd1d6fe05debc3d836e2cdba64b9ae4b792b9b9fcd29",
+      "holdout": "5be7a4ff9e9b56be1396f5797c4cfc29fae51b4e998b10d60001a02539054b93",
+      "counterexample": "051b21e279b53a150fe6d30a18dcfdc4dafdc2f412c154f4a8e25e48d80bf8a2"
+    }
+  }
+}

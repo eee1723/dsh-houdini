@@ -377,12 +377,20 @@ assert.equal(blindPrompt.executionAgentExposed, false)
 assert.equal(targetPrompt.executionAgentExposed, false)
 
 const freezeStatus = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-freeze-status.json'), 'utf8'))
-assert.equal(freezeStatus.status, 'awaiting-independent-holdouts')
-assert.equal(freezeStatus.finalProtocolGenerated, false)
+const frozenProtocol = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-manifest.json'), 'utf8'))
+assert.equal(validateProtocolManifest(frozenProtocol), frozenProtocol)
+assert.equal(freezeStatus.status, 'ready-for-smoke')
+assert.equal(freezeStatus.finalProtocolGenerated, true)
 assert.deepEqual(freezeStatus.execution.models, ['kimi-coding/k3', 'apikeyfun/glm-5.3-flash'])
-assert.ok(Object.values(freezeStatus.instances).every((entry) => entry.holdout === null))
+assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.holdout)))
 assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.calibration)))
 assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.counterexample)))
+assert.equal(freezeStatus.protocol.version, frozenProtocol.protocolVersion)
+assert.equal(freezeStatus.protocol.canonicalSha256, sha256Json(frozenProtocol))
+assert.equal(freezeStatus.protocol.fileSha256, sha256File(path.join(root, 'benchmark', 'protocol-manifest.json')))
+for (const family of ['mechanical', 'simulation', 'lookdev']) {
+  assert.deepEqual(freezeStatus.instances[family], frozenProtocol.sealedInstances[family])
+}
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.ok(!packageJson.files.includes('benchmark'), 'sealed benchmark administration must not ship in the production npm package')
