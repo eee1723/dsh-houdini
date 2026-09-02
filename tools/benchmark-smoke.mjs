@@ -13,6 +13,7 @@ import {
 } from './benchmark-manifest.mjs'
 
 const FAMILIES = ['mechanical', 'simulation', 'lookdev']
+const PHASES = ['smoke', 'discovery']
 
 function loadJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -25,13 +26,15 @@ function requireFile(file, label) {
   return file
 }
 
-export function prepareSmokeWorkspace({ kitRoot, family, runId, protocolFile }) {
+export function prepareIsolatedRunWorkspace({ kitRoot, family, runId, protocolFile, phase, model }) {
   if (!FAMILIES.includes(family)) throw new Error(`unsupported family: ${family}`)
+  if (!PHASES.includes(phase)) throw new Error(`unsupported isolated run phase: ${phase}`)
   if (typeof runId !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(runId)) throw new Error('runId is invalid')
   const kit = path.resolve(kitRoot)
   const protocolPath = path.resolve(protocolFile)
   const protocol = loadJson(requireFile(protocolPath, 'protocol manifest'))
   validateProtocolManifest(protocol)
+  if (!protocol.execution.models.includes(model)) throw new Error(`model is not frozen in the protocol: ${model}`)
 
   const operatorRoot = path.join(kit, 'operator', family)
   const sourceHipRoot = path.join(kit, 'hip', family)
@@ -90,9 +93,9 @@ export function prepareSmokeWorkspace({ kitRoot, family, runId, protocolFile }) 
     protocolVersion: protocol.protocolVersion,
     protocolManifestSha256: sha256File(protocolPath),
     family,
-    phase: 'smoke',
+    phase,
     instanceRole: 'calibration',
-    model: protocol.execution.models[0],
+    model,
     instanceSealedSha256: protocol.sealedInstances[family].calibration,
     evaluatorSpecSha256: sealed.files.evaluatorSpecSha256,
     publicBriefSha256: sealed.files.publicBriefSha256,
@@ -106,6 +109,19 @@ export function prepareSmokeWorkspace({ kitRoot, family, runId, protocolFile }) 
   const preflightFile = path.join(operatorRoot, `${runId}-preflight.json`)
   fs.writeFileSync(preflightFile, `${JSON.stringify(preflight, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
   return { ...preflight, preflightFile }
+}
+
+export function prepareSmokeWorkspace({ kitRoot, family, runId, protocolFile }) {
+  const protocol = loadJson(requireFile(path.resolve(protocolFile), 'protocol manifest'))
+  validateProtocolManifest(protocol)
+  return prepareIsolatedRunWorkspace({
+    kitRoot,
+    family,
+    runId,
+    protocolFile,
+    phase: 'smoke',
+    model: protocol.execution.models[0],
+  })
 }
 
 function option(values, name) {

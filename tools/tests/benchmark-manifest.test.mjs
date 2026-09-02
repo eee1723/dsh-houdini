@@ -355,6 +355,7 @@ for (const schema of [
   'sealed-instance-manifest.schema.json',
   'protocol-freeze-status.schema.json',
   'evaluation-result.schema.json',
+  'formal-matrix.schema.json',
 ]) {
   const parsed = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', schema), 'utf8'))
   assert.equal(parsed.$schema, 'https://json-schema.org/draft/2020-12/schema')
@@ -398,6 +399,7 @@ assert.equal(targetPrompt.executionAgentExposed, false)
 
 const freezeStatus = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-freeze-status.json'), 'utf8'))
 const frozenProtocol = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-manifest.json'), 'utf8'))
+const formalMatrix = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'formal-matrix.json'), 'utf8'))
 assert.equal(validateProtocolManifest(frozenProtocol), frozenProtocol)
 assert.equal(freezeStatus.status, 'ready-for-formal-runs')
 assert.equal(freezeStatus.finalProtocolGenerated, true)
@@ -410,6 +412,18 @@ assert.equal(freezeStatus.protocol.canonicalSha256, sha256Json(frozenProtocol))
 assert.equal(freezeStatus.protocol.fileSha256, sha256File(path.join(root, 'benchmark', 'protocol-manifest.json')))
 for (const family of ['mechanical', 'simulation', 'lookdev']) {
   assert.deepEqual(freezeStatus.instances[family], frozenProtocol.sealedInstances[family])
+}
+assert.equal(formalMatrix.protocolVersion, frozenProtocol.protocolVersion)
+assert.equal(formalMatrix.protocolManifestSha256, sha256File(path.join(root, 'benchmark', 'protocol-manifest.json')))
+assert.equal(formalMatrix.holdoutReleased, false)
+assert.deepEqual(formalMatrix.runs.map((item) => item.ordinal), [1, 2, 3, 4, 5, 6])
+assert.equal(new Set(formalMatrix.runs.map((item) => item.runId)).size, 6)
+assert.deepEqual(formalMatrix.runs.map((item) => item.model), [
+  'kimi-coding/k3', 'apikeyfun/glm-5.3-flash', 'kimi-coding/k3',
+  'apikeyfun/glm-5.3-flash', 'kimi-coding/k3', 'apikeyfun/glm-5.3-flash',
+])
+for (const family of ['mechanical', 'simulation', 'lookdev']) {
+  assert.deepEqual(formalMatrix.runs.filter((item) => item.capabilityFamily === family).map((item) => item.model).sort(), [...frozenProtocol.execution.models].sort())
 }
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))

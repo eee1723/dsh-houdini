@@ -152,6 +152,10 @@ sealed manifest hash、能力标签、普通 brief schema 和解封规则，运�
 同模型重复，而不是改 prompt。执行顺序在两模型之间交错，避免 Houdini/runtime 状态和人工评审疲劳
 总是偏向同一模型。该矩阵用于发现和归因，不单独承担“通用能力提升”的证明。
 
+V4 的六次顺序已冻结在 `benchmark/formal-matrix.json`：Mechanical/K3 → Simulation/GLM →
+Lookdev/K3 → Mechanical/GLM → Simulation/K3 → Lookdev/GLM。阶段为 `discovery`、实例角色为
+`calibration`、追加纠错上限为 0，且 `holdoutReleased=false`；正式矩阵不会提前解封 B4 holdout。
+
 每次 run manifest 至少记录：protocol/task/run id、Git commit、Houdini/DSH/toolkit/provider/model
 版本、production-surface hash、seed scene hash、用户 brief hash、独立 evaluator spec hash、向 agent
 实际暴露的资源清单、预设回答、开始/结束时间、终止原因、trace 路径、HIP/cache/render 路径、

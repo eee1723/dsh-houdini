@@ -1850,6 +1850,18 @@ evidenceId 必须与输入图片集合完全相等；Target criterion 集合必�
 响应均拒绝、不进入评分。Protocol 升为 `b0-2026-09-02-v4`，生产
 agent surface/49 动词不变。
 
+### 2.64 正式 3×2 矩阵与隔离 preparer（2026-09-02）
+
+`benchmark/formal-matrix.json` 预登记六次 calibration/discovery 运行，模型严格交错：Mechanical/K3 →
+Simulation/GLM → Lookdev/K3 → Mechanical/GLM → Simulation/K3 → Lookdev/GLM；每族各模型恰好一次，
+追加纠错上限 0，`holdoutReleased=false`。新增 `tools/benchmark-run.mjs`，复用 smoke 已验证的隔离逻辑，
+但要求显式冻结模型并拒绝协议外 provider/model。正式 workspace 仍只含普通 `agent-message.txt` 和 seed
+精确复制的 `work.hip`，evaluator material 不进入 execution。
+
+V4 formal kit 建于 `E:/tmp/dsh-houdini-formal-b0-2026-09-02-v4`；只复制三族 calibration bundle/seed、
+V4 protocol/prompt/matrix，holdout 文件数为 0。第 1 次 `formal-mechanical-k3-r1` 已完成 preflight，等待新
+H21 进程打开其 `work.hip` 后通过正式 workspace/session API 投递。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { prepareSmokeWorkspace } from '../benchmark-smoke.mjs'
+import { prepareIsolatedRunWorkspace, prepareSmokeWorkspace } from '../benchmark-smoke.mjs'
 import { sha256File, sha256Json } from '../benchmark-manifest.mjs'
 
 const hash = 'a'.repeat(64)
@@ -32,6 +32,12 @@ try {
   assert.deepEqual(prepared.agentVisibleFiles, ['agent-message.txt', 'work.hip'])
   assert.equal(sha256File(prepared.workHip), seed.output.sha256)
   assert.throws(() => prepareSmokeWorkspace({ kitRoot: root, family: 'mechanical', runId: 'smoke-1', protocolFile }), /already exists/)
+  const formal = prepareIsolatedRunWorkspace({ kitRoot: root, family: 'mechanical', runId: 'formal-1', protocolFile, phase: 'discovery', model: 'model-b' })
+  assert.equal(formal.phase, 'discovery')
+  assert.equal(formal.model, 'model-b')
+  assert.deepEqual(formal.agentVisibleFiles, ['agent-message.txt', 'work.hip'])
+  assert.throws(() => prepareIsolatedRunWorkspace({ kitRoot: root, family: 'mechanical', runId: 'bad-model', protocolFile, phase: 'discovery', model: 'model-c' }), /not frozen/)
+  assert.throws(() => prepareIsolatedRunWorkspace({ kitRoot: root, family: 'mechanical', runId: 'bad-phase', protocolFile, phase: 'generalization', model: 'model-a' }), /unsupported isolated run phase/)
 } finally {
   fs.rmSync(root, { recursive: true, force: true })
 }

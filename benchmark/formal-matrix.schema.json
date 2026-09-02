@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dsh-houdini.local/schemas/formal-matrix.v1.json",
+  "title": "dsh-houdini frozen formal 3x2 matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "protocolManifestSha256", "phase", "instanceRole", "holdoutReleased", "additionalCorrectionLimit", "runs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocolVersion": { "type": "string", "minLength": 1 },
+    "protocolManifestSha256": { "$ref": "#/$defs/sha256" },
+    "phase": { "const": "discovery" },
+    "instanceRole": { "const": "calibration" },
+    "holdoutReleased": { "const": false },
+    "additionalCorrectionLimit": { "const": 0 },
+    "runs": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ordinal", "runId", "capabilityFamily", "model", "status"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "runId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "capabilityFamily": { "enum": ["mechanical", "simulation", "lookdev"] },
+          "model": { "enum": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"] },
+          "status": { "enum": ["pending", "running", "completed", "failed", "invalidated"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}
