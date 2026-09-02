@@ -1862,6 +1862,13 @@ V4 formal kit 建于 `E:/tmp/dsh-houdini-formal-b0-2026-09-02-v4`；只复制三
 V4 protocol/prompt/matrix，holdout 文件数为 0。第 1 次 `formal-mechanical-k3-r1` 已完成 preflight，等待新
 H21 进程打开其 `work.hip` 后通过正式 workspace/session API 投递。
 
+第 1 次正式运行随后自然完成：1 turn、22 tools、311 verbs、13/49 目录广度，0 Gate block、0 成功裸修改、
+0 query mutation；3 个失败调用及 2 次 rollback 均保留。独立 H21 结构/控制/折叠/尺寸扰动/恢复与最终保存
+门通过；Blind/Target 9 criterion 全 pass，整体/局部视觉置信度为 0.8/0.7，V4 normalizer 派生 0 hard
+failure。离散评分 `pass=maxPoints, fail/unverified=0` 得 40/25/25/10=100，claimLevel=none。该单次结果不
+构成模型比较或泛化主张。第一次 Blind 正文因 CLI 1.18.2 更新提示污染 fence 外 presentation 被拒；保持
+批次 CLI 1.18.1 不升级，以 `--quiet` 同输入重试成功。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
