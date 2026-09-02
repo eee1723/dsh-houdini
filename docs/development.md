@@ -1869,6 +1869,14 @@ failure。离散评分 `pass=maxPoints, fail/unverified=0` 得 40/25/25/10=100�
 构成模型比较或泛化主张。第一次 Blind 正文因 CLI 1.18.2 更新提示污染 fence 外 presentation 被拒；保持
 批次 CLI 1.18.1 不升级，以 `--quiet` 同输入重试成功。
 
+第 2 次 `formal-simulation-glm-r1` 也自然完成：1 turn、50 tools、247 verbs、19/49 目录广度；14 failed
+calls、11 rollback、1 Gate block、0 成功裸 Houdini 场景修改、0 query mutation。执行模型 direct
+`read_image` 因 adapter 未声明 image input 失败，随后固定生产 Vision Toolkit 三次语义检查成功。独立 H21
+确认真实 Bullet solver、42 个稳定 block ID、A/B 各 120 帧缓存、三帧演化、重力 A/B 42/42 终态差异和
+最终网络 0 error/warning。Blind/Target 9 criterion 全 pass，视觉时间/构图 confidence 均 0.9，离散评分
+100、0 hard failure、claimLevel=none。过程约 74.9 分钟，显著慢于第 1 项且失败/回滚更多；2/6 阶段只记录
+同为 core success 与效率差异，不做模型排名。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
