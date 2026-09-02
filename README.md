@@ -322,7 +322,8 @@ rollback provenance、render freshness、health 主线程边界和 evidence 分�
    路径均可直接看图；独立 evaluator 已固定为 DashScope `qwen-vl-max`，blind/target prompt 和同图
    两阶段 smoke 已通过；三族 calibration/counterexample/独立 holdout hash 已封存，final protocol
    `b0-2026-09-01-v3` 已生成，强制隔离 run workspace/`work.hip` 并规范化 evaluator JSON presentation；
-   Mechanical 与 Simulation smoke 已通过，下一步运行 Lookdev smoke；
+   Mechanical、Simulation 与 Lookdev smoke 已通过；正式 3×2 前先补 Target criterion/evidence ID
+   引用完整性门禁；
 2. 用已生成的机械、模拟和 lookdev seed 运行三族任务级非评分 smoke，通过 `$HIP`/trace/评审输入
    真实文件门禁；
 3. 用冻结后的未见实例验证首轮公共 P0 没有误阻或 false-completion 回退；completed smoke 的 `$HIP`/

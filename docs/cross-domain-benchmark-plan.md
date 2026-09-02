@@ -5,7 +5,8 @@
 > 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
 > blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 与独立 holdout hash
 > 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，final protocol 已升为
-> `b0-2026-09-01-v3`；Mechanical 与 Simulation smoke 已通过，Lookdev 待运行。
+> `b0-2026-09-01-v3`；Mechanical、Simulation 与 Lookdev smoke 均已通过；正式 3×2 前待补
+> Target criterion/evidence ID 引用完整性门禁。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，

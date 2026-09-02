@@ -1822,6 +1822,20 @@ Raw Gate 在执行前拦截；随后两轮真实写盘使用同一可审计 `all
 这不是隐蔽成功裸修改，但说明按钮型参数需要进入后续动词覆盖评估；正式矩阵前不临时改变 49 动词
 surface，以免破坏已冻结 protocol。
 
+### 2.62 Lookdev smoke attempt 1 通过与 evaluator 引用完整性缺口（2026-09-02）
+
+Lookdev calibration 同样从 live HIP/cwd、blank Houdini preset、K3 routable 和零 token 状态开始。最终
+1 turn、68 tools、131 verbs、21/49 目录广度，成功 exec 动词覆盖 28/29；0 Gate block、0 成功裸修改、
+0 query mutation。独立 H21 回读确认 Solaris/Karma stage、MaterialX surface context/绑定、相机/灯光、
+RenderSettings/Product/Var 与可执行 USD Render ROP；最终整体/局部 EXR 均为可读 1024×576 16-bit
+float RGBA，`render_frame` fresh 且 semantic inspection 成功。Blind/Target 的 core/visual 均 pass、
+0 hard failure；三项 run/input/artifact validator 全通过。结果仍只算非评分 smoke。
+
+Target raw JSON 同时出现一个评分前必须封口的语义合同缺口：criteria 集合正确，但若干
+deterministicEvidenceId 被重复写进 `evidenceIds`，V3 shape normalizer 仍会接受。该结果不改变本次
+管线 smoke 结论，但正式矩阵不能依赖人工发现；下一步把预期 criterion/image/deterministic ID 集合作为
+normalizer contract，要求集合相等、namespace 引用存在、hard failure criterion 可解析，失败即拒绝。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1929,11 +1943,11 @@ QPainter 圆弧 spinner。
    跨域反例；原题改善不能单独证明通用能力。
 2. 🔶 protocol/run/brief/answers/seed/evaluation schema、agent-surface hash、跨文件 hash、Git/npm 隔离、
    通用 seed generator 和结构 identity 已完成；模型/provider 与最终 protocol version 待环境冻结。
-3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；Mechanical 与
-   Simulation 的 `$HIP`/cache/trace/评审输入真实文件门禁已完成，Lookdev 任务级非评分 smoke 待执行。
-   仓库不接收 HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型/evaluator/九个 hash 已冻结；Mechanical attempt 2 与 Simulation attempt 1 的隔离
-   execution + evaluator delivery 已通过，protocol 为 `b0-2026-09-01-v3`。下一步运行 Lookdev smoke。
+3. ✅ 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；Mechanical、
+   Simulation、Lookdev 的 `$HIP`/cache/trace/评审输入真实文件门禁均已完成。仓库不接收 HIP/cache/
+   render 或未解封留出正文。
+4. 🔶 执行模型/evaluator/九个 hash 已冻结；三族隔离 execution + evaluator delivery 已通过，当前 protocol
+   为 `b0-2026-09-01-v3`。正式 3×2 前先补 evaluator criterion/evidence ID 引用完整性并升级 protocol。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 
