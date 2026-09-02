@@ -1807,6 +1807,21 @@ warning，集成输出 344 points/202 prims，6 个控制恢复默认。功能�
 臂与右关节在匿名静帧中视觉连接歧义而 unverified。该冲突不阻塞基础设施 smoke，也不被 K3 的结构自证覆盖。
 新增 normalizer 回归后 Node suite 为 16 个文件。
 
+### 2.61 Simulation smoke attempt 1 通过（2026-09-02）
+
+Simulation calibration 在全新隔离 execution workspace 中运行；发送前由 Host RPC 校验
+cwd/preset/model/blank/turn/step/token，live HIP 与 workspace 精确一致。最终 1 turn、66 tools、120 verbs、
+terminal completed、0 pending todo；成功 exec 的动词覆盖为 20/21，query mutation=0，exec-for-read-only=0。
+独立 H21 回读、真实 cache 文件、三帧几何差分、同构图双帧 render、Blind/Target delivery 与
+`validate-run`/`validate-inputs`/`validate-smoke` 均通过；Target core/visual 为 pass、0 hard failure，
+honest-report 因冻结视觉输入不把 agent 自述当 ground truth 而保留 unverified。该结果只证明 smoke 管线，
+不产生质量分数。
+
+本轮同时形成工具采用证据：File Cache 的写盘按钮没有目录动词，模型连续 5 次无豁免低层调用均被
+Raw Gate 在执行前拦截；随后两轮真实写盘使用同一可审计 `allow_raw` 理由，`gateOutcome=exempted`。
+这不是隐蔽成功裸修改，但说明按钮型参数需要进入后续动词覆盖评估；正式矩阵前不临时改变 49 动词
+surface，以免破坏已冻结 protocol。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1914,11 +1929,11 @@ QPainter 圆弧 spinner。
    跨域反例；原题改善不能单独证明通用能力。
 2. 🔶 protocol/run/brief/answers/seed/evaluation schema、agent-surface hash、跨文件 hash、Git/npm 隔离、
    通用 seed generator 和结构 identity 已完成；模型/provider 与最终 protocol version 待环境冻结。
-3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
-   的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
-   HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型/evaluator/九个 hash 已冻结；Mechanical attempt 2 的隔离 execution + evaluator delivery
-   已通过，protocol 为 `b0-2026-09-01-v3`。下一步运行 Simulation/Lookdev smoke。
+3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；Mechanical 与
+   Simulation 的 `$HIP`/cache/trace/评审输入真实文件门禁已完成，Lookdev 任务级非评分 smoke 待执行。
+   仓库不接收 HIP/cache/render 或未解封留出正文。
+4. 🔶 执行模型/evaluator/九个 hash 已冻结；Mechanical attempt 2 与 Simulation attempt 1 的隔离
+   execution + evaluator delivery 已通过，protocol 为 `b0-2026-09-01-v3`。下一步运行 Lookdev smoke。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 
