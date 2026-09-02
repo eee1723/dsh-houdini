@@ -1891,6 +1891,13 @@ rollback，0 Gate block/成功裸修改/query mutation，成功 exec 动词覆�
 约15.0分钟/22 tools/3 failed/2 rollback，GLM约31.7分钟/50 tools/10 failed/8 rollback，结果并列而效率与
 稳定性偏向 K3。
 
+第 5 次 `formal-simulation-k3-r1` 自然完成：103 trace steps、332 verbs、24/49 目录广度；13 failed
+calls/11 rollback，0 Gate block，但出现 2 次 query mutation（直接 `hou.setFrame`/`cook()`）和 18 次成功
+裸 File Cache 按钮写盘。独立 H21 确认 rbdbulletsolver、18 个稳定 cube ID、120 帧 cache、早中晚演化、
+重力 A/B 重算差异、最终节点 0 error/warning；三张同构图与语义检查通过。Target 9 criterion 全 pass、
+100 分、0 hard failure、claimLevel=none。Simulation 同族 K3/GLM 均 100；K3 约36.8分钟且 query mutation
+更多，GLM 约74.9分钟但无 query mutation；结果同分，效率/流程各有不同信号。该结果不改变 49 动词 surface。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
