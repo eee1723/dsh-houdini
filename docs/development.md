@@ -1787,6 +1787,26 @@ copy 交付。新增 `tools/benchmark-smoke.mjs`：每次创建全新隔离 exec
 证据留在 sibling 目录。Protocol v2 新增同一 workspace policy，canonical/file hash 重新封存；新增回归后
 Node suite 为 15 个文件。Attempt 1 只作为基础设施发现证据，不评分 K3、不进入 smoke success 计数。
 
+### 2.60 Mechanical smoke attempt 2 通过与 evaluator normalizer（2026-09-01）
+
+通过正式 `workspace.create` + 带预分配 sessionId 的 `session.create`，attempt 2 在发送 prompt 前确认 cwd 为
+隔离 execution 目录、preset=houdini、model=kimi-coding/k3、blank=true、turns/steps/tokens=0；workspace
+初始只含 `agent-message.txt` 和 seed 精确复制的 `work.hip`。Host `session.prompt` 只发送公开文本。真实 run
+为 1 turn/37 tools/222 verbs/21.6 分钟，成功 mutation exec 动词覆盖 100%、0 query mutation、terminal
+completed；`scene_save` 直接保存 work.hip，没有 Save As/backup/shell copy 绕路。
+
+`validate-run`、`validate-inputs`、`validate-smoke` 全通过：work.hip 472368 bytes，trace 387856 bytes，整体/
+特写 21600/11577 bytes，final node `/obj/monitor_arm_OUT/OUT`。独立 H21 回读 10 个模块/输出均 0 error/
+warning，集成输出 344 points/202 prims，6 个控制恢复默认。功能质量不计分；trace 有一次只读验证路径 bug，
+无 verb failure/Raw Gate block/无动词裸修改。
+
+独立 evaluator delivery 暴露 presentation P0：Overall Blind 相同输入连续两次返回被单层 `json` code fence 包裹的
+正确 JSON，Closeup Blind 还回显中性 `viewLabel`。新增 `tools/benchmark-evaluator.mjs`：只接受 raw JSON 或
+恰好一层且无外部文本的 JSON fence；保留可选字符串 viewLabel，未知字段/额外文字/多 fence/stage 错误/
+缺字段仍 fail-closed。Protocol v3 固定 normalizer id。Mechanical Overall Target=pass；Closeup Target 因绿色
+臂与右关节在匿名静帧中视觉连接歧义而 unverified。该冲突不阻塞基础设施 smoke，也不被 K3 的结构自证覆盖。
+新增 normalizer 回归后 Node suite 为 16 个文件。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1897,8 +1917,8 @@ QPainter 圆弧 spinner。
 3. 🔶 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；completed smoke
    的 `$HIP`/trace/评审输入真实文件门禁已完成，但三族任务级非评分 smoke 尚未执行。仓库不接收
    HIP/cache/render 或未解封留出正文。
-4. 🔶 执行模型/evaluator/九个 hash 已冻结；mechanical attempt 1 因 workspace 污染 invalidated，protocol
-   升为 `b0-2026-09-01-v2` 并加入隔离 workspace/`work.hip` policy。下一步重跑 mechanical smoke。
+4. 🔶 执行模型/evaluator/九个 hash 已冻结；Mechanical attempt 2 的隔离 execution + evaluator delivery
+   已通过，protocol 为 `b0-2026-09-01-v3`。下一步运行 Simulation/Lookdev smoke。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 

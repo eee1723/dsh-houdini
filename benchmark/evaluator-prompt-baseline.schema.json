@@ -4,7 +4,7 @@
   "title": "dsh-houdini independent evaluator prompt baseline",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "verifiedAt", "evaluator", "prompts", "independentInputs", "executionAgentExposed", "status", "smoke"],
+  "required": ["schemaVersion", "verifiedAt", "evaluator", "prompts", "normalizer", "independentInputs", "executionAgentExposed", "status", "smoke"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "verifiedAt": { "type": "string", "format": "date-time" },
@@ -25,6 +25,14 @@
       "properties": {
         "blind": { "$ref": "#/$defs/prompt" },
         "target": { "$ref": "#/$defs/prompt" }
+      }
+    },
+    "normalizer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "acceptedPresentations"],
+      "properties": {
+        "id": { "const": "evaluator-json-normalizer-v1" },
+        "acceptedPresentations": { "const": ["raw-json", "single-json-code-fence"] }
       }
     },
     "independentInputs": { "const": true },

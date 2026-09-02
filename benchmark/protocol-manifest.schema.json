@@ -70,11 +70,12 @@
     "evaluation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["deterministicEvaluator", "blindVisualEvaluator", "targetEvaluator", "blindPromptSha256", "targetPromptSha256"],
+      "required": ["deterministicEvaluator", "blindVisualEvaluator", "targetEvaluator", "responseNormalizer", "blindPromptSha256", "targetPromptSha256"],
       "properties": {
         "deterministicEvaluator": { "type": "string", "minLength": 1 },
         "blindVisualEvaluator": { "type": "string", "minLength": 1 },
         "targetEvaluator": { "type": "string", "minLength": 1 },
+        "responseNormalizer": { "const": "evaluator-json-normalizer-v1" },
         "blindPromptSha256": { "$ref": "#/$defs/sha256" },
         "targetPromptSha256": { "$ref": "#/$defs/sha256" }
       }

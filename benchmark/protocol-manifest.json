@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "protocolVersion": "b0-2026-09-01-v2",
-  "createdAt": "2026-09-01T07:50:27.6106897Z",
+  "protocolVersion": "b0-2026-09-01-v3",
+  "createdAt": "2026-09-01T08:26:59.7752317Z",
   "baselineCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
   "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "environment": {
@@ -25,6 +25,7 @@
     "deterministicEvaluator": "dsh-houdini-evidence-v2+hython-21.0.440",
     "blindVisualEvaluator": "dashscope/qwen-vl-max",
     "targetEvaluator": "dashscope/qwen-vl-max",
+    "responseNormalizer": "evaluator-json-normalizer-v1",
     "blindPromptSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64",
     "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
   },

@@ -505,11 +505,14 @@ export function validateProtocolManifest(manifest) {
   if (manifest.execution.additionalCorrectionLimit !== 0) throw new Error('additionalCorrectionLimit must be 0')
   requireObject(manifest.evaluation, 'evaluation')
   requireExactKeys(manifest.evaluation, [
-    'deterministicEvaluator', 'blindVisualEvaluator', 'targetEvaluator',
+    'deterministicEvaluator', 'blindVisualEvaluator', 'targetEvaluator', 'responseNormalizer',
     'blindPromptSha256', 'targetPromptSha256',
   ], 'evaluation')
   for (const field of ['deterministicEvaluator', 'blindVisualEvaluator', 'targetEvaluator']) {
     requireString(manifest.evaluation[field], `evaluation.${field}`)
+  }
+  if (manifest.evaluation.responseNormalizer !== 'evaluator-json-normalizer-v1') {
+    throw new Error('evaluation.responseNormalizer is invalid')
   }
   requireHash(manifest.evaluation.blindPromptSha256, 'evaluation.blindPromptSha256')
   requireHash(manifest.evaluation.targetPromptSha256, 'evaluation.targetPromptSha256')

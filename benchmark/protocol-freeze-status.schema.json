@@ -31,9 +31,10 @@
     },
     "evaluation": {
       "type": "object", "additionalProperties": false,
-      "required": ["evaluator", "blindPromptSha256", "targetPromptSha256"],
+      "required": ["evaluator", "responseNormalizer", "blindPromptSha256", "targetPromptSha256"],
       "properties": {
         "evaluator": { "const": "dashscope/qwen-vl-max" },
+        "responseNormalizer": { "const": "evaluator-json-normalizer-v1" },
         "blindPromptSha256": { "$ref": "#/$defs/sha256" },
         "targetPromptSha256": { "$ref": "#/$defs/sha256" }
       }

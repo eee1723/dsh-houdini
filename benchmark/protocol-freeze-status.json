@@ -17,6 +17,7 @@
   },
   "evaluation": {
     "evaluator": "dashscope/qwen-vl-max",
+    "responseNormalizer": "evaluator-json-normalizer-v1",
     "blindPromptSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64",
     "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
   },
@@ -27,8 +28,8 @@
   },
   "finalProtocolGenerated": true,
   "protocol": {
-    "version": "b0-2026-09-01-v2",
-    "canonicalSha256": "d82ed6ecb3bcf37852828814f53b816f177aacf2afbee6a6d445dca8f011557e",
-    "fileSha256": "5b07321c99ec98c3218f05b0d06c8af9377bd2f6ab2186cafb04f6dbe6039087"
+    "version": "b0-2026-09-01-v3",
+    "canonicalSha256": "920f966230f46cdcef030d471c601b7419fa9f84e03a8d8750264b404322cab6",
+    "fileSha256": "49cc51823386f014cc22c3feed9e574d80af76270703df6628577f1e548398e1"
   }
 }

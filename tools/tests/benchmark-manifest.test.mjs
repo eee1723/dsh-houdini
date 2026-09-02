@@ -64,6 +64,7 @@ const protocol = {
     deterministicEvaluator: 'deterministic-v1',
     blindVisualEvaluator: 'blind-v1',
     targetEvaluator: 'target-v1',
+    responseNormalizer: 'evaluator-json-normalizer-v1',
     blindPromptSha256: hash,
     targetPromptSha256: hash2,
   },

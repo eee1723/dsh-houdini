@@ -5,7 +5,7 @@
 > 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
 > blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 与独立 holdout hash
 > 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，final protocol 已升为
-> `b0-2026-09-01-v2`；三族任务级非评分 smoke 待重跑。
+> `b0-2026-09-01-v3`；Mechanical smoke 已通过，Simulation/Lookdev 待运行。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
@@ -24,6 +24,13 @@ run 必须 `invalidated`，不能因 agent 未实际读取就降级污染事实�
 Save As，agent 只能 `saveAsBackup + shell copy`。V2 协议现强制 `isolated-run-directory`，将 seed 精确字节
 复制为当前 `work.hip`，execution workspace 只允许 `agent-message.txt` 和 `work.hip`，evaluator material
 不可访问。污染 run 只有在 status=`invalidated` 时才允许记录 `evaluatorMaterialExposed=true`。
+
+Mechanical attempt 2 使用隔离 workspace、`work.hip` 和正式 workspace/session API，execution cwd、preset、
+model 在 prompt 前核验；`validate-run`/`validate-inputs`/`validate-smoke`、H21 独立 HIP 回读、整体/特写 PNG、
+trace 和 final node 均通过。Qwen-VL Blind 连续返回语义正确但带单层 `json` code fence 的响应，另一次回显中性
+`viewLabel`；V3 加入 `evaluator-json-normalizer-v1`，只接受 raw JSON 或无外部文本的单层 JSON fence，
+剥壳后仍严格校验 stage/字段/状态，未知字段继续拒绝。整体 Target 为 pass，关节特写 Target 为 unverified；
+该分歧保留但不阻塞非评分基础设施 smoke。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 

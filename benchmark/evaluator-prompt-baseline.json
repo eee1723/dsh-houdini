@@ -16,6 +16,10 @@
       "canonicalSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
     }
   },
+  "normalizer": {
+    "id": "evaluator-json-normalizer-v1",
+    "acceptedPresentations": ["raw-json", "single-json-code-fence"]
+  },
   "independentInputs": true,
   "executionAgentExposed": false,
   "status": "verified",
