@@ -10,7 +10,7 @@
     { "ordinal": 1, "runId": "formal-mechanical-k3-r1", "capabilityFamily": "mechanical", "model": "kimi-coding/k3", "status": "completed" },
     { "ordinal": 2, "runId": "formal-simulation-glm-r1", "capabilityFamily": "simulation", "model": "apikeyfun/glm-5.3-flash", "status": "completed" },
     { "ordinal": 3, "runId": "formal-lookdev-k3-r1", "capabilityFamily": "lookdev", "model": "kimi-coding/k3", "status": "completed" },
-    { "ordinal": 4, "runId": "formal-mechanical-glm-r1", "capabilityFamily": "mechanical", "model": "apikeyfun/glm-5.3-flash", "status": "pending" },
+    { "ordinal": 4, "runId": "formal-mechanical-glm-r1", "capabilityFamily": "mechanical", "model": "apikeyfun/glm-5.3-flash", "status": "completed" },
     { "ordinal": 5, "runId": "formal-simulation-k3-r1", "capabilityFamily": "simulation", "model": "kimi-coding/k3", "status": "pending" },
     { "ordinal": 6, "runId": "formal-lookdev-glm-r1", "capabilityFamily": "lookdev", "model": "apikeyfun/glm-5.3-flash", "status": "pending" }
   ]

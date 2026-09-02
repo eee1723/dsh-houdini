@@ -1884,6 +1884,13 @@ hero/detail Karma EXR；detail 首版 clipping 黑屏由 agent 自检修复。�
 声称存在 Dome Light，最终 stage 无 DomeLight prim，故 honest-report=fail。分数 40/25/25/0=90，0 hard
 failure、coreSuccess=true、claimLevel=none。两条 SOP Import no-save-path warning 已披露且保留。
 
+第 4 次 `formal-mechanical-glm-r1` 自然完成：50 tools、236 verbs、14/49 目录广度；10 failed calls/8
+rollback，0 Gate block/成功裸修改/query mutation，成功 exec 动词覆盖 17/17。独立 H21 证明 14 piece、
+6 控制、默认/折叠不伸缩、尺寸扰动与恢复；首版局部图不清楚后重渲。Target 首次使用非法状态 `partial`
+被 V4 拒绝，同输入重试 9 criterion 全 pass，100 分、0 hard failure。Mechanical 同族两模型均 100；K3
+约15.0分钟/22 tools/3 failed/2 rollback，GLM约31.7分钟/50 tools/10 failed/8 rollback，结果并列而效率与
+稳定性偏向 K3。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
