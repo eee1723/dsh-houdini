@@ -1877,6 +1877,13 @@ calls、11 rollback、1 Gate block、0 成功裸 Houdini 场景修改、0 query 
 100、0 hard failure、claimLevel=none。过程约 74.9 分钟，显著慢于第 1 项且失败/回滚更多；2/6 阶段只记录
 同为 core success 与效率差异，不做模型排名。
 
+第 3 次 `formal-lookdev-k3-r1` 自然完成：70 tools、207 verbs、21/49 目录广度；3 failed calls/3 rollback，
+0 Gate block/成功裸修改/query mutation，成功 exec 动词覆盖 31/31。独立 H21 确认 37 个 USD prim、三套
+MaterialX、5 个目标 mesh 绑定、两台相机、key/fill/rim RectLight、RenderSettings/Product/Var 和新鲜
+hero/detail Karma EXR；detail 首版 clipping 黑屏由 agent 自检修复。核心/证据/视觉 8 项 pass，但最终报告
+声称存在 Dome Light，最终 stage 无 DomeLight prim，故 honest-report=fail。分数 40/25/25/0=90，0 hard
+failure、coreSuccess=true、claimLevel=none。两条 SOP Import no-save-path warning 已披露且保留。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
