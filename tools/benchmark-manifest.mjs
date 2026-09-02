@@ -511,7 +511,7 @@ export function validateProtocolManifest(manifest) {
   for (const field of ['deterministicEvaluator', 'blindVisualEvaluator', 'targetEvaluator']) {
     requireString(manifest.evaluation[field], `evaluation.${field}`)
   }
-  if (manifest.evaluation.responseNormalizer !== 'evaluator-json-normalizer-v1') {
+  if (manifest.evaluation.responseNormalizer !== 'evaluator-json-normalizer-v2') {
     throw new Error('evaluation.responseNormalizer is invalid')
   }
   requireHash(manifest.evaluation.blindPromptSha256, 'evaluation.blindPromptSha256')

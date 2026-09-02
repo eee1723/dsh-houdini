@@ -64,7 +64,7 @@ const protocol = {
     deterministicEvaluator: 'deterministic-v1',
     blindVisualEvaluator: 'blind-v1',
     targetEvaluator: 'target-v1',
-    responseNormalizer: 'evaluator-json-normalizer-v1',
+    responseNormalizer: 'evaluator-json-normalizer-v2',
     blindPromptSha256: hash,
     targetPromptSha256: hash2,
   },
@@ -376,7 +376,7 @@ assert.equal(modelCapability.models[1].minimumVerifiedMaxTokens, 1500)
 
 const evaluatorBaseline = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompt-baseline.json'), 'utf8'))
 const blindPrompt = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompts', 'blind-visual-v1.json'), 'utf8'))
-const targetPrompt = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompts', 'target-verification-v1.json'), 'utf8'))
+const targetPrompt = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompts', 'target-verification-v6.json'), 'utf8'))
 assert.equal(evaluatorBaseline.evaluator.model, 'qwen-vl-max')
 assert.equal(evaluatorBaseline.prompts.blind.canonicalSha256, sha256Json(blindPrompt))
 assert.equal(evaluatorBaseline.prompts.target.canonicalSha256, sha256Json(targetPrompt))
@@ -385,16 +385,21 @@ assert.equal(evaluatorBaseline.status, 'verified')
 assert.notEqual(evaluatorBaseline.smoke.blindInputSha256, evaluatorBaseline.smoke.targetInputSha256)
 assert.equal(evaluatorBaseline.smoke.blindSemanticOk, true)
 assert.equal(evaluatorBaseline.smoke.targetSemanticOk, true)
-assert.equal(evaluatorBaseline.smoke.blindTransportFailures, 1)
+assert.equal(evaluatorBaseline.normalizer.id, 'evaluator-json-normalizer-v2')
+assert.equal(evaluatorBaseline.normalizer.contractRequired, true)
+assert.equal(evaluatorBaseline.smoke.inputHashMode, 'canonical-bundle-v1')
+assert.equal(evaluatorBaseline.smoke.blindTransportFailures, 0)
+assert.equal(evaluatorBaseline.smoke.targetContractRejections, 5)
 assert.equal(blindPrompt.stage, 'blind')
 assert.equal(targetPrompt.stage, 'target')
+assert.equal(targetPrompt.promptId, 'target-verification-v6')
 assert.equal(blindPrompt.executionAgentExposed, false)
 assert.equal(targetPrompt.executionAgentExposed, false)
 
 const freezeStatus = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-freeze-status.json'), 'utf8'))
 const frozenProtocol = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'protocol-manifest.json'), 'utf8'))
 assert.equal(validateProtocolManifest(frozenProtocol), frozenProtocol)
-assert.equal(freezeStatus.status, 'ready-for-smoke')
+assert.equal(freezeStatus.status, 'ready-for-formal-runs')
 assert.equal(freezeStatus.finalProtocolGenerated, true)
 assert.deepEqual(freezeStatus.execution.models, ['kimi-coding/k3', 'apikeyfun/glm-5.3-flash'])
 assert.ok(Object.values(freezeStatus.instances).every((entry) => /^[0-9a-f]{64}$/.test(entry.holdout)))

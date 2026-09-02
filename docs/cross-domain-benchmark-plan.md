@@ -1,12 +1,12 @@
 # dsh-houdini 跨域能力评测计划
 
-> 状态：2026-09-01 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
+> 状态：2026-09-02 路线与反过拟合硬约束已拍板；M1 完整冷启动/live query/Trace 基线已封口，
 > B0 schema、交叉 hash、smoke 产物门禁、通用 seed generator 与三族 calibration seed 输入已实现；
 > 执行模型已选 K3/GLM 并通过当前 provider 的同图原生视觉探针；DashScope qwen-vl-max 的独立
 > blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 与独立 holdout hash
-> 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，final protocol 已升为
-> `b0-2026-09-01-v3`；Mechanical、Simulation 与 Lookdev smoke 均已通过；正式 3×2 前待补
-> Target criterion/evidence ID 引用完整性门禁。
+> 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，三族隔离 smoke 均已通过；Lookdev
+> evaluator 又暴露 ID namespace/hard-failure 语义缺口。Final protocol 已升为 `b0-2026-09-02-v4`，
+> V2 normalizer 的引用完整性与确定性 hard-failure 回放通过，当前可启动正式 3×2。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
@@ -32,6 +32,13 @@ trace 和 final node 均通过。Qwen-VL Blind 连续返回语义正确但带单
 `viewLabel`；V3 加入 `evaluator-json-normalizer-v1`，只接受 raw JSON 或无外部文本的单层 JSON fence，
 剥壳后仍严格校验 stage/字段/状态，未知字段继续拒绝。整体 Target 为 pass，关节特写 Target 为 unverified；
 该分歧保留但不阻塞非评分基础设施 smoke。
+
+Simulation/Lookdev smoke 通过后，Lookdev Target 暴露两类 shape schema 无法发现的语义错误：图片 ID 与
+deterministic ID namespace 交叉，以及把未触发的 critical 条件写进 `hardFailures`。V4 使用
+`target-verification-v6` + `evaluator-json-normalizer-v2`：模型只输出 criteria/overall；normalizer 要求
+预期 criterion 集合完全相等、引用存在且 namespace 不交叉，并根据冻结 critical rules 与 `status=fail`
+确定性生成 hardFailures。相同 Lookdev 输入最终回放为 9 criterion、core/visual pass、0 hard failure；此前
+5 个语义不合规 Target 响应全部 fail-closed，不进入评分。
 > 本文是下一阶段 benchmark、评分协议与准入决策的唯一维护位置。README 只保留路线摘要，
 > `development.md` 只记录执行状态，`tool-design.md` 只记录经评测进入的工具决策。
 
@@ -240,12 +247,12 @@ PNG、同一中性 prompt、零工具直连两条 provider：K3 一次完成并�
 该探针只验证直接图片输入，不替代独立 evaluator；执行期 Vision Toolkit 仍固定为 0.1.7 + qwen-vl-max。
 
 独立 evaluator 固定为 DashScope `qwen-vl-max`。通用 `blind-visual-v1` 与
-`target-verification-v1` 分别封存为 canonical SHA-256 `51a96b85…` 与 `07bd7cc2…`；blind 只收匿名图并
+`target-verification-v6` 分别封存为 canonical SHA-256 `51a96b85…` 与 `5b0f1bcf…`；blind 只收匿名图并
 禁止 pass/fail，target 才收 public goal、criteria、确定性证据和已冻结 blind result。2026-09-01 用同一
-UI 图做两阶段 smoke：第一次 blind 在 TLS 建连前 `ECONNRESET`，不计模型失败；相同输入重试返回严格 JSON，
-只描述可见布局与不确定性。target 一次返回三个 criterion 的完整集合，均引用图片与确定性 evidence，
-hardFailures 为空并保留单图 limitations。完整输入 hash `64cacba9…` / `b97ce4bd…` 不同，结果 hash
-`dbb05f3c…` / `f59170d1…`；基线在 `benchmark/evaluator-prompt-baseline.json` 标为 `verified`。
+Lookdev 整体/特写同输入做 V4 smoke：blind 一次返回可见布局与不确定性；Target 经 5 次合同拒绝后，v6
+返回完整 9 criterion 与正确 namespace，normalizer 确定性生成空 hardFailures。完整 canonical bundle 输入
+hash `bfe85928…` / `2fde0f28…` 不同，结果 hash `043bd75f…` / `e62e5ab0…`；基线在
+`benchmark/evaluator-prompt-baseline.json` 标为 `verified`。
 
 brief envelope 的 `briefId`、能力族和实例角色只供 evaluator/run 管理；执行 agent payload 只能取普通
 `agentMessage` 与公开资源，不能暴露 calibration/holdout 身份。answers 只允许用户偏好、资产位置、输出格式

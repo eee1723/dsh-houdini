@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-09-01T03:58:13.8139459Z",
+  "verifiedAt": "2026-09-02T03:41:11.8356772Z",
   "evaluator": {
     "provider": "dashscope",
     "model": "qwen-vl-max",
@@ -12,13 +12,23 @@
       "canonicalSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64"
     },
     "target": {
-      "promptId": "target-verification-v1",
-      "canonicalSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
+      "promptId": "target-verification-v6",
+      "canonicalSha256": "5b0f1bcfceff8dfd85590c37d3ba7aeb40cb48e424ef77e46262fe5d5beacbe2"
     }
   },
   "normalizer": {
-    "id": "evaluator-json-normalizer-v1",
-    "acceptedPresentations": ["raw-json", "single-json-code-fence"]
+    "id": "evaluator-json-normalizer-v2",
+    "acceptedPresentations": ["raw-json", "single-json-code-fence"],
+    "contractRequired": true,
+    "enforcedReferences": [
+      "blind-observation-evidence-ids",
+      "target-criterion-ids",
+      "target-image-evidence-ids",
+      "target-deterministic-evidence-ids",
+      "target-hard-failure-rules",
+      "target-hard-failures-derived-from-critical-fails",
+      "target-core-status-derived-from-critical-statuses"
+    ]
   },
   "independentInputs": true,
   "executionAgentExposed": false,
@@ -26,14 +36,17 @@
   "smoke": {
     "cliVersion": "1.18.1",
     "skillVersion": "1.18.1",
-    "imageSha256": "b09ebe94e282884339a23be15ee3b7426664eafb206bb19afef85a8afe315d17",
-    "blindInputSha256": "64cacba91875ba314c68c4e4420edbc09deda2c94ac74bf3bf5083862f9e53b8",
-    "targetInputSha256": "b97ce4bddef14050e18e0e682b3d23877de9b414de3429af4e625429907a66c4",
-    "blindResultSha256": "dbb05f3ccda583622f552bcb491dce96b17b6be43e5dd97c069d726c33b80c49",
-    "targetResultSha256": "f59170d12d77f1bb41251a0a0b26fb37451047f6ca769b7776f4a225e48ceaa2",
-    "blindAttempts": 2,
-    "targetAttempts": 1,
-    "blindTransportFailures": 1,
+    "inputHashMode": "canonical-bundle-v1",
+    "imageSha256": "3d11d2350aaad404288a105575e7a80004d47dddd9877380ea1d19620c621e0c",
+    "targetContractSha256": "8e4ac01befe7b6210edc4addc7c36aea3860406488ecdac73a1e14eaee544679",
+    "blindInputSha256": "bfe859283bbfc856d347b701050afba788b7182d38c3c5a8cd55682acec7d3aa",
+    "targetInputSha256": "2fde0f28644f37b5711566f24a878a94ab97d66f0f01d40484b139e0704d9ee5",
+    "blindResultSha256": "043bd75f78ed35192dc3b2dd0502a4e643a9b381751b2916b81dbd68dfe01bc0",
+    "targetResultSha256": "e62e5ab083f4e586833b97b6ed381ea0e54d77a73e89dd3fc8df9cccb4c3ccbd",
+    "blindAttempts": 1,
+    "targetAttempts": 6,
+    "blindTransportFailures": 0,
+    "targetContractRejections": 5,
     "blindSemanticOk": true,
     "targetSemanticOk": true
   }

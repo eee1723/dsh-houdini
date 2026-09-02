@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "ready-for-smoke",
+  "status": "ready-for-formal-runs",
   "productionSurfaceCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
   "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "execution": {
@@ -17,9 +17,9 @@
   },
   "evaluation": {
     "evaluator": "dashscope/qwen-vl-max",
-    "responseNormalizer": "evaluator-json-normalizer-v1",
+    "responseNormalizer": "evaluator-json-normalizer-v2",
     "blindPromptSha256": "51a96b858aab24b1aecd1d2574067337b5e7359fdeb724234b4c6a0522fe7b64",
-    "targetPromptSha256": "07bd7cc2bfefb8100dfcf291acc3a57a1b7d5447c4c5b6b80e49c121b0b1603e"
+    "targetPromptSha256": "5b0f1bcfceff8dfd85590c37d3ba7aeb40cb48e424ef77e46262fe5d5beacbe2"
   },
   "instances": {
     "mechanical": { "calibration": "ffe8dd91481c882231d16804f073f446c22f0ee72e4784208d5fb35426e3fc14", "holdout": "c3df4d532661af2bf79971f34a76336aa429a40d2429c4d768fd339aca862fde", "counterexample": "4f391e64e4fd8e7e104060ead51c040691865286253ae122f9e482912561fc10" },
@@ -28,8 +28,8 @@
   },
   "finalProtocolGenerated": true,
   "protocol": {
-    "version": "b0-2026-09-01-v3",
-    "canonicalSha256": "920f966230f46cdcef030d471c601b7419fa9f84e03a8d8750264b404322cab6",
-    "fileSha256": "49cc51823386f014cc22c3feed9e574d80af76270703df6628577f1e548398e1"
+    "version": "b0-2026-09-02-v4",
+    "canonicalSha256": "fefbbc0ed539a25ee7f7f5b12487a38969c845a042f40d6994719be1ae37d8ce",
+    "fileSha256": "5699c89979857ffcccd679d2147c1613ca6ad392f4ee1446d0806e6c81cdb780"
   }
 }

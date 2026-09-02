@@ -75,7 +75,7 @@
         "deterministicEvaluator": { "type": "string", "minLength": 1 },
         "blindVisualEvaluator": { "type": "string", "minLength": 1 },
         "targetEvaluator": { "type": "string", "minLength": 1 },
-        "responseNormalizer": { "const": "evaluator-json-normalizer-v1" },
+        "responseNormalizer": { "const": "evaluator-json-normalizer-v2" },
         "blindPromptSha256": { "$ref": "#/$defs/sha256" },
         "targetPromptSha256": { "$ref": "#/$defs/sha256" }
       }

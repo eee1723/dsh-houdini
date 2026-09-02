@@ -29,10 +29,22 @@
     },
     "normalizer": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "acceptedPresentations"],
+      "required": ["id", "acceptedPresentations", "contractRequired", "enforcedReferences"],
       "properties": {
-        "id": { "const": "evaluator-json-normalizer-v1" },
-        "acceptedPresentations": { "const": ["raw-json", "single-json-code-fence"] }
+        "id": { "const": "evaluator-json-normalizer-v2" },
+        "acceptedPresentations": { "const": ["raw-json", "single-json-code-fence"] },
+        "contractRequired": { "const": true },
+        "enforcedReferences": {
+          "const": [
+            "blind-observation-evidence-ids",
+            "target-criterion-ids",
+            "target-image-evidence-ids",
+            "target-deterministic-evidence-ids",
+            "target-hard-failure-rules",
+            "target-hard-failures-derived-from-critical-fails",
+            "target-core-status-derived-from-critical-statuses"
+          ]
+        }
       }
     },
     "independentInputs": { "const": true },
@@ -42,14 +54,16 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "cliVersion", "skillVersion", "imageSha256", "blindInputSha256", "targetInputSha256",
+        "cliVersion", "skillVersion", "inputHashMode", "imageSha256", "targetContractSha256", "blindInputSha256", "targetInputSha256",
         "blindResultSha256", "targetResultSha256", "blindAttempts", "targetAttempts",
-        "blindTransportFailures", "blindSemanticOk", "targetSemanticOk"
+        "blindTransportFailures", "targetContractRejections", "blindSemanticOk", "targetSemanticOk"
       ],
       "properties": {
         "cliVersion": { "type": "string", "minLength": 1 },
         "skillVersion": { "type": "string", "minLength": 1 },
+        "inputHashMode": { "const": "canonical-bundle-v1" },
         "imageSha256": { "$ref": "#/$defs/sha256" },
+        "targetContractSha256": { "$ref": "#/$defs/sha256" },
         "blindInputSha256": { "$ref": "#/$defs/sha256" },
         "targetInputSha256": { "$ref": "#/$defs/sha256" },
         "blindResultSha256": { "$ref": "#/$defs/sha256" },
@@ -57,6 +71,7 @@
         "blindAttempts": { "type": "integer", "minimum": 1 },
         "targetAttempts": { "type": "integer", "minimum": 1 },
         "blindTransportFailures": { "type": "integer", "minimum": 0 },
+        "targetContractRejections": { "type": "integer", "minimum": 0 },
         "blindSemanticOk": { "const": true },
         "targetSemanticOk": { "const": true }
       }

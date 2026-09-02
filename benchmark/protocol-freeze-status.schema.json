@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "status", "productionSurfaceCommit", "agentSurfaceSha256", "execution", "evaluation", "instances", "finalProtocolGenerated", "protocol"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "status": { "const": "ready-for-smoke" },
+    "status": { "const": "ready-for-formal-runs" },
     "productionSurfaceCommit": { "$ref": "#/$defs/gitSha" },
     "agentSurfaceSha256": { "$ref": "#/$defs/sha256" },
     "execution": {
@@ -34,7 +34,7 @@
       "required": ["evaluator", "responseNormalizer", "blindPromptSha256", "targetPromptSha256"],
       "properties": {
         "evaluator": { "const": "dashscope/qwen-vl-max" },
-        "responseNormalizer": { "const": "evaluator-json-normalizer-v1" },
+        "responseNormalizer": { "const": "evaluator-json-normalizer-v2" },
         "blindPromptSha256": { "$ref": "#/$defs/sha256" },
         "targetPromptSha256": { "$ref": "#/$defs/sha256" }
       }

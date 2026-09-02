@@ -1836,6 +1836,20 @@ deterministicEvidenceId 被重复写进 `evidenceIds`，V3 shape normalizer 仍�
 管线 smoke 结论，但正式矩阵不能依赖人工发现；下一步把预期 criterion/image/deterministic ID 集合作为
 normalizer contract，要求集合相等、namespace 引用存在、hard failure criterion 可解析，失败即拒绝。
 
+### 2.63 Evaluator V4 引用合同与确定性 hard failure（2026-09-02）
+
+新增 `evaluator-json-normalizer-v2`：每次 normalize 必须带只含 ID/rule 的 contract。Blind observations 的
+evidenceId 必须与输入图片集合完全相等；Target criterion 集合必须完全相等，image/deterministic 引用必须
+存在、唯一且 namespace 不交叉。真实 Lookdev 原始 Target 回放立即拒绝了 V3 遗漏的 ID 串线。
+
+随后同一输入连续暴露更深的 evaluator 偏差：即使 prompt 明说未触发时返回空数组，qwen-vl-max 仍会把
+预登记 hard-failure 条件写成非空条目，同时对应 criteria 为 pass。最终移除视觉模型输出中的
+`hardFailures`；`target-verification-v6` 只要求 criteria/overall，normalizer 按冻结 critical rule 和
+`status=fail` 确定性派生 hardFailures。V6 真实回放通过 9 criterion、正确引用、core/visual pass，并派生
+0 hard failure；`overall.coreGoalStatus` 同样由 critical criterion 状态确定性校验。此前 5 次语义不合规
+响应均拒绝、不进入评分。Protocol 升为 `b0-2026-09-02-v4`，生产
+agent surface/49 动词不变。
+
 ## 3. 卡点（blockers）
 
 ### ✅ 3.1 静态 client 半的加载方式（已解决）
@@ -1946,8 +1960,8 @@ QPainter 圆弧 spinner。
 3. ✅ 三个能力族的通用 calibration seed 输入已建立并由 H21 实际重复生成/H21-H22 回归；Mechanical、
    Simulation、Lookdev 的 `$HIP`/cache/trace/评审输入真实文件门禁均已完成。仓库不接收 HIP/cache/
    render 或未解封留出正文。
-4. 🔶 执行模型/evaluator/九个 hash 已冻结；三族隔离 execution + evaluator delivery 已通过，当前 protocol
-   为 `b0-2026-09-01-v3`。正式 3×2 前先补 evaluator criterion/evidence ID 引用完整性并升级 protocol。
+4. ✅ 执行模型/evaluator/九个 hash 已冻结；三族隔离 execution + evaluator delivery 已通过，protocol
+   `b0-2026-09-02-v4` 的 ID 引用完整性与确定性 hard-failure 同输入回放也已通过。下一步正式 3×2。
 5. ⏳ `houdini_query`/`houdini_exec` 暂时保持两个工具；正式运行记录误选、query→exec 重试、
    `execUsedForReadOnly`、`read_only_blocked` 与安全收益后再评估单工具 `mode`，本阶段不先改接口。
 
