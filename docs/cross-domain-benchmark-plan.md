@@ -411,3 +411,23 @@ B4 分成两条不可混淆的通道：
 - 不宣布任何模型排名或通用能力提升；三族并列只说明 calibration 实例上当前 surface 不区分两模型结果。
 - 不因诚实扣分修改评分线；两次 90 分保留为 discovery 事实。
 - B3 候选在进入 surface 前一律先升级 protocol version，改进的泛化价值只能由 B4 留出解封判定。
+
+### 10.5 `houdini_query` / `houdini_exec` 两工具评估（六场正式数据）
+
+六场逐 trace 统计（query/exec/job_submit/job_status 调用数、query mutation、exec 无动词调用）：
+
+| run | query | exec | job_submit/status | query mutation | exec 无动词 |
+|---|---:|---:|---:|---:|---:|
+| mechanical/K3 | 0 | 17 | 0/0 | 0 | 1 |
+| simulation/GLM | 6 | 27 | 0/0 | 0 | 5 |
+| lookdev/K3 | 10 | 34 | 6/6 | 0 | 0 |
+| mechanical/GLM | 17 | 20 | 0/0 | 0 | 0 |
+| simulation/K3 | 14 | 60 | 9/9 | 2 | 0 |
+| lookdev/GLM | 54 | 34 | 4/3 | 0 | 0 |
+| **合计** | **101** | **192** | 19/18 | **2** | **6** |
+
+- 正式误选率 2/101（≈2.0%），全部为 simulation/K3 的 `hou.setFrame`/`cook()`；其余 99 次 query
+  均为只读。query 的只读语义在 98% 调用上成立，分离工具的安全收益为实。
+- exec 无动词调用 6 次中 5 次在 simulation/GLM，均为只读探测，不构成旁路。
+- 结论：**维持两工具保留**，不合并、不删除；simulation/K3 的 2 次 query mutation 记入该模型的
+  过程画像，不改变工具划分。若未来批次误选率显著上升再重估。
