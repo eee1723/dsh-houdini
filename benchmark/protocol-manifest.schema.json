@@ -35,7 +35,7 @@
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["models", "budget", "workspace", "additionalCorrectionLimit"],
+      "required": ["models", "budget", "workspace", "additionalCorrectionLimit", "settingsFileSha256"],
       "properties": {
         "models": {
           "type": "array",
@@ -43,6 +43,10 @@
           "maxItems": 2,
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
+        },
+        "settingsFileSha256": {
+          "$ref": "#/$defs/sha256",
+          "description": "SHA-256 of the runtime settings file (e.g. ~/.dsh/settings.yaml); records agent-surface changes that live outside the repo, such as provider model declarations."
         },
         "budget": {
           "type": "object",

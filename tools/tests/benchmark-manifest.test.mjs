@@ -59,6 +59,7 @@ const protocol = {
       evaluatorMaterialAccessible: false,
     },
     additionalCorrectionLimit: 0,
+    settingsFileSha256: hash,
   },
   evaluation: {
     deterministicEvaluator: 'deterministic-v1',
@@ -82,7 +83,7 @@ assert.throws(() => validateProtocolManifest({
   evaluation: { ...protocol.evaluation, targetPromptSha256: hash },
 }), /independently sealed/)
 assert.throws(() => validateProtocolManifest({ ...protocol, unexpected: true }), /unsupported field/)
-assert.throws(() => validateProtocolManifest({ ...protocol, execution: { models: ['model-a', 'model-a'], additionalCorrectionLimit: 0 } }), /two distinct/)
+assert.throws(() => validateProtocolManifest({ ...protocol, execution: { models: ['model-a', 'model-a'], additionalCorrectionLimit: 0, settingsFileSha256: hash } }), /two distinct/)
 
 const run = {
   schemaVersion: 1,
@@ -372,7 +373,7 @@ assert.deepEqual(
 )
 assert.ok(modelCapability.models.every((item) => item.transportOk && item.semanticOk))
 assert.equal(modelCapability.models[0].adapterImageDeclared, true)
-assert.equal(modelCapability.models[1].adapterImageDeclared, null)
+assert.equal(modelCapability.models[1].adapterImageDeclared, true)
 assert.equal(modelCapability.models[1].minimumVerifiedMaxTokens, 1500)
 
 const evaluatorBaseline = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'evaluator-prompt-baseline.json'), 'utf8'))

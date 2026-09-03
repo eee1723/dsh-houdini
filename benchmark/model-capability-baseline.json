@@ -24,13 +24,13 @@
       "provider": "apikeyfun",
       "model": "glm-5.3-flash",
       "api": "openai-completions",
-      "adapterImageDeclared": null,
+      "adapterImageDeclared": true,
       "transportOk": true,
       "semanticOk": true,
       "responseModel": "glm-5.3-flash",
       "attempts": 2,
       "minimumVerifiedMaxTokens": 1500,
-      "notes": "The custom provider accepted the data-URL PNG. A 500-token attempt ended by length after 482 reasoning tokens and was semantically incomplete; a 1500-token retry correctly described the same title, metrics row, and left/right panels."
+      "notes": "The custom provider accepted the data-URL PNG. A 500-token attempt ended by length after 482 reasoning tokens and was semantically incomplete; a 1500-token retry correctly described the same title, metrics row, and left/right panels. 2026-09-03 (v5 C1): settings.yaml model entry now declares input=[text,image]; declaration verified truthful by this probe."
     }
   ]
 }

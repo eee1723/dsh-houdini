@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "protocolVersion": "b0-2026-09-02-v4",
-  "protocolManifestSha256": "5699c89979857ffcccd679d2147c1613ca6ad392f4ee1446d0806e6c81cdb780",
-  "phase": "discovery",
+  "protocolVersion": "b0-2026-09-03-v5",
+  "protocolManifestSha256": "9be7fe51b5dd6c970c1777966f43450cf97ab1ef87e784503185e4bdcd87864a",
+  "phase": "regression",
   "instanceRole": "calibration",
   "holdoutReleased": false,
   "additionalCorrectionLimit": 0,
   "runs": [
-    { "ordinal": 1, "runId": "formal-mechanical-k3-r1", "capabilityFamily": "mechanical", "model": "kimi-coding/k3", "status": "completed" },
-    { "ordinal": 2, "runId": "formal-simulation-glm-r1", "capabilityFamily": "simulation", "model": "apikeyfun/glm-5.3-flash", "status": "completed" },
-    { "ordinal": 3, "runId": "formal-lookdev-k3-r1", "capabilityFamily": "lookdev", "model": "kimi-coding/k3", "status": "completed" },
-    { "ordinal": 4, "runId": "formal-mechanical-glm-r1", "capabilityFamily": "mechanical", "model": "apikeyfun/glm-5.3-flash", "status": "completed" },
-    { "ordinal": 5, "runId": "formal-simulation-k3-r1", "capabilityFamily": "simulation", "model": "kimi-coding/k3", "status": "completed" },
-    { "ordinal": 6, "runId": "formal-lookdev-glm-r1", "capabilityFamily": "lookdev", "model": "apikeyfun/glm-5.3-flash", "status": "completed" }
+    { "ordinal": 1, "runId": "regression-mechanical-k3-v5-r1", "capabilityFamily": "mechanical", "model": "kimi-coding/k3", "status": "pending" },
+    { "ordinal": 2, "runId": "regression-simulation-glm-v5-r1", "capabilityFamily": "simulation", "model": "apikeyfun/glm-5.3-flash", "status": "pending" },
+    { "ordinal": 3, "runId": "regression-lookdev-k3-v5-r1", "capabilityFamily": "lookdev", "model": "kimi-coding/k3", "status": "pending" },
+    { "ordinal": 4, "runId": "regression-mechanical-glm-v5-r1", "capabilityFamily": "mechanical", "model": "apikeyfun/glm-5.3-flash", "status": "pending" },
+    { "ordinal": 5, "runId": "regression-simulation-k3-v5-r1", "capabilityFamily": "simulation", "model": "kimi-coding/k3", "status": "pending" },
+    { "ordinal": 6, "runId": "regression-lookdev-glm-v5-r1", "capabilityFamily": "lookdev", "model": "apikeyfun/glm-5.3-flash", "status": "pending" }
   ]
 }

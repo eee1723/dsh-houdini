@@ -28,8 +28,8 @@
   },
   "finalProtocolGenerated": true,
   "protocol": {
-    "version": "b0-2026-09-02-v4",
-    "canonicalSha256": "fefbbc0ed539a25ee7f7f5b12487a38969c845a042f40d6994719be1ae37d8ce",
-    "fileSha256": "5699c89979857ffcccd679d2147c1613ca6ad392f4ee1446d0806e6c81cdb780"
+    "version": "b0-2026-09-03-v5",
+    "canonicalSha256": "829a30b3fb6ee8994e70d7c5e209b7a49c90e835fd2d301f1b7edb245857ef43",
+    "fileSha256": "9be7fe51b5dd6c970c1777966f43450cf97ab1ef87e784503185e4bdcd87864a"
   }
 }

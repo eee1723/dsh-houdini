@@ -481,7 +481,8 @@ export function validateProtocolManifest(manifest) {
     requireString(manifest.environment[field], `environment.${field}`)
   }
   requireObject(manifest.execution, 'execution')
-  requireExactKeys(manifest.execution, ['models', 'budget', 'workspace', 'additionalCorrectionLimit'], 'execution')
+  requireExactKeys(manifest.execution, ['models', 'budget', 'workspace', 'additionalCorrectionLimit', 'settingsFileSha256'], 'execution')
+  requireHash(manifest.execution.settingsFileSha256, 'execution.settingsFileSha256')
   if (!Array.isArray(manifest.execution.models) || manifest.execution.models.length !== 2 || new Set(manifest.execution.models).size !== 2) {
     throw new Error('execution.models must contain exactly two distinct model identifiers')
   }

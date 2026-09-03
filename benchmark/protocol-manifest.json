@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "protocolVersion": "b0-2026-09-02-v4",
-  "createdAt": "2026-09-02T03:20:19.0186591Z",
-  "baselineCommit": "4316620011cf74b1b489448d57aaf28e2bfcadc3",
+  "protocolVersion": "b0-2026-09-03-v5",
+  "createdAt": "2026-09-03T04:41:51.834Z",
+  "baselineCommit": "0fe19d3e4d49694516b080067f2fcb50af2b1df8",
   "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
   "environment": {
     "houdini": "21.0.440",
@@ -11,18 +11,28 @@
     "visionToolkit": "0.1.7"
   },
   "execution": {
-    "models": ["kimi-coding/k3", "apikeyfun/glm-5.3-flash"],
-    "budget": { "wallMinutes": 120, "maxTurns": 1 },
+    "models": [
+      "kimi-coding/k3",
+      "apikeyfun/glm-5.3-flash"
+    ],
+    "budget": {
+      "wallMinutes": 120,
+      "maxTurns": 1
+    },
     "workspace": {
       "mode": "isolated-run-directory",
       "seedHandling": "copy-exact-bytes-to-work.hip",
-      "agentVisibleFiles": ["agent-message.txt", "work.hip"],
+      "agentVisibleFiles": [
+        "agent-message.txt",
+        "work.hip"
+      ],
       "evaluatorMaterialAccessible": false
     },
-    "additionalCorrectionLimit": 0
+    "additionalCorrectionLimit": 0,
+    "settingsFileSha256": "13909d44e95a7afed268356e6c302d89c382cdc121e1d8d3a64b367f1c8bb8b5"
   },
   "evaluation": {
-    "deterministicEvaluator": "dsh-houdini-evidence-v2+hython-21.0.440",
+    "deterministicEvaluator": "dsh-houdini-evidence-v3+hython-21.0.440",
     "blindVisualEvaluator": "dashscope/qwen-vl-max",
     "targetEvaluator": "dashscope/qwen-vl-max",
     "responseNormalizer": "evaluator-json-normalizer-v2",

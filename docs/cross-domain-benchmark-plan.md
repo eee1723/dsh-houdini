@@ -432,12 +432,20 @@ B4 分成两条不可混淆的通道：
 - 结论：**维持两工具保留**，不合并、不删除；simulation/K3 的 2 次 query mutation 记入该模型的
   过程画像，不改变工具划分。若未来批次误选率显著上升再重估。
 
-## 11. v5 协议变更单（2026-09-03 起草；C1 已批准并应用，批次待启动）
+## 11. v5 协议变更单（2026-09-03 起草；C1/C2 已批准，协议已冻结，回归批次待执行）
 
 B2 归因（§10）后仅两项证据达门槛的修复进入本变更单；两者都要求新 protocol version，
 正式回归前不得混入 v4 批次结论。2026-09-03 C1 已应用：settings.yaml 变更后文件 SHA-256
 `13909d44e95a7afed268356e6c302d89c382cdc121e1d8d3a64b367f1c8bb8b5`（glm-5.3-flash 条目
 新增 `input: [text, image]`），v5 manifest 以此记录仓库外 surface 变更。
+
+**v5 已冻结**：`benchmark/protocol-manifest.json` = `b0-2026-09-03-v5`（canonical
+`829a30b3…`、file `9be7fe51…`），protocol schema/validator 新增必填 `execution.settingsFileSha256`
+以覆盖仓库外 surface；`deterministicEvaluator` 升为 `dsh-houdini-evidence-v3`（C2：det-final-report
+含报告原文引用）；`benchmark/formal-matrix.json` 重置为 regression 阶段六场 pending
+（`regression-<family>-<model>-v5-r1`，模型交错顺序同 v4）；capability baseline 的 glm
+`adapterImageDeclared` 由 null 更正为 true。agentSurfaceSha256 不变（`b9bee29b…`），sealed
+实例 hash 全部沿用，holdout 未解封。
 
 ### C1：GLM adapter 声明图像输入（agent surface 修复）
 

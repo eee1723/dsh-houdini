@@ -9,7 +9,7 @@
     "schemaVersion": { "const": 1 },
     "protocolVersion": { "type": "string", "minLength": 1 },
     "protocolManifestSha256": { "$ref": "#/$defs/sha256" },
-    "phase": { "const": "discovery" },
+    "phase": { "enum": ["discovery", "regression"] },
     "instanceRole": { "const": "calibration" },
     "holdoutReleased": { "const": false },
     "additionalCorrectionLimit": { "const": 0 },
