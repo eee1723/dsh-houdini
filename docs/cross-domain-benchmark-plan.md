@@ -6,7 +6,8 @@
 > blind/target prompt 与两阶段 smoke 已冻结/通过。三族 calibration/counterexample 与独立 holdout hash
 > 已封存。首个 mechanical smoke 暴露 workspace/seed-copy P0 后，三族隔离 smoke 均已通过；Lookdev
 > evaluator 又暴露 ID namespace/hard-failure 语义缺口。Final protocol 已升为 `b0-2026-09-02-v4`，
-> V2 normalizer 的引用完整性与确定性 hard-failure 回放通过，当前可启动正式 3×2。
+> V2 normalizer 的引用完整性与确定性 hard-failure 回放通过。正式 3×2 已全部完成（6/6 coreSuccess、
+> 0 hard failure、0 泄漏），B2 跨 run 归因与 B3 候选门槛状态见 §10；holdout 仍未解封。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
@@ -352,3 +353,61 @@ B4 分成两条不可混淆的通道：
 
 只有未见留出实例可以把“我们修好了这道题”提升为“agent 获得了可迁移能力”；原题重复、措辞变体、
 同一 seed 换参数或 evaluator 被答案污染都不能证明通用能力提升。
+
+## 10. B2 跨 run 归因（2026-09-02，正式 3×2 完成 6/6 后）
+
+### 10.1 批次合规与主指标
+
+- 6/6 自然完成（单 turn、0 追加纠错、墙钟均在 120 分钟内），`validate-run`/`validate-inputs`/
+  `validate-evaluation` 全通过；`evaluatorMaterialExposed=false` 六场一致，leakage incidents = 0，
+  holdout 全程未解封。
+- **Core success rate = 6/6（100%）**：全部 0 hard failure 且总分 ≥ 75（100×4、90×2）。
+- **False-completion rate = 0/6**：无核心 hard fail / 核心 unverified 被宣称完成的运行。
+- **User-correction dependency = 0**（预登记值，无例外）。
+- **Self-detected defect rate**：agent 自检发现并修复的缺陷均有复验证据（lookdev/K3 相机近裁剪黑屏、
+  mechanical/GLM 局部图不清重渲、lookdev/GLM 480×360 预览重渲 1280×960）；但两起诚实缺陷
+  （lookdev 两模型各一）均未被 agent 自己发现，诚实维度的自检出率 0/2。
+- **Effective repair rate**：上述 3 次 agent 发起的返工均有复验证据支持，记 3/3。
+- **Reviewer agreement**：六场核心视觉维度上 blind/target/人工审计一致；唯一保留分歧为
+  lookdev/GLM honest-report（target 因缺报告原文裁 unverified，人工记录事实冲突），按规则同样 0 分，
+  不影响总分结论。
+
+### 10.2 五类归因
+
+1. **模型差异**：结果同族并列（Mechanical 100/100、Simulation 100/100、Lookdev 90/90），差异全部在
+   过程。K3 效率显著更高（mechanical 15.0 vs 31.7 min、simulation 36.8 vs 74.9 min），动词密度高、
+   调用次数少；但 simulation/K3 出现 2 次 query mutation 和 18 次裸 File Cache 写盘，GLM 全部三场
+   0 query mutation。GLM 风格是小步多探针（lookdev rawReadOnly 41、toolCalls 108），失败/回滚更多
+   （10–14 次）但无越权修改。当前批次不支持排名结论，只支持“结果并列、过程画像不同”。
+2. **任务特有 recipe**：未发现。同 brief 下两模型路线分化明显（lookdev：K3 per-mesh 绑定 + EXR/PNG
+   双出图 vs GLM scope 绑定 + 仅 PNG），说明执行不是背固定配方。
+3. **公共工作流缺口**：
+   - **诚实报告与可回读事实不符在 lookdev 两模型独立重复**（K3 虚构 DomeLight；GLM 台账称无
+     warning 而回读有 2 条 SOP import warning）。跨模型重复成立，但属同一实例，跨任务重复未成立。
+   - **视觉 bootstrap 缺口跨族复现 2 次**（simulation/GLM、lookdev/GLM）：GLM adapter 未声明 image
+     input 导致 direct `read_image` 失败，agent 自行回退 Vision Toolkit `vision_glance` 成功。这是
+     provider/toolkit 声明缺口，不是模型能力问题。
+4. **工具缺口**（均只有单任务证据，未达 B3 门槛，记观察）：
+   - `render_frame` ~110s 硬顶 vs CPU 正式渲染 >2min → lookdev/GLM 7 次带理由的单次 allow_raw
+     豁免（首次被 Gate 拦截后合规重发）。“长渲染无正式异步动词”是真实缺口。
+   - File Cache 写盘无动词 → simulation/K3 18 次裸 `pressButton`。
+5. **evaluator 可靠性**：所有不合规响应均 fail-closed 未进评分（lookdev/GLM blind 2 次拒绝后第 3 次
+   通过；mechanical/GLM target 非法状态 `partial` 被拒后重试通过；批次内 1 次 CLI 更新提示污染 fence
+   被拒并以 `--quiet` 重试）。发现的输入设计缺口：target 输入只含 honest-report 的声明摘要、不含最终
+   报告原文，导致 lookdev/GLM 该项只能保守裁 unverified。
+
+### 10.3 B3 候选清单（门槛状态如实标注）
+
+| 候选 | 类型 | 证据 | 门槛状态 |
+|---|---|---|---|
+| 报告收尾前最终 stage 复核 probe（诚实缺口） | 动词/skill 候选 | lookdev 两模型重复 | 跨模型 ✓、跨任务 ✗，暂不进 surface |
+| target 输入附最终报告原文 | evaluator 输入修复 | lookdev/GLM 单 run | 改 evaluator 输入 = 新 protocol version，记 v5 候选 |
+| 长渲染异步动词（render 域） | 动词候选 | lookdev/GLM 单 run 7 次豁免 | 待第二个任务复现 |
+| File Cache 写盘动词 | 动词候选 | simulation/K3 单 run 18 次裸写 | 待第二个任务复现 |
+| GLM adapter image input 声明修复 | provider/toolkit 修复 | simulation+lookdev 两次复现 | 达复现门槛；改 agent surface，需新 protocol version + B4 回归 |
+
+### 10.4 本阶段明确不下的结论
+
+- 不宣布任何模型排名或通用能力提升；三族并列只说明 calibration 实例上当前 surface 不区分两模型结果。
+- 不因诚实扣分修改评分线；两次 90 分保留为 discovery 事实。
+- B3 候选在进入 surface 前一律先升级 protocol version，改进的泛化价值只能由 B4 留出解封判定。

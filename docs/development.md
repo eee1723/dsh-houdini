@@ -32,8 +32,8 @@
 | GUI 启动线程边界 | 🔶 WebView/launcher 阻塞 preflight 已迁 worker；待完整重启 GUI smoke | QWebEngine async retry + launcher worker listener/PID preflight；普通 Open 不杀现有 Bridge |
 | 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
 | Host / Bridge 词表握手 | ✅ 49 动词 live 验证；当前 Host 小修待 reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
-| B0 评测协议 | 🔶 schema/hash/真实 smoke 产物门禁与三族 seed 基础已完成 | brief/answers/seed/evaluation + run 交叉校验；通用 generator/结构 identity/三族 calibration 输入已验证，模型/provider/protocol 与任务级 smoke 待冻结 |
-| 跨域质量闭环 | 🔶 discovery 已归因，不冒充正式排名 | 下一步先清 GUI 主线程边界，再跑三族 smoke/未见留出；确定性检查 + 独立视觉评审 |
+| B0 评测协议 | ✅ 已冻结并跑完正式矩阵 | Protocol `b0-2026-09-02-v4`；brief/answers/seed/evaluation + run 交叉校验全通过；3×2 calibration 6/6 completed |
+| 跨域质量闭环 | 🔶 B2 归因已记录（§10），B3/B4 待启动 | 6/6 coreSuccess、0 hard failure、0 泄漏；B3 候选五项按门槛标注；holdout 未解封 |
 
 ---
 
@@ -1897,6 +1897,20 @@ calls/11 rollback，0 Gate block，但出现 2 次 query mutation（直接 `hou.
 重力 A/B 重算差异、最终节点 0 error/warning；三张同构图与语义检查通过。Target 9 criterion 全 pass、
 100 分、0 hard failure、claimLevel=none。Simulation 同族 K3/GLM 均 100；K3 约36.8分钟且 query mutation
 更多，GLM 约74.9分钟但无 query mutation；结果同分，效率/流程各有不同信号。该结果不改变 49 动词 surface。
+
+第 6 次 `formal-lookdev-glm-r1` 自然完成：108 trace steps、94 verbs、19/49 目录广度；13 failed
+calls/11 rollback，0 query mutation、0 Gate block，7 次成功裸 `rop.render()` 均为异步 job +
+单次 allow_raw 豁免（render_frame ~110s 硬顶、CPU 渲染 >2min，首次被 Gate 拦截后带理由重发）。
+read_image 因执行模型未声明图像输入失败 1 次，3 次 vision_glance 语义检查成功且最终 QA 在最终
+1280×960 图上完成；预览 480×360 后重渲正式分辨率。独立 H21 回读确认 33 prim、teal_glaze
+(0.006,0.13,0.10)/metalness 0/transmission 0/roughness 0.32/coat 0.65、3 RectLight、2 相机、
+RenderSettings+2 RenderProduct+beauty Var、Karma rop 可执行、0 error。诚实分缺口：最终报告台账声称
+stage 无 error/warning，但回读发现 2 条 SOP import no-save-path warning（import_shaderball/
+import_ground），K3 同族当时披露了同类 warning。Target 核验 honest-report 为 unverified（缺报告
+原文输入，保守裁定），按规则 0 分。总分 90（40+25+25+0）、0 hard failure、coreSuccess=true、
+claimLevel=none。盲评 3 次调用 2 次合同拒绝后通过，Target 1 次通过。正式 3×2 全部 6/6 完成：
+Mechanical 100/100、Simulation 100/100、Lookdev 90/90（K3/GLM），三族六场全部 coreSuccess、
+0 hard failure；同族并列，跨族差异与流程信号（query mutation、裸写盘、诚实项）留待 B2 归因。
 
 ## 3. 卡点（blockers）
 
