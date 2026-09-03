@@ -431,3 +431,54 @@ B4 分成两条不可混淆的通道：
 - exec 无动词调用 6 次中 5 次在 simulation/GLM，均为只读探测，不构成旁路。
 - 结论：**维持两工具保留**，不合并、不删除；simulation/K3 的 2 次 query mutation 记入该模型的
   过程画像，不改变工具划分。若未来批次误选率显著上升再重估。
+
+## 11. v5 协议变更单（2026-09-03 起草；C1 已批准并应用，批次待启动）
+
+B2 归因（§10）后仅两项证据达门槛的修复进入本变更单；两者都要求新 protocol version，
+正式回归前不得混入 v4 批次结论。2026-09-03 C1 已应用：settings.yaml 变更后文件 SHA-256
+`13909d44e95a7afed268356e6c302d89c382cdc121e1d8d3a64b367f1c8bb8b5`（glm-5.3-flash 条目
+新增 `input: [text, image]`），v5 manifest 以此记录仓库外 surface 变更。
+
+### C1：GLM adapter 声明图像输入（agent surface 修复）
+
+- 证据：simulation/GLM 与 lookdev/GLM 两场 direct `read_image` 均被 gate 拒绝
+  （`model does not declare image input`），agent 被迫回退 `vision_glance`；K3 侧零复发。
+- 根因：`apikeyfun` 不在 pi-ai 内置 catalog，`glm-5.3-flash` 条目未写 `input`，
+  回退到路由 `defaultInput=['text']` → `read-image.ts` 的 `assertImageCapableRoute` 拒绝。
+- 修复（`~/.dsh/settings.yaml`，模型条目加一行）：
+
+  ```yaml
+  models:
+    - id: glm-5.3-flash
+      name: glm-5.3-flash
+      contextWindow: 1000000
+      input: [text, image]
+  ```
+
+- 真实性依据：`benchmark/model-capability-baseline.json` 已验证该端点 1500-token 预算下
+  原生接收并正确描述同一 PNG；声明不是猜测。
+- 注意：该文件在仓库外，`agentSurfaceSha256` 覆盖不到；v5 manifest 必须在 environment 段
+  显式记录 glm 模型声明的变更，否则 surface 审计漏掉这一行。GLM 正式运行视觉预算下限
+  1500 max tokens 继续有效。
+
+### C2：target 评审输入附最终报告原文（evaluator 输入修复）
+
+- 证据：lookdev/GLM 的 honest-report 因 target 输入只有声明摘要、没有报告原文，
+  评审只能裁 unverified；无法区分「真失实」与「评审看不到」。
+- 修复：`det-final-report` 的 summary 从布尔声明表升级为「声明表 + 报告相关段落原文引用」；
+  冻结 prompt `target-verification-v6` 文本不变（引用原文仍是"确定性证据摘要"的合法内容），
+  criterion 集合、hard-failure 规则、normalizer 全部不动。
+- 影响：v4/v5 的 honest-report 分数不可直接比较，v5 批次独立建档。
+
+### 不在本变更单
+
+- 长渲染异步动词、File Cache 写盘动词：单任务证据，等 v5 批次内复现再立项。
+- 诚实复核 probe：跨模型重复但同实例，先以评测侧 trace 审计增强观察，不进 surface。
+- 评分线、holdout、模型清单：不动。
+
+### v5 执行顺序（批准后）
+
+1. 应用 C1/C2，重算并记录 glm 声明变更；生成 `b0-2026-09-03-v5` manifest，全部 hash 重封；
+2. B4 回归通道：v5 下重跑六个 calibration 原题，验证 C1 无副作用、C2 能正常裁决 honest-report；
+3. 观察长渲染/File Cache/诚实缺口是否在 v5 复现，达门槛才进 B3 动词/skill 设计；
+4. 回归全绿后才允许讨论 holdout 解封。
