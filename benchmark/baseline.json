@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "createdAt": "2026-09-01T03:09:20.6500652Z",
-  "baselineCommit": "cf1f1e80affa08c13db79294e78a49ee9a945d85",
-  "agentSurfaceSha256": "b9bee29b431701e7262da916addbaeb3971c348e6a059685cf5df4400b9e02aa",
+  "createdAt": "2026-09-04T00:00:00.0000000Z",
+  "baselineCommit": "3c7d96eaf34607d269f9ca8ff5715f04b0227ca9",
+  "agentSurfaceSha256": "1c3abd20f95a02692ca68c220aa63c06eef577d332d465ed361697f0680ff9ed",
   "runtimeVerification": {
-    "matchesBaseline": true,
-    "note": "A fresh H21 process loaded cf1f1e8 after a full Houdini restart. Host/Bridge contract checking, asynchronous WebView startup, query read-only enforcement, and Houdini Trace classification passed. Subsequent committed changes contain only tests, status documentation, and benchmark-only seed infrastructure; no runtime file differs from the loaded baseline.",
-    "verifiedAt": "2026-09-01T03:30:08.6570559Z",
-    "loadedRepositoryCommit": "cf1f1e80affa08c13db79294e78a49ee9a945d85",
-    "workingTreeDirty": false,
-    "pendingReload": [],
+    "matchesBaseline": false,
+    "note": "2026-09-04 O1 human-scale placement changed the agent-visible surface (tab_create placement / connect flow snap / layout_nodes mode='flow'; verb fingerprint unchanged at 4f3516dec006 because it binds verb names only). H21.0.440 and H22.0.368 hython regressions (tools/tests/dsh-layout-flow.test.py) both pass, and the client.js catalog was regenerated. No live Bridge cold-start reload verification yet; the previous live verification record for cf1f1e8 (H21 cold start, session 45798bd2) remains in git history. Live smoke is deferred to the v6 regression batch per plan §12.",
+    "verifiedAt": "2026-09-04T00:00:00.0000000Z",
+    "loadedRepositoryCommit": null,
+    "workingTreeDirty": null,
+    "pendingReload": ["dsh_hou_helpers.py layout verbs", "client.js catalog"],
     "houdini": "21.0.440",
     "dsh": "0.1.1-rc.2",
     "plugin": "0.1.0",
@@ -17,16 +17,10 @@
     "rawGate": true,
     "verbCatalogCount": 49,
     "verbCatalogSha256": "4f3516dec0067daf5a76d1726fb258d9d015f03cdaa5faa5d749529afd330af1",
-    "activeJobs": 0,
-    "queuedJobs": 0,
-    "runningJobs": 0,
-    "webStatus": 200,
-    "guiSmoke": {
-      "mode": "Houdini",
-      "sessionId": "45798bd2-41a6-4b12-9dfa-fb62b25faa45",
-      "query": "用 houdini_query 列出 /obj 下所有节点",
-      "result": "success; /obj contained /obj/geo1 (geo) with no cook errors",
-      "traceClassification": "read-only HOM probe; 0 mutations; 0 Raw Gate blocks; 0 rollbacks"
-    }
+    "activeJobs": null,
+    "queuedJobs": null,
+    "runningJobs": null,
+    "webStatus": null,
+    "guiSmoke": null
   }
 }
