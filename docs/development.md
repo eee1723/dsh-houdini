@@ -15,6 +15,7 @@
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
 | 动词词表（bridge namespace） | ✅ | 49 个目录入口：47 个主动词（含 `verb_help`）+ 2 个 display 兼容入口；文档/Host/Bridge 三方契约测试 |
+| 人性化落位（O1） | ✅ 2026-09-04 | `tab_create` 连完 inputs 自动落位（无输入放右侧新列）、`connect` 纠流（dst 违反自顶向下流才 snap，已在下游绝不动，返回 `position_adjusted`）、`layout_nodes` 新增 `mode='flow'` 拓扑分层；H21/H22 `dsh-layout-flow` 回归通过 |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 观察层继续记录已覆盖裸调用与仓库写入风险 |
 | raw-hou gate | ✅ 默认开启；已覆盖调用不可旁路 | 执行前 AST 拦截 + 低层缺口单次豁免；`dict.setdefault` 只读误伤已修（§2.17 / §2.36） |

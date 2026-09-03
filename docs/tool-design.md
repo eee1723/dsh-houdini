@@ -130,13 +130,13 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...])` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；初始化失败会清理 partial create 并向外抛错，绝不静默降级成裸节点；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path | `hou.Node` |
-| `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder | dict |
+| `tab_create(parent, type_name, name=, inputs=[...])` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；初始化失败会清理 partial create 并向外抛错，绝不静默降级成裸节点；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
+| `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, allow_foreign=None)` | 连线（src 输出 → dst 输入）；mutation 边界在 dst；落口与请求不一致时返回里带 `note` | dict |
+| `connect(src, dst, index=0, allow_foreign=None)` | 连线（src 输出 → dst 输入）；mutation 边界在 dst；落口与请求不一致时返回里带 `note`；连接成功后若 dst 违反自顶向下流（dst.y >= 输入的 min y）则 snap 到「x = 输入 x 均值，y = min(输入 y) − 垂直间距」，已在下游（dst.y < min 输入 y）的节点绝不动，返回带 `position_adjusted` | dict |
 | `disconnect_input(dst, index=0, allow_foreign=None)` | 断开 destination 的一个输入口；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除（返回被表达式引用的上游）；拒绝删除 owner-tagged `render_view` 会话级基础设施，避免进入 H21 OpenGL teardown fatal 路径 | dict |
@@ -145,7 +145,7 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
-| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None)` | host task 中 `nodes=None` 只布局当前 session 创建项并回报 `foreign_nodes_skipped`；显式列表逐项过 ownership guard。Python Shell 无 host owner 时保持传统全布局语义 | dict |
+| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children')` | `mode='children'`（默认）= 原生 layoutChildren，行为不变；`mode='flow'` = 自研拓扑分层：按最长路径深度分行（深度 0 最上，y = −depth × 垂直间距），同深度按节点当前 x 排序保持左右阅读顺序、等距排开并整体居中，有环时按原顺序兜底不断裂；spacing 默认从节点实际尺寸推导，显式正值覆盖。host task 中 `nodes=None` 只布局当前 session 创建项并回报 `foreign_nodes_skipped`；显式列表逐项过 ownership guard。Python Shell 无 host owner 时保持传统全布局语义 | dict |
 
 **ownership 边界**：读取/依赖 foreign 节点不受限；例如可把用户节点作为 `connect` 的
 source，不能默认改它的参数、名字、旗标、位置、HDA 定义或把它作为 destination 改线。
@@ -154,6 +154,13 @@ source，不能默认改它的参数、名字、旗标、位置、HDA 定义或�
 call id 只作创建审计，不把多次工具调用割裂成无法继续编辑的节点。
 registry 只在当前 Houdini 进程内有效；完整重启后无法在不信任可复制 tag 的前提下证明旧节点
 来源，因此安全地降级为 foreign，由用户对具体目标作单次授权。
+
+**人性化落位（O1，2026-09-03）**：agent 建节点全堆原点、最后一发原生 L（layoutChildren）
+了事，是真实会话里最刺眼的机器味。因此把「整齐」做成建设的副产品：`tab_create` 落位、
+`connect` 纠流、`layout_nodes` 提供 flow 分层。明确不做「每次操作后自动全量
+layoutChildren」——原生 L 会重排整张网络（含 foreign 节点与用户手摆位置），既越
+ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的节点，`connect` 永不移动已在
+下游的节点，flow 只重排 ownership 过滤后的集合。
 
 ### compatibility 域（仅历史回放，不进新 guidance）
 

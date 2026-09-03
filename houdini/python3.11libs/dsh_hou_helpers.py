@@ -842,6 +842,58 @@ def _tool_has_extra_init(tool) -> bool:
     return False
 
 
+def _flow_gaps(nodes):
+    """由节点实际网络尺寸推导 flow 落位的水平/垂直间距（不用拍脑袋常量）。"""
+    width = height = 0.0
+    for n in nodes:
+        try:
+            size = n.size()
+            width = max(width, float(size.x()))
+            height = max(height, float(size.y()))
+        except Exception:
+            continue
+    h_gap = (width if width > 0 else 2.0) + 0.8
+    v_gap = (height if height > 0 else 1.0) + 0.4
+    return h_gap, v_gap
+
+
+def _place_created_node(node):
+    """tab_create 智能落位：有输入放到输入下游，无输入放右侧新列（空网络落原点）。
+
+    网络坐标 y 向下为负：输入下游 = 更小的 y；「最顶部」= 最大的 y。
+    """
+    parent = node.parent()
+    inputs = [n for n in node.inputs() if n is not None]
+    if inputs:
+        _h_gap, v_gap = _flow_gaps([node, *inputs])
+        x = sum(float(n.position().x()) for n in inputs) / len(inputs)
+        y = min(float(n.position().y()) for n in inputs) - v_gap
+    else:
+        siblings = [c for c in parent.children() if c.sessionId() != node.sessionId()]
+        if not siblings:
+            return
+        x = max(float(c.position().x()) + float(c.size().x()) for c in siblings) + 0.8
+        y = max(float(c.position().y()) for c in siblings)
+    node.setPosition(hou.Vector2(x, y))
+
+
+def _snap_into_flow(node):
+    """connect 纠流：节点违反自顶向下流（不在所有输入下游）时 snap 到输入正下方。
+
+    已在下游（y 严格小于所有输入的 min y）的节点绝不动。返回是否移动了节点。
+    """
+    inputs = [n for n in node.inputs() if n is not None]
+    if not inputs:
+        return False
+    min_y = min(float(n.position().y()) for n in inputs)
+    if float(node.position().y()) < min_y:
+        return False
+    _h_gap, v_gap = _flow_gaps([node, *inputs])
+    x = sum(float(n.position().x()) for n in inputs) / len(inputs)
+    node.setPosition(hou.Vector2(x, min_y - v_gap))
+    return True
+
+
 def tab_create(
     parent: hou.Node,
     type_name: str,
@@ -856,6 +908,10 @@ def tab_create(
       连接失败会抛错，不会静默跳过）。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
+    - 落位：连完 inputs 后自动摆放——有输入时放到所有输入下游
+      （x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络
+      现有内容右侧新列（空网络落原点）。间距由节点实际尺寸推导，见
+      ``_place_created_node``。
     """
     parent = _resolve(parent)  # 铁律 1：hou.Node 或 path 字符串均可
     cat = parent.childTypeCategory()
@@ -908,6 +964,9 @@ def tab_create(
                 raise ValueError(
                     f"连接输入失败：{node.path()} 的第 {index} 个输入 ← {source!r}（{e}）"
                 ) from e
+
+    if node is not None:
+        _place_created_node(node)
 
     return node
 
@@ -1433,16 +1492,18 @@ def describe(node) -> dict:
 def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
-    返回 ``{"node": dst path, "input": 实际落到的输入口}``。请求的端口不存在时
-    退化为「下一个可用输入」，此时返回里会带 ``note``——落口与请求不一致必须
-    让调用方知道，静默改口会让 agent 基于错误的连线继续推理。
+    返回 ``{"node": dst path, "input": 实际落到的输入口, "position_adjusted": bool}``。
+    请求的端口不存在时退化为「下一个可用输入」，此时返回里会带 ``note``——落口
+    与请求不一致必须让调用方知道，静默改口会让 agent 基于错误的连线继续推理。
+    连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时 snap 到
+    输入正下方；已在下游的节点绝不动。
     """
     s = _resolve(src)
     d = _resolve(dst)
     _require_owned(d, "connect destination", allow_foreign)
     try:
         d.setInput(index, s)
-        return {"node": d.path(), "input": index}
+        return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d)}
     except Exception:
         pass
     try:
@@ -1457,6 +1518,7 @@ def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
         "node": d.path(),
         "input": used[-1] if used else None,
         "note": f"请求的输入口 {index} 不可用，已退化为下一个可用输入",
+        "position_adjusted": _snap_into_flow(d),
     }
 
 
@@ -1687,10 +1749,55 @@ def display_node(parent) -> dict:
     )
 
 
+def _layout_flow(items, horizontal_spacing: float, vertical_spacing: float) -> None:
+    """flow 布局：按最长路径深度分行（深度 0 最上），同深度按当前 x 排序保持
+    左右阅读顺序、等距排开并整体居中。有环时环上边按 0 深度贡献兜底，不断裂。"""
+    item_ids = {int(n.sessionId()) for n in items}
+    depth: dict[int, int] = {}
+
+    def visit(node, visiting: set) -> int:
+        sid = int(node.sessionId())
+        if sid in depth:
+            return depth[sid]
+        if sid in visiting:  # 环：按 0 贡献兜底
+            return 0
+        visiting.add(sid)
+        ups = [i for i in node.inputs() if i is not None and int(i.sessionId()) in item_ids]
+        d = 0 if not ups else 1 + max(visit(i, visiting) for i in ups)
+        visiting.discard(sid)
+        depth[sid] = d
+        return d
+
+    for n in items:
+        visit(n, set())
+
+    h_gap, v_gap = _flow_gaps(items)
+    h_pitch = float(horizontal_spacing) if horizontal_spacing > 0 else h_gap
+    v_pitch = float(vertical_spacing) if vertical_spacing > 0 else v_gap
+
+    rows: dict[int, list] = {}
+    for n in items:
+        rows.setdefault(depth[int(n.sessionId())], []).append(n)
+    for d, row in rows.items():
+        row.sort(key=lambda n: (float(n.position().x()), n.path()))
+        for i, n in enumerate(row):
+            x = (i - (len(row) - 1) / 2.0) * h_pitch
+            n.setPosition(hou.Vector2(x, -d * v_pitch))
+
+
 def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
                  vertical_spacing: float = -1.0,
-                 allow_foreign: str | None = None) -> dict:
-    """按 Houdini 原生 layoutChildren 布局全部或显式指定的网络项。"""
+                 allow_foreign: str | None = None,
+                 mode: str = "children") -> dict:
+    """布局全部或显式指定的网络项。
+
+    ``mode='children'``（默认）= 原生 layoutChildren，行为不变；
+    ``mode='flow'`` = 自研拓扑分层（``_layout_flow``）：深度 0 最上、
+    y = −depth × 垂直间距，同深度按当前 x 排序居中，环上边兜底不断裂。
+    ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
+    """
+    if mode not in ("children", "flow"):
+        raise ValueError(f"mode 必须是 'children' 或 'flow'，收到 {mode!r}")
     p = _resolve(parent)
     items = []
     foreign_skipped = []
@@ -1712,13 +1819,17 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     else:
         items = list(p.children())
     if items:
-        p.layoutChildren(
-            items=tuple(items),
-            horizontal_spacing=float(horizontal_spacing),
-            vertical_spacing=float(vertical_spacing),
-        )
+        if mode == "children":
+            p.layoutChildren(
+                items=tuple(items),
+                horizontal_spacing=float(horizontal_spacing),
+                vertical_spacing=float(vertical_spacing),
+            )
+        else:
+            _layout_flow(items, horizontal_spacing, vertical_spacing)
     return {
         "parent": p.path(),
+        "mode": mode,
         "nodes": [
             {"path": n.path(), "position": [float(v) for v in n.position()]}
             for n in items
