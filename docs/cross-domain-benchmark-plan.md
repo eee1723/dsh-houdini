@@ -8,6 +8,8 @@
 > evaluator 又暴露 ID namespace/hard-failure 语义缺口。Final protocol 已升为 `b0-2026-09-02-v4`，
 > V2 normalizer 的引用完整性与确定性 hard-failure 回放通过。正式 3×2 已全部完成（6/6 coreSuccess、
 > 0 hard failure、0 泄漏），B2 跨 run 归因与 B3 候选门槛状态见 §10；holdout 仍未解封。
+> 2026-09-04：v5 六场回归暂缓（C1/C2 为评审/声明侧变更，无可回归失败实例，改轻量验证）；
+> 评估定位原则与后续优化计划见 §12。
 
 2026-09-01 已加入 evaluator-spec/sealed-instance 通用 schema 与 seal 工具，三族 calibration 和
 counterexample bundle 均在 Git 忽略目录完成交叉 hash 封存；tracked freeze status 只记录六个 bundle hash，
@@ -432,7 +434,7 @@ B4 分成两条不可混淆的通道：
 - 结论：**维持两工具保留**，不合并、不删除；simulation/K3 的 2 次 query mutation 记入该模型的
   过程画像，不改变工具划分。若未来批次误选率显著上升再重估。
 
-## 11. v5 协议变更单（2026-09-03 起草；C1/C2 已批准，协议已冻结，回归批次待执行）
+## 11. v5 协议变更单（2026-09-03 起草；C1/C2 已批准并冻结；2026-09-04 六场回归暂缓、改轻量验证，见 §12）
 
 B2 归因（§10）后仅两项证据达门槛的修复进入本变更单；两者都要求新 protocol version，
 正式回归前不得混入 v4 批次结论。2026-09-03 C1 已应用：settings.yaml 变更后文件 SHA-256
@@ -487,6 +489,66 @@ B2 归因（§10）后仅两项证据达门槛的修复进入本变更单；两�
 ### v5 执行顺序（批准后）
 
 1. 应用 C1/C2，重算并记录 glm 声明变更；生成 `b0-2026-09-03-v5` manifest，全部 hash 重封；
-2. B4 回归通道：v5 下重跑六个 calibration 原题，验证 C1 无副作用、C2 能正常裁决 honest-report；
+2. ~~B4 回归通道~~（2026-09-04 暂缓）：C1/C2 均为评审/声明侧变更，v4 两个诚实失分点不由其修复、按 B4 定义无可回归失败实例；六场整批回归合并到下一次 agent surface 变更后的批次（§12）。替代轻量验证：a) C2 用 v4 lookdev/GLM 既有证据包以 v3 evaluator 重评 honest-report（零 Houdini 会话）；b) C1 一次 `read_image` smoke；
 3. 观察长渲染/File Cache/诚实缺口是否在 v5 复现，达门槛才进 B3 动词/skill 设计；
 4. 回归全绿后才允许讨论 holdout 解封。
+
+## 12. 评估定位与后续优化计划（2026-09-04）
+
+### 12.1 评估定位原则
+
+- 评估是发现问题、确认问题的手段，不是目的；不为评估而评估。
+- 整批回归的触发条件收紧为两类：agent surface 发生行为变化（动词/skill/preset/guidance），
+  或出现了可回归的失败实例。仅评审侧变化（evaluator 输入、评审模型、provider 声明）时，
+  用既有证据包重评 + 定向 smoke 代替整批。
+- v5 属于后者：C1 是 provider 声明修复、C2 是评审输入修复；v4 的两个诚实失分点
+  （lookdev/K3 虚构 DomeLight、lookdev/GLM 漏报 SOP import warning）不由 C1/C2 修复，
+  按 B4 定义没有可回归的失败实例。因此六场回归暂缓，`formal-matrix.json` 保持 pending，
+  攒到下一次 agent surface 变更后的批次一并执行。
+
+### 12.2 评测系统变更单（v6 候选，下一批回归前落地）
+
+- E1 pass^k：当前每格单跑、无方差控制。协议化为关键格重复运行并定义聚合口径，
+  避免单跑随机波动被当成结论。
+- E2 第二评审模型：盲评/目标核验目前只有 qwen-vl-max 一家。接入第二家视觉模型，
+  双评审一致率作为评审可信度指标纳入 run 记录。
+- E3 清理：`benchmark/evaluator-prompts/target-verification-v1.json` 已被 v6 prompt 取代，
+  标 superseded 或移入 archive，保持目录单一真相。
+
+### 12.3 优化计划（按依赖排序；O1/O2 为 agent surface 变更）
+
+**O1 人性化网络布局（动词层，无前置依赖）**
+
+1. `tab_create`/`tab_apply` 智能落位：新节点默认按数据流放到上游节点的下游空位，
+   不再堆叠原点；无输入时从网格起点递进。
+2. 连接后下游节点与上游列对齐。
+3. `layout_nodes` 增加 flow-aware 模式：拓扑分层、列内等距，符合阅读习惯，
+   替代"最后一发 L"。
+4. 明确不做"每次创建/连接后自动全量 `layoutChildren`"：会打散人工摆位、随网络规模变贵、
+   且行为不可预测。若确需自动模式，做成默认关闭的开关先观察。
+5. 设计先落 `docs/tool-design.md`，走生成器刷新 contract + Node 回归后才进 surface。
+
+**O2 rig/animation skill 现代化（skill 层；官方调研已完成，见 rig-animation-design.md §11）**
+
+1. FK/机械层级默认路由收紧为 KineFX joints；OBJ hierarchy 降级为显式 legacy fallback。
+2. 先补 KineFX 机械 FK 最小 recipe 的 H21/H22 实测基线，再写入 skill reference；未实测不写。
+3. APEX 仅在需要 IK 组件或 set driven keys（H22 机械联动官方方案）时采用；
+   简单机械动画不升级为 APEX。
+
+**O3 坑位台账（复盘机制，轻量、无代码依赖）**
+
+1. 维护人工策展的坑位台账；每批评测复盘时把确认的坑按强度归档：能写成动词 guard 的进
+   guard（确定性拦截），属于做法的进 skill recipe，只有跨会话长尾才考虑记忆系统。
+2. 原则：能用 guard 挡的不用 skill 教，能用 skill 教的不靠记忆猜。记忆系统暂缓——它引入
+   非确定性与过期风险，并污染评测可复现性。
+
+**O4 评测系统增强（E1/E2 落地）**：在下一批回归前完成，与该批同时生效。
+
+**O5 精化种子与质量维度（与 O1/O2 一起触发下一批整批回归）**
+
+1. 现有种子不动，保持回归基线可比。
+2. 新增精化 tier 种子：更多关节/控制层级、多层材质与灯光构成、指定构图；验收口径同步细化。
+3. 评分增加与 coreSuccess 解耦的质量维度分，避免质量分淹没稳定性信号。
+
+**下一批回归（v6）触发条件**：O1 + O2 的 surface 变更完成、O4 落地、O5 种子冻结后，
+一次整批回归同时验证全部变更，摊薄评估成本。

@@ -32,8 +32,8 @@
 | GUI 启动线程边界 | 🔶 WebView/launcher 阻塞 preflight 已迁 worker；待完整重启 GUI smoke | QWebEngine async retry + launcher worker listener/PID preflight；普通 Open 不杀现有 Bridge |
 | 视觉产图/relay/证据判定 | ✅ vision-toolkit 0.1.7 生产化 | 按需 skill 激活 10 个工具；本机 DashScope 配置保留；旧 router/fallback 退役；render_view/media 与语义失败识别可用（§2.35–§2.39） |
 | Host / Bridge 词表握手 | ✅ 49 动词 live 验证；当前 Host 小修待 reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
-| B0 评测协议 | ✅ v4 矩阵跑完；v5 已冻结待回归 | v4 `b0-2026-09-02-v4` 3×2 calibration 6/6 completed；v5 `b0-2026-09-03-v5`（C1 glm 图像声明 + C2 报告原文入 target 输入 + settingsFileSha256 入协议）manifest/matrix 已冻结，regression 六场 pending |
-| 跨域质量闭环 | 🔶 B2 归因已记录（§10），v5 回归（B4 回归通道）待执行 | 6/6 coreSuccess、0 hard failure、0 泄漏；B3 候选五项按门槛标注；holdout 未解封 |
+| B0 评测协议 | ✅ v4 矩阵跑完；v5 已冻结，回归暂缓改轻量验证 | v4 `b0-2026-09-02-v4` 3×2 calibration 6/6 completed；v5 `b0-2026-09-03-v5`（C1 glm 图像声明 + C2 报告原文入 target 输入 + settingsFileSha256 入协议）manifest/matrix 已冻结；2026-09-04 六场回归暂缓（C1/C2 为评审/声明侧变更），改 C2 证据包重评 + read_image smoke，整批攒到下次 surface 变更（plan §12） |
+| 跨域质量闭环 | 🔶 B2 归因已记录（§10）；v5 整批回归暂缓，后续优化计划 O1–O5 与下一批触发条件见 plan §12 | 6/6 coreSuccess、0 hard failure、0 泄漏；B3 候选五项按门槛标注；holdout 未解封 |
 
 ---
 

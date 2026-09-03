@@ -1,6 +1,6 @@
 # Rig / Animation 能力：第一性原理设计
 
-状态（2026-08-23）：Phase A/B/C 的实现与历史 H21/H22 smoke 已完成；蜘蛛任务提供了新的刚性分件 rig trace。旧大范围回归脚本当前已移除，Phase D 除继续收集真实任务外，还需按现契约重建最小回归覆盖。
+状态（2026-08-23）：Phase A/B/C 的实现与历史 H21/H22 smoke 已完成；蜘蛛任务提供了新的刚性分件 rig trace。旧大范围回归脚本当前已移除，Phase D 除继续收集真实任务外，还需按现契约重建最小回归覆盖。2026-09-04：SideFX 官方文档复核完成（§11）；父子层级/FK 机械结构的默认路由收紧为 KineFX joints，OBJ hierarchy 降为显式 legacy fallback（§6.1 路由表已同步）。
 
 初始日期：2026-08-21
 直接证据：`session-a41c853a-b833-48e8-acf7-7ff332a982f8`（魔方绑定动画）、`session-9b7bd919-47dd-4edc-aa1c-422bdbee0251`（蜘蛛刚性分件 rig）
@@ -137,7 +137,7 @@
 |---|---|---|
 | 普通参数/镜头/灯光动画 | channels + keyframes | key 回读、曲线范围、目标帧求值 |
 | 独立刚体 pieces / 装配 / 魔方 | stable `name/piece_id` + packed pieces + template transforms / Transform Pieces | 每 piece transform、活动集合、非交换步骤、刚体不变量 |
-| 父子层级/FK 机械结构 | object hierarchy 或 KineFX joint transforms，按规模/交付选 | parent/local/world transform、limits、层级传播 |
+| 父子层级/FK 机械结构 | **KineFX joint transforms（默认，依据见 §11）**；OBJ hierarchy 仅作显式 legacy fallback | parent/local/world transform、limits、层级传播 |
 | skeleton + skin deformation | KineFX capture + animated skeleton + Joint Deform | `boneCapture`、rest/animated pose、变形/法线/体积 |
 | animator-facing character rig | KineFX + APEX components/graph | controls、FK/IK/constraints、graph evaluation、animate state |
 | 物理运动 | RBD/DOP/KineFX secondary/ragdoll | solver 状态、碰撞、缓存、确定性/随机种子 |
@@ -325,3 +325,31 @@ adapter。它们都必须先通过 Phase C/D 证据门。
 未来 trace 的首个防作弊基线。ordered 魔方副本、channel/KineFX 基准和固定构图 GUI A/B
 也已完成；APEX 最小非交互 evaluation 随后也在 H21/H22 通过。下一步是更多真实用户任务，
 不能把 packed-piece 或 graph-engine smoke 外推为所有绑定系统均已覆盖。
+
+## 11. 官方文档复核（2026-09-04）：KineFX/APEX 现行定位
+
+来源均为 sidefx.com 官方文档或官方发布页；二手转录单独标注。动机：正式 3×2 发现机械层级
+任务走了 OBJ 级父子绑定这条官方语境下的旧流程，需要官方依据收紧默认路由。
+
+- KineFX 是 SOP 级角色绑定/动画工具集总称：关节是点几何，层级由折线连接定义，而非 OBJ 级
+  bone 对象。官方 overview 把 OBJ 级流程定位为 pre-Houdini 20 的旧路径（"A bit of
+  background"），并提供 Scene Character Import SOP 做单向迁移。
+  https://www.sidefx.com/docs/houdini/character/kinefx/overview.html
+- 官方原话："KineFX is the umbrella term for Houdini's SOP-based character toolset, and
+  APEX is the rigging engine that runs underneath it." APEX 图本身是 packed geometry，实现
+  rig 逻辑与求值解耦（延迟求值）。
+- 成熟度时间线：H20 引入（官方 sneak peek 标 BETA）；H20.5 官方产品页标 BETA；H21 keynote
+  宣布 production-ready（docs 正文无此字样，属 keynote 与二手转录）；H22 围绕 APEX 成熟化：
+  rig template、CUDA 实时变形器、APEX Rig Pose SOP、set driven keys rig component（机械联动
+  的官方方案）。H22 的 APEX Animate LOP 仍标 Beta。
+- 前 APEX 的 Rig Pose SOP / Bone Deform SOP 未弃用，H22 仍在加参数。
+- 对"从零 procedural 搭简单机械结构并做动画"：纯 KineFX SOP（Skeleton → Rig Pose →
+  Joint Deform / FK joints）是官方仍一等维护且对程序化驱动最友好的路径；APEX 全套
+  （Autorig Component + packed folder + animate state）交互重心在视口 viewer state，agent
+  驱动成本高，仅在需要 IK 组件或 driven keys 时采用。
+- 路由决定：父子层级/FK 机械结构默认使用 KineFX joints，OBJ hierarchy 不再是并列默认项，
+  仅在用户明确要求或兼容旧场景时作为 legacy fallback。该决定只改 skill 路由与 recipe（属
+  agent surface 变更，进下一批协议），不新增 KineFX 专用动词——现有 `tab_create`/
+  `set_keyframes`/`set_parm`/`create_spare_parms` 足够驱动。
+- §3 的"绑定任务都应该使用 KineFX/APEX"假设仍然不成立：packed pieces、纯 channel、物理
+  求解各有其位；本次收紧的只是 FK/机械层级一行，不是全表。
