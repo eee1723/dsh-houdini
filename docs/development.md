@@ -24,7 +24,7 @@
 | Houdini Trace 视图（Phase 2） | ✅ 已重写：全量调用 + 裸 hou hint 可见（§2.9） | `client.js` + `dsh.client` 声明 |
 | Houdini trace 审计 skill | ✅（§2.20 / §2.36） | evidence schema v2：真实 adoption 指标 + vision semantic outcome + 完成风险 |
 | Solaris/Karma workflow skill | ✅（§2.25） | `houdini-solaris-karma-workflow` + 版本化 Karma/MaterialX/COP 接口参考 |
-| Rig/animation workflow skill | ✅（§2.26） | channel / packed pieces / KineFX skin / APEX 路由与完成门 |
+| Rig/animation workflow skill | ✅（§2.26；2026-09-04 O2 收紧） | channel / packed pieces / KineFX skin / APEX 路由与完成门；机械 FK 默认 KineFX joints（reference §3.1 双版本实测基线）；`resolve_latest_type` namespace 解析修复 |
 | Houdini skill 治理 | ✅（§2.27） | `houdini-skill-governance` + evidence ingestion / lifecycle / deterministic audit |
 | plugin persona 中性化 | ✅ | GUIDANCE 只保留稳定契约，目录由 `tool-design.md` 生成；身份/工作方式归 preset，领域 recipe 归 skill |
 | houdini 模式 preset | ✅ | `~/.dsh/.agent-presets/houdini/` + `presets/houdini/`，校验通过 |

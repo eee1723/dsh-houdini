@@ -14,7 +14,7 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 
 - 普通参数、对象、灯光、镜头：channels/keyframes；
 - 独立刚体 pieces、装配、魔方：stable identity + packed/template transforms；
-- 父子机械/FK：OBJ hierarchy 或 KineFX joints，按交付规模选择；
+- 父子机械/FK：默认 KineFX joints（官方现行栈，实测基线见 references §3.1）；OBJ hierarchy 仅在用户明确要求或兼容旧场景时作 legacy fallback；
 - skeleton + skin：KineFX capture pose + animated pose + Joint Deform；
 - animator-facing controls、constraints、FK/IK：KineFX + APEX；
 - 物理运动：SIM/RBD/ragdoll，不能用 keyframe 完成门代替 solver/cache 契约。

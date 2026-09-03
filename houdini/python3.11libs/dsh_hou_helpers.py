@@ -389,12 +389,16 @@ def resolve_latest_type(category, base: str) -> str:
     """返回某节点族的最新版本全名，如 'copytopoints' -> 'copytopoints::2.0'。
 
     无版本化条目时原样返回 ``base``；有多个 ``::N`` 时取 ``N`` 最大者。
+    只以 namespace 形式注册的族（'rigdoctor' -> 'kinefx::rigdoctor'）返回带
+    namespace 的全名：`createNode(exact_type_name=True)` 不接受裸别名。
+    多 namespace 同名时按名称排序取第一个（确定性兜底）。
     """
     cat = _category(category)
+    names = cat.nodeTypes().keys()
     prefix = base + "::"
     best_key: tuple[int, ...] = ()
-    best_name = base
-    for name in cat.nodeTypes().keys():
+    best_name = base if base in names else None
+    for name in names:
         if not name.startswith(prefix):
             continue
         m = _VERSION_RE.match(name)
@@ -404,7 +408,20 @@ def resolve_latest_type(category, base: str) -> str:
         if key > best_key:
             best_key = key
             best_name = name
-    return best_name
+    if best_name is not None:
+        return best_name
+    ns_key: tuple[int, ...] = ()
+    ns_name = None
+    for name in sorted(names):
+        parts = name.split("::")
+        if len(parts) == 2 and parts[1] == base and ns_name is None:
+            ns_name = name
+        elif len(parts) == 3 and parts[1] == base:
+            key = _version_key(parts[2])
+            if key > ns_key:
+                ns_key = key
+                ns_name = name
+    return ns_name if ns_name is not None else base
 
 
 # ---------------------------------------------------------------------------

@@ -353,3 +353,15 @@ adapter。它们都必须先通过 Phase C/D 证据门。
   `set_keyframes`/`set_parm`/`create_spare_parms` 足够驱动。
 - §3 的"绑定任务都应该使用 KineFX/APEX"假设仍然不成立：packed pieces、纯 channel、物理
   求解各有其位；本次收紧的只是 FK/机械层级一行，不是全表。
+
+### 11.1 机械 FK 实测基线（2026-09-04，同日双版本通过）
+
+§11 的路由决定已落地为可执行 recipe，回归 `tools/tests/dsh-kinefx-fk.test.py` 在
+H21.0.440 / H22.0.368 双双通过：Python SOP 骨架（`name` + `rest_transform`）→
+`rigdoctor`（`inittransforms=1`）→ `kinefx::rigpose` multiparm（`@name=<joint>` 组语法）
+→ `set_keyframes` 驱动 `r{i}*` → `kinefx::attachjointgeo` 刚性挂接，FK 传播与关键帧
+回读均验证。实施中发现并修复一个真实动词层 bug：`resolve_latest_type` 此前不认
+namespace 注册名，所有 `kinefx::*` 类型无法经 `tab_create` 创建；现已修复。H22 裸名
+`rigpose` 会命中接口不同的 `apex::rigpose`，跨版本 recipe 一律钉 `kinefx::rigpose`。
+唯一遗留低层缺口：multiparm 实例插入（`insertMultiParmInstance`）无动词，单次裸调用
+完成，待复现证据再决定是否动词化。细节与坑位清单见 skill reference §3.1。

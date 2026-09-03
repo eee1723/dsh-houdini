@@ -90,6 +90,28 @@ Joint Capture Proximity/Biharmonic 在 rest skin 上生成 `boneCapture`。Joint
 历史证据来自已移除的 `houdini/tests/regress_animation_foundations.py`（3-joint Rig Pose /
 Joint Capture / Joint Deform）；当前最小等价回归尚待重建。
 
+### 3.1 机械 FK 实测基线（2026-09-04，H21.0.440 / H22.0.368 双版本通过）
+
+回归：`tools/tests/dsh-kinefx-fk.test.py`。链路与坑全部实测确认：
+
+1. skeleton：Python SOP 生成 joint 点（稳定 `name` + P）+ polyline 拓扑 + **16-float
+   `rest_transform`** 点属性（`attachjointgeo` 必需，缺它报 "No valid roots found"）。
+2. `rigdoctor` 的 `inittransforms` 默认关，必须显式设 1 才会初始化 `transform`/`localtransform`。
+3. `kinefx::rigpose` 的 `transformations` multiparm 每实例控制一组 joint：
+   `insertMultiParmInstance` 没有动词，单独一次裸调用（gate 不拦，它不在动词覆盖面）；
+   **group 必须写 `@name=<joint>`**（裸 joint 名命中空组、只有 warning、不报错）；实例的
+   `r{i}x/y/z` 是普通 channel，直接 `set_keyframes` 打帧。
+4. `kinefx::attachjointgeo`：输入序 = (animated skeleton, shape library)，按 `name` 把刚体
+   link 挂到 joint；attach 会把 shape 重新对位到 joint 处，link 应建在对应 joint 的 rest 位置。
+5. FK 验证：父 joint 旋转传播到子 joint 和 attached link（回归断言 mid 绕 z 转 90° 后
+   tip link bbox 位移 > 0.5，且 mid 的 `transform` 行向量从 (1,0,0) 变为 (0,1,0)）。
+
+**命名空间坑**：kinefx 类型注册名带 `kinefx::` 前缀，`createNode(exact_type_name=True)`
+不接受裸别名；`resolve_latest_type` 已支持 namespace 解析（2026-09-04 修复）。但 H22 的裸名
+`rigpose` 会命中 `apex::rigpose`（接口不同，无 `transformations` multiparm）——跨版本 recipe
+一律钉 `kinefx::rigpose`。`apex::rigpose` 是 H22 更新的节点，但交互重心在 viewer state，
+agent 程序化路径未验证，不进 recipe。
+
 ## 4. APEX 与 simulation 边界
 
 APEX 是 graph evaluation，不是所有 rig 的默认层。采用前证明需要：animator-facing controls、

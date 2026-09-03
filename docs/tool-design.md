@@ -91,7 +91,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 |---|---|---|
 | `search_tab_menu(category, query)` | 列出某 context 下匹配的节点族 + 最新版 | dict |
 | `search_tab_entries(parent, query)` | 按真实父网络列当前可见的 node/tool entry；排除 hidden/deprecated，Material Library 根层只暴露 Builder tool；每项标 `kind` 与 dsh 是否可安全执行 | dict |
-| `resolve_latest_type(category, base)` | 某族最新版全名（内部为主） | str |
+| `resolve_latest_type(category, base)` | 某族最新版全名（内部为主）；只以 namespace 注册的族返回带前缀全名（'rigdoctor' → 'kinefx::rigdoctor'），裸别名过不了 `createNode(exact_type_name=True)`；跨 namespace 同名按排序取第一个，recipe 需跨版本一致时应显式钉命名空间 | str |
 
 ### 真实 Tab entry、Solaris/USD 自省的设计基线
 
