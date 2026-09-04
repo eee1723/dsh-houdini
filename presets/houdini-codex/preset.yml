@@ -1,2 +1,0 @@
-name: Houdini Codex 主力模式
-description: 所有实质性任务先交给官方 Codex；父 agent 只负责任务封装、Codex 调度，以及代为执行 Codex 当前无法直接调用的 Houdini 工具。

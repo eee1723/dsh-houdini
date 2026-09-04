@@ -18,12 +18,9 @@ requirements = sync.load_requirements(ROOT / "dsh-profile.requirements.json")
 assert requirements["profile"] == "web"
 assert [item["name"] for item in requirements["plugins"]] == [
     "dsh-houdini", "@anionex/dsh-vision-toolkit",
-    "@deepseek-ai/dsh-subagent-codex",
 ]
 assert requirements["plugins"][1]["spec"] == "@anionex/dsh-vision-toolkit@0.1.40"
 assert requirements["plugins"][1]["version"] == "0.1.40"
-assert requirements["plugins"][2]["spec"] == "@deepseek-ai/dsh-subagent-codex@0.1.2-rc.1"
-assert requirements["plugins"][2]["version"] == "0.1.2-rc.1"
 assert requirements["removePlugins"] == ["dsh-vision-router", "dsh-vision-fallback"]
 
 with tempfile.TemporaryDirectory() as raw_home:
@@ -34,19 +31,11 @@ with tempfile.TemporaryDirectory() as raw_home:
         "dependencies": {
             "dsh-houdini": f"link:{ROOT.as_posix()}",
             "@anionex/dsh-vision-toolkit": "0.1.40",
-            "@deepseek-ai/dsh-subagent-codex": "0.1.2-rc.1",
         },
-        "dsh": {"profile": {"bundles": [
-            "dsh-houdini", "@anionex/dsh-vision-toolkit",
-            "@deepseek-ai/dsh-subagent-codex",
-        ]}},
+        "dsh": {"profile": {"bundles": ["dsh-houdini", "@anionex/dsh-vision-toolkit"]}},
     }
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for name, version in (
-        ("dsh-houdini", "0.1.0"),
-        ("@anionex/dsh-vision-toolkit", "0.1.40"),
-        ("@deepseek-ai/dsh-subagent-codex", "0.1.2-rc.1"),
-    ):
+    for name, version in (("dsh-houdini", "0.1.0"), ("@anionex/dsh-vision-toolkit", "0.1.40")):
         package_dir = profile / "node_modules" / name
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text(

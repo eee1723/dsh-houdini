@@ -10,11 +10,6 @@
       "name": "@anionex/dsh-vision-toolkit",
       "spec": "@anionex/dsh-vision-toolkit@0.1.40",
       "version": "0.1.40"
-    },
-    {
-      "name": "@deepseek-ai/dsh-subagent-codex",
-      "spec": "@deepseek-ai/dsh-subagent-codex@0.1.2-rc.1",
-      "version": "0.1.2-rc.1"
     }
   ],
   "removePlugins": [
