@@ -1,16 +1,19 @@
 {
   "schemaVersion": 2,
-  "createdAt": "2026-09-04T00:00:00.0000000Z",
+  "createdAt": "2026-09-04T10:44:56.2691447Z",
   "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "844e05fd36c86ec6ef621226cd356055e3dc5f5ebb594e603a8d3fd0cc32c3f3",
-  "compatibilitySurfaceSha256": "500f16c79277001e64c1c1eb7d235cf325afa76d2634a2cbc9e0a52504cd13df",
+  "agentSurfaceSha256": "62c8c9241592a25668848d51fc9e77fd09d0dde75007564f40c637a96b0b3e65",
+  "compatibilitySurfaceSha256": "7b79215e468d5218005bd6dc9b79f5bbdb3855a474faa572f0093a8533eb8721",
   "runtimeVerification": {
-    "matchesBaseline": true,
-    "note": "2026-09-04 model-visible agentSurface and browser/runtime compatibilitySurface are sealed independently. K3 session 429506d9 completed on the current 50-verb rig surface; its 936-event offline evidence reports 35 tools, 29 Houdini calls, 117 verbs, and 5 raw read-only probes. The rebuilt client declares trajectory and the live DSH 0.1.2 QtWebEngine view matches those facts exactly: 29 calls, 23/29 calls with verbs, 117 total verbs, 16/50 catalog breadth, and 5 read-only probes. Browser session/list and session/cancel both return HTTP 200. Unknown DSH downloads cannot become the serving runtime until entered in dsh-runtime-compatibility.json after the compatibility gate.",
+    "matchesBaseline": false,
+    "note": "2026-09-04 render_view output color management candidate: the previous runtime wrote scene-linear OpenGL RGB unchanged into 8-bit PNG (colorcorrect=none, gamma=1), while EXR appeared normal after Nuke's view transform. H21 same-scene A/B confirmed OCIO sRGB PNG matches linear EXR converted with Houdini iconvert exactly (sampled RMSE 0, changed pixels 0%); mean luma rose from 0.51 to 2.46 and nonblack coverage from 2.15% to 5.51%. Source now writes PNG/JPEG/TIFF through the current OCIO encoded-sRGB output space, keeps EXR/HDR scene-linear, reports output_color, and fails closed when required ROP parameters cannot be applied. H21/H22 color-contract regressions pass, but the Houdini-owned GUI runtime still needs Repair/restart plus render_view smoke before matchesBaseline may return to true.",
     "verifiedAt": "2026-09-04T00:00:00.0000000Z",
     "loadedRepositoryCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
     "workingTreeDirty": true,
-    "pendingReload": [],
+    "pendingReload": [
+      "render_view format-aware output color management",
+      "generated render_view catalog guidance"
+    ],
     "houdini": "21.0.440",
     "dsh": "0.1.2-rc.1",
     "plugin": "0.1.0",
@@ -22,6 +25,6 @@
     "queuedJobs": 0,
     "runningJobs": 0,
     "webStatus": 200,
-    "guiSmoke": "DSH 0.1.2 useTrajectory(eventNodes) live; completed K3 trace matches offline evidence"
+    "guiSmoke": "pending Repair/restart: verify default PNG output_color=display_srgb and explicit EXR output_color=scene_linear"
   }
 }

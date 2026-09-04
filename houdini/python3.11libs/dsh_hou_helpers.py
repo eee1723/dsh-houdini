@@ -4435,6 +4435,112 @@ _NAMED_DIRECTIONS = {
 }
 
 
+# ``render_view`` is a visual-inspection/presentation path, so its default PNG
+# must be display encoded.  OpenGL ROP renders scene-linear values; writing
+# those values unchanged to an 8-bit PNG makes ordinary image viewers treat
+# linear samples as sRGB and crushes the shadows.  EXR/HDR remain scene-linear
+# for compositing applications such as Nuke.
+_DISPLAY_IMAGE_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tif", ".tiff",
+})
+_LINEAR_IMAGE_EXTENSIONS = frozenset({".exr", ".hdr", ".pic", ".rat"})
+_SRGB_OCIO_SPACE_PREFERENCES = (
+    # Houdini 22 / OCIO config 3 (ACES 2).
+    "sRGB Encoded Rec.709 (sRGB)",
+    # Houdini 21 / OCIO config 2.1 (ACES 1.3).
+    "sRGB - Texture",
+    # Common studio/legacy alias.
+    "Utility - sRGB - Texture",
+)
+
+
+def _select_srgb_ocio_space(spaces=None) -> str | None:
+    """Return an encoded sRGB output space across shipped H21/H22 configs."""
+    if spaces is None:
+        try:
+            spaces = hou.Color.ocio_spaces()
+        except Exception:
+            spaces = ()
+    available = {str(space) for space in spaces}
+    for preferred in _SRGB_OCIO_SPACE_PREFERENCES:
+        if preferred in available:
+            return preferred
+
+    # Custom configs often rename the utility space.  Prefer an encoded or
+    # texture sRGB space, but never silently select a display reference space:
+    # the OpenGL ROP parameter expects an output colorspace, not a display/view
+    # pair.
+    candidates = sorted(
+        space for space in available
+        if "srgb" in space.lower()
+        and "display" not in space.lower()
+        and ("encoded" in space.lower() or "texture" in space.lower())
+    )
+    return candidates[0] if candidates else None
+
+
+def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
+    """Choose scene-linear vs display encoding from the requested file type."""
+    extension = os.path.splitext(os.fspath(picture))[1].lower()
+    if extension in _LINEAR_IMAGE_EXTENSIONS:
+        return {
+            "mode": "scene_linear",
+            "extension": extension,
+            "method": "none",
+            "ocio_colorspace": None,
+            "approximate": False,
+            "settings": {
+                "colorcorrect": "none",
+                "gamma": 1.0,
+                "lut": "",
+                "ociocolorspace": "",
+                "ociolooks": "",
+            },
+        }
+
+    # Unknown extensions follow render_view's presentation intent.  Known
+    # display formats are listed explicitly for diagnostics, but defaulting an
+    # unfamiliar 8-bit writer to linear would recreate the original dark-image
+    # failure.
+    target = _select_srgb_ocio_space(ocio_spaces)
+    if target:
+        return {
+            "mode": "display_srgb",
+            "extension": extension,
+            "known_display_extension": extension in _DISPLAY_IMAGE_EXTENSIONS,
+            "method": "ocio_colorspace",
+            "ocio_colorspace": target,
+            "approximate": False,
+            "settings": {
+                "colorcorrect": "ocio",
+                "gamma": 1.0,
+                "lut": "",
+                "ociocolorspace": target,
+                "ociolooks": "",
+            },
+        }
+
+    # A custom OCIO config may expose no encoded sRGB output space.  Preserve a
+    # usable visual-inspection PNG with the OpenGL ROP's gamma path, and report
+    # that this is an approximation rather than pretending it is an exact sRGB
+    # transfer function.
+    return {
+        "mode": "display_srgb",
+        "extension": extension,
+        "known_display_extension": extension in _DISPLAY_IMAGE_EXTENSIONS,
+        "method": "gamma_fallback",
+        "ocio_colorspace": None,
+        "approximate": True,
+        "settings": {
+            "colorcorrect": "lut_gamma",
+            "gamma": 2.2,
+            "lut": "",
+            "ociocolorspace": "",
+            "ociolooks": "",
+        },
+    }
+
+
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
@@ -4455,6 +4561,9 @@ def render_view(node, direction="iso", frame=None,
     - ``coverage``：full framing 的画面覆盖率（0.1..0.95）。
     - ``framing_frame``：用哪一帧的 bbox 计算相机；None = 跟随 ``frame``。动画
       A/B 应给两次调用传同一个 framing_frame，确保相机 center/eye/dist 完全一致。
+    - 输出颜色按扩展名自动管理：PNG/JPEG/TIFF 等展示格式从当前
+      ``scene_linear`` 经 OCIO 转为编码 sRGB；EXR/HDR 保持线性供 Nuke/合成。
+      返回 ``output_color`` 记录实际方法与目标空间，不用 gamma 猜测冒充 OCIO。
     - 返回 source/proxy fingerprint；真实目标在验证期间变化时 ``stale=True``。
 
     需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
@@ -4565,7 +4674,17 @@ def render_view(node, direction="iso", frame=None,
                 eye[0], eye[1], eye[2], 1.0,
             )))
 
+        if picture is None:
+            hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
+            frame_tag = str(f).replace("-", "m").replace(".", "p")
+            picture = os.path.join(
+                hip, "render", f"dsh_view_{time.time_ns()}_f{frame_tag}.png")
+        picture = os.fspath(picture)
+        output_color = _render_output_color_plan(picture)
+
         # OpenGL ROP 完全拥有自己的对象/灯光/颜色设置，不消费用户 display/light。
+        # 颜色设置由目标文件类型决定：展示格式写 display-encoded sRGB，
+        # EXR/HDR 保持 scene-linear。不能把 linear RGB 原样量化进 PNG。
         settings = {
             "camera": cam.path(),
             "vobjects": proxy.path(),
@@ -4576,20 +4695,35 @@ def render_view(node, direction="iso", frame=None,
             "excludelights": "*",
             "shadingmode": "smooth",
             "usegeocolor": True,
-            "colorcorrect": "none",
-            "gamma": 1.0,
             "tres": True,
             "override_camerares": True,
             "res1": int(width),
             "res2": int(height),
+            **output_color["settings"],
         }
         applied = {name: _try_set(rop, name, value) for name, value in settings.items()}
 
-        if picture is None:
-            hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
-            frame_tag = str(f).replace("-", "m").replace(".", "p")
-            picture = os.path.join(
-                hip, "render", f"dsh_view_{time.time_ns()}_f{frame_tag}.png")
+        color_required = ["colorcorrect", "gamma"]
+        if output_color["method"] == "ocio_colorspace":
+            color_required.append("ociocolorspace")
+        missing_color_settings = [name for name in color_required if not applied.get(name)]
+        if missing_color_settings:
+            raise RuntimeError(
+                "OpenGL ROP 无法应用输出颜色管理参数："
+                f"{missing_color_settings}；拒绝生成颜色空间不明的 {picture}"
+            )
+        output_color = {
+            key: value for key, value in output_color.items() if key != "settings"
+        }
+        try:
+            output_color["ocio_config"] = hou.Color.ocio_configPath()
+        except Exception:
+            output_color["ocio_config"] = None
+        output_color["applied"] = {
+            "colorcorrect": rop.parm("colorcorrect").rawValue(),
+            "gamma": float(rop.parm("gamma").eval()),
+            "ocio_colorspace": rop.parm("ociocolorspace").eval(),
+        }
 
         rendered = render_frame(rop, picture=picture, frame=f)
         check = None
@@ -4637,6 +4771,7 @@ def render_view(node, direction="iso", frame=None,
                 "source_signature": framing_fingerprint["signature"],
             },
             "rop_settings_applied": applied,
+            "output_color": output_color,
             "check": check,
         }
         if resolution_note:

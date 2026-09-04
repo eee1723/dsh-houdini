@@ -31,7 +31,7 @@
 | houdini-dev 模式 preset（开发） | ✅ | `~/.dsh/.agent-presets/houdini-dev/` + `presets/houdini-dev/`，`standingKeyFor` 校验通过 |
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
 | GUI 启动线程边界 | ✅ DSH 0.1.2 / QtWebEngine 108 live smoke | QWebEngine async retry + launcher worker listener/PID/session preflight；DocumentCreation polyfill 覆盖 AbortSignal.any 与 Promise.withResolvers；普通 Open 不杀现有 Bridge（§2.68–§2.69） |
-| 视觉产图/relay/证据判定 | 🔶 vision-toolkit 0.1.40 runtime 已恢复，语义 smoke 待跑 | settings API 已兼容；0.1.40 的旧 `session.events` 调用由 exact-version/exact-callsite repair 收敛到 `snapshotEvents()`；Web profile/新会话可加载，本机 DashScope 配置保留；semantic inspection 仍须独立同图验证（§2.35–§2.39 / §2.68–§2.69） |
+| 视觉产图/relay/证据判定 | 🔶 vision-toolkit 0.1.40 runtime 已恢复；OpenGL PNG 色彩修复待 runtime reload / GUI smoke；语义 smoke 待跑 | settings API 已兼容；0.1.40 的旧 `session.events` 调用由 exact-version/exact-callsite repair 收敛到 `snapshotEvents()`；`render_view` 的 PNG/JPEG/TIFF 改为 scene-linear → OCIO encoded sRGB，EXR/HDR 保持线性并回报 `output_color`（§2.71）；Web profile/新会话可加载，本机 DashScope 配置保留；semantic inspection 仍须独立同图验证（§2.35–§2.39 / §2.68–§2.71） |
 | Host / Bridge 词表握手 | ✅ 旧 49 动词 live 验证；50 动词 candidate 待 reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
 | B0 评测协议 | ✅ v4 矩阵跑完；v5 已冻结，回归暂缓改轻量验证 | v4 `b0-2026-09-02-v4` 3×2 calibration 6/6 completed；v5 `b0-2026-09-03-v5`（C1 glm 图像声明 + C2 报告原文入 target 输入 + settingsFileSha256 入协议）manifest/matrix 已冻结；2026-09-04 六场回归暂缓（C1/C2 为评审/声明侧变更），改 C2 证据包重评 + read_image smoke，整批攒到下次 surface 变更（plan §12） |
 | 跨域质量闭环 | 🔶 B2 归因已记录（§10）；v5 整批回归暂缓，后续优化计划 O1–O5 与下一批触发条件见 plan §12 | 6/6 coreSuccess、0 hard failure、0 泄漏；B3 候选五项按门槛标注；holdout 未解封 |
@@ -2037,6 +2037,32 @@ UI 根因是 client 仍读取未声明的 `useSession(s => s.nodes)`。DSH 0.1.2
 preferred exact version，版本面板对未知 latest 显示 Await compatibility 且不可激活。benchmark baseline
 schema v2 把 agent surface 与 compatibility surface 分开，避免纯 client/runtime 修复触发模型能力矩阵，
 但仍由独立 hash 阻止未验证发布。资格流程与回滚边界见 `docs/dsh-update-compatibility.md`。
+
+### 2.71 render_view 线性 PNG 偏暗与按格式输出颜色管理（2026-09-04）
+
+最新程序化自行车 session `a7c3ea6e-6ad1-4fb5-bb90-e1d3b987ad1e` 的四张 OpenGL PNG
+均可解码且 semantic inspection 成功，但 iso/final 的 `mean_luma` 仅 0.37/0.50、非黑像素
+1.20%/2.06%；用户同时报告同场景 EXR 在 Nuke 中显示正常。根因不是 PNG 编解码损坏，而是
+`render_view` 把 OpenGL ROP 固定为 `colorcorrect='none', gamma=1.0`：scene-linear RGB 被原样量化到
+8-bit PNG，普通查看器按 sRGB 解释后暗部被压黑；Nuke 对线性 EXR 应用查看变换，所以显示正常。
+SideFX OpenGL ROP/OCIO 官方合同也明确 None 保持线性、PNG/JPG 通常为 gamma-encoded sRGB、
+EXR/HDR 通常保持线性。
+
+修复按目标扩展名自动规划输出：PNG/JPEG/TIFF/BMP/TGA 从当前 `scene_linear` 经 OpenGL ROP 的
+OCIO colorspace 转到编码 sRGB；H21 ACES 1.3 选择 `sRGB - Texture`，H22 ACES 2.0 选择
+`sRGB Encoded Rec.709 (sRGB)`，自定义 config 按 encoded/texture sRGB 名称保守发现；找不到时才使用
+明确标 `approximate=true` 的 gamma 2.2 兜底。EXR/HDR/PIC/RAT 保持 `colorcorrect='none'`。
+`render_view` 新增 `output_color` 回报 mode/method/space/config/实际 ROP 值，并在必要颜色参数无法应用时
+fail-closed，不生成颜色空间不明的展示图。
+
+同一 H21.0.440 HIP/相机/几何的真实 OpenGL A/B：旧 linear PNG 为 mean 0.51、nonblack 2.15%；
+OCIO sRGB PNG 为 mean 2.46、nonblack 5.51%，轮胎/辐条/车把/座垫暗部恢复。线性 EXR 经 Houdini
+`iconvert --ocio --ociodisplay 'sRGB - Display' 'Un-tone-mapped'` 得到的 PNG 与 OpenGL ROP 直接
+OCIO PNG 抽样像素完全一致（RMSE 0、changed 0%），证明修复是正确显示编码而非曝光补偿。
+新增 `dsh-render-color-management.test.py`，H21.0.440/H22.0.368 均验证空间选择、PNG/EXR 分流、
+ROP 参数落地与无 sRGB space 的显式 fallback。H22 headless 实际 OpenGL 渲染受 Vulkan surface 缺失限制，
+颜色合同回归已通过；源码仍需 Repair/restart 后在 Houdini-owned GUI runtime 运行最终 `render_view`
+smoke，再更新 baseline 的 runtime verification，完成前不冒充 live released。
 
 ## 3. 卡点（blockers）
 
