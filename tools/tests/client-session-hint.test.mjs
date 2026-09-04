@@ -4,6 +4,8 @@ import vm from 'node:vm';
 
 
 const source = await readFile(new URL('../../client.js', import.meta.url), 'utf8');
+const packageManifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+assert(packageManifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-trajectory'));
 
 
 async function run(href) {
@@ -86,8 +88,8 @@ const view = plain.registrations.houdinitrace.component;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
   + '{"name":"set_keyframes","signature":"(node, channels) -> dict"} (0ms)';
 const tree = view({
-  useSession: (select) => select({
-    nodes: [{
+  useTrajectory: (select) => select({
+    eventNodes: [{
       kind: 'tool-result',
       seq: 4,
       time: 100,
@@ -132,7 +134,7 @@ const blockedRawUsage = {
 };
 const traceTree = view({
   useSession: (select) => select({
-    nodes: [
+    views: new Map([['trajectory', { eventNodes: [
       {
         kind: 'tool-result', seq: 10, time: 1000,
         call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "n = hou.node('/obj')\n__result__ = scene_info()" }) },
@@ -172,7 +174,7 @@ const traceTree = view({
           'verbs (2):\n1. [ok] layout_nodes(["/obj"]) -> {"nodes":12} (2ms)\n2. [FAIL] display_node(["/obj/bike/OUT"]) -> error: ambiguous (0ms)',
         ].join('\n\n') }],
       },
-    ],
+    ] }]]),
   }),
 });
 const traceText = textContent(traceTree).replace(/\s+/g, ' ');

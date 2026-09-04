@@ -222,6 +222,8 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 
 - 不把“绑定”直接等同 KineFX/APEX。先分类：parameter channel、rigid pieces、hierarchy/FK、
   skeleton + skin、animator-facing character rig、simulation。
+- `/obj` 等路径只说明放置 context，不自动授权相同名称的数据模型。新建几何父子机械/FK 默认
+  KineFX；OBJ parenting 只在用户明确要求、既有 legacy、场景对象装配或下游 OBJ 交付时成立。
 - rigid piece 任务检查稳定 `name/piece_id`、rest transform、当前 transform 与 membership；
   packed pieces/Copy to Points/Transform Pieces 通常比对所有展开点手写矩阵更符合数据模型。
 - 旋转轴上的 piece 可能 `P` 完全不变而 `orient/transform` 已改变；活动集合和刚体动画不能只
@@ -229,10 +231,16 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
   Transform Pieces 用来匹配的属性 class，不能假设模板 `name` 自动传播。
 - KineFX 检查 joint `name/P/transform`、parent/local/world space；skin 另检查 `boneCapture`、
   capture pose、animated pose 与 Joint Deform。没有 skin/层级需求时，不因“专业”而强制 KineFX。
+- 把 driver skeleton、control/capture binding 与 driven deliverable 分开。Attach Joint Geometry 的
+  `jointgeo`/anchor、包含 skeleton 的总 bbox 或 joint P 变化都不能证明最终 skin/link 在动；实际
+  geometry 探针失败后不得换测上游 metadata 并把同一契约改判为通过。
 - APEX 面向 controls、constraints、FK/IK 与可复用 rig graph；必须证明任务需要延迟图求值和
   animator-facing 逻辑，不能用它替代简单 piece state evaluator。
 - 路径依赖/非交换序列必须表示 ordered state transition。使用初始 membership + 独立绝对
   通道时，除非各通道确实互不影响，否则是结构性反例。
+- 审计 OBJ parenting 时核对 `parent output → child input`，但 agent 应通过
+  `set_object_parent(child,parent,reason=...)` 表达意图；generic `connect` 成功不得作为新建几何
+  rig 使用 OBJ hierarchy 的依据。若最终契约是 geometry，仍需显式 final geometry 取证。
 
 ### 数据流和属性
 

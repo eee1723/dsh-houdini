@@ -19,8 +19,8 @@ assert requirements["profile"] == "web"
 assert [item["name"] for item in requirements["plugins"]] == [
     "dsh-houdini", "@anionex/dsh-vision-toolkit",
 ]
-assert requirements["plugins"][1]["spec"] == "@anionex/dsh-vision-toolkit@0.1.7"
-assert requirements["plugins"][1]["version"] == "0.1.7"
+assert requirements["plugins"][1]["spec"] == "@anionex/dsh-vision-toolkit@0.1.40"
+assert requirements["plugins"][1]["version"] == "0.1.40"
 assert requirements["removePlugins"] == ["dsh-vision-router", "dsh-vision-fallback"]
 
 with tempfile.TemporaryDirectory() as raw_home:
@@ -30,12 +30,12 @@ with tempfile.TemporaryDirectory() as raw_home:
     manifest = {
         "dependencies": {
             "dsh-houdini": f"link:{ROOT.as_posix()}",
-            "@anionex/dsh-vision-toolkit": "0.1.7",
+            "@anionex/dsh-vision-toolkit": "0.1.40",
         },
         "dsh": {"profile": {"bundles": ["dsh-houdini", "@anionex/dsh-vision-toolkit"]}},
     }
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for name, version in (("dsh-houdini", "0.1.0"), ("@anionex/dsh-vision-toolkit", "0.1.7")):
+    for name, version in (("dsh-houdini", "0.1.0"), ("@anionex/dsh-vision-toolkit", "0.1.40")):
         package_dir = profile / "node_modules" / name
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text(
@@ -46,12 +46,23 @@ with tempfile.TemporaryDirectory() as raw_home:
     assert status["ok"], status
     assert sync.required_install_specs(requirements, status, project_root=ROOT) == []
 
+    exposure = (
+        profile / "node_modules" / "@anionex" / "dsh-vision-toolkit" / "lib" / "exposure.js"
+    )
+    exposure.parent.mkdir(parents=True)
+    exposure.write_bytes(b"before\n" + sync._VISION_TOOLKIT_OLD_EVENTS_API + b"\nafter\n")
+    repaired = sync.apply_profile_compatibility_repairs(requirements, home=home)
+    assert repaired == ["vision-toolkit 0.1.40 session.snapshotEvents compatibility"]
+    assert sync._VISION_TOOLKIT_OLD_EVENTS_API not in exposure.read_bytes()
+    assert exposure.read_bytes().count(sync._VISION_TOOLKIT_NEW_EVENTS_API) == 1
+    assert sync.apply_profile_compatibility_repairs(requirements, home=home) == []
+
     manifest["dsh"]["profile"]["bundles"].remove("@anionex/dsh-vision-toolkit")
     (profile / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
     missing = sync.inspect_profile(requirements, project_root=ROOT, home=home)
     assert not missing["ok"]
     assert sync.required_install_specs(requirements, missing, project_root=ROOT) == [
-        "@anionex/dsh-vision-toolkit@0.1.7",
+        "@anionex/dsh-vision-toolkit@0.1.40",
     ]
 
     manifest["dsh"]["profile"]["bundles"].extend([

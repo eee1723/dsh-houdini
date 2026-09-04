@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "preferredVersion": "0.1.2-rc.1",
+  "releases": [
+    {
+      "dshVersion": "0.1.2-rc.1",
+      "rpcWire": "slash-generated-args-v1",
+      "browserAuth": "process-token-signed-cookie-v1",
+      "qtWebEngineMinimum": "6.5.3 / Chromium 108",
+      "requiredPolyfills": [
+        "AbortSignal.any",
+        "Promise.withResolvers"
+      ],
+      "trajectorySource": "useTrajectory(snapshot.eventNodes)",
+      "visionToolkitVersion": "0.1.40",
+      "visionToolkitRepairs": [
+        "session.events -> session.snapshotEvents()"
+      ],
+      "verifiedOn": [
+        "Houdini 21.0.440 Python 3.11",
+        "Houdini 22.0.368 Python 3.13"
+      ]
+    }
+  ]
+}

@@ -38,6 +38,16 @@ _DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
 _FRONTEND_PORT = 3081
 _BRIDGE_PORT = 8765
 
+_module_dir = os.path.dirname(os.path.abspath(__file__))
+if _module_dir not in sys.path:
+    sys.path.append(_module_dir)
+import dsh_web_auth
+import dsh_runtime_compat
+
+_DSH_WEB_SESSION = dsh_web_auth.shared_session(
+    f"http://127.0.0.1:{_FRONTEND_PORT}", _FRONTEND_LOG, _RUNTIME_STATE,
+)
+
 _WINDOW = None
 _TIMER = None
 
@@ -133,11 +143,16 @@ def _cached_dsh_versions() -> list[str]:
 
 
 def _selected_cached_dsh_version() -> str | None:
-    installs = _cached_dsh_installations()
+    verified = dsh_runtime_compat.verified_versions()
+    installs = [
+        item for item in _cached_dsh_installations()
+        if item["version"] in verified
+    ]
     return installs[0]["version"] if installs else None
 
 
 def _promote_cached_dsh(version: str) -> None:
+    dsh_runtime_compat.require_verified(version)
     matches = [item for item in _cached_dsh_installations() if item["version"] == version]
     if not matches:
         raise RuntimeError(f"DSH {version} finished but was not found in {_NPM_CACHE}")
@@ -243,12 +258,33 @@ def _http_json(url: str, data: dict | None = None, timeout: int = 5) -> dict:
     return value
 
 
-def _dsh_rpc(method: str, payload: dict) -> dict:
-    decoded = _http_json(
+def _dsh_rpc_wire(method: str, payload: dict) -> dict:
+    body = json.dumps({
+        "type": "client-request",
+        "rpcId": "dsh-houdini-manager-" + uuid.uuid4().hex,
+        "method": method,
+        "payload": payload,
+    }).encode("utf-8")
+    request = urllib.request.Request(
         f"http://127.0.0.1:{_FRONTEND_PORT}/api/{method}",
-        {"type": "client-request", "rpcId": "dsh-houdini-manager-" + uuid.uuid4().hex,
-         "method": method, "payload": payload},
+        data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
     )
+    try:
+        try:
+            response = _DSH_WEB_SESSION.open(request, timeout=5)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 401:
+                raise
+            exc.close()
+            _DSH_WEB_SESSION.authorize(5)
+            response = _DSH_WEB_SESSION.open(request, timeout=5)
+        with response:
+            decoded = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"DSH RPC {method} failed over HTTP {exc.code}: {detail[-1000:]}") from exc
     result = decoded.get("result")
     if not isinstance(result, dict) or result.get("ok") is not True:
         raise RuntimeError(f"DSH RPC {method} did not return a successful envelope")
@@ -256,6 +292,16 @@ def _dsh_rpc(method: str, payload: dict) -> dict:
     if not isinstance(value, dict):
         raise RuntimeError(f"DSH RPC {method} returned a non-object value")
     return value
+
+
+def _dsh_rpc(method: str, payload: dict) -> dict:
+    """Call the legacy wire, falling back only when DSH reports it absent."""
+    try:
+        return _dsh_rpc_wire(method, payload)
+    except RuntimeError as exc:
+        if method == "session.list" and "over HTTP 404" in str(exc):
+            return _dsh_rpc_wire("session/list", {"args": {"_request": payload}})
+        raise
 
 
 def _runtime_activity() -> dict:
@@ -528,12 +574,22 @@ def _check_updates(state: dict) -> None:
         latest, next_version = _dsh_release_info()
         selected = _selected_cached_dsh_version()
         override = _dsh_launch_override()
+        compatible = latest in dsh_runtime_compat.verified_versions()
         updates.update(
             dsh_latest=latest, dsh_target=latest, dsh_next=next_version,
             dsh_cached_ready=selected == latest,
         )
         if override:
             updates.update(dsh_status="blocked", dsh_action="Pinned", dsh_note=f"Pinned by {override}")
+        elif not compatible:
+            updates.update(
+                dsh_status="blocked", dsh_action="Await compatibility",
+                dsh_can_update=False,
+                dsh_note=(
+                    f"DSH {latest} is available but is not compatibility-verified; "
+                    f"serving remains on {runtime['version'] or selected or 'the last verified release'}"
+                ),
+            )
         elif runtime["verified"] and runtime["version"] == latest:
             updates.update(dsh_status="current", dsh_action="Up to date")
         elif selected == latest:
@@ -608,6 +664,7 @@ def _prepare_activation(state: dict, component: str, success_message: str = "Upd
 def _update_dsh(state: dict) -> None:
     try:
         latest = str(state.get("dsh_target") or _dsh_release_info()[0])
+        dsh_runtime_compat.require_verified(latest)
         override = _dsh_launch_override()
         if override:
             raise RuntimeError(f"launcher is pinned by {override}; remove that override before updating")

@@ -6,13 +6,13 @@
 
 ## 当前状态
 
-截至 2026-09-01，项目包含 5 个 `houdini_*` 工具、49 个意图级动词和 5 个按需 skills。Host/Bridge
+截至 2026-09-04，项目包含 5 个 `houdini_*` 工具、50 个意图级动词和 5 个按需 skills。Host/Bridge
 词表指纹握手、Raw Gate、session ownership、失败 rollback、隔离 `render_view`、media relay、
 Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨能力族 discovery 已完成并用于
 修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
 生产 guidance、preset、skills 或工具。
 
-当前源码和 49 动词合同已通过 Node、H21/H22 回归；2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
+当前源码和 50 动词合同已通过 Node、H21/H22 回归；2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
 Host media/read-only、content-addressed media relay、WebView 异步重试与 launcher worker preflight 均已加载。
 `/health` 返回 49 动词和指纹 `4f3516dec006…`，Web 200；真实 Houdini 模式 session
 `45798bd2-41a6-4b12-9dfa-fb62b25faa45` 的 `houdini_query` 与 Houdini Trace smoke 通过，分类为 1 次
@@ -23,6 +23,7 @@ Host media/read-only、content-addressed media relay、WebView 异步重试与 l
 - **[`docs/setup.md`](docs/setup.md)** — 新机安装步骤（换电脑/重装照做）。
 - **[`docs/tool-design.md`](docs/tool-design.md)** — 设计宪法：动词词表、两轴模型、铁律、帮助文档三阶段、动词追踪。
 - **[`docs/development.md`](docs/development.md)** — 开发进度与卡点（随开发同步维护）。
+- **[`docs/dsh-update-compatibility.md`](docs/dsh-update-compatibility.md)** — DSH 宿主升级的候选隔离、双 surface hash、五类 runtime smoke 与 fail-closed 激活门。
 - **[`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)** — 跨域发现、留出验证、反过拟合防火墙和能力准入协议。
 - **[`docs/rig-animation-design.md`](docs/rig-animation-design.md)** — Rig/animation 第一性原理、官方系统路由、最小工具预算与分阶段验收。
 - **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
@@ -55,7 +56,7 @@ bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().
 bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外可直接用）。它们把 Houdini 的
 惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`。
 **动词是主接口**；`hou` 只用于词表表达不了的只读检查、UI 或底层几何操作。当前目录为
-11 个 domain / 49 个 verbs。不得在 bridge exec 内调用 `hou.hipFile.load()` 或
+11 个 domain / 50 个 verbs。不得在 bridge exec 内调用 `hou.hipFile.load()` 或
 `hou.hipFile.clear()`；已有动词覆盖的裸修改不能旁路 Gate。
 
 > 完整设计（两轴模型、铁律、帮助文档三阶段、后续路线）见 **[`docs/tool-design.md`](docs/tool-design.md)** —— 那是唯一真相源，本表只是速查。
@@ -71,7 +72,8 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | node | `graph(node, depth=1, direction='both')` | 拓扑：inputs / outputs / parm_refs（含 `ch()` 隐形引用） |
 | node | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删）+ 帮助元数据 |
 | node | `node_provenance(node)` | 区分 foreign、当前/其他 DSH session owner 与持久 service；读取开放、修改受控 |
-| node | `connect(src, dst, index=0, allow_foreign=None)` / `disconnect_input(dst, index=0, allow_foreign=None)` | 连线/断开指定输入；destination 是修改边界，foreign source 可读 |
+| node | `connect(src, dst, index=0, allow_foreign=None)` / `disconnect_input(dst, index=0, allow_foreign=None)` | 普通网络数据流连线/断开；OBJ parenting/unparent 明确拒绝 |
+| node | `set_object_parent(child, parent, keep_world=True, reason='', index=0)` | 显式场景 OBJ parenting；自然 child→parent 参数序、合法 reason、环检测、默认保持世界变换并回读 |
 | node | `rename_node(node, name)` / `delete_node(node)` | 重命名 / 删除（返回被表达式引用的上游） |
 | node | `cook_node(node, force=False)` | cook + error/warning + `healthy`（warning 未解释不能算完成） |
 | node | `sop_set_output` / `sop_output_node` | SOP singular display/render 输出（用户 viewport/交付） |
@@ -182,10 +184,10 @@ python houdini/install.py
 
 顶部 `DSH-Houdini` 菜单只保留两个入口，职责明确分开：
 
-- `Open Workspace`：健康服务存在时只唤起内嵌窗口，不重载页面、不切换当前会话；缺少前端时才执行完整启动。
+- `Open Workspace`：以当前已保存 `.hip` 的目录幂等注册/解析 DSH workspace，在 worker 线程复用或创建对应的 `houdini` preset session，再把内嵌窗口路由过去；缺少前端时执行完整启动。切换 HIP 后再次点击即可切换任务边界，不需要把任务建在插件仓库。
 - `Version & Diagnostics...`：检查 DSH npm 通道与 dsh-houdini Git 通道。开发后加载新 Host、Bridge 或 preset，展开 `Advanced diagnostics` 并执行 `Repair and restart runtime`。
 
-显式 repair 会同步 preset、重载 Houdini 内 Bridge、替换 DSH 前端，并通过正式 Host RPC 复用或创建与当前 `$HIP` 工作区匹配的 `houdini` preset session。诊断面板会先检查活动 DSH turn/Houdini job，忙碌时不强制中断；普通 `Open Workspace` 不承担 repair 或工作区重建。等待前端期间会显示分阶段进度；日常启动直接使用 project-local npx cache 中已验证的 CLI，首次无缓存或显式指定版本才走 npx。启动来源、cwd、命令和错误写入 `.dsh-web.log`，就绪后 `.dsh-runtime.json` 记录实际监听 PID 与版本。
+显式 repair 会同步 preset、重载 Houdini 内 Bridge、替换 DSH 前端，并通过正式 Host RPC 复用或创建与当前 `$HIP` 工作区匹配的 `houdini` preset session。诊断面板会先检查活动 DSH turn/Houdini job，忙碌时不强制中断。已命名 HIP 的父目录是 Houdini 任务工作区；未保存场景使用仓库外的中立 scratch，且创建失败时不会扩大到 `dsh-houdini` 源码目录。等待前端期间会显示分阶段进度；日常启动直接使用 project-local npx cache 中已验证的 CLI，首次无缓存或显式指定版本才走 npx。启动来源、cwd、命令和错误写入 `.dsh-web.log`，就绪后 `.dsh-runtime.json` 记录实际监听 PID、版本与不含 token 的启动日志 offset。
 
 安装脚本给顶部菜单栏追加 `DSH-Houdini` 菜单，并通过 `PYTHONPATH` 把 `python3.11libs` 加进 `sys.path`。目录名不依赖 Houdini 当前 Python 小版本：同一份纯 Python 代码支持 H21 py3.11 与 H22 py3.13。脚本把本机 checkout 的绝对路径写入 package，并安装到检测到的每个 Houdini 版本 pref 目录：
 
@@ -195,7 +197,7 @@ python houdini/install.py
 
 安装脚本现在同时完成两部分：写入所有已检测 Houdini 版本的 package，并把
 `dsh-profile.requirements.json` 声明的完整能力同步到 DSH `web` profile。目前包括本地
-`dsh-houdini` bundle 和锁定的 `@anionex/dsh-vision-toolkit@0.1.7`。后者按需加载
+`dsh-houdini` bundle 和锁定的 `@anionex/dsh-vision-toolkit@0.1.40`。后者按需加载
 `vision-tools` skill，并提供 `vision_glance`、ground/detect、crop/trace、pixel diff、长图 OCR、
 前景提取、主色分析和本地 HTML 截图共 10 个独立工具。同步会迁移移除旧
 `dsh-vision-router` 和已退役的本地 `dsh-vision-fallback`，且始终通过官方 `dsh plugin`

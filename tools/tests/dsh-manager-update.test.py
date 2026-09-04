@@ -69,7 +69,7 @@ try:
     with tempfile.TemporaryDirectory() as raw_cache:
         manager._NPM_CACHE = raw_cache
         npx_root = Path(raw_cache) / "_npx"
-        for index, version in enumerate(("0.1.0-rc.7", "0.1.1-rc.2"), start=1):
+        for index, version in enumerate(("0.1.1-rc.2", "0.1.2-rc.1"), start=1):
             package = npx_root / str(index) / "node_modules" / "@deepseek-ai" / "dsh"
             (package / "lib").mkdir(parents=True)
             (package / "package.json").write_text(
@@ -79,9 +79,15 @@ try:
             bin_path.write_text("// test", encoding="utf-8")
             os.utime(bin_path, (index, index))
 
-        assert manager._selected_cached_dsh_version() == "0.1.1-rc.2"
-        manager._promote_cached_dsh("0.1.0-rc.7")
-        assert manager._selected_cached_dsh_version() == "0.1.0-rc.7"
+        assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
+        manager._promote_cached_dsh("0.1.2-rc.1")
+        assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
+        try:
+            manager._promote_cached_dsh("0.1.1-rc.2")
+        except RuntimeError as exc:
+            assert "not compatibility-verified" in str(exc)
+        else:
+            raise AssertionError("unverified cached DSH must not be promoted")
 finally:
     manager._NPM_CACHE = original_cache
 
@@ -128,13 +134,14 @@ originals = {
     "override": manager._dsh_launch_override,
     "port_open": manager._port_open,
     "rpc": manager._dsh_rpc,
+    "rpc_wire": manager._dsh_rpc_wire,
     "http": manager._http_json,
     "run_npx": manager._run_npx_dsh,
     "promote": manager._promote_cached_dsh,
     "activity": manager._runtime_activity,
 }
 try:
-    manager._dsh_release_info = lambda: ("0.1.1-rc.2", "0.1.1-rc.2")
+    manager._dsh_release_info = lambda: ("0.1.2-rc.1", "0.1.2-rc.1")
     manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
     manager._runtime_dsh_info = lambda: {
         "online": True, "verified": True, "version": "0.1.0-rc.7", "note": "PID 42",
@@ -152,11 +159,18 @@ try:
     assert state["dsh_status"] == "update" and state["dsh_can_update"] is True, state
     assert state["plugin_status"] == "update" and state["plugin_can_update"] is True, state
 
-    manager._selected_cached_dsh_version = lambda: "0.1.1-rc.2"
+    manager._selected_cached_dsh_version = lambda: "0.1.2-rc.1"
     state = {"busy": True}
     manager._check_updates(state)
     assert state["dsh_status"] == "staged" and state["dsh_action"] == "Restart to latest", state
     manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
+
+    manager._dsh_release_info = lambda: ("0.1.3-unverified", "0.1.3-unverified")
+    state = {"busy": True}
+    manager._check_updates(state)
+    assert state["dsh_status"] == "blocked" and state["dsh_can_update"] is False, state
+    assert state["dsh_action"] == "Await compatibility", state
+    manager._dsh_release_info = lambda: ("0.1.2-rc.1", "0.1.2-rc.1")
 
     manager._dsh_launch_override = lambda: "DSH_HOUDINI_DSH_SPEC=@deepseek-ai/dsh@old"
     state = {"busy": True}
@@ -207,7 +221,7 @@ try:
 
     manager._run_npx_dsh = fake_run_npx
     manager._promote_cached_dsh = lambda version: None
-    state = {"busy": True, "dsh_target": "0.1.1-rc.2"}
+    state = {"busy": True, "dsh_target": "0.1.2-rc.1"}
     manager._update_dsh(state)
     assert state["result"] == "activate", state
     assert state["download_progress"] is None, state
@@ -220,6 +234,7 @@ finally:
     manager._dsh_launch_override = originals["override"]
     manager._port_open = originals["port_open"]
     manager._dsh_rpc = originals["rpc"]
+    manager._dsh_rpc_wire = originals["rpc_wire"]
     manager._http_json = originals["http"]
     manager._run_npx_dsh = originals["run_npx"]
     manager._promote_cached_dsh = originals["promote"]

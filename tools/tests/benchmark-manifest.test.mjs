@@ -5,8 +5,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   agentSurfaceHash,
+  compatibilitySurfaceHash,
   canonicalJson,
   listAgentSurfaceFiles,
+  listCompatibilitySurfaceFiles,
   publicBriefAgentPayload,
   resolveHipArtifactPath,
   sha256File,
@@ -33,9 +35,17 @@ const currentSurfaceHash = agentSurfaceHash(root)
 assert.match(currentSurfaceHash, /^[0-9a-f]{64}$/)
 assert.ok(listAgentSurfaceFiles(root).includes('presets/houdini/agent.cordis.yml'))
 assert.ok(listAgentSurfaceFiles(root).includes('skills/houdini-sop-workflow/SKILL.md'))
+assert.ok(!listAgentSurfaceFiles(root).includes('client.js'))
+assert.ok(listCompatibilitySurfaceFiles(root).includes('client.js'))
+assert.ok(listCompatibilitySurfaceFiles(root).includes('houdini/python3.11libs/dsh_webview.py'))
 
 const baseline = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'baseline.json'), 'utf8'))
 assert.equal(currentSurfaceHash, baseline.agentSurfaceSha256, 'agent-visible surface drifted after the benchmark baseline was sealed')
+assert.equal(
+  compatibilitySurfaceHash(root),
+  baseline.compatibilitySurfaceSha256,
+  'runtime/browser compatibility surface drifted after the baseline was sealed',
+)
 
 const protocol = {
   schemaVersion: 1,

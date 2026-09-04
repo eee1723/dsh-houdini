@@ -1,4 +1,4 @@
-"""H21/H22 HOM regression: KineFX 机械 FK 最小 recipe（O2）。
+"""H21/H22 HOM regression: KineFX 机械 FK + rigid deliverable recipe。
 
 锁定官方现行栈的 agent 可驱动路径（rig-animation-design.md §11 实测基线）：
 
@@ -6,7 +6,9 @@
 - rigdoctor `inittransforms=1` 初始化 transform/localtransform；
 - `kinefx::rigpose` 的 transformations multiparm 用 `@name=<joint>` 组语法寻址
   （裸 joint 名会命中空组并 warning），r{N}x/y/z 可由 set_keyframes 打关键帧；
-- `kinefx::attachjointgeo` 按 `name` 把刚体 link 挂到 joint，FK 传播成立；
+- `kinefx::capturepackedgeo` 按 `name` 做 100% rigid capture；
+- `kinefx::jointdeform` 消费 capture/animated pose，最终 link 几何真实运动；
+- skeleton 总 bbox 会随 FK 变化，但不能冒充 driven geometry oracle；
 - resolve_latest_type 的 namespace 解析：'rigdoctor' → 'kinefx::rigdoctor'；
   H22 裸名 'rigpose' 会命中 apex::rigpose（接口不同），跨版本 recipe 必须钉
   `kinefx::` 命名空间。
@@ -47,6 +49,14 @@ def bbox_center_at(node_path, frame):
 bb = geo.boundingBox()
 c = (bb.minvec() + bb.maxvec()) / 2
 __result__ = [round(float(v), 3) for v in c]""")
+
+
+def bbox_extent_at(node_path, frame):
+    run(f"__result__ = set_timeline(current_frame={frame})")
+    run(f"__result__ = cook_node({node_path!r}, force=True)")
+    return run(f"""geo = hou.node({node_path!r}).geometry()
+size = geo.boundingBox().sizevec()
+__result__ = [round(float(v), 3) for v in size]""")
 
 
 SKELETON_PY = """node = hou.pwd()
@@ -92,7 +102,8 @@ try:
     run(
         f"__result__ = set_keyframes({rp_path!r}, "
         "{'r0z': [{'frame': 1, 'value': 0.0, 'curve': 'linear'}, "
-        "{'frame': 24, 'value': 90.0, 'curve': 'linear'}]})"
+        "{'frame': 24, 'value': 90.0, 'curve': 'linear'}, "
+        "{'frame': 48, 'value': 0.0, 'curve': 'linear'}]})"
     )
 
     # 3) FK：mid 关节 local rotation 在 frame 24 为绕 z 90°
@@ -109,20 +120,60 @@ __result__ = [round(t[i], 3) for i in range(3)]""")
     assert abs(row[0]) < 1e-3 and abs(row[1] - 1.0) < 1e-3, row
     assert run(f"__result__ = hou.node({rp_path!r}).parm('r0z').isTimeDependent()") is True
 
-    # 4) attachjointgeo 刚性挂接：tip link 随 mid 旋转摆动（FK 传播）
-    run(
+    # 4) 负对照：driver skeleton 的总 bbox 本身就会变化，不能作为 link oracle。
+    skel_c1 = bbox_center_at(rp_path, 1)
+    skel_c24 = bbox_center_at(rp_path, 24)
+    assert sum(abs(a - b) for a, b in zip(skel_c1, skel_c24)) > 0.5
+
+    # 5) rigid capture + deform：只在最终 driven geometry 上验 link。
+    deform_path = run(
         f"bx = tab_create({geo_path!r}, 'box', name='link_tip')\n"
-        "set_parms(bx, {'sizey': 1.0, 'ty': 2.5})\n"
+        "set_parms(bx, {'sizex': 0.2, 'sizey': 1.0, 'sizez': 0.3, 'ty': 2.5})\n"
         f"nm = tab_create({geo_path!r}, 'name', name='name_tip', inputs=[bx])\n"
         "set_parm(nm, 'name1', 'tip')\n"
-        f"att = tab_create({geo_path!r}, 'kinefx::attachjointgeo', name='attach', inputs=[{rp_path!r}, nm])\n"
-        "__result__ = att.path()"
+        f"cap = tab_create({geo_path!r}, 'kinefx::capturepackedgeo', name='capture_link', inputs=[nm, {geo_path + '/init_tf'!r}])\n"
+        "set_parms(cap, {'packinput': 1, 'useconnectivity': 0, 'nameattribute': 'name', "
+        "'capturebyname': 1, 'skinattr': 'name', 'skelattr': 'name'})\n"
+        f"deform = tab_create({geo_path!r}, 'kinefx::jointdeform', name='deform_link', inputs=[cap, {geo_path + '/init_tf'!r}, {rp_path!r}])\n"
+        "__result__ = deform.path()"
     )
-    attach_path = geo_path + "/attach"
-    c1 = bbox_center_at(attach_path, 1)
-    c24 = bbox_center_at(attach_path, 24)
+
+    captured = run(f"""g = hou.node({geo_path + '/capture_link'!r}).geometry()
+__result__ = {{
+    'point_attribs': sorted(a.name() for a in g.pointAttribs()),
+    'prim_types': sorted(set(str(p.type()).split('.')[-1] for p in g.prims())),
+}}""")
+    assert "boneCapture" in captured["point_attribs"], captured
+
+    health = run(
+        f"__result__ = {{'capture': cook_node({geo_path + '/capture_link'!r}, force=True), "
+        f"'deform': cook_node({deform_path!r}, force=True)}}"
+    )
+    assert health["capture"]["healthy"] is True, health
+    assert health["deform"]["healthy"] is True, health
+
+    delivered = run(f"""g = hou.node({deform_path!r}).geometry()
+__result__ = {{
+    'points': len(g.points()), 'prims': len(g.prims()),
+    'point_attribs': sorted(a.name() for a in g.pointAttribs()),
+    'prim_types': sorted(set(str(p.type()).split('.')[-1] for p in g.prims())),
+}}""")
+    assert delivered["points"] == 1 and delivered["prims"] == 1, delivered
+    assert "Polygon" not in delivered["prim_types"], delivered
+
+    c1 = bbox_center_at(deform_path, 1)
+    c24 = bbox_center_at(deform_path, 24)
+    c48 = bbox_center_at(deform_path, 48)
     moved = sum(abs(a - b) for a, b in zip(c1, c24))
     assert moved > 0.5, (c1, c24, moved)
+    assert c1 == [0.0, 2.5, 0.0], c1
+    assert c24 == [-1.5, 1.0, 0.0], c24
+    assert c48 == c1, (c1, c48)
+
+    e1 = bbox_extent_at(deform_path, 1)
+    e24 = bbox_extent_at(deform_path, 24)
+    assert e1 == [0.2, 1.0, 0.3], e1
+    assert e24 == [1.0, 0.2, 0.3], e24
 
     print("kinefx-fk regression: ok")
 finally:

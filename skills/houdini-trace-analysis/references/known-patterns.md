@@ -433,3 +433,48 @@
   内容摘要，只有新建或变化才 fresh，并 finally 恢复 picture/frame/foreground。
 - 反例/边界：H21 `hython` 保存后 dirty flag 仍不可靠，必须返回 null/false 边界，不能硬说 clean；
   文件指纹证明本次产物变化，不等于渲染内容语义正确。
+
+## HTA-031：driver/binding 运动冒充最终 driven geometry
+
+- 状态：确认/P0 契约修正；原失败实例的新 session 正向回归通过，未见同族与反例仍待验收。
+- 首次/最近证据：`7bf34ae9-f148-4920-9599-9c3f3c77f438` #87 的 actual unpacked TCP 在运动帧
+  最大误差 10.07；#94 改测 packed anchor transform 后误差变成 5.4e-7；#96 只比较 5 个 skeleton
+  joint P；#123–#125 的最终图仍是直刚体 + 弯骨架，vision 明确回答主体 straight，最终报告却宣称
+  刚体弯曲通过。当前 H21 viewport 同图复现；首版 `dsh-kinefx-fk` 仍因混合输出总 bbox 变化假绿。
+- 症状：channel/joint、绑定元数据、总 bbox 和 pixel diff 都变化，cook 也无 warning，但用户最终要
+  播放或渲染的 geometry/state 保持 rest、缺失或错误。
+- 根因：任务合同没有区分 `driver state → binding/evaluation → driven deliverable`；验证又从实际
+  输出退回上游 proxy/anchor，或让 driver visualization 污染 bbox/render diff。
+- 修复：rig skill 内联三层交付合同与失败证据不降级规则；KineFX reference 将 Attach Joint Geometry
+  限定为 control/capture 辅助，rigid deliverable 路由到 Capture Packed Geometry → Joint Deform。
+  回归直接验证 final link 的 world center、orientation/extent、recovery、boneCapture 和无 skeleton
+  polygon，并保留 skeleton-only bbox 会动的负对照。
+- 正向回归：`975f49a0-97f2-44d9-b290-76716741cc54` #1/#2 读取新 skill/reference，#40–#53
+  建 rigid capture，#55–#59 建 deform/final OUT，#63/#64/#68/#86 验实际 piece/marker/FK，#88/#89
+  刷新最终 render/vision，#90/#91 flow layout 并 clean save。同模型同提示由 130 降到 92 tools，
+  但仍有 20 failures，主要来自 skeleton HOM 与 capture 参数探索，故效率 fast path 继续收敛。
+- 反例/边界：用户只要 skeleton、control shapes、capture influence 或调试 overlay 时，driver/binding
+  本身可以是 deliverable；普通 channel 或 solver 任务沿用同一分层，但不强制 KineFX 节点。
+- 下一验收：新低能力模型 session 使用未见的层级刚体任务，确认先声明三层合同、选择正确 driven
+  output，并在隐藏 helper 后完成数值与固定构图视觉验收；另用纯 control-shape 任务确认不会误触发
+  Joint Deform。
+
+## HTA-032：创建路径被误读成 legacy rig 架构
+
+- 状态：确认/P0 guard 已实现，待新 session 正例与 scene-parenting 反例。
+- 证据：未见层级刚体 session `db2cf0bf-a8ca-4907-a373-7ab2d41f31ce` #1 已加载最新 rig skill，
+  但未读 KineFX reference；#2 把“在 /obj 下”直接写成 OBJ hierarchy；#7 的 SOP `connect` 方向反转，
+  display OUT 为 0 点；#10 又把 Object parenting 接成 platform→arm→base。0 geometry/render/vision、
+  5 unfinished todo，两个 turn 均由用户中止，场景 dirty 未保存。
+- 症状：用户的 context/path 词被当成 representation 授权；模型绕过默认现代流程，并用 generic
+  dataflow verb 猜 scene parenting 方向。
+- 根因：主 skill 的 fallback 边界不够显著；仅靠提示无法阻止已曝光规则被较弱模型忽略；`connect`
+  在 SOP/OBJ context 副作用不同，参数序又与自然语言“把 child 绑定到 parent”相反。
+- 修复：rig skill 明确 `/obj` 只表示位置，新建几何 FK 必须先读 KineFX §3.1；OBJ parenting 限定为
+  scene assembly/camera-light-null/existing legacy/explicit user/downstream OBJ delivery。工具新增
+  `set_object_parent(child,parent,keep_world,reason)`；generic `connect`/`disconnect_input` 拒绝 OBJ
+  parenting/unparent。H21/H22 回归覆盖 reason、方向、环、world preserve、回读与 ownership。
+- 反例/边界：camera/light/null 跟随、多个独立场景对象装配、既有 legacy 维护或明确 OBJ hierarchy
+  交付仍应使用 OBJ parenting；KineFX 不是整个 OBJ scene graph 的替代。
+- 下一验收：K3 重跑未见几何 FK 正例应自然走 KineFX；另跑 camera 跟随 object 与用户明确 OBJ
+  hierarchy 两个反例，确认语义动词可用且不会被误禁。

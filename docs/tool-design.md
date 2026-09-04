@@ -35,7 +35,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 ### 9 个域
 
 这里是架构层的 9 个领域族；构建期 catalog 会按工具职责把 compatibility、vocabulary 等
-独立展开，当前实际目录为 11 个 domain / 49 verbs。
+独立展开，当前实际目录为 11 个 domain / 50 verbs。
 
 | 域 | 现状态 | 预留动词（将来，示意） |
 |---|---|---|
@@ -136,8 +136,9 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, allow_foreign=None)` | 连线（src 输出 → dst 输入）；mutation 边界在 dst；落口与请求不一致时返回里带 `note`；连接成功后若 dst 违反自顶向下流（dst.y >= 输入的 min y）则 snap 到「x = 输入 x 均值，y = min(输入 y) − 垂直间距」，已在下游（dst.y < min 输入 y）的节点绝不动，返回带 `position_adjusted` | dict |
-| `disconnect_input(dst, index=0, allow_foreign=None)` | 断开 destination 的一个输入口；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
+| `connect(src, dst, index=0, allow_foreign=None)` | 数据流连线（src 输出 → dst 输入）；mutation 边界在 dst；**OBJ→OBJ 拒绝**，因为 Object wiring 是 parenting，必须改用语义明确的 `set_object_parent(child,parent,...)`。落口与请求不一致时返回里带 `note`；连接成功后若 dst 违反自顶向下流则 snap 到输入下方，已在下游的节点不动 | dict |
+| `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
+| `disconnect_input(dst, index=0, allow_foreign=None)` | 断开普通网络 destination 输入；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除（返回被表达式引用的上游）；拒绝删除 owner-tagged `render_view` 会话级基础设施，避免进入 H21 OpenGL teardown fatal 路径 | dict |
 | `cook_node(node, force=False)` | cook + error/warning；另给 `ok/warning_free/healthy`，warning 未解释不得当完成 | dict |
@@ -154,6 +155,10 @@ source，不能默认改它的参数、名字、旗标、位置、HDA 定义或�
 call id 只作创建审计，不把多次工具调用割裂成无法继续编辑的节点。
 registry 只在当前 Houdini 进程内有效；完整重启后无法在不信任可复制 tag 的前提下证明旧节点
 来源，因此安全地降级为 foreign，由用户对具体目标作单次授权。
+
+**OBJ parenting 边界（2026-09-04）**：`connect` 只保留数据流语义，避免同名动词在 Object context
+悄悄变成 parenting。场景层级改用 child-first 的 `set_object_parent`，并要求结构化 reason；这既阻止
+新建几何 FK 回退旧 OBJ rig，也保留 camera/light/null、scene assembly、legacy 和下游 OBJ 交付。
 
 **人性化落位（O1，2026-09-03）**：agent 建节点全堆原点、最后一发原生 L（layoutChildren）
 了事，是真实会话里最刺眼的机器味。因此把「整齐」做成建设的副产品：`tab_create` 落位、

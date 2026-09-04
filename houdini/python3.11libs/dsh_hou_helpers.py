@@ -1506,9 +1506,114 @@ def describe(node) -> dict:
 
 # --- node 域：写 -----------------------------------------------------------
 
+_OBJECT_PARENT_REASONS = {
+    "scene_assembly",
+    "camera_light_null",
+    "existing_legacy",
+    "explicit_user",
+    "downstream_obj_delivery",
+}
+
+
+def _matrix_values(matrix) -> list[float]:
+    return [float(value) for value in matrix.asTuple()]
+
+
+def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
+                      index: int = 0, allow_foreign: str | None = None) -> dict:
+    """显式设置 OBJ parent，参数顺序是 ``child, parent``。
+
+    这是 scene hierarchy 例外入口，不是新建几何 FK rig 的默认表示。``reason``
+    必须是 ``scene_assembly/camera_light_null/existing_legacy/explicit_user/``
+    ``downstream_obj_delivery`` 之一。``parent=None`` 表示 unparent；普通父级
+    使用 ``index=0``，Blend 等明确多输入对象可指定其他 input。
+    ``keep_world=True`` 在改层级后恢复 child 的原世界变换，并回读验证 parent。
+    """
+    c = _resolve(child)
+    p = None if parent is None else _resolve(parent)
+    obj_category = hou.objNodeTypeCategory()
+    if c.type().category() != obj_category:
+        raise ValueError(f"set_object_parent 的 child 必须是 OBJ，收到 {c.path()}")
+    if p is not None and p.type().category() != obj_category:
+        raise ValueError(f"set_object_parent 的 parent 必须是 OBJ 或 None，收到 {p.path()}")
+    reason = str(reason or "").strip()
+    if reason not in _OBJECT_PARENT_REASONS:
+        raise ValueError(
+            "reason 必须明确 OBJ parenting 的合法边界，可用："
+            f"{sorted(_OBJECT_PARENT_REASONS)}。新建几何父子机械/FK 请使用 KineFX。"
+        )
+    if p is not None and int(p.sessionId()) == int(c.sessionId()):
+        raise ValueError("对象不能 parent 到自身")
+    index = int(index)
+    if index < 0 or index >= len(c.inputConnectors()):
+        raise ValueError(
+            f"input index {index} 超出 {c.path()} 的有效范围 "
+            f"0..{len(c.inputConnectors()) - 1}"
+        )
+    if p is not None:
+        pending = [p]
+        seen = set()
+        while pending:
+            cursor = pending.pop()
+            sid = int(cursor.sessionId())
+            if sid in seen:
+                continue
+            seen.add(sid)
+            if int(cursor.sessionId()) == int(c.sessionId()):
+                raise ValueError(
+                    f"OBJ parenting 会形成环：{c.path()} <- {p.path()}"
+                )
+            pending.extend(item for item in cursor.inputs() if item is not None)
+
+    _require_owned(c, "set_object_parent child", allow_foreign)
+    previous = c.input(index)
+    world_before = c.worldTransform()
+    local_before = {
+        "t": [float(v) for v in c.parmTuple("t").eval()],
+        "r": [float(v) for v in c.parmTuple("r").eval()],
+        "s": [float(v) for v in c.parmTuple("s").eval()],
+    }
+    c.setInput(index, p)
+    if bool(keep_world):
+        c.setWorldTransform(world_before)
+    actual = c.input(index)
+    actual_matches = (
+        (actual is None and p is None)
+        or (actual is not None and p is not None
+            and int(actual.sessionId()) == int(p.sessionId()))
+    )
+    if not actual_matches:
+        raise RuntimeError(
+            f"OBJ parenting 回读不一致：requested={p.path() if p else None}, "
+            f"actual={actual.path() if actual else None}"
+        )
+    world_after = c.worldTransform()
+    before_values = _matrix_values(world_before)
+    after_values = _matrix_values(world_after)
+    world_delta = max(abs(a - b) for a, b in zip(before_values, after_values))
+    return {
+        "child": c.path(),
+        "parent": p.path() if p is not None else None,
+        "previous_parent": previous.path() if previous is not None else None,
+        "input": index,
+        "reason": reason,
+        "keep_world": bool(keep_world),
+        "verified": actual_matches,
+        "world_transform_preserved": world_delta <= 1e-6 if keep_world else None,
+        "world_delta_max": world_delta,
+        "local_before": local_before,
+        "local_after": {
+            "t": [float(v) for v in c.parmTuple("t").eval()],
+            "r": [float(v) for v in c.parmTuple("r").eval()],
+            "s": [float(v) for v in c.parmTuple("s").eval()],
+        },
+    }
+
 def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
+    只表达普通网络 dataflow；OBJ→OBJ 是 parenting，明确拒绝并要求
+    ``set_object_parent(child, parent, reason=...)``。
     返回 ``{"node": dst path, "input": 实际落到的输入口, "position_adjusted": bool}``。
     请求的端口不存在时退化为「下一个可用输入」，此时返回里会带 ``note``——落口
     与请求不一致必须让调用方知道，静默改口会让 agent 基于错误的连线继续推理。
@@ -1517,6 +1622,14 @@ def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
     """
     s = _resolve(src)
     d = _resolve(dst)
+    if (s.type().category() == hou.objNodeTypeCategory()
+            and d.type().category() == hou.objNodeTypeCategory()):
+        raise ValueError(
+            "connect 只表达网络数据流，不执行 OBJ parenting。"
+            f"当前连线会把 {s.path()} 作为 parent、{d.path()} 作为 child；"
+            "请改用 set_object_parent(child, parent, keep_world=True, reason=...)。"
+            "新建几何父子机械/FK 默认使用 KineFX；/obj 只表示创建位置。"
+        )
     _require_owned(d, "connect destination", allow_foreign)
     try:
         d.setInput(index, s)
@@ -1540,8 +1653,13 @@ def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
 
 
 def disconnect_input(dst, index: int = 0, allow_foreign: str | None = None) -> dict:
-    """断开 ``dst`` 的一个输入口；mutation/ownership 边界在 destination。"""
+    """断开普通网络 ``dst`` 输入；OBJ unparent 改用 ``set_object_parent``。"""
     d = _resolve(dst)
+    if d.type().category() == hou.objNodeTypeCategory():
+        raise ValueError(
+            "disconnect_input 不执行 OBJ unparent；请用 "
+            "set_object_parent(child, None, keep_world=True, reason=...)"
+        )
     _require_owned(d, "disconnect_input", allow_foreign)
     index = int(index)
     if index < 0 or index >= len(d.inputConnectors()):

@@ -23,6 +23,8 @@ description: 创建、审查、维护和演化 dsh-houdini 的领域 skills。�
 3. 给请求分类：`CREATE`、`UPDATE`、`INGEST`、`SPLIT/MERGE`、`DEPRECATE`、`RELEASE_AUDIT`。
 4. 创建或重构 skill 时完整阅读
    [references/quality-standard.md](references/quality-standard.md)。
+   domain skill 的实质更新必须按其中“弱模型执行标准”检查复杂度门、执行脊柱、fast path、
+   探测停止、证据失效与验收矩阵；不能只过 frontmatter/链接审计就称质量达标。
 5. 证据来自 trace、官方文档、视频、HIP/HDA 工程或源码时，完整阅读
    [references/evidence-ingestion.md](references/evidence-ingestion.md)，先建立 claim/provenance，
    再决定是否改变规范。
@@ -40,7 +42,8 @@ description: 创建、审查、维护和演化 dsh-houdini 的领域 skills。�
 8. 做最小 diff，清除重复规则，保留反例和适用边界。单个项目节点名、艺术偏好、视频作者
    个人习惯、benchmark ID、实例对象/目标参数、评分答案或模型臆测不得升级为通用硬规则。
 9. 验证后才标记完成：目标 skill 的结构校验、治理审计、引用/注册、必要构建、当前 Houdini
-   版本实验、真实行为用例和反例。新 session 才能验证新的 skill catalog/guidance 是否曝光。
+   版本实验、原失败、未见同族行为用例和相邻/领域内反例。新 session 才能验证新的 skill
+   catalog/guidance 是否曝光；缺少任一发布门时明确停在 candidate/verified。
 
 ## 受控自进化
 

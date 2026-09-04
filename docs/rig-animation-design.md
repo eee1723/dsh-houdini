@@ -68,7 +68,7 @@
 - skill 可版本化、按需加载，适合领域路由、官方模式和完成门。
 - 动词适合跨任务稳定意图、校验、事务、状态恢复和紧凑返回，不适合收录每个 node/API。
 - 裸 `hou` 必须保留为低频逃生舱，否则词表未覆盖的新领域会被硬性卡死。
-- 当前 49 个目录动词已覆盖发现、建图、参数/关键帧、几何、资产、USD、渲染与视口；新增能力
+- 当前 50 个目录动词已覆盖发现、建图、显式 OBJ parenting、参数/关键帧、几何、资产、USD、渲染与视口；新增能力
   必须优先扩展现有语义，不能按单 trace 增长一组专用名字。
 - `hou` 只能在 Houdini 主线程执行；GUI 用户的 selection/display/frame 可能随时变化，
   agent 的验证必须保持隔离和状态恢复。
@@ -354,14 +354,22 @@ adapter。它们都必须先通过 Phase C/D 证据门。
 - §3 的"绑定任务都应该使用 KineFX/APEX"假设仍然不成立：packed pieces、纯 channel、物理
   求解各有其位；本次收紧的只是 FK/机械层级一行，不是全表。
 
-### 11.1 机械 FK 实测基线（2026-09-04，同日双版本通过）
+### 11.1 机械 FK driver 基线与 rigid deliverable 修正（2026-09-04）
 
-§11 的路由决定已落地为可执行 recipe，回归 `tools/tests/dsh-kinefx-fk.test.py` 在
-H21.0.440 / H22.0.368 双双通过：Python SOP 骨架（`name` + `rest_transform`）→
-`rigdoctor`（`inittransforms=1`）→ `kinefx::rigpose` multiparm（`@name=<joint>` 组语法）
-→ `set_keyframes` 驱动 `r{i}*` → `kinefx::attachjointgeo` 刚性挂接，FK 传播与关键帧
-回读均验证。实施中发现并修复一个真实动词层 bug：`resolve_latest_type` 此前不认
-namespace 注册名，所有 `kinefx::*` 类型无法经 `tab_create` 创建；现已修复。H22 裸名
-`rigpose` 会命中接口不同的 `apex::rigpose`，跨版本 recipe 一律钉 `kinefx::rigpose`。
-唯一遗留低层缺口：multiparm 实例插入（`insertMultiParmInstance`）无动词，单次裸调用
-完成，待复现证据再决定是否动词化。细节与坑位清单见 skill reference §3.1。
+§11 的 KineFX 路由本身成立，但首版回归只证明 driver skeleton：Python SOP 骨架（`name` +
+`rest_transform`）→ `rigdoctor(inittransforms=1)` → `kinefx::rigpose` multiparm
+（`@name=<joint>`）→ `set_keyframes`。首版又把 `kinefx::attachjointgeo` 混合输出的总 bbox
+变化当成 attached link 运动；真实任务 `7bf34ae9-f148-4920-9599-9c3f3c77f438` 证明 skeleton
+折线在动时该 oracle 会假绿，而最终刚体保持 rest。
+
+SideFX 官方合同与 H21.0.440/H22.0.368 disposable 实验共同确认：Attach Joint Geometry 只附加
+control/capture-influence shapes；可见 rigid geometry 必须经 `kinefx::capturepackedgeo`
+按 name 建 100% `boneCapture`，再由 `kinefx::jointdeform(captured rest geometry,
+capture pose, animated pose)` 输出。修订后的回归验证非立方 link 的实际 center、旋转后 extent、
+recovery、`boneCapture` 和 final output 不含 skeleton polygon；并保留 skeleton 总 bbox 自身会动的
+负对照。两版均无 error/warning 通过。
+
+namespace 修复仍有效：`resolve_latest_type` 已支持 `kinefx::*`；H22 裸名 `rigpose` 会命中接口
+不同的 `apex::rigpose`，跨版本 recipe 一律钉 `kinefx::rigpose`。multiparm 实例插入
+（`insertMultiParmInstance`）仍无动词，自然任务与回归已形成重复证据，后续应优先扩展通用参数
+能力而非新增 KineFX 专用 verb。细节与边界见 rig skill reference §3.1。

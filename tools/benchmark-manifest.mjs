@@ -7,10 +7,23 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const defaultRoot = path.dirname(here)
 
 export const AGENT_SURFACE_ENTRIES = Object.freeze([
-  'client.js',
   'docs/tool-design.md',
   'presets',
   'skills',
+  'src',
+])
+
+// Browser/runtime compatibility is sealed separately from model-visible
+// instructions. A Trace UI or launcher fix must run Host/Qt/profile lifecycle
+// gates, but should not by itself trigger the expensive model capability matrix.
+export const COMPATIBILITY_SURFACE_ENTRIES = Object.freeze([
+  'client.js',
+  'package.json',
+  'dsh-profile.requirements.json',
+  'dsh-runtime-compatibility.json',
+  'houdini/MainMenuCommon.xml',
+  'houdini/install.py',
+  'houdini/python3.11libs',
   'src',
 ])
 
@@ -47,6 +60,14 @@ export function listAgentSurfaceFiles(root = defaultRoot) {
     .sort()
 }
 
+export function listCompatibilitySurfaceFiles(root = defaultRoot) {
+  return COMPATIBILITY_SURFACE_ENTRIES
+    .flatMap((entry) => walkFiles(path.join(root, entry), root))
+    .filter((file) => /\.(?:js|mjs|ts|py|json|xml|md|ya?ml)$/.test(file))
+    .filter((file) => !file.endsWith('generated-verb-contract.ts'))
+    .sort()
+}
+
 export function sha256Bytes(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
@@ -68,8 +89,16 @@ export function sha256Json(value) {
 }
 
 export function agentSurfaceHash(root = defaultRoot) {
+  return surfaceHash(root, listAgentSurfaceFiles(root))
+}
+
+export function compatibilitySurfaceHash(root = defaultRoot) {
+  return surfaceHash(root, listCompatibilitySurfaceFiles(root))
+}
+
+function surfaceHash(root, files) {
   const hash = crypto.createHash('sha256')
-  for (const relative of listAgentSurfaceFiles(root)) {
+  for (const relative of files) {
     const text = fs.readFileSync(path.join(root, relative), 'utf8').replaceAll('\r\n', '\n')
     hash.update(relative)
     hash.update('\0')

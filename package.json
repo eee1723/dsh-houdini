@@ -19,6 +19,7 @@
     "client.js",
     "cordis.patch.yml",
     "dsh-profile.requirements.json",
+    "dsh-runtime-compatibility.json",
     "houdini",
     "skills",
     "docs",
@@ -38,7 +39,8 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-trajectory"
       ]
     }
   },

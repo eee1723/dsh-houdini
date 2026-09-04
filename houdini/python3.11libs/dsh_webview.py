@@ -66,10 +66,31 @@ _POLYFILL_ABORT_SIGNAL_ANY_JS = """
 })()
 """
 
+# DSH 0.1.2 的新版 client/runtime 及 vision-toolkit 间接使用 ES2024
+# Promise.withResolvers。H21/H22 的 QtWebEngine 6.5.3（Chrome 108）没有该
+# API，会在 Cordis inventory 建立前抛错，随后所有 RPC 都退化成 Failed to
+# fetch。与 AbortSignal.any 一样必须在 DocumentCreation、MainWorld 注入。
+_POLYFILL_PROMISE_WITH_RESOLVERS_JS = """
+(function(){
+  if (typeof Promise === 'undefined' || typeof Promise.withResolvers === 'function') return;
+  Object.defineProperty(Promise, 'withResolvers', {
+    configurable: true,
+    writable: true,
+    value: function(){
+      var C = this;
+      var resolve, reject;
+      var promise = new C(function(res, rej){ resolve = res; reject = rej; });
+      return { promise: promise, resolve: resolve, reject: reject };
+    }
+  });
+})()
+"""
+
 _window: QWidget | None = None
 _view: QWebEngineView | None = None
 _retry_timer: QTimer | None = None
 _target_url = FRONTEND_URL
+_after_auth_url: str | None = None
 
 
 def _on_main_thread() -> bool:
@@ -86,9 +107,16 @@ def _retry_load() -> None:
 
 def _load_finished(ok: bool) -> None:
     """Run the page patch on success, or schedule one cancellable async retry."""
+    global _target_url, _after_auth_url
     if ok:
         if _retry_timer is not None:
             _retry_timer.stop()
+        if _after_auth_url is not None and _view is not None:
+            target = _after_auth_url
+            _after_auth_url = None
+            _target_url = target
+            _view.load(QUrl(target))
+            return
         if _view is not None:
             _view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS)
         return
@@ -118,18 +146,23 @@ def _session_url(session_id: str | None) -> str:
 
 
 def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
-    """在 DocumentCreation 注入 AbortSignal.any polyfill（先于页面脚本执行）。"""
+    """在 DocumentCreation 注入 QtWebEngine 缺失的 Web runtime API。"""
     script = QWebEngineScript()
-    script.setName("dsh-abortsignal-any-polyfill")
+    script.setName("dsh-qtwebengine-runtime-polyfills")
     script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
     script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
     script.setRunsOnSubFrames(False)
-    script.setSourceCode(_POLYFILL_ABORT_SIGNAL_ANY_JS)
+    script.setSourceCode(
+        _POLYFILL_ABORT_SIGNAL_ANY_JS + ";\n" + _POLYFILL_PROMISE_WITH_RESOLVERS_JS
+    )
     view.page().scripts().insert(script)
 
 
-def show_webview(session_id: str | None = None) -> str:
-    """打开内嵌 UI；可路由显式 session，无 id 时只唤起当前窗口。"""
+def show_webview(
+    session_id: str | None = None,
+    authenticated_url: str | None = None,
+) -> str:
+    """打开内嵌 UI；先建立 DSH 浏览器 cookie，再路由显式 session。"""
     if QCoreApplication.instance() is None:
         raise RuntimeError(
             "dsh_webview 需要 Qt GUI：当前是 hython/无 UI 进程，无法内嵌 web UI。"
@@ -140,15 +173,19 @@ def show_webview(session_id: str | None = None) -> str:
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _retry_timer, _target_url
+    global _window, _view, _retry_timer, _target_url, _after_auth_url
     target_url = _session_url(session_id)
+    initial_url = authenticated_url or target_url
     if _window is not None and _window.isVisible():
         # A full service restart carries an explicit Host-created/reused
         # session target. Plain Open Workspace intentionally does not reload or
         # change the user's current conversation.
-        if session_id is not None and _view is not None:
-            _target_url = target_url
+        if (session_id is not None or authenticated_url is not None) and _view is not None:
+            _after_auth_url = target_url if authenticated_url is not None else None
+            _target_url = initial_url
             _view.load(QUrl(_target_url))
+        else:
+            _after_auth_url = None
         _bring_to_front(_window)
         return (
             f"webview routed to {session_id}"
@@ -174,10 +211,11 @@ def show_webview(session_id: str | None = None) -> str:
         _view = view
         _retry_timer = retry_timer
 
-    _target_url = target_url
+    _after_auth_url = target_url if authenticated_url is not None else None
+    _target_url = initial_url
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))
-    return f"opened {_target_url}"
+    return "opened authenticated DSH workspace" if authenticated_url else f"opened {target_url}"
 
 
 if __name__ == "__main__":

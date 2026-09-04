@@ -93,3 +93,28 @@ runtime、`$HFS/houdini/help`、shipped shelf/source 与最小实验为准。
 
 回滚：按 Git diff 分别回退三个 domain reference/entry 与 GOV-002；不删除整个 skills 目录，
 不修改用户 preset 或 HIP。
+
+## 7. 弱模型执行标准复审（2026-09-04）
+
+同模型同提示的 KineFX 原题由 `7bf34ae9…` 的核心失败改善为 `975f49a0…` 的最终 rigid geometry
+通过，证明“交付边界 + driver/binding/deliverable + 条件 fast path”能改变弱模型行为；但新 trace
+仍有 20 failed calls，说明路线正确不等于执行足够高效。治理 quality standard 因此新增统一的
+复杂度门、执行脊柱、fast path、探测阶梯、两次同边界失败换策略、证据失效和七类发布验收。
+
+当前采用度不是简单的 pass/fail，而按领域列 backlog：
+
+| Skill | 当前强项 | 相对新标准的缺口 | 状态 |
+|---|---|---|---|
+| rig/animation | 分类、三层交付、KineFX H21/H22 fast path、时序/最终几何门 | 未见层级刚体正例、control/channel/solver 反例；multiparm 与 node-help 工具缺口 | reference implementation / verified candidate |
+| SOP | 质量合同、模块关系、扰动/恢复、新鲜证据、局部几何门 | 按数据模型整理 fast path、两次失败换策略、简单任务负担反例需复审 | pending standardization |
+| Solaris/Karma | USD/material/render 分层、Tab setup、正式产物门 | H22 GUI fast path、诊断升级顺序、渲染超时转 job 的停止合同需复审 | pending standardization |
+| trace analysis | 确定性 evidence、失败分类、反事实轨迹、证据等级 | 视觉失败后恢复和跨证据冲突需更结构化；不强套内容制作 fast path | audit-specialized / partial |
+| skill governance | 来源、版本、反例、发布/回滚 | 新 §2 弱模型标准与 GOV-007 已补；需要用后续两个 domain update 验证治理本身 | canonical standard / candidate |
+
+推进顺序：先用 rig 完成未见正例与反例，确认标准不只修原题；再按自然 trace 中的主要失败面依次
+标准化 SOP、Solaris/Karma。不得为了表格全绿一次性给所有 entrypoint 复制通用段落；每个 domain
+只加入会改变本领域决策的内容，并用自己的 fast path 和反例发布。
+
+K3 未见正例 `db2cf0bf…` 进一步确认“简洁”不能等同只写建议：架构禁止项由主 skill 一条短 gate
+表达，确定性阻断交给 verb。新增 `set_object_parent` 后，guidance 只说明 `connect` 是 dataflow，rig
+entrypoint 只说明 KineFX 默认和 OBJ 例外，具体 parenting reason/回读放 §3.2；避免三层重复整段规则。

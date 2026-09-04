@@ -53,7 +53,7 @@ python houdini/install.py --skip-dsh-profile
 ## 4. 启动
 
 1. 完整重开 Houdini，让 package 和菜单生效。
-2. 点击 `DSH-Houdini` → `Open Workspace`。服务未运行时会同步 preset、启动 Bridge 和前端，并打开内嵌 UI；服务已健康时只唤起窗口。
+2. 先把场景保存到目标工程目录，再点击 `DSH-Houdini` → `Open Workspace`。launcher 会把 `.hip` 的父目录幂等注册为 DSH workspace，并复用/创建该目录下的 Houdini 会话；服务未运行时同时同步 preset、启动 Bridge 和前端。切换到另一份 HIP 后再点一次即可切换工作区。未保存场景只使用仓库外中立 scratch，插件源码目录永不作为兜底任务工作区。
 3. 在 Web UI 新建会话并选择「Houdini 模式」。开发插件本身时选择「Houdini 开发模式」。
 
 加载刚修改的 Host、Bridge、helper 或 preset 时，打开 `Version & Diagnostics...`，展开 `Advanced diagnostics`，点击 `Repair and restart runtime`。它会先检查活动 DSH turn/Houdini job，忙碌时不会强制中断。`dsh_webview.py`、菜单 XML、安装 package 等由 Houdini 进程缓存的 UI/安装层改动需要完整重启 Houdini。
@@ -104,7 +104,7 @@ $env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
 
 ## 7. 视觉能力边界
 
-当前安装清单固定 `@anionex/dsh-vision-toolkit@0.1.7`，并主动移除旧
+当前安装清单固定 `@anionex/dsh-vision-toolkit@0.1.40`，并主动移除旧
 `dsh-vision-router` 与 `dsh-vision-fallback`。在会话中先加载 `vision-tools` skill；需要时
 `vision_toolkit_activate` 会为当前 agent 挂载 10 个独立的 `vision_*` 工具。远程视觉工具使用
 `设置 → 视觉工具` 里配置的 provider/model/DSH Credential，本地 crop/trace/pixel diff/

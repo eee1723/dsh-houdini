@@ -8,8 +8,8 @@
     },
     {
       "name": "@anionex/dsh-vision-toolkit",
-      "spec": "@anionex/dsh-vision-toolkit@0.1.7",
-      "version": "0.1.7"
+      "spec": "@anionex/dsh-vision-toolkit@0.1.40",
+      "version": "0.1.40"
     }
   ],
   "removePlugins": [

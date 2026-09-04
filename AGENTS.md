@@ -2,14 +2,14 @@
 
 ## 项目定位
 
-dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。链路：`src/`（注册 5 个 `houdini_*` 工具）→ HTTP → `dsh_bridge.py`（主线程工作队列）→ `dsh_hou_helpers.py`（49 动词）。`hou` 只存在于 Houdini 侧 Python 模块，Node Host 不直接调用 HOM。
+dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在运行的 SideFX Houdini 会话。链路：`src/`（注册 5 个 `houdini_*` 工具）→ HTTP → `dsh_bridge.py`（主线程工作队列）→ `dsh_hou_helpers.py`（50 动词）。`hou` 只存在于 Houdini 侧 Python 模块，Node Host 不直接调用 HOM。
 
 ## 怎么跑
 
 - 构建：`npm install && npm run build`。生成器从 `docs/tool-design.md` 同时刷新 `client.js` 目录和 `src/generated-verb-contract.ts`，再由 tsc 输出 `lib/`；不要手改生成区或 `lib/`。
 - 启动：Houdini 菜单 `DSH-Houdini` → `Open Workspace`。加载新代码/修复运行时时，打开 `Version & Diagnostics...` → `Advanced diagnostics` → `Repair and restart runtime`。
 - 验证：Web UI 新建「Houdini 模式」会话，发「用 houdini_query 列出 /obj 下所有节点」。Host 会在第一次场景调用前比较自身词表指纹与运行中 Bridge；不一致会拒绝执行并要求重启服务。
-- 测试：`npm test` 跑构建和全部 Node 确定性回归；需要 HOM 的回归在 `tools/tests/*.test.py`，目标版本用 `hython` 跑。至少再执行 raw-gate、node-ownership、caught-failure、tab-create-failure 和 scene/network/render contract；发布前同时跑 H21/H22。
+- 测试：`npm test` 跑构建和全部 Node 确定性回归；需要 HOM 的回归在 `tools/tests/*.test.py`，目标版本用 `hython` 跑。至少再执行 raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting 和 scene/network/render contract；发布前同时跑 H21/H22。
 - trace：先按 `houdini-trace-analysis` skill 跑 `extract-trace-evidence.mjs`，再跑 `node tools/trace-report.mjs`。报告必须区分目录广度、调用含动词率、动词密度、只读裸探针、被 Gate 拦截和成功裸修改。
 
 ## 技术栈与目录
@@ -32,12 +32,20 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 
 ## 当前状态（2026-09-02）
 
-端到端链路、49 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，Bridge 49 动词/指纹 `4f3516dec006…`、Web 200、异步 WebView、Host/Bridge 握手与真实 Houdini 模式 `houdini_query`/Trace 只读分类均通过；session `45798bd2-41a6-4b12-9dfa-fb62b25faa45` 为 1 次无动词只读 HOM probe，0 mutation、0 Gate block、0 rollback。16 个 Node 回归已兼容 Windows CRLF，H21/H22 核心 HOM/launcher/manager/profile/seed 回归也重新通过，当前没有待加载的运行时修复。
+端到端链路、50 个目录动词、五个 skills、ownership guard、Raw Gate、rollback、隔离 `render_view`、HTML/evidence trace 已实现。2026-09-01 从 `cf1f1e8` 完整冷启动 H21 时 Bridge 为 49 动词/指纹 `4f3516dec006…`；当前第 50 个动词 `set_object_parent` 已通过 H21/H22 回归但待 runtime reload。该历史 cold-start 的 Web 200、异步 WebView、Host/Bridge 握手与真实 Houdini 模式 `houdini_query`/Trace 只读分类均通过；session `45798bd2-41a6-4b12-9dfa-fb62b25faa45` 为 1 次无动词只读 HOM probe，0 mutation、0 Gate block、0 rollback。
 
-生产视觉能力固定为本机已验证好用的 `@anionex/dsh-vision-toolkit@0.1.7`：按需 skill 激活 10 个独立视觉工具，provider/model/凭据由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection，升级 toolkit/provider 前做隔离同图 A/B。开发依赖已与生产 DSH 0.1.1-rc.2 对齐，五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
+生产视觉依赖已因 DSH 0.1.2 兼容性固定到 `@anionex/dsh-vision-toolkit@0.1.40`：该版移除了对旧 settings runtime API 的导入，Web profile 加载已实测；升级后的 semantic smoke/A-B 尚未跑，完成前不得把 runtime 可加载写成视觉语义已验证。provider/model/凭据仍由 profile 设置管理；旧 `dsh-vision-router` 与本地 `dsh-vision-fallback` 均退役。每次任务仍须区分 transport、bootstrap、presentation 与 semantic inspection。launcher 已适配 DSH 0.1.2 的 process token → signed browser cookie 鉴权和 slash/generated-args RPC，Host RPC 与 QtWebEngine 分别建立各自 cookie；五个 `houdini_*` 工具已有纯函数调用/结果卡片与回放回归。
 
 跨能力族 discovery 已完成，B0 基础设施、三族 seed/smoke 与 Protocol `b0-2026-09-02-v4` 已冻结。正式 3×2 已完成 6/6：Mechanical/K3=100、Mechanical/GLM=100、Simulation/GLM=100、Simulation/K3=100、Lookdev/K3=90、Lookdev/GLM=90，均 0 hard failure/coreSuccess=true/claimLevel=none，三族同族并列。Mechanical/ Simulation 效率偏向 K3，但 Simulation/K3 出现 2 次 query mutation 和 18 次裸 File Cache 写盘，GLM 无 query mutation但运行更慢。Lookdev 两模型同 90、各扣诚实 10 分：K3 报告声称存在实际没有的 DomeLight；GLM 台账声称 stage 无 error/warning，独立回读发现 2 条 SOP import warning（Target 保守裁为 unverified，按规则 0 分）。GLM lookdev 另有 7 次成功裸 `rop.render()`（均为异步 job + 单次 allow_raw 豁免，因 render_frame ~110s 硬顶）。discovery 阶段结论可进入 B2 归因；最终能力结论仍待 B4 留出解封。生产面不得写实例答案；holdout未解封；大规模改动继续放在整批之后。两工具误选率已按六场正式数据评估：query mutation 2/101（均 simulation/K3），安全收益成立，`houdini_query`/`houdini_exec` 维持两工具保留（§10.5）。B2 归因与 B3 候选门槛见 plan §10；v5 变更单（§11）已批准并冻结为 `b0-2026-09-03-v5`：C1 glm-5.3-flash 声明 `input: [text, image]` 已应用（settings.yaml SHA-256 `13909d44…`，协议新增必填 `execution.settingsFileSha256` 覆盖仓库外 surface），C2 target 输入附报告原文（deterministicEvaluator 升 v3）；`formal-matrix.json` 已重置为 regression 阶段六场 pending；2026-09-04 决定六场回归暂缓：C1/C2 为评审/声明侧变更，v4 两个诚实失分点不由其修复、无可回归失败实例，改 C2 证据包重评 + read_image smoke 轻量验证，整批攒到下一次 agent surface 变更后一次执行。评估定位为发现/确认问题的手段而非目的，不为评估而评估；后续优化计划（O1 人性化 layout 动词、O2 rig skill 默认路由收紧为 KineFX、O3 坑位台账、O4 评审 pass^k 与第二评审模型、O5 精化种子与质量维度）与下一批回归触发条件见 plan §12。
 
 2026-09-04 O1 已落地：`tab_create` 智能落位、`connect` 纠流（`position_adjusted`）、`layout_nodes` 新增 `mode='flow'` 拓扑分层；词表指纹不变（仍 `4f3516dec006`，指纹只绑动词名），但 agent-surface hash 变为 `1c3abd20…`，`benchmark/baseline.json` 已重封；H21/H22 `dsh-layout-flow` 回归通过，live Bridge 冷启动加载验证留待 v6 批次前一并做。O1 属 agent surface 变更，v5 矩阵继续 pending，攒入 v6 整批回归。
 
-2026-09-04 O2 已落地：父子机械/FK 默认路由收紧为 KineFX joints（OBJ hierarchy 降为 legacy fallback）；修复 `resolve_latest_type` 不认 namespace 注册名的动词层 bug（此前所有 `kinefx::*` 类型无法经 `tab_create` 创建）；KineFX 机械 FK recipe（骨架 Python SOP + `rest_transform` → rigdoctor `inittransforms=1` → `kinefx::rigpose` multiparm `@name=<joint>` + `set_keyframes` → `kinefx::attachjointgeo`）双版本实测通过，回归 `dsh-kinefx-fk`；坑位与 H22 `apex::rigpose` 命名空间坑写入 skill reference §3.1。agent-surface hash 变为 `ad9e3f92…` 并已重封。O3–O5 未动。
+2026-09-04 O2 路由与 namespace 修复已落地，但首个自然 KineFX 任务 `7bf34ae9…` 打穿首版回归假阳性：driver skeleton 正确，`attachjointgeo(role=capture)` 的最终刚体保持 rest；旧测试因混合输出总 bbox 随 skeleton 变化而假绿。rig skill 已改为通用 `driver → binding/evaluation → driven deliverable` 三层合同，条件性 recipe 修正为 Capture Packed Geometry → Joint Deform；新回归验证实际 link center/旋转 extent/recovery/boneCapture/无 skeleton polygon，H21/H22 通过。candidate agent-surface hash 为 `6534fde1…`；仍待 Repair/restart 后新 session 的未见刚体正例 + control-shape 反例，未标 released。O3 坑位台账已建立；O4–O5 未动。
+
+2026-09-04 同模型同原题新 session `975f49a0…` 已完成原失败实例正向回归：最终 672 点 driven geometry、逐 piece 刚体不变量、解析 FK、f1/f96 recovery、fixed-camera render、flow layout 与 clean save 均成立；tools 130→92，但仍有 20 failed calls。治理 quality standard 已新增面向弱模型的复杂度门、执行脊柱、版本 fast path、探测阶梯、两次同边界失败换策略、证据失效和七类发布验收；rig reference 加入 H21/H22 验证过的 skeleton/capture 最小 API，作为其他 domain skill 后续标准化的参考实现。candidate agent-surface hash 为 `c8ba7353…`。不得一次性复制通用文案：SOP、Solaris/Karma 必须按各自 trace、fast path 和反例逐项发布。rig 仍待未见层级刚体正例、control-shape 反例及 channel/solver 反例。
+
+2026-09-04 未见维护平台任务 `db2cf0bf…` 成为 K3 反例：最新 rig skill 已加载但 reference 未读，`/obj` 位置被误解为 OBJ hierarchy 授权；SOP 与 parenting 的 `connect` 方向均反，base output 为空，0 验证/渲染/保存后由用户中止。现将规则收敛为：新建几何父子机械/FK 必须 KineFX 且 mutation 前读 §3.1；OBJ parenting 只保留 scene assembly/legacy/explicit user/downstream delivery 四类边界。工具层新增 `set_object_parent(child,parent,keep_world,reason)`，generic `connect`/`disconnect_input` 拒绝 OBJ parenting/unparent，H21/H22 环检测、reason、world-preserve 与回读回归通过。当前源码 50 动词/新指纹待 Repair/restart 和 K3 未见正例/OBJ scene 反例验证。
+
+2026-09-04 DSH 0.1.2 runtime 兼容已实装修复：launcher/manager 支持 process-token cookie 与 slash/generated-args RPC；H21/H22 QtWebEngine 在 DocumentCreation 注入 `AbortSignal.any` 和 `Promise.withResolvers`；vision-toolkit 0.1.40 的唯一旧 `session.events` callsite 由 exact-version fail-closed repair 改用公开 `snapshotEvents()`。新 workspace 合同为“已保存 HIP 父目录即 DSH workspace”，每次 Open Workspace 都在 worker 幂等注册、复用/创建并路由；未保存场景只用仓库外 scratch，绝不回退插件源码。当前 `E:/tmp/test11` workspace 与新 Houdini session 已 live 验证，浏览器 RPC 200；视觉 semantic smoke 仍待跑，不得冒充已验证。
+
+2026-09-04 最新 K3 session `429506d9…` completed，但 Trace 因 client 读取已删除的 `Session.nodes` 静默为空；离线 evidence 为 936 events/35 tools/29 Houdini calls/117 verbs。client 已显式依赖 trajectory，用 DSH 0.1.2 `useTrajectory(eventNodes)` 与 0.1.1 `views.get('trajectory').eventNodes` 双版本 adapter；live UI 的 29、23/29、117、16/50、5 raw reads 与离线证据一致。DSH 更新改为 `dsh-runtime-compatibility.json` 精确白名单：下载不等于激活，未知 latest 不得成为 serving runtime。baseline schema v2 分离 agent surface 与 compatibility surface；新版本必须按 `docs/dsh-update-compatibility.md` 通过 Host RPC、H21/H22 QtWebEngine、Trace、workspace/session、第三方 bundle 门后才能提升。

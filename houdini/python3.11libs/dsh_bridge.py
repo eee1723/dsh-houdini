@@ -183,6 +183,7 @@ _VERBS: dict[str, object] = {
     "describe": dsh_hou_helpers.describe,
     "node_provenance": dsh_hou_helpers.node_provenance,
     "connect": dsh_hou_helpers.connect,
+    "set_object_parent": dsh_hou_helpers.set_object_parent,
     "disconnect_input": dsh_hou_helpers.disconnect_input,
     "rename_node": dsh_hou_helpers.rename_node,
     "delete_node": dsh_hou_helpers.delete_node,
@@ -225,7 +226,7 @@ _VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexd
 
 _MUTATING_VERB_NAMES = {
     "scene_save", "set_timeline", "create_bookmark", "delete_bookmark",
-    "tab_create", "tab_apply", "connect", "disconnect_input", "rename_node",
+    "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "set_display", "sop_set_output",
     "set_object_visible", "layout_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
@@ -243,8 +244,8 @@ _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 _RAW_HOU_VERB_MAP = {
     "hipFile.save": "scene_save",
     "createNode": "search_tab_entries + tab_create/tab_apply",
-    "setInput": "connect or disconnect_input",
-    "setFirstInput": "connect or disconnect_input",
+    "setInput": "connect, set_object_parent, or disconnect_input",
+    "setFirstInput": "connect, set_object_parent, or disconnect_input",
     "connectInputs": "connect",
     "setName": "rename_node",
     "destroy": "delete_node",

@@ -535,6 +535,21 @@ B2 归因（§10）后仅两项证据达门槛的修复进入本变更单；两�
 3. APEX 仅在需要 IK 组件或 set driven keys（H22 机械联动官方方案）时采用；
    简单机械动画不升级为 APEX。
 
+2026-09-04 自然 KineFX 任务暴露首版 O2 的 driver/deliverable 假阳性：Attach Joint Geometry 的
+control/capture metadata 与 skeleton 总 bbox 被误当成最终刚体 deformation。skill 已用三层交付合同
+做泛化修正，reference/回归改为 rigid capture → Joint Deform 并通过 H21/H22；该失败实例进入 v6
+mechanical refinement 定向回归。随后同模型同原题新 session `975f49a0…` 的最终 rigid geometry、
+解析 FK、fixed-camera render、flow layout 与 clean save 全部通过，tools 130→92；但 20 次失败仍暴露
+skeleton HOM/capture 参数效率缺口。治理标准与 rig fast path 已继续收敛，尚待未见同族正例、纯
+control-shape 反例及 channel/solver 反例，不能用原题通过宣布泛化完成。
+
+首个 K3 未见同族正例 `db2cf0bf…` 随后失败：`/obj` 位置被误读为 OBJ hierarchy，且 generic
+`connect` 使 SOP dataflow 与 Object parenting 双双反向。由于最新 skill 已加载，问题不能再归因于
+部署或知识缺失。v6 candidate 因此加入显式 OBJ parenting guard：第 50 个动词
+`set_object_parent(child,parent,reason,index)`；generic connect/unparent 拒绝 OBJ，rig 路由只保留
+KineFX 必须项与合法 scene-parenting 例外。未见正例必须用 K3 重跑，另加 camera 跟随和用户明确
+OBJ hierarchy 反例，防止为修机械 FK 破坏场景装配。
+
 **O3 坑位台账（复盘机制，轻量、无代码依赖）**——2026-09-04 已建立 `docs/pitfall-ledger.md`，
 首批收录 L01–L12（含 O2 实测发现的 namespace/`@name=` 组语法/rest_transform 等坑的沉淀位置）：
 

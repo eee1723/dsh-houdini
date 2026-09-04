@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { EXPECTED_VERB_NAMES } from '../../lib/generated-verb-contract.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const currentSurfaces = [
@@ -24,6 +25,9 @@ for (const relative of currentSurfaces) {
 }
 
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+const agents = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8')
+const development = fs.readFileSync(path.join(root, 'docs', 'development.md'), 'utf8')
+const verbCount = EXPECTED_VERB_NAMES.length
 const nodeTestCount = fs.readdirSync(path.join(root, 'tools', 'tests'))
   .filter((name) => name.endsWith('.test.mjs')).length
 assert.match(
@@ -37,7 +41,13 @@ for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
   assert.match(readme, new RegExp(skillFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README omits ${skillFile}`)
 }
 
-assert.match(readme, /Open Workspace[^\n]*不重载页面、不切换当前会话/)
+assert.match(readme, /Open Workspace[^\n]*已保存 `\.hip`[^\n]*DSH workspace/)
+assert.match(readme, /切换 HIP 后再次点击即可切换任务边界/)
+assert.match(readme, /未保存场景[^\n]*中立 scratch[^\n]*不会扩大到 `dsh-houdini`/)
 assert.match(readme, /Repair and restart runtime/)
+assert.match(readme, new RegExp(`${verbCount} 个意图级动词`))
+assert.match(agents, new RegExp(`dsh_hou_helpers\\.py.（${verbCount} 动词）`))
+assert.match(development, new RegExp(`${verbCount} 个目录入口`))
+assert.match(readme, /set_object_parent\(child, parent/)
 
 console.log('current documentation consistency tests passed')

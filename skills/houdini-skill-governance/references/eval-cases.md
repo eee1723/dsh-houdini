@@ -92,3 +92,67 @@
 - `GOV-003`：第三方 COP 视频包含有用 setup 与个人偏好，只吸收可复现 claim；
 - `GOV-004`：用户 HIP 含专有 HDA/缺失插件，只读分析且不复制内部代码；
 - `GOV-005`：两个 skills 触发重叠，基于真实误路由决定窄化、联用或合并。
+
+## GOV-006：低能力模型区分 driver、binding 与最终交付
+
+### 正例输入
+
+给一个未见过的父子刚体机构任务，要求可见外壳随多个 joint 的 FK 动画运动，并交付固定机位多帧
+对比；不要使用既有 trace 的对象名称、段数、角度、帧号或配色。
+
+### 相邻反例
+
+1. 只要求给 skeleton joints 附加可选中的 control shapes，不需要 renderable skin；
+2. 只给普通 camera 参数打关键帧，不存在 skeleton/capture；
+3. 物理铰链由 solver 驱动，交付物是 cache，不应改写成 Rig Pose。
+
+### Observable pass criteria
+
+1. 正例在建图前声明 `driver → binding/evaluation → driven deliverable`，但不复述固定项目 recipe；
+2. skeleton/joint 数据和最终 rigid geometry 分层验证，final output 隐藏 helper 后仍完整且随帧运动；
+3. actual geometry probe 失败时保持 fail，不改测 anchor/总 bbox 后宣称完成；
+4. 视觉明确报告主体静止、缺失或反向时阻断完成，pixel diff 不覆盖负证据；
+5. control-shape 反例正确保留 Attach Joint Geometry，不无条件添加 capture/deform；
+6. channel 与 solver 反例保持各自数据模型，不因 skill 中出现 KineFX recipe 而误路由；
+7. H21/H22 的最终 geometry 数据门通过，且没有用户未要求的外部写入。
+
+### 当前状态
+
+- 确定性节点/数据正例与 skeleton-only bbox 反例已由 `dsh-kinefx-fk.test.py` 在 H21/H22 通过；
+- 原失败实例已由新 `qwen3.8-max` session `975f49a0-97f2-44d9-b290-76716741cc54` 正向通过：
+  自然读取 reference、采用 rigid capture → deform、最终 672 点 geometry 运动与恢复、fixed-camera
+  render、flow layout 和 clean save 均成立；工具调用从 130 降到 92，但仍有 20 failed calls。
+- 首个未见同族 K3 session `db2cf0bf-a8ca-4907-a373-7ab2d41f31ce` 失败：把 `/obj` 位置误读为
+  OBJ hierarchy，未读 §3.1，SOP/OBJ 两层连线均反向并由用户中止。现已用短路由规则和显式
+  `set_object_parent` guard 修正；同一未见正例必须重跑。
+- control-shape、camera/object scene-parenting、明确 legacy OBJ、channel/solver 反例仍待完成，
+  当前不得标 released。
+
+## GOV-007：弱模型高效执行标准不得变成万能模板
+
+### 输入
+
+选择一个有已验证 fast path 的复杂 domain task，以及三个边界任务：简单单节点编辑、同领域但数据
+模型不同的任务、相邻 skill 的任务。执行模型使用目标支持矩阵中较弱且历史上会重复探测的模型；
+不给它预期节点答案或失败原因。
+
+### Observable pass criteria
+
+1. 复杂正例在首个大规模 mutation 前留下紧凑交付合同，直接采用匹配的 fast path；不从零逆向
+   HDA，不倾倒整个节点目录。
+2. 未知契约按 reference → tool/parm → 单变量 probe → 本机 help 的阶梯推进；同一边界两次失败后
+   回到 checkpoint 并换策略，而不是继续改拼写。
+3. 每个 batch 只跨一个可验证边界；影响下游语义的 mutation 后只刷新受影响证据，最终报告不复用
+   陈旧结果。
+4. 简单任务不输出长合同、不加载无关 reference、不强制 render/研究/扰动。
+5. 同领域反例选择另一正确数据模型；相邻领域反例不被该 skill 吞并。
+6. 最终 deliverable、helper 隔离、warning/error、时间/文件/视觉门与保存按任务实际需要成立；证据
+   冲突被显式裁决，无法证明的项标 unverified。
+7. 记录首次正确 checkpoint、调用/失败/rollback、重复 probe、raw exemption 和用户纠正；不设为了
+   追分而可作弊的固定调用阈值。
+
+### 当前状态
+
+- 质量规范和 rig reference implementation 已落地；原失败实例证明路线与调用数改善。
+- SOP、Solaris/Karma 仍需各自的未见正例/反例和版本 fast path 审核后才能声称采用同一标准；
+  trace/governance 属审计型 skill，只采用同样的证据、停止和渐进披露原则，不强套内容制作步骤。

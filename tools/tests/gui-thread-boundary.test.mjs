@@ -6,6 +6,10 @@ assert.doesNotMatch(webview, /^import socket$/m, 'WebView GUI module must not pe
 assert.doesNotMatch(webview, /def _port_open\b/, 'WebView retry must use asynchronous QWebEngine loading');
 assert.match(webview, /view\.loadFinished\.connect\(_load_finished\)/);
 assert.match(webview, /retry_timer\.setSingleShot\(True\)/);
+assert.match(webview, /Promise\.withResolvers/);
+assert.match(webview, /Object\.defineProperty\(Promise, 'withResolvers'/);
+assert.match(webview, /QWebEngineScript\.InjectionPoint\.DocumentCreation/);
+assert.match(webview, /_POLYFILL_ABORT_SIGNAL_ANY_JS \+ ";\\n" \+ _POLYFILL_PROMISE_WITH_RESOLVERS_JS/);
 
 const launcher = fs.readFileSync('houdini/python3.11libs/dsh_launcher.py', 'utf8');
 const functionBody = (name) => {
@@ -26,5 +30,7 @@ assert.match(functionBody('_dispatch_service_preflight'), /cannot schedule non-b
 assert.match(functionBody('launch'), /clear_external_bridge=True/);
 assert.doesNotMatch(functionBody('open_workspace'), /clear_external_bridge=True/);
 assert.match(functionBody('open_workspace'), /bridge already running[\s\S]*?open_ui_when_ready/);
+assert.match(functionBody('open_workspace'), /_open_existing_frontend\(frontend_cwd/);
+assert.match(functionBody('_open_existing_frontend'), /threading\.Thread\(target=worker/);
 
 console.log('GUI-thread probe regression passed');
