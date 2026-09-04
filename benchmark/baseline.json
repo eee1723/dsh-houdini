@@ -1,16 +1,18 @@
 {
   "schemaVersion": 2,
   "createdAt": "2026-09-04T00:00:00.0000000Z",
-  "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "844e05fd36c86ec6ef621226cd356055e3dc5f5ebb594e603a8d3fd0cc32c3f3",
-  "compatibilitySurfaceSha256": "500f16c79277001e64c1c1eb7d235cf325afa76d2634a2cbc9e0a52504cd13df",
+  "baselineCommit": "9bd2af4eb9e9f61b433367f35702a6189f65509b",
+  "agentSurfaceSha256": "05740a23e51dc8c077b7c0ecdaeb017c523b0a458c5f6142f2afbf1bae7b705e",
+  "compatibilitySurfaceSha256": "0d86210f68d9df196ebd8ba927a4d51f5662be65815bd7ada62768f13e8ad6d7",
   "runtimeVerification": {
-    "matchesBaseline": true,
-    "note": "2026-09-04 model-visible agentSurface and browser/runtime compatibilitySurface are sealed independently. K3 session 429506d9 completed on the current 50-verb rig surface; its 936-event offline evidence reports 35 tools, 29 Houdini calls, 117 verbs, and 5 raw read-only probes. The rebuilt client declares trajectory and the live DSH 0.1.2 QtWebEngine view matches those facts exactly: 29 calls, 23/29 calls with verbs, 117 total verbs, 16/50 catalog breadth, and 5 read-only probes. Browser session/list and session/cancel both return HTTP 200. Unknown DSH downloads cannot become the serving runtime until entered in dsh-runtime-compatibility.json after the compatibility gate.",
+    "matchesBaseline": false,
+    "note": "2026-09-04 model-visible agentSurface and browser/runtime compatibilitySurface remain sealed independently. The new houdini-codex preset and pinned @deepseek-ai/dsh-subagent-codex@0.1.2-rc.1 profile requirement are live-verified on DSH 0.1.2 at the Host layer: session/create selected agentPreset=houdini-codex, the first substantive call was subagent_codex, package-local official Codex app-server reused ChatGPT authentication, and the exact CODEX_SUBSCRIPTION_OK_7F3A result completed without file access. The recorded request tool catalog excludes parent shell/fs/web/ordinary subagent/workflow while retaining the live Houdini actuator tools. Vision Toolkit 0.1.40 exact session.snapshotEvents repair was reapplied after profile installation. This machine currently exposes no Houdini executable or process, so the new profile composition has not yet repeated the H21/H22 QtWebEngine gate; matchesBaseline remains false until that smoke is recorded. Previous K3 trace evidence remains 936 events/35 tools/29 Houdini calls/117 verbs/5 raw reads. Unknown DSH downloads still cannot become the serving runtime until entered in dsh-runtime-compatibility.json after the compatibility gate.",
     "verifiedAt": "2026-09-04T00:00:00.0000000Z",
-    "loadedRepositoryCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
+    "loadedRepositoryCommit": "9bd2af4eb9e9f61b433367f35702a6189f65509b",
     "workingTreeDirty": true,
-    "pendingReload": [],
+    "pendingReload": [
+      "H21/H22 QtWebEngine smoke for the Codex provider profile composition"
+    ],
     "houdini": "21.0.440",
     "dsh": "0.1.2-rc.1",
     "plugin": "0.1.0",
@@ -22,6 +24,6 @@
     "queuedJobs": 0,
     "runningJobs": 0,
     "webStatus": 200,
-    "guiSmoke": "DSH 0.1.2 useTrajectory(eventNodes) live; completed K3 trace matches offline evidence"
+    "guiSmoke": "Host RPC and real ChatGPT-authenticated Codex subagent smoke passed; H21/H22 QtWebEngine composition smoke pending"
   }
 }

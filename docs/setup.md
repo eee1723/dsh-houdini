@@ -33,8 +33,17 @@ python houdini/install.py
 安装器会：
 
 - 给检测到的每个 Houdini 大版本写 `Documents/houdini*/packages/dsh-houdini.json`，把本 checkout 的 Houdini 菜单和 Python 路径注入进程；
-- 按 `dsh-profile.requirements.json` 通过官方 `dsh plugin` 命令同步 `web` profile，包括本地 `dsh-houdini` 和锁定的视觉能力；
+- 按 `dsh-profile.requirements.json` 通过官方 `dsh plugin` 命令同步 `web` profile，包括本地 `dsh-houdini`、锁定的视觉能力和固定版本的 Codex App Server subagent provider；
 - 后续由 launcher 把仓库中的 `presets/houdini*` 同步到 `~/.dsh/.agent-presets/`。
+
+若要使用 **「Houdini Codex 主力模式」**消耗 ChatGPT/Codex 订阅额度，还需在每台机器完成一次官方账号登录：
+
+```powershell
+codex login
+codex login status
+```
+
+第二条命令应显示 `Logged in using ChatGPT`。安装器与 Git 都不会复制 `~/.codex/auth.json`；该文件包含访问令牌，必须留在本机且不得提交。使用 `codex login --with-api-key` 会切换到 OpenAI Platform API 的独立按量计费，不会消耗 ChatGPT 订阅额度。
 
 只预览 Houdini package：
 
@@ -54,7 +63,7 @@ python houdini/install.py --skip-dsh-profile
 
 1. 完整重开 Houdini，让 package 和菜单生效。
 2. 先把场景保存到目标工程目录，再点击 `DSH-Houdini` → `Open Workspace`。launcher 会把 `.hip` 的父目录幂等注册为 DSH workspace，并复用/创建该目录下的 Houdini 会话；服务未运行时同时同步 preset、启动 Bridge 和前端。切换到另一份 HIP 后再点一次即可切换工作区。未保存场景只使用仓库外中立 scratch，插件源码目录永不作为兜底任务工作区。
-3. 在 Web UI 新建会话并选择「Houdini 模式」。开发插件本身时选择「Houdini 开发模式」。
+3. 在 Web UI 新建会话并选择「Houdini 模式」。开发插件本身时选择「Houdini 开发模式」；希望把实质性工作优先交给官方 Codex 时选择「Houdini Codex 主力模式」。
 
 加载刚修改的 Host、Bridge、helper 或 preset 时，打开 `Version & Diagnostics...`，展开 `Advanced diagnostics`，点击 `Repair and restart runtime`。它会先检查活动 DSH turn/Houdini job，忙碌时不会强制中断。`dsh_webview.py`、菜单 XML、安装 package 等由 Houdini 进程缓存的 UI/安装层改动需要完整重启 Houdini。
 
@@ -70,6 +79,12 @@ python houdini/install.py --skip-dsh-profile
 - 会话出现 `Houdini Trace` 标签页；
 - 第一次场景调用没有 Host/Bridge contract mismatch；若有，执行一次 `Repair and restart runtime` 后新建会话重试；
 - 其它不挂 dsh-houdini 的模式不会收到 Houdini persona。
+
+Codex 主力模式另做一条无副作用 smoke：
+
+> 必须调用 subagent_codex，让 Codex 不读取或修改文件，只返回精确文本 CODEX_SUBSCRIPTION_OK。
+
+预期第一项实质性工具调用为 `subagent_codex`，且结果不是 API key 计费路径。该模式仍需要一个可用的父模型来发起委派；live Houdini 工具当前由父 agent 按 Codex 方案代为执行，再把真实结果交给 Codex 复核。
 
 开发侧最低验证：
 
@@ -120,9 +135,10 @@ $env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
 npx --yes @deepseek-ai/dsh plugin --profile web remove dsh-houdini
 Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini"
 Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
+Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini-codex"
 ```
 
-再删除各 `Documents/houdini*/packages/dsh-houdini.json`。视觉插件是共享 profile 能力，不随 dsh-houdini 自动移除；确认没有其它 consumer 后再单独卸载。
+再删除各 `Documents/houdini*/packages/dsh-houdini.json`。视觉插件和 Codex subagent provider 是共享 profile 能力，不随 dsh-houdini 自动移除；确认没有其它 consumer 后再分别卸载 `@anionex/dsh-vision-toolkit` 与 `@deepseek-ai/dsh-subagent-codex`。
 
 ## 机器态清单
 
@@ -133,4 +149,5 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\houdini-dev"
 | Houdini package | `Documents/houdini*/packages/` | 重跑安装器 |
 | DSH web profile | `~/.dsh/profiles/web/` | 重跑安装器 |
 | 本地 presets | `~/.dsh/.agent-presets/` | launcher 自动同步 |
+| Codex 账号认证 | `~/.codex/` 或系统凭据库 | 每台机器执行官方 `codex login`，绝不进 Git |
 | 运行中 Bridge/前端 | Houdini/Node 进程 | Host/Bridge 用 repair；WebView/UI 模块改动完整重启 Houdini |

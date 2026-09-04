@@ -197,7 +197,8 @@ python houdini/install.py
 
 安装脚本现在同时完成两部分：写入所有已检测 Houdini 版本的 package，并把
 `dsh-profile.requirements.json` 声明的完整能力同步到 DSH `web` profile。目前包括本地
-`dsh-houdini` bundle 和锁定的 `@anionex/dsh-vision-toolkit@0.1.40`。后者按需加载
+`dsh-houdini` bundle、锁定的 `@anionex/dsh-vision-toolkit@0.1.40`，以及通过官方 Codex
+App Server 协议运行的 `@deepseek-ai/dsh-subagent-codex@0.1.2-rc.1`。视觉工具按需加载
 `vision-tools` skill，并提供 `vision_glance`、ground/detect、crop/trace、pixel diff、长图 OCR、
 前景提取、主色分析和本地 HTML 截图共 10 个独立工具。同步会迁移移除旧
 `dsh-vision-router` 和已退役的本地 `dsh-vision-fallback`，且始终通过官方 `dsh plugin`
@@ -234,9 +235,13 @@ dsh web                                                 # 起前端（profile �
 在 UI 新建会话时选 **「Houdini 模式」**。安装器用 DSH 官方插件命令 link 本地目录并同步
 所需 bundle；改代码后 `npm run build`，再从 Houdini 诊断面板展开 `Advanced diagnostics`，执行 `Repair and restart runtime` 即可
 同步 preset 与新增依赖。卸载时分别执行
-`dsh plugin --profile web remove dsh-houdini @anionex/dsh-vision-toolkit`。
+`dsh plugin --profile web remove dsh-houdini @anionex/dsh-vision-toolkit @deepseek-ai/dsh-subagent-codex`。
 
 仓库另带一个 **`houdini-dev` 模式 preset**（`presets/houdini-dev/`）：工具集与 `houdini` 完全相同，仅 persona 换成 coding/development——以插件仓库为主目标、把运行中的 Houdini 会话当**测试目标**（改 `src/`/`client.js`/`houdini/python3.11libs/` 时用 `houdini_*` 工具做端到端验证）。开发/测试插件本身时选 **「Houdini 开发模式」**，复制方式同上（`presets/houdini-dev/` → `~/.dsh/.agent-presets/houdini-dev/`）。
+
+第三个 **`houdini-codex` 模式 preset**（`presets/houdini-codex/`，UI 名称 **「Houdini Codex 主力模式」**）把父模型收缩为薄编排器：代码、文件、研究、审查等实质性任务必须先委派给 `subagent_codex`；live Houdini 任务采用“Codex 决策 → 父 agent 仅执行 `houdini_*` → Codex 复核”的闭环。该 preset 禁用父模型的 shell、文件系统、Web、普通 subagent/fork 和 workflow 工具。安装器会同步模板并安装固定版本的 Codex provider，但不会复制账号凭据；每台新机器仍须使用官方 Codex 登录流程完成 `codex login`，并以 `codex login status` 确认 `Logged in using ChatGPT`。API key 登录走独立 API 按量计费，不使用 ChatGPT 订阅额度。
+
+`subagent_codex` 通过系统契约与工具裁剪强约束为实质性任务的首个执行入口，并已有真实订阅 smoke；它不是 agent loop 的硬编码 `tool_choice`。父 provider 仍须有足够额度来读取请求、发起工具调用和转交结果。官方 Codex 子线程也不会自动继承 DSH 的 `houdini_*` 工具，因此在没有新增 MCP/dynamic-tools 转发层前，父 agent 仍是 live Houdini 的窄执行器。
 
 > 为何用 preset 而不是 `--patch` overlay：dsh 的 client 模块系统靠 `require.resolve(包名/package.json)` 发现插件的 client 半，`file://` overlay 无法被解析；preset 用包名加载，client 半（`houdinitrace` 视图）才生效。
 
