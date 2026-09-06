@@ -10,6 +10,7 @@
 6. 时间动画
 7. 视觉与用户 viewport
 8. 失败恢复和性能
+9. 小模块构建与检查 fast path
 
 ## 1. 模块契约模板
 
@@ -144,3 +145,54 @@ geo_frame_diff(out, 1, 12, attrib='P')
 - 性能以 cook time、点面数和 SideFX Performance Monitor 为证据，不用工具调用次数代替 cook 性能。
 - 结束时 `layout_nodes`；缺省只整理当前 agent session 创建的节点并返回
   `foreign_nodes_skipped`，不要为了整洁移动用户临时创建的节点。
+
+## 9. 小模块构建与检查 fast path
+
+适用：在现有 SOP parent 中新增一个可以独立 cook 的小模块；H21.0.440/H22.0.368 的
+类型、参数菜单、失败清理与 warning 传播已有工具回归。行为发布仍需未见新 session 验证。
+不适用：修改既有节点、OBJ parenting、Karma setup、HDA 库编辑或模拟写盘；这些继续使用
+对应 primitive/domain verbs，不把多种生命周期塞进一个 build。
+
+输入是新节点声明和已有输入，输出是一个明确 SOP。例如（parent 是当前任务的 SOP 容器）：
+
+```python
+card = node_info(parent, 'xform', parm_filter='scale')
+spec = [
+    {'name': 'unit', 'type': 'box'},
+    {'name': 'shaped', 'type': 'xform', 'inputs': ['unit'], 'parms': {'sx': 1.5}},
+    {'name': 'OUT_MODULE', 'type': 'null', 'inputs': ['shaped']},
+]
+# 不熟悉的接口先 dry_run；它不创建 probe，但也不能证明 VEX/cook。
+build_module(parent, spec, output='OUT_MODULE', dry_run=True)
+result = build_module(parent, spec, output='OUT_MODULE')
+__result__ = result['validation']
+```
+
+消费 checkpoint，不只看 Python 成功：
+
+- `validation.ok=False`：error 或空输出，不能进入后续细化。
+- `warning_free=False`：检查 issues 中的真实节点和属性；解决或记录明确边界。
+- `scope/checked_nodes`：说明检查覆盖；模块范围不能冒充整网。
+- `semantic_status='unverified'`：还要验证原型、关系与视觉，不能自动改成 pass。
+- `frame/checked_at/output_fingerprint`：用于识别证据属于哪个输出状态；抽样指纹不是
+  全量拓扑/材质证明。用户或 agent 改了受影响参数/接线后重新检查。
+
+输入只引用前面 spec 或现有直属 child 名，可用 None 跳过input；如 Wrangle 的 `[None,'anchors']`。
+跨 subnet 在目标网络创建 Object Merge 并用objpath1引用源，不尝试用不同端口跨网络接线。
+模块不覆盖同名节点，失败清理本批新增节点，
+不自动改变用户 output；单节点仍可 `tab_create`。收尾再 `sop_set_output`。
+
+菜单示例：`set_parm(wrangle,'class','detail')` 的 detail 是 token，不是 label/任意表达式；
+动态菜单由 `list_parms(wrangle)` 给出。需要菜单表达式时显式传
+`{'expression': '0', 'language': 'hscript'}`；表达式与普通字符串不混猜。
+
+失败转向：先消费 returned error 和 node_info/list_parms；同边界两次失败就停止重放整个模块，
+用一个最小 primitive probe 查缺口。完成前删除 probe；文件/参数回调副作用不在模块删除保证内。
+
+来源：本项目严格设参、SOP 模块回归与节点卡运行结果；SideFX
+[Parm API](https://www.sidefx.com/docs/houdini/hom/hou/Parm.html)。
+验收必须写显式 `verify_network(parent,output=out)`；省略output不再跟随display，空/error输出
+默认硬失败。`require_valid=False`仅供保留失败诊断，不得替代复验。读取operation-evidence中的
+output/frame/scope/失败原因，而不是只看开头“Python执行成功”或取不存在的errors字段。
+
+证据等级：工具合同回归与行为采用分别记录；弱模型未见任务增益 candidate。最后核对：2026-09-06。

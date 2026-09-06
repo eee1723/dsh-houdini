@@ -1,0 +1,16 @@
+{
+  "parent": "/obj/MTB",
+  "output": "/obj/MTB/OUT_MTB",
+  "controller": "/obj/MTB/CTRL",
+  "parts": [
+    {"id": "required-frame", "group": "frame", "min_prims": 1},
+    {"id": "required-tread", "group": "knobs", "min_prims": 1584}
+  ],
+  "controls": [
+    {"id": "hub-width-response", "parm": "hub_half", "value": 0.0814,
+     "expectations": [{"group": "hub", "metric": "bounds_size", "axis": 2, "delta": [0.0001, 0.02]}]},
+    {"id": "drive-offset-response", "parm": "drive_z", "value": 0.0572,
+     "expectations": [{"group": "chainring", "metric": "bounds_center", "axis": 2, "delta": [0.0001, 0.02]}]}
+  ],
+  "interfaces": []
+}

@@ -4,16 +4,19 @@ import { HoudiniBridge } from '../../lib/bridge.js';
 import {
   EXPECTED_VERB_CATALOG_HASH,
   EXPECTED_VERB_NAMES,
+  EXPECTED_EXECUTION_CONTRACT_VERSION,
 } from '../../lib/generated-verb-contract.js';
 
 let stale = true;
 let execCalls = 0;
 let lastExecBody = null;
+let semanticVersion = EXPECTED_EXECUTION_CONTRACT_VERSION;
 const server = http.createServer((request, response) => {
   response.setHeader('content-type', 'application/json');
   if (request.url === '/health') {
     response.end(JSON.stringify({
       ok: true,
+      executionContractVersion: semanticVersion,
       verbCatalog: stale
         ? { hash: 'old', count: 1, names: ['scene_info'] }
         : {
@@ -61,6 +64,11 @@ try {
   const result = await bridge.exec('__result__ = 1');
   assert.equal(result.ok, true);
   assert.equal(execCalls, 1);
+  assert.deepEqual(lastExecBody.expected_contract, {version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH});
+  semanticVersion--;
+  await assert.rejects(bridge.exec('__result__ = 2'), /contract mismatch.*semantics/);
+  assert.equal(execCalls, 1, 'same-name stale semantics must fail before /exec even immediately after a successful check');
+  semanticVersion = EXPECTED_EXECUTION_CONTRACT_VERSION;
   assert.equal(await bridge.hipDir(), 'C:/project');
   assert.equal(lastExecBody.read_only, 'true', 'internal $HIP inspection must use the read-only bridge boundary');
 } finally {

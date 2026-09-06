@@ -5,7 +5,7 @@
  * this client is the only channel the plugin uses to reach it.
  */
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
-import { EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
+import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
 export interface ExecResult {
@@ -28,6 +28,10 @@ export interface ExecResult {
   images?: JsonValue
   /** Media relay outcome, filled host-side: bridge paths copied into the session workspace. */
   media?: JsonValue
+  /** Failed/warning operation checks despite successful Python execution. */
+  checks?: JsonValue
+  /** Compact operation evidence, retained independently of verbose ledger previews. */
+  evidence?: JsonValue
 }
 
 /** Handle returned when a background job is accepted by the bridge. */
@@ -51,6 +55,7 @@ interface BridgeHealth {
   ok: boolean
   houVersion?: string
   rawGate?: boolean
+  executionContractVersion?: number
   verbCatalog?: {
     hash?: string
     count?: number
@@ -66,8 +71,6 @@ function normalizeBaseUrl(url: string): string {
 
 export class HoudiniBridge {
   private readonly baseUrl: string
-  private contractCheckedAt = 0
-  private contractCheck: Promise<void> | null = null
 
   constructor(baseUrl: string, private readonly timeoutMs: number) {
     this.baseUrl = normalizeBaseUrl(baseUrl)
@@ -77,46 +80,53 @@ export class HoudiniBridge {
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
   async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope, readOnly = false): Promise<ExecResult> {
     await this.ensureCompatible(signal)
-    const body: Record<string, string> = { code }
+    const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
       body.owner_session = owner.sessionId
       body.owner_call = owner.callId
     }
     if (readOnly) body.read_only = 'true'
-    return this.post('/exec', body, signal)
+    const result = await this.post<ExecResult>('/exec', body, signal)
+    if (!readOnly) this.hipCache = null
+    return result
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
   async submitJob(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<JobHandle> {
     await this.ensureCompatible(signal)
-    const body: Record<string, string> = { code }
+    const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
       body.owner_session = owner.sessionId
       body.owner_call = owner.callId
     }
-    return this.post('/jobs', body, signal)
+    return await this.post('/jobs', body, signal)
+  }
+
+  /** Opaque review leases belong to Host, never model-supplied owner/pass flags. */
+  async review(request: Record<string, unknown>, owner: OwnershipScope, signal?: AbortSignal): Promise<ExecResult> {
+    await this.ensureCompatible(signal)
+    return this.post('/review', {request,owner_session:owner.sessionId,owner_call:owner.callId,
+      expected_contract:this.expectedContract()},signal)
   }
 
   /** Refuse scene work when the host catalog and in-process bridge differ. */
   private async ensureCompatible(signal?: AbortSignal): Promise<void> {
-    if (Date.now() - this.contractCheckedAt < 30_000) return
-    if (this.contractCheck) return this.contractCheck
-    const pending = this.checkContract(signal)
-    this.contractCheck = pending
-    try {
-      await pending
-      this.contractCheckedAt = Date.now()
-    } finally {
-      if (this.contractCheck === pending) this.contractCheck = null
-    }
+    // A bridge can restart on the same port at any time. A 30s cache accepted
+    // stale semantics; sharing its AbortSignal also cancelled unrelated calls.
+    await this.checkContract(signal)
+  }
+
+  private expectedContract() {
+    return { version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH }
   }
 
   private async checkContract(signal?: AbortSignal): Promise<void> {
     const health = await this.get<BridgeHealth>('/health', signal)
     const actual = health.verbCatalog
-    if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH) return
+    if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH
+        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) return
 
     const expectedNames = new Set<string>(EXPECTED_VERB_NAMES)
     const actualNames = new Set(Array.isArray(actual?.names) ? actual.names : [])
@@ -125,6 +135,7 @@ export class HoudiniBridge {
     const detail = [
       `host=${EXPECTED_VERB_CATALOG_HASH.slice(0, 12)} (${EXPECTED_VERB_NAMES.length})`,
       `bridge=${actual?.hash?.slice(0, 12) ?? 'missing'} (${actual?.count ?? 'unknown'})`,
+      `semantics=host:${EXPECTED_EXECUTION_CONTRACT_VERSION}/bridge:${health.executionContractVersion ?? 'missing'}`,
       missing.length ? `missing=${missing.join(',')}` : '',
       extra.length ? `extra=${extra.join(',')}` : '',
       health.error ? `health=${health.error}` : '',
@@ -185,7 +196,7 @@ export class HoudiniBridge {
     let dir: string | null = null
     try {
       const r = await this.exec(
-        "import os, hou\n_p = hou.hipFile.path()\n__result__ = '' if os.path.basename(_p).lower() == 'untitled.hip' else os.path.dirname(_p)",
+        "import os, hou\n_p = hou.hipFile.path()\n__result__ = os.path.dirname(_p) if scene_info()['has_named_path'] else ''",
         undefined,
         undefined,
         undefined,
@@ -231,8 +242,10 @@ export class HoudiniBridge {
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)
       throw new Error(
-        `cannot reach the Houdini bridge at ${this.baseUrl} (${reason}); `
-        + 'start dsh_bridge.py inside Houdini first — see README',
+        `Houdini bridge request ${path} at ${this.baseUrl} failed (${reason}); `
+        + (init.method === 'POST' && (path === '/exec' || path === '/jobs')
+          ? 'execution may still be queued/running or already applied; inspect scene/job state before retrying, and do not blindly resubmit.'
+          : 'check bridge availability; see README'),
       )
     }
     if (!res.ok) {

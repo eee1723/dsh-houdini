@@ -84,3 +84,12 @@ assert.deepEqual(parseToolArguments({ x: 1 }), { x: 1 });
 assert.deepEqual(parseToolArguments('null'), { _raw: 'null' });
 
 console.log('normalized trace step tests passed');
+
+const evidenceText = 'operation-evidence:\n' + JSON.stringify([
+  {ledgerIndex:1,verb:'render_view',output:'Z:/project/render/a.png',frame:7,ok:false,pixel_status:'failed'},
+]) + '\n\nverbs (1):\n1. [ok] render_view(["/obj/a/OUT"]) -> {"service":"a huge truncated… (1ms)';
+const structured = normalizeTraceSteps([call(1,'e','houdini_exec',{code:'render_view(out)'}),result(2,'e',evidenceText)]).steps[0];
+assert.equal(structured.verbs[0].ok, true, 'transport ledger success stays distinct from pixel failure');
+assert.equal(structured.verbs[0].result.ok, false);
+assert.equal(structured.verbs[0].result.frame, 7);
+assert.equal(structured.verbs[0].result.output, 'Z:/project/render/a.png');

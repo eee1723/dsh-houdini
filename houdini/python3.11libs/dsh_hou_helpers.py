@@ -47,6 +47,13 @@ import hou
 import toolutils
 
 
+class CheckpointError(RuntimeError):
+    """A failed operation retains machine-readable evidence in the Bridge ledger."""
+    def __init__(self, message, evidence):
+        super().__init__(message)
+        self.evidence = evidence
+
+
 # ``render_view`` infrastructure is session-scoped service state, not a
 # per-task probe. Deleting an OpenGL ROP (or a node it references) after a
 # successful render can make H21 enter its process-fatal GL capability path.
@@ -70,6 +77,19 @@ _TASK_OWNER_CALL_KEY = "dsh_houdini_created_by_call"
 _ACTIVE_OWNER_SESSION: str | None = None
 _ACTIVE_OWNER_CALL: str | None = None
 _OWNED_NODE_SESSIONS: dict[int, dict] = {}
+_REVIEW_PARAMETER_ACCESS = None
+
+
+@contextlib.contextmanager
+def _review_parameter_access(session, controller):
+    """Internal one-call capability; only the review service enters this scope."""
+    global _REVIEW_PARAMETER_ACCESS
+    previous = _REVIEW_PARAMETER_ACCESS
+    _REVIEW_PARAMETER_ACCESS = (session, int(controller.sessionId()))
+    try:
+        yield
+    finally:
+        _REVIEW_PARAMETER_ACCESS = previous
 
 
 def _set_execution_owner(session_id: str | None, call_id: str | None):
@@ -144,6 +164,10 @@ def node_provenance(node) -> dict:
 
 def _require_owned(node, operation: str, allow_foreign: str | None = None) -> None:
     """Guard one node mutation while preserving direct Python-shell workflows."""
+    # Validate BEFORE the owned/direct-call fast paths. Python annotations are
+    # not runtime checks: an accidental port number must never become authority.
+    if allow_foreign is not None and (not isinstance(allow_foreign, str) or not allow_foreign.strip()):
+        raise ValueError('allow_foreign must be a nonempty explicit authorization reason string, or None')
     if _ACTIVE_OWNER_SESSION is None:
         return
     info = node_provenance(node)
@@ -154,7 +178,10 @@ def _require_owned(node, operation: str, allow_foreign: str | None = None) -> No
             f"{info['path']} belongs to the persistent dsh-houdini service; "
             f"{operation} is not allowed"
         )
-    reason = str(allow_foreign or "").strip()
+    if (_REVIEW_PARAMETER_ACCESS == (_ACTIVE_OWNER_SESSION, int(_resolve(node).sessionId()))
+            and operation in ('test_controls', 'set_parms', 'set_parm')):
+        return
+    reason = allow_foreign.strip() if allow_foreign is not None else ""
     if reason:
         print(
             f"[ownership] foreign-node exemption for {operation}: "
@@ -235,7 +262,10 @@ def context_name(category) -> str:
 def scene_info() -> dict:
     """只读场景/时间线摘要；不移动 playbar、不遍历整张节点图。"""
     hip_path = hou.hipFile.path()
-    has_named_path = os.path.basename(hip_path).lower() != "untitled.hip"
+    # A user may deliberately save/load a file called untitled.hip. The basename
+    # alone is not proof that the scene is new (especially in headless HOM).
+    file_exists = os.path.isfile(hip_path)
+    has_named_path = os.path.basename(hip_path).lower() != "untitled.hip" or file_exists
     has_unsaved_changes = bool(hou.hipFile.hasUnsavedChanges())
     ui_available = bool(hou.isUIAvailable())
     return {
@@ -244,7 +274,8 @@ def scene_info() -> dict:
         "has_named_path": has_named_path,
         "has_unsaved_changes": has_unsaved_changes,
         "dirty_reliable": ui_available,
-        "clean_on_disk": has_named_path and not has_unsaved_changes if ui_available else None,
+        "file_exists": file_exists,
+        "clean_on_disk": file_exists and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
         "fps": float(hou.fps()),
         "frame": float(hou.frame()),
@@ -260,8 +291,8 @@ def scene_info() -> dict:
 def scene_save(expected_path: str | None = None) -> dict:
     """保存当前已命名 HIP，并回报真实 dirty/file 状态；不承担 Save As。"""
     path = os.path.abspath(hou.hipFile.path())
-    if os.path.basename(path).lower() == "untitled.hip":
-        raise ValueError("当前 HIP 尚未命名；请先在 Houdini UI 中 Save As，再调用 scene_save")
+    if not scene_info()["has_named_path"]:
+        raise ValueError("当前 HIP 尚未命名；确认目标路径后用 scene_save_as，或先在 Houdini UI 中 Save As")
     if expected_path is not None:
         expected = os.path.abspath(hou.expandString(str(expected_path)))
         if os.path.normcase(expected) != os.path.normcase(path):
@@ -273,6 +304,8 @@ def scene_save(expected_path: str | None = None) -> dict:
     if not os.path.isfile(path):
         raise RuntimeError(f"hou.hipFile.save() 返回后文件不存在：{path}")
     stat = os.stat(path)
+    if stat.st_size == 0:
+        raise RuntimeError(f"保存后 HIP 文件为空：{path}")
     return {
         "path": path,
         "dirty_before": dirty_before,
@@ -282,6 +315,72 @@ def scene_save(expected_path: str | None = None) -> dict:
         "bytes": int(stat.st_size),
         "mtime_ns": int(stat.st_mtime_ns),
     }
+
+
+def scene_save_as(path: str, expected_current_path: str, reason: str,
+                  overwrite: bool = False) -> dict:
+    """Save As to an explicitly authorized absolute HIP path; never load/clear.
+
+    ``expected_current_path`` must match the current scene. Existing targets
+    require explicit ``overwrite=True`` and user authorization in ``reason``.
+    File I/O is not undoable; a failed save may leave a partial new target.
+    After a workspace change, reopen Open Workspace to rebind the DSH session.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("reason 必须记录用户对目标路径/覆盖的明确授权")
+    if not isinstance(overwrite, bool):
+        raise ValueError("overwrite 必须是 bool")
+    current = os.path.abspath(hou.hipFile.path())
+    if not isinstance(expected_current_path, str) or not expected_current_path:
+        raise ValueError("expected_current_path 必须来自 scene_info().hip_path")
+    expected = os.path.abspath(hou.expandString(expected_current_path))
+    if os.path.normcase(expected) != os.path.normcase(current):
+        raise ValueError(f"expected_current_path 不匹配：{expected!r} != {current!r}")
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("path 必须是明确的绝对 HIP 路径")
+    target = hou.expandString(path)
+    if not os.path.isabs(target) or os.path.splitext(target)[1].lower() not in (".hip", ".hiplc", ".hipnc"):
+        raise ValueError("path 必须是绝对路径，扩展名为 .hip/.hiplc/.hipnc")
+    target = os.path.realpath(target)
+    repo = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    try:
+        in_repo = os.path.commonpath([repo, target]) == repo
+    except ValueError:
+        in_repo = False
+    if in_repo:
+        raise ValueError("HIP 产物不能保存到插件仓库；请选择用户项目目录")
+    existed = os.path.lexists(target)
+    if existed and not overwrite:
+        raise ValueError(f"target exists: {target}; 当前文件请用 scene_save，另存覆盖需要明确授权 overwrite=True")
+    if existed and not os.path.isfile(target):
+        raise ValueError(f"target is not a regular file: {target}")
+    dirty_before = bool(hou.hipFile.hasUnsavedChanges())
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    if not overwrite:
+        # Reserve without a check-then-overwrite race. Only a new empty file is
+        # created; a concurrent existing target causes FileExistsError.
+        with open(target, "xb"):
+            pass
+    try:
+        # H21 file-event callbacks do not consistently escape Windows backslashes.
+        hou.hipFile.save(file_name=target.replace("\\", "/"))
+        if os.path.normcase(os.path.realpath(hou.hipFile.path())) != os.path.normcase(target):
+            raise RuntimeError("Save As 返回后当前 HIP 路径与目标不一致")
+        stat = os.stat(target)
+        if stat.st_size == 0:
+            raise RuntimeError("Save As 返回后目标 HIP 为空")
+    except BaseException:
+        # Restoring the in-memory name is not a claim that disk I/O rolled back.
+        hou.hipFile.setName(current.replace("\\", "/"))
+        raise
+    reliable = bool(hou.isUIAvailable())
+    dirty_after = bool(hou.hipFile.hasUnsavedChanges())
+    return {"path": target, "previous_path": current, "reason": reason.strip(),
+            "overwrote": existed, "dirty_before": dirty_before, "dirty_after": dirty_after,
+            "dirty_reliable": reliable, "clean_on_disk": not dirty_after if reliable else None,
+            "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "workspace_changed": os.path.normcase(os.path.dirname(current)) != os.path.normcase(os.path.dirname(target)),
+            "note": "File I/O is not undoable. Open Workspace after changing project directory."}
 
 
 def _frame_pair(value, label: str) -> tuple[float, float]:
@@ -936,6 +1035,16 @@ def tab_create(
     latest = resolve_latest_type(cat, type_name)
 
     node_type = hou.nodeType(cat, latest)
+    if inputs is not None and not isinstance(inputs, list):
+        raise ValueError("inputs 必须是 source 节点/path 的 list")
+    if inputs and cat == hou.objNodeTypeCategory():
+        raise ValueError("Object inputs are parenting; create first, then use set_object_parent with an explicit reason")
+    input_nodes = [None if source is None else _resolve(source) for source in (inputs or [])]
+    for source in input_nodes:
+        if source is not None and source.parent() != parent:
+            raise ValueError(f'different_parent: source={source.path()} parent={source.parent().path()}, destination parent={parent.path()}; use an Object Merge inside the destination SOP network or an explicit subnet input, not cross-network wires')
+    if node_type is not None and len(input_nodes) > node_type.maxNumInputs():
+        raise ValueError(f"{latest} 最多接受 {node_type.maxNumInputs()} 个输入，收到 {len(input_nodes)}")
     if node_type is not None and not _visible_node_type(node_type):
         raise ValueError(
             f"节点类型 {latest!r} 在当前 Houdini 中 hidden/deprecated；"
@@ -958,33 +1067,30 @@ def tab_create(
     except Exception:
         tool = None
 
+    before = set(parent.children())
+    provenance = dict(_OWNED_NODE_SESSIONS)
     node: hou.Node | None = None
-    if tool is not None and _tool_has_extra_init(tool):
-        node = _run_shelf_tool(tool, parent, latest)
-
-    if node is None:
-        node = parent.createNode(latest, node_name=name, exact_type_name=True)
-        _register_owned_node(node)
-    elif name is not None:
-        try:
+    try:
+        if tool is not None and _tool_has_extra_init(tool):
+            node = _run_shelf_tool(tool, parent, latest)
+        if node is None:
+            node = parent.createNode(latest, node_name=name, exact_type_name=True)
+            _register_owned_node(node)
+        elif name is not None:
             node.setName(name, unique_name=True)
-        except Exception:
-            pass
-
-    if node is not None and inputs:
-        for index, source in enumerate(inputs):
-            # setInput 只接受 hou.Node（实测 H21/H22 对 path 字符串抛 TypeError），
-            # 且失败必须显式报错——静默跳过会让 agent 基于错误的连线继续推理。
-            try:
-                node.setInput(index, _resolve(source))
-            except Exception as e:
-                raise ValueError(
-                    f"连接输入失败：{node.path()} 的第 {index} 个输入 ← {source!r}（{e}）"
-                ) from e
-
-    if node is not None:
+        for index, source in enumerate(input_nodes):
+            if source is not None:
+                node.setInput(index, source)
         _place_created_node(node)
-
+    except BaseException:
+        # Headless has no undo stack. Never leave a half-created semantic node
+        # or provenance after a failed shelf initializer/input/name operation.
+        for partial in reversed(parent.children()):
+            if partial not in before:
+                partial.destroy()
+        _OWNED_NODE_SESSIONS.clear()
+        _OWNED_NODE_SESSIONS.update(provenance)
+        raise
     return node
 
 
@@ -1609,14 +1715,14 @@ def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
         },
     }
 
-def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
+def connect(src, dst, index: int = 0, *, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
     只表达普通网络 dataflow；OBJ→OBJ 是 parenting，明确拒绝并要求
     ``set_object_parent(child, parent, reason=...)``。
     返回 ``{"node": dst path, "input": 实际落到的输入口, "position_adjusted": bool}``。
-    请求的端口不存在时退化为「下一个可用输入」，此时返回里会带 ``note``——落口
-    与请求不一致必须让调用方知道，静默改口会让 agent 基于错误的连线继续推理。
+    请求的端口不存在或连接失败时明确拒绝，不尝试改接其他端口。
+    只有一个端口参数 ``index``（目标输入）；权限理由只能用keyword，不能传第4位置参数。
     连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时 snap 到
     输入正下方；已在下游的节点绝不动。
     """
@@ -1631,28 +1737,18 @@ def connect(src, dst, index: int = 0, allow_foreign: str | None = None) -> dict:
             "新建几何父子机械/FK 默认使用 KineFX；/obj 只表示创建位置。"
         )
     _require_owned(d, "connect destination", allow_foreign)
+    if s.parent() != d.parent():
+        raise ValueError(f'different_parent: source={s.path()} parent={s.parent().path()}, destination={d.path()} parent={d.parent().path()}; use an Object Merge inside the destination SOP network or an explicit subnet input. Changing the input index cannot fix this boundary')
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise ValueError("index 必须是非负整数")
     try:
         d.setInput(index, s)
-        return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d)}
-    except Exception:
-        pass
-    try:
-        d.setNextInput(s)
     except Exception as e:
-        raise ValueError(
-            f"连接失败：{s.path()} → {d.path()}：输入口 {index} 不存在，"
-            f"且没有可退化的空闲输入口（{e}）"
-        ) from e
-    used = [i for n_, i, _o in d.inputsWithIndices() if n_ == s]
-    return {
-        "node": d.path(),
-        "input": used[-1] if used else None,
-        "note": f"请求的输入口 {index} 不可用，已退化为下一个可用输入",
-        "position_adjusted": _snap_into_flow(d),
-    }
+        raise ValueError(f"连接失败：{s.path()} → {d.path()} input {index}（{e}）；未尝试其他端口") from e
+    return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d)}
 
 
-def disconnect_input(dst, index: int = 0, allow_foreign: str | None = None) -> dict:
+def disconnect_input(dst, index: int = 0, *, allow_foreign: str | None = None) -> dict:
     """断开普通网络 ``dst`` 输入；OBJ unparent 改用 ``set_object_parent``。"""
     d = _resolve(dst)
     if d.type().category() == hou.objNodeTypeCategory():
@@ -1725,6 +1821,35 @@ def cook_node(node, force: bool = False) -> dict:
         "healthy": not errors and not warnings,
         "forced": bool(force),
     }
+
+
+def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True) -> dict:
+    """SOP network cook/geometry checkpoint, including upstream warning nodes.
+
+    Checks direct children by default; optional nodes limits scope explicitly.
+    Explicit output is always required; no display fallback. Empty/error output
+    raises CheckpointError by default; require_valid=False is diagnostic only.
+    No viewport changes.
+    healthy != task/visual success; relationships remain unverified.
+    """
+    from dsh_sop_contracts import verify_network as verify
+    return verify(parent, output=output, nodes=nodes, limit=limit, require_valid=require_valid)
+
+
+def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None) -> dict:
+    """Build 1..64 NEW SOP nodes from {name,type,parms?,inputs?} specs.
+
+    Inputs are earlier spec/existing direct child names; None skips an input.
+    For secondary Wrangle lookup use inputs=[None, 'source']. No overwrite or flags.
+    dry_run is static preflight (no scratch node); VEX/cook not yet verified.
+    Failed creation/parameters/cook removes only this batch's new nodes.
+    Returned validation reports warnings separately from errors and semantics.
+    Optional interfaces are final-output point-group → primitive-group proximity
+    contracts, checked after construction; failing/unverified contracts fail the
+    module and clean its new nodes. See geo_check_interfaces for exact schema.
+    """
+    from dsh_sop_contracts import build_module as build
+    return build(parent, nodes, output=output, dry_run=dry_run, interfaces=interfaces)
 
 
 def sop_set_output(node, render: bool = True,
@@ -1975,6 +2100,72 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
 
 # --- parm 域 ---------------------------------------------------------------
 
+def _parm_template_card(tpl) -> dict:
+    entry = {"name": tpl.name(), "label": tpl.label(), "type": tpl.type().name(),
+             "size": tpl.numComponents()}
+    if tpl.numComponents() == 1:
+        entry["components"] = [tpl.name()]
+    else:
+        scheme = tpl.namingScheme().name()
+        suffixes = {"XYZW": "xyzw", "RGBA": "rgba", "UVW": "uvw", "XYWH": "xywh"}.get(scheme)
+        if suffixes:
+            entry["components"] = [tpl.name() + s for s in suffixes[:tpl.numComponents()]]
+        elif scheme in ("Base0", "Base1"):
+            start = 0 if scheme == "Base0" else 1
+            entry["components"] = [tpl.name() + str(i + start) for i in range(tpl.numComponents())]
+    for field, method in (("help", "help"), ("default", "defaultValue")):
+        try:
+            value = getattr(tpl, method)()
+            if value is not None:
+                entry[field] = _val(value)
+        except (AttributeError, hou.Error):
+            pass
+    try:
+        tokens, labels = tpl.menuItems(), tpl.menuLabels()
+        if tokens:
+            entry["menu"] = [{"index": i, "token": token,
+                              "label": labels[i] if i < len(labels) else token}
+                             for i, token in enumerate(tokens)]
+        elif tpl.itemGeneratorScript():
+            entry["menu_dynamic"] = True
+    except (AttributeError, hou.Error):
+        pass
+    return entry
+
+
+def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 80) -> dict:
+    """Read a version-resolved node card BEFORE creating a node (no scratch nodes).
+
+    Static templates include menu tokens/labels/defaults. Dynamic menus require
+    ``list_parms`` on an actual node; this card does not run shelf scripts.
+    ``parent`` supplies the real creation context, not a guessed category.
+    """
+    p = _resolve(parent)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 256:
+        raise ValueError("limit 必须在 1..256")
+    cat = p.childTypeCategory()
+    latest = resolve_latest_type(cat, type_name)
+    typ = hou.nodeType(cat, latest)
+    if typ is None:
+        raise ValueError(f"未知节点类型：{type_name}")
+    parameters = []
+    def visit(templates):
+        for tpl in templates:
+            if isinstance(tpl, hou.FolderParmTemplate):
+                visit(tpl.parmTemplates())
+            elif not parm_filter or parm_filter.lower() in (tpl.name() + ' ' + tpl.label()).lower():
+                parameters.append(_parm_template_card(tpl))
+    visit(typ.parmTemplates())
+    return {"parent": p.path(), "type": latest, "category": cat.name(),
+            **({'usage_notes':['agroup/bgroup select INPUT primitive groups, not output names. To preserve part identity, tag input primitives upstream and inspect groups on the actual Boolean output; topology/group counts may change with parameters.']} if latest.split('::')[0]=='boolean' else {}),
+            "version": hou.applicationVersionString(), "description": typ.description(),
+            "visible": _visible_node_type(typ), "min_inputs": typ.minNumInputs(),
+            "max_inputs": typ.maxNumInputs(), "max_outputs": typ.maxNumOutputs(),
+            "parameters": parameters[:limit], "parameter_count": len(parameters),
+            "truncated": len(parameters) > limit, "help_url": typ.defaultHelpUrl(),
+            "note": "Static type contract; dynamic menus and shelf initialization may add parameters."}
+
+
 def list_parms(node) -> list:
     """参数**目录**：名字/标签/类型/帮助，不给值（导航用，回答「想改的参数叫什么」）。"""
     n = _resolve(node)
@@ -2005,6 +2196,17 @@ def list_parms(node) -> list:
                         entry[field] = v
                 except Exception:
                     pass
+            try:
+                card = _parm_template_card(tpl)
+                entry.update({k: v for k, v in card.items() if k in ("menu", "menu_dynamic", "default")})
+                if len(pt) == 1:
+                    tokens, labels = pt[0].menuItems(), pt[0].menuLabels()
+                    if tokens:
+                        entry["menu"] = [{"index": i, "token": token,
+                                          "label": labels[i] if i < len(labels) else token}
+                                         for i, token in enumerate(tokens)]
+            except (AttributeError, hou.Error):
+                pass
         else:
             entry["label"] = None
         out.append(entry)
@@ -2118,8 +2320,55 @@ def _clear_animation(p) -> str | None:
     return desc
 
 
+def _parameter_snapshot(targets) -> dict:
+    snapshots = {}
+    for target in targets:
+        if target.isLocked():
+            raise ValueError(f"参数已锁定：{target.path()}")
+        keys = tuple(target.keyframes())
+        value = (target.unexpandedString() if target.parmTemplate().type() == hou.parmTemplateType.String
+                 else target.eval()) if not keys else None
+        snapshots[target.name()] = (target, keys, value)
+    return snapshots
+
+
+def _restore_parameters(snapshots) -> list:
+    errors = []
+    for target, keys, value in snapshots.values():
+        try:
+            target.deleteAllKeyframes()
+            if keys:
+                target.setKeyframes(keys)
+            else:
+                target.set(value, follow_parm_reference=False)
+        except Exception as error:
+            errors.append(f"{target.path()}: {error}")
+    return errors
+
+
 def set_parm(node, name: str, value,
              allow_foreign: str | None = None) -> dict:
+    """设参；numeric string 是表达式，Menu string 是精确 token。
+
+    失败恢复本参数的值/表达式/关键帧，不跟随引用修改其他节点。菜单动画可显式传
+    {"expression": "...", "language": "hscript"|"python"}。外部回调不属回滚范围。
+    """
+    n = _resolve(node)
+    _require_owned(n, "set_parm", allow_foreign)
+    p = n.parm(name)
+    targets = (p,) if p is not None else n.parmTuple(name)
+    snapshots = _parameter_snapshot(targets) if targets is not None else {}
+    try:
+        return _set_parm_impl(n, name, value, allow_foreign)
+    except BaseException as error:
+        restore_errors = _restore_parameters(snapshots)
+        if restore_errors:
+            raise RuntimeError(f"{error}; parameter_restore_errors={restore_errors}") from error
+        raise
+
+
+def _set_parm_impl(node, name: str, value,
+                   allow_foreign: str | None = None) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
 
     数值型参数收到字符串值时按**表达式**处理（H21/H22 实测 ``Parm.set(str)``
@@ -2133,6 +2382,28 @@ def set_parm(node, name: str, value,
     _require_owned(n, "set_parm", allow_foreign)
     p = n.parm(name)
     if p is not None:
+        if isinstance(value, dict):
+            if set(value) - {"expression", "language"} or not isinstance(value.get("expression"), str):
+                raise ValueError("表达式对象只接受 expression 和可选 language")
+            language = value.get("language", "hscript")
+            if language not in ("hscript", "python"):
+                raise ValueError("expression language 必须为 hscript/python")
+            _clear_animation(p)
+            p.setExpression(value["expression"], language=(hou.exprLanguage.Hscript if language == "hscript" else hou.exprLanguage.Python))
+            return {"parm": name, "expression": value["expression"], "value": _val(p.eval())}
+        # Menu tokens are not expressions. Do not let an invalid token silently
+        # evaluate to 0 or leave an animated parameter with its keys deleted.
+        if p.parmTemplate().type() == hou.parmTemplateType.Menu:
+            tokens = tuple(p.menuItems())
+            if isinstance(value, str):
+                if value not in tokens:
+                    raise ValueError(f"{p.path()} 无效 menu token {value!r}；有效值 {list(tokens)}，请用 list_parms")
+            elif isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(tokens):
+                raise ValueError(f"{p.path()} menu index 必须在 0..{len(tokens)-1} 或传精确 token")
+            cleared = _clear_animation(p)
+            p.set(value)
+            return {"parm": p.name(), "value": _val(p.eval()), "menu_token": p.evalAsString(),
+                    **({"note": f"cleared {cleared}"} if cleared else {})}
         if isinstance(value, str):
             tpl_type = None
             try:
@@ -2140,7 +2411,8 @@ def set_parm(node, name: str, value,
             except Exception:
                 pass
             if tpl_type in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
-                p.setExpression(value)
+                _clear_animation(p)
+                p.setExpression(value, language=hou.exprLanguage.Hscript)
                 return {"parm": p.name(), "expression": value, "value": _val(p.eval())}
         cleared = _clear_animation(p)
         p.set(value)
@@ -2152,6 +2424,8 @@ def set_parm(node, name: str, value,
     pt = n.parmTuple(name)
     if pt is not None:
         if isinstance(value, (list, tuple)):
+            if len(value) != len(pt):
+                raise ValueError(f"{pt.name()} 需要 {len(pt)} 个分量，收到 {len(value)}")
             cleared = [c for pp in pt for c in [_clear_animation(pp)] if c]
             pt.set(value)
             out = {"parm": pt.name(), "value": [_val(v) for v in pt.eval()]}
@@ -2172,16 +2446,30 @@ def set_parm(node, name: str, value,
 
 
 def set_parms(node, values: dict,
-              allow_foreign: str | None = None) -> dict:
+              allow_foreign: str | None = None, strict: bool = True) -> dict:
     """批量设参：``{name: value}`` 逐项走 ``set_parm`` 同一套语义（含表达式/关键帧清除）。
 
-    **逐项容错**：单项失败不中断，返回分 ``set``/``failed`` 两组——收尾恢复默认值、
-    测试摆场景这类「一串赋值」不用再手写 ``parm().set`` 循环。
+    默认 strict：预检参数名，失败恢复本批参数（含表达式/关键帧）并抛错。
+    ``strict=False`` 仅用于明确允许部分成功的诊断/恢复，返回 ``ok/set/failed``。
+    参数回调的外部副作用不能靠参数快照回滚，复杂批次仍需 Bridge undo 事务。
     """
     n = _resolve(node)
     _require_owned(n, "set_parms", allow_foreign)
     if not isinstance(values, dict) or not values:
         raise ValueError("values 必须是非空 dict：{参数名: 值}")
+    if not isinstance(strict, bool):
+        raise ValueError("strict 必须是 bool")
+    snapshots = {}
+    if strict:
+        for key in values:
+            parm = n.parm(key)
+            targets = (parm,) if parm is not None else n.parmTuple(key)
+            if targets is None:
+                raise ValueError(f"{n.path()} 没有参数 {key!r}；请用 list_parms")
+            for target in targets:
+                if target.name() in snapshots:
+                    raise ValueError(f"同批参数重叠：{key!r} 与 {target.name()!r}")
+                snapshots.update(_parameter_snapshot((target,)))
     done, failed, notes = {}, {}, {}
     for key, value in values.items():
         try:
@@ -2191,7 +2479,10 @@ def set_parms(node, values: dict,
                 notes[r["parm"]] = r["note"]
         except Exception as e:
             failed[key] = str(e)
-    out = {"node": n.path(), "set": done}
+            if strict:
+                restore_errors = _restore_parameters(snapshots)
+                raise RuntimeError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}") from e
+    out = {"node": n.path(), "ok": not failed, "set": done}
     if notes:
         out["notes"] = notes
     if failed:
@@ -3281,6 +3572,52 @@ def hda_set_interface(
 
 # --- geometry 域 -------------------------------------------------------------
 
+def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
+    """验证实际最终SOP上的连接接口，不用另建的anchor/proxy代替部件。
+
+    interfaces=[{id,source_group,target_group,max_distance,expected_points}]。
+    source_group为最终polygon/mesh表面顶点的命名point group；target_group为不相交
+    的命名primitive group（closed Polygon/Mesh/Sphere/Tube）。全source点都须在容差内。
+    只测SOP local点到指定表面的距离，不证明整体穿插/强度/所有表面最小间隙。
+    空选择/基数不符fail；不支持表示unverified；超max_pairs拒绝不抽样。
+    """
+    from dsh_quality_contracts import geo_check_interfaces as check
+    return check(output, interfaces, max_pairs=max_pairs)
+
+
+def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None) -> dict:
+    """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
+
+    tests=[{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}]。
+    metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
+    point_count、primitive_count、area；center/min/max不是有效缩写。
+    group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
+    可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
+    用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
+    拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
+    当前控制输出仅支持Polygon/Mesh/Sphere/Tube及点几何，其他类型写前unverified。
+    每case至少一项预期delta排除0；不保证外部文件/Python或solver副作用可撤销。
+    可选domain=[{id,left:数值spare参数名,op:lt|le|gt|ge|eq|ne,right:参数名或有限数值}]。
+    检查基准和实际扰动值；独立无key控制还可写前拒绝无效测试值。不求解/钳制，不证明全范围。
+    可选topology=[{id,groups:[最终primitive组名,...],require_closed:true}]检查融合表面的
+    共享边连通/闭合；在基准与每次扰动实际输出上复查。不用于未焊接独立部件的距离/强度证明。
+    """
+    from dsh_quality_contracts import test_controls as test
+    return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign, domain=domain, topology=topology)
+
+
+def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = False,
+                      order_attrib=None, max_points: int = 10000) -> dict:
+    """全量检查一条有序点序列的相邻弦长（SOP local单位），不是曲线弧长或表面关系。
+
+    默认按point number；可用唯一数值order_attrib排序。closed=True检查末→首。
+    超max_points拒绝，不抽样；返回全量min/max/failure_count及最多16个最差相邻对。
+    ok仅证明本条距离约束，geometry/视觉/实际零件关系须另外验证。
+    """
+    from dsh_sop_contracts import geo_point_spacing as check
+    return check(node, expected, tolerance, closed=closed, order_attrib=order_attrib, max_points=max_points)
+
+
 def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
     """属性**值**统计：min/max/mean/count（`describe` 只给属性名清单，不给值）。
 
@@ -3639,6 +3976,62 @@ def report_image(path: str) -> str:
     return p
 
 
+def _resolve_output_path(path, *, frame, default_subdir="render") -> str:
+    """Resolve output files BEFORE mutation; never use the process cwd.
+
+    A bare filename goes to $HIP/default_subdir; a relative subpath is $HIP
+    relative. Absolute paths remain explicit caller intent except repository
+    paths. Relative traversal/junction escapes and extensionless files fail.
+    """
+    raw = os.fspath(path)
+    if not isinstance(raw, str) or not raw.strip() or '\x00' in raw:
+        raise ValueError('output path must be a nonempty file path')
+    expanded = hou.expandStringAtFrame(raw, float(frame)).replace('\\', '/')
+    if not os.path.splitext(os.path.basename(expanded))[1]:
+        raise ValueError('output extension is required; use .png for previews, .exr for linear images or the intended cache extension')
+    if not os.path.isabs(expanded):
+        if os.path.splitdrive(expanded)[0] or not scene_info()['has_named_path']:
+            raise ValueError('relative output requires a named HIP; confirm a project and use scene_save_as first')
+        hip = os.path.realpath(os.path.dirname(hou.hipFile.path()))
+        relative = expanded if '/' in expanded else os.path.join(default_subdir, expanded)
+        target = os.path.realpath(os.path.join(hip, relative))
+        if os.path.commonpath([hip, target]) != hip:
+            raise ValueError(f'relative output is outside $HIP: {raw!r}')
+    else:
+        target = os.path.realpath(expanded)
+    repo = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    try:
+        in_repo = os.path.commonpath([repo, target]) == repo
+    except ValueError:
+        in_repo = False
+    if in_repo:
+        raise ValueError('output cannot be written into the plugin repository; choose the HIP project directory')
+    return target.replace('\\', '/')
+
+
+def _render_validation(rendered, check, stale, pixel_supported=True) -> dict:
+    errors = list(rendered.get('errors') or [])
+    file_ok = bool(rendered.get('fresh') and rendered.get('file_bytes') and not errors)
+    if not file_ok and not errors:
+        errors.append('render output missing, empty or stale on disk')
+    pixel_status = 'unverified'
+    if pixel_supported:
+        if not isinstance(check, dict) or check.get('error'):
+            pixel_status = 'failed'
+            errors.append('pixel inspection failed: ' + str((check or {}).get('error', 'missing check')))
+        elif 'no_nonblack_content' in check.get('presentation', {}).get('reasons', []):
+            pixel_status = 'failed'
+            errors.append('pixel inspection: no_nonblack_content')
+        elif check.get('presentation', {}).get('needs_review'):
+            pixel_status = 'needs_review'
+        else:
+            pixel_status = 'passed'
+    if stale:
+        errors.append('target/proxy changed during rendering; recapture evidence')
+    return {'ok': not errors, 'errors': errors, 'file_status': 'passed' if file_ok else 'failed',
+            'pixel_status': pixel_status, 'semantic_status': 'unverified'}
+
+
 def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
 
@@ -3680,14 +4073,18 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
             "outputimage/sopoutput/lopoutput/dopoutput/copoutput/choutput）——"
             "它不是 ROP？（非常规输出参数请裸写 hou，词表不覆盖）"
         )
-    original_output = p.unexpandedString()
-    if picture is not None:
-        p.set(picture)
     f = hou.frame() if frame is None else float(frame)
+    if not math.isfinite(f) or not math.isfinite(float(timeout)) or float(timeout) <= 0:
+        raise ValueError('frame must be finite and timeout must be positive/finite')
+    # Resolving before any parameter/frame write also rejects extensionless
+    # outputs and relative files outside the project with zero scene effects.
+    original_output = p.unexpandedString()
+    target = _resolve_output_path(original_output if picture is None else picture, frame=f,
+                                  default_subdir='geo' if p.name() in ('sopoutput','dopoutput') else 'render')
     original_frame = float(hou.frame())
     foreground_parm = n.parm("soho_foreground")
     original_foreground = foreground_parm.eval() if foreground_parm is not None else None
-    target = None
+    parameter_state = _parameter_snapshot([p] + ([foreground_parm] if foreground_parm is not None else []))
     t0 = time.time()
     render_err = None
     file_bytes = None
@@ -3711,10 +4108,12 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         }
 
     try:
+        _clear_animation(p)
+        p.set(target, follow_parm_reference=False)
         hou.setFrame(f)
         if foreground_parm is not None:
-            foreground_parm.set(1)
-        target = hou.text.expandString(p.unexpandedString())
+            _clear_animation(foreground_parm)
+            foreground_parm.set(1, follow_parm_reference=False)
         pre_fingerprint = fingerprint(target)
         out_dir = os.path.dirname(target)
         if out_dir and not os.path.isdir(out_dir):
@@ -3727,29 +4126,21 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         deadline = t0 + float(timeout)
         while not render_err and time.time() < deadline:
             post_fingerprint = fingerprint(target)
-            if post_fingerprint is not None and post_fingerprint != pre_fingerprint:
+            if post_fingerprint is not None and post_fingerprint['bytes'] > 0 and post_fingerprint != pre_fingerprint:
                 file_bytes = post_fingerprint["bytes"]
                 break
             time.sleep(1)
     finally:
-        if picture is not None:
-            try:
-                p.set(original_output)
-            except Exception:
-                pass
-        if foreground_parm is not None and original_foreground is not None:
-            try:
-                foreground_parm.set(original_foreground)
-            except Exception:
-                pass
+        restore_errors = _restore_parameters(parameter_state)
         # 渲染帧属于 agent 验证状态，不占用用户 playbar；即使 ROP 失败也还原。
         if float(hou.frame()) != original_frame:
             try:
                 hou.setFrame(original_frame)
-            except Exception:
-                pass
+            except Exception as error:
+                restore_errors.append(f'frame: {error}')
 
     errors: list[str] = []
+    errors.extend(f'restore failed: {error}' for error in restore_errors)
     if render_err:
         errors.append(render_err)
     try:
@@ -3776,23 +4167,51 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     }
 
 
+_MAX_IMAGE_PIXELS = 16 * 1024 * 1024
+_MAX_IMAGE_FILE_BYTES = 64 * 1024 * 1024
+
+
+class _QtPixelRows:
+    """Retain the decoded image, not millions of Python RGB tuple objects."""
+    def __init__(self, image):
+        self.image = image
+
+    def __getitem__(self, y):
+        image = self.image
+        class Row:
+            def __getitem__(self, x):
+                color = image.pixelColor(x, y)
+                return (color.red(), color.green(), color.blue())
+        return Row()
+
+
+class _BytePixelRows:
+    def __init__(self, rows, channels):
+        self.rows, self.channels = rows, channels
+
+    def __getitem__(self, y):
+        data, channels = self.rows[y], self.channels
+        class Row:
+            def __getitem__(self, x):
+                offset = x * channels
+                return (data[offset],) * 3 if channels == 1 else tuple(data[offset:offset + 3])
+        return Row()
+
+
 def _read_pixels_qt(path: str):
     """QImage 读像素（Houdini GUI/hython 均带 PySide6）；失败返回 None。"""
     try:
-        from PySide6.QtGui import QImage
-        img = QImage(path)
+        from PySide6.QtGui import QImage, QImageReader
+        reader = QImageReader(path)
+        size = reader.size()
+        if size.width() <= 0 or size.height() <= 0 or size.width() * size.height() > _MAX_IMAGE_PIXELS:
+            return None
+        img = reader.read()
         if img.isNull():
             return None
         img = img.convertToFormat(QImage.Format.Format_RGB888)
         w, h = img.width(), img.height()
-        pixels = []
-        for y in range(h):
-            row = []
-            for x in range(w):
-                c = img.pixelColor(x, y)
-                row.append((c.red(), c.green(), c.blue()))
-            pixels.append(row)
-        return w, h, pixels
+        return w, h, _QtPixelRows(img)
     except Exception:
         return None
 
@@ -3807,33 +4226,48 @@ def _read_pixels_png(path: str):
     """纯标准库 PNG 解码（8-bit grey/RGB/RGBA，无交错）——hython 无 GUI 时的
     fallback。返回 (w, h, pixels)；不支持的格式返回 None。"""
     try:
-        data = open(path, "rb").read()
+        with open(path, "rb") as source:
+            data = source.read(_MAX_IMAGE_FILE_BYTES + 1)
+        if len(data) > _MAX_IMAGE_FILE_BYTES:
+            return None
         if data[:8] != b"\x89PNG\r\n\x1a\n":
             return None
         pos = 8
-        idat = b""
+        idat = []
         w = h = bitd = colort = None
         while pos < len(data):
             ln = struct.unpack(">I", data[pos:pos+4])[0]
+            if pos + 12 + ln > len(data):
+                return None
             typ = data[pos+4:pos+8]
             chunk = data[pos+8:pos+8+ln]
             if typ == b"IHDR":
+                if len(chunk) != 13 or chunk[10:] != b'\x00\x00\x00':
+                    return None  # nonstandard compression/filtering or Adam7
                 w, h, bitd, colort = struct.unpack(">IIBB", chunk[:10])
+                if w <= 0 or h <= 0 or w * h > _MAX_IMAGE_PIXELS:
+                    return None
             elif typ == b"IDAT":
-                idat += chunk
+                idat.append(chunk)
             elif typ == b"IEND":
                 break
             pos += 12 + ln
         if bitd != 8 or colort not in (0, 2, 6):
             return None
         channels = {0: 1, 2: 3, 6: 4}[colort]
-        raw = zlib.decompress(idat)
         stride = w * channels
+        expected = h * (stride + 1)
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(b''.join(idat), expected + 1)
+        if len(raw) != expected or not decoder.eof or decoder.unconsumed_tail:
+            return None
         pixels = []
         prev = bytearray(stride)
         off = 0
         for _y in range(h):
             filt = raw[off]
+            if filt > 4:
+                return None
             line = bytearray(raw[off+1:off+1+stride])
             off += 1 + stride
             for i in range(stride):
@@ -3848,16 +4282,9 @@ def _read_pixels_png(path: str):
                     line[i] = (line[i] + (a + b) // 2) & 0xFF
                 elif filt == 4:
                     line[i] = (line[i] + _paeth(a, b, c)) & 0xFF
-            row = []
-            for x in range(w):
-                base = x * channels
-                if channels == 1:
-                    row.append((line[base],) * 3)
-                else:
-                    row.append((line[base], line[base+1], line[base+2]))
-            pixels.append(row)
+            pixels.append(bytes(line))
             prev = line
-        return w, h, pixels
+        return w, h, _BytePixelRows(pixels, channels)
     except Exception:
         return None
 
@@ -3886,12 +4313,23 @@ def _image_stats(w: int, h: int, pixels, max_samples: int = 512) -> dict:
                     bbox[0] = min(bbox[0], x); bbox[1] = min(bbox[1], y)
                     bbox[2] = max(bbox[2], x); bbox[3] = max(bbox[3], y)
     total = len(lumas) or 1
+    risk_reasons = []
+    if bbox is None:
+        risk_reasons.append('no_nonblack_content')
+    bbox_coverage = (100 * (bbox[2] - bbox[0] + step) * (bbox[3] - bbox[1] + step) / (w * h)) if bbox else 0
+    if bbox and (bbox[0] <= step or bbox[1] <= step or w - 1 - bbox[2] <= step or h - 1 - bbox[3] <= step):
+        risk_reasons.append('nonblack_content_at_image_edge')
+    if bbox and bbox_coverage < 10:
+        risk_reasons.append('small_nonblack_bbox')
     return {
         "mean_luma": round(sum(lumas) / total, 2),
         "max_luma": round(max(lumas), 2) if lumas else 0,
         "nonblack_pct": round(nb * 100.0 / total, 2),
         "dominant": [rs // nb, gs // nb, bs // nb] if nb else None,
         "content_bbox": bbox,
+        "presentation": {"needs_review": bool(risk_reasons), "reasons": risk_reasons,
+                         "bbox_coverage_pct": round(min(100, bbox_coverage), 2),
+                         "scope": "nonblack pixels, not object segmentation", "semantic_status": "unverified"},
     }
 
 
@@ -4297,8 +4735,8 @@ def _geometry_fingerprint(node: hou.Node, frame: float) -> dict:
     geometry = node.geometryAtFrame(frame)
     if geometry is None:
         raise ValueError(f"节点 {node.path()} 在 frame {frame} 没有 geometry")
-    points = len(geometry.points())
-    prims = len(geometry.prims())
+    points = int(geometry.intrinsicValue("pointcount"))
+    prims = int(geometry.intrinsicValue("primitivecount"))
     if points == 0 and prims == 0:
         raise ValueError(
             f"节点 {node.path()} 在 frame {frame} cook 成功但没有可渲染几何；"
@@ -4311,18 +4749,17 @@ def _geometry_fingerprint(node: hou.Node, frame: float) -> dict:
     signature.update(f"{points}|{prims}|{bbox_min}|{bbox_max}".encode("utf-8"))
     # 有界抽样 P：检测用户/上游在验证期间改变真实目标，不遍历百万点全量。
     if points and geometry.findPointAttrib("P") is not None:
-        values = list(geometry.pointFloatAttribValues("P"))
         count = min(points, 257)
         indices = [0] if count == 1 else sorted({
             round(i * (points - 1) / (count - 1)) for i in range(count)
         })
         for index in indices:
-            offset = index * 3
+            position = geometry.point(index).position()
             signature.update(struct.pack(
                 "<3d",
-                float(values[offset]),
-                float(values[offset + 1]),
-                float(values[offset + 2]),
+                float(position[0]),
+                float(position[1]),
+                float(position[2]),
             ))
     errors = list(node.errors())
     warnings = list(node.warnings())
@@ -4586,6 +5023,15 @@ def render_view(node, direction="iso", frame=None,
     target, resolution_note = _resolve_render_sop(node)
     f = float(hou.frame()) if frame is None else float(frame)
     framing_f = f if framing_frame is None else float(framing_frame)
+    if not math.isfinite(f) or not math.isfinite(framing_f):
+        raise ValueError('frame/framing_frame must be finite')
+    if picture is None:
+        frame_tag = str(f).replace('-', 'm').replace('.', 'p')
+        picture = f'dsh_view_{time.time_ns()}_f{frame_tag}.png'
+    picture = _resolve_output_path(picture, frame=f, default_subdir='render')
+    image_ext = os.path.splitext(picture)[1].lower()
+    if image_ext not in ('.png','.jpg','.jpeg','.bmp','.tga','.tif','.tiff','.exr','.hdr','.pic','.rat'):
+        raise ValueError(f'unsupported render_view image extension: {image_ext}; use PNG or EXR')
     before = _geometry_fingerprint(target, f)
     if before["errors"]:
         raise ValueError(f"目标 {target.path()} cook error：{before['errors']}")
@@ -4674,12 +5120,6 @@ def render_view(node, direction="iso", frame=None,
                 eye[0], eye[1], eye[2], 1.0,
             )))
 
-        if picture is None:
-            hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
-            frame_tag = str(f).replace("-", "m").replace(".", "p")
-            picture = os.path.join(
-                hip, "render", f"dsh_view_{time.time_ns()}_f{frame_tag}.png")
-        picture = os.fspath(picture)
         output_color = _render_output_color_plan(picture)
 
         # OpenGL ROP 完全拥有自己的对象/灯光/颜色设置，不消费用户 display/light。
@@ -4736,7 +5176,13 @@ def render_view(node, direction="iso", frame=None,
         proxy_after = _geometry_fingerprint(proxy_out, f)
         stale = before["signature"] != after["signature"]
         proxy_stale = proxy_before["signature"] != proxy_after["signature"]
+        validation = _render_validation(rendered, check, stale or proxy_stale,
+                                         pixel_supported=image_ext not in ('.exr','.hdr','.pic','.rat'))
         result_payload = {
+            **validation,
+            "output": rendered["output"],
+            "frame": f,
+            "stale": stale or proxy_stale,
             "target": target.path(),
             "resolved_from": _resolve(node).path(),
             "proxy": proxy.path(),
@@ -4752,7 +5198,7 @@ def render_view(node, direction="iso", frame=None,
             "output": rendered["output"],
             "frame": f,
             "file_bytes": rendered["file_bytes"],
-            "errors": rendered["errors"],
+            "errors": validation['errors'],
             "warnings": list(dict.fromkeys(before["warnings"] + proxy_before["warnings"])),
             "stale": stale or proxy_stale,
             "source_fingerprint_before": before,
@@ -4814,3 +5260,5 @@ def render_view(node, direction="iso", frame=None,
             result_payload["user_state_restored"] = not restore_errors
             if restore_errors:
                 result_payload["restore_errors"] = restore_errors
+                result_payload['ok'] = False
+                result_payload['errors'].extend(f'user state restore failed: {e}' for e in restore_errors)

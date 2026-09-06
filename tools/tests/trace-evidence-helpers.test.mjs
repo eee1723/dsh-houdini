@@ -20,6 +20,16 @@ import {
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 assert.equal(isMutatingRawMethodName('renderNode'), false);
+const typedAdoption=collectVerbAdoption([
+  {tool:'houdini_exec',isHoudini:true,args:{review:{parent:'/obj/g',output:'/obj/g/O'}},verbs:[],mutatingRawMethods:[]},
+  {tool:'houdini_exec',isHoudini:true,args:{review_test:{tests:[]}},verbs:[],mutatingRawMethods:[]},
+  {tool:'houdini_exec',isHoudini:true,args:{delivery:{action:'check'}},verbs:[],mutatingRawMethods:[]},
+  {tool:'houdini_query',isHoudini:true,code:'__result__=hou.frame()',verbs:[],mutatingRawMethods:[]},
+  {tool:'houdini_exec',isHoudini:true,code:'tab_create(...)',verbs:[{verb:'tab_create'}],mutatingRawMethods:[]},
+]);
+assert.equal(typedAdoption.structuredCalls,3);
+assert.equal(typedAdoption.rawReadOnlyCalls,1);
+assert.equal(typedAdoption.successfulExecVerbCoveragePct,100);
 assert.equal(isMutatingRawMethodName('displayNode'), false);
 assert.equal(isMutatingRawMethodName('render'), true);
 
@@ -501,4 +511,49 @@ assert.equal(completedVisionTodoWithoutEvidence([
   { content: '视觉检查', status: 'completed' },
 ], [{ semanticOk: true }]), false);
 
+// Only selected options are contract facts, never unselected UI suggestions.
+const selectedContract = collectQualityLoopEvidence({
+  userMessages: [{time: 1, text: '创建程序化资产'}],
+  steps: [{index: 1, time: 2, tool: 'ask_user_question', args: {questions: [
+    {id: 'quality', header: 'LOD', options: [
+      {label: '产品级', description: '不省略细节，需验证控制参数和连接关系'},
+      {label: '预览', description: '无参考假设'},
+    ]},
+  ]}, resultText: JSON.stringify({answers: [{id: 'quality', selected: ['产品级']}]}), verbs: []},
+  {index: 2, time: 3, tool: 'houdini_exec', verbs: [{verb: 'tab_create', ok: true}],
+   code: 'n = tab_create(parent, "null"); g = n.geometry(); print("clearance", g.boundingBox())'},
+  {index: 3, time: 4, tool: 'houdini_exec', verbs: [{verb: 'render_view', ok: true, args: '["/obj/a/SKELETON"]'}]},
+  ],
+});
+assert.equal(selectedContract.contract.fields.qualityLod, true);
+assert.equal(selectedContract.contract.fields.simplifications, true);
+assert.equal(selectedContract.contract.fields.referenceStatus, false, 'unselected assumptions must not enter contract');
+assert.deepEqual(selectedContract.relations.probeSteps, [2]);
+assert.equal(selectedContract.skeleton.checkpointMentions[0].source, 'render_target');
+assert.equal(findQueryMutationSteps([{tool: 'houdini_query', verbs: [{verb: 'verify_network', ok: true}]}]).length, 1);
+const fullStep = {index: 1, time: 2, tool: 'houdini_query', verbs: [], code: 'print("clearance", node.geometry().boundingBox())', resultText: 'clearance 0.01'};
+const compactStep = {...fullStep};
+Object.defineProperty(compactStep, 'code', {value: fullStep.code, enumerable: false});
+Object.defineProperty(compactStep, 'resultText', {value: fullStep.resultText, enumerable: false});
+assert.deepEqual(collectQualityLoopEvidence({steps: [compactStep]}), collectQualityLoopEvidence({steps: [fullStep]}));
 console.log('trace evidence helper tests passed');
+
+const failedCheckpoint={index:1,tool:'houdini_exec',failed:false,verbs:[{verb:'verify_network',ok:true,
+  result:{output:'/obj/a/OUT',scope:'direct_children',ok:false,nonempty:false}}]};
+const succeededCheckpoint={index:2,tool:'houdini_exec',failed:false,verbs:[{verb:'verify_network',ok:true,
+  result:{output:'/obj/a/OUT',scope:'direct_children',ok:true,nonempty:true}}]};
+assert.ok(qualityLoopRisks(collectQualityLoopEvidence({steps:[failedCheckpoint]})).some(r=>r.code==='unresolved_output_checkpoints'));
+assert.ok(!qualityLoopRisks(collectQualityLoopEvidence({steps:[failedCheckpoint,succeededCheckpoint]})).some(r=>r.code==='unresolved_output_checkpoints'));
+const assumptions=collectQualityLoopEvidence({assistantMessages:[{text:'符合真实类别，但具体数值是典型值的假设，而非已核实规格。'}]});
+assert.equal(assumptions.reference.unsupportedExternalTruthClaims.length,0);
+const builtCheckpoint={index:1,tool:'houdini_exec',failed:false,verbs:[{verb:'build_module',ok:true,
+  result:{validation:{output:'/obj/a/OUT',scope:'explicit_nodes',ok:true,nonempty:true},interface_checks:{ok:true}}}]};
+const controlCheckpoint={index:2,tool:'houdini_exec',failed:false,verbs:[{verb:'test_controls',ok:true,
+  result:{ok:true,restored:true,output:'/obj/a/OUT',results:[{id:'length',status:'pass'}]}}]};
+const quality=collectQualityLoopEvidence({steps:[builtCheckpoint,controlCheckpoint],
+  userMessages:[{text:'做一个程序化资产'}],assistantMessages:[{text:'假设的镜头级模型，有控制参数与关系验证，不做隐藏细节。'}]});
+assert.equal(quality.outputCheckpoints.length,1);
+assert.deepEqual(quality.relations.probeSteps,[1]);
+assert.equal(quality.perturbation.controlTests.length,1);
+assert.ok(!qualityLoopRisks(quality).some(r=>r.code==='procedural_control_not_perturbed'));
+assert.equal(findQueryMutationSteps([{tool:'houdini_query',verbs:[{verb:'test_controls',ok:true}]}]).length,1);

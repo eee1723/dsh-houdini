@@ -14,7 +14,8 @@
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ 源码 50；runtime 待 reload | 50 个目录入口：48 个主动词（含 `verb_help`）+ 2 个 display 兼容入口；新增显式 `set_object_parent`，文档/Host/Bridge 三方契约测试 |
+| 动词词表（bridge namespace） | ✅ 源码57/语义v9候选 | 57 个目录入口（55主动词+2兼容入口）；五工具不增，底层检查保留，生产delivery状态流程已退役 |
+| 独立资产评审 | 🔶 v9候选，未live验收 | 一次前台spawn，自主批测/截图/恢复和一次汇总；原始需求由Host转交，权限临时限定且不改ownership。六个skills；见[边界/验证](independent-asset-review.md) |
 | 人性化落位（O1） | ✅ 2026-09-04 | `tab_create` 连完 inputs 自动落位（无输入放右侧新列）、`connect` 纠流（dst 违反自顶向下流才 snap，已在下游绝不动，返回 `position_adjusted`）、`layout_nodes` 新增 `mode='flow'` 拓扑分层；H21/H22 `dsh-layout-flow` 回归通过 |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 观察层继续记录已覆盖裸调用与仓库写入风险 |
@@ -39,6 +40,24 @@
 ---
 
 ## 2. 已完成
+
+### 2026-09-07：v9独立评审替代delivery生产流程
+
+用户在两次桌子对比后明确选择：移除登记/累计收据/缓存，将需求完整性和效果判断交给
+独立子agent，避免作者逐参数转发。旧代码和专属测试移至不打包历史目录；通用控制/接口/
+拓扑/domain/恢复检查保留，node_info/build_module去掉delivery准入字段，执行版本升9。
+Host复用DSH公开前台spawn，原始需求/问答/附件进入独立上下文；review_test仅绑定child
+可用，受控测试单调用恢复、结果按批紧凑返回。主agent等待，token不会进入模型参数或
+报告；普通修改/保存/job不授予评审者。参考/权限/取消/限制见独立评审文档。
+
+CREATE资产评审skill（直接交付评审/实验，与离线trace不同）；UPDATE SOP方法路由，
+不写对象recipe。治理前5skills/0issues；新6skills需结构、打包与回归验证，不因此released。
+独立前向检查识别0.08m接触失败、不应委派的小编辑及unsupported模拟；据此修复截图恢复
+异常不能被参数恢复洗成pass，并明确只读非委派fallback。此为合成行为检查，不是新K3
+任务验收。最终npm test为17个Node文件；H21/H22各24项（含新真实Node/HTTP/主线程与
+确定性child替身、恢复错误与过期权限）全过；quick_validate通过，治理6skills/0issues，
+pack dry-run排除退役模块。只读health仍为v8/57，源码v9未重启。没有修改源HIP或改变冻结
+protocol/matrix/holdout。退役代码可从tools/prototypes/retired-delivery恢复，需同步契约与两端。
 
 ### 2.1 工具（host half）
 
@@ -2063,6 +2082,73 @@ OCIO PNG 抽样像素完全一致（RMSE 0、changed 0%），证明修复是正�
 ROP 参数落地与无 sRGB space 的显式 fallback。H22 headless 实际 OpenGL 渲染受 Vulkan surface 缺失限制，
 颜色合同回归已通过；源码仍需 Repair/restart 后在 Houdini-owned GUI runtime 运行最终 `render_view`
 smoke，再更新 baseline 的 runtime verification，完成前不冒充 live released。
+
+### 2.72 执行契约 v2 与 SOP checkpoint 候选（2026-09-05）
+
+用户授权依据三条建模任务复盘推进修复，并 review 潜在风险。自然 trace `f87b7f37…` 的
+HIP 命名误拦、24 次批量部分失败（#55 同批18次）和上下游 warning/完成语义成为直接证据。
+本轮实现 strict 参数恢复、node_info 菜单/组件/端口卡、受控 scene_save_as、SOP-only 小模块
+build_module 与 verify_network；新增组合逻辑放入 `dsh_sop_contracts.py`，复用现有 ownership/
+Tab/参数/指纹 primitives，没有引入新的传输、通用 DSL 或对象专用配方。
+
+review 另修复：connect 错口自动回退、tab_create 的 OBJ parenting 旁路与失败残留、无 pump
+时 HTTP 线程执行 HOM、失败请求继承旧图片、ledger 超限后无追踪执行、running job 取消丢失真实
+结果、job 派发异常悬挂、持锁发 HTTP 响应、活跃 job 无上限、非法请求体/浏览器简单跨站请求、
+health 仅名指纹/短缓存漏掉语义漂移，以及像素解码/指纹抽样的内存放大。文件/回调 I/O 不宣称可撤销。
+
+evidence 修复 compact 在分析前丢 code（以及 object spread 再丢 non-enumerable code/result），
+合同只吸收实际 selected options、骨架 render target 记作可观察 checkpoint，mixed edit+probe 不再
+全部漏掉，参数部分失败单列。重提取旧会话 full/compact 质量事实一致，24 条部分失败保留；LOD/
+骨架/关系探针误报消除，前置 reference/simplification 缺项仍保留，不把检测探针当语义通过。
+
+详细变更、验证与剩余风险见 `docs/execution-contract-review.md`。SOP skill 的 fast path 仅为
+工具已验证 candidate，未见弱模型行为、视觉语义和 live reload 不在本轮源码回归结论内；v5 冻结
+协议/matrix/holdout 不改写，后续先做定向 K3 新会话而非立即铺开整批大评测。
+
+### 2.73 自然新会话验收与执行契约 v3（2026-09-06）
+
+K3 `a28410c5…` 已加载54动词与v2；19/89工具失败，146次set_parms无旧式部分失败假绿，
+12次undo；但build_module零实际调用，node_info仅一次，verify_network六次都选择空CONTROLS/
+默认output0且未通过。模型仍以完成交付。只读health确认v2/54，不能归咎于未加载修复。
+独立读取与交付bytes/点面数一致的备份：实际OUT非空、5个merge warning，中心点序列111对中
+第26→27距离2.8355mm；首/中/末约12.7mm的抽查漏过该局部异常。hub_width不驱动最终几何。
+实际相对picture写到用户主目录；没有扩展名的首次图片check解码失败却顶层errors为空。
+
+用户继续授权源码修复。v3要求verify显式output，empty/error默认抛带结构证据的CheckpointError，
+require_valid=False仅用于诊断；跨parent接线在调用HOM前报告两端网络与Object Merge/subnet
+替代路径。build_module补None输入空槽及静态menu预检；主skill给出最小入口而非把全部细节藏在
+按需reference。渲染输出统一锚HIP与校验扩展名，ROP参数/key/expression恢复；file/pixel/semantic
+状态独立，缺失像素证据不再被执行成功掩盖。operation-evidence在长stdout前完整返回且trace按
+ledgerIndex恢复被截断的关键事实。新增geo_point_spacing全量序列相邻弦长检查，超预算拒绝，
+不把弦长冒充弧长或实际链板/表面关系。新工具在原交付备份上正确检出同一最差对，未保存源HIP。
+
+版本/回归、当前candidate边界和未完成工作见`docs/execution-contract-review.md`末节；未动用户
+模型、未重启live runtime、未解封holdout，未宣称补齐了自动控制响应审计或强制最终回答门禁。
+
+### 2.74 模块质量合同 v4：连接接口与控制响应（2026-09-06）
+
+用户授权继续推进质量主线。`9d3b119f…` 已实际采用v3/build_module21次，但方向检查未发现叉轴
+脱开，fork_travel/crank_len无响应，P-only探针又曾误判原生Tube的bb_shell_d。此次不做自行车
+配方修复，新增独立 `dsh_quality_contracts.py`：geo_check_interfaces选择同一实际输出的表面
+point group与独立primitive group，全声明点到表面距离检查；空组/基数不符/重叠自证失败，
+游离driver点和不支持的primitive保持unverified。build_module可附interfaces，检查不通过则
+清理本批新节点，不把只会cook当模块完工。
+
+test_controls以用户/agent声明的数值case和预期delta测试具体输出group的尺寸/位置/计数/面积，
+每case至少有一个非零响应期望，可加不变量与接口复验；默认基线接口不通过时零写入退出。
+值被钳制则fail；控制只允许数字组件，禁止menu/callback/multiparm；遵守ownership。每case恢复
+参数/keys/frame，并以有界bgeo数据核对输出恢复（不再仅P）。未知表示unverified，失败恢复不
+能掩盖原错误。外部文件、Python/solver状态不属保证；不为这些副作用提供通用事务。
+
+正反例中发现默认hou.BoundingBox并非空累加器，会把原点混入远处部件；局部指标改从首个实际
+primitive bbox开始。test8文件只读复验准确识别两个死控制并确认Tube直径响应；冻结的真实输出
+只添加诊断group、未改变P/primitive数量，接口检测检出叉轴全部12个端部表面点超距，源HIP
+SHA256不变。两组证据均不证明未声明的机械关系，更不证明新K3会话质量增益。
+
+SOP skill为UPDATE，新增按需module-quality-contracts reference（无对象实例答案），强调接口参与
+生成、最终表面独立回读、逐case控制响应。trace可识别build内checkpoint、接口和control-test证据，
+unsupported会在前置checks显示。双版本回归、候选surface与未验收项见execution-contract-review末节。
+源码57/语义v4候选；未自动重启运行时、未改原始任务模型、未改v5冻结协议/holdout。
 
 ## 3. 卡点（blockers）
 

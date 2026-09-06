@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
+import { ReviewController } from './review.js'
 
 /** Canonical fields shared by every exec-shaped result. */
 const execOutputProperties = {
@@ -28,6 +29,8 @@ const execOutputProperties = {
   advisory: { type: 'string' },
   images: { type: 'json' },
   media: { type: 'json' },
+  checks: { type: 'json' },
+  evidence: { type: 'json' },
 } as const
 
 const execOutputSchema = {
@@ -55,6 +58,7 @@ function execPresentationMeta(value: ExecResult): PresentationMeta {
     ok: value.ok,
     verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
     mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+    ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
   }
 }
 
@@ -71,6 +75,7 @@ function jobPresentationMeta(value: JobStatus): PresentationMeta {
 function resultTitle(label: string, result: ToolResult): string {
   if (result.isError) return `${label} failed`
   const meta = asPresentationMeta(result.meta)
+  if (meta?.ok === true && meta?.checksPending) return `${label} executed; checks need attention`
   if (meta?.ok === true) return `${label} succeeded`
   if (meta?.ok === false) return `${label} failed`
   return `${label} complete`
@@ -116,6 +121,12 @@ function renderVerbs(value: ExecResult): string[] {
 /** Append captured stdout/stderr/__result__/verbs of one exec-shaped value. */
 function renderStreams(value: ExecResult): string[] {
   const parts: string[] = []
+  if (value.evidence !== undefined) {
+    parts.push(`operation-evidence:\n${JSON.stringify(value.evidence)}`)
+  }
+  if (value.checks !== undefined) {
+    parts.push(`CHECKS NEED ATTENTION (execution success is not validation success):\n${JSON.stringify(value.checks)}`)
+  }
   if (value.stdout) parts.push(`stdout:\n${value.stdout}`)
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
   if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
@@ -140,7 +151,9 @@ function renderStreams(value: ExecResult): string[] {
 function renderExec(value: ExecResult) {
   const parts: string[] = []
   if (value.ok) {
-    parts.push('Executed successfully.')
+    parts.push(Array.isArray(value.checks) && value.checks.length
+      ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'
+      : 'Executed successfully.')
   } else {
     parts.push(`Execution failed:\n${value.error ?? 'unknown error'}`)
   }
@@ -269,6 +282,7 @@ const ALLOW_RAW_PARAM = {
 
 /** Register every Houdini tool; disposal of the plugin unregisters them. */
 export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void {
+  const review = new ReviewController(bridge)
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description:
@@ -276,9 +290,14 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'module pre-imported and may modify the scene: create or edit nodes, set parameters, '
       + 'and cook. Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
       + 'is verb-covered. Print what the agent needs to know; assign a JSON-serializable '
-      + 'value to the variable `__result__` to return structured data.',
+      + 'value to the variable `__result__` to return structured data. Alternatively review {parent,output,controller?} '
+      + 'delegates one independent foreground asset review using the logged original user requirements. '
+      + 'Wait for its report; no concurrent scene edits. Only that reviewer may use review_test for bounded '
+      + 'batch control perturbations/preview captures with automatic restoration. No delivery registration or evidence cache.',
     parameters: {
-      code: { type: 'string', required: true, description: 'Python source executed in Houdini with `hou` available' },
+      code: { type: 'string', description: 'Python source; mutually exclusive with review/review_test' },
+      review: { type: 'json', description: 'Start one independent reviewer: {parent:absolute_SOP_network,output:absolute_final_SOP,controller?:absolute_CTRL}. Specify current-task owned nodes. Original user requirements are read by Host; do not submit a success story, contract, permissions or expected verdict.' },
+      review_test: { type: 'json', description: 'Active reviewer only: {tests?:[{id,values:{numeric_spare_name:number},expectations?:[{group?,metric,axis?,delta:[min,max]}]}],views?:[iso|front|side|top],interfaces?:[...],topology?:[...],domain?:[...]}. Up to 16 cases; at most 2 views and 8 images including baseline. Empty tests captures baseline. Without expectations, responsive/unchanged is unverified, not correctness. Every case restores parameters/keys/frame; no new permission is granted by this argument.' },
       allow_raw: ALLOW_RAW_PARAM,
     },
     output: {
@@ -286,14 +305,24 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => renderExec(value),
       presentationMeta: (_args, value) => execPresentationMeta(value),
     },
-    presentCall: (args) => ({
+    presentCall: (args) => !args.code && !args.review && !args.review_test ? undefined : ({
       card: 'generic',
-      title: 'Execute Houdini Python',
+      title: args.review ? 'Independent Houdini asset review' : args.review_test ? 'Houdini review experiment' : 'Execute Houdini Python',
       kind: 'edit',
-      rawInput: codePresentationInput(args),
+      rawInput: args.review ?? args.review_test ?? codePresentationInput(args as {code:string;allow_raw?:string}),
     }),
     presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
+      if([args.code,args.review,args.review_test].filter(v=>v!==undefined).length!==1) throw new Error('provide exactly one of code, review, review_test')
+      if(args.review!==undefined || args.review_test!==undefined) {
+        if(args.allow_raw!==undefined) throw new Error('review cannot be mixed with allow_raw')
+        const result=args.review!==undefined
+          ? await review.start(args.review,exec,ownershipScopeOf(exec))
+          : await review.test(args.review_test,exec,ownershipScopeOf(exec))
+        return relayMedia(result,exec,bridge)
+      }
+      await review.guard(exec,false)
+      if(typeof args.code!=='string' || !args.code.trim())throw new Error('provide nonempty code')
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
@@ -321,6 +350,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(resultTitle('Houdini inspection', result), result),
     async execute(args, exec) {
+      await review.guard(exec,true)
       const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
       return withWorkspaceNote(await relayMedia(result, exec, bridge), exec, bridge)
     },
@@ -354,6 +384,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
+      await review.guard(exec,false)
       return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
     },
   }))

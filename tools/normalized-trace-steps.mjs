@@ -38,11 +38,17 @@ function parseJsonBlock(text, label) {
 export function parseVerbLedger(text) {
   const match = text.match(/verbs \((\d+)\):\n([\s\S]*?)(?:\n\n|$)/);
   if (!match) return [];
+  const evidence = parseJsonBlock(text, 'operation-evidence');
   return match[2].split('\n').flatMap((line) => {
     const parsed = parseVerbLedgerLine(line);
     if (!parsed) return [];
     let result = parsed.result;
     try { result = JSON.parse(parsed.result); } catch {}
+    const summary = Array.isArray(evidence) ? evidence.find(e => e.ledgerIndex === parsed.ledgerIndex && e.verb === parsed.verb) : null;
+    if (summary) {
+      const {ledgerIndex, verb, ...facts} = summary;
+      result = {...(result && typeof result === 'object' ? result : {}), ...facts};
+    }
     return [{
       ledgerIndex: parsed.ledgerIndex,
       ok: parsed.ok,

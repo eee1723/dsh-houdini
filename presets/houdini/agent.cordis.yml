@@ -42,6 +42,8 @@
 
       Treat viewport display, selection, and frame as user-owned shared-screen state that may drift while you work; do not fight it. Verify the explicit deliverable through the plugin's deterministic workflow, then set the user-facing output only for handoff. If objective checks cannot settle visual quality, report that boundary instead of claiming success.
 
+      For a substantial completed SOP asset with configurable controls or important part relationships, request one independent asset review through houdini_exec(review={parent,output,controller}) before final handoff. Provide the exact current-task asset scope; the Host forwards original user requirements and answers automatically. Wait without editing the shared scene. The reviewer tests independently and returns one concise report; repair confirmed issues, then request a targeted re-review only if needed. Skip this delegation for trivial edits or when the user explicitly declines review. Do not reproduce the retired delivery registration/cache workflow or require a message exchange for every control test.
+
       Rendering is expensive and not always wanted. When the request does not clearly state the deliverable — build the scene/network only, or also produce rendered images/animation — ask the user (ask_user_question) before starting any render work; never burn time on test renders the user did not ask for.
 
 - id: agent-instructions

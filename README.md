@@ -6,13 +6,22 @@
 
 ## 当前状态
 
-截至 2026-09-04，项目包含 5 个 `houdini_*` 工具、50 个意图级动词和 5 个按需 skills。Host/Bridge
+截至 2026-09-07，项目包含 5 个 `houdini_*` 工具、57 个意图级动词和 6 个按需 skills。Host/Bridge
 词表指纹握手、Raw Gate、session ownership、失败 rollback、隔离 `render_view`、media relay、
 Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨能力族 discovery 已完成并用于
 修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
 生产 guidance、preset、skills 或工具。
 
-当前源码和 50 动词合同已通过 Node、H21/H22 回归；2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
+当前 57 动词/执行语义 v9 是独立资产评审候选：移除生产delivery登记/累计收据/缓存流程，
+保留网络、接口、拓扑、domain与控制测试检查器。`houdini_exec(review={parent,output,controller?})`
+一次委派前台spawn评审者，Host提供原始要求/问答/图片引用；评审者可自主查询和批量
+`review_test`，在同一主线程调用中改参、测量/产图并恢复，返回紧凑本批结果。
+作者等待；测试权限仅绑定本任务资产及唯一子agent，普通ownership不变。没有长期合同缓存。
+当前自动评审入口是本任务拥有的SOP输出，受控扰动限原生无外部副作用网络；不支持的测试
+保持unverified，不限制普通建模选型。技术回归不证明评审模型的质量/效率，live新会话和
+真实OpenGL扰动截图仍待验收。操作、权限和回退见[`docs/independent-asset-review.md`](docs/independent-asset-review.md)。
+旧delivery文档/原型保留为历史，不再是当前使用路径。以下是历史冷启动证据：
+2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
 Host media/read-only、content-addressed media relay、WebView 异步重试与 launcher worker preflight 均已加载。
 `/health` 返回 49 动词和指纹 `4f3516dec006…`，Web 200；真实 Houdini 模式 session
 `45798bd2-41a6-4b12-9dfa-fb62b25faa45` 的 `houdini_query` 与 Houdini Trace smoke 通过，分类为 1 次
@@ -27,6 +36,7 @@ Host media/read-only、content-addressed media relay、WebView 异步重试与 l
 - **[`docs/cross-domain-benchmark-plan.md`](docs/cross-domain-benchmark-plan.md)** — 跨域发现、留出验证、反过拟合防火墙和能力准入协议。
 - **[`docs/rig-animation-design.md`](docs/rig-animation-design.md)** — Rig/animation 第一性原理、官方系统路由、最小工具预算与分阶段验收。
 - **[`skills/houdini-trace-analysis/SKILL.md`](skills/houdini-trace-analysis/SKILL.md)** — Houdini trace 的标准审计流程、工具机会矩阵和词表演化规则。
+- **[`skills/houdini-asset-review/SKILL.md`](skills/houdini-asset-review/SKILL.md)** — 独立最终资产评审、受控效果测试、证据裁决与一次汇总。
 - **[`skills/houdini-sop-workflow/SKILL.md`](skills/houdini-sop-workflow/SKILL.md)** — 程序化 SOP/VEX/Copy/属性/模块验证和动画交付工作流。
 - **[`skills/houdini-solaris-karma-workflow/SKILL.md`](skills/houdini-solaris-karma-workflow/SKILL.md)** — Solaris/USD、MaterialX、Karma 与正式渲染交付工作流。
 - **[`skills/houdini-rig-animation-workflow/SKILL.md`](skills/houdini-rig-animation-workflow/SKILL.md)** — Channel、刚体 pieces、机械层级、KineFX skin、APEX 路由与时序完成门。
@@ -56,7 +66,7 @@ bridge 还会在执行前 AST 扫描裸调用。`createNode`/`setInput`/`parm().
 bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外可直接用）。它们把 Houdini 的
 惯例/校验/最新版本解析/错误处理固化，让 agent 写一句 `set_parm(...)` 而不是十几行裸 `hou`。
 **动词是主接口**；`hou` 只用于词表表达不了的只读检查、UI 或底层几何操作。当前目录为
-11 个 domain / 50 个 verbs。不得在 bridge exec 内调用 `hou.hipFile.load()` 或
+11 个 domain / 57 个 verbs。不得在 bridge exec 内调用 `hou.hipFile.load()` 或
 `hou.hipFile.clear()`；已有动词覆盖的裸修改不能旁路 Gate。
 
 > 完整设计（两轴模型、铁律、帮助文档三阶段、后续路线）见 **[`docs/tool-design.md`](docs/tool-design.md)** —— 那是唯一真相源，本表只是速查。
@@ -66,6 +76,10 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | 类型目录 | `search_tab_menu(category, query)` / `search_tab_entries(parent, query)` | 类型注册表查询 / 真实 parent 可见的 node+tool Tab entries |
 | 类型目录 | `resolve_latest_type(category, base)` | 某节点族的最新版全名（内部为主） |
 | scene | `scene_info()` / `scene_save(expected_path=None)` | 只读场景状态；明确区分 named/dirty/reliable/clean。保存只作用于当前已命名 HIP，并回报 dirty、bytes、mtime |
+| scene | `scene_save_as(path, expected_current_path, reason, overwrite=False)` | 授权绝对路径 Save As；防串场，默认不覆盖，文件 I/O 不可回滚 |
+| node | `node_info(parent, type_name, parm_filter='')` | 创建前取得版本/端口/参数组件与 menu token，不创建 probe |
+| node | `build_module(parent, nodes, output, dry_run=False)` | 小型新增 SOP 模块，静态预检/严格设参/cook；失败清理本批新增节点 |
+| node | `verify_network(parent, output, nodes=None, require_valid=True)` | 必须显式 output；空/error 输出默认失败，诊断模式不解除验收；聚合 error/warning/非空状态，不是语义/视觉质量评分 |
 | scene | `set_timeline` / `list_bookmarks` / `create_bookmark` / `delete_bookmark` | 时间线字段与 bookmark 明确意图，不再猜 playbar/HOM API |
 | node | `tab_create(...)` / `tab_apply(parent, tool_id)` | 建一个可见节点 / 应用 allowlist 多节点 Tab recipe；GUI 恢复用户状态、headless 同语义 |
 | node | `find_nodes(pattern="*", category=, node_type=, root=)` | 找**已存在**节点（扁平 path 列表） |
@@ -81,15 +95,22 @@ bridge 在 exec 命名空间里预置了一组**通用动词**（除 `hou` 外�
 | node | `layout_nodes(parent, nodes=)` | 默认只布局当前 session 创建节点，并报告跳过的 foreign 节点 |
 | parm | `list_parms(node)` | 参数**目录**（名字/标签/类型/帮助，不给值） |
 | parm | `read_parms(node, changed_only=True)` | 参数**值**（默认只看非默认 + 表达式/动画 + 被引用；动画附 key count/首尾帧/curve 摘要） |
-| parm | `set_parm(node, name, value)` / `set_parms(node, values)` | 单项设参 / 逐项容错批量设参；普通数值赋值会清掉旧动画并回报 |
+| parm | `set_parm(node, name, value)` / `set_parms(node, values, strict=True)` | 失败恢复参数/表达式/关键帧；批量默认严格，strict=False 才显式容错；Menu token 与数值表达式分开 |
 | parm | `set_keyframes(node, channels, replace=True)` | frame 单位批量关键帧，constant/linear/bezier，预检/回读/失败恢复原 keys |
 | parm | `create_spare_parms(node, code_parm='snippet', defaults={...}, spec=)` | 扫代码引用或显式创建 controller folder/参数，避免驱动静默为 0 |
 | asset | `hda_create` / `hda_info` / `hda_get_section` / `hda_set_section` / `hda_patch_section` / `hda_set_interface` | HDA 创建、自省、section 安全修改和声明式参数面板 |
 | geometry | `geo_attrib_stats` / `geo_piece_stats` / `geo_frame_diff` | 属性值、局部 piece extent/面积退化、无 playbar 副作用跨帧差异 |
+| geometry | `geo_point_spacing(node, expected, tolerance, closed=False)` | 有序点序列全部相邻弦长；闭环含末→首，报告最差对，超预算拒绝不抽样；不证明实际表面关系 |
+| geometry | `geo_check_interfaces(output, interfaces)` | 最终SOP的命名接口点group→目标表面primitive group，全声明点距离验收，缺组/自证/不支持表示不假绿 |
+| geometry | `test_controls(controller, output, tests, interfaces=None)` | exec内临时改数字控制、验证预期局部响应/接口，再恢复原参数/keys/frame；完整bgeo核对恢复，包含原生primitive形状 |
 | stage/USD | `usd_stage_summary(lop)` / `usd_prim_info(lop, prim_path)` | USD 场景摘要 / 单 prim 属性、绑定和时间采样 |
 | render | `render_view(EXPLICIT_SOP, direction='iso', framing='full|detail', coverage=, framing_frame=)` | **视觉验证主干 v2**：显式 SOP → 隐藏 Object Merge proxy → ROP forceobjects；PNG/JPEG/TIFF 自动从 scene-linear 经 OCIO 编码到 sRGB，EXR/HDR 保持线性，并在 `output_color` 回报实际转换；用户 output/OBJ visibility/selection/frame 漂移不选渲染源；渲染基础设施作为带 owner tag 的持久服务收进 OBJ/OUT Network Box，任务收尾复用而不删除；动画 A/B 用同一 framing_frame 锁相机 |
 | render | `render_frame(rop, picture=, frame=)` / `render_check(path, ref=)` | 渲染前后比较 bytes/mtime/有界内容摘要，只接受新鲜产物并恢复临时输出参数；另做图像客观统计 |
 | viewport | `viewport_screenshot(...)` | **诊断**：「用户屏幕上现在是什么」（非验证手段——验证走 render_view） |
+
+渲染裸文件名写 `$HIP/render`（geometry/cache ROP用`$HIP/geo`），相对子路径以`$HIP`为根；
+无扩展名、相对逃逸和插件仓库路径拒绝。`render_view` 分开 file/pixel/semantic 状态，
+operation-evidence 在长日志前保留完整路径、frame、检查摘要。像素解码失败不会被 errors=[] 覆盖。
 
 产图动词的产物自动经桥 `/media` 端点回传进会话工作区（`.dsh-houdini-media/`），
 目标名使用内容 SHA-256 短前缀 + 原 basename，避免不同目录/帧的同名图覆盖；结果里带 `media` 段
@@ -106,8 +127,8 @@ owner-tagged 节点；空闲 proxy 已自动清空 live source 引用。
 
 ## Houdini trace 分析 skill
 
-插件通过 `ctx.skills.register()` 随包发布 trace、SOP、Solaris/Karma、rig/animation 和
-skill-governance 五个 skills，在 Houdini / Houdini-dev
+插件通过 `ctx.skills.register()` 随包发布 trace、asset-review、SOP、Solaris/Karma、rig/animation 和
+skill-governance 六个 skills，在 Houdini / Houdini-dev
 模式的 skill 目录中按需加载。它不是另一个 trace UI，而是 `houdinitrace`（实时观察）和
 `trace-report.mjs`（事实报告）之上的审计规范：重建用户任务契约，检查工具该用未用/
 误用/缺失/冗余/拆并，审计节点模块、属性数据流、cook warning、显示、渲染和多帧动画，
@@ -268,7 +289,7 @@ npm test
 npm pack --dry-run
 ```
 
-`npm test` 当前运行构建和 16 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
+`npm test` 当前运行构建和 17 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
 封存、Host/Bridge 词表握手、工具展示纯函数、WebView GUI 线程边界、trace replay/normalized-step/
 evidence 和当前文档一致性；测试文件数由一致性门禁反向核对，新增回归后不能只改代码不改 README。
 
@@ -295,12 +316,14 @@ node skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs --root . -
 请求体超过 16 MiB 拒绝；后台 job 结束后保留 10 分钟供轮询、最多保留 1000 个（超限自动清理）。
 `GET /health` 除初始化时缓存的 Houdini 版本和 job 数外，还返回运行中动词表的名称与 SHA-256 指纹；
 HTTP handler 不直接调用 HOM。Host 在执行场景代码前与由 `tool-design.md` 生成的预期指纹比较，
-版本漂移时 fail-closed。`GET /media?path=` 只读、限图片扩展名和 64MB，把产图动词的图片字节回传给 Host。
+并核对执行语义版本，版本漂移时 fail-closed；请求携带 expected_contract 二次校验，不使用短时成功缓存。
+`GET /media?path=` 只读、限图片扩展名和 64MB，把产图动词的图片字节回传给 Host。
+JSON POST 拒绝浏览器 Origin/简单跨站请求；本地可信进程仍可访问，这不是恶意代码安全沙箱。
 
 ## 已知限制
 
 - `hou` 只能在 Houdini 主线程调用：桥把全部执行编组到主线程（GUI 下是 QTimer 泵，headless 下是 `__main__` 主循环泵），因此严格串行——后台 job 是排队异步而非并行，且代码执行期间 GUI 会像原生 cook 一样冻结；取消是协作式的——排队中的 job 在执行前被丢弃（零场景副作用），运行中的杀不掉
-- 桥绑定 `127.0.0.1`，未做鉴权——不要在不可信网络上暴露端口
+- 桥绑定 `127.0.0.1`，无本地进程身份鉴权——不要在不可信网络上暴露端口；主线程泵不可用时拒绝执行，不退回 HTTP 线程
 - exec rollback 只覆盖 Houdini undo stack 中可撤销的场景修改；`scene_save`、render/cache 文件、HDA library 等外部副作用不能靠 undo 回滚，调用前应使用 expected path、独立输出目录和新鲜度证据
 - 客户端超时/取消不会中断 Houdini 内已在执行的代码：调用方看到失败或取消时，场景可能已经被改——重试前先用 `houdini_query` 确认场景状态
 - `houdini_query` 的只读边界由受限动词 namespace 与 AST 预检实现，面向正常 agent 执行轨迹；它不是针对恶意 Python 反射代码的安全沙箱。Bridge 仍只应绑定 loopback 并由可信本机 agent 使用

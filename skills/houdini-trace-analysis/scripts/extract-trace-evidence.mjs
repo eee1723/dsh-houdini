@@ -16,6 +16,7 @@ import {
   completedVisionTodoWithoutEvidence,
   classifyVisionEvidence,
   collectVerbAdoption,
+  isStructuredHoudiniCall,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
   findQueryMutationSteps,
@@ -200,6 +201,9 @@ function analyzeTrace(file) {
     // duplicate potentially huge tool output, while render paths and nested
     // render_check facts remain recoverable before serialization.
     Object.defineProperty(step, 'resultText', { value: source.resultText, enumerable: false });
+    // Compact is a serialization choice, not an analysis input. Dropping code
+    // here used to erase relationship probes from otherwise identical traces.
+    Object.defineProperty(step, 'code', { value: code, enumerable: !compact });
     steps.push(step);
     firstToolTime = Math.min(firstToolTime, source.time || Infinity);
     lastToolTime = Math.max(lastToolTime, source.time || 0);
@@ -220,7 +224,10 @@ function analyzeTrace(file) {
   const failedVerbCalls = steps.flatMap((step) => step.verbs
     .filter((verb) => !verb.ok)
     .map((verb) => ({ index: step.index, time: step.time, ...verb })));
-  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !step.verbs.length).map((step) => ({
+  const partialParameterFailures = steps.flatMap((step) => step.verbs
+    .filter((verb) => verb.verb === 'set_parms' && verb.ok && verb.result?.failed && Object.keys(verb.result.failed).length)
+    .map((verb) => ({index: step.index, time: step.time, failed: verb.result.failed})));
+  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !isStructuredHoudiniCall(step) && !step.verbs.length).map((step) => ({
     index: step.index,
     time: step.time,
     tool: step.tool,
@@ -423,6 +430,7 @@ function analyzeTrace(file) {
     },
     failedCalls,
     failedVerbCalls,
+    partialParameterFailures,
     rawHoudiniNoVerb,
     rawMutationSteps,
     verblessMutations,

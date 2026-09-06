@@ -61,10 +61,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
 import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
+import dsh_review
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
 # threads must not call HOM, including for seemingly harmless health metadata.
 _HOU_VERSION = hou.applicationVersionString()
+_HOU_THREAD_ID = threading.get_ident()
+# Bump when operation semantics change without renaming verbs. Host generation
+# reads the matching version declaration in docs/tool-design.md.
+_EXECUTION_CONTRACT_VERSION = 9
+_RUNTIME_ID = uuid.uuid4().hex
+# Remove the retired v8 callback when reloading an existing runtime.
+if globals().get('_delivery_hip_callback') is not None:
+    try:hou.hipFile.removeEventCallback(_delivery_hip_callback)
+    except hou.Error:pass
+_review_service = dsh_review.ReviewService()
+_review_busy = False  # job admission mirror, updated under _jobs_lock
 
 # --- limits (kept small so a runaway agent cannot exhaust Houdini) ----------
 _MAX_STREAM_BYTES = 1024 * 1024          # cap captured stdout/stderr per exec
@@ -73,6 +85,7 @@ _MAX_BODY_BYTES = 16 * 1024 * 1024       # reject oversized HTTP bodies
 _MAX_RESULT_DEPTH = 20                   # recursion depth for __result__ coercion
 _MAX_RESULT_ITEMS = 1000                 # items per container before repr fallback
 _MAX_JOBS = 1000                         # terminal-job registry cap
+_MAX_ACTIVE_JOBS = 32                    # bound queued workers, not only history
 _JOB_RETENTION_SECONDS = 600             # keep terminal job results for polling
 
 _exec_lock = threading.Lock()
@@ -169,6 +182,7 @@ _VERBS: dict[str, object] = {
     "verb_help": _verb_help,
     "scene_info": dsh_hou_helpers.scene_info,
     "scene_save": dsh_hou_helpers.scene_save,
+    "scene_save_as": dsh_hou_helpers.scene_save_as,
     "set_timeline": dsh_hou_helpers.set_timeline,
     "list_bookmarks": dsh_hou_helpers.list_bookmarks,
     "create_bookmark": dsh_hou_helpers.create_bookmark,
@@ -177,6 +191,9 @@ _VERBS: dict[str, object] = {
     "search_tab_entries": dsh_hou_helpers.search_tab_entries,
     "resolve_latest_type": dsh_hou_helpers.resolve_latest_type,
     "tab_create": dsh_hou_helpers.tab_create,
+    "node_info": dsh_hou_helpers.node_info,
+    "build_module": dsh_hou_helpers.build_module,
+    "verify_network": dsh_hou_helpers.verify_network,
     "tab_apply": dsh_hou_helpers.tab_apply,
     "find_nodes": dsh_hou_helpers.find_nodes,
     "graph": dsh_hou_helpers.graph,
@@ -208,6 +225,9 @@ _VERBS: dict[str, object] = {
     "hda_patch_section": dsh_hou_helpers.hda_patch_section,
     "hda_set_interface": dsh_hou_helpers.hda_set_interface,
     "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
+    "geo_point_spacing": dsh_hou_helpers.geo_point_spacing,
+    "geo_check_interfaces": dsh_hou_helpers.geo_check_interfaces,
+    "test_controls": dsh_hou_helpers.test_controls,
     "geo_piece_stats": dsh_hou_helpers.geo_piece_stats,
     "geo_frame_diff": dsh_hou_helpers.geo_frame_diff,
     "usd_stage_summary": dsh_hou_helpers.usd_stage_summary,
@@ -225,7 +245,7 @@ _VERB_NAMES = tuple(sorted(_VERBS))
 _VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexdigest()
 
 _MUTATING_VERB_NAMES = {
-    "scene_save", "set_timeline", "create_bookmark", "delete_bookmark",
+    "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "set_display", "sop_set_output",
     "set_object_visible", "layout_nodes", "set_parm", "set_parms",
@@ -243,6 +263,7 @@ _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 # 里附一条 advisory，点明对应的动词——让 agent 从结果里直接看到可替代方案。
 _RAW_HOU_VERB_MAP = {
     "hipFile.save": "scene_save",
+    "hipFile.setName": "scene_save_as",
     "createNode": "search_tab_entries + tab_create/tab_apply",
     "setInput": "connect, set_object_parent, or disconnect_input",
     "setFirstInput": "connect, set_object_parent, or disconnect_input",
@@ -279,8 +300,8 @@ def _raw_hou_calls(code: str) -> dict[str, int]:
             continue
         func = node.func
         path = _call_path(func)
-        if path == "hou.hipFile.save":
-            key = "hipFile.save"
+        if path in ("hou.hipFile.save", "hou.hipFile.setName"):
+            key = path.removeprefix("hou.")
         elif func.attr in _RAW_HOU_VERB_MAP:
             key = func.attr
         elif (
@@ -482,8 +503,9 @@ def _raw_usage_analysis(code: str) -> dict:
         if path is not None:
             direct[path] = direct.get(path, 0) + 1
         attr = node.func.attr
-        if path == "hou.hipFile.save":
-            covered["hipFile.save"] = covered.get("hipFile.save", 0) + 1
+        if path in ("hou.hipFile.save", "hou.hipFile.setName"):
+            key = path.removeprefix("hou.")
+            covered[key] = covered.get(key, 0) + 1
         elif attr in _RAW_HOU_VERB_MAP:
             covered[attr] = covered.get(attr, 0) + 1
         elif (
@@ -526,30 +548,11 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
         tree = ast.parse(code)
     except SyntaxError:
         return None  # 语法错误交给 exec 自己报
-    python_sets = _python_set_names(tree)
-    covered: dict[str, int] = {}
-    mutating: dict[str, int] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        attr = node.func.attr
-        path = _call_path(node.func)
-        if path == "hou.hipFile.save":
-            covered["hipFile.save"] = covered.get("hipFile.save", 0) + 1
-        elif attr in _RAW_HOU_VERB_MAP:
-            covered[attr] = covered.get(attr, 0) + 1
-        elif (
-            attr == "set"
-            and isinstance(node.func.value, ast.Call)
-            and isinstance(node.func.value.func, ast.Attribute)
-            and node.func.value.func.attr in ("parm", "parmTuple")
-        ):
-            covered["parm().set"] = covered.get("parm().set", 0) + 1
-        elif (
-            not _is_safe_python_method(node, python_sets)
-            and attr.startswith(_GATE_MUTATING_PREFIXES)
-        ):
-            mutating[attr] = mutating.get(attr, 0) + 1
+    # Gate and audit must classify the same operation; formerly these loops
+    # drifted independently (notably hipFile.setName versus Node.setName).
+    usage = _raw_usage_analysis(code)
+    covered = {item['name']: item['count'] for item in usage['coveredMutations']}
+    mutating = {item['name']: item['count'] for item in usage['suspectedMutations']}
     if not covered and not mutating:
         return None
     if not covered and allow_raw:
@@ -647,10 +650,43 @@ def _clip(obj) -> str:
     return text if len(text) <= _VERB_VALUE_CHARS else text[:_VERB_VALUE_CHARS] + "..."
 
 
+def _operation_summary(name: str, result):
+    """Small, untruncated evidence before verbose node lists/service metadata."""
+    if not isinstance(result, dict):
+        return None
+    r = result.get('validation', result) if name == 'build_module' else result
+    if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
+        return None
+    fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
+              'warning_free','failure_reasons','next_action','file_status','pixel_status','semantic_status',
+              'fresh','file_bytes','stale','user_state_restored','dry_run','valid','node','status',
+              'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
+              'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
+              'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller','baseline_interfaces','pair_tests','reason','parameter_writes')
+    out = {k: r[k] for k in fields if k in r}
+    if result.get('interface_checks') is not None:
+        out['interface_checks'] = result['interface_checks']
+    for field in ('error_nodes','warning_nodes','errors','warnings'):
+        if field in r:
+            values = r[field]
+            out[field] = [str(v)[:400] for v in values[:12]]
+            out[field + '_count'] = len(values)
+    fp = r.get('output_fingerprint') or r.get('source_fingerprint_after')
+    if isinstance(fp, dict):
+        out['source'] = {k: fp[k] for k in ('path','frame','signature','points','prims') if k in fp}
+    check = r.get('check')
+    if isinstance(check, dict):
+        out['pixels'] = {k: check[k] for k in ('error','width','height','mean_luma','nonblack_pct','content_bbox','presentation') if k in check}
+    return out
+
+
 def _make_tracer(name: str, fn, ledger: list):
     def wrapped(*args, **kwargs):
         if len(ledger) >= _VERB_ENTRY_LIMIT:
-            return fn(*args, **kwargs)
+            error = f"verb ledger limit {_VERB_ENTRY_LIMIT} reached; split into smaller checkpoints"
+            if len(ledger) == _VERB_ENTRY_LIMIT:
+                ledger.append({"verb": name, "ok": False, "error": error, "args": [], "kwargs": {}, "ms": 0})
+            raise RuntimeError(error)
         start = time.time()
         args_json = _verb_value(list(args))
         kwargs_json = {str(k): _verb_value(v) for k, v in kwargs.items()}
@@ -665,6 +701,19 @@ def _make_tracer(name: str, fn, ledger: list):
                 "result": _verb_value(result),
                 "ms": round((time.time() - start) * 1000, 1),
             }
+            check = result.get("validation", result) if isinstance(result, dict) else None
+            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "geo_point_spacing","geo_check_interfaces","test_controls") and isinstance(check, dict):
+                if check.get('status') == 'unverified':
+                    entry['check_status'] = 'unverified'
+                elif check.get("ok") is False or check.get("errors") or check.get("fresh") is False:
+                    entry["check_status"] = "failed"
+                elif check.get("healthy") is False or check.get("warning_free") is False or check.get('pixel_status') == 'needs_review':
+                    entry["check_status"] = "warning"
+                else:
+                    entry["check_status"] = "passed" if not result.get("dry_run") else "unverified"
+            summary = _operation_summary(name, result)
+            if summary is not None:
+                entry['summary'] = _jsonable(summary)
             ledger.append(entry)
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> {_clip(entry['result'])}  ({entry['ms']}ms)")
@@ -679,6 +728,9 @@ def _make_tracer(name: str, fn, ledger: list):
                 "error": str(e),
                 "ms": round((time.time() - start) * 1000, 1),
             })
+            if isinstance(e, dsh_hou_helpers.CheckpointError):
+                ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence))
+                ledger[-1]['check_status'] = 'failed'
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> ERROR: {e}")
             raise
@@ -721,6 +773,11 @@ def run_code(code: str, allow_raw: str | None = None,
     allow_raw：词表未覆盖的低层修改的一次性豁免理由（见 _gate_message）；
     它不能旁路已被动词覆盖的裸调用。豁免会打印 [gate] 行进 stdout，进结果与 trace。
     """
+    if threading.get_ident() != _HOU_THREAD_ID:
+        raise RuntimeError("run_code must execute on Houdini's owning thread")
+    global _review_busy
+    _review_service.guard_code(owner_session,read_only)
+    with _jobs_lock:_review_busy=_review_service.active()
     verb_ledger: list = []
     namespace = {"hou": hou}
     for _name, _fn in _VERBS.items():
@@ -734,6 +791,9 @@ def run_code(code: str, allow_raw: str | None = None,
     raw_usage = _raw_usage_analysis(code)
     gate_outcome = "not_applicable"
     with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call):
+        # Clear even for preflight rejection and snapshot before releasing the
+        # execution lock, so one request cannot inherit another request's media.
+        dsh_hou_helpers._PRODUCED_IMAGES.clear()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
                 error = _forbidden_hip_lifecycle_message(code)
@@ -760,7 +820,6 @@ def run_code(code: str, allow_raw: str | None = None,
                         gate_outcome = "read_only"
                     elif has_covered or has_suspected:
                         gate_outcome = "allowed"
-                    dsh_hou_helpers._PRODUCED_IMAGES.clear()
                     compiled = compile(code, "<dsh-houdini>", "exec")
                     undo_enabled = bool(hou.undos.areEnabled())
                     if undo_enabled:
@@ -810,6 +869,7 @@ def run_code(code: str, allow_raw: str | None = None,
             except BaseException:
                 if error is None:
                     error = traceback.format_exc()
+        images = [p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
     envelope = {
         "ok": error is None,
         "stdout": stdout.getvalue(),
@@ -818,11 +878,18 @@ def run_code(code: str, allow_raw: str | None = None,
     # 本次 exec 产出的图片（render_frame/render_view/viewport_screenshot 登记）：
     # host 侧经 /media 端点把字节拉回会话工作区，vision/fs 工具才读得到
     # （工作区沙箱；2026-08-19 草地 trace：vision_glance 读 $HIP 截图被拒）。
-    images = [p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
     if images:
         envelope["images"] = images
     if verb_ledger:
         envelope["verbs"] = verb_ledger
+        evidence = [{'ledgerIndex': i + 1, 'verb': v['verb'], **v['summary']}
+                    for i, v in enumerate(verb_ledger) if isinstance(v.get('summary'), dict)]
+        if evidence:
+            envelope['evidence'] = evidence
+        checks = [{"verb": v["verb"], "status": v["check_status"]}
+                  for v in verb_ledger if v.get("check_status") in ("failed", "warning", "unverified")]
+        if checks:
+            envelope["checks"] = checks
     if (
         raw_usage.get("directCalls")
         or raw_usage.get("coveredMutations")
@@ -862,11 +929,16 @@ _pump_timer = None     # GUI-mode QTimer (kept alive; stopped by stop())
 
 def _pump() -> None:
     """Main-thread: run every queued work item, FIFO. Never raises."""
+    if threading.get_ident() != _HOU_THREAD_ID:
+        raise RuntimeError("Houdini pump must run on its owning thread")
     while True:
         try:
             func, done, holder = _work_queue.get_nowait()
         except queue.Empty:
             return
+        if holder.get("cancelled"):
+            done.set()
+            continue
         try:
             holder["result"] = func()
         except BaseException as exc:  # a failing task must not kill the pump
@@ -878,16 +950,20 @@ def _pump() -> None:
 def _execute(func):
     """Run `func` on Houdini's main thread and wait for its return value.
 
-    Falls back to inline execution only when no main-thread pump exists
-    (interactive hython without the __main__ loop) — the documented entry
-    points (GUI menu / Python Shell, `hython dsh_bridge.py`) always have one.
+    Owning-thread callers may execute inline (including disposable hython).
+    Worker callers must have a live pump; never fall back to worker-thread HOM.
     """
-    if not _pump_active:
+    if threading.get_ident() == _HOU_THREAD_ID:
         return func()
+    if not _pump_active:
+        raise RuntimeError("Houdini main-thread pump is unavailable; refusing execution on a worker thread")
     done = threading.Event()
     holder: dict = {}
     _work_queue.put((func, done, holder))
-    done.wait()
+    while not done.wait(0.25):
+        if not _pump_active:
+            holder["cancelled"] = True
+            raise RuntimeError("Houdini main-thread pump stopped before queued execution completed")
     if "error" in holder:
         raise holder["error"]
     return holder["result"]
@@ -950,6 +1026,28 @@ def _job_activity() -> dict:
     }
 
 
+def run_review(body):
+    """Opaque Host lease transport; model receives only scope and compact tests."""
+    global _review_busy
+    if threading.get_ident()!=_HOU_THREAD_ID:raise RuntimeError('review requires owning thread')
+    if set(body)-{'request','owner_session','owner_call','expected_contract'}:raise ValueError('unknown review transport fields')
+    request=body.get('request')
+    if not isinstance(request,dict):raise ValueError('review request must be an object')
+    with _jobs_lock:
+        if request.get('action')=='begin' and any(j.get('status') in ('queued','running') for j in _jobs.values()):
+            raise ValueError('wait for active jobs before reviewing')
+        _review_busy=True
+    try:
+        with _exec_lock,dsh_hou_helpers._execution_owner(body.get('owner_session'),body.get('owner_call')):
+            dsh_hou_helpers._PRODUCED_IMAGES.clear()
+            result=_review_service.execute(request,body.get('owner_session'),body.get('owner_call'))
+            images=[p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
+            return {'ok':True,'stdout':'','stderr':'','result':_jsonable(result),
+                    **({'images':images} if images else {})}
+    finally:
+        with _jobs_lock:_review_busy=_review_service.active()
+
+
 def _job_body(job_id: str, code: str, allow_raw: str | None = None,
               owner_session: str | None = None,
               owner_call: str | None = None) -> dict | None:
@@ -969,9 +1067,12 @@ def _job_body(job_id: str, code: str, allow_raw: str | None = None,
 def _run_job(job_id: str, code: str, allow_raw: str | None = None,
              owner_session: str | None = None,
              owner_call: str | None = None) -> None:
-    outcome = _execute(
-        lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
-    )
+    try:
+        outcome = _execute(
+            lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
+        )
+    except BaseException:
+        outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
     if outcome is None:
         return  # cancelled while queued: code never ran, scene untouched
     with _jobs_lock:
@@ -1012,6 +1113,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "houVersion": _HOU_VERSION,
                     "rawGate": _raw_gate,
+                    "executionContractVersion": _EXECUTION_CONTRACT_VERSION,
+                    "runtimeId": _RUNTIME_ID,
                     "verbCatalog": {
                         "hash": _VERB_CATALOG_HASH,
                         "count": len(_VERB_NAMES),
@@ -1025,7 +1128,7 @@ class _Handler(BaseHTTPRequestHandler):
         # /media?path=<abs>：把桥进程读得到的图片字节回传给 host——host 再写进
         # 会话工作区，弥合「$HIP 产物」与「工作区沙箱的 vision/fs 工具」之间的
         # 路径断层。只读、限图片扩展名、限大小；不碰 hou，handler 线程安全。
-        if self.path.startswith("/media"):
+        if urllib.parse.urlparse(self.path).path == "/media":
             try:
                 params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 target = os.path.abspath(params.get("path", [""])[0])
@@ -1041,7 +1144,10 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send({"ok": False, "error": f"file too large ({size} > {_MEDIA_MAX_BYTES})"}, status=413)
                     return
                 with open(target, "rb") as fh:
-                    data = fh.read()
+                    data = fh.read(_MEDIA_MAX_BYTES + 1)
+                if len(data) > _MEDIA_MAX_BYTES:
+                    self._send({"ok": False, "error": "media grew beyond size limit"}, status=413)
+                    return
                 self.send_response(200)
                 self.send_header("content-type", _MEDIA_MIME.get(ext, "application/octet-stream"))
                 self.send_header("content-length", str(len(data)))
@@ -1054,19 +1160,48 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
         try:
+            # Reject browser simple-request CSRF against this trusted loopback
+            # execution service. No CORS permission is granted. This does not
+            # make arbitrary local Python or the Raw Gate a security sandbox.
+            if self.headers.get('origin') is not None or self.headers.get_content_type() != 'application/json':
+                self.close_connection = True
+                self._send({"ok": False, "error": "JSON requests from trusted local clients only (no browser Origin)"}, status=403)
+                return
             length = int(self.headers.get("content-length") or 0)
-            if length > _MAX_BODY_BYTES:
+            if length < 0 or length > _MAX_BODY_BYTES or self.headers.get('transfer-encoding'):
+                self.close_connection = True
                 self._send(
-                    {"ok": False, "error": f"request body too large ({length} > {_MAX_BODY_BYTES})"},
+                    {"ok": False, "error": f"invalid request body length/encoding ({length}, max {_MAX_BODY_BYTES})"},
                     status=413,
                 )
                 return
             body = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(body, dict):
+                self._send({"ok": False, "error": "JSON body must be an object"}, status=400)
+                return
             self._route(body)
+        except (ValueError, UnicodeError) as error:
+            self.close_connection = True
+            self._send({"ok": False, "error": str(error)}, status=400)
         except Exception:
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path=='/review':
+            if len(json.dumps(body).encode('utf-8'))>80*1024:
+                self._send({'ok':False,'error':'review request exceeds 80KiB'},status=413);return
+            if body.get('expected_contract')!={'version':_EXECUTION_CONTRACT_VERSION,'hash':_VERB_CATALOG_HASH}:
+                self._send({'ok':False,'error':'execution contract mismatch'},status=409);return
+            self._send(_execute(lambda:run_review(body)))
+            return
+        if self.path in ("/exec", "/jobs"):
+            expected = body.get("expected_contract")
+            if expected is not None and expected != {"version": _EXECUTION_CONTRACT_VERSION, "hash": _VERB_CATALOG_HASH}:
+                self._send({"ok": False, "error": "execution contract mismatch; Repair and restart runtime"}, status=409)
+                return
+            if not isinstance(body.get("code"), str):
+                self._send({"ok": False, "error": "code must be a string"}, status=400)
+                return
         if self.path == "/exec":
             code = str(body.get("code", ""))
             allow_raw = body.get("allow_raw")
@@ -1074,6 +1209,9 @@ class _Handler(BaseHTTPRequestHandler):
             owner_session = body.get("owner_session")
             owner_call = body.get("owner_call")
             read_only_value = body.get("read_only")
+            if type(read_only_value) not in (bool, str, type(None)) or read_only_value not in (None, True, False, "true", "false"):
+                self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
+                return
             read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
             self._send(_execute(lambda: run_code(
                 code,
@@ -1086,11 +1224,18 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/jobs":
             job_id = uuid.uuid4().hex[:12]
             with _jobs_lock:
-                _jobs[job_id] = {
-                    "jobId": job_id, "status": "queued",
-                    "ok": False, "stdout": "", "stderr": "",
-                }
-                _job_meta[job_id] = time.time()
+                lease=_review_service.lease
+                review_blocked=_review_busy and (lease is None or time.monotonic()<=lease['expires'])
+                overloaded = review_blocked or sum(j['status'] in ('queued', 'running') for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
+                if not overloaded:
+                    _jobs[job_id] = {
+                        "jobId": job_id, "status": "queued",
+                        "ok": False, "stdout": "", "stderr": "",
+                    }
+                    _job_meta[job_id] = time.time()
+            if overloaded:
+                self._send({"ok": False, "error": "too many active Houdini jobs; await existing work"}, status=429)
+                return
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
             owner_session = body.get("owner_session")
@@ -1113,9 +1258,11 @@ class _Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "jobs":
             with _jobs_lock:
                 job = _jobs.get(parts[1])
-                if job is not None and parts[2] == "cancel" and job["status"] in ("queued", "running"):
+                if job is not None and parts[2] == "cancel" and job["status"] == "queued":
                     job["status"] = "cancelled"
                     _job_meta[parts[1]] = time.time()
+                elif job is not None and parts[2] == "cancel" and job["status"] == "running":
+                    job["advisory"] = "Running HOM cannot be interrupted; job remains running and its actual result will be retained."
             if job is None:
                 self._send({"ok": False, "error": f"unknown job {parts[1]}"}, status=404)
                 return
@@ -1135,7 +1282,8 @@ class _Handler(BaseHTTPRequestHandler):
                         time.sleep(0.25)
             if parts[2] in ("status", "cancel"):
                 with _jobs_lock:
-                    self._send(dict(job))
+                    snapshot = dict(job)
+                self._send(snapshot)
                 return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
@@ -1160,6 +1308,14 @@ def stop() -> None:
     timer = _pump_timer
     _pump_timer = None
     _pump_active = False
+    while True:
+        try:
+            _func, done, holder = _work_queue.get_nowait()
+        except queue.Empty:
+            break
+        holder["cancelled"] = True
+        holder["error"] = RuntimeError("Houdini bridge stopped before queued work executed")
+        done.set()
     if timer is not None:
         try:
             timer.stop()
@@ -1173,18 +1329,22 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     In GUI mode call this from the main thread (Python Shell / menu — the
     documented entry points are) so the execution pump binds to the Qt loop.
     """
-    global _server
+    global _server, _RUNTIME_ID, _review_service, _review_busy
+    if threading.get_ident() != _HOU_THREAD_ID:
+        raise RuntimeError("start must run on Houdini's owning thread")
     stop()
-    server = ThreadingHTTPServer((host, port), _Handler)
+    _RUNTIME_ID=uuid.uuid4().hex
+    _review_service=dsh_review.ReviewService()
+    _review_busy=False
+    if hou.isUIAvailable() and not _install_gui_pump():
+        raise RuntimeError("Cannot start bridge without a Houdini GUI main-thread pump")
+    try:
+        server = ThreadingHTTPServer((host, port), _Handler)
+    except BaseException:
+        stop()
+        raise
     _server = server
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
-    try:
-        ui = hou.isUIAvailable()
-    except Exception:
-        ui = False
-    if ui and not _install_gui_pump():
-        print("[dsh-houdini] WARNING: no main-thread pump; code will run on "
-              "handler threads, which is NOT safe for hou in GUI mode")
     print(f"[dsh-houdini] bridge serving on http://{host}:{port}")
     return server
 

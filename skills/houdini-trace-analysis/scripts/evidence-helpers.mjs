@@ -283,14 +283,20 @@ export function classifyVisionEvidence(step) {
 }
 
 /** Metrics that separate vocabulary breadth from actual execution adoption. */
+export function isStructuredHoudiniCall(step) {
+  return step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
+}
+
 export function collectVerbAdoption(steps) {
   const houdini = steps.filter((step) => step.isHoudini);
+  const structured = houdini.filter(isStructuredHoudiniCall);
+  const python = houdini.filter(step=>!isStructuredHoudiniCall(step));
   const withVerbs = houdini.filter((step) => (step.verbs || []).length > 0);
   const verbCalls = houdini.reduce((sum, step) => sum + (step.verbs || []).length, 0);
-  const rawReadOnly = houdini.filter((step) => (
+  const rawReadOnly = python.filter((step) => (
     !(step.verbs || []).length && !(step.mutatingRawMethods || []).length
   ));
-  const exec = houdini.filter((step) => step.tool === 'houdini_exec');
+  const exec = python.filter((step) => step.tool === 'houdini_exec');
   const successfulExec = exec.filter((step) => !step.failed);
   const successfulExecWithVerbs = successfulExec.filter((step) => (step.verbs || []).length > 0);
   const verblessRawMutation = houdini.filter((step) => (
@@ -314,12 +320,14 @@ export function collectVerbAdoption(steps) {
     successfulExecVerbCoveragePct: pct(successfulExecWithVerbs.length, successfulExec.length),
     blockedVerblessRawMutationCalls: blockedRawMutation.length,
     successfulVerblessRawMutationCalls: successfulRawMutation.length,
+    ...(structured.length ? {structuredCalls:structured.length,pythonCalls:python.length,
+      pythonCallCoveragePct:pct(withVerbs.length,python.length)} : {}),
   };
 }
 
 const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|真实\s*solver|有效缓存|可重算|产品视觉开发|正式(?:的)?\s*(?:Karma\s*)?渲染|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|real solver|valid cache|recomputable|product lookdev|final Karma render|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
 const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
-const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
+const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|(?:值|比例|尺寸|数值|典型值).{0,16}假设|非已核实规格|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
 const UNVERIFIED_MARKER = /(?:unverified|未验证|无法验证|待验证)/i;
 const COMPLETION_MARKER = /(?:^|[\s：:。])(?:完成|已完成|交付|complete(?:d)?|delivered)(?:[\s：:。]|$)/i;
 const REQUESTED_GOAL_SIGNALS = [
@@ -333,18 +341,18 @@ const REQUESTED_GOAL_SIGNALS = [
   ['verification', /(?:可靠(?:的)?验证|可靠(?:的)?验收|reliable (?:verification|validation))/i],
 ];
 const MUTATING_VERBS = new Set([
-  'scene_save', 'tab_create', 'tab_apply', 'connect', 'disconnect_input', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
+  'scene_save', 'scene_save_as', 'tab_create', 'tab_apply', 'connect', 'set_object_parent', 'disconnect_input', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
   'set_keyframes', 'create_spare_parms', 'set_timeline', 'create_bookmark', 'delete_bookmark',
   'hda_create', 'hda_set_section', 'hda_patch_section', 'hda_set_interface', 'sop_set_output',
   'set_object_visible', 'set_display', 'layout_nodes',
 ]);
 const QUERY_SIDE_EFFECT_VERBS = new Set([
   ...MUTATING_VERBS,
-  'cook_node', 'render_frame', 'render_view', 'viewport_screenshot',
+  'cook_node', 'verify_network', 'build_module', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot',
 ]);
 const VALIDATION_VERBS = new Set([
   'cook_node', 'describe', 'geo_piece_stats', 'geo_attrib_stats', 'geo_frame_diff', 'render_view',
-  'render_frame', 'render_check',
+  'render_frame', 'render_check', 'verify_network', 'geo_point_spacing', 'geo_check_interfaces', 'test_controls',
 ]);
 const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚点|端点|distance|距离|clearance|间隙|intersection|相交|穿插|contact|接触|contain(?:ed)?|包含|insert(?:ed)?|插入|tangent|切线|deviation|偏差)/ig;
 
@@ -377,6 +385,7 @@ function stepIndex(step, fallback) {
 
 function sceneMutation(step) {
   if (step.failed) return false;
+  if ((step.verbs || []).some((verb) => verb.verb === 'build_module' && parseLedgerArgs(verb.args ?? verb.argsText).kwargs.dry_run !== true)) return true;
   if ((step.verbs || []).some((verb) => MUTATING_VERBS.has(verb.verb))) return true;
   return (step.mutatingRawMethods || []).some((name) => !['save', 'render'].includes(String(name)));
 }
@@ -418,6 +427,7 @@ function setParmEvents(steps) {
     const index = stepIndex(step, offset + 1);
     if (step.failed) continue;
     for (const verb of step.verbs || []) {
+      if (verb.ok === false) continue;
       const { positional, kwargs } = parseLedgerArgs(verb.args ?? verb.argsText);
       const node = nodePath(positional[0]);
       if (!node || (!isObjectRoot(node) && !controlNodes.has(node))) continue;
@@ -440,6 +450,8 @@ function setParmEvents(steps) {
       if (!values || Array.isArray(values) || typeof values !== 'object') continue;
       for (const [parm, value] of Object.entries(values)) {
         if (!parm || parm === 'undefined') continue;
+        const result = verbResult(verb.result ?? verb.detail);
+        if (result.failed && Object.hasOwn(result.failed, parm)) continue;
         const key = `${node}\u0000${parm}`;
         const list = events.get(key) || [];
         list.push({ index, node, parm, value, stable: stableValue(value) });
@@ -524,10 +536,25 @@ export function collectQualityLoopEvidence({
   const request = messageText(userMessages);
   const assistant = messageText(assistantMessages);
   const applicable = OPEN_ENDED_QUALITY_REQUEST.test(request);
-  const indexed = steps.map((step, offset) => ({ ...step, index: stepIndex(step, offset + 1) }));
+  const indexed = steps.map((step, offset) => ({ ...step, code: step.code, resultText: step.resultText,
+    index: stepIndex(step, offset + 1) }));
   const firstMutation = indexed.find(sceneMutation) || null;
   const firstMutationTime = firstMutation?.time ?? Infinity;
+  const confirmedChoiceText = indexed.filter(step => step.tool === 'ask_user_question'
+    && !step.failed && (!firstMutation || step.index < firstMutation.index)).flatMap(step => {
+    const result = tryJson(String(step.resultText ?? step.resultPreview ?? ''));
+    return (Array.isArray(result?.answers) ? result.answers : []).flatMap(answer => {
+      const question = step.args?.questions?.find(q => q.id === answer.id);
+      const selected = Array.isArray(answer.selected) ? answer.selected : [];
+      if (!selected.length) return [];
+      return selected.map(label => {
+        const option = question?.options?.find(o => o.label === label);
+        return `${question?.header ?? ''}: ${label} ${option?.description ?? ''}`;
+      });
+    });
+  });
   const preMutationText = [
+    ...confirmedChoiceText,
     messageText(
       assistantMessages.filter((message) => !Number.isFinite(message.time) || message.time <= firstMutationTime),
     ),
@@ -581,27 +608,67 @@ export function collectQualityLoopEvidence({
     return /(?:骨架|中心线|代理体|anchors?).{0,60}(?:验证|验收|通过|成功|check|validate)/i.test(text)
       || /(?:验证|验收|通过|成功|check|validate).{0,60}(?:骨架|中心线|代理体|anchors?)/i.test(text);
   }).map((message) => ({ time: message.time, text: String(message.text || '').slice(0, 300) }));
+  if (firstRender) {
+    for (const verb of firstRender.verbs || []) {
+      if (verb.verb !== 'render_view' || verb.ok === false) continue;
+      const target = nodePath(parseLedgerArgs(verb.args ?? verb.argsText).positional[0]);
+      if (target && /(?:skeleton|proxy|blockout|anchors?|骨架|代理)/i.test(target)) {
+        skeletonCheckpointMentions.push({time: firstRender.time, index: firstRender.index,
+          text: `Explicit skeleton/proxy render target: ${target}`, source: 'render_target'});
+      }
+    }
+  }
 
   const relationshipProbeSteps = [];
   const relationshipKeywords = new Set();
   for (const step of indexed) {
+    if (!step.failed && (step.verbs || []).some(v => v.verb === 'geo_check_interfaces'
+        || (v.verb === 'build_module' && verbResult(v.result ?? v.detail).interface_checks))) {
+      relationshipProbeSteps.push(step.index);
+      relationshipKeywords.add('declared_final_surface_interfaces');
+    }
     const code = String(step.code || '');
     const hits = [...code.matchAll(RELATION_PATTERN)].map((match) => match[0].toLowerCase());
-    if (!hits.length || step.failed || sceneMutation(step)) continue;
+    if (!hits.length || step.failed) continue;
+    // Mixed edit+measurement is legitimate. A mere relationship comment in
+    // construction code is not a probe; require geometry access and output.
+    if (sceneMutation(step) && !(/geometry\(|boundingBox\(|attribValue\(|\.position\(/.test(code)
+        && /print\(|__result__\s*=/.test(code))) continue;
     relationshipProbeSteps.push(step.index);
     for (const hit of hits) relationshipKeywords.add(hit);
   }
 
   const perturbations = restoredPerturbations(indexed);
+  const controlTests = indexed.flatMap(step => (step.verbs || []).filter(v => v.verb === 'test_controls')
+    .map(v => ({index:step.index, ...verbResult(v.result ?? v.detail)})));
+  for(const step of indexed.filter(s=>s.args?.review_test && !s.failed)) {
+    const result=execResultFromPreview(step.resultText || step.resultPreview || '');
+    if(result?.cases?.length)controlTests.push({index:step.index,...result,results:result.cases,
+      executed:result.cases.some(c=>c.actual_values && c.restored===true)});
+  }
   const lastMutation = [...indexed].reverse().find(sceneMutation) || null;
   const latestCounts = latestGeometryCounts(indexed, lastMutation?.index ?? 0);
   const finalCountClaim = finalGeometryCountClaim(assistantMessages);
   const finalCountMatchesEvidence = !finalCountClaim || !latestCounts
     ? null
     : finalCountClaim.points === latestCounts.points && finalCountClaim.prims === latestCounts.prims;
+  const checkpoints = new Map();
+  for (const step of indexed) {
+    for (const verb of step.verbs || []) {
+      if (!['verify_network','build_module'].includes(verb.verb)) continue;
+      const raw = verbResult(verb.result ?? verb.detail);
+      const r = raw.validation || raw;
+      if (typeof r.output !== 'string' || typeof r.ok !== 'boolean') continue;
+      // A successful check in a different scope cannot erase a failed one.
+      const key = JSON.stringify([r.output, r.scope, r.scope_signature ?? r.checked_nodes ?? null]);
+      checkpoints.set(key, {index: step.index, output:r.output, scope:r.scope ?? null,
+        ok:r.ok, reasons:r.failure_reasons ?? (r.nonempty === false ? ['empty_output'] : [])});
+    }
+  }
 
   return {
     applicable,
+    outputCheckpoints: [...checkpoints.values()],
     requestSignals: [...new Set(request.match(OPEN_ENDED_QUALITY_REQUEST) || [])],
     available: {
       webSearch: availableTools.some((name) => /web_search|browser/i.test(String(name))),
@@ -634,6 +701,7 @@ export function collectQualityLoopEvidence({
     },
     perturbation: {
       restored: perturbations,
+      controlTests,
     },
     freshness: {
       lastMutationIndex: lastMutation?.index ?? null,
@@ -702,7 +770,8 @@ export function qualityLoopRisks(evidence) {
       detail: `${evidence.skeleton.tabCreatesBeforeFirstRender} nodes were created before the first render without an explicit skeleton/proxy checkpoint.`,
     });
   }
-  if (evidence.applicable && evidence.contract.fields.controls && !evidence.perturbation.restored.length) {
+  if (evidence.applicable && evidence.contract.fields.controls && !evidence.perturbation.restored.length
+      && !(evidence.perturbation.controlTests || []).some(t => (t.ok === true || t.executed === true) && t.restored === true && t.results?.length)) {
     risks.push({
       code: 'procedural_control_not_perturbed',
       detail: 'The task promised configurable controls, but no set → validate → restore perturbation was observed on a declared user-control node.',
@@ -722,6 +791,10 @@ export function qualityLoopRisks(evidence) {
       evidence: evidence.freshness.latestGeometryCounts,
     });
   }
+  const unresolved = (evidence.outputCheckpoints || []).filter(c => !c.ok);
+  if (unresolved.length) risks.push({code:'unresolved_output_checkpoints',
+    detail:'Output checkpoints failed without a later successful check of the same output/scope. Diagnostic probes may be intentional; review against the deliverable contract.',
+    checkpoints:unresolved});
   return risks;
 }
 

@@ -49,6 +49,16 @@ assert.deepEqual(exec.presentResult(execArgs, { content: text, isError: false, m
   content: text,
 });
 assert.equal(exec.presentCall({}), undefined, 'invalid replay args must fall back safely');
+const pendingChecks = {...execValue, checks: [{verb: 'set_parms', status: 'failed'}]};
+const pendingMeta = exec.output.presentationMeta(execArgs, pendingChecks);
+assert.match(exec.presentResult(execArgs, {content: text, isError: false, meta: pendingMeta}).title, /checks need attention/);
+assert.match(exec.output.render(execArgs, pendingChecks)[0].text, /checks failed or contain warnings/);
+const evidenceValue = {...pendingChecks, stdout:'long verbose node list', evidence:[
+  {ledgerIndex:1,verb:'render_view',ok:false,output:'Z:/project/render/image.png',pixel_status:'failed',semantic_status:'unverified'},
+]};
+const evidenceText = exec.output.render(execArgs, evidenceValue)[0].text;
+assert.ok(evidenceText.indexOf('operation-evidence:') < evidenceText.indexOf('stdout:'));
+assert.match(evidenceText, /"pixel_status":"failed"/);
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

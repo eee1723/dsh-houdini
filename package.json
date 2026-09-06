@@ -28,7 +28,7 @@
     "tools/trace-session-lib.mjs"
   ],
   "scripts": {
-    "build": "node tools/gen-client-catalog.mjs && tsc -p tsconfig.json",
+    "build": "node tools/gen-client-catalog.mjs && tsc -p tsconfig.json && node tools/prune-retired-build.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
     "prepare": "npm run build"
   },

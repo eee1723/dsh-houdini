@@ -18,6 +18,10 @@ assert.deepEqual(generatedNames, catalogNames, 'generated host names drifted fro
 assert.equal(generatedHash, expectedHash, 'generated host hash drifted from tool-design.md');
 
 const bridge = fs.readFileSync(path.join(root, 'houdini', 'python3.11libs', 'dsh_bridge.py'), 'utf8');
+const generatedVersion = Number(generated.match(/EXPECTED_EXECUTION_CONTRACT_VERSION = (\d+)/)?.[1]);
+const bridgeVersion = Number(bridge.match(/_EXECUTION_CONTRACT_VERSION = (\d+)/)?.[1]);
+assert.ok(generatedVersion > 0);
+assert.equal(generatedVersion, bridgeVersion, 'host/bridge semantic execution version drifted');
 const registry = bridge.match(/_VERBS:\s*dict\[str, object\]\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || '';
 const bridgeNames = [...registry.matchAll(/^\s*"([A-Za-z_]\w*)":/gm)].map((match) => match[1]).sort();
 assert.deepEqual(bridgeNames, catalogNames, 'running bridge registry source drifted from tool-design.md');

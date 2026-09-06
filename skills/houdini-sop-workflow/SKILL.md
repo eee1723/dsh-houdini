@@ -45,20 +45,32 @@ description: 设计、构建、调试和交付稳健的 Houdini SOP 程序化网
 ## 执行顺序
 
 1. 用 `scene_info`、`find_nodes` 和 `graph` 检查现场；不要猜当前 HIP、时间线或拓扑。
-2. 把需求拆成模块，逐个写出 `输入几何/属性 → 操作 → 输出几何/属性 → 验收不变量`；质量敏感
-   资产另写共享尺寸/anchor 和模块关系，避免多个 Wrangle 复制同一绝对坐标。
-3. 创建复杂节点前先 `search_tab_menu`；用 `tab_create`，不要裸 `createNode` 或凭旧经验选节点。
-4. 每次只构建一个可验证 batch。batch 后运行 `cook_node`、`describe` 和必要的属性/piece 统计；失败时依靠 exec rollback 回到上个 checkpoint。
-5. 参数名先 `list_parms`；同节点三项以上独立赋值用 `set_parms`；实际意图用 `read_parms`。
+2. 把需求拆成模块，逐个写出 `输入几何/属性 → 操作 → 输出几何/属性 → 验收不变量`。连接件由
+   共享接口位置构建，并在最终表面保留可核验的接口point/primitive groups；不要只写平行/锚点
+   相等就宣称实际部件连接。多模块装配或需反复调参时，先读[模块质量合同](references/module-quality-contracts.md)。
+3. 不熟悉的类型先 `search_tab_entries(parent, query)` 与 `node_info(parent,type_name)`，取得实际端口和菜单 token；已有节点用 `list_parms` 查动态菜单。不要靠拼写试错或读取仓库源码发现接口。
+4. 新增的小型 SOP 模块先用 `build_module` 表达本地 inputs 和 output（最小形状见下）；已有网络编辑、多上下文 setup 使用原有 verbs。跨 subnet 不直接 connect：在目标网络用 Object Merge 或明确 subnet 输入。构建/cook 都走 exec。版本细节见 [SOP fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
+5. `set_parms` 默认严格失败/恢复；不要为继续建图改成 `strict=False`。该模式只适合允许部分成功的诊断/恢复，其 `ok=False/failed` 仍是未完成证据。菜单字符串必须是精确 token，不能猜 label。
 6. 按“源几何 → 单元 → 成形 → 模板点 → 复制 → 变形 → 合并输出”逐层验收。全场 bbox 和点数不能证明每个 piece 正确。
 7. 用 `geo_piece_stats` 检查重复单元局部 extent/面积；用 `geo_attrib_stats` 检查驱动属性；动画用 `geo_frame_diff` 检查至少两帧。
-8. 所有 cook warning 必须解决或解释。Merge 的 N/uv/Cd mismatch 不能因没有 error 而忽略。
+8. 每个模块消费 `build_module.validation`；集成后用完整直属范围的 `verify_network(parent,output=实际交付SOP)`。独立表面接触用geo_check_interfaces；融合Polygon表面用test_controls的topology检查，不将共享缝顶点塞进独立距离检查。test_controls绑定输出指标并复查相应关系；require_valid=False仅诊断，warning解决或解释。复杂资产可在收尾调用独立资产评审；不再登记delivery合同或维护累计收据。
 9. 任务需要视觉证据且当前 GUI 渲染环境可用时，用 `render_view(EXPLICIT_SOP)`；用户
    viewport 漂移不影响它。用户说屏幕异常时再用 `viewport_screenshot` 诊断并与显式输出
    对照。动画固定构图先用 bbox/测试帧选择能覆盖验收帧包络的 `framing_frame` 和 coverage；
    `render_check` 的 `content_bbox` 触边或安全边距不足时视为裁切风险并重新取景。纯网络/数据交付
    或视觉难以裁定时，不为追图推翻已通过的语义门。
-10. 布局节点、把用户 SOP output 移到交付节点、恢复 frame/selection/visibility，最后说明控制参数、warning、文件和验证证据。
+10. 布局节点、把用户 SOP output 移到交付节点、恢复 frame/selection/visibility，再保存。未命名 HIP 用用户确认路径的 `scene_save_as`；不能把保存失败列为普通边界后宣称完整交付。
+
+新增模块最小形状（parent 是本任务已有的 SOP 容器；参数/造型自行选择）：
+
+```python
+spec = [{'name': 'unit', 'type': 'box'},
+        {'name': 'OUT_UNIT', 'type': 'null', 'inputs': ['unit']}]
+__result__ = build_module(parent, spec, output='OUT_UNIT')
+```
+
+Wrangle用 `inputs=[None,'anchors']` 表达仅input 1读源；避免因输入空槽而退回大段手写。
+新增参数前查node_info；失败后独立query回读存活节点，再修，勿把猜测式诊断放在大构建batch尾部。
 
 ## 关键选择
 
@@ -71,8 +83,11 @@ description: 设计、构建、调试和交付稳健的 Houdini SOP 程序化网
   不算可靠的程序化接口。需要用户反复调整时，用 spare parms/HDA interface 或清晰的控制节点暴露。
 - `geo_piece_stats` 的非退化只证明局部面积/extent，不证明部件已连接、无穿插或满足最小间隙；
   涉及装配关系时必须另验轴线、接触、包含、间隙或禁止相交等契约。
+- 有序点列等间距用 `geo_point_spacing` 全扫相邻弦长；表面接口用 `geo_check_interfaces`，不互相替代。
+  `test_controls` 的预期指标/变化范围来自设计合同，不从测量结果反推合格线；bounds变化只证明
+  该局部响应，不能证明连接。原生primitive/packed变化不能只看P，已证无效控制修正或标未交付。
 
-复杂 Copy、变形、属性和动画模式按需阅读 [references/sop-patterns.md](references/sop-patterns.md)。
+复杂 Copy、变形、属性和动画模式按需阅读 [references/sop-patterns.md](references/sop-patterns.md)。同一模块边界连续两次失败时，回到最后检查点查精确接口或换构造策略；不要持续改拼写、重复长 batch。保留小状态摘要：当前模块/输出、未通过关系、最新证据时间/frame/指纹及用户修改造成的失效，不重复粘贴整段历史。
 
 ## 完成门
 

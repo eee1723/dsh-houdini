@@ -353,9 +353,15 @@ def restart_bridge() -> str:
     _module_path_on_syspath()
     import dsh_bridge
     import dsh_hou_helpers
+    import dsh_review
+    import dsh_quality_contracts
+    import dsh_sop_contracts
 
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
+    importlib.reload(dsh_sop_contracts)
+    importlib.reload(dsh_quality_contracts)
+    importlib.reload(dsh_review)
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(BRIDGE_PORT, BRIDGE_HOST)
     return f"bridge restarted on {BRIDGE_HOST}:{BRIDGE_PORT}"

@@ -1,5 +1,27 @@
 # dsh-houdini 动词词表设计（宪法）
 
+Execution contract version: 9
+
+### 独立资产评审（v9候选，不增加动词）
+
+五工具/57动词不变。移除生产delivery分支、合同登记/累计收据和缓存复用状态机；保留
+verify_network、接口/拓扑/domain、test_controls与恢复检查。
+`houdini_exec(review={parent,output,controller?})`一次委派DSH前台spawn子agent；Host读取
+原始用户消息和真实问答，不以作者自评代替验收要求。仅绑定的评审者可用
+`houdini_exec(review_test={tests?:[{id,values,expectations?}],views?,interfaces?,topology?,domain?})`。
+tests每批最多16项；views最多2个iso/front/side/top，总图数含基准最多8张。无expectations
+只返回响应事实和unverified，不能冒充正确性。测试/渲染在同一主线程调用内恢复后返回；
+模型只读紧凑本批结果，不再逐case登记/累计或向作者请求执行。空tests用于当前基准检查。
+普通作者的node_info/build_module不再受delivery类型准入声明影响；有副作用/不支持的资产
+仍可只读评审，其受控扰动明确unverified。评审不修模、不保存、不删节点、不提交job。
+权限由Host限定原作者拥有的parent/output/controller及唯一子agent，绑定节点身份/HIP；
+结束/取消/超时撤销。主agent等待，其他场景修改/job不与评审交错。改变交付基准要求重新
+评审，不覆盖用户变化。不是Python安全沙箱，不对外部副作用或全部参数组合出保证。
+详见`docs/independent-asset-review.md`；旧v8说明与代码保留为不打包的历史参考。
+
+执行语义版本独立于动词名指纹。修改默认失败/恢复/权限语义时提升此版本；Host 每次场景请求
+核对 health 的版本与目录 hash，并随请求附 expected_contract，由 Bridge 在执行前再次校验。
+
 > 本文是 dsh-houdini「场景操作动词」的**唯一真相源**（single source of truth）。
 > 代码实现（`houdini/python3.11libs/dsh_hou_helpers.py`）是本文的运行时实现。
 > **改任何动词必须同步改本文并跑 `npm run build`**；构建会生成 Host 目录/指纹，测试会校验 Bridge 注册表没有漂移。README 只放速查和指针。
@@ -35,7 +57,7 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 ### 9 个域
 
 这里是架构层的 9 个领域族；构建期 catalog 会按工具职责把 compatibility、vocabulary 等
-独立展开，当前实际目录为 11 个 domain / 50 verbs。
+独立展开，当前实际目录为 11 个 domain / 57 verbs。
 
 | 域 | 现状态 | 预留动词（将来，示意） |
 |---|---|---|
@@ -136,9 +158,12 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, allow_foreign=None)` | 数据流连线（src 输出 → dst 输入）；mutation 边界在 dst；**OBJ→OBJ 拒绝**，因为 Object wiring 是 parenting，必须改用语义明确的 `set_object_parent(child,parent,...)`。落口与请求不一致时返回里带 `note`；连接成功后若 dst 违反自顶向下流则 snap 到输入下方，已在下游的节点不动 | dict |
+| `connect(src, dst, index=0, *, allow_foreign=None)` | 严格数据流连线（src 输出 → dst 指定输入）；只有一个端口参数index，第4位置参数拒绝；权限理由必须显式keyword非空字符串。mutation 边界在 dst；**OBJ→OBJ 拒绝**，改用 `set_object_parent`。端口错误不再改接下一个输入；连接后仅在 dst 违反自顶向下流时调整落位 | dict |
+| `node_info(parent, type_name, parm_filter='', limit=80)` | 创建前读取实际 parent context 下最新版类型、端口数量、参数默认值/组件名/menu token/label 与帮助 URL；Boolean说明输入选择组和部件组传递；不建临时节点、不运行 shelf；动态菜单需创建后 list_parms，truncated 明示。没有delivery类型准入字段 | dict |
+| `build_module(parent, nodes, output, dry_run=False, interfaces=None)` | 小型新增 SOP 模块：1..64 个 `{name,type,parms?,inputs?}`，inputs 为更早 spec/现有直属 child 名，None跳输入。预检后用既有verbs建图/cook；可附geo_check_interfaces合同，最终几何接口fail/unverified使本批失败并清理新增节点。dry_run只校验声明，不证明VEX/cook/接口；返回validation与interface_checks，不覆盖既有节点/flags | dict |
+| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True)` | SOP checkpoint：必须显式 output，省略即报可操作错误，绝不跟随 display。默认检查 parent 直属范围，可 nodes 限域；error/空输出默认抛 CheckpointError 并保留结构证据，require_valid=False 仅供诊断。warning独立，scope/时间/frame/输出指纹与失败原因前置；不证明关系/视觉 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
-| `disconnect_input(dst, index=0, allow_foreign=None)` | 断开普通网络 destination 输入；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
+| `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除（返回被表达式引用的上游）；拒绝删除 owner-tagged `render_view` 会话级基础设施，避免进入 H21 OpenGL teardown fatal 路径 | dict |
 | `cook_node(node, force=False)` | cook + error/warning；另给 `ok/warning_free/healthy`，warning 未解释不得当完成 | dict |
@@ -178,10 +203,10 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助（导航用，不给值） | list |
+| `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际 menu token/index/label（不给当前值）；动态菜单以实际节点为准 | list |
 | `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by`；动画附 `time_dependent/key_count/first_frame/last_frame/curves` 摘要，不默认倾倒全部 keys | list |
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠）。参数上有表达式/关键帧时**自动清除再设值**，返回带 `note` 说明清掉了什么（2026-08-20 起，OTL 会话 seq 28944：`$FEND` 表达式把 set 静默架空）；想保留动画就请显式用字符串表达式 | dict |
-| `set_parms(node, values, allow_foreign=None)` | 批量设参：`{name: value}` 字典逐项走 `set_parm` 同一套语义，**逐项容错**——单项失败不中断，返回分 `set`/`failed` 两组（消灭循环裸 `parm().set` 的 advisory 噪音） | dict |
+| `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；失败恢复本批参数值/表达式/关键帧并抛错。显式 strict=False 才逐项容错，返回 ok/set/failed；参数回调及外部文件不属快照回滚。Menu string 只接受精确 token；数值 string 是 HScript 表达式，显式表达式对象支持 language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
 | `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`。同名拒绝，不隐式覆盖 | dict |
 
@@ -191,6 +216,7 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 |---|---|---|
 | `scene_info()` | 只读 HIP/version/fps/current frame/time/frame range/playback range/UI 状态；明确区分 `has_named_path`、`has_unsaved_changes`、`dirty_reliable`、`clean_on_disk`，不再用路径存在冒充保存完成；hython 的 dirty 不可靠时 clean=null；不移动 playbar、不遍历整张节点图 | dict |
 | `scene_save(expected_path=None)` | 只保存当前已命名 HIP，不承担 Save As/open/new；可选 expected_path 作防串场断言，返回 dirty before/after/reliable、clean（headless=null）、bytes、mtime_ns | dict |
+| `scene_save_as(path, expected_current_path, reason, overwrite=False)` | 用户授权的 Save As：明确绝对 HIP 路径，expected_current_path 防串场，reason 记录路径/覆盖授权；已存在目标必须 overwrite=True。拒绝插件仓库落盘，回报前后路径/dirty/file/workspace_changed。无 load/clear；文件写不可撤销，失败可能留部分新文件，跨目录后 Open Workspace 重新绑定 | dict |
 | `set_timeline(fps=None, frame_range=None, playback_range=None, current_frame=None)` | 设置明确的时间线字段；至少一项，范围校验后回读 scene_info | dict |
 | `list_bookmarks()` | 列出 bookmark id/name/start/end/enabled/visible/comment | list |
 | `create_bookmark(name, start, end, replace=False)` | 创建整数帧 bookmark；同名默认拒绝，replace 精确替换 | dict |
@@ -208,6 +234,9 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `geo_attrib_stats(node, name, attrib_class='point')` | 属性**值**统计：min/max/mean/count（`describe` 只给属性名清单）；point/prim/vertex/detail，多分量按分量给 | dict |
+| `geo_point_spacing(node, expected, tolerance, closed=False, order_attrib=None, max_points=10000)` | 全量相邻点弦长验收：默认point number顺序，或唯一数值order_attrib；closed含末→首，SOP local单位；返回全量min/max/failure_count及最多16个最差对与sequence hash。超预算拒绝不抽样；只证明该序列约束，不证明弧长、网格接线或实际零件关系 | dict |
+| `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内的实际接口点→表面距离：1..16个 `{id,source_group,target_group,max_distance,expected_points}`；source为命名point group且点必须属于最终Polygon/Mesh表面，target为独立primitive group（closed Polygon/Mesh/Sphere/Tube）；全部声明点须在容差内，空组/基数不符fail，自重叠拒绝假自证，不支持类型unverified；SOP local单位，有界全量不采样。只证明接口接近，不是碰撞/包含/强度认证；回报几何/合同hash | dict |
+| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`；metric精确为bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、point_count、primitive_count、area，至少一项delta排除0。可选domain标量比较；topology为 `{id,groups:[primitive组,...],require_closed:true}` 列表，检查融合Polygon共享边连通/闭合，不代替独立表面interfaces或形状/强度。基准/扰动均复查；恢复参数/keys/frame，以完整bgeo解码内容（只排除导出头info.date）核对。支持Polygon/Mesh/Sphere/Tube/点几何；其他写前unverified。禁callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，外部副作用不属恢复保证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16)` | primitive piece 的局部 bbox/extent/面积与退化统计；无 piece 属性时用内存 Connectivity SOP Verb，不污染网络，能发现「全场 bbox 正常但每个实例零宽/零面积」 | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
@@ -248,6 +277,13 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 - `{"type":"toggle"}` / `{"type":"separator"}`
 
 ### render / sim 域（渲染产物）
+
+输出路径合同 v3：裸文件名写 `$HIP/render`（geometry/cache ROP 用 `$HIP/geo`），相对子路径
+相对 `$HIP`，禁止相对路径/junction逃逸、无扩展名和插件仓库落盘；绝对路径保留调用方明确意图。
+frame token在目标帧解析，ROP临时输出/表达式/keys和frame恢复，不能跟随引用修改别的参数。
+`render_view` 返回 `ok/file_status/pixel_status/semantic_status`；PNG等解码失败进入errors且ok=false，
+EXR等未支持pixel检查明确unverified，不当错误PNG处理。Bridge的operation-evidence在长stdout前
+完整保留路径、frame、状态和小型检查摘要；服务元数据截断不能掩盖关键证据。
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
@@ -412,7 +448,7 @@ advisory 的下一步：软提示被模型无视的天花板已反复实证（�
 
 - 构建器按排序后的目录动词名生成 `src/generated-verb-contract.ts` 及 SHA-256；
 - Bridge 按实际 `_VERBS` 注册表独立生成同算法指纹，并由 `/health.verbCatalog` 返回名称、数量、hash；
-- Host 在场景代码进入 `/exec`/`/jobs` 前检查，成功后短时缓存；旧 Bridge 缺字段或 hash 不同都 fail-closed，并提示 `Repair and restart runtime`；
+- Host 在每次场景代码进入 `/exec`/`/jobs` 前检查目录与 executionContractVersion，不缓存成功状态；请求带 expected_contract 让 Bridge 再拒绝不一致代际。旧 Bridge 缺字段或 hash/语义版本不同都 fail-closed，并提示 `Repair and restart runtime`；
 - `tools/tests/verb-contract.test.mjs` 校验文档、生成物和 Bridge 源注册表三方一致，`bridge-contract.test.mjs` 校验 mismatch 不会触达 `/exec`。
 
 ### 图片 media relay（2026-08-19，草地任务 trace 的直接产出）
