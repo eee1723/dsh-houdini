@@ -12,14 +12,15 @@ Houdini Trace 与 evidence/HTML 审计均已实现。最近一轮跨模型、跨
 修复通用执行合同；它不是严格冻结的正式模型排名，任务实例、评分答案和对象 recipe 没有写回
 生产 guidance、preset、skills 或工具。
 
-当前 57 动词/执行语义 v9 是独立资产评审候选：移除生产delivery登记/累计收据/缓存流程，
-保留网络、接口、拓扑、domain与控制测试检查器。`houdini_exec(review={parent,output,controller?})`
-一次委派前台spawn评审者，Host提供原始要求/问答/图片引用；评审者可自主查询和批量
-`review_test`，在同一主线程调用中改参、测量/产图并恢复，返回紧凑本批结果。
-作者等待；测试权限仅绑定本任务资产及唯一子agent，普通ownership不变。没有长期合同缓存。
-当前自动评审入口是本任务拥有的SOP输出，受控扰动限原生无外部副作用网络；不支持的测试
-保持unverified，不限制普通建模选型。技术回归不证明评审模型的质量/效率，live新会话和
-真实OpenGL扰动截图仍待验收。操作、权限和回退见[`docs/independent-asset-review.md`](docs/independent-asset-review.md)。
+当前源码为 57 动词/执行语义 v13 候选：菜单set_value、接线前后状态、壳朝向、截面邻近、线性参数域与图片路由提示已接入，详见 docs/development.md。v13未自动重启live、未做新模型验收。
+普通建模沿用 v10 按需评审策略：普通建模不再默认委派评审，先提高作者执行成功率。
+用户要求或具体疑点需要第二视角时，`houdini_exec(review={parent,output,controller?})` 做快速复核。
+Host提供当前摘要/接口覆盖/实验适用性与历史工具事实，优先复用图片；四分钟、最多三个针对性
+实验，一次短问题清单。未测项不变成pass，保留ownership、Raw Gate与恢复边界，无长期证据缓存。
+作者端修复动态参数预检、陈旧cook错误、诊断信息、失败残留收口并支持Toggle测试。
+真实v9会话已验证委派/基准截图/读图/返回，但因网络不支持没有执行评审改参；v10新会话的
+质量/效率收益仍待正常任务观察。没有自动重启live或修改用户HIP。
+操作、证据与评审去留条件见[`docs/independent-asset-review.md`](docs/independent-asset-review.md)。
 旧delivery文档/原型保留为历史，不再是当前使用路径。以下是历史冷启动证据：
 2026-09-01 从 `cf1f1e8` 完整冷启动 H21 后，
 Host media/read-only、content-addressed media relay、WebView 异步重试与 launcher worker preflight 均已加载。
@@ -289,7 +290,7 @@ npm test
 npm pack --dry-run
 ```
 
-`npm test` 当前运行构建和 17 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
+`npm test` 当前运行构建和 19 个 Node 确定性测试文件，包括：反过拟合扫描、agent-visible surface
 封存、Host/Bridge 词表握手、工具展示纯函数、WebView GUI 线程边界、trace replay/normalized-step/
 evidence 和当前文档一致性；测试文件数由一致性门禁反向核对，新增回归后不能只改代码不改 README。
 

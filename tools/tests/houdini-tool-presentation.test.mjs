@@ -34,6 +34,14 @@ const execValue = {
 };
 
 const exec = definitions.get('houdini_exec');
+const compactResult = exec.output.render({}, {
+  ok:true,stdout:'[verb] repeated echo\nimportant user diagnostic',stderr:'',
+  transaction:{status:'committed',nodes:[]},
+  verbs:[{verb:'set_parm',ok:true,args:['/obj/a','tx',1],result:{value:1},ms:1}],
+}).map(c=>c.text||'').join('\n');
+assert(!compactResult.includes('repeated echo'));
+assert(compactResult.includes('important user diagnostic'));
+assert(compactResult.includes('transaction:') && compactResult.includes('verbs (1):'));
 const execArgs = { code: 'set_parm(node, "tx", 1)', allow_raw: 'fixture gap' };
 assert.deepEqual(exec.presentCall(execArgs), {
   card: 'generic',

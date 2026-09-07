@@ -654,6 +654,14 @@ export function collectQualityLoopEvidence({
     : finalCountClaim.points === latestCounts.points && finalCountClaim.prims === latestCounts.prims;
   const checkpoints = new Map();
   for (const step of indexed) {
+    if (step.transaction?.status === 'rolled_back' || step.rollback?.applied === true) continue;
+    for (const node of step.transaction?.nodes || []) {
+      if (node.exists === false && node.prior_path && step.transaction.status === 'committed') {
+        for (const value of checkpoints.values()) if (value.output === node.prior_path) {
+          value.lifecycle = 'removed'; value.removedAt = step.index;
+        }
+      }
+    }
     for (const verb of step.verbs || []) {
       if (!['verify_network','build_module'].includes(verb.verb)) continue;
       const raw = verbResult(verb.result ?? verb.detail);

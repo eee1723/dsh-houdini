@@ -38,6 +38,16 @@ try:
     out=root.node('OUT')
     checks=h.geo_check_interfaces(out,[interface])
     assert checks['ok'] and checks['results'][0]['max_distance']<1e-6,checks
+    # Coverage names come from actual selected final primitives, not the name
+    # of the interface group or an agent-authored completeness claim.
+    import dsh_quality_contracts as q
+    named=out.geometry().freeze()
+    named.addAttrib(hou.attribType.Prim,'name','')
+    target_ids={p.number() for p in named.findPrimGroup('b_surface').prims()}
+    for prim in named.prims():prim.setAttribValue('name','member_b' if prim.number() in target_ids else 'member_a')
+    coverage=q._check_interfaces(named,[interface],50000)['results'][0]
+    assert coverage['source_pieces']==['member_a'] and coverage['target_pieces']==['member_b'],coverage
+    assert not coverage['piece_coverage_truncated']
     h.set_parm(root.node('part_b'),'ty',.3)
     detached=h.geo_check_interfaces(out,[interface])
     assert detached['status']=='fail' and detached['results'][0]['failure_count']>0,detached

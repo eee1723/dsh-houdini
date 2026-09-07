@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {imageInspectionRoute} from '../../lib/tools.js';
+const seen=[];
+const ctx={get(name){assert.equal(name,'llm');return {async resolveModelInfo(provider,model,signal){seen.push([provider,model]);assert.ok(signal instanceof AbortSignal);return {inputModalities:model==='image-model'?['text','image']:['text']};}};}};
+const exec={agent:{session:{requestHeader(){return {config:{provider:'actual',model:'image-model'}}}},options:{provider:'old',model:'text-model'}}};
+let r=await imageInspectionRoute(ctx,exec);assert.equal(r.declared_image_input,true);assert.match(r.next_action,/read_image/);assert.deepEqual(seen[0],['actual','image-model']);
+exec.agent.session.requestHeader=()=>({config:{provider:'actual',model:'text-model'}});
+r=await imageInspectionRoute(ctx,exec);assert.equal(r.declared_image_input,false);assert.match(r.next_action,/vision_glance/);assert.equal(r.semantic_status,'unverified');
+assert.equal((await imageInspectionRoute({},exec)).declared_image_input,null);
+assert.equal((await imageInspectionRoute({get:()=>({resolveModelInfo:async()=>{throw Error('offline')}})},exec)).declared_image_input,null);
+const abort=new AbortController();
+const pending=imageInspectionRoute({get:()=>({resolveModelInfo:()=>new Promise(()=>{})})},{...exec,signal:abort.signal});
+abort.abort();assert.equal((await pending).declared_image_input,null);
+console.log('PASS image inspection capability routing');

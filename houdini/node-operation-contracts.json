@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "cards": {
+    "sweep": {
+      "id": "sweep-cross-section-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/sweep.html",
+      "notes": [
+        "Input 0 is the backbone; input 1 is an optional cross-section. Default custom sections are centered at the origin in the XY plane, +Y up (normal along Z), not placed at the path start.",
+        "For a circular tube consider the built-in circle section. For custom sections explicitly establish section plane, path frame/up and end-cap intent before construction. tab_create with explicit input 1 reconciles the shipped Sweep 2.0 initializer to surfaceshape=input after wiring; explicit build parms may override this.",
+        "A non-XY section may be intentional with Pitch/Yaw or upstream pre-rotation; do not rotate it blindly. Inspect local section extents and actual end boundaries; world bbox alone cannot prove a tube."
+      ]
+    },
+    "polyextrude": {
+      "id": "extrusion-surfaces-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html",
+      "notes": [
+        "Front is the displaced face; Back is the original face; Side bridges them. These names are relative to extrusion, not world up/down.",
+        "When thickening an open sheet into a closed slab, explicitly choose outputfront/outputback/outputside and inspect the final boundary edges and world position.",
+        "Do not enable Output Back universally: extruding faces of an existing solid can create unwanted interior faces."
+      ]
+    },
+    "revolve": {
+      "id": "revolve-ends-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html",
+      "notes": [
+        "Closing the revolution around its axis does not cap the two ends of an open profile. Decide profile endpoints/end closure explicitly and inspect final boundary loops.",
+        "An intentional open vessel or tube must remain open. Profile radius and axial position are separate coordinates; validate one unit before instancing.",
+        "Profile order and axis direction determine polygon winding. After forming a closed shell inspect both shared-edge consistency and orientation; a Normal SOP does not reverse polygon winding."
+      ]
+    },
+    "copytopoints": {
+      "id": "copy-local-frame-v1",
+      "source": "https://www.sidefx.com/docs/houdini/copy/instanceattrs.html",
+      "notes": [
+        "Input 0 is the source unit, input 1 the destination points. Establish the unit local axes and destination P/orient/scale before copying.",
+        "Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison."
+      ]
+    },
+    "blast": {
+      "id": "selection-class-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html",
+      "notes": [
+        "Set group type explicitly when selecting point numbers. A polyline with many points is still one primitive; primitive 0 is not point 0.",
+        "Check surviving point/primitive counts before using the output as instance templates."
+      ]
+    },
+    "attribwrangle": {
+      "id": "expression-language-v1",
+      "source": "https://www.sidefx.com/docs/houdini/vex/functions/ch.html",
+      "notes": [
+        "The snippet is VEX; numeric parameter expressions outside the snippet are HScript unless explicitly tagged Python. Do not copy VEX chf/chi calls into HScript parameter expressions.",
+        "Declare attribute class/type and input slots. Use stable names/ids for module interfaces rather than recovering identity from bounding-box sort order."
+      ]
+    },
+    "boolean": {
+      "id": "boolean-input-groups-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html",
+      "notes": [
+        "agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters."
+      ]
+    }
+  }
+}

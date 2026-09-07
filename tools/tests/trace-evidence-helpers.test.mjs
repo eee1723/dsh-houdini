@@ -553,6 +553,8 @@ const controlCheckpoint={index:2,tool:'houdini_exec',failed:false,verbs:[{verb:'
 const quality=collectQualityLoopEvidence({steps:[builtCheckpoint,controlCheckpoint],
   userMessages:[{text:'做一个程序化资产'}],assistantMessages:[{text:'假设的镜头级模型，有控制参数与关系验证，不做隐藏细节。'}]});
 assert.equal(quality.outputCheckpoints.length,1);
+assert.equal(collectQualityLoopEvidence({steps:[{...builtCheckpoint,transaction:{status:'rolled_back'}}]}).outputCheckpoints.length,0,
+  'a successful build later rolled back is not current output evidence');
 assert.deepEqual(quality.relations.probeSteps,[1]);
 assert.equal(quality.perturbation.controlTests.length,1);
 assert.ok(!qualityLoopRisks(quality).some(r=>r.code==='procedural_control_not_perturbed'));

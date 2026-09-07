@@ -32,7 +32,39 @@ dsh-houdini 是 DeepSeek Harness（dsh）插件，让 agent 驱动一个正在�
 - 执行契约 v3：继承v2严格设参；verify_network必须明确output、默认拒绝empty/error，require_valid=False仅诊断。build_module支持None输入空槽；跨subnet接线不能猜端口。渲染相对路径锚HIP、缺后缀拒绝，file/pixel/semantic分层；geo_point_spacing全量检查有序点弦长，不证明表面关系。Save As仍须目标路径/当前HIP/用户授权，不放开raw load/clear。
 - 执行契约 v4 继承上述边界：build_module可附interfaces，geo_check_interfaces只验证实际output上的命名表面点到指定表面的距离，不证明实体穿插/强度；test_controls必须exec，临时数字控制、声明指标/关系、恢复参数/keys/frame及bgeo。unsupported保持unverified，不用P-only断言原生primitive无响应；外部文件/Python/solver副作用不属恢复保证。
 
-## 2026-09-07 v9：独立资产评审候选（当前）
+## 2026-09-07 v13：同题双模型复盘后候选（当前）
+
+菜单set_value/strict preflight一致；接线前后状态与parent-relative verify；inspect逐壳朝向，
+section_proximity实际表面截面、线性domain；media给当前路由图片能力提示。仍5工具57动词。
+Node19、H21/H22各29回归通过，原Grok稀疏腿39个高度截面检查通过且源HIP未改。
+边界见docs/development.md；不把几何观察写成自交/实体接触认证。未重启live/未做新模型验收。
+v12双模型trace已证实每消息1次快照和部分新检查自然采用，但两个最终座面仍有朝向错误。
+
+## 2026-09-07 v10：执行效率与按需快速复核（历史）
+
+v12后续候选：Sweep 2.0显式input1在Shelf后校正模式，build参数仍优先；多项静态预检零创建
+汇总、required_outputs检查必需新分支；interfaces可声明axis_gap实际primitive组投影间隙，
+不证明真实接触/实体插入。Node18、双版各28 Python回归通过；真实Shelf脚本受控回放不是
+GUI自动化，新模型未验收/live未重启。见docs/development.md的v12记录。
+
+后续v11源码候选已实施首批建模观察修复：固定/context metadata、节点操作卡、literal filter诊断、
+tuple表达式预检、transaction最终状态、Polygon观察/稳定ID位移/range、目标取景。仍57动词；
+Node18、H21/H22各27 Python通过，render焦点仅HOM+renderer替身，live最后实读v10未重启。
+SOP正文精简，计划各包剩余项见docs/procedural-modeling-repair-plan.md；不把代码回归写成
+新session/GUI语义/模型质量已验收。保留原有WIP、Raw Gate/ownership和冻结matrix/holdout。
+
+用户批准精简评审、同步修复作者工具，并以实际收益判断评审必要性。5工具/57动词/6skills。
+普通建模不默认委派；用户要求或具体疑点才快速review。begin提供当前摘要/接口piece覆盖/
+实验适用性，Host转交原始要求与至多8条/16K字符历史工具事实；事实不是作者自评，也不
+自动证明当前依赖。只query/exec/read_image，skill内联；目标六calls以内，四分钟上限，
+全评审最多3case。无问题报告限定范围未发现阻断项，不整表pass；保留未测/unsupported。
+作者端静态multiparm实例/count预检、旧cook错误刷新、直接cook_details、Toggle0/1测试、
+headless GUI探测与精确新建identity残留清理。不能靠父网络/路径/self-authorization清理foreign。
+Node17及H21/H22各25回归与离线独立材料检查见docs/independent-asset-review.md。
+真实v9已验证委派/基准图/读图/回传但评审0 writes；v10源码未自动重启live，不声称新K3
+质量/效率增益。若自然使用持续无实质发现则保持/收缩按需评审，把投入放作者执行质量。
+
+## 2026-09-07 v9：独立资产评审候选（历史）
 
 用户明确授权清理delivery流程，改一次前台spawn评审、自主改参/产图/恢复、一次汇总。
 仍5工具/57动词；houdini_exec新增review(scope)/review_test(batch)，与code/allow_raw互斥。

@@ -25,10 +25,11 @@ const agentVisibleFiles = [
   'docs/cross-domain-benchmark-plan.md',
   'docs/development.md',
   'docs/tool-design.md',
+  'houdini/node-operation-contracts.json',
   ...walk('src').filter((file) => !file.endsWith('generated-verb-contract.ts')),
   ...walk('presets'),
   ...walk('skills'),
-].filter((file) => /\.(?:md|mjs|ts|js|ya?ml)$/.test(file))
+].filter((file) => /\.(?:md|mjs|ts|js|json|ya?ml)$/.test(file))
 
 const protectedMarkers = [
   /BM-MECH-01/i,

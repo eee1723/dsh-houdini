@@ -148,6 +148,20 @@ geo_frame_diff(out, 1, 12, attrib='P')
 
 ## 9. 小模块构建与检查 fast path
 
+v12：声明Sweep第二输入时tab_create会在接线后校正surfaceshape=input，build显式parms仍优先。
+静态node_info默认值不保证等于Shelf创建值；保留卡片components/usage_notes，不只回传参数名。
+build_module的独立参数/输入错误一次汇总为preflight errors，按具体field/components一起修，不重发多次长spec猜字段。
+组合多个交付分支时可传required_outputs=[分支输出名,...]，防止Merge非空掩盖某个必需分支为空；
+辅助空CTRL不在此列。仍优先按可独立检查的小模块构建，不把所有造型塞进一个大batch。
+
+v11准备阶段先读node_info的usage_notes/operation_card。单节点知识来自随包操作卡：
+Sweep默认自定义截面在原点XY平面；PolyExtrude的front/back按挤出方向定义；Revolve周向closed不代表端盖；
+Blast明确点/面group类型。H21/H22最小构造正反例有回归；意图允许开放或预旋转时不强制修正。
+构造顺序：明确表示和局部坐标→一个单元→inspect实际表面/截面→再复制→按身份集成。
+用geo_piece_stats(out,inspect=True,group=...)观察边界和局部basis extent；非Polygon返回unverified。
+有意分组切口不视作整体实体破损，整体bbox不能证明弯曲薄片有管状截面。
+同一exec后项失败会回滚前项成功的模块；transaction记录最终状态，普通诊断读取放query。
+
 适用：在现有 SOP parent 中新增一个可以独立 cook 的小模块；H21.0.440/H22.0.368 的
 类型、参数菜单、失败清理与 warning 传播已有工具回归。行为发布仍需未见新 session 验证。
 不适用：修改既有节点、OBJ parenting、Karma setup、HDA 库编辑或模拟写盘；这些继续使用
@@ -162,8 +176,8 @@ spec = [
     {'name': 'shaped', 'type': 'xform', 'inputs': ['unit'], 'parms': {'sx': 1.5}},
     {'name': 'OUT_MODULE', 'type': 'null', 'inputs': ['shaped']},
 ]
-# 不熟悉的接口先 dry_run；它不创建 probe，但也不能证明 VEX/cook。
-build_module(parent, spec, output='OUT_MODULE', dry_run=True)
+# 接口已知可直接构建；有静态字段疑问时才 dry_run，它不证明 VEX/cook。
+# build_module(parent, spec, output='OUT_MODULE', dry_run=True)
 result = build_module(parent, spec, output='OUT_MODULE')
 __result__ = result['validation']
 ```
@@ -196,3 +210,14 @@ __result__ = result['validation']
 output/frame/scope/失败原因，而不是只看开头“Python执行成功”或取不存在的errors字段。
 
 证据等级：工具合同回归与行为采用分别记录；弱模型未见任务增益 candidate。最后核对：2026-09-06。
+
+
+v10候选（H21/H22隔离回归）：node_info返回默认multiparm实际编号；build_module支持显式
+整数count（0..64）并按父count→子count→字段顺序赋值。动态count/超过静态预算仍走
+原生tab_create/list_parms，不为预检限制改写成VEX。数值参数字符串为HScript表达式；需要
+显式语言用{expression,language}。先前错误节点的cook_node会刷新旧错误；仍失败直接读
+cook_details定位，不重发无关模块。Toggle的test_controls用整数0/1，菜单/按钮仍不支持。
+
+
+v13设值提示：node_info菜单项的set_value是可直接设置值，菜单token也由setter转换；菜单表达式用显式对象。
+替换Merge既有输入直接connect，断开后消费inputs_after再操作；不要把旧索引当稳定身份。

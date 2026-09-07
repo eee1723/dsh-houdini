@@ -20,6 +20,7 @@ export interface ExecResult {
   error?: string
   /** Failure-time Houdini undo rollback outcome, when execution reached Python. */
   rollback?: JsonValue
+  transaction?: JsonValue
   /** Structured Raw Gate/read-only HOM classification produced by the bridge AST. */
   rawUsage?: JsonValue
   /** Advisory hint, present when the code bypassed the verb vocabulary with raw hou calls. */
@@ -186,6 +187,13 @@ export class HoudiniBridge {
   }
 
   private hipCache: { dir: string | null; at: number } | null = null
+
+  /** Fixed, non-evaluating metadata route; old bridges degrade without executing code. */
+  async sceneContext(signal?: AbortSignal): Promise<unknown> {
+    const timeout = AbortSignal.timeout(2000)
+    return this.post('/context', { schema_version: 1 },
+      signal ? AbortSignal.any([signal, timeout]) : timeout)
+  }
 
   /** Directory of the live hip file ($HIP), 60s cache; null when unreachable
    *  or the scene was never saved (untitled.hip — no meaningful $HIP, the

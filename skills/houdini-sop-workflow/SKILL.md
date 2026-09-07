@@ -1,115 +1,51 @@
 ---
 name: houdini-sop-workflow
-description: 设计、构建、调试和交付稳健的 Houdini SOP 程序化网络。用于创建或修改建模、散布、Copy to Points、属性传递、VEX 变形、Sweep/PolyWire、Merge、时间动画等 SOP 任务，尤其在开放式建模需要参考/质量合同、共享尺寸与锚点、模块关系验收，或需要选择正确原生节点、处理 cook warning、验证局部 piece、隔离视觉输出和多帧验收时。
+description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用于建模、散布、Copy to Points、属性传递、VEX成形、Sweep/PolyWire、Merge和SOP动画；尤其涉及多模块空间关系、可调控制、局部几何/拓扑、cook warning或视觉取证时。不用于纯场景查询，也不代替rig或Solaris领域流程。
 ---
 
 # Houdini SOP Workflow
 
-按 Houdini 数据流工作，不把“大段 Python/VEX 跑通”当完成。先选对原生模块，再逐模块验证，最后才渲染和交付。
+以一个正确、可观察的原型推进。新增细节前先确认主要形体和实际连接；每次检查明确输出、方法与范围。
 
-## 前置合同
+## 进入任务
 
-简单、规格完整的编辑可直接执行。开放式、质量敏感、机械/空间关系复杂或明确要求“程序化资产”
-的任务，在大规模建图前先确认上游任务合同至少覆盖：目标/参考状态、LOD 与允许简化、单位和
-关键尺寸、需要暴露的控制、模块关系、客观完成门和视觉取证视角。缺少外部参考时，把尺寸与
-审美判断标为假设，不得用自生成数值的内部一致性冒充外部真实性。
+先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。用户选择会变化，快照不构成foreign修改授权。
 
-只要任务满足上述任一条件，就在首个大规模 scene mutation 前读取
-[references/procedural-quality-contract.md](references/procedural-quality-contract.md)；它不是可跳过的补充材料。
-简单、规格完整的编辑才按需省略该引用。
+简单、规格完整的编辑直接修改并回读。普通可调模型用几句说明目标、自选尺寸、控制和验证范围。质量敏感、外部真实性或复杂装配在大规模建图前读[质量合同](references/procedural-quality-contract.md)；外部参考会改变方案且research/web可用时实际检索，无来源就标假设。只询问会改变方案的选择，一次给有影响说明的互斥选项，不因“程序化”启动长问卷。
 
-需要用户决定变体、质量/LOD、交付深度或允许简化时，优先一次给出有实际影响说明的选择题，
-例如预览级/镜头级/产品级、只网络/验证预览/正式渲染，并保留自定义文本补充和“由 agent 决定”选项。
-不要用一串空输入框要求用户凭空发明规格；只有路径、名称、精确尺寸等天然唯一值才直接问文本。
+## 执行循环
 
-## 强完成协议
+1. **方法与原型**：选择曲线/截面/开放表面/实体/实例等表示。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
+2. **当前节点知识**：用node_info(实际parent,type,parm_filter=...)只读当前操作需要的参数与operation_card；默认24项，先缩小filter再提高limit，避免扫描无关类型。filter是字面子串，空匹配先去掉filter重查，不因空卡创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
+3. **骨架门**：只建代理体/中心线/主要截面，查世界位置、尺寸、方向和主连接。视觉交付已在范围内且GUI可用时，尽早看可辨认的整体或明确侧向图。主要比例/位置错误先修骨架，不进入细化。
+4. **模块门**：一个build_module对应可独立cook的小模块和明确非空output；空CTRL/helper用tab_create。先验证单元再复制。检查实际表面/截面、封口意图、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，warning清理或解释。
+5. **关系门**：每完成一个模块就和相邻模块集成检查。独立表面用适用的interfaces距离，融合Polygon才用共享拓扑。距离不等于有符号插入，bbox对称不等于几何镜像；接地覆盖每个要求的足部。没有可靠方法就保留unverified。
+6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。优先test_controls；范围/容差来自设计，不能观察失败后扩大窗口凑pass；耦合控制再测一个边界组合，滑条范围不等于有效参数域。修测试需独立理由与新样本/解析关系。只测bbox变化不证明连接或整个参数域。
+7. **交付门**：集成后verify_network(parent,output=实际交付SOP)，最后一次相关修改后刷新必要统计、关系和图像。布局、恢复frame/selection/visibility、设sop_set_output，再保存。未命名HIP用有授权路径及当前HIP校验的scene_save_as；保存失败不能宣称完整交付。
 
-质量敏感的开放式资产按下列 checkpoint 推进；某项不适用时显式说明原因，不静默跳过：
+模块与关系循环推进，不等所有细节完成才检查装配。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
 
-1. **研究/合同**：外部真实性会改变方案且 research/web 可用时实际检索并记录来源；否则向用户
-   索取参考，或把自选尺寸标为未验证假设。合同必须包含质量/LOD、允许简化、控制、关系和证据视角。
-2. **骨架**：先只做 controls、named anchors/local frames、中心线或代理体；在增加装饰和重复小件前，
-   用数值关系及需要时的整体 render 验证比例、轮廓和主要连接。骨架未通过不进入细化。
-3. **模块/关系账本**：逐模块记录输入、输出和不变量；每条连接、共轴、包含、间隙、禁止穿插或
-   属性连续关系最终标记 `pass / fail / unverified`，并指向对应 query、统计或局部视图。
-4. **视觉批评**：整体图只验轮廓，局部关系必须有可辨认的特写。先声明资产 length/up/width 轴，
-   用显式观察向量生成可比较视角，不假设命名的 `side/front` 自动理解资产朝向。每次读取
-   `render_view` 返回的 `check`，或另跑 `render_check`；近黑、内容极少、bbox 为空/触边或特写目标
-   不在画面时，像素展示门失败并重新取景/调整验证展示。首次语义读图先列可见缺陷和不确定项，
-   再决定返工或降级结论；“文件生成”“像素可用”“可辨认”和“高质量/与参考一致”是不同结论。
-5. **扰动/恢复**：可调资产至少改变一个会影响多个模块的关键用户控制，cook 并重跑受影响关系门，
-   然后恢复交付值再复验。只在默认值能 cook 不算程序化完成。
-6. **新鲜证据**：最后一次几何 mutation 后重新采集最终输出统计、warning、关系账本和交付视图；
-   不复用修改前的点数、primitive 数或图片。无法证明的项保留 `unverified`，不得由 todo 完成状态补证。
+## 执行与恢复
 
-## 执行顺序
+- build_module声明name/type/parms/inputs/output；None表示空输入槽。跨subnet使用Object Merge或明确端口。connect(src,dst,index)直接替换既有输入；Merge先断后接会前移丢分支，消费inputs_after。set_parms保持strict，不能以strict=False绕过构建失败。
+- 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留node_info的components/usage_notes。最终分支保留语义primitive组，方便关系检查和局部取景。
+- tab_create返回hou.Node；list_parms/read_parms返回list。菜单用token/set_value，菜单表达式用{expression,language}；普通数值字符串是HScript表达式，VEX在snippet内；tuple表达式用组件字段。见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
+- 看transaction最终状态：同一exec后方失败可以撤销前方成功的build_module。先确认相关identity/存活输出；撤销过的打标缺失不是生成器无效证据，不沿用被回滚依赖；不熟悉的回读另开query，避免尾部格式化错误撤销构建。
+- 同一模块边界连续两次失败，回到最后有效输出做最小单变量诊断或换方法；不反复全文重建多个未知模块，不catch mutation/cook异常后继续。
+- 保留小状态摘要：当前输出/身份、未过关系、最新证据frame/时间、受影响修改；只重验受影响检查。
 
-1. 用 `scene_info`、`find_nodes` 和 `graph` 检查现场；不要猜当前 HIP、时间线或拓扑。
-2. 把需求拆成模块，逐个写出 `输入几何/属性 → 操作 → 输出几何/属性 → 验收不变量`。连接件由
-   共享接口位置构建，并在最终表面保留可核验的接口point/primitive groups；不要只写平行/锚点
-   相等就宣称实际部件连接。多模块装配或需反复调参时，先读[模块质量合同](references/module-quality-contracts.md)。
-3. 不熟悉的类型先 `search_tab_entries(parent, query)` 与 `node_info(parent,type_name)`，取得实际端口和菜单 token；已有节点用 `list_parms` 查动态菜单。不要靠拼写试错或读取仓库源码发现接口。
-4. 新增的小型 SOP 模块先用 `build_module` 表达本地 inputs 和 output（最小形状见下）；已有网络编辑、多上下文 setup 使用原有 verbs。跨 subnet 不直接 connect：在目标网络用 Object Merge 或明确 subnet 输入。构建/cook 都走 exec。版本细节见 [SOP fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
-5. `set_parms` 默认严格失败/恢复；不要为继续建图改成 `strict=False`。该模式只适合允许部分成功的诊断/恢复，其 `ok=False/failed` 仍是未完成证据。菜单字符串必须是精确 token，不能猜 label。
-6. 按“源几何 → 单元 → 成形 → 模板点 → 复制 → 变形 → 合并输出”逐层验收。全场 bbox 和点数不能证明每个 piece 正确。
-7. 用 `geo_piece_stats` 检查重复单元局部 extent/面积；用 `geo_attrib_stats` 检查驱动属性；动画用 `geo_frame_diff` 检查至少两帧。
-8. 每个模块消费 `build_module.validation`；集成后用完整直属范围的 `verify_network(parent,output=实际交付SOP)`。独立表面接触用geo_check_interfaces；融合Polygon表面用test_controls的topology检查，不将共享缝顶点塞进独立距离检查。test_controls绑定输出指标并复查相应关系；require_valid=False仅诊断，warning解决或解释。复杂资产可在收尾调用独立资产评审；不再登记delivery合同或维护累计收据。
-9. 任务需要视觉证据且当前 GUI 渲染环境可用时，用 `render_view(EXPLICIT_SOP)`；用户
-   viewport 漂移不影响它。用户说屏幕异常时再用 `viewport_screenshot` 诊断并与显式输出
-   对照。动画固定构图先用 bbox/测试帧选择能覆盖验收帧包络的 `framing_frame` 和 coverage；
-   `render_check` 的 `content_bbox` 触边或安全边距不足时视为裁切风险并重新取景。纯网络/数据交付
-   或视觉难以裁定时，不为追图推翻已通过的语义门。
-10. 布局节点、把用户 SOP output 移到交付节点、恢复 frame/selection/visibility，再保存。未命名 HIP 用用户确认路径的 `scene_save_as`；不能把保存失败列为普通边界后宣称完整交付。
+## 观察与关键方法
 
-新增模块最小形状（parent 是本任务已有的 SOP 容器；参数/造型自行选择）：
+- geo_piece_stats默认按连接性或指定身份属性统计局部extent/面积；inspect=True观察命名primitive组的Polygon边界/边连通/非流形和basis下extent；shell_orientation保留有向体积条件。半径用到轴的欧氏距离，轴向投影不是半径。observed仅量测，分组切口可有意开放。
+- geo_attrib_stats读驱动属性；geo_point_spacing全扫有序点弦长，不证明表面关系。test_controls的point_mean/面积可观察局部形变；位移指标要求稳定唯一id_attrib及相同面连接。数量参数测确切piece数/身份，native/packed不靠P-only。
+- Copy to Points承担实例变换，模板orient/scale与原型局部轴需一致；Copy/Merge明确属性class和传播。带状物用有面积截面，非刚性成形通常先作用中心线/低维结构再生成厚度。细节见[方法参考](references/sop-patterns.md)。
+- 每图绑定问题和部件。render_view(EXPLICIT_SOP,focus_group=...,isolate=...,projection='orthographic')用于局部观察；空组不能换整图冒充特写。返回framing.bounds可固定跨参数A/B，方向/分辨率/coverage也需一致。
+- 消费render_view.check/render_check；空白、近黑、错误目标、严重裁切不通过。按media.inspection选择读图路由；先描述可见事实，再定位疑点，以对应几何/视角逐项核销。遮挡不等于缺件，无地面参照不能看图断言接地；勿整表pass。
+- 用户屏幕异常才用viewport_screenshot；保留持久__dsh_houdini_*服务。纯网络交付或无GUI不强制追图，视觉未验证则明确报告。
+- 动画至少两个相隔帧的实际几何/固定构图图像证据；A/B同framing_frame且覆盖帧包络。完全静止/方向错误是反例；细微审美无法裁定交给用户播放判断，不无限追图。
 
-```python
-spec = [{'name': 'unit', 'type': 'box'},
-        {'name': 'OUT_UNIT', 'type': 'null', 'inputs': ['unit']}]
-__result__ = build_module(parent, spec, output='OUT_UNIT')
-```
+## 完成范围
 
-Wrangle用 `inputs=[None,'anchors']` 表达仅input 1读源；避免因输入空槽而退回大段手写。
-新增参数前查node_info；失败后独立query回读存活节点，再修，勿把猜测式诊断放在大构建batch尾部。
+最终显式输出非空、无error，warning已处理；单元与核心关系有对应实际输出证据；控制集中且代表性扰动/恢复通过。未测控制、unsupported、外部真实性、视觉不确定分别报告，不能用todo completed补证或把部分测量写成全部pass。关键控制不能靠重复改多个VEX常量维护。
 
-## 关键选择
-
-- 散布复制优先 `copytopoints`，让 Houdini 处理 `orient/N/up/pscale`。classic Copy 只有在其独有语义被明确需要时使用。
-- 叶片、带状物等应使用有面积的 Grid/ribbon 或 Curve → deform → Sweep。不要捕获中心线 rest 后再用它重建已生成截面的所有点。
-- 非刚性弯曲优先在中心线/低维结构上完成，再生成宽度/厚度；刚性每实例摇摆可在模板点 `orient` 上做时间变化。
-- Copy/Merge 前后明确属性 class 和传播规则；不要依赖“看起来可能自动复制”。
-- VEX 代码以模块不变量为目标；编译通过只证明语法，不证明几何语义。
-- 关键控制采用单一真相源，派生模块引用同一参数/属性/anchor；“去多个 VEX 字符串里分别改坐标”
-  不算可靠的程序化接口。需要用户反复调整时，用 spare parms/HDA interface 或清晰的控制节点暴露。
-- `geo_piece_stats` 的非退化只证明局部面积/extent，不证明部件已连接、无穿插或满足最小间隙；
-  涉及装配关系时必须另验轴线、接触、包含、间隙或禁止相交等契约。
-- 有序点列等间距用 `geo_point_spacing` 全扫相邻弦长；表面接口用 `geo_check_interfaces`，不互相替代。
-  `test_controls` 的预期指标/变化范围来自设计合同，不从测量结果反推合格线；bounds变化只证明
-  该局部响应，不能证明连接。原生primitive/packed变化不能只看P，已证无效控制修正或标未交付。
-
-复杂 Copy、变形、属性和动画模式按需阅读 [references/sop-patterns.md](references/sop-patterns.md)。同一模块边界连续两次失败时，回到最后检查点查精确接口或换构造策略；不要持续改拼写、重复长 batch。保留小状态摘要：当前模块/输出、未通过关系、最新证据时间/frame/指纹及用户修改造成的失效，不重复粘贴整段历史。
-
-## 完成门
-
-仅在以下条件全部成立后交付：
-
-- 最终显式 SOP 存在、非空、无 cook error。
-- warning 已清理或逐条解释。
-- 单元/piece 没有非预期零宽、零面积或属性缺失。
-- 契约要求可调时，关键参数已集中暴露，依赖模块由共享参数/anchor 派生；不存在会在一次合理调参后
-  立即失配的重复常量。
-- 已对至少一个跨模块关键控制完成“改变 → cook/关系复验 → 恢复交付值 → 再复验”；若资产没有
-  此类控制，说明为何扰动门不适用。
-- 契约涉及部件连接、包含、间隙或禁止穿插时，相关关系有逐项证据；整体 bbox、点数、无 warning
-  或 `degenerate_surface_pieces=0` 不替代这些证据。
-- 用户目标涉及动画时，两帧 `geo_frame_diff` 或固定相机 render diff 明显非零；检查锚点/活动区等可客观语义。静帧无法可靠裁定细微动态或审美力度时，明确交给用户播放判断，不无限追图、不伪称视觉确认。
-- 若契约包含视觉交付，`render_view(EXPLICIT_SOP)` 应成功且 `stale=false`，动画 A/B 使用相同
-  `framing_frame`，并确认所有验收帧的 `content_bbox` 都保留安全边距。纯网络/数据交付，或当前环境无法可靠视觉验证时，明确把画面/播放判断交给
-  用户且不声称视觉通过；这不阻塞已经客观证明的结构与数据完成度。
-- 小零件、连接和穿插不能只靠整物远景确认；视觉验收按契约增加能看清目标关系的局部视角，并把
-  “与参考一致”“主观质量通过”和“图像成功生成”分开报告。
-- 语义视觉不可用时仍要完成 `render_view.check`/`render_check` 的像素级降级验收；只因
-  `stale=false`、文件存在或无 render error 不能把近黑、空白、错误轴向或严重裁切的图片标为 pass。
-- 最终统计、关系结果和交付图均晚于或同批发生于最后一次几何修改；最终报告逐项列
-  `pass / fail / unverified`，不把内部一致升级成有来源的真实性。
-- Probe 已清理，网络已布局，用户 viewport output 仅在交付阶段设置。
+普通收尾不自动委派；用户要求或具体疑点才快速review，复用已有工具事实与图像。不再登记delivery合同。

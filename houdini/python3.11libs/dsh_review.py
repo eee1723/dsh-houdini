@@ -55,6 +55,43 @@ def _safe_test_scope(parent):
                 raise ValueError(f'external dependency outside reversible review scope: {n.path()} -> {ref.path()}')
 
 
+def _test_support(parent, ctrl):
+    try:
+        if ctrl is None:raise ValueError('no controller bound')
+        _safe_test_scope(parent)
+    except ValueError as error:
+        return {'supported':False,'reason':str(error),'next_action':'Read-only review; do not plan perturbations or change the asset to satisfy this checker.'}
+    return {'supported':True,'max_cases':3,'note':'Only declared bounded experiments; not all parameter combinations.'}
+
+
+def _snapshot(parent, out, ctrl):
+    """One bounded current observation, not a persistent delivery/evidence ledger."""
+    children=parent.children()
+    if len(children)>128:raise ValueError('review snapshot budget: at most 128 direct SOP nodes')
+    _,g=q._geometry(out)
+    pieces={}
+    named=g.findPrimAttrib('name') is not None
+    for prim in g.prims():
+        if named:
+            name=prim.stringAttribValue('name')
+            pieces[name]=pieces.get(name,0)+1
+    point_groups=[]
+    for group in g.pointGroups()[:32]:
+        names=sorted({v.prim().stringAttribValue('name') for p in group.points() for v in p.vertices()}) if named else []
+        point_groups.append({'group':group.name(),'points':len(group.points()),'pieces':names[:32],'pieces_truncated':len(names)>32})
+    errors=[{'node':n.path(),'errors':list(n.errors())[:3]} for n in children if n.errors()]
+    warnings=[{'node':n.path(),'warnings':list(n.warnings())[:3]} for n in children if n.warnings()]
+    controls=[{'parm':p.name(),'value':p.eval(),'type':p.parmTemplate().type().name()} for p in ctrl.spareParms()
+              if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int,hou.parmTemplateType.Toggle)] if ctrl else []
+    return {'output':out.path(),'frame':float(hou.frame()),'geometry':h._geo_summary(g),
+            'source':h._geometry_fingerprint(out,hou.frame()),'geometry_sha256':q._data_signature(g),
+            'network':{'nodes':len(children),'errors':errors[:12],'warnings':warnings[:12],'issues_truncated':len(errors)>12 or len(warnings)>12},
+            'pieces':[{'name':k,'prims':v} for k,v in sorted(pieces.items())[:64]],'piece_count':len(pieces),'pieces_truncated':len(pieces)>64,
+            'point_groups':point_groups,'point_groups_truncated':len(g.pointGroups())>32,
+            'controls':controls[:64],'controls_truncated':len(controls)>64,'test_support':_test_support(parent,ctrl),
+            'scope':'Current output/coverage only. A name group is not a connected component; references are not control response.'}
+
+
 def _compact(result):
     """One batch only; never resend past batches or all pairwise measurements."""
     rows=[]
@@ -65,7 +102,7 @@ def _compact(result):
             checked=row.get(key)
             if checked is not None:
                 entries=checked if isinstance(checked,list) else checked.get('results',[])
-                rows[-1][key]=[{k:r[k] for k in ('id','status','reason','max_distance','failure_count','surface_components') if k in r} for r in entries]
+                rows[-1][key]=[{k:r[k] for k in ('id','status','reason','max_distance','failure_count','surface_components','source_pieces','target_pieces','piece_coverage_truncated') if k in r} for r in entries]
     return {k:result[k] for k in ('ok','status','restored','reason','parameter_writes','semantic_status') if k in result} | {
         'cases':rows,'scope':'this batch only; response-only evidence is not design correctness',
         'baseline_checks':{key:([{k:r[k] for k in ('id','status','reason','max_distance','failure_count') if k in r}
@@ -110,12 +147,13 @@ class ReviewService:
             if ctrl:
                 if ctrl.parent()!=parent:raise ValueError('review controller must be a direct child of parent')
                 h._require_owned(ctrl,'review controller')
+            snapshot=_snapshot(parent,out,ctrl)
             token=uuid.uuid4().hex
             self.lease={'token':token,'owner':session,'child':None,'parent':parent,'parent_id':parent.sessionId(),
                         'output_path':out.path(),'output_id':out.sessionId(),'controller':ctrl,
                         'controller_id':ctrl.sessionId() if ctrl else None,'hip':hou.hipFile.path(),
-                        'frame':float(hou.frame()),'graph':_graph(parent),'expires':time.monotonic()+600,'failed_restore':False}
-            return {'token':token,'scope':dict(scope),'test_permission':'temporary numeric controls only; no edits/saves/jobs'}
+                        'frame':float(hou.frame()),'graph':_graph(parent),'expires':time.monotonic()+240,'failed_restore':False,'cases_requested':0}
+            return {'token':token,'scope':dict(scope),'snapshot':snapshot,'test_permission':'temporary numeric controls only; no edits/saves/jobs'}
         if action=='end':
             _exact(request,{'action','token'})
             # Idempotent cleanup after expiry; never releases somebody else's lease.
@@ -145,7 +183,7 @@ class ReviewService:
         if spec.get('domain') and lease['controller'] is None:raise ValueError('domain needs the bound controller')
         tests=spec.get('tests',[]);views=spec.get('views',[])
         q.validate_capture_views(views)
-        if not isinstance(tests,list) or len(tests)>16:raise ValueError('review_test.tests requires 0..16 cases')
+        if not isinstance(tests,list) or len(tests)>3:raise ValueError('quick review supports 0..3 targeted cases; no exhaustive control sweep')
         if len(views)*(len(tests)+1)>8:raise ValueError('at most 8 review images per batch, including baseline')
         out=h._resolve(lease['output_path']);ctrl=lease['controller']
         if tests:
@@ -155,10 +193,12 @@ class ReviewService:
             except ValueError as error:
                 return {'status':'unverified','reason':str(error),'parameter_writes':0,'restored':True,
                         'semantic_status':'unverified','cases':[],'next_action':'Use read-only evidence; this test method does not support the asset.'}
-            numeric={p.name() for p in ctrl.spareParms() if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int)}
+            numeric={p.name() for p in ctrl.spareParms() if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int,hou.parmTemplateType.Toggle)}
             for case in tests:
                 if not isinstance(case,dict) or not isinstance(case.get('values'),dict) or not set(case['values'])<=numeric:
                     raise ValueError('review tests may change only numeric spare controls of the bound controller')
+            if lease['cases_requested']+len(tests)>3:raise ValueError('quick review experiment budget exhausted; report remaining uncertainty')
+            lease['cases_requested']+=len(tests)
         try:
             baseline=q.capture_views(out,views)
             if not tests:
@@ -171,7 +211,8 @@ class ReviewService:
                         'network':{k:network[k] for k in ('healthy','nonempty','warning_free','failure_reasons','error_nodes','warning_nodes') if k in network},
                         'groups':[{'group':p.name(),'prims':len(p.prims())} for p in g.primGroups()],
                         'point_groups':[{'group':p.name(),'points':len(p.points())} for p in g.pointGroups()],
-                        'controls':[{'parm':p.name(),'value':p.eval()} for p in ctrl.spareParms() if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int)] if ctrl else [],
+                        'controls':[{'parm':p.name(),'value':p.eval()} for p in ctrl.spareParms() if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int,hou.parmTemplateType.Toggle)] if ctrl else [],
+                        'test_support':_test_support(lease['parent'],ctrl),
                         'interfaces':interfaces,'topology':topology,'domain':domain}
             # Narrow internal capability, not an allow_foreign string supplied by
             # the model and not a change to the node's durable/runtime owner.

@@ -49,6 +49,26 @@ Packed/volume/NURBS等暂未验证的表示返回unverified。超点数/内存/�
 
 ## 控制契约：改变什么，什么必须不变
 
+### 实际表面组的轴向间隙（v12）
+
+上下叠放/沿轴布置的部件，可用最终输出primitive组计算投影间隙，避免重复构造公式自证。
+例如声明source为上方部件、target为下方部件：
+
+```python
+relations = [{'id': 'stack_projection', 'method': 'axis_gap',
+              'source_group': 'upper_surface', 'target_group': 'lower_surface',
+              'axis': 1, 'gap_range': [-0.001, 0.001], 'min_overlap': 0.01}]
+measured = geo_check_interfaces(out, relations)
+# 同一关系可以进入参数扰动窗口，在基准与每个case上复查：
+tested = test_controls(controller, out, tests, interfaces=relations)
+```
+
+数值仅示schema，范围按设计单位明确。量测是source.min[axis]−target.max[axis]；正数为分離，
+负数为轴向投影重叠。另外两轴区间重叠须≥min_overlap。曲面bbox相接不证明表面实际接触，
+需要真实接触时再加适用的点到面接口；不用于任意弯曲榫接、实体穿透深度或强度认证。
+source/target必须为实际交付中的非空且互不重叠primitive组；不得临时加入driver点伪造表面。
+观察→参数扰动→同关系复查→完整恢复应在test_controls内完成，不能以恢复了几个bbox替代bgeo恢复证据。
+
 在暴露参数时声明一个可测预期：具体输出部件、metric、测试值与有符号delta允许区间。
 优先测相关primitive group，避免整体bbox掩盖局部变化。至少确认每个交付控制有预期作用；
 相互依赖的控制再选择少量组合测试，不把一次通过说成全范围成立。
@@ -67,6 +87,10 @@ report = test_controls(controller, out, tests, interfaces=interfaces)
 
 示例基准length为1、单位米且输出长度一比一响应；实际参数/目标变化由任务决定。
 metric精确为bounds_size、bounds_center、bounds_min、bounds_max（axis0/1/2）、point_count、primitive_count、area；不接受center/min/max缩写。
+v11另支持point_mean（axis）、boundary_edges、piece_count（Polygon共享边连通）、max_point_displacement/mean_point_displacement。
+位移必须提供id_attrib：稳定唯一integer/string point ID，面连接在ID空间保持一致；对应关系变化返回unverified。
+expectation可带range=[min,max]检查基准及扰动绝对范围，例如封闭面的boundary_edges要求range=[0,0]、delta=[0,0]；
+单纯delta=0不能证明基准已闭合。仍需至少一条响应delta排除0；有意分组切口不能无条件要求闭合。
 每case至少一个delta区间必须排除0以声明实际响应；不变量可作为额外expectation。
 这是数值标量测试，只传组件名，不直接传元组、菜单、按钮、multiparm或callback控制。
 测试值被范围钳制而未按要求生效时判失败，不把未真正执行的case计为通过。
@@ -84,6 +108,7 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 - `status=unverified`：证据方法不支持，不得改写成pass；换经过验证的数据表示或独立方法。
 - `restored=False`：状态恢复异常，先处理，不重试下一case。
 - `ok=True`：仅已声明接口/控制case通过；还需最终网络warning及视觉质量验收。
+- 数值最近距离是无符号邻近，不等于插入深度；整组bbox极值对称不是镜像几何。需要局部轴、明确部件对和覆盖范围，方法不能证明的关系保持unverified。
 - 保存草稿/部分交付不被这些门禁止，完成报告必须保留未完成项。
 
 修订生成器后刷新受影响检查，不沿用旧geometry_sha256/contract_sha256。接口检测和构造可
@@ -96,3 +121,38 @@ SideFX [Prim.nearestToPosition](https://www.sidefx.com/docs/houdini/hom/hou/Prim
 `dsh-quality-contracts.test.py`覆盖连接正例、方向正确但脱开、默认通过/扰动失败、空组、基数、
 自重叠、游离driver点、unsupported target、预算、死控制、原生Tube、表达式/cook恢复、ownership。
 证据：工具合同双版本本地verified，SOP工作流candidate；最后核对2026-09-06，不宣称制造认证。
+
+
+## v13：不改变交付网格的截面观察
+
+Applies when：独立Polygon部件在明确轴平面处应邻近另一表面，现有顶点太稀或点组选取随参数跳变。
+Do not use when：任意实体碰撞、融合部件、自交或需要证明整面接触；共面面/歧义截面保持unverified。
+
+```python
+interfaces = [{'id':'section_fit', 'method':'section_proximity',
+  'source_group':'supports', 'target_group':'cross_member',
+  'axis':1, 'plane_at':'target_center', 'expected_components':4,
+  'max_distance':0.002}]
+report = geo_check_interfaces(out, interfaces)
+```
+
+示例数字只是schema；组件数量和容差来自任务。每个源组件都需非空闭合截面，取实际交线段中点到目标面的距离。
+不需要给交付网格加Resample，也不把expected_points简单删除。component_coverage明确各组件样本量，
+预算/不支持保持显式状态。参数扰动复用同一interfaces，target_center每次来自目标实际几何。
+
+派生参数域可用数据化线性右值，例如移动量必须低于可用尺寸减去壁厚和余量：
+
+```python
+domain = [{'id':'clearance', 'left':'travel', 'op':'lt',
+  'right':{'terms':{'available_length':1, 'wall_thickness':-1}, 'constant':-0.01}}]
+```
+
+不执行表达式字符串、不自动钳制；它只验证声明case。至少选一个接近耦合边界的组合，
+对真实输出关系复验，不能用两个公开参数大小关系代替全部派生锚点。
+
+闭合壳的观察分三层：boundary_edges、orientation_conflicts、shell_orientation。
+后者positive只在简单非嵌套壳条件下解释为外向；自交/嵌套未测，开放表面不推断内外。
+双面预览能掩盖反向面；按HOM primitive normal与已知外表面方向核对，不能任取叉积约定。
+
+来源：v13工具候选；真实trace与独立HOM反例记录在development。实现回归见
+`dsh-modeling-semantics.test.py`，新模型自然采用及质量提升仍待新会话验收。

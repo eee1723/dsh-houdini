@@ -11,11 +11,102 @@
 
 ## 1. 现状总览
 
+### 2026-09-07 v13 候选：同题双模型暴露的执行语义缺口
+
+用户在双模型trace分析后授权实施。来源：8c15d536（GLM）#27/#34错误半径、#36 Merge前移、
+#42/#45尾部错误回滚；3371673a（Grok）#20/#25 Int菜单、#37–#42接口采样、#47视觉误报。
+完整108步审计及独立HIP反例见tools/out/two-model-stool-analysis-20260907.md。
+两次真实v12运行已各只注入1份消息快照；required_outputs、test_controls和Grok的axis_gap有自然采用证据。
+这不代表本轮v13已加载，也不能把两模型最终座面朝向错误写成质量验收通过。
+
+本轮仍5工具/57动词，6skills；保留既有WIP、Raw Gate、ownership、恢复与冻结matrix/holdout：
+- node_info默认24项，menu set_value与strict setter/preflight同源，修复Color primitive token被当表达式。
+  Int token-valued菜单使用实际存储值；普通Int/Float字符串表达式继续可用，菜单表达式用显式对象。
+- connect/disconnect_input返回有界inputs_before/after，说明Merge重排；verify_network简单output相对parent。
+- inspect新增逐壳有向体积sign，闭合/一致/朝外条件分开；不宣称已求解自交/嵌套实体。
+- section_proximity从最终Polygon实际截面取样，每个源组件需闭合非空截面；不加密交付网格。
+  共面/复杂截面unsupported；只证明样本邻近，不证明焊接/穿透/全表面关系。
+- domain右值允许最多8项线性控制组合和constant；检查派生尺寸余量，无eval/钳制/自动滑条保护。
+- media.inspection按DSH公开requestHeader + llm.resolveModelInfo预报图片输入能力；失败不影响渲染，
+  不改用户模型声明、不自动执行外部视觉。信号/1.5秒截止均有返回兜底。
+- SOP正文定向替换：当前操作查卡、朝向分层、Merge替换、耦合case和视觉疑点逐项核销；
+  schema细节放module reference，未写入吧台凳配方。工具卡补Revolve winding边界。
+
+验证记录：tools/tests/dsh-modeling-semantics.test.py、image-inspection-route.test.mjs；
+npm test 19个Node文件通过；H21.0.440/H22.0.368各29 Python回归通过，新增语义测试的
+空组/重叠/共面截面/预算/非有限系数反例最终在双版本再次通过。治理6skills/6注册、0issues/0warnings；
+npm pack dry-run包含77文件及必需资源，git diff --check通过。原始test15/test16在独立H21回放：
+GLM检出96条朝向冲突，Grok检出1个负向壳；绕过腿Resample后56面（原1352面），39个脚踏高度
+截面邻近检查39/39通过，完整几何恢复且两源HIP SHA-256不变。这不是全表面接触或模型语义验收。
+结果在tools/out/v13-regressions-H21.json、v13-regressions-H22.json及
+v13-original-counterexamples-21.0.440.json。首轮发现普通Int无menuItems异常并修正；
+历史connect精确对象断言已更新为原字段兼容+新增连接证据，HTTP桥在重建Host v13后复验。
+状态为source candidate；本轮未重启运行中Houdini/DSH，未修改test15/test16源HIP。
+新会话自然采用、视觉识别准确率、模型质量/效率收益仍待用户后续任务验证。
+
+### 2026-09-07 v12 候选：吧台凳反例的三项窄修
+
+用户批准实施复盘发现；保留之前WIP，基线见tools/out/stool-repair-baseline。仍5工具/57动词。
+
+- Sweep 2.0真实Shelf脚本在无input1时设surfaceshape=tube，而tab_create原先先初始化后接inputs。
+  现在仅对该已验证类型在显式input1接线后校正为input；build_module显式parms随后可覆盖，
+  不关闭其他Shelf初始化，也不根据未声明的用户选择猜截面。真实脚本的GUI节点创建入口替身
+  在双版复现原tube选择，再验证修复与无input1/显式tube反例。
+- build_module独立参数/tuple/menu/输入错误集中返回PreflightError，零创建，前32项及总数；
+  node_info在operation-evidence保留tuple components/usage_notes。静态零写错误不再一概
+  标recovery_unverified；此前有修改时仍按真实事务结果处理。required_outputs可要求1..16
+  新分支非空，避免整体Merge遮住缺失模块；未声明的空helper仍合法。
+- interfaces新增method=axis_gap：实际非空且不重叠primitive组的source.min−target.max与
+  横向投影交叠，接入build/query/test_controls同一基准/扰动/恢复路径；只证明投影关系，
+  不升级为真实接触/实体穿透。source/target表面不支持保持unverified。
+
+验证：npm test 18 Node；H21.0.440/H22.0.368各28 Python回归，结果在tools/out/v12-regressions-*.json；
+新增dsh-stool-repair覆盖真实随附脚本、显式覆盖、多错零写、必需空分支、18mm分離、横向错开、
+负间隙越界、自重叠/缺组/unsupported、扰动后关系失败及完整恢复。冻结最终吧台凳几何诊断
+实测gap=0.017999947m，判fail，源HIP SHA-256未变；tools/out/stool-v12-gap-result.json。
+实际GUI创建/新模型自然采用仍待验收，未重启live，不声明本轮品质提升已发布。
+
+### 2026-09-07 v11 源码候选：程序化建模观察与反馈
+
+用户随后确认“每条用户消息一次”策略。Host通过公开inbox/inserted在收件时启动有界采集，
+以消息ID缓存in-flight/结果；claim和后续assemble只复用。删除修改代际/30秒刷新与状态比较，
+失败也不自动重试。capture_requested_at与observed_at区分接收/实际采集；旧消息指代不会跟随
+后来选择改变。新消息和任务中追加消息各自采集，问候跳过，未知恢复路径首次读取时注明实际时间。
+此更改仅Host，待正在跑的任务结束后统一reload，不改当前任务运行配置。
+
+后续吧台凳live trace `82190a41…`证明：用户在turn前通过agent-preset/selected切到houdini，
+实际persona正确，metadata已成功取回。前四次Houdini快照中两次仅时间变化；宿主以全文相等去重，
+所以30秒采样及无效exec也会触发重复注入。另发现JSON整体括号转义破坏结构，首次assemble早于
+user/message落盘导致第一步缺快照。源码已补状态比较（排除observed_at/elapsed_ms、同用户状态不变复用文本）、
+仅JSON字符串token转义、公开agent/inbox/claimed捕获首条消息；定向与Node回归验证，未中断/热替换在跑任务。
+
+用户批准实施[全链路计划](procedural-modeling-repair-plan.md)，仍5工具/57动词，执行契约提升11。
+既有v10 WIP已保存差异和哈希；live health实读H21/v10，未重启，不声明候选已生效。
+
+- Host公开async prompt assemble补只读metadata context；当前为每用户消息一次（初版修改刷新已取消），
+  schema1固定/context经主线程队列，超时取消，无geometry/cook。几何选择暂not_observed。
+- node_info增加literal过滤诊断和随包操作卡；numeric tuple表达式写前拒绝并提示组件名。
+  exec transaction报告最终状态/相关identity；模型展示去掉重复tracer stdout，完整ledger保留。
+- geo_piece_stats inspect模式观察有界Polygon拓扑/局部basis；test_controls加局部均值、
+  边界/件数、稳定ID位移与基准/扰动绝对range。未知表示/对应关系不伪称pass。
+- render_view加focus_group/isolate/orthographic/framing_bounds，目标空/缺失拒绝，
+  相机与proxy双版HOM验证使用renderer替身，未当作GUI像素或视觉语义证据。
+- SOP正文5580→3095字符，强调正确原型、模块/关系循环和观测方法；trace新增实际preset、
+  persona、耗时/文本体积和transaction信息。原椅子重提取仍74calls/195verbs，工具时长65917ms；
+  可省重复tracer文本243819/561275字符（43.4%），不是新模型提速实测。
+- 创建返回缺preset时独立查session/list；水印兼容0.1.2 projectionValues。历史cordis来源尚不能
+  由日志唯一归因，不把请求了houdini/看见工具当有效persona证明。
+
+验证：npm test 18 Node文件；H21.0.440/H22.0.368各27 Python回归；6skill/6注册，audit零问题；
+pack资源包含context、操作卡与几何观察模块。详见tools/out/v11-regressions-H21.json及H22.json。
+尚待：真实GUI上下文/图像、新session曝光、未见模型行为验收；通用接地/镜像/有符号插入封装、
+更多诊断展示和方法判据自动风险索引仍未完成。计划保留各包状态，不标released；冻结矩阵/holdout未改。
+
 | 模块 | 状态 | 关键产物 |
 |---|---|---|
 | 工具（host half） | ✅ | 5 个 `houdini_*` 工具 |
-| 动词词表（bridge namespace） | ✅ 源码57/语义v9候选 | 57 个目录入口（55主动词+2兼容入口）；五工具不增，底层检查保留，生产delivery状态流程已退役 |
-| 独立资产评审 | 🔶 v9候选，未live验收 | 一次前台spawn，自主批测/截图/恢复和一次汇总；原始需求由Host转交，权限临时限定且不改ownership。六个skills；见[边界/验证](independent-asset-review.md) |
+| 动词词表（bridge namespace） | ✅ 源码57/语义v10候选 | 57 个目录入口（55主动词+2兼容入口）；五工具不增，底层检查保留，生产delivery状态流程已退役 |
+| 独立资产评审 | 🔶 v10按需快速复核候选 | 普通建模不默认委派；当前摘要/历史工具事实/提前适用性，优先已有图，最多3case/4分钟。v9真实委派已验、扰动未验；见[证据与去留条件](independent-asset-review.md) |
 | 人性化落位（O1） | ✅ 2026-09-04 | `tab_create` 连完 inputs 自动落位（无输入放右侧新列）、`connect` 纠流（dst 违反自顶向下流才 snap，已在下游绝不动，返回 `position_adjusted`）、`layout_nodes` 新增 `mode='flow'` 拓扑分层；H21/H22 `dsh-layout-flow` 回归通过 |
 | 动词追踪 tracer（Phase 1） | ✅ 已激活（2026-08-17 会话实测 `verbs (N)` 段回传） | `verbs` 字段 + `[verb]` stdout 行 |
 | 裸 hou advisory | ✅ | AST 观察层继续记录已覆盖裸调用与仓库写入风险 |
@@ -33,13 +124,32 @@
 | Houdini 侧一键启动/桥/WebView | ✅ | `dsh_launcher.py`（profile 模式）等 |
 | GUI 启动线程边界 | ✅ DSH 0.1.2 / QtWebEngine 108 live smoke | QWebEngine async retry + launcher worker listener/PID/session preflight；DocumentCreation polyfill 覆盖 AbortSignal.any 与 Promise.withResolvers；普通 Open 不杀现有 Bridge（§2.68–§2.69） |
 | 视觉产图/relay/证据判定 | 🔶 vision-toolkit 0.1.40 runtime 已恢复；OpenGL PNG 色彩修复待 runtime reload / GUI smoke；语义 smoke 待跑 | settings API 已兼容；0.1.40 的旧 `session.events` 调用由 exact-version/exact-callsite repair 收敛到 `snapshotEvents()`；`render_view` 的 PNG/JPEG/TIFF 改为 scene-linear → OCIO encoded sRGB，EXR/HDR 保持线性并回报 `output_color`（§2.71）；Web profile/新会话可加载，本机 DashScope 配置保留；semantic inspection 仍须独立同图验证（§2.35–§2.39 / §2.68–§2.71） |
-| Host / Bridge 词表握手 | ✅ 旧 49 动词 live 验证；50 动词 candidate 待 reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
+| Host / Bridge 词表握手 | ✅ live v9/57只读确认；v10源码待reload | 场景执行前比较独立 SHA-256，版本漂移 fail-closed；内部 `$HIP` probe 已强制 read-only |
 | B0 评测协议 | ✅ v4 矩阵跑完；v5 已冻结，回归暂缓改轻量验证 | v4 `b0-2026-09-02-v4` 3×2 calibration 6/6 completed；v5 `b0-2026-09-03-v5`（C1 glm 图像声明 + C2 报告原文入 target 输入 + settingsFileSha256 入协议）manifest/matrix 已冻结；2026-09-04 六场回归暂缓（C1/C2 为评审/声明侧变更），改 C2 证据包重评 + read_image smoke，整批攒到下次 surface 变更（plan §12） |
 | 跨域质量闭环 | 🔶 B2 归因已记录（§10）；v5 整批回归暂缓，后续优化计划 O1–O5 与下一批触发条件见 plan §12 | 6/6 coreSuccess、0 hard failure、0 泄漏；B3 候选五项按门槛标注；holdout 未解封 |
 
 ---
 
 ## 2. 已完成
+
+### 2026-09-07：v10执行效率与按需快速复核
+
+用户明确批准作者工具和评审一起减负，评审是否保留以新增问题发现/有效返工判断。
+真实桌子7d145b95…为作者61calls/评审18calls、约42分钟；评审因Wrangle零写入，仍总评
+pass；独立回读发现apron_ends只覆盖前后围板。作者实际三个数值控制+toggle已测，不能
+将其余控制一起判过。用户确认期间调参/切换节点，基准变化不作为误拦截。
+
+v10仍57动词，评审默认按需，Host一次交付原始要求、当前快照/控制/接口piece覆盖、
+实验适用性和历史工具事实，去掉重复skill加载/全网盘点；只query/exec/read_image，
+四分钟/全程3case，问题清单附范围，不整体认证。没有长期证据缓存或退回delivery。
+node_info/build_module支持有界静态multiparm/count；cook_node刷新旧错误；构建失败
+直接给cook_details；Toggle0/1受控测试；headless不访问hou.ui。失败undo后基于本调用
+确切created identity清理残留，foreign后代阻断，未放宽ownership。
+
+Node17文件及H21/H22各25脚本；部分undo故障注入覆盖残留身份收口，原GUI/shelf残留
+根因尚未独立复现。独立前向材料检查只读1次材料+2张图即指出覆盖遗漏/未测边界，简单
+Box修改不委派；不是新K3实测或质量A/B。v10未自动重启live、未改源HIP，正式矩阵和
+holdout不动。详细结果、候选发布边界与评审去留条件见independent-asset-review.md。
 
 ### 2026-09-07：v9独立评审替代delivery生产流程
 
@@ -2233,7 +2343,15 @@ QPainter 圆弧 spinner。
 
 ---
 
-## 5. 下一步（按依赖顺序，2026-09-01 review）
+## 5. 下一步（2026-09-07更新）
+
+当前顺序：先让下次正常任务加载v10验证作者错误诊断/小模块构建，再观察按需快速复核的
+新增缺陷与实际返工收益。真实GUI扰动恢复未验；不为证明评审而重复建模或扩矩阵。
+若持续只复述作者结果/unsupported，保持显式只读复核，把资源投入执行质量。
+
+以下为2026-09-01阶段计划历史快照；其中已完成/无需reload不代表当前v10加载状态。
+
+### 历史阶段计划
 
 > benchmark、评分和准入规则只在
 > [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md) 维护；本节只记录执行状态，

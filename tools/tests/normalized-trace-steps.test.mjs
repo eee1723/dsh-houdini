@@ -93,3 +93,6 @@ assert.equal(structured.verbs[0].ok, true, 'transport ledger success stays disti
 assert.equal(structured.verbs[0].result.ok, false);
 assert.equal(structured.verbs[0].result.frame, 7);
 assert.equal(structured.verbs[0].result.output, 'Z:/project/render/a.png');
+const rolled = normalizeTraceSteps([call(10,'r','houdini_exec',{}),result(15,'r','transaction:\n{"status":"rolled_back","nodes":[]}\n\n'+evidenceText,true)]).steps[0];
+assert.equal(rolled.durationMs,5);
+assert.equal(rolled.transaction.status,'rolled_back');

@@ -83,6 +83,11 @@ const plain = await run('http://127.0.0.1:3081/');
 assert.deepEqual(plain.injected, []);
 assert.deepEqual(plain.opened, []);
 assert.deepEqual(plain.replaced, []);
+const watermark = plain.registrations['houdini-watermark'].component;
+assert(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'houdini'}}}})}),
+  'DSH 0.1.2 projected preset must show Houdini mode');
+assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{agentPreset:'houdini',projectionValues:{agentPreset:'cordis'}}}})}),null,
+  'current projected preset must override legacy stored value');
 
 const view = plain.registrations.houdinitrace.component;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '

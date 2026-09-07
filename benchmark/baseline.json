@@ -2,19 +2,19 @@
   "schemaVersion": 2,
   "createdAt": "2026-09-04T10:44:56.2691447Z",
   "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "9e7e8e0416a29399259d8ebe72f6e6acdec1af26b58996ea26d10d86d78498b0",
-  "compatibilitySurfaceSha256": "4e3903b658f68d997c9e2997227063369242467e024fa32265b6b86352d097b2",
+  "agentSurfaceSha256": "1b6f8d19091a236c15d5bf695020095014fe7bfabb0c4fd243e4ad9ffcdc7a32",
+  "compatibilitySurfaceSha256": "7ec2aae4e081ee2bec93cca7780fa9c06064c88b5f88e318e85030aa399d1b52",
   "runtimeVerification": {
     "matchesBaseline": false,
-    "note": "2026-09-07 execution-contract v9/57 verbs candidate: production delivery registration/cache retired; foreground independent spawn reviewer with Host-bound temporary control testing and optional captures/restoration. Six bundled skills. Deterministic Node and dual-Houdini regressions are not a real model/GUI acceptance. Read-only health on 2026-09-07 still reports live Bridge v8/57; no automatic restart or source HIP changes. Historical verifiedAt/loadedRepositoryCommit below are not v9 observations. Frozen protocol/matrix/holdout unchanged.",
+    "note": "2026-09-07 v13 source candidate: menu values, connection snapshots, shell orientation, section proximity, linear domain and image route metadata. Prior two v12 sessions verified once-per-message context and adopted checks; v13 has no live reload or new model acceptance.",
     "verifiedAt": "2026-09-04T00:00:00.0000000Z",
     "loadedRepositoryCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
     "workingTreeDirty": true,
     "pendingReload": [
-      "57-verb execution contract v9: remove production delivery state; add independent reviewer and short-lived scoped experiment permission",
-      "foreground spawn inheritance/tool restriction/cleanup in a fresh DSH session",
-      "real GUI parameter-state capture, media access and recovery",
-      "six-skill catalog and updated SOP/preset review routing"
+      "Execution contract v13 Host/Bridge",
+      "Menu values and connection snapshots",
+      "Shell orientation and section proximity",
+      "Linear domain and image inspection routing"
     ],
     "houdini": "21.0.440",
     "dsh": "0.1.2-rc.1",

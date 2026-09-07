@@ -17,6 +17,12 @@
 
 ## 1. 证据边界
 
+先核对session元数据的effective preset与request/header实际persona，再核对skill/card曝光。工具存在不等于Houdini persona已加载。
+v11transaction区分动词执行与最终提交；rolled_back中的成功ledger不得当当前依赖。删除/替换输出可解除旧checkpoint，不能只按旧路径永久记未解决。
+检查判据是否蕴含标签：unsigned距离不是插入深度、bbox极值不是镜像对称、全局最低y不是每足接地。
+只测response不证明扰动后invariants；事后改阈值需独立依据；unsupported保留范围。
+图像访问与正确识别分别记录；focus_group/isolate/projection/framing_bounds明确实际观察条件。
+
 必须同时使用三层证据：
 
 - 原始层：用户/assistant 消息、tool call、tool result、turn 结束状态。

@@ -63,6 +63,25 @@ try:
             "workspaceId": "workspace-modern", "agentPreset": "houdini",
         }}}),
     ], calls
+    # A missing creation projection requires independent readback, never success by request intent.
+    for actual in ('houdini', 'cordis', None):
+        reads = []
+        def missing_projection(method, payload, timeout=dsh_launcher.DSH_RPC_TIMEOUT):
+            if method == 'workspace/create':
+                return {'workspace': {'workspaceId': 'w', 'path': r'E:\modern-workspace', 'sessionIds': []}}
+            if method == 'session/create': return {'sessionId': 'new'}
+            if method == 'session/list':
+                reads.append(True)
+                return {'items': [] if len(reads)==1 else [{'sessionId':'new','projections':{'values':{'agentPreset':actual}}}]}
+            raise AssertionError(method)
+        dsh_launcher._dsh_rpc_wire = missing_projection
+        if actual == 'houdini':
+            assert dsh_launcher.ensure_houdini_session(r'E:\modern-workspace')[0]=='new'
+        else:
+            try:dsh_launcher.ensure_houdini_session(r'E:\modern-workspace')
+            except RuntimeError as e:assert 'did not activate' in str(e)
+            else:raise AssertionError('unverified preset was accepted')
+        assert len(reads)==2
 finally:
     dsh_launcher._dsh_rpc = original_rpc
     dsh_launcher._dsh_rpc_wire = original_wire

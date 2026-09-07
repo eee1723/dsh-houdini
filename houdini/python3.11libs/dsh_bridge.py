@@ -69,7 +69,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 9
+_EXECUTION_CONTRACT_VERSION = 13
 _RUNTIME_ID = uuid.uuid4().hex
 # Remove the retired v8 callback when reloading an existing runtime.
 if globals().get('_delivery_hip_callback') is not None:
@@ -655,6 +655,18 @@ def _operation_summary(name: str, result):
     if not isinstance(result, dict):
         return None
     r = result.get('validation', result) if name == 'build_module' else result
+    if name == 'node_info':
+        components = [{'name':p['name'],'components':p['components']} for p in r.get('parameters',[]) if len(p.get('components',[]))>1]
+        return {k:r[k] for k in ('parent','type','version','visible','operation_card','usage_notes','filter_mode','filter','parameter_count','total_parameter_count','next_action') if k in r} | {
+            'tuple_components':components[:20], 'tuple_components_truncated':len(components)>20,
+            'setting_cards':[{k:p[k] for k in ('name','type','components','default','menu','menu_dynamic') if k in p}
+                             for p in r.get('parameters',[])[:24]],
+            'setting_cards_truncated':len(r.get('parameters',[]))>24,
+            'parameter_scope':'returned filtered parameter card only; retain components and menu set_value when summarizing'}
+    if name in ('connect','disconnect_input'):
+        return result
+    if name == 'geo_piece_stats' and 'shell_orientation' in r:
+        return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
     if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
         return None
     fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
@@ -662,8 +674,10 @@ def _operation_summary(name: str, result):
               'fresh','file_bytes','stale','user_state_restored','dry_run','valid','node','status',
               'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
-              'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller','baseline_interfaces','pair_tests','reason','parameter_writes')
+              'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller','baseline_interfaces','pair_tests','reason','parameter_writes','required_outputs')
     out = {k: r[k] for k in fields if k in r}
+    if name == 'render_view' and isinstance(r.get('framing'), dict):
+        out['framing'] = r['framing']
     if result.get('interface_checks') is not None:
         out['interface_checks'] = result['interface_checks']
     for field in ('error_nodes','warning_nodes','errors','warnings'):
@@ -680,8 +694,15 @@ def _operation_summary(name: str, result):
     return out
 
 
-def _make_tracer(name: str, fn, ledger: list):
+def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
     def wrapped(*args, **kwargs):
+        if observed_nodes is not None and name in _MUTATING_VERB_NAMES:
+            for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller') if k in kwargs]:
+                try:
+                    node = value if isinstance(value, hou.Node) else hou.node(value) if isinstance(value, str) and value.startswith('/') else None
+                    if node is not None: observed_nodes[node.sessionId()] = node.path()
+                except hou.Error:
+                    pass
         if len(ledger) >= _VERB_ENTRY_LIMIT:
             error = f"verb ledger limit {_VERB_ENTRY_LIMIT} reached; split into smaller checkpoints"
             if len(ledger) == _VERB_ENTRY_LIMIT:
@@ -731,6 +752,9 @@ def _make_tracer(name: str, fn, ledger: list):
             if isinstance(e, dsh_hou_helpers.CheckpointError):
                 ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence))
                 ledger[-1]['check_status'] = 'failed'
+            if isinstance(e, dsh_hou_helpers.PreflightError):
+                ledger[-1]['summary'] = _jsonable(e.evidence)
+                ledger[-1]['check_status'] = 'failed'
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> ERROR: {e}")
             raise
@@ -779,18 +803,19 @@ def run_code(code: str, allow_raw: str | None = None,
     _review_service.guard_code(owner_session,read_only)
     with _jobs_lock:_review_busy=_review_service.active()
     verb_ledger: list = []
+    observed_nodes = {}
     namespace = {"hou": hou}
     for _name, _fn in _VERBS.items():
         if read_only and _name in _MUTATING_VERB_NAMES:
             continue
-        namespace[_name] = _make_tracer(_name, _fn, verb_ledger)
+        namespace[_name] = _make_tracer(_name, _fn, verb_ledger, observed_nodes)
     stdout = _CappedStringIO(_MAX_STREAM_BYTES)
     stderr = _CappedStringIO(_MAX_STREAM_BYTES)
     error = None
     rollback = None
     raw_usage = _raw_usage_analysis(code)
     gate_outcome = "not_applicable"
-    with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call):
+    with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call), dsh_hou_helpers._track_created_nodes() as created_nodes:
         # Clear even for preflight rejection and snapshot before releasing the
         # execution lock, so one request cannot inherit another request's media.
         dsh_hou_helpers._PRODUCED_IMAGES.clear()
@@ -833,6 +858,7 @@ def run_code(code: str, allow_raw: str | None = None,
                             original_error = traceback.format_exc()
                             applied = False
                             rollback_error = None
+                            removed_residuals = []
                             try:
                                 labels = list(hou.undos.undoLabels())
                                 if labels and labels[0] == label:
@@ -840,6 +866,7 @@ def run_code(code: str, allow_raw: str | None = None,
                                     applied = True
                                     dsh_hou_helpers._OWNED_NODE_SESSIONS.clear()
                                     dsh_hou_helpers._OWNED_NODE_SESSIONS.update(ownership_before)
+                                    removed_residuals = dsh_hou_helpers._cleanup_failed_creations(created_nodes, ownership_before)
                             except BaseException as undo_error:
                                 rollback_error = str(undo_error)
                             rollback = {
@@ -854,6 +881,8 @@ def run_code(code: str, allow_raw: str | None = None,
                                 )
                             if rollback_error is not None:
                                 rollback["error"] = rollback_error
+                            if removed_residuals:
+                                rollback['removed_created_residuals'] = removed_residuals
                             error = original_error
                     else:
                         try:
@@ -875,6 +904,27 @@ def run_code(code: str, allow_raw: str | None = None,
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
     }
+    mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
+    if error is None:
+        transaction_status = 'committed' if mutation_attempted else 'no_scene_change'
+    elif rollback and rollback.get('applied') and not rollback.get('error'):
+        transaction_status = 'rolled_back'
+    elif not mutation_attempted or gate_outcome in ('blocked', 'forbidden', 'read_only_blocked'):
+        transaction_status = 'no_scene_change'
+    elif not created_nodes and not raw_usage.get('coveredMutations') and not raw_usage.get('suspectedMutations') and all(
+            v.get('summary',{}).get('scene_writes') == 0 for v in verb_ledger if v['verb'] in _MUTATING_VERB_NAMES):
+        transaction_status = 'no_scene_change'
+    else:
+        transaction_status = 'recovery_unverified'
+    identities = sorted(set(observed_nodes) | created_nodes)
+    states = []
+    for identity in identities[:64]:
+        node = hou.nodeBySessionId(identity)
+        states.append({'identity': identity, 'prior_path': observed_nodes.get(identity),
+                       'exists': node is not None, 'path': node.path() if node else None})
+    envelope['transaction'] = {'status': transaction_status, 'scope': 'Houdini undoable scene edits only; file/external side effects are separate',
+                               'nodes': states, 'nodes_truncated': len(identities) > 64,
+                               'coverage': 'created identities and primary mutation arguments, not all implicit dependencies'}
     # 本次 exec 产出的图片（render_frame/render_view/viewport_screenshot 登记）：
     # host 侧经 /media 端点把字节拉回会话工作区，vision/fs 工具才读得到
     # （工作区沙箱；2026-08-19 草地 trace：vision_glance 读 $HIP 截图被拒）。
@@ -947,7 +997,7 @@ def _pump() -> None:
             done.set()
 
 
-def _execute(func):
+def _execute(func, timeout=None):
     """Run `func` on Houdini's main thread and wait for its return value.
 
     Owning-thread callers may execute inline (including disposable hython).
@@ -960,7 +1010,11 @@ def _execute(func):
     done = threading.Event()
     holder: dict = {}
     _work_queue.put((func, done, holder))
+    deadline = time.monotonic() + timeout if timeout is not None else None
     while not done.wait(0.25):
+        if deadline is not None and time.monotonic() >= deadline:
+            holder['cancelled'] = True
+            raise TimeoutError('Houdini main-thread queue is busy; metadata observation expired')
         if not _pump_active:
             holder["cancelled"] = True
             raise RuntimeError("Houdini main-thread pump stopped before queued execution completed")
@@ -1187,6 +1241,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path == '/context':
+            if type(body.get('schema_version')) is not int or body.get('schema_version') != 1 or set(body) != {'schema_version'}:
+                self._send({'ok': False, 'error': 'context requires schema_version=1 only'}, status=400)
+                return
+            from dsh_context import scene_context
+            try:
+                self._send({'ok': True, 'result': _execute(
+                    lambda: scene_context(_RUNTIME_ID, _HOU_THREAD_ID), timeout=1.5)})
+            except (TimeoutError, RuntimeError) as exc:
+                self._send({'ok': False, 'status': 'unavailable', 'reason': str(exc)})
+            return
         if self.path=='/review':
             if len(json.dumps(body).encode('utf-8'))>80*1024:
                 self._send({'ok':False,'error':'review request exceeds 80KiB'},status=413);return

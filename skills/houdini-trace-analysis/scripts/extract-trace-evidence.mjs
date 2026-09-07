@@ -146,6 +146,7 @@ function analyzeTrace(file) {
           model: event.data?.header?.config?.model || null,
           systemChars: system.length,
           systemHash: hash,
+          personaLines: system.split('\n').filter(line => /^You are (?:a|an) /.test(line)).slice(0, 4),
           mentionedCatalogVerbs: catalogNames.filter(
             (name) => new RegExp(`\\b${name}\\b`).test(system),
           ),
@@ -178,6 +179,8 @@ function analyzeTrace(file) {
       callSeq: source.callSeq,
       resultSeq: source.resultSeq,
       time: source.time,
+      callTime: source.callTime,
+      durationMs: source.durationMs,
       turn: source.turn,
       step: source.step,
       tool: source.tool,
@@ -193,6 +196,7 @@ function analyzeTrace(file) {
       rawMethods: source.rawMethods,
       mutatingRawMethods: source.mutatingRawMethods,
       advisory: source.advisory,
+      transaction: source.transaction,
       rollback: source.rollback?._raw ? { _raw: clip(source.rollback._raw) } : source.rollback,
       rawUsage: source.rawUsage?._raw ? { _raw: clip(source.rawUsage._raw) } : source.rawUsage,
     };
@@ -393,6 +397,19 @@ function analyzeTrace(file) {
     replayedResults,
     unmatchedResults,
     eventCount: events.length,
+    effectivePreset: {
+      initial: events.find(e => e.type === 'session')?.agentPreset ?? null,
+      changes: events.filter(e => e.type === 'agent-preset/selected').map(e => ({seq:e.seq,time:e.time,preset:e.data?.agentPreset})),
+    },
+    observationContexts: events.filter(e => e.type === 'user/message' && e.data?.source?.kind === 'plugin')
+      .flatMap(e => (e.data?.source?.sections || []).filter(s => s.name === 'dsh-houdini:scene-context')
+        .map(s => ({seq:e.seq,time:e.time,text:s.text}))),
+    executionCost: {
+      toolDurationSumMs: steps.reduce((n,s) => n + (s.durationMs ?? 0), 0),
+      measuredToolDurations: steps.filter(s => s.durationMs !== null).length,
+      resultChars: normalized.steps.reduce((n,s) => n+s.resultText.length,0),
+      note: 'Call-to-result sum includes waits and possible overlap; gaps are not a direct model inference-time measurement.',
+    },
     startTime: Number.isFinite(firstTime) ? firstTime : null,
     endTime: lastTime || null,
     durationMs: Number.isFinite(firstTime) && lastTime ? lastTime - firstTime : null,

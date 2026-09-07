@@ -7,6 +7,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const defaultRoot = path.dirname(here)
 
 export const AGENT_SURFACE_ENTRIES = Object.freeze([
+  'houdini/node-operation-contracts.json',
   'docs/tool-design.md',
   'presets',
   'skills',
@@ -17,6 +18,7 @@ export const AGENT_SURFACE_ENTRIES = Object.freeze([
 // instructions. A Trace UI or launcher fix must run Host/Qt/profile lifecycle
 // gates, but should not by itself trigger the expensive model capability matrix.
 export const COMPATIBILITY_SURFACE_ENTRIES = Object.freeze([
+  'houdini/node-operation-contracts.json',
   'client.js',
   'package.json',
   'dsh-profile.requirements.json',
@@ -55,7 +57,7 @@ function walkFiles(absolute, root) {
 export function listAgentSurfaceFiles(root = defaultRoot) {
   return AGENT_SURFACE_ENTRIES
     .flatMap((entry) => walkFiles(path.join(root, entry), root))
-    .filter((file) => /\.(?:js|mjs|ts|md|ya?ml)$/.test(file))
+    .filter((file) => /\.(?:js|mjs|ts|json|md|ya?ml)$/.test(file))
     .filter((file) => !file.endsWith('generated-verb-contract.ts'))
     .sort()
 }

@@ -825,7 +825,16 @@ def ensure_houdini_session(workspace_dir: str) -> tuple[str, str]:
     agent_preset = created.get("agentPreset")
     if not isinstance(session_id, str) or not session_id:
         raise RuntimeError("session.create succeeded without a sessionId")
-    if agent_preset is not None and agent_preset != HOUDINI_AGENT_PRESET:
+    if agent_preset is None:
+        observed = (
+            _dsh_rpc_wire('session/list', {'args': {'_request': {}}})
+            if modern_wire else _dsh_rpc('session.list', {})
+        ).get('items') or []
+        row = next((item for item in observed if item.get('sessionId') == session_id), {})
+        agent_preset = row.get('agentPreset')
+        if agent_preset is None:
+            agent_preset = (row.get('projections') or {}).get('values', {}).get('agentPreset')
+    if agent_preset != HOUDINI_AGENT_PRESET:
         raise RuntimeError(
             "session.create did not activate the Houdini preset "
             f"(expected {HOUDINI_AGENT_PRESET!r}, got {agent_preset!r})"

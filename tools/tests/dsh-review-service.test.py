@@ -28,7 +28,9 @@ tests=[{'id':'width','values':{'width':2},'expectations':[{'metric':'bounds_size
        {'id':'dead','values':{'dead':2}}]
 try:
     rejects(lambda:request('begin','stranger',scope=scope),'ownership guard')
-    token=request('begin',scope=scope)['token']
+    opened=request('begin',scope=scope)
+    assert opened['snapshot']['test_support']['supported'] and len(opened['snapshot']['controls'])==2,opened
+    token=opened['token']
     rejects(lambda:request('begin',scope=scope),'another review')
     request('bind',token=token,child='reviewer')
     rejects(lambda:request('bind',token=token,child='different'),'exactly one')
@@ -49,8 +51,11 @@ try:
     # Independent response smoke is never silently upgraded to design correctness.
     result=request('test','reviewer',token=token,request={'tests':[{'id':'responsive','values':{'width':1.5}}]})
     assert result['cases'][0]['response_status']=='responsive' and result['status']=='unverified'
+    rejects(lambda:request('test','reviewer',token=token,request={'tests':[tests[0]]}),'budget exhausted')
     rejects(lambda:request('test','reviewer',token=token,request={'tests':[{'id':'bad','values':{'tx':1}}]}),'numeric spare')
     rejects(lambda:request('test','reviewer',token=token,request={'owner':'author'}),'expected fields')
+    request('end',token=token)
+    token=request('begin',scope=scope)['token'];request('bind',token=token,child='reviewer')
     # Capture runs on the perturbed state and returns after restoration, without
     # relying on a real GL context in deterministic headless tests.
     original_ui=hou.isUIAvailable;original_render=h.render_view;seen=[]
@@ -82,7 +87,9 @@ try:
     ctrl.parm('width').set(1)
     # No VEX/Python/file/callback mutation experiments; normal authoring is not gated.
     node=root.createNode('python','unsafe')
-    token=request('begin',scope=scope)['token'];request('bind',token=token,child='reviewer')
+    opened=request('begin',scope=scope)
+    assert not opened['snapshot']['test_support']['supported'] and 'unsafe' in opened['snapshot']['test_support']['reason']
+    token=opened['token'];request('bind',token=token,child='reviewer')
     unsupported=request('test','reviewer',token=token,request={'tests':tests})
     assert unsupported['status']=='unverified' and unsupported['parameter_writes']==0
     request('end',token=token);node.destroy()

@@ -54,6 +54,17 @@ class CheckpointError(RuntimeError):
         self.evidence = evidence
 
 
+class PreflightError(ValueError):
+    """Independent static errors collected before module creation starts."""
+    def __init__(self, errors):
+        self.evidence = {'ok': False, 'phase': 'static_preflight', 'scene_writes': 0,
+                         'errors': errors[:32], 'error_count': len(errors),
+                         'errors_truncated': len(errors) > 32,
+                         'next_action': 'Fix the listed fields together; no nodes were created by this module.'}
+        super().__init__('module static preflight failed (zero scene writes): ' +
+                         '; '.join(f"{e['node']}: {e['message']}" for e in errors[:32]))
+
+
 # ``render_view`` infrastructure is session-scoped service state, not a
 # per-task probe. Deleting an OpenGL ROP (or a node it references) after a
 # successful render can make H21 enter its process-fatal GL capability path.
@@ -78,6 +89,38 @@ _ACTIVE_OWNER_SESSION: str | None = None
 _ACTIVE_OWNER_CALL: str | None = None
 _OWNED_NODE_SESSIONS: dict[int, dict] = {}
 _REVIEW_PARAMETER_ACCESS = None
+_CREATION_JOURNAL = None
+
+
+@contextlib.contextmanager
+def _track_created_nodes():
+    """Retain exact created identities across nested module/provenance cleanup."""
+    global _CREATION_JOURNAL
+    previous = _CREATION_JOURNAL
+    created = set()
+    _CREATION_JOURNAL = created
+    try:
+        yield created
+    finally:
+        _CREATION_JOURNAL = previous
+
+
+def _cleanup_failed_creations(created, ownership_before):
+    removed = []
+    # Never infer ownership from paths or an agent-created parent. A partial
+    # shelf/undo recovery can resurrect a registered identity after its registry
+    # entry was removed; only identities recorded in this call are eligible.
+    with hou.undos.disabler():
+        for node_id in sorted(created - set(ownership_before), reverse=True):
+            node = hou.nodeBySessionId(node_id)
+            if node is None:continue
+            descendants = node.allSubChildren()
+            if any(n.sessionId() not in created for n in descendants):
+                raise RuntimeError(f'rollback cleanup refused foreign descendants of {node.path()}')
+            removed.append(node.path())
+            node.destroy()
+            _OWNED_NODE_SESSIONS.pop(node_id, None)
+    return removed
 
 
 @contextlib.contextmanager
@@ -132,6 +175,8 @@ def _register_owned_node(node) -> None:
             "path_at_creation": item.path(),
         }
         _OWNED_NODE_SESSIONS[int(item.sessionId())] = entry
+        if _CREATION_JOURNAL is not None:
+            _CREATION_JOURNAL.add(int(item.sessionId()))
         item.setUserData(_TASK_OWNER_KEY, _ACTIVE_OWNER_SESSION)
         if _ACTIVE_OWNER_CALL:
             item.setUserData(_TASK_OWNER_CALL_KEY, _ACTIVE_OWNER_CALL)
@@ -528,6 +573,8 @@ def resolve_latest_type(category, base: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _network_editor():
+    if not hou.isUIAvailable():
+        return None
     pane = toolutils.networkEditor()
     if pane is not None:
         return pane
@@ -1022,6 +1069,7 @@ def tab_create(
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
     - ``inputs``：可选，创建后按序连到 input 0..n（节点或路径均可；
       连接失败会抛错，不会静默跳过）。
+      Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
     - 落位：连完 inputs 后自动摆放——有输入时放到所有输入下游
@@ -1081,6 +1129,14 @@ def tab_create(
         for index, source in enumerate(input_nodes):
             if source is not None:
                 node.setInput(index, source)
+        # Sweep's shipped shelf selects a built-in tube before our explicit
+        # second input is connected. Reconcile this known input-dependent
+        # initializer after wiring. build_module applies explicit parms later.
+        if latest == 'sweep::2.0' and len(input_nodes) > 1 and input_nodes[1] is not None:
+            shape = node.parm('surfaceshape')
+            if shape is None or 'input' not in shape.menuItems():
+                raise ValueError('Sweep 2.0 input initializer contract changed; cannot select supplied cross-section')
+            shape.set('input')
         _place_created_node(node)
     except BaseException:
         # Headless has no undo stack. Never leave a half-created semantic node
@@ -1715,6 +1771,12 @@ def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
         },
     }
 
+def _input_state(node):
+    connections = node.inputConnections()
+    return {'connections': [{'input':c.inputIndex(), 'source':c.inputNode().path(), 'source_output':c.outputIndex()}
+                            for c in connections[:128]], 'count':len(connections), 'truncated':len(connections)>128}
+
+
 def connect(src, dst, index: int = 0, *, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
@@ -1741,11 +1803,14 @@ def connect(src, dst, index: int = 0, *, allow_foreign: str | None = None) -> di
         raise ValueError(f'different_parent: source={s.path()} parent={s.parent().path()}, destination={d.path()} parent={d.parent().path()}; use an Object Merge inside the destination SOP network or an explicit subnet input. Changing the input index cannot fix this boundary')
     if isinstance(index, bool) or not isinstance(index, int) or index < 0:
         raise ValueError("index 必须是非负整数")
+    before = _input_state(d)
     try:
         d.setInput(index, s)
     except Exception as e:
         raise ValueError(f"连接失败：{s.path()} → {d.path()} input {index}（{e}）；未尝试其他端口") from e
-    return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d)}
+    return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d),
+            'inputs_before':before, 'inputs_after':_input_state(d),
+            'note':'connect replaces the current occupant; do not disconnect first to replace a Merge input'}
 
 
 def disconnect_input(dst, index: int = 0, *, allow_foreign: str | None = None) -> dict:
@@ -1761,11 +1826,14 @@ def disconnect_input(dst, index: int = 0, *, allow_foreign: str | None = None) -
     if index < 0 or index >= len(d.inputConnectors()):
         raise ValueError(f"输入口 {index} 超出 {d.path()} 的有效范围 0..{len(d.inputConnectors()) - 1}")
     previous = d.input(index)
+    before = _input_state(d)
     d.setInput(index, None)
     return {
         "node": d.path(),
         "input": index,
         "disconnected": previous.path() if previous is not None else None,
+        'inputs_before':before, 'inputs_after':_input_state(d),
+        'next_action':'Use inputs_after: variable inputs may shift after disconnect; old indices are no longer reliable.',
     }
 
 
@@ -1801,11 +1869,12 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
 
 
 def cook_node(node, force: bool = False) -> dict:
-    """cook 节点并采集 errors/warnings；``healthy`` 要求两者都为空。"""
+    """Cook and read health; refresh an existing error once to avoid stale diagnostics."""
     n = _resolve(node)
+    effective_force = bool(force) or bool(n.errors())
     cook_error = None
     try:
-        n.cook(force=bool(force))
+        n.cook(force=effective_force)
     except Exception as e:  # hou.OperationFailed 等
         cook_error = str(e)
     errors = list(n.errors())
@@ -1819,7 +1888,7 @@ def cook_node(node, force: bool = False) -> dict:
         "ok": not errors,
         "warning_free": not warnings,
         "healthy": not errors and not warnings,
-        "forced": bool(force),
+        "forced": effective_force,
     }
 
 
@@ -1836,20 +1905,25 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     return verify(parent, output=output, nodes=nodes, limit=limit, require_valid=require_valid)
 
 
-def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None) -> dict:
+def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
     """Build 1..64 NEW SOP nodes from {name,type,parms?,inputs?} specs.
 
     Inputs are earlier spec/existing direct child names; None skips an input.
     For secondary Wrangle lookup use inputs=[None, 'source']. No overwrite or flags.
     dry_run is static preflight (no scratch node); VEX/cook not yet verified.
     Failed creation/parameters/cook removes only this batch's new nodes.
+    Output must contain geometry. Create empty controllers/helpers with tab_create.
     Returned validation reports warnings separately from errors and semantics.
     Optional interfaces are final-output point-group → primitive-group proximity
     contracts, checked after construction; failing/unverified contracts fail the
     module and clean its new nodes. See geo_check_interfaces for exact schema.
+    required_outputs=[new_node_name,...] optionally requires nonempty module
+    branches, so a healthy merge cannot hide missing deliverable pieces. Empty
+    helpers remain allowed when not declared required. Independent static field
+    errors are returned together before creation; retain parameter components.
     """
     from dsh_sop_contracts import build_module as build
-    return build(parent, nodes, output=output, dry_run=dry_run, interfaces=interfaces)
+    return build(parent, nodes, output=output, dry_run=dry_run, interfaces=interfaces, required_outputs=required_outputs)
 
 
 def sop_set_output(node, render: bool = True,
@@ -2100,6 +2174,34 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
 
 # --- parm 域 ---------------------------------------------------------------
 
+def _menu_entries(tpl, tokens, labels):
+    """One setting-value contract for static cards and live setters."""
+    numeric = tpl.type() == hou.parmTemplateType.Int
+    try: use_tokens = bool(tpl.menuUseToken())
+    except (AttributeError, hou.Error): use_tokens = False
+    rows = []
+    for i, token in enumerate(tokens):
+        value = i if numeric else token
+        if numeric and use_tokens:
+            try: value = int(token)
+            except ValueError:
+                raise ValueError('integer token-valued menu contains noninteger tokens; use an explicit expression')
+        rows.append({'index':i, 'token':token, 'label':labels[i] if i < len(labels) else token, 'set_value':value})
+    return rows
+
+
+def _menu_setting(entries, value):
+    if isinstance(value, str):
+        for item in entries:
+            if item['token'] == value: return item['set_value']
+    elif type(value) is int:
+        # Native ordered menus also accept indices; Int menus expose storage values.
+        for item in entries:
+            if value == item['set_value'] or (isinstance(item['set_value'], str) and value == item['index']):
+                return item['set_value']
+    raise ValueError(f'invalid menu value {value!r}; use a menu token/set_value from node_info or list_parms; expressions require {{expression,language}}')
+
+
 def _parm_template_card(tpl) -> dict:
     entry = {"name": tpl.name(), "label": tpl.label(), "type": tpl.type().name(),
              "size": tpl.numComponents()}
@@ -2123,9 +2225,8 @@ def _parm_template_card(tpl) -> dict:
     try:
         tokens, labels = tpl.menuItems(), tpl.menuLabels()
         if tokens:
-            entry["menu"] = [{"index": i, "token": token,
-                              "label": labels[i] if i < len(labels) else token}
-                             for i, token in enumerate(tokens)]
+            entry["menu"] = _menu_entries(tpl, tokens, labels)
+            entry['menu_setting'] = 'token_or_set_value; explicit expression object for numeric menu expressions'
         elif tpl.itemGeneratorScript():
             entry["menu_dynamic"] = True
     except (AttributeError, hou.Error):
@@ -2133,13 +2234,53 @@ def _parm_template_card(tpl) -> dict:
     return entry
 
 
-def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 80) -> dict:
+def _node_parameter_cards(typ, counts=None):
+    """Expand bounded static multiparm instances without creating scratch nodes."""
+    counts = counts or {}
+    cards = []
+    def expand(name, indices):
+        for i in indices:
+            name = name.replace('#', str(i), 1)
+        return name
+    def visit(templates, indices=(), parents=()):
+        for tpl in templates:
+            name = expand(tpl.name(), indices)
+            if isinstance(tpl, hou.FolderParmTemplate):
+                if tpl.folderType() in (hou.folderType.MultiparmBlock, hou.folderType.ScrollingMultiparmBlock, hou.folderType.TabbedMultiparmBlock):
+                    count = counts.get(name, tpl.defaultValue())
+                    if type(count) is not int or not 0 <= count <= 64:
+                        raise ValueError(f'{name}: static multiparm count must be an integer in 0..64; use tab_create/list_parms for dynamic counts')
+                    cards.append({'name':name,'label':tpl.label(),'type':'Folder','size':1,'components':[name],
+                                  'default':tpl.defaultValue(),'multiparm_count':True,'multiparm_parents':list(parents)})
+                    start = int(tpl.tags().get('multistartoffset', '1'))
+                    for i in range(start, start + count):
+                        visit(tpl.parmTemplates(), indices + (i,), parents + (name,))
+                else:
+                    visit(tpl.parmTemplates(), indices, parents)
+            else:
+                card = _parm_template_card(tpl)
+                card['name'] = name
+                card['components'] = [expand(c, indices) for c in card.get('components', [])]
+                if parents:
+                    card['multiparm_parents'] = list(parents)
+                cards.append(card)
+            if len(cards) > 2048:
+                raise ValueError('static parameter expansion exceeds 2048 entries; use primitive verbs')
+    visit(typ.parmTemplates())
+    return cards
+
+
+def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) -> dict:
     """Read a version-resolved node card BEFORE creating a node (no scratch nodes).
 
+    parm_filter is a literal case-insensitive substring, NOT regex or glob.
+    An empty match is not an empty type: retry with parm_filter=''.
     Static templates include menu tokens/labels/defaults. Dynamic menus require
     ``list_parms`` on an actual node; this card does not run shelf scripts.
     ``parent`` supplies the real creation context, not a guessed category.
     """
+    if isinstance(parent, str) and not parent.startswith('/'):
+        raise ValueError('node_info(parent,type): parent must be an existing absolute network path, not a category; create the geometry container with tab_create("/obj","geo",name) first')
     p = _resolve(parent)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 256:
         raise ValueError("limit 必须在 1..256")
@@ -2147,21 +2288,22 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 80) ->
     latest = resolve_latest_type(cat, type_name)
     typ = hou.nodeType(cat, latest)
     if typ is None:
-        raise ValueError(f"未知节点类型：{type_name}")
-    parameters = []
-    def visit(templates):
-        for tpl in templates:
-            if isinstance(tpl, hou.FolderParmTemplate):
-                visit(tpl.parmTemplates())
-            elif not parm_filter or parm_filter.lower() in (tpl.name() + ' ' + tpl.label()).lower():
-                parameters.append(_parm_template_card(tpl))
-    visit(typ.parmTemplates())
+        raise ValueError(f"未知节点类型：{type_name}; parent={p.path()} creates {cat.name()} nodes. For SOP types use an existing geometry container, not /obj; search_tab_entries(parent,query) lists valid types.")
+    if not isinstance(parm_filter, str):
+        raise ValueError('parm_filter must be a literal substring string')
+    all_parameters = _node_parameter_cards(typ)
+    from dsh_operation_cards import operation_card
+    operation = operation_card(latest)
+    parameters = [c for c in all_parameters if not parm_filter or parm_filter.lower() in (c['name'] + ' ' + c['label']).lower()]
     return {"parent": p.path(), "type": latest, "category": cat.name(),
-            **({'usage_notes':['agroup/bgroup select INPUT primitive groups, not output names. To preserve part identity, tag input primitives upstream and inspect groups on the actual Boolean output; topology/group counts may change with parameters.']} if latest.split('::')[0]=='boolean' else {}),
+            **({'usage_notes': operation['notes'], 'operation_card': {'id': operation['id'], 'source': operation['source']}} if operation else {}),
             "version": hou.applicationVersionString(), "description": typ.description(),
             "visible": _visible_node_type(typ), "min_inputs": typ.minNumInputs(),
             "max_inputs": typ.maxNumInputs(), "max_outputs": typ.maxNumOutputs(),
             "parameters": parameters[:limit], "parameter_count": len(parameters),
+            "total_parameter_count": len(all_parameters), "filter_mode": "literal_substring",
+            "filter": parm_filter,
+            **({'next_action': "No literal matches; retry node_info with parm_filter='' before creating a probe. Pipe/glob/regex syntax is not interpreted."} if parm_filter and not parameters else {}),
             "truncated": len(parameters) > limit, "help_url": typ.defaultHelpUrl(),
             "note": "Static type contract; dynamic menus and shelf initialization may add parameters."}
 
@@ -2202,9 +2344,7 @@ def list_parms(node) -> list:
                 if len(pt) == 1:
                     tokens, labels = pt[0].menuItems(), pt[0].menuLabels()
                     if tokens:
-                        entry["menu"] = [{"index": i, "token": token,
-                                          "label": labels[i] if i < len(labels) else token}
-                                         for i, token in enumerate(tokens)]
+                        entry["menu"] = _menu_entries(tpl, tokens, labels)
             except (AttributeError, hou.Error):
                 pass
         else:
@@ -2393,15 +2533,15 @@ def _set_parm_impl(node, name: str, value,
             return {"parm": name, "expression": value["expression"], "value": _val(p.eval())}
         # Menu tokens are not expressions. Do not let an invalid token silently
         # evaluate to 0 or leave an animated parameter with its keys deleted.
-        if p.parmTemplate().type() == hou.parmTemplateType.Menu:
-            tokens = tuple(p.menuItems())
-            if isinstance(value, str):
-                if value not in tokens:
-                    raise ValueError(f"{p.path()} 无效 menu token {value!r}；有效值 {list(tokens)}，请用 list_parms")
-            elif isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(tokens):
-                raise ValueError(f"{p.path()} menu index 必须在 0..{len(tokens)-1} 或传精确 token")
+        tpl = p.parmTemplate()
+        try: tokens = tuple(p.menuItems()) if tpl.type() in (hou.parmTemplateType.Menu, hou.parmTemplateType.Int) else ()
+        except hou.OperationFailed:
+            if tpl.type() == hou.parmTemplateType.Menu: raise
+            tokens = ()  # plain integer controls are not menus
+        if tokens or tpl.type() == hou.parmTemplateType.Menu:
+            setting = _menu_setting(_menu_entries(tpl, tokens, p.menuLabels()), value)
             cleared = _clear_animation(p)
-            p.set(value)
+            p.set(setting)
             return {"parm": p.name(), "value": _val(p.eval()), "menu_token": p.evalAsString(),
                     **({"note": f"cleared {cleared}"} if cleared else {})}
         if isinstance(value, str):
@@ -2426,6 +2566,8 @@ def _set_parm_impl(node, name: str, value,
         if isinstance(value, (list, tuple)):
             if len(value) != len(pt):
                 raise ValueError(f"{pt.name()} 需要 {len(pt)} 个分量，收到 {len(value)}")
+            if pt.parmTemplate().type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float) and any(not isinstance(v, (int, float)) for v in value):
+                raise ValueError(f'{pt.name()}: numeric tuple requires numeric values; set expressions on components {[p.name() for p in pt]} using set_parms instead')
             cleared = [c for pp in pt for c in [_clear_animation(pp)] if c]
             pt.set(value)
             out = {"parm": pt.name(), "value": [_val(v) for v in pt.eval()]}
@@ -3580,6 +3722,9 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     的命名primitive group（closed Polygon/Mesh/Sphere/Tube）。全source点都须在容差内。
     只测SOP local点到指定表面的距离，不证明整体穿插/强度/所有表面最小间隙。
     空选择/基数不符fail；不支持表示unverified；超max_pairs拒绝不抽样。
+    可选method='axis_gap'时source_group/target_group均为实际primitive组，带axis(0..2)、
+    gap_range=[min,max]和正数min_overlap。测source.min-target.max及横向投影重叠；
+    正数表示轴向分離，负数表示投影重叠，仅此，不能称为真实接触或插入深度。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
@@ -3588,9 +3733,11 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None) -> dict:
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
-    tests=[{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}]。
+    tests=[{id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}]}]。
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
-    point_count、primitive_count、area；center/min/max不是有效缩写。
+    point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
+    max_point_displacement/mean_point_displacement需id_attrib稳定唯一point ID及相同面连接；
+    range=[min,max]验证基准/扰动绝对范围，delta是相对响应；center/min/max不是有效缩写。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
     可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
@@ -3693,12 +3840,15 @@ def _summary(values: list) -> dict:
 
 
 def geo_piece_stats(node, piece_attrib: str | None = None,
-                    sample: int = 16) -> dict:
+                    sample: int = 16, *, inspect: bool = False, group=None, basis=None) -> dict:
     """按 primitive piece 报局部 bbox/面积，识别整体 bbox 掩盖的局部退化。
 
     ``piece_attrib=None`` 时用原生 Connectivity SOP Verb 在内存副本上生成临时
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
+    inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
+    返回边界/非流形/边连通/零面积与局部extent。observed不是形态pass，分组切口可能有意开放。
+    曲线/native/packed及超预算保持unverified；group/basis不能用于默认piece统计。
     """
     n = _resolve(node)
     if n.type().category() != hou.sopNodeTypeCategory():
@@ -3708,6 +3858,13 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     source = n.geometry()
     if source is None:
         raise ValueError(f"节点 {n.path()} 没有 geometry")
+    if not isinstance(inspect, bool): raise ValueError('inspect must be boolean')
+    if inspect:
+        from dsh_geometry_observation import polygon_observation
+        return {'node': n.path(), 'frame': float(hou.frame()), 'checked_at': time.time(),
+                **polygon_observation(source, group, basis)}
+    if group is not None or basis is not None:
+        raise ValueError('group/basis require inspect=True (selected polygon observation)')
     geometry = source
     generated = False
     attrib_name = piece_attrib
@@ -4981,7 +5138,8 @@ def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
-                framing_frame=None) -> dict:
+                framing_frame=None, *, focus_group=None, isolate: bool = False,
+                projection: str = 'perspective', framing_bounds=None) -> dict:
     """显式 SOP → agent proxy → OpenGL ROP → render_check 的隔离验证。
 
     用户可随时把源 OBJ 的 display/render flag 切到空节点：本动词不跟随它，
@@ -5002,6 +5160,9 @@ def render_view(node, direction="iso", frame=None,
       ``scene_linear`` 经 OCIO 转为编码 sRGB；EXR/HDR 保持线性供 Nuke/合成。
       返回 ``output_color`` 记录实际方法与目标空间，不用 gamma 猜测冒充 OCIO。
     - 返回 source/proxy fingerprint；真实目标在验证期间变化时 ``stale=True``。
+    - focus_group为精确primitive组，空/缺失拒绝；isolate只在持久proxy中保留该组。
+      projection为perspective/orthographic。framing_bounds=[min_xyz,max_xyz]使用proxy世界坐标；
+      与相同direction/coverage/resolution配合锁定跨参数A/B，取自返回framing.bounds。
 
     需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
     走 CPU 渲染器。注意 GL 渲染在 Windows 锁屏/远程桌面断开时可能失败，
@@ -5014,6 +5175,12 @@ def render_view(node, direction="iso", frame=None,
         )
     if framing not in ("full", "detail"):
         raise ValueError("framing 只能是 'full' 或 'detail'")
+    if not isinstance(isolate, bool) or (isolate and focus_group is None):
+        raise ValueError('isolate requires an explicit focus_group')
+    if projection not in ('perspective', 'orthographic'):
+        raise ValueError('projection must be perspective or orthographic')
+    if focus_group is not None and (not isinstance(focus_group,str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',focus_group)):
+        raise ValueError('focus_group must be an exact named primitive group, not a pattern')
     coverage = float(coverage)
     if not 0.1 <= coverage <= 0.95:
         raise ValueError("coverage 必须在 0.1..0.95")
@@ -5042,6 +5209,23 @@ def render_view(node, direction="iso", frame=None,
     result_payload = None
     try:
         proxy, proxy_out = _ensure_render_proxy(target)
+        focus_bounds = None
+        if focus_group is not None:
+            from dsh_geometry_observation import selected_prims
+            focus_geometry = proxy_out.geometryAtFrame(framing_f)
+            focus_prims = selected_prims(focus_geometry, focus_group)
+            focus_bounds = focus_prims[0].boundingBox()
+            for prim in focus_prims[1:]: focus_bounds.enlargeToContain(prim.boundingBox())
+            # Check the rendered frame too; never silently fall back to an empty group.
+            selected_prims(proxy_out.geometryAtFrame(f), focus_group)
+            if isolate:
+                focus_node = _owned_node(proxy, 'focus', 'blast')
+                focus_node.setInput(0, proxy.node('source'))
+                focus_node.parm('grouptype').set('prims')
+                focus_node.parm('group').set(focus_group)
+                focus_node.parm('negate').set(1)
+                proxy_out.setInput(0, focus_node)
+                proxy_out.cook(force=True)
         proxy_before = _geometry_fingerprint(proxy_out, f)
         if proxy_before["errors"]:
             raise ValueError(
@@ -5058,7 +5242,14 @@ def render_view(node, direction="iso", frame=None,
             raise ValueError(
                 f"目标 {target.path()} 在 framing_frame={framing_f} 没有可取景几何"
             )
-        bb = framing_geometry.boundingBox()
+        bb = focus_bounds if focus_bounds is not None else framing_geometry.boundingBox()
+        if framing_bounds is not None:
+            if not isinstance(framing_bounds,(list,tuple)) or len(framing_bounds)!=2 or any(not isinstance(v,(list,tuple)) or len(v)!=3 for v in framing_bounds):
+                raise ValueError('framing_bounds must be [min_xyz,max_xyz] in render-proxy world space')
+            low,high = [[float(x) for x in v] for v in framing_bounds]
+            if not all(math.isfinite(x) for v in (low,high) for x in v) or any(a>b for a,b in zip(low,high)) or low==high:
+                raise ValueError('framing_bounds must be finite ordered nonzero bounds')
+            bb = hou.BoundingBox(*(low+high))
         center = bb.center()
         extents = bb.sizevec()
         size = max(float(extents[0]), float(extents[1]), float(extents[2]))
@@ -5066,6 +5257,7 @@ def render_view(node, direction="iso", frame=None,
         obj = hou.node("/obj")
         out = hou.node("/out")
         cam = _owned_node(obj, _RENDER_CAMERA_NAME, "cam")
+        cam.parm('projection').set('ortho' if projection == 'orthographic' else 'perspective')
         aim = _owned_node(obj, _RENDER_TARGET_NAME, "null")
         rop = _owned_node(out, _RENDER_ROP_NAME, "opengl")
         obj_service_box = _render_service_box(
@@ -5093,6 +5285,11 @@ def render_view(node, direction="iso", frame=None,
         dist = (max(size, 1e-3) / 2.0) / math.tan(fov / 2.0) / coverage
         if framing == "detail":
             dist *= 0.55
+        if projection == 'orthographic':
+            # Bounding sphere covers oblique views too; shared bounds fix parameter A/B.
+            ortho_width = max(float(extents.length()),1e-3) / coverage * max(1.0,float(width)/float(height))
+            if framing == 'detail': ortho_width *= 0.55
+            cam.parm('orthowidth').set(ortho_width)
 
         if isinstance(direction, str):
             named = _NAMED_DIRECTIONS.get(direction.strip().lower())
@@ -5206,6 +5403,10 @@ def render_view(node, direction="iso", frame=None,
             "proxy_signature_before": proxy_before["signature"],
             "proxy_signature_after": proxy_after["signature"],
             "framing": {
+                "focus_group": focus_group, "isolated": isolate, "projection": projection,
+                "bounds": [[float(x) for x in bb.minvec()],[float(x) for x in bb.maxvec()]],
+                "bounds_source": 'explicit' if framing_bounds is not None else 'focus_group' if focus_group else 'output',
+                "coordinate_space": 'render proxy world space',
                 "mode": framing,
                 "frame": framing_f,
                 "coverage": coverage,

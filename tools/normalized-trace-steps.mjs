@@ -118,6 +118,8 @@ export function normalizeTraceSteps(events) {
       callSeq: call.eventSeq ?? null,
       resultSeq: event.seq ?? null,
       time: event.time ?? null,
+      callTime: call.time ?? null,
+      durationMs: Number.isFinite(call.time) && Number.isFinite(event.time) ? event.time - call.time : null,
       turn: event.data?.turn ?? null,
       step: event.data?.step ?? null,
       tool: call.name || '?',
@@ -131,6 +133,7 @@ export function normalizeTraceSteps(events) {
       mutatingRawMethods,
       advisory: advisoryMatch ? advisoryMatch[1].trim() : null,
       rollback: parseJsonBlock(resultText, 'rollback'),
+      transaction: parseJsonBlock(resultText, 'transaction'),
       rawUsage,
     });
   }

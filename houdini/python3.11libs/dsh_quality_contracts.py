@@ -39,6 +39,14 @@ def validate_domain(domain):
         if c['op'] not in ('lt','le','gt','ge','eq','ne'):raise ValueError('domain op must be exactly lt, le, gt, ge, eq or ne')
         if isinstance(c['right'],str):
             if not c['right'].strip():raise ValueError('domain right control must be nonempty')
+        elif isinstance(c['right'],dict):
+            _exact_keys(c['right'],{'terms','constant'},'domain linear right')
+            terms=c['right'].get('terms')
+            if not isinstance(terms,dict) or not 1<=len(terms)<=8:raise ValueError('domain terms must contain 1..8 numeric control coefficients')
+            for name,coefficient in terms.items():
+                if not isinstance(name,str) or not name.strip():raise ValueError('domain term control must be nonempty')
+                _finite(coefficient,'domain coefficient')
+            _finite(c['right'].get('constant',0),'domain constant')
         else:_finite(c['right'],'domain right')
 
 
@@ -51,7 +59,10 @@ def domain_checks(ctrl, domain, overrides=None):
     compare={'lt':operator.lt,'le':operator.le,'gt':operator.gt,'ge':operator.ge,'eq':operator.eq,'ne':operator.ne}
     rows=[]
     for c in domain:
-        left=value(c['left']);right=value(c['right']) if isinstance(c['right'],str) else c['right']
+        left=value(c['left'])
+        rhs=c['right']
+        right=value(rhs) if isinstance(rhs,str) else math.fsum(value(n)*k for n,k in rhs['terms'].items())+rhs.get('constant',0) if isinstance(rhs,dict) else rhs
+        right=_finite(right,'domain evaluated right')
         rows.append({'id':c['id'],'kind':'domain','status':'pass' if compare[c['op']](left,right) else 'fail',
                      'condition':dict(c),'left_value':left,'right_value':right,
                      'scope':'current or proposed scalar values only; not proof of all combinations',
@@ -75,15 +86,34 @@ def validate_interfaces(interfaces):
         raise ValueError('interfaces must contain 1..16 explicit contracts')
     ids = set()
     for item in interfaces:
-        _exact_keys(item, {'id','source_group','target_group','max_distance','expected_points'}, 'interface')
+        if not isinstance(item,dict):raise ValueError('interface must be an object')
+        axis_gap = item.get('method') == 'axis_gap'
+        section = item.get('method') == 'section_proximity'
+        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','source_group','target_group','max_distance','expected_points'}
+        _exact_keys(item, allowed, 'interface')
         for key in ('id', 'source_group', 'target_group'):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f'interface {key} must be nonempty')
         if item['id'] in ids:
             raise ValueError('interface ids must be unique')
         ids.add(item['id'])
+        if axis_gap:
+            if type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2:
+                raise ValueError('axis_gap requires axis=0/1/2')
+            limits = item.get('gap_range')
+            if not isinstance(limits,(list,tuple)) or len(limits)!=2 or _finite(limits[0],'gap_range')>_finite(limits[1],'gap_range'):
+                raise ValueError('gap_range must be finite [min,max] in SOP local units')
+            if _finite(item.get('min_overlap'),'min_overlap') <= 0:
+                raise ValueError('axis_gap requires positive min_overlap on both transverse axes')
+            continue
         if _finite(item.get('max_distance'), 'max_distance') < 0:
             raise ValueError('max_distance must be nonnegative (SOP local units)')
+        if section:
+            if type(item.get('axis')) is not int or not 0<=item['axis']<=2:raise ValueError('section axis must be 0/1/2')
+            if item.get('plane_at') != 'target_center':_finite(item.get('plane_at'),'section plane_at')
+            if type(item.get('expected_components')) is not int or not 1<=item['expected_components']<=32:
+                raise ValueError('section expected_components must be 1..32')
+            continue
         if type(item.get('expected_points')) is not int or not 1 <= item['expected_points'] <= 512:
             raise ValueError('expected_points must be an integer in 1..512; do not silently accept missing endpoints')
 
@@ -133,6 +163,13 @@ def _check_interfaces(g, interfaces, max_pairs):
     selections = []
     results = []
     for item in interfaces:
+        if item.get('method') == 'axis_gap':
+            results.append(_axis_gap(g, item))
+            continue
+        if item.get('method') == 'section_proximity':
+            row, pairs = _section_proximity(g,item,max_pairs-total_pairs)
+            results.append(row);total_pairs+=pairs
+            continue
         pg = g.findPointGroup(item['source_group'])
         tg = g.findPrimGroup(item['target_group'])
         points = list(pg.points()) if pg else []
@@ -140,6 +177,11 @@ def _check_interfaces(g, interfaces, max_pairs):
         base = {'id':item['id'],'source_group':item['source_group'],'target_group':item['target_group'],
                 'source_count':len(points),'target_count':len(prims),'expected_points':item['expected_points'],
                 'tolerance':item['max_distance']}
+        if g.findPrimAttrib('name'):
+            source_names = sorted({v.prim().stringAttribValue('name') for p in points for v in p.vertices()})
+            target_names = sorted({p.stringAttribValue('name') for p in prims})
+            base.update(source_pieces=source_names[:32], target_pieces=target_names[:32],
+                        piece_coverage_truncated=len(source_names)>32 or len(target_names)>32)
         if len(points) != item['expected_points'] or not prims:
             results.append({**base,'status':'fail','reason':'missing_group_or_cardinality_mismatch'})
             continue
@@ -189,9 +231,73 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'every declared source vertex against every selected target surface',
+            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface',
             'coordinate_space':'explicit output SOP local',
-            'scope':'point-to-surface interface proximity only; not solid overlap, penetration, mechanical strength or all-surface clearance'}
+            'scope':'declared proximity or axis-projection relations only; not solid overlap, penetration, mechanical strength or all-surface clearance'}
+
+
+def _section_proximity(g,item,budget):
+    base={**item,'scope':'actual polygon-plane section segment midpoints to target surfaces; not full-surface contact, penetration or strength'}
+    source=g.findPrimGroup(item['source_group']);target=g.findPrimGroup(item['target_group'])
+    sp=list(source.prims()) if source else [];tp=list(target.prims()) if target else []
+    if not sp or not tp:return {**base,'status':'fail','reason':'missing_or_empty_primitive_group'},0
+    if {p.number() for s in sp for p in s.points()} & {p.number() for s in tp for p in s.points()}:
+        return {**base,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate'},0
+    if any(not _supported_surface(p) for p in tp):return {**base,'status':'unverified','reason':'unsupported_target_surface_type'},0
+    axis=item['axis'];position=item['plane_at']
+    if position=='target_center':
+        position=(min(p.boundingBox().minvec()[axis] for p in tp)+max(p.boundingBox().maxvec()[axis] for p in tp))*.5
+    if not math.isfinite(position):return {**base,'status':'unverified','reason':'nonfinite plane'},0
+    from dsh_geometry_observation import surface_sections
+    try:samples,coverage=surface_sections(sp,axis,position,item['expected_components'])
+    except ValueError as error:
+        missing=str(error) in ('source component count differs from expected_components','each source component must have a nonempty closed section')
+        return {**base,'status':'fail' if missing else 'unverified','reason':str(error),'plane_position':position},0
+    pairs=len(samples)*len(tp)
+    if pairs>budget:raise ValueError('interface nearest-surface budget exceeded; narrow explicit groups')
+    distances=[];failures=[]
+    try:
+        for sample in samples:
+            candidates=[p.nearestToPosition(sample['position'])[2] for p in tp]
+            if any(not math.isfinite(d) or d<0 for d in candidates):raise UnsupportedEvidence('invalid nearest surface result')
+            distance=min(candidates);distances.append(distance)
+            if distance>item['max_distance']:
+                failures.append({'distance':distance,'position':list(sample['position']),'component':sample['component']})
+    except (hou.Error,UnsupportedEvidence) as error:return {**base,'status':'unverified','reason':str(error)},pairs
+    return {**base,'status':'fail' if failures else 'pass','plane_position':position,
+            'source_count':len(samples),'component_coverage':coverage,'min_distance':min(distances),'max_distance':max(distances),
+            'failure_count':len(failures),'failures':sorted(failures,key=lambda r:r['distance'],reverse=True)[:8]},pairs
+
+
+def _axis_gap(g, item):
+    """Actual selected surface bounds, not design anchors or duplicated formulas.
+
+    Positive gap means source is above target along the declared axis. Transverse
+    interval overlap is necessary but never sufficient to prove surface contact.
+    """
+    base = {**item, 'coordinate_space':'explicit output SOP local',
+            'scope':'source bounds_min minus target bounds_max; transverse interval overlap only, not physical contact/penetration'}
+    groups = [g.findPrimGroup(item[k]) for k in ('source_group','target_group')]
+    selections = [list(group.prims()) if group else [] for group in groups]
+    if any(not s for s in selections):
+        return {**base,'status':'fail','reason':'missing_or_empty_primitive_group'}
+    if {p.number() for p in selections[0]} & {p.number() for p in selections[1]}:
+        return {**base,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate'}
+    if any(not _supported_surface(p) for s in selections for p in s):
+        return {**base,'status':'unverified','reason':'unsupported_surface_type'}
+    bounds = []
+    for prims in selections:
+        box = prims[0].boundingBox()
+        for prim in prims[1:]:box.enlargeToContain(prim.boundingBox())
+        bounds.append(([float(v) for v in box.minvec()],[float(v) for v in box.maxvec()]))
+    if not all(math.isfinite(v) for box in bounds for side in box for v in side):
+        return {**base,'status':'unverified','reason':'nonfinite_bounds'}
+    axis=item['axis'];gap=bounds[0][0][axis]-bounds[1][1][axis]
+    overlap={str(i):min(bounds[0][1][i],bounds[1][1][i])-max(bounds[0][0][i],bounds[1][0][i]) for i in range(3) if i!=axis}
+    ok=item['gap_range'][0]<=gap<=item['gap_range'][1] and all(v>=item['min_overlap'] for v in overlap.values())
+    return {**base,'status':'pass' if ok else 'fail','gap':gap,'transverse_overlap':overlap,
+            'source_bounds':bounds[0],'target_bounds':bounds[1],
+            'source_primitive_count':len(selections[0]),'target_primitive_count':len(selections[1])}
 
 
 def geo_check_interfaces(output, interfaces, max_pairs=50000):
@@ -276,11 +382,11 @@ def _check_topology(g, topology):
 
 
 def _validate_expectation(item):
-    _exact_keys(item, {'group','metric','axis','delta'}, 'expectation')
+    _exact_keys(item, {'group','metric','axis','delta','range','id_attrib'}, 'expectation')
     metric = item.get('metric')
-    if metric not in ('bounds_size','bounds_center','bounds_min','bounds_max','point_count','primitive_count','area'):
-        raise ValueError('unsupported metric; exact values: bounds_size, bounds_center, bounds_min, bounds_max, point_count, primitive_count, area')
-    if metric.startswith('bounds_') and (type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2):
+    if metric not in ('bounds_size','bounds_center','bounds_min','bounds_max','point_count','primitive_count','area','point_mean','boundary_edges','piece_count','max_point_displacement','mean_point_displacement'):
+        raise ValueError('unsupported metric; exact values: bounds_size, bounds_center, bounds_min, bounds_max, point_count, primitive_count, area, point_mean, boundary_edges, piece_count, max_point_displacement, mean_point_displacement')
+    if (metric.startswith('bounds_') or metric == 'point_mean') and (type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2):
         raise ValueError('bounds metric needs axis=0/1/2')
     if 'group' in item and (not isinstance(item['group'],str) or not item['group']):
         raise ValueError('group must name a nonempty primitive group in the actual output')
@@ -290,14 +396,35 @@ def _validate_expectation(item):
     lo, hi = [_finite(v,'delta') for v in delta]
     if lo > hi:
         raise ValueError('delta minimum must be <= maximum')
+    if 'displacement' in metric and (not isinstance(item.get('id_attrib'),str) or not item['id_attrib']):
+        raise ValueError('point displacement requires stable unique point id_attrib')
+    if 'range' in item:
+        r=item['range']
+        if not isinstance(r,(list,tuple)) or len(r)!=2 or _finite(r[0],'range')>_finite(r[1],'range'):
+            raise ValueError('range must be finite [minimum,maximum] for both baseline and test value')
 
 
-def _measure(g, item):
+def _measure(g, item, reference=None):
     group = g.findPrimGroup(item['group']) if item.get('group') else None
     if item.get('group') and group is None:
         raise ValueError(f'missing measurement group {item["group"]!r}')
     prims = list(group.prims()) if group is not None else list(g.prims())
     metric = item['metric']
+    if metric in ('max_point_displacement','mean_point_displacement'):
+        from dsh_geometry_observation import point_displacement
+        try:return point_displacement(g, reference if reference is not None else g, item)
+        except ValueError as error:raise UnsupportedEvidence(str(error)) from error
+    if metric in ('boundary_edges','piece_count'):
+        from dsh_geometry_observation import polygon_observation
+        report=polygon_observation(g,item.get('group'))
+        if report['status']!='observed':raise UnsupportedEvidence(report['reason'])
+        return report['boundary_edges' if metric=='boundary_edges' else 'edge_connected_components']
+    if metric == 'point_mean':
+        if any(p.type()!=hou.primType.Polygon for p in prims):raise UnsupportedEvidence('point_mean is polygon point observation only, not native primitive response')
+        points={p.number():p for prim in prims for p in prim.points()}
+        if not points:raise ValueError('empty point selection')
+        if len(points)>50000:raise UnsupportedEvidence('point_mean exceeds 50000 point budget')
+        return sum(float(p.position()[item['axis']]) for p in points.values())/len(points)
     if group is not None and not prims:
         raise ValueError('measurement selection is empty')
     if not prims and metric != 'point_count':
@@ -372,7 +499,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         for name,value in values.items():
             _finite(value,'control value')
             p=ctrl.parm(name)
-            if p is None or p.parmTemplate().type() not in (hou.parmTemplateType.Float,hou.parmTemplateType.Int):
+            if p is None or p.parmTemplate().type() not in (hou.parmTemplateType.Float,hou.parmTemplateType.Int,hou.parmTemplateType.Toggle):
                 raise ValueError(f'{name}: only numeric scalar controls supported')
             tpl=p.parmTemplate()
             if tpl.scriptCallback() or p.isMultiParmInstance():
@@ -384,6 +511,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
                 pass
             if tpl.type()==hou.parmTemplateType.Int and type(value) is not int:
                 raise ValueError(f'{name}: integer parameter needs integer value')
+            if tpl.type()==hou.parmTemplateType.Toggle and (type(value) is not int or value not in (0,1)):
+                raise ValueError(f'{name}: toggle needs integer 0 or 1')
             if float(p.eval())==float(value):
                 raise ValueError(f'{name}: perturbation must differ from current value')
             names.add(name)
@@ -424,6 +553,12 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         baselines={test['id']:[_measure(baseline,e) for e in test.get('expectations',[])] for test in tests}
         if not all(math.isfinite(float(v)) for values in baselines.values() for v in values):
             raise UnsupportedEvidence('nonfinite baseline measurement; zero parameter writes')
+        for test in tests:
+            for exp,value in zip(test.get('expectations',[]),baselines[test['id']]):
+                if 'range' in exp and not exp['range'][0]<=value<=exp['range'][1]:
+                    return {'ok':False,'status':'fail','restored':True,'parameter_writes':0,'results':[],
+                            'reason':'baseline outside declared absolute range','expectation':exp,'baseline':value,
+                            'semantic_status':'unverified'}
     except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
@@ -435,6 +570,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         # Expressions/animation may couple other domain variables: check their
         # actual values AFTER applying the case instead of predicting them.
         domain_names={c['left'] for c in domain or []} | {c['right'] for c in domain or [] if isinstance(c['right'],str)}
+        domain_names.update(n for c in domain or [] if isinstance(c['right'],dict) for n in c['right']['terms'])
         if domain and not any(ctrl.parm(n).keyframes() for n in domain_names | set(test['values'])):
             proposed=domain_checks(ctrl,domain,test['values'])
             if any(r['status']=='fail' for r in proposed):
@@ -457,9 +593,10 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
             _,g=_geometry(node)
             measurements=[]
             for exp,start in zip(test.get('expectations',[]),baselines[test['id']]):
-                end=_measure(g,exp);delta=end-start;lo,hi=exp['delta']
+                end=_measure(g,exp,baseline);delta=end-start;lo,hi=exp['delta']
                 if not math.isfinite(float(end)):raise UnsupportedEvidence('nonfinite measured value')
-                measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi})
+                range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
+                measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
             relations=_check_interfaces(g,interfaces,50000) if interfaces is not None else None
             topology_check=_check_topology(g,topology) if topology is not None else None
             measurements_pass=all(m['pass'] for m in measurements)

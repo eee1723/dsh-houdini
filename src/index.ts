@@ -10,6 +10,7 @@ import { HoudiniBridge } from './bridge.js'
 import { VERB_CATALOG_SUMMARY } from './generated-verb-contract.js'
 import { registerBundledSkills } from './skill.js'
 import { registerHoudiniTools } from './tools.js'
+import { installSceneContext } from './context.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills']
@@ -19,11 +20,13 @@ export interface Config {
   bridgeUrl: string
   /** Per-request timeout for bridge calls; job submission returns long before this. */
   requestTimeoutMs: number
+  automaticContext?: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
   bridgeUrl: Schema.string().default('http://127.0.0.1:8765'),
   requestTimeoutMs: Schema.number().default(120000),
+  automaticContext: Schema.boolean().default(true),
 })
 
 /**
@@ -41,7 +44,7 @@ const GUIDANCE: PromptSection = {
     '',
     `Current catalog (generated from docs/tool-design.md): ${VERB_CATALOG_SUMMARY}`,
     'For a small NEW SOP module, build_module preflights/cooks the batch (None skips input slots), and may validate declared interfaces on its final output. node_info discovers ports/menu tokens. verify_network requires explicit output; empty/error output fails by default, require_valid=False is diagnostic only. geo_check_interfaces measures named final-surface ports; test_controls temporarily changes numeric controls, measures declared responses and restores them (exec only). Neither certifies unspecified relationships/art quality. Read operation-evidence/checks, not just Python success. set_parms is strict by default. Save As requires user-authorized path/expected_current_path. Render filenames require extensions and resolve under $HIP. File/Python/solver side effects are not undoable.',
-    'houdini_exec(review={parent,output,controller?}) delegates one independent foreground SOP asset review using logged user requirements; it is not a delivery contract/receipt cache. The Host-authorized reviewer can query and run review_test batches with automatic parameter restoration and optional preview captures, but cannot execute arbitrary edits/jobs/saves. Main-agent scene edits wait until review ends. Ordinary node ownership is unchanged; review permissions cannot be supplied by model arguments. Unsupported mutation tests remain unverified, never restrict normal authoring to a test whitelist.',
+    'houdini_exec(review={parent,output,controller?}) optionally delegates a quick SOP issue review when requested or a concrete concern needs a second perspective, using logged requirements/current snapshot/prior tool facts; it is not a delivery contract/receipt cache. The Host-authorized reviewer can query and run review_test batches with automatic parameter restoration and optional preview captures, but cannot execute arbitrary edits/jobs/saves. Main-agent scene edits wait until review ends. Ordinary node ownership is unchanged; review permissions cannot be supplied by model arguments. Unsupported mutation tests remain unverified, never restrict normal authoring to a test whitelist.',
     '',
     'Ownership is runtime provenance, not path or copied metadata. Any node may be inspected or used as a read/source dependency, but mutation verbs normally write only nodes created by the current DSH session. Use `node_provenance` when origin is unclear. Pass `allow_foreign="<exact user authorization>"` only when the user explicitly requested changing that foreign node; it authorizes one audited call and never justifies incidental cleanup. `layout_nodes(parent)` defaults to current-session nodes.',
     '',
@@ -59,4 +62,5 @@ export function apply(ctx: Context, config: Config) {
   registerHoudiniTools(ctx, bridge)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)
+  if (config.automaticContext !== false) installSceneContext(ctx, bridge)
 }

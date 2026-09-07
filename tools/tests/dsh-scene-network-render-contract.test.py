@@ -40,7 +40,7 @@ try:
         owner_call="disconnect",
     )
     assert disconnected["ok"] is True, disconnected
-    assert disconnected["result"] == {
+    assert {k:disconnected["result"][k] for k in ("node","input","disconnected")} == {
         "node": target_path,
         "input": 0,
         "disconnected": source_path,
