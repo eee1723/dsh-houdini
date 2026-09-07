@@ -1,8 +1,15 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cards": {
     "sweep": {
-      "id": "sweep-cross-section-v1",
+      "id": "sweep-cross-section-v2",
+      "node_types": ["sweep::2.0"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["surfaceshape", "endcaptype", "radius", "cols", "primtype"],
+      "decisions": [
+        {"id": "section_source", "any_of": [["surfaceshape"]], "guidance": "Choose external input sections or a built-in section explicitly; wiring alone does not express the intended profile."},
+        {"id": "end_closure", "any_of": [["endcaptype"]], "guidance": "Choose open ends or an applicable cap type; an intentionally open tube/ribbon must not be capped automatically."}
+      ],
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/sweep.html",
       "notes": [
         "Input 0 is the backbone; input 1 is an optional cross-section. Default custom sections are centered at the origin in the XY plane, +Y up (normal along Z), not placed at the path start.",
@@ -11,12 +18,87 @@
       ]
     },
     "polyextrude": {
-      "id": "extrusion-surfaces-v1",
+      "id": "extrusion-surfaces-v2",
+      "node_types": ["polyextrude::2.0"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["outputfront", "outputback", "outputside", "dist", "inset", "group", "splittype"],
+      "decisions": [
+        {"id": "extrusion_surfaces", "any_of": [["outputfront", "outputback", "outputside"]], "guidance": "Choose displaced front/original back/connecting sides for the input: sheet thickening differs from extrusion on an existing solid. Front/back do not mean world top/bottom."}
+      ],
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html",
       "notes": [
         "Front is the displaced face; Back is the original face; Side bridges them. These names are relative to extrusion, not world up/down.",
         "When thickening an open sheet into a closed slab, explicitly choose outputfront/outputback/outputside and inspect the final boundary edges and world position.",
         "Do not enable Output Back universally: extruding faces of an existing solid can create unwanted interior faces."
+      ]
+    },
+    "polybevel": {
+      "id": "bevel-selection-v1",
+      "node_types": ["polybevel::3.0"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html",
+      "critical_parameters": ["group", "grouptype", "ignoreflatedges", "flatangle", "offset", "divisions"],
+      "decisions": [
+        {"id": "bevel_selection", "any_of": [["group", "grouptype"], ["ignoreflatedges", "flatangle"]], "guidance": "Choose a typed selection or an explicit flat-edge policy. Empty group can intentionally mean all eligible edges; angle filtering alone is not a semantic part selection."}
+      ],
+      "notes": [
+        "Direct creation has empty group, grouptype=guess, ignoreflatedges=0. Maximum Normal Angle is flatangle (degrees): with ignoreflatedges=1, smaller adjacent face-normal angles are excluded. It is not a maximum angle to bevel.",
+        "For controlled hard-surface fillets, build a procedural edge group from construction boundaries/part identity and geometric criteria, then set group and grouptype=edges. Avoid persistent hard-coded edge numbers after topology changes. Explicit all-edge or point bevels remain valid intents.",
+        "Choose width against local feature spacing and inspect the selected edges and resulting corner geometry; nonempty output/collision options do not prove no overlap or correct detail. Increasing divisions cannot fix a wrong selection."
+      ]
+    },
+    "sphere": {
+      "id": "sphere-representation-v1",
+      "node_types": ["sphere"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/sphere.html",
+      "critical_parameters": ["type", "freq", "rows", "cols"],
+      "decisions": [
+        {"id": "representation", "any_of": [["type"]], "guidance": "Choose the representation before face editing: a native sphere is not a polygon mesh. Preserve native/NURBS/packed representations when required by the downstream task."}
+      ],
+      "notes": [
+        "Direct creation type=prim is an analytic Sphere. Polygon and Polygon Mesh are distinct menu choices with different tessellation controls; use the current menu tokens, not a shared numeric index.",
+        "For polygon modeling, explicitly choose the polygon representation and inspect actual primitive types and silhouette density. Houdini's generic primitive count also counts native/packed objects; it is not a polygon face count."
+      ]
+    },
+    "tube": {
+      "id": "tube-representation-v1",
+      "node_types": ["tube"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/tube.html",
+      "critical_parameters": ["type", "cap", "rows", "cols", "orient", "height", "rad"],
+      "decisions": [
+        {"id": "representation", "any_of": [["type"]], "guidance": "Choose polygon output for polygon face operations; native Tube is a legitimate alternative, not a failed polygon."},
+        {"id": "end_closure", "any_of": [["cap"]], "guidance": "Choose whether end caps are intended. Open pipes and closed solid cylinders have different contracts."}
+      ],
+      "notes": [
+        "Direct creation type=prim and cap=0. Explicit polygon type and caps are separate decisions; a nonempty native Tube does not establish polygon topology.",
+        "Inspect the actual axis, radius, end boundaries and resolution before using the unit in booleans or instancing. A capped cylinder does not by itself model a hollow pipe wall."
+      ]
+    },
+    "circle": {
+      "id": "circle-representation-v1",
+      "node_types": ["circle"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/circle.html",
+      "critical_parameters": ["type", "arc", "orient", "divs", "rad"],
+      "decisions": [
+        {"id": "representation", "any_of": [["type"]], "guidance": "Choose a polygon or smooth curve representation for the downstream profile operation; do not assume a native circle provides editable perimeter points."}
+      ],
+      "notes": [
+        "Direct creation type=prim. For a polygon profile, explicitly choose type=poly and establish plane, arc/closure and subdivisions. A closed perimeter, filled polygon and thick closed solid are different deliverables.",
+        "Native or NURBS curves can be intentional; do not insert Convert blindly. Verify the resulting representation after the consuming surface operation."
+      ]
+    },
+    "box": {
+      "id": "box-representation-v1",
+      "node_types": ["box"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/box.html",
+      "critical_parameters": ["type", "size", "divrate"],
+      "notes": [
+        "Unlike Sphere/Tube/Circle, direct Box creation already defaults to type=poly. Do not globally set type=0: numeric menu indices differ between node families.",
+        "Set dimensions and only the subdivisions needed by the intended operation; a dense flat box does not gain construction detail merely from more faces. Native/mesh output remains an explicit alternative."
       ]
     },
     "revolve": {
@@ -45,11 +127,35 @@
       ]
     },
     "attribwrangle": {
-      "id": "expression-language-v1",
-      "source": "https://www.sidefx.com/docs/houdini/vex/functions/ch.html",
+      "id": "wrangle-execution-v3",
+      "node_types": ["attribwrangle"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["class", "group", "grouptype", "vex_numcount"],
+      "decisions": [
+        {"id": "execution_class", "any_of": [["class"]], "guidance": "Choose Run Over before writing VEX: point/primitive/vertex for existing components, detail for one global execution, number for intentional iteration-count execution. Use current menu tokens, not guessed integers or a parameter named runover."}
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/attribwrangle.html",
       "notes": [
         "The snippet is VEX; numeric parameter expressions outside the snippet are HScript unless explicitly tagged Python. Do not copy VEX chf/chi calls into HScript parameter expressions.",
-        "Declare attribute class/type and input slots. Use stable names/ids for module interfaces rather than recovering identity from bounding-box sort order."
+        "Declare attribute class/type and input slots. Use stable names/ids for module interfaces rather than recovering identity from bounding-box sort order.",
+        "Run Over uses parameter class: detail executes once, point executes per input point (none on empty input), number repeats Number Count times. A snippet already looping over the entire generation domain usually needs detail, not number. Intentional Numbers generators use elemnum/numelem; do not change their mode blindly.",
+        "Before Copy to Points, verify the template count and exact P/id tuple uniqueness with geo_attrib_stats(..., unique=True). Nonempty output and unchanged bounds do not rule out overlapping copies."
+      ]
+    },
+    "cam": {
+      "id": "camera-framing-v1",
+      "source": "https://www.sidefx.com/docs/houdini/ref/cameralenses.html",
+      "notes": [
+        "For an owned static OBJ camera and explicit SOP target, use camera_fit to solve perspective depth and both screen axes before rendering. It preserves focal length, clears lookatpath, and reports actual projection margins; no preview service camera reuse as a delivery camera.",
+        "Camera resolution/pixel aspect and the final USD RenderProduct may differ. After Scene Import, render_frame(..., framing={target: USD_asset_path}) checks the actual composed products. Do not infer full framing from camera distance or a nonempty image."
+      ]
+    },
+    "karmarendersettings": {
+      "id": "karma-product-resolution-v1",
+      "source": "https://www.sidefx.com/docs/houdini/nodes/lop/karmarendersettings.html",
+      "notes": [
+        "Karma Setup may derive and lock resolution components. Inspect list_parms locked_components and the actual RenderProduct before assigning both dimensions; do not unlock a recipe expression to suppress a strict-setting failure.",
+        "Keep settings/product/camera paths explicit. Use render_frame's optional framing preflight for full-asset images; intentional crops and unsupported lens effects are separate contracts."
       ]
     },
     "boolean": {

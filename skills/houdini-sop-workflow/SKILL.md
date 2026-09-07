@@ -16,7 +16,7 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 ## 执行循环
 
 1. **方法与原型**：选择曲线/截面/开放表面/实体/实例等表示。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
-2. **当前节点知识**：用node_info(实际parent,type,parm_filter=...)只读当前操作需要的参数与operation_card；默认24项，先缩小filter再提高limit，避免扫描无关类型。filter是字面子串，空匹配先去掉filter重查，不因空卡创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
+2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
 3. **骨架门**：只建代理体/中心线/主要截面，查世界位置、尺寸、方向和主连接。视觉交付已在范围内且GUI可用时，尽早看可辨认的整体或明确侧向图。主要比例/位置错误先修骨架，不进入细化。
 4. **模块门**：一个build_module对应可独立cook的小模块和明确非空output；空CTRL/helper用tab_create。先验证单元再复制。检查实际表面/截面、封口意图、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，warning清理或解释。
 5. **关系门**：每完成一个模块就和相邻模块集成检查。独立表面用适用的interfaces距离，融合Polygon才用共享拓扑。距离不等于有符号插入，bbox对称不等于几何镜像；接地覆盖每个要求的足部。没有可靠方法就保留unverified。
@@ -28,7 +28,7 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 ## 执行与恢复
 
 - build_module声明name/type/parms/inputs/output；None表示空输入槽。跨subnet使用Object Merge或明确端口。connect(src,dst,index)直接替换既有输入；Merge先断后接会前移丢分支，消费inputs_after。set_parms保持strict，不能以strict=False绕过构建失败。
-- 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留node_info的components/usage_notes。最终分支保留语义primitive组，方便关系检查和局部取景。
+- 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留components/菜单set_value。设置尚未决定时用dry_run集中读operation_advisories再构建；已明确时不强制双调用。advisories只提示缺少显式选择，不改默认值，也不证明选择正确。最终分支保留语义primitive组。
 - tab_create返回hou.Node；list_parms/read_parms返回list。菜单用token/set_value，菜单表达式用{expression,language}；普通数值字符串是HScript表达式，VEX在snippet内；tuple表达式用组件字段。见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
 - 看transaction最终状态：同一exec后方失败可以撤销前方成功的build_module。先确认相关identity/存活输出；撤销过的打标缺失不是生成器无效证据，不沿用被回滚依赖；不熟悉的回读另开query，避免尾部格式化错误撤销构建。
 - 同一模块边界连续两次失败，回到最后有效输出做最小单变量诊断或换方法；不反复全文重建多个未知模块，不catch mutation/cook异常后继续。
@@ -37,10 +37,11 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 ## 观察与关键方法
 
 - geo_piece_stats默认按连接性或指定身份属性统计局部extent/面积；inspect=True观察命名primitive组的Polygon边界/边连通/非流形和basis下extent；shell_orientation保留有向体积条件。半径用到轴的欧氏距离，轴向投影不是半径。observed仅量测，分组切口可有意开放。
-- geo_attrib_stats读驱动属性；geo_point_spacing全扫有序点弦长，不证明表面关系。test_controls的point_mean/面积可观察局部形变；位移指标要求稳定唯一id_attrib及相同面连接。数量参数测确切piece数/身份，native/packed不靠P-only。
+- geo_attrib_stats读驱动属性；复制前用unique=True检查模板P/id的精确tuple唯一性及预期基数，bbox不变不能排除重叠复制。geo_point_spacing只测有序点弦长。test_controls位移/变换误差要求稳定唯一id_attrib和相同面连接；选中件及其附属件查同一预期变换，未选中件查identity，见[模块合同](references/module-quality-contracts.md)。混合网格点均值不是设计中心，native/packed不靠P-only。
 - Copy to Points承担实例变换，模板orient/scale与原型局部轴需一致；Copy/Merge明确属性class和传播。带状物用有面积截面，非刚性成形通常先作用中心线/低维结构再生成厚度。细节见[方法参考](references/sop-patterns.md)。
-- 每图绑定问题和部件。render_view(EXPLICIT_SOP,focus_group=...,isolate=...,projection='orthographic')用于局部观察；空组不能换整图冒充特写。返回framing.bounds可固定跨参数A/B，方向/分辨率/coverage也需一致。
-- 消费render_view.check/render_check；空白、近黑、错误目标、严重裁切不通过。按media.inspection选择读图路由；先描述可见事实，再定位疑点，以对应几何/视角逐项核销。遮挡不等于缺件，无地面参照不能看图断言接地；勿整表pass。
+- 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)；精度不等于面数。用户要求多agent模块协作时读[并行设计、单作者执行](references/module-design-collaboration.md)，没有可用的受限设计子agent入口就保持单作者，不借review权限建模。
+- 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
+- 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。按media.inspection读图，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
 - 用户屏幕异常才用viewport_screenshot；保留持久__dsh_houdini_*服务。纯网络交付或无GUI不强制追图，视觉未验证则明确报告。
 - 动画至少两个相隔帧的实际几何/固定构图图像证据；A/B同framing_frame且覆盖帧包络。完全静止/方向错误是反例；细微审美无法裁定交给用户播放判断，不无限追图。
 

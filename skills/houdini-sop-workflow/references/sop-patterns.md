@@ -125,7 +125,7 @@ geo_frame_diff(out, 1, 12, attrib='P')
 
 全局 `mean_delta/max_delta` 非零证明时间依赖，不自动证明审美语义。若固定相机 A/B 暴露完全静止、方向相反、主体缺失等明确反例，应回到风场设计；若节点、属性、锚点/活动区和时间依赖均通过，而两张静帧只是不足以裁定细微动态或视觉力度，可诚实交付“画面待用户播放判断”，不能宣称视觉已经确认，也不必无限渲染说服视觉模型。
 
-做 render A/B 时必须锁定同一相机和构图。当前若分别调用会按每帧动态 bbox 重取景的渲染工具，应先核对返回的 `center/eye/dist/direction`；这些值不同，则 pixel diff 混入了相机变化，不能单独证明动画。固定参考帧要按整段验收帧的 bbox 包络来选，并留足 coverage；任一帧的 `render_check.content_bbox` 触到图像边缘或安全边距不足，都说明“相机固定但取景不完整”，应扩大 coverage 或更换包络更大的 `framing_frame` 后重渲染。
+做render A/B时锁定相同direction/画幅/模式，复用framing_frame和覆盖状态的framing.bounds、framing.depth_bounds；核对matrix/focal/orthowidth，差异会把相机变化混入pixel diff。full取景不足应修正事先选定的共享包络，不逐帧移动相机；减小coverage会留更多边距，不是扩大coverage。detail只允许二维裁框，depth_check失败不能当有意裁切；focus未隔离时深度包络还包含周围几何。
 
 若 geometry diff 非零但 render diff 为零，调查 proxy/ROP 缓存；若两者都为零，调查表达式、spare 参数和 time dependency。
 
@@ -154,9 +154,10 @@ build_module的独立参数/输入错误一次汇总为preflight errors，按具
 组合多个交付分支时可传required_outputs=[分支输出名,...]，防止Merge非空掩盖某个必需分支为空；
 辅助空CTRL不在此列。仍优先按可独立检查的小模块构建，不把所有造型塞进一个大batch。
 
-v11准备阶段先读node_info的usage_notes/operation_card。单节点知识来自随包操作卡：
-Sweep默认自定义截面在原点XY平面；PolyExtrude的front/back按挤出方向定义；Revolve周向closed不代表端盖；
-Blast明确点/面group类型。H21/H22最小构造正反例有回归；意图允许开放或预旋转时不强制修正。
+准备阶段读node_info的usage_notes/operation_card.decisions/operation_parameters；关键设置不受
+普通参数filter/limit裁切。单节点事实仅由随包操作卡维护，不在reference复制菜单索引或默认值。
+build_module的operation_advisories按类型/缺少的显式选择合并；尚未决定时dry_run后修spec，
+已明确意图可直接build，不为清除提示改变有意开放/native/all-edge输出。零提示不证明几何正确。
 构造顺序：明确表示和局部坐标→一个单元→inspect实际表面/截面→再复制→按身份集成。
 用geo_piece_stats(out,inspect=True,group=...)观察边界和局部basis extent；非Polygon返回unverified。
 有意分组切口不视作整体实体破损，整体bbox不能证明弯曲薄片有管状截面。

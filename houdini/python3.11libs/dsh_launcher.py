@@ -356,9 +356,15 @@ def restart_bridge() -> str:
     import dsh_review
     import dsh_quality_contracts
     import dsh_sop_contracts
+    import dsh_camera_framing
+    import dsh_geometry_observation
+    import dsh_operation_cards
 
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
+    importlib.reload(dsh_camera_framing)
+    importlib.reload(dsh_geometry_observation)
+    importlib.reload(dsh_operation_cards)
     importlib.reload(dsh_sop_contracts)
     importlib.reload(dsh_quality_contracts)
     importlib.reload(dsh_review)

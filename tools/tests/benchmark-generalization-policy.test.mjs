@@ -22,9 +22,7 @@ const agentVisibleFiles = [
   'AGENTS.md',
   'README.md',
   'client.js',
-  'docs/cross-domain-benchmark-plan.md',
-  'docs/development.md',
-  'docs/tool-design.md',
+  ...walk('docs'),
   'houdini/node-operation-contracts.json',
   ...walk('src').filter((file) => !file.endsWith('generated-verb-contract.ts')),
   ...walk('presets'),
@@ -50,7 +48,7 @@ for (const relative of agentVisibleFiles) {
   }
 }
 
-const plan = fs.readFileSync(path.join(root, 'docs', 'cross-domain-benchmark-plan.md'), 'utf8')
+const plan = fs.readFileSync(path.join(root, 'docs', 'benchmark-design.md'), 'utf8')
 assert.match(plan, /执行信息防火墙/)
 assert.match(plan, /未见留出/)
 assert.match(plan, /只有未见留出实例/)

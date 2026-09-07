@@ -1921,6 +1921,9 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     branches, so a healthy merge cannot hide missing deliverable pieces. Empty
     helpers remain allowed when not declared required. Independent static field
     errors are returned together before creation; retain parameter components.
+    operation_advisories group missing explicit decisions by type/fields; use
+    dry_run when these choices are unresolved. Advice never changes defaults or
+    rejects intentional open/native/all-edge geometry, and is not verification.
     """
     from dsh_sop_contracts import build_module as build
     return build(parent, nodes, output=output, dry_run=dry_run, interfaces=interfaces, required_outputs=required_outputs)
@@ -2277,6 +2280,8 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     An empty match is not an empty type: retry with parm_filter=''.
     Static templates include menu tokens/labels/defaults. Dynamic menus require
     ``list_parms`` on an actual node; this card does not run shelf scripts.
+    operation_parameters additionally carries unfiltered critical settings and
+    operation_card.decisions; retain these even when filtering other parameters.
     ``parent`` supplies the real creation context, not a guessed category.
     """
     if isinstance(parent, str) and not parent.startswith('/'):
@@ -2292,11 +2297,14 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     if not isinstance(parm_filter, str):
         raise ValueError('parm_filter must be a literal substring string')
     all_parameters = _node_parameter_cards(typ)
-    from dsh_operation_cards import operation_card
+    from dsh_operation_cards import operation_card, operation_metadata, operation_parameters
     operation = operation_card(latest)
+    important, missing = operation_parameters(operation, all_parameters) if operation else ([], [])
     parameters = [c for c in all_parameters if not parm_filter or parm_filter.lower() in (c['name'] + ' ' + c['label']).lower()]
     return {"parent": p.path(), "type": latest, "category": cat.name(),
-            **({'usage_notes': operation['notes'], 'operation_card': {'id': operation['id'], 'source': operation['source']}} if operation else {}),
+            **({'usage_notes': operation['notes'], 'operation_card': operation_metadata(operation),
+                'operation_parameters': important, 'operation_parameters_missing': missing,
+                'operation_parameter_scope': 'Unfiltered critical static templates; defaults are not Shelf-created values. Missing fields require runtime inspection, not guessed replacements.'} if operation else {}),
             "version": hou.applicationVersionString(), "description": typ.description(),
             "visible": _visible_node_type(typ), "min_inputs": typ.minNumInputs(),
             "max_inputs": typ.maxNumInputs(), "max_outputs": typ.maxNumOutputs(),
@@ -2314,6 +2322,8 @@ def list_parms(node) -> list:
     out = []
     for pt in n.parmTuples():
         entry: dict = {"name": pt.name()}
+        entry['components'] = [p.name() for p in pt]
+        entry['locked_components'] = [p.name() for p in pt if p.isLocked()]
         tpl = pt.parmTemplate()
         if tpl is not None:
             try:
@@ -3737,6 +3747,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
     point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
     max_point_displacement/mean_point_displacement需id_attrib稳定唯一point ID及相同面连接；
+    max_transform_error另给transform（16数row-major仿射矩阵，SOP-local行向量约定），
+    测max(|P_baseline*transform-P_test|)，baseline残差=0；仍需另有非零响应项。
     range=[min,max]验证基准/扰动绝对范围，delta是相对响应；center/min/max不是有效缩写。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
     可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
@@ -3765,12 +3777,16 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
     return check(node, expected, tolerance, closed=closed, order_attrib=order_attrib, max_points=max_points)
 
 
-def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
+def geo_attrib_stats(node, name: str, attrib_class: str = "point", *, unique: bool = False,
+                     max_elements: int = 100000) -> dict:
     """属性**值**统计：min/max/mean/count（`describe` 只给属性名清单，不给值）。
 
     用于验证驱动数据（@Cd/@curveu/@pscale…）是否符合预期，不用手写逐点循环。
     attrib_class: "point" / "prim" / "vertex" / "detail"。数值属性支持多分量
-    （vector 按分量给 min/max/mean）；字符串属性报明确错误。
+    （vector 按分量给 min/max/mean）。unique=True全量检查属性完整tuple的精确唯一性，
+    返回unique_count/duplicate_count/all_unique和重复样本，支持int/float/string。
+    用P检查精确重叠模板点，用id检查身份；不是容差焊接或几何碰撞判断。
+    超max_elements或非有限值拒绝，不抽样后宣称唯一；不自动删除重复。
     """
     n = _resolve(node)
     g = n.geometry()
@@ -3798,8 +3814,17 @@ def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
         )
     data_type = attrib.dataType()
     size = attrib.size()
-    if data_type == hou.attribData.String:
+    if not isinstance(unique, bool) or type(max_elements) is not int or not 1 <= max_elements <= 1000000:
+        raise ValueError('unique must be bool; max_elements integer in 1..1000000')
+    uniqueness = {}
+    if unique:
+        from dsh_geometry_observation import attribute_uniqueness
+        uniqueness = attribute_uniqueness(g, attrib, attrib_class, max_elements)
+    if data_type == hou.attribData.String and not unique:
         raise ValueError(f"属性 '{name}' 是字符串属性，geo_attrib_stats 只统计数值属性")
+    if data_type == hou.attribData.String:
+        return {'node': n.path(), 'attrib': name, 'class': attrib_class,
+                'data_type': 'string', 'size': size, **uniqueness}
     if attrib_class == "detail":
         v = g.attribValue(name)
         values = list(v) if isinstance(v, (tuple, list)) else [v]
@@ -3826,6 +3851,7 @@ def geo_attrib_stats(node, name: str, attrib_class: str = "point") -> dict:
         "min": _collapse(mins),
         "max": _collapse(maxs),
         "mean": _collapse(means),
+        **uniqueness,
     }
 
 
@@ -4189,7 +4215,24 @@ def _render_validation(rendered, check, stale, pixel_supported=True) -> dict:
             'pixel_status': pixel_status, 'semantic_status': 'unverified'}
 
 
-def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
+def camera_fit(camera, target, direction='iso', coverage: float = .82,
+               width=None, height=None, frame=None, *, dry_run: bool = False,
+               allow_foreign: str | None = None) -> dict:
+    """拟合一个正式 OBJ cam 到显式 SOP 的世界空间包络，不渲染、不动用户视口。
+
+    保留焦距/投影，按direction和coverage安全框求距离（正交则求orthowidth），
+    写入后按实际矩阵回验。width/height默认取相机分辨率。允许parent变换，
+    拒绝动画/表达式/约束相机、偏移或裁切窗口和lens shader。lookatpath会清空，
+    只改指定相机、不移动目标；失败恢复参数。dry_run返回拟合计划，仍须exec。
+    ownership及单次allow_foreign适用；持久render_view服务相机永不允许改作交付。
+    Solaris用Scene Import导入此相机；render_frame(framing=...)按最终USD相机/产品
+    预检，不能把OBJ取景通过当成USD产品通过。只证明当前帧包络，不证明位移/运动模糊。
+    """
+    from dsh_camera_framing import fit_camera
+    return fit_camera(camera, target, direction, coverage, width, height, frame, dry_run, allow_foreign)
+
+
+def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing=None) -> dict:
     """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
 
     固化「设 picture → setFrame → rop.render() → 等产物 → 报大小」的样板：
@@ -4204,6 +4247,10 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
       （host 侧桥请求超时 120s），本动词面向单帧测试渲染。
+    - framing：可选{target:绝对USD资产prim路径, coverage:.82}。只支持USD Render ROP，
+      在renderer启动/文件写入前验证实际stage全部RenderProducts的相机与目标包络。
+      包含resolution/pixelAspect/aperture conform/dataWindow；失败零渲染，不自动移动相机。
+      未传则保留正式/艺术裁切镜头语义。只证明本帧USD bounds，不证明位移/快门/语义质量。
     """
     n = _resolve(rop)
     if not isinstance(n, hou.RopNode) or not hasattr(n, "render"):
@@ -4242,6 +4289,18 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
     foreground_parm = n.parm("soho_foreground")
     original_foreground = foreground_parm.eval() if foreground_parm is not None else None
     parameter_state = _parameter_snapshot([p] + ([foreground_parm] if foreground_parm is not None else []))
+    framing_evidence = None
+    if framing is not None:
+        from dsh_camera_framing import usd_check
+        try:
+            if float(hou.frame()) != f:
+                hou.setFrame(f)
+            framing_evidence = usd_check(n, framing, f)
+            if not framing_evidence['ok']:
+                raise CheckpointError('USD framing failed before renderer start; fit the explicit camera or revise the intentional crop', framing_evidence)
+        finally:
+            if float(hou.frame()) != original_frame:
+                hou.setFrame(original_frame)
     t0 = time.time()
     render_err = None
     file_bytes = None
@@ -4276,6 +4335,8 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         if out_dir and not os.path.isdir(out_dir):
             os.makedirs(out_dir, exist_ok=True)
         try:
+            if framing_evidence is not None:
+                framing_evidence['render_started'] = True
             n.render(frame_range=(f, f))
         except Exception as e:  # hou.Error 等
             render_err = str(e)
@@ -4319,6 +4380,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110) -> dict:
         "fresh": file_bytes is not None,
         "pre_fingerprint": pre_fingerprint,
         "post_fingerprint": post_fingerprint,
+        **({'framing': framing_evidence} if framing_evidence is not None else {}),
         "errors": errors,
         "ms": int((time.time() - t0) * 1000),
     }
@@ -5139,7 +5201,7 @@ def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
                 framing_frame=None, *, focus_group=None, isolate: bool = False,
-                projection: str = 'perspective', framing_bounds=None) -> dict:
+                projection: str = 'perspective', framing_bounds=None, depth_bounds=None) -> dict:
     """显式 SOP → agent proxy → OpenGL ROP → render_check 的隔离验证。
 
     用户可随时把源 OBJ 的 display/render flag 切到空节点：本动词不跟随它，
@@ -5152,8 +5214,9 @@ def render_view(node, direction="iso", frame=None,
       ``'top'``（草地重跑 trace：agent 直觉写法就是 ``'iso'``——命名视角
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
-    - ``framing``：``full`` 完整入镜；``detail`` 拉近到约 55% 距离。
-    - ``coverage``：full framing 的画面覆盖率（0.1..0.95）。
+    - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
+      detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。
+    - ``coverage``：full中央安全框宽/高占比（0.1..0.95）；.82为每侧至少9%边距。
     - ``framing_frame``：用哪一帧的 bbox 计算相机；None = 跟随 ``frame``。动画
       A/B 应给两次调用传同一个 framing_frame，确保相机 center/eye/dist 完全一致。
     - 输出颜色按扩展名自动管理：PNG/JPEG/TIFF 等展示格式从当前
@@ -5162,7 +5225,12 @@ def render_view(node, direction="iso", frame=None,
     - 返回 source/proxy fingerprint；真实目标在验证期间变化时 ``stale=True``。
     - focus_group为精确primitive组，空/缺失拒绝；isolate只在持久proxy中保留该组。
       projection为perspective/orthographic。framing_bounds=[min_xyz,max_xyz]使用proxy世界坐标；
-      与相同direction/coverage/resolution配合锁定跨参数A/B，取自返回framing.bounds。
+      full中是完整取景包络，不是局部ROI。局部观察用focus_group，或detail配合局部bounds。
+    - depth_bounds=[min_xyz,max_xyz]是全部实际渲染内容的深度包络，含未隔离上下文。
+      默认取framing_frame的全部proxy；给framing_bounds但没给depth_bounds时沿用同一包络。
+      A/B同时复用返回framing.bounds和framing.depth_bounds及相同方向/画幅/模式；越界拒绝不漂移。
+    - 返回dict含output/check/framing/errors/stale；check含presentation/content_bbox等像素事实。
+      pixels是check兼容别名，Bridge证据也提供check/pixels；不能把ok当视觉语义通过。
 
     需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
     走 CPU 渲染器。注意 GL 渲染在 Windows 锁屏/远程桌面断开时可能失败，
@@ -5250,6 +5318,11 @@ def render_view(node, direction="iso", frame=None,
             if not all(math.isfinite(x) for v in (low,high) for x in v) or any(a>b for a,b in zip(low,high)) or low==high:
                 raise ValueError('framing_bounds must be finite ordered nonzero bounds')
             bb = hou.BoundingBox(*(low+high))
+        reference_depth_bounds = depth_bounds if depth_bounds is not None else framing_bounds
+        depth_source = 'explicit' if depth_bounds is not None else 'framing_bounds' if framing_bounds is not None else 'framing_frame_output'
+        if reference_depth_bounds is None:
+            depth_bb = framing_geometry.boundingBox()
+            reference_depth_bounds = [list(depth_bb.minvec()), list(depth_bb.maxvec())]
         center = bb.center()
         extents = bb.sizevec()
         size = max(float(extents[0]), float(extents[1]), float(extents[2]))
@@ -5273,24 +5346,7 @@ def render_view(node, direction="iso", frame=None,
         _restore_obj_visibility(obj_visibility)
         aim.parmTuple("t").set([float(center[0]), float(center[1]), float(center[2])])
 
-        focal, aperture = 50.0, 41.4214
-        try:
-            focal = float(cam.parm("focal").eval())
-            aperture = float(cam.parm("aperture").eval())
-        except Exception:
-            pass
-        fov_h = 2.0 * math.atan(aperture / (2.0 * focal))
-        fov_v = 2.0 * math.atan(math.tan(fov_h / 2.0) * float(height) / float(width))
-        fov = min(fov_h, fov_v)
-        dist = (max(size, 1e-3) / 2.0) / math.tan(fov / 2.0) / coverage
-        if framing == "detail":
-            dist *= 0.55
-        if projection == 'orthographic':
-            # Bounding sphere covers oblique views too; shared bounds fix parameter A/B.
-            ortho_width = max(float(extents.length()),1e-3) / coverage * max(1.0,float(width)/float(height))
-            if framing == 'detail': ortho_width *= 0.55
-            cam.parm('orthowidth').set(ortho_width)
-
+        from dsh_camera_framing import corners, preview_plan, preview_check, obj_lens
         if isinstance(direction, str):
             named = _NAMED_DIRECTIONS.get(direction.strip().lower())
             if named is None:
@@ -5299,23 +5355,49 @@ def render_view(node, direction="iso", frame=None,
                     f"{sorted(_NAMED_DIRECTIONS)} 或三分量向量 [x, y, z]"
                 )
             direction = named
-        d = hou.Vector3(*[float(x) for x in direction])
-        if d.length() < 1e-6:
-            raise ValueError(f"direction 不能是零向量：{direction!r}")
-        d = d.normalized()
-        eye = center + d * dist
-        cam.parmTuple("t").set([float(eye[0]), float(eye[1]), float(eye[2])])
-        if not _try_set(cam, "lookat", aim.path()):
-            up = hou.Vector3(0, 1, 0)
-            fwd = (center - eye).normalized()
-            right = fwd.cross(up).normalized()
-            up2 = right.cross(fwd).normalized()
-            cam.setWorldTransform(hou.Matrix4((
-                right[0], right[1], right[2], 0.0,
-                up2[0], up2[1], up2[2], 0.0,
-                -fwd[0], -fwd[1], -fwd[2], 0.0,
-                eye[0], eye[1], eye[2], 1.0,
-            )))
+        # Service state must not inherit a prior shot's lens/window settings.
+        for name, value in {'focal':50.0, 'aperture':41.4214, 'aspect':1.0,
+                            'winx':0, 'winy':0, 'winsizex':1, 'winsizey':1,
+                            'cropl':0, 'cropr':1, 'cropb':0, 'cropt':1, 'constraints_on':0,
+                            'lookatpath':'', 'resx':int(width), 'resy':int(height),
+                            'vm_lensshader':''}.items():
+            parm = cam.parm(name)
+            if parm is not None:
+                _clear_animation(parm)
+                parm.set(value, follow_parm_reference=False)
+        plan = preview_plan([list(bb.minvec()), list(bb.maxvec())], reference_depth_bounds,
+                            direction, width, height, coverage=coverage, projection=projection, framing=framing)
+        dist = plan['dist']
+        d = hou.Vector3(plan['direction'])
+        eye = center + d*dist
+        matrix = plan['matrix']
+        matrix.setAt(3, 0, eye[0]); matrix.setAt(3, 1, eye[1]); matrix.setAt(3, 2, eye[2])
+        cam.setWorldTransform(matrix)
+        cam.parm('near').set(plan['near'])
+        cam.parm('far').set(plan['far'])
+        cam.parm('focal').set(plan['focal'])
+        if projection == 'orthographic':
+            cam.parm('orthowidth').set(plan['orthowidth'])
+        # Check the rendered state, not only framing_frame/explicit bounds. A
+        # stale A/B envelope must fail, never move the supposedly locked camera.
+        current_geo = proxy_out.geometryAtFrame(f)
+        current_bb = current_geo.boundingBox()
+        rendered_points = corners([list(current_bb.minvec()), list(current_bb.maxvec())])
+        if focus_group is not None:
+            current_prims = selected_prims(current_geo, focus_group)
+            current_bb = current_prims[0].boundingBox()
+            for prim in current_prims[1:]: current_bb.enlargeToContain(prim.boundingBox())
+        framing_check = preview_check(corners([list(current_bb.minvec()), list(current_bb.maxvec())]),
+            rendered_points, cam.worldTransform(), width, height, framing=framing, coverage=coverage, **obj_lens(cam))
+        if not framing_check['ok']:
+            action = ('Depth clipping is never an intentional crop. Supply shared depth_bounds covering all rendered context, '
+                      'or isolate an explicit focus_group; no automatic camera drift.' if not framing_check['depth_check']['ok'] else
+                      'full framing_bounds must cover the whole focus, not a local ROI. For a close-up use focus_group or '
+                      'framing="detail"; for A/B provide fixed framing_bounds AND depth_bounds covering the test states.')
+            if framing == 'full' and 'outside_safe_frame' in framing_check['reasons'] and not framing_check['depth_check']['ok']:
+                action += ' full also requires complete focus framing: local ROI needs focus_group or framing="detail", not repeated envelope guesses.'
+            raise CheckpointError('render_view framing failed before render. ' + action,
+                                  {**framing_check, 'render_started': False, 'target': target.path(), 'next_action': action})
 
         output_color = _render_output_color_plan(picture)
 
@@ -5403,9 +5485,11 @@ def render_view(node, direction="iso", frame=None,
             "proxy_signature_before": proxy_before["signature"],
             "proxy_signature_after": proxy_after["signature"],
             "framing": {
+                **framing_check,
                 "focus_group": focus_group, "isolated": isolate, "projection": projection,
                 "bounds": [[float(x) for x in bb.minvec()],[float(x) for x in bb.maxvec()]],
                 "bounds_source": 'explicit' if framing_bounds is not None else 'focus_group' if focus_group else 'output',
+                "depth_bounds": plan['depth_bounds'], "depth_bounds_source": depth_source,
                 "coordinate_space": 'render proxy world space',
                 "mode": framing,
                 "frame": framing_f,
@@ -5420,6 +5504,7 @@ def render_view(node, direction="iso", frame=None,
             "rop_settings_applied": applied,
             "output_color": output_color,
             "check": check,
+            "pixels": check,
         }
         if resolution_note:
             result_payload["note"] = resolution_note

@@ -75,6 +75,14 @@ LOP scene chain -> Karma Render Settings
 - AOV/denoiser 不在简单 beauty 测试时强制开启；用户要求合成、深度、Cryptomatte、
   去噪或生产 EXR 时才配置并用 stage summary 检查 RenderVar/Product。
 
+静态整物镜头使用camera_fit：显式OBJ cam与SOP目标，保留焦距、清lookatpath、写入世界构图并回验。
+width/height应与最终产品一致；list_parms的locked_components能识别setup派生字段，不解锁表达式来凑分辨率。
+Scene Import后用render_frame的framing={target:实际USD资产路径,coverage:.82}预检，不认为OBJ通过就等于USD通过。
+检查包括全部产品的camera、resolution/pixelAspect、aspectRatioConformPolicy与dataWindowNDC；不支持的ROP
+override/外部USD/前置脚本/lens/Volume/PointInstancer明确拒绝，不暗中更改镜头或增加重渲染。
+此fast path适用于当前帧普通透视/正交包络，不用于艺术裁切、动画相机、位移/快门包络或语义质量认证。
+技术版本与回归状态见development的v14记录；未见任务自然采用仍待验。
+
 ## 5. 灯光
 
 - 中性测试：Distant + Dome 合理。

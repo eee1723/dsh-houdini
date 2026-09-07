@@ -150,7 +150,9 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     if not isinstance(nodes, list) or not 1 <= len(nodes) <= 64:
         raise ValueError('nodes must contain 1..64 small-module specs')
     existing = {n.name(): n for n in p.children()}
+    from dsh_operation_cards import decision_advisories
     specs, known, preflight_errors = [], set(existing), []
+    advice_by_type = {}
     def problem(name, field, message, **details):
         preflight_errors.append({'node': name, 'field': field, 'message': message, **details})
     for spec in nodes:
@@ -172,6 +174,18 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
         values, inputs = spec.get('parms', {}), spec.get('inputs', [])
         if not isinstance(values, dict) or not isinstance(inputs, list):
             raise ValueError(f'{name}: parms must be dict and inputs must be list')
+        decisions = decision_advisories(card.get('operation_card', {}), values)
+        if decisions:
+            key = (card['type'], tuple(d['id'] for d in decisions),
+                   tuple(tuple(tuple(m) for m in d['missing']) for d in decisions))
+            if key not in advice_by_type:
+                relevant = {n for d in decisions for option in d['alternatives'] for n in option}
+                advice_by_type[key] = {'type': card['type'], 'nodes': [],
+                                       'operation_card': card['operation_card']['id'],
+                                       'decisions': decisions,
+                                       'setting_cards': [p for p in card.get('operation_parameters', []) if p['name'] in relevant],
+                                       'missing_runtime_parameters': card.get('operation_parameters_missing', [])}
+            advice_by_type[key]['nodes'].append(name)
         # Actual numbered multiparm names must be validated against the declared
         # count (or the static default), not the uninstantiated '#' template.
         typ_obj = hou.nodeType(p.childTypeCategory(), card['type'])
@@ -215,10 +229,16 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             raise ValueError('required_outputs must contain 1..16 unique new node names')
         if any(n not in {s['name'] for s in specs} for n in required_outputs):
             raise ValueError('required_outputs must name newly declared module nodes')
+    advice = {'operation_advisories': list(advice_by_type.values())[:16],
+              'operation_advisory_count': len(advice_by_type),
+              'operation_advisories_truncated': len(advice_by_type) > 16,
+              'operation_advisory_scope': 'Static explicit-field presence only; advisory, not a rejection or geometric/intent verification. No parameters are changed by this advice.'}
     if preflight_errors:
-        raise h.PreflightError(preflight_errors)
+        error = h.PreflightError(preflight_errors)
+        error.evidence.update(advice)
+        raise error
     if dry_run:
-        return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs),
+        return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs), **advice,
                 'output': output, 'interface_status': 'unverified' if interfaces is not None else 'not_requested',
                 'required_outputs': list(required_outputs or []),
                 'note': 'Static preflight only; VEX, dynamic menus, cooking and interface geometry remain unverified.'}
@@ -258,10 +278,12 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             raise h.CheckpointError('build_module interface contract failed/unverified; new module removed',
                                     {**validation,'ok':False,'failure_reasons':['interface_contract'],
                                      'interface_checks':interface_checks})
-        return {'valid': True, 'dry_run': False, 'parent': p.path(),
+        return {'valid': True, 'dry_run': False, 'parent': p.path(), **advice,
                 'created': {name: n.path() for name, n in created.items()}, 'validation': validation,
                 **({'interface_checks':interface_checks} if interfaces is not None else {})}
-    except BaseException:
+    except BaseException as error:
+        if isinstance(getattr(error, 'evidence', None), dict):
+            error.evidence.update(advice)
         for n in reversed(p.children()):
             if n not in baseline:
                 n.destroy()

@@ -382,10 +382,10 @@ def _check_topology(g, topology):
 
 
 def _validate_expectation(item):
-    _exact_keys(item, {'group','metric','axis','delta','range','id_attrib'}, 'expectation')
+    _exact_keys(item, {'group','metric','axis','delta','range','id_attrib','transform'}, 'expectation')
     metric = item.get('metric')
-    if metric not in ('bounds_size','bounds_center','bounds_min','bounds_max','point_count','primitive_count','area','point_mean','boundary_edges','piece_count','max_point_displacement','mean_point_displacement'):
-        raise ValueError('unsupported metric; exact values: bounds_size, bounds_center, bounds_min, bounds_max, point_count, primitive_count, area, point_mean, boundary_edges, piece_count, max_point_displacement, mean_point_displacement')
+    if metric not in ('bounds_size','bounds_center','bounds_min','bounds_max','point_count','primitive_count','area','point_mean','boundary_edges','piece_count','max_point_displacement','mean_point_displacement','max_transform_error'):
+        raise ValueError('unsupported metric; exact values: bounds_size, bounds_center, bounds_min, bounds_max, point_count, primitive_count, area, point_mean, boundary_edges, piece_count, max_point_displacement, mean_point_displacement, max_transform_error')
     if (metric.startswith('bounds_') or metric == 'point_mean') and (type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2):
         raise ValueError('bounds metric needs axis=0/1/2')
     if 'group' in item and (not isinstance(item['group'],str) or not item['group']):
@@ -396,8 +396,17 @@ def _validate_expectation(item):
     lo, hi = [_finite(v,'delta') for v in delta]
     if lo > hi:
         raise ValueError('delta minimum must be <= maximum')
-    if 'displacement' in metric and (not isinstance(item.get('id_attrib'),str) or not item['id_attrib']):
+    if ('displacement' in metric or metric=='max_transform_error') and (not isinstance(item.get('id_attrib'),str) or not item['id_attrib']):
         raise ValueError('point displacement requires stable unique point id_attrib')
+    if metric == 'max_transform_error':
+        matrix=item.get('transform')
+        if not isinstance(matrix,list) or len(matrix)!=16:
+            raise ValueError('transform must be a row-major 16-number SOP-local affine matrix (Houdini row-vector convention)')
+        values=[_finite(v,'transform') for v in matrix]
+        if any(abs(values[i])>1e-10 for i in (3,7,11)) or abs(values[15]-1)>1e-10:
+            raise ValueError('transform must be affine')
+    elif 'transform' in item:
+        raise ValueError('transform is only valid with max_transform_error')
     if 'range' in item:
         r=item['range']
         if not isinstance(r,(list,tuple)) or len(r)!=2 or _finite(r[0],'range')>_finite(r[1],'range'):
@@ -410,9 +419,12 @@ def _measure(g, item, reference=None):
         raise ValueError(f'missing measurement group {item["group"]!r}')
     prims = list(group.prims()) if group is not None else list(g.prims())
     metric = item['metric']
-    if metric in ('max_point_displacement','mean_point_displacement'):
+    if metric in ('max_point_displacement','mean_point_displacement','max_transform_error'):
         from dsh_geometry_observation import point_displacement
-        try:return point_displacement(g, reference if reference is not None else g, item)
+        # Baseline residual is zero against identity, not against the future
+        # perturbation transform. Still validate identity/topology and finiteness.
+        measure_item = {**item,'transform':list(hou.Matrix4(1).asTuple())} if metric=='max_transform_error' and reference is None else item
+        try:return point_displacement(g, reference if reference is not None else g, measure_item)
         except ValueError as error:raise UnsupportedEvidence(str(error)) from error
     if metric in ('boundary_edges','piece_count'):
         from dsh_geometry_observation import polygon_observation

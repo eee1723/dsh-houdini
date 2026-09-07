@@ -89,6 +89,7 @@ report = test_controls(controller, out, tests, interfaces=interfaces)
 metric精确为bounds_size、bounds_center、bounds_min、bounds_max（axis0/1/2）、point_count、primitive_count、area；不接受center/min/max缩写。
 v11另支持point_mean（axis）、boundary_edges、piece_count（Polygon共享边连通）、max_point_displacement/mean_point_displacement。
 位移必须提供id_attrib：稳定唯一integer/string point ID，面连接在ID空间保持一致；对应关系变化返回unverified。
+已知变换的控制可附max_transform_error，提供同样id_attrib、实际primitive group和transform（16数row-major仿射矩阵，Houdini行向量约定，SOP-local空间）。它测量全组真实点相对`P_baseline * transform`的最大残差，baseline残差定义为0；delta/range使用设计容差，另加一项非零位移响应。将主体和附属件声明为同一变换，未选中组声明identity，可检出“主体动了但附属件不跟随”。它不是拟合当前结果来反推正确变换，也不证明全部姿态/碰撞；混合几何的点均值不能当设计轴心。修改生成器后需重新建立基准。
 expectation可带range=[min,max]检查基准及扰动绝对范围，例如封闭面的boundary_edges要求range=[0,0]、delta=[0,0]；
 单纯delta=0不能证明基准已闭合。仍需至少一条响应delta排除0；有意分组切口不能无条件要求闭合。
 每case至少一个delta区间必须排除0以声明实际响应；不变量可作为额外expectation。

@@ -9,7 +9,7 @@
 
 ## 界限
 
-只允许写输出根；`E:/dsh-houdini` 全部只读。只允许读取：`benchmark/*schema.json`、`benchmark/seed-inputs/`、`tools/benchmark-manifest.mjs`、`tools/benchmark-instance.mjs`、`tools/benchmark-seed*`、`docs/cross-domain-benchmark-plan.md`。不许读取 `benchmark/sealed/`、`benchmark/protocol-freeze-status.json`、`docs/development.md`、`tools/out/`、任何 DSH session/trace，也不许搜索现有题目名称。不得改仓库、生产 prompt/preset/skill/verb/tool、schema、测试或阈值；不得把 evaluator spec/答案放进 public brief、seed HIP 或 agent 可访问资源。不可恢复操作、安装依赖、改权限均写 `BLOCKED.md` 后跳过。
+只允许写输出根；`E:/dsh-houdini` 全部只读。只允许读取：`benchmark/*schema.json`、`benchmark/seed-inputs/`、`tools/benchmark-manifest.mjs`、`tools/benchmark-instance.mjs`、`tools/benchmark-seed*`、`docs/benchmark-design.md`。不许读取 `benchmark/sealed/`、`benchmark/protocol-freeze-status.json`、`docs/development.md`、`tools/out/`、任何 DSH session/trace，也不许搜索现有题目名称。不得改仓库、生产 prompt/preset/skill/verb/tool、schema、测试或阈值；不得把 evaluator spec/答案放进 public brief、seed HIP 或 agent 可访问资源。不可恢复操作、安装依赖、改权限均写 `BLOCKED.md` 后跳过。
 
 ## 现状与任务 0
 

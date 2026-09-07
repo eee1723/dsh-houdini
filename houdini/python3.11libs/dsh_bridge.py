@@ -69,7 +69,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 13
+_EXECUTION_CONTRACT_VERSION = 16
 _RUNTIME_ID = uuid.uuid4().hex
 # Remove the retired v8 callback when reloading an existing runtime.
 if globals().get('_delivery_hip_callback') is not None:
@@ -233,6 +233,7 @@ _VERBS: dict[str, object] = {
     "usd_stage_summary": dsh_hou_helpers.usd_stage_summary,
     "usd_prim_info": dsh_hou_helpers.usd_prim_info,
     "render_frame": dsh_hou_helpers.render_frame,
+    "camera_fit": dsh_hou_helpers.camera_fit,
     "render_check": dsh_hou_helpers.render_check,
     "render_view": dsh_hou_helpers.render_view,
     "viewport_screenshot": dsh_hou_helpers.viewport_screenshot,
@@ -251,7 +252,7 @@ _MUTATING_VERB_NAMES = {
     "set_object_visible", "layout_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "render_frame", "render_view",
-    "viewport_screenshot",
+    "viewport_screenshot", "camera_fit",
 }
 
 _VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
@@ -657,13 +658,17 @@ def _operation_summary(name: str, result):
     r = result.get('validation', result) if name == 'build_module' else result
     if name == 'node_info':
         components = [{'name':p['name'],'components':p['components']} for p in r.get('parameters',[]) if len(p.get('components',[]))>1]
-        return {k:r[k] for k in ('parent','type','version','visible','operation_card','usage_notes','filter_mode','filter','parameter_count','total_parameter_count','next_action') if k in r} | {
+        return {k:r[k] for k in ('parent','type','version','visible','operation_card','usage_notes','operation_parameters','operation_parameters_missing','operation_parameter_scope','filter_mode','filter','parameter_count','total_parameter_count','next_action') if k in r} | {
             'tuple_components':components[:20], 'tuple_components_truncated':len(components)>20,
             'setting_cards':[{k:p[k] for k in ('name','type','components','default','menu','menu_dynamic') if k in p}
                              for p in r.get('parameters',[])[:24]],
             'setting_cards_truncated':len(r.get('parameters',[]))>24,
             'parameter_scope':'returned filtered parameter card only; retain components and menu set_value when summarizing'}
     if name in ('connect','disconnect_input'):
+        return result
+    if name == 'camera_fit':
+        return result
+    if name == 'geo_attrib_stats' and 'unique_count' in result:
         return result
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
         return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
@@ -676,8 +681,13 @@ def _operation_summary(name: str, result):
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller','baseline_interfaces','pair_tests','reason','parameter_writes','required_outputs')
     out = {k: r[k] for k in fields if k in r}
-    if name == 'render_view' and isinstance(r.get('framing'), dict):
+    if name == 'build_module':
+        out.update({k: result[k] for k in ('operation_advisories','operation_advisory_count',
+                                          'operation_advisories_truncated','operation_advisory_scope') if k in result})
+    if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']
+    if 'framing_status' in r:
+        out.update({k:r[k] for k in ('framing_status','products','reasons','render_started','projected_bounds_ndc','margin_px','depth_check','crop_reasons') if k in r})
     if result.get('interface_checks') is not None:
         out['interface_checks'] = result['interface_checks']
     for field in ('error_nodes','warning_nodes','errors','warnings'):
@@ -690,14 +700,15 @@ def _operation_summary(name: str, result):
         out['source'] = {k: fp[k] for k in ('path','frame','signature','points','prims') if k in fp}
     check = r.get('check')
     if isinstance(check, dict):
-        out['pixels'] = {k: check[k] for k in ('error','width','height','mean_luma','nonblack_pct','content_bbox','presentation') if k in check}
+        out['check'] = check
+        out['pixels'] = check  # compatibility alias; matches the Python result
     return out
 
 
 def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
     def wrapped(*args, **kwargs):
         if observed_nodes is not None and name in _MUTATING_VERB_NAMES:
-            for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller') if k in kwargs]:
+            for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller', 'camera', 'target') if k in kwargs]:
                 try:
                     node = value if isinstance(value, hou.Node) else hou.node(value) if isinstance(value, str) and value.startswith('/') else None
                     if node is not None: observed_nodes[node.sessionId()] = node.path()
@@ -723,7 +734,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
                 "ms": round((time.time() - start) * 1000, 1),
             }
             check = result.get("validation", result) if isinstance(result, dict) else None
-            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "geo_point_spacing","geo_check_interfaces","test_controls") and isinstance(check, dict):
+            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls") and isinstance(check, dict):
                 if check.get('status') == 'unverified':
                     entry['check_status'] = 'unverified'
                 elif check.get("ok") is False or check.get("errors") or check.get("fresh") is False:

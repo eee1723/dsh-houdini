@@ -344,7 +344,7 @@ const MUTATING_VERBS = new Set([
   'scene_save', 'scene_save_as', 'tab_create', 'tab_apply', 'connect', 'set_object_parent', 'disconnect_input', 'rename_node', 'delete_node', 'set_parm', 'set_parms',
   'set_keyframes', 'create_spare_parms', 'set_timeline', 'create_bookmark', 'delete_bookmark',
   'hda_create', 'hda_set_section', 'hda_patch_section', 'hda_set_interface', 'sop_set_output',
-  'set_object_visible', 'set_display', 'layout_nodes',
+  'set_object_visible', 'set_display', 'layout_nodes', 'camera_fit',
 ]);
 const QUERY_SIDE_EFFECT_VERBS = new Set([
   ...MUTATING_VERBS,

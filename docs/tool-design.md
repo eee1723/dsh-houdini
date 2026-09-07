@@ -1,191 +1,41 @@
-# dsh-houdini 动词词表设计（宪法）
+# 工具设计与动词词表
 
-Execution contract version: 13
+Execution contract version: 16
 
+本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
+实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
+[Bridge注册表](../houdini/python3.11libs/dsh_bridge.py)及运行时verb_help相互校验。
+执行边界详见[执行契约](execution-contract.md)，节点知识见[同源节点卡](node-operation-cards.md)。
 
-### v13候选：设值语义、接线状态、朝向和截面观察
+## 设计原则
 
-仍5工具/57动词。node_info默认最多24个参数，显式limit可扩展；按当前操作用literal filter，
-不批量扫描无关类型。menu条目新增set_value，与set_parm/set_parms/build_module预检同源。
-原生Menu和带菜单的Int接受精确token或set_value；Int的menuUseToken值按实际存储解释。
-菜单上的表达式必须用{expression,language}对象，普通无菜单数值字符串仍为HScript表达式。
-无效菜单值在清keys/创建前拒绝；String建议菜单不封禁自定义字符串。动态菜单只由实际节点解析。
+动词是稳定意图接口，不是hou的一对一包装；域只是导航，不是权限分类。
+低层只读可用query中的HOM逃生舱，已覆盖的裸修改不得旁路。通用机制进入动词/guard，
+方法进入按需skill，身份与风格进入preset，常驻guidance只放跨域稳定契约。
+未知签名先verb_help，不以失败调用探索返回类型；类型发现、操作知识、运行状态分别查询。
 
-connect/disconnect_input新增inputs_before/inputs_after：实际源路径、源输出、目标输入，最多128连接，
-明确count/truncated。Merge断开后后续输入可能前移；替换直接connect，消费最终连接表。
-verify_network的简单output名称相对明确parent解析，与build_module一致；拒绝猜测其他网络。
+- 新动词必须有跨任务独立意图、稳定参数/返回、错误与恢复边界，不能只为单个对象或提高目录覆盖率。
+- 各参数接受Node/path的范围以实际签名为准；涉及foreign修改须单次用户明确授权。
+- 写操作须严格设参、主线程执行、记录真实失败和最终事务状态，不catch失败后继续交付。
+- 多节点setup与单节点创建分开：tab_apply面向受限真实Shelf组合，不把所有setup压进tab_create。
+- 只读describe/list_parms/node_info不能为导航隐式创建或cook重型上游。
+- 所有证据都要带范围，cook、关系、渲染像素和视觉语义不互相代替。
 
-geo_piece_stats inspect新增shell_orientation：逐边连通壳的closed/consistent及HOM约定有向体积sign。
-开放/不一致/退化壳unverified；positive只在简单、非嵌套、无自交闭合壳假设下对应朝外。
-不计算自交/嵌套包含，不把有向体积或shared-edge consistency写成实体有效性认证。
+## 顶层工具
 
-interfaces新增{ id,method:'section_proximity',source_group,target_group,axis:0|1|2,
-plane_at:'target_center'|有限坐标,expected_components:1..32,max_distance:非负数 }。
-source/target均为实际output的非空primitive组且不共享点。用实际Polygon面与轴平面交线段中点，
-检测每个源边连通component的非空闭合截面，再量测中点到target支持表面的距离。
-plane_at=target_center按当前target实际bbox中心重算。最多512样本，沿用总nearest pair预算；
-不创建节点/改拓扑，不要求采样点数固定。缺组件/空截面fail，非Polygon/共面面/歧义截面unverified。
-这证明声明截面样本的邻近性，不证明整面接触、穿插、连接强度。build_module/test_controls复用同一方法。
+| 工具 | 作用 |
+|---|---|
+| houdini_query | 只读观察；没有allow_raw修改豁免 |
+| houdini_exec | 场景修改；code、review、review_test为互斥分支 |
+| houdini_job_submit | 长操作排队异步提交 |
+| houdini_job_status | 状态/结果及可选等待 |
+| houdini_job_cancel | 协作式取消；不强杀已执行HOM |
 
-domain.right新增有界线性数据对象{terms:{数字spare参数名:系数,...},constant?:数值}（1..8项），
-允许表达派生尺寸和余量，不eval字符串，不求解或钳制。未知参数/非有限值拒绝；表达式/keys存在时
-按实际扰动后值检查。无耦合keys的非法候选可零写入拒绝；参数域仍只检查声明case，不成为滑条保护。
+工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
+请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
+兼容入口保留历史调用解释能力，不作为新guidance中的优先创建方式。
 
-图片relay的media.inspection读取Host当前requestHeader路由及公开llm.resolveModelInfo，给出
-声明图片输入能力和下一步：read_image，或可用时vision_toolkit_activate/vision_glance。
-未知配置保留unknown，查询失败不影响render结果；不改用户模型设置、不自动调用外部视觉服务。
-所有几何/路由结果仍保留semantic_status=unverified，实际视觉疑点逐项消费。
-
-### v12候选：输入依赖初始化、组合预检与实际表面关系
-
-仍5工具/57动词。tab_create保留shelf初始化；Sweep 2.0声明input1时在接线后校正
-surfaceshape=input，避免初始化在输入尚未连接时留下内置tube。build_module显式parms在其后生效，
-用户可明确选择tube/ribbon；其他类型不作同名参数猜测。双版真实随附shelf脚本受控回放验证，GUI仍单独验收。
-
-build_module新增keyword-only required_outputs=[新节点名]（1..16、唯一）：验证必需分支非空，
-不强制所有helper非空。独立参数名/tuple/menu/输入错误一次收集为PreflightError，
-operation-evidence保留phase=static_preflight、scene_writes=0、前32错误与总数。无其他写入时
-transaction=no_scene_change；不能用局部零写覆盖前面已执行修改。node_info的组件名/操作说明
-在operation-evidence中单独保留，避免agent只回传参数名列表时丢失。
-
-geo_check_interfaces及build_module/test_controls的interfaces可声明
-{id,method:'axis_gap',source_group,target_group,axis:0|1|2,gap_range:[min,max],min_overlap:正数}。
-两组均为最终输出的精确primitive组，非空、不重叠；实际surface bbox计算source.min[axis]−target.max[axis]，
-并要求另外两轴投影交叠不少于min_overlap。正数为分离，负数为轴向重叠；这仅验证投影间隙，
-不证明接触、实体插入/穿透、焊接或强度。只接受支持的表面primitive；unsupported保持unverified。
-可接入test_controls基准/扰动检查与恢复。原point→surface默认合同保持不变。
-
-### 程序化建模观察与执行反馈（v11候选）
-
-仍五工具/57动词。Host通过公开异步prompt assembly注入带来源的只读metadata快照：
-HIP/version/frame、有效preset、选中节点、候选pane与display/render，明确时间和未知状态。
-`automaticContext=false`可停用；每条用户消息在Host收件时采集一次并绑定消息ID，后续claim/组装复用。
-工具执行、场景改变、时间流逝均不刷新该快照；失败不自动重试，agent需要新状态时显式query。
-记录capture_requested_at（Host收件/采集请求时刻）与observed_at（主线程实际采集时刻），不声称精确发送瞬间状态。
-Bridge固定`/context`请求使用schema_version=1，主线程队列等待1.5秒后取消过期项；旧Bridge
-不支持时标unavailable，不执行任意代码兜底。几何选择当前保留not_observed。
-
-exec回报transaction最终状态与本请求记录identity的存活摘要；动词执行成功不证明未被随后回滚。
-模型输出去除重复的[verb] stdout回显，完整ledger及原始返回保留。node_info明确literal_substring
-筛选、total_parameter_count与零匹配恢复，并给相关节点的operation_card/usage_notes。
-数值tuple表达式在清key/创建前拒绝，提示用组件字段。操作知识唯一源是
-`houdini/node-operation-contracts.json`，单节点事实经node_info提供，组合方法在SOP reference。
-
-`geo_piece_stats(...,inspect=True,group=None,basis=None)`增加有界选中Polygon观测：边连通分量、
-边界、非流形、朝向冲突、零面积及显式正交basis下extent；status=observed仅表示量测完成。
-默认旧piece统计不变；group/basis只用于inspect模式。选择边界可能是有意分组切口，不证明实体相交。
-`test_controls`新增point_mean(axis)、boundary_edges、piece_count（共享边连通Polygon）及
-max_point_displacement/mean_point_displacement（必须id_attrib稳定唯一ID＋相同面连接）。
-expectation可带range=[min,max]，基准及扰动均满足绝对范围；delta仍检查响应且至少一项排除0。
-unsupported/对应关系不成立保持unverified，不把native primitive降为P-only。
-
-`render_view`新增focus_group（精确primitive组）、isolate、projection=perspective|orthographic、
-framing_bounds=[min_xyz,max_xyz]（proxy世界空间）。目标空/缺失拒绝；隔离只在持久proxy内执行。
-framing返回group/projection/bounds/isolation，跨参数A/B可复用同bounds/direction/resolution/coverage；
-同framing_frame本身不保证参数变化后的相机相同。GUI图像及新模型行为发布证据另记，不能用headless替代。
-
-### 按需快速资产复核（v10候选，不增加动词）
-
-五工具/57动词。普通建模由作者完成相关输出/关系/控制检查；用户要求或具体疑点需要第二视角
-时才调用 `houdini_exec(review={parent,output,controller?})`。Host在一次入口中提供原始要求、
-当前几何/控制/部件/接口覆盖摘要、实验适用性及至多8条/16K字符历史工具事实（非作者自评）。
-不登记合同或维护长期证据缓存；历史测量不自动证明当前依赖和未测控制。
-
-评审只暴露query/exec/read_image，技能已内联；优先已有图片，目标六次以内工具调用，四分钟
-上限。`review_test`只针对疑点、全程至多3个case、2视角/含基准8张图。普通作者的test_controls
-仍支持16个case，新增Toggle的0/1受控验证。零实验/unsupported保持unverified；一次短问题
-清单附检查范围，工具成功仅代表评审完成，不代表资产认证。作者保留未测范围。
-
-临时权限仍绑定作者拥有的SOP parent/output/controller、唯一child与HIP/节点/参数/frame；
-改参/产图/恢复仍在同一主线程工作项。普通修改、保存、删节点、job、再委派不可用。恢复失败
-或基准改变阻断后续操作；不放开任意VEX/Python/File/Solver，不以测试白名单限制作者选型。
-
-作者端：node_info展开有界静态multiparm，build_module先设置count再设置实际实例参数；
-空CTRL走tab_create，非空输出门保留。cook_node已有错误时强制刷新一次，构建失败携带具体
-cook_details。失败undo后只清理本调用记录的确切新建节点identity，不用路径/父网络推断权限。
-详见 `docs/independent-asset-review.md`；v9实会话与v10本地验证分开记录。
-
-执行语义版本独立于动词名指纹。修改默认失败/恢复/权限语义时提升此版本；Host 每次场景请求
-核对 health 的版本与目录 hash，并随请求附 expected_contract，由 Bridge 在执行前再次校验。
-
-> 本文是 dsh-houdini「场景操作动词」的**唯一真相源**（single source of truth）。
-> 代码实现（`houdini/python3.11libs/dsh_hou_helpers.py`）是本文的运行时实现。
-> **改任何动词必须同步改本文并跑 `npm run build`**；构建会生成 Host 目录/指纹，测试会校验 Bridge 注册表没有漂移。README 只放速查和指针。
->
-> 设计对标三份参考：Houdini-Agent、fxhoudinimcp、kleer001/houdini-mcp（见 README 引用）。
-
----
-
-## 1. 定位：动词层是「意图层」，不是「hou 的 1:1 包装」
-
-agent 执行代码时，`hou` 本身可用（逃生舱）。动词层做的是把 Houdini 的
-**惯例、校验、错误处理、最新版本解析**固化下来，让 agent 写一句 `set_parm(...)`
-而不是十几行裸 `hou`。核心收益：
-
-- **省 token**：返回精简、JSON 安全、无 traceback 噪音。
-- **稳**：集中错误处理比 agent 每次手写 try/except 可靠。
-- **准**：把「查不猜」、最新版本、命名冲突、引用检查等边界统一。
-
-类比：`hou` 是 bash，动词是 `ls` / `find` / `sed` / `rm` 那套命令词汇。
-
----
-
-## 2. 两轴模型：动词轴 × 域轴
-
-分类按两个**正交**维度组织，不按一条线：
-
-- **动词轴（语法，通用不变）**：find / create / read / update / delete / connect / verify
-- **域轴（名词，逐域扩展）**：node → parm → geometry → scene → viewport → asset → render/sim → code
-
-CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA），所以
-**「域」是扩展单元，「动词」是复用单元**。
-
-### 9 个域
-
-这里是架构层的 9 个领域族；构建期 catalog 会按工具职责把 compatibility、vocabulary 等
-独立展开，当前实际目录为 11 个 domain / 57 verbs。
-
-| 域 | 现状态 | 预留动词（将来，示意） |
-|---|---|---|
-| **node / network**（场景图） | ✅ 已实现（含 SOP/OBJ 显示语义 + layout） | network box / sticky note |
-| **parm**（依附 node） | ✅ 已实现 | 表达式 / keyframe / spare parm / lock |
-| **geometry**（几何数据） | ✅ 部分实现（属性/piece/跨帧） | `geo_export` |
-| **stage / USD**（Solaris 数据） | ✅ 只读摘要/prim 详情 | USD layer/edit（仍走裸 API） |
-| **scene**（工程/会话） | ✅ info/save/timeline/bookmark | `scene_open`（仅未来 Host 生命周期握手） |
-| **viewport**（视口/UI） | ✅ 部分实现（`viewport_screenshot`） | `viewport_frame` `viewport_camera` |
-| **asset**（HDA） | ✅ 已实现（2026-08-20，OTL 会话复盘 P0） | `hda_install` `hda_list` |
-| **render / sim**（重型） | ✅ job 通道 + `render_frame`/`render_check` | `render_start` `sim_step`（走 job） |
-| **code**（逃生舱） | ✅ `houdini_exec` | — |
-
-### 命名约定
-
-1. **域编码进名字**：`geo_*`、`scene_*`、`viewport_*`、`hda_*` 前缀。
-2. **node 是默认域，用简名**（`find_nodes` `connect` `cook_node`…），其余域一律带前缀。
-3. 这样将来加域不冲突，agent 一眼看出动词属于哪个域。
-
----
-
-## 3. 铁律（每个动词都必须遵守）
-
-1. **统一引用约定**：动词里表示「节点」的参数一律接受 `hou.Node` **或** path 字符串，
-   内部 `_resolve()` 统一转换；不存在则抛一条明确的中文错误。
-2. **返回精简、JSON 安全**：只吐 path / 小 dict / list / None；`hou.Vector3/Matrix/Color`
-   等转成 list；不吐 hou 对象、不吐 traceback 噪音。
-3. **`hou` 永远是逃生舱**：动词覆盖不了的复杂场景，agent 可直接裸写 `hou`。
-4. **兼容演化**：已发布意图和既有默认行为不得静默改变；允许增加带默认值的兼容参数。任何目录/签名变化必须同步本文、重建 Host 契约并通过 Bridge 注册表一致性测试。
-5. **动词 = 语义动作**：一个动词一个语义，内部把校验/纠错/引用检查固化，
-   不做 1:1 的 `hou` 转发。
-6. **失败不留半成品**：GUI exec 自动进入唯一 undo group，异常时只在栈顶 label
-   精确匹配时 performUndo，并回报 `rollback`；文件 I/O/HDA 库等非 undoable 副作用
-   不伪称已回滚。headless undo stack 关闭时明确回报 unsupported。
-7. **节点来源不靠猜**：parent/path/name 与可复制的 userData 都不是所有权。host 从真实
-   tool context 注入 session/call，bridge 以进程内 `hou.Node.sessionId()` 登记动词新建节点；
-   foreign 节点可自由读取，但 mutation 默认拒绝，只有用户明确指定该节点时才可用
-   `allow_foreign="<授权理由>"`，并把豁免写进 stdout/trace。
-
----
-
-## 4. 动词表（当前已实现）
+## 动词目录
 
 ### vocabulary 域（回答「动词怎么调用」）
 
@@ -201,39 +51,6 @@ CRUD 对每个域都成立（能建节点、建参数、建 keyframe、建 HDA�
 | `search_tab_entries(parent, query)` | 按真实父网络列当前可见的 node/tool entry；排除 hidden/deprecated，Material Library 根层只暴露 Builder tool；每项标 `kind` 与 dsh 是否可安全执行 | dict |
 | `resolve_latest_type(category, base)` | 某族最新版全名（内部为主）；只以 namespace 注册的族返回带前缀全名（'rigdoctor' → 'kinefx::rigdoctor'），裸别名过不了 `createNode(exact_type_name=True)`；跨 namespace 同名按排序取第一个，recipe 需跨版本一致时应显式钉命名空间 | str |
 
-### 真实 Tab entry、Solaris/USD 自省的设计基线
-
-`session-71d76525` 暴露了一个比“节点名猜错”更底层的契约错误：Houdini 的 Tab
-菜单不等于 `NodeTypeCategory.nodeTypes()`。真实菜单同时包含节点类型、上下文过滤、
-隐藏/旧类型和会执行脚本的 setup tool；例如 H21 的 **Karma (Setup)** 是
-`lop_karma_setup`，会创建 Karma Render Settings + USD Render ROP，而 **Karma
-Material Builder** 是 `vop_karmamtlxsubnet`，会创建带 Karma/MaterialX tab mask、
-render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复现这些语义。
-
-第一批能力已按以下边界实现；GUI setup 回归和 allowlist 扩展仍按该边界推进：
-
-- 扩展 Tab 查询为 **parent-aware**：以真实父网络为主输入，返回当前上下文可见的
-  entry，并区分 `node_type` 与 `tool`；保留旧 `category + query` 形态作兼容查询，
-  但明确它只是类型注册表，不再声称等于用户菜单。
-- 单节点创建与 Tab tool 执行必须拆开：`tab_create` 保持“创建一个节点”的冻结返回
-  契约；新增的 tool 意图返回**所有**创建节点、连线和状态恢复结果，不能把多节点
-  setup 压成第一个 `hou.Node`。
-- tool 执行初期只允许当前 network context 可见、非交互、可审计的 allowlist entry；
-  通过当前安装的 SideFX recipe initializer/稳定 setup 契约适配执行，不运行会抢
-  selection/current 或打开 modal/file picker/viewport picking 的通用 shelf UI 包装。
-  GUI 保存/恢复 network editor pwd、selection/current；headless 使用同一 recipe。
-- `tab_create` 的 fallback 不得再把被 parent tab mask 排除的类型伪装成“完整 Tab
-  语义”；需要绕过 UI 过滤的专家操作必须显式走裸 `hou` 并留下理由。
-- 新增 USD stage/prim 自省意图：摘要层回答 geometry/material/light/camera/
-  RenderSettings/RenderProduct/RenderVar 与 binding；详情层回答单个 prim 的 properties、
-  primvars、relationships、material binding 和 time samples。它们替代反复猜 Pixar
-  USD Python API，但不包装任意 USD 编辑。
-- `render_frame` 保持“已有交付 ROP”的语义；传 LOP 时在渲染前明确拒绝并指向
-  Karma (Setup)/USD Render ROP，不把 `LopNode.render()` 的 AttributeError 推迟到 job。
-
-这批能力是 Solaris/Karma 和未来 Copernicus setup/bake/material 接入的共同地基；
-不为单个草地任务硬编码 `karma_setup`，也不把任意 shelf tool 暴露为无界执行入口。
-
 ### node 域（场景图）
 
 | 动词 | 语义 | 返回 |
@@ -245,8 +62,8 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
 | `connect(src, dst, index=0, *, allow_foreign=None)` | 严格数据流连线（src 输出 → dst 指定输入）；只有一个端口参数index，第4位置参数拒绝；权限理由必须显式keyword非空字符串。mutation 边界在 dst；**OBJ→OBJ 拒绝**，改用 `set_object_parent`。端口错误不再改接下一个输入；连接后仅在 dst 违反自顶向下流时调整落位 | dict |
-| `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际 parent context 下最新版类型、端口数量、参数默认值/组件名/menu token/label 与帮助 URL；Boolean说明输入选择组和部件组传递；不建临时节点、不运行 shelf；动态菜单需创建后 list_parms，truncated 明示。没有delivery类型准入字段 | dict |
-| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 小型新增SOP模块：1..64个{name,type,parms?,inputs?}，inputs为更早spec/现有child名，None跳输入。独立静态参数/输入错误汇总后零创建拒绝。required_outputs可指定1..16必需非空新分支，不限制可为空helper；可附geo_check_interfaces实际输出合同。失败清理新节点；dry_run仅静态，返回validation/interface_checks，不覆盖已有节点/flags | dict |
+| `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
+| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝。operation_advisories按类型/缺少显式决策合并，非阻断、不改默认值、不证明语义；dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
 | `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True)` | SOP checkpoint：必须显式 output，省略即报可操作错误，绝不跟随 display。默认检查 parent 直属范围，可 nodes 限域；error/空输出默认抛 CheckpointError 并保留结构证据，require_valid=False 仅供诊断。warning独立，scope/时间/frame/输出指纹与失败原因前置；不证明关系/视觉 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
@@ -258,25 +75,6 @@ render context 和内部默认网络的 subnet。仅有 `createNode()` 无法复
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
 | `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children')` | `mode='children'`（默认）= 原生 layoutChildren，行为不变；`mode='flow'` = 自研拓扑分层：按最长路径深度分行（深度 0 最上，y = −depth × 垂直间距），同深度按节点当前 x 排序保持左右阅读顺序、等距排开并整体居中，有环时按原顺序兜底不断裂；spacing 默认从节点实际尺寸推导，显式正值覆盖。host task 中 `nodes=None` 只布局当前 session 创建项并回报 `foreign_nodes_skipped`；显式列表逐项过 ownership guard。Python Shell 无 host owner 时保持传统全布局语义 | dict |
-
-**ownership 边界**：读取/依赖 foreign 节点不受限；例如可把用户节点作为 `connect` 的
-source，不能默认改它的参数、名字、旗标、位置、HDA 定义或把它作为 destination 改线。
-`allow_foreign` 不是“接管”或永久转移所有权，只授权这一次动词调用，并要求理由进入 trace。
-持久 `render_view` service 永不接受该豁免。当前 owner 生命周期是一个 DSH agent session；
-call id 只作创建审计，不把多次工具调用割裂成无法继续编辑的节点。
-registry 只在当前 Houdini 进程内有效；完整重启后无法在不信任可复制 tag 的前提下证明旧节点
-来源，因此安全地降级为 foreign，由用户对具体目标作单次授权。
-
-**OBJ parenting 边界（2026-09-04）**：`connect` 只保留数据流语义，避免同名动词在 Object context
-悄悄变成 parenting。场景层级改用 child-first 的 `set_object_parent`，并要求结构化 reason；这既阻止
-新建几何 FK 回退旧 OBJ rig，也保留 camera/light/null、scene assembly、legacy 和下游 OBJ 交付。
-
-**人性化落位（O1，2026-09-03）**：agent 建节点全堆原点、最后一发原生 L（layoutChildren）
-了事，是真实会话里最刺眼的机器味。因此把「整齐」做成建设的副产品：`tab_create` 落位、
-`connect` 纠流、`layout_nodes` 提供 flow 分层。明确不做「每次操作后自动全量
-layoutChildren」——原生 L 会重排整张网络（含 foreign 节点与用户手摆位置），既越
-ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的节点，`connect` 永不移动已在
-下游的节点，flow 只重排 ownership 过滤后的集合。
 
 ### compatibility 域（仅历史回放，不进新 guidance）
 
@@ -291,7 +89,7 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 |---|---|---|
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际 menu token/index/label（不给当前值）；动态菜单以实际节点为准 | list |
 | `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by`；动画附 `time_dependent/key_count/first_frame/last_frame/curves` 摘要，不默认倾倒全部 keys | list |
-| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠）。参数上有表达式/关键帧时**自动清除再设值**，返回带 `note` 说明清掉了什么（2026-08-20 起，OTL 会话 seq 28944：`$FEND` 表达式把 set 静默架空）；想保留动画就请显式用字符串表达式 | dict |
+| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠）。参数上有表达式/关键帧时**自动清除再设值**，返回带 `note` 说明清掉了什么；想保留动画就请显式用字符串表达式 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；失败恢复本批参数值/表达式/关键帧并抛错。显式 strict=False 才逐项容错，返回 ok/set/failed；参数回调及外部文件不属快照回滚。Menu string 只接受精确 token；数值 string 是 HScript 表达式，显式表达式对象支持 language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
 | `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`。同名拒绝，不隐式覆盖 | dict |
@@ -308,21 +106,14 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 | `create_bookmark(name, start, end, replace=False)` | 创建整数帧 bookmark；同名默认拒绝，replace 精确替换 | dict |
 | `delete_bookmark(name_or_id)` | 按精确名称或 session id 删除，失败列现有项 | dict |
 
-**HIP open/new 生命周期边界**：不得在 bridge exec 中调用 `hou.hipFile.load()` 或
-`hou.hipFile.clear()`。H21 GUI 实测 load/clear 会使当前 exec 丢失后续 result/images，恢复或
-新场景重置还可能断开连接并重启 Houdini，使桥无法
-完成 finally/state restore。`scene_info` 只读、显式保存仍可走当前能力；打开/替换用户 HIP
-或 File > New 必须由 Houdini UI 完成，或未来设计 host-level、可确认 unsaved、可重连的独立操作，不能简单
-封装一个 `scene_open -> hipFile.load` 动词。
-
 ### geometry 域（几何数据）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `geo_attrib_stats(node, name, attrib_class='point')` | 属性**值**统计：min/max/mean/count（`describe` 只给属性名清单）；point/prim/vertex/detail，多分量按分量给 | dict |
+| `geo_attrib_stats(node, name, attrib_class='point', *, unique=False, max_elements=100000)` | 数值min/max/mean/count；unique=True全量检查精确完整tuple（含字符串），返回unique_count/duplicate_count/all_unique及至多8个重复样本。用P查精确重叠、用id查身份；超预算/非有限拒绝，无容差焊接或自动删除。point/prim/vertex/detail | dict |
 | `geo_point_spacing(node, expected, tolerance, closed=False, order_attrib=None, max_points=10000)` | 全量相邻点弦长验收：默认point number顺序，或唯一数值order_attrib；closed含末→首，SOP local单位；返回全量min/max/failure_count及最多16个最差对与sequence hash。超预算拒绝不抽样；只证明该序列约束，不证明弧长、网格接线或实际零件关系 | dict |
 | `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内1..16实际关系。默认{id,source_group,target_group,max_distance,expected_points}测独立表面点到面距离；method=axis_gap改用两个primitive组及axis/gap_range/min_overlap，测source.min−target.max与横向区间重叠。空组/自重叠fail，不支持unverified；SOP local有界不抽样。距离/投影范围不是接触、实体插入、碰撞或强度认证；返回实际值/范围/几何hash | dict |
-| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`；metric为bounds_size/center/min/max（axis）、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）、max_point_displacement/mean_point_displacement（id_attrib稳定唯一ID和相同拓扑）；range可验证基准及扰动绝对范围，至少一项delta排除0。可选domain标量比较；topology为 `{id,groups:[primitive组,...],require_closed:true}` 列表，检查融合Polygon共享边连通/闭合，不代替独立表面interfaces或形状/强度。基准/扰动均复查；恢复参数/keys/frame，以完整bgeo解码内容（只排除导出头info.date）核对。支持Polygon/Mesh/Sphere/Tube/点几何；其他写前unverified。禁callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，外部副作用不属恢复保证 | dict |
+| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。domain/interfaces/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（仅排除导出头日期）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，其他写前unverified。拒绝callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece 的局部 bbox/extent/面积与退化统计；无 piece 属性时用内存 Connectivity SOP Verb，不污染网络，能发现「全场 bbox 正常但每个实例零宽/零面积」；inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通及正交basis下extent，observed仅为量测完成，方法不支持保持unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
@@ -333,12 +124,7 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 | `usd_stage_summary(node, max_paths=64)` | 概览某 LOP 输出 stage 的 geometry/material/light/camera/RenderSettings/Product/Var，材质绑定、time-sampled 属性及 cook warning；路径按组限量但计数完整 | dict |
 | `usd_prim_info(node, prim_path, max_properties=200)` | 检查单个 USD prim 的属性、primvar、relationship、material binding、time samples；points/topology 等大数组只报结构不整段拉取 | dict |
 
-### asset 域（HDA / 数字资产，2026-08-20 落地）
-
-设计背景：project_init OTL 会话（trace f608bfab）——造工具是继「造内容」之后的第二高频场景，
-但该会话 75 次 exec 中 59 次纯裸 hou，最大空洞就是 HDA authoring（parmTemplateGroup 系约
-55 次裸调用、参数组重建泥潭 6 调用、conditional 被吞 5 调用 + 1 用户回合、PythonModule
-全文重发 5 次约 55KB）。本域动词把这些教训固化：
+### asset 域（HDA / 数字资产）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
@@ -347,34 +133,15 @@ ownership 边界又毁掉用户布局；所以落位只动本次新建/连接的
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
 | `hda_set_section(node, section, code, allow_foreign=None)` | 全量写 section。`PythonModule` 先 `compile()` 预检语法（带行号报错，不写脏）；写后读回校验一致 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |
-| `hda_set_interface(node, spec, keep_std=True, hide_builtin_tabs=False, allow_foreign=None)` | **声明式参数面板**（已拍板：整组重建语义，非 merge）：`spec` 是条目列表（folder/separator/toggle/int/float/string/button/menu），重建自定义参数组；subnet HDA 的 Transform/Subnet 标准页从 Houdini 原生 subnet 类型重新取得，避免夹带旧自定义参数。`hide_when` 字段写 conditional，**提交后读回验证**——被 `setParmTemplateGroup` 吞掉就自动改走 DialogScript `hidewhen` 补丁兜底（seq 124609 的教训）；folder 上设 `hide_when` 直接报错（Houdini 不支持，seq 98973 实测）。`hide_builtin_tabs=True` 通过公开 `ParmTemplateGroup.hide` 生成 `invisibletab` 隐藏标准页 | dict |
-
-**`hda_set_interface` 的 spec 条目格式**（JSON 安全的 dict 列表，嵌套 folder 用 `parms`）：
-
-- 公共字段：`name` `label` `default` `help` `hide_when`（如 `"{ manual_res == 0 }"`）`join_next` `tags`
-- `{"type":"folder", "folder_type":"simple|tabs|collapsible", "parms":[...]}`
-- `{"type":"int"|"float", "min":, "max":}`；菜单只支持 int：
-  `{"type":"int", "menu":{"items":[...], "labels":[...]}}`
-  ——⚠️ **int+menu 存的是菜单索引（0..N-1）不是值**（会话 seq 51814 服务器实跑 1 fps 事故），
-  `default` 也必须填索引；回调代码里需自行做索引→token 映射。HOM 的
-  `FloatParmTemplate` 构造器不接受菜单参数，动词会明确拒绝；想存真实 token 请用 string 类型
-- `{"type":"string", "file":"dir|alembic|image|geo|any"}` → 文件选择器
-- `{"type":"button", "callback":"hou.phm().xxx(kwargs)"}`（Python 回调）
-- `{"type":"toggle"}` / `{"type":"separator"}`
+| `hda_set_interface(node, spec, keep_std=True, hide_builtin_tabs=False, allow_foreign=None)` | **声明式参数面板**（整组重建语义，非 merge）：`spec` 是条目列表（folder/separator/toggle/int/float/string/button/menu），重建自定义参数组；subnet HDA 的 Transform/Subnet 标准页从 Houdini 原生 subnet 类型重新取得，避免夹带旧自定义参数。`hide_when` 字段写 conditional，**提交后读回验证**——被 `setParmTemplateGroup` 吞掉就自动改走 DialogScript `hidewhen` 补丁兜底；folder 上设 `hide_when` 直接报错（Houdini不支持）。`hide_builtin_tabs=True` 通过公开 `ParmTemplateGroup.hide` 生成 `invisibletab` 隐藏标准页 | dict |
 
 ### render / sim 域（渲染产物）
 
-输出路径合同 v3：裸文件名写 `$HIP/render`（geometry/cache ROP 用 `$HIP/geo`），相对子路径
-相对 `$HIP`，禁止相对路径/junction逃逸、无扩展名和插件仓库落盘；绝对路径保留调用方明确意图。
-frame token在目标帧解析，ROP临时输出/表达式/keys和frame恢复，不能跟随引用修改别的参数。
-`render_view` 返回 `ok/file_status/pixel_status/semantic_status`；PNG等解码失败进入errors且ok=false，
-EXR等未支持pixel检查明确unverified，不当错误PNG处理。Bridge的operation-evidence在长stdout前
-完整保留路径、frame、状态和小型检查摘要；服务元数据截断不能掩盖关键证据。
-
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `render_frame(rop, picture=None, frame=None, timeout=110)` | 渲染一个**可执行 hou.RopNode**并验证产物；USD Render ROP 优先 `outputimage` 而非其 USD `lopoutput`。调用期临时启用 foreground wait；`picture` 覆盖和目标 frame 均在 `finally` 恢复。渲染前后记录 bytes/mtime/有界内容摘要，只有目标新建或指纹变化才算 `fresh=true`，沿用旧文件会失败。普通 LOP 在 job 前拒绝；>110s 走 job | dict |
-| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, focus_group=None, isolate=False, projection='perspective', framing_bounds=None)` | **视觉验证主干 v2**：显式 SOP → agent-owned Object Merge proxy → agent camera/OpenGL ROP `forceobjects` 只渲染 proxy；不依赖/不改变用户 SOP output、OBJ visibility、selection、viewport 或 frame。PNG/JPEG/TIFF 等展示格式从当前 `scene_linear` 经 OCIO 写为编码 sRGB，EXR/HDR 保持线性供 Nuke/合成；返回 `output_color` 记录实际方法/空间，找不到 sRGB OCIO space 时显式标记 gamma 2.2 近似兜底。基础设施是会话级持久服务，OBJ/OUT 两侧分别收进带说明的 Network Box，任务收尾不得删除；空闲 proxy 会清空真实引用。传 OBJ 时只在调用开始解析一次 SOP并提醒。preflight 拒绝空/error 几何；返回 source fingerprint 前后、`stale`、eye/direction、ROP 设置、service metadata 和 render_check。动画 A/B 给所有调用传相同 `framing_frame`，用同一 bbox 锁定相机；focus_group指定实际primitive组，空组拒绝，可isolate；projection可orthographic，framing_bounds固定proxy世界[min,max]包络用于跨参数相机一致。返回取景范围与隔离事实 | dict |
+| `camera_fit(camera, target, direction='iso', coverage=0.82, width=None, height=None, frame=None, *, dry_run=False, allow_foreign=None)` | 将正式静态OBJ cam拟合到显式SOP世界包络；保留焦距，清lookatpath，求距离/正交宽度，实际矩阵投影回验；无渲染/视口改变。尺寸默认相机值，当前frame。拒绝动画/约束/窗口偏移/自定义lens，失败恢复。ownership与单次allow_foreign适用，持久preview服务永不豁免；dry_run仍exec。Solaris需导入并按实际RenderProduct预检 | dict |
+| `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job | dict |
+| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机/OpenGL，恢复用户状态，服务不删除。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝。展示格式OCIO编码sRGB（无匹配空间时明确gamma近似），EXR/HDR线性；output_color记录方法，不证明语义 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
 ### viewport 域（视口/UI）
@@ -383,212 +150,13 @@ EXR等未支持pixel检查明确unverified，不当错误PNG处理。Bridge的op
 |---|---|---|
 | `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False)` | **用户屏幕诊断工具**：用户切空 display 节点时截到空是正确结果，不能用来证明 agent 产物；和 `render_view(explicit_sop)` 对照可区分 viewport 漂移与真实几何错误。flipbook 异步，设置/相机在落盘后恢复 | dict |
 
-### 拆分决策：`list_parms` vs `read_parms`
+## 自省、帮助与追踪
 
-两个动词回答**两个不同问题**，合并会互相污染：
+list_parms回答“参数叫什么”，read_parms回答“实际值/表达式与引用是什么”；node_info给创建前静态
+模板和节点卡，describe给已有节点/数据/帮助元数据。filter是字面子串，不是regex。
+静态模板和Shelf创建状态不同；动态菜单须list_parms，不假定stock节点内嵌完整帮助文本。
+当前不提供全文离线帮助检索或node_help动词。
 
-- `list_parms` → 「我想改的参数叫什么名？」（导航，类似 `ls`）
-- `read_parms` → 「这个节点实际在干什么？」（意图解读）
-
----
-
-> **实测 API 基线（H21.0.440 / py3.11 与 H22.0.368 / py3.13 一致）**：
-> `Parm.set(str)` 对数值参数抛 TypeError（表达式必须走 `setExpression`）；
-> `hou.Parm` 无 `isReferencedBy`，引用自省用 `parmsReferencingThis()` / `getReferencedParm()`；
-> `Node.inputs()` 是紧凑元组（无 None 占位，但代码仍做防御）；`setInput` 只接受 `hou.Node` 对象。
->
-> **HDA authoring 基线（H21 实测，project_init OTL 会话 trace f608bfab）**：
-> ① `setParmTemplateGroup` 提交会**丢弃 API 侧 `setConditional` 设的 conditional**
-> （GUI 设的能活）——写后必须读回验证，丢了就补丁 DialogScript `hidewhen` 行；
-> ② conditional 对 **folder 无效**（只有 `invisibletab` 能隐藏整页）；
-> ③ 删除内置 std 页会被 Houdini 自动重建，隐藏走 DialogScript `invisibletab`，
-> 且 `setParmTemplateGroup` round-trip 会**保留**已有 `invisibletab`；
-> ④ `parmTemplateGroup.remove(folder)` 可能留下内层残参、同名 folder 被自动改名
-> （folder_init→folder_init2）——面板重建用整组替换，不要增量修；
-> ⑤ Int 参数配菜单存**索引**不存值；⑥ `alembicTimeRange` 有归档缓存脏读
-> （同路径重写的 abc 会读出错误单位），读前先 `alembicClearArchiveCache()`；
-> ⑦ abc 时间戳是 Maya 约定 frame=t×fps，与 `hou.timeToFrame`（frame 1 = 0s）差一帧。
-
----
-
-## 5. 场景定向模型（LLM 在 Houdini 任务里需要哪些信息）
-
-| # | 维度 | LLM 用它判断什么 | 动词 |
-|---|---|---|---|
-| 1 | 拓扑（DAG） | 我在链条哪、动谁影响谁 | `graph` |
-| 2 | 生命周期状态 | 健康吗、能 cook 吗、被 bypass 吗 | `describe` |
-| 3 | 有意义的参数 | 和默认比改了啥、有无表达式引用 | `read_parms` |
-| 4 | 数据流（几何/属性） | 流过什么数据、要不要加操作 | `describe` |
-| 5 | 工作上下文 | 人现在在看/选什么 | `scene.context`（预留） |
-| 6 | 错误 | 哪里断了、怎么修 | `cook_node` + `describe` |
-
-其中 #1（拓扑）、#3（有意义参数）、#2（状态）最容易被忽视但最能提升判断力。
-
----
-
-## 6. 帮助文档能力（三阶段）
-
-| 阶段 | 内容 | 成本 | 状态 |
-|---|---|---|---|
-| Stage 1 | `describe`/`list_parms` 顺带返回免费元数据：`defaultHelpUrl()`、`embeddedHelp()`（HDA 常有）、parm `help()` | 免费 | ✅ 已实现 |
-| Stage 2 | `node_help(node_or_type, parm=None)` 动词，fallback：embeddedHelp → 本地帮助服务器 → SideFX 在线 URL（agent 用 `web_search` 抓） | 中等 | roadmap |
-| Stage 3 | 离线全文检索（BM25 over `$HFS/help`），对标 fxhoudinimcp/kleer001 | 大 | roadmap |
-
-> 实测结论：stock 节点内联帮助在 HOM 里基本是空的（`description()` 只回 label、
-> `embeddedHelp()` 空、`parmTemplate.help()` 空、`helpUrl()` 需帮助服务器在线）；
-> 真正文本在 `$HFS/houdini/help/`。所以 Stage 2/3 不是「顺手就有」，需专门建设。
-
----
-
-## 7. 后续路线（与 README 对齐）
-
-下一阶段先执行 [`cross-domain-benchmark-plan.md`](./cross-domain-benchmark-plan.md)，不预设需要新增动词：
-
-1. discovery 只作为归因证据；launcher/WebView GUI 主线程阻塞 preflight 已修，2026-09-01 已从
-   `cf1f1e8` 完整冷启动 Houdini并重跑 49 动词 query/Trace/WebView smoke，当前 runtime baseline 通过；
-2. 通用 seed generator 与三族 calibration 输入已完成；冻结模型/provider/protocol 并通过三族任务级
-   非评分 smoke 后再解封未见实例。执行 agent 只接收普通用户任务，不接收 benchmark ID、隐藏评分
-   维度或为实例定制的节点/参数 recipe；
-3. 同一通用意图在至少两个独立任务重复、现有动词无法安全表达时，才进入 agent-native 动词设计；
-4. 视觉 provider 只在盲语义、目标核验和人工抽检的核心维度一致率足够时作为 ground truth，
-   不以 transport/bootstrap/presentation 成功替代；
-5. `ctx.jobs` 迁移、query/exec approval 层、helper 按域拆分与自动化 H21/H22/GUI 回归保留为工程
-   backlog，正式证据阶段中途不改
-   实验底座；Houdini 主线程执行仍保持串行，ownership guard 继续作为内部安全边界；
-6. 不为一次性只读探针、单个 benchmark 对象或目录覆盖率新增动词；任何改进必须在未见同族实例与
-   跨域反例上验证，原失败任务回归不能单独证明通用能力提升。
-
----
-
-## 8. 动词追踪（houdinitrace）
-
-为便于「看清动词词表调用情况、按观察调整词表」，bridge 给每个动词包了一层
-**运行时 tracer**（`dsh_bridge.py`）：
-
-- 每次 exec 的返回 envelope 里多一个 `verbs` 字段：列表，每项记录
-  `{verb, args, kwargs, ok, result/error, ms}`。
-- `hou.Node` 入参/出参自动转成 `{"node": path}`，其余递归转 JSON 安全形式。
-- stdout 同时打印一行 `[verb] 名称(入参) -> 出参 (耗时)` 摘要。
-- 失败调用以 `ok: false` + `error` 记录，不改变原抛错语义。
-
-这是 **houdinitrace 视图的数据层**。Phase 2（已实现）：dsh-houdini 的 client 半
-（`client.js`，手写 CJS factory，免 bundler）在 `conversation.view` 上注册
-`id="houdinitrace"` 标签页（与 `chat`/`trajectory` 并列），从 `useSession(snapshot.nodes)`
-里过滤 `houdini_*` 的 `ToolResultNode` 渲染成调用卡。视图展示**全部** houdini_* 调用
-（2026-08-17 修正：原先只抽 `verbs (...)` 段，纯裸 hou 的会话会显示成空白，恰好漏掉
-最该监控的信号）。2026-08-25 的 K3 自行车 trace 又证明，前端用
-`/hou\.\w+\(/` 把所有直接 HOM 语法标成“裸 hou”同样不成立：23 张带旧标签的卡里
-15 张同时有动词，且真正的 `hou.hipFile.save()` 反而被该正则漏掉。
-
-当前 Bridge 为每次执行返回结构化 `rawUsage`：`directCalls`、`coveredMutations`、
-`suspectedMutations`、`gateOutcome` 与可选 `exemptionReason`，Host 渲染为稳定
-`raw-usage:` 段。Houdini Trace 页面据此分别展示调用含动词率、成功修改 exec 动词覆盖、
-无动词只读探针、Gate 拦截、低层豁免和回滚动词工作量；历史 trace 仅把源码匹配称作
-“HOM 读取/直接 HOM”，不再冒充安全结论。时间线详情按执行代码、HOM/Gate、事务、动词、
-结构化返回、程序输出、提示分区，原始工具文本保留在第二层折叠中。
-
-### 裸 hou advisory（2026-08-17）
-
-铁律 3（`hou` 是逃生舱）的配套 observability：光声明原则无法知道 agent 是否真的在逃。
-bridge 对每次 exec 的代码做 **AST 静态扫描**（`_raw_hou_calls`），统计动词已覆盖的
-裸调用（`createNode`→`tab_create`、`setInput`/`connectInputs`→`connect`、
-`parm(...).set`→`set_parm`、`setName`→`rename_node`、`destroy`→`delete_node`、
-`cook`→`cook_node`、`setDisplayFlag`→`sop_set_output` 或 `set_object_visible`、
-`setRenderFlag`→`sop_set_output`、`layoutChildren/setPosition`→`layout_nodes`、
-`addSpareParmTuple`→`create_spare_parms`、
-`setExpression`→`set_parm`）；当代码**完全没走动词**却用了这些调用时，envelope 附
-`advisory` 字段（文本，点明对应动词），工具渲染为 `hint:` 段。用 AST 而非正则：
-注释和字符串里的同名文本不会误报；语法错误时静默跳过。
-
-### raw-hou gate：默认拦截 + 受限豁免（2026-08-19；2026-08-23 收紧）
-
-advisory 的下一步：软提示被模型无视的天花板已反复实证（包括 session
-`c6481bf1` 的 deepseek-v4-flash-vision-exp 连续 16 条 raw hint、0 verb），gate
-把它升级为**执行前拦截**，同时为词表真缺口保留显式、可审计的低层豁免。
-
-- **开关**：桥模块级 `_raw_gate`，默认**开**；`/health` 带 `rawGate` 状态。
-  高级开发调试可在 Houdini Python Shell 临时 `dsh_bridge.set_raw_gate(False)`；
-  桥重启（launcher 菜单）后恢复安全默认，避免一次调试关闭永久变成生产 fail-open。
-- **拦截集**（AST，`_gate_message`）：①动词已覆盖的裸调用（`_RAW_HOU_VERB_MAP`
-  全集 + `parm().set` 特判）→ 报错逐一点明对应动词；②疑似修改场景的方法
-  调用（`set*/add*/create*/delete*/save*/render*` 等前缀启发式）→ 报错列出。
-  拒绝发生在**执行前**，零副作用；语法错误放行给 exec 自己报。与 HOM 不重名的标准
-  Python 容器方法必须显式排除；`dict.setdefault` 与静态可证的 `set()` 变量 `.add()`
-  已由真实 trace 证明会误伤并列入安全集合（不泛化放行 HOM `add*`）。
-  receiver 仍无法静态判型的低层修改继续走一次性豁免。
-- **豁免通道**：工具参数 `allow_raw="为什么动词覆盖不了"`（exec/query/
-  job_submit 都有）只放行**没有直接动词的低层修改**，桥打印
-  `[gate] raw-hou exemption: <理由>` 进 stdout（进结果、进 trace）。
-  `createNode`、`parm().set`、`cook`、`destroy` 等已覆盖调用即使带 `allow_raw`
-  仍拒绝；调用方必须把低层代码拆成独立 batch，外层场景操作使用 verb。否则模型只需
-  给整段裸代码附一句泛化理由，gate 就会退化回 advisory。
-- **不拦**：纯读取/引用（`hou.node`/`hou.hipFile`/`print` 等）——词表不
-  打算覆盖「取引用」这种语言级操作。
-- receiver 语义不唯一的方法不伪装成已覆盖：例如 `setPosition` 同时可能是
-  NetworkMovableItem 布局或 GeoPoint 写位置，现只作为“疑似修改”拦截，低层几何可明确豁免，
-  不再错误提示一律改用 `layout_nodes`。
-
-### Host / Bridge 词表握手（2026-08-23）
-
-`tool-design.md` 是 Host 预期目录，运行中 `_VERBS` 是 Houdini 进程事实，两者必须独立计算后比较，不能因为来自同一 checkout 就假设已经 reload：
-
-- 构建器按排序后的目录动词名生成 `src/generated-verb-contract.ts` 及 SHA-256；
-- Bridge 按实际 `_VERBS` 注册表独立生成同算法指纹，并由 `/health.verbCatalog` 返回名称、数量、hash；
-- Host 在每次场景代码进入 `/exec`/`/jobs` 前检查目录与 executionContractVersion，不缓存成功状态；请求带 expected_contract 让 Bridge 再拒绝不一致代际。旧 Bridge 缺字段或 hash/语义版本不同都 fail-closed，并提示 `Repair and restart runtime`；
-- `tools/tests/verb-contract.test.mjs` 校验文档、生成物和 Bridge 源注册表三方一致，`bridge-contract.test.mjs` 校验 mismatch 不会触达 `/exec`。
-
-### 图片 media relay（2026-08-19，草地任务 trace 的直接产出）
-
-「共享屏幕副驾驶」定位的管道地基：产图的动词（`render_frame` / `render_view` /
-`viewport_screenshot`）把产物路径登记进 `dsh_hou_helpers._PRODUCED_IMAGES`
-（`report_image()`，agent 手写产出也可登记），bridge 在 exec envelope 里带
-`images` 字段；host 侧对每个路径 `GET /media?path=...`（桥新端点：只读、限
-图片扩展名、64MB 上限）拉回字节，以内容 SHA-256 短前缀 + 原 basename 写进
-`<工作区>/.dsh-houdini-media/`，避免不同目录/帧的同名图互相覆盖，并在
-工具结果里渲染 `media` 段（from → to 映射）。**vision/fs 工具用右侧的工作区
-路径**——$HIP 原路径对它们不可读（沙箱）。这修掉了草地 trace 里
-`vision_glance` 被 "image escapes the allowed directories" 拦截的根因，也让
-workspace note 从「每次调用都重复」降为「每会话一次」（alarm fatigue 实证：
-同一条 note 重复 30+ 次后模型完全无视 hint）。
-
-### trace-analysis skill（2026-08-20）
-
-`houdinitrace` 回答“发生了什么”，`trace-report.mjs` 固化调用目录/时间线/失败事实；
-随包 `houdini-trace-analysis` skill 负责“如何审判”：任务契约、阶段门、工具机会矩阵、
-Houdini 模块/属性/cook/显示/渲染/动画语义、反事实最小轨迹和 P0/P1/P2 产品建议。
-配套 `extract-trace-evidence.mjs` 从多帧 zstd 确定性提取硬失败、verb ledger、裸调用、
-批量设参机会、render/vision、todo 和 terminal 状态，并支持多 trace 聚合。指标必须拆开：
-目录广度只回答“用了哪些能力”；调用含动词率、动词密度、成功 exec 覆盖、只读裸探针、
-Gate 拦截和成功裸修改分别回答采用、效率与安全，禁止再把 `used/全部目录` 命名为使用率。
-视觉证据同时记录 role、transport 和 semantic outcome；bootstrap/presentation 不算语义识图。
-
-词表决策不得由调用频率直接推出：未用先判 `NOT_APPLICABLE` 或 `MISSED`；删除候选需
-至少三个多样 trace、明确替代和反例分析。每次新复盘若发现通用审计盲区，更新 skill
-量表；若发现重复产品模式，带 session/步骤证据更新模式库。
-
-### 「共享屏幕副驾驶」定位（2026-08-19，经双向钢人论证 + 用户拍板）
-
-视口是**用户的**领地：漂移（移动/遮挡/最小化）是要共存的现实，不是要对抗的
-噪声。由此确定的分工：
-
-- **验证/交付走 agent 自己的渲染管线**：机器的 GUI OpenGL 上下文稳定时，
-  `render_view`（OpenGL ROP 离屏）是默认视觉验证路径；Karma 是用户明确要成片时的
-  交付渲染器，不进快速验证闭环。OpenGL/驱动失败属于机器能力失败，不能推翻已通过的
-  节点语义，也不得在可能崩溃的同一环境连续重试；保留 cook/属性/拓扑/时间证据并交给
-  用户 playback 判断，或按交付需求走 Karma CPU。不能按“有无独显”全局禁用：换机、
-  驱动和远程桌面都会改变能力。
-- **`viewport_screenshot` 降级为诊断**：只回答「用户屏幕上现在是什么」。
-- **不新增编程用户视口的动词**（不做 `viewport_look_at`）：草地 trace 里 40 分钟
-  的相机矩阵挣扎，根因是「试图编程一个不属于自己的东西」，正确解法是根本不碰它。
-- **词表按意图而非 API 表面增长**：新动词的门槛是「一个 Houdini 用户会当成
-  一个动作的事」（render_view 合格：取景+渲染+验证=一个意图；viewport_state /
-  parm_menu 这类 API 碎片不合格，折进现有动词或不做）。
-
-> 注：dsh 里用户说的「trace」即 `dsh-client-ui-trajectory` 的「轨迹」视图，本质是
-> `conversation.view` 上的一个注册项；「并列」= 同 Slot 再注册一个 id。
->
-> **加载前提**：dsh 的 client 模块系统（`dsh-client-modules`）靠
-> `require.resolve(包名/package.json)` 发现 client 半，要求插件以**包名**加载
-> （`dsh.client` + `exports["./client"]`）。开发 overlay（`cordis.dev.yml` 的
-> `file:///...` URL）无法被它解析，需改用包名加载（profile/pnpm link）才能让
-> `houdinitrace` 标签页出现。
+Bridge返回结构化verbs ledger、rawUsage、operation-evidence和transaction。Trace与离线报告分别保留
+目录广度、调用含动词率、动词密度、成功exec修改覆盖、只读裸探针、Gate拦截与成功裸修改，
+不把used/全部目录称为执行成功率。相关代码地图见[架构](architecture.md)。

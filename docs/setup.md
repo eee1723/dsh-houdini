@@ -7,7 +7,7 @@
 | 依赖 | 检查 |
 |---|---|
 | Git | `git --version` |
-| Node.js 18+ 与 npm/npx | `node -v`、`npm -v` |
+| Node.js 与 npm/npx | `node -v`、`npm -v`；使用所选DSH支持的Node，完整trace zstd工具需要提供zstd API的运行时 |
 | Python 3（只需标准库） | `python --version`；Windows Store stub 可改用 `py -3` |
 | SideFX Houdini | 至少启动过一次，以生成 `Documents/houdini*` 用户目录 |
 
@@ -22,7 +22,7 @@ npm install
 npm run build
 ```
 
-构建先从 `docs/tool-design.md` 生成浏览器目录和 Host 动词契约，再由 tsc 输出 `lib/`。`lib/` 和 `node_modules/` 不提交，也不要手改。
+构建先从节点卡JSON生成文档，再从 `docs/tool-design.md` 生成浏览器目录和Host动词契约，最后由tsc输出 `lib/`。`lib/` 和 `node_modules/` 不提交，也不要手改。只读同步检查使用 `npm run docs:check`。
 
 ## 3. 一次性安装机器态
 
@@ -97,7 +97,7 @@ Host/Bridge/helper/preset 更新随后执行 `Repair and restart runtime`。`dsh
 版本诊断面板分别管理 DeepSeek Harness npm 通道和 dsh-houdini Git 通道；不要把“更新 Harness”与“拉本仓库代码”混成同一动作。临时验证特定 DSH 根包版本可在启动 Houdini 前设置：
 
 ```powershell
-$env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@0.1.0-rc.7'
+$env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@<待验证的精确版本>'
 ```
 
 该变量只固定 CLI 根包，不等于完整依赖 lockfile。

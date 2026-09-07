@@ -147,6 +147,31 @@ def surface_sections(prims, axis, position, expected_components):
     return samples,coverage
 
 
+def attribute_uniqueness(g, attrib, attrib_class, max_elements):
+    """Exact tuple identity; finite, complete, bounded, no rounding/sampling."""
+    count = 1 if attrib_class == 'detail' else int(g.intrinsicValue(
+        {'point':'pointcount','prim':'primitivecount','vertex':'vertexcount'}[attrib_class]))
+    if count > max_elements or count*attrib.size() > 1000000:
+        raise ValueError('uniqueness budget exceeded; narrow the input, no sampling')
+    if attrib.isArrayType():
+        raise ValueError('array attributes are not supported by tuple uniqueness')
+    elements = {'point':g.points, 'prim':g.prims,
+                'vertex':lambda:(v for p in g.prims() for v in p.vertices()), 'detail':lambda:[g]}[attrib_class]()
+    counts, samples = {}, {}
+    for index, element in enumerate(elements):
+        value = element.attribValue(attrib)
+        key = tuple(value) if isinstance(value,(tuple,list)) else (value,)
+        if any(isinstance(v, (float,int)) and not math.isfinite(v) for v in key):
+            raise ValueError('nonfinite attribute value; uniqueness unverified')
+        counts[key] = counts.get(key, 0)+1
+        if key not in samples: samples[key] = index
+    duplicates = [{'value':list(k), 'count':v, 'first_element':samples[k]} for k,v in counts.items() if v>1]
+    return {'count':count, 'unique_count':len(counts), 'duplicate_count':count-len(counts),
+            'all_unique':count>0 and count==len(counts), 'duplicate_samples':duplicates[:8],
+            'samples_truncated':len(duplicates)>8, 'comparison':'exact_complete_attribute_tuple',
+            'coverage':'all_elements', 'semantic_status':'unverified'}
+
+
 def point_displacement(g, reference, item):
     """Stable IDs plus identical face membership required; never compare by point order."""
     name = item.get('id_attrib')
@@ -165,6 +190,7 @@ def point_displacement(g, reference, item):
         return {ids[i]:p.position() for i,p in points.items()},topology
     a,ta=mapped(reference);b,tb=mapped(g)
     if a.keys()!=b.keys() or ta!=tb:raise ValueError('stable-ID topology changed; displacement correspondence unverified')
-    distances=[(a[k]-b[k]).length() for k in a]
+    transform = hou.Matrix4(item['transform']) if item['metric']=='max_transform_error' else hou.Matrix4(1)
+    distances=[(a[k]*transform-b[k]).length() for k in a]
     if any(not math.isfinite(v) for v in distances):raise ValueError('nonfinite displacement')
-    return max(distances) if item['metric']=='max_point_displacement' else sum(distances)/len(distances)
+    return max(distances) if item['metric'] in ('max_point_displacement','max_transform_error') else sum(distances)/len(distances)

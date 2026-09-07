@@ -38,11 +38,11 @@ npx cache，也不会成为日常 serving runtime。显式 `DSH_HOUDINI_DSH_BIN`
 不删除 Session、HIP、workspace 或插件仓库。若旧 DSH 需要不同第三方 bundle 版本，必须把整个组合视为另一条
 release 记录，不能假设 RPC adapter 向后兼容就代表 profile 也向后兼容。
 
-## 本轮基准证据
+## 兼容适配的代码责任
 
-DSH `0.1.2-rc.1` 的破坏面包括 process-token cookie、slash/generated-args RPC、Session
-`snapshotEvents()`、Conversation/Trajectory target snapshot，以及 QtWebEngine 108 缺少的
-`Promise.withResolvers` / `AbortSignal.any`。K3 completed session `429506d9…` 的离线证据为
-936 events、35 tool calls、29 Houdini calls、117 verbs；修复后的 live Houdini Trace 精确显示
-29、23/29、117、16/50 和 5 个只读探针，浏览器内 `session/list` / `session/cancel` 均 HTTP 200。
+[dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py)处理process-token cookie与
+slash/generated-args RPC；[client.js](../client.js)消费公开Trajectory snapshot；
+[dsh_webview.py](../houdini/python3.11libs/dsh_webview.py)在DocumentCreation注入必要Web API补丁；
+[profile sync](../houdini/python3.11libs/dsh_profile_sync.py)只对精确toolkit版本/调用点做兼容修补。
+支持组合来自兼容JSON；一次探测结果不能成为永久live状态，部署验证记录不保存在本设计文档。
 
