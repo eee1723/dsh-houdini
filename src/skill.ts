@@ -23,6 +23,7 @@ const SKILLS = [
   { name: 'houdini-solaris-karma-workflow', dir: 'houdini-solaris-karma-workflow' },
   { name: 'houdini-rig-animation-workflow', dir: 'houdini-rig-animation-workflow' },
   { name: 'houdini-skill-governance', dir: 'houdini-skill-governance' },
+  { name: 'houdini-video-tutorial', dir: 'houdini-video-tutorial' },
 ] as const
 
 function parseSkill(markdown: string, expectedName: string): { description: string; content: string } {

@@ -234,7 +234,9 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
             ? [...new Set(verbs.map((v) => verbTitles[v.verb] || v.verb))].join(
                 " / ",
               )
-            : args.result_ref
+            : args.source_ref
+              ? "读取原始任务来源"
+              : args.result_ref
               ? "读取历史工具结果"
               : args.review
               ? "复核输出"
@@ -296,7 +298,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         transaction,
         rollbackApplied: rollback,
         state,
-        kind: args.result_ref ? "read" : toolKind(name),
+        kind: args.result_ref || args.source_ref ? "read" : toolKind(name),
         request: req,
         requestKey: req?.key || (c ? "assistant:" + pairKey(turn, step) : null),
         accounting: account,
@@ -757,9 +759,14 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           ),
           h("h4", null, "参数"),
           verbArguments(v.argsText),
+          v.error != null ? h("h4", null, "错误") : null,
+          v.error != null ? structured(v.error) : null,
           h("h4", null, "返回"),
-          structured(json(v.detail) ?? v.detail),
-          v.detail.endsWith("…")
+          v.detail == null ? note("返回值未记录；失败原因和补充证据不等于成功返回。")
+            : structured(json(v.detail) ?? v.detail),
+          v.summary != null ? h("h4", null, "补充证据") : null,
+          v.summary != null ? structured(v.summary) : null,
+          typeof v.detail === "string" && v.detail.endsWith("…")
             ? note("Host 动词摘要已截断；完整证据以操作证据和结构化返回为准。")
             : null,
           button("查看动词契约 →", () => goVerb(v.verb)),

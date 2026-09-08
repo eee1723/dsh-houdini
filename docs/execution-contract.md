@@ -8,7 +8,8 @@
 - hou仅在Houdini主线程调用；HTTP线程只排队。泵不可用即拒绝，不退回网络线程执行。
 - query使用只读namespace与AST预检；exec负责修改，job负责长操作。Raw Gate默认开启，
   已有动词覆盖的裸修改不能用allow_raw旁路；仅独立、无动词等价的低层缺口允许单次明确理由。
-- query的result_ref分支只读当前workspace中已返回的历史结果；与code互斥，不进入Bridge/HOM，
+- query的result_ref分支只读当前workspace中已返回的历史结果；source_ref只读当前session公开日志中的任务来源。
+  两者与code三路互斥，不进入Bridge/HOM，source_ref不接受JSON pointer或跨session路径，
   不能当现场新观察或ownership授权。新查询、修改和任务产物仍遵守原边界。
 - ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
   foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
@@ -39,6 +40,17 @@ Host的execution-state从公开tool事件重建，独立于用户消息绑定的
 已回滚检查不作当前通过；已记录依赖变化或同调用后续修改使旧检查stale。非stale仍只是历史观察，
 不能认证当前live状态或赋予foreign权限。没有第二份可写任务账本，不自动改写用户原始指代。
 
+Host的task-sources只从source.kind=user消息和已关联的ask_user_question问答建立来源锚；
+注入上下文、自动goal续接和作者自述不提升为用户要求，缺source的历史消息不猜测为用户原文。
+多消息/目标/压缩续接提供首条与最近来源的有限摘录，遗漏数和截断显式报告；单条普通请求不重复注入。
+source_ref=index列出可用来源，来源hash分页回读完整文本；非文本仅保留类型标记，不声称读取了图片。
+作用域仅当前session可见的公开日志，不保证被裁除的历史仍存在；不存在的来源明确拒绝而不替换成摘要。
+goal/change只标为报告的计划状态，不覆盖原文或证明完成；来源顺序也不推导用户是否替代旧任务。
+复杂任务的需求/默认/未知、模块依赖风险及续接摘要由preset约定维护，Host不建另一份可写需求库，
+不强制简单编辑建表。来源可回读和提示注入不等于模型已采纳或最终provider输入保留已验证。
+SOP聚焦模块流程复用现有计划和工具事实，方法在[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md#模块聚焦与交接)。
+局部检查与最终输出成员/实际实例关系分别验证；此工作流没有新增Host自动调度、模块通过证书或多作者权限。
+
 job仍通过同一主线程队列串行执行。排队取消可阻止执行；已开始的代码不能强杀，
 客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
 HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单独报告外部副作用。
@@ -49,6 +61,9 @@ HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单�
 不创建scratch；操作卡关键参数不受普通筛选裁切，见[节点卡](node-operation-cards.md)。
 精确菜单用token/set_value；数值表达式字符串是HScript，显式Python要声明语言；
 VEX仅在snippet内。tuple表达式用组件字段，严格设参不允许跳过未知/无效字段假报成功。
+build_module静态预检与实际数值setter共用值形状校验：size=1及单独组件是标量，接受有限数值、
+HScript字符串或显式expression/language；不接受单元素列表。只有多分量tuple整体值接受等长有限
+数值列表，表达式必须写组件名；菜单继续使用token/set_value策略。静态通过不证明表达式可求值或cook通过。
 默认值和当前值分别修改：create_spare_parms(update_defaults=...)仅更新显式已有scalar spare的
 字面默认值，预检整批再应用，回读默认值并保留当前值/表达式/keys；失败恢复模板与参数状态。
 不更新内建、菜单、tuple、callback、multiparm或表达式默认值，不隐式改变已有创建模式。
@@ -100,6 +115,11 @@ test_controls必须exec：临时数字控制、声明指标/关系/domain，随�
 不支持的表示/菜单/副作用保持unverified；文件/Python/solver副作用不属于恢复保证。
 控制响应非零不等于设计正确，单次case不证明所有参数组合。相关修改使旧证据失效。
 test_controls的control_summary和Bridge证据保留顶层status/reason、失败判据及case_counts。
+逐case还保留output_data_changed、measured_groups、whole_output_measurements和接口/拓扑状态；
+coverage明确只通过声明检查，未请求关系时为not_checked。输出指纹变化但指标失败不证明控制未接线，
+变化也可能来自属性；先查实际受影响部件与预期依赖。全局bounds/count不证明连接、间隙或均匀变换。
+需要均匀/刚体变换时声明stable-ID max_transform_error；需要连接时声明适用的实际表面接口，
+不以范围提示替代关系执行，也不强制简单尺寸调整运行不相关关系检查。
 基准失败可零写返回results=[]，相关case标not_run；range同时约束基准和扰动绝对值，delta约束变化。
 Host在详细证据和stdout前展示摘要；纠正判据后须复跑，不能把未运行或解释过的失败当成通过。
 

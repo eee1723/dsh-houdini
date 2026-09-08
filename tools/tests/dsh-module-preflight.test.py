@@ -9,6 +9,43 @@ import dsh_bridge as b
 root=h.tab_create('/obj','geo','__module_preflight')
 source=h.tab_create(root,'box','source')
 try:
+    # Static validation must agree with actual HOM setters for size-one fields.
+    # The old preflight demanded [64] for circle.divs, then the setter rejected it.
+    scalar_specs=[
+        {'name':'profile','type':'circle','parms':{'type':'poly','divs':64}},
+        {'name':'body','type':'tube','parms':{'type':'poly','height':2.5,'cols':18,'cap':1}},
+        {'name':'wire','type':'polywire','inputs':['profile'],'parms':{'radius':0.02,'div':8}},
+        {'name':'expr','type':'circle','parms':{'type':'poly','divs':{'expression':'16*2','language':'hscript'}}},
+        {'name':'string_expr','type':'tube','parms':{'type':'poly','height':'1+2'}},
+        {'name':'python_expr','type':'circle','parms':{'type':'poly','divs':{'expression':'8*4','language':'python'}}},
+    ]
+    before={n.sessionId() for n in root.children()}
+    assert h.build_module(root,scalar_specs,output='wire',dry_run=True)['valid']
+    assert before=={n.sessionId() for n in root.children()}
+    built=h.build_module(root,scalar_specs,output='wire',required_outputs=['body','expr','string_expr','python_expr'])
+    assert built['validation']['ok']
+    for node,field,value in [('profile','divs',64),('body','height',2.5),('body','cols',18),
+                              ('wire','radius',.02),('wire','div',8),('expr','divs',32),
+                              ('string_expr','height',3),('python_expr','divs',32)]:
+        assert root.node(node).evalParm(field)==value,(node,field)
+        h.set_parm(root.node(node),field,value)
+        assert root.node(node).evalParm(field)==value
+    for spec in reversed(scalar_specs):h.delete_node(root.node(spec['name']))
+    # Reject nonfinite literals in dry-run before creating nodes, and preserve
+    # existing parameter animation in the primitive setter's failure path.
+    for field,value in [('sizex',float('nan')),('size',[1,float('inf'),1])]:
+        before={n.sessionId() for n in root.children()}
+        try:h.build_module(root,[{'name':'nonfinite','type':'box','parms':{field:value}}],output='nonfinite',dry_run=True)
+        except h.PreflightError as error:assert 'finite' in str(error)
+        else:raise AssertionError('nonfinite preflight accepted')
+        assert before=={n.sessionId() for n in root.children()}
+    source.parm('sizex').setExpression('1+0*$F',hou.exprLanguage.Hscript)
+    keys=source.parm('sizex').keyframes()
+    try:h.set_parm(source,'sizex',[1])
+    except ValueError as error:assert 'scalar' in str(error)
+    else:raise AssertionError('scalar list accepted')
+    assert source.parm('sizex').keyframes()==keys
+    h.set_parm(source,'sizex',1)
     cases=[
         ([{'name':'hidden','type':'partition'}],'hidden','hidden/deprecated'),
         ([{'name':'unknown','type':'nonexistent_test_type'}],'unknown','未知节点类型'),
@@ -19,6 +56,12 @@ try:
         ([{'name':'bad','type':'xform','inputs':['missing']}],'bad','earlier spec'),
         ([{'name':'valid','type':'box'}],'missing','newly created'),
         ([{'name':'source','type':'box'}],'source','exists'),
+        ([{'name':'bad','type':'circle','parms':{'divs':[64]}}],'bad','scalar'),
+        ([{'name':'bad','type':'tube','parms':{'height':[1]}}],'bad','scalar'),
+        ([{'name':'bad','type':'box','parms':{'sizex':[1]}}],'bad','scalar'),
+        ([{'name':'bad','type':'circle','parms':{'divs':{'expression':'8','language':'vex'}}}],'bad','language'),
+        ([{'name':'bad','type':'circle','parms':{'divs':{'expression':8}}}],'bad','expression'),
+        ([{'name':'bad','type':'sphere','parms':{'rad':['1','2','3']}}],'bad','numeric tuple'),
     ]
     for specs,output,message in cases:
         before={n.sessionId() for n in root.children()}

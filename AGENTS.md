@@ -22,10 +22,11 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 ## 单一维护源
 
 - docs/README.md是长期知识索引；架构与代码地图在docs/architecture.md。
+- 接续开发先读docs/handoff.md；它是唯一滚动交接入口，只保留未完成动作/验证缺口，按docs/development.md及时删项。
 - docs/tool-design.md维护动词目录/执行版本；houdini/node-operation-contracts.json维护节点卡，
   docs/node-operation-cards.md只由生成器镜像。领域方法只在skills按需维护。
 - docs只放现役设计、接口、维护规范、稳定测试方法和实现边界。修改时就地替换旧说明，
-  不追加阶段计划、版本叙事、尝试/测试结果、session记录或小目标；不建立docs/archive。
+  docs/handoff.md仅例外容纳必要交接；不追加版本叙事、尝试/测试流水、session记录，不建立docs/archive或按日期分叉交接。
 - 新增长期生产模块必须进入架构代码索引；新增文档须加入索引并有源码与验证入口。
 - 过程与证据保留在会话/CI或不打包的临时产物，历史在Git；不改机器生成记忆或范围外项目。
 - TypeScript ESM/Cordis，client.js是手写CJS factory；Python通过PYTHONPATH兼容H21/H22。

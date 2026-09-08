@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "createdAt": "2026-09-04T10:44:56.2691447Z",
   "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "dd7e4d7bdb6f229f3753eea746e8a22c60049a1d33c3aad087edcf9f84ccd3e2",
-  "compatibilitySurfaceSha256": "8e1d6dd262a6d19f255026d3918a1f219afd3df3c608d03cd9cff7effa3db2c9",
+  "agentSurfaceSha256": "e9923efa5edcb90fbd887a167a3d0bd5c32f378cbdb77b226ddba75dbd4d553f",
+  "compatibilitySurfaceSha256": "4292b070346a263517546f7c2551bbfa674261909900a7360e03e2d460c0bc5b",
   "runtimeVerification": {
     "matchesBaseline": false,
     "note": "v21 source candidate: retained canonical results with bounded historical detail reads, compact native model presentation, ordered Bridge runtime/impact observations and event-derived execution-state context. Prior v19/v20 fixes and pending changes retained. Isolated verification is separate from live loading; historical runtime fields below remain unchanged.",

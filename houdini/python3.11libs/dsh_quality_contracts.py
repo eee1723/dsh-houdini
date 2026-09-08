@@ -503,12 +503,24 @@ def capture_views(output, views):
     return captures
 
 
-def _control_summary(result, tests):
+def _control_summary(result, tests, interfaces=None, topology=None):
     """Keep zero-write baseline failures visible even when results is empty."""
     rows = result.get('results', [])
     by_id = {r['id']: r for r in rows}
-    cases = [{'id': t['id'], 'status': by_id.get(t['id'], {}).get('status', 'not_run')}
-             for t in tests]
+    cases = []
+    for test in tests:
+        row = by_id.get(test['id'], {})
+        measurements = row.get('measurements', [])
+        cases.append({'id': test['id'], 'status': row.get('status', 'not_run'),
+                      'controls': sorted(test['values']),
+                      'output_data_changed': row.get('geometry_changed'),
+                      'measured_groups': sorted({m['expectation']['group'] for m in measurements
+                                                 if m['expectation'].get('group') is not None}),
+                      'whole_output_measurements': sum(m['expectation'].get('group') is None for m in measurements),
+                      'measurement_count': len(measurements),
+                      'interface_status': row.get('interfaces', {}).get('status') if isinstance(row.get('interfaces'), dict) else 'not_checked',
+                      'topology_status': row.get('topology', {}).get('status') if isinstance(row.get('topology'), dict) else 'not_checked',
+                      'changed_output_with_failed_measurements': row.get('geometry_changed') is True and any(not m['pass'] for m in measurements)})
     counts = {status: sum(c['status'] == status for c in cases)
               for status in ('pass', 'fail', 'unverified', 'not_run')}
     failures = []
@@ -517,13 +529,24 @@ def _control_summary(result, tests):
             continue
         failed = [m for m in row.get('measurements', []) if not m['pass']]
         failures.append({'id': row['id'], 'status': row['status'],
-                         **{k: row[k] for k in ('reason', 'restored') if k in row},
+                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed') if k in row},
                          'failed_measurements': failed[:8],
                          'failed_measurement_count': len(failed),
                          'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
                                              if isinstance(row.get(k), dict)}})
     return {'status': result['status'], 'ok': result['ok'], 'restored': result['restored'],
             'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
+            'coverage': {'acceptance': 'declared_checks_only',
+                         'declared_controls': sorted({name for t in tests for name in t['values']}),
+                         'declared_interfaces': len(interfaces or []),
+                         'declared_topology_contracts': len(topology or []),
+                         'measured_cases': sum(c['measurement_count'] > 0 for c in cases),
+                         'relationship_scope': 'declared_contracts_only' if interfaces or topology else 'not_checked',
+                         'boundary': 'Bounds/count response does not prove attachment, clearance or uniform transforms. '
+                                     'A changed output fingerprint with failed metrics is not an unconnected/dead control: '
+                                     'inspect local geometry and intended dependencies before rewiring. '
+                                     'Fingerprint changes may include attributes, not only point motion. '
+                                     'No inference about undeclared controls, relationships or the full parameter domain.'},
             'failures': failures[:8], 'failure_count': len(failures),
             **{k: result[k] for k in ('controller', 'output', 'frame', 'contract_sha256',
                                      'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes') if k in result},
@@ -537,7 +560,7 @@ def _control_summary(result, tests):
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
     result = _test_controls(controller, output, tests, interfaces, allow_foreign,
                             domain=domain, topology=topology, views=views, response_only=response_only)
-    result['control_summary'] = _control_summary(result, tests)
+    result['control_summary'] = _control_summary(result, tests, interfaces, topology)
     return result
 
 

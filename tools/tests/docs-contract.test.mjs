@@ -52,6 +52,55 @@ try {
 
 const docs = fs.readdirSync(path.join(root, 'docs'), { withFileTypes: true })
 assert.ok(docs.every(d => d.isFile() && d.name.endsWith('.md')), 'docs is a flat current-design library, not an artifact/archive directory')
+assert.deepEqual(docs.filter(d => /handoff|交接/i.test(d.name)).map(d => d.name), ['handoff.md'],
+  'use one rolling handoff, not dated or parallel copies')
+
+// A bounded current handoff is the sole exception to the no-process-doc rule.
+// This validates shape and budget; only a human/code review can confirm that
+// an implementation actually satisfies an item's removal criteria.
+function checkHandoff(text) {
+  assert(text.length <= 8000, 'handoff exceeds 8000 characters; prune/merge resolved work')
+  assert(text.split('\n').length <= 120, 'handoff exceeds 120 lines')
+  assert.match(text, /^# 当前开发交接\n/)
+  const date = text.match(/^核对日期：(\d{4}-\d{2}-\d{2})$/m)?.[1]
+  assert(date && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date,
+    'handoff needs a valid checked date')
+  assert.doesNotMatch(text, /^\s*- \[[xX]\]/m, 'remove completed handoff items instead of retaining checked boxes')
+  assert.doesNotMatch(text, /\]\([^)]*(?:tools\/out|\.research)[^)]*\)/,
+    'handoff must not depend on ignored local evidence links')
+  const entries = [...text.matchAll(/^### (H-\d{2}) (.+)\n([\s\S]*?)(?=^### |$(?![\s\S]))/gm)]
+  const headings = text.split('\n').filter(line => /^#{2,6} /.test(line))
+  assert(headings.every(line => line === '## 待交接事项' || /^### H-\d{2} .+/.test(line)),
+    'handoff has unexpected history/completed sections')
+  assert(entries.length <= 8, 'handoff exceeds 8 active items')
+  assert.equal(new Set(entries.map(e => e[1])).size, entries.length, 'handoff ids must be unique')
+  if (!entries.length) assert.match(text, /当前无待交接事项/, 'empty handoff must say no pending work')
+  else assert(!text.includes('当前无待交接事项'), 'active handoff cannot claim no pending work')
+  for (const [, id, , body] of entries) {
+    for (const field of ['状态', '现状', '下一步', '移除条件', '入口']) {
+      assert.equal([...body.matchAll(new RegExp(`^- ${field}：\\S.*$`, 'gm'))].length, 1,
+        `${id} requires exactly one nonempty ${field}`)
+    }
+    assert.match(body, /^- 状态：(待修复|待验证|待决策)$/m, `${id} closed work must be removed`)
+    assert.match(body, /^- 入口：.*\]\(/m, `${id} needs a repository source/verification link`)
+  }
+}
+checkHandoff(read('docs/handoff.md'))
+const sample = '# 当前开发交接\n\n核对日期：2026-09-09\n\n## 待交接事项\n\n'
+  + '### H-01 示例\n\n- 状态：待验证\n- 现状：已有实现但缺验证\n- 下一步：运行对应回归\n'
+  + '- 移除条件：实际验证完成\n- 入口：[测试](../tools/tests/docs-contract.test.mjs)。\n'
+checkHandoff(sample)
+checkHandoff('# 当前开发交接\n\n核对日期：2026-09-09\n\n当前无待交接事项。\n')
+for (const invalid of [sample.replace('状态：待验证', '状态：已完成'),
+  sample.replace('- 下一步：运行对应回归\n', ''),
+  sample + sample.slice(sample.indexOf('### H-01')),
+  sample + '\n- [x] 已实现\n', sample + '\n## 历史完成记录\n',
+  sample + 'a'.repeat(8001), sample + '\n'.repeat(121),
+  sample.replace('2026-09-09', '2026-02-30'),
+  sample.replace('../tools/tests/docs-contract.test.mjs', '../tools/out/only-local.md'),
+  sample + Array.from({length:8}, (_, i) => sample.slice(sample.indexOf('### H-01')).replace('H-01', 'H-0'+(i+2))).join('\n')]) {
+  assert.throws(() => checkHandoff(invalid), 'invalid handoff must fail without being silently rewritten')
+}
 const index = read('docs/README.md')
 for (const file of docs) {
   if (file.name !== 'README.md') assert.ok(index.includes(`](${file.name})`), `unindexed document ${file.name}`)

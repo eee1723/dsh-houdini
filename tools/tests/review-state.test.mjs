@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {ReviewController,reviewScope,reviewTaskMaterials,reviewPriorEvidence} from '../../lib/review.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 
-const events=[{type:'user/message',data:{content:[{type:'text',text:'Build a configurable generic asset.'},{type:'image',attachment:{id:'user-reference'}}]}},
+const events=[{type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'Build a configurable generic asset.'},{type:'image',attachment:{id:'user-reference'}}]}},
   {type:'user/message',data:{content:[{type:'text',text:'Current runtime context. not task material'}]}},
   {type:'assistant/message',data:{message:{content:[{type:'text',text:'AUTHOR CLAIMS EVERYTHING PERFECT'}]}}},
   {type:'tool/call',data:{name:'ask_user_question',callId:'q',arguments:'{"questions":[]}'}},

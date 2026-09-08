@@ -1,0 +1,145 @@
+"""Isolated real QtWebEngine auth redirect and startup-RPC regression.
+
+Run with hython and QT_QPA_PLATFORM=offscreen, using isolated Houdini prefs.
+Only a local fixture server is used; never connects to the user's DSH or HIP.
+"""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+import json
+import sys
+import threading
+import time
+import urllib.parse
+
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
+import dsh_webview as webview
+
+requests = []
+TOKEN = "isolated-fixture-token"
+fail_auth_once = False
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        global fail_auth_once
+        if self.path == "/?token=" + TOKEN:
+            if fail_auth_once:
+                fail_auth_once = False
+                self.send_response(503)
+                self.end_headers()
+                return
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", "fixture_auth=1; Path=/; HttpOnly; SameSite=Strict")
+            self.end_headers()
+            return
+        if "fixture_auth=1" not in (self.headers.get("Cookie") or ""):
+            self.send_response(401)
+            self.end_headers()
+            return
+        if self.path.startswith("/favicon"):
+            self.send_response(204)
+            self.end_headers()
+            return
+        requests.append(self.path)
+        body = b'''<!doctype html><script>
+        window.probe = {urlAtBoot: location.href, done: false};
+        Promise.all(['/api/inventory', '/api/syncInspectManifest'].map(path =>
+          fetch(path, {method:'POST', body:'{}'}).then(r => r.json())))
+          .then(() => {probe.done = true;}, e => {probe.error = String(e);});
+        </script><p>isolated startup fixture</p>'''
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        time.sleep(0.3)  # Keep initialization requests in flight at loadFinished.
+        body = b'{"ok":true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+app = QApplication.instance() or QApplication([])
+app.setQuitOnLastWindowClosed(False)
+base = "http://127.0.0.1:" + str(server.server_address[1])
+webview.FRONTEND_URL = base
+
+def settle():
+    loop = QEventLoop()
+    QTimer.singleShot(1500, loop.quit)
+    loop.exec()
+    rows = []
+    loop = QEventLoop()
+    webview._view.page().runJavaScript("JSON.stringify(window.probe)", 0, lambda value: (rows.append(value), loop.quit()))
+    QTimer.singleShot(3000, loop.quit)
+    loop.exec()
+    assert rows and rows[0], "fixture did not load"
+    return json.loads(rows[0])
+
+try:
+    webview.show_webview(session_id="task /中文?&", authenticated_url=base + "/?token=" + TOKEN)
+    webview.show_webview()  # Reopen before the initial auth/redirect has completed.
+    observed = settle()
+    assert len(requests) == 1, f"auth bootstrap loaded the app {len(requests)} times: {requests}"
+    assert observed["done"] and "error" not in observed, observed
+    assert "dsh-houdini-session=task" in observed["urlAtBoot"], observed
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["task /中文?&"]
+    assert "token=" not in observed["urlAtBoot"], "launch token must not reach the app URL"
+    assert not webview._view.page().scripts().find("dsh-launch-session-hint"), "one-navigation hint must be retired"
+
+    # Plain reopen does not reload or switch the existing selected task.
+    webview.show_webview()
+    assert settle() == observed
+    assert len(requests) == 1
+    # A new explicit target replaces the old hint without an extra app bootstrap.
+    webview.show_webview(session_id="next", authenticated_url=base + "/?token=" + TOKEN)
+    observed = settle()
+    assert len(requests) == 2
+    assert observed["done"] and observed["urlAtBoot"].endswith("dsh-houdini-session=next")
+    webview.show_webview(authenticated_url=base + "/?token=" + TOKEN)
+    observed = settle()
+    assert len(requests) == 3 and observed["urlAtBoot"] == base + "/"
+    assert observed["done"]
+    webview.show_webview(session_id="direct")
+    observed = settle()
+    assert len(requests) == 4 and observed["done"]
+    assert observed["urlAtBoot"].endswith("dsh-houdini-session=direct")
+    # A later ordinary document must not receive a stale injected session hint.
+    webview._view.load(webview.QUrl(base + "/"))
+    observed = settle()
+    assert len(requests) == 5 and observed["urlAtBoot"] == base + "/"
+    # Failed auth must retain the pending hint across the existing async retry.
+    fail_auth_once = True
+    webview._RETRY_INTERVAL_MS = 100
+    webview.show_webview(session_id="retry", authenticated_url=base + "/?token=" + TOKEN)
+    observed = settle()
+    assert not fail_auth_once and len(requests) == 6
+    assert observed["done"] and observed["urlAtBoot"].endswith("dsh-houdini-session=retry")
+    assert not webview._retry_timer.isActive()
+    assert not webview._view.page().scripts().find("dsh-launch-session-hint")
+    print("Qt WebView: single authenticated bootstrap, in-flight RPCs, explicit session hint and plain reopen passed")
+finally:
+    if webview._retry_timer is not None:
+        webview._retry_timer.stop()
+    if webview._window is not None:
+        webview._window.close()
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)

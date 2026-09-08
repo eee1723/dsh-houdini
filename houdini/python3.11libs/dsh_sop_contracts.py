@@ -192,12 +192,15 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 similar = difflib.get_close_matches(field, sorted(allowed), n=5, cutoff=0.25)
                 problem(name, field, f'unknown parameter(s) {field!r}; candidates={similar}; use node_info with a literal filter', candidates=similar)
         for parameter in card['parameters']:
-            if parameter['name'] in values and parameter.get('components') and parameter.get('type') in ('Float', 'Int'):
-                value = values[parameter['name']]
-                if not isinstance(value, (list, tuple)) or len(value) != len(parameter['components']):
-                    problem(name, parameter['name'], f"tuple needs {len(parameter['components'])} components: {parameter['components']}", components=parameter['components'])
-                elif any(not isinstance(v, (int, float)) for v in value):
-                    problem(name, parameter['name'], f"numeric tuple requires numeric values; expressions use component names {parameter['components']}", components=parameter['components'])
+            if parameter.get('type') in ('Float', 'Int') and not parameter.get('menu') and not parameter.get('menu_dynamic'):
+                components = parameter.get('components', [])
+                fields = ([parameter['name']] if parameter['name'] in values else [])
+                fields += [c for c in components if c != parameter['name'] and c in values]
+                for field in fields:
+                    try:
+                        h._validate_numeric_parameter_value(values[field], components if field == parameter['name'] else ())
+                    except (ValueError, OverflowError) as error:
+                        problem(name, field, str(error), components=components)
             if parameter['name'] in values and parameter.get('menu') and parameter.get('type') in ('Menu','Int') and not parameter.get('menu_dynamic'):
                 value = values[parameter['name']]
                 tokens = [item['token'] for item in parameter['menu']]

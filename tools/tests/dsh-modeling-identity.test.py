@@ -78,6 +78,24 @@ try:
     rejected(lambda:q._validate_expectation({**exp,'transform':[0]*16}),'affine')
     frozen=twist.geometry().freeze();frozen.point(0).setAttribValue('id',1)
     rejected(lambda:q._measure(frozen,exp),'duplicate')
+    # Whole-assembly bounds can scale correctly while an interior part receives
+    # an extra local deformation. Stable-ID transform checks must reject this.
+    h.create_spare_parms(ctrl,spec=[{'type':'float','name':'scale','default':1}])
+    scaling=root.createNode('attribwrangle','scaling');scaling.setInput(0,groups)
+    scaling.parm('snippet').set('float s=ch("../CONTROL/scale"); if(@ptnum<8) @P.x+=0.2*(s-1); @P*=s;')
+    scale_test=[{'id':'scale_response','values':{'scale':1.05},'expectations':[
+        {'metric':'bounds_size','axis':0,'delta':[.25,.27]}]}]
+    scaled=h.test_controls(ctrl,scaling,scale_test)
+    assert scaled['ok'] and scaled['control_summary']['coverage']['relationship_scope']=='not_checked',scaled
+    scale_test[0]['expectations'].append({'metric':'max_transform_error','id_attrib':'id',
+        'transform':list(hou.hmath.buildScale((1.05,1.05,1.05)).asTuple()),'delta':[0,1e-5],'range':[0,1e-5]})
+    signature=q._data_signature(scaling.geometry())
+    nonuniform=h.test_controls(ctrl,scaling,scale_test)
+    assert nonuniform['status']=='fail' and nonuniform['restored'],nonuniform
+    assert nonuniform['results'][0]['measurements'][-1]['measured']>.01
+    assert signature==q._data_signature(scaling.geometry()) and ctrl.evalParm('scale')==1
+    scaling.parm('snippet').set('@P*=ch("../CONTROL/scale");')
+    assert h.test_controls(ctrl,scaling,scale_test)['ok'],'genuine uniform scale still passes'
 finally:
     root.destroy()
 print('template uniqueness / intentional Numbers / transform-follow negative control / restoration passed: '+hou.applicationVersionString())

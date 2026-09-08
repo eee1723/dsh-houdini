@@ -75,10 +75,15 @@ python houdini/install.py --skip-dsh-profile
 
 ```powershell
 npm test
+$env:HOUDINI_PATH='&'
+$env:HOUDINI_NO_ENV_FILE='1'
+# 仓库外隔离偏好目录；完整矩阵与边界见 development.md。
+$env:HOUDINI_USER_PREF_DIR=($env:TEMP+'/dsh-regression/houdini__HVER__')
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-bridge-raw-gate.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-node-ownership.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-bridge-caught-failure.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-tab-create-failure.test.py
+& 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-object-parenting.test.py
 & 'C:\Program Files\Side Effects Software\Houdini 21.0.440\bin\hython.exe' tools/tests/dsh-scene-network-render-contract.test.py
 ```
 

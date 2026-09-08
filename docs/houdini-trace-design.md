@@ -47,6 +47,8 @@
 - 检查：目标、frame、范围、方法、通过/失败/未验证项；检查通过不能扩大为任务完成。
 - 渲染：产物、取景、帧、像素/裁面检查、媒体转交与语义识图分别显示。
 - 失败：失败位置、原因、场景影响、回滚范围、后续修正调用；不能把所有拒绝都标为 Raw Gate。
+- 动词失败记录可以仅有error/summary而无result；详情分别展示错误、返回与补充证据，缺失返回明确标记，
+  不转为null或成功。null/false/0/空字符串仍保留真实值，打开失败详情和返回列表不得撤下Trace视图。
 - 原始请求、完整返回、stdout/stderr放在末层折叠；保留格式和来源，未知结构提供通用键值/列表展示。
 
 视觉编码轻量且一致：技能读取用淡紫、文件读取用蓝灰、Houdini 查询用蓝、Houdini 执行用柔和橙。
@@ -67,6 +69,8 @@
 | Houdini persona | [presets](../presets/)经persona插件挂载 | preset模板与本次实际生效内容；不能只按磁盘文件断言已加载 |
 | 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
 | 动态现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 独立runtime context，不是System段；采集时间、复用与缺失 |
+| 历史执行事实 | [src/execution-state.ts](../src/execution-state.ts)的dsh-houdini:execution-state | runtime/sequence、失效与in-flight；不是现场通过证书 |
+| 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)的dsh-houdini:task-sources | 用户原文、澄清问答与计划区分；摘录/省略明示，source_ref回读不执行HOM |
 | 工具定义 | [src/tools.ts](../src/tools.ts)与平台其他提供方，最终可见schema集合 | schema是独立请求组成；工具限制不会自动证明对应guidance也被删除 |
 | 项目指令与其他上下文 | 实际上下文提供方及最终消息 | 来源、角色、顺序；不凭插件名称猜正文或注入位置 |
 | 用户/assistant/tool历史、技能与参考正文 | 最终messages及读取/压缩/裁剪记录 | 已读取、仍保留、已压缩与已裁剪分别表达 |

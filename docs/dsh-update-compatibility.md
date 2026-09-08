@@ -44,5 +44,10 @@ release 记录，不能假设 RPC adapter 向后兼容就代表 profile 也向�
 slash/generated-args RPC；[client.js](../client.js)消费公开Trajectory snapshot；
 [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py)在DocumentCreation注入必要Web API补丁；
 [profile sync](../houdini/python3.11libs/dsh_profile_sync.py)只对精确toolkit版本/调用点做兼容修补。
+WebView鉴权重定向已加载主页面；不能在loadFinished再导航一次以传session hint，否则可能中断
+首个页面的inventory/inspect初始化请求。显式session通过同源DocumentCreation脚本写入URL，
+供现有client消费，加载后撤销脚本；token不进入脚本，失败仍走异步重试。
+隔离真实Qt入口见[dsh-webview-navigation](../tools/tests/dsh-webview-navigation.test.py)，
+覆盖cookie重定向、单次app bootstrap、加载期间RPC、会话切换和普通重开；不替代live端到端验收。
 支持组合来自兼容JSON；一次探测结果不能成为永久live状态，部署验证记录不保存在本设计文档。
 

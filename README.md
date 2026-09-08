@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、58 个意图级动词、6个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、58 个意图级动词、7个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -12,7 +12,9 @@
 [节点操作卡](docs/node-operation-cards.md)、
 [开发维护规范](docs/development.md)。
 
-docs只保存当前设计、实现和维护方法，不保存迭代日记或测试流水。节点卡由JSON同源生成，
+接续开发先看[当前交接](docs/handoff.md)：只保留待办、验证缺口及下一步，完成即移除，不作历史日志。
+
+docs保存当前设计、实现和维护方法；当前交接是唯一滚动待办例外，不保存迭代日记或测试流水。节点卡由JSON同源生成，
 其他设计随代码原位更新；构建产物和源码说明都不能证明live版本已加载。
 
 ## 快速开始
@@ -55,6 +57,7 @@ python houdini/install.py
 | [houdini-asset-review](skills/houdini-asset-review/SKILL.md) | 短时受限独立复核 |
 | [houdini-trace-analysis](skills/houdini-trace-analysis/SKILL.md) | 确定性trace取证、指标与审计 |
 | [houdini-skill-governance](skills/houdini-skill-governance/SKILL.md) | 领域知识的来源、版本和发布边界 |
+| [houdini-video-tutorial](skills/houdini-video-tutorial/SKILL.md) | 本地视频的云转录、画面核对与复现依据；不自动搭建工程或沉淀知识 |
 
 ## 配置与支持组合
 
@@ -76,7 +79,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和24 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和25 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

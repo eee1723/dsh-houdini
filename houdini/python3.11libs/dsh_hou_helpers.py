@@ -2618,6 +2618,31 @@ def set_parm(node, name: str, value,
         raise
 
 
+def _validate_numeric_parameter_value(value, components=()) -> None:
+    """Shared static/runtime value-shape check; never evaluate an expression.
+
+    A size-one template names a scalar Parm, not a ParmTuple-only setter.
+    Full numeric tuples accept finite literals; scalar/component fields accept
+    literals or explicit expressions. Menus retain their separate token policy.
+    """
+    if len(components) > 1:
+        if not isinstance(value, (list, tuple)) or len(value) != len(components):
+            raise ValueError(f'tuple needs {len(components)} components: {list(components)}')
+        if any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in value):
+            raise ValueError(f'numeric tuple requires finite numeric values; expressions use component names {list(components)}')
+        return
+    if isinstance(value, str):
+        return  # Numeric strings are HScript, not implicit menu tokens.
+    if isinstance(value, dict):
+        if set(value) - {'expression', 'language'} or not isinstance(value.get('expression'), str):
+            raise ValueError('scalar expression object accepts expression string and optional language only')
+        if value.get('language', 'hscript') not in ('hscript', 'python'):
+            raise ValueError('expression language must be hscript/python')
+        return
+    if not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError('numeric scalar requires a finite number or expression, not a list/tuple or null')
+
+
 def _set_parm_impl(node, name: str, value,
                    allow_foreign: str | None = None) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
@@ -2655,6 +2680,8 @@ def _set_parm_impl(node, name: str, value,
             p.set(setting)
             return {"parm": p.name(), "value": _val(p.eval()), "menu_token": p.evalAsString(),
                     **({"note": f"cleared {cleared}"} if cleared else {})}
+        if tpl.type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
+            _validate_numeric_parameter_value(value)
         if isinstance(value, str):
             tpl_type = None
             try:
@@ -2677,8 +2704,8 @@ def _set_parm_impl(node, name: str, value,
         if isinstance(value, (list, tuple)):
             if len(value) != len(pt):
                 raise ValueError(f"{pt.name()} 需要 {len(pt)} 个分量，收到 {len(value)}")
-            if pt.parmTemplate().type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float) and any(not isinstance(v, (int, float)) for v in value):
-                raise ValueError(f'{pt.name()}: numeric tuple requires numeric values; set expressions on components {[p.name() for p in pt]} using set_parms instead')
+            if pt.parmTemplate().type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
+                _validate_numeric_parameter_value(value, [p.name() for p in pt])
             cleared = [c for pp in pt for c in [_clear_animation(pp)] if c]
             pt.set(value)
             out = {"parm": pt.name(), "value": [_val(v) for v in pt.eval()]}
@@ -3996,7 +4023,9 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     测max(|P_baseline*transform-P_test|)，baseline残差=0；仍需另有非零响应项。
     range=[min,max]验证基准/扰动绝对范围，delta是相对响应；center/min/max不是有效缩写。
     先消费control_summary的status/reason/case_counts；results=[]可能是基准失败，绝非通过。
-    control_summary保留未运行case和失败测量；修正判据后复跑，不能用文字解释替代新结果。
+    control_summary保留未运行case、输出变化与失败测量，coverage区分全输出/部件测量和接口覆盖。
+    bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
+    修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
     可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。

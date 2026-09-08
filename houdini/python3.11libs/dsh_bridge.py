@@ -69,7 +69,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 21
+_EXECUTION_CONTRACT_VERSION = 22
 _RUNTIME_ID = uuid.uuid4().hex
 _EXECUTION_SEQUENCE = 0
 # Remove the retired v8 callback when reloading an existing runtime.

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import urllib.parse
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
@@ -115,8 +116,10 @@ def _load_finished(ok: bool) -> None:
             target = _after_auth_url
             _after_auth_url = None
             _target_url = target
-            _view.load(QUrl(target))
-            return
+            # The token exchange already redirects to the app. Navigating here
+            # bootstraps it twice and aborts its inventory/inspect RPCs. The
+            # DocumentCreation hint has already routed the first document.
+            _clear_launch_session_hint(_view)
         if _view is not None:
             _view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS)
         return
@@ -158,6 +161,42 @@ def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
     view.page().scripts().insert(script)
 
 
+def _clear_launch_session_hint(view: QWebEngineView) -> None:
+    scripts = view.page().scripts()
+    for prior in scripts.find("dsh-launch-session-hint"):
+        scripts.remove(prior)
+
+
+def _install_launch_session_hint(view: QWebEngineView, target_url: str | None) -> None:
+    """Put the explicit session in the redirected app URL before its JS runs.
+
+    DSH's token exchange redirects to /, dropping query parameters. Only the
+    same-origin non-token app document receives the hint; no fetch, second
+    navigation, token embedding, or synchronous GUI-thread networking.
+    """
+    _clear_launch_session_hint(view)
+    if target_url is None:
+        return
+    script = QWebEngineScript()
+    script.setName("dsh-launch-session-hint")
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(False)
+    script.setSourceCode("""
+(function(){
+  var target = new URL(%s);
+  var current = new URL(window.location.href);
+  if (current.origin !== target.origin || current.pathname !== target.pathname
+      || current.searchParams.has('token')) return;
+  var session = target.searchParams.get('dsh-houdini-session');
+  if (!session) return;
+  current.searchParams.set('dsh-houdini-session', session);
+  window.history.replaceState(window.history.state, '', current.pathname + current.search + current.hash);
+})()
+""" % json.dumps(target_url))
+    view.page().scripts().insert(script)
+
+
 def show_webview(
     session_id: str | None = None,
     authenticated_url: str | None = None,
@@ -182,10 +221,11 @@ def show_webview(
         # change the user's current conversation.
         if (session_id is not None or authenticated_url is not None) and _view is not None:
             _after_auth_url = target_url if authenticated_url is not None else None
+            _install_launch_session_hint(_view, _after_auth_url)
             _target_url = initial_url
             _view.load(QUrl(_target_url))
-        else:
-            _after_auth_url = None
+        # A plain reopen while authentication is still loading must not discard
+        # its pending hint/cleanup; it only raises the existing window.
         _bring_to_front(_window)
         return (
             f"webview routed to {session_id}"
@@ -212,6 +252,7 @@ def show_webview(
         _retry_timer = retry_timer
 
     _after_auth_url = target_url if authenticated_url is not None else None
+    _install_launch_session_hint(_view, _after_auth_url)
     _target_url = initial_url
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))

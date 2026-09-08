@@ -16,6 +16,7 @@ import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
 import { ReviewController } from './review.js'
 import { readResultDetail, retainResult } from './result-details.js'
+import { readTaskSource } from './task-sources.js'
 
 /** Canonical fields shared by every exec-shaped result. */
 const execOutputProperties = {
@@ -439,9 +440,11 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       'Run read-only Python inspection code inside Houdini, with `hou` pre-imported. Use it to '
       + 'list nodes, read parameters, check for errors, and inspect scene state. It MUST NOT '
       + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them. '
-      + 'Alternatively read a retained historical result with result_ref (SHA-256), optional JSON pointer, offset and limit; this reads the workspace artifact without executing Houdini.',
+      + 'Alternatively read a retained historical result with result_ref (SHA-256), optional JSON pointer, offset and limit; this reads the workspace artifact without executing Houdini. '
+      + 'Read original current-session task material with source_ref="index" or a source hash, offset and limit; no Houdini execution. Questions/plans are not user requirements or permission.',
     parameters: {
-      code: { type: 'string', description: 'Read-only Python; mutually exclusive with result_ref' },
+      code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref or source_ref' },
+      source_ref: { type: 'string', description: 'index lists current-session task sources; a listed SHA-256 reads original text with provenance. Nontext blocks are markers, not interpreted references.' },
       result_ref: { type: 'string', description: 'SHA-256 returned in result-details; historical evidence, not live scene state' },
       pointer: { type: 'string', description: 'JSON Pointer into retained envelope, e.g. /verbs/0/args or /result; default root' },
       offset: { type: 'number', description: 'Character offset into selected JSON text; default 0' },
@@ -454,14 +457,20 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
+      title: args.source_ref ? 'Read task source' : args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
       kind: 'read',
-      rawInput: args.result_ref ? args : codePresentationInput(args as { code:string }),
+      rawInput: args.result_ref || args.source_ref ? args : codePresentationInput(args as { code:string }),
     }),
-    presentResult: (args, result) => genericResult(resultTitle(args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
+    presentResult: (args, result) => genericResult(resultTitle(args.source_ref ? 'Task source' : args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
     async execute(args, exec) {
       await review.guard(exec,true)
-      if ((args.code !== undefined) === (args.result_ref !== undefined)) throw new Error('provide exactly one of code or result_ref')
+      if ([args.code,args.result_ref,args.source_ref].filter(v=>v!==undefined).length !== 1) throw new Error('provide exactly one of code, result_ref or source_ref')
+      if (args.source_ref !== undefined) {
+        if (args.pointer !== undefined) throw new Error('pointer requires result_ref; task sources use offset/limit')
+        if (!exec.agent) throw new Error('task sources require a current agent session')
+        const session = exec.agent.session as unknown as { snapshotEvents(): Array<{type:string;seq?:number;data?:any}> }
+        return readTaskSource(session.snapshotEvents(),args.source_ref,args.offset,args.limit)
+      }
       if (args.result_ref !== undefined) return readResultDetail(workspaceOf(exec),args.result_ref,args.pointer,args.offset,args.limit)
       if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')

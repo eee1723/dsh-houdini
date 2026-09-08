@@ -485,5 +485,41 @@ const detailRead=View.model({eventNodes:[{...result('detail','houdini_query',2,2
   call:{name:'houdini_query',argsRaw:JSON.stringify({result_ref:'a'.repeat(64)})}}]}).entries[0];
 assert.equal(detailRead.kind,'read');
 assert.equal(detailRead.title,'读取历史工具结果');
+const sourceRead=View.model({eventNodes:[{...result('source','houdini_query',3,30,'Executed successfully.'),
+  call:{name:'houdini_query',argsRaw:JSON.stringify({source_ref:'index'})}}]}).entries[0];
+assert.equal(sourceRead.kind,'read');
+assert.equal(sourceRead.title,'读取原始任务来源');
 tree=click('失败 / 拦截');assert.equal(callRows(tree).length,1);assert.match(content(tree),/permission denied/);
 console.log('Compact timeline: tool colors, 124 calls, top pagination, direct page selection and detail navigation passed');
+
+// Exercise the actual detail renderer, not only the parsed model. Failed Bridge
+// ledger rows legitimately carry error/summary with no result at all.
+const detailCases = [
+  {verb:'set_parms',ok:false,args:[],kwargs:{},error:'fixture parameter rejected',ms:0,
+    summary:{dispatched:false,scene_writes:0}},
+  {verb:'verify_network',ok:false,args:['/obj/g'],error:'fixture checkpoint failed',ms:2,
+    result:null,summary:{status:'failed',output:'/obj/g/OUT'}},
+  {verb:'read_parms',ok:true,args:[],result:null,ms:1},
+  {verb:'unknown',ok:true,ms:1},
+  {verb:'read_parms',ok:true,args:[],result:false,ms:1},
+  {verb:'read_parms',ok:true,args:[],result:0,ms:1},
+  {verb:'read_parms',ok:true,args:[],result:'',ms:1},
+];
+for (const [i, ledger] of detailCases.entries()) {
+  hooks=[];
+  snapshot.runningCalls=[];
+  snapshot.eventNodes=[{...result('detail-case-'+i,'houdini_exec',1,10,'Executed successfully.'),
+    meta:{canonical:{ok:ledger.ok,verbs:[ledger]}}}];
+  const before=JSON.stringify(snapshot);
+  const entry=View.model(snapshot).entries[0];
+  tree=render();callRows(tree)[0].props.onClick();tree=render();
+  const displayed=content(tree);
+  if(ledger.error) assert(displayed.includes(ledger.error),'keep actual failure reason visible');
+  if(ledger.summary) assert(displayed.includes('补充证据') && displayed.includes('scene_writes' in ledger.summary ? 'scene_writes' : '/obj/g/OUT'));
+  if(!Object.hasOwn(ledger,'result')) assert(displayed.includes('返回值未记录'),'missing is not a successful null return');
+  else assert.equal(entry.verbs[0].detail,JSON.stringify(ledger.result));
+  assert.equal(JSON.stringify(snapshot),before,'rendering cannot rewrite canonical evidence');
+  tree=click('← 返回步骤列表');
+  assert.equal(callRows(tree).length,1,'a failure detail must not remove the trace');
+}
+console.log('Trace failed-detail rendering: missing/null/falsy returns, errors, summaries and back navigation passed');

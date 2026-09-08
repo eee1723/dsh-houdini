@@ -81,6 +81,8 @@ try:
     result=h.test_controls(ctrl,out,tests,interfaces=[interface])
     assert result['ok'] and result['restored'] and ctrl.evalParm('length')==1,result
     assert result['control_summary']['case_counts']=={'pass':1,'fail':0,'unverified':0,'not_run':0}
+    assert result['control_summary']['coverage']['declared_interfaces']==1
+    assert result['control_summary']['cases'][0]['interface_status']=='pass'
     # Absolute ranges apply to baseline too: a rejected baseline must not look
     # like an empty successful batch when author code prints only results.
     baseline_test=[{'id':'target_only_range','values':{'length':1.2},'expectations':[
@@ -93,6 +95,9 @@ try:
     assert summary['baseline']==2 and summary['expectation']['range']==[2.19,2.21]
     assert evidence['controller']==ctrl.path() and evidence['output']==out.path()
     assert summary['controller']==ctrl.path() and summary['output']==out.path()
+    assert summary['coverage']['measured_cases']==0
+    assert summary['coverage']['declared_controls']==['length']
+    assert summary['cases'][0]['output_data_changed'] is None,'not_run must not be reported unchanged'
     assert ctrl.evalParm('length')==1 and evidence['results']==[]
     result=h.test_controls(ctrl,out,[{'id':'dead','values':{'unused':2},'expectations':[
       {'metric':'bounds_size','axis':0,'delta':[.1,2]}]}])
@@ -100,6 +105,8 @@ try:
     failure=result['control_summary']['failures'][0]
     assert failure['id']=='dead' and failure['failed_measurement_count']==1
     assert failure['failed_measurements'][0]['delta']==0
+    assert failure['geometry_changed'] is False
+    assert result['control_summary']['cases'][0]['output_data_changed'] is False
     rejects(lambda:h.test_controls(ctrl,out,[{'id':'no_response','values':{'unused':2},'expectations':[
         {'metric':'bounds_size','axis':0,'delta':[-1,1]}]}]),'non-zero expected response')
     # Local selection: avoid a global bbox hiding the expected module response.
@@ -117,9 +124,37 @@ try:
     ctrl.parm('length').lock(False)
     # A hard-coded neighbor makes the default relation correct but perturbation wrong.
     h.set_parm(root.node('part_b'),'tx',1.5)
+    # A shrinking part can pass an area response even after losing contact.
+    detach_test=[{'id':'area_response','values':{'length':.8},'expectations':[
+        {'metric':'area','delta':[-.801,-.799]}]}]
+    narrow=h.test_controls(ctrl,out,detach_test)
+    assert narrow['ok'] and narrow['control_summary']['coverage']['relationship_scope']=='not_checked',narrow
+    assert narrow['control_summary']['coverage']['acceptance']=='declared_checks_only'
     result=h.test_controls(ctrl,out,tests,interfaces=[interface])
     assert not result['ok'] and result['restored'],result
+    detached=h.test_controls(ctrl,out,detach_test,interfaces=[interface])
+    assert not detached['ok'] and detached['restored'],detached
+    assert detached['control_summary']['cases'][0]['interface_status']=='fail',detached
     h.set_parm(root.node('part_b'),'tx',"ch('../CONTROL/length')+0.5")
+
+    # A local part moves inside a fixed outer envelope. Its global bbox does
+    # not move, but it is not a dead control and must not be diagnosed as one.
+    envelope=root.createNode('box','envelope');envelope.parmTuple('size').set((10,10,10))
+    enclosed=root.createNode('merge','enclosed')
+    enclosed.setInput(0,envelope);enclosed.setInput(1,out)
+    local_test=[{'id':'local_motion','values':{'length':1.2},'expectations':[
+        {'metric':'bounds_size','axis':0,'delta':[.199,.201]}]}]
+    local=h.test_controls(ctrl,enclosed,local_test)
+    assert not local['ok'] and local['restored']
+    summary=local['control_summary']
+    assert summary['cases'][0]['output_data_changed'] is True
+    assert summary['cases'][0]['changed_output_with_failed_measurements'] is True
+    assert summary['failures'][0]['geometry_changed'] is True
+    env=b.run_code(f'__result__=test_controls({ctrl.path()!r},{enclosed.path()!r},{local_test!r})')
+    ev=next(e for e in env['evidence'] if e['verb']=='test_controls')
+    assert ev['control_summary']['cases'][0]['changed_output_with_failed_measurements'] is True
+    local_test[0]['expectations'][0]={'metric':'bounds_center','axis':0,'group':'b_surface','delta':[.199,.201]}
+    assert h.test_controls(ctrl,enclosed,local_test)['ok'],'measuring the affected part reveals the actual response'
 
     # Native Tube: radius lives in primitive intrinsic state, not point P.
     native=root.createNode('tube','native')

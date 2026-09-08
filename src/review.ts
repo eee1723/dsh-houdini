@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ExecResult, HoudiniBridge, OwnershipScope } from './bridge.js'
+import { taskSources } from './task-sources.js'
 
 type Agent = NonNullable<ToolRunContext['agent']>
 type Run = { id: string; localAgent?: Agent; result: Promise<{ stopReason: string; output: unknown[] }>; dispose(): Promise<void> }
@@ -78,17 +79,8 @@ export function reviewScope(value: unknown): Record<string, string> {
 export function reviewTaskMaterials(agent: Agent): string {
   const session = agent.session as unknown as { snapshotEvents(): Array<{type: string; data?: any}> }
   const events = session.snapshotEvents()
-  const answerCalls = new Set(events.filter(e=>e.type==='tool/call' && e.data?.name==='ask_user_question').map(e=>e.data.callId))
-  const parts: unknown[] = []
-  for (const e of events) {
-    if (e.type==='user/message') {
-      const text=(e.data?.content || []).filter((c:any)=>c.type==='text').map((c:any)=>c.text).join('\n')
-      if (text && !text.startsWith('Current runtime context.') && !text.startsWith('<system-reminder>')) parts.push({user:text})
-    }
-    if(e.type==='tool/call' && e.data?.name==='ask_user_question') parts.push({question:e.data.arguments})
-    if(e.type==='tool/result' && answerCalls.has(e.data?.message?.source?.callId)) parts.push({answer:e.data.message.content})
-  }
-  if (!parts.length) throw new Error('review requires original user task material from the trusted parent session')
+  const parts = taskSources(events)
+  if (!parts.some(row => row.kind === 'user_message')) throw new Error('review requires original user task material from the trusted parent session')
   const text=JSON.stringify(parts)
   if(text.length>64000) throw new Error('review task history exceeds 64KiB; use a focused task session, do not silently omit user requirements')
   return text
@@ -131,7 +123,7 @@ export class ReviewController {
     const scope=reviewScope(value)
     const material=reviewTaskMaterials(exec.agent)
     const references=(exec.agent.session as unknown as {snapshotEvents():Array<{type:string;data?:any}>}).snapshotEvents()
-      .filter(e=>e.type==='user/message').flatMap(e=>(e.data?.content||[]).filter((c:any)=>c.type==='image'))
+      .filter(e=>e.type==='user/message' && e.data?.source?.kind==='user').flatMap(e=>(e.data?.content||[]).filter((c:any)=>c.type==='image'))
     const runtime=(exec.agent.ctx as unknown as {get(name:string):unknown}).get('subagents') as Runtime | undefined
     if(!runtime?.start) throw new Error('DSH in-process subagents service unavailable; review not started')
     // Restrict at creation, using only actually exposed tools. No shell, generic

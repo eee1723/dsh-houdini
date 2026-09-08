@@ -25,8 +25,9 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/媒体转交、纯展示函数 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本 |
-| [src/context.ts](../src/context.ts) | message绑定、in-flight去重、现场摘要预算；独立注入执行事实投影，不刷新用户指代/授权 |
+| [src/context.ts](../src/context.ts) | message绑定、in-flight去重和预算；分别注入现场摘要、执行事实与任务来源，不刷新用户指代/授权 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件按runtime/sequence重建有限历史状态，标记回滚/依赖变化/未知执行，不维护另一事实库 |
+| [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
 | [src/review.ts](../src/review.ts) | 原始要求/历史工具事实、独立受限child、lease生命周期 |
 | [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 交互选择题的互斥性与可执行约束 |
@@ -37,7 +38,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
-context摘要只包含metadata；缺失不等于空场景，选择可变也不构成foreign修改授权。
+scene-context只包含用户消息绑定的metadata；execution-state是工具事件投影，task-sources是原始用户材料的来源索引，
+三者不互相替代。缺失不等于空场景，选择可变也不构成foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
 
 ## Houdini执行模块
@@ -77,6 +79,17 @@ GUI线程不得阻塞socket/子进程/netstat探测；进程缓存的UI/package�
 python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩阵以兼容清单为准。
 
 ## 视觉、追踪和开发工具
+
+视频教程解析由[video skill](../skills/houdini-video-tutorial/SKILL.md)组织，
+[video_tutorial.py](../skills/houdini-video-tutorial/scripts/video_tutorial.py)在普通宿主进程中执行
+本地媒体准备、授权云转录、全片均匀粗扫/局部重看和结果校验，不经 Bridge、不调用 HOM。
+帧索引保留实际 PTS 和播放时间轴起点；缩略图联系表与按显式区域比较的像素变化候选用于导航，
+候选保留前后原图、阈值和时间区间，不做自动语义或操作识别。
+局部 `context` 汇集 hash 绑定的图像与转录，`check-notes` 校验 agent 填写的状态/操作记录，
+只提供引用和结构验证，不证明语义真实性，不执行其中内容，也不据此授权工程修改。
+依赖宿主 Python、FFmpeg、SiliconFlow 凭据及实际语义识图工具；注册 skill 不会安装依赖。
+原视频、切片、转录及画面依据保存在仓库外任务目录，不进入包或 Trace 来源目录。
+输入目前为本地视频，脚本不下载链接、不做语义识图，也不自动复现工程或更新生产知识。
 
 图片由Bridge按请求关联产图事实，经Host复制到会话可读的media映射；路径转交不是语义识图。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。

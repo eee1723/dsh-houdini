@@ -13,6 +13,7 @@
 | 领域方法 | [skills](../skills/)的对应SKILL/reference | docs链接原文，不复制recipe |
 | Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，展示在client.js | 内容复用目录/注册表/请求快照；当前源码、已加载能力和历史请求分开，不手抄提示词与技能正文 |
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
+| 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
 
 ## 2. 构建与生成
 
@@ -43,6 +44,24 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 停用功能先迁移有效约束到现役文档，再清理文件及调用者，不建立docs/archive。
 不因为文档声称已修复就删除验证；机器内存和跨项目材料不属于默认同步范围。
 
+### 交接文档生命周期
+
+`docs/handoff.md`是过程信息进入docs的唯一有限例外，纳入Git与文档索引；跨电脑仍须提交/推送后拉取，
+存在于工作区不等于已同步。只保留下一次接续必须知道的未完成动作、阻塞和验证缺口，不记已完成履历。
+
+- 固定一份文件，原位更新“核对日期”；最多8个活动条目、120行、8000字符。超限先合并同一问题和删除已核销项，
+  不另开按日期/批次命名的交接文档，也不把有效阻塞丢进不可同步的临时文件。
+- 每项包含稳定H编号、状态（待修复/待验证/待决策）、现状、下一步、移除条件和仓库内源码/验证入口。
+  状态只描述尚欠动作；仅缺live或模型验证就写具体缺口，不继续列已经实现的修复。
+- 每次完成实现与所需验证、明确取消或替代该项时，在同一变更中删除整项；不要改成“已完成”继续留着。
+  实现已完成但验收未完成时，只留下验收动作；稳定设计/边界先并回对应现役文档，历史由Git保留。
+- 每次接续与收尾核对全表，不仅追加新条目；无活动项时保留标题、核对日期和“当前无待交接事项”。
+- 不复制完整问题历史、测试计数/日志、私有trace、HIP内容或机器密钥。入口必须能随仓库找到；本机证据可以辅助，
+  不能作为理解或复现该项的唯一材料。长期产品方向留在development-directions，不逐条复制进交接。
+
+`docs:check`只读检查体量、字段、状态、唯一编号和链接，并拒绝已完成勾选项及额外交接副本；
+它不能从代码自动判断业务完成，删项仍须实际核对移除条件。清理交接条目不等于授权删除临时实验、HIP或工作树。
+
 ## 4. 回归与发布
 
 npm test发现并运行tools/tests下全部Node测试。涉及HOM时在隔离hython、隔离偏好目录中运行
@@ -71,17 +90,35 @@ Python验证脚本在Windows使用UTF-8；若hython缺skill校验依赖，使用
 事件乱序/replay、runtime更换、未返回修改和job状态不复活旧证据。两者不替代GUI外部修改观察。
 结果分层用[result-details](../tools/tests/result-details.test.mjs)验证canonical可读回、分页/防篡改、
 保存失败不触发修改重试，以及默认文本与完整审计各自的统计口径。
+任务来源用[task-sources](../tools/tests/task-sources.test.mjs)验证用户/注入来源隔离、澄清失败与replay、
+原文分页回读、session隔离及超预算；[scene-context](../tools/tests/scene-context.test.mjs)覆盖首轮claim、
+上下文抑制与模板转义，不以这些测试替代复杂任务规划、续接及完成行为验收。
 控制摘要用[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)
 覆盖基准失败及Bridge证据，[dsh-interface-evidence](../tools/tests/dsh-interface-evidence.test.py)
 保留真实实例、合法间隙和顶点距离不能证明无碰撞的反例。
 恢复指纹用[dsh-geometry-fingerprint](../tools/tests/dsh-geometry-fingerprint.test.py)区分组目录排列
 和真实成员/ordered顺序/属性变化；[dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py)
 覆盖零写入拒绝、同批其他修改及创建后失败，防止恢复状态被错误降级。
+module-preflight同时覆盖circle.divs、tube.height/cols、polywire.radius/div的标量、表达式及实际回读，
+并保留单值列表拒绝、真tuple、非有限值和动画恢复反例；不能只验证单独set_parm而漏掉模块预检。
+quality-contracts用“局部变化但整体bbox不变”和“面积响应通过但部件脱离”区分测量与关系覆盖；
+[modeling-identity](../tools/tests/dsh-modeling-identity.test.py)用外包络缩放正确但内部部件额外位移的反例，
+验证stable-ID max_transform_error会拒绝错误均匀缩放，而真实均匀变换可通过。
+聚焦模块的执行基础用[module-integration](../tools/tests/dsh-module-integration.test.py)验证：局部输出健康但下游
+漏件、实例变换造成脱离、独立模块失败保留旧提交、共享控制在实际装配输出上的测试和恢复。
+这只是HOM机制回归；SOP skill的顺序聚焦仍是工作流候选，需同模型/版本/预算的自然任务对照，
+另含简单编辑、单部件、相邻领域和接口未定的反例，不以固定脚本通过证明LLM采用或视觉质量。
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
 baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
 冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。
 
 ## 5. 领域与真实运行验收
+
+视频解析离线回归使用 `python tools/tests/video-tutorial.test.py`（宿主 Python 3.11+，不需要 HOM、
+密钥或网络），覆盖授权、分片覆盖、续跑、失败/未知请求、证据损坏和抽帧边界。
+真实媒体/云验证使用[video skill](../skills/houdini-video-tutorial/SKILL.md)的准备与小片段路径，
+在仓库外运行，云提交需当前用户授权；FFmpeg、服务响应、语义识图和教程复现分别验收。
+不得把默认离线回归改为联网上传教程，测试数据与转录不进入包。
 
 Rig的可执行入口是[rig skill](../skills/houdini-rig-animation-workflow/SKILL.md)、
 [rig参考](../skills/houdini-rig-animation-workflow/references/rig-animation-patterns.md)及

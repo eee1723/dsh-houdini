@@ -10,6 +10,11 @@ assert.match(webview, /Promise\.withResolvers/);
 assert.match(webview, /Object\.defineProperty\(Promise, 'withResolvers'/);
 assert.match(webview, /QWebEngineScript\.InjectionPoint\.DocumentCreation/);
 assert.match(webview, /_POLYFILL_ABORT_SIGNAL_ANY_JS \+ ";\\n" \+ _POLYFILL_PROMISE_WITH_RESOLVERS_JS/);
+const finished = webview.match(/def _load_finished\(ok: bool\)[\s\S]*?(?=\ndef )/)[0];
+assert.doesNotMatch(finished, /\.load\(/, 'auth completion must not restart the app and abort startup RPCs');
+assert.match(webview, /window\.history\.replaceState/);
+assert.match(webview, /current\.origin !== target\.origin/);
+assert.match(webview, /current\.searchParams\.has\('token'\)/);
 
 const launcher = fs.readFileSync('houdini/python3.11libs/dsh_launcher.py', 'utf8');
 const functionBody = (name) => {
