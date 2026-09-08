@@ -104,7 +104,9 @@ export function normalizeTraceSteps(events) {
     const args = parseToolArguments(call.arguments);
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
-    const rawUsage = parseJsonBlock(resultText, 'raw-usage');
+    const canonical = event.data?.meta?.canonical;
+    const envelope = String(call.name).startsWith('houdini_') && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
+    const rawUsage = envelope?.rawUsage ?? parseJsonBlock(resultText, 'raw-usage');
     const mutatingRawMethods = rawUsage && !rawUsage._raw
       ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
         .filter((item) => isMutatingRawMethodName(item?.name))
@@ -124,16 +126,24 @@ export function normalizeTraceSteps(events) {
       step: event.data?.step ?? null,
       tool: call.name || '?',
       isHoudini: String(call.name || '').startsWith('houdini_'),
-      failed: toolResultFailed(message, resultText),
+      failed: toolResultFailed(message, resultText) || (envelope?.status ? envelope.status === 'failed' : envelope?.ok === false),
       args,
       code,
       resultText,
-      verbs: parseVerbLedger(resultText),
+      verbs: Array.isArray(envelope?.verbs) ? envelope.verbs.map((v,i) => ({
+        ledgerIndex:i+1,ok:v.ok,verb:v.verb,
+        args:JSON.stringify(v.args)+(v.kwargs && Object.keys(v.kwargs).length ? ', '+JSON.stringify(v.kwargs) : ''),
+        result:v.summary ? {...(typeof v.result === 'object' && v.result !== null ? v.result : {}),...v.summary} : v.result,
+        resultText:JSON.stringify(v.result),ms:v.ms,
+      })) : parseVerbLedger(resultText),
       rawMethods: rawMethodNames(code),
       mutatingRawMethods,
       advisory: advisoryMatch ? advisoryMatch[1].trim() : null,
-      rollback: parseJsonBlock(resultText, 'rollback'),
-      transaction: parseJsonBlock(resultText, 'transaction'),
+      rollback: envelope?.rollback ?? parseJsonBlock(resultText, 'rollback'),
+      transaction: envelope?.transaction ?? parseJsonBlock(resultText, 'transaction'),
+      canonical: envelope,
+      canonicalStatus: envelope ? 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
+      executionLocation: call.name === 'houdini_query' && args.result_ref ? 'host_result_artifact' : null,
       rawUsage,
     });
   }

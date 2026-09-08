@@ -17,6 +17,7 @@ benchmark/runs/
 # data) and fetched docs — never commit.
 .research/
 .dsh-houdini-media/
+.dsh-houdini-results/
 .dsh-vision-router/
 .dsh-vision-toolkit/
 session/

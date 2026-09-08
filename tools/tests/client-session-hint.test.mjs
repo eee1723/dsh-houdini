@@ -51,6 +51,10 @@ async function run(href) {
     if (name === 'react') {
       return {
         createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+        useState: value => [value, () => {}],
+        useMemo: fn => fn(),
+        useEffect: () => {},
+        useRef: value => ({ current: value }),
       };
     }
     throw new Error(`unexpected client dependency: ${name}`);
@@ -137,7 +141,7 @@ const blockedRawUsage = {
   suspectedMutations: [{ name: 'save', count: 1 }],
   gateOutcome: 'blocked',
 };
-const traceTree = view({
+const traceProps = {
   useSession: (select) => select({
     views: new Map([['trajectory', { eventNodes: [
       {
@@ -181,22 +185,23 @@ const traceTree = view({
       },
     ] }]]),
   }),
-});
+};
+const traceTree = view(traceProps);
 const traceText = textContent(traceTree).replace(/\s+/g, ' ');
-assert.match(traceText, /HOM 读取 ×1/);
-assert.match(traceText, /动词 ×1/);
 assert.match(traceText, /Gate 拦截/);
-assert.match(traceText, /低层豁免/);
 assert.match(traceText, /已回滚/);
 assert.match(traceText, /执行代码/);
-assert.match(traceText, /HOM \/ Raw Gate/);
 assert.match(traceText, /动词证据/);
-assert.match(traceText, /结构化返回/);
-assert.match(traceText, /程序输出/);
 assert.match(traceText, /查看原始工具结果/);
-assert(!traceText.includes('裸 hou'));
-assert.match(traceText, /成功修改含动词 · 50%/);
-assert.match(traceText, /无动词只读探针/);
-assert.match(traceText, /Raw Gate 拦截/);
+assert.match(traceText, /提示词与上下文/);
+assert(!traceText.includes('成功修改含动词'), 'analysis metrics must not crowd the main timeline');
+const snapshot = traceProps.useSession(s=>s.views.get('trajectory'));
+const entries = view.model(snapshot).entries;
+assert.equal(entries[0].rawMode, 'read_only');
+assert.equal(entries[0].directHouCount, 1);
+assert.equal(entries[0].verbs.length, 1);
+assert.equal(entries[1].gateBlocked, true);
+assert.equal(entries[2].rawMode, 'exempted');
+assert.equal(entries[3].rollbackApplied, true);
 
 console.log('client launcher-session hint and ledger parser tests passed');

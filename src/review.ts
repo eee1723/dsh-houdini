@@ -25,10 +25,16 @@ export function reviewPriorEvidence(events: any[], scope: Record<string,string>)
     if(m.content?.some((c:any)=>c.isError))continue
     const text=(m.content||[]).flatMap((c:any)=>c.content||[]).filter((c:any)=>c.type==='text').map((c:any)=>c.text).join('\n')
     // Host renders operation-evidence before any model-controlled stdout/result.
-    const match=text.match(/^(?:Executed successfully\.|Operation executed;[^\n]*)\n\n(?:transaction:\n[^\n]+\n\n)?operation-evidence:\n([^\n]+)/)
-    if(!match)continue
+    const match=text.match(/^(?:Executed successfully\.|Operation executed;[^\n]*)\n\n(?:execution-observation:\n[^\n]+\n\n)?(?:transaction:\n[^\n]+\n\n)?operation-evidence:\n([^\n]+)/)
     let evidence:any
-    try{evidence=JSON.parse(match[1])}catch{continue}
+    if (e.data?.meta?.canonical) {
+      const canonical=e.data.meta.canonical
+      if(canonical.ok!==true || ['rolled_back','recovery_unverified'].includes(canonical.transaction?.status))continue
+      evidence=canonical.evidence
+    } else {
+      if(!match)continue
+      try{evidence=JSON.parse(match[1])}catch{continue}
+    }
     if(!Array.isArray(evidence))continue
     for(const r of evidence) {
       if(!r || typeof r!=='object')continue

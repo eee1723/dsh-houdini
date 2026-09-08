@@ -18,9 +18,9 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 1. **方法与原型**：选择曲线/截面/开放表面/实体/实例等表示。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
 2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
 3. **骨架门**：只建代理体/中心线/主要截面，查世界位置、尺寸、方向和主连接。视觉交付已在范围内且GUI可用时，尽早看可辨认的整体或明确侧向图。主要比例/位置错误先修骨架，不进入细化。
-4. **模块门**：一个build_module对应可独立cook的小模块和明确非空output；空CTRL/helper用tab_create。先验证单元再复制。检查实际表面/截面、封口意图、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，warning清理或解释。
-5. **关系门**：每完成一个模块就和相邻模块集成检查。独立表面用适用的interfaces距离，融合Polygon才用共享拓扑。距离不等于有符号插入，bbox对称不等于几何镜像；接地覆盖每个要求的足部。没有可靠方法就保留unverified。
-6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。优先test_controls；范围/容差来自设计，不能观察失败后扩大窗口凑pass；耦合控制再测一个边界组合，滑条范围不等于有效参数域。修测试需独立理由与新样本/解析关系。只测bbox变化不证明连接或整个参数域。
+4. **模块门**：一个build_module对应可独立cook的小模块和明确非空output；空CTRL/helper用tab_create。先验证单元及其附属件连接再复制。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，warning清理或解释，不为清warning丢掉最终部件身份。
+5. **关系门**：每完成一个模块就检查相邻关系，测最终变换后的实例表面，不测未变换原型。独立表面用适用的interfaces，融合Polygon才用共享拓扑；顶点对最小距离不能证明无穿插，距离不等于插入深度。接地逐足检查；合法装配间隙按任务判断，没有可靠方法保留unverified。
+6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
 7. **交付门**：集成后verify_network(parent,output=实际交付SOP)，最后一次相关修改后刷新必要统计、关系和图像。布局、恢复frame/selection/visibility、设sop_set_output，再保存。未命名HIP用有授权路径及当前HIP校验的scene_save_as；保存失败不能宣称完整交付。
 
 模块与关系循环推进，不等所有细节完成才检查装配。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
@@ -30,7 +30,9 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 - build_module声明name/type/parms/inputs/output；None表示空输入槽。跨subnet使用Object Merge或明确端口。connect(src,dst,index)直接替换既有输入；Merge先断后接会前移丢分支，消费inputs_after。set_parms保持strict，不能以strict=False绕过构建失败。
 - 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留components/菜单set_value。设置尚未决定时用dry_run集中读operation_advisories再构建；已明确时不强制双调用。advisories只提示缺少显式选择，不改默认值，也不证明选择正确。最终分支保留语义primitive组。
 - tab_create返回hou.Node；list_parms/read_parms返回list。菜单用token/set_value，菜单表达式用{expression,language}；普通数值字符串是HScript表达式，VEX在snippet内；tuple表达式用组件字段。见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
-- 看transaction最终状态：同一exec后方失败可以撤销前方成功的build_module。先确认相关identity/存活输出；撤销过的打标缺失不是生成器无效证据，不沿用被回滚依赖；不熟悉的回读另开query，避免尾部格式化错误撤销构建。
+- 更新已有spare默认值用create_spare_parms(update_defaults={name:literal})，当前值另用set_parms；两者回读分开。不支持的参数按verb_help边界报告，不因猜错HOM方法而断言环境不支持。
+- 可独立cook/验收的模块各用一次exec，引用存活输出后另做集成；不可分的部件仍在模块内批量修改。看transaction最终状态：同一exec后方失败会撤销前方可撤销修改，不沿用被回滚依赖；陌生回读另开query，模块返回直接使用已知validation，避免尾部格式化错误撤销构建。
+- 局部源码改动先read_parms(names=[代码字段])取得当前原文和hash，再用set_parms的literal patch；全部锚点/次数在本节点本批写入前验证，不能静默忽略0命中。跨节点不共享此预检，仍按模块/exec恢复；详见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
 - 同一模块边界连续两次失败，回到最后有效输出做最小单变量诊断或换方法；不反复全文重建多个未知模块，不catch mutation/cook异常后继续。
 - 保留小状态摘要：当前输出/身份、未过关系、最新证据frame/时间、受影响修改；只重验受影响检查。
 

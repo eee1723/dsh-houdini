@@ -8,10 +8,12 @@ import {
   newestSessionFile,
   resolveSessionFile,
   sessionIdFromFile,
+  collectRequestTelemetry,
 } from '../../../tools/trace-session-lib.mjs';
 import { normalizeTraceSteps } from '../../../tools/normalized-trace-steps.mjs';
 import {
   collectValidationCoverage,
+  collectRetryWork,
   collectQualityLoopEvidence,
   completedVisionTodoWithoutEvidence,
   classifyVisionEvidence,
@@ -181,6 +183,8 @@ function analyzeTrace(file) {
       time: source.time,
       callTime: source.callTime,
       durationMs: source.durationMs,
+      canonical: compact ? undefined : source.canonical,
+      canonicalStatus: source.canonicalStatus,
       turn: source.turn,
       step: source.step,
       tool: source.tool,
@@ -209,7 +213,7 @@ function analyzeTrace(file) {
     // here used to erase relationship probes from otherwise identical traces.
     Object.defineProperty(step, 'code', { value: code, enumerable: !compact });
     steps.push(step);
-    firstToolTime = Math.min(firstToolTime, source.time || Infinity);
+    firstToolTime = Math.min(firstToolTime, source.callTime ?? source.time ?? Infinity);
     lastToolTime = Math.max(lastToolTime, source.time || 0);
     addCount(toolCounts, step.tool);
     for (const method of source.rawMethods) addCount(rawMethodCounts, method);
@@ -386,7 +390,7 @@ function analyzeTrace(file) {
       detail: 'No assistant delivery message followed the final tool result.',
     });
   }
-  const initialRequest = [...userMessages].reverse().find(
+  const initialRequest = userMessages.find(
     (message) => message.time <= firstToolTime,
   ) || null;
   return {
@@ -410,6 +414,7 @@ function analyzeTrace(file) {
       resultChars: normalized.steps.reduce((n,s) => n+s.resultText.length,0),
       note: 'Call-to-result sum includes waits and possible overlap; gaps are not a direct model inference-time measurement.',
     },
+    requestTelemetry: collectRequestTelemetry(events),
     startTime: Number.isFinite(firstTime) ? firstTime : null,
     endTime: lastTime || null,
     durationMs: Number.isFinite(firstTime) && lastTime ? lastTime - firstTime : null,
@@ -466,6 +471,7 @@ function analyzeTrace(file) {
     qualityLoopEvidence,
     validationCoverage,
     repeatedCode,
+    retryWork: collectRetryWork(normalized.steps),
     timelineGaps: gaps,
     totalCodeChars: steps.reduce((sum, step) => sum + step.codeChars, 0),
     execCodeChars: steps.filter((step) => step.tool === 'houdini_exec').reduce((sum, step) => sum + step.codeChars, 0),

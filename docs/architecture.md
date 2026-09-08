@@ -25,12 +25,15 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/媒体转交、纯展示函数 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本 |
-| [src/context.ts](../src/context.ts) | message绑定、in-flight去重、现场摘要预算；不刷新用户授权 |
+| [src/context.ts](../src/context.ts) | message绑定、in-flight去重、现场摘要预算；独立注入执行事实投影，不刷新用户指代/授权 |
+| [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件按runtime/sequence重建有限历史状态，标记回滚/依赖变化/未知执行，不维护另一事实库 |
+| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
 | [src/review.ts](../src/review.ts) | 原始要求/历史工具事实、独立受限child、lease生命周期 |
 | [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 交互选择题的互斥性与可执行约束 |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [client.js](../client.js) | 手写CJS factory；Houdini Trace视图、回放解析和生成目录 |
+| [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 五看板、公开Trajectory请求/调用适配、结构化详情、技能证据与类型配色；构建嵌入client.js |
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
@@ -77,13 +80,18 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 图片由Bridge按请求关联产图事实，经Host复制到会话可读的media映射；路径转交不是语义识图。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
-Trace记录动词ledger、rawUsage、Gate与transaction；Host删除重复stdout回显但保留原始事实。
+Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
+大结果保存到workspace的.dsh-houdini-results后才精简模型文本。该目录是工具返回副本，不是HIP内容输出。
+失败/警告/unsupported/恢复错误、媒体路径和权限提示保留；未知结果可通过已提供的result_ref按字段读取。
+页面信息架构、内容来源与历史快照同步规则见[Houdini Trace设计](houdini-trace-design.md)。
+该文档区分实际请求System/schema/usage、上下文事件与当前构建来源目录；逐段运行provenance和最终messages可见集合尚未提供。
 
 | 工具 | 长期职责 |
 |---|---|
 | [catalog-lib.mjs](../tools/catalog-lib.mjs)、[gen-client-catalog.mjs](../tools/gen-client-catalog.mjs) | 词表解析与Host/client生成 |
+| [gen-trace-client.mjs](../tools/gen-trace-client.mjs) | 同源提取guidance/preset/注册技能与资源，嵌入手写Trace组件及样式；--check只读漂移验证 |
 | [gen-node-card-docs.mjs](../tools/gen-node-card-docs.mjs) | JSON节点卡→文档，严格schema与漂移检查 |
-| [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一 |
+| [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[prune-retired-build.mjs](../tools/prune-retired-build.mjs) | 回归发现与退役构建文件清理 |

@@ -15,6 +15,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
 import { ReviewController } from './review.js'
+import { readResultDetail, retainResult } from './result-details.js'
 
 /** Canonical fields shared by every exec-shaped result. */
 const execOutputProperties = {
@@ -32,6 +33,8 @@ const execOutputProperties = {
   media: { type: 'json' },
   checks: { type: 'json' },
   evidence: { type: 'json' },
+  execution: { type: 'json' },
+  details: { type: 'json' },
 } as const
 
 const execOutputSchema = {
@@ -60,6 +63,7 @@ function execPresentationMeta(value: ExecResult): PresentationMeta {
     verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
     mediaCount: Array.isArray(value.media) ? value.media.length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
+    ...(value.execution !== undefined || value.details !== undefined ? { canonical: value as unknown as JsonValue } : {}),
   }
 }
 
@@ -70,6 +74,7 @@ function jobPresentationMeta(value: JobStatus): PresentationMeta {
     status: value.status,
     verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
     mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+    ...(value.execution !== undefined || value.details !== undefined ? { canonical: value as unknown as JsonValue } : {}),
   }
 }
 
@@ -101,20 +106,38 @@ function truncate(text: string, max = 400): string {
 }
 
 /** Render the runtime verb ledger as one compact line per verb call. */
+function hasCaution(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const nonempty = (v:unknown) => Array.isArray(v) ? v.length > 0 : v && typeof v === 'object'
+    ? Object.keys(v).length > 0 : v !== null && v !== undefined && v !== '' && v !== false && v !== 0
+  for (const [key,v] of Object.entries(value)) {
+    if (['ok','healthy','warning_free','restored','fresh'].includes(key) && v === false) return true
+    if ((key === 'status' || key.endsWith('_status')) && typeof v === 'string'
+        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(v)) return true
+    if (/^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key) && nonempty(v)) return true
+    if (hasCaution(v)) return true
+  }
+  return false
+}
+
 function renderVerbs(value: ExecResult): string[] {
   if (!Array.isArray(value.verbs) || value.verbs.length === 0) return []
   const lines = (value.verbs as Array<Record<string, unknown>>).map((v, i) => {
     const ok = v.ok === true
-    const detail = ok
+    let detail = ok
       ? truncate(JSON.stringify(v.result))
       : `error: ${truncate(String(v.error))}`
-    const kwargsObj = v.kwargs !== null && typeof v.kwargs === 'object'
+    const compact = (value.details as any)?.stored === true
+    const caution = hasCaution(v.result) || ['failed','warning','unverified'].includes(String(v.check_status))
+    if (compact && (caution || !ok)) detail = ok ? JSON.stringify(v.result) : `error: ${String(v.error)}`
+    const kwargsObj = !compact && v.kwargs !== null && typeof v.kwargs === 'object'
       ? v.kwargs as Record<string, unknown>
       : null
     const kwargs = kwargsObj !== null && Object.keys(kwargsObj).length > 0
       ? `, ${JSON.stringify(kwargsObj)}`
       : ''
-    return `${i + 1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}(${JSON.stringify(v.args)}${kwargs}) -> ${detail} (${String(v.ms)}ms)`
+    const args = compact ? [] : v.args
+    return `${i + 1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}(${JSON.stringify(args)}${kwargs}) -> ${compact && ok && !caution ? JSON.stringify({ args_omitted:true, detail_pointer: `/verbs/${i}`, check_status: v.check_status ?? null, result_preview:detail }) : detail} (${String(v.ms)}ms)`
   })
   return [`verbs (${value.verbs.length}):\n${lines.join('\n')}`]
 }
@@ -122,9 +145,28 @@ function renderVerbs(value: ExecResult): string[] {
 /** Append captured stdout/stderr/__result__/verbs of one exec-shaped value. */
 function renderStreams(value: ExecResult): string[] {
   const parts: string[] = []
+  const compact = (value.details as any)?.stored === true
+  if (value.execution !== undefined) {
+    const e:any = value.execution
+    const observation = compact && Array.isArray(e.impact?.nodes) && e.impact.nodes.length > 16
+      ? {...e,impact:{...e.impact,nodes:e.impact.nodes.slice(0,16),nodes_omitted:e.impact.nodes.length-16,detail_pointer:'/execution/impact/nodes'}} : e
+    parts.push(`execution-observation:\n${JSON.stringify(observation)}`)
+  }
   if (value.transaction !== undefined) parts.push(`transaction:\n${JSON.stringify(value.transaction)}`)
+  if (Array.isArray(value.evidence)) {
+    const summaries = value.evidence.flatMap(item => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)
+          || item.verb !== 'test_controls') return []
+      const summary = item.control_summary
+      return summary !== null && typeof summary === 'object' && !Array.isArray(summary)
+        ? [{ ledgerIndex: item.ledgerIndex, ...summary }] : []
+    })
+    if (summaries.length) parts.push(`control-test-summary (not_run is not pass):\n${JSON.stringify(summaries)}`)
+  }
   if (value.evidence !== undefined) {
-    parts.push(`operation-evidence:\n${JSON.stringify(value.evidence)}`)
+    // Never summarize away failure/warning/unsupported evidence. For healthy
+    // large records only repeated display payloads are eligible for omission.
+    parts.push(`operation-evidence:\n${JSON.stringify(compact ? compactEvidence(value.evidence) : value.evidence)}`)
   }
   if (value.checks !== undefined) {
     parts.push(`CHECKS NEED ATTENTION (execution success is not validation success):\n${JSON.stringify(value.checks)}`)
@@ -138,7 +180,11 @@ function renderStreams(value: ExecResult): string[] {
     if (output) parts.push(`stdout:\n${output}`)
   }
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
-  if (value.result !== undefined) parts.push(`__result__:\n${JSON.stringify(value.result, null, 2)}`)
+  if (value.result !== undefined) {
+    const result = JSON.stringify(value.result, null, 2)
+    parts.push(`__result__:\n${compact && result.length > 4000 && !hasCaution(value.result) ? JSON.stringify({omitted:true,detail_pointer:'/result',chars:result.length,
+      next_action:'Read the selected result fields through result_ref before relying on omitted values.'}) : result}`)
+  }
   if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
   if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
   parts.push(...renderVerbs(value))
@@ -153,7 +199,26 @@ function renderStreams(value: ExecResult): string[] {
     )
   }
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
+  if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
   return parts
+}
+
+function compactEvidence(evidence: unknown): unknown {
+  if (!Array.isArray(evidence)) return evidence
+  return evidence.map((item, i) => {
+    if (!item || typeof item !== 'object' || JSON.stringify(item).length <= 2000) return item
+    const text = JSON.stringify(item)
+    if (hasCaution(item)) return item
+    // Keep all scalar facts and all other fields; only omit named verbose
+    // successful-detail arrays. Unknown schemas remain intact by default.
+    const out = { ...item }
+    for (const key of ['checked_nodes', 'cook_details', 'created', 'node_details']) {
+      if (Array.isArray(out[key]) && JSON.stringify(out[key]).length > 1500) {
+        out[key] = { omitted:true, count:out[key].length, detail_pointer:`/evidence/${i}/${key}` }
+      }
+    }
+    return out
+  })
 }
 
 /** Render an exec-shaped canonical value as model-facing text. */
@@ -325,7 +390,10 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     description:
       'Execute Python code inside the running Houdini session. The code runs with the `hou` '
       + 'module pre-imported and may modify the scene: create or edit nodes, set parameters, '
-      + 'and cook. Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
+      + 'and cook. One call is one execution checkpoint: keep independently verifiable modules in separate calls, '
+      + 'and unfamiliar read-only discovery in houdini_query before or after a committed module. '
+      + 'When Houdini undo is enabled, a later failure rolls back earlier undoable edits in this same call; inspect transaction/rollback. '
+      + 'Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
       + 'is verb-covered. Print what the agent needs to know; assign a JSON-serializable '
       + 'value to the variable `__result__` to return structured data. Alternatively review {parent,output,controller?} '
       + 'optionally delegates one quick issue review with current snapshot and prior tool facts; not a mandatory task stage. '
@@ -356,12 +424,12 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
         const result=args.review!==undefined
           ? await review.start(args.review,exec,ownershipScopeOf(exec))
           : await review.test(args.review_test,exec,ownershipScopeOf(exec))
-        return relayMedia(result,exec,bridge,ctx)
+        return retainResult(await relayMedia(result,exec,bridge,ctx),workspaceOf(exec))
       }
       await review.guard(exec,false)
       if(typeof args.code!=='string' || !args.code.trim())throw new Error('provide nonempty code')
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
-      return withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge)
+      return retainResult(await withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
     },
   }))
 
@@ -370,9 +438,14 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     description:
       'Run read-only Python inspection code inside Houdini, with `hou` pre-imported. Use it to '
       + 'list nodes, read parameters, check for errors, and inspect scene state. It MUST NOT '
-      + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them.',
+      + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them. '
+      + 'Alternatively read a retained historical result with result_ref (SHA-256), optional JSON pointer, offset and limit; this reads the workspace artifact without executing Houdini.',
     parameters: {
-      code: { type: 'string', required: true, description: 'Read-only Python inspection code with `hou` available' },
+      code: { type: 'string', description: 'Read-only Python; mutually exclusive with result_ref' },
+      result_ref: { type: 'string', description: 'SHA-256 returned in result-details; historical evidence, not live scene state' },
+      pointer: { type: 'string', description: 'JSON Pointer into retained envelope, e.g. /verbs/0/args or /result; default root' },
+      offset: { type: 'number', description: 'Character offset into selected JSON text; default 0' },
+      limit: { type: 'number', description: 'Page characters 1..16000; default 6000' },
     },
     output: {
       schema: execOutputSchema,
@@ -381,15 +454,19 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: 'Inspect Houdini scene',
+      title: args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
       kind: 'read',
-      rawInput: codePresentationInput(args),
+      rawInput: args.result_ref ? args : codePresentationInput(args as { code:string }),
     }),
-    presentResult: (_args, result) => genericResult(resultTitle('Houdini inspection', result), result),
+    presentResult: (args, result) => genericResult(resultTitle(args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
     async execute(args, exec) {
       await review.guard(exec,true)
+      if ((args.code !== undefined) === (args.result_ref !== undefined)) throw new Error('provide exactly one of code or result_ref')
+      if (args.result_ref !== undefined) return readResultDetail(workspaceOf(exec),args.result_ref,args.pointer,args.offset,args.limit)
+      if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
+      if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
       const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
-      return withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge)
+      return retainResult(await withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
     },
   }))
 
@@ -452,7 +529,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
     async execute(args, exec) {
       const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
-      return relayMedia(status, exec, bridge, ctx)
+      return retainResult(await relayMedia(status, exec, bridge, ctx),workspaceOf(exec))
     },
   }))
 
@@ -480,7 +557,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job cancellation', result), result),
     async execute(args, exec) {
-      return bridge.cancelJob(args.jobId, exec.signal)
+      return retainResult(await bridge.cancelJob(args.jobId, exec.signal),workspaceOf(exec))
     },
   }))
 }

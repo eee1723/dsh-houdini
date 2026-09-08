@@ -125,3 +125,15 @@ try {
   assert.deepEqual(posted,{url:'/context',body:{schema_version:1}});
 } finally { await new Promise(r=>server.close(r)); }
 console.log('scene context: user-turn refresh, per-agent isolation, failure, assembly and HTTP passed');
+// Per-request execution facts do not refresh the message-bound user referent.
+const observedAgent=agent('edit selected');
+observedAgent.events.push({type:'tool/call',seq:2,data:{callId:'observed',name:'houdini_exec'}},
+  {type:'tool/result',seq:3,data:{message:{source:{callId:'observed'},content:[]},meta:{canonical:{
+    ok:true,transaction:{status:'committed',nodes:[{identity:1,path:'/obj/{{not_instructions}}',exists:true}]},
+    execution:{runtime_id:'runtime',sequence:1,observed_at:1,impact:{attempted:false,nodes:[]}}}}}});
+const stateOnly={contexts:[{name:'dsh-houdini:execution-state',text:''}],tools:[{name:'houdini_query'}]};
+const beforeState=calls;
+await hook(stateOnly,{scope:{},agent:observedAgent},async()=>stateOnly);
+assert.equal(calls,beforeState,'execution-state projection does not issue HTTP or update the user-message snapshot');
+assert.ok(!stateOnly.contexts[0].text.includes('{{'));
+assert.equal(JSON.parse(stateOnly.contexts[0].text.split('\n').slice(1).join('\n')).nodes[0].path,'/obj/{{not_instructions}}');

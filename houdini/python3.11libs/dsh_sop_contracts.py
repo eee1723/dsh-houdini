@@ -129,15 +129,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     return result
 
 
-def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
-    """Create a small new SOP module; never overwrite existing nodes or flags.
-
-    Specs: {name, type, parms?, inputs?}. Inputs reference earlier specs or
-    existing direct children. Exact input indices follow list order. Static
-    type/parm/input preflight runs before creation; dry_run does not create a
-    scratch node and cannot prove dynamic menus/VEX/cook. On failure only newly
-    created nodes are removed, including headless (external I/O not reversible).
-    """
+def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs):
+    """Read-only validation boundary: no creation, parameter edits or flag changes."""
     import dsh_hou_helpers as h
     if interfaces is not None:
         from dsh_quality_contracts import validate_interfaces
@@ -199,10 +192,11 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
                 similar = difflib.get_close_matches(field, sorted(allowed), n=5, cutoff=0.25)
                 problem(name, field, f'unknown parameter(s) {field!r}; candidates={similar}; use node_info with a literal filter', candidates=similar)
         for parameter in card['parameters']:
-            if parameter['name'] in values and parameter.get('components') and isinstance(values[parameter['name']], (list, tuple)) and parameter.get('type') in ('Float', 'Int'):
-                if len(values[parameter['name']]) != len(parameter['components']):
+            if parameter['name'] in values and parameter.get('components') and parameter.get('type') in ('Float', 'Int'):
+                value = values[parameter['name']]
+                if not isinstance(value, (list, tuple)) or len(value) != len(parameter['components']):
                     problem(name, parameter['name'], f"tuple needs {len(parameter['components'])} components: {parameter['components']}", components=parameter['components'])
-                if any(not isinstance(v, (int, float)) for v in values[parameter['name']]):
+                elif any(not isinstance(v, (int, float)) for v in value):
                     problem(name, parameter['name'], f"numeric tuple requires numeric values; expressions use component names {parameter['components']}", components=parameter['components'])
             if parameter['name'] in values and parameter.get('menu') and parameter.get('type') in ('Menu','Int') and not parameter.get('menu_dynamic'):
                 value = values[parameter['name']]
@@ -237,6 +231,23 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
         error = h.PreflightError(preflight_errors)
         error.evidence.update(advice)
         raise error
+    return p, existing, specs, advice
+
+
+def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
+    """Create a small SOP module after zero-write type/parameter/input preflight.
+
+    Inputs reference earlier specs or existing direct children; None retains
+    empty input slots. dry_run cannot prove VEX/cook/geometry. After creation
+    starts, cleanup and transaction recovery keep their existing strict rules.
+    """
+    import dsh_hou_helpers as h
+    try:
+        p, existing, specs, advice = _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs)
+    except h.PreflightError:
+        raise
+    except (ValueError, TypeError, hou.Error) as error:
+        raise h.PreflightError([{'node':'module','field':'preflight','message':str(error)}]) from error
     if dry_run:
         return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs), **advice,
                 'output': output, 'interface_status': 'unverified' if interfaces is not None else 'not_requested',

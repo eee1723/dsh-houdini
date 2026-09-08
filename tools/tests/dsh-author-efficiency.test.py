@@ -20,6 +20,11 @@ with h._execution_owner('efficiency','setup'):
 try:
     rejects(lambda:h.node_info('Sop','box'),'existing absolute network')
     rejects(lambda:h.node_info('/obj','box'),'existing geometry container')
+    for code in ['node_info("box")','node_info(type_name="box")','node_info(type="box",context="sop")']:
+        env=b.run_code(code,read_only=True)
+        assert not env['ok'] and 'node_info(parent, type_name' in env['error'],env
+        assert 'existing_geo' in env['error'] and 'houdini_exec' in env['error'],env
+        assert env['transaction']['status']=='no_scene_change',env
     with h._execution_owner('efficiency','test'):
         h.set_parm(switch,'input','chi("../CTRL/enabled")')
         assert not h.cook_node(switch)['ok']

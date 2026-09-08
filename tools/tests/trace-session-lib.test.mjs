@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { newestSessionFile, toolResultCallId, uniqueToolResultEvents } from '../trace-session-lib.mjs';
+import { newestSessionFile, toolResultCallId, uniqueToolResultEvents, collectRequestTelemetry } from '../trace-session-lib.mjs';
 
 const result = (seq, callId, turn = 1, step = 1) => ({
   seq,
@@ -36,6 +36,31 @@ const input = [
   other,
   alternateSchema,
 ];
+
+const usageEvent = (seq, turn, step, usage) => ({seq, type:'assistant/chunk', data:{turn,step,chunk:{type:'usage',usage}}});
+const measured = usageEvent(10,1,1,{inputTokens:10,outputTokens:2,cacheReadTokens:80,totalTokens:92});
+const telemetry = collectRequestTelemetry([measured, {...measured,seq:11},
+  usageEvent(12,1,2,{inputTokens:5,outputTokens:1,totalTokens:6}),
+  usageEvent(13,1,2,{inputTokens:5,outputTokens:3,totalTokens:8}),
+  usageEvent(14,2,1,{totalTokens:100}),
+  usageEvent(15,2,2,{inputTokens:20,outputTokens:2,cacheReadTokens:10,totalTokens:22}),
+  {seq:16,type:'turn/end',data:{turn:1,reason:{kind:'error',error:{code:'INVALID_REQUEST',message:'model unavailable'}}}},
+  {seq:17,type:'turn/end',data:{turn:2,reason:{kind:'completed'}}},
+  {seq:18,type:'compaction/prune'},
+]);
+assert.equal(telemetry.requestCount,4);
+assert.equal(telemetry.duplicateUsageEvents,1);
+assert.equal(telemetry.updatedUsageEvents,1);
+assert.equal(telemetry.totals.inputTokens,35);
+assert.equal(telemetry.totals.outputTokens,7);
+assert.equal(telemetry.requests[0].inputWithCache,90);
+assert.equal(telemetry.requests[2].inputTokens,null);
+assert.equal(telemetry.requests[2].inputWithCache,null);
+assert.equal(telemetry.last.inputWithCache,null,'do not double count provider-inclusive cache fields');
+assert.deepEqual(telemetry.arithmeticMismatchSeqs,[15]);
+assert.equal(telemetry.upstreamTurnErrors.length,1,'later completed turn does not erase startup error');
+assert.equal(telemetry.compactionEvents.length,1);
+assert.equal(collectRequestTelemetry([]).totals.inputTokens,null);
 
 assert.equal(toolResultCallId(original), 'call-a');
 assert.equal(toolResultCallId(alternateSchema), 'call-alt');

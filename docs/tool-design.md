@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 16
+Execution contract version: 21
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -25,7 +25,7 @@ Execution contract version: 16
 
 | 工具 | 作用 |
 |---|---|
-| houdini_query | 只读观察；没有allow_raw修改豁免 |
+| houdini_query | code为Houdini只读观察；互斥result_ref为Host历史结果读取，可带JSON pointer/offset/limit，不执行HOM；没有allow_raw修改豁免 |
 | houdini_exec | 场景修改；code、review、review_test为互斥分支 |
 | houdini_job_submit | 长操作排队异步提交 |
 | houdini_job_status | 状态/结果及可选等待 |
@@ -34,6 +34,13 @@ Execution contract version: 16
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
 兼容入口保留历史调用解释能力，不作为新guidance中的优先创建方式。
+大返回在当前workspace成功保存完整Bridge返回JSON后才精简默认文本；result-details提供SHA-256和
+可用读取入口。`houdini_query(result_ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
+字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
+文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
+保存失败保持原有展示，不把已执行修改报成失败；读取缺失/损坏文件也不得重放原场景修改。
+canonical metadata与模型文本分别保留：metadata供原生事件、UI、审计和状态投影；Code Mode仍按Host
+协议返回完整canonical值，嵌套事件可能不含metadata，此时完整值须由result_ref读取，审计明确标缺口。
 
 ## 动词目录
 
@@ -41,7 +48,7 @@ Execution contract version: 16
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `verb_help(name)` | 返回已注入动词的准确 signature 与 docstring；未知名列相似项。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状 | dict |
+| `verb_help(name)` | 返回已注入动词的准确 signature、return_type（无注解则null）、call_mode与docstring；未知名列相似项。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状 | dict |
 
 ### 类型目录（回答「能建什么」）
 
@@ -88,11 +95,11 @@ Execution contract version: 16
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际 menu token/index/label（不给当前值）；动态菜单以实际节点为准 | list |
-| `read_parms(node, changed_only=True)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；表达式参数附 `referenced_parm`，被引用参数标 `referenced_by`；动画附 `time_dependent/key_count/first_frame/last_frame/curves` 摘要，不默认倾倒全部 keys | list |
-| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值参数收到字符串 = 设表达式；失败列相似名，自纠）。参数上有表达式/关键帧时**自动清除再设值**，返回带 `note` 说明清掉了什么；想保留动画就请显式用字符串表达式 | dict |
-| `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；失败恢复本批参数值/表达式/关键帧并抛错。显式 strict=False 才逐项容错，返回 ok/set/failed；参数回调及外部文件不属快照回滚。Menu string 只接受精确 token；数值 string 是 HScript 表达式，显式表达式对象支持 language | dict |
+| `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量字段，按请求顺序返回且不受changed_only过滤，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
+| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
+| `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
-| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`。同名拒绝，不隐式覆盖 | dict |
+| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms | dict |
 
 ### scene 域（工程/时间线）
 
@@ -113,7 +120,7 @@ Execution contract version: 16
 | `geo_attrib_stats(node, name, attrib_class='point', *, unique=False, max_elements=100000)` | 数值min/max/mean/count；unique=True全量检查精确完整tuple（含字符串），返回unique_count/duplicate_count/all_unique及至多8个重复样本。用P查精确重叠、用id查身份；超预算/非有限拒绝，无容差焊接或自动删除。point/prim/vertex/detail | dict |
 | `geo_point_spacing(node, expected, tolerance, closed=False, order_attrib=None, max_points=10000)` | 全量相邻点弦长验收：默认point number顺序，或唯一数值order_attrib；closed含末→首，SOP local单位；返回全量min/max/failure_count及最多16个最差对与sequence hash。超预算拒绝不抽样；只证明该序列约束，不证明弧长、网格接线或实际零件关系 | dict |
 | `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内1..16实际关系。默认{id,source_group,target_group,max_distance,expected_points}测独立表面点到面距离；method=axis_gap改用两个primitive组及axis/gap_range/min_overlap，测source.min−target.max与横向区间重叠。空组/自重叠fail，不支持unverified；SOP local有界不抽样。距离/投影范围不是接触、实体插入、碰撞或强度认证；返回实际值/范围/几何hash | dict |
-| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。domain/interfaces/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（仅排除导出头日期）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，其他写前unverified。拒绝callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
+| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。control_summary保留顶层失败原因、失败测量与逐case状态；基准失败的results=[]明确标not_run，不作通过。domain/interfaces/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，其他写前unverified。拒绝callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece 的局部 bbox/extent/面积与退化统计；无 piece 属性时用内存 Connectivity SOP Verb，不污染网络，能发现「全场 bbox 正常但每个实例零宽/零面积」；inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通及正交basis下extent，observed仅为量测完成，方法不支持保持unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 

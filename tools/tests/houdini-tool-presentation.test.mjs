@@ -67,6 +67,17 @@ const evidenceValue = {...pendingChecks, stdout:'long verbose node list', eviden
 const evidenceText = exec.output.render(execArgs, evidenceValue)[0].text;
 assert.ok(evidenceText.indexOf('operation-evidence:') < evidenceText.indexOf('stdout:'));
 assert.match(evidenceText, /"pixel_status":"failed"/);
+const baselineFailure = exec.output.render({}, {...execValue, stdout:'[]', evidence:[{
+  ledgerIndex:1, verb:'test_controls', results:[], control_summary:{status:'fail', ok:false,
+    restored:true, reason:'baseline outside declared absolute range', case_id:'reach',
+    baseline:2, expectation:{range:[3,4]}, parameter_writes:0,
+    case_counts:{pass:0,fail:0,unverified:0,not_run:1}},
+}]}).map(c=>c.text||'').join('\n');
+assert(baselineFailure.indexOf('control-test-summary') < baselineFailure.indexOf('stdout:'));
+assert.match(baselineFailure, /not_run is not pass/);
+assert.match(baselineFailure, /baseline outside declared absolute range/);
+assert.match(baselineFailure, /"not_run":1/);
+assert.match(baselineFailure, /"case_id":"reach"/);
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

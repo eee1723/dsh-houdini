@@ -8,6 +8,8 @@
 - hou仅在Houdini主线程调用；HTTP线程只排队。泵不可用即拒绝，不退回网络线程执行。
 - query使用只读namespace与AST预检；exec负责修改，job负责长操作。Raw Gate默认开启，
   已有动词覆盖的裸修改不能用allow_raw旁路；仅独立、无动词等价的低层缺口允许单次明确理由。
+- query的result_ref分支只读当前workspace中已返回的历史结果；与code互斥，不进入Bridge/HOM，
+  不能当现场新观察或ownership授权。新查询、修改和任务产物仍遵守原边界。
 - ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
   foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
   持久render服务不可豁免，layout默认仅本session节点。
@@ -17,9 +19,25 @@
 
 ## 事务与异步
 
-exec异常恢复Houdini可撤销状态；捕获mutation/cook异常不重新抛出会被caught-failure机制拦截。
+exec异常恢复Houdini可撤销状态；捕获动词异常不重新抛出会被caught-failure机制拦截。
+同一exec已有失败动词后，后续修改、cook、渲染和保存动词在派发前拒绝，记录零写入证据；
+只读诊断仍可运行，修复须在新exec提交。此前文件写入和任意Python外部副作用不属undo保证。
 消费transaction最终状态：后项失败可能撤销同exec中前面成功的build，不能沿用已回滚节点。
 失败补充清理仅限本调用journal的确切新建identity；foreign后代不自动删除。
+可独立cook和验收的模块使用不同exec，集成引用已提交且仍存活的输出；不可分模块内仍批量原子执行。
+独立query失败不撤销此前exec；同exec尾部只读错误仍使整批失败，不按异常类型猜测部分提交。
+动词派发前做实际签名绑定，argument_binding失败附signature、dispatched=false与scene_writes=0；
+该证据只覆盖未派发的当前调用，不能抵消同exec此前的修改。函数内部TypeError仍保留原始原因。
+每个Bridge执行返回execution.runtime_id/sequence/observed_at/frame和本次影响观察；运行实例与节点
+identity共同解释，路径不充当identity。影响包含有界原生outputs和上次cook可见的dependents，删除/改名
+前观察后代，最多256身份；truncated/unavailable/global必须保留，动态/外部依赖和用户GUI修改不在覆盖内。
+last_edit_ledger_index可识别同调用内检查之后的修改；outputs将检查条目绑定到末态节点identity/存活状态。
+这些记录用于让旧证据失效，不证明未列出的依赖不存在，也不证明下一请求时场景未变。
+
+Host的execution-state从公开tool事件重建，独立于用户消息绑定的scene-context：按runtime/sequence
+去重与排序，保留最近观察、删除、失败、in-flight/未知执行和有限检查范围。运行时或观察到的HIP路径改变不复活旧identity，
+已回滚检查不作当前通过；已记录依赖变化或同调用后续修改使旧检查stale。非stale仍只是历史观察，
+不能认证当前live状态或赋予foreign权限。没有第二份可写任务账本，不自动改写用户原始指代。
 
 job仍通过同一主线程队列串行执行。排队取消可阻止执行；已开始的代码不能强杀，
 客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
@@ -31,6 +49,18 @@ HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单�
 不创建scratch；操作卡关键参数不受普通筛选裁切，见[节点卡](node-operation-cards.md)。
 精确菜单用token/set_value；数值表达式字符串是HScript，显式Python要声明语言；
 VEX仅在snippet内。tuple表达式用组件字段，严格设参不允许跳过未知/无效字段假报成功。
+默认值和当前值分别修改：create_spare_parms(update_defaults=...)仅更新显式已有scalar spare的
+字面默认值，预检整批再应用，回读默认值并保留当前值/表达式/keys；失败恢复模板与参数状态。
+不更新内建、菜单、tuple、callback、multiparm或表达式默认值，不隐式改变已有创建模式。
+字面字符串局部修改复用set_parm/set_parms的patch对象，必须带原始UTF-8源码expected_sha256和
+每个old/new的精确count；缺锚点、次数不符、版本过期在本节点本批values开始写入前拒绝。
+read_parms(names=[...])按指定字段读取，提供source_sha256；有变量展开时raw_value保留原文。
+patch只支持无动画/表达式的可编辑scalar string，拒绝锁定/callback/固定菜单；Wrangle的代码片段
+StringReplace菜单不执行、不阻止源码修改。补丁限定literal replace、不执行脚本/正则；原文和
+结果不超过524288字符，1..32项替换、old/new累计131072字符，每项count为1..256。
+set_parms的patch只允许strict=True，写入失败恢复本批值/keys。其他节点不在本批预检范围内；
+跨节点调用仍遵循exec的undo与外部副作用边界。返回前后hash、字符数和次数，不重复整份源码；
+hash/写入回读证明文本变化，VEX/cook/几何/关系仍需独立的同层验收。
 静态multiparm先设置父/子count，再设置实例；动态或超预算情况用原生动词回读，不猜编号。
 connect替换既有输入，断开后输入可能压缩，后续使用inputs_after而不是旧索引。
 
@@ -39,6 +69,8 @@ connect替换既有输入，断开后输入可能压缩，后续使用inputs_aft
 [SOP contracts](../houdini/python3.11libs/dsh_sop_contracts.py)负责新增节点的静态检查、构建、cook与清理。
 build_module只新增1..64个SOP，不覆盖既有节点或输出旗标；inputs引用更早声明/现有直属子节点，
 None为空槽，跨subnet用Object Merge或明确端口。独立静态错误汇总后零创建拒绝。
+类型/参数/输入/输出静态拒绝统一携带phase=static_preflight及scene_writes=0；零写入仅针对
+该模块，同exec内的其他修改、创建后的cook失败仍由事务恢复规则判定。
 operation_advisories只描述缺少显式选择：不替用户封口、选边或转类型；没有提示也不证明正确。
 
 output必须是明确新建非空交付；空CTRL/helper用tab_create。required_outputs检查必需分支，
@@ -62,9 +94,14 @@ require_valid=False仅诊断，不能用来完成验收。warning、cook成功�
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。
-恢复指纹仅排除导出头时间，不忽略用户属性、拓扑或原生primitive数据。
+恢复指纹排除导出头date和派生group_summary，并按组名整理已知bgeo组目录记录；
+组名、组成员、ordered group内部顺序、用户属性、拓扑和原生primitive数据仍完整比较。
+重复组名或无法识别的组目录结构拒绝，不通过忽略真实选择或几何差异放行。
 不支持的表示/菜单/副作用保持unverified；文件/Python/solver副作用不属于恢复保证。
 控制响应非零不等于设计正确，单次case不证明所有参数组合。相关修改使旧证据失效。
+test_controls的control_summary和Bridge证据保留顶层status/reason、失败判据及case_counts。
+基准失败可零写返回results=[]，相关case标not_run；range同时约束基准和扰动绝对值，delta约束变化。
+Host在详细证据和stdout前展示摘要；纠正判据后须复跑，不能把未运行或解释过的失败当成通过。
 
 ## 渲染、构图与保存
 

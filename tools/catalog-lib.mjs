@@ -18,7 +18,7 @@ export function loadCatalog(docFile) {
     // 动词行：| `verb(sig)` | 语义 | 返回 |——返回列可能含空格（path 列表/新 path）
     const row = line.match(/^\|\s*`(\w+)\((.*?)\)`\s*\|\s*(.+?)\s*\|\s*([^|]+?)\s*\|$/);
     if (row && cur) {
-      cur.verbs.push({ name: row[1], sig: row[2], desc: row[3], used: 0 });
+      cur.verbs.push({ name: row[1], sig: row[2], desc: row[3], returns: row[4], used: 0 });
     }
   }
   return domains;

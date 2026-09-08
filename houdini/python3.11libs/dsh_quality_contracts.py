@@ -132,22 +132,49 @@ def _geometry(output):
     return node, g.freeze(read_only=True)
 
 
+def _canonical_geometry_payload(data):
+    """Canonicalize export metadata and group-directory order, never membership."""
+    payload=hjson.loads(data)
+    if (not isinstance(payload,list) or len(payload)%2
+            or any(not isinstance(k,str) for k in payload[::2])
+            or len(set(payload[::2])) != len(payload[::2])):
+        raise ValueError('unsupported bgeo root schema; no restoration fingerprint fallback')
+    for i in range(0,len(payload),2):
+        key, value = payload[i:i+2]
+        if key in ('pointgroups','primitivegroups','vertexgroups','edgegroups'):
+            if not isinstance(value,list):
+                raise ValueError(f'unsupported bgeo {key} schema')
+            names, seen = [], set()
+            for record in value:
+                if (not isinstance(record,list) or len(record)!=2
+                        or not isinstance(record[0],list) or len(record[0])%2
+                        or any(not isinstance(k,str) for k in record[0][::2])
+                        or len(set(record[0][::2])) != len(record[0][::2])):
+                    raise ValueError(f'unsupported bgeo {key} record; preserve unknown group semantics')
+                descriptor=dict(zip(record[0][::2],record[0][1::2]))
+                name=descriptor.get('name')
+                if not isinstance(name,str) or not name or name in seen:
+                    raise ValueError(f'unsupported bgeo {key} group names')
+                names.append(name)
+                seen.add(name)
+            # Houdini may enumerate independent named groups in a different
+            # serialization order after recooking. Keep each descriptor and
+            # selection payload intact, including ordered-group element order.
+            payload[i+1]=[record for _,record in sorted(zip(names,value),key=lambda pair:pair[0])]
+        elif key=='info' and isinstance(value,dict):
+            # Both are writer-generated descriptions, not user attributes.
+            # The actual group names, membership and selection order stay above.
+            payload[i+1]={k:v for k,v in value.items() if k not in ('date','group_summary')}
+    return payload
+
+
 def _data_signature(g):
     # bgeo contains topology, attributes AND primitive intrinsics (native Tube
     # radius, packed transforms, etc.). P-only signatures miss such changes.
     data = g.data()
     if len(data) > _MAX_GEOMETRY_BYTES:
         raise ValueError('serialized geometry evidence budget exceeded')
-    # Houdini's bgeo writer injects wall-clock info.date on EACH serialization.
-    # Raw bytes can disagree across one second with identical geometry. Decode
-    # the complete payload and remove ONLY that export-header timestamp; user
-    # attributes named date, topology, intrinsics and all groups remain included.
-    payload=hjson.loads(data)
-    if not isinstance(payload,list) or len(payload)%2 or any(not isinstance(k,str) for k in payload[::2]):
-        raise ValueError('unsupported bgeo root schema; no restoration fingerprint fallback')
-    for i in range(0,len(payload),2):
-        if payload[i]=='info' and isinstance(payload[i+1],dict):
-            payload[i+1]={k:v for k,v in payload[i+1].items() if k!='date'}
+    payload=_canonical_geometry_payload(data)
     canonical=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')
     if len(canonical)>4*_MAX_GEOMETRY_BYTES:raise ValueError('decoded geometry evidence budget exceeded')
     return hashlib.sha256(canonical).hexdigest()
@@ -476,7 +503,45 @@ def capture_views(output, views):
     return captures
 
 
+def _control_summary(result, tests):
+    """Keep zero-write baseline failures visible even when results is empty."""
+    rows = result.get('results', [])
+    by_id = {r['id']: r for r in rows}
+    cases = [{'id': t['id'], 'status': by_id.get(t['id'], {}).get('status', 'not_run')}
+             for t in tests]
+    counts = {status: sum(c['status'] == status for c in cases)
+              for status in ('pass', 'fail', 'unverified', 'not_run')}
+    failures = []
+    for row in rows:
+        if row['status'] == 'pass':
+            continue
+        failed = [m for m in row.get('measurements', []) if not m['pass']]
+        failures.append({'id': row['id'], 'status': row['status'],
+                         **{k: row[k] for k in ('reason', 'restored') if k in row},
+                         'failed_measurements': failed[:8],
+                         'failed_measurement_count': len(failed),
+                         'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
+                                             if isinstance(row.get(k), dict)}})
+    return {'status': result['status'], 'ok': result['ok'], 'restored': result['restored'],
+            'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
+            'failures': failures[:8], 'failure_count': len(failures),
+            **{k: result[k] for k in ('controller', 'output', 'frame', 'contract_sha256',
+                                     'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes') if k in result},
+            'next_action': ('Only the declared cases and measurements passed; untested relationships remain unverified.'
+                if result['ok'] else result.get('next_action',
+                'Read the top-level failure before results; not_run cases are not passes. '
+                'range applies to baseline AND perturbed values; delta is the signed change. '
+                'Correct a mistaken expectation with independent evidence, then rerun affected cases.'))}
+
+
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
+    result = _test_controls(controller, output, tests, interfaces, allow_foreign,
+                            domain=domain, topology=topology, views=views, response_only=response_only)
+    result['control_summary'] = _control_summary(result, tests)
+    return result
+
+
+def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
@@ -568,7 +633,9 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         for test in tests:
             for exp,value in zip(test.get('expectations',[]),baselines[test['id']]):
                 if 'range' in exp and not exp['range'][0]<=value<=exp['range'][1]:
-                    return {'ok':False,'status':'fail','restored':True,'parameter_writes':0,'results':[],
+                    return {'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
+                            'frame':original_frame,'checked_at':time.time(),
+                            'restored':True,'parameter_writes':0,'results':[], 'case_id':test['id'],
                             'reason':'baseline outside declared absolute range','expectation':exp,'baseline':value,
                             'semantic_status':'unverified'}
     except UnsupportedEvidence as error:

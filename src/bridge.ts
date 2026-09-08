@@ -33,6 +33,10 @@ export interface ExecResult {
   checks?: JsonValue
   /** Compact operation evidence, retained independently of verbose ledger previews. */
   evidence?: JsonValue
+  /** Bridge runtime/order and bounded impact observation; not a scene lock. */
+  execution?: JsonValue
+  /** Immutable returned-envelope reference, filled host-side for large results. */
+  details?: JsonValue
 }
 
 /** Handle returned when a background job is accepted by the bridge. */

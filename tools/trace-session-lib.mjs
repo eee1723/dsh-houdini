@@ -110,3 +110,50 @@ export function uniqueToolResultEvents(events) {
 export function sessionIdFromFile(file) {
   return path.basename(path.dirname(resolveSessionFile(file))).replace(/^session-/, '');
 }
+
+/** Provider-reported request accounting, separate from tools and scene effects.
+ * Repeated cumulative usage for a request is replaced, never added twice.
+ * Missing fields stay unknown. No inference about billing or retained messages.
+ */
+export function collectRequestTelemetry(events) {
+  const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens'];
+  const requests = new Map();
+  let duplicateUsageEvents = 0;
+  let updatedUsageEvents = 0;
+  const count = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  for (const event of events) {
+    const d = event.data;
+    if (event.type !== 'assistant/chunk' || d?.chunk?.type !== 'usage') continue;
+    const key = d.turn != null && d.step != null ? `${d.turn}/${d.step}` : `seq:${event.seq}`;
+    const usage = Object.fromEntries(fields.map(f => [f, count(d.chunk.usage?.[f])]));
+    const prior = requests.get(key);
+    if (prior) {
+      if (fields.every(f => prior[f] === usage[f])) duplicateUsageEvents++;
+      else updatedUsageEvents++;
+    }
+    const sum = usage.inputTokens == null || usage.outputTokens == null ? null
+      : usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+    const arithmeticMatches = sum == null || usage.totalTokens == null ? null : sum === usage.totalTokens;
+    requests.set(key, {seq:event.seq, time:event.time, turn:d.turn ?? null, step:d.step ?? null, ...usage,
+      arithmeticMatches,
+      inputWithCache: arithmeticMatches === true ? sum - usage.outputTokens : null});
+  }
+  const rows = [...requests.values()];
+  const measuredFields = Object.fromEntries(fields.map(f => [f, rows.filter(r => r[f] != null).length]));
+  const totals = Object.fromEntries(fields.map(f => [f, measuredFields[f] ? rows.reduce((n,r) => n+(r[f] ?? 0),0) : null]));
+  const turnEnds = events.filter(e => e.type === 'turn/end').map(e => ({seq:e.seq,time:e.time,
+    turn:e.data?.turn ?? null, kind:e.data?.reason?.kind ?? 'unknown',
+    code:e.data?.reason?.error?.code ?? null,
+    // Only the error message, never request headers/credentials/config bodies.
+    message: typeof e.data?.reason?.error?.message === 'string'
+      ? e.data.reason.error.message.replace(/Bearer\s+\S+|sk-[A-Za-z0-9_-]+/gi, '[redacted]').slice(0,800) : null}));
+  return {requests:rows, requestCount:rows.length, duplicateUsageEvents, updatedUsageEvents,
+    totals, measuredFields, last:rows.at(-1) ?? null,
+    arithmeticMismatchSeqs:rows.filter(r => r.arithmeticMatches === false).map(r => r.seq),
+    turnEnds, upstreamTurnErrors:turnEnds.filter(e => e.kind === 'error'),
+    compactionEvents:events.filter(e => e.type?.startsWith('compaction/')).map(e => ({seq:e.seq,time:e.time,type:e.type})),
+    goalChanges:events.filter(e => e.type === 'goal/change').map(e => ({seq:e.seq,time:e.time,
+      operation:e.data?.operation ?? null, phase:e.data?.goal?.phase ?? null,
+      objective:e.data?.goal?.objective ?? null})),
+    note:'Provider-reported cumulative fields per turn/step; totals repeatedly count history, not unique content or billing. Missing usage is unknown. Input plus cache is derived only when the reported arithmetic agrees (absent cache treated as zero for that check). No recorded compaction does not prove full message retention.'};
+}

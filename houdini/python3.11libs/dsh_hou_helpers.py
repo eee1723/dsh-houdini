@@ -65,6 +65,14 @@ class PreflightError(ValueError):
                          '; '.join(f"{e['node']}: {e['message']}" for e in errors[:32]))
 
 
+class ParameterPatchError(ValueError):
+    """Literal patch validation failed before any parameter in the batch changed."""
+    def __init__(self, message, parameter):
+        super().__init__(message)
+        self.evidence = {'ok': False, 'phase': 'parameter_patch_preflight', 'scene_writes': 0,
+                         'parameter': parameter, 'next_action': 'Read the current raw string and source_sha256 with read_parms; fix all patch anchors before retrying.'}
+
+
 # ``render_view`` infrastructure is session-scoped service state, not a
 # per-task probe. Deleting an OpenGL ROP (or a node it references) after a
 # successful render can make H21 enter its process-fatal GL capability path.
@@ -2283,6 +2291,9 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     operation_parameters additionally carries unfiltered critical settings and
     operation_card.decisions; retain these even when filtering other parameters.
     ``parent`` supplies the real creation context, not a guessed category.
+    SOP example: ``node_info(existing_geo, "box")``. With no SOP container,
+    first create one via ``tab_create("/obj", "geo", name=...)`` in exec;
+    querying ``node_info("/obj", "box")`` cannot discover an SOP Box.
     """
     if isinstance(parent, str) and not parent.startswith('/'):
         raise ValueError('node_info(parent,type): parent must be an existing absolute network path, not a category; create the geometry container with tab_create("/obj","geo",name) first')
@@ -2363,16 +2374,28 @@ def list_parms(node) -> list:
     return out
 
 
-def read_parms(node, changed_only: bool = True) -> list:
+def read_parms(node, changed_only: bool = True, *, names: list | None = None) -> list:
     """参数**值**：默认只看「非默认 + 带表达式 + 被引用」的参数（意图解读用）。
 
     带表达式的参数会顺带解析引用目标（``referenced_parm``），被其他参数引用的
     参数会标 ``referenced_by``——两个方向的依赖对 agent 判断「动谁会波及谁」都需要。
     返回 ``list[dict]``，每项至少有 ``name/value``；不是 name→value 字典。
+    names可显式选1..32个唯一标量参数，按请求顺序返回且不受changed_only过滤；缺失字段报错。
+    无动画的string含原始UTF-8源码source_sha256；求值不同于原文时另含raw_value。
     """
     n = _resolve(node)
     out = []
-    for p in n.parms():
+    if names is not None:
+        if (not isinstance(names, list) or not 1 <= len(names) <= 32
+                or any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names)):
+            raise ValueError('names must contain 1..32 unique scalar parameter names')
+        parameters = [n.parm(name) for name in names]
+        missing = [name for name, p in zip(names, parameters) if p is None]
+        if missing:
+            raise ValueError(f'missing scalar parameter names: {missing}; use list_parms for the current interface')
+    else:
+        parameters = n.parms()
+    for p in parameters:
         try:
             is_default = p.isDefault()
         except Exception:
@@ -2398,7 +2421,7 @@ def read_parms(node, changed_only: bool = True) -> list:
             time_dependent = bool(p.isTimeDependent())
         except Exception:
             time_dependent = False
-        if changed_only and is_default and not has_expr and not is_ref and not keys and not time_dependent:
+        if names is None and changed_only and is_default and not has_expr and not is_ref and not keys and not time_dependent:
             continue
         entry: dict = {"name": p.name()}
         tpl = p.parmTemplate()
@@ -2422,6 +2445,11 @@ def read_parms(node, changed_only: bool = True) -> list:
                     entry["referenced_parm"] = ref.path()
             except Exception:
                 pass
+        if tpl is not None and tpl.type() == hou.parmTemplateType.String and not keys and not has_expr:
+            raw = p.unexpandedString()
+            entry['source_sha256'] = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+            if raw != entry.get('value'):
+                entry['raw_value'] = raw
         if is_ref:
             entry["referenced_by"] = True
         if keys or time_dependent:
@@ -2496,19 +2524,92 @@ def _restore_parameters(snapshots) -> list:
     return errors
 
 
+def _prepare_parameter_patch(p, value):
+    """Bounded sequential literal replacements, fully planned before writes."""
+    def reject(message):
+        raise ParameterPatchError(f'{p.path()}: {message}', p.path())
+    if set(value) != {'patch', 'expected_sha256'}:
+        reject('patch object requires only patch and expected_sha256')
+    expected = value['expected_sha256']
+    if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
+        reject('expected_sha256 must be the current raw UTF-8 string SHA-256')
+    tpl = p.parmTemplate()
+    if tpl.type() != hou.parmTemplateType.String or tpl.numComponents() != 1:
+        reject('patch requires a literal scalar string parameter')
+    if p.isLocked() or p.keyframes():
+        reject('patch refuses locked, animated or expression-driven strings')
+    # Wrangle source editors have a StringReplace snippet menu; that is an
+    # editable source field, not an enum. Never evaluate its menu generator.
+    if tpl.scriptCallback() or ((tpl.menuItems() or tpl.itemGeneratorScript())
+                               and tpl.menuType() == hou.menuType.Normal):
+        reject('patch refuses callback and fixed-menu parameters')
+    patches = value['patch']
+    if not isinstance(patches, list) or not 1 <= len(patches) <= 32:
+        reject('patch requires 1..32 literal replacement objects')
+    source = p.unexpandedString()
+    if len(source) > 524288:
+        reject('source exceeds 524288 characters; split into smaller editable modules')
+    before_hash = hashlib.sha256(source.encode('utf-8')).hexdigest()
+    if before_hash != expected:
+        reject(f'stale source: expected {expected}, current {before_hash}')
+    result, matches, text_budget = source, [], 0
+    for index, edit in enumerate(patches):
+        if not isinstance(edit, dict) or set(edit) != {'old', 'new', 'count'}:
+            reject(f'patch[{index}] requires only old/new/count')
+        old, new, count = edit['old'], edit['new'], edit['count']
+        if not isinstance(old, str) or not old or not isinstance(new, str) or old == new:
+            reject(f'patch[{index}] needs a nonempty old string and a different new string')
+        text_budget += len(old) + len(new)
+        if text_budget > 131072 or type(count) is not int or not 1 <= count <= 256:
+            reject(f'patch[{index}] exceeds text budget or needs integer count in 1..256')
+        actual = result.count(old)
+        if actual != count:
+            reject(f'patch[{index}] anchor count: expected {count}, found {actual}; no parameters written')
+        result = result.replace(old, new, count)
+        if len(result) > 524288:
+            reject('patched source exceeds 524288 characters')
+        matches.append({'count': count, 'old_chars': len(old), 'new_chars': len(new)})
+    if result == source:
+        reject('patch sequence makes no net change')
+    return {'source': source, 'result': result, 'evidence': {
+        'before_sha256': before_hash, 'after_sha256': hashlib.sha256(result.encode('utf-8')).hexdigest(),
+        'before_chars': len(source), 'after_chars': len(result), 'replacements': matches}}
+
+
+def _apply_parameter_patch(p, plan):
+    # Another parameter callback in this batch may have changed the source;
+    # this is a write-phase failure, never zero-write evidence for the batch.
+    if p.keyframes() or p.unexpandedString() != plan['source']:
+        raise RuntimeError(f'{p.path()}: source changed after patch preflight')
+    p.set(plan['result'], follow_parm_reference=False)
+    if p.keyframes() or p.unexpandedString() != plan['result']:
+        raise RuntimeError(f'{p.path()}: literal patch readback mismatch')
+    return {'parm': p.name(), 'patch': plan['evidence'], 'value_omitted': True}
+
+
 def set_parm(node, name: str, value,
              allow_foreign: str | None = None) -> dict:
     """设参；numeric string 是表达式，Menu string 是精确 token。
 
     失败恢复本参数的值/表达式/关键帧，不跟随引用修改其他节点。菜单动画可显式传
     {"expression": "...", "language": "hscript"|"python"}。外部回调不属回滚范围。
+    字面string可用{"expected_sha256":原始UTF8源码hash,"patch":[{"old":锚点,"new":替换,"count":精确次数}]}。
+    1..32项顺序替换，先验证全部锚点/版本；拒绝锁定、动画/表达式、callback和固定菜单。
+    源码上限524288字符，替换文本累计131072字符，count为1..256；不执行正则或补丁脚本。
+    返回patch的前后hash/字符数/替换次数，value_omitted=True；不证明VEX或几何通过，另做cook/verify_network。
     """
     n = _resolve(node)
     _require_owned(n, "set_parm", allow_foreign)
     p = n.parm(name)
     targets = (p,) if p is not None else n.parmTuple(name)
+    is_patch = isinstance(value, dict) and 'patch' in value
+    if is_patch and p is None:
+        raise ParameterPatchError(f'{name}: patch requires an existing scalar string parameter', n.path())
+    plan = _prepare_parameter_patch(p, value) if is_patch else None
     snapshots = _parameter_snapshot(targets) if targets is not None else {}
     try:
+        if plan is not None:
+            return _apply_parameter_patch(p, plan)
         return _set_parm_impl(n, name, value, allow_foreign)
     except BaseException as error:
         restore_errors = _restore_parameters(snapshots)
@@ -2604,6 +2705,9 @@ def set_parms(node, values: dict,
     默认 strict：预检参数名，失败恢复本批参数（含表达式/关键帧）并抛错。
     ``strict=False`` 仅用于明确允许部分成功的诊断/恢复，返回 ``ok/set/failed``。
     参数回调的外部副作用不能靠参数快照回滚，复杂批次仍需 Bridge undo 事务。
+    value支持set_parm的字面string patch对象；只允许strict=True，整批patch验证通过后才写任何参数。
+    补丁字段在set中返回前后hash/字符数/替换次数（不回传整份源码），patched列出这些字段名。
+    预检限本节点本批values；其他节点/其他调用不属此预检范围。
     """
     n = _resolve(node)
     _require_owned(n, "set_parms", allow_foreign)
@@ -2611,7 +2715,9 @@ def set_parms(node, values: dict,
         raise ValueError("values 必须是非空 dict：{参数名: 值}")
     if not isinstance(strict, bool):
         raise ValueError("strict 必须是 bool")
-    snapshots = {}
+    snapshots, patch_plans = {}, {}
+    if not strict and any(isinstance(v, dict) and 'patch' in v for v in values.values()):
+        raise ParameterPatchError('literal patches require strict=True', n.path())
     if strict:
         for key in values:
             parm = n.parm(key)
@@ -2622,11 +2728,19 @@ def set_parms(node, values: dict,
                 if target.name() in snapshots:
                     raise ValueError(f"同批参数重叠：{key!r} 与 {target.name()!r}")
                 snapshots.update(_parameter_snapshot((target,)))
+        # Validate EVERY patch before the first regular or patch parameter write.
+        for key, value in values.items():
+            if isinstance(value, dict) and 'patch' in value:
+                parm = n.parm(key)
+                if parm is None:
+                    raise ParameterPatchError(f'{key}: patch requires a scalar string parameter', n.path())
+                patch_plans[key] = _prepare_parameter_patch(parm, value)
     done, failed, notes = {}, {}, {}
     for key, value in values.items():
         try:
-            r = set_parm(n, key, value, allow_foreign=allow_foreign)
-            done[r["parm"]] = r.get("value", r.get("expression"))
+            r = (_apply_parameter_patch(n.parm(key), patch_plans[key]) if key in patch_plans
+                 else set_parm(n, key, value, allow_foreign=allow_foreign))
+            done[r["parm"]] = r['patch'] if 'patch' in r else r.get("value", r.get("expression"))
             if "note" in r:
                 notes[r["parm"]] = r["note"]
         except Exception as e:
@@ -2635,6 +2749,8 @@ def set_parms(node, values: dict,
                 restore_errors = _restore_parameters(snapshots)
                 raise RuntimeError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}") from e
     out = {"node": n.path(), "ok": not failed, "set": done}
+    if patch_plans:
+        out['patched'] = list(patch_plans)
     if notes:
         out["notes"] = notes
     if failed:
@@ -2872,14 +2988,132 @@ def _spare_spec_template(item: dict, path: str, names: set):
     return template
 
 
+def _update_spare_defaults(n, updates):
+    """Update only literal scalar spare defaults; preserve live values/animation."""
+    if not isinstance(updates, dict) or not 1 <= len(updates) <= 32:
+        raise ValueError('update_defaults must contain 1..32 existing scalar spare parameters')
+    group = n.parmTemplateGroup()
+    before_group = n.parmTemplateGroup()
+    targets, changes = [], {}
+    for name, value in updates.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError('update_defaults keys must be nonempty parameter names')
+        p = n.parm(name)
+        if p is None or not p.isSpare():
+            raise ValueError(f'{name}: update_defaults requires an existing spare parameter')
+        tpl = p.parmTemplate()
+        kind = tpl.type()
+        if (tpl.numComponents() != 1 or p.isMultiParmInstance() or tpl.scriptCallback()
+                or kind not in (hou.parmTemplateType.Float, hou.parmTemplateType.Int,
+                                hou.parmTemplateType.Toggle, hou.parmTemplateType.String)):
+            raise ValueError(f'{name}: only scalar float/int/toggle/string defaults without callbacks or multiparms are supported')
+        if getattr(tpl, 'menuItems', lambda: ())():
+            raise ValueError(f'{name}: menu defaults are unsupported')
+        if any(getattr(tpl, 'defaultExpression', lambda: ())()):
+            raise ValueError(f'{name}: expression defaults are unsupported; do not silently replace their meaning')
+        if kind == hou.parmTemplateType.String:
+            valid = isinstance(value, str)
+        elif kind == hou.parmTemplateType.Toggle:
+            valid = type(value) is bool or (type(value) is int and value in (0, 1))
+        elif kind == hou.parmTemplateType.Int:
+            valid = type(value) is int and -(2**31) <= value < 2**31
+        else:
+            valid = type(value) in (int, float) and math.isfinite(value)
+        if not valid:
+            raise ValueError(f'{name}: invalid literal default for {kind.name()}')
+        if kind in (hou.parmTemplateType.Float, hou.parmTemplateType.Int):
+            if ((tpl.minIsStrict() and value < tpl.minValue())
+                    or (tpl.maxIsStrict() and value > tpl.maxValue())):
+                raise ValueError(f'{name}: default is outside strict parameter limits')
+        old = tpl.defaultValue()
+        # ToggleParmTemplate uses a scalar default; other scalar templates use a tuple.
+        tpl.setDefaultValue(bool(value) if kind == hou.parmTemplateType.Toggle else (value,))
+        group.replace(name, tpl)
+        targets.append(p)
+        changes[name] = {'before': _val(old), 'after': _val(tpl.defaultValue())}
+    snapshots = _parameter_snapshot(targets)  # preflight locks before the first write
+
+    def restore_values():
+        # Reacquire parms after replacing their templates.
+        return _restore_parameters({name: (n.parm(name), keys, value)
+                                    for name, (_, keys, value) in snapshots.items()})
+
+    try:
+        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+        errors = restore_values()
+        if errors:
+            raise RuntimeError(f'current parameter state restore failed: {errors}')
+        for name, change in changes.items():
+            p = n.parm(name)
+            actual = _val(p.parmTemplate().defaultValue())
+            if actual != change['after']:
+                raise RuntimeError(f'{name}: default readback mismatch: {actual!r}')
+            _, keys, value = snapshots[name]
+            current = (p.unexpandedString() if p.parmTemplate().type() == hou.parmTemplateType.String
+                       else p.eval()) if not keys else None
+            if tuple(p.keyframes()) != keys or current != value:
+                raise RuntimeError(f'{name}: current value or animation changed during default update')
+        return {'node': n.path(), 'mode': 'update_defaults', 'ok': True,
+                'updated': changes, 'current_state_preserved': True,
+                'current_values': {name: _val(n.parm(name).eval()) for name in changes}}
+    except Exception as error:
+        restore_errors = []
+        try:
+            n.setParmTemplateGroup(before_group, rename_conflicting_parms=False)
+        except Exception as rollback_error:
+            restore_errors.append(str(rollback_error))
+        restore_errors.extend(restore_values())
+        if restore_errors:
+            raise CheckpointError(f'default update restoration failed: {restore_errors}',
+                                  {'ok': False, 'node': n.path(), 'restored': False}) from error
+        raise
+
+
+def _apply_spare_interface(n, group, code_parm):
+    """Refresh a code parm without flattening its source, references or animation.
+
+    A wrangle cooked before its local channels exist can retain missing-channel
+    dependencies after setParmTemplateGroup, even on a forced cook. Reassigning
+    the original source/keyframes invalidates those compiled dependencies.
+    """
+    source = n.parm(code_parm)
+    if source is not None and source.parmTemplate().type() != hou.parmTemplateType.String:
+        raise ValueError(f'{code_parm}: code parameter must be a string')
+    snapshots = _parameter_snapshot([source]) if source is not None else {}
+    before = n.parmTemplateGroup()
+
+    def refresh():
+        errors = _restore_parameters({name: (n.parm(name), keys, value)
+                                      for name, (_, keys, value) in snapshots.items()})
+        if errors:
+            raise RuntimeError(f'code dependency refresh failed: {errors}')
+        for name, (_, keys, value) in snapshots.items():
+            current = n.parm(name)
+            if tuple(current.keyframes()) != keys or (not keys and current.unexpandedString() != value):
+                raise RuntimeError(f'{name}: code state changed during dependency refresh')
+
+    try:
+        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+        refresh()
+    except Exception as error:
+        try:
+            n.setParmTemplateGroup(before, rename_conflicting_parms=False)
+            refresh()
+        except Exception as restore_error:
+            raise CheckpointError(f'spare interface restoration failed: {restore_error}',
+                                  {'ok': False, 'node': n.path(), 'restored': False}) from error
+        raise
+    return code_parm if snapshots else None
+
+
 def create_spare_parms(node, code_parm: str = "snippet",
                        defaults: dict | None = None,
                        spec: list | None = None,
-                       allow_foreign: str | None = None) -> dict:
+                       allow_foreign: str | None = None, *, update_defaults: dict | None = None) -> dict:
     """从代码参数的 ch/chf/chi/chv/chs 引用创建缺失 spare parameters。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
-    已存在参数不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
+    已存在参数默认不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
     或裸 hou 处理。
 
     ``spec`` 的精确递归 schema：folder 条目是
@@ -2897,11 +3131,21 @@ def create_spare_parms(node, code_parm: str = "snippet",
             ]},
         ])
 
+    新建参数接口后重新赋写code_parm原始源码/keys以刷新编译依赖，不改源码或烘焙表达式。
+    返回refreshed_code_parm（未刷新为None）；源码锁定在写入接口前拒绝。
     spec 模式返回 ``node/mode/created/leaf_values``；扫描模式返回
     ``node/code_parm/references/created/existing/defaults_applied/unsupported``。
+    显式 ``update_defaults={name:literal}`` 仅更新1..32个已有scalar spare默认值，
+    与spec/defaults/非默认code_parm互斥；保留当前值、表达式和keys，不重置当前值。
+    仅float/int/toggle/string，拒绝内建参数、tuple/menu/callback/multiparm、表达式默认值。
+    返回updated前后默认值、current_values/current_state_preserved；要同时改变当前值另用set_parms。
     """
     n = _resolve(node)
     _require_owned(n, "create_spare_parms", allow_foreign)
+    if update_defaults is not None:
+        if spec is not None or defaults is not None or code_parm != 'snippet':
+            raise ValueError('update_defaults is exclusive with spec/defaults/code_parm scanning')
+        return _update_spare_defaults(n, update_defaults)
     if spec is not None:
         if not isinstance(spec, (list, tuple)) or not spec:
             raise ValueError("spec 必须是非空 list")
@@ -2922,7 +3166,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
         group = n.parmTemplateGroup()
         for template in templates:
             group.append(template)
-        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+        refreshed = _apply_spare_interface(n, group, code_parm)
         leaves = []
         def collect(items):
             for item in items:
@@ -2935,6 +3179,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
             "node": n.path(),
             "mode": "spec",
             "created": sorted(names),
+            "refreshed_code_parm": refreshed,
             "leaf_values": {
                 name: _val(n.parm(name).eval()) for name in leaves
             },
@@ -2996,8 +3241,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
         created_names.append(name)
     for template in templates:
         group.append(template)
-    if templates:
-        n.setParmTemplateGroup(group, rename_conflicting_parms=False)
+    refreshed = _apply_spare_interface(n, group, code_parm) if templates else None
     applied = {}
     for name in created_names:
         if name in defaults:
@@ -3011,6 +3255,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
         "existing": existing,
         "defaults_applied": applied,
         "unsupported": unsupported,
+        "refreshed_code_parm": refreshed,
     }
 
 
@@ -3750,6 +3995,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     max_transform_error另给transform（16数row-major仿射矩阵，SOP-local行向量约定），
     测max(|P_baseline*transform-P_test|)，baseline残差=0；仍需另有非零响应项。
     range=[min,max]验证基准/扰动绝对范围，delta是相对响应；center/min/max不是有效缩写。
+    先消费control_summary的status/reason/case_counts；results=[]可能是基准失败，绝非通过。
+    control_summary保留未运行case和失败测量；修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
     可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。

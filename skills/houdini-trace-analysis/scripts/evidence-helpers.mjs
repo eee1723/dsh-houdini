@@ -4,6 +4,56 @@ function tryJson(text) {
   catch { return null; }
 }
 
+/** Diagnostic retry candidates, not semantic equivalence or avoidable cost.
+ * Input must be normalized unique calls; replay removal belongs upstream.
+ */
+export function collectRetryWork(steps = []) {
+  const calls = steps.filter(s => typeof s.code === 'string' && s.code.length);
+  const rolledBack = calls.filter(s => s.rollback?.applied === true);
+  const limit = {lookbackCodeCalls:8, minCodeChars:512, maxCodeChars:65536, minLineOverlap:0.8};
+  const lineMap = code => {
+    const lines = new Map();
+    for (const raw of code.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (line) lines.set(line,(lines.get(line)||0)+1);
+    }
+    return lines;
+  };
+  const sized = calls.map(s => ({...s, lines:s.code.length >= limit.minCodeChars
+    && s.code.length <= limit.maxCodeChars ? lineMap(s.code) : null}));
+  const weight = lines => [...lines].reduce((n,[line,count])=>n+line.length*count,0);
+  const excerpt = (a,b) => [...a].filter(([line,count])=>count>(b.get(line)||0))
+    .slice(0,6).map(([line,count])=>({line:line.slice(0,180),count:count-(b.get(line)||0),truncated:line.length>180}));
+  const candidates=[];
+  for(let i=0;i<sized.length;i++) {
+    const current=sized[i];
+    if(!current.lines)continue;
+    let best=null;
+    for(let j=i-1;j>=Math.max(0,i-limit.lookbackCodeCalls);j--) {
+      const prior=sized[j];
+      if(!prior.failed || !prior.lines || prior.tool!==current.tool)continue;
+      let common=0;
+      for(const [line,count] of current.lines)common+=line.length*Math.min(count,prior.lines.get(line)||0);
+      const score=common/Math.max(weight(current.lines),weight(prior.lines),1);
+      if(score<limit.minLineOverlap || (best && best.lineOverlap>=score))continue;
+      best={from:prior.index,to:current.index,lineOverlap:score,
+        priorCodeChars:prior.code.length,currentCodeChars:current.code.length,
+        currentFailed:!!current.failed,priorRollbackApplied:prior.rollback?.applied===true,
+        changedLineExcerpts:{removed:excerpt(prior.lines,current.lines),added:excerpt(current.lines,prior.lines)},
+        kind:'failed_call_followed_by_similar_code_candidate'};
+    }
+    if(best)candidates.push({...best,lineOverlap:Number(best.lineOverlap.toFixed(4))});
+  }
+  return {codeCalls:calls.length,totalCodeChars:calls.reduce((n,s)=>n+s.code.length,0),
+    failedCodeChars:calls.filter(s=>s.failed).reduce((n,s)=>n+s.code.length,0),
+    appliedRollbackCalls:rolledBack.length,appliedRollbackCodeChars:rolledBack.reduce((n,s)=>n+s.code.length,0),
+    successfulBuildEntriesInAppliedRollbacks:rolledBack.flatMap(s=>(s.verbs||[])
+      .filter(v=>v.verb==='build_module' && v.ok===true)
+      .map(v=>({step:s.index,ledgerIndex:v.ledgerIndex??null,verb:v.verb}))),
+    candidates,limits:limit,similaritySkippedCalls:sized.filter(s=>!s.lines).map(s=>s.index),
+    note:'Raw code characters, not tokens, time or savings. Applied rollback code is a subset of submitted code, not an additional cost. Similarity is trimmed exact-line multiset overlap (order/indentation ignored), not Python equivalence; candidates may be necessary retries or distinct module work. Successful build ledger entries were later rolled back, not retained outputs. Full source remains in the corresponding trace steps.'};
+}
+
 export function extractAvailableSkills(text) {
   if (typeof text !== 'string' || !text.includes('<available_skills>')) return [];
   return [...text.matchAll(/^- `([^`]+)`: /gm)].map((match) => match[1]);
@@ -288,7 +338,8 @@ export function isStructuredHoudiniCall(step) {
 }
 
 export function collectVerbAdoption(steps) {
-  const houdini = steps.filter((step) => step.isHoudini);
+  const detailReads = steps.filter(step => step.tool === 'houdini_query' && step.args?.result_ref);
+  const houdini = steps.filter((step) => step.isHoudini && !detailReads.includes(step));
   const structured = houdini.filter(isStructuredHoudiniCall);
   const python = houdini.filter(step=>!isStructuredHoudiniCall(step));
   const withVerbs = houdini.filter((step) => (step.verbs || []).length > 0);
@@ -309,6 +360,7 @@ export function collectVerbAdoption(steps) {
   const pct = (part, total) => total ? Math.round((part / total) * 1000) / 10 : null;
   return {
     houdiniCalls: houdini.length,
+    hostResultDetailReads: detailReads.length,
     callsWithVerbs: withVerbs.length,
     callCoveragePct: pct(withVerbs.length, houdini.length),
     verbCalls,
@@ -535,7 +587,8 @@ export function collectQualityLoopEvidence({
 } = {}) {
   const request = messageText(userMessages);
   const assistant = messageText(assistantMessages);
-  const applicable = OPEN_ENDED_QUALITY_REQUEST.test(request);
+  const applicable = OPEN_ENDED_QUALITY_REQUEST.test(request)
+    || /(?:精细|细致|近景|测绘|实景|表面质感|close[- ]?up|fine detail|surface texture|survey reference)/i.test(request);
   const indexed = steps.map((step, offset) => ({ ...step, code: step.code, resultText: step.resultText,
     index: stepIndex(step, offset + 1) }));
   const firstMutation = indexed.find(sceneMutation) || null;
@@ -630,10 +683,14 @@ export function collectQualityLoopEvidence({
     const code = String(step.code || '');
     const hits = [...code.matchAll(RELATION_PATTERN)].map((match) => match[0].toLowerCase());
     if (!hits.length || step.failed) continue;
-    // Mixed edit+measurement is legitimate. A mere relationship comment in
-    // construction code is not a probe; require geometry access and output.
-    if (sceneMutation(step) && !(/geometry\(|boundingBox\(|attribValue\(|\.position\(/.test(code)
+    // Text in construction code (including VEX tangent comments) is not a
+    // measurement. Require geometry access and an observable labelled result
+    // for both query and exec; this still identifies a candidate, not a pass.
+    if (!(/geometry\(|boundingBox\(|attribValue\(|\.position\(/.test(code)
         && /print\(|__result__\s*=/.test(code))) continue;
+    const outputLines = code.split('\n').filter(line => /\bprint\s*\(|__result__\s*=/.test(line));
+    if (!outputLines.some(line => new RegExp(RELATION_PATTERN.source, 'i').test(line))
+        || !String(step.resultText ?? step.resultPreview ?? '').trim()) continue;
     relationshipProbeSteps.push(step.index);
     for (const hit of hits) relationshipKeywords.add(hit);
   }

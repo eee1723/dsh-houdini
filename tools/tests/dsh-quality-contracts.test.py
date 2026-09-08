@@ -80,9 +80,26 @@ try:
       {'metric':'bounds_size','axis':0,'delta':[.199,.201]}]}]
     result=h.test_controls(ctrl,out,tests,interfaces=[interface])
     assert result['ok'] and result['restored'] and ctrl.evalParm('length')==1,result
+    assert result['control_summary']['case_counts']=={'pass':1,'fail':0,'unverified':0,'not_run':0}
+    # Absolute ranges apply to baseline too: a rejected baseline must not look
+    # like an empty successful batch when author code prints only results.
+    baseline_test=[{'id':'target_only_range','values':{'length':1.2},'expectations':[
+        {'metric':'bounds_size','axis':0,'delta':[.199,.201],'range':[2.19,2.21]}]}]
+    env=b.run_code(f'r=test_controls({ctrl.path()!r},{out.path()!r},{baseline_test!r}); print(r["results"])')
+    evidence=next(e for e in env['evidence'] if e['verb']=='test_controls')
+    summary=evidence['control_summary']
+    assert env['ok'] and summary['status']=='fail' and summary['parameter_writes']==0,env
+    assert summary['case_counts']['not_run']==1 and summary['case_id']=='target_only_range'
+    assert summary['baseline']==2 and summary['expectation']['range']==[2.19,2.21]
+    assert evidence['controller']==ctrl.path() and evidence['output']==out.path()
+    assert summary['controller']==ctrl.path() and summary['output']==out.path()
+    assert ctrl.evalParm('length')==1 and evidence['results']==[]
     result=h.test_controls(ctrl,out,[{'id':'dead','values':{'unused':2},'expectations':[
       {'metric':'bounds_size','axis':0,'delta':[.1,2]}]}])
     assert not result['ok'] and result['restored'] and ctrl.evalParm('unused')==1,result
+    failure=result['control_summary']['failures'][0]
+    assert failure['id']=='dead' and failure['failed_measurement_count']==1
+    assert failure['failed_measurements'][0]['delta']==0
     rejects(lambda:h.test_controls(ctrl,out,[{'id':'no_response','values':{'unused':2},'expectations':[
         {'metric':'bounds_size','axis':0,'delta':[-1,1]}]}]),'non-zero expected response')
     # Local selection: avoid a global bbox hiding the expected module response.
@@ -115,6 +132,8 @@ try:
         {'metric':'bounds_size','axis':0,'delta':[.199,.201]}]}]
     packed_result=h.test_controls(ctrl,packed,packed_test)
     assert packed_result['status']=='unverified' and packed_result['parameter_writes']==0 and ctrl.evalParm('length')==1,packed_result
+    assert packed_result['control_summary']['case_counts']['not_run']==1
+    assert 'restoration oracle' in packed_result['control_summary']['reason']
     area_test=[{'id':'packed_area','values':{'length':1.2},'expectations':[
         {'metric':'area','delta':[.1,1]}]}]
     unsupported_area=h.test_controls(ctrl,packed,area_test)

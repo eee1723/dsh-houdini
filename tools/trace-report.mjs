@@ -20,10 +20,12 @@ import { loadCatalog } from './catalog-lib.mjs';
 import {
   loadSessionEvents,
   newestSessionFile,
+  collectRequestTelemetry,
 } from './trace-session-lib.mjs';
 import { normalizeTraceSteps } from './normalized-trace-steps.mjs';
 import {
   collectQualityLoopEvidence,
+  collectRetryWork,
   collectVerbAdoption,
   collectValidationCoverage,
   qualityLoopRisks,
@@ -57,7 +59,9 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 
 // ---------- parse trace ----------
 const { events } = loadSessionEvents(sessionFile);
+const requestTelemetry = collectRequestTelemetry(events);
 const normalized = normalizeTraceSteps(events);
+const retryWork = collectRetryWork(normalized.steps);
 const { replayedResults, unmatchedResults } = normalized;
 
 const userMsgs = [];
@@ -204,7 +208,9 @@ const timelineHtml = steps.map((s, i) => {
   if (s.code) detailParts.push(`<div class="lbl">code</div><pre>${esc(s.code)}</pre>`);
   if (Object.keys(s.args).length && !s.code) detailParts.push(`<div class="lbl">args</div><pre>${esc(JSON.stringify(s.args, null, 2))}</pre>`);
   if (s.advisory) detailParts.push(`<div class="lbl">advisory</div><pre class="adv">${esc(s.advisory)}</pre>`);
-  detailParts.push(`<div class="lbl">result</div><pre>${esc(s.resultText)}</pre>`);
+  detailParts.push(`<div class="lbl">model-facing result</div><pre>${esc(s.resultText)}</pre>`);
+  if (s.canonical) detailParts.push(`<div class="lbl">canonical returned envelope (audit metadata)</div><pre>${esc(JSON.stringify(s.canonical,null,2))}</pre>`);
+  else if(s.canonicalStatus==='referenced_artifact_only')detailParts.push('<p>Full envelope is referenced by result-details; this trace event has no canonical metadata. Do not treat omitted fields as absent facts.</p>');
   return `
   <div class="step ${s.failed ? 'failed' : ''}">
     <div class="step-head">
@@ -324,6 +330,18 @@ const html = `<!DOCTYPE html>
     ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
     ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
+    <h2>回滚与近重复重试候选</h2>
+    <p>提交代码 ${retryWork.totalCodeChars} 字符；失败调用代码 ${retryWork.failedCodeChars} 字符；已应用回滚 ${retryWork.appliedRollbackCalls} 次，涉及代码 ${retryWork.appliedRollbackCodeChars} 字符。
+    ${retryWork.successfulBuildEntriesInAppliedRollbacks.length} 个成功的 build_module ledger 条目随后被所在调用回滚；近重复重试候选 ${retryWork.candidates.length} 对。</p>
+    <p class="dim-text">字符数不是token、耗时或可节省量；回滚代码已包含在提交量中。相似度只比较去首尾空白的相同行，忽略行序和缩进，不证明语义等价或浪费；必要重试和不同模块可能相似。候选附步骤定位和有限差异片段，完整代码在下方调用详情。</p>
+    <details><summary>候选对、差异片段、统计口径与分析范围</summary><pre>${esc(JSON.stringify(retryWork,null,2))}</pre></details>
+    <h2>请求用量与逐轮运行状态</h2>
+    <p>记录到 ${requestTelemetry.requestCount} 个请求的 usage；末请求输入含缓存 ${requestTelemetry.last?.inputWithCache ?? '未知'} tokens。
+    累计报告 input ${requestTelemetry.totals.inputTokens ?? '未知'} / cache read ${requestTelemetry.totals.cacheReadTokens ?? '未知'} / output ${requestTelemetry.totals.outputTokens ?? '未知'}。
+    逐轮上游错误 ${requestTelemetry.upstreamTurnErrors.length}；compaction 事件 ${requestTelemetry.compactionEvents.length}；usage 去重 ${requestTelemetry.duplicateUsageEvents}，更新 ${requestTelemetry.updatedUsageEvents}。</p>
+    <p class="dim-text">请求累计重复计算历史，不是独立文本量或账单；缺失字段为未知。输入含缓存仅在字段算术一致时推导；未记录压缩不能证明原文全部保留。上游错误与工具失败分别统计。</p>
+    ${requestTelemetry.upstreamTurnErrors.map(e => `<p>turn ${esc(e.turn)} · ${esc(e.code)} · ${esc(e.message)}</p>`).join('')}
+    <details><summary>完整请求、逐轮与目标变更记录</summary><pre>${esc(JSON.stringify(requestTelemetry,null,2))}</pre></details>
     <h2>动画 / 多帧验证覆盖</h2>
     ${validationHtml}
     <h2>开放式任务质量闭环（HTA-023）</h2>

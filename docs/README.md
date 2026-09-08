@@ -8,6 +8,7 @@
 | 文档 | 职责 / 对应实现 |
 |---|---|
 | [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
+| [Houdini Trace设计](houdini-trace-design.md) | 五看板信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
 | [工具设计与词表](tool-design.md) | 58动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |

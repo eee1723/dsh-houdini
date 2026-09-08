@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   collectValidationCoverage,
+  collectRetryWork,
   collectQualityLoopEvidence,
   completedVisionTodoWithoutEvidence,
   execResultFromPreview,
@@ -20,6 +21,36 @@ import {
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 assert.equal(isMutatingRawMethodName('renderNode'), false);
+const retainedRead=collectVerbAdoption([{isHoudini:true,tool:'houdini_query',args:{result_ref:'a'.repeat(64)},code:'',verbs:[]}]);
+assert.equal(retainedRead.houdiniCalls,0);
+assert.equal(retainedRead.hostResultDetailReads,1,'reading stored results is not a new HOM call');
+
+const lines=Array.from({length:30},(_,i)=>`value_${i} = input_value_${i} + 100`).join('\n');
+const retry=collectRetryWork([
+  {index:1,tool:'houdini_exec',code:lines,failed:true,rollback:{applied:true},verbs:[{verb:'build_module',ok:true,ledgerIndex:1}]},
+  {index:2,tool:'houdini_exec',code:lines.replace('input_value_15','corrected_value'),failed:false},
+  {index:3,tool:'houdini_exec',code:'a completely unrelated long command'.repeat(32),failed:true},
+]);
+assert.equal(retry.candidates.length,1);
+assert.deepEqual([retry.candidates[0].from,retry.candidates[0].to],[1,2]);
+assert.ok(retry.candidates[0].changedLineExcerpts.added[0].line.includes('corrected_value'));
+assert.equal(retry.appliedRollbackCalls,1);
+assert.equal(retry.appliedRollbackCodeChars,lines.length);
+assert.equal(retry.successfulBuildEntriesInAppliedRollbacks.length,1);
+assert.equal(collectRetryWork([{index:1,tool:'houdini_exec',code:lines,failed:false},
+  {index:2,tool:'houdini_exec',code:lines,failed:false}]).candidates.length,0,'successful repeated generation is not a failed retry');
+assert.equal(collectRetryWork([{index:1,tool:'houdini_exec',code:'x'.repeat(70000),failed:true}]).similaritySkippedCalls[0],1);
+
+for (const text of ['细致表现模型表面质感和近景结构', 'Use survey references and fine detail for close-up inspection']) {
+  assert.equal(collectQualityLoopEvidence({userMessages:[{text}]}).applicable,true);
+}
+assert.equal(collectQualityLoopEvidence({userMessages:[{text:'把节点改名为OUT'}]}).applicable,false);
+for (const tool of ['houdini_exec','houdini_query']) {
+  const evidence = collectQualityLoopEvidence({steps:[{index:1,tool,failed:false,
+    code:'# tangent direction\ng = n.geometry(); print(g.boundingBox())', resultText:'(0,0,0)-(1,1,1)',
+    verbs:tool==='houdini_exec' ? [{verb:'set_parms',ok:true}] : []}]});
+  assert.deepEqual(evidence.relations.probeSteps,[],'construction tangent comments are not relationship measurements');
+}
 const typedAdoption=collectVerbAdoption([
   {tool:'houdini_exec',isHoudini:true,args:{review:{parent:'/obj/g',output:'/obj/g/O'}},verbs:[],mutatingRawMethods:[]},
   {tool:'houdini_exec',isHoudini:true,args:{review_test:{tests:[]}},verbs:[],mutatingRawMethods:[]},
@@ -244,6 +275,7 @@ assert.deepEqual(collectVerbAdoption([
   { tool: 'houdini_exec', isHoudini: true, failed: true, verbs: [], mutatingRawMethods: ['cook'], resultPreview: 'raw-hou gate: blocked BEFORE execution' },
 ]), {
   houdiniCalls: 3,
+  hostResultDetailReads: 0,
   callsWithVerbs: 1,
   callCoveragePct: 33.3,
   verbCalls: 1,
@@ -343,7 +375,7 @@ const completeQualityLoop = collectQualityLoopEvidence({
     }, { verb: 'cook_node', ok: true, args: '["/obj/product/OUT"]' }],
   }, {
     index: 5, time: 5, tool: 'houdini_query', failed: false,
-    code: 'measure axis distance and clearance', verbs: [],
+    code: 'print("clearance", node.geometry().boundingBox())', resultText: 'clearance 0.01', verbs: [],
   }, {
     index: 6, time: 6, tool: 'houdini_exec', failed: false, verbs: [{
       verb: 'set_parms', ok: true, args: '["/obj/product",{"scale":1}]',
@@ -521,7 +553,7 @@ const selectedContract = collectQualityLoopEvidence({
     ]},
   ]}, resultText: JSON.stringify({answers: [{id: 'quality', selected: ['产品级']}]}), verbs: []},
   {index: 2, time: 3, tool: 'houdini_exec', verbs: [{verb: 'tab_create', ok: true}],
-   code: 'n = tab_create(parent, "null"); g = n.geometry(); print("clearance", g.boundingBox())'},
+   code: 'n = tab_create(parent, "null"); g = n.geometry(); print("clearance", g.boundingBox())', resultText:'clearance 0.01'},
   {index: 3, time: 4, tool: 'houdini_exec', verbs: [{verb: 'render_view', ok: true, args: '["/obj/a/SKELETON"]'}]},
   ],
 });

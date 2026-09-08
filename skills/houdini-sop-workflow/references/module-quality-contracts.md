@@ -21,6 +21,8 @@
 
 适用时把这些组随Copy/Merge一路传到交付OUT；顶点数改变后更新明确基数，不静默接受空选择。
 组名来自当前任务，不由库固定。一个模块可以有多个出口/接口，每个需独立检查。
+原型通过不能代替复制/变换后的实例关系。最终输出保留可选择的部件身份和接口组；附属件
+随主体一起移动只证明共同运动，不证明二者连接。先验证原型内部连接，再检查各实例的外部接口。
 
 ## 最小执行路径
 
@@ -46,6 +48,10 @@ result = build_module(parent, spec, output='OUT_MODULE', interfaces=interfaces)
 Packed/volume/NURBS等暂未验证的表示返回unverified。超点数/内存/查询预算拒绝，不抽样假绿。
 这个检查**不证明**整个表面无穿插、包含深度、焊接、机械强度，也不能把方向平行当成连接。
 需要插入或实体相交时应选择对应独立方法，不通过放大max_distance来使错误结果变绿。
+顶点对顶点的最小距离是完整表面最小距离的上界，不是安全间隙下界；面中部相交时顶点仍可远离。
+源顶点到真实目标表面也只覆盖这些样本，不证明连续全表面无穿插。要求贴合时检查指定接口的
+全部声明样本；要求无碰撞却无适用检测时保留unverified。独立装配允许经设计确认的间隙，
+不因没有共享点就强制Fuse/Boolean，也不把封闭且朝外的各部件当作装配关系已通过。
 
 ## 控制契约：改变什么，什么必须不变
 
@@ -97,7 +103,8 @@ expectation可带range=[min,max]检查基准及扰动绝对范围，例如封闭
 测试值被范围钳制而未按要求生效时判失败，不把未真正执行的case计为通过。
 
 每个case先改值/cook，再测指标与接口，最后恢复原值、表达式、关键帧、frame，并核对实际
-output完整bgeo解码数据恢复（只排除导出头时间戳，不排除用户属性）。原生Tube/Sphere半径不靠P-only判定。控制测试当前仅支持
+output完整bgeo解码数据恢复：排除导出头date和派生group_summary，已知组目录按组名规范排列；
+保留所有组成员、ordered group内部顺序、用户属性及几何。原生Tube/Sphere半径不靠P-only判定。控制测试当前仅支持
 Polygon/Mesh/Sphere/Tube及点几何；Packed/NURBS/volume等在写参数前返回unverified。
 Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的恢复oracle。
 恢复失败必须停止继续改场景并检查，不自动抹掉错误；无法测量的类型保持unverified。
@@ -105,7 +112,8 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 
 ## 读结果与返工
 
-- `status=fail`：看具体接口点/最近primitive/距离，或控制测量的baseline/measured/delta。
+- 先读control_summary的status/reason/case_counts和restored；results=[]可能是基准失败或unsupported，not_run不是pass。摘要保留controller/output、失败case/判据和基准值，不能只打印results后丢掉失败原因。
+- `status=fail`：看具体接口点/最近primitive/距离，或控制测量的baseline/measured/delta。range同时约束基准与扰动；只希望约束变化时用delta。验证恒定件时连同应响应的主体一起选取，保留非零响应以排除死控制。
 - `status=unverified`：证据方法不支持，不得改写成pass；换经过验证的数据表示或独立方法。
 - `restored=False`：状态恢复异常，先处理，不重试下一case。
 - `ok=True`：仅已声明接口/控制case通过；还需最终网络warning及视觉质量验收。
@@ -114,6 +122,7 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 
 修订生成器后刷新受影响检查，不沿用旧geometry_sha256/contract_sha256。接口检测和构造可
 共享设计坐标，但验证必须从真实交付表面取值，不能只检设计anchor的一致性。
+期望写错可以依据独立解析或已知几何纠正，但修正后必须复跑受影响case；语言解释不能替代新结果。
 
 ## 来源与验证
 
@@ -121,7 +130,8 @@ SideFX [Prim.nearestToPosition](https://www.sidefx.com/docs/houdini/hom/hou/Prim
 和 [Geometry.freeze/data](https://www.sidefx.com/docs/houdini/hom/hou/Geometry.html)；本项目
 `dsh-quality-contracts.test.py`覆盖连接正例、方向正确但脱开、默认通过/扰动失败、空组、基数、
 自重叠、游离driver点、unsupported target、预算、死控制、原生Tube、表达式/cook恢复、ownership。
-证据：工具合同双版本本地verified，SOP工作流candidate；最后核对2026-09-06，不宣称制造认证。
+`dsh-interface-evidence.test.py`另覆盖真实实例脱开、允许间隙、接触及相交时顶点距离仍为正的反例。
+工具合同以目标版本回归为据；SOP工作流自然采用仍需新会话验证，不宣称制造认证。
 
 
 ## v13：不改变交付网格的截面观察
@@ -155,5 +165,5 @@ domain = [{'id':'clearance', 'left':'travel', 'op':'lt',
 后者positive只在简单非嵌套壳条件下解释为外向；自交/嵌套未测，开放表面不推断内外。
 双面预览能掩盖反向面；按HOM primitive normal与已知外表面方向核对，不能任取叉积约定。
 
-来源：v13工具候选；真实trace与独立HOM反例记录在development。实现回归见
-`dsh-modeling-semantics.test.py`，新模型自然采用及质量提升仍待新会话验收。
+实现回归见`dsh-modeling-semantics.test.py`；过程证据留在会话/CI或非发布临时产物，
+新模型自然采用及质量提升仍待新会话验收。

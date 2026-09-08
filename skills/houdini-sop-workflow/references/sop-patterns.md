@@ -162,6 +162,8 @@ build_module的operation_advisories按类型/缺少的显式选择合并；尚�
 用geo_piece_stats(out,inspect=True,group=...)观察边界和局部basis extent；非Polygon返回unverified。
 有意分组切口不视作整体实体破损，整体bbox不能证明弯曲薄片有管状截面。
 同一exec后项失败会回滚前项成功的模块；transaction记录最终状态，普通诊断读取放query。
+独立模块分不同exec提交，再用仍存活的输出集成；不能独立验收的部件保留同一事务，不能靠catch
+异常让半成品提交。返回已知validation即可，陌生返回类型先verb_help查看return_type/call_mode。
 
 适用：在现有 SOP parent 中新增一个可以独立 cook 的小模块；H21.0.440/H22.0.368 的
 类型、参数菜单、失败清理与 warning 传播已有工具回归。行为发布仍需未见新 session 验证。
@@ -210,7 +212,30 @@ __result__ = result['validation']
 默认硬失败。`require_valid=False`仅供保留失败诊断，不得替代复验。读取operation-evidence中的
 output/frame/scope/失败原因，而不是只看开头“Python执行成功”或取不存在的errors字段。
 
-证据等级：工具合同回归与行为采用分别记录；弱模型未见任务增益 candidate。最后核对：2026-09-06。
+已有节点的局部文本更新适用set_parms的literal patch；先在query读取实际字段：
+
+```python
+__result__ = read_parms(target, names=['snippet'])
+```
+
+再在exec使用读到的source_sha256及实际的唯一锚点（old_text/new_text由本次改动决定）：
+
+```python
+set_parms(target, {'snippet': {
+    'expected_sha256': source_sha256,
+    'patch': [{'old': old_text, 'new': new_text, 'count': 1}],
+}})
+__result__ = verify_network(parent, output=output)
+```
+
+缺锚点/多命中/hash过期时，重读当前字段并修正补丁；不删除expected_sha256或随意增加count。
+本节点本批全部patch在任何设参前校验；跨节点仍以模块事务划分，不能把它当跨节点dry_run。
+只支持无动画/表达式的literal string；带表达式/keys的代码先明确编辑意图，用原设参或资产接口，
+不烘焙后冒充保留动画。输出hash证明文本回读，VEX语法/非空几何/关系须照常验收。
+补丁数量、字符预算与返回字段以verb_help为准。无需全文替换时返回也只含变化摘要。
+
+证据等级：H21.0.440/H22.0.368工具合同、故障注入与行为采用分别记录；弱模型未见任务增益 candidate。
+验证入口：tools/tests/dsh-parameter-patch.test.py、dsh-module-boundaries.test.py。最后核对：2026-09-08。
 
 
 v10候选（H21/H22隔离回归）：node_info返回默认multiparm实际编号；build_module支持显式

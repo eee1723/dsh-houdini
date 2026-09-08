@@ -11,6 +11,7 @@
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
 | 领域方法 | [skills](../skills/)的对应SKILL/reference | docs链接原文，不复制recipe |
+| Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，展示在client.js | 内容复用目录/注册表/请求快照；当前源码、已加载能力和历史请求分开，不手抄提示词与技能正文 |
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
 
 ## 2. 构建与生成
@@ -23,7 +24,9 @@ npm test
 npm pack --dry-run
 ```
 
-只用npm，不用pnpm。build自动生成节点卡文档与Host/client词表，再运行tsc；不要手改lib或生成区。
+只用npm，不用pnpm。build自动生成节点卡文档、Host/client词表和Trace组件/来源清单，再运行tsc；不要手改lib或生成区。
+Trace手写界面在client/trace-view.js与trace-view.css；guidance、persona、注册技能及资源从来源生成，
+不在展示代码复制正文。生成漂移由trace-view回归与gen-trace-client --check验证。
 docs:check是只读漂移/索引/链接/模块覆盖检查，不偷偷修正文档；CI应在build前运行，防止生成步骤掩盖漂移。
 node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加载器、生成器和测试。
 关键参数名对应runtime模板，不能从手册猜数字菜单值或把一次读取的默认值固化为全版本事实。
@@ -58,6 +61,22 @@ node skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs --strict
 
 Python验证脚本在Windows使用UTF-8；若hython缺skill校验依赖，使用已有系统Python，不污染Houdini环境。
 不同实例或renderer的正确性必须由相应行为检查证明，不能拿数值/HOM替身测试当成GUI/语义验收。
+参数默认值更新用[dsh-spare-defaults](../tools/tests/dsh-spare-defaults.test.py)检查当前值/动画、ownership和失败恢复；
+编译后新增参数用[dsh-spare-dependency](../tools/tests/dsh-spare-dependency.test.py)检查源码刷新、动画保持和失败恢复。
+局部源码更新用[dsh-parameter-patch](../tools/tests/dsh-parameter-patch.test.py)检查版本/锚点零写入、
+整批恢复与真实cook失败；[dsh-module-boundaries](../tools/tests/dsh-module-boundaries.test.py)
+区分独立提交保留、同批原子回滚及签名绑定/内部实现错误。
+执行观察用[dsh-execution-observation](../tools/tests/dsh-execution-observation.test.py)检查实际连线/表达式
+依赖、无额外cook、删除和同调用检查顺序；[execution-state](../tools/tests/execution-state.test.mjs)验证
+事件乱序/replay、runtime更换、未返回修改和job状态不复活旧证据。两者不替代GUI外部修改观察。
+结果分层用[result-details](../tools/tests/result-details.test.mjs)验证canonical可读回、分页/防篡改、
+保存失败不触发修改重试，以及默认文本与完整审计各自的统计口径。
+控制摘要用[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)
+覆盖基准失败及Bridge证据，[dsh-interface-evidence](../tools/tests/dsh-interface-evidence.test.py)
+保留真实实例、合法间隙和顶点距离不能证明无碰撞的反例。
+恢复指纹用[dsh-geometry-fingerprint](../tools/tests/dsh-geometry-fingerprint.test.py)区分组目录排列
+和真实成员/ordered顺序/属性变化；[dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py)
+覆盖零写入拒绝、同批其他修改及创建后失败，防止恢复状态被错误降级。
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
 baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
 冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。

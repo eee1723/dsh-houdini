@@ -22,7 +22,7 @@ const END = '// <<< houdini-catalog';
 const catalog = loadCatalog(DOC).map((d) => ({
   domain: d.domain,
   note: d.note,
-  verbs: d.verbs.map((v) => ({ name: v.name, sig: v.sig, desc: v.desc })),
+  verbs: d.verbs.map((v) => ({ name: v.name, sig: v.sig, desc: v.desc, returns: v.returns })),
 }));
 const verbTotal = catalog.reduce((n, d) => n + d.verbs.length, 0);
 const verbNames = catalog.flatMap((domain) => domain.verbs.map((verb) => verb.name)).sort();

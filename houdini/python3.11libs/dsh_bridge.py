@@ -69,8 +69,9 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 16
+_EXECUTION_CONTRACT_VERSION = 21
 _RUNTIME_ID = uuid.uuid4().hex
+_EXECUTION_SEQUENCE = 0
 # Remove the retired v8 callback when reloading an existing runtime.
 if globals().get('_delivery_hip_callback') is not None:
     try:hou.hipFile.removeEventCallback(_delivery_hip_callback)
@@ -168,12 +169,18 @@ def _verb_help(name: str) -> dict:
         suggestions = difflib.get_close_matches(key, sorted(registry), n=8, cutoff=0.35)
         raise ValueError(f"未知动词 {key!r}；相似动词：{suggestions}")
     try:
-        signature = str(inspect.signature(fn))
+        inspected = inspect.signature(fn)
+        signature = str(inspected)
+        returns = inspected.return_annotation
+        return_type = None if returns is inspect.Signature.empty else inspect.formatannotation(returns)
     except Exception:
         signature = None
+        return_type = None
     return {
         "name": key,
         "signature": signature,
+        "return_type": return_type,
+        "call_mode": "exec" if key in _MUTATING_VERB_NAMES else "query_or_exec",
         "doc": inspect.getdoc(fn) or "",
     }
 
@@ -254,6 +261,40 @@ _MUTATING_VERB_NAMES = {
     "hda_patch_section", "hda_set_interface", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit",
 }
+
+# These verbs may cook or manage services but do not author the deliverable's
+# graph/parameters on a successful, restored call. Unknown effects stay unknown.
+_OBSERVATION_VERBS = {'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes',
+    'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
+_GLOBAL_EDIT_VERBS = {'set_timeline', 'scene_save_as', 'hda_create', 'hda_set_section',
+                     'hda_patch_section', 'hda_set_interface'}
+
+
+def _observe_impact(nodes, impact, descendants=False):
+    """No cook: bounded native wire/expression references, before and after edits.
+
+    HOM dependents are based on last cook and cannot prove all dynamic/external
+    dependencies. This is an invalidation hint, never an unaffected-scene proof.
+    """
+    pending = list(nodes)
+    seen = set()
+    while pending:
+        if len(impact['nodes']) >= 256 or len(seen) >= 256:
+            impact['truncated'] = True
+            break
+        node = pending.pop()
+        try:
+            identity = node.sessionId()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            impact['nodes'][identity] = node.path()
+            pending.extend(node.outputs())
+            pending.extend(node.dependents(include_children=False))
+            if descendants and node.isNetwork():
+                pending.extend(node.children())
+        except Exception:
+            impact['unavailable'] = True
 
 _VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
 _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
@@ -656,6 +697,11 @@ def _operation_summary(name: str, result):
     if not isinstance(result, dict):
         return None
     r = result.get('validation', result) if name == 'build_module' else result
+    if name == 'set_parm' and 'patch' in r:
+        return r
+    if name == 'set_parms' and r.get('patched'):
+        return {'node': r['node'], 'ok': r['ok'],
+                'patches': {key: r['set'][key] for key in r['patched']}}
     if name == 'node_info':
         components = [{'name':p['name'],'components':p['components']} for p in r.get('parameters',[]) if len(p.get('components',[]))>1]
         return {k:r[k] for k in ('parent','type','version','visible','operation_card','usage_notes','operation_parameters','operation_parameters_missing','operation_parameter_scope','filter_mode','filter','parameter_count','total_parameter_count','next_action') if k in r} | {
@@ -670,6 +716,8 @@ def _operation_summary(name: str, result):
         return result
     if name == 'geo_attrib_stats' and 'unique_count' in result:
         return result
+    if name == 'create_spare_parms' and result.get('mode') == 'update_defaults':
+        return result
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
         return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
     if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
@@ -679,7 +727,9 @@ def _operation_summary(name: str, result):
               'fresh','file_bytes','stale','user_state_restored','dry_run','valid','node','status',
               'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
-              'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller','baseline_interfaces','pair_tests','reason','parameter_writes','required_outputs')
+              'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
+              'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
+              'pair_tests','reason','parameter_writes','required_outputs')
     out = {k: r[k] for k in fields if k in r}
     if name == 'build_module':
         out.update({k: result[k] for k in ('operation_advisories','operation_advisory_count',
@@ -705,9 +755,28 @@ def _operation_summary(name: str, result):
     return out
 
 
-def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
+class _DispatchBlockedError(RuntimeError):
+    def __init__(self, message, evidence):
+        super().__init__(message)
+        self.evidence = evidence
+
+
+class _VerbArgumentError(TypeError):
+    def __init__(self, message, evidence):
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
+    # Give a precise, zero-write recovery path for repeated discovery mistakes;
+    # do not label TypeErrors raised inside the implementation as argument errors.
+    try:
+        discovery_signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        discovery_signature = None
     def wrapped(*args, **kwargs):
-        if observed_nodes is not None and name in _MUTATING_VERB_NAMES:
+        if observed_nodes is not None and (name in _MUTATING_VERB_NAMES or name in
+                ('describe', 'read_parms', 'list_parms', 'node_provenance', 'display_node', 'sop_output_node')):
             for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller', 'camera', 'target') if k in kwargs]:
                 try:
                     node = value if isinstance(value, hou.Node) else hou.node(value) if isinstance(value, str) and value.startswith('/') else None
@@ -723,7 +792,53 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
         args_json = _verb_value(list(args))
         kwargs_json = {str(k): _verb_value(v) for k, v in kwargs.items()}
         try:
+            if name in _MUTATING_VERB_NAMES:
+                failed = next((entry for entry in ledger if not entry.get('ok', False)), None)
+                if failed is not None:
+                    raise _DispatchBlockedError(
+                        f"{name} blocked before dispatch: earlier verb {failed['verb']} failed; "
+                        "this exec cannot commit. Read-only diagnostics may continue; repair in a new exec.",
+                        {'ok': False, 'phase': 'prior_verb_failure', 'scene_writes': 0,
+                         'dispatched': False, 'failed_verb': failed['verb']})
+            if discovery_signature is not None:
+                try:
+                    discovery_signature.bind(*args, **kwargs)
+                except TypeError as error:
+                    hint = ( ' parent is an existing creation network, not a category. '
+                             'For SOPs use node_info(existing_geo, "box"); if no geometry container exists, '
+                             'first create one with tab_create("/obj", "geo", name=...) through houdini_exec.'
+                             if name == 'node_info' else '')
+                    message = (f'{error}. Call {name}{discovery_signature}. '
+                               f'Use verb_help("{name}") for return type and documentation. '
+                               'This call was not dispatched and made no scene writes.' + hint)
+                    raise _VerbArgumentError(message, {'ok': False, 'phase': 'argument_binding',
+                        'scene_writes': 0, 'dispatched': False, 'signature': str(discovery_signature),
+                        'next_action': f'verb_help("{name}")'}) from error
+            targets = []
+            edits_content = name in _MUTATING_VERB_NAMES and name not in _OBSERVATION_VERBS
+            if impact is not None and edits_content:
+                impact['attempted'] = True
+                if name in _GLOBAL_EDIT_VERBS:
+                    impact['global'] = True
+                for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller', 'target', 'src', 'dst') if k in kwargs]:
+                    try:
+                        node = value if isinstance(value, hou.Node) else hou.node(value) if isinstance(value, str) and value.startswith('/') else None
+                        if node is not None:
+                            targets.append(node)
+                    except hou.Error:
+                        impact['unavailable'] = True
+                if not targets:
+                    impact['global'] = True
+                _observe_impact(targets, impact, descendants=name in ('delete_node', 'rename_node'))
             result = fn(*args, **kwargs)
+            if impact is not None:
+                if edits_content:
+                    impact['last_edit_ledger_index'] = len(ledger) + 1
+                    if name != 'delete_node':
+                        _observe_impact(targets, impact, descendants=name == 'rename_node')
+                if name == 'test_controls' and isinstance(result, dict) and result.get('restored') is not True:
+                    impact['global'] = True
+                    impact['attempted'] = True
             entry = {
                 "verb": name,
                 "ts": round(start, 3),  # 绝对时间戳（epoch 秒）：跨 exec 重建真实调用顺序
@@ -751,6 +866,9 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> {_clip(entry['result'])}  ({entry['ms']}ms)")
             return result
         except BaseException as e:  # 记录失败调用并原样抛出，不改变原语义
+            if impact is not None and name == 'test_controls':
+                impact['global'] = True
+                impact['attempted'] = True
             ledger.append({
                 "verb": name,
                 "ts": round(start, 3),
@@ -763,7 +881,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None):
             if isinstance(e, dsh_hou_helpers.CheckpointError):
                 ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence))
                 ledger[-1]['check_status'] = 'failed'
-            if isinstance(e, dsh_hou_helpers.PreflightError):
+            if isinstance(e, (dsh_hou_helpers.PreflightError, dsh_hou_helpers.ParameterPatchError,
+                              _DispatchBlockedError, _VerbArgumentError)):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
                 ledger[-1]['check_status'] = 'failed'
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
@@ -810,16 +929,19 @@ def run_code(code: str, allow_raw: str | None = None,
     """
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("run_code must execute on Houdini's owning thread")
-    global _review_busy
+    global _review_busy, _EXECUTION_SEQUENCE
+    _EXECUTION_SEQUENCE += 1
+    execution_sequence = _EXECUTION_SEQUENCE
     _review_service.guard_code(owner_session,read_only)
     with _jobs_lock:_review_busy=_review_service.active()
     verb_ledger: list = []
     observed_nodes = {}
+    impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
     namespace = {"hou": hou}
     for _name, _fn in _VERBS.items():
         if read_only and _name in _MUTATING_VERB_NAMES:
             continue
-        namespace[_name] = _make_tracer(_name, _fn, verb_ledger, observed_nodes)
+        namespace[_name] = _make_tracer(_name, _fn, verb_ledger, observed_nodes, impact)
     stdout = _CappedStringIO(_MAX_STREAM_BYTES)
     stderr = _CappedStringIO(_MAX_STREAM_BYTES)
     error = None
@@ -927,15 +1049,28 @@ def run_code(code: str, allow_raw: str | None = None,
         transaction_status = 'no_scene_change'
     else:
         transaction_status = 'recovery_unverified'
-    identities = sorted(set(observed_nodes) | created_nodes)
+    identities = sorted(set(observed_nodes) | created_nodes | set(impact['nodes']))
     states = []
     for identity in identities[:64]:
         node = hou.nodeBySessionId(identity)
-        states.append({'identity': identity, 'prior_path': observed_nodes.get(identity),
+        states.append({'identity': identity, 'prior_path': observed_nodes.get(identity, impact['nodes'].get(identity)),
                        'exists': node is not None, 'path': node.path() if node else None})
     envelope['transaction'] = {'status': transaction_status, 'scope': 'Houdini undoable scene edits only; file/external side effects are separate',
                                'nodes': states, 'nodes_truncated': len(identities) > 64,
-                               'coverage': 'created identities and primary mutation arguments, not all implicit dependencies'}
+                               'coverage': 'created identities, primary arguments and bounded native dependency cone; not all implicit dependencies'}
+    if transaction_status != 'no_scene_change':
+        _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
+        if raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'):
+            impact['global'] = True
+            impact['attempted'] = True
+    else:
+        impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+    envelope['execution'] = {'runtime_id': _RUNTIME_ID, 'sequence': execution_sequence,
+        'observed_at': time.time(), 'frame': float(hou.frame()), 'hip_path': hou.hipFile.path(),
+        'owner_session': owner_session, 'read_only': read_only,
+        'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
+            'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
+            'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
     # 本次 exec 产出的图片（render_frame/render_view/viewport_screenshot 登记）：
     # host 侧经 /media 端点把字节拉回会话工作区，vision/fs 工具才读得到
     # （工作区沙箱；2026-08-19 草地 trace：vision_glance 读 $HIP 截图被拒）。
@@ -976,6 +1111,24 @@ def run_code(code: str, allow_raw: str | None = None,
         except (TypeError, ValueError):
             result = repr(result)
         envelope["result"] = result
+    bindings = []
+    for item in envelope.get('evidence', []):
+        if len(bindings) >= 64:
+            break
+        if item.get('verb') in ('render_view', 'render_frame'):
+            source = item.get('source')
+            target = item.get('target') or (source.get('path') if isinstance(source, dict) else None)
+        else:
+            target = item.get('output') or item.get('node')
+        if isinstance(target, str) and target.startswith('/'):
+            try:
+                node = hou.node(target)
+                bindings.append({'ledger_index': item['ledgerIndex'], 'verb': item['verb'],
+                                 'path': target, 'identity': node.sessionId() if node else None,
+                                 'exists': node is not None})
+            except Exception:
+                envelope['execution']['outputs_unavailable'] = True
+    envelope['execution']['outputs'] = bindings
     return envelope
 
 
