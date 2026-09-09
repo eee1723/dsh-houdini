@@ -131,6 +131,7 @@ quality-contracts用“局部变化但整体bbox不变”和“面积响应通�
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
 baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
 冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。
+冻结protocol-manifest的字节摘要以已提交LF内容为准，由.gitattributes固定检出格式；不得为Windows换行转换改动协议或放宽摘要校验。
 
 ### 发行操作与信任配置
 
