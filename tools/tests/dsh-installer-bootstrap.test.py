@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as tempo
     target = packages / "dsh-houdini.json"
     package = d.read_json(target)
     hosted = Path(package["path"])
-    assert hosted.is_relative_to(install)
+    assert hosted.resolve().is_relative_to(install.resolve())
     assert (hosted / "python/dsh_install_ui.py").is_file()
     assert (hosted / "python3.11libs/pythonrc.py").is_file()
     assert (hosted / "python3.13libs/pythonrc.py").is_file()
