@@ -78,6 +78,20 @@ registration
         : undefined,
   });
 const t = (text) => [{ type: "text", text }];
+// Group the selected request without substituting new source text or dropping unknowns.
+const historicalSystem = 'You are an AI agent powered by DeepSeek Harness.\r\n\r\n'
+  + 'You are a Houdini automation agent powered by OLD-MODEL. Old requirement.\r\n\r\n'
+  + 'UNRECOGNIZED PROVIDER: preserve $HIP and <xml> verbatim.\r\n\r\n'
+  + 'Use the read tool — old implementation.\r\n\r\nUse subagent_fork in the background by default.';
+const promptSections = View.systemSections(historicalSystem);
+assert.equal(promptSections.map(s=>s.text).join(''), historicalSystem);
+assert.equal(promptSections.length,5);
+assert.equal(promptSections[2].category,'其他／来源未识别');
+assert.equal(promptSections[1].source,'presets/houdini/agent.cordis.yml');
+assert(promptSections[4].source.includes('toolName=subagent_fork'));
+assert(!promptSections.some(s=>s.text.includes('glm-5.3-flash')));
+assert.equal(View.systemSections('').length,0);
+assert.equal(View.systemSections('Houdini outputs belong under $HIP; historical relay rule.')[0].source,'src/index.ts · dsh-houdini:guidance');
 const req = {
   purpose: "assistant",
   turn: 1,
@@ -403,6 +417,7 @@ assert.match(content(tree), /NEW SYSTEM/);
 const picker = all(tree).find((n) => n.type === "select");
 picker.props.onChange({ target: { value: "assistant:2" } });
 assert.match(content(render()), /HISTORICAL SYSTEM/);
+assert(all(render()).filter(n=>n.type==='details' && /tr-prompt-/.test(n.props.className||'')).every(n=>!n.props.open),'prompt groups and bodies default closed');
 assert(
   !content(render()).includes("NEW SYSTEM"),
   "history must not silently use latest header",
@@ -485,6 +500,11 @@ const detailRead=View.model({eventNodes:[{...result('detail','houdini_query',2,2
   call:{name:'houdini_query',argsRaw:JSON.stringify({result_ref:'a'.repeat(64)})}}]}).entries[0];
 assert.equal(detailRead.kind,'read');
 assert.equal(detailRead.title,'读取历史工具结果');
+const recoveredRequest=View.model({eventNodes:[{...result('recover','houdini_query',3,30,'Executed successfully.'),
+  call:{name:'houdini_query',argsRaw:JSON.stringify({request_ref:'a'.repeat(32)+'.'+'b'.repeat(32)})},
+  meta:{canonical:{ok:true,requestReceipt:{status:'done',retrieved:true},verbs:[{verb:'set_parm',ok:true,args:[],result:{value:1},ms:1}]}}}]}).entries[0];
+assert.equal(recoveredRequest.verbs.length,0,'recovered execution is not a second mutation in the timeline');
+assert.equal(recoveredRequest.title,'查回原请求');
 const sourceRead=View.model({eventNodes:[{...result('source','houdini_query',3,30,'Executed successfully.'),
   call:{name:'houdini_query',argsRaw:JSON.stringify({source_ref:'index'})}}]}).entries[0];
 assert.equal(sourceRead.kind,'read');
@@ -523,3 +543,29 @@ for (const [i, ledger] of detailCases.entries()) {
   assert.equal(callRows(tree).length,1,'a failure detail must not remove the trace');
 }
 console.log('Trace failed-detail rendering: missing/null/falsy returns, errors, summaries and back navigation passed');
+
+// The generated UI and offline reports share the raw-effect classifier.
+const effectCases=[
+  ['blocked-backup','houdini_exec',{code:'copy_backup()'},false,'blocked','gate_blocked'],
+  ['blocked-query','houdini_query',{code:'change_path()'},false,'read_only_blocked','gate_blocked'],
+  ['dynamic','houdini_exec',{code:'runtime.check()'},true,'read_only','unknown'],
+  ['readonly','houdini_query',{code:'hou.frame()'},true,'read_only','read_only_query'],
+  ['detail-history','houdini_query',{result_ref:'stored'},true,'blocked',null],
+];
+const effectNodes=effectCases.map(([id,name,args,ok,gateOutcome],i)=>({
+  ...result(id,name,i+1,10+i,'See retained result.'),
+  call:{name,argsRaw:JSON.stringify(args)},
+  meta:{canonical:{ok,verbs:[],transaction:{status:'no_scene_change'},rawUsage:{gateOutcome}}},
+}));
+const effectEntries=View.model({eventNodes:effectNodes}).entries;
+for(const [id,, , , ,expected] of effectCases) {
+  assert.equal(effectEntries.find(e=>e.id===id).rawEffect,expected);
+}
+assert.equal(effectEntries.find(e=>e.id==='blocked-query').state,'Gate 拦截');
+assert.equal(effectEntries.find(e=>e.id==='detail-history').gateBlocked,false,'historical blocked receipts are not new Gate rejections');
+assert(!effectEntries.find(e=>e.id==='dynamic').summary.includes('只读'));
+hooks=[];snapshot.runningCalls=[];snapshot.eventNodes=effectNodes;
+tree=render();tree=click('分析');
+assert.match(content(tree),/无动词副作用未知/);
+assert.match(content(tree),/Host 历史结果 \/ 来源回读/);
+console.log('Trace UI raw effects: canonical blocked query/exec, dynamic unknown, historical detail exclusion passed');

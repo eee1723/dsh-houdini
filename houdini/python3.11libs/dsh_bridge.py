@@ -61,7 +61,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
 import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
-import dsh_review
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
 # threads must not call HOM, including for seemingly harmless health metadata.
@@ -69,15 +68,15 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 22
+_EXECUTION_CONTRACT_VERSION = 26
 _RUNTIME_ID = uuid.uuid4().hex
+from dsh_requests import RequestRegistry
+_request_registry = RequestRegistry(_RUNTIME_ID)
 _EXECUTION_SEQUENCE = 0
 # Remove the retired v8 callback when reloading an existing runtime.
 if globals().get('_delivery_hip_callback') is not None:
     try:hou.hipFile.removeEventCallback(_delivery_hip_callback)
     except hou.Error:pass
-_review_service = dsh_review.ReviewService()
-_review_busy = False  # job admission mirror, updated under _jobs_lock
 
 # --- limits (kept small so a runaway agent cannot exhaust Houdini) ----------
 _MAX_STREAM_BYTES = 1024 * 1024          # cap captured stdout/stderr per exec
@@ -697,6 +696,8 @@ def _operation_summary(name: str, result):
     if not isinstance(result, dict):
         return None
     r = result.get('validation', result) if name == 'build_module' else result
+    if name in ('set_parm','set_parms') and ('evaluation' in r or 'evaluations' in r):
+        return r
     if name == 'set_parm' and 'patch' in r:
         return r
     if name == 'set_parms' and r.get('patched'):
@@ -849,6 +850,10 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 "ms": round((time.time() - start) * 1000, 1),
             }
             check = result.get("validation", result) if isinstance(result, dict) else None
+            if name=='set_parm' and isinstance(check,dict) and isinstance(check.get('evaluation'),dict):
+                status=check['evaluation'].get('status')
+                entry['check_status']={'failed':'failed','warning':'warning','unverified':'unverified'}.get(status,'passed')
+                entry['check_scope']='parameter evaluation only; geometry effect unverified'
             if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls") and isinstance(check, dict):
                 if check.get('status') == 'unverified':
                     entry['check_status'] = 'unverified'
@@ -929,11 +934,9 @@ def run_code(code: str, allow_raw: str | None = None,
     """
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("run_code must execute on Houdini's owning thread")
-    global _review_busy, _EXECUTION_SEQUENCE
+    global _EXECUTION_SEQUENCE
     _EXECUTION_SEQUENCE += 1
     execution_sequence = _EXECUTION_SEQUENCE
-    _review_service.guard_code(owner_session,read_only)
-    with _jobs_lock:_review_busy=_review_service.active()
     verb_ledger: list = []
     observed_nodes = {}
     impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
@@ -1244,28 +1247,6 @@ def _job_activity() -> dict:
     }
 
 
-def run_review(body):
-    """Opaque Host lease transport; model receives only scope and compact tests."""
-    global _review_busy
-    if threading.get_ident()!=_HOU_THREAD_ID:raise RuntimeError('review requires owning thread')
-    if set(body)-{'request','owner_session','owner_call','expected_contract'}:raise ValueError('unknown review transport fields')
-    request=body.get('request')
-    if not isinstance(request,dict):raise ValueError('review request must be an object')
-    with _jobs_lock:
-        if request.get('action')=='begin' and any(j.get('status') in ('queued','running') for j in _jobs.values()):
-            raise ValueError('wait for active jobs before reviewing')
-        _review_busy=True
-    try:
-        with _exec_lock,dsh_hou_helpers._execution_owner(body.get('owner_session'),body.get('owner_call')):
-            dsh_hou_helpers._PRODUCED_IMAGES.clear()
-            result=_review_service.execute(request,body.get('owner_session'),body.get('owner_call'))
-            images=[p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
-            return {'ok':True,'stdout':'','stderr':'','result':_jsonable(result),
-                    **({'images':images} if images else {})}
-    finally:
-        with _jobs_lock:_review_busy=_review_service.active()
-
-
 def _job_body(job_id: str, code: str, allow_raw: str | None = None,
               owner_session: str | None = None,
               owner_call: str | None = None) -> dict | None:
@@ -1405,6 +1386,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path == '/requests/status':
+            if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v for v in body.values()):
+                self._send({'ok':False,'error':'request_ref and owner_session required'},status=400)
+                return
+            self._send({'ok':True,'stdout':'','stderr':'',
+                        'requestReceipt':(_request_registry.recent(body['owner_session']) if body['request_ref']=='index'
+                                          else _request_registry.status(body['request_ref'],body['owner_session']))})
+            return
         if self.path == '/context':
             if type(body.get('schema_version')) is not int or body.get('schema_version') != 1 or set(body) != {'schema_version'}:
                 self._send({'ok': False, 'error': 'context requires schema_version=1 only'}, status=400)
@@ -1415,13 +1404,6 @@ class _Handler(BaseHTTPRequestHandler):
                     lambda: scene_context(_RUNTIME_ID, _HOU_THREAD_ID), timeout=1.5)})
             except (TimeoutError, RuntimeError) as exc:
                 self._send({'ok': False, 'status': 'unavailable', 'reason': str(exc)})
-            return
-        if self.path=='/review':
-            if len(json.dumps(body).encode('utf-8'))>80*1024:
-                self._send({'ok':False,'error':'review request exceeds 80KiB'},status=413);return
-            if body.get('expected_contract')!={'version':_EXECUTION_CONTRACT_VERSION,'hash':_VERB_CATALOG_HASH}:
-                self._send({'ok':False,'error':'execution contract mismatch'},status=409);return
-            self._send(_execute(lambda:run_review(body)))
             return
         if self.path in ("/exec", "/jobs"):
             expected = body.get("expected_contract")
@@ -1442,20 +1424,59 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
                 return
             read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
-            self._send(_execute(lambda: run_code(
+            invoke=lambda: run_code(
                 code,
                 allow_raw,
                 str(owner_session) if owner_session else None,
                 str(owner_call) if owner_call else None,
                 read_only,
-            )))
+            )
+            ref=body.get('request_ref')
+            if ref is None:
+                self._send(_execute(invoke))
+                return
+            try:
+                admitted=_request_registry.reserve(ref,owner_session,body)
+            except ValueError as error:
+                self._send({'ok':False,'error':str(error)},status=409)
+                return
+            if not admitted:
+                receipt=_request_registry.status(ref,owner_session)
+                if receipt['status']=='done':self._send(receipt['result'])
+                else:self._send({'ok':False,'stdout':'','stderr':'','requestReceipt':receipt,
+                                'error':'Request already admitted; retrieve status instead of resubmitting.'})
+                return
+            def tracked():
+                _request_registry.running(ref)
+                try:result=invoke()
+                except BaseException:
+                    result={'ok':False,'stdout':'','stderr':'','error':traceback.format_exc()}
+                result['requestReceipt']={'request_ref':ref,'runtime_id':_RUNTIME_ID,'status':'done'}
+                _request_registry.complete(ref,result)
+                return result
+            try:
+                result=_execute(tracked)
+            except BaseException as error:
+                # Only a still queued receipt proves that HOM never began.
+                if _request_registry.status(ref,owner_session)['status']=='queued':
+                    _request_registry.fail_before_dispatch(ref,error)
+                raise
+            self._send(result)
             return
         if self.path == "/jobs":
+            ref=body.get('request_ref')
+            owner_session=body.get('owner_session')
+            if ref is not None:
+                try:admitted=_request_registry.reserve(ref,owner_session,{**body,'request_kind':'job_submit'})
+                except ValueError as error:
+                    self._send({'ok':False,'error':str(error)},status=409);return
+                if not admitted:
+                    receipt=_request_registry.status(ref,owner_session)
+                    self._send(receipt['result'] if receipt['status']=='done' else {'requestReceipt':receipt})
+                    return
             job_id = uuid.uuid4().hex[:12]
             with _jobs_lock:
-                lease=_review_service.lease
-                review_blocked=_review_busy and (lease is None or time.monotonic()<=lease['expires'])
-                overloaded = review_blocked or sum(j['status'] in ('queued', 'running') for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
+                overloaded = sum(j['status'] in ('queued', 'running') for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
                 if not overloaded:
                     _jobs[job_id] = {
                         "jobId": job_id, "status": "queued",
@@ -1463,13 +1484,14 @@ class _Handler(BaseHTTPRequestHandler):
                     }
                     _job_meta[job_id] = time.time()
             if overloaded:
+                if ref is not None:_request_registry.fail_before_dispatch(ref,'job admission refused: active job limit')
                 self._send({"ok": False, "error": "too many active Houdini jobs; await existing work"}, status=429)
                 return
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
             owner_session = body.get("owner_session")
             owner_call = body.get("owner_call")
-            threading.Thread(
+            worker=threading.Thread(
                 target=_run_job,
                 args=(
                     job_id,
@@ -1479,9 +1501,21 @@ class _Handler(BaseHTTPRequestHandler):
                     str(owner_call) if owner_call else None,
                 ),
                 daemon=True,
-            ).start()
+            )
+            try:worker.start()
+            except BaseException:
+                with _jobs_lock:
+                    _jobs.pop(job_id,None);_job_meta.pop(job_id,None)
+                if ref is not None:_request_registry.fail_before_dispatch(ref,'job worker did not start')
+                raise
+            handle={'jobId':job_id}
+            if ref is not None:
+                handle['requestReceipt']={'request_ref':ref,'runtime_id':_RUNTIME_ID,
+                                          'status':'job_submitted','jobId':job_id,
+                                          'note':'Admission confirmed, not execution completion; collect with houdini_job_status.'}
+                _request_registry.complete(ref,handle)
             _prune_jobs()
-            self._send({"jobId": job_id})
+            self._send(handle)
             return
         parts = [p for p in self.path.split("/") if p]
         if len(parts) == 3 and parts[0] == "jobs":
@@ -1558,13 +1592,12 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     In GUI mode call this from the main thread (Python Shell / menu — the
     documented entry points are) so the execution pump binds to the Qt loop.
     """
-    global _server, _RUNTIME_ID, _review_service, _review_busy
+    global _server, _RUNTIME_ID, _request_registry
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("start must run on Houdini's owning thread")
     stop()
     _RUNTIME_ID=uuid.uuid4().hex
-    _review_service=dsh_review.ReviewService()
-    _review_busy=False
+    _request_registry=RequestRegistry(_RUNTIME_ID)
     if hou.isUIAvailable() and not _install_gui_pump():
         raise RuntimeError("Cannot start bridge without a Houdini GUI main-thread pump")
     try:

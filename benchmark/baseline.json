@@ -2,16 +2,16 @@
   "schemaVersion": 2,
   "createdAt": "2026-09-04T10:44:56.2691447Z",
   "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "e9923efa5edcb90fbd887a167a3d0bd5c32f378cbdb77b226ddba75dbd4d553f",
-  "compatibilitySurfaceSha256": "4292b070346a263517546f7c2551bbfa674261909900a7360e03e2d460c0bc5b",
+  "agentSurfaceSha256": "c8b6681701768882701fc976f01c4c3b2b446aa24d2af4692a3f6a8764915d5a",
+  "compatibilitySurfaceSha256": "5709bde9d1e78830eb10a6bfa181726c637137232b51b5df201439e6d46d93d4",
   "runtimeVerification": {
     "matchesBaseline": false,
-    "note": "v21 source candidate: retained canonical results with bounded historical detail reads, compact native model presentation, ordered Bridge runtime/impact observations and event-derived execution-state context. Prior v19/v20 fixes and pending changes retained. Isolated verification is separate from live loading; historical runtime fields below remain unchanged.",
+    "note": "v26 source candidate: independent review removed; native multimodal image attachments replace secondary vision tools and workspace media copies; explicit skill roots and grouped historical System display. Prior pending verification retained; no live reload or new-session acceptance.",
     "verifiedAt": "2026-09-04T00:00:00.0000000Z",
     "loadedRepositoryCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
     "workingTreeDirty": true,
     "pendingReload": [
-      "Execution contract v21 Host/Bridge: 58 verbs",
+      "Execution contract v26 Host/Bridge: 58 verbs",
       "Shared camera framing module and composed USD preflight",
       "Template uniqueness and expected-transform metrics",
       "Operation cards and SOP/Karma workflow updates",
@@ -25,7 +25,9 @@
       "Spare interface compiled dependency refresh and prior-failure dispatch guard",
       "Request-level offline telemetry and original requirement retention",
       "Literal parameter patches/selective reads/signature binding diagnostics and retry metrics",
-      "Canonical result retention/compact native text and event-derived execution observations"
+      "Canonical result retention/compact native text and event-derived execution observations",
+      "Exact control value/animation/post-cook restoration checks",
+      "Same-runtime exec request receipt and status recovery"
     ],
     "houdini": "21.0.440",
     "dsh": "0.1.2-rc.1",

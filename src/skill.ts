@@ -18,7 +18,6 @@ type ContextWithSkills = Context & { skills: SkillRegistryLike }
 
 const SKILLS = [
   { name: 'houdini-trace-analysis', dir: 'houdini-trace-analysis' },
-  { name: 'houdini-asset-review', dir: 'houdini-asset-review' },
   { name: 'houdini-sop-workflow', dir: 'houdini-sop-workflow' },
   { name: 'houdini-solaris-karma-workflow', dir: 'houdini-solaris-karma-workflow' },
   { name: 'houdini-rig-animation-workflow', dir: 'houdini-rig-animation-workflow' },

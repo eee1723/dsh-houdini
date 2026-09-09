@@ -64,10 +64,21 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 
 ## 4. 回归与发布
 
+[表达式分层诊断](../tools/tests/dsh-expression-diagnostics.test.py)在H21/H22验证合法0、原生写入失败、
+错误函数/语法/Python求值、缺失引用warning、无关cook错误和参数/批次动画恢复；求值成功
+但空输出的反例仍由verify_network拒绝，不由set_parm冒充几何验收。
+
+控制恢复用[dsh-control-state-restoration](../tools/tests/dsh-control-state-restoration.test.py)验证几何相同但
+参数/动画错误的反例、恢复cook期间变值、OBJ主控同批设值/追加folder与后续独立undo；请求恢复用[dsh-request-recovery](../tools/tests/dsh-request-recovery.test.py)
+及[Host回包恢复](../tools/tests/request-recovery.test.mjs)覆盖队列、运行中、断联、坏JSON、超时、重复身份、
+结果过期、runtime变更、jobs提交回包丢失、回执索引、队列取消和不重复修改。查回jobId只证明提交，
+迟到提交回执不复活已结束job；迟到running/unknown或Bridge结果过期不抹除Host已收到的完成回执。
+AbortSignal取消后的查回验证HTTP客户端，不能代替实际Host停止按钮、丢弃结果与新session用户路径验收。
+
 npm test发现并运行tools/tests下全部Node测试。涉及HOM时在隔离hython、隔离偏好目录中运行
 tools/tests/*.test.py，目标版本覆盖H21/H22；不要连接用户live会话或load/save源HIP。
 至少覆盖Raw Gate、node ownership、caught-failure、tab-create-failure、object-parenting、
-scene/network/render contract；节点知识、构图、控制或review变更再跑相应回归。
+scene/network/render contract；节点知识、构图、控制变更再跑相应回归。
 
 ```powershell
 $env:HOUDINI_PATH='&'
@@ -92,7 +103,8 @@ Python验证脚本在Windows使用UTF-8；若hython缺skill校验依赖，使用
 保存失败不触发修改重试，以及默认文本与完整审计各自的统计口径。
 任务来源用[task-sources](../tools/tests/task-sources.test.mjs)验证用户/注入来源隔离、澄清失败与replay、
 原文分页回读、session隔离及超预算；[scene-context](../tools/tests/scene-context.test.mjs)覆盖首轮claim、
-上下文抑制与模板转义，不以这些测试替代复杂任务规划、续接及完成行为验收。
+按需指代、普通查询零追加、独立提醒去重/解除、surface替换恢复、上下文抑制与模板转义，
+并用DSH Session实际deriveMessages检查消息不累积；不以这些测试替代live模型输入及复杂任务规划验收。
 控制摘要用[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)
 覆盖基准失败及Bridge证据，[dsh-interface-evidence](../tools/tests/dsh-interface-evidence.test.py)
 保留真实实例、合法间隙和顶点距离不能证明无碰撞的反例。

@@ -288,6 +288,13 @@ const VISION_REFUSAL = [
   /images?.{0,20}(?:omitted|not (?:available|provided|attached))/i,
 ];
 
+/** Native output delivery is observable; model interpretation remains a separate judgement. */
+export function nativeImageEvidence(steps) {
+  return steps.flatMap(step => (Array.isArray(step.canonical?.imageAttachments) ? step.canonical.imageAttachments : [])
+    .map(item => ({index:step.index,path:item.from,attachmentId:item.attachment?.attachmentId ?? null,
+      delivered:!!item.attachment?.attachmentId && !item.error,error:item.error ?? null,semanticStatus:'unverified'})));
+}
+
 /** Distinguish tool transport, image delivery, setup, and actual semantic inspection. */
 export function classifyVisionEvidence(step) {
   const tool = String(step.tool || '');
@@ -337,26 +344,46 @@ export function isStructuredHoudiniCall(step) {
   return step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
 }
 
+export function isHoudiniDetailRead(step) {
+  return step.tool === 'houdini_query' && Boolean(step.args?.result_ref || step.args?.request_ref || step.args?.source_ref);
+}
+
+/** Classify evidence, not arbitrary Python semantics. Kept dependency-free so
+ * the generated Trace client uses exactly the same rules as offline reports.
+ * Gate "read_only" describes static raw scanning, even for mutating verbs;
+ * no_scene_change excludes neither file I/O nor module/global side effects.
+ */
+export function classifyRawEffect(step) {
+  const usage = step.canonical?.rawUsage ?? step.rawUsage;
+  const failed = step.failed || step.canonical?.ok === false;
+  const outcome = usage?.gateOutcome;
+  const text = String(step.resultText ?? step.resultPreview ?? '');
+  if (outcome === 'blocked' || outcome === 'read_only_blocked'
+    || (failed && /raw-hou gate: blocked BEFORE execution|houdini_query is read-only and rejected this code BEFORE execution/i.test(text))) return 'gate_blocked';
+  // Canonical/raw-usage arrays take precedence over method-name heuristics.
+  if (usage && !usage._raw) {
+    if (usage.coveredMutations?.length) return 'mutation_candidate';
+    if (usage.suspectedMutations?.length || outcome === 'exempted') return 'suspected_effect';
+  } else if (step.mutatingRawMethods?.length) return 'mutation_candidate';
+  if (failed) return 'failed';
+  if (step.tool === 'houdini_query' && step.canonical?.execution?.read_only !== false) return 'read_only_query';
+  return 'unknown';
+}
+
 export function collectVerbAdoption(steps) {
-  const detailReads = steps.filter(step => step.tool === 'houdini_query' && step.args?.result_ref);
+  const detailReads = steps.filter(isHoudiniDetailRead);
   const houdini = steps.filter((step) => step.isHoudini && !detailReads.includes(step));
   const structured = houdini.filter(isStructuredHoudiniCall);
   const python = houdini.filter(step=>!isStructuredHoudiniCall(step));
   const withVerbs = houdini.filter((step) => (step.verbs || []).length > 0);
   const verbCalls = houdini.reduce((sum, step) => sum + (step.verbs || []).length, 0);
-  const rawReadOnly = python.filter((step) => (
-    !(step.verbs || []).length && !(step.mutatingRawMethods || []).length
-  ));
+  const raw = python.filter(step => !(step.verbs || []).length);
+  const rawReadOnly = raw.filter(step => classifyRawEffect(step) === 'read_only_query');
   const exec = python.filter((step) => step.tool === 'houdini_exec');
   const successfulExec = exec.filter((step) => !step.failed);
   const successfulExecWithVerbs = successfulExec.filter((step) => (step.verbs || []).length > 0);
-  const verblessRawMutation = houdini.filter((step) => (
-    !(step.verbs || []).length && (step.mutatingRawMethods || []).length > 0
-  ));
-  const blockedRawMutation = verblessRawMutation.filter((step) => (
-    step.failed && /raw-hou gate: blocked BEFORE execution/i.test(String(step.resultPreview ?? step.resultText ?? ''))
-  ));
-  const successfulRawMutation = verblessRawMutation.filter((step) => !step.failed);
+  const blockedRawMutation = raw.filter(step => classifyRawEffect(step) === 'gate_blocked');
+  const successfulRawMutation = raw.filter(step => !step.failed && classifyRawEffect(step) === 'mutation_candidate');
   const pct = (part, total) => total ? Math.round((part / total) * 1000) / 10 : null;
   return {
     houdiniCalls: houdini.length,
@@ -366,6 +393,9 @@ export function collectVerbAdoption(steps) {
     verbCalls,
     verbDensity: houdini.length ? Math.round((verbCalls / houdini.length) * 100) / 100 : 0,
     rawReadOnlyCalls: rawReadOnly.length,
+    rawSuspectedEffectCalls: raw.filter(step => classifyRawEffect(step) === 'suspected_effect').length,
+    rawUnknownEffectCalls: raw.filter(step => classifyRawEffect(step) === 'unknown').length,
+    rawFailedCalls: raw.filter(step => classifyRawEffect(step) === 'failed').length,
     execCalls: exec.length,
     successfulExecCalls: successfulExec.length,
     successfulExecWithVerbs: successfulExecWithVerbs.length,
@@ -436,10 +466,149 @@ function stepIndex(step, fallback) {
 }
 
 function sceneMutation(step) {
+  if (step.recoveredExecution || step.executionReplay || step.canonical?.requestReceipt?.retrieved) return false;
   if (step.failed) return false;
   if ((step.verbs || []).some((verb) => verb.verb === 'build_module' && parseLedgerArgs(verb.args ?? verb.argsText).kwargs.dry_run !== true)) return true;
   if ((step.verbs || []).some((verb) => MUTATING_VERBS.has(verb.verb))) return true;
   return (step.mutatingRawMethods || []).some((name) => !['save', 'render'].includes(String(name)));
+}
+
+function confirmedAnswers(indexed) {
+  const rows=[];
+  for(const step of indexed) {
+    if(step.tool!=='ask_user_question' || step.failed)continue;
+    const result=tryJson(String(step.resultText ?? step.resultPreview ?? ''));
+    for(const answer of Array.isArray(result?.answers)?result.answers:[]) {
+      if(typeof answer?.id!=='string'||!answer.id)continue;
+      const matches=(step.args?.questions||[]).filter(q=>q.id===answer.id);
+      if(matches.length!==1)continue;
+      const q=matches[0];
+      const selected=Array.isArray(answer.selected)?answer.selected.filter(v=>typeof v==='string'&&v):[];
+      const options=selected.flatMap(label=>{
+        const found=(q.options||[]).filter(o=>o.label===label);
+        return found.length===1 ? [{label,description:found[0].description||''}] : [];
+      });
+      const custom=typeof answer.custom==='string'?answer.custom.trim():'';
+      if(!options.length&&!custom)continue;
+      rows.push({index:step.index,question_id:answer.id,selected:options,custom,
+        text:[...options.map(o=>`${o.label} ${o.description}`),custom].filter(Boolean).join('\n'),
+        question_header:q.header||'',provenance:'successful answer matched by question id; only selected option descriptions and actual custom text'});
+    }
+  }
+  return rows;
+}
+
+function handwrittenRelationProbe(step) {
+  if(step.failed || ['rolled_back','recovery_unverified'].includes(step.transaction?.status) || step.rollback?.applied)return null;
+  // Remove embedded source and comments before looking for actual Python
+  // geometry access. This is lexical candidate detection, not dataflow proof.
+  const code=String(step.code||'').replace(/'''[\s\S]*?'''|"""[\s\S]*?"""/g,'"embedded_source"')
+    .replace(/^\s*#.*$/gm,'');
+  const executable=code.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,'"literal"').replace(/#.*$/gm,'');
+  if(!/\.\s*(?:geometry(?:AtFrame)?|boundingBox|attribValue|position)\s*\(/.test(executable)
+      || !/\bprint\s*\(|__result__\s*=/.test(executable))return null;
+  const canonical=step.canonical;
+  let output=canonical ? [canonical.stdout,canonical.result===undefined?'':JSON.stringify(canonical.result)].filter(Boolean).join('\n') : '';
+  if(!canonical) {
+    const text=String(step.resultText??step.resultPreview??'');
+    const stdout=text.match(/(?:^|\n\n)stdout:\n([\s\S]*?)(?=\n\n[\w_-]+(?:[^\n]*)?:\n|$)/)?.[1];
+    const result=text.includes('__result__:')?execResultFromPreview(text):null;
+    output=[stdout,result===null||result===undefined?'':JSON.stringify(result)].filter(Boolean).join('\n');
+    if(!output&&!/verbs \(\d+\):|operation-evidence:/.test(text))output=text;
+  }
+  output=output.split('\n').filter(line=>!line.startsWith('[verb] ')).join('\n');
+  const relation=new RegExp(RELATION_PATTERN.source+'|gap|offset_error|alignment|同心|对齐|端口','i');
+  const numeric=v=>typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean'
+    || Array.isArray(v)&&v.length>0&&v.every(numeric);
+  const measured=[];
+  const inspect=(value,path='')=>{
+    if(value===null||typeof value!=='object')return;
+    for(const [name,v] of Object.entries(value)) {
+      if(['parms','parameters','snippet','code','source_code'].includes(name))continue;
+      if(relation.test(path+'/'+name)&&numeric(v))measured.push({field:path+'/'+name,value:v});
+      else if(typeof v==='object')inspect(v,path+'/'+name);
+    }
+  };
+  const parsed=canonical?.result??(String(step.resultText??step.resultPreview??'').includes('__result__:')?execResultFromPreview(step.resultText??step.resultPreview):tryJson(output));
+  inspect(parsed);
+  const printed=new RegExp('(?:'+relation.source+')\\s*(?:[:=]\\s*|\\s+)(?:[+-]?\\d|true\\b|false\\b)','i');
+  // Structured source dumps are not free-form diagnostic lines.
+  const printedMeasurement=!parsed&&output.split('\n').some(line=>printed.test(line));
+  if(!measured.length&&!printedMeasurement)return null;
+  return {index:step.index,kind:'handwritten_measurement_candidate',
+    measuredFields:measured.slice(0,16),
+    resultExcerpt:output.slice(0,800),
+    scope:'Geometry access and relation-labelled numeric/boolean output observed; correctness, entity scope, thresholds and artistic quality are not certified.'};
+}
+
+function visualFreshness(indexed, assistantMessages) {
+  const produced=[],inspections=[];
+  const key=p=>typeof p==='string'?p.replaceAll('\\','/').replace(/^([A-Z]):/,(_,d)=>d.toLowerCase()+':'):null;
+  for(const step of indexed) {
+    if(step.recoveredExecution || step.executionReplay || step.canonical?.requestReceipt?.retrieved)continue;
+    for(const v of step.verbs||[]) {
+      if(!['render_view','render_frame'].includes(v.verb)||v.ok===false||step.failed)continue;
+      const result=verbResult(v.result??v.detail);
+      const media=step.canonical?.media||[];
+      const path=result.output||result.picture||partialJsonString(v.result??v.detail,'output')[0];
+      if(typeof path!=='string')continue;
+      const target=nodePath(parseLedgerArgs(v.args??v.argsText).positional[0]);
+      const kwargs=parseLedgerArgs(v.args??v.argsText).kwargs;
+      const view=JSON.stringify([kwargs.direction??null,kwargs.focus_group??null,kwargs.framing??null,kwargs.frame??result.frame??null]);
+      const aliases=[path,...media.filter(m=>key(m.from)===key(path)&&!m.error).map(m=>m.to)];
+      // Legacy native events only retained the explicit textual relay mapping.
+      // Never guess links by matching a basename or content-hash prefix.
+      for(const line of String(step.resultText??step.resultPreview??'').split('\n')) {
+        const mapped=line.trim().match(/^- (.+?) -> (.+) \(\d+ KB\)$/);
+        if(mapped&&key(mapped[1])===key(path))aliases.push(mapped[2]);
+      }
+      produced.push({index:step.index,verb:v.verb,path,target,view,aliases:aliases.map(key),
+        invalidTransaction:step.transaction?.status==='rolled_back'||step.rollback?.applied===true,
+        source:result.source||null});
+    }
+    const vision=classifyVisionEvidence(step);
+    if(vision.role!=='inspection')continue;
+    for(const path of vision.images) {
+      const image=[...produced].reverse().find(p=>p.aliases.includes(key(path)));
+      const row={index:step.index,path,accessSucceeded:vision.semanticOk===true,
+        view:image?.view??null,
+        productionIndex:image?.index??null,target:image?.target??null,
+        status:!vision.semanticOk?'inspection_access_failed':!image?'unlinked_image':image.invalidTransaction?'invalidated_transaction':'no_recorded_change',
+        changedAt:[]};
+      if(image&&vision.semanticOk&&!image.invalidTransaction)for(const later of indexed.filter(s=>s.index>image.index)) {
+        const uncertain=later.transaction?.status==='recovery_unverified'||later.rollback?.error
+          || (later.failed&&later.rollback?.supported===false);
+        if(!sceneMutation(later)&&!uncertain)continue;
+        if(uncertain) {
+          if(row.status!=='stale_after_recorded_target_change')row.status='freshness_unverified_after_failed_execution';
+          row.changedAt.push(later.index);continue;
+        }
+        const verbs=later.verbs||[];
+        if(verbs.length&&verbs.every(v=>['scene_save','layout_nodes','create_bookmark','delete_bookmark'].includes(v.verb)))continue;
+        const impact=later.canonical?.execution?.impact;
+        const paths=impact?.nodes?.map(n=>n.path)||verbs.flatMap(v=>parseLedgerArgs(v.args??v.argsText).positional.filter(p=>typeof p==='string'&&p.startsWith('/')));
+        const target=image.target;
+        const matched=target&&paths.some(p=>p===target||target.startsWith(p+'/'));
+        if(matched||impact?.global) {
+          row.status='stale_after_recorded_target_change';row.changedAt.push(later.index);
+        }else {
+          if(row.status==='no_recorded_change')row.status='freshness_unverified_after_unscoped_change';
+          row.changedAt.push(later.index);
+        }
+      }
+      inspections.push(row);
+    }
+  }
+  const latest=new Map();
+  for(const row of inspections)if(row.target) {
+    const key=JSON.stringify([row.target,row.view]);
+    if(row.accessSucceeded || !latest.get(key)?.accessSucceeded)latest.set(key,row);
+  }
+  const final=String(assistantMessages?.at(-1)?.text||'');
+  const claimsPass=/(?:视觉|图像|各视角).{0,28}(?:通过|确认无误|均正常)|visual.{0,28}(?:passed|verified)/i.test(final)
+    && !/(?:视觉|图像).{0,12}(?:未验证|未通过)|visual.{0,12}unverified/i.test(final);
+  return {inspections,latestInspections:[...latest.values()],finalClaimsVisualPass:claimsPass,
+    scope:'Links rendered paths and canonical relay aliases. Freshness is evaluated through trace end, not inspection time. Latest views are grouped by known target/framing inputs, not inferred complete view coverage. Successful access does not prove correct visual judgement; no_recorded_change is not live validity.'};
 }
 
 function stableValue(value) {
@@ -578,6 +747,45 @@ function finalGeometryCountClaim(assistantMessages) {
   };
 }
 
+function auditReviewEvidence(steps, assistantMessages) {
+  const sourceReads=[], inspections=[];
+  const excerpt=text=>({text:String(text||'').slice(0,1600),truncated:String(text||'').length>1600});
+  for(const step of steps) {
+    if(step.tool==='houdini_query' && typeof step.args?.source_ref==='string') {
+      const page=step.canonical?.result ?? execResultFromPreview(step.resultText??step.resultPreview);
+      const available=!step.failed && step.canonical?.ok!==false
+        && page?.source_ref===step.args.source_ref && page?.format==='json_text_page' && typeof page.text==='string';
+      sourceReads.push({index:step.index,source_ref:step.args.source_ref,
+        mode:step.args.source_ref==='index'?'discovery':'source_body',
+        status:available?'page_returned':step.failed||step.canonical?.ok===false?'read_failed':'return_unverified',
+        ...(available?{offset:page.offset,returned_chars:page.text.length,total_chars:page.total_chars,next_offset:page.next_offset}:{}),
+      });
+    }
+    const vision=classifyVisionEvidence(step);
+    const nextTime=vision.role==='inspection'
+      ? steps.reduce((next,s)=>Number.isFinite(s.time)&&s.time>step.time?Math.min(next,s.time):next,Infinity) : Infinity;
+    if(vision.role==='inspection')inspections.push({index:step.index,images:vision.images,
+      accessSucceeded:vision.semanticOk===true,
+      toolResult:excerpt(step.resultText??step.resultPreview),
+      // Image-only tools have no semantic prose. Retain subsequent model text
+      // separately: successful image delivery never certifies that judgement.
+      followingAssistant:assistantMessages.filter(m=>Number.isFinite(step.time)&&Number.isFinite(m.time)
+        && m.time>=step.time && m.time<=nextTime)
+        .map(m=>({time:m.time,...excerpt(m.text)})),
+    });
+  }
+  const discovered=sourceReads.some(r=>r.mode==='discovery'&&r.status==='page_returned');
+  const bodyReturned=sourceReads.some(r=>r.mode==='source_body'&&r.status==='page_returned'&&r.returned_chars>0);
+  return {
+    taskSources:{reads:sourceReads,discoveryWithoutBodyReadObserved:discovered&&!bodyReturned,
+      scope:'Records returned source pages only. An index is discovery, not source-body retrieval; pages may be partial. Original input or injected excerpts may already be available. No inference of model consumption, requirement completeness or permission.'},
+    visualComparison:{inspections,finalStatement:excerpt(assistantMessages.at(-1)?.text),
+      verdict:'requires_semantic_review',
+      scope:'Compare inspection results, subsequent model interpretation and final claims manually, with image version and target scope. Access success does not mean visual correctness; conflicting, agreeing and ambiguous prose are not classified by keywords.'},
+    probeScope:'Handwritten probes remain candidates; entity coverage, thresholds, geometry dataflow and relation correctness require source review even when a numeric result exists.',
+  };
+}
+
 /**
  * Deterministic evidence for the open-ended quality loop (HTA-023 family).
  * It reports observable gates; it does not pretend regexes can judge artistic quality.
@@ -587,27 +795,21 @@ export function collectQualityLoopEvidence({
 } = {}) {
   const request = messageText(userMessages);
   const assistant = messageText(assistantMessages);
-  const applicable = OPEN_ENDED_QUALITY_REQUEST.test(request)
+  let applicable = OPEN_ENDED_QUALITY_REQUEST.test(request)
     || /(?:精细|细致|近景|测绘|实景|表面质感|close[- ]?up|fine detail|surface texture|survey reference)/i.test(request);
-  const indexed = steps.map((step, offset) => ({ ...step, code: step.code, resultText: step.resultText,
+  const indexed = steps.map((step, offset) => ({ ...step, code: step.code, resultText: step.resultText, canonical:step.canonical,
     index: stepIndex(step, offset + 1) }));
   const firstMutation = indexed.find(sceneMutation) || null;
   const firstMutationTime = firstMutation?.time ?? Infinity;
-  const confirmedChoiceText = indexed.filter(step => step.tool === 'ask_user_question'
-    && !step.failed && (!firstMutation || step.index < firstMutation.index)).flatMap(step => {
-    const result = tryJson(String(step.resultText ?? step.resultPreview ?? ''));
-    return (Array.isArray(result?.answers) ? result.answers : []).flatMap(answer => {
-      const question = step.args?.questions?.find(q => q.id === answer.id);
-      const selected = Array.isArray(answer.selected) ? answer.selected : [];
-      if (!selected.length) return [];
-      return selected.map(label => {
-        const option = question?.options?.find(o => o.label === label);
-        return `${question?.header ?? ''}: ${label} ${option?.description ?? ''}`;
-      });
-    });
-  });
+  const clarifications=confirmedAnswers(indexed);
+  const initialChoices=clarifications.filter(row=>!firstMutation||row.index<firstMutation.index);
+  const confirmedChoiceText=initialChoices.map(row=>row.text);
+  const agreedRequest=[request,...confirmedChoiceText].join('\n');
+  applicable ||= OPEN_ENDED_QUALITY_REQUEST.test(confirmedChoiceText.join('\n'))
+    || /高细节|精细|近景|high[- ]detail|close[- ]up/i.test(confirmedChoiceText.join('\n'));
   const preMutationText = [
     ...confirmedChoiceText,
+    messageText(userMessages.filter(message=>!Number.isFinite(message.time)||message.time<=firstMutationTime)),
     messageText(
       assistantMessages.filter((message) => !Number.isFinite(message.time) || message.time <= firstMutationTime),
     ),
@@ -619,15 +821,15 @@ export function collectQualityLoopEvidence({
   const contractFields = {
     target: /(?:目标|对象|效果|target|deliverable|交付)/i.test(preMutationText),
     referenceStatus: /(?:参考|来源|无外部参考|假设|reference|source)/i.test(preMutationText),
-    qualityLod: /(?:质量(?:标准|门|级别)|LOD|轮廓级|镜头级|产品级|预览级|观察距离|quality bar|quality level)/i.test(preMutationText),
+    qualityLod: /(?:质量(?:标准|门|级别)|LOD|轮廓级|镜头级|产品级|预览级|观察距离|高细节|细节丰富|精细|细致|近景|high[- ]detail|fine detail|close[- ]up|quality bar|quality level)/i.test(preMutationText),
     simplifications: /(?:简化|省略|不做|允许.*(?:略|省)|边界|simplif|omit|out of scope)/i.test(preMutationText),
     unitsDimensions: /(?:单位|尺寸|范围|半径|长度|角度|米|厘米|mm|cm|\bm\b|units?|dimensions?)/i.test(preMutationText),
     controls: /(?:控制参数|可调参数|需要暴露|spare parm|HDA interface|controls?)/i.test(preMutationText),
     relations: /(?:连接|共轴|轴线|端点|包含|间隙|穿插|接触|关系|relations?|clearance|intersection)/i.test(preMutationText),
     evidencePlan: /(?:验证|验收|证据|视角|特写|render|evidence|check)/i.test(preMutationText),
   };
-  const requiresControls = /(?:程序化|可调|可以调节|参数化|procedural|adjustable|configurable|parameterized)/i.test(request);
-  const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(request);
+  const requiresControls = /(?:程序化|可调|可以调节|参数化|procedural|adjustable|configurable|parameterized)/i.test(agreedRequest);
+  const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(agreedRequest);
   const requiredContractFields = [
     'referenceStatus', 'qualityLod', 'simplifications',
     ...(requiresControls ? ['controls'] : []),
@@ -673,26 +875,19 @@ export function collectQualityLoopEvidence({
   }
 
   const relationshipProbeSteps = [];
+  const relationCandidates=[];
   const relationshipKeywords = new Set();
   for (const step of indexed) {
-    if (!step.failed && (step.verbs || []).some(v => v.verb === 'geo_check_interfaces'
-        || (v.verb === 'build_module' && verbResult(v.result ?? v.detail).interface_checks))) {
+    if (!step.failed && !['rolled_back','recovery_unverified'].includes(step.transaction?.status) && !step.rollback?.applied && (step.verbs || []).some(v => v.ok!==false && (v.verb === 'geo_check_interfaces'
+        || (v.verb === 'build_module' && verbResult(v.result ?? v.detail).interface_checks)))) {
       relationshipProbeSteps.push(step.index);
       relationshipKeywords.add('declared_final_surface_interfaces');
     }
-    const code = String(step.code || '');
-    const hits = [...code.matchAll(RELATION_PATTERN)].map((match) => match[0].toLowerCase());
-    if (!hits.length || step.failed) continue;
-    // Text in construction code (including VEX tangent comments) is not a
-    // measurement. Require geometry access and an observable labelled result
-    // for both query and exec; this still identifies a candidate, not a pass.
-    if (!(/geometry\(|boundingBox\(|attribValue\(|\.position\(/.test(code)
-        && /print\(|__result__\s*=/.test(code))) continue;
-    const outputLines = code.split('\n').filter(line => /\bprint\s*\(|__result__\s*=/.test(line));
-    if (!outputLines.some(line => new RegExp(RELATION_PATTERN.source, 'i').test(line))
-        || !String(step.resultText ?? step.resultPreview ?? '').trim()) continue;
+    const candidate=handwrittenRelationProbe(step);
+    if(!candidate)continue;
+    relationCandidates.push(candidate);
     relationshipProbeSteps.push(step.index);
-    for (const hit of hits) relationshipKeywords.add(hit);
+    for (const hit of candidate.resultExcerpt.matchAll(RELATION_PATTERN)) relationshipKeywords.add(hit[0].toLowerCase());
   }
 
   const perturbations = restoredPerturbations(indexed);
@@ -733,6 +928,7 @@ export function collectQualityLoopEvidence({
 
   return {
     applicable,
+    manualReview:auditReviewEvidence(indexed,assistantMessages),
     outputCheckpoints: [...checkpoints.values()],
     requestSignals: [...new Set(request.match(OPEN_ENDED_QUALITY_REQUEST) || [])],
     available: {
@@ -740,6 +936,8 @@ export function collectQualityLoopEvidence({
       tools: [...new Set(availableTools)].sort(),
     },
     contract: {
+      clarifications,
+      detectionScope:'Lexical evidence of stated fields and matched user answers, not proof that acceptance criteria are measurable, complete or satisfied.',
       firstMutationIndex: firstMutation?.index ?? null,
       requirements: { controls: requiresControls, relations: requiresRelations },
       fields: contractFields,
@@ -761,6 +959,7 @@ export function collectQualityLoopEvidence({
       checkpointMentions: skeletonCheckpointMentions,
     },
     relations: {
+      candidates:relationCandidates,
       probeSteps: [...new Set(relationshipProbeSteps)],
       keywords: [...relationshipKeywords].sort(),
     },
@@ -769,6 +968,7 @@ export function collectQualityLoopEvidence({
       controlTests,
     },
     freshness: {
+      visual:visualFreshness(indexed,assistantMessages),
       lastMutationIndex: lastMutation?.index ?? null,
       latestGeometryCounts: latestCounts,
       finalGeometryCountClaim: finalCountClaim,
@@ -798,6 +998,11 @@ export function requestedGoalReportedUnverified(userMessages = [], assistantMess
 export function qualityLoopRisks(evidence) {
   const risks = [];
   if (!evidence) return risks;
+  const visual=evidence.freshness?.visual;
+  if(visual?.finalClaimsVisualPass && visual.latestInspections.some(r=>r.status==='stale_after_recorded_target_change'))risks.push({
+    code:'visual_completion_claim_with_stale_evidence',
+    detail:'Final visual-pass language coexists with latest inspected views preceding a recorded target change. Review claim scope; this is not an automatic artistic-quality verdict.',
+    inspections:visual.latestInspections.filter(r=>r.status==='stale_after_recorded_target_change')});
   if (evidence.applicable && evidence.contract.missing.length) {
     risks.push({
       code: 'quality_contract_incomplete',

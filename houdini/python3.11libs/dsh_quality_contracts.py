@@ -529,7 +529,7 @@ def _control_summary(result, tests, interfaces=None, topology=None):
             continue
         failed = [m for m in row.get('measurements', []) if not m['pass']]
         failures.append({'id': row['id'], 'status': row['status'],
-                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed') if k in row},
+                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors', 'parameter_restore') if k in row},
                          'failed_measurements': failed[:8],
                          'failed_measurement_count': len(failed),
                          'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
@@ -665,7 +665,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
-    rows=[];all_restored=True
+    rows=[];all_restored=True;restoration=None
     for test in tests:
         row={'id':test['id'],'values':test['values'],'status':'fail'}
         # Independent unkeyed controls permit zero-write candidate preflight.
@@ -728,6 +728,13 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 geometry_restored=cook['ok'] and _data_signature(restored)==baseline_hash
             except Exception as error:
                 errors.append('output restore: '+str(error));geometry_restored=False
+            # Read AFTER recooking: expressions/solver/Python code can affect
+            # channel state during evaluation even when the bgeo is unchanged.
+            restoration=h._parameter_restore_evidence(snapshots)
+            errors.extend(restoration['errors'])
+            row['parameter_restore']=restoration
+            if float(hou.frame())!=original_frame:
+                errors.append('frame differs after output restoration cook')
             row['restored']=not errors and geometry_restored
             row['restore_errors']=errors
             if not row['restored']:
@@ -739,6 +746,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     status='pass' if ok else 'fail' if any(r['status']=='fail' for r in rows) or (baseline_relations and baseline_relations['status']=='fail') else 'unverified'
     return {'ok':ok,'status':status,'controller':ctrl.path(),'output':node.path(),
             'frame':original_frame,'checked_at':time.time(),'restored':all_restored,'baseline_sha256':baseline_hash,
+            'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
             'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
             'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships',

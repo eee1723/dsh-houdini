@@ -21,6 +21,62 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
   const requestKey = (r) => r.purpose + ":" + r.startSeq;
   const pairKey = (turn, step) => turn + ":" + step;
   const own = (v, k) => v != null && Object.prototype.hasOwnProperty.call(v, k);
+  // Reading groups inferred from recognizable text, never runtime provenance.
+  // Bodies always come from the selected historical request, including unknowns.
+  const promptRules = [
+    ["DSH 身份与运行环境", "框架身份", "You are an AI agent powered by DeepSeek Harness.", "@deepseek-ai/dsh-system-prompt · packages/core/system-prompt/src/index.ts"],
+    ["DSH 身份与运行环境", "实现目录", "The DeepSeek Harness implementation checkout", "@deepseek-ai/dsh-app-boot · packages/boot/app-boot/src/index.ts"],
+    ["DSH 身份与运行环境", "Web GUI", "You are interacting with the user through the DeepSeek Harness Web GUI", "@deepseek-ai/dsh-web-app · packages/bundle/web-app/src/index.ts"],
+    ["Houdini 身份与工作方式", "Houdini persona", "You are a Houdini automation agent", "presets/houdini/agent.cordis.yml"],
+    ["Houdini 工具执行规则", "插件 guidance", "houdini_* tools operate", "src/index.ts · dsh-houdini:guidance"],
+    ["通用文件、进程与搜索", "文件引用", "Tokens prefixed with @", "@deepseek-ai/dsh-file-reference · lib/index.js"],
+    ["通用文件、进程与搜索", "进程退出码", "Non-zero exits are reported", "packages/shell/tool-pwsh/src/index.ts"],
+    ["通用文件、进程与搜索", "读取文件", "Use the read tool", "packages/fs/tool-fs/src/read.ts"],
+    ["通用文件、进程与搜索", "写入文件", "Use the write tool", "packages/fs/tool-fs/src/write.ts"],
+    ["通用文件、进程与搜索", "编辑文件", "Use the edit tool", "packages/fs/tool-fs/src/edit.ts"],
+    ["通用文件、进程与搜索", "查找文件", "Use the glob tool", "packages/fs/tool-fs-search/src/glob.ts"],
+    ["通用文件、进程与搜索", "搜索内容", "Use the grep tool", "packages/fs/tool-fs-search/src/grep.ts"],
+    ["通用文件、进程与搜索", "后台任务", "Track every background job id", "packages/jobs/tool-jobs/src/index.ts"],
+    ["通用文件、进程与搜索", "联网搜索", "Use the web_search tool", "packages/web/tool-web/src/search.ts"],
+    ["长期目标与多 agent", "Goal", "Use goal tools", "packages/goal/tool-goal/src/index.ts"],
+    ["长期目标与多 agent", "Workflow", "Use the workflow tool ONLY", "packages/workflow/tool-workflow/src/index.ts"],
+    ["长期目标与多 agent", "Ralph", "Use the ralph tool ONLY", "packages/workflow/tool-ralph/src/index.ts"],
+    ["长期目标与多 agent", "Subagent", "Use subagent in the background", "packages/subagent/tool-subagent/src/index.ts · toolName=subagent"],
+    ["长期目标与多 agent", "Subagent fork", "Use subagent_fork in the background", "packages/subagent/tool-subagent/src/index.ts · toolName=subagent_fork"],
+    ["交付展示", "输出文件引用", "When you successfully create or modify files", "packages/client/ui-deliverables/src/index.ts"],
+  ];
+  const promptPrefix = s => s.replaceAll("`", "").trimStart();
+  function systemSections(system) {
+    const parts = String(system ?? "").split(/(\r?\n[ \t]*\r?\n)/);
+    const definitions = [
+      {rule: promptRules[4], text: sources.guidance?.text || ""},
+      ...array(sources.presets).map(p => ({
+        rule: ["Houdini 身份与工作方式", "Persona · " + p.name, "", p.file], text: p.text,
+      })),
+    ];
+    const sections = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      const body = parts[i] + (parts[i + 1] || "");
+      if (!body) continue;
+      const prefix = promptPrefix(parts[i]);
+      let rule = promptRules.find(r => prefix.startsWith(r[2]));
+      if (!rule && prefix.startsWith("Houdini outputs belong under")) rule = promptRules[4];
+      if (!rule) {
+        // Match known paragraph openings, without copying current text into history.
+        const definition = definitions.find(d => String(d.text).split(/\n\s*\n/).some(p => {
+          const start = promptPrefix(p).split("{{")[0].slice(0, 90);
+          return start.length >= 25 && prefix.startsWith(start);
+        }));
+        rule = definition?.rule;
+      }
+      const category = rule?.[0] || "其他／来源未识别";
+      const source = rule?.[3] || "未采集；保留实际请求原文";
+      const last = sections.at(-1);
+      if (last?.source === source && rule) last.text += body;
+      else sections.push({category, title: rule?.[1] || "未知系统片段", source, text: body, index: sections.length + 1});
+    }
+    return sections;
+  }
   // UI categories only: these colors do not confer execution permissions.
   const toolKind = (name) => {
     if (name === "skill") return "skill";
@@ -130,7 +186,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
   function sections(raw) {
     const out = {};
     const re =
-      /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
+      /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
     const matches = [...raw.matchAll(re)];
     matches.forEach((m, i) => {
       out[m[1]] = raw
@@ -196,6 +252,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
             });
     });
     const entries = [];
+    const seenExecutions = new Set();
     const seen = new Set();
     function add(n, pending, parent) {
       const id = n.callId || "unpaired:" + n.seq;
@@ -219,7 +276,11 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         null;
       const account = req?.accounting || c?.assistantUsage || null;
       const failed = !pending && (Boolean(n.isError) || info.failed);
-      const verbs = info.verbs;
+      const executionKey = canonical?.execution?.runtime_id && Number.isFinite(canonical.execution.sequence)
+        ? canonical.execution.runtime_id + ':' + canonical.execution.sequence : null;
+      const repeatedExecution = executionKey && seenExecutions.has(executionKey);
+      if(executionKey)seenExecutions.add(executionKey);
+      const verbs = canonical?.requestReceipt?.retrieved || repeatedExecution ? [] : info.verbs;
       const parsedArgs = json(argsRaw);
       const args =
         parsedArgs &&
@@ -227,6 +288,11 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         !Array.isArray(parsedArgs)
           ? parsedArgs
           : {};
+      const analysisStep = {tool: name, isHoudini: name.startsWith('houdini_'),
+        args, code: args.code || '', verbs, failed, canonical,
+        rawUsage: info.rawUsage, resultText: info.text};
+      const rawEffect = isHoudiniDetailRead(analysisStep) ? null : classifyRawEffect(analysisStep);
+      const gateBlocked = rawEffect === 'gate_blocked';
       const title =
         name === "skill"
           ? "读取技能 · " + (args.name || "名称缺失")
@@ -234,7 +300,9 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
             ? [...new Set(verbs.map((v) => verbTitles[v.verb] || v.verb))].join(
                 " / ",
               )
-            : args.source_ref
+            : args.request_ref
+              ? "查回原请求"
+              : args.source_ref
               ? "读取原始任务来源"
               : args.result_ref
               ? "读取历史工具结果"
@@ -248,7 +316,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         : Boolean(info.rollbackApplied && !info.rollback?.error);
       const state = pending
         ? "执行中（最后快照）"
-        : info.gateBlocked
+        : gateBlocked
           ? "Gate 拦截"
           : rollback
             ? "已回滚"
@@ -289,6 +357,9 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         name,
         args,
         argsRaw,
+        analysisStep,
+        rawEffect,
+        gateBlocked,
         title,
         target,
         verbs,
@@ -298,7 +369,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         transaction,
         rollbackApplied: rollback,
         state,
-        kind: args.result_ref || args.source_ref ? "read" : toolKind(name),
+        kind: args.request_ref || args.result_ref || args.source_ref ? "read" : toolKind(name),
         request: req,
         requestKey: req?.key || (c ? "assistant:" + pairKey(turn, step) : null),
         accounting: account,
@@ -782,11 +853,12 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           { className: "tr-buttons" },
           typeTag(e.name),
           tag(e.state, e.failed),
-          e.rawMode === "read_only"
+          e.rawEffect === "read_only_query"
             ? tag(
-                "HOM 读取" + (e.directHouCount ? " ×" + e.directHouCount : ""),
+                "只读 query（守卫范围）",
               )
             : null,
+          !e.verbs.length && e.rawEffect === "unknown" ? tag("副作用未知") : null,
           e.rawMode === "exempted" ? tag("低层豁免") : null,
           e.verbs.length ? tag("动词 ×" + e.verbs.length) : null,
         ),
@@ -926,6 +998,10 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               h("summary", null, "媒体与其他内容块"),
               structured(e.blocks.filter((b) => b.type !== "text")),
             )
+          : null,
+        e.imageAttachments || e.canonical?.imageAttachments
+          ? h("details", null, h("summary", null, "原生图像附件 · 传递状态"),
+              structured(e.canonical?.imageAttachments || json(e.imageAttachments) || e.imageAttachments))
           : null,
         e.media
           ? h(
@@ -1237,6 +1313,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
 
     function prompt() {
       const p = request?.prompt;
+      const sections = systemSections(p?.system);
       const g = sources.guidance;
       const sourceItems = [
         {
@@ -1287,7 +1364,19 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               null,
               h("h4", null, "最终 System · 按请求记录原文"),
               p
-                ? prose(p.system || "此请求未包含 System 正文")
+                ? h("div", {className:"tr-prompt-groups", key: requestKey(request)},
+                    note("按职责与已知来源规则分组，默认折叠。来源为文本匹配提示，未采集运行时注册 provenance；正文始终来自所选请求，未知内容完整保留。"),
+                    [...new Set(sections.map(s => s.category))].map(category => {
+                      const items = sections.filter(s => s.category === category);
+                      return h("details", {className:"tr-prompt-group", key:category},
+                        h("summary", null, category, h("span", {className:"tr-muted"}, ` · ${items.length} 个片段 · ${items.reduce((n,s)=>n+s.text.length,0)} 字符`)),
+                        items.map(s => h("details", {className:"tr-prompt-section", key:s.index},
+                          h("summary", null, `#${s.index} ${s.title}`, h("small", {className:"tr-prompt-source"}, s.source)),
+                          h("pre", {className:"tr-prompt-raw"}, s.text))));
+                    }),
+                    h("details", {className:"tr-prompt-group"},
+                      h("summary", null, "完整 System 原文 · 原始顺序"),
+                      h("pre", {className:"tr-prompt-raw"}, p.system || "此请求未包含 System 正文")))
                 : empty("此请求没有公开的提示词快照。"),
               request?.promptChange
                 ? note("相对前一已加载状态：" + request.promptChange.kind)
@@ -1309,7 +1398,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
                   )
                 : null,
               note(
-                "这里保留 DSH 最终拼接的所有系统内容。公开快照未提供逐段注册 provenance；不能凭文本位置猜提供方。",
+                "分类不改变实际 System 顺序。展开完整原文可核对；不能用当前源码替换历史请求，也不能将匹配来源当作已验证加载版本。",
               ),
             )
           : null,
@@ -1368,7 +1457,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
                     .map((part, i) =>
                       h(
                         "details",
-                        { key: i, open: i === 0 },
+                        { key: i },
                         h(
                           "summary",
                           null,
@@ -1818,35 +1907,31 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
       const entries = data.entries.filter(
         (e) => e.name.startsWith("houdini_") && !e.pending,
       );
-      const successful = entries.filter(
-        (e) => e.name === "houdini_exec" && !e.failed && !e.rollbackApplied,
-      );
-      const withVerbs = successful.filter((e) => e.verbs.length).length;
-      const verbCount = entries.reduce((n, e) => n + e.verbs.length, 0);
+      const adoption = collectVerbAdoption(entries.map(e => e.analysisStep));
       const distinctVerbs = new Set(
         entries.flatMap((e) => e.verbs.map((v) => v.verb)),
       );
       const knownVerbs = catalog.flatMap((d) => d.verbs.map((v) => v.name));
       const accounts = data.requests.map((r) => r.accounting).filter(Boolean);
       const metrics = [
-        ["Houdini 已返回调用", entries.length],
+        ["Houdini 已返回调用（排除历史回读）", adoption.houdiniCalls],
+        ["Host 历史结果 / 来源回读", adoption.hostResultDetailReads],
         [
           "调用含动词",
-          entries.filter((e) => e.verbs.length).length + " / " + entries.length,
+          adoption.callsWithVerbs + " / " + adoption.houdiniCalls,
         ],
         [
-          "成功执行含动词 · " +
-            (successful.length
-              ? Math.round((withVerbs * 1000) / successful.length) / 10
-              : 0) +
+          "成功 exec 含动词 · " +
+            (adoption.successfulExecVerbCoveragePct ?? '—') +
             "%",
-          withVerbs + " / " + successful.length,
+          adoption.successfulExecWithVerbs + " / " + adoption.successfulExecCalls,
         ],
         [
-          "无动词只读探针",
-          entries.filter((e) => !e.verbs.length && e.rawMode === "read_only")
-            .length,
+          "无动词只读 query（守卫范围）", adoption.rawReadOnlyCalls,
         ],
+        ["无动词疑似副作用 / 外部操作", adoption.rawSuspectedEffectCalls],
+        ["无动词副作用未知", adoption.rawUnknownEffectCalls],
+        ["无动词失败（未证明只读）", adoption.rawFailedCalls],
         ["Raw Gate 拦截", entries.filter((e) => e.gateBlocked).length],
         ["回滚调用", entries.filter((e) => e.rollbackApplied).length],
         [
@@ -1857,7 +1942,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         ],
         [
           "动词密度（每次Houdini调用）",
-          entries.length ? (verbCount / entries.length).toFixed(2) : "—",
+          adoption.verbDensity,
         ],
         [
           "回滚动作工作量",
@@ -1883,7 +1968,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           ),
         ),
         note(
-          "含动词率描述调用形态，不代表场景修改成功率或任务完成度；展开调用核对事务和实际证据。",
+          "含动词率描述调用形态，成功 exec 包含验证和动态函数，不代表修改采用率或任务完成度。Gate read_only 是静态扫描结果；no_scene_change 不排除文件或 Python 全局副作用。",
         ),
         h("h4", null, "模型请求 usage · 请求去重"),
         accounts.length
@@ -1914,23 +1999,23 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               h("div", { className: "tr-meta" }, e.errorText || e.statusText),
             ),
           ),
-        h("h4", null, "低层执行分类"),
+        h("h4", null, "无动词调用的副作用证据"),
         table(
           ["分类", "调用数"],
           [
-            "read_only",
-            "blocked",
-            "exempted",
-            "gate_disabled",
-            "legacy_bypass",
-            "mutation",
+            "read_only_query",
+            "gate_blocked",
+            "suspected_effect",
+            "mutation_candidate",
+            "unknown",
+            "failed",
           ].map((mode) => [
             mode,
-            String(entries.filter((e) => e.rawMode === mode).length),
+            String(entries.filter((e) => !e.verbs.length && e.rawEffect === mode).length),
           ]),
         ),
         note(
-          "只读 HOM、Gate拦截、豁免、成功低层修改必须分开核对；原始语法探测不独自证明发生修改。",
+          "历史回读不计新执行。unknown 包含动态 exec；疑似外部副作用与裸修改候选不证明实际发生，失败也不证明没有副作用。原始 Gate 回包在调用详情保留。",
         ),
       );
     }
@@ -1981,5 +2066,6 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
   }
   View.model = model;
   View.usage = usage;
+  View.systemSections = systemSections;
   return View;
 }

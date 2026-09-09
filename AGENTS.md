@@ -48,5 +48,5 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
   A/B用相同framing_frame及固定取景/深度包络；detail只允许二维裁框，近远裁面错误拒绝，
   不漂移相机。正式camera_fit保持自身边界。
 - transport/bootstrap/presentation/semantic inspection分别判断；没有成功语义识图必须写视觉未验证。
-- 普通建模不默认委派；用户要求或具体疑点才受限review。没有多作者租约，不能借review/allow_foreign建模。
+- 普通建模与收尾验证由当前作者执行；无独立评审agent入口。没有多作者租约，不能借allow_foreign或共享身份建模。
 - 冻结的benchmark protocol/matrix/holdout不得随普通开发改动或解封；评测答案不进入生产面。

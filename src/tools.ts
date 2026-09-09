@@ -10,13 +10,10 @@ import {
   type JsonValue,
   type ToolResult,
 } from '@deepseek-ai/dsh-tools'
-import { createHash } from 'node:crypto'
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
-import { ReviewController } from './review.js'
 import { readResultDetail, retainResult } from './result-details.js'
 import { readTaskSource } from './task-sources.js'
+import { attachImages, imageBlocks } from './image-output.js'
 
 /** Canonical fields shared by every exec-shaped result. */
 const execOutputProperties = {
@@ -31,11 +28,12 @@ const execOutputProperties = {
   rawUsage: { type: 'json' },
   advisory: { type: 'string' },
   images: { type: 'json' },
-  media: { type: 'json' },
+  imageAttachments: { type: 'json' },
   checks: { type: 'json' },
   evidence: { type: 'json' },
   execution: { type: 'json' },
   details: { type: 'json' },
+  requestReceipt: { type: 'json' },
 } as const
 
 const execOutputSchema = {
@@ -62,9 +60,9 @@ function execPresentationMeta(value: ExecResult): PresentationMeta {
   return {
     ok: value.ok,
     verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
-    mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+    imageCount: Array.isArray(value.imageAttachments) ? value.imageAttachments.filter((a: any) => a.attachment).length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
-    ...(value.execution !== undefined || value.details !== undefined ? { canonical: value as unknown as JsonValue } : {}),
+    ...(value.execution !== undefined || value.details !== undefined || value.requestReceipt !== undefined ? { canonical: value as unknown as JsonValue } : {}),
   }
 }
 
@@ -74,7 +72,7 @@ function jobPresentationMeta(value: JobStatus): PresentationMeta {
     jobId: value.jobId,
     status: value.status,
     verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
-    mediaCount: Array.isArray(value.media) ? value.media.length : 0,
+    imageCount: Array.isArray(value.imageAttachments) ? value.imageAttachments.filter((a: any) => a.attachment).length : 0,
     ...(value.execution !== undefined || value.details !== undefined ? { canonical: value as unknown as JsonValue } : {}),
   }
 }
@@ -146,6 +144,7 @@ function renderVerbs(value: ExecResult): string[] {
 /** Append captured stdout/stderr/__result__/verbs of one exec-shaped value. */
 function renderStreams(value: ExecResult): string[] {
   const parts: string[] = []
+  if (value.requestReceipt !== undefined) parts.push(`request-receipt:\n${JSON.stringify(value.requestReceipt)}`)
   const compact = (value.details as any)?.stored === true
   if (value.execution !== undefined) {
     const e:any = value.execution
@@ -189,16 +188,7 @@ function renderStreams(value: ExecResult): string[] {
   if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
   if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
   parts.push(...renderVerbs(value))
-  if (Array.isArray(value.media) && value.media.length) {
-    const lines = (value.media as Array<Record<string, unknown>>).map((m) =>
-      m.error
-        ? `- ${String(m.from)} -> RELAY FAILED: ${String(m.error)}`
-        : `- ${String(m.from)} -> ${String(m.to)} (${Math.round(Number(m.bytes) / 1024)} KB)`)
-    parts.push(
-      `media (relayed into the session workspace — readable by fs/vision tools; `
-      + `use the workspace path on the right with an available vision_* tool):\n${lines.join('\n')}`,
-    )
-  }
+  if (Array.isArray(value.imageAttachments)) parts.push('image-attachments:\n' + JSON.stringify(value.imageAttachments));
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
   return parts
@@ -225,6 +215,13 @@ function compactEvidence(evidence: unknown): unknown {
 /** Render an exec-shaped canonical value as model-facing text. */
 function renderExec(value: ExecResult) {
   const parts: string[] = []
+  const receipt:any = value.requestReceipt
+  if (receipt && receipt.status !== 'done') {
+    parts.push(`Request receipt status: ${receipt.status}. This reports request recovery state, not successful scene completion.`)
+    if (value.error) parts.push(`Transport detail:\n${value.error}`)
+    parts.push(...renderStreams(value))
+    return [{ type:'text' as const,text:parts.join('\n\n') }]
+  }
   if (value.ok) {
     parts.push(Array.isArray(value.checks) && value.checks.length
       ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'
@@ -233,7 +230,7 @@ function renderExec(value: ExecResult) {
     parts.push(`Execution failed:\n${value.error ?? 'unknown error'}`)
   }
   parts.push(...renderStreams(value))
-  return [{ type: 'text' as const, text: parts.join('\n\n') }]
+  return [{ type: 'text' as const, text: parts.join('\n\n') }, ...imageBlocks(value)]
 }
 
 /** Normalize a Windows-ish path for comparison (case, slashes, trailing sep). */
@@ -241,7 +238,7 @@ function normPath(p: string): string {
   return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
-/** Session workspace (the dsh sandbox root for fs/vision tools), when known. */
+/** Session workspace (the dsh sandbox root for filesystem tools), when known. */
 function workspaceOf(execInput: unknown): string | null {
   const cwd = (execInput as { agent?: { session?: { header?: { cwd?: unknown } } } })
     .agent?.session?.header?.cwd
@@ -258,73 +255,7 @@ function ownershipScopeOf(execInput: unknown): OwnershipScope | undefined {
   return { sessionId, callId }
 }
 
-/**
- * Media relay (2026-08-19, grass-task trace): image-producing verbs register
- * their outputs in the envelope's `images`; those live under $HIP, which
- * dsh-side vision/fs tools cannot read when the session workspace differs.
- * Copy the bytes through the bridge (`GET /media`) into
- * `<workspace>/.dsh-houdini-media/` so the vision loop works regardless of
- * where the hip lives. The model gets the mapping in the `media` section.
- */
-export async function imageInspectionRoute(ctx: unknown, execInput: unknown): Promise<Record<string, unknown>> {
-  const exec = execInput as any
-  try {
-    const config = exec.agent?.session.requestHeader?.()?.config
-    const provider = config?.provider ?? exec.agent?.options?.provider
-    const model = config?.model ?? exec.agent?.options?.model
-    const llm = (ctx as any)?.get?.('llm')
-    if (!provider || !model || !llm?.resolveModelInfo) throw new Error('route unavailable')
-    const signal = exec.signal ? AbortSignal.any([exec.signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500)
-    signal.throwIfAborted()
-    let onAbort: () => void = () => {}
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(new Error('image route lookup aborted'))
-      signal.addEventListener('abort', onAbort, { once:true })
-    })
-    let info: any
-    try { info = await Promise.race([llm.resolveModelInfo(provider, model, signal), aborted]) }
-    finally { signal.removeEventListener('abort', onAbort) }
-    const declared = Array.isArray(info.inputModalities) && info.inputModalities.includes('image')
-    return { model, declared_image_input: declared, semantic_status:'unverified',
-      next_action: declared ? 'Use read_image on the relayed path for semantic inspection.'
-        : 'This route cannot use read_image. Use vision_toolkit_activate/vision_glance if available; otherwise report visual semantics unverified. Do not change model declarations based on the model name.' }
-  } catch {
-    return { declared_image_input:null, semantic_status:'unverified', next_action:'Image route could not be resolved; check available image inspection capability. Render transport does not establish semantic verification.' }
-  }
-}
-
-async function relayMedia<T extends ExecResult>(value: T, execInput: unknown, bridge: HoudiniBridge, ctx?: Context): Promise<T> {
-  const images = Array.isArray(value.images) ? value.images.filter((p): p is string => typeof p === 'string') : []
-  if (!images.length) return value
-  const cwd = workspaceOf(execInput)
-  if (!cwd) return value
-  const dir = path.join(cwd, '.dsh-houdini-media')
-  const media: Array<Record<string, unknown>> = []
-  const inspection = await imageInspectionRoute(ctx, execInput)
-  for (const from of images) {
-    try {
-      const bytes = await bridge.fetchMedia(from)
-      const contentId = createHash('sha256').update(bytes).digest('hex').slice(0, 12)
-      const to = path.join(dir, `${contentId}-${path.basename(from.replace(/\\/g, '/'))}`)
-      await fs.mkdir(dir, { recursive: true })
-      await fs.writeFile(to, bytes)
-      media.push({ from, to, bytes: bytes.length, inspection })
-    } catch (cause) {
-      media.push({ from, error: cause instanceof Error ? cause.message : String(cause) })
-    }
-  }
-  return { ...value, media }
-}
-
-/**
- * Append a note when the session workspace does not match $HIP. dsh-side file
- * tools (pwsh/fs/vision) are sandboxed to the session workspace — a mismatch
- * means they cannot exchange files with Houdini (images are exempt: the media
- * relay above handles them). Shown ONCE per Host process and (workspace,
- * $HIP) pair — the
- * grass-task trace (2026-08-19) showed the repeated note training the model
- * to ignore hints entirely (alarm fatigue).
- */
+/** Explain filesystem workspace differences once; native images do not need workspace copies. */
 const _workspaceNoteShown = new Set<string>()
 
 async function withWorkspaceNote(value: ExecResult, execInput: unknown, bridge: HoudiniBridge): Promise<ExecResult> {
@@ -337,8 +268,8 @@ async function withWorkspaceNote(value: ExecResult, execInput: unknown, bridge: 
   _workspaceNoteShown.add(key)
   const note = [
     `workspace note: this session's workspace is "${cwd}", but $HIP (the live Houdini project directory) is "${hip}".`,
-    'Anchor all Houdini outputs at $HIP. Images produced by render/screenshot verbs are auto-relayed into the',
-    'workspace (see the media section), so vision tools work as-is; for OTHER files dsh-side tools must read,',
+    'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments;',
+    'for other files that workspace tools must read,',
     'open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run Repair and restart runtime',
     'to seed a Houdini session from the current $HIP. Never work around this by writing into the dsh-houdini',
     'plugin repository. (This note is shown once per Host process and workspace/$HIP pair.)',
@@ -361,7 +292,7 @@ function renderJobStatus(value: JobStatus) {
     case 'done': parts.push('Job finished successfully.'); break
   }
   parts.push(...renderStreams(value))
-  return [{ type: 'text' as const, text: parts.join('\n\n') }]
+  return [{ type: 'text' as const, text: parts.join('\n\n') }, ...imageBlocks(value)]
 }
 
 const jobStatusOutputSchema = {
@@ -385,7 +316,6 @@ const ALLOW_RAW_PARAM = {
 
 /** Register every Houdini tool; disposal of the plugin unregisters them. */
 export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void {
-  const review = new ReviewController(bridge)
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description:
@@ -396,14 +326,9 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'When Houdini undo is enabled, a later failure rolls back earlier undoable edits in this same call; inspect transaction/rollback. '
       + 'Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
       + 'is verb-covered. Print what the agent needs to know; assign a JSON-serializable '
-      + 'value to the variable `__result__` to return structured data. Alternatively review {parent,output,controller?} '
-      + 'optionally delegates one quick issue review with current snapshot and prior tool facts; not a mandatory task stage. '
-      + 'Wait for its report; no concurrent scene edits. Only that reviewer may use review_test for bounded '
-      + 'batch control perturbations/preview captures with automatic restoration. No delivery registration or evidence cache.',
+      + 'value to the variable `__result__` to return structured data. Render/screenshot images are returned directly as native image attachments.',
     parameters: {
-      code: { type: 'string', description: 'Python source; mutually exclusive with review/review_test' },
-      review: { type: 'json', description: 'Start one independent reviewer: {parent:absolute_SOP_network,output:absolute_final_SOP,controller?:absolute_CTRL}. Specify current-task owned nodes. Original user requirements are read by Host; do not submit a success story, contract, permissions or expected verdict.' },
-      review_test: { type: 'json', description: 'Active reviewer only: {tests?:[{id,values:{numeric_spare_name:number},expectations?:[{group?,metric,axis?,delta:[min,max]}]}],views?:[iso|front|side|top],interfaces?:[...],topology?:[...],domain?:[...]}. Up to 3 targeted cases across this quick review; at most 2 views and 8 images including baseline. Empty tests captures baseline. Without expectations, responsive/unchanged is unverified, not correctness. Every case restores parameters/keys/frame; no new permission is granted by this argument.' },
+      code: { type: 'string', required: true, description: 'Python source to execute' },
       allow_raw: ALLOW_RAW_PARAM,
     },
     output: {
@@ -411,26 +336,17 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       render: (_args, value) => renderExec(value),
       presentationMeta: (_args, value) => execPresentationMeta(value),
     },
-    presentCall: (args) => !args.code && !args.review && !args.review_test ? undefined : ({
+    presentCall: (args) => !args.code ? undefined : ({
       card: 'generic',
-      title: args.review ? 'Independent Houdini asset review' : args.review_test ? 'Houdini review experiment' : 'Execute Houdini Python',
+      title: 'Execute Houdini Python',
       kind: 'edit',
-      rawInput: args.review ?? args.review_test ?? codePresentationInput(args as {code:string;allow_raw?:string}),
+      rawInput: codePresentationInput(args as {code:string;allow_raw?:string}),
     }),
     presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
-      if([args.code,args.review,args.review_test].filter(v=>v!==undefined).length!==1) throw new Error('provide exactly one of code, review, review_test')
-      if(args.review!==undefined || args.review_test!==undefined) {
-        if(args.allow_raw!==undefined) throw new Error('review cannot be mixed with allow_raw')
-        const result=args.review!==undefined
-          ? await review.start(args.review,exec,ownershipScopeOf(exec))
-          : await review.test(args.review_test,exec,ownershipScopeOf(exec))
-        return retainResult(await relayMedia(result,exec,bridge,ctx),workspaceOf(exec))
-      }
-      await review.guard(exec,false)
-      if(typeof args.code!=='string' || !args.code.trim())throw new Error('provide nonempty code')
+      if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty Python code')
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
-      return retainResult(await withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
+      return retainResult(await withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
     },
   }))
 
@@ -441,10 +357,12 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       + 'list nodes, read parameters, check for errors, and inspect scene state. It MUST NOT '
       + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them. '
       + 'Alternatively read a retained historical result with result_ref (SHA-256), optional JSON pointer, offset and limit; this reads the workspace artifact without executing Houdini. '
-      + 'Read original current-session task material with source_ref="index" or a source hash, offset and limit; no Houdini execution. Questions/plans are not user requirements or permission.',
+      + 'Read original current-session task material with source_ref="index" or a source hash, offset and limit; no Houdini execution. Questions/plans are not user requirements or permission. '
+      + 'After an uncertain exec response, request_ref retrieves its same-runtime execution receipt without resubmitting code. Exactly one query mode per call.',
     parameters: {
-      code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref or source_ref' },
+      code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref, source_ref or request_ref' },
       source_ref: { type: 'string', description: 'index lists current-session task sources; a listed SHA-256 reads original text with provenance. Nontext blocks are markers, not interpreted references.' },
+      request_ref: { type: 'string', description: 'Exec/job receipt after uncertain response; index recovers recent current-session references if Host discarded the response. No HOM or resubmission; match original owner_call, missing is unknown.' },
       result_ref: { type: 'string', description: 'SHA-256 returned in result-details; historical evidence, not live scene state' },
       pointer: { type: 'string', description: 'JSON Pointer into retained envelope, e.g. /verbs/0/args or /result; default root' },
       offset: { type: 'number', description: 'Character offset into selected JSON text; default 0' },
@@ -457,14 +375,30 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: args.source_ref ? 'Read task source' : args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
+      title: args.request_ref ? 'Recover Houdini request' : args.source_ref ? 'Read task source' : args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
       kind: 'read',
-      rawInput: args.result_ref || args.source_ref ? args : codePresentationInput(args as { code:string }),
+      rawInput: args.request_ref || args.result_ref || args.source_ref ? args : codePresentationInput(args as { code:string }),
     }),
-    presentResult: (args, result) => genericResult(resultTitle(args.source_ref ? 'Task source' : args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
+    presentResult: (args, result) => genericResult(args.request_ref ? 'Houdini request recovery status' : resultTitle(args.source_ref ? 'Task source' : args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
     async execute(args, exec) {
-      await review.guard(exec,true)
-      if ([args.code,args.result_ref,args.source_ref].filter(v=>v!==undefined).length !== 1) throw new Error('provide exactly one of code, result_ref or source_ref')
+      if ([args.code,args.result_ref,args.source_ref,args.request_ref].filter(v=>v!==undefined).length !== 1) throw new Error('provide exactly one of code, result_ref, source_ref or request_ref. For original user material use source_ref="index" then a listed source hash; for stored tool output use the SHA-256 from result-details as result_ref; for uncertain execution use request_ref. These references are not interchangeable; query them separately.')
+      if (args.request_ref !== undefined) {
+        if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('request_ref does not accept pagination or pointer')
+        const owner=ownershipScopeOf(exec)
+        if (!owner) throw new Error('request_ref requires current Host session identity')
+        const receipt=await bridge.requestStatus(args.request_ref,owner,exec.signal)
+        const r:any=receipt.requestReceipt
+        if (r?.jobId) return {ok:true,stdout:'',stderr:'',result:{jobId:r.jobId},
+          requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'job_submitted',jobId:r.jobId,
+            retrieved:true,note:'Original job admission recovered, not completed execution. Collect houdini_job_status(jobId).'}}
+        if (r?.status==='done' && r.result) {
+          if (r.result.jobId) return {ok:true,stdout:'',stderr:'',result:{jobId:r.result.jobId},
+            requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'job_submitted',jobId:r.result.jobId,
+              retrieved:true,note:'Original job admission recovered, not completed execution. Collect houdini_job_status(jobId).'}}
+          return retainResult(await attachImages({...r.result,requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'done',retrieved:true}},exec,bridge,ctx),workspaceOf(exec))
+        }
+        return receipt
+      }
       if (args.source_ref !== undefined) {
         if (args.pointer !== undefined) throw new Error('pointer requires result_ref; task sources use offset/limit')
         if (!exec.agent) throw new Error('task sources require a current agent session')
@@ -475,7 +409,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
       const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
-      return retainResult(await withWorkspaceNote(await relayMedia(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
+      return retainResult(await withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
     },
   }))
 
@@ -493,11 +427,14 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     output: {
       schema: {
         type: 'object',
-        properties: { jobId: { type: 'string', required: true } },
+        properties: { jobId: { type: 'string' }, requestReceipt: {type:'json'}, error: {type:'string'} },
         additionalProperties: false,
       },
-      render: (_args, value) => [{ type: 'text' as const, text: `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` }],
-      presentationMeta: (_args, value) => ({ jobId: value.jobId }),
+      render: (_args, value) => [{ type: 'text' as const, text: value.jobId
+        ? `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` + (value.requestReceipt ? `\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` : '')
+        : `Job admission uncertain; do not resubmit.\n${value.error || ''}\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` }],
+      presentationMeta: (_args, value) => ({ ...(value.jobId ? {jobId:value.jobId}:{}),
+        ...(value.requestReceipt ? {canonical:{...value,ok:!!value.jobId,stdout:'',stderr:''} as unknown as JsonValue}: {}) }),
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -507,7 +444,6 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
-      await review.guard(exec,false)
       return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
     },
   }))
@@ -525,7 +461,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     output: {
       schema: jobStatusOutputSchema,
       render: (_args, value) => {
-        return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, ...renderJobStatus(value).map((b) => b.text)].join('\n\n') }]
+        return [{ type: 'text' as const, text: `job ${value.jobId}: ${value.status}` }, ...renderJobStatus(value)]
       },
       presentationMeta: (_args, value) => jobPresentationMeta(value),
     },
@@ -538,7 +474,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
     async execute(args, exec) {
       const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
-      return retainResult(await relayMedia(status, exec, bridge, ctx),workspaceOf(exec))
+      return retainResult(await attachImages(status, exec, bridge, ctx),workspaceOf(exec))
     },
   }))
 
@@ -554,7 +490,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     output: {
       schema: jobStatusOutputSchema,
       render: (_args, value) => {
-        return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, ...renderJobStatus(value).map((b) => b.text)].join('\n\n') }]
+        return [{ type: 'text' as const, text: `job ${value.jobId}: ${value.status}` }, ...renderJobStatus(value)]
       },
       presentationMeta: (_args, value) => jobPresentationMeta(value),
     },

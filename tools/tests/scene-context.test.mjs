@@ -1,171 +1,142 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { SceneContextProvider, installSceneContext } from '../../lib/context.js';
-import { HoudiniBridge } from '../../lib/bridge.js';
-
-let calls = 0;
-const bridge = { observationGeneration: 0, async sceneContext() {
-  calls++;
-  return {ok:true,result:{hip_path:'{{scene}}.hip', frame:1, observed_at:123}};
-}};
-function agent(text, seq=1) {
-  const events=[{type:'user/message',seq,data:{source:{kind:'user'},content:[{type:'text',text}]}}];
-  return {session:{header:{agentPreset:'houdini'},snapshotEvents:()=>events},events};
+import {SceneContextProvider, installSceneContext, needsSceneReferent} from '../../lib/context.js';
+import {HoudiniBridge} from '../../lib/bridge.js';
+import {Session} from '@deepseek-ai/dsh-session';
+const SCENE='dsh-houdini:scene-context',STATE='dsh-houdini:execution-state',TASK='dsh-houdini:task-sources',RECOVERY='dsh-houdini:context-recovery';
+const user=(id,text)=>({id,role:'user',source:{kind:'user'},content:[{type:'text',text}]});
+const data=s=>JSON.parse(s.text.slice(s.text.indexOf('\n')+1));
+function agent(){
+  const events=[],surface={nodes:[],replaceGeneration:0};
+  const a={session:{header:{agentPreset:'houdini'},surface,snapshotEvents:()=>events},events};
+  a.append=(type,d,visible=false)=>{const e={type,seq:events.length+1,data:d};events.push(e);if(visible)surface.nodes.push(e.seq);return e;};
+  return a;
 }
-const p=new SceneContextProvider(bridge);
-assert.equal(await p.observe(agent('你好！')), '');
-assert.equal(calls,0);
-const a=agent('改变选中节点');
-const first=await p.observe(a);
-assert.match(first,/houdini/);
-assert.equal(first.includes('{{'),false,'scene data must not become prompt template variables');
-assert.equal(JSON.parse(first.split('\n').slice(1).join('\n')).observation.result.hip_path,'{{scene}}.hip',
-  'JSON string data roundtrips while nested structural braces stay valid');
-assert.equal(await p.observe(a),first);
-assert.equal(calls,1,'same assembly state is reused');
-bridge.observationGeneration++;
-await p.observe(a);
-assert.equal(calls,1,'edits never refresh a user-message snapshot');
-await p.observe(agent('改变选中节点'));
-assert.equal(calls,2,'separate sessions cannot share cached selection');
-a.events.push({type:'user/message',seq:2,data:{source:{kind:'user'},content:[{type:'text',text:'现在选中了另一个'}]}});
-await p.observe(a);
-assert.equal(calls,3);
-const down=new SceneContextProvider({observationGeneration:0,async sceneContext(){throw Error('busy');}});
-assert.match(await down.observe(agent('建模')),/unavailable/);
-const abort=new AbortController();abort.abort();
-await assert.rejects(down.observe(agent('建模'),abort.signal));
-let hook, claimed, inserted;
-installSceneContext({systemPrompt:{context(c){assert.equal(c.text,'');}},on(event,fn){
-  if(event==='system-prompt/assemble')hook=fn;
-  else if(event==='agent/inbox/claimed')claimed=fn;
-  else if(event==='agent/inbox/inserted')inserted=fn;
-  else assert.fail(event);
-}},bridge);
-const assembly={contexts:[{name:'dsh-houdini:scene-context',text:''}],tools:[{name:'houdini_query'}]};
-await hook(assembly,{scope:{},agent:a},async()=>assembly);
-assert.equal(assembly.contexts.length,1);
-assert.match(assembly.contexts[0].text,/metadata observation/);
-const countBeforeSuppression=calls;
-const suppressed={contexts:[],tools:[{name:'houdini_query'}]};
-await hook(suppressed,{scope:{},agent:agent('new suppressed task')},async()=>suppressed);
-assert.equal(calls,countBeforeSuppression,'suppressed runtime contexts must not trigger HTTP');
-const entering=agent('unused');entering.events.length=0;
-claimed({agent:entering,message:{id:'first',source:{kind:'user'},content:[{type:'text',text:'Create geometry'}]}});
-const firstAssembly={contexts:[{name:'dsh-houdini:scene-context',text:''}],tools:[{name:'houdini_query'}]};
-await hook(firstAssembly,{scope:{},agent:entering},async()=>firstAssembly);
-assert.match(firstAssembly.contexts[0].text,/metadata observation/,'first assembly sees claimed user before user/message is logged');
-let sample=0, frame=1;
-const changing={observationGeneration:0,async sceneContext(){return {ok:true,result:{observed_at:++sample,elapsed_ms:sample/10,frame,panes:[{current:{path:'/obj'}}]}};}};
-const stableProvider=new SceneContextProvider(changing),stableAgent=agent('model');
-const stableText=await stableProvider.observe(stableAgent);
-changing.observationGeneration++;
-assert.equal(await stableProvider.observe(stableAgent),stableText,'timestamp-only re-observation must not inject another snapshot');
-frame=2;changing.observationGeneration++;
-assert.equal(await stableProvider.observe(stableAgent),stableText,'later frame/selection changes must not rewrite the user referent');
-const realNow=Date.now;
-try {
-  Date.now=()=>realNow()+3600000;
-  assert.equal(await stableProvider.observe(stableAgent),stableText,'elapsed time never triggers capture');
-  assert.equal(sample,1);
-} finally { Date.now=realNow; }
-stableProvider.claim(stableAgent,{id:'next-user',source:{kind:'user'},content:[{type:'text',text:'Inspect again'}]});
-assert.equal(JSON.parse((await stableProvider.observe(stableAgent)).split('\n').slice(1).join('\n')).observation.result.observed_at,2,
-  'new user message gets a fresh observation even if facts are unchanged');
-const receivedAgent=agent('unused');receivedAgent.events.length=0;
-const received={id:'received-before-claim',source:{kind:'user'},content:[{type:'text',text:'edit this'}]};
-const beforeReceipt=calls;
-inserted({agent:receivedAgent,message:received});
-assert.equal(calls,beforeReceipt+1,'capture starts at inbox receipt, not after model reasoning');
-claimed({agent:receivedAgent,message:received});
-const receiptAssembly={contexts:[{name:'dsh-houdini:scene-context',text:''}],tools:[{name:'houdini_query'}]};
-await hook(receiptAssembly,{scope:{},agent:receivedAgent},async()=>receiptAssembly);
-assert.equal(calls,beforeReceipt+1,'claim and assembly reuse the receipt capture');
-const binding=JSON.parse(receiptAssembly.contexts[0].text.split('\n').slice(1).join('\n'));
-assert.equal(binding.user_message_id,received.id);
-assert.equal(typeof binding.capture_requested_at,'number');
-let failures=0;
-const failed=new SceneContextProvider({async sceneContext(){failures++;throw Error('unavailable');}});
-const failedAgent=agent('inspect');
-await failed.observe(failedAgent);await failed.observe(failedAgent);
-assert.equal(failures,1,'failed captures are not retried automatically within a message');
-let release;
-const concurrent=new SceneContextProvider({sceneContext:()=>new Promise(r=>{release=r;})});
-const concurrentAgent=agent('inspect');
-const pending1=concurrent.observe(concurrentAgent),pending2=concurrent.observe(concurrentAgent);
-release({ok:true,result:{frame:1}});
-assert.equal(await pending1,await pending2,'concurrent assemblies share one in-flight capture');
-let queuedFrame=10;
-const queuedProvider=new SceneContextProvider({async sceneContext(){return {ok:true,result:{frame:queuedFrame}};}});
-const queuedAgent=agent('unused');queuedAgent.events.length=0;
-const qa={id:'queued-a',source:{kind:'user'},content:[{type:'text',text:'edit selected'}]};
-const qb={...qa,id:'queued-b'};
-queuedProvider.receive(queuedAgent,qa);
-queuedFrame=20;queuedProvider.receive(queuedAgent,qb);
-queuedFrame=30;
-queuedProvider.claim(queuedAgent,qa);
-assert.equal(JSON.parse((await queuedProvider.observe(queuedAgent)).split('\n').slice(1).join('\n')).observation.result.frame,10);
-queuedProvider.claim(queuedAgent,qb);
-assert.equal(JSON.parse((await queuedProvider.observe(queuedAgent)).split('\n').slice(1).join('\n')).observation.result.frame,20,
-  'queued messages retain separate receipt snapshots, not later claim-time selections');
-const huge=new SceneContextProvider({observationGeneration:0,async sceneContext(){return {ok:true,result:{selection:[{path:'x'.repeat(10000),type:'box'}]}};}});
-assert((await huge.observe(agent('inspect huge selection'))).length<6500);
-
-let posted;
-const server=http.createServer((req,res)=>{
-  let body='';req.on('data',c=>body+=c);req.on('end',()=>{
-    posted={url:req.url,body:JSON.parse(body)};
-    res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,result:{frame:1}}));
-  });
-});
+let calls=0,frame=1;
+const bridge={async sceneContext(){calls++;return {ok:true,result:{runtime_id:'R',hip_path:'{{scene}}.hip',frame,observed_at:123,selection:[{path:'/obj/selected',type:'box'}]}};}};
+const hooks={},registered=[];
+installSceneContext({systemPrompt:{context(c){registered.push(c);}},on(name,fn){hooks[name]=fn;}},bridge);
+const receive=(a,m)=>{hooks['agent/inbox/inserted']({agent:a,message:m});hooks['agent/inbox/claimed']({agent:a,message:m});};
+async function step(a,{message,suppressed=false,reject=false,commit=true,contexts,tools=[{name:'houdini_query'}]}={}){
+  if(message)receive(a,message);
+  const assembly={contexts:contexts??(suppressed?[]:registered.map(c=>({...c}))),tools},signal=new AbortController().signal;
+  await hooks['system-prompt/assemble'](assembly,{scope:{},agent:a,signal},async()=>assembly);
+  const result=await hooks['agent/pre-step']({agent:a,signal},async()=>reject?{kind:'reject'}:{kind:'enter',messages:message?[message]:[]});
+  if(commit&&result.kind==='enter')for(const m of result.messages)a.append('user/message',m,true);
+  return {assembly,result,sections:result.messages?.flatMap(m=>m.source.sections||[])||[]};
+}
+function record(a,n,{name='houdini_query',ok=true,execution=true,receipt,nodes=[],checks=[],impact={},runtime='R',hip='scene.hip',observed=n}={}){
+  const id='call-'+n;a.append('tool/call',{callId:id,name});
+  a.append('tool/result',{message:{source:{callId:id},content:[]},meta:{canonical:{ok,transaction:{status:name==='houdini_exec'?'committed':'no_scene_change',nodes},evidence:checks,
+    ...(receipt?{requestReceipt:receipt}:{}),...(execution?{execution:{runtime_id:runtime,hip_path:hip,sequence:n,observed_at:observed,frame,
+    impact:{attempted:false,nodes:[],...impact},outputs:[]}}:{})}}},true);
+}
+for(const text of ['你好！','解释 build_module','创建一个程序化轮胎','检查 /obj/geo1/foo','What is a SOP?','继续']){
+  assert.equal(needsSceneReferent(user('u',text)),false,text);const before=calls;
+  assert.equal((await step(agent(),{message:user('u',text)})).sections.length,0,text);assert.equal(calls,before);
+}
+for(const text of ['改变选中节点','这个 HDA 为什么报错','inspect this node','当前场景有什么','edit selected'])assert(needsSceneReferent(user('u',text)),text);
+const a=agent(),m=user('first','这个 HDA 为什么报错');
+const first=await step(a,{message:m});
+assert.deepEqual(first.assembly.contexts,[],'supplements are outside the combined Host snapshot');
+assert.deepEqual(first.sections.map(s=>s.name),[SCENE]);
+assert.equal(data(first.sections[0]).user_message_id,'first');
+assert.equal(data(first.sections[0]).observation.result.hip_path,'{{scene}}.hip');
+assert(!first.sections[0].text.includes('{{'));
+const captured=calls;frame=500;
+assert.equal((await step(a)).sections.length,0,'passive frame/selection changes add nothing');assert.equal(calls,captured);
+// Failed read, corrected read, further read: no repeated runtime snapshot.
+record(a,1,{ok:false});assert.equal((await step(a)).sections.length,0);
+record(a,2);assert.equal((await step(a)).sections.length,0);
+record(a,3);assert.equal((await step(a)).sections.length,0);assert.equal(calls,captured);
+assert.equal((await step(a,{message:user('second','继续排查')})).sections.length,0);
+assert.equal((await step(a,{message:user('third','检查 /obj/other')})).sections.length,0);
+assert.equal((await step(a,{message:user('fourth','检查现在选中的节点')})).sections.length,1);
+// Normal changes/results need no duplicate inventory; dependency invalidation does.
+const edit=agent();await step(edit,{message:user('edit','创建一个盒子')});
+record(edit,1,{name:'houdini_exec',nodes:[{identity:1,path:'/obj/a',exists:true}],checks:[{ledgerIndex:1,verb:'verify_network',output:'/obj/a',ok:true}],impact:{attempted:true}});
+assert.equal((await step(edit)).sections.length,0);
+record(edit,2,{name:'houdini_exec',impact:{attempted:true,global:true}});
+let notice=await step(edit);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
+assert.equal(data(notice.sections[0]).checks[0].validity,'stale_after_recorded_change');
+assert.equal((await step(edit)).sections.length,0);record(edit,3);assert.equal((await step(edit)).sections.length,0);
+const uncertain=agent();await step(uncertain,{message:user('u','创建模块')});
+record(uncertain,1,{name:'houdini_exec',execution:false,ok:false,receipt:{request_ref:'ref',status:'unknown',owner_call:'call-1'}});
+notice=await step(uncertain);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
+assert.deepEqual(data(notice.sections[0]).unresolved_requests,[['ref','unknown']]);assert.equal((await step(uncertain)).sections.length,0);
+record(uncertain,2,{receipt:{request_ref:'ref',status:'done',owner_call:'call-1'}});
+notice=await step(uncertain);assert.equal(data(notice.sections[0]).status,'no_execution_attention');assert.equal((await step(uncertain)).sections.length,0);
+record(uncertain,3,{receipt:{request_ref:'ref',status:'unknown',owner_call:'call-1'}});assert.equal((await step(uncertain)).sections.length,0);
+const changed=agent();await step(changed,{message:user('u','继续')});record(changed,1);await step(changed);
+record(changed,2,{runtime:'NEW',hip:'other.hip'});notice=await step(changed);assert.equal(data(notice.sections[0]).observed_scene_change.runtime_id,'NEW');
+record(changed,3,{runtime:'NEW',hip:'other.hip'});assert.equal((await step(changed)).sections.length,0);
+record(changed,4,{runtime:'R',observed:1});assert.equal((await step(changed)).sections.length,0,'late observation does not cause a new runtime change');
+record(a,4,{name:'houdini_exec',execution:false,ok:false});notice=await step(a);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
+assert(!notice.sections[0].text.includes('metadata observation'),'attention never repeats the scene snapshot');
+// Recovery is tied to a replaced model surface, not every step after compaction.
+const recovery=agent();await step(recovery,{message:user('r','保留原要求 {{target}}')});record(recovery,1);await step(recovery);
+recovery.session.surface.nodes=[];recovery.session.surface.replaceGeneration=1;
+recovery.append('user/message',user('summary','历史摘要'),true).surfaceOp={op:'replace'};
+notice=await step(recovery);assert.deepEqual(notice.sections.map(s=>s.name),[TASK,RECOVERY]);
+assert.equal(data(notice.sections[0]).sources[0].excerpt,'保留原要求 {{target}}');assert(!notice.sections[0].text.includes('{{'));
+assert.equal(data(notice.sections[1]).state.coverage.execution_records,1);assert.equal((await step(recovery)).sections.length,0);
+record(recovery,2);assert.equal((await step(recovery)).sections.length,0);
+recovery.session.surface.nodes=[];recovery.session.surface.replaceGeneration=2;
+recovery.append('user/message',user('summary2','历史摘要'),true).surfaceOp={op:'replace'};
+assert.equal((await step(recovery)).sections.length,2);
+recovery.append('compaction/prune',{shadowedSeqs:[1]});
+recovery.append('tool/result',{message:{source:{callId:'pruned'},content:[]}},true).surfaceOp={op:'replace'};
+recovery.session.surface.replaceGeneration++;
+assert.equal((await step(recovery)).sections.length,0,'tool-result pruning alone must not recreate the entire recovery context');
+// Rejection/failed commit/suppression cannot consume an unlogged candidate.
+const rejected=agent();assert.equal((await step(rejected,{message:user('j','这个节点'),reject:true})).result.kind,'reject');
+assert.equal((await step(rejected)).sections.length,1);
+const notCommitted=agent(),proposed=await step(notCommitted,{message:user('p','这个节点'),commit:false});
+assert.equal((await step(notCommitted)).sections[0].text,proposed.sections[0].text);assert.equal((await step(notCommitted)).sections.length,0);
+const suppressed=agent();receive(suppressed,user('s','这个节点'));
+assert.equal((await step(suppressed,{suppressed:true})).sections.length,0);assert.equal((await step(suppressed,{tools:[]})).sections.length,0);
+assert.equal((await step(suppressed)).sections.length,1);
+const override=[{name:SCENE,text:'Scoped override'}];assert.deepEqual((await step(agent(),{contexts:override})).assembly.contexts,override);
+// A restarted provider reads the original capture; it never samples today's selection for an old message.
+const resumedProvider=new SceneContextProvider(bridge),beforeResume=calls;
+assert.match(await resumedProvider.observe(a),/fourth/);assert.equal(calls,beforeResume);
+const noCapture=agent();noCapture.append('user/message',user('old','这个节点'),true);
+assert.equal(await resumedProvider.observe(noCapture),'');assert.equal(calls,beforeResume);
+let release,count=0;
+const concurrent=new SceneContextProvider({sceneContext(){count++;return new Promise(r=>release=r);}}),ca=agent(),cm=user('c','这个节点');
+concurrent.receive(ca,cm);concurrent.claim(ca,cm);const p1=concurrent.observe(ca),p2=concurrent.observe(ca);
+release({ok:true,result:{frame:10}});assert.equal(await p1,await p2);assert.equal(count,1);
+let failures=0;const down=new SceneContextProvider({async sceneContext(){failures++;throw Error('busy');}});
+down.receive(ca,cm);down.claim(ca,cm);assert.match(await down.observe(ca),/unavailable/);await down.observe(ca);assert.equal(failures,1);
+const abort=new AbortController();abort.abort();await assert.rejects(down.observe(ca,abort.signal));
+let queuedFrame=10;const queue=new SceneContextProvider({async sceneContext(){return {ok:true,result:{frame:queuedFrame}};}});
+const qa=user('qa','选中节点'),qb=user('qb','选中节点');queue.receive(ca,qa);queuedFrame=20;queue.receive(ca,qb);queuedFrame=30;
+queue.claim(ca,qa);assert.equal(data({text:await queue.observe(ca)}).observation.result.frame,10);
+queue.claim(ca,qb);assert.equal(data({text:await queue.observe(ca)}).observation.result.frame,20);
+const huge=new SceneContextProvider({async sceneContext(){return {ok:true,result:{selection:[{path:'x'.repeat(10000)}]}};}});
+huge.receive(ca,cm);huge.claim(ca,cm);assert((await huge.observe(ca)).length<6700);
+const braces=new SceneContextProvider({async sceneContext(){return {ok:true,result:{hip_path:'{'.repeat(3000)}};}});
+braces.receive(ca,cm);braces.claim(ca,cm);assert((await braces.observe(ca)).length<6700,'budget includes template escaping');
+// Exercise actual DSH surface validation and model-message derivation, not only the hook fixture.
+const durable=Session.create('context-injection-regression');
+// The build-time Session dependency predates snapshotEvents; adapt only the
+// test view, while append validation, surface and deriveMessages stay real.
+const real={session:{snapshotEvents:()=>durable.events,get surface(){return durable.surface;}}};
+real.append=(type,d,visible=false)=>durable.append(type,d,visible?{surfaceOp:'append'}:undefined);
+await step(real,{message:user('real','检查选中节点')});
+assert.equal(durable.deriveMessages().length,2);
+assert.equal(durable.deriveMessages()[1].source.sections[0].name,SCENE);
+assert.equal((await step(real)).sections.length,0);
+assert.equal(durable.deriveMessages().length,2,'model input does not accumulate repeated scene context');
+durable.append('user/message',{...user('actual-summary','历史摘要'),source:{kind:'plugin',plugin:'compaction'}},
+  {surfaceOp:{op:'replace',start:durable.surface.nodes[0],end:durable.surface.nodes.at(-1)},sourceEventSeqs:[...durable.surface.nodes]});
+const restored=await step(real);
+assert(restored.sections.some(s=>s.name===TASK),'replacement without a compaction marker still recovers a singleton original');
+assert.equal((await step(real)).sections.length,0);
+let posted;const server=http.createServer((req,res)=>{let body='';req.on('data',c=>body+=c);req.on('end',()=>{
+  posted={url:req.url,body:JSON.parse(body)};res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,result:{frame:1}}));
+});});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-try {
-  const b=new HoudiniBridge(`http://127.0.0.1:${server.address().port}`,120000);
-  assert.equal((await b.sceneContext()).ok,true);
-  assert.deepEqual(posted,{url:'/context',body:{schema_version:1}});
-} finally { await new Promise(r=>server.close(r)); }
-console.log('scene context: user-turn refresh, per-agent isolation, failure, assembly and HTTP passed');
-// Per-request execution facts do not refresh the message-bound user referent.
-const observedAgent=agent('edit selected');
-observedAgent.events.push({type:'tool/call',seq:2,data:{callId:'observed',name:'houdini_exec'}},
-  {type:'tool/result',seq:3,data:{message:{source:{callId:'observed'},content:[]},meta:{canonical:{
-    ok:true,transaction:{status:'committed',nodes:[{identity:1,path:'/obj/{{not_instructions}}',exists:true}]},
-    execution:{runtime_id:'runtime',sequence:1,observed_at:1,impact:{attempted:false,nodes:[]}}}}}});
-const stateOnly={contexts:[{name:'dsh-houdini:execution-state',text:''}],tools:[{name:'houdini_query'}]};
-const beforeState=calls;
-await hook(stateOnly,{scope:{},agent:observedAgent},async()=>stateOnly);
-assert.equal(calls,beforeState,'execution-state projection does not issue HTTP or update the user-message snapshot');
-assert.ok(!stateOnly.contexts[0].text.includes('{{'));
-assert.equal(JSON.parse(stateOnly.contexts[0].text.split('\n').slice(1).join('\n')).nodes[0].path,'/obj/{{not_instructions}}');
-
-const taskAgent=agent('原要求 {{original}}');
-taskAgent.events[0].data.id='original';
-const nextMessage={id:'followup',source:{kind:'user'},content:[{type:'text',text:'继续 {{followup}}'}]};
-const beforeTask=calls;
-claimed({agent:taskAgent,message:nextMessage});
-const taskOnly={contexts:[{name:'dsh-houdini:task-sources',text:''}],tools:[{name:'houdini_query'}]};
-await hook(taskOnly,{scope:{},agent:taskAgent},async()=>taskOnly);
-assert.equal(calls,beforeTask,'source anchors perform no HTTP and do not recapture the scene');
-assert(!taskOnly.contexts[0].text.includes('{{'),'source text cannot become prompt template expressions');
-const taskData=JSON.parse(taskOnly.contexts[0].text.split('\n').slice(1).join('\n'));
-assert.equal(taskData.sources[0].excerpt,'原要求 {{original}}');
-assert.equal(taskData.sources.at(-1).message_id,'followup','claimed message visible before logging');
-const simpleTask={contexts:[{name:'dsh-houdini:task-sources',text:''}],tools:[{name:'houdini_query'}]};
-await hook(simpleTask,{scope:{},agent:agent('simple edit')},async()=>simpleTask);
-assert.equal(simpleTask.contexts.length,0,'single ordinary request avoids duplicate scaffolding');
-const noTools={contexts:[{name:'dsh-houdini:task-sources',text:''}],tools:[]};
-await hook(noTools,{scope:{},agent:taskAgent},async()=>noTools);
-assert.equal(noTools.contexts[0].text,'','tool scope is required');
-const hugeSourceAgent=agent('original');
-hugeSourceAgent.events[0].data.id='x'.repeat(10000);
-hugeSourceAgent.events.push({type:'user/message',seq:2,data:{id:'followup',source:{kind:'user'},content:[]}});
-const hugeSources={contexts:[{name:'dsh-houdini:task-sources',text:''}],tools:[{name:'houdini_query'}]};
-await hook(hugeSources,{scope:{},agent:hugeSourceAgent},async()=>hugeSources);
-assert.match(hugeSources.contexts[0].text,/task_sources_exceed_budget/);
-assert(hugeSources.contexts[0].text.length<6000);
-const bracesAgent=agent('{'.repeat(5000));
-bracesAgent.events.push({type:'user/message',seq:2,data:{source:{kind:'user'},content:[{type:'text',text:'}'.repeat(5000)}]}});
-const escapedBudget={contexts:[{name:'dsh-houdini:task-sources',text:''}],tools:[{name:'houdini_query'}]};
-await hook(escapedBudget,{scope:{},agent:bracesAgent},async()=>escapedBudget);
-assert.match(escapedBudget.contexts[0].text,/task_sources_exceed_budget/);
-assert(escapedBudget.contexts[0].text.length<6000,'budget applies after template escaping');
+try{const b=new HoudiniBridge(`http://127.0.0.1:${server.address().port}`,120000);assert.equal((await b.sceneContext()).ok,true);assert.deepEqual(posted,{url:'/context',body:{schema_version:1}});}
+finally{await new Promise(r=>server.close(r));}
+console.log('context injection: referent capture, quiet reads, attention/resolution, recovery, resume, rejection, suppression and HTTP passed');

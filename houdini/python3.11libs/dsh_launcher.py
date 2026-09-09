@@ -352,8 +352,8 @@ def restart_bridge() -> str:
     """Main thread: stop/reload/start the in-process bridge without probing ports."""
     _module_path_on_syspath()
     import dsh_bridge
+    import dsh_requests
     import dsh_hou_helpers
-    import dsh_review
     import dsh_quality_contracts
     import dsh_sop_contracts
     import dsh_camera_framing
@@ -367,7 +367,7 @@ def restart_bridge() -> str:
     importlib.reload(dsh_operation_cards)
     importlib.reload(dsh_sop_contracts)
     importlib.reload(dsh_quality_contracts)
-    importlib.reload(dsh_review)
+    importlib.reload(dsh_requests)
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(BRIDGE_PORT, BRIDGE_HOST)
     return f"bridge restarted on {BRIDGE_HOST}:{BRIDGE_PORT}"

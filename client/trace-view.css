@@ -1,3 +1,9 @@
+.dsh-trace .tr-prompt-group { border: 1px solid var(--tr-line); border-radius: 6px; margin: 10px 0; padding: 12px 14px; }
+.dsh-trace .tr-prompt-group > summary { cursor: pointer; font-weight: 600; }
+.dsh-trace .tr-prompt-section { border-top: 1px solid var(--tr-line); margin-top: 12px; padding-top: 10px; }
+.dsh-trace .tr-prompt-section > summary { cursor: pointer; }
+.dsh-trace .tr-prompt-source { display: block; margin: 5px 0 0 18px; color: var(--tr-muted); overflow-wrap: anywhere; font-weight: 400; }
+.dsh-trace .tr-prompt-raw { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: 12px; }
 .dsh-trace {
   --tr-bg: var(--dsw-alias-bg-layer-1, #171b20);
   --tr-panel: var(--dsw-alias-bg-layer-2, #20252b);

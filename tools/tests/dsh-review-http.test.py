@@ -1,30 +1,18 @@
-"""Real transport integration, isolated hython/server; no model calls or live runtime."""
+"""Retired review transport cannot grant scene or parameter capabilities."""
 from pathlib import Path
-import subprocess
-import sys
-import threading
-import time
+import sys, threading, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer
-ROOT=Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import dsh_bridge as b
+import dsh_hou_helpers as h
+assert not hasattr(b,'run_review') and not hasattr(b,'_review_service')
+assert not hasattr(h,'_review_parameter_access')
 server=ThreadingHTTPServer(('127.0.0.1',0),b._Handler)
 thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-process=None
 try:
-    b._pump_active=True
-    process=subprocess.Popen(['node',str(ROOT/'tools/tests/review-http-driver.mjs'),f'http://127.0.0.1:{server.server_port}'],
-        cwd=str(ROOT),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,
-        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-    deadline=time.monotonic()+45
-    while process.poll() is None and time.monotonic()<deadline:
-        b._pump();time.sleep(.01)
-    if process.poll() is None:process.kill();raise AssertionError('review HTTP integration timeout')
-    output=process.communicate()[0];print(output)
-    assert process.returncode==0,output
-    assert not b._review_service.active() and not b._review_busy
-finally:
-    b._pump_active=False
-    if process and process.poll() is None:process.kill();process.wait()
-    server.shutdown();server.server_close();thread.join(3)
-print('review HTTP integration passed')
+ request=urllib.request.Request(f'http://127.0.0.1:{server.server_port}/review',data=b'{}',headers={'Content-Type':'application/json'})
+ try: urllib.request.urlopen(request,timeout=3)
+ except urllib.error.HTTPError as error: assert error.code==404,error.code
+ else:raise AssertionError('retired review route still active')
+finally:server.shutdown();server.server_close();thread.join(3)
+print('retired review HTTP endpoint rejected')

@@ -19,13 +19,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REQUIREMENTS_FILE = PROJECT_ROOT / "dsh-profile.requirements.json"
 SYNC_TIMEOUT_SECONDS = 600
 
-_VISION_TOOLKIT_NAME = "@anionex/dsh-vision-toolkit"
-_VISION_TOOLKIT_SESSION_API_PATCH_VERSION = "0.1.40"
-_VISION_TOOLKIT_EXPOSURE_PATH = Path("lib/exposure.js")
-_VISION_TOOLKIT_OLD_EVENTS_API = b"for (const event of session.events) {"
-_VISION_TOOLKIT_NEW_EVENTS_API = b"for (const event of session.snapshotEvents()) {"
-
-
 def load_requirements(path: Path = REQUIREMENTS_FILE) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("schemaVersion") != 1:
@@ -220,48 +213,6 @@ def required_remove_names(requirements: dict, status: dict) -> list[str]:
     return [name for name in requirements.get("removePlugins", []) if name in present]
 
 
-def apply_profile_compatibility_repairs(
-    requirements: dict,
-    *,
-    home: Path | None = None,
-) -> list[str]:
-    """Apply exact, fail-closed repairs for known upstream host API breaks.
-
-    Vision Toolkit 0.1.40 migrated off the removed settingsNamespace export,
-    but its progressive-exposure restore probe still reads ``session.events``.
-    DSH 0.1.2 replaced that public snapshot property with
-    ``session.snapshotEvents()``. Patch only this exact installed version and
-    only when the expected call site occurs exactly once; an unknown artifact
-    shape must be reviewed instead of rewritten heuristically.
-    """
-    root = profile_dir(requirements["profile"], home)
-    package = _installed_manifest(root, _VISION_TOOLKIT_NAME)
-    if package is None or package.get("version") != _VISION_TOOLKIT_SESSION_API_PATCH_VERSION:
-        return []
-    target = root / "node_modules" / _VISION_TOOLKIT_NAME / _VISION_TOOLKIT_EXPOSURE_PATH
-    try:
-        source = target.read_bytes()
-    except FileNotFoundError:
-        # Minimal inspection fixtures need not reproduce an entire npm package;
-        # a real profile load will independently reject a missing entry file.
-        return []
-    old_count = source.count(_VISION_TOOLKIT_OLD_EVENTS_API)
-    new_count = source.count(_VISION_TOOLKIT_NEW_EVENTS_API)
-    if old_count == 0 and new_count == 1:
-        return []
-    if old_count != 1 or new_count != 0:
-        raise RuntimeError(
-            "Vision Toolkit 0.1.40 compatibility repair refused: "
-            f"unexpected {target} API shape (old={old_count}, new={new_count})"
-        )
-    target.write_bytes(source.replace(
-        _VISION_TOOLKIT_OLD_EVENTS_API,
-        _VISION_TOOLKIT_NEW_EVENTS_API,
-        1,
-    ))
-    return ["vision-toolkit 0.1.40 session.snapshotEvents compatibility"]
-
-
 def _run_plugin_command(
     command_prefix: list[str] | str,
     args: list[str],
@@ -321,13 +272,10 @@ def sync_profile_plugins(
     current = inspect_profile(requirements, project_root=project_root, home=home)
     specs = required_install_specs(requirements, current, project_root=project_root)
     if not specs and not removals:
-        repairs = apply_profile_compatibility_repairs(requirements, home=home)
         versions = ", ".join(
             f"{item['name']}@{item['version'] or 'local'}" for item in before["plugins"]
         )
-        return "profile plugins ok: " + versions + (
-            "; repaired " + ", ".join(repairs) if repairs else ""
-        )
+        return "profile plugins ok: " + versions
 
     if on_install is not None:
         on_install(specs)
@@ -351,12 +299,9 @@ def sync_profile_plugins(
             }, ensure_ascii=False, indent=2)
             + (f"\ncommand output:\n{chr(10).join(outputs)[-8000:]}" if outputs else "")
         )
-    repairs = apply_profile_compatibility_repairs(requirements, home=home)
     actions = []
     if removals:
         actions.append("removed " + ", ".join(removals))
     if specs:
         actions.append("added " + ", ".join(specs))
-    if repairs:
-        actions.append("repaired " + ", ".join(repairs))
     return "profile plugins synced: " + "; ".join(actions)

@@ -45,7 +45,7 @@
 - 创建：节点、类型、输入连接、显式输出、最终事务状态。
 - 设参：节点、参数、修改前/后值；未采集旧值时明确缺失，不用默认值或后续现场值代替。
 - 检查：目标、frame、范围、方法、通过/失败/未验证项；检查通过不能扩大为任务完成。
-- 渲染：产物、取景、帧、像素/裁面检查、媒体转交与语义识图分别显示。
+- 渲染：产物、取景、帧、像素/裁面检查、原生附件传递与当前模型的视觉判断分别显示。
 - 失败：失败位置、原因、场景影响、回滚范围、后续修正调用；不能把所有拒绝都标为 Raw Gate。
 - 动词失败记录可以仅有error/summary而无result；详情分别展示错误、返回与补充证据，缺失返回明确标记，
   不转为null或成功。null/false/0/空字符串仍保留真实值，打开失败详情和返回列表不得撤下Trace视图。
@@ -68,13 +68,15 @@
 | DSH身份、默认persona及其他系统段 | Host最终组装/模型请求；DSH SystemPrompt注册表 | 开关、作用域遮蔽、顺序、complete覆盖与最终生效情况 |
 | Houdini persona | [presets](../presets/)经persona插件挂载 | preset模板与本次实际生效内容；不能只按磁盘文件断言已加载 |
 | 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
-| 动态现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 独立runtime context，不是System段；采集时间、复用与缺失 |
-| 历史执行事实 | [src/execution-state.ts](../src/execution-state.ts)的dsh-houdini:execution-state | runtime/sequence、失效与in-flight；不是现场通过证书 |
-| 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)的dsh-houdini:task-sources | 用户原文、澄清问答与计划区分；摘录/省略明示，source_ref回读不执行HOM |
+| 消息指代现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 按需采集一次的独立plugin消息；绑定消息/时间，选择不构成目标或授权；历史整包snapshot按当时来源展示 |
+| 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state/context-recovery | 仅未决请求、检查失效、运行身份变化及历史替换恢复；普通回包/计数不追加，不是现场通过证书 |
+| 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)的dsh-houdini:task-sources | 按需回读与历史替换后的有限恢复；用户/澄清/计划区分，不随普通消息和goal变化追加副本 |
 | 工具定义 | [src/tools.ts](../src/tools.ts)与平台其他提供方，最终可见schema集合 | schema是独立请求组成；工具限制不会自动证明对应guidance也被删除 |
 | 项目指令与其他上下文 | 实际上下文提供方及最终消息 | 来源、角色、顺序；不凭插件名称猜正文或注入位置 |
 | 用户/assistant/tool历史、技能与参考正文 | 最终messages及读取/压缩/裁剪记录 | 已读取、仍保留、已压缩与已裁剪分别表达 |
 
+实际System按身份/运行环境、Houdini persona、插件执行规则、通用工具、长期目标/多agent、交付展示分类；未知内容单列。分类与来源片段均默认折叠，点击展开完整历史正文，保留原始序号及完整System原序视图。
+公开快照未提供逐段运行provenance时，来源文件仅标为文本规则匹配提示，不声称验证了历史版本或真实注册边界。不得以当前模板补写历史内容。
 来源目录必须允许展开全部已采集正文，而不只提供关键约束摘要。System原文保留最终组装顺序，
 完整请求结构同时显示System、Tools、Context和Messages；相邻请求的变化按来源定位。
 配置中的插件清单只证明配置存在，不能代替实际贡献段清单；未采集、未注册、禁用、被覆盖不能混用。
@@ -143,12 +145,30 @@ canonical metadata时标referenced_artifact_only，不能把压缩占位当作�
 原始请求取首次工具前最早的用户消息；恢复口令不替换它。目标变更和compaction只报告已记录事件，
 不由它们推断完整输入保留状态。验证入口为[请求审计回归](../tools/tests/trace-request-telemetry.test.mjs)。
 
-分析分别记录目录广度、调用含动词率、动词密度、只读裸探针、Gate拦截、成功裸修改、豁免及回滚工作量。
+分析分别记录目录广度、调用含动词率、动词密度、只读query守卫范围、Gate拦截、裸修改候选、疑似/未知副作用及回滚工作量。
+客户端分析、离线evidence与HTML共用evidence-helpers的classifyRawEffect/collectVerbAdoption；生成器嵌入同源函数，
+不各自按方法名前缀推导只读。canonical rawUsage优先，blocked/read_only_blocked包含外部复制等疑似操作；
+仅成功query且无副作用候选计rawReadOnlyCalls。动态exec保留unknown，no_scene_change不排除文件/Python全局副作用。
+成功exec含动词率包含测试与动态函数，不解释成mutation-intent覆盖率；result_ref/request_ref/source_ref回读排除在新HOM调用外。
+兼容字段execUsedForReadOnly保持空数组，execWithoutVerbEvidence按effect列出无动词exec，停止从“未检出修改”推定只读。
+Gate统计不是完整副作用审计，零裸修改候选不证明没有修改。验证见[副作用分类回归](../tools/tests/trace-raw-effects.test.mjs)。
 离线retryWork基于已去重调用，分别给出提交/失败/已应用回滚代码字符和被回滚的成功build ledger条目。
 近重复只在有界窗口比较失败调用后的相同行多重集，给出步骤定位和差异片段；输出分析阈值及跳过范围。
 相似度不证明代码语义等价或确定浪费，成功模块的正常重复生成不计为失败重试；字符数不冒充token或节省量。
 不把目录命中或工具成功当作实体关系/视觉/任务正确性的证明。Trace证据提取遵循
 [trace分析skill](../skills/houdini-trace-analysis/SKILL.md)，先提取证据再生成报告。
+质量契约证据纳入用户原话和按question id关联的成功澄清回答；只读被选选项描述及实际custom文本，
+不拿问题标题或未选项当已确认要求。首次修改后的澄清保留来源，但不倒填初始契约。
+手写关系probe只作为候选：需代码中的几何读取和实际输出中的关系标签/数值，允许结果字典后统一输出；
+构建注释、嵌入源码、硬写数值、失败/回滚/恢复不确定调用不证明有效测量，候选不认证实体范围或阈值正确。
+视觉新鲜度以生成步骤为起点，按明确输出路径/relay映射关联读图，直到轨迹结束追查后续修改；重读旧图
+不刷新其生成版本。已知目标变化标stale，影响不明或恢复未确认标unverified，未关联图片不强猜来源。
+最终视觉通过措辞与已关联旧视图冲突只产生范围复核提示，不做艺术判决；修改后新图仅替代已知同视图记录，
+不推导完整视角覆盖。失败的后续读图不能覆盖此前已成功访问但过期的证据。
+manualReview并列保留读图返回、后续模型解读和最终声明，语义冲突、艺术正确性和未知probe范围由人工复核，
+不扩关键词来自动裁定。taskSources仅记录index发现与原文分页返回；部分页、失败和缺返回分别标识，
+未回读不等于未消费（原消息可能已在上下文中），回读也不证明理解或验收义务完整。
+上述判据由[证据回归](../tools/tests/trace-evidence-helpers.test.mjs)验证。
 
 ## 验证与维护入口
 

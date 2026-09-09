@@ -48,7 +48,7 @@ try {
     evidence:[{ledgerIndex:1,verb:'test_controls',ok:false,restored:false,unsupported:['external solver'],reason:'restore failed',details:code}],
     result:{ok:false,warnings:['important warning'],details:code},
     rollback:{supported:true,applied:false,error:'rollback failure'},
-    media:[{from:'source',error:'relay failed'}],advisory:'ownership boundary'};
+    imageAttachments:[{from:'source',error:'relay failed'}],advisory:'ownership boundary'};
   const warningText=exec.output.render({},await retainResult(warning,dir))[0].text;
   for(const text of ['restore failed','external solver','important warning','rollback failure','relay failed','ownership boundary'])assert.ok(warningText.includes(text),text);
   const missing=await retainResult(raw,path.join(dir,'missing-workspace'));

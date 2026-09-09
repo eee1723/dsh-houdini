@@ -139,8 +139,11 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - `catalog.used/total`：目录广度，只说明任务碰过哪些能力；大量 NOT_APPLICABLE 动词不进分母推理。
 - `verbAdoption.callCoveragePct`：Houdini 调用中含至少一个 verb 的比例，会被合法只读探针稀释。
 - `verbDensity`：每次 Houdini 调用的 verb 数，观察 batch/组合程度。
-- `successfulExecVerbCoveragePct`：成功 mutation-intent exec 的 verb 覆盖，是场景修改采用的近似指标。
-- `rawReadOnlyCalls`、`blockedVerblessRawMutationCalls`、`successfulVerblessRawMutationCalls`：分别解释逃生舱、Gate 有效性与真正安全回归。
+- `successfulExecVerbCoveragePct`：全部成功exec中含动词的比例；包含加载器/纯函数测试，不是场景修改采用率。
+- `rawReadOnlyCalls`：成功、无动词且没有副作用候选的query，仅描述只读接口的守卫范围。
+- `blockedVerblessRawMutationCalls`：无动词调用的执行前Gate拦截，包含query和无已知动词的疑似/外部操作；优先canonical rawUsage，不依赖错误文案或方法名正则。
+- `successfulVerblessRawMutationCalls`：成功返回的无动词裸修改候选，不证明实际提交或全部副作用被观测。
+- `rawSuspectedEffectCalls/rawUnknownEffectCalls/rawFailedCalls`：分别保留疑似/外部副作用、未知动态调用、未证明只读的失败；不能把它们塞进只读计数。rawUsage.read_only是静态扫描结论，transaction.no_scene_change不排除文件/Python全局副作用。Host result_ref/request_ref/source_ref回读不计新HOM执行。
 
 必查机会：
 
@@ -191,6 +194,15 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 至少满足：三个以上多样 trace 中无独立价值；有等价且更安全的替代；迁移路径明确；没有诊断/逃生用途。单 trace 不允许建议删除。
 
 ## 6. Houdini 领域逻辑
+
+### HDA / OTL 代码维护
+
+- 先重建用户要的是定位原因、修改回调、消除外部包，还是可移机交付；本机依赖链不证明远端具体缺包原因。实际定义库与完整类型名、用户授权和受影响实例范围分别核对。
+- 相关自省优先hda_info/hda_get_section，局部修正可用hda_patch_section；批量磁盘定义盘点不硬套仅接受node的接口。文件列表与被检查定义逐项对齐，不能只因使用loadedFiles就判漏扫，也不能靠总数一致证明完整。
+- 依赖包含Python import、内部自定义HDA类型、其他资源；扫描无包名不证明闭包完整。section写入/hash、内部helper、实际hdaModule/回调、cook后的最终几何、隔离目标环境可用分别列证据。声明单文件自包含须覆盖实际自定义节点依赖。
+- 新实例菜单显示、底层token和实际业务输入分别取证；空默认、失效选择、切class不混同。输出仅errors()、分支数量不代替cook/warnings/分支关系。同步或替换纯函数通过不代替实际副作用与恢复。
+- 手动exec源码绕过真实回调时只认可所测函数层；弹窗未测等范围应保留。测试需隔离，不鼓励为补证直接操作用户网络。无图像的功能维护不算视觉失败，不强迫艺术/动画完成门。
+- 多section写入与普通文件写回不自动原子，HDA库不属场景undo保证。备份不等于恢复已经执行；清理临时节点不证明用户视口/dirty未变。具体维护候选由houdini-sop-workflow路由到references/hda-maintenance.md，量表不自动认证其采用效果。
 
 ### Solaris / USD / Karma
 

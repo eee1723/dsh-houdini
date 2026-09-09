@@ -6,7 +6,9 @@ import {
   completedVisionTodoWithoutEvidence,
   execResultFromPreview,
   classifyVisionEvidence,
+  nativeImageEvidence,
   collectVerbAdoption,
+  classifyRawEffect,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
   findQueryMutationSteps,
@@ -19,6 +21,12 @@ import {
   renderOutputsFromPreview,
   requestedGoalReportedUnverified,
 } from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
+const nativeImages=nativeImageEvidence([{index:7,canonical:{imageAttachments:[
+  {from:'$HIP/render/a.png',attachment:{attachmentId:'native-a'}},
+  {from:'$HIP/render/b.png',error:'route unavailable'},
+]}}]);
+assert.equal(nativeImages[0].delivered,true);assert.equal(nativeImages[0].semanticStatus,'unverified');
+assert.equal(nativeImages[1].delivered,false);assert.equal(nativeImages[1].error,'route unavailable');
 
 assert.equal(isMutatingRawMethodName('renderNode'), false);
 const retainedRead=collectVerbAdoption([{isHoudini:true,tool:'houdini_query',args:{result_ref:'a'.repeat(64)},code:'',verbs:[]}]);
@@ -281,6 +289,9 @@ assert.deepEqual(collectVerbAdoption([
   verbCalls: 1,
   verbDensity: 0.33,
   rawReadOnlyCalls: 1,
+  rawSuspectedEffectCalls: 0,
+  rawUnknownEffectCalls: 0,
+  rawFailedCalls: 0,
   execCalls: 2,
   successfulExecCalls: 1,
   successfulExecWithVerbs: 1,
@@ -334,7 +345,7 @@ const incompleteQualityLoop = collectQualityLoopEvidence({
   }],
 });
 assert.equal(incompleteQualityLoop.applicable, true);
-assert.deepEqual(incompleteQualityLoop.contract.missing, ['qualityLod', 'simplifications']);
+assert.deepEqual(incompleteQualityLoop.contract.missing, ['simplifications']);
 assert.equal(incompleteQualityLoop.reference.qualityContractRequired, true);
 assert.deepEqual(incompleteQualityLoop.reference.qualityContractLoadSteps, []);
 assert.equal(incompleteQualityLoop.reference.unsupportedExternalTruthClaims.length, 0);
@@ -495,7 +506,7 @@ const structuredContract = collectQualityLoopEvidence({
 assert.equal(structuredContract.contract.fields.referenceStatus, true);
 assert.equal(structuredContract.contract.fields.relations, true);
 assert.equal(structuredContract.contract.fields.evidencePlan, true);
-assert.deepEqual(structuredContract.contract.missing, ['qualityLod', 'simplifications']);
+assert.deepEqual(structuredContract.contract.missing, ['simplifications']);
 
 const reverseSkeletonWording = collectQualityLoopEvidence({
   userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],
@@ -570,6 +581,70 @@ Object.defineProperty(compactStep, 'resultText', {value: fullStep.resultText, en
 assert.deepEqual(collectQualityLoopEvidence({steps: [compactStep]}), collectQualityLoopEvidence({steps: [fullStep]}));
 console.log('trace evidence helper tests passed');
 
+// H-06: selected facts/custom answers, never the unchosen LOD or header alone.
+const intake={index:1,time:1,tool:'ask_user_question',args:{questions:[{id:'detail',header:'LOD',options:[
+  {label:'高细节',description:'近景使用'}, {label:'预览',description:'省略细节，假设尺寸'}]}]},
+  resultText:JSON.stringify({answers:[{id:'detail',selected:['高细节']}]}),verbs:[]};
+const initialBuild={index:2,time:2,tool:'houdini_exec',verbs:[{verb:'tab_create',ok:true}]};
+const fromChoice=collectQualityLoopEvidence({userMessages:[{time:0,text:'创建一个模型'}],steps:[intake,initialBuild]});
+assert.equal(fromChoice.contract.fields.qualityLod,true);
+assert.equal(fromChoice.applicable,true,'selected high detail activates quality audit even for a short initial request');
+assert.equal(fromChoice.contract.fields.simplifications,false);
+assert.equal(fromChoice.contract.clarifications[0].question_id,'detail');
+const decide={...intake,resultText:JSON.stringify({answers:[{id:'detail',selected:[],custom:'你决定'}]})};
+assert.equal(collectQualityLoopEvidence({steps:[decide,initialBuild]}).contract.fields.qualityLod,false,'LOD header is a question, not a chosen quality');
+const custom={...intake,resultText:JSON.stringify({answers:[{id:'detail',selected:[],custom:'需要近景细节'}]})};
+assert.equal(collectQualityLoopEvidence({steps:[custom,initialBuild]}).contract.fields.qualityLod,true);
+assert.equal(collectQualityLoopEvidence({steps:[{...custom,failed:true},initialBuild]}).contract.fields.qualityLod,false);
+assert.equal(collectQualityLoopEvidence({steps:[{...intake,resultText:JSON.stringify({answers:[{id:'wrong',selected:['高细节']}]})},initialBuild]}).contract.fields.qualityLod,false);
+const late={...custom,index:3,time:3};
+const lateEvidence=collectQualityLoopEvidence({steps:[initialBuild,late]});
+assert.equal(lateEvidence.contract.fields.qualityLod,false);
+assert.equal(lateEvidence.contract.clarifications.length,1,'late change retained without backdating initial contract');
+
+const measured={index:3,time:3,tool:'houdini_query',failed:false,verbs:[],
+  code:'g = node.geometry()\na = g.points()[0].position()\nmetrics = {"axis_gap": a[0]}\n__result__ = metrics',
+  resultText:'Executed successfully.\n\n__result__:\n{"axis_gap":0.02}'};
+const measureEvidence=collectQualityLoopEvidence({steps:[measured]});
+assert.deepEqual(measureEvidence.relations.probeSteps,[3]);
+assert.match(measureEvidence.relations.candidates[0].scope,/not certified/);
+assert.deepEqual(collectQualityLoopEvidence({steps:[{...measured,transaction:{status:'rolled_back'}}]}).relations.probeSteps,[]);
+const commentOnly={...measured,code:'code = """// tangent\nnode.geometry(); print(1)"""\nset_parm(n,"snippet",code)',
+  resultText:'stdout:\n[verb] set_parm tangent 1\n\nverbs (1):\n1. [ok] set_parm([]) -> {} (1ms)'};
+assert.deepEqual(collectQualityLoopEvidence({steps:[commentOnly]}).relations.probeSteps,[]);
+const literalClaim={...measured,code:'__result__={"clearance":0.02}'};
+assert.deepEqual(collectQualityLoopEvidence({steps:[literalClaim]}).relations.probeSteps,[],'a literal reported number without geometry access is not a measured probe');
+assert.deepEqual(collectQualityLoopEvidence({steps:[{...literalClaim,code:'text="node.geometry()"\n__result__={"clearance":0.02} # another.geometry()'}]}).relations.probeSteps,[],'quoted or commented geometry calls do not count as execution');
+const sourceDump={...measured,resultText:'Executed successfully.\n\n__result__:\n'+JSON.stringify({parms:[{name:'snippet',value:'// tangent 10; clearance=1'}],points:100})};
+assert.deepEqual(collectQualityLoopEvidence({steps:[sourceDump]}).relations.probeSteps,[],'source text in parameter readback is not a measured relation');
+
+const render={index:1,time:1,tool:'houdini_exec',verbs:[{verb:'render_view',ok:true,args:'["/obj/item/OUT"], {"direction":"front"}',result:{output:'C:/render/front.png',frame:1}}],
+  canonical:{media:[{from:'C:/render/front.png',to:'E:/workspace/hash-front.png'}]}};
+const inspect={index:2,time:2,tool:'read_image',args:{path:'E:/workspace/hash-front.png'},resultText:'image loaded',verbs:[]};
+const edit={index:3,time:3,tool:'houdini_exec',verbs:[{verb:'set_parm',ok:true,args:'["/obj/item/CTRL","width",2]'}],
+  canonical:{execution:{impact:{nodes:[{path:'/obj/item/OUT'}],attempted:true}}}};
+const finalVisual=[{time:5,text:'完成，视觉检查通过。'}];
+const stale=collectQualityLoopEvidence({steps:[render,inspect,edit],assistantMessages:finalVisual});
+assert.equal(stale.freshness.visual.inspections[0].status,'stale_after_recorded_target_change');
+const hiddenCanonical={...render};Object.defineProperty(hiddenCanonical,'canonical',{value:render.canonical,enumerable:false});
+assert.deepEqual(collectQualityLoopEvidence({steps:[hiddenCanonical,inspect,edit]}),collectQualityLoopEvidence({steps:[render,inspect,edit]}),'compact extraction retains canonical relay/impact facts during analysis');
+const legacyRender={...render,canonical:undefined,resultText:'media (relayed):\n- C:/render/front.png -> E:/workspace/hash-front.png (12 KB)'};
+assert.equal(collectQualityLoopEvidence({steps:[legacyRender,inspect]}).freshness.visual.inspections[0].productionIndex,1);
+assert.equal(collectQualityLoopEvidence({steps:[legacyRender,{...inspect,args:{path:'E:/other/hash-front.png'}}]}).freshness.visual.inspections[0].status,'unlinked_image','same basename does not establish media provenance');
+assert.ok(qualityLoopRisks(stale).some(r=>r.code==='visual_completion_claim_with_stale_evidence'));
+const reread={...inspect,index:4,time:4};
+assert.equal(collectQualityLoopEvidence({steps:[render,edit,reread]}).freshness.visual.inspections[0].status,'stale_after_recorded_target_change','reading an old image later does not refresh it');
+const newRender={...render,index:4,time:4},newRead={...inspect,index:5,time:5};
+const refreshed=collectQualityLoopEvidence({steps:[render,inspect,edit,newRender,newRead],assistantMessages:finalVisual});
+assert.equal(refreshed.freshness.visual.latestInspections[0].status,'no_recorded_change');
+assert.ok(!qualityLoopRisks(refreshed).some(r=>r.code==='visual_completion_claim_with_stale_evidence'));
+const failedRead={...inspect,failed:true};
+assert.equal(collectQualityLoopEvidence({steps:[render,failedRead]}).freshness.visual.inspections[0].status,'inspection_access_failed');
+assert.equal(collectQualityLoopEvidence({steps:[{...inspect,args:{path:'external-reference.png'}}]}).freshness.visual.inspections[0].status,'unlinked_image');
+assert.equal(collectQualityLoopEvidence({steps:[render,inspect,{index:3,tool:'houdini_exec',verbs:[{verb:'scene_save',ok:true}]}]}).freshness.visual.inspections[0].status,'no_recorded_change','saving alone does not change rendered geometry');
+const unknownFailure={index:3,tool:'houdini_exec',failed:true,transaction:{status:'recovery_unverified'},verbs:[]};
+assert.equal(collectQualityLoopEvidence({steps:[render,inspect,unknownFailure]}).freshness.visual.inspections[0].status,'freshness_unverified_after_failed_execution');
+
 const failedCheckpoint={index:1,tool:'houdini_exec',failed:false,verbs:[{verb:'verify_network',ok:true,
   result:{output:'/obj/a/OUT',scope:'direct_children',ok:false,nonempty:false}}]};
 const succeededCheckpoint={index:2,tool:'houdini_exec',failed:false,verbs:[{verb:'verify_network',ok:true,
@@ -591,3 +666,30 @@ assert.deepEqual(quality.relations.probeSteps,[1]);
 assert.equal(quality.perturbation.controlTests.length,1);
 assert.ok(!qualityLoopRisks(quality).some(r=>r.code==='procedural_control_not_perturbed'));
 assert.equal(findQueryMutationSteps([{tool:'houdini_query',verbs:[{verb:'test_controls',ok:true}]}]).length,1);
+
+assert.deepEqual(collectQualityLoopEvidence({steps:[{...measured,transaction:{status:'recovery_unverified'}}]}).relations.probeSteps,[],
+  'unverified recovery cannot contribute retained measurement evidence');
+const failedReread={...inspect,index:4,time:4,failed:true};
+assert.ok(qualityLoopRisks(collectQualityLoopEvidence({steps:[render,inspect,edit,failedReread],assistantMessages:finalVisual}))
+  .some(r=>r.code==='visual_completion_claim_with_stale_evidence'),
+  'a failed reread must not hide the prior successful but stale inspection');
+
+const sourcePage=(index,ref,text,offset=0,total=text.length)=>({index,tool:'houdini_query',args:{source_ref:ref},
+  canonical:{ok:true,result:{source_ref:ref,format:'json_text_page',text,offset,total_chars:total,
+    next_offset:offset+text.length<total?offset+text.length:null}}});
+const discovery=sourcePage(1,'index','[{"source_ref":"'+'a'.repeat(64)+'"}]');
+assert.equal(collectQualityLoopEvidence({steps:[discovery]}).manualReview.taskSources.discoveryWithoutBodyReadObserved,true);
+const partialSource=sourcePage(2,'a'.repeat(64),'partial',0,100);
+const sourceReview=collectQualityLoopEvidence({steps:[discovery,partialSource]}).manualReview.taskSources;
+assert.equal(sourceReview.discoveryWithoutBodyReadObserved,false);
+assert.equal(sourceReview.reads[1].next_offset,7);
+assert.equal(sourceReview.reads[1].total_chars,100,'partial retrieval is visible and never reported as full consumption');
+assert.equal(collectQualityLoopEvidence({steps:[discovery,{...partialSource,failed:true}]}).manualReview.taskSources.discoveryWithoutBodyReadObserved,true);
+assert.equal(collectQualityLoopEvidence({steps:[{...discovery,canonical:undefined}]}).manualReview.taskSources.reads[0].status,'return_unverified');
+for(const conclusion of ['右侧支架明显脱离主体。','右侧支架与主体接触，连接完整。','遮挡严重，无法确定支架是否连接。']) {
+  const comparison=collectQualityLoopEvidence({steps:[render,{...inspect,tool:'vision_glance',resultText:conclusion}],
+    assistantMessages:[{time:2.5,text:'读取了检查结果。'},...finalVisual]}).manualReview.visualComparison;
+  assert.equal(comparison.inspections[0].toolResult.text,conclusion);
+  assert.equal(comparison.finalStatement.text,finalVisual[0].text);
+  assert.equal(comparison.verdict,'requires_semantic_review','semantic contradictions must remain explicit review material, not a lexical pass/fail');
+}

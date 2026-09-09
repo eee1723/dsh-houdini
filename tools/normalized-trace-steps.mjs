@@ -87,6 +87,7 @@ export function normalizeTraceSteps(events) {
 
   const { uniqueResults, replayedResults } = uniqueToolResultEvents(events || []);
   const steps = [];
+  const executions = new Map();
   const unmatchedResults = [];
   for (const event of uniqueResults) {
     const callId = toolResultCallId(event);
@@ -106,6 +107,16 @@ export function normalizeTraceSteps(events) {
     const resultText = toolResultText(message);
     const canonical = event.data?.meta?.canonical;
     const envelope = String(call.name).startsWith('houdini_') && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
+    const observation = envelope?.execution;
+    const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
+      ? `${observation.runtime_id}:${observation.sequence}` : null;
+    const executionReplay = executionKey !== null && executions.has(executionKey);
+    if(executionKey && !executionReplay)executions.set(executionKey,{
+      runtimeId:observation.runtime_id,sequence:observation.sequence,firstResultSeq:event.seq,
+      firstTool:call.name,recovered:envelope?.requestReceipt?.retrieved===true,
+      verbCalls:Array.isArray(envelope.verbs)?envelope.verbs.length:0,
+      transaction:envelope.transaction?.status??null,
+    });
     const rawUsage = envelope?.rawUsage ?? parseJsonBlock(resultText, 'raw-usage');
     const mutatingRawMethods = rawUsage && !rawUsage._raw
       ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
@@ -130,7 +141,7 @@ export function normalizeTraceSteps(events) {
       args,
       code,
       resultText,
-      verbs: Array.isArray(envelope?.verbs) ? envelope.verbs.map((v,i) => ({
+      verbs: executionReplay || envelope?.requestReceipt?.retrieved ? [] : Array.isArray(envelope?.verbs) ? envelope.verbs.map((v,i) => ({
         ledgerIndex:i+1,ok:v.ok,verb:v.verb,
         args:JSON.stringify(v.args)+(v.kwargs && Object.keys(v.kwargs).length ? ', '+JSON.stringify(v.kwargs) : ''),
         result:v.summary ? {...(typeof v.result === 'object' && v.result !== null ? v.result : {}),...v.summary} : v.result,
@@ -142,11 +153,13 @@ export function normalizeTraceSteps(events) {
       rollback: envelope?.rollback ?? parseJsonBlock(resultText, 'rollback'),
       transaction: envelope?.transaction ?? parseJsonBlock(resultText, 'transaction'),
       canonical: envelope,
+      recoveredExecution: envelope?.requestReceipt?.retrieved === true,
+      executionReplay,
       canonicalStatus: envelope ? 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
       executionLocation: call.name === 'houdini_query' && args.result_ref ? 'host_result_artifact' : null,
       rawUsage,
     });
   }
 
-  return { steps, replayedResults, unmatchedResults };
+  return { steps, replayedResults, unmatchedResults, uniqueExecutions:[...executions.values()] };
 }

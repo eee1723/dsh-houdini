@@ -11,8 +11,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
          → src/context.ts：每条用户消息至多一次只读现场摘要
          → src/tools.ts → src/bridge.ts：类型/权限上下文、握手、请求
          → dsh_bridge.py：HTTP → 主线程队列 → 受限执行/动词追踪
-         → dsh_hou_helpers.py → SOP/几何/相机/评审模块
-         → 结构化结果、operation-evidence、media → Host → client/trace
+         → dsh_hou_helpers.py → SOP/几何/相机模块
+         → 结构化结果、operation-evidence、原生图像附件 → Host → client/trace
 ```
 
 静态文档和构建通过不证明live已加载。查看当前/预期版本与重载要求使用[兼容设计](dsh-update-compatibility.md)
@@ -23,13 +23,13 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 | 源码 | 维护职责 |
 |---|---|
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
-| [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/媒体转交、纯展示函数 |
+| [src/image-output.ts](../src/image-output.ts) | Bridge 图像→DSH 原生附件；模型能力检查、字节限额、原生与 Code Mode 图像返回，无工作区副本 |
+| [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/原生图像交付、纯展示函数 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本 |
-| [src/context.ts](../src/context.ts) | message绑定、in-flight去重和预算；分别注入现场摘要、执行事实与任务来源，不刷新用户指代/授权 |
-| [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件按runtime/sequence重建有限历史状态，标记回滚/依赖变化/未知执行，不维护另一事实库 |
+| [src/context.ts](../src/context.ts) | 按需指代采集、message绑定及预算；pre-step按公开surface去重独立补充段，历史替换时恢复，普通查询不追加上下文 |
+| [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建有限历史状态及未决请求/检查失效/运行身份变化提醒；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
-| [src/review.ts](../src/review.ts) | 原始要求/历史工具事实、独立受限child、lease生命周期 |
 | [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 交互选择题的互斥性与可执行约束 |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
@@ -38,8 +38,9 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
-scene-context只包含用户消息绑定的metadata；execution-state是工具事件投影，task-sources是原始用户材料的来源索引，
-三者不互相替代。缺失不等于空场景，选择可变也不构成foreign修改授权。
+scene-context只为现场指代提供用户消息绑定的metadata；execution-state按有意义的异常变化提醒，
+task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
+三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
 
 ## Houdini执行模块
@@ -47,6 +48,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | 源码 | 维护职责 / 深入文档 |
 |---|---|
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope |
+| [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime的有界exec/jobs回执、owner_call索引、payload/owner冲突拒绝和原结果/jobId查回；无HOM，不重提代码 |
 | [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 58动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
@@ -54,7 +56,6 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_quality_contracts.py](../houdini/python3.11libs/dsh_quality_contracts.py) | 实际接口、拓扑/domain和可恢复control实验 |
 | [dsh_camera_framing.py](../houdini/python3.11libs/dsh_camera_framing.py) | 八角点投影、预览取景/深度分离与镜头缩放、静态OBJ camera_fit、实际USD产品预检 |
 | [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata，无socket/进程探测 |
-| [dsh_review.py](../houdini/python3.11libs/dsh_review.py) | [受限评审](independent-asset-review.md)token、范围与基准绑定、实验预算/恢复 |
 
 [执行与证据契约](execution-contract.md)维护这些模块的跨层不变量，节点领域recipe在skills。
 
@@ -71,7 +72,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步profile依赖、精确版本兼容修补 |
 | [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 精确兼容清单读取/选择，未知latest不自动激活 |
 | [dsh-runtime-compatibility.json](../dsh-runtime-compatibility.json) | preferred DSH及支持组合的唯一清单 |
-| [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 受管profile与vision toolkit依赖的唯一清单 |
+| [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 受管profile依赖与移除清单 |
 | [cordis.patch.yml](../cordis.patch.yml) | bundle组合与插件配置 |
 | [presets](../presets/) | Houdini生产/开发persona；身份与领域工作方式，不放进插件guidance |
 
@@ -87,11 +88,11 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 候选保留前后原图、阈值和时间区间，不做自动语义或操作识别。
 局部 `context` 汇集 hash 绑定的图像与转录，`check-notes` 校验 agent 填写的状态/操作记录，
 只提供引用和结构验证，不证明语义真实性，不执行其中内容，也不据此授权工程修改。
-依赖宿主 Python、FFmpeg、SiliconFlow 凭据及实际语义识图工具；注册 skill 不会安装依赖。
+依赖宿主 Python、FFmpeg、SiliconFlow 凭据及当前模型的原生图像输入能力；注册 skill 不会安装依赖。
 原视频、切片、转录及画面依据保存在仓库外任务目录，不进入包或 Trace 来源目录。
 输入目前为本地视频，脚本不下载链接、不做语义识图，也不自动复现工程或更新生产知识。
 
-图片由Bridge按请求关联产图事实，经Host复制到会话可读的media映射；路径转交不是语义识图。
+图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
 大结果保存到workspace的.dsh-houdini-results后才精简模型文本。该目录是工具返回副本，不是HIP内容输出。
@@ -102,7 +103,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | 工具 | 长期职责 |
 |---|---|
 | [catalog-lib.mjs](../tools/catalog-lib.mjs)、[gen-client-catalog.mjs](../tools/gen-client-catalog.mjs) | 词表解析与Host/client生成 |
-| [gen-trace-client.mjs](../tools/gen-trace-client.mjs) | 同源提取guidance/preset/注册技能与资源，嵌入手写Trace组件及样式；--check只读漂移验证 |
+| [gen-trace-client.mjs](../tools/gen-trace-client.mjs) | 同源提取guidance/preset/注册技能与资源，嵌入手写Trace组件、样式及evidence-helpers副作用分类/采用统计函数；--check只读漂移验证 |
 | [gen-node-card-docs.mjs](../tools/gen-node-card-docs.mjs) | JSON节点卡→文档，严格schema与漂移检查 |
 | [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |

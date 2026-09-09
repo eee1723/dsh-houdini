@@ -26,7 +26,10 @@ try:
         assert 'existing_geo' in env['error'] and 'houdini_exec' in env['error'],env
         assert env['transaction']['status']=='no_scene_change',env
     with h._execution_owner('efficiency','test'):
-        h.set_parm(switch,'input','chi("../CTRL/enabled")')
+        rejects(lambda:h.set_parm(switch,'input','chi("../CTRL/enabled")'),'Unknown function')
+        # Native fault injection still exercises cook error refresh; the public
+        # setter now rejects this expression before it can be committed.
+        switch.parm('input').setExpression('chi("../CTRL/enabled")',hou.exprLanguage.Hscript)
         assert not h.cook_node(switch)['ok']
         h.set_parm(switch,'input','1-ch("../CTRL/enabled")')
         assert h.cook_node(switch)['ok'],switch.errors()

@@ -1,6 +1,6 @@
 ---
 name: houdini-sop-workflow
-description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用于建模、散布、Copy to Points、属性传递、VEX成形、Sweep/PolyWire、Merge和SOP动画；尤其涉及多模块空间关系、可调控制、局部几何/拓扑、cook warning或视觉取证时。不用于纯场景查询，也不代替rig或Solaris领域流程。
+description: 设计、构建、调试和交付 Houdini SOP 程序化网络，以及 SOP HDA/OTL 的代码、回调和部署依赖维护。用于建模、散布、Copy to Points、属性传递、VEX成形、Sweep/PolyWire、Merge和SOP动画；尤其涉及多模块空间关系、可调控制、局部几何/拓扑、cook warning或视觉取证时。不用于纯场景查询，也不代替rig或Solaris领域流程。
 ---
 
 # Houdini SOP Workflow
@@ -8,6 +8,8 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 以一个正确、可观察的原型推进。新增细节前先确认主要形体和实际连接；每次检查明确输出、方法与范围。
 
 ## 进入任务
+
+SOP HDA/OTL 的 PythonModule、菜单/按钮回调或内嵌部署维护先读[HDA 维护](references/hda-maintenance.md)，按受影响入口和依赖验收；不套用下方新建复杂模型的骨架、研究或渲染流程。普通参数赋值/改名仍直接执行并回读。
 
 先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。用户选择会变化，快照不构成foreign修改授权。
 
@@ -41,9 +43,9 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 - geo_piece_stats默认按连接性或指定身份属性统计局部extent/面积；inspect=True观察命名primitive组的Polygon边界/边连通/非流形和basis下extent；shell_orientation保留有向体积条件。半径用到轴的欧氏距离，轴向投影不是半径。observed仅量测，分组切口可有意开放。
 - geo_attrib_stats读驱动属性；复制前用unique=True检查模板P/id的精确tuple唯一性及预期基数，bbox不变不能排除重叠复制。geo_point_spacing只测有序点弦长。test_controls位移/变换误差要求稳定唯一id_attrib和相同面连接；选中件及其附属件查同一预期变换，未选中件查identity，见[模块合同](references/module-quality-contracts.md)。混合网格点均值不是设计中心，native/packed不靠P-only。
 - Copy to Points承担实例变换，模板orient/scale与原型局部轴需一致；Copy/Merge明确属性class和传播。带状物用有面积截面，非刚性成形通常先作用中心线/低维结构再生成厚度。细节见[方法参考](references/sop-patterns.md)。
-- 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)；精度不等于面数。用户要求多agent模块协作时读[并行设计、单作者执行](references/module-design-collaboration.md)，没有可用的受限设计子agent入口就保持单作者，不借review权限建模。
+- 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)；精度不等于面数。用户要求多agent模块协作时读[并行设计、单作者执行](references/module-design-collaboration.md)，没有可用的受限设计子agent入口就保持单作者，不借allow_foreign或共享身份绕过ownership。
 - 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
-- 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。按media.inspection读图，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
+- 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。直接查看工具结果中的原生图像附件，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
 - 用户屏幕异常才用viewport_screenshot；保留持久__dsh_houdini_*服务。纯网络交付或无GUI不强制追图，视觉未验证则明确报告。
 - 动画至少两个相隔帧的实际几何/固定构图图像证据；A/B同framing_frame且覆盖帧包络。完全静止/方向错误是反例；细微审美无法裁定交给用户播放判断，不无限追图。
 
@@ -51,4 +53,4 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络。用
 
 最终显式输出非空、无error，warning已处理；单元与核心关系有对应实际输出证据；控制集中且代表性扰动/恢复通过。未测控制、unsupported、外部真实性、视觉不确定分别报告，不能用todo completed补证或把部分测量写成全部pass。关键控制不能靠重复改多个VEX常量维护。
 
-普通收尾不自动委派；用户要求或具体疑点才快速review，复用已有工具事实与图像。不再登记delivery合同。
+收尾由当前作者完成输出、关系和控制检查，复用已有工具事实与原生图像；核心未验证项如实保留。

@@ -5,15 +5,11 @@
     {
       "name": "dsh-houdini",
       "source": "project"
-    },
-    {
-      "name": "@anionex/dsh-vision-toolkit",
-      "spec": "@anionex/dsh-vision-toolkit@0.1.40",
-      "version": "0.1.40"
     }
   ],
   "removePlugins": [
     "dsh-vision-router",
-    "dsh-vision-fallback"
+    "dsh-vision-fallback",
+    "@anionex/dsh-vision-toolkit"
   ]
 }

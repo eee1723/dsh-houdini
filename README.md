@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、58 个意图级动词、7个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、58 个意图级动词、6个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -40,21 +40,19 @@ python houdini/install.py
 | 工具 | 作用 |
 |---|---|
 | houdini_query | 只读观察 |
-| houdini_exec | 场景修改或显式受限review/review_test |
+| houdini_exec | 场景修改与作者验证 |
 | houdini_job_submit | 长操作异步排队 |
 | houdini_job_status | 状态、等待和结果 |
 | houdini_job_cancel | 协作式取消 |
 
 修改使用动词，未知签名先verb_help，关键节点设置先node_info；所有结果都应消费失败和范围证据。
 例如OBJ装配使用set_object_parent(child, parent, reason=...)，而不是generic connect。
-普通建模不默认委派；[资产复核](docs/independent-asset-review.md)只在用户要求或具体疑点时使用。
 
 | Skill | 职责 |
 |---|---|
-| [houdini-sop-workflow](skills/houdini-sop-workflow/SKILL.md) | SOP/VEX、模块、细化、接口与参数验证 |
+| [houdini-sop-workflow](skills/houdini-sop-workflow/SKILL.md) | SOP/VEX、模块、细化、接口与参数验证；SOP HDA代码/回调维护 |
 | [houdini-rig-animation-workflow](skills/houdini-rig-animation-workflow/SKILL.md) | Channel、KineFX/rig、实际运动交付 |
 | [houdini-solaris-karma-workflow](skills/houdini-solaris-karma-workflow/SKILL.md) | USD、MaterialX、Karma正式渲染 |
-| [houdini-asset-review](skills/houdini-asset-review/SKILL.md) | 短时受限独立复核 |
 | [houdini-trace-analysis](skills/houdini-trace-analysis/SKILL.md) | 确定性trace取证、指标与审计 |
 | [houdini-skill-governance](skills/houdini-skill-governance/SKILL.md) | 领域知识的来源、版本和发布边界 |
 | [houdini-video-tutorial](skills/houdini-video-tutorial/SKILL.md) | 本地视频的云转录、画面核对与复现依据；不自动搭建工程或沉淀知识 |
@@ -64,11 +62,11 @@ python houdini/install.py
 配置源为[src/index.ts](src/index.ts)：bridgeUrl默认http://127.0.0.1:8765，
 requestTimeoutMs默认120000，automaticContext默认true。
 兼容DSH由[dsh-runtime-compatibility.json](dsh-runtime-compatibility.json)精确选择，
-profile/视觉依赖由[dsh-profile.requirements.json](dsh-profile.requirements.json)管理。
+profile依赖由[dsh-profile.requirements.json](dsh-profile.requirements.json)管理。
 升级遵循[兼容设计](docs/dsh-update-compatibility.md)，不把npm latest自动当serving版本。
 
-图片通过media映射转交。vision toolkit的provider/model/凭据由profile管理；
-文件存在、像素检查、图片展示都不等于语义识图成功，没有成功inspection就报告视觉未验证。
+图片直接作为原生多模态工具结果返回；不安装额外识图工具，不向工作区media目录复制文件。
+文件存在、像素检查、图片展示都不等于语义识图成功，当前模型未实际查看图像时报告视觉未验证。
 
 ## 开发与验证
 
@@ -79,7 +77,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和25 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和27 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

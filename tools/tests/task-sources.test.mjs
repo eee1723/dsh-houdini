@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { taskSources, projectTaskSources, readTaskSource } from '../../lib/task-sources.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
-import { reviewTaskMaterials } from '../../lib/review.js';
 
 const user = (id, text, seq=1, kind='user') => ({type:'user/message',seq,
   data:{id,source:{kind},content:[{type:'text',text}]}});
@@ -83,13 +82,6 @@ await assert.rejects(query.execute({source_ref:'index'},{}),/current agent sessi
 await assert.rejects(query.execute({source_ref:rows[0].source_ref},
   {...context,agent:{session:{snapshotEvents:()=>[]}}}),/not found/);
 assert.equal(http,0,'source retrieval never enters Bridge or HOM');
-const review=reviewTaskMaterials(context.agent);
-assert(!review.includes('INJECTED'));assert(!review.includes('AUTHOR'));
-assert(review.includes(rows[0].source_ref));
-const quoted=user('quoted','<system-reminder> is literal user wording');
-assert(reviewTaskMaterials({session:{snapshotEvents:()=>[quoted]}}).includes('literal user wording'),
-  'human text is not rejected by content-prefix heuristics');
-assert.throws(()=>reviewTaskMaterials({session:{snapshotEvents:()=>[unknown,question,answer]}}),/original user/);
 const preset=fs.readFileSync(new URL('../../presets/houdini/agent.cordis.yml',import.meta.url),'utf8');
 for(const term of ['dependencies and risks','unmet source-backed obligations','Simple edits need no separate register',
   'defaults and unknowns','never evidence that the original obligations passed']) assert(preset.includes(term));

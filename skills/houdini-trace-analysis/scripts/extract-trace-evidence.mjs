@@ -17,7 +17,10 @@ import {
   collectQualityLoopEvidence,
   completedVisionTodoWithoutEvidence,
   classifyVisionEvidence,
+  nativeImageEvidence,
   collectVerbAdoption,
+  classifyRawEffect,
+  isHoudiniDetailRead,
   isStructuredHoudiniCall,
   extractAvailableSkills,
   findBatchSetParmOpportunities,
@@ -185,6 +188,8 @@ function analyzeTrace(file) {
       durationMs: source.durationMs,
       canonical: compact ? undefined : source.canonical,
       canonicalStatus: source.canonicalStatus,
+      recoveredExecution: source.recoveredExecution,
+      executionReplay: source.executionReplay,
       turn: source.turn,
       step: source.step,
       tool: source.tool,
@@ -204,6 +209,7 @@ function analyzeTrace(file) {
       rollback: source.rollback?._raw ? { _raw: clip(source.rollback._raw) } : source.rollback,
       rawUsage: source.rawUsage?._raw ? { _raw: clip(source.rawUsage._raw) } : source.rawUsage,
     };
+    if (compact && source.canonical) Object.defineProperty(step,'canonical',{value:source.canonical,enumerable:false});
     // Keep the unabridged result only in memory for coverage extraction. It is
     // deliberately non-enumerable so compact/full evidence JSON does not
     // duplicate potentially huge tool output, while render paths and nested
@@ -235,13 +241,15 @@ function analyzeTrace(file) {
   const partialParameterFailures = steps.flatMap((step) => step.verbs
     .filter((verb) => verb.verb === 'set_parms' && verb.ok && verb.result?.failed && Object.keys(verb.result.failed).length)
     .map((verb) => ({index: step.index, time: step.time, failed: verb.result.failed})));
-  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !isStructuredHoudiniCall(step) && !step.verbs.length).map((step) => ({
+  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !isHoudiniDetailRead(step) && !isStructuredHoudiniCall(step) && !step.verbs.length).map((step) => ({
     index: step.index,
     time: step.time,
     tool: step.tool,
     codePreview: step.codePreview,
     rawMethods: step.rawMethods,
     mutatingRawMethods: step.mutatingRawMethods,
+    effect: classifyRawEffect(step),
+    rawUsage: step.rawUsage,
   }));
   const rawMutationSteps = steps.filter(
     (step) => step.isHoudini && step.mutatingRawMethods.length,
@@ -254,9 +262,10 @@ function analyzeTrace(file) {
     mixedWithVerbs: step.verbs.length > 0,
   }));
   const verblessMutations = rawMutationSteps.filter((step) => !step.mixedWithVerbs);
-  const execUsedForReadOnly = rawHoudiniNoVerb.filter(
-    (step) => step.tool === 'houdini_exec' && !step.mutatingRawMethods.length,
-  );
+  // Kept for schema compatibility; absence of detected writes never proves an
+  // exec was read-only. Unknown dynamic calls are retained with their evidence.
+  const execUsedForReadOnly = [];
+  const execWithoutVerbEvidence = rawHoudiniNoVerb.filter(step => step.tool === 'houdini_exec');
   const queryWithMutation = findQueryMutationSteps(steps);
   const batchSetParmOpportunities = findBatchSetParmOpportunities(steps);
   const suppressedCookFailureSteps = findSuppressedCookFailures(steps);
@@ -276,6 +285,7 @@ function analyzeTrace(file) {
   const successfulVisionEvidence = visionEvidence.filter(
     (item) => item.role === 'inspection' && item.semanticOk === true,
   );
+  const nativeImages = nativeImageEvidence(steps);
   const skillActivations = steps.filter((step) => step.tool === 'skill').map((step) => ({
     index: step.index,
     time: step.time,
@@ -310,12 +320,16 @@ function analyzeTrace(file) {
       detail: 'The run ended because the model/provider quota was exhausted, not because the task reached delivery.',
     });
   }
-  if (renderEvidence.length && !successfulVisionEvidence.length) {
+  if (renderEvidence.length && !successfulVisionEvidence.length && !nativeImages.some(i=>i.delivered)) {
     completionRisks.push({
       code: 'render_without_successful_vision',
-      detail: 'Render evidence exists, but no vision tool successfully inspected an image.',
+      detail: 'Render evidence exists, but no native image attachment delivery or successful legacy image inspection was recorded.',
     });
   }
+  if (nativeImages.some(i=>i.delivered)) completionRisks.push({
+    code:'native_image_interpretation_requires_review',
+    detail:'Native image attachments were delivered to the model channel. Compare subsequent model interpretation with the actual images; delivery does not certify visual semantics and requires no extra vision tool.',
+  });
   if (visionEvidence.some((item) => item.transportOk === false || item.reason)) {
     completionRisks.push({
       code: 'vision_tool_failed',
@@ -415,6 +429,10 @@ function analyzeTrace(file) {
       note: 'Call-to-result sum includes waits and possible overlap; gaps are not a direct model inference-time measurement.',
     },
     requestTelemetry: collectRequestTelemetry(events),
+    executionAccounting: {records:normalized.uniqueExecutions,
+      uniqueExecutions:normalized.uniqueExecutions.length,
+      uniqueVerbCalls:normalized.uniqueExecutions.reduce((n,e)=>n+e.verbCalls,0),
+      note:'Only canonical runtime/sequence observations; missing historical observations are unmeasured. Transport polls and result retrievals are separate calls, never new executions.'},
     startTime: Number.isFinite(firstTime) ? firstTime : null,
     endTime: lastTime || null,
     durationMs: Number.isFinite(firstTime) && lastTime ? lastTime - firstTime : null,
@@ -457,6 +475,7 @@ function analyzeTrace(file) {
     rawMutationSteps,
     verblessMutations,
     execUsedForReadOnly,
+    execWithoutVerbEvidence,
     queryWithMutation,
     rawMethodCounts: sortCounts(rawMethodCounts),
     advisorySteps: steps.filter((step) => step.advisory).map((step) => step.index),
@@ -467,6 +486,7 @@ function analyzeTrace(file) {
     suppressedCookFailureSteps,
     renderEvidence,
     visionEvidence,
+    nativeImages,
     completionRisks,
     qualityLoopEvidence,
     validationCoverage,

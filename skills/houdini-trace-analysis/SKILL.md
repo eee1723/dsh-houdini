@@ -38,7 +38,8 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
 - 区分“工具缺失”和“已有工具未使用”；先证明任务意图，再做词表建议。
 - 用 `capabilitySnapshots` 判断该步骤当时实际曝光的能力；不得用当前新词表倒查旧 trace 后指责 agent 漏用。
 - 视觉证据读取 `visionEvidence[].role/transportOk/semanticOk/reason` 与 `completionRisks`。只有 `role="inspection" && semanticOk=true` 才算语义识图；bootstrap、presentation、transport success、结构化 `ok:false` 或文本拒绝都不算。只有 render/render_check 而没有成功 inspection 时，必须保留“视觉语义未验证”的边界。
-- 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、无动词只读探针、成功 exec 覆盖、Gate 拦截和成功裸修改；目录广度只说明任务触达哪些能力。
+- 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、只读query守卫范围、Gate拦截、裸修改候选、疑似/未知副作用；成功exec含动词率的分母也包含测试/动态调用，不是修改采用率。目录广度只说明触达能力，没检出修改不证明只读。
+- HDA维护按量表区分section写入、实际回调、最终输出和交付依赖；内嵌Python不证明无其他HDA/资源依赖，内部函数通过不冒充按钮验收。普通功能维护不强制艺术渲染。
 - 开放式质量任务优先读取 `qualityLoopEvidence` 与对应 `completionRisks`，核对合同缺字段、research
   可用但未用、质量合同未加载、首张 render 过晚、关系 probe、控制扰动恢复和最终统计新鲜度；
   自动风险是可复核证据索引，不是艺术质量评分。合同字段可来自 mutation 前 assistant prose、

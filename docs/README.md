@@ -7,16 +7,15 @@
 
 | 文档 | 职责 / 对应实现 |
 |---|---|
-| [当前交接](handoff.md) | 下一次开发必须知道的未完成动作、验证缺口与移除条件；完成即删，不积累历史 |
+| [当前交接](handoff.md) | 未完成动作的优先级、依赖、验证缺口与移除条件；完成即删，不积累历史 |
 | [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
-| [主要开发方向](development-directions.md) | 四项基础能力的当前开发状态、后续重点、目标交付与验收原则；不包含自动知识沉淀 |
+| [主要开发方向](development-directions.md) | 四项产品方向、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
 | [Houdini Trace设计](houdini-trace-design.md) | 五看板信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
 | [工具设计与词表](tool-design.md) | 58动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 机器态、工作区、配置、启动、重载和卸载 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 精确版本清单、鉴权/RPC/Qt/profile资格门 |
-| [资产复核设计](independent-asset-review.md) | 按需评审、短期权限、测试与恢复，不是多作者入口 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [评测基础设施设计](benchmark-design.md) | manifest/schema、信息隔离、评审与能力主张，不保存批次结果 |
 | [开发维护规范](development.md) | 代码/文档同步、生成门禁、测试入口、发布及文档生命周期 |

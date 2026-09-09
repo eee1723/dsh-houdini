@@ -96,7 +96,6 @@ _TASK_OWNER_CALL_KEY = "dsh_houdini_created_by_call"
 _ACTIVE_OWNER_SESSION: str | None = None
 _ACTIVE_OWNER_CALL: str | None = None
 _OWNED_NODE_SESSIONS: dict[int, dict] = {}
-_REVIEW_PARAMETER_ACCESS = None
 _CREATION_JOURNAL = None
 
 
@@ -129,18 +128,6 @@ def _cleanup_failed_creations(created, ownership_before):
             node.destroy()
             _OWNED_NODE_SESSIONS.pop(node_id, None)
     return removed
-
-
-@contextlib.contextmanager
-def _review_parameter_access(session, controller):
-    """Internal one-call capability; only the review service enters this scope."""
-    global _REVIEW_PARAMETER_ACCESS
-    previous = _REVIEW_PARAMETER_ACCESS
-    _REVIEW_PARAMETER_ACCESS = (session, int(controller.sessionId()))
-    try:
-        yield
-    finally:
-        _REVIEW_PARAMETER_ACCESS = previous
 
 
 def _set_execution_owner(session_id: str | None, call_id: str | None):
@@ -231,9 +218,6 @@ def _require_owned(node, operation: str, allow_foreign: str | None = None) -> No
             f"{info['path']} belongs to the persistent dsh-houdini service; "
             f"{operation} is not allowed"
         )
-    if (_REVIEW_PARAMETER_ACCESS == (_ACTIVE_OWNER_SESSION, int(_resolve(node).sessionId()))
-            and operation in ('test_controls', 'set_parms', 'set_parm')):
-        return
     reason = allow_foreign.strip() if allow_foreign is not None else ""
     if reason:
         print(
@@ -2430,6 +2414,7 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
                 entry["label"] = tpl.label()
             except Exception:
                 entry["label"] = None
+        previous_errors=tuple(str(e) for e in n.errors()) if has_expr else ()
         try:
             entry["value"] = _val(p.eval())
         except Exception:
@@ -2439,6 +2424,14 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
                 entry["value"] = None
         if has_expr:
             entry["expression"] = expr
+            try:
+                language='python' if p.expressionLanguage()==hou.exprLanguage.Python else 'hscript'
+                entry['language']=language
+                entry['evaluation']=_expression_evaluation(p,entry.get('value'),language,previous_errors)
+                entry['value']=entry['evaluation']['value']
+                entry['effect_status']='unverified'
+            except Exception as error:
+                entry['evaluation']={'status':'unverified','reason':str(error)}
             try:
                 ref = p.getReferencedParm()
                 if ref is not None:
@@ -2510,6 +2503,37 @@ def _parameter_snapshot(targets) -> dict:
     return snapshots
 
 
+def _parameter_restore_evidence(snapshots) -> dict:
+    """Read back exact channel state; matching output geometry is insufficient.
+
+    Re-resolve by original node identity and parameter name, never by a path
+    that could now identify a replacement node. No parameter or geometry writes.
+    """
+    errors, channels = [], []
+    for target, keys, value in snapshots.values():
+        try:
+            node = target.node()
+            current = hou.nodeBySessionId(node.sessionId())
+            p = current.parm(target.name()) if current is not None else None
+            if p is None:
+                raise RuntimeError('original parameter identity no longer exists')
+            actual_keys = tuple(p.keyframes())
+            raw = (p.unexpandedString() if p.parmTemplate().type() == hou.parmTemplateType.String
+                   else p.eval()) if not actual_keys else None
+            exact = actual_keys == keys and (bool(keys) or raw == value)
+            channels.append({'node_identity':node.sessionId(),'parameter':p.path(),
+                'key_count_before':len(keys),'key_count_after':len(actual_keys),
+                'state_matches':exact,
+                **({'expected_value':_val(value),'actual_value':_val(raw)} if not keys
+                   else {'animation_matches':actual_keys == keys})})
+            if not exact:
+                errors.append(f'{p.path()}: restored value/expression/keyframes differ from snapshot')
+        except Exception as error:
+            errors.append(f'parameter restoration readback: {error}')
+    return {'ok':not errors,'channels':channels,'errors':errors,
+            'scope':'exact state of snapshotted channels only; no external side effects or future-state guarantee'}
+
+
 def _restore_parameters(snapshots) -> list:
     errors = []
     for target, keys, value in snapshots.values():
@@ -2521,6 +2545,7 @@ def _restore_parameters(snapshots) -> list:
                 target.set(value, follow_parm_reference=False)
         except Exception as error:
             errors.append(f"{target.path()}: {error}")
+    errors.extend(_parameter_restore_evidence(snapshots)['errors'])
     return errors
 
 
@@ -2597,6 +2622,8 @@ def set_parm(node, name: str, value,
     1..32项顺序替换，先验证全部锚点/版本；拒绝锁定、动画/表达式、callback和固定菜单。
     源码上限524288字符，替换文本累计131072字符，count为1..256；不执行正则或补丁脚本。
     返回patch的前后hash/字符数/替换次数，value_omitted=True；不证明VEX或几何通过，另做cook/verify_network。
+    表达式返回language/write_status/evaluation/effect_status；合法0不算错误。本次新增且原生明确指向本参数的求值
+    错误或非有限数值抛CheckpointError并恢复参数；节点/tuple warning只报告范围，不认证几何或全部引用。
     """
     n = _resolve(node)
     _require_owned(n, "set_parm", allow_foreign)
@@ -2613,6 +2640,9 @@ def set_parm(node, name: str, value,
         return _set_parm_impl(n, name, value, allow_foreign)
     except BaseException as error:
         restore_errors = _restore_parameters(snapshots)
+        if isinstance(error,CheckpointError) and 'evaluation' in error.evidence:
+            error.evidence.update({'parameter_state_restored':not restore_errors,'parameter_restore_errors':restore_errors,
+                                   'write_status':'restored' if not restore_errors else 'recovery_unverified'})
         if restore_errors:
             raise RuntimeError(f"{error}; parameter_restore_errors={restore_errors}") from error
         raise
@@ -2643,6 +2673,59 @@ def _validate_numeric_parameter_value(value, components=()) -> None:
         raise ValueError('numeric scalar requires a finite number or expression, not a list/tuple or null')
 
 
+def _expression_evaluation(p, value, language, previous_errors=()):
+    """Use Houdini's diagnostics, never infer failure from a zero value.
+
+    This reads the last evaluation diagnostics, without cooking the node or
+    evaluating the expression again. Tuple warnings can concern a sibling.
+    """
+    node=p.node()
+    errors=[str(e) for e in node.errors()]
+    warnings=[str(e) for e in node.warnings()]
+    exact=re.compile(re.escape(p.path())+r'(?![A-Za-z0-9_])')
+    evaluation_path=re.compile(re.escape('('+p.path()+'))')+r'\.?\s*$')
+    own_errors=[e for e in errors if 'Unable to evaluate expression' in e and evaluation_path.search(e)]
+    new_errors=[e for e in own_errors if e not in previous_errors]
+    tuple_path=node.path()+'/'+p.tuple().name()
+    related=re.compile(re.escape(tuple_path)+r'(?![A-Za-z0-9_])')
+    related_warnings=[w for w in warnings if exact.search(w) or related.search(w)]
+    finite=not isinstance(value,(int,float)) or math.isfinite(value)
+    if not finite:
+        own_errors.append('expression evaluated to a non-finite numeric value')
+        new_errors.append(own_errors[-1])
+    status='failed' if new_errors else 'unverified' if own_errors else 'warning' if related_warnings else 'unverified' if errors or warnings else 'evaluated'
+    return {'status':status,'parameter':p.path(),'language':language,'frame':float(hou.frame()),
+        'value':_val(value) if finite else repr(value),'errors':own_errors,
+        'new_errors':new_errors,'prior_diagnostics_present':bool(previous_errors),
+        'warnings':related_warnings,'node_errors':errors,'node_warnings':warnings,
+        **({'next_action':'Inspect reference targets and explicitly cook/check the intended output; unchanged node errors may be cached from an earlier cook, and a zero value alone proves neither success nor failure.'} if status in ('warning','unverified') else {}),
+        'scope':'last parameter evaluation; tuple warnings may concern a sibling, node diagnostics may predate this write; no geometry cook or effect validation'}
+
+
+def _set_expression(p, expression, language):
+    previous_errors=tuple(str(e) for e in p.node().errors())
+    try:
+        _clear_animation(p)
+        p.setExpression(expression,language=hou.exprLanguage.Hscript if language=='hscript' else hou.exprLanguage.Python)
+    except Exception as error:
+        raise CheckpointError(f'expression write failed at {p.path()} ({language}): {error}',
+            {'ok':False,'node':p.node().path(),'parm':p.name(),'expression':expression,'language':language,
+             'failure_stage':'write','write_status':'failed','evaluation':{'status':'not_run'},'effect_status':'unverified'}) from error
+    try:
+        value=p.eval()
+        evaluation=_expression_evaluation(p,value,language,previous_errors)
+    except Exception as error:
+        raise CheckpointError(f'expression evaluation raised at {p.path()} ({language}): {error}',
+            {'ok':False,'node':p.node().path(),'parm':p.name(),'expression':expression,'language':language,
+             'failure_stage':'evaluation','write_status':'written','evaluation':{'status':'failed','errors':[str(error)]},'effect_status':'unverified'}) from error
+    result={'parm':p.name(),'node':p.node().path(),'expression':expression,'language':language,
+            'value':evaluation['value'],'write_status':'written','evaluation':evaluation,'effect_status':'unverified'}
+    if evaluation['status']=='failed':
+        raise CheckpointError(f'expression evaluation failed at {p.path()} ({language}): '+ '; '.join(evaluation['errors']),
+                              {'ok':False,'failure_stage':'evaluation',**result})
+    return result
+
+
 def _set_parm_impl(node, name: str, value,
                    allow_foreign: str | None = None) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
@@ -2664,9 +2747,7 @@ def _set_parm_impl(node, name: str, value,
             language = value.get("language", "hscript")
             if language not in ("hscript", "python"):
                 raise ValueError("expression language 必须为 hscript/python")
-            _clear_animation(p)
-            p.setExpression(value["expression"], language=(hou.exprLanguage.Hscript if language == "hscript" else hou.exprLanguage.Python))
-            return {"parm": name, "expression": value["expression"], "value": _val(p.eval())}
+            return _set_expression(p,value['expression'],language)
         # Menu tokens are not expressions. Do not let an invalid token silently
         # evaluate to 0 or leave an animated parameter with its keys deleted.
         tpl = p.parmTemplate()
@@ -2689,9 +2770,7 @@ def _set_parm_impl(node, name: str, value,
             except Exception:
                 pass
             if tpl_type in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
-                _clear_animation(p)
-                p.setExpression(value, language=hou.exprLanguage.Hscript)
-                return {"parm": p.name(), "expression": value, "value": _val(p.eval())}
+                return _set_expression(p,value,'hscript')
         cleared = _clear_animation(p)
         p.set(value)
         out = {"parm": p.name(), "value": _val(p.eval())}
@@ -2735,6 +2814,7 @@ def set_parms(node, values: dict,
     value支持set_parm的字面string patch对象；只允许strict=True，整批patch验证通过后才写任何参数。
     补丁字段在set中返回前后hash/字符数/替换次数（不回传整份源码），patched列出这些字段名。
     预检限本节点本批values；其他节点/其他调用不属此预检范围。
+    表达式字段另给evaluations；明确求值失败在strict模式恢复本批值/keys，warning/unverified单独报告。
     """
     n = _resolve(node)
     _require_owned(n, "set_parms", allow_foreign)
@@ -2762,7 +2842,7 @@ def set_parms(node, values: dict,
                 if parm is None:
                     raise ParameterPatchError(f'{key}: patch requires a scalar string parameter', n.path())
                 patch_plans[key] = _prepare_parameter_patch(parm, value)
-    done, failed, notes = {}, {}, {}
+    done, failed, notes, evaluations = {}, {}, {}, {}
     for key, value in values.items():
         try:
             r = (_apply_parameter_patch(n.parm(key), patch_plans[key]) if key in patch_plans
@@ -2770,10 +2850,15 @@ def set_parms(node, values: dict,
             done[r["parm"]] = r['patch'] if 'patch' in r else r.get("value", r.get("expression"))
             if "note" in r:
                 notes[r["parm"]] = r["note"]
+            if 'evaluation' in r:evaluations[r['parm']]=r['evaluation']
         except Exception as e:
             failed[key] = str(e)
             if strict:
                 restore_errors = _restore_parameters(snapshots)
+                if isinstance(e,CheckpointError):
+                    e.evidence.update({'batch_parameter_state_restored':not restore_errors,
+                                       'batch_restore_errors':restore_errors,'write_status':'restored' if not restore_errors else 'recovery_unverified'})
+                    raise
                 raise RuntimeError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}") from e
     out = {"node": n.path(), "ok": not failed, "set": done}
     if patch_plans:
@@ -2782,6 +2867,11 @@ def set_parms(node, values: dict,
         out["notes"] = notes
     if failed:
         out["failed"] = failed
+    if evaluations:
+        out['evaluations']=evaluations
+        out['effect_status']='unverified'
+        if any(e['status']=='unverified' for e in evaluations.values()):out['status']='unverified'
+        if any(e['status'] in ('warning','unverified') for e in evaluations.values()):out['warning_free']=False
     return out
 
 

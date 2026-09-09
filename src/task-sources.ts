@@ -66,13 +66,13 @@ const descriptor = (row: Source) => ({ source_ref: row.source_ref, kind: row.kin
   event_seq: row.event_seq, message_id: row.message_id, call_id: row.call_id,
   text_chars: row.text.length, nontext_blocks: row.nontext_blocks })
 
-export function projectTaskSources(events: Event[], claimed?: any): Record<string, unknown> | null {
+export function projectTaskSources(events: Event[], claimed?: any, recovery = false): Record<string, unknown> | null {
   const rows = taskSources(events, claimed)
   if (!rows.length) return null
   const goals = events.filter(e => e.type === 'goal/change')
   const compacted = events.some(e => e.type.startsWith('compaction/'))
   // A single ordinary request is already in the model input; avoid duplicate scaffolding.
-  if (rows.length === 1 && !compacted && !goals.length) return null
+  if (rows.length === 1 && !compacted && !goals.length && !recovery) return null
   const firstUser = Math.max(0, rows.findIndex(row => row.kind === 'user_message'))
   const selected = rows.filter((_, i) => i === firstUser || i >= rows.length - 3)
   const goal = goals.at(-1)

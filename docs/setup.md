@@ -109,15 +109,16 @@ $env:DSH_HOUDINI_DSH_SPEC='@deepseek-ai/dsh@<待验证的精确版本>'
 
 ## 7. 视觉能力边界
 
-当前安装清单固定 `@anionex/dsh-vision-toolkit@0.1.40`，并主动移除旧
-`dsh-vision-router` 与 `dsh-vision-fallback`。在会话中先加载 `vision-tools` skill；需要时
-`vision_toolkit_activate` 会为当前 agent 挂载 10 个独立的 `vision_*` 工具。远程视觉工具使用
-`设置 → 视觉工具` 里配置的 provider/model/DSH Credential，本地 crop/trace/pixel diff/
-前景提取/主色/HTML 截图无需视觉 API Key。
+受管profile仅安装dsh-houdini，并移除vision toolkit及旧视觉router/fallback。
+渲染和截图经Bridge按产图来源取回字节，保存到DSH原生附件服务，作为image内容块进入当前模型；
+不再调用额外识图工具，也不在会话工作区创建.dsh-houdini-media副本。
+要求当前模型路由声明image输入且Host提供attachments服务；不支持的格式（例如EXR）保留工程文件，
+视觉检查可生成PNG/JPEG预览。附件上传/像素检查不等于语义正确，失败明确保留未验证状态。
 
-视觉工具的 transport、runtime bootstrap 或 Artifact presentation 成功都不等于语义识图成功；
-只有 semantic inspection 真正成功后才允许宣称视觉已验证。升级 toolkit、模型或 provider 前，
-应先在隔离 profile 用同一组 Houdini render 做 A/B，并使用用户授权、可用且有配额的服务。
+Houdini生产preset的skill-filesystem设置includeDefaultRoots=false、customSkillDirs=[]，
+不扫描共享用户/项目技能目录。需要扩展时仅向customSkillDirs加入经过选择的目录；
+插件自身的随包skills仍由src/skill.ts注册。其他全局插件贡献的技能应在对应profile/plugin配置中处理，
+不能靠隐藏Trace条目改变模型可发现目录。已有历史请求保留原目录证据。
 
 ## 8. 卸载
 

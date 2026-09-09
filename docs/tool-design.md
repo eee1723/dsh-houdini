@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 22
+Execution contract version: 26
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -26,14 +26,32 @@ Execution contract version: 22
 | 工具 | 作用 |
 |---|---|
 | houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）。三分支互斥，两个Host分支不执行HOM；没有allow_raw修改豁免 |
-| houdini_exec | 场景修改；code、review、review_test为互斥分支 |
+| houdini_exec | 场景修改与作者验证；code为必填，产图通过原生附件返回 |
 | houdini_job_submit | 长操作排队异步提交 |
 | houdini_job_status | 状态/结果及可选等待 |
 | houdini_job_cancel | 协作式取消；不强杀已执行HOM |
 
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
+有Host会话身份的exec/jobs提交前带运行实例绑定的request_ref；HTTP断联、超时、坏JSON或错误状态码
+返回unknown_transport时，用houdini_query(request_ref=...)查回，不重发code。该分支与code/result_ref/
+source_ref互斥，不接受pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
+回执只在原runtime有效，结果保留10分钟且总量上限64MiB，最多4096个请求身份；结果过期或超限明确不可取回，
+身份墓碑保留到runtime结束以拒绝重复执行，容量满拒绝新登记。未知/过期/换runtime都不能推断未执行。
+jobs回执保存的是提交关联，不是完成证据；查回jobId后继续houdini_job_status。job关联在该runtime保留，
+不因完整结果的10分钟期限丢失；job实际结果仍服从job registry自身期限。重复回执不启动第二个worker，
+过载或worker未启动保留not_executed；队列取消仍阻止HOM运行，运行中取消不强杀。
+Host若丢弃整个工具结果，用request_ref='index'查看当前Host会话最近32个已登记引用、owner_call、类型与状态，
+按原调用ID选择；索引不暴露代码或结果正文。超范围、未到达Bridge、换runtime或缺失均不证明未执行。
+没有跨runtime幂等、自动重提、无限期结果保留或强杀HOM保证；实际Host取消路径仍须新session验证。
 兼容入口保留历史调用解释能力，不作为新guidance中的优先创建方式。
+表达式设参分别报告language、write_status、evaluation和effect_status；合法零值不算错误。
+H21/H22本次新增的原生求值错误明确指向当前参数，或结果为非有限数值时，抛CheckpointError并恢复原参数状态；
+strict set_parms同时恢复本批前序参数和动画。failure_stage区分写入失败与求值失败，恢复结果另外报告。
+缺失引用的warning、tuple共享warning和其他节点诊断保留范围，不把它们强行归因当前参数；可能前向引用
+的表达式允许先写入，但返回warning/unverified。先前cook错误可能在表达式修正后仍缓存；与求值前相同的
+错误不冒充本次新增失败，标unverified并要求显式cook/输出复验。read_parms同步返回表达式语言与求值诊断。
+这些读取不额外cook或重复求值；表达式通过不证明非空几何、关系或控制效果，继续按显式输出验收。
 大返回在当前workspace成功保存完整Bridge返回JSON后才精简默认文本；result-details提供SHA-256和
 可用读取入口。`houdini_query(result_ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。

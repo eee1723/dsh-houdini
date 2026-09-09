@@ -27,6 +27,9 @@ import {
   collectQualityLoopEvidence,
   collectRetryWork,
   collectVerbAdoption,
+  classifyRawEffect,
+  isHoudiniDetailRead,
+  isStructuredHoudiniCall,
   collectValidationCoverage,
   qualityLoopRisks,
   requestedGoalReportedUnverified,
@@ -113,7 +116,7 @@ const unknownVerbs = Object.keys(verbCount).filter(
 // 概览统计
 const toolCount = {};
 for (const s of steps) toolCount[s.tool] = (toolCount[s.tool] || 0) + 1;
-const rawHouSteps = steps.filter((s) => s.isHoudini && s.rawMethods.length > 0 && s.verbs.length === 0);
+const rawHouSteps = steps.filter((s) => s.isHoudini && !isHoudiniDetailRead(s) && !isStructuredHoudiniCall(s) && s.verbs.length === 0);
 const failedSteps = steps.filter((s) => s.failed);
 const advisorySteps = steps.filter((s) => s.advisory);
 const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);
@@ -170,7 +173,7 @@ const qualityLoopHtml = `
     <div class="card"><div class="num">${qualityLoopEvidence.contract.missing.length}</div><div class="cap">合同缺失字段</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.reference.researchSteps.length}</div><div class="cap">research/web 调用</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.skeleton.tabCreatesBeforeFirstRender}</div><div class="cap">首张 render 前建节点</div></div>
-    <div class="card"><div class="num">${qualityLoopEvidence.relations.probeSteps.length}</div><div class="cap">关系 probe</div></div>
+    <div class="card"><div class="num">${qualityLoopEvidence.relations.probeSteps.length}</div><div class="cap">关系检查 / 手写测量候选（非正确性认证）</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.perturbation.restored.length}</div><div class="cap">控制扰动并恢复</div></div>
     <div class="card"><div class="num" style="color:${qualityRisks.length ? 'var(--bad)' : 'var(--ok)'}">${qualityRisks.length}</div><div class="cap">质量闭环风险</div></div>
   </div>
@@ -224,12 +227,17 @@ const timelineHtml = steps.map((s, i) => {
   </div>`;
 }).join('');
 
+const rawEffectLabels = {
+  gate_blocked: 'Gate 执行前拦截', mutation_candidate: '检测到裸修改候选',
+  suspected_effect: '疑似副作用 / 外部操作', read_only_query: '只读 query（守卫范围）',
+  failed: '失败；未证明只读', unknown: '副作用未知（含动态调用）',
+};
 const rawHouHtml = rawHouSteps.length
   ? rawHouSteps.map((s) => {
       const idx = steps.indexOf(s) + 1;
       return `<div class="step"><div class="step-head"><span class="t">${fmtTime(s.time)}</span><span class="seq">#${idx}</span><span class="tool hou">${esc(s.tool)}</span>${chip(
-        s.mutatingRawMethods.length ? `裸修改 ×${s.mutatingRawMethods.length}` : `只读探针 ×${s.rawMethods.length}`,
-        s.mutatingRawMethods.length ? 'bad' : 'warn',
+        rawEffectLabels[classifyRawEffect(s)],
+        classifyRawEffect(s) === 'gate_blocked' ? 'bad' : 'warn',
       )}</div>
       <details><summary>代码</summary><pre>${esc(s.code)}</pre></details></div>`;
     }).join('')
@@ -318,8 +326,11 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num">${verbAdoption.callsWithVerbs}/${verbAdoption.houdiniCalls}</div><div class="cap">Houdini 调用含动词（${verbAdoption.callCoveragePct ?? 0}%）</div></div>
       <div class="card"><div class="num">${verbAdoption.verbDensity}</div><div class="cap">每次 Houdini 调用动词数</div></div>
       <div class="card"><div class="num">${usedVerbs}/${catalogVerbs}</div><div class="cap">目录广度（非合规率）</div></div>
-      <div class="card"><div class="num">${verbAdoption.rawReadOnlyCalls}</div><div class="cap">无动词只读探针</div></div>
-      <div class="card"><div class="num" style="color:${verbAdoption.successfulVerblessRawMutationCalls ? 'var(--bad)' : 'var(--ok)'}">${verbAdoption.successfulVerblessRawMutationCalls}</div><div class="cap">成功的无动词裸修改</div></div>
+      <div class="card"><div class="num">${verbAdoption.rawReadOnlyCalls}</div><div class="cap">无动词只读 query（守卫范围）</div></div>
+      <div class="card"><div class="num">${verbAdoption.rawSuspectedEffectCalls}</div><div class="cap">无动词疑似副作用 / 外部操作</div></div>
+      <div class="card"><div class="num">${verbAdoption.rawUnknownEffectCalls}</div><div class="cap">无动词副作用未知</div></div>
+      <div class="card"><div class="num">${verbAdoption.rawFailedCalls}</div><div class="cap">无动词失败（未证明只读）</div></div>
+      <div class="card"><div class="num">${verbAdoption.successfulVerblessRawMutationCalls}</div><div class="cap">成功返回的无动词裸修改候选</div></div>
       <div class="card"><div class="num">${verbAdoption.blockedVerblessRawMutationCalls}</div><div class="cap">Gate 执行前拦截</div></div>
       <div class="card"><div class="num" style="color:${failedSteps.length ? 'var(--bad)' : 'var(--ok)'}">${failedSteps.length}</div><div class="cap">失败调用</div></div>
       <div class="card"><div class="num">${advisorySteps.length}</div><div class="cap">advisory 触发</div></div>
@@ -327,9 +338,11 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num" style="color:${unmatchedResults.length ? 'var(--bad)' : 'var(--ok)'}">${unmatchedResults.length}</div><div class="cap">无匹配 call 的 result</div></div>
     </div>
     <p class="dim-text">工具分布: ${Object.entries(toolCount).map(([k, v]) => `${esc(k)} ×${v}`).join(' ｜ ')}</p>
+    <p class="dim-text">成功 exec 含动词 ${verbAdoption.successfulExecWithVerbs}/${verbAdoption.successfulExecCalls}（${verbAdoption.successfulExecVerbCoveragePct ?? '—'}%）只描述调用形态，分母包含验证/动态函数；不代表修改采用率。Gate read_only 是静态扫描结果，no_scene_change 不排除文件或 Python 全局副作用；零裸修改候选不证明没有修改。</p>
     ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
     ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
+    <p class="dim-text">有canonical运行序号的独立执行：${normalized.uniqueExecutions.length}；独立执行内动词 ${normalized.uniqueExecutions.reduce((n,e)=>n+e.verbCalls,0)}。仅覆盖实际保留runtime/sequence的事件，不代表旧轨迹无执行；轮询和查回仍是独立工具调用，不能重复计场景执行。</p>
     <h2>回滚与近重复重试候选</h2>
     <p>提交代码 ${retryWork.totalCodeChars} 字符；失败调用代码 ${retryWork.failedCodeChars} 字符；已应用回滚 ${retryWork.appliedRollbackCalls} 次，涉及代码 ${retryWork.appliedRollbackCodeChars} 字符。
     ${retryWork.successfulBuildEntriesInAppliedRollbacks.length} 个成功的 build_module ledger 条目随后被所在调用回滚；近重复重试候选 ${retryWork.candidates.length} 对。</p>
@@ -348,7 +361,7 @@ const html = `<!DOCTYPE html>
     ${qualityLoopHtml}
     <h2>调用时间线（真实顺序）</h2>
     ${timelineHtml}
-    <h2>无动词 HOM 段落（区分只读探针与裸修改）</h2>
+    <h2>无动词 Houdini 调用（拦截、只读 query 与未知副作用）</h2>
     ${rawHouHtml}
     <h2>失败调用</h2>
     ${failedHtml}

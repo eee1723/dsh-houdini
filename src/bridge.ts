@@ -5,6 +5,7 @@
  * this client is the only channel the plugin uses to reach it.
  */
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
+import { randomUUID } from 'node:crypto'
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
@@ -27,8 +28,8 @@ export interface ExecResult {
   advisory?: string
   /** Absolute paths of images produced during this exec (render/screenshot verbs). */
   images?: JsonValue
-  /** Media relay outcome, filled host-side: bridge paths copied into the session workspace. */
-  media?: JsonValue
+  /** Native DSH image attachment references; no workspace file copies. */
+  imageAttachments?: JsonValue
   /** Failed/warning operation checks despite successful Python execution. */
   checks?: JsonValue
   /** Compact operation evidence, retained independently of verbose ledger previews. */
@@ -37,11 +38,15 @@ export interface ExecResult {
   execution?: JsonValue
   /** Immutable returned-envelope reference, filled host-side for large results. */
   details?: JsonValue
+  /** Same-runtime execution receipt, including uncertain transport outcomes. */
+  requestReceipt?: JsonValue
 }
 
 /** Handle returned when a background job is accepted by the bridge. */
 export interface JobHandle {
-  jobId: string
+  jobId?: string
+  requestReceipt?: JsonValue
+  error?: string
 }
 
 /** Poll snapshot of a bridge-side background job. */
@@ -58,6 +63,7 @@ export interface OwnershipScope {
 
 interface BridgeHealth {
   ok: boolean
+  runtimeId?: string
   houVersion?: string
   rawGate?: boolean
   executionContractVersion?: number
@@ -84,7 +90,7 @@ export class HoudiniBridge {
   /** Run Python code in the Houdini session and wait for completion.
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
   async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope, readOnly = false): Promise<ExecResult> {
-    await this.ensureCompatible(signal)
+    const runtimeId = await this.ensureCompatible(signal)
     const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
@@ -92,46 +98,57 @@ export class HoudiniBridge {
       body.owner_call = owner.callId
     }
     if (readOnly) body.read_only = 'true'
-    const result = await this.post<ExecResult>('/exec', body, signal)
-    if (!readOnly) this.hipCache = null
-    return result
+    // Only trusted Host identities enable receipts; no model-provided ownership.
+    const ref = runtimeId && owner ? `${runtimeId}.${randomUUID().replaceAll('-','')}` : undefined
+    if (ref) body.request_ref = ref
+    try {
+      return await this.post<ExecResult>('/exec', body, signal)
+    } catch (error) {
+      if (!ref) throw error
+      // HTTP status/body/JSON failures can all occur after side effects.
+      return {ok:false,stdout:'',stderr:'',error:String(error),
+        requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+          next_action:'Use houdini_query(request_ref=...) to retrieve the admitted request. Do not resubmit the scene code.'}}
+    } finally {
+      if (!readOnly) this.hipCache = null
+    }
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
   async submitJob(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<JobHandle> {
-    await this.ensureCompatible(signal)
+    const runtimeId = await this.ensureCompatible(signal)
     const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
       body.owner_session = owner.sessionId
       body.owner_call = owner.callId
     }
-    return await this.post('/jobs', body, signal)
-  }
-
-  /** Opaque review leases belong to Host, never model-supplied owner/pass flags. */
-  async review(request: Record<string, unknown>, owner: OwnershipScope, signal?: AbortSignal): Promise<ExecResult> {
-    await this.ensureCompatible(signal)
-    return this.post('/review', {request,owner_session:owner.sessionId,owner_call:owner.callId,
-      expected_contract:this.expectedContract()},signal)
+    const ref = runtimeId && owner ? `${runtimeId}.${randomUUID().replaceAll('-','')}` : undefined
+    if (ref) body.request_ref=ref
+    try { return await this.post('/jobs', body, signal) }
+    catch (error) {
+      if (!ref) throw error
+      return {error:String(error),requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+        next_action:'Use houdini_query(request_ref=...) to recover the original jobId. Do not submit this job again.'}}
+    }
   }
 
   /** Refuse scene work when the host catalog and in-process bridge differ. */
-  private async ensureCompatible(signal?: AbortSignal): Promise<void> {
+  private async ensureCompatible(signal?: AbortSignal): Promise<string | undefined> {
     // A bridge can restart on the same port at any time. A 30s cache accepted
     // stale semantics; sharing its AbortSignal also cancelled unrelated calls.
-    await this.checkContract(signal)
+    return this.checkContract(signal)
   }
 
   private expectedContract() {
     return { version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH }
   }
 
-  private async checkContract(signal?: AbortSignal): Promise<void> {
+  private async checkContract(signal?: AbortSignal): Promise<string | undefined> {
     const health = await this.get<BridgeHealth>('/health', signal)
     const actual = health.verbCatalog
     if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH
-        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) return
+        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) return health.runtimeId
 
     const expectedNames = new Set<string>(EXPECTED_VERB_NAMES)
     const actualNames = new Set(Array.isArray(actual?.names) ? actual.names : [])
@@ -172,9 +189,9 @@ export class HoudiniBridge {
   /**
    * Fetch image bytes from the bridge's `/media` endpoint. The bridge process
    * can read $HIP-side outputs that dsh-side tools (sandboxed to the session
-   * workspace) cannot; the caller writes the bytes into the workspace.
+   * workspace) cannot; the caller commits bytes to native DSH attachments.
    */
-  async fetchMedia(path: string, signal?: AbortSignal): Promise<Buffer> {
+  async fetchMedia(path: string, signal?: AbortSignal, maxBytes = 32 * 1024 * 1024): Promise<Buffer> {
     const url = `${this.baseUrl}/media?path=${encodeURIComponent(path)}`
     let res: Response
     try {
@@ -187,7 +204,21 @@ export class HoudiniBridge {
       const detail = await res.text().catch(() => '')
       throw new Error(`bridge /media returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`)
     }
-    return Buffer.from(await res.arrayBuffer())
+    if (Number(res.headers.get('content-length')) > maxBytes) { await res.body?.cancel(); throw new Error('image exceeds attachment byte limit') }
+    const chunks: Uint8Array[] = []
+    let length = 0
+    if (!res.body) throw new Error('empty image response')
+    const reader = res.body.getReader()
+    try {
+      while (true) {
+        const {done,value} = await reader.read()
+        if (done) break
+        length += value.length
+        if (length > maxBytes) { await reader.cancel(); throw new Error('image exceeds attachment byte limit') }
+        chunks.push(value)
+      }
+    } finally { reader.releaseLock() }
+    return Buffer.concat(chunks)
   }
 
   private hipCache: { dir: string | null; at: number } | null = null
@@ -197,6 +228,11 @@ export class HoudiniBridge {
     const timeout = AbortSignal.timeout(2000)
     return this.post('/context', { schema_version: 1 },
       signal ? AbortSignal.any([signal, timeout]) : timeout)
+  }
+
+  requestStatus(ref: string, owner: OwnershipScope, signal?: AbortSignal): Promise<ExecResult> {
+    if (ref !== 'index' && !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(ref)) throw new Error('request_ref must be index or an execution receipt returned by Houdini')
+    return this.post('/requests/status',{request_ref:ref,owner_session:owner.sessionId},signal)
   }
 
   /** Directory of the live hip file ($HIP), 60s cache; null when unreachable

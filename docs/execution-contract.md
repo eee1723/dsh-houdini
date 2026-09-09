@@ -35,14 +35,27 @@ identity共同解释，路径不充当identity。影响包含有界原生outputs
 last_edit_ledger_index可识别同调用内检查之后的修改；outputs将检查条目绑定到末态节点identity/存活状态。
 这些记录用于让旧证据失效，不证明未列出的依赖不存在，也不证明下一请求时场景未变。
 
+Host的scene-context只在用户消息有“这个节点/HDA”“选中对象”“当前场景”等现场指代时采集一次；
+明确节点路径和普通解释/新建任务不采集环境选择。文本匹配只是保守指代提示，未匹配时仍可显式查询。
+选择不等于任务目标或修改授权，用户运行中切换选择、网络、视角和帧不会刷新或触发注入；
+重启Host后只能复用旧消息原快照，不能把重启时的现场重新绑定到旧消息。
+
 Host的execution-state从公开tool事件重建，独立于用户消息绑定的scene-context：按runtime/sequence
 去重与排序，保留最近观察、删除、失败、in-flight/未知执行和有限检查范围。运行时或观察到的HIP路径改变不复活旧identity，
 已回滚检查不作当前通过；已记录依赖变化或同调用后续修改使旧检查stale。非stale仍只是历史观察，
 不能认证当前live状态或赋予foreign权限。没有第二份可写任务账本，不自动改写用户原始指代。
+普通成功/失败回包由工具结果直接表达，不再按时间戳、执行序号、计数或节点清单追加摘要。
+自动提醒仅投影未决修改请求、已记录检查失效及观测到的runtime/HIP身份变化；状态解除只表示
+历史记录不再含该提醒，不证明场景通过。后台任务提交/完成由原工具结果表达，恢复摘要保留仍在运行的job。
+各补充段经agent/pre-step作为独立、可审计的plugin消息加入；按公开session surface中保留的同名正文去重，
+不进入Host整包runtime context，不因执行提醒重发权限或场景快照。拒绝/取消/未提交不消耗补充消息。
+对话历史surface替换后可恢复一次有界执行事实和来源；仅缩短单条tool/result不触发整份恢复，
+普通工具调用不持续重建恢复消息。
 
 Host的task-sources只从source.kind=user消息和已关联的ask_user_question问答建立来源锚；
 注入上下文、自动goal续接和作者自述不提升为用户要求，缺source的历史消息不猜测为用户原文。
-多消息/目标/压缩续接提供首条与最近来源的有限摘录，遗漏数和截断显式报告；单条普通请求不重复注入。
+原始消息、澄清答案和目标变化不触发额外全文副本；历史surface替换后的恢复可提供首条与最近来源的有限摘录，
+遗漏数和截断显式报告，目标始终标为作者计划。普通步骤仍可按需回读来源。
 source_ref=index列出可用来源，来源hash分页回读完整文本；非文本仅保留类型标记，不声称读取了图片。
 作用域仅当前session可见的公开日志，不保证被裁除的历史仍存在；不存在的来源明确拒绝而不替换成摘要。
 goal/change只标为报告的计划状态，不覆盖原文或证明完成；来源顺序也不推导用户是否替代旧任务。
@@ -54,13 +67,36 @@ SOP聚焦模块流程复用现有计划和工具事实，方法在[模块合同]
 job仍通过同一主线程队列串行执行。排队取消可阻止执行；已开始的代码不能强杀，
 客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
 HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单独报告外部副作用。
+exec的request_ref在进入主线程队列前登记，查回走固定只读/requests/status端点，不触发HOM或重新排队。
+同runtime同身份同payload只返回原状态/结果；payload或owner不符拒绝，不更新原请求。状态not_executed
+仅在已登记且确认主线程未开始时报告；断联、结果过期、换runtime和查不到回执均不等于未执行。
+回执丢失/过期时需显式观察实际场景再决定下一步，不自动生成新request_ref重做原修改。
+查回带retrieved标记，原执行sequence保留；执行状态投影解除已查明的unknown，离线动词核算不重复计数。
+jobs提交复用同runtime回执但以job_submit类型单独绑定payload；查回jobId只解除提交未知，job仍可能排队/
+运行中。terminal job不能被迟到的提交回执重置为排队。队列取消、过载拒绝和worker启动失败保持原执行边界。
+Host历史已保留done/not_executed/job_submitted回执时，迟到的非终态或Bridge保留期结束不将同一引用降级为未知；
+未查回过结果的过期引用仍保持不确定。该规则不把job提交当作执行完成，也不认证当前场景。
+request_ref='index'仅列当前owner最近32条回执，以owner_call对齐Host未记录结果的原调用；无代码/结果正文，
+不能用索引中缺记录自行授权重提。独立执行统计按canonical runtime/sequence去重，传输轮询仍计工具调用；
+只有历史文本或没有序号的结果明确未测，不猜执行身份。
 
 ## 参数与创建
+
+HDA section 的写后回读/hash仅证明文本写入；PythonModule语法预检不执行回调，任意命名的嵌入section
+也不自动按Python编译。内部函数测试、真实回调、cook后的交付输出、隔离环境依赖验证分别取证，
+不能互相替代。多section库修改不具备场景undo的原子恢复保证。SOP HDA维护方法见
+[HDA维护路径](../skills/houdini-sop-workflow/references/hda-maintenance.md)。
 
 真实Tab/Shelf初始化与静态类型模板不同。node_info提供实际parent下解析的类型、端口和模板，
 不创建scratch；操作卡关键参数不受普通筛选裁切，见[节点卡](node-operation-cards.md)。
 精确菜单用token/set_value；数值表达式字符串是HScript，显式Python要声明语言；
 VEX仅在snippet内。tuple表达式用组件字段，严格设参不允许跳过未知/无效字段假报成功。
+表达式写入和求值分别留证：原生setExpression失败标write/not_run；Parm.eval即使返回0，也检查H21/H22
+原生节点诊断是否新增且明确指向该参数，新增明确错误/非有限值拒绝并恢复原值与keys。不能把合法0当失败。
+旧cook错误在修正后可能仍缓存；无法区分新旧时返回unverified，允许通过显式cook/输出检查验证修复。
+warning和无法精确归属的节点诊断为有范围的warning/unverified，不用旧的其他节点cook错误拒绝合法设参。
+返回的parameter_state_restored/batch_parameter_state_restored仅指本次参数快照；外部Python副作用仍不保证恢复。
+evaluation描述当前frame的求值读取，effect_status保持unverified；空输出或错误实体关系需后续同层验收。
 build_module静态预检与实际数值setter共用值形状校验：size=1及单独组件是标量，接受有限数值、
 HScript字符串或显式expression/language；不接受单元素列表。只有多分量tuple整体值接受等长有限
 数值列表，表达式必须写组件名；菜单继续使用token/set_value策略。静态通过不证明表达式可求值或cook通过。
@@ -109,6 +145,9 @@ require_valid=False仅诊断，不能用来完成验收。warning、cook成功�
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。
+恢复不仅比较bgeo：恢复写入后及最终cook后均回读被测参数的值/表达式/keys，最终核对frame。
+parameter_restore列出快照参数身份、前后字面值或动画匹配及错误；任何不匹配都不能报告restored=true。
+这些字段证明该次回读，不保证稍后GUI/外部代码不会改值；未采集历史不能据此归因为用户undo。
 恢复指纹排除导出头date和派生group_summary，并按组名整理已知bgeo组目录记录；
 组名、组成员、ordered group内部顺序、用户属性、拓扑和原生primitive数据仍完整比较。
 重复组名或无法识别的组目录结构拒绝，不通过忽略真实选择或几何差异放行。
