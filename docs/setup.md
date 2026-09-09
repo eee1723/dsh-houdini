@@ -65,6 +65,7 @@ Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程�
 同时只允许一个Houdini进程使用受管DSH工作区；其他实例可管理/暂存更新，待前一实例退出后再启动工作区。
 动态loopback端口隔离独立DSH/开发Bridge，Windows Job Object只管理自有Node进程树，退出时收回，不按端口停止外部服务。
 WebView使用独立的内存浏览器profile，不争用Houdini默认磁盘profile或其他版本的浏览器锁；浏览器cookie/缓存随窗口生命周期结束，DSH会话与配置仍在受管data目录持久化。
+H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快捷方式或以安装bin为工作目录启动。不要把Houdini进程cwd改成源码/安装暂存目录；DSH工作区仍独立跟随HIP目录，插件不改Houdini的cwd或关闭浏览器沙箱。
 安装器不删除旧版本、旧数据、HIP或工作区。清理下载、暂存及旧版本须另行确认。
 
 | 安装根下的位置 | 职责 |

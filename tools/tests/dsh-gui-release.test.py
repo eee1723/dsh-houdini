@@ -209,7 +209,10 @@ def main():
         info.wShowWindow = 0
         with (fixture / ("houdini-" + version + ".log")).open("wb") as log:
             process = subprocess.Popen([str(executable), "-foreground", "-geometry=1024x768+12000+12000"],
-                                       cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       # Match the vendor shortcut. H22's Qt
+                                       # helper resolves native DLLs from this
+                                       # launch directory, independently of $HIP.
+                                       cwd=executable.parent, env=env, stdout=log, stderr=subprocess.STDOUT,
                                        startupinfo=info, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             # Do not put the GUI host inside the Node-style restrictive job:
             # Chromium's Windows sandbox must establish its own child jobs.

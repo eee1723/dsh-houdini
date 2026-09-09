@@ -177,6 +177,7 @@ python tools/tests/dsh-gui-release.test.py --bundle tools/out/release --trust in
 测试只新开自有GUI进程、临时偏好和测试HIP，清除模型凭据及系统Node/Git的PATH；覆盖进程启动钩子、Open Workspace、Houdini模式会话、
 真实Qt WebView鉴权、Node→GUI主线程只读调用、重复打开不重启/不新增会话和正常退出码。通过不代表另一台物理机器或模型质量已验证。
 退出测试必须走Houdini主窗口关闭路径，不能从PySide timer抛SystemExit后把崩溃的进程当成功；截图/通过标记也不能代替退出码。
+GUI按厂商快捷方式以对应Houdini安装bin为启动目录，HIP与DSH工作区另用临时目录；H22 Qt子进程的DLL查找不能用任意cwd假设替代，不通过禁用沙箱掩盖环境错误。
 
 [普通CI](../.github/workflows/ci.yml)在push/PR上只做源码检查；[发行流程](../.github/workflows/release.yml)仅显式workflow_dispatch，
 使用Windows/Houdini自托管runner、仓库变量H21_HYTHON/H22_HYTHON/RELEASE_KEY_ID及受保护release环境中的RELEASE_PRIVATE_PEM。
