@@ -8,6 +8,11 @@ lib/
 tools/out/
 __pycache__/
 
+# Publishing private keys/certificate bundles must stay outside the repository.
+*.pem
+*.pfx
+*.p12
+
 # Evaluator-only benchmark material and per-run manifests must not enter the
 # production repository or npm package. Track only schemas and generic tooling.
 benchmark/sealed/
