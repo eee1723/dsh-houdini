@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
         with patch.dict(os.environ, {"DSH_HOUDINI_DSH_SPEC": "@deepseek-ai/dsh@9.8.7"}):
             assert "@deepseek-ai/dsh@9.8.7" in installer.dsh_command_prefix()[0]
         with patch.dict(os.environ, {"DSH_HOUDINI_DSH_BIN": str(newest)}):
-            assert installer.dsh_command_prefix() == ([str(node), str(newest)], False)
+            assert installer.dsh_command_prefix() == ([str(node), str(newest.resolve())], False)
         with patch.object(launcher, "DSH_SPEC", "@deepseek-ai/dsh@9.8.7"), \
              patch.object(launcher, "FRONTEND_RUNTIME_STATE", str(root / "runtime.json")), \
              patch.dict(launcher._PENDING, {"frontend_source": "npx-cold"}, clear=True):
