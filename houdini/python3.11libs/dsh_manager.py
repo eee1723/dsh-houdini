@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections
-import glob
 import importlib
 import json
 import os
@@ -43,6 +42,15 @@ if _module_dir not in sys.path:
     sys.path.append(_module_dir)
 import dsh_web_auth
 import dsh_runtime_compat
+import dsh_release_policy
+import dsh_managed_runtime
+
+_MANAGED = dsh_managed_runtime.context(_PROJECT_ROOT)
+if _MANAGED:
+    _FRONTEND_PORT = _MANAGED["frontendPort"]
+    _BRIDGE_PORT = _MANAGED["bridgePort"]
+    _FRONTEND_LOG = os.path.join(_MANAGED["runtimeDir"], "frontend.log")
+    _RUNTIME_STATE = os.path.join(_MANAGED["runtimeDir"], "runtime.json")
 
 _DSH_WEB_SESSION = dsh_web_auth.shared_session(
     f"http://127.0.0.1:{_FRONTEND_PORT}", _FRONTEND_LOG, _RUNTIME_STATE,
@@ -114,66 +122,35 @@ def _port_pid(port: int) -> int | None:
 
 def _plugin_identity() -> tuple[str, str, bool]:
     version = _read_json(os.path.join(_PROJECT_ROOT, "package.json")).get("version", "unknown")
-    branch = _run(["git", "branch", "--show-current"], 5) or "detached"
-    commit = _run(["git", "rev-parse", "--short", "HEAD"], 5)
-    dirty = bool(_run(["git", "status", "--porcelain"], 5))
-    return str(version), f"{branch}@{commit}", dirty
-
-
-def _cached_dsh_installations() -> list[dict]:
-    pattern = os.path.join(
-        _NPM_CACHE, "_npx", "*", "node_modules", "@deepseek-ai", "dsh", "package.json",
-    )
-    installs = []
-    for path in glob.glob(pattern):
-        version = _read_json(path).get("version")
-        bin_path = os.path.join(os.path.dirname(path), "lib", "bin.js")
-        if not version or not os.path.isfile(bin_path):
-            continue
+    # ZIP installs have no Git; do not inspect an unrelated parent repository.
+    if os.path.exists(os.path.join(_PROJECT_ROOT, ".git")) and shutil.which("git"):
         try:
-            modified = os.path.getmtime(bin_path)
-        except OSError:
-            modified = 0.0
-        installs.append({"version": str(version), "bin": bin_path, "modified": modified})
-    return sorted(installs, key=lambda item: item["modified"], reverse=True)
-
-
-def _cached_dsh_versions() -> list[str]:
-    return list(dict.fromkeys(item["version"] for item in _cached_dsh_installations()))
+            branch = _run(["git", "branch", "--show-current"], 5) or "detached"
+            commit = _run(["git", "rev-parse", "--short", "HEAD"], 5)
+            dirty = bool(_run(["git", "status", "--porcelain"], 5))
+            return str(version), f"source {branch}@{commit}", dirty
+        except Exception:
+            return str(version), "source (Git identity unavailable)", False
+    return str(version), "source (no Git identity)", False
 
 
 def _selected_cached_dsh_version() -> str | None:
-    verified = dsh_runtime_compat.verified_versions()
-    installs = [
-        item for item in _cached_dsh_installations()
-        if item["version"] in verified
-    ]
-    return installs[0]["version"] if installs else None
+    cached = dsh_runtime_compat.preferred_cached_bin(_NPM_CACHE)
+    return dsh_runtime_compat.preferred_version() if cached is not None else None
 
 
-def _promote_cached_dsh(version: str) -> None:
+def _require_cached_dsh(version: str) -> None:
+    """Validate readiness; cache timestamps no longer promote a release."""
     dsh_runtime_compat.require_verified(version)
-    matches = [item for item in _cached_dsh_installations() if item["version"] == version]
-    if not matches:
+    if version != dsh_runtime_compat.preferred_version():
+        raise RuntimeError("DSH repair must use the plugin-required version")
+    if dsh_runtime_compat.preferred_cached_bin(_NPM_CACHE) is None:
         raise RuntimeError(f"DSH {version} finished but was not found in {_NPM_CACHE}")
-    os.utime(matches[0]["bin"], None)
-
-
-def _dsh_release_info() -> tuple[str, str]:
-    npm = shutil.which("npm")
-    if not npm:
-        raise RuntimeError("npm was not found; check the Node.js installation")
-    raw = _run([npm, "view", "@deepseek-ai/dsh", "version", "dist-tags", "--json"], 45)
-    npm_info = json.loads(raw)
-    tags = npm_info.get("dist-tags", {}) if isinstance(npm_info, dict) else {}
-    latest = str(tags.get("latest") or npm_info.get("version", "")).strip()
-    next_version = str(tags.get("next") or "n/a").strip()
-    if not latest or not _PACKAGE_VERSION_RE.fullmatch(latest):
-        raise RuntimeError(f"npm returned an invalid DSH version: {latest!r}")
-    return latest, next_version
 
 
 def _dsh_launch_override() -> str | None:
+    if _MANAGED:
+        return "managed signed release (repair from the installation manager)"
     explicit_bin = os.environ.get("DSH_HOUDINI_DSH_BIN", "").strip()
     if explicit_bin:
         return "DSH_HOUDINI_DSH_BIN"
@@ -181,43 +158,6 @@ def _dsh_launch_override() -> str | None:
     if spec != _DEFAULT_DSH_SPEC:
         return f"DSH_HOUDINI_DSH_SPEC={spec or '(empty)'}"
     return None
-
-
-def _git_is_ancestor(older: str, newer: str) -> bool:
-    proc = _run_process(["git", "merge-base", "--is-ancestor", older, newer], 10)
-    if proc.returncode not in (0, 1):
-        message = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-        raise RuntimeError(message.splitlines()[-1])
-    return proc.returncode == 0
-
-
-def _plugin_remote_status() -> dict:
-    _run(["git", "fetch", "--quiet", "origin", "main"], 90)
-    local_head = _run(["git", "rev-parse", "HEAD"], 5)
-    remote_head = _run(["git", "rev-parse", "refs/remotes/origin/main"], 5)
-    local_version, revision, dirty = _plugin_identity()
-    remote_package = json.loads(_run(["git", "show", f"{remote_head}:package.json"], 10))
-    remote_version = str(remote_package.get("version", "unknown"))
-
-    if local_head == remote_head:
-        relation, update_available, blocked = "current", False, False
-    elif _git_is_ancestor(local_head, remote_head):
-        relation, update_available, blocked = "behind", True, dirty
-    elif _git_is_ancestor(remote_head, local_head):
-        relation, update_available, blocked = "ahead", False, False
-    else:
-        relation, update_available, blocked = "diverged", True, True
-
-    note = f"{revision} · {relation} origin/main"
-    if dirty:
-        note += " · local changes"
-    return {
-        "localHead": local_head, "remoteHead": remote_head,
-        "localVersion": local_version, "remoteVersion": remote_version,
-        "dirty": dirty, "relation": relation,
-        "updateAvailable": update_available, "blocked": blocked,
-        "canUpdate": update_available and not blocked, "note": note,
-    }
 
 
 def _runtime_dsh_info() -> dict:
@@ -557,6 +497,10 @@ def _summary_for_state(state: dict) -> str:
         return f"{count} component{'s' if count != 1 else ''} {verb} attention"
     if statuses == ["current", "current"]:
         return "Everything is up to date"
+    if state.get("plugin_status") == "unpublished":
+        return "No stable plugin release is published; source installation is unchanged"
+    if state.get("plugin_status") == "release":
+        return "Published release information is available; source installation is unchanged"
     return "Version status is not checked yet"
 
 
@@ -564,6 +508,7 @@ def _check_updates(state: dict) -> None:
     updates = {
         "busy": False, "result": "render", "checked": True,
         "dsh_can_update": False, "plugin_can_update": False,
+        "plugin_release_url": None,
         "frontend_online": False, "bridge_online": False,
     }
     try:
@@ -571,12 +516,12 @@ def _check_updates(state: dict) -> None:
         updates["frontend_online"] = runtime["online"]
         updates["dsh_current"] = runtime["version"] or ("Not running" if not runtime["online"] else "Unknown")
         updates["dsh_note"] = runtime["note"]
-        latest, next_version = _dsh_release_info()
+        latest = dsh_runtime_compat.preferred_version()
         selected = _selected_cached_dsh_version()
         override = _dsh_launch_override()
         compatible = latest in dsh_runtime_compat.verified_versions()
         updates.update(
-            dsh_latest=latest, dsh_target=latest, dsh_next=next_version,
+            dsh_latest=latest, dsh_target=latest,
             dsh_cached_ready=selected == latest,
         )
         if override:
@@ -593,14 +538,14 @@ def _check_updates(state: dict) -> None:
         elif runtime["verified"] and runtime["version"] == latest:
             updates.update(dsh_status="current", dsh_action="Up to date")
         elif selected == latest:
-            action = "Restart to latest" if runtime["online"] else "Start latest"
+            action = "Start required version"
             updates.update(
                 dsh_status="staged", dsh_action=action, dsh_can_update=True,
                 dsh_note=f"DSH {latest} is cached and ready to activate",
             )
         else:
             status = "update" if runtime["verified"] else ("offline" if not runtime["online"] else "unknown")
-            action = "Update and restart" if runtime["online"] else "Install and start"
+            action = "Install required DSH"
             updates.update(dsh_status=status, dsh_action=action, dsh_can_update=True)
     except Exception as exc:
         updates.update(
@@ -608,18 +553,26 @@ def _check_updates(state: dict) -> None:
             dsh_note=f"DSH check failed: {exc}",
         )
     try:
-        plugin = _plugin_remote_status()
+        version, revision, dirty = _plugin_identity()
+        note = revision + (" · local changes" if dirty else "")
         updates.update(
-            plugin_current=f"{plugin['localVersion']} · {plugin['localHead'][:7]}",
-            plugin_latest=f"{plugin['remoteVersion']} · {plugin['remoteHead'][:7]}",
-            plugin_note=plugin["note"],
+            plugin_current=f"{version} · {revision}",
+            plugin_latest="No stable release", plugin_status="unpublished",
+            plugin_action="No release", plugin_note=note,
         )
-        if plugin["blocked"]:
-            updates.update(plugin_status="blocked", plugin_action="Resolve local Git state")
-        elif plugin["updateAvailable"]:
-            updates.update(plugin_status="update", plugin_action="Update plugin", plugin_can_update=True)
-        else:
-            updates.update(plugin_status="current", plugin_action="Up to date")
+        release = dsh_release_policy.latest_stable_release()
+        if release is not None:
+            try:
+                newer = dsh_release_policy.stable_version(release["version"]) > dsh_release_policy.stable_version(version)
+            except ValueError:
+                newer = False  # Unknown/dev identities cannot prove upgrade order.
+            updates.update(
+                plugin_latest=release["version"], plugin_status="update" if newer else "release",
+                plugin_action="View release", plugin_can_update=True,
+                plugin_release_url=release["url"],
+                plugin_note=note + "; publication only, compatibility and installation are not verified. "
+                "In-app installation is not available yet; this action only opens release information.",
+            )
     except Exception as exc:
         try:
             version, revision, dirty = _plugin_identity()
@@ -656,6 +609,9 @@ def _stage_or_activate(state: dict, component: str, success_message: str) -> Non
 
 def _prepare_activation(state: dict, component: str, success_message: str = "Update is ready.") -> None:
     try:
+        if component == "dsh":
+            if _dsh_launch_override() or state.get("dsh_target") != dsh_runtime_compat.preferred_version():
+                raise RuntimeError("required DSH selection changed; refresh before starting")
         _stage_or_activate(state, component, success_message)
     except Exception as exc:
         state.update(busy=False, result="render", message=f"Could not restart safely: {exc}")
@@ -663,7 +619,9 @@ def _prepare_activation(state: dict, component: str, success_message: str = "Upd
 
 def _update_dsh(state: dict) -> None:
     try:
-        latest = str(state.get("dsh_target") or _dsh_release_info()[0])
+        latest = dsh_runtime_compat.preferred_version()
+        if state.get("dsh_target", latest) != latest:
+            raise RuntimeError("required DSH version changed; refresh before installing")
         dsh_runtime_compat.require_verified(latest)
         override = _dsh_launch_override()
         if override:
@@ -678,7 +636,7 @@ def _update_dsh(state: dict) -> None:
             )
 
         output = _run_npx_dsh(latest, on_progress=publish_progress)
-        _promote_cached_dsh(latest)
+        _require_cached_dsh(latest)
         state.update(
             dsh_latest=latest, dsh_target=latest, dsh_status="staged",
             dsh_action="Restart when idle", dsh_can_update=True,
@@ -694,51 +652,10 @@ def _update_dsh(state: dict) -> None:
         )
 
 
-_HOUDINI_RESTART_FILES = {"houdini/MainMenuCommon.xml", "houdini/install.py"}
-
-
-def _update_plugin(state: dict) -> None:
-    try:
-        status = _plugin_remote_status()
-        if status["blocked"]:
-            raise RuntimeError("Git history diverged or the working tree has local changes")
-        if not status["updateAvailable"]:
-            state.update(
-                busy=False, result="render", plugin_status="current",
-                message="DSH-Houdini is already current.",
-            )
-            return
-        before = status["localHead"]
-        _run(["git", "pull", "--ff-only", "origin", "main"], 180)
-        after_head = _run(["git", "rev-parse", "HEAD"], 5)
-        changed = set(_run(["git", "diff", "--name-only", before, after_head], 20).splitlines())
-        npm = shutil.which("npm")
-        if not npm:
-            raise RuntimeError("npm was not found; source updated but dependencies were not installed")
-        _run([npm, "install", "--no-audit", "--no-fund"], 600)
-        _run([npm, "run", "build"], 600)
-        after = _plugin_remote_status()
-        state.update(
-            plugin_current=f"{after['localVersion']} · {after['localHead'][:7]}",
-            plugin_latest=f"{after['remoteVersion']} · {after['remoteHead'][:7]}",
-            plugin_note=after["note"], plugin_status="current",
-            plugin_action="Up to date", plugin_can_update=False, reload_manager=True,
-        )
-        if changed & _HOUDINI_RESTART_FILES:
-            state.update(
-                busy=False, result="render",
-                message="Plugin updated. Restart Houdini to reload menu or installation files.",
-            )
-        else:
-            _stage_or_activate(state, "plugin", "DSH-Houdini was updated and built.")
-    except Exception as exc:
-        state.update(busy=False, result="render", message=f"DSH-Houdini update failed: {exc}")
-
-
 def show_version_manager() -> None:
     """Show a non-modal, version-focused panel on Houdini's GUI thread."""
     global _WINDOW, _TIMER
-    from hutil.Qt import QtCore, QtWidgets
+    from hutil.Qt import QtCore, QtGui, QtWidgets
 
     if _WINDOW is not None and _WINDOW.isVisible():
         _WINDOW.raise_()
@@ -779,7 +696,7 @@ def show_version_manager() -> None:
     title.setObjectName("title")
     refresh_btn = QtWidgets.QPushButton("Refresh")
     refresh_btn.setObjectName("quiet")
-    refresh_btn.setToolTip("Check npm and origin/main again")
+    refresh_btn.setToolTip("Check required DSH and published stable plugin releases; never pull Git")
     heading.addWidget(title)
     heading.addStretch(1)
     heading.addWidget(refresh_btn)
@@ -794,7 +711,7 @@ def show_version_manager() -> None:
     for column in range(3):
         columns.setColumnStretch(column, 2)
     columns.setColumnStretch(3, 0)
-    for column, text in ((1, "CURRENT"), (2, "LATEST")):
+    for column, text in ((1, "CURRENT / SOURCE"), (2, "REQUIRED / PUBLISHED")):
         label = QtWidgets.QLabel(text)
         label.setObjectName("column")
         columns.addWidget(label, 0, column)
@@ -829,7 +746,7 @@ def show_version_manager() -> None:
         layout.addWidget(frame)
         return current_label, latest_label, action_btn, note_label
 
-    dsh_current, dsh_latest, dsh_action, dsh_note = component_rail("DeepSeek Harness")
+    dsh_current, dsh_latest, dsh_action, dsh_note = component_rail("Required DSH runtime")
     plugin_current, plugin_latest, plugin_action, plugin_note = component_rail("DSH-Houdini")
     download_panel = QtWidgets.QFrame()
     download_panel.setObjectName("rail")
@@ -889,7 +806,7 @@ def show_version_manager() -> None:
         return True
 
     def check_updates() -> None:
-        if set_busy("Checking DSH on npm and DSH-Houdini on origin/main…"):
+        if set_busy("Checking required DSH and published stable plugin releases…"):
             threading.Thread(target=_check_updates, args=(state,), daemon=True).start()
 
     def update_dsh() -> None:
@@ -897,9 +814,9 @@ def show_version_manager() -> None:
             if set_busy("Checking whether the runtime is idle…"):
                 threading.Thread(target=_prepare_activation, args=(state, "dsh"), daemon=True).start()
             return
-        target = state.get("dsh_target", "the latest release")
+        target = state.get("dsh_target", "the plugin-required version")
         answer = QtWidgets.QMessageBox.question(
-            dialog, "Update DeepSeek Harness",
+            dialog, "Install required DSH runtime",
             f"Download DSH {target} and restart services when the runtime is idle?\n\n"
             "Package count, received bytes, and download speed remain visible throughout. "
             "There is no automatic total timeout.\n\n"
@@ -909,17 +826,9 @@ def show_version_manager() -> None:
             threading.Thread(target=_update_dsh, args=(state,), daemon=True).start()
 
     def update_plugin() -> None:
-        if state.get("plugin_status") == "staged":
-            if set_busy("Checking whether the runtime is idle…"):
-                threading.Thread(target=_prepare_activation, args=(state, "plugin"), daemon=True).start()
-            return
-        answer = QtWidgets.QMessageBox.question(
-            dialog, "Update DSH-Houdini",
-            "Fast-forward origin/main, install dependencies, build, and restart services when idle?\n\n"
-            "Updates are blocked when local Git changes would make the operation unsafe.",
-        )
-        if answer == QtWidgets.QMessageBox.Yes and set_busy("Updating and building DSH-Houdini…"):
-            threading.Thread(target=_update_plugin, args=(state,), daemon=True).start()
+        url = state.get("plugin_release_url")
+        if url and not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
+            summary_label.setText("Could not open the release page: " + url)
 
     def repair_runtime() -> None:
         answer = QtWidgets.QMessageBox.question(
@@ -965,7 +874,7 @@ def show_version_manager() -> None:
         plugin_current.setText(str(state.get("plugin_current", "Unknown")))
         plugin_latest.setText(str(state.get("plugin_latest", "Unknown")))
         plugin_detail = str(state.get("plugin_note", ""))
-        show_plugin_note = state.get("plugin_status") in ("blocked", "error", "staged")
+        show_plugin_note = bool(plugin_detail)
         plugin_note.setText(plugin_detail if show_plugin_note else "")
         plugin_note.setVisible(show_plugin_note)
         dsh_action.setText(str(state.get("dsh_action", "Unavailable")))
@@ -1023,8 +932,6 @@ def show_version_manager() -> None:
         global _WINDOW, _TIMER
         if _TIMER is not None:
             _TIMER.stop()
-        if state.get("reload_manager"):
-            sys.modules.pop(__name__, None)
         _WINDOW = None
         _TIMER = None
 

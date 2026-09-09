@@ -64,13 +64,20 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | 源码 / 配置 | 职责 |
 |---|---|
 | [houdini/install.py](../houdini/install.py) | Houdini package安装、profile同步入口 |
+| [Install.cmd](../Install.cmd)、[installer/install.ps1](../installer/install.ps1) | 无外部Python/Node引导、独立管理器不可变复制、package原子注册与备份；完整离线包使用Houdini内置Python暂存 |
+| [dsh_bootstrap.py](../houdini/python3.11libs/dsh_bootstrap.py) | Houdini启动固定版本选择，后台校验/数据快照、主线程加载；未安装时仍能打开管理器 |
+| [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 独立Qt安装/同版修复/校验/回退；本进程与下次启动分层，worker队列与取消 |
+| [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | RSA签名/资产/全量文件校验、安全解压、OS锁、旁路安装、独立数据快照和回退；无Node/hou/Qt依赖 |
+| [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径、独立DSH_HOME、子进程环境和Windows Job Object自有前端生命周期；不按端口停止外部服务 |
+| [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |
 | [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace、Version & Diagnostics菜单 |
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | worker启动/repair、主线程接入、模块重载、HIP工作区、preset同步 |
-| [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断UI、DSH npm与插件Git双更新通道 |
+| [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断UI、配套DSH安装/修复、正式Release只读发现；不拉取或构建Git源码 |
+| [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
 | [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、DocumentCreation兼容补丁 |
 | [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py) | process-token→signed cookie、RPC wire与会话请求 |
 | [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步profile依赖、精确版本兼容修补 |
-| [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 精确兼容清单读取/选择，未知latest不自动激活 |
+| [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 安装器/launcher/manager共享精确preferred版本与cache选择；不以缓存时间选择其他已验证版本 |
 | [dsh-runtime-compatibility.json](../dsh-runtime-compatibility.json) | preferred DSH及支持组合的唯一清单 |
 | [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 受管profile依赖与移除清单 |
 | [cordis.patch.yml](../cordis.patch.yml) | bundle组合与插件配置 |
@@ -109,6 +116,9 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[prune-retired-build.mjs](../tools/prune-retired-build.mjs) | 回归发现与退役构建文件清理 |
+| [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
+| [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
+| [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
 
 评测工具与schema见[评测设计](benchmark-design.md)。tools/prototypes、一次性probe及tools/out

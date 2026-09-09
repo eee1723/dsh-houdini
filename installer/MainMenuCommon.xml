@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mainMenu>
+  <menuBar>
+    <subMenu id="dsh_menu">
+      <label>DSH-Houdini</label>
+      <scriptItem id="dsh.open_workspace">
+        <label>Open Workspace</label>
+        <scriptCode><![CDATA[
+import dsh_bootstrap
+dsh_bootstrap.open_workspace()
+]]></scriptCode>
+      </scriptItem>
+      <scriptItem id="dsh.version_manager">
+        <label>Version &amp; Diagnostics...</label>
+        <scriptCode><![CDATA[
+import dsh_bootstrap
+dsh_bootstrap.show_manager()
+]]></scriptCode>
+      </scriptItem>
+    </subMenu>
+  </menuBar>
+</mainMenu>

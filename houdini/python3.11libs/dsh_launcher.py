@@ -67,15 +67,15 @@ FRONTEND_RUNTIME_STATE = os.path.join(_PROJECT_ROOT, ".dsh-runtime.json")
 # overlay is retired: it cannot be discovered as a package for the client half.)
 
 # How to boot the dsh web frontend.
-#   * Default: directly execute a valid CLI already present in the project-local
+#   * Default: directly execute the plugin-required CLI in the project-local
 #     npx cache. This avoids a warm launch blocking on npm registry resolution.
-#   * With no cache, fall back to npx for the first download.
+#   * With no matching cache, fall back to npx for that exact version.
 #   * Set DSH_HOUDINI_DSH_SPEC to test/update a specific CLI release through
 #     npx, or DSH_HOUDINI_DSH_BIN to pin an already-installed bin.js.
 #   * SHELL=False + DSH_BIN remains as a source-compatible developer override.
 SHELL = True
 DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
-DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC)
+DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC).strip()
 FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port} --no-open'
 
 # npm cache for npx. The default cache is write-blocked on sandboxed machines
@@ -108,6 +108,18 @@ if _module_dir not in sys.path:
     sys.path.append(_module_dir)
 import dsh_web_auth
 import dsh_runtime_compat
+import dsh_managed_runtime
+
+_MANAGED = dsh_managed_runtime.context(_PROJECT_ROOT)
+if _MANAGED:
+    NODE = os.path.join(_MANAGED["install"], "node", "node.exe")
+    FRONTEND_PORT = _MANAGED["frontendPort"]
+    BRIDGE_PORT = _MANAGED["bridgePort"]
+    FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
+    FRONTEND_LOG = os.path.join(_MANAGED["runtimeDir"], "frontend.log")
+    FRONTEND_RUNTIME_STATE = os.path.join(_MANAGED["runtimeDir"], "runtime.json")
+    NPM_CACHE = os.path.join(_MANAGED["root"], "cache")
+    PRESET_DST = os.path.join(_MANAGED["home"], ".agent-presets")
 
 _DSH_WEB_SESSION = dsh_web_auth.shared_session(
     FRONTEND_URL, FRONTEND_LOG, FRONTEND_RUNTIME_STATE,
@@ -116,6 +128,8 @@ _DSH_WEB_SESSION = dsh_web_auth.shared_session(
 
 # hip 未保存时的中立工作区（仓库的兄弟目录，按需创建）：产出永不落仓库。
 _FALLBACK_WORKSPACE = os.path.join(os.path.dirname(_PROJECT_ROOT), "dsh-houdini-workspace")
+if _MANAGED:
+    _FALLBACK_WORKSPACE = os.path.join(_MANAGED["root"], "workspaces", "unsaved")
 
 
 def _hip_dir() -> str:
@@ -183,7 +197,7 @@ def _plugin_runtime_probe() -> tuple[bool, str]:
             ],
             cwd=_PROJECT_ROOT, capture_output=True, timeout=30,
             creationflags=_CREATE_NO_WINDOW,
-            env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
+            env=dict(dsh_managed_runtime.environment(), NPM_CONFIG_CACHE=NPM_CACHE),
         )
         raw = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
         output = raw.decode("utf-8", errors="replace").strip()
@@ -218,6 +232,12 @@ def _is_module_resolution_failure(output: str) -> bool:
 
 def ensure_dependencies(on_install=None) -> str:
     """Make sure the compiled plugin is resolvable, not merely present on disk."""
+    if _MANAGED:
+        ok, message = _plugin_runtime_probe()
+        if not ok:
+            _append_dependency_failure(message)
+            return "managed dependency check FAILED; use Version & Diagnostics to install / repair the signed package"
+        return "managed dependencies ok (no package manager)"
     nm = os.path.join(_PROJECT_ROOT, "node_modules")
     restored = []
     for pkg in REQUIRED_PACKAGES:
@@ -271,6 +291,8 @@ def ensure_dependencies(on_install=None) -> str:
 
 def sync_presets() -> str:
     """Copy repo presets over ~/.dsh/.agent-presets/ (adds/overwrites, never deletes)."""
+    if _MANAGED:
+        return "managed presets prepared in the isolated DSH home"
     if not os.path.isdir(PRESET_SRC):
         return "no presets/ directory in repo"
     synced = []
@@ -327,7 +349,9 @@ def _port_pid(port: int) -> int | None:
 
 
 def _kill_port_process(port: int) -> bool:
-    """Force-kill whatever process listens on :port (never the Houdini process)."""
+    """Stop managed owned jobs only; source mode retains its explicit repair path."""
+    if _MANAGED:
+        return dsh_managed_runtime.stop_owned() if port == FRONTEND_PORT else False
     pid = _port_pid(port)
     if pid is None or pid == os.getpid():
         return False
@@ -406,8 +430,11 @@ def _write_frontend_runtime_state(pid: int | None) -> None:
         return
     bin_path = _PENDING.get("frontend_bin")
     version = _PENDING.get("frontend_version")
-    if not version:
-        cached = _newest_cached_dsh_bin()
+    if (not version and _PENDING.get("frontend_source") == "npx-cold"
+            and DSH_SPEC == DEFAULT_DSH_SPEC and not DSH_BIN_ENV):
+        # Only the default exact cold command can be identified by its required
+        # cache. A developer override must never borrow the default's identity.
+        cached = _preferred_cached_dsh_bin()
         if cached is not None:
             bin_path = cached[0]
             version = _dsh_version_for_bin(bin_path)
@@ -431,33 +458,10 @@ def _write_frontend_runtime_state(pid: int | None) -> None:
             pass
 
 
-def _newest_cached_dsh_bin() -> tuple[str, str] | None:
-    """Return the newest compatibility-verified cached CLI without npm."""
-    npx_root = os.path.join(NPM_CACHE, "_npx")
-    candidates: list[tuple[float, str]] = []
-    verified = dsh_runtime_compat.verified_versions()
-    try:
-        entries = os.scandir(npx_root)
-    except OSError:
-        return None
-    with entries:
-        for entry in entries:
-            if not entry.is_dir():
-                continue
-            bin_path = os.path.join(
-                entry.path, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js",
-            )
-            if os.path.isfile(bin_path):
-                if _dsh_version_for_bin(bin_path) not in verified:
-                    continue
-                try:
-                    modified = os.path.getmtime(bin_path)
-                except OSError:
-                    modified = 0.0
-                candidates.append((modified, bin_path))
-    if not candidates:
-        return None
-    return max(candidates)[1], "cached-cli"
+def _preferred_cached_dsh_bin() -> tuple[str, str] | None:
+    """Return only the plugin-required cached CLI; cache recency has no authority."""
+    cached = dsh_runtime_compat.preferred_cached_bin(NPM_CACHE)
+    return (str(cached), "cached-cli") if cached is not None else None
 
 
 def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
@@ -466,13 +470,19 @@ def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
     # version. Do not silently substitute an unrelated cached default version.
     if DSH_SPEC != DEFAULT_DSH_SPEC:
         return None
-    return _newest_cached_dsh_bin()
+    return _preferred_cached_dsh_bin()
 
 
 def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
     """Choose a deterministic warm command or the explicit cold npx path."""
     if not NODE or not os.path.exists(NODE):
         raise RuntimeError(f"node executable not found: {NODE}")
+
+    if _MANAGED:
+        binary = os.path.join(_MANAGED["install"], "app", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
+        if not os.path.isfile(binary):
+            raise RuntimeError("Managed DSH is missing. Install / repair the signed package.")
+        return [NODE, binary, "web", "--port", str(FRONTEND_PORT), "--no-open"], False, "managed-cli", FRONTEND_WARM_WAIT_TIMEOUT
 
     if DSH_BIN_ENV:
         explicit = os.path.abspath(os.path.expanduser(DSH_BIN_ENV))
@@ -509,7 +519,7 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
         raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
     cold_spec = DSH_SPEC
     if DSH_SPEC == DEFAULT_DSH_SPEC:
-        cold_spec = f"{DEFAULT_DSH_SPEC}@{dsh_runtime_compat.preferred_version()}"
+        cold_spec = dsh_runtime_compat.preferred_spec()
     return (
         FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT, spec=cold_spec),
         True, "npx-cold", FRONTEND_COLD_WAIT_TIMEOUT,
@@ -529,6 +539,8 @@ def _profile_sync_command() -> tuple[list[str] | str, bool, str, int]:
 
 def sync_profile_plugins(on_install=None) -> str:
     """Install/activate every required web-profile bundle, only when needed."""
+    if _MANAGED:
+        return "managed profile initialized through the bundled DSH API (no package manager)"
     _module_path_on_syspath()
     import dsh_profile_sync
 
@@ -575,7 +587,9 @@ def start_frontend(workspace_dir: str | None = None) -> str:
     if _port_open(FRONTEND_HOST, FRONTEND_PORT):
         return f"frontend already running on {FRONTEND_URL}"
 
-    cwd = workspace_dir or _PROJECT_ROOT
+    cwd = workspace_dir or (_FALLBACK_WORKSPACE if _MANAGED else _PROJECT_ROOT)
+    if _MANAGED:
+        os.makedirs(cwd, exist_ok=True)
     # A failed command-selection attempt must never reuse the process handle
     # from an earlier launch and misreport it as the newly created frontend.
     for key in (
@@ -595,7 +609,7 @@ def start_frontend(workspace_dir: str | None = None) -> str:
         "cwd": cwd,
         "close_fds": True,
         "shell": use_shell,
-        "env": dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
+        "env": dict(dsh_managed_runtime.environment(), NPM_CONFIG_CACHE=NPM_CACHE),
     }
     if os.name == "nt":
         # DETACHED_PROCESS would leave the cmd/npx/node tree console-less, and
@@ -612,6 +626,8 @@ def start_frontend(workspace_dir: str | None = None) -> str:
         _DSH_WEB_SESSION.reset(log_offset=auth_log_offset)
         kwargs["stdout"] = log
         _PENDING["proc"] = subprocess.Popen(cmd, **kwargs)
+        if _MANAGED:
+            dsh_managed_runtime.own_process(_PENDING["proc"])
     _PENDING["frontend_source"] = source
     bin_path = cmd[1] if isinstance(cmd, list) and len(cmd) > 1 else None
     _PENDING["frontend_bin"] = bin_path
@@ -983,6 +999,9 @@ def _set_startup_state(
 def _terminate_pending_frontend() -> None:
     """Stop only the frontend process tree spawned by this launch attempt."""
     _clear_frontend_runtime_state()
+    if _MANAGED:
+        dsh_managed_runtime.stop_owned()
+        return
     proc = _PENDING.get("proc")
     if proc is None or proc.poll() is not None:
         return

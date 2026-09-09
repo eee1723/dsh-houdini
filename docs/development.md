@@ -64,6 +64,14 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 
 ## 4. 回归与发布
 
+正式发布必须经过[发行单元与发布门](dsh-update-compatibility.md#正式发行单元与发布门)：main push不是发布，tag/Draft也不使更新对普通用户可见。
+用户发行包与开发checkout分离；只在发布端构建正式包，Node/DSH/完整依赖树绑定精确组合。安装实现见[setup](setup.md)，尚欠实际验收见[交接](handoff.md)。
+
+部署策略离线回归：[Release边界](../tools/tests/dsh-release-policy.test.py)、[安装/启动精确选择](../tools/tests/dsh-install-runtime.test.py)、
+[兼容清单](../tools/tests/dsh-runtime-compat.test.py)可在Python 3.11+运行，无网络/安装/用户目录写入；
+[管理器](../tools/tests/dsh-manager-update.test.py)、[启动预检](../tools/tests/dsh-launcher-preflight.test.py)及[profile同步](../tools/tests/dsh-profile-sync.test.py)
+用下述隔离H21/H22 hython环境分别执行。各测试使用临时fixture；这组检查不代替真实Qt页面、干净机器安装或已加载身份验收。
+
 [表达式分层诊断](../tools/tests/dsh-expression-diagnostics.test.py)在H21/H22验证合法0、原生写入失败、
 错误函数/语法/Python求值、缺失引用warning、无关cook错误和参数/批次动画恢复；求值成功
 但空输出的反例仍由verify_network拒绝，不由set_parm冒充几何验收。
@@ -123,6 +131,59 @@ quality-contracts用“局部变化但整体bbox不变”和“面积响应通�
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
 baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
 冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。
+
+### 发行操作与信任配置
+
+运行依赖唯一锁在[deployment/package-lock.json](../deployment/package-lock.json)，根DSH版本与兼容preferred必须一致；
+[runtime.json](../deployment/runtime.json)固定Windows x64、Node版本与官方分发摘要。发布前核对依赖许可证与包内third-party-notices.json；不省略上游LICENSE。
+维护者可用 `node tools/release-sign.mjs import-lock 路径`导入已验证的完整npm锁；生成后必须用npm ci和真实包smoke资格验证，不能只锁根包。
+
+受信发布身份以[公钥清单](../installer/release-trust.json)为准，日常发布复用对应私钥；不重复生成同一key ID，也不提交私钥。
+仅首次建立身份或轮换时使用keygen，并为新身份选用新路径与新key ID：
+
+```powershell
+node tools/release-sign.mjs keygen D:/Secure/dsh-release-next.pem D:/Secure/dsh-public-next.json release-key-next
+# 仅新身份/轮换时执行上行；审核新公钥后合入installer/release-trust.json，不覆盖仍受信的旧key。
+# 以下使用已配置的release-key-1发布，私钥路径换成本机安全存放位置：
+python tools/build-release.py --unsigned --output tools/out/release --key-id release-key-1
+# 在独立签名环境、同一已审核tag checkout中放入上一步产物：
+$env:DSH_RELEASE_SIGNING_KEY='D:/Secure/dsh-release.pem'
+python tools/finalize-release.py --directory tools/out/release --key-id release-key-1
+```
+
+正式构建要求干净checkout、匹配package版本的已存在vMAJOR.MINOR.PATCH标签，以及已提交的公钥。
+构建器生成unsigned payload与release.json，独立finalize才签名并生成release.sig.json、轻量安装器和offline.zip；两者均不发布GitHub Release。
+当前受信key ID为release-key-1；实际私钥不随源码分发，维护者须单独安全备份并配置受保护签名环境。缺少公钥或未知key仍fail-closed。
+显式 `--candidate --trust 临时公钥文件`可对未提交源码做隔离测试；candidate签名包不被普通面板接受，也不可冒充正式验收。
+
+```powershell
+python tools/run-deployment-tests.py
+python tools/run-deployment-tests.py --hython 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/hython.exe' --hython 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/hython.exe'
+python tools/tests/dsh-deployment-e2e.test.py --bundle tools/out/release --trust installer/release-trust.json --hython 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/hython.exe' --hython 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/hython.exe'
+```
+
+离线回归覆盖签名拒绝、路径穿越/别名/重复/特殊文件、取消、磁盘/原子写入失败、进程互斥、数据快照/回退、引导损坏修复和真实Qt控件。
+e2e从真实签名包安装到隔离目录，使用包内Node启动DSH并验证profile、全局/会话端口、401/200鉴权RPC、自有进程回收；
+指定hython后还在实际安装目录执行Node→HTTP→Houdini主线程只读调用及合同握手，不调用收费模型、不访问用户HIP。
+测试产物和截图留在临时目录或tools/out；发行包中不携带测试私钥、会话或测试基准。
+
+真实GUI发行验收使用[GUI测试](../tools/tests/dsh-gui-release.test.py)：
+
+```powershell
+python tools/tests/dsh-gui-release.test.py --bundle tools/out/release --trust installer/release-trust.json --houdini 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/houdini.exe' --houdini 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/houdini.exe'
+```
+
+测试只新开自有GUI进程、临时偏好和测试HIP，清除模型凭据及系统Node/Git的PATH；覆盖进程启动钩子、Open Workspace、Houdini模式会话、
+真实Qt WebView鉴权、Node→GUI主线程只读调用、重复打开不重启/不新增会话和正常退出码。通过不代表另一台物理机器或模型质量已验证。
+退出测试必须走Houdini主窗口关闭路径，不能从PySide timer抛SystemExit后把崩溃的进程当成功；截图/通过标记也不能代替退出码。
+
+[普通CI](../.github/workflows/ci.yml)在push/PR上只做源码检查；[发行流程](../.github/workflows/release.yml)仅显式workflow_dispatch，
+使用Windows/Houdini自托管runner、仓库变量H21_HYTHON/H22_HYTHON/RELEASE_KEY_ID及受保护release环境中的RELEASE_PRIVATE_PEM。
+assemble、sign、verify-signed、draft为分离job：构建/验收只在无签名密钥的自托管环境运行，签名在干净托管runner且不执行payload/npm，草稿上传也不执行payload。
+Actions引用固定commit，签名任务只接受当前审核tag的版本/commit/Node/DSH身份。通过后只上传Draft；启用仓库immutable Releases并完成真实Houdini用户路径后，维护者才明确发布。
+PR不得在持有许可证的自托管runner上任意执行；不能让依赖安装脚本或安装客户端接触发布密钥。
+首发也可由维护者手动执行同样的构建、独立签名、双版本CLI/GUI验收，再上传Draft并验证下载字节；不要求先部署常驻runner。
+手动路径同样先准备全部资产、启用immutable Releases，再明确发布；Git凭据仅用于官方仓库API，私钥不进入构建环境或上传到Git。
 
 ## 5. 领域与真实运行验收
 

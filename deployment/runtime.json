@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "platform": "win32-x64",
+  "nodeVersion": "24.17.0",
+  "nodeArchiveSha256": "f2aa33b35b75aca5f3f7b85675a6f6423201053e9381911e64961f3bda2528ab",
+  "houdini": ["21.0", "22.0"]
+}

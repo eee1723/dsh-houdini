@@ -18,8 +18,17 @@ export const AGENT_SURFACE_ENTRIES = Object.freeze([
 // instructions. A Trace UI or launcher fix must run Host/Qt/profile lifecycle
 // gates, but should not by itself trigger the expensive model capability matrix.
 export const COMPATIBILITY_SURFACE_ENTRIES = Object.freeze([
+  'Install.cmd',
+  'installer',
+  'deployment',
+  'tools/prepare-managed-profile.mjs',
+  'tools/build-release.py',
+  'tools/finalize-release.py',
+  'tools/release-sign.mjs',
+  '.github/workflows',
   'houdini/node-operation-contracts.json',
   'client.js',
+  'cordis.patch.yml',
   'package.json',
   'dsh-profile.requirements.json',
   'dsh-runtime-compatibility.json',
@@ -65,7 +74,7 @@ export function listAgentSurfaceFiles(root = defaultRoot) {
 export function listCompatibilitySurfaceFiles(root = defaultRoot) {
   return COMPATIBILITY_SURFACE_ENTRIES
     .flatMap((entry) => walkFiles(path.join(root, entry), root))
-    .filter((file) => /\.(?:js|mjs|ts|py|json|xml|md|ya?ml)$/.test(file))
+    .filter((file) => /\.(?:js|mjs|ts|py|ps1|cmd|json|xml|md|ya?ml)$/.test(file))
     .filter((file) => !file.endsWith('generated-verb-contract.ts'))
     .sort()
 }

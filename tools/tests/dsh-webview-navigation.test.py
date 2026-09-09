@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.parse
 
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -138,8 +138,12 @@ try:
 finally:
     if webview._retry_timer is not None:
         webview._retry_timer.stop()
-    if webview._window is not None:
-        webview._window.close()
+    if webview._view is not None:
+        assert webview._view.page().profile().isOffTheRecord(), "plugin views must not share Houdini's persistent default profile"
+    webview._dispose_webview()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert webview._view is None and webview._window is None
     server.shutdown()
     server.server_close()
     thread.join(timeout=2)

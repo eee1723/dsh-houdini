@@ -62,8 +62,7 @@ finally:
         bridge._jobs.update(original_jobs)
 
 
-# Cache ordering is the launch selection contract; promotion makes an already
-# cached exact release become the next deterministic launcher candidate.
+# Repair validates the required cached release, never promotes by modification time.
 original_cache = manager._NPM_CACHE
 try:
     with tempfile.TemporaryDirectory() as raw_cache:
@@ -80,10 +79,10 @@ try:
             os.utime(bin_path, (index, index))
 
         assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
-        manager._promote_cached_dsh("0.1.2-rc.1")
+        manager._require_cached_dsh("0.1.2-rc.1")
         assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
         try:
-            manager._promote_cached_dsh("0.1.1-rc.2")
+            manager._require_cached_dsh("0.1.1-rc.2")
         except RuntimeError as exc:
             assert "not compatibility-verified" in str(exc)
         else:
@@ -126,10 +125,10 @@ assert "attention" in manager._summary_for_state(
 
 
 originals = {
-    "release": manager._dsh_release_info,
+    "required": manager.dsh_runtime_compat.preferred_version,
     "selected": manager._selected_cached_dsh_version,
     "runtime": manager._runtime_dsh_info,
-    "plugin": manager._plugin_remote_status,
+    "plugin": manager.dsh_release_policy.latest_stable_release,
     "identity": manager._plugin_identity,
     "override": manager._dsh_launch_override,
     "port_open": manager._port_open,
@@ -137,40 +136,45 @@ originals = {
     "rpc_wire": manager._dsh_rpc_wire,
     "http": manager._http_json,
     "run_npx": manager._run_npx_dsh,
-    "promote": manager._promote_cached_dsh,
+    "cached": manager._require_cached_dsh,
     "activity": manager._runtime_activity,
+    "run": manager._run,
 }
 try:
-    manager._dsh_release_info = lambda: ("0.1.2-rc.1", "0.1.2-rc.1")
+    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.2-rc.1"
     manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
     manager._runtime_dsh_info = lambda: {
         "online": True, "verified": True, "version": "0.1.0-rc.7", "note": "PID 42",
     }
     manager._dsh_launch_override = lambda: None
-    manager._plugin_remote_status = lambda: {
-        "localVersion": "0.1.0", "remoteVersion": "0.1.1",
-        "localHead": "a" * 40, "remoteHead": "b" * 40,
-        "blocked": False, "updateAvailable": True, "canUpdate": True,
-        "note": "main@aaaaaaa · behind origin/main",
+    manager._plugin_identity = lambda: ("0.1.0", "source main@aaaaaaa", False)
+    manager.dsh_release_policy.latest_stable_release = lambda: {
+        "version": "0.1.1", "url": manager.dsh_release_policy.RELEASES_URL + "/tag/v0.1.1",
+        "installable": False,
     }
+    def forbidden_process(*args, **kwargs):
+        raise AssertionError("release check must not fetch Git or resolve npm latest")
+    manager._run = forbidden_process
     manager._port_open = lambda port: True
     state = {"busy": True}
     manager._check_updates(state)
     assert state["dsh_status"] == "update" and state["dsh_can_update"] is True, state
     assert state["plugin_status"] == "update" and state["plugin_can_update"] is True, state
+    assert state["plugin_action"] == "View release", state
+    assert "not verified" in state["plugin_note"], state
 
     manager._selected_cached_dsh_version = lambda: "0.1.2-rc.1"
     state = {"busy": True}
     manager._check_updates(state)
-    assert state["dsh_status"] == "staged" and state["dsh_action"] == "Restart to latest", state
+    assert state["dsh_status"] == "staged" and state["dsh_action"] == "Start required version", state
     manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
 
-    manager._dsh_release_info = lambda: ("0.1.3-unverified", "0.1.3-unverified")
+    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.3-unverified"
     state = {"busy": True}
     manager._check_updates(state)
     assert state["dsh_status"] == "blocked" and state["dsh_can_update"] is False, state
     assert state["dsh_action"] == "Await compatibility", state
-    manager._dsh_release_info = lambda: ("0.1.2-rc.1", "0.1.2-rc.1")
+    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.2-rc.1"
 
     manager._dsh_launch_override = lambda: "DSH_HOUDINI_DSH_SPEC=@deepseek-ai/dsh@old"
     state = {"busy": True}
@@ -178,15 +182,28 @@ try:
     assert state["dsh_status"] == "blocked" and state["dsh_can_update"] is False, state
     manager._dsh_launch_override = lambda: None
 
-    manager._plugin_remote_status = lambda: {
-        "localVersion": "0.1.0", "remoteVersion": "0.1.1",
-        "localHead": "a" * 40, "remoteHead": "b" * 40,
-        "blocked": True, "updateAvailable": True, "canUpdate": False,
-        "note": "local changes",
-    }
+    # Dirty source trees do not block read-only release discovery or get overwritten.
+    manager._plugin_identity = lambda: ("0.1.0", "source main@aaaaaaa", True)
     state = {"busy": True}
     manager._check_updates(state)
-    assert state["plugin_status"] == "blocked" and state["plugin_can_update"] is False, state
+    assert state["plugin_status"] == "update" and state["plugin_action"] == "View release", state
+    assert "local changes" in state["plugin_note"], state
+
+    # A source tree at the same version is not falsely called a verified installation.
+    manager._plugin_identity = lambda: ("0.1.1", "source (no Git identity)", False)
+    manager._check_updates(state)
+    assert state["plugin_status"] == "release", state
+    manager.dsh_release_policy.latest_stable_release = lambda: None
+    manager._check_updates(state)
+    assert state["plugin_status"] == "unpublished" and not state["plugin_can_update"], state
+    assert state["plugin_release_url"] is None, state
+
+    def offline():
+        raise TimeoutError("offline fixture")
+    manager.dsh_release_policy.latest_stable_release = offline
+    manager._check_updates(state)
+    assert state["plugin_status"] == "error" and not state["plugin_can_update"], state
+    assert state["plugin_release_url"] is None and "offline fixture" in state["plugin_note"], state
 
     # Both DSH turns and bridge jobs participate in the restart guard.
     manager._port_open = lambda port: True
@@ -220,16 +237,24 @@ try:
         return version
 
     manager._run_npx_dsh = fake_run_npx
-    manager._promote_cached_dsh = lambda version: None
+    manager._require_cached_dsh = lambda version: None
     state = {"busy": True, "dsh_target": "0.1.2-rc.1"}
     manager._update_dsh(state)
     assert state["result"] == "activate", state
     assert state["download_progress"] is None, state
+    state = {"busy": True, "dsh_target": "0.1.1-rc.2"}
+    manager._run_npx_dsh = forbidden_process
+    manager._update_dsh(state)
+    assert state["result"] == "render" and state["dsh_status"] == "error", state
+    assert "refresh" in state["message"], state
+    state = {"dsh_target": "0.1.1-rc.2"}
+    manager._prepare_activation(state, "dsh")
+    assert state["result"] == "render" and "refresh" in state["message"], state
 finally:
-    manager._dsh_release_info = originals["release"]
+    manager.dsh_runtime_compat.preferred_version = originals["required"]
     manager._selected_cached_dsh_version = originals["selected"]
     manager._runtime_dsh_info = originals["runtime"]
-    manager._plugin_remote_status = originals["plugin"]
+    manager.dsh_release_policy.latest_stable_release = originals["plugin"]
     manager._plugin_identity = originals["identity"]
     manager._dsh_launch_override = originals["override"]
     manager._port_open = originals["port_open"]
@@ -237,8 +262,9 @@ finally:
     manager._dsh_rpc_wire = originals["rpc_wire"]
     manager._http_json = originals["http"]
     manager._run_npx_dsh = originals["run_npx"]
-    manager._promote_cached_dsh = originals["promote"]
+    manager._require_cached_dsh = originals["cached"]
     manager._runtime_activity = originals["activity"]
+    manager._run = originals["run"]
 
 
 # Launcher marker is atomic data derived from the selected CLI package.

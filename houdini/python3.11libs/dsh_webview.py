@@ -17,14 +17,18 @@ from __future__ import annotations
 
 import json
 import urllib.parse
+import dsh_managed_runtime
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
-from PySide6.QtWebEngineCore import QWebEngineScript
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = 3081
+_MANAGED = dsh_managed_runtime.context()
+if _MANAGED:
+    FRONTEND_PORT = _MANAGED["frontendPort"]
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 SESSION_HINT_PARAM = "dsh-houdini-session"
 
@@ -92,6 +96,22 @@ _view: QWebEngineView | None = None
 _retry_timer: QTimer | None = None
 _target_url = FRONTEND_URL
 _after_auth_url: str | None = None
+_quit_connected = False
+
+
+def _dispose_webview() -> None:
+    """Release our page before its profile/application; do not touch other views."""
+    global _window, _view, _retry_timer, _after_auth_url
+    window, view, timer = _window, _view, _retry_timer
+    _window = _view = _retry_timer = None
+    _after_auth_url = None
+    if timer is not None:
+        timer.stop()
+    if view is not None:
+        view.stop()
+    if window is not None:
+        window.close()
+        window.deleteLater()
 
 
 def _on_main_thread() -> bool:
@@ -212,7 +232,7 @@ def show_webview(
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _retry_timer, _target_url, _after_auth_url
+    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected
     target_url = _session_url(session_id)
     initial_url = authenticated_url or target_url
     if _window is not None and _window.isVisible():
@@ -235,7 +255,13 @@ def show_webview(
     if _window is None:
         win = QWidget()
         win.setWindowTitle("DSH-Houdini")
-        view = QWebEngineView()
+        view = QWebEngineView(win)
+        # Never share Houdini's disk-based default browser profile between
+        # processes/versions. Server-side DSH data remains persistent; browser
+        # cookies/cache are scoped to this one plugin window's lifetime.
+        # The view is created before the profile so its page is destroyed first.
+        profile = QWebEngineProfile(win)
+        view.setPage(QWebEnginePage(profile, view))
         _install_abort_signal_polyfill(view)
         # QWebEngine 的网络加载是异步的：成功后注入性能修复 CSS，失败则由
         # cancellable QTimer 重试。主线程不再同步探测 localhost 端口。
@@ -250,6 +276,9 @@ def show_webview(
         _window = win
         _view = view
         _retry_timer = retry_timer
+        if not _quit_connected:
+            QCoreApplication.instance().aboutToQuit.connect(_dispose_webview)
+            _quit_connected = True
 
     _after_auth_url = target_url if authenticated_url is not None else None
     _install_launch_session_hint(_view, _after_auth_url)

@@ -4,5 +4,5 @@
     - id: houdini
       name: dsh-houdini
       config:
-        bridgeUrl: http://127.0.0.1:8765
+        bridgeUrl: !!js process.env.DSH_HOUDINI_BRIDGE_URL || 'http://127.0.0.1:8765'
         requestTimeoutMs: 120000

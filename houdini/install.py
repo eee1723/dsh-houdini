@@ -31,10 +31,12 @@ PROJECT_ROOT = PACKAGE_ROOT.parent
 PYTHON_LIB = PACKAGE_ROOT / "python3.11libs"
 NPM_CACHE = PROJECT_ROOT / ".npm-cache"
 DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
+sys.path.insert(0, str(PYTHON_LIB))
+import dsh_runtime_compat
 
 
 def dsh_command_prefix() -> tuple[list[str] | str, bool]:
-    """Prefer an already cached/explicit CLI; use npx only for a cold install."""
+    """Use the launcher's exact default release, or an explicit developer pin."""
     node = shutil.which("node")
     explicit = os.environ.get("DSH_HOUDINI_DSH_BIN", "").strip()
     if explicit:
@@ -45,14 +47,14 @@ def dsh_command_prefix() -> tuple[list[str] | str, bool]:
             raise RuntimeError("Node.js is required to run DSH_HOUDINI_DSH_BIN")
         return [node, str(target)], False
 
-    dsh_spec = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC)
-    if dsh_spec == DEFAULT_DSH_SPEC and node:
-        candidates = list(NPM_CACHE.glob(
-            "_npx/*/node_modules/@deepseek-ai/dsh/lib/bin.js"
-        ))
-        if candidates:
-            latest = max(candidates, key=lambda item: item.stat().st_mtime)
-            return [node, str(latest)], False
+    dsh_spec = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC).strip()
+    if not dsh_spec:
+        raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
+    if dsh_spec == DEFAULT_DSH_SPEC:
+        cached = dsh_runtime_compat.preferred_cached_bin(NPM_CACHE) if node else None
+        if cached is not None:
+            return [node, str(cached)], False
+        dsh_spec = dsh_runtime_compat.preferred_spec()
 
     npx = shutil.which("npx")
     if not npx:

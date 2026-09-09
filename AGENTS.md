@@ -16,6 +16,8 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Diagnostics →
   Advanced diagnostics → Repair and restart runtime；WebView/menu/package变更完整重启Houdini。
   不未经用户授权重启live或修改HIP；构建通过不等于live已加载。
+- 部署：main push/tag/Draft不算正式发布；安装/启动/修复默认共用兼容清单preferred精确DSH。
+  正式受管安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。
 - trace先按houdini-trace-analysis skill跑extract-trace-evidence.mjs，再跑tools/trace-report.mjs；
   区分目录广度、调用含动词率、动词密度、只读裸探针、Gate拦截与成功裸修改。
 

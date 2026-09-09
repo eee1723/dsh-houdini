@@ -3,7 +3,7 @@
   "createdAt": "2026-09-04T10:44:56.2691447Z",
   "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
   "agentSurfaceSha256": "c8b6681701768882701fc976f01c4c3b2b446aa24d2af4692a3f6a8764915d5a",
-  "compatibilitySurfaceSha256": "5709bde9d1e78830eb10a6bfa181726c637137232b51b5df201439e6d46d93d4",
+  "compatibilitySurfaceSha256": "6b3a9be7c281ee214a6cd835e1130a94b5bd72a3dc6a2bbcd6164cb468fed418",
   "runtimeVerification": {
     "matchesBaseline": false,
     "note": "v26 source candidate: independent review removed; native multimodal image attachments replace secondary vision tools and workspace media copies; explicit skill roots and grouped historical System display. Prior pending verification retained; no live reload or new-session acceptance.",
@@ -27,7 +27,8 @@
       "Literal parameter patches/selective reads/signature binding diagnostics and retry metrics",
       "Canonical result retention/compact native text and event-derived execution observations",
       "Exact control value/animation/post-cook restoration checks",
-      "Same-runtime exec request receipt and status recovery"
+      "Same-runtime exec request receipt and status recovery",
+      "Signed offline deployment, managed profile/ports and rollback; isolated tests do not replace live user-path acceptance"
     ],
     "houdini": "21.0.440",
     "dsh": "0.1.2-rc.1",

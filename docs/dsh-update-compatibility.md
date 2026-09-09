@@ -1,9 +1,34 @@
-# DSH 更新兼容门
+# DSH 与插件发行兼容门
 
-DSH 的 npm `latest` 只是可下载候选，不是 dsh-houdini 可运行版本。默认 launcher 只激活
-[`dsh-runtime-compatibility.json`](../dsh-runtime-compatibility.json) 中精确列出的版本；未知版本即使已进入
-npx cache，也不会成为日常 serving runtime。显式 `DSH_HOUDINI_DSH_BIN` / `DSH_HOUDINI_DSH_SPEC`
+## 正式发行单元与发布门
+
+正式产品的更新单位是一个经过验证的完整组合，不是 Git 分支或独立 DSH npm latest。安装体验与目录/失败合同见[安装与更新](setup.md#正式发行与受管安装合同)。
+兼容JSON是源码运行时选择源；受管发行使用签名release.json和完整离线包。兼容记录、自动测试和草稿资产都不等于正式发布或live验收。
+
+release.json绑定插件精确版本、源码commit、stable/candidate通道、精确Node/DSH、平台/架构、支持的Houdini版本、managerProtocol、
+全量文件inventory摘要、npm锁摘要和payload名字/大小/SHA-256；严格字段/schema校验见[dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py)。
+Python/Qt实际支持面仍由H21/H22资格验证决定，不以版本列表代替实测；数据按安装实例独立快照，无跨版本自动合并。
+发现 Release 仅证明作者已发布，不证明资产完整、适用当前机器或可以启用。激活前必须校验清单/资产/实际运行身份；缺项、损坏、来源异常、未知 schema 均拒绝。
+在线安装先确认官方不可变Release，再取release.json与release.sig.json，通过安装器内置公钥验证RSA-3072/4096 PKCS#1 v1.5 SHA-256签名，
+随后校验签名绑定的payload和逐文件inventory；离线执行同一签名门。发布私钥不入仓库/包，未知key拒绝并要求可信新安装器。
+公钥轮换须先分发含新公钥的安装器，不能从待验证Release自动信任新钥匙；撤销公钥同样需要可信安装器更新。
+HTTPS/摘要不是签名，签名也不防御本机用户主动替换整个安装器/信任库；不得声称这是抵抗本机账户失陷的安全沙箱。
+
+发布资格顺序：选定提交 → 锁依赖并构建 → Node/安装回归 → H21/H22 隔离与实际用户路径验收 → 生成可复验的资产 → 上传 Draft → 作者明确发布。
+普通 push 只做开发同步/测试，tag 可触发候选打包但不自动转正式。Draft 和 prerelease 不进入默认正式通道；版本比较使用语义版本，不按字符串或 commit 时间推断升级。
+发布包保留许可证与依赖清单；干净环境必须覆盖无 Git/Node/外部 Python、中文/空格路径、自定义 Houdini 偏好目录、受限网络、本地包安装、磁盘不足/中断/损坏包、多实例、重启启用与数据迁移回退。
+用户机器不重建正式包；发布构建以冻结 lockfile 组装并验证完整依赖树，不能用仅固定 DSH 根包的 npx cache 代替发行锁。
+
+## 源码运行时的兼容选择
+
+DSH 的 npm `latest` 不是 dsh-houdini 的独立更新目标。安装器、launcher和manager默认只选择
+[`dsh-runtime-compatibility.json`](../dsh-runtime-compatibility.json) 的精确preferred版本；其他已验证版本、未知版本即使更新进入
+npx cache，也不会替换当前插件要求的版本。未命中preferred缓存时只下载对应精确根包，不选择最近修改的缓存。显式 `DSH_HOUDINI_DSH_BIN` / `DSH_HOUDINI_DSH_SPEC`
 仅用于隔离资格验证，不代表发布。
+
+面板的[dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py)只查询官方仓库指定的latest稳定Release，
+拒绝Draft、prerelease和非vMAJOR.MINOR.PATCH标签，未发布和网络不可用分别处理。
+源码诊断面板只提供发布页链接；独立受管面板经过签名/资产门后暂存安装，二者不混用路径或状态。
 
 ## 两个独立 surface
 
@@ -71,4 +96,5 @@ WebView鉴权重定向已加载主页面；不能在loadFinished再导航一次�
 隔离真实Qt入口见[dsh-webview-navigation](../tools/tests/dsh-webview-navigation.test.py)，
 覆盖cookie重定向、单次app bootstrap、加载期间RPC、会话切换和普通重开；不替代live端到端验收。
 支持组合来自兼容JSON；一次探测结果不能成为永久live状态，部署验证记录不保存在本设计文档。
+每个插件窗口使用自有内存QWebEngineProfile，页面先于profile销毁，退出时回收窗口；不共享Houdini默认磁盘profile，防止不同GUI进程争用浏览器存储。
 
