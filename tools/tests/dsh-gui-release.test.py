@@ -1,7 +1,7 @@
 """Actual Houdini GUI release acceptance in an isolated installation.
 
 No user's preferences/HIP are used. No model call is made. The launched GUI
-process and its own descendants are owned by a Windows Job Object. This is
+process is owned by its Popen handle; its Node frontend has its own Job Object. This is
 not a substitute for a second physical Windows machine or model-quality tests.
 """
 from __future__ import annotations
@@ -211,7 +211,8 @@ def main():
             process = subprocess.Popen([str(executable), "-foreground", "-geometry=1024x768+12000+12000"],
                                        cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT,
                                        startupinfo=info, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            managed.own_process(process)
+            # Do not put the GUI host inside the Node-style restrictive job:
+            # Chromium's Windows sandbox must establish its own child jobs.
             try:
                 deadline = time.monotonic() + 720
                 last = None
@@ -240,7 +241,8 @@ def main():
                 value["processExit"] = exit_code
                 deployment.atomic_json(result, value)
             finally:
-                managed.stop_owned()
+                if process.poll() is None:
+                    process.kill()
                 process.wait(timeout=20)
     print("Actual H21/H22 GUI installation, workspace, reopen and WebView acceptance passed", flush=True)
 

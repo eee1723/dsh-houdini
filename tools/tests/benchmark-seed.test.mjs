@@ -94,6 +94,13 @@ try {
   assert.equal(manifest.generator.parametersSha256, seedParametersSha256(input))
   assert.equal(manifest.output.identitySha256, sha256Json(identity))
   assert.equal(validateSeedFixture(manifest, { hipRoot }).fixtureId, input.fixtureId)
+  const alias = path.join(hipRoot, 'seeds-alias')
+  fs.symlinkSync(path.dirname(outputPath), alias, process.platform === 'win32' ? 'junction' : 'dir')
+  const aliased = buildSeedFixtureManifest({
+    input, hipRoot, generatorScript,
+    runnerResult: { ok: true, outputPath: path.join(alias, path.basename(outputPath)), houdini: '21.0.440', identity },
+  })
+  assert.equal(aliased.output.sha256, manifest.output.sha256, 'path aliases must identify the same existing HIP')
   assert.throws(() => buildSeedFixtureManifest({
     input,
     hipRoot,

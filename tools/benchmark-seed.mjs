@@ -132,13 +132,23 @@ export function runSeedHython({ hython, generatorScript = defaultGeneratorScript
     }
     const result = parseRunnerOutput(run.stdout)
     if (result.ok !== true) throw new Error('Hython seed runner returned ok=false')
-    if (path.resolve(result.outputPath) !== path.resolve(outputPath)) {
+    if (!sameExistingPath(result.outputPath, outputPath)) {
       throw new Error('Hython seed runner output path does not match the requested path')
     }
     requireObject(result.identity, 'Hython structural identity')
     return result
   } finally {
     fs.rmSync(requestRoot, { recursive: true, force: true })
+  }
+}
+
+function sameExistingPath(left, right) {
+  try {
+    // Windows TEMP may use an 8.3 alias while the validated $HIP resolver
+    // returns the long path. Compare canonical paths, not their spellings.
+    return fs.realpathSync.native(path.resolve(left)) === fs.realpathSync.native(path.resolve(right))
+  } catch {
+    return false
   }
 }
 
@@ -153,7 +163,7 @@ export function buildSeedFixtureManifest({
   if (!fs.existsSync(outputPath) || !fs.statSync(outputPath).isFile() || fs.statSync(outputPath).size <= 0) {
     throw new Error(`generated seed HIP is missing or empty: ${outputPath}`)
   }
-  if (path.resolve(runnerResult.outputPath) !== path.resolve(outputPath)) {
+  if (!sameExistingPath(runnerResult.outputPath, outputPath)) {
     throw new Error('runner result does not point at the generated seed HIP')
   }
   const manifest = {
