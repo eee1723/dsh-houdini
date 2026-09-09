@@ -19,7 +19,7 @@ docs保存当前设计、实现和维护方法；当前交接是唯一滚动待�
 
 ## 快速开始
 
-正式用户：下载已发布的offline.zip，解压后双击[Install.cmd](Install.cmd)，重开Houdini即可进入独立安装管理器。
+正式用户：从[正式发行页](https://github.com/eee1723/dsh-houdini/releases/latest)下载offline.zip，解压后双击[Install.cmd](Install.cmd)，重开Houdini即可进入独立安装管理器。
 完整包包含固定Node/DSH/依赖，无需手动build；轻量安装器或源码ZIP先装管理器，再获取正式包。
 只发现明确发布的稳定Release，不跟随main；安装、修复、旁路更新和回退见[setup](docs/setup.md)。尚无正式Release或发行公钥时不会安装未发布源码。
 下面的命令仅用于显式源码开发：

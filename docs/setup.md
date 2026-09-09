@@ -5,7 +5,7 @@ Windows x64受管安装把插件、Node、DSH和完整依赖作为一个签名�
 
 ## 普通安装
 
-1. 下载正式Release中的完整 `dsh-houdini-版本-offline.zip`，解压后双击 `Install.cmd`。
+1. 从[正式发行页](https://github.com/eee1723/dsh-houdini/releases/latest)下载完整 `dsh-houdini-版本-offline.zip`，解压后双击 `Install.cmd`。
 2. 安装器按用户权限注册H21/H22菜单，不修改系统Node、Python或全局PATH。
 3. 完整重开Houdini，选择 **DSH-Houdini → Open Workspace**。后台校验并准备隔离profile后启动配套DSH。
 4. 首次在DSH页面配置模型/API凭据。受管安装不自动迁移或清空既有 `~/.dsh`，此前独立DSH原样保留。
