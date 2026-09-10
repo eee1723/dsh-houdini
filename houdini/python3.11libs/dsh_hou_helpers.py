@@ -44,6 +44,7 @@ import zlib
 from typing import Any
 
 import hou
+import dsh_cook_control as _cook_control
 import toolutils
 
 
@@ -1570,6 +1571,7 @@ def describe(node) -> dict:
         "type": t.name(),
         "category": t.category().name(),
     }
+    info['ports'] = _port_metadata(n)
 
     # 生命周期状态
     try:
@@ -1772,18 +1774,62 @@ def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
 
 def _input_state(node):
     connections = node.inputConnections()
-    return {'connections': [{'input':c.inputIndex(), 'source':c.inputNode().path(), 'source_output':c.outputIndex()}
-                            for c in connections[:128]], 'count':len(connections), 'truncated':len(connections)>128}
+    rows = []
+    for connection in connections[:128]:
+        source = connection.inputNode()
+        # A native subnet indirect input is a NetworkMovableItem, not a Node.
+        # Preserve that distinction instead of inventing a node or dropping it.
+        indirect = connection.subnetIndirectInput() if source is None else None
+        rows.append({'input': connection.inputIndex(),
+                     'source': source.path() if source is not None else None,
+                     'source_kind': 'node' if source is not None else
+                                    'subnet_indirect_input' if indirect is not None else 'non_node',
+                     'source_output': connection.outputIndex()})
+    return {'connections': rows, 'count': len(connections), 'truncated': len(connections) > 128}
 
 
-def connect(src, dst, index: int = 0, *, allow_foreign: str | None = None) -> dict:
+def _port_metadata(node):
+    """Native connector metadata; no cook, guessing or name-to-role inference."""
+    result = {}
+    for direction in ('input', 'output'):
+        names = tuple(getattr(node, direction + 'Names')())
+        labels = tuple(getattr(node, direction + 'Labels')())
+        types_method = getattr(node, direction + 'DataTypes', None)
+        types = tuple(types_method()) if types_method else ()
+        count = max(len(names), len(labels), len(getattr(node, direction + 'Connectors')()))
+        result[direction + 's'] = [dict(index=i, name=names[i] if i < len(names) else None,
+            label=labels[i] if i < len(labels) else None, data_type=types[i] if i < len(types) else None)
+            for i in range(min(count, 128))]
+        result[direction + '_count'] = count
+        result[direction + '_truncated'] = count > 128
+    return result
+
+
+def _resolve_port(node, selector, direction):
+    names = tuple(getattr(node, direction + 'Names')())
+    if isinstance(selector, str):
+        matches = [i for i, name in enumerate(names) if name == selector]
+        if not selector or len(matches) != 1:
+            raise ValueError(f'{direction} port name must match exactly once: {selector!r}; available={names[:128]}')
+        return matches[0]
+    if type(selector) is not int or selector < 0:
+        raise ValueError(f'{direction} port must be a nonnegative integer or exact name')
+    count = (node.type().maxNumInputs() if direction == 'input'
+             else max(len(names), len(node.outputConnectors())))
+    if selector >= count:
+        raise ValueError(f'{direction} port index {selector} outside 0..{count - 1} on {node.path()}')
+    return selector
+
+
+def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_foreign: str | None = None) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
     只表达普通网络 dataflow；OBJ→OBJ 是 parenting，明确拒绝并要求
     ``set_object_parent(child, parent, reason=...)``。
     返回 ``{"node": dst path, "input": 实际落到的输入口, "position_adjusted": bool}``。
     请求的端口不存在或连接失败时明确拒绝，不尝试改接其他端口。
-    只有一个端口参数 ``index``（目标输入）；权限理由只能用keyword，不能传第4位置参数。
+    index 为目标输入名/索引；keyword-only output 为源输出名/索引，默认0保持兼容。
+    先解析两端并检查类型，再写入；不按label猜名称、不自动改接；第4位置参数拒绝。
     连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时 snap 到
     输入正下方；已在下游的节点绝不动。
     """
@@ -1800,14 +1846,28 @@ def connect(src, dst, index: int = 0, *, allow_foreign: str | None = None) -> di
     _require_owned(d, "connect destination", allow_foreign)
     if s.parent() != d.parent():
         raise ValueError(f'different_parent: source={s.path()} parent={s.parent().path()}, destination={d.path()} parent={d.parent().path()}; use an Object Merge inside the destination SOP network or an explicit subnet input. Changing the input index cannot fix this boundary')
-    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-        raise ValueError("index 必须是非负整数")
+    index = _resolve_port(d, index, 'input')
+    output = _resolve_port(s, output, 'output')
+    compatible = getattr(d, 'isInputCompatible', None)
+    # COP Cache/Null-like ports acquire their signature from the first wire.
+    # Native isInputCompatible reports false while they are still 'undef'.
+    dynamic_type = (isinstance(d, hou.CopNode) and
+                    (index >= len(d.inputDataTypes()) or d.inputDataTypes()[index] == 'undef'))
+    if compatible is not None and not dynamic_type and not compatible(index, s, output):
+        raise ValueError(f'incompatible ports: {s.path()} output {output} -> {d.path()} input {index}; zero connection writes')
     before = _input_state(d)
     try:
-        d.setInput(index, s)
+        d.setInput(index, s, output)
     except Exception as e:
         raise ValueError(f"连接失败：{s.path()} → {d.path()} input {index}（{e}）；未尝试其他端口") from e
-    return {"node": d.path(), "input": index, "position_adjusted": _snap_into_flow(d),
+    actual = [c for c in d.inputConnections() if c.inputIndex() == index]
+    if len(actual) != 1 or actual[0].inputNode() != s or actual[0].outputIndex() != output:
+        raise RuntimeError('connect readback mismatch; transaction must roll back')
+    return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
+            'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
+            'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,
+            'type_check': 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
+            'verified': True, 'semantic_status': 'unverified', "position_adjusted": _snap_into_flow(d),
             'inputs_before':before, 'inputs_after':_input_state(d),
             'note':'connect replaces the current occupant; do not disconnect first to replace a Merge input'}
 
@@ -1845,7 +1905,7 @@ def rename_node(node, name: str, allow_foreign: str | None = None) -> str:
 
 
 def delete_node(node, allow_foreign: str | None = None) -> dict:
-    """删除普通节点；持久 render_view 服务节点受生命周期守卫保护。"""
+    """删除前检查节点及所有后代权限；持久render_view服务始终受保护。"""
     n = _resolve(node)
     if n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE:
         raise ValueError(
@@ -1854,6 +1914,8 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
             "this infrastructure and clears its live source reference after each render."
         )
     _require_owned(n, "delete_node", allow_foreign)
+    for child in n.allSubChildren():
+        _require_owned(child, "delete_node descendant", allow_foreign)
     refs = sorted(x.path() for x in n.parmsReferencingThis())
     session_ids = [int(n.sessionId())]
     session_ids.extend(int(child.sessionId()) for child in n.allSubChildren())
@@ -1895,7 +1957,7 @@ def cook_node(node, force: bool = False, timeout_ms: int = 30000) -> dict:
             n.cook(force=effective_force)
             operation.updateProgress(1)
     except Exception as e:  # hou.OperationFailed 等
-        cook_error = str(e)
+        cook_error = str(e) or type(e).__name__
     errors = list(n.errors())
     if cook_error and cook_error not in errors:
         errors.insert(0, cook_error)
@@ -3463,6 +3525,8 @@ def hda_create(
     max_inputs: int = 0,
     replace: bool = False,
     allow_foreign: str | None = None,
+    *,
+    max_outputs: int | None = None,
 ) -> dict:
     """把已有节点（通常 subnet）转为 HDA；默认写到 ``$HIP/otls``。
 
@@ -3470,6 +3534,8 @@ def hda_create(
     销毁同类型的全部现有实例，再逐一定义 ``destroy()``（只删目标定义，不会粗暴
     uninstall 整个多资产库），最后从传入的源节点重建。传入源节点本身不能已经是
     待替换类型，否则销毁实例后就没有可供重建的源节点。
+    max_outputs可选1..64，None保留原生默认；这是端口上限，不会自动接线。
+    实例spare不保证进入定义；返回两层条目数，不以创建成功替代新实例/公共输出验证。
     """
     n = _resolve(node)
     _require_owned(n, "hda_create", allow_foreign)
@@ -3483,6 +3549,8 @@ def hda_create(
             f"输入数不合法：需要 0 <= min_inputs <= max_inputs，"
             f"收到 {min_inputs}/{max_inputs}"
         )
+    if max_outputs is not None and (type(max_outputs) is not int or not 1 <= max_outputs <= 64):
+        raise ValueError('max_outputs must be an integer in 1..64 or None (native default)')
 
     category = n.type().category()
     existing_type = category.nodeTypes().get(name)
@@ -3519,6 +3587,21 @@ def hda_create(
             f"源节点 '{n.path()}' 本身就是待替换类型 '{name}'；"
             "请先建一个普通 subnet 作为重建源，避免 replace 销毁源节点"
         )
+    if replace:
+        # Preflight the entire destructive set before destroying any instance
+        # or creating a directory. A later foreign instance must not leave an
+        # earlier instance deleted when undo is disabled.
+        ancestors = set()
+        ancestor = n.parent()
+        while ancestor is not None:
+            ancestors.add(int(ancestor.sessionId()))
+            ancestor = ancestor.parent()
+        for inst in instances:
+            if int(inst.sessionId()) in ancestors:
+                raise ValueError('hda_create replacement source is inside an instance that would be destroyed')
+            _require_owned(inst, 'hda_create replace instance', allow_foreign)
+            for child in inst.allSubChildren():
+                _require_owned(child, 'hda_create replace descendant', allow_foreign)
 
     target = _default_hda_file(name) if hda_file is None else hou.expandString(str(hda_file))
     target = os.path.abspath(target)
@@ -3558,6 +3641,8 @@ def hda_create(
     definition = created.type().definition()
     if definition is None:
         raise RuntimeError(f"createDigitalAsset 返回后类型 '{name}' 没有 definition")
+    if max_outputs is not None:
+        definition.setMaxNumOutputs(max_outputs)
     # Conversion may replace the root HOM identity. Transfer only its trusted
     # existing provenance; never adopt foreign descendants or an allowed foreign source.
     if source_owner is not None:
@@ -3573,10 +3658,31 @@ def hda_create(
         "hda_file": definition.libraryFilePath(),
         "min_inputs": definition.minNumInputs(),
         "max_inputs": definition.maxNumInputs(),
+        "max_outputs": definition.maxNumOutputs(),
+        "instance_interface_entries": len(created.parmTemplateGroup().entries()),
+        "definition_interface_entries": len(definition.parmTemplateGroup().entries()),
+        "verification_scope": "definition created; spare migration, public outputs and fresh-instance behavior require separate verification",
         "replaced": bool(replace),
         "destroyed_instances": destroyed,
         "removed_definitions": removed_definitions,
     }
+
+
+def hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None) -> dict:
+    """Preview-bound unlock/save/lock/promote of a disk HDA, never flatten/unpack.
+
+    First dry_run=True, review plan_sha256/affected_instances; apply with expected_plan.
+    lock requires discard_changes=True for unmatched contents; discarded descendants
+    must also be owned/explicitly authorized. Unlock never grants descendant ownership.
+    save requires unlocked source with definition interface (no spare overlays), checks
+    every affected instance, restores this call's definition/library on write failure.
+    promote moves the source additive spare interface into the definition while
+    preserving existing root channels/keys/locks; rejects other instance overlays.
+    <=64 instances/512 descendants/32MiB library/2MiB source. No cook/GUI/semantic proof.
+    """
+    from dsh_hda_lifecycle import edit
+    return edit(node, action, dry_run=dry_run, expected_plan=expected_plan,
+                discard_changes=discard_changes, allow_foreign=allow_foreign)
 
 
 def _enum_name(value) -> str:
@@ -3723,10 +3829,13 @@ def hda_info(node, max_depth: int = 6, include_state: bool = False, analyze_ui: 
             "version": definition.version(),
             "min_inputs": definition.minNumInputs(),
             "max_inputs": definition.maxNumInputs(),
+            "max_outputs": definition.maxNumOutputs(),
             "sections": sections,
             "interface": [_template_info(entry, 0, max_depth)
                           for entry in definition.parmTemplateGroup().entries()],
         }
+        out['matches_definition'] = n.matchesCurrentDefinition()
+        out['locked'] = n.isLockedHDA()
     if include_state:
         from dsh_hda_interfaces import parameter_states
         out['parameter_states'] = parameter_states(n)
@@ -4169,7 +4278,8 @@ def hda_set_interface(
     (name/label/enabled?/ramp_type?)、repeater(name/label/parms/style?/count?/label_ref?)。
     可混用普通spec；新增label/ramp、numeric components/look、multiparm与tab条件。
     dry_run=True只预检并返回展开interface/ui_analysis，不写入；各模式仍须exec。
-    layout不继承edits的旧通道状态保持/文件恢复承诺；布局组件不代表业务功能。
+    layout成功仍是整组替换、不保证旧通道保持；写后失败恢复本调用定义/实例界面/通道/库。
+    定义写入与场景undo隔离，后续同exec失败不撤销已经成功的库写入；布局组件不代表业务功能。
 
     增量模式：spec省略，传edits=[{op:'update',name,fields}或{op:'add',spec,folder?}]
     与hda_info的expected_sha256。update支持label/help/default/min/max/min_strict/
@@ -4183,7 +4293,27 @@ def hda_set_interface(
     ``hide_builtin_tabs`` 通过公开的 ParmTemplateGroup.hide 隐藏这些页。所有
     ``hide_when`` 在提交后读回验证，Houdini 若吞掉 conditional，则自动补丁
     DialogScript 的 ``hidewhen`` 并再次验证。
+    SOP subnet标准label1..label4管理字段保留但隐藏，不影响输入名称/接线或自定义Label。
+    与现有实例spare同名的重建在定义/磁盘写入前拒绝，不隐式合并或丢弃spare。
     """
+    if edits is None:
+        kwargs = dict(spec=spec, keep_std=keep_std, hide_builtin_tabs=hide_builtin_tabs,
+                      allow_foreign=allow_foreign, expected_sha256=expected_sha256, layout=layout)
+        if type(dry_run) is not bool:
+            raise ValueError('dry_run must be boolean')
+        preview = _rebuild_hda_interface(node, dry_run=True, **kwargs)
+        if dry_run:
+            return preview
+        from dsh_hda_interfaces import definition_write_guard
+        n, _ = _hda_definition(node)
+        with definition_write_guard(n, 'hda_set_interface rebuild', allow_foreign):
+            return _rebuild_hda_interface(node, dry_run=False, **kwargs)
+    return _rebuild_hda_interface(node, spec, keep_std, hide_builtin_tabs, allow_foreign,
+                                  edits=edits, expected_sha256=expected_sha256, dry_run=dry_run, layout=layout)
+
+
+def _rebuild_hda_interface(node, spec=None, keep_std=True, hide_builtin_tabs=False, allow_foreign=None,
+                           *, edits=None, expected_sha256=None, dry_run=False, layout=None):
     if layout is not None:
         if spec is not None or edits is not None or expected_sha256 is not None:
             raise ValueError('layout is exclusive with spec/edits/expected_sha256')
@@ -4201,9 +4331,8 @@ def hda_set_interface(
         raise ValueError('dry_run must be boolean')
     n, definition = _hda_definition(node)
     _require_owned(n, "hda_set_interface", allow_foreign)
-    if layout is not None:
-        for instance in n.type().instances():
-            _require_owned(instance, 'hda_set_interface layout affected instance', allow_foreign)
+    for instance in n.type().instances():
+        _require_owned(instance, 'hda_set_interface rebuild affected instance', allow_foreign)
     if not isinstance(spec, (list, tuple)):
         raise ValueError("spec 必须是参数条目 list")
     names: set = set()
@@ -4212,6 +4341,16 @@ def hda_set_interface(
         _build_interface_template(item, f"spec[{index}]", names, conditions)
         for index, item in enumerate(spec)
     ]
+    # An instance overlay can survive definition replacement and merge multiparm
+    # children. Refuse the ambiguity BEFORE touching the shared library.
+    definition_names = _all_template_names(definition.parmTemplateGroup().entries())
+    for instance in n.type().instances():
+        overlay_names = _all_template_names(instance.parmTemplateGroup().entries()) - definition_names
+        collisions = names & overlay_names
+        if collisions:
+            raise ValueError(f'instance spare interface conflicts with definition rebuild on {instance.path()}: '
+                             f'{sorted(collisions)}; no definition/library writes. '
+                             'Keep the source intact; use a clean definition instance and verify migration separately.')
 
     standard = _standard_interface_entries(n) if keep_std else []
     conflicts = names & _all_template_names(standard)
@@ -4227,6 +4366,12 @@ def hda_set_interface(
         group.append(template)
     standard_names = []
     for template in standard:
+        # Native SOP subnet input-label editors are authoring metadata, not
+        # business controls. Keep their values/port semantics, hide only these
+        # standard templates; do not hide custom Label/heading controls.
+        if (n.type().category() == hou.sopNodeTypeCategory()
+                and template.name() in {'label1', 'label2', 'label3', 'label4'}):
+            template.hide(True)
         group.append(template)
         standard_names.append(template.name())
     if hide_builtin_tabs:
@@ -4270,6 +4415,9 @@ def hda_set_interface(
 
     verified = {}
     final_group = n.parmTemplateGroup()
+    from dsh_hda_interfaces import _walk
+    observed_templates = list(_walk(final_group.entries()))
+    business_order = []
     for index, template in enumerate(custom):
         def verify_template(expected, actual):
             if actual.type() != expected.type() or actual.label() != expected.label():
@@ -4295,7 +4443,25 @@ def hda_set_interface(
                     verify_template(child, actual_child)
         # Existing hide_when fallback below owns legacy HideWhen verification.
         if layout is not None:
-            verify_template(template, final_group.entries()[index])
+            actual = final_group.find(template.name())
+            if actual is None and isinstance(template, hou.FolderParmTemplate):
+                # Houdini normalizes tab-set names and can wrap OBJ controls in
+                # a spare folder. Match a renamed folder only when its native
+                # type/label is unique, never by its old positional index.
+                candidates = [t for t in _walk(final_group.entries())
+                              if isinstance(t, hou.FolderParmTemplate)
+                              and t.label()==template.label() and t.folderType()==template.folderType()]
+                if len(candidates)==1:
+                    actual=candidates[0]
+            if actual is None:
+                raise RuntimeError(f'UI template missing or ambiguous after native normalization: {template.name()}')
+            positions = [i for i,t in enumerate(observed_templates) if t.name()==actual.name() and t.type()==actual.type()]
+            if len(positions)!=1:
+                raise RuntimeError(f'UI template order is ambiguous: {template.name()}')
+            business_order.append(positions[0])
+            verify_template(template, actual)
+    if business_order != sorted(set(business_order)):
+        raise RuntimeError('UI custom template order changed during native normalization')
     for name, expected in conditions.items():
         template = final_group.find(name)
         actual = None if template is None else template.conditionals().get(
@@ -4380,6 +4546,48 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign, domain=domain, topology=topology)
 
 
+def cop_layer_stats(node, output=0, *, max_pixels=4194304) -> dict:
+    """exec-only: full bounded ImageLayer statistics, metadata and exact buffer fingerprint.
+
+    output is an exact output name/index. No sampling, normalization or Geometry conversion.
+    max_pixels is 1..16777216; memory/cook cost is not a hard process budget.
+    Manual, failed cook, unsupported output and oversized buffer reject; sticky upstream cache
+    remains explicitly unknown. Returns per-channel min/max/mean/nonfinite and XY variation.
+    """
+    from dsh_cop_contracts import layer_stats
+    return layer_stats(node, output, max_pixels=max_pixels)
+
+
+def cop_compare_layers(before, after, *, before_output=0, after_output=0, expected_delta=None,
+                       tolerance=1e-6, max_pixels=4194304) -> dict:
+    """exec-only: full aligned buffer difference AFTER - BEFORE; no implicit resampling.
+
+    expected_delta is optional {node,output?} naming a declared increment layer; when provided
+    check max(abs((after-before)-expected_delta)) <= tolerance. Without it return measurement,
+    status=unverified, never artistic/semantic success. Channel/window/space mismatch rejects.
+    """
+    from dsh_cop_contracts import compare_layers
+    return compare_layers(before, after, before_output=before_output, after_output=after_output,
+                          expected_delta=expected_delta, tolerance=tolerance, max_pixels=max_pixels)
+
+
+def test_cop_controls(controller, output, tests, *, output_port=0, max_pixels=4194304,
+                      allow_foreign=None) -> dict:
+    """exec-only reversible numeric scalar COP controls, exact channel/frame/output restoration.
+
+    tests=[{id,values:{parm:number},expectations:[{metric,channel,delta:[min,max],range?:[min,max]}]}].
+    Metrics: mean,min,max,mean_abs_change,max_abs_change; change metrics baseline=0.
+    Every case needs a nonzero expected response; range checks baseline and perturbation.
+    Reject menus/callbacks/multiparms/tuples, Manual, unsupported/nonfinite layers before writes.
+    Uses full ImageLayer fingerprint (not bgeo), checks all controlled channels after recook.
+    Sticky Cache upstream is rejected; external files/Python/solver effects are not restored.
+    A restored failed test is status=fail; restoration failure raises CheckpointError.
+    """
+    from dsh_cop_contracts import test_controls
+    return test_controls(controller, output, tests, output_port=output_port,
+                         max_pixels=max_pixels, allow_foreign=allow_foreign)
+
+
 def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = False,
                       order_attrib=None, max_points: int = 10000) -> dict:
     """全量检查一条有序点序列的相邻弦长（SOP local单位），不是曲线弧长或表面关系。
@@ -4404,6 +4612,7 @@ def geo_attrib_stats(node, name: str, attrib_class: str = "point", *, unique: bo
     超max_elements或非有限值拒绝，不抽样后宣称唯一；不自动删除重复。
     """
     n = _resolve(node)
+    _cook_control.require_evaluation('geo_attrib_stats')
     g = n.geometry()
     finders = {
         "point": (g.findPointAttrib, g.pointFloatAttribValues, g.pointIntAttribValues),
@@ -4496,6 +4705,7 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
         raise ValueError("geo_piece_stats 只接受 SOP 节点")
     if not isinstance(sample, int) or sample <= 0 or sample > 256:
         raise ValueError("sample 必须是 1..256 的整数")
+    _cook_control.require_evaluation('geo_piece_stats')
     source = n.geometry()
     if source is None:
         raise ValueError(f"节点 {n.path()} 没有 geometry")
@@ -4652,6 +4862,7 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
     if tolerance < 0:
         raise ValueError("tolerance 不能为负")
     fa, fb = float(frame_a), float(frame_b)
+    _cook_control.require_evaluation('geo_frame_diff')
     ga = n.geometryAtFrame(fa)
     gb = n.geometryAtFrame(fb)
     if ga is None or gb is None:
@@ -4843,6 +5054,7 @@ def camera_fit(camera, target, direction='iso', coverage: float = .82,
     Solaris用Scene Import导入此相机；render_frame(framing=...)按最终USD相机/产品
     预检，不能把OBJ取景通过当成USD产品通过。只证明当前帧包络，不证明位移/运动模糊。
     """
+    _cook_control.require_evaluation('camera_fit')
     from dsh_camera_framing import fit_camera
     return fit_camera(camera, target, direction, coverage, width, height, frame, dry_run, allow_foreign)
 
@@ -4867,6 +5079,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
       包含resolution/pixelAspect/aperture conform/dataWindow；失败零渲染，不自动移动相机。
       未传则保留正式/艺术裁切镜头语义。只证明本帧USD bounds，不证明位移/快门/语义质量。
     """
+    _cook_control.require_evaluation('render_frame')
     n = _resolve(rop)
     if not isinstance(n, hou.RopNode) or not hasattr(n, "render"):
         if n.type().category() == hou.lopNodeTypeCategory():
@@ -5252,6 +5465,7 @@ _CLEAN_GUIDES = (
 
 def _display_bbox(n):
     """节点的显示几何 bbox：obj 级取其 displayNode，SOP 直接取。"""
+    _cook_control.require_evaluation('display geometry bounds')
     try:
         d = n.displayNode()
         if d is not None:
@@ -5566,6 +5780,7 @@ def _resolve_render_sop(node) -> tuple[hou.Node, str | None]:
 
 
 def _geometry_fingerprint(node: hou.Node, frame: float) -> dict:
+    _cook_control.require_evaluation('geometry fingerprint')
     geometry = node.geometryAtFrame(frame)
     if geometry is None:
         raise ValueError(f"节点 {node.path()} 在 frame {frame} 没有 geometry")
@@ -5856,6 +6071,7 @@ def render_view(node, direction="iso", frame=None,
             "render_view 需要 Houdini GUI（OpenGL ROP 要 GL 上下文）；"
             "headless 环境请用 render_frame 走 CPU 渲染器"
         )
+    _cook_control.require_evaluation('render_view')
     if framing not in ("full", "detail"):
         raise ValueError("framing 只能是 'full' 或 'detail'")
     if not isinstance(isolate, bool) or (isolate and focus_group is None):

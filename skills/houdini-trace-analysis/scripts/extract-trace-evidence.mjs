@@ -10,7 +10,7 @@ import {
   sessionIdFromFile,
   collectRequestTelemetry,
 } from '../../../tools/trace-session-lib.mjs';
-import { normalizeTraceSteps } from '../../../tools/normalized-trace-steps.mjs';
+import { normalizeTraceSteps, unresolvedExecutionRequests } from '../../../tools/normalized-trace-steps.mjs';
 import {
   collectValidationCoverage,
   collectRetryWork,
@@ -300,6 +300,10 @@ function analyzeTrace(file) {
     activatedSkills: skillActivations.filter((item) => item.succeeded).map((item) => item.name),
   });
   const completionRisks = [];
+  const unresolvedRequests = unresolvedExecutionRequests(normalized.steps);
+  if (unresolvedRequests.length) completionRisks.push({code: 'unresolved_execution_receipt',
+    detail: `${unresolvedRequests.length} request outcome(s) remain unknown; missing ledger does not mean not executed.`,
+    steps: unresolvedRequests.map(item => item.index)});
   const turnEnd = [...events].reverse().find((event) => event.type === 'turn/end') || null;
   const terminalReason = turnEnd?.data?.reason || null;
   const terminalMessage = String(
@@ -462,6 +466,8 @@ function analyzeTrace(file) {
     verbFailures: sortCounts(verbFailures),
     verbAdoption,
     catalog: {
+      scope: 'current_repository_catalog; historical exposure is reported separately',
+      initiallyExposedNames: capabilitySnapshots[0]?.mentionedCatalogVerbs ?? null,
       total: catalogNames.length,
       used: usedVerbs.length,
       usedNames: usedVerbs.sort(),
@@ -485,6 +491,7 @@ function analyzeTrace(file) {
     batchSetParmOpportunities,
     suppressedCookFailureSteps,
     renderEvidence,
+    unresolvedRequests,
     visionEvidence,
     nativeImages,
     completionRisks,

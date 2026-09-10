@@ -5,9 +5,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from houdini_test_environment import isolated_environment, launch_directory
 
 
 def probe():
@@ -23,6 +26,15 @@ def probe():
         try:
             if state['step']==0:
                 state['report']=gallery.build(output)
+                for path in state['report']['nodes'].values():
+                    node=hou.node(path)
+                    node.updateParmStates()
+                    for name in ('label1','label2','label3','label4'):
+                        # Parm.isHidden reports evaluated hide-when state; the
+                        # persistent template flag is a separate native surface.
+                        # Actual visibility still requires the screenshots below.
+                        assert node.parmTemplateGroup().find(name).isHidden(), (path,name)
+                        assert node.type().definition().parmTemplateGroup().find(name).isHidden(), (path,name)
                 state['pane']=hou.ui.paneTabOfType(hou.paneTabType.Parm)
                 state['pane'].pane().setIsMaximized(True)
                 state['pane'].setCurrentNode(hou.node(state['report']['nodes']['shape_controls']))
@@ -44,10 +56,16 @@ def probe():
                 n=hou.node(state['report']['nodes']['attribute_controls'])
                 next(p for p in n.parms() if p.parmTemplate().type()==hou.parmTemplateType.FolderSet
                      and 'Output' in p.parmTemplate().folderNames()).set(1)
-            else:
+            elif state['step']==4:
                 target=output/'attribute-output.png'
                 assert window.screen().grabWindow(window.winId()).save(str(target));state['shots'].append(str(target))
-                (output/'gui-result.json').write_text(json.dumps({'ok':True,'shots':state['shots']}),encoding='utf-8')
+                window.resize(420,900)
+            else:
+                target=output/'attribute-output-resized.png'
+                assert window.screen().grabWindow(window.winId()).save(str(target));state['shots'].append(str(target))
+                (output/'gui-result.json').write_text(json.dumps({'ok':True,'shots':state['shots'],
+                    'requested_window_width':420,'actual_window_width':window.width(),
+                    'narrow_width_reached':window.width()<=500}),encoding='utf-8')
                 hou.hipFile.save(str(output/'ui-gallery.hip'))
                 timer.stop();window.close();return
             state['step']+=1
@@ -69,21 +87,17 @@ def main():
         parser.error('--output must be an empty directory outside the repository')
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='dsh-ui-gui-') as temp:
-        prefs_pattern=str(Path(temp)/'prefs__HVER__')
+        env=isolated_environment(temp, executable=args.houdini, gui=True)
+        prefs_pattern=env['HOUDINI_USER_PREF_DIR']
         script=f"import runpy\nrunpy.run_path({str(Path(__file__).resolve())!r})['probe']()\n"
         for major, version in (('21.0','3.11'),('22.0','3.13')):
             prefs=Path(prefs_pattern.replace('__HVER__',major))
             hook=prefs/f'python{version}libs/uiready.py';hook.parent.mkdir(parents=True);hook.write_text(script,encoding='utf-8')
-        env=dict(os.environ)
-        for key in list(env):
-            if key.upper().startswith('HOUDINI_') or key.upper() in ('PYTHONPATH','PYTHONHOME','HSITE','HFS','HB','HDSO','HHP'):
-                env.pop(key)
-        env.update(HOUDINI_PATH='&',HOUDINI_NO_ENV_FILE='1',HOUDINI_USER_PREF_DIR=prefs_pattern,
-                   HOUDINI_PACKAGE_DIR=str(Path(temp)/'packages'),DSH_UI_GUI_OUTPUT=str(output),PYTHONNOUSERSITE='1')
+        env['DSH_UI_GUI_OUTPUT']=str(output)
         info=subprocess.STARTUPINFO();info.dwFlags|=subprocess.STARTF_USESHOWWINDOW;info.wShowWindow=0
         with (output/'gui-process.log').open('w',encoding='utf-8') as log:
             process=subprocess.Popen([str(args.houdini.resolve()),'-foreground','-geometry=1100x900+12000+12000'],
-                cwd=args.houdini.resolve().parent,env=env,stdout=log,stderr=log,startupinfo=info)
+                cwd=launch_directory(args.houdini),env=env,stdout=log,stderr=log,startupinfo=info)
             try:
                 process.wait(timeout=120)
             finally:

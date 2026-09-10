@@ -7,6 +7,7 @@ import math
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 
 import hou
 
@@ -160,6 +161,66 @@ def _replace_bytes(path, content):
             os.unlink(temporary)
 
 
+@contextmanager
+def definition_write_guard(node, operation, allow_foreign=None):
+    # Definition writes are not scene-undo transactions. Recording their root
+    # interface restoration in the scene undo group would undo the restoration
+    # a second time and replace original channel values with definition defaults.
+    with hou.undos.disabler():
+        with _definition_write_guard(node, operation, allow_foreign):
+            yield
+
+
+@contextmanager
+def _definition_write_guard(node, operation, allow_foreign=None):
+    """Restore this call's disk definition/root interfaces on failure; not scene undo."""
+    import dsh_hou_helpers as h
+    definition = node.type().definition()
+    instances = list(node.type().instances())
+    if len(instances) > 64:
+        raise ValueError('definition write supports at most 64 affected instances')
+    for instance in instances:
+        h._require_owned(instance, operation + ' affected instance', allow_foreign)
+    library = definition.libraryFilePath()
+    if not os.path.isfile(library) or os.path.islink(library) or os.path.getsize(library) > 32*1024*1024:
+        raise ValueError('definition write requires a regular disk library <=32 MiB')
+    with open(library, 'rb') as stream:
+        original_file = stream.read()
+    sections = {name: bytes(section.binaryContents()) for name, section in definition.sections().items()}
+    if sum(map(len, sections.values())) > 32*1024*1024:
+        raise ValueError('definition sections exceed 32 MiB')
+    interfaces = [(n, n.parmTemplateGroup()) for n in instances]
+    states = _snapshot(instances)
+    try:
+        yield
+    except Exception as error:
+        failures = []
+        try:
+            for name, section in list(definition.sections().items()):
+                if name not in sections:
+                    section.destroy()
+            for name, content in sections.items():
+                definition.addSection(name, content)
+            for instance, interface in interfaces:
+                instance.setParmTemplateGroup(interface)
+            failures.extend(_restore(states))
+            actual = {name: bytes(s.binaryContents()) for name, s in definition.sections().items()}
+            if actual != sections:
+                failures.append('definition section readback differs after restoration')
+        except Exception as restore_error:
+            failures.append(str(restore_error))
+        try:
+            _replace_bytes(library, original_file)
+            with open(library, 'rb') as stream:
+                if stream.read() != original_file:
+                    failures.append('library bytes differ after restoration')
+        except Exception as restore_error:
+            failures.append(str(restore_error))
+        raise h.CheckpointError(f'{operation} failed: {error}; restoration errors={failures}',
+            {'ok':False,'phase':'write','restored':not failures,'restore_errors':failures,
+             'scope':'this call definition sections/root interfaces/channels/library; external effects excluded'}) from error
+
+
 def _interface_dialog(original, group):
     """Keep asset header/help/input metadata; replace only native parameter blocks.
 
@@ -191,7 +252,8 @@ def _interface_dialog(original, group):
 def patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
     import dsh_hou_helpers as h
     try:
-        return _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign)
+        with hou.undos.disabler():
+            return _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign)
     except h.CheckpointError:
         raise
     except Exception as error:

@@ -43,6 +43,10 @@ def execute(kwargs):
     gain = node.evalParm("gain")
     if gain < 0:
         raise ValueError("gain must be nonnegative")
+    if gain == 0:
+        import hou
+        hou.setUpdateMode(hou.updateMode.Manual)
+        return
     node.parm("result").set(calculate(gain))
     node.parm("runs").set(node.evalParm("runs") + 1)
 '''
@@ -79,7 +83,23 @@ def execute(kwargs):
     report = runner.check(source, hython)
     assert report['ok'], report
     assert len(report['cases']) == 3 and report['exit_code'] == 0
+    assert report['worker']['released'] and report['worker']['phase'] == 'run'
     assert assets.read_bytes() == original
+    report = runner.check(source, temp / 'missing-hython.exe')
+    assert not report['ok'] and report['worker']['phase'] == 'spawn', report
+    assert not report['worker']['started'] and not report['worker']['released'], report
+    cancel = temp / 'cancel'
+    cancel.write_text('cancel', encoding='utf-8')
+    report = runner.check(source, hython, cancel_file=cancel)
+    assert not report['ok'] and report['worker']['status'] == 'cancelled_before_start', report
+    assert not report['worker']['released'] and assets.read_bytes() == original
+    normal_cases = manifest['cases']
+    manifest['cases'] = [{'id':'manual-output','values':{'gain':0},'buttons':['execute'],
+                          'expect_geometry':{'output':'geometry/output_box','points':8,'primitives':6}}]
+    source.write_text(json.dumps(manifest), encoding='utf-8')
+    report = runner.check(source, hython)
+    assert not report['ok'] and 'not_cooked_manual' in json.dumps(report), report
+    manifest['cases'] = normal_cases
     # Same package without its Python dependency must fail in a fresh process,
     # even though the author machine has the original module directory.
     manifest['python_paths'] = []

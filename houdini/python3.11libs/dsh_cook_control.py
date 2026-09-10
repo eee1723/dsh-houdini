@@ -3,6 +3,14 @@ import re
 import hou
 
 
+def require_evaluation(operation):
+    """Fail before geometry/camera/render work; cached data is not fresh proof."""
+    if hou.updateModeSetting() == hou.updateMode.Manual:
+        raise ValueError(f'{operation} requires geometry evaluation, unavailable in Manual mode. '
+                         'Keep metadata inspection/editing in Manual; explicitly authorize '
+                         'set_update_mode before evaluation. No empty/fresh result is inferred.')
+
+
 def validate_vex(source):
     # Preserve strings while dropping comments, so commented examples do not block.
     cleaned = re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*[\s\S]*?\*/',

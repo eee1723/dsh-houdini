@@ -22,7 +22,7 @@ import {
   newestSessionFile,
   collectRequestTelemetry,
 } from './trace-session-lib.mjs';
-import { normalizeTraceSteps } from './normalized-trace-steps.mjs';
+import { normalizeTraceSteps, unresolvedExecutionRequests } from './normalized-trace-steps.mjs';
 import {
   collectQualityLoopEvidence,
   collectRetryWork,
@@ -134,6 +134,10 @@ const qualityLoopEvidence = collectQualityLoopEvidence({
   activatedSkills,
 });
 const qualityRisks = qualityLoopRisks(qualityLoopEvidence);
+const unresolvedRequests = unresolvedExecutionRequests(normalized.steps);
+if (unresolvedRequests.length) qualityRisks.push({code:'unresolved_execution_receipt',
+  detail:'Missing execution ledger does not mean not executed; artifacts do not resolve a request receipt.',
+  requests:unresolvedRequests});
 const unverifiedRequestedGoals = requestedGoalReportedUnverified(userMsgs, assistantMsgs);
 if (unverifiedRequestedGoals.length) {
   qualityRisks.push({

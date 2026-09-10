@@ -68,7 +68,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 30
+_EXECUTION_CONTRACT_VERSION = 34
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)
@@ -228,6 +228,7 @@ _VERBS: dict[str, object] = {
     "parameter_ui": dsh_hou_helpers.parameter_ui,
     "bind_controls": dsh_hou_helpers.bind_controls,
     "hda_create": dsh_hou_helpers.hda_create,
+    "hda_edit": dsh_hou_helpers.hda_edit,
     "hda_info": dsh_hou_helpers.hda_info,
     "hda_get_section": dsh_hou_helpers.hda_get_section,
     "hda_set_section": dsh_hou_helpers.hda_set_section,
@@ -237,6 +238,9 @@ _VERBS: dict[str, object] = {
     "geo_point_spacing": dsh_hou_helpers.geo_point_spacing,
     "geo_check_interfaces": dsh_hou_helpers.geo_check_interfaces,
     "test_controls": dsh_hou_helpers.test_controls,
+    "cop_layer_stats": dsh_hou_helpers.cop_layer_stats,
+    "cop_compare_layers": dsh_hou_helpers.cop_compare_layers,
+    "test_cop_controls": dsh_hou_helpers.test_cop_controls,
     "geo_piece_stats": dsh_hou_helpers.geo_piece_stats,
     "geo_frame_diff": dsh_hou_helpers.geo_frame_diff,
     "usd_stage_summary": dsh_hou_helpers.usd_stage_summary,
@@ -255,21 +259,22 @@ _VERB_NAMES = tuple(sorted(_VERBS))
 _VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexdigest()
 
 _MUTATING_VERB_NAMES = {
+    "cop_layer_stats", "cop_compare_layers", "test_cop_controls",
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "set_display", "sop_set_output",
     "set_object_visible", "layout_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
-    "hda_patch_section", "hda_set_interface", "render_frame", "render_view",
+    "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
 }
 
 # These verbs may cook or manage services but do not author the deliverable's
 # graph/parameters on a successful, restored call. Unknown effects stay unknown.
-_OBSERVATION_VERBS = {'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes',
+_OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls', 'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes',
     'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
 _GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_set_section', 'bind_controls',
-                     'hda_patch_section', 'hda_set_interface'}
+                     'hda_patch_section', 'hda_set_interface', 'hda_edit'}
 
 
 def _observe_impact(nodes, impact, descendants=False):
@@ -322,6 +327,10 @@ _RAW_HOU_VERB_MAP = {
     "parm().set": "set_parm",   # 由 _raw_hou_calls 特判 parm(...).set(...) 模式
     "setExpression": "set_parm",  # set_parm 收到字符串值即走表达式路由
     "createDigitalAsset": "hda_create",
+    "allowEditingOfContents": "hda_edit",
+    "updateFromNode": "hda_edit",
+    "matchCurrentDefinition": "hda_edit",
+    "removeSpareParms": "hda_edit",
     "setParmTemplateGroup": "hda_set_interface or create_spare_parms",
     "addSpareParmTuple": "create_spare_parms",
     "setKeyframe": "set_keyframes",
@@ -725,12 +734,19 @@ def _operation_summary(name: str, result):
     if name == 'bind_controls' or name == 'create_spare_parms' and result.get('mode') == 'layout':
         return {k: result[k] for k in ('ok','mode','controller','node','dry_run','applied','phase',
             'scene_writes','created','current_state_preserved','plan_sha256','bindings','restored','restore_errors','scope') if k in result}
+    if name == 'hda_edit':
+        return result
     if name == 'hda_set_interface':
         return {k: result[k] for k in ('ok', 'mode', 'node', 'dry_run', 'applied', 'phase',
                 'scene_writes', 'before_sha256', 'after_sha256', 'current_state_preserved',
                 'preserved_channels', 'restored', 'restore_errors', 'scope') if k in result}
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
         return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
+    if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
+        return {k:r[k] for k in ('ok','status','semantic_status','node','output','output_port','controller',
+                'frame','checked_at','scope','resolution','channels','statistics','sha256','freshness','cache',
+                'formula','max_abs_difference','max_abs_error','tolerance','before','after','expected_delta',
+                'restored','parameter_writes','coverage','case_id','reason','results') if k in r}
     if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
         return None
     fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
@@ -740,7 +756,7 @@ def _operation_summary(name: str, result):
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
-              'pair_tests','reason','parameter_writes','required_outputs')
+              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode')
     out = {k: r[k] for k in fields if k in r}
     if name == 'build_module':
         out.update({k: result[k] for k in ('operation_advisories','operation_advisory_count',
@@ -827,7 +843,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                         'next_action': f'verb_help("{name}")'}) from error
             targets = []
             edits_content = name in _MUTATING_VERB_NAMES and name not in _OBSERVATION_VERBS
-            if name in ('hda_set_interface', 'create_spare_parms', 'bind_controls') and kwargs.get('dry_run') is True:
+            if name in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit') and kwargs.get('dry_run') is True:
                 edits_content = False
             if impact is not None and edits_content:
                 impact['attempted'] = True
@@ -849,7 +865,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                     impact['last_edit_ledger_index'] = len(ledger) + 1
                     if name != 'delete_node':
                         _observe_impact(targets, impact, descendants=name == 'rename_node')
-                if name == 'test_controls' and isinstance(result, dict) and result.get('restored') is not True:
+                if name in ('test_controls', 'test_cop_controls') and isinstance(result, dict) and result.get('restored') is not True:
                     impact['global'] = True
                     impact['attempted'] = True
             entry = {
@@ -866,8 +882,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 status=check['evaluation'].get('status')
                 entry['check_status']={'failed':'failed','warning':'warning','unverified':'unverified'}.get(status,'passed')
                 entry['check_scope']='parameter evaluation only; geometry effect unverified'
-            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls") and isinstance(check, dict):
-                if check.get('status') == 'unverified':
+            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
+                if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
                 elif check.get("ok") is False or check.get("errors") or check.get("fresh") is False:
                     entry["check_status"] = "failed"
@@ -883,7 +899,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> {_clip(entry['result'])}  ({entry['ms']}ms)")
             return result
         except BaseException as e:  # 记录失败调用并原样抛出，不改变原语义
-            if impact is not None and name == 'test_controls':
+            if impact is not None and name in ('test_controls', 'test_cop_controls'):
                 impact['global'] = True
                 impact['attempted'] = True
             ledger.append({
@@ -1053,7 +1069,7 @@ def run_code(code: str, allow_raw: str | None = None,
         "stderr": stderr.getvalue(),
     }
     mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
-        not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls') and (v.get('summary') or {}).get('scene_writes') == 0)
+        not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit') and (v.get('summary') or {}).get('scene_writes') == 0)
         for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
     if error is None:
         transaction_status = 'committed' if mutation_attempted else 'no_scene_change'
@@ -1137,13 +1153,19 @@ def run_code(code: str, allow_raw: str | None = None,
             source = item.get('source')
             target = item.get('target') or (source.get('path') if isinstance(source, dict) else None)
         else:
-            target = item.get('output') or item.get('node')
+            target = item.get('output') if isinstance(item.get('output'), str) else item.get('node')
+            if item.get('verb') == 'cop_compare_layers':
+                target = (item.get('after') or {}).get('node')
         if isinstance(target, str) and target.startswith('/'):
             try:
                 node = hou.node(target)
-                bindings.append({'ledger_index': item['ledgerIndex'], 'verb': item['verb'],
+                binding = {'ledger_index': item['ledgerIndex'], 'verb': item['verb'],
                                  'path': target, 'identity': node.sessionId() if node else None,
-                                 'exists': node is not None})
+                                 'exists': node is not None}
+                if item.get('verb') == 'cop_compare_layers':
+                    binding['dependencies'] = [{k: m[k] for k in ('node', 'identity', 'output') if k in m}
+                        for m in (item.get('before'), item.get('after'), item.get('expected_delta')) if isinstance(m, dict)]
+                bindings.append(binding)
             except Exception:
                 envelope['execution']['outputs_unavailable'] = True
     envelope['execution']['outputs'] = bindings

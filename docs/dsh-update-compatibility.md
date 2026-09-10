@@ -35,12 +35,23 @@ npx cache，也不会替换当前插件要求的版本。未命中preferred缓�
 | Surface | 内容 | 变更后的必跑门 |
 |---|---|---|
 | Agent surface | guidance、preset、skills、工具 schema/行为、动词合同 | Node + H21/H22 Houdini 回归；按风险运行模型 smoke/矩阵 |
-| Compatibility surface | client UI、launcher/manager、Web auth/RPC、profile bundle、QtWebEngine 兼容 | Node + H21/H22 runtime、浏览器 RPC、Trace、workspace/session、第三方 bundle smoke；不因纯 UI 修复自动重跑模型矩阵 |
+| Compatibility surface | client UI、launcher/manager、Web auth/RPC、profile bundle、QtWebEngine 兼容及随包作者检查器/环境构造 | Node + H21/H22 runtime、浏览器 RPC、Trace、workspace/session、第三方 bundle及受影响作者检查器smoke；不因纯 UI 修复自动重跑模型矩阵 |
 
 两者分别写入 `benchmark/baseline.json` 的 `agentSurfaceSha256` 和
 `compatibilitySurfaceSha256`。一次变更可以同时触发两边，但不得用一边的通过冒充另一边。
 
 ## 新 DSH 版本的资格流程
+
+DSH 0.1.5候选尚未接纳为preferred：当前包的LLM/system-prompt peer范围不接受0.1.5预发行版，
+persona仍使用text而候选要求prefix/suffix，Trace用量统计尚未适配V3结算事件。只改peer范围不代表完成迁移。
+模块可导入、conversation.view/composer.dock仍有公开类型定义，不等于组合启动或GUI已经通过。
+会话V3升级后不支持旧版本降级读取；候选资格验证必须使用独立DSH_HOME和自建日志，不直接迁移用户历史。
+
+可复跑的只读API预检是[check-dsh-candidate.mjs](../tools/check-dsh-candidate.mjs)：
+`node tools/check-dsh-candidate.mjs --candidate <隔离npm目录> --plugin <解压后的插件包目录>`。
+候选依赖先通过npm下载；正常组合安装失败时，解压原包仅用于区分模块/API问题，绝不绕过peer准入。
+脚本检查peer、persona schema、V3用量及公开接口，失败退出非零；不执行模型、迁移用户profile或提升preferred。
+TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 WebView资格门。
 
 保持当前 serving runtime 在线，依次完成：
 

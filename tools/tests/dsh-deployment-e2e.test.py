@@ -15,6 +15,8 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from houdini_test_environment import isolated_environment, launch_directory
 sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
 import dsh_deployment as d
 import dsh_bootstrap as bootstrap
@@ -102,9 +104,13 @@ try:
         print("Real portable Node + exact DSH + isolated profile + plugin import + 401/200 authenticated RPC passed", flush=True)
         for hython in args.hython:
             prefs = tempfile.mkdtemp(prefix="dsh-installed-houdini-")
-            child_env = dict(env, HOUDINI_PATH="&", HOUDINI_NO_ENV_FILE="1", HOUDINI_USER_PREF_DIR=prefs + "/houdini__HVER__",
-                             QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
-            subprocess.run([str(hython), str(ROOT / "tools/tests/dsh-managed-houdini.test.py")], env=child_env, check=True, timeout=120)
+            hython = hython.resolve(strict=True)
+            child_env = isolated_environment(prefs, executable=hython, base=env)
+            # Restore only this fixture's explicitly created managed identity.
+            child_env.update(DSH_HOME=ctx['home'], DSH_HOUDINI_MANAGED_CONTEXT=env['DSH_HOUDINI_MANAGED_CONTEXT'])
+            subprocess.run([str(hython), str(ROOT / "tools/tests/dsh-managed-houdini.test.py")],
+                           cwd=launch_directory(hython), env=child_env, check=True, timeout=120,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 finally:
     managed.stop_owned()
     if process is not None:

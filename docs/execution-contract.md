@@ -19,6 +19,8 @@ create_spare_parms(layout)只追加单节点参数；bind_controls必须预览�
 - ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
   foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
   持久render服务不可豁免，layout默认仅本session节点。
+- delete_node删除容器前检查全部后代权限；hda_create替换先检查全部实例/后代且拒绝销毁重建源的祖先，
+  再开始删除。不能依赖Undo补救尚未完成的权限预检。
 - 原生OBJ parent/unparent使用set_object_parent并说明reason；generic connect/disconnect只管数据流。
 - loopback并不鉴别所有本地进程。AST和ownership面向正常agent，不是恶意Python安全沙箱。
   不应向不可信网络暴露Bridge。
@@ -87,10 +89,28 @@ request_ref='index'仅列当前owner最近32条回执，以owner_call对齐Host�
 
 ## 参数与创建
 
+COP观察/关系/控制动词必须exec，经同一Bridge主线程编组；直接读取ImageLayer而非Geometry代理。
+Manual、失败cook、非图层、预算超限明确拒绝；统计完整buffer但不限制上游GPU cook内存，不隐式抽样。
+层间差值必须相同通道/窗口/空间/帧，公式与操作数随结果保留；未声明预期只量测，不认证语义。
+控制实验复用通道恢复并核对frame、完整buffer及已列元数据；sticky Cache不能认证控制/恢复，
+恢复失败抛CheckpointError并使执行影响保持未知。外部文件/Python/solver状态不在恢复保证内。
+具名connect只验证实际边与端口选择；动态undef签名由原生连线求解，cook/类型通过仍不证明角色正确。
+COP差值证据绑定before/after/expected_delta的identity与输出口；任一已记录操作数变化都会使旧检查失效。
+不同输出口的统计分别保留；依赖失效仍是历史投影，不监听未记录GUI或外部文件修改。
+
 HDA section 的写后回读/hash仅证明文本写入；PythonModule语法预检不执行回调，任意命名的嵌入section
 也不自动按Python编译。内部函数测试、真实回调、cook后的交付输出、隔离环境依赖验证分别取证，
 不能互相替代。多section库修改不具备场景undo的原子恢复保证。SOP HDA维护方法见
 [HDA维护路径](../skills/houdini-sop-workflow/references/hda-maintenance.md)。
+
+HDA创建的输入/输出上限不是接线证明；实例spare、定义界面、公共端口输出与隔离新实例分别验证。
+界面整组重建遇实例spare同名覆盖时在库写前拒绝；显式spare提升走hda_edit(promote)。
+界面重建及hda_edit(save/promote)写后失败恢复本调用的定义section、根实例界面/通道和磁盘库，
+定义写入与场景Undo分离，避免外层Undo再次撤销恢复。后续同exec失败不撤销已经成功的库写入，外部副作用不保证。
+hda_edit预览绑定源码/库/定义与共享实例状态；解锁不授予后代ownership，锁定丢弃内容须显式确认及逐后代授权。
+SOP subnet标准输入Label管理字段保留但隐藏，不删除端口或用户自定义标题。
+connect的inputs_before/after保留subnet间接输入为source=null、source_kind=subnet_indirect_input，
+不把非Node连接猜成普通节点；source_output仍为原生连接索引。
 
 真实Tab/Shelf初始化与静态类型模板不同。node_info提供实际parent下解析的类型、端口和模板，
 不创建scratch；操作卡关键参数不受普通筛选裁切，见[节点卡](node-operation-cards.md)。

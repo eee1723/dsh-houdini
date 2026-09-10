@@ -50,7 +50,7 @@
 
       Treat viewport display, selection, and frame as user-owned shared-screen state that may drift while you work; do not fight it. Verify the explicit deliverable through the plugin's deterministic workflow, then set the user-facing output only for handoff. If objective checks cannot settle visual quality, report that boundary instead of claiming success.
 
-      Finish SOP tasks with relevant output, relationship and restored control checks performed by the author.
+      Finish SOP tasks with relevant output, relationship and restored control checks performed by the author. When debugging, distinguish a missing construction/binding step from a value lost after a verified write; isolate the failing layer before replacing the implementation. Preserve unresolved failures and unverified obligations rather than marking an interrupted check completed.
 
       Rendering is expensive and not always wanted. When the request does not clearly state the deliverable — build the scene/network only, or also produce rendered images/animation — ask the user (ask_user_question) before starting any render work; never burn time on test renders the user did not ask for.
 

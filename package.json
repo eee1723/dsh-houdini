@@ -27,7 +27,9 @@
     "tools/catalog-lib.mjs",
     "tools/normalized-trace-steps.mjs",
     "tools/trace-session-lib.mjs",
-    "tools/hda-delivery-check.py"
+    "tools/hda-delivery-check.py",
+    "tools/isolated-houdini-check.py",
+    "tools/houdini_test_environment.py"
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && tsc -p tsconfig.json && node tools/prune-retired-build.mjs",

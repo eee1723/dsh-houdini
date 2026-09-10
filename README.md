@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、61 个意图级动词、8个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、65 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -54,6 +54,7 @@ python houdini/install.py
 | Skill | 职责 |
 |---|---|
 | [houdini-sop-workflow](skills/houdini-sop-workflow/SKILL.md) | SOP/VEX、模块、细化、接口与参数验证；SOP HDA内部几何输出 |
+| [houdini-cop-workflow](skills/houdini-cop-workflow/SKILL.md) | 按需 COP/Copernicus 图层、端口语义、控制关系与纹理交付；运行态与自然触发待验收 |
 | [houdini-tool-development](skills/houdini-tool-development/SKILL.md) | HDA封装/代码/回调、脚本与依赖交付、Shelf/快捷键及工具入口开发 |
 | [houdini-parameter-ui](skills/houdini-parameter-ui/SKILL.md) | 跨建模/场景总控/HDA的控制设计、共享布局组件、载体选择与参数绑定 |
 | [houdini-rig-animation-workflow](skills/houdini-rig-animation-workflow/SKILL.md) | Channel、KineFX/rig、实际运动交付 |
@@ -82,7 +83,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和27 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和28 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

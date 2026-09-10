@@ -30,6 +30,8 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
         raise ValueError('expected must be positive/finite; tolerance nonnegative/finite (SOP local units)')
     if not isinstance(closed, bool) or type(max_points) is not int or not 2 <= max_points <= 100000:
         raise ValueError('closed must be bool; max_points integer in 2..100000')
+    from dsh_cook_control import require_evaluation
+    require_evaluation('geo_point_spacing')
     g = n.geometry() if n.type().category() == hou.sopNodeTypeCategory() else None
     if g is None or n.errors():
         raise ValueError('geo_point_spacing requires an error-free SOP geometry output')
@@ -101,23 +103,41 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         raise ValueError(f"verification scope has {len(selected)} nodes, exceeding limit={limit}; select a module")
     if any(n.parent() != p or n.type().category() != hou.sopNodeTypeCategory() for n in selected):
         raise ValueError("all nodes must be direct SOP children of parent")
+    if hou.updateModeSetting() == hou.updateMode.Manual:
+        result = {'ok':False, 'healthy':False, 'warning_free':None, 'parent':p.path(),
+                  'output':out.path(), 'status':'not_evaluated_manual', 'update_mode':'manual',
+                  'failure_reasons':['not_evaluated_manual'], 'geometry':None, 'nonempty':None,
+                  'output_fingerprint':None, 'semantic_status':'unverified',
+                  'frame':float(hou.frame()), 'checked_at':time.time(),
+                  'scope':'direct_children' if nodes is None else 'explicit_nodes',
+                  'scope_signature':hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
+                  'requested_nodes':[n.path() for n in selected], 'checked_nodes':[], 'node_count':0,
+                  'error_nodes':[], 'warning_nodes':[], 'issues':[],
+                  'next_action':'Manual mode: metadata inspection/editing only; explicitly authorize set_update_mode before evaluation. Geometry is unknown, not empty.'}
+        if require_valid:
+            raise h.CheckpointError(result['next_action'], result)
+        return result
     reports = [h.cook_node(n) for n in selected]
     errors = [r['path'] for r in reports if not r['ok']]
     warnings = [r['path'] for r in reports if not r['warning_free']]
-    geometry = out.geometry()
+    output_cooked = next(r['ok'] for r in reports if r['path'] == out.path())
+    # Never turn a failed/interrupted explicit cook into an unbounded implicit
+    # retry through geometry()/geometryAtFrame(), or certify its stale cache.
+    geometry = out.geometry() if output_cooked else None
     summary = h._geo_summary(geometry) if geometry is not None else None
-    nonempty = bool(summary and (summary.get('points') or summary.get('prims')))
+    nonempty = bool(summary and (summary.get('points') or summary.get('prims'))) if output_cooked else None
     fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
-    reasons = (['cook_error'] if errors else []) + ([] if nonempty else ['empty_output'])
+    reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
     result = {'ok': not reasons, 'output': out.path(), 'failure_reasons': reasons,
             'parent': p.path(), 'frame': float(hou.frame()),
             'checked_at': time.time(), 'scope': 'direct_children' if nodes is None else 'explicit_nodes',
             'scope_signature': hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
             'checked_nodes': [n.path() for n in selected], 'node_count': len(selected),
-            'ok': not errors and nonempty, 'warning_free': not warnings,
+            'warning_free': not warnings,
             'healthy': not errors and not warnings and nonempty, 'nonempty': nonempty,
             'error_nodes': errors, 'warning_nodes': warnings,
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,
+            'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
             'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
@@ -256,6 +276,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
                 'output': output, 'interface_status': 'unverified' if interfaces is not None else 'not_requested',
                 'required_outputs': list(required_outputs or []),
                 'note': 'Static preflight only; VEX, dynamic menus, cooking and interface geometry remain unverified.'}
+    from dsh_cook_control import require_evaluation
+    require_evaluation('build_module')
     baseline = set(p.children())
     provenance = dict(h._OWNED_NODE_SESSIONS)
     # renderNode() can fall back to displayNode() even without a render flag.

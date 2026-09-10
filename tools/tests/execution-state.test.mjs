@@ -51,4 +51,17 @@ events.at(-1).data.meta.canonical.execution.hip_path='new_project.hip';
 assert.deepEqual(projectExecutionState(events).nodes.map(n=>n.identity),[3],'different observed HIP path cannot inherit prior scene identities');
 assert.equal(projectExecutionState(events).hip_path,'new_project.hip');
 assert.equal(projectExecutionState([]),null);
+events.splice(0);
+record(1,{evidence:[{ledgerIndex:1,verb:'cop_compare_layers',status:'pass',ok:true}],
+  outputs:[{ledger_index:1,verb:'cop_compare_layers',identity:3,path:'/obj/n3',exists:true,
+    dependencies:[{identity:1,node:'/obj/n1',output:0},{identity:3,node:'/obj/n3',output:0}]}]});
+record(2,{impact:{attempted:true,nodes:[node(1)]}});
+assert.equal(projectExecutionState(events).checks[0].validity,'stale_after_recorded_change',
+  'independent before/delta operands invalidate a comparison even when after is unchanged');
+record(3,{evidence:[{ledgerIndex:1,verb:'cop_layer_stats',node:'/obj/n3',output:0,status:'pass',ok:true},
+                   {ledgerIndex:2,verb:'cop_layer_stats',node:'/obj/n3',output:1,status:'unverified',ok:true}],
+  outputs:[{ledger_index:1,identity:3,path:'/obj/n3'},{ledger_index:2,identity:3,path:'/obj/n3'}]});
+assert.equal(projectExecutionState(events).checks.filter(c=>c.verb==='cop_layer_stats').length,2,
+  'different output ports cannot overwrite each other');
+assert.equal(projectExecutionState(events).checks.at(-1).status,'unverified');
 console.log('execution-state projection: dependency invalidation, deleted identities, same-call edits, rollback, replay, timeout, runtime change, out-of-order jobs and pending jobs passed');

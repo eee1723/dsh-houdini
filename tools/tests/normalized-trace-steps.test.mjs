@@ -4,6 +4,7 @@ import {
   parseToolArguments,
   toolResultFailed,
   toolResultText,
+  unresolvedExecutionRequests,
 } from '../normalized-trace-steps.mjs';
 
 const call = (seq, callId, name, args) => ({
@@ -96,3 +97,12 @@ assert.equal(structured.verbs[0].result.output, 'Z:/project/render/a.png');
 const rolled = normalizeTraceSteps([call(10,'r','houdini_exec',{}),result(15,'r','transaction:\n{"status":"rolled_back","nodes":[]}\n\n'+evidenceText,true)]).steps[0];
 assert.equal(rolled.durationMs,5);
 assert.equal(rolled.transaction.status,'rolled_back');
+
+const receiptStep = (index, status, runtime='one', ref='request') => ({index,
+  tool:'houdini_exec', canonical:{requestReceipt:{runtime_id:runtime,request_ref:ref,status}}});
+assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport')]).length,1);
+assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done')]).length,0);
+assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done','two')]).length,1);
+assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done','one','other')]).length,1);
+assert.equal(unresolvedExecutionRequests([receiptStep(1,'done'),receiptStep(2,'unknown_transport')]).length,0);
+assert.equal(unresolvedExecutionRequests([{index:1,resultText:'request-receipt:\n'+JSON.stringify({runtime_id:'one',request_ref:'q',status:'unknown_transport'})}]).length,1);

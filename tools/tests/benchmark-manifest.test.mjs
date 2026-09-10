@@ -38,6 +38,9 @@ assert.ok(listAgentSurfaceFiles(root).includes('skills/houdini-sop-workflow/SKIL
 assert.ok(!listAgentSurfaceFiles(root).includes('client.js'))
 assert.ok(listCompatibilitySurfaceFiles(root).includes('client.js'))
 assert.ok(listCompatibilitySurfaceFiles(root).includes('houdini/python3.11libs/dsh_webview.py'))
+for (const file of ['tools/hda-delivery-check.py', 'tools/isolated-houdini-check.py', 'tools/houdini_test_environment.py']) {
+  assert.ok(listCompatibilitySurfaceFiles(root).includes(file), 'packaged author-check code must be sealed: ' + file)
+}
 
 const baseline = JSON.parse(fs.readFileSync(path.join(root, 'benchmark', 'baseline.json'), 'utf8'))
 assert.equal(currentSurfaceHash, baseline.agentSurfaceSha256, 'agent-visible surface drifted after the benchmark baseline was sealed')

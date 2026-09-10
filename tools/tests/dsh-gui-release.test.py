@@ -21,6 +21,8 @@ import time
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from houdini_test_environment import isolated_environment, launch_directory
 
 
 def start_gui_probe():
@@ -181,17 +183,15 @@ def main():
     store = deployment.Store(install_root, deployment.read_json(args.trust), allow_candidate=args.candidate)
     ident = store.stage(args.bundle, lambda text: None)
     for executable in args.houdini:
+        executable = executable.resolve(strict=True)
         match = re.search(r"Houdini (21|22)\.0", str(executable))
         if not match:
             raise ValueError("test requires explicit H21/H22 executable paths")
         version = match[1] + ".0"
         py_version = "3.11" if version == "21.0" else "3.13"
-        prefs_pattern = str(fixture / ("prefs-" + version) / "houdini__HVER__")
+        env = isolated_environment(fixture / ('gui-' + version), executable=executable, gui=True)
+        prefs_pattern = env['HOUDINI_USER_PREF_DIR']
         prefs = Path(prefs_pattern.replace("__HVER__", version))
-        env = {k: v for k, v in os.environ.items() if not re.search(r"TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL|^DSH_|^NODE_", k, re.I)}
-        env.update(HOUDINI_PATH="&", HOUDINI_NO_ENV_FILE="1", HOUDINI_USER_PREF_DIR=prefs_pattern,
-                   PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
-        env.pop("QT_QPA_PLATFORM", None)
         env["PATH"] = str(executable.parent) + os.pathsep + str(Path(os.environ["WINDIR"]) / "System32") + os.pathsep + str(Path(os.environ["WINDIR"]) / "System32/WindowsPowerShell/v1.0")
         subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(installer / "installer/install.ps1"),
                         "-Root", str(install_root), "-PackagesDir", str(prefs / "packages")], env=env, check=True,
@@ -212,7 +212,7 @@ def main():
                                        # Match the vendor shortcut. H22's Qt
                                        # helper resolves native DLLs from this
                                        # launch directory, independently of $HIP.
-                                       cwd=executable.parent, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       cwd=launch_directory(executable), env=env, stdout=log, stderr=subprocess.STDOUT,
                                        startupinfo=info, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             # Do not put the GUI host inside the Node-style restrictive job:
             # Chromium's Windows sandbox must establish its own child jobs.

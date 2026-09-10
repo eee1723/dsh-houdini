@@ -123,6 +123,8 @@ def _geometry(output):
     node = h._resolve(output)
     if node.type().category() != hou.sopNodeTypeCategory():
         raise ValueError('explicit output must be a SOP')
+    from dsh_cook_control import require_evaluation
+    require_evaluation('geometry quality check')
     g = node.geometry()
     if g is None or node.errors():
         raise ValueError(f'output has no healthy geometry: {node.path()}: {node.errors()}')

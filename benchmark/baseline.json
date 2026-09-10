@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "createdAt": "2026-09-04T10:44:56.2691447Z",
-  "baselineCommit": "23be4f75ae7624a0caec81dfdd8b65a53e67ebc1",
-  "agentSurfaceSha256": "c8b6681701768882701fc976f01c4c3b2b446aa24d2af4692a3f6a8764915d5a",
-  "compatibilitySurfaceSha256": "6b3a9be7c281ee214a6cd835e1130a94b5bd72a3dc6a2bbcd6164cb468fed418",
+  "createdAt": "2026-09-10T13:17:50.834Z",
+  "baselineCommit": "08f0b54838919b836d999165dbc3e70cb5b49a00",
+  "agentSurfaceSha256": "40208a1acd62b088f5ba585301fad2531b99607c308d774a3af0256ca37aacb2",
+  "compatibilitySurfaceSha256": "fa7848144e2a537f7369489d47f49d7ca607076cac98e31eb675706ca2d03ef9",
   "runtimeVerification": {
     "matchesBaseline": false,
     "note": "v26 source candidate: independent review removed; native multimodal image attachments replace secondary vision tools and workspace media copies; explicit skill roots and grouped historical System display. Prior pending verification retained; no live reload or new-session acceptance.",

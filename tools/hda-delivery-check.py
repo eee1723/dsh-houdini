@@ -13,9 +13,10 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from houdini_test_environment import isolated_environment, launch_directory
 
 
 @contextlib.contextmanager
@@ -160,7 +161,7 @@ def worker(manifest_path, result_path):
                             result['buttons_executed'].append(name)
                         diagnostic = diagnostic_text(diagnostics)
                 except Exception as error:
-                    callback_error = str(error)
+                    callback_error = str(error) or type(error).__name__
                 if diagnostic:
                     callback_error = diagnostic
                     result['callback_diagnostics'] = diagnostic[-8000:]
@@ -183,7 +184,9 @@ def worker(manifest_path, result_path):
                     if output is None or output.type().category() != hou.sopNodeTypeCategory():
                         raise AssertionError('expected SOP output is missing')
                     with h._execution_owner('delivery-check', case['id']):
-                        h.cook_node(output)
+                        cooked = h.cook_node(output)
+                    if cooked.get('ok') is not True:
+                        raise AssertionError('output cook did not complete: ' + json.dumps(cooked, ensure_ascii=False))
                     if output.errors():
                         raise AssertionError(str(output.errors()))
                     geo = output.geometry()
@@ -237,20 +240,11 @@ def check(manifest_path, hython, timeout=120, memory_mb=4096, cancel_file=None):
         copied = temp / 'manifest.json'
         copied.write_text(json.dumps(manifest), encoding='utf-8')
         report_file = temp / 'report.json'
-        env = dict(os.environ)
-        for key in list(env):
-            if (key.upper() in {'PYTHONPATH', 'PYTHONHOME', 'HSITE', 'HFS', 'HHP', 'HB', 'HDSO'} or
-                    key.upper().startswith('HOUDINI_') and key.upper() != 'HOUDINI_LICENSE_SERVER'):
-                env.pop(key)
-        packages = temp / 'packages'; packages.mkdir()
-        env.update(HOUDINI_PATH='&', HOUDINI_NO_ENV_FILE='1',
-                   HOUDINI_USER_PREF_DIR=str(temp / 'prefs__HVER__'),
-                   HOUDINI_PACKAGE_DIR=str(packages), PYTHONIOENCODING='utf-8',
-                   PYTHONNOUSERSITE='1', HFS=str(hython.parent.parent))
+        env = isolated_environment(temp, executable=hython if hython.is_file() else None)
         sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'houdini/python3.11libs'))
         from dsh_worker_limits import run_gated_worker
         process=run_gated_worker([str(hython), str(Path(__file__).resolve()), '--worker',
-                                 str(copied), str(report_file)],cwd=temp,env=env,timeout=timeout,
+                                 str(copied), str(report_file)],cwd=launch_directory(hython) if hython.is_file() else temp,env=env,timeout=timeout,
                                  memory_mb=memory_mb,cancel_file=cancel_file)
         report = json.loads(report_file.read_text(encoding='utf-8')) if report_file.exists() else {'ok': False, 'error': 'worker produced no report'}
         report.update(exit_code=process['returncode'], assets=hashes, worker=process)

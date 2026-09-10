@@ -19,6 +19,10 @@
 
 ## 机制验证与行为验收入口
 
+`tools/tests/dsh-hda-public-contract.test.py`覆盖原生subnet间接输入、输入/输出声明、公共消费者、
+定义保存后的表达式/双实例隔离、标准输入标签隐藏与业务标题保留、spare冲突库写前拒绝。
+机制回归不替代作者工作流；新任务仍需完成各端口、参数域和真实UI验收。
+
 界面增量与交付检查已有H21.0.440/H22.0.368隔离hython回归入口：
 tools/tests/dsh-hda-interface-patch.test.py、tools/tests/dsh-hda-delivery.test.py。
 覆盖旧通道状态/新默认、过期版本与恢复、真实按钮异常/菜单/重复调用、不同输入、错误结果、

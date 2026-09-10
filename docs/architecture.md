@@ -52,11 +52,13 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 |---|---|
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime的有界exec/jobs回执、owner_call索引、payload/owner冲突拒绝和原结果/jobId查回；无HOM，不重提代码 |
-| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 61动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
-| [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、自省状态与增量修改预检、实例通道保留及本调用文件恢复 |
+| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 65动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
+| [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
+| [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
+| [dsh_hda_lifecycle.py](../houdini/python3.11libs/dsh_hda_lifecycle.py) | HDA解锁/保存/锁定/参数提升的版本预览、共享实例权限和状态回读；不拆包或认领后代 |
 | [dsh_parameter_ui.py](../houdini/python3.11libs/dsh_parameter_ui.py) | 共享组件展开、布局预检/诊断、单节点spare追加及状态保留 |
 | [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
-| [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | 更新模式与已知不终止VEX模式预检；协作超时不保证内存安全 |
+| [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | 更新模式、共用Manual计算拒绝与已知不终止VEX模式预检；协作超时不保证内存安全 |
 | [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker进程树限额、超时/取消与退出回收，不接管live进程 |
 | [dsh_hda_ui.py](../houdini/python3.11libs/dsh_hda_ui.py) | 旧UI模块的兼容导入入口 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、静态预检、失败清理、有序点弦长 |
@@ -108,6 +110,12 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 原视频、切片、转录及画面依据保存在仓库外任务目录，不进入包或 Trace 来源目录。
 输入目前为本地视频，脚本不下载链接、不做语义识图，也不自动复现工程或更新生产知识。
 
+教程复现按阶段选择领域 workflow；[COP skill](../skills/houdini-cop-workflow/SKILL.md)独立维护
+Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](../src/skill.ts) 注册。
+正文与参考按需读取，不扩充默认 guidance；SOP 源几何与 Solaris 材质消费仍由各自 workflow 负责。
+图层工具实现独立在 `dsh_cop_contracts.py`，skill 只组织调用；版本与行为门见其
+[验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)。
+
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
@@ -128,6 +136,8 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
+| [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；不改变用户进程环境 |
+| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
 
 评测工具与schema见[评测设计](benchmark-design.md)。tools/prototypes、一次性probe及tools/out

@@ -94,7 +94,8 @@ override/外部USD/前置脚本/lens/Volume/PointInstancer明确拒绝，不暗�
 
 ## 6. Copernicus 接口
 
-未来 COP 能力先复用 Tab/setup/USD 地基，不在 system prompt 预载节点清单。常见接口：
+COP 图层构建、关系与导出由按需加载的 `houdini-cop-workflow` 维护；本节只维护 Solaris
+消费接口，不在 system prompt 预载节点清单。仅消费现有贴图不加载 COP workflow。常见接口：
 
 - Texture Material Library LOP + USD Material COP。
 - Quick Surface Material LOP。

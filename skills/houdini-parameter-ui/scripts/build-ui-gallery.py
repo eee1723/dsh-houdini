@@ -28,7 +28,7 @@ def build(output):
 g=tab_create('/obj','geo',name={name!r})
 n=tab_create(g,'subnet',name='ui_controls')
 asset=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={path!r})
-check=hda_set_interface(asset['node'],layout={layout!r},keep_std=False)
+check=hda_set_interface(asset['node'],layout={layout!r})
 __result__={{'node':asset['node'],'analysis':check['ui_analysis']}}
 """
         result = bridge.run_code(code, owner_session='ui-gallery-author', owner_call=name)

@@ -68,6 +68,29 @@ export function toolResultFailed(message, text = toolResultText(message)) {
     || /^Error:/.test(text);
 }
 
+/** Unknown execution receipts stay unknown until the SAME runtime/ref is resolved.
+ * A later successful unrelated query or an image file is not an execution receipt.
+ */
+export function unresolvedExecutionRequests(steps) {
+  const pending = new Map();
+  const resolved = new Set();
+  for (const step of steps) {
+    const receipt = step.canonical?.requestReceipt ?? parseJsonBlock(step.resultText || '', 'request-receipt');
+    if (!receipt?.request_ref || !receipt.runtime_id) continue;
+    const key = JSON.stringify([receipt.runtime_id, receipt.request_ref]);
+    if (['done', 'not_executed', 'job_submitted'].includes(receipt.status)) {
+      pending.delete(key);
+      resolved.add(key);
+    } else if (['unknown_transport', 'unknown', 'expired', 'runtime_changed'].includes(receipt.status)
+               && !resolved.has(key)) {
+      pending.set(key, {index: step.index, time: step.time, tool: step.tool,
+        request_ref: receipt.request_ref, runtime_id: receipt.runtime_id, status: receipt.status,
+        scope: 'execution outcome unknown; no inference from absent ledger or existing artifacts'});
+    }
+  }
+  return [...pending.values()];
+}
+
 /**
  * Correlate tool calls with their first execution result and expose one stable,
  * consumer-neutral step shape. Compaction replays remain diagnostics and never

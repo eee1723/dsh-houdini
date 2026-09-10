@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 30
+Execution contract version: 34
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -20,6 +20,13 @@ Execution contract version: 30
 - 多节点setup与单节点创建分开：tab_apply面向受限真实Shelf组合，不把所有setup压进tab_create。
 - 只读describe/list_parms/node_info不能为导航隐式创建或cook重型上游。
 - 所有证据都要带范围，cook、关系、渲染像素和视觉语义不互相代替。
+
+Manual模式下describe只读metadata，cook_node返回not_cooked_manual；verify_network默认拒绝，
+require_valid=False返回not_evaluated_manual，geometry/nonempty/output_fingerprint为null、checked_nodes为空，
+不能把未计算当作空输出或新鲜证据。几何统计/关系/控制实验、实际build_module、camera_fit和渲染入口
+在计算或修改前拒绝Manual；build_module的静态dry_run仍可用。不自动切Auto，也不强杀用户Houdini。
+verify_network的显式output cook失败后不再用geometry/geometryAtFrame隐式重试；几何和nonempty保持未知，
+不把中断/失败缓存认证为当前输出，也不把未知附加解释为empty_output。
 
 ## 顶层工具
 
@@ -86,7 +93,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, *, allow_foreign=None)` | 严格数据流连线（src 输出 → dst 指定输入）；只有一个端口参数index，第4位置参数拒绝；权限理由必须显式keyword非空字符串。mutation 边界在 dst；**OBJ→OBJ 拒绝**，改用 `set_object_parent`。端口错误不再改接下一个输入；连接后仅在 dst 违反自顶向下流时调整落位 | dict |
+| `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。默认output=0兼容旧调用，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型/缺少显式决策合并，非阻断、不改默认值、不证明语义；dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
 | `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True)` | SOP checkpoint：必须显式 output，省略即报可操作错误，绝不跟随 display。默认检查 parent 直属范围，可 nodes 限域；error/空输出默认抛 CheckpointError 并保留结构证据，require_valid=False 仅供诊断。warning独立，scope/时间/frame/输出指纹与失败原因前置；不证明关系/视觉 | dict |
@@ -146,6 +153,14 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece 的局部 bbox/extent/面积与退化统计；无 piece 属性时用内存 Connectivity SOP Verb，不污染网络，能发现「全场 bbox 正常但每个实例零宽/零面积」；inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通及正交basis下extent，observed仅为量测完成，方法不支持保持unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
+### cop 域（Copernicus 图层与关系）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `cop_layer_stats(node, output=0, *, max_pixels=4194304)` | 必须exec：直接读取当前ImageLayer，output为源输出名/索引；完整buffer统计/指纹、类型/通道、data/display window、空间、pixel scale、frame、U/V梯度。max_pixels为1..16777216，超预算拒绝不抽样，预算不限制上游GPU cook分配。拒绝Manual、失败cook、非图层和未支持storage；非有限值fail，sticky Cache新鲜度unknown；不证明视觉或外部文件最新 | dict |
+| `cop_compare_layers(before, after, *, before_output=0, after_output=0, expected_delta=None, tolerance=1e-6, max_pixels=4194304)` | 必须exec：测after-before，完整通道/窗口/空间对齐，不静默重采样；无expected_delta仅量测status=unverified。expected_delta={node,output?}时检验max(abs((after-before)-expected_delta))<=tolerance，返回实际操作数/公式/误差；非有限、错位拒绝，sticky Cache不认证通过；不判断作者选对了数学对象或艺术效果 | dict |
+| `test_cop_controls(controller, output, tests, *, output_port=0, max_pixels=4194304, allow_foreign=None)` | 必须exec：1..16个{id,values:{parm:number},expectations:[{metric,channel,delta:[min,max],range?}]}；metric为mean/min/max/mean_abs_change/max_abs_change，变化指标基准0。每case至少一项非零预期，range验基准与扰动；复用参数/keys/frame恢复并比较完整图层/元数据指纹。拒绝菜单/回调/multiparm/tuple、Manual、sticky Cache和无效基准；恢复失败抛CheckpointError，已恢复的失败仍fail。仅声明case/输出范围，不恢复外部文件/Python/solver副作用，不替代语义读图 | dict |
+
 ### stage / USD 域（Solaris 只读自省）
 
 | 动词 | 语义 | 返回 |
@@ -159,12 +174,13 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None)` | 把已有节点（通常 subnet）转为数字资产：自动建 otls 目录、默认 `$HIP/otls/<name>.hda`。`replace=True` = 整体重建：所有待销毁实例逐项通过 ownership guard 后，卸载旧定义并覆盖文件；否则同名冲突报错并提示 replace | dict |
+| `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None, *, max_outputs=None)` | 把已有节点（通常 subnet）转为数字资产：自动建 otls 目录、默认 `$HIP/otls/<name>.hda`。max_outputs可显式声明1..64个输出上限，None保留原生默认；非法值写前拒绝。返回输入/输出上限、实例/定义顶层参数条目数和verification_scope，不承诺spare自动迁移或公共输出正确。`replace=True` = 整体重建：所有待销毁实例逐项通过 ownership guard 后，卸载旧定义并覆盖文件；否则同名冲突报错并提示 replace | dict |
 | `hda_info(node, max_depth=6, include_state=False, analyze_ui=False)` | 资产/参数界面只读自省：类型/定义文件/section、实例interface与definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、单页tab_conditionals、tuple look与Ramp类型。interface_sha256绑定类型/库路径/DialogScript；include_state返回至多512通道的raw_value/keyframes/locked。analyze_ui返回树计数/深度/截断及非阻断引用、标题和密集行建议，不执行菜单/表达式/cook，不自动修复或认证视觉。普通节点也可用 | dict |
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
 | `hda_set_section(node, section, code, allow_foreign=None)` | 全量写 section。`PythonModule` 先 `compile()` 预检语法（带行号报错，不写脏）；写后读回校验一致 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |
-| `hda_set_interface(node, spec=None, keep_std=True, hide_builtin_tabs=False, allow_foreign=None, *, edits=None, expected_sha256=None, dry_run=False, layout=None)` | spec/layout为整组重建；layout与spec/edits互斥，展开可选section/row/remap/repeater为原始spec，最多512条/12层，检查所有同定义实例ownership。支持原有控件及label/ramp、数值components(1..4)/look、multiparm folder与tab条件；布局指南见工具开发skill。dry_run对三种模式均零写入预览，仍须exec。只有edits模式提供旧通道状态保留与同步失败文件恢复，范围见下方；layout/spec不是兼容迁移器，写后失败须按实际文件恢复，不扩大undo保证 | dict |
+| `hda_set_interface(node, spec=None, keep_std=True, hide_builtin_tabs=False, allow_foreign=None, *, edits=None, expected_sha256=None, dry_run=False, layout=None)` | spec/layout整组重建，均检查共享实例ownership；layout与spec/edits互斥，最多512条/12层。支持label/ramp、tuple、multiparm、条件及组件；SOP标准输入Label隐藏。dry_run零写入；spare冲突写前拒绝。edits成功保留旧通道，重建成功不保证旧通道；重建写后失败恢复本调用定义section、实例界面/通道及磁盘库（<=32MiB、64实例、每实例512通道），返回restored/restore_errors。定义写入独立于场景Undo，后续exec失败不撤销已成功的库写入，外部副作用不保证恢复 | dict |
+| `hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None)` | 受控unlock/save/lock/promote，不拆包。先dry_run取得plan_sha256，应用须expected_plan匹配库/定义/源码/实例状态；<=32MiB库、512后代、64实例、2MiB源码。save要求解锁且无实例界面覆盖；promote显式提升源spare界面并保留已有根参数/keys/locks，拒绝其他实例覆盖与既有模板删除/变型。共享写入检查所有实例；lock丢弃内部修改须discard_changes=True且后代也获授权；unlock不授予后代ownership。save/promote写后失败恢复本调用定义/根界面/通道/磁盘，不保证外部副作用或后续exec失败恢复。返回状态/哈希不证明公共输出、回调、GUI或依赖通过 | dict |
 
 #### HDA界面增量合同
 

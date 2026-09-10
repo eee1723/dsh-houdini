@@ -1,10 +1,24 @@
 # HDA 代码与交付维护
 
-适用：修改既有 HDA/OTL 的模块、回调、动态菜单或消除外部 Python 依赖。
-不适用：普通参数赋值/改名、新建模型、仅解释 API；其他 context 的输出验收走对应领域流程。
+适用：HDA/OTL的端口规划、封装交付、模块/回调/动态菜单维护及依赖检查。
+不适用：普通参数赋值/改名或未要求封装的模型；内部几何按对应领域流程验收。
 这是现有 section/所有权/同层证据合同的维护路径候选，不是新增打包 API 或已验证的跨机器兼容保证。
 
 ## 定位与依赖
+
+新建时先明确端口数量、顺序/名称、数据含义、必需/可选、空输入行为和各输出的消费者。
+纯生成器可为0输入/1输出；加工器按需求声明，不照抄subnet默认四输入。hda_create的min_inputs/
+max_inputs及max_outputs只声明边界，内部Output仍须实际接线；多输出逐口验证，display/render旗标不等于端口。
+先用最小几何验证公开控制→定义界面→新实例→下游消费者，再扩展复杂网络。新实例的HOM identity须重新取得。
+原实例spare不会自动证明定义已携带参数；冲突写前拒绝时保留源实例，用显式promote迁移，不能删除唯一状态来赌修复。
+
+“解锁内容”“将修改保存到定义”“匹配定义重新锁定”“拆解/移除资产封装”是不同动作。
+重新匹配会丢弃未保存的内部修改，保存定义会影响共享实例；都不等于普通参数编辑，也不扩大后代ownership。
+hda_edit分别提供unlock/save/lock/promote；每次先dry_run，核对plan_sha256、共享实例与丢弃范围，应用时传expected_plan。
+save要求已解锁且无实例界面覆盖；promote显式把源spare提升到定义，保留已有根参数/keys/locks，拒绝其他实例覆盖。
+lock对未匹配内容要求discard_changes=True及后代权限；先保存再锁定也须重新预览，不能把保存当成授权丢弃其他内容。
+unlock不认领后代，不递归解锁嵌套HDA；不能通过裸HOM或拆包绕过这些边界。
+成功后从新实例公共端口重验；生命周期返回值仅证明状态/文件，不证明内部几何、回调或依赖。
 
 1. 从目标实例读 hda_info，确认完整类型名、实际定义库、section 与参数接口；读 hda_get_section 和关联菜单/按钮 callback。不要猜 HDADefinition 的属性名或丢失命名空间。批量磁盘盘点可在 Bridge 用只读 HOM 查询定义；将文件列表与实际检查过的定义逐项对齐，不用 loadedFiles 数量代替覆盖。
 2. 普通源码读取、备份、编辑和纯 Python 导入实验使用已有 Host 文件/shell 工具；HOM 只经 Bridge。Host 无权访问时明确路径缺口，不绕过沙箱。历史结果用 result_ref 回读，不在 Houdini 里打开结果存储实现文件。修改 sys.path、写临时文件或执行未知模块不属于只读 query。
@@ -16,7 +30,7 @@
 
 - 修改 foreign 定义需针对用户明确目标的单次 allow_foreign；临时实例不授权修改无关共享库。
 - 写前备份目标库，并离线编译要作为 Python 执行的代码。hda_set_section 的语法预检只覆盖 PythonModule，不自动识别任意命名的嵌入 section。首次整模块替换用 hda_set_section；局部修正先回读并用 hda_patch_section 的唯一锚点，不全文重发。
-- 多 section 更新先准备并核对依赖，最后切换入口。逐项写入不是整库原子事务；失败后检查实际库内容，按备份恢复方案处理，不能声称场景 undo 恢复了 HDA 文件。真正原子文件替换需同目录临时文件与替换操作，直接 open(...,'w') 不算。
+- 多section更新先核对依赖，最后切换入口；逐项section写入不是整库原子事务。hda_edit的save/promote与界面重建拥有本调用的定义/根界面/通道/库恢复，定义写入与场景Undo隔离，后续exec失败不撤销已成功的库写入。恢复失败会显式报告，任意回调/进程/外部文件不在保证内。
 - 修改定义可能影响所有使用该定义的实例。临时节点 finally 清理不证明 selection/display/render flags 或 dirty 状态未变；需要声称保持时须有前后观察。
 
 ## 同层验收与停止
@@ -44,6 +58,9 @@ manifest格式和调用见仓库docs/development.md的“HDA交付检查器”�
 tools/tests/dsh-hda-delivery.test.py。只运行获授权的可信资产，不把进程隔离当不可信代码沙箱。
 H21/H22的pressButton可能只向原生stderr报告异常；不能只以返回无异常判成功。
 检查器拒绝子HDA定义来自未声明开发路径；GUI/Shelf/快捷键和动态依赖闭包仍未验证。
+
+`tools/tests/dsh-hda-lifecycle.test.py`在H21/H22用普通几何HDA和重复参数界面验证preview/save/lock/promote、
+过期/foreign/Raw Gate拒绝以及写后失败恢复；这是机制证据，不证明未见自然任务采用或已部署。
 
 来源：仓库 `houdini/python3.11libs/dsh_hou_helpers.py` 的 HDA section 实现，以及 `docs/execution-contract.md` 的恢复边界与证据分层。本路径提炼自一次真实 HDA 维护审计与已有同层验收合同；不携带用户资产代码、路径或专有类型。
 证据等级：E1 工作流候选；目标是 H21/H22，尚缺新 session 的未见 HDA 任务行为验收。原实例内部函数测试不证明新路径已采用，也不证明跨版本已通过。

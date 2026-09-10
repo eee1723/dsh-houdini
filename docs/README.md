@@ -11,7 +11,7 @@
 | [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
 | [主要开发方向](development-directions.md) | 四项产品方向、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
 | [Houdini Trace设计](houdini-trace-design.md) | 五看板信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
-| [工具设计与词表](tool-design.md) | 58动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
+| [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
@@ -22,6 +22,10 @@
 | [控制参数、界面与绑定设计](parameter-controls.md) | 跨建模/场景总控/HDA的分层职责、多种推进顺序与实施完成门 |
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
+
+[COP workflow](../skills/houdini-cop-workflow/SKILL.md)维护 Copernicus 图层、关系验证与纹理交付，
+由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其
+[验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)，注册由 `src/skill.ts` 维护。
 
 HDA封装、PythonModule/回调、脚本打包、Shelf/Tab、快捷键及Panel/Viewer State由
 [Houdini 工具开发 skill](../skills/houdini-tool-development/SKILL.md)维护；共享控制定义、参数UI组件与绑定由

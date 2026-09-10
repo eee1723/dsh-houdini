@@ -12,7 +12,9 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 
 1. 用 `scene_info` 确认 Houdini 版本、HIP、帧范围；明确单帧/序列和 Karma CPU/XPU。
 2. 最终渲染前先完成源 SOP 的 cook/warning/几何/动画验证。`render_view` 仍只负责快速
-   SOP 验证，Karma 不进入反复建模调试闭环。
+   SOP 验证，Karma 不进入反复几何建模调试闭环。材质/COP 任务可在细节搭建前做低成本
+   Karma 预览，先验证 UV、绑定、相机与采样；COP 图层构建/诊断按需加载 `houdini-cop-workflow`，
+   仅消费现有贴图时不加载它。图层数值调试不靠反复最终渲染。
 3. 对实际 parent 调 `search_tab_entries(parent, query)`。不要把全局 node type 注册表当作
    用户 Tab 菜单，不要用裸 `createNode` 绕过 hidden/deprecated 或 builder tab mask。
 4. 新 Karma 材质默认从 Material Library 内的 **Karma Material Builder** 开始；用

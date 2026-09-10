@@ -33,8 +33,9 @@ class WorkerJob:
         limits.job_memory=memory_mb*1024*1024
         if (not self.handle or not k.SetInformationJobObject(self.handle,9,ctypes.byref(limits),ctypes.sizeof(limits))
                 or not k.AssignProcessToJobObject(self.handle,wintypes.HANDLE(int(process._handle)))):
+            error=ctypes.get_last_error()
             self.close()
-            raise OSError(ctypes.get_last_error(),'cannot establish worker job limits')
+            raise OSError(error,'cannot establish worker job limits')
 
     def terminate(self):
         if not self.kernel.TerminateJobObject(self.handle,1):
@@ -50,32 +51,55 @@ def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_f
 
     Job caps committed memory for this tree, not GPU allocations or the whole host.
     Allocation denial may raise/crash inside worker; it is not labeled a proved OOM.
+    started means a process was created; released means GO was sent, not that the
+    payload finished. Startup failures retain phase/error without releasing work.
     """
     if os.name!='nt':raise RuntimeError('worker limits currently require Windows')
     if type(memory_mb) is not int or not 128<=memory_mb<=65536:raise ValueError('memory_mb must be 128..65536')
     if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=86400:raise ValueError('timeout must be finite and in 0..86400 seconds')
     cancel=Path(cancel_file) if cancel_file else None
     if cancel and cancel.exists():
-        return {'status':'cancelled_before_start','returncode':None,'output':'','started':False}
+        return {'status':'cancelled_before_start','returncode':None,'output':'','started':False,
+                'released':False,'phase':'spawn'}
     with tempfile.TemporaryFile() as log:
-        process=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.PIPE,stdout=log,stderr=log,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
-        job=None;status='failed';started=time.monotonic()
+        process=None;job=None;status='failed';started=time.monotonic()
+        phase='spawn';released=False;error=None
         try:
+            process=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.PIPE,stdout=log,stderr=log,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+            phase='limits'
             job=WorkerJob(process,memory_mb)
-            process.stdin.write(b'GO\n');process.stdin.close()
-            while process.poll() is None:
-                if cancel and cancel.exists():status='cancelled';job.terminate();break
-                if time.monotonic()-started>=timeout:status='timed_out';job.terminate();break
-                time.sleep(.05)
+            phase='release'
+            # Recheck after process creation/assignment, before any user payload.
+            if cancel and cancel.exists():
+                status='cancelled';job.terminate()
+            elif time.monotonic()-started>=timeout:
+                status='timed_out';job.terminate()
+            elif process.poll() is not None:
+                raise RuntimeError('worker exited before GO')
+            else:
+                process.stdin.write(b'GO\n');process.stdin.flush()
+                released=True;process.stdin.close();phase='run'
+                while process.poll() is None:
+                    if cancel and cancel.exists():status='cancelled';job.terminate();break
+                    if time.monotonic()-started>=timeout:status='timed_out';job.terminate();break
+                    time.sleep(.05)
             process.wait(timeout=15)
-            if status=='failed' and process.returncode==0:status='completed'
+            if status=='failed' and released and process.returncode==0:status='completed'
+        except (OSError, RuntimeError, subprocess.SubprocessError) as failure:
+            status='failed';error=f'{type(failure).__name__}: {failure}'
         finally:
             if job:job.close()  # also removes descendants after normal parent exit
-            if process.poll() is None:process.kill();process.wait(timeout=15)
-            if process.stdin and not process.stdin.closed:process.stdin.close()
+            if process is not None:
+                if process.poll() is None:process.kill();process.wait(timeout=15)
+                if process.stdin and not process.stdin.closed:
+                    try:process.stdin.close()
+                    except OSError:pass  # pipe may have broken before GO was flushed
         log.seek(0,2);size=log.tell();log.seek(max(0,size-12000))
         output=log.read().decode('utf-8',errors='replace')
-        return {'status':status,'returncode':process.returncode,'output':output,'started':True,
+        result={'status':status,'returncode':process.returncode if process is not None else None,
+                'output':output,'started':process is not None,'released':released,'phase':phase,
                 'memory_mb':memory_mb,'elapsed_seconds':round(time.monotonic()-started,3),
                 'scope':'owned Windows process tree; committed-memory cap; no GPU or external-service limit'}
+        if error:result['error']=error
+        return result

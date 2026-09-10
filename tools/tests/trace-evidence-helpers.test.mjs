@@ -666,6 +666,7 @@ assert.deepEqual(quality.relations.probeSteps,[1]);
 assert.equal(quality.perturbation.controlTests.length,1);
 assert.ok(!qualityLoopRisks(quality).some(r=>r.code==='procedural_control_not_perturbed'));
 assert.equal(findQueryMutationSteps([{tool:'houdini_query',verbs:[{verb:'test_controls',ok:true}]}]).length,1);
+assert.equal(findQueryMutationSteps([{tool:'houdini_query',verbs:[{verb:'hda_edit',ok:true}]}]).length,1);
 
 assert.deepEqual(collectQualityLoopEvidence({steps:[{...measured,transaction:{status:'recovery_unverified'}}]}).relations.probeSteps,[],
   'unverified recovery cannot contribute retained measurement evidence');

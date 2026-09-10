@@ -3,7 +3,8 @@
  */
 type Event = {type: string; seq?: number; time?: number; data?: any}
 const NAMES = new Set(['houdini_exec', 'houdini_query', 'houdini_job_submit', 'houdini_job_status', 'houdini_job_cancel'])
-const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_check_interfaces', 'render_view', 'render_frame'])
+const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_check_interfaces', 'render_view', 'render_frame',
+  'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'])
 const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
 
 export function projectExecutionState(events: Event[]): Record<string, unknown> | null {
@@ -75,6 +76,7 @@ export function projectExecutionState(events: Event[]): Record<string, unknown> 
     const mayHaveEdited = impact.attempted === true && value.transaction?.status !== 'no_scene_change'
     if (mayHaveEdited) for (const check of checks.values()) {
       if (impact.global || impact.truncated || impact.unavailable || check.identity === null || changed.has(check.identity)
+          || (check.dependency_identities || []).some((id:number) => changed.has(id))
           || check.verb.startsWith('render_')) {
         check.validity = 'stale_after_recorded_change'
         check.invalidated_by = callId
@@ -90,6 +92,7 @@ export function projectExecutionState(events: Event[]): Record<string, unknown> 
       if (!CHECKS.has(item?.verb)) continue
       const binding:any = byIndex.get(item.ledgerIndex)
       const identity = binding?.identity ?? null
+      const dependencyIdentities = (binding?.dependencies || []).map((d:any) => d.identity).filter(Number.isFinite)
       const checkStatus = item.ok === false || item.restored === false ? 'fail'
         : item.warning_free === false || item.healthy === false ? 'warning'
         : item.status ?? (item.ok === true ? 'observed_pass' : 'unverified')
@@ -100,9 +103,12 @@ export function projectExecutionState(events: Event[]): Record<string, unknown> 
         : unknownOrder ? 'unverified_change_order_in_call'
         : supersededInCall ? 'stale_after_later_edit_in_same_call'
         : 'historical_observation_only'
-      const key = `${item.verb}:${identity ?? binding?.path ?? item.output ?? item.node ?? item.ledgerIndex}`
+      const portScope = item.verb === 'cop_compare_layers' ? JSON.stringify(binding?.dependencies || [])
+        : item.verb === 'cop_layer_stats' ? item.output : item.verb === 'test_cop_controls' ? item.output_port : ''
+      const key = `${item.verb}:${identity ?? binding?.path ?? item.output ?? item.node ?? item.ledgerIndex}:${portScope}`
       checks.delete(key)
       checks.set(key,{verb:item.verb,identity,output:binding?.path ?? item.output ?? item.node,
+        ...(dependencyIdentities.length ? {dependency_identities:dependencyIdentities} : {}),
         status:checkStatus,validity,scope:item.scope ?? null,frame:item.frame ?? e.frame,
         source_call:callId,event_seq:eventSeq,sequence:e.sequence,
         ...(value.details?.stored ? {result_ref:value.details.sha256,pointer:`/evidence/${value.evidence.indexOf(item)}`} : {})})
