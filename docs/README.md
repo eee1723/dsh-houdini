@@ -19,8 +19,15 @@
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [评测基础设施设计](benchmark-design.md) | manifest/schema、信息隔离、评审与能力主张，不保存批次结果 |
 | [开发维护规范](development.md) | 代码/文档同步、生成门禁、测试入口、发布及文档生命周期 |
+| [控制参数、界面与绑定设计](parameter-controls.md) | 跨建模/场景总控/HDA的分层职责、多种推进顺序与实施完成门 |
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
+
+HDA封装、PythonModule/回调、脚本打包、Shelf/Tab、快捷键及Panel/Viewer State由
+[Houdini 工具开发 skill](../skills/houdini-tool-development/SKILL.md)维护；共享控制定义、参数UI组件与绑定由
+[参数界面skill](../skills/houdini-parameter-ui/SKILL.md)维护，适用于普通控制节点和HDA。注册入口为
+[src/skill.ts](../src/skill.ts)，来源、版本范围与验证入口见其
+[证据与验收](../skills/houdini-tool-development/references/evidence-and-validation.md)。
 
 ## 文档准入
 

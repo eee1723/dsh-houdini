@@ -1,6 +1,6 @@
 ---
 name: houdini-sop-workflow
-description: 设计、构建、调试和交付 Houdini SOP 程序化网络，以及 SOP HDA/OTL 的代码、回调和部署依赖维护。用于建模、散布、Copy to Points、属性传递、VEX成形、Sweep/PolyWire、Merge和SOP动画；尤其涉及多模块空间关系、可调控制、局部几何/拓扑、cook warning或视觉取证时。不用于纯场景查询，也不代替rig或Solaris领域流程。
+description: 设计、构建、调试和交付 Houdini SOP 程序化网络，包括 SOP HDA 的内部几何输出。用于建模、散布、Copy to Points、属性传递、VEX成形、Sweep/PolyWire、Merge和SOP动画；尤其涉及多模块空间关系、可调控制、局部几何/拓扑、cook warning或视觉取证时。不用于纯场景查询、工具UI/回调/打包开发，也不代替rig或Solaris领域流程。
 ---
 
 # Houdini SOP Workflow
@@ -9,7 +9,9 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络，以
 
 ## 进入任务
 
-SOP HDA/OTL 的 PythonModule、菜单/按钮回调或内嵌部署维护先读[HDA 维护](references/hda-maintenance.md)，按受影响入口和依赖验收；不套用下方新建复杂模型的骨架、研究或渲染流程。普通参数赋值/改名仍直接执行并回读。
+程序化控制节点、场景总控或先UI后建模时按名联用houdini-parameter-ui。模型控制的含义/约束先明确；UI、绑定与SOP输出分层验证，普通赋值不要求建立总控。
+
+HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发按名加载 houdini-tool-development；旧[HDA 维护入口](references/hda-maintenance.md)保留路由。涉及 SOP 几何输出时再联用本流程。普通参数赋值/改名仍直接执行并回读。
 
 先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。用户选择会变化，快照不构成foreign修改授权。
 

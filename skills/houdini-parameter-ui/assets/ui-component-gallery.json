@@ -1,0 +1,64 @@
+{
+  "shape_controls": [
+    {"type":"folder","name":"general","label":"General","folder_type":"tabs","parms":[
+      {"type":"int","name":"resolution","label":"Resolution","default":24,"min":4,"max":128},
+      {"type":"separator","name":"transform_gap"},
+      {"type":"float","name":"offset","label":"Offset","components":3,"look":"vector","default":[0,0,0]},
+      {"type":"float","name":"size","label":"Size","components":3,"look":"vector","default":[1,1,1]},
+      {"component":"section","name":"direction","label":"Direction","enabled":false,"collapsed":true,"header_parm":"direction_weight","parms":[
+        {"type":"float","name":"direction_weight","label":"Weight","default":1,"min":0,"max":1},
+        {"type":"float","name":"direction_vector","label":"Direction","components":3,"look":"vector","default":[0,1,0]},
+        {"component":"row","parms":[
+          {"type":"toggle","name":"adjust_angle","label":"Adjust Angle","default":true},
+          {"type":"float","name":"angle_weight","label":"Weight","default":1,"min":0,"max":1,"disable_when":"{ adjust_angle == 0 }"}
+        ]}
+      ]}
+    ]},
+    {"type":"folder","name":"detail","label":"Detail","folder_type":"tabs","ends_tab_group":true,"parms":[
+      {"type":"menu","name":"detail_mode","label":"Detail Mode","menu":{"items":["noise","pattern"],"labels":["Noise","Pattern"]},"default":0},
+      {"component":"section","name":"global_detail","label":"Global Detail","collapsed":true,"parms":[
+        {"type":"float","name":"detail_strength","label":"Strength","default":1,"min":0,"max":4}
+      ]},
+      {"type":"folder","name":"noise_page","label":"Noise","folder_type":"tabs","tab_hide_when":"{ detail_mode == pattern }","parms":[
+        {"component":"row","parms":[
+          {"type":"float","name":"amplitude","label":"Amplitude","default":1,"min":0,"max":3},
+          {"type":"toggle","name":"normalize","label":"Normalize","default":true}
+        ]},
+        {"component":"remap","name":"profile","label":"Remap Profile","enabled":false},
+        {"type":"float","name":"frequency","label":"Frequency","default":1,"min":0.01,"max":10},
+        {"type":"folder","name":"remap_options","label":"Remap Options","folder_type":"simple","tags":{"sidefx::look":"blank"},"tab_hide_when":"{ profile_enabled == 0 }","parms":[
+          {"type":"float","name":"remap_mix","label":"Mix","default":1,"min":0,"max":1}
+        ]}
+      ]},
+      {"type":"folder","name":"pattern_page","label":"Pattern","folder_type":"tabs","ends_tab_group":true,"tab_hide_when":"{ detail_mode == noise }","parms":[
+        {"type":"int","name":"repeat_count","label":"Repeat Count","default":4,"min":1,"max":32}
+      ]}
+    ]}
+  ],
+  "attribute_controls": [
+    {"component":"section","name":"preview","label":"Preview","enabled":false,"collapsed":true,"parms":[
+      {"type":"float","name":"preview_color","label":"Color","components":3,"look":"color","default":[0.2,0.6,0.9]},
+      {"type":"float","name":"preview_scale","label":"Marker Scale","default":1}
+    ]},
+    {"type":"folder","name":"attributes","label":"Attributes","folder_type":"tabs","parms":[
+      {"component":"repeater","name":"entries","label":"Attribute Entries","style":"tabs","count":2,"label_ref":"entry_name#","parms":[
+        {"type":"string","name":"entry_name#","label":"Attribute Name","default":"weight"},
+        {"component":"row","parms":[
+          {"type":"toggle","name":"entry_enabled#","label":"Enable","default":true},
+          {"type":"float","name":"entry_value#","label":"Value","default":1,"disable_when":"{ entry_enabled# == 0 }"}
+        ]}
+      ]}
+    ]},
+    {"type":"folder","name":"output","label":"Output","folder_type":"tabs","ends_tab_group":true,"parms":[
+      {"type":"label","name":"range_heading","label":"Value Range","tags":{"sidefx::look":"heading"}},
+      {"type":"float","name":"input_range","label":"Input Range","components":2,"default":[0,1]},
+      {"component":"row","parms":[
+        {"type":"float","name":"output_min","label":"Output Min","default":0,"tags":{"sidefx::slider":"none"}},
+        {"type":"float","name":"output_max","label":"Max","default":1,"tags":{"sidefx::slider":"none"}}
+      ]},
+      {"component":"remap","name":"output_profile","label":"Remap Output","enabled":true},
+      {"type":"separator","name":"output_gap","tags":{"sidefx::look":"blank","sidefx::layout_height":"small"}},
+      {"type":"string","name":"output_name","label":"Output Attribute","default":"result"}
+    ]}
+  ]
+}

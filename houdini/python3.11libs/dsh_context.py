@@ -17,6 +17,7 @@ def scene_context(runtime_id, owner_thread):
         'schema_version': 1, 'runtime_id': runtime_id,
         'observed_at': time.time(), 'version': hou.applicationVersionString(),
         'hip_path': hou.hipFile.path(), 'frame': float(hou.frame()),
+        'update_mode': {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         'ui_available': ui, 'dirty_reliable': ui,
         'has_unsaved_changes': bool(hou.hipFile.hasUnsavedChanges()) if ui else None,
         'selection': [], 'selection_count': 0, 'panes': [],

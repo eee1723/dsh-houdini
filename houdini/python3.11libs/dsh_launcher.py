@@ -378,6 +378,11 @@ def restart_bridge() -> str:
     import dsh_bridge
     import dsh_requests
     import dsh_hou_helpers
+    import dsh_hda_interfaces
+    import dsh_hda_ui
+    import dsh_parameter_ui
+    import dsh_control_bindings
+    import dsh_cook_control
     import dsh_quality_contracts
     import dsh_sop_contracts
     import dsh_camera_framing
@@ -386,6 +391,11 @@ def restart_bridge() -> str:
 
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
+    importlib.reload(dsh_hda_interfaces)
+    importlib.reload(dsh_parameter_ui)
+    importlib.reload(dsh_control_bindings)
+    importlib.reload(dsh_cook_control)
+    importlib.reload(dsh_hda_ui)
     importlib.reload(dsh_camera_framing)
     importlib.reload(dsh_geometry_observation)
     importlib.reload(dsh_operation_cards)

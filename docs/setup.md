@@ -34,7 +34,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 
 ## Version & Diagnostics
 
-顶部两列分别是 **This Houdini process** 与 **Next Houdini start**，不是两个独立更新的产品。
+受管模式顶部两列分别是 **This Houdini process** 与 **Next Houdini start**，不是两个独立更新的产品。
+源码和受管安装共用此主面板及 **Advanced runtime diagnostics** 入口；面板明确显示安装模式和路径。
+源码模式右列为 **Source on disk**，只展示磁盘package版本，当前运行态标为未核验；实际加载身份在高级诊断中检查。
+源码模式提供正式发行页、源码版本刷新和Git/npm更新说明，不创建受管安装状态，安装修复/回退/取消切换按钮不可用。
+源码模式可直接打开高级诊断来检查尚未启动的运行时；以下操作表描述受管模式。
 
 | 操作 | 行为 |
 |---|---|
@@ -99,7 +103,7 @@ python houdini/install.py
 
 `houdini/install.py --print`只预览package；`--skip-dsh-profile`只注册源码package。
 lib和node_modules不提交，生成区不手改；更新源码执行git pull --ff-only、npm install、npm run build。
-源码安装仍使用系统Node与项目npx缓存，只锁DSH根包，不具有完整受管发行保证。普通面板不拉main、不原地构建。
+源码安装仍使用系统Node与项目npx缓存，只锁DSH根包，不具有完整受管发行保证。共用面板不拉main、不原地构建。
 开发者命令行构建仍是明确路径，受管界面不提供构建源码或启用未发布checkout按钮。
 
 默认安装/启动/修复共用[兼容清单](../dsh-runtime-compatibility.json)的preferred精确DSH。

@@ -202,7 +202,7 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - 依赖包含Python import、内部自定义HDA类型、其他资源；扫描无包名不证明闭包完整。section写入/hash、内部helper、实际hdaModule/回调、cook后的最终几何、隔离目标环境可用分别列证据。声明单文件自包含须覆盖实际自定义节点依赖。
 - 新实例菜单显示、底层token和实际业务输入分别取证；空默认、失效选择、切class不混同。输出仅errors()、分支数量不代替cook/warnings/分支关系。同步或替换纯函数通过不代替实际副作用与恢复。
 - 手动exec源码绕过真实回调时只认可所测函数层；弹窗未测等范围应保留。测试需隔离，不鼓励为补证直接操作用户网络。无图像的功能维护不算视觉失败，不强迫艺术/动画完成门。
-- 多section写入与普通文件写回不自动原子，HDA库不属场景undo保证。备份不等于恢复已经执行；清理临时节点不证明用户视口/dirty未变。具体维护候选由houdini-sop-workflow路由到references/hda-maintenance.md，量表不自动认证其采用效果。
+- 多section写入与普通文件写回不自动原子，HDA库不属场景undo保证。备份不等于恢复已经执行；清理临时节点不证明用户视口/dirty未变。具体维护候选按名加载houdini-tool-development，再读取其references/hda-maintenance.md，量表不自动认证其采用效果。
 
 ### Solaris / USD / Karma
 

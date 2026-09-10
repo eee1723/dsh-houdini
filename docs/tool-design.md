@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 26
+Execution contract version: 30
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -94,7 +94,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除（返回被表达式引用的上游）；拒绝删除 owner-tagged `render_view` 会话级基础设施，避免进入 H21 OpenGL teardown fatal 路径 | dict |
-| `cook_node(node, force=False)` | cook + error/warning；另给 `ok/warning_free/healthy`，warning 未解释不得当完成 | dict |
+| `cook_node(node, force=False, timeout_ms=30000)` | cook + error/warning，timeout_ms为1..120000的协作预算，仅原生中断检查点可响应，不保证强制停止/内存安全。Manual返回ok=False/status=not_cooked_manual，不自动切Auto；预检至多512上游节点的已知VEX删除循环。warning未解释不得当完成 | dict |
 | `sop_set_output(node, render=True, allow_foreign=None)` | 把 SOP singular display/render 旗标移到输出节点；属于用户 viewport/交付状态，不是 render_view 前置条件 | dict |
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
@@ -117,7 +117,11 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
-| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms | dict |
+| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms 新增layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
+| `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省，返回实例/可选定义树、可选raw状态和非阻断结构建议；不要求HDA，不cook/执行菜单，不创建绑定。hda_info保留同形兼容入口 | dict |
+| `bind_controls(controller, bindings, *, dry_run=False, expected_plan=None, replace_existing=False, allow_foreign=None)` | 1..32项明确数值绑定：source为控制节点参数名，target为目标参数绝对路径，可选scale/offset。dry_run返回plan_sha256；应用必须expected_plan匹配identity/值/keys/锁定/帧。默认拒绝已有驱动，replace_existing显式替换；拒绝非数值/菜单/回调/multiparm、任意表达式源、批次源目标交叠及重复目标。整数目标只接受整数源与映射系数。实际HScript引用和值回读，失败恢复本批目标通道；不保证领域输出或外部副作用 | dict |
+
+| `set_update_mode(mode, expected_mode)` | 显式切换auto/manual/on_mouse_up，expected_mode防止覆盖过期用户状态；切Auto可能触发全场景计算，不是取消接口 | dict |
 
 ### scene 域（工程/时间线）
 
@@ -151,14 +155,39 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 ### asset 域（HDA / 数字资产）
 
+通用参数界面和绑定属于parm域，HDA入口保留资产语义。
+
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None)` | 把已有节点（通常 subnet）转为数字资产：自动建 otls 目录、默认 `$HIP/otls/<name>.hda`。`replace=True` = 整体重建：所有待销毁实例逐项通过 ownership guard 后，卸载旧定义并覆盖文件；否则同名冲突报错并提示 replace | dict |
-| `hda_info(node, max_depth=6)` | 资产/参数界面**只读自省**：类型名、定义文件、section 清单、参数模板树（名字/标签/类型/conditional/tags/嵌套 folder 递归）——替代手写 walk()（会话里重复写了 3 次）。普通节点也可用（只有 parm 树，无 section） | dict |
+| `hda_info(node, max_depth=6, include_state=False, analyze_ui=False)` | 资产/参数界面只读自省：类型/定义文件/section、实例interface与definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、单页tab_conditionals、tuple look与Ramp类型。interface_sha256绑定类型/库路径/DialogScript；include_state返回至多512通道的raw_value/keyframes/locked。analyze_ui返回树计数/深度/截断及非阻断引用、标题和密集行建议，不执行菜单/表达式/cook，不自动修复或认证视觉。普通节点也可用 | dict |
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
 | `hda_set_section(node, section, code, allow_foreign=None)` | 全量写 section。`PythonModule` 先 `compile()` 预检语法（带行号报错，不写脏）；写后读回校验一致 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |
-| `hda_set_interface(node, spec, keep_std=True, hide_builtin_tabs=False, allow_foreign=None)` | **声明式参数面板**（整组重建语义，非 merge）：`spec` 是条目列表（folder/separator/toggle/int/float/string/button/menu），重建自定义参数组；subnet HDA 的 Transform/Subnet 标准页从 Houdini 原生 subnet 类型重新取得，避免夹带旧自定义参数。`hide_when` 字段写 conditional，**提交后读回验证**——被 `setParmTemplateGroup` 吞掉就自动改走 DialogScript `hidewhen` 补丁兜底；folder 上设 `hide_when` 直接报错（Houdini不支持）。`hide_builtin_tabs=True` 通过公开 `ParmTemplateGroup.hide` 生成 `invisibletab` 隐藏标准页 | dict |
+| `hda_set_interface(node, spec=None, keep_std=True, hide_builtin_tabs=False, allow_foreign=None, *, edits=None, expected_sha256=None, dry_run=False, layout=None)` | spec/layout为整组重建；layout与spec/edits互斥，展开可选section/row/remap/repeater为原始spec，最多512条/12层，检查所有同定义实例ownership。支持原有控件及label/ramp、数值components(1..4)/look、multiparm folder与tab条件；布局指南见工具开发skill。dry_run对三种模式均零写入预览，仍须exec。只有edits模式提供旧通道状态保留与同步失败文件恢复，范围见下方；layout/spec不是兼容迁移器，写后失败须按实际文件恢复，不扩大undo保证 | dict |
+
+#### HDA界面增量合同
+
+`edits`逐项作用于同一份内存模板，所有项预检通过后才写入：
+
+- `{"op":"update","name":"参数内部名","fields":{...}}`：fields支持label/help/hidden/join_next、min/max/min_strict/max_strict、hide_when/disable_when及字面标量default。默认值修改拒绝菜单、回调、表达式默认和非标量；条件使用原生大括号语法，空字符串清除条件。改变默认值保留已有实例当前值。
+- `{"op":"add","spec":{...},"folder":"已有folder内部名"}`：spec采用现有创建条目；folder省略时追加到原始定义顶层。未知字段、重复名字和不存在的目标整批零写入拒绝。
+- 当前不支持删除、改名、移动、类型转换、已有callback/menu更新、ramp/multiparm或实例独有界面覆盖；不是任意HDA接口迁移器。最多256模板、64实例、每实例512通道。
+- 版本来自类型/库路径/原始DialogScript，写前拒绝过期版本。原始定义不含Houdini自动补齐的部分系统页签；这些页签只供自省，不能作为增量目标。原生序列化参数块保留资产头部、帮助和输入标签；不重建标准页，不运行回调或证明布局/输出。
+- dry_run返回changes/affected_instances/applied=False/scene_writes=0；成功应用另返回after_sha256/current_state_preserved/preserved_channels。模板回读与通道保留失败时恢复本调用前DialogScript、通道及磁盘库；这是同步失败恢复，不是断电原子事务或后续exec失败的文件undo。
+
+#### HDA布局创建合同
+
+原始spec新增：label；ramp的ramp_type(float/color)、points(2..16)、basis(linear/constant/catmullrom/bspline)、show_controls；
+float/int的components(1..4)、等长default和look(regular/vector/color)，color要求3/4分量。
+folder_type增加multiparm_list/multiparm_tabs/multiparm_scroll，default为0..64实例；子字段每层重复需要一个#占位。
+普通folder支持ends_tab_group与tab_hide_when/tab_disable_when（单页/单区），multiparm不支持tab条件；hide_when/disable_when为普通模板条件。
+通用字段增加hidden/hide_label/disable_when。菜单条件核对实际token，不能从eval返回的索引猜条件值。
+
+layout组件的字段、选择标准和完整可编辑样例唯一维护于[UI组件参考](../skills/houdini-parameter-ui/references/ui-components.md)。
+layout写后检查标签/顺序、类型、tags、默认、组件数、join及条件；原生归并后的folder-set名字需回读，不承诺提交名字原样保留。
+ui_analysis只是非阻断建议：未解析引用可能是tuple分量、动态或外部路径，不能据此自动改名。
+Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的状态迁移与恢复。
 
 ### render / sim 域（渲染产物）
 

@@ -20,6 +20,9 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ## Host与浏览器
 
+HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-check.py)启动独立hython，
+复制声明库/模块后验证真实回调、菜单、输出与实际依赖路径；不向live运行态开放任意按钮执行。
+
 | 源码 | 维护职责 |
 |---|---|
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
@@ -31,7 +34,7 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
 | [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 交互选择题的互斥性与可执行约束 |
-| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册 |
+| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [client.js](../client.js) | 手写CJS factory；Houdini Trace视图、回放解析和生成目录 |
 | [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 五看板、公开Trajectory请求/调用适配、结构化详情、技能证据与类型配色；构建嵌入client.js |
@@ -49,7 +52,13 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 |---|---|
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime的有界exec/jobs回执、owner_call索引、payload/owner冲突拒绝和原结果/jobId查回；无HOM，不重提代码 |
-| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 58动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
+| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 61动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
+| [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、自省状态与增量修改预检、实例通道保留及本调用文件恢复 |
+| [dsh_parameter_ui.py](../houdini/python3.11libs/dsh_parameter_ui.py) | 共享组件展开、布局预检/诊断、单节点spare追加及状态保留 |
+| [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
+| [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | 更新模式与已知不终止VEX模式预检；协作超时不保证内存安全 |
+| [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker进程树限额、超时/取消与退出回收，不接管live进程 |
+| [dsh_hda_ui.py](../houdini/python3.11libs/dsh_hda_ui.py) | 旧UI模块的兼容导入入口 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
 | [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换 |
@@ -66,7 +75,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [houdini/install.py](../houdini/install.py) | Houdini package安装、profile同步入口 |
 | [Install.cmd](../Install.cmd)、[installer/install.ps1](../installer/install.ps1) | 无外部Python/Node引导、独立管理器不可变复制、package原子注册与备份；完整离线包使用Houdini内置Python暂存 |
 | [dsh_bootstrap.py](../houdini/python3.11libs/dsh_bootstrap.py) | Houdini启动固定版本选择，后台校验/数据快照、主线程加载；未安装时仍能打开管理器 |
-| [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 独立Qt安装/同版修复/校验/回退；本进程与下次启动分层，worker队列与取消 |
+| [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 源码/受管共用独立Qt主面板与高级诊断入口；源码仅查看/更新说明，受管安装/同版修复/校验/回退，worker队列与取消 |
 | [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | RSA签名/资产/全量文件校验、安全解压、OS锁、旁路安装、独立数据快照和回退；无Node/hou/Qt依赖 |
 | [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径、独立DSH_HOME、子进程环境和Windows Job Object自有前端生命周期；不按端口停止外部服务 |
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |

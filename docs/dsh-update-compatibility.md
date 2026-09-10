@@ -28,7 +28,7 @@ npx cache，也不会替换当前插件要求的版本。未命中preferred缓�
 
 面板的[dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py)只查询官方仓库指定的latest稳定Release，
 拒绝Draft、prerelease和非vMAJOR.MINOR.PATCH标签，未发布和网络不可用分别处理。
-源码诊断面板只提供发布页链接；独立受管面板经过签名/资产门后暂存安装，二者不混用路径或状态。
+源码和受管安装共用独立主面板与高级运行时诊断入口，按模式显示路径与有效操作。源码模式仅提供发布页链接、磁盘版本和Git/npm更新说明；受管模式经过签名/资产门后暂存安装，二者不混用路径或状态。
 
 ## 两个独立 surface
 

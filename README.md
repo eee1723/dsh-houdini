@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、58 个意图级动词、6个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、61 个意图级动词、8个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -53,7 +53,9 @@ python houdini/install.py
 
 | Skill | 职责 |
 |---|---|
-| [houdini-sop-workflow](skills/houdini-sop-workflow/SKILL.md) | SOP/VEX、模块、细化、接口与参数验证；SOP HDA代码/回调维护 |
+| [houdini-sop-workflow](skills/houdini-sop-workflow/SKILL.md) | SOP/VEX、模块、细化、接口与参数验证；SOP HDA内部几何输出 |
+| [houdini-tool-development](skills/houdini-tool-development/SKILL.md) | HDA封装/代码/回调、脚本与依赖交付、Shelf/快捷键及工具入口开发 |
+| [houdini-parameter-ui](skills/houdini-parameter-ui/SKILL.md) | 跨建模/场景总控/HDA的控制设计、共享布局组件、载体选择与参数绑定 |
 | [houdini-rig-animation-workflow](skills/houdini-rig-animation-workflow/SKILL.md) | Channel、KineFX/rig、实际运动交付 |
 | [houdini-solaris-karma-workflow](skills/houdini-solaris-karma-workflow/SKILL.md) | USD、MaterialX、Karma正式渲染 |
 | [houdini-trace-analysis](skills/houdini-trace-analysis/SKILL.md) | 确定性trace取证、指标与审计 |

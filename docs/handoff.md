@@ -28,7 +28,7 @@
 
 - 状态：待验证
 - 现状：正式发行链已可用，剩余边界是另一台物理机器、自定义启动环境及用户模型路径；H22 Qt helper需按安装合同的bin启动目录，私钥备份尚待维护者确认，长期自托管发布环境未配置。
-- 下一步：确认私钥安全备份；按需要配置长期发布runner，并扩展异机/自定义Houdini启动目录与下一组DSH升级的数据兼容验证。获授权后继续核对实际用户现场的请求恢复、来源/工作流、新session指代/提醒/压缩恢复、原生/Code Mode图像及Trace历史；不以安装/只读smoke核销模型行为与视觉验收。
+- 下一步：确认私钥安全备份；按需要配置长期发布runner，并扩展异机/自定义Houdini启动目录与下一组DSH升级的数据兼容验证。完整重开后核对源码/受管菜单的共用主面板、模式路径和高级诊断入口。获授权后继续核对实际用户现场的请求恢复、来源/工作流、新session指代/提醒/压缩恢复、原生/Code Mode图像及Trace历史；不以安装/只读smoke核销模型行为与视觉验收。
 - 移除条件：上述跨机/启动环境边界及获授权用户路径有证据，备份/长期发布运维责任明确；未测试的模型和驱动组合不被宣称为已验证，当前用户旧进程不冒充已加载发行版。
 - 入口：[安装合同](setup.md)、[兼容验收](dsh-update-compatibility.md)、[安装器](../houdini/install.py)、[发布策略](../houdini/python3.11libs/dsh_release_policy.py)、[部署回归](development.md#4-回归与发布)、[WebView回归](../tools/tests/dsh-webview-navigation.test.py)、[Trace回归](../tools/tests/trace-view.test.mjs)。
 
@@ -43,8 +43,8 @@
 ### H-03 超时与不确定请求恢复（RT-02）
 
 - 状态：待验证
-- 现状：exec/jobs已有同runtime回执查回及按owner_call发现近期引用；提交与完成区分，canonical执行按runtime/sequence去重。实际Host取消路径、长任务结果过期和新session中的恢复采用尚未闭环。
-- 下一步：验证排队取消、运行中断联、提交回包丢失、Host丢弃结果、迟到回包、结果过期和runtime更换；按原调用ID查回而非重提，分别核对原生/Code Mode事件与执行计账。
+- 现状：exec/jobs已有同runtime回执；已补VEX风险拒绝、Manual观察和协作超时；HDA隔离检查器已接Windows自有worker树的内存上限、超时/取消及子进程回收。live运行中取消、通用隔离cook、持久身份恢复和图片历史恢复仍未闭环。
+- 下一步：将自有worker控制复用于通用隔离cook/渲染/缓存，补live协作取消；统一几何入口Manual/新鲜度语义并验证原生中断。实现节点UUID+工程登记恢复，不能仅凭tag授权。图片恢复需检查Host请求waterfall与冻结请求合同，保留原始历史，不直接改node_modules。继续验证断联回执/过期/runtime更换。
 - 移除条件：H-01所确认版本的真实路径可区分未执行/执行中/完成/仍未知，查回不重做修改、不重复计账；过期及无法恢复的情况如实报告，不能仅以隔离脚本通过核销。
 - 入口：[Host传输](../src/bridge.ts)、[Bridge队列](../houdini/python3.11libs/dsh_bridge.py)、[执行状态测试](../tools/tests/execution-state.test.mjs)。
 
@@ -68,7 +68,7 @@
 
 - 状态：待验证
 - 现状：离线正反例覆盖恢复不确定probe、失败重读不掩盖旧图、来源发现/原文部分页/失败，以及节点/tuple诊断归属。读图结果与最终声明并列留给人工语义复核；来源回读不证明消费或完整义务。
-- 下一步：用H-01确认版本的新轨迹核对引用提示/表达式诊断是否减少误用；人工比较读图、模型解读与最终声明，并检查候选probe实体/阈值范围。SOP HDA维护候选另验实际回调/缺子定义/干净环境及简单编辑反例；界面分类须新加载核对，自然任务采用效果仍未验证。
+- 下一步：用H-01确认版本的新轨迹核对引用提示/表达式诊断是否减少误用；人工比较读图、模型解读与最终声明，并检查候选probe实体/阈值范围。按[共享控制设计](parameter-controls.md)补新session参数UI skill触发、先UI/后UI自然任务、窄面板与总控选参质量；固定绑定/组件回归不证明自然采用。工具开发仍按[验收矩阵](../skills/houdini-tool-development/references/evidence-and-validation.md)补Shelf/快捷键生命周期；核对版本29加载，旧现场不能冒充新能力。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。
 

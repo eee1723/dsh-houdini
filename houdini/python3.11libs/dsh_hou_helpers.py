@@ -314,6 +314,7 @@ def scene_info() -> dict:
         "file_exists": file_exists,
         "clean_on_disk": file_exists and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
+        "update_mode": {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         "fps": float(hou.fps()),
         "frame": float(hou.frame()),
         "time": float(hou.time()),
@@ -1597,6 +1598,12 @@ def describe(node) -> dict:
     # 大小写 bug 让 describe 长期静默不返回 geometry（2026-08-19 实证：草地
     # trace 里 agent 在 describe 之后仍手写 bbox/点数循环，就是因为拿不到）。
     if t.category() == hou.sopNodeTypeCategory():
+        if hou.updateModeSetting() == hou.updateMode.Manual:
+            info['geometry'] = None
+            info['geometry_status'] = 'not_evaluated_manual'
+            info['update_mode'] = 'manual'
+            info['geometry_note'] = 'Metadata only: no geometry evaluation requested in Manual mode; not proof of empty geometry.'
+            return info
         geo = None
         try:
             geo = n.geometry()
@@ -1860,13 +1867,33 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
     return result
 
 
-def cook_node(node, force: bool = False) -> dict:
+def set_update_mode(mode: str, expected_mode: str) -> dict:
+    """Explicit global auto/manual/on_mouse_up switch; requires current expected_mode.
+    Switching to auto may trigger dirty networks. Never an interrupt or automatic recovery.
+    """
+    from dsh_cook_control import set_update_mode as change
+    return change(mode, expected_mode)
+
+
+def cook_node(node, force: bool = False, timeout_ms: int = 30000) -> dict:
     """Cook and read health; refresh an existing error once to avoid stale diagnostics."""
     n = _resolve(node)
+    if type(timeout_ms) is not int or not 1 <= timeout_ms <= 120000:
+        raise ValueError('timeout_ms must be 1..120000; cooperative timeout, not an OOM guarantee')
+    mode = hou.updateModeSetting()
+    if mode == hou.updateMode.Manual:
+        return {'path':n.path(), 'ok':False, 'healthy':False, 'warning_free':True,
+                'status':'not_cooked_manual', 'errors':[], 'warnings':[], 'forced':False,
+                'update_mode':'manual', 'next_action':'Keep Manual for inspection/editing; explicitly authorize a policy change before evaluation. Missing geometry is not an empty successful output.'}
+    from dsh_cook_control import preflight
+    preflight(n)
     effective_force = bool(force) or bool(n.errors())
     cook_error = None
     try:
-        n.cook(force=effective_force)
+        with hou.InterruptableOperation('DSH cook', timeout_ms=timeout_ms) as operation:
+            operation.updateProgress(0)
+            n.cook(force=effective_force)
+            operation.updateProgress(1)
     except Exception as e:  # hou.OperationFailed 等
         cook_error = str(e)
     errors = list(n.errors())
@@ -1881,6 +1908,7 @@ def cook_node(node, force: bool = False) -> dict:
         "warning_free": not warnings,
         "healthy": not errors and not warnings,
         "forced": effective_force,
+        'timeout_ms':timeout_ms, 'interrupt_scope':'cooperative native checkpoints only; cannot guarantee immediate interruption or memory safety',
     }
 
 
@@ -2627,6 +2655,9 @@ def set_parm(node, name: str, value,
     """
     n = _resolve(node)
     _require_owned(n, "set_parm", allow_foreign)
+    if name == 'snippet' and isinstance(value, str) and 'wrangle' in n.type().name():
+        from dsh_cook_control import validate_vex
+        validate_vex(value)
     p = n.parm(name)
     targets = (p,) if p is not None else n.parmTuple(name)
     is_patch = isinstance(value, dict) and 'patch' in value
@@ -3226,8 +3257,13 @@ def _apply_spare_interface(n, group, code_parm):
 def create_spare_parms(node, code_parm: str = "snippet",
                        defaults: dict | None = None,
                        spec: list | None = None,
-                       allow_foreign: str | None = None, *, update_defaults: dict | None = None) -> dict:
+                       allow_foreign: str | None = None, *, update_defaults: dict | None = None,
+                       layout: list | None = None, dry_run: bool = False) -> dict:
     """从代码参数的 ch/chf/chi/chv/chs 引用创建缺失 spare parameters。
+
+    layout可选模式：与spec/defaults/update_defaults互斥，复用houdini-parameter-ui
+    组件，默认追加到单节点而不改HDA定义。dry_run=True返回展开界面/建议且零写入。
+    拒绝同名模板/通道；保持已有值/keys/locks，失败恢复旧接口和通道；不创建绑定。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
     已存在参数默认不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
@@ -3259,6 +3295,19 @@ def create_spare_parms(node, code_parm: str = "snippet",
     """
     n = _resolve(node)
     _require_owned(n, "create_spare_parms", allow_foreign)
+    if layout is not None:
+        if spec is not None or defaults is not None or update_defaults is not None:
+            raise ValueError('layout is exclusive with spec/defaults/update_defaults')
+        from dsh_parameter_ui import apply_spare_layout
+        try:
+            return apply_spare_layout(n, layout, code_parm, dry_run)
+        except CheckpointError:
+            raise
+        except Exception as error:
+            raise CheckpointError(str(error), {'ok': False, 'mode': 'layout',
+                'phase': 'preflight', 'scene_writes': 0}) from error
+    if dry_run is not False:
+        raise ValueError('dry_run requires layout mode')
     if update_defaults is not None:
         if spec is not None or defaults is not None or code_parm != 'snippet':
             raise ValueError('update_defaults is exclusive with spec/defaults/code_parm scanning')
@@ -3495,6 +3544,8 @@ def hda_create(
             definition.destroy()
             removed_definitions.append(file_path)
 
+    source_identity = int(n.sessionId())
+    source_owner = _OWNED_NODE_SESSIONS.get(source_identity)
     created = n.createDigitalAsset(
         name=name,
         hda_file_name=target,
@@ -3507,6 +3558,14 @@ def hda_create(
     definition = created.type().definition()
     if definition is None:
         raise RuntimeError(f"createDigitalAsset 返回后类型 '{name}' 没有 definition")
+    # Conversion may replace the root HOM identity. Transfer only its trusted
+    # existing provenance; never adopt foreign descendants or an allowed foreign source.
+    if source_owner is not None:
+        _OWNED_NODE_SESSIONS[int(created.sessionId())] = dict(source_owner)
+        if _CREATION_JOURNAL is not None and source_identity in _CREATION_JOURNAL:
+            _CREATION_JOURNAL.add(int(created.sessionId()))
+        if hou.nodeBySessionId(source_identity) is None:
+            _OWNED_NODE_SESSIONS.pop(source_identity, None)
     return {
         "node": created.path(),
         "type": created.type().name(),
@@ -3536,10 +3595,20 @@ def _template_info(template, depth: int, max_depth: int) -> dict:
     for key, getter in (
         ("hidden", "isHidden"),
         ("join_next", "joinsWithNext"),
+        ("hide_label", "isLabelHidden"),
         ("help", "help"),
         ("default", "defaultValue"),
         ("menu_items", "menuItems"),
         ("menu_labels", "menuLabels"),
+        ("column_labels", "columnLabels"),
+        ("components", "numComponents"),
+        ("min", "minValue"),
+        ("max", "maxValue"),
+        ("min_strict", "minIsStrict"),
+        ("max_strict", "maxIsStrict"),
+        ("callback", "scriptCallback"),
+        ("menu_generator", "itemGeneratorScript"),
+        ("default_expression", "defaultExpression"),
     ):
         try:
             value = getattr(template, getter)()
@@ -3561,8 +3630,18 @@ def _template_info(template, depth: int, max_depth: int) -> dict:
             entry["tags"] = dict(tags)
     except Exception:
         pass
+    for key, getter in (("callback_language", "scriptCallbackLanguage"),
+                        ("menu_generator_language", "itemGeneratorScriptLanguage"),
+                        ("menu_type", "menuType"), ("string_type", "stringType"),
+                        ("file_type", "fileType"), ("look", "look"), ("naming_scheme", "namingScheme")):
+        try:
+            entry[key] = _enum_name(getattr(template, getter)())
+        except (AttributeError, hou.Error):
+            pass
     if isinstance(template, hou.FolderParmTemplate):
         entry["folder_type"] = _enum_name(template.folderType())
+        entry['tab_conditionals'] = {_enum_name(k): v for k, v in template.tabConditionals().items()}
+        entry['ends_tab_group'] = template.endsTabGroup()
         children = list(template.parmTemplates())
         if depth < max_depth:
             entry["parms"] = [
@@ -3570,12 +3649,49 @@ def _template_info(template, depth: int, max_depth: int) -> dict:
             ]
         elif children:
             entry["parms_omitted"] = len(children)
+    if isinstance(template, hou.RampParmTemplate):
+        entry['ramp_type'] = _enum_name(template.parmType())
+        entry['show_controls'] = template.showsControls()
+        entry['basis'] = _enum_name(template.defaultBasis())
     return entry
 
 
-def hda_info(node, max_depth: int = 6) -> dict:
-    """只读自省 HDA 定义与参数模板树；普通节点也可查看参数树。"""
+def parameter_ui(node, max_depth: int = 6, include_state: bool = False, analyze_ui: bool = False) -> dict:
+    """Read parameter UI on any node: instance/definition tree, optional raw state and structural suggestions.
+
+    Does not create an HDA, evaluate menus, cook geometry, bind targets or alter UI.
+    hda_info remains a compatible entry for existing asset-oriented workflows.
+    """
+    return hda_info(node, max_depth=max_depth, include_state=include_state, analyze_ui=analyze_ui)
+
+
+def bind_controls(controller, bindings: list, *, dry_run: bool = False,
+                  expected_plan: str | None = None, replace_existing: bool = False,
+                  allow_foreign: str | None = None) -> dict:
+    """Bind explicit numeric controls to target parameter paths; never chooses targets.
+
+    bindings=[{source:'control_name',target:'/obj/node/parm',scale:1,offset:0}].
+    First dry_run=True; apply requires its expected_plan=plan_sha256. Protects
+    existing keys/expressions unless replace_existing=True. Source expressions,
+    menus/callbacks/multiparms and source-target chains in a batch are unsupported.
+    Integer targets need integer sources and scale/offset. Failure restores target
+    channels; expression/value readback does not verify final domain geometry.
+    """
+    from dsh_control_bindings import bind_controls as bind
+    return bind(controller, bindings, dry_run, expected_plan, replace_existing, allow_foreign)
+
+
+def hda_info(node, max_depth: int = 6, include_state: bool = False, analyze_ui: bool = False) -> dict:
+    """只读HDA/实例模板树、interface_sha256；include_state回读至多512通道raw值/keys/locks。
+
+    analyze_ui=True给出计数/深度、标题/条件引用、菜单token与密集行建议；仅分析
+    返回树，截断见omitted_children。不求值表达式/菜单，不cook或自动修复。
+    """
     n = _resolve(node)
+    if type(include_state) is not bool:
+        raise ValueError('include_state must be boolean')
+    if type(analyze_ui) is not bool:
+        raise ValueError('analyze_ui must be boolean')
     if not isinstance(max_depth, int) or max_depth < 0 or max_depth > 20:
         raise ValueError("max_depth 必须是 0..20 的整数")
     definition = n.type().definition()
@@ -3591,6 +3707,8 @@ def hda_info(node, max_depth: int = 6) -> dict:
         ],
     }
     if definition is not None:
+        from dsh_hda_interfaces import interface_revision
+        out['interface_sha256'] = interface_revision(n)
         sections = []
         for name, section in sorted(definition.sections().items()):
             try:
@@ -3606,7 +3724,16 @@ def hda_info(node, max_depth: int = 6) -> dict:
             "min_inputs": definition.minNumInputs(),
             "max_inputs": definition.maxNumInputs(),
             "sections": sections,
+            "interface": [_template_info(entry, 0, max_depth)
+                          for entry in definition.parmTemplateGroup().entries()],
         }
+    if include_state:
+        from dsh_hda_interfaces import parameter_states
+        out['parameter_states'] = parameter_states(n)
+    if analyze_ui:
+        from dsh_parameter_ui import analyze_ui as inspect_ui
+        out['ui_analysis'] = inspect_ui(out['interface'])
+        out['ui_analysis']['max_depth_requested'] = max_depth
     return out
 
 
@@ -3714,11 +3841,11 @@ def hda_patch_section(
     return out
 
 
-def _spec_name(item: dict, path: str) -> str:
+def _spec_name(item: dict, path: str, multiparm_depth: int = 0) -> str:
     name = item.get("name")
-    if not isinstance(name, str) or not _PARM_NAME_RE.fullmatch(name):
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_#]*', name) or name.count('#') != multiparm_depth:
         raise ValueError(
-            f"{path}.name 必须匹配 {_PARM_NAME_RE.pattern!r}，收到 {name!r}"
+            f"{path}.name requires a stable identifier and {multiparm_depth} multiparm # placeholders, received {name!r}"
         )
     return name
 
@@ -3755,13 +3882,15 @@ def _apply_template_common(template, item: dict, path: str, conditions: dict) ->
         template.setJoinWithNext(True)
     hide_when = _normalize_hide_when(item.get("hide_when"), path)
     if hide_when is not None:
-        if isinstance(template, hou.FolderParmTemplate):
-            raise ValueError(
-                f"{path}.hide_when 不能设在 folder 上；Houdini 不支持 folder conditional，"
-                "隐藏整页请用 hide_builtin_tabs 或调整具体参数"
-            )
         template.setConditional(hou.parmCondType.HideWhen, hide_when)
         conditions[template.name()] = hide_when
+    disable_when = _normalize_hide_when(item.get('disable_when'), path)
+    if disable_when:
+        template.setConditional(hou.parmCondType.DisableWhen, disable_when)
+    if 'hidden' in item:
+        template.hide(bool(item['hidden']))
+    if 'hide_label' in item:
+        template.setLabelHidden(bool(item['hide_label']))
     tags = dict(template.tags())
     user_tags = item.get("tags", {})
     if not isinstance(user_tags, dict):
@@ -3776,18 +3905,19 @@ def _build_interface_template(
     path: str,
     names: set,
     conditions: dict,
+    multiparm_depth: int = 0,
 ):
     if not isinstance(item, dict):
         raise ValueError(f"{path} 必须是 dict")
     kind = str(item.get("type", "")).strip().lower()
     if kind not in {
-        "folder", "separator", "toggle", "int", "float", "string", "button", "menu"
+        "folder", "separator", "toggle", "int", "float", "string", "button", "menu", "ramp", "label"
     }:
         raise ValueError(
             f"{path}.type 不支持 {kind!r}；可用 folder/separator/toggle/int/float/"
             "string/button/menu"
         )
-    name = _spec_name(item, path)
+    name = _spec_name(item, path, multiparm_depth)
     if name in names:
         raise ValueError(f"参数/文件夹名 {name!r} 重复（Houdini 参数名全局唯一）")
     names.add(name)
@@ -3799,6 +3929,9 @@ def _build_interface_template(
             "simple": hou.folderType.Simple,
             "tabs": hou.folderType.Tabs,
             "collapsible": hou.folderType.Collapsible,
+            "multiparm_list": hou.folderType.MultiparmBlock,
+            "multiparm_tabs": hou.folderType.TabbedMultiparmBlock,
+            "multiparm_scroll": hou.folderType.ScrollingMultiparmBlock,
         }
         if folder_type not in folder_types:
             raise ValueError(f"{path}.folder_type 只能是 {sorted(folder_types)}")
@@ -3806,22 +3939,58 @@ def _build_interface_template(
         if not isinstance(children, (list, tuple)):
             raise ValueError(f"{path}.parms 必须是 list")
         template = hou.FolderParmTemplate(
-            name, label, folder_type=folder_types[folder_type]
+            name, label, folder_type=folder_types[folder_type], ends_tab_group=bool(item.get('ends_tab_group', False))
         )
+        is_multi = folder_type.startswith('multiparm_')
+        if is_multi:
+            count = item.get('default', 0)
+            if type(count) is not int or not 0 <= count <= 64:
+                raise ValueError('multiparm default count must be 0..64')
+            template.setDefaultValue(count)
+        for field, condition in [('tab_hide_when', hou.parmCondType.HideWhen), ('tab_disable_when', hou.parmCondType.DisableWhen)]:
+            if item.get(field):
+                if is_multi:
+                    raise ValueError('tab conditionals are unsupported on multiparm folders')
+                template.setTabConditional(condition, _normalize_hide_when(item[field], path))
         for index, child in enumerate(children):
             template.addParmTemplate(
                 _build_interface_template(
-                    child, f"{path}.parms[{index}]", names, conditions
+                    child, f"{path}.parms[{index}]", names, conditions, multiparm_depth + int(is_multi)
                 )
             )
     elif kind == "separator":
         template = hou.SeparatorParmTemplate(name, label)
+    elif kind == 'label':
+        template = hou.LabelParmTemplate(name, label, column_labels=(label,))
+    elif kind == 'ramp':
+        ramp_type = item.get('ramp_type', 'float')
+        if ramp_type not in ('float', 'color'):
+            raise ValueError('ramp_type must be float/color')
+        basis = item.get('basis', 'linear')
+        bases = {'linear': hou.rampBasis.Linear, 'constant': hou.rampBasis.Constant,
+                 'catmullrom': hou.rampBasis.CatmullRom, 'bspline': hou.rampBasis.BSpline}
+        if basis not in bases:
+            raise ValueError('unsupported ramp basis')
+        points = item.get('points', 2)
+        if type(points) is not int or not 2 <= points <= 16:
+            raise ValueError('ramp points must be 2..16')
+        template = hou.RampParmTemplate(name, label,
+            hou.rampParmType.Float if ramp_type == 'float' else hou.rampParmType.Color,
+            default_value=points, default_basis=bases[basis], show_controls=bool(item.get('show_controls', False)))
     elif kind == "toggle":
         template = hou.ToggleParmTemplate(
             name, label, default_value=bool(item.get("default", False))
         )
     elif kind in ("int", "float"):
-        default = item.get("default", 0)
+        components = item.get('components', 1)
+        if type(components) is not int or not 1 <= components <= 4:
+            raise ValueError('numeric components must be 1..4')
+        default = item.get("default", 0 if components == 1 else [0]*components)
+        if components > 1 and (not isinstance(default, (list, tuple)) or len(default) != components):
+            raise ValueError('tuple default must match components')
+        values = [default] if components == 1 else default
+        if any(type(v) not in (int, float) or not math.isfinite(v) or kind == 'int' and type(v) is not int for v in values):
+            raise ValueError('numeric defaults must be finite and match numeric type')
         minimum = item.get("min", 0)
         maximum = item.get("max", 10)
         if kind == "float" and "menu" in item:
@@ -3830,13 +3999,15 @@ def _build_interface_template(
                 "需要菜单请用 int+menu（值为索引）或 string"
             )
         kwargs = {
-            "default_value": (float(default),) if kind == "float" else (int(default),),
+            "default_value": tuple(float(v) for v in values) if kind == "float" else tuple(values),
             "min": float(minimum) if kind == "float" else int(minimum),
             "max": float(maximum) if kind == "float" else int(maximum),
             "min_is_strict": bool(item.get("min_strict", False)),
             "max_is_strict": bool(item.get("max_strict", False)),
         }
         if kind == "int" and "menu" in item:
+            if components != 1:
+                raise ValueError('menus require scalar components')
             items, labels = _menu_data(item, path)
             index = int(default)
             if not 0 <= index < len(items):
@@ -3846,7 +4017,13 @@ def _build_interface_template(
                 )
             kwargs.update(menu_items=items, menu_labels=labels)
         cls = hou.FloatParmTemplate if kind == "float" else hou.IntParmTemplate
-        template = cls(name, label, 1, **kwargs)
+        template = cls(name, label, components, **kwargs)
+        look = item.get('look', 'regular')
+        if look not in ('regular', 'vector', 'color') or look == 'color' and components not in (3, 4):
+            raise ValueError('numeric look must be regular/vector/color (color needs 3/4 components)')
+        template.setLook({'regular': hou.parmLook.Regular, 'vector': hou.parmLook.Vector, 'color': hou.parmLook.ColorSquare}[look])
+        if look == 'color':
+            template.setNamingScheme(hou.parmNamingScheme.RGBA)
     elif kind == "string":
         default = str(item.get("default", ""))
         file_kind = item.get("file")
@@ -3975,12 +4152,31 @@ def _patch_dialog_hide_when(dialog: str, name: str, condition: str) -> str:
 
 def hda_set_interface(
     node,
-    spec: list,
+    spec: list | None = None,
     keep_std: bool = True,
     hide_builtin_tabs: bool = False,
     allow_foreign: str | None = None,
+    *,
+    edits: list | None = None,
+    expected_sha256: str | None = None,
+    dry_run: bool = False,
+    layout: list | None = None,
 ) -> dict:
     """按 JSON 安全 spec 声明式重建 HDA 参数面板并验证 conditional。
+
+    layout为可选组件列表，与spec/edits互斥，仍是整组重建。component支持section
+    (name/label/parms, enabled?/collapsed?/header_parm?)、row(parms)、remap
+    (name/label/enabled?/ramp_type?)、repeater(name/label/parms/style?/count?/label_ref?)。
+    可混用普通spec；新增label/ramp、numeric components/look、multiparm与tab条件。
+    dry_run=True只预检并返回展开interface/ui_analysis，不写入；各模式仍须exec。
+    layout不继承edits的旧通道状态保持/文件恢复承诺；布局组件不代表业务功能。
+
+    增量模式：spec省略，传edits=[{op:'update',name,fields}或{op:'add',spec,folder?}]
+    与hda_info的expected_sha256。update支持label/help/default/min/max/min_strict/
+    max_strict/hidden/join_next/disable_when/hide_when。dry_run=True预览但仍须exec。
+    所有受影响实例均检查ownership；保留旧通道值/keys/locks，新实例用新默认。
+    不支持删除/改名/移动/类型转换/ramp/multiparm/实例界面覆盖；最多32项、64实例。
+    同步失败恢复本调用的定义、通道、磁盘库，不保证外部副作用或后续exec失败恢复。
 
     自定义部分是**整组重建**，不是 merge。``keep_std`` 对 subnet HDA 从原生
     subnet 类型重新取得 Transform/Subnet 等标准页，避免把旧自定义参数夹带回来；
@@ -3988,8 +4184,26 @@ def hda_set_interface(
     ``hide_when`` 在提交后读回验证，Houdini 若吞掉 conditional，则自动补丁
     DialogScript 的 ``hidewhen`` 并再次验证。
     """
+    if layout is not None:
+        if spec is not None or edits is not None or expected_sha256 is not None:
+            raise ValueError('layout is exclusive with spec/edits/expected_sha256')
+        from dsh_parameter_ui import expand_layout, validate_layout_spec
+        spec = expand_layout(layout)
+        validate_layout_spec(spec)
+    if edits is not None:
+        if spec is not None or keep_std is not True or hide_builtin_tabs is not False:
+            raise ValueError('edits is exclusive with spec/keep_std/hide_builtin_tabs options')
+        from dsh_hda_interfaces import patch_interface
+        return patch_interface(node, edits, expected_sha256, dry_run, allow_foreign)
+    if expected_sha256 is not None:
+        raise ValueError('expected_sha256 requires edits mode')
+    if type(dry_run) is not bool:
+        raise ValueError('dry_run must be boolean')
     n, definition = _hda_definition(node)
     _require_owned(n, "hda_set_interface", allow_foreign)
+    if layout is not None:
+        for instance in n.type().instances():
+            _require_owned(instance, 'hda_set_interface layout affected instance', allow_foreign)
     if not isinstance(spec, (list, tuple)):
         raise ValueError("spec 必须是参数条目 list")
     names: set = set()
@@ -4022,6 +4236,12 @@ def hda_set_interface(
             except Exception as e:
                 raise ValueError(f"隐藏标准页 {name!r} 失败：{e}") from e
 
+    from dsh_parameter_ui import analyze_ui as inspect_ui
+    preview_tree = [_template_info(t, 0, 20) for t in group.entries()]
+    if dry_run:
+        return {'node': n.path(), 'mode': 'layout' if layout is not None else 'rebuild',
+                'dry_run': True, 'applied': False, 'scene_writes': 0,
+                'interface': preview_tree, 'ui_analysis': inspect_ui(preview_tree)}
     definition.setParmTemplateGroup(group, rename_conflicting_parms=False)
 
     # H21 实测 setParmTemplateGroup 会吞一部分 API setConditional：先读回，
@@ -4050,6 +4270,32 @@ def hda_set_interface(
 
     verified = {}
     final_group = n.parmTemplateGroup()
+    for index, template in enumerate(custom):
+        def verify_template(expected, actual):
+            if actual.type() != expected.type() or actual.label() != expected.label():
+                raise RuntimeError(f'UI template order/type/label mismatch: {expected.name()}')
+            for key, value in expected.tags().items():
+                if actual.tags().get(key) != value:
+                    raise RuntimeError(f'UI tag readback mismatch: {expected.name()}/{key}')
+            for getter in ('joinsWithNext', 'isLabelHidden', 'numComponents', 'defaultValue'):
+                if hasattr(expected, getter) and getattr(actual, getter)() != getattr(expected, getter)():
+                    raise RuntimeError(f'UI property readback mismatch: {expected.name()}/{getter}')
+            for condition, value in expected.conditionals().items():
+                if actual.conditionals().get(condition) != value:
+                    raise RuntimeError(f'UI conditional readback mismatch: {expected.name()}/{condition}')
+            if isinstance(expected, hou.FolderParmTemplate):
+                if actual.folderType() != expected.folderType():
+                    raise RuntimeError(f'UI folder layout mismatch: {expected.name()}')
+                if actual.tabConditionals() != expected.tabConditionals():
+                    raise RuntimeError(f'UI tab conditional readback mismatch: {expected.name()}')
+                children = actual.parmTemplates()
+                if len(children) != len(expected.parmTemplates()):
+                    raise RuntimeError(f'UI folder child count mismatch: {expected.name()}')
+                for child, actual_child in zip(expected.parmTemplates(), children):
+                    verify_template(child, actual_child)
+        # Existing hide_when fallback below owns legacy HideWhen verification.
+        if layout is not None:
+            verify_template(template, final_group.entries()[index])
     for name, expected in conditions.items():
         template = final_group.find(name)
         actual = None if template is None else template.conditionals().get(
@@ -4081,6 +4327,9 @@ def hda_set_interface(
         "hidden_standard_tabs": sorted(hidden_std),
         "hide_when_verified": verified,
         "dialogscript_patched": patched,
+        'mode': 'layout' if layout is not None else 'rebuild',
+        'ok': True, 'applied': True,
+        'ui_analysis': inspect_ui([_template_info(t, 0, 20) for t in final_group.entries()]),
     }
 
 

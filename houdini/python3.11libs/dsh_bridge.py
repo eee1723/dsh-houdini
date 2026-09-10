@@ -68,7 +68,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 26
+_EXECUTION_CONTRACT_VERSION = 30
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)
@@ -211,6 +211,7 @@ _VERBS: dict[str, object] = {
     "rename_node": dsh_hou_helpers.rename_node,
     "delete_node": dsh_hou_helpers.delete_node,
     "cook_node": dsh_hou_helpers.cook_node,
+    "set_update_mode": dsh_hou_helpers.set_update_mode,
     "set_display": dsh_hou_helpers.set_display,
     "display_node": dsh_hou_helpers.display_node,
     "sop_set_output": dsh_hou_helpers.sop_set_output,
@@ -224,6 +225,8 @@ _VERBS: dict[str, object] = {
     "set_parms": dsh_hou_helpers.set_parms,
     "set_keyframes": dsh_hou_helpers.set_keyframes,
     "create_spare_parms": dsh_hou_helpers.create_spare_parms,
+    "parameter_ui": dsh_hou_helpers.parameter_ui,
+    "bind_controls": dsh_hou_helpers.bind_controls,
     "hda_create": dsh_hou_helpers.hda_create,
     "hda_info": dsh_hou_helpers.hda_info,
     "hda_get_section": dsh_hou_helpers.hda_get_section,
@@ -258,14 +261,14 @@ _MUTATING_VERB_NAMES = {
     "set_object_visible", "layout_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "render_frame", "render_view",
-    "viewport_screenshot", "camera_fit",
+    "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
 }
 
 # These verbs may cook or manage services but do not author the deliverable's
 # graph/parameters on a successful, restored call. Unknown effects stay unknown.
 _OBSERVATION_VERBS = {'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes',
     'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
-_GLOBAL_EDIT_VERBS = {'set_timeline', 'scene_save_as', 'hda_create', 'hda_set_section',
+_GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_set_section', 'bind_controls',
                      'hda_patch_section', 'hda_set_interface'}
 
 
@@ -719,6 +722,13 @@ def _operation_summary(name: str, result):
         return result
     if name == 'create_spare_parms' and result.get('mode') == 'update_defaults':
         return result
+    if name == 'bind_controls' or name == 'create_spare_parms' and result.get('mode') == 'layout':
+        return {k: result[k] for k in ('ok','mode','controller','node','dry_run','applied','phase',
+            'scene_writes','created','current_state_preserved','plan_sha256','bindings','restored','restore_errors','scope') if k in result}
+    if name == 'hda_set_interface':
+        return {k: result[k] for k in ('ok', 'mode', 'node', 'dry_run', 'applied', 'phase',
+                'scene_writes', 'before_sha256', 'after_sha256', 'current_state_preserved',
+                'preserved_channels', 'restored', 'restore_errors', 'scope') if k in result}
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
         return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
     if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
@@ -817,6 +827,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                         'next_action': f'verb_help("{name}")'}) from error
             targets = []
             edits_content = name in _MUTATING_VERB_NAMES and name not in _OBSERVATION_VERBS
+            if name in ('hda_set_interface', 'create_spare_parms', 'bind_controls') and kwargs.get('dry_run') is True:
+                edits_content = False
             if impact is not None and edits_content:
                 impact['attempted'] = True
                 if name in _GLOBAL_EDIT_VERBS:
@@ -1040,7 +1052,9 @@ def run_code(code: str, allow_raw: str | None = None,
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
     }
-    mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
+    mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
+        not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls') and (v.get('summary') or {}).get('scene_writes') == 0)
+        for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
     if error is None:
         transaction_status = 'committed' if mutation_attempted else 'no_scene_change'
     elif rollback and rollback.get('applied') and not rollback.get('error'):
@@ -1070,6 +1084,7 @@ def run_code(code: str, allow_raw: str | None = None,
         impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
     envelope['execution'] = {'runtime_id': _RUNTIME_ID, 'sequence': execution_sequence,
         'observed_at': time.time(), 'frame': float(hou.frame()), 'hip_path': hou.hipFile.path(),
+        'update_mode': dsh_hou_helpers.scene_info()['update_mode'],
         'owner_session': owner_session, 'read_only': read_only,
         'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
             'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],

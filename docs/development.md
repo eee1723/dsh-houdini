@@ -6,7 +6,7 @@
 
 | 内容 | 修改位置 | 派生/验证 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证58 个目录入口 |
+| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证61 个目录入口 |
 | 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
@@ -129,9 +129,67 @@ quality-contracts用“局部变化但整体bbox不变”和“面积响应通�
 这只是HOM机制回归；SOP skill的顺序聚焦仍是工作流候选，需同模型/版本/预算的自然任务对照，
 另含简单编辑、单部件、相邻领域和接口未定的反例，不以固定脚本通过证明LLM采用或视觉质量。
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
+
+HDA界面增量使用[dsh-hda-interface-patch](../tools/tests/dsh-hda-interface-patch.test.py)覆盖
+多实例值/keys/locks、新实例默认、预览零写入、过期版本、ownership及磁盘恢复；
+真实按钮/动态菜单和干净进程依赖用[dsh-hda-delivery](../tools/tests/dsh-hda-delivery.test.py)验证。
+两者在H21/H22隔离hython运行；它们不证明GUI布局、自然任务采用或任意插件兼容。
+
+UI组件用[dsh-hda-ui-components](../tools/tests/dsh-hda-ui-components.test.py)验证组件展开、
+数值tuple/颜色、标题开关/条件、Ramp和multiparm增删/重载，以及错误字段/引用诊断。
+可选[原生GUI检查](../tools/tests/dsh-hda-ui-gui.test.py)用--houdini指定安装、--output指定仓库外新目录，
+仅新开自有GUI进程并捕获画廊面板；不连接用户会话、不使用computer-use。进程退出、截图可读性和
+语义布局分别验收。通用JSON与构建命令由[UI组件skill参考](../skills/houdini-parameter-ui/references/ui-components.md)维护。
+
 baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
 冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。
 冻结protocol-manifest的字节摘要以已提交LF内容为准，由.gitattributes固定检出格式；不得为Windows换行转换改动协议或放宽摘要校验。
+
+### HDA交付检查器
+
+共享控制接口用[dsh-parameter-controls](../tools/tests/dsh-parameter-controls.test.py)在H21/H22验证普通Null组件、
+先UI后模型/既有网络后加总控、引用与最终几何响应、旧动画/锁定/Ramp保持、计划过期/循环/ownership拒绝及绑定/界面失败恢复。
+层次设计与实施完成门见[控制参数与绑定](parameter-controls.md)，不将固定夹具通过写成自然任务质量保证。
+
+[hda-delivery-check.py](../tools/hda-delivery-check.py)是作者使用的隔离开发检查器，随包携带。
+普通Python进程调用指定hython，把声明HDA和Python目录复制到临时目录，用独立偏好和工作目录
+启动测试；不连接live Bridge或加载用户HIP。资产和回调必须是获授权执行的可信代码，
+进程隔离不是不可信代码沙箱，也不保证回调对绝对路径、网络或外部进程的副作用可恢复。
+
+```powershell
+python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json
+```
+
+manifest中资源路径相对manifest目录；每个case创建新实例。最小结构如下，类型、参数与判据按交付物填写：
+
+```json
+{
+  "assets": ["tool.hda"],
+  "python_paths": ["python"],
+  "category": "Object",
+  "type": "studio::tool::1.0",
+  "cases": [
+    {"id": "default-and-repeat", "buttons": ["execute", "execute"],
+     "expect_parms": {"runs": 2}},
+    {"id": "invalid-input", "values": {"gain": -1}, "buttons": ["execute"],
+     "expect_error": "gain must be nonnegative", "expect_parms": {"runs": 0}}
+  ]
+}
+```
+
+category支持Object/Sop；可选menus为参数名→预期token列表；expect_geometry包含实例内相对output及
+points/primitives计数。expect_error匹配真实回调诊断，仍可检验失败后的参数状态。HOM可能吞掉按钮异常，
+检查器捕获原生stderr并结合显式结果判据；无异常返回不单独算通过。最终退出码和报告必须同时成功。
+声明库优先加载，子定义来源必须位于交付副本或目标Houdini安装内，拒绝偷偷回到原开发目录。
+这只证明列出的case和可见实例依赖，不认证动态导入闭包、GUI、Shelf/快捷键或Houdini Engine。
+
+Windows检查器支持--timeout秒数、--memory-mb（默认4096，128..65536）和--cancel-file。
+worker在加载用户资产前等待GO，建立Job Object后才放行；超时或取消文件出现会终止本次自有进程树，
+父进程正常退出也回收仍存活的子进程。取消文件不自动删除，已存在时不启动worker。
+报告worker.status区分completed/failed/timed_out/cancelled/cancelled_before_start；只有报告与退出状态均通过才成功。
+内存上限约束进程树提交内存，分配失败可能表现为异常或崩溃；不把未知退出归因为OOM，不限制GPU显存、外部服务或用户主Houdini。
+[worker回归](../tools/tests/dsh-worker-limits.test.py)用小型Python进程验证截止时间、取消、分配拒绝和后代回收，
+[HDA回归](../tools/tests/dsh-hda-delivery.test.py)在H21/H22验证真实受限worker。
 
 ### 发行操作与信任配置
 
@@ -188,6 +246,9 @@ PR不得在持有许可证的自托管runner上任意执行；不能让依赖安
 手动路径同样先准备全部资产、启用immutable Releases，再明确发布；Git凭据仅用于官方仓库API，私钥不进入构建环境或上传到Git。
 
 ## 5. 领域与真实运行验收
+
+计算策略用[隔离cook回归](../tools/tests/dsh-cook-control.test.py)验证已知VEX不终止模式写前拒绝、Manual元数据读取、显式更新模式与普通cook。
+协作超时依赖原生进度检查点，普通cook成功不证明任意原生操作可取消；内存限制/运行中取消/身份持久恢复仍以handoff待办为准。
 
 视频解析离线回归使用 `python tools/tests/video-tutorial.test.py`（宿主 Python 3.11+，不需要 HOM、
 密钥或网络），覆盖授权、分片覆盖、续跑、失败/未知请求、证据损坏和抽帧边界。

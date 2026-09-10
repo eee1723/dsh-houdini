@@ -29,8 +29,8 @@ dsh_launcher.open_workspace()
       <scriptItem id="dsh.version_manager">
         <label>Version &amp; Diagnostics...</label>
         <scriptCode><![CDATA[
-import dsh_manager
-dsh_manager.show_version_manager()
+import dsh_install_ui
+dsh_install_ui.show_source()
 ]]></scriptCode>
       </scriptItem>
 

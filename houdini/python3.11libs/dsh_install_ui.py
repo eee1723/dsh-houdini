@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import queue
 import threading
 
@@ -11,9 +12,18 @@ import dsh_release_policy as releases
 _WINDOW = None
 
 
-def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None):
+def show_source(*, parent=None):
+    """Open the shared panel without creating or selecting a managed installation."""
+    return show(source_root=Path(__file__).resolve().parents[2], parent=parent)
+
+
+def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None):
     global _WINDOW
     from hutil.Qt import QtCore, QtGui, QtWidgets
+    source_root = Path(source_root).resolve() if source_root is not None else None
+    source_mode = source_root is not None
+    if source_mode == (store is not None):
+        raise ValueError("Choose either a source checkout or a managed installation store")
     if _WINDOW is not None:
         if context_provider is not None:
             _WINDOW._dsh_context_provider = context_provider
@@ -54,29 +64,42 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
             widget.setObjectName(name)
         return widget
     layout.addWidget(label("DSH-Houdini", "title"))
-    layout.addWidget(label("Managed installation · plugin + Node + DeepSeek Harness", "caption"))
+    layout.addWidget(label("Source development · local checkout" if source_mode else
+                           "Managed installation · plugin + Node + DeepSeek Harness", "caption"))
+    location = label(str(source_root if source_mode else store.root), "caption")
+    location.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+    layout.addWidget(location)
     track = QtWidgets.QFrame()
     track.setObjectName("track")
     versions = QtWidgets.QGridLayout(track)
     versions.addWidget(label("THIS HOUDINI PROCESS", "caption"), 0, 0)
-    versions.addWidget(label("NEXT HOUDINI START", "caption"), 0, 1)
+    versions.addWidget(label("SOURCE ON DISK" if source_mode else "NEXT HOUDINI START", "caption"), 0, 1)
     current = label("Not loaded", "version")
     pending = label("Not installed", "version")
     versions.addWidget(current, 1, 0)
     versions.addWidget(pending, 1, 1)
     layout.addWidget(track)
-    status = label(startup_error or "Install once. Updates are prepared alongside the running version.")
+    source_help = ("Update this checkout in a terminal: git pull --ff-only, npm install, npm run build. "
+                   "Then use Advanced runtime diagnostics to repair / restart the runtime. "
+                   "Menu, package and WebView changes require a full Houdini restart. "
+                   "A successful build does not verify the loaded runtime.")
+    status = label(startup_error or (source_help if source_mode else
+                                    "Install once. Updates are prepared alongside the running version."))
     layout.addWidget(status)
     controls = QtWidgets.QGridLayout()
     online = QtWidgets.QPushButton("Check for a release")
     online.setObjectName("primary")
-    local = QtWidgets.QPushButton("Install local package…")
+    local = QtWidgets.QPushButton("Source update instructions" if source_mode else "Install local package…")
     repair = QtWidgets.QPushButton("Repair current version")
-    verify_button = QtWidgets.QPushButton("Verify installation")
+    verify_button = QtWidgets.QPushButton("Refresh source version" if source_mode else "Verify installation")
     rollback = QtWidgets.QPushButton("Prepare rollback")
     cancel_pending = QtWidgets.QPushButton("Cancel pending change")
     cancel = QtWidgets.QPushButton("Cancel operation")
     buttons = [online, local, repair, verify_button, rollback, cancel_pending]
+    managed_only = [repair, rollback, cancel_pending] if source_mode else []
+    for button in managed_only:
+        button.setEnabled(False)
+        button.setToolTip("Available for managed signed installations. This checkout uses Git and npm.")
     for index, button in enumerate(buttons):
         button.setMinimumHeight(38)
         button.setFont(QtGui.QFont("Segoe UI", 10))
@@ -97,7 +120,7 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
     layout.addWidget(details)
     advanced = QtWidgets.QPushButton("Advanced runtime diagnostics")
     advanced.setMinimumHeight(38)
-    advanced.setEnabled(loaded is not None)
+    advanced.setEnabled(source_mode or loaded is not None)
     layout.addWidget(advanced)
     events = queue.Queue()
     cancelled = threading.Event()
@@ -107,6 +130,11 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
             raise InterruptedError("Cancelled. The running installation is unchanged; partial downloads are retained.")
         events.put(("progress", text))
     def refresh():
+        if source_mode:
+            current.setText("Source mode · runtime unchecked")
+            for button in managed_only:
+                button.setEnabled(False)
+            return
         data = store.state()
         def version(ident):
             return ident.split("-")[0] if ident else "Not installed"
@@ -133,11 +161,16 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
                 events.put(("error", str(exc)))
         threading.Thread(target=worker, daemon=True).start()
     def online_action():
+        if source_mode and state["release"] is not None:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(state["release"]["url"]))
+            return
         if state["release"] is None:
             def check():
                 value = releases.latest_stable_release()
                 events.put(("release", value))
-                return "No stable release is published." if value is None else "Published version found. Install / repair downloads a signed complete package."
+                return "No stable release is published." if value is None else (
+                    "Published version found. View the release page; update this checkout with Git and npm."
+                    if source_mode else "Published version found. Install / repair downloads a signed complete package.")
             run(check)
         else:
             release = state["release"]
@@ -148,10 +181,22 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
                     return "Ready. Restart Houdini, then Open Workspace to activate the new installation."
                 run(install)
     def local_action():
+        if source_mode:
+            status.setText(source_help)
+            details.setPlainText(str(source_root) + "\n\n" + source_help)
+            return
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(window, "Select signed release.json beside its ZIP and signature", "", "Release manifest (release.json)")
         if filename:
             run(lambda: store.stage(Path(filename).parent, report) and "Local package ready for the next Houdini start.")
     def verify():
+        if source_mode:
+            def read_source():
+                package = json.loads((source_root / "package.json").read_text(encoding="utf-8"))
+                events.put(("source", str(package["version"])))
+                return "Source package version read. Build outputs and the loaded runtime have not been verified."
+            pending.setText("Checking…")
+            run(read_source)
+            return
         def task():
             data = store.state()
             ident = data["pending"] or data["current"]
@@ -190,10 +235,15 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
                         details.appendPlainText(str(exc))
         while not events.empty():
             kind, value = events.get_nowait()
+            if kind == "source":
+                pending.setText(value + " · source")
+                continue
             if kind == "release":
                 state["release"] = value
-                online.setText("Install / repair " + value["version"] if value else "Check for a release")
+                online.setText(("View release " if source_mode else "Install / repair ") + value["version"] if value else "Check for a release")
                 continue
+            if source_mode and kind == "error" and pending.text() == "Checking…":
+                pending.setText("Unavailable")
             status.setText(value)
             if kind != "progress" or not details.toPlainText().endswith(value):
                 details.appendPlainText(value)
@@ -234,4 +284,6 @@ def show(store, *, pinned=None, loaded=None, startup_error=None, parent=None, co
         status.setText(str(exc))
     _WINDOW = window
     window.show()
+    if source_mode:
+        verify()
     return window
