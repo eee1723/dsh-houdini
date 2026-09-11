@@ -485,8 +485,260 @@ class EvidenceNotesTests(unittest.TestCase):
         self.assertIn("speech-00000", (output / "index.md").read_text(encoding="utf-8"))
 
 
+class TutorialIndexTests(unittest.TestCase):
+    packet = EvidenceNotesTests.packet
+    notes = EvidenceNotesTests.notes
+
+    def setUp(self):
+        ChangeCandidateTests.setUp(self)
+        _, self.context_path = self.packet()
+        self.notes_path = self.root / "notes.json"
+        video.save(self.notes_path, self.notes(self.context_path))
+        with patch.object(video, "video_timing", return_value={"end": 30}), patch.object(video, "probe", return_value=(30.095, [])):
+            result = video.index_init(Args(frames_dir=str(self.frames), transcript=str(self.root / "transcript.json"),
+                output=str(self.root / "catalog"), ffprobe="unused"))
+        self.path = Path(result["index"])
+        self.catalog = video.read(self.path)
+        self.catalog["chapters"] = [{"id": "chapter-a", "title": "Build", "ranges": [[0, 15]]},
+                                    {"id": "chapter-b", "title": "Correction", "ranges": [[15, 30]]}]
+        self.catalog["modules"] = [{"id": "module-a", "title": "Distribution", "ranges": [[0, 12], [15, 30]],
+            "purpose": "Understand distribution and its later correction", "inputs": ["source geometry"],
+            "outputs": ["points"], "depends_on": [], "questions": ["Which input is connected?"],
+            "unknowns": ["Source of the offscreen wire"], "evidence": [{
+                "context": video.file_reference(self.context_path), "notes": video.file_reference(self.notes_path),
+                "step_ids": ["step-one"]}]}]
+        self.write_catalog()
+        self.query = Args(index=str(self.path), module="module-a", max_chars=24000)
+
+    def write_catalog(self):
+        self.path.write_text(json.dumps(self.catalog), encoding="utf-8")
+
+    def test_discontinuous_module_reads_original_bounds_and_evidence(self):
+        result = video.read_index(self.query)
+        self.assertEqual([c["text"] for c in result["speech"]], ["A setting", "Another setting"])
+        self.assertEqual(result["speech"][1]["end"], 25)
+        self.assertEqual(result["speech_gaps"], [{"range": [0, 12], "gaps": []}, {"range": [15, 30], "gaps": [[25, 30]]}])
+        self.assertEqual(result["module"]["unknowns"], ["Source of the offscreen wire"])
+        self.assertEqual(result["observations"][0]["frames"][0]["actual_seconds"], 0)
+        self.assertEqual(result["runtime_verification"], "not_performed")
+
+    def test_audio_tail_uses_media_boundary_not_video_end(self):
+        path = self.root / "transcript.json"
+        transcript = video.read(path)
+        transcript["chunks"].append({"start": 30, "end": 30.095, "text": "audio tail"})
+        path.write_text(json.dumps(transcript), encoding="utf-8")
+        self.catalog["transcript"] = video.file_reference(path)
+        self.catalog["modules"][0]["evidence"] = []
+        self.write_catalog()
+        data, chunks = video.index_sources(self.path)
+        self.assertEqual(data["video_duration_seconds"], 30)
+        self.assertEqual(chunks[-1]["end"], 30.095)
+        transcript["chunks"][-1]["end"] = 31
+        path.write_text(json.dumps(transcript), encoding="utf-8")
+        self.catalog["transcript"] = video.file_reference(path)
+        self.write_catalog()
+        with self.assertRaisesRegex(video.Failure, "exceeds media duration"):
+            video.index_sources(self.path)
+
+    def test_legacy_index_and_invalid_video_span(self):
+        self.catalog.pop("video_duration_seconds")
+        self.write_catalog()
+        video.read_index(self.query)
+        self.catalog["video_duration_seconds"] = 10
+        self.write_catalog()
+        with self.assertRaisesRegex(video.Failure, "Invalid source duration"):
+            video.read_index(self.query)
+
+    def test_module_pages_preserve_all_items_and_unknowns(self):
+        self.query.section, self.query.offset, self.query.limit = "speech", 0, 1
+        first = video.read_index(self.query)
+        self.query.index_sha256 = first["index_sha256"]
+        self.query.offset = first["next_offset"]
+        second = video.read_index(self.query)
+        self.assertEqual([r["id"] for r in first["items"] + second["items"]], ["speech-00000", "speech-00001"])
+        self.assertIsNone(second["next_offset"])
+        self.assertEqual(first["module_unknowns"], self.catalog["modules"][0]["unknowns"])
+        self.query.section, self.query.offset = "observations", 0
+        self.assertEqual(video.read_index(self.query)["items"][0]["step"]["id"], "step-one")
+
+    def test_module_page_revision_change_and_invalid_paging(self):
+        self.query.section, self.query.offset, self.query.limit = "speech", 0, 1
+        self.query.index_sha256 = video.read_index(self.query)["index_sha256"]
+        self.catalog["modules"][0]["questions"].append("New requirement")
+        self.write_catalog()
+        with self.assertRaisesRegex(video.Failure, "Index changed"):
+            video.read_index(self.query)
+        self.query.index_sha256 = None
+        self.query.offset = 3
+        with self.assertRaisesRegex(video.Failure, "offset exceeds"):
+            video.read_index(self.query)
+        self.query.section = "all"
+        with self.assertRaisesRegex(video.Failure, "Select speech"):
+            video.read_index(self.query)
+
+    def test_overview_does_not_expand_transcript_or_observations(self):
+        self.query.module = None
+        result = video.read_index(self.query)
+        self.assertNotIn("speech", result)
+        self.assertNotIn("observations", result)
+        self.assertEqual(result["modules"][0]["unknowns"], 1)
+        self.assertEqual(result["semantic_validation"], "agent_assertions_not_independently_verified")
+
+    def test_module_read_excludes_unrelated_speech_without_cutting_chunk(self):
+        self.catalog["modules"][0]["ranges"] = [[0, 10]]
+        self.write_catalog()
+        result = video.read_index(self.query)
+        self.assertEqual(len(result["speech"]), 1)
+        self.assertEqual(result["speech"][0]["end"], 12)
+        self.assertEqual(result["transcript"]["sha256"], video.sha(self.root / "transcript.json"))
+
+    def test_paging_works_before_agent_authors_modules(self):
+        self.catalog["chapters"], self.catalog["modules"] = [], []
+        self.write_catalog()
+        args = Args(index=str(self.path), offset=0, limit=1, max_chars=24000)
+        first = video.read_transcript(args)
+        args.offset = first["next_offset"]
+        second = video.read_transcript(args)
+        self.assertEqual(first["chunks"][0]["id"], "speech-00000")
+        self.assertEqual(second["chunks"][0]["id"], "speech-00001")
+        self.assertIsNone(second["next_offset"])
+        with self.assertRaises(video.Failure):
+            video.check_index(args)
+
+    def test_budget_rejects_instead_of_truncating(self):
+        self.query.max_chars = 1000
+        with self.assertRaisesRegex(video.Failure, "No content truncated"):
+            video.read_index(self.query)
+        self.query.max_chars = 24000
+        self.assertEqual(len(video.read_index(self.query)["speech"]), 2)
+
+    def test_transcript_revision_invalidates_read(self):
+        (self.root / "transcript.json").write_text("{}")
+        with self.assertRaisesRegex(video.Failure, "Transcript changed"):
+            video.read_index(self.query)
+
+    def test_notes_revision_invalidates_read(self):
+        self.notes_path.write_text("{}")
+        with self.assertRaisesRegex(video.Failure, "Notes changed"):
+            video.read_index(self.query)
+
+    def test_cycle_missing_dependency_and_unknown_module_rejected(self):
+        module = self.catalog["modules"][0]
+        for dependency in ("module-a", "absent"):
+            module["depends_on"] = [dependency]
+            self.write_catalog()
+            with self.assertRaises(video.Failure):
+                video.read_index(self.query)
+        module["depends_on"] = []
+        self.write_catalog()
+        self.query.module = "absent"
+        with self.assertRaisesRegex(video.Failure, "Unknown module"):
+            video.read_index(self.query)
+
+    def test_ranges_and_evidence_scope_rejected(self):
+        for ranges in ([[0, 31]], [[15, 25], [0, 12]], [[0, 20], [15, 25]], [[15, 25]]):
+            self.catalog["modules"][0]["ranges"] = ranges
+            self.write_catalog()
+            with self.assertRaises(video.Failure):
+                video.read_index(self.query)
+
+    def test_conflicting_notes_remain_visible(self):
+        notes = self.notes(self.context_path)
+        notes["steps"][0].update(conflicts=["Panel differs from speech"], evidence_state="conflict",
+                                  reconstruction_readiness="needs_more_evidence")
+        self.notes_path.write_text(json.dumps(notes))
+        self.catalog["modules"][0]["evidence"][0]["notes"] = video.file_reference(self.notes_path)
+        self.write_catalog()
+        step = video.read_index(self.query)["observations"][0]["step"]
+        self.assertEqual(step["conflicts"], ["Panel differs from speech"])
+        self.assertEqual(step["reconstruction_readiness"], "needs_more_evidence")
+        self.query.module = None
+        self.assertEqual(video.read_index(self.query)["modules"][0]["evidence_conflicts"], 1)
+
+    def test_chapter_gaps_remain_visible(self):
+        self.catalog["chapters"] = self.catalog["chapters"][:1]
+        self.write_catalog()
+        self.query.module = None
+        self.assertEqual(video.read_index(self.query)["chapter_gaps"], [[15, 30.095]])
+
+    def test_silent_index_has_no_invented_speech(self):
+        self.catalog["transcript"] = None
+        self.catalog["modules"][0]["evidence"] = []
+        self.write_catalog()
+        result = video.read_index(self.query)
+        self.assertEqual(result["speech"], [])
+        self.assertEqual(result["speech_gaps"][0]["gaps"], [[0, 12]])
+
+    def test_foreign_transcript_cannot_be_pinned_as_same_source(self):
+        path = self.root / "foreign.json"
+        video.save(path, {"source_sha256": "other", "timestamp_basis": video.BASIS, "chunks": []})
+        self.catalog["transcript"] = video.file_reference(path)
+        self.write_catalog()
+        with self.assertRaisesRegex(video.Failure, "another source"):
+            video.read_index(self.query)
+
+
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/ffprobe not installed; offline unit tests still run")
 class MediaTimingTests(unittest.TestCase):
+    def test_silent_cli_scan_index_evidence_and_crop_comparison(self):
+        with tempfile.TemporaryDirectory(prefix="dsh-video-cli-") as folder:
+            root = Path(folder)
+            source = root / "静音.mp4"
+            video.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "lavfi",
+                       "-i", "testsrc2=size=96x64:rate=10:duration=3", "-c:v", "mpeg4", str(source)])
+            def cli(*args):
+                result = video.run([sys.executable, str(Path(video.__file__)), *map(str, args)])
+                return json.loads(result.decode("utf-8").splitlines()[-1])
+            frames = root / "frames"
+            cli("scan", "--video", source, "--output", frames, "--interval", 1)
+            result = cli("index-init", "--frames-dir", frames, "--output", root / "catalog")
+            index = Path(result["index"])
+            data = video.read(index)
+            data["chapters"] = [{"id": "chapter", "title": "Silent demonstration", "ranges": [[0, 3]]}]
+            packet = cli("context", "--frames-dir", frames, "--start", 0, "--end", 2, "--output", root / "evidence")
+            context = root / "evidence/context.json"
+            notes = {"schema": 1, "context_sha256": packet["context_sha256"], "steps": [{
+                "id": "state", "kind": "observed_state", "range_seconds": [0, 2], "intent": "Synthetic fixture only",
+                "speech_ids": [], "visual": [{"frame_id": "frame-0000.png", "observed": "Synthetic test pattern"}],
+                "inferences": [], "conflicts": [], "unknowns": ["No actual tutorial semantics in fixture"],
+                "evidence_state": "visual_checked", "reconstruction_readiness": "needs_more_evidence"}]}
+            notes_path = root / "notes.json"
+            video.save(notes_path, notes)
+            cli("check-notes", "--context", context, "--notes", notes_path, "--output", root / "checked")
+            data["modules"] = [{"id": "module", "title": "Silent module", "ranges": [[0, 3]], "purpose": "Exercise CLI",
+                "inputs": [], "outputs": [], "depends_on": [], "questions": [], "unknowns": [],
+                "evidence": [{"context": video.file_reference(context), "notes": video.file_reference(notes_path), "step_ids": ["state"]}]}]
+            index.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(cli("check-index", "--index", index)["modules"][0]["evidence_pending"], 1)
+            self.assertEqual(cli("read-transcript", "--index", index)["chunks"], [])
+            self.assertEqual(cli("read-index", "--index", index, "--module", "module")["observations"][0]["step"]["id"], "state")
+            compared = cli("changes", "--frames-dir", frames, "--output", root / "changes", "--region-mode", "crop-first",
+                           "--region", "panel:0.1:0.1:0.5:0.5")
+            self.assertEqual(compared["semantic_inspection"], "not_performed")
+            self.assertEqual(video.read(root / "changes/changes.json")["settings"]["region_mode"], "crop-first")
+
+    def test_crop_first_preserves_small_region_change(self):
+        with tempfile.TemporaryDirectory(prefix="dsh-video-crop-") as folder:
+            root = Path(folder)
+            before, after = root / "before.png", root / "after.png"
+            for path, draw in ((before, None), (after, "drawbox=x=960:y=540:w=4:h=10:color=white:t=fill")):
+                command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "lavfi",
+                           "-i", "color=black:size=1920x1080"]
+                if draw:
+                    command += ["-vf", draw]
+                video.run(command + ["-frames:v", "1", "-update", "1", str(path)])
+            region = video.parse_regions(["parameter:0.5:0.5:0.025:0.025"])[0]
+            full = video.parse_regions(None)[0]
+            grid = [video.comparison_rgb(p, "ffmpeg", 32, 32) for p in (before, after)]
+            crop = [video.comparison_rgb(p, "ffmpeg", 32, 32, region) for p in (before, after)]
+            grid_score = video.pixel_metrics(*grid, 32, 32, region, .08)
+            crop_score = video.pixel_metrics(*crop, 32, 32, full, .08)
+            self.assertLess(grid_score["mean_delta"], .02)
+            self.assertGreater(crop_score["mean_delta"], .02)
+            outside = video.parse_regions(["other:0:0:0.025:0.025"])[0]
+            self.assertEqual(video.comparison_rgb(before, "ffmpeg", 32, 32, outside),
+                             video.comparison_rgb(after, "ffmpeg", 32, 32, outside))
+
     def test_real_rgb_decoder(self):
         with tempfile.TemporaryDirectory(prefix="dsh-change-rgb-") as folder:
             image = Path(folder) / "red.png"

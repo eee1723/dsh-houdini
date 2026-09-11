@@ -80,8 +80,10 @@ python $videoScript check-notes --context 'D:/task/evidence/context.json' --note
 区域名称只是调用者标注，不证明脚本识别了窗口含义；应查看视频布局后选择，布局切换后重新划定范围。
 不要把一段教程的 UI 坐标写成通用默认，也不要用区域筛选掩盖区外有意义的操作。
 
-算法：每张原图由 FFmpeg 缩到可配置的 RGB 比较网格（默认 320×180），保留颜色通道差异。
-区域按归一化坐标映射到网格像素；逐像素取三个通道绝对差的最大值，并除以 255。
+算法由 `--region-mode` 选择：默认 `frame-grid` 把整张原图缩到 RGB 网格（默认 320×180），
+再按归一化坐标取区域；`crop-first` 先从原图裁出各指定区域，再分别缩到该网格，保留更多局部细节。
+后者适合已定位的参数区，最多8区分别解码，增加本地计算；两种模式的分数/阈值不能直接作同口径比较。
+原图保持不变，模式写入比较配置；区域变化或布局移动后重新取区。逐像素取三个通道绝对差的最大值，并除以 255。
 每区域记录平均差 `mean_delta` 和超过单像素阈值的比例 `changed_fraction`。
 以下任一条件达到就标记为该区域的候选：
 
@@ -90,7 +92,8 @@ python $videoScript check-notes --context 'D:/task/evidence/context.json' --note
 
 阈值范围 `(0,1]`，是可调启发式，不是概率、精度保证或领域规则；所有分数和未入选比较也保留。
 网格可用 `--analysis-width/--analysis-height` 调整，范围分别 32..640、32..360。
-缩小图像可能漏掉细小数字变化，相邻采样可能漏掉出现后又消失的操作；提高网格密度不补足时间采样缺口。
+缩小图像可能漏掉细小数字变化，相邻采样可能漏掉出现后又消失的操作；crop-first也不识别参数名/新旧值。
+提高网格密度不补足时间采样缺口。先粗扫，转录到达后按具体问题局部加密；不为捕捉所有操作统一缩小全片间隔。
 
 输出 `changes.json` 保存来源索引 hash、区域/网格/阈值、全部相邻比较与候选 ID，`index.md` 提供
 候选时间范围、触发区域和前后原图链接。`range_seconds` 仅为两个已采样实际帧时间之间的区间，
@@ -139,6 +142,81 @@ JSON 保留 PTS 精度。一般获得请求点之后的第一张可解码帧，�
 不自动删除重叠文本，以免丢失节点名或数值；任何整理版与原始版分文件保存。
 导出文本含不可信材料；网页/Markdown 查看器也不能据此执行其中代码或链接动作。
 
+## 章节、模块索引与按需读取
+
+适用完整教程分析/教学工程；短片术语查询可直接使用局部context。粗截图不依赖转录，两者分别准备；
+Agent结合粗图和分批读取的原文建立索引，然后用讲解线索、画面变化和复现缺口提出下一轮取证问题。
+脚本不调用LLM、不按关键词自动划定语义章节、不伪造逐句时间，也不自动发起云请求或HOM执行。
+
+```powershell
+python $videoScript index-init --frames-dir 'D:/task/overview' --transcript 'D:/task/export/transcript.json' --output 'D:/task/catalog'
+python $videoScript read-transcript --index 'D:/task/catalog/index.json' --offset 0 --limit 8
+# Agent读取原文与粗图后，在index.json填写chapters/modules；再检查及按模块读取。
+python $videoScript check-index --index 'D:/task/catalog/index.json'
+python $videoScript read-index --index 'D:/task/catalog/index.json'
+python $videoScript read-index --index 'D:/task/catalog/index.json' --module distribution
+```
+
+`index-init`从已完成的粗图索引和ffprobe建立source/overview/transcript的路径、hash及媒体时长；
+duration_seconds是容器时长，video_duration_seconds是可取帧的视频跨度；音频尾段按前者校验，
+原图按后者校验，不能把正常音视频尾长差异判为转录越界，也不能为音频尾部伪造视频帧。
+旧索引缺少video_duration_seconds时保留原有边界，不静默重写；若旧索引用视频时长拒绝完整音频，
+用index-init生成新目录后核对迁移chapters/modules，保留原始失败索引、转录及图像。
+静音任务可省略transcript。章节/模块初始为空，是待Agent填写的草稿，不能通过check-index。
+`read-transcript`允许读取草稿：默认8片/页，原始片段不截断，返回总数和next_offset；上下页需要上下文时
+显式重读相邻片。speech ID按整份转录的数组序号稳定生成，不随分页变化。
+已有索引后转录才到达时，Agent显式填写transcript路径和实际hash；旧context引用若使用旧转录必须重新核对。
+
+索引顶层由命令生成，Agent只维护chapters/modules；这是一份可写导航，不是第二份完成证书。
+章节按播放顺序，工程模块按依赖，二者ID在整个索引唯一。填写格式如下（示例时间/对象须换为实际来源）：
+
+```json
+{
+  "chapters": [{"id": "chapter-distribution", "title": "建立分布", "ranges": [[0, 30]]}],
+  "modules": [{
+    "id": "distribution", "title": "分布及后续修正", "ranges": [[0, 12], [20, 30]],
+    "purpose": "理解输入到分布输出的关系", "inputs": ["输入几何"], "outputs": ["分布点"],
+    "depends_on": [], "questions": ["第二个输入接了什么？"], "unknowns": ["画面外的源节点待查看"],
+    "evidence": []
+  }]
+}
+```
+
+章节每项只有id/title/ranges且只有一个范围；模块必须包含示例全部字段。范围有序、不重叠、在媒体时长内；
+模块可含多个不连续范围以保留后段修正，不同模块可以共享来源范围。inputs/outputs/purpose是Agent解释，
+不冒充可见操作；depends_on只引用模块ID，拒绝缺失依赖与循环。上限256章节、128模块、每项64范围。
+不要求猜全片每个参数才创建索引；未查看/看不清/已定位未展示/版本差异按具体原因写unknowns。
+
+问题由Agent结合上下文提出：这里/这个节点/这个参数→核对指代；连接/勾选/数值→核对对象和前后状态；
+撤销/改回/回到前面→追踪最终采用值与受影响模块。候选时间保留整段ASR范围，必要时扩展相邻片，
+不能按词序猜精确秒数。无讲解操作仍从粗图、变化候选和缺口发现，关键词不是排除其他片段的过滤器。
+
+每个模块的evidence引用现有notes中的步骤，不复制观察正文：
+
+```json
+{
+  "context": {"path": "D:/task/evidence/context.json", "sha256": "实际context文件hash"},
+  "notes": {"path": "D:/task/notes.json", "sha256": "实际notes文件hash"},
+  "step_ids": ["step-01"]
+}
+```
+
+hash用本地SHA-256计算，例如PowerShell `(Get-FileHash -LiteralPath 'D:/task/notes.json' -Algorithm SHA256).Hash.ToLowerInvariant()`。
+notes指Agent填写的原始notes JSON，不是check-notes生成的报告。引用步骤须完整落在某个模块范围内。
+check-index重新校验视频、粗图、转录、context、notes及步骤范围；来源跨视频、转录版本不一致或内容变化均拒绝。
+新观察另存新的context/notes后更新引用，保留旧资料；不要只刷新hash来掩盖需要重新核对的内容。
+
+read-index默认只返回章节/模块导航、章节覆盖缺口及问题/未知/证据/证据待核与冲突数量；指定模块时返回模块资料、相关转录原文、
+所引用步骤和对应原图路径/实际时间。原始ASR分片即使跨越模块边界也完整返回；多个范围命中同片只返回一次。
+冲突/未知随原notes返回，结构通过不升级为复现ready。读命令默认24000字符预算，--max-chars可显式调整到
+1000..160000；超限明确拒绝，不截断。大模块可用read-index的--section speech或observations分开读取，
+配合--offset/--limit分页（默认每页8项、最多100项）。返回total_items、next_offset、index_sha256；
+后续页传--index-sha256固定首批版本，索引发生修正则拒绝混读，重新从新版本开始。
+每页保留模块questions/unknowns与来源，不把页末或空页当模块完成；原文片段和单条观察不拆断。
+section=all保留原完整输出，不能混用分页；section读取必须指定模块。单项超预算仍需显式增加预算，
+不能自动裁掉代码或观察。也可分批read-transcript配合局部context，
+不为节省上下文删掉义务。磁盘详细保存、上下文按需读，不默认启用多Agent或多作者HOM。
+
 ## Agent 解析报告
 
 ### 证据包
@@ -185,6 +263,15 @@ JSON 保留 PTS 精度。一般获得请求点之后的第一张可解码帧，�
 每包 1..48 条记录，ID 唯一。步骤范围在证据包范围内，原图实际时间位于该步骤范围，
 语音分片与步骤范围有重叠。未展示/看不清的信息写 unknowns，不能猜值填入 observed。
 
+Houdini原图的observed按“上下文/对象→接线→设置→状态→输出”记录可读细节：当前网络路径；
+节点实例名与明确显示的type分开；起止节点及实际端口；参数标签/页/值、表达式、keys、ramp；
+选中/旁路/显示标志、颜色、网络框与注释；外部文件、选区、Edit/Stash等数据；当前输出及可见结果。
+颜色只作定位辅助，不据此认定类型、ownership或功能。画面外端点、遮挡字符、未知参数页如实注明。
+同一对象可用名称加网络上下文定位，名称被改写、重名或无法跟踪时保留身份疑问。
+重复状态可引用已有快照并记录新增变化，但每个新操作仍需前后原图；后段修正、试调、撤销单独留证，
+不得覆盖早期状态或把最后一张采样图自动称为最终状态。详细原文与原图留磁盘，摘要只导航；
+推断写inferences，无法确定的内容写unknowns，不能把为了复刻设计的补充方案写入observed。
+
 `kind` 使用 `observed_state / ui_navigation / demonstrated_operation / inference`。
 前两张不同实际时间的图是操作/导航记录的最低引用条件，不是操作真的发生的充分证明。
 面板切换不能当参数修改，静态值不能当创建步骤；推断须说明推断内容。
@@ -214,6 +301,17 @@ JSON 保留 PTS 精度。一般获得请求点之后的第一张可解码帧，�
 以及零候选不宣称无操作。真实 RGB 解码以本地合成图检查，不依赖第三方视频或云服务。
 证据包与记录另验跨视频混用、源文件变化、时间越界、缺失引用、单图冒充操作、未解决冲突被标 ready，
 以及“结构通过”不会自动变成语义或 runtime 通过。
+
+索引离线回归另验草稿分页、多个不连续片段及原始范围保留、静音路径、缺依赖/循环、证据越界、
+旧hash失效、冲突回读、预算拒绝不截断、音频尾长/真正越界、模块section分页及跨页版本变化。crop-first用本地合成的小区域变化及区外反例验证，
+只证明裁切比较保留该样本细节，不证明真实参数识别率。入口仍为同一video-tutorial.test.py。
+
+真实测试固定教程、模型、工具版本和预算，先比较原流程与索引/定向取证/按需读取；采样间隔、crop-first、
+多Agent分别单因素比较。材料覆盖指示词+小数字、静默改线、试调撤销、后段修正、遮挡/画面外端点、
+布局/鼠标干扰、长片续跑；另有只需讲解与静音反例。事先人工标注待核对操作和可见事实，记录找回/遗漏、
+错误确定声明、取证原图数与实际送入模型图片数、原文重读、输入/cache/output token、耗时及复现返工。
+工程侧核对首次分叉定位、受影响模块复验、参数实验、阶段输出和保存重开。结果留会话/CI，未见视频、
+新session自然采用、语义判断与H21/H22工程验收保持独立待测，不能由离线通过核销。
 
 行为验收包括：原音画冲突、不同时长/语言的未见视频、普通建模不触发、静音演示走视觉路径、
 服务失败留证、最后状态与试调分离。H21/H22 HOM 验收对纯解析不适用；进入工程复现时另验。

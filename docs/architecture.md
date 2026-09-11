@@ -102,11 +102,14 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 视频教程解析由[video skill](../skills/houdini-video-tutorial/SKILL.md)组织，
 [video_tutorial.py](../skills/houdini-video-tutorial/scripts/video_tutorial.py)在普通宿主进程中执行
-本地媒体准备、授权云转录、全片均匀粗扫/局部重看和结果校验，不经 Bridge、不调用 HOM。
+  本地媒体准备、授权云转录、全片均匀粗扫/局部重看和结果校验，不经 Bridge、不调用 HOM。
 帧索引保留实际 PTS 和播放时间轴起点；缩略图联系表与按显式区域比较的像素变化候选用于导航，
-候选保留前后原图、阈值和时间区间，不做自动语义或操作识别。
+候选保留前后原图、阈值、比较模式和时间区间；可选择原图区域先裁切再缩放，不做自动语义或操作识别。
 局部 `context` 汇集 hash 绑定的图像与转录，`check-notes` 校验 agent 填写的状态/操作记录，
 只提供引用和结构验证，不证明语义真实性，不执行其中内容，也不据此授权工程修改。
+同脚本的index-init/check-index维护来源绑定的章节/多时间段模块索引；read-transcript分页原文，
+read-index按模块或section分页读取原文和既有notes引用，固定跨页索引版本；容器与视频跨度分别校验。
+检查依赖、证据失效和预算，不自动划分语义或认证工程完成。
 依赖宿主 Python、FFmpeg、SiliconFlow 凭据及当前模型的原生图像输入能力；注册 skill 不会安装依赖。
 原视频、切片、转录及画面依据保存在仓库外任务目录，不进入包或 Trace 来源目录。
 输入目前为本地视频，脚本不下载链接、不做语义识图，也不自动复现工程或更新生产知识。

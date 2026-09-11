@@ -25,6 +25,8 @@
 
 教程工程的目的/原片回看/差异核对/替代顺序及交付门唯一维护在
 [复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)，由video skill进入复现阶段时读取。
+视频资料分层、章节/模块索引、定向取证、原文分页与真实测试方法唯一维护在
+[视频运行与证据契约](../skills/houdini-video-tutorial/references/video-processing.md)；原始材料和单次结果不进入docs。
 
 [COP workflow](../skills/houdini-cop-workflow/SKILL.md)维护 Copernicus 图层、关系验证与纹理交付，
 由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其

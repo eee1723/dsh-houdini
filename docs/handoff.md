@@ -1,6 +1,6 @@
 # 当前开发交接
 
-核对日期：2026-09-10
+核对日期：2026-09-11
 
 只保留下一次开发所需的活动事项；完成对应移除条件即删除整项，不追加完成日志。
 维护规则见[交接文档生命周期](development.md#交接文档生命周期)。实现版本以[工具设计](tool-design.md)为准，
@@ -80,8 +80,8 @@
 ### H-07 视频解析到教学工程的端到端验证
 
 - 状态：待验证
-- 现状：教程优先/目的驱动/替代后置协议已入video/SOP与preset；延迟HDA身份、Data设参零写拒绝、替换接线回读及叠面风险有隔离回归。COP图层/控制与浮点交付基础已有；原教程完整复验、自然回看/完成裁决与视觉待实测，封存指纹不自动重封。
-- 下一步：在确认加载当前合同的新session按[COP验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)测自然采用、原失败与未见任务；获授权短片分别验资料复用与冷启动。云提交/工程修改分别授权；benchmark重封另经明确范围确认。
+- 现状：粗图/转录→模块索引→定向取证→按模块读取已接入；音视频跨度分离、模块section分页及跨页版本固定已有。单视频真实资料链已跑通，像素候选仍会漏掉低幅代码/参数变化，详细对象/修正关系仍主要由文字表达。DSH自然采用与教学工程未验；Agent可见面变化触发封存指纹门，整体测试未全通过，不能自动重封。
+- 下一步：确认新session加载当前合同后，按[视频测试矩阵](../skills/houdini-video-tutorial/references/video-processing.md#维护验收)与[COP验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)验未见任务、资料复用与冷启动；重点验低分操作仍由讲解/缺口回查、后段修正保留及分页读取自然采用，评估对象/端口/参数与修正关系的结构化查询。记录误认、成本、返工、参数实验与重开；不以调低阈值核销漏检。云提交/工程修改分别授权；benchmark重封另经明确范围确认。
 - 移除条件：当前候选的真实媒体/语义及最小教学工程验收有证据；更远能力继续留在开发方向，不扩成交接长清单。
 - 入口：[视频当前范围](development-directions.md#教程转教学工程)、[解析脚本](../skills/houdini-video-tutorial/scripts/video_tutorial.py)、[离线回归](../tools/tests/video-tutorial.test.py)。
 

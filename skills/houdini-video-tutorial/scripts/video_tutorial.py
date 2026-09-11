@@ -535,24 +535,35 @@ def pixel_metrics(before, after, width, height, region, pixel_threshold):
             "comparison_pixels": pixels, "comparison_box": [left, top, right, bottom]}
 
 
-def comparison_rgb(path, ffmpeg, width, height):
+def comparison_rgb(path, ffmpeg, width, height, region=None):
+    filters = []
+    if region is not None:
+        source_width, source_height = png_size(path)
+        left, top, right, bottom = region_box(region, source_width, source_height)
+        filters.append(f"crop={right-left}:{bottom-top}:{left}:{top}:exact=1")
+    filters.extend([f"scale={width}:{height}:flags=area", "format=rgb24"])
     data = run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(path),
-                "-vf", f"scale={width}:{height}:flags=area,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "pipe:1"])
+                "-vf", ",".join(filters), "-frames:v", "1", "-f", "rawvideo", "pipe:1"])
     check(len(data) == width * height * 3, "Could not decode RGB comparison frame")
     return data
 
 
 def compare_index(root, data, args, regions, decoder=comparison_rgb):
     width, height = args.analysis_width, args.analysis_height
+    crop_first = getattr(args, "region_mode", "frame-grid") == "crop-first"
     pairs = []
     previous_rgb = None
     for number, row in enumerate(data["frames"]):
-        rgb = decoder(root / row["file"], args.ffmpeg, width, height)
+        rgb = ({r["name"]: decoder(root / row["file"], args.ffmpeg, width, height, r) for r in regions}
+               if crop_first else decoder(root / row["file"], args.ffmpeg, width, height))
         if number:
             before = data["frames"][number - 1]
             duplicate = row["actual_seconds"] == before["actual_seconds"]
-            scores = {region["name"]: pixel_metrics(previous_rgb, rgb, width, height, region, args.pixel_threshold)
-                      for region in regions}
+            scores = {region["name"]: pixel_metrics(
+                previous_rgb[region["name"]] if crop_first else previous_rgb,
+                rgb[region["name"]] if crop_first else rgb, width, height,
+                {"name": region["name"], "x": 0, "y": 0, "width": 1, "height": 1} if crop_first else region, args.pixel_threshold)
+                for region in regions}
             triggers = [name for name, score in scores.items() if not duplicate and
                         (score["mean_delta"] >= args.mean_threshold or score["changed_fraction"] >= args.fraction_threshold)]
             pairs.append({"id": f"pair-{number - 1:04d}", "before": before["file"], "after": row["file"],
@@ -567,13 +578,16 @@ def compare_index(root, data, args, regions, decoder=comparison_rgb):
 
 def changes(args):
     regions = parse_regions(args.region)
+    region_mode = getattr(args, "region_mode", "frame-grid")
+    check(region_mode in ("frame-grid", "crop-first"), "Invalid region comparison mode")
     check(all(math.isfinite(v) and 0 < v <= 1 for v in
               (args.pixel_threshold, args.mean_threshold, args.fraction_threshold)), "Thresholds must be finite in (0,1]")
     check(32 <= args.analysis_width <= 640 and 32 <= args.analysis_height <= 360, "Comparison dimensions outside budget")
     root = directory(args.frames_dir)
     data, index_hash, dimensions = checked_frame_index(root)
     output = directory(args.output, new=True)
-    settings = {"regions": regions, "analysis_width": args.analysis_width, "analysis_height": args.analysis_height,
+    settings = {"regions": regions, "region_mode": region_mode,
+                "analysis_width": args.analysis_width, "analysis_height": args.analysis_height,
                 "pixel_threshold": args.pixel_threshold, "mean_threshold": args.mean_threshold,
                 "fraction_threshold": args.fraction_threshold, "candidate_rule": "mean_delta >= mean_threshold OR changed_fraction >= fraction_threshold"}
     save(output / "comparison-plan.json", {"frames_index": str(root / "frames.json"), "frames_index_sha256": index_hash,
@@ -790,6 +804,215 @@ def check_notes(args):
     return {**validation, "output": str(output)}
 
 
+def pinned_file(value, label):
+    check(isinstance(value, dict) and set(value) == {"path", "sha256"}, f"Invalid {label} reference")
+    path = Path(value["path"])
+    check(path.is_absolute() and sha(path) == value["sha256"], f"{label} changed; refresh references explicitly")
+    return path
+
+
+def file_reference(path):
+    return {"path": str(path), "sha256": sha(path)}
+
+
+def index_init(args):
+    root = directory(args.frames_dir)
+    frames, _, _ = checked_frame_index(root)
+    source = Path(frames["source"])
+    timing = video_timing(source, args.ffprobe)
+    media_duration, _ = probe(source, args.ffprobe)
+    transcript = Path(args.transcript) if args.transcript else None
+    if transcript:
+        transcript_chunks(transcript, frames["source_sha256"])
+    data = {"schema": 1, "kind": "tutorial_index", "source": file_reference(source),
+            "duration_seconds": media_duration, "video_duration_seconds": timing["end"],
+            "overview": file_reference(root / "frames.json"),
+            "transcript": file_reference(transcript) if transcript else None,
+            "chapters": [], "modules": []}
+    output = directory(args.output, new=True)
+    save(output / "index.json", data)
+    return {"index": str(output / "index.json"), "status": "draft",
+            "next": "Read transcript pages and overview images; author chapters/modules, then check-index. No semantic analysis performed."}
+
+
+def index_sources(path):
+    check(path.is_absolute() and path.stat().st_size <= 4_000_000, "Absolute tutorial index of at most 4MB required")
+    data = read(path)
+    check(set(data) - {"video_duration_seconds"} == {"schema", "kind", "source", "duration_seconds", "overview", "transcript", "chapters", "modules"}
+          and data["schema"] == 1 and data["kind"] == "tutorial_index", "Invalid tutorial index schema")
+    source = pinned_file(data["source"], "Source")
+    overview = pinned_file(data["overview"], "Overview")
+    check(overview.name == "frames.json", "Overview must reference frames.json")
+    frames, _, _ = checked_frame_index(overview.parent)
+    check(Path(frames["source"]) == source and frames["source_sha256"] == data["source"]["sha256"],
+          "Overview belongs to another video")
+    duration = data["duration_seconds"]
+    video_duration = data.get("video_duration_seconds", duration)
+    check(type(duration) in (int, float) and math.isfinite(duration) and duration > 0
+          and type(video_duration) in (int, float) and math.isfinite(video_duration) and 0 < video_duration <= duration + 0.001
+          and all(f["actual_seconds"] < video_duration + 0.001 for f in frames["frames"]), "Invalid source duration")
+    chunks = transcript_chunks(pinned_file(data["transcript"], "Transcript"), data["source"]["sha256"]) if data["transcript"] else []
+    check(all(c["end"] <= duration + 0.001 for c in chunks),
+          "Transcript exceeds media duration; legacy indexes may require regeneration with index-init (preserve original evidence)")
+    return data, chunks
+
+
+def index_ranges(values, duration):
+    check(isinstance(values, list) and 1 <= len(values) <= 64, "Use 1..64 source ranges")
+    previous = -1
+    for pair in values:
+        check(isinstance(pair, list) and len(pair) == 2
+              and all(type(t) in (int, float) and math.isfinite(t) for t in pair), "Invalid source range")
+        start, end = pair
+        check(0 <= start < end <= duration and start >= previous, "Source ranges must be ordered, non-overlapping and inside video")
+        previous = end
+
+
+def index_text(value, name):
+    check(isinstance(value, str) and 0 < len(value.strip()) <= 4000, f"Invalid {name}")
+
+
+def checked_index(path):
+    data, chunks = index_sources(path)
+    chapters, modules = data["chapters"], data["modules"]
+    check(isinstance(chapters, list) and 1 <= len(chapters) <= 256, "Author 1..256 chapters")
+    check(isinstance(modules, list) and 1 <= len(modules) <= 128, "Author 1..128 modules")
+    identities = set()
+    previous = -1
+    evidence = {}
+    for group, rows in (("chapter", chapters), ("module", modules)):
+        for row in rows:
+            required = {"id", "title", "ranges"} if group == "chapter" else {
+                "id", "title", "ranges", "purpose", "inputs", "outputs", "depends_on", "questions", "unknowns", "evidence"}
+            check(isinstance(row, dict) and set(row) == required, f"Invalid {group} fields")
+            identity = row["id"]
+            check(isinstance(identity, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,63}", identity)
+                  and identity not in identities, "Index IDs must be unique")
+            identities.add(identity)
+            index_text(row["title"], "title")
+            index_ranges(row["ranges"], data["duration_seconds"])
+            if group == "chapter":
+                check(len(row["ranges"]) == 1 and row["ranges"][0][0] >= previous, "Chapters must follow playback order without overlap")
+                previous = row["ranges"][0][1]
+                continue
+            index_text(row["purpose"], "purpose")
+            for name in ("inputs", "outputs", "depends_on", "questions", "unknowns"):
+                string_list(row[name], name)
+            check(len(set(row["depends_on"])) == len(row["depends_on"]), "Duplicate dependency")
+            check(isinstance(row["evidence"], list) and len(row["evidence"]) <= 64, "Evidence reference budget exceeded")
+            evidence[identity] = []
+            for ref in row["evidence"]:
+                check(isinstance(ref, dict) and set(ref) == {"context", "notes", "step_ids"}, "Invalid module evidence reference")
+                context_path = pinned_file(ref["context"], "Context")
+                notes_path = pinned_file(ref["notes"], "Notes")
+                check(notes_path.stat().st_size <= 2_000_000, "Notes exceed 2MB budget")
+                packet = checked_context(context_path)
+                check(packet["source_sha256"] == data["source"]["sha256"], "Module evidence belongs to another video")
+                check(packet["transcript"] == data["transcript"],
+                      "Module evidence uses a different transcript revision")
+                notes = read(notes_path)
+                validate_notes(notes, packet, ref["context"]["sha256"])
+                string_list(ref["step_ids"], "step_ids")
+                check(ref["step_ids"] and len(set(ref["step_ids"])) == len(ref["step_ids"]), "Select unique evidence steps")
+                lookup = {step["id"]: step for step in notes["steps"]}
+                for step_id in ref["step_ids"]:
+                    check(step_id in lookup, "Missing evidence step")
+                    step = lookup[step_id]
+                    check(any(start <= step["range_seconds"][0] < step["range_seconds"][1] <= end
+                              for start, end in row["ranges"]), "Evidence step outside module ranges")
+                    evidence[identity].append({"context": ref["context"], "notes": ref["notes"], "step": step,
+                        "frames": [f for f in packet["frames"] if f["id"] in {v["frame_id"] for v in step["visual"]}]})
+    lookup = {m["id"]: m for m in modules}
+    visited, active = set(), set()
+    def visit(identity):
+        check(identity in lookup, "Unknown module dependency")
+        check(identity not in active, "Module dependency cycle")
+        if identity in visited:
+            return
+        active.add(identity)
+        for dependency in lookup[identity]["depends_on"]:
+            visit(dependency)
+        active.remove(identity)
+        visited.add(identity)
+    for identity in lookup:
+        visit(identity)
+    return data, chunks, evidence
+
+
+def index_summary(data, evidence):
+    chapter_ranges = [{"start": c["ranges"][0][0], "end": c["ranges"][0][1]} for c in data["chapters"]]
+    return {"source_sha256": data["source"]["sha256"], "chapters": data["chapters"],
+            "chapter_gaps": speech_gaps(chapter_ranges, 0, data["duration_seconds"]),
+            "modules": [{"id": m["id"], "title": m["title"], "ranges": m["ranges"],
+                         "depends_on": m["depends_on"], "questions": len(m["questions"]),
+                         "unknowns": len(m["unknowns"]), "evidence_steps": len(evidence[m["id"]]),
+                         "evidence_pending": sum(e["step"]["reconstruction_readiness"] != "ready_for_runtime_check" for e in evidence[m["id"]]),
+                         "evidence_conflicts": sum(bool(e["step"]["conflicts"]) for e in evidence[m["id"]])} for m in data["modules"]],
+            "structural_validation": "passed", "semantic_validation": "agent_assertions_not_independently_verified",
+            "runtime_verification": "not_performed"}
+
+
+def bounded_result(value, budget):
+    check(type(budget) is int and 1000 <= budget <= 160000, "max-chars must be 1000..160000")
+    check(len(json.dumps(value, ensure_ascii=False)) <= budget,
+          "Read budget exceeded; select a module, reduce transcript page size, or explicitly increase max-chars. No content truncated.")
+    return value
+
+
+def check_index(args):
+    data, _, evidence = checked_index(Path(args.index))
+    return index_summary(data, evidence)
+
+
+def read_index(args):
+    path = Path(args.index)
+    revision = sha(path)
+    expected_revision = getattr(args, "index_sha256", None)
+    check(expected_revision is None or expected_revision == revision, "Index changed between pages; restart reading the updated index")
+    data, chunks, evidence = checked_index(path)
+    section = getattr(args, "section", "all")
+    offset, limit = getattr(args, "offset", 0), getattr(args, "limit", None)
+    check(section in ("all", "speech", "observations"), "Invalid module section")
+    check(type(offset) is int and offset >= 0 and (limit is None or type(limit) is int and 1 <= limit <= 100), "Invalid module page")
+    check(section != "all" or offset == 0 and limit is None, "Select speech or observations for paging")
+    if not args.module:
+        check(section == "all" and offset == 0 and limit is None, "Module required for section reads")
+        return bounded_result(index_summary(data, evidence), args.max_chars)
+    modules = [m for m in data["modules"] if m["id"] == args.module]
+    check(len(modules) == 1, "Unknown module")
+    module = modules[0]
+    selected = [c for c in chunks if any(c["start"] < end and c["end"] > start for start, end in module["ranges"])]
+    result = {"module": module, "speech": selected, "speech_timestamp_basis": BASIS,
+              "speech_gaps": [{"range": pair, "gaps": speech_gaps(
+                  [c for c in selected if c["start"] < pair[1] and c["end"] > pair[0]], *pair)} for pair in module["ranges"]],
+              "observations": evidence[module["id"]], "source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
+              "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed"}
+    if section != "all":
+        rows = selected if section == "speech" else evidence[module["id"]]
+        check(offset <= len(rows), "Module page offset exceeds section length")
+        stop = min(len(rows), offset + (limit or 8))
+        result = {"module_id": module["id"], "module_title": module["title"], "ranges": module["ranges"],
+                  "index_sha256": revision, "source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
+                  "section": section, "items": rows[offset:stop], "total_items": len(rows), "offset": offset,
+                  "next_offset": stop if stop < len(rows) else None, "module_questions": module["questions"],
+                  "module_unknowns": module["unknowns"], "speech_timestamp_basis": BASIS,
+                  "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed"}
+    check(sha(path) == revision, "Index changed during read; restart reading the updated index")
+    return bounded_result(result, args.max_chars)
+
+
+def read_transcript(args):
+    data, chunks = index_sources(Path(args.index))
+    check(type(args.offset) is int and 0 <= args.offset <= len(chunks), "Invalid transcript offset")
+    check(type(args.limit) is int and 1 <= args.limit <= 100, "Transcript limit must be 1..100")
+    selected = chunks[args.offset:args.offset + args.limit]
+    next_offset = args.offset + len(selected)
+    return bounded_result({"source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
+        "speech_timestamp_basis": BASIS, "chunks": selected, "total_chunks": len(chunks),
+        "next_offset": next_offset if next_offset < len(chunks) else None,
+        "text_accuracy": "unverified"}, args.max_chars)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -833,6 +1056,8 @@ def main():
     c.add_argument("--frames-dir", required=True)
     c.add_argument("--output", required=True)
     c.add_argument("--region", action="append", help="name:x:y:width:height normalized to 0..1; repeat for up to 8 ROIs")
+    c.add_argument("--region-mode", choices=("frame-grid", "crop-first"), default="frame-grid",
+                   help="crop-first preserves regional detail before scaling; thresholds are not comparable across modes")
     c.add_argument("--analysis-width", type=int, default=320)
     c.add_argument("--analysis-height", type=int, default=180)
     c.add_argument("--pixel-threshold", type=float, default=0.08)
@@ -849,13 +1074,34 @@ def main():
     notes.add_argument("--context", required=True)
     notes.add_argument("--notes", required=True)
     notes.add_argument("--output", required=True)
+    init = commands.add_parser("index-init")
+    init.add_argument("--frames-dir", required=True)
+    init.add_argument("--transcript")
+    init.add_argument("--output", required=True)
+    init.add_argument("--ffprobe", default="ffprobe")
+    for name in ("check-index", "read-index", "read-transcript"):
+        cmd = commands.add_parser(name)
+        cmd.add_argument("--index", required=True)
+        if name != "check-index":
+            cmd.add_argument("--max-chars", type=int, default=24000)
+        if name == "read-index":
+            cmd.add_argument("--module")
+            cmd.add_argument("--section", choices=("all", "speech", "observations"), default="all")
+            cmd.add_argument("--offset", type=int, default=0)
+            cmd.add_argument("--limit", type=int)
+            cmd.add_argument("--index-sha256", help="Pin the index revision returned by the first section page")
+        if name == "read-transcript":
+            cmd.add_argument("--offset", type=int, default=0)
+            cmd.add_argument("--limit", type=int, default=8)
     args = parser.parse_args()
     try:
         if args.command in ("scan", "review"):
             result = frame_job(args, args.command)
         else:
             result = {"prepare": prepare, "transcribe": transcribe, "export": export, "frames": frames,
-                      "changes": changes, "context": context, "check-notes": check_notes}[args.command](args)
+                      "changes": changes, "context": context, "check-notes": check_notes,
+                      "index-init": index_init, "check-index": check_index, "read-index": read_index,
+                      "read-transcript": read_transcript}[args.command](args)
         print(json.dumps(result, ensure_ascii=False))
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         # No arbitrary exception/body logging: network errors may contain private data.
