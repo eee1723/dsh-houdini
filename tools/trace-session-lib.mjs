@@ -123,9 +123,13 @@ export function collectRequestTelemetry(events) {
   const count = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   for (const event of events) {
     const d = event.data;
-    if (event.type !== 'assistant/chunk' || d?.chunk?.type !== 'usage') continue;
+    // V3 persists settled usage on the message, including interrupted messages.
+    // Keep legacy chunk logs readable; mixed records share one turn/step key.
+    const reportedUsage = event.type === 'assistant/message' ? d?.usage
+      : event.type === 'assistant/chunk' && d?.chunk?.type === 'usage' ? d.chunk.usage : null;
+    if (!reportedUsage || typeof reportedUsage !== 'object') continue;
     const key = d.turn != null && d.step != null ? `${d.turn}/${d.step}` : `seq:${event.seq}`;
-    const usage = Object.fromEntries(fields.map(f => [f, count(d.chunk.usage?.[f])]));
+    const usage = Object.fromEntries(fields.map(f => [f, count(reportedUsage[f])]));
     const prior = requests.get(key);
     if (prior) {
       if (fields.every(f => prior[f] === usage[f])) duplicateUsageEvents++;

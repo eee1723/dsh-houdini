@@ -9,7 +9,7 @@ const STATE_NAME = 'dsh-houdini:execution-state'
 const TASK_NAME = 'dsh-houdini:task-sources'
 const RECOVERY_NAME = 'dsh-houdini:context-recovery'
 type Event = { type: string; seq?: number; data?: any; surfaceOp?: string | {op:string} }
-type AgentView = { session: { snapshotEvents(): Event[]; header?: { agentPreset?: string };
+type AgentView = { session: { snapshotEvents(): readonly Event[]; header?: { agentPreset?: string };
   surface?: {nodes: readonly number[]; replaceGeneration: number} } }
 type Section = {name:string;text:string}
 function sectionData(section?: Section): any {
@@ -25,7 +25,7 @@ export function needsSceneReferent(message: any): boolean {
   if (/\/(?:obj|stage|mat|out|img|ch|tasks)\//i.test(text)) return false
   return /(?:这个|这些|当前|眼前|现在的)\s*(?:节点|HDA|物体|对象|场景|工程|网络)|\b(?:this|these|current)\s+(?:node|hda|object|scene|network|hip)\b/i.test(text)
 }
-function last(events: Event[], predicate: (event: Event) => boolean): Event | undefined {
+function last(events: readonly Event[], predicate: (event: Event) => boolean): Event | undefined {
   for (let i = events.length - 1; i >= 0; i--) if (predicate(events[i])) return events[i]
 }
 

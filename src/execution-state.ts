@@ -7,7 +7,7 @@ const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_
   'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'])
 const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
 
-export function projectExecutionState(events: Event[]): Record<string, unknown> | null {
+export function projectExecutionState(events: readonly Event[]): Record<string, unknown> | null {
   const calls = new Map<string, any>()
   const seen = new Set<string>()
   const rows: any[] = []
@@ -136,7 +136,7 @@ export function projectExecutionState(events: Event[]): Record<string, unknown> 
 /** Only facts requiring attention beyond an ordinary returned tool result.
  * No clocks, counters, healthy-node inventory or repeated error traceback.
  */
-export function projectExecutionNotice(events: Event[]): Record<string, unknown> | null {
+export function projectExecutionNotice(events: readonly Event[]): Record<string, unknown> | null {
   const state = projectExecutionState(events) as any
   if (!state) return null
   const checks = (state.checks || []).filter((check: any) =>

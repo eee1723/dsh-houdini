@@ -32,7 +32,7 @@
     "tools/houdini_test_environment.py"
   ],
   "scripts": {
-    "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && tsc -p tsconfig.json && node tools/prune-retired-build.mjs",
+    "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && tsc -p tsconfig.json && node tools/prune-retired-build.mjs",
     "docs:generate": "node tools/gen-node-card-docs.mjs",
     "docs:check": "node tools/gen-node-card-docs.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
@@ -52,15 +52,17 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.1.2-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2"
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2 || ^0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2 || 0.1.5-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^22",
+    "core-js": "3.45.1",
+    "esbuild": "0.25.9",
     "typescript": "^5"
   }
 }

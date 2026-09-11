@@ -42,8 +42,12 @@ npx cache，也不会替换当前插件要求的版本。未命中preferred缓�
 
 ## 新 DSH 版本的资格流程
 
-DSH 0.1.5候选尚未接纳为preferred：当前包的LLM/system-prompt peer范围不接受0.1.5预发行版，
-persona仍使用text而候选要求prefix/suffix，Trace用量统计尚未适配V3结算事件。只改peer范围不代表完成迁移。
+DSH 0.1.5-rc.2是当前源码preferred与发行锁目标，由用户明确授权切换以进行Houdini实际验收；
+兼容清单保留pendingVerification，不代表GUI资格已完成或正式发行已发布。LLM/system-prompt peer显式接受该精确候选，
+不提前接受其他0.1.5预发行版；构建使用同版tools/system-prompt。persona以prefix为主，text通过YAML别名复用
+同一正文供旧受支持DSH读取；Trace离线统计兼容旧chunk与V3 assistant/message结算usage。
+Session事件消费者使用只读snapshotEvents；Bridge JSON类型独立于上游已移除的tools类型重导出。
+这些源码适配不代表完成运行时资格或历史迁移。
 模块可导入、conversation.view/composer.dock仍有公开类型定义，不等于组合启动或GUI已经通过。
 会话V3升级后不支持旧版本降级读取；候选资格验证必须使用独立DSH_HOME和自建日志，不直接迁移用户历史。
 
@@ -52,6 +56,11 @@ persona仍使用text而候选要求prefix/suffix，Trace用量统计尚未适配
 候选依赖先通过npm下载；正常组合安装失败时，解压原包仅用于区分模块/API问题，绝不绕过peer准入。
 脚本检查peer、persona schema、V3用量及公开接口，失败退出非零；不执行模型、迁移用户profile或提升preferred。
 TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 WebView资格门。
+
+无模型的组合启动回归是[dsh-candidate-runtime.test.py](../tools/tests/dsh-candidate-runtime.test.py)：
+先在独立npm目录正常安装精确DSH与本插件tgz，再执行`python tools/tests/dsh-candidate-runtime.test.py --candidate <隔离npm目录>`。
+它复用受管profile准备入口，在新DSH_HOME验证真实Node启动、401/200 RPC、workspace幂等及两个preset创建，
+只关闭自己启动的进程，证据留在系统临时目录；不认证签名发行包、Houdini WebView或发送/停止模型路径。
 
 保持当前 serving runtime 在线，依次完成：
 
@@ -100,6 +109,10 @@ Host/Bridge/helper版本、执行合同与词表hash，区分磁盘源码与已�
 [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py)处理process-token cookie与
 slash/generated-args RPC；[client.js](../client.js)消费公开Trajectory snapshot；
 [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py)在DocumentCreation注入必要Web API补丁；
+Iterator及其辅助方法使用锁定core-js构建的兼容资产，在MainWorld早于模块加载执行；
+DSH document preview内嵌PDF.js会在模块求值时访问Iterator.prototype，不能等loadFinished再补。
+生成入口为[gen-web-polyfills.mjs](../tools/gen-web-polyfills.mjs)，随包携带许可证；不改上游npm缓存。
+此补丁针对页面realm，不证明PDF worker及任意文档格式在旧Chromium上的完整兼容。
 [profile sync](../houdini/python3.11libs/dsh_profile_sync.py)只对精确toolkit版本/调用点做兼容修补。
 WebView鉴权重定向已加载主页面；不能在loadFinished再导航一次以传session hint，否则可能中断
 首个页面的inventory/inspect初始化请求。显式session通过同源DocumentCreation脚本写入URL，

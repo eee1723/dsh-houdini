@@ -23,7 +23,7 @@ function content(blocks: any[]): { text: string; nontext_blocks: string[] } {
   return { text: texts.join('\n'), nontext_blocks: nontext }
 }
 
-export function taskSources(events: Event[], claimed?: any): Source[] {
+export function taskSources(events: readonly Event[], claimed?: any): Source[] {
   const rows: Source[] = [], seen = new Set<string>(), questions = new Set<string>(), settled = new Set<string>()
   const add = (kind: string, event: Event, body: ReturnType<typeof content>, messageId?: string, callId?: string) => {
     const key = `${kind}:${callId ?? messageId ?? event.seq ?? rows.length}`
@@ -66,7 +66,7 @@ const descriptor = (row: Source) => ({ source_ref: row.source_ref, kind: row.kin
   event_seq: row.event_seq, message_id: row.message_id, call_id: row.call_id,
   text_chars: row.text.length, nontext_blocks: row.nontext_blocks })
 
-export function projectTaskSources(events: Event[], claimed?: any, recovery = false): Record<string, unknown> | null {
+export function projectTaskSources(events: readonly Event[], claimed?: any, recovery = false): Record<string, unknown> | null {
   const rows = taskSources(events, claimed)
   if (!rows.length) return null
   const goals = events.filter(e => e.type === 'goal/change')
@@ -90,7 +90,7 @@ export function projectTaskSources(events: Event[], claimed?: any, recovery = fa
     boundary: 'Available current-session sources only, not a complete requirement register. Excerpts may omit obligations. Questions are model-authored; answers are recorded tool replies, not inferred choices. Nontext content is not interpreted. Later messages may add, correct or replace work: resolve intent from originals, never from order alone. No authorization or acceptance is derived.' }
 }
 
-export function readTaskSource(events: Event[], ref: string, offset = 0, limit = 6000): ExecResult {
+export function readTaskSource(events: readonly Event[], ref: string, offset = 0, limit = 6000): ExecResult {
   if (ref !== 'index' && !/^[0-9a-f]{64}$/.test(ref)) throw new Error('source_ref must be index or a source hash')
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {
     throw new Error('offset must be a nonnegative integer; limit must be 1..16000 characters')

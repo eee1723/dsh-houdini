@@ -119,9 +119,7 @@ const braces=new SceneContextProvider({async sceneContext(){return {ok:true,resu
 braces.receive(ca,cm);braces.claim(ca,cm);assert((await braces.observe(ca)).length<6700,'budget includes template escaping');
 // Exercise actual DSH surface validation and model-message derivation, not only the hook fixture.
 const durable=Session.create('context-injection-regression');
-// The build-time Session dependency predates snapshotEvents; adapt only the
-// test view, while append validation, surface and deriveMessages stay real.
-const real={session:{snapshotEvents:()=>durable.events,get surface(){return durable.surface;}}};
+const real={session:durable};
 real.append=(type,d,visible=false)=>durable.append(type,d,visible?{surfaceOp:'append'}:undefined);
 await step(real,{message:user('real','检查选中节点')});
 assert.equal(durable.deriveMessages().length,2);
@@ -129,7 +127,7 @@ assert.equal(durable.deriveMessages()[1].source.sections[0].name,SCENE);
 assert.equal((await step(real)).sections.length,0);
 assert.equal(durable.deriveMessages().length,2,'model input does not accumulate repeated scene context');
 durable.append('user/message',{...user('actual-summary','历史摘要'),source:{kind:'plugin',plugin:'compaction'}},
-  {surfaceOp:{op:'replace',start:durable.surface.nodes[0],end:durable.surface.nodes.at(-1)},sourceEventSeqs:[...durable.surface.nodes]});
+  {surfaceOp:{op:'replace',startSeq:durable.surface.nodes[0],endSeq:durable.surface.nodes.at(-1)},sourceEventSeqs:[...durable.surface.nodes]});
 const restored=await step(real);
 assert(restored.sections.some(s=>s.name===TASK),'replacement without a compaction marker still recovers a singleton original');
 assert.equal((await step(real)).sections.length,0);

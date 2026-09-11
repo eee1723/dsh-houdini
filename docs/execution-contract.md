@@ -89,6 +89,10 @@ request_ref='index'仅列当前owner最近32条回执，以owner_call对齐Host�
 
 ## 参数与创建
 
+普通set_parm(s)在快照/写入前拒绝Data参数，内嵌Geometry等需其原生初始化流程，不能进入数字恢复。
+新建HDA同步展开延迟定义后登记其初始化后代；后续用户加入的子节点不因父级owned而获得身份。
+delete_node返回受影响消费者与原生删除后的接线；重新创建同名节点不证明恢复了引用、连线或控制关系。
+
 COP观察/关系/控制动词必须exec，经同一Bridge主线程编组；直接读取ImageLayer而非Geometry代理。
 Manual、失败cook、非图层、预算超限明确拒绝；统计完整buffer但不限制上游GPU cook内存，不隐式抽样。
 层间差值必须相同通道/窗口/空间/帧，公式与操作数随结果保留；未声明预期只量测，不认证语义。

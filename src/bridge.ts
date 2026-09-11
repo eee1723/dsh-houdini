@@ -4,7 +4,8 @@
  * The bridge runs inside Houdini's own Python, where the `hou` module lives;
  * this client is the only channel the plugin uses to reach it.
  */
-import type { JsonValue } from '@deepseek-ai/dsh-tools'
+/** Bridge wire JSON is independent of DSH's version-specific type re-exports. */
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 import { randomUUID } from 'node:crypto'
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 

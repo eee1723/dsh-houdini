@@ -161,7 +161,10 @@ def _register_owned_node(node) -> None:
         return
     items = [node]
     try:
-        items.extend(node.allSubChildren())
+        # Materialize the newly created HDA's delayed definition NOW. Otherwise
+        # its native children first appear on cook and incorrectly look foreign.
+        # Never do this later to adopt arbitrary children of an owned parent.
+        items.extend(node.allSubChildren(sync_delayed_definition=True))
     except Exception:
         pass
     for item in items:
@@ -1533,7 +1536,8 @@ def graph(node, depth: int = 1, direction: str = "both") -> dict:
     n = _resolve(node)
     up = _hop_paths(n, "up", depth) if direction in ("both", "up") else []
     down = _hop_paths(n, "down", depth) if direction in ("both", "down") else []
-    refs = sorted(x.path() for x in n.parmsReferencingThis())
+    refs = sorted(x.path() for x in n.parmsReferencingThis()
+                  if x.node() != n and not x.node().path().startswith(n.path() + '/'))
     return {"path": n.path(), "inputs": up, "outputs": down, "parm_refs": refs}
 
 
@@ -1919,11 +1923,21 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
     refs = sorted(x.path() for x in n.parmsReferencingThis())
     session_ids = [int(n.sessionId())]
     session_ids.extend(int(child.sessionId()) for child in n.allSubChildren())
+    consumers = []
+    for connection in n.outputConnections():
+        consumer = connection.outputNode()
+        if consumer is not None:
+            consumers.append((consumer, connection.inputIndex(), connection.outputIndex()))
     path = n.path()
     n.destroy()
     for session_id in session_ids:
         _OWNED_NODE_SESSIONS.pop(session_id, None)
     result: dict = {"deleted": path}
+    result['affected_connections'] = [
+        {'destination': consumer.path(), 'input': index, 'deleted_source_output': port,
+         'inputs_after': _input_state(consumer)} for consumer, index, port in consumers[:64]]
+    result['affected_connections_truncated'] = len(consumers) > 64
+    result['next_action'] = 'Deletion may reconnect/bypass native wires. A same-named replacement does not restore them; inspect affected_connections and explicitly reconnect, then retest final-output controls.'
     if refs:
         result["orphaned_parm_refs"] = refs
     return result
@@ -2584,6 +2598,8 @@ def _clear_animation(p) -> str | None:
 def _parameter_snapshot(targets) -> dict:
     snapshots = {}
     for target in targets:
+        if target.parmTemplate().type() == hou.parmTemplateType.Data:
+            raise ValueError(f'{target.path()}: data parameters are not scalar values; zero writes. Use the documented node initialization workflow (for example Stash Input), not set_parm(s) on embedded geometry.')
         if target.isLocked():
             raise ValueError(f"参数已锁定：{target.path()}")
         keys = tuple(target.keyframes())
@@ -2708,6 +2724,7 @@ def set_parm(node, name: str, value,
 
     失败恢复本参数的值/表达式/关键帧，不跟随引用修改其他节点。菜单动画可显式传
     {"expression": "...", "language": "hscript"|"python"}。外部回调不属回滚范围。
+    Data/内嵌Geometry参数在快照与写入前拒绝；按节点原生初始化流程处理，不用标量setter。
     字面string可用{"expected_sha256":原始UTF8源码hash,"patch":[{"old":锚点,"new":替换,"count":精确次数}]}。
     1..32项顺序替换，先验证全部锚点/版本；拒绝锁定、动画/表达式、callback和固定菜单。
     源码上限524288字符，替换文本累计131072字符，count为1..256；不执行正则或补丁脚本。
@@ -4697,7 +4714,8 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
     inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
-    返回边界/非流形/边连通/零面积与局部extent。observed不是形态pass，分组切口可能有意开放。
+    返回边界/非流形/边连通/零面积、surface_area与局部extent；duplicate_boundary_faces及
+    closed_planar_components是重合边界/闭合共面壳风险，不是任意重叠检测。observed不是形态pass。
     曲线/native/packed及超预算保持unverified；group/basis不能用于默认piece统计。
     """
     n = _resolve(node)

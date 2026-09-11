@@ -38,11 +38,15 @@ try {
 const persona=await load('@deepseek-ai/dsh-persona');
 for(const preset of ['houdini','houdini-dev']) {
   const source=fs.readFileSync(path.join(plugin,'presets',preset,'agent.cordis.yml'),'utf8');
-  // These checked-in presets have a single persona text field. Do not evaluate !!js.
-  const field=/\n    text: >-/.test(source)?'text':/\n    prefix: >-/.test(source)?'prefix':null;
+  // Parse only the persona row, never evaluate the other rows' !!js expressions.
+  const yaml=require('js-yaml');
+  const row=source.match(/^- id: persona\r?\n[\s\S]*?(?=^- id:|$(?![\s\S]))/m)?.[0];
+  const config=row ? yaml.load(row)[0].config : null;
+  const field=typeof config?.prefix==='string'?'prefix':typeof config?.text==='string'?'text':null;
   try {
     if(!field) throw Error('unrecognized persona config; inspect the preset explicitly');
-    persona.Config({[field]:'isolated compatibility probe'});
+    const parsed=persona.Config(config);
+    if(parsed[field]!==config[field]) throw Error('persona content changed during schema validation');
     report.checks.push({id:'persona:'+preset,ok:true,field});
   } catch(error) {report.checks.push({id:'persona:'+preset,ok:false,field,error:clean(error)});}
 }

@@ -450,7 +450,7 @@ class EvidenceNotesTests(unittest.TestCase):
             video.validate_notes(notes, packet, video.sha(path))
         notes = self.notes(path)
         notes["steps"][0]["speech_ids"] = ["speech-00001"]
-        with self.assertRaises(video.Failure):
+        with self.assertRaisesRegex(video.Failure, "step-one:.*speech-00001"):
             video.validate_notes(notes, packet, video.sha(path))
 
     def test_single_snapshot_cannot_be_operation(self):

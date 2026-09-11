@@ -140,7 +140,8 @@ result_ref分页读取单独计为Host详情读取，不计新HOM调用/裸探�
 canonical metadata时标referenced_artifact_only，不能把压缩占位当作参数/证据缺失的确定事实。
 工具参数/返回文本长度可独立估算并标注tokenizer/口径；工具返回不是模型输出，进入后续请求时可能被压缩或裁剪。
 没有usage显示未采集，不能显示0；缓存、推理token字段是否包含在总量内以提供方定义为准，不重复相加。
-离线提取器和HTML报告复用collectRequestTelemetry：按turn/step保留最新累计usage，区分重复与更新，
+离线提取器和HTML报告复用collectRequestTelemetry：兼容旧assistant/chunk usage与V3 assistant/message.usage
+（含interrupted结算），按turn/step保留最新累计usage，混合记录不重复累计，缺失用量不补零，区分重复与更新，
 记录字段覆盖和算术不一致；逐轮上游错误不被后续completed覆盖，不混入工具失败计数。
 原始请求取首次工具前最早的用户消息；恢复口令不替换它。目标变更和compaction只报告已记录事件，
 不由它们推断完整输入保留状态。验证入口为[请求审计回归](../tools/tests/trace-request-telemetry.test.mjs)。

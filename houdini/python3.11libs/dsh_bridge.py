@@ -68,7 +68,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 34
+_EXECUTION_CONTRACT_VERSION = 35
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)

@@ -23,6 +23,9 @@
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
+教程工程的目的/原片回看/差异核对/替代顺序及交付门唯一维护在
+[复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)，由video skill进入复现阶段时读取。
+
 [COP workflow](../skills/houdini-cop-workflow/SKILL.md)维护 Copernicus 图层、关系验证与纹理交付，
 由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)，注册由 `src/skill.ts` 维护。

@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {execFileSync} from 'node:child_process';
+execFileSync(process.execPath,['tools/gen-web-polyfills.mjs','--check']);
+const source=fs.readFileSync('houdini/python3.11libs/dsh_iterator_polyfill.js','utf8');
+const context=vm.createContext({});
+vm.runInContext('delete globalThis.Iterator',context);
+assert.throws(()=>vm.runInContext('Iterator.prototype.join',context),/Iterator is not defined/);
+vm.runInContext(source,context);
+assert.equal(vm.runInContext('[1,2].values().map(x=>x*2).toArray().join(",")',context),'2,4');
+assert.equal(vm.runInContext('new Map([[1,2]]).values().some(x=>x===2)',context),true);
+vm.runInContext('globalThis.savedIterator=Iterator;globalThis.savedMap=Iterator.prototype.map',context);
+vm.runInContext(source,context);
+assert.equal(vm.runInContext('Iterator===savedIterator && Iterator.prototype.map===savedMap',context),true);
+console.log('Iterator compatibility generation, missing-global repro, helpers and idempotence passed');

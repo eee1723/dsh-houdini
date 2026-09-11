@@ -297,6 +297,10 @@ PR不得在持有许可证的自托管runner上任意执行；不能让依赖安
 
 ## 5. 领域与真实运行验收
 
+教程执行边界用[dsh-tutorial-contracts](../tools/tests/dsh-tutorial-contracts.test.py)在H21/H22隔离回归：
+单层/叠面/实体反例、延迟HDA后代登记与foreign保留、删除后消费者回读、Data参数批次零写拒绝。
+教程优先回看、目的理解及完整交付的自然采用另按video skill复现协议验收，不由机制测试核销。
+
 COP用[dsh-cop-contracts](../tools/tests/dsh-cop-contracts.test.py)在隔离H21/H22通过Bridge验证具名
 源/目标端口、动态签名、零写拒绝/ownership/Gate/回滚、原生多通道/整数图层、对齐差值与预算/Manual。
 控制测试含错口仍cook的反例、正确响应、参数/keys/frame与完整buffer恢复、扰动及恢复故障；

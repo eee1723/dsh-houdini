@@ -7,10 +7,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import {
   defineTool,
   type GenericResultView,
-  type JsonValue,
   type ToolResult,
 } from '@deepseek-ai/dsh-tools'
-import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope } from './bridge.js'
+import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope, JsonValue } from './bridge.js'
 import { readResultDetail, retainResult } from './result-details.js'
 import { readTaskSource } from './task-sources.js'
 import { attachImages, imageBlocks } from './image-output.js'

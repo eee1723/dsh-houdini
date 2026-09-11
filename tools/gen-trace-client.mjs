@@ -83,7 +83,7 @@ export function traceSources() {
       const file = `presets/${name}/agent.cordis.yml`;
       if (!fs.existsSync(path.join(root, file))) return [];
       const text = read(file).match(
-        /    text: >-\n([\s\S]*?)(?=^- id:|$(?![\s\S]))/m,
+        /    prefix: &houdini_persona >-\n([\s\S]*?)(?=^ {0,4}\S|$(?![\s\S]))/m,
       )?.[1];
       if (!text) throw new Error(`${file}: persona template not found`);
       return [

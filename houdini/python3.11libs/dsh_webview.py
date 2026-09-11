@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import urllib.parse
 import dsh_managed_runtime
 
@@ -177,6 +178,7 @@ def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
     script.setRunsOnSubFrames(False)
     script.setSourceCode(
         _POLYFILL_ABORT_SIGNAL_ANY_JS + ";\n" + _POLYFILL_PROMISE_WITH_RESOLVERS_JS
+        + ";\n" + Path(__file__).with_name("dsh_iterator_polyfill.js").read_text(encoding="utf-8")
     )
     view.page().scripts().insert(script)
 

@@ -50,6 +50,12 @@ class Handler(BaseHTTPRequestHandler):
         requests.append(self.path)
         body = b'''<!doctype html><script>
         window.probe = {urlAtBoot: location.href, done: false};
+        try {
+          // PDF.js module-evaluation failure and its later iterator helper use.
+          if (typeof Iterator.prototype.join !== 'function') Iterator.prototype.join = function(s) {return [...this].join(s);};
+          probe.iterator = [1,2].values().map(x => x*2).toArray().join(',');
+          probe.iteratorSome = new Map([[1,2]]).values().some(x => x === 2);
+        } catch(e) { probe.iteratorError = String(e); }
         Promise.all(['/api/inventory', '/api/syncInspectManifest'].map(path =>
           fetch(path, {method:'POST', body:'{}'}).then(r => r.json())))
           .then(() => {probe.done = true;}, e => {probe.error = String(e);});
@@ -99,6 +105,8 @@ try:
     observed = settle()
     assert len(requests) == 1, f"auth bootstrap loaded the app {len(requests)} times: {requests}"
     assert observed["done"] and "error" not in observed, observed
+    assert observed.get("iterator") == "2,4" and observed.get("iteratorSome") is True, observed
+    assert "iteratorError" not in observed, observed
     assert "dsh-houdini-session=task" in observed["urlAtBoot"], observed
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["task /中文?&"]
     assert "token=" not in observed["urlAtBoot"], "launch token must not reach the app URL"

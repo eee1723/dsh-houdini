@@ -40,10 +40,22 @@ def polygon_observation(g, group=None, basis=None):
             parent[n] = parent[parent[n]]; n = parent[n]
         return n
     pts, zero_area, zero_edges = {}, 0, 0
+    face_keys, repeated_faces, areas = set(), [], []
     for p in prims:
         ids = [v.point().number() for v in p.vertices()]
         for v in p.vertices(): pts[v.point().number()] = tuple(v.point().position())
         area = float(p.intrinsicValue('measuredarea'))
+        areas.append(area)
+        coords_face = [pts[i] for i in ids]
+        if coords_face:
+            # Cyclic boundary equality, not a sorted vertex-set guess. Reverse
+            # winding and distinct point identities may still duplicate a face.
+            def canonical_cycle(values):
+                start = min(range(len(values)), key=values.__getitem__)
+                return tuple(values[start:] + values[:start])
+            key = min(canonical_cycle(coords_face), canonical_cycle(list(reversed(coords_face))))
+            if key in face_keys: repeated_faces.append(p.number())
+            face_keys.add(key)
         if not math.isfinite(area) or area <= 1e-16: zero_area += 1
         for a,b in zip(ids,ids[1:]+ids[:1]):
             edges[tuple(sorted((a,b)))].append(p.number()); directed[a,b] += 1
@@ -66,6 +78,18 @@ def polygon_observation(g, group=None, basis=None):
         closed = all(len(o)==2 for e,o in shell_edges)
         consistent = all(len(o)!=2 or directed[a,b]==directed[b,a] for (a,b),o in shell_edges)
         row = {'component':rid, 'primitive_count':len(faces), 'closed':closed, 'consistent':consistent}
+        vertices = [tuple(v.point().position()) for p in faces for v in p.vertices()]
+        center = hou.Vector3(vertices[0])
+        scale = max(max(v[i] for v in vertices)-min(v[i] for v in vertices) for i in range(3))
+        normal = None
+        for face in faces:
+            polygon = [v.point().position() for v in face.vertices()]
+            for i in range(1, len(polygon)-1):
+                candidate = (polygon[i]-polygon[0]).cross(polygon[i+1]-polygon[0])
+                if candidate.length() > max(scale*scale, 1e-24)*1e-12:
+                    normal = candidate.normalized(); break
+            if normal is not None: break
+        row['planar'] = normal is not None and all(abs((hou.Vector3(v)-center).dot(normal)) <= max(scale,1e-12)*1e-8 for v in vertices)
         if not closed or not consistent or any(float(p.intrinsicValue('measuredarea'))<=1e-16 for p in faces):
             row.update(status='unverified',reason='requires closed, consistently wound, nondegenerate polygon shell')
         else:
@@ -89,6 +113,10 @@ def polygon_observation(g, group=None, basis=None):
                    'unverified_count':sum(r['status']=='unverified' or r.get('sign')=='near_zero' for r in shell_rows),
                    'scope':'Positive follows outward HOM winding ONLY for a simple unnested closed shell. Self-intersections, nested cavities and solid validity are NOT tested. Near-zero or inconsistent/open shells cannot establish inward/outward.'}
     return {**result, 'status': 'observed', 'selected_primitives':len(prims), 'selected_points':len(pts),
+            'surface_area': math.fsum(areas),
+            'duplicate_boundary_faces':len(repeated_faces), 'duplicate_face_sample':repeated_faces[:16],
+            'closed_planar_components':sum(r['closed'] and r['planar'] for r in shell_rows),
+            'overlap_scope':'Exact coincident cyclic boundaries and closed coplanar shells are risk evidence, not arbitrary overlap detection. A filled polygon plus tessellation can close a zero-thickness shell; intentional double-sided surfaces require explicit interpretation.',
             'edge_connected_components':len({root(n) for n in parent}),
             'boundary_edges':len(boundary), 'boundary_edge_sample':boundary[:16],
             'boundary_sample_truncated':len(boundary)>16,

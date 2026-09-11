@@ -724,14 +724,14 @@ def validate_notes(data, packet, packet_hash):
         check(len(set(step["speech_ids"])) == len(step["speech_ids"]), "Duplicate speech references")
         for identity in step["speech_ids"]:
             check(identity in speech and speech[identity]["start"] < end and speech[identity]["end"] > start,
-                  "Missing/out-of-range speech reference")
+                  f"{step['id']}: Missing/out-of-range speech reference {identity!r}; step={start}..{end}, speech={None if identity not in speech else [speech[identity]['start'], speech[identity]['end']]}. Require a real overlapping excerpt, not an invented timestamp.")
         check(isinstance(step["visual"], list) and len(step["visual"]) <= 48, "Invalid visual references")
         seen, times = set(), set()
         for ref in step["visual"]:
             check(set(ref) == {"frame_id", "observed"}, "Visual refs require frame_id and observed only")
             identity = ref["frame_id"]
             check(identity in frames and identity not in seen and start <= frames[identity]["actual_seconds"] <= end,
-                  "Missing/duplicate/out-of-range frame reference")
+                  f"{step['id']}: Missing/duplicate/out-of-range frame reference {identity!r}; step={start}..{end}; use the actual frame time and original evidence.")
             check(isinstance(ref["observed"], str) and 0 < len(ref["observed"].strip()) <= 4000, "Observed description required")
             seen.add(identity)
             times.add(frames[identity]["actual_seconds"])
@@ -749,12 +749,12 @@ def validate_notes(data, packet, packet_hash):
         if state == "unknown":
             check(bool(step["unknowns"]), "Unknown state must describe missing evidence")
         if step["kind"] in ("ui_navigation", "demonstrated_operation"):
-            check(len(times) >= 2, "An operation/navigation requires distinct before and after frame observations")
+            check(len(times) >= 2, f"{step['id']}: An operation/navigation requires distinct before and after frame observations; one frame supports a state only, not proof of an operation.")
         if step["kind"] == "inference":
             check(bool(step["inferences"]), "Inference explanation required")
         if ready == "ready_for_runtime_check":
             check(state == "visual_checked" and not step["conflicts"] and not step["unknowns"]
-                  and step["kind"] not in ("inference", "ui_navigation"), "Not ready: unresolved evidence or non-build step")
+                  and step["kind"] not in ("inference", "ui_navigation"), f"{step['id']}: Not ready: unresolved evidence or non-build step. Keep needs_more_evidence and revisit the tutorial; do not delete unknowns to obtain ready.")
     return {"structural_validation": "passed", "steps": len(data["steps"]),
             "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed",
             "needs_more_evidence": [s["id"] for s in data["steps"] if s["reconstruction_readiness"] == "needs_more_evidence"]}

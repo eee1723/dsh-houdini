@@ -33,7 +33,7 @@
 
 - 状态：待验证
 - 现状：正式发行链已可用；部署/GUI验收驱动共用环境隔离，拒绝继承外部Houdini包、Python/Qt/DSH配置和模型凭据。另一台物理机器、自定义用户启动环境及模型路径仍待验收；H22 Qt helper按安装合同从bin启动，私钥备份与长期发布环境仍待维护者确认。
-- 下一步：DSH 0.1.5候选先解决peer范围、persona text→prefix及V3 Trace用量迁移，再按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)验证隔离组合/RPC/H21/H22 WebView；保持旧preferred与用户历史不动。确认私钥备份和长期发布运维；补异机/自定义启动目录及完整重开后的共用主面板、模式和高级诊断。获授权后验请求恢复、来源/工作流、新session/压缩恢复、原生/Code Mode图像及Trace历史，不以只读smoke核销模型与视觉。
+- 下一步：用户已授权将源码默认运行时切至DSH 0.1.5-rc.2并自行在Houdini验收；按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)补H21/H22 WebView与发送/停止/重连、V3 Trace真实历史及签名组合验收。源码变更触发的benchmark指纹仍需明确授权重封，不能放宽门禁；不以preferred切换证明live已加载或正式发布，不自动迁移用户历史。确认私钥备份和长期发布运维；补异机/自定义启动目录及完整重开后的共用主面板、模式和高级诊断。获授权后验请求恢复、来源/工作流、新session/压缩恢复、原生/Code Mode图像，不以只读smoke核销模型与视觉。
 - 移除条件：上述跨机/启动环境边界及获授权用户路径有证据，备份/长期发布运维责任明确；未测试的模型和驱动组合不被宣称为已验证，当前用户旧进程不冒充已加载发行版。
 - 入口：[安装合同](setup.md)、[兼容验收](dsh-update-compatibility.md)、[安装器](../houdini/install.py)、[发布策略](../houdini/python3.11libs/dsh_release_policy.py)、[部署回归](development.md#4-回归与发布)、[WebView回归](../tools/tests/dsh-webview-navigation.test.py)、[Trace回归](../tools/tests/trace-view.test.mjs)。
 
@@ -80,7 +80,7 @@
 ### H-07 视频解析到教学工程的端到端验证
 
 - 状态：待验证
-- 现状：COP候选workflow与按阶段路由已有；具名connect、原生图层/差值与控制恢复有H21/H22隔离机制回归及浮点导出/自建HIP重开。未覆盖节点/格式、原教程完整复验、自然触发/视觉与部署仍待验；封存benchmark内容指纹随源码变化，不自动重封。
+- 现状：教程优先/目的驱动/替代后置协议已入video/SOP与preset；延迟HDA身份、Data设参零写拒绝、替换接线回读及叠面风险有隔离回归。COP图层/控制与浮点交付基础已有；原教程完整复验、自然回看/完成裁决与视觉待实测，封存指纹不自动重封。
 - 下一步：在确认加载当前合同的新session按[COP验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)测自然采用、原失败与未见任务；获授权短片分别验资料复用与冷启动。云提交/工程修改分别授权；benchmark重封另经明确范围确认。
 - 移除条件：当前候选的真实媒体/语义及最小教学工程验收有证据；更远能力继续留在开发方向，不扩成交接长清单。
 - 入口：[视频当前范围](development-directions.md#教程转教学工程)、[解析脚本](../skills/houdini-video-tutorial/scripts/video_tutorial.py)、[离线回归](../tools/tests/video-tutorial.test.py)。

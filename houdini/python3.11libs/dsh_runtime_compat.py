@@ -4,6 +4,8 @@ Downloading a DSH package does not authorize activating it.  The default
 launcher selects only an exact release recorded in
 ``dsh-runtime-compatibility.json`` after Host RPC, browser, QtWebEngine,
 client-view, third-party bundle, and workspace/session checks have passed.
+An explicitly user-authorized default for hands-on acceptance may instead carry
+pendingVerification; manifest admission is not proof of completed GUI acceptance.
 Explicit developer bin/spec overrides remain available for qualifying a new
 candidate without changing the normal user's serving runtime.
 """

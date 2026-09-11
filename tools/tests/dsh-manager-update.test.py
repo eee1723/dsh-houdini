@@ -68,7 +68,8 @@ try:
     with tempfile.TemporaryDirectory() as raw_cache:
         manager._NPM_CACHE = raw_cache
         npx_root = Path(raw_cache) / "_npx"
-        for index, version in enumerate(("0.1.1-rc.2", "0.1.2-rc.1"), start=1):
+        target = manager.dsh_runtime_compat.preferred_version()
+        for index, version in enumerate(("0.1.1-rc.2", target), start=1):
             package = npx_root / str(index) / "node_modules" / "@deepseek-ai" / "dsh"
             (package / "lib").mkdir(parents=True)
             (package / "package.json").write_text(
@@ -78,9 +79,9 @@ try:
             bin_path.write_text("// test", encoding="utf-8")
             os.utime(bin_path, (index, index))
 
-        assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
-        manager._require_cached_dsh("0.1.2-rc.1")
-        assert manager._selected_cached_dsh_version() == "0.1.2-rc.1"
+        assert manager._selected_cached_dsh_version() == target
+        manager._require_cached_dsh(target)
+        assert manager._selected_cached_dsh_version() == target
         try:
             manager._require_cached_dsh("0.1.1-rc.2")
         except RuntimeError as exc:

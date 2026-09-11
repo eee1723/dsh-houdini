@@ -1,7 +1,22 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.1.2-rc.1",
+  "preferredVersion": "0.1.5-rc.2",
   "releases": [
+    {
+      "dshVersion": "0.1.5-rc.2",
+      "rpcWire": "slash-generated-args-v1",
+      "browserAuth": "process-token-signed-cookie-v1",
+      "qtWebEngineMinimum": "6.5.3 / Chromium 108",
+      "requiredPolyfills": ["AbortSignal.any", "Promise.withResolvers", "Iterator"],
+      "trajectorySource": "useTrajectory(snapshot.eventNodes)",
+      "sessionFormatVersion": 3,
+      "verificationStatus": "user-authorized-default-awaiting-gui-acceptance",
+      "verifiedOn": [],
+      "pendingVerification": [
+        "H21/H22 live WebView, send/cancel/reconnect and V3 Trace",
+        "signed release combination acceptance"
+      ]
+    },
     {
       "dshVersion": "0.1.2-rc.1",
       "rpcWire": "slash-generated-args-v1",

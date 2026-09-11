@@ -62,6 +62,22 @@ assert.equal(telemetry.upstreamTurnErrors.length,1,'later completed turn does no
 assert.equal(telemetry.compactionEvents.length,1);
 assert.equal(collectRequestTelemetry([]).totals.inputTokens,null);
 
+const settled = (seq, turn, step, usage, interrupted) => ({seq, type:'assistant/message',
+  data:{turn,step,message:{role:'assistant',content:[]},stream:[],usage,interrupted}});
+const v3 = collectRequestTelemetry([
+  settled(20,1,1,measured.data.chunk.usage),
+  settled(21,1,2,undefined), // Missing is unknown, not a zero-token request.
+  settled(22,1,3,{inputTokens:5,outputTokens:1,totalTokens:6},true),
+]);
+assert.equal(v3.requestCount,2);
+assert.equal(v3.totals.totalTokens,98);
+assert.equal(v3.requests[0].inputWithCache,90);
+const mixed = collectRequestTelemetry([measured,settled(23,1,1,measured.data.chunk.usage)]);
+assert.equal(mixed.requestCount,1);
+assert.equal(mixed.totals.totalTokens,92);
+assert.equal(mixed.duplicateUsageEvents,1);
+assert.equal(collectRequestTelemetry([settled(24,1,1,{outputTokens:-1})]).last.outputTokens,null);
+
 assert.equal(toolResultCallId(original), 'call-a');
 assert.equal(toolResultCallId(alternateSchema), 'call-alt');
 assert.equal(toolResultCallId(input[0]), null);
