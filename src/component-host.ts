@@ -1,0 +1,338 @@
+/** Opt-in component authoring provider. Native DSH owns conversations; this plugin owns workers. */
+import type {Context} from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+import {defineTool} from '@deepseek-ai/dsh-tools'
+import {randomUUID} from 'node:crypto'
+import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import {fileURLToPath} from 'node:url'
+import type {ExecutorController} from './executor-controller.js'
+import type {ExecutorRecord} from './executor-routing.js'
+import {recordedExecutorIdentity} from './execution-state.js'
+
+export const name='dsh-houdini-component-host'
+export const inject=['subagents','agents','sessions','tools','houdiniTargets']
+export interface Config {
+  python:string; houdini:string; workerRoot:string; executorRegistry:string;
+  gui:boolean; memoryMb:number; threads:number; startupTimeoutSeconds:number; maxWorkers:number;
+  projectLocalWorkers:boolean;
+}
+export const Config:Schema<Config>=Schema.object({
+  python:Schema.string().required(),houdini:Schema.string().required(),workerRoot:Schema.string().required(),
+  executorRegistry:Schema.string().required(),gui:Schema.boolean().default(true),
+  memoryMb:Schema.number().default(4096),threads:Schema.number().default(2),
+  startupTimeoutSeconds:Schema.number().default(90),maxWorkers:Schema.number().default(2),
+  // Default also upgrades existing source-preview profiles without rewriting a live Host overlay.
+  projectLocalWorkers:Schema.boolean().default(true),
+})
+// The optional upstream service is structurally consumed: installed releases lack
+// provider-selected cwd. Every child is checked before model admission regardless.
+type Agent = {id:string;session:any}
+type NativeSubagents = {
+  registerProvider(provider:unknown):()=>void;
+  startContinuable(spec:unknown):Promise<{childId:string;messageId:string}>;
+}
+type Worker = {parentId:string;directory:string;workspace:string;process?:ChildProcessWithoutNullStreams;
+  ready?:Promise<ExecutorRecord>;record?:ExecutorRecord;exited:boolean;error?:string;
+  stopRequested?:boolean;stopUnknown?:string;stopPromise?:Promise<void>}
+
+// A completed parent turn is not a license to interrupt a child still working.
+// Give the user a short continuation window, then release only idle owned workers.
+export const COMPONENT_IDLE_RELEASE_MS=30_000
+
+export function completedTurnSequence(events:readonly {type:string;seq?:number;data:unknown}[]):number|undefined {
+  for(let index=events.length-1;index>=0;index--){
+    const event=events[index]
+    if(event.type==='turn/start')return undefined
+    if(event.type==='turn/end')return (event.data as {reason?:{kind?:string}})?.reason?.kind==='completed'
+      ?event.seq:undefined
+  }
+  return undefined
+}
+
+// Process exit and a saved idle checkpoint are different facts. In particular,
+// the supervisor can exit non-zero after reclaiming a busy Houdini tree.
+export function componentWorkerSnapshot(worker:Pick<Worker,'exited'|'error'|'record'|'ready'|'stopRequested'|'stopUnknown'>) {
+  const checkpoint=worker.exited&&!worker.error&&!worker.stopUnknown?'saved':'unknown'
+  return {workerStatus:worker.exited?'stopped':worker.stopUnknown?'stop_unknown':worker.stopRequested?'stopping'
+    :worker.record?'ready':worker.ready?'starting':'reserved',checkpoint,
+    error:worker.stopUnknown??worker.error??null}
+}
+
+export function componentStopOutcome(childId:string, worker:Pick<Worker,'exited'|'error'|'stopUnknown'>) {
+  const checkpoint=worker.exited&&!worker.error&&!worker.stopUnknown?'saved':'unknown'
+  return {childId,stopped:worker.exited,ok:checkpoint==='saved',checkpoint,
+    error:worker.stopUnknown??worker.error??null,files_retained:true}
+}
+
+/** A timeout is not a saved checkpoint, even if the supervisor exits later. */
+export function stopComponentWorker(worker:Worker, timeoutMs=30_000):Promise<void> {
+  if(worker.stopPromise)return worker.stopPromise
+  const proc=worker.process
+  if(!proc||worker.exited)return Promise.resolve()
+  worker.stopRequested=true
+  worker.stopPromise=new Promise<void>((resolve,reject)=>{
+    const onExit=()=>{clearTimeout(timer);resolve()}
+    const timer=setTimeout(()=>{
+      proc.off('exit',onExit)
+      worker.stopUnknown='Component supervisor has not exited; checkpoint remains unknown'
+      reject(new Error(worker.stopUnknown))
+    },timeoutMs)
+    proc.once('exit',onExit)
+    try {proc.stdin.end('STOP\n')}
+    catch(error){clearTimeout(timer);proc.off('exit',onExit)
+      worker.stopUnknown=String(error);reject(error)}
+  })
+  return worker.stopPromise
+}
+
+// Host facts accompany the parent's brief, but do not replace the user's requirements.
+export function componentAuthorPrompt(task:string, gui:boolean):string {
+  return `Component author execution facts (Host): Your executor binding and current HIP are assigned by the Host. `+
+    `Inspect the binding/scene; save the current HIP with scene_save(), never Save As to a filename suggested in the brief. `+
+    `render_view is a Houdini verb called inside houdini_exec code, not a separate top-level tool. `+
+    `Do not traverse project/install directories inside houdini_query or houdini_exec; `+
+    `ask the parent for bounded source inspection when needed. `+
+    (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, and report what it actually shows. `
+      :`This worker is headless: render_view requires GUI. If an authorized bounded render_frame can satisfy a required visual check, inspect its output; otherwise report visual unverified to the parent. `)+
+    `A secondary brief cannot silently cancel an explicit visual or control obligation from the original user request; `+
+    `if requirements conflict or the original scope is unavailable, ask the parent to reconcile them. `+
+    `Test the declared local controls and restore them before publishing; an exported file alone is not completion.\n\n`+
+    `Parent component brief (check its interface and assumptions):\n${task}`
+}
+
+export function apply(ctx:Context, config:Config):void {
+  for(const p of [config.python,config.houdini,config.workerRoot,config.executorRegistry])
+    if(!path.isAbsolute(p)) throw new Error('Component configuration requires absolute paths')
+  if(!Number.isInteger(config.maxWorkers)||config.maxWorkers<1||config.maxWorkers>8
+    ||!Number.isInteger(config.memoryMb)||config.memoryMb<128||config.memoryMb>65536
+    ||!Number.isInteger(config.threads)||config.threads<1||config.threads>64
+    ||!Number.isFinite(config.startupTimeoutSeconds)||config.startupTimeoutSeconds<=0||config.startupTimeoutSeconds>600)
+    throw new Error('Invalid component worker resource limits')
+  const subagents=ctx.get('subagents') as NativeSubagents
+  const workers=new Map<string,Worker>()
+  const releaseTimers=new Map<string,ReturnType<typeof setTimeout>>()
+  const lifetime=new AbortController()
+  const supervisor=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../tools/component-worker.py')
+  const router=()=> (ctx.get('houdiniTargets') as ExecutorController).getRouter(config.executorRegistry)
+  const under=(root:string,target:string)=>{
+    const relative=path.relative(root,target)
+    return !relative||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative))
+  }
+  const same=(a:string,b:string)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b
+
+  const projectWorkerRoot=async(agent:Agent,signal:AbortSignal):Promise<string>=>{
+    const id=recordedExecutorIdentity(agent.session.snapshotEvents())!
+    const record=await router().directory.find(id)
+    if(record.task_id!==agent.id||!record.hip_path)throw new Error('Assembly HIP has no writer reservation for this task')
+    const observed=await router().sceneContextFor(agent.session,signal) as {ok?:boolean;result?:{hip_path?:string}}
+    if(observed?.ok!==true||typeof observed.result?.hip_path!=='string')
+      throw new Error('Cannot confirm the current assembly HIP; no component directory created')
+    const hip=await fs.realpath(record.hip_path)
+    if(!same(hip,await fs.realpath(observed.result.hip_path)))
+      throw new Error('Assembly HIP changed after registration; no component directory created')
+    const directory=path.dirname(hip)
+    if(!same(directory,await fs.realpath(agent.session.header.cwd)))
+      throw new Error('Assembly task workspace differs from its registered HIP directory; no component directory created')
+    return path.join(directory,'dsh-components')
+  }
+
+  const startWorker=(worker:Worker):Promise<ExecutorRecord>=>new Promise((resolve,reject)=>{
+    const environment=Object.fromEntries(Object.entries(process.env).filter(([key])=>
+      key==='HOUDINI_LICENSE_SERVER'||!/TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL|^DSH_|^PYTHON|^HOUDINI_|^QT_|^NODE_/i.test(key)))
+    const proc=spawn(config.python,[supervisor,'--executable',config.houdini,'--directory',worker.directory,
+      '--registry',config.executorRegistry,'--memory-mb',String(config.memoryMb),'--threads',String(config.threads),
+      '--startup-timeout',String(config.startupTimeoutSeconds),...(config.gui?['--gui']:[])],
+      {cwd:path.dirname(supervisor),env:environment,windowsHide:true,stdio:'pipe'})
+    worker.process=proc
+    proc.stdin.on('error',error=>{
+      if(worker.stopRequested)worker.stopUnknown??=String(error)
+      else worker.error=String(error)
+    })
+    let buffer='',diagnostics=''
+    const timer=setTimeout(()=>{reject(new Error('Component startup timeout'));proc.stdin.end('STOP\n')},
+      (config.startupTimeoutSeconds+10)*1000)
+    proc.stderr.on('data',chunk=>{diagnostics=(diagnostics+String(chunk)).slice(-4000)})
+    proc.stdout.on('data',chunk=>{
+      buffer+=String(chunk)
+      if(buffer.length>32768){reject(new Error('Component readiness exceeds size limit'));proc.stdin.end('STOP\n');return}
+      const end=buffer.indexOf('\n')
+      if(end<0)return
+      try {
+        const value=JSON.parse(buffer.slice(0,end))
+        if(value.ok!==true||value.workspace!==worker.workspace||!value.record?.executor_id)
+          throw new Error('Component readiness identity mismatch')
+        worker.record=value.record
+        clearTimeout(timer);resolve(value.record)
+      } catch(error){clearTimeout(timer);reject(error);proc.stdin.end('STOP\n')}
+    })
+    proc.once('error',error=>{clearTimeout(timer);worker.error=String(error);worker.exited=true;reject(error)})
+    proc.once('exit',(code)=>{clearTimeout(timer);worker.exited=true;
+      if(code!==0)worker.error=`Worker exited (${code}): ${diagnostics}`
+      reject(new Error(worker.error||'Component stopped before readiness'))})
+  })
+
+  const stop=(worker:Worker)=>stopComponentWorker(worker)
+  const clearRelease=(parentId:string)=>{
+    const timer=releaseTimers.get(parentId)
+    if(timer)clearTimeout(timer)
+    releaseTimers.delete(parentId)
+  }
+  const scheduleRelease=(parentId:string)=>{
+    clearRelease(parentId)
+    const parent=ctx.agents.get(parentId as Parameters<typeof ctx.agents.get>[0])
+    if(!parent||parent.status!=='idle')return
+    const completed=completedTurnSequence(parent.session.snapshotEvents())
+    if(completed===undefined)return
+    const hasIdle=[...workers.entries()].some(([childId,worker])=>{
+      if(worker.parentId!==parentId||worker.exited||!worker.record)return false
+      const child=ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])
+      return !child||child.status==='idle'
+    })
+    if(!hasIdle)return
+    releaseTimers.set(parentId,setTimeout(()=>{
+      releaseTimers.delete(parentId)
+      if(lifetime.signal.aborted)return
+      const latest=ctx.agents.get(parentId as Parameters<typeof ctx.agents.get>[0])
+      if(!latest||latest.status!=='idle'||completedTurnSequence(latest.session.snapshotEvents())!==completed)return
+      for(const [childId,worker] of workers){
+        if(worker.parentId!==parentId||worker.exited||!worker.record)continue
+        const child=ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])
+        if(child&&child.status!=='idle')continue
+      void stop(worker).catch(error=>{worker.stopUnknown??=String(error)
+        ctx.logger.warn(`Component ${childId} idle release failed: ${String(error)}`)})
+      }
+    },COMPONENT_IDLE_RELEASE_MS))
+  }
+  ctx.on('agent/status',({agent,status})=>{
+    if(status==='running'){
+      clearRelease(workers.get(agent.id)?.parentId??agent.id)
+      return
+    }
+    scheduleRelease(workers.get(agent.id)?.parentId??agent.id)
+  })
+  ctx.on('agent/disposed',({agent})=>{
+    if(workers.has(agent.id))return
+    clearRelease(agent.id)
+    for(const [childId,worker] of workers)if(worker.parentId===agent.id&&!worker.exited&&worker.record
+      &&ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])?.status!=='running')
+      void stop(worker).catch(error=>{worker.stopUnknown??=String(error)
+        ctx.logger.warn(`Component worker release after parent disposal failed: ${String(error)}`)})
+  })
+  ctx.effect(()=>async()=>{lifetime.abort();for(const id of releaseTimers.keys())clearRelease(id);
+    await Promise.all([...workers.values()].map(stop))},
+    'component worker supervision')
+  ctx.effect(()=>subagents.registerProvider({name:'houdini-component',inheritsParentContext:false,
+    capabilities:{agentOptions:true,outputSchema:false,depthLimit:true,toolFilter:true,persona:true},
+    start:async()=>{throw new Error('Use component_delegate for continuable component authors')},
+    prepareContinuable:async({sessionId,parent,signal}:{sessionId:string;parent:Agent;signal:AbortSignal})=>{
+      const worker=workers.get(sessionId)
+      if(!worker||worker.parentId!==parent.id)throw new Error('No Host-reserved component request')
+      signal.throwIfAborted();lifetime.signal.throwIfAborted()
+      worker.ready=startWorker(worker)
+      const cancel=()=>worker.process?.stdin.end('STOP\n')
+      signal.addEventListener('abort',cancel,{once:true})
+      lifetime.signal.addEventListener('abort',cancel,{once:true})
+      try { await worker.ready }
+      finally {
+        signal.removeEventListener('abort',cancel)
+        lifetime.signal.removeEventListener('abort',cancel)
+      }
+      signal.throwIfAborted()
+      return {cwd:worker.workspace}
+    },
+  }), 'component child provider')
+  ctx.on('agent/pre-step',async({agent,signal},next)=>{
+    const worker=workers.get(agent.id)
+    const events=agent.session.snapshotEvents() as readonly {type:string;data:unknown}[]
+    const isComponent=events.some(e=>e.type==='subagent/descriptor'&&(e.data as any).provider==='houdini-component')
+    if(!worker) {
+      if(isComponent)throw new Error('Component worker is unavailable after Host restart; no automatic rebind or replay')
+      return next()
+    }
+    if(worker.exited)throw new Error(worker.error||'Component worker stopped; no automatic restart')
+    const policy=agent.ctx.get('sandboxPolicy') as {resolve(input:unknown):{mode:string;workspaceRoot:string}}|undefined
+    const filesystem=agent.ctx.get('fs') as {sandboxMode?:string}|undefined
+    if(!policy||filesystem?.sandboxMode===undefined||policy.resolve({session:agent.session}).mode!=='workspace-write')
+      throw new Error('Component authors require a confining filesystem and workspace-write policy; no model request admitted')
+    const record=await worker.ready!
+    signal.throwIfAborted()
+    await router().prepareComponent(agent,record,worker.parentId,worker.workspace,signal)
+    return next()
+  })
+  const componentTools=new Set(['houdini_exec','houdini_query','houdini_job_submit','houdini_job_status','houdini_job_cancel',
+    'skill','read','write','edit','todo_write','send_message'])
+  ctx.on('tools/pre-execute',async(exec,next)=>{
+    if(exec.agent&&workers.has(exec.agent.id)&&!componentTools.has(exec.name))
+      throw new Error('Component author tool is outside the bounded modeling/file/message set; ask the parent to coordinate')
+    return next()
+  })
+
+  ctx.tools.register(defineTool({name:'component_delegate',description:
+    'Delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity, not completion; does not import or modify assembly. Use component_status to inspect capacity without starting a worker.',
+    parameters:{task:{type:'string',required:true,description:'Complete bounded component brief'}},
+    output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
+    presentCall:()=>({card:'generic',title:'Delegate Houdini component',kind:'execute'}),
+    async execute({task},{agent,signal}) {
+      if(!agent)throw new Error('Component delegation requires an owning task')
+      if(!recordedExecutorIdentity(agent.session.snapshotEvents()))throw new Error('Select the assembly executor first')
+      if(workers.has(agent.id))throw new Error('Component authors cannot delegate more workers')
+      if(typeof task!=='string'||!task.trim()||task.length>24000)throw new Error('Component brief must contain 1..24000 characters')
+      if([...workers.values()].filter(w=>!w.exited).length>=config.maxWorkers)throw new Error('Component worker capacity reached; finish and explicitly stop a worker')
+      const temp=await fs.realpath(os.tmpdir())
+      const parentWorkspace=agent.session.header.cwd
+      if(!parentWorkspace||under(temp,await fs.realpath(parentWorkspace)))
+        throw new Error('Component and assembly workspaces must be outside the platform temp area, which DSH permits all workspace-write sessions to write')
+      const requestedRoot=config.projectLocalWorkers?await projectWorkerRoot(agent,signal):config.workerRoot
+      if(under(temp,requestedRoot))
+        throw new Error('Component workspaces must be outside the platform temp area')
+      try { await fs.mkdir(requestedRoot) }
+      catch(error) { if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error }
+      const stat=await fs.lstat(requestedRoot)
+      const root=await fs.realpath(requestedRoot)
+      if(!stat.isDirectory()||stat.isSymbolicLink()||!same(root,path.resolve(requestedRoot)))
+        throw new Error('Component directory must be a real directory, not a link or junction')
+      if([...workers.values()].filter(w=>!w.exited).length>=config.maxWorkers)throw new Error('Component worker capacity reached')
+      const id=randomUUID(),directory=path.join(root,id)
+      const worker:Worker={parentId:agent.id,directory,workspace:path.join(directory,'workspace'),exited:false}
+      workers.set(id,worker)
+      try {
+        const result=await subagents.startContinuable({childId:id,provider:'houdini-component',label:'Houdini component',
+          request:{parent:agent,prompt:[{type:'text',text:componentAuthorPrompt(task,config.gui)}],maxDepth:1},signal})
+        return {...result,workspace:worker.workspace,status:'accepted',completion:'unverified'}
+      } catch(error){await stop(worker);throw error}
+    },
+  }))
+  ctx.tools.register(defineTool({name:'component_status',description:
+    'Read the current parent-owned component worker capacity and child states without starting work. Snapshot only; use native child messages to wait for a result, not repeated status or filesystem polling. Ready/idle does not certify component completion.',
+    parameters:{},
+    output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
+    presentCall:()=>({card:'generic',title:'Component worker status',kind:'read'}),
+    async execute(_args,{agent}) {
+      if(!agent)throw new Error('Component status requires an owning task')
+      const children=[...workers.entries()].filter(([,worker])=>worker.parentId===agent.id).map(([childId,worker])=>({
+        childId,taskStatus:ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])?.status??'not_registered',
+        ...componentWorkerSnapshot(worker),
+      }))
+      return {capacity:config.maxWorkers,occupied:[...workers.values()].filter(worker=>!worker.exited).length,
+        children,completion:'unverified'}
+    },
+  }))
+  ctx.tools.register(defineTool({name:'component_stop',description:
+    'Stop an owned component worker after finishing its task, before claiming final completion. Check ok and checkpoint=saved; stopped alone means only process exit. A busy/failed shutdown returns checkpoint=unknown with its error. Does not delete files or import a component. Completed idle parent turns also trigger a 30-second guarded release fallback; a released child cannot resume on the same executor.',
+    parameters:{childId:{type:'string',required:true}},
+    output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
+    presentCall:()=>({card:'generic',title:'Stop Houdini component',kind:'execute'}),
+    async execute({childId},{agent}) {
+      const worker=workers.get(childId)
+      if(!agent||!worker||worker.parentId!==agent.id)throw new Error('Not a component owned by this parent')
+      const child=ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])
+      if(child&&child.status!=='idle')throw new Error('Component task is still active; interrupt/wait for the child before stopping its worker')
+      try {await stop(worker)}
+      catch(error){worker.stopUnknown??=String(error)}
+      return componentStopOutcome(childId,worker)
+    },
+  }))
+}

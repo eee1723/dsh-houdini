@@ -114,6 +114,34 @@ export class ExecutorRouter {
     return (await this.verified(target,session.id,bounded)).sceneContext(bounded)
   }
 
+  /** Host-owned component startup only; never exposed through the target-picker Remote. */
+  async prepareComponent(agent:{id:string;session:Session & {header:{cwd?:string;parentSession?:string}}},
+    expected:ExecutorRecord, parentId:string, workspace:string, signal?:AbortSignal):Promise<void> {
+    signal=this.signal(signal)
+    const guard=()=>{
+      signal.throwIfAborted()
+      if(agent.id!==agent.session.id||agent.session.header.parentSession!==parentId
+        ||agent.session.header.cwd!==workspace) throw new Error('Component child/workspace identity mismatch; no executor binding')
+      const bound=recordedExecutorIdentity(agent.session.snapshotEvents())
+      requireExecutorContinuity(agent.session.snapshotEvents(),expected.executor_id)
+      if(!bound&&agent.session.snapshotEvents().some(e=>['step/start','tool/call','assistant/message'].includes(e.type)))
+        throw new Error('Component initial binding must precede every model step and tool call')
+    }
+    guard()
+    const record=await this.directory.find(expected.executor_id)
+    if(record.registration_id!==expected.registration_id||record.runtime_id!==expected.runtime_id
+      ||record.hip_path!==expected.hip_path||record.bridge_url!==expected.bridge_url)
+      throw new Error('Component worker registration changed; no automatic recovery')
+    if(record.task_id!==null&&record.task_id!==agent.id) throw new Error('Component worker belongs to another author')
+    const bridge=await this.verified(record.executor_id,agent.id,signal,false)
+    guard()
+    if(record.task_id===null) await bridge.claimWriter(agent.id,record.registration_id,record.hip_path!,signal)
+    await this.verified(record.executor_id,agent.id,signal)
+    guard()
+    await this.binding.ensure(agent.session,record.executor_id,signal)
+    guard()
+  }
+
   /** Host/UI only. Initial bind, not a recovery/rebind or model-callable tool. */
   async selectInitial(agent:{id:string;status:string;session:Session}, id:string, registrationId:string, signal?:AbortSignal, expectedHip?:string):Promise<void> {
     signal=this.signal(signal)

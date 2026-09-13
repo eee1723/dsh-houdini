@@ -22,7 +22,7 @@
         <label>Open Workspace</label>
         <scriptCode><![CDATA[
 import dsh_launcher
-dsh_launcher.open_workspace()
+dsh_launcher.open_workspace(select_mode=True)
 ]]></scriptCode>
       </scriptItem>
 

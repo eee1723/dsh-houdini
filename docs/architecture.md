@@ -20,12 +20,20 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ## 职责分层
 
+候选组件调度入口：[component-host.ts](../src/component-host.ts)注册显式组件委派/停止与原生子任务provider，
+监管独立worker，在pre-step核对并持久化绑定；未默认挂载，真实profile/GUI验收仍需完成。
+
 ### 多Houdini执行端与任务恢复
 
 源码已集成显式共享执行端模式：一个DSH Host、多个独立Houdini Bridge、每个任务持久绑定一个执行端。
 默认Open Workspace仍是单实例，受管安装锁不自动解除；共享模式需明确启用，不能复用另一实例的端口身份。
 唯一设计与运维说明见[多实例与任务恢复](multi-instance.md)：身份分层、启动/选择、写入预留、Repair范围、
 退出与恢复边界及验收入口。代码整合和隔离验证不代表当前live已加载，也不代表崩溃自动续跑完成。
+
+### 组件协作的目标接入
+
+[多Agent组件建模](component-collaboration.md)在上述执行端基础上使用独立子作者与普通subnet/节点片段交换，
+主作者只写总装；不要求HDA交付，不引入同HIP多作者或第二套Agent状态机。源码组件预览候选已接原生可续跑子任务、独立worker和pre-step绑定，仍依赖单独构建的DSH provider-cwd候选；普通/受管运行时尚未合并，完整依赖与候选替换尚未完成。接入与验收矩阵在该文档维护。
 
 ### 现役分层
 
@@ -83,9 +91,11 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 
 | 源码 | 维护职责 / 深入文档 |
 |---|---|
+| [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；尚无自动派工或更新替换保证 |
+| [dsh_component_worker.py](../houdini/python3.11libs/dsh_component_worker.py) | 自有组件进程初始化、新HIP/Bridge登记与空闲检查点退出；由tools/component-worker.py监管，不接管live |
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
-| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 65动词的主要实现、真实Tab/Shelf、参数、provenance、HDA、USD、render入口 |
+| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 通用动词实现与领域转接、真实Tab/Shelf、参数、provenance、HDA、USD、render入口；完整目录由tool-design维护 |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
 | [dsh_hda_lifecycle.py](../houdini/python3.11libs/dsh_hda_lifecycle.py) | HDA解锁/保存/锁定/参数提升的版本预览、共享实例权限和状态回读；不拆包或认领后代 |
@@ -115,8 +125,9 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径/环境与共用Windows前端生命周期；先建立Job再放行CLI，reload保留句柄。普通路径只收自有树；显式强制Repair可按安装/主入口/原生进程句柄核验并终止旧DSH监听者，不按端口自动认领 |
 | [dsh_executor_registry.py](../houdini/python3.11libs/dsh_executor_registry.py) | 多执行端登记与协作HIP单写租约候选；独立记录、原生文件身份、崩溃释放，不自动路由/重开或截获GUI保存 |
 | [dsh_shared_executor.py](../houdini/python3.11libs/dsh_shared_executor.py) | 候选登记菜单：主线程采集实际HIP/绑定Bridge动态端口，worker持久登记；不启动共享DSH、不保存HIP、不自动绑定任务 |
+| [dsh_component_preview.py](../houdini/python3.11libs/dsh_component_preview.py) | 源码限定的一键组件预览：隔离DSH profile、动态Host端口、当前已保存HIP登记及内嵌页面；不迁移旧任务/账号，不进入受管默认入口 |
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |
-| [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace、Version & Diagnostics菜单 |
+| [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace、源码组件预览与Version & Diagnostics菜单 |
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | worker启动/repair、主线程接入、模块重载与HIP目录意图；只读Host就绪、不再筛选/创建任务，preset/profile共用动态DSH_HOME |
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |

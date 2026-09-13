@@ -3,6 +3,9 @@
 本页是多Houdini执行端的唯一长期设计/运维说明；代码地图见[架构](architecture.md)，活动缺口只在
 [交接](handoff.md)维护。默认启动、发行资格与数据迁移仍遵循[安装合同](setup.md)和[兼容门](dsh-update-compatibility.md)。
 
+[组件协作设计](component-collaboration.md)单独维护独立子作者、普通subnet/节点片段交付和装配计划；
+它复用本页执行端边界，不表示共享模式已经提供自动多Agent建模或跨进程ownership恢复。
+
 ## 当前可用范围
 
 源码已集成**显式共享模式**：一个DSH Host提供统一会话/账号入口，多个Houdini使用各自Bridge与进程身份；
@@ -11,6 +14,20 @@
 
 默认Open Workspace仍使用原单实例路线。受管安装保留安装级runtime锁，不能靠删锁或手改签名发行包启用。
 源码集成不证明用户当前进程已加载；菜单/客户端更改需要在保存并结束现有任务后重新打开对应环境。
+
+源码菜单只显示 **Open Workspace**：源码版新开的GUI、已保存的HIP且没有自有前端时，提供默认“Regular workspace”与显式“Component preview”选择；受管版和未保存HIP不显示该选择，仍走普通入口。组件预览还要求HIP不在平台TEMP，
+首次在Houdini内选择带子任务cwd扩展的已构建DSH bin.js、独立Python和Houdini GUI executable。
+它在LOCALAPPDATA下建立新的隔离profile（不复制旧模型凭据/历史），登记当前HIP为总装执行端，
+从Houdini自有Windows Job启动动态端口的共享Host，并打开内嵌工作区；组件worker由Host按需启动。
+已有单实例前端/不同共享登记拒绝，不停止/接管外部进程；已有自有工作区再次点Open Workspace直接唤起（包括尚未绑定任务但已登记当前HIP的组件预览），不再选择模式、不启动第二个Host。其他共享登记及停止的预览Host仍拒绝自动接管/重启。
+首次在新profile配置模型后，页面仍需明确选择总装HIP的执行端；accepted不等于子作者已完成。
+点击菜单时当前已保存的HIP就是总装HIP；首次委派时Host重新核对任务绑定、现场HIP和任务工作区，
+然后在该HIP同目录创建`dsh-components/<child-id>/workspace/component.hip`，各子作者各用独立进程/工程。
+预览profile的账号、登记和进程配置仍留在LOCALAPPDATA；旧profile的Host要在正常结束后重新加载源码才能使用新目录策略，
+不迁移或删除旧子工程。主工作区的文件工具也能访问其下的子目录，所以这不是文件系统层面的主子隔离；
+主作者只能通过可信片段导入，不直接改子HIP，子作者仍受自己的workspace-write与HOM身份边界约束。
+重复点菜单只唤起同HIP页面；切HIP/退出后的任务恢复未实现，失败保留隔离profile与诊断日志，不自动重发未知修改。
+这不是受管安装或正式DSH 0.1.5-rc.2的功能，不自动迁移手工候选Host的会话。
 
 不包含：自动启动/接管共享Host、正常退出时的任务选择对话框、自动重开Houdini、跨进程节点ownership恢复、
 未知操作重放、共享模式的跨路径Save As预留转移，以及GUI/外部程序的全部写入拦截。

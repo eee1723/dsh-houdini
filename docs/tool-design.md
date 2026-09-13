@@ -1,11 +1,14 @@
 # 工具设计与动词词表
 
-Execution contract version: 44
+Execution contract version: 47
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
 [Bridge注册表](../houdini/python3.11libs/dsh_bridge.py)及运行时verb_help相互校验。
 执行边界详见[执行契约](execution-contract.md)，节点知识见[同源节点卡](node-operation-cards.md)。
+
+组件schema-2使用原生节点档案保存内部值，交换快照只比较根公开参数与节点/接线清单；引用/权限/输出检查保留。
+旧schema-1导入拒绝并要求另存导出，不原地升级文件；替换计划仍检查内部状态，详细边界见[组件设计](component-collaboration.md)。
 
 ## 设计原则
 
@@ -48,6 +51,11 @@ H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户F
 
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
+
+显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()和component_stop(childId)，
+只管理原生子任务和自有worker，不属于上述5个houdini工具或HOM动词目录，默认不挂载。
+status只读返回当前作者子任务/worker快照及容量，不启动worker，也不证明组件完成；等待交付走原生子任务消息，不用空委派探容量。
+accepted不代表模型已开始/组件已完成；准备/权限不符在模型请求前拒绝。Host向子作者说明当前HIP由绑定提供、render_view在houdini_exec内，不能把子简报中的Save As路径或取消原始视觉义务当成有效合同。节点片段仍经下面component_*动词显式处理。
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。路径差异通过Open Workspace处理。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
@@ -176,6 +184,9 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
+| `component_export(node, filename, contract)` | 候选：当前作者普通SOP subnet导出至已命名$HIP内新.dshcomponent；contract恰含module_id/revision/units/outputs，输出索引须由sop_set_output发布。运行时verb_help提供可执行的最小示例和字段约束；检查公共输出、有限依赖与快照。同构建往返，不覆盖文件，不证明装配质量；文件写入不可Undo | dict |
+| `component_import(parent, filename, expected_sha256, name, trusted=False)` | 候选：显式可信、hash固定、同构建普通subnet片段导入当前作者SOP父网络；新名字、不覆盖、不接管旧节点，返回待验收candidate。原生档案可执行代码，trusted不构成安全沙箱；尚非自动子作者交付通道 | dict |
+| `component_replace(node, candidate, dry_run=True, expected_plan=None)` | 候选：同作者同父普通subnet的显式输出接线替换；先预览，再用未过期plan提交。保留旧网络不删除/改名，外部参数消费者拒绝，不猜迁移公共参数；候选控制须先准备，提交后仍须实际装配关系/视觉复验 | dict |
 | `package_info(name=None, limit=64)` | 官方运行态package清单；精确name另给有界资源路径。省略环境变量值，不扫磁盘、不加载或改包；GUI接口不可用返回unavailable而非空清单。Active不证明兼容/授权，publisher未验证；Bridge回执提供runtime身份 | dict |
 | `cop_layer_stats(node, output=0, *, max_pixels=4194304)` | 必须exec：直接读取当前ImageLayer，output为源输出名/索引；完整buffer统计/指纹、类型/通道、data/display window、空间、pixel scale、frame、U/V梯度。max_pixels为1..16777216，超预算拒绝不抽样，预算不限制上游GPU cook分配。拒绝Manual、失败cook、非图层和未支持storage；非有限值fail，sticky Cache新鲜度unknown；不证明视觉或外部文件最新 | dict |
 | `cop_compare_layers(before, after, *, before_output=0, after_output=0, expected_delta=None, tolerance=1e-6, max_pixels=4194304)` | 必须exec：测after-before，完整通道/窗口/空间对齐，不静默重采样；无expected_delta仅量测status=unverified。expected_delta={node,output?}时检验max(abs((after-before)-expected_delta))<=tolerance，返回实际操作数/公式/误差；非有限、错位拒绝，sticky Cache不认证通过；不判断作者选对了数学对象或艺术效果 | dict |

@@ -209,9 +209,11 @@ def stop_verified_frontend(pid, *, cli_roots, port, listener_pid):
         kernel.CloseHandle(handle)
 
 
-def spawn_frontend(command, *, node, shell=False, **kwargs):
+def spawn_frontend(command, *, node, shell=False, replace_existing=True, **kwargs):
     """Create a Node CLI/npx tree, establish ownership, then release its entrypoint."""
     with _JOB_LOCK:
+        if not replace_existing and _PROCESS is not None and _PROCESS.poll() is None:
+            raise RuntimeError('Another owned frontend is active; component preview cannot replace it')
         # Native Node entry keeps import.meta.main, argv and CLI exit semantics.
         args = [node, "--import", _NODE_START_GATE]
         args.extend(["-e", _NODE_SHELL_ENTRY, command] if shell else command[1:])

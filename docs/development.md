@@ -6,7 +6,7 @@
 
 | 内容 | 修改位置 | 派生/验证 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证65 个目录入口 |
+| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证69 个目录入口 |
 | 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
@@ -14,6 +14,7 @@
 | Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，展示在client.js | 内容复用目录/注册表/请求快照；当前源码、已加载能力和历史请求分开，不手抄提示词与技能正文 |
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
 | 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
+| 组件协作设计 | [component-collaboration.md](component-collaboration.md) | 普通节点片段/独立作者的接口和实施完成门；当前动作归handoff，执行端运维归multi-instance |
 
 ## 2. 构建与生成
 
@@ -359,6 +360,24 @@ PR不得在持有许可证的自托管runner上任意执行；不能让依赖安
 手动路径同样先准备全部资产、启用immutable Releases，再明确发布；Git凭据仅用于官方仓库API，私钥不进入构建环境或上传到Git。
 
 ## 5. 领域与真实运行验收
+
+普通subnet片段用[隔离驱动](../tools/tests/run-component-exchange.py)接收一个或多个hython完整路径，
+分别运行[片段回归](../tools/tests/dsh-component-exchange.test.py)、[公开帮助示例](../tools/tests/dsh-component-public-help.test.py)与独立export/import/reopen进程。
+加--boundaries运行raw-gate、ownership、caught-failure、tab-create-failure、object-parenting、scene/network/render、公共输出和集成回归。
+不启动模型、不加载用户HIP；测试创建的临时fixture保留供检查。仅证明首版自包含subnet候选往返，不核销完整组件协作。
+
+组件进程用[双worker测试](../tools/tests/dsh-component-worker.test.py)传hython完整路径；传houdini.exe并加--gui时另验真实预览。
+[DSH组件链路](../tools/tests/dsh-component-loop.test.py)传Node、已构建的候选DSH bin.js和hython，使用隔离Web profile与确定性adapter，
+验证两子任务在主HIP同目录`dsh-components`下各有独立workspace/执行端、导出/主作者导入/共享控制恢复；
+传未修改DSH并加--expect-cwd-rejection验证首次模型前拒绝。
+这些驱动保留临时fixture供复核，日志可能有本次Host鉴权URL，禁止直接对外贴原始token；不访问用户账号或收费模型。
+源码一键组件预览的Host/登记组合用[run-component-preview-registration.py](../tools/tests/run-component-preview-registration.py)
+传已构建cwd候选DSH bin.js和H21/H22 hython完整路径；它在隔离新HIP及profile上验证自有动态Host与执行端发现。
+[run-component-preview-gui.py](../tools/tests/run-component-preview-gui.py)传H21/H22 hython路径验证内嵌页动态origin，
+CLI/Python菜单拒绝反例见[dsh-component-preview.test.py](../tools/tests/dsh-component-preview.test.py)。
+隔离GUI菜单启动用[run-component-preview-menu.py](../tools/tests/run-component-preview-menu.py)传已构建DSH bin.js和H21/H22 houdini.exe，
+只创建夹具HIP/profile、打开内嵌页并回收自有进程；不执行模型。这些测试不证明当前用户live加载或自然任务，
+菜单变更后须完整重开Houdini再验。
 
 教程执行边界用[dsh-tutorial-contracts](../tools/tests/dsh-tutorial-contracts.test.py)在H21/H22隔离回归：
 单层/叠面/实体反例、延迟HDA后代登记与foreign保留、删除后消费者回读、Data参数批次零写拒绝。

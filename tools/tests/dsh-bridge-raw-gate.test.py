@@ -106,6 +106,30 @@ assert clear_blocked["ok"] is False, clear_blocked
 assert "hou.hipFile.clear() is forbidden" in clear_blocked["error"], clear_blocked
 assert hou.hipFile.path() == original_hip, clear_blocked
 
+# A recursive source scan in the Bridge once held a component GUI queue for
+# minutes. Reject the call before it can run, including common import aliases.
+for code in (
+    "import os\nlist(os.walk('C:/'))",
+    "import os as files\nlist(files.walk('C:/'))",
+    "from os import walk as scan\nlist(scan('C:/'))",
+    "from pathlib import Path\nlist(Path('C:/').rglob('*.py'))",
+    "from pathlib import Path\nlist(Path('C:/').walk())",
+    "from pathlib import Path as Files\nroot=Files('C:/'); list(root.walk())",
+    "import pathlib as files\nroot=files.Path('C:/'); list((root / 'Users').glob('**/*.py'))",
+    "from pathlib import Path\nlist(Path.cwd().glob('**/scene.hip'))",
+    "from pathlib import Path\npattern='**/*.hip'; list(Path('C:/').glob(pattern))",
+    "import glob as files\nlist(files.iglob('C:/**/*.py', recursive=True))",
+):
+    for read_only in (False, True):
+        blocked = dsh_bridge.run_code(code, read_only=read_only,
+                                      allow_raw='attempted traversal exemption')
+        assert not blocked['ok'] and 'filesystem traversal is forbidden' in blocked['error'], blocked
+        assert blocked['rawUsage']['gateOutcome'] == 'forbidden', blocked
+assert dsh_bridge._blocking_host_traversal_message(
+    "import os\n__result__=os.path.basename('C:/bounded/file.txt')") is None
+assert dsh_bridge._blocking_host_traversal_message(
+    "from pathlib import Path\n__result__=list(Path('C:/bounded').glob('*.hip'))") is None
+
 # Python-only aggregation is read-only even though setdefault starts with
 # "set". This exact shape occurred in a real geometry diagnostic trace.
 container_query = dsh_bridge.run_code(

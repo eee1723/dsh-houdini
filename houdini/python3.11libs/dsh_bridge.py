@@ -61,6 +61,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
 import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
+import dsh_component_contracts
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
 # threads must not call HOM, including for seemingly harmless health metadata.
@@ -68,7 +69,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 44
+_EXECUTION_CONTRACT_VERSION = 47
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -187,6 +188,9 @@ def _verb_help(name: str) -> dict:
 
 
 _VERBS: dict[str, object] = {
+    "component_export": dsh_component_contracts.component_export,
+    "component_import": dsh_component_contracts.component_import,
+    "component_replace": dsh_component_contracts.component_replace,
     "package_info": dsh_hou_helpers.package_info,
     "verb_help": _verb_help,
     "scene_info": dsh_hou_helpers.scene_info,
@@ -262,6 +266,7 @@ _VERB_NAMES = tuple(sorted(_VERBS))
 _VERB_CATALOG_HASH = hashlib.sha256("\n".join(_VERB_NAMES).encode("utf-8")).hexdigest()
 
 _MUTATING_VERB_NAMES = {
+    "component_export", "component_import", "component_replace",
     "cop_layer_stats", "cop_compare_layers", "test_cop_controls",
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
@@ -314,6 +319,10 @@ _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
 # 那些动词已覆盖的裸 hou 调用；一旦代码完全没走动词却用了这些调用，就在返回
 # 里附一条 advisory，点明对应的动词——让 agent 从结果里直接看到可替代方案。
 _RAW_HOU_VERB_MAP = {
+    "saveItemsToFile": "component_export",
+    "loadItemsFromFile": "component_import",
+    "saveChildrenToFile": "component_export",
+    "loadChildrenFromFile": "component_import",
     "hipFile.save": "scene_save",
     "hipFile.setName": "scene_save_as",
     "createNode": "search_tab_entries + tab_create/tab_apply",
@@ -422,6 +431,94 @@ def _forbidden_hip_lifecycle_message(code: str) -> str | None:
                 "reconnecting operation."
             )
     return None
+
+
+def _blocking_host_traversal_message(code: str) -> str | None:
+    """Keep recursive filesystem discovery off Houdini's serialized GUI thread.
+
+    This is a narrow preflight for known unbounded traversal APIs, not a Python
+    sandbox or a guarantee that arbitrary agent code can be interrupted.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    os_aliases = {'os'}
+    glob_aliases = {'glob'}
+    path_modules = {'pathlib'}
+    path_constructors = {'Path'}
+    path_values = set()
+    direct_walk = set()
+    direct_glob = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                if item.name == 'os':
+                    os_aliases.add(item.asname or item.name)
+                elif item.name == 'glob':
+                    glob_aliases.add(item.asname or item.name)
+                elif item.name == 'pathlib':
+                    path_modules.add(item.asname or item.name)
+        elif isinstance(node, ast.ImportFrom):
+            for item in node.names:
+                if node.module == 'os' and item.name in ('walk', 'fwalk'):
+                    direct_walk.add(item.asname or item.name)
+                elif node.module == 'glob' and item.name in ('glob', 'iglob'):
+                    direct_glob.add(item.asname or item.name)
+                elif node.module == 'pathlib' and item.name == 'Path':
+                    path_constructors.add(item.asname or item.name)
+    def is_path(value):
+        if isinstance(value, ast.Name):
+            return value.id in path_values
+        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+            return is_path(value.left)
+        if isinstance(value, ast.Attribute):
+            return is_path(value.value)
+        if not isinstance(value, ast.Call):
+            return False
+        func = value.func
+        if isinstance(func, ast.Name):
+            return func.id in path_constructors
+        if isinstance(func, ast.Attribute):
+            if isinstance(func.value, ast.Name) and func.value.id in path_modules and func.attr == 'Path':
+                return True
+            if isinstance(func.value, ast.Name) and func.value.id in path_constructors and func.attr in ('cwd', 'home'):
+                return True
+            return is_path(func.value)
+        return False
+    # Resolve simple aliases and `root / name` chains without following paths.
+    for _ in range(3):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and is_path(node.value):
+                path_values.update(target.id for target in node.targets if isinstance(target, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and is_path(node.value):
+                path_values.add(node.target.id)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and (func.id in direct_walk or func.id in direct_glob):
+            break
+        if isinstance(func, ast.Attribute):
+            owner = func.value
+            if func.attr == 'rglob':
+                break
+            if is_path(owner) and func.attr == 'walk':
+                break
+            if is_path(owner) and func.attr == 'glob':
+                pattern = node.args[0] if node.args else next((arg.value for arg in node.keywords if arg.arg == 'pattern'), None)
+                if not isinstance(pattern, ast.Constant) or not isinstance(pattern.value, str) or '**' in pattern.value:
+                    break
+            if (isinstance(owner, ast.Name) and
+                ((owner.id in os_aliases and func.attr in ('walk', 'fwalk')) or
+                 (owner.id in glob_aliases and func.attr in ('glob', 'iglob')))):
+                break
+    else:
+        return None
+    return ('Recursive filesystem traversal is forbidden inside the Houdini bridge: '
+            'it can occupy the serialized main-thread queue and leave later requests '
+            'with unknown outcomes. Use a bounded file tool outside Houdini, or ask '
+            'the parent to inspect project sources. Do not retry timed-out requests.')
 
 
 # --- repo-write advisory ------------------------------------------------------
@@ -1037,6 +1134,10 @@ def run_code(code: str, allow_raw: str | None = None,
                 error = _forbidden_hip_lifecycle_message(code)
                 if error is not None:
                     gate_outcome = "forbidden"
+                if error is None:
+                    error = _blocking_host_traversal_message(code)
+                    if error is not None:
+                        gate_outcome = "forbidden"
                 if error is None and read_only:
                     error = _query_mutation_message(code)
                     if error is not None:

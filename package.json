@@ -16,6 +16,10 @@
       "types": "./lib/executor-host.d.ts",
       "default": "./lib/executor-host.js"
     },
+    "./component-host": {
+      "types": "./lib/component-host.d.ts",
+      "default": "./lib/component-host.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -34,6 +38,8 @@
     "tools/trace-session-lib.mjs",
     "tools/hda-delivery-check.py",
     "tools/isolated-houdini-check.py",
+    "tools/component-worker.py",
+    "tools/prepare-component-profile.mjs",
     "tools/houdini_test_environment.py"
   ],
   "scripts": {

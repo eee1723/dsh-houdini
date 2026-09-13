@@ -52,6 +52,19 @@ try {
   }
   const flush=async s=>{flushed.push(s.id);return true}
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(flush))
+  const childWorkspace=path.join(directory,'child-workspace')
+  const child={id:agents[0].id,session:Session.create(agents[0].id,[],{
+    version:3,id:agents[0].id,createdAt:1,isSeeded:false,parentSession:'parent',cwd:childWorkspace})}
+  await assert.rejects(router.prepareComponent(child,records[0],'wrong-parent',childWorkspace),/identity mismatch/)
+  await assert.rejects(router.prepareComponent(child,records[0],'parent',directory),/identity mismatch/)
+  await assert.rejects(router.prepareComponent(child,{...records[0],runtime_id:'f'.repeat(32)},'parent',childWorkspace),/registration changed/)
+  const late={id:agents[0].id,session:{id:agents[0].id,header:child.session.header,
+    snapshotEvents:()=>[{type:'step/start',data:{}}],append:()=>{throw Error('must not append')}}}
+  await assert.rejects(router.prepareComponent(late,records[0],'parent',childWorkspace),/precede every model step/)
+  await router.prepareComponent(child,records[0],'parent',childWorkspace)
+  assert.equal(recordedExecutorIdentity(child.session.snapshotEvents()),records[0].executor_id)
+  const noFlush=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(async()=>false))
+  await assert.rejects(noFlush.prepareComponent(child,records[0],'parent',childWorkspace),/durable/)
   const ctx=new Context()
   ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
   const controller=new ExecutorController(ctx,router)

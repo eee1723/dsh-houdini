@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、65 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、69 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -85,7 +85,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和32 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和33 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

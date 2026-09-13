@@ -355,6 +355,7 @@ def restart_bridge(*, port=None) -> str:
     import dsh_cop_contracts
     import dsh_quality_contracts
     import dsh_sop_contracts
+    import dsh_component_contracts
     import dsh_camera_framing
     import dsh_geometry_observation
     import dsh_operation_cards
@@ -382,6 +383,7 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_geometry_observation)
     importlib.reload(dsh_operation_cards)
     importlib.reload(dsh_sop_contracts)
+    importlib.reload(dsh_component_contracts)
     importlib.reload(dsh_quality_contracts)
     importlib.reload(dsh_requests)
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
@@ -1237,7 +1239,8 @@ def launch(*, force_frontend=False) -> None:
     workspace, which must track the current hip directory.
     """
     from dsh_executor_registry import is_shared_executor
-    if is_shared_executor():
+    preview = sys.modules.get('dsh_component_preview')
+    if is_shared_executor() or (preview and preview.is_starting()):
         _report('This is a shared executor. Use Repair This Shared Executor; restarting the shared DSH Host is a separate operation affecting all tasks.')
         return
     frontend_cwd = _hip_dir()
@@ -1259,13 +1262,54 @@ def launch(*, force_frontend=False) -> None:
         _dispatch_service_preflight(after_preflight)
 
 
-def open_workspace() -> None:
+def _choose_component_preview() -> bool | None:
+    """Source menu only: default ordinary, explicit preview, or cancel."""
+    if _MANAGED or not hou.isUIAvailable() or dsh_managed_runtime.has_owned_frontend():
+        return False
+    try:
+        hip = hou.hipFile.path()
+        if hou.hipFile.isNewFile() or not hip or not os.path.isfile(hip):
+            return False
+    except Exception:
+        return False
+    selected = hou.ui.displayMessage(
+        'Open the regular workspace, or explicitly use the isolated component source preview '
+        'for this saved HIP. Preview has a separate profile and is not the managed release.',
+        buttons=('Regular workspace', 'Component preview', 'Cancel'),
+        default_choice=0, close_choice=2, title='Open Workspace')
+    return True if selected == 1 else None if selected == 2 else False
+
+
+def open_workspace(*, select_mode: bool = False) -> None:
     """Open the embedded workspace without restarting a healthy frontend.
 
     If the web service is absent, fall back to the full launch path. Keeping
     "open" separate from "restart" avoids destroying a live dsh session just
-    because the user wants to bring its Houdini window to the front.
+    because the user wants to bring its Houdini window to the front. The menu
+    alone offers an explicit source-preview choice on a fresh saved HIP.
     """
+    from dsh_executor_registry import is_shared_executor
+    preview = sys.modules.get('dsh_component_preview')
+    if preview and preview.is_starting():
+        _report('This Houdini is preparing its component workspace; wait for that entry to finish. No second Host was started.')
+        return
+    if preview and preview.has_host_attempt():
+        # This is the exact source-preview instance already owned by this Houdini.
+        # Its entry validates the HIP, registration and Host lifetime before reuse;
+        # a stopped Host reports unknown state instead of starting another one.
+        preview.open_workspace()
+        return
+    if is_shared_executor():
+        _report('This Houdini is registered to another shared Host. Open Workspace cannot restart or adopt it; use its explicit shared-executor entry.')
+        return
+    if select_mode:
+        choice = _choose_component_preview()
+        if choice is None:
+            return
+        if choice:
+            import dsh_component_preview
+            dsh_component_preview.open_workspace()
+            return
     frontend_cwd = _hip_dir()
 
     def after_preflight(preflight: dict | None, error: str | None) -> None:

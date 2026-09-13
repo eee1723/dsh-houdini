@@ -123,6 +123,12 @@ class ExecutorRegistration:
         if self._closed:
             raise RuntimeError('executor registration is closed')
 
+    def registered_hip(self):
+        """Published HIP before a task claims it; reserved HIP afterwards."""
+        with self._guard:
+            self._open()
+            return self._hip or self._observed_hip
+
     def claim_writer(self, task_id, hip):
         """Acquire before enabling mutations. Never create/save/load the HIP.
 

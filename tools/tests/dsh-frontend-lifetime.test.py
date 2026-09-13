@@ -24,6 +24,14 @@ import dsh_managed_runtime as runtime
 assert os.name == "nt", "frontend Job regression requires Windows"
 node = launcher.NODE
 identity=runtime.executor_identity()
+with patch.object(runtime, '_PROCESS', types.SimpleNamespace(poll=lambda: None)), \
+     patch.object(runtime.subprocess, 'Popen', side_effect=AssertionError('must not spawn over owned frontend')):
+    try:
+        runtime.spawn_frontend([node, 'candidate-bin.js'], node=node, replace_existing=False)
+    except RuntimeError as error:
+        assert 'cannot replace' in str(error)
+    else:
+        raise AssertionError('component preview replaced a live owned frontend')
 with patch.dict(os.environ,{'DSH_HOUDINI_EXECUTOR_ID':'f'*32}):
     importlib.reload(runtime)
     assert runtime.executor_identity()==identity,'reload/inherited env cannot change this process identity'

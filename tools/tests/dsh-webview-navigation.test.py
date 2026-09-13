@@ -178,6 +178,15 @@ try:
     recovered = settle()
     assert len(requests) == 10 and recovered["done"]
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(recovered["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_a]
+    # Component preview uses an independently allocated loopback Host origin.
+    webview.FRONTEND_URL = 'http://127.0.0.1:1'
+    assert not webview.raise_workspace(workspace_a)
+    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + '/?token=' + TOKEN,
+                         frontend_url=base, force_reload=True)
+    assert settle()['done'] and len(requests) == 11
+    assert webview.raise_workspace(workspace_a, frontend_url=base)
+    assert not webview.raise_workspace(workspace_a)
+    webview.FRONTEND_URL = base
     print("Qt WebView: one auth bootstrap, hidden-page reuse, HIP switch, Repair and native-client workspace hints passed")
 finally:
     if webview._retry_timer is not None:

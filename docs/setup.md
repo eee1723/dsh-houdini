@@ -96,7 +96,7 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 ## 工作区使用
 
-源码已整合显式共享执行端模式，不替换下述默认Open Workspace，也不自动解除受管安装的runtime锁。
+源码菜单只有Open Workspace：新开且已保存HIP可显式选择隔离组件预览，普通模式为默认；这只合并菜单，不合并profile/正式运行时，也不自动解除受管安装的runtime锁。
 启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
 
 先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。

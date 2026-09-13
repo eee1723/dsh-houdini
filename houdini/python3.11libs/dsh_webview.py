@@ -103,16 +103,18 @@ _target_url = FRONTEND_URL
 _after_auth_url: str | None = None
 _quit_connected = False
 _workspace_dir: str | None = None
+_active_frontend_url: str | None = None
 _load_failed = False
 
 
 def _dispose_webview() -> None:
     """Release our page before its profile/application; do not touch other views."""
-    global _window, _view, _retry_timer, _after_auth_url, _workspace_dir, _load_failed
+    global _window, _view, _retry_timer, _after_auth_url, _workspace_dir, _active_frontend_url, _load_failed
     window, view, timer = _window, _view, _retry_timer
     _window = _view = _retry_timer = None
     _after_auth_url = None
     _workspace_dir = None
+    _active_frontend_url = None
     _load_failed = False
     if timer is not None:
         timer.stop()
@@ -173,9 +175,11 @@ def _bring_to_front(win: QWidget) -> None:
     win.show()
 
 
-def raise_workspace(workspace_dir: str | None = None) -> bool:
+def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | None = None) -> bool:
     """Raise our existing page without authentication, navigation or session IO."""
     if _window is None or _view is None:
+        return False
+    if _active_frontend_url != (frontend_url or FRONTEND_URL):
         return False
     if workspace_dir is not None and _workspace_dir != os.path.normcase(os.path.abspath(workspace_dir)):
         return False
@@ -185,18 +189,19 @@ def raise_workspace(workspace_dir: str | None = None) -> bool:
     return True
 
 
-def _navigation_url(workspace_dir: str | None, session_id: str | None) -> str:
+def _navigation_url(workspace_dir: str | None, session_id: str | None, frontend_url: str | None = None) -> str:
+    base = frontend_url or FRONTEND_URL
     query = {}
     if workspace_dir is not None:
         query[WORKSPACE_HINT_PARAM] = workspace_dir
     elif session_id is not None:
         query[SESSION_HINT_PARAM] = session_id
     if not query:
-        return FRONTEND_URL
+        return base
     # A manual retry keeps one prospective Session identity, including after a
     # create response is lost. This is a navigation attempt, not a second registry.
     query[REQUEST_HINT_PARAM] = "dsh-houdini-" + uuid.uuid4().hex
-    return FRONTEND_URL + "?" + urllib.parse.urlencode(query)
+    return base + "?" + urllib.parse.urlencode(query)
 
 
 def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
@@ -267,6 +272,7 @@ def show_webview(
     session_id: str | None = None,
     authenticated_url: str | None = None,
     *, workspace_dir: str | None = None, force_reload: bool = False,
+    frontend_url: str | None = None,
 ) -> str:
     """唤起当前工作区页面；新导航/Repair 先认证，再由 client 选择任务。"""
     if QCoreApplication.instance() is None:
@@ -279,12 +285,20 @@ def show_webview(
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _workspace_dir, _load_failed
+    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _workspace_dir, _active_frontend_url, _load_failed
+    base = frontend_url or FRONTEND_URL
+    parsed = urllib.parse.urlsplit(base)
+    if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.port is None or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
+        raise ValueError('Embedded DSH frontend must be an exact loopback HTTP origin')
+    if authenticated_url is not None:
+        auth = urllib.parse.urlsplit(authenticated_url)
+        if auth.scheme != parsed.scheme or auth.hostname != parsed.hostname or auth.port != parsed.port:
+            raise ValueError('DSH launch token must belong to the selected frontend origin')
     if (not force_reload and session_id is None
             and (workspace_dir is not None or authenticated_url is None)
-            and raise_workspace(workspace_dir)):
+            and raise_workspace(workspace_dir, frontend_url=base)):
         return "webview already open"
-    target_url = _navigation_url(workspace_dir, session_id)
+    target_url = _navigation_url(workspace_dir, session_id, base)
     initial_url = authenticated_url or target_url
 
     if _window is None:
@@ -318,6 +332,7 @@ def show_webview(
     _after_auth_url = target_url if authenticated_url is not None else None
     _install_launch_session_hint(_view, target_url if workspace_dir is not None or session_id is not None else None)
     _workspace_dir = os.path.normcase(os.path.abspath(workspace_dir)) if workspace_dir is not None else None
+    _active_frontend_url = base
     _target_url = initial_url
     _load_failed = False
     _retry_timer.stop()
