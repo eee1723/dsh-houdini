@@ -28,9 +28,9 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 4. **模块门**：把当前焦点模块当作独立的局部交付任务，不只是一个代码批次：明确相关原始要求、输入/局部坐标、输出、必须看清的细节和局部完成条件，按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)推进。一个模块可用多个小build_module，空CTRL/helper用tab_create；先验证单元及附属件连接再复制。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，不为清warning丢掉部件身份；局部条件满足或遇到明确依赖阻塞就回到集成，不无限堆细节。
 5. **集成关系门**：局部通过与集成通过分开记录。先核对必需部件实际进入最终输出（非空组/身份及基数），再测复制/变换后的实例接口；上游模块健康不能发现下游Switch漏件。独立表面用适用的interfaces，融合Polygon才用共享拓扑；顶点对最小距离不能证明无穿插，距离不等于插入深度。接地逐足检查；合法装配间隙按任务判断，没有可靠方法保留unverified。
 6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
-7. **交付门**：集成后verify_network(parent,output=实际交付SOP)，最后一次相关修改后刷新必要统计、关系和图像。布局、恢复frame/selection/visibility、设sop_set_output，再保存。未命名HIP用有授权路径及当前HIP校验的scene_save_as；保存失败不能宣称完整交付。
+7. **交付门**：普通geo只需明确最终SOP，sop_set_output(末端)设置display/render，再verify_network(parent,output=末端)，不创建也不要求Output节点。只有subnet/HDA的公共交付边界才用sop_set_output(末端,output_index=0)接原生Output，并verify_network(parent,output=末端,output_index=0)；多出口逐口声明，内部Null/旗标不替代公共端口。不要把“逐层发布”扩成每个普通geo都建Output；已有显式出口保持其消费者合同，不擅自删除。最后一次相关修改后刷新统计、关系及颜色/材质之后的交付图像。布局、恢复frame/selection及无关visibility，再保存；未命名HIP须有授权路径及当前HIP校验。内部调试仅切旗标，不重接公共端口。
 
-整体代理→聚焦模块→局部验收→集成复验循环推进，不等所有细节完成才装配。默认同一作者顺序聚焦，不自动启动子agent；简单单参编辑不建模块表。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
+整体代理→聚焦模块→局部验收→集成复验循环推进，不等所有细节完成才装配。模块是接口/验收边界，不强制每个模块一个subnet；用户要求独立子网时遵守，否则按耦合度选择同层分支或容器。默认同一作者顺序聚焦，不自动启动子agent；简单单参编辑不建模块表。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
 
 ## 执行与恢复
 
@@ -40,7 +40,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 - 更新已有spare默认值用create_spare_parms(update_defaults={name:literal})，当前值另用set_parms；两者回读分开。不支持的参数按verb_help边界报告，不因猜错HOM方法而断言环境不支持。
 - 可独立cook/验收的构建批次分别提交exec；一个焦点模块可以跨多个已提交批次，引用存活输出后另做集成，不可分的修改仍保持同批原子性。看transaction最终状态：同一exec后方失败会撤销前方可撤销修改，不沿用被回滚依赖；陌生回读另开query，模块返回直接使用已知validation，避免尾部格式化错误撤销构建。
 - 局部源码改动先read_parms(names=[代码字段])取得当前原文和hash，再用set_parms的literal patch；全部锚点/次数在本节点本批写入前验证，不能静默忽略0命中。跨节点不共享此预检，仍按模块/exec恢复；详见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
-- 同一模块边界连续两次失败，回到最后有效输出做最小单变量诊断或换方法；不反复全文重建多个未知模块，不catch mutation/cook异常后继续。
+- 同一模块边界连续两次失败，回到最后有效输出做最小单变量诊断或换方法；不反复全文重建多个未知模块，不catch mutation/cook异常后继续。比较实际输入、参数回读、选择成员及输出，不用总数相同推导选择失效；换方法成功不能证明原生节点有bug。
 - 节点替换前记录输入、输出消费者及参数引用；删除结果中的受影响连接必须回读并显式重接。
   同名新节点不继承旧接线/控制证据；对最终OUT做控制扰动，避免孤立形变节点和旁路控制。
 - 填充、镜像、细分后检查表面面积、边界与重复覆盖。闭合Polygon已可为面，不能再填一层后仅按
@@ -53,7 +53,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 - geo_piece_stats默认按连接性或指定身份属性统计局部extent/面积；inspect=True观察命名primitive组的Polygon边界/边连通/非流形和basis下extent；shell_orientation保留有向体积条件。半径用到轴的欧氏距离，轴向投影不是半径。observed仅量测，分组切口可有意开放。
 - geo_attrib_stats读驱动属性；复制前用unique=True检查模板P/id的精确tuple唯一性及预期基数，bbox不变不能排除重叠复制。geo_point_spacing只测有序点弦长。test_controls位移/变换误差要求稳定唯一id_attrib和相同面连接；选中件及其附属件查同一预期变换，未选中件查identity，见[模块合同](references/module-quality-contracts.md)。混合网格点均值不是设计中心，native/packed不靠P-only。
 - Copy to Points承担实例变换，模板orient/scale与原型局部轴需一致；Copy/Merge明确属性class和传播。带状物用有面积截面，非刚性成形通常先作用中心线/低维结构再生成厚度。细节见[方法参考](references/sop-patterns.md)。
-- 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)；精度不等于面数。用户要求多agent模块协作时读[并行设计、单作者执行](references/module-design-collaboration.md)，没有可用的受限设计子agent入口就保持单作者，不借allow_foreign或共享身份绕过ownership。
+- 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)。优先让原生SOP承担成形/复制，VEX承担锚点、属性和必要的自定义算法；不用纯VEX比例或节点数评分，但不能因调试失败悄悄放弃用户指定的方法/结构。用户要求多agent模块协作时读[并行设计、单作者执行](references/module-design-collaboration.md)，没有可用的受限设计子agent入口就保持单作者，不借allow_foreign或共享身份绕过ownership。
 - 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
 - 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。直接查看工具结果中的原生图像附件，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
 - 用户屏幕异常才用viewport_screenshot；保留持久__dsh_houdini_*服务。纯网络交付或无GUI不强制追图，视觉未验证则明确报告。

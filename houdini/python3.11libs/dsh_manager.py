@@ -234,46 +234,45 @@ def _dsh_rpc_wire(method: str, payload: dict) -> dict:
     return value
 
 
-def _dsh_rpc(method: str, payload: dict) -> dict:
-    """Call the legacy wire, falling back only when DSH reports it absent."""
-    try:
-        return _dsh_rpc_wire(method, payload)
-    except RuntimeError as exc:
-        if method == "session.list" and "over HTTP 404" in str(exc):
-            return _dsh_rpc_wire("session/list", {"args": {"_request": payload}})
-        raise
-
-
 def _runtime_activity() -> dict:
     """Fail closed when a running service cannot prove it is idle."""
     reasons = []
     active_sessions = 0
     active_jobs = 0
+    active_requests = 0
     frontend_online = _port_open(_FRONTEND_PORT)
     bridge_online = _port_open(_BRIDGE_PORT)
     if frontend_online:
         try:
-            value = _dsh_rpc("session.list", {})
+            value = _dsh_rpc_wire("session/list", {"args": {"_request": {}}})
             items = value.get("items", [])
             if not isinstance(items, list):
-                raise RuntimeError("session.list items is not a list")
+                raise RuntimeError("session/list items is not a list")
             active_sessions = sum(
                 1 for item in items if isinstance(item, dict) and item.get("running") is True
             )
         except Exception as exc:
             reasons.append(f"DSH activity unknown: {exc}")
     if bridge_online:
+        active_jobs = active_requests = None
         try:
             health = _http_json(f"http://127.0.0.1:{_BRIDGE_PORT}/health")
-            active_jobs = int(health.get("activeJobs", 0))
+            if health.get('ok') is not True or any(type(health.get(key)) is not int or health[key] < 0
+                                                  for key in ('activeJobs', 'activeRequests')):
+                raise RuntimeError('Bridge cannot confirm all in-flight requests; let existing work settle and fully restart Houdini to load the current Bridge')
+            active_jobs = health['activeJobs']
+            active_requests = health['activeRequests']
         except Exception as exc:
-            reasons.append(f"Houdini job activity unknown: {exc}")
+            reasons.append(f"Houdini execution activity unknown: {exc}")
     if active_sessions:
         reasons.append(f"{active_sessions} DSH session(s) are running")
     if active_jobs:
         reasons.append(f"{active_jobs} Houdini job(s) are active")
+    if active_requests:
+        reasons.append(f"{active_requests} Houdini request(s)/job links are still active")
     return {
         "safe": not reasons, "activeSessions": active_sessions, "activeJobs": active_jobs,
+        "activeRequests": active_requests,
         "note": "; ".join(reasons) if reasons else "Runtime is idle",
     }
 
@@ -607,8 +606,14 @@ def _stage_or_activate(state: dict, component: str, success_message: str) -> Non
         })
 
 
-def _prepare_activation(state: dict, component: str, success_message: str = "Update is ready.") -> None:
+def _prepare_activation(state: dict, component: str, success_message: str = "Update is ready.", *, force_frontend=False) -> None:
     try:
+        if force_frontend:
+            if component != 'repair':
+                raise RuntimeError('Force restart is only available for explicit runtime repair')
+            state.update(busy=False, result='activate', activation='force-services',
+                         message='Force repair requested; verifying process identity and Houdini execution state…')
+            return
         if component == "dsh":
             if _dsh_launch_override() or state.get("dsh_target") != dsh_runtime_compat.preferred_version():
                 raise RuntimeError("required DSH selection changed; refresh before starting")
@@ -833,12 +838,19 @@ def show_version_manager() -> None:
     def repair_runtime() -> None:
         answer = QtWidgets.QMessageBox.question(
             dialog, "Repair runtime",
-            "Restart the Houdini bridge and DSH frontend when no active work is detected?",
+            "Force-stop this installation's DSH frontend and restart the runtime?\n\n"
+            "Active agent turns and external tool work may be interrupted; session files are kept, "
+            "but unfinished results may be lost. Verified legacy DSH listeners can also be stopped.\n\n"
+            "Houdini and other applications will not be killed. Bridge restart is refused while "
+            "Houdini execution is active or cannot be verified idle.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
         )
-        if answer == QtWidgets.QMessageBox.Yes and set_busy("Checking whether the runtime is idle…"):
+        if answer == QtWidgets.QMessageBox.Yes and set_busy("Preparing guarded force repair…"):
             threading.Thread(
                 target=_prepare_activation,
                 args=(state, "repair", "Runtime repair is ready."),
+                kwargs={"force_frontend": True},
                 daemon=True,
             ).start()
 
@@ -856,11 +868,14 @@ def show_version_manager() -> None:
         advanced_toggle.setText("Advanced diagnostics  ▾" if checked else "Advanced diagnostics  ▸")
         dialog.adjustSize()
 
-    def launch_services() -> None:
+    def launch_services(*, force_frontend=False) -> None:
         dialog.close()
         import dsh_launcher
         importlib.reload(dsh_launcher)
-        dsh_launcher.launch()
+        if force_frontend:
+            dsh_launcher.launch(force_frontend=True)
+        else:
+            dsh_launcher.launch()
 
     def render_state() -> None:
         download_panel.setVisible(False)
@@ -923,9 +938,11 @@ def show_version_manager() -> None:
         if state.get("result") is None:
             return
         result = state.pop("result", None)
-        if result == "activate" and state.pop("activation", None) == "services":
-            launch_services()
-            return
+        if result == "activate":
+            activation = state.pop("activation", None)
+            if activation in ('services', 'force-services'):
+                launch_services(force_frontend=activation == 'force-services')
+                return
         render_state()
 
     def cleanup(_code: int) -> None:

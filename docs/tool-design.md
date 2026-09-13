@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 35
+Execution contract version: 44
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -27,12 +27,20 @@ require_valid=False返回not_evaluated_manual，geometry/nonempty/output_fingerp
 在计算或修改前拒绝Manual；build_module的静态dry_run仍可用。不自动切Auto，也不强杀用户Houdini。
 verify_network的显式output cook失败后不再用geometry/geometryAtFrame隐式重试；几何和nonempty保持未知，
 不把中断/失败缓存认证为当前输出，也不把未知附加解释为empty_output。
+test_controls的恢复cook也遵守同一边界：失败后不再读geometry触发重算，保留恢复诊断且restored为false。
 
 ## 顶层工具
 
+read_parms的Ramp值为JSON对象：type=ramp、basis插值名称、keys控制点位置、values标量或RGB数组。
+它是当前求值的回读格式，不是set_parms载荷，不证明动画/回调/完整状态恢复；普通标量返回保持不变。
+
+render_view的H22后端为Flipbook/Vulkan，使用独立Work Lights与OCIO颜色空间；
+H21保持既有OpenGL ROP和设置。两者共用显式SOP代理、相机/深度包络、状态恢复与新鲜度检查。
+H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户Flipbook节点，不删除旧持久服务。
+
 | 工具 | 作用 |
 |---|---|
-| houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）。三分支互斥，两个Host分支不执行HOM；没有allow_raw修改豁免 |
+| houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）；request_ref为同runtime请求回执。四分支互斥，后三者不执行HOM；没有allow_raw修改豁免 |
 | houdini_exec | 场景修改与作者验证；code为必填，产图通过原生附件返回 |
 | houdini_job_submit | 长操作排队异步提交 |
 | houdini_job_status | 状态/结果及可选等待 |
@@ -40,16 +48,27 @@ verify_network的显式output cook失败后不再用geometry/geometryAtFrame隐�
 
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
-有Host会话身份的exec/jobs提交前带运行实例绑定的request_ref；HTTP断联、超时、坏JSON或错误状态码
+execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
+不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。路径差异通过Open Workspace处理。
+有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
+同时读取词表与执行合同；它替代普通health握手，不增加网络往返，也不进入HOM队列。GET /health不签票。
+票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，
+已消费且回执淘汰的旧票也不能重入队；保留窗口内的重复引用只查原结果，owner/payload不一致仍拒绝。
+HTTP断联、超时、坏JSON或错误状态码
 返回unknown_transport时，用houdini_query(request_ref=...)查回，不重发code。该分支与code/result_ref/
 source_ref互斥，不接受pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
-回执只在原runtime有效，结果保留10分钟且总量上限64MiB，最多4096个请求身份；结果过期或超限明确不可取回，
-身份墓碑保留到runtime结束以拒绝重复执行，容量满拒绝新登记。未知/过期/换runtime都不能推断未执行。
-jobs回执保存的是提交关联，不是完成证据；查回jobId后继续houdini_job_status。job关联在该runtime保留，
-不因完整结果的10分钟期限丢失；job实际结果仍服从job registry自身期限。重复回执不启动第二个worker，
+回执窗口最多4096条：正在执行/排队的请求及活动job关联不可淘汰，已终结旧记录按容量轮转，不设累计请求寿命。
+只有全部槽都仍活动时才拒绝新增登记。结果正文最多保留10分钟且总量上限64MiB，超预算先淘汰旧正文；
+过期/预算淘汰明确为result_expired，单条超预算为result_unavailable；记录淘汰后为unknown，不能推断未执行。
+jobs回执保存的是提交关联，不是完成证据；查回jobId后继续houdini_job_status。关联保持到job worker终态，
+不受正文到期影响；终态后进入普通淘汰队列。job实际结果服从job registry自身期限。重复回执不启动第二个worker，
 过载或worker未启动保留not_executed；队列取消仍阻止HOM运行，运行中取消不强杀。
-Host若丢弃整个工具结果，用request_ref='index'查看当前Host会话最近32个已登记引用、owner_call、类型与状态，
-按原调用ID选择；索引不暴露代码或结果正文。超范围、未到达Bridge、换runtime或缺失均不证明未执行。
+Host若丢弃整个工具结果，用request_ref='index'查看当前Host会话最多32条引用，优先仍活动请求/job关联，再列最近终结记录。
+按owner_call对齐原调用；索引不暴露代码或结果正文，省略数明确。超范围、未到达Bridge、换runtime或缺失均不证明未执行。
+health的activeRequests由Registry活动槽推导，涵盖未返回exec和活动job关联，不是activeExecs，也不把未用票计入执行。
+普通更新启用同时检查Host任务、Bridge jobs与activeRequests；显式强制Repair可中断DSH任务，但仍在停止前后
+验证Bridge空闲，并在主线程重载前复查本地请求/jobs/队列。缺失/非法活动观察为unknown，不按0放行；
+进程核验与操作边界见[安装合同](setup.md)，强制DSH退出不授权强杀HOM或重发未知请求。
 没有跨runtime幂等、自动重提、无限期结果保留或强杀HOM保证；实际Host取消路径仍须新session验证。
 兼容入口保留历史调用解释能力，不作为新guidance中的优先创建方式。
 表达式设参分别报告language、write_status、evaluation和effect_status；合法零值不算错误。
@@ -96,13 +115,13 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。默认output=0兼容旧调用，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型/缺少显式决策合并，非阻断、不改默认值、不证明语义；dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
-| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True)` | SOP checkpoint：必须显式 output，省略即报可操作错误，绝不跟随 display。默认检查 parent 直属范围，可 nodes 限域；error/空输出默认抛 CheckpointError 并保留结构证据，require_valid=False 仅供诊断。warning独立，scope/时间/frame/输出指纹与失败原因前置；不证明关系/视觉 | dict |
+| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式 output，不跟随display。output_index=0..63另验同父网络原生Output为该节点或直接连接它；省略仅验内部构建。默认检查直属范围，可nodes限域；error/空输出默认抛CheckpointError，require_valid=False仅诊断。嵌入Packed穿透包装检查内容；有界遍历超限/仅外部Packed保持unverified并拒绝假绿。warning、内容存在、部件齐全和视觉分开 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除前核对全部后代身份；返回外部参数引用及最多64项affected_connections（目标输入、原源输出及inputs_after），提示原生删除可能旁路重接，同名新节点不继承接线。拒绝删除owner-tagged render_view会话级基础设施。创建时同步新HDA的延迟定义后登记原生后代；不收养后来加入的foreign子节点 | dict |
-| `cook_node(node, force=False, timeout_ms=30000)` | cook + error/warning，timeout_ms为1..120000的协作预算，仅原生中断检查点可响应，不保证强制停止/内存安全。Manual返回ok=False/status=not_cooked_manual，不自动切Auto；预检至多512上游节点的已知VEX删除循环。warning未解释不得当完成 | dict |
-| `sop_set_output(node, render=True, allow_foreign=None)` | 把 SOP singular display/render 旗标移到输出节点；属于用户 viewport/交付状态，不是 render_view 前置条件 | dict |
+| `cook_node(node, force=False, timeout_ms=30000)` | cook + error/warning，timeout_ms为1..120000的协作预算，仅原生中断检查点可响应，不保证强制停止/内存安全。Manual返回ok=False/status=not_cooked_manual，不自动切Auto；预检输入计数恒条件、平直删除语句组成的已知无界VEX循环，未知控制流不作安全认证。依赖规模本身不拒绝；verify_network的内部只读批次共享一次完整上游预检，不跨调用缓存。warning未解释不得当完成 | dict |
+| `sop_set_output(node, render=True, allow_foreign=None, *, output_index=None)` | 默认仅移动SOP display/render旗标。显式output_index=0..63复用/创建同父网络原生Output并接线，将旗标设到它；重复索引/循环/foreign接口写入拒绝，逐层发布不猜祖先。返回public_output接线事实，不cook/保存HDA，须另验几何、新实例与根显示；不是render_view前置条件 | dict |
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
@@ -128,7 +147,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省，返回实例/可选定义树、可选raw状态和非阻断结构建议；不要求HDA，不cook/执行菜单，不创建绑定。hda_info保留同形兼容入口 | dict |
 | `bind_controls(controller, bindings, *, dry_run=False, expected_plan=None, replace_existing=False, allow_foreign=None)` | 1..32项明确数值绑定：source为控制节点参数名，target为目标参数绝对路径，可选scale/offset。dry_run返回plan_sha256；应用必须expected_plan匹配identity/值/keys/锁定/帧。默认拒绝已有驱动，replace_existing显式替换；拒绝非数值/菜单/回调/multiparm、任意表达式源、批次源目标交叠及重复目标。整数目标只接受整数源与映射系数。实际HScript引用和值回读，失败恢复本批目标通道；不保证领域输出或外部副作用 | dict |
 
-| `set_update_mode(mode, expected_mode)` | 显式切换auto/manual/on_mouse_up，expected_mode防止覆盖过期用户状态；切Auto可能触发全场景计算，不是取消接口 | dict |
+| `set_update_mode(mode, expected_mode)` | 显式切换auto/manual/on_mouse_up，expected_mode防止覆盖过期用户状态；无GUI拒绝on_mouse_up（原生会降为auto）。after/changed取实际回读，未应用请求或setter失败会尝试恢复并报告结果；模式恢复不撤销触发的cook/外部副作用。切Auto可能触发全场景计算，不是取消接口 | dict |
 
 ### scene 域（工程/时间线）
 
@@ -157,6 +176,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
+| `package_info(name=None, limit=64)` | 官方运行态package清单；精确name另给有界资源路径。省略环境变量值，不扫磁盘、不加载或改包；GUI接口不可用返回unavailable而非空清单。Active不证明兼容/授权，publisher未验证；Bridge回执提供runtime身份 | dict |
 | `cop_layer_stats(node, output=0, *, max_pixels=4194304)` | 必须exec：直接读取当前ImageLayer，output为源输出名/索引；完整buffer统计/指纹、类型/通道、data/display window、空间、pixel scale、frame、U/V梯度。max_pixels为1..16777216，超预算拒绝不抽样，预算不限制上游GPU cook分配。拒绝Manual、失败cook、非图层和未支持storage；非有限值fail，sticky Cache新鲜度unknown；不证明视觉或外部文件最新 | dict |
 | `cop_compare_layers(before, after, *, before_output=0, after_output=0, expected_delta=None, tolerance=1e-6, max_pixels=4194304)` | 必须exec：测after-before，完整通道/窗口/空间对齐，不静默重采样；无expected_delta仅量测status=unverified。expected_delta={node,output?}时检验max(abs((after-before)-expected_delta))<=tolerance，返回实际操作数/公式/误差；非有限、错位拒绝，sticky Cache不认证通过；不判断作者选对了数学对象或艺术效果 | dict |
 | `test_cop_controls(controller, output, tests, *, output_port=0, max_pixels=4194304, allow_foreign=None)` | 必须exec：1..16个{id,values:{parm:number},expectations:[{metric,channel,delta:[min,max],range?}]}；metric为mean/min/max/mean_abs_change/max_abs_change，变化指标基准0。每case至少一项非零预期，range验基准与扰动；复用参数/keys/frame恢复并比较完整图层/元数据指纹。拒绝菜单/回调/multiparm/tuple、Manual、sticky Cache和无效基准；恢复失败抛CheckpointError，已恢复的失败仍fail。仅声明case/输出范围，不恢复外部文件/Python/solver副作用，不替代语义读图 | dict |

@@ -31,7 +31,13 @@ assert launcher._frontend_command()[2] == "managed-cli"
 assert launcher.ensure_dependencies() == "managed dependencies ok (no package manager)"
 runtime = manager._runtime_dsh_info()
 assert runtime["verified"] and runtime["version"] == ctx["dshVersion"], runtime
-assert launcher._kill_port_process(ctx["bridgePort"]) is False
+try:
+    launcher._service_preflight()
+except RuntimeError as exc:
+    # The fixture frontend belongs to the parent runner's Job, not this Houdini.
+    assert "frontend port conflict" in str(exc), exc
+else:
+    raise AssertionError("a child Houdini must not adopt the parent's frontend")
 
 bridge.start(ctx["bridgePort"])
 bridge._pump_active = True

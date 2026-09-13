@@ -15,6 +15,7 @@
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
+| [多实例与任务恢复](multi-instance.md) | 显式共享Host/多Houdini的身份、绑定、写入预留、单端Repair、启用步骤和未开放的恢复边界 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、鉴权/RPC/Qt/profile资格门 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [评测基础设施设计](benchmark-design.md) | manifest/schema、信息隔离、评审与能力主张，不保存批次结果 |

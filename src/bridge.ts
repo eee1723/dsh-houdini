@@ -6,7 +6,6 @@
  */
 /** Bridge wire JSON is independent of DSH's version-specific type re-exports. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import { randomUUID } from 'node:crypto'
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
@@ -64,7 +63,9 @@ export interface OwnershipScope {
 
 interface BridgeHealth {
   ok: boolean
+  executorId?: string
   runtimeId?: string
+  requestRef?: string
   houVersion?: string
   rawGate?: boolean
   executionContractVersion?: number
@@ -84,14 +85,33 @@ function normalizeBaseUrl(url: string): string {
 export class HoudiniBridge {
   private readonly baseUrl: string
 
-  constructor(baseUrl: string, private readonly timeoutMs: number) {
+  constructor(baseUrl: string, private readonly timeoutMs: number, private readonly executorId?: string,
+    private readonly lifetime?:AbortSignal) {
     this.baseUrl = normalizeBaseUrl(baseUrl)
+    if (executorId !== undefined && !/^[0-9a-f]{32}$/.test(executorId)) throw new Error('Invalid Houdini executor identity')
+  }
+
+  private targetHeaders(): Record<string, string> {
+    return this.executorId ? {'X-DSH-Houdini-Executor': this.executorId} : {}
+  }
+
+  /** Host routing identity, never a tool argument or node edit permission. */
+  get targetExecutorId(): string | undefined { return this.executorId }
+
+  /** Non-HOM identity/contract check for an explicit target selection. */
+  async inspectExecutor(signal?: AbortSignal): Promise<BridgeHealth> {
+    return this.checkContract(signal)
+  }
+  async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal):Promise<void> {
+    const result=await this.post<{ok:boolean;error?:string}>('/executor/claim',{
+      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip},signal)
+    if(result.ok!==true) throw new Error(result.error||'Writer reservation failed')
   }
 
   /** Run Python code in the Houdini session and wait for completion.
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
   async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope, readOnly = false): Promise<ExecResult> {
-    const runtimeId = await this.ensureCompatible(signal)
+    const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
     const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
@@ -99,8 +119,7 @@ export class HoudiniBridge {
       body.owner_call = owner.callId
     }
     if (readOnly) body.read_only = 'true'
-    // Only trusted Host identities enable receipts; no model-provided ownership.
-    const ref = runtimeId && owner ? `${runtimeId}.${randomUUID().replaceAll('-','')}` : undefined
+    // A Bridge-issued ticket can be admitted only once, even after its result expires.
     if (ref) body.request_ref = ref
     try {
       return await this.post<ExecResult>('/exec', body, signal)
@@ -109,47 +128,59 @@ export class HoudiniBridge {
       // HTTP status/body/JSON failures can all occur after side effects.
       return {ok:false,stdout:'',stderr:'',error:String(error),
         requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+          ...(this.executorId ? {executor_id:this.executorId} : {}),
           next_action:'Use houdini_query(request_ref=...) to retrieve the admitted request. Do not resubmit the scene code.'}}
-    } finally {
-      if (!readOnly) this.hipCache = null
     }
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
   async submitJob(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<JobHandle> {
-    const runtimeId = await this.ensureCompatible(signal)
+    const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
     const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
     if (allowRaw) body.allow_raw = allowRaw
     if (owner) {
       body.owner_session = owner.sessionId
       body.owner_call = owner.callId
     }
-    const ref = runtimeId && owner ? `${runtimeId}.${randomUUID().replaceAll('-','')}` : undefined
     if (ref) body.request_ref=ref
-    try { return await this.post('/jobs', body, signal) }
+    try {
+      const handle = await this.post<JobHandle>('/jobs', body, signal)
+      if (handle.requestReceipt && this.executorId) {
+        handle.requestReceipt = {...handle.requestReceipt as Record<string, JsonValue>, executor_id:this.executorId}
+      }
+      return handle
+    }
     catch (error) {
       if (!ref) throw error
       return {error:String(error),requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+        ...(this.executorId ? {executor_id:this.executorId} : {}),
         next_action:'Use houdini_query(request_ref=...) to recover the original jobId. Do not submit this job again.'}}
     }
-  }
-
-  /** Refuse scene work when the host catalog and in-process bridge differ. */
-  private async ensureCompatible(signal?: AbortSignal): Promise<string | undefined> {
-    // A bridge can restart on the same port at any time. A 30s cache accepted
-    // stale semantics; sharing its AbortSignal also cancelled unrelated calls.
-    return this.checkContract(signal)
   }
 
   private expectedContract() {
     return { version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH }
   }
 
-  private async checkContract(signal?: AbortSignal): Promise<string | undefined> {
-    const health = await this.get<BridgeHealth>('/health', signal)
+  private async checkContract(signal?: AbortSignal, owner?: OwnershipScope): Promise<BridgeHealth> {
+    // No cached handshake: the process can restart on the same port. Preparing
+    // a ticket also returns the contract, so admission costs no extra round trip.
+    const health = owner
+      ? await this.post<BridgeHealth>('/requests/prepare', { owner_session: owner.sessionId }, signal)
+      : await this.get<BridgeHealth>('/health', signal)
     const actual = health.verbCatalog
+    if (this.executorId && health.executorId !== this.executorId) {
+      throw new Error('Houdini executor mismatch: no scene code was submitted. The connection belongs to another Houdini process. Restore the intended target; do not retry scene operations or automatically rebind by port/HIP path.')
+    }
     if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH
-        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) return health.runtimeId
+        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) {
+      if (owner && (typeof health.runtimeId !== 'string' || typeof health.requestRef !== 'string'
+          || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(health.requestRef)
+          || !health.requestRef.startsWith(health.runtimeId + '.'))) {
+        throw new Error('Houdini bridge did not prepare a valid same-runtime request ticket; no scene code was submitted. Repair and restart runtime before retrying.')
+      }
+      return health
+    }
 
     const expectedNames = new Set<string>(EXPECTED_VERB_NAMES)
     const actualNames = new Set(Array.isArray(actual?.names) ? actual.names : [])
@@ -196,7 +227,7 @@ export class HoudiniBridge {
     const url = `${this.baseUrl}/media?path=${encodeURIComponent(path)}`
     let res: Response
     try {
-      res = await fetch(url, { signal: this.withTimeout(signal) })
+      res = await fetch(url, { headers: this.targetHeaders(), signal: this.withTimeout(signal) })
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)
       throw new Error(`cannot reach the Houdini bridge at ${this.baseUrl} (${reason})`)
@@ -222,8 +253,6 @@ export class HoudiniBridge {
     return Buffer.concat(chunks)
   }
 
-  private hipCache: { dir: string | null; at: number } | null = null
-
   /** Fixed, non-evaluating metadata route; old bridges degrade without executing code. */
   async sceneContext(signal?: AbortSignal): Promise<unknown> {
     const timeout = AbortSignal.timeout(2000)
@@ -236,32 +265,9 @@ export class HoudiniBridge {
     return this.post('/requests/status',{request_ref:ref,owner_session:owner.sessionId},signal)
   }
 
-  /** Directory of the live hip file ($HIP), 60s cache; null when unreachable
-   *  or the scene was never saved (untitled.hip — no meaningful $HIP, the
-   *  preset persona already tells the agent to ask the user first).
-   *  Used to detect sessions whose workspace does not match the live scene. */
-  async hipDir(): Promise<string | null> {
-    if (this.hipCache && Date.now() - this.hipCache.at < 60_000) return this.hipCache.dir
-    let dir: string | null = null
-    try {
-      const r = await this.exec(
-        "import os, hou\n_p = hou.hipFile.path()\n__result__ = os.path.dirname(_p) if scene_info()['has_named_path'] else ''",
-        undefined,
-        undefined,
-        undefined,
-        true,
-      )
-      if (r.ok && typeof r.result === 'string' && r.result) dir = r.result
-    } catch {
-      // bridge down — the exec itself already reported that; no note needed
-    }
-    this.hipCache = { dir, at: Date.now() }
-    return dir
-  }
-
   private withTimeout(signal: AbortSignal | undefined, extraMs = 0): AbortSignal {
     const timeout = AbortSignal.timeout(this.timeoutMs + extraMs)
-    return signal ? AbortSignal.any([signal, timeout]) : timeout
+    return AbortSignal.any([timeout,...(signal?[signal]:[]),...(this.lifetime?[this.lifetime]:[])])
   }
 
   private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -286,6 +292,7 @@ export class HoudiniBridge {
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
+        headers: {...Object.fromEntries(new Headers(init.headers)), ...this.targetHeaders()},
         signal: this.withTimeout(signal, extraMs),
       })
     } catch (cause) {

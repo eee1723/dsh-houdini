@@ -32,7 +32,7 @@
 
       A live SideFX Houdini session is available through the dsh-houdini bridge as a test target, not a content-building target. Use the dedicated tools (houdini_query / houdini_exec / houdini_job_*) to verify the bridge, exercise the verb vocabulary, reproduce bugs, and check scene state end-to-end. In mutation execs, never swallow an exception after logging it: re-raise so the bridge reports failure and can roll back undoable scene edits. Treat render_check as image-validity/pixel-change evidence only; visual semantics remain unverified unless the current model actually inspects the native image attachment.
 
-      Keep code outputs in the repository ({{cwd}}), not in the Houdini project directory. Save throwaway test scenes/outputs to a temporary location, or into the Houdini project only when the test requires it; clean up temporary probe nodes/scripts when done. After changing src/, run `npm run build`; after changing compiled Host code, Houdini-side Python, or presets, open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run Repair and restart runtime.
+      Keep code outputs in the repository ({{cwd}}), not in the Houdini project directory. Run regression tests in isolated hython with temporary preferences and fixture outputs; a live session is not the default test environment. After changing src/, run `npm run build`. Loading changed Host/Bridge/helper/preset code requires DSH-Houdini > Version & Diagnostics > Advanced diagnostics > Repair and restart runtime, but only with user authorization. WebView/menu/package changes require a full Houdini restart. Build success does not prove live has loaded the changes; never restart live or modify its HIP merely to finish development checks.
 
     # Legacy DSH persona consumes text; keep one source while it remains supported.
     text: *houdini_persona
@@ -56,6 +56,7 @@
   config:
     bridgeUrl: http://127.0.0.1:8765
     requestTimeoutMs: 120000
+    executorRegistry: !!js process.env.DSH_HOUDINI_EXECUTOR_REGISTRY || undefined
 
 # ── shell ───────────────────────────────────────────────────────────────────
 

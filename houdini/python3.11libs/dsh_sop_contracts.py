@@ -72,12 +72,109 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
             'note': 'Only the specified point sequence/chord spacing is checked; not curve arc length or final surface/assembly correctness.'}
 
 
-def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True) -> dict:
+def _output_ports(parent):
+    return [n for n in parent.children() if n.type().name() == 'output']
+
+
+def _output_index(index):
+    if type(index) is not int or not 0 <= index <= 63:
+        raise ValueError('output_index must be an integer in 0..63, or None for display-only')
+
+
+def _public_output(parent, source, index):
+    _output_index(index)
+    ports = [n for n in _output_ports(parent) if n.evalParm('outputidx') == index]
+    port = ports[0] if len(ports) == 1 else None
+    valid = port is not None and (port == source or any(
+        c.inputIndex() == 0 and c.inputNode() == source and c.outputIndex() == 0
+        for c in port.inputConnections()))
+    return {'ok': valid, 'index': index, 'node': port.path() if port else None,
+            'source': source.path(), 'matches': [n.path() for n in ports],
+            'reason': None if valid else 'missing_duplicate_or_unwired_public_output',
+            'scope': 'direct Output wiring only; not ancestor visibility or fresh-instance behavior'}
+
+
+def publish_output(source, index, allow_foreign=None):
+    """Explicit port authoring, no cooking or automatic ancestor publication."""
+    import dsh_hou_helpers as h
+    _output_index(index)
+    parent = source.parent()
+    ports = [n for n in _output_ports(parent) if n.evalParm('outputidx') == index]
+    if len(ports) > 1:
+        raise ValueError(f'duplicate Output index {index}; inspect and resolve explicitly')
+    port = ports[0] if ports else None
+    if source.type().name() == 'output':
+        if port != source:
+            raise ValueError('source is an Output with a different index; edit the port explicitly')
+    else:
+        if port is not None and port in source.inputAncestors():
+            raise ValueError('publishing this source would create an Output dependency cycle')
+        # An owned child does not authorize replacing a foreign public interface.
+        h._require_owned(parent, 'publish SOP output', allow_foreign)
+        if port is not None:
+            h._require_owned(port, 'publish SOP output', allow_foreign)
+        else:
+            port = h.tab_create(parent, 'output', name=f'output{index}')
+            h.set_parms(port, {'outputidx': index})
+        h.connect(source, port, allow_foreign=allow_foreign)
+    result = _public_output(parent, source, index)
+    if not result['ok']:
+        raise ValueError('public Output wiring readback failed')
+    return result
+
+
+def _content_nonempty(geometry, max_prims=100000, max_depth=16):
+    """Existence witness inside embedded packs, not membership or shape proof.
+
+    Point-only data is valid; wrapper points do not prove embedded content.
+    Bound traversal and never load external packed files to obtain a witness.
+    """
+    pending = [(geometry, 0)]
+    checked = 0
+    unknown = False
+    while pending:
+        geo, depth = pending.pop()
+        if geo is None:
+            unknown = True
+            continue
+        count = int(geo.intrinsicValue('primitivecount'))
+        points = int(geo.intrinsicValue('pointcount'))
+        if not count:
+            if points:
+                return {'nonempty': True, 'status': 'observed_content'}
+            continue
+        # One concrete non-packed primitive is an existence witness, not a
+        # sample-based claim about the remaining geometry. Large meshes stay cheap.
+        if 'Packed' not in str(geo.prim(0).type()):
+            return {'nonempty': True, 'status': 'observed_content'}
+        if depth > max_depth or checked + count > max_prims:
+            unknown = True
+            continue
+        checked += count
+        wrapper_points = set()
+        for prim in geo.prims():
+            if 'Packed' not in str(prim.type()):
+                return {'nonempty': True, 'status': 'observed_content'}
+            wrapper_points.update(v.point().number() for v in prim.vertices())
+            if isinstance(prim, hou.PackedGeometry):
+                pending.append((prim.getEmbeddedGeometry(), depth + 1))
+            else:
+                unknown = True
+        if points > len(wrapper_points):
+            return {'nonempty': True, 'status': 'observed_content'}
+    return {'nonempty': None if unknown else False,
+            'status': 'unverified_content' if unknown else 'empty_content'}
+
+
+def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True,
+                   *, output_index: int | None = None) -> dict:
     """Cook/check SOP children, not just OUT. No display/frame/selection changes.
 
     Default scope is all direct SOP children (not HDA internals). Explicit nodes
     restrict the scope; the report lists it. A limit overrun fails, never samples
     and reports healthy. Warnings, empty output and semantic verification differ.
+    output_index checks the parent public Output is this source (or directly
+    wired to it); omission remains an internal construction checkpoint.
     """
     import dsh_hou_helpers as h
     p = h._resolve(parent)
@@ -96,6 +193,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     out = p.node(output) if isinstance(output, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', output) else h._resolve(output)
     if out is None or out.parent() != p:
         raise ValueError("output must be an explicit direct SOP child")
+    public = _public_output(p, out, output_index) if output_index is not None else None
+    if public is not None and public['node']:
+        selected.append(h._resolve(public['node']))
     if out not in selected:
         selected.append(out)
     selected = list(dict.fromkeys(selected))
@@ -108,6 +208,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   'output':out.path(), 'status':'not_evaluated_manual', 'update_mode':'manual',
                   'failure_reasons':['not_evaluated_manual'], 'geometry':None, 'nonempty':None,
                   'output_fingerprint':None, 'semantic_status':'unverified',
+                  'public_output':public, 'content_check':{'nonempty':None,'status':'not_evaluated'},
                   'frame':float(hou.frame()), 'checked_at':time.time(),
                   'scope':'direct_children' if nodes is None else 'explicit_nodes',
                   'scope_signature':hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
@@ -117,7 +218,12 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         if require_valid:
             raise h.CheckpointError(result['next_action'], result)
         return result
-    reports = [h.cook_node(n) for n in selected]
+    # This internal read-only batch authors no source or wiring changes. Scan
+    # its complete dependency union once, before the first cook; do not retain
+    # validation across calls or use an upstream-size cap as a danger signal.
+    from dsh_cook_control import preflight
+    preflight(selected)
+    reports = [h._cook_node(n, preflight=False) for n in selected]
     errors = [r['path'] for r in reports if not r['ok']]
     warnings = [r['path'] for r in reports if not r['warning_free']]
     output_cooked = next(r['ok'] for r in reports if r['path'] == out.path())
@@ -125,16 +231,22 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     # retry through geometry()/geometryAtFrame(), or certify its stale cache.
     geometry = out.geometry() if output_cooked else None
     summary = h._geo_summary(geometry) if geometry is not None else None
-    nonempty = bool(summary and (summary.get('points') or summary.get('prims'))) if output_cooked else None
+    content = _content_nonempty(geometry) if geometry is not None else {'nonempty':None, 'status':'not_evaluated'}
+    nonempty = content['nonempty']
     fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
     reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
+    if output_cooked and nonempty is None:
+        reasons = [r for r in reasons if r != 'empty_output'] + ['unverified_output_content']
+    if public is not None and not public['ok']:
+        reasons.append('public_output')
     result = {'ok': not reasons, 'output': out.path(), 'failure_reasons': reasons,
             'parent': p.path(), 'frame': float(hou.frame()),
             'checked_at': time.time(), 'scope': 'direct_children' if nodes is None else 'explicit_nodes',
             'scope_signature': hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
             'checked_nodes': [n.path() for n in selected], 'node_count': len(selected),
             'warning_free': not warnings,
-            'healthy': not errors and not warnings and nonempty, 'nonempty': nonempty,
+            'healthy': not reasons and not warnings and nonempty is True, 'nonempty': nonempty,
+            'content_check': content, 'public_output': public,
             'error_nodes': errors, 'warning_nodes': warnings,
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,
             'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
@@ -302,7 +414,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
         for name in required_outputs or []:
             node = created[name]
             geometry = node.geometry()
-            required_checks.append({'output':node.path(), 'nonempty': bool(geometry is not None and (len(geometry.points()) or len(geometry.prims()))), 'errors':list(node.errors())})
+            content = _content_nonempty(geometry) if geometry is not None else {'nonempty':None, 'status':'not_evaluated'}
+            required_checks.append({'output':node.path(), **content, 'errors':list(node.errors())})
         if any(not row['nonempty'] or row['errors'] for row in required_checks):
             raise h.CheckpointError('required module output is empty or has cook errors; newly created module removed',
                                     {**validation, 'ok':False, 'failure_reasons':['required_output'], 'required_outputs':required_checks})

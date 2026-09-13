@@ -81,6 +81,10 @@ Scene Import后用render_frame的framing={target:实际USD资产路径,coverage:
 检查包括全部产品的camera、resolution/pixelAspect、aspectRatioConformPolicy与dataWindowNDC；不支持的ROP
 override/外部USD/前置脚本/lens/Volume/PointInstancer明确拒绝，不暗中更改镜头或增加重渲染。
 此fast path适用于当前帧普通透视/正交包络，不用于艺术裁切、动画相机、位移/快门包络或语义质量认证。
+诊断材质细节时另查景深启用状态、焦点距离和光圈；camera_fit不设置焦点，包络通过不证明画面清晰。
+移动相机或改变焦距后重新检查清晰度。仅在自有诊断镜头且不要求景深时临时关闭景深；
+艺术镜头保留原意并校准焦点，不把失焦误诊为纹理分辨率或继续增加细节。此项有H22单任务对照，
+跨版本默认值与未见任务采用仍待验，不固定某个版本的默认焦点/参数token。
 技术版本与回归状态见development的v14记录；未见任务自然采用仍待验。
 
 ## 5. 灯光

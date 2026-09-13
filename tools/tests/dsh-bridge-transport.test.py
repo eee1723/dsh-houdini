@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import dsh_bridge as b
@@ -24,7 +25,56 @@ def post(path, value, headers=None):
 
 
 try:
+    from dsh_managed_runtime import executor_identity
+    assert executor_identity()==b._EXECUTOR_ID
+    import importlib
+    import dsh_managed_runtime as runtime
+    identity=runtime.executor_identity()
+    importlib.reload(runtime)
+    assert identity==runtime.executor_identity(), 'module reload must not replace process identity'
+    wrong='0'*32 if identity!='0'*32 else '1'*32
+    headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':wrong}
+    for path in ('/exec','/jobs','/jobs/not-ours/cancel','/jobs/not-ours/status',
+                 '/context','/requests/prepare','/requests/status'):
+        status,result=post(path,{'code':'raise RuntimeError("should never execute")'},headers)
+        assert status==409 and 'executor_mismatch' in result['error'],(path,status,result)
+    connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+    connection.request('GET','/media?path=never-read.png',headers={'X-DSH-Houdini-Executor':wrong})
+    response=connection.getresponse()
+    assert response.status==409 and 'executor_mismatch' in response.read().decode()
+    connection.close()
+    good={'Content-Type':'application/json','X-DSH-Houdini-Executor':identity}
+    status,prepared=post('/requests/prepare',{'owner_session':'bound-client'},good)
+    assert status==200 and prepared['executorId']==identity,(status,prepared)
+    # The Qt callback yields after a slow item, rather than draining an entire
+    # scene backlog in one tick. The next tick resumes FIFO, including failures.
+    order = []
+    work = [(threading.Event(), {}) for _ in range(3)]
+    def first():
+        order.append('first')
+        return 'completed'
+    def second():
+        order.append('second')
+        raise ValueError('fixture failure')
+    for fn, (done, holder) in zip((first, second, lambda: order.append('cancelled')), work):
+        b._work_queue.put((fn, done, holder))
+    work[2][1]['cancelled'] = True
+    with patch.object(b.time, 'monotonic', side_effect=[0, 0, 0.010]):
+        b._pump()
+    assert order == ['first'] and work[0][0].is_set() and not work[1][0].is_set()
+    assert work[0][1]['result'] == 'completed'
+    with patch.object(b.time, 'monotonic', return_value=1):
+        b._pump()
+    assert order == ['first', 'second'] and all(done.is_set() for done, _ in work)
+    assert isinstance(work[1][1]['error'], ValueError)
+
     assert post('/exec', {'code': 'pass'}, {'Content-Type': 'text/plain'})[0] == 403
+    assert post('/requests/prepare', {'owner_session':'fixture'}, {'Content-Type':'application/json','Origin':'https://untrusted.example'})[0] == 403
+    assert post('/requests/prepare', {'owner_session':''})[0] == 400
+    assert post('/requests/prepare', {'owner_session':'fixture','code':'must not execute'})[0] == 400
+    status, prepared = post('/requests/prepare', {'owner_session':'fixture'})
+    assert status == 200 and prepared['requestRef'].startswith(prepared['runtimeId']+'.')
+    assert b._work_queue.empty(), 'preparing a receipt must not run or queue HOM'
     assert post('/exec', {'code': 'pass'}, {'Content-Type': 'application/json', 'Origin': 'https://untrusted.example'})[0] == 403
     assert post('/exec', [], None)[0] == 400
     assert post('/exec', {'code': 'pass'}, {'Content-Type': 'application/json', 'Content-Length': '-1'})[0] == 413

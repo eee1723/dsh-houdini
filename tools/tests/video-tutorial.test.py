@@ -1,6 +1,9 @@
 """Offline behavior tests; never upload video or require Houdini/API credentials."""
 import importlib.util
+from collections import Counter
+from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import tempfile
 import sys
@@ -26,9 +29,12 @@ class VideoTests(unittest.TestCase):
         self.work = self.root / "work"
         self.work.mkdir()
         self.chunks = []
+        self.audio_names = {}
         for index, (start, end) in enumerate(video.ranges(2, 12, 14, 5, 1)):
             audio = self.work / f"audio-{index:05d}.wav"
-            audio.write_bytes(f"synthetic test chunk {index}".encode())
+            payload = f"synthetic test chunk {index}".encode()
+            audio.write_bytes(payload)
+            self.audio_names[payload] = audio.name
             self.chunks.append({"id": f"{index:05d}", "start": start, "end": end,
                                 "audio": audio.name, "sha256": video.sha(audio)})
         self.manifest = {"schema": 1, "source": str(self.source), "source_sha256": video.sha(self.source),
@@ -39,8 +45,8 @@ class VideoTests(unittest.TestCase):
         self.args = Args(work=str(self.work), model="test/asr", allow_upload=True, max_chunks=2, retry_failed=False)
         self.calls = []
 
-    def sender(self, path, model, key):
-        self.calls.append(path.name)
+    def sender(self, audio, model, key):
+        self.calls.append(self.audio_names[audio])
         return "Turn parameter to 0.2", "synthetic-trace"
 
     def transcribe(self, sender=None):
@@ -48,6 +54,13 @@ class VideoTests(unittest.TestCase):
 
     def write_manifest(self):
         (self.work / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+
+    def seed_attempts(self, chunk_index, count):
+        video.config(self.work, self.args.model)
+        item = self.chunks[chunk_index]
+        for number in range(1, count + 1):
+            video.save(self.work / f"attempt-{item['id']}-{number}.json",
+                       {"id": item["id"], "attempt": number, "audio_sha256": item["sha256"]})
 
     def test_fractional_end_and_invalid_bounds(self):
         self.assertEqual(video.ranges(2, 99, 14.5, 5, 1), [(2, 7), (6, 11), (10, 14.5)])
@@ -63,7 +76,8 @@ class VideoTests(unittest.TestCase):
 
     def test_resume_skips_success(self):
         self.assertEqual(self.transcribe()["submitted"], 2)
-        self.assertEqual(self.transcribe(), {"submitted": 1, "remaining": 0})
+        self.assertEqual(self.transcribe(), {"submitted": 1, "retried": 0, "retry_budget": 0,
+                                           "remaining": 0, "remaining_unsubmitted": 0, "deferred": []})
         self.assertEqual(self.transcribe()["submitted"], 0)
         self.assertEqual(len(set(self.calls)), 3)
         self.assertEqual(len(self.calls), 3)
@@ -84,16 +98,17 @@ class VideoTests(unittest.TestCase):
         self.assertEqual(summary["text_accuracy"], "unverified")
 
     def test_unknown_request_not_automatically_retried(self):
-        video.save(self.work / "attempt-00000-1.json", {"id": "00000", "attempt": 1,
-                                                       "audio_sha256": self.chunks[0]["sha256"]})
-        with self.assertRaises(video.Failure):
-            self.transcribe()
-        self.assertFalse(self.calls)
+        self.seed_attempts(0, 1)
+        result = self.transcribe()
+        self.assertEqual(self.calls, ["audio-00001.wav", "audio-00002.wav"])
+        self.assertEqual(result["deferred"], [{"id": "00000", "status": "unknown", "attempts": 1}])
+        self.assertEqual(result["remaining_unsubmitted"], 0)
         self.args.retry_failed = True
-        self.transcribe()
+        self.assertEqual(self.transcribe()["retried"], 1)
         self.assertTrue((self.work / "attempt-00000-2.json").exists())
 
     def test_failure_stops_and_retry_budget(self):
+        self.args.chunks = ["00000"]
         def fail(*args):
             self.calls.append("failed")
             raise TimeoutError("secret must not be emitted")
@@ -101,15 +116,170 @@ class VideoTests(unittest.TestCase):
             self.transcribe(fail)
         self.assertEqual(len(self.calls), 1)
         self.assertNotIn("secret", (self.work / "outcome-00000-1.json").read_text())
-        with self.assertRaises(video.Failure):
-            self.transcribe(fail)
+        self.assertEqual(self.transcribe(fail)["submitted"], 0)
         self.assertEqual(len(self.calls), 1)
         self.args.retry_failed = True
         with self.assertRaises(video.Failure):
             self.transcribe(fail)
-        with self.assertRaises(video.Failure):
-            self.transcribe(fail)
+        self.args.retry_failed = False
+        self.assertEqual(self.transcribe(fail)["submitted"], 0)
         self.assertEqual(len(self.calls), 2)
+
+    def test_third_attempt_is_authorized_per_invocation_without_rewriting_history(self):
+        self.seed_attempts(0, 2)
+        originals = {p: p.read_bytes() for p in self.work.glob("attempt-*.json")}
+        self.args.chunks = ["00000"]
+        result = video.transcribe(self.args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+        self.assertEqual(result["submitted"], 0)
+        self.assertEqual(result["deferred"], [{"id": "00000", "status": "unknown", "attempts": 2}])
+        self.args.retry_failed = True
+        self.args.max_retries = 1
+        result = self.transcribe()
+        self.assertEqual((result["retried"], result["retry_budget"]), (1, 1))
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 3)
+        self.assertTrue(all(p.read_bytes() == data for p, data in originals.items()))
+
+    def test_deferred_twice_attempted_chunk_does_not_block_pending_or_hide_export_gap(self):
+        self.seed_attempts(0, 2)
+        result = self.transcribe()
+        self.assertEqual(result["submitted"], 2)
+        self.assertEqual(result["remaining"], 1)
+        self.assertEqual(result["remaining_unsubmitted"], 0)
+        self.assertEqual(self.calls, ["audio-00001.wav", "audio-00002.wav"])
+        summary = video.export(Args(work=str(self.work), output=str(self.root / "export")))
+        self.assertEqual(summary["status"], "partial")
+        self.assertEqual([(row["id"], row["status"]) for row in summary["missing"]], [("00000", "unknown")])
+
+    def test_retry_request_budget_and_two_digit_attempt_order(self):
+        for index, count in enumerate((2, 9, 1)):
+            self.seed_attempts(index, count)
+        self.args.retry_failed = True
+        self.args.max_retries = 1
+        self.args.max_chunks = 3
+        result = self.transcribe()
+        self.assertEqual((result["submitted"], result["retried"]), (1, 1))
+        self.assertEqual([row["id"] for row in result["deferred"]], ["00001", "00002"])
+        self.args.chunks = ["00001"]
+        result = self.transcribe()
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(video.latest(self.work, self.chunks[1])[0], 10)
+        self.args.chunks = ["00002"]
+        self.args.max_retries = 0
+        self.assertEqual(video.transcribe(self.args, sender=lambda *a: self.fail("network"),
+                                         get_key=lambda: self.fail("key"))["submitted"], 0)
+
+    def test_total_request_budget_includes_new_and_retry_requests(self):
+        self.seed_attempts(0, 2)
+        self.args.retry_failed = True
+        self.args.max_retries = 3
+        self.args.max_chunks = 2
+        result = self.transcribe()
+        self.assertEqual(self.calls, ["audio-00000.wav", "audio-00001.wav"])
+        self.assertEqual((result["submitted"], result["retried"], result["remaining_unsubmitted"]), (2, 1, 1))
+
+    def test_chunk_selection_is_explicit_and_runs_in_source_order(self):
+        self.args.chunks = ["00002", "00000"]
+        result = self.transcribe()
+        self.assertEqual(self.calls, ["audio-00000.wav", "audio-00002.wav"])
+        self.assertEqual(result["selected_chunks"], ["00000", "00002"])
+        self.assertEqual(result["remaining_unsubmitted"], 1)
+        result = video.transcribe(self.args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+        self.assertEqual(result["submitted"], 0)
+        self.assertEqual(result["remaining"], 1)
+
+    def test_bad_selection_or_budget_is_rejected_before_credentials_or_network(self):
+        variants = [{"chunks": value} for value in ([], ["00099"], ["00000", "00000"], [1], "00000")]
+        variants += [{"max_retries": value, "retry_failed": True} for value in (-1, 101, 1.5, True)]
+        variants += [{"max_retries": 1, "retry_failed": False}]
+        variants += [{"max_chunks": value} for value in (0, 101, 1.5, True)]
+        for fields in variants:
+            with self.subTest(fields=fields):
+                args = Args(**(vars(self.args) | fields))
+                with self.assertRaises(video.Failure):
+                    video.transcribe(args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+                self.assertFalse((self.work / "asr-config.json").exists())
+                self.assertFalse((self.work / ".lock").exists())
+
+    def test_failure_preserves_prior_progress_and_resume_only_submits_untouched_chunks(self):
+        self.args.max_chunks = 3
+        def fail_second(audio, model, key):
+            if self.audio_names[audio] == "audio-00001.wav":
+                raise TimeoutError("not logged")
+            return self.sender(audio, model, key)
+        with self.assertRaisesRegex(video.Failure, "chunk 00001 after 1 successful submissions"):
+            self.transcribe(fail_second)
+        self.assertEqual(video.latest(self.work, self.chunks[0])[1]["status"], "success")
+        self.assertFalse((self.work / ".lock").exists())
+        result = self.transcribe()
+        self.assertEqual(self.calls, ["audio-00000.wav", "audio-00002.wav"])
+        self.assertEqual(result["deferred"], [{"id": "00001", "status": "unknown", "attempts": 1}])
+        self.assertEqual(result["remaining_unsubmitted"], 0)
+
+    def test_upload_keeps_exclusive_lock_through_submission(self):
+        self.args.max_chunks = 1
+        def submit(audio, model, key):
+            with self.assertRaisesRegex(video.Failure, "Task locked"):
+                video.transcribe(self.args, sender=lambda *a: self.fail("second request"),
+                                 get_key=lambda: self.fail("second credential access"))
+            return self.sender(audio, model, key)
+        self.assertEqual(self.transcribe(submit)["submitted"], 1)
+        self.assertFalse((self.work / ".lock").exists())
+
+    def test_existing_attempts_require_original_model_configuration(self):
+        self.seed_attempts(0, 1)
+        (self.work / "asr-config.json").unlink()
+        with self.assertRaisesRegex(video.Failure, "Missing ASR config"):
+            video.transcribe(self.args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+        self.assertFalse((self.work / "asr-config.json").exists())
+
+    def test_cli_documents_selection_and_current_retry_budget(self):
+        output = video.run([sys.executable, str(Path(video.__file__)), "transcribe", "--help"]).decode("utf-8")
+        self.assertIn("--chunks", output)
+        self.assertIn("--max-retries", output)
+        self.assertIn("this invocation", output)
+
+    def test_later_audio_change_is_not_submitted_or_logged_as_an_unknown_request(self):
+        target = self.work / "audio-00001.wav"
+        original = target.read_bytes()
+        self.args.max_chunks = 3
+        def change_next_chunk(audio, model, key):
+            target.write_bytes(b"changed during the first submission")
+            return self.sender(audio, model, key)
+        with self.assertRaisesRegex(video.Failure, "chunk 00001; not submitted; 1 prior successes preserved"):
+            self.transcribe(change_next_chunk)
+        self.assertEqual(self.calls, ["audio-00000.wav"])
+        self.assertFalse((self.work / "attempt-00001-1.json").exists())
+        self.assertFalse((self.work / "outcome-00001-1.json").exists())
+        self.assertEqual(video.latest(self.work, self.chunks[1]), (0, None))
+        target.write_bytes(original)
+        result = self.transcribe()
+        self.assertEqual((result["submitted"], result["retried"], result["remaining"]), (2, 0, 0))
+
+    def test_post_sends_verified_bytes_even_if_the_source_path_changes(self):
+        target = self.work / "audio-00000.wav"
+        original = target.read_bytes()
+        self.args.max_chunks = 1
+        requests = []
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return b'{"text":"snapshot transcript"}'
+        def open_request(request, timeout):
+            requests.append(request)
+            return Response()
+        def change_then_post(audio, model, key):
+            self.assertEqual(audio, original)
+            target.write_bytes(b"replacement file contents")
+            return video.post(audio, model, key)
+        with patch.object(video.urllib.request, "build_opener", return_value=Args(open=open_request)):
+            result = self.transcribe(change_then_post)
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(len(requests), 1)
+        self.assertIn(b"\r\n\r\n" + original + b"\r\n--", requests[0].data)
+        self.assertNotIn(b"replacement file contents", requests[0].data)
+        self.assertEqual(video.latest(self.work, self.chunks[0])[1]["audio_sha256"], self.chunks[0]["sha256"])
 
     def test_changed_source_blocks_network(self):
         self.source.write_bytes(b"changed")
@@ -485,6 +655,85 @@ class EvidenceNotesTests(unittest.TestCase):
         self.assertIn("speech-00000", (output / "index.md").read_text(encoding="utf-8"))
 
 
+class StructuredNotesTests(unittest.TestCase):
+    setUp = EvidenceNotesTests.setUp
+    packet = EvidenceNotesTests.packet
+    notes = EvidenceNotesTests.notes
+    def structured(self, path):
+        data = self.notes(path)
+        data["schema"] = 2
+        d = video.empty_detail()
+        d["subject"] = {"id": "filter-a", "name": "filter1", "type": None}
+        d["context"].update(domain="COP", network_path="/img/a", panel_target="/img/a/filter1")
+        d["facts"] = [{"field": "parameter.amount", "value": "0.4", "basis": "visual",
+                       "frame_ids": ["frame-0000.png"], "speech_ids": [], "state": "observed", "reason": "Visible panel"}]
+        data["steps"][0]["detail"] = d
+        return data
+
+    def test_structured_fact_requires_its_own_evidence(self):
+        packet, path = self.packet()
+        data = self.structured(path)
+        video.validate_notes(data, packet, video.sha(path))
+        data["steps"][0]["detail"]["facts"][0]["frame_ids"] = []
+        with self.assertRaises(video.Failure):
+            video.validate_notes(data, packet, video.sha(path))
+
+    def test_unknown_cannot_become_final_claim(self):
+        packet, path = self.packet()
+        data = self.structured(path)
+        s = data["steps"][0]
+        s.update(unknowns=["Later changes not reviewed"], reconstruction_readiness="needs_more_evidence")
+        s["detail"]["facts"][0]["state"] = "final_claim"
+        with self.assertRaises(video.Failure):
+            video.validate_notes(data, packet, video.sha(path))
+
+    def test_unrelated_image_cannot_certify_inferred_fact(self):
+        packet, path = self.packet()
+        data = self.structured(path)
+        data["steps"][0]["inferences"] = ["Estimated from context"]
+        data["steps"][0]["detail"]["facts"][0]["basis"] = "inference"
+        with self.assertRaises(video.Failure):
+            video.validate_notes(data, packet, video.sha(path))
+        data["steps"][0]["reconstruction_readiness"] = "needs_more_evidence"
+        video.validate_notes(data, packet, video.sha(path))
+
+    def test_unseen_gap_does_not_claim_not_shown(self):
+        packet, path = self.packet()
+        data = self.structured(path)
+        s = data["steps"][0]
+        s.update(unknowns=["Input source unknown"], reconstruction_readiness="needs_more_evidence")
+        s["detail"]["gaps"] = [{"field": "input.1", "status": "not_shown_in_reviewed_frames", "checked_frame_ids": [], "question": "Which source?"}]
+        with self.assertRaises(video.Failure):
+            video.validate_notes(data, packet, video.sha(path))
+        s["detail"]["gaps"][0]["status"] = "not_reviewed"
+        video.validate_notes(data, packet, video.sha(path))
+
+    def test_reference_needs_criteria_conditions_and_limits(self):
+        packet, path = self.packet()
+        data = self.structured(path)
+        r = {"role": "detail", "frame_ids": ["frame-0000.png"], "criteria": ["Visible boundary"],
+             "conditions": ["Lighting unknown"], "limitations": ["Cannot judge hidden parts"], "stage": "preview", "reason": "Boundary is legible"}
+        data["steps"][0]["detail"]["references"] = [r]
+        video.validate_notes(data, packet, video.sha(path))
+        r["role"] = "motion"
+        with self.assertRaises(video.Failure):
+            video.validate_notes(data, packet, video.sha(path))
+
+    def test_draft_and_migration_do_not_invent_context(self):
+        packet, path = self.packet()
+        old = self.root / "old.json"
+        video.save(old, self.notes(path))
+        old_hash = video.sha(old)
+        for name, notes in (("draft", None), ("migrated", str(old))):
+            out = self.root / name
+            video.notes_init(Args(context=str(path), notes=notes, output=str(out)))
+            data = video.read(out / "notes.json")
+            video.validate_notes(data, packet, video.sha(path))
+            self.assertIsNone(data["steps"][0]["detail"]["context"]["network_path"])
+            self.assertEqual(data["steps"][0]["detail"]["facts"], [])
+        self.assertEqual(video.sha(old), old_hash)
+
+
 class TutorialIndexTests(unittest.TestCase):
     packet = EvidenceNotesTests.packet
     notes = EvidenceNotesTests.notes
@@ -677,6 +926,93 @@ class TutorialIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(video.Failure, "another source"):
             video.read_index(self.query)
 
+    def test_one_read_bounds_hashing_and_reuses_shared_context(self):
+        base = self.catalog["modules"][0]
+        for count in (1, 10):
+            self.catalog["modules"] = [dict(deepcopy(base), id=f"module-{i}") for i in range(count)]
+            self.query.module = "module-0"
+            self.write_catalog()
+            for reader, field in ((video.read_index, "observations"), (video.query_notes, "items")):
+                with self.subTest(modules=count, reader=reader.__name__):
+                    with patch.object(video.hashlib, "file_digest", wraps=video.hashlib.file_digest) as digests, \
+                            patch.object(video, "build_context", wraps=video.build_context) as contexts:
+                        result = reader(self.query)
+                    counts = Counter(Path(call.args[0].name) for call in digests.call_args_list)
+                    self.assertEqual(counts[self.source], 2)
+                    self.assertTrue(counts and all(value == 2 for value in counts.values()), counts)
+                    self.assertEqual(contexts.call_count, 1)
+                    self.assertEqual(len(result[field]), 1)
+
+    def test_next_read_rehashes_even_if_size_and_mtime_are_unchanged(self):
+        video.read_index(self.query)
+        prior = self.source.stat()
+        self.source.write_bytes(b"tamper")  # same byte count as the fixture's b"source"
+        os.utime(self.source, ns=(prior.st_atime_ns, prior.st_mtime_ns))
+        for read in (lambda: video.read_index(self.query),
+                     lambda: video.query_notes(Args(index=str(self.path)))):
+            with self.assertRaisesRegex(video.Failure, "Source changed"):
+                read()
+
+    def test_changed_dependency_before_receipt_is_rejected_and_scope_is_discarded(self):
+        summarize = video.index_summary
+        def change_after_validation(data, evidence):
+            self.source.write_bytes(b"changed after its only hash")
+            return summarize(data, evidence)
+        self.query.module = None
+        with patch.object(video, "index_summary", change_after_validation):
+            with self.assertRaisesRegex(video.Failure, "changed during validation"):
+                video.read_index(self.query)
+        self.source.write_bytes(b"source")
+        self.assertEqual(video.read_index(self.query)["structural_validation"], "passed")
+
+    def test_changed_file_cannot_reuse_a_cached_hash(self):
+        checked_context = video.checked_context
+        def change_before_repeated_source_read(path):
+            self.source.write_bytes(b"changed before a cache hit")
+            return checked_context(path)
+        with patch.object(video, "checked_context", change_before_repeated_source_read):
+            with self.assertRaisesRegex(video.Failure, "changed during validation"):
+                video.read_index(self.query)
+
+    def test_same_command_rehash_rejects_source_and_json_edits_with_preserved_metadata(self):
+        checked_context = video.checked_context
+        signature = video.file_signature
+        intent = video.read(self.notes_path)["steps"][0]["intent"].encode("utf-8")
+        for target, before, after in ((self.source, b"source", b"tamper"),
+                                      (self.notes_path, intent, b"X" * len(intent))):
+            original = target.read_bytes()
+            for reader in (video.read_index, video.query_notes):
+                with self.subTest(target=target.name, reader=reader.__name__):
+                    signatures = {}
+                    def preserved_signature(path):
+                        # Windows ctime records creation, not last content edit.
+                        # Freeze metadata on other platforms too so a ctime
+                        # change cannot mask a missing final digest check.
+                        return signatures.setdefault(path, signature(path))
+                    def edit_before_context(path):
+                        prior = target.stat()
+                        target.write_bytes(original.replace(before, after, 1))
+                        os.utime(target, ns=(prior.st_atime_ns, prior.st_mtime_ns))
+                        return checked_context(path)
+                    try:
+                        with patch.object(video, "file_signature", preserved_signature), \
+                                patch.object(video, "checked_context", edit_before_context):
+                            with self.assertRaisesRegex(video.Failure, "changed during validation"):
+                                reader(self.query)
+                    finally:
+                        target.write_bytes(original)
+
+    def test_source_changing_while_hashed_is_rejected(self):
+        digest = video.hashlib.file_digest
+        def change_during_hash(stream, algorithm):
+            value = digest(stream, algorithm)
+            if Path(stream.name) == self.source:
+                self.source.write_bytes(b"changed while hashing")
+            return value
+        with patch.object(video.hashlib, "file_digest", change_during_hash):
+            with self.assertRaisesRegex(video.Failure, "changed while hashing"):
+                video.read_index(self.query)
+
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/ffprobe not installed; offline unit tests still run")
 class MediaTimingTests(unittest.TestCase):
@@ -768,6 +1104,222 @@ class MediaTimingTests(unittest.TestCase):
             video.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-copyts", "-i", str(source),
                        "-vf", "select='gte(t,5.31)'", "-fps_mode", "passthrough", "-frames:v", "1", "-update", "1", str(expected)])
             self.assertEqual(video.sha(frame), video.sha(expected))
+
+
+class NotesQueryTests(unittest.TestCase):
+    setUp = TutorialIndexTests.setUp
+    packet = TutorialIndexTests.packet
+    notes = TutorialIndexTests.notes
+    write_catalog = TutorialIndexTests.write_catalog
+    structured = StructuredNotesTests.structured
+
+    def install_structured(self):
+        data = self.structured(self.context_path)
+        self.notes_path.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][0]["notes"] = video.file_reference(self.notes_path)
+        self.write_catalog()
+        return data
+
+    def test_query_filters_context_and_keeps_module_unknowns(self):
+        self.install_structured()
+        args = Args(index=str(self.path), subject="filter-a", network="/img/a", domain="COP", field="parameter.amount")
+        result = video.query_notes(args)
+        self.assertEqual(result["total_items"], 1)
+        self.assertEqual(result["module_issues"][0]["unknowns"], ["Source of the offscreen wire"])
+        args.network = "/img/b"
+        self.assertEqual(video.query_notes(args)["total_items"], 0)
+
+    def test_legacy_not_silently_assigned_an_identity(self):
+        result = video.query_notes(Args(index=str(self.path)))
+        self.assertEqual(result["legacy_observations_without_context"], 1)
+        self.assertEqual(video.query_notes(Args(index=str(self.path), subject="filter-a"))["total_items"], 0)
+
+    def test_query_pages_pin_revision_and_reject_budget(self):
+        self.install_structured()
+        result = video.query_notes(Args(index=str(self.path)))
+        self.catalog["modules"][0]["questions"].append("New question")
+        self.write_catalog()
+        with self.assertRaises(video.Failure):
+            video.query_notes(Args(index=str(self.path), index_sha256=result["index_sha256"]))
+        with self.assertRaises(video.Failure):
+            video.query_notes(Args(index=str(self.path), max_chars=1000))
+
+    def add_revision(self, wrong_context=False):
+        old = self.install_structured()
+        # The fixture's context ends at 20, so use the frame at 20 in a nonzero range 15..20.
+        new = json.loads(json.dumps(old))
+        step = new["steps"][0]
+        step.update(id="step-two", range_seconds=[15, 20], speech_ids=["speech-00001"],
+                    visual=[{"frame_id": "frame-0002.png", "observed": "Later displayed value"}])
+        d = step["detail"]
+        d["facts"][0].update(value="0.8", frame_ids=["frame-0002.png"], state="trial")
+        d["revisions"] = [{"notes_sha256": video.sha(self.notes_path), "step_id": "step-one",
+                           "fields": ["parameter.amount"], "kind": "changes", "reason": "Later trial"}]
+        if wrong_context:
+            d["context"]["network_path"] = "/img/b"
+        target = self.root / "later.json"
+        video.save(target, new)
+        self.catalog["modules"][0]["evidence"].append({"notes": video.file_reference(target),
+                    "context": video.file_reference(self.context_path), "step_ids": ["step-two"]})
+        self.write_catalog()
+        return target
+
+    def test_revision_keeps_history_and_does_not_pick_latest_as_final(self):
+        self.add_revision()
+        result = video.query_notes(Args(index=str(self.path), view="final", limit=1))
+        self.assertEqual(result["total_items"], 2)
+        self.assertEqual(result["next_offset"], 1)
+        result2 = video.query_notes(Args(index=str(self.path), view="final", offset=1, index_sha256=result["index_sha256"]))
+        self.assertEqual(result2["items"][0]["step"]["detail"]["facts"][0]["state"], "trial")
+        self.assertIn("not_computed", result2["final_state"])
+
+    def test_revision_cannot_cross_contexts_or_lose_target(self):
+        self.add_revision(wrong_context=True)
+        with self.assertRaises(video.Failure):
+            video.checked_index(self.path)
+        self.catalog["modules"][0]["evidence"].pop(0)
+        self.write_catalog()
+        with self.assertRaises(video.Failure):
+            video.checked_index(self.path)
+
+    def test_final_claim_cannot_hide_gap_only_observation(self):
+        data = self.install_structured()
+        first = data["steps"][0]
+        first["detail"]["facts"][0]["state"] = "final_claim"
+        rows = [{"step": first, "notes": {"sha256": "a"}}]
+        self.assertEqual(video.final_claims(rows)[0]["status"], "author_final_claim")
+        later = json.loads(json.dumps(first))
+        later["detail"]["facts"] = []
+        later["unknowns"] = ["Later panel not clear"]
+        rows.append({"step": later, "notes": {"sha256": "b"}})
+        self.assertEqual(video.final_claims(rows)[0]["status"], "unknown")
+
+    def test_subject_identity_cannot_silently_merge_same_name_networks(self):
+        self.add_revision(wrong_context=True)
+        target = self.root / "later.json"
+        data = video.read(target)
+        data["steps"][0]["detail"]["revisions"] = []
+        target.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][-1]["notes"] = video.file_reference(target)
+        self.write_catalog()
+        with self.assertRaisesRegex(video.Failure, "Subject ID reused"):
+            video.checked_index(self.path)
+        data["steps"][0]["detail"]["subject"]["id"] = "filter-b"
+        target.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][-1]["notes"] = video.file_reference(target)
+        self.write_catalog()
+        self.assertEqual(video.query_notes(Args(index=str(self.path)))["total_items"], 2)
+
+    def test_shared_evidence_deduplicated_and_references_exported(self):
+        data = self.install_structured()
+        data["steps"][0]["detail"]["references"] = [{"role": "overall", "frame_ids": ["frame-0000.png"],
+            "criteria": ["Overall shape"], "conditions": ["Unknown lighting"], "limitations": ["Not hidden topology"],
+            "stage": "preview", "reason": "Clear whole object"}]
+        self.notes_path.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][0]["notes"] = video.file_reference(self.notes_path)
+        other = json.loads(json.dumps(self.catalog["modules"][0]))
+        other["id"] = "module-b"
+        self.catalog["modules"].append(other)
+        self.write_catalog()
+        result = video.query_notes(Args(index=str(self.path), view="references"))
+        self.assertEqual(result["total_items"], 1)
+        self.assertEqual(result["items"][0]["module_ids"], ["module-a", "module-b"])
+        output = self.root / "brief"
+        video.export_brief(Args(index=str(self.path), output=str(output)))
+        text = (output / "brief.md").read_text(encoding="utf-8")
+        self.assertIn("Unknown lighting", text)
+        self.assertIn("Source of the offscreen wire", text)
+        self.assertEqual(video.read(output / "brief.json")["final_state"], "not_computed")
+
+    def test_index_link_retains_original_and_old_references(self):
+        self.install_structured()
+        before = video.sha(self.path)
+        result = video.index_link(Args(index=str(self.path), module="module-a", context=str(self.context_path),
+                         notes=str(self.notes_path), step_ids=["step-one"], output=str(self.root / "linked")))
+        self.assertEqual(video.sha(self.path), before)
+        self.assertEqual(len(video.read(Path(result["index"]))["modules"][0]["evidence"]), 2)
+        self.assertEqual(video.query_notes(Args(index=result["index"]))["total_items"], 1)
+
+    def install_reference(self, stage="final_claim", role="overall", unknown_method=False):
+        data = self.install_structured()
+        step = data["steps"][0]
+        step["detail"]["references"] = [{"role": role, "frame_ids": ["frame-0000.png"],
+            "criteria": ["Silhouette and relative scale"], "conditions": ["Perspective view"],
+            "limitations": ["Lighting settings unavailable"], "stage": stage,
+            "reason": "Opening showcase of the intended result"}]
+        if unknown_method:
+            step["unknowns"] = ["Hidden curve settings unavailable"]
+            step["reconstruction_readiness"] = "needs_more_evidence"
+        self.notes_path.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][0]["notes"] = video.file_reference(self.notes_path)
+        self.write_catalog()
+        return data
+
+    def test_effect_handoff_requires_final_candidate_before_writing(self):
+        for stage, role in (("preview", "overall"), ("intermediate", "detail"),
+                            ("unknown", "material"), ("final_claim", "intermediate")):
+            with self.subTest(stage=stage, role=role):
+                self.install_reference(stage, role)
+                output = self.root / "no-target-brief"
+                with self.assertRaisesRegex(video.Failure, "No indexed final reference"):
+                    video.export_brief(Args(index=str(self.path), output=str(output), require_final_reference=True))
+                self.assertFalse(output.exists())
+
+    def test_unknown_method_does_not_erase_visible_final_effect(self):
+        self.install_reference(unknown_method=True)
+        hashes = [video.sha(p) for p in (self.path, self.notes_path, self.context_path)]
+        output = self.root / "effect-brief"
+        video.export_brief(Args(index=str(self.path), output=str(output), require_final_reference=True))
+        brief = video.read(output / "brief.json")
+        self.assertEqual(brief["reference_summary"]["final_candidate_count"], 1)
+        self.assertEqual(brief["reference_summary"]["selection"], "not_performed")
+        self.assertEqual(brief["runtime_verification"], "not_performed")
+        self.assertIn("Hidden curve settings unavailable", brief["observations"][0]["step"]["unknowns"])
+        ref = brief["comparison_references"][0]
+        self.assertEqual(ref["frames"][0]["actual_seconds"], 0)
+        self.assertTrue(Path(ref["frames"][0]["path"]).exists())
+        self.assertEqual(hashes, [video.sha(p) for p in (self.path, self.notes_path, self.context_path)])
+
+    def test_reference_summary_keeps_candidates_without_picking_latest(self):
+        data = self.install_reference()
+        ref = data["steps"][0]["detail"]["references"][0]
+        data["steps"][0]["detail"]["references"] += [
+            {**ref, "stage": "preview", "frame_ids": ["frame-0001.png"], "reason": "Later experiment"},
+            {**ref, "role": "detail", "reason": "Alternative result view"}]
+        # The second frame must be explicitly observed by this source step.
+        data["steps"][0]["visual"].append({"frame_id": "frame-0001.png", "observed": "Later experiment"})
+        self.notes_path.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][0]["notes"] = video.file_reference(self.notes_path)
+        self.write_catalog()
+        result = video.query_notes(Args(index=str(self.path), view="references"))
+        summary = result["reference_summary"]
+        self.assertEqual(summary["reference_count"], 3)
+        self.assertEqual(summary["final_candidate_count"], 2)
+        self.assertEqual(summary["final_candidate_roles"], ["detail", "overall"])
+        self.assertEqual(summary["selection"], "not_performed")
+        filtered = video.query_notes(Args(index=str(self.path), view="references", subject="absent"))
+        self.assertEqual(filtered["reference_summary"]["status"], "no_final_reference")
+
+    def test_legacy_analysis_export_remains_available_without_target(self):
+        output = self.root / "analysis-brief"
+        result = video.export_brief(Args(index=str(self.path), output=str(output)))
+        self.assertEqual(result["reference_summary"]["status"], "no_final_reference")
+        with self.assertRaisesRegex(video.Failure, "No indexed final reference"):
+            video.export_brief(Args(index=str(self.path), output=str(self.root / "strict-brief"), require_final_reference=True))
+
+    def test_review_packet_crops_correct_rectangle_without_changing_original(self):
+        before = video.sha(self.frames / "frame-0000.png")
+        calls = []
+        def fake_run(command):
+            calls.append(command)
+            Path(command[-1]).write_bytes(b"fake crop")
+        with patch.object(video, "run", side_effect=fake_run):
+            result = video.review_packet(Args(context=str(self.context_path), frame_ids=["frame-0000.png"],
+                region=["panel:0.25:0.25:0.5:0.5"], question="What value is visible?", ffmpeg="unused",
+                output=str(self.root / "focus")))
+        self.assertIn("crop=40:20:20:10", calls[0])
+        self.assertEqual(video.sha(self.frames / "frame-0000.png"), before)
+        self.assertEqual(result["semantic_inspection"], "not_performed")
 
 
 if __name__ == "__main__":

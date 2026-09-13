@@ -1,11 +1,217 @@
 /** A bounded projection of durable tool facts, rebuilt from public events.
  * No second mutable scene database and no cached permissions/pass certificates.
  */
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type {Context} from '@deepseek-ai/cordis'
+import type {Session,SessionSeq} from '@deepseek-ai/dsh-session'
 type Event = {type: string; seq?: number; time?: number; data?: any}
+const TARGET_SECTION = 'dsh-houdini:executor-binding'
+
+function bindingRecords(events: readonly Event[]): string[] {
+  const ids: string[] = []
+  for (const e of events) {
+    if (e.type !== 'user/message' || e.data?.source?.kind !== 'plugin' || e.data.source.plugin !== 'dsh-houdini') continue
+    for (const section of e.data.source.sections || []) {
+      if (section.name !== TARGET_SECTION) continue
+      let value: any
+      try { value = JSON.parse(section.text.slice(section.text.indexOf('\n') + 1)) }
+      catch { throw new Error('Malformed persisted executor binding; no live request sent') }
+      if (value?.schema !== 1 || value?.kind !== 'executor_binding' || !/^[0-9a-f]{32}$/.test(value?.executor_id || '')) {
+        throw new Error('Invalid persisted executor binding; no live request sent')
+      }
+      ids.push(value.executor_id)
+    }
+  }
+  return ids
+}
+
+type BindingSession = {
+  snapshotEvents(): readonly Event[]
+  append(type: 'user/message', data: ReturnType<typeof createUserMessage>, options: {surfaceOp:'append'}): unknown
+  surface?: {nodes:readonly number[]}
+}
+
+function bindingMessage(current:string) {
+  const section={name:TARGET_SECTION,text:'Houdini task target binding (routing data, not node ownership or permission).\n'
+    +JSON.stringify({schema:1,kind:'executor_binding',executor_id:current})}
+  return createUserMessage({content:[{type:'text',text:section.text}],
+    source:{kind:'plugin',plugin:'dsh-houdini',form:'snapshot',sections:[section]}})
+}
+
+function surfaceEvents(session:BindingSession):readonly Event[] {
+  const events=session.snapshotEvents()
+  if(!session.surface) return events
+  const bySeq=new Map(events.map(e=>[e.seq,e]))
+  return session.surface.nodes.map(seq=>bySeq.get(seq)!).filter(Boolean)
+}
+
+function pendingTools(events:readonly Event[]):Set<string> {
+  const pending=new Set<string>()
+  for(const e of events) {
+    if(e.type==='assistant/message') for(const c of e.data?.message?.content||[]) if(c.type==='tool-call') pending.add(c.id)
+    if(e.type==='tool/result') pending.delete(e.data?.message?.source?.callId)
+  }
+  return pending
+}
+
+/** Compact only a complete text-only exchange broken by our misplaced binding.
+ * Use DSH's normal summary replacement, never bypass its protected tool rewrites.
+ * Original events remain immutable. No result is fabricated and no tool runs.
+ */
+export function repairExecutorBindingOrder(session:Session):number {
+  const events=surfaceEvents(session),pending=new Set<string>()
+  const plans:Event[][]=[]
+  let batch:Event[]=[],broken=false
+  let unsafe=false
+  for(let i=0;i<events.length;i++) {
+    const e=events[i]
+    if(e.type==='assistant/message') {
+      if(pending.size) unsafe=true
+      for(const c of e.data?.message?.content||[]) if(c.type==='tool-call') pending.add(c.id)
+      batch=pending.size?[e]:[]
+      broken=false
+    } else if(e.type==='tool/result') {
+      if(!pending.delete(e.data?.message?.source?.callId)) unsafe=true
+      if(batch.length) batch.push(e)
+    } else if(pending.size && e.type==='user/message') {
+      batch.push(e)
+      const sections=e.data?.source?.sections, blocks=e.data?.content
+      const next=events[i+1], block=next?.data?.message?.content?.[0]
+      const own=e.data?.source?.kind==='plugin'&&e.data.source.plugin==='dsh-houdini'
+        &&Array.isArray(sections)&&sections.length===1&&sections[0].name===TARGET_SECTION
+        &&Array.isArray(blocks)&&blocks.length===1&&blocks[0].type==='text'&&blocks[0].text===sections[0].text
+      if(own&&bindingRecords([e]).length===1&&next?.type==='tool/result'
+        &&pending.has(next.data?.message?.source?.callId)&&block?.type==='tool-result'
+        &&next.data.message.content.length===1&&block.toolCallId===next.data.message.source.callId) {
+        broken=true
+      } else unsafe=true
+    } else if(pending.size) {
+      unsafe=true
+    }
+    if(batch.length&&!pending.size) {
+      if(broken) plans.push(batch)
+      batch=[];broken=false
+    }
+  }
+  if(!plans.length&&!broken) return 0
+  if(unsafe||pending.size) throw new Error('Cannot repair binding order: missing or unrelated tool-message evidence. Original history preserved; no model or Houdini request sent.')
+  const summaries=plans.map(batch=>{
+    const assistant=batch[0].data.message
+    const calls=assistant.content.filter((c:any)=>c.type==='tool-call')
+    const results=batch.filter(e=>e.type==='tool/result').map(e=>{
+      const content=e.data.message.content
+      if(content.length!==1||content[0].type!=='tool-result'||content[0].content.some((c:any)=>c.type!=='text')) throw new Error('Binding-order recovery requires text-only results; original multimodal history retained')
+      return {call_id:content[0].toolCallId,is_error:content[0].isError===true,text:content[0].content.map((c:any)=>c.text)}
+    })
+    const text='Recovered completed tool exchange after a plugin binding-order bug. Original result text is retained below; these are historical results, not new tool calls. This repair executed no tools. Original events remain in the session log.\n'
+      +JSON.stringify({assistant_text:assistant.content.filter((c:any)=>c.type==='text').map((c:any)=>c.text),calls,results})
+    if(text.length>200000) throw new Error('Binding-order recovery exceeds bounded summary size; original history preserved')
+    return {batch,text}
+  })
+  for(const {batch,text} of summaries) {
+    session.append('user/message',createUserMessage({content:[{type:'text',text}],
+      source:{kind:'plugin',plugin:'dsh-houdini',form:'snapshot',sections:[{name:'dsh-houdini:binding-order-repair',text}]}}),{
+      surfaceOp:{op:'replace',startSeq:batch[0].seq! as SessionSeq,endSeq:batch.at(-1)!.seq! as SessionSeq},
+      sourceEventSeqs:batch.map(e=>e.seq! as SessionSeq),
+    })
+  }
+  return plans.length
+}
+
+/** Pre-step messages use DSH's normal acceptance boundary, before model tool calls. */
+export function installExecutorBinding(ctx:Context,current?:string):void {
+  const repairFlushed=new WeakSet<Session>()
+  ctx.on('agent/pre-step',async({agent,signal},next)=>{
+    const decision=await next()
+    signal.throwIfAborted()
+    if(decision.kind==='reject') return decision
+    const changed=repairExecutorBindingOrder(agent.session)
+    const hasRepair=agent.session.snapshotEvents().some(e=>e.type==='user/message'&&e.data.source.kind==='plugin'
+      &&e.data.source.plugin==='dsh-houdini'&&(e.data.source as any).sections?.some((s:any)=>s.name==='dsh-houdini:binding-order-repair'))
+    if(changed||hasRepair&&!repairFlushed.has(agent.session)) {
+      if(await ctx.sessions.flush(agent.session)!==true) throw new Error('Binding-order repair is not durable; no model request sent')
+      repairFlushed.add(agent.session)
+    }
+    if(!current) return decision
+    const events=agent.session.snapshotEvents()
+    requireExecutorContinuity(events,current)
+    const proposed=[...events,...decision.messages.map(data=>({type:'user/message',data}))]
+    requireExecutorContinuity(proposed,current)
+    if(bindingRecords(proposed).length) return decision
+    if(!/^[0-9a-f]{32}$/.test(current)) throw new Error('Invalid executor identity')
+    return {...decision,messages:[...decision.messages,bindingMessage(current)]}
+  })
+}
+
+/** Uses the public DSH log and durability barrier; never maintains a second binding file. */
+export class ExecutorBindingBarrier {
+  private readonly flushed = new WeakMap<BindingSession, Promise<void>>()
+  constructor(private readonly flush: (session: BindingSession) => Promise<boolean>) {}
+
+  async ensure(session: BindingSession, current?: string, signal?: AbortSignal, allowAppend=true): Promise<void> {
+    signal?.throwIfAborted()
+    const events = session.snapshotEvents()
+    requireExecutorContinuity(events, current)
+    if (!current) return // explicitly unbound legacy client, not a multi-executor route
+    if (!/^[0-9a-f]{32}$/.test(current)) throw new Error('Invalid target executor identity')
+    let pending = this.flushed.get(session)
+    if (!pending) {
+      if (!bindingRecords(events).length) {
+        if(!allowAppend||pendingTools(surfaceEvents(session)).size) throw new Error('Executor binding must be accepted before model tool calls; no message inserted and no live request sent')
+        session.append('user/message',bindingMessage(current),{surfaceOp:'append'})
+      }
+      // Schedule after publishing the shared promise so simultaneous calls share one flush.
+      pending = Promise.resolve().then(async () => {
+        if (await this.flush(session) !== true) throw new Error('Executor binding has no durable session backend; no live request sent')
+      })
+      this.flushed.set(session,pending)
+      pending.catch(() => { if (this.flushed.get(session) === pending) this.flushed.delete(session) })
+    }
+    await pending
+    signal?.throwIfAborted()
+    requireExecutorContinuity(session.snapshotEvents(),current)
+  }
+}
 const NAMES = new Set(['houdini_exec', 'houdini_query', 'houdini_job_submit', 'houdini_job_status', 'houdini_job_cancel'])
 const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_check_interfaces', 'render_view', 'render_frame',
   'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'])
 const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
+
+/** Historical target continuity, not authority to adopt/rebind a new executor.
+ * Only correlate original live calls with canonical tool results. A detail read,
+ * source excerpt, receipt lookup or replay must not invent a target assignment.
+ */
+export function requireExecutorContinuity(events: readonly Event[], current?: string): void {
+  const identity = recordedExecutorIdentity(events)
+  if (identity && identity !== current) throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. Restore the original binding before any live operation.')
+}
+
+export function recordedExecutorIdentity(events: readonly Event[]): string | undefined {
+  const calls = new Map<string, any>()
+  const seen = new Set<string>()
+  const identities = new Set<string>(bindingRecords(events))
+  for (const event of events) {
+    const d = event.data
+    if (event.type === 'tool/call' && NAMES.has(d?.name)) calls.set(d.callId, d)
+    if (event.type !== 'tool/result') continue
+    const id = d?.message?.source?.callId
+    const call = calls.get(id)
+    if (!call || seen.has(id)) continue
+    seen.add(id)
+    if (call.name === 'houdini_query' && (call.args?.result_ref || call.args?.source_ref || call.args?.request_ref)) continue
+    const value = d.meta?.canonical
+    const identity = value?.execution?.executor_id ?? value?.requestReceipt?.executor_id
+    if (identity === undefined) continue // old histories remain legacy, never infer identity from PID/path
+    if (typeof identity !== 'string' || !/^[0-9a-f]{32}$/.test(identity)) {
+      throw new Error('Invalid recorded Houdini executor identity; no live request sent. Inspect the original session evidence.')
+    }
+    identities.add(identity)
+  }
+  if (identities.size > 1) {
+    throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. Read retained results and reconcile the saved project before explicitly restoring the binding; do not start a new task to bypass this check or infer ownership from the HIP path.')
+  }
+  return identities.values().next().value
+}
 
 export function projectExecutionState(events: readonly Event[]): Record<string, unknown> | null {
   const calls = new Map<string, any>()

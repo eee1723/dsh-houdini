@@ -20,6 +20,7 @@ import { loadCatalog } from './catalog-lib.mjs';
 import {
   loadSessionEvents,
   newestSessionFile,
+  resolveSessionFile,
   collectRequestTelemetry,
 } from './trace-session-lib.mjs';
 import { normalizeTraceSteps, unresolvedExecutionRequests } from './normalized-trace-steps.mjs';
@@ -49,7 +50,7 @@ for (let i = 0; i < argv.length; i++) {
 
 let sessionFile = sessionArg;
 if (sessionArg && fs.statSync(sessionArg).isDirectory()) {
-  sessionFile = path.join(sessionArg, 'session.jsonl.zstd');
+  sessionFile = resolveSessionFile(sessionArg);
 }
 if (!sessionFile) sessionFile = newestSessionFile();
 if (!sessionFile || !fs.existsSync(sessionFile)) {
@@ -350,6 +351,7 @@ const html = `<!DOCTYPE html>
     <h2>回滚与近重复重试候选</h2>
     <p>提交代码 ${retryWork.totalCodeChars} 字符；失败调用代码 ${retryWork.failedCodeChars} 字符；已应用回滚 ${retryWork.appliedRollbackCalls} 次，涉及代码 ${retryWork.appliedRollbackCodeChars} 字符。
     ${retryWork.successfulBuildEntriesInAppliedRollbacks.length} 个成功的 build_module ledger 条目随后被所在调用回滚；近重复重试候选 ${retryWork.candidates.length} 对。</p>
+    <p>Host 文件写入目标 ${retryWork.hostWork.fileWrites.length} 个，相同 shell 命令重跑 ${retryWork.hostWork.repeatedCommands.length} 组。下方明细保留步骤范围；重复不等于无进展，离线工作不等于停滞，不能据此自动停止。</p>
     <p class="dim-text">字符数不是token、耗时或可节省量；回滚代码已包含在提交量中。相似度只比较去首尾空白的相同行，忽略行序和缩进，不证明语义等价或浪费；必要重试和不同模块可能相似。候选附步骤定位和有限差异片段，完整代码在下方调用详情。</p>
     <details><summary>候选对、差异片段、统计口径与分析范围</summary><pre>${esc(JSON.stringify(retryWork,null,2))}</pre></details>
     <h2>请求用量与逐轮运行状态</h2>

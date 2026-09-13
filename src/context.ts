@@ -12,6 +12,7 @@ type Event = { type: string; seq?: number; data?: any; surfaceOp?: string | {op:
 type AgentView = { session: { snapshotEvents(): readonly Event[]; header?: { agentPreset?: string };
   surface?: {nodes: readonly number[]; replaceGeneration: number} } }
 type Section = {name:string;text:string}
+type SceneBridge = Pick<HoudiniBridge,'sceneContext'> | {sceneContextFor(session:any,signal?:AbortSignal):Promise<unknown>}
 function sectionData(section?: Section): any {
   try { return JSON.parse(section!.text.slice(section!.text.indexOf('\n') + 1)) }
   catch { return null }
@@ -38,7 +39,7 @@ function literal(text: string): string {
 export class SceneContextProvider {
   private readonly cache = new WeakMap<object, Map<string, Promise<string>>>()
   private readonly claimed = new WeakMap<object, any>()
-  constructor(private readonly bridge: Pick<HoudiniBridge, 'sceneContext'>) {}
+  constructor(private readonly bridge: SceneBridge) {}
 
   receive(agent: AgentView, message: any): void {
     if (message?.source?.kind === 'user') void this.forMessage(agent, message)
@@ -93,7 +94,7 @@ export class SceneContextProvider {
     const presetEvent = last(events, e => e.type === 'agent-preset/selected')
     const preset = presetEvent?.data?.agentPreset ?? agent.session.header?.agentPreset ?? 'unknown'
     let observation: unknown
-    try { observation = await this.bridge.sceneContext() }
+    try { observation = await ('sceneContextFor' in this.bridge ? this.bridge.sceneContextFor(agent.session) : this.bridge.sceneContext()) }
     catch (error) {
       observation = { ok: false, status: 'unavailable', reason: String(error).slice(0, 300) }
     }
@@ -128,7 +129,7 @@ export class SceneContextProvider {
   }
 }
 
-export function installSceneContext(ctx: Context, bridge: HoudiniBridge): void {
+export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
   const provider = new SceneContextProvider(bridge)
   const prepared = new WeakMap<object, Section[]>()
   ctx.on('agent/inbox/inserted', ({ agent, message }) => {

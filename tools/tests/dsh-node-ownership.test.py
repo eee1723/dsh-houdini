@@ -115,6 +115,17 @@ try:
     assert "[ownership] foreign-node exemption" in authorized["stdout"], authorized
     foreign = hou.node(authorized["result"])
     assert foreign is not None and foreign.name() == "user_authorized"
+    # Repair reloads implementation, not the owning Houdini process. Preserve
+    # exact runtime identities, never adopt nodes merely because paths match.
+    import importlib
+    import dsh_hou_helpers as helpers
+    registry = helpers._OWNED_NODE_SESSIONS
+    importlib.reload(helpers)
+    assert helpers._OWNED_NODE_SESSIONS is registry
+    same_owner = dsh_bridge.run_code(f'__result__=node_provenance({owned_path!r})', owner_session=session_a)
+    assert same_owner['result']['status'] == 'owned_current_session', same_owner
+    other_owner = dsh_bridge.run_code(f'__result__=node_provenance({owned_path!r})', owner_session=session_b)
+    assert other_owner['result']['status'] == 'owned_other_session', other_owner
 
 finally:
     # Test cleanup is outside a host-owned bridge execution on purpose; direct

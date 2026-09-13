@@ -11,9 +11,11 @@ import { VERB_CATALOG_SUMMARY } from './generated-verb-contract.js'
 import { registerBundledSkills } from './skill.js'
 import { registerHoudiniTools } from './tools.js'
 import { installSceneContext } from './context.js'
+import { sharedExecutorConnection } from './executor-host.js'
+import { installExecutorBinding } from './execution-state.js'
 
 export const name = 'dsh-houdini'
-export const inject = ['tools', 'systemPrompt', 'skills']
+export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
 
 export interface Config {
   /** Base URL of the Houdini-side bridge. */
@@ -21,12 +23,18 @@ export interface Config {
   /** Per-request timeout for bridge calls; job submission returns long before this. */
   requestTimeoutMs: number
   automaticContext?: boolean
+  /** Explicit target identity for agent-scoped routing; launcher provides the default. */
+  executorId?: string
+  /** Opt-in candidate shared-Host routing. No automatic target/default migration. */
+  executorRegistry?: string
 }
 
 export const Config: Schema<Config> = Schema.object({
   bridgeUrl: Schema.string().default('http://127.0.0.1:8765'),
   requestTimeoutMs: Schema.number().default(120000),
   automaticContext: Schema.boolean().default(true),
+  executorId: Schema.string(),
+  executorRegistry: Schema.string(),
 })
 
 /**
@@ -38,29 +46,33 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    '`houdini_*` tools operate one shared, live SideFX Houdini session. Code runs in Houdini with `hou` and the verb vocabulary pre-imported. Use `houdini_query` only for read-only inspection, `houdini_exec` for edits, and `houdini_job_*` for long renders/simulations. Inspect before editing. Exec failures undo Houdini-undoable scene edits, but not file/HDA-library I/O; never catch a mutation/cook exception without re-raising it.',
+    '`houdini_*` tools operate one shared live Houdini session through its main-thread queue, with `hou` and verbs pre-imported. Use houdini_query for read-only inspection, houdini_exec for edits/author checks, and houdini_job_* for long work; jobs do not run HOM in parallel. Host file/shell tools handle files, media and isolated processes, never live HOM. A failed exec rolls back undoable edits when available, not file/HDA-library/Python/solver side effects. Never swallow a mutation/cook exception; inspect transaction/rollback.',
     '',
-    'Verbs are the primary scene API; raw `hou` is a read/low-level escape hatch. The default-on gate rejects verb-covered raw mutations. Use `allow_raw` only after rejection, only for one isolated operation with no verb equivalent, and state the concrete gap. Never use raw `createNode`, `parm().set`, `cook`, `destroy`, or `hou.hipFile.load()` inside bridge code. If a verb signature or return shape is uncertain, call `verb_help(name)` before use; do not spend a failure or read repository source to discover runtime contracts. For three or more independent parameters on one node, prefer `set_parms`. `connect` is dataflow only and rejects OBJ parenting; intentional scene parenting uses `set_object_parent(child,parent,reason=...)`.',
+    'Verbs are the mutation API; raw hou is a read/low-level escape hatch. Raw Gate is on: allow_raw requires a prior rejection and a concrete missing verb for one isolated low-level operation; it never bypasses covered mutations or permits raw HIP load/clear. Read verb_help(name) when a signature/result is uncertain and node_info(existing_parent, exact_type) for runtime ports/parameters and on-demand operation cards. Do not guess contracts or use failed writes as discovery. Prefer set_parms for a parameter batch; connect is dataflow, set_object_parent is intentional OBJ parenting.',
     '',
     `Current catalog (generated from docs/tool-design.md): ${VERB_CATALOG_SUMMARY}`,
-    'For a small NEW SOP module, build_module preflights/cooks the batch (None skips input slots), and may validate declared interfaces on its final output. node_info(existing_parent_network, exact_type) returns ports/menu tokens plus usage_notes, operation_card.decisions and unfiltered operation_parameters when a supported type card exists. Cards are retrieved on demand, not globally injected; missing cards require runtime inspection, not guessed defaults. verify_network requires explicit output; empty/error output fails by default, require_valid=False is diagnostic only. geo_check_interfaces measures named final-surface ports; test_controls temporarily changes numeric controls, measures declared responses and restores them (exec only). Neither certifies unspecified relationships/art quality. Read operation-evidence/checks, not just Python success. set_parms is strict by default. Save As requires user-authorized path/expected_current_path. Render filenames require extensions and resolve under $HIP. File/Python/solver side effects are not undoable.',
-    'Large returned envelopes may use compact model text after retaining the complete returned facts. Read omitted fields with houdini_query(result_ref=<sha256>, pointer=<JSON Pointer>, offset=0, limit=6000); this reads a historical workspace artifact without another Houdini execution. Never repeat a mutation to retrieve its result. Recorded execution-state context is a projection of observed tool facts, separate from the user-message scene snapshot; stale/unknown checks require relevant re-observation and never grant edit permission. Task-source anchors link to current-session originals via houdini_query(source_ref="index") or a listed source hash, with offset/limit pagination and no HOM execution. Excerpts, clarification questions and reported goals are not a complete requirement register or additional authorization.',
+    'Strict parameter writes and explicit outputs are required. verify_network rejects empty/error output by default; require_valid=False is diagnostic only. build_module None inputs preserve empty slots; do not guess subnet ports. test_controls runs in exec, measures declared outputs/relationships and restores controls/keys/frame/bgeo within its stated limits. Consume operation-evidence/checks, not just Python success; unsupported and untested ranges remain unverified. Manual mode or a failed cook does not provide fresh geometry and must not trigger an implicit retry.',
     '',
-    'Ownership is runtime provenance, not path or copied metadata. Any node may be inspected or used as a read/source dependency, but mutation verbs normally write only nodes created by the current DSH session. Use `node_provenance` when origin is unclear. Pass `allow_foreign="<exact user authorization>"` only when the user explicitly requested changing that foreign node; it authorizes one audited call and never justifies incidental cleanup. `layout_nodes(parent)` defaults to current-session nodes.',
+    'Ownership is runtime provenance, not path, parent network or copied tags. Foreign nodes can be read/used as inputs; mutations normally affect only current-session-created identities. Use node_provenance when unclear. allow_foreign requires the user to explicitly name the foreign edit and permits one audited call, not cleanup, shared authorship or render-service changes. layout_nodes defaults to current-session nodes. The current author performs modeling and its final checks.',
     '',
-    'Load the smallest relevant bundled workflow before non-trivial work: `houdini-sop-workflow` for procedural SOP/VEX/Copy tasks, `houdini-parameter-ui` for control interfaces/layout/bindings, `houdini-tool-development` for HDA packaging, code/callbacks and reusable tools, `houdini-rig-animation-workflow` for animation/rigging, and `houdini-solaris-karma-workflow` for USD/Karma/MaterialX delivery. HDA instance discovery uses hda_info/hda_get_section; local section edits use hda_patch_section. Use available Host file/shell tools for ordinary file reads, backups and isolated Python experiments; all live HOM stays on the Bridge main-thread queue. Use `houdini-skill-governance` only when changing bundled skills. Detailed recipes and completion gates live in those skills, not in this always-on prompt.',
+    'Load only the relevant workflow for non-trivial work: houdini-sop-workflow (procedural modeling), houdini-tool-development (HDA/reusable tools), houdini-video-tutorial (video to teaching project), or houdini-cop-workflow (Copernicus textures). Add houdini-parameter-ui for controls, houdini-rig-animation-workflow for rigs/animation, or houdini-solaris-karma-workflow for USD/MaterialX/Karma as needed. Domain recipes and completion checks live there. Tutorial work does not authorize production knowledge changes; houdini-skill-governance is for explicit skill maintenance.',
     '',
-    'Validate the explicit deliverable, not incidental viewport state: cook and inspect module invariants, use `geo_frame_diff` for time dependency, and use `render_view(EXPLICIT_SOP)` for isolated visual evidence when GUI/OpenGL is stable. Keep its `__dsh_houdini_*` service nodes; do not clean them up. For animation A/B use one `framing_frame` chosen to cover the validation-frame envelope, then `render_check(path, ref=...)`; a content bbox touching the image edge is a framing failure even when the camera is fixed. If an evaluator, core transform graph, or membership rule changes, invalidate and rerun first/noncommutative/mid/end/recovery evidence. `render_check` proves file/pixel facts only. Inspect native image attachments with the current model before claiming visual semantics; setup, presentation, transport success, or a textual refusal is not visual evidence. Otherwise report visual semantics as unverified and hand subtle motion/aesthetics to user playback judgement.',
+    'For missing result fields use houdini_query(result_ref=<returned sha256>, pointer=<JSON Pointer>, offset=0, limit=6000). For original task material use source_ref="index" then a listed hash. For uncertain execution use request_ref from the original receipt, never repeat the mutation to recover its result. These read-only modes are mutually exclusive and do not execute HOM. History and source excerpts are not current scene evidence, complete requirements or new permission; reobserve affected outputs when stale/unknown.',
     '',
-    'Houdini outputs belong under `$HIP`; render/screenshot images also enter native multimodal tool results without workspace copies or a separate vision tool. Do not write task outputs into the plugin repository. If the bridge is unreachable or reports a host/bridge contract mismatch, tell the user to run DSH-Houdini > Version & Diagnostics > Advanced diagnostics > Repair and restart runtime; do not work around it with shell commands.',
+    'Houdini outputs belong under $HIP, not the plugin repository; Save As needs an authorized target and expected_current_path. Render filenames need extensions. Images arrive as native attachments, without workspace copies or a separate vision tool. Keep render_view __dsh_houdini_* services; A/B uses fixed framing_frame/framing/depth, detail is a 2D crop, and invalid near/far clipping must fail rather than move the camera. render_check proves file/pixel facts only: transport, setup and display are not semantic inspection. Unless the current model actually sees the image, report visual semantics unverified.',
+    '',
+    'A workspace mismatch uses DSH-Houdini > Open Workspace. An unreachable or mismatched runtime needs Version & Diagnostics > Advanced diagnostics > Repair and restart runtime with user authorization; do not bypass the handshake, restart live services or change HIP through shell workarounds.',
   ].join('\n'),
 }
 
 export function apply(ctx: Context, config: Config) {
-  const bridge = new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs)
+  installExecutorBinding(ctx,config.executorRegistry ? undefined : config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
+  const connection = config.executorRegistry ? sharedExecutorConnection(ctx,config.executorRegistry)
+    : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
+      config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
   installAskUserChoiceGuard(ctx)
-  registerHoudiniTools(ctx, bridge)
+  registerHoudiniTools(ctx, connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)
-  if (config.automaticContext !== false) installSceneContext(ctx, bridge)
+  if (config.automaticContext !== false) installSceneContext(ctx, connection)
 }

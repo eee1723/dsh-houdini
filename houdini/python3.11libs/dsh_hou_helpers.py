@@ -96,7 +96,9 @@ _TASK_OWNER_KEY = "dsh_houdini_task_owner"
 _TASK_OWNER_CALL_KEY = "dsh_houdini_created_by_call"
 _ACTIVE_OWNER_SESSION: str | None = None
 _ACTIVE_OWNER_CALL: str | None = None
-_OWNED_NODE_SESSIONS: dict[int, dict] = {}
+if globals().get('_OWNED_NODE_PID') != os.getpid():
+    _OWNED_NODE_PID = os.getpid()
+    _OWNED_NODE_SESSIONS: dict[int, dict] = {}
 _CREATION_JOURNAL = None
 
 
@@ -384,6 +386,8 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     if not os.path.isabs(target) or os.path.splitext(target)[1].lower() not in (".hip", ".hiplc", ".hipnc"):
         raise ValueError("path 必须是绝对路径，扩展名为 .hip/.hiplc/.hipnc")
     target = os.path.realpath(target)
+    from dsh_executor_registry import require_save_target
+    require_save_target(target)
     repo = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
     try:
         in_repo = os.path.commonpath([repo, target]) == repo
@@ -1469,6 +1473,46 @@ def _val(v):
 
 # --- node 域：查 -----------------------------------------------------------
 
+def package_info(name: str | None = None, limit: int = 64) -> dict:
+    """Native loaded-package summaries, or bounded resources for one exact name.
+
+    No disk scan/install/reload; environment values omitted. Active is not
+    compatibility or edit permission. Missing GUI API is unavailable, not empty.
+    """
+    import json
+    if name is not None and (not isinstance(name,str) or not name.strip()):
+        raise ValueError('name must be an exact nonempty package name or None')
+    if type(limit) is not int or not 1 <= limit <= 256:
+        raise ValueError('limit must be 1..256')
+    base={'source':'hou.ui.packageInfo','houdini_version':hou.applicationVersionString(),
+          'checked_at':time.time(),'scope':'native package metadata; not compatibility or permission',
+          'environment_values_omitted':True}
+    if not hou.isUIAvailable() or not hasattr(getattr(hou,'ui',None),'packageInfo'):
+        return {**base,'ok':False,'status':'unavailable','reason':'GUI packageInfo API unavailable','packages':None}
+    raw=hou.ui.packageInfo()
+    if len(raw)>8*1024*1024:
+        return {**base,'ok':False,'status':'unavailable','reason':'metadata exceeds 8 MiB','packages':None}
+    data=json.loads(raw)
+    if not isinstance(data,dict):raise ValueError('unexpected native packageInfo schema')
+    selected=sorted(data) if name is None else [name] if name in data else []
+    rows=[]
+    for key in selected[:limit]:
+        p=data[key]
+        if not isinstance(p,dict):raise ValueError('unexpected package entry')
+        resources=p.get('Resources') or {}
+        row={'name':key,'config_path':p.get('File path'),'active':p.get('Active'),
+             'auto_load':p.get('Auto load'),'version':p.get('Version'),
+             'warnings':p.get('Warnings',[]),'resource_root':resources.get('Root folder'),
+             'publisher':'unverified'}
+        if name is not None:
+            row['resources']={k:v[:limit] for k,v in resources.items() if isinstance(v,list)}
+            row['resource_counts']={k:len(v) for k,v in resources.items() if isinstance(v,list)}
+            row['resources_truncated']=any(len(v)>limit for v in resources.values() if isinstance(v,list))
+        rows.append(row)
+    return {**base,'ok':True,'status':'observed' if name is None or rows else 'not_found',
+            'total':len(data),'matched':len(selected),'truncated':len(selected)>limit,'packages':rows}
+
+
 def find_nodes(pattern: str = "*", category=None, node_type=None, root=None) -> list:
     """在场景里找**已存在**的节点，返回扁平 path 列表（按路径排序）。
 
@@ -1857,7 +1901,17 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     # Native isInputCompatible reports false while they are still 'undef'.
     dynamic_type = (isinstance(d, hou.CopNode) and
                     (index >= len(d.inputDataTypes()) or d.inputDataTypes()[index] == 'undef'))
-    if compatible is not None and not dynamic_type and not compatible(index, s, output):
+    # H22 USD Material COP reports incompatible even for native RGB->RGB
+    # and Mono->Mono wires that setInput accepts. Keep the exception narrow:
+    # concrete, identical image signatures only; no implicit channel coercion.
+    material_signature = False
+    if (isinstance(s, hou.CopNode) and isinstance(d, hou.CopNode)
+            and d.type().nameComponents()[2] == 'usdmaterial'):
+        source_types, target_types = s.outputDataTypes(), d.inputDataTypes()
+        material_signature = (output < len(source_types) and index < len(target_types)
+                              and source_types[output] == target_types[index]
+                              and source_types[output] in ('Mono', 'UV', 'RGB', 'RGBA'))
+    if compatible is not None and not dynamic_type and not material_signature and not compatible(index, s, output):
         raise ValueError(f'incompatible ports: {s.path()} output {output} -> {d.path()} input {index}; zero connection writes')
     before = _input_state(d)
     try:
@@ -1870,7 +1924,7 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
             'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
             'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,
-            'type_check': 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
+            'type_check': 'cop_material_exact_signature' if material_signature else 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
             'verified': True, 'semantic_status': 'unverified', "position_adjusted": _snap_into_flow(d),
             'inputs_before':before, 'inputs_after':_input_state(d),
             'note':'connect replaces the current occupant; do not disconnect first to replace a Merge input'}
@@ -1953,6 +2007,11 @@ def set_update_mode(mode: str, expected_mode: str) -> dict:
 
 def cook_node(node, force: bool = False, timeout_ms: int = 30000) -> dict:
     """Cook and read health; refresh an existing error once to avoid stale diagnostics."""
+    return _cook_node(node, force, timeout_ms)
+
+
+def _cook_node(node, force=False, timeout_ms=30000, *, preflight=True):
+    """Internal cook core; only verify_network's already-checked batch skips DFS."""
     n = _resolve(node)
     if type(timeout_ms) is not int or not 1 <= timeout_ms <= 120000:
         raise ValueError('timeout_ms must be 1..120000; cooperative timeout, not an OOM guarantee')
@@ -1961,8 +2020,9 @@ def cook_node(node, force: bool = False, timeout_ms: int = 30000) -> dict:
         return {'path':n.path(), 'ok':False, 'healthy':False, 'warning_free':True,
                 'status':'not_cooked_manual', 'errors':[], 'warnings':[], 'forced':False,
                 'update_mode':'manual', 'next_action':'Keep Manual for inspection/editing; explicitly authorize a policy change before evaluation. Missing geometry is not an empty successful output.'}
-    from dsh_cook_control import preflight
-    preflight(n)
+    if preflight:
+        from dsh_cook_control import preflight as check_dependencies
+        check_dependencies([n])
     effective_force = bool(force) or bool(n.errors())
     cook_error = None
     try:
@@ -1988,17 +2048,21 @@ def cook_node(node, force: bool = False, timeout_ms: int = 30000) -> dict:
     }
 
 
-def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True) -> dict:
+def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True,
+                   *, output_index: int | None = None) -> dict:
     """SOP network cook/geometry checkpoint, including upstream warning nodes.
 
     Checks direct children by default; optional nodes limits scope explicitly.
     Explicit output is always required; no display fallback. Empty/error output
     raises CheckpointError by default; require_valid=False is diagnostic only.
-    No viewport changes.
+    No viewport changes. output_index=0..63 additionally requires the matching
+    native Output to be this source or directly wired to it. Packed wrapper
+    counts alone do not prove nonempty embedded content.
     healthy != task/visual success; relationships remain unverified.
     """
     from dsh_sop_contracts import verify_network as verify
-    return verify(parent, output=output, nodes=nodes, limit=limit, require_valid=require_valid)
+    return verify(parent, output=output, nodes=nodes, limit=limit, require_valid=require_valid,
+                  output_index=output_index)
 
 
 def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
@@ -2026,11 +2090,16 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
 
 
 def sop_set_output(node, render: bool = True,
-                   allow_foreign: str | None = None) -> dict:
+                   allow_foreign: str | None = None, *, output_index: int | None = None) -> dict:
     """把 SOP display（默认连同 render）旗标移到指定输出节点。
 
     这是用户 viewport/交付状态，不是 ``render_view`` 的前置条件；agent 的
     离屏验证会从显式 SOP 建 proxy，不依赖这里的旗标。
+    output_index=None只切旗标；显式0..63在同一父网络复用/创建并接线原生Output，
+    普通geo交付保持None，无需Output节点；subnet/HDA公共交付才指定索引。
+    固定容器公共出口，再把旗标设到该Output。逐层发布，不猜祖先输出。
+    不cook、不保存定义；用verify_network(parent,output=源SOP,output_index=同索引)
+    另验接线和几何。公共出口、显示和HDA新实例验收是不同层。
     """
     n = _resolve(node)
     _require_owned(n, "sop_set_output", allow_foreign)
@@ -2039,15 +2108,19 @@ def sop_set_output(node, render: bool = True,
             f"sop_set_output 只接受 SOP，收到 {n.path()} "
             f"({n.type().category().name()})；OBJ 可见性请用 set_object_visible"
         )
+    if not isinstance(render, bool):
+        raise ValueError('render must be bool')
+    source = n
+    published = None
+    if output_index is not None:
+        from dsh_sop_contracts import publish_output
+        published = publish_output(n, output_index, allow_foreign)
+        n = _resolve(published['node'])
     n.setDisplayFlag(True)
     if render:
         n.setRenderFlag(True)
-    return {
-        "context": "sop",
-        "node": n.path(),
-        "display": True,
-        "render": bool(render),
-    }
+    return {'context': 'sop', 'node': n.path(), 'display': True, 'render': render,
+            'source': source.path(), 'public_output': published}
 
 
 def sop_output_node(parent) -> dict:
@@ -2468,6 +2541,8 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
     带表达式的参数会顺带解析引用目标（``referenced_parm``），被其他参数引用的
     参数会标 ``referenced_by``——两个方向的依赖对 agent 判断「动谁会波及谁」都需要。
     返回 ``list[dict]``，每项至少有 ``name/value``；不是 name→value 字典。
+    Ramp value为{type:'ramp',basis:[名称],keys:[位置],values:[标量或RGB数组]}，
+    可直接json.dumps；仅当前求值控制点，不证明动画恢复，也不是setter输入格式。
     names可显式选1..32个唯一标量参数，按请求顺序返回且不受changed_only过滤；缺失字段报错。
     无动画的string含原始UTF-8源码source_sha256；求值不同于原文时另含raw_value。
     """
@@ -2520,7 +2595,15 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
                 entry["label"] = None
         previous_errors=tuple(str(e) for e in n.errors()) if has_expr else ()
         try:
-            entry["value"] = _val(p.eval())
+            value = p.eval()
+            if isinstance(value, hou.Ramp):
+                entry['value'] = {'type': 'ramp', 'basis': [str(b).rsplit('.', 1)[-1] for b in value.basis()],
+                                  'keys': [float(k) for k in value.keys()],
+                                  'values': [[float(v.r()),float(v.g()),float(v.b())] if isinstance(v,hou.Color)
+                                             else _val(v) for v in value.values()]}
+                entry['value_scope'] = 'evaluated ramp knots only; not animation, callbacks or a setter payload'
+            else:
+                entry["value"] = _val(value)
         except Exception:
             try:
                 entry["value"] = p.evalAsString()
@@ -3343,6 +3426,8 @@ def create_spare_parms(node, code_parm: str = "snippet",
     layout可选模式：与spec/defaults/update_defaults互斥，复用houdini-parameter-ui
     组件，默认追加到单节点而不改HDA定义。dry_run=True返回展开界面/建议且零写入。
     拒绝同名模板/通道；保持已有值/keys/locks，失败恢复旧接口和通道；不创建绑定。
+    菜单/颜色tuple/ramp等完整layout字段和可执行示例见verb_help('hda_set_interface')；
+    下方简化spec只支持folder与scalar，不要将完整layout字段混入简化spec。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
     已存在参数默认不重建。``chramp`` 等复杂引用列入 unsupported，交给 HDA/interface
@@ -4122,7 +4207,7 @@ def _build_interface_template(
         if kind == "float" and "menu" in item:
             raise ValueError(
                 f"{path}: Houdini FloatParmTemplate 不支持菜单；"
-                "需要菜单请用 int+menu（值为索引）或 string"
+                "需要菜单请用 int+menu（值为索引）或 type=menu；string只存文本，不创建菜单"
             )
         kwargs = {
             "default_value": tuple(float(v) for v in values) if kind == "float" else tuple(values),
@@ -4289,6 +4374,34 @@ def hda_set_interface(
     layout: list | None = None,
 ) -> dict:
     """按 JSON 安全 spec 声明式重建 HDA 参数面板并验证 conditional。
+
+    原始spec字段（同样适用于create_spare_parms的layout，不适用于其简化spec）：
+    每项必填type/name；label默认name。全局唯一稳定name，multiparm内每层含一个#。
+    float/int: default为标量；components=2..4时default须等长数组；look=regular/vector/color，
+    color要求3/4分量。min/max是建议范围，min_strict/max_strict才是硬限制。
+    int+menu: menu={items:[token,...],labels:[label,...]}，default是整数索引，不是token；
+    type=menu同样以整数索引指定default。float不接受menu，string不创建菜单。
+    toggle: default布尔。string: default文本，可选file=dir/geo/alembic/image/any。
+    folder: parms子项，folder_type=simple/tabs/collapsible/multiparm_list/multiparm_tabs/
+    multiparm_scroll；multiparm的default为0..64条目数。separator/label只需type/name。
+    ramp: ramp_type=float/color，points=2..16，basis=linear/constant/catmullrom/bspline，
+    show_controls布尔。button必须给非空Python callback；创建不执行callback。
+    通用可选字段：help/join_next/hidden/hide_label/tags/hide_when/disable_when。
+    条件为Houdini条件字符串，例如{ enabled == 0 }，不是Python表达式。
+    未列字段不要猜测；先用小layout及dry_run验证，不需要读取插件实现源码。
+
+    最小示例（先预检，确认后原样应用；输出/绑定仍须单独实现）::
+
+        layout = [{"type":"folder","name":"controls","parms":[
+            {"type":"float","name":"width","default":1.0,"min":0.1,"max":5.0},
+            {"type":"int","name":"mode","default":0,
+             "menu":{"items":["draft","final"],"labels":["Draft","Final"]}},
+            {"type":"float","name":"tint","components":3,"look":"color",
+             "default":[0.6,0.3,0.1]}]}]
+        hda_set_interface(node, layout=layout, dry_run=True)
+
+    普通Null/子网的实例参数用create_spare_parms(node,layout=layout,dry_run=True)，
+    不为创建控制面板强制转HDA。只读参数值/元数据用parameter_ui/read_parms。
 
     layout为可选组件列表，与spec/edits互斥，仍是整组重建。component支持section
     (name/label/parms, enabled?/collapsed?/header_parm?)、row(parms)、remap
@@ -5719,6 +5832,7 @@ _RENDER_PROXY_NAME = "__dsh_houdini_render_proxy"
 _RENDER_CAMERA_NAME = "__dsh_houdini_cam"
 _RENDER_TARGET_NAME = "__dsh_houdini_target"
 _RENDER_ROP_NAME = "__dsh_houdini_opengl"
+_RENDER_FLIPBOOK_NAME = "__dsh_houdini_flipbook"
 
 
 def _owned_node(parent: hou.Node, name: str, type_name: str) -> hou.Node:
@@ -6050,7 +6164,8 @@ def render_view(node, direction="iso", frame=None,
                 framing: str = "full", coverage: float = 0.82,
                 framing_frame=None, *, focus_group=None, isolate: bool = False,
                 projection: str = 'perspective', framing_bounds=None, depth_bounds=None) -> dict:
-    """显式 SOP → agent proxy → OpenGL ROP → render_check 的隔离验证。
+    """显式 SOP → agent proxy → viewport ROP → render_check 的隔离验证。
+    H22使用Flipbook/Vulkan及独立Work Lights；H21保持原OpenGL ROP设置。
 
     用户可随时把源 OBJ 的 display/render flag 切到空节点：本动词不跟随它，
     而是让 agent-owned Object Merge 指向传入的**具体 SOP**，OpenGL ROP 用
@@ -6080,13 +6195,14 @@ def render_view(node, direction="iso", frame=None,
     - 返回dict含output/check/framing/errors/stale；check含presentation/content_bbox等像素事实。
       pixels是check兼容别名，Bridge证据也提供check/pixels；不能把ok当视觉语义通过。
 
-    需要 GUI 会话（OpenGL ROP 要 GL 上下文）；headless 请用 render_frame
-    走 CPU 渲染器。注意 GL 渲染在 Windows 锁屏/远程桌面断开时可能失败，
+    本工具仍要求GUI会话；这不是对Flipbook原生headless能力的限制声明。
+    H22要求Vulkan兼容设备，H21保持原GUI边界；headless另走render_frame。
+    硬件预览在Windows锁屏/远程桌面断开时可能失败，
     失败会体现在返回的 ``errors`` 里。
     """
     if not hou.isUIAvailable():
         raise ValueError(
-            "render_view 需要 Houdini GUI（OpenGL ROP 要 GL 上下文）；"
+            "render_view 当前支持范围需要 Houdini GUI；"
             "headless 环境请用 render_frame 走 CPU 渲染器"
         )
     _cook_control.require_evaluation('render_view')
@@ -6181,7 +6297,9 @@ def render_view(node, direction="iso", frame=None,
         cam = _owned_node(obj, _RENDER_CAMERA_NAME, "cam")
         cam.parm('projection').set('ortho' if projection == 'orthographic' else 'perspective')
         aim = _owned_node(obj, _RENDER_TARGET_NAME, "null")
-        rop = _owned_node(out, _RENDER_ROP_NAME, "opengl")
+        use_flipbook = hou.applicationVersion()[0] >= 22
+        rop = _owned_node(out, _RENDER_FLIPBOOK_NAME if use_flipbook else _RENDER_ROP_NAME,
+                          "flipbook" if use_flipbook else "opengl")
         obj_service_box = _render_service_box(
             obj, _RENDER_OBJ_BOX_NAME, [proxy, cam, aim])
         out_service_box = _render_service_box(
@@ -6269,9 +6387,27 @@ def render_view(node, direction="iso", frame=None,
             "res2": int(height),
             **output_color["settings"],
         }
+        if use_flipbook:
+            # Flipbook has explicit work lighting and no legacy gamma knob.
+            # Do not inherit Scene Lights (its default) or the user's viewport.
+            if output_color['method'] == 'gamma_fallback':
+                raise RuntimeError('H22 Flipbook requires an available encoded sRGB OCIO colorspace; no legacy gamma fallback')
+            settings.pop('gamma', None)
+            settings.pop('lut', None)
+            settings.pop('override_camerares', None)
+            settings.update(opsource='obj', scenepath='/obj', sopsource='render',
+                            lighting='headlight', worklighttype='headlight',
+                            headlightint=1.0, headlightrotate1=22.0, headlightrotate2=22.0,
+                            useraytrace=False, motionblur=False, dof=False, bloom=False,
+                            uniformfog=False, volumefog=False, onionskin=False, slapcomp=False,
+                            ociolooks='', bgimage='', aspect=1.0)
         applied = {name: _try_set(rop, name, value) for name, value in settings.items()}
+        if use_flipbook:
+            missing = [name for name, ok in applied.items() if not ok]
+            if missing:
+                raise RuntimeError(f'Flipbook preview settings unavailable: {missing}')
 
-        color_required = ["colorcorrect", "gamma"]
+        color_required = ["colorcorrect"] if use_flipbook else ["colorcorrect", "gamma"]
         if output_color["method"] == "ocio_colorspace":
             color_required.append("ociocolorspace")
         missing_color_settings = [name for name in color_required if not applied.get(name)]
@@ -6289,7 +6425,7 @@ def render_view(node, direction="iso", frame=None,
             output_color["ocio_config"] = None
         output_color["applied"] = {
             "colorcorrect": rop.parm("colorcorrect").rawValue(),
-            "gamma": float(rop.parm("gamma").eval()),
+            "gamma": None if use_flipbook else float(rop.parm("gamma").eval()),
             "ocio_colorspace": rop.parm("ociocolorspace").eval(),
         }
 
@@ -6308,6 +6444,7 @@ def render_view(node, direction="iso", frame=None,
                                          pixel_supported=image_ext not in ('.exr','.hdr','.pic','.rat'))
         result_payload = {
             **validation,
+            "preview_backend": "flipbook_vulkan" if use_flipbook else "opengl_legacy",
             "output": rendered["output"],
             "frame": f,
             "stale": stale or proxy_stale,

@@ -13,6 +13,7 @@ import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope, JsonValue } 
 import { readResultDetail, retainResult } from './result-details.js'
 import { readTaskSource } from './task-sources.js'
 import { attachImages, imageBlocks } from './image-output.js'
+import { ExecutorBindingBarrier } from './execution-state.js'
 
 /** Canonical fields shared by every exec-shaped result. */
 const execOutputProperties = {
@@ -254,24 +255,26 @@ function ownershipScopeOf(execInput: unknown): OwnershipScope | undefined {
   return { sessionId, callId }
 }
 
-/** Explain filesystem workspace differences once; native images do not need workspace copies. */
-const _workspaceNoteShown = new Set<string>()
+/** Advice is a projection of this result, never another scene query after an edit. */
+const workspaceNotes = new WeakMap<object, string>()
 
-async function withWorkspaceNote(value: ExecResult, execInput: unknown, bridge: HoudiniBridge): Promise<ExecResult> {
+function withWorkspaceNote<T extends ExecResult>(value: T, execInput: unknown): T {
   const cwd = workspaceOf(execInput)
-  if (!cwd) return value
-  const hip = await bridge.hipDir()
-  if (!hip || normPath(hip) === normPath(cwd)) return value
+  const agent = (execInput as { agent?: object }).agent
+  const hip = asPresentationMeta(value.execution)?.hip_dir
+  if (!cwd || !agent || typeof hip !== 'string' || !hip) return value
+  if (normPath(hip) === normPath(cwd)) {
+    workspaceNotes.delete(agent)
+    return value
+  }
   const key = `${normPath(cwd)}|${normPath(hip)}`
-  if (_workspaceNoteShown.has(key)) return value
-  _workspaceNoteShown.add(key)
+  if (workspaceNotes.get(agent) === key) return value
+  workspaceNotes.set(agent, key)
   const note = [
-    `workspace note: this session's workspace is "${cwd}", but $HIP (the live Houdini project directory) is "${hip}".`,
+    `workspace note: this session's workspace is "${cwd}"; this operation observed $HIP at "${hip}".`,
     'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments;',
-    'for other files that workspace tools must read,',
-    'open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run Repair and restart runtime',
-    'to seed a Houdini session from the current $HIP. Never work around this by writing into the dsh-houdini',
-    'plugin repository. (This note is shown once per Host process and workspace/$HIP pair.)',
+    'use DSH-Houdini > Open Workspace to select the current HIP workspace for other file tools.',
+    'Do not write task outputs into the plugin repository.',
   ].join(' ')
   return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
 }
@@ -314,7 +317,20 @@ const ALLOW_RAW_PARAM = {
 } as const
 
 /** Register every Houdini tool; disposal of the plugin unregisters them. */
-export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void {
+export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {resolve(exec:any):Promise<HoudiniBridge>}): void {
+  const resolveBridge = (exec:any):Promise<HoudiniBridge> => 'resolve' in connection ? connection.resolve(exec) : Promise.resolve(connection)
+  const binding = new ExecutorBindingBarrier(async session => {
+    if (!ctx.sessions?.flush) throw new Error('DSH session durability service unavailable; no live request sent')
+    return ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0])
+  })
+  async function requireTaskTarget(exec: any, bridge:HoudiniBridge): Promise<void> {
+    const session = exec.agent?.session
+    if (!session?.snapshotEvents) {
+      if (bridge.targetExecutorId) throw new Error('Bound Houdini operations require a durable agent session')
+      return
+    }
+    await binding.ensure(session,bridge.targetExecutorId,exec.signal,false)
+  }
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description:
@@ -344,8 +360,10 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty Python code')
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
       const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
-      return retainResult(await withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
+      return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
     },
   }))
 
@@ -361,7 +379,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     parameters: {
       code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref, source_ref or request_ref' },
       source_ref: { type: 'string', description: 'index lists current-session task sources; a listed SHA-256 reads original text with provenance. Nontext blocks are markers, not interpreted references.' },
-      request_ref: { type: 'string', description: 'Exec/job receipt after uncertain response; index recovers recent current-session references if Host discarded the response. No HOM or resubmission; match original owner_call, missing is unknown.' },
+      request_ref: { type: 'string', description: 'Exec/job receipt after uncertain response; index lists active then recent current-session references if Host discarded the response. No HOM or resubmission; match original owner_call, missing is unknown.' },
       result_ref: { type: 'string', description: 'SHA-256 returned in result-details; historical evidence, not live scene state' },
       pointer: { type: 'string', description: 'JSON Pointer into retained envelope, e.g. /verbs/0/args or /result; default root' },
       offset: { type: 'number', description: 'Character offset into selected JSON text; default 0' },
@@ -385,6 +403,7 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
         if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('request_ref does not accept pagination or pointer')
         const owner=ownershipScopeOf(exec)
         if (!owner) throw new Error('request_ref requires current Host session identity')
+        const bridge = await resolveBridge(exec)
         const receipt=await bridge.requestStatus(args.request_ref,owner,exec.signal)
         const r:any=receipt.requestReceipt
         if (r?.jobId) return {ok:true,stdout:'',stderr:'',result:{jobId:r.jobId},
@@ -407,8 +426,10 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
       if (args.result_ref !== undefined) return readResultDetail(workspaceOf(exec),args.result_ref,args.pointer,args.offset,args.limit)
       if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
       const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
-      return retainResult(await withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec, bridge), workspaceOf(exec))
+      return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
     },
   }))
 
@@ -443,6 +464,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
       return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
     },
   }))
@@ -472,6 +495,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
     async execute(args, exec) {
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
       const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
       return retainResult(await attachImages(status, exec, bridge, ctx),workspaceOf(exec))
     },
@@ -501,6 +526,8 @@ export function registerHoudiniTools(ctx: Context, bridge: HoudiniBridge): void 
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job cancellation', result), result),
     async execute(args, exec) {
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
       return retainResult(await bridge.cancelJob(args.jobId, exec.signal),workspaceOf(exec))
     },
   }))

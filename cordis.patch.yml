@@ -6,3 +6,4 @@
       config:
         bridgeUrl: !!js process.env.DSH_HOUDINI_BRIDGE_URL || 'http://127.0.0.1:8765'
         requestTimeoutMs: 120000
+        executorRegistry: !!js process.env.DSH_HOUDINI_EXECUTOR_REGISTRY || undefined

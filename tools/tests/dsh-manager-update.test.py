@@ -1,4 +1,4 @@
-"""Standard-library regression for version state and safe activation."""
+"""Isolated hython regression for version state and safe activation."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ import types
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
-if "hou" not in sys.modules:
-    sys.modules["hou"] = types.SimpleNamespace()
+import hou  # Bridge imports real toolutils/HOM; run with isolated hython.
 
 import dsh_launcher as launcher
 import dsh_manager as manager
@@ -133,7 +132,6 @@ originals = {
     "identity": manager._plugin_identity,
     "override": manager._dsh_launch_override,
     "port_open": manager._port_open,
-    "rpc": manager._dsh_rpc,
     "rpc_wire": manager._dsh_rpc_wire,
     "http": manager._http_json,
     "run_npx": manager._run_npx_dsh,
@@ -208,16 +206,96 @@ try:
 
     # Both DSH turns and bridge jobs participate in the restart guard.
     manager._port_open = lambda port: True
-    manager._dsh_rpc = lambda method, payload: {"items": [{"running": True}, {"running": False}]}
-    manager._http_json = lambda url, data=None, timeout=5: {"activeJobs": 2}
+    rpc_calls = []
+    def runtime_sessions(method, payload):
+        rpc_calls.append((method, payload))
+        return {"items": [{"running": True}, {"running": False}]}
+    manager._dsh_rpc_wire = runtime_sessions
+    manager._http_json = lambda url, data=None, timeout=5: {"ok": True, "activeJobs": 2, "activeRequests": 0}
     activity = manager._runtime_activity()
     assert activity["safe"] is False
     assert activity["activeSessions"] == 1 and activity["activeJobs"] == 2, activity
+    assert rpc_calls == [("session/list", {"args": {"_request": {}}})]
+
+    # An unavailable or invalid activity read must never authorize a restart or
+    # try another protocol, including the former dotted endpoint.
+    for detail in ("over HTTP 404", "over HTTP 503", "gateway/bad-request", "transport failed"):
+        rpc_calls.clear()
+        def unavailable(method, payload):
+            rpc_calls.append((method, payload))
+            raise RuntimeError(detail)
+        manager._dsh_rpc_wire = unavailable
+        activity = manager._runtime_activity()
+        assert not activity["safe"] and detail in activity["note"], activity
+        assert rpc_calls == [("session/list", {"args": {"_request": {}}})]
+    manager._dsh_rpc_wire = lambda method, payload: {"items": None}
+    activity = manager._runtime_activity()
+    assert not activity["safe"] and "items is not a list" in activity["note"], activity
+
+    # A stopped Host can leave its foreground HOM queued/running. Read the
+    # actual Registry count through the actual health projection before Repair.
+    from unittest.mock import patch
+    from dsh_requests import RequestRegistry
+    registry = RequestRegistry('a' * 32)
+    manager._dsh_rpc_wire = lambda method, payload: {'items': [{'running': False}]}
+    health_handler = object.__new__(bridge._Handler)
+    with patch.object(bridge, '_request_registry', registry), patch.dict(bridge._jobs, {}, clear=True):
+        manager._http_json = lambda *args, **kwargs: health_handler._health()
+        ticket = registry.issue('stopped-host')
+        assert manager._runtime_activity()['safe'], 'unused ticket is not executing work'
+        registry.reserve(ticket, 'stopped-host', {'code': 'x'})
+        for status in ('queued', 'running'):
+            if status == 'running': registry.running(ticket)
+            activity = manager._runtime_activity()
+            assert activity['activeRequests'] == 1 and activity['activeJobs'] == 0 and not activity['safe'], activity
+            decision = {}
+            manager._prepare_activation(decision, 'repair')
+            assert decision['result'] == 'render' and 'deferred' in decision['message'], decision
+        registry.complete(ticket, {'ok': True})
+        assert manager._runtime_activity()['safe']
+        decision = {}
+        manager._prepare_activation(decision, 'repair')
+        assert decision['result'] == 'activate'
+
+    # Worker preflight can be stale by the time the GUI dispatches the restart.
+    with patch.object(bridge, '_request_registry', registry), \
+         patch.object(bridge, '_job_activity', return_value={'activeJobs':0}), \
+         patch.object(bridge, 'stop', side_effect=AssertionError('active Bridge stopped')), \
+         patch.object(launcher.importlib, 'reload', side_effect=AssertionError('active modules reloaded')):
+        ticket=registry.issue('late-request')
+        registry.reserve(ticket,'late-request',{'code':'x'})
+        try:
+            launcher.restart_bridge()
+        except RuntimeError as error:
+            assert 'arrived after preflight' in str(error),error
+        else:
+            raise AssertionError('late request did not prevent reload')
+        registry.complete(ticket,{'ok':True})
+
+    for invalid_health in ({}, {'ok': True, 'activeJobs': 0},
+                           {'ok': False, 'activeJobs': 0, 'activeRequests': 0},
+                           {'ok': True, 'activeJobs': 0, 'activeRequests': -1},
+                           {'ok': True, 'activeJobs': 0, 'activeRequests': False},
+                           {'ok': True, 'activeJobs': 0, 'activeRequests': '0'}):
+        manager._http_json = lambda *args, **kwargs: invalid_health
+        activity = manager._runtime_activity()
+        assert not activity['safe'] and activity['activeRequests'] is None, activity
+        decision = {}
+        manager._prepare_activation(decision, 'repair')
+        assert decision['result'] == 'render', 'missing/invalid activity is not idle'
 
     manager._runtime_activity = lambda: {"safe": False, "note": "1 session is running"}
     state = {}
     manager._stage_or_activate(state, "dsh", "Ready.")
     assert state["result"] == "render" and state["dsh_status"] == "staged", state
+    # Explicit force repair delegates identity/HOM guards to launcher preflight;
+    # an unresponsive or running DSH session must not prevent that guarded path.
+    state = {}
+    manager._prepare_activation(state, 'repair', force_frontend=True)
+    assert state['result']=='activate' and state['activation']=='force-services',state
+    state = {}
+    manager._prepare_activation(state, 'dsh', force_frontend=True)
+    assert state['result']=='render' and 'only available' in state['message'],state
 
     manager._runtime_activity = lambda: {"safe": True, "note": "Runtime is idle"}
     state = {}
@@ -259,7 +337,6 @@ finally:
     manager._plugin_identity = originals["identity"]
     manager._dsh_launch_override = originals["override"]
     manager._port_open = originals["port_open"]
-    manager._dsh_rpc = originals["rpc"]
     manager._dsh_rpc_wire = originals["rpc_wire"]
     manager._http_json = originals["http"]
     manager._run_npx_dsh = originals["run_npx"]

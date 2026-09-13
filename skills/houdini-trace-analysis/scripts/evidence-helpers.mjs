@@ -50,8 +50,48 @@ export function collectRetryWork(steps = []) {
     successfulBuildEntriesInAppliedRollbacks:rolledBack.flatMap(s=>(s.verbs||[])
       .filter(v=>v.verb==='build_module' && v.ok===true)
       .map(v=>({step:s.index,ledgerIndex:v.ledgerIndex??null,verb:v.verb}))),
-    candidates,limits:limit,similaritySkippedCalls:sized.filter(s=>!s.lines).map(s=>s.index),
+    candidates,limits:limit,hostWork:collectHostWork(steps),similaritySkippedCalls:sized.filter(s=>!s.lines).map(s=>s.index),
     note:'Raw code characters, not tokens, time or savings. Applied rollback code is a subset of submitted code, not an additional cost. Similarity is trimmed exact-line multiset overlap (order/indentation ignored), not Python equivalence; candidates may be necessary retries or distinct module work. Successful build ledger entries were later rolled back, not retained outputs. Full source remains in the corresponding trace steps.'};
+}
+
+/** Observations only: host work can be necessary research/building, not a stall. */
+export function collectHostWork(steps = []) {
+  const writes = new Map(), commands = new Map(), runs = [];
+  let run = null;
+  const finish = () => { if (run) runs.push(run); run = null; };
+  for (const s of steps) {
+    const args = s.args || {};
+    const file = ['write','edit'].includes(s.tool) ? args.file_path : null;
+    const command = ['pwsh','bash'].includes(s.tool) ? args.command : null;
+    const host = typeof file === 'string' || typeof command === 'string';
+    if (typeof file === 'string') {
+      const key = file.replaceAll('\\','/');
+      const item = writes.get(key) || {path:key,steps:[],writeCalls:0,editCalls:0,failedCalls:0};
+      item.steps.push(s.index);item[s.tool==='write'?'writeCalls':'editCalls']++;
+      if(s.failed)item.failedCalls++;
+      writes.set(key,item);
+    }
+    if (typeof command === 'string') {
+      // Exact text only; do not assume different commands share effects, or
+      // infer execution success from printed PASS/FAIL words.
+      const item = commands.get(command) || {commandPreview:command.slice(0,240),
+        truncated:command.length>240,steps:[],failedCalls:0};
+      item.steps.push(s.index);if(s.failed)item.failedCalls++;
+      commands.set(command,item);
+    }
+    if (s.isHoudini || s.tool?.startsWith('houdini_')) { finish(); continue; }
+    if (run && s.turn !== run.turn) finish();
+    if (host) {
+      run ||= {turn:s.turn,firstStep:s.index,lastStep:s.index,hostCalls:0};
+      run.lastStep=s.index;run.hostCalls++;
+    }
+  }
+  finish();
+  return {fileWrites:[...writes.values()].sort((a,b)=>b.steps.length-a.steps.length),
+    repeatedCommands:[...commands.values()].filter(x=>x.steps.length>1)
+      .sort((a,b)=>b.steps.length-a.steps.length),
+    hostIntervalsWithoutHoudiniCalls:runs,
+    scope:'Exact host write/edit targets and shell commands in deduplicated steps. Intervals may include reads/research. No inference of semantic progress, file contents, subprocess success, geometry correctness or a reason to stop. Failed calls count only normalized tool failures; printed FAIL is not a structured verdict.'};
 }
 
 export function extractAvailableSkills(text) {

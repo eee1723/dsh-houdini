@@ -83,6 +83,15 @@ await assert.rejects(query.execute({source_ref:rows[0].source_ref},
   {...context,agent:{session:{snapshotEvents:()=>[]}}}),/not found/);
 assert.equal(http,0,'source retrieval never enters Bridge or HOM');
 const preset=fs.readFileSync(new URL('../../presets/houdini/agent.cordis.yml',import.meta.url),'utf8');
-for(const term of ['dependencies and risks','unmet source-backed obligations','Simple edits need no separate register',
-  'defaults and unknowns','never evidence that the original obligations passed']) assert(preset.includes(term));
+// Check the compact policy's obligations, not the old paragraph wording.
+for (const pattern of [/source-backed requirements/, /assumptions\/unknowns/,
+  /module dependencies and checks/, /retain unmet obligations/, /not proof of completion/,
+  /Do not create a second requirement ledger/, /simple edits pay for source lookups/]) {
+  assert.match(preset, pattern);
+}
+assert.doesNotMatch(preset, /Route ALL Houdini work|give each question 2–4|before starting any render work/);
+const guidance = fs.readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
+for (const name of ['houdini-sop-workflow', 'houdini-tool-development', 'houdini-video-tutorial', 'houdini-cop-workflow']) {
+  assert(guidance.includes(name), `missing product workflow route: ${name}`);
+}
 console.log('task sources: original provenance, plan separation, replay, exact pagination, session isolation, no HOM and bounded anchors passed');

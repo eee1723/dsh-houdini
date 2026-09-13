@@ -12,12 +12,17 @@
       "default": "./lib/index.js"
     },
     "./client": "./client.js",
+    "./executor-host": {
+      "types": "./lib/executor-host.d.ts",
+      "default": "./lib/executor-host.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "client.js",
     "cordis.patch.yml",
+    "shared-host.cordis.yml",
     "dsh-profile.requirements.json",
     "dsh-runtime-compatibility.json",
     "houdini",

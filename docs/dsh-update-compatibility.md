@@ -61,6 +61,8 @@ TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 W
 先在独立npm目录正常安装精确DSH与本插件tgz，再执行`python tools/tests/dsh-candidate-runtime.test.py --candidate <隔离npm目录>`。
 它复用受管profile准备入口，在新DSH_HOME验证真实Node启动、401/200 RPC、workspace幂等及两个preset创建，
 只关闭自己启动的进程，证据留在系统临时目录；不认证签名发行包、Houdini WebView或发送/停止模型路径。
+本机已缓存正常安装的DSH时，可用`--runtime-cache <含node_modules的缓存目录>`建立临时只读投影并测试源码插件，
+不改缓存或用户home。回归包含同session ID重试/并发、未附着任务恢复、preset失败后恢复和独立归档集合；不替代正式包验收。
 
 保持当前 serving runtime 在线，依次完成：
 

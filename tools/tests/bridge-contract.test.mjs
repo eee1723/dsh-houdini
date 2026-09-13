@@ -38,7 +38,6 @@ const server = http.createServer((request, response) => {
         ok: true,
         stdout: '',
         stderr: '',
-        ...(lastExecBody.code.includes('hou.hipFile.path()') ? { result: 'C:/project' } : {}),
       }));
     });
     return;
@@ -69,8 +68,9 @@ try {
   await assert.rejects(bridge.exec('__result__ = 2'), /contract mismatch.*semantics/);
   assert.equal(execCalls, 1, 'same-name stale semantics must fail before /exec even immediately after a successful check');
   semanticVersion = EXPECTED_EXECUTION_CONTRACT_VERSION;
-  assert.equal(await bridge.hipDir(), 'C:/project');
-  assert.equal(lastExecBody.read_only, 'true', 'internal $HIP inspection must use the read-only bridge boundary');
+  await bridge.exec('__result__ = 3', undefined, undefined, undefined, true);
+  assert.equal(lastExecBody.read_only, 'true', 'query must use the read-only bridge boundary');
+  assert.equal(execCalls, 2, 'one admitted exec per public scene call; no hidden workspace probe');
 } finally {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }

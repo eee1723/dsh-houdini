@@ -1,6 +1,7 @@
 """Ordered runtime observations and bounded native dependency impact, without extra cooks."""
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import hou
 import dsh_hou_helpers as h
@@ -29,6 +30,20 @@ try:
     assert query['execution']['sequence']>observation['sequence']
     assert not query['execution']['impact']['attempted'] and not query['execution']['impact']['nodes']
     assert query['transaction']['nodes'][0]['identity']==ctrl.sessionId()
+    assert query['execution']['hip_dir'] is None, 'new scene has no meaningful project directory'
+    # A legitimately saved untitled.hip is a project too. No extra Host query
+    # is needed to decide workspace advice, and observing it does not cook.
+    original_path = hou.hipFile.path()
+    with TemporaryDirectory(prefix='dsh-observed-hip-') as directory:
+        try:
+            saved = Path(directory) / 'untitled.hip'
+            hou.hipFile.save(str(saved))
+            named = run('pass', read_only=True)
+            assert Path(named['execution']['hip_dir']) == Path(directory), named
+            assert Path(named['execution']['hip_path']) == saved, named
+            assert out.needsToCook(), 'workspace metadata must not cook geometry'
+        finally:
+            hou.hipFile.setName(original_path)
     checked=run(f'verify_network({root.path()!r},output={out.path()!r})')
     assert checked['execution']['outputs'][0]['identity']==out.sessionId(),checked
     assert not checked['execution']['impact']['attempted']

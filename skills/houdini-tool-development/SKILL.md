@@ -22,7 +22,7 @@ description: 开发、维护和交付Houdini HDA/OTL、Python回调、Shelf/Tab�
 
 ## 执行脊柱
 
-1. 明确目标 Houdini/Python/Qt 版本、GUI 或 headless、Houdini 或 Engine；确认交付是单 HDA 还是带外部模块的 package。已有约定优先，不凭经验固定目录、快捷键或 Qt import。
+1. 明确目标 Houdini/Python/Qt 版本及宿主；创建/安装工具或HDA时先读[脚本与存放](references/scripts-and-packaging.md)，有界检查相关非官方package的实际加载来源与冲突，再确认工程目录、新独立package或用户指定已有package。可复用工具优先建议独立package，用户已选目录则遵守；创建产物不等于授权安装、修改其他包或重启。
 2. 只读定位受影响的类型定义、参数、脚本、工具标识及加载路径。普通改动不遍历全盘 HDA。未知接口先查 verb_help/公开参数/目标版本帮助，再做一个隔离最小探针。
 3. 新建HDA先按[HDA维护](references/hda-maintenance.md)规划端口并验证一个公开控制→定义→新实例→公共输出消费者，再扩展内部模块；不要把内部OUT或原实例spare当作资产交付。普通按钮不引入整套自定义UI。
 4. 分块修改并回读。HDA写入按维护reference的文件恢复合同；源码、构建产物、已加载模块分别核对。连续两次失败回到已通过checkpoint，隔离原生机制、载体、绑定和业务层；先证明写入/保存确实发生，再判断状态丢失，不能以换实现代替根因证明。
@@ -32,6 +32,7 @@ description: 开发、维护和交付Houdini HDA/OTL、Python回调、Shelf/Tab�
 ## 执行边界
 
 agent 驱动 HOM 仍走 Bridge 主线程队列和现有动词，遵循仓库 docs/execution-contract.md。Shelf/回调代码是交付给 Houdini 的运行入口，不能拿它绕过 Raw Gate、所有权或用户授权；缺少受控入口时记录能力缺口。源码编辑本身不证明 live 加载，重启和 HIP 保存沿用仓库 docs/setup.md。
+普通用户工具不写$HFS、不向Houdini自带Python安装依赖、不默认修改全局启动脚本/环境变量或无关用户偏好。HDA二进制由Houdini管理；内部节点/UI/section通过对应动词维护，不通过解压字符串替换重写资产库。
 
 本库 `houdini/python3.11libs` 经启动器 PYTHONPATH 兼容加载，不是所有 Houdini 版本的标准目录模板。开发新用户工具采用目标解释器的目录约定；维护 DSH 自身时保留现有布局。
 

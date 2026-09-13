@@ -43,23 +43,38 @@ def _exact(value, allowed, label):
         raise ValueError(label + ' has unknown fields or is not an object')
 
 
+_DEPENDENCY_NODE_LIMIT = 4096
+_DEPENDENCY_EDGE_LIMIT = 32768
+_DEPENDENCY_SECONDS = 2.0
+
+
 def _cache_evidence(node):
     """Bounded native dependencies; not proof against dynamic/external effects."""
-    pending, seen, sticky = [node], set(), []
+    pending, seen, sticky = [node], {node.sessionId()}, []
+    edges = 0
+    deadline = time.monotonic() + _DEPENDENCY_SECONDS
     while pending:
         current = pending.pop()
-        if current.sessionId() in seen:
-            continue
-        seen.add(current.sessionId())
-        if len(seen) > 512:
-            raise ValueError('COP dependency inspection exceeds 512 nodes')
+        if time.monotonic() > deadline:
+            raise ValueError('COP dependency inspection time budget exceeded; freshness unverified')
         if isinstance(current, hou.CopNode) and current.type().nameComponents()[2] == 'cache':
             parm = current.parm('clearonchange')
             if parm is None or not parm.eval():
                 sticky.append(current.path())
-        pending.extend(x for x in current.inputs() if x is not None)
-        pending.extend(x for x in current.references() if x is not None)
+        for dependency in (*current.inputs(), *current.references()):
+            if dependency is None:
+                continue
+            edges += 1
+            if edges > _DEPENDENCY_EDGE_LIMIT:
+                raise ValueError('COP dependency inspection edge budget exceeded; freshness unverified')
+            identity = dependency.sessionId()
+            if identity not in seen:
+                if len(seen) >= _DEPENDENCY_NODE_LIMIT:
+                    raise ValueError(f'COP dependency inspection exceeds {_DEPENDENCY_NODE_LIMIT} nodes; freshness unverified')
+                seen.add(identity)
+                pending.append(dependency)
     return {'sticky_cache_nodes': sorted(sticky), 'nodes_inspected': len(seen),
+            'edges_inspected': edges, 'node_limit': _DEPENDENCY_NODE_LIMIT,
             'scope': 'native input/reference graph only; dynamic dependencies and external changes unverified'}
 
 

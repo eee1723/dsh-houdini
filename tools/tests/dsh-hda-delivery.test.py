@@ -71,7 +71,7 @@ def execute(kwargs):
                     {'id': 'default_and_repeat', 'buttons': ['execute', 'execute'],
                      'menus': {'choice': ['double', 'triple']},
                      'expect_parms': {'gain': 2.0, 'result': 4.0, 'runs': 2, 'choice': 'double'},
-                     'expect_geometry': {'output': 'geometry/output_box', 'points': 8, 'primitives': 6}},
+                     'expect_geometry': {'output': 'geometry/output_box', 'points': 8, 'primitives': 6, 'bounds_size':[1,1,1]}},
                     {'id': 'different_input', 'values': {'gain': 3.5}, 'buttons': ['execute'],
                      'expect_parms': {'result': 7.0, 'runs': 1}},
                     {'id': 'invalid_input', 'values': {'gain': -1}, 'buttons': ['execute'],
@@ -94,6 +94,15 @@ def execute(kwargs):
     assert not report['ok'] and report['worker']['status'] == 'cancelled_before_start', report
     assert not report['worker']['released'] and assets.read_bytes() == original
     normal_cases = manifest['cases']
+    # Same point/primitive counts cannot conceal an incorrect dimension or Cd.
+    for expectation, message in [({'bounds_size':[2,1,1]},'bounds_size'),
+                                 ({'point_cd':[1,0,0]},'point_cd')]:
+        manifest['cases']=[{'id':'false-green-counterexample','expect_geometry':
+            {'output':'geometry/output_box','points':8,'primitives':6,**expectation}}]
+        source.write_text(json.dumps(manifest),encoding='utf-8-sig')
+        report=runner.check(source,hython)
+        assert not report['ok'] and message in json.dumps(report),report
+    manifest['cases']=normal_cases
     manifest['cases'] = [{'id':'manual-output','values':{'gain':0},'buttons':['execute'],
                           'expect_geometry':{'output':'geometry/output_box','points':8,'primitives':6}}]
     source.write_text(json.dumps(manifest), encoding='utf-8')

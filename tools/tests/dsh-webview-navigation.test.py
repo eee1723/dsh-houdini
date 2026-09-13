@@ -120,7 +120,7 @@ try:
     webview.show_webview(session_id="next", authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
     assert len(requests) == 2
-    assert observed["done"] and observed["urlAtBoot"].endswith("dsh-houdini-session=next")
+    assert observed["done"] and urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["next"]
     webview.show_webview(authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
     assert len(requests) == 3 and observed["urlAtBoot"] == base + "/"
@@ -128,7 +128,7 @@ try:
     webview.show_webview(session_id="direct")
     observed = settle()
     assert len(requests) == 4 and observed["done"]
-    assert observed["urlAtBoot"].endswith("dsh-houdini-session=direct")
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["direct"]
     # A later ordinary document must not receive a stale injected session hint.
     webview._view.load(webview.QUrl(base + "/"))
     observed = settle()
@@ -139,10 +139,46 @@ try:
     webview.show_webview(session_id="retry", authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
     assert not fail_auth_once and len(requests) == 6
-    assert observed["done"] and observed["urlAtBoot"].endswith("dsh-houdini-session=retry")
+    assert observed["done"] and urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["retry"]
     assert not webview._retry_timer.isActive()
     assert not webview._view.page().scripts().find("dsh-launch-session-hint")
-    print("Qt WebView: single authenticated bootstrap, in-flight RPCs, explicit session hint and plain reopen passed")
+
+    # A real workspace route keeps the same page across visible/hidden reopening.
+    workspace_a, workspace_b = r"E:\fixture A", r"E:\fixture B"
+    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
+    observed = settle()
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)
+    assert len(requests) == 7 and query["dsh-houdini-workspace"] == [workspace_a]
+    assert query["dsh-houdini-request"][0].startswith("dsh-houdini-")
+    assert "dsh-houdini-session" not in query
+    assert webview.raise_workspace(workspace_a)
+    webview._window.hide()
+    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
+    assert settle() == observed and len(requests) == 7
+    assert not webview.raise_workspace(workspace_b)
+    webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN)
+    changed = settle()
+    assert len(requests) == 8
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(changed["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_b]
+    webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN, force_reload=True)
+    restarted = settle()
+    assert len(requests) == 9 and restarted["done"]
+    assert restarted["urlAtBoot"] != changed["urlAtBoot"], "Repair needs a new navigation intent after auth"
+
+    # A failed load while the window is hidden has no active retry timer. Raising
+    # it must resume the existing intent, not strand an otherwise healthy host.
+    fail_auth_once = True
+    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
+    webview._window.hide()
+    loop = QEventLoop()
+    QTimer.singleShot(1000, loop.quit)
+    loop.exec()
+    assert webview._load_failed and not webview._retry_timer.isActive()
+    assert webview.raise_workspace(workspace_a)
+    recovered = settle()
+    assert len(requests) == 10 and recovered["done"]
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(recovered["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_a]
+    print("Qt WebView: one auth bootstrap, hidden-page reuse, HIP switch, Repair and native-client workspace hints passed")
 finally:
     if webview._retry_timer is not None:
         webview._retry_timer.stop()

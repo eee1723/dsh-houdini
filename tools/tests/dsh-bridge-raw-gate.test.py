@@ -31,6 +31,24 @@ assert covered["rawUsage"]["coveredMutations"] == [
     {"name": "createNode", "count": 1, "verb": "search_tab_entries + tab_create/tab_apply"}
 ], covered["rawUsage"]
 
+# Parameter aliases and bound setters cannot turn a covered write into an exemption.
+fixture = hou.node('/obj').createNode('geo', '__gate_parameter_alias')
+before = fixture.parm('tx').eval()
+for code in (
+    f"n=hou.node({fixture.path()!r}); p=n.parm('tx'); p.set(9)",
+    f"p=hou.node({fixture.path()!r}).parmTuple('t'); q=p; q.set((9,9,9))",
+    f"p=hou.node({fixture.path()!r}).parm('tx'); write=p.set; write(9)",
+    f"p, unused = hou.node({fixture.path()!r}).parm('tx'), 0; p.set(9)",
+    f"p=hou.node({fixture.path()!r}).parm('tx'); p.set(hou.Ramp((hou.rampBasis.Linear,)*2,(0,1),(0,1)))",
+):
+    result = dsh_bridge.run_code(code, allow_raw='parameter format allegedly unsupported')
+    assert not result['ok'] and 'allow_raw cannot exempt' in result['error'], result
+    assert result['rawUsage']['coveredMutations'][0]['name'] == 'parm().set', result
+    assert fixture.parm('tx').eval() == before
+fixture.destroy()
+assert dsh_bridge._raw_usage_analysis('class Box: pass\nx=Box(); x.set(3)')['coveredMutations'] == []
+assert dsh_bridge._raw_usage_analysis("p=hou.parm('/obj/a/tx'); __result__=p.eval()")['coveredMutations'] == []
+
 # Read-only HOM remains a language-level escape hatch without ceremony.
 read_only = dsh_bridge.run_code(
     "n = hou.node('/obj')\n__result__ = n.path()",

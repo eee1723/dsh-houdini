@@ -68,7 +68,9 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 35
+_EXECUTION_CONTRACT_VERSION = 44
+from dsh_managed_runtime import executor_identity
+_EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)
@@ -185,6 +187,7 @@ def _verb_help(name: str) -> dict:
 
 
 _VERBS: dict[str, object] = {
+    "package_info": dsh_hou_helpers.package_info,
     "verb_help": _verb_help,
     "scene_info": dsh_hou_helpers.scene_info,
     "scene_save": dsh_hou_helpers.scene_save,
@@ -534,6 +537,45 @@ def _is_safe_python_method(node: ast.Call, python_sets: set[str]) -> bool:
     )
 
 
+def _parameter_write_calls(tree):
+    """Conservative lexical aliases, never execute expressions to identify a receiver.
+
+    Track parameter objects and bound setters through assignments. Rebindings
+    remain conservative within the submitted batch; this is not a Python sandbox.
+    """
+    parms, setters = set(), set()
+    def parameter(expr):
+        return (isinstance(expr, ast.Name) and expr.id in parms or
+                isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)
+                and expr.func.attr in ('parm', 'parmTuple'))
+    def setter(expr):
+        return (isinstance(expr, ast.Name) and expr.id in setters or
+                isinstance(expr, ast.Attribute) and expr.attr == 'set' and parameter(expr.value))
+    assignments = []
+    def bind(target, value):
+        if isinstance(target, ast.Name):
+            assignments.append((target.id, value))
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            for t, v in zip(target.elts, value.elts):
+                bind(t, v)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            bind(node.target, node.value)
+    for _ in range(len(assignments) + 1):
+        previous = (len(parms), len(setters))
+        for name, expr in assignments:
+            if parameter(expr):
+                parms.add(name)
+            if setter(expr):
+                setters.add(name)
+        if previous == (len(parms), len(setters)):
+            break
+    return {id(node) for node in ast.walk(tree) if isinstance(node, ast.Call) and setter(node.func)}
+
+
 def _raw_usage_analysis(code: str) -> dict:
     """Describe raw HOM syntax and gate-relevant mutations for UI/auditing.
 
@@ -546,10 +588,14 @@ def _raw_usage_analysis(code: str) -> dict:
     except SyntaxError:
         return {}
     python_sets = _python_set_names(tree)
+    parameter_writes = _parameter_write_calls(tree)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
     for node in ast.walk(tree):
+        if id(node) in parameter_writes:
+            covered['parm().set'] = covered.get('parm().set', 0) + 1
+            continue
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         path = _call_path(node.func)
@@ -985,6 +1031,9 @@ def run_code(code: str, allow_raw: str | None = None,
         dsh_hou_helpers._PRODUCED_IMAGES.clear()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
+                if not read_only:
+                    from dsh_executor_registry import require_active_writer
+                    require_active_writer(owner_session, hou.hipFile.path())
                 error = _forbidden_hip_lifecycle_message(code)
                 if error is not None:
                     gate_outcome = "forbidden"
@@ -1098,16 +1147,16 @@ def run_code(code: str, allow_raw: str | None = None,
             impact['attempted'] = True
     else:
         impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
-    envelope['execution'] = {'runtime_id': _RUNTIME_ID, 'sequence': execution_sequence,
-        'observed_at': time.time(), 'frame': float(hou.frame()), 'hip_path': hou.hipFile.path(),
-        'update_mode': dsh_hou_helpers.scene_info()['update_mode'],
+    scene = dsh_hou_helpers.scene_info()
+    envelope['execution'] = {'runtime_id': _RUNTIME_ID, 'executor_id': _EXECUTOR_ID, 'sequence': execution_sequence,
+        'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
+        'hip_dir': os.path.dirname(scene['hip_path']) if scene['has_named_path'] else None,
+        'update_mode': scene['update_mode'],
         'owner_session': owner_session, 'read_only': read_only,
         'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
             'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
             'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
-    # 本次 exec 产出的图片（render_frame/render_view/viewport_screenshot 登记）：
-    # host 侧经 /media 端点把字节拉回会话工作区，vision/fs 工具才读得到
-    # （工作区沙箱；2026-08-19 草地 trace：vision_glance 读 $HIP 截图被拒）。
+    # Only images produced by this request enter the Host's native attachments.
     if images:
         envelope["images"] = images
     if verb_ledger:
@@ -1182,10 +1231,14 @@ _pump_timer = None     # GUI-mode QTimer (kept alive; stopped by stop())
 
 
 def _pump() -> None:
-    """Main-thread: run every queued work item, FIFO. Never raises."""
+    """Main-thread FIFO, yielding between tasks after an 8ms GUI time slice.
+
+    A single HOM operation can exceed the slice; it is never interrupted here.
+    """
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("Houdini pump must run on its owning thread")
-    while True:
+    deadline = time.monotonic() + 0.008
+    while time.monotonic() < deadline:
         try:
             func, done, holder = _work_queue.get_nowait()
         except queue.Empty:
@@ -1302,22 +1355,26 @@ def _job_body(job_id: str, code: str, allow_raw: str | None = None,
 
 def _run_job(job_id: str, code: str, allow_raw: str | None = None,
              owner_session: str | None = None,
-             owner_call: str | None = None) -> None:
+             owner_call: str | None = None, request_ref: str | None = None) -> None:
     try:
-        outcome = _execute(
-            lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
-        )
-    except BaseException:
-        outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
-    if outcome is None:
-        return  # cancelled while queued: code never ran, scene untouched
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None or job["status"] == "cancelled":
-            return
-        job.update(outcome)
-        job["status"] = "done" if outcome["ok"] else "failed"
-        _job_meta[job_id] = time.time()
+        try:
+            outcome = _execute(
+                lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
+            )
+        except BaseException:
+            outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
+        if outcome is None:
+            return  # cancelled while queued: code never ran, scene untouched
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is None or job["status"] == "cancelled":
+                return
+            job.update(outcome)
+            job["status"] = "done" if outcome["ok"] else "failed"
+            _job_meta[job_id] = time.time()
+    finally:
+        if request_ref is not None:
+            _request_registry.finish_job(request_ref)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -1342,28 +1399,26 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _health(self) -> dict:
+        return {
+            "ok": True, "houVersion": _HOU_VERSION, "rawGate": _raw_gate,
+            "executionContractVersion": _EXECUTION_CONTRACT_VERSION, "runtimeId": _RUNTIME_ID,
+            "executorId": _EXECUTOR_ID,
+            "verbCatalog": {"hash": _VERB_CATALOG_HASH, "count": len(_VERB_NAMES), "names": list(_VERB_NAMES)},
+            "activeRequests": _request_registry.active_count(),
+            **_job_activity(),
+        }
+
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
+        if not self._check_executor():
+            return
         if self.path == "/health":
             try:
-                self._send({
-                    "ok": True,
-                    "houVersion": _HOU_VERSION,
-                    "rawGate": _raw_gate,
-                    "executionContractVersion": _EXECUTION_CONTRACT_VERSION,
-                    "runtimeId": _RUNTIME_ID,
-                    "verbCatalog": {
-                        "hash": _VERB_CATALOG_HASH,
-                        "count": len(_VERB_NAMES),
-                        "names": list(_VERB_NAMES),
-                    },
-                    **_job_activity(),
-                })
+                self._send(self._health())
             except Exception:
                 self._send({"ok": False, "error": traceback.format_exc()}, status=500)
             return
-        # /media?path=<abs>：把桥进程读得到的图片字节回传给 host——host 再写进
-        # 会话工作区，弥合「$HIP 产物」与「工作区沙箱的 vision/fs 工具」之间的
-        # 路径断层。只读、限图片扩展名、限大小；不碰 hou，handler 线程安全。
+        # Relay request-produced image bytes to Host native attachments; no HOM.
         if urllib.parse.urlparse(self.path).path == "/media":
             try:
                 params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1394,7 +1449,18 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
+    def _check_executor(self):
+        expected = self.headers.get('X-DSH-Houdini-Executor')
+        if expected is not None and expected != _EXECUTOR_ID:
+            self.close_connection = True
+            self._send({'ok': False, 'error': 'executor_mismatch: this Houdini is not the bound target; no operation dispatched',
+                        'executorId': _EXECUTOR_ID}, status=409)
+            return False
+        return True
+
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
+        if not self._check_executor():
+            return
         try:
             # Reject browser simple-request CSRF against this trusted loopback
             # execution service. No CORS permission is granted. This does not
@@ -1423,6 +1489,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path == '/executor/claim':
+            if set(body) != {'task_id', 'registration_id', 'expected_hip'} or not all(isinstance(v,str) and v for v in body.values()):
+                self._send({'ok':False,'error':'Expected task_id, registration_id and expected_hip'},status=400)
+                return
+            from dsh_executor_registry import active_registration
+            registration = active_registration()
+            actual = _execute(lambda: hou.hipFile.path())
+            result = registration.claim(body['task_id'], body['registration_id'], body['expected_hip'], actual)
+            self._send({'ok':True,'result':result})
+            return
+        if self.path == '/requests/prepare':
+            if set(body) != {'owner_session'} or not isinstance(body['owner_session'], str) or not body['owner_session']:
+                self._send({'ok': False, 'error': 'owner_session required'}, status=400)
+                return
+            # POST shares the JSON/no-Origin boundary. A health probe never
+            # allocates tickets, and preparing one never enters the HOM queue.
+            self._send({**self._health(), 'requestRef': _request_registry.issue(body['owner_session'])})
+            return
         if self.path == '/requests/status':
             if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v for v in body.values()):
                 self._send({'ok':False,'error':'request_ref and owner_session required'},status=400)
@@ -1484,7 +1568,10 @@ class _Handler(BaseHTTPRequestHandler):
                                 'error':'Request already admitted; retrieve status instead of resubmitting.'})
                 return
             def tracked():
-                _request_registry.running(ref)
+                if not _request_registry.running(ref):
+                    return {'ok':False,'stdout':'','stderr':'',
+                            'requestReceipt':_request_registry.status(ref,owner_session),
+                            'error':'Request no longer queued; original code was not started again.'}
                 try:result=invoke()
                 except BaseException:
                     result={'ok':False,'stdout':'','stderr':'','error':traceback.format_exc()}
@@ -1536,14 +1623,24 @@ class _Handler(BaseHTTPRequestHandler):
                     allow_raw,
                     str(owner_session) if owner_session else None,
                     str(owner_call) if owner_call else None,
+                    ref,
                 ),
                 daemon=True,
             )
             try:worker.start()
             except BaseException:
                 with _jobs_lock:
-                    _jobs.pop(job_id,None);_job_meta.pop(job_id,None)
-                if ref is not None:_request_registry.fail_before_dispatch(ref,'job worker did not start')
+                    job = _jobs.get(job_id)
+                    not_started = job is None or job['status'] == 'queued'
+                    if not_started:
+                        _jobs.pop(job_id,None);_job_meta.pop(job_id,None)
+                if ref is not None:
+                    if not_started:
+                        _request_registry.fail_before_dispatch(ref,'job worker did not start')
+                    else:
+                        # Starting a thread can fail after it claimed the job.
+                        # Preserve that job/result, not a false nonexecution receipt.
+                        _request_registry.complete(ref,{'jobId':job_id})
                 raise
             handle={'jobId':job_id}
             if ref is not None:
@@ -1644,7 +1741,7 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
         raise
     _server = server
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
-    print(f"[dsh-houdini] bridge serving on http://{host}:{port}")
+    print(f"[dsh-houdini] bridge serving on http://{host}:{server.server_port}")
     return server
 
 

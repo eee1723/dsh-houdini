@@ -127,12 +127,13 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
 
 ### 工程复现
 
-区分两种目标，并在交付中说明采用哪一种：
+以最终参考为目标，并区分效果复刻与严格复原：
 
-- 忠实复现：保留教程的核心方法与结构，明确无法复现或需要版本适配的部分。
-- 原理重建：保留目标和关键原理，允许使用适配当前版本的替代实现，并说明差异。
+- 效果复刻：默认保留教程核心方法，明确内容按来源实现；未展示的设置通过推理与受控实验补全，持续对照最终效果。
+- 严格复原：用户明确要求原节点/原参数一致时，缺失原值保持未知；效果相近不能冒充原值已还原。
 
-不能用外观相近的替代方案冒充忠实复现，也不能用成功执行代替与教程目标的核对。
+两者均分开说明来源事实、版本适配与推演值；缺少实现细节不是降低效果目标的理由，成功执行不代替最终对照。
+目标定位、实验停止/恢复与完成边界由[复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)唯一维护。
 
 ### 教学交付与验收
 
@@ -155,6 +156,8 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
    均匀采样不能保证捕获全部短促操作，跳步、遮挡仍须明确留作缺口。
 3. 章节/多时间段模块索引、原文分页和按模块证据读取已有源码入口；验证Agent从转录与粗图形成索引，
    按具体问题局部加密并回填观察，复现时映射到本地节点、保留后段修正及受影响复验。
+   schema-2 notes与多入口查询、修正引用、参考图及派生交接已有源码实现；优先验信息提取的事实准确性、
+   错误确定声明、对象混淆与参考覆盖，再验复刻执行。旧notes不自动补上下文或升级为最终状态。
    运行格式与对照测试唯一维护在[视频证据契约](../skills/houdini-video-tutorial/references/video-processing.md)，
    脚本不自动划分语义章节，索引校验不证明观察正确或工程完成。
 4. 完成基础教学 HIP：中间输出、原理注释、实验参数、依赖说明和重开验收。
@@ -201,7 +204,7 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
 | 程序化建模 | [SOP 契约](../houdini/python3.11libs/dsh_sop_contracts.py)、[质量契约](../houdini/python3.11libs/dsh_quality_contracts.py)、[SOP skill](../skills/houdini-sop-workflow/SKILL.md) | [开发维护](development.md)中的隔离 HOM 回归，加实际建模和后续修改任务 |
 | HDA 与工具插件 | [helpers](../houdini/python3.11libs/dsh_hou_helpers.py)中的 HDA 接口、[工具设计](tool-design.md) | 现有回归之外，按具体交付建立实例、输入、重载及工具生命周期测试 |
 | 教程转教学工程 | [视频解析 skill](../skills/houdini-video-tutorial/SKILL.md)、[处理脚本](../skills/houdini-video-tutorial/scripts/video_tutorial.py)，以及现有领域执行工具 | [离线行为回归](../tools/tests/video-tutorial.test.py)；真实云请求/画面理解、新 session 触发、未见视频及教学 HIP 端到端分别验收 |
-| Copernicus 程序化贴图 | [helpers](../houdini/python3.11libs/dsh_hou_helpers.py)的通用节点操作、[Solaris/Karma 参考](../skills/houdini-solaris-karma-workflow/references/karma-patterns.md)中的 COP 接口 | 待建立 COP 数据/输出/平铺/参数检查，以及真实材质预览与视觉验收 |
+| Copernicus 程序化贴图 | [COP图层与控制实现](../houdini/python3.11libs/dsh_cop_contracts.py)、[COP workflow](../skills/houdini-cop-workflow/SKILL.md)，以及Solaris/MaterialX消费接口 | [COP机制回归](../tools/tests/dsh-cop-contracts.test.py)；真实材质预览、自然采用、平铺与最终交付仍须单独验收 |
 
 文档修改使用 `npm run docs:check`；源码变更与目标 H21/H22 的隔离验证遵循
 [开发维护规范](development.md)。不修改冻结 benchmark protocol、matrix 或 holdout 来配合开发样例。

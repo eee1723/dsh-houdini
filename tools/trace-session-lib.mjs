@@ -13,10 +13,12 @@ export function newestSessionFile(root = path.join(os.homedir(), '.dsh', 'sessio
     const workspaceDir = path.join(root, workspace);
     if (!fs.statSync(workspaceDir).isDirectory()) continue;
     for (const session of fs.readdirSync(workspaceDir)) {
-      const file = path.join(workspaceDir, session, 'session.jsonl.zstd');
-      if (!fs.existsSync(file)) continue;
-      const modified = fs.statSync(file).mtimeMs;
-      if (!best || modified > best.modified) best = { file, modified };
+      for (const name of ['session.v3.jsonl.zstd', 'session.jsonl.zstd']) {
+        const file = path.join(workspaceDir, session, name);
+        if (!fs.existsSync(file)) continue;
+        const modified = fs.statSync(file).mtimeMs;
+        if (!best || modified > best.modified) best = { file, modified };
+      }
     }
   }
   return best?.file ?? null;
@@ -27,9 +29,9 @@ export function resolveSessionFile(input) {
   if (!input) throw new Error('session path is required');
   const absolute = path.resolve(input);
   if (!fs.existsSync(absolute)) throw new Error(`session path does not exist: ${absolute}`);
-  return fs.statSync(absolute).isDirectory()
-    ? path.join(absolute, 'session.jsonl.zstd')
-    : absolute;
+  if (!fs.statSync(absolute).isDirectory()) return absolute;
+  const v3 = path.join(absolute, 'session.v3.jsonl.zstd');
+  return fs.existsSync(v3) ? v3 : path.join(absolute, 'session.jsonl.zstd');
 }
 
 /** Load every JSON event from a concatenated multi-frame zstd session. */

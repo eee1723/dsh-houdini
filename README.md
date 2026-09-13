@@ -9,6 +9,7 @@
 [系统架构](docs/architecture.md)、
 [工具词表](docs/tool-design.md)、
 [执行与证据契约](docs/execution-contract.md)、
+[多实例与任务恢复](docs/multi-instance.md)、
 [节点操作卡](docs/node-operation-cards.md)、
 [开发维护规范](docs/development.md)。
 
@@ -36,7 +37,8 @@ python houdini/install.py
 
 加载更新的Host/Bridge/helper/preset，用Version & Diagnostics → Advanced diagnostics →
 **Repair and restart runtime**；菜单、package或WebView变更需完整重开Houdini。
-活动任务不会被正常repair强制中断；失配时不要绕过Host/Bridge握手。
+显式确认Repair可中断DSH任务，但仍保护活动Houdini执行；失配时不要绕过Host/Bridge握手。
+多Houdini需显式共享模式，默认Open Workspace不会自动多开；启用、单端Repair和限制见[多实例说明](docs/multi-instance.md)。
 
 ## 工具与工作流
 
@@ -83,7 +85,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和29 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和32 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

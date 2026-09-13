@@ -1,19 +1,27 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import {randomUUID} from 'node:crypto';
 import {HoudiniBridge} from '../../lib/bridge.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {projectExecutionState} from '../../lib/execution-state.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js';
-const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map();let edits=0,jobs=0,mode='disconnect';
+const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
 const server=http.createServer((req,res)=>{
  res.setHeader('content-type','application/json');
- if(req.url==='/health'){res.end(JSON.stringify({ok:true,runtimeId:runtime,executionContractVersion:version,verbCatalog:{hash}}));return;}
  let text='';req.on('data',b=>text+=b);req.on('end',()=>{
   const body=JSON.parse(text);
+  if(req.url==='/requests/prepare'){
+   preparations++;
+   assert.deepEqual(body,{owner_session:'owner'});
+   const ref=runtime+'.'+randomUUID().replaceAll('-','');tickets.add(ref);
+   res.end(JSON.stringify({ok:true,runtimeId:runtime,executionContractVersion:version,verbCatalog:{hash},
+    ...(ticketMode==='missing'?{}:{requestRef:ticketMode==='wrong-runtime'?'b'.repeat(32)+'.'+ref.split('.')[1]:ref})}));return;
+  }
   if(body.request_ref && body.owner_call)sourceCalls.set(body.request_ref,body.owner_call);
   if(req.url==='/exec'){
+   assert(tickets.delete(body.request_ref),'Host must submit the prepared Bridge ticket exactly once');
    edits++;
    const value={ok:true,stdout:'executed once',stderr:'',result:edits,transaction:{status:'committed',nodes:[]},
     execution:{runtime_id:runtime,sequence:edits,observed_at:edits,impact:{attempted:true,global:true,nodes:[]}},
@@ -25,6 +33,7 @@ const server=http.createServer((req,res)=>{
    else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
    else {res.statusCode=500;res.end('response failed after mutation');}
   }else if(req.url==='/jobs'){
+   assert(tickets.delete(body.request_ref));
    jobs++;records.set(body.request_ref,{jobId:'job-'+jobs});req.socket.destroy();
   }else if(req.url==='/requests/status'){
    res.end(JSON.stringify({ok:true,stdout:'',stderr:'',requestReceipt:body.request_ref==='index'
@@ -37,6 +46,12 @@ await new Promise(r=>server.listen(0,'127.0.0.1',r));
 try{
  const bridge=new HoudiniBridge(`http://127.0.0.1:${server.address().port}`,80);
  const owner={sessionId:'owner',callId:'call'};
+ for(const invalid of ['missing','wrong-runtime']) {
+  ticketMode=invalid;
+  await assert.rejects(bridge.exec('must_not_submit()',undefined,undefined,owner),/valid same-runtime request ticket/);
+  assert.equal(edits,0,'invalid prepare response never submits scene code');
+ }
+ ticketMode='valid';
  for(const failure of ['disconnect','bad-json','delay','http-error']){
   mode=failure;
   const unknown=await bridge.exec('mutate()',undefined,undefined,owner);
@@ -108,5 +123,6 @@ try{
   {seq:6,type:'tool/call',data:{name:'houdini_query',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
+ assert.equal(preparations,edits+jobs+2,'one prepare replaces health; recovery does not prepare or resubmit');
 }finally{await new Promise(r=>server.close(r));}
 console.log('exec response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');

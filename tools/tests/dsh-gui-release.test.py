@@ -79,10 +79,11 @@ def start_gui_probe():
             pid = manager._port_pid(ctx["frontendPort"])
             assert isinstance(pid, int) and pid > 0
             sessions = launcher._dsh_rpc_wire("session/list", {"args": {"_request": {}}}).get("items")
-            row = launcher._select_houdini_session(sessions, str(scene.parent))
-            assert row, "Open Workspace did not create its Houdini-preset session"
-            sid, _ = launcher.ensure_houdini_session(str(scene.parent))
-            assert sid == row["sessionId"]
+            rows = [row for row in sessions
+                    if row.get("cwd") and Path(row["cwd"]).resolve() == scene.parent.resolve()
+                    and (row.get("projections") or {}).get("values", {}).get("agentPreset") == "houdini"]
+            assert len(rows) == 1, "The native client must create/reuse exactly one Houdini-preset task"
+            sid = rows[0]["sessionId"]
             plugin = Path(ctx["install"]) / "app/node_modules/dsh-houdini"
             script = """
 const {HoudiniBridge} = await import(process.argv[1]);
@@ -105,7 +106,7 @@ if (!window.__releaseSmoke) {
     .then(async r=>{const j=await r.json();window.__releaseSmoke={status:r.status,ok:j.result?.ok===true,count:j.result?.value?.items?.length};})
     .catch(e=>{window.__releaseSmoke={error:String(e)}});
 }
-JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0,6000),rpc:window.__releaseSmoke,tokenInUrl:new URL(location.href).searchParams.has('token')});
+JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0,6000),rpc:window.__releaseSmoke,tokenInUrl:new URL(location.href).searchParams.has('token'),navigationPending:new URL(location.href).searchParams.has('dsh-houdini-workspace'),navigationError:document.querySelector('#dsh-houdini-navigation[role="alert"]')?.textContent});
 """, 0, lambda value: state.update(js=json.loads(value) if value else None))
     def tick():
         try:
@@ -142,9 +143,12 @@ JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0
             webview._window.move(12000, 12000)
             javascript(webview._view.page())
             observed = state["js"]
+            if observed and observed.get("navigationError"):
+                finish(False, observed["navigationError"])
+                return
             if (observed and observed.get("ready") == "complete" and len(observed.get("text") or "") > 80
                     and observed.get("rpc", {}).get("ok") and observed["rpc"].get("count", 0) >= 1
-                    and not observed.get("tokenInUrl") and not state["probe"]):
+                    and not observed.get("tokenInUrl") and not observed.get("navigationPending") and not state["probe"]):
                 state["probe"] = True
                 state["phase"] = "checking-reopen" if state["first"] else "checking-workspace"
                 threading.Thread(target=probe_worker, daemon=True).start()

@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -58,7 +59,7 @@ def definition_inventory(node, libraries, factory_root):
 
 
 def load_manifest(path):
-    data = json.loads(path.read_text(encoding='utf-8'))
+    data = json.loads(path.read_text(encoding='utf-8-sig'))
     allowed = {'assets', 'python_paths', 'category', 'type', 'cases'}
     if not isinstance(data, dict) or set(data) - allowed:
         raise ValueError('manifest has unknown fields')
@@ -90,10 +91,19 @@ def load_manifest(path):
             raise ValueError('each case needs an observable result, not only a successful callback')
         geo = case.get('expect_geometry')
         if geo is not None:
-            if (not isinstance(geo, dict) or set(geo) - {'output', 'points', 'primitives'} or
+            if (not isinstance(geo, dict) or set(geo) - {'output', 'points', 'primitives', 'bounds_size', 'point_cd', 'tolerance'} or
                     not isinstance(geo.get('output'), str) or
-                    not any(k in geo for k in ('points', 'primitives'))):
-                raise ValueError('expect_geometry needs relative output and point/primitive counts')
+                    not any(k in geo for k in ('points', 'primitives', 'bounds_size', 'point_cd'))):
+                raise ValueError('expect_geometry needs relative output and points/primitives/bounds_size/point_cd checks')
+            tolerance = geo.get('tolerance', 1e-6)
+            if type(tolerance) not in (int,float) or not math.isfinite(tolerance) or tolerance < 0:
+                raise ValueError('geometry tolerance must be finite and nonnegative')
+            for key in ('bounds_size','point_cd'):
+                if key in geo and (not isinstance(geo[key],list) or len(geo[key])!=3 or
+                    any(type(v) not in (int,float) or not math.isfinite(v) for v in geo[key])):
+                    raise ValueError(f'{key} must be three finite numbers')
+            if 'bounds_size' in geo and any(v<0 for v in geo['bounds_size']):
+                raise ValueError('bounds_size must be nonnegative')
             if geo['output'].startswith('/') or '..' in geo['output'].split('/'):
                 raise ValueError('geometry output must stay inside the case instance')
             for key in ('points', 'primitives'):
@@ -192,6 +202,25 @@ def worker(manifest_path, result_path):
                     geo = output.geometry()
                     counts = {'points': len(geo.points()), 'primitives': len(geo.prims())}
                     result['geometry'] = counts
+                    result['geometry']['scope'] = 'selected output SOP-local units; only declared checks, not full asset correctness'
+                    tolerance = expected.get('tolerance',1e-6)
+                    if 'bounds_size' in expected:
+                        measured = list(geo.boundingBox().sizevec())
+                        result['geometry']['bounds_size'] = measured
+                        if not geo.points() or any(not math.isfinite(v) or abs(v-e)>tolerance for v,e in zip(measured,expected['bounds_size'])):
+                            raise AssertionError(f'bounds_size: actual={measured}, expected={expected["bounds_size"]}')
+                    if 'point_cd' in expected:
+                        attr = geo.findPointAttrib('Cd')
+                        if attr is None or attr.size()!=3 or attr.dataType()!=hou.attribData.Float or not counts['points']:
+                            raise AssertionError('point_cd requires nonempty float3 point Cd')
+                        if counts['points']>1000000:
+                            raise AssertionError('point_cd exceeds 1000000-point verification budget; no sampling')
+                        values = geo.pointFloatAttribValues('Cd')
+                        errors = [abs(v-expected['point_cd'][i%3]) for i,v in enumerate(values)]
+                        result['geometry']['point_cd'] = {'expected':expected['point_cd'], 'checked_points':counts['points'],
+                            'max_error':max(errors), 'scope':'all point Cd components; not material appearance'}
+                        if any(not math.isfinite(v) for v in values) or max(errors)>tolerance:
+                            raise AssertionError('point_cd differs from expected on actual output')
                     for key in ('points', 'primitives'):
                         if key in expected and expected[key] != counts[key]:
                             raise AssertionError(f'{key}: actual={counts[key]}, expected={expected[key]}')

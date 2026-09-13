@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { newestSessionFile, toolResultCallId, uniqueToolResultEvents, collectRequestTelemetry } from '../trace-session-lib.mjs';
+import { newestSessionFile, resolveSessionFile, toolResultCallId, uniqueToolResultEvents, collectRequestTelemetry } from '../trace-session-lib.mjs';
 
 const result = (seq, callId, turn = 1, step = 1) => ({
   seq,
@@ -104,6 +104,13 @@ fs.writeFileSync(newer, 'new');
 fs.utimesSync(older, new Date(1_000), new Date(1_000));
 fs.utimesSync(newer, new Date(2_000), new Date(2_000));
 assert.equal(newestSessionFile(sessionRoot), newer);
+const v3File = path.join(path.dirname(newer), 'session.v3.jsonl.zstd');
+fs.writeFileSync(v3File, 'v3');
+fs.utimesSync(v3File, new Date(3_000), new Date(3_000));
+assert.equal(newestSessionFile(sessionRoot), v3File);
+assert.equal(resolveSessionFile(path.dirname(newer)), v3File);
+assert.equal(resolveSessionFile(path.dirname(older)), older);
+assert.equal(resolveSessionFile(newer), newer, 'explicit legacy file remains selectable');
 assert.ok(path.resolve(sessionRoot).startsWith(path.resolve(os.tmpdir())));
 fs.rmSync(sessionRoot, { recursive: true });
 

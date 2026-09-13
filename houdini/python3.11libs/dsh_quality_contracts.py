@@ -726,8 +726,13 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 except Exception as error:errors.append('frame: '+str(error))
             try:
                 cook=h.cook_node(node,force=True)
+                # geometry() can implicitly retry a failed/interrupted cook.
+                # Missing restoration evidence must remain unknown, not trigger
+                # another evaluation after the explicit attempt already failed.
+                if not cook['ok']:
+                    raise ValueError(f'restoration cook failed: {cook["errors"]}')
                 _,restored=_geometry(node)
-                geometry_restored=cook['ok'] and _data_signature(restored)==baseline_hash
+                geometry_restored=_data_signature(restored)==baseline_hash
             except Exception as error:
                 errors.append('output restore: '+str(error));geometry_restored=False
             # Read AFTER recooking: expressions/solver/Python code can affect

@@ -1,0 +1,8 @@
+# Explicit candidate Host overlay. Requires one shared registry; no default ports.
+# Use only with an isolated/qualified Host profile; ordinary startup is unchanged.
+- insert:
+    - id: houdini-executor-host
+      name: dsh-houdini/executor-host
+      config:
+        executorRegistry: !!js process.env.DSH_HOUDINI_EXECUTOR_REGISTRY
+        requestTimeoutMs: 120000

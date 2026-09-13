@@ -4,8 +4,8 @@
 - QWebEngineView 只能在主线程创建/操作；Houdini 菜单和 Python Shell 都在主线程，
   直接调用即可。
 - 幂等：重复调用唤起已有窗口，不重复创建。
-- 完整启动可传 session_id；URL hint 由 dsh-houdini client 半通过公开
-  sessions.refresh/open 消费。无 id 的 Open Workspace 不重载、不切换当前会话。
+- 完整启动传 workspace_dir；client 使用 DSH 原生工作区/任务状态处理归档与 Houdini preset。
+- 同 HIP 的已有页面（包括隐藏的窗口）只唤起，保留当前浏览任务、输入草稿和滚动。
 - 前端未就绪时每 2s 自动重试加载，直到连上（配合 launcher 的完整启动路径）。
 
 用法（Houdini GUI 菜单或 Python Shell，主线程）：
@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import urllib.parse
+import uuid
 import dsh_managed_runtime
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
@@ -32,6 +34,8 @@ if _MANAGED:
     FRONTEND_PORT = _MANAGED["frontendPort"]
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 SESSION_HINT_PARAM = "dsh-houdini-session"
+WORKSPACE_HINT_PARAM = "dsh-houdini-workspace"
+REQUEST_HINT_PARAM = "dsh-houdini-request"
 
 _RETRY_INTERVAL_MS = 2000
 
@@ -98,14 +102,18 @@ _retry_timer: QTimer | None = None
 _target_url = FRONTEND_URL
 _after_auth_url: str | None = None
 _quit_connected = False
+_workspace_dir: str | None = None
+_load_failed = False
 
 
 def _dispose_webview() -> None:
     """Release our page before its profile/application; do not touch other views."""
-    global _window, _view, _retry_timer, _after_auth_url
+    global _window, _view, _retry_timer, _after_auth_url, _workspace_dir, _load_failed
     window, view, timer = _window, _view, _retry_timer
     _window = _view = _retry_timer = None
     _after_auth_url = None
+    _workspace_dir = None
+    _load_failed = False
     if timer is not None:
         timer.stop()
     if view is not None:
@@ -129,7 +137,8 @@ def _retry_load() -> None:
 
 def _load_finished(ok: bool) -> None:
     """Run the page patch on success, or schedule one cancellable async retry."""
-    global _target_url, _after_auth_url
+    global _target_url, _after_auth_url, _load_failed
+    _load_failed = not ok
     if ok:
         if _retry_timer is not None:
             _retry_timer.stop()
@@ -139,9 +148,10 @@ def _load_finished(ok: bool) -> None:
             _target_url = target
             # The token exchange already redirects to the app. Navigating here
             # bootstraps it twice and aborts its inventory/inspect RPCs. The
-            # DocumentCreation hint has already routed the first document.
-            _clear_launch_session_hint(_view)
+            # The first document already has its intent; the client selects the
+            # task when the native workspace/session snapshots arrive.
         if _view is not None:
+            _clear_launch_session_hint(_view)
             _view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS)
         return
     if (_retry_timer is not None and _window is not None
@@ -163,10 +173,30 @@ def _bring_to_front(win: QWidget) -> None:
     win.show()
 
 
-def _session_url(session_id: str | None) -> str:
-    if not session_id:
+def raise_workspace(workspace_dir: str | None = None) -> bool:
+    """Raise our existing page without authentication, navigation or session IO."""
+    if _window is None or _view is None:
+        return False
+    if workspace_dir is not None and _workspace_dir != os.path.normcase(os.path.abspath(workspace_dir)):
+        return False
+    _bring_to_front(_window)
+    if _load_failed and _retry_timer is not None and not _retry_timer.isActive():
+        _retry_timer.start(0)
+    return True
+
+
+def _navigation_url(workspace_dir: str | None, session_id: str | None) -> str:
+    query = {}
+    if workspace_dir is not None:
+        query[WORKSPACE_HINT_PARAM] = workspace_dir
+    elif session_id is not None:
+        query[SESSION_HINT_PARAM] = session_id
+    if not query:
         return FRONTEND_URL
-    return FRONTEND_URL + "?" + urllib.parse.urlencode({SESSION_HINT_PARAM: session_id})
+    # A manual retry keeps one prospective Session identity, including after a
+    # create response is lost. This is a navigation attempt, not a second registry.
+    query[REQUEST_HINT_PARAM] = "dsh-houdini-" + uuid.uuid4().hex
+    return FRONTEND_URL + "?" + urllib.parse.urlencode(query)
 
 
 def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
@@ -190,7 +220,7 @@ def _clear_launch_session_hint(view: QWebEngineView) -> None:
 
 
 def _install_launch_session_hint(view: QWebEngineView, target_url: str | None) -> None:
-    """Put the explicit session in the redirected app URL before its JS runs.
+    """Put one navigation intent in the redirected app URL before its JS runs.
 
     DSH's token exchange redirects to /, dropping query parameters. Only the
     same-origin non-token app document receives the hint; no fetch, second
@@ -210,10 +240,24 @@ def _install_launch_session_hint(view: QWebEngineView, target_url: str | None) -
   var current = new URL(window.location.href);
   if (current.origin !== target.origin || current.pathname !== target.pathname
       || current.searchParams.has('token')) return;
-  var session = target.searchParams.get('dsh-houdini-session');
-  if (!session) return;
-  current.searchParams.set('dsh-houdini-session', session);
+  ['dsh-houdini-workspace', 'dsh-houdini-session', 'dsh-houdini-request'].forEach(function(key){
+    if (target.searchParams.has(key)) current.searchParams.set(key, target.searchParams.get(key));
+  });
   window.history.replaceState(window.history.state, '', current.pathname + current.search + current.hash);
+  // User intent can arrive before the client plugin finishes loading. Carry only
+  // this document's cancellation bit, never a second copy of DSH session state.
+  var intent = {id: target.searchParams.get('dsh-houdini-request'), cancelled: false};
+  var cancel = function(event){
+    if (['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+    intent.cancelled = true;
+  };
+  window.addEventListener('pointerdown', cancel, true);
+  window.addEventListener('keydown', cancel, true);
+  intent.dispose = function(){
+    window.removeEventListener('pointerdown', cancel, true);
+    window.removeEventListener('keydown', cancel, true);
+  };
+  window.__dshHoudiniLaunchIntent = intent;
 })()
 """ % json.dumps(target_url))
     view.page().scripts().insert(script)
@@ -222,8 +266,9 @@ def _install_launch_session_hint(view: QWebEngineView, target_url: str | None) -
 def show_webview(
     session_id: str | None = None,
     authenticated_url: str | None = None,
+    *, workspace_dir: str | None = None, force_reload: bool = False,
 ) -> str:
-    """打开内嵌 UI；先建立 DSH 浏览器 cookie，再路由显式 session。"""
+    """唤起当前工作区页面；新导航/Repair 先认证，再由 client 选择任务。"""
     if QCoreApplication.instance() is None:
         raise RuntimeError(
             "dsh_webview 需要 Qt GUI：当前是 hython/无 UI 进程，无法内嵌 web UI。"
@@ -234,25 +279,13 @@ def show_webview(
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected
-    target_url = _session_url(session_id)
+    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _workspace_dir, _load_failed
+    if (not force_reload and session_id is None
+            and (workspace_dir is not None or authenticated_url is None)
+            and raise_workspace(workspace_dir)):
+        return "webview already open"
+    target_url = _navigation_url(workspace_dir, session_id)
     initial_url = authenticated_url or target_url
-    if _window is not None and _window.isVisible():
-        # A full service restart carries an explicit Host-created/reused
-        # session target. Plain Open Workspace intentionally does not reload or
-        # change the user's current conversation.
-        if (session_id is not None or authenticated_url is not None) and _view is not None:
-            _after_auth_url = target_url if authenticated_url is not None else None
-            _install_launch_session_hint(_view, _after_auth_url)
-            _target_url = initial_url
-            _view.load(QUrl(_target_url))
-        # A plain reopen while authentication is still loading must not discard
-        # its pending hint/cleanup; it only raises the existing window.
-        _bring_to_front(_window)
-        return (
-            f"webview routed to {session_id}"
-            if session_id is not None else "webview already open"
-        )
 
     if _window is None:
         win = QWidget()
@@ -283,8 +316,11 @@ def show_webview(
             _quit_connected = True
 
     _after_auth_url = target_url if authenticated_url is not None else None
-    _install_launch_session_hint(_view, _after_auth_url)
+    _install_launch_session_hint(_view, target_url if workspace_dir is not None or session_id is not None else None)
+    _workspace_dir = os.path.normcase(os.path.abspath(workspace_dir)) if workspace_dir is not None else None
     _target_url = initial_url
+    _load_failed = False
+    _retry_timer.stop()
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))
     return "opened authenticated DSH workspace" if authenticated_url else f"opened {target_url}"

@@ -144,4 +144,30 @@ assert.equal(
 const frozenArgs = Object.freeze({ jobId: 'job-7', wait: 1 });
 assert.deepEqual(status.presentCall(frozenArgs), status.presentCall(frozenArgs));
 
+// Workspace advice uses the operation's own observation, without a hidden
+// health/exec round trip, and belongs to the agent rather than the Host process.
+const workspaceDefinitions = new Map();
+let workspaceExecutions = 0;
+let workspaceResult = {ok:true,stdout:'',stderr:'',execution:{hip_dir:'C:/project'}};
+registerHoudiniTools({tools:{register: d => workspaceDefinitions.set(d.name, d)}}, {
+  async exec() { workspaceExecutions++; return workspaceResult; },
+  async hipDir() { throw new Error('presentation must not probe Houdini'); },
+});
+const agentA = {id:'a',session:{header:{cwd:'C:/work'}}};
+const agentB = {id:'b',session:{header:{cwd:'C:/work'}}};
+const executeWorkspace = (agent, name = 'houdini_exec') =>
+  workspaceDefinitions.get(name).execute({code:'pass'}, {agent,callId:`c${workspaceExecutions}`});
+assert.match((await executeWorkspace(agentA)).advisory, /Open Workspace/);
+assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'same agent/pair is deduplicated');
+assert.match((await executeWorkspace(agentB, 'houdini_query')).advisory, /Open Workspace/, 'other agent gets its own advice');
+workspaceResult = {...workspaceResult, execution:{hip_dir:'c:\\WORK\\'}};
+assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'Windows slashes/case do not cause false mismatch');
+workspaceResult = {...workspaceResult, execution:{hip_dir:'C:/project'}};
+assert.match((await executeWorkspace(agentA)).advisory, /Open Workspace/, 'a newly changed workspace is explained again');
+workspaceResult = {...workspaceResult, execution:{hip_dir:null}};
+assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'unnamed HIP is not a known project');
+workspaceResult = {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}};
+assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'uncertain receipt must not trigger another queued observation');
+assert.equal(workspaceExecutions, 7, 'each user tool call executes exactly once');
+
 console.log('houdini tool presentation tests passed');

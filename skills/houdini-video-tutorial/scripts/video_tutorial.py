@@ -1,7 +1,9 @@
 """Local video evidence and explicitly authorized SiliconFlow ASR. Python 3.11+, no HOM."""
 import argparse
 from contextlib import contextmanager
+from contextvars import ContextVar
 from fractions import Fraction
+from functools import wraps
 import hashlib
 import json
 import math
@@ -18,6 +20,7 @@ import uuid
 ENDPOINT = "https://api.siliconflow.cn/v1/audio/transcriptions"
 PACKAGE = Path(__file__).resolve().parents[3]
 BASIS = "audio_chunk_bounds_not_sentence_or_word_alignment"
+_READ_VALIDATION = ContextVar("video_read_validation", default=None)
 
 
 class Failure(Exception):
@@ -29,9 +32,54 @@ def check(condition, message):
         raise Failure(message)
 
 
-def sha(path):
-    with Path(path).open("rb") as stream:
+def file_signature(path):
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def file_digest(path):
+    with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def validated_read(function):
+    """Deduplicate one command's evidence reads; never trust a previous command."""
+    @wraps(function)
+    def run(*args, **kwargs):
+        if _READ_VALIDATION.get() is not None:
+            return function(*args, **kwargs)
+        state = {"hashes": {}, "contexts": {}}
+        token = _READ_VALIDATION.set(state)
+        try:
+            result = function(*args, **kwargs)
+            # Metadata can be preserved across edits (Windows ctime is creation
+            # time). Rehash each dependency once before returning a receipt;
+            # repeated module references still share their initial validation.
+            for path, (signature, digest) in state["hashes"].items():
+                check(file_signature(path) == signature, "Evidence file changed during validation; retry the read")
+                current = file_digest(path)  # Deliberately bypass the command cache.
+                check(file_signature(path) == signature and current == digest,
+                      "Evidence file changed during validation; retry the read")
+            return result
+        finally:
+            _READ_VALIDATION.reset(token)
+    return run
+
+
+def sha(path):
+    path = Path(path).absolute()
+    state = _READ_VALIDATION.get()
+    if state is None:
+        return file_digest(path)
+    signature = file_signature(path)
+    cached = state["hashes"].get(path)
+    if cached is not None:
+        check(signature == cached[0], "Evidence file changed during validation; retry the read")
+        return cached[1]
+    digest = file_digest(path)
+    check(file_signature(path) == signature, "Evidence file changed while hashing; retry the read")
+    state["hashes"][path] = (signature, digest)
+    return digest
 
 
 def text_sha(value):
@@ -168,8 +216,11 @@ def config(work, model=None):
 
 
 def latest(work, item):
-    attempts = sorted(work.glob(f"attempt-{item['id']}-*.json"))
-    check(len(attempts) <= 2, "Retry budget exceeded")
+    attempts = list(work.glob(f"attempt-{item['id']}-*.json"))
+    for path in attempts:
+        check(re.fullmatch(rf"attempt-{re.escape(item['id'])}-[1-9][0-9]*\.json", path.name),
+              "Attempt sequence damaged")
+    attempts.sort(key=lambda path: int(path.stem.rsplit("-", 1)[1]))
     expected_outcomes = {f"outcome-{item['id']}-{i}.json" for i in range(1, len(attempts) + 1)}
     check(all(path.name in expected_outcomes for path in work.glob(f"outcome-{item['id']}-*.json")), "Orphan outcome")
     outcome = None
@@ -207,11 +258,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def post(audio, model, key):
+    """Upload the immutable, manifest-checked bytes supplied by transcribe."""
+    check(isinstance(audio, bytes), "ASR upload requires prepared audio bytes, not a path")
     boundary = "dsh" + uuid.uuid4().hex
     head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n"
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n"
             "Content-Type: audio/wav\r\n\r\n").encode()
-    body = head + audio.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    body = head + audio + f"\r\n--{boundary}--\r\n".encode()
     request = urllib.request.Request(ENDPOINT, data=body, headers={"Authorization": f"Bearer {key}",
         "Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
     with urllib.request.build_opener(NoRedirect()).open(request, timeout=60) as response:
@@ -227,28 +280,55 @@ def post(audio, model, key):
 def transcribe(args, sender=post, get_key=key_from_environment):
     check(args.allow_upload, "Cloud upload requires explicit user authorization and --allow-upload")
     check(re.fullmatch(r"[A-Za-z0-9_.:/-]{1,160}", args.model), "Invalid model identifier")
-    check(1 <= args.max_chunks <= 100, "max-chunks must be 1..100")
+    check(type(args.max_chunks) is int and 1 <= args.max_chunks <= 100, "max-chunks must be 1..100")
+    retry_budget = getattr(args, "max_retries", None)
+    if retry_budget is None:
+        retry_budget = 1 if args.retry_failed else 0
+    check(type(retry_budget) is int and 0 <= retry_budget <= 100, "max-retries must be 0..100")
+    check(args.retry_failed or retry_budget == 0, "A retry budget requires explicit --retry-failed authorization")
+    requested = getattr(args, "chunks", None)
+    check(requested is None or isinstance(requested, list) and requested
+          and all(isinstance(value, str) for value in requested), "chunks must be a nonempty list of chunk IDs")
+    check(requested is None or len(set(requested)) == len(requested), "Duplicate chunk IDs")
     work = directory(args.work)
     with lock(work):
         manifest = load(work)
         check(manifest["has_audio"], "No audio stream; use visual-only analysis")
-        config(work, args.model)
+        identities = {item["id"] for item in manifest["chunks"]}
+        check(requested is None or set(requested) <= identities, "Unknown chunk ID")
+        selected = identities if requested is None else set(requested)
         states = [(item, *latest(work, item)) for item in manifest["chunks"]]
+        check(not any(count for _, count, _ in states) or (work / "asr-config.json").is_file(),
+              "Missing ASR config for existing attempts; restore the original asr-config.json from a known backup, "
+              "or start a separately authorized new task without changing this history. Cannot reconstruct model identity")
+        config(work, args.model)
+        queue, planned_retries = [], 0
         for item, count, outcome in states:
-            if count and outcome["status"] != "success":
-                check(args.retry_failed and count < 2, "Failed/unknown attempt; explicit retry approval required (one retry maximum)")
-        key = get_key()
-        sent = 0
-        for item, count, outcome in states:
-            if outcome and outcome["status"] == "success":
+            if item["id"] not in selected or outcome and outcome["status"] == "success":
                 continue
-            if sent >= args.max_chunks:
+            if count and planned_retries >= retry_budget:
+                continue
+            if len(queue) >= args.max_chunks:
                 break
+            queue.append((item, count))
+            planned_retries += bool(count)
+        key = None
+        sent = retried = 0
+        for item, count in queue:
+            audio_path = work / item["audio"]
+            check(not audio_path.is_symlink(), f"Audio symlink rejected for chunk {item['id']}; not submitted")
+            with audio_path.open("rb") as stream:
+                audio = stream.read(50_000_000)
+            check(len(audio) < 50_000_000, f"Audio exceeds upload bound for chunk {item['id']}; not submitted")
+            check(hashlib.sha256(audio).hexdigest() == item["sha256"],
+                  f"Audio changed before upload for chunk {item['id']}; not submitted; {sent} prior successes preserved")
+            if key is None:
+                key = get_key()
             number = count + 1
             save(work / f"attempt-{item['id']}-{number}.json",
                  {"id": item["id"], "attempt": number, "audio_sha256": item["sha256"]})
             try:
-                text, trace = sender(work / item["audio"], args.model, key)
+                text, trace = sender(audio, args.model, key)
                 check(isinstance(text, str), "Invalid ASR text")
                 check(not key or key not in text, "Credential echoed in response; response rejected")
                 result = {"status": "success", "text": text, "text_sha256": text_sha(text),
@@ -257,12 +337,25 @@ def transcribe(args, sender=post, get_key=key_from_environment):
                 result = {"status": "http_error" if isinstance(error, urllib.error.HTTPError) else "unknown",
                           "http_status": error.code if isinstance(error, urllib.error.HTTPError) else None}
                 save(work / f"outcome-{item['id']}-{number}.json", result)
-                raise Failure("ASR failed; evidence retained, no automatic retry") from None
+                raise Failure(f"ASR failed on chunk {item['id']} after {sent} successful submissions; "
+                              "evidence retained, no automatic retry") from None
             save(work / f"outcome-{item['id']}-{number}.json", result)
             sent += 1
+            retried += bool(count)
             print(json.dumps({"chunk": item["id"], "status": "saved", "characters": len(text)}), flush=True)
-        return {"submitted": sent, "remaining": sum(latest(work, i)[1] is None or
-                 latest(work, i)[1]["status"] != "success" for i in manifest["chunks"])}
+        unsubmitted, deferred = [], []
+        for item in manifest["chunks"]:
+            count, outcome = latest(work, item)
+            if not count:
+                unsubmitted.append(item["id"])
+            elif outcome["status"] != "success":
+                deferred.append({"id": item["id"], "status": outcome["status"], "attempts": count})
+        result = {"submitted": sent, "retried": retried, "retry_budget": retry_budget,
+                  "remaining": len(unsubmitted) + len(deferred), "remaining_unsubmitted": len(unsubmitted),
+                  "deferred": deferred}
+        if requested is not None:
+            result["selected_chunks"] = [item["id"] for item in manifest["chunks"] if item["id"] in selected]
+        return result
 
 
 def export(args):
@@ -694,6 +787,12 @@ def context(args):
 
 def checked_context(path):
     check(path.is_absolute() and path.stat().st_size <= 2_000_000, "Absolute context JSON of at most 2MB required")
+    state = _READ_VALIDATION.get()
+    if state is not None:
+        sha(path)  # Track the context itself as well as its pinned dependencies.
+    if state is not None and path in state["contexts"]:
+        check(not path.is_symlink(), "Symlink artifact rejected")
+        return state["contexts"][path]
     data = read(path)
     check(data["schema"] == 1 and data["kind"] == "video_review_context", "Unsupported context")
     frame_index = Path(data["frames_index"])
@@ -705,6 +804,8 @@ def checked_context(path):
         check(transcript_path.is_absolute() and sha(transcript_path) == transcript["sha256"], "Transcript changed since context creation")
     actual = build_context(directory(frame_index.parent), transcript_path, *data["range_seconds"])
     check(data == actual, "Context contents differ from pinned source evidence")
+    if state is not None:
+        state["contexts"][path] = data
     return data
 
 
@@ -714,7 +815,7 @@ def string_list(value, name):
 
 
 def validate_notes(data, packet, packet_hash):
-    check(set(data) == {"schema", "context_sha256", "steps"} and data["schema"] == 1
+    check(set(data) == {"schema", "context_sha256", "steps"} and type(data["schema"]) is int and data["schema"] in (1, 2)
           and data["context_sha256"] == packet_hash, "Notes must bind the exact context hash")
     check(isinstance(data["steps"], list) and 1 <= len(data["steps"]) <= 48, "Use 1..48 notes steps")
     frames = {row["id"]: row for row in packet["frames"]}
@@ -723,7 +824,7 @@ def validate_notes(data, packet, packet_hash):
     required = {"id", "kind", "range_seconds", "intent", "speech_ids", "visual", "inferences", "conflicts",
                 "unknowns", "evidence_state", "reconstruction_readiness"}
     for step in data["steps"]:
-        check(set(step) == required, "Unsupported/missing step fields")
+        check(set(step) == (required | {"detail"} if data["schema"] == 2 else required), "Unsupported/missing step fields")
         check(isinstance(step["id"], str) and re.fullmatch(r"[a-z][a-z0-9-]{0,63}", step["id"])
               and step["id"] not in identities, "Step IDs must be unique")
         identities.add(step["id"])
@@ -769,9 +870,152 @@ def validate_notes(data, packet, packet_hash):
         if ready == "ready_for_runtime_check":
             check(state == "visual_checked" and not step["conflicts"] and not step["unknowns"]
                   and step["kind"] not in ("inference", "ui_navigation"), f"{step['id']}: Not ready: unresolved evidence or non-build step. Keep needs_more_evidence and revisit the tutorial; do not delete unknowns to obtain ready.")
+        if data["schema"] == 2:
+            validate_detail(step, frames)
     return {"structural_validation": "passed", "steps": len(data["steps"]),
             "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed",
             "needs_more_evidence": [s["id"] for s in data["steps"] if s["reconstruction_readiness"] == "needs_more_evidence"]}
+
+
+def empty_detail():
+    return {"subject": {"id": None, "name": None, "type": None},
+            "context": {"domain": None, "network_path": None, "panel_target": None,
+                        "panel_tab": None, "panel_locked": None, "displayed_output": None},
+            "facts": [], "revisions": [], "gaps": [], "references": []}
+
+
+def validate_detail(step, frames):
+    """Validate authored claims, never infer identity, final values or semantic truth."""
+    d = step["detail"]
+    template = empty_detail()
+    check(isinstance(d, dict) and set(d) == set(template), f"{step['id']}.detail: invalid fields")
+    for group in ("subject", "context"):
+        check(isinstance(d[group], dict) and set(d[group]) == set(template[group]), f"detail.{group}: invalid fields")
+        for key, value in d[group].items():
+            if key == "panel_locked":
+                check(value is None or type(value) is bool, "panel_locked must be boolean or null")
+            elif value is not None:
+                index_text(value, f"{group}.{key}")
+    if d["subject"]["id"] is not None:
+        check(re.fullmatch(r"[a-z][a-z0-9-]{0,63}", d["subject"]["id"]), "Invalid video-local subject ID")
+    visual = {v["frame_id"] for v in step["visual"]}
+    speech = set(step["speech_ids"])
+    def refs(values, allowed, label, required=False):
+        string_list(values, label)
+        check(len(values) == len(set(values)) and set(values) <= allowed and (values or not required),
+              f"{step['id']}.{label}: use unique references from this step; available={sorted(allowed)}")
+    for key in ("facts", "revisions", "gaps", "references"):
+        check(isinstance(d[key], list) and len(d[key]) <= 32, f"detail.{key}: use at most 32 items")
+    fields = set()
+    for f in d["facts"]:
+        check(isinstance(f, dict) and set(f) == {"field", "value", "basis", "frame_ids", "speech_ids", "state", "reason"}, "Invalid fact fields")
+        index_text(f["field"], "fact.field")
+        check(f["field"] not in fields, "Duplicate fact field in one observation; use separate observations for conflicts")
+        fields.add(f["field"])
+        index_text(f["value"], "fact.value (verbatim text, not executable code)")
+        index_text(f["reason"], "fact.reason")
+        check(f["basis"] in ("visual", "speech", "inference"), "Invalid fact basis")
+        check(f["state"] in ("observed", "trial", "final_claim", "unknown"), "Invalid fact state")
+        refs(f["frame_ids"], visual, "fact.frame_ids", f["basis"] == "visual")
+        refs(f["speech_ids"], speech, "fact.speech_ids", f["basis"] == "speech")
+        check(f["basis"] != "inference" or bool(step["inferences"]), "Inferred fact requires explicit inference")
+        if f["state"] == "unknown":
+            check(step["unknowns"] and step["reconstruction_readiness"] != "ready_for_runtime_check",
+                  "Unknown fact must remain an unresolved step")
+        if step["reconstruction_readiness"] == "ready_for_runtime_check":
+            check(f["basis"] == "visual", "Nonvisual structured facts cannot be promoted to runtime-ready by unrelated frame observations")
+        if f["state"] == "final_claim":
+            check(f["basis"] == "visual" and step["evidence_state"] == "visual_checked"
+                  and not step["unknowns"] and not step["conflicts"] and not d["gaps"],
+                  "Final claim requires visual evidence without unresolved gaps; not a script certification")
+    for r in d["revisions"]:
+        check(isinstance(r, dict) and set(r) == {"notes_sha256", "step_id", "fields", "kind", "reason"}, "Invalid revision link")
+        check(isinstance(r["notes_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", r["notes_sha256"]), "Revision needs pinned notes hash")
+        index_text(r["step_id"], "revision.step_id")
+        index_text(r["reason"], "revision.reason")
+        refs(r["fields"], fields, "revision.fields", True)
+        check(r["kind"] in ("changes", "reverts", "corrects", "conflicts_with"), "Invalid revision kind")
+        check(visual or speech, "Revision requires evidence")
+    for g in d["gaps"]:
+        check(isinstance(g, dict) and set(g) == {"field", "status", "checked_frame_ids", "question"}, "Invalid gap fields")
+        index_text(g["field"], "gap.field")
+        index_text(g["question"], "gap.question")
+        check(g["status"] in ("not_reviewed", "unclear", "not_shown_in_reviewed_frames", "version_difference"), "Invalid gap status")
+        refs(g["checked_frame_ids"], visual, "gap.checked_frame_ids", g["status"] != "not_reviewed")
+        check(step["unknowns"] and step["reconstruction_readiness"] != "ready_for_runtime_check", "Structured gaps must remain in unknowns and block readiness")
+    for r in d["references"]:
+        check(isinstance(r, dict) and set(r) == {"role", "frame_ids", "criteria", "conditions", "limitations", "stage", "reason"}, "Invalid comparison reference")
+        check(r["role"] in ("overall", "detail", "material", "intermediate", "motion"), "Invalid reference role")
+        check(r["stage"] in ("final_claim", "intermediate", "preview", "unknown"), "Invalid reference stage")
+        refs(r["frame_ids"], visual, "reference.frame_ids", True)
+        for key in ("criteria", "conditions", "limitations"):
+            string_list(r[key], "reference." + key)
+            check(r[key], "Reference criteria, conditions and limitations must be explicit (including unknown conditions)")
+        index_text(r["reason"], "reference.reason")
+        if r["role"] == "motion":
+            check(len({frames[i]["actual_seconds"] for i in r["frame_ids"]}) >= 2, "Motion reference requires distinct times")
+        if r["stage"] == "final_claim":
+            check(step["evidence_state"] == "visual_checked" and not step["conflicts"], "Conflicting reference cannot claim final state")
+
+
+def notes_init(args):
+    path = Path(args.context)
+    packet = checked_context(path)
+    if getattr(args, "notes", None):
+        original = Path(args.notes)
+        check(original.is_absolute() and original.stat().st_size <= 2_000_000, "Absolute notes of at most 2MB required")
+        data = read(original)
+        validate_notes(data, packet, sha(path))
+        check(data["schema"] == 1, "Migration requires schema-1 notes; preserve the original")
+        data["schema"] = 2
+        for step in data["steps"]:
+            step["detail"] = empty_detail()
+    else:
+        data = {"schema": 2, "context_sha256": sha(path), "steps": [{
+            "id": "observation-01", "kind": "observed_state", "range_seconds": packet["range_seconds"],
+            "intent": "Record the answer to the current review question", "speech_ids": [], "visual": [],
+            "inferences": [], "conflicts": [], "unknowns": ["Evidence not yet reviewed"],
+            "evidence_state": "unknown", "reconstruction_readiness": "needs_more_evidence", "detail": empty_detail()}]}
+    validate_notes(data, packet, sha(path))
+    output = directory(args.output, new=True)
+    save(output / "notes.json", data)
+    save(output / "evidence-options.json", {"context": file_reference(path), "frames": packet["frames"],
+                                           "speech": packet["speech"], "semantic_inspection": "not_performed"})
+    return {"notes": str(output / "notes.json"), "status": "draft", "identity_and_final_state": "not_inferred"}
+
+
+def review_packet(args):
+    """Render explicitly selected context frames/regions; originals remain evidence."""
+    path = Path(args.context)
+    packet = checked_context(path)
+    lookup = {f["id"]: f for f in packet["frames"]}
+    ids = args.frame_ids
+    check(isinstance(ids, list) and 1 <= len(ids) <= 12 and len(set(ids)) == len(ids)
+          and set(ids) <= set(lookup), f"Select 1..12 unique frames; available={list(lookup)}")
+    regions = parse_regions(args.region)
+    check(len(regions) == 1, "Use one explicit region per review packet; reassess after layout changes")
+    index_text(args.question, "review question")
+    output = directory(args.output, new=True)
+    items = []
+    for i, identity in enumerate(ids):
+        frame = lookup[identity]
+        width, height = png_size(Path(frame["path"]))
+        region = regions[0]
+        x, y, right, bottom = region_box(region, width, height)
+        w, h = right - x, bottom - y
+        target = output / f"detail-{i:02d}.png"
+        run([args.ffmpeg, "-v", "error", "-i", frame["path"], "-vf", f"crop={w}:{h}:{x}:{y}",
+             "-frames:v", "1", str(target)])
+        items.append({"frame": frame, "region": region, "crop": file_reference(target)})
+    save(output / "review.json", {"context": file_reference(path), "question": args.question,
+                                  "items": items, "semantic_inspection": "not_performed"})
+    with (output / "index.md").open("x", encoding="utf-8") as stream:
+        stream.write("# Focused review\n\n" + args.question + "\n\nCrops are navigation, not new observations.\n\n")
+        for item in items:
+            f = item["frame"]
+            stream.write(f"## {f['actual_seconds']}s\n\n[Original](<{Path(f['path']).as_posix()}>)\n\n"
+                         f"![Region](<{Path(item['crop']['path']).as_posix()}>)\n\n")
+    return {"output": str(output), "frames": len(items), "semantic_inspection": "not_performed"}
 
 
 def check_notes(args):
@@ -800,6 +1044,9 @@ def check_notes(args):
             for name in ("inferences", "conflicts", "unknowns"):
                 if step[name]:
                     stream.write(f"\n{name}：\n\n" + "\n".join("- " + text for text in step[name]) + "\n")
+            if "detail" in step:
+                stream.write("\nStructured observations (author assertions):\n\n```json\n" +
+                             json.dumps(step["detail"], ensure_ascii=False, indent=2) + "\n```\n")
             stream.write("\n")
     return {**validation, "output": str(output)}
 
@@ -936,12 +1183,248 @@ def checked_index(path):
         visited.add(identity)
     for identity in lookup:
         visit(identity)
+    validate_revision_links(evidence)
     return data, chunks, evidence
+
+
+def evidence_rows(evidence):
+    rows = {}
+    for module, items in evidence.items():
+        for item in items:
+            key = (item["notes"]["sha256"], item["step"]["id"])
+            if key not in rows:
+                rows[key] = {**item, "module_ids": []}
+            if module not in rows[key]["module_ids"]:
+                rows[key]["module_ids"].append(module)
+    return rows
+
+
+def validate_revision_links(evidence):
+    rows = evidence_rows(evidence)
+    subjects = {}
+    for key, item in rows.items():
+        step = item["step"]
+        d = step.get("detail", empty_detail())
+        identity = d["subject"]["id"]
+        if identity is not None:
+            previous = subjects.setdefault(identity, {})
+            for field in ("domain", "network_path"):
+                value = d["context"][field]
+                if value is not None:
+                    check(field not in previous or previous[field] == value,
+                          "Subject ID reused across contexts; assign distinct IDs or preserve identity as unknown")
+                    previous[field] = value
+        for link in d["revisions"]:
+            target = (link["notes_sha256"], link["step_id"])
+            check(target in rows and target != key, "Revision target must be included in module evidence with its exact notes hash")
+            old = rows[target]["step"]
+            prior = old.get("detail", empty_detail())
+            check(d["subject"]["id"] is not None and d["subject"]["id"] == prior["subject"]["id"]
+                  and d["context"]["domain"] == prior["context"]["domain"]
+                  and d["context"]["network_path"] == prior["context"]["network_path"],
+                  "Revision cannot silently merge different subjects/contexts")
+            check(old["range_seconds"][1] <= step["range_seconds"][0], "Revision must follow its target; overlapping ranges need narrower evidence")
+            check(set(link["fields"]) <= {f["field"] for f in prior["facts"]}, "Revision field missing in target")
+    # Strict increasing source ranges above also prohibit cycles. Never erase old claims.
+
+
+def final_claims(rows, field=None):
+    """Conservative, query-scoped author-claim summaries; never infer from latest timestamp."""
+    groups = {}
+    for item in rows:
+        s = item["step"]
+        d = s.get("detail", empty_detail())
+        for fact in d["facts"]:
+            if field and fact["field"] != field:
+                continue
+            key = (d["subject"]["id"], d["context"]["domain"], d["context"]["network_path"], fact["field"])
+            groups.setdefault(key, []).append((item, fact))
+    summaries = []
+    for (subject, domain, network, name), entries in groups.items():
+        replaced = set()
+        for item, _ in entries:
+            for link in item["step"]["detail"]["revisions"]:
+                if name in link["fields"] and link["kind"] != "conflicts_with":
+                    replaced.add((link["notes_sha256"], link["step_id"]))
+        active = [(i, f) for i, f in entries if (i["notes"]["sha256"], i["step"]["id"]) not in replaced]
+        related = [i["step"] for i in rows if "detail" in i["step"]
+                   and i["step"]["detail"]["subject"]["id"] == subject
+                   and i["step"]["detail"]["context"]["domain"] == domain
+                   and i["step"]["detail"]["context"]["network_path"] == network]
+        uncertain = any(s["conflicts"] or s["unknowns"] or s["detail"]["gaps"]
+                        or any(r["kind"] == "conflicts_with" for r in s["detail"]["revisions"]) for s in related)
+        claimed = subject is not None and not uncertain and len(active) == 1 and active[0][1]["state"] == "final_claim"
+        summaries.append({"subject": subject, "domain": domain, "network": network, "field": name,
+                          "status": "author_final_claim" if claimed else "unknown",
+                          "value": active[0][1]["value"] if claimed else None,
+                          "candidates": [{"notes_sha256": i["notes"]["sha256"], "step_id": i["step"]["id"],
+                                          "value": f["value"], "state": f["state"]} for i, f in active],
+                          "scope": "matching indexed observations only; not completeness or semantic certification"})
+    return summaries
+
+
+def comparison_references(rows):
+    """Project recorded references without selecting a winner or inventing finality."""
+    result = []
+    for item in rows:
+        frames = {f["id"]: f for f in item["frames"]}
+        for ref in item["step"].get("detail", {}).get("references", []):
+            result.append({**ref, "notes": item["notes"], "step_id": item["step"]["id"],
+                           "module_ids": item["module_ids"],
+                           "frames": [frames[key] for key in ref["frame_ids"]]})
+    return result
+
+
+def reference_summary(references):
+    final = [r for r in references if r["stage"] == "final_claim" and r["role"] != "intermediate"]
+    return {"status": "final_candidates_present" if final else "no_final_reference",
+            "reference_count": len(references), "final_candidate_count": len(final),
+            "final_candidate_roles": sorted({r["role"] for r in final}),
+            "selection": "not_performed",
+            "scope": "indexed author claims only; not target coverage, visual similarity or reconstruction readiness",
+            "next_action": "Open candidate originals; select the intended result and check overall/detail/material/motion coverage as applicable."
+                           if final else "Locate the intended finished result in the source, including opening showcases and later corrections; do not promote the latest frame or a preview automatically."}
+
+
+@validated_read
+def query_notes(args):
+    path = Path(args.index)
+    revision = sha(path)
+    check(getattr(args, "index_sha256", None) in (None, revision), "Index changed between pages")
+    data, _, evidence = checked_index(path)
+    module = getattr(args, "module", None)
+    check(module is None or module in evidence, "Unknown module")
+    start, end = getattr(args, "start", None), getattr(args, "end", None)
+    check((start is None) == (end is None), "Use start and end together")
+    if start is not None:
+        index_ranges([[start, end]], data["duration_seconds"])
+    rows = list(evidence_rows(evidence).values())
+    selected = []
+    for item in rows:
+        step = item["step"]
+        d = step.get("detail", empty_detail())
+        if module and module not in item["module_ids"]:
+            continue
+        if any(getattr(args, option, None) is not None and getattr(args, option) != value for option, value in (
+                ("subject", d["subject"]["id"]), ("network", d["context"]["network_path"]), ("domain", d["context"]["domain"]))):
+            continue
+        if start is not None and not (step["range_seconds"][0] < end and step["range_seconds"][1] > start):
+            continue
+        field = getattr(args, "field", None)
+        if field and field not in {f["field"] for f in d["facts"]} | {g["field"] for g in d["gaps"]}:
+            continue
+        selected.append(item)
+    selected.sort(key=lambda x: (x["step"]["range_seconds"][0], x["notes"]["sha256"], x["step"]["id"]))
+    view = getattr(args, "view", "history")
+    check(view in ("history", "issues", "references", "final"), "Invalid notes view")
+    # Final view deliberately includes ALL matching observations, not only final claims.
+    # A later trial/conflict must not disappear behind a previously asserted final value.
+    if view == "issues":
+        selected = [i for i in selected if i["step"]["unknowns"] or i["step"]["conflicts"] or i["step"].get("detail", {}).get("gaps")]
+    elif view == "references":
+        selected = [i for i in selected if i["step"].get("detail", {}).get("references")]
+    offset, limit = getattr(args, "offset", 0), getattr(args, "limit", 8)
+    check(type(offset) is int and 0 <= offset <= len(selected) and type(limit) is int and 1 <= limit <= 100, "Invalid notes page")
+    stop = min(len(selected), offset + limit)
+    scoped = [m for m in data["modules"] if module is None or m["id"] == module]
+    result = {"index_sha256": revision, "source_sha256": data["source"]["sha256"], "view": view,
+              "items": selected[offset:stop], "total_items": len(selected), "next_offset": stop if stop < len(selected) else None,
+              "module_issues": [{"id": m["id"], "questions": m["questions"], "unknowns": m["unknowns"]} for m in scoped],
+              "legacy_observations_without_context": sum("detail" not in i["step"] for i in rows),
+              "final_state": "not_computed_review_full_history_and_revision_links",
+              "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed"}
+    if view == "final":
+        result["field_claims"] = final_claims(selected, getattr(args, "field", None))
+    if view == "references":
+        # Summary covers the full filtered set, not just this page.
+        result["reference_summary"] = reference_summary(comparison_references(selected))
+    check(sha(path) == revision, "Index changed during read")
+    return bounded_result(result, getattr(args, "max_chars", 24000))
+
+
+@validated_read
+def export_brief(args):
+    """Derived navigation only: no new writable source of facts or completion certificate."""
+    path = Path(args.index)
+    revision = sha(path)
+    data, _, evidence = checked_index(path)
+    result = {"index": file_reference(path), "summary": index_summary(data, evidence),
+              "modules": data["modules"], "observations": list(evidence_rows(evidence).values()),
+              "final_state": "not_computed", "runtime_verification": "not_performed"}
+    result["comparison_references"] = comparison_references(result["observations"])
+    result["reference_summary"] = reference_summary(result["comparison_references"])
+    if getattr(args, "require_final_reference", False):
+        check(result["reference_summary"]["final_candidate_count"] > 0,
+              "No indexed final reference candidate. Review source result images and record their stage/reason; preview/intermediate frames are not a finished target. No export written.")
+    check(sha(path) == revision, "Index changed during export")
+    output = directory(args.output, new=True)
+    save(output / "brief.json", result)
+    lines = ["# Tutorial evidence handoff", "", "Derived navigation; not semantic certification or permission to build.",
+             "Do not edit this report as a second source of truth. Re-export after notes/index changes.", "",
+             f"Source index: [{path.name}](<{path.as_posix()}>)", "", "## Target reference candidates", "",
+             result["reference_summary"]["status"], "", result["reference_summary"]["next_action"], "",
+             "Candidate presence does not certify coverage or similarity. Missing method settings may be inferred and tested for effect reconstruction; keep them separate from observed source facts.", ""]
+    for ref in result["comparison_references"]:
+        lines += [f"- {ref['role']} / {ref['stage']}: {ref['reason']}",
+                  f"  - Source: [{ref['step_id']}](<{Path(ref['notes']['path']).as_posix()}>) / modules: {', '.join(ref['module_ids'])}",
+                  "  - Criteria: " + "; ".join(ref["criteria"]),
+                  "  - Conditions: " + "; ".join(ref["conditions"]),
+                  "  - Limitations: " + "; ".join(ref["limitations"])]
+        for f in ref["frames"]:
+            lines += [f"  - [{f['actual_seconds']}s](<{Path(f['path']).as_posix()}>)"]
+    lines += ["", "## Modules", ""]
+    for m in data["modules"]:
+        lines += [f"### {m['id']}: {m['title']}", "", m["purpose"], "",
+                  "Dependencies: " + ", ".join(m["depends_on"]), "",
+                  "Inputs: " + "; ".join(m["inputs"]), "", "Outputs: " + "; ".join(m["outputs"]), ""]
+        for issue in m["questions"] + m["unknowns"]:
+            lines += ["- Open: " + issue]
+        lines += [""]
+        for item in evidence[m["id"]]:
+            s = item["step"]
+            lines += [f"- [{s['id']}](<{Path(item['notes']['path']).as_posix()}>) {s['range_seconds']}: {s['intent']} ({s['evidence_state']})"]
+            for issue in s["unknowns"] + s["conflicts"]:
+                lines += ["  - Open: " + issue]
+        lines += [""]
+    with (output / "brief.md").open("x", encoding="utf-8") as stream:
+        stream.write("\n".join(lines))
+    return {"output": str(output), "index_sha256": revision, "reference_summary": result["reference_summary"],
+            "semantic_validation": "agent_assertions_not_independently_verified"}
+
+
+@validated_read
+def index_link(args):
+    """Attach checked notes in a NEW index revision, retaining all earlier references."""
+    path = Path(args.index)
+    data, _, _ = checked_index(path)
+    context_path, notes_path = Path(args.context), Path(args.notes)
+    packet = checked_context(context_path)
+    check(notes_path.is_absolute() and notes_path.stat().st_size <= 2_000_000, "Absolute notes of at most 2MB required")
+    notes = read(notes_path)
+    validate_notes(notes, packet, sha(context_path))
+    check(packet["source_sha256"] == data["source"]["sha256"] and packet["transcript"] == data["transcript"], "Evidence source/transcript mismatch")
+    modules = [m for m in data["modules"] if m["id"] == args.module]
+    check(len(modules) == 1, "Unknown module")
+    ids = args.step_ids
+    string_list(ids, "step_ids")
+    check(ids and len(ids) == len(set(ids)), "Select unique evidence steps")
+    lookup = {s["id"]: s for s in notes["steps"]}
+    for identity in ids:
+        check(identity in lookup and any(a <= lookup[identity]["range_seconds"][0] < lookup[identity]["range_seconds"][1] <= b
+                                        for a, b in modules[0]["ranges"]), "Selected step missing or outside module ranges")
+    modules[0]["evidence"].append({"context": file_reference(context_path), "notes": file_reference(notes_path), "step_ids": ids})
+    output = directory(args.output, new=True)
+    target = output / "index.json"
+    save(target, data)
+    # Invalid links leave a diagnostic candidate file, never a success receipt or a replaced source.
+    checked_index(target)
+    return {"index": str(target), "index_sha256": sha(target), "structural_validation": "passed"}
 
 
 def index_summary(data, evidence):
     chapter_ranges = [{"start": c["ranges"][0][0], "end": c["ranges"][0][1]} for c in data["chapters"]]
     return {"source_sha256": data["source"]["sha256"], "chapters": data["chapters"],
+            "reference_summary": reference_summary(comparison_references(evidence_rows(evidence).values())),
             "chapter_gaps": speech_gaps(chapter_ranges, 0, data["duration_seconds"]),
             "modules": [{"id": m["id"], "title": m["title"], "ranges": m["ranges"],
                          "depends_on": m["depends_on"], "questions": len(m["questions"]),
@@ -959,11 +1442,13 @@ def bounded_result(value, budget):
     return value
 
 
+@validated_read
 def check_index(args):
     data, _, evidence = checked_index(Path(args.index))
     return index_summary(data, evidence)
 
 
+@validated_read
 def read_index(args):
     path = Path(args.index)
     revision = sha(path)
@@ -1001,6 +1486,7 @@ def read_index(args):
     return bounded_result(result, args.max_chars)
 
 
+@validated_read
 def read_transcript(args):
     data, chunks = index_sources(Path(args.index))
     check(type(args.offset) is int and 0 <= args.offset <= len(chunks), "Invalid transcript offset")
@@ -1014,6 +1500,9 @@ def read_transcript(args):
 
 
 def main():
+    # CLI JSON is consumed by agents and shell pipelines; Windows locale is not a wire encoding.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("prepare")
@@ -1031,6 +1520,9 @@ def main():
     t.add_argument("--allow-upload", action="store_true")
     t.add_argument("--retry-failed", action="store_true")
     t.add_argument("--max-chunks", type=int, default=4)
+    t.add_argument("--max-retries", type=int,
+                   help="Retry requests authorized for this invocation, default 1 with --retry-failed, otherwise 0")
+    t.add_argument("--chunks", nargs="+", help="Submit only these manifest chunk IDs; successes are always skipped")
     e = commands.add_parser("export")
     e.add_argument("--work", required=True)
     e.add_argument("--output", required=True)
@@ -1074,6 +1566,36 @@ def main():
     notes.add_argument("--context", required=True)
     notes.add_argument("--notes", required=True)
     notes.add_argument("--output", required=True)
+    draft = commands.add_parser("notes-init")
+    draft.add_argument("--context", required=True)
+    draft.add_argument("--notes", help="Explicitly migrate schema-1 notes into a new output directory")
+    draft.add_argument("--output", required=True)
+    focus = commands.add_parser("review-packet")
+    focus.add_argument("--context", required=True)
+    focus.add_argument("--frame-ids", nargs="+", required=True)
+    focus.add_argument("--region", action="append", required=True)
+    focus.add_argument("--question", required=True)
+    focus.add_argument("--output", required=True)
+    focus.add_argument("--ffmpeg", default="ffmpeg")
+    brief = commands.add_parser("export-brief")
+    brief.add_argument("--index", required=True)
+    brief.add_argument("--output", required=True)
+    brief.add_argument("--require-final-reference", action="store_true",
+                       help="Refuse export without an indexed final-result reference candidate; does not certify semantic coverage")
+    link = commands.add_parser("index-link")
+    for flag in ("index", "module", "context", "notes", "output"):
+        link.add_argument("--" + flag, required=True)
+    link.add_argument("--step-ids", nargs="+", required=True)
+    query = commands.add_parser("query-notes")
+    query.add_argument("--index", required=True)
+    for flag in ("module", "subject", "network", "domain", "field", "index-sha256"):
+        query.add_argument("--" + flag)
+    query.add_argument("--start", type=float)
+    query.add_argument("--end", type=float)
+    query.add_argument("--view", choices=("history", "issues", "references", "final"), default="history")
+    query.add_argument("--offset", type=int, default=0)
+    query.add_argument("--limit", type=int, default=8)
+    query.add_argument("--max-chars", type=int, default=24000)
     init = commands.add_parser("index-init")
     init.add_argument("--frames-dir", required=True)
     init.add_argument("--transcript")
@@ -1100,6 +1622,9 @@ def main():
         else:
             result = {"prepare": prepare, "transcribe": transcribe, "export": export, "frames": frames,
                       "changes": changes, "context": context, "check-notes": check_notes,
+                      "notes-init": notes_init, "query-notes": query_notes, "export-brief": export_brief,
+                      "review-packet": review_packet,
+                      "index-link": index_link,
                       "index-init": index_init, "check-index": check_index, "read-index": read_index,
                       "read-transcript": read_transcript}[args.command](args)
         print(json.dumps(result, ensure_ascii=False))

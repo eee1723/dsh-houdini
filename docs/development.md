@@ -73,6 +73,32 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 [兼容清单](../tools/tests/dsh-runtime-compat.test.py)可在Python 3.11+运行，无网络/安装/用户目录写入；
 [管理器](../tools/tests/dsh-manager-update.test.py)、[启动预检](../tools/tests/dsh-launcher-preflight.test.py)及[profile同步](../tools/tests/dsh-profile-sync.test.py)
 用下述隔离H21/H22 hython环境分别执行。各测试使用临时fixture；这组检查不代替真实Qt页面、干净机器安装或已加载身份验收。
+[前端生命周期](../tools/tests/dsh-frontend-lifetime.test.py)在Windows使用自有Node父/子/孙进程验证source/managed共用Job、
+启动放行闸、外部监听者隔离及launcher reload；不启动模型或连接用户live，包含在部署回归的Houdini组。
+[强制修复](../tools/tests/dsh-force-repair.test.py)使用隔离Node监听器验证安装/主入口识别、端口变化拒绝、
+保留进程句柄终止、端口释放和Bridge活动前后检查；不以端口或标记文件授予自动进程所有权。
+多执行端候选用普通Python运行 `tools/tests/dsh-multi-executor.test.py --hython H21完整路径 --hython H22完整路径`。
+同时启动两个隔离hython，使用自建文件作写锁身份夹具但不加载HIP；验证真实HTTP目标绑定、同HIP/硬链接互斥、
+仅结束一个自有进程时另一个可用、正常退出与崩溃释放。共享DSH选择/UI、真实保存与恢复仍需独立验收。
+加 `--host-node Node完整路径` 时，启动测试Host调用两端实际Bridge，使用夹具会话与落盘sink，不启动收费模型。
+`executor-routing.test.mjs`默认使用两个HTTP夹具验证共享工具路由；显式设置DSH_TEST_GATEWAY_ROOT为目标DSH的
+@deepseek-ai包目录时，另用其实际Typert Registry/Gateway验证Remote列表/选择分发。它不认证HTTP鉴权或浏览器UI。
+同一测试还用真实Cordis fiber加载一个Host服务和两个preset消费者：卸载一个消费者不移除服务、Host卸载
+阻止旧Bridge继续发送、重载后消费者重新解析服务、重复Host挂载与配置不一致均拒绝。
+完整共享Host验收为显式、无模型的隔离测试：先运行tools/tests/prepare-shared-host-fixture.mjs，参数为精确DSH bin.js、
+尚不存在的临时DSH_HOME、候选插件根；再运行tools/tests/dsh-shared-host-e2e.test.py，参数依次为Node、DSH bin.js、
+该临时home的父目录、Playwright模块完整路径、目标hython。准备器生成fixture标记，拒绝直接使用用户home。
+浏览器脚本通过原生认证页面、跳过配置密钥、创建空任务、确认执行端并刷新绑定，不发送模型请求；
+截图保留fixture目录。测试Host用自有Job回收，不接管现有端口。CLI/HTTP、实际DSH持久化、浏览器和Qt分别取证。
+双执行端回归还验证共享Repair只改变一个Bridge代际、另一端继续响应，并保留同进程节点ownership。
+[执行端绑定](../tools/tests/executor-binding.test.mjs)验证错目标零派发、握手后目标更换、job/媒体边界，
+以及真实DSH Session记录往返、首次调用等待flush、并发屏障、失败/无后端/取消不发送和历史不重绑。
+模拟持久化监听器不认证实际DSH文件后端或用户重启路径；这些需新运行态另验。
+绑定回归必须覆盖真实Cordis依赖注入和未完成的多工具交换：pre-step接受绑定、工具期零消息插入、结果完整的旧错误
+交换按原生摘要投影恢复、原记录不变与重复修复幂等；缺结果/其他用户介入拒绝修复，flush失败不能被下一步跳过。
+真实agent loop回归用 `python tools/tests/dsh-binding-loop.test.py Node完整路径 DSH-bin.js完整路径`，加`--legacy`
+重现旧版插入位置。使用全新DSH_HOME、本地确定性adapter和严格假Bridge，不读取用户账号、不向外部模型发请求；
+验真实pre-step/工具调度/下一次模型输入顺序，查询不得重复执行。fixture日志保留临时目录，不进入包。
 
 [表达式分层诊断](../tools/tests/dsh-expression-diagnostics.test.py)在H21/H22验证合法0、原生写入失败、
 错误函数/语法/Python求值、缺失引用warning、无关cook错误和参数/批次动画恢复；求值成功
@@ -84,11 +110,30 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 结果过期、runtime变更、jobs提交回包丢失、回执索引、队列取消和不重复修改。查回jobId只证明提交，
 迟到提交回执不复活已结束job；迟到running/unknown或Bridge结果过期不抹除Host已收到的完成回执。
 AbortSignal取消后的查回验证HTTP客户端，不能代替实际Host停止按钮、丢弃结果与新session用户路径验收。
+[回执注册表](../tools/tests/dsh-request-registry.test.py)不依赖HOM，覆盖小窗口连续请求、并发一次入场、旧票/owner/runtime冲突、
+正文预算/过期、活动job保护与早完成顺序、running不可降级及索引边界；已纳入部署回归的纯Python组。
 
+预览后端变更另跑[版本后端回归](../tools/tests/dsh-preview-backend.test.py)，检查H21原路径与H22 Flipbook参数，
+再在隔离GUI验证实际明暗、Cd、重复渲染及代理恢复；stub渲染不证明图片质量。
+公开UI帮助使用[帮助示例回归](../tools/tests/dsh-ui-public-help.test.py)：直接从运行时verb_help提取示例，
+在普通节点和HDA上预检/应用并检查值；错误tuple默认值保持零新增参数。无需读取插件源码。
+参数回读另验[Ramp回读回归](../tools/tests/dsh-ramp-readback.test.py)：Bridge代码内直接json.dumps，
+覆盖float/color Ramp及原生Color SOP，并确认只读参数状态不变。
+Host反复写文件/运行命令的观察用[Host工作证据回归](../tools/tests/trace-host-work.test.mjs)，
+确认去重后步骤、跨turn/Houdini调用边界以及打印FAIL不被误当工具失败。重复只是候选，
+不能推断语义停滞、执行成功或自动取消权限；真实进展控制尚需单独验证。
+package发现的[投影回归](../tools/tests/dsh-package-info.test.py)覆盖只读、缺GUI、禁用状态、资源截断与环境值不外露；
+它使用原生API替身，不证明GUI加载/重载稳定性。真实package加载仍需独立GUI夹具。
+真实加载用[package GUI回归](../tools/tests/dsh-package-gui.test.py)，普通Python传`--houdini`目标GUI可执行文件；
+在隔离包/偏好目录加载启用与禁用夹具，检查资源、重复查询和场景状态，并要求正常退出。
+该测试不修改当前live包；not_found只表示未出现在当前原生清单，不能断言配置文件不存在。
 npm test发现并运行tools/tests下全部Node测试。涉及HOM时在隔离hython、隔离偏好目录中运行
 tools/tests/*.test.py，目标版本覆盖H21/H22；不要连接用户live会话或load/save源HIP。
 至少覆盖Raw Gate、node ownership、caught-failure、tab-create-failure、object-parenting、
 scene/network/render contract；节点知识、构图、控制变更再跑相应回归。
+公共输出/封装变更另跑[输出发布回归](../tools/tests/dsh-output-publication.test.py)及
+[HDA公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)：覆盖空Output、内部显示切换、多端口/身份拒绝、
+嵌套空Pack、新实例和消费者。内容非空不证明必需成员或关系；行为续跑与艺术质量仍须新任务验证。
 
 ```powershell
 $env:HOUDINI_PATH='&'
@@ -115,6 +160,7 @@ GUI不继承offscreen或禁用沙箱设置。该隔离不限制可信测试脚�
 事件乱序/replay、runtime更换、未返回修改和job状态不复活旧证据。两者不替代GUI外部修改观察。
 结果分层用[result-details](../tools/tests/result-details.test.mjs)验证canonical可读回、分页/防篡改、
 保存失败不触发修改重试，以及默认文本与完整审计各自的统计口径。
+同次HIP目录和队列时间片由execution-observation、bridge-transport覆盖；Host展示回归检查工作区提醒零额外HOM及agent隔离。
 任务来源用[task-sources](../tools/tests/task-sources.test.mjs)验证用户/注入来源隔离、澄清失败与replay、
 原文分页回读、session隔离及超预算；[scene-context](../tools/tests/scene-context.test.mjs)覆盖首轮claim、
 按需指代、普通查询零追加、独立提醒去重/解除、surface替换恢复、上下文抑制与模板转义，
@@ -220,6 +266,23 @@ g = tab_create('/obj', 'geo', name='asset')
 tab_create(g, 'box', name='OUT')
 ```
 
+manifest接受UTF-8（可带BOM）。`expect_geometry`可组合`points/primitives`、`bounds_size:[x,y,z]`、
+`point_cd:[r,g,b]`及`tolerance`（默认1e-6）；至少一个判据，output为实例相对路径，SOP公共输出用`.`。
+尺寸使用所选SOP局部单位，point_cd检查全部点（最多100万点，不抽样），不证明材质外观或完整参数域。
+例如普通盒子与宽度变化应使用尺寸判据，不能仅以两者都有8点6面验证宽度绑定：
+
+```json
+{"assets":["asset.hda"],"category":"Sop","type":"example::shape::1.0","cases":[
+  {"id":"default","expect_geometry":{"output":".","bounds_size":[1,1,1],"point_cd":[0.8,0.3,0.1]}},
+  {"id":"wide","values":{"width":2},"expect_geometry":{"output":".","bounds_size":[2,1,1]}}
+]}
+```
+
+字段取决于交付资产真实接口，不自动创建width/Cd。`values`写实例参数，`expect_parms`只回读参数；
+`menus`核对token列表、`buttons`调用真实按钮、`expect_error`匹配预期回调错误。它们不能替代几何响应。
+回归：[交付几何](../tools/tests/dsh-delivery-geometry.test.py)与[完整交付](../tools/tests/dsh-hda-delivery.test.py)
+覆盖正确颜色/尺寸，以及点面数相同但尺寸错、颜色缺失/错误的负例和BOM。
+
 ```json
 {"script":"build.py","checks":[{"id":"out","kind":"cache","node":"/obj/asset/OUT","frame":1,"file":"out.bgeo.sc","expect":{"points":8,"primitives":6}}]}
 ```
@@ -303,6 +366,8 @@ PR不得在持有许可证的自托管runner上任意执行；不能让依赖安
 
 COP用[dsh-cop-contracts](../tools/tests/dsh-cop-contracts.test.py)在隔离H21/H22通过Bridge验证具名
 源/目标端口、动态签名、零写拒绝/ownership/Gate/回滚、原生多通道/整数图层、对齐差值与预算/Manual。
+大依赖原生HDA组合另验图层差值、控制恢复、sticky Cache及节点/边/时间预算拒绝；H22 USD Material
+精确同型连线与错型零写入分别检查，不将原生预检假阴性扩大成所有COP允许隐式转型。
 控制测试含错口仍cook的反例、正确响应、参数/keys/frame与完整buffer恢复、扰动及恢复故障；
 交付含浮点EXR导出/读回和隔离自建HIP重开。部署runner纳入此套；不连接live，不证明自然模型采用或视觉质量。
 

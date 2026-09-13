@@ -10,11 +10,25 @@ create_spare_parms(layout)只追加单节点参数；bind_controls必须预览�
 
 ## 安全与权限
 
+启动器提供进程级executor ID，Host可由agent作用域配置executorId覆盖；每个请求携带目标头，Bridge先核对
+再进入HTTP路由。错目标返回409，不排队/控制job/读媒体；相同端口与相同工具版本不证明相同Houdini。
+该ID与Bridge runtime代际及节点ownership分离；缺少绑定的独立旧客户端仅兼容，不具备此保护。
+配置覆盖属于宿主路由，不是模型自行认领执行端的接口，也不是本机恶意客户端认证机制。
+canonical执行历史含executor_id时，工具入口禁止把原任务的代码/job操作发往不同或未绑定执行端；
+回放结果、材料及回执查询不构成重新绑定。无身份的旧历史保留兼容但不推断目标，完整恢复授权入口尚未开放。
+绑定Host首次现场调用前必须将目标作为plugin来源消息追加到DSH会话，并等待sessions.flush确认持久化监听器参与；
+无后端/落盘失败/取消均不提交现场请求。并发首调用共享屏障，已追加未落盘的记录不删除、不重建第二份绑定文件。
+普通任务通过agent/pre-step的正常消息批次接受绑定，工具执行阶段只能等待已有绑定落盘，不能在assistant工具调用与
+尚未返回的tool结果之间插入user消息。插件须显式声明sessions依赖，不能用可选链绕过Cordis注入边界。
+旧版自身绑定插入造成的顺序错误，只能对结果齐全、纯文本且无其他用户介入的完整工具交换追加摘要投影修正；
+原始事件/结果/绑定保留，不伪造tool结果、不执行工具。缺结果、混合媒体或无关交错拒绝自动修正；修正落盘失败仍阻止下个模型请求。
+
 - hou仅在Houdini主线程调用；HTTP线程只排队。泵不可用即拒绝，不退回网络线程执行。
 - query使用只读namespace与AST预检；exec负责修改，job负责长操作。Raw Gate默认开启，
-  已有动词覆盖的裸修改不能用allow_raw旁路；仅独立、无动词等价的低层缺口允许单次明确理由。
-- query的result_ref分支只读当前workspace中已返回的历史结果；source_ref只读当前session公开日志中的任务来源。
-  两者与code三路互斥，不进入Bridge/HOM，source_ref不接受JSON pointer或跨session路径，
+  已有动词覆盖的裸修改不能用allow_raw旁路；parameter/tuple及其set方法的词法赋值别名同样拒绝。
+  同批重绑定保守处理；静态识别不等于任意Python的完整沙箱。仅独立、无动词等价的低层缺口允许单次明确理由。
+- query的result_ref分支只读当前workspace中已返回的历史结果；source_ref只读当前session公开日志中的任务来源，
+  两者不进入Bridge/HOM；request_ref只查Bridge同runtime回执、不执行HOM。四分支与code互斥，source_ref不接受JSON pointer或跨session路径，
   不能当现场新观察或ownership授权。新查询、修改和任务产物仍遵守原边界。
 - ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
   foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
@@ -36,7 +50,8 @@ exec异常恢复Houdini可撤销状态；捕获动词异常不重新抛出会被
 独立query失败不撤销此前exec；同exec尾部只读错误仍使整批失败，不按异常类型猜测部分提交。
 动词派发前做实际签名绑定，argument_binding失败附signature、dispatched=false与scene_writes=0；
 该证据只覆盖未派发的当前调用，不能抵消同exec此前的修改。函数内部TypeError仍保留原始原因。
-每个Bridge执行返回execution.runtime_id/sequence/observed_at/frame和本次影响观察；运行实例与节点
+每个Bridge执行返回execution.runtime_id/sequence/observed_at/frame及hip_path/hip_dir和本次影响观察；
+hip_dir仅在场景有命名路径时提供，Host直接投影工作区提醒，不为展示再次执行HOM。运行实例与节点
 identity共同解释，路径不充当identity。影响包含有界原生outputs和上次cook可见的dependents，删除/改名
 前观察后代，最多256身份；truncated/unavailable/global必须保留，动态/外部依赖和用户GUI修改不在覆盖内。
 last_edit_ledger_index可识别同调用内检查之后的修改；outputs将检查条目绑定到末态节点identity/存活状态。
@@ -74,16 +89,20 @@ SOP聚焦模块流程复用现有计划和工具事实，方法在[模块合同]
 job仍通过同一主线程队列串行执行。排队取消可阻止执行；已开始的代码不能强杀，
 客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
 HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单独报告外部副作用。
-exec的request_ref在进入主线程队列前登记，查回走固定只读/requests/status端点，不触发HOM或重新排队。
+Host经POST /requests/prepare取得带owner的单次票和当前合同，不额外增加握手往返。exec的request_ref在进入主线程队列前消费并登记，
+查回走固定只读/requests/status端点，不触发HOM或重新排队。签票不意味着已提交代码，也不进入HOM队列。
 同runtime同身份同payload只返回原状态/结果；payload或owner不符拒绝，不更新原请求。状态not_executed
-仅在已登记且确认主线程未开始时报告；断联、结果过期、换runtime和查不到回执均不等于未执行。
+仅在Registry同锁确认仍queued时报告，不能将running降级；断联、结果过期、换runtime和查不到回执均不等于未执行。
+结果正文与终结记录有界轮转，不保留无限墓碑；旧票离开待用票池后不能因回执被淘汰而重新执行。仍活动请求不可淘汰。
+Host超时/取消后仍可能存在活动Bridge请求；health/Repair用Registry活动槽观察补足这一边界，缺字段不当空闲。
 回执丢失/过期时需显式观察实际场景再决定下一步，不自动生成新request_ref重做原修改。
 查回带retrieved标记，原执行sequence保留；执行状态投影解除已查明的unknown，离线动词核算不重复计数。
 jobs提交复用同runtime回执但以job_submit类型单独绑定payload；查回jobId只解除提交未知，job仍可能排队/
-运行中。terminal job不能被迟到的提交回执重置为排队。队列取消、过载拒绝和worker启动失败保持原执行边界。
+运行中。活动job的关联保持到worker终态；worker先结束、后记录admission的顺序同样可释放保护，避免永久占槽。
+terminal job不能被迟到的提交回执重置为排队。队列取消、过载拒绝和worker启动失败保持原执行边界。
 Host历史已保留done/not_executed/job_submitted回执时，迟到的非终态或Bridge保留期结束不将同一引用降级为未知；
 未查回过结果的过期引用仍保持不确定。该规则不把job提交当作执行完成，也不认证当前场景。
-request_ref='index'仅列当前owner最近32条回执，以owner_call对齐Host未记录结果的原调用；无代码/结果正文，
+request_ref='index'仅列当前owner最多32条回执，优先活动请求/job关联，再列最近终结记录，以owner_call对齐原调用；无代码/结果正文，
 不能用索引中缺记录自行授权重提。独立执行统计按canonical runtime/sequence去重，传输轮询仍计工具调用；
 只有历史文本或没有序号的结果明确未测，不猜执行身份。
 
@@ -98,7 +117,10 @@ Manual、失败cook、非图层、预算超限明确拒绝；统计完整buffer�
 层间差值必须相同通道/窗口/空间/帧，公式与操作数随结果保留；未声明预期只量测，不认证语义。
 控制实验复用通道恢复并核对frame、完整buffer及已列元数据；sticky Cache不能认证控制/恢复，
 恢复失败抛CheckpointError并使执行影响保持未知。外部文件/Python/solver状态不在恢复保证内。
-具名connect只验证实际边与端口选择；动态undef签名由原生连线求解，cook/类型通过仍不证明角色正确。
+具名connect只验证实际边与端口选择；动态undef签名由原生连线求解。USD Material COP对原生预检假阴性
+仅允许两端具体图层类型完全相同的连线，并回读实际端口；不隐式转换通道，cook/类型通过仍不证明角色正确。
+COP缓存依赖检查保留全部原生input/reference路径，入队去重；上限4096节点、32768条边、两秒检查预算，
+超限拒绝并保留新鲜度未知，不截断冒充通过。预算在原生调用之间检查，不承诺中断阻塞HOM或限制GPU cook。
 COP差值证据绑定before/after/expected_delta的identity与输出口；任一已记录操作数变化都会使旧检查失效。
 不同输出口的统计分别保留；依赖失效仍是历史投影，不监听未记录GUI或外部文件修改。
 
@@ -157,6 +179,13 @@ output必须是明确新建非空交付；空CTRL/helper用tab_create。required
 防止非空Merge掩盖丢件。可附实际interfaces；失败或unsupported会使该构建失败并清理新节点。
 dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
+subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
+普通geo仅明确最终SOP并设置display/render，不要求创建Output；显式选择发布的旧调用保持兼容。
+verify_network(...,output_index=同索引)检查其直接接线；不指定索引仍是内部构建/显示操作，
+不自动猜祖先、改变OBJ可见性或保存定义。重复索引、成环和未授权foreign出口写入拒绝。
+嵌入Packed的包装点/面不算实际内容：检查器有界访问内嵌几何，空内容拒绝，外部Packed或超限
+无法取证时保持unverified。非空仅说明存在内容，不证明每个必需模块都进入输出；多实例、
+根层显示、颜色/材质与实际关系仍须对应验收。
 
 ## 几何、接口与控制
 

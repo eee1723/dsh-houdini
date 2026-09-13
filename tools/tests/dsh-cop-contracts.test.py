@@ -46,6 +46,85 @@ __result__=c.path()
 root = setup['result']
 a, z, inc, uv, noise = [root + '/' + x for x in ('a','b','increment','coordinates','noise')]
 try:
+    # Two ordinary native HDAs exceeded the old 512-node freshness limit.
+    call(f'''
+large=tab_create('/obj/__cop_contracts','copnet',name='large')
+set_parms(large,{{'setres':1,'res1':32,'res2':32}})
+left=tab_create(large,'tilepattern',name='left')
+right=tab_create(large,'tilepattern',name='right')
+mix=tab_create(large,'blend',name='mix')
+connect(left,mix,0)
+connect(right,mix,1)
+''')
+    large_out='/obj/__cop_contracts/large/mix'
+    measured=value(f'cop_layer_stats({large_out!r})')
+    assert measured['cache']['nodes_inspected'] > 512, measured['cache']
+    assert measured['resolution']==[32,32],measured
+    call('''
+gain=tab_create('/obj/__cop_contracts/large','layer',name='gain')
+set_parms(gain,{'setres':1,'resx':32,'resy':32,'f1':0.25})
+out=tab_create('/obj/__cop_contracts/large','blend',name='controlled')
+set_parms(out,{'mode':'add'})
+connect('/obj/__cop_contracts/large/mix',out,0)
+connect(gain,out,1)
+''')
+    large_gain='/obj/__cop_contracts/large/gain'
+    large_controlled='/obj/__cop_contracts/large/controlled'
+    large_cases=[{'id':'gain','values':{'f1':.5},'expectations':[{'metric':'mean','channel':0,'delta':[.24,.26]}]}]
+    control=value(f'test_cop_controls({large_gain!r},{large_controlled!r},{large_cases!r})')
+    assert control['ok'] and control['restored'],control
+    relation=value(f'cop_compare_layers({large_out!r},{large_controlled!r},expected_delta={{"node":{large_gain!r}}})')
+    assert relation['status']=='pass',relation
+    call('''
+cache=tab_create('/obj/__cop_contracts/large','cache',name='sticky')
+connect('/obj/__cop_contracts/large/left',cache)
+connect(cache,'/obj/__cop_contracts/large/mix',0)
+set_parms(cache,{'clearonchange':0})
+''')
+    assert value(f'cop_layer_stats({large_controlled!r})')['freshness']=='unverified'
+    rejects(f'test_cop_controls({large_gain!r},{large_controlled!r},{large_cases!r})','sticky')
+    call("set_parms('/obj/__cop_contracts/large/sticky',{'clearonchange':1})")
+    old_limit=cop._DEPENDENCY_NODE_LIMIT
+    try:
+        cop._DEPENDENCY_NODE_LIMIT=512
+        rejects(f'cop_layer_stats({large_out!r})','exceeds 512')
+    finally:
+        cop._DEPENDENCY_NODE_LIMIT=old_limit
+    old_edges=cop._DEPENDENCY_EDGE_LIMIT
+    try:
+        cop._DEPENDENCY_EDGE_LIMIT=1
+        rejects(f'cop_layer_stats({large_out!r})','edge budget')
+    finally:
+        cop._DEPENDENCY_EDGE_LIMIT=old_edges
+    old_seconds=cop._DEPENDENCY_SECONDS
+    try:
+        cop._DEPENDENCY_SECONDS=-1
+        rejects(f'cop_layer_stats({large_out!r})','time budget')
+    finally:
+        cop._DEPENDENCY_SECONDS=old_seconds
+
+    if hou.applicationVersion()[0]>=22:
+        call('''
+tml=tab_create('/stage','texturemateriallibrary',name='__cop_material_contract')
+rgb=tab_create(tml,'constant',name='rgb')
+mono=tab_create(tml,'constant',name='mono')
+set_parms(rgb,{'signature':'f3'})
+set_parms(mono,{'signature':'f1'})
+''')
+        material='/stage/__cop_material_contract/usdmaterial1'
+        rgb='/stage/__cop_material_contract/rgb'
+        mono='/stage/__cop_material_contract/mono'
+        for src, port in ((rgb,0),(mono,3),(mono,12)):
+            linked=value(f'connect({src!r},{material!r},{port})')
+            assert linked['type_check']=='cop_material_exact_signature',linked
+            assert hou.node(material).input(port).path()==src
+        prior=hou.node(material).input(0)
+        rejects(f'connect({mono!r},{material!r},0)','incompatible')
+        assert hou.node(material).input(0)==prior
+        rejects(f'connect({rgb!r},{material!r},0)','foreign',owner='another')
+        assert value(f'cook_node({material!r})')['ok']
+        call("delete_node('/stage/__cop_material_contract')")
+
     ports = value(f'describe({noise!r})')["ports"]
     assert ports['inputs'][0]['name'] == 'size_ref' and ports['inputs'][1]['name'] == 'pos', ports
     wired = value(f'connect({uv!r},{(root+"/second_output")!r},"source",output="uvscale")')

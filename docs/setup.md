@@ -68,6 +68,19 @@ Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程�
 
 同时只允许一个Houdini进程使用受管DSH工作区；其他实例可管理/暂存更新，待前一实例退出后再启动工作区。
 动态loopback端口隔离独立DSH/开发Bridge，Windows Job Object只管理自有Node进程树，退出时收回，不按端口停止外部服务。
+Windows源码模式也使用同一Job生命周期：CLI/npx在加入自有Job后才开始执行，启动器重载及UI清理不丢失所有权。
+普通Open Workspace/启动不接管外部监听者。Repair确认后强制停止本Houdini拥有的前端树，允许中断DSH agent；
+对旧版无Job前端，只允许经真实可执行文件、精确DSH主入口/参数及本安装CLI路径核验的监听进程，
+保留原生进程句柄并在终止前重查端口，防止PID复用误杀。源码限本项目npx缓存，受管限本发行安装；
+未知程序/自定义入口拒绝，不能仅凭端口、node.exe名称或runtime.json终止。未登记的旧进程后代不凭端口推定归属。
+确认框说明会中断任务，默认取消；保留会话文件但不保证未完成结果。普通更新仍等DSH空闲，不隐式使用强制路径。
+另一Houdini占用Bridge时拒绝，不杀Houdini、不修改HIP或自动迁移历史。
+Host不再运行不等于HOM已结束；强制停止前后均检查Bridge未完成请求/jobs。旧Bridge缺少完整活动观察时不猜空闲，
+等待现有工作结束、确认场景后完整重开Houdini加载当前Bridge，不绕过此观察缺口强制重启。
+当前退出仍按Job回收自有DSH；独立任务宿主、退出时保留服务选择和崩溃后安全续跑尚未实现。
+启动器创建的DSH携带当前Houdini的executor ID，所有Bridge请求核对目标，防止同端口换进程后误操作。
+ID不是密码或节点ownership；进程重开不能凭原HIP路径自动续跑。共享任务入口/多执行端的目标设计、
+身份分层与尚未开放部分见[多执行端与恢复](architecture.md#多houdini执行端与任务恢复)。
 WebView使用独立的内存浏览器profile，不争用Houdini默认磁盘profile或其他版本的浏览器锁；浏览器cookie/缓存随窗口生命周期结束，DSH会话与配置仍在受管data目录持久化。
 H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快捷方式或以安装bin为工作目录启动。不要把Houdini进程cwd改成源码/安装暂存目录；DSH工作区仍独立跟随HIP目录，插件不改Houdini的cwd或关闭浏览器沙箱。
 安装器不删除旧版本、旧数据、HIP或工作区。清理下载、暂存及旧版本须另行确认。
@@ -83,7 +96,12 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 ## 工作区使用
 
+源码已整合显式共享执行端模式，不替换下述默认Open Workspace，也不自动解除受管安装的runtime锁。
+启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
+
 先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。
+同目录已有页面只唤起，包括隐藏后的重开，不刷新当前草稿；新页/换目录时由DSH原生状态复用有效Houdini任务，
+不会选中归档、其他preset或子agent。确实没有可用任务才创建；导航失败可原位重试，不自动重复建任务。
 未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」，开发插件选择「Houdini开发模式」。
 首次请求houdini_query调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
 图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。

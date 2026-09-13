@@ -7,6 +7,18 @@ import dsh_bridge as b
 headless=c.scene_context('test',threading.get_ident())
 assert headless['frame']==hou.frame() and not headless['ui_available']
 assert headless['geometry_selection']['status']=='not_observed'
+original_mode=hou.updateModeSetting()
+try:
+    for mode, name in ((hou.updateMode.AutoUpdate,'auto'), (hou.updateMode.Manual,'manual'),
+                       (hou.updateMode.OnMouseUp,'on_mouse_up')):
+        hou.setUpdateMode(mode)
+        observed=hou.updateModeSetting()
+        expected={hou.updateMode.AutoUpdate:'auto',hou.updateMode.Manual:'manual',hou.updateMode.OnMouseUp:'on_mouse_up'}[observed]
+        assert c.scene_context('test',threading.get_ident())['update_mode']==expected
+        if mode != hou.updateMode.OnMouseUp:
+            assert expected==name
+finally:
+    hou.setUpdateMode(original_mode)
 handler=object.__new__(b._Handler);handler.path='/context';responses=[]
 handler._send=lambda payload,status=200:responses.append((status,payload))
 handler._route({'schema_version':1})
@@ -34,11 +46,13 @@ c.hou=types.SimpleNamespace(isUIAvailable=lambda:True,
     applicationVersionString=lambda:'fixture',hipFile=types.SimpleNamespace(path=lambda:'x.hip',hasUnsavedChanges=lambda:True),
     frame=lambda:10,selectedNodes=lambda:[Node()]*20,playbar=types.SimpleNamespace(isPlaying=lambda:False),
     ui=types.SimpleNamespace(paneTabs=lambda:[Pane(),Pane()]),
+    updateMode=hou.updateMode,updateModeSetting=lambda:hou.updateMode.Manual,
     paneTabType=types.SimpleNamespace(NetworkEditor='network',SceneViewer='viewer'),sopNodeTypeCategory=lambda:'sop',Error=Exception)
 try:
     result=c.scene_context('fixture',threading.get_ident())
     assert result['selection_count']==20 and len(result['selection'])==16
     assert result['selection_truncated'] and result['focus']=='unknown'
+    assert result['update_mode']=='manual'
     assert len(result['panes'])==2 and result['panes'][0]['display']=='/obj/g'
 finally:c.hou=real
 errors=[]
