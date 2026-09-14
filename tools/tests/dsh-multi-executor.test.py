@@ -85,6 +85,22 @@ def driver(args):
         base=Path(temporary)
         registry=base/'registry'
         try:
+            # Render slot mechanics: re-entrant inside one process, absent without a registry.
+            import dsh_executor_registry as registry_module
+            class _RegistrationStub:
+                _closed = False
+                def __init__(self, root): self.root = root
+            registry_module._ACTIVE = _RegistrationStub(registry)
+            first = registry_module.render_slot()
+            assert first is not None
+            assert registry_module.render_slot() is None, 'a nested render conflicts with its own slot'
+            registry_module.release_render_slot(None)
+            registry_module.release_render_slot(first)
+            again = registry_module.render_slot()
+            assert again is not None
+            registry_module.release_render_slot(again)
+            registry_module._ACTIVE = None
+            assert registry_module.render_slot() is None, 'no active registry must not take a lease'
             records=[]
             for index, binary in enumerate(args.hython):
                 binary=Path(binary).resolve(strict=True)
@@ -158,6 +174,17 @@ def driver(args):
                     'request_ref':health['requestRef'],
                     'expected_contract':{'version':health['executionContractVersion'],'hash':health['verbCatalog']['hash']}})
                 assert status==200 and result['result']==record['houdini_version'],result
+            # One render slot per shared registry: a held lease refuses another
+            # executor's render fast (before scene validation); release restores it.
+            from dsh_deployment import FileLease
+            held=FileLease(registry/'render.lock')
+            try:
+                status,busy=call(a,'/exec',{'code':"render_frame('/obj/none')",'owner_session':a['task_id']})
+                assert status==200 and not busy['ok'] and 'render slot is busy' in busy['error'],busy
+            finally:
+                held.close()
+            status,free=call(a,'/exec',{'code':"render_frame('/obj/none')",'owner_session':a['task_id']})
+            assert status==200 and not free['ok'] and 'render slot is busy' not in free.get('error',''),free
             third=ExecutorRegistration(registry,'d'*32,installation=ROOT,version='22.0.368')
             try:
                 for target in (a['hip_path'],b['hip_path']):

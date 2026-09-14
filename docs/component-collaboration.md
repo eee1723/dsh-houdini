@@ -18,8 +18,8 @@
 
 ## 当前基础与开放边界
 
-component_export/component_import首版仅支持自包含、根输入未连接的普通SOP subnet，固定同构建、显式公共输出，
-拒绝已知外部依赖/自定义HDA/回调；不支持同层集合、外部文件打包或自动候选接纳。component_replace只迁移预览锁定的输出接线，保留旧网络；外部参数消费者拒绝，公共值须先显式准备。trusted=True必须明确确认原生档案可信，
+component_export/component_import首版仅支持自包含、根输入未连接的普通SOP subnet，固定同构建、显式公共输出，合同可声明公共输入槽位inputs，
+拒绝已知外部依赖/自定义HDA/回调；不支持同层集合、外部文件打包或自动候选接纳。component_replace迁移预览锁定的输出接线，保留旧网络；已连接输入、公共参数值/keys及其外部表达式消费者仅在显式migration计划声明时迁移，未声明拒绝。trusted=True必须明确确认原生档案可信，
 不能将子作者返回的路径/hash当安全批准。静态扫描不证明任意代码安全或完整依赖闭包，自动子作者导入尚不可启用。
 传输文件用hash固定字节，导入后只返回candidate；几何/接口/视觉验收仍需另做，不代表C1完整完成。
 
@@ -27,7 +27,8 @@ schema-2片段由Houdini原生保存/载入完整节点数据；自定义交换�
 依赖扫描仍检查引用通道、NodeReference、回调和类型来源；带表达式的NodeReference按实际求值目标查包含关系，原生间接输入按所属subnet/槽位记录。
 内部Ramp保留在原生档案中，公共Ramp和替换预览仍以basis/keys/values表达，不能通过删除Ramp或改建模型来迁就传输。
 导入验证公共接口、网络健康及明确输出；这些不证明内部任意代码安全或全部几何语义。完整节点数据等价由原生往返回归覆盖常见节点，不声称通用艺术正确性。
-schema-1片段明确拒绝并要求从源subnet导出新文件，旧文件/HIP不修改。component_replace的手改检测仍保留内部状态指纹，不因交换快照精简而缩小。
+schema-1片段明确拒绝并要求从源subnet导出新文件，旧文件/HIP不修改。component_replace的手改检测仍保留内部状态指纹，不因交换快照精简而缩小；plan失配按侧命名原因：old手改（保留的本地分叉）、candidate被改、消费者接线变化或身份重建，不再只报泛化stale。
+component_import在本session登记候选的module_id/revision/sha256 provenance；component_replace可用expected_contract把接纳钉在指定修订上，迟到旧修订与无provenance候选明确拒绝；provenance不跨Bridge重启，重启后带expected_contract的替换安全侧拒绝。修订使哪些候选过期的传播仍在工作包/任务文本层，机制层只提供接纳门。
 
 正式锁定DSH的可续跑provider仅提供seed；独立源码候选扩展prepareContinuable的cwd，由Session创建持久化、冷恢复保留。
 异步准备优先复用agent/pre-step，在首个模型请求/工具派发前等待绑定并flush；收件箱接受任务不等于执行端就绪。
@@ -35,13 +36,14 @@ schema-1片段明确拒绝并要求从源subnet导出新文件，旧文件/HIP�
 
 显式Host插件component-host注册component_delegate(task)、component_status()与component_stop(childId)，不挂到默认安装/启动路线。
 status只读返回全局容量和本作者child/worker快照，既不派工也不判定完成；实际交付仍由原生子任务消息承载，不能以快照或文件轮询替代等待。
+worker就绪后意外退出、stdin失效或子作者被pre-step闸阻断时，Host向父作者发一次notice短报（父闲followup唤醒、父忙steer，按worker与原因去重；父已销毁只记日志）；显式停止、空闲释放和就绪前启动失败不产生短报，前者由component_stop回执承载、后者由delegate同步拒绝。
 stop的`stopped`只表示受管进程已退出；`ok`与`checkpoint=saved`才表示空闲检查点已保存。异常回收返回`checkpoint=unknown`和原始错误，保留文件但不能将其视为已验证交付。
 委派上限、进程内存/线程、GUI后端、超时、Python/Houdini路径和worker根目录都由Host配置；子作者没有自选端口/路径授权。
 Host仅保留当前自有worker句柄和关联，不承担原生子任务队列。主任务正常完成一轮并转空闲后，Host给30秒续接窗口；若主子均仍空闲，只通过自有监管器STOP保存检查点并释放worker。新一轮开始会取消尚未发出的STOP，活跃子任务不被自动终止；主任务被销毁时也只释放空闲自有worker。停止失败记为检查点未知，不把进程退出冒充保存成功；已释放子任务不自动重启或重放，修订需重新委派。Host重启后不重开/收养旧worker；原任务恢复明确拒绝。
 组件作者要求实际受限文件后端和workspace-write；工具执行限定建模、受限文件、技能、todo和父子消息，拒绝自行调用shell/任意job/再委派。
 总装与worker工作区必须在平台临时目录之外，因为DSH允许workspace-write任务共同写平台临时目录；独立cwd不取消该原有例外。
 文件工具越界有独立反例；Bridge中的Python和进程Job不是恶意代码的文件系统安全沙箱，不以此宣称任意代码隔离。
-当前尚未实现跨worker渲染单槽、结构化全局约束校验及接口修订自动失效；任务文本须明确约束，主作者自行核对版本，不以本地句柄登记证明艺术/关系正确。
+跨worker渲染单槽已实现：共享registry下render.lock的OS级FileLease（进程死即释放），render_view/render_frame进入时非阻塞取槽，被占即快速拒绝并建议改走houdini_job_submit；进程内可重入（render_view内部render_frame不自冲突），无registry的单执行端路线不取槽、由Bridge主线程队列串行。当前尚未实现结构化全局约束校验；接口修订失效的传播仍在任务文本层，机制层只有接纳门，主作者自行核对版本，不以本地句柄登记证明艺术/关系正确。
 Host给子作者的简报附执行事实：绑定提供当前HIP，scene_save保存原处；render_view是houdini_exec内动词，GUI可用时局部视觉义务须实看原生图像，headless可按授权尝试有界render_frame，否则明确未验证。该提示不能证明主作者完整传递了原始要求，冲突仍需追问，不替代结构化接口校验。
 
 | 能力 | 当前事实 | 本设计新增的闭环 |
@@ -135,8 +137,8 @@ hash只证明内容固定，subnet不锁定也不等于安全；序列化片段�
 2. 主作者显式接收模块/合同修订，在自身新建隔离staging容器导入；不覆盖同名既有网络，不载入/清空/merge主HIP。
 3. 确认创建identity、依赖、内部相对引用、spare参数/表达式/keys、公共输出和局部非空，再显式接入共享控制/锚点。
 4. 在实际装配变换下查部件成员/基数、接口、控制响应和图像；候选未通过不切换正式消费者。
-5. 提交前复核旧模块identity、结构/参数/接线指纹及候选hash；有用户/GUI修改或外部消费者变化则停止自动替换。
-6. 记录全部外部导线、参数消费者及用户公开值/表达式/keys；按稳定接口ID显式迁移后切换。接口删除/改名/类型变化须迁移计划，不能按位置猜。
+5. 提交前复核旧模块identity、结构/参数/接线指纹及候选hash；有用户/GUI修改或外部消费者变化则停止自动替换，plan失配按漂移侧命名返回。
+6. 记录全部外部导线、参数消费者及用户公开值/表达式/keys；按稳定接口ID显式迁移后切换。机制已落地为component_replace的显式migration计划：输出接线总是迁移，已连接根输入须逐槽映射（inputs），公共参数值/keys与外部表达式消费者按参数名迁移（public_parms），未声明的输入/消费者/引用形态拒绝，失败逆序恢复。接口删除/改名/类型变化须迁移计划，不能按位置猜。带表达式的keyframe、keyframed消费者与跨组件引用仍拒绝。
 7. 复读新接线与实际最终输出；失败恢复已记录的接线/控制并保留旧模块。恢复不完整则停止，不能宣称原子成功。
 
 总装的内部手改视为本地分叉：默认保留并请求合并策略，不全文覆盖、不把“最新片段”当成更高权限。
@@ -164,7 +166,7 @@ Host负责子任务workspace、HIP路径、偏好/包/缓存/临时目录隔离�
 
 每进程主线程消费自己的队列，CPU/内存/渲染/模型并发分别限额；多SOP内部线程不能和worker数一起无限相乘。
 Bridge预检拒绝常见的`os.walk`/`Path.walk`/`Path.rglob`及递归`Path.glob('**/...')`目录遍历，保留静态非递归`Path.glob('*.hip')`；直接`glob`调用也拒绝，以免无界源文件搜索占住GUI主线程。源码检查应在Houdini外用有界文件工具完成。静态预检不是任意Python可抢占的执行沙箱，已在运行中的HOM/未知请求仍按回执和检查点边界处理。
-第一版共享渲染资源设单槽，数值限额来自目标机器实测与显式配置，不把开发机配置写成发行默认。
+共享渲染资源单槽即registry根render.lock租约（见上节机制）；其余数值限额来自目标机器实测与显式配置，不把开发机配置写成发行默认。
 GUI用于复用现有render_view闭环；后续hython池须补低成本render_frame预览、图像交付与非GUI失败策略，不能静默跳过局部看图。
 许可证、驱动、UI后端与目标版本分别验证；配置失败/资源不足明确排队或暂停，不借用用户其他Houdini进程。
 

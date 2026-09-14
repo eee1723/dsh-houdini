@@ -17,6 +17,11 @@ from dsh_deployment import FileLease, atomic_json
 if '_ACTIVE' not in globals():
     _ACTIVE = None
 
+# This process's own render lease, so nested renders (render_view → render_frame)
+# never conflict with themselves across the decorator boundary.
+if '_HELD_RENDER_SLOT' not in globals():
+    _HELD_RENDER_SLOT = None
+
 
 def active_registration():
     if _ACTIVE is None:
@@ -223,6 +228,39 @@ def require_active_writer(task_id, actual_hip):
 def require_save_target(path):
     if _ACTIVE is not None and os.path.normcase(os.path.abspath(path)) != os.path.normcase(_ACTIVE._hip or ''):
         raise RuntimeError('Shared executor Save As requires a new writer reservation; use the explicit handoff flow, not this scene call')
+
+
+def render_slot():
+    """One cross-process render lease per shared registry; None outside shared-executor mode.
+
+    Fail-fast: a busy slot refuses instead of queueing inside the Bridge request
+    budget, so a waiting caller never holds the GUI main thread hostage. Without
+    an active registry the Bridge main-thread queue already serializes this
+    process, so no lease is taken. The lease is OS-held: a crashed renderer
+    releases it without deleting any file. Re-entrant within this process: a
+    nested render (render_view calls render_frame) does not conflict with itself.
+    Long renders belong in houdini_job_* and are not covered by this slot.
+    """
+    if not is_shared_executor():
+        return None
+    global _HELD_RENDER_SLOT
+    if _HELD_RENDER_SLOT is not None:
+        return None
+    try:
+        lease = FileLease(_ACTIVE.root / 'render.lock')
+    except RuntimeError:
+        raise RuntimeError('render slot is busy on the shared host: another executor is rendering; '
+                           'retry after it finishes, or submit long renders via houdini_job_submit') from None
+    _HELD_RENDER_SLOT = lease
+    return lease
+
+
+def release_render_slot(lease):
+    """Release the lease returned by render_slot; nested renders get None and no-op."""
+    global _HELD_RENDER_SLOT
+    if lease is not None and lease is _HELD_RENDER_SLOT:
+        _HELD_RENDER_SLOT = None
+        lease.close()
 
 
 def read_candidates(root, *, installation):

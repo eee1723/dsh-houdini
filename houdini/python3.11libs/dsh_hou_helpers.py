@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import difflib
 import fnmatch
+import functools
 import hashlib
 import math
 import os
@@ -46,6 +47,19 @@ from typing import Any
 import hou
 import dsh_cook_control as _cook_control
 import toolutils
+
+
+def _with_render_slot(fn):
+    """Serialize render_frame/render_view across shared-host executors (fail-fast)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        import dsh_executor_registry
+        slot = dsh_executor_registry.render_slot()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            dsh_executor_registry.release_render_slot(slot)
+    return wrapper
 
 
 class CheckpointError(RuntimeError):
@@ -5190,6 +5204,7 @@ def camera_fit(camera, target, direction='iso', coverage: float = .82,
     return fit_camera(camera, target, direction, coverage, width, height, frame, dry_run, allow_foreign)
 
 
+@_with_render_slot
 def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing=None) -> dict:
     """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
 
@@ -6159,6 +6174,7 @@ def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
     }
 
 
+@_with_render_slot
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
