@@ -121,6 +121,8 @@ export function componentAuthorPrompt(task:string, gui:boolean):string {
     `render_view is a Houdini verb called inside houdini_exec code, not a separate top-level tool. `+
     `Do not traverse project/install directories inside houdini_query or houdini_exec; `+
     `ask the parent for bounded source inspection when needed. `+
+    `Your tool surface is bounded to houdini_exec/houdini_query/houdini_job_*, skill, read/write/edit inside your workspace, todo_write and send_message to the parent. `+
+    `Shell, grep, component_status and component_delegate are not available to you; the tool gate rejects them — do not try. `+
     (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, and report what it actually shows. `
       :`This worker is headless: render_view requires GUI. If an authorized bounded render_frame can satisfy a required visual check, inspect its output; otherwise report visual unverified to the parent. `)+
     `A secondary brief cannot silently cancel an explicit visual or control obligation from the original user request; `+
