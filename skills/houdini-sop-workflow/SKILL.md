@@ -22,7 +22,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 ## 执行循环
 
-1. **方法与原型**：选择曲线/截面/开放表面/实体/实例等表示。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
+1. **方法与原型**：以人工易接手和构建/cook/修改/验证的整体效率选择曲线/截面/开放表面/实体/实例等表示，按需混合原生SOP与VEX。涉及重复资产、VEX职责划分或构造选型时，先读[建模方法](references/modeling-methods.md#1-从表示和构造选方法)。重复资产必须走Copy，保留独立可替换源；VEX按功能与输入输出拆分，不能把整个多功能模块塞进一个Wrangle。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
 2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
 3. **骨架门**：复杂装配先用低成本整体代理确定尺度、方向、接口和共享控制，再选择当前风险或质量最关键的模块。视觉交付已在范围内且GUI可用时，尽早看整体或明确侧向图；主要比例/接口未定不精雕独立零件。用户只要单个部件时不扩建整物。
 4. **模块门**：把当前焦点模块当作独立的局部交付任务，不只是一个代码批次：明确相关原始要求、输入/局部坐标、输出、必须看清的细节和局部完成条件，按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)推进。一个模块可用多个小build_module，空CTRL/helper用tab_create；先验证单元及附属件连接再复制。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，不为清warning丢掉部件身份；局部条件满足或遇到明确依赖阻塞就回到集成，不无限堆细节。
