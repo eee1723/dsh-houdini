@@ -147,6 +147,41 @@ def _cleanup_failed_creations(created, ownership_before):
     return removed
 
 
+def _reconcile_undo_resurrected(ownership_before):
+    """Re-register native descendants resurrected by our own undo with fresh ids.
+
+    Houdini undo resurrects a deleted node with its original sessionId but gives
+    recreated native init-script children NEW ids (probe: wrangle keeps its id,
+    inner attribvop gets a fresh one). Without this reconcile the resurrected
+    subtree stays foreign forever and even delete_node is refused. Eligibility
+    is bounded evidence from our own serialized undo: the recorded identity is
+    dead, its exact creation path now holds a node with a registered live
+    ancestor, and that node is not already registered. Anything else stays
+    foreign; paths alone never grant ownership.
+    """
+    restored = []
+    for old_id, entry in ownership_before.items():
+        if hou.nodeBySessionId(old_id) is not None:
+            continue
+        path = entry.get('path_at_creation')
+        candidate = hou.node(path) if isinstance(path, str) else None
+        if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS:
+            continue
+        ancestor = candidate.parent()
+        while ancestor is not None and int(ancestor.sessionId()) not in _OWNED_NODE_SESSIONS:
+            ancestor = ancestor.parent()
+        if ancestor is None:
+            continue
+        _OWNED_NODE_SESSIONS[int(candidate.sessionId())] = dict(entry)
+        if _CREATION_JOURNAL is not None:
+            _CREATION_JOURNAL.add(int(candidate.sessionId()))
+        candidate.setUserData(_TASK_OWNER_KEY, entry.get('session'))
+        if entry.get('call'):
+            candidate.setUserData(_TASK_OWNER_CALL_KEY, entry['call'])
+        restored.append(candidate.path())
+    return restored
+
+
 def _set_execution_owner(session_id: str | None, call_id: str | None):
     """Install trusted host provenance for one serialized bridge execution."""
     global _ACTIVE_OWNER_SESSION, _ACTIVE_OWNER_CALL

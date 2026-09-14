@@ -46,6 +46,9 @@ exec异常恢复Houdini可撤销状态；捕获动词异常不重新抛出会被
 只读诊断仍可运行，修复须在新exec提交。此前文件写入和任意Python外部副作用不属undo保证。
 消费transaction最终状态：后项失败可能撤销同exec中前面成功的build，不能沿用已回滚节点。
 失败补充清理仅限本调用journal的确切新建identity；foreign后代不自动删除。
+undo复活已删节点时父节点恢复原sessionId，但原生初始化后代（如wrangle内部VOP）由Houdini以新id重建；
+Bridge回滚在恢复登记表后按有界证据（旧id已死+精确创建路径+已登记的存活祖先）重新登记这些后代，
+其余无法确认的后代保持foreign，rollback报告reconciled_resurrected_identities。
 可独立cook和验收的模块使用不同exec，集成引用已提交且仍存活的输出；不可分模块内仍批量原子执行。
 独立query失败不撤销此前exec；同exec尾部只读错误仍使整批失败，不按异常类型猜测部分提交。
 动词派发前做实际签名绑定，argument_binding失败附signature、dispatched=false与scene_writes=0；

@@ -60,6 +60,51 @@ try:
     assert restored_owner["ok"] is True, restored_owner
     assert restored_owner["result"]["status"] == "owned_current_session", restored_owner
 
+    # Undo resurrects a deleted node with its original id but recreates native
+    # init-script children under fresh ids; the bridge must reconcile those
+    # identities or the resurrected subtree stays foreign and undeletable.
+    wrangle_result = dsh_bridge.run_code(
+        f"g = tab_create('/obj', 'geo', name='undo_geo_{suffix}')\n"
+        "w = tab_create(g, 'attribwrangle', name='undo_wrangle')\n"
+        "__result__ = w.path()",
+        owner_session=session_a,
+        owner_call="call-create-wrangle",
+    )
+    assert wrangle_result["ok"] is True, wrangle_result
+    wrangle_path = wrangle_result["result"]
+    geo_path = hou.node(wrangle_path).parent().path()
+    inner_before = hou.node(wrangle_path).allSubChildren(sync_delayed_definition=True)
+    assert inner_before, "attribwrangle should carry a native inner VOP child"
+    inner_id_before = int(inner_before[0].sessionId())
+
+    failed_delete = dsh_bridge.run_code(
+        f"delete_node({wrangle_path!r})\nraise RuntimeError('intentional wrangle rollback')",
+        owner_session=session_a,
+        owner_call="call-rollback-wrangle",
+    )
+    assert failed_delete["ok"] is False, failed_delete
+    assert failed_delete["rollback"]["applied"] is True, failed_delete
+    resurrected = hou.node(wrangle_path)
+    assert resurrected is not None, failed_delete
+    inner_after = resurrected.allSubChildren(sync_delayed_definition=True)
+    assert inner_after, failed_delete
+    if int(inner_after[0].sessionId()) != inner_id_before:
+        assert inner_after[0].path() in failed_delete["rollback"].get("reconciled_resurrected_identities", []), failed_delete
+    inner_prov = dsh_bridge.run_code(
+        f"__result__ = node_provenance({inner_after[0].path()!r})",
+        owner_session=session_a,
+        owner_call="call-inner-provenance",
+    )
+    assert inner_prov["result"]["status"] == "owned_current_session", inner_prov
+    cleanup = dsh_bridge.run_code(
+        f"delete_node({wrangle_path!r})",
+        owner_session=session_a,
+        owner_call="call-delete-wrangle",
+    )
+    assert cleanup["ok"] is True, cleanup
+    assert hou.node(wrangle_path) is None
+    dsh_bridge.run_code(f"delete_node({geo_path!r})", owner_session=session_a)
+
     # Simulate a user-created/copied node.  Even a copied/forged durable tag is
     # audit metadata only; a fresh Houdini sessionId is not runtime-owned.
     foreign = parent.createNode("null", "copytopoints2")
