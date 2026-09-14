@@ -447,7 +447,7 @@ export function collectVerbAdoption(steps) {
   };
 }
 
-const OPEN_ENDED_QUALITY_REQUEST = /(?:程序化|细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|真实\s*solver|有效缓存|可重算|产品视觉开发|正式(?:的)?\s*(?:Karma\s*)?渲染|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|procedural|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|real solver|valid cache|recomputable|product lookdev|final Karma render|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
+const OPEN_ENDED_QUALITY_REQUEST = /(?:细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|真实\s*solver|有效缓存|可重算|产品视觉开发|正式(?:的)?\s*(?:Karma\s*)?渲染|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|real solver|valid cache|recomputable|product lookdev|final Karma render|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
 const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
 const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|(?:值|比例|尺寸|数值|典型值).{0,16}假设|非已核实规格|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
 const UNVERIFIED_MARKER = /(?:unverified|未验证|无法验证|待验证)/i;
@@ -868,11 +868,11 @@ export function collectQualityLoopEvidence({
     qualityLod: /(?:质量(?:标准|门|级别)|LOD|轮廓级|镜头级|产品级|预览级|观察距离|高细节|细节丰富|精细|细致|近景|high[- ]detail|fine detail|close[- ]up|quality bar|quality level)/i.test(preMutationText),
     simplifications: /(?:简化|省略|不做|允许.*(?:略|省)|边界|simplif|omit|out of scope)/i.test(preMutationText),
     unitsDimensions: /(?:单位|尺寸|范围|半径|长度|角度|米|厘米|mm|cm|\bm\b|units?|dimensions?)/i.test(preMutationText),
-    controls: /(?:控制参数|可调参数|需要暴露|spare parm|HDA interface|controls?)/i.test(preMutationText),
-    relations: /(?:连接|共轴|轴线|端点|包含|间隙|穿插|接触|关系|relations?|clearance|intersection)/i.test(preMutationText),
+    controls: /(?:总控|统一调整|联动|控制参数|可调参数|需要暴露|spare parm|HDA interface|controls?)/i.test(preMutationText),
+    relations: /(?:连接|装配|接地|贴轮|贴合|不炸|共轴|轴线|端点|包含|间隙|穿插|接触|关系|relations?|clearance|intersection)/i.test(preMutationText),
     evidencePlan: /(?:验证|验收|证据|视角|特写|render|evidence|check)/i.test(preMutationText),
   };
-  const requiresControls = /(?:程序化|可调|可以调节|参数化|procedural|adjustable|configurable|parameterized)/i.test(agreedRequest);
+  const requiresControls = /(?:总控|统一调整|联动|程序化|可调|可以调节|参数化|controls?|procedural|parameter[- ]driven|adjustable|configurable|parameterized)/i.test(agreedRequest);
   const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(agreedRequest);
   const requiredContractFields = [
     'referenceStatus', 'qualityLod', 'simplifications',
@@ -1117,7 +1117,7 @@ export function completedVisionTodoWithoutEvidence(latestTodo, successfulVisionE
   return Boolean((latestTodo || []).some((item) => {
     const content = String(item?.content || '');
     return item?.status === 'completed'
-      && /(?:vision|视觉|图像检查|图片检查)/i.test(content)
+      && /(?:\bvision\b|视觉|图像检查|图片检查)/i.test(content)
       && !/(?:unverified|未验证|无法|失败|不可用|凭据|待用户|人工确认|交给用户)/i.test(content);
   }));
 }

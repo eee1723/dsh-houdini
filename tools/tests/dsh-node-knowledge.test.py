@@ -44,7 +44,8 @@ def positions(node):
 try:
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
-    families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box', 'attribwrangle')
+    families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
+                'attribwrangle', 'object_merge')
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
@@ -63,6 +64,20 @@ try:
     detached['decisions'].clear()
     assert cards.operation_card('attribwrangle')['decisions'], 'cache must not be mutable by its consumer'
     done('runtime critical templates, filtering, version boundaries and cache isolation')
+
+    # Cross-OBJ assembly must choose its transform space explicitly.  A path by
+    # itself reads SOP-local geometry; Into This Object preserves the source OBJ
+    # placement relative to the current network.
+    source_obj = hou.node('/obj').createNode('geo', 'object_merge_source')
+    source_obj.parm('tx').set(3)
+    source_box = source_obj.createNode('box', 'shape')
+    imported = make('object_merge', 'placed_import', {'objpath1': source_box.path(), 'xformtype': 0})
+    local_center = imported.geometry().boundingBox().center()[0]
+    h.set_parm(imported, 'xformtype', 1)
+    world_center = imported.geometry().boundingBox().center()[0]
+    assert abs(local_center) < 1e-6 and abs(world_center - 3) < 1e-6, (local_center, world_center)
+    imported.destroy(); source_obj.destroy()
+    done('Object Merge local-space counterexample and Into This Object placement')
 
     # Actual native and polygon output, not only parameter labels.
     for family in ('sphere', 'tube', 'circle'):

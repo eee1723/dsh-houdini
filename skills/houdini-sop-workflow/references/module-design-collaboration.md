@@ -8,14 +8,15 @@ component_delegate/component_status/component_stop是Host工具，查自己的�
 ## 独立组件模式（候选）
 
 每个工程仍只有一个作者。主作者只写总装；组件作者只写自己的新HIP，不能请求allow_foreign、共享身份或自行启动进程来跨工程修改。
+独立组件模式的默认交换物是`component_export`生成的`.dshcomponent`，不是HDA库。只有用户原始要求明确包含可安装HDA/OTL交付时才转`houdini-tool-development`走HDA生命周期；不能由主作者自行升级范围，再用裸`hou.hda.installFile`替代`component_import`的hash、revision与接纳门。
 component_delegate的accepted只证明子任务已接受，不证明就绪或完成；使用原生子任务消息继续同一组件，等待其实际交付，不复制所有子轨迹回主上下文。
 需要看容量时用只读component_status快照，不能发placeholder任务探测；接纳后按原生消息等待，不轮询文件或反复列任务。status的ready/idle不证明建模完成。
 
 1. 主作者先确定整体尺度、单位/轴向、named anchors与接口frame、共享自由/派生参数、邻接包络、LOD和实际表面验收条件。Houdini世界是Y-up，简报必须显式钉住世界轴向与轮/板类部件的朝向约定，不让子作者自选坐标系。把相关原始要求和这些约束一起放入task，不只发模块名称；轴向、半径定义、厚度方向、默认与范围及出口要互相一致，矛盾先修订再派发。不得在子简报中撤销用户明确的局部预览或控制义务；若必须变更，先向用户确认。子作者的工具面只有houdini_exec/houdini_query/houdini_job_*、skill、工作区内read/write/edit、todo_write和send_message，没有shell/grep/component_status/component_delegate；简报不得要求子作者调用这些工具。
-2. 组件作者在自己的普通SOP subnet里建模，以根spare参数为公共接口、内部相对引用、原生Output为出口；局部细节参数自行设计，影响外部接口的变更先回提。首版不支持导出根外接输入、外部文件/Python回调或自定义HDA依赖；遇到这些需求报告限制，不擅自烘焙或删结构。
+2. 组件作者在自己的普通SOP subnet里建模，以根spare参数为公共接口、内部相对引用、原生Output为出口；局部细节参数自行设计，影响外部接口的变更先回提。首版不支持导出根外接输入、外部文件/Python回调、自定义HDA依赖或额外HDA封装；遇到这些需求报告限制，不擅自烘焙、删结构或扩大交付层。
 3. 完成局部几何、控制扰动/恢复和可辨特写后，按verb_help的component_export合同导出新.dshcomponent，返回路径/hash、模块修订、公共参数/输出、已测/未测范围。render_view是houdini_exec代码内动词，不是顶层工具；GUI可用且局部视觉在范围内时实际调用、查看原生图像附件，失败则写视觉未验证并报告阻塞，不以主作者总装图替代。Host已经指定当前HIP，子作者只用scene_save()；主作者不另指定componentA/B.hip或要求Save As。文件revision固定字节，不是HDA定义，不覆盖旧文件。
-4. 主作者核对用户允许的可信来源和接口后，使用component_import导入新candidate；trusted=True只确认原生档案可信，hash不认证代码安全。未知来源、未授权外部代码或旧合同先停止，不把子作者自评当自动批准。集成走受控接纳：候选直接接入装配链（显式接线或component_replace替换既有槽位），不用Object Merge绝对路径引用候选节点——候选改名/删除会断链，且候选树不构成可替换的受管槽位。
-5. 主作者配置候选公共控制和装配变换，检查最终成员及变换后的真实表面关系；局部pass不等于整体相连。集成验收必须实测部件间穿插/间隙关系（geo_check_interfaces或逐件bbox关系），单件尺寸联动不构成装配正确；渲染图语义与数值判据矛盾时以图像为准重新核对，不能看图后仍按数值通过口径报告。尽早集成代理版本，最终调整后再做共享控制扰动/恢复和图像验证。
+4. 主作者核对用户允许的可信来源和接口后，使用component_import导入新candidate；trusted=True只确认原生档案可信，hash不认证代码安全。未知来源、未授权外部代码或旧合同先停止，不把子作者自评当自动批准。每个候选完成后即可接入已稳定槽位，不必为等待另一作者而推迟独立集成。集成走受控接纳：候选直接接入装配链（显式接线或component_replace替换既有槽位），不用Object Merge绝对路径引用候选节点——候选改名/删除会断链，且候选树不构成可替换的受管槽位。
+5. 主作者配置候选公共控制和装配变换，检查最终成员及变换后的真实表面关系；局部pass不等于整体相连。集成验收必须实测部件间穿插/间隙关系（geo_check_interfaces或逐件bbox关系），单件尺寸联动不构成装配正确。跨OBJ为了检查或渲染而临时Object Merge时必须显式选择`Into This Object`等价变换，并比较合并输出bbox与各源world bbox；默认local-space合并会丢OBJ变换。合并warning未解决、proxy包络与真实装配不一致或图像冲突时，预览无效且视觉todo不得完成。尽早集成代理版本，最终调整后再做共享控制扰动/恢复和图像验证。
 6. 更新采用component_replace预览/计划匹配的替换，保留旧网络。输出接线总是迁移；已连接输入、公共参数值/keys及其表达式消费者只在显式migration计划声明时迁移，未声明拒绝；接口修订用expected_contract钉住，迟到的旧修订会被拒绝。它不证明视觉/接口；先准备候选参数，过期计划重新核对（失配会按漂移侧命名），发现用户手改先报告，不覆盖。不要为继续替换而删外部引用或改宽容差。
 7. 子任务结束后主作者可component_stop释放自己的worker；活动子任务先停止/等待，文件保留。断联/代际变化不得重发未知修改或换端；恢复缺口报告给用户，不能在shell补开同身份。
 

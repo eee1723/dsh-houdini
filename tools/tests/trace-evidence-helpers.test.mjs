@@ -553,6 +553,18 @@ assert.equal(completedVisionTodoWithoutEvidence([
 assert.equal(completedVisionTodoWithoutEvidence([
   { content: '视觉检查', status: 'completed' },
 ], [{ semanticOk: true }]), false);
+assert.equal(completedVisionTodoWithoutEvidence([
+  { content: 'Check divisions parameter', status: 'completed' },
+]), false, '`divisions` is not the English word `vision`');
+
+const specifiedComponent = collectQualityLoopEvidence({
+  userMessages: [{time: 1, text: 'Build a clean editable procedural component. All dimensions are parameter-driven; network only.'}],
+  assistantMessages: [{time: 2, text: 'The component controls and numeric verification are fully specified.'}],
+  steps: [],
+});
+assert.equal(specifiedComponent.applicable, false,
+  'procedural construction alone is not an open-ended artistic quality contract');
+assert.equal(specifiedComponent.contract.requirements.controls, true);
 
 // Only selected options are contract facts, never unselected UI suggestions.
 const selectedContract = collectQualityLoopEvidence({

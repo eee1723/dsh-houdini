@@ -597,7 +597,10 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         if not isinstance(values,dict) or not 1 <= len(values) <= 8:
             raise ValueError('each test needs 1..8 numeric scalar parameter values')
         if not isinstance(expectations,list) or not (0 if response_only else 1) <= len(expectations) <= 16:
-            raise ValueError('each test needs 1..16 declared measurement expectations')
+            raise ValueError(
+                'each test needs 1..16 declared measurement expectations; '
+                'split a larger check into multiple test cases with the same control values'
+            )
         for name,value in values.items():
             _finite(value,'control value')
             p=ctrl.parm(name)

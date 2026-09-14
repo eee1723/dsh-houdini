@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 14 · Source SHA-256: `b4a196e7412ca8a1a40b708db7f19f208c0e81131f2233d4d0cec4a8a4d71397`
+Schema: 2 · Cards: 15 · Source SHA-256: `0d00b7a19d501fa358740528a40770a7ea490c864ddec41c6ac674ffd6e408d4`
 
 ## 数据与设计契约
 
@@ -29,6 +29,7 @@ Schema: 2 · Cards: 14 · Source SHA-256: `b4a196e7412ca8a1a40b708db7f19f208c0e8
 - [box](#box)
 - [revolve](#revolve)
 - [copytopoints](#copytopoints)
+- [object_merge](#object_merge)
 - [blast](#blast)
 - [attribwrangle](#attribwrangle)
 - [cam](#cam)
@@ -186,6 +187,24 @@ Schema: 2 · Cards: 14 · Source SHA-256: `b4a196e7412ca8a1a40b708db7f19f208c0e8
 
 - Input 0 is the source unit, input 1 the destination points. Establish the unit local axes and destination P/orient/scale before copying.
 - Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison.
+
+## object_merge
+
+标识：`object-merge-space-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/object_merge.html)。
+
+精确类型：`object_merge`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`objpath1`、`xformtype`。
+
+### 构建前决策
+
+- `transform_space`：`xformtype`。Choose whether the import preserves source object placement or intentionally reads SOP-local coordinates. Cross-object assembly and render proxies normally require Into This Object.
+
+### 操作与边界
+
+- An object path alone does not preserve assembly placement. For a source under another OBJ, explicitly use Into This Object when the final relationship depends on that OBJ's translate/rotate/scale; local-space import is only valid when ignoring those transforms is intentional.
+- Before using a merged proxy for relationship or visual acceptance, compare its bbox with the contributing sources in the same world space and resolve attribute-mismatch warnings. A nonempty render of a local-space proxy is not evidence for the placed assembly.
 
 ## blast
 

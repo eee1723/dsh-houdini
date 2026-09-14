@@ -121,12 +121,13 @@
 
 ## HTA-014：靠失败或读仓库源码发现动词契约
 
-- 状态：已修（`verb_help` + guidance/关键 docstring）
-- 证据：`71d76525` 工具调用 #3 把 `search_tab_menu` dict 当 list、#7 把 `read_parms` list 当 dict、#12 猜错 `geo_attrib_stats` keyword、#31 假设 `describe` 含 `ok`；中途 #13–#16 用 grep/read 打开插件源码才纠正。`a41c853a` 已曝光 `verb_help`，但 #8 仍把 `read_parms` list 当 dict，导致完整 exec rollback。正常 Houdini 会话工作区是 `$HIP`，仓库源码不应成为运行期契约入口。
+- 状态：基础自省已修；弱模型读取后消费和高密度检查分包仍待自然验收。
+- 证据：`71d76525` 工具调用 #3 把 `search_tab_menu` dict 当 list、#7 把 `read_parms` list 当 dict、#12 猜错 `geo_attrib_stats` keyword、#31 假设 `describe` 含 `ok`；中途 #13–#16 用 grep/read 打开插件源码才纠正。`a41c853a` 已曝光 `verb_help`，但 #8 仍把 `read_parms` list 当 dict，导致完整 exec rollback。`dsh-houdini-a51a592e4f5c420bb8dff3807f8e533d`已调用12次verb_help，#21仍漏掉bind_controls的dry-run计划，#23又因错误`unexpandedString`回读撤销成功绑定，#31/#33两次把超过16项的检查塞进单case。正常 Houdini 会话工作区是 `$HIP`，仓库源码不应成为运行期契约入口。
 - 症状：一次本可只读发现的签名/结果字段，变成 exec 失败、undo、重复 batch；有时失败发生在修改之后。
 - 根因：system prompt 为控制体积只列意图，没有统一的运行期动词契约自省；Python `inspect.signature` 虽可手写，但 agent 不知道 registry 边界和结果含义。
-- 修复：新增 `verb_help(name)` 返回准确 signature/docstring、未知名相似建议；guidance 要求不确定时先查。`read_parms` doc 明确返回 `list[dict]`，guidance 明确 `cook_node` 才拥有 `ok/healthy`、`graph` 要围绕数据节点调用。H21 headless/live bridge 回归通过。
+- 修复：新增 `verb_help(name)` 返回准确 signature/docstring、未知名相似建议；guidance 要求不确定时先查。`read_parms` doc 明确返回 `list[dict]`，guidance 明确 `cook_node` 才拥有 `ok/healthy`、`graph` 要围绕数据节点调用。test_controls现明确每case最多16项并提示以相同values拆case；H21/H22回归通过。mutation/apply和不确定观察仍应分批，读取帮助但忽略返回合同不算问题已核销。
 - 边界：节点自身的 SideFX 参数/帮助仍由 `list_parms`/`describe` 和未来 `node_help` 负责；`verb_help` 不替代它们。
+- 下一验收：未见控制装配任务读取一次bind/test合同后直接按preview→apply→独立readback与预分包路径完成；相邻简单单参任务不因本规则强制多批。
 
 ## HTA-015：节点类型注册表被误当成真实 Tab 菜单
 
@@ -478,3 +479,39 @@
   交付仍应使用 OBJ parenting；KineFX 不是整个 OBJ scene graph 的替代。
 - 下一验收：K3 重跑未见几何 FK 正例应自然走 KineFX；另跑 camera 跟随 object 与用户明确 OBJ
   hierarchy 两个反例，确认语义动词可用且不会被误禁。
+
+## HTA-033：独立组件委派被自行升级成HDA库交换
+
+- 状态：候选 E1；协作reference已窄修，受管组件自然采用仍待新session。
+- 首次/最近证据：`dsh-houdini-a51a592e4f5c420bb8dff3807f8e533d`主步骤#12/#13、#18；
+  子会话`81da9edd`与`b2105893`。用户只要求独立组件作者与总装，父简报却要求两个可安装HDA；
+  子作者随后承担hda_create/interface/save/fresh-instance生命周期，主作者用裸`hou.hda.installFile`
+  安装，`component_export/import/replace`零采用。
+- 症状：component_delegate确实隔离了作者，但组件交换失去`.dshcomponent`的hash、revision、
+  trusted import与受控接纳；HDA定义安装成为场景Undo之外的全局副作用，简单模块又额外支付打包成本。
+- 根因候选：主作者只加载SOP skill却未读模块协作reference，把“独立作者”误等同“发布HDA”；
+  缺少用户明确HDA交付要求时仍扩大了交付层。
+- 当前修复：模块协作reference明确默认交换物只能是component_export生成的`.dshcomponent`；
+  用户原始任务明确要求可安装HDA/OTL时才转tool-development，不能自行升级后用裸installFile替代接纳门。
+- 反例/边界：用户明确要求制作、维护或交付可安装HDA时，HDA生命周期与库写入本身合理；
+  仍需按HDA信任、版本、依赖和隔离合同验收，不能硬套普通片段替换。
+- 下一验收：相同两组件任务的新session应出现export路径/hash/revision、父import和实际槽位接纳，
+  且没有裸HDA安装；另以明确HDA交付任务确认不会误禁合法资产开发。
+
+## HTA-034：跨OBJ装配代理丢失对象变换后仍成功出图
+
+- 状态：P0当前产物问题已确认，domain/card与render warning门已修；proxy/world包络自动守卫仍为候选。
+- 首次/最近证据：`dsh-houdini-a51a592e4f5c420bb8dff3807f8e533d`主步骤#29、#36、#38。
+  实际对象world bbox证明上方部件已平移，临时Object Merge只设置objpath未选择变换空间；代理bbox
+  丢失该world高度且render带attribute mismatch warning，原图呈现错误装配。
+- 症状：真实场景的数值装配可以正确，代理仍非空、像素门和framing均通过，却显示局部坐标下的
+  错误相对位置。后续视觉模型即使能看图，也是在裁判另一个数据流。
+- 根因：跨OBJ Object Merge默认/隐式坐标空间没有进入模块接口；render_view只能忠实渲染传入SOP，
+  无法知道上游作者本想保留哪个OBJ变换。
+- 当前修复：SOP workflow、模块协作reference与Object Merge节点卡要求显式选择Into This Object
+  等价模式；关系/视觉代理必须让合并bbox与源world bbox一致。render_view遇源/proxy cook warning
+  现保留诊断图但返回ok=false；自动比较proxy与多源world包络仍为候选。
+- 反例/边界：有意把多个源归一到各自SOP-local原点进行形状对比时，忽略OBJ变换是合法的；
+  此时不得把结果称为场景装配预览或实际空间关系。
+- 下一验收：用带平移、旋转、非均匀缩放的未见双组件任务验证proxy/world包络与图像一致；
+  再决定是否给render_view增加可选expected-world-bounds守卫或新增受控装配预览动词。

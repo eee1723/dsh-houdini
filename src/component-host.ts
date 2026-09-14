@@ -123,6 +123,8 @@ export function componentAuthorPrompt(task:string, gui:boolean):string {
     `ask the parent for bounded source inspection when needed. `+
     `Your tool surface is bounded to houdini_exec/houdini_query/houdini_job_*, skill, read/write/edit inside your workspace, todo_write and send_message to the parent. `+
     `Shell, grep, component_status and component_delegate are not available to you; the tool gate rejects them — do not try. `+
+    `Unless the original user explicitly requested an installable HDA/OTL, author a plain self-contained SOP subnet and publish it with component_export as a revisioned .dshcomponent; `+
+    `do not expand a parent brief into HDA creation or library installation. If the parent asks for HDA without quoting that original requirement, report the scope conflict before building. `+
     (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, and report what it actually shows. `
       :`This worker is headless: render_view requires GUI. If an authorized bounded render_frame can satisfy a required visual check, inspect its output; otherwise report visual unverified to the parent. `)+
     `A secondary brief cannot silently cancel an explicit visual or control obligation from the original user request; `+
@@ -318,7 +320,7 @@ export function apply(ctx:Context, config:Config):void {
   })
 
   ctx.tools.register(defineTool({name:'component_delegate',description:
-    'Delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity, not completion; does not import or modify assembly. After delegating, end the turn and wait for the child\u2019s native message or a Host infrastructure report instead of polling status or files. Use component_status to inspect capacity without starting a worker.',
+    'Delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. Unless the original user explicitly requests an installable HDA/OTL, commission a plain SOP subnet exported as a revisioned .dshcomponent; the parent later verifies its hash and uses component_import plus an explicit assembly connection or component_replace plan. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity, not completion; does not import or modify assembly. After delegating, end the turn and wait for the child\u2019s native message or a Host infrastructure report instead of polling status or files. Use component_status to inspect capacity without starting a worker.',
     parameters:{task:{type:'string',required:true,description:'Complete bounded component brief'}},
     output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
     presentCall:()=>({card:'generic',title:'Delegate Houdini component',kind:'execute'}),
