@@ -3,6 +3,7 @@
 适用：用户要求多个agent协作，且有至少两个接口稳定、可以独立细化的模块。
 不适用：简单模型、比例未定、共享连续曲面/跨模块布尔/耦合变形仍在设计的阶段。
 默认不启用多作者。仅当用户明确选择、当前Host实际曝光component_delegate且独立执行端准备通过时，使用下述候选组件模式；否则沿用仅设计模式。
+component_delegate/component_status/component_stop是Host工具，查自己的工具目录即可确认是否曝光；它们不是HOM动词，用verb_help探测只会得到unknown verb，不能据此判定不可用。
 
 ## 独立组件模式（候选）
 
