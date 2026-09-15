@@ -33,8 +33,8 @@ schema-1片段明确拒绝并要求从源subnet导出新文件，旧文件/HIP�
 异步准备优先复用agent/pre-step，在首个模型请求/工具派发前等待绑定并flush；收件箱接受任务不等于执行端就绪。
 该候选尚未进入兼容清单或安装运行态。确定性profile→两子任务→worker→片段导入→总控恢复已有测试入口；真实任务、文件/进程工具全路径隔离和正式发布资格仍待验收，不修改node_modules、伪造父身份或复制续跑状态机。
 
-显式Host插件component-host注册component_delegate(task)、component_status()与component_stop(childId)，不挂到默认安装/启动路线。
-status只读返回全局容量和本作者child/worker快照，既不派工也不判定完成；实际交付仍由原生子任务消息承载，不能以快照或文件轮询替代等待。
+显式Host插件component-host注册component_delegate(task)、component_status()、component_wait(timeoutSeconds=30)与component_stop(childId)，不挂到默认安装/启动路线。这四个是父任务顶层Host工具，不属于Houdini动词目录；组件子任务不会获得它们，`verb_help`也不解析它们。status只取一次快照，后续用wait在Host API内等待状态变化及原生子任务消息，不反复轮询status/文件。Host在子任务首消息中同时列出可用顶层工具与动词边界，参数绑定错误返回精确签名后应直接消费，不把失败调用当发现机制。
+status只读返回全局容量、本作者child/worker快照及权威workspace/HIP，既不派工也不判定完成；liveSceneState未观察时，磁盘HIP的大小/mtime不能证明live worker是否已有未保存修改。主作者须等待原生子任务完成通知再核对交付，不以快照或文件轮询替代等待。
 stop的`stopped`只表示受管进程已退出；`ok`与`checkpoint=saved`才表示空闲检查点已保存。异常回收返回`checkpoint=unknown`和原始错误，保留文件但不能将其视为已验证交付。
 委派上限、进程内存/线程、GUI后端、超时、Python/Houdini路径和worker根目录都由Host配置；子作者没有自选端口/路径授权。
 Host仅保留当前自有worker句柄和关联，不承担原生子任务队列。主任务正常完成一轮并转空闲后，Host给30秒续接窗口；若主子均仍空闲，只通过自有监管器STOP保存检查点并释放worker。新一轮开始会取消尚未发出的STOP，活跃子任务不被自动终止；主任务被销毁时也只释放空闲自有worker。停止失败记为检查点未知，不把进程退出冒充保存成功；已释放子任务不自动重启或重放，修订需重新委派。Host重启后不重开/收养旧worker；原任务恢复明确拒绝。
@@ -42,7 +42,7 @@ Host仅保留当前自有worker句柄和关联，不承担原生子任务队列�
 总装与worker工作区必须在平台临时目录之外，因为DSH允许workspace-write任务共同写平台临时目录；独立cwd不取消该原有例外。
 文件工具越界有独立反例；Bridge中的Python和进程Job不是恶意代码的文件系统安全沙箱，不以此宣称任意代码隔离。
 当前尚未实现跨worker渲染单槽、结构化全局约束校验及接口修订自动失效；任务文本须明确约束，主作者自行核对版本，不以本地句柄登记证明艺术/关系正确。
-Host给子作者的简报附执行事实：绑定提供当前HIP，scene_save保存原处；render_view是houdini_exec内动词，GUI可用时局部视觉义务须实看原生图像，headless可按授权尝试有界render_frame，否则明确未验证。该提示不能证明主作者完整传递了原始要求，冲突仍需追问，不替代结构化接口校验。
+Host给子作者的简报先附权威workspace与固定`workspace/component.hip`，再附父作者文本；权威事实覆盖父简报中自称由Host分配的workspace/HIP/绝对导出目录，片段只写当前`$HIP`目录。子作者交付须给出component_export返回的完整绝对文件名、hash和合同；父作者按该文件名核对并导入，不从自己的`$HIP`猜子目录。scene_save保存原处；render_view是houdini_exec内动词，GUI可用时局部视觉义务须实看原生图像，headless可按授权尝试有界render_frame，否则明确未验证。该提示不能证明主作者完整传递了原始要求，冲突仍需追问，不替代结构化接口校验。
 
 | 能力 | 当前事实 | 本设计新增的闭环 |
 |---|---|---|

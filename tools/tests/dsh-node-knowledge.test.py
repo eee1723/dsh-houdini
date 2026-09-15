@@ -55,6 +55,13 @@ try:
             if setting.get('menu') and not setting.get('menu_dynamic'):
                 assert {m['token'] for m in setting['menu']} == set(actual.parm(setting['name']).menuItems())
         actual.destroy()
+    assert h.node_info(root, 'box', filter='size')['filter'] == 'size'
+    try:
+        h.node_info(root, 'box', parm_filter='size', filter='scale')
+    except ValueError as error:
+        assert 'only one' in str(error)
+    else:
+        raise AssertionError('node_info filter aliases must be exclusive')
     assert set(root.children()) == before
     assert cards.operation_card('polybevel::2.0') is None
     assert cards.operation_card('sweep::99.0') is None
@@ -163,11 +170,13 @@ try:
     assert plan['valid'] and set(root.children()) == before
     assert plan['operation_advisory_count'] == 1
     assert plan['operation_advisories'][0]['nodes'] == ['advice_a', 'advice_b']
-    assert {d['id'] for d in plan['operation_advisories'][0]['decisions']} == {'representation', 'end_closure'}
+    assert {d['id'] for d in plan['operation_advisories'][0]['decisions']} == {'representation', 'end_closure', 'radius_axes'}
+    radius_advice=next(d for d in plan['operation_advisories'][0]['decisions'] if d['id']=='radius_axes')
+    assert radius_advice['always'] and 'never outer/inner' in radius_advice['guidance']
     assert bridge._operation_summary('build_module', plan)['operation_advisories'] == plan['operation_advisories']
     explicit = [{'name': 'intentional_native', 'type': 'tube', 'parms': {'type': 'prim', 'cap': 0}}]
     built = h.build_module(root, explicit, output='intentional_native')
-    assert not built['operation_advisories']
+    assert built['operation_advisories'] and {d['id'] for d in built['operation_advisories'][0]['decisions']}=={'radius_axes'}
     assert root.node('intentional_native').parm('type').evalAsString() == 'prim'
     assert root.node('intentional_native').evalParm('cap') == 0
     inherited = h.build_module(root, [{'name': 'inherit_native', 'type': 'tube'}], output='inherit_native')

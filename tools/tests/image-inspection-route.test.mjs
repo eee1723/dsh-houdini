@@ -12,7 +12,7 @@ const refs=[];
 const attachments={imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:150},async saveImage({data,name}){saved++;const ref={attachmentId:'image-'+saved,mediaType:'image/png',bytes:data.length,width:1,height:1,name};refs.push(ref);return ref}};
 let modalities=['text','image'];
 const ctx={get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined};
-const bridge={async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},async jobStatus(){return {...value,jobId:'job',status:'done'}}};
+const bridge={async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
 try{
  const result=await attachImages(value,exec,bridge,ctx);
  assert.equal(result.media,undefined);assert.equal(imageBlocks(result).length,2);assert.deepEqual(fs.readdirSync(cwd),[],'no workspace media copy');
@@ -22,7 +22,7 @@ try{
  assert.equal(deferred.length,1);assert.equal(deferred[0].content.filter(b=>b.type==='image').length,2);
  const defs=new Map();registerHoudiniTools({...ctx,tools:{register:d=>defs.set(d.name,d)}},bridge);
  for(const name of ['houdini_exec','houdini_job_status']){
-  const tool=defs.get(name);const args=name==='houdini_exec'?{code:'render'}:{jobId:'job'};
+  const tool=defs.get(name);const args=name==='houdini_exec'?{code:'render'}:{jobId:'abcdef123456'};
   const output=await tool.execute(args,exec);assert.equal(tool.output.render(args,output).filter(b=>b.type==='image').length,2);
  }
  assert.equal(sceneCalls,1);

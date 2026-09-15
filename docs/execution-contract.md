@@ -2,6 +2,7 @@
 
 共享参数控制的职责和推进顺序见[控制参数、界面与绑定](parameter-controls.md)。UI追加、HDA定义重建和持续绑定是独立修改：
 create_spare_parms(layout)只追加单节点参数；bind_controls必须预览并核对源/目标状态计划，实际写入仍检查目标ownership。
+node_info接受`filter`作为`parm_filter`兼容别名；create_spare_parms第二位置参数为list/tuple时按spec处理。后台job状态/取消只接受Bridge实际生成的12位十六进制id，placeholder在Host侧拒绝，不发送到Houdini。
 旧动画/表达式默认保护，显式替换不扩大foreign授权。绑定回读只证明表达式及当前数值，领域输出需独立验证；
 界面/绑定恢复仅覆盖声明的通道/模板范围，不恢复任意回调、文件、solver或外部进程副作用。
 
@@ -156,7 +157,7 @@ HScript字符串或显式expression/language；不接受单元素列表。只有
 不更新内建、菜单、tuple、callback、multiparm或表达式默认值，不隐式改变已有创建模式。
 字面字符串局部修改复用set_parm/set_parms的patch对象，必须带原始UTF-8源码expected_sha256和
 每个old/new的精确count；缺锚点、次数不符、版本过期在本节点本批values开始写入前拒绝。
-read_parms(names=[...])按指定字段读取，提供source_sha256；有变量展开时raw_value保留原文。
+read_parms(names=[...])按指定标量或tuple字段读取，tuple保留逐分量诊断；string提供source_sha256，有变量展开时raw_value保留原文。
 patch只支持无动画/表达式的可编辑scalar string，拒绝锁定/callback/固定菜单；Wrangle的代码片段
 StringReplace菜单不执行、不阻止源码修改。补丁限定literal replace、不执行脚本/正则；原文和
 结果不超过524288字符，1..32项替换、old/new累计131072字符，每项count为1..256。

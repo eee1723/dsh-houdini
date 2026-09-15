@@ -16,6 +16,7 @@ assert.notEqual(renderNodeCards(altered), read(outputPath))
 for (const c of Object.values(data.cards)) {
   for (const note of c.notes) assert.ok(read(outputPath).includes(note), `missing note: ${c.id}`)
   for (const d of c.decisions || []) assert.ok(read(outputPath).includes(d.guidance), `missing decision: ${c.id}/${d.id}`)
+  for (const d of c.always_advisories || []) assert.ok(read(outputPath).includes(d.guidance), `missing advisory: ${c.id}/${d.id}`)
 }
 const invalid = structuredClone(data)
 invalid.cards.sweep.decisions[0].any_of = [['invented_field']]

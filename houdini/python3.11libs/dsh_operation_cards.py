@@ -17,7 +17,8 @@ def operation_card(type_name):
 
 def operation_metadata(card):
     """No cached HOM state: tested versions describe evidence, not live defaults."""
-    return {k: card[k] for k in ('id', 'source', 'node_types', 'tested_versions', 'decisions') if k in card}
+    return {k: card[k] for k in ('id', 'source', 'node_types', 'tested_versions', 'decisions',
+                                 'always_advisories') if k in card}
 
 
 def operation_parameters(card, parameters):
@@ -34,8 +35,11 @@ def decision_advisories(card, values):
     Explicit empty groups/open ends/native types remain legal. Specifying a
     field (including an expression) is not evidence of correct geometry.
     """
-    return [{'id': d['id'], 'alternatives': [list(option) for option in d['any_of']],
-             'missing': [[name for name in option if name not in values] for option in d['any_of']],
-             'guidance': d['guidance']}
-            for d in card.get('decisions', [])
-            if not any(all(name in values for name in option) for option in d['any_of'])]
+    missing = [{'id': d['id'], 'alternatives': [list(option) for option in d['any_of']],
+                'missing': [[name for name in option if name not in values] for option in d['any_of']],
+                'guidance': d['guidance']}
+               for d in card.get('decisions', [])
+               if not any(all(name in values for name in option) for option in d['any_of'])]
+    semantic = [{'id': d['id'], 'alternatives': [], 'missing': [], 'always': True,
+                 'guidance': d['guidance']} for d in card.get('always_advisories', [])]
+    return missing + semantic

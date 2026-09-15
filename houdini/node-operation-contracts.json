@@ -71,9 +71,12 @@
         {"id": "representation", "any_of": [["type"]], "guidance": "Choose polygon output for polygon face operations; native Tube is a legitimate alternative, not a failed polygon."},
         {"id": "end_closure", "any_of": [["cap"]], "guidance": "Choose whether end caps are intended. Open pipes and closed solid cylinders have different contracts."}
       ],
+      "always_advisories": [
+        {"id": "radius_axes", "guidance": "Tube rad1/rad2 are the X/Y ellipse radii of one cross-section, never outer/inner radii. A capped Tube is a filled cylinder even when rad1 and rad2 differ; use a construction that creates an actual inner surface for a pipe, washer or through-hole."}
+      ],
       "notes": [
         "Direct creation type=prim and cap=0. Explicit polygon type and caps are separate decisions; a nonempty native Tube does not establish polygon topology.",
-        "Inspect the actual axis, radius, end boundaries and resolution before using the unit in booleans or instancing. A capped cylinder does not by itself model a hollow pipe wall."
+        "rad1/rad2 are the X/Y ellipse radii of one cross-section, not outer/inner radii. Inspect the actual axis, radius, end boundaries and resolution before using the unit in booleans or instancing. A capped cylinder does not by itself model a hollow pipe wall."
       ]
     },
     "circle": {

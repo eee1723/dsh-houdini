@@ -32,6 +32,15 @@ try:
     ext.parm('outputback').set(1)
     closed=h.geo_piece_stats(ext,inspect=True)
     assert closed['boundary_edges']==0 and closed['edge_connected_components']==1,closed
+    tube=root.createNode('tube');tube.parm('type').set('poly');tube.parm('cap').set(1)
+    tube.parm('orient').set('z');tube.parmTuple('rad').set((.15,.11));tube.parm('height').set(.04)
+    tube_axes=h.geo_piece_stats(tube,inspect=True)['center_axis_surface_hits']['axes']
+    assert [row['surface_hits'] for row in tube_axes]==[2,2,2],tube_axes
+    torus=root.createNode('torus');torus.parm('type').set('poly');torus.parm('orient').set('y')
+    torus_report=h.geo_piece_stats(torus,inspect=True)
+    assert torus_report['boundary_edges']==0 and torus_report['nonmanifold_edges']==0,torus_report
+    torus_axes=torus_report['center_axis_surface_hits']['axes']
+    assert torus_axes[1]['status']=='observed' and torus_axes[1]['surface_hits']==0,torus_axes
     group=ext.geometry().freeze();pg=group.createPrimGroup('one_face');pg.add(group.prim(0))
     assert o.polygon_observation(group,'one_face')['boundary_edges']>0,'group cuts are intentional boundaries'
     rejects(lambda:o.polygon_observation(group,'missing'),'missing')

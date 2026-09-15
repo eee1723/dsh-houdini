@@ -25,7 +25,7 @@ export function validateNodeCards(data) {
   const ids = new Set()
   for (const [family, c] of Object.entries(data.cards)) {
     if (!/^[a-z][a-z0-9_]*$/.test(family)) throw new Error('invalid card family')
-    keys(c, ['id','source','notes','node_types','tested_versions','critical_parameters','decisions'], family)
+    keys(c, ['id','source','notes','node_types','tested_versions','critical_parameters','decisions','always_advisories'], family)
     if (typeof c.id !== 'string' || !/^[a-z0-9-]+$/.test(c.id) || ids.has(c.id)) throw new Error(`${family}: invalid/duplicate card id`)
     ids.add(c.id)
     if (typeof c.source !== 'string' || !c.source.startsWith('https://www.sidefx.com/docs/')) throw new Error(`${family}: expected official source`)
@@ -45,6 +45,16 @@ export function validateNodeCards(data) {
         }
       }
     }
+    if ('always_advisories' in c) {
+      if (!Array.isArray(c.always_advisories) || !c.always_advisories.length) throw new Error(`${family}: always_advisories must be a nonempty array`)
+      const ids = new Set(c.decisions?.map(d => d.id) || [])
+      for (const d of c.always_advisories) {
+        keys(d, ['id','guidance'], `${family}.always_advisory`)
+        if (typeof d.id !== 'string' || !/^[a-z0-9_]+$/.test(d.id) || ids.has(d.id)) throw new Error(`${family}: invalid/duplicate advisory id`)
+        if (typeof d.guidance !== 'string' || !d.guidance.trim()) throw new Error(`${family}: invalid always advisory`)
+        ids.add(d.id)
+      }
+    }
   }
   return data
 }
@@ -60,9 +70,9 @@ export function renderNodeCards(data) {
     '- JSON维护输入语义、决策、反例与来源；本页逐项镜像，英文操作说明不另行手译成第二份真相。',
     '- `id`标识知识修订；`node_types`限定精确类型，省略时按现有family规则匹配。`tested_versions`是证据范围，省略不表示已验证所有版本。',
     '- `critical_parameters`只维护关键参数名；实际类型、默认值、组件名、菜单token/set_value由Houdini运行时模板提供，不在文档固化菜单索引。',
-    '- `decisions[].any_of`列出备选字段组合：满足任一组合仅表示显式提供字段，不证明值或建模意图正确。`guidance`解释决策边界。',
+    '- `decisions[].any_of`列出备选字段组合：满足任一组合仅表示显式提供字段，不证明值或建模意图正确。`always_advisories`保存每次采用该节点都必须看到的参数语义反例；两者的`guidance`都解释边界。',
     '- `node_info`返回不受普通filter/limit裁切的`operation_parameters`及缺字段提示；静态模板不等于Shelf初始化后的实际值。',
-    '- `build_module.operation_advisories`按类型/缺字段合并，最多16条并报告总数/截断。不阻断、不改默认值、不cook、不解析VEX；未决选择可先dry_run。',
+    '- `build_module.operation_advisories`按类型合并缺字段和常驻语义反例，最多16条并报告总数/截断。不阻断、不改默认值、不cook、不解析VEX；未决选择可先dry_run。',
     '- 精确类型不匹配时不套用受限卡；复制返回值不应修改缓存。新增字段必须同时更新生成器、运行时消费者和测试。', '',
     '实现：[卡加载器](../houdini/python3.11libs/dsh_operation_cards.py)、[node_info](../houdini/python3.11libs/dsh_hou_helpers.py)、[模块构建](../houdini/python3.11libs/dsh_sop_contracts.py)。',
     '契约：[工具设计](tool-design.md)；验证：[节点行为回归](../tools/tests/dsh-node-knowledge.test.py)。', '', '## 卡片目录', '']
@@ -75,6 +85,10 @@ export function renderNodeCards(data) {
     if (c.decisions?.length) {
       out.push('', '### 构建前决策', '')
       for (const d of c.decisions) out.push(`- ${inline(d.id)}：${d.any_of.map(option => option.map(inline).join(' + ')).join(' **或** ')}。${d.guidance}`)
+    }
+    if (c.always_advisories?.length) {
+      out.push('', '### 常驻语义提示', '')
+      for (const d of c.always_advisories) out.push(`- ${inline(d.id)}：${d.guidance}`)
     }
     out.push('', '### 操作与边界', '', ...c.notes.map(n => '- ' + n))
   }

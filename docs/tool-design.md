@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 47
+Execution contract version: 52
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -52,9 +52,9 @@ H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户F
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
 
-显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()和component_stop(childId)，
+显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()、component_wait(timeoutSeconds=30)和component_stop(childId)，
 只管理原生子任务和自有worker，不属于上述5个houdini工具或HOM动词目录，默认不挂载。
-status只读返回当前作者子任务/worker快照及容量，不启动worker，也不证明组件完成；等待交付走原生子任务消息，不用空委派探容量。
+status只用于一次当前作者子任务/worker快照、权威workspace/HIP及容量，不启动worker，也不证明组件完成；wait在Host内等待最多30秒直到task/worker状态变化，超时只表示期间无状态变化。liveSceneState=unobserved时磁盘大小/mtime不能推导未保存的Houdini现场，等待交付走wait与原生子任务消息，不重复status或轮询文件。
 accepted不代表模型已开始/组件已完成；准备/权限不符在模型请求前拒绝。Host向子作者说明当前HIP由绑定提供、render_view在houdini_exec内，不能把子简报中的Save As路径或取消原始视觉义务当成有效合同。节点片段仍经下面component_*动词显式处理。
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。路径差异通过Open Workspace处理。
@@ -100,7 +100,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `verb_help(name)` | 返回已注入动词的准确 signature、return_type（无注解则null）、call_mode与docstring；未知名列相似项。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状 | dict |
+| `verb_help(name)` | 返回已注入动词的准确 signature、return_type（无注解则null）、call_mode与docstring；name也可为1..16项唯一名称列表，批量返回items/count。未知名列相似项，批次任一未知则整次明确失败。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状 | dict |
 
 ### 类型目录（回答「能建什么」）
 
@@ -108,21 +108,21 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 |---|---|---|
 | `search_tab_menu(category, query)` | 列出某 context 下匹配的节点族 + 最新版 | dict |
 | `search_tab_entries(parent, query)` | 按真实父网络列当前可见的 node/tool entry；排除 hidden/deprecated，Material Library 根层只暴露 Builder tool；每项标 `kind` 与 dsh 是否可安全执行 | dict |
-| `resolve_latest_type(category, base)` | 某族最新版全名（内部为主）；只以 namespace 注册的族返回带前缀全名（'rigdoctor' → 'kinefx::rigdoctor'），裸别名过不了 `createNode(exact_type_name=True)`；跨 namespace 同名按排序取第一个，recipe 需跨版本一致时应显式钉命名空间 | str |
+| `resolve_latest_type(category, base)` | 已注册节点族的最新版全名（内部为主）；只以 namespace 注册的族返回带前缀全名（'rigdoctor' → 'kinefx::rigdoctor'），裸别名过不了 `createNode(exact_type_name=True)`；跨 namespace 同名按排序取第一个，recipe 需跨版本一致时应显式钉命名空间；当前类别没有该族时明确失败，不回传未经验证的base | str |
 
 ### node 域（场景图）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...])` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；初始化失败会清理 partial create 并向外抛错，绝不静默降级成裸节点；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
 | `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
 | `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。默认output=0兼容旧调用，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
-| `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
-| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型/缺少显式决策合并，非阻断、不改默认值、不证明语义；dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
+| `node_info(parent, type_name, parm_filter='', limit=24, *, filter=None)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；`filter`是`parm_filter`的兼容别名，两者不可同时给。operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
+| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型合并缺少显式决策及已声明的参数语义警示，非阻断、不改默认值、不证明语义；Tube始终说明rad1/rad2是X/Y椭圆轴半径而非内外径。dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
 | `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式 output，不跟随display。output_index=0..63另验同父网络原生Output为该节点或直接连接它；省略仅验内部构建。默认检查直属范围，可nodes限域；error/空输出默认抛CheckpointError，require_valid=False仅诊断。嵌入Packed穿透包装检查内容；有界遍历超限/仅外部Packed保持unverified并拒绝假绿。warning、内容存在、部件齐全和视觉分开 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
@@ -147,11 +147,11 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际 menu token/index/label（不给当前值）；动态菜单以实际节点为准 | list |
-| `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量字段，按请求顺序返回且不受changed_only过滤，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
+| `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量或tuple字段，按请求顺序返回且不受changed_only过滤，tuple给聚合value/component_names及逐分量诊断，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
-| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms 新增layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
+| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；第二位置参数为list/tuple时兼容解释成`spec`，避免把参数规格误作代码参数名。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`，`min_is_strict/max_is_strict`兼容同义字段。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms 新增layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
 | `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省，返回实例/可选定义树、可选raw状态和非阻断结构建议；不要求HDA，不cook/执行菜单，不创建绑定。hda_info保留同形兼容入口 | dict |
 | `bind_controls(controller, bindings, *, dry_run=False, expected_plan=None, replace_existing=False, allow_foreign=None)` | 1..32项明确数值绑定：source为控制节点参数名，target为目标参数绝对路径，可选scale/offset。dry_run返回plan_sha256；应用必须expected_plan匹配identity/值/keys/锁定/帧。默认拒绝已有驱动，replace_existing显式替换；拒绝非数值/菜单/回调/multiparm、任意表达式源、批次源目标交叠及重复目标。整数目标只接受整数源与映射系数。实际HScript引用和值回读，失败恢复本批目标通道；不保证领域输出或外部副作用 | dict |
 
@@ -177,17 +177,27 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `geo_point_spacing(node, expected, tolerance, closed=False, order_attrib=None, max_points=10000)` | 全量相邻点弦长验收：默认point number顺序，或唯一数值order_attrib；closed含末→首，SOP local单位；返回全量min/max/failure_count及最多16个最差对与sequence hash。超预算拒绝不抽样；只证明该序列约束，不证明弧长、网格接线或实际零件关系 | dict |
 | `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内1..16实际关系。默认{id,source_group,target_group,max_distance,expected_points}测独立表面点到面距离；method=axis_gap改用两个primitive组及axis/gap_range/min_overlap，测source.min−target.max与横向区间重叠。空组/自重叠fail，不支持unverified；SOP local有界不抽样。距离/投影范围不是接触、实体插入、碰撞或强度认证；返回实际值/范围/几何hash | dict |
 | `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}]}`。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。control_summary保留顶层失败原因、失败测量与逐case状态；基准失败的results=[]明确标not_run，不作通过。domain/interfaces/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，其他写前unverified。拒绝callback/menu/button/multiparm/tuple，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
-| `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece的局部bbox/extent/面积与退化；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent及surface_area、duplicate_boundary_faces、closed_planar_components。后两项为精确循环边界重合/闭合共面壳风险，不认证任意重叠或实体有效；有意双面需解释。observed仅量测，方法不支持保持unverified | dict |
+| `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece的局部bbox/extent/面积与退化；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent及surface_area、duplicate_boundary_faces、closed_planar_components，并返回center_axis_surface_hits：三条basis轴向包围盒中心线与fan三角表面的交点数。实心封口通常为2，声明的通孔轴可为0，但零交点必须结合闭合/流形和沿轴图像，不能单独证明通孔或实体有效。duplicate/planar字段只表示精确循环边界重合/闭合共面壳风险；有意双面需解释。observed仅量测，方法不支持保持unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
+
+### component 域（普通 SOP 组件交换）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `component_export(node, filename, contract)` | 候选：当前作者普通SOP subnet导出至已命名$HIP内新.dshcomponent；contract恰含module_id/revision/units/outputs，输出索引须由sop_set_output发布。运行时verb_help提供可执行的最小示例和字段约束；检查公共输出、有限依赖与快照。同构建往返，不覆盖文件，不证明装配质量；文件写入不可Undo | dict |
+| `component_import(parent, filename, expected_sha256, name, trusted=False)` | 候选：显式可信、hash固定、同构建普通subnet片段导入当前作者SOP父网络；SHA-256接受大小写十六进制并返回规范小写；新名字、不覆盖、不接管旧节点，返回待验收candidate。原生档案可执行代码，trusted不构成安全沙箱；尚非自动子作者交付通道 | dict |
+| `component_replace(node, candidate, dry_run=True, expected_plan=None)` | 候选：同作者同父普通subnet的显式输出接线替换；先预览，再用未过期plan提交。保留旧网络不删除/改名，外部参数消费者拒绝，不猜迁移公共参数；候选控制须先准备，提交后仍须实际装配关系/视觉复验 | dict |
+
+### runtime 域（运行时包自省）
+
+| 动词 | 语义 | 返回 |
+|---|---|---|
+| `package_info(name=None, limit=64)` | 官方运行态package清单；精确name另给有界资源路径。省略环境变量值，不扫磁盘、不加载或改包；GUI接口不可用返回unavailable而非空清单。Active不证明兼容/授权，publisher未验证；Bridge回执提供runtime身份 | dict |
 
 ### cop 域（Copernicus 图层与关系）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `component_export(node, filename, contract)` | 候选：当前作者普通SOP subnet导出至已命名$HIP内新.dshcomponent；contract恰含module_id/revision/units/outputs，输出索引须由sop_set_output发布。运行时verb_help提供可执行的最小示例和字段约束；检查公共输出、有限依赖与快照。同构建往返，不覆盖文件，不证明装配质量；文件写入不可Undo | dict |
-| `component_import(parent, filename, expected_sha256, name, trusted=False)` | 候选：显式可信、hash固定、同构建普通subnet片段导入当前作者SOP父网络；新名字、不覆盖、不接管旧节点，返回待验收candidate。原生档案可执行代码，trusted不构成安全沙箱；尚非自动子作者交付通道 | dict |
-| `component_replace(node, candidate, dry_run=True, expected_plan=None)` | 候选：同作者同父普通subnet的显式输出接线替换；先预览，再用未过期plan提交。保留旧网络不删除/改名，外部参数消费者拒绝，不猜迁移公共参数；候选控制须先准备，提交后仍须实际装配关系/视觉复验 | dict |
-| `package_info(name=None, limit=64)` | 官方运行态package清单；精确name另给有界资源路径。省略环境变量值，不扫磁盘、不加载或改包；GUI接口不可用返回unavailable而非空清单。Active不证明兼容/授权，publisher未验证；Bridge回执提供runtime身份 | dict |
 | `cop_layer_stats(node, output=0, *, max_pixels=4194304)` | 必须exec：直接读取当前ImageLayer，output为源输出名/索引；完整buffer统计/指纹、类型/通道、data/display window、空间、pixel scale、frame、U/V梯度。max_pixels为1..16777216，超预算拒绝不抽样，预算不限制上游GPU cook分配。拒绝Manual、失败cook、非图层和未支持storage；非有限值fail，sticky Cache新鲜度unknown；不证明视觉或外部文件最新 | dict |
 | `cop_compare_layers(before, after, *, before_output=0, after_output=0, expected_delta=None, tolerance=1e-6, max_pixels=4194304)` | 必须exec：测after-before，完整通道/窗口/空间对齐，不静默重采样；无expected_delta仅量测status=unverified。expected_delta={node,output?}时检验max(abs((after-before)-expected_delta))<=tolerance，返回实际操作数/公式/误差；非有限、错位拒绝，sticky Cache不认证通过；不判断作者选对了数学对象或艺术效果 | dict |
 | `test_cop_controls(controller, output, tests, *, output_port=0, max_pixels=4194304, allow_foreign=None)` | 必须exec：1..16个{id,values:{parm:number},expectations:[{metric,channel,delta:[min,max],range?}]}；metric为mean/min/max/mean_abs_change/max_abs_change，变化指标基准0。每case至少一项非零预期，range验基准与扰动；复用参数/keys/frame恢复并比较完整图层/元数据指纹。拒绝菜单/回调/multiparm/tuple、Manual、sticky Cache和无效基准；恢复失败抛CheckpointError，已恢复的失败仍fail。仅声明case/输出范围，不恢复外部文件/Python/solver副作用，不替代语义读图 | dict |

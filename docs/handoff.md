@@ -1,6 +1,6 @@
 # 当前开发交接
 
-核对日期：2026-09-14
+核对日期：2026-09-15
 
 只保留下一次开发所需的活动事项；完成对应移除条件即删除整项，不追加完成日志。
 维护规则见[交接文档生命周期](development.md#交接文档生命周期)。实现版本以[工具设计](tool-design.md)为准，
@@ -64,8 +64,8 @@
 ### H-05 组件协作与质量成本（PL/IN/CX/EV）
 
 - 状态：待验证
-- 现状：候选component-host已接原生可续跑子任务、独立worker和pre-step绑定；H21/H22有真实DSH无模型费用的导出/导入/总控恢复及GUI预览入口。源码菜单已收敛为单个Open Workspace：仅新开已保存HIP、无自有前端时显式选择组件预览，普通为默认；H21/H22隔离GUI验证首次选择与重复唤起同一Host，普通/受管运行时本身尚未合并，用户live加载与自然任务未验。首次预览的独立Python/当前Houdini路径可确定时自动采用；CLI只信显式候选，其余路径仍需选择，live首次配置未验。预览委派按当前绑定HIP/现场/cwd核对后在同目录建dsh-components，主工作区可访问子文件，不声称文件系统主子隔离；现有live Host不会因源码编辑自动加载新策略。文件工具反例要求工作区不在平台TEMP（该区是DSH共同可写例外），组件要求workspace-write并禁shell/再委派。片段支持subnet/多出口，replace只迁移锁定计划的输出接线并保旧。Host另给子作者当前HIP/预览动词说明，component_status只读探容量，不等于完成或消息驱动等待；新代码在主任务正常完成且主子空闲30秒后兜底释放自有worker，旧live Host未加载该改动。上游cwd候选在codex/component-child-preparation；未安装/发布，官方原版有零子模型执行拒绝反例。
-- 下一步：跨机接续先把DSH provider-cwd候选提交到可访问的远端并固定修订；本仓库的源码分支、构建产物或官方0.1.5-rc.2不能替代该候选。新加载合同47/schema-2复验原生倒角盒体/圆环任务，不复用旧schema-1文件；交换只镜像公共参数/节点接线，原生档案保留内部数据，Ramp/表达式字符串/间接输入有专用回归。component_export公开帮助和递归遍历拒绝已在隔离H21/H22验，仍需在新加载自然子任务核对实际采用；异常worker停止的未知检查点在真实Host中的展示仍待验（停止超时/迟到退出的确定性反例已有）。补消息驱动等待和基础设施阻塞短报；检验子作者实际看局部图、原始义务不被简报取消及公共尺寸控制。完整约束/修订失效、输入/外部依赖迁移、手改/消费者迁移、渲染单槽仍未完成；C5质量成本及正式加载/发布资格另验。
+- 现状：候选component-host已接原生可续跑子任务、独立worker和pre-step绑定；H21/H22有真实DSH无模型费用的导出/导入/总控恢复及GUI预览入口。源码菜单已收敛为单个Open Workspace：仅新开已保存HIP、无自有前端时显式选择组件预览，普通为默认；H21/H22隔离GUI验证首次选择与重复唤起同一Host，普通/受管运行时本身尚未合并，用户live正式加载未验。首次预览的独立Python/当前Houdini路径可确定时自动采用；CLI只信显式候选，其余路径仍需选择，live首次配置未验。预览委派按当前绑定HIP/现场/cwd核对后在同目录建dsh-components，主工作区可访问子文件，不声称文件系统主子隔离；现有live Host不会因源码编辑自动加载新策略。文件工具反例要求工作区不在平台TEMP（该区是DSH共同可写例外），组件要求workspace-write并禁shell/再委派。片段支持subnet/多出口，replace只迁移锁定计划的输出接线并保旧。Host在父简报前注入权威workspace/HIP并返回同一字段，component_status明确liveSceneState未观察且磁盘状态不能替代现场；新代码在主任务正常完成且主子空闲30秒后兜底释放自有worker，旧live Host未加载该改动。上游cwd候选已在[独立fork](https://github.com/eee1723/deepseek-harness/tree/codex/component-child-preparation)的02f873ac0f80ceb8463034053af0db221ddd790c，可远端读取但未安装/发布；官方原版有零子模型执行拒绝反例。
+- 下一步：跨机接续须从上游组件cwd候选的固定修订构建，不能以本仓库源码build、官方同版本包或旧live Host替代。相同DeepSeek Flash的父子自然回归已暴露Tube半径轴语义误读、顶点最小半径伪证和前视图孔误判；合同52已提供节点卡恒定语义提示、闭合流形中心轴表面交点观察、批量verb_help及component_wait。H21/H22定向HOM与无模型双组件API路径已通过，隔离单环自然任务也已完成子片段导出、父端hash/导入复验、控制恢复、沿孔轴可见开口、总装HIP保存和worker已保存停止；其余完整双组件、未见要求变化、主子总成本与同信息单作者对照仍待验。当前自然轨迹还发现父作者从自身$HIP猜子文件路径导致一次导入失败，并把七次scalar verb_help错报为一次batch；交付合同现要求子作者提供完整绝对导出文件名，下一轮核对是否自然遵守。原生图像确实送入模型，但颜色自述与像素不符，Trace没有独立语义识图记录，后续视觉结论须人工对照原图。Host中断后旧session受管恢复仍需带checkpoint hash/session ownership的新executor恢复协议，不能靠重绑或认领既有节点；完整约束/修订失效、输入/外部依赖迁移、手改/消费者迁移、渲染单槽及C5质量成本仍待验。
 - 移除条件：C1～C4在隔离H21/H22与获授权真实路径完成；C5以固定模型/版本/信息/总预算比较整体单作者、聚焦单作者与独立多作者，覆盖简单任务反例，报告主子总成本/质量/返工分布并明确采用范围。压缩策略另测；不以加预算或子作者自评核销。
 - 入口：[组件协作与完成门](component-collaboration.md)、[执行端路由](../src/executor-routing.ts)、[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md)、[集成反例](../tools/tests/dsh-module-integration.test.py)。
 

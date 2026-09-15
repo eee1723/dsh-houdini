@@ -16,6 +16,75 @@ def selected_prims(g, group=None):
     return prims
 
 
+def _center_axis_surface_hits(prims, axes, lower, upper):
+    """Intersect each basis-aligned bbox-center line with polygon triangles.
+
+    This is surface evidence, not a solid classifier. In particular, zero hits
+    along a declared hole axis can support a visible through opening only when
+    closure/manifold checks also pass; a filled cap normally produces two hits.
+    """
+    center = [(lower[i] + upper[i]) * .5 for i in range(3)]
+    scale = max((upper[i] - lower[i] for i in range(3)), default=1.0)
+    determinant_epsilon = max(scale * scale, 1e-18) * 1e-10
+    barycentric_epsilon = 1e-8
+    position_epsilon = max(scale, 1e-9) * 1e-7
+
+    def projected(position):
+        values = [sum(float(position[k]) * axes[i][k] for k in range(3)) for i in range(3)]
+        return [values[i] - center[i] for i in range(3)]
+
+    def dot(a, b): return sum(x * y for x, y in zip(a, b))
+    def sub(a, b): return [x - y for x, y in zip(a, b)]
+    def cross(a, b):
+        return [a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0]]
+
+    rows = []
+    for axis in range(3):
+        direction = [1.0 if i == axis else 0.0 for i in range(3)]
+        hits, coplanar = [], 0
+        for prim in prims:
+            polygon = [projected(v.point().position()) for v in prim.vertices()]
+            if len(polygon) < 3:
+                continue
+            for index in range(1, len(polygon) - 1):
+                a, b, c = polygon[0], polygon[index], polygon[index + 1]
+                edge1, edge2 = sub(b, a), sub(c, a)
+                h = cross(direction, edge2)
+                determinant = dot(edge1, h)
+                if abs(determinant) <= determinant_epsilon:
+                    normal = cross(edge1, edge2)
+                    if dot(normal, normal) > determinant_epsilon * determinant_epsilon and abs(dot(normal, a)) <= position_epsilon * math.sqrt(dot(normal, normal)):
+                        coplanar += 1
+                    continue
+                inverse = 1.0 / determinant
+                offset = [-value for value in a]
+                u = inverse * dot(offset, h)
+                q = cross(offset, edge1)
+                v = inverse * dot(direction, q)
+                if u < -barycentric_epsilon or v < -barycentric_epsilon or u + v > 1.0 + barycentric_epsilon:
+                    continue
+                hits.append(inverse * dot(edge2, q))
+        unique = []
+        for value in sorted(hits):
+            if not unique or abs(value - unique[-1]) > position_epsilon:
+                unique.append(value)
+        rows.append({
+            'axis': axis,
+            'surface_hits': len(unique),
+            'positions': unique[:16],
+            'positions_truncated': len(unique) > 16,
+            'status': 'unverified' if coplanar else 'observed',
+            'coplanar_triangles': coplanar,
+        })
+    return {
+        'origin': center,
+        'axes': rows,
+        'scope': 'Intersections of each basis-aligned line through the selected bbox center with fan-triangulated polygon surfaces. Zero hits is not alone proof of a through-hole; combine it with closed/manifold checks and an axis-aligned image.',
+    }
+
+
 def polygon_observation(g, group=None, basis=None):
     prims = selected_prims(g, group)
     result = {'method': 'full selected polygon topology and point extents', 'group': group,
@@ -112,6 +181,7 @@ def polygon_observation(g, group=None, basis=None):
                    'negative_count':sum(r.get('sign')=='negative' for r in shell_rows),
                    'unverified_count':sum(r['status']=='unverified' or r.get('sign')=='near_zero' for r in shell_rows),
                    'scope':'Positive follows outward HOM winding ONLY for a simple unnested closed shell. Self-intersections, nested cavities and solid validity are NOT tested. Near-zero or inconsistent/open shells cannot establish inward/outward.'}
+    center_axis_hits = _center_axis_surface_hits(prims, axes, lower, upper)
     return {**result, 'status': 'observed', 'selected_primitives':len(prims), 'selected_points':len(pts),
             'surface_area': math.fsum(areas),
             'duplicate_boundary_faces':len(repeated_faces), 'duplicate_face_sample':repeated_faces[:16],
@@ -123,6 +193,7 @@ def polygon_observation(g, group=None, basis=None):
             'nonmanifold_edges':sum(len(o)>2 for o in edges.values()),
             'orientation_conflicts':sum(len(o)==2 and directed[a,b]!=directed[b,a] for (a,b),o in edges.items()),
             'zero_area_faces':zero_area,'zero_length_edges':zero_edges,'shell_orientation':orientation,
+            'center_axis_surface_hits':center_axis_hits,
             'basis':axes,'bounds_min':lower,'bounds_max':upper,'extents':[b-a for a,b in zip(lower,upper)]}
 
 

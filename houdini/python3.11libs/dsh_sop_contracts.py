@@ -213,7 +213,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   'scope':'direct_children' if nodes is None else 'explicit_nodes',
                   'scope_signature':hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
                   'requested_nodes':[n.path() for n in selected], 'checked_nodes':[], 'node_count':0,
-                  'error_nodes':[], 'warning_nodes':[], 'issues':[],
+                  'error_nodes':[], 'error_nodes_count':0, 'warning_nodes':[], 'warning_nodes_count':0, 'issues':[],
                   'next_action':'Manual mode: metadata inspection/editing only; explicitly authorize set_update_mode before evaluation. Geometry is unknown, not empty.'}
         if require_valid:
             raise h.CheckpointError(result['next_action'], result)
@@ -247,7 +247,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'warning_free': not warnings,
             'healthy': not reasons and not warnings and nonempty is True, 'nonempty': nonempty,
             'content_check': content, 'public_output': public,
-            'error_nodes': errors, 'warning_nodes': warnings,
+            'error_nodes': errors, 'error_nodes_count': len(errors),
+            'warning_nodes': warnings, 'warning_nodes_count': len(warnings),
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,
             'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
@@ -361,7 +362,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
     advice = {'operation_advisories': list(advice_by_type.values())[:16],
               'operation_advisory_count': len(advice_by_type),
               'operation_advisories_truncated': len(advice_by_type) > 16,
-              'operation_advisory_scope': 'Static explicit-field presence only; advisory, not a rejection or geometric/intent verification. No parameters are changed by this advice.'}
+              'operation_advisory_scope': 'Static explicit-field presence plus declared parameter-semantic caveats; advisory, not a rejection or geometric/intent verification. No parameters are changed by this advice.'}
     if preflight_errors:
         error = h.PreflightError(preflight_errors)
         error.evidence.update(advice)

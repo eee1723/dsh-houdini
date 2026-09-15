@@ -24,6 +24,7 @@ try:
     run(f"plain=tab_create({root.path()!r},'box','plain')\nsop_set_output(plain)")
     assert root.node('output0') is None
     r=run(f"__result__=verify_network({root.path()!r},output='plain',nodes=[{root.node('plain').path()!r}])")['result']
+    assert r['error_nodes_count']==len(r['error_nodes']) and r['warning_nodes_count']==len(r['warning_nodes'])
     assert r['ok'] and r['public_output'] is None
     assert root.displayNode()==root.node('plain')
     # Recreate native initialization's unconnected output even in headless mode.

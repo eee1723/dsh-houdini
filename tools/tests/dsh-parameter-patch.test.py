@@ -35,6 +35,10 @@ with h._execution_owner('patch-owner', 'test'):
         selected=h.read_parms(n,names=['label','snippet'])
         assert [r['name'] for r in selected]==['label','snippet']
         assert selected[0]['source_sha256']==sha('alpha alpha'),'explicit default-valued field must not be omitted'
+        tuple_row=h.read_parms(root,names=['t'])[0]
+        assert tuple_row['name']=='t' and tuple_row['type']=='tuple' and tuple_row['size']==3
+        assert tuple_row['component_names']==['tx','ty','tz'] and tuple_row['value']==[0.0,0.0,0.0]
+        assert [component['name'] for component in tuple_row['components']]==['tx','ty','tz']
         rejects(lambda:h.read_parms(n,names=['label','missing']),'missing scalar')
         rejects(lambda:h.read_parms(n,names=['label','label']),'unique scalar')
         proposal=patch(source,'n=2','n=3')

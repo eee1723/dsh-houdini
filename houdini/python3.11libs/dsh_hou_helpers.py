@@ -533,10 +533,11 @@ def _version_key(version: str):
 def resolve_latest_type(category, base: str) -> str:
     """返回某节点族的最新版本全名，如 'copytopoints' -> 'copytopoints::2.0'。
 
-    无版本化条目时原样返回 ``base``；有多个 ``::N`` 时取 ``N`` 最大者。
+    无版本化条目时返回已注册的 ``base``；有多个 ``::N`` 时取 ``N`` 最大者。
     只以 namespace 形式注册的族（'rigdoctor' -> 'kinefx::rigdoctor'）返回带
     namespace 的全名：`createNode(exact_type_name=True)` 不接受裸别名。
     多 namespace 同名时按名称排序取第一个（确定性兜底）。
+    当前类别不存在该族时明确失败，不把未验证的输入伪装成解析结果。
     """
     cat = _category(category)
     names = cat.nodeTypes().keys()
@@ -566,7 +567,12 @@ def resolve_latest_type(category, base: str) -> str:
             if key > ns_key:
                 ns_key = key
                 ns_name = name
-    return ns_name if ns_name is not None else base
+    if ns_name is not None:
+        return ns_name
+    raise ValueError(
+        f"未知节点类型族：{base!r}；category={cat.name()}；"
+        "用 search_tab_menu(category, query) 或 search_tab_entries(parent, query) 查当前版本的真实类型"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1063,6 +1069,7 @@ def tab_create(
     type_name: str,
     name: str | None = None,
     inputs: list | None = None,
+    parms: dict | None = None,
 ) -> hou.Node | None:
     """按 Tab Menu 语义创建节点：最新版本 + 完整初始化，返回创建的节点。
 
@@ -1070,6 +1077,8 @@ def tab_create(
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
     - ``inputs``：可选，创建后按序连到 input 0..n（节点或路径均可；
       连接失败会抛错，不会静默跳过）。
+    - ``parms``：可选非空严格参数批次，创建/接线后通过set_parms应用；
+      任一字段失败会连同新节点一起清理。复杂模块仍优先build_module。
       Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
@@ -1086,6 +1095,8 @@ def tab_create(
     node_type = hou.nodeType(cat, latest)
     if inputs is not None and not isinstance(inputs, list):
         raise ValueError("inputs 必须是 source 节点/path 的 list")
+    if parms is not None and (not isinstance(parms, dict) or not parms):
+        raise ValueError("parms 必须是非空 {参数名: 值} dict")
     if inputs and cat == hou.objNodeTypeCategory():
         raise ValueError("Object inputs are parenting; create first, then use set_object_parent with an explicit reason")
     input_nodes = [None if source is None else _resolve(source) for source in (inputs or [])]
@@ -1138,6 +1149,8 @@ def tab_create(
             if shape is None or 'input' not in shape.menuItems():
                 raise ValueError('Sweep 2.0 input initializer contract changed; cannot select supplied cross-section')
             shape.set('input')
+        if parms is not None:
+            set_parms(node, parms)
         _place_created_node(node)
     except BaseException:
         # Headless has no undo stack. Never leave a half-created semantic node
@@ -2442,10 +2455,11 @@ def _node_parameter_cards(typ, counts=None):
     return cards
 
 
-def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) -> dict:
+def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24,
+              *, filter: str | None = None) -> dict:
     """Read a version-resolved node card BEFORE creating a node (no scratch nodes).
 
-    parm_filter is a literal case-insensitive substring, NOT regex or glob.
+    parm_filter/filter is a literal case-insensitive substring, NOT regex or glob.
     An empty match is not an empty type: retry with parm_filter=''.
     Static templates include menu tokens/labels/defaults. Dynamic menus require
     ``list_parms`` on an actual node; this card does not run shelf scripts.
@@ -2466,6 +2480,10 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     typ = hou.nodeType(cat, latest)
     if typ is None:
         raise ValueError(f"未知节点类型：{type_name}; parent={p.path()} creates {cat.name()} nodes. For SOP types use an existing geometry container, not /obj; search_tab_entries(parent,query) lists valid types.")
+    if filter is not None:
+        if parm_filter:
+            raise ValueError("use only one of parm_filter or filter")
+        parm_filter = filter
     if not isinstance(parm_filter, str):
         raise ValueError('parm_filter must be a literal substring string')
     all_parameters = _node_parameter_cards(typ)
@@ -2543,19 +2561,38 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
     返回 ``list[dict]``，每项至少有 ``name/value``；不是 name→value 字典。
     Ramp value为{type:'ramp',basis:[名称],keys:[位置],values:[标量或RGB数组]}，
     可直接json.dumps；仅当前求值控制点，不证明动画恢复，也不是setter输入格式。
-    names可显式选1..32个唯一标量参数，按请求顺序返回且不受changed_only过滤；缺失字段报错。
+    names可显式选1..32个唯一标量或tuple参数，按请求顺序返回且不受changed_only过滤；
+    tuple返回聚合value和带完整诊断的components；缺失字段报错。
     无动画的string含原始UTF-8源码source_sha256；求值不同于原文时另含raw_value。
     """
     n = _resolve(node)
     out = []
+    requested = None
     if names is not None:
         if (not isinstance(names, list) or not 1 <= len(names) <= 32
                 or any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names)):
-            raise ValueError('names must contain 1..32 unique scalar parameter names')
-        parameters = [n.parm(name) for name in names]
-        missing = [name for name, p in zip(names, parameters) if p is None]
+            raise ValueError('names must contain 1..32 unique scalar/tuple parameter names')
+        requested = []
+        missing = []
+        parameters = []
+        seen = set()
+        for name in names:
+            scalar = n.parm(name)
+            if scalar is not None:
+                group = ('scalar', name, (scalar,))
+            else:
+                parm_tuple = n.parmTuple(name)
+                if parm_tuple is None:
+                    missing.append(name)
+                    continue
+                group = ('tuple', name, tuple(parm_tuple))
+            requested.append(group)
+            for parm in group[2]:
+                if parm.name() not in seen:
+                    seen.add(parm.name())
+                    parameters.append(parm)
         if missing:
-            raise ValueError(f'missing scalar parameter names: {missing}; use list_parms for the current interface')
+            raise ValueError(f'missing scalar/tuple parameter names: {missing}; use list_parms for the current interface')
     else:
         parameters = n.parms()
     for p in parameters:
@@ -2653,6 +2690,31 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
             if curves:
                 entry["curves"] = curves
         out.append(entry)
+    if requested is not None:
+        by_name = {entry['name']: entry for entry in out}
+        selected = []
+        for kind, name, parms in requested:
+            components = [by_name[parm.name()] for parm in parms]
+            if kind == 'scalar':
+                selected.append(components[0])
+                continue
+            parm_tuple = n.parmTuple(name)
+            template = parm_tuple.parmTemplate() if parm_tuple is not None else None
+            entry = {
+                'name': name,
+                'label': template.label() if template is not None else None,
+                'type': 'tuple',
+                'size': len(components),
+                'component_names': [component['name'] for component in components],
+                'value': [component.get('value') for component in components],
+                'components': components,
+            }
+            if any(component.get('animated') for component in components):
+                entry['animated'] = True
+            if any(component.get('time_dependent') for component in components):
+                entry['time_dependent'] = True
+            selected.append(entry)
+        return selected
     return out
 
 
@@ -3284,8 +3346,8 @@ def _spare_spec_template(item: dict, path: str, names: set):
             "default_value": (float(default),) if kind == "float" else (int(default),),
             "min": float(minimum) if kind == "float" else int(minimum),
             "max": float(maximum) if kind == "float" else int(maximum),
-            "min_is_strict": bool(item.get("min_strict", False)),
-            "max_is_strict": bool(item.get("max_strict", False)),
+            "min_is_strict": bool(item.get("min_strict", item.get("min_is_strict", False))),
+            "max_is_strict": bool(item.get("max_strict", item.get("max_is_strict", False))),
         }
         cls = hou.FloatParmTemplate if kind == "float" else hou.IntParmTemplate
         template = cls(name, label, 1, **kwargs)
@@ -3457,6 +3519,13 @@ def create_spare_parms(node, code_parm: str = "snippet",
     仅float/int/toggle/string，拒绝内建参数、tuple/menu/callback/multiparm、表达式默认值。
     返回updated前后默认值、current_values/current_state_preserved；要同时改变当前值另用set_parms。
     """
+    if isinstance(code_parm, (list, tuple)):
+        if spec is not None or defaults is not None or update_defaults is not None or layout is not None:
+            raise ValueError('positional spec cannot be combined with spec/defaults/update_defaults/layout')
+        spec = list(code_parm)
+        code_parm = 'snippet'
+    elif not isinstance(code_parm, str):
+        raise ValueError('code_parm must be a parameter name string; pass a parameter specification as spec=[...]')
     n = _resolve(node)
     _require_owned(n, "create_spare_parms", allow_foreign)
     if layout is not None:
@@ -4827,7 +4896,9 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
     inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
-    返回边界/非流形/边连通/零面积、surface_area与局部extent；duplicate_boundary_faces及
+    返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
+    量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合
+    闭合/流形与轴向图像）；duplicate_boundary_faces及
     closed_planar_components是重合边界/闭合共面壳风险，不是任意重叠检测。observed不是形态pass。
     曲线/native/packed及超预算保持unverified；group/basis不能用于默认piece统计。
     """

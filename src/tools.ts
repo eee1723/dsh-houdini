@@ -497,6 +497,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     async execute(args, exec) {
       const bridge = await resolveBridge(exec)
       await requireTaskTarget(exec,bridge)
+      if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
+        throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
       const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
       return retainResult(await attachImages(status, exec, bridge, ctx),workspaceOf(exec))
     },
@@ -528,6 +530,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     async execute(args, exec) {
       const bridge = await resolveBridge(exec)
       await requireTaskTarget(exec,bridge)
+      if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
+        throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
       return retainResult(await bridge.cancelJob(args.jobId, exec.signal),workspaceOf(exec))
     },
   }))

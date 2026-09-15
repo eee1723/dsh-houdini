@@ -100,6 +100,7 @@ assert.equal(
 );
 
 const status = definitions.get('houdini_job_status');
+await assert.rejects(status.execute({jobId:'update_placeholder'},{agent:{}}),/placeholders are never sent/);
 const jobValue = {
   jobId: 'job-7',
   status: 'running',
@@ -128,6 +129,7 @@ assert.equal(
 );
 
 const cancel = definitions.get('houdini_job_cancel');
+await assert.rejects(cancel.execute({jobId:'none'},{agent:{}}),/placeholders are never sent/);
 assert.deepEqual(cancel.presentCall({ jobId: 'job-7' }), {
   card: 'generic',
   title: 'Cancel Houdini job job-7',

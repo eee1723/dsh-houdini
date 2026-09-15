@@ -89,18 +89,42 @@ export function stopComponentWorker(worker:Worker, timeoutMs=30_000):Promise<voi
 }
 
 // Host facts accompany the parent's brief, but do not replace the user's requirements.
-export function componentAuthorPrompt(task:string, gui:boolean):string {
+// The path is known before model admission because every worker starts from the
+// fixed workspace/component.hip contract. Keep it outside the parent-authored
+// brief so a guessed path cannot masquerade as a Host assignment.
+export function componentAuthorPrompt(task:string, gui:boolean,workspace?:string):string {
+  const hip=workspace?path.join(workspace,'component.hip'):undefined
+  const authoritative=workspace
+    ?`Authoritative workspace: ${JSON.stringify(workspace)}. Authoritative current HIP: ${JSON.stringify(hip)}. `+
+      `These Host facts override every workspace, HIP or export-directory path stated in the parent brief. `
+    :''
   return `Component author execution facts (Host): Your executor binding and current HIP are assigned by the Host. `+
+    authoritative+
+    `Top-level tools in this child are houdini_query (read-only), houdini_exec (edits and checks), `+
+    `houdini_job_submit/status/cancel (only for a real id returned by submit), skill/read/write/edit/todo_write/send_message. `+
+    `component_delegate, component_status, component_wait and component_stop belong to the parent Host and are unavailable here; do not probe or retry them. `+
+    `Houdini verbs such as tab_create, node_info, build_module, render_view and component_export are already-imported Python globals inside houdini_exec/query; `+
+    `call them directly and do not import a houdini_verbs module. verb_help documents only those verbs, never top-level tools. `+
+    `When argument binding reports an exact signature or next_action, follow it in the next call; do not repeat a guessed signature or catch/suppress verb failures. `+
     `Inspect the binding/scene; save the current HIP with scene_save(), never Save As to a filename suggested in the brief. `+
+    `Export into the current HIP directory with $HIP/<name>.dshcomponent; ignore any parent-supplied absolute export path. `+
+    `Report the exported artifact's full absolute path, sha256 and contract to the parent; a basename alone is not an import address. `+
     `render_view is a Houdini verb called inside houdini_exec code, not a separate top-level tool. `+
     `Do not traverse project/install directories inside houdini_query or houdini_exec; `+
     `ask the parent for bounded source inspection when needed. `+
-    (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, and report what it actually shows. `
+    (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, retain the preview as evidence, and report what it actually shows. `+
+      `Do not delete preview files with shell, os.remove or allow_raw. If the brief requires a hole or opening, capture a view looking along its declared axis: `+
+      `the background-separated opening must actually be visible, and geo_piece_stats(inspect=True).center_axis_surface_hits for that basis axis must be observed with zero hits on a closed manifold before you report it as a through-hole. `
       :`This worker is headless: render_view requires GUI. If an authorized bounded render_frame can satisfy a required visual check, inspect its output; otherwise report visual unverified to the parent. `)+
     `A secondary brief cannot silently cancel an explicit visual or control obligation from the original user request; `+
     `if requirements conflict or the original scope is unavailable, ask the parent to reconcile them. `+
     `Test the declared local controls and restore them before publishing; an exported file alone is not completion.\n\n`+
-    `Parent component brief (check its interface and assumptions):\n${task}`
+    `Parent component brief (check its interface and assumptions):\n${task}\n\n`+
+    `Host closing constraints (authoritative after the parent brief): use the Host workspace/HIP above; `+
+    `the parent-consumable artifact is an ordinary SOP subnet exported with component_export to $HIP/<name>.dshcomponent, not bgeo/FBX/Alembic/ROP output. `+
+    `Give the parent the exact absolute filename returned by component_export; do not make the parent infer it from its own $HIP. `+
+    `Keep the same completed modeling work if the brief requested another file format, then add the required .dshcomponent. `+
+    `For SOP discovery first create or use an actual geometry/subnet parent, for example geo=tab_create('/obj','geo','component'); part=tab_create(geo,'subnet','part'); node_info(part,'circle',filter='radius').`
 }
 
 export function apply(ctx:Context, config:Config):void {
@@ -122,6 +146,17 @@ export function apply(ctx:Context, config:Config):void {
     return !relative||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative))
   }
   const same=(a:string,b:string)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b
+  const snapshot=(parentId:string)=>{
+    const children=[...workers.entries()].filter(([,worker])=>worker.parentId===parentId).map(([childId,worker])=>({
+      childId,taskStatus:ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])?.status??'not_registered',
+      workspace:worker.workspace,hipPath:worker.record?.hip_path??path.join(worker.workspace,'component.hip'),
+      liveSceneState:'unobserved',
+      ...componentWorkerSnapshot(worker),
+    }))
+    return {capacity:config.maxWorkers,occupied:[...workers.values()].filter(worker=>!worker.exited).length,
+      children,completion:'unverified',
+      observation:'Worker/process state only. Disk size or mtime does not reveal the live unsaved Houdini scene.'}
+  }
 
   const projectWorkerRoot=async(agent:Agent,signal:AbortSignal):Promise<string>=>{
     const id=recordedExecutorIdentity(agent.session.snapshotEvents())!
@@ -271,7 +306,7 @@ export function apply(ctx:Context, config:Config):void {
   })
 
   ctx.tools.register(defineTool({name:'component_delegate',description:
-    'Delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity, not completion; does not import or modify assembly. Use component_status to inspect capacity without starting a worker.',
+    'Top-level Host tool (not a Houdini verb): delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. For a hole/opening, require a closed-manifold center-axis zero-hit check and an image looking along that axis. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity and absolute child workspace, not completion; does not import or modify assembly. Import the exact absolute artifact path reported after the child exports, never infer a sibling path from the assembly $HIP. Use component_status once for a snapshot and component_wait for message-driven waiting; never pass component_* names to verb_help.',
     parameters:{task:{type:'string',required:true,description:'Complete bounded component brief'}},
     output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
     presentCall:()=>({card:'generic',title:'Delegate Houdini component',kind:'execute'}),
@@ -300,28 +335,50 @@ export function apply(ctx:Context, config:Config):void {
       workers.set(id,worker)
       try {
         const result=await subagents.startContinuable({childId:id,provider:'houdini-component',label:'Houdini component',
-          request:{parent:agent,prompt:[{type:'text',text:componentAuthorPrompt(task,config.gui)}],maxDepth:1},signal})
-        return {...result,workspace:worker.workspace,status:'accepted',completion:'unverified'}
+          request:{parent:agent,prompt:[{type:'text',text:componentAuthorPrompt(task,config.gui,worker.workspace)}],maxDepth:1},signal})
+        return {...result,workspace:worker.workspace,hipPath:path.join(worker.workspace,'component.hip'),
+          status:'accepted',completion:'unverified'}
       } catch(error){await stop(worker);throw error}
     },
   }))
   ctx.tools.register(defineTool({name:'component_status',description:
-    'Read the current parent-owned component worker capacity and child states without starting work. Snapshot only; use native child messages to wait for a result, not repeated status or filesystem polling. Ready/idle does not certify component completion.',
+    'Top-level parent Host tool (not a Houdini verb): read one current parent-owned component worker capacity/state snapshot without starting work. Use component_wait for later synchronization, never repeat status or poll files. Ready/idle does not certify component completion. Component children cannot call this tool.',
     parameters:{},
     output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
     presentCall:()=>({card:'generic',title:'Component worker status',kind:'read'}),
     async execute(_args,{agent}) {
       if(!agent)throw new Error('Component status requires an owning task')
-      const children=[...workers.entries()].filter(([,worker])=>worker.parentId===agent.id).map(([childId,worker])=>({
-        childId,taskStatus:ctx.agents.get(childId as Parameters<typeof ctx.agents.get>[0])?.status??'not_registered',
-        ...componentWorkerSnapshot(worker),
-      }))
-      return {capacity:config.maxWorkers,occupied:[...workers.values()].filter(worker=>!worker.exited).length,
-        children,completion:'unverified'}
+      return snapshot(agent.id)
+    },
+  }))
+  ctx.tools.register(defineTool({name:'component_wait',description:
+    'Top-level parent Host tool (not a Houdini verb): wait through the API for up to 30 seconds until an owned component task/worker state changes. This replaces repeated component_status and filesystem polling. A timeout is only a quiet wait; completion still comes from the native child message and must be verified.',
+    parameters:{timeoutSeconds:{type:'number',description:'Finite wait from 1 to 30 seconds (default 30)'}},
+    output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
+    presentCall:()=>({card:'generic',title:'Wait for Houdini components',kind:'read'}),
+    async execute({timeoutSeconds=30},{agent,signal}) {
+      if(!agent)throw new Error('Component wait requires an owning task')
+      if(!Number.isFinite(timeoutSeconds)||timeoutSeconds<1||timeoutSeconds>30)
+        throw new Error('timeoutSeconds must be a finite number from 1 to 30')
+      const started=Date.now(),initial=snapshot(agent.id)
+      const signature=JSON.stringify(initial.children.map(({childId,taskStatus,workerStatus,checkpoint,error})=>
+        ({childId,taskStatus,workerStatus,checkpoint,error})))
+      if(initial.children.length===0||initial.children.every(child=>child.workerStatus==='stopped'))
+        return {...initial,changed:false,timedOut:false,waitedMs:0}
+      const deadline=started+timeoutSeconds*1000
+      while(Date.now()<deadline){
+        await new Promise(resolve=>setTimeout(resolve,Math.min(250,deadline-Date.now())))
+        signal.throwIfAborted()
+        const current=snapshot(agent.id)
+        const currentSignature=JSON.stringify(current.children.map(({childId,taskStatus,workerStatus,checkpoint,error})=>
+          ({childId,taskStatus,workerStatus,checkpoint,error})))
+        if(currentSignature!==signature)return {...current,changed:true,timedOut:false,waitedMs:Date.now()-started}
+      }
+      return {...snapshot(agent.id),changed:false,timedOut:true,waitedMs:Date.now()-started}
     },
   }))
   ctx.tools.register(defineTool({name:'component_stop',description:
-    'Stop an owned component worker after finishing its task, before claiming final completion. Check ok and checkpoint=saved; stopped alone means only process exit. A busy/failed shutdown returns checkpoint=unknown with its error. Does not delete files or import a component. Completed idle parent turns also trigger a 30-second guarded release fallback; a released child cannot resume on the same executor.',
+    'Top-level parent Host tool (not a Houdini verb): stop an owned component worker after finishing its task, before claiming final completion. Check ok and checkpoint=saved; stopped alone means only process exit. A busy/failed shutdown returns checkpoint=unknown with its error. Does not delete files or import a component. Completed idle parent turns also trigger a 30-second guarded release fallback; a released child cannot resume on the same executor.',
     parameters:{childId:{type:'string',required:true}},
     output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
     presentCall:()=>({card:'generic',title:'Stop Houdini component',kind:'execute'}),

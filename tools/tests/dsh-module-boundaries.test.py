@@ -55,6 +55,12 @@ try:
     for name, mode, returned in [('tab_create','exec','Node'),('list_parms','query_or_exec','list'),('read_parms','query_or_exec','list')]:
         info=b._verb_help(name)
         assert info['call_mode']==mode and returned in info['return_type'],info
+    batch=b._verb_help(['tab_create','read_parms'])
+    assert batch['count']==2 and [item['name'] for item in batch['items']]==['tab_create','read_parms'],batch
+    for bad in ([], ['tab_create','tab_create'], ['tab_create', 3]):
+        try:b._verb_help(bad)
+        except ValueError:pass
+        else:raise AssertionError('invalid verb_help batch accepted: '+repr(bad))
 finally:
     root.destroy()
 print('module checkpoint/discovery failure/integration retry/atomic rollback/signature discovery passed on '+hou.applicationVersionString())

@@ -40,7 +40,7 @@ try {
       calls.push([task,req.url])
       // Force interleaving so a mutable global target would send the wrong task.
       await new Promise(resolve=>setTimeout(resolve,i?1:15))
-      res.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{target:id},jobId:'job-'+i,status:'done',
+      res.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{target:id},jobId:String(i).repeat(12),status:'done',
         requestReceipt:{request_ref:runtime+'.'+'a'.repeat(32),runtime_id:runtime,status:'done'}}))
     })
     servers.push(server)
@@ -103,9 +103,9 @@ try {
   const values=await Promise.all([0,1].map(i=>defs.get('houdini_exec').execute({code:'pass'},context(i))))
   assert.deepEqual(values.map(v=>v.result.target),records.map(r=>r.executor_id))
   await Promise.all([0,1].map(i=>defs.get('houdini_job_submit').execute({code:'pass'},context(i))))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_cancel').execute({jobId:'job-'+i},context(i))))
-  assert(calls.some(c=>c[0]==='task-0'&&c[1]==='/jobs/job-0/cancel'))
-  assert(calls.some(c=>c[0]==='task-1'&&c[1]==='/jobs/job-1/cancel'))
+  await Promise.all([0,1].map(i=>defs.get('houdini_job_cancel').execute({jobId:String(i).repeat(12)},context(i))))
+  assert(calls.some(c=>c[0]==='task-0'&&c[1]==='/jobs/000000000000/cancel'))
+  assert(calls.some(c=>c[0]==='task-1'&&c[1]==='/jobs/111111111111/cancel'))
   const before=calls.length
   // One Host-plane controller survives removal of either preset consumer.
   const hostContext=new Context()

@@ -3,16 +3,16 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 14 · Source SHA-256: `b4a196e7412ca8a1a40b708db7f19f208c0e81131f2233d4d0cec4a8a4d71397`
+Schema: 2 · Cards: 14 · Source SHA-256: `ea91fefc40a78c46116541156df83779185f61b55f82ff27a1a81aebeb3716e2`
 
 ## 数据与设计契约
 
 - JSON维护输入语义、决策、反例与来源；本页逐项镜像，英文操作说明不另行手译成第二份真相。
 - `id`标识知识修订；`node_types`限定精确类型，省略时按现有family规则匹配。`tested_versions`是证据范围，省略不表示已验证所有版本。
 - `critical_parameters`只维护关键参数名；实际类型、默认值、组件名、菜单token/set_value由Houdini运行时模板提供，不在文档固化菜单索引。
-- `decisions[].any_of`列出备选字段组合：满足任一组合仅表示显式提供字段，不证明值或建模意图正确。`guidance`解释决策边界。
+- `decisions[].any_of`列出备选字段组合：满足任一组合仅表示显式提供字段，不证明值或建模意图正确。`always_advisories`保存每次采用该节点都必须看到的参数语义反例；两者的`guidance`都解释边界。
 - `node_info`返回不受普通filter/limit裁切的`operation_parameters`及缺字段提示；静态模板不等于Shelf初始化后的实际值。
-- `build_module.operation_advisories`按类型/缺字段合并，最多16条并报告总数/截断。不阻断、不改默认值、不cook、不解析VEX；未决选择可先dry_run。
+- `build_module.operation_advisories`按类型合并缺字段和常驻语义反例，最多16条并报告总数/截断。不阻断、不改默认值、不cook、不解析VEX；未决选择可先dry_run。
 - 精确类型不匹配时不套用受限卡；复制返回值不应修改缓存。新增字段必须同时更新生成器、运行时消费者和测试。
 
 实现：[卡加载器](../houdini/python3.11libs/dsh_operation_cards.py)、[node_info](../houdini/python3.11libs/dsh_hou_helpers.py)、[模块构建](../houdini/python3.11libs/dsh_sop_contracts.py)。
@@ -125,10 +125,14 @@ Schema: 2 · Cards: 14 · Source SHA-256: `b4a196e7412ca8a1a40b708db7f19f208c0e8
 - `representation`：`type`。Choose polygon output for polygon face operations; native Tube is a legitimate alternative, not a failed polygon.
 - `end_closure`：`cap`。Choose whether end caps are intended. Open pipes and closed solid cylinders have different contracts.
 
+### 常驻语义提示
+
+- `radius_axes`：Tube rad1/rad2 are the X/Y ellipse radii of one cross-section, never outer/inner radii. A capped Tube is a filled cylinder even when rad1 and rad2 differ; use a construction that creates an actual inner surface for a pipe, washer or through-hole.
+
 ### 操作与边界
 
 - Direct creation type=prim and cap=0. Explicit polygon type and caps are separate decisions; a nonempty native Tube does not establish polygon topology.
-- Inspect the actual axis, radius, end boundaries and resolution before using the unit in booleans or instancing. A capped cylinder does not by itself model a hollow pipe wall.
+- rad1/rad2 are the X/Y ellipse radii of one cross-section, not outer/inner radii. Inspect the actual axis, radius, end boundaries and resolution before using the unit in booleans or instancing. A capped cylinder does not by itself model a hollow pipe wall.
 
 ## circle
 

@@ -74,6 +74,21 @@ def _nodes(root):
     return nodes
 
 
+def _sidefx_definition_ancestor(node, root, hfs):
+    """Return the owning built-in HDA instance for definition implementation nodes."""
+    cursor = node
+    while cursor is not None and cursor != root.parent():
+        definition = cursor.type().definition()
+        if definition is not None:
+            library = Path(definition.libraryFilePath()).resolve()
+            if library.is_relative_to(hfs):
+                return cursor
+        if cursor == root:
+            break
+        cursor = cursor.parent()
+    return None
+
+
 def _parm_value(parm):
     """Serializable authored channels or literal values, shared by both snapshots."""
     keys = parm.keyframes()
@@ -104,8 +119,20 @@ def _snapshot(root, *, check_owned=False):
     hfs = Path(hou.getenv('HFS')).resolve()
     public_parms = set(root.spareParms())
     for node in nodes:
+        sidefx_instance = _sidefx_definition_ancestor(node, root, hfs)
         if check_owned:
-            h._require_owned(node, 'component export')
+            try:
+                h._require_owned(node, 'component export')
+            except ValueError as ownership_error:
+                # Some SideFX HDAs materialize implementation children only on
+                # their first cook. Those child session ids were not present when
+                # the owned HDA instance was created, but they are definition
+                # contents rather than separately authored scene nodes. Accept
+                # only internals of an owned, SideFX-installed definition. A
+                # foreign direct child or a custom HDA still fails normally.
+                if sidefx_instance is None:
+                    raise ownership_error
+                h._require_owned(sidefx_instance, 'component export built-in HDA instance')
         if node.eventCallbacks() or node.userData(h._RENDER_OWNER_KEY):
             raise ValueError('component cannot contain callbacks or persistent service nodes')
         definition = node.type().definition()
@@ -118,7 +145,7 @@ def _snapshot(root, *, check_owned=False):
         parms = []
         for parm in node.parms():
             template = parm.parmTemplate()
-            if template.scriptCallback():
+            if template.scriptCallback() and sidefx_instance is None:
                 raise ValueError('component parameter callbacks are unsupported')
             keys = parm.keyframes()
             # Inspect reference-bearing channels without serializing every
@@ -275,8 +302,9 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
     name = _name(name)
     if parent.node(name) is not None:
         raise ValueError('component import never overwrites an existing node')
-    if not isinstance(expected_sha256, str) or not re.fullmatch('[0-9a-f]{64}', expected_sha256):
-        raise ValueError('expected_sha256 required')
+    if not isinstance(expected_sha256, str) or not re.fullmatch('[0-9a-fA-F]{64}', expected_sha256):
+        raise ValueError('expected_sha256 must be a 64-character hexadecimal digest')
+    expected_sha256 = expected_sha256.lower()
     with _path(filename).open('rb') as stream:
         data = stream.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES or _hash(data) != expected_sha256:

@@ -16,7 +16,7 @@
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
 | [多实例与任务恢复](multi-instance.md) | 显式共享Host/多Houdini的身份、绑定、写入预留、单端Repair、启用步骤和未开放的恢复边界 |
-| [多Agent组件建模](component-collaboration.md) | 重要优化设计：独立作者/进程、普通subnet与节点片段交付、共享控制、受控装配和实施验收；自动协作尚未实现 |
+| [多Agent组件建模](component-collaboration.md) | 独立作者/进程、普通subnet与节点片段交付、共享控制、受控装配和实施验收；显式候选已有，完整协作验收未闭环 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、鉴权/RPC/Qt/profile资格门 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [评测基础设施设计](benchmark-design.md) | manifest/schema、信息隔离、评审与能力主张，不保存批次结果 |

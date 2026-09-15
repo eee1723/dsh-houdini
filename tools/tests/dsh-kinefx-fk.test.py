@@ -83,6 +83,13 @@ try:
     )
     assert resolved["rd"] == "kinefx::rigdoctor", resolved
     assert resolved["pinned"] == "kinefx::rigpose", resolved
+    missing = dsh_bridge.run_code(
+        "__result__ = resolve_latest_type('sop', 'transform')",
+        owner_session=session,
+        owner_call="call-kinefx-missing-type",
+    )
+    assert missing["ok"] is False, missing
+    assert "未知节点类型族" in missing["error"] and "transform" in missing["error"], missing
 
     # 1) 骨架 + transform 初始化 + rigpose（钉 kinefx:: 命名空间）
     geo_path = run(

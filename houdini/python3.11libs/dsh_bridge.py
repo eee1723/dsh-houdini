@@ -69,7 +69,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 47
+_EXECUTION_CONTRACT_VERSION = 52
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -160,12 +160,21 @@ def _jsonable(value, _depth: int = 0):
 # 每个动词（verb）的运行时调用都会被记录：动词名 / 入参 / 出参 / 是否成功 / 耗时。
 # 记录随 exec 结果返回（`verbs` 字段），供 agent 和将来的 houdinitrace 视图
 # 消费——让动词词表的调用情况「是否成功 + 具体输入输出」清晰可见。
-def _verb_help(name: str) -> dict:
-    """返回一个已注入动词的 signature/docstring，避免靠失败或仓库源码猜契约。"""
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("name 必须是非空动词名")
-    key = name.strip()
+def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
+    """返回已注入动词的准确签名；列表可一次查询 1..16 个唯一名称。"""
     registry = globals().get("_VERBS", {})
+    if isinstance(name, (list, tuple)):
+        if not 1 <= len(name) <= 16:
+            raise ValueError("name 列表必须包含 1..16 个动词名")
+        if any(not isinstance(item, str) or not item.strip() for item in name):
+            raise ValueError("name 列表中的每项都必须是非空动词名")
+        keys = [item.strip() for item in name]
+        if len(set(keys)) != len(keys):
+            raise ValueError("name 列表中的动词名必须唯一")
+        return {"items": [_verb_help(key) for key in keys], "count": len(keys)}
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name 必须是非空动词名或 1..16 项名称列表")
+    key = name.strip()
     fn = registry.get(key)
     if fn is None:
         suggestions = difflib.get_close_matches(key, sorted(registry), n=8, cutoff=0.35)

@@ -16,10 +16,16 @@ with h._execution_owner('efficiency','setup'):
     source=h.tab_create(root,'box','source')
     ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=[{'type':'toggle','name':'enabled','default':True}])
+    positional=h.tab_create(root,'null','POSITIONAL_CTRL')
+    positional_result=h.create_spare_parms(positional,[{'type':'float','name':'amount','default':1,
+        'min':0,'max':2,'min_is_strict':True,'max_is_strict':True}])
+    assert positional_result['mode']=='spec' and positional.parm('amount').parmTemplate().minIsStrict()
+    with_parms=h.tab_create(root,'box','with_parms',parms={'sizex':2.0,'sizey':0.5})
+    assert with_parms.evalParm('sizex')==2.0 and with_parms.evalParm('sizey')==0.5
     switch=h.tab_create(root,'switch','choice',inputs=[source])
 try:
     rejects(lambda:h.node_info('Sop','box'),'existing absolute network')
-    rejects(lambda:h.node_info('/obj','box'),'existing geometry container')
+    rejects(lambda:h.node_info('/obj','box'),'search_tab_menu')
     for code in ['node_info("box")','node_info(type_name="box")','node_info(type="box",context="sop")']:
         env=b.run_code(code,read_only=True)
         assert not env['ok'] and 'node_info(parent, type_name' in env['error'],env

@@ -7,6 +7,9 @@ import {createHash} from 'node:crypto'
 export const inject=['llm','agents']
 export function apply(ctx) {
   let childRequests=0
+  const expectChildFailure=process.env.DSH_COMPONENT_EXPECT_CHILD_FAILURE==='1'
+  const expectStartupFailure=process.env.DSH_COMPONENT_EXPECT_STARTUP_FAILURE==='1'
+  const expectStopFailure=process.env.DSH_COMPONENT_EXPECT_STOP_FAILURE==='1'
   ctx.on('agent/disposed',({agent})=>{
     if(process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'&&agent.session.header.parentSession){
       assert.equal(childRequests,0)
@@ -21,14 +24,27 @@ export function apply(ctx) {
       if(options.purpose||!agent){blocks=[{type:'text',text:'Component fixture'}]}
       else if(agent.session.header.parentSession){
         childRequests++
+        const promptText=options.messages.flatMap(message=>message.content
+          .filter(block=>block.type==='text').map(block=>block.text)).join('\n')
+        const failingAuthor=expectChildFailure&&promptText.includes('Fixture part 0:')
         assert(agent.session.header.cwd.startsWith(process.env.DSH_COMPONENT_TEST_WORKERS))
-        assert(JSON.stringify(options.messages).includes('render_view is a Houdini verb called inside houdini_exec'),
+        assert(promptText.includes('render_view is a Houdini verb called inside houdini_exec'),
           'Host execution facts must reach the child before its first model request')
+        assert(promptText.includes(`Authoritative workspace: ${JSON.stringify(agent.session.header.cwd)}`),
+          'Host must inject the allocated child workspace before the parent-authored brief')
+        assert(promptText.includes(`Authoritative current HIP: ${JSON.stringify(path.join(agent.session.header.cwd,'component.hip'))}`),
+          'Host must inject the exact fixed child HIP before the parent-authored brief')
+        assert(promptText.includes('These Host facts override every workspace, HIP or export-directory path stated in the parent brief'))
+        assert(promptText.includes('Z:\\wrong-parent-path\\component.hip'),
+          'the negative control must retain the parent-authored fake path as untrusted brief text')
         assert(agent.session.snapshotEvents().some(e=>e.type==='user/message'&&e.data.source?.plugin==='dsh-houdini'
           &&e.data.source.sections?.some(s=>s.name==='dsh-houdini:executor-binding')))
         const results=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'))
         for(const result of results){
           if(result.toolCallId==='outside-write')assert(result.isError, 'child wrote outside its workspace')
+          else if(failingAuthor&&result.toolCallId==='component-export')
+            assert.match(result.content.filter(c=>c.type==='text').map(c=>c.text).join('\n'),
+              /Execution failed:[\s\S]*missing\/ambiguous\/unconnected public output 1/)
           else assert(!result.isError,JSON.stringify(result))
         }
         if(!results.length){
@@ -38,12 +54,23 @@ export function apply(ctx) {
           assert(fs.existsSync(path.join(agent.session.header.cwd,'local.txt')))
           assert(!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'forbidden-'+agent.id+'.txt')))
           const filename=path.join(agent.session.header.cwd,'part.dshcomponent')
-          const code="g=tab_create('/obj','geo','component')\ns=tab_create(g,'subnet','part')\n"
+          let code="g=tab_create('/obj','geo','component')\ns=tab_create(g,'subnet','part')\n"
             +"create_spare_parms(s,layout=[{'type':'float','name':'width','default':1}])\n"
             +"b=tab_create(s,'box','shape')\nset_parms(b,{'sizex':'ch(\"../width\")'})\n"
             +"detail=tab_create(s,'polybevel','bevel',inputs=[b])\nsop_set_output(detail,output_index=0)\n"
-            +`__result__=component_export(s,${JSON.stringify(filename)},{'module_id':'part','revision':1,'units':'m','outputs':[0]})`
+          code+=failingAuthor?"scene_save()\n__result__={'modeled':True,'exported':False}"
+            :`__result__=component_export(s,${JSON.stringify(filename)},{'module_id':'part','revision':1,'units':'m','outputs':[0]})`
           blocks=[{type:'tool-call',id:'component-build',name:'houdini_exec',arguments:JSON.stringify({code})}]
+        }else if(failingAuthor&&!results.some(r=>r.toolCallId==='component-export')){
+          assert(fs.existsSync(path.join(agent.session.header.cwd,'component.hip')),
+            'the modeled HIP must be saved before exchange failure injection')
+          const filename=path.join(agent.session.header.cwd,'part.dshcomponent')
+          const code=`__result__=component_export('/obj/component/part',${JSON.stringify(filename)},{'module_id':'part','revision':1,'units':'m','outputs':[1]})`
+          blocks=[{type:'tool-call',id:'component-export',name:'houdini_exec',arguments:JSON.stringify({code})}]
+        }else if(failingAuthor){
+          assert(!fs.existsSync(path.join(agent.session.header.cwd,'part.dshcomponent')),
+            'failed exchange cannot publish a component artifact')
+          blocks=[{type:'text',text:'Component exchange blocked at component_export: missing/ambiguous/unconnected public output 1. Modeled HIP retained; artifact and visual acceptance unverified. Do not import or rebuild this component.'}]
         }else{
           assert(fs.existsSync(path.join(agent.session.header.cwd,'part.dshcomponent')))
           fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,agent.id+'.json'),JSON.stringify({child:agent.id,cwd:agent.session.header.cwd,passed:true}))
@@ -53,6 +80,14 @@ export function apply(ctx) {
         const autoRelease=process.env.DSH_COMPONENT_EXPECT_AUTO_RELEASE==='1'
         const checked=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='component_status')
         const called=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='component_delegate')
+        const waited=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='component_wait')
+        // Drive assembly from the native child settlement notices actually
+        // visible to the parent's model. Artifact existence is only checked
+        // after both authors have reported; it is not a completion signal.
+        const modelText=options.messages.flatMap(m=>m.content.filter(c=>c.type==='text').map(c=>c.text)).join('\n')
+        const notices=[...modelText.matchAll(/Background subagent ([0-9a-f-]{36}) (finished and will do no further work|was stopped|ran out of room|declined the task|failed before it finished|ended abnormally)/g)]
+        const settled=new Set(notices.filter(match=>match[2]==='finished and will do no further work').map(match=>match[1]))
+        assert.equal(settled.size,notices.length,'each visible child settlement must be unique and completed')
         if(checked&&!called){
           const status=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='capacity')).at(-1)
           assert(status&&!status.isError,
@@ -60,9 +95,68 @@ export function apply(ctx) {
           assert(!fs.existsSync(process.env.DSH_COMPONENT_TEST_WORKERS),
             'capacity inspection must not start a worker or create its root')
         }
-        const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json')
+        if(waited){
+          const waitResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='component-wait')).at(-1)
+          if(waitResult){
+            assert(!waitResult.isError,'component_wait must remain an API-level bounded wait')
+            const value=JSON.parse(waitResult.content.find(c=>c.type==='text').text)
+            assert.equal(typeof value.changed,'boolean')
+            assert.equal(typeof value.timedOut,'boolean')
+            assert(value.waitedMs>=0&&value.waitedMs<=2000,value)
+          }
+        }
         const assembly=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='houdini_exec')
-        if(autoRelease&&fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'assembled.json'))){
+        const startupResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='delegate-0')).at(-1)
+        if(expectStartupFailure&&startupResult){
+          assert(startupResult.isError,'missing worker executable must reject before child admission')
+          const error=startupResult.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')
+          assert.match(error,/ENOENT|not found|cannot find/i)
+          assert.equal(childRequests,0,'failed startup must not request a child model')
+          assert(!assembly,'failed startup must not mutate assembly')
+          fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'startup-blocked.json'),JSON.stringify({
+            error:error.slice(0,1000),childRequests,assembly:false}))
+          blocks=[{type:'text',text:`Component startup blocked: ${error.slice(0,300)}. No child was admitted or assembly attempted; check the configured worker executable before retrying.`}]
+        }else if(expectStopFailure&&settled.size===2&&!assembly){
+          const failedChild=[...settled].sort()[0],survivingChild=[...settled].sort()[1]
+          const readyFile=path.join(process.env.DSH_COMPONENT_TEST_OUT,'stop-ready.json')
+          if(!fs.existsSync(readyFile)){
+            assert(fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,failedChild+'.json')))
+            assert(fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,survivingChild+'.json')))
+            fs.writeFileSync(readyFile,JSON.stringify({failedChild,survivingChild}))
+            blocks=[{type:'text',text:'Both component artifacts are retained. Awaiting the isolated worker-stop fault injection before checkpoint inspection.'}]
+          }else{
+            const statusResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='stop-fault-status')).at(-1)
+            const stopResults=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId.startsWith('stop-fault-child-')))
+            if(!statusResult)blocks=[{type:'tool-call',id:'stop-fault-status',name:'component_status',arguments:'{}'}]
+            else if(!stopResults.length){
+              assert(!statusResult.isError)
+              const status=JSON.parse(statusResult.content.find(c=>c.type==='text').text)
+              assert.match(status.observation,/Disk size or mtime does not reveal the live unsaved Houdini scene/)
+              assert(status.children.every(child=>child.liveSceneState==='unobserved'
+                &&child.hipPath===path.join(child.workspace,'component.hip')))
+              const failed=status.children.find(child=>child.childId===failedChild)
+              const surviving=status.children.find(child=>child.childId===survivingChild)
+              assert.equal(failed.workerStatus,'stopped')
+              assert.equal(failed.checkpoint,'unknown')
+              assert.equal(surviving.workerStatus,'ready')
+              blocks=[failedChild,survivingChild].map((childId,i)=>({type:'tool-call',id:'stop-fault-child-'+i,
+                name:'component_stop',arguments:JSON.stringify({childId})}))
+            }else{
+              assert.equal(stopResults.length,2)
+              assert(stopResults.every(result=>!result.isError))
+              const outcomes=stopResults.map(result=>JSON.parse(result.content.find(c=>c.type==='text').text))
+              const failed=outcomes.find(result=>result.childId===failedChild)
+              const surviving=outcomes.find(result=>result.childId===survivingChild)
+              assert.deepEqual({stopped:failed.stopped,ok:failed.ok,checkpoint:failed.checkpoint},
+                {stopped:true,ok:false,checkpoint:'unknown'})
+              assert.match(failed.error,/exited unexpectedly|Worker exited/i)
+              assert.deepEqual({stopped:surviving.stopped,ok:surviving.ok,checkpoint:surviving.checkpoint},
+                {stopped:true,ok:true,checkpoint:'saved'})
+              fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'stop-unknown.json'),JSON.stringify({failed,surviving,assembly:false}))
+              blocks=[{type:'text',text:'One owned worker exited unexpectedly: its checkpoint is unknown and its files are retained. The other worker stopped with a saved checkpoint. Assembly was not attempted.'}]
+            }
+          }
+        }else if(autoRelease&&fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'assembled.json'))){
           const status=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='release-status')).at(-1)
           if(!status)blocks=[{type:'tool-call',id:'release-status',name:'component_status',arguments:'{}'}]
           else{
@@ -74,7 +168,26 @@ export function apply(ctx) {
             fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'released.json'),JSON.stringify(result))
             blocks=[{type:'text',text:'Idle component workers released with saved checkpoints.'}]
           }
-        }else if(files.length===2&&!assembly){
+        }else if(expectChildFailure&&settled.size===2&&!assembly){
+          assert.match(modelText,/Component exchange blocked at component_export: missing\/ambiguous\/unconnected public output 1/,
+            'the original exchange failure must reach the parent in a native child notice')
+          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json'))
+          assert.equal(files.length,1,'only the successful author may publish a fixture record')
+          const survivor=JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,files[0])))
+          assert(settled.has(survivor.child),'the surviving artifact must belong to a completed child')
+          const failedChild=[...settled].find(id=>id!==survivor.child)
+          assert(failedChild)
+          assert(fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,failedChild,'workspace','component.hip')))
+          assert(!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,failedChild,'workspace','part.dshcomponent')))
+          fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'blocked.json'),JSON.stringify({
+            failedChild,survivingChild:survivor.child,accepted:[...settled],assembly:false,
+            error:'missing/ambiguous/unconnected public output 1'}))
+          blocks=[{type:'text',text:'Component exchange blocked: missing/ambiguous/unconnected public output 1. The other child artifact is retained; assembly was not attempted. Geometry and visual acceptance remain unverified.'}]
+        }else if(settled.size===2&&!assembly){
+          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json')
+          assert.equal(files.length,2,'both completed children must have published fixture records')
+          assert.deepEqual(new Set(files.map(file=>JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,file))).child)),settled,
+            'parent must receive settlement notices from exactly the two publishing authors')
           let code="g=tab_create('/obj','geo','assembly')\nctrl=tab_create(g,'null','CTRL')\ncreate_spare_parms(ctrl,layout=[{'type':'float','name':'width','default':1}])\n"
           for(let i=0;i<files.length;i++){
             const info=JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,files[i])))
@@ -96,6 +209,7 @@ export function apply(ctx) {
             fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'assembled.json'),JSON.stringify({passed:true}))
             blocks=[{type:'text',text:'Assembly saved; worker release pending idle-turn boundary.'}]
           }else if(stops.length===0){
+            const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json')
             blocks=files.map((file,i)=>({type:'tool-call',id:'stop-child-'+i,name:'component_stop',
               arguments:JSON.stringify({childId:JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,file))).child})}))
           }else{
@@ -105,8 +219,9 @@ export function apply(ctx) {
             blocks=[{type:'text',text:'Two ordinary subnets assembled; shared control and recovery passed; both workers stopped.'}]
           }
         }else blocks=!checked?[{type:'tool-call',id:'capacity',name:'component_status',arguments:'{}'}]
-          :called?[{type:'text',text:'Component work accepted; awaiting its result.'}]:[0,1].map(i=>({
-          type:'tool-call',id:'delegate-'+i,name:'component_delegate',arguments:JSON.stringify({task:'Fixture part '+i+': create an ordinary subnet box in metres, publish output 0 and export part.dshcomponent. Do not create an HDA.'})}))
+          :called?(!waited?[{type:'tool-call',id:'component-wait',name:'component_wait',arguments:JSON.stringify({timeoutSeconds:1})}]
+            :[{type:'text',text:'Component work accepted; awaiting its result.'}]):(expectStartupFailure?[0]:[0,1]).map(i=>({
+          type:'tool-call',id:'delegate-'+i,name:'component_delegate',arguments:JSON.stringify({task:'Fixture part '+i+': create an ordinary subnet box in metres, publish output 0 and export part.dshcomponent. Do not create an HDA. Parent guesses the Host-assigned HIP is Z:\\wrong-parent-path\\component.hip; this negative-control claim must not become authoritative.'})}))
       }
       for(let index=0;index<blocks.length;index++){
         yield {type:'block-start',index,blockType:blocks[index].type}

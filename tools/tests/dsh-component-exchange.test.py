@@ -120,6 +120,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     file = str(Path(folder) / 'part.dshcomponent')
     contract = {'module_id': 'part', 'revision': 1, 'units': 'm', 'outputs': [0]}
     exported = run(f'__result__=component_export("/obj/source/module",{file!r},{contract!r})')
+    # SideFX HDAs may materialize definition-owned implementation children on
+    # first cook. They belong to the owned built-in instance and must not make
+    # a self-authored component impossible to export.
+    run("m=tab_create('/obj/source/module','matchsize','builtin_hda',inputs=['/obj/source/module/shape'])\n"
+        "sop_set_output(m,output_index=2)\ncook_node(m)")
+    lazy_file = str(Path(folder) / 'builtin_hda.dshcomponent')
+    lazy_contract = {**contract, 'outputs': [0, 2]}
+    run(f'__result__=component_export("/obj/source/module",{lazy_file!r},{lazy_contract!r})')
     query = b.run_code(f'component_export("/obj/source/module",{file!r},{contract!r})', owner_session='source', read_only=True)
     assert not query['ok']
     for method in ('saveItemsToFile', 'loadItemsFromFile', 'saveChildrenToFile', 'loadChildrenFromFile'):
@@ -130,6 +138,13 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     result = run(f'__result__=component_import({args},trusted=True)', owner='assembly')
     root = hou.node(result['node'])
     assert root.type().name() == 'subnet' and root.geometry().prims()
+    uppercase = run(
+        f'__result__=component_import("/obj/assembly",{file!r},{exported["sha256"].upper()!r},'
+        '"uppercase_digest",trusted=True)',
+        owner='assembly',
+    )
+    assert uppercase['sha256'] == exported['sha256']
+    run('delete_node("/obj/assembly/uppercase_digest")', owner='assembly')
     with h._execution_owner('assembly', 'check'):
         assert all(h.node_provenance(n)['status'] == 'owned_current_session' for n in (root, *root.allSubChildren()))
     run(f'set_parms({root.node("shape").path()!r},{{"sizex":2}})', owner='assembly')
