@@ -7,7 +7,7 @@ import {registerHoudiniTools} from '../../lib/tools.js';
 const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-native-images-'));
 const value={ok:true,stdout:'',stderr:'',images:['C:/project/a.png','C:/project/b.png']};
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
-const exec={agent:{options:{provider:'old',model:'wrong'},session:{header:{cwd},requestHeader:()=>({config:{provider:'active',model:'native'}})}},signal:new AbortController().signal};
+const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:{header:{cwd},requestHeader:()=>({config:{provider:'active',model:'native'}})}},callId:'image-call',signal:new AbortController().signal};
 const refs=[];
 const attachments={imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:150},async saveImage({data,name}){saved++;const ref={attachmentId:'image-'+saved,mediaType:'image/png',bytes:data.length,width:1,height:1,name};refs.push(ref);return ref}};
 let modalities=['text','image'];

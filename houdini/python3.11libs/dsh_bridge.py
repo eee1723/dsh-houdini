@@ -15,10 +15,18 @@ Or headless with hython:
 
 Endpoints:
     GET  /health              {}            -> version, raw gate, and active job counts
-    POST /exec                {"code": str} -> ExecResult
-    POST /jobs                {"code": str} -> {"jobId": str}
-    POST /jobs/<id>/status    {}            -> JobStatus
-    POST /jobs/<id>/cancel    {}            -> JobStatus
+    POST /exec                admission envelope -> ExecResult
+    POST /jobs                admission envelope -> {"jobId": str}
+    POST /jobs/<id>/status    identity + contract envelope -> JobStatus
+    POST /jobs/<id>/cancel    identity + contract envelope -> JobStatus
+
+The admission envelope is {"code", "owner_session", "owner_call",
+"expected_contract", "request_ref"}: every execution and job submission carries
+the Host session identity, the expected contract and a one-time ticket prepared
+via /requests/prepare. Missing or mistyped fields return 400; a well-formed
+envelope from a different Host generation returns 409; untracked HTTP execution
+is not supported. Job status/cancel carry {"owner_session", "owner_call",
+"expected_contract"} and are authorized by the owning session only.
 
 ExecResult includes ``ok/stdout/stderr/result/error`` plus the verb ledger,
 Raw Gate classification, rollback outcome, advisory text and produced image
@@ -69,7 +77,10 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 52
+# 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
+# owner_call), expected_contract and a one-time request ticket; job status and
+# cancel are authorized by the owning session only.
+_EXECUTION_CONTRACT_VERSION = 53
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -934,6 +945,35 @@ def _operation_summary(name: str, result):
     return out
 
 
+def _contract_error(expected) -> tuple[int, str] | None:
+    """Shared contract-envelope validation for execution and job control.
+
+    A missing or malformed envelope is a 400 (bad request shape); a well-formed
+    envelope from a different Host generation is a 409 that must fire before any
+    scene execution, ticket consumption or job state change. The version must be
+    a strict integer: Python bools are int subclasses and are rejected here so a
+    mistyped field reads as 400, not as a version mismatch.
+    """
+    version = expected.get("version") if isinstance(expected, dict) else None
+    if (not isinstance(expected, dict) or set(expected) != {"version", "hash"}
+            or type(version) is not int
+            or not isinstance(expected.get("hash"), str)):
+        return 400, "expected_contract with integer version and hash string is required"
+    if expected != {"version": _EXECUTION_CONTRACT_VERSION, "hash": _VERB_CATALOG_HASH}:
+        return 409, "execution contract mismatch; Repair and restart runtime"
+    return None
+
+
+def _owner_error(body: dict) -> tuple[int, str] | None:
+    """Host session identity validation; values are taken verbatim, never coerced."""
+    owner_session = body.get("owner_session")
+    owner_call = body.get("owner_call")
+    if (not isinstance(owner_session, str) or not owner_session.strip()
+            or not isinstance(owner_call, str) or not owner_call.strip()):
+        return 400, "owner_session and owner_call must be nonempty strings from the Host tool context"
+    return None
+
+
 class _DispatchBlockedError(RuntimeError):
     def __init__(self, message, evidence):
         super().__init__(message)
@@ -1435,6 +1475,12 @@ def _prune_jobs() -> None:
                 _job_meta.pop(job_id, None)
 
 
+def _public_job(job: dict) -> dict:
+    """API-visible snapshot of a job record; internal owner fields never leak
+    into status/cancel responses or tool output schemas."""
+    return {key: value for key, value in job.items() if key not in ("owner_session", "owner_call")}
+
+
 def _job_activity() -> dict:
     """Return non-terminal job counts without exposing job payloads."""
     with _jobs_lock:
@@ -1610,7 +1656,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({'ok':True,'result':result})
             return
         if self.path == '/requests/prepare':
-            if set(body) != {'owner_session'} or not isinstance(body['owner_session'], str) or not body['owner_session']:
+            if set(body) != {'owner_session'} or not isinstance(body['owner_session'], str) or not body['owner_session'].strip():
                 self._send({'ok': False, 'error': 'owner_session required'}, status=400)
                 return
             # POST shares the JSON/no-Origin boundary. A health probe never
@@ -1618,7 +1664,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({**self._health(), 'requestRef': _request_registry.issue(body['owner_session'])})
             return
         if self.path == '/requests/status':
-            if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v for v in body.values()):
+            if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v.strip() for v in body.values()):
                 self._send({'ok':False,'error':'request_ref and owner_session required'},status=400)
                 return
             self._send({'ok':True,'stdout':'','stderr':'',
@@ -1637,35 +1683,32 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({'ok': False, 'status': 'unavailable', 'reason': str(exc)})
             return
         if self.path in ("/exec", "/jobs"):
-            expected = body.get("expected_contract")
-            if expected is not None and expected != {"version": _EXECUTION_CONTRACT_VERSION, "hash": _VERB_CATALOG_HASH}:
-                self._send({"ok": False, "error": "execution contract mismatch; Repair and restart runtime"}, status=409)
-                return
-            if not isinstance(body.get("code"), str):
-                self._send({"ok": False, "error": "code must be a string"}, status=400)
+            # Complete admission envelope before anything is queued or consumed:
+            # Host identity, contract and a one-time ticket. Untracked execution
+            # (formerly the no-ticket compatibility branch) no longer exists.
+            rejection = _owner_error(body)
+            if rejection is None:
+                rejection = _contract_error(body.get("expected_contract"))
+            if rejection is None and not isinstance(body.get("code"), str):
+                rejection = 400, "code must be a string"
+            if rejection is None and (not isinstance(body.get("request_ref"), str) or not body["request_ref"]):
+                rejection = 400, "request_ref ticket is required; untracked HTTP execution is not supported"
+            if rejection is not None:
+                self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return
         if self.path == "/exec":
-            code = str(body.get("code", ""))
+            code = body["code"]
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
-            owner_session = body.get("owner_session")
-            owner_call = body.get("owner_call")
+            owner_session = body["owner_session"]
+            owner_call = body["owner_call"]
+            ref = body["request_ref"]
             read_only_value = body.get("read_only")
             if type(read_only_value) not in (bool, str, type(None)) or read_only_value not in (None, True, False, "true", "false"):
                 self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
                 return
             read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
-            invoke=lambda: run_code(
-                code,
-                allow_raw,
-                str(owner_session) if owner_session else None,
-                str(owner_call) if owner_call else None,
-                read_only,
-            )
-            ref=body.get('request_ref')
-            if ref is None:
-                self._send(_execute(invoke))
-                return
+            invoke=lambda: run_code(code, allow_raw, owner_session, owner_call, read_only)
             try:
                 admitted=_request_registry.reserve(ref,owner_session,body)
             except ValueError as error:
@@ -1698,41 +1741,42 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(result)
             return
         if self.path == "/jobs":
-            ref=body.get('request_ref')
-            owner_session=body.get('owner_session')
-            if ref is not None:
-                try:admitted=_request_registry.reserve(ref,owner_session,{**body,'request_kind':'job_submit'})
-                except ValueError as error:
-                    self._send({'ok':False,'error':str(error)},status=409);return
-                if not admitted:
-                    receipt=_request_registry.status(ref,owner_session)
-                    self._send(receipt['result'] if receipt['status']=='done' else {'requestReceipt':receipt})
-                    return
+            ref = body["request_ref"]
+            owner_session = body["owner_session"]
+            owner_call = body["owner_call"]
+            try:admitted=_request_registry.reserve(ref,owner_session,{**body,'request_kind':'job_submit'})
+            except ValueError as error:
+                self._send({'ok':False,'error':str(error)},status=409);return
+            if not admitted:
+                receipt=_request_registry.status(ref,owner_session)
+                self._send(receipt['result'] if receipt['status']=='done' else {'requestReceipt':receipt})
+                return
             job_id = uuid.uuid4().hex[:12]
             with _jobs_lock:
                 overloaded = sum(j['status'] in ('queued', 'running') for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
                 if not overloaded:
+                    # owner_session/owner_call are internal authorization fields:
+                    # they must never reach a public snapshot (see _public_job).
                     _jobs[job_id] = {
                         "jobId": job_id, "status": "queued",
                         "ok": False, "stdout": "", "stderr": "",
+                        "owner_session": owner_session, "owner_call": owner_call,
                     }
                     _job_meta[job_id] = time.time()
             if overloaded:
-                if ref is not None:_request_registry.fail_before_dispatch(ref,'job admission refused: active job limit')
+                _request_registry.fail_before_dispatch(ref,'job admission refused: active job limit')
                 self._send({"ok": False, "error": "too many active Houdini jobs; await existing work"}, status=429)
                 return
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
-            owner_session = body.get("owner_session")
-            owner_call = body.get("owner_call")
             worker=threading.Thread(
                 target=_run_job,
                 args=(
                     job_id,
-                    str(body.get("code", "")),
+                    body["code"],
                     allow_raw,
-                    str(owner_session) if owner_session else None,
-                    str(owner_call) if owner_call else None,
+                    owner_session,
+                    owner_call,
                     ref,
                 ),
                 daemon=True,
@@ -1744,36 +1788,59 @@ class _Handler(BaseHTTPRequestHandler):
                     not_started = job is None or job['status'] == 'queued'
                     if not_started:
                         _jobs.pop(job_id,None);_job_meta.pop(job_id,None)
-                if ref is not None:
-                    if not_started:
-                        _request_registry.fail_before_dispatch(ref,'job worker did not start')
-                    else:
-                        # Starting a thread can fail after it claimed the job.
-                        # Preserve that job/result, not a false nonexecution receipt.
-                        _request_registry.complete(ref,{'jobId':job_id})
+                if not_started:
+                    _request_registry.fail_before_dispatch(ref,'job worker did not start')
+                else:
+                    # Starting a thread can fail after it claimed the job.
+                    # Preserve that job/result, not a false nonexecution receipt.
+                    _request_registry.complete(ref,{'jobId':job_id})
                 raise
-            handle={'jobId':job_id}
-            if ref is not None:
-                handle['requestReceipt']={'request_ref':ref,'runtime_id':_RUNTIME_ID,
-                                          'status':'job_submitted','jobId':job_id,
-                                          'note':'Admission confirmed, not execution completion; collect with houdini_job_status.'}
-                _request_registry.complete(ref,handle)
+            handle={'jobId':job_id,
+                    'requestReceipt':{'request_ref':ref,'runtime_id':_RUNTIME_ID,
+                                      'status':'job_submitted','jobId':job_id,
+                                      'note':'Admission confirmed, not execution completion; collect with houdini_job_status.'}}
+            _request_registry.complete(ref,handle)
             _prune_jobs()
             self._send(handle)
             return
         parts = [p for p in self.path.split("/") if p]
         if len(parts) == 3 and parts[0] == "jobs":
-            with _jobs_lock:
-                job = _jobs.get(parts[1])
-                if job is not None and parts[2] == "cancel" and job["status"] == "queued":
-                    job["status"] = "cancelled"
-                    _job_meta[parts[1]] = time.time()
-                elif job is not None and parts[2] == "cancel" and job["status"] == "running":
-                    job["advisory"] = "Running HOM cannot be interrupted; job remains running and its actual result will be retained."
-            if job is None:
-                self._send({"ok": False, "error": f"unknown job {parts[1]}"}, status=404)
+            job_id = parts[1]
+            # Job control carries the same identity/contract envelope as
+            # execution. A new Host must refuse an old Bridge (and vice versa)
+            # before any job state is read or changed; missing identity is 400,
+            # a well-formed foreign contract is 409.
+            rejection = _owner_error(body)
+            if rejection is None:
+                rejection = _contract_error(body.get("expected_contract"))
+            if rejection is not None:
+                self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return
-            if parts[2] == "status":
+            owner_session = body["owner_session"]
+            if parts[2] == "cancel":
+                # Ownership check and mutation share one lock acquisition: a
+                # foreign session can neither change state, timestamps nor
+                # advisory, and gets no existence signal (uniform 404).
+                authorized = False
+                with _jobs_lock:
+                    job = _jobs.get(job_id)
+                    if job is not None and job.get("owner_session") == owner_session:
+                        authorized = True
+                        if job["status"] == "queued":
+                            job["status"] = "cancelled"
+                            _job_meta[job_id] = time.time()
+                        elif job["status"] == "running":
+                            job["advisory"] = "Running HOM cannot be interrupted; job remains running and its actual result will be retained."
+                if not authorized:
+                    self._send({"ok": False, "error": f"no job {job_id} for this session"}, status=404)
+                    return
+            elif parts[2] == "status":
+                with _jobs_lock:
+                    job = _jobs.get(job_id)
+                    authorized = job is not None and job.get("owner_session") == owner_session
+                if not authorized:
+                    self._send({"ok": False, "error": f"no job {job_id} for this session"}, status=404)
+                    return
                 # 长轮询：body 带 wait（秒，上限 600）时在本 handler 线程里
                 # 等到终态或超时一次返回——调用方不必 sleep 循环刷状态。
                 # 注意必须在 _jobs_lock 之外等待：持锁等待会把 _run_job
@@ -1787,11 +1854,13 @@ class _Handler(BaseHTTPRequestHandler):
                         if terminal:
                             break
                         time.sleep(0.25)
-            if parts[2] in ("status", "cancel"):
-                with _jobs_lock:
-                    snapshot = dict(job)
-                self._send(snapshot)
+            else:
+                self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
                 return
+            with _jobs_lock:
+                snapshot = _public_job(job)
+            self._send(snapshot)
+            return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
 

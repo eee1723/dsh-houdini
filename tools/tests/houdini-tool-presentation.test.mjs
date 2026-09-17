@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { HoudiniBridge } from '../../lib/bridge.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
 
 const definitions = new Map();
@@ -171,5 +173,89 @@ assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'unnamed HIP 
 workspaceResult = {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'uncertain receipt must not trigger another queued observation');
 assert.equal(workspaceExecutions, 7, 'each user tool call executes exactly once');
+
+// Execution identity is mandatory Host context. Missing, blank or mistyped
+// agent.id/callId must fail before executor resolution, writer claims, ticket
+// preparation or any Houdini request — legal tool arguments stay untouched.
+const strictDefs = new Map();
+let resolved = 0, flushed = 0, sent = 0, seenOwner;
+const strictBridge = {
+  targetExecutorId: 'e'.repeat(32),
+  async exec(code, owner) { sent++; seenOwner = owner; return {ok:true,stdout:'',stderr:''}; },
+  async submitJob(code, owner) { sent++; seenOwner = owner; return {jobId:'a'.repeat(12)}; },
+  async jobStatus(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'done', ok:true, stdout:'', stderr:''}; },
+  async cancelJob(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'cancelled', ok:true, stdout:'', stderr:''}; },
+};
+registerHoudiniTools({tools:{register:d=>strictDefs.set(d.name,d)},
+  sessions:{flush:async()=>{flushed++;return true}}},
+  {resolve: async () => {resolved++;return strictBridge}});
+const identity = (agentId, callId) => ({agent: agentId === undefined ? undefined : {id: agentId}, callId});
+const badIdentities = [
+  identity(undefined, 'c'), identity('session', undefined), identity('session', ''),
+  identity('session', '   '), identity('session', 7), identity('', 'c'), identity('   ', 'c'),
+  identity(7, 'c'), {}, undefined,
+];
+const bindingSection = {name:'dsh-houdini:executor-binding', text:'Houdini task target binding (routing data, not node ownership or permission).\n'
+  + JSON.stringify({schema:1, kind:'executor_binding', executor_id:'e'.repeat(32)})};
+const makeStrictSession = () => ({snapshotEvents: () => [
+  {seq:1, type:'user/message', data:{source:{kind:'plugin', plugin:'dsh-houdini', sections:[bindingSection]}}},
+], append: () => {}});
+const goodExec = {agent:{id:'session-1',session:makeStrictSession()}, callId:'call-9'};
+for (const bad of badIdentities) {
+  await assert.rejects(strictDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_query').execute({code:'pass'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_query').execute({request_ref:'index'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);
+}
+assert.equal(resolved, 0, 'identity failures must precede executor resolution');
+assert.equal(flushed, 0, 'identity failures must precede writer claims');
+assert.equal(sent, 0, 'identity failures must precede any Houdini request');
+await assert.rejects(strictDefs.get('houdini_query').execute({result_ref:'f'.repeat(64)},identity(undefined,'c')),
+  /workspace/, 'historical result reads keep their local boundary and need no bridge identity');
+assert.equal(resolved, 0, 'result_ref still never resolves an executor');
+// A valid identity flows verbatim through every code/job branch — no coercion,
+// no trimming — and shared tool instances never borrow another session's identity.
+await strictDefs.get('houdini_exec').execute({code:'pass'}, goodExec);
+assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
+await strictDefs.get('houdini_query').execute({code:'pass'}, goodExec);
+assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
+await strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)}, goodExec);
+assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
+const padded = {agent:{id:' padded id ',session:makeStrictSession()},callId:' padded call '};
+await strictDefs.get('houdini_exec').execute({code:'pass'}, padded);
+assert.deepEqual(seenOwner, {sessionId:' padded id ', callId:' padded call '}, 'legal values are sent verbatim');
+const other = {agent:{id:'session-2',session:makeStrictSession()}, callId:'call-10'};
+await strictDefs.get('houdini_exec').execute({code:'pass'}, other);
+assert.deepEqual(seenOwner, {sessionId:'session-2', callId:'call-10'}, 'no cross-session identity reuse');
+assert.equal(sent, 5);
+
+// The same tool-level identity rejections produce zero traffic against a REAL
+// HoudiniBridge: every endpoint (health, prepare, exec, jobs, job control)
+// would be counted; none is reached.
+const realDefs = new Map();
+let networkRequests = 0;
+const countingServer = http.createServer((request, response) => {
+  networkRequests++;
+  response.setHeader('content-type', 'application/json');
+  response.end('{}');
+});
+await new Promise((resolve) => countingServer.listen(0, '127.0.0.1', resolve));
+try {
+  const realBridge = new HoudiniBridge(`http://127.0.0.1:${countingServer.address().port}`, 1000);
+  registerHoudiniTools({tools:{register:d=>realDefs.set(d.name,d)}}, realBridge);
+  for (const bad of badIdentities) {
+    await assert.rejects(realDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_query').execute({code:'pass'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_query').execute({request_ref:'index'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);
+  }
+  assert.equal(networkRequests, 0, 'identity failures must reach no real Bridge endpoint');
+} finally {
+  await new Promise((resolve) => countingServer.close(resolve));
+}
 
 console.log('houdini tool presentation tests passed');

@@ -117,7 +117,14 @@ def driver(args):
             assert a['hip_path']!=b['hip_path'] and a['task_id'] is None and b['task_id'] is None
             for i,record in enumerate(records):
                 task='task-'+str(i)
-                status,blocked=call(record,'/exec',{'code':'__result__=1','owner_session':task})
+                def submit(code,owner=task,record=record):
+                    # Every HTTP execution now carries the complete admission
+                    # envelope; a fresh one-time ticket per attempt.
+                    _,prepared=call(record,'/requests/prepare',{'owner_session':owner})
+                    body={'code':code,'owner_session':owner,'owner_call':'driver','request_ref':prepared['requestRef'],
+                          'expected_contract':{'version':prepared['executionContractVersion'],'hash':prepared['verbCatalog']['hash']}}
+                    return call(record,'/exec',body)
+                status,blocked=submit('__result__=1')
                 assert status==200 and not blocked['ok'] and 'reservation mismatch' in blocked['error'],blocked
                 assert call(record,'/executor/claim',{'task_id':task,'registration_id':'f'*32,
                     'expected_hip':record['hip_path']})[0]!=200
@@ -125,12 +132,12 @@ def driver(args):
                     'expected_hip':record['hip_path']})
                 assert status==200 and claimed['ok'],claimed
                 record.update(claimed['result'])
-                status,created=call(record,'/exec',{'code':"g=tab_create('/obj','geo',name='owned_fixture')\n__result__=g.path()",'owner_session':task})
+                status,created=submit("g=tab_create('/obj','geo',name='owned_fixture')\n__result__=g.path()")
                 assert status==200 and created['ok'],created
-                status,denied=call(record,'/exec',{'code':"delete_node('/obj/owned_fixture')",'owner_session':'wrong-task'})
+                status,denied=submit("delete_node('/obj/owned_fixture')",owner='wrong-task')
                 assert status==200 and not denied['ok'] and 'reservation mismatch' in denied['error'],denied
                 output=base/f'forbidden-save-{i}.hip'
-                status,denied=call(record,'/exec',{'code':f'scene_save_as({str(output)!r},{record["hip_path"]!r},"isolated test target")','owner_session':task})
+                status,denied=submit(f'scene_save_as({str(output)!r},{record["hip_path"]!r},"isolated test target")')
                 assert status==200 and not denied['ok'] and 'new writer reservation' in denied['error'],denied
                 assert not output.exists()
                 assert call(record,'/executor/claim',{'task_id':'another','registration_id':record['registration_id'],
@@ -181,7 +188,10 @@ def driver(args):
                 assert updated['runtime_id']!=before_runtime
                 a.update(updated)
                 assert call(b,'/health')[1]['runtimeId']==b['runtime_id']
-                status,edited=call(a,'/exec',{'code':"set_parms('/obj/owned_fixture',{'tx':2})",'owner_session':a['task_id']})
+                _,prepared=call(a,'/requests/prepare',{'owner_session':a['task_id']})
+                status,edited=call(a,'/exec',{'code':"set_parms('/obj/owned_fixture',{'tx':2})",'owner_session':a['task_id'],
+                    'owner_call':'driver','request_ref':prepared['requestRef'],
+                    'expected_contract':{'version':prepared['executionContractVersion'],'hash':prepared['verbCatalog']['hash']}})
                 assert status==200 and edited['ok'],edited
                 # Kill only the process created by this test; other Bridge stays available.
                 children[0].kill();children[0].wait(timeout=10)

@@ -161,8 +161,9 @@ assert.throws(()=>requireExecutorContinuity(history('malformed'),first),/Invalid
 const definitions=new Map()
 registerHoudiniTools({tools:{register(d){definitions.set(d.name,d)}}}, {targetExecutorId:second})
 const context={agent:{id:'task',session:{snapshotEvents:()=>prior}},callId:'now'}
+const boundJobId='a'.repeat(12)
 for(const name of ['houdini_exec','houdini_query','houdini_job_submit','houdini_job_status','houdini_job_cancel']){
-  await assert.rejects(definitions.get(name).execute({code:'pass',jobId:'j'},context),/requires recovery/)
+  await assert.rejects(definitions.get(name).execute({code:'pass',jobId:boundJobId},context),/requires recovery/)
 }
 // Source material remains inspectable without calling any Bridge method.
 const sourceContext={...context,agent:{...context.agent,session:{snapshotEvents:()=>[
@@ -190,24 +191,24 @@ try{
   const url=`http://127.0.0.1:${server.address().port}`,owner={sessionId:'task',callId:'call'}
   assert.throws(()=>new HoudiniBridge(url,1000,'bad'),'invalid identity')
   const a=new HoudiniBridge(url,1000,first),b=new HoudiniBridge(url,1000,second)
-  await a.exec('pass',undefined,undefined,owner)
-  await a.sceneContext();await a.jobStatus('j');await a.cancelJob('j')
+  await a.exec('pass',owner)
+  await a.sceneContext();await a.jobStatus('j',owner);await a.cancelJob('j',owner)
   await a.requestStatus('index',owner);await a.fetchMedia('x.png')
   assert.equal(dispatched.length,6)
-  await assert.rejects(b.exec('pass',undefined,undefined,owner),/409/)
+  await assert.rejects(b.exec('pass',owner),/409/)
   assert.equal(dispatched.length,6)
   replaceAfterPrepare=true
-  const unknown=await a.exec('must not reach replacement',undefined,undefined,owner)
+  const unknown=await a.exec('must not reach replacement',owner)
   assert.equal(unknown.requestReceipt.status,'unknown_transport')
   assert.equal(unknown.requestReceipt.executor_id,first)
   assert.equal(dispatched.length,6,'target changed after handshake must reject actual request')
-  for(const action of [()=>a.exec('pass',undefined,undefined,owner),()=>a.submitJob('pass',undefined,undefined,owner),
-    ()=>a.sceneContext(),()=>a.jobStatus('j'),()=>a.cancelJob('j'),()=>a.requestStatus('index',owner),()=>a.fetchMedia('x.png')]){
+  for(const action of [()=>a.exec('pass',owner),()=>a.submitJob('pass',owner),
+    ()=>a.sceneContext(),()=>a.jobStatus('j',owner),()=>a.cancelJob('j',owner),()=>a.requestStatus('index',owner),()=>a.fetchMedia('x.png')]){
     await assert.rejects(action,/409/)
   }
   assert.equal(dispatched.length,6,'reads, media and job control cannot cross target either')
   replaceAfterPrepare=false
-  await b.exec('pass',undefined,undefined,owner)
+  await b.exec('pass',owner)
   assert.equal(dispatched.length,7)
 }finally{await new Promise(resolve=>server.close(resolve))}
 console.log('executor binding: all routes, target mismatch and post-handshake replacement passed')

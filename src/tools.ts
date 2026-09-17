@@ -245,13 +245,20 @@ function workspaceOf(execInput: unknown): string | null {
   return typeof cwd === 'string' && cwd ? cwd : null
 }
 
-/** Trusted execution identity comes from dsh's tool context, never model args. */
-function ownershipScopeOf(execInput: unknown): OwnershipScope | undefined {
-  const input = execInput as { agent?: { id?: unknown }; callId?: unknown }
+/** Trusted execution identity comes from dsh's tool context, never model args.
+ *  Both fields must be nonempty, non-whitespace strings and are kept verbatim —
+ *  no coercion, no trimming. Missing identity is a hard rejection, not an
+ *  optional scope: every code execution and job control carries it. */
+function ownershipScopeOf(execInput: unknown): OwnershipScope {
+  const input = (execInput ?? {}) as { agent?: { id?: unknown }; callId?: unknown }
   const sessionId = input.agent?.id
   const callId = input.callId
-  if (typeof sessionId !== 'string' || !sessionId) return undefined
-  if (typeof callId !== 'string' || !callId) return undefined
+  const valid = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
+  if (!valid(sessionId) || !valid(callId)) {
+    throw new Error(
+      'Houdini execution requires the current Host session identity (agent.id and callId); '
+      + 'missing, blank or mistyped identity is rejected before any executor resolution or request')
+  }
   return { sessionId, callId }
 }
 
@@ -360,9 +367,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty Python code')
+      const owner = ownershipScopeOf(exec)
       const bridge = await resolveBridge(exec)
       await requireTaskTarget(exec,bridge)
-      const result = await bridge.exec(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
+      const result = await bridge.exec(args.code, owner, exec.signal, args.allow_raw)
       return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
     },
   }))
@@ -402,7 +410,6 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
       if (args.request_ref !== undefined) {
         if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('request_ref does not accept pagination or pointer')
         const owner=ownershipScopeOf(exec)
-        if (!owner) throw new Error('request_ref requires current Host session identity')
         const bridge = await resolveBridge(exec)
         const receipt=await bridge.requestStatus(args.request_ref,owner,exec.signal)
         const r:any=receipt.requestReceipt
@@ -426,9 +433,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
       if (args.result_ref !== undefined) return readResultDetail(workspaceOf(exec),args.result_ref,args.pointer,args.offset,args.limit)
       if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
       if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
+      const owner = ownershipScopeOf(exec)
       const bridge = await resolveBridge(exec)
       await requireTaskTarget(exec,bridge)
-      const result = await bridge.exec(args.code, exec.signal, undefined, ownershipScopeOf(exec), true)
+      const result = await bridge.exec(args.code, owner, exec.signal, undefined, true)
       return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
     },
   }))
@@ -464,9 +472,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
+      const owner = ownershipScopeOf(exec)
       const bridge = await resolveBridge(exec)
       await requireTaskTarget(exec,bridge)
-      return bridge.submitJob(args.code, exec.signal, args.allow_raw, ownershipScopeOf(exec))
+      return bridge.submitJob(args.code, owner, exec.signal, args.allow_raw)
     },
   }))
 
@@ -495,11 +504,12 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
     async execute(args, exec) {
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const status = await bridge.jobStatus(args.jobId, args.wait, exec.signal)
+      const owner = ownershipScopeOf(exec)
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
+      const status = await bridge.jobStatus(args.jobId, owner, args.wait, exec.signal)
       return retainResult(await attachImages(status, exec, bridge, ctx),workspaceOf(exec))
     },
   }))
@@ -528,11 +538,12 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job cancellation', result), result),
     async execute(args, exec) {
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      return retainResult(await bridge.cancelJob(args.jobId, exec.signal),workspaceOf(exec))
+      const owner = ownershipScopeOf(exec)
+      const bridge = await resolveBridge(exec)
+      await requireTaskTarget(exec,bridge)
+      return retainResult(await bridge.cancelJob(args.jobId, owner, exec.signal),workspaceOf(exec))
     },
   }))
 }

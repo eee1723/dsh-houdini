@@ -81,6 +81,22 @@ try:
     identity=created[-1].sessionId()
     handler('/jobs',lambda *a,**k:None)._route(job_payload)
     assert hou.node('/obj/'+job_name).sessionId()==identity and set(b._jobs)==job_ids
+    # Route-level authorization check: these call _Handler._route() directly
+    # (not a socket-level HTTP round trip); full HTTP transport is covered by
+    # dsh-bridge-transport in the deployment driver. Recovered jobId: the owning
+    # session reads the original job with a fresh callId; a foreign session gets
+    # the uniform 404 with no result body.
+    recovered_view=[]
+    handler('/jobs/'+jid+'/status',lambda value,status=200:recovered_view.append((status,value)))._route(
+        {'owner_session':owner,'owner_call':'after-recovery','expected_contract':
+         {'version':b._EXECUTION_CONTRACT_VERSION,'hash':b._VERB_CATALOG_HASH}})
+    assert recovered_view[0][0]==200 and recovered_view[0][1]['status']=='done' \
+        and recovered_view[0][1]['result']==created[-1].path(),recovered_view
+    stranger_view=[]
+    handler('/jobs/'+jid+'/status',lambda value,status=200:stranger_view.append((status,value)))._route(
+        {'owner_session':'stranger','owner_call':'x','expected_contract':
+         {'version':b._EXECUTION_CONTRACT_VERSION,'hash':b._VERB_CATALOG_HASH}})
+    assert stranger_view[0][0]==404 and set(stranger_view[0][1])<={'ok','error'},stranger_view
     index=[]
     handler('/requests/status',lambda value,status=200:index.append(value))._route({'request_ref':'index','owner_session':owner})
     assert any(r['owner_call']==job_payload['owner_call'] and r['request_ref']==job_token for r in index[0]['requestReceipt']['requests'])
@@ -97,7 +113,8 @@ try:
     cancel_ref=ref();cancel_body=body(cancel_ref,'raise RuntimeError("cancelled job must never execute")');handles=[]
     handler('/jobs',lambda value,status=200:handles.append(value))._route(cancel_body)
     cancel_id=handles[0]['jobId']
-    handler('/jobs/'+cancel_id+'/cancel',lambda *a,**k:None)._route({})
+    handler('/jobs/'+cancel_id+'/cancel',lambda *a,**k:None)._route({'owner_session':owner,'owner_call':'cancel-call',
+        'expected_contract':{'version':b._EXECUTION_CONTRACT_VERSION,'hash':b._VERB_CATALOG_HASH}})
     assert b._jobs[cancel_id]['status']=='cancelled'
     deadline=time.monotonic()+3
     while b._work_queue.empty() and time.monotonic()<deadline:time.sleep(.01)

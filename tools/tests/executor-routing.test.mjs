@@ -19,6 +19,7 @@ const endpoints=path.join(directory,'endpoints')
 await fs.mkdir(endpoints)
 const servers=[],records=[],agents=[],calls=[],flushed=[]
 const write=r=>fs.writeFile(path.join(endpoints,r.executor_id+'.json'),JSON.stringify(r))
+const routeCounts=[{},{}]
 try {
   for(let i=0;i<2;i++) {
     const id=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='task-'+i
@@ -26,6 +27,7 @@ try {
     agents.push({id:task,status:'idle',session})
     const server=http.createServer(async(req,res)=>{
       res.setHeader('content-type','application/json')
+      routeCounts[i][req.url]=(routeCounts[i][req.url]||0)+1
       if(req.headers['x-dsh-houdini-executor']!==id){res.writeHead(409);res.end('{}');return}
       let text='';for await(const chunk of req)text+=chunk
       const body=text?JSON.parse(text):{}
@@ -36,6 +38,20 @@ try {
       if(req.url==='/exec'||req.url==='/jobs') {
         assert(flushed.includes(task),'never execute before target durability')
         assert.equal(body.owner_session,task,'a shared tool instance sent the other task to this Bridge')
+      }
+      if(req.url==='/jobs') {
+        assert.equal(body.owner_call,'submit-'+i,'job admission carries the submit call callId')
+        assert.deepEqual(body.expected_contract,{version,hash},'job admission carries the expected contract')
+      }
+      if(req.url==='/jobs/'+String(i).repeat(12)+'/status') {
+        assert.equal(body.owner_session,task,'job status must carry the owning session')
+        assert.equal(body.owner_call,'status-'+i,'job status carries THIS call, not a cached submit callId')
+        assert.deepEqual(body.expected_contract,{version,hash},'job status carries the expected contract')
+      }
+      if(req.url==='/jobs/'+String(i).repeat(12)+'/cancel') {
+        assert.equal(body.owner_session,task,'job cancel must carry the owning session')
+        assert.equal(body.owner_call,'cancel-'+i,'job cancel carries THIS call, not a cached submit callId')
+        assert.deepEqual(body.expected_contract,{version,hash},'job cancel carries the expected contract')
       }
       calls.push([task,req.url])
       // Force interleaving so a mutable global target would send the wrong task.
@@ -80,7 +96,7 @@ try {
     gateway=new Gateway(ctx,{websocketHeartbeatIntervalMs:2000})
     assert.equal((await gateway.invoke({namespace:'houdiniTargets',method:'list',args:{}})).candidates.length,2)
   }
-  const context=i=>({agent:agents[i],callId:'call-'+i})
+  const context=(i,op)=>({agent:agents[i],callId:(op||'call')+'-'+i})
   await assert.rejects(controller.select({sessionId:agents[0].id,executorId:records[0].executor_id,
     registrationId:records[0].registration_id,expectedHip:path.join(directory,'wrong.hip')},new AbortController().signal),/HIP changed/)
   await assert.rejects(router.resolve(context(0)),/Choose a Houdini/)
@@ -100,12 +116,22 @@ try {
   await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/recovery/)
   const defs=new Map()
   registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)},sessions:{flush}},router)
-  const values=await Promise.all([0,1].map(i=>defs.get('houdini_exec').execute({code:'pass'},context(i))))
+  const values=await Promise.all([0,1].map(i=>defs.get('houdini_exec').execute({code:'pass'},context(i,'exec'))))
   assert.deepEqual(values.map(v=>v.result.target),records.map(r=>r.executor_id))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_submit').execute({code:'pass'},context(i))))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_cancel').execute({jobId:String(i).repeat(12)},context(i))))
+  await Promise.all([0,1].map(i=>defs.get('houdini_job_submit').execute({code:'pass'},context(i,'submit'))))
+  await Promise.all([0,1].map(i=>defs.get('houdini_job_status').execute({jobId:String(i).repeat(12)},context(i,'status'))))
+  await Promise.all([0,1].map(i=>defs.get('houdini_job_cancel').execute({jobId:String(i).repeat(12)},context(i,'cancel'))))
   assert(calls.some(c=>c[0]==='task-0'&&c[1]==='/jobs/000000000000/cancel'))
   assert(calls.some(c=>c[0]==='task-1'&&c[1]==='/jobs/111111111111/cancel'))
+  // Route-count proof: every job-control branch was actually reached exactly
+  // once per session, and job control prepared no execution tickets.
+  for(let i=0;i<2;i++) {
+    const jid=String(i).repeat(12)
+    assert.equal(routeCounts[i]['/jobs/'+jid+'/status'],1,'job status route reached exactly once')
+    assert.equal(routeCounts[i]['/jobs/'+jid+'/cancel'],1,'job cancel route reached exactly once')
+    assert.equal(routeCounts[i]['/jobs'],1,'job admission route reached exactly once')
+  }
+  assert.equal(routeCounts[0]['/requests/prepare']+routeCounts[1]['/requests/prepare'],4,'exec+submit prepare tickets; job control prepares none')
   const before=calls.length
   // One Host-plane controller survives removal of either preset consumer.
   const hostContext=new Context()
@@ -127,7 +153,7 @@ try {
   assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
   await host.dispose()
   await assert.rejects(async()=>consumerB.resolve(context(1)),/unavailable/)
-  await assert.rejects(oldBridge.exec('pass',undefined,undefined,{sessionId:agents[1].id,callId:'old'}),/unloaded|aborted/)
+  await assert.rejects(oldBridge.exec('pass',{sessionId:agents[1].id,callId:'old'}),/unloaded|aborted/)
   assert.equal(calls.length,before,'unloaded service cannot dispatch through a retained Bridge')
   host=await hostContext.plugin(executorHost,{executorRegistry:directory,requestTimeoutMs:1000})
   assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')

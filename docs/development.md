@@ -108,7 +108,9 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 控制恢复用[dsh-control-state-restoration](../tools/tests/dsh-control-state-restoration.test.py)验证几何相同但
 参数/动画错误的反例、恢复cook期间变值、OBJ主控同批设值/追加folder与后续独立undo；请求恢复用[dsh-request-recovery](../tools/tests/dsh-request-recovery.test.py)
 及[Host回包恢复](../tools/tests/request-recovery.test.mjs)覆盖队列、运行中、断联、坏JSON、超时、重复身份、
-结果过期、runtime变更、jobs提交回包丢失、回执索引、队列取消和不重复修改。查回jobId只证明提交，
+结果过期、runtime变更、jobs提交回包丢失、回执索引、队列取消和不重复修改；HTTP拒绝、thread边界与job真实性由
+[dsh-bridge-transport](../tools/tests/dsh-bridge-transport.test.py)覆盖。两者均已纳入tools/run-deployment-tests.py的Houdini组，
+随--hython双版本运行：HTTP /exec、/jobs要求完整owner身份、合同与一次性票据，Job控制按所属会话授权，拒绝操作零副作用。查回jobId只证明提交，
 迟到提交回执不复活已结束job；迟到running/unknown或Bridge结果过期不抹除Host已收到的完成回执。
 AbortSignal取消后的查回验证HTTP客户端，不能代替实际Host停止按钮、丢弃结果与新session用户路径验收。
 [回执注册表](../tools/tests/dsh-request-registry.test.py)不依赖HOM，覆盖小窗口连续请求、并发一次入场、旧票/owner/runtime冲突、

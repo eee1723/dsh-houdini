@@ -61,6 +61,19 @@ export interface OwnershipScope {
   callId: string
 }
 
+/** Runtime identity check for callers that bypass TypeScript types. Values
+ *  must be nonempty, non-whitespace strings and are sent verbatim — never
+ *  coerced or trimmed. Runs before any network request. */
+function assertOwnership(owner: OwnershipScope, action: string): void {
+  const valid = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
+  if (!owner || typeof owner !== 'object'
+      || !valid((owner as OwnershipScope).sessionId) || !valid((owner as OwnershipScope).callId)) {
+    throw new Error(
+      `${action} requires the current Host session identity (agent.id and callId); `
+      + 'missing, blank or mistyped identity is rejected before any Houdini request')
+  }
+}
+
 interface BridgeHealth {
   ok: boolean
   executorId?: string
@@ -109,18 +122,21 @@ export class HoudiniBridge {
   }
 
   /** Run Python code in the Houdini session and wait for completion.
-   *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on. */
-  async exec(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope, readOnly = false): Promise<ExecResult> {
+   *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on.
+   *  owner is mandatory: every HTTP execution carries the Host session
+   *  identity, the per-call id and a one-time Bridge-issued ticket. */
+  async exec(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string, readOnly = false): Promise<ExecResult> {
+    assertOwnership(owner, 'Houdini execution')
     const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
-    const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
-    if (allowRaw) body.allow_raw = allowRaw
-    if (owner) {
-      body.owner_session = owner.sessionId
-      body.owner_call = owner.callId
+    const body: Record<string, unknown> = {
+      code,
+      owner_session: owner.sessionId,
+      owner_call: owner.callId,
+      expected_contract: this.expectedContract(),
+      request_ref: ref,
     }
+    if (allowRaw) body.allow_raw = allowRaw
     if (readOnly) body.read_only = 'true'
-    // A Bridge-issued ticket can be admitted only once, even after its result expires.
-    if (ref) body.request_ref = ref
     try {
       return await this.post<ExecResult>('/exec', body, signal)
     } catch (error) {
@@ -134,15 +150,17 @@ export class HoudiniBridge {
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
-  async submitJob(code: string, signal?: AbortSignal, allowRaw?: string, owner?: OwnershipScope): Promise<JobHandle> {
+  async submitJob(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string): Promise<JobHandle> {
+    assertOwnership(owner, 'Houdini job submission')
     const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
-    const body: Record<string, unknown> = { code, expected_contract: this.expectedContract() }
-    if (allowRaw) body.allow_raw = allowRaw
-    if (owner) {
-      body.owner_session = owner.sessionId
-      body.owner_call = owner.callId
+    const body: Record<string, unknown> = {
+      code,
+      owner_session: owner.sessionId,
+      owner_call: owner.callId,
+      expected_contract: this.expectedContract(),
+      request_ref: ref,
     }
-    if (ref) body.request_ref=ref
+    if (allowRaw) body.allow_raw = allowRaw
     try {
       const handle = await this.post<JobHandle>('/jobs', body, signal)
       if (handle.requestReceipt && this.executorId) {
@@ -204,9 +222,20 @@ export class HoudiniBridge {
 
   /** Poll a bridge-side background job. Pass `wait` (seconds) to long-poll:
    *  the bridge holds the request until the job reaches a terminal state or
-   *  the wait elapses, so callers get the outcome in one round trip. */
-  jobStatus(jobId: string, wait?: number, signal?: AbortSignal): Promise<JobStatus> {
-    const body = wait && wait > 0 ? { wait } : {}
+   *  the wait elapses, so callers get the outcome in one round trip.
+   *  Job control is authorized by the owning session, so the request carries
+   *  the current identity and expected contract; a non-HOM health check runs
+   *  first so an old Bridge that ignores owner fields is rejected before any
+   *  job state is read or changed (no ticket is prepared or code submitted). */
+  async jobStatus(jobId: string, owner: OwnershipScope, wait?: number, signal?: AbortSignal): Promise<JobStatus> {
+    assertOwnership(owner, 'Houdini job status')
+    await this.checkContract(signal)
+    const body: Record<string, unknown> = {
+      owner_session: owner.sessionId,
+      owner_call: owner.callId,
+      expected_contract: this.expectedContract(),
+    }
+    if (wait && wait > 0) body.wait = wait
     // Long polls must outlive the wait itself — extend the per-request
     // timeout past it (bridge caps the wait at 600s).
     const extraMs = wait && wait > 0 ? Math.min(wait, 600) * 1000 + 10000 : 0
@@ -214,8 +243,14 @@ export class HoudiniBridge {
   }
 
   /** Cooperatively cancel a queued or running bridge-side job. */
-  cancelJob(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
-    return this.post(`/jobs/${encodeURIComponent(jobId)}/cancel`, {}, signal)
+  async cancelJob(jobId: string, owner: OwnershipScope, signal?: AbortSignal): Promise<JobStatus> {
+    assertOwnership(owner, 'Houdini job cancellation')
+    await this.checkContract(signal)
+    return this.post(`/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      owner_session: owner.sessionId,
+      owner_call: owner.callId,
+      expected_contract: this.expectedContract(),
+    }, signal)
   }
 
   /**

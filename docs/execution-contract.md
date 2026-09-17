@@ -15,6 +15,14 @@ node_info接受`filter`作为`parm_filter`兼容别名；create_spare_parms第�
 再进入HTTP路由。错目标返回409，不排队/控制job/读媒体；相同端口与相同工具版本不证明相同Houdini。
 该ID与Bridge runtime代际及节点ownership分离；缺少绑定的独立旧客户端仅兼容，不具备此保护。
 配置覆盖属于宿主路由，不是模型自行认领执行端的接口，也不是本机恶意客户端认证机制。
+HTTP执行与Job控制区分三种身份：executor ID来自宿主配置/登记与绑定，负责路由；owner_session负责本轮操作归属，
+owner_call负责单次调用追踪，两者取自Host工具执行上下文；三者均不是模型自行填写的授权参数，空白/错误类型在发送前拒绝且不裁剪改写。/exec与/jobs必须携带完整
+owner_session、owner_call、expected_contract与一次性request_ref票据，缺失或类型错误返回400，合法形状但合同不匹配返回409，
+票据冲突仍由Registry拒绝；无身份HTTP执行已移除，进程内直接调用run_code/helpers与Python Shell路径不受影响。
+job查询、等待与取消只授权提交会话（仅比较owner_session，不要求当前callId等于提交callId）；未知、跨会话或缺少可信owner的
+job统一404不泄露存在性，job内部身份字段不进入公开返回对象，不得根据路径/tag/请求者声明推断owner。旧Host／新Bridge与
+新Host／旧Bridge在场景执行和Job控制之前互相拒绝（Host先经/health做非HOM合同检查，不签新票）；握手失败不得自动重启live。
+这些校验防止正常Host调用链中的身份遗漏与跨会话误操作，不构成抵御任意本地进程伪造请求的认证系统。
 canonical执行历史含executor_id时，工具入口禁止把原任务的代码/job操作发往不同或未绑定执行端；
 回放结果、材料及回执查询不构成重新绑定。无身份的旧历史保留兼容但不推断目标，完整恢复授权入口尚未开放。
 绑定Host首次现场调用前必须将目标作为plugin来源消息追加到DSH会话，并等待sessions.flush确认持久化监听器参与；
@@ -87,7 +95,8 @@ goal/change只标为报告的计划状态，不覆盖原文或证明完成；来
 SOP聚焦模块流程复用现有计划和工具事实，方法在[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md#模块聚焦与交接)。
 局部检查与最终输出成员/实际实例关系分别验证；此工作流没有新增Host自动调度、模块通过证书或多作者权限。
 
-job仍通过同一主线程队列串行执行。排队取消可阻止执行；已开始的代码不能强杀，
+job仍通过同一主线程队列串行执行。job的授权检查在_jobs_lock内完成，检查通过后才能改变状态、时间戳或advisory；
+长轮询等待仍在锁外，不阻塞worker写终态。排队取消可阻止执行；已开始的代码不能强杀，
 客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
 HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单独报告外部副作用。
 Host经POST /requests/prepare取得带owner的单次票和当前合同，不额外增加握手往返。exec的request_ref在进入主线程队列前消费并登记，

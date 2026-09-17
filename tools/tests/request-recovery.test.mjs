@@ -33,6 +33,9 @@ const server=http.createServer((req,res)=>{
    else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
    else {res.statusCode=500;res.end('response failed after mutation');}
   }else if(req.url==='/jobs'){
+   assert.equal(body.owner_session,'owner','job admission carries the session identity');
+   assert.equal(body.owner_call,'lost-job-call','job admission carries the current callId');
+   assert.deepEqual(body.expected_contract,{version,hash},'job admission carries the expected contract');
    assert(tickets.delete(body.request_ref));
    jobs++;records.set(body.request_ref,{jobId:'job-'+jobs});req.socket.destroy();
   }else if(req.url==='/requests/status'){
@@ -48,13 +51,13 @@ try{
  const owner={sessionId:'owner',callId:'call'};
  for(const invalid of ['missing','wrong-runtime']) {
   ticketMode=invalid;
-  await assert.rejects(bridge.exec('must_not_submit()',undefined,undefined,owner),/valid same-runtime request ticket/);
+  await assert.rejects(bridge.exec('must_not_submit()',owner),/valid same-runtime request ticket/);
   assert.equal(edits,0,'invalid prepare response never submits scene code');
  }
  ticketMode='valid';
  for(const failure of ['disconnect','bad-json','delay','http-error']){
   mode=failure;
-  const unknown=await bridge.exec('mutate()',undefined,undefined,owner);
+  const unknown=await bridge.exec('mutate()',owner);
   assert.equal(unknown.requestReceipt.status,'unknown_transport');
   const before=edits,receipt=await bridge.requestStatus(unknown.requestReceipt.request_ref,owner);
   assert.equal(receipt.requestReceipt.status,'done');assert.equal(receipt.requestReceipt.result.result,before);
@@ -62,7 +65,7 @@ try{
  }
  mode='delay';
  const cancellation=new AbortController();onExecAdmitted=()=>cancellation.abort();
- const cancelled=await bridge.exec('mutate_then_cancel()',cancellation.signal,undefined,{sessionId:'owner',callId:'cancelled-call'});
+ const cancelled=await bridge.exec('mutate_then_cancel()',owner,cancellation.signal);
  onExecAdmitted=undefined;
  assert.equal(cancelled.requestReceipt.status,'unknown_transport');
  const beforeRecovery=edits;
