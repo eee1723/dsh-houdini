@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import tempfile
 
@@ -490,8 +491,34 @@ def _restore_parm(parm, captured):
     kind, payload = captured
     if kind == 'keys':
         parm.deleteAllKeyframes()
-        for clone in payload:
-            parm.setKeyframe(clone)
+        parm.setKeyframes(list(payload))
+        # Per-key segment initialization: a batch set can grow a spurious
+        # incoming acceleration on keys whose captured segment carries none
+        # (a trailing linear() key after a bezier key grows one). Rebuild such
+        # keys minimally so every restored key holds exactly its captured
+        # segment state - slopes, acceleration and segment expression alike.
+        by_frame = {key.frame(): key for key in parm.keyframes()}
+        for source in payload:
+            target = by_frame.get(source.frame())
+            if target is None:
+                continue
+            try:
+                source.inAccel()
+                captured_set = True
+            except hou.KeyframeValueNotSet:
+                captured_set = False
+            try:
+                target.inAccel()
+                restored_set = True
+            except hou.KeyframeValueNotSet:
+                restored_set = False
+            if captured_set or not restored_set:
+                continue
+            minimal = hou.Keyframe(source.value())
+            minimal.setFrame(source.frame())
+            if source.isExpressionSet():
+                minimal.setExpression(source.expression(), source.expressionLanguage())
+            parm.setKeyframe(minimal)
         return
     parm.deleteAllKeyframes()
     parm.set(payload)
@@ -502,17 +529,20 @@ def _resolve_channel_reference(node, path):
 
     '..' climbs parents; an absolute path is taken as-is; everything else hangs
     under the consumer node itself (Houdini's own resolution for parm
-    expressions). Returns a node path + optional channel suffix, not a hou.Parm.
+    expressions). The result is normalized, so redundant navigation inside the
+    reference ('.', 'a/../b', doubled slashes) still resolves to the same
+    network location. Returns a node path + optional channel suffix, not a
+    hou.Parm.
     """
     if path.startswith('/'):
-        return path
+        return posixpath.normpath(path)
     base = node
     parts = path.split('/')
     while parts and parts[0] == '..':
         base = base.parent()
         parts = parts[1:]
-    rest = '/'.join(part for part in parts if part)
-    return (base.path() + '/' + rest) if rest else base.path()
+    rest = '/'.join(part for part in parts if part and part != '.')
+    return posixpath.normpath((base.path() + '/' + rest) if rest else base.path())
 
 
 _CH_CALL = re.compile(r"(ch[a-zA-Z]*)\s*\(")
@@ -531,8 +561,13 @@ def _repoint_expression(consumer, old, new):
     Deep-relative references that resolve elsewhere (e.g. ../../part/width from
     a sibling network) are left untouched; a consumer referencing several
     migrated channels is rewritten ONCE for all of them. Any channel-function
-    argument that is not a literal path (concatenation, variables) refuses
-    before any write: it cannot be proven independent of the old component.
+    argument that is not a single literal path ending the argument (computed
+    fragments, variables) refuses before any write: it cannot be proven
+    independent of the old component. The consumer set comes from Houdini's
+    dependency graph (parmsReferencingThis), but every literal reference inside
+    a detected consumer is repointed by its RESOLVED target - including forms
+    the dependency graph does not track (mid-path '..' navigation), so no
+    textual reference into the old component survives the migration.
     In HOM an expression lives on keyframes, so an expression-driven consumer
     has keys; value-keyframed consumers without an expression are refused.
     """
@@ -559,6 +594,19 @@ def _repoint_expression(consumer, old, new):
         j = expression.find(quote, i + 1)
         if j < 0:
             refusal = f'unterminated string literal in channel call {call.group(1)}(...)'
+            break
+        # The literal must END the argument: the next non-space character has to
+        # close the call or start another argument. A literal followed by more
+        # expression ('..' + "/name", f-strings, format calls) is a fragment of
+        # a computed reference - rewriting the literal alone would silently
+        # migrate half a reference, so it refuses before any write.
+        after = j + 1
+        while after < len(expression) and expression[after] in ' \t':
+            after += 1
+        if after >= len(expression) or expression[after] not in '),':
+            refusal = (f'channel call {call.group(1)}(...) takes a computed argument; the literal '
+                       f'{quote}{expression[i + 1:j]}{quote} is embedded in a larger expression and cannot '
+                       f'be proven independent of {old_abs}')
             break
         path = expression[i + 1:j]
         resolved = _resolve_channel_reference(consumer.node(), path)

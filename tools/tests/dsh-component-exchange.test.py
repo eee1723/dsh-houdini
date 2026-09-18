@@ -255,9 +255,10 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.parm('/obj/assembly/ctrl/drive') in hou.node('/obj/assembly/newmod').parm('width').parmsReferencingThis()
     assert hou.parm('/obj/assembly/ctrl/drive') not in hou.node('/obj/assembly/oldmod').parm('width').parmsReferencingThis()
     assert hou.node('/obj/assembly/oldmod').parm('width').keyframes(), 'the old module keeps its own channels'
-    # Counterexample: a partial write mid-migration (keys deleted, set raises)
-    # must still be fully rolled back — the rollback ledger entry is registered
-    # BEFORE the mutation, not after it succeeds.
+    # Counterexample: a failure raised INSIDE the migration commit, after the
+    # real write and before the commit function returns, must still be fully
+    # rolled back — the rollback ledger entry is registered BEFORE the
+    # mutation, not after it succeeds.
     run('s=tab_create("/obj/assembly","subnet","oldmod2")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('s=tab_create("/obj/assembly","subnet","newmod2")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('feeder2=tab_create("/obj/assembly","box","feeder2")\nconnect("/obj/assembly/feeder2","/obj/assembly/oldmod2")', owner='assembly')
@@ -269,44 +270,42 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         'set_parms("/obj/assembly/ctrl2",{"drive":"ch(\\"/obj/assembly/oldmod2/width\\")"})', owner='assembly')
     run('set_keyframes("/obj/assembly/oldmod2",{"width":[{"frame":2,"value":3},{"frame":10,"value":7}]})', owner='assembly')
     preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
-    # R5: a partial write must REALLY corrupt the target before the failure, and
-    # the internal ledger must recover it. Verified at BOTH layers, separately:
+    # R5: the fault fires INSIDE the migration commit after the real write
+    # (keys already moved onto the candidate, then provably corrupted to 123.0)
+    # and before the commit returns. Verified at BOTH layers, separately:
     # direct helper (no bridge undo - the ledger alone must heal), then bridge.
     real_restore = components._restore_parm
     corruption = []
-    partial = {'n': 0}
-    def corrupt_then_continue(parm, captured):
-        partial['n'] += 1
+    injections = {'n': 0}
+    def corrupt_then_raise(parm, captured):
+        injections['n'] += 1
+        if injections['n'] != 1:
+            return real_restore(parm, captured)  # rollback-phase restores stay clean
         real_restore(parm, captured)
-        if partial['n'] == 1:
-            # The migrate-apply already moved the keys; corrupt the value on top
-            # so the rollback ledger has something real to recover.
-            parm.set(123.0)
-            corruption.append(parm.eval())
-        return
+        parm.set(123.0)
+        corruption.append(parm.eval())
+        raise RuntimeError('injected failure after the real write, before the commit returns')
     with h._execution_owner('assembly', 'direct-partial-write'):
-        with patch.object(components, '_restore_parm', corrupt_then_continue), \
-                patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+        with patch.object(components, '_restore_parm', corrupt_then_raise):
             try:
                 components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
                                              expected_plan=preview['plan'],
                                              migration={'inputs': {'0': 0}, 'public_parms': ['width']})
             except RuntimeError as error:
-                assert 'injected consumer cook failure' in str(error), error
+                assert 'injected failure after the real write' in str(error), error
             else:
-                raise AssertionError('the injected cook failure must fail the commit')
-    assert corruption == [123.0], 'the partial write must have really corrupted the target first'
+                raise AssertionError('the injected post-write failure must fail the commit')
+    assert corruption == [123.0], 'the real write must have happened before the injected failure'
     assert hou.node('/obj/assembly/newmod2').parm('width').eval() == 9, \
         'the internal ledger must recover the really-corrupted value on a direct call'
     assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
-    # Bridge layer, independently: the same corruption through run_code heals too.
-    partial['n'] = 0
+    # Bridge layer, independently: the same in-commit failure through run_code heals too.
+    injections['n'] = 0
     corruption.clear()
-    with patch.object(components, '_restore_parm', corrupt_then_continue), \
-            patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+    with patch.object(components, '_restore_parm', corrupt_then_raise):
         failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
                            f'expected_plan={preview["plan"]!r},migration={{"inputs":{{"0":0}},"public_parms":["width"]}})')
-    assert 'injected consumer cook failure' in failed, failed
+    assert 'injected failure after the real write' in failed, failed
     assert corruption == [123.0], corruption
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert hou.node('/obj/assembly/newmod2').input(0) is None
@@ -423,9 +422,32 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         'set_parms("/obj/assembly/ctrl4",{"drive":"ch(\\"../tupleold/trix\\") + ch(\\"../\\" + \\"tupleold/triy\\")"})', owner='assembly')
     nonliteral = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
                            'migration={"inputs":{},"public_parms":["tri"]})')
-    assert 'cannot prove it is independent' in nonliteral and 'ctrl4' in nonliteral, nonliteral
+    assert 'embedded in a larger expression' in nonliteral and 'ctrl4' in nonliteral, nonliteral
     assert not hou.parm('/obj/assembly/tuplenew/trix').keyframes(), 'a refused preview must not write'
     hou.node('/obj/assembly/ctrl4').destroy()
+    # Fixed counterexample 2 of the concatenated-reference class: the fragment
+    # literal ALONE ('../tupleold/' + 'triy'). Its literal prefix resolves into
+    # the old component, so an unguarded rewrite would silently migrate half a
+    # reference. The commit path must refuse it before any write, not rewrite it.
+    run('ctrl5=tab_create("/obj/assembly","null","ctrl5")\n'
+        'create_spare_parms("/obj/assembly/ctrl5",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl5",{"drive":"ch(\\"../tupleold/\\" + \\"triy\\")"})', owner='assembly')
+    fragment = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",dry_run=False,'
+                         'migration={"inputs":{},"public_parms":["tri"]})')
+    assert 'embedded in a larger expression' in fragment and 'ctrl5' in fragment, fragment
+    assert hou.parm('/obj/assembly/ctrl5/drive').expression() == 'ch("../tupleold/" + "triy")', \
+        'the refused consumer expression must remain untouched'
+    assert not hou.parm('/obj/assembly/tuplenew/trix').keyframes(), 'the refused commit must not write'
+    hou.node('/obj/assembly/ctrl5').destroy()
+    # Fixed positives for complete-path references: the absolute form is
+    # rewritten to the same target. The redundant mid-path navigation form is
+    # NOT a tracked Houdini dependency (parmsReferencingThis does not link it),
+    # so it stays out of the declared migration scope and keeps targeting the
+    # retained old component; the rewrite leaves it byte-identical.
+    run('ctrl6=tab_create("/obj/assembly","null","ctrl6")\n'
+        'create_spare_parms("/obj/assembly/ctrl6",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl6",{"drive":"ch(\\"/obj/assembly/tupleold/trix\\") + '
+        'ch(\\"../tupleold/triy\\") + ch(\\"../null/../tupleold/triz\\")"})', owner='assembly')
     # Ambiguous slot spelling: {0: 1, "0": 2} is a conflicting plan, refused.
     collision = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
                           'migration={"inputs":{0:1,"0":2},"public_parms":["tri"]})')
@@ -449,7 +471,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
                         'migration={"inputs":{},"public_parms":["tri"]})', owner='assembly')
     assert tuple_preview['ok'] is True, tuple_preview
     rows = tuple_preview['migration']['parameter_consumers']
-    assert [row['channels'] for row in rows] == [['trix', 'triy']], rows
+    assert sorted((row['parm'].split('/')[-2], tuple(row['channels'])) for row in rows) == \
+        [('ctrl3', ('trix', 'triy')), ('ctrl6', ('trix', 'triy'))], rows
     run(f'__result__=component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",dry_run=False,'
         f'expected_plan={tuple_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["tri"]}})', owner='assembly')
     for channel in ('trix', 'triy', 'triz'):
@@ -463,6 +486,13 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.parm('/obj/assembly/ctrl3/drive').expression() == \
         'ch("../tuplenew/trix") + ch("../tuplenew/triy") + ch("../../tupleold/triy")', \
         hou.parm('/obj/assembly/ctrl3/drive').expression()
+    # Complete-path forms are rewritten to the same resolved target: the
+    # absolute form stays absolute, and even the mid-path navigation reference
+    # that Houdini's dependency graph does not track is repointed by its
+    # resolved target - no textual reference into the old component survives.
+    assert hou.parm('/obj/assembly/ctrl6/drive').expression() == \
+        'ch("/obj/assembly/tuplenew/trix") + ch("../tuplenew/triy") + ch("../tuplenew/triz")', \
+        hou.parm('/obj/assembly/ctrl6/drive').expression()
     assert hou.node('/obj/assembly/sink3').input(0).path() == '/obj/assembly/tuplenew'
     assert hou.node('/obj/assembly/sink2').input(0) is not None  # earlier scenario untouched
     # Expression-driven keyframes are refused at preview, not mid-commit.
@@ -477,6 +507,95 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     hou.parm('/obj/assembly/keyold/speed').setKeyframe(expression_key)
     refused = fail_with('component_replace("/obj/assembly/keyold","/obj/assembly/keynew",migration={"public_parms":["speed"]})')
     assert 'keyframes driven by expressions are not migrated' in refused, refused
+    # R4: per-key segment state. The migrated keys must carry the FULL segment
+    # state per key - segment expression (including non-default linear), raw
+    # slope/acceleration data on expression-free keys, and incoming
+    # acceleration - for expression, mixed and expression-free keys alike.
+    run('s=tab_create("/obj/assembly","subnet","segold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","segnew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('segsink=tab_create("/obj/assembly","null","segsink",inputs=["/obj/assembly/segold"])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/segold",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/segnew",layout=[{"type":"float","name":"speed","default":2}])', owner='assembly')
+    seg_old = hou.parm('/obj/assembly/segold/speed')
+    with h._execution_owner('assembly', 'segment-state-fixture'):
+        expr_bezier = hou.Keyframe(5.0)
+        expr_bezier.setFrame(2)
+        expr_bezier.setExpression('bezier()', hou.exprLanguage.Hscript)
+        expr_bezier.setSlope(1.5)
+        expr_bezier.setAccel(2.0)
+        raw = hou.Keyframe(7.0)
+        raw.setFrame(10)
+        raw.setSlope(0.75)
+        raw.setInSlope(-1.25)
+        raw.setAccel(1.5)
+        raw.setInAccel(2.5)
+        expr_linear = hou.Keyframe(9.0)
+        expr_linear.setFrame(20)
+        expr_linear.setExpression('linear()', hou.exprLanguage.Hscript)
+        seg_old.setKeyframes([expr_bezier, raw, expr_linear])
+    def optional(accessor, key):
+        try:
+            return accessor()
+        except hou.KeyframeValueNotSet:
+            return None
+    def full_state(parm):
+        return [(k.frame(), k.value(), k.slope(), k.inSlope(),
+                 optional(k.accel, k), optional(k.inAccel, k),
+                 k.expression() if k.isExpressionSet() else None) for k in parm.keyframes()]
+    seg_baseline = full_state(seg_old)
+    seg_preview = run('__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",'
+                      'migration={"inputs":{},"public_parms":["speed"]})', owner='assembly')
+    run(f'__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",dry_run=False,'
+        f'expected_plan={seg_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["speed"]}})', owner='assembly')
+    seg_moved = full_state(hou.parm('/obj/assembly/segnew/speed'))
+    assert len(seg_moved) == 3, seg_moved
+    for before, after in zip(seg_baseline, seg_moved):
+        for field, left, right in zip(('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression'), before, after):
+            if isinstance(left, float):
+                # Houdini normalizes bezier acceleration on write; the migration
+                # must be faithful to the source curve, which the same-frame
+                # comparison below pins to within double-precision noise.
+                assert abs(left - right) < 1e-9, (field, left, right)
+            else:
+                assert left == right, (field, left, right)
+    assert seg_moved[2][6] == 'linear()', 'the linear segment expression must survive the migration'
+    assert seg_moved[1][5] is not None and abs(seg_moved[1][5] - seg_baseline[1][5]) < 1e-9, \
+        'the incoming acceleration of the expression-free key must survive'
+    assert seg_moved[2][5] is None and seg_baseline[2][5] is None, \
+        'the linear() key has no incoming acceleration on either side'
+    # The same fixed test proves the legacy field-by-field rebuild fails: it
+    # loses the linear() segment expression and the raw key's acceleration.
+    with h._execution_owner('assembly', 'segment-state-fixture'):
+        scratch = hou.node('/obj/assembly/segnew').createNode('null', 'legacyscratch')
+        ptg = scratch.parmTemplateGroup()
+        ptg.append(hou.FloatParmTemplate('speed', 'speed', 1, default_value=(0,)))
+        scratch.setParmTemplateGroup(ptg)
+        legacy_target = scratch.parm('speed')
+        rebuilt = []
+        for k in seg_old.keyframes():
+            clone = hou.Keyframe(k.value())
+            clone.setFrame(k.frame())
+            clone.setSlope(k.slope())
+            clone.setInSlope(k.inSlope())
+            clone.setAccel(k.accel())
+            try:
+                clone.setInAccel(k.inAccel())
+            except hou.KeyframeValueNotSet:
+                pass
+            rebuilt.append(clone)
+        legacy_target.setKeyframes(rebuilt)
+    legacy_state = full_state(legacy_target)
+    legacy_failed = []
+    for before, after in zip(seg_baseline, legacy_state):
+        for field, left, right in zip(('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression'), before, after):
+            same = abs(left - right) < 1e-9 if isinstance(left, float) else left == right
+            if not same:
+                legacy_failed.append((field, left, right))
+    assert any(field == 'expression' and right == 'bezier()' for field, left, right in legacy_failed), \
+        'the legacy rebuild must lose the linear() segment expression: ' + repr(legacy_failed)
+    assert any(field == 'inAccel' for field, left, right in legacy_failed), \
+        'the legacy rebuild must corrupt the incoming-acceleration state: ' + repr(legacy_failed)
+    scratch.destroy()
     run('sop_set_output("/obj/source/module/shape",output_index=1)')
     multi_file = str(Path(folder) / 'multi.dshcomponent')
     multi_contract = {**contract, 'outputs': [0, 1]}
