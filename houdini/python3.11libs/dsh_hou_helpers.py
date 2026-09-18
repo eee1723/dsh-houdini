@@ -153,25 +153,28 @@ def _reconcile_undo_resurrected(deleted_by_batch):
     Houdini undo resurrects a deleted node with its original sessionId but gives
     recreated native init-script children NEW ids (probe: wrangle keeps its id,
     inner attribvop gets a fresh one). Without this reconcile the resurrected
-    subtree stays foreign forever and even delete_node is refused. Eligibility is
-    causally bound to the batch that performed the undo: ``deleted_by_batch``
-    holds only entries for identities that were alive at batch start and are
-    dead after the batch's own deletions — exactly what this undo can resurrect.
-    The full pre-batch registry is never scanned, so a stale entry left behind
-    by a leaked deletion route of an earlier batch (destroy without unregister)
-    cannot graft its author onto a later batch's resurrected nodes. Additional
-    bounded evidence per entry: the node now sitting at the exact recorded path
-    has the recorded node type, is not already registered, and has a registered
-    live ancestor. Undo resurrection does not preserve userData, so the durable
-    owner tag is not evidence here; a same-path replacement of a different node
-    type stays foreign, and paths alone never grant ownership.
+    subtree stays foreign forever and even delete_node is refused.
+
+    ``deleted_by_batch`` maps identity -> (registry entry, path at batch start).
+    Eligibility is causally bound to the batch that performed the undo: only
+    identities alive at batch start and dead after the batch's own deletions
+    are candidates — exactly what this undo can resurrect. Targets are located
+    by the BATCH-START path, never by path_at_creation: a rename between the
+    creation batch and this batch (or a user node recreated at the old creation
+    path) must not redirect adoption. path_at_creation stays audit-only.
+    Additional bounded evidence per entry: the node now sitting at the
+    batch-start path has the recorded node type, is not already registered, and
+    has a registered live ancestor. Adoption consumes the dead entry. Undo
+    resurrection does not preserve userData, so the durable owner tag is not
+    evidence here; a same-path replacement of a different node type stays
+    foreign, and paths alone never grant ownership — when the evidence does not
+    identify the resurrected node unambiguously, it stays foreign.
     """
     restored = []
-    for old_id, entry in deleted_by_batch.items():
+    for old_id, (entry, batch_start_path) in deleted_by_batch.items():
         if hou.nodeBySessionId(old_id) is not None:
             continue
-        path = entry.get('path_at_creation')
-        candidate = hou.node(path) if isinstance(path, str) else None
+        candidate = hou.node(batch_start_path) if isinstance(batch_start_path, str) else None
         if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS:
             continue
         if entry.get('type') is not None and candidate.type().name() != entry['type']:

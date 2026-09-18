@@ -59,6 +59,7 @@ import inspect
 import json
 import math
 import os
+import sys
 import queue
 import threading
 import time
@@ -1213,13 +1214,22 @@ def run_code(code: str, allow_raw: str | None = None,
                     if undo_enabled:
                         label = f"dsh-houdini exec {uuid.uuid4().hex}"
                         ownership_before = dict(dsh_hou_helpers._OWNED_NODE_SESSIONS)
-                        # Causal binding: only entries whose identity was ALIVE at batch
-                        # start are eligible for undo-resurrection adoption. Stale entries
-                        # left by a leaked deletion route (destroy without unregister) were
-                        # already dead before this batch; their undo cannot resurrect
-                        # anything, so they must never be adoption candidates.
-                        alive_at_start = {identity for identity in ownership_before
-                                          if hou.nodeBySessionId(identity) is not None}
+                        # Component provenance rides the same transaction as the scene:
+                        # a rollback must restore _IMPORT_RECORDS together with the nodes,
+                        # or a later expected_contract operation sees stale provenance.
+                        _components = sys.modules.get('dsh_component_contracts')
+                        imports_before = dict(_components._IMPORT_RECORDS)                             if _components is not None and hasattr(_components, '_IMPORT_RECORDS') else None
+                        # Causal binding, part 1: only entries whose identity was ALIVE
+                        # at batch start are eligible for undo-resurrection adoption,
+                        # and each records the path it ACTUALLY held at batch start
+                        # (renames included). Stale entries left by a leaked deletion
+                        # route (destroy without unregister) were already dead before
+                        # this batch; their undo cannot resurrect anything.
+                        alive_at_start = {}
+                        for _identity, _entry in dsh_hou_helpers._OWNED_NODE_SESSIONS.items():
+                            _live = hou.nodeBySessionId(_identity)
+                            if _live is not None:
+                                alive_at_start[_identity] = (_entry, _live.path())
                         try:
                             with hou.undos.group(label):
                                 exec(compiled, namespace)
@@ -1231,6 +1241,13 @@ def run_code(code: str, allow_raw: str | None = None,
                             removed_residuals = []
                             reconciled = []
                             try:
+                                # Causal binding, part 2: the deleted set is computed
+                                # BEFORE the undo - identities alive at batch start that
+                                # are dead after this batch's own deletions. Exactly
+                                # these can be resurrected by the undo below.
+                                deleted_by_batch = {identity: alive_at_start[identity]
+                                                    for identity in alive_at_start
+                                                    if hou.nodeBySessionId(identity) is None}
                                 labels = list(hou.undos.undoLabels())
                                 if labels and labels[0] == label:
                                     hou.undos.performUndo()
@@ -1241,14 +1258,14 @@ def run_code(code: str, allow_raw: str | None = None,
                                     # Undo resurrects deleted nodes with their original ids but gives
                                     # recreated native children fresh ones; re-register those with the
                                     # bounded evidence of the pre-batch record. Adoption is causally
-                                    # bound to THIS batch: only entries for identities this batch
-                                    # deleted (alive at start, dead before the undo) are candidates —
-                                    # never the full pre-batch registry, which can carry stale entries
-                                    # from leaked deletions of earlier batches.
-                                    deleted_by_batch = {identity: ownership_before[identity]
-                                                        for identity in alive_at_start
-                                                        if hou.nodeBySessionId(identity) is None}
+                                    # bound to THIS batch (deleted_by_batch) and locates candidates
+                                    # by the path each identity actually held at batch start -
+                                    # path_at_creation is audit-only and must never select targets
+                                    # after renames.
                                     reconciled = dsh_hou_helpers._reconcile_undo_resurrected(deleted_by_batch)
+                                    if imports_before is not None:
+                                        _components._IMPORT_RECORDS.clear()
+                                        _components._IMPORT_RECORDS.update(imports_before)
                             except BaseException as undo_error:
                                 rollback_error = str(undo_error)
                             rollback = {

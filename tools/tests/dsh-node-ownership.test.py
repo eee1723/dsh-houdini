@@ -127,7 +127,9 @@ try:
     assert gone["ok"] is True and hou.node(wrangle2_path) is None, gone
     replacement = hou.node(geo2_path).createNode("box", "undo_wrangle2")
     assert replacement.type().name() != "attribwrangle"
-    restored = dsh_hou_helpers._reconcile_undo_resurrected(snapshot)
+    snapshot_now = {identity: (entry, entry.get('path_at_creation'))
+                    for identity, entry in snapshot.items()}
+    restored = dsh_hou_helpers._reconcile_undo_resurrected(snapshot_now)
     assert restored == [], restored
     assert int(replacement.sessionId()) not in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored
     replacement.destroy()
@@ -146,7 +148,7 @@ try:
     b_wrangle_path = bg["result"]
     assert b_wrangle_path == wrangle2_path, (b_wrangle_path, wrangle2_path)
     b_id = int(hou.node(b_wrangle_path).sessionId())
-    restored_b = dsh_hou_helpers._reconcile_undo_resurrected(snapshot)
+    restored_b = dsh_hou_helpers._reconcile_undo_resurrected(snapshot_now)
     assert restored_b == [], restored_b
     assert b_id in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored_b
     prov_b = dsh_bridge.run_code(
@@ -214,6 +216,71 @@ try:
                                          owner_call="call-causal-cleanup")
     assert causal_cleanup["ok"] is True, causal_cleanup
     dsh_hou_helpers._OWNED_NODE_SESSIONS.pop(stale_id, None)  # purge the injected poison
+
+    # Rename + user node at the old creation path + undo: adoption must locate
+    # candidates by the batch-start path, never by path_at_creation (audit-only).
+    renamed = dsh_bridge.run_code(
+        f"g = tab_create('/obj', 'geo', name='rename_geo_{suffix}')\n"
+        "w = tab_create(g, 'attribwrangle', name='part')\n"
+        "__result__ = {'geo': g.path(), 'wrangle': w.path()}",
+        owner_session=session_b,
+        owner_call="call-rename-create",
+    )
+    assert renamed["ok"] is True, renamed
+    rename_geo, part_path = renamed["result"]["geo"], renamed["result"]["wrangle"]
+    renamed_path = run_rename = dsh_bridge.run_code(
+        f"__result__ = rename_node({part_path!r}, 'renamed')",
+        owner_session=session_b,
+        owner_call="call-rename",
+    )
+    assert run_rename["ok"] is True and run_rename["result"] == f"/obj/rename_geo_{suffix}/renamed", run_rename
+    # The user rebuilds a same-type node at the OLD creation path (outside any
+    # session: direct native creation, unregistered, foreign to every author).
+    user_node = hou.node(rename_geo).createNode("attribwrangle", "part")
+    assert user_node.path() == part_path, user_node.path()
+    user_inner = user_node.allSubChildren(sync_delayed_definition=True)[0]
+    failed_rename_batch = dsh_bridge.run_code(
+        f"delete_node('/obj/rename_geo_{suffix}/renamed')\nraise RuntimeError('rename rollback probe')",
+        owner_session=session_b,
+        owner_call="call-rename-rollback",
+    )
+    assert failed_rename_batch["ok"] is False and failed_rename_batch["rollback"]["applied"] is True, failed_rename_batch
+    # The user's node is never claimed by any session.
+    user_prov = dsh_bridge.run_code(
+        f"__result__ = node_provenance({user_node.path()!r})",
+        owner_session=session_b,
+        owner_call="call-user-prov",
+    )
+    assert user_prov["result"]["status"] == "foreign", user_prov
+    assert dsh_bridge.run_code(
+        f"delete_node({user_node.path()!r})", owner_session=session_b,
+        owner_call="call-user-delete")["ok"] is False, 'a foreign user node must stay undeletable by the author'
+    # The REAL resurrected node (at its renamed path) and its fresh-id inner are
+    # the adopted identities; the fresh-id regime is asserted explicitly.
+    resurrected_renamed = hou.node(f"/obj/rename_geo_{suffix}/renamed")
+    assert resurrected_renamed is not None, failed_rename_batch
+    renamed_prov = dsh_bridge.run_code(
+        f"__result__ = node_provenance('/obj/rename_geo_{suffix}/renamed')",
+        owner_session=session_b,
+        owner_call="call-renamed-prov",
+    )
+    assert renamed_prov["result"]["status"] == "owned_current_session", renamed_prov
+    fresh_inner = resurrected_renamed.allSubChildren(sync_delayed_definition=True)[0]
+    if int(fresh_inner.sessionId()) != int(hou.node(f"/obj/rename_geo_{suffix}/part/attribvop1").sessionId()):
+        inner_prov = dsh_bridge.run_code(
+            f"__result__ = node_provenance({fresh_inner.path()!r})",
+            owner_session=session_b,
+            owner_call="call-fresh-inner-prov",
+        )
+        assert inner_prov["result"]["status"] == "owned_current_session", inner_prov
+        assert inner_prov["result"]["runtime_owner"]["session"] == session_b, inner_prov
+    # Cleanup: the author removes its own subtree; the user node is removed the
+    # same way it arrived (directly, outside any session).
+    assert dsh_bridge.run_code(f"delete_node('/obj/rename_geo_{suffix}/renamed')",
+                               owner_session=session_b, owner_call="call-rename-cleanup")["ok"] is True
+    user_node.destroy()
+    assert dsh_bridge.run_code(f"delete_node({rename_geo!r})", owner_session=session_b,
+                               owner_call="call-rename-geo-cleanup")["ok"] is True
 
     # Negative (unrelated-failure rollback): a failing batch elsewhere removes
     # only its own created node and never reconciles unrelated identities.
