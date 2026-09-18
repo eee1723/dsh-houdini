@@ -569,6 +569,67 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         return [(k.frame(), k.value(), k.slope(), k.inSlope(),
                  optional(k.accel, k), optional(k.inAccel, k),
                  k.expression() if k.isExpressionSet() else None) for k in parm.keyframes()]
+    # THE single-source keyframe comparator for this battery. Seven fields,
+    # always, for the candidate migration and for the historical falsification
+    # alike; zip never truncates because the key counts are compared first.
+    # Frames, values and the segment expressions compare EXACTLY. Numeric
+    # tolerance exists only for the two fields declared in KEY_TOLERANCE, with
+    # its justification: Houdini re-normalizes segment acceleration on EVERY
+    # write - re-writing the read-back payload shifts an incoming acceleration
+    # by up to ~6.4e-9 even for a pure batch set (probed on H21) - so the
+    # migration is faithful to the source state within Houdini's own
+    # write-to-write variance. Unset states are preserved: an unset field on
+    # one side against a set field on the other is a mismatch, never an
+    # equality, and None == None is the only equal unset pair.
+    KEY_FIELDS = ('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression')
+    KEY_TOLERANCE = {'accel': 1e-7, 'inAccel': 1e-7}
+    def key_mismatches(baseline, moved, roles):
+        mismatches = []
+        if len(baseline) != len(moved):
+            return [('key-count', len(baseline), len(moved), roles)]
+        for index, (before, after) in enumerate(zip(baseline, moved)):
+            for field, left, right in zip(KEY_FIELDS, before, after):
+                if (left is None) != (right is None):
+                    mismatches.append((index, field, left, right, roles + ': unset-state mismatch'))
+                elif left is None:
+                    continue
+                elif field in KEY_TOLERANCE:
+                    if not (isinstance(left, (int, float)) and isinstance(right, (int, float))
+                            and abs(left - right) < KEY_TOLERANCE[field]):
+                        mismatches.append((index, field, left, right, roles))
+                elif left != right:
+                    mismatches.append((index, field, left, right, roles))
+        return mismatches
+    # Comparator self-test: the comparator itself must fail when a non-trailing
+    # segment expression, a frame or a value is changed, when a key count
+    # differs, or when an unset state is broken; it must stay silent within the
+    # declared tolerance and MUST stay exact on frames even far below the
+    # declared numeric tolerance.
+    synth_base = [(1.0, 3.0, 0.0, 0.0, None, None, 'bezier()'),
+                  (9.0, 4.0, 0.0, 0.0, 0.5, 0.25, 'bezier()'),
+                  (14.0, 5.0, 0.0, 0.0, 0.9, 0.5, 'bezier()'),
+                  (20.0, 6.0, 0.0, 0.0, None, None, 'linear()')]
+    assert key_mismatches(synth_base, [tuple(k) for k in synth_base], 'self') == []
+    expr_mutant = [tuple(k) for k in synth_base]; expr_mutant[1] = expr_mutant[1][:6] + ('linear()',)
+    assert [(m[1], m[2]) for m in key_mismatches(synth_base, expr_mutant, 'expr')] == [('expression', 'bezier()')]
+    frame_mutant = [tuple(k) for k in synth_base]; frame_mutant[2] = (frame_mutant[2][0] + 5e-8,) + frame_mutant[2][1:]
+    assert [m[1] for m in key_mismatches(synth_base, frame_mutant, 'frame')] == ['frame'], \
+        'frames compare exactly, even below the declared numeric tolerance'
+    value_mutant = [tuple(k) for k in synth_base]; value_mutant[2] = (value_mutant[2][0], value_mutant[2][1] + 1.0) + value_mutant[2][2:]
+    assert [m[1] for m in key_mismatches(synth_base, value_mutant, 'value')] == ['value']
+    count_mutant = synth_base[:-1]
+    assert key_mismatches(synth_base, count_mutant, 'count')[0][0] == 'key-count', \
+        'zip must never truncate the comparison silently'
+    within = [tuple(k) for k in synth_base]; within[1] = (within[1][:4] + (0.5 + 1e-9, within[1][5], within[1][6]))
+    assert key_mismatches(synth_base, within, 'tolerance') == [], 'the declared tolerance must hold'
+    beyond = [tuple(k) for k in synth_base]; beyond[1] = (beyond[1][:4] + (0.5 + 1e-3, beyond[1][5], beyond[1][6]))
+    assert [m[1] for m in key_mismatches(synth_base, beyond, 'beyond')] == ['accel']
+    unset_mutant = [tuple(k) for k in synth_base]; unset_mutant[3] = unset_mutant[3][:5] + (0.25,) + unset_mutant[3][6:]
+    assert [m[1] for m in key_mismatches(synth_base, unset_mutant, 'unset')] == ['inAccel'], \
+        'an unset state broken on one side must fail, never compare equal'
+    unset_both = [tuple(k) for k in synth_base]; unset_both[1] = unset_both[1][:5] + (None,) + unset_both[1][6:]
+    assert key_mismatches(synth_base, unset_both, 'unset-both')[0][1] == 'inAccel', \
+        'set against unset is a mismatch in either direction'
     # Precondition pinned by HOM read-back of the ACTUAL curve (not variable
     # names): every written key carries a materialized segment expression
     # (bezier() default or the real one), and Houdini's own write
@@ -587,19 +648,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run(f'__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",dry_run=False,'
         f'expected_plan={seg_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["speed"]}})', owner='assembly')
     seg_moved = full_state(hou.parm('/obj/assembly/segnew/speed'))
-    assert len(seg_moved) == 4, seg_moved
-    for before, after in zip(seg_baseline, seg_moved):
-        for field, left, right in zip(('frame', 'value', 'slope', 'accel', 'inAccel', 'expression'), before, after):
-            if isinstance(left, float):
-                # Houdini re-normalizes segment acceleration on EVERY write:
-                # re-writing the read-back payload shifts an incoming
-                # acceleration by up to ~6.4e-9 even for a pure batch set
-                # (probed on H21). The migration is faithful to the source
-                # state within Houdini's own write-to-write variance; frames,
-                # values and expressions stay exact.
-                assert abs(left - right) < 1e-7, (field, left, right)
-            else:
-                assert left == right, (field, left, right)
+    assert key_mismatches(seg_baseline, seg_moved, 'candidate migration') == [], \
+        (seg_baseline, seg_moved)
     assert seg_moved[3][6] == 'linear()', 'the linear segment expression must survive the migration'
     assert seg_moved[1][5] is not None and abs(seg_moved[1][5] - seg_baseline[1][5]) < 1e-7, \
         ('the non-default incoming acceleration of the expression key must survive', seg_baseline, seg_moved)
@@ -629,18 +679,13 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         legacy_target = scratch.parm('speed')
         legacy_ns['_restore_parm'](legacy_target, legacy_ns['_capture_parm'](seg_old))
     legacy_state = full_state(legacy_target)
-    legacy_failed = []
-    for before, after in zip(seg_baseline, legacy_state):
-        for field, left, right in zip(('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression'), before, after):
-            same = abs(left - right) < 1e-7 if isinstance(left, float) else left == right
-            if not same:
-                legacy_failed.append((field, left, right))
-    assert any(field == 'inAccel' for field, left, right in legacy_failed), \
+    legacy_failed = key_mismatches(seg_baseline, legacy_state, 'historical 0effe03 pair')
+    assert any(entry[1] == 'inAccel' for entry in legacy_failed), \
         'the historical pair must lose the incoming-acceleration state: ' + repr(legacy_failed)
-    assert any(field == 'accel' and isinstance(left, float) and isinstance(right, float)
-               and abs(left - right) > 1e-7 for field, left, right in legacy_failed), \
+    assert any(entry[1] == 'accel' and isinstance(entry[2], (int, float)) and isinstance(entry[3], (int, float))
+               and abs(entry[2] - entry[3]) > KEY_TOLERANCE['accel'] for entry in legacy_failed), \
         'the historical per-key write must recompute the outgoing acceleration: ' + repr(legacy_failed)
-    assert all(entry[0] != 'expression' for entry in legacy_failed), \
+    assert all(entry[1] != 'expression' for entry in legacy_failed), \
         'the historical pair carries segment expressions; the known-lost states are acceleration-only: ' \
         + repr(legacy_failed)
     scratch.destroy()
