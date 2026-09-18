@@ -269,24 +269,75 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         'set_parms("/obj/assembly/ctrl2",{"drive":"ch(\\"/obj/assembly/oldmod2/width\\")"})', owner='assembly')
     run('set_keyframes("/obj/assembly/oldmod2",{"width":[{"frame":2,"value":3},{"frame":10,"value":7}]})', owner='assembly')
     preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
+    # R5: a partial write must REALLY corrupt the target before the failure, and
+    # the internal ledger must recover it. Verified at BOTH layers, separately:
+    # direct helper (no bridge undo - the ledger alone must heal), then bridge.
     real_restore = components._restore_parm
+    corruption = []
     partial = {'n': 0}
-    def partial_write_then_raise(parm, captured):
+    def corrupt_then_continue(parm, captured):
         partial['n'] += 1
+        real_restore(parm, captured)
         if partial['n'] == 1:
-            parm.deleteAllKeyframes()
-            raise RuntimeError('injected partial write')
-        return real_restore(parm, captured)
-    with patch.object(components, '_restore_parm', partial_write_then_raise):
+            # The migrate-apply already moved the keys; corrupt the value on top
+            # so the rollback ledger has something real to recover.
+            parm.set(123.0)
+            corruption.append(parm.eval())
+        return
+    with h._execution_owner('assembly', 'direct-partial-write'):
+        with patch.object(components, '_restore_parm', corrupt_then_continue), \
+                patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+            try:
+                components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
+                                             expected_plan=preview['plan'],
+                                             migration={'inputs': {'0': 0}, 'public_parms': ['width']})
+            except RuntimeError as error:
+                assert 'injected consumer cook failure' in str(error), error
+            else:
+                raise AssertionError('the injected cook failure must fail the commit')
+    assert corruption == [123.0], 'the partial write must have really corrupted the target first'
+    assert hou.node('/obj/assembly/newmod2').parm('width').eval() == 9, \
+        'the internal ledger must recover the really-corrupted value on a direct call'
+    assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
+    # Bridge layer, independently: the same corruption through run_code heals too.
+    partial['n'] = 0
+    corruption.clear()
+    with patch.object(components, '_restore_parm', corrupt_then_continue), \
+            patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
                            f'expected_plan={preview["plan"]!r},migration={{"inputs":{{"0":0}},"public_parms":["width"]}})')
-    assert 'injected partial write' in failed, failed
+    assert 'injected consumer cook failure' in failed, failed
+    assert corruption == [123.0], corruption
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert hou.node('/obj/assembly/newmod2').input(0) is None
     assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
     assert [k.frame() for k in hou.node('/obj/assembly/oldmod2').parm('width').keyframes()] == [2, 10]
     assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
     assert hou.node('/obj/assembly/newmod2').parm('width').eval() == 9
+    assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
+    # R5: same-exec consistency - a successful replace followed by a later failure
+    # in the SAME exec restores the component import records together with the scene.
+    run("g=tab_create('/obj','geo','swapsource')\ns=tab_create(g,'subnet','module')\nb=tab_create(s,'box','shape')\nsop_set_output(b,output_index=0)")
+    swap_contract = {'module_id': 'swapmod', 'revision': 1, 'units': 'm', 'outputs': [0]}
+    swap_file = str(Path(folder) / 'swapmod.dshcomponent')
+    swap_export = run(f'__result__=component_export("/obj/swapsource/module",{swap_file!r},{swap_contract!r})')
+    run(f'__result__=component_import("/obj/assembly",{swap_export["file"]!r},{swap_export["sha256"]!r},"swapold",trusted=True)', owner='assembly')
+    swap_new = run(f'__result__=component_import("/obj/assembly",{swap_export["file"]!r},{swap_export["sha256"]!r},"swapnew",trusted=True)', owner='assembly')
+    run('sink5=tab_create("/obj/assembly","null","sink5",inputs=["/obj/assembly/swapold"])', owner='assembly')
+    swap_preview = run('__result__=component_replace("/obj/assembly/swapold","/obj/assembly/swapnew",'
+                       'expected_contract={"module_id":"swapmod","revision":1},migration={"inputs":{},"public_parms":[]})', owner='assembly')
+    swap_failed = fail_with(
+        f'__result__=component_replace("/obj/assembly/swapold","/obj/assembly/swapnew",dry_run=False,'
+        f'expected_contract={{"module_id":"swapmod","revision":1}},expected_plan={swap_preview["plan"]!r},'
+        f'migration={{"inputs":{{}},"public_parms":[]}})\nraise RuntimeError("post-replace failure")', owner='assembly')
+    assert 'post-replace failure' in swap_failed, swap_failed
+    assert int(swap_new['identity']) in components._IMPORT_RECORDS, \
+        'the rollback must restore the candidate import record with the scene'
+    assert hou.node('/obj/assembly/sink5').input(0).path() == '/obj/assembly/swapold'
+    swap_redone = run(f'__result__=component_replace("/obj/assembly/swapold","/obj/assembly/swapnew",dry_run=False,'
+                      f'expected_contract={{"module_id":"swapmod","revision":1}},expected_plan={swap_preview["plan"]!r},'
+                      f'migration={{"inputs":{{}},"public_parms":[]}})', owner='assembly')
+    assert swap_redone['ok'] is True, swap_redone
     assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
     # Counterexample: a failing internal restoration is escalated, not silently
     # claimed complete. At bridge level the caught-failure undo additionally
@@ -337,33 +388,82 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
     assert hou.node('/obj/assembly/oldmod2').parm('width').keyframes()
-    # Full channel preservation: a multi-channel public parameter migrates as
-    # one declared tuple with every channel; a channel-level declaration is
-    # refused instead of silently migrating a single channel.
+    # R3/R4: multi-channel public parameter migration - aggregation, deep-relative
+    # preservation, write-ahead refusal, full keyframe state, type/arity/slot checks.
     run('s=tab_create("/obj/assembly","subnet","tupleold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('s=tab_create("/obj/assembly","subnet","tuplenew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('sink3=tab_create("/obj/assembly","null","sink3",inputs=["/obj/assembly/tupleold"])', owner='assembly')
     run('create_spare_parms("/obj/assembly/tupleold",layout=[{"type":"float","name":"tri","components":3,"default":[0,0,0]}])', owner='assembly')
     run('create_spare_parms("/obj/assembly/tuplenew",layout=[{"type":"float","name":"tri","components":3,"default":[5,5,5]}])', owner='assembly')
-    run('set_keyframes("/obj/assembly/tupleold",{"trix":[{"frame":1,"value":11}],'
-        '"triy":[{"frame":2,"value":22}],"triz":[{"frame":3,"value":33}]})', owner='assembly')
+    run('set_keyframes("/obj/assembly/tupleold",{"trix":[{"frame":1,"value":11,"curve":"bezier"}],'
+        '"triy":[{"frame":2,"value":22,"curve":"bezier"}],"triz":[{"frame":3,"value":33,"curve":"bezier"}]})', owner='assembly')
+    # A key with explicit slope/acceleration: full curve state, not just frame+value.
+    rich = hou.Keyframe()
+    rich.setFrame(3)
+    rich.setValue(33)
+    rich.setSlope(2.0)
+    rich.setInSlope(-1.0)
+    rich.setAccel(3.0)
+    hou.parm('/obj/assembly/tupleold/triz').setKeyframe(rich)
+    # Full-state baseline: every channel's keyframes with slopes and acceleration,
+    # captured BEFORE the migration (Houdini may normalize accel on write; the
+    # migration must be faithful to whatever the source curve actually holds).
+    expected_state = {channel: [(k.frame(), k.value(), k.slope(), k.inSlope(), k.accel())
+                                for k in hou.parm(f'/obj/assembly/tupleold/{channel}').keyframes()]
+                      for channel in ('trix', 'triy', 'triz')}
+    # One consumer referencing TWO migrated channels plus a deep-relative
+    # reference that resolves OUTSIDE the old component and must stay untouched.
     run('ctrl3=tab_create("/obj/assembly","null","ctrl3")\n'
         'create_spare_parms("/obj/assembly/ctrl3",layout=[{"type":"float","name":"drive","default":0}])\n'
-        'set_parms("/obj/assembly/ctrl3",{"drive":"ch(\\"/obj/assembly/tupleold/triy\\")"})', owner='assembly')
+        'set_parms("/obj/assembly/ctrl3",{"drive":"ch(\\"../tupleold/trix\\") + ch(\\"../tupleold/triy\\") + ch(\\"../../tupleold/triy\\")"})', owner='assembly')
+    # A consumer with a NON-LITERAL argument that cannot be proven independent of
+    # the old component: the whole replace refuses BEFORE any write.
+    run('ctrl4=tab_create("/obj/assembly","null","ctrl4")\n'
+        'create_spare_parms("/obj/assembly/ctrl4",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl4",{"drive":"ch(\\"../tupleold/trix\\") + ch(\\"../\\" + \\"tupleold/triy\\")"})', owner='assembly')
+    nonliteral = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
+                           'migration={"inputs":{},"public_parms":["tri"]})')
+    assert 'cannot prove it is independent' in nonliteral and 'ctrl4' in nonliteral, nonliteral
+    assert not hou.parm('/obj/assembly/tuplenew/trix').keyframes(), 'a refused preview must not write'
+    hou.node('/obj/assembly/ctrl4').destroy()
+    # Ambiguous slot spelling: {0: 1, "0": 2} is a conflicting plan, refused.
+    collision = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
+                          'migration={"inputs":{0:1,"0":2},"public_parms":["tri"]})')
+    assert 'slot 0 twice' in collision, collision
+    # Candidate type/arity incompatibility is refused at the plan check.
+    run('s=tab_create("/obj/assembly","subnet","tuplenarrow")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
+        'create_spare_parms("/obj/assembly/tuplenarrow",layout=[{"type":"float","name":"tri","components":2,"default":[0,0]}])', owner='assembly')
+    arity = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenarrow",'
+                      'migration={"inputs":{},"public_parms":["tri"]})')
+    assert 'arity differs' in arity, arity
+    run('s=tab_create("/obj/assembly","subnet","tupletext")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
+        'create_spare_parms("/obj/assembly/tupletext",layout=[{"type":"int","name":"tri","components":3,"default":[0,0,0]}])', owner='assembly')
+    type_refused = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tupletext",'
+                             'migration={"inputs":{},"public_parms":["tri"]})')
+    assert 'type differs' in type_refused, type_refused
+    # Channel-level declaration stays refused with the tuple name named.
     channel_only = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
                              'migration={"inputs":{},"public_parms":["trix"]})')
     assert 'channel of tuple' in channel_only and "'tri'" in channel_only, channel_only
     tuple_preview = run('__result__=component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
                         'migration={"inputs":{},"public_parms":["tri"]})', owner='assembly')
     assert tuple_preview['ok'] is True, tuple_preview
+    rows = tuple_preview['migration']['parameter_consumers']
+    assert [row['channels'] for row in rows] == [['trix', 'triy']], rows
     run(f'__result__=component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",dry_run=False,'
         f'expected_plan={tuple_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["tri"]}})', owner='assembly')
-    for channel, frame, value in (('trix', 1, 11), ('triy', 2, 22), ('triz', 3, 33)):
+    for channel in ('trix', 'triy', 'triz'):
         moved_keys = hou.parm(f'/obj/assembly/tuplenew/{channel}').keyframes()
-        assert [k.frame() for k in moved_keys] == [frame] and [k.value() for k in moved_keys] == [value], channel
+        moved_state = [(k.frame(), k.value(), k.slope(), k.inSlope(), k.accel()) for k in moved_keys]
+        assert moved_state == expected_state[channel], (
+            'full keyframe state must survive the migration: ' + channel
+            + ' ' + repr(moved_state) + ' != ' + repr(expected_state[channel]))
         kept_keys = hou.parm(f'/obj/assembly/tupleold/{channel}').keyframes()
-        assert [k.frame() for k in kept_keys] == [frame], channel
-    assert 'tuplenew' in hou.parm('/obj/assembly/ctrl3/drive').expression(), 'consumer must repoint to the candidate'
+        assert [(k.frame(), k.value()) for k in kept_keys] == [(s[0], s[1]) for s in expected_state[channel]], channel
+    assert hou.parm('/obj/assembly/ctrl3/drive').expression() == \
+        'ch("../tuplenew/trix") + ch("../tuplenew/triy") + ch("../../tupleold/triy")', \
+        hou.parm('/obj/assembly/ctrl3/drive').expression()
+    assert hou.node('/obj/assembly/sink3').input(0).path() == '/obj/assembly/tuplenew'
     assert hou.node('/obj/assembly/sink2').input(0) is not None  # earlier scenario untouched
     # Expression-driven keyframes are refused at preview, not mid-commit.
     run('s=tab_create("/obj/assembly","subnet","keyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'

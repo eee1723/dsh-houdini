@@ -442,6 +442,9 @@ def _migration(value):
         slot = _slot(key)
         if slot is None or type(target) is not int or not 0 <= slot <= 63 or not 0 <= target <= 63:
             raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
+        if slot in normalized:
+            raise ValueError(f'migration inputs declare slot {slot} twice with different spellings '
+                             f'({normalized[slot]!r} and {target!r}); the plan is ambiguous and refused')
         normalized[slot] = target
     if len(set(normalized.values())) != len(normalized):
         raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
@@ -460,33 +463,24 @@ def _input_wires(node):
 def _capture_parm(parm):
     """Restorable snapshot of one live channel; expression-driven keys cannot be restored.
 
-    Segment functions (bezier()/linear()/…) are plain animation data and migrate;
-    any other keyframe expression is refused rather than rewritten.
+    Segment functions (bezier()/linear()/...) are plain animation data and migrate;
+    any other keyframe expression is refused rather than rewritten. The snapshot
+    carries the Keyframe objects returned by keyframes() VERBATIM - frame, value,
+    slopes, acceleration and segment state all survive - instead of rebuilding a
+    partial copy field by field.
     """
     keys = parm.keyframes()
     if keys:
-        clones = []
         for key in keys:
-            segment = None
             try:
                 if key.isExpressionSet():
                     segment = key.expression()
             except hou.OperationFailed:
-                segment = None
-            if segment is not None:
-                if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\(\)', segment.strip()):
+                continue
+            else:
+                if segment is not None and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\(\)', segment.strip()):
                     raise ValueError('keyframes driven by expressions are not migrated: ' + parm.path())
-                segment = (segment, key.expressionLanguage())
-            clone = hou.Keyframe()
-            clone.setFrame(key.frame())
-            clone.setValue(key.value())
-            clone.setSlope(key.slope())
-            clone.setInSlope(key.inSlope())
-            clone.setAccel(key.accel())
-            if segment is not None:
-                clone.setExpression(segment[0], segment[1])
-            clones.append(clone)
-        return ('keys', clones)
+        return ('keys', keys)
     if parm.parmTemplate().type() == hou.parmTemplateType.String:
         return ('string', parm.unexpandedString())
     return ('value', parm.eval())
@@ -503,13 +497,44 @@ def _restore_parm(parm, captured):
     parm.set(payload)
 
 
-def _repoint_expression(consumer, old, new):
-    """Rewrite one consumer expression from the old module path to the candidate path.
+def _resolve_channel_reference(node, path):
+    """Absolute target of one HScript channel reference, relative to `node`.
 
-    Only absolute and consumer-relative path forms are supported; anything else is
-    refused instead of guessed. In HOM an expression lives on keyframes, so an
-    expression-driven consumer has keys; value-keyframed consumers without an
-    expression are refused.
+    '..' climbs parents; an absolute path is taken as-is; everything else hangs
+    under the consumer node itself (Houdini's own resolution for parm
+    expressions). Returns a node path + optional channel suffix, not a hou.Parm.
+    """
+    if path.startswith('/'):
+        return path
+    base = node
+    parts = path.split('/')
+    while parts and parts[0] == '..':
+        base = base.parent()
+        parts = parts[1:]
+    rest = '/'.join(part for part in parts if part)
+    return (base.path() + '/' + rest) if rest else base.path()
+
+
+_CH_CALL = re.compile(r"(ch[a-zA-Z]*)\s*\(")
+
+
+_CH_CALL = re.compile(r"\b(ch[a-zA-Z]*)\s*\(")
+
+
+def _repoint_expression(consumer, old, new):
+    """Rewrite one consumer expression's references from the old component to the
+    candidate, preserving each reference's form and the rest of the expression.
+
+    Only literal string arguments of Houdini channel functions (ch/chf/chi/chs/...)
+    are rewritten, and only when the reference RESOLVES - relative to the
+    consumer node - to the declared old component or a parameter on it.
+    Deep-relative references that resolve elsewhere (e.g. ../../part/width from
+    a sibling network) are left untouched; a consumer referencing several
+    migrated channels is rewritten ONCE for all of them. Any channel-function
+    argument that is not a literal path (concatenation, variables) refuses
+    before any write: it cannot be proven independent of the old component.
+    In HOM an expression lives on keyframes, so an expression-driven consumer
+    has keys; value-keyframed consumers without an expression are refused.
     """
     try:
         expression = consumer.expression()
@@ -517,14 +542,65 @@ def _repoint_expression(consumer, old, new):
     except hou.OperationFailed:
         raise ValueError('external consumer is not expression-driven (keyframed consumers are not migrated): '
                          + consumer.path()) from None
-    forms = [(old.path(), new.path()), (consumer.node().relativePathTo(old), consumer.node().relativePathTo(new))]
-    rewritten = expression
-    matched = False
-    for before, after in forms:
-        pattern = re.escape(before) + r'(?=[/\'"]|$)'
-        rewritten, count = re.subn(pattern, after, rewritten)
-        matched = matched or count > 0
-    if not matched or rewritten == expression:
+    old_abs, new_abs = old.path(), new.path()
+    old_rel, new_rel = consumer.node().relativePathTo(old), consumer.node().relativePathTo(new)
+    rewritten_parts = []
+    pos, matched = 0, False
+    refusal = None
+    for call in _CH_CALL.finditer(expression):
+        i = call.end()
+        while i < len(expression) and expression[i] in ' \t':
+            i += 1
+        if i >= len(expression) or expression[i] not in '\'"':
+            refusal = (f'channel call {call.group(1)}(...) takes a non-literal argument; '
+                       f'cannot prove it is independent of {old_abs}')
+            break
+        quote = expression[i]
+        j = expression.find(quote, i + 1)
+        if j < 0:
+            refusal = f'unterminated string literal in channel call {call.group(1)}(...)'
+            break
+        path = expression[i + 1:j]
+        resolved = _resolve_channel_reference(consumer.node(), path)
+        suffix = None
+        if resolved == old_abs:
+            suffix = ''
+        elif resolved.startswith(old_abs + '/'):
+            suffix = resolved[len(old_abs):]
+        new_literal = None
+        if suffix is not None:
+            if path.startswith('/'):
+                new_literal = new_abs + suffix
+            else:
+                climb = consumer.node()
+                climb_prefix = ''
+                parts = path.split('/')
+                while parts and parts[0] == '..':
+                    climb_prefix += '../'
+                    climb = climb.parent()
+                    parts = parts[1:]
+                new_literal = climb_prefix + climb.relativePathTo(new) + suffix
+            matched = True
+        elif resolved == new_abs or resolved.startswith(new_abs + '/') or hou.node(resolved) is None:
+            pass  # a reference to the candidate or to a (possibly absent) channel elsewhere: leave it
+        else:
+            refusal = (f'channel call {call.group(1)}(\"{path}\") resolves to the network node {resolved}, '
+                       f'not a channel; cannot prove it is independent of {old_abs}')
+        rewritten_parts.append(expression[pos:i + 1])
+        if new_literal is not None:
+            rewritten_parts.append(new_literal)
+        else:
+            rewritten_parts.append(path)
+        rewritten_parts.append(quote)
+        pos = j + 1
+    rewritten_parts.append(expression[pos:])
+    if refusal is None and _CH_CALL.search(expression[pos:]):
+        refusal = 'a malformed or unterminated channel call remains after the last parsed reference'
+    if refusal is not None:
+        raise ValueError(f'unsupported reference form in {consumer.path()}: {refusal}; '
+                         'the consumer is refused before any write')
+    rewritten = ''.join(rewritten_parts)
+    if not matched:
         raise ValueError('unsupported consumer reference form: ' + consumer.path())
     return expression, language, rewritten
 
@@ -603,6 +679,8 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             raise ValueError('candidate lacks the declared public parameter: ' + name)
         if len(public_spares[name]) != len(new_spares[name]):
             raise ValueError('candidate public parameter arity differs from the old component: ' + name)
+        if [p.parmTemplate().type() for p in public_spares[name]] != [p.parmTemplate().type() for p in new_spares[name]]:
+            raise ValueError('candidate public parameter type differs from the old component: ' + name)
     old_state, new_state = _replacement_state(old, migratable_public=frozenset(migration['public_parms'])), \
         _replacement_state(new)
     old_inputs = _input_wires(old)
@@ -642,6 +720,8 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
     consumers = []
     old_members = set(_nodes(old))
     new_members = set(_nodes(new))
+    consumers = []
+    consumer_channels = {}
     for name in migration['public_parms']:
         for public_parm in public_spares[name]:
             for consumer in public_parm.parmsReferencingThis():
@@ -650,8 +730,13 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
                 if consumer.node() in new_members:
                     raise ValueError('replacement candidate depends on an old component public parameter: ' + consumer.path())
                 h._require_owned(consumer.node(), 'component_replace consumer')
-                original, language, rewritten = _repoint_expression(consumer, old, new)
-                consumers.append({'parm': consumer.path(), 'public': public_parm.name(), 'from': original, 'to': rewritten})
+                # A consumer referencing several migrated channels is aggregated:
+                # one rewritten expression, one commit - never one row per channel.
+                consumer_channels.setdefault(consumer.path(), {'consumer': consumer, 'channels': set()})['channels'].add(public_parm.name())
+    for parm_path, row in consumer_channels.items():
+        original, language, rewritten = _repoint_expression(row['consumer'], old, new)
+        consumers.append({'parm': parm_path, 'channels': sorted(row['channels']),
+                          'from': original, 'to': rewritten})
     # Feasibility is checked at preview, not discovered mid-commit.
     for name in migration['public_parms']:
         for old_parm, new_parm in zip(public_spares[name], new_spares[name]):
@@ -725,7 +810,7 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             consumer.setExpression(row['to'], language)
         for name in migration['public_parms']:
             for old_parm, new_parm in zip(public_spares[name], new_spares[name]):
-                expected = {row['parm'] for row in consumers if row['public'] == old_parm.name()}
+                expected = {row['parm'] for row in consumers if old_parm.name() in row['channels']}
                 lingering = {p.path() for p in old_parm.parmsReferencingThis()} & expected
                 arrived = {p.path() for p in new_parm.parmsReferencingThis()} & expected
                 if lingering or arrived != expected:
