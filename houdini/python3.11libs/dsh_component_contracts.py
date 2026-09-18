@@ -401,7 +401,7 @@ def _replacement_state(root, *, migratable_public=frozenset()):
             for consumer in parm.parmsReferencingThis():
                 if consumer.node() in members:
                     continue
-                if node is root and parm.path() in public and parm.name() in migratable_public:
+                if node is root and parm.path() in public and parm.tuple().name() in migratable_public:
                     continue
                 external_refs.append(consumer.path())
         rows.append({'id': node.sessionId(), 'path': node.path(), 'type': node.type().name(), 'parms': parms,
@@ -424,16 +424,32 @@ def _migration(value):
     if not isinstance(value, dict) or not set(value) <= {'inputs', 'public_parms'}:
         raise ValueError('migration may only declare inputs and public_parms')
     inputs = value.get('inputs', {})
-    if not isinstance(inputs, dict) \
-            or any(type(k) is not int or k < 0 or k > 63 for k in inputs) \
-            or any(type(v) is not int or v < 0 or v > 63 for v in inputs.values()) \
-            or len(set(inputs.values())) != len(inputs):
+    if not isinstance(inputs, dict):
+        raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
+
+    def _slot(key):
+        # The Host transport is JSON: object keys arrive as digit strings. The
+        # canonical JSON form is accepted and normalized to the integer slot it
+        # names; anything else stays rejected.
+        if type(key) is int:
+            return key
+        if isinstance(key, str) and re.fullmatch(r'(0|[1-9][0-9]*)', key):
+            return int(key)
+        return None
+
+    normalized = {}
+    for key, target in inputs.items():
+        slot = _slot(key)
+        if slot is None or type(target) is not int or not 0 <= slot <= 63 or not 0 <= target <= 63:
+            raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
+        normalized[slot] = target
+    if len(set(normalized.values())) != len(normalized):
         raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
     names = value.get('public_parms', [])
     if not isinstance(names, list) or any(not isinstance(n, str) or not NAME.fullmatch(n) for n in names) \
             or len(set(names)) != len(names):
         raise ValueError('migration public_parms must be unique parameter names')
-    return {'inputs': dict(inputs), 'public_parms': list(names)}
+    return {'inputs': normalized, 'public_parms': list(names)}
 
 
 def _input_wires(node):
@@ -528,6 +544,8 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
     Both subnets must belong to this author and have the same parent. No node is
     deleted or renamed. Output wires always migrate; connected root inputs and
     public parameter values/keys with their external expression consumers migrate
+    (public parameters are declared by their tuple name and migrate with every
+    channel; channel-level declarations are refused, never partially migrated).
     only when the explicit migration plan declares them (per-slot input mapping,
     named public parameters). Undeclared inputs or consumers refuse the commit —
     nothing is guessed by position. Commit requires the unchanged preview hash and
@@ -557,15 +575,36 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
                              % (expected_contract['module_id'], expected_contract['revision'],
                                 record['module_id'], record['revision']))
     migration = _migration(migration)
-    old_state, new_state = _replacement_state(old, migratable_public=frozenset(migration['public_parms'])), \
-        _replacement_state(new)
-    public_spares = {p.name(): p for p in old.spareParms()}
-    new_spares = {p.name(): p for p in new.spareParms()}
+
+    def _spare_channels(root):
+        """Declared-name -> spare channels. spareParms() yields per-channel Parm
+        objects; a multi-channel tuple appears as name+'x/y/z' style channels and
+        its tuple name is the only canonical declaration that preserves every
+        channel. Channel-level declarations are refused below, never partially
+        migrated."""
+        channels = {}
+        for parm in root.spareParms():
+            channels.setdefault(parm.tuple().name(), []).append(parm)
+        return channels
+
+    public_spares = _spare_channels(old)
+    new_spares = _spare_channels(new)
+    # Plan validation runs before the state scan so a channel-level declaration
+    # is reported as itself, not masked by an unrelated external-ref error.
     for name in migration['public_parms']:
         if name not in public_spares:
+            owner = next((tuple_name for tuple_name, chan in public_spares.items()
+                          if any(p.name() == name for p in chan)), None)
+            if owner is not None:
+                raise ValueError(f'public parameter {name!r} is one channel of tuple {owner!r}; '
+                                 f'declare the tuple name {owner!r} so every channel migrates')
             raise ValueError('declared public parameter missing on the old component: ' + name)
         if name not in new_spares:
             raise ValueError('candidate lacks the declared public parameter: ' + name)
+        if len(public_spares[name]) != len(new_spares[name]):
+            raise ValueError('candidate public parameter arity differs from the old component: ' + name)
+    old_state, new_state = _replacement_state(old, migratable_public=frozenset(migration['public_parms'])), \
+        _replacement_state(new)
     old_inputs = _input_wires(old)
     for row in old_inputs:
         source = hou.nodeBySessionId(row['identity'])
@@ -604,20 +643,22 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
     old_members = set(_nodes(old))
     new_members = set(_nodes(new))
     for name in migration['public_parms']:
-        for consumer in public_spares[name].parmsReferencingThis():
-            if consumer.node() in old_members:
-                continue
-            if consumer.node() in new_members:
-                raise ValueError('replacement candidate depends on an old component public parameter: ' + consumer.path())
-            h._require_owned(consumer.node(), 'component_replace consumer')
-            original, language, rewritten = _repoint_expression(consumer, old, new)
-            consumers.append({'parm': consumer.path(), 'public': name, 'from': original, 'to': rewritten})
+        for public_parm in public_spares[name]:
+            for consumer in public_parm.parmsReferencingThis():
+                if consumer.node() in old_members:
+                    continue
+                if consumer.node() in new_members:
+                    raise ValueError('replacement candidate depends on an old component public parameter: ' + consumer.path())
+                h._require_owned(consumer.node(), 'component_replace consumer')
+                original, language, rewritten = _repoint_expression(consumer, old, new)
+                consumers.append({'parm': consumer.path(), 'public': public_parm.name(), 'from': original, 'to': rewritten})
     # Feasibility is checked at preview, not discovered mid-commit.
     for name in migration['public_parms']:
-        _capture_parm(public_spares[name])
-        if new_spares[name].isLocked():
-            raise ValueError('candidate public parameter is locked: ' + new_spares[name].path())
-        _capture_parm(new_spares[name])
+        for old_parm, new_parm in zip(public_spares[name], new_spares[name]):
+            _capture_parm(old_parm)
+            if new_parm.isLocked():
+                raise ValueError('candidate public parameter is locked: ' + new_parm.path())
+            _capture_parm(new_parm)
     migration_state = {'plan': migration, 'old_inputs': old_inputs, 'candidate_inputs': candidate_inputs,
                        'consumers': consumers}
     state = {'old': old_state, 'candidate': new_state, 'wires': wires, 'migration': migration_state}
@@ -669,11 +710,12 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             old.setInput(row['slot'], None)
             new.setInput(target_slot, source, row['output'])
         for name in migration['public_parms']:
-            if new_spares[name].isLocked():
-                raise ValueError('candidate public parameter is locked: ' + new_spares[name].path())
-            captured = _capture_parm(new_spares[name])
-            moved_parms.append((new_spares[name], captured))
-            _restore_parm(new_spares[name], _capture_parm(public_spares[name]))
+            for old_parm, new_parm in zip(public_spares[name], new_spares[name]):
+                if new_parm.isLocked():
+                    raise ValueError('candidate public parameter is locked: ' + new_parm.path())
+                captured = _capture_parm(new_parm)
+                moved_parms.append((new_parm, captured))
+                _restore_parm(new_parm, _capture_parm(old_parm))
         for row in consumers:
             consumer = hou.parm(row['parm'])
             if consumer is None or consumer.expression() != row['from']:
@@ -682,11 +724,13 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             repointed.append((consumer, row['from'], language))
             consumer.setExpression(row['to'], language)
         for name in migration['public_parms']:
-            expected = {row['parm'] for row in consumers if row['public'] == name}
-            lingering = {p.path() for p in public_spares[name].parmsReferencingThis()} & expected
-            arrived = {p.path() for p in new_spares[name].parmsReferencingThis()} & expected
-            if lingering or arrived != expected:
-                raise ValueError('consumer reference did not migrate to the candidate public parameter: ' + name)
+            for old_parm, new_parm in zip(public_spares[name], new_spares[name]):
+                expected = {row['parm'] for row in consumers if row['public'] == old_parm.name()}
+                lingering = {p.path() for p in old_parm.parmsReferencingThis()} & expected
+                arrived = {p.path() for p in new_parm.parmsReferencingThis()} & expected
+                if lingering or arrived != expected:
+                    raise ValueError('consumer reference did not migrate to the candidate public parameter: '
+                                     + old_parm.path())
         for row in wires:
             consumer = hou.nodeBySessionId(row['identity'])
             if consumer is None or consumer.path() != row['consumer']:

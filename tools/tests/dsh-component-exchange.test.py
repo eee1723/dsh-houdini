@@ -218,34 +218,34 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run('ctrl=tab_create("/obj/assembly","null","ctrl")', owner='assembly')
     run('create_spare_parms("/obj/assembly/ctrl",layout=[{"type":"float","name":"drive","default":0}])\n'
         'set_parms("/obj/assembly/ctrl",{"drive":"ch(\\"/obj/assembly/oldmod/width\\")"})', owner='assembly')
-    hidden = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0}})')
+    hidden = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0}})')
     assert 'outside the declared migration plan' in hidden, hidden
-    missing = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})')
+    missing = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})')
     assert 'candidate lacks the declared public parameter' in missing, missing
     run('create_spare_parms("/obj/assembly/newmod",layout=[{"type":"float","name":"width","default":9}])', owner='assembly')
     run('blocker=tab_create("/obj/assembly","box","blocker")\nconnect("/obj/assembly/blocker","/obj/assembly/newmod")', owner='assembly')
-    occupied = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})')
+    occupied = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})')
     assert 'already connected' in occupied, occupied
     run('disconnect_input("/obj/assembly/newmod",index=0)', owner='assembly')
-    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     assert preview['migration']['inputs'][0]['slot'] == 0 and len(preview['migration']['parameter_consumers']) == 1
     drift = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,'
                       f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:1}},"public_parms":["width"]}})')
     assert 'migration inputs/parameters/consumers changed after preview' in drift, drift
     run('set_parms("/obj/assembly/oldmod",{"width":3})', owner='assembly')
-    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     with patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         fail_with(f'component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,expected_plan={preview["plan"]!r},'
-                  'migration={"inputs":{0:0},"public_parms":["width"]})')
+                  'migration={"inputs":{"0":0},"public_parms":["width"]})')
     assert hou.node('/obj/assembly/oldmod').input(0).path() == '/obj/assembly/feeder'
     assert hou.node('/obj/assembly/newmod').input(0) is None
     assert 'oldmod' in hou.parm('/obj/assembly/ctrl/drive').expression()
     assert hou.node('/obj/assembly/newmod').parm('width').eval() == 9
     assert hou.node('/obj/assembly/sink').input(0).path() == '/obj/assembly/oldmod'
     run('set_keyframes("/obj/assembly/oldmod",{"width":[{"frame":1,"value":2},{"frame":12,"value":5}]})', owner='assembly')
-    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     final = run(f'__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,expected_plan={preview["plan"]!r},'
-                'migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+                'migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     assert final['migrated'] == {'inputs': 1, 'public_parms': ['width'], 'parameter_consumers': 1}
     keys = hou.node('/obj/assembly/newmod').parm('width').keyframes()
     assert [k.frame() for k in keys] == [1, 12] and [k.value() for k in keys] == [2, 5]
@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run('create_spare_parms("/obj/assembly/ctrl2",layout=[{"type":"float","name":"drive","default":0}])\n'
         'set_parms("/obj/assembly/ctrl2",{"drive":"ch(\\"/obj/assembly/oldmod2/width\\")"})', owner='assembly')
     run('set_keyframes("/obj/assembly/oldmod2",{"width":[{"frame":2,"value":3},{"frame":10,"value":7}]})', owner='assembly')
-    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     real_restore = components._restore_parm
     partial = {'n': 0}
     def partial_write_then_raise(parm, captured):
@@ -279,7 +279,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         return real_restore(parm, captured)
     with patch.object(components, '_restore_parm', partial_write_then_raise):
         failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
-                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:0}},"public_parms":["width"]}})')
+                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{"0":0}},"public_parms":["width"]}})')
     assert 'injected partial write' in failed, failed
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert hou.node('/obj/assembly/newmod2').input(0) is None
@@ -291,7 +291,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     # Counterexample: a failing internal restoration is escalated, not silently
     # claimed complete. At bridge level the caught-failure undo additionally
     # restores the whole batch on top of the ledger restore.
-    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
     flaky = {'n': 0}
     def restore_fails_on_rollback(parm, captured):
         flaky['n'] += 1
@@ -301,7 +301,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     with patch.object(components, '_restore_parm', restore_fails_on_rollback), \
             patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
-                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:0}},"public_parms":["width"]}})')
+                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{"0":0}},"public_parms":["width"]}})')
     assert 'component replacement restoration failed' in failed and 'injected restore failure' in failed, failed
     assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
@@ -312,7 +312,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     # every ledger entry except the failing one was restored in reverse order.
     with h._execution_owner('assembly', 'direct-replace'):
         direct_preview = components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2',
-                                                      dry_run=True, migration={'inputs': {0: 0}, 'public_parms': ['width']})
+                                                      dry_run=True, migration={'inputs': {'0': 0}, 'public_parms': ['width']})
         flaky2 = {'n': 0}
         def restore_fails_direct(parm, captured):
             flaky2['n'] += 1
@@ -324,7 +324,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
             try:
                 components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
                                              expected_plan=direct_preview['plan'],
-                                             migration={'inputs': {0: 0}, 'public_parms': ['width']})
+                                             migration={'inputs': {'0': 0}, 'public_parms': ['width']})
             except RuntimeError as error:
                 assert 'component replacement restoration failed' in str(error), error
                 assert 'injected restore failure' in str(error), error
@@ -337,6 +337,34 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
     assert hou.node('/obj/assembly/oldmod2').parm('width').keyframes()
+    # Full channel preservation: a multi-channel public parameter migrates as
+    # one declared tuple with every channel; a channel-level declaration is
+    # refused instead of silently migrating a single channel.
+    run('s=tab_create("/obj/assembly","subnet","tupleold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","tuplenew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('sink3=tab_create("/obj/assembly","null","sink3",inputs=["/obj/assembly/tupleold"])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/tupleold",layout=[{"type":"float","name":"tri","components":3,"default":[0,0,0]}])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/tuplenew",layout=[{"type":"float","name":"tri","components":3,"default":[5,5,5]}])', owner='assembly')
+    run('set_keyframes("/obj/assembly/tupleold",{"trix":[{"frame":1,"value":11}],'
+        '"triy":[{"frame":2,"value":22}],"triz":[{"frame":3,"value":33}]})', owner='assembly')
+    run('ctrl3=tab_create("/obj/assembly","null","ctrl3")\n'
+        'create_spare_parms("/obj/assembly/ctrl3",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl3",{"drive":"ch(\\"/obj/assembly/tupleold/triy\\")"})', owner='assembly')
+    channel_only = fail_with('component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
+                             'migration={"inputs":{},"public_parms":["trix"]})')
+    assert 'channel of tuple' in channel_only and "'tri'" in channel_only, channel_only
+    tuple_preview = run('__result__=component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",'
+                        'migration={"inputs":{},"public_parms":["tri"]})', owner='assembly')
+    assert tuple_preview['ok'] is True, tuple_preview
+    run(f'__result__=component_replace("/obj/assembly/tupleold","/obj/assembly/tuplenew",dry_run=False,'
+        f'expected_plan={tuple_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["tri"]}})', owner='assembly')
+    for channel, frame, value in (('trix', 1, 11), ('triy', 2, 22), ('triz', 3, 33)):
+        moved_keys = hou.parm(f'/obj/assembly/tuplenew/{channel}').keyframes()
+        assert [k.frame() for k in moved_keys] == [frame] and [k.value() for k in moved_keys] == [value], channel
+        kept_keys = hou.parm(f'/obj/assembly/tupleold/{channel}').keyframes()
+        assert [k.frame() for k in kept_keys] == [frame], channel
+    assert 'tuplenew' in hou.parm('/obj/assembly/ctrl3/drive').expression(), 'consumer must repoint to the candidate'
+    assert hou.node('/obj/assembly/sink2').input(0) is not None  # earlier scenario untouched
     # Expression-driven keyframes are refused at preview, not mid-commit.
     run('s=tab_create("/obj/assembly","subnet","keyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
         'create_spare_parms("/obj/assembly/keyold",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
