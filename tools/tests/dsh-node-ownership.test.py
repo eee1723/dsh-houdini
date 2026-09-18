@@ -159,6 +159,62 @@ try:
     dsh_bridge.run_code(f"delete_node({b_wrangle_path!r})", owner_session=session_b)
     dsh_bridge.run_code(f"delete_node({b_geo_path!r})", owner_session=session_b)
 
+    # Causal binding: adoption candidates come only from THIS batch's deletions.
+    # A stale entry left behind by an earlier leaked deletion (destroy without
+    # unregister) must never graft its author onto a later batch's resurrected
+    # nodes — the reconcile serves each candidate first-come-first-served, so a
+    # full-registry scan would let the oldest stale entry win the race. The
+    # stale record below is seeded explicitly (dead id, exact future path,
+    # recorded type, another session's authorship) to simulate that leak class
+    # deterministically; everything after it runs through the real bridge.
+    stale_id = 900000000 + int(suffix, 36) % 100000
+    assert hou.nodeBySessionId(stale_id) is None and stale_id not in dsh_hou_helpers._OWNED_NODE_SESSIONS
+    stale_path = f"/obj/causal_geo_{suffix}/causal_wrangle/attribvop1"
+    dsh_hou_helpers._OWNED_NODE_SESSIONS[stale_id] = {
+        "session": session_a, "call": "leaked-deletion-from-earlier-batch",
+        "path_at_creation": stale_path, "type": "attribwranglecore",
+    }
+    same_paths = dsh_bridge.run_code(
+        f"g = tab_create('/obj', 'geo', name='causal_geo_{suffix}')\n"
+        "w = tab_create(g, 'attribwrangle', name='causal_wrangle')\n"
+        "__result__ = {'geo': g.path(), 'wrangle': w.path()}",
+        owner_session=session_b,
+        owner_call="call-causal-create-b",
+    )
+    assert same_paths["ok"] is True, same_paths
+    assert same_paths["result"]["geo"] == f"/obj/causal_geo_{suffix}", same_paths
+    live_wrangle = same_paths["result"]["wrangle"]
+    assert hou.node(live_wrangle).allSubChildren(sync_delayed_definition=True)[0].path() == stale_path, live_wrangle
+    live_inner_id = int(hou.node(stale_path).sessionId())
+    failed_causal = dsh_bridge.run_code(
+        f"delete_node({live_wrangle!r})\nraise RuntimeError('causal binding rollback probe')",
+        owner_session=session_b,
+        owner_call="call-causal-rollback",
+    )
+    assert failed_causal["ok"] is False and failed_causal["rollback"]["applied"] is True, failed_causal
+    resurrected_wrangle = hou.node(live_wrangle)
+    assert resurrected_wrangle is not None, failed_causal
+    resurrected_inner = resurrected_wrangle.allSubChildren(sync_delayed_definition=True)[0]
+    if int(resurrected_inner.sessionId()) != live_inner_id:
+        # Fresh-id recreation: the causal-binding regime. The resurrected child
+        # must be adopted only from THIS batch's deletion (session b's entry),
+        # never from the stale entry poisoned by session a's earlier leak.
+        assert resurrected_inner.path() in failed_causal["rollback"].get("reconciled_resurrected_identities", []), failed_causal
+        causal_prov = dsh_bridge.run_code(
+            f"__result__ = node_provenance({resurrected_inner.path()!r})",
+            owner_session=session_b,
+            owner_call="call-causal-prov",
+        )
+        assert causal_prov["result"]["status"] == "owned_current_session", causal_prov
+        assert causal_prov["result"]["runtime_owner"]["session"] == session_b, causal_prov
+    else:
+        raise AssertionError('this Houdini build resurrects the inner child with its original id; '
+                             'the causal-binding fresh-id scenario is not exercisable here')
+    causal_cleanup = dsh_bridge.run_code(f"delete_node({same_paths['result']['geo']!r})", owner_session=session_b,
+                                         owner_call="call-causal-cleanup")
+    assert causal_cleanup["ok"] is True, causal_cleanup
+    dsh_hou_helpers._OWNED_NODE_SESSIONS.pop(stale_id, None)  # purge the injected poison
+
     # Negative (unrelated-failure rollback): a failing batch elsewhere removes
     # only its own created node and never reconciles unrelated identities.
     keep = dsh_bridge.run_code(

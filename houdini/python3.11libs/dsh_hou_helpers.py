@@ -147,22 +147,27 @@ def _cleanup_failed_creations(created, ownership_before):
     return removed
 
 
-def _reconcile_undo_resurrected(ownership_before):
+def _reconcile_undo_resurrected(deleted_by_batch):
     """Re-register native descendants resurrected by our own undo with fresh ids.
 
     Houdini undo resurrects a deleted node with its original sessionId but gives
     recreated native init-script children NEW ids (probe: wrangle keeps its id,
     inner attribvop gets a fresh one). Without this reconcile the resurrected
-    subtree stays foreign forever and even delete_node is refused. Eligibility
-    is bounded evidence from our own serialized undo: the recorded identity is
-    dead, and the node now sitting at the exact creation path has the recorded
-    node type, is not already registered, and has a registered live ancestor.
-    Undo resurrection does not preserve userData, so the durable owner tag is
-    not evidence here; a same-path replacement of a different node type stays
-    foreign, and paths alone never grant ownership.
+    subtree stays foreign forever and even delete_node is refused. Eligibility is
+    causally bound to the batch that performed the undo: ``deleted_by_batch``
+    holds only entries for identities that were alive at batch start and are
+    dead after the batch's own deletions — exactly what this undo can resurrect.
+    The full pre-batch registry is never scanned, so a stale entry left behind
+    by a leaked deletion route of an earlier batch (destroy without unregister)
+    cannot graft its author onto a later batch's resurrected nodes. Additional
+    bounded evidence per entry: the node now sitting at the exact recorded path
+    has the recorded node type, is not already registered, and has a registered
+    live ancestor. Undo resurrection does not preserve userData, so the durable
+    owner tag is not evidence here; a same-path replacement of a different node
+    type stays foreign, and paths alone never grant ownership.
     """
     restored = []
-    for old_id, entry in ownership_before.items():
+    for old_id, entry in deleted_by_batch.items():
         if hou.nodeBySessionId(old_id) is not None:
             continue
         path = entry.get('path_at_creation')
@@ -177,6 +182,9 @@ def _reconcile_undo_resurrected(ownership_before):
         if ancestor is None:
             continue
         _OWNED_NODE_SESSIONS[int(candidate.sessionId())] = dict(entry)
+        # Consume the dead entry: ids are never reused, so after adoption the
+        # old record must not linger as a stale candidate for later batches.
+        _OWNED_NODE_SESSIONS.pop(int(old_id), None)
         if _CREATION_JOURNAL is not None:
             _CREATION_JOURNAL.add(int(candidate.sessionId()))
         candidate.setUserData(_TASK_OWNER_KEY, entry.get('session'))
@@ -679,10 +687,16 @@ def _run_shelf_tool(tool, parent: hou.Node, type_name: str) -> hou.Node | None:
         # re-raise so the bridge can roll back any other undoable edits.
         for child in reversed(parent.children()):
             if child.sessionId() not in before:
+                ids = [int(n.sessionId()) for n in (child, *child.allSubChildren())]
                 try:
                     child.destroy()
                 except Exception:
-                    pass
+                    continue  # a live node keeps its registration
+                # Headless has no undo, so the bridge registry restore never runs;
+                # a partial child destroyed here must not leave a stale entry that
+                # a later batch's undo reconcile could adopt.
+                for identity in ids:
+                    _OWNED_NODE_SESSIONS.pop(identity, None)
         raise
     finally:
         try:
@@ -996,10 +1010,13 @@ def tab_apply(parent, tool_id: str) -> dict:
             # children created by this recipe attempt so a partial setup never leaks.
             for child in reversed(parent.children()):
                 if child.sessionId() not in before:
+                    ids = [int(n.sessionId()) for n in (child, *child.allSubChildren())]
                     try:
                         child.destroy()
                     except Exception:
-                        pass
+                        continue  # a live node keeps its registration
+                    for identity in ids:
+                        _OWNED_NODE_SESSIONS.pop(identity, None)
             raise
         created = [child for child in parent.children() if child.sessionId() not in before]
         if not created:

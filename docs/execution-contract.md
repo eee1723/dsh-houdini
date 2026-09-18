@@ -56,7 +56,10 @@ exec异常恢复Houdini可撤销状态；捕获动词异常不重新抛出会被
 消费transaction最终状态：后项失败可能撤销同exec中前面成功的build，不能沿用已回滚节点。
 失败补充清理仅限本调用journal的确切新建identity；foreign后代不自动删除。
 undo复活已删节点时父节点恢复原sessionId，但原生初始化后代（如wrangle内部VOP）由Houdini以新id重建；
-Bridge回滚在恢复登记表后按有界证据（旧id已死+精确创建路径+已登记的存活祖先）重新登记这些后代，
+Bridge回滚在恢复登记表后按有界证据重新登记这些后代：收养候选仅限本批删除的登记条目
+（批次开始时存活、回滚前死亡的identity集合），不全量扫描登记表——早前泄漏删除留下的
+陈旧条目不是候选，不能把旧作者身份接到后续批次的复活节点上；逐条证据为旧id已死+
+精确创建路径+登记类型一致+已登记的存活祖先。headless tab失败清理同步注销半成品后代。
 其余无法确认的后代保持foreign，rollback报告reconciled_resurrected_identities。
 可独立cook和验收的模块使用不同exec，集成引用已提交且仍存活的输出；不可分模块内仍批量原子执行。
 独立query失败不撤销此前exec；同exec尾部只读错误仍使整批失败，不按异常类型猜测部分提交。
