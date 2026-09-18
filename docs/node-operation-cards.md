@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 15 · Source SHA-256: `0d00b7a19d501fa358740528a40770a7ea490c864ddec41c6ac674ffd6e408d4`
+Schema: 2 · Cards: 15 · Source SHA-256: `eadbf57e8afb354adf53f631a7460d070a807052719b93d15c270981b9df395d`
 
 ## 数据与设计契约
 
