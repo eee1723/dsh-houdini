@@ -40,7 +40,8 @@ auto_release = '--expect-auto-release' in sys.argv
 child_failure = '--expect-child-failure' in sys.argv
 startup_failure = '--expect-startup-failure' in sys.argv
 stop_failure = '--expect-stop-failure' in sys.argv
-assert sum((negative, auto_release, child_failure, startup_failure, stop_failure)) <= 1
+worker_crash = '--expect-worker-crash' in sys.argv
+assert sum((negative, auto_release, child_failure, startup_failure, stop_failure, worker_crash)) <= 1
 if auto_release:
     env['DSH_COMPONENT_EXPECT_AUTO_RELEASE'] = '1'
 if negative:
@@ -51,6 +52,8 @@ if startup_failure:
     env['DSH_COMPONENT_EXPECT_STARTUP_FAILURE'] = '1'
 if stop_failure:
     env['DSH_COMPONENT_EXPECT_STOP_FAILURE'] = '1'
+if worker_crash:
+    env['DSH_COMPONENT_EXPECT_WORKER_CRASH'] = '1'
 parent_log = (fixture / 'parent.log').open('wb')
 parent = subprocess.Popen([sys.executable, str(ROOT / 'tools/component-worker.py'), '--executable', hython,
                            '--directory', str(fixture / 'parent'), '--registry', str(registry),
@@ -127,15 +130,39 @@ try:
         rpc('session/prompt', {'request': {'sessionId': task, 'requestId': str(uuid.uuid4()), 'mode': 'queue',
                                          'content': [{'type': 'text', 'text': 'Inspect the injected worker-stop failure.'}]}})
     outcome = ('rejected.json' if negative else 'blocked.json' if child_failure else
-               'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else 'assembled.json')
+               'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else
+               'crash-report.json' if worker_crash else 'assembled.json')
     while not (outputs / outcome).exists():
         if time.monotonic() > deadline:
             raise RuntimeError('Component loop incomplete; inspect ' + str(fixture))
         time.sleep(.25)
     if negative:
-        assert json.loads((outputs / 'rejected.json').read_text()) == {'rejected': True, 'childRequests': 0}
+        rejected_doc = json.loads((outputs / 'rejected.json').read_text())
+        assert rejected_doc['rejected'] is True and rejected_doc['childRequests'] == 0, rejected_doc
+        # R6: pin the PRECISE cause. The official runtime admits the continuable
+        # descriptor but refuses the delegation at child admission because the
+        # candidate component-host pre-step never bound the child executor.
+        turn_error = [e['detail'] for e in rejected_doc['events'] if '"kind":"error"' in e['detail']]
+        assert any('no executor binding' in detail for detail in turn_error), turn_error
         assert not list(workers.glob('*/workspace/part.dshcomponent'))
+        source_doc = json.loads((outputs / 'module-source.json').read_text())
+        sessions = rpc('session/list', {'_request': {}})
+        reason_doc = {'reason': json.dumps(sessions)[:1500], 'childRequests': 0}
         print('PASS unpatched DSH rejected before child model request or component build')
+        print('rejection reason:', reason_doc['reason'][:300])
+        print('loaded module source:', json.dumps(source_doc)[:300])
+    elif worker_crash:
+        report = json.loads((outputs / 'crash-report.json').read_text())
+        assert report['outcome'] in ('failed before it finished', 'ended abnormally'), report
+        assert report['assembled'] is False, report
+        sessions = rpc('session/list', {'_request': {}})
+        child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
+        assert len(child_sessions) == 2,             'exactly the two dispatched children may exist; no replacement dispatch after the crash: ' + str(len(child_sessions))
+        artifacts = list(workers.glob('*/workspace/part.dshcomponent'))
+        assert len(artifacts) == 1,             'only the surviving child may hold a published artifact: ' + str(artifacts)
+        print('PASS real worker crash after readiness: the parent received the failure notice,')
+        print('     exactly two child sessions existed (no replacement dispatch), and only')
+        print('     the surviving child published an artifact; assembly never ran')
     elif child_failure:
         blocked = json.loads((outputs / 'blocked.json').read_text())
         assert blocked['assembly'] is False
@@ -164,7 +191,7 @@ try:
         assert not (outputs / 'assembled.json').exists()
         print('PASS abnormal owned worker exit remains checkpoint-unknown, sibling saves cleanly, both artifacts retained; no assembly or external model request')
     else:
-        results = [json.loads(p.read_text()) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json')]
+        results = [json.loads(p.read_text()) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json')]
         assert len({r['cwd'] for r in results}) == 2 and all(r['passed'] for r in results)
         assert all(Path(r['cwd']).is_relative_to(workers) for r in results)
         assert not configured_workers.exists()

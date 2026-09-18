@@ -4,16 +4,36 @@ import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
+import {createRequire} from 'node:module'
 export const inject=['llm','agents']
 export function apply(ctx) {
   let childRequests=0
   const expectChildFailure=process.env.DSH_COMPONENT_EXPECT_CHILD_FAILURE==='1'
   const expectStartupFailure=process.env.DSH_COMPONENT_EXPECT_STARTUP_FAILURE==='1'
   const expectStopFailure=process.env.DSH_COMPONENT_EXPECT_STOP_FAILURE==='1'
+  const expectRejection=process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'
+  const expectWorkerCrash=process.env.DSH_COMPONENT_EXPECT_WORKER_CRASH==='1'
+  // R6: record which DSH runtime modules this composition ACTUALLY loaded, so a
+  // negative result can never be explained by an unexpected module source.
+  const requireFromHost=createRequire(process.argv[1]||import.meta.url)
+  let moduleSource
+  try {
+    const subagentPkg=requireFromHost.resolve('@deepseek-ai/dsh-subagent/package.json')
+    moduleSource={subagent:subagentPkg,version:JSON.parse(fs.readFileSync(subagentPkg,'utf8')).version,
+      executable:process.execPath,pid:process.pid,cli:process.argv[1]||null}
+  }catch(error){moduleSource={resolutionError:String(error).slice(0,400),cli:process.argv[1]||null}}
+  fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'module-source.json'),JSON.stringify(moduleSource,null,2))
   ctx.on('agent/disposed',({agent})=>{
     if(process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'&&agent.session.header.parentSession){
       assert.equal(childRequests,0)
-      fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'rejected.json'),JSON.stringify({rejected:true,childRequests}))
+      // R6: pin the ACTUAL refusal cause. Walk the parent session's events and
+      // keep every delegate-shaped failure so the negative result cannot be
+      // explained by cwd, permissions or preparation problems instead.
+      const events=agent.session.snapshotEvents().slice(-14).map(e=>({
+        type:e.type,name:e.data?.name??null,
+        detail:String(JSON.stringify(e.data)?.slice(0,420)??'')}))
+      fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'rejected.json'),JSON.stringify({
+        rejected:true,childRequests,events},null,2))
     }
   })
   class Fixture extends LlmAdapter {
@@ -47,6 +67,11 @@ export function apply(ctx) {
               /Execution failed:[\s\S]*missing\/ambiguous\/unconnected public output 1/)
           else assert(!result.isError,JSON.stringify(result))
         }
+        if(expectWorkerCrash&&promptText.includes('Fixture part 0:')&&results.some(r=>r.toolCallId==='component-build')){
+          // R6: the worker is ready and has done real work; now crash it hard so
+          // the parent experiences a genuine mid-flight worker failure notice.
+          throw new Error('injected worker crash after readiness and build')
+        }
         if(!results.length){
           blocks=[{type:'tool-call',id:'inside-write',name:'write',arguments:JSON.stringify({file_path:'local.txt',content:'local fixture'})},
             {type:'tool-call',id:'outside-write',name:'write',arguments:JSON.stringify({file_path:path.join(process.env.DSH_COMPONENT_TEST_OUT,'forbidden-'+agent.id+'.txt'),content:'must not be written'})}]
@@ -77,6 +102,14 @@ export function apply(ctx) {
           blocks=[{type:'text',text:'Component candidate exported; assembly remains unverified.'}]
         }
       }else{
+        if(expectRejection&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'rejection-reason.json'))){
+          const failed=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.isError))
+          if(failed.length){
+            const reason=failed.map(r=>r.content.filter(c=>c.type==='text').map(c=>c.text).join('|')).join(' | ')
+            fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'rejection-reason.json'),
+              JSON.stringify({reason:reason.slice(0,2000),childRequests}))
+          }
+        }
         const autoRelease=process.env.DSH_COMPONENT_EXPECT_AUTO_RELEASE==='1'
         const checked=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='component_status')
         const called=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='component_delegate')
@@ -87,7 +120,6 @@ export function apply(ctx) {
         const modelText=options.messages.flatMap(m=>m.content.filter(c=>c.type==='text').map(c=>c.text)).join('\n')
         const notices=[...modelText.matchAll(/Background subagent ([0-9a-f-]{36}) (finished and will do no further work|was stopped|ran out of room|declined the task|failed before it finished|ended abnormally)/g)]
         const settled=new Set(notices.filter(match=>match[2]==='finished and will do no further work').map(match=>match[1]))
-        assert.equal(settled.size,notices.length,'each visible child settlement must be unique and completed')
         if(checked&&!called){
           const status=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='capacity')).at(-1)
           assert(status&&!status.isError,
@@ -106,6 +138,30 @@ export function apply(ctx) {
           }
         }
         const assembly=agent.session.snapshotEvents().some(e=>e.type==='tool/call'&&e.data.name==='houdini_exec')
+        {
+          const turnLog=path.join(process.env.DSH_COMPONENT_TEST_OUT,'parent-turns.json')
+          try{
+            const turns=fs.existsSync(turnLog)?JSON.parse(fs.readFileSync(turnLog,'utf8')):[]
+            if(turns.length<14)turns.push({turn:turns.length+1,childRequests,
+              notices:notices.map(n=>n[2]),modelTextTail:modelText.slice(-500)})
+            fs.writeFileSync(turnLog,JSON.stringify(turns,null,2))
+          }catch(error){}
+        }
+        if(expectWorkerCrash){
+          try{
+            const turns=fs.existsSync(turnLog)?JSON.parse(fs.readFileSync(turnLog,'utf8')):[]
+            if(turns.length<10)turns.push({turn:turns.length+1,childRequests,
+              notices:notices.map(n=>n[2]),modelTextTail:modelText.slice(-600)})
+            fs.writeFileSync(turnLog,JSON.stringify(turns,null,2))
+          }catch(error){}
+          const crashNotice=notices.find(match=>match[2]==='failed before it finished'||match[2]==='ended abnormally')
+          if(crashNotice&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'crash-report.json'))){
+            fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'crash-report.json'),JSON.stringify({
+              notice:crashNotice[0],outcome:crashNotice[2],childRequests,assembled:assembly}))
+          }
+        }else{
+          assert.equal(settled.size,notices.length,'each visible child settlement must be unique and completed')
+        }
         const startupResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='delegate-0')).at(-1)
         if(expectStartupFailure&&startupResult){
           assert(startupResult.isError,'missing worker executable must reject before child admission')
@@ -171,7 +227,7 @@ export function apply(ctx) {
         }else if(expectChildFailure&&settled.size===2&&!assembly){
           assert.match(modelText,/Component exchange blocked at component_export: missing\/ambiguous\/unconnected public output 1/,
             'the original exchange failure must reach the parent in a native child notice')
-          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json'))
+          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&!['parent-turns.json','module-source.json'].includes(f))
           assert.equal(files.length,1,'only the successful author may publish a fixture record')
           const survivor=JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,files[0])))
           assert(settled.has(survivor.child),'the surviving artifact must belong to a completed child')
@@ -184,7 +240,7 @@ export function apply(ctx) {
             error:'missing/ambiguous/unconnected public output 1'}))
           blocks=[{type:'text',text:'Component exchange blocked: missing/ambiguous/unconnected public output 1. The other child artifact is retained; assembly was not attempted. Geometry and visual acceptance remain unverified.'}]
         }else if(settled.size===2&&!assembly){
-          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json')
+          const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json'&&!['parent-turns.json','module-source.json'].includes(f))
           assert.equal(files.length,2,'both completed children must have published fixture records')
           assert.deepEqual(new Set(files.map(file=>JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,file))).child)),settled,
             'parent must receive settlement notices from exactly the two publishing authors')
@@ -209,7 +265,7 @@ export function apply(ctx) {
             fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'assembled.json'),JSON.stringify({passed:true}))
             blocks=[{type:'text',text:'Assembly saved; worker release pending idle-turn boundary.'}]
           }else if(stops.length===0){
-            const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json')
+            const files=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT).filter(f=>f.endsWith('.json')&&f!=='assembled.json'&&!['parent-turns.json','module-source.json'].includes(f))
             blocks=files.map((file,i)=>({type:'tool-call',id:'stop-child-'+i,name:'component_stop',
               arguments:JSON.stringify({childId:JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,file))).child})}))
           }else{
