@@ -187,8 +187,9 @@ try:
         owner_call="call-prov-keep",
     )
     assert prov_keep["result"]["status"] == "owned_current_session", prov_keep
+    keep_geo = hou.node(keep_path).parent().path()
     dsh_bridge.run_code(f"delete_node({keep_path!r})", owner_session=session_a)
-    dsh_bridge.run_code(f"delete_node({hou.node(keep_path).parent().path()!r})", owner_session=session_a)
+    dsh_bridge.run_code(f"delete_node({keep_geo!r})", owner_session=session_a)
 
     # Simulate a user-created/copied node.  Even a copied/forged durable tag is
     # audit metadata only; a fresh Houdini sessionId is not runtime-owned.

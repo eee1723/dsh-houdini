@@ -288,8 +288,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
     assert hou.node('/obj/assembly/newmod2').parm('width').eval() == 9
     assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
-    # Counterexample: a failing restoration is escalated, not silently claimed
-    # complete; every other ledger entry is still restored in reverse order.
+    # Counterexample: a failing internal restoration is escalated, not silently
+    # claimed complete. At bridge level the caught-failure undo additionally
+    # restores the whole batch on top of the ledger restore.
     preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
     flaky = {'n': 0}
     def restore_fails_on_rollback(parm, captured):
@@ -305,7 +306,36 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
     assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
     assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
-    assert hou.node('/obj/assembly/newmod2').parm('width').keyframes(), 'a failed restoration leaves the residual honestly migrayed'
+    assert [k.frame() for k in hou.node('/obj/assembly/oldmod2').parm('width').keyframes()] == [2, 10]
+    assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
+    # Direct call (no bridge undo): the internal partial restore is visible —
+    # every ledger entry except the failing one was restored in reverse order.
+    with h._execution_owner('assembly', 'direct-replace'):
+        direct_preview = components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2',
+                                                      dry_run=True, migration={'inputs': {0: 0}, 'public_parms': ['width']})
+        flaky2 = {'n': 0}
+        def restore_fails_direct(parm, captured):
+            flaky2['n'] += 1
+            if flaky2['n'] == 2:
+                raise RuntimeError('injected restore failure')
+            return real_restore(parm, captured)
+        with patch.object(components, '_restore_parm', restore_fails_direct), \
+                patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+            try:
+                components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
+                                             expected_plan=direct_preview['plan'],
+                                             migration={'inputs': {0: 0}, 'public_parms': ['width']})
+            except RuntimeError as error:
+                assert 'component replacement restoration failed' in str(error), error
+                assert 'injected restore failure' in str(error), error
+                assert 'injected consumer cook failure' in str(error.__cause__), error
+            else:
+                raise AssertionError('a failed restoration must escalate as RuntimeError')
+    assert [k.frame() for k in hou.node('/obj/assembly/newmod2').parm('width').keyframes()] == [2, 10], \
+        'the failed ledger entry residual stays visible on a direct call'
+    assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
+    assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
+    assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
     assert hou.node('/obj/assembly/oldmod2').parm('width').keyframes()
     # Expression-driven keyframes are refused at preview, not mid-commit.
     run('s=tab_create("/obj/assembly","subnet","keyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
