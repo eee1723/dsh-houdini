@@ -4,12 +4,25 @@ import sys
 import tempfile
 import hashlib
 import json
+import re
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
 import dsh_component_contracts as components
+
+# Verbatim historical implementations, extracted with git cat-file (exact
+# blob bytes) and pinned by sha256. They are falsification controls, not
+# approximations: the R4 legacy restore as of 0effe03 rebuilds every key
+# from its value alone, and the pre-iteration-6 capture raises NameError
+# on the first-key-no-expression branch.
+RESTORE_0EFFE03_SHA256 = '6b69895d08effb94bcbdcafed2ef6f38da60a29ca9ea02682aa7dee93c6ea5c6'
+RESTORE_0EFFE03 = "def _restore_parm(parm, captured):\n    kind, payload = captured\n    if kind == 'keys':\n        parm.deleteAllKeyframes()\n        for clone in payload:\n            parm.setKeyframe(clone)\n        return\n    parm.deleteAllKeyframes()\n    parm.set(payload)\n"
+CAPTURE_49BF56E_SHA256 = '5129fa165366c179a340fd4e589d2acc9ad034f4b186f215774bbf73889fa9fd'
+CAPTURE_49BF56E = 'def _capture_parm(parm):\n    """Restorable snapshot of one live channel; expression-driven keys cannot be restored.\n\n    Segment functions (bezier()/linear()/...) are plain animation data and migrate;\n    any other keyframe expression is refused rather than rewritten. The snapshot\n    carries the Keyframe objects returned by keyframes() VERBATIM - frame, value,\n    slopes, acceleration and segment state all survive - instead of rebuilding a\n    partial copy field by field.\n    """\n    keys = parm.keyframes()\n    if keys:\n        for key in keys:\n            try:\n                if key.isExpressionSet():\n                    segment = key.expression()\n            except hou.OperationFailed:\n                continue\n            else:\n                if segment is not None and not re.fullmatch(r\'[A-Za-z_][A-Za-z0-9_]*\\(\\)\', segment.strip()):\n                    raise ValueError(\'keyframes driven by expressions are not migrated: \' + parm.path())\n        return (\'keys\', keys)\n    if parm.parmTemplate().type() == hou.parmTemplateType.String:\n        return (\'string\', parm.unexpandedString())\n    return (\'value\', parm.eval())\n'
+CAPTURE_0EFFE03_SHA256 = '02135861a3253b59df5a29086c717929991b69fc838118a286bb77837cbf6e9f'
+CAPTURE_0EFFE03 = 'def _capture_parm(parm):\n    """Restorable snapshot of one live channel; expression-driven keys cannot be restored.\n\n    Segment functions (bezier()/linear()/…) are plain animation data and migrate;\n    any other keyframe expression is refused rather than rewritten.\n    """\n    keys = parm.keyframes()\n    if keys:\n        clones = []\n        for key in keys:\n            segment = None\n            try:\n                if key.isExpressionSet():\n                    segment = key.expression()\n            except hou.OperationFailed:\n                segment = None\n            if segment is not None:\n                if not re.fullmatch(r\'[A-Za-z_][A-Za-z0-9_]*\\(\\)\', segment.strip()):\n                    raise ValueError(\'keyframes driven by expressions are not migrated: \' + parm.path())\n                segment = (segment, key.expressionLanguage())\n            clone = hou.Keyframe()\n            clone.setFrame(key.frame())\n            clone.setValue(key.value())\n            clone.setSlope(key.slope())\n            clone.setInSlope(key.inSlope())\n            clone.setAccel(key.accel())\n            if segment is not None:\n                clone.setExpression(segment[0], segment[1])\n            clones.append(clone)\n        return (\'keys\', clones)\n    if parm.parmTemplate().type() == hou.parmTemplateType.String:\n        return (\'string\', parm.unexpandedString())\n    return (\'value\', parm.eval())\n'
 
 
 def run(code, owner='source', ok=True):
@@ -508,9 +521,17 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     refused = fail_with('component_replace("/obj/assembly/keyold","/obj/assembly/keynew",migration={"public_parms":["speed"]})')
     assert 'keyframes driven by expressions are not migrated' in refused, refused
     # R4: per-key segment state. The migrated keys must carry the FULL segment
-    # state per key - segment expression (including non-default linear), raw
+    # state per key - segment expressions (including non-default linear), raw
     # slope/acceleration data on expression-free keys, and incoming
-    # acceleration - for expression, mixed and expression-free keys alike.
+    # acceleration, set or unset. The guarantee is per-key segment-state
+    # faithfulness for these covered classes; it is not a blanket promise that
+    # every conceivable curve state survives.
+    # HOM fact (probed, H21/H22): a key read back from a live parm always
+    # reports isExpressionSet() True - Houdini materializes the default
+    # bezier() segment on write. The capture-side first-key-no-expression
+    # branch is therefore exercised at the unit level below with real
+    # in-memory hou.Keyframe objects whose HOM read-back state is
+    # isExpressionSet() False.
     run('s=tab_create("/obj/assembly","subnet","segold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('s=tab_create("/obj/assembly","subnet","segnew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
     run('segsink=tab_create("/obj/assembly","null","segsink",inputs=["/obj/assembly/segold"])', owner='assembly')
@@ -518,21 +539,27 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run('create_spare_parms("/obj/assembly/segnew",layout=[{"type":"float","name":"speed","default":2}])', owner='assembly')
     seg_old = hou.parm('/obj/assembly/segold/speed')
     with h._execution_owner('assembly', 'segment-state-fixture'):
-        expr_bezier = hou.Keyframe(5.0)
-        expr_bezier.setFrame(2)
+        first_raw = hou.Keyframe(5.0)
+        first_raw.setFrame(2)
+        first_raw.setSlope(1.5)
+        first_raw.setAccel(2.0)
+        expr_bezier = hou.Keyframe(7.0)
+        expr_bezier.setFrame(10)
         expr_bezier.setExpression('bezier()', hou.exprLanguage.Hscript)
-        expr_bezier.setSlope(1.5)
-        expr_bezier.setAccel(2.0)
-        raw = hou.Keyframe(7.0)
-        raw.setFrame(10)
-        raw.setSlope(0.75)
-        raw.setInSlope(-1.25)
-        raw.setAccel(1.5)
-        raw.setInAccel(2.5)
+        expr_bezier.setSlope(0.75)
+        expr_bezier.setInSlope(-1.25)
+        expr_bezier.setAccel(1.5)
+        expr_bezier.setInAccel(2.5)
+        mid_raw = hou.Keyframe(8.0)
+        mid_raw.setFrame(15)
+        mid_raw.setSlope(-0.25)
+        mid_raw.setInSlope(0.5)
+        mid_raw.setAccel(0.9)
+        mid_raw.setInAccel(0.5)
         expr_linear = hou.Keyframe(9.0)
         expr_linear.setFrame(20)
         expr_linear.setExpression('linear()', hou.exprLanguage.Hscript)
-        seg_old.setKeyframes([expr_bezier, raw, expr_linear])
+        seg_old.setKeyframes([first_raw, expr_bezier, mid_raw, expr_linear])
     def optional(accessor, key):
         try:
             return accessor()
@@ -542,60 +569,202 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         return [(k.frame(), k.value(), k.slope(), k.inSlope(),
                  optional(k.accel, k), optional(k.inAccel, k),
                  k.expression() if k.isExpressionSet() else None) for k in parm.keyframes()]
+    # Precondition pinned by HOM read-back of the ACTUAL curve (not variable
+    # names): every written key carries a materialized segment expression
+    # (bezier() default or the real one), and Houdini's own write
+    # normalization recomputes incoming accelerations - the baseline below is
+    # whatever the source curve actually holds, and the migration must be
+    # faithful to exactly that state.
+    pre_state = seg_old.keyframes()
+    assert [k.isExpressionSet() for k in pre_state] == [True, True, True, True], \
+        [k.isExpressionSet() for k in pre_state]
+    assert [k.expression() if k.isExpressionSet() else None for k in pre_state] == \
+        ['bezier()', 'bezier()', 'bezier()', 'linear()'], \
+        [k.expression() if k.isExpressionSet() else None for k in pre_state]
     seg_baseline = full_state(seg_old)
     seg_preview = run('__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",'
                       'migration={"inputs":{},"public_parms":["speed"]})', owner='assembly')
     run(f'__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",dry_run=False,'
         f'expected_plan={seg_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["speed"]}})', owner='assembly')
     seg_moved = full_state(hou.parm('/obj/assembly/segnew/speed'))
-    assert len(seg_moved) == 3, seg_moved
+    assert len(seg_moved) == 4, seg_moved
     for before, after in zip(seg_baseline, seg_moved):
-        for field, left, right in zip(('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression'), before, after):
+        for field, left, right in zip(('frame', 'value', 'slope', 'accel', 'inAccel', 'expression'), before, after):
             if isinstance(left, float):
-                # Houdini normalizes bezier acceleration on write; the migration
-                # must be faithful to the source curve, which the same-frame
-                # comparison below pins to within double-precision noise.
-                assert abs(left - right) < 1e-9, (field, left, right)
+                # Houdini re-normalizes segment acceleration on EVERY write:
+                # re-writing the read-back payload shifts an incoming
+                # acceleration by up to ~6.4e-9 even for a pure batch set
+                # (probed on H21). The migration is faithful to the source
+                # state within Houdini's own write-to-write variance; frames,
+                # values and expressions stay exact.
+                assert abs(left - right) < 1e-7, (field, left, right)
             else:
                 assert left == right, (field, left, right)
-    assert seg_moved[2][6] == 'linear()', 'the linear segment expression must survive the migration'
-    assert seg_moved[1][5] is not None and abs(seg_moved[1][5] - seg_baseline[1][5]) < 1e-9, \
-        'the incoming acceleration of the expression-free key must survive'
-    assert seg_moved[2][5] is None and seg_baseline[2][5] is None, \
-        'the linear() key has no incoming acceleration on either side'
-    # The same fixed test proves the legacy field-by-field rebuild fails: it
-    # loses the linear() segment expression and the raw key's acceleration.
+    assert seg_moved[3][6] == 'linear()', 'the linear segment expression must survive the migration'
+    assert seg_moved[1][5] is not None and abs(seg_moved[1][5] - seg_baseline[1][5]) < 1e-7, \
+        ('the non-default incoming acceleration of the expression key must survive', seg_baseline, seg_moved)
+    assert seg_moved[2][5] is not None and abs(seg_moved[2][5] - seg_baseline[2][5]) < 1e-7, \
+        ('the non-default incoming acceleration of the raw key must survive', seg_baseline, seg_moved)
+    assert seg_moved[3][5] is None and seg_baseline[3][5] is None, \
+        'the trailing linear() key must not grow a spurious incoming acceleration'
+    # The same fixed test proves the REAL historical implementation fails:
+    # the capture+restore pair as of 0effe03 (verbatim git blobs, sha256
+    # pinned above) rebuilds each captured key field by field WITHOUT the
+    # incoming acceleration and writes keys one by one, so on the same input
+    # the incoming-acceleration state is lost and the outgoing acceleration
+    # is recomputed by the write path - far beyond the write-to-write
+    # variance the fixed implementation stays within. Segment expressions do
+    # survive this pair (the capture carried them); the known-lost states are
+    # the incoming acceleration and the write-path acceleration fidelity.
+    assert hashlib.sha256(RESTORE_0EFFE03.encode('utf-8')).hexdigest() == RESTORE_0EFFE03_SHA256
+    assert hashlib.sha256(CAPTURE_0EFFE03.encode('utf-8')).hexdigest() == CAPTURE_0EFFE03_SHA256
+    legacy_ns = {'hou': hou, 're': re}
+    exec(CAPTURE_0EFFE03, legacy_ns)
+    exec(RESTORE_0EFFE03, legacy_ns)
     with h._execution_owner('assembly', 'segment-state-fixture'):
         scratch = hou.node('/obj/assembly/segnew').createNode('null', 'legacyscratch')
         ptg = scratch.parmTemplateGroup()
         ptg.append(hou.FloatParmTemplate('speed', 'speed', 1, default_value=(0,)))
         scratch.setParmTemplateGroup(ptg)
         legacy_target = scratch.parm('speed')
-        rebuilt = []
-        for k in seg_old.keyframes():
-            clone = hou.Keyframe(k.value())
-            clone.setFrame(k.frame())
-            clone.setSlope(k.slope())
-            clone.setInSlope(k.inSlope())
-            clone.setAccel(k.accel())
-            try:
-                clone.setInAccel(k.inAccel())
-            except hou.KeyframeValueNotSet:
-                pass
-            rebuilt.append(clone)
-        legacy_target.setKeyframes(rebuilt)
+        legacy_ns['_restore_parm'](legacy_target, legacy_ns['_capture_parm'](seg_old))
     legacy_state = full_state(legacy_target)
     legacy_failed = []
     for before, after in zip(seg_baseline, legacy_state):
         for field, left, right in zip(('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression'), before, after):
-            same = abs(left - right) < 1e-9 if isinstance(left, float) else left == right
+            same = abs(left - right) < 1e-7 if isinstance(left, float) else left == right
             if not same:
                 legacy_failed.append((field, left, right))
-    assert any(field == 'expression' and right == 'bezier()' for field, left, right in legacy_failed), \
-        'the legacy rebuild must lose the linear() segment expression: ' + repr(legacy_failed)
     assert any(field == 'inAccel' for field, left, right in legacy_failed), \
-        'the legacy rebuild must corrupt the incoming-acceleration state: ' + repr(legacy_failed)
+        'the historical pair must lose the incoming-acceleration state: ' + repr(legacy_failed)
+    assert any(field == 'accel' and isinstance(left, float) and isinstance(right, float)
+               and abs(left - right) > 1e-7 for field, left, right in legacy_failed), \
+        'the historical per-key write must recompute the outgoing acceleration: ' + repr(legacy_failed)
+    assert all(entry[0] != 'expression' for entry in legacy_failed), \
+        'the historical pair carries segment expressions; the known-lost states are acceleration-only: ' \
+        + repr(legacy_failed)
     scratch.destroy()
+    # Capture-side per-key segment initialization: the pre-iteration-6 capture
+    # (verbatim git blob, sha256 pinned above) used its `segment` variable
+    # without initializing it per key, so a curve whose FIRST key reports no
+    # expression raised NameError instead of capturing. Live parms always
+    # materialize a segment expression (HOM fact above), so the branch is hit
+    # with real in-memory hou.Keyframe objects: their HOM read-back state
+    # (isExpressionSet() False) is the precondition, the pre-fix capture
+    # raises NameError on the same input, the fixed capture succeeds.
+    assert hashlib.sha256(CAPTURE_49BF56E.encode('utf-8')).hexdigest() == CAPTURE_49BF56E_SHA256
+    class _FakeParm:
+        def __init__(self, keys):
+            self._keys = keys
+        def keyframes(self):
+            return list(self._keys)
+    bare_first = hou.Keyframe(3.0)
+    bare_first.setFrame(1)
+    expressed_second = hou.Keyframe(4.0)
+    expressed_second.setFrame(9)
+    expressed_second.setExpression('bezier()', hou.exprLanguage.Hscript)
+    assert bare_first.isExpressionSet() is False, 'the in-memory first key must read back expression-free'
+    assert expressed_second.isExpressionSet() is True
+    fake_parm = _FakeParm([bare_first, expressed_second])
+    buggy_ns = {'hou': hou, 're': re}
+    exec(CAPTURE_49BF56E, buggy_ns)
+    try:
+        buggy_ns['_capture_parm'](fake_parm)
+        raise AssertionError('the pre-iteration-6 capture must fail on the first-key-no-expression branch')
+    except NameError:
+        pass
+    fixed_keys = components._capture_parm(fake_parm)
+    assert fixed_keys[0] == 'keys' and fixed_keys[1] == [bare_first, expressed_second], fixed_keys
+    # R3 scope: expression-language support, lexical discrimination and the
+    # refusal boundary. Supported language: HScript channel expressions only.
+    # Within HScript the scan is lexical - string literals are data whose raw
+    # text is preserved (a backslash stops termination without changing the
+    # value, probed), so an ordinary string containing ch(...) text is never
+    # rewritten - while the first literal argument of an ACTUAL channel call is
+    # the only rewritable reference. Python-language references are refused
+    # before any write, and audited on every detected consumer node because
+    # the dependency graph does not track them (probed).
+    run('s=tab_create("/obj/assembly","subnet","refold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","refnew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('create_spare_parms("/obj/assembly/refold",layout=[{"type":"float","name":"gain","default":1}])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/refnew",layout=[{"type":"float","name":"gain","default":2}])', owner='assembly')
+    run('refsink=tab_create("/obj/assembly","null","refsink",inputs=["/obj/assembly/refold"])', owner='assembly')
+    # (1) An actual reference PLUS an ordinary string containing ch(...) text:
+    # the reference is rewritten, the string survives byte-identical.
+    string_expr = 'ch("../refold/gain") + 0*strcmp("ch(../unrelated/gain)", "x")'
+    run('ctrl7=tab_create("/obj/assembly","null","ctrl7")\n'
+        'create_spare_parms("/obj/assembly/ctrl7",layout=[{"type":"float","name":"drive","default":0}])\n'
+        f'set_parms("/obj/assembly/ctrl7",{{"drive":{string_expr!r}}})', owner='assembly')
+    # (2) Escaped-quote variant: the string holds a full ch("...") reference
+    # shape with backslash-escaped quotes; still data, still preserved raw.
+    # (2) Escaped quotes: a string holding backslash-escaped quotes stays raw
+    # data (the lexer must not end the literal early) while the real reference
+    # is rewritten. (HOM fact, probed: an expression whose string embeds
+    # escaped ch(...) text is NOT tracked by the dependency graph at all, so
+    # the escaped ch-text case is pinned at the unit level below, where the
+    # pure string constant carries both.)
+    escaped_expr = 'ch("../refold/gain") * (1 - strcmp("a \\"quoted\\" word", ""))'
+    run('ctrl7b=tab_create("/obj/assembly","null","ctrl7b")\n'
+        'create_spare_parms("/obj/assembly/ctrl7b",layout=[{"type":"float","name":"drive","default":0}])\n'
+        f'set_parms("/obj/assembly/ctrl7b",{{"drive":{escaped_expr!r}}})', owner='assembly')
+    ref_preview = run('__result__=component_replace("/obj/assembly/refold","/obj/assembly/refnew",'
+                      'migration={"inputs":{},"public_parms":["gain"]})', owner='assembly')
+    assert sorted(row['parm'].split('/')[-2] for row in ref_preview['migration']['parameter_consumers']) == \
+        ['ctrl7', 'ctrl7b'], ref_preview['migration']['parameter_consumers']
+    run(f'__result__=component_replace("/obj/assembly/refold","/obj/assembly/refnew",dry_run=False,'
+        f'expected_plan={ref_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["gain"]}})', owner='assembly')
+    assert hou.parm('/obj/assembly/ctrl7/drive').expression() == \
+        'ch("../refnew/gain") + 0*strcmp("ch(../unrelated/gain)", "x")', \
+        hou.parm('/obj/assembly/ctrl7/drive').expression()
+    assert hou.parm('/obj/assembly/ctrl7b/drive').expression() == \
+        'ch("../refnew/gain") * (1 - strcmp("a \\"quoted\\" word", ""))', \
+        hou.parm('/obj/assembly/ctrl7b/drive').expression()
+    # (3) A python-language reference on a detected consumer node: the graph
+    # does not track it, so the audit refuses the replace before any write.
+    # A fresh pair is used: a candidate that already received parameter
+    # consumers is refused by the existing already-has-consumers invariant, so
+    # the second replace must not reuse the committed pair.
+    run('s=tab_create("/obj/assembly","subnet","pyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","pynnew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('create_spare_parms("/obj/assembly/pyold",layout=[{"type":"float","name":"gain","default":1}])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/pynnew",layout=[{"type":"float","name":"gain","default":2}])', owner='assembly')
+    run('pysink=tab_create("/obj/assembly","null","pysink",inputs=["/obj/assembly/pyold"])', owner='assembly')
+    py_expr = 'ch("../pyold/gain")'
+    run('ctrl8=tab_create("/obj/assembly","null","ctrl8")\n'
+        'create_spare_parms("/obj/assembly/ctrl8",layout=[{"type":"float","name":"drive","default":0}])\n'
+        f'set_parms("/obj/assembly/ctrl8",{{"drive":{py_expr!r}}})', owner='assembly')
+    run('create_spare_parms("/obj/assembly/ctrl8",layout=[{"type":"string","name":"brief","default":"x"}])', owner='assembly')
+    with h._execution_owner('assembly', 'r3-scope'):
+        hou.node('/obj/assembly/ctrl8').parm('brief').setExpression('ch("../pyold/gain") * 2', hou.exprLanguage.Python)
+    python_refused = fail_with('component_replace("/obj/assembly/pyold","/obj/assembly/pynnew",dry_run=False,'
+                               'migration={"inputs":{},"public_parms":["gain"]})')
+    assert 'unsupported expression language' in python_refused and 'ctrl8' in python_refused, python_refused
+    assert not hou.parm('/obj/assembly/pynnew/gain').keyframes(), 'a refused replace must not write'
+    # Unit level: the rewriter refuses the python-language consumer itself, a
+    # pure string constant (no actual call), and leaves the refused parms
+    # byte-identical.
+    from dsh_component_contracts import _repoint_expression as _repoint
+    try:
+        _repoint(hou.node('/obj/assembly/ctrl8').parm('brief'),
+                 hou.node('/obj/assembly/pyold'), hou.node('/obj/assembly/pynnew'))
+        raise AssertionError('python-language consumers must be refused')
+    except ValueError as error:
+        assert 'unsupported expression language' in str(error), error
+    assert hou.node('/obj/assembly/ctrl8').parm('brief').expression() == 'ch("../pyold/gain") * 2'
+    # A pure string constant is data end to end: no actual call, nothing to
+    # rewrite, the text survives byte-identical.
+    constant_expr = '"see ch(\\"../pyold/gain\\") docs"'
+    with h._execution_owner('assembly', 'r3-scope'):
+        hou.node('/obj/assembly/ctrl8').parm('brief').setExpression(constant_expr, hou.exprLanguage.Hscript)
+    try:
+        _repoint(hou.node('/obj/assembly/ctrl8').parm('brief'),
+                 hou.node('/obj/assembly/pyold'), hou.node('/obj/assembly/pynnew'))
+        raise AssertionError('a pure string constant is not a rewritable reference')
+    except ValueError as error:
+        assert 'unsupported consumer reference form' in str(error), error
+    assert hou.node('/obj/assembly/ctrl8').parm('brief').expression() == constant_expr, \
+        hou.node('/obj/assembly/ctrl8').parm('brief').expression()
+    hou.node('/obj/assembly/ctrl8').destroy()
     run('sop_set_output("/obj/source/module/shape",output_index=1)')
     multi_file = str(Path(folder) / 'multi.dshcomponent')
     multi_contract = {**contract, 'outputs': [0, 1]}

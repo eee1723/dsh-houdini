@@ -43,7 +43,8 @@ startup_failure = '--expect-startup-failure' in sys.argv
 stop_failure = '--expect-stop-failure' in sys.argv
 adapter_throw = '--expect-adapter-throw' in sys.argv
 process_exit = '--expect-worker-process-exit' in sys.argv
-assert sum((negative, auto_release, child_failure, startup_failure, stop_failure, adapter_throw, process_exit)) <= 1
+built_exit = '--expect-built-exit' in sys.argv
+assert sum((negative, auto_release, child_failure, startup_failure, stop_failure, adapter_throw, process_exit, built_exit)) <= 1
 if auto_release:
     env['DSH_COMPONENT_EXPECT_AUTO_RELEASE'] = '1'
 if negative:
@@ -58,6 +59,8 @@ if adapter_throw:
     env['DSH_COMPONENT_EXPECT_ADAPTER_THROW'] = '1'
 if process_exit:
     env['DSH_COMPONENT_EXPECT_WORKER_PROCESS_EXIT'] = '1'
+if built_exit:
+    env['DSH_COMPONENT_EXPECT_BUILT_EXIT'] = '1'
 parent_log = (fixture / 'parent.log').open('wb')
 parent = subprocess.Popen([sys.executable, str(ROOT / 'tools/component-worker.py'), '--executable', hython,
                            '--directory', str(fixture / 'parent'), '--registry', str(registry),
@@ -136,7 +139,8 @@ try:
     outcome = ('rejected.json' if negative else 'blocked.json' if child_failure else
                'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else
                'adapter-throw.json' if adapter_throw else
-               'process-exit.json' if process_exit else 'assembled.json')
+               'process-exit.json' if process_exit else
+               'built-exit.json' if built_exit else 'assembled.json')
     while not (outputs / outcome).exists():
         if time.monotonic() > deadline:
             raise RuntimeError('Component loop incomplete; inspect ' + str(fixture))
@@ -161,14 +165,26 @@ try:
         assert report['outcome'] in ('failed before it finished', 'ended abnormally'), report
         assert report['assembled'] is False, report
         assert report['sessionEvents'], 'the throw must surface as an actual session event'
+        # childId-bound acceptance: the notice names the exact child; ITS
+        # finished authoring work (built HIP + exported artifact) is retained
+        # because the throw hit the model boundary only, the OTHER child owns
+        # its artifact too, and the failed child's worker process is alive.
+        failed_workspace = workers / report['failedChild'] / 'workspace'
+        survivor_workspace = workers / report['survivorChild'] / 'workspace'
+        assert (failed_workspace / 'component.hip').exists(), report
+        assert (failed_workspace / 'part.dshcomponent').exists(), report
+        assert (survivor_workspace / 'part.dshcomponent').exists(), report
+        assert report['workerStillAlive'] is True,             'an adapter throw must not stop the worker process: ' + str(report)
         sessions = rpc('session/list', {'_request': {}})
         child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
         assert len(child_sessions) == 2,             'exactly the two dispatched children may exist; no replacement dispatch after the adapter throw: ' + str(len(child_sessions))
         artifacts = list(workers.glob('*/workspace/part.dshcomponent'))
-        assert len(artifacts) == 1,             'only the surviving child may hold a published artifact: ' + str(artifacts)
-        print('PASS injected child model-adapter throw after readiness: the parent received the')
-        print('     native failure notice, exactly two child sessions existed (no replacement')
-        print('     dispatch), and only the surviving child published an artifact; assembly never ran')
+        assert len(artifacts) == 2,             'both children finished authoring; both artifacts are retained: ' + str(artifacts)
+        print('PASS injected child model-adapter throw after authoring, bound to the failed childId:')
+        print('     the parent received the native failure notice, the failed child keeps its')
+        print('     built HIP and retained artifact (the throw hit the model boundary only),')
+        print('     its worker process stays alive, the surviving child owns its artifact, and')
+        print('     exactly two child sessions existed (no replacement dispatch); assembly never ran')
     elif process_exit:
         report = json.loads((outputs / 'process-exit.json').read_text(encoding='utf-8'))
         kill_doc = json.loads((outputs / 'process-exit-kill.json').read_text(encoding='utf-8'))
@@ -189,6 +205,27 @@ try:
         print('     dsh-houdini infrastructure notice for the exact childId, the childId-bound')
         print('     status snapshot reports stopped/unknown while the survivor stays ready, and')
         print('     both artifacts are retained; no replacement dispatch, assembly never ran')
+    elif built_exit:
+        report = json.loads((outputs / 'built-exit.json').read_text(encoding='utf-8'))
+        kill_doc = json.loads((outputs / 'built-exit-kill.json').read_text(encoding='utf-8'))
+        assert report['builtChild'] == kill_doc['builtChild'] and report['pid'] == kill_doc['pid'], report
+        assert kill_doc['killError'] is None and kill_doc['pidDead'] is True and kill_doc['parentIdleAtKill'] is True, kill_doc
+        assert report['wake']['prevTurnTextOnly'] is True, report
+        assert report['wake']['statusCallIndex'] > report['wake']['noticeEventIndex'] >= 0, report
+        assert report['status']['failed']['workerStatus'] == 'stopped'
+        assert report['status']['failed']['checkpoint'] == 'unknown'
+        assert report['status']['surviving']['workerStatus'] == 'ready'
+        assert report['artifacts'] == {'builtHip': True, 'builtMarker': True, 'failedArtifact': False, 'survivorArtifact': True}, report
+        assert report['delegateCalls'] == 2 and report['assembly'] is False, report
+        sessions = rpc('session/list', {'_request': {}})
+        child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
+        assert len(child_sessions) == 2,             'no replacement dispatch may follow the built-exit kill: ' + str(len(child_sessions))
+        assert not (outputs / 'assembled.json').exists()
+        print('PASS real worker exit while built-not-exported with the parent idle: the kill by')
+        print('     registry-bound pid succeeded, the dsh-houdini infrastructure notice woke the')
+        print('     idle parent as an actual session event before the childId-bound checkpoint')
+        print('     inspection (stopped/unknown vs ready survivor), the built HIP and marker are')
+        print('     retained with no artifact; no replacement dispatch, assembly never ran')
     elif child_failure:
         blocked = json.loads((outputs / 'blocked.json').read_text(encoding='utf-8'))
         assert blocked['assembly'] is False
@@ -217,7 +254,7 @@ try:
         assert not (outputs / 'assembled.json').exists()
         print('PASS abnormal owned worker exit remains checkpoint-unknown, sibling saves cleanly, both artifacts retained; no assembly or external model request')
     else:
-        results = [json.loads(p.read_text(encoding='utf-8')) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json', 'adapter-throw.json', 'process-exit.json', 'process-exit-kill.json')]
+        results = [json.loads(p.read_text(encoding='utf-8')) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json', 'adapter-throw.json', 'process-exit.json', 'process-exit-kill.json', 'built-exit.json', 'built-exit-kill.json', 'built-exit-armed.json', 'built-exit-error.json', 'process-exit-error.json', 'process-exit-debug.json')]
         assert len({r['cwd'] for r in results}) == 2 and all(r['passed'] for r in results)
         assert all(Path(r['cwd']).is_relative_to(workers) for r in results)
         assert not configured_workers.exists()

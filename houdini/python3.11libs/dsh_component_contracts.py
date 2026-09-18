@@ -473,14 +473,19 @@ def _capture_parm(parm):
     keys = parm.keyframes()
     if keys:
         for key in keys:
+            # Per-key segment initialization: the segment state must reset for
+            # every key. The first key of a curve routinely carries no
+            # expression, so an uninitialized `segment` would raise NameError
+            # there - and a leaked previous key's segment could misjudge this
+            # key's refusal.
+            segment = None
             try:
                 if key.isExpressionSet():
                     segment = key.expression()
             except hou.OperationFailed:
                 continue
-            else:
-                if segment is not None and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\(\)', segment.strip()):
-                    raise ValueError('keyframes driven by expressions are not migrated: ' + parm.path())
+            if segment is not None and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\(\)', segment.strip()):
+                raise ValueError('keyframes driven by expressions are not migrated: ' + parm.path())
         return ('keys', keys)
     if parm.parmTemplate().type() == hou.parmTemplateType.String:
         return ('string', parm.unexpandedString())
@@ -548,6 +553,47 @@ def _resolve_channel_reference(node, path):
 _CH_CALL = re.compile(r"(ch[a-zA-Z]*)\s*\(")
 
 
+class _ExpressionLexError(ValueError):
+    pass
+
+
+def _hscript_strings(expression):
+    """Segment an HScript channel expression into code and string literal runs.
+
+    Returns a list of (kind, start, end) with kind 'code' or 'string' and
+    half-open offsets into `expression`. HScript string literals keep their raw
+    text verbatim: a backslash does not change the value, it only stops the
+    next character from terminating the literal (probed on H21: "a\"b"
+    evaluates to a\"b, not a"b). HScript channel expressions have no comment
+    syntax, so every non-string byte is code. Channel-call shaped text inside
+    a string segment is data and must never be rewritten.
+    """
+    segments = []
+    i, n, code_start = 0, len(expression), 0
+    while i < n:
+        char = expression[i]
+        if char == '"' or char == "'":
+            j = i + 1
+            while j < n:
+                if expression[j] == '\\':
+                    j += 2
+                    continue
+                if expression[j] == char:
+                    break
+                j += 1
+            if j >= n:
+                raise _ExpressionLexError('unterminated string literal starting at offset %d in %r' % (i, expression))
+            if i > code_start:
+                segments.append(('code', code_start, i))
+            segments.append(('string', i, j + 1))
+            i = code_start = j + 1
+        else:
+            i += 1
+    if code_start < n:
+        segments.append(('code', code_start, n))
+    return segments
+
+
 _CH_CALL = re.compile(r"\b(ch[a-zA-Z]*)\s*\(")
 
 
@@ -555,19 +601,29 @@ def _repoint_expression(consumer, old, new):
     """Rewrite one consumer expression's references from the old component to the
     candidate, preserving each reference's form and the rest of the expression.
 
-    Only literal string arguments of Houdini channel functions (ch/chf/chi/chs/...)
-    are rewritten, and only when the reference RESOLVES - relative to the
-    consumer node - to the declared old component or a parameter on it.
+    Expression-language scope: ONLY HScript channel expressions are rewritten.
+    A python-language consumer is refused before any write (its reference
+    syntax and semantics are out of scope). The scan is lexical: channel calls
+    are recognized in code segments only; string literals are data whose raw
+    text is preserved verbatim, so an ordinary string that happens to contain
+    ch(...) text is never rewritten and survives byte-identical. Only the
+    first literal argument of an actual channel call (ch/chf/chi/chs/...) is a
+    candidate reference, and only when the reference RESOLVES - relative to
+    the consumer node - to the declared old component or a parameter on it.
     Deep-relative references that resolve elsewhere (e.g. ../../part/width from
     a sibling network) are left untouched; a consumer referencing several
-    migrated channels is rewritten ONCE for all of them. Any channel-function
-    argument that is not a single literal path ending the argument (computed
-    fragments, variables) refuses before any write: it cannot be proven
-    independent of the old component. The consumer set comes from Houdini's
-    dependency graph (parmsReferencingThis), but every literal reference inside
-    a detected consumer is repointed by its RESOLVED target - including forms
-    the dependency graph does not track (mid-path '..' navigation), so no
-    textual reference into the old component survives the migration.
+    migrated channels is rewritten ONCE for all of them. Any channel-call
+    argument that is not a single literal ending the argument (computed
+    fragments, variables, nested calls) refuses before any write: it cannot
+    be proven independent of the old component. The consumer set comes from
+    Houdini's dependency graph (parmsReferencingThis), but every literal
+    reference inside a detected consumer is repointed by its RESOLVED target -
+    including forms the dependency graph does not track (mid-path '..'
+    navigation), so no textual reference into the old component survives the
+    migration. Python-language references are invisible to that graph
+    (probed), so component_replace additionally audits the other parms of
+    every detected consumer node and refuses when one mentions the old
+    component instead of silently leaving a stale live reference behind.
     In HOM an expression lives on keyframes, so an expression-driven consumer
     has keys; value-keyframed consumers without an expression are refused.
     """
@@ -577,73 +633,84 @@ def _repoint_expression(consumer, old, new):
     except hou.OperationFailed:
         raise ValueError('external consumer is not expression-driven (keyframed consumers are not migrated): '
                          + consumer.path()) from None
+    if language != hou.exprLanguage.Hscript:
+        raise ValueError(f'unsupported expression language {language} in {consumer.path()}: '
+                         'only HScript channel expressions are migrated; the consumer is refused before any write')
     old_abs, new_abs = old.path(), new.path()
-    old_rel, new_rel = consumer.node().relativePathTo(old), consumer.node().relativePathTo(new)
+    try:
+        segments = _hscript_strings(expression)
+    except _ExpressionLexError as error:
+        raise ValueError(f'unsupported reference form in {consumer.path()}: {error}; '
+                         'the consumer is refused before any write') from None
+    string_ends = {start: end for kind, start, end in segments if kind == 'string'}
     rewritten_parts = []
     pos, matched = 0, False
     refusal = None
-    for call in _CH_CALL.finditer(expression):
-        i = call.end()
-        while i < len(expression) and expression[i] in ' \t':
-            i += 1
-        if i >= len(expression) or expression[i] not in '\'"':
-            refusal = (f'channel call {call.group(1)}(...) takes a non-literal argument; '
-                       f'cannot prove it is independent of {old_abs}')
-            break
-        quote = expression[i]
-        j = expression.find(quote, i + 1)
-        if j < 0:
-            refusal = f'unterminated string literal in channel call {call.group(1)}(...)'
-            break
-        # The literal must END the argument: the next non-space character has to
-        # close the call or start another argument. A literal followed by more
-        # expression ('..' + "/name", f-strings, format calls) is a fragment of
-        # a computed reference - rewriting the literal alone would silently
-        # migrate half a reference, so it refuses before any write.
-        after = j + 1
-        while after < len(expression) and expression[after] in ' \t':
-            after += 1
-        if after >= len(expression) or expression[after] not in '),':
-            refusal = (f'channel call {call.group(1)}(...) takes a computed argument; the literal '
-                       f'{quote}{expression[i + 1:j]}{quote} is embedded in a larger expression and cannot '
-                       f'be proven independent of {old_abs}')
-            break
-        path = expression[i + 1:j]
-        resolved = _resolve_channel_reference(consumer.node(), path)
-        suffix = None
-        if resolved == old_abs:
-            suffix = ''
-        elif resolved.startswith(old_abs + '/'):
-            suffix = resolved[len(old_abs):]
-        new_literal = None
-        if suffix is not None:
-            if path.startswith('/'):
-                new_literal = new_abs + suffix
+    for kind, start, end in segments:
+        if kind != 'code':
+            continue
+        for call in _CH_CALL.finditer(expression, start, end):
+            # The argument scan runs over the whole expression: only spaces may
+            # sit between the call's parenthesis and its literal, and spaces are
+            # always code, so the first non-space byte decides.
+            i = call.end()
+            while i < len(expression) and expression[i] in ' \t':
+                i += 1
+            if i >= len(expression) or expression[i] not in '"\'' or i not in string_ends:
+                refusal = (f'channel call {call.group(1)}(...) takes a non-literal argument; '
+                           f'cannot prove it is independent of {old_abs}')
+                break
+            string_end = string_ends[i]
+            # The literal must END the argument: the next non-space character has
+            # to close the call or start another argument. A literal followed by
+            # more expression ('..' + "/name", f-strings, format calls) is a
+            # fragment of a computed reference - rewriting the literal alone
+            # would silently migrate half a reference, so it refuses before any
+            # write.
+            after = string_end
+            while after < len(expression) and expression[after] in ' \t':
+                after += 1
+            if after >= len(expression) or expression[after] not in '),':
+                refusal = (f'channel call {call.group(1)}(...) takes a computed argument; the literal '
+                           f'{expression[i:string_end]} is embedded in a larger expression and cannot '
+                           f'be proven independent of {old_abs}')
+                break
+            path = expression[i + 1:string_end - 1]
+            resolved = _resolve_channel_reference(consumer.node(), path)
+            suffix = None
+            if resolved == old_abs:
+                suffix = ''
+            elif resolved.startswith(old_abs + '/'):
+                suffix = resolved[len(old_abs):]
+            new_literal = None
+            if suffix is not None:
+                if path.startswith('/'):
+                    new_literal = new_abs + suffix
+                else:
+                    climb = consumer.node()
+                    climb_prefix = ''
+                    parts = path.split('/')
+                    while parts and parts[0] == '..':
+                        climb_prefix += '../'
+                        climb = climb.parent()
+                        parts = parts[1:]
+                    new_literal = climb_prefix + climb.relativePathTo(new) + suffix
+                matched = True
+            elif resolved == new_abs or resolved.startswith(new_abs + '/') or hou.node(resolved) is None:
+                pass  # a reference to the candidate or to a (possibly absent) channel elsewhere: leave it
             else:
-                climb = consumer.node()
-                climb_prefix = ''
-                parts = path.split('/')
-                while parts and parts[0] == '..':
-                    climb_prefix += '../'
-                    climb = climb.parent()
-                    parts = parts[1:]
-                new_literal = climb_prefix + climb.relativePathTo(new) + suffix
-            matched = True
-        elif resolved == new_abs or resolved.startswith(new_abs + '/') or hou.node(resolved) is None:
-            pass  # a reference to the candidate or to a (possibly absent) channel elsewhere: leave it
-        else:
-            refusal = (f'channel call {call.group(1)}(\"{path}\") resolves to the network node {resolved}, '
-                       f'not a channel; cannot prove it is independent of {old_abs}')
-        rewritten_parts.append(expression[pos:i + 1])
-        if new_literal is not None:
-            rewritten_parts.append(new_literal)
-        else:
-            rewritten_parts.append(path)
-        rewritten_parts.append(quote)
-        pos = j + 1
+                refusal = (f'channel call {call.group(1)}("{path}") resolves to the network node {resolved}, '
+                           f'not a channel; cannot prove it is independent of {old_abs}')
+            rewritten_parts.append(expression[pos:i + 1])
+            if new_literal is not None:
+                rewritten_parts.append(new_literal)
+            else:
+                rewritten_parts.append(path)
+            rewritten_parts.append(expression[string_end - 1])
+            pos = string_end
+        if refusal is not None:
+            break
     rewritten_parts.append(expression[pos:])
-    if refusal is None and _CH_CALL.search(expression[pos:]):
-        refusal = 'a malformed or unterminated channel call remains after the last parsed reference'
     if refusal is not None:
         raise ValueError(f'unsupported reference form in {consumer.path()}: {refusal}; '
                          'the consumer is refused before any write')
@@ -781,6 +848,29 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
                 # A consumer referencing several migrated channels is aggregated:
                 # one rewritten expression, one commit - never one row per channel.
                 consumer_channels.setdefault(consumer.path(), {'consumer': consumer, 'channels': set()})['channels'].add(public_parm.name())
+    # Expression-language audit: Houdini's dependency graph does not track
+    # python-language references (probed), so a python parm on a detected
+    # consumer node could keep silently reading the retained frozen copy after
+    # the replace. Refuse before any write instead of guessing; the audit only
+    # covers nodes the graph already reported as consumers.
+    for consumer_path, row in consumer_channels.items():
+        node = row['consumer'].node()
+        for parm in node.parms():
+            if parm.path() in consumer_channels:
+                continue
+            try:
+                language_other = parm.expressionLanguage()
+                if language_other == hou.exprLanguage.Hscript:
+                    continue
+                text = parm.expression()
+            except hou.OperationFailed:
+                continue
+            hit = next((form for form in (old.path(), node.relativePathTo(old))
+                        if form and form in text), None)
+            if hit is not None:
+                raise ValueError(f'unsupported expression language {language_other} in {parm.path()}: '
+                                 f'the consumer expression mentions the old component ({hit}); only HScript '
+                                 'channel expressions are migrated, so the replace refuses before any write')
     for parm_path, row in consumer_channels.items():
         original, language, rewritten = _repoint_expression(row['consumer'], old, new)
         consumers.append({'parm': parm_path, 'channels': sorted(row['channels']),

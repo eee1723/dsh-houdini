@@ -14,6 +14,17 @@ export function apply(ctx) {
   const expectRejection=process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'
   const expectAdapterThrow=process.env.DSH_COMPONENT_EXPECT_ADAPTER_THROW==='1'
   const expectProcessExit=process.env.DSH_COMPONENT_EXPECT_WORKER_PROCESS_EXIT==='1'
+  const expectBuiltExit=process.env.DSH_COMPONENT_EXPECT_BUILT_EXIT==='1'
+  // Whether the PREVIOUS parent turn returned synthetic tool calls. The
+  // built-exit drill uses it to prove the kill happens on an idle parent turn
+  // and that the infrastructure notice - not a fixture tool-call chain - woke
+  // the parent into the checkpoint inspection.
+  let lastParentHadToolCall=false
+  // Captured when the built-exit drill issues its checkpoint inspection:
+  // the wake is proven by the fact that the kill turn ended with plain text
+  // and the infrastructure notice - not a fixture tool-call chain - provoked
+  // the next request.
+  let builtExitWake=null
   // R6: record which DSH runtime modules this composition ACTUALLY loaded, so a
   // negative result can never be explained by an unexpected module source.
   const requireFromHost=createRequire(process.argv[1]||import.meta.url)
@@ -102,9 +113,19 @@ export function apply(ctx) {
             +"create_spare_parms(s,layout=[{'type':'float','name':'width','default':1}])\n"
             +"b=tab_create(s,'box','shape')\nset_parms(b,{'sizex':'ch(\"../width\")'})\n"
             +"detail=tab_create(s,'polybevel','bevel',inputs=[b])\nsop_set_output(detail,output_index=0)\n"
-          code+=failingAuthor?"scene_save()\n__result__={'modeled':True,'exported':False}"
+          const deferExport=expectBuiltExit&&promptText.includes('Fixture part 0:')
+          code+=(failingAuthor||deferExport)?"scene_save()\n__result__={'modeled':True,'exported':False}"
             :`__result__=component_export(s,${JSON.stringify(filename)},{'module_id':'part','revision':1,'units':'m','outputs':[0]})`
           blocks=[{type:'tool-call',id:'component-build',name:'houdini_exec',arguments:JSON.stringify({code})}]
+        }else if(expectBuiltExit&&promptText.includes('Fixture part 0:')&&!results.some(r=>r.toolCallId==='built-marker')){
+          // R6 built-exit drill: this child BUILDS and saves its HIP but never
+          // exports; its worker stays alive until the parent-side drill kills
+          // the process while the parent is idle.
+          assert(fs.existsSync(path.join(agent.session.header.cwd,'component.hip')),
+            'the built HIP must be saved before the built-exit drill defers the export')
+          blocks=[{type:'tool-call',id:'built-marker',name:'write',arguments:JSON.stringify({file_path:'built.marker',content:'built; export deferred by the drill'})}]
+        }else if(expectBuiltExit&&results.some(r=>r.toolCallId==='built-marker')){
+          blocks=[{type:'text',text:'Built and saved; export deliberately deferred by the drill. Do not export or assemble.'}]
         }else if(failingAuthor&&!results.some(r=>r.toolCallId==='component-export')){
           assert(fs.existsSync(path.join(agent.session.header.cwd,'component.hip')),
             'the modeled HIP must be saved before exchange failure injection')
@@ -171,9 +192,43 @@ export function apply(ctx) {
           const throwEvents=throwNotice?agent.session.snapshotEvents().filter(e=>e.type==='user/message'
             &&JSON.stringify(e.data??{}).includes(throwNotice[0])):[]
           if(throwNotice&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'adapter-throw.json'))){
-            fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'adapter-throw.json'),JSON.stringify({
-              notice:throwNotice[0],outcome:throwNotice[2],childRequests,assembled:assembly,
-              sessionEvents:throwEvents.slice(-2).map(e=>({type:e.type,source:e.data?.source?.plugin??null}))},null,2))
+            // The throw is bound to the exact childId the notice names: that
+            // child keeps its built HIP with no artifact, the other child owns
+            // its artifact, and the failed child's worker PROCESS is still
+            // alive - an adapter throw is not a process exit.
+            const failedChild=throwNotice[1]
+            const survivorFiles=fs.readdirSync(process.env.DSH_COMPONENT_TEST_OUT)
+              .filter(f=>/^[0-9a-f-]{36}\.json$/.test(f))
+            if(survivorFiles.length===1){
+              const survivorChild=JSON.parse(fs.readFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,survivorFiles[0]))).child
+              const failedWorkspace=path.join(process.env.DSH_COMPONENT_TEST_WORKERS,failedChild,'workspace')
+              const endpoints=path.join(process.env.DSH_HOUDINI_EXECUTOR_REGISTRY,'endpoints')
+              const failedRecord=fs.readdirSync(endpoints).filter(f=>f.endsWith('.json'))
+                .map(f=>JSON.parse(fs.readFileSync(path.join(endpoints,f),'utf8'))).find(r=>r.task_id===failedChild)
+              let workerAlive=null
+              if(failedRecord&&Number.isInteger(failedRecord.pid)){
+                try{process.kill(failedRecord.pid,0);workerAlive=true}
+                catch(error){workerAlive=error.code!=='ESRCH'}
+              }
+              const report={notice:throwNotice[0],outcome:throwNotice[2],failedChild,survivorChild,
+                childRequests,assembled:assembly,
+                artifacts:{failedHip:fs.existsSync(path.join(failedWorkspace,'component.hip')),
+                  failedArtifact:fs.existsSync(path.join(failedWorkspace,'part.dshcomponent')),
+                  survivorArtifact:fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,survivorChild,'workspace','part.dshcomponent'))},
+                workerStillAlive:workerAlive,
+                sessionEvents:throwEvents.slice(-2).map(e=>({type:e.type,source:e.data?.source?.plugin??null}))}
+              // The throw fires after the failed child finished authoring and
+              // exporting: its artifact is legitimately RETAINED, the failure
+              // hit the model boundary only, and the worker process keeps
+              // running - an adapter throw is not a process exit.
+              assert(report.artifacts.failedHip,'the failed child must keep its built HIP')
+              assert(report.artifacts.failedArtifact,'the failed child finished authoring; its artifact must be retained')
+              assert(report.artifacts.survivorArtifact,'the surviving child must own its artifact')
+              assert(workerAlive===true,'an adapter throw must NOT stop the worker process')
+              assert(!assembly,'assembly must not run after an adapter throw')
+              fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'adapter-throw.json'),JSON.stringify(report,null,2))
+              blocks=[{type:'text',text:'Adapter throw confirmed for the named child: its built HIP is retained with no artifact, the surviving child owns its artifact, and the failed worker process is still running. No assembly was attempted.'}]
+            }
           }
         }else if(expectProcessExit){
           // the killed child may add a native failure notice on top of the two
@@ -230,6 +285,89 @@ export function apply(ctx) {
               fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'stop-unknown.json'),JSON.stringify({failed,surviving,assembly:false}))
               blocks=[{type:'text',text:'One owned worker exited unexpectedly: its checkpoint is unknown and its files are retained. The other worker stopped with a saved checkpoint. Assembly was not attempted.'}]
             }
+          }
+        }else if(expectBuiltExit&&!assembly&&called){
+          // R6: REAL worker exit while the child is BUILT but NOT exported and
+          // the parent task is idle. The drill kills the built child's worker
+          // by its registry pid, requires the kill to succeed, the
+          // infrastructure report to wake the idle parent as an actual session
+          // event, the childId-bound status snapshot, and the two children's
+          // distinct fates - with no replacement dispatch and no assembly.
+          const outDir=process.env.DSH_COMPONENT_TEST_OUT
+          const killLog=path.join(outDir,'built-exit-kill.json')
+          const builtChild=[...settled].find(id=>fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,id,'workspace','built.marker'))
+            &&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,id,'workspace','part.dshcomponent')))
+          const statusResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='built-exit-status')).at(-1)
+          if(!fs.existsSync(killLog)){
+            if(!builtChild||lastParentHadToolCall||settled.size<2){
+              blocks=[{type:'text',text:'Arming the built-exit drill: waiting for the built-but-not-exported child, both settlements and an idle parent turn.'}]
+            }else{
+              const endpoints=path.join(process.env.DSH_HOUDINI_EXECUTOR_REGISTRY,'endpoints')
+              const record=fs.readdirSync(endpoints).filter(f=>f.endsWith('.json'))
+                .map(f=>JSON.parse(fs.readFileSync(path.join(endpoints,f),'utf8'))).find(r=>r.task_id===builtChild)
+              assert(record&&Number.isInteger(record.pid)&&record.pid>0,
+                'the built child must own a registry record with a real pid: '+JSON.stringify(record))
+              let killError=null
+              try{process.kill(record.pid)}catch(error){killError=String(error)}
+              let pidDead=false
+              try{process.kill(record.pid,0)}catch(error){pidDead=error.code==='ESRCH'}
+              assert(!killError,'the kill must succeed: '+String(killError))
+              assert(pidDead,'the killed pid must be gone')
+              assert(!lastParentHadToolCall,'the kill must happen while the parent task is idle')
+              fs.writeFileSync(killLog,JSON.stringify({builtChild,pid:record.pid,killError,pidDead,parentIdleAtKill:true}))
+              blocks=[{type:'text',text:'The built-but-not-exported child keeps its HIP; its worker process was terminated for the real built-exit drill. Awaiting the infrastructure report before checkpoint inspection.'}]
+            }
+          }else if(statusResult){
+            try{
+            assert(!statusResult.isError,JSON.stringify(statusResult))
+            const status=JSON.parse(statusResult.content.find(c=>c.type==='text').text)
+            const kill=JSON.parse(fs.readFileSync(killLog,'utf8'))
+            const failed=status.children.find(c=>c.childId===kill.builtChild)
+            const surviving=status.children.filter(c=>c.childId!==kill.builtChild)
+            assert(failed,'the killed childId must appear in the status snapshot: '+JSON.stringify(status).slice(0,400))
+            assert.equal(failed.workerStatus,'stopped')
+            assert.equal(failed.checkpoint,'unknown')
+            assert(surviving.length===1&&surviving[0].workerStatus==='ready',
+              'the surviving child must stay ready: '+JSON.stringify(surviving))
+            const events=agent.session.snapshotEvents()
+            const noticeIndex=events.findIndex(e=>e.type==='user/message'
+              &&e.data?.source?.plugin==='dsh-houdini'&&e.data?.source?.form==='notice'
+              &&JSON.stringify(e.data).includes(kill.builtChild))
+            const statusCalls=events.map((e,i)=>({e,i})).filter(x=>x.e.type==='tool/call'&&x.e.data?.name==='component_status')
+            const statusCallIndex=statusCalls.length?statusCalls[statusCalls.length-1].i:-1
+            assert(noticeIndex>=0,'the infrastructure report must exist as an actual session event')
+            assert(statusCallIndex>noticeIndex,'the parent may only inspect after the notice woke it: notice -> status call')
+            const delegateCalls=events.filter(e=>e.type==='tool/call'&&e.data?.name==='component_delegate').length
+            const builtWorkspace=path.join(process.env.DSH_COMPONENT_TEST_WORKERS,kill.builtChild,'workspace')
+            const survivorChild=surviving[0].childId
+            const report={builtChild:kill.builtChild,pid:kill.pid,killError:kill.killError,pidDead:kill.pidDead,
+              parentIdleAtKill:kill.parentIdleAtKill,
+              wake:{noticeEventIndex:noticeIndex,statusCallIndex,...(builtExitWake??{})},
+              status:{failed,surviving:surviving[0]},
+              artifacts:{builtHip:fs.existsSync(path.join(builtWorkspace,'component.hip')),
+                builtMarker:fs.existsSync(path.join(builtWorkspace,'built.marker')),
+                failedArtifact:fs.existsSync(path.join(builtWorkspace,'part.dshcomponent')),
+                survivorArtifact:fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,survivorChild,'workspace','part.dshcomponent'))},
+              delegateCalls,assembly,
+              eventOrder:events.slice(Math.max(0,noticeIndex-2),statusCallIndex+1)
+                .map(e=>({type:e.type,name:e.data?.name??null,plugin:e.data?.source?.plugin??null}))}
+            assert(report.artifacts.builtHip&&report.artifacts.builtMarker,'the built-not-exported state must be preserved')
+            assert(!report.artifacts.failedArtifact,'nothing may export the killed child artifact')
+            assert(report.artifacts.survivorArtifact,'the survivor artifact must be retained')
+            assert.equal(delegateCalls,2,'no replacement dispatch may follow the process exit')
+            assert(!assembly,'assembly must never run in the built-exit drill')
+            fs.writeFileSync(path.join(outDir,'built-exit.json'),JSON.stringify(report,null,2))
+            blocks=[{type:'text',text:'One built-but-not-exported worker exited for real: the kill succeeded, the infrastructure report woke this idle session, its HIP and marker are retained with no artifact, and the surviving worker stays ready. Assembly was not attempted.'}]
+            }catch(error){try{fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'built-exit-error.json'),
+              String(error && error.stack || error))}catch(_){}throw error}
+          }else{
+            const kill=JSON.parse(fs.readFileSync(killLog,'utf8'))
+            const infraVisible=agent.session.snapshotEvents().some(e=>e.type==='user/message'
+              &&e.data?.source?.plugin==='dsh-houdini'&&e.data?.source?.form==='notice'
+              &&JSON.stringify(e.data).includes(kill.builtChild))
+            if(infraVisible){builtExitWake={prevTurnTextOnly:!lastParentHadToolCall}
+              blocks=[{type:'tool-call',id:'built-exit-status',name:'component_status',arguments:'{}'}]}
+            else blocks=[{type:'text',text:'Awaiting the worker infrastructure report for the terminated process.'}]
           }
         }else if(expectProcessExit&&settled.size===2&&!assembly){
           // R6: REAL worker process exit. One settled child's worker process is
@@ -365,6 +503,7 @@ export function apply(ctx) {
             :[{type:'text',text:'Component work accepted; awaiting its result.'}]):(expectStartupFailure?[0]:[0,1]).map(i=>({
           type:'tool-call',id:'delegate-'+i,name:'component_delegate',arguments:JSON.stringify({task:'Fixture part '+i+': create an ordinary subnet box in metres, publish output 0 and export part.dshcomponent. Do not create an HDA. Parent guesses the Host-assigned HIP is Z:\\wrong-parent-path\\component.hip; this negative-control claim must not become authoritative.'})}))
       }
+      if(agent&&!agent.session.header.parentSession)lastParentHadToolCall=blocks.some(b=>b.type==='tool-call')
       for(let index=0;index<blocks.length;index++){
         yield {type:'block-start',index,blockType:blocks[index].type}
         yield {type:'block-end',index,block:blocks[index]}
