@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
 
 import hou
 import dsh_bridge
+import dsh_hou_helpers
 
 
 suffix = uuid.uuid4().hex[:8]
@@ -104,6 +105,90 @@ try:
     assert cleanup["ok"] is True, cleanup
     assert hou.node(wrangle_path) is None
     dsh_bridge.run_code(f"delete_node({geo_path!r})", owner_session=session_a)
+
+    # Negative: a same-path replacement of a different node type (even under a
+    # registered live ancestor) must never be adopted as the dead identity.
+    wr = dsh_bridge.run_code(
+        f"g2 = tab_create('/obj', 'geo', name='undo_geo2_{suffix}')\n"
+        "w2 = tab_create(g2, 'attribwrangle', name='undo_wrangle2')\n"
+        "__result__ = {'geo': g2.path(), 'wrangle': w2.path()}",
+        owner_session=session_a,
+        owner_call="call-create-wrangle2",
+    )
+    assert wr["ok"] is True, wr
+    wrangle2_path = wr["result"]["wrangle"]
+    geo2_path = wr["result"]["geo"]
+    snapshot = dict(dsh_hou_helpers._OWNED_NODE_SESSIONS)
+    gone = dsh_bridge.run_code(
+        f"delete_node({wrangle2_path!r})",
+        owner_session=session_a,
+        owner_call="call-delete-wrangle2",
+    )
+    assert gone["ok"] is True and hou.node(wrangle2_path) is None, gone
+    replacement = hou.node(geo2_path).createNode("box", "undo_wrangle2")
+    assert replacement.type().name() != "attribwrangle"
+    restored = dsh_hou_helpers._reconcile_undo_resurrected(snapshot)
+    assert restored == [], restored
+    assert int(replacement.sessionId()) not in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored
+    replacement.destroy()
+
+    # Negative (cross-author): a same-path node registered by another session is
+    # never re-registered under the dead identity's record.
+    dsh_bridge.run_code(f"delete_node({geo2_path!r})", owner_session=session_a)
+    bg = dsh_bridge.run_code(
+        f"g3 = tab_create('/obj', 'geo', name='undo_geo2_{suffix}')\n"
+        "w3 = tab_create(g3, 'attribwrangle', name='undo_wrangle2')\n"
+        "__result__ = w3.path()",
+        owner_session=session_b,
+        owner_call="call-create-b",
+    )
+    assert bg["ok"] is True, bg
+    b_wrangle_path = bg["result"]
+    assert b_wrangle_path == wrangle2_path, (b_wrangle_path, wrangle2_path)
+    b_id = int(hou.node(b_wrangle_path).sessionId())
+    restored_b = dsh_hou_helpers._reconcile_undo_resurrected(snapshot)
+    assert restored_b == [], restored_b
+    assert b_id in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored_b
+    prov_b = dsh_bridge.run_code(
+        f"__result__ = node_provenance({b_wrangle_path!r})",
+        owner_session=session_b,
+        owner_call="call-prov-b",
+    )
+    assert prov_b["result"]["status"] == "owned_current_session", prov_b
+    b_geo_path = hou.node(b_wrangle_path).parent().path()
+    dsh_bridge.run_code(f"delete_node({b_wrangle_path!r})", owner_session=session_b)
+    dsh_bridge.run_code(f"delete_node({b_geo_path!r})", owner_session=session_b)
+
+    # Negative (unrelated-failure rollback): a failing batch elsewhere removes
+    # only its own created node and never reconciles unrelated identities.
+    keep = dsh_bridge.run_code(
+        f"gk = tab_create('/obj', 'geo', name='undo_keep_{suffix}')\n"
+        "wk = tab_create(gk, 'attribwrangle', name='keep_wrangle')\n"
+        "__result__ = wk.path()",
+        owner_session=session_a,
+        owner_call="call-create-keep",
+    )
+    assert keep["ok"] is True, keep
+    keep_path = keep["result"]
+    unrelated = dsh_bridge.run_code(
+        f"g4 = tab_create('/obj', 'geo', name='undo_fail_{suffix}')\n"
+        "w4 = tab_create(g4, 'attribwrangle', name='doomed')\n"
+        "raise RuntimeError('intentional unrelated rollback')",
+        owner_session=session_a,
+        owner_call="call-unrelated-rollback",
+    )
+    assert unrelated["ok"] is False, unrelated
+    assert unrelated["rollback"]["applied"] is True, unrelated
+    assert unrelated["rollback"].get("reconciled_resurrected_identities") in (None, []), unrelated
+    assert hou.node(keep_path) is not None, unrelated
+    prov_keep = dsh_bridge.run_code(
+        f"__result__ = node_provenance({keep_path!r})",
+        owner_session=session_a,
+        owner_call="call-prov-keep",
+    )
+    assert prov_keep["result"]["status"] == "owned_current_session", prov_keep
+    dsh_bridge.run_code(f"delete_node({keep_path!r})", owner_session=session_a)
+    dsh_bridge.run_code(f"delete_node({hou.node(keep_path).parent().path()!r})", owner_session=session_a)
 
     # Simulate a user-created/copied node.  Even a copied/forged durable tag is
     # audit metadata only; a fresh Houdini sessionId is not runtime-owned.

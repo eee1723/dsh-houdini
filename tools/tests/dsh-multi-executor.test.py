@@ -183,14 +183,24 @@ def driver(args):
                 assert status==200 and result['result']==record['houdini_version'],result
             # One render slot per shared registry: a held lease refuses another
             # executor's render fast (before scene validation); release restores it.
+            # Both probes run the full admission path: executor identity header,
+            # prepared one-time request ticket and the execution contract pin.
             from dsh_deployment import FileLease
+            _,slot_health=call(a,'/requests/prepare',{'owner_session':a['task_id']})
+            busy_body={'code':"render_frame('/obj/none')",'owner_session':a['task_id'],'owner_call':'render-slot-probe',
+                'request_ref':slot_health['requestRef'],
+                'expected_contract':{'version':slot_health['executionContractVersion'],'hash':slot_health['verbCatalog']['hash']}}
             held=FileLease(registry/'render.lock')
             try:
-                status,busy=call(a,'/exec',{'code':"render_frame('/obj/none')",'owner_session':a['task_id']})
+                status,busy=call(a,'/exec',busy_body)
                 assert status==200 and not busy['ok'] and 'render slot is busy' in busy['error'],busy
             finally:
                 held.close()
-            status,free=call(a,'/exec',{'code':"render_frame('/obj/none')",'owner_session':a['task_id']})
+            _,slot_health=call(a,'/requests/prepare',{'owner_session':a['task_id']})
+            free_body={'code':"render_frame('/obj/none')",'owner_session':a['task_id'],'owner_call':'render-slot-probe',
+                'request_ref':slot_health['requestRef'],
+                'expected_contract':{'version':slot_health['executionContractVersion'],'hash':slot_health['verbCatalog']['hash']}}
+            status,free=call(a,'/exec',free_body)
             assert status==200 and not free['ok'] and 'render slot is busy' not in free.get('error',''),free
             third=ExecutorRegistration(registry,'d'*32,installation=ROOT,version='22.0.368')
             try:

@@ -487,15 +487,6 @@ def _restore_parm(parm, captured):
     parm.set(payload)
 
 
-def _migrate_public_parm(source, target):
-    """Copy one authored public channel onto the candidate; the old module keeps its own."""
-    if target.isLocked():
-        raise ValueError('candidate public parameter is locked: ' + target.path())
-    captured = _capture_parm(target)
-    _restore_parm(target, _capture_parm(source))
-    return captured
-
-
 def _repoint_expression(consumer, old, new):
     """Rewrite one consumer expression from the old module path to the candidate path.
 
@@ -671,18 +662,25 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             if source is None or source.path() != row['source']:
                 raise ValueError('input source identity changed')
             target_slot = migration['inputs'][row['slot']]
+            # Register the rollback ledger entry BEFORE mutating: a failure raised
+            # by the second mutation of this iteration (or mid-way through any
+            # later restore) must still see this wire in the ledger.
+            moved_inputs.append((row, target_slot))
             old.setInput(row['slot'], None)
             new.setInput(target_slot, source, row['output'])
-            moved_inputs.append((row, target_slot))
         for name in migration['public_parms']:
-            moved_parms.append((new_spares[name], _migrate_public_parm(public_spares[name], new_spares[name])))
+            if new_spares[name].isLocked():
+                raise ValueError('candidate public parameter is locked: ' + new_spares[name].path())
+            captured = _capture_parm(new_spares[name])
+            moved_parms.append((new_spares[name], captured))
+            _restore_parm(new_spares[name], _capture_parm(public_spares[name]))
         for row in consumers:
             consumer = hou.parm(row['parm'])
             if consumer is None or consumer.expression() != row['from']:
                 raise ValueError('consumer expression changed')
             language = consumer.expressionLanguage()
-            consumer.setExpression(row['to'], language)
             repointed.append((consumer, row['from'], language))
+            consumer.setExpression(row['to'], language)
         for name in migration['public_parms']:
             expected = {row['parm'] for row in consumers if row['public'] == name}
             lingering = {p.path() for p in public_spares[name].parmsReferencingThis()} & expected

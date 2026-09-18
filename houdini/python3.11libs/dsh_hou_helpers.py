@@ -155,9 +155,11 @@ def _reconcile_undo_resurrected(ownership_before):
     inner attribvop gets a fresh one). Without this reconcile the resurrected
     subtree stays foreign forever and even delete_node is refused. Eligibility
     is bounded evidence from our own serialized undo: the recorded identity is
-    dead, its exact creation path now holds a node with a registered live
-    ancestor, and that node is not already registered. Anything else stays
-    foreign; paths alone never grant ownership.
+    dead, and the node now sitting at the exact creation path has the recorded
+    node type, is not already registered, and has a registered live ancestor.
+    Undo resurrection does not preserve userData, so the durable owner tag is
+    not evidence here; a same-path replacement of a different node type stays
+    foreign, and paths alone never grant ownership.
     """
     restored = []
     for old_id, entry in ownership_before.items():
@@ -166,6 +168,8 @@ def _reconcile_undo_resurrected(ownership_before):
         path = entry.get('path_at_creation')
         candidate = hou.node(path) if isinstance(path, str) else None
         if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS:
+            continue
+        if entry.get('type') is not None and candidate.type().name() != entry['type']:
             continue
         ancestor = candidate.parent()
         while ancestor is not None and int(ancestor.sessionId()) not in _OWNED_NODE_SESSIONS:
@@ -223,6 +227,7 @@ def _register_owned_node(node) -> None:
             "session": _ACTIVE_OWNER_SESSION,
             "call": _ACTIVE_OWNER_CALL,
             "path_at_creation": item.path(),
+            "type": item.type().name(),
         }
         _OWNED_NODE_SESSIONS[int(item.sessionId())] = entry
         if _CREATION_JOURNAL is not None:

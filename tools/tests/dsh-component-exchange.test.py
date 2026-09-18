@@ -255,6 +255,58 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert hou.parm('/obj/assembly/ctrl/drive') in hou.node('/obj/assembly/newmod').parm('width').parmsReferencingThis()
     assert hou.parm('/obj/assembly/ctrl/drive') not in hou.node('/obj/assembly/oldmod').parm('width').parmsReferencingThis()
     assert hou.node('/obj/assembly/oldmod').parm('width').keyframes(), 'the old module keeps its own channels'
+    # Counterexample: a partial write mid-migration (keys deleted, set raises)
+    # must still be fully rolled back — the rollback ledger entry is registered
+    # BEFORE the mutation, not after it succeeds.
+    run('s=tab_create("/obj/assembly","subnet","oldmod2")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","newmod2")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('feeder2=tab_create("/obj/assembly","box","feeder2")\nconnect("/obj/assembly/feeder2","/obj/assembly/oldmod2")', owner='assembly')
+    run('sink2=tab_create("/obj/assembly","null","sink2",inputs=["/obj/assembly/oldmod2"])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/oldmod2",layout=[{"type":"float","name":"width","default":1}])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/newmod2",layout=[{"type":"float","name":"width","default":9}])', owner='assembly')
+    run('ctrl2=tab_create("/obj/assembly","null","ctrl2")', owner='assembly')
+    run('create_spare_parms("/obj/assembly/ctrl2",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl2",{"drive":"ch(\\"/obj/assembly/oldmod2/width\\")"})', owner='assembly')
+    run('set_keyframes("/obj/assembly/oldmod2",{"width":[{"frame":2,"value":3},{"frame":10,"value":7}]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    real_restore = components._restore_parm
+    partial = {'n': 0}
+    def partial_write_then_raise(parm, captured):
+        partial['n'] += 1
+        if partial['n'] == 1:
+            parm.deleteAllKeyframes()
+            raise RuntimeError('injected partial write')
+        return real_restore(parm, captured)
+    with patch.object(components, '_restore_parm', partial_write_then_raise):
+        failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
+                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:0}},"public_parms":["width"]}})')
+    assert 'injected partial write' in failed, failed
+    assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
+    assert hou.node('/obj/assembly/newmod2').input(0) is None
+    assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
+    assert [k.frame() for k in hou.node('/obj/assembly/oldmod2').parm('width').keyframes()] == [2, 10]
+    assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
+    assert hou.node('/obj/assembly/newmod2').parm('width').eval() == 9
+    assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
+    # Counterexample: a failing restoration is escalated, not silently claimed
+    # complete; every other ledger entry is still restored in reverse order.
+    preview = run('__result__=component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    flaky = {'n': 0}
+    def restore_fails_on_rollback(parm, captured):
+        flaky['n'] += 1
+        if flaky['n'] == 2:
+            raise RuntimeError('injected restore failure')
+        return real_restore(parm, captured)
+    with patch.object(components, '_restore_parm', restore_fails_on_rollback), \
+            patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+        failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
+                           f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:0}},"public_parms":["width"]}})')
+    assert 'component replacement restoration failed' in failed and 'injected restore failure' in failed, failed
+    assert hou.node('/obj/assembly/sink2').input(0).path() == '/obj/assembly/oldmod2'
+    assert hou.node('/obj/assembly/oldmod2').input(0).path() == '/obj/assembly/feeder2'
+    assert 'oldmod2' in hou.parm('/obj/assembly/ctrl2/drive').expression()
+    assert hou.node('/obj/assembly/newmod2').parm('width').keyframes(), 'a failed restoration leaves the residual honestly migrayed'
+    assert hou.node('/obj/assembly/oldmod2').parm('width').keyframes()
     # Expression-driven keyframes are refused at preview, not mid-commit.
     run('s=tab_create("/obj/assembly","subnet","keyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
         'create_spare_parms("/obj/assembly/keyold",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
