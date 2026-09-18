@@ -80,7 +80,7 @@ _HOU_THREAD_ID = threading.get_ident()
 # 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
 # owner_call), expected_contract and a one-time request ticket; job status and
 # cancel are authorized by the owning session only.
-_EXECUTION_CONTRACT_VERSION = 53
+_EXECUTION_CONTRACT_VERSION = 54
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex

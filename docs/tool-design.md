@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 53
+Execution contract version: 54
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、

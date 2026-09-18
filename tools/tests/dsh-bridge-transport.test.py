@@ -139,6 +139,13 @@ try:
         assert post('/jobs/zz/cancel', job_control(body_contract=envelope))[0] == 400, bad_version
     assert post('/exec', admission('pass', body_contract={'version': b._EXECUTION_CONTRACT_VERSION - 1, 'hash': b._VERB_CATALOG_HASH}))[0] == 409
     assert b._work_queue.empty(), 'contract rejections must not queue anything'
+    # Old-Host/new-Bridge mixed combination: the stale envelope must be refused
+    # with ZERO scene modification - the would-be mutation never reaches exec.
+    marker = hou.node('/obj').createNode('null', 'contract_probe_marker')
+    stale = post('/exec', admission("g=tab_create('/obj','geo','never_created')", body_contract={'version': b._EXECUTION_CONTRACT_VERSION - 1, 'hash': b._VERB_CATALOG_HASH}))
+    assert stale[0] == 409, stale
+    assert hou.node('/obj/never_created') is None, 'a stale-contract exec must not touch the scene'
+    marker.destroy()
     assert post('/exec', admission('pass', read_only='tru'))[0] == 400
     assert post('/exec', admission('pass', body_contract={'version': 0, 'hash': 'stale'}))[0] == 409
     status, error = post('/exec', admission('raise Exception("must not execute")'))
