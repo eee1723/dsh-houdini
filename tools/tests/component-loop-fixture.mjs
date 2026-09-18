@@ -366,7 +366,7 @@ export function apply(ctx) {
             const builtWorkspace=path.join(process.env.DSH_COMPONENT_TEST_WORKERS,kill.builtChild,'workspace')
             const survivorChild=surviving[0].childId
             const report={builtChild:kill.builtChild,pid:kill.pid,killError:kill.killError,pidDead:kill.pidDead,
-              killBy:kill.killBy,parentIdle:kill.parentIdle,turnOfStatusCall:parentTurnNo,
+              killBy:kill.killBy,parentIdle:kill.preKill.parentIdle,turnOfStatusCall:parentTurnNo,
               infraEvent:{source:noticeData.source??null,text:JSON.stringify(noticeData).slice(0,500)},
               wake:{noticeEventIndex:noticeIndex,statusCallIndex,...(builtExitWake??{})},
               status:{failed,surviving:surviving[0]},

@@ -300,6 +300,8 @@ try:
         assert report['wake']['statusCallIndex'] > report['wake']['noticeEventIndex'] >= 0, report
         assert report['turnOfStatusCall'] > idle_doc['turn'], \
             ('the status check must run in a NEW parent turn after the idle-turn kill', report['turnOfStatusCall'], idle_doc)
+        assert report['parentIdle']['turn'] == idle_doc['turn'] and report['parentIdle'] == idle_doc, \
+            ('the report must carry the exact idle-turn marker the driver killed against', report.get('parentIdle'), idle_doc)
         notice_in_order = [entry for entry in report['eventOrder']
                            if entry['type'] == 'user/message' and entry.get('plugin') == 'dsh-houdini']
         assert notice_in_order and notice_in_order[0]['index'] == report['wake']['noticeEventIndex'], report['eventOrder']
