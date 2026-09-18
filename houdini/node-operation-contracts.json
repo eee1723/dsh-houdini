@@ -121,6 +121,20 @@
         "Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison."
       ]
     },
+    "object_merge": {
+      "id": "object-merge-space-v1",
+      "node_types": ["object_merge"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["objpath1", "xformtype"],
+      "decisions": [
+        {"id": "transform_space", "any_of": [["xformtype"]], "guidance": "Choose whether the import preserves source object placement or intentionally reads SOP-local coordinates. Cross-object assembly and render proxies normally require Into This Object."}
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/object_merge.html",
+      "notes": [
+        "An object path alone does not preserve assembly placement. For a source under another OBJ, explicitly use Into This Object when the final relationship depends on that OBJ's translate/rotate/scale; local-space import is only valid when ignoring those transforms is intentional.",
+        "Before using a merged proxy for relationship or visual acceptance, compare its bbox with the contributing sources in the same world space and resolve attribute-mismatch warnings. A nonempty render of a local-space proxy is not evidence for the placed assembly."
+      ]
+    },
     "blast": {
       "id": "selection-class-v1",
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/blast.html",

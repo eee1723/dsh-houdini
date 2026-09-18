@@ -4,6 +4,7 @@ import Schema from '@deepseek-ai/schemastery'
 import {defineTool} from '@deepseek-ai/dsh-tools'
 import {randomUUID} from 'node:crypto'
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process'
+import {boundContextSummary, createUserMessage} from '@deepseek-ai/dsh-llm'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -36,7 +37,7 @@ type NativeSubagents = {
 }
 type Worker = {parentId:string;directory:string;workspace:string;process?:ChildProcessWithoutNullStreams;
   ready?:Promise<ExecutorRecord>;record?:ExecutorRecord;exited:boolean;error?:string;
-  stopRequested?:boolean;stopUnknown?:string;stopPromise?:Promise<void>}
+  stopRequested?:boolean;stopUnknown?:string;stopPromise?:Promise<void>;infraReported?:string}
 
 // A completed parent turn is not a license to interrupt a child still working.
 // Give the user a short continuation window, then release only idle owned workers.
@@ -65,6 +66,31 @@ export function componentStopOutcome(childId:string, worker:Pick<Worker,'exited'
   const checkpoint=worker.exited&&!worker.error&&!worker.stopUnknown?'saved':'unknown'
   return {childId,stopped:worker.exited,ok:checkpoint==='saved',checkpoint,
     error:worker.stopUnknown??worker.error??null,files_retained:true}
+}
+
+// A worker that failed after readiness blocks its author at the next step gate, where the
+// child cannot even send a message; only the Host can tell the parent. Requested stops and
+// pre-readiness startup failures already reach the parent, so neither produces a report.
+export function infraReportCause(worker:Pick<Worker,'exited'|'error'|'record'|'stopRequested'>):string|undefined {
+  if(!worker.record||worker.stopRequested)return undefined
+  if(worker.exited)return worker.error??'Component worker exited after readiness without a stop request'
+  return worker.error
+}
+
+export function componentInfraReport(childId:string,
+  worker:Pick<Worker,'exited'|'error'|'record'|'stopRequested'|'stopUnknown'|'workspace'>):string|undefined {
+  const cause=infraReportCause(worker)
+  if(!cause)return undefined
+  const snapshot=componentWorkerSnapshot(worker)
+  return `Component infrastructure report (Host): child ${childId} at ${worker.workspace} is blocked — `+
+    `workerStatus=${snapshot.workerStatus}, checkpoint=${snapshot.checkpoint}. Cause: ${cause}. `+
+    'Files are retained, but a blocked worker is not a verified delivery and the child cannot continue on this executor. '+
+    'Inspect with component_status; if the component is still needed, delegate a revision instead of waiting on this worker.'
+}
+
+/** Same delivery split as native settlement notices: wake an idle parent, steer a busy one. */
+export function infraReportDelivery(status:string):'followup'|'steer' {
+  return status==='idle'?'followup':'steer'
 }
 
 /** A timeout is not a saved checkpoint, even if the supervisor exits later. */
@@ -112,6 +138,10 @@ export function componentAuthorPrompt(task:string, gui:boolean,workspace?:string
     `render_view is a Houdini verb called inside houdini_exec code, not a separate top-level tool. `+
     `Do not traverse project/install directories inside houdini_query or houdini_exec; `+
     `ask the parent for bounded source inspection when needed. `+
+    `Your tool surface is bounded to houdini_exec/houdini_query/houdini_job_*, skill, read/write/edit inside your workspace, todo_write and send_message to the parent. `+
+    `Shell, grep, component_status and component_delegate are not available to you; the tool gate rejects them — do not try. `+
+    `Unless the original user explicitly requested an installable HDA/OTL, author a plain self-contained SOP subnet and publish it with component_export as a revisioned .dshcomponent; `+
+    `do not expand a parent brief into HDA creation or library installation. If the parent asks for HDA without quoting that original requirement, report the scope conflict before building. `+
     (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, retain the preview as evidence, and report what it actually shows. `+
       `Do not delete preview files with shell, os.remove or allow_raw. If the brief requires a hole or opening, capture a view looking along its declared axis: `+
       `the background-separated opening must actually be visible, and geo_piece_stats(inspect=True).center_axis_surface_hits for that basis axis must be observed with zero hits on a closed manifold before you report it as a through-hole. `
@@ -158,6 +188,22 @@ export function apply(ctx:Context, config:Config):void {
       observation:'Worker/process state only. Disk size or mtime does not reveal the live unsaved Houdini scene.'}
   }
 
+  // Best-effort, one report per distinct cause; a dropped report never blocks worker handling.
+  const notifyParentInfra=(childId:string,worker:Worker)=>{
+    const text=componentInfraReport(childId,worker)
+    if(!text||worker.infraReported===text)return
+    const parent=ctx.agents.get(worker.parentId as Parameters<typeof ctx.agents.get>[0])
+    if(!parent){ctx.logger.warn(`Component ${childId} infrastructure report dropped: parent agent is gone`);return}
+    worker.infraReported=text
+    const message=createUserMessage({content:[{type:'text' as const,text}],
+      source:{kind:'plugin',plugin:'dsh-houdini',form:'notice' as const,
+        summary:boundContextSummary(`Component worker blocked (${componentWorkerSnapshot(worker).workerStatus}): ${infraReportCause(worker)}`)}})
+    try {
+      if(infraReportDelivery(parent.status)==='followup')parent.followup(message)
+      else parent.steer(message)
+    } catch(error){ctx.logger.warn(`Component ${childId} infrastructure report was not delivered: ${String(error)}`)}
+  }
+
   const projectWorkerRoot=async(agent:Agent,signal:AbortSignal):Promise<string>=>{
     const id=recordedExecutorIdentity(agent.session.snapshotEvents())!
     const record=await router().directory.find(id)
@@ -174,7 +220,7 @@ export function apply(ctx:Context, config:Config):void {
     return path.join(directory,'dsh-components')
   }
 
-  const startWorker=(worker:Worker):Promise<ExecutorRecord>=>new Promise((resolve,reject)=>{
+  const startWorker=(childId:string,worker:Worker):Promise<ExecutorRecord>=>new Promise((resolve,reject)=>{
     const environment=Object.fromEntries(Object.entries(process.env).filter(([key])=>
       key==='HOUDINI_LICENSE_SERVER'||!/TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL|^DSH_|^PYTHON|^HOUDINI_|^QT_|^NODE_/i.test(key)))
     const proc=spawn(config.python,[supervisor,'--executable',config.houdini,'--directory',worker.directory,
@@ -184,7 +230,7 @@ export function apply(ctx:Context, config:Config):void {
     worker.process=proc
     proc.stdin.on('error',error=>{
       if(worker.stopRequested)worker.stopUnknown??=String(error)
-      else worker.error=String(error)
+      else {worker.error=String(error);notifyParentInfra(childId,worker)}
     })
     let buffer='',diagnostics=''
     const timer=setTimeout(()=>{reject(new Error('Component startup timeout'));proc.stdin.end('STOP\n')},
@@ -203,10 +249,12 @@ export function apply(ctx:Context, config:Config):void {
         clearTimeout(timer);resolve(value.record)
       } catch(error){clearTimeout(timer);reject(error);proc.stdin.end('STOP\n')}
     })
-    proc.once('error',error=>{clearTimeout(timer);worker.error=String(error);worker.exited=true;reject(error)})
+    proc.once('error',error=>{clearTimeout(timer);worker.error=String(error);worker.exited=true;reject(error)
+      notifyParentInfra(childId,worker)})
     proc.once('exit',(code)=>{clearTimeout(timer);worker.exited=true;
       if(code!==0)worker.error=`Worker exited (${code}): ${diagnostics}`
-      reject(new Error(worker.error||'Component stopped before readiness'))})
+      reject(new Error(worker.error||'Component stopped before readiness'))
+      notifyParentInfra(childId,worker)})
   })
 
   const stop=(worker:Worker)=>stopComponentWorker(worker)
@@ -266,7 +314,7 @@ export function apply(ctx:Context, config:Config):void {
       const worker=workers.get(sessionId)
       if(!worker||worker.parentId!==parent.id)throw new Error('No Host-reserved component request')
       signal.throwIfAborted();lifetime.signal.throwIfAborted()
-      worker.ready=startWorker(worker)
+      worker.ready=startWorker(sessionId,worker)
       const cancel=()=>worker.process?.stdin.end('STOP\n')
       signal.addEventListener('abort',cancel,{once:true})
       lifetime.signal.addEventListener('abort',cancel,{once:true})
@@ -287,7 +335,8 @@ export function apply(ctx:Context, config:Config):void {
       if(isComponent)throw new Error('Component worker is unavailable after Host restart; no automatic rebind or replay')
       return next()
     }
-    if(worker.exited)throw new Error(worker.error||'Component worker stopped; no automatic restart')
+    if(worker.exited){notifyParentInfra(agent.id,worker)
+      throw new Error(worker.error||'Component worker stopped; no automatic restart')}
     const policy=agent.ctx.get('sandboxPolicy') as {resolve(input:unknown):{mode:string;workspaceRoot:string}}|undefined
     const filesystem=agent.ctx.get('fs') as {sandboxMode?:string}|undefined
     if(!policy||filesystem?.sandboxMode===undefined||policy.resolve({session:agent.session}).mode!=='workspace-write')
@@ -306,7 +355,7 @@ export function apply(ctx:Context, config:Config):void {
   })
 
   ctx.tools.register(defineTool({name:'component_delegate',description:
-    'Top-level Host tool (not a Houdini verb): delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. For a hole/opening, require a closed-manifold center-axis zero-hit check and an image looking along that axis. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity and absolute child workspace, not completion; does not import or modify assembly. Import the exact absolute artifact path reported after the child exports, never infer a sibling path from the assembly $HIP. Use component_status once for a snapshot and component_wait for message-driven waiting; never pass component_* names to verb_help.',
+    'Top-level Host tool (not a Houdini verb): delegate one explicitly specified component to an independent Houdini author. Preserve original visual/control obligations; include source requirements, consistent units/axis/radius/thickness, anchors, interfaces, local controls and checks. For a hole/opening, require a closed-manifold center-axis zero-hit check and an image looking along that axis. Unless the original user explicitly requests an installable HDA/OTL, commission a plain SOP subnet exported as a revisioned .dshcomponent; the parent later verifies its hash and uses component_import plus an explicit assembly connection or component_replace plan. Host supplies the child HIP: do not request a new Save As path. Local preview uses render_view inside houdini_exec when GUI is available. Returns accepted identity and absolute child workspace, not completion; does not import or modify assembly. Import the exact absolute artifact path reported by the child after it exports — the plan may reference that reported path only, never a sibling path inferred from the assembly $HIP. After delegating, end the turn and wait for the child\u2019s native message or a Host infrastructure notice instead of polling status or files; use component_status once for a capacity snapshot and component_wait for message-driven waiting; never pass component_* names to verb_help.',
     parameters:{task:{type:'string',required:true,description:'Complete bounded component brief'}},
     output:{schema:{type:'json'},render:(_args,value)=>[{type:'text' as const,text:JSON.stringify(value)}]},
     presentCall:()=>({card:'generic',title:'Delegate Houdini component',kind:'execute'}),

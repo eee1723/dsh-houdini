@@ -139,9 +139,16 @@ function analyzeTrace(file) {
       }
     } else if (event.type === 'request/header') {
       const system = event.data?.header?.system || '';
-      const hash = digest(system);
-      if (system && !seenCapabilityHashes.has(hash)) {
-        seenCapabilityHashes.add(hash);
+      const availableTools = (event.data?.header?.tools || [])
+        .map((tool) => tool?.name || tool?.function?.name)
+        .filter(Boolean)
+        .sort();
+      // Component-preview V3 traces may keep the prompt outside the header
+      // while retaining the exact top-level tool surface.  That surface is
+      // still capability evidence when `system` is empty.
+      const snapshotHash = digest(JSON.stringify({ system, availableTools }));
+      if ((system || availableTools.length) && !seenCapabilityHashes.has(snapshotHash)) {
+        seenCapabilityHashes.add(snapshotHash);
         const listedSkills = [...system.matchAll(/^- `([^`]+)`: /gm)].map((match) => match[1]);
         capabilitySnapshots.push({
           seq: event.seq,
@@ -150,15 +157,12 @@ function analyzeTrace(file) {
           step: event.data?.step,
           model: event.data?.header?.config?.model || null,
           systemChars: system.length,
-          systemHash: hash,
+          systemHash: digest(system),
           personaLines: system.split('\n').filter(line => /^You are (?:a|an) /.test(line)).slice(0, 4),
           mentionedCatalogVerbs: catalogNames.filter(
             (name) => new RegExp(`\\b${name}\\b`).test(system),
           ),
-          availableTools: (event.data?.header?.tools || [])
-            .map((tool) => tool?.name || tool?.function?.name)
-            .filter(Boolean)
-            .sort(),
+          availableTools,
           // Some dsh runtimes expose the skill loader without embedding a skill catalog in
           // the request header. `[]` would falsely mean "no skills were available"; null means
           // "the header did not declare availability". Actual successful loads are reported
@@ -328,6 +332,20 @@ function analyzeTrace(file) {
     completionRisks.push({
       code: 'render_without_successful_vision',
       detail: 'Render evidence exists, but no native image attachment delivery or successful legacy image inspection was recorded.',
+    });
+  }
+  const renderWarningSteps = renderEvidence.filter((item) => (
+    item.ok !== false
+    && (
+      (Array.isArray(item.result?.warnings) && item.result.warnings.length > 0)
+      || Number(item.result?.warnings_count) > 0
+    )
+  )).map((item) => item.index);
+  if (renderWarningSteps.length) {
+    completionRisks.push({
+      code: 'render_with_warnings',
+      detail: 'At least one retained render completed with warnings; file/pixel success does not satisfy the render completion gate.',
+      steps: [...new Set(renderWarningSteps)],
     });
   }
   if (nativeImages.some(i=>i.delivered)) completionRisks.push({

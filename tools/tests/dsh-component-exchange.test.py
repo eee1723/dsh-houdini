@@ -18,6 +18,12 @@ def run(code, owner='source', ok=True):
     return result.get('result')
 
 
+def fail_with(code, owner='assembly'):
+    result = b.run_code(code, owner_session=owner)
+    assert result['ok'] is False, result
+    return str(result.get('error'))
+
+
 if len(sys.argv) > 1 and sys.argv[1] != '--parameters':
     mode, directory = sys.argv[1:3]
     folder = Path(directory)
@@ -166,6 +172,101 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     with patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         run(f'component_replace("/obj/assembly/renamed","/obj/assembly/replacement",dry_run=False,expected_plan={preview["plan"]!r})', owner='assembly', ok=False)
     assert hou.node('/obj/assembly/consumer').input(0) == root
+    # A: expected_contract pins the candidate to the contract recorded at import.
+    accepted = run(f'__result__=component_import("/obj/assembly",{file!r},{exported["sha256"]!r},"rev1",trusted=True)', owner='assembly')
+    stale = fail_with('component_replace("/obj/assembly/renamed","/obj/assembly/rev1",'
+                      'expected_contract={"module_id":"part","revision":2})')
+    assert 'stale or unexpected' in stale and 'revision 2' in stale and 'revision 1' in stale, stale
+    for bad_contract in ({'module_id': 'part'}, {'module_id': 'part', 'revision': 0},
+                         {'module_id': 'part', 'revision': '1'}, {'module_id': 'part', 'revision': 1, 'units': 'm'}):
+        assert 'expected_contract' in fail_with(
+            f'component_replace("/obj/assembly/renamed","/obj/assembly/rev1",expected_contract={bad_contract!r})'), bad_contract
+    run('s=tab_create("/obj/assembly","subnet","handmade")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    unknown = fail_with('component_replace("/obj/assembly/renamed","/obj/assembly/handmade",'
+                        'expected_contract={"module_id":"part","revision":1})')
+    assert 'provenance is unknown' in unknown, unknown
+    # C: a stale commit names the drifted side instead of a generic mismatch.
+    preview = run('__result__=component_replace("/obj/assembly/renamed","/obj/assembly/rev1")', owner='assembly')
+    assert set(preview['plan']['parts']) == {'old', 'candidate', 'wires', 'migration'}
+    run('set_parms("/obj/assembly/renamed/shape",{"sizez":4})', owner='assembly')
+    drift = fail_with(f'component_replace("/obj/assembly/renamed","/obj/assembly/rev1",dry_run=False,expected_plan={preview["plan"]!r})')
+    assert 'local fork' in drift and 'no wires changed' in drift, drift
+    assert hou.node('/obj/assembly/consumer').input(0) == root
+    preview = run('__result__=component_replace("/obj/assembly/renamed","/obj/assembly/rev1")', owner='assembly')
+    run('set_parms("/obj/assembly/rev1/shape",{"sizey":5})', owner='assembly')
+    drift = fail_with(f'component_replace("/obj/assembly/renamed","/obj/assembly/rev1",dry_run=False,expected_plan={preview["plan"]!r})')
+    assert 'candidate modified' in drift, drift
+    preview = run('__result__=component_replace("/obj/assembly/renamed","/obj/assembly/rev1")', owner='assembly')
+    run('late=tab_create("/obj/assembly","null","late",inputs=["/obj/assembly/renamed"])', owner='assembly')
+    drift = fail_with(f'component_replace("/obj/assembly/renamed","/obj/assembly/rev1",dry_run=False,expected_plan={preview["plan"]!r})')
+    assert 'consumers changed' in drift, drift
+    # A+C positive: matching contract and fresh plan commit together, migrating both consumers.
+    preview = run('__result__=component_replace("/obj/assembly/renamed","/obj/assembly/rev1")', owner='assembly')
+    final = run(f'__result__=component_replace("/obj/assembly/renamed","/obj/assembly/rev1",dry_run=False,'
+                f'expected_plan={preview["plan"]!r},expected_contract={{"module_id":"part","revision":1}})', owner='assembly')
+    assert final['contract']['module_id'] == 'part' and final['contract']['revision'] == 1
+    assert hou.node('/obj/assembly/consumer').input(0).path() == accepted['node']
+    assert hou.node('/obj/assembly/late').input(0).path() == accepted['node']
+    # B: explicit migration plan — input wires, public values/keys, parameter consumers.
+    run('s=tab_create("/obj/assembly","subnet","oldmod")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","newmod")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)', owner='assembly')
+    run('feeder=tab_create("/obj/assembly","box","feeder")\nconnect("/obj/assembly/feeder","/obj/assembly/oldmod")', owner='assembly')
+    run('sink=tab_create("/obj/assembly","null","sink",inputs=["/obj/assembly/oldmod"])', owner='assembly')
+    run('create_spare_parms("/obj/assembly/oldmod",layout=[{"type":"float","name":"width","default":1}])', owner='assembly')
+    uncovered = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod")')
+    assert 'not covered by the migration plan' in uncovered, uncovered
+    run('ctrl=tab_create("/obj/assembly","null","ctrl")', owner='assembly')
+    run('create_spare_parms("/obj/assembly/ctrl",layout=[{"type":"float","name":"drive","default":0}])\n'
+        'set_parms("/obj/assembly/ctrl",{"drive":"ch(\\"/obj/assembly/oldmod/width\\")"})', owner='assembly')
+    hidden = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0}})')
+    assert 'outside the declared migration plan' in hidden, hidden
+    missing = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})')
+    assert 'candidate lacks the declared public parameter' in missing, missing
+    run('create_spare_parms("/obj/assembly/newmod",layout=[{"type":"float","name":"width","default":9}])', owner='assembly')
+    run('blocker=tab_create("/obj/assembly","box","blocker")\nconnect("/obj/assembly/blocker","/obj/assembly/newmod")', owner='assembly')
+    occupied = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})')
+    assert 'already connected' in occupied, occupied
+    run('disconnect_input("/obj/assembly/newmod",index=0)', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    assert preview['migration']['inputs'][0]['slot'] == 0 and len(preview['migration']['parameter_consumers']) == 1
+    drift = fail_with('component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,'
+                      f'expected_plan={preview["plan"]!r},migration={{"inputs":{{0:1}},"public_parms":["width"]}})')
+    assert 'migration inputs/parameters/consumers changed after preview' in drift, drift
+    run('set_parms("/obj/assembly/oldmod",{"width":3})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    with patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+        fail_with(f'component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,expected_plan={preview["plan"]!r},'
+                  'migration={"inputs":{0:0},"public_parms":["width"]})')
+    assert hou.node('/obj/assembly/oldmod').input(0).path() == '/obj/assembly/feeder'
+    assert hou.node('/obj/assembly/newmod').input(0) is None
+    assert 'oldmod' in hou.parm('/obj/assembly/ctrl/drive').expression()
+    assert hou.node('/obj/assembly/newmod').parm('width').eval() == 9
+    assert hou.node('/obj/assembly/sink').input(0).path() == '/obj/assembly/oldmod'
+    run('set_keyframes("/obj/assembly/oldmod",{"width":[{"frame":1,"value":2},{"frame":12,"value":5}]})', owner='assembly')
+    preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    final = run(f'__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,expected_plan={preview["plan"]!r},'
+                'migration={"inputs":{0:0},"public_parms":["width"]})', owner='assembly')
+    assert final['migrated'] == {'inputs': 1, 'public_parms': ['width'], 'parameter_consumers': 1}
+    keys = hou.node('/obj/assembly/newmod').parm('width').keyframes()
+    assert [k.frame() for k in keys] == [1, 12] and [k.value() for k in keys] == [2, 5]
+    assert hou.node('/obj/assembly/newmod').input(0).path() == '/obj/assembly/feeder'
+    assert hou.node('/obj/assembly/oldmod').input(0) is None
+    assert 'newmod' in hou.parm('/obj/assembly/ctrl/drive').expression()
+    assert hou.parm('/obj/assembly/ctrl/drive') in hou.node('/obj/assembly/newmod').parm('width').parmsReferencingThis()
+    assert hou.parm('/obj/assembly/ctrl/drive') not in hou.node('/obj/assembly/oldmod').parm('width').parmsReferencingThis()
+    assert hou.node('/obj/assembly/oldmod').parm('width').keyframes(), 'the old module keeps its own channels'
+    # Expression-driven keyframes are refused at preview, not mid-commit.
+    run('s=tab_create("/obj/assembly","subnet","keyold")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
+        'create_spare_parms("/obj/assembly/keyold",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
+    run('s=tab_create("/obj/assembly","subnet","keynew")\nb=tab_create(s,"box","shape")\nsop_set_output(b,output_index=0)\n'
+        'create_spare_parms("/obj/assembly/keynew",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
+    run('keysink=tab_create("/obj/assembly","null","keysink",inputs=["/obj/assembly/keyold"])', owner='assembly')
+    expression_key = hou.Keyframe()
+    expression_key.setFrame(1)
+    expression_key.setExpression('1 + $F', hou.exprLanguage.Hscript)
+    hou.parm('/obj/assembly/keyold/speed').setKeyframe(expression_key)
+    refused = fail_with('component_replace("/obj/assembly/keyold","/obj/assembly/keynew",migration={"public_parms":["speed"]})')
+    assert 'keyframes driven by expressions are not migrated' in refused, refused
     run('sop_set_output("/obj/source/module/shape",output_index=1)')
     multi_file = str(Path(folder) / 'multi.dshcomponent')
     multi_contract = {**contract, 'outputs': [0, 1]}

@@ -57,22 +57,22 @@
 
 - 状态：待验证
 - 现状：来源锚、控制变化/覆盖摘要和接口/精确变换测量已有；模型仍可能用bbox或面数通过声称整体连接、均匀变换或全部控制正确。
-- 下一步：新加载合同41验公共Output逐层发布、空Pack拒绝、独立HDA实例与默认/边界参数；核对“要求→控制→实际输出/关系→恢复→复验”。验证原生方法失败后的同层诊断、源码重建一致性及局部pass不外推全局；不新增第二份可写完成证书。回滚后原生初始化后代foreign的线索仍需隔离因果复现，不能以放宽ownership消除。
+- 下一步：新加载合同41验公共Output逐层发布、空Pack拒绝、独立HDA实例与默认/边界参数；核对“要求→控制→实际输出/关系→恢复→复验”。验证原生方法失败后的同层诊断、源码重建一致性及局部pass不外推全局；不新增第二份可写完成证书。回滚后原生初始化后代foreign已隔离复现并修复（undo复活子节点换新id，Bridge回滚按有界证据重新登记，H21/H22正反例在node-ownership回归），新加载与自然清理路径未验，不能以放宽ownership消除。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[变换反例](../tools/tests/dsh-modeling-identity.test.py)。
 
 ### H-05 组件协作与质量成本（PL/IN/CX/EV）
 
 - 状态：待验证
-- 现状：候选component-host已接原生可续跑子任务、独立worker和pre-step绑定；H21/H22有真实DSH无模型费用的导出/导入/总控恢复及GUI预览入口。源码菜单已收敛为单个Open Workspace：仅新开已保存HIP、无自有前端时显式选择组件预览，普通为默认；H21/H22隔离GUI验证首次选择与重复唤起同一Host，普通/受管运行时本身尚未合并，用户live正式加载未验。首次预览的独立Python/当前Houdini路径可确定时自动采用；CLI只信显式候选，其余路径仍需选择，live首次配置未验。预览委派按当前绑定HIP/现场/cwd核对后在同目录建dsh-components，主工作区可访问子文件，不声称文件系统主子隔离；现有live Host不会因源码编辑自动加载新策略。文件工具反例要求工作区不在平台TEMP（该区是DSH共同可写例外），组件要求workspace-write并禁shell/再委派。片段支持subnet/多出口，replace只迁移锁定计划的输出接线并保旧。Host在父简报前注入权威workspace/HIP并返回同一字段，component_status明确liveSceneState未观察且磁盘状态不能替代现场；新代码在主任务正常完成且主子空闲30秒后兜底释放自有worker，旧live Host未加载该改动。上游cwd候选已在[独立fork](https://github.com/eee1723/deepseek-harness/tree/codex/component-child-preparation)的02f873ac0f80ceb8463034053af0db221ddd790c，可远端读取但未安装/发布；官方原版有零子模型执行拒绝反例。
-- 下一步：跨机接续须从上游组件cwd候选的固定修订构建，不能以本仓库源码build、官方同版本包或旧live Host替代。相同DeepSeek Flash的父子自然回归已暴露Tube半径轴语义误读、顶点最小半径伪证和前视图孔误判；合同52已提供节点卡恒定语义提示、闭合流形中心轴表面交点观察、批量verb_help及component_wait。H21/H22定向HOM与无模型双组件API路径已通过，隔离单环自然任务也已完成子片段导出、父端hash/导入复验、控制恢复、沿孔轴可见开口、总装HIP保存和worker已保存停止；其余完整双组件、未见要求变化、主子总成本与同信息单作者对照仍待验。当前自然轨迹还发现父作者从自身$HIP猜子文件路径导致一次导入失败，并把七次scalar verb_help错报为一次batch；交付合同现要求子作者提供完整绝对导出文件名，下一轮核对是否自然遵守。原生图像确实送入模型，但颜色自述与像素不符，Trace没有独立语义识图记录，后续视觉结论须人工对照原图。Host中断后旧session受管恢复仍需带checkpoint hash/session ownership的新executor恢复协议，不能靠重绑或认领既有节点；完整约束/修订失效、输入/外部依赖迁移、手改/消费者迁移、渲染单槽及C5质量成本仍待验。
+- 现状：候选component-host已接原生可续跑子任务、独立worker和pre-step绑定；H21/H22有真实DSH无模型费用的导出/导入/总控恢复及GUI预览入口。菜单为单个Open Workspace，仅新开已保存HIP、无自有前端时显式选Component preview，普通为默认；H21/H22隔离GUI验证首次选择与重复唤起同一Host，普通/受管运行时尚未合并，用户live正式加载未验。首次预览的独立Python/当前Houdini路径可确定时自动采用；CLI只信显式候选，其余路径仍需选择，live首次配置未验；现有live Host不会因源码编辑自动加载新策略。预览在绑定HIP目录建dsh-components，主子可互访文件，不声称文件系统隔离；文件工具反例要求工作区不在平台TEMP（该区是DSH共同可写例外），组件要求workspace-write并禁shell/再委派。修订接纳门、显式migration计划、plan失配分类、阻塞短报、渲染单槽均已实现并有隔离H21/H22回归，机制细节见[组件协作](component-collaboration.md)；Host在父简报前注入权威workspace/HIP并返回同一字段，新代码在主任务正常完成且主子空闲30秒后兜底释放自有worker，旧live Host未加载该改动。上游cwd候选固定于eee1723/deepseek-harness的codex/component-child-preparation@02f873ac（0.1.5-rc.2基线+1提交），本机E:/deepseek-harness已构建该修订CLI；未安装/发布，官方原版有零子模型执行拒绝反例。自然任务已暴露两类集成失败：test21虽跑通委派/片段交换，却因轴向错误、穿板、绝对Object Merge引用和遗留warning/probe导致质量门失败；test22的Y-up/子工具面/四轮控制已正向收敛，但父作者未读协作reference，自行把普通组件升级为HDA库并裸install，受管export/import/replace零采用，约四分之一Houdini调用硬失败。test22真实场景world bbox正确，临时装配预览却因Object Merge未保留OBJ变换而显示轮子穿到板上，且带wheel_id mismatch warning；说明数值场景与视觉proxy必须分别验同一数据流。
+- 下一步：本仓库的源码分支、构建产物或官方0.1.5-rc.2不能替代该候选；跨机接续须从上游组件cwd候选的固定修订构建，升级基线是独立资格重验，不随普通开发rebase。用新加载skill复验未见两组件任务：父作者必须先读协作reference，默认普通subnet→component_export→hash/revision→component_import→槽位接纳，不得自行升级HDA或裸安装；明确HDA交付任务作为反例。集成输出须在同一坐标系实测关系，跨OBJ代理显式保留world变换，proxy bbox与源world bbox一致且warning-free后才可读图；原生图像确实送入模型，但颜色自述与像素不符，Trace没有独立语义识图记录，后续视觉结论须人工对照原图。继续验异常worker展示、局部图、公共控制、输入/外部依赖迁移、手改/消费者迁移、迁移表达式/keys、修订失效和GUI双worker渲染互斥；Host中断后旧session受管恢复仍需带checkpoint hash/session ownership的新executor恢复协议，不能靠重绑或认领既有节点。未见要求变化、主子总成本与同信息单作者对照：C5以固定模型/版本/信息/质量门比较单作者与多作者的主子总请求、首次正确组件、HDA/打包尾段、失败/rollback和最终缺陷，不用并行数量或单一墙钟证明收益。
 - 移除条件：C1～C4在隔离H21/H22与获授权真实路径完成；C5以固定模型/版本/信息/总预算比较整体单作者、聚焦单作者与独立多作者，覆盖简单任务反例，报告主子总成本/质量/返工分布并明确采用范围。压缩策略另测；不以加预算或子作者自评核销。
 - 入口：[组件协作与完成门](component-collaboration.md)、[执行端路由](../src/executor-routing.ts)、[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md)、[集成反例](../tools/tests/dsh-module-integration.test.py)。
 
 ### H-06 Trace判据与接口发现误差（QA-03、API、OBS）
 
 - 状态：待验证
-- 现状：公开UI与HDA实例/消费者/隔离加载链有正向证据，尺寸/Cd/BOM判据仍待自然采用。工具开发规范已区分工程目录/独立package/已有包授权、HDA修改层及运行态来源；完整package发现与加载验证未实现。H22预览已复核、H21不变；隔离GUI退出和临时目录ACL问题待诊断，不扩大权限。读图与声明仍需语义复核。
+- 现状：公开UI与HDA实例/消费者/隔离加载链有正向证据，尺寸/Cd/BOM判据仍待自然采用。工具开发规范已区分工程目录/独立package/已有包授权、HDA修改层及运行态来源；完整package发现与加载验证未实现。H22预览已复核、H21不变；隔离GUI退出和临时目录ACL问题待诊断，不扩大权限。test22复现Trace误判：空system的V3 request/header丢失实际工具面、`divisions`误命中vision todo、中文总控/联动/装配合同漏识别、带warning的render没有独立风险；提取器与确定性fixture已修，旧trace重提取和新session展示仍待验。
 - 下一步：用H-01确认版本的新轨迹核对引用/诊断与参数UI自然触发；按[共享控制设计](parameter-controls.md)验先UI/后UI、真正窄面板和总控选参。HDA按[生命周期回归](../tools/tests/dsh-hda-lifecycle.test.py)扩展复杂嵌套/外部回调边界与未见自然任务，按[公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)验新实例/多端口与实际控制关系；不维护某次trace资产，不将模型自然采用视为机制回归已证明。按[工具验收矩阵](../skills/houdini-tool-development/references/evidence-and-validation.md)补Shelf/快捷键；benchmark封存指纹不符须获重封授权，不降低门禁或宣称live已更新。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。

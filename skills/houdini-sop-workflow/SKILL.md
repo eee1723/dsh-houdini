@@ -22,7 +22,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 ## 执行循环
 
-1. **方法与原型**：选择曲线/截面/开放表面/实体/实例等表示。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
+1. **方法与原型**：以人工易接手和构建/cook/修改/验证的整体效率选择曲线/截面/开放表面/实体/实例等表示，按需混合原生SOP与VEX。涉及重复资产、VEX职责划分或构造选型时，先读[建模方法](references/modeling-methods.md#1-从表示和构造选方法)。重复资产必须走Copy，保留独立可替换源；VEX按功能与输入输出拆分，不能把整个多功能模块塞进一个Wrangle。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
 2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
 3. **骨架门**：复杂装配先用低成本整体代理确定尺度、方向、接口和共享控制，再选择当前风险或质量最关键的模块。视觉交付已在范围内且GUI可用时，尽早看整体或明确侧向图；主要比例/接口未定不精雕独立零件。用户只要单个部件时不扩建整物。
 4. **模块门**：把当前焦点模块当作独立的局部交付任务，不只是一个代码批次：明确相关原始要求、输入/局部坐标、输出、必须看清的细节和局部完成条件，按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)推进。一个模块可用多个小build_module，空CTRL/helper用tab_create；先验证单元及附属件连接再复制。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，不为清warning丢掉部件身份；局部条件满足或遇到明确依赖阻塞就回到集成，不无限堆细节。
@@ -54,6 +54,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 - geo_attrib_stats读驱动属性；复制前用unique=True检查模板P/id的精确tuple唯一性及预期基数，bbox不变不能排除重叠复制。geo_point_spacing只测有序点弦长。test_controls位移/变换误差要求稳定唯一id_attrib和相同面连接；选中件及其附属件查同一预期变换，未选中件查identity，见[模块合同](references/module-quality-contracts.md)。混合网格点均值不是设计中心，native/packed不靠P-only。
 - Copy to Points承担实例变换，模板orient/scale与原型局部轴需一致；Copy/Merge明确属性class和传播。带状物用有面积截面，非刚性成形通常先作用中心线/低维结构再生成厚度。细节见[方法参考](references/sop-patterns.md)。
 - 需要选择基础成形方法、局部倒角/分组或高细节细化时读[建模方法与细节预算](references/modeling-methods.md)。优先让原生SOP承担成形/复制，VEX承担锚点、属性和必要的自定义算法；不用纯VEX比例或节点数评分，但不能因调试失败悄悄放弃用户指定的方法/结构。用户要求多agent模块协作时读[模块协作](references/module-design-collaboration.md)：显式可用的component_delegate走独立工程候选，否则仅并行设计或单作者；不借allow_foreign或共享身份绕过ownership。
+- 跨OBJ汇总实际装配时显式处理Object Merge坐标空间；要保留场景放置就使用`Into This Object`等价模式，local-space合并只在有意忽略OBJ变换时成立。用于关系或渲染的代理必须让合并bbox与源world bbox一致并处理warning，否则proxy不是交付物证据。
 - 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
 - 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。直接查看工具结果中的原生图像附件，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
 - 用户屏幕异常才用viewport_screenshot；保留持久__dsh_houdini_*服务。纯网络交付或无GUI不强制追图，视觉未验证则明确报告。

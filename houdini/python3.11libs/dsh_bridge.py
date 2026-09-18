@@ -1222,6 +1222,7 @@ def run_code(code: str, allow_raw: str | None = None,
                             applied = False
                             rollback_error = None
                             removed_residuals = []
+                            reconciled = []
                             try:
                                 labels = list(hou.undos.undoLabels())
                                 if labels and labels[0] == label:
@@ -1230,6 +1231,10 @@ def run_code(code: str, allow_raw: str | None = None,
                                     dsh_hou_helpers._OWNED_NODE_SESSIONS.clear()
                                     dsh_hou_helpers._OWNED_NODE_SESSIONS.update(ownership_before)
                                     removed_residuals = dsh_hou_helpers._cleanup_failed_creations(created_nodes, ownership_before)
+                                    # Undo resurrects deleted nodes with their original ids but gives
+                                    # recreated native children fresh ones; re-register those with the
+                                    # bounded evidence of the pre-batch record.
+                                    reconciled = dsh_hou_helpers._reconcile_undo_resurrected(ownership_before)
                             except BaseException as undo_error:
                                 rollback_error = str(undo_error)
                             rollback = {
@@ -1246,6 +1251,8 @@ def run_code(code: str, allow_raw: str | None = None,
                                 rollback["error"] = rollback_error
                             if removed_residuals:
                                 rollback['removed_created_residuals'] = removed_residuals
+                            if reconciled:
+                                rollback['reconciled_resurrected_identities'] = reconciled
                             error = original_error
                     else:
                         try:

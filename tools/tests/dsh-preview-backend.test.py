@@ -12,6 +12,14 @@ def render(rop,picture=None,frame=None,**kwargs):
     return {'fresh':True,'file_bytes':1,'errors':[],'output':picture}
 h.render_frame=render
 h.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
+warning_gate=h._render_validation(
+    {'fresh':True,'file_bytes':1,'errors':[]},
+    {'presentation':{'needs_review':False}},
+    False,
+    warnings=['attribute mismatch'],
+)
+assert not warning_gate['ok'] and warning_gate['file_status']=='passed'
+assert 'cannot pass acceptance' in warning_gate['errors'][-1]
 g=hou.node('/obj').createNode('geo','backend_fixture');box=g.createNode('box')
 try:
  with tempfile.TemporaryDirectory() as tmp:
@@ -34,6 +42,15 @@ try:
         assert r.evalParm('gamma')==1
     assert r.evalParm('forceobjects')==result['proxy']
     assert r.evalParm('alights')=='' and r.evalParm('excludelights')=='*'
+    tagged=g.createNode('attribwrangle','tagged')
+    tagged.setInput(0,box);tagged.parm('class').set('point');tagged.parm('snippet').set('s@test_id="tagged";')
+    plain=g.createNode('box','plain');plain.parm('tx').set(2)
+    warning_merge=g.createNode('merge','warning_merge');warning_merge.setInput(0,tagged);warning_merge.setInput(1,plain)
+    warning_merge.cook(force=True)
+    assert warning_merge.warnings(), 'fixture must produce an attribute mismatch warning'
+    warned=h.render_view(warning_merge,picture=tmp+'/warning.png')
+    assert not warned['ok'] and warned['file_status']=='passed' and warned['pixel_status']=='passed'
+    assert warned['warnings'] and 'cannot pass acceptance' in warned['errors'][-1]
 finally:
  hou.isUIAvailable=old_ui;h.render_frame=old_render;h.render_check=old_check
  g.destroy()

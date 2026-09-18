@@ -109,6 +109,9 @@ try:
     assert result['control_summary']['cases'][0]['output_data_changed'] is False
     rejects(lambda:h.test_controls(ctrl,out,[{'id':'no_response','values':{'unused':2},'expectations':[
         {'metric':'bounds_size','axis':0,'delta':[-1,1]}]}]),'non-zero expected response')
+    too_many=[{'metric':'bounds_size','axis':0,'delta':[.1,.3]} for _ in range(17)]
+    rejects(lambda:h.test_controls(ctrl,out,[{'id':'split_me','values':{'length':1.2},
+        'expectations':too_many}]),'split a larger check into multiple test cases with the same control values')
     # Local selection: avoid a global bbox hiding the expected module response.
     tests_group=[{'id':'local','values':{'length':1.2},'expectations':[
       {'metric':'bounds_center','group':'b_surface','axis':0,'delta':[.199,.201]}]}]

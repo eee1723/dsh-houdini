@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import difflib
 import fnmatch
+import functools
 import hashlib
 import math
 import os
@@ -46,6 +47,19 @@ from typing import Any
 import hou
 import dsh_cook_control as _cook_control
 import toolutils
+
+
+def _with_render_slot(fn):
+    """Serialize render_frame/render_view across shared-host executors (fail-fast)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        import dsh_executor_registry
+        slot = dsh_executor_registry.render_slot()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            dsh_executor_registry.release_render_slot(slot)
+    return wrapper
 
 
 class CheckpointError(RuntimeError):
@@ -131,6 +145,41 @@ def _cleanup_failed_creations(created, ownership_before):
             node.destroy()
             _OWNED_NODE_SESSIONS.pop(node_id, None)
     return removed
+
+
+def _reconcile_undo_resurrected(ownership_before):
+    """Re-register native descendants resurrected by our own undo with fresh ids.
+
+    Houdini undo resurrects a deleted node with its original sessionId but gives
+    recreated native init-script children NEW ids (probe: wrangle keeps its id,
+    inner attribvop gets a fresh one). Without this reconcile the resurrected
+    subtree stays foreign forever and even delete_node is refused. Eligibility
+    is bounded evidence from our own serialized undo: the recorded identity is
+    dead, its exact creation path now holds a node with a registered live
+    ancestor, and that node is not already registered. Anything else stays
+    foreign; paths alone never grant ownership.
+    """
+    restored = []
+    for old_id, entry in ownership_before.items():
+        if hou.nodeBySessionId(old_id) is not None:
+            continue
+        path = entry.get('path_at_creation')
+        candidate = hou.node(path) if isinstance(path, str) else None
+        if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS:
+            continue
+        ancestor = candidate.parent()
+        while ancestor is not None and int(ancestor.sessionId()) not in _OWNED_NODE_SESSIONS:
+            ancestor = ancestor.parent()
+        if ancestor is None:
+            continue
+        _OWNED_NODE_SESSIONS[int(candidate.sessionId())] = dict(entry)
+        if _CREATION_JOURNAL is not None:
+            _CREATION_JOURNAL.add(int(candidate.sessionId()))
+        candidate.setUserData(_TASK_OWNER_KEY, entry.get('session'))
+        if entry.get('call'):
+            candidate.setUserData(_TASK_OWNER_CALL_KEY, entry['call'])
+        restored.append(candidate.path())
+    return restored
 
 
 def _set_execution_owner(session_id: str | None, call_id: str | None):
@@ -4719,7 +4768,9 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None) -> dict:
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
-    tests=[{id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}]}]。
+    tests为1..16个case；每个case是
+    {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}]}，
+    每个case最多16个expectations；同一扰动的大检查按相同values拆成多个case。
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
     point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
     max_point_displacement/mean_point_displacement需id_attrib稳定唯一point ID及相同面连接；
@@ -5220,8 +5271,9 @@ def _resolve_output_path(path, *, frame, default_subdir="render") -> str:
     return target.replace('\\', '/')
 
 
-def _render_validation(rendered, check, stale, pixel_supported=True) -> dict:
+def _render_validation(rendered, check, stale, pixel_supported=True, warnings=None) -> dict:
     errors = list(rendered.get('errors') or [])
+    warnings = list(warnings or [])
     file_ok = bool(rendered.get('fresh') and rendered.get('file_bytes') and not errors)
     if not file_ok and not errors:
         errors.append('render output missing, empty or stale on disk')
@@ -5239,6 +5291,11 @@ def _render_validation(rendered, check, stale, pixel_supported=True) -> dict:
             pixel_status = 'passed'
     if stale:
         errors.append('target/proxy changed during rendering; recapture evidence')
+    if warnings:
+        errors.append(
+            'render source has cook warnings; image retained for diagnosis but cannot pass acceptance: '
+            + '; '.join(dict.fromkeys(str(item) for item in warnings))
+        )
     return {'ok': not errors, 'errors': errors, 'file_status': 'passed' if file_ok else 'failed',
             'pixel_status': pixel_status, 'semantic_status': 'unverified'}
 
@@ -5261,6 +5318,7 @@ def camera_fit(camera, target, direction='iso', coverage: float = .82,
     return fit_camera(camera, target, direction, coverage, width, height, frame, dry_run, allow_foreign)
 
 
+@_with_render_slot
 def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing=None) -> dict:
     """渲染单帧并**验证产物**（等文件落盘 + 非空 + 采集 ROP 错误）。
 
@@ -6230,6 +6288,7 @@ def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
     }
 
 
+@_with_render_slot
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
@@ -6265,6 +6324,8 @@ def render_view(node, direction="iso", frame=None,
       A/B同时复用返回framing.bounds和framing.depth_bounds及相同方向/画幅/模式；越界拒绝不漂移。
     - 返回dict含output/check/framing/errors/stale；check含presentation/content_bbox等像素事实。
       pixels是check兼容别名，Bridge证据也提供check/pixels；不能把ok当视觉语义通过。
+      源或proxy有cook warning时仍保留诊断图片，但返回ok=False并把warning写入errors，
+      不能用文件/像素成功核销视觉完成门。
 
     本工具仍要求GUI会话；这不是对Flipbook原生headless能力的限制声明。
     H22要求Vulkan兼容设备，H21保持原GUI边界；headless另走render_frame。
@@ -6511,8 +6572,14 @@ def render_view(node, direction="iso", frame=None,
         proxy_after = _geometry_fingerprint(proxy_out, f)
         stale = before["signature"] != after["signature"]
         proxy_stale = proxy_before["signature"] != proxy_after["signature"]
-        validation = _render_validation(rendered, check, stale or proxy_stale,
-                                         pixel_supported=image_ext not in ('.exr','.hdr','.pic','.rat'))
+        render_warnings = list(dict.fromkeys(before["warnings"] + proxy_before["warnings"]))
+        validation = _render_validation(
+            rendered,
+            check,
+            stale or proxy_stale,
+            pixel_supported=image_ext not in ('.exr','.hdr','.pic','.rat'),
+            warnings=render_warnings,
+        )
         result_payload = {
             **validation,
             "preview_backend": "flipbook_vulkan" if use_flipbook else "opengl_legacy",
@@ -6535,7 +6602,7 @@ def render_view(node, direction="iso", frame=None,
             "frame": f,
             "file_bytes": rendered["file_bytes"],
             "errors": validation['errors'],
-            "warnings": list(dict.fromkeys(before["warnings"] + proxy_before["warnings"])),
+            "warnings": render_warnings,
             "stale": stale or proxy_stale,
             "source_fingerprint_before": before,
             "source_fingerprint_after": after,

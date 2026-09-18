@@ -165,6 +165,9 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - 属性值：`geo_attrib_stats`；若局部形态仍不可证，记录新的几何自省缺口。
 - 视觉验证：`render_view`；交付 ROP 才用 `render_frame`。
 - 用户屏幕问题：`viewport_screenshot` 仅作诊断。
+- 多agent组件任务先核对request/header实际顶层工具面、子会话executor/HIP、子作者是否真实建模、
+  交换物格式与父级接纳。普通独立组件默认应有component_export的路径/hash/revision和父级
+  component_import/槽位接纳；用户未要求HDA时自行升级为HDA再裸install不算等价采用。
 
 ## 5. 动词组合的保留、补充、拆分与合并
 
@@ -320,6 +323,9 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 9. 语义视觉失败或不可用时，仍读取 `render_view.check`/`render_check` 的亮度、非黑占比和
    content bbox。近黑、近空、目标缺失、触边或资产轴向错误的图片只能判像素展示失败；
    `stale=false`、文件字节非零和无 render error 只证明 transport/file 层。
+10. 关系/视觉使用临时代理时，先证明代理与交付物是同一数据流和坐标空间。跨OBJ Object Merge
+    必须核对变换模式及proxy bbox与源world bbox；合并warning、包络冲突或丢OBJ变换时，非空图片
+    也不是实际装配证据。
 
 ### 动画
 

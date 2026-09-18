@@ -20,6 +20,11 @@ MAX_BYTES = 32 * 1024 * 1024
 MAX_NODES = 1024
 NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,79}$')
 
+# Candidate provenance for this Bridge session only: import records the accepted
+# contract so replace can refuse a stale or unknown-revision draft. Records do not
+# survive a Bridge restart; replace then refuses expected_contract checks (safe side).
+_IMPORT_RECORDS = {}
+
 
 def _h():
     import dsh_hou_helpers
@@ -204,8 +209,9 @@ def _snapshot(root, *, check_owned=False):
 
 
 def _contract(contract):
-    if not isinstance(contract, dict) or set(contract) != {'module_id', 'revision', 'units', 'outputs'}:
-        raise ValueError('contract requires exactly module_id, revision, units, outputs')
+    if not isinstance(contract, dict) or not {'module_id', 'revision', 'units', 'outputs'} <= set(contract) \
+            or not set(contract) <= {'module_id', 'revision', 'units', 'outputs', 'inputs'}:
+        raise ValueError('contract requires exactly module_id, revision, units, outputs (inputs optional)')
     _name(contract['module_id'])
     if type(contract['revision']) is not int or contract['revision'] < 1:
         raise ValueError('positive integer contract revision required')
@@ -216,6 +222,10 @@ def _contract(contract):
         raise ValueError('one or more public output indices required')
     if any(type(i) is not int or i < 0 or i > 63 for i in outputs) or len(set(outputs)) != len(outputs):
         raise ValueError('public output indices must be unique integers in 0..63')
+    inputs = contract.get('inputs', [])
+    if not isinstance(inputs, list) or len(inputs) > 64 \
+            or any(type(i) is not int or i < 0 or i > 63 for i in inputs) or len(set(inputs)) != len(inputs):
+        raise ValueError('declared public input slots must be unique integers in 0..63')
     return json.loads(_json(contract))
 
 
@@ -348,6 +358,8 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
         for identity in set(previous_ids) - live_ids:
             h._OWNED_NODE_SESSIONS.pop(identity, None)
         _verify(moved, contract)
+        _IMPORT_RECORDS[moved.sessionId()] = {'module_id': contract['module_id'], 'revision': contract['revision'],
+                                              'inputs': contract.get('inputs', []), 'sha256': expected_sha256}
         return {'ok': True, 'node': moved.path(), 'sha256': expected_sha256, 'contract': contract,
                 'identity': moved.sessionId(), 'semantic_status': 'unverified', 'status': 'candidate'}
     except BaseException:
@@ -367,11 +379,17 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
         h._apply_tab_user_state(state)
 
 
-def _replacement_state(root):
-    """Current identities and authored channels, independent of cooked geometry."""
+def _replacement_state(root, *, migratable_public=frozenset()):
+    """Current identities and authored channels, independent of cooked geometry.
+
+    External parameter consumers are refused, except references to root spare
+    public parameters explicitly listed in migratable_public (handled by the
+    migration plan).
+    """
     h = _h()
     nodes = _nodes(root)
     members = set(nodes)
+    public = {p.path() for p in root.spareParms()}
     rows = []
     external_refs = []
     for node in nodes:
@@ -380,7 +398,12 @@ def _replacement_state(root):
         for parm in node.parms():
             value = _parm_value(parm)
             parms.append([parm.name(), value, parm.isLocked()])
-            external_refs.extend(p.path() for p in parm.parmsReferencingThis() if p.node() not in members)
+            for consumer in parm.parmsReferencingThis():
+                if consumer.node() in members:
+                    continue
+                if node is root and parm.path() in public and parm.name() in migratable_public:
+                    continue
+                external_refs.append(consumer.path())
         rows.append({'id': node.sessionId(), 'path': node.path(), 'type': node.type().name(), 'parms': parms,
                      'templates': node.parmTemplateGroup().asDialogScript(),
                      'wires': [(w.inputIndex(),
@@ -389,18 +412,141 @@ def _replacement_state(root):
                                 w.outputIndex()) for w in node.inputConnections()],
                      'bypass': node.isBypassed() if isinstance(node, hou.SopNode) else False})
     if external_refs:
-        raise ValueError('component replacement cannot migrate external parameter consumers: ' + ', '.join(external_refs[:8]))
+        raise ValueError('component replacement cannot migrate external parameter consumers '
+                         'outside the declared migration plan: ' + ', '.join(external_refs[:8]))
     return rows
 
 
-def component_replace(node, candidate, *, dry_run=True, expected_plan=None):
-    """Preview/commit explicit output-wire replacement, retaining the old subnet.
+def _migration(value):
+    """Explicit migration plan: per-slot input mapping and named public parameters."""
+    if value is None:
+        return {'inputs': {}, 'public_parms': []}
+    if not isinstance(value, dict) or not set(value) <= {'inputs', 'public_parms'}:
+        raise ValueError('migration may only declare inputs and public_parms')
+    inputs = value.get('inputs', {})
+    if not isinstance(inputs, dict) \
+            or any(type(k) is not int or k < 0 or k > 63 for k in inputs) \
+            or any(type(v) is not int or v < 0 or v > 63 for v in inputs.values()) \
+            or len(set(inputs.values())) != len(inputs):
+        raise ValueError('migration inputs must map unique integer slots 0..63 to unique target slots')
+    names = value.get('public_parms', [])
+    if not isinstance(names, list) or any(not isinstance(n, str) or not NAME.fullmatch(n) for n in names) \
+            or len(set(names)) != len(names):
+        raise ValueError('migration public_parms must be unique parameter names')
+    return {'inputs': dict(inputs), 'public_parms': list(names)}
+
+
+def _input_wires(node):
+    return [{'slot': w.inputIndex(), 'source': w.inputNode().path(), 'identity': w.inputNode().sessionId(),
+             'output': w.outputIndex()} for w in node.inputConnections()]
+
+
+def _capture_parm(parm):
+    """Restorable snapshot of one live channel; expression-driven keys cannot be restored.
+
+    Segment functions (bezier()/linear()/…) are plain animation data and migrate;
+    any other keyframe expression is refused rather than rewritten.
+    """
+    keys = parm.keyframes()
+    if keys:
+        clones = []
+        for key in keys:
+            segment = None
+            try:
+                if key.isExpressionSet():
+                    segment = key.expression()
+            except hou.OperationFailed:
+                segment = None
+            if segment is not None:
+                if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*\(\)', segment.strip()):
+                    raise ValueError('keyframes driven by expressions are not migrated: ' + parm.path())
+                segment = (segment, key.expressionLanguage())
+            clone = hou.Keyframe()
+            clone.setFrame(key.frame())
+            clone.setValue(key.value())
+            clone.setSlope(key.slope())
+            clone.setInSlope(key.inSlope())
+            clone.setAccel(key.accel())
+            if segment is not None:
+                clone.setExpression(segment[0], segment[1])
+            clones.append(clone)
+        return ('keys', clones)
+    if parm.parmTemplate().type() == hou.parmTemplateType.String:
+        return ('string', parm.unexpandedString())
+    return ('value', parm.eval())
+
+
+def _restore_parm(parm, captured):
+    kind, payload = captured
+    if kind == 'keys':
+        parm.deleteAllKeyframes()
+        for clone in payload:
+            parm.setKeyframe(clone)
+        return
+    parm.deleteAllKeyframes()
+    parm.set(payload)
+
+
+def _migrate_public_parm(source, target):
+    """Copy one authored public channel onto the candidate; the old module keeps its own."""
+    if target.isLocked():
+        raise ValueError('candidate public parameter is locked: ' + target.path())
+    captured = _capture_parm(target)
+    _restore_parm(target, _capture_parm(source))
+    return captured
+
+
+def _repoint_expression(consumer, old, new):
+    """Rewrite one consumer expression from the old module path to the candidate path.
+
+    Only absolute and consumer-relative path forms are supported; anything else is
+    refused instead of guessed. In HOM an expression lives on keyframes, so an
+    expression-driven consumer has keys; value-keyframed consumers without an
+    expression are refused.
+    """
+    try:
+        expression = consumer.expression()
+        language = consumer.expressionLanguage()
+    except hou.OperationFailed:
+        raise ValueError('external consumer is not expression-driven (keyframed consumers are not migrated): '
+                         + consumer.path()) from None
+    forms = [(old.path(), new.path()), (consumer.node().relativePathTo(old), consumer.node().relativePathTo(new))]
+    rewritten = expression
+    matched = False
+    for before, after in forms:
+        pattern = re.escape(before) + r'(?=[/\'"]|$)'
+        rewritten, count = re.subn(pattern, after, rewritten)
+        matched = matched or count > 0
+    if not matched or rewritten == expression:
+        raise ValueError('unsupported consumer reference form: ' + consumer.path())
+    return expression, language, rewritten
+
+
+def _expected_contract(value):
+    if (not isinstance(value, dict) or set(value) != {'module_id', 'revision'}
+            or not isinstance(value['module_id'], str) or not NAME.fullmatch(value['module_id'])
+            or not isinstance(value['revision'], int) or isinstance(value['revision'], bool)
+            or value['revision'] < 1):
+        raise ValueError('expected_contract must contain exactly module_id and a positive integer revision')
+    return value
+
+
+def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expected_contract=None, migration=None):
+    """Preview/commit an explicit replacement, retaining the old subnet.
 
     Both subnets must belong to this author and have the same parent. No node is
-    deleted or renamed; external parameter consumers are refused. Public values
-    are not guessed/copied: prepare and verify candidate controls before preview.
-    Commit requires the unchanged preview hash and identities. This checks network
-    health, not visual quality or cross-component contacts; rerun those afterward.
+    deleted or renamed. Output wires always migrate; connected root inputs and
+    public parameter values/keys with their external expression consumers migrate
+    only when the explicit migration plan declares them (per-slot input mapping,
+    named public parameters). Undeclared inputs or consumers refuse the commit —
+    nothing is guessed by position. Commit requires the unchanged preview hash and
+    identities; a mismatch names the drifted side (old component manual edits are a
+    retained local fork, candidate edits, consumer wiring changes, or migration
+    drift). expected_contract pins the candidate to a module_id/revision recorded
+    by component_import in this session, refusing a late older draft. Any commit
+    failure restores wires, expressions and parameter values in reverse order.
+    This checks network health, not visual quality or cross-component contacts;
+    rerun those afterward.
     """
     h = _h()
     h._cook_control.require_evaluation('component_replace')
@@ -408,7 +554,47 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None):
     if old == new or old.parent() != new.parent():
         raise ValueError('distinct ordinary subnets with the same parent required')
     h._require_owned(old.parent(), 'component_replace')
-    old_state, new_state = _replacement_state(old), _replacement_state(new)
+    record = _IMPORT_RECORDS.get(new.sessionId())
+    if expected_contract is not None:
+        _expected_contract(expected_contract)
+        if record is None:
+            raise ValueError('candidate provenance is unknown in this session; '
+                             'import it with component_import or drop expected_contract')
+        if record['module_id'] != expected_contract['module_id'] or record['revision'] != expected_contract['revision']:
+            raise ValueError('candidate contract is stale or unexpected: expected %s revision %s, session holds %s revision %s; '
+                             'a late older draft is refused'
+                             % (expected_contract['module_id'], expected_contract['revision'],
+                                record['module_id'], record['revision']))
+    migration = _migration(migration)
+    old_state, new_state = _replacement_state(old, migratable_public=frozenset(migration['public_parms'])), \
+        _replacement_state(new)
+    public_spares = {p.name(): p for p in old.spareParms()}
+    new_spares = {p.name(): p for p in new.spareParms()}
+    for name in migration['public_parms']:
+        if name not in public_spares:
+            raise ValueError('declared public parameter missing on the old component: ' + name)
+        if name not in new_spares:
+            raise ValueError('candidate lacks the declared public parameter: ' + name)
+    old_inputs = _input_wires(old)
+    for row in old_inputs:
+        source = hou.nodeBySessionId(row['identity'])
+        if source is None or source.path() != row['source']:
+            raise ValueError('input source identity changed')
+        h._require_owned(source, 'component_replace input source')
+        if row['slot'] not in migration['inputs']:
+            raise ValueError('connected old component input slot %d is not covered by the migration plan' % row['slot'])
+    candidate_inputs = _input_wires(new)
+    occupied = {row['slot'] for row in candidate_inputs}
+    for source_slot, target_slot in migration['inputs'].items():
+        if target_slot in occupied:
+            raise ValueError('candidate input slot %d is already connected' % target_slot)
+    old_record = _IMPORT_RECORDS.get(old.sessionId())
+    if old_record is not None and old_record['inputs'] \
+            and any(slot not in old_record['inputs'] for slot in migration['inputs']):
+        raise ValueError('migration source slot outside the old component declared inputs')
+    if record is not None and record['inputs'] \
+            and any(slot not in record['inputs'] for slot in migration['inputs'].values()):
+        raise ValueError('migration target slot outside the candidate declared inputs')
     wires = []
     for wire in old.outputConnections():
         consumer = wire.outputNode()
@@ -421,21 +607,88 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None):
         raise ValueError('old component has no explicit output consumers')
     if new.outputConnections():
         raise ValueError('candidate already has consumers; refuse implicit shared replacement')
-    # Only wire migration is supported. Inbound links must already be configured
-    # explicitly on the candidate and participate in the preview fingerprint.
     public = sorted({row['output'] for row in wires})
     _verify(new, {'outputs': public})
-    state = {'old': old_state, 'candidate': new_state, 'wires': wires}
-    plan = {'old_identity': old.sessionId(), 'candidate_identity': new.sessionId(), 'sha256': _hash(_json(state))}
+    consumers = []
+    old_members = set(_nodes(old))
+    new_members = set(_nodes(new))
+    for name in migration['public_parms']:
+        for consumer in public_spares[name].parmsReferencingThis():
+            if consumer.node() in old_members:
+                continue
+            if consumer.node() in new_members:
+                raise ValueError('replacement candidate depends on an old component public parameter: ' + consumer.path())
+            h._require_owned(consumer.node(), 'component_replace consumer')
+            original, language, rewritten = _repoint_expression(consumer, old, new)
+            consumers.append({'parm': consumer.path(), 'public': name, 'from': original, 'to': rewritten})
+    # Feasibility is checked at preview, not discovered mid-commit.
+    for name in migration['public_parms']:
+        _capture_parm(public_spares[name])
+        if new_spares[name].isLocked():
+            raise ValueError('candidate public parameter is locked: ' + new_spares[name].path())
+        _capture_parm(new_spares[name])
+    migration_state = {'plan': migration, 'old_inputs': old_inputs, 'candidate_inputs': candidate_inputs,
+                       'consumers': consumers}
+    state = {'old': old_state, 'candidate': new_state, 'wires': wires, 'migration': migration_state}
+    plan = {'old_identity': old.sessionId(), 'candidate_identity': new.sessionId(), 'sha256': _hash(_json(state)),
+            'parts': {side: _hash(_json(state[side])) for side in ('old', 'candidate', 'wires', 'migration')}}
     if dry_run is not False:
         if dry_run is not True:
             raise ValueError('dry_run must be boolean')
-        return {'ok': True, 'scene_writes': 0, 'plan': plan, 'consumers': wires,
-                'scope': 'output wires only; candidate controls must already be prepared', 'semantic_status': 'unverified'}
+        return {'ok': True, 'scene_writes': 0, 'plan': plan, 'consumers': wires, 'contract': record,
+                'migration': {'inputs': old_inputs, 'public_parms': migration['public_parms'],
+                              'parameter_consumers': consumers},
+                'scope': 'declared migration plan only; undeclared inputs/consumers refuse the commit',
+                'semantic_status': 'unverified'}
     if expected_plan != plan:
-        raise ValueError('component replacement plan is stale or absent; no wires changed')
+        reasons = []
+        if isinstance(expected_plan, dict):
+            if expected_plan.get('old_identity') != old.sessionId():
+                reasons.append('old component identity changed (recreated node)')
+            if expected_plan.get('candidate_identity') != new.sessionId():
+                reasons.append('candidate identity changed (recreated node)')
+            parts = expected_plan.get('parts')
+            if isinstance(parts, dict):
+                if parts.get('old') != plan['parts']['old']:
+                    reasons.append('old component modified after preview: manual edits are a local fork, '
+                                   'the old subnet is retained; re-preview or merge explicitly')
+                if parts.get('candidate') != plan['parts']['candidate']:
+                    reasons.append('candidate modified after preview')
+                if parts.get('wires') != plan['parts']['wires']:
+                    reasons.append('output consumers changed after preview')
+                if parts.get('migration') != plan['parts']['migration']:
+                    reasons.append('migration inputs/parameters/consumers changed after preview')
+        detail = ': ' + '; '.join(dict.fromkeys(reasons)) if reasons else ''
+        raise ValueError('component replacement plan is stale or absent; no wires changed' + detail)
+    moved_inputs = []
+    moved_parms = []
+    repointed = []
     changed = []
+    failures = []
     try:
+        for row in old_inputs:
+            source = hou.nodeBySessionId(row['identity'])
+            if source is None or source.path() != row['source']:
+                raise ValueError('input source identity changed')
+            target_slot = migration['inputs'][row['slot']]
+            old.setInput(row['slot'], None)
+            new.setInput(target_slot, source, row['output'])
+            moved_inputs.append((row, target_slot))
+        for name in migration['public_parms']:
+            moved_parms.append((new_spares[name], _migrate_public_parm(public_spares[name], new_spares[name])))
+        for row in consumers:
+            consumer = hou.parm(row['parm'])
+            if consumer is None or consumer.expression() != row['from']:
+                raise ValueError('consumer expression changed')
+            language = consumer.expressionLanguage()
+            consumer.setExpression(row['to'], language)
+            repointed.append((consumer, row['from'], language))
+        for name in migration['public_parms']:
+            expected = {row['parm'] for row in consumers if row['public'] == name}
+            lingering = {p.path() for p in public_spares[name].parmsReferencingThis()} & expected
+            arrived = {p.path() for p in new_spares[name].parmsReferencingThis()} & expected
+            if lingering or arrived != expected:
+                raise ValueError('consumer reference did not migrate to the candidate public parameter: ' + name)
         for row in wires:
             consumer = hou.nodeBySessionId(row['identity'])
             if consumer is None or consumer.path() != row['consumer']:
@@ -446,13 +699,34 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None):
             result = h.cook_node(consumer)
             if not result.get('healthy'):
                 raise ValueError('replacement consumer is not healthy')
+        _IMPORT_RECORDS.pop(new.sessionId(), None)
         return {'ok': True, 'node': new.path(), 'retained_previous': old.path(), 'consumers': wires,
-                'semantic_status': 'unverified', 'scope': 'output wires only; no parameter migration or deletion'}
+                'contract': record, 'migrated': {'inputs': len(moved_inputs), 'public_parms': migration['public_parms'],
+                                                 'parameter_consumers': len(repointed)},
+                'semantic_status': 'unverified',
+                'scope': 'declared migration plan; old module retained, not renamed or deleted'}
     except BaseException as error:
-        failures = []
         for consumer, row in reversed(changed):
             try:
                 consumer.setInput(row['input'], old, row['output'])
+            except Exception as restore_error:
+                failures.append(str(restore_error))
+        for consumer, original, language in reversed(repointed):
+            try:
+                consumer.setExpression(original, language)
+            except Exception as restore_error:
+                failures.append(str(restore_error))
+        for target, captured in reversed(moved_parms):
+            try:
+                _restore_parm(target, captured)
+            except Exception as restore_error:
+                failures.append(str(restore_error))
+        for row, target_slot in reversed(moved_inputs):
+            try:
+                source = hou.nodeBySessionId(row['identity'])
+                new.setInput(target_slot, None)
+                if source is not None:
+                    old.setInput(row['slot'], source, row['output'])
             except Exception as restore_error:
                 failures.append(str(restore_error))
         if failures:

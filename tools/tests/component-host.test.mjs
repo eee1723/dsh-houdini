@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {EventEmitter} from 'node:events'
-import {componentAuthorPrompt,componentStopOutcome,componentWorkerSnapshot,stopComponentWorker,
-  completedTurnSequence,COMPONENT_IDLE_RELEASE_MS} from '../../lib/component-host.js'
+import {componentAuthorPrompt,componentInfraReport,componentStopOutcome,componentWorkerSnapshot,infraReportCause,
+  infraReportDelivery,stopComponentWorker,completedTurnSequence,COMPONENT_IDLE_RELEASE_MS} from '../../lib/component-host.js'
 
 const brief='Build a bounded wheel with a local visual check.'
 const workspace='Z:\\project\\dsh-components\\child\\workspace'
@@ -29,6 +29,11 @@ assert.match(gui,/node_info\(part,'circle',filter='radius'\)/)
 assert.match(gui,/Do not traverse project\/install directories inside houdini_query or houdini_exec/)
 assert.match(gui,/inspect its native image attachment/)
 assert.match(gui,/cannot silently cancel an explicit visual or control obligation/)
+assert.match(gui,/tool surface is bounded/)
+assert.match(gui,/component_status and component_delegate are not available/)
+assert.match(gui,/original user explicitly requested an installable HDA\/OTL/)
+assert.match(gui,/component_export as a revisioned \.dshcomponent/)
+assert.match(gui,/report the scope conflict before building/)
 const headless=componentAuthorPrompt(brief,false,workspace)
 assert.match(headless,/headless.*render_view requires GUI.*render_frame.*visual unverified/)
 assert(!headless.includes('render a bounded preview'))
@@ -82,4 +87,25 @@ assert.equal(completedTurnSequence([{type:'turn/end',seq:8,data:{reason:{kind:'c
 assert.equal(completedTurnSequence([{type:'turn/end',seq:8,data:{reason:{kind:'completed'}}},
   {type:'turn/start',seq:9,data:{}}]),undefined)
 assert.equal(completedTurnSequence([{type:'turn/end',seq:8,data:{reason:{kind:'interrupted'}}}]),undefined)
+{
+  const ready={exited:false,record:{executor_id:'w1'},workspace:'/asm/dsh-components/c1/workspace'}
+  assert.equal(infraReportCause(ready),undefined,'a healthy ready worker has no report cause')
+  assert.equal(componentInfraReport('c1',ready),undefined)
+  assert.equal(infraReportCause({exited:true,error:'boom'}),undefined,'pre-readiness failure reaches the parent synchronously')
+  assert.equal(infraReportCause({exited:true,record:{},stopRequested:true}),undefined,'requested stops are known to the parent')
+  const crashed={exited:true,record:{},workspace:'/asm/dsh-components/c1/workspace',error:'Worker exited (1): oom'}
+  const report=componentInfraReport('c1',crashed)
+  assert.match(report,/child c1.*dsh-components\/c1\/workspace/)
+  assert.match(report,/workerStatus=stopped, checkpoint=unknown/)
+  assert.match(report,/Worker exited \(1\): oom/)
+  assert.match(report,/not a verified delivery/)
+  assert.match(report,/delegate a revision/)
+  const silent={exited:true,record:{},workspace:'/asm/dsh-components/c2/workspace'}
+  assert.match(componentInfraReport('c2',silent),/checkpoint=saved/,'clean exit keeps its saved-checkpoint account')
+  assert.match(componentInfraReport('c2',silent),/without a stop request/)
+  const stuck={exited:false,record:{},workspace:'/asm/dsh-components/c3/workspace',error:'stdin broken'}
+  assert.match(componentInfraReport('c3',stuck),/workerStatus=ready, checkpoint=unknown/)
+  assert.equal(infraReportDelivery('idle'),'followup')
+  assert.equal(infraReportDelivery('running'),'steer')
+}
 console.log('component author Host facts distinguish verb/tool, HIP and visual obligations')
