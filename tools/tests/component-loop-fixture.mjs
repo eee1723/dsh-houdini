@@ -12,7 +12,8 @@ export function apply(ctx) {
   const expectStartupFailure=process.env.DSH_COMPONENT_EXPECT_STARTUP_FAILURE==='1'
   const expectStopFailure=process.env.DSH_COMPONENT_EXPECT_STOP_FAILURE==='1'
   const expectRejection=process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'
-  const expectWorkerCrash=process.env.DSH_COMPONENT_EXPECT_WORKER_CRASH==='1'
+  const expectAdapterThrow=process.env.DSH_COMPONENT_EXPECT_ADAPTER_THROW==='1'
+  const expectProcessExit=process.env.DSH_COMPONENT_EXPECT_WORKER_PROCESS_EXIT==='1'
   // R6: record which DSH runtime modules this composition ACTUALLY loaded, so a
   // negative result can never be explained by an unexpected module source.
   const requireFromHost=createRequire(process.argv[1]||import.meta.url)
@@ -22,6 +23,22 @@ export function apply(ctx) {
     moduleSource={subagent:subagentPkg,version:JSON.parse(fs.readFileSync(subagentPkg,'utf8')).version,
       executable:process.execPath,pid:process.pid,cli:process.argv[1]||null}
   }catch(error){moduleSource={resolutionError:String(error).slice(0,400),cli:process.argv[1]||null}}
+  try{
+    // The dsh-houdini plugin is loaded from the isolated profile's node_modules
+    // junction (prepared by prepare-shared-host-fixture.mjs), not from the CLI's
+    // own require stack - resolve it there.
+    const profileNodeModules=path.join(process.env.DSH_HOME,'profiles/web/node_modules')
+    const hostPkg=path.join(profileNodeModules,'dsh-houdini/package.json')
+    const hostRoot=path.dirname(hostPkg)
+    let hostContract=null
+    try{
+      const built=fs.readFileSync(path.join(hostRoot,'lib','generated-verb-contract.js'),'utf8')
+      const match=built.match(/EXPECTED_EXECUTION_CONTRACT_VERSION\s*=\s*(\d+)/)
+      hostContract=match?Number(match[1]):null
+    }catch(error){}
+    moduleSource={...moduleSource,host:{package:hostPkg,
+      version:JSON.parse(fs.readFileSync(hostPkg,'utf8')).version,hostContractVersion:hostContract}}
+  }catch(error){moduleSource={...moduleSource,host:{resolutionError:String(error).slice(0,400)}}}
   fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'module-source.json'),JSON.stringify(moduleSource,null,2))
   ctx.on('agent/disposed',({agent})=>{
     if(process.env.DSH_COMPONENT_EXPECT_REJECTION==='1'&&agent.session.header.parentSession){
@@ -67,10 +84,12 @@ export function apply(ctx) {
               /Execution failed:[\s\S]*missing\/ambiguous\/unconnected public output 1/)
           else assert(!result.isError,JSON.stringify(result))
         }
-        if(expectWorkerCrash&&promptText.includes('Fixture part 0:')&&results.some(r=>r.toolCallId==='component-build')){
-          // R6: the worker is ready and has done real work; now crash it hard so
-          // the parent experiences a genuine mid-flight worker failure notice.
-          throw new Error('injected worker crash after readiness and build')
+        if(expectAdapterThrow&&promptText.includes('Fixture part 0:')&&results.some(r=>r.toolCallId==='component-build')){
+          // The fixture's model adapter throws INSIDE the child session after
+          // readiness and a real build. This is an adapter-level failure, not a
+          // worker process exit: the child process keeps running. The real
+          // process-exit drill lives in --expect-worker-process-exit.
+          throw new Error('injected adapter throw after readiness and build')
         }
         if(!results.length){
           blocks=[{type:'tool-call',id:'inside-write',name:'write',arguments:JSON.stringify({file_path:'local.txt',content:'local fixture'})},
@@ -147,18 +166,18 @@ export function apply(ctx) {
             fs.writeFileSync(turnLog,JSON.stringify(turns,null,2))
           }catch(error){}
         }
-        if(expectWorkerCrash){
-          try{
-            const turns=fs.existsSync(turnLog)?JSON.parse(fs.readFileSync(turnLog,'utf8')):[]
-            if(turns.length<10)turns.push({turn:turns.length+1,childRequests,
-              notices:notices.map(n=>n[2]),modelTextTail:modelText.slice(-600)})
-            fs.writeFileSync(turnLog,JSON.stringify(turns,null,2))
-          }catch(error){}
-          const crashNotice=notices.find(match=>match[2]==='failed before it finished'||match[2]==='ended abnormally')
-          if(crashNotice&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'crash-report.json'))){
-            fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'crash-report.json'),JSON.stringify({
-              notice:crashNotice[0],outcome:crashNotice[2],childRequests,assembled:assembly}))
+        if(expectAdapterThrow){
+          const throwNotice=notices.find(match=>match[2]==='failed before it finished'||match[2]==='ended abnormally')
+          const throwEvents=throwNotice?agent.session.snapshotEvents().filter(e=>e.type==='user/message'
+            &&JSON.stringify(e.data??{}).includes(throwNotice[0])):[]
+          if(throwNotice&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'adapter-throw.json'))){
+            fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'adapter-throw.json'),JSON.stringify({
+              notice:throwNotice[0],outcome:throwNotice[2],childRequests,assembled:assembly,
+              sessionEvents:throwEvents.slice(-2).map(e=>({type:e.type,source:e.data?.source?.plugin??null}))},null,2))
           }
+        }else if(expectProcessExit){
+          // the killed child may add a native failure notice on top of the two
+          // settlements; uniqueness is asserted only for the plain positive run
         }else{
           assert.equal(settled.size,notices.length,'each visible child settlement must be unique and completed')
         }
@@ -211,6 +230,73 @@ export function apply(ctx) {
               fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'stop-unknown.json'),JSON.stringify({failed,surviving,assembly:false}))
               blocks=[{type:'text',text:'One owned worker exited unexpectedly: its checkpoint is unknown and its files are retained. The other worker stopped with a saved checkpoint. Assembly was not attempted.'}]
             }
+          }
+        }else if(expectProcessExit&&settled.size===2&&!assembly){
+          // R6: REAL worker process exit. One settled child's worker process is
+          // killed via its registry-record PID; the drill then requires the
+          // native infrastructure report as an actual session event, the
+          // childId-bound component_status snapshot and both retained artifacts.
+          const failedChild=[...settled].sort()[0],survivingChild=[...settled].sort()[1]
+          const outDir=process.env.DSH_COMPONENT_TEST_OUT
+          const killLog=path.join(outDir,'process-exit-kill.json')
+          const statusResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='exit-status')).at(-1)
+          if(!fs.existsSync(killLog)){
+            const endpoints=path.join(process.env.DSH_HOUDINI_EXECUTOR_REGISTRY,'endpoints')
+            const records=fs.readdirSync(endpoints).filter(f=>f.endsWith('.json'))
+              .map(f=>JSON.parse(fs.readFileSync(path.join(endpoints,f),'utf8')))
+            const failedRecord=records.find(r=>r.task_id===failedChild)
+            const survivingRecord=records.find(r=>r.task_id===survivingChild)
+            assert(failedRecord&&Number.isInteger(failedRecord.pid)&&failedRecord.pid>0,
+              'the failed child must own a registry record with a real pid: '+JSON.stringify(records).slice(0,400))
+            assert(survivingRecord&&Number.isInteger(survivingRecord.pid),'the surviving child must own a registry record')
+            let killError=null
+            try{process.kill(failedRecord.pid)}catch(error){killError=String(error)}
+            fs.writeFileSync(killLog,JSON.stringify({failedChild,pid:failedRecord.pid,
+              survivingChild,survivorPid:survivingRecord.pid,killError}))
+            blocks=[{type:'text',text:'Both component artifacts are retained. One owned worker process was terminated for the real process-exit drill; awaiting the infrastructure report before checkpoint inspection.'}]
+          }else if(statusResult){
+            try{
+            assert(!statusResult.isError,JSON.stringify(statusResult))
+            const status=JSON.parse(statusResult.content.find(c=>c.type==='text').text)
+            const kill=JSON.parse(fs.readFileSync(killLog,'utf8'))
+            const failed=status.children.find(c=>c.childId===kill.failedChild)
+            const surviving=status.children.find(c=>c.childId===kill.survivingChild)
+            try{fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'process-exit-debug.json'),
+              JSON.stringify({statusText:statusResult.content.map(c=>c.text).join('|').slice(0,1200)},null,2))}catch(error){}
+            assert(failed&&surviving,JSON.stringify(status).slice(0,400))
+            assert.equal(failed.workerStatus,'stopped')
+            assert.equal(failed.checkpoint,'unknown')
+            assert.equal(surviving.workerStatus,'ready')
+            const infraEvent=agent.session.snapshotEvents().find(e=>e.type==='user/message'
+              &&e.data?.source?.plugin==='dsh-houdini'&&e.data?.source?.form==='notice'
+              &&JSON.stringify(e.data).includes(failedChild))
+            const delegateCalls=agent.session.snapshotEvents().filter(e=>e.type==='tool/call'&&e.data?.name==='component_delegate').length
+            const report={failedChild,pid:kill.pid,survivingChild,survivorPid:kill.survivorPid,
+              killError:kill.killError??null,
+              infraEvent:infraEvent?{type:infraEvent.type,source:infraEvent.data?.source,
+                text:JSON.stringify(infraEvent.data).slice(0,900)}:null,
+              status:{failed,surviving},
+              artifacts:{failed:fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,failedChild,'workspace','part.dshcomponent')),
+                surviving:fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,survivingChild,'workspace','part.dshcomponent'))},
+              childRequests,delegateCalls,assembly}
+            assert(report.artifacts.failed&&report.artifacts.surviving,'both artifacts must be retained after the process exit')
+            assert(infraEvent,'the infrastructure report must exist as an actual session event')
+            assert(!assembly,'assembly must never run in the process-exit drill')
+            assert.equal(delegateCalls,2,'no replacement dispatch may follow the process exit')
+            fs.writeFileSync(path.join(outDir,'process-exit.json'),JSON.stringify(report,null,2))
+            blocks=[{type:'text',text:'One owned worker process exited for real: its checkpoint is unknown, its artifact is retained, and the infrastructure report reached this session. The surviving worker stays ready. Assembly was not attempted.'}]
+            }catch(error){try{fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'process-exit-error.json'),
+              String(error && error.stack || error))}catch(_){}throw error}
+          }else{
+            const events=agent.session.snapshotEvents()
+            try{fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'process-exit-debug.json'),JSON.stringify(
+              events.slice(-10).map(e=>({type:e.type,source:JSON.stringify(e.data?.source??null),
+                dataHead:JSON.stringify(e.data??{}).slice(0,260)})),null,2))}catch(error){}
+            const infraVisible=events.some(e=>e.type==='user/message'
+              &&e.data?.source?.plugin==='dsh-houdini'&&e.data?.source?.form==='notice'
+              &&JSON.stringify(e.data).includes(failedChild))
+            if(infraVisible)blocks=[{type:'tool-call',id:'exit-status',name:'component_status',arguments:'{}'}]
+            else blocks=[{type:'text',text:'Awaiting the worker infrastructure report for the terminated process.'}]
           }
         }else if(autoRelease&&fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'assembled.json'))){
           const status=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='release-status')).at(-1)

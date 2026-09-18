@@ -6,6 +6,7 @@ Uses new data/registry/work directories and a deterministic adapter only.
 from pathlib import Path
 import json
 import queue
+import re
 import socket
 import subprocess
 import sys
@@ -40,8 +41,9 @@ auto_release = '--expect-auto-release' in sys.argv
 child_failure = '--expect-child-failure' in sys.argv
 startup_failure = '--expect-startup-failure' in sys.argv
 stop_failure = '--expect-stop-failure' in sys.argv
-worker_crash = '--expect-worker-crash' in sys.argv
-assert sum((negative, auto_release, child_failure, startup_failure, stop_failure, worker_crash)) <= 1
+adapter_throw = '--expect-adapter-throw' in sys.argv
+process_exit = '--expect-worker-process-exit' in sys.argv
+assert sum((negative, auto_release, child_failure, startup_failure, stop_failure, adapter_throw, process_exit)) <= 1
 if auto_release:
     env['DSH_COMPONENT_EXPECT_AUTO_RELEASE'] = '1'
 if negative:
@@ -52,8 +54,10 @@ if startup_failure:
     env['DSH_COMPONENT_EXPECT_STARTUP_FAILURE'] = '1'
 if stop_failure:
     env['DSH_COMPONENT_EXPECT_STOP_FAILURE'] = '1'
-if worker_crash:
-    env['DSH_COMPONENT_EXPECT_WORKER_CRASH'] = '1'
+if adapter_throw:
+    env['DSH_COMPONENT_EXPECT_ADAPTER_THROW'] = '1'
+if process_exit:
+    env['DSH_COMPONENT_EXPECT_WORKER_PROCESS_EXIT'] = '1'
 parent_log = (fixture / 'parent.log').open('wb')
 parent = subprocess.Popen([sys.executable, str(ROOT / 'tools/component-worker.py'), '--executable', hython,
                            '--directory', str(fixture / 'parent'), '--registry', str(registry),
@@ -123,7 +127,7 @@ try:
             if time.monotonic() > deadline:
                 raise RuntimeError('Component stop fault setup incomplete; inspect ' + str(fixture))
             time.sleep(.25)
-        ready = json.loads((outputs / 'stop-ready.json').read_text())
+        ready = json.loads((outputs / 'stop-ready.json').read_text(encoding='utf-8'))
         (workers / ready['failedChild'] / 'stop').touch(exist_ok=False)
         # Allow the owned worker to exit before asking Host for its checkpoint.
         time.sleep(2)
@@ -131,13 +135,14 @@ try:
                                          'content': [{'type': 'text', 'text': 'Inspect the injected worker-stop failure.'}]}})
     outcome = ('rejected.json' if negative else 'blocked.json' if child_failure else
                'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else
-               'crash-report.json' if worker_crash else 'assembled.json')
+               'adapter-throw.json' if adapter_throw else
+               'process-exit.json' if process_exit else 'assembled.json')
     while not (outputs / outcome).exists():
         if time.monotonic() > deadline:
             raise RuntimeError('Component loop incomplete; inspect ' + str(fixture))
         time.sleep(.25)
     if negative:
-        rejected_doc = json.loads((outputs / 'rejected.json').read_text())
+        rejected_doc = json.loads((outputs / 'rejected.json').read_text(encoding='utf-8'))
         assert rejected_doc['rejected'] is True and rejected_doc['childRequests'] == 0, rejected_doc
         # R6: pin the PRECISE cause. The official runtime admits the continuable
         # descriptor but refuses the delegation at child admission because the
@@ -145,26 +150,47 @@ try:
         turn_error = [e['detail'] for e in rejected_doc['events'] if '"kind":"error"' in e['detail']]
         assert any('no executor binding' in detail for detail in turn_error), turn_error
         assert not list(workers.glob('*/workspace/part.dshcomponent'))
-        source_doc = json.loads((outputs / 'module-source.json').read_text())
+        source_doc = json.loads((outputs / 'module-source.json').read_text(encoding='utf-8'))
         sessions = rpc('session/list', {'_request': {}})
         reason_doc = {'reason': json.dumps(sessions)[:1500], 'childRequests': 0}
         print('PASS unpatched DSH rejected before child model request or component build')
         print('rejection reason:', reason_doc['reason'][:300])
         print('loaded module source:', json.dumps(source_doc)[:300])
-    elif worker_crash:
-        report = json.loads((outputs / 'crash-report.json').read_text())
+    elif adapter_throw:
+        report = json.loads((outputs / 'adapter-throw.json').read_text(encoding='utf-8'))
         assert report['outcome'] in ('failed before it finished', 'ended abnormally'), report
         assert report['assembled'] is False, report
+        assert report['sessionEvents'], 'the throw must surface as an actual session event'
         sessions = rpc('session/list', {'_request': {}})
         child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
-        assert len(child_sessions) == 2,             'exactly the two dispatched children may exist; no replacement dispatch after the crash: ' + str(len(child_sessions))
+        assert len(child_sessions) == 2,             'exactly the two dispatched children may exist; no replacement dispatch after the adapter throw: ' + str(len(child_sessions))
         artifacts = list(workers.glob('*/workspace/part.dshcomponent'))
         assert len(artifacts) == 1,             'only the surviving child may hold a published artifact: ' + str(artifacts)
-        print('PASS real worker crash after readiness: the parent received the failure notice,')
-        print('     exactly two child sessions existed (no replacement dispatch), and only')
-        print('     the surviving child published an artifact; assembly never ran')
+        print('PASS injected child model-adapter throw after readiness: the parent received the')
+        print('     native failure notice, exactly two child sessions existed (no replacement')
+        print('     dispatch), and only the surviving child published an artifact; assembly never ran')
+    elif process_exit:
+        report = json.loads((outputs / 'process-exit.json').read_text(encoding='utf-8'))
+        kill_doc = json.loads((outputs / 'process-exit-kill.json').read_text(encoding='utf-8'))
+        assert report['pid'] == kill_doc['pid'] and report['failedChild'] == kill_doc['failedChild'], report
+        assert report['survivorPid'] == kill_doc['survivorPid'], report
+        assert report['infraEvent'] and report['infraEvent']['source'].get('plugin') == 'dsh-houdini', report
+        assert 'blocked' in report['infraEvent']['text'] and report['failedChild'] in report['infraEvent']['text'], report['infraEvent']
+        assert report['status']['failed']['workerStatus'] == 'stopped'
+        assert report['status']['failed']['checkpoint'] == 'unknown'
+        assert report['status']['surviving']['workerStatus'] == 'ready'
+        assert report['artifacts'] == {'failed': True, 'surviving': True}, report
+        assert report['delegateCalls'] == 2 and report['assembly'] is False, report
+        sessions = rpc('session/list', {'_request': {}})
+        child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
+        assert len(child_sessions) == 2,             'no replacement dispatch may follow a real worker process exit: ' + str(len(child_sessions))
+        assert not (outputs / 'assembled.json').exists()
+        print('PASS real worker process exit by registry-bound pid: the parent session holds the')
+        print('     dsh-houdini infrastructure notice for the exact childId, the childId-bound')
+        print('     status snapshot reports stopped/unknown while the survivor stays ready, and')
+        print('     both artifacts are retained; no replacement dispatch, assembly never ran')
     elif child_failure:
-        blocked = json.loads((outputs / 'blocked.json').read_text())
+        blocked = json.loads((outputs / 'blocked.json').read_text(encoding='utf-8'))
         assert blocked['assembly'] is False
         assert blocked['error'] == 'missing/ambiguous/unconnected public output 1'
         assert len(set(blocked['accepted'])) == 2
@@ -176,14 +202,14 @@ try:
         assert not (outputs / 'assembled.json').exists()
         print('PASS native child failure notice, concise parent block report, surviving artifact and saved failed HIP; no assembly or external model request')
     elif startup_failure:
-        blocked = json.loads((outputs / 'startup-blocked.json').read_text())
+        blocked = json.loads((outputs / 'startup-blocked.json').read_text(encoding='utf-8'))
         assert blocked['childRequests'] == 0 and blocked['assembly'] is False
         assert 'ENOENT' in blocked['error'] or 'not found' in blocked['error'].lower()
         assert not list(workers.glob('*/workspace/component.hip'))
         assert not (outputs / 'assembled.json').exists()
         print('PASS worker startup error surfaced to parent before child model or assembly; no external model request')
     elif stop_failure:
-        result = json.loads((outputs / 'stop-unknown.json').read_text())
+        result = json.loads((outputs / 'stop-unknown.json').read_text(encoding='utf-8'))
         assert result['assembly'] is False
         assert result['failed']['stopped'] is True and result['failed']['checkpoint'] == 'unknown'
         assert result['surviving']['ok'] is True and result['surviving']['checkpoint'] == 'saved'
@@ -191,10 +217,21 @@ try:
         assert not (outputs / 'assembled.json').exists()
         print('PASS abnormal owned worker exit remains checkpoint-unknown, sibling saves cleanly, both artifacts retained; no assembly or external model request')
     else:
-        results = [json.loads(p.read_text()) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json')]
+        results = [json.loads(p.read_text(encoding='utf-8')) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json', 'adapter-throw.json', 'process-exit.json', 'process-exit-kill.json')]
         assert len({r['cwd'] for r in results}) == 2 and all(r['passed'] for r in results)
         assert all(Path(r['cwd']).is_relative_to(workers) for r in results)
         assert not configured_workers.exists()
+        # 54/54 pairing evidence: the Host the CLI actually loaded (resolved in
+        # the fresh isolated profile) must carry the same execution-contract
+        # version as the Bridge that ran the composition.
+        source_doc = json.loads((outputs / 'module-source.json').read_text(encoding='utf-8'))
+        bridge_version = int(re.search(r'_EXECUTION_CONTRACT_VERSION\s*=\s*(\d+)',
+                                       (ROOT / 'houdini/python3.11libs/dsh_bridge.py').read_text(encoding='utf-8')).group(1))
+        assert source_doc.get('host', {}).get('hostContractVersion') == bridge_version, \
+            ('host/bridge contract mismatch', source_doc.get('host'), bridge_version)
+        print('pairing: host contract %s == bridge contract %s (plugin %s, subagent %s)' % (
+            source_doc['host']['hostContractVersion'], bridge_version,
+            source_doc['host'].get('package'), source_doc.get('version')))
         if auto_release:
             # The first finished turn must go idle before the Host's bounded grace period starts.
             time.sleep(35)
