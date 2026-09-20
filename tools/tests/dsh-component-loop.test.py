@@ -112,8 +112,10 @@ try:
         return result['result']['value']
     def pid_alive(pid):
         # Windows-safe liveness probe: os.kill(pid, 0) is NOT a probe on
-        # Windows (any other signal unconditionally terminates the process),
-        # so query the process handle instead.
+        # Windows (any other signal unconditionally terminates the process).
+        # OpenProcess alone is not enough either - it succeeds while any
+        # handle to a terminated process remains open - so query the exit
+        # code: STILL_ACTIVE (259) means alive, any other code means dead.
         if os.name != 'nt':
             try:
                 os.kill(pid, 0)
@@ -123,8 +125,13 @@ try:
         handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return True
+        try:
+            code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True  # cannot query; assume alive
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
     deadline = time.monotonic() + 90
     last_error = None
     while True:
@@ -155,62 +162,146 @@ try:
         rpc('session/prompt', {'request': {'sessionId': task, 'requestId': str(uuid.uuid4()), 'mode': 'queue',
                                          'content': [{'type': 'text', 'text': 'Inspect the injected worker-stop failure.'}]}})
     if built_exit:
-        # R6 built-exit drill, driver-driven: the fixture parks the built child
-        # at a synchronous hold point (built, saved, NOT exported, NOT ended)
-        # and records the idle parent turn; THIS driver - outside any model
-        # turn - observes the idle parent, verifies the worker's registry-bound
-        # identity, and terminates the process itself. The kill never happens
-        # inside a parent model turn.
-        while not ((outputs / 'parent-idle.json').exists() and (outputs / 'built-hold.json').exists()):
+        # R6 built-exit drill, driver-driven. The fixture parks the built
+        # child at a synchronous hold point (built, saved, NOT exported, NOT
+        # ended) and records the idle parent turn from real session events.
+        # THIS driver - outside any model turn - verifies preconditions for
+        # the real target AND for a completed-child counterexample, writes an
+        # immutable arm record, kills, and only then writes the outcome.
+        def atomic_write_json(path, doc):
+            tmp = str(path) + '.tmp-' + str(os.getpid())
+            with open(tmp, 'w', encoding='utf-8') as stream:
+                json.dump(doc, stream, indent=1)
+            os.replace(tmp, str(path))
+
+        class PreconditionRejected(Exception):
+            pass
+
+        def session_items():
+            return rpc('session/list', {'_request': {}}).get('items', [])
+
+        def event_notices():
+            snapshot = json.loads((outputs / 'built-exit-events.json').read_text(encoding='utf-8'))
+            return [entry['notice'] for entry in snapshot if entry.get('notice')]
+
+        def built_exit_preconditions(candidate_child, items, snap_notices, records):
+            """One verifier for the real kill and the counterexample alike:
+            every rejection names its reason, so the counterexample proves the
+            gate is real instead of an assertion passing vacuously."""
+            parent_item = next((i for i in items if i.get('sessionId') == task), None)
+            if parent_item is None or parent_item.get('running') is not False:
+                raise PreconditionRejected('the parent task must be observed idle at kill time')
+            terminal = [n for n in snap_notices
+                        if n.get('kind') == 'native' and n.get('childId') == candidate_child]
+            if terminal:
+                raise PreconditionRejected('the candidate child already has a terminal notice: '
+                                           + json.dumps(terminal[0]))
+            item = next((i for i in items if i.get('sessionId') == candidate_child), None)
+            if item is None:
+                raise PreconditionRejected('no session item for ' + candidate_child)
+            if item.get('running') is not True:
+                raise PreconditionRejected('the candidate child session is not running (already ended): '
+                                           + json.dumps(item)[:240])
+            record = next((r for r in records if r.get('task_id') == candidate_child), None)
+            if not record or record.get('pid', 0) <= 0:
+                raise PreconditionRejected('no registry record with a real pid for ' + candidate_child)
+            if record.get('hip_path') != str(workers / candidate_child / 'workspace' / 'component.hip'):
+                raise PreconditionRejected('registry hip_path does not match the built workspace: '
+                                           + json.dumps(record))
+            return record, item
+
+        while not ((outputs / 'built-exit-idle.json').exists() and (outputs / 'built-hold.json').exists()):
             if time.monotonic() > deadline:
                 raise RuntimeError('built-exit sync point never reached; inspect ' + str(fixture))
             time.sleep(.25)
-        idle_doc = json.loads((outputs / 'parent-idle.json').read_text(encoding='utf-8'))
-        hold_doc = json.loads((outputs / 'built-hold.json').read_text(encoding='utf-8'))
+        idle_doc = json.loads((outputs / 'built-exit-idle.json').read_text(encoding='utf-8'))
         assert idle_doc['endedTextOnly'] is True and idle_doc['outstandingSyntheticCalls'] is False, idle_doc
-        built_dirs = [d for d in workers.iterdir()
-                      if (d / 'workspace' / 'built.marker').exists()
-                      and not (d / 'workspace' / 'part.dshcomponent').exists()]
-        assert len(built_dirs) == 1, built_dirs
-        built_child = built_dirs[0].name
-        assert built_child == hold_doc['child'], (built_child, hold_doc)
-        # The child must be NOT ended: no published record and no settlement
-        # notice naming it may exist at the hold point.
-        assert not (outputs / (built_child + '.json')).exists(), 'the built child must not have ended'
-        turn_doc = json.loads((outputs / 'parent-turns.json').read_text(encoding='utf-8'))
-        assert not any(built_child in notice for turn in turn_doc for notice in turn['notices']), turn_doc
-        # Registry-bound identity: the record the Host wrote for THIS worker
-        # must name this child and this workspace before the driver may kill.
+        assert idle_doc.get('idleTurn') is not None, 'the idle turn must come from a real turn/start event'
+        hold_doc = json.loads((outputs / 'built-hold.json').read_text(encoding='utf-8'))
+        built_child = hold_doc['child']
+        assert not (outputs / (built_child + '.json')).exists(), 'the built child must not have published a record'
+        # The counterexample needs the survivor's terminal notice in the
+        # session event snapshot: wait for the survivor's published record and
+        # its settlement to be on the record.
+        survivor_child = None
+        while survivor_child is None:
+            if time.monotonic() > deadline:
+                raise RuntimeError('the survivor never published; inspect ' + str(fixture))
+            published = [p for p in outputs.glob('*.json') if re.fullmatch(r'[0-9a-f-]{36}', p.stem)]
+            if len(published) == 1:
+                candidate = published[0].stem
+                try:
+                    notices = event_notices()
+                except FileNotFoundError:
+                    notices = []
+                if any(n.get('childId') == candidate and n.get('outcome') == 'finished and will do no further work'
+                       for n in notices):
+                    survivor_child = candidate
+            time.sleep(.25)
+        assert survivor_child != built_child, (survivor_child, built_child)
+        # Observe the sessions: the parent task idle, the target child STILL
+        # running at its hold point.
+        while True:
+            items = session_items()
+            parent_item = next((i for i in items if i.get('sessionId') == task), None)
+            child_item = next((i for i in items if i.get('sessionId') == built_child), None)
+            if (parent_item is not None and parent_item.get('running') is False
+                    and child_item is not None and child_item.get('running') is True):
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError('the parent never settled idle or the child left its hold; inspect ' + str(fixture))
+            time.sleep(.25)
+        snap_notices = event_notices()
+        assert not any(n.get('childId') == built_child for n in snap_notices), \
+            'the target child must have no terminal event before the kill: ' + json.dumps(snap_notices)[:400]
+        # Registry-bound identity for the REAL target, through the shared
+        # verifier.
         records = [json.loads(p.read_text(encoding='utf-8')) for p in (registry / 'endpoints').glob('*.json')]
-        worker_record = next((r for r in records if r.get('task_id') == built_child), None)
-        assert worker_record and worker_record.get('pid', 0) > 0, records
-        assert worker_record.get('hip_path') == str(built_dirs[0] / 'workspace' / 'component.hip'), worker_record
+        worker_record, child_item = built_exit_preconditions(built_child, items, snap_notices, records)
         pid = worker_record['pid']
         assert pid_alive(pid), 'the worker must be alive at the hold point'
-        sessions_at_kill = rpc('session/list', {'_request': {}})
-        parent_item = next((item for item in sessions_at_kill.get('items', []) if item.get('sessionId') == task), None)
-        assert parent_item is not None, 'the parent session must be observable via session/list'
-        assert parent_item.get('running') is False, ('the parent task must be observed idle at kill time', parent_item)
-        # Re-read the idle marker immediately before the kill so the recorded
-        # idle turn is the turn that is actually idle when the process dies.
-        idle_doc = json.loads((outputs / 'parent-idle.json').read_text(encoding='utf-8'))
-        assert idle_doc['endedTextOnly'] is True and idle_doc['outstandingSyntheticCalls'] is False, idle_doc
-        os.kill(pid, signal.SIGTERM)  # driver-owned kill, outside any model turn
+        # Counterexample: the SAME verifier must REJECT the completed child
+        # (the survivor has settled) instead of passing vacuously.
+        try:
+            built_exit_preconditions(survivor_child, items, snap_notices, records)
+            raise AssertionError('the completed-child counterexample must be rejected by the preconditions')
+        except PreconditionRejected as rejection:
+            counterexample_reason = str(rejection)
+        # Immutable arm record, written atomically BEFORE the kill.
+        arm_doc = {
+            'armedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+            'killBy': 'test-driver: os.kill(SIGTERM) outside any model turn',
+            'killAuthorized': True,
+            'target': {'builtChild': built_child, 'pid': pid,
+                       'record': {key: worker_record.get(key) for key in
+                                  ('task_id', 'pid', 'hip_path', 'executor_id', 'registration_id')}},
+            'preconditions': {
+                'parentSession': {'sessionId': task, 'running': parent_item.get('running')},
+                'childSession': {'sessionId': built_child, 'running': child_item.get('running')},
+                'terminalEventsForChildCount': 0,
+                'idleMarker': idle_doc},
+            'negativeControl': {'input': survivor_child,
+                                'inputClass': 'target child task already completed (settled)',
+                                'rejected': True, 'reason': counterexample_reason}}
+        atomic_write_json(outputs / 'built-exit-arm.json', arm_doc)
+        # The kill, outside any model turn.
+        kill_error = None
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError as error:
+            kill_error = str(error)
         post_dead = False
         for _ in range(60):
             if not pid_alive(pid):
                 post_dead = True
                 break
             time.sleep(.1)
-        assert post_dead, 'the terminated pid must be gone'
-        (outputs / 'built-exit-kill.json').write_text(json.dumps({
-            'killBy': 'test-driver: os.kill(SIGTERM) outside any model turn',
-            'builtChild': built_child, 'pid': pid,
-            'record': {key: worker_record.get(key) for key in ('task_id', 'pid', 'hip_path', 'executor_id', 'registration_id')},
-            'preKill': {'workerAlive': True, 'builtMarker': True, 'artifact': False, 'ended': False,
-                        'parentIdle': idle_doc, 'holdPoint': hold_doc,
-                        'hostParentSession': parent_item},
-            'postKill': {'pidDead': True}}, indent=1), encoding='utf-8')
+        # Separate outcome record, written AFTER the kill.
+        outcome_doc = {'pidDead': post_dead, 'killError': kill_error,
+                       'probe': 'OpenProcess(SYNCHRONIZE) after SIGTERM',
+                       'confirmedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z')}
+        atomic_write_json(outputs / 'built-exit-outcome.json', outcome_doc)
+        assert kill_error is None and post_dead, (kill_error, post_dead)
     outcome = ('rejected.json' if negative else 'blocked.json' if child_failure else
                'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else
                'adapter-throw.json' if adapter_throw else
@@ -282,46 +373,60 @@ try:
         print('     both artifacts are retained; no replacement dispatch, assembly never ran')
     elif built_exit:
         report = json.loads((outputs / 'built-exit.json').read_text(encoding='utf-8'))
-        kill_doc = json.loads((outputs / 'built-exit-kill.json').read_text(encoding='utf-8'))
-        # The kill was driver-owned, outside any model turn, after verifying
-        # the worker's registry-bound identity.
-        assert kill_doc['killBy'].startswith('test-driver'), kill_doc
-        assert kill_doc['record']['task_id'] == kill_doc['builtChild'], kill_doc
-        assert kill_doc['preKill']['workerAlive'] is True and kill_doc['preKill']['ended'] is False, kill_doc
-        assert kill_doc['postKill']['pidDead'] is True, kill_doc
-        assert report['builtChild'] == kill_doc['builtChild'] and report['pid'] == kill_doc['pid'], report
-        # Causal chain: observed idle parent turn -> driver kill -> Host
-        # infrastructure notice -> NEW parent turn -> childId-bound status
-        # check. Real turn ids and event indices, not conventions.
-        idle_doc = kill_doc['preKill']['parentIdle']
-        assert idle_doc['endedTextOnly'] is True and idle_doc['outstandingSyntheticCalls'] is False, idle_doc
-        assert kill_doc['preKill']['hostParentSession'] is not None, kill_doc['preKill']
-        assert report['wake']['prevTurnTextOnly'] is True, report
-        assert report['wake']['statusCallIndex'] > report['wake']['noticeEventIndex'] >= 0, report
-        assert report['turnOfStatusCall'] > idle_doc['turn'], \
-            ('the status check must run in a NEW parent turn after the idle-turn kill', report['turnOfStatusCall'], idle_doc)
-        assert report['parentIdle']['turn'] == idle_doc['turn'] and report['parentIdle'] == idle_doc, \
-            ('the report must carry the exact idle-turn marker the driver killed against', report.get('parentIdle'), idle_doc)
-        notice_in_order = [entry for entry in report['eventOrder']
-                           if entry['type'] == 'user/message' and entry.get('plugin') == 'dsh-houdini']
-        assert notice_in_order and notice_in_order[0]['index'] == report['wake']['noticeEventIndex'], report['eventOrder']
-        assert report['infraEvent']['text'] and kill_doc['builtChild'] in report['infraEvent']['text'], report['infraEvent']
+        arm_doc = json.loads((outputs / 'built-exit-arm.json').read_text(encoding='utf-8'))
+        outcome_doc = json.loads((outputs / 'built-exit-outcome.json').read_text(encoding='utf-8'))
+        # Driver-owned fault control: immutable arm before the kill, separate
+        # outcome after it, and the report carries both verbatim.
+        assert arm_doc['killBy'].startswith('test-driver'), arm_doc
+        assert arm_doc['killAuthorized'] is True, arm_doc
+        assert arm_doc['target']['record']['task_id'] == arm_doc['target']['builtChild'], arm_doc
+        assert arm_doc['preconditions']['parentSession']['running'] is False, arm_doc['preconditions']
+        assert arm_doc['preconditions']['childSession']['running'] is True, arm_doc['preconditions']
+        assert arm_doc['preconditions']['terminalEventsForChildCount'] == 0, arm_doc['preconditions']
+        assert arm_doc['negativeControl']['rejected'] is True, arm_doc['negativeControl']
+        assert arm_doc['negativeControl']['input'] != arm_doc['target']['builtChild'], arm_doc['negativeControl']
+        assert 'terminal notice' in arm_doc['negativeControl']['reason'], arm_doc['negativeControl']
+        assert outcome_doc['pidDead'] is True and outcome_doc['killError'] is None, outcome_doc
+        assert report['arm'] == arm_doc and report['outcome'] == outcome_doc, report
+        assert report['builtChild'] == arm_doc['target']['builtChild'], report
+        assert report['pid'] == arm_doc['target']['pid'], report
+        # Real event identity: the idle turn from a real turn/start event, the
+        # status turn from the exact built-exit-status call event, real seq,
+        # time and callId; array positions only ever labeled index.
+        assert isinstance(report['idleTurn'], int) and isinstance(report['statusTurn'], int), report
+        assert report['statusTurn'] > report['idleTurn'], ('the checkpoint inspection must run in a later real turn', report)
+        assert report['statusCall']['callId'] and isinstance(report['statusCall']['seq'], int), report['statusCall']
+        # The notices keep childId and outcome, and BOTH kinds are on the
+        # record with their persistent seq/time.
+        notices = report['noticesByReportTime']
+        infra = [n for n in notices if n['kind'] == 'infrastructure' and n['childId'] == report['builtChild']]
+        native = [n for n in notices if n['kind'] == 'native' and n['childId'] == report['builtChild']]
+        assert infra and all(isinstance(n['seq'], int) and n['time'] for n in infra), notices
+        assert native and native[0]['outcome'] == 'failed before it finished', notices
+        assert report['statusCall']['seq'] > min(n['seq'] for n in notices), \
+            'the checkpoint inspection must follow the first notice in the persistent event order'
+        assert 'unique cause' in report['wakePathNote'], report['wakePathNote']
         assert report['status']['failed']['workerStatus'] == 'stopped'
         assert report['status']['failed']['checkpoint'] == 'unknown'
         assert report['status']['surviving']['workerStatus'] == 'ready'
         assert report['artifacts'] == {'builtHip': True, 'builtMarker': True, 'failedArtifact': False, 'survivorArtifact': True}, report
         assert report['delegateCalls'] == 2 and report['assembly'] is False, report
+        for entry in report['eventOrder']:
+            assert isinstance(entry['index'], int) and isinstance(entry['seq'], int) and entry['time'], entry
         sessions = rpc('session/list', {'_request': {}})
         child_sessions = [item for item in sessions.get('items', []) if item.get('origin') == 'subagent']
         assert len(child_sessions) == 2,             'no replacement dispatch may follow the built-exit kill: ' + str(len(child_sessions))
         assert not (outputs / 'assembled.json').exists()
-        print('PASS real worker exit while built-not-exported, driver-driven: the test driver observed the')
-        print('     idle parent turn, verified the worker registry identity (task_id/hip_path/pid) and')
-        print('     killed the process outside any model turn; the dsh-houdini infrastructure notice')
-        print('     then woke the idle parent as an actual session event (turn %s -> notice at event %s ->' % (idle_doc['turn'], report['wake']['noticeEventIndex']))
-        print('     status call at event %s in parent turn %s), the childId-bound checkpoint inspection' % (report['wake']['statusCallIndex'], report['turnOfStatusCall']))
-        print('     reports stopped/unknown vs ready survivor, the built HIP and marker are retained')
-        print('     with nothing exported, and there is no replacement dispatch or assembly')
+        print('PASS real worker exit while built-not-exported, driver-driven with real-event forensics:')
+        print('     the driver observed the idle parent (running=false) and the target child still')
+        print('     running with no terminal event, verified the registry identity and REJECTED the')
+        print('     completed-child counterexample through the same verifier before killing outside')
+        print('     any model turn; the notices (Host infrastructure + native child failure) are on')
+        print('     the record with childId, outcome, persistent seq and time; the checkpoint')
+        print('     inspection is attributed to its exact call event (seq %s, callId %s, turn %s,' % (
+            report['statusCall']['seq'], report['statusCall']['callId'], report['statusTurn']))
+        print('     idle turn %s); failed stopped/unknown vs ready survivor, nothing exported, no' % report['idleTurn'])
+        print('     re-dispatch, no assembly - sequential appearance reported, not claimed as a unique cause')
     elif child_failure:
         blocked = json.loads((outputs / 'blocked.json').read_text(encoding='utf-8'))
         assert blocked['assembly'] is False
@@ -350,7 +455,7 @@ try:
         assert not (outputs / 'assembled.json').exists()
         print('PASS abnormal owned worker exit remains checkpoint-unknown, sibling saves cleanly, both artifacts retained; no assembly or external model request')
     else:
-        results = [json.loads(p.read_text(encoding='utf-8')) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json', 'adapter-throw.json', 'process-exit.json', 'process-exit-kill.json', 'built-exit.json', 'built-exit-kill.json', 'built-exit-armed.json', 'built-exit-error.json', 'built-hold.json', 'parent-idle.json', 'process-exit-error.json', 'process-exit-debug.json')]
+        results = [json.loads(p.read_text(encoding='utf-8')) for p in outputs.glob('*.json') if p.name not in ('assembled.json', 'released.json', 'parent-turns.json', 'module-source.json', 'rejection-reason.json', 'adapter-throw.json', 'process-exit.json', 'process-exit-kill.json', 'built-exit.json', 'built-exit-arm.json', 'built-exit-outcome.json', 'built-exit-idle.json', 'built-exit-events.json', 'built-exit-trace.jsonl', 'built-exit-error.json', 'built-exit-kill.json', 'built-exit-armed.json', 'built-hold.json', 'built-exit-event-sample.json', 'parent-idle.json', 'process-exit-error.json', 'process-exit-debug.json')]
         assert len({r['cwd'] for r in results}) == 2 and all(r['passed'] for r in results)
         assert all(Path(r['cwd']).is_relative_to(workers) for r in results)
         assert not configured_workers.exists()

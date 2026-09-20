@@ -20,16 +20,61 @@ export function apply(ctx) {
   // and that the infrastructure notice - not a fixture tool-call chain - woke
   // the parent into the checkpoint inspection.
   let lastParentHadToolCall=false
-  // Captured when the built-exit drill issues its checkpoint inspection:
-  // the wake is proven by the fact that the kill turn ended with plain text
-  // and the infrastructure notice - not a fixture tool-call chain - provoked
-  // the next request.
-  let builtExitWake=null
-  // Monotonic parent-turn identifier: recorded into the idle marker and the
-  // built-exit report so the causal chain (idle turn -> driver kill ->
-  // infrastructure notice -> NEW parent turn -> status check) carries real
-  // turn ids instead of conventions.
-  let parentTurnNo=0
+  // Adapter-request ordinal ONLY: this counts model requests served by this
+  // adapter and is never presented as a session turn. Real turn identity in
+  // the built-exit evidence comes from turn/start and turn/end session
+  // events (data.turn), and every event carries a persistent seq and time.
+  let requestOrdinal=0
+  // Atomic write via temp file + rename: readers never observe a partial
+  // record, and an existing arm/idle record is never rewritten in place.
+  const atomicWrite=(file,value)=>{
+    const tmp=file+'.tmp-'+process.pid+'-'+Date.now()
+    fs.writeFileSync(tmp,typeof value==='string'?value:JSON.stringify(value,null,1))
+    fs.renameSync(tmp,file)
+  }
+  // REAL event classification. Infrastructure notices are user/message events
+  // carrying the dsh-houdini plugin notice source AND the exact Host report
+  // prefix (the target-binding message shares the source but is NOT a worker
+  // report); native subagent notices are user/message events whose text opens
+  // with 'Background subagent'. Every record keeps the persistent seq, the
+  // time, the childId and the outcome text verbatim.
+  const classifyNotices=(events,childId)=>{
+    const found=[]
+    for(const event of events){
+      if(event.type!=='user/message')continue
+      const text=(event.data?.content??[]).filter(c=>c.type==='text').map(c=>c.text).join(' ')
+      const source=event.data?.source??null
+      let kind=null,child=null,outcome=null
+      const infra=/^Component infrastructure report \(Host\): child ([0-9a-f-]{36})/.exec(text)
+      const native=/^Background subagent ([0-9a-f-]{36}) (finished and will do no further work|was stopped|ran out of room|declined the task|failed before it finished|ended abnormally)/.exec(text)
+      if(infra&&source?.plugin==='dsh-houdini'&&source?.form==='notice'){
+        kind='infrastructure';child=infra[1]
+        outcome='worker blocked (Host infrastructure report)'
+      }else if(native){
+        kind='native';child=native[1];outcome=native[2]
+      }else continue
+      if(childId&&child!==childId)continue
+      found.push({kind,childId:child,outcome,seq:event.seq,time:event.time,
+        source:source?{kind:source.kind??null,plugin:source.plugin??null,form:source.form??null}:null,
+        textHead:text.slice(0,260)})
+    }
+    return found
+  }
+  // The REAL turn number containing an event: the last turn/start whose seq
+  // is at or below the event's own seq (the session log is append-ordered).
+  const turnOfSeq=(events,seq)=>{
+    let turn=null
+    for(const event of events){
+      if(typeof event.seq!=='number'||event.seq>seq)break
+      if(event.type==='turn/start')turn=event.data?.turn??turn
+    }
+    return turn
+  }
+  // Full-event snapshot for the driver: real seq/time plus per-type identity.
+  const eventSnapshot=events=>events.map((e,i)=>({index:i,seq:e.seq,time:e.time,type:e.type,
+    ...(e.type==='user/message'?{notice:classifyNotices([e],null)[0]??null}:{}),
+    ...(e.type==='turn/start'||e.type==='turn/end'?{turn:e.data?.turn??null,reason:e.data?.reason??null}:{}),
+    ...(e.type==='tool/call'?{callId:e.data?.callId??null,name:e.data?.name??null}:{})}))
   // R6: record which DSH runtime modules this composition ACTUALLY loaded, so a
   // negative result can never be explained by an unexpected module source.
   const requireFromHost=createRequire(process.argv[1]||import.meta.url)
@@ -167,7 +212,7 @@ export function apply(ctx) {
           blocks=[{type:'text',text:'Component candidate exported; assembly remains unverified.'}]
         }
       }else{
-        parentTurnNo+=1
+        requestOrdinal+=1
         if(expectRejection&&!fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'rejection-reason.json'))){
           const failed=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.isError))
           if(failed.length){
@@ -318,85 +363,132 @@ export function apply(ctx) {
         }else if(expectBuiltExit&&!assembly&&called){
           // R6: REAL worker exit while the child is BUILT, SAVED, NOT
           // exported and NOT ended, and the parent task is IDLE. The fixture
-          // never kills: it parks the built child at a synchronous hold
-          // point and records every idle parent turn; the TEST DRIVER - the
-          // Python loop test, outside any model turn - verifies the worker's
-          // registry-bound identity and terminates the process. The fixture
-          // then requires the infrastructure report to wake the idle parent
-          // as an actual session event, the childId-bound status snapshot,
-          // and the two children's distinct fates - with no replacement
-          // dispatch and no assembly.
+          // never kills: the TEST DRIVER verifies preconditions outside any
+          // model turn and terminates the process. Identity and causality
+          // come from REAL session events - a persistent seq and time on
+          // every event, turn numbers from turn/start and turn/end events,
+          // the checkpoint inspection attributed to its exact
+          // built-exit-status call event - and array positions are labeled
+          // index, never passed off as persistent ordinals.
           const outDir=process.env.DSH_COMPONENT_TEST_OUT
-          const killLog=path.join(outDir,'built-exit-kill.json')
+          const armFile=path.join(outDir,'built-exit-arm.json')
+          const outcomeFile=path.join(outDir,'built-exit-outcome.json')
+          const idleMarker=path.join(outDir,'built-exit-idle.json')
+          const events=agent.session.snapshotEvents()
           const statusResult=options.messages.flatMap(m=>m.content.filter(c=>c.type==='tool-result'&&c.toolCallId==='built-exit-status')).at(-1)
-          try{fs.appendFileSync(path.join(outDir,'built-exit-trace.jsonl'),JSON.stringify({turn:parentTurnNo,killLog:fs.existsSync(killLog),statusResult:!!statusResult,statusError:statusResult?statusResult.isError:null,settled:settled.size,notices:notices.length,called,assembly})+'\n')}catch(_){}
-          if(!fs.existsSync(killLog)){
-            // Idle arm turn: this parent turn ends with plain text and no
-            // synthetic call outstanding. The marker (with the real turn id)
-            // is what the driver observes before performing the kill; the
-            // kill itself is driver-owned and never runs inside a model turn.
-            fs.writeFileSync(path.join(outDir,'parent-idle.json'),JSON.stringify({
-              turn:parentTurnNo,childRequests,endedTextOnly:true,
-              outstandingSyntheticCalls:false,prevTurnHadToolCall:lastParentHadToolCall,
-              note:'this parent turn ends text-only (the arm text below is its only block); the driver kills outside any model turn'}))
-            blocks=[{type:'text',text:'Arming the built-exit drill: the built-but-not-exported child is holding at its sync point and this parent turn stays idle until the test driver acts.'}]
-          }else if(statusResult){
+          try{fs.appendFileSync(path.join(outDir,'built-exit-trace.jsonl'),JSON.stringify({requestOrdinal,arm:fs.existsSync(armFile),outcome:fs.existsSync(outcomeFile),idle:fs.existsSync(idleMarker),statusResult:!!statusResult,statusError:statusResult?statusResult.isError:null,settled:settled.size,notices:notices.length,called,assembly})+'\n')}catch(_){}
+          if(statusResult){
             try{
             assert(!statusResult.isError,JSON.stringify(statusResult))
             const status=JSON.parse(statusResult.content.find(c=>c.type==='text').text)
-            const kill=JSON.parse(fs.readFileSync(killLog,'utf8'))
-            const failed=status.children.find(c=>c.childId===kill.builtChild)
-            const surviving=status.children.filter(c=>c.childId!==kill.builtChild)
+            // The driver's immutable records: the arm record was written
+            // atomically BEFORE the kill, the outcome separately after it.
+            // The checkpoint inspection itself fired on the notice events
+            // alone; this bounded await only covers the write latency of the
+            // records the report must quote verbatim (awaiting here never
+            // blocks the host event loop and never defers an arrived notice).
+            let arm=null,outcome=null
+            for(let waitedMs=0;waitedMs<8000;waitedMs+=250){
+              try{
+                arm=JSON.parse(fs.readFileSync(armFile,'utf8'))
+                outcome=JSON.parse(fs.readFileSync(outcomeFile,'utf8'))
+                break
+              }catch(missing){await new Promise(resolve=>setTimeout(resolve,250))}
+            }
+            assert(arm&&outcome,'the driver arm/outcome records never appeared: '+String(arm)+' '+String(outcome))
+            const builtChild=arm.target.builtChild
+            assert(arm.killAuthorized===true,'the kill must be authorized by verified preconditions: '+JSON.stringify(arm).slice(0,400))
+            assert(arm.negativeControl&&arm.negativeControl.rejected===true,
+              'the precondition verifier must have rejected the completed-child counterexample: '+JSON.stringify(arm.negativeControl))
+            assert(outcome.pidDead===true,'the driver outcome record must confirm the terminated pid is gone: '+JSON.stringify(outcome))
+            const failed=status.children.find(c=>c.childId===builtChild)
+            const surviving=status.children.filter(c=>c.childId!==builtChild)
             assert(failed,'the killed childId must appear in the status snapshot: '+JSON.stringify(status).slice(0,400))
             assert.equal(failed.workerStatus,'stopped')
             assert.equal(failed.checkpoint,'unknown')
             assert(surviving.length===1&&surviving[0].workerStatus==='ready',
               'the surviving child must stay ready: '+JSON.stringify(surviving))
-            const events=agent.session.snapshotEvents()
-            const noticeEvents=events.map((e,i)=>({e,i})).filter(x=>x.e.type==='user/message'
-              &&x.e.data?.source?.plugin==='dsh-houdini'&&x.e.data?.source?.form==='notice'
-              &&JSON.stringify(x.e.data).includes(kill.builtChild))
-            const noticeIndex=noticeEvents.length?noticeEvents[noticeEvents.length-1].i:-1
-            const noticeData=noticeIndex>=0?events[noticeIndex].data??{}:{}
-            const statusCalls=events.map((e,i)=>({e,i})).filter(x=>x.e.type==='tool/call'&&x.e.data?.name==='component_status')
-            const statusCallIndex=statusCalls.length?statusCalls[statusCalls.length-1].i:-1
-            assert(noticeIndex>=0,'the infrastructure report must exist as an actual session event')
-            assert(statusCallIndex>noticeIndex,'the parent may only inspect after the notice woke it: notice -> status call')
+            const builtNotices=classifyNotices(events,builtChild)
+            const infraNotice=builtNotices.find(n=>n.kind==='infrastructure')
+            assert(infraNotice,'the Host infrastructure report must exist as an actual session event naming the killed child')
+            const statusCallEvent=[...events].reverse().find(e=>e.type==='tool/call'&&e.data?.name==='component_status')
+            assert(statusCallEvent,'the built-exit-status call must exist as an actual session event')
+            const statusTurn=statusCallEvent.data?.turn??turnOfSeq(events,statusCallEvent.seq)
+            const firstNoticeSeq=builtNotices.length?Math.min(...builtNotices.map(n=>n.seq)):null
+            assert(firstNoticeSeq!==null&&statusCallEvent.seq>firstNoticeSeq,
+              'the checkpoint inspection must follow the first recorded notice for the killed child in the persistent event order')
             const delegateCalls=events.filter(e=>e.type==='tool/call'&&e.data?.name==='component_delegate').length
-            const builtWorkspace=path.join(process.env.DSH_COMPONENT_TEST_WORKERS,kill.builtChild,'workspace')
+            const builtWorkspace=path.join(process.env.DSH_COMPONENT_TEST_WORKERS,builtChild,'workspace')
             const survivorChild=surviving[0].childId
-            const report={builtChild:kill.builtChild,pid:kill.pid,killError:kill.killError,pidDead:kill.pidDead,
-              killBy:kill.killBy,parentIdle:kill.preKill.parentIdle,turnOfStatusCall:parentTurnNo,
-              infraEvent:{source:noticeData.source??null,text:JSON.stringify(noticeData).slice(0,500)},
-              wake:{noticeEventIndex:noticeIndex,statusCallIndex,...(builtExitWake??{})},
+            const orderStart=events.findIndex(e=>e.seq===firstNoticeSeq)
+            const orderEnd=events.findIndex(e=>e.seq===statusCallEvent.seq)
+            const report={builtChild,pid:arm.target.pid,killBy:arm.killBy,
+              arm,outcome,
+              idleTurn:arm.preconditions.idleMarker.idleTurn,
+              idleTurnSource:'the real session turn number from the turn/start event preceding the idle marker',
+              statusTurn,
+              statusTurnSource:'the turn recorded on the built-exit-status call event itself (cross-checked against turn/start)',
+              statusCall:{seq:statusCallEvent.seq,time:statusCallEvent.time,callId:statusCallEvent.data?.callId??null,
+                argumentsHead:JSON.stringify(statusCallEvent.data?.arguments??null).slice(0,120)},
+              noticesBeforeStatusCall:builtNotices.filter(n=>n.seq<statusCallEvent.seq),
+              noticesByReportTime:builtNotices,
+              wakePathNote:'the checkpoint inspection followed the recorded notices in the persistent event order; the session may have been woken by any of them (the Host infrastructure report and/or the native child failure notice) - sequential appearance is reported, not claimed as a unique cause',
               status:{failed,surviving:surviving[0]},
               artifacts:{builtHip:fs.existsSync(path.join(builtWorkspace,'component.hip')),
                 builtMarker:fs.existsSync(path.join(builtWorkspace,'built.marker')),
                 failedArtifact:fs.existsSync(path.join(builtWorkspace,'part.dshcomponent')),
                 survivorArtifact:fs.existsSync(path.join(process.env.DSH_COMPONENT_TEST_WORKERS,survivorChild,'workspace','part.dshcomponent'))},
               delegateCalls,assembly,
-              eventOrder:events.slice(Math.max(0,noticeIndex-2),statusCallIndex+1)
-                .map((e,i)=>({index:Math.max(0,noticeIndex-2)+i,type:e.type,name:e.data?.name??null,plugin:e.data?.source?.plugin??null}))}
+              eventOrder:events.slice(orderStart,orderEnd+1).map((e,i)=>({index:orderStart+i,seq:e.seq,time:e.time,
+                type:e.type,name:e.data?.name??null,plugin:e.data?.source?.plugin??null,turn:e.data?.turn??null}))}
             assert(report.artifacts.builtHip&&report.artifacts.builtMarker,'the built-not-exported state must be preserved')
             assert(!report.artifacts.failedArtifact,'nothing may export the killed child artifact')
             assert(report.artifacts.survivorArtifact,'the survivor artifact must be retained')
             assert.equal(delegateCalls,2,'no replacement dispatch may follow the process exit')
             assert(!assembly,'assembly must never run in the built-exit drill')
-            fs.writeFileSync(path.join(outDir,'built-exit.json'),JSON.stringify(report,null,2))
-            blocks=[{type:'text',text:'One built-but-not-exported worker exited for real: the test driver verified its registry identity and terminated it outside any model turn, the infrastructure report woke this idle session, its HIP and marker are retained with nothing exported, and the surviving worker stays ready. Assembly was not attempted.'}]
+            assert(report.statusCall.callId,'the status call event must carry its real callId')
+            atomicWrite(path.join(outDir,'built-exit.json'),JSON.stringify(report,null,1))
+            blocks=[{type:'text',text:'One built-but-not-exported worker exited for real: the test driver verified the registry identity and terminated it outside any model turn, the worker-exit notices are on the record with their persistent event ids, and the checkpoint inspection followed them in the event order. Nothing was exported and assembly was not attempted.'}]
             }catch(error){try{fs.writeFileSync(path.join(process.env.DSH_COMPONENT_TEST_OUT,'built-exit-error.json'),
               String(error && error.stack || error))}catch(_){}throw error}
           }else{
-            const kill=JSON.parse(fs.readFileSync(killLog,'utf8'))
-            const infraVisible=agent.session.snapshotEvents().some(e=>e.type==='user/message'
-              &&e.data?.source?.plugin==='dsh-houdini'&&e.data?.source?.form==='notice'
-              &&JSON.stringify(e.data).includes(kill.builtChild))
-            if(infraVisible){builtExitWake={prevTurnTextOnly:!lastParentHadToolCall}
-              blocks=[{type:'tool-call',id:'built-exit-status',name:'component_status',arguments:'{}'}]}
-            else{fs.writeFileSync(path.join(outDir,'built-exit-events.json'),JSON.stringify(
-              agent.session.snapshotEvents().filter(e=>e.type==='user/message').map((e,i)=>({i,
-                source:e.data?.source??null,text:JSON.stringify(e.data).slice(0,260)})),null,2))
-              blocks=[{type:'text',text:'Awaiting the worker infrastructure report for the terminated process.'}]}
+            const holdFile=path.join(outDir,'built-hold.json')
+            const builtChildKnown=fs.existsSync(holdFile)?JSON.parse(fs.readFileSync(holdFile,'utf8')).child:null
+            const builtNotices=builtChildKnown?classifyNotices(events,builtChildKnown):[]
+            const builtInfra=builtNotices.find(n=>n.kind==='infrastructure')
+            const builtNative=builtNotices.find(n=>n.kind==='native')
+            if(builtInfra){
+              // The Host infrastructure report is visible: the worker exit
+              // has been observed by the Host itself, so the checkpoint
+              // inspection can run on real event grounds. Notice handling
+              // never depends on the driver outcome record having landed,
+              // and an arrived notice is never dropped, deferred, or
+              // answered by re-arming.
+              blocks=[{type:'tool-call',id:'built-exit-status',name:'component_status',arguments:'{}'}]
+            }else if(builtNative){
+              // Only the native child failure notice has arrived so far: the
+              // registry pid names the Houdini process, and the Host's own
+              // worker bookkeeping (supervisor exit -> infrastructure
+              // report) follows it. Stand by WITHOUT re-arming and keep the
+              // arrived notice in the conversation until the Host report
+              // shows up as an event.
+              blocks=[{type:'text',text:'The child failure notice for the built-but-not-exported child is on the record; standing by without re-arming until the Host infrastructure report for that worker appears as an event, then this session inspects the checkpoint.'}]
+            }else{
+              // Pre-kill idle arm: the marker is written ONCE, atomically,
+              // with the real session turn number; the event snapshot is
+              // refreshed for the driver on every idle arm turn.
+              if(!fs.existsSync(idleMarker)){
+                const starts=events.filter(e=>e.type==='turn/start')
+                atomicWrite(idleMarker,{idleTurn:starts.length?starts[starts.length-1].data?.turn??null:null,
+                  idleTurnSource:'last turn/start event at marker time (real session turn number)',
+                  eventSeqAtMarker:events.length?events[events.length-1].seq:null,
+                  requestOrdinal,childRequests,endedTextOnly:true,outstandingSyntheticCalls:false,
+                  prevTurnHadToolCall:lastParentHadToolCall,
+                  note:'this parent turn ends text-only (the arm text below is its only block); the driver kills outside any model turn'})
+              }
+              atomicWrite(path.join(outDir,'built-exit-events.json'),eventSnapshot(events))
+              blocks=[{type:'text',text:'Arming the built-exit drill: the built-but-not-exported child is holding at its sync point and this parent turn stays idle until the test driver acts.'}]
+            }
           }
         }else if(expectProcessExit&&settled.size===2&&!assembly){
           // R6: REAL worker process exit. One settled child's worker process is
