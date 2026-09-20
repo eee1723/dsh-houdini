@@ -14,6 +14,9 @@ from dsh_web_auth import DshWebSession
 from dsh_managed_runtime import spawn_frontend,stop_owned
 node,cli=sys.argv[1:3]
 legacy='--legacy' in sys.argv[3:]
+attention='--attention' in sys.argv[3:]
+flush_mode='false,false' if '--flush-false' in sys.argv[3:] else 'throw' if '--flush-throw' in sys.argv[3:] else ''
+assert not flush_mode or attention, 'flush failures require --attention'
 fixture=Path(tempfile.mkdtemp(prefix='dsh-binding-loop-'))
 executor='a'*32;runtime='c'*32;executions=[]
 generated=(ROOT/'src/generated-verb-contract.ts').read_text(encoding='utf-8')
@@ -28,9 +31,18 @@ class Handler(BaseHTTPRequestHandler):
                     'executionContractVersion':version,'verbCatalog':{'hash':catalog}}
         elif self.path=='/exec':
             assert self.headers['X-DSH-Houdini-Executor']==executor
-            assert data['code'] in ('__result__=0','__result__=1') and data['read_only']=='true',data
+            allowed=[f'__result__={i}' for i in range(100 if attention else 2)]
+            assert data['code'] in allowed and data.get('read_only','false')==('false' if attention else 'true'),data
             executions.append(data['code'])
-            result={'ok':True,'stdout':'','stderr':'','result':int(data['code'][-1])}
+            ordinal=int(data['code'].split('=')[1])+1
+            result={'ok':True,'stdout':'','stderr':'','result':ordinal-1}
+            if attention:
+                result.update(transaction={'status':'committed','nodes':[]},
+                    execution={'runtime_id':runtime,'executor_id':executor,'sequence':ordinal,
+                        'observed_at':ordinal,'frame':1,'hip_path':str(fixture/'fixture.hip'),'hip_dir':str(fixture),
+                        'read_only':False,'impact':{'attempted':True,'global':True,'nodes':[]},
+                        'outputs':[{'ledger_index':1,'identity':1,'path':'/obj/fixture/OUT'}]},
+                    evidence=[{'ledgerIndex':1,'verb':'verify_network','ok':True,'output':'/obj/fixture/OUT'}] if ordinal==1 else [])
         else: raise AssertionError('Unexpected endpoint '+self.path)
         raw=json.dumps(result).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
 fake=ThreadingHTTPServer(('127.0.0.1',0),Handler)
@@ -39,6 +51,8 @@ env=isolated_environment(fixture/'env')
 env.update(DSH_HOME=str(fixture/'home'),DSH_HOUDINI_EXECUTOR_ID=executor,
     DSH_HOUDINI_BRIDGE_URL=f'http://127.0.0.1:{fake.server_port}',DSH_BINDING_FIXTURE_OUT=str(fixture/'passed.json'))
 if legacy:env['DSH_BINDING_REPAIR_FIXTURE']='1'
+if attention:env['DSH_ATTENTION_FIXTURE']='1'
+if flush_mode:env['DSH_ATTENTION_FLUSH_FAILURES']=flush_mode
 subprocess.run([node,str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'),cli,env['DSH_HOME'],str(ROOT)],
     cwd=ROOT,env=env,check=True,timeout=60,capture_output=True)
 for name in ('houdini','houdini-dev'):
@@ -68,14 +82,29 @@ try:
     task=str(uuid.uuid4())
     rpc('session/create',{'request':{'sessionId':task,'cwd':str(fixture),'agentPreset':'houdini'}})
     rpc('session/selectModel',{'request':{'sessionId':task,'provider':'binding-fixture','model':'fixture'}})
-    rpc('session/prompt',{'request':{'sessionId':task,'requestId':str(uuid.uuid4()),'mode':'queue','content':[{'type':'text','text':'Run the two read-only fixture queries.'}]}})
-    for _ in range(120):
+    prompt='Run one hundred offline fixture changes.' if attention else 'Run the two read-only fixture queries.'
+    rpc('session/prompt',{'request':{'sessionId':task,'requestId':str(uuid.uuid4()),'mode':'queue','content':[{'type':'text','text':prompt}]}})
+    resumed_failures=0
+    for _ in range(240):
         if (fixture/'passed.json').exists():break
+        failure_file=fixture/'flush-failures.json'
+        if flush_mode and failure_file.exists():
+            failures=json.loads(failure_file.read_text(encoding='utf8'))
+            assert all(not row.get('timeout') for row in failures),failures
+            assert len({row['modelRequests'] for row in failures})==1,failures
+            assert len({row['turn'] for row in failures})==len(failures), 'each failure must be a distinct retry'
+            if len(failures)>resumed_failures:
+                resumed_failures=len(failures)
+                rpc('session/prompt',{'request':{'sessionId':task,'requestId':str(uuid.uuid4()),'mode':'queue',
+                    'content':[{'type':'text','text':'Continue the offline fixture after persistence failure.'}]}})
         time.sleep(.25)
     else:raise RuntimeError('Agent loop did not reach the second valid request; inspect '+str(fixture))
-    assert sorted(executions)==['__result__=0','__result__=1'],executions
+    assert sorted(executions)==sorted(f'__result__={i}' for i in range(100 if attention else 2)),executions
     assert json.loads((fixture/'passed.json').read_text())['repaired'] is legacy
-    print('PASS real DSH loop: pre-step binding, scoped sessions.flush, two tool calls, complete results, valid next model request; zero external model requests')
+    if flush_mode:
+        assert resumed_failures==len(flush_mode.split(',')),resumed_failures
+        print('PASS persistence retry barriers:',flush_mode,'; zero additional model requests during failures')
+    print('PASS real DSH loop: '+('100 changing execution notices bounded in actual adapter requests; original calls/results and user prompt retained' if attention else 'pre-step binding, scoped sessions.flush, two tool calls, complete results, valid next model request')+'; zero external model requests')
     print('Fixture:',fixture)
 finally:
     stop_owned();fake.shutdown();fake.server_close()

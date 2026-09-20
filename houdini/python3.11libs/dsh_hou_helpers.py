@@ -3761,6 +3761,104 @@ def _default_hda_file(name: str) -> str:
     return os.path.join(hip_dir, "otls", file_stem + ".hda")
 
 
+def _native_definition_identity(node, libraries):
+    """Trust only an unchanged locked definition shipped inside this HFS."""
+    definition = node.type().definition()
+    if definition is None or not node.isLockedHDA() or not node.matchesCurrentDefinition():
+        return None
+    hfs = os.path.realpath(hou.expandString('$HFS'))
+    library = os.path.realpath(definition.libraryFilePath())
+    try:
+        if os.path.commonpath([hfs, library]) != hfs or not os.path.isfile(library):
+            return None
+    except ValueError:
+        return None
+    if library not in libraries:
+        size = os.path.getsize(library)
+        if size > 32 * 1024 * 1024 or libraries.get('_bytes', 0) + size > 64 * 1024 * 1024:
+            return None
+        with open(library, 'rb') as stream:
+            libraries[library] = hashlib.sha256(stream.read()).hexdigest()
+        libraries['_bytes'] = libraries.get('_bytes', 0) + size
+    return (node.type().category().name(), node.type().name(), library, libraries[library])
+
+
+def _snapshot_native_conversion(root):
+    """Capture wholly owned, locked native subtrees BEFORE conversion.
+
+    A path is only a slot within an unchanged native definition rooted at a
+    surviving owned HOM identity, never independent proof of ownership.
+    """
+    owner = _OWNED_NODE_SESSIONS.get(int(root.sessionId()))
+    if owner is None or owner['session'] != _ACTIVE_OWNER_SESSION:
+        return []
+    candidates = list(root.allSubChildren())
+    if len(candidates) > 512:
+        return []
+    libraries, captured, covered = {}, [], set()
+    for anchor in candidates:
+        aid = int(anchor.sessionId())
+        if aid in covered:
+            continue
+        entry = _OWNED_NODE_SESSIONS.get(aid)
+        if not entry or entry['session'] != _ACTIVE_OWNER_SESSION:
+            continue
+        definition = _native_definition_identity(anchor, libraries)
+        if definition is None:
+            continue
+        members = [anchor, *anchor.allSubChildren(sync_delayed_definition=True)]
+        if any(not (e := _OWNED_NODE_SESSIONS.get(int(n.sessionId())))
+               or e['session'] != _ACTIVE_OWNER_SESSION
+               or n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE for n in members):
+            continue
+        inventory = {anchor.relativePathTo(n): {
+            'identity': int(n.sessionId()), 'type': (n.type().category().name(), n.type().name()),
+            'owner': dict(_OWNED_NODE_SESSIONS[int(n.sessionId())])} for n in members[1:]}
+        captured.append((aid, definition, inventory))
+        covered.update(int(n.sessionId()) for n in members)
+    return captured
+
+
+def _reconcile_native_conversion(captured):
+    """Transfer only extinct identities in the exact captured native inventory."""
+    libraries, materialized, transferred = {}, [], []
+    for aid, definition, before in captured:
+        anchor = hou.nodeBySessionId(aid)
+        if anchor is None or _OWNED_NODE_SESSIONS.get(aid, {}).get('session') != _ACTIVE_OWNER_SESSION \
+                or _native_definition_identity(anchor, libraries) != definition:
+            continue
+        anchor.allSubChildren(sync_delayed_definition=True)
+        materialized.append((aid, definition, before))
+    # Recheck actual definition bytes after ALL materialization, not a cached
+    # pre-materialization digest. No further delayed loading during transfers.
+    libraries = {}
+    for aid, definition, before in materialized:
+        anchor = hou.nodeBySessionId(aid)
+        if anchor is None or _OWNED_NODE_SESSIONS.get(aid, {}).get('session') != _ACTIVE_OWNER_SESSION \
+                or _native_definition_identity(anchor, libraries) != definition:
+            continue
+        after = {anchor.relativePathTo(n): n for n in anchor.allSubChildren()}
+        if set(before) != set(after) or any(
+                (n.type().category().name(), n.type().name()) != before[slot]['type']
+                or n.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE for slot, n in after.items()):
+            continue
+        for slot, n in after.items():
+            old = before[slot]
+            new_id = int(n.sessionId())
+            if old['owner']['session'] != _ACTIVE_OWNER_SESSION or old['identity'] == new_id or hou.nodeBySessionId(old['identity']) is not None:
+                continue
+            # Never overwrite a registered identity, even one with copied tags.
+            if new_id in _OWNED_NODE_SESSIONS:
+                continue
+            _OWNED_NODE_SESSIONS[new_id] = dict(old['owner'])
+            _OWNED_NODE_SESSIONS.pop(old['identity'], None)
+            if _CREATION_JOURNAL is not None and old['identity'] in _CREATION_JOURNAL:
+                _CREATION_JOURNAL.add(new_id)
+            transferred.append({'node': n.path(), 'previous_identity': old['identity'],
+                                'identity': new_id, 'native_anchor_identity': aid})
+    return transferred
+
+
 def hda_create(
     node,
     name: str,
@@ -3780,7 +3878,8 @@ def hda_create(
     uninstall 整个多资产库），最后从传入的源节点重建。传入源节点本身不能已经是
     待替换类型，否则销毁实例后就没有可供重建的源节点。
     max_outputs可选1..64，None保留原生默认；这是端口上限，不会自动接线。
-    实例spare不保证进入定义；返回两层条目数，不以创建成功替代新实例/公共输出验证。
+    实例spare不保证进入定义；返回pending_spare_parameters与原地hda_edit('promote')指引。
+    不以创建成功替代新实例/公共输出验证；转换只接续可证明来自同一锁定原生定义的自有后代。
     """
     n = _resolve(node)
     _require_owned(n, "hda_create", allow_foreign)
@@ -3874,6 +3973,7 @@ def hda_create(
 
     source_identity = int(n.sessionId())
     source_owner = _OWNED_NODE_SESSIONS.get(source_identity)
+    native_before = _snapshot_native_conversion(n)
     created = n.createDigitalAsset(
         name=name,
         hda_file_name=target,
@@ -3888,6 +3988,10 @@ def hda_create(
         raise RuntimeError(f"createDigitalAsset 返回后类型 '{name}' 没有 definition")
     if max_outputs is not None:
         definition.setMaxNumOutputs(max_outputs)
+    # Conversion invalidates native delayed internals (e.g. a Wrangle's VOP).
+    # Materialize only captured native anchors within this serialized mutation,
+    # never arbitrary user definitions or a future cook/adoption rule.
+    native_transfers = _reconcile_native_conversion(native_before)
     # Conversion may replace the root HOM identity. Transfer only its trusted
     # existing provenance; never adopt foreign descendants or an allowed foreign source.
     if source_owner is not None:
@@ -3896,6 +4000,8 @@ def hda_create(
             _CREATION_JOURNAL.add(int(created.sessionId()))
         if hou.nodeBySessionId(source_identity) is None:
             _OWNED_NODE_SESSIONS.pop(source_identity, None)
+    pending_spares = [p.name() for p in created.spareParms()
+                      if definition.parmTemplateGroup().find(p.name()) is None]
     return {
         "node": created.path(),
         "type": created.type().name(),
@@ -3906,6 +4012,13 @@ def hda_create(
         "max_outputs": definition.maxNumOutputs(),
         "instance_interface_entries": len(created.parmTemplateGroup().entries()),
         "definition_interface_entries": len(definition.parmTemplateGroup().entries()),
+        "pending_spare_parameters": pending_spares[:64],
+        "pending_spare_parameter_count": len(pending_spares),
+        "native_identity_transfers": native_transfers,
+        "next_action": ("Instance spare controls are not yet in the definition. Read hda_edit help; "
+                        "preview unlock if locked, then promote with expected_plan to migrate in place. "
+                        "Verify a fresh instance before considering replacement."
+                        if pending_spares else "Verify fresh-instance parameters and public outputs; later internal edits require hda_edit save."),
         "verification_scope": "definition created; spare migration, public outputs and fresh-instance behavior require separate verification",
         "replaced": bool(replace),
         "destroyed_instances": destroyed,
@@ -4658,7 +4771,7 @@ def _rebuild_hda_interface(node, spec=None, keep_std=True, hide_builtin_tabs=Fal
     preview_tree = [_template_info(t, 0, 20) for t in group.entries()]
     if dry_run:
         return {'node': n.path(), 'mode': 'layout' if layout is not None else 'rebuild',
-                'dry_run': True, 'applied': False, 'scene_writes': 0,
+                'ok': True, 'dry_run': True, 'applied': False, 'scene_writes': 0,
                 'interface': preview_tree, 'ui_analysis': inspect_ui(preview_tree)}
     definition.setParmTemplateGroup(group, rename_conflicting_parms=False)
 

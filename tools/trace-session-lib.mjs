@@ -2,6 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { createHash } from 'node:crypto';
+
+// Legacy traces remain readable without DSH installed. V3 is certified only
+// by the public native validator; absence is reported as unknown, not emulated.
+let nativeSurfaceApi = null;
+try {
+  const [session, surface] = await Promise.all([
+    import('@deepseek-ai/dsh-session'), import('@deepseek-ai/dsh-session/surface'),
+  ]);
+  nativeSurfaceApi = {SurfaceManager:surface.SurfaceManager,
+    snapshot:session.snapshotSessionEvent, message:session.deriveEventMessage,
+    version:session.SESSION_FORMAT_VERSION};
+} catch { /* collectRequestContexts reports the unavailable validator explicitly */ }
 
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd];
 
@@ -118,7 +131,7 @@ export function sessionIdFromFile(file) {
  * Missing fields stay unknown. No inference about billing or retained messages.
  */
 export function collectRequestTelemetry(events) {
-  const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens'];
+  const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens', 'reasoningTokens'];
   const requests = new Map();
   let duplicateUsageEvents = 0;
   let updatedUsageEvents = 0;
@@ -161,5 +174,104 @@ export function collectRequestTelemetry(events) {
     goalChanges:events.filter(e => e.type === 'goal/change').map(e => ({seq:e.seq,time:e.time,
       operation:e.data?.operation ?? null, phase:e.data?.goal?.phase ?? null,
       objective:e.data?.goal?.objective ?? null})),
-    note:'Provider-reported cumulative fields per turn/step; totals repeatedly count history, not unique content or billing. Missing usage is unknown. Input plus cache is derived only when the reported arithmetic agrees (absent cache treated as zero for that check). No recorded compaction does not prove full message retention.'};
+    note:'Provider-reported cumulative fields per turn/step; totals repeatedly count history, not unique content or billing. reasoningTokens is a subset of outputTokens, never added to totalTokens. Missing usage is unknown. Input plus cache is derived only when the reported arithmetic agrees (absent cache treated as zero for that check). No recorded compaction does not prove full message retention.'};
+}
+
+/** Request-prefix surface accounting. Never includes streams, usage or canonical
+ * metadata as model text. Text sizes are characters, not provider token counts.
+ * V3 replacements use their exact visible endpoints; malformed/missing history
+ * is marked unknown instead of certifying a stale system prompt.
+ */
+export function collectRequestContexts(events, {includeSystemText = false} = {}) {
+  const fileVersion = events[0]?.type === 'session' ? events[0].version : undefined;
+  const v3 = fileVersion >= 3 || events.some(e => e.surfaceOp !== undefined);
+  const eligible = new Set(['system/message', 'user/message', 'assistant/message', 'tool/result']);
+  const surface = [], rows = [], seenRequests = new Set();
+  const nativeLog = [];
+  const manager = v3 && typeof nativeSurfaceApi?.SurfaceManager === 'function'
+    ? new nativeSurfaceApi.SurfaceManager(nativeLog) : null;
+  let header = {}, complete = !v3 || !!manager, projectionError = complete ? null : 'Native V3 surface validator unavailable';
+  if (v3 && fileVersion > nativeSurfaceApi?.version) {
+    complete = false; projectionError = 'Session format is newer than the installed native validator';
+  }
+  const message = e => v3 ? nativeSurfaceApi.message(e)
+    : e.type === 'user/message' ? e.data : e.data?.message;
+  const reject = (event, error) => {
+    complete = false;
+    const text = String(error?.message || '');
+    const category = /surfaceOp/.test(text) ? 'invalid or missing surface marker'
+      : /sourceEventSeqs/.test(text) ? 'invalid replacement provenance'
+      : /tool\/result.*replace/.test(text) ? 'illegal tool-result replacement'
+      : /system prompt|node 0/.test(text) ? 'protected system head replacement'
+      : /seq|contiguous/.test(text) ? 'noncontiguous event sequence' : 'invalid event/message invariant';
+    projectionError ??= `Native V3 validation rejected seq ${event.seq}: ${category}`;
+  };
+  const snapshot = (event, boundary = 'before_assistant_message') => {
+    const parts = {system:0,user:0,plugin:0,skill_catalog:0,assistant_text:0,reasoning:0,tool_arguments:0,tool_results:0};
+    const systems = [];
+    let messageCount = 0;
+    const visible = complete ? (v3 ? manager.nodes.map(seq=>nativeLog[seq]) : surface) : [];
+    for (const e of visible) {
+      const m = message(e);
+      if (!m) continue;
+      if (['system/message','assistant/message'].includes(e.type) && !m.content?.length) continue;
+      messageCount++;
+      const category = e.type === 'system/message' ? 'system'
+        : e.type === 'tool/result' ? 'tool_results'
+        : e.type === 'assistant/message' ? 'assistant_text'
+        : m.source?.kind === 'user' ? 'user' : m.source?.kind === 'skill-catalog' ? 'skill_catalog' : 'plugin';
+      const walk = blocks => {
+        for (const b of blocks || []) {
+          if (typeof b.text === 'string') {
+            parts[b.type === 'reasoning' ? 'reasoning' : category] += b.text.length;
+            if (category === 'system' && b.type === 'text') systems.push(b.text);
+          }
+          if (b.type === 'tool-call') parts.tool_arguments += typeof b.arguments === 'string' ? b.arguments.length : JSON.stringify(b.arguments ?? {}).length;
+          if (b.type === 'tool-result' || b.type === 'tool_result') walk(b.content);
+        }
+      };
+      walk(m.content);
+    }
+    const system = systems.length ? systems.join('\n') : !v3 ? header.system || '' : '';
+    if (!systems.length) parts.system = system.length;
+    const tools = header.tools || [];
+    rows.push({seq:event.seq,time:event.time,turn:event.data?.turn ?? null,step:event.data?.step ?? null,
+      boundary,projectionComplete:complete,projectionError,model:complete ? header.config?.model ?? null : null,
+      systemChars:complete ? system.length : null,
+      systemHash:complete ? createHash('sha256').update(system).digest('hex').slice(0,16) : null,
+      systemSource:!complete ? 'unknown_invalid_surface' : systems.length ? 'surface_system_messages' : v3 ? 'no_visible_system_message' : 'legacy_header',
+      toolsSchemaChars:complete ? JSON.stringify(tools).length : null,
+      availableTools:complete ? tools.map(t=>t.name || t.function?.name).filter(Boolean).sort() : null,
+      surfaceMessageCount:complete ? messageCount : null,
+      contentChars:complete ? Object.values(parts).reduce((a,b)=>a+b,0) : null,
+      charactersByKind:complete ? parts : null,
+      ...(includeSystemText ? {systemText:complete ? system : null} : {}),
+      scope:'Reconstructed logged request prefix; characters are not tokens or billing. Excludes transport transforms and unlogged middleware.'});
+  };
+  for (const [eventIndex,raw] of events.entries()) {
+    if (raw.type === 'session' && raw.seq == null) {
+      if (eventIndex !== 0) reject(raw,new Error('duplicate file header'));
+      continue;
+    }
+    let e = raw;
+    if (v3 && complete) {
+      try {
+        e = nativeSurfaceApi.snapshot(raw);
+        manager.validateNext(e); // validate BEFORE certifying this request prefix
+      } catch (error) { reject(raw,error); }
+    }
+    if (e.type === 'request/header') header = e.data?.header || {};
+    if (e.type === 'assistant/message') {
+      const key = e.data?.turn != null && e.data?.step != null ? `${e.data.turn}/${e.data.step}` : `seq:${e.seq}`;
+      if (!seenRequests.has(key)) { snapshot(e); seenRequests.add(key); }
+    }
+    if (v3) {
+      if (complete) {
+        nativeLog.push(e);
+        try { void manager.nodes; } catch (error) { reject(e,error); }
+      }
+    } else if (eligible.has(e.type)) surface.push(e);
+  }
+  if (!rows.length) snapshot(events.at(-1) || {}, 'header_only_no_observed_response');
+  return rows;
 }

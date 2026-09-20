@@ -309,6 +309,8 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 
 ### 静态视觉
 
+新建或实质修改几何/装配默认需要低成本预览及实际inspection，网络/HIP/HDA交付不豁免。纯查询、改名、无可见变化的维护、明确禁止或能力不可用保留适用边界；Karma属于正式渲染范围。未尝试与尝试失败分别判定。
+
 1. `cook_node`/模块不变量先通过。
 2. `render_view` 返回非空、合理 content bbox 和亮度。
 3. 第一轮视觉 prompt 只问“描述可见几何、颜色、位置、异常”，不说“这是成功的草地”。
@@ -355,6 +357,8 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 ## 9. 效率、恢复和卫生
 
 统计并解释：
+
+- V3按各请求前的有效surface读取system/message，旧header.system仅作旧格式来源；不拿最终提示倒填历史。字符与provider token分开，reasoning属于output而非额外总量；缓存累计不等于独立内容或账单。等待用户时间单列，日志stream/canonical metadata不自动计入模型消息。
 
 - 首次正确模块产物时间、首次视觉证据时间、用户纠正时间、最终交付时间。
 - 构建、几何调试、渲染调试各占多少调用/分钟。

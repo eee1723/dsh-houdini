@@ -180,6 +180,8 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 图层工具实现独立在 `dsh_cop_contracts.py`，skill 只组织调用；版本与行为门见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)。
 
+执行注意事项由context.ts在正常pre-step接受边界整理：最多4条本插件独立execution-state快照；超限逐条以公开surface replace换为空system消息（不进入模型），原始事件保留，混合来源/未完成工具批次不整理。新状态仍在当前步骤正常追加，未决回执/陈旧证据保留。整理后的持久化确认按会话/替换边界重试，失败后即使无新通知、上下文被抑制或会话重载也不放行模型请求；自身整理不会触发全量recovery；替换会改变缓存前缀，成本收益须独立测量。
+
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
@@ -194,7 +196,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [gen-trace-client.mjs](../tools/gen-trace-client.mjs) | 同源提取guidance/preset/注册技能与资源，嵌入手写Trace组件、样式及evidence-helpers副作用分类/采用统计函数；--check只读漂移验证 |
 | [gen-web-polyfills.mjs](../tools/gen-web-polyfills.mjs) | 从锁定core-js生成Chrome 108兼容资产与许可证；web-polyfills与双版本Qt导航回归验证 |
 | [gen-node-card-docs.mjs](../tools/gen-node-card-docs.mjs) | JSON节点卡→文档，严格schema与漂移检查 |
-| [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取 |
+| [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取；V3上下文经安装的DSH公开surface校验器折叠，非法或校验器不可用时报告未知，legacy独立兼容 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[prune-retired-build.mjs](../tools/prune-retired-build.mjs) | 回归发现与退役构建文件清理 |

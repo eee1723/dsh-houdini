@@ -110,13 +110,97 @@ function hasCaution(value: unknown): boolean {
   const nonempty = (v:unknown) => Array.isArray(v) ? v.length > 0 : v && typeof v === 'object'
     ? Object.keys(v).length > 0 : v !== null && v !== undefined && v !== '' && v !== false && v !== 0
   for (const [key,v] of Object.entries(value)) {
-    if (['ok','healthy','warning_free','restored','fresh'].includes(key) && v === false) return true
+    if (['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && v === false) return true
     if ((key === 'status' || key.endsWith('_status')) && typeof v === 'string'
         && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(v)) return true
     if (/^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key) && nonempty(v)) return true
     if (hasCaution(v)) return true
   }
   return false
+}
+
+const jsonPointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
+
+/** Risk facts survive even when a ledger points to the single evidence copy. */
+function riskFacts(value: unknown, pointer: string): Array<{pointer:string;value:unknown}> {
+  if (!value || typeof value !== 'object') return []
+  const rows: Array<{pointer:string;value:unknown}> = []
+  for (const [key, item] of Object.entries(value)) {
+    const at = `${pointer}/${jsonPointerKey(key)}`
+    const falseFact = ['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && item === false
+    const status = (key === 'status' || key.endsWith('_status')) && typeof item === 'string'
+      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(item)
+    const diagnostic = /^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key)
+      && item != null && item !== false && item !== '' && (typeof item !== 'object' || Object.keys(item).length > 0)
+    if (falseFact || status || diagnostic) rows.push({pointer:at,value:item})
+    else rows.push(...riskFacts(item,at))
+  }
+  return rows
+}
+
+/** Only known, successful repeated detail is reduced. Unknown and failed
+ * branches stay intact; every omission resolves in the immutable raw envelope.
+ */
+function compactMeasurementValue(value: any, pointer: string, key = ''): any {
+  if (!value || typeof value !== 'object') return value
+  if (key === 'parameter_restore' && value.ok === true && Array.isArray(value.channels)
+      && Object.keys(value).every(k=>['ok','channels','errors','scope'].includes(k))
+      && value.channels.every((c:any)=>c.state_matches === true) && !hasCaution(value)) {
+    return {ok:true,checked_channels:value.channels.length,scope:value.scope,detail_pointer:pointer}
+  }
+  if (Array.isArray(value)) {
+    if (['domain','baseline_domain'].includes(key) && value.length && value.every(v=>v.status === 'pass' && !hasCaution(v)
+        && Object.keys(v).every(k=>['id','kind','status','condition','left_value','right_value','scope','next_action'].includes(k)))) {
+      return {status:'pass',condition_ids:value.map(v=>v.id),checked_conditions:value.length,
+        scope:'Declared comparisons only; full conditions are retained in the referenced result.',detail_pointer:pointer}
+    }
+    if (['checked_nodes','cook_details','created','node_details'].includes(key)
+        && JSON.stringify(value).length > 1500 && !hasCaution(value)) {
+      return {omitted:true,count:value.length,detail_pointer:pointer}
+    }
+    return value.map((item,i)=>compactMeasurementValue(item,`${pointer}/${i}`))
+  }
+  return Object.fromEntries(Object.entries(value).map(([name,item])=>
+    [name,compactMeasurementValue(item,`${pointer}/${jsonPointerKey(name)}`,name)]))
+}
+
+function compactEvidence(evidence: unknown): unknown {
+  if (!Array.isArray(evidence)) return evidence
+  return evidence.map((item,i)=>item && ['test_controls','verify_network','build_module','node_info'].includes(item.verb)
+    ? compactMeasurementValue(item,`/evidence/${i}`) : item)
+}
+
+/** Reuse only byte-equivalent JSON subtrees of known evidence schemas. The
+ * original result remains addressable, and unique wrapper/diagnostic fields
+ * are traversed rather than dropped because a neighbouring subtree matched.
+ */
+function shareResultEvidence(value: unknown, evidence: unknown) {
+  const represented = new Map<string,{pointer:string;without_tags:boolean}>()
+  const index = (item:any,pointer:string,without_tags=false) => {
+    if (!item || typeof item !== 'object') return
+    const encoded=JSON.stringify(item)
+    if (encoded.length >= 256 && !represented.has(encoded)) represented.set(encoded,{pointer,without_tags})
+    for (const [key,child] of Object.entries(item)) index(child,`${pointer}/${jsonPointerKey(key)}`)
+  }
+  if (Array.isArray(evidence)) evidence.forEach((item,i)=> {
+    if (!item || !['test_controls','verify_network','build_module','node_info'].includes(item.verb)) return
+    const {ledgerIndex,verb,...payload}=item
+    index(payload,`/evidence/${i}`,true)
+  })
+  let changed=false
+  const project = (item:any,pointer:string):any => {
+    if (!item || typeof item !== 'object') return item
+    const match=represented.get(JSON.stringify(item))
+    if (match) {
+      changed=true
+      return {duplicate:true,duplicate_of:match.pointer,detail_pointer:pointer,
+        ...(match.without_tags ? {evidence_tags_excluded:true} : {}),
+        ...Object.fromEntries(['id','ok','status','restored','semantic_status'].filter(k=>Object.hasOwn(item,k)).map(k=>[k,item[k]]))}
+    }
+    return Array.isArray(item) ? item.map((child,i)=>project(child,`${pointer}/${i}`))
+      : Object.fromEntries(Object.entries(item).map(([key,child])=>[key,project(child,`${pointer}/${jsonPointerKey(key)}`)]))
+  }
+  return {value:project(value,'/result'),changed}
 }
 
 function renderVerbs(value: ExecResult): string[] {
@@ -127,16 +211,22 @@ function renderVerbs(value: ExecResult): string[] {
       ? truncate(JSON.stringify(v.result))
       : `error: ${truncate(String(v.error))}`
     const compact = (value.details as any)?.stored === true
-    const caution = hasCaution(v.result) || ['failed','warning','unverified'].includes(String(v.check_status))
-    if (compact && (caution || !ok)) detail = ok ? JSON.stringify(v.result) : `error: ${String(v.error)}`
-    const kwargsObj = !compact && v.kwargs !== null && typeof v.kwargs === 'object'
+    if (compact) {
+      const pointer = `/verbs/${i}/result`
+      const evidenceIndex = Array.isArray(value.evidence) ? value.evidence.findIndex((e:any)=>e?.ledgerIndex === i+1 && e?.verb === v.verb) : -1
+      const facts = {args_omitted:true,detail_pointer:`/verbs/${i}`,check_status:v.check_status ?? null,
+        ...(evidenceIndex >= 0 ? {evidence_pointer:`/evidence/${evidenceIndex}`} : {}),
+        ...(ok && evidenceIndex < 0 && v.verb !== 'verb_help' ? {result_preview:truncate(JSON.stringify(v.result))} : {}),
+        ...(!ok ? {error:String(v.error)} : {}),attention:riskFacts(v.result,pointer)}
+      return `${i+1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}([]) -> ${JSON.stringify(facts)} (${String(v.ms)}ms)`
+    }
+    const kwargsObj = v.kwargs !== null && typeof v.kwargs === 'object'
       ? v.kwargs as Record<string, unknown>
       : null
     const kwargs = kwargsObj !== null && Object.keys(kwargsObj).length > 0
       ? `, ${JSON.stringify(kwargsObj)}`
       : ''
-    const args = compact ? [] : v.args
-    return `${i + 1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}(${JSON.stringify(args)}${kwargs}) -> ${compact && ok && !caution ? JSON.stringify({ args_omitted:true, detail_pointer: `/verbs/${i}`, check_status: v.check_status ?? null, result_preview:detail }) : detail} (${String(v.ms)}ms)`
+    return `${i + 1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}(${JSON.stringify(v.args)}${kwargs}) -> ${detail} (${String(v.ms)}ms)`
   })
   return [`verbs (${value.verbs.length}):\n${lines.join('\n')}`]
 }
@@ -161,7 +251,7 @@ function renderStreams(value: ExecResult): string[] {
       return summary !== null && typeof summary === 'object' && !Array.isArray(summary)
         ? [{ ledgerIndex: item.ledgerIndex, ...summary }] : []
     })
-    if (summaries.length) parts.push(`control-test-summary (not_run is not pass):\n${JSON.stringify(summaries)}`)
+    if (summaries.length && !compact) parts.push(`control-test-summary (not_run is not pass):\n${JSON.stringify(summaries)}`)
   }
   if (value.evidence !== undefined) {
     // Never summarize away failure/warning/unsupported evidence. For healthy
@@ -180,9 +270,13 @@ function renderStreams(value: ExecResult): string[] {
     if (output) parts.push(`stdout:\n${output}`)
   }
   if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
+  const helps = compact && Array.isArray(value.verbs) ? value.verbs.filter((v:any)=>v.verb === 'verb_help' && v.ok).map((v:any)=>v.result) : []
+  if (helps.length) parts.push(`verb-help (signatures, call modes and preconditions):\n${JSON.stringify(helps)}`)
   if (value.result !== undefined) {
-    const result = JSON.stringify(value.result, null, 2)
-    parts.push(`__result__:\n${compact && result.length > 4000 && !hasCaution(value.result) ? JSON.stringify({omitted:true,detail_pointer:'/result',chars:result.length,
+    const projection = compact ? shareResultEvidence(value.result,value.evidence) : {value:value.result,changed:false}
+    const result = JSON.stringify(projection.value, null, 2)
+    const sameHelp = helps.some((help:any)=>JSON.stringify(help) === JSON.stringify(value.result))
+    parts.push(`__result__:\n${sameHelp || compact && !projection.changed && result.length > 4000 && !hasCaution(value.result) ? JSON.stringify({omitted:true,detail_pointer:'/result',chars:result.length,
       next_action:'Read the selected result fields through result_ref before relying on omitted values.'}) : result}`)
   }
   if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
@@ -192,24 +286,6 @@ function renderStreams(value: ExecResult): string[] {
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
   return parts
-}
-
-function compactEvidence(evidence: unknown): unknown {
-  if (!Array.isArray(evidence)) return evidence
-  return evidence.map((item, i) => {
-    if (!item || typeof item !== 'object' || JSON.stringify(item).length <= 2000) return item
-    const text = JSON.stringify(item)
-    if (hasCaution(item)) return item
-    // Keep all scalar facts and all other fields; only omit named verbose
-    // successful-detail arrays. Unknown schemas remain intact by default.
-    const out = { ...item }
-    for (const key of ['checked_nodes', 'cook_details', 'created', 'node_details']) {
-      if (Array.isArray(out[key]) && JSON.stringify(out[key]).length > 1500) {
-        out[key] = { omitted:true, count:out[key].length, detail_pointer:`/evidence/${i}/${key}` }
-      }
-    }
-    return out
-  })
 }
 
 /** Render an exec-shaped canonical value as model-facing text. */

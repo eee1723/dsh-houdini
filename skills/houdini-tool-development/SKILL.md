@@ -1,11 +1,11 @@
 ---
 name: houdini-tool-development
-description: 开发、维护和交付Houdini HDA/OTL、Python回调、Shelf/Tab工具、快捷键及Python Panel/Viewer State入口，管理脚本与打包依赖。用于资产封装和工具交付；纯控制面板/总控布局走houdini-parameter-ui，普通设参/建模/使用现成工具不触发。
+description: 开发、维护和交付Houdini HDA/OTL、Python回调、Shelf/Tab工具、快捷键及Python Panel/Viewer State入口，管理脚本与打包依赖。用于用户明确要求的HDA、共享节点类型/安装分发或既有工具维护；普通可调模型、独立保存HIP不触发，纯控制面板/总控布局走houdini-parameter-ui。
 ---
 
 # Houdini Tool Development
 
-交付可安装、可找到、可操作且行为可验证的工具。内部几何、rig或Solaris结果按对应领域skill验收；共享控制定义、UI与绑定按名加载houdini-parameter-ui。本skill负责资产封装、脚本生命周期与分发。
+交付可安装、可找到、可操作且行为可验证的工具。仅当用户明确要求HDA/OTL、共享节点类型、安装分发或维护既有工具时进入封装；普通模型的“可调、网络清楚、独立保存”默认普通网络与HIP，不能先升级HDA再让用户为封装返工选方案。内部几何、rig或Solaris结果按对应领域skill验收，工具封装不豁免建模视觉检查；共享控制定义、UI与绑定按名加载houdini-parameter-ui。本skill负责资产封装、脚本生命周期与分发。
 
 ## 选择入口
 

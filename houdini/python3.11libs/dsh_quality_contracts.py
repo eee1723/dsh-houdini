@@ -50,12 +50,27 @@ def validate_domain(domain):
         else:_finite(c['right'],'domain right')
 
 
+def _control_parameter(ctrl, name):
+    """One declared scalar control, whether spare or defined by an HDA."""
+    p = ctrl.parm(name)
+    if p is None or p.parmTemplate().type() not in (hou.parmTemplateType.Float, hou.parmTemplateType.Int, hou.parmTemplateType.Toggle):
+        raise ValueError(f'{name}: only existing numeric scalar controls supported')
+    tpl = p.parmTemplate()
+    if tpl.scriptCallback() or p.isMultiParmInstance():
+        raise ValueError(f'{name}: callbacks/multiparms are not supported control-test targets')
+    try:
+        if tpl.menuItems() or tpl.itemGeneratorScript():
+            raise ValueError(f'{name}: menu controls are not supported')
+    except AttributeError:
+        pass
+    return p
+
+
 def domain_checks(ctrl, domain, overrides=None):
-    """Compare numeric spare values; no eval strings, solving or parameter writes."""
-    names={p.name() for p in ctrl.spareParms() if p.parmTemplate().type() in (hou.parmTemplateType.Float,hou.parmTemplateType.Int)}
+    """Compare declared numeric controls; no eval strings, solving or writes."""
     def value(name):
-        if name not in names:raise ValueError(f'domain references missing numeric spare control {name!r}')
-        return _finite(overrides[name] if overrides and name in overrides else ctrl.evalParm(name),'domain value')
+        p = _control_parameter(ctrl, name)
+        return _finite(overrides[name] if overrides and name in overrides else p.eval(),'domain value')
     compare={'lt':operator.lt,'le':operator.le,'gt':operator.gt,'ge':operator.ge,'eq':operator.eq,'ne':operator.ne}
     rows=[]
     for c in domain:
@@ -603,17 +618,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             )
         for name,value in values.items():
             _finite(value,'control value')
-            p=ctrl.parm(name)
-            if p is None or p.parmTemplate().type() not in (hou.parmTemplateType.Float,hou.parmTemplateType.Int,hou.parmTemplateType.Toggle):
-                raise ValueError(f'{name}: only numeric scalar controls supported')
+            p=_control_parameter(ctrl,name)
             tpl=p.parmTemplate()
-            if tpl.scriptCallback() or p.isMultiParmInstance():
-                raise ValueError(f'{name}: callbacks/multiparms are not supported control-test targets')
-            try:
-                if tpl.menuItems():
-                    raise ValueError(f'{name}: menu controls are not supported')
-            except AttributeError:
-                pass
             if tpl.type()==hou.parmTemplateType.Int and type(value) is not int:
                 raise ValueError(f'{name}: integer parameter needs integer value')
             if tpl.type()==hou.parmTemplateType.Toggle and (type(value) is not int or value not in (0,1)):

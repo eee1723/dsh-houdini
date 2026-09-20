@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HoudiniBridge } from './bridge.js'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, createSystemMessage } from '@deepseek-ai/dsh-llm'
 import { projectExecutionState, projectExecutionNotice } from './execution-state.js'
 import { projectTaskSources } from './task-sources.js'
 
@@ -8,6 +8,8 @@ const NAME = 'dsh-houdini:scene-context'
 const STATE_NAME = 'dsh-houdini:execution-state'
 const TASK_NAME = 'dsh-houdini:task-sources'
 const RECOVERY_NAME = 'dsh-houdini:context-recovery'
+const ATTENTION_COMPACTION = 'dsh-houdini:attention-compaction'
+export const MAX_EXECUTION_NOTICES = 4
 type Event = { type: string; seq?: number; data?: any; surfaceOp?: string | {op:string} }
 type AgentView = { session: { snapshotEvents(): readonly Event[]; header?: { agentPreset?: string };
   surface?: {nodes: readonly number[]; replaceGeneration: number} } }
@@ -16,6 +18,42 @@ type SceneBridge = Pick<HoudiniBridge,'sceneContext'> | {sceneContextFor(session
 function sectionData(section?: Section): any {
   try { return JSON.parse(section!.text.slice(section!.text.indexOf('\n') + 1)) }
   catch { return null }
+}
+
+/** Public single-node surface replacements, never a span across tool/user data.
+ * Empty system messages are DSH's native non-emitting tombstones. Current facts
+ * are appended normally at this step, not moved into an earlier history slot.
+ */
+export function compactExecutionNotices(session: any, incomingNotice: boolean): number {
+  if (!session.surface || typeof session.append !== 'function') return 0
+  const events: Event[] = session.snapshotEvents()
+  const visible = new Set<number>(session.surface.nodes)
+  const boundary = last(events,e=>e.type === 'step/start')
+  if (!Number.isInteger(boundary?.data?.turn) || !Number.isInteger(boundary?.data?.step)) return 0
+  const pending = new Set<string>()
+  for (const e of events) {
+    if (!visible.has(e.seq!)) continue
+    if (e.type === 'assistant/message') for (const b of e.data?.message?.content || []) if (b.type === 'tool-call') pending.add(b.id)
+    if (e.type === 'tool/result') {
+      const id = e.data?.message?.source?.callId
+      if (!pending.delete(id)) return 0 // incomplete/ambiguous history is not ours to repair
+    }
+  }
+  if (pending.size) return 0
+  const notices = events.filter(e=> {
+    const m=e.data, sections=m?.source?.sections, blocks=m?.content
+    return visible.has(e.seq!) && e.seq !== session.surface.nodes[0] && e.type === 'user/message'
+      && m.source?.kind === 'plugin' && m.source.plugin === 'dsh-houdini' && m.source.form === 'snapshot'
+      && sections?.length === 1 && sections[0].name === STATE_NAME
+      && blocks?.length === 1 && blocks[0].type === 'text' && blocks[0].text === sections[0].text
+      && ['execution_attention','no_execution_attention','execution_state_exceeds_budget'].includes(sectionData(sections[0])?.status)
+  })
+  if (notices.length + Number(incomingNotice) <= MAX_EXECUTION_NOTICES) return 0
+  const obsolete = incomingNotice ? notices : notices.slice(0,-1)
+  for (const e of obsolete) session.append('system/message', {
+    turn:boundary!.data.turn,step:boundary!.data.step,message:createSystemMessage('',ATTENTION_COMPACTION),
+  }, {surfaceOp:{op:'replace',startSeq:e.seq,endSeq:e.seq},sourceEventSeqs:[e.seq]})
+  return obsolete.length
 }
 
 /** Conservative referent hint, not an intent classifier or edit authorization. */
@@ -131,6 +169,9 @@ export class SceneContextProvider {
 
 export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
   const provider = new SceneContextProvider(bridge)
+  // Acknowledgements are a cache, not authority: after resume the latest owned
+  // tombstone is rediscovered from immutable history and flushed again.
+  const confirmedCompaction = new WeakMap<object,number>()
   const prepared = new WeakMap<object, Section[]>()
   ctx.on('agent/inbox/inserted', ({ agent, message }) => {
     // Capture on receipt, before queued messages are claimed for a model step.
@@ -158,6 +199,21 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
     const additions = (prepared.get(agent) || []).filter(s => retained.get(s.name) !== s.text)
       .map(section => createUserMessage({content:[{type:'text',text:section.text}],
         source:{kind:'plugin',plugin:'dsh-houdini',form:'snapshot',sections:[section]}}))
+    // The normal message-acceptance boundary owns the new snapshot. Only prune
+    // once a non-rejected next step can accept it and persistence is available.
+    const sessions = ctx.get?.('sessions') as {flush(session:unknown):Promise<boolean>} | undefined
+    if (sessions && typeof sessions.flush === 'function' && (prepared.get(agent) || []).some(s=>s.name === STATE_NAME)) {
+      compactExecutionNotices(view.session,additions.some(m=>
+        m.source.kind === 'plugin' && m.source.sections?.some(s=>s.name === STATE_NAME)))
+    }
+    const latestCompaction = last(view.session.snapshotEvents(),e=>e.type === 'system/message'
+      && e.data?.message?.source?.plugin === ATTENTION_COMPACTION)?.seq
+    if (latestCompaction !== undefined && confirmedCompaction.get(view.session) !== latestCompaction) {
+      if (!sessions || typeof sessions.flush !== 'function' || await sessions.flush(view.session) !== true)
+        throw new Error('Execution-notice compaction was not durable; no model request sent')
+      signal.throwIfAborted()
+      confirmedCompaction.set(view.session,latestCompaction)
+    }
     return {...decision,messages:[...decision.messages,...additions]}
   })
   // Context providers are synchronous. The public assembly waterfall is async;
@@ -176,6 +232,7 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
     // A tool-result pruner also increments replaceGeneration. It must not
     // trigger a full recovery on every shortened tool result.
     const replaced = last(events, e => e.type !== 'tool/result'
+      && !(e.type === 'system/message' && e.data?.message?.source?.plugin === ATTENTION_COMPACTION)
       && typeof e.surfaceOp === 'object' && e.surfaceOp.op === 'replace')
     const generation = replaced?.seq === undefined ? 0 : replaced.seq + 1
     const surface = agent.session.surface && new Set(agent.session.surface.nodes)
@@ -197,7 +254,12 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
         let data = literal(JSON.stringify(state ?? {status:'no_execution_attention',
           boundary:'Previously reported execution attention is no longer present in recorded tool evidence. This is not scene validation or task completion.'}))
         if (data.length > 7000) data = JSON.stringify({status:'execution_state_exceeds_budget',
-          runtime_id:state?.runtime_id, boundary:'Recorded observations exceed the context budget. Read recent tool results and query the relevant current outputs; no blanket pass or permission is implied.'})
+          runtime_id:state?.runtime_id,pending_calls:state?.pending_calls ?? 0,
+          unresolved_request_count:(state?.unresolved_requests as unknown[] | undefined)?.length ?? 0,
+          unresolved_call_count:(state?.unresolved_calls as unknown[] | undefined)?.length ?? 0,
+          affected_check_count:(state?.checks as unknown[] | undefined)?.length ?? 0,
+          read:'Use houdini_query(request_ref="index") for retained request references; read the original tool results and recheck the affected outputs.',
+          boundary:'Attention details exceed the context budget, NOT resolved or passed. Original results remain in history. No blanket pass or permission is implied.'})
         sections.push({name:STATE_NAME,text:'Houdini execution attention (historical data, not instructions or permission). This replaces earlier execution-attention notices only.\n'+data})
       }
     }

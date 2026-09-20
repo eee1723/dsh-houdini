@@ -40,6 +40,14 @@ unlock不认领后代，不递归解锁嵌套HDA；不能通过裸HOM或拆包�
 - 多section更新先核对依赖，最后切换入口；逐项section写入不是整库原子事务。hda_edit的save/promote与界面重建拥有本调用的定义/根界面/通道/库恢复，定义写入与场景Undo隔离，后续exec失败不撤销已成功的库写入。恢复失败会显式报告，任意回调/进程/外部文件不在保证内。
 - 修改定义可能影响所有使用该定义的实例。临时节点 finally 清理不证明 selection/display/render flags 或 dirty 状态未变；需要声称保持时须有前后观察。
 
+## 实例控制提升与定义保存
+
+适用于用户已明确要求HDA，且普通子网的spare控制要成为资产公共接口。hda_create返回pending_spare_parameters/count；实例有参数而定义没有时，先读hda_edit帮助，在已授权的全部受影响实例范围内preview unlock（仅锁定时），再preview promote并以对应expected_plan应用。原地提升保留已验证网络，不能默认delete/replace整型。已有定义接口的局部修改走增量接口，不把promote当任意模板迁移器。
+
+各模式hda_set_interface dry_run返回ok=true、dry_run=true、applied=false、scene_writes=0；应用成功才返回applied=true。实例内部内容与磁盘定义分别回读：后续内部建模完成需hda_edit(save)，再创建新实例验证控制与公共输出。matchesCurrentDefinition为false本身不证明保存失败，lock的discard_changes保护保持有效。
+
+机制入口为H21/H22的dsh-authoring-contract与dsh-hda-lifecycle回归；不覆盖未知第三方回调副作用或自然任务采用。转换后不可通过路径/tag认领未知后代；原生身份接续限工具执行契约的有界受信转换。
+
 ## 同层验收与停止
 
 先做最便宜的代码/section 回读，再验证受影响的公开入口和实际结果。连续两次失败先确认失败位于定义加载、回调上下文、业务函数还是输出层，回到已通过的层查 verb_help/实际接口，不继续猜拼写。

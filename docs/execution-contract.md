@@ -146,7 +146,8 @@ HDA section 的写后回读/hash仅证明文本写入；PythonModule语法预检
 [HDA维护路径](../skills/houdini-sop-workflow/references/hda-maintenance.md)。
 
 HDA创建的输入/输出上限不是接线证明；实例spare、定义界面、公共端口输出与隔离新实例分别验证。
-界面整组重建遇实例spare同名覆盖时在库写前拒绝；显式spare提升走hda_edit(promote)。
+hda_create只在本次转换内接续原生延迟内部身份：转换前整段自有、锁定原生定义实际库位于HFS且指纹不变、原生父identity存活、完整相对内部清单/类型匹配、旧identity消失且新identity未登记。超出有界清单或来源不符继续不认领；路径/tag本身不授予权限，allow_foreign不产生长期owner。
+界面整组重建遇实例spare同名覆盖时在库写前拒绝；显式spare提升走hda_edit(promote)。预检各模式返回ok=true/dry_run=true/applied=false/scene_writes=0；不把ok解释成几何或视觉验收。
 界面重建及hda_edit(save/promote)写后失败恢复本调用的定义section、根实例界面/通道和磁盘库，
 定义写入与场景Undo分离，避免外层Undo再次撤销恢复。后续同exec失败不撤销已经成功的库写入，外部副作用不保证。
 hda_edit预览绑定源码/库/定义与共享实例状态；解锁不授予后代ownership，锁定丢弃内容须显式确认及逐后代授权。
@@ -218,7 +219,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
-test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。
+test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
 恢复不仅比较bgeo：恢复写入后及最终cook后均回读被测参数的值/表达式/keys，最终核对frame。
 parameter_restore列出快照参数身份、前后字面值或动画匹配及错误；任何不匹配都不能报告restored=true。
 这些字段证明该次回读，不保证稍后GUI/外部代码不会改值；未采集历史不能据此归因为用户undo。

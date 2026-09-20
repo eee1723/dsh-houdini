@@ -22,6 +22,7 @@ import {
   newestSessionFile,
   resolveSessionFile,
   collectRequestTelemetry,
+  collectRequestContexts,
 } from './trace-session-lib.mjs';
 import { normalizeTraceSteps, unresolvedExecutionRequests } from './normalized-trace-steps.mjs';
 import {
@@ -64,6 +65,7 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 // ---------- parse trace ----------
 const { events } = loadSessionEvents(sessionFile);
 const requestTelemetry = collectRequestTelemetry(events);
+const requestContexts = collectRequestContexts(events);
 const normalized = normalizeTraceSteps(events);
 const retryWork = collectRetryWork(normalized.steps);
 const { replayedResults, unmatchedResults } = normalized;
@@ -356,11 +358,13 @@ const html = `<!DOCTYPE html>
     <details><summary>候选对、差异片段、统计口径与分析范围</summary><pre>${esc(JSON.stringify(retryWork,null,2))}</pre></details>
     <h2>请求用量与逐轮运行状态</h2>
     <p>记录到 ${requestTelemetry.requestCount} 个请求的 usage；末请求输入含缓存 ${requestTelemetry.last?.inputWithCache ?? '未知'} tokens。
-    累计报告 input ${requestTelemetry.totals.inputTokens ?? '未知'} / cache read ${requestTelemetry.totals.cacheReadTokens ?? '未知'} / output ${requestTelemetry.totals.outputTokens ?? '未知'}。
+    累计报告 input ${requestTelemetry.totals.inputTokens ?? '未知'} / cache read ${requestTelemetry.totals.cacheReadTokens ?? '未知'} / output ${requestTelemetry.totals.outputTokens ?? '未知'}，其中 reasoning ${requestTelemetry.totals.reasoningTokens ?? '未知'}（已包含在 output 中）。
     逐轮上游错误 ${requestTelemetry.upstreamTurnErrors.length}；compaction 事件 ${requestTelemetry.compactionEvents.length}；usage 去重 ${requestTelemetry.duplicateUsageEvents}，更新 ${requestTelemetry.updatedUsageEvents}。</p>
     <p class="dim-text">请求累计重复计算历史，不是独立文本量或账单；缺失字段为未知。输入含缓存仅在字段算术一致时推导；未记录压缩不能证明原文全部保留。上游错误与工具失败分别统计。</p>
     ${requestTelemetry.upstreamTurnErrors.map(e => `<p>turn ${esc(e.turn)} · ${esc(e.code)} · ${esc(e.message)}</p>`).join('')}
     <details><summary>完整请求、逐轮与目标变更记录</summary><pre>${esc(JSON.stringify(requestTelemetry,null,2))}</pre></details>
+    <p>最后请求前可重建消息 ${requestContexts.at(-1)?.contentChars ?? '未知'} 字符；system ${requestContexts.at(-1)?.systemChars ?? '未知'} 字符；工具 schema ${requestContexts.at(-1)?.toolsSchemaChars ?? '未知'} 字符。字符不是 token；只折叠日志中的有效 surface，不把 stream 或 canonical metadata 加入模型消息。</p>
+    <details><summary>逐请求上下文组成与来源（不含推理正文）</summary><pre>${esc(JSON.stringify(requestContexts,null,2))}</pre></details>
     <h2>动画 / 多帧验证覆盖</h2>
     ${validationHtml}
     <h2>开放式任务质量闭环（HTA-023）</h2>

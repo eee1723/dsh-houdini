@@ -9,6 +9,7 @@ import {
   resolveSessionFile,
   sessionIdFromFile,
   collectRequestTelemetry,
+  collectRequestContexts,
 } from '../../../tools/trace-session-lib.mjs';
 import { normalizeTraceSteps, unresolvedExecutionRequests } from '../../../tools/normalized-trace-steps.mjs';
 import {
@@ -137,39 +138,25 @@ function analyzeTrace(file) {
         assistantMessages.push({ seq: event.seq, time: event.time, text });
         lastAssistantTime = Math.max(lastAssistantTime, event.time || 0);
       }
-    } else if (event.type === 'request/header') {
-      const system = event.data?.header?.system || '';
-      const availableTools = (event.data?.header?.tools || [])
-        .map((tool) => tool?.name || tool?.function?.name)
-        .filter(Boolean)
-        .sort();
-      // Component-preview V3 traces may keep the prompt outside the header
-      // while retaining the exact top-level tool surface.  That surface is
-      // still capability evidence when `system` is empty.
-      const snapshotHash = digest(JSON.stringify({ system, availableTools }));
-      if ((system || availableTools.length) && !seenCapabilityHashes.has(snapshotHash)) {
-        seenCapabilityHashes.add(snapshotHash);
-        const listedSkills = [...system.matchAll(/^- `([^`]+)`: /gm)].map((match) => match[1]);
-        capabilitySnapshots.push({
-          seq: event.seq,
-          time: event.time,
-          turn: event.data?.turn,
-          step: event.data?.step,
-          model: event.data?.header?.config?.model || null,
-          systemChars: system.length,
-          systemHash: digest(system),
-          personaLines: system.split('\n').filter(line => /^You are (?:a|an) /.test(line)).slice(0, 4),
-          mentionedCatalogVerbs: catalogNames.filter(
-            (name) => new RegExp(`\\b${name}\\b`).test(system),
-          ),
-          availableTools,
-          // Some dsh runtimes expose the skill loader without embedding a skill catalog in
-          // the request header. `[]` would falsely mean "no skills were available"; null means
-          // "the header did not declare availability". Actual successful loads are reported
-          // separately as skillActivations below.
-          availableSkills: listedSkills.length ? listedSkills : null,
-        });
-      }
+    }
+  }
+
+  const requestContexts = collectRequestContexts(events, {includeSystemText:true});
+  for (const context of requestContexts) {
+    const system = context.systemText || "";
+    const availableTools = context.availableTools;
+    const snapshotHash = digest(JSON.stringify({system:context.systemHash,availableTools}));
+    if ((!context.projectionComplete || system || availableTools?.length) && !seenCapabilityHashes.has(snapshotHash)) {
+      seenCapabilityHashes.add(snapshotHash);
+      const listedSkills = [...system.matchAll(/^- `([^`]+)`: /gm)].map(match=>match[1]);
+      capabilitySnapshots.push({
+        seq:context.seq,time:context.time,turn:context.turn,step:context.step,model:context.model,
+        systemChars:context.systemChars,systemHash:context.systemHash,
+        systemSource:context.systemSource,projectionComplete:context.projectionComplete,projectionError:context.projectionError,
+        personaLines:context.projectionComplete ? system.split('\n').filter(line=>/^You are (?:a|an) /.test(line)).slice(0,4) : null,
+        mentionedCatalogVerbs:context.projectionComplete ? catalogNames.filter(name=>new RegExp(`\\b${name}\\b`).test(system)) : null,
+        availableTools,availableSkills:listedSkills.length ? listedSkills : null,
+      });
     }
   }
 
@@ -451,6 +438,7 @@ function analyzeTrace(file) {
       note: 'Call-to-result sum includes waits and possible overlap; gaps are not a direct model inference-time measurement.',
     },
     requestTelemetry: collectRequestTelemetry(events),
+    requestContexts: requestContexts.map(({systemText,...context})=>context),
     executionAccounting: {records:normalized.uniqueExecutions,
       uniqueExecutions:normalized.uniqueExecutions.length,
       uniqueVerbCalls:normalized.uniqueExecutions.reduce((n,e)=>n+e.verbCalls,0),
