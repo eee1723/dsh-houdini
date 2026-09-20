@@ -26,6 +26,116 @@ from houdini_test_environment import isolated_environment
 from dsh_web_auth import DshWebSession
 from dsh_managed_runtime import spawn_frontend, stop_owned
 
+probe_selftest_only = '--probe-selftest' in sys.argv
+
+# Windows-safe process probe. os.kill(pid, 0) is NOT a probe on Windows (any
+# signal other than 0 unconditionally terminates the target), and OpenProcess
+# alone proves nothing: it succeeds while ANY handle to a terminated process
+# remains open. The probe therefore opens the process ONCE with the
+# permission that matches the wait (SYNCHRONIZE), KEEPS that same handle, and
+# answers the liveness question with WaitForSingleObject(handle, 0):
+# WAIT_OBJECT_0 means the process has exited (the handle is signaled),
+# WAIT_TIMEOUT means it is still running. Every ctypes signature is declared
+# explicitly and every failure is read through GetLastError
+# (ctypes.get_last_error via use_last_error=True). A query failure is
+# reported as 'unknown' - never as death, never as permission to kill.
+if os.name == 'nt':
+    from ctypes import wintypes
+    _KERNEL32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    _KERNEL32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _KERNEL32.OpenProcess.restype = wintypes.HANDLE
+    _KERNEL32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    _KERNEL32.WaitForSingleObject.restype = wintypes.DWORD
+    _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _KERNEL32.CloseHandle.restype = wintypes.BOOL
+    _PROCESS_SYNCHRONIZE = 0x00100000
+    _WAIT_OBJECT_0 = 0x00000000
+    _WAIT_TIMEOUT = 0x00000102
+
+PROBE_METHOD = ('OpenProcess(SYNCHRONIZE) once + WaitForSingleObject(handle, 0) '
+                'on the same held handle')
+
+class WindowsPidProbe:
+    def __init__(self, pid):
+        self.pid = pid
+        self.open_error = None
+        self.handle = None
+        if os.name == 'nt':
+            self.handle = _KERNEL32.OpenProcess(_PROCESS_SYNCHRONIZE, False, int(pid))
+            self.open_error = ctypes.get_last_error()
+
+    def state(self):
+        """Return (state, detail): state in {'alive', 'exited', 'unknown'};
+        detail carries the actual wait code and the GetLastError value."""
+        if os.name != 'nt':
+            try:
+                os.kill(self.pid, 0)
+                return 'alive', {'method': 'posix kill(pid, 0)'}
+            except ProcessLookupError:
+                return 'exited', {'method': 'posix kill(pid, 0)'}
+            except OSError as error:
+                return 'unknown', {'method': 'posix kill(pid, 0)', 'reason': 'probe failed',
+                                   'lastError': int(error.errno or 0)}
+        if not self.handle:
+            return 'unknown', {'method': PROBE_METHOD, 'reason': 'OpenProcess failed',
+                               'openError': self.open_error}
+        code = _KERNEL32.WaitForSingleObject(self.handle, 0)
+        last_error = ctypes.get_last_error()
+        if code == _WAIT_OBJECT_0:
+            return 'exited', {'method': PROBE_METHOD, 'waitCode': code, 'lastError': last_error}
+        if code == _WAIT_TIMEOUT:
+            return 'alive', {'method': PROBE_METHOD, 'waitCode': code, 'lastError': last_error}
+        return 'unknown', {'method': PROBE_METHOD, 'reason': 'WaitForSingleObject failed',
+                           'waitCode': code, 'lastError': last_error}
+
+    def close(self):
+        if os.name == 'nt' and self.handle:
+            _KERNEL32.CloseHandle(self.handle)
+            self.handle = None
+
+def probe_selftest():
+    """Three-case self-test. The third case (query failure / invalid handle)
+    must report 'unknown' - it must never produce passing evidence."""
+    # Case 1: own child, running.
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    probe = WindowsPidProbe(child.pid)
+    state, detail = probe.state()
+    assert state == 'alive', ('self-test: the running child must read alive', detail)
+    # Case 2: the child has exited while the test still holds the SAME handle
+    # opened before the exit (the OpenProcess-only pitfall).
+    child.terminate()
+    child.wait(10)
+    state, detail = probe.state()
+    assert state == 'exited', ('self-test: the exited child must read exited even with the handle held', detail)
+    probe.close()
+    # Case 3a: OpenProcess on a pid that no process owns - must be 'unknown'
+    # with the error recorded, never 'exited'.
+    ghost = WindowsPidProbe(0xDEADBEE0)
+    state, detail = ghost.state()
+    assert state == 'unknown' and detail.get('reason') == 'OpenProcess failed', (state, detail)
+    # Case 3b: invalid handle passed to the wait - WAIT_FAILED, must be
+    # 'unknown' with GetLastError (6, ERROR_INVALID_HANDLE), never a pass.
+    # INVALID_HANDLE_VALUE itself is special-cased by WaitForSingleObject
+    # (it is treated as the current process and times out), so the failure
+    # case uses a 4-byte-unaligned value that cannot name a real handle in
+    # this process.
+    broken = WindowsPidProbe.__new__(WindowsPidProbe)
+    broken.pid = 0
+    broken.handle = 0x0000DEAD
+    broken.open_error = None
+    state, detail = broken.state()
+    assert state == 'unknown' and detail.get('reason') == 'WaitForSingleObject failed' \
+        and detail.get('lastError') == 6, (state, detail)
+
+# The self-test runs in every invocation (cheap, self-contained evidence) and
+# standalone via --probe-selftest, which exits after printing the result.
+SELFTEST = probe_selftest()
+print('probe self-test: OK (running child reads alive; exited child reads exited '
+      'with the same held handle; OpenProcess failure reads unknown with its error; '
+      'invalid handle reads unknown with GetLastError 6)', flush=True)
+if probe_selftest_only:
+    raise SystemExit(0)
+
 node, cli, hython = sys.argv[1:4]
 # DSH workspace-write intentionally permits the platform temp area. Put author
 # workspaces outside it so the negative test actually crosses a denied boundary.
@@ -110,28 +220,6 @@ try:
             result = json.load(response)
         assert result['result']['ok'], result
         return result['result']['value']
-    def pid_alive(pid):
-        # Windows-safe liveness probe: os.kill(pid, 0) is NOT a probe on
-        # Windows (any other signal unconditionally terminates the process).
-        # OpenProcess alone is not enough either - it succeeds while any
-        # handle to a terminated process remains open - so query the exit
-        # code: STILL_ACTIVE (259) means alive, any other code means dead.
-        if os.name != 'nt':
-            try:
-                os.kill(pid, 0)
-                return True
-            except OSError:
-                return False
-        handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return True  # cannot query; assume alive
-            return code.value == 259  # STILL_ACTIVE
-        finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
     deadline = time.monotonic() + 90
     last_error = None
     while True:
@@ -259,7 +347,16 @@ try:
         records = [json.loads(p.read_text(encoding='utf-8')) for p in (registry / 'endpoints').glob('*.json')]
         worker_record, child_item = built_exit_preconditions(built_child, items, snap_notices, records)
         pid = worker_record['pid']
-        assert pid_alive(pid), 'the worker must be alive at the hold point'
+        # The kill authorization rests on a CONFIRMED-alive probe. The same
+        # handle stays open from this precondition through the post-kill
+        # polls; a query failure ('unknown') never authorizes the kill.
+        probe = WindowsPidProbe(pid)
+        pre_state, pre_detail = probe.state()
+        if pre_state != 'alive':
+            probe.close()
+            raise RuntimeError('the worker pid must read alive through the '
+                               + PROBE_METHOD + ' before any kill; got '
+                               + json.dumps({'state': pre_state, **pre_detail}))
         # Counterexample: the SAME verifier must REJECT the completed child
         # (the survivor has settled) instead of passing vacuously.
         try:
@@ -279,7 +376,9 @@ try:
                 'parentSession': {'sessionId': task, 'running': parent_item.get('running')},
                 'childSession': {'sessionId': built_child, 'running': child_item.get('running')},
                 'terminalEventsForChildCount': 0,
-                'idleMarker': idle_doc},
+                'idleMarker': idle_doc,
+                'pidProbe': {'method': PROBE_METHOD, 'state': pre_state, 'detail': pre_detail,
+                             'handleHeldThroughKill': True}},
             'negativeControl': {'input': survivor_child,
                                 'inputClass': 'target child task already completed (settled)',
                                 'rejected': True, 'reason': counterexample_reason}}
@@ -290,18 +389,28 @@ try:
             os.kill(pid, signal.SIGTERM)
         except OSError as error:
             kill_error = str(error)
-        post_dead = False
+        # Poll the SAME held handle after the kill. Only WAIT_OBJECT_0
+        # (state 'exited') confirms death; an 'unknown' poll is recorded as
+        # unknown and never counted as a death confirmation.
+        polls = []
+        final_state = None
         for _ in range(60):
-            if not pid_alive(pid):
-                post_dead = True
-                break
+            state, detail = probe.state()
+            polls.append({'state': state, **detail})
+            if state != 'unknown':
+                final_state = state
+                if state == 'exited':
+                    break
             time.sleep(.1)
-        # Separate outcome record, written AFTER the kill.
-        outcome_doc = {'pidDead': post_dead, 'killError': kill_error,
-                       'probe': 'OpenProcess(SYNCHRONIZE) after SIGTERM',
+        probe.close()
+        # Separate outcome record, written AFTER the kill, carrying the
+        # actual probe method, the returned states and the error codes.
+        outcome_doc = {'pidDead': final_state == 'exited', 'killError': kill_error,
+                       'probe': {'method': PROBE_METHOD, 'handleHeldThroughKill': True,
+                                 'finalState': final_state, 'polls': polls},
                        'confirmedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z')}
         atomic_write_json(outputs / 'built-exit-outcome.json', outcome_doc)
-        assert kill_error is None and post_dead, (kill_error, post_dead)
+        assert kill_error is None and final_state == 'exited', (kill_error, outcome_doc)
     outcome = ('rejected.json' if negative else 'blocked.json' if child_failure else
                'startup-blocked.json' if startup_failure else 'stop-unknown.json' if stop_failure else
                'adapter-throw.json' if adapter_throw else

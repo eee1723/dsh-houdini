@@ -401,6 +401,14 @@ export function apply(ctx) {
             assert(arm.negativeControl&&arm.negativeControl.rejected===true,
               'the precondition verifier must have rejected the completed-child counterexample: '+JSON.stringify(arm.negativeControl))
             assert(outcome.pidDead===true,'the driver outcome record must confirm the terminated pid is gone: '+JSON.stringify(outcome))
+            assert(arm.preconditions&&arm.preconditions.pidProbe&&arm.preconditions.pidProbe.state==='alive'
+              &&/WaitForSingleObject/.test(arm.preconditions.pidProbe.method),
+              'the kill authorization must rest on a confirmed-alive WaitForSingleObject probe on a held handle, never on a query failure: '
+              +JSON.stringify(arm.preconditions&&arm.preconditions.pidProbe))
+            assert(outcome.probe&&outcome.probe.finalState==='exited'&&/WaitForSingleObject/.test(outcome.probe.method)
+              &&Array.isArray(outcome.probe.polls)&&outcome.probe.polls.length,
+              'the death confirmation must come from the WaitForSingleObject probe on the same held handle (method, states and errors recorded): '
+              +JSON.stringify(outcome.probe))
             const failed=status.children.find(c=>c.childId===builtChild)
             const surviving=status.children.filter(c=>c.childId!==builtChild)
             assert(failed,'the killed childId must appear in the status snapshot: '+JSON.stringify(status).slice(0,400))
