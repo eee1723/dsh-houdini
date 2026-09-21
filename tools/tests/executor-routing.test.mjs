@@ -86,7 +86,12 @@ try {
   const controller=new ExecutorController(ctx,router)
   assert.deepEqual(remoteMethods(controller).map(m=>m.method),['list','select'])
   assert.equal(controller.typertRemote.namespace,'houdiniTargets')
-  assert.equal((await controller.list()).candidates.length,2)
+  const legacyList=await controller.list(undefined)
+  assert.equal(legacyList.candidates.length,2)
+  assert.equal(legacyList.recovery.status,'session_required')
+  const initialList=await controller.list({sessionId:agents[0].id})
+  assert.equal(initialList.candidates.length,2)
+  assert.equal(initialList.recovery.status,'unbound')
   let gateway
   if(process.env.DSH_TEST_GATEWAY_ROOT) {
     const modules=process.env.DSH_TEST_GATEWAY_ROOT
@@ -94,7 +99,7 @@ try {
     const {default:Gateway}=await import(pathToFileURL(path.join(modules,'dsh-api-gateway/lib/index.js')))
     new Registry(ctx)
     gateway=new Gateway(ctx,{websocketHeartbeatIntervalMs:2000})
-    assert.equal((await gateway.invoke({namespace:'houdiniTargets',method:'list',args:{}})).candidates.length,2)
+    assert.equal((await gateway.invoke({namespace:'houdiniTargets',method:'list',args:{input:{sessionId:agents[0].id}}})).candidates.length,2)
   }
   const context=(i,op)=>({agent:agents[i],callId:(op||'call')+'-'+i})
   await assert.rejects(controller.select({sessionId:agents[0].id,executorId:records[0].executor_id,
@@ -113,6 +118,7 @@ try {
   }
   if(gateway) console.log('Real DSH Typert Gateway list/select dispatch passed')
   assert.equal(recordedExecutorIdentity(agents[0].session.snapshotEvents()),records[0].executor_id)
+  assert.equal((await controller.list({sessionId:agents[0].id})).recovery.status,'bound_available')
   await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/recovery/)
   const defs=new Map()
   registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)},sessions:{flush}},router)

@@ -123,7 +123,12 @@ try {
   assert.equal(sent,true)
   // Real DSH session schema round-trip, without any tool/result ever arriving.
   const restored=Session.create('binding-restored',JSON.parse(fs.readFileSync(file,'utf8')))
-  await assert.rejects(new ExecutorBindingBarrier(async()=>true).ensure(restored,second),/requires recovery/)
+  await assert.rejects(new ExecutorBindingBarrier(async()=>true).ensure(restored,second),error=>{
+    assert.match(error.message,/requires recovery/)
+    assert.match(error.message,/cross-process recovery is not implemented/)
+    assert.match(error.message,/No live request sent/)
+    return true
+  })
   await new ExecutorBindingBarrier(async()=>true).ensure(restored,first)
   assert.equal(restored.snapshotEvents().filter(e=>e.type==='user/message').length,1,'resume does not duplicate binding; DSH may add an end-seed marker')
   let attempts=0
@@ -154,7 +159,12 @@ requireExecutorContinuity([],second)
 requireExecutorContinuity(history(undefined),second)
 assert.throws(()=>requireExecutorContinuity(prior,second),/requires recovery/)
 assert.throws(()=>requireExecutorContinuity(prior),/requires recovery/)
-assert.throws(()=>requireExecutorContinuity([...prior,...history(second,'houdini_exec',{},'other')],second),/requires recovery/)
+assert.throws(()=>requireExecutorContinuity([...prior,...history(second,'houdini_exec',{},'other')],second),error=>{
+  assert.match(error.message,/more than one recorded executor identity/)
+  assert.match(error.message,/Cross-process recovery is not implemented/)
+  assert.match(error.message,/No live request sent/)
+  return true
+})
 requireExecutorContinuity(history(first,'houdini_query',{result_ref:'retained'}),second)
 requireExecutorContinuity([...prior,...history(second).slice(1)],first) // replay cannot rebind
 assert.throws(()=>requireExecutorContinuity(history('malformed'),first),/Invalid recorded/)

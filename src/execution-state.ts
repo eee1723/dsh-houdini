@@ -183,7 +183,7 @@ const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
  */
 export function requireExecutorContinuity(events: readonly Event[], current?: string): void {
   const identity = recordedExecutorIdentity(events)
-  if (identity && identity !== current) throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. Restore the original binding before any live operation.')
+  if (identity && identity !== current) throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. If the original Houdini process is gone, cross-process recovery is not implemented: preserve the saved/crash HIP and inspect retained results; do not start a new task or select another target to bypass ownership. Restore the original binding only when that exact process is still available.')
 }
 
 export function recordedExecutorIdentity(events: readonly Event[]): string | undefined {
@@ -208,7 +208,7 @@ export function recordedExecutorIdentity(events: readonly Event[]): string | und
     identities.add(identity)
   }
   if (identities.size > 1) {
-    throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. Read retained results and reconcile the saved project before explicitly restoring the binding; do not start a new task to bypass this check or infer ownership from the HIP path.')
+    throw new Error('Houdini task requires recovery: history contains more than one recorded executor identity. No live request sent. Cross-process recovery is not implemented: read retained results, preserve the saved/crash HIP and reconcile the project before any future recovery flow; do not start a new task to bypass this check or infer ownership from the HIP path.')
   }
   return identities.values().next().value
 }

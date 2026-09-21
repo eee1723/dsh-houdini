@@ -22,6 +22,7 @@ v11transaction区分动词执行与最终提交；rolled_back中的成功ledger�
 检查判据是否蕴含标签：unsigned距离不是插入深度、bbox极值不是镜像对称、全局最低y不是每足接地。
 只测response不证明扰动后invariants；事后改阈值需独立依据；unsupported保留范围。
 图像访问与正确识别分别记录；focus_group/isolate/projection/framing_bounds明确实际观察条件。
+手写逐件关系检查是候选证据，不是正确性证书；由受治理几何统计产生的`issues/issue_count/issue_total/pass`可证明检查发生，但计数与总判定冲突时必须标检查器失败或unverified，不能只挑空issues或一段解释写成pass。
 
 必须同时使用三层证据：
 

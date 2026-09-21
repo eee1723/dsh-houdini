@@ -26,7 +26,21 @@ try:
     r=run(f"__result__=verify_network({root.path()!r},output='plain',nodes=[{root.node('plain').path()!r}])")['result']
     assert r['error_nodes_count']==len(r['error_nodes']) and r['warning_nodes_count']==len(r['warning_nodes'])
     assert r['ok'] and r['public_output'] is None
+    assert r['handoff_output']['status']=='implementation_output' and not r['handoff_output']['is_null']
     assert root.displayNode()==root.node('plain')
+    # A nontrivial same-level asset can expose stable logical-module and root
+    # Null checkpoints without inventing a subnet/public Output contract.
+    run(f"src=tab_create({root.path()!r},'box','module_source')\n"
+        f"module_out=tab_create({root.path()!r},'null','OUT_MODULE',inputs=[src])\n"
+        f"asset_out=tab_create({root.path()!r},'null','OUT_ASSET',inputs=[module_out])\n"
+        "sop_set_output(asset_out)")
+    r=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+          f"nodes={[root.node('module_source').path(), root.node('OUT_MODULE').path(), root.node('OUT_ASSET').path()]!r})")['result']
+    assert r['ok'] and r['output']==root.node('OUT_ASSET').path() and r['public_output'] is None
+    assert r['handoff_output']=={'path':root.node('OUT_ASSET').path(),'name':'OUT_ASSET','type':'null',
+        'is_null':True,'has_stable_name':True,'is_leaf':True,'status':'stable_null_checkpoint',
+        'scope':'Presentation/readability facts only. A named Null is not a public subnet port, geometry proof, relationship proof or requirement to wrap every simple chain.'}
+    assert root.displayNode()==root.node('OUT_ASSET') and not root.node('OUT_ASSET').outputs()
     # Recreate native initialization's unconnected output even in headless mode.
     if not sub.node('output0'):
         run(f"tab_create({sub.path()!r},'output','output0')")

@@ -515,3 +515,22 @@
   此时不得把结果称为场景装配预览或实际空间关系。
 - 下一验收：用带平移、旋转、非均匀缩放的未见双组件任务验证proxy/world包络与图像一致；
   再决定是否给render_view增加可选expected-world-bounds守卫或新增受控装配预览动词。
+
+## HTA-035：手写装配检查器成为第二套易错几何系统
+
+- 状态：确认S2；evidence冲突守卫已修，通用关系工具覆盖仍待设计。
+- 首次/最近证据：置物架trace `dsh-houdini-f171e7a3cea84e56bb6cfb95a0bfa8fa`的控制检查先因整体bbox半径/组合范围期望写错而失败，修正后才通过；`dsh-houdini-205ddaafbbe44a6eaf5523cf4dbb32c6` #20/#21的柱外缘判据写反，#50漏乘前后两面系数，#52先报40条连接错误，#53修正面/六角跨度/角位映射后`issues=[]`，但总`pass=false`仍暴露计数表达式笔误。
+- 症状：实际几何可保持正确，临时Python按bbox排序、字符串方位和重复公式重新实现装配语义，产生大量假失败；agent随后用语言逐条撤销检查结果，完成门难区分模型错误和检查器错误。
+- 根因：构造与验证复制同一设计公式，缺少稳定piece/interface身份和可表达切触、嵌入、局部轴覆盖的类型化合同；旧提取器又只识别字段名含distance/clearance的结果，导致逐件检查在审计中消失。
+- 当前修复：由`geo_piece_stats/geo_attrib_stats`产生、同时输出关系意图和结构化`issues/issue_count/issue_total/pass`的步骤记为手写测量候选，明确不认证公式；计数与pass矛盾新增`handwritten_relation_probe_conflict`风险。修改判据后仍须复跑，语言解释不能替代新结果。
+- 反例/边界：短小、由独立解析推导且结构化返回一致的特殊检查仍有价值；不因手写检查易错而删除只读HOM逃生能力，也不把普通piece计数误当关系证据。
+- 下一验收：用非置物架装配验证稳定piece配对、安装面/局部轴、切触与有符号嵌入的通用合同；在两类任务重复前不新增对象专用动词。
+
+## HTA-036：输出cook通过后，交互guide cook仍可走未覆盖原生路径
+
+- 状态：候选E1/P0事故证据；节点卡已加版本限定警示，最小GUI反例通过，原复杂网络复现与修复版本未知。
+- 首次证据：`dsh-houdini-205ddaafbbe44a6eaf5523cf4dbb32c6` #36加入两个`polybevel::3.0`，#37/#38/#41及#55的cook、控制、render、verify与保存均成功；Houdini 21.0.440随后signal 11，原生栈顶部为`GU_PolyBevel3::LoopSet::addPoint → ignoreInlinePoints → SOP_Node::cookGuide`。干净保存版与crash备份的26节点/参数/接线/Box快照一致，未观察到用户持久修改。
+- 症状：任务输出和保存证据全部通过，用户在网络/节点交互后仍崩溃；普通`verify_network`无法覆盖viewport state/guide生命周期。
+- 根因候选：重新访问上游源或节点状态触发PolyBevel 3.0 guide cook的原生缺陷；尚无最小复现，不能归因于Bridge/WebView，也不能外推所有H21/H22构建。隔离新场景的Box→PolyBevel→Copy→OUT在H21.0.440/H22.0.368依次选择SOURCE/BEVEL/OUT/再回SOURCE均正常退出，证明节点类型和这组基础参数本身不足以复现事故。
+- 当前边界：保留可旁路源检查点；涉及可编辑交付时在隔离GUI补关键节点选择/guide smoke，未跑则只说明输出cook通过。崩溃后的executor换代另由恢复协议处理，不能重绑或新建任务绕过。
+- 下一验收：从原复杂网络做有界拓扑/UI状态约简，找出最小附加条件；再在更新H21构建复核。复现前不禁用PolyBevel、不宣称升级已修，已通过的基础夹具也不证明原工程安全。

@@ -145,6 +145,10 @@ scene/network/render contract；节点知识、构图、控制变更再跑相应
 公共输出/封装变更另跑[输出发布回归](../tools/tests/dsh-output-publication.test.py)及
 [HDA公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)：覆盖空Output、内部显示切换、多端口/身份拒绝、
 嵌套空Pack、新实例和消费者。内容非空不证明必需成员或关系；行为续跑与艺术质量仍须新任务验证。
+H21 PolyBevel正常输出cook后仍可能在用户选择/guide阶段走不同原生路径；用
+[隔离GUI驱动](../tools/tests/run-polybevel-guide-gui.py)对目标H21/H22 GUI各跑一次。它只创建新场景、
+保存临时HIP并依次选SOURCE/BEVEL/OUT/再回SOURCE；进程崩溃或无报告是失败证据，不能因输出verify通过忽略。
+该夹具不加载live HIP，也不证明任意拓扑、显卡或后续构建安全。
 
 ```powershell
 $env:HOUDINI_PATH='&'

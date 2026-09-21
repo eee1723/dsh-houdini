@@ -25,9 +25,11 @@ const record={executor_id:'a'.repeat(32),registration_id:'b'.repeat(32),houdini_
   hip_path:'C:/fixture/test.hip',task_id:null,state:'registered'}
 let tree=render()
 assert.equal(requests.length,0,'mount must not silently query/select a target')
-response={ok:true,value:{candidates:[record]}}
+response={ok:true,value:{candidates:[record],recovery:{status:'unbound',message:'本任务尚未绑定Houdini。'}}}
 button(tree,'Houdini 执行端').props.onClick();await settle();tree=render()
 assert.equal(requests[0].endpoint,'houdiniTargets/list')
+assert.equal(requests[0].payload.args.input.sessionId,'task-a')
+assert(nodes(tree).some(n=>n.children.some(c=>typeof c==='string'&&c.includes('本任务尚未绑定'))))
 assert(button(tree,'选择并绑定'))
 button(tree,'选择并绑定').props.onClick();assert.equal(requests.length,1,'cancelled confirmation must not select')
 confirm=true;response={ok:true,value:{status:'bound'}}
@@ -43,7 +45,7 @@ const staleSignal=requests.at(-1).signal
 task='task-b';render();assert(staleSignal.aborted)
 resolve({ok:true,value:{candidates:[record]}});await settle();tree=render()
 assert.equal(button(tree,'选择并绑定'),undefined,'late response must not populate another task')
-response={ok:true,value:{candidates:[{...record,task_id:'task-a'}]}}
+response={ok:true,value:{candidates:[{...record,task_id:'task-a'}],recovery:{status:'bound_disconnected',message:'原Houdini执行端已断开。'}}}
 button(tree,'Houdini 执行端').props.onClick();await settle();tree=render()
 assert.equal(button(tree,'选择并绑定').props.disabled,true,'other author reservation is not selectable')
 console.log('executor picker: explicit consent, native RPC, captured HIP, stale response and author exclusion passed')

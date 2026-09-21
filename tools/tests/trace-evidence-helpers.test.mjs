@@ -629,6 +629,22 @@ assert.deepEqual(collectQualityLoopEvidence({steps:[literalClaim]}).relations.pr
 assert.deepEqual(collectQualityLoopEvidence({steps:[{...literalClaim,code:'text="node.geometry()"\n__result__={"clearance":0.02} # another.geometry()'}]}).relations.probeSteps,[],'quoted or commented geometry calls do not count as execution');
 const sourceDump={...measured,resultText:'Executed successfully.\n\n__result__:\n'+JSON.stringify({parms:[{name:'snippet',value:'// tangent 10; clearance=1'}],points:100})};
 assert.deepEqual(collectQualityLoopEvidence({steps:[sourceDump]}).relations.probeSteps,[],'source text in parameter readback is not a measured relation');
+const pieceRelationProbe={index:4,time:4,tool:'houdini_query',failed:false,
+  verbs:[{verb:'geo_piece_stats',ok:true,result:{piece_count:4}}],
+  code:'stats=geo_piece_stats(out,piece_attrib="piece")\nissues=[]\nif bad: issues.append("pin contact not flush")\n__result__={"issue_count":len(issues),"issues":issues,"pass":not issues}',
+  canonical:{result:{issue_total:0,issues:[],pass:true}}};
+const pieceRelationEvidence=collectQualityLoopEvidence({steps:[pieceRelationProbe]});
+assert.deepEqual(pieceRelationEvidence.relations.probeSteps,[4],
+  'governed piece summaries plus a structured relationship issue verdict are retained as handwritten candidates');
+assert.deepEqual(pieceRelationEvidence.relations.candidates[0].measuredFields,
+  [{field:'/issue_total',value:0},{field:'/pass',value:true}]);
+assert.match(pieceRelationEvidence.relations.candidates[0].scope,/not certified/);
+const contradictoryPieceProbe={...pieceRelationProbe,canonical:{result:{issue_total:0,issues:[],pass:false}}};
+assert.ok(qualityLoopRisks(collectQualityLoopEvidence({steps:[contradictoryPieceProbe]}))
+  .some(r=>r.code==='handwritten_relation_probe_conflict'),
+  'a zero-issue/false-pass checker contradiction is a risk, not relationship success');
+assert.deepEqual(collectQualityLoopEvidence({steps:[{...pieceRelationProbe,code:'stats=geo_piece_stats(out)\n__result__={"issue_count":0}'}]}).relations.probeSteps,[],
+  'generic piece counts without relationship intent are not relation probes');
 
 const render={index:1,time:1,tool:'houdini_exec',verbs:[{verb:'render_view',ok:true,args:'["/obj/item/OUT"], {"direction":"front"}',result:{output:'C:/render/front.png',frame:1}}],
   canonical:{media:[{from:'C:/render/front.png',to:'E:/workspace/hash-front.png'}]}};

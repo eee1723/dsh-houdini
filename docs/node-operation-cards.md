@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 15 · Source SHA-256: `eadbf57e8afb354adf53f631a7460d070a807052719b93d15c270981b9df395d`
+Schema: 2 · Cards: 15 · Source SHA-256: `f09d8e120a061e9441b9ac54fa825238f107739fb6ff91aad62caa574ffba4fd`
 
 ## 数据与设计契约
 
@@ -93,6 +93,7 @@ Schema: 2 · Cards: 15 · Source SHA-256: `eadbf57e8afb354adf53f631a7460d070a807
 - Direct creation has empty group, grouptype=guess, ignoreflatedges=0. Maximum Normal Angle is flatangle (degrees): with ignoreflatedges=1, smaller adjacent face-normal angles are excluded. It is not a maximum angle to bevel.
 - For controlled hard-surface fillets, build a procedural edge group from construction boundaries/part identity and geometric criteria, then set group and grouptype=edges. Avoid persistent hard-coded edge numbers after topology changes. Explicit all-edge or point bevels remain valid intents.
 - Choose width against local feature spacing and inspect the selected edges and resulting corner geometry; nonempty output/collision options do not prove no overlap or correct detail. Increasing divisions cannot fix a wrong selection.
+- H21.0.440 user evidence recorded a native PolyBevel 3.0 viewport guide-cook crash after normal output cook, render and save when an upstream source was revisited. A minimal Box→PolyBevel→Copy→OUT selection/guide smoke passed on H21.0.440 and H22.0.368, so do not generalize the incident to every PolyBevel. Output verification alone is still not an interaction-safety proof for the original complex network: retain a bypassable source checkpoint and use an isolated GUI smoke for the actual topology before claiming that path stable.
 
 ## sphere
 

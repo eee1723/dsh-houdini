@@ -134,4 +134,24 @@ for (const [dir, suffix] of [['src', '.ts'], ['houdini/python3.11libs', '.py']])
     assert.ok(architecture.includes(`](../${dir}/${name})`), `production module has no architecture entry: ${dir}/${name}`)
   }
 }
+
+const sopWorkflow = read('skills/houdini-sop-workflow/SKILL.md')
+const moduleContracts = read('skills/houdini-sop-workflow/references/module-quality-contracts.md')
+const handoffLayout = read('skills/houdini-sop-workflow/references/network-handoff.md')
+for (const text of [sopWorkflow, moduleContracts]) {
+  assert.match(text, /同层.*逻辑模块/, 'ordinary single-author modules must remain flat by default')
+  assert.match(text, /最低共同装配层/, 'cross-module connectors need one owning assembly boundary')
+  assert.match(text, /不因.*自动创建(?:subnet|Subnet)/,
+    'module boundaries must not imply automatic subnet creation')
+}
+assert.match(sopWorkflow, /OUT_ASSET/, 'nontrivial editable assets need a stable root handoff output')
+assert.match(sopWorkflow, /绝对.*路径/, 'movable modules must reject hidden absolute dependencies')
+assert.match(handoffLayout, /OUT_<MODULE>/, 'flat module checkpoints belong in the handoff contract')
+assert.match(handoffLayout, /不把它埋在assembly框内/, 'the final output needs a distinct presentation role')
+const houdiniPreset = read('presets/houdini/agent.cordis.yml')
+assert.match(houdiniPreset, /subnet containers are not the default/)
+assert.match(houdiniPreset, /OUT_ASSET/)
+assert.match(houdiniPreset, /lowest common assembly/)
+assert.ok(data.cards.polybevel.notes.some(note => /guide-cook crash/.test(note)),
+  'the observed H21 PolyBevel interaction crash must remain an explicit scoped risk')
 console.log(`documentation contracts passed (${docs.length} current docs, ${Object.keys(data.cards).length} generated cards)`)

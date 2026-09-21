@@ -193,6 +193,19 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     out = p.node(output) if isinstance(output, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', output) else h._resolve(output)
     if out is None or out.parent() != p:
         raise ValueError("output must be an explicit direct SOP child")
+    handoff_output = {
+        'path': out.path(),
+        'name': out.name(),
+        'type': out.type().name(),
+        'is_null': out.type().name() == 'null',
+        'has_stable_name': bool(re.fullmatch(r'OUT(?:_[A-Za-z0-9]+)*', out.name(), re.IGNORECASE)),
+        'is_leaf': not bool(out.outputs()),
+        'status': ('stable_null_checkpoint'
+                   if out.type().name() == 'null' and re.fullmatch(r'OUT(?:_[A-Za-z0-9]+)*', out.name(), re.IGNORECASE)
+                   else 'implementation_output'),
+        'scope': ('Presentation/readability facts only. A named Null is not a public subnet port, geometry proof, '
+                  'relationship proof or requirement to wrap every simple chain.'),
+    }
     public = _public_output(p, out, output_index) if output_index is not None else None
     if public is not None and public['node']:
         selected.append(h._resolve(public['node']))
@@ -208,7 +221,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   'output':out.path(), 'status':'not_evaluated_manual', 'update_mode':'manual',
                   'failure_reasons':['not_evaluated_manual'], 'geometry':None, 'nonempty':None,
                   'output_fingerprint':None, 'semantic_status':'unverified',
-                  'public_output':public, 'content_check':{'nonempty':None,'status':'not_evaluated'},
+                  'public_output':public, 'handoff_output':handoff_output,
+                  'content_check':{'nonempty':None,'status':'not_evaluated'},
                   'frame':float(hou.frame()), 'checked_at':time.time(),
                   'scope':'direct_children' if nodes is None else 'explicit_nodes',
                   'scope_signature':hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
@@ -246,7 +260,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'checked_nodes': [n.path() for n in selected], 'node_count': len(selected),
             'warning_free': not warnings,
             'healthy': not reasons and not warnings and nonempty is True, 'nonempty': nonempty,
-            'content_check': content, 'public_output': public,
+            'content_check': content, 'public_output': public, 'handoff_output': handoff_output,
             'error_nodes': errors, 'error_nodes_count': len(errors),
             'warning_nodes': warnings, 'warning_nodes_count': len(warnings),
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,

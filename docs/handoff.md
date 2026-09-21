@@ -1,6 +1,6 @@
 # 当前开发交接
 
-核对日期：2026-09-20
+核对日期：2026-09-21
 
 只保留下一次开发所需的活动事项；完成对应移除条件即删除整项，不追加完成日志。
 维护规则见[交接文档生命周期](development.md#交接文档生命周期)。实现版本以[工具设计](tool-design.md)为准，
@@ -56,8 +56,8 @@
 ### H-04 原始要求与控制/结构验收（QA-01/05/06、RB-06）
 
 - 状态：待验证
-- 现状：来源锚、控制变化/覆盖摘要和接口/精确变换测量已有；模型仍可能用bbox或面数通过声称整体连接、均匀变换或全部控制正确。
-- 下一步：新加载当前合同验公共Output逐层发布、空Pack拒绝、独立HDA实例与默认/边界参数；核对“要求→控制→实际输出/关系→恢复→复验”。验证原生方法失败后的同层诊断、源码重建一致性及局部pass不外推全局；不新增第二份可写完成证书。undo复活子节点已按有界证据重新登记（node-ownership回归含正反例），新加载与自然清理路径未验，不能以放宽ownership消除。
+- 现状：来源锚、控制/接口测量已有；模型仍会用bbox/面数外推整体关系。置物架另暴露平铺职责混杂、实现节点充当根输出、绝对控制路径、手写判据假失败及正常cook/save后的H21 PolyBevel guide崩溃。
+- 下一步：新加载合同验默认同层逻辑模块、`OUT_<MODULE>`/`OUT_ASSET`、连接件最低共同装配归属和相对依赖；仅在端口稳定、独立复用/替换/组件作者或用户明确层级时采用Subnet。继续验公共Output、空Pack、HDA实例与“要求→控制→关系→恢复→复验”；基础PolyBevel guide夹具H21/H22已过，继续约简原复杂工程的附加崩溃条件。局部pass不外推全局，不新增第二份完成证书；新加载ownership路径仍待验。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[变换反例](../tools/tests/dsh-modeling-identity.test.py)。
 
@@ -72,7 +72,7 @@
 ### H-06 Trace判据与接口发现误差（QA-03、API、OBS）
 
 - 状态：待验证
-- 现状：公开UI与HDA实例/消费者/隔离加载链有正向证据，尺寸/Cd/BOM判据仍待自然采用。工具开发规范已区分工程目录/独立package/已有包授权、HDA修改层及运行态来源；完整package发现与加载验证未实现。H22预览已复核、H21不变；隔离GUI退出和临时目录ACL问题待诊断，不扩大权限。test22复现Trace误判：空system的V3 request/header丢失实际工具面、`divisions`误命中vision todo、中文总控/联动/装配合同漏识别、带warning的render没有独立风险；提取器与fixture已修；旧trace重提取和新session展示仍待验。
+- 现状：公开UI/HDA隔离链有正向证据，尺寸/Cd/BOM仍待自然采用；完整package发现未实现。H22预览已复核，H21不变；隔离GUI退出/临时目录ACL待诊断。test22误判已窄修；test32逐件关系探针和判定冲突现可提取，原生图附件与语义inspection仍须分开。
 - 下一步：用H-01确认版本的新轨迹核对引用/诊断与参数UI自然触发；按[共享控制设计](parameter-controls.md)验先UI/后UI、真正窄面板和总控选参。新session另验默认低成本预览/原生读图、普通HIP交付及显式HDA对照；domain/接口返回/原生身份接续的自然采用与live仍待验。HDA按[生命周期回归](../tools/tests/dsh-hda-lifecycle.test.py)扩展复杂嵌套/外部回调边界与未见自然任务，按[公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)验新实例/多端口与实际控制关系；不维护某次trace资产，不将模型自然采用视为机制回归已证明。按[工具验收矩阵](../skills/houdini-tool-development/references/evidence-and-validation.md)补Shelf/快捷键；benchmark封存指纹不符须获重封授权，不降低门禁或宣称live已更新。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。

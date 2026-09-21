@@ -478,7 +478,7 @@ const VALIDATION_VERBS = new Set([
   'cook_node', 'describe', 'geo_piece_stats', 'geo_attrib_stats', 'geo_frame_diff', 'render_view',
   'render_frame', 'render_check', 'verify_network', 'geo_point_spacing', 'geo_check_interfaces', 'test_controls',
 ]);
-const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚点|端点|distance|距离|clearance|间隙|intersection|相交|穿插|contact|接触|contain(?:ed)?|包含|insert(?:ed)?|插入|tangent|切线|deviation|偏差)/ig;
+const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚点|端点|distance|距离|clearance|间隙|intersection|相交|穿插|contact|接触|contain(?:ed)?|包含|insert(?:ed)?|插入|embed(?:ded)?|嵌入|penetrat(?:e|ed|ion)|穿透|tangent|切线|flush|齐平|贴合|bearing|support|承托|ground(?:ed|ing)?|落地|deviation|偏差)/ig;
 
 export function findQueryMutationSteps(steps) {
   return (steps || []).filter((step) => (
@@ -549,8 +549,9 @@ function handwrittenRelationProbe(step) {
   const code=String(step.code||'').replace(/'''[\s\S]*?'''|"""[\s\S]*?"""/g,'"embedded_source"')
     .replace(/^\s*#.*$/gm,'');
   const executable=code.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,'"literal"').replace(/#.*$/gm,'');
-  if(!/\.\s*(?:geometry(?:AtFrame)?|boundingBox|attribValue|position)\s*\(/.test(executable)
-      || !/\bprint\s*\(|__result__\s*=/.test(executable))return null;
+  const directGeometry=/\.\s*(?:geometry(?:AtFrame)?|boundingBox|attribValue|position)\s*\(/.test(executable);
+  const measuredGeometry=(step.verbs||[]).some(v=>v.ok!==false&&['geo_piece_stats','geo_attrib_stats'].includes(v.verb));
+  if((!directGeometry&&!measuredGeometry)||!/\bprint\s*\(|__result__\s*=/.test(executable))return null;
   const canonical=step.canonical;
   let output=canonical ? [canonical.stdout,canonical.result===undefined?'':JSON.stringify(canonical.result)].filter(Boolean).join('\n') : '';
   if(!canonical) {
@@ -575,6 +576,19 @@ function handwrittenRelationProbe(step) {
   };
   const parsed=canonical?.result??(String(step.resultText??step.resultPreview??'').includes('__result__:')?execResultFromPreview(step.resultText??step.resultPreview):tryJson(output));
   inspect(parsed);
+  // Piece-oriented probes often read a governed geometry summary, then emit
+  // an empty/non-empty issues list rather than a field literally named
+  // "distance". Retain that as a candidate only when executable code contains
+  // relationship language and the structured result exposes the diagnostic
+  // verdict. This records that a probe happened; it never certifies its maths.
+  const relationCode=new RegExp(RELATION_PATTERN.source,'i').test(code);
+  const issueVerdict=parsed&&typeof parsed==='object'&&(Array.isArray(parsed.issues)
+    || Number.isFinite(parsed.issue_count)||Number.isFinite(parsed.issue_total)
+    || typeof parsed.pass==='boolean'||typeof parsed.ok==='boolean');
+  if(!measured.length&&relationCode&&issueVerdict) {
+    for(const name of ['issue_count','issue_total','pass','ok'])if(numeric(parsed[name]))measured.push({field:'/'+name,value:parsed[name]});
+    if(!measured.length&&Array.isArray(parsed.issues))measured.push({field:'/issues/count',value:parsed.issues.length});
+  }
   const printed=new RegExp('(?:'+relation.source+')\\s*(?:[:=]\\s*|\\s+)(?:[+-]?\\d|true\\b|false\\b)','i');
   // Structured source dumps are not free-form diagnostic lines.
   const printedMeasurement=!parsed&&output.split('\n').some(line=>printed.test(line));
@@ -1097,6 +1111,15 @@ export function qualityLoopRisks(evidence) {
       detail: 'The pre-mutation contract promised module relationships, but no relationship-oriented probe was observed.',
     });
   }
+  const contradictoryRelationCandidates=(evidence.relations.candidates||[]).filter(candidate=>{
+    const fields=Object.fromEntries((candidate.measuredFields||[]).map(row=>[row.field,row.value]));
+    const count=fields['/issue_count']??fields['/issue_total']??fields['/issues/count'];
+    return (count===0&&fields['/pass']===false)||(typeof count==='number'&&count>0&&fields['/pass']===true);
+  });
+  if(contradictoryRelationCandidates.length)risks.push({
+    code:'handwritten_relation_probe_conflict',
+    detail:'A handwritten relationship probe reported an issue count and pass verdict that contradict each other. Treat the checker as failed/unverified until its formula and final verdict are corrected and rerun.',
+    candidates:contradictoryRelationCandidates});
   if (evidence.freshness.finalCountMatchesEvidence === false) {
     risks.push({
       code: 'stale_final_geometry_counts',
