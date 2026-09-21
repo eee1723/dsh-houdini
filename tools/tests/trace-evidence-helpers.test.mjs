@@ -53,6 +53,12 @@ for (const text of ['细致表现模型表面质感和近景结构', 'Use survey
   assert.equal(collectQualityLoopEvidence({userMessages:[{text}]}).applicable,true);
 }
 assert.equal(collectQualityLoopEvidence({userMessages:[{text:'把节点改名为OUT'}]}).applicable,false);
+const proceduralAssembly = collectQualityLoopEvidence({userMessages:[{text:
+  '做一个可调宽度、深度和高度的程序化工具车，修改主要参数后各部件关系仍要正确，网络要清楚，并保留可见连接细节。'}]});
+assert.equal(proceduralAssembly.applicable,true,
+  'Chinese procedural assemblies with relation and handoff requirements need the quality loop');
+assert.equal(proceduralAssembly.contract.requirements.controls,true);
+assert.equal(proceduralAssembly.contract.requirements.relations,true);
 for (const tool of ['houdini_exec','houdini_query']) {
   const evidence = collectQualityLoopEvidence({steps:[{index:1,tool,failed:false,
     code:'# tangent direction\ng = n.geometry(); print(g.boundingBox())', resultText:'(0,0,0)-(1,1,1)',

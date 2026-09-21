@@ -55,6 +55,15 @@ def run():
   fresh=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={handoff_names!r},dry_run=True)")['result']
   handoff_noop=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={handoff_names!r},expected_plan={fresh['plan_sha256']!r})")
   assert not handoff_noop['result']['applied'] and handoff_noop['result']['scene_writes']==0
+  component=[{'name':'structure_component','label':'STRUCTURE component','role':'component',
+              'boxes':['placement','sources','assembly'],'color':[.22,.38,.58]}]
+  component_dry=call(f"__result__=network_boxes({parent!r},{component!r},dry_run=True)")['result']
+  component_apply=call(f"__result__=network_boxes({parent!r},{component!r},expected_plan={component_dry['plan_sha256']!r})")['result']
+  component_box=hou.node(parent).findNetworkBox('structure_component')
+  assert component_apply['applied'] and {box.name() for box in component_box.networkBoxes()}=={'placement','sources','assembly'}
+  component_layout_dry=call(f"__result__=layout_nodes({parent!r},mode='component',boxes=['structure_component'],dry_run=True)")['result']
+  component_layout=call(f"__result__=layout_nodes({parent!r},mode='component',boxes=['structure_component'],expected_plan={component_layout_dry['plan_sha256']!r})")['result']
+  assert component_layout['layout_status']=='passed' and component_layout['leaf_box_overlap_count']==0
   assert obstacle_before=={'node':[float(v) for v in foreign.position()],
                            'box':[float(v) for v in (*foreign_box.position(),*foreign_box.size())],
                            'note':[float(v) for v in (*note.position(),*note.size())],
@@ -123,7 +132,8 @@ def run():
       f"delete_node({paths[6]!r})\na=network_boxes({parent!r},{after_delete!r},dry_run=True)\n"
       f"network_boxes({parent!r},{after_delete!r},expected_plan=a['plan_sha256'])\nraise RuntimeError('member delete')",
       owner_session=session,owner_call='member-delete')
-  assert not member_delete['ok'] and member_delete['rollback']['network_boxes']['ok']
+  assert not member_delete['ok'],member_delete
+  assert member_delete.get('rollback',{}).get('network_boxes',{}).get('ok'),member_delete
   assert member_delete['rollback']['network_boxes']['entry_count']==2,member_delete
   assert hou.node(paths[6]) is not None and {item.path() for item in hou.node(parent).findNetworkBox('sources').items(recurse=False)}==set(paths[6:10])
   rollback_cases.append({'case':'member_delete','entry_count':member_delete['rollback']['network_boxes']['entry_count']})
@@ -136,15 +146,19 @@ def run():
   assert set(after)==set(before)
   for name in handoff_names:
    assert after[name]['label']==before[name]['label'] and after[name]['color']==before[name]['color'] and after[name]['members']==before[name]['members']
+  assert {box.name() for box in reopened.findNetworkBox('structure_component').networkBoxes()}=={'placement','sources','assembly'}
+  assert all(reopened.findNetworkBox(name).parentNetworkBox()==reopened.findNetworkBox('structure_component')
+             for name in ('placement','sources','assembly'))
   assert all(boxes.box_provenance(box,session)['status']=='foreign' for box in reopened.networkBoxes())
   reopened_positions={path:[float(v) for v in hou.node(path).position()] for path in paths}
   max_position_delta=max(abs(a-b) for path in paths for a,b in zip(positions[path],reopened_positions[path]))
   assert max_position_delta<=1e-6,max_position_delta
   report={'ok':True,'version':hou.applicationVersionString(),'hip':hip,
-          'scope':'native GUI Network Box color/membership, comfortable handoff layout, Bridge undo and save/reopen',
+          'scope':'native GUI Network Box color/node+box membership, comfortable leaf handoff, one component container, Bridge undo and save/reopen',
           'before':before,'after':after,'positions_preserved':True,
           'max_position_delta':max_position_delta,
-          'handoff':handoff,'handoff_noop':handoff_noop['result'],
+          'handoff':handoff,'handoff_noop':handoff_noop['result'],'component':component_apply,
+          'component_layout':component_layout,
           'fixed_obstacles_preserved':True,'fixed_obstacles':obstacle_before,
           'rollback':rolled['rollback'],'rollback_cases':rollback_cases,
           'transaction':rolled['transaction']}

@@ -63,8 +63,8 @@ try:
  noop=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},expected_plan={fresh['plan_sha256']!r})")
  assert noop['ok'] and not noop['result']['applied'] and noop['result']['scene_writes']==0
  assert noop['transaction']['status']=='no_scene_change'
- denied=call(f"layout_nodes({parent!r},mode='handoff',boxes=['foreign_box'],dry_run=True,allow_foreign='no broad handoff')")
- assert not denied['ok'] and 'owned' in denied['error']
+ denied=call(f"layout_nodes({parent!r},mode='handoff',boxes=['foreign_box'],dry_run=True)")
+ assert not denied['ok'] and 'ownership guard' in denied['error']
  # Apply failure after some node moves restores through the accepted box journal.
  shifted=hou.node(paths[0]);shifted.setPosition(shifted.position()+hou.Vector2(3,0))
  fail_plan=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},dry_run=True)")['result']

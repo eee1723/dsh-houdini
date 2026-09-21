@@ -448,6 +448,7 @@ export function collectVerbAdoption(steps) {
 }
 
 const OPEN_ENDED_QUALITY_REQUEST = /(?:细节丰富|高质量|写实|逼真|真实感|电影感|镜头级|可靠(?:的)?验证|复杂(?:资产|模型)|真实\s*solver|有效缓存|可重算|产品视觉开发|正式(?:的)?\s*(?:Karma\s*)?渲染|(?:可调|可以调节|参数化).{0,16}(?:效果|模拟|系统)|high[- ]?quality|detail(?:ed| rich)|realistic|cinematic|shot[- ]?quality|reliable (?:verification|validation)|real solver|valid cache|recomputable|product lookdev|final Karma render|(?:adjustable|configurable|parameterized).{0,16}(?:effect|simulation|system))/i;
+const PROCEDURAL_ASSEMBLY_QUALITY_REQUEST = /(?:(?:程序化|可调|参数化).{0,96}(?:部件关系|关系(?:仍要)?正确|连接细节|装配关系|网络(?:要)?清楚)|(?:procedural|adjustable|parameterized).{0,96}(?:part relationships?|assembly relations?|connection details?|clear network))/i;
 const EXTERNAL_TRUTH_SIGNAL = /(?:(?:符合|属于|处于|均在).{0,40}(?:真实|现实|行业|规格|标准|范围)|(?:典型|真实|行业|标准).{0,40}(?:标定|尺寸|规格|比例|范围|标准)|(?:real[- ]?world|industry|spec(?:ification)?|physically accurate).{0,40}(?:dimension|proportion|range|standard|accurate))/i;
 const ASSUMPTION_BOUNDARY = /(?:无外部参考|没有外部参考|基于假设|假设值|(?:值|比例|尺寸|数值|典型值).{0,16}假设|非已核实规格|未验证|内部一致|风格化|用户授权|用户选择|no external reference|assum(?:e|ed|ption)|unverified|stylized)/i;
 const UNVERIFIED_MARKER = /(?:unverified|未验证|无法验证|待验证)/i;
@@ -854,6 +855,7 @@ export function collectQualityLoopEvidence({
   const request = messageText(userMessages);
   const assistant = messageText(assistantMessages);
   let applicable = OPEN_ENDED_QUALITY_REQUEST.test(request)
+    || PROCEDURAL_ASSEMBLY_QUALITY_REQUEST.test(request)
     || /(?:精细|细致|近景|测绘|实景|表面质感|close[- ]?up|fine detail|surface texture|survey reference)/i.test(request);
   const indexed = steps.map((step, offset) => ({ ...step, code: step.code, resultText: step.resultText, canonical:step.canonical,
     index: stepIndex(step, offset + 1) }));
@@ -864,6 +866,7 @@ export function collectQualityLoopEvidence({
   const confirmedChoiceText=initialChoices.map(row=>row.text);
   const agreedRequest=[request,...confirmedChoiceText].join('\n');
   applicable ||= OPEN_ENDED_QUALITY_REQUEST.test(confirmedChoiceText.join('\n'))
+    || PROCEDURAL_ASSEMBLY_QUALITY_REQUEST.test(confirmedChoiceText.join('\n'))
     || /高细节|精细|近景|high[- ]detail|close[- ]up/i.test(confirmedChoiceText.join('\n'));
   const preMutationText = [
     ...confirmedChoiceText,

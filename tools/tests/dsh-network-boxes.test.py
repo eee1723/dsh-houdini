@@ -81,6 +81,64 @@ try:
     assert hou.node(paths['OUT']).input(0)==hou.node(paths['assemble'])
     assert all(isinstance(key,tuple) and key[0]=='network_box' for key in boxes._OWNED_BOXES)
 
+    # Component presentation hierarchy is exactly two levels: first create
+    # and lay out leaf role boxes, then wrap existing leaves in one container.
+    nested=ok(
+        f"p=tab_create('/obj','geo',name='__nested_boxes_{suffix}')\n"
+        "s=tab_create(p,'box',name='source')\nq=tab_create(p,'null',name='points')\n"
+        "c=tab_create(p,'copytopoints',name='copy',inputs=[s,q])\n"
+        "o=tab_create(p,'null',name='OUT',inputs=[c])\n"
+        "__result__={'parent':p.path(),'nodes':[s.path(),q.path(),c.path(),o.path()]}")['result']
+    nested_parent=nested['parent']
+    leaf_groups=[
+      {'name':'part_source','label':'PART source','role':'source','members':[nested['nodes'][0]]},
+      {'name':'part_place','label':'PART template/copy','role':'placement','members':nested['nodes'][1:3]},
+      {'name':'part_out','label':'PART output','role':'output','members':[nested['nodes'][3]]},
+    ]
+    leaf_plan=preview(nested_parent,leaf_groups);assert apply(nested_parent,leaf_groups,leaf_plan['plan_sha256'])['ok']
+    leaf_names=[row['name'] for row in leaf_groups]
+    layout_plan=call(f"__result__=layout_nodes({nested_parent!r},mode='handoff',boxes={leaf_names!r},dry_run=True)")
+    assert layout_plan['ok'] and layout_plan['result']['layout_status']=='planned',layout_plan
+    layout_apply=call(f"__result__=layout_nodes({nested_parent!r},mode='handoff',boxes={leaf_names!r},expected_plan={layout_plan['result']['plan_sha256']!r})")
+    assert layout_apply['ok'] and layout_apply['result']['layout_status']=='passed',layout_apply
+    component=[{'name':'part_component','label':'PART component','role':'component','boxes':leaf_names,'color':[.2,.35,.55]}]
+    component_plan=preview(nested_parent,component)
+    assert component_plan['boxes'][0]['boxes']==leaf_names and component_plan['boxes'][0]['members']==[]
+    component_apply=apply(nested_parent,component,component_plan['plan_sha256']);assert component_apply['ok'],component_apply
+    outer=hou.node(nested_parent).findNetworkBox('part_component')
+    assert {box.name() for box in outer.networkBoxes()}==set(leaf_names)
+    assert all(hou.node(nested_parent).findNetworkBox(name).parentNetworkBox()==outer for name in leaf_names)
+    assert all(hou.node(path).parentNetworkBox().name() in leaf_names for path in nested['nodes'])
+    component_layout_plan=call(f"__result__=layout_nodes({nested_parent!r},mode='component',boxes=['part_component'],dry_run=True)")
+    assert component_layout_plan['ok'] and component_layout_plan['result']['layout_status']=='planned',component_layout_plan
+    component_layout=call(f"__result__=layout_nodes({nested_parent!r},mode='component',boxes=['part_component'],expected_plan={component_layout_plan['result']['plan_sha256']!r})")
+    assert component_layout['ok'] and component_layout['result']['layout_status']=='passed',component_layout
+    assert component_layout['result']['leaf_box_overlap_count']==0 and component_layout['result']['component_box_overlap_count']==0
+    component_layout_fresh=call(f"__result__=layout_nodes({nested_parent!r},mode='component',boxes=['part_component'],dry_run=True)")
+    component_layout_noop=call(f"__result__=layout_nodes({nested_parent!r},mode='component',boxes=['part_component'],expected_plan={component_layout_fresh['result']['plan_sha256']!r})")
+    assert component_layout_noop['ok'] and component_layout_noop['result']['scene_writes']==0
+    wrong_mode=call(f"__result__=layout_nodes({nested_parent!r},mode='component',boxes=['part_source'],dry_run=True)")
+    assert not wrong_mode['ok'] and 'top-level component container' in wrong_mode['error']
+    repeated=preview(nested_parent,component);repeated_apply=apply(nested_parent,component,repeated['plan_sha256'])
+    assert repeated_apply['ok'] and repeated_apply['result']['scene_writes']==0
+    mixed={**component[0],'members':[nested['nodes'][0]]}
+    mixed_call=call(f"__result__=network_boxes({nested_parent!r},[{mixed!r}],dry_run=True)")
+    assert not mixed_call['ok'] and 'exactly one' in mixed_call['error']
+    deep={'name':'too_deep','label':'Too deep','role':'component','boxes':['part_component']}
+    deep_call=call(f"__result__=network_boxes({nested_parent!r},[{deep!r}],dry_run=True)")
+    assert not deep_call['ok'] and 'already a component container' in deep_call['error']
+    remove_outer=preview(nested_parent,[],remove=['part_component'])
+    assert apply(nested_parent,[],remove_outer['plan_sha256'],remove=['part_component'])['ok']
+    assert all(hou.node(nested_parent).findNetworkBox(name).parentNetworkBox() is None for name in leaf_names)
+    rolled=call(
+        f"a=network_boxes({nested_parent!r},{component!r},dry_run=True)\n"
+        f"network_boxes({nested_parent!r},{component!r},expected_plan=a['plan_sha256'])\n"
+        "raise RuntimeError('rollback nested component container')")
+    assert not rolled['ok'] and rolled['rollback']['applied'] and rolled['rollback']['network_boxes']['ok'],rolled
+    assert hou.node(nested_parent).findNetworkBox('part_component') is None
+    assert all(hou.node(nested_parent).findNetworkBox(name).parentNetworkBox() is None for name in leaf_names)
+    assert call(f"__result__=delete_node({nested_parent!r})")['ok']
+
     multi_node=ok(f"__result__=tab_create({parent!r},'null',name='multi_node').path()")['result']
     multi_group={'name':'temp_multi','label':'First','role':'assembly','members':[multi_node]}
     multi_update={**multi_group,'label':'Second'}
@@ -122,6 +180,30 @@ try:
         "raise RuntimeError('movement before grouping failure')")
     assert not moved_then_group['ok'] and moved_then_group['rollback']['network_boxes']['ok'],moved_then_group
     assert {path:tuple(float(v) for v in hou.node(path).position()) for path in before_undo_positions}==before_undo_positions
+
+    # A named existing network remains denied by default, but an explicit
+    # user authorization can cover the exact foreign boxes and their members.
+    foreign_layout=ok(
+        "p=tab_create('/obj','geo',name='__foreign_layout_"+suffix+"')\n"
+        "a=tab_create(p,'box',name='source')\n"
+        "b=tab_create(p,'xform',name='process',inputs=[a])\n"
+        "o=tab_create(p,'null',name='OUT',inputs=[b])\n"
+        "__result__={'parent':p.path(),'nodes':[a.path(),b.path(),o.path()]}",owner='other-layout')['result']
+    foreign_groups=[
+      {'name':'foreign_source','label':'Existing source','role':'source','members':[foreign_layout['nodes'][0]]},
+      {'name':'foreign_process','label':'Existing processing','role':'assembly','members':[foreign_layout['nodes'][1]]},
+      {'name':'foreign_output','label':'Existing output','role':'output','members':[foreign_layout['nodes'][2]]},
+    ]
+    foreign_box_plan=preview(foreign_layout['parent'],foreign_groups,allow='fixture creates another author network')
+    assert apply(foreign_layout['parent'],foreign_groups,foreign_box_plan['plan_sha256'],allow='fixture creates another author network')['ok']
+    denied_layout=call(f"__result__=layout_nodes({foreign_layout['parent']!r},mode='handoff',boxes={[g['name'] for g in foreign_groups]!r},dry_run=True)")
+    assert not denied_layout['ok'] and 'ownership guard' in denied_layout['error'],denied_layout
+    layout_reason='user explicitly requested layout repair of this existing network'
+    allowed_plan=call(f"__result__=layout_nodes({foreign_layout['parent']!r},mode='handoff',boxes={[g['name'] for g in foreign_groups]!r},dry_run=True,allow_foreign={layout_reason!r})")
+    assert allowed_plan['ok'] and allowed_plan['result']['layout_status']=='planned',allowed_plan
+    allowed_apply=call(f"__result__=layout_nodes({foreign_layout['parent']!r},mode='handoff',boxes={[g['name'] for g in foreign_groups]!r},expected_plan={allowed_plan['result']['plan_sha256']!r},allow_foreign={layout_reason!r})")
+    assert allowed_apply['ok'] and allowed_apply['result']['layout_status']=='passed',allowed_apply
+    assert call(f"__result__=delete_node({foreign_layout['parent']!r},allow_foreign={layout_reason!r})")['ok']
 
     renamed_parent_path='/obj/renamed_parent_'+suffix
     renamed_groups=[]
@@ -265,7 +347,7 @@ try:
     assert hou.node(paths['spare']) is not None and hou.node(parent+'/spare_temp') is None
     for bad_group,needle in (
         ({**groups[0],'role':'status_green'},'unknown'),
-        ({**groups[0],'unexpected':1},'name,label,role,members'),
+        ({**groups[0],'unexpected':1},'name,label,role'),
         ({**groups[0],'members':[paths['ctrl'],paths['ctrl']]},'multiple groups'),
     ):
         bad_call=call(f"__result__=network_boxes({parent!r},[{bad_group!r}],dry_run=True)")
@@ -281,10 +363,12 @@ try:
     assert not unsupported['ok'] and 'minimized' in unsupported['error'];minimized.destroy(destroy_contents=False)
     outer=hou.node(parent).createNetworkBox('outer_user');inner=hou.node(parent).createNetworkBox('inner_user')
     outer.addNetworkBox(inner);inner.addItem(hou.node(paths['spare']))
-    inner_group={'name':'inner_user','label':'Unsupported nested','role':'source','members':[paths['spare']]}
-    unsupported_nested=call(f"__result__=network_boxes({parent!r},[{inner_group!r}],dry_run=True,allow_foreign='fixture')")
-    assert not unsupported_nested['ok'] and 'nested' in unsupported_nested['error']
-    outer.removeNetworkBox(inner);inner.destroy(destroy_contents=False);outer.destroy(destroy_contents=False)
+    too_deep=hou.node(parent).createNetworkBox('too_deep_user');too_deep.addNetworkBox(outer)
+    deep_group={'name':'deep_target','label':'Unsupported third level','role':'component','boxes':['inner_user']}
+    unsupported_nested=call(f"__result__=network_boxes({parent!r},[{deep_group!r}],dry_run=True,allow_foreign='fixture')")
+    assert not unsupported_nested['ok'] and ('deeper than one' in unsupported_nested['error'] or 'component container' in unsupported_nested['error'])
+    too_deep.removeNetworkBox(outer);outer.removeNetworkBox(inner)
+    inner.destroy(destroy_contents=False);outer.destroy(destroy_contents=False);too_deep.destroy(destroy_contents=False)
     sticky=hou.node(parent).createStickyNote('note');note_box=hou.node(parent).createNetworkBox('note_box');note_box.addItem(sticky)
     note_group={'name':'note_box','label':'Unsupported','role':'source','members':[paths['spare']]}
     unsupported_note=call(f"__result__=network_boxes({parent!r},[{note_group!r}],dry_run=True,allow_foreign='fixture')")

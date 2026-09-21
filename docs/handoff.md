@@ -56,8 +56,8 @@
 ### H-04 原始要求与控制/结构验收（QA-01/05/06、RB-06）
 
 - 状态：待验证
-- 现状：来源锚、控制/接口测量已有；模型仍会用bbox/面数外推整体关系。置物架另暴露平铺职责混杂、实现节点充当根输出、绝对控制路径、手写判据假失败及正常cook/save后的H21 PolyBevel guide崩溃。
-- 下一步：新加载合同验默认同层逻辑模块、`OUT_<MODULE>`/`OUT_ASSET`、连接件最低共同装配归属和相对依赖；仅在端口稳定、独立复用/替换/组件作者或用户明确层级时采用Subnet。继续验公共Output、空Pack、HDA实例与“要求→控制→关系→恢复→复验”；基础PolyBevel guide夹具H21/H22已过，继续约简原复杂工程的附加崩溃条件。局部pass不外推全局，不新增第二份完成证书；新加载ownership路径仍待验。
+- 现状：来源锚、控制/接口测量已有；模型仍会用bbox/面数外推整体关系。置物架暴露职责混杂、无稳定根输出、绝对引用、假失败及H21 PolyBevel guide崩溃。后续装配已采用同层模块、`OUT_<MODULE>`/`OUT_ASSET`与相对依赖，却把Z当世界高度并用`min Z=0`误证接地。现已补原生Y-up起模、旧工程根输出前适配、逐足世界接地、part观察色及一层组件容器→角色小框；叶子handoff与组件布局分层，H21/H22 GUI已验父子框、undo和保存重开。既有HIP只证明局部回归。
+- 下一步：新加载合同用未见Y-up装配任务验世界轴、稳定输出、组件/角色两层布局、连接件归属和相对依赖；仅在端口稳定、独立复用/替换/组件作者或用户明确层级时采用Subnet。继续验公共Output、空Pack、HDA实例及“要求→控制→关系→恢复→复验”；继续约简原复杂工程的PolyBevel附加崩溃条件。局部pass不外推全局。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[变换反例](../tools/tests/dsh-modeling-identity.test.py)。
 
@@ -72,7 +72,7 @@
 ### H-06 Trace判据与接口发现误差（QA-03、API、OBS）
 
 - 状态：待验证
-- 现状：公开UI/HDA隔离链有正向证据，尺寸/Cd/BOM仍待自然采用；完整package发现未实现。H22预览已复核，H21不变；隔离GUI退出/临时目录ACL待诊断。test22误判已窄修；test32逐件关系探针和判定冲突现可提取，原生图附件与语义inspection仍须分开。
+- 现状：公开UI/HDA隔离链有正向证据，尺寸/Cd/BOM仍待自然采用；完整package发现未实现。H22预览已复核，H21不变；隔离GUI退出/临时目录ACL待诊断。test22误判已窄修；test32关系探针冲突可提取；中文“程序化+关系保持+网络清楚”现会进入qualityLoop。原生图附件与语义inspection仍须分开，无地面参照不能证明世界姿态。
 - 下一步：用H-01确认版本的新轨迹核对引用/诊断与参数UI自然触发；按[共享控制设计](parameter-controls.md)验先UI/后UI、真正窄面板和总控选参。新session另验默认低成本预览/原生读图、普通HIP交付及显式HDA对照；domain/接口返回/原生身份接续的自然采用与live仍待验。HDA按[生命周期回归](../tools/tests/dsh-hda-lifecycle.test.py)扩展复杂嵌套/外部回调边界与未见自然任务，按[公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)验新实例/多端口与实际控制关系；不维护某次trace资产，不将模型自然采用视为机制回归已证明。按[工具验收矩阵](../skills/houdini-tool-development/references/evidence-and-validation.md)补Shelf/快捷键；benchmark封存指纹不符须获重封授权，不降低门禁或宣称live已更新。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。

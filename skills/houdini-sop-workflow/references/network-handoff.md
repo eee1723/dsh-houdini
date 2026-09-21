@@ -11,12 +11,17 @@
 先区分逻辑模块与技术阶段。普通单作者装配默认可在同层以逻辑模块组织：每个可独立替换、细化或重复的组件让源、局部处理和稳定`OUT_<MODULE>`相邻，父装配只消费这些输出；不因为模块化自动创建Subnet。根层预计继续编辑的非平凡资产使用稳定`OUT_ASSET` Null。Network Box只是同parent的扁平展示，不能冒充层级、公共端口或成员/权限证据；小模块可合并成一个清楚的Box，不机械创建空角色框。
 
 - `controls`：用户控制、共享参数和驱动入口。
+- `component`：仅用于包含叶子角色框的一层组件展示容器，不直接装节点。
 - `placement`：点流、方向、尺度、随机化与装配位置。
 - `source`：可独立替换的源几何/原型。
 - `assembly`：处理、复制、合并和最终装配。
 - `output`：稳定`OUT_ASSET`/`OUT_<MODULE>` Null、显式公共输出或交付检查点。非平凡根资产已有稳定最终输出时应单独列入本角色，不把它埋在assembly框内。
 
-按实际网络选用，不要求五类全部存在。一个节点只能进入一个本次管理的扁平Box；标签写给用户看，名字保持稳定。角色色由`network_boxes`统一设置，不手调成无语义的彩虹色。
+按实际网络选用，不要求五类全部存在。一个节点只能进入一个本次管理的扁平Box；标签写给用户看，名字保持稳定。纯技术角色布局使用`network_boxes`默认角色色，不手调成无语义的彩虹色。
+
+当用户既要按组件接手，又要保留“可替换源、模板点/放置、Copy/处理、模块输出”等技术阶段时，使用两层**组件容器→角色单元格**。先按实际节点建立`MODULE · SOURCE`、`MODULE · TEMPLATE/COPY`、`MODULE · OUT`叶子框并完成`mode='handoff'`；短链可合并相邻角色，不制造空框。再单独调用`network_boxes`，让`role='component'`的大框通过`boxes=[...]`包含这些已布局叶子框，最后对所有组件大框执行两阶段`layout_nodes(mode='component', boxes=[...])`，它以叶子框为整体移动单元，不打散小框内部。同一节点仍只属于一个叶子框；组件框不直接装节点、不与叶子框同批创建、不再套第三层。这是Network Box展示层级，不是Subnet、公共端口或所有权层级。
+
+需要快速观察不同组件时，可给同一组件的大框和叶子框使用同一低饱和色相，以轻微明度差区分阶段；相邻组件避免近似色，控制、总装和最终输出仍保留稳定的中性色/角色色。颜色必须与组件标签、几何`part`/piece身份保持可解释对应，不按创建顺序随机分配，也不能用“颜色不同”替代实际成员、接线和输出验证。已有用户自定义配色默认保留；只有用户要求重配或新建交接布局时才覆盖。
 
 ## 两阶段执行
 
@@ -32,7 +37,9 @@ layout_nodes(parent, mode='handoff', boxes=names,
              expected_plan=layout_plan['plan_sha256'])
 ```
 
-handoff只移动当前session自有Box及其完整自有成员。未选节点、foreign/service/未选Box、Sticky Note和Network Dot是固定障碍；不要用`allow_foreign`试图越权。若返回`blocked`，缩小显式Box范围或由用户处理固定障碍，不删除/移动外来内容。
+handoff默认只移动当前session自有Box及其完整自有成员。未选节点、foreign/service/未选Box、Sticky Note和Network Dot是固定障碍；不能仅为整理美观使用`allow_foreign`越权。用户明确授权修复某个已命名既有网络时，可对精确列出的旧Box及成员传一次性非空`allow_foreign`理由，并在dry-run与apply保持同一授权；持久render service永不豁免。若返回`blocked`，缩小显式Box范围或由用户处理固定障碍，不删除/移动未授权内容。
+
+`handoff`只接叶子框，`component`只接组件大框；不能把父子框混在同一次布局。更新或移除嵌套叶子框时必须同批声明其组件容器最终`boxes`列表或移除容器，避免留下隐式重归属。
 
 ## 验收
 

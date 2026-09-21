@@ -2427,22 +2427,25 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     ``mode='flow'`` = 自研拓扑分层（``_layout_flow``）：深度 0 最上、
     y = −depth × 垂直间距，同深度按当前 x 排序居中，环上边兜底不断裂。
     ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
-    ``mode='handoff'`` = 对显式当前session自有Network Box执行comfortable宽松布局；
-    强制dry-run plan后apply，其他网络项全部作为固定障碍。
+    ``mode='handoff'`` = 对显式叶子Network Box执行comfortable宽松布局；
+    ``mode='component'`` = 对显式一层组件容器布局，整体移动其叶子框及节点。
+    两者都强制dry-run plan后apply，其他网络项全部作为固定障碍。
     """
-    if mode not in ("children", "flow", "handoff"):
-        raise ValueError(f"mode 必须是 'children'、'flow' 或 'handoff'，收到 {mode!r}")
+    if mode not in ("children", "flow", "handoff", "component"):
+        raise ValueError(f"mode 必须是 'children'、'flow'、'handoff' 或 'component'，收到 {mode!r}")
     p = _resolve(parent)
-    if mode == 'handoff':
-        if nodes is not None:raise ValueError('handoff mode derives nodes from boxes; nodes must be None')
-        if boxes is None:raise ValueError('handoff mode requires explicit boxes')
+    if mode in ('handoff','component'):
+        if nodes is not None:raise ValueError(f'{mode} mode derives items from boxes; nodes must be None')
+        if boxes is None:raise ValueError(f'{mode} mode requires explicit boxes')
         if horizontal_spacing!=-1.0 or vertical_spacing!=-1.0:
-            raise ValueError('handoff mode uses profile clearances, not children/flow spacing')
-        from dsh_network_boxes import NetworkBoxOperationError,apply_handoff_layout
+            raise ValueError(f'{mode} mode uses profile clearances, not children/flow spacing')
+        from dsh_network_boxes import NetworkBoxOperationError,apply_component_layout,apply_handoff_layout
         try:
-            return apply_handoff_layout(p,boxes,profile=profile,dry_run=dry_run,
+            operation=apply_handoff_layout if mode=='handoff' else apply_component_layout
+            return operation(p,boxes,profile=profile,dry_run=dry_run,
                 expected_plan=expected_plan,active_owner_session=_ACTIVE_OWNER_SESSION,
-                node_provenance=node_provenance)
+                node_provenance=node_provenance,allow_foreign=allow_foreign,
+                require_node_owned=_require_owned)
         except NetworkBoxOperationError as error:
             raise CheckpointError(str(error),error.evidence) from error
     if boxes is not None or profile!='comfortable' or dry_run is not False or expected_plan is not None:
@@ -2490,11 +2493,14 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
 
 def network_boxes(parent, groups, *, remove=None, dry_run=False,
                   expected_plan=None, allow_foreign=None) -> dict:
-    """Preview/apply governed flat Network Box membership, labels and role colors.
+    """Preview/apply governed Network Box membership, labels and role colors.
 
     Apply requires ``expected_plan`` from a fresh ``dry_run=True`` call. This is
-    presentation grouping only: member nodes, geometry, wiring and existing
-    ``layout_nodes`` behavior are not moved or evaluated.
+    presentation grouping only: member nodes, geometry and wiring are not moved
+    or evaluated. A group uses exactly one of ``members`` (direct child nodes)
+    or ``boxes`` (already-created leaf boxes). ``boxes`` creates one bounded
+    component-container level; create/layout leaf role boxes first, then wrap
+    them. Deeper nesting and mixed node/box membership are rejected.
     """
     try:
         p = _resolve(parent)

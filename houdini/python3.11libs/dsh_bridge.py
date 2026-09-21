@@ -985,10 +985,12 @@ def _operation_summary(name: str, result):
             'current_state_preserved','restored','restore_errors','identity_remaps',
             'original_error','recovery_exception','journaled','scope','layout_status') if k in result} | {
             'box_count': len(result.get('boxes') or [])}
-    if name == 'layout_nodes' and result.get('mode')=='handoff':
+    if name == 'layout_nodes' and result.get('mode') in ('handoff','component'):
         return {k:result[k] for k in ('ok','mode','dry_run','applied','scene_writes','plan_sha256','profile','parent',
             'box_count','movable_node_count','moved_node_count','changed_box_count','node_overlap_count',
             'box_overlap_count','obstacle_overlap_count','containment_failures','clearance_failures',
+            'component_box_count','leaf_box_count','moved_leaf_box_count','changed_component_box_count',
+            'leaf_box_overlap_count','component_box_overlap_count',
             'required_clearances','achieved_clearances','minimum_clearances',
             'fixed_obstacles','skipped_items','layout_status','restored','restore_errors','scope') if k in result}
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
@@ -1415,7 +1417,7 @@ def run_code(code: str, allow_raw: str | None = None,
     elif not mutation_attempted or gate_outcome in ('blocked', 'forbidden', 'read_only_blocked'):
         transaction_status = 'no_scene_change'
     elif not created_nodes and not raw_usage.get('coveredMutations') and not raw_usage.get('suspectedMutations') and all(
-            v.get('summary',{}).get('scene_writes') == 0 for v in verb_ledger if v['verb'] in _MUTATING_VERB_NAMES):
+            (v.get('summary') or {}).get('scene_writes') == 0 for v in verb_ledger if v['verb'] in _MUTATING_VERB_NAMES):
         transaction_status = 'no_scene_change'
     else:
         transaction_status = 'recovery_unverified'

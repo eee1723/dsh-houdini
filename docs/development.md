@@ -197,7 +197,7 @@ quality-contracts用“局部变化但整体bbox不变”和“面积响应通�
 另含简单编辑、单部件、相邻领域和接口未定的反例，不以固定脚本通过证明LLM采用或视觉质量。
 Network Box与交接布局分别由`dsh-network-boxes`、`dsh-network-layout`、`dsh-handoff-layout`覆盖治理、纯规划器、
 两阶段apply/陈旧计划/零写入重复执行、固定障碍与失败恢复，并随部署驱动在H21/H22运行。原生GUI夹具
-`dsh-network-boxes-gui.test.py`仅在新开的隔离Houdini进程中验证角色色、comfortable handoff、undo及保存重开；
+`dsh-network-boxes-gui.test.py`仅在新开的隔离Houdini进程中验证角色色、叶子框comfortable handoff、一层组件容器、undo及保存重开；
 产物放`tools/out`或临时目录，不连接live，也不把脚本通过写成自然任务采用或视觉审美证明。
 
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
