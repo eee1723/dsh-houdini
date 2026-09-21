@@ -31,6 +31,25 @@ assert covered["rawUsage"]["coveredMutations"] == [
     {"name": "createNode", "count": 1, "verb": "search_tab_entries + tab_create/tab_apply"}
 ], covered["rawUsage"]
 
+# Network Box creation is unambiguous; generic color/comment methods are only
+# verb-covered when the receiver is proven to be a Network Box.
+box_create = dsh_bridge.run_code(
+    "hou.node('/obj').createNetworkBox('__raw_box__')",
+    allow_raw='attempted Network Box escape hatch',
+)
+assert not box_create['ok'] and 'createNetworkBox -> network_boxes' in box_create['error'], box_create
+assert hou.node('/obj').findNetworkBox('__raw_box__') is None
+box_usage = dsh_bridge._raw_usage_analysis(
+    "b=hou.node('/obj').findNetworkBox('x')\nb.setColor(hou.Color((1,0,0)))\nb.setComment('x')\nb.addNode(hou.node('/obj/x'))\nb.removeNode(hou.node('/obj/x'))\nb.removeAllNodes()")
+assert [row['name'] for row in box_usage['coveredMutations']] == [
+    'networkBox.addNode', 'networkBox.removeAllNodes', 'networkBox.removeNode',
+    'networkBox.setColor', 'networkBox.setComment'], box_usage
+by_id=dsh_bridge._raw_usage_analysis("b=hou.networkBoxBySessionId(0)\nb.addItem(hou.node('/obj/x'))")
+assert by_id['coveredMutations']==[{'name':'networkBox.addItem','count':1,'verb':'network_boxes'}],by_id
+generic_color = dsh_bridge._raw_usage_analysis("widget.setColor('red')")
+assert generic_color['coveredMutations'] == [] and generic_color['suspectedMutations'] == [
+    {'name':'setColor','count':1}], generic_color
+
 # Parameter aliases and bound setters cannot turn a covered write into an exemption.
 fixture = hou.node('/obj').createNode('geo', '__gate_parameter_alias')
 before = fixture.parm('tx').eval()

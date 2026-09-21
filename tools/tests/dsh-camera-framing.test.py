@@ -157,6 +157,9 @@ import importlib
 import dsh_launcher as launcher
 import dsh_operation_cards as cards
 import dsh_geometry_observation as observation
+import dsh_preview_paths as preview_paths
+import dsh_network_layout as network_layout
+import dsh_network_boxes as network_boxes_module
 real_reload=importlib.reload
 real_stop,real_start=bridge.stop,bridge.start
 started=[]
@@ -166,9 +169,16 @@ try:
     importlib.reload=lambda m:m if m is bridge else real_reload(m)
     f.solve=None
     observation.attribute_uniqueness=None
+    preview_paths.allocate_managed=None
+    network_layout.union=None
+    box_registry=network_boxes_module._OWNED_BOXES
+    network_boxes_module.apply_network_boxes=None
     cards._cards=lambda:{'cards':{}}
     launcher.restart_bridge()
     assert callable(f.solve) and callable(observation.attribute_uniqueness)
+    assert callable(preview_paths.allocate_managed)
+    assert callable(network_layout.union) and callable(network_boxes_module.apply_network_boxes)
+    assert network_boxes_module._OWNED_BOXES is box_registry
     assert cards.operation_card('attribwrangle')['id']=='wrangle-execution-v3'
     assert len(started)==1
 finally:

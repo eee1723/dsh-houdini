@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 55
+Execution contract version: 58
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -40,6 +40,9 @@ read_parms的Ramp值为JSON对象：type=ramp、basis插值名称、keys控制�
 render_view的H22后端为Flipbook/Vulkan，使用独立Work Lights与OCIO颜色空间；
 H21保持既有OpenGL ROP和设置。两者共用显式SOP代理、相机/深度包络、状态恢复与新鲜度检查。
 H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户Flipbook节点，不删除旧持久服务。
+render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-visual-checks/<run-id>/`；managed只接收
+省略文件名或安全basename，路径输入须显式选`output_policy='explicit'`。旧图不迁移/自动删除，
+render_frame与ROP/geometry cache输出语义不变。
 
 | 工具 | 作用 |
 |---|---|
@@ -134,7 +137,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
-| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children')` | `mode='children'`（默认）= 原生 layoutChildren，行为不变；`mode='flow'` = 自研拓扑分层：按最长路径深度分行（深度 0 最上，y = −depth × 垂直间距），同深度按节点当前 x 排序保持左右阅读顺序、等距排开并整体居中，有环时按原顺序兜底不断裂；spacing 默认从节点实际尺寸推导，显式正值覆盖。host task 中 `nodes=None` 只布局当前 session 创建项并回报 `foreign_nodes_skipped`；显式列表逐项过 ownership guard。Python Shell 无 host owner 时保持传统全布局语义 | dict |
+| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`保持原生layoutChildren；`flow`保持节点拓扑分层。`handoff`仅接受显式`boxes`，由盒内依赖与盒间DAG生成宽松交接布局；`profile='comfortable'`以实际节点宽高设定节点横/纵净距、Box标题/边距及Box横/纵净距。handoff只移动当前session自有扁平Box及其完整自有成员，把未选节点、foreign/service/未选Box、Sticky Note和Network Dot作为固定障碍；`allow_foreign`不能放宽，任何障碍量测失败都零写入拒绝。必须先`dry_run=True`取得绑定当前Box/节点/障碍/generation的`plan_sha256`，再以`expected_plan`应用；陈旧计划拒绝，重复应用零写入。`required_clearances`是profile阈值；`achieved_clearances`与兼容别名`minimum_clearances`来自规划矩形，apply成功时再由实际节点/Box/障碍回读重算，并说明实际提供分离的轴；阈值、重叠或containment不满足均不得passed。只证明network-editor presentation，不证明几何、线交叉或视觉质量。children/flow的ownership与spacing语义不变 | dict |
+| `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 受治理的扁平Network Box分组：groups每项严格为{name,label,role,members,color?}，members是同parent直属节点完整成员表；roles为controls/placement/source/assembly/output并有语义色。所有apply必须先dry_run取得同状态plan_sha256；陈旧/缺失plan零写入拒绝。创建用role默认色，已有box普通upsert保留现色，显式color才覆盖；成员从其他box移动时源box必须同批声明最终成员或remove。仅支持非嵌套、非最小化、node-only box；移除永不删除内容。Box权限使用独立类型化runtime registry，不从名字/父级/成员推断；foreign需单次授权，render服务永不豁免。失败恢复membership/bounds/label/color/selection/位置及registry；只组织展示，不移动节点、不cook、不证明布局无重叠，layout_status=not_performed | dict |
 
 ### compatibility 域（仅历史回放，不进新 guidance）
 
@@ -253,14 +257,14 @@ Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的
 |---|---|---|
 | `camera_fit(camera, target, direction='iso', coverage=0.82, width=None, height=None, frame=None, *, dry_run=False, allow_foreign=None)` | 将正式静态OBJ cam拟合到显式SOP世界包络；保留焦距，清lookatpath，求距离/正交宽度，实际矩阵投影回验；无渲染/视口改变。尺寸默认相机值，当前frame。拒绝动画/约束/窗口偏移/自定义lens，失败恢复。ownership与单次allow_foreign适用，持久preview服务永不豁免；dry_run仍exec。Solaris需导入并按实际RenderProduct预检 | dict |
 | `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
-| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机/OpenGL，恢复用户状态，服务不删除。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB（无匹配空间时明确gamma近似），EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
+| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机/OpenGL，恢复用户状态，服务不删除。output_policy默认managed：picture省略或仅安全basename，唯一文件落`$HIP/dsh-visual-checks/<run-id>/`；路径值必须选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB（无匹配空间时明确gamma近似），EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
 ### viewport 域（视口/UI）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False)` | **用户屏幕诊断工具**：用户切空 display 节点时截到空是正确结果，不能用来证明 agent 产物；和 `render_view(explicit_sop)` 对照可区分 viewport 漂移与真实几何错误。flipbook 异步，设置/相机在落盘后恢复 | dict |
+| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed')` | **用户屏幕诊断工具**：managed/explicit路径和artifact合同同render_view；无命名HIP时managed零状态修改拒绝。PNG/JPEG/BMP/TGA为支持截图格式。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
 
 ## 自省、帮助与追踪
 

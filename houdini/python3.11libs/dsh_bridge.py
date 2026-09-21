@@ -71,6 +71,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
 import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
 import dsh_component_contracts
+import dsh_network_boxes
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
 # threads must not call HOM, including for seemingly harmless health metadata.
@@ -81,7 +82,7 @@ _HOU_THREAD_ID = threading.get_ident()
 # 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
 # owner_call), expected_contract and a one-time request ticket; job status and
 # cancel are authorized by the owning session only.
-_EXECUTION_CONTRACT_VERSION = 55
+_EXECUTION_CONTRACT_VERSION = 58
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -247,6 +248,7 @@ _VERBS: dict[str, object] = {
     "set_object_visible": dsh_hou_helpers.set_object_visible,
     "visible_objects": dsh_hou_helpers.visible_objects,
     "layout_nodes": dsh_hou_helpers.layout_nodes,
+    "network_boxes": dsh_hou_helpers.network_boxes,
     "list_parms": dsh_hou_helpers.list_parms,
     "read_parms": dsh_hou_helpers.read_parms,
     "set_parm": dsh_hou_helpers.set_parm,
@@ -292,7 +294,7 @@ _MUTATING_VERB_NAMES = {
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "set_display", "sop_set_output",
-    "set_object_visible", "layout_nodes", "set_parm", "set_parms",
+    "set_object_visible", "layout_nodes", "network_boxes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
@@ -300,7 +302,7 @@ _MUTATING_VERB_NAMES = {
 
 # These verbs may cook or manage services but do not author the deliverable's
 # graph/parameters on a successful, restored call. Unknown effects stay unknown.
-_OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls', 'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes',
+_OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls', 'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes', 'network_boxes',
     'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
 _GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_set_section', 'bind_controls',
                      'hda_patch_section', 'hda_set_interface', 'hda_edit'}
@@ -357,6 +359,21 @@ _RAW_HOU_VERB_MAP = {
     "setRenderFlag": "sop_set_output",
     "layoutChildren": "layout_nodes",
     "moveToGoodPosition": "layout_nodes",
+    "createNetworkBox": "network_boxes",
+    "networkBox.addItem": "network_boxes",
+    "networkBox.addNode": "network_boxes",
+    "networkBox.removeItem": "network_boxes",
+    "networkBox.removeNode": "network_boxes",
+    "networkBox.removeAllItems": "network_boxes",
+    "networkBox.removeAllNodes": "network_boxes",
+    "networkBox.setComment": "network_boxes",
+    "networkBox.setColor": "network_boxes",
+    "networkBox.setAlpha": "network_boxes",
+    "networkBox.setAutoFit": "network_boxes",
+    "networkBox.setBounds": "network_boxes",
+    "networkBox.setMinimized": "network_boxes",
+    "networkBox.fitAroundContents": "network_boxes",
+    "networkBox.destroy": "network_boxes or delete_node",
     "parm().set": "set_parm",   # 由 _raw_hou_calls 特判 parm(...).set(...) 模式
     "setExpression": "set_parm",  # set_parm 收到字符串值即走表达式路由
     "createDigitalAsset": "hda_create",
@@ -374,14 +391,66 @@ _RAW_HOU_VERB_MAP = {
 }
 
 
+_NETWORK_BOX_MUTATORS = {
+    'addItem', 'addNode', 'removeItem', 'removeNode', 'removeAllItems', 'removeAllNodes', 'setComment', 'setColor',
+    'setAlpha', 'setAutoFit', 'setBounds', 'setMinimized',
+    'fitAroundContents', 'destroy',
+}
+
+
+def _network_box_mutation_calls(tree) -> dict[int, str]:
+    """Receiver-aware raw classification for proven Network Box variables."""
+    boxes = set()
+    assignments = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            assignments.extend((target, node.value) for target in node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            assignments.append((node.target, node.value))
+        elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            value = node.iter
+            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                    and value.func.attr in ('networkBoxes', 'iterNetworkBoxes')):
+                boxes.add(node.target.id)
+    for _ in range(len(assignments) + 1):
+        previous = len(boxes)
+        for target, value in assignments:
+            if not isinstance(target, ast.Name):
+                continue
+            if isinstance(value, ast.Name) and value.id in boxes:
+                boxes.add(target.id)
+            elif (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                  and value.func.attr in ('createNetworkBox', 'findNetworkBox', 'networkBoxBySessionId')):
+                boxes.add(target.id)
+        if len(boxes) == previous:
+            break
+    result = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        attr, receiver = node.func.attr, node.func.value
+        proven = isinstance(receiver, ast.Name) and receiver.id in boxes
+        proven = proven or (isinstance(receiver, ast.Call)
+            and isinstance(receiver.func, ast.Attribute)
+            and receiver.func.attr in ('createNetworkBox', 'findNetworkBox', 'networkBoxBySessionId'))
+        if proven and attr in _NETWORK_BOX_MUTATORS:
+            result[id(node)] = 'networkBox.' + attr
+    return result
+
+
 def _raw_hou_calls(code: str) -> dict[str, int]:
     """Count raw hou calls a verb already covers (AST-based; {} when unparseable)."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return {}
+    box_calls = _network_box_mutation_calls(tree)
     counts: dict[str, int] = {}
     for node in ast.walk(tree):
+        if id(node) in box_calls:
+            key = box_calls[id(node)]
+            counts[key] = counts.get(key, 0) + 1
+            continue
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         func = node.func
@@ -707,10 +776,15 @@ def _raw_usage_analysis(code: str) -> dict:
         return {}
     python_sets = _python_set_names(tree)
     parameter_writes = _parameter_write_calls(tree)
+    box_writes = _network_box_mutation_calls(tree)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
     for node in ast.walk(tree):
+        if id(node) in box_writes:
+            key = box_writes[id(node)]
+            covered[key] = covered.get(key, 0) + 1
+            continue
         if id(node) in parameter_writes:
             covered['parm().set'] = covered.get('parm().set', 0) + 1
             continue
@@ -904,6 +978,19 @@ def _operation_summary(name: str, result):
         return {k: result[k] for k in ('ok', 'mode', 'node', 'dry_run', 'applied', 'phase',
                 'scene_writes', 'before_sha256', 'after_sha256', 'current_state_preserved',
                 'preserved_channels', 'restored', 'restore_errors', 'scope') if k in result}
+    if name == 'network_boxes':
+        return {k: result[k] for k in (
+            'ok','dry_run','applied','phase','scene_writes','plan_sha256','parent',
+            'created','updated','removed','unchanged','protected_items',
+            'current_state_preserved','restored','restore_errors','identity_remaps',
+            'original_error','recovery_exception','journaled','scope','layout_status') if k in result} | {
+            'box_count': len(result.get('boxes') or [])}
+    if name == 'layout_nodes' and result.get('mode')=='handoff':
+        return {k:result[k] for k in ('ok','mode','dry_run','applied','scene_writes','plan_sha256','profile','parent',
+            'box_count','movable_node_count','moved_node_count','changed_box_count','node_overlap_count',
+            'box_overlap_count','obstacle_overlap_count','containment_failures','clearance_failures',
+            'required_clearances','achieved_clearances','minimum_clearances',
+            'fixed_obstacles','skipped_items','layout_status','restored','restore_errors','scope') if k in result}
     if name == 'geo_piece_stats' and 'shell_orientation' in r:
         return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
     if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
@@ -911,17 +998,22 @@ def _operation_summary(name: str, result):
                 'frame','checked_at','scope','resolution','channels','statistics','sha256','freshness','cache',
                 'formula','max_abs_difference','max_abs_error','tolerance','before','after','expected_delta',
                 'restored','parameter_writes','coverage','case_id','reason','results') if k in r}
-    if name not in ('verify_network', 'build_module', 'render_view', 'render_frame', 'geo_point_spacing','geo_check_interfaces','test_controls'):
+    if name not in ('verify_network', 'build_module', 'render_view', 'render_frame',
+                    'viewport_screenshot', 'geo_point_spacing','geo_check_interfaces','test_controls'):
         return None
     fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
               'warning_free','failure_reasons','next_action','file_status','pixel_status','semantic_status',
-              'fresh','file_bytes','stale','user_state_restored','dry_run','valid','node','status',
+               'fresh','file_bytes','bytes','stale','capture_unresolved','user_state_restored','restore_errors','dry_run','valid','node','status',
               'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
               'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode')
     out = {k: r[k] for k in fields if k in r}
+    if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
+        out['artifact'] = {k:r['artifact'].get(k) for k in (
+            'purpose','output_policy','actual_path','hip_relative_path','managed_root',
+            'run_id','capture_id','frame','reservation_retained')}
     if name == 'build_module':
         out.update({k: result[k] for k in ('operation_advisories','operation_advisory_count',
                                           'operation_advisories_truncated','operation_advisory_scope') if k in result})
@@ -1075,7 +1167,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 status=check['evaluation'].get('status')
                 entry['check_status']={'failed':'failed','warning':'warning','unverified':'unverified'}.get(status,'passed')
                 entry['check_scope']='parameter evaluation only; geometry effect unverified'
-            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
+            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "viewport_screenshot", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
                 if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
                 elif check.get("ok") is False or check.get("errors") or check.get("fresh") is False:
@@ -1172,7 +1264,9 @@ def run_code(code: str, allow_raw: str | None = None,
     rollback = None
     raw_usage = _raw_usage_analysis(code)
     gate_outcome = "not_applicable"
-    with _exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call), dsh_hou_helpers._track_created_nodes() as created_nodes:
+    with (_exec_lock, dsh_hou_helpers._execution_owner(owner_session, owner_call),
+          dsh_hou_helpers._track_created_nodes() as created_nodes,
+          dsh_network_boxes.transaction_journal() as box_journal):
         # Clear even for preflight rejection and snapshot before releasing the
         # execution lock, so one request cannot inherit another request's media.
         dsh_hou_helpers._PRODUCED_IMAGES.clear()
@@ -1266,6 +1360,10 @@ def run_code(code: str, allow_raw: str | None = None,
                                     if imports_before is not None:
                                         _components._IMPORT_RECORDS.clear()
                                         _components._IMPORT_RECORDS.update(imports_before)
+                                    box_reconciliation = dsh_network_boxes.reconcile_transaction(box_journal)
+                                    if not box_reconciliation['ok']:
+                                        raise RuntimeError('Network Box rollback reconciliation failed: ' +
+                                                           '; '.join(box_reconciliation['errors']))
                             except BaseException as undo_error:
                                 rollback_error = str(undo_error)
                             rollback = {
@@ -1284,6 +1382,8 @@ def run_code(code: str, allow_raw: str | None = None,
                                 rollback['removed_created_residuals'] = removed_residuals
                             if reconciled:
                                 rollback['reconciled_resurrected_identities'] = reconciled
+                            if 'box_reconciliation' in locals():
+                                rollback['network_boxes'] = box_reconciliation
                             error = original_error
                     else:
                         try:
@@ -1306,7 +1406,7 @@ def run_code(code: str, allow_raw: str | None = None,
         "stderr": stderr.getvalue(),
     }
     mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
-        not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit') and (v.get('summary') or {}).get('scene_writes') == 0)
+        not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit', 'network_boxes', 'layout_nodes') and (v.get('summary') or {}).get('scene_writes') == 0)
         for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
     if error is None:
         transaction_status = 'committed' if mutation_attempted else 'no_scene_change'
@@ -1328,6 +1428,11 @@ def run_code(code: str, allow_raw: str | None = None,
     envelope['transaction'] = {'status': transaction_status, 'scope': 'Houdini undoable scene edits only; file/external side effects are separate',
                                'nodes': states, 'nodes_truncated': len(identities) > 64,
                                'coverage': 'created identities, primary arguments and bounded native dependency cone; not all implicit dependencies'}
+    if box_journal.get('entries'):
+        envelope['transaction']['network_boxes'] = {
+            'entry_count': len(box_journal['entries']), 'box_count': box_journal['boxes'],
+            'node_count': box_journal['nodes'],
+            'scope': 'typed Network Box presentation snapshots; never node identities or geometry evidence'}
     if transaction_status != 'no_scene_change':
         _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
         if raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'):

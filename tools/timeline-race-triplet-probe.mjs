@@ -21,7 +21,8 @@ for render_frame in (1, 46, 240):
     result = render_view(
         '/obj/rubik/OUT', direction='iso', frame=render_frame,
         framing_frame=1, width=720, height=720, framing='full',
-        picture='Z:/tmp/dsh-rubik-replay-gl-probe/triplet_slot_' + str(render_frame) + '.png')
+        picture='Z:/tmp/dsh-rubik-replay-gl-probe/triplet_slot_' + str(render_frame) + '.png',
+        output_policy='explicit')
     items.append({'frame': render_frame, 'bytes': result.get('file_bytes'), 'stale': result.get('stale')})
 after_frame = float(hou.frame())
 __result__ = {'before_frame': before_frame, 'after_frame': after_frame, 'items': items}

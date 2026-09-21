@@ -259,9 +259,35 @@ camera_fit只修改明确授权的静态OBJ cam，保留焦距、清lookatpath�
 render_frame可用framing检查实际USD RenderProduct相机、画幅/裁切/像素比例；
 未传保留艺术裁切语义，不隐式调整正式相机。预检不保证位移/运动模糊/遮挡或视觉质量。
 
-渲染相对路径锚定$HIP，缺后缀拒绝；render_check仅证明文件新鲜度/像素事实。
+正式渲染/缓存的相对路径仍锚定$HIP，缺后缀拒绝；render_check仅证明文件新鲜度/像素事实。
+render_view与viewport_screenshot的agent验证输出默认使用`$HIP/dsh-visual-checks/<run-id>/`：
+managed只接受省略或安全basename并分配唯一capture，任何路径值须显式选explicit。managed要求已命名HIP，
+不回退cwd/仓库；Save As只影响后续capture，不迁移/删除旧图，也不让图片成为HIP cook依赖。
+artifact记录purpose、policy、实际/相对路径、managed root、run/capture及frame；图片文件是场景undo之外的
+外部效果，后续同exec失败不会宣称已删除。viewport截图只接受本次新建/改变的非空候选，旧匹配文件不算fresh；
+managed分配的独占reservation保持到本次capture明确完成/失败，强制ID碰撞不能复用在途路径；只删除本调用token，
+已有图片和其他调用reservation不动，重定向managed目录拒绝。flipbook派发已尝试但尚无完成证据的任何退出
+（超时、派发异常或轮询中断）均属异步完成未知：保留并报告本次reservation，不把目的地重新投入分配或自动清理。
+只有派发前失败或已完成且实际路径通过复验才释放。viewport候选还须匹配请求frame、连续稳定且由支持解码器读取；
+无效/截断/歧义文件不通过。绑定相机在frame/取景前安全解锁并脱离，恢复frame与默认视图后最后还原关联/锁定；
+临时flipbook、视口显示和取景在成功/失败后逐项回读，setter/恢复错误聚合并拒绝整体成功，不自动重试。
 transport、bootstrap、presentation、semantic inspection四层独立；没有成功语义识图就写视觉未验证。
 viewport_screenshot用于用户屏幕诊断，不能把视口漂移当成最终模型错误。
+
+Network Box属于可使HIP变脏的presentation mutation，不是几何修改或质量证书。`network_boxes`只接受显式
+扁平成员表，并强制dry-run plan后apply；类型化Box registry与节点registry分离，因为不同NetworkMovableItem
+子类的sessionId可碰撞。Box名字、标签、颜色、成员、owned parent都不授予权限；foreign仅单次授权，
+render服务永不豁免。移除box保留节点；失败恢复成员、bounds、标签、颜色、选择、成员位置及registry。
+plan hash绑定当前进程generation，同进程Repair保持、换进程失效；preflight拒绝明确scene_writes=0。
+有native undo的Bridge在同exec后项失败后只读核对最早pre-exec Box状态并精确对账authority，不重放中间快照；
+多次create/update/remove与先前节点移动均由原生undo恢复。无undo的headless环境仅保证动词内部原子性，
+不把后续无关异常冒充整批已回滚。分组不移动节点、不cook、不使现有geometry/render证据因展示变化失效；
+它只使旧network-editor布局观察失效。`layout_nodes(mode='handoff')`是独立、强制两阶段的presentation mutation：
+只接受显式当前session自有扁平Box及其完整自有成员，foreign/service/未选项、Sticky Note与Network Dot固定不动，
+`allow_foreign`不放宽；plan绑定当前process generation、成员/接线/位置、Box状态和障碍，陈旧计划零写入拒绝。
+comfortable profile用实际节点尺寸设定节点净距、标题/侧/底边距和Box净距；应用只各写一次最终节点位置与Box bounds，
+回读实际节点/Box/固定障碍后重算重叠、containment和取得净距，区分profile要求与实测值；障碍量测失败或应用期间改变时
+fail closed并纳入同一Box journal恢复。成功只证明编辑器排布，不证明几何正确、无接线交叉或语义视觉质量。
 
 scene_save_as需授权的目标路径及expected_current_path，不开放raw load/clear。
 资产库修改不是普通场景撤销；create_spare_parms/update_hda的写后回读与锁定定义边界以动词合同为准。

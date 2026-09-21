@@ -3,7 +3,7 @@
 ## 项目定位
 
 dsh-houdini是DeepSeek Harness插件：src/（5个houdini_*工具）→ HTTP →
-dsh_bridge.py（Houdini主线程队列）→ `dsh_hou_helpers.py`（69 动词）及领域模块。
+dsh_bridge.py（Houdini主线程队列）→ `dsh_hou_helpers.py`（70 动词）及领域模块。
 hou只存在于Houdini侧，Node Host不直接调用HOM。
 
 ## 命令与入口

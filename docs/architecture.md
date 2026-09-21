@@ -96,6 +96,9 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
 | [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 通用动词实现与领域转接、真实Tab/Shelf、参数、provenance、HDA、USD、render入口；完整目录由tool-design维护 |
+| [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py) | agent视觉检查的managed/explicit路径、唯一capture预留及artifact元数据；不负责渲染或保留策略 |
+| [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py) | 无HOM、确定性的矩形/净距、局部避障与Box handoff规划 |
+| [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance、handoff应用及Bridge恢复journal |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
 | [dsh_hda_lifecycle.py](../houdini/python3.11libs/dsh_hda_lifecycle.py) | HDA解锁/保存/锁定/参数提升的版本预览、共享实例权限和状态回读；不拆包或认领后代 |
@@ -150,6 +153,14 @@ GUI线程不得阻塞socket/子进程/netstat探测；进程缓存的UI/package�
 python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩阵以兼容清单为准。
 
 ## 视觉、追踪和开发工具
+
+[dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护agent视觉检查的managed/explicit路径策略、唯一capture分配
+和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
+`$HIP/dsh-visual-checks/<run-id>/`，不建立第二条图片复制管线。
+[dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
+[dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护受治理分组、语义色、类型化Box provenance、
+presentation快照、handoff两阶段应用与Bridge undo核对。handoff不改变现有children/flow语义，只移动显式选中的
+当前session自有扁平Box及完整自有成员；其他网络项作为固定障碍。
 
 视频教程解析由[video skill](../skills/houdini-video-tutorial/SKILL.md)组织，
 [video_tutorial.py](../skills/houdini-video-tutorial/scripts/video_tutorial.py)在普通宿主进程中执行

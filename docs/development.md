@@ -6,7 +6,7 @@
 
 | 内容 | 修改位置 | 派生/验证 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证69 个目录入口 |
+| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证70 个目录入口 |
 | 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
@@ -117,8 +117,11 @@ AbortSignal取消后的查回验证HTTP客户端，不能代替实际Host停止�
 [回执注册表](../tools/tests/dsh-request-registry.test.py)不依赖HOM，覆盖小窗口连续请求、并发一次入场、旧票/owner/runtime冲突、
 正文预算/过期、活动job保护与早完成顺序、running不可降级及索引边界；已纳入部署回归的纯Python组。
 
-预览后端变更另跑[版本后端回归](../tools/tests/dsh-preview-backend.test.py)，检查H21原路径与H22 Flipbook参数，
-再在隔离GUI验证实际明暗、Cd、重复渲染及代理恢复；stub渲染不证明图片质量。
+预览后端变更另跑[版本后端回归](../tools/tests/dsh-preview-backend.test.py)，检查H21原路径与H22 Flipbook参数；
+[managed路径回归](../tools/tests/dsh-managed-preview-paths.test.py)验证命名/拒绝/唯一分配/Save As/reload，
+[viewport恢复回归](../tools/tests/dsh-viewport-screenshot.test.py)用替身注入frame/flipbook/恢复和旧文件失败。
+再在新建隔离GUI验证实际明暗、Cd、截图、重复渲染、相机关联及代理恢复；路径/替身测试不证明GUI或图片质量，
+不得连接用户live进程或源HIP。
 公开UI帮助使用[帮助示例回归](../tools/tests/dsh-ui-public-help.test.py)：直接从运行时verb_help提取示例，
 在普通节点和HDA上预检/应用并检查值；错误tuple默认值保持零新增参数。无需读取插件源码。
 参数回读另验[Ramp回读回归](../tools/tests/dsh-ramp-readback.test.py)：Bridge代码内直接json.dumps，
@@ -131,6 +134,10 @@ package发现的[投影回归](../tools/tests/dsh-package-info.test.py)覆盖只
 真实加载用[package GUI回归](../tools/tests/dsh-package-gui.test.py)，普通Python传`--houdini`目标GUI可执行文件；
 在隔离包/偏好目录加载启用与禁用夹具，检查资源、重复查询和场景状态，并要求正常退出。
 该测试不修改当前live包；not_found只表示未出现在当前原生清单，不能断言配置文件不存在。
+Network Box机制分别用[纯矩形核心](../tools/tests/dsh-network-layout.test.py)和
+[受治理Box回归](../tools/tests/dsh-network-boxes.test.py)验证：前者不依赖HOM，后者在隔离H21/H22覆盖
+plan/apply、类型化ownership、语义色、成员/删除保留、local恢复、Bridge同exec undo、Raw Gate及save/reopen。
+它不证明最终handoff布局或GUI文字可读性；真实GUI颜色/undo另用新建临时场景验收，不连接live HIP。
 npm test发现并运行tools/tests下全部Node测试。涉及HOM时在隔离hython、隔离偏好目录中运行
 tools/tests/*.test.py，目标版本覆盖H21/H22；不要连接用户live会话或load/save源HIP。
 至少覆盖Raw Gate、node ownership、caught-failure、tab-create-failure、object-parenting、
@@ -184,6 +191,11 @@ quality-contracts用“局部变化但整体bbox不变”和“面积响应通�
 漏件、实例变换造成脱离、独立模块失败保留旧提交、共享控制在实际装配输出上的测试和恢复。
 这只是HOM机制回归；SOP skill的顺序聚焦仍是工作流候选，需同模型/版本/预算的自然任务对照，
 另含简单编辑、单部件、相邻领域和接口未定的反例，不以固定脚本通过证明LLM采用或视觉质量。
+Network Box与交接布局分别由`dsh-network-boxes`、`dsh-network-layout`、`dsh-handoff-layout`覆盖治理、纯规划器、
+两阶段apply/陈旧计划/零写入重复执行、固定障碍与失败恢复，并随部署驱动在H21/H22运行。原生GUI夹具
+`dsh-network-boxes-gui.test.py`仅在新开的隔离Houdini进程中验证角色色、comfortable handoff、undo及保存重开；
+产物放`tools/out`或临时目录，不连接live，也不把脚本通过写成自然任务采用或视觉审美证明。
+
 构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
 
 [资产作者合同回归](../tools/tests/dsh-authoring-contract.test.py)在隔离H21/H22检查spare/定义参数domain一致、接口preview零写入与成功字段、原生内部identity接续和foreign反例；已纳入部署驱动。
@@ -408,7 +420,7 @@ COP用[dsh-cop-contracts](../tools/tests/dsh-cop-contracts.test.py)在隔离H21/
 Rig的可执行入口是[rig skill](../skills/houdini-rig-animation-workflow/SKILL.md)、
 [rig参考](../skills/houdini-rig-animation-workflow/references/rig-animation-patterns.md)及
 [隔离KineFX回归](../tools/tests/dsh-kinefx-fk.test.py)，不依赖删除的一次性probe。
-Render真实像素使用[OpenGL smoke](../tools/camera-opengl-smoke.py)或
+Render真实像素与managed viewport恢复使用[OpenGL smoke](../tools/camera-opengl-smoke.py)或
 [Karma smoke](../tools/camera-karma-smoke.py)，需区分文件/像素与语义识图。
 新技能/提示只有新session能验证曝光；可复现功能测试与未见建模任务的质量/效率证据分开。
 

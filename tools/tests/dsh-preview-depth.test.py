@@ -94,7 +94,7 @@ try:
         path=tmp+'/preview.png'
         for projection in ('orthographic','perspective'):
             for isolate in (False,True):
-                options={'focus_group':'focus','isolate':isolate,'projection':projection,'direction':[1,.2,.25],'picture':path}
+                options={'focus_group':'focus','isolate':isolate,'projection':projection,'direction':[1,.2,.25],'picture':path,'output_policy':'explicit'}
                 a=h.render_view(merge,**options)
                 b=h.render_view(merge,framing='detail',**options)
                 assert a['framing']['matrix']==b['framing']['matrix']
@@ -121,18 +121,18 @@ try:
         # Fixed frame observes the depth envelope at that frame, not the new one.
         surround.parm('tx').setExpression('($F-1)*1000')
         rejects(lambda:h.render_view(merge,frame=2,framing_frame=1,focus_group='focus',
-                                    projection='orthographic',framing='detail',direction=[1,.2,.25],picture=path),'near_or_behind_camera')
+                                    projection='orthographic',framing='detail',direction=[1,.2,.25],picture=path,output_policy='explicit'),'near_or_behind_camera')
         surround.parm('tx').deleteAllKeyframes();surround.parm('tx').set(0)
         # Local ROI needs detail; full keeps rejecting XY overflow, with useful guidance.
         roi=[[40,0,-10],[60,20,10]]
-        rejects(lambda:h.render_view(merge,framing_bounds=roi,depth_bounds=context,projection='orthographic',picture=path),
+        rejects(lambda:h.render_view(merge,framing_bounds=roi,depth_bounds=context,projection='orthographic',picture=path,output_policy='explicit'),
                 'outside_safe_frame')
-        close=h.render_view(merge,framing='detail',framing_bounds=roi,depth_bounds=context,projection='orthographic',picture=path)
+        close=h.render_view(merge,framing='detail',framing_bounds=roi,depth_bounds=context,projection='orthographic',picture=path,output_policy='explicit')
         assert close['framing']['ok'] and close['framing']['depth_check']['ok']
         # Fault injection: even detail cannot hide a broken lens's depth clipping.
         original=f.obj_lens
         f.obj_lens=lambda cam:{**original(cam),'far':original(cam)['near']*2}
-        try:rejects(lambda:h.render_view(merge,framing='detail',projection='orthographic',picture=path),'far_clip')
+        try:rejects(lambda:h.render_view(merge,framing='detail',projection='orthographic',picture=path,output_policy='explicit'),'far_clip')
         finally:f.obj_lens=original
 finally:
     hou.isUIAvailable=real_ui;h.render_frame=real_render;h.render_check=real_check

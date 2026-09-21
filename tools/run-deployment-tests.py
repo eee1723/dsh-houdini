@@ -9,10 +9,10 @@ import re
 from houdini_test_environment import isolated_environment, launch_directory
 
 ROOT = Path(__file__).resolve().parents[1]
-PURE = ["dsh-test-environment", "dsh-request-registry", "dsh-isolated-manifest", "dsh-release-policy", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-installer-bootstrap"]
+PURE = ["dsh-test-environment", "dsh-request-registry", "dsh-isolated-manifest", "dsh-release-policy", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-installer-bootstrap", "dsh-managed-preview-paths", "dsh-network-layout"]
 HOUDINI = ["dsh-manager-update", "dsh-launcher-preflight", "dsh-frontend-lifetime", "dsh-force-repair", "dsh-profile-sync", "dsh-install-ui",
            "dsh-bridge-raw-gate", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
-           "dsh-object-parenting", "dsh-scene-network-render-contract", "dsh-cop-contracts",
+           "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-cop-contracts",
            "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts"]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--hython", action="append", type=Path, default=[])

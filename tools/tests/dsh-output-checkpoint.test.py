@@ -85,6 +85,25 @@ try:
     assert hdr['ok'] and hdr['pixel_status'] == 'unverified'
     stale = h._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'presentation':{}}, True)
     assert not stale['ok']
+    artifact = {'purpose':'viewport_diagnostic','output_policy':'managed',
+        'actual_path':'Z:/checks/run/a.png','hip_relative_path':'dsh-visual-checks/run/a.png',
+        'managed_root':'Z:/checks/run','run_id':'run','capture_id':'a','frame':1}
+    shot_summary = bridge._operation_summary('viewport_screenshot', {
+        'ok':False,'path':artifact['actual_path'],'artifact':artifact,'frame':1,
+        'fresh':True,'file_status':'passed','semantic_status':'unverified',
+        'user_state_restored':False,'restore_errors':['frame: injected'],'errors':['restore failed']})
+    assert all(shot_summary['artifact'][key]==value for key,value in artifact.items())
+    assert shot_summary['artifact']['reservation_retained'] is None and shot_summary['user_state_restored'] is False
+    assert shot_summary['restore_errors']==['frame: injected']
+    unresolved_artifact={**artifact,'reservation_retained':True}
+    unresolved_summary=bridge._operation_summary('viewport_screenshot',{
+        'ok':False,'path':artifact['actual_path'],'artifact':unresolved_artifact,
+        'frame':1,'fresh':False,'file_status':'failed','semantic_status':'unverified',
+        'capture_unresolved':True,'user_state_restored':True,'restore_errors':[],
+        'errors':['injected post-dispatch failure']})
+    assert unresolved_summary['capture_unresolved'] is True
+    assert unresolved_summary['artifact']['reservation_retained'] is True
+    assert not any(key.startswith('_reservation') for key in unresolved_summary['artifact'])
     ledger=[]
     bridge._make_tracer('verify_network',lambda: diagnostic,ledger)()
     assert ledger[0]['summary']['output'] == ctrl.path()
@@ -99,6 +118,21 @@ try:
         reject(lambda:h._resolve_output_path('../outside.png',frame=1,default_subdir='render'), 'outside')
         reject(lambda:h._resolve_output_path('no_extension',frame=1,default_subdir='render'), 'extension')
         reject(lambda:h._resolve_output_path(str(Path(__file__).resolve().parents[2]/'bad.png'),frame=1,default_subdir='render'), 'repository')
+        with h._execution_owner('managed-checkpoint-session','capture'):
+            managed, managed_artifact, _ = h._preview_artifact(
+                '检查 图.$F4.png', frame=3, purpose='model_visual_verification',
+                output_policy='managed', default_label='preview', default_subdir='render')
+        assert Path(managed).parent.parent==base/'dsh-visual-checks'
+        assert managed_artifact['output_policy']=='managed' and '0003' in Path(managed).name
+        assert h._release_preview_reservation(managed_artifact)==[]
+        explicit, explicit_artifact, _ = h._preview_artifact(
+            (base/'delivery'/'preview.png').as_posix(), frame=3,
+            purpose='model_visual_verification', output_policy='explicit',
+            default_label='preview', default_subdir='render')
+        assert Path(explicit)==base/'delivery'/'preview.png'
+        assert explicit_artifact['managed_root'] is None
+        reject(lambda:h._preview_artifact('../bad.png',frame=1,purpose='test',
+            output_policy='managed',default_label='x',default_subdir='render'),'basename')
         rop=hou.node('/out').createNode('geometry','__checkpoint_rop')
         try:
             rop.parm('soppath').set(source.path())

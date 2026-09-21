@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import {projectExecutionState} from '../../lib/execution-state.js';
 
 const events=[];
-function record(sequence, {tool='houdini_exec',runtime='R',nodes=[],impact={},evidence=[],outputs=[],status='committed',ok=true,observed=sequence,jobId,jobStatus}={}) {
+function record(sequence, {tool='houdini_exec',runtime='R',nodes=[],networkBoxes,impact={},evidence=[],outputs=[],status='committed',ok=true,observed=sequence,jobId,jobStatus}={}) {
   const id='call-'+events.length;
   events.push({seq:events.length+1,type:'tool/call',data:{callId:id,name:tool}});
-  const canonical={ok,transaction:{status,nodes},evidence,
+  const canonical={ok,transaction:{status,nodes,...(networkBoxes?{network_boxes:networkBoxes}:{})},evidence,
     execution:{runtime_id:runtime,sequence,observed_at:observed,frame:1,
       impact:{attempted:false,nodes:[],...impact},outputs},...(jobId?{jobId,status:jobStatus}:{})};
   events.push({seq:events.length+1,type:'tool/result',data:{meta:{canonical},message:{source:{callId:id},content:[]}}});
@@ -26,8 +26,12 @@ assert.equal(projectExecutionState(events).checks[0].validity,'stale_after_later
 record(6,{evidence:[check],outputs:[output],status:'rolled_back',ok:false});
 assert.equal(projectExecutionState(events).checks[0].validity,'not_current_after_failed_transaction');
 record(7,{evidence:[check],outputs:[output],status:'no_scene_change'});
+const validityBeforePresentation=projectExecutionState(events).checks[0].validity;
+record(8,{networkBoxes:{entry_count:1,box_count:2,node_count:4},impact:{attempted:false,nodes:[]}});
+assert.equal(projectExecutionState(events).checks[0].validity,validityBeforePresentation,
+  'typed Network Box presentation does not pollute node history or stale geometry evidence');
 const duplicate=events.at(-1);events.push({...duplicate,seq:100});
-assert.equal(projectExecutionState(events).coverage.execution_records,7,'result replay is not another execution');
+assert.equal(projectExecutionState(events).coverage.execution_records,8,'result replay is not another execution');
 events.push({seq:101,type:'tool/call',data:{name:'houdini_exec',callId:'timeout'}},
   {seq:102,type:'tool/result',data:{message:{source:{callId:'timeout'},content:[{isError:true}]}}});
 assert.equal(projectExecutionState(events).checks[0].validity,'unverified_after_unobserved_or_inflight_execution');
@@ -36,7 +40,7 @@ record(1,{runtime:'NEW',observed:1000,nodes:[node(9)]});
 assert.equal(projectExecutionState(events).runtime_id,'NEW');
 assert.equal(projectExecutionState(events).checks.length,0);
 assert.deepEqual(projectExecutionState(events).nodes.map(n=>n.identity),[9]);
-record(8,{tool:'houdini_job_status',runtime:'R',observed:8,jobId:'old',jobStatus:'done',evidence:[check],outputs:[output]});
+record(9,{tool:'houdini_job_status',runtime:'R',observed:9,jobId:'old',jobStatus:'done',evidence:[check],outputs:[output]});
 assert.equal(projectExecutionState(events).runtime_id,'NEW','late old-runtime job result does not reset the active observation');
 const fresh=[];
 const earlier=events.splice(0);

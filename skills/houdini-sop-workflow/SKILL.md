@@ -24,11 +24,11 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 1. **方法与原型**：以人工易接手和构建/cook/修改/验证的整体效率选择曲线/截面/开放表面/实体/实例等表示，按需混合原生SOP与VEX。涉及重复资产、VEX职责划分或构造选型时，先读[建模方法](references/modeling-methods.md#1-从表示和构造选方法)。重复资产必须走Copy，保留独立可替换源；VEX按功能与输入输出拆分，不能把整个多功能模块塞进一个Wrangle。集中关键控制，建立named anchors/local frames和稳定piece身份。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
 2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
-3. **骨架门**：复杂装配先用低成本整体代理确定尺度、方向、接口和共享控制，再选择当前风险或质量最关键的模块。GUI可用且用户未禁止时，新建或实质修改几何默认尽早用render_view看整体或明确侧向图，并实际查看原生图像附件；仅交付网络/HIP不豁免。主要比例/接口未定不精雕独立零件。用户只要单个部件时不扩建整物。
+3. **骨架门**：复杂装配先用低成本整体代理确定尺度、方向、接口和共享控制，再选择当前风险或质量最关键的模块。GUI可用且用户未禁止时，骨架/首个可辨原型一形成就用render_view看整体或明确侧向图并实际查看原生图像附件，不能等全部建完才第一次预览；仅交付网络/HIP不豁免。主要比例/接口未定不精雕独立零件。用户只要单个部件时不扩建整物。
 4. **模块门**：把当前焦点模块当作独立的局部交付任务，不只是一个代码批次：明确相关原始要求、输入/局部坐标、输出、必须看清的细节和局部完成条件，按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)推进。一个模块可用多个小build_module，空CTRL/helper用tab_create；先验证单元及附属件连接再复制。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。消费validation/cook_details，不为清warning丢掉部件身份；局部条件满足或遇到明确依赖阻塞就回到集成，不无限堆细节。
-5. **集成关系门**：局部通过与集成通过分开记录。先核对必需部件实际进入最终输出（非空组/身份及基数），再测复制/变换后的实例接口；上游模块健康不能发现下游Switch漏件。独立表面用适用的interfaces，融合Polygon才用共享拓扑；顶点对最小距离不能证明无穿插，距离不等于插入深度，容差内近邻/无穿插不证明实际承托；支撑任务须说明并验证接触面或连接件。接地逐足检查；合法装配间隙按任务判断，没有可靠方法保留unverified。
-6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
-7. **交付门**：普通geo只需明确最终SOP，sop_set_output(末端)设置display/render，再verify_network(parent,output=末端)，不创建也不要求Output节点。只有subnet/HDA的公共交付边界才用sop_set_output(末端,output_index=0)接原生Output，并verify_network(parent,output=末端,output_index=0)；多出口逐口声明，内部Null/旗标不替代公共端口。不要把“逐层发布”扩成每个普通geo都建Output；已有显式出口保持其消费者合同，不擅自删除。最后一次相关修改后刷新统计、关系及颜色/材质之后的交付图像。布局、恢复frame/selection及无关visibility，再保存；未命名HIP须有授权路径及当前HIP校验。内部调试仅切旗标，不重接公共端口。
+5. **集成关系门**：局部通过与集成通过分开记录。按需求和当前控制状态先导出期望成员/基数，再独立核对最终输出；不能从“实际幸存了什么”反推期望集合。之后测复制/变换后的实例接口；上游模块健康不能发现下游Switch漏件。计数、组、拓扑或输出身份变化时重新评估需测接口，旧状态合同不覆盖新增件。独立表面用适用的interfaces，融合Polygon才用共享拓扑；顶点对最小距离不能证明无穿插，距离不等于插入深度，容差内近邻/无穿插不证明实际承托；支撑任务须说明并验证接触面或连接件。接地逐足检查；合法装配间隙按任务判断，没有可靠方法保留unverified。
+6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。静态interfaces只有在其选择和基数覆盖基准及每个扰动状态时才能复用；当前API无法表达变化成员全集时，拆成有明确范围且可恢复的受支持检查并保留限制，不能用固定子集声称全覆盖。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
+7. **交付门**：普通geo只需明确最终SOP，sop_set_output(末端)设置display/render，再verify_network(parent,output=末端)，不创建也不要求Output节点。只有subnet/HDA的公共交付边界才用sop_set_output(末端,output_index=0)接原生Output，并verify_network(parent,output=末端,output_index=0)；多出口逐口声明，内部Null/旗标不替代公共端口。不要把“逐层发布”扩成每个普通geo都建Output；已有显式出口保持其消费者合同，不擅自删除。新建或实质扩展的非平凡网络在功能验证后按[网络交接布局](references/network-handoff.md)建立语义Network Box并执行comfortable handoff；单节点/短直链、维护/探针、foreign网络、用户明确不要布局或不受支持项可跳过并说明。最后一次相关修改后刷新统计、关系及颜色/材质之后的交付图像。恢复frame/selection及无关visibility，再保存；未命名HIP须有授权路径及当前HIP校验。内部调试仅切旗标，不重接公共端口。
 
 整体代理→聚焦模块→局部验收→集成复验循环推进，不等所有细节完成才装配。模块是接口/验收边界，不强制每个模块一个subnet；用户要求独立子网时遵守，否则按耦合度选择同层分支或容器。默认同一作者顺序聚焦，不自动启动子agent；简单单参编辑不建模块表。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
 
@@ -57,11 +57,11 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 - 跨OBJ汇总实际装配时显式处理Object Merge坐标空间；要保留场景放置就使用`Into This Object`等价模式，local-space合并只在有意忽略OBJ变换时成立。用于关系或渲染的代理必须让合并bbox与源world bbox一致并处理warning，否则proxy不是交付物证据。
 - 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
 - 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。直接查看工具结果中的原生图像附件，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
-- viewport_screenshot用于用户视口或参数界面的实际显示验收；模型本体优先render_view(明确最终SOP)，复用版本原生低成本后端与持久__dsh_houdini_*服务。原型和最后一次相关修改后各检查必要视角，关键接口看局部，不对每次无关调用重复追图。纯查询/改名/无可见变化的维护不强制预览；无GUI、预览/识图失败或用户明确禁止时报告具体限制与视觉未验证，不默认改走Karma。未请求成品图片不是省略建模视觉验证的理由。
+- viewport_screenshot用于用户视口或参数界面的实际显示验收；模型本体优先render_view(明确最终SOP)，复用版本原生低成本后端与持久__dsh_houdini_*服务。两者默认managed，把验证图放进`$HIP/dsh-visual-checks/<run-id>/`；只有用户明确要交付路径或隔离测试自管目的地时才传`output_policy='explicit'`，不得为方便把agent预览散放HIP根目录。原型和最后一次相关修改后各检查必要视角，关键接口看局部，不对每次无关调用重复追图。纯查询/改名/无可见变化的维护不强制预览；无GUI、预览/识图失败或用户明确禁止时报告具体限制与视觉未验证，不默认改走Karma。未请求成品图片不是省略建模视觉验证的理由。
 - 动画至少两个相隔帧的实际几何/固定构图图像证据；A/B同framing_frame且覆盖帧包络。完全静止/方向错误是反例；细微审美无法裁定交给用户播放判断，不无限追图。
 
 ## 完成范围
 
-最终显式输出非空、无error，warning已处理；单元与核心关系有对应实际输出证据；控制集中且代表性扰动/恢复通过。未测控制、unsupported、外部真实性、视觉不确定分别报告，不能用todo completed补证或把部分测量写成全部pass。关键控制不能靠重复改多个VEX常量维护。
+最终显式输出非空、无error，warning已处理；单元与核心关系有对应实际输出证据；控制集中且代表性扰动/恢复通过。缺少当前状态必需成员/关系覆盖时以partial/incomplete开头；报告参数和场景事实，不在没有证据时臆测是用户或GUI改动。未测控制、unsupported、外部真实性、视觉不确定分别报告，不能用todo completed补证或把部分测量写成全部pass。关键控制不能靠重复改多个VEX常量维护。
 
 收尾由当前作者完成输出、关系和控制检查，复用已有工具事实与原生图像；核心未验证项如实保留。

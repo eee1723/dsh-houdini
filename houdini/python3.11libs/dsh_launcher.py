@@ -346,6 +346,9 @@ def restart_bridge(*, port=None) -> str:
         raise ValueError('Invalid Bridge restart port')
     import dsh_bridge
     import dsh_requests
+    import dsh_preview_paths
+    import dsh_network_layout
+    import dsh_network_boxes
     import dsh_hou_helpers
     import dsh_hda_interfaces
     import dsh_hda_ui
@@ -372,6 +375,9 @@ def restart_bridge(*, port=None) -> str:
             or not dsh_bridge._work_queue.empty()):
         raise RuntimeError('Bridge restart deferred: scene work arrived after preflight; no modules were reloaded')
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
+    importlib.reload(dsh_preview_paths)     # path policy before helper wrappers
+    importlib.reload(dsh_network_layout)
+    importlib.reload(dsh_network_boxes)
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
     importlib.reload(dsh_hda_interfaces)
     importlib.reload(dsh_parameter_ui)

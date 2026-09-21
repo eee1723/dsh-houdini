@@ -16,22 +16,22 @@ h.render_frame=render
 h.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
 try:
     with tempfile.TemporaryDirectory() as tmp:
-        a=h.render_view(group,focus_group='target',isolate=True,projection='orthographic',picture=tmp+'/a.png')
+        a=h.render_view(group,focus_group='target',isolate=True,projection='orthographic',picture=tmp+'/a.png',output_policy='explicit')
         assert a['framing']['focus_group']=='target' and a['framing']['isolated']
         assert hou.node(a['camera']).evalParm('projection')==1
         assert hou.node(a['proxy']).node('source').evalParm('objpath1')==''
         box.parm('sizex').set(.7)
-        b=h.render_view(group,focus_group='target',projection='orthographic',framing_bounds=a['framing']['bounds'],picture=tmp+'/b.png')
+        b=h.render_view(group,focus_group='target',projection='orthographic',framing_bounds=a['framing']['bounds'],picture=tmp+'/b.png',output_policy='explicit')
         assert a['framing']['eye']==b['framing']['eye'] and a['framing']['center']==b['framing']['center']
         assert b['framing']['bounds_source']=='explicit'
         box.parm('sizex').set(4)
-        try:h.render_view(group,focus_group='target',projection='orthographic',framing_bounds=a['framing']['bounds'],picture=tmp+'/clip.png')
+        try:h.render_view(group,focus_group='target',projection='orthographic',framing_bounds=a['framing']['bounds'],picture=tmp+'/clip.png',output_policy='explicit')
         except h.CheckpointError as e:assert e.evidence['render_started'] is False
         else:raise AssertionError('a locked, undersized A/B envelope must reject before rendering')
-        c=h.render_view(group,picture=tmp+'/c.png')
+        c=h.render_view(group,picture=tmp+'/c.png',output_policy='explicit')
         assert hou.node(c['camera']).evalParm('projection')==0,'previous ortho mode must not leak'
         assert c['framing']['framing_status']=='passed' and c['framing']['margin_px']['bottom']>=720*.09-.01
-        try:h.render_view(group,focus_group='missing',picture=tmp+'/d.png')
+        try:h.render_view(group,focus_group='missing',picture=tmp+'/d.png',output_policy='explicit')
         except ValueError as e:assert 'missing primitive group' in str(e)
         else:raise AssertionError('empty focus silently rendered whole object')
         assert len(calls)==3

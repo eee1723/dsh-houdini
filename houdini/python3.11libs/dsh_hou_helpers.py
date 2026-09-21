@@ -1101,6 +1101,22 @@ def _flow_gaps(nodes):
     return h_gap, v_gap
 
 
+def _local_free_position(node, preferred):
+    from dsh_network_layout import Rect, find_free_translation
+    from dsh_network_boxes import _effective_box_rect,collect_editor_obstacles
+    parent=node.parent();size=node.size();width,height=float(size.x()),float(size.y())
+    source=Rect(0,0,width,height);current_box=node.parentNetworkBox()
+    obstacles=collect_editor_obstacles(parent,excluded_node_ids=[int(node.sessionId())],
+        excluded_box_ids=[] if current_box is None else [int(current_box.sessionId())],
+        dot_footprint=(width*.5,height))
+    container=None if current_box is None else _effective_box_rect(current_box)
+    result=find_free_translation(source,obstacles,preferred=preferred,
+        step=(max(width*1.5,1e-3),max(height*2.0,1e-3)),
+        clearance=(width*.5,height*.75),container=container,max_candidates=512)
+    return {'ok':result['ok'],'status':'adjusted' if result['ok'] else 'blocked',
+            'position':result.get('translation'),'blockers':result.get('blocked_by') or []}
+
+
 def _place_created_node(node):
     """tab_create 智能落位：有输入放到输入下游，无输入放右侧新列（空网络落原点）。
 
@@ -1114,11 +1130,15 @@ def _place_created_node(node):
         y = min(float(n.position().y()) for n in inputs) - v_gap
     else:
         siblings = [c for c in parent.children() if c.sessionId() != node.sessionId()]
-        if not siblings:
-            return
-        x = max(float(c.position().x()) + float(c.size().x()) for c in siblings) + 0.8
-        y = max(float(c.position().y()) for c in siblings)
-    node.setPosition(hou.Vector2(x, y))
+        if siblings:
+            x = max(float(c.position().x()) + float(c.size().x()) for c in siblings) + 0.8
+            y = max(float(c.position().y()) for c in siblings)
+        else:
+            x=y=0.0
+    placement=_local_free_position(node,(x,y))
+    if not placement['ok']:
+        raise RuntimeError(f"no bounded collision-free position for {node.path()}: {placement['blockers']}")
+    node.setPosition(hou.Vector2(*placement['position']))
 
 
 def _snap_into_flow(node):
@@ -1128,14 +1148,23 @@ def _snap_into_flow(node):
     """
     inputs = [n for n in node.inputs() if n is not None]
     if not inputs:
-        return False
+        return {'adjusted':False,'status':'unchanged','blockers':[]}
     min_y = min(float(n.position().y()) for n in inputs)
     if float(node.position().y()) < min_y:
-        return False
+        return {'adjusted':False,'status':'unchanged','blockers':[]}
     _h_gap, v_gap = _flow_gaps([node, *inputs])
     x = sum(float(n.position().x()) for n in inputs) / len(inputs)
-    node.setPosition(hou.Vector2(x, min_y - v_gap))
-    return True
+    from dsh_network_boxes import journal_containing_boxes
+    try:
+        placement=_local_free_position(node,(x,min_y-v_gap))
+    except Exception as error:
+        return {'adjusted':False,'status':'blocked',
+                'blockers':['obstacle_measurement_failed:'+str(error)]}
+    if not placement['ok']:
+        return {'adjusted':False,'status':'blocked','blockers':placement['blockers']}
+    journal_containing_boxes([node], 'connect_position_before')
+    node.setPosition(hou.Vector2(*placement['position']))
+    return {'adjusted':True,'status':'adjusted','blockers':[]}
 
 
 def tab_create(
@@ -1156,10 +1185,10 @@ def tab_create(
       Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
-    - 落位：连完 inputs 后自动摆放——有输入时放到所有输入下游
-      （x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络
-      现有内容右侧新列（空网络落原点）。间距由节点实际尺寸推导，见
-      ``_place_created_node``。
+    - 落位：连完 inputs 后自动摆放——有输入时以下游均值为首选；无输入时以父网络
+      右侧新列为首选（空网络落原点）。再对兄弟节点、其他Network Box、Sticky Note和
+      Network Dot做有界避障；找不到安全位置则创建失败并由调用事务清理。间距由节点
+      实际尺寸推导，见``_place_created_node``。
     """
     parent = _resolve(parent)  # 铁律 1：hou.Node 或 path 字符串均可
     cat = parent.childTypeCategory()
@@ -1965,8 +1994,9 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     请求的端口不存在或连接失败时明确拒绝，不尝试改接其他端口。
     index 为目标输入名/索引；keyword-only output 为源输出名/索引，默认0保持兼容。
     先解析两端并检查类型，再写入；不按label猜名称、不自动改接；第4位置参数拒绝。
-    连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时 snap 到
-    输入正下方；已在下游的节点绝不动。
+    连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时，以输入
+    正下方为首选并对节点、Box与注释项做有界避障；已在下游的节点绝不动。若没有
+    安全落位，接线保留并以``placement_status='blocked'``报告，不移动dst。
     """
     s = _resolve(src)
     d = _resolve(dst)
@@ -2008,11 +2038,13 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     actual = [c for c in d.inputConnections() if c.inputIndex() == index]
     if len(actual) != 1 or actual[0].inputNode() != s or actual[0].outputIndex() != output:
         raise RuntimeError('connect readback mismatch; transaction must roll back')
+    placement = _snap_into_flow(d)
     return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
             'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
             'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,
             'type_check': 'cop_material_exact_signature' if material_signature else 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
-            'verified': True, 'semantic_status': 'unverified', "position_adjusted": _snap_into_flow(d),
+            'verified': True, 'semantic_status': 'unverified', "position_adjusted": placement['adjusted'],
+            'placement_status':placement['status'],'placement_blockers':placement['blockers'],
             'inputs_before':before, 'inputs_after':_input_state(d),
             'note':'connect replaces the current occupant; do not disconnect first to replace a Merge input'}
 
@@ -2061,6 +2093,10 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
     _require_owned(n, "delete_node", allow_foreign)
     for child in n.allSubChildren():
         _require_owned(child, "delete_node descendant", allow_foreign)
+    from dsh_network_boxes import prepare_parent_deletion, commit_parent_deletion
+    box_deletion = prepare_parent_deletion(
+        n, active_owner_session=_ACTIVE_OWNER_SESSION,
+        allow_foreign=allow_foreign, require_node_owned=_require_owned)
     refs = sorted(x.path() for x in n.parmsReferencingThis())
     session_ids = [int(n.sessionId())]
     session_ids.extend(int(child.sessionId()) for child in n.allSubChildren())
@@ -2071,6 +2107,7 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
             consumers.append((consumer, connection.inputIndex(), connection.outputIndex()))
     path = n.path()
     n.destroy()
+    commit_parent_deletion(box_deletion)
     for session_id in session_ids:
         _OWNED_NODE_SESSIONS.pop(session_id, None)
     result: dict = {"deleted": path}
@@ -2381,17 +2418,35 @@ def _layout_flow(items, horizontal_spacing: float, vertical_spacing: float) -> N
 def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
                  vertical_spacing: float = -1.0,
                  allow_foreign: str | None = None,
-                 mode: str = "children") -> dict:
+                 mode: str = "children", *, boxes=None,
+                 profile: str = "comfortable", dry_run: bool = False,
+                 expected_plan=None) -> dict:
     """布局全部或显式指定的网络项。
 
     ``mode='children'``（默认）= 原生 layoutChildren，行为不变；
     ``mode='flow'`` = 自研拓扑分层（``_layout_flow``）：深度 0 最上、
     y = −depth × 垂直间距，同深度按当前 x 排序居中，环上边兜底不断裂。
     ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
+    ``mode='handoff'`` = 对显式当前session自有Network Box执行comfortable宽松布局；
+    强制dry-run plan后apply，其他网络项全部作为固定障碍。
     """
-    if mode not in ("children", "flow"):
-        raise ValueError(f"mode 必须是 'children' 或 'flow'，收到 {mode!r}")
+    if mode not in ("children", "flow", "handoff"):
+        raise ValueError(f"mode 必须是 'children'、'flow' 或 'handoff'，收到 {mode!r}")
     p = _resolve(parent)
+    if mode == 'handoff':
+        if nodes is not None:raise ValueError('handoff mode derives nodes from boxes; nodes must be None')
+        if boxes is None:raise ValueError('handoff mode requires explicit boxes')
+        if horizontal_spacing!=-1.0 or vertical_spacing!=-1.0:
+            raise ValueError('handoff mode uses profile clearances, not children/flow spacing')
+        from dsh_network_boxes import NetworkBoxOperationError,apply_handoff_layout
+        try:
+            return apply_handoff_layout(p,boxes,profile=profile,dry_run=dry_run,
+                expected_plan=expected_plan,active_owner_session=_ACTIVE_OWNER_SESSION,
+                node_provenance=node_provenance)
+        except NetworkBoxOperationError as error:
+            raise CheckpointError(str(error),error.evidence) from error
+    if boxes is not None or profile!='comfortable' or dry_run is not False or expected_plan is not None:
+        raise ValueError('boxes/profile/dry_run/expected_plan are handoff-only arguments')
     items = []
     foreign_skipped = []
     if nodes is not None:
@@ -2412,6 +2467,8 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     else:
         items = list(p.children())
     if items:
+        from dsh_network_boxes import journal_containing_boxes
+        journal_containing_boxes(items, 'layout_nodes_before')
         if mode == "children":
             p.layoutChildren(
                 items=tuple(items),
@@ -2429,6 +2486,34 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
         ],
         "foreign_nodes_skipped": foreign_skipped,
     }
+
+
+def network_boxes(parent, groups, *, remove=None, dry_run=False,
+                  expected_plan=None, allow_foreign=None) -> dict:
+    """Preview/apply governed flat Network Box membership, labels and role colors.
+
+    Apply requires ``expected_plan`` from a fresh ``dry_run=True`` call. This is
+    presentation grouping only: member nodes, geometry, wiring and existing
+    ``layout_nodes`` behavior are not moved or evaluated.
+    """
+    try:
+        p = _resolve(parent)
+    except (ValueError, TypeError) as error:
+        raise CheckpointError(str(error), {
+            'ok':False,'dry_run':bool(dry_run) if type(dry_run) is bool else None,
+            'applied':False,'phase':'preflight','scene_writes':0,
+            'parent':str(parent),'restored':True,'restore_errors':[],
+            'layout_status':'not_performed','scope':'Network Box parent resolution; zero scene writes'}) from error
+    from dsh_network_boxes import NetworkBoxOperationError, apply_network_boxes
+    try:
+        return apply_network_boxes(
+            p, groups, remove=remove, dry_run=dry_run,
+            expected_plan=expected_plan, allow_foreign=allow_foreign,
+            active_owner_session=_ACTIVE_OWNER_SESSION,
+            active_owner_call=_ACTIVE_OWNER_CALL,
+            resolve_node=_resolve, require_node_owned=_require_owned)
+    except NetworkBoxOperationError as error:
+        raise CheckpointError(str(error), error.evidence) from error
 
 
 # --- parm 域 ---------------------------------------------------------------
@@ -5363,6 +5448,10 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
 # trace：vision_glance 被 "image escapes the allowed directories" 拦截）。
 _PRODUCED_IMAGES: list = []
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"}
+_PREVIEW_IMAGE_EXTS = {
+    ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".tif", ".tiff",
+    ".exr", ".hdr", ".pic", ".rat",
+}
 
 
 def report_image(path: str) -> str:
@@ -5407,6 +5496,43 @@ def _resolve_output_path(path, *, frame, default_subdir="render") -> str:
     if in_repo:
         raise ValueError('output cannot be written into the plugin repository; choose the HIP project directory')
     return target.replace('\\', '/')
+
+
+def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
+                      default_subdir, allowed_extensions=_PREVIEW_IMAGE_EXTS):
+    """Resolve preview output policy before renderer/viewer state changes."""
+    if output_policy not in ("managed", "explicit"):
+        raise ValueError("output_policy must be 'managed' or 'explicit'")
+    scene = scene_info()
+    hip_path = scene["hip_path"] if scene["has_named_path"] else None
+    from dsh_preview_paths import allocate_managed, explicit_artifact
+    if output_policy == "managed":
+        artifact = allocate_managed(
+            hip_path,
+            path,
+            frame=frame,
+            purpose=purpose,
+            owner_session=_ACTIVE_OWNER_SESSION,
+            repository_root=os.path.join(os.path.dirname(__file__), '..', '..'),
+            default_label=default_label,
+            default_extension=".png",
+            allowed_extensions=allowed_extensions,
+            expand=lambda value: hou.expandStringAtFrame(value, float(frame)),
+        )
+        return artifact["actual_path"], artifact, hip_path
+    if path is None:
+        frame_tag = str(float(frame)).replace('-', 'm').replace('.', 'p')
+        path = f"{default_label}_{time.time_ns()}_f{frame_tag}.png"
+    target = _resolve_output_path(path, frame=frame, default_subdir=default_subdir)
+    extension = os.path.splitext(target)[1].lower()
+    if allowed_extensions and extension not in allowed_extensions:
+        raise ValueError(f"unsupported preview image extension: {extension}; use PNG or EXR")
+    return target, explicit_artifact(hip_path, target, frame=frame, purpose=purpose), hip_path
+
+
+def _release_preview_reservation(artifact) -> list[str]:
+    from dsh_preview_paths import release_reservation
+    return release_reservation(artifact)
 
 
 def _render_validation(rendered, check, stale, pixel_supported=True, warnings=None) -> dict:
@@ -5873,7 +5999,17 @@ def _display_bbox(n):
     return n.geometry().boundingBox()
 
 
-def _restore_webview_window() -> None:
+def _webview_was_minimized():
+    """Return the pre-capture minimized state when the optional WebView exists."""
+    try:
+        import dsh_webview
+        win = getattr(dsh_webview, "_window", None)
+        return None if win is None else bool(win.isMinimized())
+    except Exception:
+        return None
+
+
+def _restore_webview_window(was_minimized=None) -> None:
     """截图后还原被最小化的内嵌 web UI 窗口（dsh_webview）。
 
     用户报告（2026-08-18）：agent 截图时 agent 窗口会最小化，要手动从
@@ -5888,198 +6024,459 @@ def _restore_webview_window() -> None:
     if win is None:
         return
     try:
-        if win.isMinimized():
+        if was_minimized is not True and win.isMinimized():
             win.showNormal()
             dsh_webview._bring_to_front(win)
     except Exception:
         pass
 
 
+def _viewport_camera_state(camera) -> tuple:
+    """Comparable readback for the documented H21/H22 viewport-camera surface."""
+    values = []
+    for name in ('translation', 'rotation', 'pivot', 'aperture', 'aspectRatio',
+                 'clipPlanes', 'focalLength', 'focalUnitScale', 'orthoWidth',
+                 'windowOffset', 'windowSize', 'isOrthographic'):
+        method = getattr(camera, name, None)
+        if not callable(method):
+            raise RuntimeError(f'viewport camera readback unavailable: {name}')
+        value = method()
+        if isinstance(value, (hou.Matrix3, hou.Matrix4)):
+            value = tuple(float(item) for item in value.asTuple())
+        elif isinstance(value, (tuple, list, hou.Vector2, hou.Vector3, hou.Vector4)):
+            value = tuple(float(item) for item in value)
+        elif isinstance(value, bool):
+            value = bool(value)
+        else:
+            value = float(value)
+        values.append((name, value))
+    return tuple(values)
+
+
+def _viewport_camera_states_equal(before, after, tolerance=1e-8) -> bool:
+    before_map, after_map = dict(before), dict(after)
+    if set(before_map) != set(after_map):
+        return False
+    for name_a, value_a in before:
+        if name_a == 'orthoWidth' and not before_map['isOrthographic'] and not after_map['isOrthographic']:
+            continue  # inactive perspective-camera field is normalized by setDefaultCamera
+        value_b = after_map[name_a]
+        if isinstance(value_a, tuple):
+            if not isinstance(value_b, tuple) or len(value_a) != len(value_b):
+                return False
+            if any(not math.isclose(float(a), float(b), rel_tol=0.0, abs_tol=tolerance)
+                   for a, b in zip(value_a, value_b)):
+                return False
+        elif isinstance(value_a, bool):
+            if value_a is not value_b:
+                return False
+        elif not math.isclose(float(value_a), float(value_b), rel_tol=0.0, abs_tol=tolerance):
+            return False
+    return True
+
+
+def _same_network_item(left, right) -> bool:
+    if left is right:
+        return True
+    try:
+        return int(left.sessionId()) == int(right.sessionId())
+    except Exception:
+        try:
+            return left.path() == right.path()
+        except Exception:
+            return False
+
+
+def _readable_tga(path: str) -> bool:
+    """Bounded structural completeness check for common TGA flipbook output."""
+    if os.path.splitext(path)[1].lower() != '.tga':
+        return False
+    try:
+        with open(path, 'rb') as source:
+            data = source.read(_MAX_IMAGE_FILE_BYTES + 1)
+        if len(data) > _MAX_IMAGE_FILE_BYTES or len(data) < 18:
+            return False
+        ident, cmap, kind = data[0], data[1], data[2]
+        cmap_len = int.from_bytes(data[5:7], 'little')
+        cmap_bits = data[7]
+        width = int.from_bytes(data[12:14], 'little')
+        height = int.from_bytes(data[14:16], 'little')
+        depth = data[16]
+        if not width or not height or width * height > _MAX_IMAGE_PIXELS:
+            return False
+        if cmap not in (0, 1) or kind not in (2, 3, 10, 11) or depth not in (8, 16, 24, 32):
+            return False
+        offset = 18 + ident + ((cmap_len * cmap_bits + 7) // 8 if cmap else 0)
+        bytes_per_pixel = (depth + 7) // 8
+        pixels = width * height
+        if kind in (2, 3):
+            return len(data) >= offset + pixels * bytes_per_pixel
+        produced = 0
+        while produced < pixels and offset < len(data):
+            header = data[offset]; offset += 1
+            count = (header & 0x7f) + 1
+            payload = bytes_per_pixel if header & 0x80 else count * bytes_per_pixel
+            if offset + payload > len(data):
+                return False
+            offset += payload; produced += count
+        return produced == pixels
+    except Exception:
+        return False
+
+
+def _screenshot_readable(path: str) -> bool:
+    return (_read_pixels_qt(path) is not None or _read_pixels_png(path) is not None
+            or _readable_tga(path))
+
+
 def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
-                        textures=None, backface_cull=False) -> dict:
-    """抓取当前场景视口截图（所见即所得）——**GUI 模式限定**。
+                        textures=None, backface_cull=False, *,
+                        output_policy: str = "managed") -> dict:
+    """Capture the selected viewport with bounded freshness and full restoration.
 
-    视觉验证的另一半：``render_frame``/``render_check`` 管渲染产物，本动词
-    回答「用户现在在视口里看到什么」。无 UI（hython/批渲染）时抛明确错误，
-    请改用 ``render_frame``。
-
-    - path：保存路径；None = ``$HIP/screenshots/viewport_f<帧>_<时间>.png``
-      （hip 未保存时落在当前目录的 ``screenshots/`` 下）。
-    - frame：抓哪一帧；None = 当前帧。
-    - clean：True（默认）时临时隐藏视口装饰（参考平面网格/坐标指示器/手柄/
-      标签/相机遮幅/性能 HUD 等，见 ``_CLEAN_GUIDES``），截完恢复原设置。
-    - frame_target：节点（hou.Node 或 path），或 ``True`` = 「/obj 下当前挂
-      display 旗标的对象」。给了就把视口取景到该节点的显示几何 bbox
-      （`frameBoundingBox`），主体占满画面；视图变换尽力恢复
-      （ViewportCamera 支持 setTransform 时），恢复不了则停留在取景位置。
-    - textures：None（默认）不动纹理显示；True/False 临时强制开/关纹理
-      （模型上的 UV 贴图/棋盘格不想入镜就传 False），截完恢复。
-    - backface_cull：True 时临时开启背面剔除（`removeBackfaces`）——HOM 只
-      暴露剔除开关，背面 tint 颜色没有 API；默认 False 不动。
-
-    实现走 SceneViewer 的 flipbook 通道（单帧、不进 MPlay），因此视口显示
-    什么就抓什么——包括 display 旗标位置错误造成的「只显示一个圆环」这类
-    事故，截图前先用 ``display_node`` 核对旗标。
-
-    注意：flipbook 是**异步**渲染——所有视口设置的恢复都必须等到产物文件
-    落盘确认之后，否则截图时设置已被还原（2026-08-17 实测踩坑）。
+    Managed output (the default) accepts only an omitted filename or safe
+    basename and writes under ``$HIP/dsh-visual-checks/<run-id>/``. Deliberate
+    destinations use ``output_policy='explicit'``.  The capture is a user-screen
+    diagnostic: readable pixels are required, but visual semantics remain
+    unverified.  H21/H22 require stashed flipbook and viewport-camera state;
+    unsupported restoration combinations reject before mutation.
     """
     if not hou.isUIAvailable():
-        raise ValueError(
-            "viewport_screenshot 需要 Houdini GUI（当前无 UI）；"
-            "headless 环境请用 render_frame"
-        )
+        raise ValueError("viewport_screenshot 需要 Houdini GUI（当前无 UI）；headless 环境请用 render_frame")
+    f = float(hou.frame()) if frame is None else float(frame)
+    if not math.isfinite(f):
+        raise ValueError('frame must be finite')
     viewer = hou.ui.curDesktop().paneTabOfType(hou.paneTabType.SceneViewer)
     if viewer is None:
         raise ValueError("当前桌面没有 Scene Viewer 面板——请先打开一个场景视口")
-    f = hou.frame() if frame is None else float(frame)
-    if path is None:
-        hip = os.path.dirname(hou.hipFile.path()) or os.getcwd()
-        stamp = time.strftime("%H%M%S")
-        path = os.path.join(hip, "screenshots", f"viewport_f{int(f)}_{stamp}.png")
-    out_dir = os.path.dirname(path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-
-    hou.setFrame(f)
     vp = viewer.curViewport()
     if vp is None:
         raise ValueError("Scene Viewer 没有活动视口")
-
     st = vp.settings()
+
+    # Resolve identity only. Geometry is evaluated after path validation and
+    # after switching to the requested frame inside the protected lifecycle.
+    target_node = None
+    if frame_target is True:
+        try:
+            frame_target = next((c for c in hou.node('/obj').children() if c.isDisplayFlagSet()), None)
+        except Exception:
+            frame_target = None
+    if frame_target is not None:
+        target_node = _resolve(frame_target)
+    framed = target_node.path() if target_node is not None else None
+
+    live_settings = viewer.flipbookSettings()
+    stash_settings = getattr(live_settings, 'stash', None)
+    if not callable(stash_settings):
+        raise RuntimeError('copied flipbook settings are unavailable on this Houdini build')
+    settings = stash_settings()
+    if settings is None or settings is live_settings:
+        raise RuntimeError('flipbook settings stash did not return an independent copy')
+    leave_getter = getattr(live_settings, 'leaveFrameAtEnd', None)
+    live_before = (live_settings.output(), live_settings.outputToMPlay(), live_settings.frameRange(),
+                   leave_getter() if callable(leave_getter) else None)
+
+    camera_snapshot = None
+    camera_state_before = None
+    linked_camera = None
+    camera_lock_before = None
+    if target_node is not None:
+        camera = vp.defaultCamera()
+        stash_camera = getattr(camera, 'stash', None)
+        if not callable(stash_camera) or not callable(getattr(vp, 'setDefaultCamera', None)):
+            raise RuntimeError('full viewport camera restoration is unavailable on this Houdini build')
+        camera_snapshot = stash_camera()
+        camera_state_before = _viewport_camera_state(camera)
+        for name in ('camera', 'setCamera', 'useDefaultCamera', 'isCameraLockedToView', 'lockCameraToView'):
+            if not callable(getattr(vp, name, None)):
+                raise RuntimeError(f'viewport camera association restoration is unavailable: {name}')
+        linked_camera = vp.camera()
+        camera_lock_before = bool(vp.isCameraLockedToView())
+
+    path, artifact, artifact_hip_path = _preview_artifact(
+        path, frame=f, purpose='viewport_diagnostic', output_policy=output_policy,
+        default_label='viewport', default_subdir='screenshots',
+        allowed_extensions={'.png', '.jpg', '.jpeg', '.bmp', '.tga'})
+
+    import glob as _glob
+    stem, ext = os.path.splitext(path)
+
+    def candidate_allowed(candidate):
+        if os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(os.path.abspath(path)):
+            return True
+        if not float(f).is_integer():
+            return False
+        if os.path.dirname(os.path.abspath(candidate)) != os.path.dirname(os.path.abspath(path)):
+            return False
+        name = os.path.basename(candidate)
+        base = os.path.basename(stem)
+        if not name.lower().endswith(ext.lower()) or not name.startswith(base):
+            return False
+        suffix = name[len(base):len(name) - len(ext)]
+        match = re.fullmatch(r'[._-](\d+)', suffix)
+        return bool(match and int(match.group(1)) == int(f))
+
+    def candidates():
+        found = {os.path.normcase(os.path.abspath(path)): path}
+        pattern = _glob.escape(stem) + '*' + _glob.escape(ext)
+        for item in _glob.glob(pattern):
+            if candidate_allowed(item):
+                found.setdefault(os.path.normcase(os.path.abspath(item)), item)
+        return sorted(found.values())
+
+    def fingerprint(candidate):
+        if not os.path.isfile(candidate):
+            return None
+        stat = os.stat(candidate)
+        digest = hashlib.sha256()
+        with open(candidate, 'rb') as handle:
+            digest.update(handle.read(64 * 1024))
+            if stat.st_size > 64 * 1024:
+                handle.seek(max(0, stat.st_size - 64 * 1024))
+                digest.update(handle.read(64 * 1024))
+        return (int(stat.st_size), int(stat.st_mtime_ns), digest.hexdigest())
+
+    original_frame = float(hou.frame())
+    webview_was_minimized = _webview_was_minimized()
+    before_files = {}
+    actual = None
+    capture_error = None
+    capture_unresolved = False
+    dispatch_attempted = False
+    capture_settled = False
+    restore_errors = []
     saved_guides = []
     saved_textures = None
     saved_backface = None
     refplane = None
     refplane_was = False
-    if clean:
-        # 地面参考网格不是 viewportGuide 枚举，是 SceneViewer 的
-        # hou.ReferencePlane 对象（setIsVisible）——H21 实测 XZPlane guide
-        # 默认就是 False 但网格照画，真正的开关在这里。
-        try:
-            refplane = viewer.referencePlane()
-            refplane_was = bool(refplane.isVisible())
-            if refplane_was:
-                refplane.setIsVisible(False)
-        except Exception:
-            refplane = None
-        for name in _CLEAN_GUIDES:
-            g = getattr(hou.viewportGuide, name, None)
-            if g is None:
-                continue
-            try:
-                if st.guideEnabled(g):
-                    st.enableGuide(g, False)
-                    saved_guides.append(g)
-            except Exception:
-                continue
-    if textures is not None:
-        try:
-            saved_textures = st.displayTextures()
-            st.setDisplayTextures(bool(textures))
-        except Exception:
-            saved_textures = None
-    if backface_cull:
-        try:
-            saved_backface = st.removeBackfaces()
-            st.setRemoveBackfaces(True)
-        except Exception:
-            saved_backface = None
+    lock_attempted = detach_attempted = detached = False
 
-    # 取景：frame_target=True 表示「/obj 下当前挂 display 旗标的对象」
-    # （agent 的直觉写法——2026-08-18 trace 实测 agent 这么传然后报错）。
-    if frame_target is True:
-        try:
-            frame_target = next(
-                (c for c in hou.node("/obj").children() if c.isDisplayFlagSet()),
-                None,
-            )
-        except Exception:
-            frame_target = None
-    cam_restore = None
-    framed = None
-    if frame_target is not None:
-        tn = _resolve(frame_target)
-        framed = tn.path()
-        try:
-            cam = vp.defaultCamera()
-            cam_restore = (cam, cam.transform())
-        except Exception:
-            cam_restore = None
-        vp.frameBoundingBox(_display_bbox(tn))
-
-    # FlipbookSettings 是抽象类（无构造），唯一来源是 viewer.flipbookSettings()；
-    # flipbook(viewport=None, settings=None, ...) 的 settings 是**一次性覆盖**，
-    # 不改对话框设置。但 flipbookSettings() 可能返回对话框的活对象，所以改完
-    # 恢复现场，两边都安全。
-    settings = viewer.flipbookSettings()
-    saved = (settings.output(), settings.outputToMPlay(), settings.frameRange())
-    settings.output(path)
-    settings.outputToMPlay(False)
-    settings.frameRange((f, f))
     try:
-        viewer.flipbook(settings=settings)
+        out_dir = os.path.dirname(path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        before_files = {candidate: fingerprint(candidate) for candidate in candidates()}
 
-        actual = path
-        deadline = time.time() + 15  # flipbook 异步落盘，等确认
-        import glob as _glob
-        stem, ext = os.path.splitext(path)
-        while time.time() < deadline:
-            if os.path.exists(actual) and os.path.getsize(actual) > 0:
-                break
-            # flipbook 可能给文件名补帧号后缀，按 stem 找最新产物
-            candidates = _glob.glob(stem + "*" + ext) or _glob.glob(stem + "*")
-            candidates = [c for c in candidates if os.path.getsize(c) > 0]
-            if candidates:
-                actual = max(candidates, key=os.path.getmtime)
-                break
-            time.sleep(0.5)
-        else:
-            raise RuntimeError(f"flipbook 未产出截图：{path}")
-    finally:
-        # 恢复必须在文件落盘之后（flipbook 异步）：先恢复 flipbook 对话框设置，
-        # 再恢复相机，最后恢复视口显示设置。
-        settings.output(saved[0])
-        settings.outputToMPlay(saved[1])
-        settings.frameRange(saved[2])
-        if cam_restore is not None:
+        # A linked camera is detached before frame or viewport manipulation.
+        if target_node is not None and linked_camera is not None:
+            if camera_lock_before:
+                lock_attempted = True
+                vp.lockCameraToView(False)
+                if vp.isCameraLockedToView():
+                    raise RuntimeError('viewport camera remained locked after unlock')
+            detach_attempted = True
+            vp.useDefaultCamera()
+            detached = vp.camera() is None
+            if not detached:
+                raise RuntimeError('viewport camera remained linked after detachment')
+
+        hou.setFrame(f)
+        if float(hou.frame()) != f:
+            raise RuntimeError('requested capture frame was not applied')
+
+        if clean:
             try:
-                cam_restore[0].setTransform(cam_restore[1])
+                refplane = viewer.referencePlane()
+                refplane_was = bool(refplane.isVisible())
             except Exception:
-                pass
+                refplane = None
+            if refplane is not None and refplane_was:
+                refplane.setIsVisible(False)
+            for name in _CLEAN_GUIDES:
+                guide = getattr(hou.viewportGuide, name, None)
+                if guide is None:
+                    continue
+                try:
+                    enabled = bool(st.guideEnabled(guide))
+                except Exception:
+                    continue
+                if enabled:
+                    saved_guides.append(guide)
+                    st.enableGuide(guide, False)
+        if textures is not None:
+            saved_textures = bool(st.displayTextures())
+            st.setDisplayTextures(bool(textures))
+        if backface_cull:
+            saved_backface = bool(st.removeBackfaces())
+            st.setRemoveBackfaces(True)
+        if target_node is not None:
+            vp.frameBoundingBox(_display_bbox(target_node))
+
+        settings.output(path)
+        settings.outputToMPlay(False)
+        settings.frameRange((f, f))
+        leave_at_end = getattr(settings, 'leaveFrameAtEnd', None)
+        if callable(leave_at_end):
+            leave_at_end(False)
+        dispatch_attempted = True
+        viewer.flipbook(viewport=vp, settings=settings)
+
+        deadline = time.time() + 15
+        stable = {}
+        while time.time() < deadline:
+            changed = []
+            for candidate in candidates():
+                current = fingerprint(candidate)
+                if current is not None and current[0] > 0 and current != before_files.get(candidate):
+                    changed.append((candidate, current))
+            if len(changed) > 1:
+                raise RuntimeError(f"flipbook produced ambiguous screenshot candidates: {[item[0] for item in changed]}")
+            if changed:
+                candidate, current = changed[0]
+                if _screenshot_readable(candidate):
+                    if stable.get(candidate) == current:
+                        actual = candidate
+                        break
+                    stable = {candidate: current}
+                else:
+                    stable = {}
+            time.sleep(0.2)
+        else:
+            capture_unresolved = True
+            raise RuntimeError(f"flipbook did not produce a stable readable screenshot: {path}")
+    except BaseException as error:
+        capture_error = error
+        if dispatch_attempted and not capture_settled:
+            capture_unresolved = True
+    finally:
+        # Restore display state first while the viewport remains safely detached.
         if refplane is not None and refplane_was:
             try:
                 refplane.setIsVisible(True)
-            except Exception:
-                pass
-        for g in saved_guides:
+                if not refplane.isVisible():
+                    raise RuntimeError('readback remained hidden')
+            except Exception as error:
+                restore_errors.append(f'reference plane: {error}')
+        for guide in saved_guides:
             try:
-                st.enableGuide(g, True)
-            except Exception:
-                pass
+                st.enableGuide(guide, True)
+                if not st.guideEnabled(guide):
+                    raise RuntimeError('readback remained disabled')
+            except Exception as error:
+                restore_errors.append(f'viewport guide: {error}')
         if saved_textures is not None:
             try:
                 st.setDisplayTextures(saved_textures)
-            except Exception:
-                pass
+                if bool(st.displayTextures()) != saved_textures:
+                    raise RuntimeError('readback mismatch')
+            except Exception as error:
+                restore_errors.append(f'textures: {error}')
         if saved_backface is not None:
             try:
                 st.setRemoveBackfaces(saved_backface)
-            except Exception:
-                pass
+                if bool(st.removeBackfaces()) != saved_backface:
+                    raise RuntimeError('readback mismatch')
+            except Exception as error:
+                restore_errors.append(f'backface culling: {error}')
+
+        # If detachment partially failed, retry a safe detach before any
+        # viewport-camera snapshot is applied. Never setDefaultCamera while a
+        # linked, locked scene camera remains active.
+        safe_default = target_node is not None and linked_camera is None
+        if target_node is not None and linked_camera is not None:
+            try:
+                if vp.isCameraLockedToView():
+                    vp.lockCameraToView(False)
+                if vp.camera() is not None:
+                    vp.useDefaultCamera()
+                safe_default = vp.camera() is None and not vp.isCameraLockedToView()
+                if not safe_default:
+                    raise RuntimeError('could not obtain a safely detached viewport')
+            except Exception as error:
+                restore_errors.append(f'camera detachment: {error}')
+                safe_default = False
+        try:
+            if float(hou.frame()) != original_frame:
+                hou.setFrame(original_frame)
+            if float(hou.frame()) != original_frame:
+                raise RuntimeError('frame readback mismatch')
+        except Exception as error:
+            restore_errors.append(f'frame: {error}')
+
+        if target_node is not None and safe_default:
+            try:
+                vp.setDefaultCamera(camera_snapshot)
+                camera_state_after = _viewport_camera_state(vp.defaultCamera())
+                if not _viewport_camera_states_equal(camera_state_before, camera_state_after):
+                    raise RuntimeError(f'viewport camera readback mismatch: before={camera_state_before!r}, after={camera_state_after!r}')
+            except Exception as error:
+                restore_errors.append(f'viewport camera: {error}')
+        if target_node is not None and linked_camera is not None:
+            try:
+                vp.setCamera(linked_camera)
+                if not _same_network_item(vp.camera(), linked_camera):
+                    raise RuntimeError('linked camera readback mismatch')
+            except Exception as error:
+                restore_errors.append(f'linked camera: {error}')
+            try:
+                vp.lockCameraToView(camera_lock_before)
+                if bool(vp.isCameraLockedToView()) != camera_lock_before:
+                    raise RuntimeError('camera lock readback mismatch')
+            except Exception as error:
+                restore_errors.append(f'camera lock: {error}')
+
+        try:
+            leave_now = leave_getter() if callable(leave_getter) else None
+            live_after = (live_settings.output(), live_settings.outputToMPlay(),
+                          live_settings.frameRange(), leave_now)
+            if live_after != live_before:
+                raise RuntimeError('interactive flipbook settings changed')
+        except Exception as error:
+            restore_errors.append(f'flipbook settings: {error}')
+        _restore_webview_window(webview_was_minimized)
+
+    from dsh_preview_paths import retain_reservation, with_actual_path
+    validated_artifact = None
+    actual_validated = False
+    try:
+        validated_artifact = with_actual_path(artifact, actual or path, artifact_hip_path)
+        actual_validated = actual is not None
+        if actual_validated:
+            capture_settled = True
+    except Exception as error:
+        capture_error = capture_error or error
+    if dispatch_attempted and not capture_settled:
+        capture_unresolved = True
+    if capture_unresolved:
+        retain_reservation(artifact)
+    else:
+        restore_errors.extend(_release_preview_reservation(artifact))
+    if validated_artifact is not None:
+        if artifact.get('reservation_retained'):
+            validated_artifact['reservation_retained'] = True
+        artifact = validated_artifact
+    else:
+        artifact = {key: value for key, value in artifact.items()
+                    if not key.startswith('_reservation')}
+    if actual_validated:
+        report_image(actual)
+    failure_evidence = {
+        'ok': False, 'path': actual or path, 'artifact': artifact, 'frame': f,
+        'fresh': actual_validated, 'file_status': 'passed' if actual_validated else 'failed',
+        'capture_unresolved': capture_unresolved,
+        'semantic_status': 'unverified', 'user_state_restored': not restore_errors,
+        'restore_errors': restore_errors,
+        'scope': 'frame, copied flipbook settings, changed viewport guides/display settings, framing camera and camera association',
+    }
+    if capture_error is not None or restore_errors:
+        reasons = ([str(capture_error)] if capture_error is not None else [])
+        reasons.extend(f'restore failed: {item}' for item in restore_errors)
+        failure_evidence['errors'] = reasons
+        raise CheckpointError('viewport screenshot failed: ' + '; '.join(reasons), failure_evidence)
 
     result: dict[str, Any] = {
-        "path": actual,
-        "viewer": viewer.name(),
-        "viewport": vp.name(),
-        "frame": f,
-        "bytes": os.path.getsize(actual),
-        "clean": bool(clean),
+        'ok': True, 'path': actual, 'artifact': artifact,
+        'viewer': viewer.name(), 'viewport': vp.name(), 'frame': f,
+        'bytes': os.path.getsize(actual), 'fresh': True, 'file_status': 'passed',
+        'semantic_status': 'unverified', 'user_state_restored': True,
+        'restore_errors': [],
+        'scope': 'frame, copied flipbook settings, changed viewport guides/display settings, framing camera and camera association',
+        'clean': bool(clean),
     }
     if framed is not None:
-        result["framed"] = framed
-    report_image(actual)
-    _restore_webview_window()
+        result['framed'] = framed
     return result
 
 
@@ -6146,6 +6543,8 @@ def _render_service_box(parent: hou.Node, name: str,
     box.setComment(_RENDER_BOX_COMMENT)
     box.setColor(hou.Color((0.16, 0.30, 0.48)))
     box.fitAroundContents()
+    from dsh_network_boxes import register_service_box
+    register_service_box(box)
     return box
 
 
@@ -6430,7 +6829,8 @@ def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
-                framing_frame=None, *, focus_group=None, isolate: bool = False,
+                framing_frame=None, *, output_policy: str = "managed",
+                focus_group=None, isolate: bool = False,
                 projection: str = 'perspective', framing_bounds=None, depth_bounds=None) -> dict:
     """显式 SOP → agent proxy → viewport ROP → render_check 的隔离验证。
     H22使用Flipbook/Vulkan及独立Work Lights；H21保持原OpenGL ROP设置。
@@ -6445,6 +6845,9 @@ def render_view(node, direction="iso", frame=None,
       ``'top'``（草地重跑 trace：agent 直觉写法就是 ``'iso'``——命名视角
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
+    - ``picture/output_policy``：默认managed，只接收省略或安全basename并写入
+      ``$HIP/dsh-visual-checks/<run-id>/``；用户明确目的地或隔离测试路径须传
+      ``output_policy='explicit'``。两种模式均返回``artifact``路径事实。
     - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
       detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。
     - ``coverage``：full中央安全框宽/高占比（0.1..0.95）；.82为每侧至少9%边距。
@@ -6495,19 +6898,29 @@ def render_view(node, direction="iso", frame=None,
     framing_f = f if framing_frame is None else float(framing_frame)
     if not math.isfinite(f) or not math.isfinite(framing_f):
         raise ValueError('frame/framing_frame must be finite')
-    if picture is None:
-        frame_tag = str(f).replace('-', 'm').replace('.', 'p')
-        picture = f'dsh_view_{time.time_ns()}_f{frame_tag}.png'
-    picture = _resolve_output_path(picture, frame=f, default_subdir='render')
-    image_ext = os.path.splitext(picture)[1].lower()
-    if image_ext not in ('.png','.jpg','.jpeg','.bmp','.tga','.tif','.tiff','.exr','.hdr','.pic','.rat'):
-        raise ValueError(f'unsupported render_view image extension: {image_ext}; use PNG or EXR')
-    before = _geometry_fingerprint(target, f)
-    if before["errors"]:
-        raise ValueError(f"目标 {target.path()} cook error：{before['errors']}")
-
-    obj_visibility = _snapshot_obj_visibility()
-    selection = _snapshot_selection()
+    direction_label = direction if isinstance(direction, str) else 'view'
+    picture, artifact, _artifact_hip_path = _preview_artifact(
+        picture,
+        frame=f,
+        purpose='model_visual_verification',
+        output_policy=output_policy,
+        default_label=f'{target.name()}_{direction_label}',
+        default_subdir='render',
+    )
+    try:
+        image_ext = os.path.splitext(picture)[1].lower()
+        if image_ext not in ('.png','.jpg','.jpeg','.bmp','.tga','.tif','.tiff','.exr','.hdr','.pic','.rat'):
+            raise ValueError(f'unsupported render_view image extension: {image_ext}; use PNG or EXR')
+        before = _geometry_fingerprint(target, f)
+        if before["errors"]:
+            raise ValueError(f"目标 {target.path()} cook error：{before['errors']}")
+        obj_visibility = _snapshot_obj_visibility()
+        selection = _snapshot_selection()
+    except BaseException as error:
+        reservation_errors = _release_preview_reservation(artifact)
+        if reservation_errors:
+            raise RuntimeError(str(error) + '; ' + '; '.join(reservation_errors)) from error
+        raise
     proxy = proxy_out = cam = aim = rop = None
     result_payload = None
     try:
@@ -6720,6 +7133,7 @@ def render_view(node, direction="iso", frame=None,
         )
         result_payload = {
             **validation,
+            "artifact": artifact,
             "preview_backend": "flipbook_vulkan" if use_flipbook else "opengl_legacy",
             "output": rendered["output"],
             "frame": f,
@@ -6777,7 +7191,8 @@ def render_view(node, direction="iso", frame=None,
             )
         return result_payload
     finally:
-        restore_errors = _restore_obj_visibility(obj_visibility)
+        restore_errors = _release_preview_reservation(artifact)
+        restore_errors.extend(_restore_obj_visibility(obj_visibility))
         restore_errors.extend(_restore_selection(selection))
         if proxy is not None:
             try:

@@ -84,7 +84,8 @@ def run() -> None:
             mark(f"helper_{index:02d}_before frame={frame}")
             result = helpers.render_view(
                 box.path(), frame=frame, framing_frame=1.0,
-                width=1280, height=720, picture=picture)
+                width=1280, height=720, picture=picture,
+                output_policy='explicit')
             mark(
                 f"helper_{index:02d}_after frame={frame} "
                 f"bytes={result.get('file_bytes')} stale={result.get('stale')}"

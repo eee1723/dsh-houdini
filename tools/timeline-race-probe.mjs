@@ -20,7 +20,8 @@ before_frame = float(hou.frame())
 result = render_view(
     '/obj/rubik/OUT', direction='iso', frame=${renderFrame},
     framing_frame=1, width=720, height=720, framing='full',
-    picture='Z:/tmp/dsh-rubik-replay-gl-probe/timeline_slot_${index % 3}.png')
+    picture='Z:/tmp/dsh-rubik-replay-gl-probe/timeline_slot_${index % 3}.png',
+    output_policy='explicit')
 after_frame = float(hou.frame())
 __result__ = {
     'before_frame': before_frame,
