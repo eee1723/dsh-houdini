@@ -12,8 +12,8 @@ assert(
   "generated renderer and content inventory must match current sources",
 );
 const inventory = traceSources();
-assert(inventory.presets.every(p => !p.text.includes('*houdini_persona') && !p.text.includes('Legacy DSH')),
-  'persona inventory excludes YAML aliases and compatibility comments');
+assert(inventory.presets.every(p => p.text.startsWith('You are ')),
+  'persona inventory contains the current prefix text');
 assert(inventory.guidance.text.includes("set_parms"));
 assert(
   inventory.presets.every((p) => p.text.length > 1000),

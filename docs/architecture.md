@@ -78,6 +78,12 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
+
+提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止与交接方式；
+插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
+domain skill及reference维护建模、验证和交付方法。低频对象recipe不得进入persona/guidance；一个规则需要跨层出现时，
+上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
+
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
 scene-context只为现场指代提供用户消息绑定的metadata；execution-state按有意义的异常变化提醒，
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
@@ -106,7 +112,6 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
 | [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | Manual计算边界、单次批量依赖预检与规范不终止VEX模式识别；未知控制流不认证安全，不设隐藏上游节点数门，无跨调用缓存 |
 | [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker进程树限额、超时/取消与退出回收，不接管live进程 |
-| [dsh_hda_ui.py](../houdini/python3.11libs/dsh_hda_ui.py) | 旧UI模块的兼容导入入口 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、原生公共Output发布/接线验收、有界Packed内容检查、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
 | [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换 |
@@ -137,10 +142,10 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、DocumentCreation兼容补丁 |
 | [dsh_iterator_polyfill.js](../houdini/python3.11libs/dsh_iterator_polyfill.js) | 构建生成的core-js Iterator兼容实现，附MIT许可证；仅缺失/不兼容API补齐，不手改 |
 | [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py) | process-token→signed cookie、RPC wire与会话请求 |
-| [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步profile依赖、精确版本兼容修补 |
-| [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 安装器/launcher/manager共享精确preferred版本与cache选择；不以缓存时间选择其他已验证版本 |
+| [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步当前profile声明的项目依赖 |
+| [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 安装器/launcher/manager共享唯一精确preferred版本与cache选择；不以缓存时间选择其他版本 |
 | [dsh-runtime-compatibility.json](../dsh-runtime-compatibility.json) | preferred DSH及支持组合的唯一清单 |
-| [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 受管profile依赖与移除清单 |
+| [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 当前受管profile的项目插件依赖清单 |
 | [cordis.patch.yml](../cordis.patch.yml) | bundle组合与插件配置 |
 | [presets](../presets/) | Houdini生产/开发persona；身份与领域工作方式，不放进插件guidance |
 | [shared-host.cordis.yml](../shared-host.cordis.yml) | 显式候选Host组合；仅共享登记模式使用，不修改现役profile或替用户启动服务 |
@@ -210,7 +215,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取；V3上下文经安装的DSH公开surface校验器折叠，非法或校验器不可用时报告未知，legacy独立兼容 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取 |
-| [run-node-tests.mjs](../tools/run-node-tests.mjs)、[prune-retired-build.mjs](../tools/prune-retired-build.mjs) | 回归发现与退役构建文件清理 |
+| [run-node-tests.mjs](../tools/run-node-tests.mjs)、[clean-build.mjs](../tools/clean-build.mjs) | 回归发现与每次构建前清空纯生成lib，避免删除源码后残留旧输出 |
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
@@ -218,5 +223,4 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
 
-评测工具与schema见[评测设计](benchmark-design.md)。tools/prototypes、一次性probe及tools/out
-不是生产API，不把其试验方案提升为现役功能；测试入口见[开发维护](development.md)。
+评测工具与schema见[评测设计](benchmark-design.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

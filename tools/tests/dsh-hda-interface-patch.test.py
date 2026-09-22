@@ -48,7 +48,7 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     n2.parm('amount').set(4.0)
     before_states = api.parameter_states(n), api.parameter_states(n2)
     old_bytes = library.read_bytes()
-    info = run(f'__result__=hda_info({target!r}, include_state=True)', read_only=True)
+    info = run(f'__result__=parameter_ui({target!r}, include_state=True)', read_only=True)
     assert info['parameter_states'] == before_states[0]
     revision = info['interface_sha256']
     edits = [{'op': 'update', 'name': 'amount', 'fields': {'label': 'Magnitude', 'default': 5.0, 'help': 'Unit distance'}},

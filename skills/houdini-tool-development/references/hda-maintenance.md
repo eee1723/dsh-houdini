@@ -23,7 +23,7 @@ lock对未匹配内容要求discard_changes=True及后代权限；先保存再�
 unlock不认领后代，不递归解锁嵌套HDA；不能通过裸HOM或拆包绕过这些边界。
 成功后从新实例公共端口重验；生命周期返回值仅证明状态/文件，不证明内部几何、回调或依赖。
 
-1. 从目标实例读 hda_info，确认完整类型名、实际定义库、section 与参数接口；读 hda_get_section 和关联菜单/按钮 callback。不要猜 HDADefinition 的属性名或丢失命名空间。批量磁盘盘点可在 Bridge 用只读 HOM 查询定义；将文件列表与实际检查过的定义逐项对齐，不用 loadedFiles 数量代替覆盖。
+1. 从目标实例读 parameter_ui，确认完整类型名、实际定义库、section 与参数接口；读 hda_get_section 和关联菜单/按钮 callback。不要猜 HDADefinition 的属性名或丢失命名空间。批量磁盘盘点可在 Bridge 用只读 HOM 查询定义；将文件列表与实际检查过的定义逐项对齐，不用 loadedFiles 数量代替覆盖。
 2. 普通源码读取、备份、编辑和纯 Python 导入实验使用已有 Host 文件/shell 工具；HOM 只经 Bridge。Host 无权访问时明确路径缺口，不绕过沙箱。历史结果用 result_ref 回读，不在 Houdini 里打开结果存储实现文件。修改 sys.path、写临时文件或执行未知模块不属于只读 query。
 3. 拆开三类运行依赖：Python import、内部自定义节点/HDA 定义、外部文件/资源。检查与本次修改相关的入口、事件脚本和内部代码；文本无 import 不能证明动态导入或自定义节点依赖不存在。无法覆盖的范围保留 unverified。只在本机找到依赖链时，将远端缺文件、路径遮蔽等列为候选原因，不断言远端根因。
 

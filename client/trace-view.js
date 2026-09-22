@@ -132,7 +132,6 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
       "vocabulary 域": "签名与帮助",
       类型目录: "类型发现",
       "node 域": "节点与网络",
-      "compatibility 域": "历史兼容",
       "parm 域": "参数与动画",
       "scene 域": "工程与时间线",
       "geometry 域": "几何与关系",

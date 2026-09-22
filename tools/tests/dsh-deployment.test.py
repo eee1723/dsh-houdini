@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         source.mkdir()
         files = {
             "app/package-lock.json": b'{"lockfileVersion":3}',
-            "app/node_modules/@deepseek-ai/dsh/package.json": b'{"version":"0.1.2-rc.1"}',
+            "app/node_modules/@deepseek-ai/dsh/package.json": b'{"version":"0.1.6-alpha.2"}',
             "app/node_modules/dsh-houdini/package.json": json.dumps({"version": version}).encode(),
             "node/node.exe": b"fixture, never executed",
         }
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         manifest = {
             "schemaVersion": 1, "managerProtocol": 1, "version": version, "commit": "a" * 40,
             "channel": channel, "platform": "win32-x64", "nodeVersion": "24.17.0",
-            "dshVersion": "0.1.2-rc.1", "houdini": ["21.0", "22.0"],
+            "dshVersion": "0.1.6-alpha.2", "houdini": ["21.0", "22.0"],
             "inventorySha256": d.hashlib.sha256(inventory).hexdigest(),
             "lockSha256": d.hashlib.sha256(files["app/package-lock.json"]).hexdigest(),
             "asset": {"name": name, "size": (source / name).stat().st_size, "sha256": d.digest(source / name)},

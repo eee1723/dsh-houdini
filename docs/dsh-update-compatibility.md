@@ -22,8 +22,8 @@ HTTPS/摘要不是签名，签名也不防御本机用户主动替换整个安�
 ## 源码运行时的兼容选择
 
 DSH 的 npm `latest` 不是 dsh-houdini 的独立更新目标。安装器、launcher和manager默认只选择
-[`dsh-runtime-compatibility.json`](../dsh-runtime-compatibility.json) 的精确preferred版本；其他已验证版本、未知版本即使更新进入
-npx cache，也不会替换当前插件要求的版本。未命中preferred缓存时只下载对应精确根包，不选择最近修改的缓存。显式 `DSH_HOUDINI_DSH_BIN` / `DSH_HOUDINI_DSH_SPEC`
+[`dsh-runtime-compatibility.json`](../dsh-runtime-compatibility.json) 中唯一受支持的精确preferred版本；其他版本即使进入
+npx cache，也不会替换当前插件要求。未命中preferred缓存时只下载对应精确根包，不选择最近修改的缓存。显式 `DSH_HOUDINI_DSH_BIN` / `DSH_HOUDINI_DSH_SPEC`
 仅用于隔离资格验证，不代表发布。
 
 面板的[dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py)只查询官方仓库指定的latest稳定Release，
@@ -42,14 +42,18 @@ npx cache，也不会替换当前插件要求的版本。未命中preferred缓�
 
 ## 新 DSH 版本的资格流程
 
-DSH 0.1.5-rc.2是当前源码preferred与发行锁目标，由用户明确授权切换以进行Houdini实际验收；
-兼容清单保留pendingVerification，不代表GUI资格已完成或正式发行已发布。LLM/system-prompt peer显式接受该精确候选，
-不提前接受其他0.1.5预发行版；构建使用同版tools/system-prompt。persona以prefix为主，text通过YAML别名复用
-同一正文供旧受支持DSH读取；Trace离线统计兼容旧chunk与V3 assistant/message结算usage。
-Session事件消费者使用只读snapshotEvents；Bridge JSON类型独立于上游已移除的tools类型重导出。
-这些源码适配不代表完成运行时资格或历史迁移。
-模块可导入、conversation.view/composer.dock仍有公开类型定义，不等于组合启动或GUI已经通过。
-会话V3升级后不支持旧版本降级读取；候选资格验证必须使用独立DSH_HOME和自建日志，不直接迁移用户历史。
+DSH 0.1.6-alpha.2是当前源码preferred与发行锁目标，由用户明确授权切换以进行Houdini实际验收；
+它是官方最新预发行版。兼容清单只保留这一版本并保留pendingVerification，不代表GUI资格已完成或正式发行已发布。
+LLM/system-prompt peer只接受该精确版本；构建使用同版tools/system-prompt。persona只使用当前`prefix`字段，
+Trace按V3 assistant/message结算usage。
+
+preset直接使用当前`dsh-workflow-ptc` provider，不做版本转换。客户端直接使用公开
+`uiWorkspace.openSession`与`uiSession`当前绑定，不保留已移除的Session导航接口。上游已弃用同步Session历史读取，
+但0.1.6仍保留现有API；插件尚未把
+持久状态消费者全部迁移到projection，这一后续风险不得被当前组合启动通过掩盖。Bridge JSON类型继续独立于
+上游tools类型重导出。这些源码适配不代表完成live GUI资格或热卸载验收。
+模块可导入、workflow provider可解析、conversation.view/composer.dock仍有公开类型定义，不等于GUI已经通过。
+候选资格验证必须使用独立DSH_HOME和自建日志；当前源码不提供跨DSH版本的数据迁移或降级路径。
 
 可复跑的只读API预检是[check-dsh-candidate.mjs](../tools/check-dsh-candidate.mjs)：
 `node tools/check-dsh-candidate.mjs --candidate <隔离npm目录> --plugin <解压后的插件包目录>`。
@@ -81,9 +85,8 @@ TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 W
 8. **回归与提升**：`npm test`；H21/H22 launcher/manager 及 AGENTS.md 指定 HOM suites；记录真实 PID parent、
    DSH/plugin/bundle 版本和两个 surface hash。全部通过后才把精确版本加入 compatibility manifest，并显式设置 preferred。
 
-任何一步失败都保持旧 serving runtime。回滚只改变兼容清单的 preferred release 或显式启动已验证旧组合；
-不删除 Session、HIP、workspace 或插件仓库。若旧 DSH 需要不同第三方 bundle 版本，必须把整个组合视为另一条
-release 记录，不能假设 RPC adapter 向后兼容就代表 profile 也向后兼容。
+任何一步失败都不替换当前 serving runtime。需要回退时从Git或已签名历史发行恢复完整组合，不在当前源码中
+保留多版本分支；回退操作仍不得删除 Session、HIP、workspace 或插件仓库。
 
 ## 源码候选的完整用户路径验收
 
@@ -115,7 +118,7 @@ Iterator及其辅助方法使用锁定core-js构建的兼容资产，在MainWorl
 DSH document preview内嵌PDF.js会在模块求值时访问Iterator.prototype，不能等loadFinished再补。
 生成入口为[gen-web-polyfills.mjs](../tools/gen-web-polyfills.mjs)，随包携带许可证；不改上游npm缓存。
 此补丁针对页面realm，不证明PDF worker及任意文档格式在旧Chromium上的完整兼容。
-[profile sync](../houdini/python3.11libs/dsh_profile_sync.py)只对精确toolkit版本/调用点做兼容修补。
+[profile sync](../houdini/python3.11libs/dsh_profile_sync.py)只同步当前项目bundle与明确移除项，不改写旧版本调用点。
 WebView鉴权重定向已加载主页面；不能在loadFinished再导航一次以传session hint，否则可能中断
 首个页面的inventory/inspect初始化请求。显式session通过同源DocumentCreation脚本写入URL，
 供现有client消费，加载后撤销脚本；token不进入脚本，失败仍走异步重试。

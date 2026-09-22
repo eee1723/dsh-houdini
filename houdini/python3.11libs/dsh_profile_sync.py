@@ -45,16 +45,6 @@ def load_requirements(path: Path = REQUIREMENTS_FILE) -> dict:
                 raise RuntimeError(f"plugin {name!r} has an invalid project path: {path}")
         elif not isinstance(item.get("spec"), str):
             raise RuntimeError(f"plugin {name!r} needs a spec: {path}")
-    remove_plugins = data.get("removePlugins", [])
-    if not isinstance(remove_plugins, list) or not all(
-        isinstance(name, str) and name.strip() for name in remove_plugins
-    ):
-        raise RuntimeError(f"requirements removePlugins must be a string list: {path}")
-    if len(remove_plugins) != len(set(remove_plugins)):
-        raise RuntimeError(f"duplicate removePlugins entry: {path}")
-    overlap = names.intersection(remove_plugins)
-    if overlap:
-        raise RuntimeError(f"plugins cannot be both required and removed: {sorted(overlap)}")
     return data
 
 
@@ -166,26 +156,12 @@ def inspect_profile(
         if reasons:
             problems.append({"name": name, "reasons": reasons})
 
-    obsolete = []
-    for name in requirements.get("removePlugins", []):
-        dependency = dependencies.get(name)
-        package = _installed_manifest(root, name)
-        bundle_count = bundles.count(name)
-        if dependency is not None or package is not None or bundle_count:
-            obsolete.append({
-                "name": name,
-                "dependency": dependency,
-                "version": package.get("version") if package else None,
-                "bundleCount": bundle_count,
-            })
-
     return {
-        "ok": not problems and not obsolete,
+        "ok": not problems,
         "profile": profile,
         "profileDir": str(root),
         "plugins": installed,
         "problems": problems,
-        "obsolete": obsolete,
     }
 
 
@@ -205,12 +181,6 @@ def required_install_specs(
         else:
             specs.append(requirement["spec"])
     return specs
-
-
-def required_remove_names(requirements: dict, status: dict) -> list[str]:
-    """Return obsolete managed plugins that are still present in the profile."""
-    present = {item["name"] for item in status.get("obsolete", [])}
-    return [name for name in requirements.get("removePlugins", []) if name in present]
 
 
 def _run_plugin_command(
@@ -257,21 +227,9 @@ def sync_profile_plugins(
     """Reconcile required bundles through ``dsh plugin``, then verify them."""
     requirements = load_requirements(project_root / REQUIREMENTS_FILE.name)
     before = inspect_profile(requirements, project_root=project_root, home=home)
-    removals = required_remove_names(requirements, before)
     outputs: list[str] = []
-    if removals:
-        outputs.append(_run_plugin_command(
-            command_prefix,
-            ["plugin", "--profile", requirements["profile"], "remove", *removals],
-            use_shell=use_shell,
-            project_root=project_root,
-            env=env,
-            timeout=timeout,
-        ))
-
-    current = inspect_profile(requirements, project_root=project_root, home=home)
-    specs = required_install_specs(requirements, current, project_root=project_root)
-    if not specs and not removals:
+    specs = required_install_specs(requirements, before, project_root=project_root)
+    if not specs:
         versions = ", ".join(
             f"{item['name']}@{item['version'] or 'local'}" for item in before["plugins"]
         )
@@ -293,15 +251,7 @@ def sync_profile_plugins(
     if not after["ok"]:
         raise RuntimeError(
             "DSH profile plugin synchronization did not satisfy the manifest:\n"
-            + json.dumps({
-                "problems": after["problems"],
-                "obsolete": after.get("obsolete", []),
-            }, ensure_ascii=False, indent=2)
+            + json.dumps({"problems": after["problems"]}, ensure_ascii=False, indent=2)
             + (f"\ncommand output:\n{chr(10).join(outputs)[-8000:]}" if outputs else "")
         )
-    actions = []
-    if removals:
-        actions.append("removed " + ", ".join(removals))
-    if specs:
-        actions.append("added " + ", ".join(specs))
-    return "profile plugins synced: " + "; ".join(actions)
+    return "profile plugins synced: added " + ", ".join(specs)

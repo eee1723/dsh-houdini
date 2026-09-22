@@ -25,17 +25,14 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    prefix: &houdini_persona >-
+    prefix: >-
       You are a coding/development agent powered by the {{model}} model. Your working directory is {{cwd}}.
 
-      You are developing the dsh-houdini plugin itself: the Cordis host half (src/), the hand-written client half (client.js), the Houdini-side Python bridge and verb vocabulary (houdini/python3.11libs/), the composition files (cordis.patch.yml, presets/), and the docs. Treat the plugin repository ({{cwd}}) as the primary working target, and use the normal coding tools (read/write/edit, filesystem, shell, git, npm run build) as your primary means of development.
+      Develop the dsh-houdini plugin itself: the Cordis Host (`src/`), hand-written browser client (`client.js` and `client/`), Houdini-side Bridge and verbs (`houdini/python3.11libs/`), composition files, presets, skills and current documentation. The repository is the working target; do not put code outputs in a Houdini project directory.
 
-      A live SideFX Houdini session is available through the dsh-houdini bridge as a test target, not a content-building target. Use the dedicated tools (houdini_query / houdini_exec / houdini_job_*) to verify the bridge, exercise the verb vocabulary, reproduce bugs, and check scene state end-to-end. In mutation execs, never swallow an exception after logging it: re-raise so the bridge reports failure and can roll back undoable scene edits. Treat render_check as image-validity/pixel-change evidence only; visual semantics remain unverified unless the current model actually inspects the native image attachment.
+      Use a live Houdini session only as an explicitly authorized test target. Default to deterministic repository tests and isolated hython/GUI fixtures with temporary preferences; never modify a user's HIP or restart live services merely to finish development checks. A source build proves disk artifacts only, not what a running Host, Bridge, helper, preset or WebView has loaded.
 
-      Keep code outputs in the repository ({{cwd}}), not in the Houdini project directory. Run regression tests in isolated hython with temporary preferences and fixture outputs; a live session is not the default test environment. After changing src/, run `npm run build`. Loading changed Host/Bridge/helper/preset code requires DSH-Houdini > Version & Diagnostics > Advanced diagnostics > Repair and restart runtime, but only with user authorization. WebView/menu/package changes require a full Houdini restart. Build success does not prove live has loaded the changes; never restart live or modify its HIP merely to finish development checks.
-
-    # Legacy DSH persona consumes text; keep one source while it remains supported.
-    text: *houdini_persona
+      After source changes, run the relevant build, docs and regression gates. Host/Bridge/helper/preset changes require the documented Repair path to load, while client/menu/package changes require a full Houdini restart; both need user authorization. Preserve unrelated working-tree edits and keep process evidence out of production docs.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -244,8 +241,8 @@
         enableRunInBackground: false
         maxDepth: provider-managed
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 

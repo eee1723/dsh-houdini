@@ -96,7 +96,7 @@ def expand_layout(layout):
 
 
 def validate_layout_spec(spec):
-    """Strict component path; legacy spec remains independently compatible."""
+    """Validate the current expanded layout schema before applying it."""
     common = {'type', 'name', 'label', 'help', 'tags', 'hidden', 'hide_label', 'join_next', 'hide_when', 'disable_when'}
     kinds = {'folder': {'parms', 'folder_type', 'default', 'ends_tab_group', 'tab_hide_when', 'tab_disable_when'},
              'float': {'default', 'min', 'max', 'min_strict', 'max_strict', 'components', 'look'},

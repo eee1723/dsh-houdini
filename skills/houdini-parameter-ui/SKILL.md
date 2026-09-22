@@ -21,7 +21,7 @@ description: 设计、建立和维护Houdini参数面板、程序化模型控制
 
 ## 载体与实现
 
-- 单实例/场景控制通常使用Null或已有合适节点上的spare parameters。create_spare_parms(layout=...)复用组件，默认只追加，拒绝同名覆盖；旧默认值修改走update_defaults。
+- 单实例/场景控制通常使用Null或已有合适节点上的spare parameters。create_spare_parms(layout=...)复用组件，默认只追加，拒绝同名覆盖；已有默认值修改走update_defaults。
 - 用户明确需要共享节点类型或安装分发时选择HDA，按名联用houdini-tool-development；可调参数或独立保存HIP本身不要求HDA。hda_set_interface(layout=...)是整组重建，已有实例状态需要保留时选择受支持的edits路径。
 - parameter_ui提供通用节点参数树、可选状态与结构建议；不要求目标是HDA。只取相关节点，不为做总控默认扫描全盘/全场景。
 - [组件参考](references/ui-components.md)与[界面设计](references/hda-ui.md)维护分组、条件、标签和画廊；可以混用普通spec或完全不用组件。

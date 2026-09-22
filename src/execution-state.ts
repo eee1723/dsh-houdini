@@ -152,7 +152,7 @@ export class ExecutorBindingBarrier {
     signal?.throwIfAborted()
     const events = session.snapshotEvents()
     requireExecutorContinuity(events, current)
-    if (!current) return // explicitly unbound legacy client, not a multi-executor route
+    if (!current) return // explicitly unbound single-executor route
     if (!/^[0-9a-f]{32}$/.test(current)) throw new Error('Invalid target executor identity')
     let pending = this.flushed.get(session)
     if (!pending) {
@@ -201,7 +201,7 @@ export function recordedExecutorIdentity(events: readonly Event[]): string | und
     if (call.name === 'houdini_query' && (call.args?.result_ref || call.args?.source_ref || call.args?.request_ref)) continue
     const value = d.meta?.canonical
     const identity = value?.execution?.executor_id ?? value?.requestReceipt?.executor_id
-    if (identity === undefined) continue // old histories remain legacy, never infer identity from PID/path
+    if (identity === undefined) continue // an unbound history never gains identity from PID/path
     if (typeof identity !== 'string' || !/^[0-9a-f]{32}$/.test(identity)) {
       throw new Error('Invalid recorded Houdini executor identity; no live request sent. Inspect the original session evidence.')
     }

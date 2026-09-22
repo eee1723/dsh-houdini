@@ -32,22 +32,25 @@ async function run(href, options = {}) {
     ? [{ id: url.searchParams.get('dsh-houdini-session'), cwd: path, projectionValues: {agentPreset:'houdini'}, updatedAt: 1 }] : []);
   const sessionStore = options.sessionStore ?? store({
     ids: rows.map(row => row.id), byId: Object.fromEntries(rows.map(row => [row.id, row])),
-    current: options.current, phase: options.sessionPhase ?? 'ready',
+    phase: options.sessionPhase ?? 'ready',
   });
+  const currentSession = options.currentSession ?? store({key: options.current});
   const workspaceStore = options.workspaceStore ?? store({
     items: [{workspaceId:'w', path, sessionIds: options.accounted ?? rows.map(row => row.id)}],
     archivedSessionIds: options.archived ?? [], phase: options.workspacePhase ?? 'ready', state:options.workspaceStatus??'idle', error:null,
   });
   let refreshes = 0, reloads = 0, earlyDisposed = false;
+  const openSession = id => {
+    assert(sessionStore.getSnapshot().byId[id], 'native session navigation rejects unaddressable IDs');
+    opened.push(id);
+    currentSession.set({key:id});
+  };
   const sessions = {
     list: sessionStore,
     refresh: async () => { refreshes++; if (options.refresh) await options.refresh(api); },
-    open: id => {
-      assert(sessionStore.getSnapshot().byId[id], 'native sessions.open rejects unaddressable IDs');
-      opened.push(id);
-      sessionStore.set({...sessionStore.getSnapshot(), current:id});
-    },
   };
+  const uiSession = {adapter:{current:currentSession}};
+  const uiWorkspace = {openSession};
   function publish(request, preset = 'houdini', attached = true) {
     const previous = sessionStore.getSnapshot();
     sessionStore.set({...previous, ids:[...new Set([...previous.ids,request.sessionId])],
@@ -92,11 +95,12 @@ async function run(href, options = {}) {
   const body = element('body');
   const document = {body, querySelector:()=>({}), createElement:element, head:element('head')};
   const scope = {
-    get: name => ({sessions,workspaces,remote,slots,layout:options.layout===false?undefined:{selectPanel:id=>panels.push(id)}})[name],
+    get: name => ({sessions,workspaces,remote,slots,uiSession,uiWorkspace,
+      layout:options.layout===false?undefined:{selectPanel:id=>panels.push(id)}})[name],
     effect: install => { const dispose=install(); if(dispose) disposers.push(dispose); },
   };
   const api = {
-    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,sessions,publish,
+    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,sessions,uiWorkspace,publish,
     get refreshes(){return refreshes;},get reloads(){return reloads;},get earlyDisposed(){return earlyDisposed;},
     emit: (name,event={target:body})=>{for(const fn of [...(listeners.get(name)??[])])fn(event);},
     timeout:()=>{for(const fn of [...timers.values()])fn();},
@@ -128,7 +132,9 @@ async function run(href, options = {}) {
 const hinted = await run(
   'http://127.0.0.1:3081/?dsh-houdini-session=session-target&retained=yes#conversation',
 );
-assert.deepEqual(hinted.injected, [['sessions', 'workspaces', 'remote', 'remote.session'], ['connection']]);
+assert.deepEqual(hinted.injected, [[
+  'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace',
+], ['connection']]);
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced, [{
   state: { retained: true },
@@ -218,7 +224,7 @@ const workspaceGate = deferred();
 const manual = await run(workspaceUrl,{rows:[row('manual',1,'standard')],
   createWorkspace:(_input,api)=>workspaceGate.promise.then(()=>api.workspaceStore.getSnapshot().items[0])});
 manual.emit('pointerdown');
-manual.sessions.open('manual');
+manual.uiWorkspace.openSession('manual');
 workspaceGate.resolve();
 await flush();
 assert.deepEqual(manual.opened,['manual']);
@@ -232,7 +238,7 @@ const duringCreate = await run(workspaceUrl,{rows:[row('manual',1,'standard')],c
 }});
 assert.equal(duringCreate.creates.length,1);
 duringCreate.emit('keydown');
-duringCreate.sessions.open('manual');
+duringCreate.uiWorkspace.openSession('manual');
 createGate.resolve();
 await flush();
 assert.deepEqual(duringCreate.opened,['manual']);
@@ -335,7 +341,7 @@ for (const timeout of [false,true]) {
   failed.emit('pointerdown',{target:retryButton});
   assert.equal(failed.notices().length,1,'the notice itself is not a different navigation intent');
   failed.emit('keydown',{key:'x',target:failed.body});
-  failed.sessions.open('manual');
+  failed.uiWorkspace.openSession('manual');
   const count=failed.creates.length;
   retryButton.onclick();await flush();
   assert.equal(failed.creates.length,count);
@@ -348,9 +354,9 @@ for (const timeout of [false,true]) {
 
 const watermark = plain.registrations['houdini-watermark'].component;
 assert(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'houdini'}}}})}),
-  'DSH 0.1.2 projected preset must show Houdini mode');
-assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{agentPreset:'houdini',projectionValues:{agentPreset:'cordis'}}}})}),null,
-  'current projected preset must override legacy stored value');
+  'current projected preset must show Houdini mode');
+assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'cordis'}}}})}),null,
+  'non-Houdini projected preset must not show the watermark');
 
 const view = plain.registrations.houdinitrace.component;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
@@ -435,11 +441,11 @@ const traceProps = {
       },
       {
         kind: 'tool-result', seq: 13, time: 4000,
-        call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "layout_nodes('/obj')\ndisplay_node('/obj/bike/OUT')" }) },
+        call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "layout_nodes('/obj')\nsop_set_output('/obj/bike/OUT')" }) },
         content: [{ type: 'text', text: [
           'Execution failed:\nValueError: display output is ambiguous',
           'rollback:\n{"supported":true,"applied":true,"scope":"Houdini undoable scene edits only"}',
-          'verbs (2):\n1. [ok] layout_nodes(["/obj"]) -> {"nodes":12} (2ms)\n2. [FAIL] display_node(["/obj/bike/OUT"]) -> error: ambiguous (0ms)',
+          'verbs (2):\n1. [ok] layout_nodes(["/obj"]) -> {"nodes":12} (2ms)\n2. [FAIL] sop_set_output(["/obj/bike/OUT"]) -> error: ambiguous (0ms)',
         ].join('\n\n') }],
       },
     ] }]]),

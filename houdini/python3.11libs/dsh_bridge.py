@@ -82,18 +82,13 @@ _HOU_THREAD_ID = threading.get_ident()
 # 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
 # owner_call), expected_contract and a one-time request ticket; job status and
 # cancel are authorized by the owning session only.
-_EXECUTION_CONTRACT_VERSION = 58
+_EXECUTION_CONTRACT_VERSION = 59
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)
 _EXECUTION_SEQUENCE = 0
-# Remove the retired v8 callback when reloading an existing runtime.
-if globals().get('_delivery_hip_callback') is not None:
-    try:hou.hipFile.removeEventCallback(_delivery_hip_callback)
-    except hou.Error:pass
-
 # --- limits (kept small so a runaway agent cannot exhaust Houdini) ----------
 _MAX_STREAM_BYTES = 1024 * 1024          # cap captured stdout/stderr per exec
 _MAX_RESULT_BYTES = 4 * 1024 * 1024      # cap the serialized __result__
@@ -241,8 +236,6 @@ _VERBS: dict[str, object] = {
     "delete_node": dsh_hou_helpers.delete_node,
     "cook_node": dsh_hou_helpers.cook_node,
     "set_update_mode": dsh_hou_helpers.set_update_mode,
-    "set_display": dsh_hou_helpers.set_display,
-    "display_node": dsh_hou_helpers.display_node,
     "sop_set_output": dsh_hou_helpers.sop_set_output,
     "sop_output_node": dsh_hou_helpers.sop_output_node,
     "set_object_visible": dsh_hou_helpers.set_object_visible,
@@ -259,7 +252,6 @@ _VERBS: dict[str, object] = {
     "bind_controls": dsh_hou_helpers.bind_controls,
     "hda_create": dsh_hou_helpers.hda_create,
     "hda_edit": dsh_hou_helpers.hda_edit,
-    "hda_info": dsh_hou_helpers.hda_info,
     "hda_get_section": dsh_hou_helpers.hda_get_section,
     "hda_set_section": dsh_hou_helpers.hda_set_section,
     "hda_patch_section": dsh_hou_helpers.hda_patch_section,
@@ -293,7 +285,7 @@ _MUTATING_VERB_NAMES = {
     "cop_layer_stats", "cop_compare_layers", "test_cop_controls",
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
-    "delete_node", "cook_node", "set_display", "sop_set_output",
+    "delete_node", "cook_node", "sop_set_output",
     "set_object_visible", "layout_nodes", "network_boxes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
@@ -1090,7 +1082,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
         discovery_signature = None
     def wrapped(*args, **kwargs):
         if observed_nodes is not None and (name in _MUTATING_VERB_NAMES or name in
-                ('describe', 'read_parms', 'list_parms', 'node_provenance', 'display_node', 'sop_output_node')):
+                ('describe', 'read_parms', 'list_parms', 'node_provenance', 'sop_output_node')):
             for value in list(args[:2]) + [kwargs[k] for k in ('node', 'parent', 'output', 'controller', 'camera', 'target') if k in kwargs]:
                 try:
                     node = value if isinstance(value, hou.Node) else hou.node(value) if isinstance(value, str) and value.startswith('/') else None

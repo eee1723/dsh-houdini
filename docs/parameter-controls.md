@@ -34,7 +34,7 @@
 
 | 阶段 | 工作范围 | 完成依据 |
 |---|---|---|
-| 共享知识与路由 | 参数界面skill承接UI参考/画廊，工具开发保留HDA/脚本/交付；旧入口兼容 | 注册/资源/索引一致，普通赋值不误路由为设计任务 |
+| 共享知识与路由 | 参数界面skill承接UI参考/画廊，工具开发维护HDA/脚本/交付 | 注册/资源/索引一致，普通赋值不误路由为设计任务 |
 | 单节点应用 | 共用layout展开，spare追加与预览，拒绝同名覆盖，保留旧值/表达式/keys/locks | Null/已有控制节点、失败恢复与双版本测试 |
 | 独立绑定 | 明确源/目标、直接与线性数值引用，预览计划/hash、驱动覆盖显式化、失败恢复 | 普通正例、旧驱动/锁定/循环/过期拒绝、实际目标响应 |
 | 两种顺序验收 | 从零控制驱动模型；既有网络扫描后接总控 | 参数、绑定表达式及最终SOP输出分别验证；GUI与自然任务独立报告 |
@@ -43,8 +43,8 @@
 
 ## 当前实施边界
 
-parameter_ui作为不依赖HDA的只读入口，hda_info保留兼容；create_spare_parms与hda_set_interface共用组件展开。
-spare的layout默认追加，与HDA整组重建分开。旧默认更新仍用update_defaults；已有HDA兼容编辑仍用edits。
+parameter_ui是不依赖HDA的统一只读界面入口；create_spare_parms与hda_set_interface共用组件展开。
+spare的layout默认追加，与HDA整组重建分开。已有spare默认值更新用update_defaults；HDA增量编辑用edits。
 bind_controls首版只接受明确数值源与目标以及线性scale/offset，不接管任意已有表达式网络。
 未指定的场景参数不自动变为总控目标；单次allow_foreign只用于用户明确的目标，服务节点不豁免。
 布局、参数读取和绑定回读各自不能证明业务产物正确；领域输出验证继续使用现有cook/verify_network/test_controls合同。

@@ -56,13 +56,7 @@ try:
             if setting.get('menu') and not setting.get('menu_dynamic'):
                 assert {m['token'] for m in setting['menu']} == set(actual.parm(setting['name']).menuItems())
         actual.destroy()
-    assert h.node_info(root, 'box', filter='size')['filter'] == 'size'
-    try:
-        h.node_info(root, 'box', parm_filter='size', filter='scale')
-    except ValueError as error:
-        assert 'only one' in str(error)
-    else:
-        raise AssertionError('node_info filter aliases must be exclusive')
+    assert h.node_info(root, 'box', parm_filter='size')['filter'] == 'size'
     assert set(root.children()) == before
     assert cards.operation_card('polybevel::2.0') is None
     assert cards.operation_card('sweep::99.0') is None

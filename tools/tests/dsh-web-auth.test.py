@@ -1,4 +1,4 @@
-"""Standard-library regression for DSH 0.1.2 browser-session auth."""
+"""Standard-library regression for current DSH browser-session auth."""
 
 from __future__ import annotations
 

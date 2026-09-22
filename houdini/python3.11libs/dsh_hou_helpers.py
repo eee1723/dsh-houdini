@@ -2281,7 +2281,7 @@ def sop_output_node(parent) -> dict:
             result["note"] = (
                 f"display 旗标不在链尾，下游 {len(downstream)} 个节点 "
                 f"({', '.join(downstream[:5])}) 不会显示/渲染；"
-                "如需以链尾为输出，用 set_display 把旗标移过去"
+                "如需以链尾为输出，用 sop_set_output 把旗标移过去"
             )
     return result
 
@@ -2340,43 +2340,6 @@ def visible_objects(root="/obj") -> dict:
             "provenance": node_provenance(child)["status"],
         })
     return {"context": "obj", "root": p.path(), "objects": objects}
-
-
-def set_display(node, render: bool = True,
-                allow_foreign: str | None = None) -> dict:
-    """兼容入口：SOP → sop_set_output；OBJ → set_object_visible。
-
-    新代码请使用语义明确的新动词。OBJ 没有独立 render flag，``render`` 在
-    OBJ 分支被忽略并回报 note。
-    """
-    n = _resolve(node)
-    if n.type().category() == hou.sopNodeTypeCategory():
-        return sop_set_output(n, render=render, allow_foreign=allow_foreign)
-    if n.type().category() == hou.objNodeTypeCategory():
-        result = set_object_visible(n, True, allow_foreign=allow_foreign)
-        result["note"] = "OBJ 没有 SOP 式 render flag；render 参数已忽略"
-        return result
-    raise ValueError(
-        f"set_display 不支持 {n.path()} ({n.type().category().name()})；"
-        "请用 sop_set_output 或 set_object_visible"
-    )
-
-
-def display_node(parent) -> dict:
-    """兼容入口：SOP 网络 → sop_output_node；OBJ manager → visible_objects。"""
-    p = _resolve(parent)
-    try:
-        child_category = p.childTypeCategory()
-    except Exception:
-        child_category = None
-    if child_category == hou.sopNodeTypeCategory():
-        return sop_output_node(p)
-    if child_category == hou.objNodeTypeCategory():
-        return visible_objects(p)
-    raise ValueError(
-        f"display_node 无法判断 {p.path()} 的显示语义；"
-        "请用 sop_output_node 或 visible_objects"
-    )
 
 
 def _layout_flow(items, horizontal_spacing: float, vertical_spacing: float) -> None:
@@ -2620,11 +2583,10 @@ def _node_parameter_cards(typ, counts=None):
     return cards
 
 
-def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24,
-              *, filter: str | None = None) -> dict:
+def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) -> dict:
     """Read a version-resolved node card BEFORE creating a node (no scratch nodes).
 
-    parm_filter/filter is a literal case-insensitive substring, NOT regex or glob.
+    parm_filter is a literal case-insensitive substring, NOT regex or glob.
     An empty match is not an empty type: retry with parm_filter=''.
     Static templates include menu tokens/labels/defaults. Dynamic menus require
     ``list_parms`` on an actual node; this card does not run shelf scripts.
@@ -2645,10 +2607,6 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24,
     typ = hou.nodeType(cat, latest)
     if typ is None:
         raise ValueError(f"未知节点类型：{type_name}; parent={p.path()} creates {cat.name()} nodes. For SOP types use an existing geometry container, not /obj; search_tab_entries(parent,query) lists valid types.")
-    if filter is not None:
-        if parm_filter:
-            raise ValueError("use only one of parm_filter or filter")
-        parm_filter = filter
     if not isinstance(parm_filter, str):
         raise ValueError('parm_filter must be a literal substring string')
     all_parameters = _node_parameter_cards(typ)
@@ -3511,8 +3469,8 @@ def _spare_spec_template(item: dict, path: str, names: set):
             "default_value": (float(default),) if kind == "float" else (int(default),),
             "min": float(minimum) if kind == "float" else int(minimum),
             "max": float(maximum) if kind == "float" else int(maximum),
-            "min_is_strict": bool(item.get("min_strict", item.get("min_is_strict", False))),
-            "max_is_strict": bool(item.get("max_strict", item.get("max_is_strict", False))),
+            "min_is_strict": bool(item.get("min_strict", False)),
+            "max_is_strict": bool(item.get("max_strict", False)),
         }
         cls = hou.FloatParmTemplate if kind == "float" else hou.IntParmTemplate
         template = cls(name, label, 1, **kwargs)
@@ -3684,12 +3642,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
     仅float/int/toggle/string，拒绝内建参数、tuple/menu/callback/multiparm、表达式默认值。
     返回updated前后默认值、current_values/current_state_preserved；要同时改变当前值另用set_parms。
     """
-    if isinstance(code_parm, (list, tuple)):
-        if spec is not None or defaults is not None or update_defaults is not None or layout is not None:
-            raise ValueError('positional spec cannot be combined with spec/defaults/update_defaults/layout')
-        spec = list(code_parm)
-        code_parm = 'snippet'
-    elif not isinstance(code_parm, str):
+    if not isinstance(code_parm, str):
         raise ValueError('code_parm must be a parameter name string; pass a parameter specification as spec=[...]')
     n = _resolve(node)
     _require_owned(n, "create_spare_parms", allow_foreign)
@@ -4211,15 +4164,6 @@ def _template_info(template, depth: int, max_depth: int) -> dict:
     return entry
 
 
-def parameter_ui(node, max_depth: int = 6, include_state: bool = False, analyze_ui: bool = False) -> dict:
-    """Read parameter UI on any node: instance/definition tree, optional raw state and structural suggestions.
-
-    Does not create an HDA, evaluate menus, cook geometry, bind targets or alter UI.
-    hda_info remains a compatible entry for existing asset-oriented workflows.
-    """
-    return hda_info(node, max_depth=max_depth, include_state=include_state, analyze_ui=analyze_ui)
-
-
 def bind_controls(controller, bindings: list, *, dry_run: bool = False,
                   expected_plan: str | None = None, replace_existing: bool = False,
                   allow_foreign: str | None = None) -> dict:
@@ -4236,8 +4180,8 @@ def bind_controls(controller, bindings: list, *, dry_run: bool = False,
     return bind(controller, bindings, dry_run, expected_plan, replace_existing, allow_foreign)
 
 
-def hda_info(node, max_depth: int = 6, include_state: bool = False, analyze_ui: bool = False) -> dict:
-    """只读HDA/实例模板树、interface_sha256；include_state回读至多512通道raw值/keys/locks。
+def parameter_ui(node, max_depth: int = 6, include_state: bool = False, analyze_ui: bool = False) -> dict:
+    """只读任意节点的实例/定义模板树与interface_sha256。
 
     analyze_ui=True给出计数/深度、标题/条件引用、菜单token与密集行建议；仅分析
     返回树，截断见omitted_children。不求值表达式/菜单，不cook或自动修复。
@@ -4759,7 +4703,7 @@ def hda_set_interface(
     定义写入与场景undo隔离，后续同exec失败不撤销已经成功的库写入；布局组件不代表业务功能。
 
     增量模式：spec省略，传edits=[{op:'update',name,fields}或{op:'add',spec,folder?}]
-    与hda_info的expected_sha256。update支持label/help/default/min/max/min_strict/
+    并把parameter_ui返回的interface_sha256传为expected_sha256。update支持label/help/default/min/max/min_strict/
     max_strict/hidden/join_next/disable_when/hide_when。dry_run=True预览但仍须exec。
     所有受影响实例均检查ownership；保留旧通道值/keys/locks，新实例用新默认。
     不支持删除/改名/移动/类型转换/ramp/multiparm/实例界面覆盖；最多32项、64实例。

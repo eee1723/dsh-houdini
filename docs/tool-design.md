@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 58
+Execution contract version: 59
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -81,7 +81,6 @@ health的activeRequests由Registry活动槽推导，涵盖未返回exec和活动
 验证Bridge空闲，并在主线程重载前复查本地请求/jobs/队列。缺失/非法活动观察为unknown，不按0放行；
 进程核验与操作边界见[安装合同](setup.md)，强制DSH退出不授权强杀HOM或重发未知请求。
 没有跨runtime幂等、自动重提、无限期结果保留或强杀HOM保证；实际Host取消路径仍须新session验证。
-兼容入口保留历史调用解释能力，不作为新guidance中的优先创建方式。
 表达式设参分别报告language、write_status、evaluation和effect_status；合法零值不算错误。
 H21/H22本次新增的原生求值错误明确指向当前参数，或结果为非有限数值时，抛CheckpointError并恢复原参数状态；
 strict set_parms同时恢复本批前序参数和动画。failure_stage区分写入失败与求值失败，恢复结果另外报告。
@@ -124,8 +123,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。默认output=0兼容旧调用，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
-| `node_info(parent, type_name, parm_filter='', limit=24, *, filter=None)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；`filter`是`parm_filter`的兼容别名，两者不可同时给。operation_card含决策/版本，operation_parameters保留不受filter/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
+| `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
+| `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；parm_filter只作字面子串筛选。operation_card含决策/版本，operation_parameters保留不受筛选/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型合并缺少显式决策及已声明的参数语义警示，非阻断、不改默认值、不证明语义；Tube始终说明rad1/rad2是X/Y椭圆轴半径而非内外径。dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
 | `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式 output，不跟随display。output_index=0..63另验同父网络原生Output为该节点或直接连接它；省略仅验内部构建。默认检查直属范围，可nodes限域；error/空输出默认抛CheckpointError，require_valid=False仅诊断。嵌入Packed穿透包装检查内容；有界遍历超限/仅外部Packed保持unverified并拒绝假绿。handoff_output另回报名称/type/Null/leaf及稳定OUT命名事实，只供交接可读性判断，不把Null当公共端口或几何证明。warning、内容存在、部件齐全和视觉分开 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
@@ -140,13 +139,6 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`保持原生layoutChildren；`flow`保持节点拓扑分层；`handoff`对叶子Box内节点及盒间DAG做comfortable布局；`component`把一层组件容器中的叶子Box视为整体单元，按跨叶子接线布局组件并等量平移叶子内节点。后两者只接受显式`boxes`和`profile='comfortable'`，默认只移动当前session自有项；用户明确授权修复指定既有网络时，非空`allow_foreign`可单次放宽并留下日志，持久service永不豁免。未选节点/Box、Sticky Note和Network Dot作为固定障碍，量测失败零写入拒绝。必须先`dry_run=True`取得绑定当前层级/节点/障碍/generation的`plan_sha256`，再以`expected_plan`及相同授权应用；陈旧计划拒绝，重复应用零写入。`handoff`回报节点/叶子Box，`component`回报叶子/组件Box的重叠、containment与实测净距；只证明network-editor presentation，不证明几何、线交叉或视觉质量。children/flow的ownership与spacing语义不变 | dict |
 | `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 受治理Network Box分组：groups每项严格为{name,label,role,members,color?}或{name,label,role,boxes,color?}；前者是同parent直属节点的叶子框，后者是包含已存在叶子框的一层`component`容器。叶子先创建并由handoff布局，组件容器另批建立；禁止节点与box混装、同批创建被引用叶子、第三层嵌套、循环和最小化/其他editor item。roles为controls/component/placement/source/assembly/output。所有apply必须先dry_run取得同状态plan_sha256；陈旧/缺失plan零写入拒绝。创建用role默认色，已有box普通upsert保留现色，显式color才覆盖；节点或子框从其他box移动时源box必须同批声明最终成员/boxes或remove。移除永不删除节点或子框。Box权限使用独立类型化runtime registry，不从名字/父级/成员推断；foreign需单次授权，render服务永不豁免。失败恢复node/box membership、bounds/label/color/selection/位置及registry；只组织展示，不cook、不证明布局或几何正确 | dict |
 
-### compatibility 域（仅历史回放，不进新 guidance）
-
-| 动词 | 语义 | 返回 |
-|---|---|---|
-| `set_display(node, render=True, allow_foreign=None)` | deprecated 兼容 wrapper：按节点 context 路由 SOP output / OBJ visibility | dict |
-| `display_node(parent)` | deprecated 兼容 wrapper：按父网络 context 路由 SOP output / OBJ visibility | dict |
-
 ### parm 域（依附 node）
 
 | 动词 | 语义 | 返回 |
@@ -156,8 +148,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
-| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters；第二位置参数为list/tuple时兼容解释成`spec`，避免把参数规格误作代码参数名。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`，`min_is_strict/max_is_strict`兼容同义字段。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值，遵守严格上下限；当前值另用set_parms 新增layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
-| `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省，返回实例/可选定义树、可选raw状态和非阻断结构建议；不要求HDA，不cook/执行菜单，不创建绑定。hda_info保留同形兼容入口 | dict |
+| `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`；spec必须用具名参数，严格上下限字段只接受min_strict/max_strict。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值；当前值另用set_parms。layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
+| `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省：类型/可选定义文件与section、实例interface及definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、tuple look和Ramp类型。include_state返回至多512通道raw值/keys/locks；analyze_ui返回非阻断结构建议。不执行菜单/表达式/cook，不自动修复或创建绑定 | dict |
 | `bind_controls(controller, bindings, *, dry_run=False, expected_plan=None, replace_existing=False, allow_foreign=None)` | 1..32项明确数值绑定：source为控制节点参数名，target为目标参数绝对路径，可选scale/offset。dry_run返回plan_sha256；应用必须expected_plan匹配identity/值/keys/锁定/帧。默认拒绝已有驱动，replace_existing显式替换；拒绝非数值/菜单/回调/multiparm、任意表达式源、批次源目标交叠及重复目标。整数目标只接受整数源与映射系数。实际HScript引用和值回读，失败恢复本批目标通道；不保证领域输出或外部副作用 | dict |
 
 | `set_update_mode(mode, expected_mode)` | 显式切换auto/manual/on_mouse_up，expected_mode防止覆盖过期用户状态；无GUI拒绝on_mouse_up（原生会降为auto）。after/changed取实际回读，未应用请求或setter失败会尝试恢复并报告结果；模式恢复不撤销触发的cook/外部副作用。切Auto可能触发全场景计算，不是取消接口 | dict |
@@ -221,7 +213,6 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | 动词 | 语义 | 返回 |
 |---|---|---|
 | `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None, *, max_outputs=None)` | 把已有节点（通常 subnet）转为数字资产：自动建 otls 目录、默认 `$HIP/otls/<name>.hda`。max_outputs可显式声明1..64个输出上限，None保留原生默认；非法值写前拒绝。返回输入/输出上限、实例/定义顶层参数条目数和verification_scope，不承诺spare自动迁移或公共输出正确。`replace=True` = 整体重建：所有待销毁实例逐项通过 ownership guard 后，卸载旧定义并覆盖文件；否则同名冲突报错并提示 replace | dict |
-| `hda_info(node, max_depth=6, include_state=False, analyze_ui=False)` | 资产/参数界面只读自省：类型/定义文件/section、实例interface与definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、单页tab_conditionals、tuple look与Ramp类型。interface_sha256绑定类型/库路径/DialogScript；include_state返回至多512通道的raw_value/keyframes/locked。analyze_ui返回树计数/深度/截断及非阻断引用、标题和密集行建议，不执行菜单/表达式/cook，不自动修复或认证视觉。普通节点也可用 | dict |
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
 | `hda_set_section(node, section, code, allow_foreign=None)` | 全量写 section。`PythonModule` 先 `compile()` 预检语法（带行号报错，不写脏）；写后读回校验一致 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |

@@ -140,10 +140,10 @@ originals = {
     "run": manager._run,
 }
 try:
-    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.2-rc.1"
-    manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
+    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.6-alpha.2"
+    manager._selected_cached_dsh_version = lambda: "0.1.6-alpha.1"
     manager._runtime_dsh_info = lambda: {
-        "online": True, "verified": True, "version": "0.1.0-rc.7", "note": "PID 42",
+        "online": True, "verified": True, "version": "0.1.6-alpha.1", "note": "PID 42",
     }
     manager._dsh_launch_override = lambda: None
     manager._plugin_identity = lambda: ("0.1.0", "source main@aaaaaaa", False)
@@ -162,18 +162,18 @@ try:
     assert state["plugin_action"] == "View release", state
     assert "not verified" in state["plugin_note"], state
 
-    manager._selected_cached_dsh_version = lambda: "0.1.2-rc.1"
+    manager._selected_cached_dsh_version = lambda: "0.1.6-alpha.2"
     state = {"busy": True}
     manager._check_updates(state)
     assert state["dsh_status"] == "staged" and state["dsh_action"] == "Start required version", state
-    manager._selected_cached_dsh_version = lambda: "0.1.0-rc.7"
+    manager._selected_cached_dsh_version = lambda: "0.1.6-alpha.1"
 
     manager.dsh_runtime_compat.preferred_version = lambda: "0.1.3-unverified"
     state = {"busy": True}
     manager._check_updates(state)
     assert state["dsh_status"] == "blocked" and state["dsh_can_update"] is False, state
     assert state["dsh_action"] == "Await compatibility", state
-    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.2-rc.1"
+    manager.dsh_runtime_compat.preferred_version = lambda: "0.1.6-alpha.2"
 
     manager._dsh_launch_override = lambda: "DSH_HOUDINI_DSH_SPEC=@deepseek-ai/dsh@old"
     state = {"busy": True}
@@ -317,7 +317,7 @@ try:
 
     manager._run_npx_dsh = fake_run_npx
     manager._require_cached_dsh = lambda version: None
-    state = {"busy": True, "dsh_target": "0.1.2-rc.1"}
+    state = {"busy": True, "dsh_target": "0.1.6-alpha.2"}
     manager._update_dsh(state)
     assert state["result"] == "activate", state
     assert state["download_progress"] is None, state

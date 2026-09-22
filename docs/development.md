@@ -6,7 +6,7 @@
 
 | 内容 | 修改位置 | 派生/验证 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证70 个目录入口 |
+| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证67 个目录入口 |
 | 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
@@ -38,6 +38,8 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 新增或改变长期维护能力时，修改对应现役设计段落、源码索引和适用边界；不追加版本日志。
 诊断须先给出最小反例、失败层与因果依据，再修复并验证正反例；换算法后症状消失不能反证原生机制有错。
 每次代码变更沿现役索引核对受影响的文档、skill和preset/guidance；规则同源原位维护，不用追加补丁段落代替矛盾清理。
+提示词review同时核对四层边界：persona不复制工具合同或领域recipe，guidance不复制低频skill步骤，tool/verb描述不承担
+任务规划和完成策略，skill不重复跨域授权与运行时安全规则。精简后用Trace来源目录核对实际注入文本，而不是只看YAML/源码行数。
 新生产模块须在architecture代码地图可找到；新文档须进入docs索引，并解释它的唯一职责。
 变更词表签名/执行语义需同步Bridge版本和生成产物；仅整理文档不虚增执行版本。
 节点卡变化要运行生成一致性和目标Houdini的参数/正反例测试。

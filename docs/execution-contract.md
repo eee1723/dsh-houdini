@@ -2,7 +2,7 @@
 
 共享参数控制的职责和推进顺序见[控制参数、界面与绑定](parameter-controls.md)。UI追加、HDA定义重建和持续绑定是独立修改：
 create_spare_parms(layout)只追加单节点参数；bind_controls必须预览并核对源/目标状态计划，实际写入仍检查目标ownership。
-node_info接受`filter`作为`parm_filter`兼容别名；create_spare_parms第二位置参数为list/tuple时按spec处理。后台job状态/取消只接受Bridge实际生成的12位十六进制id，placeholder在Host侧拒绝，不发送到Houdini。
+node_info只接受`parm_filter`字面子串；create_spare_parms的spec必须使用具名参数。后台job状态/取消只接受Bridge实际生成的12位十六进制id，placeholder在Host侧拒绝，不发送到Houdini。
 旧动画/表达式默认保护，显式替换不扩大foreign授权。绑定回读只证明表达式及当前数值，领域输出需独立验证；
 界面/绑定恢复仅覆盖声明的通道/模板范围，不恢复任意回调、文件、solver或外部进程副作用。
 
@@ -143,7 +143,7 @@ COP差值证据绑定before/after/expected_delta的identity与输出口；任一
 HDA section 的写后回读/hash仅证明文本写入；PythonModule语法预检不执行回调，任意命名的嵌入section
 也不自动按Python编译。内部函数测试、真实回调、cook后的交付输出、隔离环境依赖验证分别取证，
 不能互相替代。多section库修改不具备场景undo的原子恢复保证。SOP HDA维护方法见
-[HDA维护路径](../skills/houdini-sop-workflow/references/hda-maintenance.md)。
+[HDA维护路径](../skills/houdini-tool-development/references/hda-maintenance.md)。
 
 HDA创建的输入/输出上限不是接线证明；实例spare、定义界面、公共端口输出与隔离新实例分别验证。
 hda_create只在本次转换内接续原生延迟内部身份：转换前整段自有、锁定原生定义实际库位于HFS且指纹不变、原生父identity存活、完整相对内部清单/类型匹配、旧identity消失且新identity未登记。超出有界清单或来源不符继续不认领；路径/tag本身不授予权限，allow_foreign不产生长期owner。
@@ -197,7 +197,7 @@ output必须是明确新建非空交付；空CTRL/helper用tab_create。required
 dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
 subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
-普通geo仅明确最终SOP并设置display/render，不要求创建Output；显式选择发布的旧调用保持兼容。
+普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。
 verify_network(...,output_index=同索引)检查其直接接线；不指定索引仍是内部构建/显示操作，
 不自动猜祖先、改变OBJ可见性或保存定义。重复索引、成环和未授权foreign出口写入拒绝。
 嵌入Packed的包装点/面不算实际内容：检查器有界访问内嵌几何，空内容拒绝，外部Packed或超限

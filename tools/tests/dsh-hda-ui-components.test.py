@@ -47,7 +47,7 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
         assert not preview['result']['ui_analysis']['issues'], preview['result']['ui_analysis']
         result=run(f'__result__=hda_set_interface({path!r},layout={layout!r},keep_std=False)')['result']
         assert not result['ui_analysis']['issues'],result['ui_analysis']
-        info=run(f'__result__=hda_info({path!r},max_depth=12,analyze_ui=True)',True)['result']
+        info=run(f'__result__=parameter_ui({path!r},max_depth=12,analyze_ui=True)',True)['result']
         assert info['ui_analysis']['entries']>15
         if name=='shape_controls':
             group=n.parmTemplateGroup()

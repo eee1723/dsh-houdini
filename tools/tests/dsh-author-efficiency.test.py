@@ -16,10 +16,10 @@ with h._execution_owner('efficiency','setup'):
     source=h.tab_create(root,'box','source')
     ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=[{'type':'toggle','name':'enabled','default':True}])
-    positional=h.tab_create(root,'null','POSITIONAL_CTRL')
-    positional_result=h.create_spare_parms(positional,[{'type':'float','name':'amount','default':1,
-        'min':0,'max':2,'min_is_strict':True,'max_is_strict':True}])
-    assert positional_result['mode']=='spec' and positional.parm('amount').parmTemplate().minIsStrict()
+    explicit=h.tab_create(root,'null','EXPLICIT_CTRL')
+    explicit_result=h.create_spare_parms(explicit,spec=[{'type':'float','name':'amount','default':1,
+        'min':0,'max':2,'min_strict':True,'max_strict':True}])
+    assert explicit_result['mode']=='spec' and explicit.parm('amount').parmTemplate().minIsStrict()
     with_parms=h.tab_create(root,'box','with_parms',parms={'sizex':2.0,'sizey':0.5})
     assert with_parms.evalParm('sizex')==2.0 and with_parms.evalParm('sizey')==0.5
     switch=h.tab_create(root,'switch','choice',inputs=[source])

@@ -162,7 +162,7 @@ def _process_record(pid):
 def stop_verified_frontend(pid, *, cli_roots, port, listener_pid):
     """Explicit repair only; retain a native handle so PID reuse cannot kill a successor.
 
-    Legacy listener only: unregistered descendants are not inferred from a port.
+    Stale verified listener only: unregistered descendants are not inferred from a port.
     Owned process trees continue to use stop_owned instead.
     """
     if os.name != 'nt' or type(pid) is not int or pid <= 0 or pid == os.getpid():

@@ -32,10 +32,10 @@
 ## HTA-004：agent-owned render 管线污染 OBJ 可见性
 
 - 状态：已修（render_view v2 proxy isolation + display context split）
-- 证据：`40054277` 步骤 #19/#21 只出绿色准星；步骤 #28 raw `setDisplayFlag(True)` 后恢复内容。`display_node('/obj')` 在步骤 #25 自身失败。
+- 证据：`40054277` 步骤 #19/#21 只出绿色准星；步骤 #28 raw `setDisplayFlag(True)` 后恢复内容；此前的模糊显示查询在步骤 #25 自身失败。
 - 症状：创建 `/obj/dsh_cam`/target 后用户对象被隐藏；验证工具改变了被验证状态。
-- 根因：`render_view`/`tab_create` 未保存和恢复 OBJ display 状态；`display_node` 把 SOP 单一 display child 语义套到 OBJ。
-- 修复：显式 SOP 经隐藏 Object Merge proxy，ROP forceobjects 只渲染 proxy；保存/恢复 OBJ visibility、selection、frame。SOP output 与 OBJ visibility 新动词拆分，旧名兼容路由。
+- 根因：`render_view`/`tab_create` 未保存和恢复 OBJ display 状态；旧的模糊显示入口把 SOP 单一 display child 语义套到 OBJ。
+- 修复：显式 SOP 经隐藏 Object Merge proxy，ROP forceobjects 只渲染 proxy；保存/恢复 OBJ visibility、selection、frame。SOP output 与 OBJ visibility 使用各自的语义动词，不再保留模糊入口。
 - 边界：SOP 子网的 display flag 仍是单节点语义，不能因 OBJ 行为删除该能力。
 
 ## HTA-005：手写 agent 相机矩阵导致恢复失败和序列化噪音

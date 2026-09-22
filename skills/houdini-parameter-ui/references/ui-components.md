@@ -59,7 +59,7 @@ create_spare_parms(node, layout=layout)
 
 | 失败面 | 为什么影响设计 | 当前处理和边界 |
 |---|---|---|
-| 自省漏掉单页条件 | 看见参数树却不知道某页为何消失/禁用 | hda_info增加tab_conditionals与UI分析；请求足够max_depth，截断时不判断全局完整性 |
+| 自省漏掉单页条件 | 看见参数树却不知道某页为何消失/禁用 | parameter_ui返回tab_conditionals与UI分析；请求足够max_depth，截断时不判断全局完整性 |
 | 标题/条件引用拼错 | 界面能打开，相关开关却可能失效 | ui_analysis提示未解析引用，不自动猜同义名；tuple分量/动态或外部引用需人工核对 |
 | 菜单索引与UI条件token混淆 | eval返回索引，条件却可能需要符号token | 实际菜单token与条件相互核对；分析器提醒可疑数字比较，不盲目改写 |
 | HDA页签内部名被原生归并 | 提交名不一定是最后的folder-set参数名 | 自省实际FolderSet/标签树，验证结构顺序；不按未确认的name操作页签 |
@@ -70,7 +70,7 @@ create_spare_parms(node, layout=layout)
 
 ## 分析与样例
 
-parameter_ui(node,max_depth=12,analyze_ui=True)返回ui_analysis：类型计数、深度、标题开关数、单页条件数、结构建议和截断标志。hda_info保留兼容。
+parameter_ui(node,max_depth=12,analyze_ui=True)返回ui_analysis：类型计数、深度、标题开关数、单页条件数、结构建议和截断标志。
 它不执行回调/菜单，不cook，不复制源码，也不生成“视觉正确”的证书。发现引用不存在时先核对当前实例，再决定是否需要修复。
 
 [组件画廊JSON](../assets/ui-component-gallery.json)包含两种可编辑组合：整体/细节控制，以及重复属性条目/输出区。

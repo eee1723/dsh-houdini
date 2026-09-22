@@ -156,12 +156,11 @@ assert.match(sopWorkflow, /组件.*Cd/, 'requested observation colors must follo
 assert.match(moduleContracts, /X宽、Y高、Z深/, 'module contracts need the default Houdini world frame')
 assert.match(handoffLayout, /MODULE · SOURCE/, 'handoff reference needs the component-row role-cell pattern')
 const houdiniPreset = read('presets/houdini/agent.cordis.yml')
-assert.match(houdiniPreset, /subnet containers are not the default/)
-assert.match(houdiniPreset, /OUT_ASSET/)
-assert.match(houdiniPreset, /lowest common assembly/)
-assert.match(houdiniPreset, /world Y-up/)
-assert.match(houdiniPreset, /first skeleton\/source/)
-assert.match(houdiniPreset, /component Network Box/)
+assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tutorial methods belong to those skills/,
+  'the persona must route domain methods instead of duplicating them')
+for (const leakedRecipe of [/OUT_ASSET/, /Copy to Points/, /component Network Box/, /world Y-up/]) {
+  assert.doesNotMatch(houdiniPreset, leakedRecipe, 'domain recipes belong to the matching skill, not the persona')
+}
 assert.ok(data.cards.polybevel.notes.some(note => /guide-cook crash/.test(note)),
   'the observed H21 PolyBevel interaction crash must remain an explicit scoped risk')
 console.log(`documentation contracts passed (${docs.length} current docs, ${Object.keys(data.cards).length} generated cards)`)

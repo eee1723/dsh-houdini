@@ -161,7 +161,7 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - Solaris/Material/COP 等上下文创建：优先 `search_tab_entries(actual_parent, query)`；检查
   entry 是 node type 还是多节点 tool、是否 hidden/deprecated、是否被 parent tab mask
   排除。`tab_create` 只建一个可见节点，setup/builder 用 `tab_apply`。
-- 显示：SOP 用 `sop_set_output/sop_output_node`，OBJ 用 `set_object_visible/visible_objects`；旧 `set_display/display_node` 只作兼容。检查是否错误混用 singular/plural context。
+- 显示：SOP 用 `sop_set_output/sop_output_node`，OBJ 用 `set_object_visible/visible_objects`；检查是否错误混用 singular/plural context。
 - cook/状态：`cook_node` + `describe`，但不得忽略 warning。
 - 属性值：`geo_attrib_stats`；若局部形态仍不可证，记录新的几何自省缺口。
 - 视觉验证：`render_view`；交付 ROP 才用 `render_frame`。
@@ -206,7 +206,7 @@ evidence 必须去重并把后续结果列为 `replayedResults`，不得让 repl
 - 渲染调用意图、已执行ledger、回执、磁盘产物与inspection分别统计；未知请求没有ledger不能推导没有执行。版本错配只证明观测时合同不同，不证明导致进程终止的根因。
 
 - 先重建用户要的是定位原因、修改回调、消除外部包，还是可移机交付；本机依赖链不证明远端具体缺包原因。实际定义库与完整类型名、用户授权和受影响实例范围分别核对。
-- 相关自省优先hda_info/hda_get_section，局部修正可用hda_patch_section；批量磁盘定义盘点不硬套仅接受node的接口。文件列表与被检查定义逐项对齐，不能只因使用loadedFiles就判漏扫，也不能靠总数一致证明完整。
+- 相关自省优先parameter_ui/hda_get_section，局部修正可用hda_patch_section；批量磁盘定义盘点不硬套仅接受node的接口。文件列表与被检查定义逐项对齐，不能只因使用loadedFiles就判漏扫，也不能靠总数一致证明完整。
 - 依赖包含Python import、内部自定义HDA类型、其他资源；扫描无包名不证明闭包完整。section写入/hash、内部helper、实际hdaModule/回调、cook后的最终几何、隔离目标环境可用分别列证据。声明单文件自包含须覆盖实际自定义节点依赖。
 - 新实例菜单显示、底层token和实际业务输入分别取证；空默认、失效选择、切class不混同。输出仅errors()、分支数量不代替cook/warnings/分支关系。同步或替换纯函数通过不代替实际副作用与恢复。
 - 手动exec源码绕过真实回调时只认可所测函数层；弹窗未测等范围应保留。测试需隔离，不鼓励为补证直接操作用户网络。无图像的功能维护不算视觉失败，不强迫艺术/动画完成门。

@@ -149,7 +149,7 @@ def _new_config(hou, root: Path) -> dict | None:
     # the candidate choice; npm releases/cache hits are never inferred.
     binary = os.environ.get('DSH_HOUDINI_COMPONENT_BIN', '').strip().strip('"')
     if not binary:
-        binary = _prompt_path(hou, 'Select a BUILT DSH CLI containing provider-selected child cwd (apps/cli/lib/bin.js). Official 0.1.5-rc.2 does not include this candidate change.',
+        binary = _prompt_path(hou, 'Select a BUILT DSH CLI containing provider-selected child cwd (apps/cli/lib/bin.js). Official DSH releases do not replace this pinned component-runtime candidate.',
                               os.environ.get('DSH_HOUDINI_DSH_BIN', ''))
     if binary is None:
         return None

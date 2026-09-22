@@ -1,5 +1,5 @@
 /**
- * HTTP client for the Houdini-side bridge (`houdini/dsh_bridge.py`).
+ * HTTP client for the Houdini-side bridge (`houdini/python3.11libs/dsh_bridge.py`).
  *
  * The bridge runs inside Houdini's own Python, where the `hou` module lives;
  * this client is the only channel the plugin uses to reach it.

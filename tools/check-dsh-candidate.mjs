@@ -23,7 +23,7 @@ const load=async name=>import(pathToFileURL(require.resolve(name)).href);
 const manifest=JSON.parse(fs.readFileSync(path.join(plugin,'package.json'),'utf8'));
 const clean=error=>String(error).replace(/Bearer\s+\S+|([?&]token=)[^&\s]+/gi,'[redacted]');
 const report={candidateVersion:require('@deepseek-ai/dsh/package.json').version,
-  pluginVersion:manifest.version,checks:[],notTested:['live Houdini WebView','authenticated RPC','old-session migration','model behavior']};
+  pluginVersion:manifest.version,checks:[],notTested:['live Houdini WebView','authenticated RPC','model behavior']};
 const semver=require('semver');
 for(const [name,range] of Object.entries(manifest.peerDependencies||{})) {
   try {
@@ -49,6 +49,15 @@ for(const preset of ['houdini','houdini-dev']) {
     if(parsed[field]!==config[field]) throw Error('persona content changed during schema validation');
     report.checks.push({id:'persona:'+preset,ok:true,field});
   } catch(error) {report.checks.push({id:'persona:'+preset,ok:false,field,error:clean(error)});}
+  const workflow=source.match(/^\s+- id: (workflow-(?:ptc|worker-thread))\r?\n\s+name: ['"]([^'"]+)['"]/m);
+  try {
+    if(!workflow) throw Error('workflow provider row not found');
+    require.resolve(workflow[2]);
+    report.checks.push({id:'workflow-provider:'+preset,ok:true,row:workflow[1],package:workflow[2]});
+  } catch(error) {
+    report.checks.push({id:'workflow-provider:'+preset,ok:false,
+      row:workflow?.[1],package:workflow?.[2],error:clean(error)});
+  }
 }
 const session=await load('@deepseek-ai/dsh-session');
 report.sessionFormatVersion=session.SESSION_FORMAT_VERSION;

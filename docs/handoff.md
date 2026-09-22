@@ -1,6 +1,6 @@
 # 当前开发交接
 
-核对日期：2026-09-21
+核对日期：2026-09-22
 
 只保留下一次开发所需的活动事项；完成对应移除条件即删除整项，不追加完成日志。
 维护规则见[交接文档生命周期](development.md#交接文档生命周期)。实现版本以[工具设计](tool-design.md)为准，
@@ -23,7 +23,7 @@
 | 7 / P2 | H-07 教学工程 | 获授权短片的音画核对、阶段复现、参数实验和重开验收；材料/云提交授权未到时保留缺口 |
 | 8 / 收口 | 全链路代码与知识review | 修复后逐层审查安装→Host→Bridge→helpers→结果/图像→Trace→交付；发现缺陷回到对应H项复验 |
 
-最终review核对重复状态、消费者、异常吞没、权限/生命周期及文档冲突；不因静态无引用删除兼容接口。
+最终review核对重复状态、消费者、异常吞没、权限/生命周期及文档冲突；退役接口先核对消费者与替代路径，历史只留Git。
 稳定结论原位同步docs/规则，生成区仅由生成器刷新；门禁覆盖docs:check、npm test、H21/H22相关HOM与包内容检查。
 运行态未验证、缺授权/材料/异机证据必须保留pending；临时产物/分支清场先只读列候选，汇报后经用户确认才删除。
 
@@ -32,8 +32,8 @@
 ### H-01 部署更新改造与完整运行态验收
 
 - 状态：待验证
-- 现状：正式发行链已可用；部署/GUI验收驱动共用环境隔离，拒绝继承外部Houdini包、Python/Qt/DSH配置和模型凭据。另一台物理机器、自定义用户启动环境及模型路径仍待验收；H22 Qt helper按安装合同从bin启动，私钥备份与长期发布环境仍待维护者确认。
-- 下一步：用户已授权将源码默认运行时切至DSH 0.1.5-rc.2并自行在Houdini验收；按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)补H21/H22 WebView与发送/停止/重连、V3 Trace真实历史及签名组合验收。不以preferred切换证明live已加载或正式发布，不自动迁移用户历史。确认私钥备份和长期发布运维；补异机/自定义启动目录及完整重开后的共用主面板、模式和高级诊断。获授权后验请求恢复、来源/工作流、新session/压缩恢复、原生/Code Mode图像，不以只读smoke核销模型与视觉。待live重载合同55后在实际运行态复核无票据拒绝与Job跨会话拒绝行为。
+- 现状：源码只支持官方最新预发行DSH 0.1.6-alpha.2，preferred、peer和部署锁均为该精确版本；打包API/preset、独立Host/RPC及H21/H22隔离部署/HOM回归通过。客户端直接使用当前多实例导航，preset直接使用当前workflow provider。未重启live或证明WebView、签名发行、异机/自定义启动和模型路径；私钥备份与长期运维责任未定。
+- 下一步：按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)补H21/H22 live WebView发送/停止/重连、V3 Trace、插件实时禁用/重载及签名组合；把弃用的同步Session历史读取逐域迁至projection。再验异机启动、主面板/诊断、请求恢复、来源/工作流、压缩恢复和原生/Code Mode图像。preferred与隔离smoke均不证明live已加载、正式发布、历史迁移或视觉正确；live重载后复核无票据及Job跨会话拒绝。
 - 移除条件：上述跨机/启动环境边界及获授权用户路径有证据，备份/长期发布运维责任明确；未测试的模型和驱动组合不被宣称为已验证，当前用户旧进程不冒充已加载发行版。
 - 入口：[安装合同](setup.md)、[兼容验收](dsh-update-compatibility.md)、[安装器](../houdini/install.py)、[发布策略](../houdini/python3.11libs/dsh_release_policy.py)、[部署回归](development.md#4-回归与发布)、[WebView回归](../tools/tests/dsh-webview-navigation.test.py)、[Trace回归](../tools/tests/trace-view.test.mjs)。
 
@@ -65,7 +65,7 @@
 
 - 状态：待验证
 - 现状：候选component-host已接原生可续跑子任务、独立worker和pre-step绑定；单个Open Workspace菜单：仅新开已保存HIP且无自有前端时显式选Component preview，普通为默认；普通/受管运行时尚未合并，live正式加载未验。首次预览的独立Python/当前Houdini路径可确定时自动采用；CLI只信显式候选，live首次配置未验，现有live Host不随源码编辑自动加载新策略。预览在绑定HIP目录建dsh-components，主子可互访文件，不声称文件系统隔离；文件工具反例要求工作区不在平台TEMP（DSH共同可写例外），组件要求workspace-write并禁shell/再委派。机制见[组件协作](component-collaboration.md)；Host在父简报前注入权威workspace/HIP并返回同一字段；上游cwd候选固定于eee1723/deepseek-harness的codex/component-child-preparation@02f873ac，本机已构建该修订CLI；未安装/发布，官方原版有零子模型执行拒绝反例。自然任务已暴露两类集成失败：test21跑通委派/片段交换但轴向错误、穿板、绝对Object Merge引用与遗留warning/probe致质量门失败；test22控制正向收敛但父作者未读协作reference、自行升级HDA并裸install，受管交换零采用；临时装配预览因Object Merge未保留OBJ变换显示轮子穿板并带wheel_id mismatch warning——数值场景与视觉proxy须分别验同一数据流。
-- 下一步：跨机接续须从上游cwd候选固定修订构建，本仓库源码分支/构建产物/官方0.1.5-rc.2均不能替代；升级基线是独立资格重验，不随普通开发rebase。用新加载skill复验未见两组件任务：父作者先读协作reference，默认普通subnet→component_export→hash/revision→component_import→槽位接纳，不得自行升级HDA或裸安装；HDA交付任务作反例。集成输出须同坐标系实测关系，跨OBJ代理显式保留world变换，proxy bbox与源world bbox一致且warning-free后才可读图；颜色自述与像素不符、Trace无独立语义识图记录，视觉结论须人工对照原图。继续验异常worker展示、局部图、公共控制、输入/外部依赖与手改/消费者迁移、迁移表达式/keys、修订失效、GUI双worker渲染互斥；Host中断后旧session受管恢复仍需带checkpoint hash/session ownership的executor恢复协议，不能靠重绑或认领既有节点。未见要求变化与同信息单作者对照按C5固定模型/版本/信息/质量门进行，不以并行数量或单一墙钟证明收益。
+- 下一步：跨机接续须从上游cwd候选固定修订构建，本仓库源码分支/构建产物/官方DSH发行线均不能替代；升级基线是独立资格重验，不随普通开发rebase。用新加载skill复验未见两组件任务：父作者先读协作reference，默认普通subnet→component_export→hash/revision→component_import→槽位接纳，不得自行升级HDA或裸安装；HDA交付任务作反例。集成输出须同坐标系实测关系，跨OBJ代理显式保留world变换，proxy bbox与源world bbox一致且warning-free后才可读图；颜色自述与像素不符、Trace无独立语义识图记录，视觉结论须人工对照原图。继续验异常worker展示、局部图、公共控制、输入/外部依赖与手改/消费者迁移、迁移表达式/keys、修订失效、GUI双worker渲染互斥；Host中断后旧session受管恢复仍需带checkpoint hash/session ownership的executor恢复协议，不能靠重绑或认领既有节点。未见要求变化与同信息单作者对照按C5固定模型/版本/信息/质量门进行，不以并行数量或单一墙钟证明收益。
 - 移除条件：C1～C4在隔离H21/H22与获授权真实路径完成；C5以固定模型/版本/信息/总预算比较整体单作者、聚焦单作者与独立多作者，覆盖简单任务反例，报告主子总成本/质量/返工分布并明确采用范围。压缩策略另测；不以加预算或子作者自评核销。
 - 入口：[组件协作与完成门](component-collaboration.md)、[执行端路由](../src/executor-routing.ts)、[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md)、[集成反例](../tools/tests/dsh-module-integration.test.py)。
 

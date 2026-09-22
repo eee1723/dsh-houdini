@@ -14,7 +14,7 @@
 ## 控件行为
 
 需要快速组织标题开关、紧凑行、按需Ramp或重复条目时按需读[可组合UI组件](ui-components.md)；
-组件与普通spec混用，不规定整套布局。hda_info(analyze_ui=True)可辅助找悬空引用和可疑菜单条件，建议不自动修复。
+组件与普通spec混用，不规定整套布局。parameter_ui(analyze_ui=True)可辅助找悬空引用和可疑菜单条件，建议不自动修复。
 
 参数提升/引用用于稳定数据驱动；回调用于需要明确事件动作的操作。新增“生成/更新/导出”按钮时说明写入对象与反馈，避免调普通数值时隐式重建网络或写盘。
 
@@ -28,7 +28,7 @@ Disable When 适合当前不可编辑但仍需解释的选项；Hide When 适合
 
 ## 验收
 
-已有HDA做小改动时，先用hda_info(include_state=True)读取实例/定义界面与interface_sha256。
+已有HDA做小改动时，先用parameter_ui(include_state=True)读取实例/定义界面与interface_sha256。
 支持范围内用hda_set_interface(edits=..., expected_sha256=..., dry_run=True)预览，再按同版本应用。
 update支持label/help/default/范围/条件等；add可追加到已存在folder。缺少字段时查verb_help，
 不要把整组spec重建当增量更新。当前拒绝删除/改名/移动/类型转换、ramp/multiparm和实例界面覆盖；

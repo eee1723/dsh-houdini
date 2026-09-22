@@ -128,19 +128,15 @@ export function componentAuthorPrompt(task:string, gui:boolean,workspace?:string
     authoritative+
     `Top-level tools in this child are houdini_query (read-only), houdini_exec (edits and checks), `+
     `houdini_job_submit/status/cancel (only for a real id returned by submit), skill/read/write/edit/todo_write/send_message. `+
-    `component_delegate, component_status, component_wait and component_stop belong to the parent Host and are unavailable here; do not probe or retry them. `+
+    `Shell, grep and component_delegate/status/wait/stop are unavailable; do not probe or retry them. `+
     `Houdini verbs such as tab_create, node_info, build_module, render_view and component_export are already-imported Python globals inside houdini_exec/query; `+
-    `call them directly and do not import a houdini_verbs module. verb_help documents only those verbs, never top-level tools. `+
+    `call them there, not as top-level tools, and do not import a houdini_verbs module. verb_help documents only these verbs. `+
     `When argument binding reports an exact signature or next_action, follow it in the next call; do not repeat a guessed signature or catch/suppress verb failures. `+
     `Inspect the binding/scene; save the current HIP with scene_save(), never Save As to a filename suggested in the brief. `+
-    `Export into the current HIP directory with $HIP/<name>.dshcomponent; ignore any parent-supplied absolute export path. `+
-    `Absolute paths are for Host-side exchange only (workspace, HIP, reported artifact address); inside the component network every reference stays relative and portable (for example ch("../width")), never an absolute host path. `+
-    `Report the exported artifact's full absolute path, sha256 and contract to the parent; a basename alone is not an import address. `+
-    `render_view is a Houdini verb called inside houdini_exec code, not a separate top-level tool. `+
+    `Inside the component network every reference stays relative and portable (for example ch("../width")); `+
+    `absolute filesystem paths are allowed only for Host-assigned workspace/HIP facts and the final artifact address reported to the parent. `+
     `Do not traverse project/install directories inside houdini_query or houdini_exec; `+
     `ask the parent for bounded source inspection when needed. `+
-    `Your tool surface is bounded to houdini_exec/houdini_query/houdini_job_*, skill, read/write/edit inside your workspace, todo_write and send_message to the parent. `+
-    `Shell, grep, component_status and component_delegate are not available to you; the tool gate rejects them — do not try. `+
     `Unless the original user explicitly requested an installable HDA/OTL, author a plain self-contained SOP subnet and publish it with component_export as a revisioned .dshcomponent; `+
     `do not expand a parent brief into HDA creation or library installation. If the parent asks for HDA without quoting that original requirement, report the scope conflict before building. `+
     (gui?`For a required local visual check, render a bounded preview, inspect its native image attachment, retain the preview as evidence, and report what it actually shows. `+
@@ -152,10 +148,10 @@ export function componentAuthorPrompt(task:string, gui:boolean,workspace?:string
     `Test the declared local controls and restore them before publishing; an exported file alone is not completion.\n\n`+
     `Parent component brief (check its interface and assumptions):\n${task}\n\n`+
     `Host closing constraints (authoritative after the parent brief): use the Host workspace/HIP above; `+
-    `the parent-consumable artifact is an ordinary SOP subnet exported with component_export to $HIP/<name>.dshcomponent, not bgeo/FBX/Alembic/ROP output. `+
-    `Give the parent the exact absolute filename returned by component_export; do not make the parent infer it from its own $HIP. `+
+    `ignore every parent-supplied export path. The parent-consumable artifact is an ordinary SOP subnet exported with component_export to `+
+    `$HIP/<name>.dshcomponent, not bgeo/FBX/Alembic/ROP output. Report the returned absolute filename, sha256 and contract; a basename is not an import address. `+
     `Keep the same completed modeling work if the brief requested another file format, then add the required .dshcomponent. `+
-    `For SOP discovery first create or use an actual geometry/subnet parent, for example geo=tab_create('/obj','geo','component'); part=tab_create(geo,'subnet','part'); node_info(part,'circle',filter='radius').`
+    `For SOP discovery first create or use an actual geometry/subnet parent, for example geo=tab_create('/obj','geo','component'); part=tab_create(geo,'subnet','part'); node_info(part,'circle',parm_filter='radius').`
 }
 
 export function apply(ctx:Context, config:Config):void {

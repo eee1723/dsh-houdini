@@ -63,7 +63,7 @@ FRONTEND_RUNTIME_STATE = os.path.join(_PROJECT_ROOT, ".dsh-runtime.json")
 
 # The frontend boots the `web` profile without a patch overlay — the `houdini`
 # agent preset mounts dsh-houdini. (The old `--patch cordis.dev.yml` file://
-# overlay is retired: it cannot be discovered as a package for the client half.)
+# A patch overlay is not used because the client half must resolve this package through the profile.)
 
 # How to boot the dsh web frontend.
 #   * Default: directly execute the plugin-required CLI in the project-local
@@ -351,7 +351,6 @@ def restart_bridge(*, port=None) -> str:
     import dsh_network_boxes
     import dsh_hou_helpers
     import dsh_hda_interfaces
-    import dsh_hda_ui
     import dsh_parameter_ui
     import dsh_control_bindings
     import dsh_cook_control
@@ -384,7 +383,6 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_control_bindings)
     importlib.reload(dsh_cook_control)
     importlib.reload(dsh_cop_contracts)
-    importlib.reload(dsh_hda_ui)
     importlib.reload(dsh_camera_framing)
     importlib.reload(dsh_geometry_observation)
     importlib.reload(dsh_operation_cards)
@@ -662,7 +660,7 @@ def _dsh_rpc_wire(method: str, payload: dict, timeout: int = DSH_RPC_TIMEOUT) ->
         except urllib.error.HTTPError as exc:
             if exc.code != 401:
                 raise
-            # DSH 0.1.2+: every Host RPC uses the browser-session cookie.
+            # Every current Host RPC uses the browser-session cookie.
             # The first 401 triggers the documented root-token exchange;
             # older DSH releases continue to succeed on the first request.
             exc.close()
@@ -779,7 +777,7 @@ def _force_frontend_repair():
         identity = dsh_managed_runtime.stop_verified_frontend(
             pid, cli_roots=roots, port=FRONTEND_PORT, listener_pid=lambda: _port_pid(FRONTEND_PORT))
         _clear_frontend_runtime_state()
-        _report(f"Force repair stopped verified legacy DSH listener PID {identity['pid']}; session files were not deleted")
+        _report(f"Force repair stopped verified stale DSH listener PID {identity['pid']}; session files were not deleted")
     deadline = time.monotonic() + 5
     while _port_open(FRONTEND_HOST, FRONTEND_PORT):
         if time.monotonic() >= deadline:

@@ -103,7 +103,12 @@ with tempfile.TemporaryDirectory(prefix="dsh-presets-中文 空格-") as tempora
     source = fixture / "source"
     preset = source / "houdini"
     preset.mkdir(parents=True)
-    (preset / "agent.cordis.yml").write_text("# fixture", encoding="utf-8")
+    current_workflow = (
+        "# fixture\n"
+        "    - id: workflow-ptc\n"
+        "      name: '@deepseek-ai/dsh-workflow-ptc'\n"
+    )
+    (preset / "agent.cordis.yml").write_text(current_workflow, encoding="utf-8")
     with patch.object(dsh_launcher, "_MANAGED", None), \
          patch.object(dsh_launcher, "PRESET_SRC", str(source)), \
          patch.object(Path, "home", return_value=fixture / "default-home"):
@@ -116,7 +121,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-presets-中文 空格-") as tempora
                 assert dsh_launcher.sync_presets() == "presets synced: houdini"
                 assert dsh_launcher.dsh_profile_sync.profile_dir("web") == expected_home / "profiles" / "web"
                 copied = expected_home / ".agent-presets" / "houdini" / "agent.cordis.yml"
-                assert copied.read_text(encoding="utf-8") == "# fixture"
+                assert copied.read_text(encoding="utf-8") == current_workflow
         with patch.object(dsh_launcher, "_MANAGED", {"home": str(fixture / "managed")}), \
              patch.object(dsh_launcher.shutil, "copytree", side_effect=AssertionError("managed preset writes")):
             assert "managed presets prepared" in dsh_launcher.sync_presets()

@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、70 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个houdini_*工具、67 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 

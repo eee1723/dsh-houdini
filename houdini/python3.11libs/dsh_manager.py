@@ -840,7 +840,7 @@ def show_version_manager() -> None:
             dialog, "Repair runtime",
             "Force-stop this installation's DSH frontend and restart the runtime?\n\n"
             "Active agent turns and external tool work may be interrupted; session files are kept, "
-            "but unfinished results may be lost. Verified legacy DSH listeners can also be stopped.\n\n"
+            "but unfinished results may be lost. Verified stale DSH listeners can also be stopped.\n\n"
             "Houdini and other applications will not be killed. Bridge restart is refused while "
             "Houdini execution is active or cannot be verified idle.",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,

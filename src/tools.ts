@@ -595,7 +595,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     description:
       'Cooperatively cancel a Houdini background job. A job still waiting in the queue is '
       + 'dropped before its code runs (no scene changes); a job already running cannot be '
-      + 'killed and will run to completion — poll houdini_job_status for the outcome.',
+      + 'killed and will run to completion. Collect the outcome with one houdini_job_status '
+      + 'call using wait=<seconds>; do not poll in a loop.',
     parameters: {
       jobId: { type: 'string', required: true, description: 'Job id returned by houdini_job_submit' },
     },
