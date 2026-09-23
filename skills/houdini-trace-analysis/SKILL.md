@@ -37,7 +37,7 @@ description: 系统复盘 dsh-houdini / DeepSeek Harness 的 Houdini agent trace
 - 区分工具调用失败、动词内部失败、执行成功但产物错误、最终未交付四种失败。
 - 区分“工具缺失”和“已有工具未使用”；先证明任务意图，再做词表建议。
 - 用 `capabilitySnapshots` 判断该步骤当时实际曝光的能力；不得用当前新词表倒查旧 trace 后指责 agent 漏用。
-- 视觉证据读取 `visionEvidence[].role/transportOk/semanticOk/reason` 与 `completionRisks`。只有 `role="inspection" && semanticOk=true` 才算语义识图；bootstrap、presentation、transport success、结构化 `ok:false` 或文本拒绝都不算。只有 render/render_check 而没有成功 inspection 时，必须保留“视觉语义未验证”的边界。
+- 显式视觉工具读取 `visionEvidence[].role/transportOk/semanticOk/reason`；只有 `role="inspection" && semanticOk=true` 才算该工具完成语义识图。原生图附件另读 `nativeImages[].followingAssistant` 并逐图对照原始图像、后续模型描述和最终声称；该关联只是人工复核入口，不自动改写 `semanticStatus`。只有 render/render_check 或附件送达而没有可核对的内容级观察时，保留“视觉语义未验证”。
 - 不把 `catalog.used/catalog.total` 称为动词使用率。优先读取 `verbAdoption`，分别解释调用含动词率、动词密度、只读query守卫范围、Gate拦截、裸修改候选、疑似/未知副作用；成功exec含动词率的分母也包含测试/动态调用，不是修改采用率。目录广度只说明触达能力，没检出修改不证明只读。
 - HDA维护按量表区分section写入、实际回调、最终输出和交付依赖；内嵌Python不证明无其他HDA/资源依赖，内部函数通过不冒充按钮验收。普通功能维护不强制艺术渲染。
 - 开放式质量任务优先读取 `qualityLoopEvidence` 与对应 `completionRisks`，核对合同缺字段、research

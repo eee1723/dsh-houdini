@@ -79,7 +79,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
 
-提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止与交接方式；
+提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止、交接及对用户的表达方式；
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
 domain skill及reference维护建模、验证和交付方法。低频对象recipe不得进入persona/guidance；一个规则需要跨层出现时，
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
@@ -224,4 +224,4 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
 
-评测工具与schema见[评测设计](benchmark-design.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。
+程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](benchmark-design.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

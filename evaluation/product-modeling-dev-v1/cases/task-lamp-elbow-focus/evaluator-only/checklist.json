@@ -1,0 +1,16 @@
+{
+  "caseId": "task-lamp-elbow-focus",
+  "reviewerInstructions": "这是限时局部能力诊断，不要求整灯。与整体建模的同一模块比较时记录相同模型和工具条件，并单列允许时间。独立重开最终 HIP，在固定近景下评估形状、连接口和角度扰动。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_detail_front", "independent_detail_side", "independent_detail_iso", "independent_angle_control_check"],
+    "source": ["reference_image", "public_brief"]
+  },
+  "criteria": [
+    {"id": "recognizable-assembly", "method": "geometry+visual", "critical": true, "expectation": "两侧夹板、中心轴与调节旋钮构成可理解的关节，而不是相互悬空的装饰圆柱。"},
+    {"id": "arm-interfaces", "method": "geometry+visual", "critical": true, "expectation": "上下灯臂端部有可接入的明确接口，轴线和位置不随意漂移。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "近景能分辨夹板厚度、轴端、紧固件和线缆通过空间；可见细节尺度协调。"},
+    {"id": "angle-response", "method": "control", "critical": true, "expectation": "改变关节角度后相关部件联动，夹板、中心轴和灯臂端部保持正确关系，恢复后回到原状态。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开，未标尺寸、假设和未完成处如实说明。"}
+  ]
+}

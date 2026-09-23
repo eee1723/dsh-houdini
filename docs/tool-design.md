@@ -178,6 +178,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None)` | primitive piece的局部bbox/extent/面积与退化；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent及surface_area、duplicate_boundary_faces、closed_planar_components，并返回center_axis_surface_hits：三条basis轴向包围盒中心线与fan三角表面的交点数。实心封口通常为2，声明的通孔轴可为0，但零交点必须结合闭合/流形和沿轴图像，不能单独证明通孔或实体有效。duplicate/planar字段只表示精确循环边界重合/闭合共面壳风险；有意双面需解释。observed仅量测，方法不支持保持unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
+失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。
+
 ### component 域（普通 SOP 组件交换）
 
 | 动词 | 语义 | 返回 |

@@ -40,11 +40,10 @@ Houdini与Houdini开发模式在所选精确DSH的`standard` Agent能力上叠�
 
 | Surface | 内容 | 变更后的必跑门 |
 |---|---|---|
-| Agent surface | guidance、preset、skills、工具 schema/行为、动词合同 | Node + H21/H22 Houdini 回归；按风险运行模型 smoke/矩阵 |
-| Compatibility surface | client UI、launcher/manager、Web auth/RPC、profile bundle、QtWebEngine 兼容及随包作者检查器/环境构造 | Node + H21/H22 runtime、浏览器 RPC、Trace、workspace/session、第三方 bundle及受影响作者检查器smoke；不因纯 UI 修复自动重跑模型矩阵 |
+| Agent surface | guidance、preset、skills、工具 schema/行为、动词合同 | Node + H21/H22 Houdini 回归；可能影响建模行为时按[产品模型开发评测](benchmark-design.md)运行受影响案例及未见题 |
+| Compatibility surface | client UI、launcher/manager、Web auth/RPC、profile bundle、QtWebEngine 兼容及随包作者检查器/环境构造 | Node + H21/H22 runtime、浏览器 RPC、Trace、workspace/session、第三方 bundle及受影响作者检查器smoke；纯 UI 修复不自动触发模型质量测试 |
 
-两者分别写入 `benchmark/baseline.json` 的 `agentSurfaceSha256` 和
-`compatibilitySurfaceSha256`。一次变更可以同时触发两边，但不得用一边的通过冒充另一边。
+一次变更可以同时影响两边，分别记录实际版本、加载身份和已运行的验证；不能用一边的通过冒充另一边。静态文件哈希不能代替运行资格或产品模型质量；运行时是否加载了新版本仍须按诊断和真实路径核对。
 
 ## 新 DSH 版本的资格流程
 
@@ -90,7 +89,7 @@ TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 W
 7. **第三方 bundle**：至少创建一个新 Agent，加载/卸载每个受管 bundle；检查 Session API、Settings API 和
    client module API。临时 repair 必须 exact-version、exact-callsite、幂等且 fail-closed，并登记删除条件。
 8. **回归与提升**：`npm test`；H21/H22 launcher/manager 及 AGENTS.md 指定 HOM suites；记录真实 PID parent、
-   DSH/plugin/bundle 版本和两个 surface hash。全部通过后才把精确版本加入 compatibility manifest，并显式设置 preferred。
+   DSH/plugin/bundle 版本、源码修订和实际加载身份。全部通过后才把精确版本加入 compatibility manifest，并显式设置 preferred。
 
 任何一步失败都不替换当前 serving runtime。需要回退时从Git或已签名历史发行恢复完整组合，不在当前源码中
 保留多版本分支；回退操作仍不得删除 Session、HIP、workspace 或插件仓库。

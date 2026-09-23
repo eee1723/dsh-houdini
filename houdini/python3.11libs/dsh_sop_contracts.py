@@ -166,6 +166,32 @@ def _content_nonempty(geometry, max_prims=100000, max_depth=16):
             'status': 'unverified_content' if unknown else 'empty_content'}
 
 
+def _vex_source_context(report):
+    """Best-effort compiler location against an existing Wrangle snippet."""
+    error_text='\n'.join(str(error) for error in report.get('errors',[]))
+    location=re.search(r'\((\d+),\s*(\d+)(?::\d+)?\)',error_text)
+    if not location:return None
+    source=re.search(r'Invalid source\s+(\S+)',error_text)
+    node=hou.node(source.group(1).rstrip('.')) if source else hou.node(report['path'])
+    for _ in range(4):
+        if node is None:break
+        parm=node.parm('snippet')
+        if parm is not None:
+            try:lines=parm.unexpandedString().splitlines()
+            except Exception:return None
+            line=int(location.group(1));column=int(location.group(2))
+            if not 1<=line<=len(lines):
+                return {'source_node':node.path(),'compiler_line':line,'column':column,
+                        'snippet_line_count':len(lines),'status':'compiler_line_not_mapped_to_snippet'}
+            return {'source_node':node.path(),'compiler_line':line,'column':column,
+                    'snippet_context':[{'line':index,'text':lines[index-1][:240]}
+                                       for index in range(max(1,line-2),min(len(lines),line+2)+1)],
+                    'status':'candidate_snippet_context',
+                    'scope':'Compiler line may refer to generated VEX; verify this mapping against the source before editing.'}
+        node=node.parent()
+    return None
+
+
 def verify_network(parent, output=None, nodes=None, limit: int = 512, require_valid: bool = True,
                    *, output_index: int | None = None) -> dict:
     """Cook/check SOP children, not just OUT. No display/frame/selection changes.
@@ -270,9 +296,12 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
                             'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),
             'note': 'Cook/geometry evidence only; no assertion of relationships, art quality or unsampled HDA internals.'}
+    if errors:
+        result['cook_details']=[{'path':r['path'],'errors':r['errors'],
+                                 'source_context':_vex_source_context(r)} for r in reports if not r['ok']][:3]
     if reasons and require_valid:
-        details = [{'path':r['path'],'errors':r['errors']} for r in reports if not r['ok']][:3]
-        raise h.CheckpointError(f'verify_network failed: {reasons}; output={out.path()}; errors={errors}; cook_details={str(details)[:1800]}. {result["next_action"]}', result)
+        details=result.get('cook_details',[])
+        raise h.CheckpointError(f'verify_network failed: {reasons}; output={out.path()}; errors={errors}; cook_details={str(details)[:3000]}. {result["next_action"]}', result)
     return result
 
 

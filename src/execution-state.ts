@@ -284,8 +284,13 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
       if (impact.global || impact.truncated || impact.unavailable || check.identity === null || changed.has(check.identity)
           || (check.dependency_identities || []).some((id:number) => changed.has(id))
           || check.verb.startsWith('render_')) {
-        check.validity = 'stale_after_recorded_change'
-        check.invalidated_by = callId
+        // Once invalid, another edit cannot make this old check less valid.
+        // Keep the first invalidator stable so unchanged attention is not
+        // reinjected after every subsequent mutation.
+        if (!check.validity.startsWith('stale_') && !check.validity.startsWith('unverified_')) {
+          check.validity = 'stale_after_recorded_change'
+          check.invalidated_by = callId
+        }
       }
     }
     for (const n of value.transaction?.nodes || []) if (Number.isFinite(n.identity)) {

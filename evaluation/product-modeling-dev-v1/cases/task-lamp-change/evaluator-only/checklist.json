@@ -1,0 +1,16 @@
+{
+  "caseId": "task-lamp-change",
+  "reviewerInstructions": "用上项原工程及其图片作基线；相同相机和取景下对照变化。不能用另建静态模型来冒充原有控制链。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_final_hip", "independent_before_after_same_view", "independent_detail_base_joint", "independent_detail_elbow_joint", "independent_control_check"],
+    "source": ["baseline_hip", "reference_image"]
+  },
+  "criteria": [
+    {"id": "requested-change", "method": "control+measurement", "critical": true, "expectation": "底座外径约增大 15%，上段臂姿态约抬高 10 度；以原工程的实际控制值和测量为依据，记录偏差。"},
+    {"id": "control-lineage", "method": "hip-inspection", "critical": true, "expectation": "从原工程控制链继续修改，可追溯到原模型；没有静态复制品替代。"},
+    {"id": "connection-preserved", "method": "geometry+visual", "critical": true, "expectation": "修改后底座枢轴、肘部、灯头和线缆仍连接正确，没有新增断口、碰撞或悬浮。"},
+    {"id": "detail-follows", "method": "visual", "critical": true, "expectation": "底座上环、脚垫、关节局部与上臂/灯头的细节随控制更新，没有留在旧位置。"},
+    {"id": "comparison", "method": "visual", "critical": true, "expectation": "修改前后用相同视角和取景展示，并提供关节与底座边缘清楚的局部图。"}
+  ]
+}

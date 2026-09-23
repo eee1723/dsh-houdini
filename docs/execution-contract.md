@@ -220,8 +220,10 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
+采集基准签名前先显式强制cook并回读通道/frame；基准cook自身改动用户状态时失败，不把零测试写入冒充恢复成功。基准cook失败但状态未变时零参数写入并返回not_run，不用随后geometry读取隐式重试。
 恢复不仅比较bgeo：恢复写入后及最终cook后均回读被测参数的值/表达式/keys，最终核对frame。
 parameter_restore列出快照参数身份、前后字面值或动画匹配及错误；任何不匹配都不能报告restored=true。
+geometry_restore列出基准/恢复签名、是否匹配；不匹配时给出有界的不同bgeo区段与首个差异路径，不能用参数一致或bbox相同覆盖几何失败。
 这些字段证明该次回读，不保证稍后GUI/外部代码不会改值；未采集历史不能据此归因为用户undo。
 恢复指纹排除导出头date和派生group_summary，并按组名整理已知bgeo组目录记录；
 组名、组成员、ordered group内部顺序、用户属性、拓扑和原生primitive数据仍完整比较。

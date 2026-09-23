@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {projectExecutionState} from '../../lib/execution-state.js';
+import {projectExecutionState,projectExecutionNotice} from '../../lib/execution-state.js';
 
 const events=[];
 function record(sequence, {tool='houdini_exec',runtime='R',nodes=[],networkBoxes,impact={},evidence=[],outputs=[],status='committed',ok=true,observed=sequence,jobId,jobStatus}={}) {
@@ -68,4 +68,12 @@ record(3,{evidence:[{ledgerIndex:1,verb:'cop_layer_stats',node:'/obj/n3',output:
 assert.equal(projectExecutionState(events).checks.filter(c=>c.verb==='cop_layer_stats').length,2,
   'different output ports cannot overwrite each other');
 assert.equal(projectExecutionState(events).checks.at(-1).status,'unverified');
+events.splice(0);
+record(1,{evidence:[check],outputs:[output]});
+const firstInvalidator=record(2,{impact:{attempted:true,nodes:[node(1)]}});
+const firstAttention=projectExecutionNotice(events);
+assert.equal(firstAttention.checks[0].invalidated_by,firstInvalidator);
+record(3,{impact:{attempted:true,nodes:[node(1)]}});
+assert.deepEqual(projectExecutionNotice(events),firstAttention,
+  'a second edit must not rewrite an already-stale check and force another attention message');
 console.log('execution-state projection: dependency invalidation, deleted identities, same-call edits, rollback, replay, timeout, runtime change, out-of-order jobs and pending jobs passed');

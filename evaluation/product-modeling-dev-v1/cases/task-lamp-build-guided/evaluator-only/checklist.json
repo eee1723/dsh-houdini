@@ -1,0 +1,18 @@
+{
+  "caseId": "task-lamp-build-guided",
+  "reviewerInstructions": "与 task-lamp-build 用相同模型、运行环境、预算和评审视角比较；唯一有意变化是执行 agent 收到用户明确列出的部件与连接要求。先看独立重开的 HIP 与图片，再读 agent 自评。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_side", "independent_overview_front", "independent_detail_base_joint", "independent_detail_elbow_joint", "independent_detail_head", "independent_control_check"],
+    "source": ["reference_image", "public_brief"]
+  },
+  "criteria": [
+    {"id": "silhouette", "method": "visual", "critical": true, "expectation": "整体轮廓和底座、双臂、灯头比例与图纸相符。"},
+    {"id": "assembly-continuity", "method": "geometry+visual", "critical": true, "expectation": "底座枢轴、两段灯臂、肘部和灯头在最终输出中连续连接，无明显悬空断口或错误穿插。"},
+    {"id": "joint-detail", "method": "visual", "critical": true, "expectation": "肘部有两侧夹板、中心轴和可辨的旋钮，底座枢轴与上盖关系正确。"},
+    {"id": "head-detail", "method": "visual", "critical": true, "expectation": "灯头外壳、独立前缘透光件和散热槽在局部图中可辨。"},
+    {"id": "base-cable", "method": "geometry+visual", "critical": false, "expectation": "底座分件与脚垫、线缆路径和端点符合公开要求。"},
+    {"id": "controls", "method": "control", "critical": true, "expectation": "底座直径和上臂角度变化后，关键接点和局部细节继续随动。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开，仍是示意或未验证的部分如实报告。"}
+  ]
+}

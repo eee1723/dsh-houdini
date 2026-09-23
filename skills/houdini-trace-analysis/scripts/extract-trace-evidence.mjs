@@ -19,11 +19,12 @@ import {
   completedVisionTodoWithoutEvidence,
   classifyVisionEvidence,
   nativeImageEvidence,
+  linkNativeImageResponses,
   collectVerbAdoption,
   classifyRawEffect,
   isHoudiniDetailRead,
   isStructuredHoudiniCall,
-  extractAvailableSkills,
+  skillCatalogNames,
   findBatchSetParmOpportunities,
   findQueryMutationSteps,
   findSuppressedCookFailures,
@@ -117,7 +118,7 @@ function analyzeTrace(file) {
     }
     if (event.type === 'user/message') {
       const text = directText(event.data.content);
-      const availableSkills = extractAvailableSkills(text);
+      const availableSkills = skillCatalogNames(event.data);
       if (availableSkills.length) {
         skillCatalogSnapshots.push({
           seq: event.seq,
@@ -276,7 +277,7 @@ function analyzeTrace(file) {
   const successfulVisionEvidence = visionEvidence.filter(
     (item) => item.role === 'inspection' && item.semanticOk === true,
   );
-  const nativeImages = nativeImageEvidence(steps);
+  const nativeImages = linkNativeImageResponses(nativeImageEvidence(steps), steps, events);
   const skillActivations = steps.filter((step) => step.tool === 'skill').map((step) => ({
     index: step.index,
     time: step.time,

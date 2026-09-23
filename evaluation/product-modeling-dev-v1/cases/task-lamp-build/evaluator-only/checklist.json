@@ -1,0 +1,19 @@
+{
+  "caseId": "task-lamp-build",
+  "reviewerInstructions": "先独立查看最终 HIP 与图片，再读 agent 自评。不能用节点数量、面数或无报错代替视觉和连接正确。任何完成主张均须与可见或可测证据对应。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_side", "independent_overview_front", "independent_detail_base_joint", "independent_detail_elbow_joint", "independent_detail_head", "independent_control_check"],
+    "source": ["reference_image"]
+  },
+  "criteria": [
+    {"id": "silhouette", "method": "visual", "critical": true, "expectation": "侧、正视整体轮廓和底座—双臂—灯头比例与参考图相符；取景足以判断。"},
+    {"id": "assembly-continuity", "method": "geometry+visual", "critical": true, "expectation": "底座枢轴、两段灯臂、肘部和灯头之间没有肉眼可见的悬空断口或错误穿插。"},
+    {"id": "head-detail", "method": "visual", "critical": true, "expectation": "灯头有外壳层次、独立的前缘透光件及图示散热槽，局部视图能看清这些特征。"},
+    {"id": "joint-detail", "method": "visual", "critical": true, "expectation": "底座与肘部关节能分辨固定座、旋转圆盘或旋钮及轴向关系，且两侧表现一致。"},
+    {"id": "base-detail", "method": "visual", "critical": false, "expectation": "底座上盖、环形分界、侧壁和接地脚垫有独立层次，而不是一片单纯圆盘。"},
+    {"id": "cable", "method": "geometry+visual", "critical": false, "expectation": "线缆有合理路径，跨关节不过度绷直、穿壳或悬浮，端部接入灯头与底座。"},
+    {"id": "procedural-editability", "method": "control", "critical": true, "expectation": "主要尺寸与姿态来自可见控制；改变上臂角和底座直径时，相应零件、连接和细节一同更新。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "交付工程可重新打开，报告未完成与未验证事项；没有把局部缺陷说成已经通过。"}
+  ]
+}

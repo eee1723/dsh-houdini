@@ -85,7 +85,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和40 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和35 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 
@@ -98,4 +98,4 @@ HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令�
 - 几何/控制检查只能证明声明范围，不认证未测参数域、自交、制造强度或艺术质量。
 - 源码、确定性回归、部署、新session曝光、真实任务质量分别验证；不互相冒充。
 
-评测工具和信息隔离见[评测设计](docs/benchmark-design.md)。本插件不依赖其他Houdini MCP服务。
+程序化产品模型的开发测试集、验收维度和信息隔离见[评测设计](docs/benchmark-design.md)。本插件不依赖其他Houdini MCP服务。

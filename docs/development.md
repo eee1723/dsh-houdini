@@ -15,6 +15,7 @@
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
 | 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
 | 组件协作设计 | [component-collaboration.md](component-collaboration.md) | 普通节点片段/独立作者的接口和实施完成门；当前动作归handoff，执行端运维归multi-instance |
+| 产品模型开发评测 | [产品模型评测集](../evaluation/product-modeling-dev-v1/)与[评测原则](benchmark-design.md) | 案例清单、公开题面、独立评审材料分离；机制回归不代替模型质量 |
 
 ## 2. 构建与生成
 
@@ -222,9 +223,7 @@ UI组件用[dsh-hda-ui-components](../tools/tests/dsh-hda-ui-components.test.py)
 仅新开自有GUI进程并捕获画廊面板；不连接用户会话、不使用computer-use。进程退出、截图可读性和
 语义布局分别验收。通用JSON与构建命令由[UI组件skill参考](../skills/houdini-parameter-ui/references/ui-components.md)维护。
 
-baseline中的surface hash反映代码快照；重封时保留runtimeVerification真实状态，不把它改成已部署。
-冻结protocol、matrix、holdout不随普通开发改写，参见[评测设计](benchmark-design.md)。
-冻结protocol-manifest的字节摘要以已提交LF内容为准，由.gitattributes固定检出格式；不得为Windows换行转换改动协议或放宽摘要校验。
+程序化产品模型的开发评测使用[独立评测集](../evaluation/product-modeling-dev-v1/)；公开 brief 与仅供评审看的细节分开，验证改进的未见题在评分前不能进入生产提示或调参过程。执行环境、模型、预算、取景和验收口径须随结果记录；代码快照、静态哈希和构建通过不证明 live 已加载或模型质量改善。
 
 ### HDA交付检查器
 

@@ -99,6 +99,15 @@ export function extractAvailableSkills(text) {
   return [...text.matchAll(/^- `([^`]+)`: /gm)].map((match) => match[1]);
 }
 
+export function skillCatalogNames(message) {
+  const source = message?.source;
+  if (source?.kind === 'skill-catalog' && source?.form === 'catalog' && Array.isArray(source.entries)) {
+    return [...new Set(source.entries.map(entry => entry?.name).filter(name => typeof name === 'string' && name))];
+  }
+  return extractAvailableSkills((message?.content || []).filter(block => block?.type === 'text')
+    .map(block => block.text).join('\n'));
+}
+
 export function parseLedgerArgs(value) {
   if (Array.isArray(value)) return { positional: value, kwargs: {} };
   if (value && typeof value === 'object') return { positional: [], kwargs: value };
@@ -333,6 +342,27 @@ export function nativeImageEvidence(steps) {
   return steps.flatMap(step => (Array.isArray(step.canonical?.imageAttachments) ? step.canonical.imageAttachments : [])
     .map(item => ({index:step.index,path:item.from,attachmentId:item.attachment?.attachmentId ?? null,
       delivered:!!item.attachment?.attachmentId && !item.error,error:item.error ?? null,semanticStatus:'unverified'})));
+}
+
+/** Link a delivered image to the next recorded assistant response, without
+ * treating the model's own description as an independent semantic verdict. */
+export function linkNativeImageResponses(images, steps, events) {
+  const stepByIndex = new Map(steps.map(step => [step.index, step]));
+  const responses = events.filter(event => event.type === 'assistant/message'
+    && Array.isArray(event.data?.message?.content));
+  return images.map(item => {
+    if (!item.delivered) return item;
+    const step = stepByIndex.get(item.index);
+    const next = responses.find(event => Number.isInteger(step?.resultSeq)
+      && event.seq > step.resultSeq && (step.turn == null || event.data?.turn === step.turn));
+    if (!next) return {...item,followingAssistant:null};
+    const blocks = next.data.message.content;
+    const prose = blocks.filter(block => block.type === 'reasoning' || block.type === 'text')
+      .map(block => String(block.text || '')).join('\n');
+    return {...item,followingAssistant:{seq:next.seq,time:next.time,
+      proseChars:prose.length,excerpt:prose.slice(0,300),
+      status:'requires_manual_image_comparison'}};
+  });
 }
 
 /** Distinguish tool transport, image delivery, setup, and actual semantic inspection. */

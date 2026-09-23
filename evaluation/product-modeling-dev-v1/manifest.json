@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "product-modeling-dev-v1",
+  "status": "development",
+  "purpose": "Diagnose and improve high-detail procedural product modeling in Houdini. These known cases support development, not generalization claims.",
+  "reviewResultSchema": "review-result.schema.json",
+  "cases": [
+    {
+      "id": "task-lamp-read-drawing",
+      "kind": "drawing-understanding",
+      "public": {
+        "brief": "cases/task-lamp-read-drawing/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-read-drawing/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-build",
+      "kind": "reference-to-model",
+      "public": {
+        "brief": "cases/task-lamp-build/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-build-guided",
+      "kind": "guided-reference-to-model",
+      "public": {
+        "brief": "cases/task-lamp-build-guided/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-build-guided/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-elbow-focus",
+      "kind": "focused-module",
+      "public": {
+        "brief": "cases/task-lamp-elbow-focus/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-elbow-focus/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-change",
+      "kind": "parameter-change",
+      "public": {
+        "brief": "cases/task-lamp-change/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-change/evaluator-only/checklist.json",
+      "dependsOn": ["task-lamp-build"]
+    },
+    {
+      "id": "equipment-case-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/equipment-case-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/equipment-case-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    }
+  ]
+}

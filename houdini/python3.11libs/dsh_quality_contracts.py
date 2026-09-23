@@ -197,6 +197,59 @@ def _data_signature(g):
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _first_geometry_difference(before, after, limit=50000):
+    """Locate a bounded bgeo difference without returning arbitrary attribute data."""
+    pending=[('',before,after)]
+    visited=0
+    while pending and visited<limit:
+        path,left,right=pending.pop()
+        visited+=1
+        if type(left) is not type(right):
+            return {'path':path or '/', 'kind':'type',
+                    'baseline_type':type(left).__name__,'restored_type':type(right).__name__}
+        if isinstance(left,dict):
+            missing=set(left)^set(right)
+            if missing:
+                key=sorted(missing)[0]
+                child=path+'/'+str(key).replace('~','~0').replace('/','~1')
+                return {'path':child,'kind':'missing_key',
+                        'present_in':'baseline' if key in left else 'restored'}
+            for key in sorted(left,reverse=True):
+                child=path+'/'+str(key).replace('~','~0').replace('/','~1')
+                pending.append((child,left[key],right[key]))
+        elif isinstance(left,list):
+            if len(left)!=len(right):
+                return {'path':path or '/', 'kind':'length',
+                        'baseline_length':len(left),'restored_length':len(right)}
+            pending.extend((path+'/'+str(i),left[i],right[i]) for i in range(len(left)-1,-1,-1))
+        elif left!=right:
+            detail={'path':path or '/', 'kind':'value'}
+            if type(left) in (int,float,bool) and type(right) in (int,float,bool):
+                detail.update(baseline_value=left,restored_value=right)
+            return detail
+    return {'path':'/', 'kind':'comparison_budget_exceeded'} if pending else None
+
+
+def _geometry_restore_diagnostic(baseline, restored, baseline_hash, restored_hash):
+    result={'matches':baseline_hash==restored_hash,
+            'baseline_sha256':baseline_hash,'restored_sha256':restored_hash}
+    if result['matches']:return result
+    before=_canonical_geometry_payload(baseline.data())
+    after=_canonical_geometry_payload(restored.data())
+    before_sections=dict(zip(before[::2],before[1::2]))
+    after_sections=dict(zip(after[::2],after[1::2]))
+    differing=[]
+    for name in sorted(set(before_sections)|set(after_sections)):
+        if name not in before_sections or name not in after_sections:
+            differing.append({'section':name,'kind':'missing_section'})
+        elif before_sections[name]!=after_sections[name]:
+            differing.append({'section':name,
+                              'first_difference':_first_geometry_difference(before_sections[name],after_sections[name])})
+    result['differing_sections']=differing[:12]
+    result['differing_section_count']=len(differing)
+    return result
+
+
 def _supported_surface(prim):
     kind = prim.type().name()
     return kind in _SURFACE_TYPES and (kind != 'Polygon' or (bool(prim.intrinsicValue('closed')) and prim.numVertices() >= 3))
@@ -528,7 +581,9 @@ def _control_summary(result, tests, interfaces=None, topology=None):
     for test in tests:
         row = by_id.get(test['id'], {})
         measurements = row.get('measurements', [])
-        cases.append({'id': test['id'], 'status': row.get('status', 'not_run'),
+        cases.append({'id': test['id'],
+                      'status':'fail' if row.get('restored') is False else row.get('status', 'not_run'),
+                      'measurement_status':row.get('status', 'not_run'),
                       'controls': sorted(test['values']),
                       'output_data_changed': row.get('geometry_changed'),
                       'measured_groups': sorted({m['expectation']['group'] for m in measurements
@@ -542,11 +597,12 @@ def _control_summary(result, tests, interfaces=None, topology=None):
               for status in ('pass', 'fail', 'unverified', 'not_run')}
     failures = []
     for row in rows:
-        if row['status'] == 'pass':
+        if row['status'] == 'pass' and row.get('restored') is not False:
             continue
         failed = [m for m in row.get('measurements', []) if not m['pass']]
         failures.append({'id': row['id'], 'status': row['status'],
-                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors', 'parameter_restore') if k in row},
+                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors',
+                                               'parameter_restore', 'geometry_restore') if k in row},
                          'failed_measurements': failed[:8],
                          'failed_measurement_count': len(failed),
                          'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
@@ -637,6 +693,22 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
                 'results':[],'baseline_domain':baseline_domain,'restored':True,'parameter_writes':0,
                 'reason':'baseline outside declared parameter domain','semantic_status':'unverified'}
+    # Normalize evaluation before sampling the baseline: a plain first cook
+    # compared against later force recooks mixes evaluation policy into the
+    # restoration comparison domain and yields signature false positives.
+    baseline_cook=h.cook_node(h._resolve(output), force=True)
+    baseline_state=h._parameter_restore_evidence(snapshots)
+    if not baseline_state['ok'] or float(hou.frame())!=original_frame:
+        raise h.CheckpointError('test_controls baseline cook changed controller or frame before testing',
+                                {'ok':False,'status':'fail','controller':ctrl.path(),
+                                 'output':h._resolve(output).path(),'restored':False,
+                                 'parameter_writes':0,'parameter_restore':baseline_state,
+                                 'frame_restored':float(hou.frame())==original_frame,'results':[]})
+    if not baseline_cook['ok']:
+        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
+                'results':[],'restored':True,'parameter_writes':0,
+                'reason':'baseline cook failed before any control write',
+                'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
     node, baseline=_geometry(output)
     unsupported_types=sorted({p.type().name() for p in baseline.prims()} - {'Polygon','Mesh','Sphere','Tube'})
     if unsupported_types:
@@ -741,22 +813,30 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if not cook['ok']:
                     raise ValueError(f'restoration cook failed: {cook["errors"]}')
                 _,restored=_geometry(node)
-                geometry_restored=_data_signature(restored)==baseline_hash
+                restored_hash=_data_signature(restored)
+                geometry_restore=_geometry_restore_diagnostic(baseline,restored,baseline_hash,restored_hash)
+                geometry_restored=geometry_restore['matches']
+                if not geometry_restored:errors.append('output bgeo differs from baseline; inspect geometry_restore')
             except Exception as error:
                 errors.append('output restore: '+str(error));geometry_restored=False
+                geometry_restore={'matches':False,'status':'not_verified','reason':str(error)}
             # Read AFTER recooking: expressions/solver/Python code can affect
             # channel state during evaluation even when the bgeo is unchanged.
             restoration=h._parameter_restore_evidence(snapshots)
             errors.extend(restoration['errors'])
             row['parameter_restore']=restoration
+            row['geometry_restore']=geometry_restore
             if float(hou.frame())!=original_frame:
                 errors.append('frame differs after output restoration cook')
             row['restored']=not errors and geometry_restored
             row['restore_errors']=errors
             if not row['restored']:
                 all_restored=False
+                failure={'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
+                         'restored':False,'results':rows+[row]}
+                failure['control_summary']=_control_summary(failure,tests,interfaces,topology)
                 raise h.CheckpointError('test_controls restoration failed; inspect controller/output before continuing',
-                                        {'ok':False,'output':node.path(),'restored':False,'results':rows+[row]})
+                                        failure)
         rows.append(row)
     ok=all(r['status']=='pass' for r in rows) and (baseline_relations is None or baseline_relations['ok'])
     status='pass' if ok else 'fail' if any(r['status']=='fail' for r in rows) or (baseline_relations and baseline_relations['status']=='fail') else 'unverified'

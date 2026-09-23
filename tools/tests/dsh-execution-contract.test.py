@@ -98,6 +98,23 @@ try:
         {'name': 'b', 'type': 'attribwrangle', 'inputs': ['a'],
          'parms': {'snippet': 'this is not valid VEX;'}}], output='b'))
     assert set(root.children()) == previous, 'cook failures must clean only this module'
+    bad_vex=root.createNode('attribwrangle','bad_vex_location')
+    bad_vex.setInput(0,box)
+    bad_vex.parm('class').set(0)
+    bad_vex.parm('snippet').set('float okay = 1;\nfloat broken = ;\nfloat later = 2;')
+    failed_vex=h.verify_network(root,output=bad_vex,nodes=[bad_vex],require_valid=False)
+    assert not failed_vex['ok'] and failed_vex['cook_details'],failed_vex
+    context=failed_vex['cook_details'][0]['source_context']
+    assert context and context['source_node']==bad_vex.path(),failed_vex
+    assert context['status'] in ('candidate_snippet_context','compiler_line_not_mapped_to_snippet')
+    if context['status']=='candidate_snippet_context':
+        assert len(context['snippet_context'])<=5 and context['snippet_context'][0]['line']>=1
+    bridge_failure=bridge.run_code(
+        f'verify_network({root.path()!r},output={bad_vex.path()!r},nodes=[{bad_vex.path()!r}])')
+    assert not bridge_failure['ok'],bridge_failure
+    visible=next(item for item in bridge_failure['evidence'] if item['verb']=='verify_network')
+    assert visible['cook_details'][0]['source_context']['source_node']==bad_vex.path(),visible
+    bad_vex.destroy()
 
     # The output null hides upstream warnings: verification must not.
     wr.destroy()

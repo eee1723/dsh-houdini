@@ -1061,7 +1061,8 @@ def _operation_summary(name: str, result):
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
-              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode')
+              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode',
+              'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}
     if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
         out['artifact'] = {k:r['artifact'].get(k) for k in (
