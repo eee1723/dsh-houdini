@@ -358,6 +358,25 @@ assert(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{a
 assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'cordis'}}}})}),null,
   'non-Houdini projected preset must not show the watermark');
 
+const workspaceStatus = plain.registrations['houdini-workspace-status'].component;
+const statusProps = (hip, cwd = 'E:/work') => ({sessionId:'s',
+  useSessions:fn=>fn({byId:{s:{cwd,projectionValues:{agentPreset:'houdini'}}}}),
+  useTrajectory:fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},
+    meta:{canonical:{execution:{hip_dir:hip}}}}]})});
+const mismatch = workspaceStatus(statusProps('E:/project'));
+assert.equal(mismatch.type,'details');
+assert.equal(mismatch.props.role,'status');
+assert(JSON.stringify(mismatch).includes('E:/project') && JSON.stringify(mismatch).includes('E:/work'));
+assert.equal(workspaceStatus(statusProps('e:\\WORK\\')),null, 'matching Windows paths need no warning');
+assert.equal(workspaceStatus(statusProps(null)),null, 'unnamed HIP must not invent a mismatch');
+const newerUnnamed = workspaceStatus({sessionId:'s',
+  useSessions:fn=>fn({byId:{s:{cwd:'E:/work',projectionValues:{agentPreset:'houdini'}}}}),
+  useTrajectory:fn=>fn({eventNodes:[
+    {kind:'tool-result',call:{name:'houdini_query'},meta:{canonical:{execution:{hip_dir:'E:/old'}}}},
+    {kind:'tool-result',call:{name:'houdini_query'},meta:{canonical:{execution:{hip_dir:null}}}},
+  ]})});
+assert.equal(newerUnnamed,null, 'latest unnamed HIP clears an older mismatch');
+
 const view = plain.registrations.houdinitrace.component;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
   + '{"name":"set_keyframes","signature":"(node, channels) -> dict"} (0ms)';

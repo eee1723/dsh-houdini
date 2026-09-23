@@ -44,6 +44,14 @@ const compactResult = exec.output.render({}, {
 assert(!compactResult.includes('repeated echo'));
 assert(compactResult.includes('important user diagnostic'));
 assert(compactResult.includes('transaction:') && compactResult.includes('verbs (1):'));
+const candidateText = exec.output.render({}, {
+  ok:true, stdout:'', stderr:'', artifactCandidates:[
+    {path:'C:/project/final.hip',kind:'scene',role:'delivery-candidate',source:'scene_save',bytes:42},
+    {path:'C:/project/check.png',kind:'image',role:'visual-check',source:'render_view',bytes:24},
+  ],
+})[0].text;
+assert.match(candidateText, /artifact-candidates \(not delivered; verify requested final files, then call present\)/);
+assert.match(candidateText, /"role":"visual-check"/);
 const execArgs = { code: 'set_parm(node, "tx", 1)', allow_raw: 'fixture gap' };
 assert.deepEqual(exec.presentCall(execArgs), {
   card: 'generic',

@@ -32,8 +32,8 @@
 ### H-01 部署更新改造与完整运行态验收
 
 - 状态：待验证
-- 现状：源码只支持官方最新预发行DSH 0.1.6-alpha.2，preferred、peer和部署锁均为该精确版本；打包API/preset、独立Host/RPC及H21/H22隔离部署/HOM回归通过。客户端直接使用当前多实例导航，preset直接使用当前workflow provider。未重启live或证明WebView、签名发行、异机/自定义启动和模型路径；私钥备份与长期运维责任未定。
-- 下一步：按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)补H21/H22 live WebView发送/停止/重连、V3 Trace、插件实时禁用/重载及签名组合；把弃用的同步Session历史读取逐域迁至projection。再验异机启动、主面板/诊断、请求恢复、来源/工作流、压缩恢复和原生/Code Mode图像。preferred与隔离smoke均不证明live已加载、正式发布、历史迁移或视觉正确；live重载后复核无票据及Job跨会话拒绝。
+- 现状：源码锁定DSH 0.1.6-alpha.2；打包API/preset、独立Host/RPC及H21/H22隔离GUI交付卡片、图片/文本预览、HIP卡片和先初始化WebEngine反例通过。未重启live或证明签名发行、异机启动和模型路径；私钥备份与长期运维责任未定。
+- 下一步：按[候选资格流程](dsh-update-compatibility.md#新-dsh-版本的资格流程)补H21/H22 live WebView发送/停止/重连、V3 Trace、插件实时禁用/重载及签名组合；把弃用的同步Session历史读取逐域迁至projection。再验异机启动、主面板/诊断、请求恢复、来源/工作流、压缩恢复和原生/Code Mode图像；live确认交付卡片与Explorer源文件定位。冻结benchmark的surface哈希另按授权流程核销。preferred与隔离smoke均不证明live已加载、正式发布、历史迁移或视觉正确；live重载后复核无票据及Job跨会话拒绝。
 - 移除条件：上述跨机/启动环境边界及获授权用户路径有证据，备份/长期发布运维责任明确；未测试的模型和驱动组合不被宣称为已验证，当前用户旧进程不冒充已加载发行版。
 - 入口：[安装合同](setup.md)、[兼容验收](dsh-update-compatibility.md)、[安装器](../houdini/install.py)、[发布策略](../houdini/python3.11libs/dsh_release_policy.py)、[部署回归](development.md#4-回归与发布)、[WebView回归](../tools/tests/dsh-webview-navigation.test.py)、[Trace回归](../tools/tests/trace-view.test.mjs)。
 

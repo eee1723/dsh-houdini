@@ -26,6 +26,12 @@ DSH 的 npm `latest` 不是 dsh-houdini 的独立更新目标。安装器、laun
 npx cache，也不会替换当前插件要求。未命中preferred缓存时只下载对应精确根包，不选择最近修改的缓存。显式 `DSH_HOUDINI_DSH_BIN` / `DSH_HOUDINI_DSH_SPEC`
 仅用于隔离资格验证，不代表发布。
 
+Houdini与Houdini开发模式在所选精确DSH的`standard` Agent能力上叠加`dsh-houdini`、身份和工作方法。DSH当前preset没有“继承standard再追加”的语义，所以两个组合文件仍是可审查的副本；[preset对齐门](../tools/tests/dsh-preset-parity.test.mjs)逐行核对该精确版本的标准能力，新增标准行缺失时构建测试失败，差异必须在升级资格验证中处理。现有Houdini模式额外启用了标准默认关闭的Ralph，作为明确例外继续保留；标准默认关闭且未安装的plugin-manager工具行不复制。最终用户文件使用标准`present`交付；原生图像附件只供模型读图，不替代源文件交付。模型须使用实际回执或明确目标路径，并在文件存在、验收后声明；验证图、缓存和诊断不自动声明。
+
+“随DSH更新获得新能力”指候选版本经过隔离组合、H21/H22用户路径和发布门后，连同新的标准preset行一起进入下一套兼容组合。开发验证可用独立`DSH_HOME`与显式候选覆盖，不能让`latest`或缓存轮换悄悄改变当前开发Host；受管发行只从签名的版本目录及其专属数据目录启动。运行诊断应同时显示源码/受管模式、项目根、DSH版本、preset来源和实际进程身份，不能仅凭磁盘文件判断已加载版本。
+
+当前DSH默认runtime resolver不依赖profile中旧的fallback junction，并忽略旧投影；读到过期junction本身不证明当前Host冷启动会失败。只有显式link/dual模式或绕开DSH resolver的独立Node调用需要另验其解析路径。不要因旧链接存在就对正在使用的profile做无依据的删除或重建。
+
 面板的[dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py)只查询官方仓库指定的latest稳定Release，
 拒绝Draft、prerelease和非vMAJOR.MINOR.PATCH标签，未发布和网络不可用分别处理。
 源码和受管安装共用独立主面板与高级运行时诊断入口，按模式显示路径与有效操作。源码模式仅提供发布页链接、磁盘版本和Git/npm更新说明；受管模式经过签名/资产门后暂存安装，二者不混用路径或状态。
@@ -63,10 +69,11 @@ TypeScript/API预检通过也不能替代下述真实启动、鉴权和H21/H22 W
 
 无模型的组合启动回归是[dsh-candidate-runtime.test.py](../tools/tests/dsh-candidate-runtime.test.py)：
 先在独立npm目录正常安装精确DSH与本插件tgz，再执行`python tools/tests/dsh-candidate-runtime.test.py --candidate <隔离npm目录>`。
-它复用受管profile准备入口，在新DSH_HOME验证真实Node启动、401/200 RPC、workspace幂等及两个preset创建，
-只关闭自己启动的进程，证据留在系统临时目录；不认证签名发行包、Houdini WebView或发送/停止模型路径。
+它复用受管profile准备入口，在新DSH_HOME验证真实Node启动、401/200 RPC、workspace幂等及两个preset创建；
+同一候选还验证`present`对真实临时文件的声明事件、错误路径拒绝，以及侧栏文件API对PNG、中文文本和workspace外绝对路径的读取。
+脚本只关闭自己启动的进程，证据留在系统临时目录；不认证签名发行包、Houdini WebView或发送/停止模型路径。
 本机已缓存正常安装的DSH时，可用`--runtime-cache <含node_modules的缓存目录>`建立临时只读投影并测试源码插件，
-不改缓存或用户home。回归包含同session ID重试/并发、未附着任务恢复、preset失败后恢复和独立归档集合；不替代正式包验收。
+不改缓存或用户home。加`--houdini-gui <目标houdini.exe>`会在隔离偏好目录启动真实GUI，检查交付卡片、PNG/文本/工作区外路径预览及HIP文件菜单；`--preinit-webengine`覆盖另一WebEngine页面先启动的反例。回归还包含同session ID重试/并发、未附着任务恢复、preset失败后恢复和独立归档集合；不替代正式包验收。
 
 保持当前 serving runtime 在线，依次完成：
 
@@ -114,6 +121,7 @@ Host/Bridge/helper版本、执行合同与词表hash，区分磁盘源码与已�
 [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py)处理process-token cookie与
 slash/generated-args RPC；[client.js](../client.js)消费公开Trajectory snapshot；
 [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py)在DocumentCreation注入必要Web API补丁；
+创建WebEngine页面前注册`dsh-resource`的Host URL语法：旧Qt默认Path语法使`new URL('dsh-resource://file/...').hostname`为空，文件资源provider无法选中。若其他Houdini面板已先初始化WebEngine、使Qt忽略晚注册，DocumentCreation仅对该虚拟scheme修正`URL.hostname`；常规URL保持原生行为。注册不附加scheme handler，文件内容仍由认证RPC读取。
 Iterator及其辅助方法使用锁定core-js构建的兼容资产，在MainWorld早于模块加载执行；
 DSH document preview内嵌PDF.js会在模块求值时访问Iterator.prototype，不能等loadFinished再补。
 生成入口为[gen-web-polyfills.mjs](../tools/gen-web-polyfills.mjs)，随包携带许可证；不改上游npm缓存。

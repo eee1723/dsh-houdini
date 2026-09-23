@@ -82,7 +82,9 @@ _HOU_THREAD_ID = threading.get_ident()
 # 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
 # owner_call), expected_contract and a one-time request ticket; job status and
 # cancel are authorized by the owning session only.
-_EXECUTION_CONTRACT_VERSION = 59
+# 60: completed result envelopes report bounded artifactCandidates from verb
+# receipts; they are path facts for Agent review, never automatic deliveries.
+_EXECUTION_CONTRACT_VERSION = 60
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -933,6 +935,63 @@ def _clip(obj) -> str:
     return text if len(text) <= _VERB_VALUE_CHARS else text[:_VERB_VALUE_CHARS] + "..."
 
 
+def _artifact_candidates(ledger, images, execution_ok):
+    """Project authoritative output paths; never declare user deliverables here."""
+    found = {}
+
+    def add(path, kind, role, source):
+        if not isinstance(path, str):
+            return
+        try:
+            if not os.path.isabs(path) or os.path.islink(path) or not os.path.isfile(path):
+                return
+            size = os.stat(path).st_size
+            absolute = os.path.abspath(path)
+            key = os.path.normcase(absolute)
+        except (OSError, ValueError):
+            return
+        if size <= 0:
+            return
+        found[key] = {'path': absolute, 'kind': kind,
+                      'role': role if execution_ok else 'diagnostic',
+                      'source': source, 'bytes': int(size)}
+
+    for entry in ledger:
+        if len(found) >= 16 or not entry.get('ok') or not isinstance(entry.get('result'), dict):
+            continue
+        name, result = entry['verb'], entry['result']
+        verified = (result.get('ok') is not False and not result.get('errors') and not result.get('warnings')
+                    and result.get('fresh') is not False and result.get('stale') is not True
+                    and result.get('warning_free') is not False
+                    and result.get('pixel_status') not in ('failed', 'needs_review')
+                    and result.get('file_status') != 'failed')
+        role = 'delivery-candidate' if verified else 'diagnostic'
+        if name in ('scene_save', 'scene_save_as'):
+            add(result.get('path'), 'scene', role, name)
+        elif name == 'component_export':
+            add(result.get('file'), 'component', role, name)
+        elif name == 'render_frame':
+            add(result.get('output'), 'render', role, name)
+        elif name in ('render_view', 'viewport_screenshot'):
+            artifact = result.get('artifact')
+            policy = artifact.get('output_policy') if isinstance(artifact, dict) else None
+            path = artifact.get('actual_path') if isinstance(artifact, dict) else None
+            if not path:
+                path = result.get('output') if name == 'render_view' else result.get('path')
+            default_role = 'visual-check' if name == 'render_view' else 'diagnostic'
+            add(path, 'image', role if policy == 'explicit' and verified else default_role if verified else 'diagnostic', name)
+    for path in images:
+        if len(found) >= 16:
+            break
+        try:
+            key = os.path.normcase(os.path.abspath(path)) if isinstance(path, str) and os.path.isabs(path) else None
+        except (OSError, ValueError):
+            key = None
+        if key not in found:
+            add(path, 'image', 'visual-check', 'reported-image')
+    return list(found.values())
+
+
 def _operation_summary(name: str, result):
     """Small, untruncated evidence before verbose node lists/service metadata."""
     if not isinstance(result, dict):
@@ -1446,6 +1505,9 @@ def run_code(code: str, allow_raw: str | None = None,
     # Only images produced by this request enter the Host's native attachments.
     if images:
         envelope["images"] = images
+    candidates = _artifact_candidates(verb_ledger, images, error is None)
+    if candidates:
+        envelope['artifactCandidates'] = candidates
     if verb_ledger:
         envelope["verbs"] = verb_ledger
         evidence = [{'ledgerIndex': i + 1, 'verb': v['verb'], **v['summary']}

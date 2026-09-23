@@ -23,7 +23,7 @@ import uuid
 import dsh_managed_runtime
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineUrlScheme
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -96,6 +96,32 @@ _POLYFILL_PROMISE_WITH_RESOLVERS_JS = """
 })()
 """
 
+# Qt WebEngine may have initialized another page before this plugin opens its
+# view. A then-late QWebEngineUrlScheme registration is ignored by Chromium:
+# the virtual DSH address remains opaque and URL.hostname is empty. Keep the
+# fallback strictly on dsh-resource addresses; it changes no fetch/navigation
+# authority and never installs a local-file scheme handler.
+_POLYFILL_DSH_RESOURCE_URL_JS = r"""
+(function(){
+  var probe = new URL('dsh-resource://file/session/probe/file.txt');
+  if (probe.hostname === 'file') return;
+  if (probe.protocol !== 'dsh-resource:' || probe.hostname !== '') return;
+  var descriptor = Object.getOwnPropertyDescriptor(URL.prototype, 'hostname');
+  if (!descriptor || !descriptor.configurable || typeof descriptor.get !== 'function') return;
+  Object.defineProperty(URL.prototype, 'hostname', {
+    configurable: descriptor.configurable,
+    enumerable: descriptor.enumerable,
+    get: function(){
+      var host = descriptor.get.call(this);
+      if (host !== '' || this.protocol !== 'dsh-resource:') return host;
+      var match = /^dsh-resource:\/\/([a-z0-9][a-z0-9-]*)(?:\/|$)/i.exec(this.href);
+      return match ? match[1].toLowerCase() : host;
+    },
+    set: descriptor.set && function(value){ descriptor.set.call(this, value); }
+  });
+})()
+"""
+
 _window: QWidget | None = None
 _view: QWebEngineView | None = None
 _retry_timer: QTimer | None = None
@@ -105,6 +131,25 @@ _quit_connected = False
 _workspace_dir: str | None = None
 _active_frontend_url: str | None = None
 _load_failed = False
+
+
+def _register_dsh_resource_scheme() -> None:
+    """Give DSH's virtual resource addresses an authority in Qt WebEngine.
+
+    The browser client uses ``new URL('dsh-resource://file/...').hostname`` to
+    select its file provider. Qt's default custom-scheme Path syntax yields an
+    empty hostname, so register Host syntax before creating a WebEngine page.
+    No scheme handler is installed: file bytes still use authenticated Host RPC.
+    """
+    name = b"dsh-resource"
+    current = QWebEngineUrlScheme.schemeByName(name)
+    if current.name():
+        if current.syntax() != QWebEngineUrlScheme.Syntax.Host:
+            raise RuntimeError("dsh-resource URL scheme has incompatible Qt WebEngine syntax")
+        return
+    scheme = QWebEngineUrlScheme(name)
+    scheme.setSyntax(QWebEngineUrlScheme.Syntax.Host)
+    QWebEngineUrlScheme.registerScheme(scheme)
 
 
 def _dispose_webview() -> None:
@@ -213,6 +258,7 @@ def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
     script.setRunsOnSubFrames(False)
     script.setSourceCode(
         _POLYFILL_ABORT_SIGNAL_ANY_JS + ";\n" + _POLYFILL_PROMISE_WITH_RESOLVERS_JS
+        + ";\n" + _POLYFILL_DSH_RESOURCE_URL_JS
         + ";\n" + Path(__file__).with_name("dsh_iterator_polyfill.js").read_text(encoding="utf-8")
     )
     view.page().scripts().insert(script)
@@ -302,6 +348,7 @@ def show_webview(
     initial_url = authenticated_url or target_url
 
     if _window is None:
+        _register_dsh_resource_scheme()
         win = QWidget()
         win.setWindowTitle("DSH-Houdini")
         view = QWebEngineView(win)

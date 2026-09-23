@@ -104,7 +104,9 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 不会选中归档、其他preset或子agent。确实没有可用任务才创建；导航失败可原位重试，不自动重复建任务。
 未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」，开发插件选择「Houdini开发模式」。
 首次请求houdini_query调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
-图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。
+图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。最终要交给用户的文件（包括图片）在实际存在并完成验证后由Agent调用`present`声明，右侧交付卡片指向源文件；验证图和缓存不自动声明。`present`不复制文件内容，源文件被移动、删除或改写后，旧卡片的打开结果也会改变。$HIP与Session workspace不同时应使用权威绝对路径，并在切换HIP后重新Open Workspace。
+H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
+会话输入区出现工作区不一致提示时，可展开查看Session workspace与最近一次Houdini调用观察到的$HIP目录；它不是持续监控，切换HIP后须重新Open Workspace，最终文件路径以当前权威回执为准。
 视频教程等可选能力的FFmpeg和云服务凭据不属于核心离线运行依赖，仍需按对应skill准备；Houdini和模型服务授权不随插件分发。
 
 ## 显式源码开发安装

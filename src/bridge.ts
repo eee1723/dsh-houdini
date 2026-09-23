@@ -30,6 +30,8 @@ export interface ExecResult {
   images?: JsonValue
   /** Native DSH image attachment references; no workspace file copies. */
   imageAttachments?: JsonValue
+  /** Existing authoritative paths for Agent review; never automatic deliveries. */
+  artifactCandidates?: JsonValue
   /** Failed/warning operation checks despite successful Python execution. */
   checks?: JsonValue
   /** Compact operation evidence, retained independently of verbose ledger previews. */

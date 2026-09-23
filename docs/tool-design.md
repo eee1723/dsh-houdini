@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 59
+Execution contract version: 60
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -54,6 +54,7 @@ render_frame与ROP/geometry cache输出语义不变。
 
 工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
+执行结果的`artifactCandidates`仅列权威文件路径、字节数、来源和用途候选；它不声明最终交付、不复制文件。最终文件仍须由Agent验收后调用标准`present`，验证图和失败产物不能自动提升为交付。
 
 显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()、component_wait(timeoutSeconds=30)和component_stop(childId)，
 只管理原生子任务和自有worker，不属于上述5个houdini工具或HOM动词目录，默认不挂载。

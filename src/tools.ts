@@ -29,6 +29,7 @@ const execOutputProperties = {
   advisory: { type: 'string' },
   images: { type: 'json' },
   imageAttachments: { type: 'json' },
+  artifactCandidates: { type: 'json' },
   checks: { type: 'json' },
   evidence: { type: 'json' },
   execution: { type: 'json' },
@@ -283,6 +284,10 @@ function renderStreams(value: ExecResult): string[] {
   if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
   parts.push(...renderVerbs(value))
   if (Array.isArray(value.imageAttachments)) parts.push('image-attachments:\n' + JSON.stringify(value.imageAttachments));
+  if (Array.isArray(value.artifactCandidates) && value.artifactCandidates.length) {
+    parts.push('artifact-candidates (not delivered; verify requested final files, then call present):\n'
+      + JSON.stringify(value.artifactCandidates))
+  }
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
   return parts

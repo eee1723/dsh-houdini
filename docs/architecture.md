@@ -48,7 +48,7 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 | Bridge | 主线程串行、身份、事务、回执和同次执行观察 | 为展示提醒重新执行Python、抢占正在运行的原生HOM |
 | Host / client | 适配DSH公共接口、原生附件、结果与历史投影 | 猜用户意图并拒绝合法问答、按端口认领或终止进程 |
 
-性能优化优先消除重复工作：工作区提示读取同次`execution.hip_dir`，不追加health/exec或维护HIP缓存；
+性能优化优先消除重复工作：工作区提示读取同次`execution.hip_dir`；浏览器仅从当前任务最近一次Houdini结果展示Session workspace与最近观察到的$HIP目录，不追加health/exec或维护HIP缓存；
 视频读取的完整性校验只在单次命令内复用，下一次重新校验；主线程队列在任务间按时间片让出GUI。
 权限与历史结果校验继续保留，不以缓存的观察代替现场事实。
 
@@ -62,7 +62,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/image-output.ts](../src/image-output.ts) | Bridge 图像→DSH 原生附件；模型能力检查、字节限额、原生与 Code Mode 图像返回，无工作区副本 |
 | [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/原生图像交付、纯展示函数 |
-| [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本 |
+| [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
 | [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从持久任务绑定解析登记、验证执行端并固定调用级Bridge，无自动默认或重绑 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，严格输入/预留/代际校验，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
@@ -139,7 +139,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | worker启动/repair、主线程接入、模块重载与HIP目录意图；只读Host就绪、不再筛选/创建任务，preset/profile共用动态DSH_HOME |
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
-| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、DocumentCreation兼容补丁 |
+| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
 | [dsh_iterator_polyfill.js](../houdini/python3.11libs/dsh_iterator_polyfill.js) | 构建生成的core-js Iterator兼容实现，附MIT许可证；仅缺失/不兼容API补齐，不手改 |
 | [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py) | process-token→signed cookie、RPC wire与会话请求 |
 | [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步当前profile声明的项目依赖 |
@@ -199,6 +199,7 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 执行注意事项由context.ts在正常pre-step接受边界整理：最多4条本插件独立execution-state快照；超限逐条以公开surface replace换为空system消息（不进入模型），原始事件保留，混合来源/未完成工具批次不整理。新状态仍在当前步骤正常追加，未决回执/陈旧证据保留。整理后的持久化确认按会话/替换边界重试，失败后即使无新通知、上下文被抑制或会话重载也不放行模型请求；自身整理不会触发全量recovery；替换会改变缓存前缀，成本收益须独立测量。
 
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
+Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；`scene_save`/`scene_save_as`、`component_export`、`render_frame`、`render_view`及`viewport_screenshot`只报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
 大结果保存到workspace的.dsh-houdini-results后才精简模型文本。该目录是工具返回副本，不是HIP内容输出。
