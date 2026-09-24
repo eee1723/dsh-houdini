@@ -108,7 +108,10 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     other_hip = other / 'renamed.hip'
     other_hip.touch()
     after_save_as = allocate(other_hip)
-    assert Path(after_save_as['actual_path']).is_relative_to(other)
+    # CI may create the fixture under an 8.3 short user path while the managed
+    # allocator resolves it to the long spelling. Compare filesystem paths,
+    # not those two lexical spellings of the same directory.
+    assert Path(after_save_as['actual_path']).resolve().is_relative_to(other.resolve())
     assert Path(first['managed_root']).exists()
 
     # Redirecting the visible managed directory is rejected even when the link
