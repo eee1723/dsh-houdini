@@ -64,6 +64,16 @@
       },
       "evaluator": "cases/equipment-case-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "sealed-bottle-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/sealed-bottle-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/sealed-bottle-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }

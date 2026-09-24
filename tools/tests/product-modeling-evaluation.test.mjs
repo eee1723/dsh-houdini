@@ -9,6 +9,7 @@ assert.deepEqual(new Set(manifest.cases.map(item => item.kind)), new Set([
   'drawing-understanding', 'reference-to-model', 'guided-reference-to-model',
   'focused-module', 'parameter-change', 'text-to-model',
 ]))
+assert.ok(manifest.cases.some(item => item.id === 'sealed-bottle-build'))
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-product-modeling-test-'))
 try {
@@ -22,6 +23,11 @@ try {
   assert.doesNotMatch(JSON.stringify(publicTask), /evaluator|checklist|sourceRoot/i)
   assert.throws(() => prepareRun({ caseId: 'task-lamp-build', output: build.destination }), /already exists/)
   assert.throws(() => prepareRun({ caseId: 'task-lamp-change', output: path.join(scratch, 'missing') }), /baseline-hip/)
+
+  const bottle = prepareRun({ caseId: 'sealed-bottle-build', output: path.join(scratch, 'bottle') })
+  assert.deepEqual(fs.readdirSync(bottle.destination).sort(), ['brief.md', 'task.json'])
+  assert.equal(bottle.task.kind, 'text-to-model')
+  assert.doesNotMatch(JSON.stringify(bottle.task), /evaluator|checklist|sourceRoot/i)
 
   const baseline = path.join(scratch, 'prior.hip')
   fs.writeFileSync(baseline, 'test HIP bytes')

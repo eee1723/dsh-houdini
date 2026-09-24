@@ -1,0 +1,19 @@
+{
+  "caseId": "sealed-bottle-build",
+  "reviewerInstructions": "先独立重开最终 HIP，在固定整体和局部视角查看，再读自评。记录瓶身、瓶口、瓶盖和提环分别用了哪些建模方法；VEX、Revolve 和原生 SOP 均可用，不能因方法名称直接判好坏。检查朝向时区分外壁、内壁和有意敞开的瓶口；单独的面数、零节点报错或局部距离为零都不足以证明封口正确。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_closed", "independent_overview_open", "independent_detail_mouth_cap", "independent_detail_base", "independent_shell_orientation_check", "independent_closure_check", "independent_control_check", "node_method_inventory"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "proportion-and-form", "method": "measurement+visual", "critical": true, "expectation": "合盖总高接近 26 cm、最宽处接近 7.5 cm；底部可平稳放置，肩部与瓶口过渡自然。"},
+    {"id": "hollow-shell", "method": "geometry+visual", "critical": true, "expectation": "瓶身有真实的内腔、外壁和可见壁厚，瓶口敞开且底部封住；外壁朝外、内壁朝向内腔，没有倒面或杂乱的面朝向。"},
+    {"id": "cap-and-seal", "method": "geometry+visual", "critical": true, "expectation": "盖内有容纳瓶口的空间，密封圈沿瓶口连续；合盖时瓶口、密封圈和盖内相互对齐，无明显穿透或悬空，不能只凭一处零间距宣称密封可靠。"},
+    {"id": "grip-and-carry", "method": "geometry+visual", "critical": true, "expectation": "瓶盖外有可辨的防滑纹，提环有握持空间，并与瓶盖形成可信的连接。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "瓶口、盖内、肩部和瓶底近景能辨认厚度与转角；无明显翻面、破面、锯齿边或穿帮。"},
+    {"id": "procedural-controls", "method": "control+geometry", "critical": true, "expectation": "瓶身高度与开盖位置可独立调整并恢复；变化后瓶口、盖子、密封圈和提环维持合理关系，模型仍可计算。"},
+    {"id": "modeling-method", "method": "network+geometry", "critical": false, "expectation": "记录主要几何由 VEX、Revolve 或其他 SOP 如何产生；无论采用哪种方法，最终模型的朝向、封口和参数变化都正确，关键部位仍可定位和编辑。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开；报告未实现的结构与未验证的封口配合，不把外观像水瓶说成密封或朝向已通过检查。"}
+  ]
+}
