@@ -68,6 +68,8 @@ try {
   }
   const flush=async s=>{flushed.push(s.id);return true}
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(flush))
+  assert.equal((await router.directory.list()).length,2,
+    'the exact configured installation must retain its registry records')
   const childWorkspace=path.join(directory,'child-workspace')
   const child={id:agents[0].id,session:Session.create(agents[0].id,[],{
     version:3,id:agents[0].id,createdAt:1,isSeeded:false,parentSession:'parent',cwd:childWorkspace})}

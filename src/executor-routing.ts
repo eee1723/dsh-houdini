@@ -38,6 +38,7 @@ export class ExecutorDirectory {
     catch(error) { if((error as NodeJS.ErrnoException).code==='ENOENT') return [];throw error }
     files=files.filter(f=>f.endsWith('.json')).sort()
     if(files.length>256) throw new Error('Executor discovery budget exceeded')
+    const configuredInstall=canonical(this.installation)
     const expectedInstall=canonical(await fs.realpath(this.installation))
     const expectedDirectory=canonical(await fs.realpath(directory))
     const records:ExecutorRecord[]=[]
@@ -58,7 +59,12 @@ export class ExecutorDirectory {
       const port=Number(new URL(r.bridge_url).port)
       if(port<1024||port>65535) throw new Error('Invalid registered Bridge port')
       // A missing foreign installation is not a reason to load or execute it.
-      if(canonical(r.installation)!==expectedInstall) continue
+      // Windows runners can canonicalize a temporary installation differently
+      // through realpath (for example a junction or a long-path alias). The
+      // exact configured spelling is still our installation, so accept it as
+      // well as its resolved spelling; never adopt an unrelated location.
+      const recordedInstall=canonical(r.installation)
+      if(recordedInstall!==configuredInstall&&recordedInstall!==expectedInstall) continue
       records.push(r)
     }
     return records
