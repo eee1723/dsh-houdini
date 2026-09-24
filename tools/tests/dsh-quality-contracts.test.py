@@ -92,7 +92,7 @@ try:
     scoped=h.test_controls(ctrl,out,conditional)
     assert scoped['ok'] and scoped['baseline_interfaces'] is None and scoped['restored'],scoped
     assert scoped['control_summary']['coverage']['declared_interfaces']==1,scoped
-    assert scoped['control_summary']['coverage']['case_specific_interface_checks']==1,scoped
+    assert scoped['control_summary']['coverage']['case_interface_contracts_declared']==1,scoped
     assert [case['interface_status'] for case in scoped['control_summary']['cases']]==['pass','not_checked'],scoped
     rejects(lambda:h.test_controls(ctrl,out,[{**conditional[0],
         'interfaces':[{**interface,'expected_points':0}]}]),'expected_points')
@@ -130,15 +130,40 @@ try:
     assert opened['ok'] and opened['restored'] and gap_ctrl.evalParm('lift')==0,opened
     assert opened['results'][0]['interfaces']['results'][0]['gap']>0.99,opened
     assert opened['control_summary']['coverage']['relationship_scope']=='declared_contracts_only',opened
-    envelope=b.run_code(f'__result__=test_controls({gap_ctrl.path()!r},{gap_out.path()!r},{open_case!r})')
+    full_cycle=h.test_controls(gap_ctrl,gap_out,open_case,baseline_interfaces=[contact])
+    assert full_cycle['ok'] and full_cycle['restored'] and full_cycle['baseline_interfaces']['status']=='pass',full_cycle
+    full_coverage=full_cycle['control_summary']['coverage']
+    assert full_coverage['declared_interfaces']==2 and full_coverage['baseline_interface_status']=='pass',full_cycle
+    assert full_coverage['cases_with_interface_checks']==1 and full_coverage['executed_interface_checks']==2,full_cycle
+    assert full_cycle['contract_sha256']!=opened['contract_sha256'],full_cycle
+    baseline_only=h.test_controls(gap_ctrl,gap_out,[{k:v for k,v in open_case[0].items() if k!='interfaces'}],
+                                  baseline_interfaces=[contact])
+    assert baseline_only['ok'] and baseline_only['control_summary']['coverage']['baseline_interface_status']=='pass',baseline_only
+    assert baseline_only['control_summary']['coverage']['cases_with_interface_checks']==0,baseline_only
+    assert baseline_only['control_summary']['coverage']['executed_interface_checks']==1,baseline_only
+    rejects(lambda:h.test_controls(gap_ctrl,gap_out,open_case,interfaces=[contact],
+        baseline_interfaces=[contact]),'unique')
+    bad_baseline={**contact,'gap_range':[.5,1.5]}
+    baseline_failed=h.test_controls(gap_ctrl,gap_out,open_case,baseline_interfaces=[bad_baseline])
+    assert baseline_failed['status']=='fail' and baseline_failed['parameter_writes']==0,baseline_failed
+    assert baseline_failed['results']==[] and gap_ctrl.evalParm('lift')==0,baseline_failed
+    baseline_coverage=baseline_failed['control_summary']['coverage']
+    assert baseline_coverage['baseline_interface_status']=='fail',baseline_failed
+    assert baseline_coverage['cases_with_interface_checks']==0 and baseline_coverage['executed_interface_checks']==1,baseline_failed
+    bad_open=[{**open_case[0],'interfaces':[{**separated,'gap_range':[2,3]}]}]
+    opened_failed=h.test_controls(gap_ctrl,gap_out,bad_open,baseline_interfaces=[contact])
+    assert opened_failed['status']=='fail' and opened_failed['restored'] and gap_ctrl.evalParm('lift')==0,opened_failed
+    assert opened_failed['baseline_interfaces']['status']=='pass' and opened_failed['results'][0]['interfaces']['status']=='fail',opened_failed
+    envelope=b.run_code(f'__result__=test_controls({gap_ctrl.path()!r},{gap_out.path()!r},{open_case!r},baseline_interfaces={[contact]!r})')
     bridge_result=next(item for item in envelope['evidence'] if item.get('verb')=='test_controls')
-    assert bridge_result['control_summary']['coverage']['case_specific_interface_checks']==1,bridge_result
+    assert bridge_result['control_summary']['coverage']['baseline_interface_status']=='pass',bridge_result
+    assert bridge_result['control_summary']['coverage']['executed_interface_checks']==2,bridge_result
     assert bridge_result['control_summary']['cases'][0]['interface_status']=='pass',bridge_result
     # Absolute ranges apply to baseline too: a rejected baseline must not look
     # like an empty successful batch when author code prints only results.
     baseline_test=[{'id':'target_only_range','values':{'length':1.2},'expectations':[
         {'metric':'bounds_size','axis':0,'delta':[.199,.201],'range':[2.19,2.21]}]}]
-    env=b.run_code(f'r=test_controls({ctrl.path()!r},{out.path()!r},{baseline_test!r}); print(r["results"])')
+    env=b.run_code(f'r=test_controls({ctrl.path()!r},{out.path()!r},{baseline_test!r},baseline_interfaces={[interface]!r}); print(r["results"])')
     evidence=next(e for e in env['evidence'] if e['verb']=='test_controls')
     summary=evidence['control_summary']
     assert env['ok'] and summary['status']=='fail' and summary['parameter_writes']==0,env
@@ -148,6 +173,7 @@ try:
     assert summary['controller']==ctrl.path() and summary['output']==out.path()
     assert summary['coverage']['measured_cases']==0
     assert summary['coverage']['declared_controls']==['length']
+    assert summary['coverage']['baseline_interface_status']=='pass' and summary['coverage']['executed_interface_checks']==1
     assert summary['cases'][0]['output_data_changed'] is None,'not_run must not be reported unchanged'
     assert ctrl.evalParm('length')==1 and evidence['results']==[]
     result=h.test_controls(ctrl,out,[{'id':'dead','values':{'unused':2},'expectations':[

@@ -573,7 +573,7 @@ def capture_views(output, views):
     return captures
 
 
-def _control_summary(result, tests, interfaces=None, topology=None):
+def _control_summary(result, tests, interfaces=None, topology=None, baseline_interfaces=None):
     """Keep zero-write baseline failures visible even when results is empty."""
     rows = result.get('results', [])
     by_id = {r['id']: r for r in rows}
@@ -596,6 +596,16 @@ def _control_summary(result, tests, interfaces=None, topology=None):
                       'changed_output_with_failed_measurements': row.get('geometry_changed') is True and any(not m['pass'] for m in measurements)})
     counts = {status: sum(c['status'] == status for c in cases)
               for status in ('pass', 'fail', 'unverified', 'not_run')}
+    baseline_result=result.get('baseline_interfaces')
+    baseline_status=(baseline_result.get('status') if isinstance(baseline_result,dict) else 'not_checked')
+    checked_cases=sum(case['interface_status']!='not_checked' for case in cases)
+    executed_interfaces=(len(baseline_result.get('results',[])) if isinstance(baseline_result,dict) else 0)
+    executed_interfaces+=sum(len(row['interfaces'].get('results',[])) for row in rows
+                             if isinstance(row.get('interfaces'),dict))
+    topology_observed=isinstance(result.get('baseline_topology'),dict) or any(
+        case['topology_status']!='not_checked' for case in cases)
+    declared_interfaces=(len(interfaces or [])+len(baseline_interfaces or [])+
+                         sum(len(test.get('interfaces',[])) for test in tests))
     failures = []
     for row in rows:
         if row['status'] == 'pass' and row.get('restored') is not False:
@@ -612,14 +622,19 @@ def _control_summary(result, tests, interfaces=None, topology=None):
             'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
             'coverage': {'acceptance': 'declared_checks_only',
                          'declared_controls': sorted({name for t in tests for name in t['values']}),
-                         'declared_interfaces': len({item['id'] for item in (interfaces or [])
-                                                     + [item for test in tests for item in test.get('interfaces', [])]}),
-                         'case_specific_interface_checks': sum(len(test.get('interfaces', [])) for test in tests),
+                         'declared_interfaces': declared_interfaces,
+                         'baseline_interface_contracts_declared': len(interfaces or [])+len(baseline_interfaces or []),
+                         'case_interface_contracts_declared': sum(len(test.get('interfaces',[])) for test in tests),
+                         'baseline_interface_status': baseline_status,
+                         'cases_with_interface_checks': checked_cases,
+                         'executed_interface_checks': executed_interfaces,
                          'declared_topology_contracts': len(topology or []),
                          'measured_cases': sum(c['measurement_count'] > 0 for c in cases),
-                         'relationship_scope': 'declared_contracts_only' if interfaces or topology
-                                               or any(test.get('interfaces') for test in tests) else 'not_checked',
-                         'boundary': 'Global interfaces cover baseline and every case; case interfaces cover only their perturbed state. '
+                         'relationship_scope': 'declared_contracts_only' if executed_interfaces or topology_observed
+                                               else 'declared_not_run' if declared_interfaces or topology else 'not_checked',
+                         'boundary': 'Declared interface counts are plans; executed counts report observed checks. '
+                                     'Global interfaces cover baseline and every case, baseline_interfaces only baseline, '
+                                     'case interfaces only their perturbed state. '
                                      'Bounds/count response does not prove attachment, clearance or uniform transforms. '
                                      'A changed output fingerprint with failed metrics is not an unconnected/dead control: '
                                      'inspect local geometry and intended dependencies before rewiring. '
@@ -635,20 +650,23 @@ def _control_summary(result, tests, interfaces=None, topology=None):
                 'Correct a mistaken expectation with independent evidence, then rerun affected cases.'))}
 
 
-def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
+def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                  baseline_interfaces=None, views=None, response_only=False):
     result = _test_controls(controller, output, tests, interfaces, allow_foreign,
-                            domain=domain, topology=topology, views=views, response_only=response_only)
-    result['control_summary'] = _control_summary(result, tests, interfaces, topology)
+                            domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
+                            views=views, response_only=response_only)
+    result['control_summary'] = _control_summary(result, tests, interfaces, topology, baseline_interfaces)
     return result
 
 
-def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
+def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                   baseline_interfaces=None, views=None, response_only=False):
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
     delta:[min,max]}]. Global interfaces are checked at baseline and in every
-    case; each test may also declare interfaces checked only at its perturbed
-    state, for example contact while closed and separation while opened.
+    case; baseline_interfaces are checked only at baseline; each test may also
+    declare interfaces checked only at its perturbed state.
     Operates only on numeric scalar controller parms, no menus/buttons/multiparms.
     Geometry bgeo fingerprints include primitive intrinsics, not just P. External
     files, Python/solver side effects and user callbacks are NOT transactional.
@@ -662,6 +680,9 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     if not isinstance(tests,list) or not 1 <= len(tests) <= 16:
         raise ValueError('tests must contain 1..16 bounded cases')
     if interfaces is not None:validate_interfaces(interfaces)
+    if baseline_interfaces is not None:
+        validate_interfaces(baseline_interfaces)
+        if interfaces:validate_interfaces(interfaces+baseline_interfaces)
     if domain is not None:validate_domain(domain)
     if topology is not None:validate_topology(topology)
     ids=set();names=set()
@@ -731,17 +752,21 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'parameter_writes':0,'semantic_status':'unverified',
                 'scope':'unsupported output representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
-    baseline_relations=_check_interfaces(baseline,interfaces,50000) if interfaces is not None else None
+    baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
+    baseline_relations=_check_interfaces(baseline,baseline_contracts,50000) if baseline_contracts else None
     baseline_topology=_check_topology(baseline,topology) if topology is not None else None
+    baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,
+                     'baseline_domain':baseline_domain}
     if baseline_topology is not None and not baseline_topology['ok']:
         return {'ok':False,'status':baseline_topology['status'],'controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'baseline_topology':baseline_topology,
+                'frame':original_frame,'checked_at':time.time(),'restored':True,**baseline_checks,
                 'parameter_writes':0,'results':[],'semantic_status':'unverified',
                 'next_action':'Fix the baseline selected surface topology before testing controls; zero parameter writes.'}
     if baseline_relations is not None and not baseline_relations['ok']:
         return {'ok':False,'status':baseline_relations['status'],'controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'baseline_interfaces':baseline_relations,
-                'results':[],'semantic_status':'unverified','next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
+                'frame':original_frame,'checked_at':time.time(),'restored':True,**baseline_checks,
+                'results':[],'parameter_writes':0,'semantic_status':'unverified',
+                'next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
     # Resolve every measurement BEFORE the first write.
     try:
         baselines={test['id']:[_measure(baseline,e) for e in test.get('expectations',[])] for test in tests}
@@ -752,12 +777,12 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if 'range' in exp and not exp['range'][0]<=value<=exp['range'][1]:
                     return {'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
                             'frame':original_frame,'checked_at':time.time(),
-                            'restored':True,'parameter_writes':0,'results':[], 'case_id':test['id'],
+                            'restored':True,'parameter_writes':0,'results':[],**baseline_checks,'case_id':test['id'],
                             'reason':'baseline outside declared absolute range','expectation':exp,'baseline':value,
                             'semantic_status':'unverified'}
     except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
+                'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
     rows=[];all_restored=True;restoration=None
     for test in tests:
@@ -845,8 +870,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             if not row['restored']:
                 all_restored=False
                 failure={'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
-                         'restored':False,'results':rows+[row]}
-                failure['control_summary']=_control_summary(failure,tests,interfaces,topology)
+                         'restored':False,'results':rows+[row],**baseline_checks}
+                failure['control_summary']=_control_summary(failure,tests,interfaces,topology,baseline_interfaces)
                 raise h.CheckpointError('test_controls restoration failed; inspect controller/output before continuing',
                                         failure)
         rows.append(row)
@@ -856,6 +881,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             'frame':original_frame,'checked_at':time.time(),'restored':all_restored,'baseline_sha256':baseline_hash,
             'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
-            'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
+            'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,
+                'baseline_interfaces':baseline_interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
             'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships',
             'next_action':'Fix failed responses/interfaces; preserve drafts. Do not claim full controllability from one global geometry change.'}

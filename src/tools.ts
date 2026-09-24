@@ -318,7 +318,9 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
         relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',
         declared_interfaces:summary.coverage?.declared_interfaces ?? 0,
-        case_specific_interface_checks:summary.coverage?.case_specific_interface_checks ?? 0,
+        baseline_interface_status:summary.coverage?.baseline_interface_status ?? 'not_checked',
+        cases_with_interface_checks:summary.coverage?.cases_with_interface_checks ?? 0,
+        executed_interface_checks:summary.coverage?.executed_interface_checks ?? 0,
         declared_topology_contracts:summary.coverage?.declared_topology_contracts ?? 0,
         unresolved_cases:unresolved,restored:summary.restored ?? null,
         boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`})

@@ -4938,7 +4938,8 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     return check(output, interfaces, max_pairs=max_pairs)
 
 
-def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None) -> dict:
+def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                  baseline_interfaces=None) -> dict:
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
     tests为1..16个case；每个case是
@@ -4955,8 +4956,9 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
     修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
-    顶层interfaces在基准及每次扰动均检查；case内interfaces只在该扰动状态检查，
-    用于合盖接触与开盖分离等不同状态合同。二者均用geo_check_interfaces同一schema；
+    顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
+    case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
+    三者均用geo_check_interfaces同一schema；
     每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
@@ -4968,7 +4970,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     共享边连通/闭合；在基准与每次扰动实际输出上复查。不用于未焊接独立部件的距离/强度证明。
     """
     from dsh_quality_contracts import test_controls as test
-    return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign, domain=domain, topology=topology)
+    return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign,
+                domain=domain, topology=topology, baseline_interfaces=baseline_interfaces)
 
 
 def cop_layer_stats(node, output=0, *, max_pixels=4194304) -> dict:
