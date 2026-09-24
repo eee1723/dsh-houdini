@@ -150,7 +150,7 @@ def _geometry(output):
 
 
 def _canonical_geometry_payload(data):
-    """Canonicalize export metadata and group-directory order, never membership."""
+    """Canonicalize writer order while retaining group members and attribute values."""
     payload=hjson.loads(data)
     if (not isinstance(payload,list) or len(payload)%2
             or any(not isinstance(k,str) for k in payload[::2])
@@ -178,6 +178,41 @@ def _canonical_geometry_payload(data):
             # serialization order after recooking. Keep each descriptor and
             # selection payload intact, including ordered-group element order.
             payload[i+1]=[record for _,record in sorted(zip(names,value),key=lambda pair:pair[0])]
+        elif key=='attributes' and isinstance(value,list) and len(value)%2==0:
+            # Houdini may assign string-table indices in cook order. The table
+            # order is not an attribute value: remap the known GA rawpagedata
+            # schema while preserving every element's actual string and all
+            # other attribute metadata. Unknown encodings stay byte-distinct.
+            for records in value[1::2]:
+                if not isinstance(records,list):continue
+                for record in records:
+                    if not isinstance(record,list) or len(record)!=2:continue
+                    descriptor,body=record
+                    if (not isinstance(descriptor,list) or len(descriptor)%2
+                            or any(not isinstance(k,str) for k in descriptor[::2])
+                            or len(set(descriptor[::2]))!=len(descriptor)//2
+                            or dict(zip(descriptor[::2],descriptor[1::2])).get('type')!='string'
+                            or not isinstance(body,list) or len(body)%2
+                            or any(not isinstance(k,str) for k in body[::2])
+                            or len(set(body[::2]))!=len(body)//2):continue
+                    fields=dict(zip(body[::2],body[1::2]))
+                    if set(fields)!={'size','storage','strings','indices'}:continue
+                    strings,indices=fields['strings'],fields['indices']
+                    if (not isinstance(strings,list) or any(not isinstance(s,str) for s in strings)
+                            or len(set(strings))!=len(strings) or not isinstance(indices,list)
+                            or len(indices)%2 or any(not isinstance(k,str) for k in indices[::2])
+                            or len(set(indices[::2]))!=len(indices)//2):continue
+                    index_fields=dict(zip(indices[::2],indices[1::2]))
+                    if (set(index_fields)-{'size','storage','pagesize','constantpageflags','rawpagedata'}
+                            or 'rawpagedata' not in index_fields):continue
+                    raw=index_fields['rawpagedata']
+                    if (not isinstance(raw,list) or any(type(n) is not int or n<-1 or n>=len(strings)
+                                                        for n in raw)):continue
+                    ordered=sorted(strings)
+                    positions={name:index for index,name in enumerate(ordered)}
+                    mapping={old:positions[name] for old,name in enumerate(strings)}
+                    body[body.index('strings')+1]=ordered
+                    indices[indices.index('rawpagedata')+1]=[mapping[n] if n>=0 else n for n in raw]
         elif key=='info' and isinstance(value,dict):
             # Both are writer-generated descriptions, not user attributes.
             # The actual group names, membership and selection order stay above.

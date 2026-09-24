@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 62
+Execution contract version: 63
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -178,7 +178,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None, integrity_only=False)` | 默认统计primitive piece局部bbox/extent/面积；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent、surface_area、duplicate_boundary_faces、closed_planar_components及center_axis_surface_hits。仅近看Polygon完整性时用inspect=True, integrity_only=True：跳过昂贵的中心线/截面诊断，最多100000 prim/400000顶点引用，返回非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何朝向相反的样本、零面积/零边及完全重复面风险；负号提示核对整壳朝向，嵌套空腔的内壳可有意反向，不能自动判错。开放边单列open_boundary_unreviewed，可能是有意接口，需按设计核对。风险/超预算在Bridge摘要与执行提醒中保留；no_detected_integrity_risk只表示本检查未发现列出的风险，不认证任意重叠、自交、接触、外形或强度。普通完整inspect仍保持原预算与语义；不支持或超预算为unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
-失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。
+失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。已知字符串属性的内部名称表可因cook顺序重排；签名同步重映射索引并比较每个元素的真实字符串，不把等值表顺序误判为几何漂移。
 Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
 多个`geo_piece_stats(...,inspect=True,integrity_only=True,group=...)`同批返回时，Host先标明本批是否检查了未分组的整件输出；局部组各自零风险不能覆盖组与组之间的完全重合面。
 
