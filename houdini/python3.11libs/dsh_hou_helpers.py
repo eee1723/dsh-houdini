@@ -4935,6 +4935,13 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     可选method='axis_gap'时source_group/target_group均为实际primitive组，带axis(0..2)、
     gap_range=[min,max]和正数min_overlap。测source.min-target.max及横向投影重叠；
     正数表示轴向分離，负数表示投影重叠，仅此，不能称为真实接触或插入深度。
+    method='solid_overlap'时两组都是同一最终SOP内完整、独立、闭合且朝外的
+    Polygon实体primitive组，另给max_overlap_volume（SOP local单位的三次方）。
+    内存Boolean Intersect量实体相交体积；正体积超限fail，零交集pass；
+    不完整/开放/非Polygon或数值模糊为unverified，不添加场景节点。
+    例：{id:'shaft_clearance',method:'solid_overlap',source_group:'lug',
+    target_group:'shaft',max_overlap_volume:0}。须另验同轴和孔壁距离；
+    零交集不证明轴已穿孔，逐状态检查也不证明连续扫掠或力学。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
@@ -4960,7 +4967,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
     顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
     case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
-    三者均用geo_check_interfaces同一schema；
+    三者均用geo_check_interfaces同一schema；实体禁穿插可用solid_overlap，
+    但所选组须完整闭合，并与同轴/孔道检查合用。
     每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，

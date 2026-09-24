@@ -286,6 +286,67 @@ try:
     query=b.run_code(f'test_controls({ctrl.path()!r},{out.path()!r},[])',read_only=True)
     assert not query['ok'] and 'read-only' in query['error'],query
 
+    # A visually coaxial shaft inside a capped Tube occupies the same solid
+    # space. A real bored lug has no Boolean intersection with the shaft.
+    bore_ctrl=root.createNode('null','BORE_CTRL')
+    h.create_spare_parms(bore_ctrl,spec=[{'type':'float','name':'offset','default':0}])
+    outer=root.createNode('tube','solid_lug')
+    cutter=root.createNode('tube','bore_cutter')
+    shaft=root.createNode('tube','bore_shaft')
+    for node,radius,height in ((outer,.005,.02),(cutter,.0025,.022),(shaft,.002,.022)):
+        h.set_parms(node,{'type':'poly','orient':'x','cap':1,'rad1':radius,
+                          'rad2':radius,'height':height,'cols':32})
+    h.set_parm(shaft,'ty',"ch('../BORE_CTRL/offset')")
+    bored=root.createNode('boolean','bored_lug')
+    bored.setInput(0,outer);bored.setInput(1,cutter)
+    h.set_parm(bored,'booleanop','subtract')
+    shaft_tag=root.createNode('attribwrangle','bore_shaft_tag')
+    shaft_tag.setInput(0,shaft);shaft_tag.parm('class').set('primitive')
+    shaft_tag.parm('snippet').set('setprimgroup(0,"shaft",@primnum,1);')
+    def bore_assembly(source,name):
+        tag=root.createNode('attribwrangle',name+'_lug_tag')
+        tag.setInput(0,source);tag.parm('class').set('primitive')
+        tag.parm('snippet').set('setprimgroup(0,"lug",@primnum,1);')
+        merged=root.createNode('merge',name)
+        merged.setInput(0,tag);merged.setInput(1,shaft_tag)
+        return merged
+    solid_assembly=bore_assembly(outer,'solid_bore_case')
+    hollow_assembly=bore_assembly(bored,'hollow_bore_case')
+    no_overlap={'id':'shaft_clearance','method':'solid_overlap','source_group':'lug',
+                'target_group':'shaft','max_overlap_volume':1e-12}
+    solid_check=h.geo_check_interfaces(solid_assembly,[no_overlap])
+    assert solid_check['status']=='fail' and solid_check['results'][0]['overlap_volume']>2e-7,solid_check
+    hollow_check=h.geo_check_interfaces(hollow_assembly,[no_overlap])
+    assert hollow_check['status']=='pass' and hollow_check['results'][0]['overlap_volume']==0,hollow_check
+    assert hollow_check['results'][0]['intersection_primitives']==0
+    rejects(lambda:h.geo_check_interfaces(hollow_assembly,[no_overlap],max_pairs=1),'budget')
+    rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'max_overlap_volume':-1}]),'nonnegative')
+    assert h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'source_group':'missing'}])['status']=='fail'
+    assert h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'source_group':'shaft'}])['status']=='fail'
+    h.set_parm(outer,'cap',0)
+    assert h.geo_check_interfaces(solid_assembly,[no_overlap])['status']=='unverified'
+    h.set_parm(outer,'cap',1)
+    h.set_parm(outer,'type','prim')
+    assert h.geo_check_interfaces(solid_assembly,[no_overlap])['status']=='unverified'
+    h.set_parm(outer,'type','poly')
+    within_bore=[{'id':'shaft_moves_inside_bore','values':{'offset':.0001},'expectations':[
+      {'metric':'bounds_center','axis':1,'group':'shaft','delta':[.00009,.00011]}]}]
+    moving_clear=h.test_controls(bore_ctrl,hollow_assembly,within_bore,interfaces=[no_overlap])
+    assert moving_clear['ok'] and moving_clear['restored'],moving_clear
+    assert moving_clear['control_summary']['coverage']['executed_interface_checks']==2,moving_clear
+    shifted=[{'id':'shaft_hits_wall','values':{'offset':.003},'expectations':[
+      {'metric':'bounds_center','axis':1,'group':'shaft','delta':[.0029,.0031]}]}]
+    before=q._data_signature(hollow_assembly.geometry())
+    moved=h.test_controls(bore_ctrl,hollow_assembly,shifted,interfaces=[no_overlap])
+    assert moved['status']=='fail' and moved['restored'],moved
+    assert moved['results'][0]['measurements'][0]['pass'] and moved['results'][0]['interfaces']['status']=='fail',moved
+    assert q._data_signature(hollow_assembly.geometry())==before
+    blocked=h.test_controls(bore_ctrl,solid_assembly,shifted,baseline_interfaces=[no_overlap])
+    assert blocked['status']=='fail' and blocked['parameter_writes']==0 and blocked['results']==[],blocked
+    envelope=b.run_code(f'__result__=geo_check_interfaces({solid_assembly.path()!r},{[no_overlap]!r})',read_only=True)
+    evidence=next(row for row in envelope['evidence'] if row.get('verb')=='geo_check_interfaces')
+    assert evidence['results'][0]['status']=='fail' and evidence['results'][0]['overlap_volume']>0,evidence
+
     # Construction fails atomically when its requested interface is absent.
     previous=set(root.children())
     rejects(lambda:h.build_module(root,[{'name':'bad_contract','type':'box'}],output='bad_contract',interfaces=[interface]),'interface')

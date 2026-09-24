@@ -1,8 +1,9 @@
 """Bounded final-geometry checks with optional controlled review preview capture.
 
 All calls run through the owning-thread Bridge. Named groups are explicit user/
-agent-selected interfaces, not inferred semantics. This is not a solid collision
-solver; unsupported representations stay unverified, never silently sampled.
+agent-selected interfaces, not inferred semantics. Only declared, bounded
+closed Polygon selections can be checked for solid overlap; this is not a
+continuous collision solver. Unsupported representations stay unverified.
 """
 from __future__ import annotations
 
@@ -104,7 +105,8 @@ def validate_interfaces(interfaces):
         if not isinstance(item,dict):raise ValueError('interface must be an object')
         axis_gap = item.get('method') == 'axis_gap'
         section = item.get('method') == 'section_proximity'
-        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','source_group','target_group','max_distance','expected_points'}
+        solid_overlap = item.get('method') == 'solid_overlap'
+        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
         for key in ('id', 'source_group', 'target_group'):
             if not isinstance(item.get(key), str) or not item[key].strip():
@@ -120,6 +122,10 @@ def validate_interfaces(interfaces):
                 raise ValueError('gap_range must be finite [min,max] in SOP local units')
             if _finite(item.get('min_overlap'),'min_overlap') <= 0:
                 raise ValueError('axis_gap requires positive min_overlap on both transverse axes')
+            continue
+        if solid_overlap:
+            if _finite(item.get('max_overlap_volume'), 'max_overlap_volume') < 0:
+                raise ValueError('max_overlap_volume must be nonnegative (SOP local units cubed)')
             continue
         if _finite(item.get('max_distance'), 'max_distance') < 0:
             raise ValueError('max_distance must be nonnegative (SOP local units)')
@@ -302,6 +308,10 @@ def _check_interfaces(g, interfaces, max_pairs):
             row, pairs = _section_proximity(g,item,max_pairs-total_pairs)
             results.append(row);total_pairs+=pairs
             continue
+        if item.get('method') == 'solid_overlap':
+            row, pairs = _solid_overlap(g,item,max_pairs-total_pairs)
+            results.append(row);total_pairs+=pairs
+            continue
         pg = g.findPointGroup(item['source_group'])
         tg = g.findPrimGroup(item['target_group'])
         points = list(pg.points()) if pg else []
@@ -363,9 +373,96 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface',
+            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared proximity or axis-projection relations only; not solid overlap, penetration, mechanical strength or all-surface clearance'}
+            'scope':'declared proximity, axis-projection or bounded solid-overlap relations only; not continuous collision, mechanical strength or unspecified part clearance'}
+
+
+def _solid_overlap(g, item, budget):
+    """Bounded Boolean intersection of two named complete Polygon solids."""
+    base={**item,'coordinate_space':'explicit output SOP local',
+          'scope':'selected closed Polygon solids only; no continuous sweep, load or strength claim'}
+    selected=[]
+    for name in (item['source_group'],item['target_group']):
+        group=g.findPrimGroup(name)
+        selected.append(list(group.prims()) if group else [])
+    source,target=selected
+    counts={'source_count':len(source),'target_count':len(target)}
+    if not source or not target:
+        return {**base,**counts,'status':'fail','reason':'missing_or_empty_primitive_group'},0
+    if {p.number() for p in source} & {p.number() for p in target}:
+        return {**base,**counts,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate'},0
+    if {p.number() for prim in source for p in prim.points()} & {p.number() for prim in target for p in prim.points()}:
+        return {**base,**counts,'status':'fail','reason':'source_and_target_share_points_cannot_self_validate'},0
+    pairs=len(source)*len(target)
+    if len(source)>512 or len(target)>512 or pairs>budget:
+        raise ValueError('solid_overlap Boolean budget exceeded; narrow to complete closed part groups')
+    from dsh_geometry_observation import polygon_observation
+    checks=[]
+    for name in (item['source_group'],item['target_group']):
+        observed=polygon_observation(g,group=name,integrity_only=True)
+        shell=observed.get('shell_orientation',{})
+        checks.append({'group':name,**{key:observed.get(key) for key in
+                       ('status','boundary_edges','nonmanifold_edges','orientation_conflicts',
+                        'zero_area_faces','zero_length_edges','duplicate_boundary_faces')},
+                       'positive_closed_shells':shell.get('positive_count'),
+                       'negative_closed_shells':shell.get('negative_count'),
+                       'unverified_shells':shell.get('unverified_count')})
+        if (observed.get('status')!='observed' or any(observed.get(key) for key in
+                ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+                 'zero_length_edges','duplicate_boundary_faces')) or
+                not shell.get('positive_count') or shell.get('negative_count') or shell.get('unverified_count')):
+            return {**base,**counts,'status':'unverified',
+                    'reason':'selection_not_complete_consistent_outward_polygon_solid',
+                    'selection_checks':checks},0
+    copies=[]
+    for prims in selected:
+        copy=hou.Geometry(g)
+        keep={p.number() for p in prims}
+        copy.deletePrims([p for p in copy.prims() if p.number() not in keep],False)
+        # A modified standalone Geometry passed into a SOP Verb must publish
+        # fresh data IDs; otherwise the verb may reuse stale cached inputs.
+        copy.incrementAllDataIds()
+        copies.append(copy)
+    verb=hou.sopNodeTypeCategory().nodeVerb('boolean::2.0')
+    if verb is None:
+        return {**base,**counts,'status':'unverified','reason':'boolean_verb_unavailable',
+                'selection_checks':checks},0
+    try:
+        verb.setParms({'booleanop':1,'asurface':0,'bsurface':0})  # Solid/Solid Intersect; no scene node.
+        intersection=hou.Geometry()
+        verb.execute(intersection,copies)
+        count=len(intersection.prims())
+        if count==0:
+            return {**base,**counts,'status':'pass','overlap_volume':0.0,
+                    'intersection_primitives':0,'selection_checks':checks},pairs
+        if count>5000 or intersection.intrinsicValue('memoryusage')>16*1024*1024:
+            return {**base,**counts,'status':'unverified','reason':'intersection_output_budget_exceeded',
+                    'intersection_primitives':count,'selection_checks':checks},pairs
+        observed=polygon_observation(intersection,integrity_only=True)
+        shell=observed.get('shell_orientation',{})
+        if (observed.get('status')!='observed' or any(observed.get(key) for key in
+                ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+                 'zero_length_edges','duplicate_boundary_faces')) or
+                not shell.get('positive_count') or shell.get('negative_count') or shell.get('unverified_count')):
+            return {**base,**counts,'status':'unverified',
+                    'reason':'intersection_not_complete_consistent_polygon_solid',
+                    'intersection_primitives':count,'selection_checks':checks},pairs
+        volume=math.fsum(float(prim.intrinsicValue('measuredvolume')) for prim in intersection.prims())
+        scale=max(float(v) for copy in copies for v in copy.boundingBox().sizevec())
+        noise_floor=max(scale**3*1e-12,1e-18)
+        if not math.isfinite(volume) or volume<=noise_floor:
+            return {**base,**counts,'status':'unverified',
+                    'reason':'intersection_volume_at_numeric_noise_floor',
+                    'overlap_volume':volume if math.isfinite(volume) else None,
+                    'numeric_noise_floor':noise_floor,'intersection_primitives':count,
+                    'selection_checks':checks},pairs
+        return {**base,**counts,'status':'pass' if volume<=item['max_overlap_volume'] else 'fail',
+                'overlap_volume':volume,'numeric_noise_floor':noise_floor,
+                'intersection_primitives':count,'selection_checks':checks},pairs
+    except (hou.Error, ValueError, TypeError, OverflowError) as error:
+        return {**base,**counts,'status':'unverified','reason':'boolean_intersection_failed',
+                'detail':str(error)[:200],'selection_checks':checks},pairs
 
 
 def _section_proximity(g,item,budget):
