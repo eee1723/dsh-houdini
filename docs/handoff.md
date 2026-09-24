@@ -55,8 +55,8 @@
 ### H-04 原始要求与控制/结构验收（QA-01/05/06、RB-06）
 
 - 状态：待验证
-- 现状：合同64自然任务正确换算HIP单位、三态开合并恢复，却把封盖实心铰耳说成轴穿孔；独立Boolean交集证实轴穿实体，Tube卡已有提示。支撑板Boolean大面着色痕迹由合同65的只读候选信号提示复核。合同66新增同一最终SOP闭合Polygon实体组的`solid_overlap`关系检查，H21/H22正反例通过，live自然采用待验；零交集仍须结合孔道和同轴。
-- 下一步：新加载版本用活动产品验Agent是否在复制前做真孔、在多个状态测实体禁穿插并诚实报告；另补未见Y-up装配、公共Output/空Pack/HDA和H21复杂PolyBevel GUI反例。局部Normal/Boolean回拼只在实际着色问题处试验，不全局改默认。
+- 现状：合同66自然任务使用`solid_overlap`并修正支架绕向；保存HIP的两侧支架孔与轴在三态均无实体相交。但Agent仅对单支架旁路做正式检查，未覆盖最终卷筒：毂为开放单层面、挡盘和线缆整壳反向、轴与卷筒无传动连接；整体尺寸大于明文要求仍报完成。合同67给verify_network返回实际bbox_size，live采用未验；Boolean着色风险由合同65单列复核。
+- 下一步：在不同产品上验最终输出全成员、物理尺寸、各状态实体接口和整件表面完成门；补未见Y-up装配、公共Output/空Pack/HDA和H21复杂PolyBevel GUI反例。局部Normal/Boolean回拼只在实际着色问题处试验。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[变换反例](../tools/tests/dsh-modeling-identity.test.py)。
 

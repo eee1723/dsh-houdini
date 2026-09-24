@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 66
+Execution contract version: 67
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -127,7 +127,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；parm_filter只作字面子串筛选。operation_card含决策/版本，operation_parameters保留不受筛选/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型合并缺少显式决策及已声明的参数语义警示，非阻断、不改默认值、不证明语义；Tube始终说明rad1/rad2是X/Y椭圆轴半径而非内外径。dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
-| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式 output，不跟随display。output_index=0..63另验同父网络原生Output为该节点或直接连接它；省略仅验内部构建。默认检查直属范围，可nodes限域；error/空输出默认抛CheckpointError，require_valid=False仅诊断。嵌入Packed穿透包装检查内容；有界遍历超限/仅外部Packed保持unverified并拒绝假绿。handoff_output另回报名称/type/Null/leaf及稳定OUT命名事实，只供交接可读性判断，不把Null当公共端口或几何证明。warning、内容存在、部件齐全和视觉分开 | dict |
+| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式 output，不跟随display。output_index=0..63另验同父网络原生Output为该节点或直接连接它；省略仅验内部构建。默认检查直属范围，可nodes限域；error/空输出默认抛CheckpointError，require_valid=False仅诊断。geometry同时给bbox_min/max及逐轴实际跨度bbox_size（SOP local场景单位），不能把单侧坐标当宽高深；物理尺寸另结合scene_info.unit_length_meters与OBJ变换。嵌入Packed穿透包装检查内容；有界遍历超限/仅外部Packed保持unverified并拒绝假绿。handoff_output另回报名称/type/Null/leaf及稳定OUT命名事实，只供交接可读性判断，不把Null当公共端口或几何证明。warning、内容存在、部件齐全和视觉分开 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |

@@ -1722,6 +1722,7 @@ def _geo_summary(geo) -> dict:
         bb = geo.boundingBox()
         s["bbox_min"] = [float(x) for x in bb.minvec()]
         s["bbox_max"] = [float(x) for x in bb.maxvec()]
+        s["bbox_size"] = [float(x) for x in bb.sizevec()]
     except Exception:
         pass
     return s

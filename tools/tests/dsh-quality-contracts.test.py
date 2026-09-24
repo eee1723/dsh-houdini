@@ -36,6 +36,8 @@ try:
     built=h.build_module(root,specs,output='OUT',interfaces=[interface])
     assert built['interface_checks']['ok'],built
     out=root.node('OUT')
+    size=h.verify_network(root,output=out)['geometry']['bbox_size']
+    assert len(size)==3 and all(abs(value-target)<1e-6 for value,target in zip(size,(2,1,1))),size
     checks=h.geo_check_interfaces(out,[interface])
     assert checks['ok'] and checks['results'][0]['max_distance']<1e-6,checks
     # Coverage names come from actual selected final primitives, not the name
