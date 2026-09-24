@@ -93,6 +93,7 @@ const compactControlFailure = exec.output.render({}, {
   evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
     status:'fail',restored:true,requested_cases:4,
     case_counts:{pass:3,fail:1,unverified:0,not_run:0},
+    coverage:{relationship_scope:'not_checked',declared_interfaces:0,declared_topology_contracts:0},
     cases:[{id:'angle_90',status:'fail'}],
   }}],
   verbs:[{verb:'test_controls',ok:true,check_status:'failed',result:{ok:false,status:'fail'}}],
@@ -100,6 +101,8 @@ const compactControlFailure = exec.output.render({}, {
 assert.match(compactControlFailure.split('\n')[0], /control-test-verdict.*"pass":3.*"fail":1.*angle_90/,
   'compact control failures must lead the model-facing result, not hide behind a successful verb call');
 assert.match(compactControlFailure, /restored only means test changes were undone/);
+assert.match(compactControlFailure.split('\n')[0], /"relationship_scope":"not_checked".*"declared_interfaces":0/,
+  'a passing measurement count must not imply component relationships were checked');
 const integrityWarning = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
   evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',

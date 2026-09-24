@@ -308,8 +308,11 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       verdicts.push(`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
         requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
         unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
+        relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',
+        declared_interfaces:summary.coverage?.declared_interfaces ?? 0,
+        declared_topology_contracts:summary.coverage?.declared_topology_contracts ?? 0,
         unresolved_cases:unresolved,restored:summary.restored ?? null,
-        boundary:'restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`)
+        boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`)
     }
     if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
       verdicts.push(`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',

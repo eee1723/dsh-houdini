@@ -179,6 +179,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
 失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。
+Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
 
 ### component 域（普通 SOP 组件交换）
 
