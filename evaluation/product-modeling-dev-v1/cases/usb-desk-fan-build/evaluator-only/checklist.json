@@ -1,0 +1,18 @@
+{
+  "caseId": "usb-desk-fan-build",
+  "reviewerInstructions": "独立重开最终HIP副本，先读真实Unit Length；只用机身零件量18×12×24cm，电源线的延伸不能混进机身尺寸。用同取景检查−15/0/25度，近看关节、前后护网、出线口和USB-C插头。护网闭环可以正确，电源线从底座到插头应有真实自由末端：检查上游曲线/路径是否意外闭合，或成品是否出现从插头回到底座的暗中回线。开放路径经过Sweep端盖变成封闭实体不构成错误。先看独立几何和画面，再读Agent自报；不按VEX/原生节点比例或总面数评分。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_unit_and_body_dimensions", "independent_overview_down", "independent_overview_neutral", "independent_overview_up", "independent_detail_grille", "independent_detail_pivot", "independent_detail_cord_exit", "independent_detail_free_plug", "independent_cord_path_open_end_review", "independent_head_control_restore_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "body-scale-and-form", "method": "measurement+visual", "critical": true, "expectation": "真实HIP单位换算后，机身约18×12×24cm，不把伸出的线缆算成机身；底座/脚垫、立柱、圆形外罩、三片扇叶、轮毂、前后护网和开关/指示细节可辨。"},
+    {"id": "cord-free-end", "method": "geometry+visual", "critical": true, "expectation": "线缆从底座后侧到未插入的USB-C插头有一个真正的末端，没有错误闭合回边或从插头折返机身的隐藏管段。中心线若可见，核对Primitive开闭和首尾连接；不以Sweep实体封闭和0边界代替路径意图。"},
+    {"id": "cord-smoothness-and-handoff", "method": "geometry+visual", "critical": true, "expectation": "线缆走向平顺、出线口护套与插头连接可信，局部无突兀急折、扭曲截面、悬空接头或明显穿桌面。"},
+    {"id": "intentional-grille-loops", "method": "geometry+visual", "critical": true, "expectation": "护网可用有意闭合的圆环；如果检查器提示闭合路径风险，需结合该环是否真正闭合且均匀判断，不能把所有闭环误报为电源线错误。"},
+    {"id": "three-state-head-pivot", "method": "control+geometry", "critical": true, "expectation": "单一俯仰控制能形成−15/0/25度并准确恢复；外罩/前后护网/叶片/轮毂随风扇头一起转，关节不断开，底座/脚垫/线缆保持原位。"},
+    {"id": "near-detail-and-editability", "method": "visual+network", "critical": true, "expectation": "护网、叶片、轮毂、关节轴/连接件、底座控制、出线口和USB-C插头近景清楚；面朝向与着色无明显缺陷，节点网络可接续编辑。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "HIP能重开且报告尺寸与工程一致，实际检查的角度/线缆/近景与声称匹配；风量、电气安全、材料强度、制造公差及线缆模拟未验时明确说明。"}
+  ]
+}

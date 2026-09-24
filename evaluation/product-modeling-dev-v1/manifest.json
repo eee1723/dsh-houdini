@@ -114,6 +114,16 @@
       },
       "evaluator": "cases/hand-crank-reel-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "usb-desk-fan-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/usb-desk-fan-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/usb-desk-fan-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }
