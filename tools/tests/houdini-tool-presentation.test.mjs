@@ -144,6 +144,16 @@ const invertedShell = exec.output.render({}, {
 assert.match(invertedShell, /"negative_closed_shells":1/);
 assert.match(invertedShell, /"opposed_shading_normals":3/);
 assert.match(invertedShell, /Normal N is not polygon winding/);
+const finalOutputRisk = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'verify_network',ok:true,
+    output:'/obj/reel/OUT_ASSET',healthy:true,warning_free:true,
+    geometry:{points:4040,prims:3768,bbox_size:[.315,.2083,.1696]},
+    scene_unit_length_meters:1,
+    surface_integrity:{status:'observed',risk_status:'needs_review',boundary_edges:96,
+      negative_closed_shells:3,unverified_shells:1}}],
+})[0].text;
+assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
+assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
 const lateInversion = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({
     ledgerIndex:index+1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',

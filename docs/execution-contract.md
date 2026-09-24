@@ -195,6 +195,9 @@ operation_advisories只描述缺少显式选择：不替用户封口、选边或
 output必须是明确新建非空交付；空CTRL/helper用tab_create。required_outputs检查必需分支，
 防止非空Merge掩盖丢件。可附实际interfaces；失败或unsupported会使该构建失败并清理新节点。
 dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
+稳定最终`OUT_ASSET`的verify_network附带有界Polygon表面复核摘要与真实bbox_size，
+不改其cook健康判定；开放边/反向壳或不支持表示需按最终零件解释，不能用
+`healthy=true`覆盖，也不必对同一状态重复执行整件Polygon快检。
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
 subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
 普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。

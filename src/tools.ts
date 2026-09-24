@@ -308,6 +308,21 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`})
   }
   for (const item of value.evidence as any[]) {
+    if (item?.verb === 'verify_network' && item.output?.toUpperCase().endsWith('/OUT_ASSET')) {
+      const surface = item.surface_integrity ?? {}
+      const needsReview = surface.status === 'unverified' || surface.risk_status === 'needs_review'
+        || (surface.boundary_edges ?? 0) > 0 || surface.shading_review_status === 'needs_visual_review'
+      verdicts.push({priority:needsReview ? 1 : 3,text:`final-output-review: ${JSON.stringify({
+        output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
+        scene_unit_length_meters:item.scene_unit_length_meters ?? null,
+        surface_status:surface.status ?? 'not_checked',
+        surface_risk_status:surface.risk_status ?? null,
+        boundary_edges:surface.boundary_edges ?? null,
+        negative_closed_shells:surface.negative_closed_shells ?? null,
+        unverified_shells:surface.unverified_shells ?? null,
+        shading_review_status:surface.shading_review_status ?? null,
+        boundary:'SOP-local size uses HIP units; compare the full span with the user request and account for OBJ transforms. Surface flags need part-level review; healthy cook does not certify assembly or appearance.'})}`})
+    }
     if (item?.verb === 'test_controls' && item.control_summary) {
       const summary = item.control_summary
       const counts = summary.case_counts ?? {}

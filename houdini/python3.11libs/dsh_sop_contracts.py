@@ -273,6 +273,42 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     summary = h._geo_summary(geometry) if geometry is not None else None
     content = _content_nonempty(geometry) if geometry is not None else {'nonempty':None, 'status':'not_evaluated'}
     nonempty = content['nonempty']
+    # The conventional final product output gets a bounded, read-only surface
+    # advisory as part of the checkpoint already used before saving. Module
+    # outputs and unsupported representations remain outside this default.
+    surface_integrity = None
+    if out.name().upper() == 'OUT_ASSET' and nonempty is True:
+        count = int(geometry.intrinsicValue('primitivecount'))
+        vertices = int(geometry.intrinsicValue('vertexcount'))
+        if count == 0:
+            surface_integrity = {'status':'unverified','reason':'no_polygon_faces',
+                'scope':'final OUT_ASSET only; point-only output has no Polygon surface review'}
+        elif count > 20000 or vertices > 100000:
+            surface_integrity = {'status':'unverified','reason':'final_polygon_review_budget_exceeded',
+                'scope':'final OUT_ASSET only; geometry remains cooked but surface quality is not checked'}
+        else:
+            from dsh_geometry_observation import polygon_observation
+            try:
+                observed = polygon_observation(geometry, integrity_only=True)
+            except (ValueError, hou.Error) as error:
+                observed = {'status':'unverified','reason':str(error)[:200]}
+            shell = observed.get('shell_orientation', {})
+            surface_integrity = {
+                'status':observed.get('status'),
+                'reason':observed.get('reason'),
+                'risk_status':observed.get('risk_status'),
+                'risk_reasons':observed.get('risk_reasons', []),
+                'boundary_edges':observed.get('boundary_edges'),
+                'nonmanifold_edges':observed.get('nonmanifold_edges'),
+                'orientation_conflicts':observed.get('orientation_conflicts'),
+                'zero_area_faces':observed.get('zero_area_faces'),
+                'duplicate_boundary_faces':observed.get('duplicate_boundary_faces'),
+                'negative_closed_shells':shell.get('negative_count'),
+                'unverified_shells':shell.get('unverified_count'),
+                'planar_repeated_point_ngons':observed.get('planar_repeated_point_ngons'),
+                'shading_review_status':observed.get('shading_review_status'),
+                'scope':'bounded final OUT_ASSET Polygon surface advisory; open ports may be intentional; no self-intersection, connection, dimension, force or visual certification',
+            }
     fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
     reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
     if output_cooked and nonempty is None:
@@ -290,12 +326,18 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'error_nodes': errors, 'error_nodes_count': len(errors),
             'warning_nodes': warnings, 'warning_nodes_count': len(warnings),
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,
+            'surface_integrity':surface_integrity,
+            'scene_unit_length_meters':None,
             'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
             'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
+                            'Review final surface boundaries/orientation and declared relations before delivery.' if surface_integrity and (surface_integrity.get('risk_status')=='needs_review' or surface_integrity.get('boundary_edges')) else
                             'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),
             'note': 'Cook/geometry evidence only; no assertion of relationships, art quality or unsampled HDA internals.'}
+    if out.name().upper() == 'OUT_ASSET':
+        from dsh_context import unit_length_meters
+        result['scene_unit_length_meters'] = unit_length_meters()
     if errors:
         result['cook_details']=[{'path':r['path'],'errors':r['errors'],
                                  'source_context':_vex_source_context(r)} for r in reports if not r['ok']][:3]

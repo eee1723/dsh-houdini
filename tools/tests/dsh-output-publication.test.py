@@ -37,6 +37,19 @@ try:
     r=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
           f"nodes={[root.node('module_source').path(), root.node('OUT_MODULE').path(), root.node('OUT_ASSET').path()]!r})")['result']
     assert r['ok'] and r['output']==root.node('OUT_ASSET').path() and r['public_output'] is None
+    assert all(abs(v-1)<1e-6 for v in r['geometry']['bbox_size']),r['geometry']
+    assert r['scene_unit_length_meters']>0
+    assert r['surface_integrity']['risk_status']=='no_detected_integrity_risk',r['surface_integrity']
+    inverted=root.createNode('reverse','inverted_for_final_advisory')
+    inverted.setInput(0,root.node('module_source'))
+    inverted.parm('vtxsort').set('reverse')
+    run(f"connect({inverted.path()!r},{root.node('OUT_ASSET').path()!r},0)")
+    risk=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+             f"nodes={[inverted.path(),root.node('OUT_ASSET').path()]!r})")['result']
+    assert risk['ok'] and risk['healthy'],'surface advisory must not rewrite cook health'
+    assert risk['surface_integrity']['negative_closed_shells']==1,risk['surface_integrity']
+    assert risk['surface_integrity']['risk_status']=='needs_review',risk['surface_integrity']
+    run(f"connect({root.node('OUT_MODULE').path()!r},{root.node('OUT_ASSET').path()!r},0)")
     assert r['handoff_output']=={'path':root.node('OUT_ASSET').path(),'name':'OUT_ASSET','type':'null',
         'is_null':True,'has_stable_name':True,'is_leaf':True,'status':'stable_null_checkpoint',
         'scope':'Presentation/readability facts only. A named Null is not a public subnet port, geometry proof, relationship proof or requirement to wrap every simple chain.'}

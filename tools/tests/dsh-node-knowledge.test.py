@@ -5,6 +5,7 @@ the separate stool-repair regression exercises the actual Sweep shelf script.
 """
 from pathlib import Path
 from itertools import combinations
+import math
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
@@ -12,6 +13,7 @@ import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 import dsh_operation_cards as cards
+from dsh_geometry_observation import polygon_observation
 
 root = hou.node('/obj').createNode('geo', 'node_knowledge_fixture')
 checks = []
@@ -110,6 +112,40 @@ try:
     assert abs(sweep.geometry().boundingBox().sizevec()[0] - .2) < 1e-5
     assert observed(sweep)['boundary_edges'] > 0, 'intentional open built-in tube'
     done('Sweep external/built-in section and cap/open geometry')
+
+    # Cable counterexample: a sampled helix that abruptly switches to a
+    # straight end produced a sharp corner and a 90-degree hand-built ring
+    # frame jump in a natural task. Build only the centerline, join its loose
+    # end with a tangent-controlled cubic, then let native Sweep make/cap it.
+    tau=2*math.pi;centerline=[]
+    for i in range(241):
+        t=i/240;theta=tau*4.5*t
+        centerline.append(hou.Vector3(-.025+.045*t,.108+.0582*math.cos(theta),.0582*math.sin(theta)))
+    start=centerline[-1];incoming=(start-centerline[-2]).normalized()
+    end=hou.Vector3(.030,.030,-.020);outgoing=hou.Vector3(.2,-1,.1).normalized()
+    handle1=start+incoming*.008;handle2=end-outgoing*.008
+    for i in range(1,29):
+        t=i/28
+        centerline.append(start*(1-t)**3+handle1*3*(1-t)**2*t+handle2*3*(1-t)*t*t+end*t**3)
+    turns=[]
+    for i in range(1,len(centerline)-1):
+        before=(centerline[i]-centerline[i-1]).normalized()
+        after=(centerline[i+1]-centerline[i]).normalized()
+        cosine=max(-1,min(1,float(before.dot(after))))
+        turns.append(math.degrees(math.acos(cosine)))
+    assert max(turns)<10 and max(turns[238:243])<10,turns[238:243]
+    path_geo=hou.Geometry();curve=path_geo.createPolygon(is_closed=False)
+    for position in centerline:
+        point=path_geo.createPoint();point.setPosition(position);curve.addVertex(point)
+    path_geo.incrementAllDataIds()
+    sweep_verb=hou.sopNodeTypeCategory().nodeVerb('sweep::2.0')
+    sweep_verb.setParms({'surfaceshape':1,'surfacetype':5,'radius':.0032,'cols':10,'endcaptype':1})
+    cable_geo=hou.Geometry();sweep_verb.execute(cable_geo,[path_geo])  # input 0 is the backbone
+    cable_check=polygon_observation(cable_geo,integrity_only=True)
+    assert cable_check['status']=='observed' and cable_check['boundary_edges']==0,cable_check
+    assert cable_check['risk_status']=='no_detected_integrity_risk',cable_check
+    assert cable_check['shell_orientation']['positive_count']==1,cable_check
+    done('tangent-continuous cable centerline + native Sweep closed surface')
 
     # The same Revolve can be a clean closed shell facing inward or outward.
     # Normal.reverse changes N, not the primitive vertex order; Reverse does.

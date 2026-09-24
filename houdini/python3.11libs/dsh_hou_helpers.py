@@ -2185,6 +2185,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     No viewport changes. output_index=0..63 additionally requires the matching
     native Output to be this source or directly wired to it. Packed wrapper
     counts alone do not prove nonempty embedded content.
+    Final OUT_ASSET adds a bounded, nonblocking surface_integrity advisory and
+    explicit bbox_size/scene_unit_length_meters. Healthy still means cook/output
+    health, not correct shape, relationship or visual finish.
     healthy != task/visual success; relationships remain unverified.
     """
     from dsh_sop_contracts import verify_network as verify
@@ -2416,6 +2419,11 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
             raise CheckpointError(str(error),error.evidence) from error
     if boxes is not None or profile!='comfortable' or dry_run is not False or expected_plan is not None:
         raise ValueError('boxes/profile/dry_run/expected_plan are handoff-only arguments')
+    if nodes is None and any(any(isinstance(item, hou.Node) for item in box.items(recurse=True))
+                             for box in p.networkBoxes()):
+        raise ValueError("layout_nodes broad children/flow would scatter Network Box members; "
+                         "use mode='handoff' with explicit leaf boxes and dry_run/expected_plan, "
+                         "or pass an explicit node subset for a local edit")
     items = []
     foreign_skipped = []
     if nodes is not None:
@@ -2464,9 +2472,9 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
     Apply requires ``expected_plan`` from a fresh ``dry_run=True`` call. This is
     presentation grouping only: member nodes, geometry and wiring are not moved
     or evaluated. A group uses exactly one of ``members`` (direct child nodes)
-    or ``boxes`` (already-created leaf boxes). ``boxes`` creates one bounded
-    component-container level; create/layout leaf role boxes first, then wrap
-    them. Deeper nesting and mixed node/box membership are rejected.
+    or ``boxes`` (already-created leaf boxes). role='component' requires boxes;
+    other roles require members. Create/layout leaf role boxes first, then wrap
+    them in one component-container level. Deeper nesting is rejected.
     """
     try:
         p = _resolve(parent)

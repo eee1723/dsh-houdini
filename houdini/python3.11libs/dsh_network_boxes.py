@@ -574,6 +574,10 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
             raise ValueError(f'{name}: members/boxes must be lists')
         if bool(members) == bool(box_names):
             raise ValueError(f'{name}: provide exactly one nonempty members or boxes list')
+        if role == 'component' and members:
+            raise ValueError(f'{name}: component role requires boxes=[existing leaf boxes], not direct node members')
+        if box_names and role != 'component':
+            raise ValueError(f'{name}: boxes= requires role=component')
         resolved = []
         for item in members:
             node = resolve_node(item)
