@@ -34,9 +34,10 @@ VEX可构造单个源资产或模板属性，重复实例由Copy生成。重复�
 
 静态不变的平面无需为“高精度”均匀加密；曲线/圆弧的分段数应由轮廓误差或目标观察尺度决定。
 参数化Primitive也属于Houdini primitive，不意味着它包含可编辑的多边形面；不要只看primitive count。
-VEX适合共享求解、驱动曲线/模板点及原生节点不能自然表达的局部算法；可直接生成网格，但须承担截面、
-封口、朝向、UV和可编辑性验证，不能因代码更熟悉就默认重写Sweep/复制/Boolean。原生节点失败先在一个
-小原型查输入表示、菜单及选择；替换方法仍须满足原合同，穿插后倒角不等于融合后的连接缝。
+默认让VEX生成控制点、路径、截面或单张构造面，再由合适的原生SOP生成厚度、旋转表面、端盖与复制。
+这保留可检查的中间形态；原生节点也会继承错误的输入顺序、方向或封口设置，不自动保证外向法线。
+确有算法或效率理由时VEX仍可直接生成闭合网格，但要独立检查闭合、相邻面朝向、整壳正反和局部外表面。
+原生节点失败先在小原型查输入表示、菜单及选择；替换方法仍须满足原合同，穿插后倒角不等于融合后的连接缝。
 
 ### 逻辑模块与容器选择
 
@@ -46,9 +47,9 @@ VEX适合共享求解、驱动曲线/模板点及原生节点不能自然表达�
 
 私有细节留在组件；跨组件连接件归最低共同装配层。模块内部不保留OBJ/工作区绝对路径，同层优先相对兄弟引用，Subnet只经公共输入/参数连接外部。全局自由量只有一个维护源，组件公开局部量仅在改变外包络/接口时提升给父级。
 纯控制生成点用detail(foreach除外)的Wrangle：`addpoint`一次生成全部实例点；point class的Wrangle
-按输入点逐点执行，空输入即零执行，不会凭空生点。VEX里读共享控制用字符串拼绝对路径
-（`chf('/obj/rig/CTRL_CART/wheelbase')` 或 `chf(CTRL+'/wheelbase')`），相对路径解析失败可能静默为0；
-写后必须cook回读实测点值，不只看snippet无语法错。
+按输入点逐点执行，空输入即零执行，不会凭空生点。同层读共享控制优先相对路径，
+例如`chf('../CTRL/wheelbase')`；跨Subnet经公开输入/参数传递，不把当前OBJ绝对路径写进内部。
+相对路径也可能因移动节点而失效，写后须cook回读实测点值，不只看snippet无语法错。
 
 ## 2. 选择先于倒角与局部操作
 
@@ -94,10 +95,12 @@ checkpoint是选择范围、局部轮廓和输出拓扑；cook成功不能保证
 
 ## 来源与证据范围
 
-2026-09-07核对，官方在线H22：
+2026-09-24核对，官方在线H22：
 [Sweep](https://www.sidefx.com/docs/houdini/nodes/sop/sweep.html)、
+[Revolve](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)、
 [PolyExtrude](https://www.sidefx.com/docs/houdini/nodes/sop/polyextrude.html)、
 [PolyBevel](https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html)、
+[Reverse](https://www.sidefx.com/docs/houdini/nodes/sop/reverse.html)、
 [Group](https://www.sidefx.com/docs/houdini/nodes/sop/groupcreate.html)、
 [Boolean](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)、
 [Fuse](https://www.sidefx.com/docs/houdini/nodes/sop/fuse.html)、

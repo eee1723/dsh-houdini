@@ -122,6 +122,27 @@ const groupOnlyIntegrity = exec.output.render({}, {
 assert.match(groupOnlyIntegrity.split('\n')[0], /polygon-integrity-coverage.*"selected_groups":2.*"whole_output_checked_in_this_call":false/);
 assert.match(groupOnlyIntegrity, /coincident faces across different groups/);
 assert.match(groupOnlyIntegrity, /polygon-integrity-verdict:.*"group":"g_gasket"/);
+const invertedShell = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
+    method:'bounded polygon surface integrity',group:'g_shell',status:'observed',
+    risk_status:'needs_review',risk_reasons:['negative_closed_shell_winding_requires_review'],
+    orientation_review_status:'negative_closed_shells_present',
+    shell_orientation:{positive_count:0,negative_count:1,unverified_count:0},
+    shading_normals:{opposed_count:3}}],
+})[0].text;
+assert.match(invertedShell, /"negative_closed_shells":1/);
+assert.match(invertedShell, /"opposed_shading_normals":3/);
+assert.match(invertedShell, /Normal N is not polygon winding/);
+const lateInversion = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({
+    ledgerIndex:index+1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    group:`g_${index}`,status:'observed',risk_status:'no_detected_integrity_risk',
+  })),{ledgerIndex:6,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    group:'g_late_inverted',status:'observed',risk_status:'needs_review',
+    shell_orientation:{negative_count:1},risk_reasons:['negative_closed_shell_winding_requires_review']}],
+})[0].text;
+assert.match(lateInversion.split('Executed successfully.')[0], /g_late_inverted/,
+  'a late risk must not be clipped behind earlier clean group results');
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

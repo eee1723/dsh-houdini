@@ -161,6 +161,6 @@ assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tu
 for (const leakedRecipe of [/OUT_ASSET/, /Copy to Points/, /component Network Box/, /world Y-up/]) {
   assert.doesNotMatch(houdiniPreset, leakedRecipe, 'domain recipes belong to the matching skill, not the persona')
 }
-assert.ok(data.cards.polybevel.notes.some(note => /guide-cook crash/.test(note)),
+assert.ok(data.cards.polybevel.notes.some(note => /H21\.0\.440.*crash.*PolyBevel.*guide cook/.test(note)),
   'the observed H21 PolyBevel interaction crash must remain an explicit scoped risk')
 console.log(`documentation contracts passed (${docs.length} current docs, ${Object.keys(data.cards).length} generated cards)`)

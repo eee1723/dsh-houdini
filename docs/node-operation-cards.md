@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 15 · Source SHA-256: `f09d8e120a061e9441b9ac54fa825238f107739fb6ff91aad62caa574ffba4fd`
+Schema: 2 · Cards: 17 · Source SHA-256: `84795c2a1decbffece04e2387121c6b49ac956375516918fe8945734a321b4d2`
 
 ## 数据与设计契约
 
@@ -28,6 +28,8 @@ Schema: 2 · Cards: 15 · Source SHA-256: `f09d8e120a061e9441b9ac54fa825238f1077
 - [circle](#circle)
 - [box](#box)
 - [revolve](#revolve)
+- [normal](#normal)
+- [reverse](#reverse)
 - [copytopoints](#copytopoints)
 - [object_merge](#object_merge)
 - [blast](#blast)
@@ -93,7 +95,7 @@ Schema: 2 · Cards: 15 · Source SHA-256: `f09d8e120a061e9441b9ac54fa825238f1077
 - Direct creation has empty group, grouptype=guess, ignoreflatedges=0. Maximum Normal Angle is flatangle (degrees): with ignoreflatedges=1, smaller adjacent face-normal angles are excluded. It is not a maximum angle to bevel.
 - For controlled hard-surface fillets, build a procedural edge group from construction boundaries/part identity and geometric criteria, then set group and grouptype=edges. Avoid persistent hard-coded edge numbers after topology changes. Explicit all-edge or point bevels remain valid intents.
 - Choose width against local feature spacing and inspect the selected edges and resulting corner geometry; nonempty output/collision options do not prove no overlap or correct detail. Increasing divisions cannot fix a wrong selection.
-- H21.0.440 user evidence recorded a native PolyBevel 3.0 viewport guide-cook crash after normal output cook, render and save when an upstream source was revisited. A minimal Box→PolyBevel→Copy→OUT selection/guide smoke passed on H21.0.440 and H22.0.368, so do not generalize the incident to every PolyBevel. Output verification alone is still not an interaction-safety proof for the original complex network: retain a bypassable source checkpoint and use an isolated GUI smoke for the actual topology before claiming that path stable.
+- On H21.0.440, a complex network has crashed during PolyBevel viewport guide cook despite successful output cook/render/save. A simple H21/H22 GUI smoke passed. For a risky final topology, retain a bypassable source and test its actual GUI selection/guide path before claiming it stable.
 
 ## sphere
 
@@ -170,16 +172,60 @@ Schema: 2 · Cards: 15 · Source SHA-256: `f09d8e120a061e9441b9ac54fa825238f1077
 
 ## revolve
 
-标识：`revolve-ends-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
+标识：`revolve-surface-orientation-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
 
-精确类型：未另限定（按family匹配）。
-已测版本：此卡未列出，不外推版本保证。
+精确类型：`revolve::2.0`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`origin`、`dir`、`divs`、`type`、`surftype`、`primtype`、`swaprowcol`、`reversecrosssections`、`cap`。
+
+### 构建前决策
+
+- `axis`：`origin` + `dir`。Choose the actual rotation axis relative to the profile; a centered Y-axis is only one valid intent.
+- `surface_output`：`surftype` + `primtype`。Choose the surface grid and output primitive type. Automatic primitive type follows the input curve; nonempty output does not prove Polygon faces.
+- `end_closure`：`cap`。Choose whether to cap the ends of an open profile. Closed revolution around the axis alone does not cap those ends.
+
+### 常驻语义提示
+
+- `surface_orientation`：After cooking a Polygon surface, check winding and outward direction. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order.
 
 ### 操作与边界
 
-- Closing the revolution around its axis does not cap the two ends of an open profile. Decide profile endpoints/end closure explicitly and inspect final boundary loops.
-- An intentional open vessel or tube must remain open. Profile radius and axial position are separate coordinates; validate one unit before instancing.
-- Profile order and axis direction determine polygon winding. After forming a closed shell inspect both shared-edge consistency and orientation; a Normal SOP does not reverse polygon winding.
+- Revolve Type closed spans the full circle; Closed Arc adds a point on the axis and produces a different shape. End Caps applies to open input curves. Check the actual profile and final boundaries before instancing.
+
+## normal
+
+标识：`normal-attribute-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/normal.html)。
+
+精确类型：`normal`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`group`、`grouptype`、`docompute`、`type`、`cuspangle`、`reverse`。
+
+### 常驻语义提示
+
+- `winding_vs_normal`：Normal computes or changes the N attribute. Its reverse parameter multiplies N by -1; it does not reverse polygon vertex order or repair inconsistent winding.
+
+### 操作与边界
+
+- Choose point, vertex, primitive or detail normals for the shading need. For an actual wrong-facing Polygon, correct its winding upstream or with a targeted Reverse SOP, then recompute N if needed.
+
+## reverse
+
+标识：`reverse-vertex-order-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/reverse.html)。
+
+精确类型：`reverse`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`group`、`vtxsort`。
+
+### 构建前决策
+
+- `vertex_order`：`vtxsort`。Choose the vertex operation explicitly using the current menu token; Reverse, Reverse U/V, Swap and Shift have different effects.
+
+### 操作与边界
+
+- Reverse changes vertex order on selected faces. Repair only the affected primitive group when the problem is local, then recheck topology orientation and any existing N attribute.
 
 ## copytopoints
 

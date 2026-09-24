@@ -1047,8 +1047,10 @@ def _operation_summary(name: str, result):
     if name == 'geo_piece_stats' and 'method' in r:
         return {k:r[k] for k in ('node','frame','group','method','status','reason','selected_primitives','selected_points',
             'boundary_edges','boundary_review_status','nonmanifold_edges','orientation_conflicts',
+            'orientation_review_status',
             'zero_area_faces','zero_length_edges','duplicate_boundary_faces','duplicate_face_sample',
-            'risk_status','risk_reasons','scope','shell_orientation','extents','bounds_min','bounds_max') if k in r}
+            'risk_status','risk_reasons','scope','shell_orientation','shading_normals',
+            'extents','bounds_min','bounds_max') if k in r}
     if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
         return {k:r[k] for k in ('ok','status','semantic_status','node','output','output_port','controller',
                 'frame','checked_at','scope','resolution','channels','statistics','sha256','freshness','cache',

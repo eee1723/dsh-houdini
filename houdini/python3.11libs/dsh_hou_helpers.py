@@ -5121,7 +5121,10 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
     inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
-    integrity_only=True只统计最终Polygon表面完整性风险，扩大有界预算并跳过昂贵的截面/体积诊断；
+    integrity_only=True统计最终Polygon表面完整性及闭合连通壳的有向体积符号，
+    扩大有界预算并跳过昂贵的截面/中心线诊断；负号只提示检查单独部件是否整壳反向，
+    嵌套空腔可有意出现反向内壳，不自动判错；还对比显式N属性与几何面朝向，
+    反向着色法线只提示复核，不自动改写几何；
     boundary_edges单独提示核对有意开放接口，不一概当破面。
     返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
     量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合

@@ -45,7 +45,7 @@ try:
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
     families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
-                'attribwrangle', 'object_merge')
+                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge')
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
@@ -60,6 +60,7 @@ try:
     assert set(root.children()) == before
     assert cards.operation_card('polybevel::2.0') is None
     assert cards.operation_card('sweep::99.0') is None
+    assert cards.operation_card('revolve::99.0') is None
     assert cards.operation_card('custom::sweep::2.0') is None
     detached = cards.operation_card('attribwrangle')
     detached['decisions'].clear()
@@ -109,6 +110,35 @@ try:
     assert abs(sweep.geometry().boundingBox().sizevec()[0] - .2) < 1e-5
     assert observed(sweep)['boundary_edges'] > 0, 'intentional open built-in tube'
     done('Sweep external/built-in section and cap/open geometry')
+
+    # The same Revolve can be a clean closed shell facing inward or outward.
+    # Normal.reverse changes N, not the primitive vertex order; Reverse does.
+    profile = make('line', 'revolve_profile', {'origin': [1, 0, 0], 'dir': [0, 1, 0]})
+    revolved = make('revolve::2.0', 'revolved', {'cap': 0}, [profile])
+    assert observed(revolved)['boundary_edges'] > 0
+    h.set_parm(revolved, 'cap', 1)
+    inward = observed(revolved)
+    assert inward['boundary_edges'] == 0 and inward['orientation_conflicts'] == 0
+    assert inward['shell_orientation']['negative_count'] == 1, inward
+    h.set_parm(revolved, 'reversecrosssections', 1)
+    outward = observed(revolved)
+    assert outward['shell_orientation']['positive_count'] == 1, outward
+    h.set_parm(revolved, 'swaprowcol', 0)
+    swapped = observed(revolved)
+    assert swapped['shell_orientation']['negative_count'] == 1, swapped
+    h.set_parm(revolved, 'swaprowcol', 1)
+    shaded = make('normal', 'shading_only', {'type': 'typeprim', 'reverse': 1}, [revolved])
+    shaded_result = observed(shaded)
+    assert shaded_result['shell_orientation']['positive_count'] == 1, shaded_result
+    face = shaded.geometry().prims()[0]
+    assert hou.Vector3(face.attribValue('N')).dot(face.normal()) < -.99
+    reoriented = make('reverse', 'reverse_winding', {'vtxsort': 'reverse'}, [revolved])
+    flipped = observed(reoriented)
+    assert flipped['shell_orientation']['negative_count'] == 1, flipped
+    card_ids = {d['id'] for d in cards.decision_advisories(cards.operation_card('revolve::2.0'), {})}
+    assert {'axis', 'surface_output', 'end_closure', 'surface_orientation'} == card_ids
+    assert {d['id'] for d in cards.decision_advisories(cards.operation_card('normal'), {})} == {'winding_vs_normal'}
+    done('Revolve cap and winding; Normal attribute versus Reverse vertex order')
 
     sheet = make('grid', 'sheet', {'rows': 2, 'cols': 2})
     ext = make('polyextrude::2.0', 'thick_sheet', {'dist': .2}, [sheet])

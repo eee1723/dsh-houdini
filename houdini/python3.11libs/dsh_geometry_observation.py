@@ -85,6 +85,114 @@ def _center_axis_surface_hits(prims, axes, lower, upper):
     }
 
 
+def _shell_orientation(prims, edges, directed, root, *, include_planarity):
+    """Report winding of each edge-connected shell; sign alone is not a solid classifier."""
+    shells = defaultdict(list)
+    for prim in prims:
+        shells[root(prim.number())].append(prim)
+    edges_by_shell = defaultdict(list)
+    for edge, owners in edges.items():
+        edges_by_shell[root(owners[0])].append((edge, owners))
+    rows = []
+    for component, faces in shells.items():
+        shell_edges = edges_by_shell[component]
+        closed = all(len(owners) == 2 for _, owners in shell_edges)
+        consistent = all(len(owners) != 2 or directed[a,b] == directed[b,a]
+                         for (a,b), owners in shell_edges)
+        row = {'component': component, 'primitive_count': len(faces),
+               'closed': closed, 'consistent': consistent}
+        vertices = [tuple(vertex.point().position()) for face in faces for vertex in face.vertices()]
+        low = [min(vertex[i] for vertex in vertices) for i in range(3)]
+        high = [max(vertex[i] for vertex in vertices) for i in range(3)]
+        scale = max(high[i] - low[i] for i in range(3))
+        if include_planarity:
+            center = hou.Vector3(vertices[0])
+            normal = None
+            for face in faces:
+                polygon = [vertex.point().position() for vertex in face.vertices()]
+                for index in range(1, len(polygon) - 1):
+                    candidate = (polygon[index] - polygon[0]).cross(polygon[index + 1] - polygon[0])
+                    if candidate.length() > max(scale * scale, 1e-24) * 1e-12:
+                        normal = candidate.normalized()
+                        break
+                if normal is not None:
+                    break
+            row['planar'] = normal is not None and all(
+                abs((hou.Vector3(vertex) - center).dot(normal)) <= max(scale, 1e-12) * 1e-8
+                for vertex in vertices)
+        if not closed or not consistent or any(float(face.intrinsicValue('measuredarea')) <= 1e-16
+                                                for face in faces):
+            row.update(status='unverified',
+                       reason='requires closed, consistently wound, nondegenerate polygon shell')
+        else:
+            origin = hou.Vector3([(a + b) * .5 for a,b in zip(low, high)])
+            terms = []
+            for face in faces:
+                face_vertices = [vertex.point().position() - origin for vertex in face.vertices()]
+                # HOM polygon winding is opposite the right-handed fan product.
+                terms.extend(-face_vertices[0].dot(face_vertices[index].cross(face_vertices[index + 1])) / 6
+                             for index in range(1, len(face_vertices) - 1))
+            volume = math.fsum(terms)
+            epsilon = scale ** 3 * 1e-12
+            row.update(status='observed', oriented_volume=volume,
+                       sign='positive' if volume > epsilon else 'negative' if volume < -epsilon else 'near_zero')
+        rows.append(row)
+    limit = 32 if include_planarity else 8
+    result = {'status': 'observed', 'components': rows[:limit],
+              'components_truncated': len(rows) > limit,
+              'positive_count': sum(row.get('sign') == 'positive' for row in rows),
+              'negative_count': sum(row.get('sign') == 'negative' for row in rows),
+              'unverified_count': sum(row['status'] == 'unverified' or row.get('sign') == 'near_zero'
+                                      for row in rows),
+              'scope': 'Positive follows outward HOM winding ONLY for a simple unnested closed shell. Self-intersections, nested cavities and solid validity are NOT tested. Near-zero or inconsistent/open shells cannot establish inward/outward.'}
+    if not include_planarity:
+        result['negative_sample'] = [row['component'] for row in rows if row.get('sign') == 'negative'][:8]
+        result['negative_sample_truncated'] = result['negative_count'] > 8
+    return result, sum(row['closed'] and row['planar'] for row in rows) if include_planarity else 0
+
+
+def _normal_attribute_observation(g, prims):
+    """Find N attributes pointing against their own Polygon winding, not against a design axis."""
+    attributes = [('vertex', g.findVertexAttrib('N')),
+                  ('point', g.findPointAttrib('N')),
+                  ('primitive', g.findPrimAttrib('N'))]
+    classes = []
+    for kind, attribute in attributes:
+        if attribute is None:
+            continue
+        row = {'class': kind, 'checked': 0, 'opposed': 0, 'invalid': 0, 'sample': []}
+        for prim in prims:
+            face_normal = prim.normal()
+            face_length = face_normal.length()
+            if kind == 'primitive':
+                elements = [prim]
+            else:
+                elements = prim.vertices() if kind == 'vertex' else prim.points()
+            for element in elements:
+                try:
+                    value = element.attribValue(attribute)
+                    normal = hou.Vector3(value)
+                    normal_length = normal.length()
+                    if (face_length <= 1e-12 or normal_length <= 1e-12
+                            or not all(math.isfinite(float(component)) for component in normal)):
+                        row['invalid'] += 1
+                        continue
+                    row['checked'] += 1
+                    if face_normal.dot(normal) / (face_length * normal_length) < -0.5:
+                        row['opposed'] += 1
+                        if len(row['sample']) < 8:
+                            row['sample'].append(prim.number())
+                except (TypeError, ValueError, hou.Error):
+                    row['invalid'] += 1
+        classes.append(row)
+    checked = sum(row['checked'] for row in classes)
+    opposed = sum(row['opposed'] for row in classes)
+    return {'status': 'absent' if not classes else 'unverified' if not checked else
+            'opposed_present' if opposed else 'observed', 'classes': classes,
+            'opposed_count': opposed,
+            'scope': 'Explicit N attributes compared with their own polygon geometric normals. Smoothing, stylized normals and mixed attribute classes require interpretation; this does not establish outward facing.'}
+
+
 def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     if type(integrity_only) is not bool:
         raise ValueError('integrity_only must be boolean')
@@ -143,6 +251,8 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     if any(not math.isfinite(v) for p in pts.values() for v in p):
         return {**result,'status':'unverified','reason':'nonfinite geometry coordinates'}
     if integrity_only:
+        orientation, _ = _shell_orientation(prims, edges, directed, root, include_planarity=False)
+        shading_normals = _normal_attribute_observation(g, prims)
         boundary_count = sum(len(owners) == 1 for owners in edges.values())
         nonmanifold_count = sum(len(owners) > 2 for owners in edges.values())
         orientation_count = sum(len(owners) == 2 and directed[a,b] != directed[b,a]
@@ -154,6 +264,10 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
             ('zero_length_edges', zero_edges),
             ('duplicate_boundary_faces', len(repeated_faces)),
         ) if count]
+        if orientation['negative_count']:
+            risks.append('negative_closed_shell_winding_requires_review')
+        if shading_normals['opposed_count']:
+            risks.append('N_attribute_opposes_polygon_winding')
         return {**result, 'status': 'observed', 'selected_primitives': len(prims),
                 'selected_points': len(pts), 'boundary_edges': boundary_count,
                 'nonmanifold_edges': nonmanifold_count,
@@ -161,6 +275,10 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
                 'zero_area_faces': zero_area, 'zero_length_edges': zero_edges,
                 'duplicate_boundary_faces': len(repeated_faces),
                 'duplicate_face_sample': repeated_faces[:8],
+                'shell_orientation': orientation,
+                'shading_normals': shading_normals,
+                'orientation_review_status': ('negative_closed_shells_present' if orientation['negative_count']
+                                              else 'unverified' if orientation['unverified_count'] else 'none'),
                 'risk_status': 'needs_review' if risks else 'no_detected_integrity_risk',
                 'risk_reasons': risks,
                 'boundary_review_status': ('open_boundary_unreviewed' if boundary_count else 'none'),
@@ -169,55 +287,13 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     lower = [min(p[i] for p in coords) for i in range(3)]
     upper = [max(p[i] for p in coords) for i in range(3)]
     boundary = [edge for edge,owners in edges.items() if len(owners)==1]
-    shells = defaultdict(list)
-    for p in prims: shells[root(p.number())].append(p)
-    edges_by_shell = defaultdict(list)
-    for edge, owners in edges.items(): edges_by_shell[root(owners[0])].append((edge,owners))
-    shell_rows = []
-    for rid, faces in shells.items():
-        shell_edges = edges_by_shell[rid]
-        closed = all(len(o)==2 for e,o in shell_edges)
-        consistent = all(len(o)!=2 or directed[a,b]==directed[b,a] for (a,b),o in shell_edges)
-        row = {'component':rid, 'primitive_count':len(faces), 'closed':closed, 'consistent':consistent}
-        vertices = [tuple(v.point().position()) for p in faces for v in p.vertices()]
-        center = hou.Vector3(vertices[0])
-        scale = max(max(v[i] for v in vertices)-min(v[i] for v in vertices) for i in range(3))
-        normal = None
-        for face in faces:
-            polygon = [v.point().position() for v in face.vertices()]
-            for i in range(1, len(polygon)-1):
-                candidate = (polygon[i]-polygon[0]).cross(polygon[i+1]-polygon[0])
-                if candidate.length() > max(scale*scale, 1e-24)*1e-12:
-                    normal = candidate.normalized(); break
-            if normal is not None: break
-        row['planar'] = normal is not None and all(abs((hou.Vector3(v)-center).dot(normal)) <= max(scale,1e-12)*1e-8 for v in vertices)
-        if not closed or not consistent or any(float(p.intrinsicValue('measuredarea'))<=1e-16 for p in faces):
-            row.update(status='unverified',reason='requires closed, consistently wound, nondegenerate polygon shell')
-        else:
-            positions = [hou.Vector3(pts[v.point().number()]) for p in faces for v in p.vertices()]
-            low = [min(p[i] for p in positions) for i in range(3)]
-            high = [max(p[i] for p in positions) for i in range(3)]
-            origin = hou.Vector3([(a+b)*.5 for a,b in zip(low,high)])
-            terms = []
-            for p in faces:
-                vs = [v.point().position()-origin for v in p.vertices()]
-                # HOM polygon winding is opposite the right-handed fan product.
-                terms.extend(-vs[0].dot(vs[i].cross(vs[i+1]))/6 for i in range(1,len(vs)-1))
-            volume = math.fsum(terms)
-            epsilon = max(high[i]-low[i] for i in range(3))**3 * 1e-12
-            row.update(status='observed',oriented_volume=volume,
-                       sign='positive' if volume>epsilon else 'negative' if volume < -epsilon else 'near_zero')
-        shell_rows.append(row)
-    orientation = {'status':'observed', 'components':shell_rows[:32], 'components_truncated':len(shell_rows)>32,
-                   'positive_count':sum(r.get('sign')=='positive' for r in shell_rows),
-                   'negative_count':sum(r.get('sign')=='negative' for r in shell_rows),
-                   'unverified_count':sum(r['status']=='unverified' or r.get('sign')=='near_zero' for r in shell_rows),
-                   'scope':'Positive follows outward HOM winding ONLY for a simple unnested closed shell. Self-intersections, nested cavities and solid validity are NOT tested. Near-zero or inconsistent/open shells cannot establish inward/outward.'}
+    orientation, closed_planar_count = _shell_orientation(prims, edges, directed, root,
+                                                          include_planarity=True)
     center_axis_hits = _center_axis_surface_hits(prims, axes, lower, upper)
     return {**result, 'status': 'observed', 'selected_primitives':len(prims), 'selected_points':len(pts),
             'surface_area': math.fsum(areas),
             'duplicate_boundary_faces':len(repeated_faces), 'duplicate_face_sample':repeated_faces[:16],
-            'closed_planar_components':sum(r['closed'] and r['planar'] for r in shell_rows),
+            'closed_planar_components':closed_planar_count,
             'overlap_scope':'Exact coincident cyclic boundaries and closed coplanar shells are risk evidence, not arbitrary overlap detection. A filled polygon plus tessellation can close a zero-thickness shell; intentional double-sided surfaces require explicit interpretation.',
             'edge_connected_components':len({root(n) for n in parent}),
             'boundary_edges':len(boundary), 'boundary_edge_sample':boundary[:16],

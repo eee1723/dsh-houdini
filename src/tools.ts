@@ -298,14 +298,14 @@ function renderStreams(value: ExecResult): string[] {
 /** Put scoped check conclusions before the verbose receipt/ledger in both display modes. */
 function leadingCheckVerdicts(value: ExecResult): string[] {
   if (!Array.isArray(value.evidence)) return []
-  const verdicts: string[] = []
+  const verdicts: { priority: number; text: string }[] = []
   const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
     && item.method === 'bounded polygon surface integrity')
   if (integrityChecks.some(item => item.group !== null && item.group !== undefined)) {
-    verdicts.push(`polygon-integrity-coverage: ${JSON.stringify({checks:integrityChecks.length,
+    verdicts.push({priority:1,text:`polygon-integrity-coverage: ${JSON.stringify({checks:integrityChecks.length,
       selected_groups:integrityChecks.filter(item => item.group !== null && item.group !== undefined).length,
       whole_output_checked_in_this_call:integrityChecks.some(item => item.group === null || item.group === undefined),
-      boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`)
+      boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`})
   }
   for (const item of value.evidence as any[]) {
     if (item?.verb === 'test_controls' && item.control_summary) {
@@ -313,25 +313,30 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       const counts = summary.case_counts ?? {}
       const unresolved = (summary.cases ?? []).filter((row:any) => row.status !== 'pass')
         .map((row:any) => row.id).slice(0, 6)
-      verdicts.push(`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
+      verdicts.push({priority:0,text:`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
         requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
         unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
         relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',
         declared_interfaces:summary.coverage?.declared_interfaces ?? 0,
         declared_topology_contracts:summary.coverage?.declared_topology_contracts ?? 0,
         unresolved_cases:unresolved,restored:summary.restored ?? null,
-        boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`)
+        boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`})
     }
     if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
-      verdicts.push(`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
+      const risk = item.status !== 'observed' || item.risk_status === 'needs_review'
+        || item.boundary_review_status === 'open_boundary_unreviewed'
+      verdicts.push({priority:risk ? 2 : 3,text:`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
         group:item.group ?? null,
         risk_status:item.risk_status ?? null,reason:item.reason ?? null,
         boundary_edges:item.boundary_edges ?? null,boundary_review_status:item.boundary_review_status ?? null,
+        orientation_review_status:item.orientation_review_status ?? null,
+        negative_closed_shells:item.shell_orientation?.negative_count ?? null,
+        opposed_shading_normals:item.shading_normals?.opposed_count ?? null,
         risk_reasons:item.risk_reasons ?? [],
-        boundary:'Scoped Polygon integrity observation only; open ports may be intentional and contact/appearance remain separate.'})}`)
+        boundary:'Negative closed-shell winding needs exterior/cavity review; Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
     }
   }
-  return verdicts.slice(0, 4)
+  return verdicts.sort((a,b) => a.priority - b.priority).slice(0, 4).map(row => row.text)
 }
 
 /** Render an exec-shaped canonical value as model-facing text. */
