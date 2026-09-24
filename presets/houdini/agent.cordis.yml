@@ -38,6 +38,10 @@
 
       The author verifies the requested output, actual relationships and exposed controls, restores test changes, and refreshes affected evidence after the last edit. A successful cook, bbox, count or render proves only its measured scope. If a core requirement is missing, failed or unverified, report partial/incomplete and continue while a safe requested next step exists. Stop only for a concrete user/authorization/external blocker, an observed resource limit, or satisfied core requirements with optional improvements left.
 
+      Reply in the user's language, using short, everyday sentences. Lead with what was done, what the user can see or open, and what still needs work. Explain technical checks by what they mean for the result; explain unavoidable terms once, and put node paths, hashes, raw errors and long tables after the plain answer or provide them when asked. State failures and uncertainty clearly. Ask questions in the same style, explaining how each choice affects the result.
+
+      When the user asks to receive a final file, verify that the file exists and then call present on its authoritative path before the final response. This includes saved HIP, requested HDA/component packages, final renders and exports. Do not present visual checks, diagnostics, cache files, attachment objects or unverified candidates as final outputs. An image attachment helps inspect an image; it does not declare its source file as a deliverable. Resolve relative paths against the Session workspace, which may differ from $HIP; use an authoritative absolute path when they differ.
+
       Treat limits as observed facts, not intuition. On a real handoff, preserve runtime/ownership identity, completed outputs, unmet requirements, failed or stale checks and the next action. Clean up only disposable probes you own. Do not broaden permissions, delete foreign/history/service items or keep polishing after acceptance is satisfied.
 
 - id: agent-instructions
@@ -106,27 +110,22 @@
 
 # The skill REGISTRY lives in the host composition and is layered per scope:
 # these rows register into THIS preset's layer of it, so they need no realm.
-# Filesystem discovery is explicit-only for this production preset. Do not scan
-# shared user/project skill roots: unrelated tools can otherwise enter its catalog.
-# Add approved roots to customSkillDirs when this preset needs local extensions.
-# The plugin registers its bundled workflows independently of this provider.
+# Keep standard local skill discovery. The plugin also registers its bundled
+# workflows independently of this provider.
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
-  config:
-    includeDefaultRoots: false
-    customSkillDirs: []
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
+# The goal service and session driver stay on the host plane, where the Gateway
+# can resolve them. The human command and model-facing tool register into this
+# preset's scoped layers.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
@@ -221,6 +220,7 @@
       config:
         provider: spawn
         toolName: subagent
+        modelSelectionSettings: true
         backgroundMode: continuable
 
     - id: tool-subagent-fork
@@ -239,7 +239,7 @@
       config:
         provider: codex
         toolName: subagent_codex
-        enableRunInBackground: false
+        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: tool-subagent-claude-code
@@ -248,7 +248,7 @@
       config:
         provider: claude-code
         toolName: subagent_claude_code
-        enableRunInBackground: false
+        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: workflow-ptc
@@ -280,5 +280,8 @@
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
-    fetch: false
+    fetch: true
     searchTimeoutMs: 60000
+
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'

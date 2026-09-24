@@ -47,6 +47,33 @@ try:
     # Primitive winding: reference box, fully reversed, mixed, and open.
     g=root.node('source').geometry().freeze()
     positive=o.polygon_observation(g)['shell_orientation'];assert positive['positive_count']==1,positive
+    quick_positive=o.polygon_observation(g,integrity_only=True)
+    assert quick_positive['risk_status']=='no_detected_integrity_risk' and quick_positive['shell_orientation']['positive_count']==1,quick_positive
+    assert quick_positive['planar_repeated_point_ngons']==0
+    # A Boolean-like flat face with bridge vertices around a hole can be
+    # topologically valid yet shade unevenly. Report visual review separately
+    # from geometry integrity.
+    bridge_geo=hou.Geometry()
+    bridge_points=[]
+    for x,z in ((0,0),(4,0),(4,4),(0,4),(1,1),(1,3),(3,3),(3,1)):
+        point=bridge_geo.createPoint();point.setPosition((x,0,z));bridge_points.append(point)
+    bridge_face=bridge_geo.createPolygon()
+    for index in (0,1,2,3,0,4,5,6,7,4):bridge_face.addVertex(bridge_points[index])
+    bridge_obs=o.polygon_observation(bridge_geo,integrity_only=True)
+    assert bridge_obs['planar_repeated_point_ngons']==1 and bridge_obs['shading_review_status']=='needs_visual_review',bridge_obs
+    assert bridge_obs['risk_status']=='no_detected_integrity_risk','shading candidate is not a topology failure'
+    bridge_points[6].setPosition((3,.01,3))
+    assert o.polygon_observation(bridge_geo,integrity_only=True)['planar_repeated_point_ngons']==0
+    shading=root.createNode('normal','reversed_shading_normals')
+    shading.setInput(0,root.node('source'))
+    shading.parm('type').set('typeprim')
+    shading.parm('reverse').set(1)
+    quick_shading=o.polygon_observation(shading.geometry(),integrity_only=True)
+    assert quick_shading['shell_orientation']['positive_count']==1 and quick_shading['shading_normals']['opposed_count']>0,quick_shading
+    assert 'N_attribute_opposes_polygon_winding' in quick_shading['risk_reasons'],quick_shading
+    bridge_check=b.run_code(f'__result__=geo_piece_stats({shading.path()!r},inspect=True,integrity_only=True)')
+    summary=next(item for item in bridge_check['evidence'] if item.get('verb')=='geo_piece_stats')
+    assert summary['shading_normals']['opposed_count']>0 and summary['shell_orientation']['positive_count']==1,summary
     def reversed_faces(source, selected):
         target=hou.Geometry();points={p.number():target.createPoint() for p in source.points()}
         for p in source.points():points[p.number()].setPosition(p.position())
@@ -56,6 +83,16 @@ try:
         return target
     g=reversed_faces(g,{p.number() for p in g.prims()})
     negative=o.polygon_observation(g)['shell_orientation'];assert negative['negative_count']==1,negative
+    quick_negative=o.polygon_observation(g,integrity_only=True)
+    assert quick_negative['orientation_conflicts']==0 and quick_negative['risk_status']=='needs_review',quick_negative
+    assert quick_negative['shell_orientation']['negative_count']==1 and quick_negative['orientation_review_status']=='negative_closed_shells_present',quick_negative
+    assert 'negative_closed_shell_winding_requires_review' in quick_negative['risk_reasons'],quick_negative
+    reverse_node=root.createNode('reverse','whole_shell_inverse')
+    reverse_node.setInput(0,root.node('source'))
+    reverse_node.parm('vtxsort').set('reverse')
+    inverted_packet=b.run_code(f'__result__=geo_piece_stats({reverse_node.path()!r},inspect=True,integrity_only=True)')
+    inverted_summary=next(item for item in inverted_packet['evidence'] if item.get('verb')=='geo_piece_stats')
+    assert inverted_summary['shell_orientation']['negative_count']==1 and inverted_summary['risk_status']=='needs_review',inverted_summary
     g=reversed_faces(g,{0})
     mixed=o.polygon_observation(g);assert mixed['orientation_conflicts']>0 and mixed['shell_orientation']['unverified_count']==1
     g.deletePrims([g.prims()[0]],False)

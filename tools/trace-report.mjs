@@ -33,6 +33,8 @@ import {
   isHoudiniDetailRead,
   isStructuredHoudiniCall,
   collectValidationCoverage,
+  nativeImageEvidence,
+  linkNativeImageResponses,
   qualityLoopRisks,
   requestedGoalReportedUnverified,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
@@ -127,6 +129,7 @@ const validationCoverage = collectValidationCoverage(
   steps.map((step, index) => ({ ...step, index: index + 1 })),
 );
 const indexedSteps = steps.map((step, index) => ({ ...step, index: index + 1 }));
+const nativeImages = linkNativeImageResponses(nativeImageEvidence(indexedSteps),indexedSteps,events);
 const activatedSkills = indexedSteps.filter((step) => step.tool === 'skill' && !step.failed)
   .map((step) => step.args?.name).filter(Boolean);
 const qualityLoopEvidence = collectQualityLoopEvidence({
@@ -170,8 +173,10 @@ const validationHtml = `
     <div class="card"><div class="num">${validationCoverage.renders.length}</div><div class="cap">render calls</div></div>
     <div class="card"><div class="num">${validationCoverage.comparisons.length}</div><div class="cap">image comparisons</div></div>
     <div class="card"><div class="num">${successfulVisionInspections.length}/${visionInspections.length}</div><div class="cap">semantic vision inspections</div></div>
+    <div class="card"><div class="num">${nativeImages.filter(item=>item.delivered).length}</div><div class="cap">原生图附件（需人工核图）</div></div>
   </div>
   <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉检查帧: ${frameList(validationCoverage.frames.visionInspection)}</p>
+  <details><summary>原生图片与后续模型描述（非语义认证）</summary><pre>${esc(JSON.stringify(nativeImages, null, 2))}</pre></details>
   <details><summary>验证覆盖明细</summary><pre>${esc(JSON.stringify(validationCoverage, null, 2))}</pre></details>`;
 
 const qualityLoopHtml = `

@@ -1,0 +1,15 @@
+{
+  "caseId": "task-lamp-read-drawing",
+  "reviewerInstructions": "独立核对回答与图纸；不得把此文件或评审提示交给执行 agent。只给有明确证据的项 pass，未提到或图上不清楚的项记 unverified。",
+  "requiredEvidence": {
+    "agentSubmitted": ["agent_final_text"],
+    "reviewerProduced": ["independent_drawing_comparison"],
+    "source": ["reference_image"]
+  },
+  "criteria": [
+    {"id": "views", "method": "drawing", "critical": true, "expectation": "分清侧视、正视、俯视与关节局部图，跨视图保持同一零件身份。"},
+    {"id": "assembly", "method": "drawing", "critical": true, "expectation": "识别底座、下臂、肘部关节、上臂、灯头和连接线缆，并说清连续连接顺序。"},
+    {"id": "small-parts", "method": "drawing", "critical": false, "expectation": "提到灯头散热槽、前缘透光件、关节调节旋钮、底座上环或脚垫等至少两类局部特征。"},
+    {"id": "uncertainty", "method": "report", "critical": true, "expectation": "区分可见特征与未给出的内部电路、材料、真实机构公差；不虚构图纸背面的结构。"}
+  ]
+}

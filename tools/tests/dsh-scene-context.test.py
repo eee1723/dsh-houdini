@@ -4,9 +4,18 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2]/'houdini/pytho
 import hou
 import dsh_context as c
 import dsh_bridge as b
+import dsh_hou_helpers as h
 headless=c.scene_context('test',threading.get_ident())
 assert headless['frame']==hou.frame() and not headless['ui_available']
 assert headless['geometry_selection']['status']=='not_observed'
+assert headless['unit_length_meters']==h.scene_info()['unit_length_meters']>0
+original_unit=headless['unit_length_meters']
+try:
+    hou.hscript('unitlength 0.01')
+    assert abs(c.scene_context('test',threading.get_ident())['unit_length_meters']-.01)<1e-9
+    assert abs(h.scene_info()['unit_length_meters']-.01)<1e-9
+finally:
+    hou.hscript('unitlength '+str(original_unit))
 original_mode=hou.updateModeSetting()
 try:
     for mode, name in ((hou.updateMode.AutoUpdate,'auto'), (hou.updateMode.Manual,'manual'),
@@ -44,6 +53,7 @@ class Pane:
 real=c.hou
 c.hou=types.SimpleNamespace(isUIAvailable=lambda:True,
     applicationVersionString=lambda:'fixture',hipFile=types.SimpleNamespace(path=lambda:'x.hip',hasUnsavedChanges=lambda:True),
+    hscript=lambda command:('Unit Length: 0.01 meters\n',''),
     frame=lambda:10,selectedNodes=lambda:[Node()]*20,playbar=types.SimpleNamespace(isPlaying=lambda:False),
     ui=types.SimpleNamespace(paneTabs=lambda:[Pane(),Pane()]),
     updateMode=hou.updateMode,updateModeSetting=lambda:hou.updateMode.Manual,
@@ -53,6 +63,7 @@ try:
     assert result['selection_count']==20 and len(result['selection'])==16
     assert result['selection_truncated'] and result['focus']=='unknown'
     assert result['update_mode']=='manual'
+    assert result['unit_length_meters']==.01
     assert len(result['panes'])==2 and result['panes'][0]['display']=='/obj/g'
 finally:c.hou=real
 errors=[]

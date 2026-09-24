@@ -115,7 +115,7 @@ tested = test_controls(controller, out, tests, interfaces=relations)
 负数为轴向投影重叠。另外两轴区间重叠须≥min_overlap。曲面bbox相接不证明表面实际接触，
 需要真实接触时再加适用的点到面接口；不用于任意弯曲榫接、实体穿透深度或强度认证。
 source/target必须为实际交付中的非空且互不重叠primitive组；不得临时加入driver点伪造表面。
-观察→参数扰动→同关系复查→完整恢复应在test_controls内完成，不能以恢复了几个bbox替代bgeo恢复证据。`interfaces`是整次调用复用的静态列表，不是按case动态生成的回调；只有其中每个选择和声明基数都覆盖基准及全部扰动状态时，才可把同一列表用于这些状态。计数驱动新增了关系而静态列表无法表达时，拆成另一个有明确状态范围且完整恢复的受支持检查，并把未覆盖状态保留为unverified，不能删expected_points或只测旧固定子集。
+观察→参数扰动→关系复查→完整恢复应在test_controls内完成，不能以恢复了几个bbox替代bgeo恢复证据。顶层`interfaces`是基准和每个case共同成立的静态合同；`baseline_interfaces`只验基准；每个case的`interfaces`只验该扰动状态，适合接触变分离等状态转换。三者都是明确列表，不执行回调或自动猜成员；若计数变化后无法为新状态声明完整选择和基数，就拆成有明确范围的受支持检查，未覆盖部分保留unverified，不能删expected_points或只测旧固定子集。
 
 在暴露参数时声明一个可测预期：具体输出部件、metric、测试值与有符号delta允许区间。
 优先测相关primitive group，避免整体bbox掩盖局部变化。至少确认每个交付控制有预期作用；

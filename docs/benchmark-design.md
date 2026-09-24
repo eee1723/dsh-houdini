@@ -1,46 +1,28 @@
-# 评测基础设施设计
+# 程序化产品模型开发评测
 
-本页描述长期评测机制，不保存模型排行、批次成绩、运行日记或优化小目标。
-协议实例与运行状态以benchmark中的schema/manifest为准；不因文档清理修改冻结protocol/matrix或解封holdout。
+本页说明如何判断 Houdini agent 是否真的做出了可编辑、细节可信的产品模型。评测实例、公开题面和仅供评审看的材料以 [产品模型开发评测集](../evaluation/product-modeling-dev-v1/) 为准。本页只保留长期规则，不记录单次成绩或测试流水。
 
-## 执行信息防火墙
+## 评测要回答的问题
 
-执行agent只接收正常用户brief、预注册歧义回答及通用skill，不接收隐藏评分、参考答案或实例专用recipe。
-用户brief和evaluator spec分别封存；答案、诊断和评分材料不得放进任务$HIP或生产guidance/preset/skill。
-生产面标识扫描是最低门，换措辞写入同一答案仍是泄漏。泄漏会使受影响run无效。
+节点能计算、文件能保存、参数能改变，只能证明工程的一部分功能。产品模型还要核对：关键零件是否齐全、该连接的地方是否接上、比例和局部形状是否符合参考、近距离观察是否可信，以及修改参数后这些关系是否仍成立。报告也必须准确说明简化、失败和未检查的范围。
 
-区分发现实例、未见留出实例、相邻/跨域反例。发现实例用于定位问题，只有未见留出实例能支持相应
-泛化主张；原题改善不能证明通用能力提升。改进冻结前不得接触用于验证该改进的留出内容。
-修改brief、fixture、模型/provider、评分或预算就属于另一协议条件，不能混作同批A/B。
-没有可复现失败或明确风险，不为评估而无条件重跑大矩阵。
+开发时把问题分成四段观察，避免一次整机任务结束后猜原因：
 
-## 文件与代码合同
+1. **理解参考**：仅给原始图纸或文字，要求列出关键零件、连接、局部细节与允许简化处；先看遗漏发生在建模前还是建模中。
+2. **建模执行**：检查最终 HIP、网络、输出、控制和真实连接；节点数、面数、bbox 或无报错不能代替产品细节。
+3. **视觉修正**：用固定整体视角和能看清接点的局部视角对照参考；图片已送达不等于模型作出了正确判断。独立评审只读观察，修改仍由原作者完成。
+4. **交付判断**：逐项写通过、失败或未验证，核对最终报告是否与工程一致；核心缺陷仍在时不能报“全部完成”。
 
-| 实现 | 职责 |
-|---|---|
-| [benchmark schema](../benchmark/) | public brief、allowed answers、seed、run、protocol、evaluation的结构合同；不进入npm包 |
-| [benchmark-manifest.mjs](../tools/benchmark-manifest.mjs) | canonical JSON/hash、schema不变量、$HIP路径、completed证据门 |
-| [benchmark-instance.mjs](../tools/benchmark-instance.mjs) | 实例材料分离封存和权限边界 |
-| [benchmark-seed.mjs](../tools/benchmark-seed.mjs)、[benchmark-seed-hython.py](../tools/benchmark-seed-hython.py) | 通用seed结构与隔离Houdini生成；无题目答案 |
-| [benchmark-smoke.mjs](../tools/benchmark-smoke.mjs) | 独立run工作区/工作HIP与输入资格检查 |
-| [benchmark-run.mjs](../tools/benchmark-run.mjs) | 操作侧运行记录与产物组织 |
-| [benchmark-evaluator.mjs](../tools/benchmark-evaluator.mjs) | 独立评审输入/结果归一、criterion/image/deterministic引用校验 |
+## 信息隔离与可比较性
 
-baseline分开封存agent surface与compatibility surface；具体集合由benchmark-manifest代码定义，
-不能把重封hash当作runtime已加载。runtimeVerification不明时保持未确认，不自动翻成true。
-具体题面、sealed材料和run产物属于隔离评测存储；docs只保存机制，tools/out不打包。
+执行 agent 只收到公开 brief、对应输入和预先登记的澄清答案。评审清单、隐藏细节和参考答案不进入执行任务、生产 preset、guidance、skill 或交付 HIP。开发中用于定位问题的案例与验证改进的未见案例分开；看过评审答案的案例只能用于修复与回归，不能再证明泛化。
 
-## 评审与能力主张
+比较工作流、工具、上下文策略或模型时，固定任务材料、Houdini/插件/模型版本、总预算、取景和验收口径，每次只改变一个因素。记录多次运行的结果分布、用户纠正、返工、总耗时与主子任务合计成本；上游等待、Houdini 执行与模型推理分开。改变题面、预算、评分或视角，就记录为另一条件，不能混成同一次 A/B。
 
-依次取得确定性事实、匿名盲视觉描述、目标核验；执行agent不是独立评委。
-目标核验包含原始目标与最终报告原文，逐项pass/fail/unverified；报告自述不是ground truth。
-图像角色、文件/像素/语义结果分开记录，评委与人工分歧不能用语言置信度覆盖。
+确定性检查适合核对文件、cook、声明的控制关系和可测几何。用户给出厘米、毫米或米时，评审应独立读取保存HIP的单位长度，再把几何尺寸换算成同一物理单位；口头的“1单位等于1厘米”不改变HIP设置。视觉评审要同时看整体与指定局部，先匿名描述观察到的形状，再对照目标逐项判断；制作者的自评不是独立证据。图像、像素读取和语义判断分别记录，盲评与人工判断出现分歧时保留分歧。
 
-评分以当前schema/validator为准：核心交付40、客观证据25、独立视觉25、诚实交付10；
-硬失败优先。比较核心成功、自主发现与有效修复、虚假完成、用户纠正依赖和评审一致性，
-同时记录工具失败/回滚/耗时/token，而不是目录广度或字段填写率。
+## 维护与运行边界
 
-新增规则要抽象到数据模型/操作意图，验证原失败、未见同族正例与不该触发的反例；
-没有独立新证据只声明局部回归，不上升为通用能力结论。
-[开发规范](development.md)维护验证入口，[兼容设计](dsh-update-compatibility.md)维护运行资格，
-这里不重复日常工程测试清单。
+评测集的结构、实例清单、校验和准备命令见 [评测目录](../evaluation/product-modeling-dev-v1/)；运行产物放在隔离目录，不进入 npm 包或生产知识。开发评测可按具体失败选择少量案例，不能把一次精选样例提升当作通用能力。正式能力主张仍需未见案例、不同产品和重复运行支撑。
+
+评测文件摘要用于核对案例本身是否一致，不能证明新版本已加载或产品模型质量提升。代码与 Houdini 的确定性回归、运行版本资格、真实模型质量分别验收，入口见 [开发维护](development.md) 与 [兼容设计](dsh-update-compatibility.md)。

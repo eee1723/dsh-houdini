@@ -29,6 +29,7 @@ const execOutputProperties = {
   advisory: { type: 'string' },
   images: { type: 'json' },
   imageAttachments: { type: 'json' },
+  artifactCandidates: { type: 'json' },
   checks: { type: 'json' },
   evidence: { type: 'json' },
   execution: { type: 'json' },
@@ -112,7 +113,8 @@ function hasCaution(value: unknown): boolean {
   for (const [key,v] of Object.entries(value)) {
     if (['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && v === false) return true
     if ((key === 'status' || key.endsWith('_status')) && typeof v === 'string'
-        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(v)) return true
+        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
+          'no_detected_integrity_risk','none'].includes(v)) return true
     if (/^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key) && nonempty(v)) return true
     if (hasCaution(v)) return true
   }
@@ -129,7 +131,8 @@ function riskFacts(value: unknown, pointer: string): Array<{pointer:string;value
     const at = `${pointer}/${jsonPointerKey(key)}`
     const falseFact = ['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && item === false
     const status = (key === 'status' || key.endsWith('_status')) && typeof item === 'string'
-      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(item)
+      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
+        'no_detected_integrity_risk','none'].includes(item)
     const diagnostic = /^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key)
       && item != null && item !== false && item !== '' && (typeof item !== 'object' || Object.keys(item).length > 0)
     if (falseFact || status || diagnostic) rows.push({pointer:at,value:item})
@@ -283,9 +286,83 @@ function renderStreams(value: ExecResult): string[] {
   if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
   parts.push(...renderVerbs(value))
   if (Array.isArray(value.imageAttachments)) parts.push('image-attachments:\n' + JSON.stringify(value.imageAttachments));
+  if (Array.isArray(value.artifactCandidates) && value.artifactCandidates.length) {
+    parts.push('artifact-candidates (not delivered; verify requested final files, then call present):\n'
+      + JSON.stringify(value.artifactCandidates))
+  }
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
   return parts
+}
+
+/** Put scoped check conclusions before the verbose receipt/ledger in both display modes. */
+function leadingCheckVerdicts(value: ExecResult): string[] {
+  if (!Array.isArray(value.evidence)) return []
+  const verdicts: { priority: number; text: string }[] = []
+  const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
+    && item.method === 'bounded polygon surface integrity')
+  if (integrityChecks.some(item => item.group !== null && item.group !== undefined)) {
+    verdicts.push({priority:1,text:`polygon-integrity-coverage: ${JSON.stringify({checks:integrityChecks.length,
+      selected_groups:integrityChecks.filter(item => item.group !== null && item.group !== undefined).length,
+      whole_output_checked_in_this_call:integrityChecks.some(item => item.group === null || item.group === undefined),
+      boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`})
+  }
+  for (const item of value.evidence as any[]) {
+    if (item?.verb === 'verify_network' && item.output?.toUpperCase().endsWith('/OUT_ASSET')) {
+      const surface = item.surface_integrity ?? {}
+      const curve = item.curve_path_integrity ?? {}
+      const needsReview = surface.status === 'unverified' || surface.risk_status === 'needs_review'
+        || (surface.boundary_edges ?? 0) > 0 || surface.shading_review_status === 'needs_visual_review'
+        || curve.risk_status === 'needs_review' || curve.risk_status === 'unverified'
+      verdicts.push({priority:needsReview ? 1 : 3,text:`final-output-review: ${JSON.stringify({
+        output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
+        scene_unit_length_meters:item.scene_unit_length_meters ?? null,
+        surface_status:surface.status ?? 'not_checked',
+        surface_risk_status:surface.risk_status ?? null,
+        boundary_edges:surface.boundary_edges ?? null,
+        negative_closed_shells:surface.negative_closed_shells ?? null,
+        unverified_shells:surface.unverified_shells ?? null,
+        shading_review_status:surface.shading_review_status ?? null,
+        sweep_path_risk_status:curve.risk_status ?? null,
+        suspicious_sweep_closures:curve.suspicious_closure_count ?? null,
+        sweep_closure_samples:curve.samples ?? [],
+        boundary:'SOP-local size uses HIP units; compare the full span with the user request and account for OBJ transforms. Surface and upstream Sweep path flags need part-level review; healthy cook does not certify assembly or appearance.'})}`})
+    }
+    if (item?.verb === 'test_controls' && item.control_summary) {
+      const summary = item.control_summary
+      const counts = summary.case_counts ?? {}
+      const unresolved = (summary.cases ?? []).filter((row:any) => row.status !== 'pass')
+        .map((row:any) => row.id).slice(0, 6)
+      verdicts.push({priority:0,text:`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
+        requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
+        unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
+        relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',
+        declared_interfaces:summary.coverage?.declared_interfaces ?? 0,
+        baseline_interface_status:summary.coverage?.baseline_interface_status ?? 'not_checked',
+        cases_with_interface_checks:summary.coverage?.cases_with_interface_checks ?? 0,
+        executed_interface_checks:summary.coverage?.executed_interface_checks ?? 0,
+        declared_topology_contracts:summary.coverage?.declared_topology_contracts ?? 0,
+        unresolved_cases:unresolved,restored:summary.restored ?? null,
+        boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`})
+    }
+    if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
+      const risk = item.status !== 'observed' || item.risk_status === 'needs_review'
+        || item.boundary_review_status === 'open_boundary_unreviewed'
+        || item.shading_review_status === 'needs_visual_review'
+      verdicts.push({priority:risk ? 2 : 3,text:`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
+        group:item.group ?? null,
+        risk_status:item.risk_status ?? null,reason:item.reason ?? null,
+        boundary_edges:item.boundary_edges ?? null,boundary_review_status:item.boundary_review_status ?? null,
+        orientation_review_status:item.orientation_review_status ?? null,
+        negative_closed_shells:item.shell_orientation?.negative_count ?? null,
+        opposed_shading_normals:item.shading_normals?.opposed_count ?? null,
+        planar_repeated_point_ngons:item.planar_repeated_point_ngons ?? null,
+        shading_review_status:item.shading_review_status ?? null,
+        risk_reasons:item.risk_reasons ?? [],
+        boundary:'Planar repeated-point n-gons may shade unevenly and need visual review; they are not integrity failures. Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
+    }
+  }
+  return verdicts.sort((a,b) => a.priority - b.priority).slice(0, 4).map(row => row.text)
 }
 
 /** Render an exec-shaped canonical value as model-facing text. */
@@ -298,6 +375,7 @@ function renderExec(value: ExecResult) {
     parts.push(...renderStreams(value))
     return [{ type:'text' as const,text:parts.join('\n\n') }]
   }
+  parts.push(...leadingCheckVerdicts(value))
   if (value.ok) {
     parts.push(Array.isArray(value.checks) && value.checks.length
       ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'

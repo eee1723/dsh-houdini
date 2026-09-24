@@ -51,6 +51,10 @@ class Handler(BaseHTTPRequestHandler):
         body = b'''<!doctype html><script>
         window.probe = {urlAtBoot: location.href, done: false};
         try {
+          probe.resourceHost = new URL('dsh-resource://file/session/fixture/example.txt').hostname;
+          probe.reviewHost = new URL('dsh-resource://changes-review/session/fixture/1/1').hostname;
+          var ordinary = new URL('https://example.com/path'); ordinary.hostname = 'example.org';
+          probe.ordinaryHost = ordinary.hostname;
           // PDF.js module-evaluation failure and its later iterator helper use.
           if (typeof Iterator.prototype.join !== 'function') Iterator.prototype.join = function(s) {return [...this].join(s);};
           probe.iterator = [1,2].values().map(x => x*2).toArray().join(',');
@@ -106,6 +110,8 @@ try:
     assert len(requests) == 1, f"auth bootstrap loaded the app {len(requests)} times: {requests}"
     assert observed["done"] and "error" not in observed, observed
     assert observed.get("iterator") == "2,4" and observed.get("iteratorSome") is True, observed
+    assert observed.get("resourceHost") == "file", observed
+    assert observed.get("reviewHost") == "changes-review" and observed.get("ordinaryHost") == "example.org", observed
     assert "iteratorError" not in observed, observed
     assert "dsh-houdini-session=task" in observed["urlAtBoot"], observed
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["task /中文?&"]

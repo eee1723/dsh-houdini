@@ -185,7 +185,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
   function sections(raw) {
     const out = {};
     const re =
-      /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
+      /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|artifact-candidates \(not delivered; verify requested final files, then call present\)|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
     const matches = [...raw.matchAll(re)];
     matches.forEach((m, i) => {
       out[m[1]] = raw

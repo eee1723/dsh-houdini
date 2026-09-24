@@ -58,6 +58,10 @@ try:
       {'name':'assembly','label':'Assembly processing','role':'assembly','members':[paths['assemble']]},
       {'name':'delivery','label':'Published output','role':'output','members':[paths['OUT']]},
     ]
+    bad_component={'name':'bad_component','label':'Must wrap leaves','role':'component',
+                   'members':[paths['ctrl']]}
+    rejected_component=call(f"__result__=network_boxes({parent!r},[{bad_component!r}],dry_run=True)")
+    assert not rejected_component['ok'] and 'component role requires boxes' in rejected_component['error']
     dry=preview(parent,groups)
     assert dry['dry_run'] and not dry['applied'] and dry['scene_writes']==0
     query_blocked=bridge.run_code(f"network_boxes({parent!r},{groups!r},dry_run=True)",read_only=True,owner_session=session)
@@ -80,6 +84,11 @@ try:
     assert hou.node(paths['assemble']).input(0)==hou.node(paths['proto_a'])
     assert hou.node(paths['OUT']).input(0)==hou.node(paths['assemble'])
     assert all(isinstance(key,tuple) and key[0]=='network_box' for key in boxes._OWNED_BOXES)
+    broad=call(f"__result__=layout_nodes({parent!r},mode='children')")
+    assert not broad['ok'] and 'scatter Network Box members' in broad['error'],broad
+    assert {name:tuple(float(v) for v in hou.node(path).position()) for name,path in paths.items()}==before_positions
+    broad_flow=call(f"__result__=layout_nodes({parent!r},mode='flow')")
+    assert not broad_flow['ok'] and 'mode=\'handoff\'' in broad_flow['error'],broad_flow
 
     # Component presentation hierarchy is exactly two levels: first create
     # and lay out leaf role boxes, then wrap existing leaves in one container.

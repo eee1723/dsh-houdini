@@ -36,6 +36,15 @@ for binary, suites in targets:
         observed_versions.add(match[1])
     for suite in suites:
         print(f"[{Path(binary).parent.parent.name}] {suite}", flush=True)
-        subprocess.run([binary, str(ROOT / "tools/tests" / (suite + ".test.py"))], cwd=cwd, env=env, check=True,
-                       timeout=300, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        completed = subprocess.run([binary, str(ROOT / "tools/tests" / (suite + ".test.py"))],
+                                   cwd=cwd, env=env, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=300,
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if completed.returncode:
+            print(f"{suite} exited {completed.returncode}", flush=True)
+            if completed.stdout:
+                print("stdout:\n" + completed.stdout[-4000:], flush=True)
+            if completed.stderr:
+                print("stderr:\n" + completed.stderr[-4000:], flush=True)
+            raise subprocess.CalledProcessError(completed.returncode, completed.args)
 print("Deployment regression suites passed", flush=True)

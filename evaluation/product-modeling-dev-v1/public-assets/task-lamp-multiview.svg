@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Nexa articulated work lamp — multiview design drawing</title>
+  <desc id="desc">Side, front and top views of an adjustable two-arm desk lamp, plus close drawings of the base pivot, elbow joint and vented lamp head. Units are millimetres.</desc>
+  <defs>
+    <style>
+      .bg{fill:#f7f9f7}.panel{fill:#fff;stroke:#a8b7b7;stroke-width:2}.ink{fill:none;stroke:#163c4b;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.fine{fill:none;stroke:#547480;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.hidden{fill:none;stroke:#94a9ad;stroke-width:1.5;stroke-dasharray:8 6}.solid{fill:#d8e4e3;stroke:#163c4b;stroke-width:3;stroke-linejoin:round}.dark{fill:#6f929b;stroke:#163c4b;stroke-width:3;stroke-linejoin:round}.glass{fill:#b8d9df;stroke:#163c4b;stroke-width:2}.accent{fill:#d38b56;stroke:#163c4b;stroke-width:2}.txt{fill:#163c4b;font-family:Arial,sans-serif;font-size:18}.small{fill:#547480;font-family:Arial,sans-serif;font-size:15}.label{fill:#163c4b;font-family:Arial,sans-serif;font-size:17;font-weight:bold;letter-spacing:1px}.number{fill:#163c4b;font-family:Arial,sans-serif;font-size:26;font-weight:bold}.dim{fill:none;stroke:#68858c;stroke-width:1.5;marker-start:url(#arr);marker-end:url(#arr)}
+    </style>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse"><path d="M8 0L0 4L8 8" fill="none" stroke="#68858c" stroke-width="1.3"/></marker>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#9db6bb" stroke-width="2"/></pattern>
+  </defs>
+  <rect class="bg" width="1600" height="1040"/>
+  <text x="44" y="46" class="number">NEXA / ADJUSTABLE WORK LAMP</text>
+  <text x="44" y="75" class="small">Concept drawing · visible exterior only · all dimensions in mm · not a manufacturing tolerance drawing</text>
+  <text x="1307" y="46" class="label">DESIGN SHEET 01</text>
+  <text x="1431" y="75" class="small">REV A</text>
+
+  <!-- Main side elevation -->
+  <rect x="42" y="100" width="920" height="600" rx="4" class="panel"/>
+  <text x="65" y="132" class="label">A / SIDE ELEVATION</text>
+  <line x1="72" y1="623" x2="930" y2="623" class="hidden"/>
+  <text x="74" y="645" class="small">DESK SURFACE</text>
+  <!-- base, top collar, pad and pivot -->
+  <path d="M145 576 Q185 553 321 553 Q449 553 495 576 L487 603 Q446 621 321 621 Q194 621 153 603 Z" class="solid"/>
+  <ellipse cx="321" cy="576" rx="176" ry="27" class="solid"/>
+  <ellipse cx="321" cy="576" rx="145" ry="18" class="fine"/>
+  <path d="M174 607 Q212 616 237 616 L234 623 L181 623 Z M406 616 Q439 613 470 604 L466 623 L410 623 Z" class="dark"/>
+  <path d="M292 551 L292 526 Q294 508 321 505 Q348 508 350 526 L350 551 Z" class="dark"/>
+  <circle cx="321" cy="517" r="27" class="solid"/>
+  <circle cx="321" cy="517" r="14" class="accent"/>
+  <circle cx="321" cy="517" r="5" class="dark"/>
+  <!-- lower hollow arm -->
+  <path d="M329 503 L528 310 Q541 298 551 310 L559 319 L352 526 Z" class="solid"/>
+  <path d="M343 504 L536 316" class="fine"/>
+  <path d="M360 487 L534 320" class="hidden"/>
+  <!-- elbow + dual stacked cheek plates -->
+  <circle cx="550" cy="316" r="33" class="dark"/>
+  <circle cx="550" cy="316" r="25" class="solid"/>
+  <circle cx="550" cy="316" r="14" class="accent"/>
+  <circle cx="550" cy="316" r="5" class="dark"/>
+  <path d="M555 290 L758 211 Q773 207 779 223 L769 239 L559 333 Z" class="solid"/>
+  <path d="M583 294 L760 227" class="fine"/>
+  <!-- lamp head yoke, shell, front lip and lens -->
+  <path d="M756 214 Q766 198 781 202 L802 213 L796 242 L772 239 Z" class="dark"/>
+  <circle cx="779" cy="222" r="12" class="accent"/>
+  <path d="M795 207 Q843 196 887 215 Q917 230 931 265 L914 293 Q854 305 802 274 Q789 253 795 207 Z" class="solid"/>
+  <path d="M809 219 Q854 214 891 230 Q905 239 915 263" class="fine"/>
+  <path d="M818 239 L833 244 M834 226 L849 231 M850 217 L866 222 M869 222 L884 228" class="ink"/>
+  <path d="M806 275 Q858 303 914 293 L903 305 Q852 315 808 290 Z" class="dark"/>
+  <path d="M816 289 Q857 308 900 301 Q881 320 845 310 Q826 305 816 289 Z" class="glass"/>
+  <!-- cable and measured axes -->
+  <path d="M295 533 C270 490 285 457 314 444 C368 422 455 355 503 296 Q519 275 539 276 C593 272 666 249 727 217 Q746 205 757 218" class="ink" stroke-width="7"/>
+  <path d="M295 533 C270 490 285 457 314 444 C368 422 455 355 503 296 Q519 275 539 276 C593 272 666 249 727 217 Q746 205 757 218" class="fine"/>
+  <circle cx="321" cy="517" r="3" fill="#163c4b"/><circle cx="550" cy="316" r="3" fill="#163c4b"/>
+  <!-- callouts -->
+  <path d="M155 543 L92 485 L92 462 M320 492 L182 424 L103 424 M542 278 L437 197 L349 197 M770 188 L704 155 L650 155 M870 302 L793 347 L713 347" class="fine"/>
+  <text x="76" y="453" class="small">TWO-PIECE BASE</text>
+  <text x="82" y="416" class="small">BASE PIVOT</text>
+  <text x="331" y="189" class="small">ELBOW FRICTION JOINT</text>
+  <text x="650" y="147" class="small">YOKE + CABLE ENTRY</text>
+  <text x="714" y="373" class="small">LENS / FRONT RIM</text>
+  <path d="M150 655 L150 679 M492 655 L492 679 M150 672 L492 672" class="dim"/>
+  <rect x="287" y="656" width="69" height="26" fill="#fff"/>
+  <text x="291" y="675" class="small">Ø 260</text>
+  <path d="M921 232 L944 232 M921 622 L944 622 M937 232 L937 622" class="dim"/>
+  <rect x="903" y="407" width="52" height="28" fill="#fff"/>
+  <text x="907" y="427" class="small">410</text>
+
+  <!-- front view -->
+  <rect x="980" y="100" width="576" height="294" rx="4" class="panel"/>
+  <text x="1000" y="132" class="label">B / FRONT ELEVATION</text>
+  <line x1="1268" y1="153" x2="1268" y2="356" class="hidden"/>
+  <path d="M1122 341 Q1268 321 1414 341 L1405 363 Q1268 377 1131 363 Z" class="solid"/>
+  <ellipse cx="1268" cy="341" rx="146" ry="18" class="solid"/>
+  <path d="M1239 334 L1239 320 Q1244 305 1268 306 Q1292 305 1297 320 L1297 334 Z" class="dark"/>
+  <circle cx="1268" cy="318" r="19" class="solid"/>
+  <path d="M1255 310 L1248 234 L1249 196 L1260 183 L1276 183 L1288 196 L1288 234 L1281 310 Z" class="solid"/>
+  <circle cx="1268" cy="201" r="23" class="dark"/>
+  <circle cx="1268" cy="201" r="12" class="accent"/>
+  <path d="M1226 176 Q1268 156 1310 176 L1332 216 Q1268 236 1204 216 Z" class="solid"/>
+  <path d="M1212 215 Q1268 231 1324 215 L1314 232 Q1268 244 1222 232 Z" class="dark"/>
+  <path d="M1224 232 Q1268 244 1312 232 Q1291 254 1268 255 Q1245 254 1224 232 Z" class="glass"/>
+
+  <!-- top plan -->
+  <rect x="980" y="410" width="576" height="290" rx="4" class="panel"/>
+  <text x="1000" y="442" class="label">C / TOP PLAN</text>
+  <ellipse cx="1268" cy="563" rx="174" ry="102" class="solid"/>
+  <ellipse cx="1268" cy="563" rx="151" ry="82" class="fine"/>
+  <ellipse cx="1268" cy="563" rx="49" ry="28" class="dark"/>
+  <path d="M1245 548 L1263 492 L1280 492 L1291 548 Z" class="solid"/>
+  <path d="M1263 492 L1267 454 L1280 454 L1280 492 Z" class="solid"/>
+  <path d="M1201 478 Q1268 453 1335 478 L1335 500 Q1268 521 1201 500 Z" class="solid"/>
+  <path d="M1211 489 L1225 492 M1235 486 L1249 488 M1261 485 L1275 485 M1287 488 L1301 486 M1311 492 L1325 489" class="ink"/>
+  <path d="M1117 662 L1117 683 M1419 662 L1419 683 M1117 676 L1419 676" class="dim"/>
+  <rect x="1231" y="661" width="76" height="25" fill="#fff"/>
+  <text x="1234" y="680" class="small">Ø 260</text>
+
+  <!-- three detail drawings -->
+  <rect x="42" y="716" width="484" height="276" rx="4" class="panel"/>
+  <rect x="538" y="716" width="484" height="276" rx="4" class="panel"/>
+  <rect x="1034" y="716" width="522" height="276" rx="4" class="panel"/>
+  <text x="64" y="747" class="label">D / BASE PIVOT DETAIL</text>
+  <text x="560" y="747" class="label">E / ELBOW JOINT DETAIL</text>
+  <text x="1056" y="747" class="label">F / HEAD DETAIL</text>
+  <path d="M88 927 L88 899 Q190 874 408 899 L408 927 Z" class="solid"/>
+  <path d="M121 899 L121 886 Q246 856 375 886 L375 899" class="fine"/>
+  <path d="M213 878 L213 827 Q215 799 248 799 Q281 799 283 827 L283 878 Z" class="dark"/>
+  <circle cx="248" cy="831" r="40" class="solid"/>
+  <circle cx="248" cy="831" r="21" class="accent"/>
+  <circle cx="248" cy="831" r="7" class="dark"/>
+  <path d="M278 800 L348 758 L362 771 L282 850" class="solid"/>
+  <path d="M105 925 L151 925 M344 925 L391 925" class="dark" stroke-width="9"/>
+  <text x="74" y="968" class="small">collar · side knob · pad below shell</text>
+
+  <path d="M571 908 L720 804 L742 830 L601 929 Z" class="solid"/>
+  <path d="M785 803 L948 760 L955 785 L814 831 Z" class="solid"/>
+  <circle cx="764" cy="824" r="64" class="dark"/>
+  <circle cx="764" cy="824" r="50" class="solid"/>
+  <circle cx="764" cy="824" r="29" class="accent"/>
+  <circle cx="764" cy="824" r="10" class="dark"/>
+  <path d="M603 880 C662 767 705 739 747 745 C818 742 854 758 914 756" class="ink"/>
+  <text x="568" y="968" class="small">paired cheek plates · centre screw · cable loop</text>
+
+  <g transform="translate(0 -24)">
+    <path d="M1080 844 Q1125 795 1236 785 Q1377 772 1504 826 L1523 889 Q1381 950 1220 922 Q1125 907 1080 844 Z" class="solid"/>
+    <path d="M1097 852 Q1198 892 1286 892 Q1419 902 1507 852" class="fine"/>
+    <path d="M1200 802 L1218 816 M1230 792 L1249 809 M1261 786 L1280 804 M1293 783 L1312 802 M1325 783 L1344 802 M1357 785 L1376 804" class="ink" stroke-width="6"/>
+    <path d="M1222 922 Q1390 948 1523 889 L1513 912 Q1366 975 1222 940 Z" class="dark"/>
+    <path d="M1245 936 Q1374 961 1506 915 Q1477 951 1375 965 Q1290 967 1245 936 Z" class="glass"/>
+  </g>
+  <text x="1057" y="968" class="small">vent slots · separate rim · diffuser below shell</text>
+  <text x="44" y="1020" class="small">Reference intent: articulated exterior, continuous assembly and legible local construction. Hidden internals are unspecified.</text>
+</svg>

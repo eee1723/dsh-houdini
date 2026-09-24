@@ -5,6 +5,7 @@ the separate stool-repair regression exercises the actual Sweep shelf script.
 """
 from pathlib import Path
 from itertools import combinations
+import math
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
@@ -12,6 +13,7 @@ import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 import dsh_operation_cards as cards
+from dsh_geometry_observation import polygon_observation
 
 root = hou.node('/obj').createNode('geo', 'node_knowledge_fixture')
 checks = []
@@ -45,7 +47,7 @@ try:
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
     families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
-                'attribwrangle', 'object_merge')
+                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge')
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
@@ -60,6 +62,7 @@ try:
     assert set(root.children()) == before
     assert cards.operation_card('polybevel::2.0') is None
     assert cards.operation_card('sweep::99.0') is None
+    assert cards.operation_card('revolve::99.0') is None
     assert cards.operation_card('custom::sweep::2.0') is None
     detached = cards.operation_card('attribwrangle')
     detached['decisions'].clear()
@@ -109,6 +112,69 @@ try:
     assert abs(sweep.geometry().boundingBox().sizevec()[0] - .2) < 1e-5
     assert observed(sweep)['boundary_edges'] > 0, 'intentional open built-in tube'
     done('Sweep external/built-in section and cap/open geometry')
+
+    # Cable counterexample: a sampled helix that abruptly switches to a
+    # straight end produced a sharp corner and a 90-degree hand-built ring
+    # frame jump in a natural task. Build only the centerline, join its loose
+    # end with a tangent-controlled cubic, then let native Sweep make/cap it.
+    tau=2*math.pi;centerline=[]
+    for i in range(241):
+        t=i/240;theta=tau*4.5*t
+        centerline.append(hou.Vector3(-.025+.045*t,.108+.0582*math.cos(theta),.0582*math.sin(theta)))
+    start=centerline[-1];incoming=(start-centerline[-2]).normalized()
+    end=hou.Vector3(.030,.030,-.020);outgoing=hou.Vector3(.2,-1,.1).normalized()
+    handle1=start+incoming*.008;handle2=end-outgoing*.008
+    for i in range(1,29):
+        t=i/28
+        centerline.append(start*(1-t)**3+handle1*3*(1-t)**2*t+handle2*3*(1-t)*t*t+end*t**3)
+    turns=[]
+    for i in range(1,len(centerline)-1):
+        before=(centerline[i]-centerline[i-1]).normalized()
+        after=(centerline[i+1]-centerline[i]).normalized()
+        cosine=max(-1,min(1,float(before.dot(after))))
+        turns.append(math.degrees(math.acos(cosine)))
+    assert max(turns)<10 and max(turns[238:243])<10,turns[238:243]
+    path_geo=hou.Geometry();curve=path_geo.createPolygon(is_closed=False)
+    for position in centerline:
+        point=path_geo.createPoint();point.setPosition(position);curve.addVertex(point)
+    path_geo.incrementAllDataIds()
+    sweep_verb=hou.sopNodeTypeCategory().nodeVerb('sweep::2.0')
+    sweep_verb.setParms({'surfaceshape':1,'surfacetype':5,'radius':.0032,'cols':10,'endcaptype':1})
+    cable_geo=hou.Geometry();sweep_verb.execute(cable_geo,[path_geo])  # input 0 is the backbone
+    cable_check=polygon_observation(cable_geo,integrity_only=True)
+    assert cable_check['status']=='observed' and cable_check['boundary_edges']==0,cable_check
+    assert cable_check['risk_status']=='no_detected_integrity_risk',cable_check
+    assert cable_check['shell_orientation']['positive_count']==1,cable_check
+    done('tangent-continuous cable centerline + native Sweep closed surface')
+
+    # The same Revolve can be a clean closed shell facing inward or outward.
+    # Normal.reverse changes N, not the primitive vertex order; Reverse does.
+    profile = make('line', 'revolve_profile', {'origin': [1, 0, 0], 'dir': [0, 1, 0]})
+    revolved = make('revolve::2.0', 'revolved', {'cap': 0}, [profile])
+    assert observed(revolved)['boundary_edges'] > 0
+    h.set_parm(revolved, 'cap', 1)
+    inward = observed(revolved)
+    assert inward['boundary_edges'] == 0 and inward['orientation_conflicts'] == 0
+    assert inward['shell_orientation']['negative_count'] == 1, inward
+    h.set_parm(revolved, 'reversecrosssections', 1)
+    outward = observed(revolved)
+    assert outward['shell_orientation']['positive_count'] == 1, outward
+    h.set_parm(revolved, 'swaprowcol', 0)
+    swapped = observed(revolved)
+    assert swapped['shell_orientation']['negative_count'] == 1, swapped
+    h.set_parm(revolved, 'swaprowcol', 1)
+    shaded = make('normal', 'shading_only', {'type': 'typeprim', 'reverse': 1}, [revolved])
+    shaded_result = observed(shaded)
+    assert shaded_result['shell_orientation']['positive_count'] == 1, shaded_result
+    face = shaded.geometry().prims()[0]
+    assert hou.Vector3(face.attribValue('N')).dot(face.normal()) < -.99
+    reoriented = make('reverse', 'reverse_winding', {'vtxsort': 'reverse'}, [revolved])
+    flipped = observed(reoriented)
+    assert flipped['shell_orientation']['negative_count'] == 1, flipped
+    card_ids = {d['id'] for d in cards.decision_advisories(cards.operation_card('revolve::2.0'), {})}
+    assert {'axis', 'surface_output', 'end_closure', 'surface_orientation'} == card_ids
+    assert {d['id'] for d in cards.decision_advisories(cards.operation_card('normal'), {})} == {'winding_vs_normal'}
+    done('Revolve cap and winding; Normal attribute versus Reverse vertex order')
 
     sheet = make('grid', 'sheet', {'rows': 2, 'cols': 2})
     ext = make('polyextrude::2.0', 'thick_sheet', {'dist': .2}, [sheet])

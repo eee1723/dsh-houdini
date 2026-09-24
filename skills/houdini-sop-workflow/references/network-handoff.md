@@ -26,6 +26,10 @@
 ## 两阶段执行
 
 先预览分组，再应用；然后预览comfortable handoff，再应用。两次apply都必须使用刚取得的`plan_sha256`，不要复用陈旧计划。
+建好成员Network Box后，不能再对整网调用`layout_nodes(mode='children'/'flow')`：
+它会把框内节点重新打散而不验证框间排布，工具现会写前拒绝这种调用。
+要整理框之间的关系，继续用下方的`handoff`预览/应用；只调整单个框内
+少量节点时，传明确的`nodes`列表。
 
 ```python
 box_plan = network_boxes(parent, groups, dry_run=True)

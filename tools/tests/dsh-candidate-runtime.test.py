@@ -5,6 +5,7 @@ use --runtime-cache for a temporary read-only projection of a cached CLI plus so
 This is not signed-package or GUI qualification and never promotes preferred.
 """
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -22,7 +23,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
-from houdini_test_environment import isolated_environment
+from houdini_test_environment import isolated_environment, launch_directory
 from dsh_web_auth import DshWebSession
 import dsh_managed_runtime as runtime
 
@@ -30,6 +31,16 @@ parser = argparse.ArgumentParser(description=__doc__)
 inputs = parser.add_mutually_exclusive_group(required=True)
 inputs.add_argument('--candidate', type=Path)
 inputs.add_argument('--runtime-cache', type=Path)
+parser.add_argument('--houdini', type=Path, action='append', default=[],
+                    help='Optional isolated hython for actual DSH delivery card/Sidebar checks')
+parser.add_argument('--houdini-gui', type=Path, action='append', default=[],
+                    help='Optional isolated Houdini GUI WebView acceptance (no user HIP)')
+parser.add_argument('--delivery-preset', choices=['houdini', 'standard'], default='houdini',
+                    help='Diagnostic comparison for the actual Agent delivery turn')
+parser.add_argument('--hold-seconds', type=int, default=0,
+                    help='Keep only this isolated Host online briefly for browser inspection')
+parser.add_argument('--preinit-webengine', action='store_true',
+                    help='Diagnostic: initialize another WebEngine page before the DSH view')
 args = parser.parse_args()
 node = shutil.which('node')
 assert node
@@ -70,8 +81,53 @@ env['DSH_HOUDINI_BRIDGE_URL'] = f'http://127.0.0.1:{bridge_port}'
 context = fixture / 'context.json'
 context.write_text(json.dumps({'home':env['DSH_HOME'], 'install':str(install), 'bridgePort':bridge_port}), encoding='utf-8')
 subprocess.run([node, str(ROOT / 'tools/prepare-managed-profile.mjs'), str(context)], check=True, env=env)
+for preset_name in ('houdini', 'houdini-dev'):
+    synced = (Path(env['DSH_HOME']) / '.agent-presets' / preset_name / 'agent.cordis.yml').read_text(encoding='utf-8')
+    assert "- id: present\n  name: '@deepseek-ai/dsh-tool-present'" in synced.replace('\r\n', '\n'), (
+        f'{preset_name} lost standard file delivery during managed preset synchronization')
 workspace = fixture / 'workspace'
 workspace.mkdir()
+text_file = workspace / '说明 空格.txt'
+text_file.write_text('Houdini delivery path\n', encoding='utf-8')
+plain_file = workspace / 'plain.txt'
+plain_file.write_text('ASCII delivery preview\n', encoding='utf-8')
+image_file = workspace / '最终 图片.png'
+image_bytes = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=')
+image_file.write_bytes(image_bytes)
+outside = fixture / 'outside 中文 空格'
+outside.mkdir()
+outside_file = outside / 'final.txt'
+outside_file.write_text('outside HIP workspace\n', encoding='utf-8')
+hip_files = []
+for gui_executable in args.houdini_gui:
+    gui_executable = gui_executable.resolve(strict=True)
+    hython = gui_executable.with_name('hython.exe')
+    hip = outside / (gui_executable.parent.parent.name + ' 空白场景.hip')
+    hip_env = isolated_environment(fixture / ('hip-' + gui_executable.parent.parent.name), executable=hython)
+    saved = subprocess.run([str(hython), '-c', 'import hou,sys; hou.hipFile.save(sys.argv[1])', str(hip)],
+                           cwd=launch_directory(hython), env=hip_env, capture_output=True,
+                           text=True, encoding='utf-8', errors='replace', timeout=60)
+    if saved.returncode or not hip.is_file():
+        raise RuntimeError('isolated Houdini HIP save failed: ' + (saved.stdout + saved.stderr)[-2000:])
+    hip_files.append(hip)
+delivery_files = [
+    {'path': str(image_file), 'description': 'Final PNG'},
+    {'path': str(text_file), 'description': 'Final text'},
+    {'path': str(plain_file), 'description': 'Plain text control'},
+    {'path': str(outside_file), 'description': 'External final output'},
+    *({'path': str(hip), 'description': 'Saved Houdini scene'} for hip in hip_files),
+]
+env['DSH_PRESENT_FIXTURE_FILES'] = json.dumps(delivery_files, ensure_ascii=False)
+delivery_output = fixture / 'presented.json'
+env['DSH_PRESENT_FIXTURE_OUT'] = str(delivery_output)
+overlay = fixture / 'present-overlay.yml'
+overlay.write_text('- insert:\n    - id: present-fixture\n      name: '
+                   + (ROOT / 'tools/tests/dsh-present-loop-fixture.mjs').as_uri() + '\n', encoding='utf-8')
+present_check = subprocess.run([node, str(ROOT / 'tools/tests/dsh-present-candidate.mjs'),
+                                str(candidate), str(workspace), str(outside_file)],
+                               check=True, env=env, capture_output=True, text=True,
+                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+print(present_check.stdout.strip(), flush=True)
 log = fixture / 'frontend.log'
 state = fixture / 'runtime.json'
 base = f'http://127.0.0.1:{port}'
@@ -90,7 +146,7 @@ def rpc(method, payload, authenticated=True, *, expected_ok=True, client=None):
 
 with log.open('wb') as output:
     process = runtime.spawn_frontend([node, str(candidate/'node_modules/@deepseek-ai/dsh/lib/bin.js'),
-                                'web', '--port', str(port), '--no-open'], node=node, cwd=workspace, env=env,
+                                'web', '--patch', str(overlay), '--port', str(port), '--no-open'], node=node, cwd=workspace, env=env,
                                stdout=output, stderr=subprocess.STDOUT,
                                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     try:
@@ -115,6 +171,7 @@ with log.open('wb') as output:
         first = rpc('workspace/create', {'request':{'path':str(workspace)}})['workspace']
         second = rpc('workspace/create', {'request':{'path':str(workspace)}})['workspace']
         assert first['workspaceId'] == second['workspaceId']
+        sessions = {}
         for preset in ['houdini','houdini-dev']:
             request = {'workspaceId':first['workspaceId'], 'agentPreset':preset,
                        'sessionId':'dsh-houdini-'+uuid.uuid4().hex}
@@ -122,6 +179,109 @@ with log.open('wb') as output:
             repeated = rpc('session/create', {'request':request})  # Also covers an ignored/lost first response.
             assert created['sessionId'] == repeated['sessionId'] == request['sessionId']
             assert created['agentPreset'] == repeated['agentPreset'] == preset
+            sessions[preset] = created['sessionId']
+
+        # These are the authenticated read routes used by Sidebar previews.
+        # Houdini's absolute output may live outside the Session file tree.
+        file_scope = sessions['houdini']
+        def file_args(path, **extra):
+            return {'workspaceFileScopeId':file_scope, 'path':str(path), **extra}
+        image_stat = rpc('workspaceFiles/stat', file_args(image_file))
+        assert Path(image_stat['absolutePath']).resolve() == image_file.resolve()
+        assert image_stat['bytes'] == len(image_bytes)
+        image_read = rpc('workspaceFiles/readAll', file_args(image_file))
+        assert base64.b64decode(image_read['data']) == image_bytes and image_read['eof']
+        text_read = rpc('workspaceFiles/read', file_args(text_file, range={'offset':1,'limit':2}))
+        assert text_read['text'].strip() == 'Houdini delivery path', text_read
+        external_stat = rpc('workspaceFiles/stat', file_args(outside_file))
+        assert Path(external_stat['absolutePath']).resolve() == outside_file.resolve()
+        for hip in hip_files:
+            hip_stat = rpc('workspaceFiles/stat', file_args(hip))
+            assert Path(hip_stat['absolutePath']).resolve() == hip.resolve() and hip_stat['bytes'] > 0
+        for invalid in (workspace, workspace / 'missing.txt'):
+            error = rpc('workspaceFiles/stat', file_args(invalid), expected_ok=False)
+            assert error, f'non-file path unexpectedly accepted: {invalid}'
+        for link in (workspace / 'file-link.txt', workspace / 'directory-junction'):
+            if link.is_symlink() or link.exists():
+                error = rpc('workspaceFiles/stat', file_args(link), expected_ok=False)
+                assert error, f'final link unexpectedly accepted: {link}'
+        print('Candidate Sidebar file routes: PNG bytes, Unicode text and outside-workspace absolute path passed', flush=True)
+
+        # The mounted Houdini preset must execute present in an actual Agent
+        # turn, then persist the event. The adapter is local and deterministic.
+        present_id = 'dsh-houdini-'+uuid.uuid4().hex
+        rpc('session/create', {'request':{'workspaceId':first['workspaceId'],
+            'agentPreset':args.delivery_preset,'sessionId':present_id}})
+        rpc('session/selectModel', {'request':{'sessionId':present_id,
+            'provider':'present-fixture','model':'fixture'}})
+        rpc('session/prompt', {'request':{'sessionId':present_id,'requestId':uuid.uuid4().hex,
+            'mode':'queue','content':[{'type':'text','text':'Deliver the temporary fixture files.'}]}})
+        for _ in range(120):
+            if delivery_output.exists():
+                break
+            assert process.poll() is None, 'candidate exited before present tool result'
+            time.sleep(.25)
+        else:
+            raise AssertionError('mounted present tool did not publish a delivery; inspect isolated frontend.log')
+        delivered = json.loads(delivery_output.read_text(encoding='utf-8'))
+        assert delivered['sessionId'] == present_id and delivered['files'] == delivery_files
+        assert isinstance(delivered['seq'], int)
+        print('Candidate Agent turn: mounted present emitted a persisted delivery event without a model request', flush=True)
+        if args.hold_seconds:
+            assert 1 <= args.hold_seconds <= 600
+            (fixture / 'launch.url').write_text(auth.launch_url(), encoding='utf-8')
+            (fixture / 'delivery-session.txt').write_text(present_id, encoding='utf-8')
+            print('Isolated browser inspection ready:', fixture, flush=True)
+            until = time.monotonic() + args.hold_seconds
+            while time.monotonic() < until and not (fixture / 'continue.flag').exists():
+                assert process.poll() is None
+                time.sleep(.5)
+        for executable in [*args.houdini, *args.houdini_gui]:
+            executable = executable.resolve(strict=True)
+            gui = executable in [p.resolve(strict=True) for p in args.houdini_gui]
+            browser_fixture = fixture / (('gui-' if gui else 'webview-') + executable.parent.parent.name)
+            browser_env = isolated_environment(browser_fixture, executable=executable, gui=gui)
+            browser_result = browser_fixture / 'present-webview.json'
+            browser_env.update(DSH_PRESENT_WEBVIEW_URL=auth.launch_url(),
+                               DSH_PRESENT_WEBVIEW_SESSION_ID=present_id,
+                               DSH_PRESENT_WEBVIEW_RESULT=str(browser_result))
+            command = [str(executable), str(ROOT / 'tools/tests/dsh-present-webview-probe.py')]
+            if gui:
+                browser_env['DSH_PRESENT_WEBVIEW_GUI'] = '1'
+                if args.preinit_webengine:
+                    browser_env['DSH_PRESENT_WEBVIEW_PREINIT'] = '1'
+                hook_source = (
+                    'import os, runpy, traceback\n'
+                    'from pathlib import Path\n'
+                    'from PySide6.QtCore import QTimer\n'
+                    'import hou\n'
+                    'def run_probe():\n'
+                    '  if os.environ.get("DSH_PRESENT_WEBVIEW_PREINIT") == "1":\n'
+                    '    from PySide6.QtWebEngineCore import QWebEnginePage\n'
+                    '    prior = QWebEnginePage(hou.qt.mainWindow())\n'
+                    '  try: runpy.run_path(' + repr(str(ROOT / 'tools/tests/dsh-present-webview-probe.py')) + ')\n'
+                    '  except BaseException:\n'
+                    '    Path(os.environ["DSH_PRESENT_WEBVIEW_RESULT"]).write_text('
+                    'traceback.format_exc(), encoding="utf-8")\n'
+                    '  finally: QTimer.singleShot(100, hou.qt.mainWindow().close)\n'
+                    'QTimer.singleShot(1500, run_probe)\n'
+                )
+                for version, python in [('21.0', '3.11'), ('22.0', '3.13')]:
+                    hook = Path(browser_env['HOUDINI_USER_PREF_DIR'].replace('__HVER__', version)) / f'python{python}libs/uiready.py'
+                    hook.parent.mkdir(parents=True, exist_ok=True)
+                    hook.write_text(hook_source, encoding='utf-8')
+                command = [str(executable), '-foreground', '-geometry=800x600+12000+12000']
+            probe = subprocess.run(command, cwd=launch_directory(executable), env=browser_env,
+                                   capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=150)
+            if probe.returncode:
+                (browser_fixture / 'probe.log').write_text(probe.stdout + probe.stderr, encoding='utf-8')
+                detail = browser_result.read_text(encoding='utf-8') if browser_result.exists() else '(no probe result)'
+                raise RuntimeError(f'{executable} delivery WebView failed: {detail[:2500]}; inspect {browser_fixture}')
+            result = json.loads(browser_result.read_text(encoding='utf-8'))
+            assert (result['ok'] and result['textPreview'] and result['imagePreview']
+                    and result['externalPreview'] and len(result['cards']) >= 4)
+            print(executable.parent.parent.name, 'isolated GUI' if gui else 'Qt WebView',
+                  'delivery cards and Sidebar preview passed', flush=True)
 
         # Real published-but-unattached state; retrying the same id must adopt
         # and attach it, not create another session or change the preset.

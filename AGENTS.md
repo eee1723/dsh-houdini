@@ -6,6 +6,11 @@ dsh-houdini是DeepSeek Harness插件：src/（5个houdini_*工具）→ HTTP →
 dsh_bridge.py（Houdini主线程队列）→ `dsh_hou_helpers.py`（67 动词）及领域模块。
 hou只存在于Houdini侧，Node Host不直接调用HOM。
 
+## 面向用户的回复
+
+- 默认用用户的语言和自然、简短的日常说法；先讲清结果、对用户的影响和下一步，再补技术细节。
+- 专业词第一次出现时用一句话解释。失败和没验证的地方要直说；节点路径、哈希与完整报错放在后面的技术补充，不让用户先读这些才能明白结论。
+
 ## 命令与入口
 
 - 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡文档、
@@ -51,4 +56,4 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
   不漂移相机。正式camera_fit保持自身边界。
 - transport/bootstrap/presentation/semantic inspection分别判断；没有成功语义识图必须写视觉未验证。
 - 普通建模与收尾验证由当前作者执行；无独立评审agent入口。没有多作者租约，不能借allow_foreign或共享身份建模。
-- 冻结的benchmark protocol/matrix/holdout不得随普通开发改动或解封；评测答案不进入生产面。
+- 程序化产品模型开发评测以evaluation/product-modeling-dev-v1/为准；公开任务与评审答案隔离，未见题不用于调参。评测答案不进入生产面。

@@ -19,7 +19,7 @@
 | [多Agent组件建模](component-collaboration.md) | 独立作者/进程、普通subnet与节点片段交付、共享控制、受控装配和实施验收；显式候选已有，完整协作验收未闭环 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、鉴权/RPC/Qt/profile资格门 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
-| [评测基础设施设计](benchmark-design.md) | manifest/schema、信息隔离、评审与能力主张，不保存批次结果 |
+| [程序化产品模型开发评测](benchmark-design.md) | 产品细节、连接、可编辑性和交付的验收原则；公开任务与评审材料隔离，不保存批次结果 |
 | [开发维护规范](development.md) | 代码/文档同步、生成门禁、测试入口、发布及文档生命周期 |
 | [控制参数、界面与绑定设计](parameter-controls.md) | 跨建模/场景总控/HDA的分层职责、多种推进顺序与实施完成门 |
 

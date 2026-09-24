@@ -5,6 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11lib
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
+import dsh_quality_contracts as q
 
 with h._execution_owner('state-restore-owner','setup'):
     root=h.tab_create('/obj','geo','__control_state_restore')
@@ -30,6 +31,58 @@ with h._execution_owner('state-restore-owner','setup'):
             failed=run(f'set_parm({out.path()!r},"ty",4)\nraise RuntimeError("later failure")')
             assert not failed['ok'] and failed['transaction']['status']=='rolled_back',failed
             assert {n:ctrl.evalParm(n) for n in actual}==actual and out.evalParm('ty')==0
+        # A changed bgeo observation must identify the failing section even
+        # when every controller channel and the frame were restored exactly.
+        original_geometry=q._geometry
+        reads=[]
+        def changed_restore_geometry(node):
+            resolved,geometry=original_geometry(node)
+            reads.append(1)
+            if len(reads)==3:
+                changed=hou.Geometry(geometry)
+                point=changed.points()[0]
+                point.setPosition(point.position()+hou.Vector3(.25,0,0))
+                return resolved,changed
+            return resolved,geometry
+        q._geometry=changed_restore_geometry
+        try:
+            h.test_controls(ctrl,out,tests)
+            raise AssertionError('different output bgeo must fail restoration')
+        except h.CheckpointError as error:
+            row=error.evidence['results'][-1]
+            assert row['status']=='pass' and row['parameter_restore']['ok'],row
+            assert row['restored'] is False and row['geometry_restore']['matches'] is False,row
+            assert row['geometry_restore']['differing_section_count']>0,row
+            assert row['geometry_restore']['differing_sections'][0]['first_difference']['path'],row
+            assert error.evidence['control_summary']['case_counts']=={'pass':0,'fail':1,'unverified':0,'not_run':0}
+        finally:
+            q._geometry=original_geometry
+        assert h.test_controls(ctrl,out,tests)['restored']
+        def failed_baseline_cook(*args,**kwargs):
+            return {'ok':False,'errors':['injected baseline failure']}
+        h.cook_node=failed_baseline_cook
+        try:
+            baseline_failure=h.test_controls(ctrl,out,tests)
+            assert baseline_failure['status']=='fail' and baseline_failure['results']==[],baseline_failure
+            assert baseline_failure['parameter_writes']==0 and baseline_failure['restored']
+            assert b._operation_summary('test_controls',baseline_failure)['cook_errors']==['injected baseline failure']
+            assert ctrl.evalParm('width')==1
+        finally:
+            h.cook_node=original_cook
+        def drifting_baseline_cook(node,*args,**kwargs):
+            result=original_cook(node,*args,**kwargs)
+            ctrl.parm('mode').set(7)
+            return result
+        h.cook_node=drifting_baseline_cook
+        try:
+            h.test_controls(ctrl,out,tests)
+            raise AssertionError('baseline cook channel drift must fail before perturbation')
+        except h.CheckpointError as error:
+            assert error.evidence['parameter_writes']==0 and error.evidence['restored'] is False
+            assert not error.evidence['parameter_restore']['ok']
+        finally:
+            h.cook_node=original_cook
+            h.set_parm(ctrl,'mode',3)
         # Fault: a non-geometric control is omitted by the restore routine.
         def omit_mode(snapshots):
             return original_restore({k:v for k,v in snapshots.items() if k!='mode'})
@@ -49,7 +102,7 @@ with h._execution_owner('state-restore-owner','setup'):
         cooks=[]
         def late_change(node,*args,**kwargs):
             result=original_cook(node,*args,**kwargs);cooks.append(1)
-            if len(cooks)==2:ctrl.parm('mode').set(7)
+            if len(cooks)==3:ctrl.parm('mode').set(7)
             return result
         h.cook_node=late_change
         try:

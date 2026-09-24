@@ -195,6 +195,12 @@ operation_advisories只描述缺少显式选择：不替用户封口、选边或
 output必须是明确新建非空交付；空CTRL/helper用tab_create。required_outputs检查必需分支，
 防止非空Merge掩盖丢件。可附实际interfaces；失败或unsupported会使该构建失败并清理新节点。
 dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
+稳定最终`OUT_ASSET`的verify_network附带有界Polygon表面复核摘要与真实bbox_size，
+不改其cook健康判定；开放边/反向壳或不支持表示需按最终零件解释，不能用
+`healthy=true`覆盖，也不必对同一状态重复执行整件Polygon快检。
+上游Sweep有Polygon中心线时，另看curve_path_integrity：异常长的闭合回边与两端
+急折只提示核对曲线意图，不把拓扑闭合误当线缆自由端正确；未参与最终输出的
+Switch分支也可能在上游，须结合实际显示判断。
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
 subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
 普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。
@@ -212,19 +218,25 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | 方法 | 能证明的范围 | 不能替代 |
 |---|---|---|
 | Polygon inspect | 指定输出/组的边界、共享边连通、非流形、朝向冲突、逐壳条件性有向体积 | 目标外形、自交、实体强度；分组切口可有意开放 |
+| Polygon integrity-only | 近看产品件的最终输出或关键源模块：有界查非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何面朝向冲突、零面积/零边与完全重复面；平面大面重复点桥接孔时另提示着色近景复核，不算几何完整性失败；负号提示核对是否整体反向，合法嵌套空腔须人工解释；开放边另提示核对接口 | 任意共面覆盖、自交、接点关系、控制扰动后的保持、参考外形或艺术质量；超预算与非Polygon保持unverified |
 | attrib unique | 全量精确tuple唯一性、基数和有限重复样本 | 容差焊接；bbox不变不能排除复制重叠 |
 | point spacing | 明确有序点的全量相邻弦长 | 曲面关系、弧长、实体间隙 |
 | named surface proximity | 指定实际表面点到目标表面的最近距离与声明基数 | 实体插入深度、全表面无穿插、强度 |
 | axis_gap | 实际primitive组沿指定轴的投影间隙和横向重叠 | 任意曲面真实接触 |
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
+| solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；无交集或阈值内通过 | 零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
+顶层interfaces验基准和每个扰动状态；baseline_interfaces只验基准；case内interfaces只验该case的扰动输出。状态不同的关系用不同合同，不能把合盖接触要求原样套到开盖状态，或删掉全部关系只保留bbox通过。三者都采用实际最终SOP表面组、相同预算和失败边界；摘要分别报告声明与实际运行的关系数，基准未验不得说合盖通过，case通过不外推其他case。
+采集基准签名前先显式强制cook并回读通道/frame；基准cook自身改动用户状态时失败，不把零测试写入冒充恢复成功。基准cook失败但状态未变时零参数写入并返回not_run，不用随后geometry读取隐式重试。
 恢复不仅比较bgeo：恢复写入后及最终cook后均回读被测参数的值/表达式/keys，最终核对frame。
 parameter_restore列出快照参数身份、前后字面值或动画匹配及错误；任何不匹配都不能报告restored=true。
+geometry_restore列出基准/恢复签名、是否匹配；不匹配时给出有界的不同bgeo区段与首个差异路径，不能用参数一致或bbox相同覆盖几何失败。
 这些字段证明该次回读，不保证稍后GUI/外部代码不会改值；未采集历史不能据此归因为用户undo。
 恢复指纹排除导出头date和派生group_summary，并按组名整理已知bgeo组目录记录；
-组名、组成员、ordered group内部顺序、用户属性、拓扑和原生primitive数据仍完整比较。
+已知GA字符串属性表按字符串排序并同步重映射原索引，避免cook顺序改变内部字典而误报；
+每个元素的实际字符串、组名/成员、ordered group内部顺序、其他用户属性、拓扑和原生primitive数据仍完整比较。未知字符串编码不静默忽略。
 重复组名或无法识别的组目录结构拒绝，不通过忽略真实选择或几何差异放行。
 不支持的表示/菜单/副作用保持unverified；文件/Python/solver副作用不属于恢复保证。
 控制响应非零不等于设计正确，单次case不证明所有参数组合。相关修改使旧证据失效。

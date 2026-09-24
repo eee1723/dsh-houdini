@@ -1,3 +1,0 @@
-# Preserve the exact, already-frozen protocol bytes on every checkout.
-# Do not change its content or recorded hash to accommodate platform newlines.
-/benchmark/protocol-manifest.json text eol=lf

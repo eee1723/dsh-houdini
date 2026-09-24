@@ -68,6 +68,27 @@ try:
         def __init__(self,value):self.value=value
         def data(self):return json.dumps(self.value,allow_nan=False).encode('utf-8')
     assert q._data_signature(Serialized(payload))==q._data_signature(Serialized(later))
+    # Equal primitive string values can serialize with a different string
+    # table order and remapped indices after recooking/Merge. Keep values,
+    # not table insertion order, in the full-payload restoration oracle.
+    first=hou.Geometry(root.node('a').geometry());second=hou.Geometry(root.node('a').geometry())
+    first_attr=first.addAttrib(hou.attribType.Prim,'part','')
+    second_attr=second.addAttrib(hou.attribType.Prim,'part','')
+    labels=['left' if prim.number()<3 else 'right' for prim in first.prims()]
+    for prim in first.prims():prim.setAttribValue(first_attr,labels[prim.number()])
+    for prim in reversed(second.prims()):prim.setAttribValue(second_attr,labels[prim.number()])
+    def string_table(geometry):
+        serialized=hjson.loads(geometry.data())
+        attrs=dict(zip(serialized[::2],serialized[1::2]))['attributes']
+        primitive_attrs=dict(zip(attrs[::2],attrs[1::2]))['primitiveattributes']
+        for descriptor,body in primitive_attrs:
+            if dict(zip(descriptor[::2],descriptor[1::2])).get('name')=='part':
+                return dict(zip(body[::2],body[1::2]))['strings']
+        raise AssertionError('part string table missing')
+    assert string_table(first)==['left','right'] and string_table(second)==['right','left']
+    assert q._data_signature(first)==q._data_signature(second)
+    second.prims()[0].setAttribValue(second_attr,'changed')
+    assert q._data_signature(first)!=q._data_signature(second),'actual primitive strings remain covered'
     # Actual user attributes and native primitive shape ARE still compared.
     g=hou.Geometry(out.geometry());g.addAttrib(hou.attribType.Global,'date','initial')
     before=q._data_signature(g);g.setGlobalAttribValue('date','changed')

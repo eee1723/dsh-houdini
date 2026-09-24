@@ -36,6 +36,8 @@ assert info['definition'] is None and info['ui_analysis']['entries']>3
 assert n.type().name()=='null'  # no HDA necessary
 
 # UI first, then model and explicit binding.
+# This existing fixture is deliberately a scene-wide /obj controller; a
+# single SOP product has a separate Geo-local control case below.
 box=run("g=tab_create('/obj','geo',name='model'); __result__=tab_create(g,'box',name='shape').path()")['result']
 mapping=[{'source':'width','target':box+'/sizex','scale':1,'offset':0}]
 plan=run(f'__result__=bind_controls({controller!r},{mapping!r},dry_run=True)')
@@ -47,6 +49,18 @@ assert applied['bindings'][0]['actual_value']==2
 expression=hou.parm(box+'/sizex').expression()
 run(f"set_parms({controller!r},{{'width':4}}); cook_node({box!r})")
 assert abs(hou.node(box).geometry().boundingBox().sizevec()[0]-4)<1e-6
+
+single=run("g=tab_create('/obj','geo',name='single_product'); "
+           "c=tab_create(g,'null',name='CTRL'); "
+           "b=tab_create(g,'box',name='body'); "
+           "__result__={'geo':g.path(),'ctrl':c.path(),'body':b.path()}")['result']
+assert hou.node(single['ctrl']).parent()==hou.node(single['geo'])
+run(f"create_spare_parms({single['ctrl']!r},spec=[{{'type':'float','name':'width','default':2}}])")
+run(f"set_parm({single['body']!r},'sizex',{{'expression':\"ch('../CTRL/width')\",'language':'hscript'}})")
+local=run(f"__result__=test_controls({single['ctrl']!r},{single['body']!r},"
+          "[{'id':'resize','values':{'width':3},'expectations':"
+          "[{'metric':'bounds_size','axis':0,'delta':[.999,1.001]}]}])")['result']
+assert local['ok'] and local['restored'] and hou.node(single['ctrl']).parm('width').eval()==2
 
 # Adding unrelated UI leaves bindings, animation, locked values and ramp intact.
 k=hou.Keyframe();k.setFrame(1);k.setValue(4);n.parm('width').setKeyframe(k)

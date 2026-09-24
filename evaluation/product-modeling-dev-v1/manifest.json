@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "product-modeling-dev-v1",
+  "status": "development",
+  "purpose": "Diagnose and improve high-detail procedural product modeling in Houdini. These known cases support development, not generalization claims.",
+  "reviewResultSchema": "review-result.schema.json",
+  "cases": [
+    {
+      "id": "task-lamp-read-drawing",
+      "kind": "drawing-understanding",
+      "public": {
+        "brief": "cases/task-lamp-read-drawing/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-read-drawing/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-build",
+      "kind": "reference-to-model",
+      "public": {
+        "brief": "cases/task-lamp-build/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-build-guided",
+      "kind": "guided-reference-to-model",
+      "public": {
+        "brief": "cases/task-lamp-build-guided/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-build-guided/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-elbow-focus",
+      "kind": "focused-module",
+      "public": {
+        "brief": "cases/task-lamp-elbow-focus/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-elbow-focus/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "task-lamp-change",
+      "kind": "parameter-change",
+      "public": {
+        "brief": "cases/task-lamp-change/public/brief.md",
+        "attachments": ["public-assets/task-lamp-multiview.png"]
+      },
+      "evaluator": "cases/task-lamp-change/evaluator-only/checklist.json",
+      "dependsOn": ["task-lamp-build"]
+    },
+    {
+      "id": "equipment-case-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/equipment-case-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/equipment-case-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "sealed-bottle-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/sealed-bottle-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/sealed-bottle-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "bench-vise-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/bench-vise-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/bench-vise-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "hinged-desk-box-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/hinged-desk-box-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/hinged-desk-box-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "folding-phone-stand-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/folding-phone-stand-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/folding-phone-stand-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "hand-crank-reel-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/hand-crank-reel-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/hand-crank-reel-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    },
+    {
+      "id": "usb-desk-fan-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/usb-desk-fan-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/usb-desk-fan-build/evaluator-only/checklist.json",
+      "dependsOn": []
+    }
+  ]
+}

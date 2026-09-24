@@ -1,0 +1,19 @@
+{
+  "caseId": "equipment-case-build",
+  "reviewerInstructions": "先独立打开工程和查看整体/局部证据，后读自评；此任务测试纯文字细节要求是否落地，不能从面积、面数推断产品可信度。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_closed", "independent_overview_open", "independent_detail_latch", "independent_detail_hinge", "independent_detail_handle", "independent_control_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "body-proportion", "method": "measurement+visual", "critical": true, "expectation": "关闭时外形接近 46×32×18 cm，箱体有清楚分离的上、下壳与接缝。"},
+    {"id": "seal", "method": "geometry+visual", "critical": true, "expectation": "连续密封结构沿箱体开口周缘，不被局部角部或铰链附近明显切断。"},
+    {"id": "latch-mechanism", "method": "geometry+visual", "critical": true, "expectation": "前侧两组锁扣有底座、活动扣舌与可见转轴或铰点，不只是贴在表面的方块。"},
+    {"id": "hinge", "method": "geometry+visual", "critical": true, "expectation": "后侧铰链与两片壳体有合理连接，转轴/铰耳能在局部图里分辨。"},
+    {"id": "handle-feet", "method": "geometry+visual", "critical": true, "expectation": "把手有实际握持空间，四角防撞件和底部支脚具有独立体积、布局与接触。"},
+    {"id": "near-detail", "method": "visual", "critical": false, "expectation": "转角、壳体筋条、握持纹理和可见紧固件可在近景辨识，尺度不会压过主体。"},
+    {"id": "controls", "method": "control", "critical": true, "expectation": "宽度、开盖角度与锁扣状态可独立调节；变化后铰链、密封、锁扣、把手仍与箱壳关系正确。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开；报告简化和未验证项，不把整体可辨认说成局部已完成。"}
+  ]
+}

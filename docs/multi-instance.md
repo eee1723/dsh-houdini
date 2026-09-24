@@ -117,7 +117,7 @@
   验认证、选择、真实Houdini领取和实际flush；精确参数和依赖见[开发规范](development.md)。
 
 Qt真实菜单、正常退出/崩溃恢复、已加载发行版和未见模型任务分别验收。测试、源码、签名包、正式Release及live
-加载状态不能互相替代；未通过冻结基准门时保留失败，不自动修改基线或评测协议。
+加载状态不能互相替代；未见模型任务按[产品模型开发评测](benchmark-design.md)保留失败和未验证项，不用改题面或评审答案掩盖缺口。
 
 设计依据：[DSH agent作用域/恢复](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/agent/README.md)、
 [DSH持久会话](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/README.md)、

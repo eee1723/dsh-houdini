@@ -1,11 +1,25 @@
 """Bounded metadata observation. Main thread only; never cook or read geometry."""
 import time
 import threading
+import re
 import hou
 
 
 def _node(node):
     return {'path': node.path(), 'type': node.type().name()}
+
+
+def unit_length_meters():
+    """Read the HIP unit length without changing the scene or evaluating geometry."""
+    try:
+        output, error = hou.hscript('unitlength')
+        if error:
+            return None
+        match = re.search(r'Unit Length:\s*([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s+meters\b', output)
+        value = float(match.group(1)) if match else None
+        return value if value is not None and value > 0 else None
+    except (AttributeError, ValueError, hou.Error):
+        return None
 
 
 def scene_context(runtime_id, owner_thread):
@@ -17,6 +31,7 @@ def scene_context(runtime_id, owner_thread):
         'schema_version': 1, 'runtime_id': runtime_id,
         'observed_at': time.time(), 'version': hou.applicationVersionString(),
         'hip_path': hou.hipFile.path(), 'frame': float(hou.frame()),
+        'unit_length_meters': unit_length_meters(),
         'update_mode': {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         'ui_available': ui, 'dirty_reliable': ui,
         'has_unsaved_changes': bool(hou.hipFile.hasUnsavedChanges()) if ui else None,

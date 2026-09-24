@@ -368,7 +368,7 @@ def context_name(category) -> str:
 # --- scene 域 ---------------------------------------------------------------
 
 def scene_info() -> dict:
-    """只读场景/时间线摘要；不移动 playbar、不遍历整张节点图。"""
+    """只读场景/时间线及HIP单位长度摘要；不移动playbar、不遍历节点图。"""
     hip_path = hou.hipFile.path()
     # A user may deliberately save/load a file called untitled.hip. The basename
     # alone is not proof that the scene is new (especially in headless HOM).
@@ -376,6 +376,7 @@ def scene_info() -> dict:
     has_named_path = os.path.basename(hip_path).lower() != "untitled.hip" or file_exists
     has_unsaved_changes = bool(hou.hipFile.hasUnsavedChanges())
     ui_available = bool(hou.isUIAvailable())
+    from dsh_context import unit_length_meters
     return {
         "hip_path": hip_path,
         "hip_name": hou.hipFile.name(),
@@ -385,6 +386,7 @@ def scene_info() -> dict:
         "file_exists": file_exists,
         "clean_on_disk": file_exists and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
+        "unit_length_meters": unit_length_meters(),
         "update_mode": {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         "fps": float(hou.fps()),
         "frame": float(hou.frame()),
@@ -1720,6 +1722,7 @@ def _geo_summary(geo) -> dict:
         bb = geo.boundingBox()
         s["bbox_min"] = [float(x) for x in bb.minvec()]
         s["bbox_max"] = [float(x) for x in bb.maxvec()]
+        s["bbox_size"] = [float(x) for x in bb.sizevec()]
     except Exception:
         pass
     return s
@@ -2182,6 +2185,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     No viewport changes. output_index=0..63 additionally requires the matching
     native Output to be this source or directly wired to it. Packed wrapper
     counts alone do not prove nonempty embedded content.
+    Final OUT_ASSET adds a bounded, nonblocking surface_integrity advisory and
+    explicit bbox_size/scene_unit_length_meters. Healthy still means cook/output
+    health, not correct shape, relationship or visual finish.
     healthy != task/visual success; relationships remain unverified.
     """
     from dsh_sop_contracts import verify_network as verify
@@ -2413,6 +2419,11 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
             raise CheckpointError(str(error),error.evidence) from error
     if boxes is not None or profile!='comfortable' or dry_run is not False or expected_plan is not None:
         raise ValueError('boxes/profile/dry_run/expected_plan are handoff-only arguments')
+    if nodes is None and any(any(isinstance(item, hou.Node) for item in box.items(recurse=True))
+                             for box in p.networkBoxes()):
+        raise ValueError("layout_nodes broad children/flow would scatter Network Box members; "
+                         "use mode='handoff' with explicit leaf boxes and dry_run/expected_plan, "
+                         "or pass an explicit node subset for a local edit")
     items = []
     foreign_skipped = []
     if nodes is not None:
@@ -2461,9 +2472,9 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
     Apply requires ``expected_plan`` from a fresh ``dry_run=True`` call. This is
     presentation grouping only: member nodes, geometry and wiring are not moved
     or evaluated. A group uses exactly one of ``members`` (direct child nodes)
-    or ``boxes`` (already-created leaf boxes). ``boxes`` creates one bounded
-    component-container level; create/layout leaf role boxes first, then wrap
-    them. Deeper nesting and mixed node/box membership are rejected.
+    or ``boxes`` (already-created leaf boxes). role='component' requires boxes;
+    other roles require members. Create/layout leaf role boxes first, then wrap
+    them in one component-container level. Deeper nesting is rejected.
     """
     try:
         p = _resolve(parent)
@@ -4933,16 +4944,24 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     可选method='axis_gap'时source_group/target_group均为实际primitive组，带axis(0..2)、
     gap_range=[min,max]和正数min_overlap。测source.min-target.max及横向投影重叠；
     正数表示轴向分離，负数表示投影重叠，仅此，不能称为真实接触或插入深度。
+    method='solid_overlap'时两组都是同一最终SOP内完整、独立、闭合且朝外的
+    Polygon实体primitive组，另给max_overlap_volume（SOP local单位的三次方）。
+    内存Boolean Intersect量实体相交体积；正体积超限fail，零交集pass；
+    不完整/开放/非Polygon或数值模糊为unverified，不添加场景节点。
+    例：{id:'shaft_clearance',method:'solid_overlap',source_group:'lug',
+    target_group:'shaft',max_overlap_volume:0}。须另验同轴和孔壁距离；
+    零交集不证明轴已穿孔，逐状态检查也不证明连续扫掠或力学。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
 
 
-def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None) -> dict:
+def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                  baseline_interfaces=None) -> dict:
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
     tests为1..16个case；每个case是
-    {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}]}，
+    {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}],interfaces?}，
     每个case最多16个expectations；同一扰动的大检查按相同values拆成多个case。
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
     point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
@@ -4955,7 +4974,11 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
     修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
-    可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
+    顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
+    case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
+    三者均用geo_check_interfaces同一schema；实体禁穿插可用solid_overlap，
+    但所选组须完整闭合，并与同轴/孔道检查合用。
+    每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
     当前控制输出仅支持Polygon/Mesh/Sphere/Tube及点几何，其他类型写前unverified。
@@ -4966,7 +4989,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     共享边连通/闭合；在基准与每次扰动实际输出上复查。不用于未焊接独立部件的距离/强度证明。
     """
     from dsh_quality_contracts import test_controls as test
-    return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign, domain=domain, topology=topology)
+    return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign,
+                domain=domain, topology=topology, baseline_interfaces=baseline_interfaces)
 
 
 def cop_layer_stats(node, output=0, *, max_pixels=4194304) -> dict:
@@ -5113,13 +5137,21 @@ def _summary(values: list) -> dict:
 
 
 def geo_piece_stats(node, piece_attrib: str | None = None,
-                    sample: int = 16, *, inspect: bool = False, group=None, basis=None) -> dict:
+                    sample: int = 16, *, inspect: bool = False, group=None, basis=None,
+                    integrity_only: bool = False) -> dict:
     """按 primitive piece 报局部 bbox/面积，识别整体 bbox 掩盖的局部退化。
 
     ``piece_attrib=None`` 时用原生 Connectivity SOP Verb 在内存副本上生成临时
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
     inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
+    integrity_only=True统计最终Polygon表面完整性及闭合连通壳的有向体积符号，
+    扩大有界预算并跳过昂贵的截面/中心线诊断；负号只提示检查单独部件是否整壳反向，
+    嵌套空腔可有意出现反向内壳，不自动判错；还对比显式N属性与几何面朝向，
+    反向着色法线只提示复核，不自动改写几何；
+    boundary_edges单独提示核对有意开放接口，不一概当破面。
+    平面大面若以重复点桥接孔，另报shading_review_status供视窗近景复核；
+    这不是拓扑失败，也不证明已有可见着色瑕疵。
     返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
     量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合
     闭合/流形与轴向图像）；duplicate_boundary_faces及
@@ -5136,10 +5168,13 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     if source is None:
         raise ValueError(f"节点 {n.path()} 没有 geometry")
     if not isinstance(inspect, bool): raise ValueError('inspect must be boolean')
+    if type(integrity_only) is not bool: raise ValueError('integrity_only must be boolean')
+    if integrity_only and not inspect:
+        raise ValueError('integrity_only requires inspect=True')
     if inspect:
         from dsh_geometry_observation import polygon_observation
         return {'node': n.path(), 'frame': float(hou.frame()), 'checked_at': time.time(),
-                **polygon_observation(source, group, basis)}
+                **polygon_observation(source, group, basis, integrity_only=integrity_only)}
     if group is not None or basis is not None:
         raise ValueError('group/basis require inspect=True (selected polygon observation)')
     geometry = source

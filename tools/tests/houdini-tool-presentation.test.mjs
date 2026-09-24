@@ -44,6 +44,14 @@ const compactResult = exec.output.render({}, {
 assert(!compactResult.includes('repeated echo'));
 assert(compactResult.includes('important user diagnostic'));
 assert(compactResult.includes('transaction:') && compactResult.includes('verbs (1):'));
+const candidateText = exec.output.render({}, {
+  ok:true, stdout:'', stderr:'', artifactCandidates:[
+    {path:'C:/project/final.hip',kind:'scene',role:'delivery-candidate',source:'scene_save',bytes:42},
+    {path:'C:/project/check.png',kind:'image',role:'visual-check',source:'render_view',bytes:24},
+  ],
+})[0].text;
+assert.match(candidateText, /artifact-candidates \(not delivered; verify requested final files, then call present\)/);
+assert.match(candidateText, /"role":"visual-check"/);
 const execArgs = { code: 'set_parm(node, "tx", 1)', allow_raw: 'fixture gap' };
 assert.deepEqual(exec.presentCall(execArgs), {
   card: 'generic',
@@ -80,6 +88,85 @@ assert.match(baselineFailure, /not_run is not pass/);
 assert.match(baselineFailure, /baseline outside declared absolute range/);
 assert.match(baselineFailure, /"not_run":1/);
 assert.match(baselineFailure, /"case_id":"reach"/);
+const compactControlFailure = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
+  evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
+    status:'fail',restored:true,requested_cases:4,
+    case_counts:{pass:3,fail:1,unverified:0,not_run:0},
+    coverage:{relationship_scope:'not_checked',declared_interfaces:0,
+      baseline_interface_status:'not_checked',cases_with_interface_checks:0,
+      executed_interface_checks:0,declared_topology_contracts:0},
+    cases:[{id:'angle_90',status:'fail'}],
+  }}],
+  verbs:[{verb:'test_controls',ok:true,check_status:'failed',result:{ok:false,status:'fail'}}],
+})[0].text;
+assert.match(compactControlFailure.split('\n')[0], /control-test-verdict.*"pass":3.*"fail":1.*angle_90/,
+  'compact control failures must lead the model-facing result, not hide behind a successful verb call');
+assert.match(compactControlFailure, /restored only means test changes were undone/);
+assert.match(compactControlFailure.split('\n')[0], /"relationship_scope":"not_checked".*"declared_interfaces":0/,
+  'a passing measurement count must not imply component relationships were checked');
+assert.match(compactControlFailure.split('\n')[0], /"baseline_interface_status":"not_checked".*"cases_with_interface_checks":0.*"executed_interface_checks":0/);
+const integrityWarning = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
+  evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    status:'observed',risk_status:'needs_review',risk_reasons:['nonmanifold_edges'],
+    boundary_edges:4,boundary_review_status:'open_boundary_unreviewed'}],
+})[0].text;
+assert.match(integrityWarning.split('\n')[0], /polygon-integrity-verdict.*needs_review.*nonmanifold_edges/);
+assert.match(integrityWarning, /open ports may be intentional/);
+const shadingCandidate = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
+    method:'bounded polygon surface integrity',status:'observed',
+    risk_status:'no_detected_integrity_risk',planar_repeated_point_ngons:2,
+    shading_review_status:'needs_visual_review'}],
+})[0].text;
+assert.match(shadingCandidate.split('\n')[0], /polygon-integrity-verdict.*"planar_repeated_point_ngons":2.*"shading_review_status":"needs_visual_review"/);
+assert.match(shadingCandidate, /not integrity failures/);
+const groupOnlyIntegrity = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[
+    {ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+      group:'g_gasket',status:'observed',risk_status:'no_detected_integrity_risk'},
+    {ledgerIndex:2,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+      group:'g_shell_base',status:'observed',risk_status:'no_detected_integrity_risk'},
+  ],
+})[0].text;
+assert.match(groupOnlyIntegrity.split('\n')[0], /polygon-integrity-coverage.*"selected_groups":2.*"whole_output_checked_in_this_call":false/);
+assert.match(groupOnlyIntegrity, /coincident faces across different groups/);
+assert.match(groupOnlyIntegrity, /polygon-integrity-verdict:.*"group":"g_gasket"/);
+const invertedShell = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
+    method:'bounded polygon surface integrity',group:'g_shell',status:'observed',
+    risk_status:'needs_review',risk_reasons:['negative_closed_shell_winding_requires_review'],
+    orientation_review_status:'negative_closed_shells_present',
+    shell_orientation:{positive_count:0,negative_count:1,unverified_count:0},
+    shading_normals:{opposed_count:3}}],
+})[0].text;
+assert.match(invertedShell, /"negative_closed_shells":1/);
+assert.match(invertedShell, /"opposed_shading_normals":3/);
+assert.match(invertedShell, /Normal N is not polygon winding/);
+const finalOutputRisk = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'verify_network',ok:true,
+    output:'/obj/reel/OUT_ASSET',healthy:true,warning_free:true,
+    geometry:{points:4040,prims:3768,bbox_size:[.315,.2083,.1696]},
+    scene_unit_length_meters:1,
+    surface_integrity:{status:'observed',risk_status:'needs_review',boundary_edges:96,
+      negative_closed_shells:3,unverified_shells:1},
+    curve_path_integrity:{status:'observed',risk_status:'needs_review',suspicious_closure_count:1,
+      samples:[{sweep:'/obj/reel/cable_sweep',backbone:'/obj/reel/cable_curve',closing_edge_ratio:4.12}]}}],
+})[0].text;
+assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
+assert.match(finalOutputRisk.split('\n')[0], /"suspicious_sweep_closures":1.*"closing_edge_ratio":4\.12/);
+assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
+const lateInversion = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({
+    ledgerIndex:index+1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    group:`g_${index}`,status:'observed',risk_status:'no_detected_integrity_risk',
+  })),{ledgerIndex:6,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    group:'g_late_inverted',status:'observed',risk_status:'needs_review',
+    shell_orientation:{negative_count:1},risk_reasons:['negative_closed_shell_winding_requires_review']}],
+})[0].text;
+assert.match(lateInversion.split('Executed successfully.')[0], /g_late_inverted/,
+  'a late risk must not be clipped behind earlier clean group results');
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

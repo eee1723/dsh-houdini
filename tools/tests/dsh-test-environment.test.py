@@ -18,9 +18,12 @@ contaminated = dict(os.environ, HOUDINI_PACKAGE_DIR='foreign-packages',
                     NODE_OPTIONS='--require foreign.js', EXAMPLE_API_KEY='test-only-placeholder',
                     HOUDINI_LICENSE_SERVER='test-license-host')
 calls = []
+def record_run(args, **kwargs):
+    calls.append(kwargs)
+    return subprocess.CompletedProcess(args, 0, '', '')
 with patch.dict(os.environ, contaminated, clear=True), \
      patch.object(sys, 'argv', ['run-deployment-tests.py']), \
-     patch.object(subprocess, 'run', side_effect=lambda *a, **kw: calls.append(kw)):
+     patch.object(subprocess, 'run', side_effect=record_run):
     runpy.run_path(str(ROOT / 'tools/run-deployment-tests.py'), run_name='__main__')
 assert calls
 for call in calls:

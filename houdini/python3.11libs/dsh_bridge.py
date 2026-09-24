@@ -82,7 +82,9 @@ _HOU_THREAD_ID = threading.get_ident()
 # 53: HTTP /exec and /jobs require a complete Host identity (owner_session,
 # owner_call), expected_contract and a one-time request ticket; job status and
 # cancel are authorized by the owning session only.
-_EXECUTION_CONTRACT_VERSION = 59
+# 60: completed result envelopes report bounded artifactCandidates from verb
+# receipts; they are path facts for Agent review, never automatic deliveries.
+_EXECUTION_CONTRACT_VERSION = 69
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -933,6 +935,63 @@ def _clip(obj) -> str:
     return text if len(text) <= _VERB_VALUE_CHARS else text[:_VERB_VALUE_CHARS] + "..."
 
 
+def _artifact_candidates(ledger, images, execution_ok):
+    """Project authoritative output paths; never declare user deliverables here."""
+    found = {}
+
+    def add(path, kind, role, source):
+        if not isinstance(path, str):
+            return
+        try:
+            if not os.path.isabs(path) or os.path.islink(path) or not os.path.isfile(path):
+                return
+            size = os.stat(path).st_size
+            absolute = os.path.abspath(path)
+            key = os.path.normcase(absolute)
+        except (OSError, ValueError):
+            return
+        if size <= 0:
+            return
+        found[key] = {'path': absolute, 'kind': kind,
+                      'role': role if execution_ok else 'diagnostic',
+                      'source': source, 'bytes': int(size)}
+
+    for entry in ledger:
+        if len(found) >= 16 or not entry.get('ok') or not isinstance(entry.get('result'), dict):
+            continue
+        name, result = entry['verb'], entry['result']
+        verified = (result.get('ok') is not False and not result.get('errors') and not result.get('warnings')
+                    and result.get('fresh') is not False and result.get('stale') is not True
+                    and result.get('warning_free') is not False
+                    and result.get('pixel_status') not in ('failed', 'needs_review')
+                    and result.get('file_status') != 'failed')
+        role = 'delivery-candidate' if verified else 'diagnostic'
+        if name in ('scene_save', 'scene_save_as'):
+            add(result.get('path'), 'scene', role, name)
+        elif name == 'component_export':
+            add(result.get('file'), 'component', role, name)
+        elif name == 'render_frame':
+            add(result.get('output'), 'render', role, name)
+        elif name in ('render_view', 'viewport_screenshot'):
+            artifact = result.get('artifact')
+            policy = artifact.get('output_policy') if isinstance(artifact, dict) else None
+            path = artifact.get('actual_path') if isinstance(artifact, dict) else None
+            if not path:
+                path = result.get('output') if name == 'render_view' else result.get('path')
+            default_role = 'visual-check' if name == 'render_view' else 'diagnostic'
+            add(path, 'image', role if policy == 'explicit' and verified else default_role if verified else 'diagnostic', name)
+    for path in images:
+        if len(found) >= 16:
+            break
+        try:
+            key = os.path.normcase(os.path.abspath(path)) if isinstance(path, str) and os.path.isabs(path) else None
+        except (OSError, ValueError):
+            key = None
+        if key not in found:
+            add(path, 'image', 'visual-check', 'reported-image')
+    return list(found.values())
+
+
 def _operation_summary(name: str, result):
     """Small, untruncated evidence before verbose node lists/service metadata."""
     if not isinstance(result, dict):
@@ -985,8 +1044,13 @@ def _operation_summary(name: str, result):
             'leaf_box_overlap_count','component_box_overlap_count',
             'required_clearances','achieved_clearances','minimum_clearances',
             'fixed_obstacles','skipped_items','layout_status','restored','restore_errors','scope') if k in result}
-    if name == 'geo_piece_stats' and 'shell_orientation' in r:
-        return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
+    if name == 'geo_piece_stats' and 'method' in r:
+        return {k:r[k] for k in ('node','frame','group','method','status','reason','selected_primitives','selected_points',
+            'boundary_edges','boundary_review_status','nonmanifold_edges','orientation_conflicts',
+            'orientation_review_status',
+            'zero_area_faces','zero_length_edges','duplicate_boundary_faces','duplicate_face_sample',
+            'risk_status','risk_reasons','scope','shell_orientation','shading_normals',
+            'extents','bounds_min','bounds_max') if k in r}
     if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
         return {k:r[k] for k in ('ok','status','semantic_status','node','output','output_port','controller',
                 'frame','checked_at','scope','resolution','channels','statistics','sha256','freshness','cache',
@@ -1002,8 +1066,13 @@ def _operation_summary(name: str, result):
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
-              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode')
+              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode',
+              'surface_integrity','curve_path_integrity','scene_unit_length_meters',
+              'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}
+    if name == 'verify_network' and isinstance(r.get('geometry'), dict):
+        out['geometry'] = {k:r['geometry'][k] for k in
+            ('points','prims','bbox_min','bbox_max','bbox_size') if k in r['geometry']}
     if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
         out['artifact'] = {k:r['artifact'].get(k) for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
@@ -1161,6 +1230,14 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 status=check['evaluation'].get('status')
                 entry['check_status']={'failed':'failed','warning':'warning','unverified':'unverified'}.get(status,'passed')
                 entry['check_scope']='parameter evaluation only; geometry effect unverified'
+            if name == 'geo_piece_stats' and isinstance(check, dict):
+                if check.get('status') == 'unverified':
+                    entry['check_status'] = 'unverified'
+                elif check.get('risk_status') == 'needs_review' or check.get('boundary_review_status') == 'open_boundary_unreviewed':
+                    entry['check_status'] = 'warning'
+                elif check.get('risk_status') == 'no_detected_integrity_risk':
+                    entry['check_status'] = 'passed'
+                entry['check_scope'] = 'Polygon surface integrity only; no contact, self-intersection, appearance or intended-open-port certification'
             if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "viewport_screenshot", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
                 if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
@@ -1446,6 +1523,9 @@ def run_code(code: str, allow_raw: str | None = None,
     # Only images produced by this request enter the Host's native attachments.
     if images:
         envelope["images"] = images
+    candidates = _artifact_candidates(verb_ledger, images, error is None)
+    if candidates:
+        envelope['artifactCandidates'] = candidates
     if verb_ledger:
         envelope["verbs"] = verb_ledger
         evidence = [{'ledgerIndex': i + 1, 'verb': v['verb'], **v['summary']}

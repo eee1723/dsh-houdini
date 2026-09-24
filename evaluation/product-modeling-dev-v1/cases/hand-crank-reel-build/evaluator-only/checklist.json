@@ -1,0 +1,17 @@
+{
+  "caseId": "hand-crank-reel-build",
+  "reviewerInstructions": "独立重开保存的HIP副本，先读真实Unit Length并换算物理尺寸，后以同相机观察0/90/180度及孔口/曲柄近景。不能凭轴和支架同轴、表面距离近或整体bbox稳定推断轴穿孔；应分别核对完整闭合支架/卷筒/轴实体的孔道、孔壁和禁止实体相交。无完整组时保留unverified。先看独立证据，最后读Agent报告，不按节点或面数打分。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_unit_and_dimensions", "independent_overview_0", "independent_overview_90", "independent_overview_180", "independent_detail_support_bore", "independent_detail_reel_hub", "independent_detail_crank", "independent_shaft_solid_overlap_check", "independent_rotation_and_restore_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "physical-scale-and-form", "method": "measurement+visual", "critical": true, "expectation": "HIP物理单位换算后整体接近20×12×15cm；底座、两片支架、卷筒两挡盘、卷线区、轴、曲柄、握柄、脚垫及可辨线缆齐全。"},
+    {"id": "true-through-bores", "method": "geometry+visual", "critical": true, "expectation": "转轴通过固定支架孔及卷筒中心真实孔道；孔壁/轴近景可辨，完整实体之间没有用实心重叠伪装穿孔。数值检查须说明所选实体组是否完整。"},
+    {"id": "crank-and-reel-connection", "method": "geometry+visual", "critical": true, "expectation": "曲柄与轴、握柄与曲柄、卷筒与转轴在外形和空间上形成可理解的传动路径，无明显悬浮装饰件或不合理穿插。"},
+    {"id": "three-state-motion", "method": "control+geometry", "critical": true, "expectation": "0/90/180度由同一主参数控制；底座、脚垫、固定支架不漂移，卷筒/轴/曲柄随动且保持连接，检查后能准确恢复。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "支架孔口、挡盘、线缆、曲柄握持处、转角和紧固件在近景清楚且有层次；平面无明显假起伏、破面、倒面或锯齿。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "HIP可重开，物理尺寸与报告一致；未做的线缆放线、承重、摩擦和制造公差明确说明，不把视觉同轴或参数响应说成真实孔道/机械功能已证明。"}
+  ]
+}

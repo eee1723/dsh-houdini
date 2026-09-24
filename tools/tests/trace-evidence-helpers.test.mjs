@@ -7,9 +7,11 @@ import {
   execResultFromPreview,
   classifyVisionEvidence,
   nativeImageEvidence,
+  linkNativeImageResponses,
   collectVerbAdoption,
   classifyRawEffect,
   extractAvailableSkills,
+  skillCatalogNames,
   findBatchSetParmOpportunities,
   findQueryMutationSteps,
   findSuppressedCookFailures,
@@ -27,6 +29,16 @@ const nativeImages=nativeImageEvidence([{index:7,canonical:{imageAttachments:[
 ]}}]);
 assert.equal(nativeImages[0].delivered,true);assert.equal(nativeImages[0].semanticStatus,'unverified');
 assert.equal(nativeImages[1].delivered,false);assert.equal(nativeImages[1].error,'route unavailable');
+const linkedImages=linkNativeImageResponses(nativeImages,[{index:7,resultSeq:40}],[
+  {seq:41,type:'assistant/message',time:123,data:{message:{content:[
+    {type:'reasoning',text:'The image appears to show a wheel and frame.'},
+    {type:'tool-call',name:'houdini_exec'},
+  ]}}},
+]);
+assert.equal(linkedImages[0].followingAssistant.seq,41);
+assert.equal(linkedImages[0].followingAssistant.status,'requires_manual_image_comparison');
+assert.equal(linkedImages[0].semanticStatus,'unverified','model self-description is not a visual certificate');
+assert.equal(linkedImages[1].followingAssistant,undefined,'undelivered images have no interpretation link');
 
 assert.equal(isMutatingRawMethodName('renderNode'), false);
 const retainedRead=collectVerbAdoption([{isHoudini:true,tool:'houdini_query',args:{result_ref:'a'.repeat(64)},code:'',verbs:[]}]);
@@ -114,6 +126,10 @@ assert.deepEqual(extractAvailableSkills(`
 </available_skills>`), [
   'houdini-rig-animation-workflow', 'houdini-trace-analysis',
 ]);
+assert.deepEqual(skillCatalogNames({source:{kind:'skill-catalog',form:'catalog',entries:[
+  {name:'houdini-sop-workflow'}, {name:'houdini-trace-analysis'}, {name:'houdini-sop-workflow'},
+]},content:[{type:'text',text:'<available_skills>legacy text</available_skills>'}]}),
+['houdini-sop-workflow','houdini-trace-analysis']);
 
 const scattered = [{
   index: 7,

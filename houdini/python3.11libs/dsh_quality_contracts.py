@@ -1,8 +1,9 @@
 """Bounded final-geometry checks with optional controlled review preview capture.
 
 All calls run through the owning-thread Bridge. Named groups are explicit user/
-agent-selected interfaces, not inferred semantics. This is not a solid collision
-solver; unsupported representations stay unverified, never silently sampled.
+agent-selected interfaces, not inferred semantics. Only declared, bounded
+closed Polygon selections can be checked for solid overlap; this is not a
+continuous collision solver. Unsupported representations stay unverified.
 """
 from __future__ import annotations
 
@@ -104,7 +105,8 @@ def validate_interfaces(interfaces):
         if not isinstance(item,dict):raise ValueError('interface must be an object')
         axis_gap = item.get('method') == 'axis_gap'
         section = item.get('method') == 'section_proximity'
-        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','source_group','target_group','max_distance','expected_points'}
+        solid_overlap = item.get('method') == 'solid_overlap'
+        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
         for key in ('id', 'source_group', 'target_group'):
             if not isinstance(item.get(key), str) or not item[key].strip():
@@ -120,6 +122,10 @@ def validate_interfaces(interfaces):
                 raise ValueError('gap_range must be finite [min,max] in SOP local units')
             if _finite(item.get('min_overlap'),'min_overlap') <= 0:
                 raise ValueError('axis_gap requires positive min_overlap on both transverse axes')
+            continue
+        if solid_overlap:
+            if _finite(item.get('max_overlap_volume'), 'max_overlap_volume') < 0:
+                raise ValueError('max_overlap_volume must be nonnegative (SOP local units cubed)')
             continue
         if _finite(item.get('max_distance'), 'max_distance') < 0:
             raise ValueError('max_distance must be nonnegative (SOP local units)')
@@ -150,7 +156,7 @@ def _geometry(output):
 
 
 def _canonical_geometry_payload(data):
-    """Canonicalize export metadata and group-directory order, never membership."""
+    """Canonicalize writer order while retaining group members and attribute values."""
     payload=hjson.loads(data)
     if (not isinstance(payload,list) or len(payload)%2
             or any(not isinstance(k,str) for k in payload[::2])
@@ -178,6 +184,41 @@ def _canonical_geometry_payload(data):
             # serialization order after recooking. Keep each descriptor and
             # selection payload intact, including ordered-group element order.
             payload[i+1]=[record for _,record in sorted(zip(names,value),key=lambda pair:pair[0])]
+        elif key=='attributes' and isinstance(value,list) and len(value)%2==0:
+            # Houdini may assign string-table indices in cook order. The table
+            # order is not an attribute value: remap the known GA rawpagedata
+            # schema while preserving every element's actual string and all
+            # other attribute metadata. Unknown encodings stay byte-distinct.
+            for records in value[1::2]:
+                if not isinstance(records,list):continue
+                for record in records:
+                    if not isinstance(record,list) or len(record)!=2:continue
+                    descriptor,body=record
+                    if (not isinstance(descriptor,list) or len(descriptor)%2
+                            or any(not isinstance(k,str) for k in descriptor[::2])
+                            or len(set(descriptor[::2]))!=len(descriptor)//2
+                            or dict(zip(descriptor[::2],descriptor[1::2])).get('type')!='string'
+                            or not isinstance(body,list) or len(body)%2
+                            or any(not isinstance(k,str) for k in body[::2])
+                            or len(set(body[::2]))!=len(body)//2):continue
+                    fields=dict(zip(body[::2],body[1::2]))
+                    if set(fields)!={'size','storage','strings','indices'}:continue
+                    strings,indices=fields['strings'],fields['indices']
+                    if (not isinstance(strings,list) or any(not isinstance(s,str) for s in strings)
+                            or len(set(strings))!=len(strings) or not isinstance(indices,list)
+                            or len(indices)%2 or any(not isinstance(k,str) for k in indices[::2])
+                            or len(set(indices[::2]))!=len(indices)//2):continue
+                    index_fields=dict(zip(indices[::2],indices[1::2]))
+                    if (set(index_fields)-{'size','storage','pagesize','constantpageflags','rawpagedata'}
+                            or 'rawpagedata' not in index_fields):continue
+                    raw=index_fields['rawpagedata']
+                    if (not isinstance(raw,list) or any(type(n) is not int or n<-1 or n>=len(strings)
+                                                        for n in raw)):continue
+                    ordered=sorted(strings)
+                    positions={name:index for index,name in enumerate(ordered)}
+                    mapping={old:positions[name] for old,name in enumerate(strings)}
+                    body[body.index('strings')+1]=ordered
+                    indices[indices.index('rawpagedata')+1]=[mapping[n] if n>=0 else n for n in raw]
         elif key=='info' and isinstance(value,dict):
             # Both are writer-generated descriptions, not user attributes.
             # The actual group names, membership and selection order stay above.
@@ -197,6 +238,59 @@ def _data_signature(g):
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _first_geometry_difference(before, after, limit=50000):
+    """Locate a bounded bgeo difference without returning arbitrary attribute data."""
+    pending=[('',before,after)]
+    visited=0
+    while pending and visited<limit:
+        path,left,right=pending.pop()
+        visited+=1
+        if type(left) is not type(right):
+            return {'path':path or '/', 'kind':'type',
+                    'baseline_type':type(left).__name__,'restored_type':type(right).__name__}
+        if isinstance(left,dict):
+            missing=set(left)^set(right)
+            if missing:
+                key=sorted(missing)[0]
+                child=path+'/'+str(key).replace('~','~0').replace('/','~1')
+                return {'path':child,'kind':'missing_key',
+                        'present_in':'baseline' if key in left else 'restored'}
+            for key in sorted(left,reverse=True):
+                child=path+'/'+str(key).replace('~','~0').replace('/','~1')
+                pending.append((child,left[key],right[key]))
+        elif isinstance(left,list):
+            if len(left)!=len(right):
+                return {'path':path or '/', 'kind':'length',
+                        'baseline_length':len(left),'restored_length':len(right)}
+            pending.extend((path+'/'+str(i),left[i],right[i]) for i in range(len(left)-1,-1,-1))
+        elif left!=right:
+            detail={'path':path or '/', 'kind':'value'}
+            if type(left) in (int,float,bool) and type(right) in (int,float,bool):
+                detail.update(baseline_value=left,restored_value=right)
+            return detail
+    return {'path':'/', 'kind':'comparison_budget_exceeded'} if pending else None
+
+
+def _geometry_restore_diagnostic(baseline, restored, baseline_hash, restored_hash):
+    result={'matches':baseline_hash==restored_hash,
+            'baseline_sha256':baseline_hash,'restored_sha256':restored_hash}
+    if result['matches']:return result
+    before=_canonical_geometry_payload(baseline.data())
+    after=_canonical_geometry_payload(restored.data())
+    before_sections=dict(zip(before[::2],before[1::2]))
+    after_sections=dict(zip(after[::2],after[1::2]))
+    differing=[]
+    for name in sorted(set(before_sections)|set(after_sections)):
+        if name not in before_sections or name not in after_sections:
+            differing.append({'section':name,'kind':'missing_section'})
+        elif before_sections[name]!=after_sections[name]:
+            differing.append({'section':name,
+                              'first_difference':_first_geometry_difference(before_sections[name],after_sections[name])})
+    result['differing_sections']=differing[:12]
+    result['differing_section_count']=len(differing)
+    return result
+
+
 def _supported_surface(prim):
     kind = prim.type().name()
     return kind in _SURFACE_TYPES and (kind != 'Polygon' or (bool(prim.intrinsicValue('closed')) and prim.numVertices() >= 3))
@@ -212,6 +306,10 @@ def _check_interfaces(g, interfaces, max_pairs):
             continue
         if item.get('method') == 'section_proximity':
             row, pairs = _section_proximity(g,item,max_pairs-total_pairs)
+            results.append(row);total_pairs+=pairs
+            continue
+        if item.get('method') == 'solid_overlap':
+            row, pairs = _solid_overlap(g,item,max_pairs-total_pairs)
             results.append(row);total_pairs+=pairs
             continue
         pg = g.findPointGroup(item['source_group'])
@@ -275,9 +373,96 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface',
+            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared proximity or axis-projection relations only; not solid overlap, penetration, mechanical strength or all-surface clearance'}
+            'scope':'declared proximity, axis-projection or bounded solid-overlap relations only; not continuous collision, mechanical strength or unspecified part clearance'}
+
+
+def _solid_overlap(g, item, budget):
+    """Bounded Boolean intersection of two named complete Polygon solids."""
+    base={**item,'coordinate_space':'explicit output SOP local',
+          'scope':'selected closed Polygon solids only; no continuous sweep, load or strength claim'}
+    selected=[]
+    for name in (item['source_group'],item['target_group']):
+        group=g.findPrimGroup(name)
+        selected.append(list(group.prims()) if group else [])
+    source,target=selected
+    counts={'source_count':len(source),'target_count':len(target)}
+    if not source or not target:
+        return {**base,**counts,'status':'fail','reason':'missing_or_empty_primitive_group'},0
+    if {p.number() for p in source} & {p.number() for p in target}:
+        return {**base,**counts,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate'},0
+    if {p.number() for prim in source for p in prim.points()} & {p.number() for prim in target for p in prim.points()}:
+        return {**base,**counts,'status':'fail','reason':'source_and_target_share_points_cannot_self_validate'},0
+    pairs=len(source)*len(target)
+    if len(source)>512 or len(target)>512 or pairs>budget:
+        raise ValueError('solid_overlap Boolean budget exceeded; narrow to complete closed part groups')
+    from dsh_geometry_observation import polygon_observation
+    checks=[]
+    for name in (item['source_group'],item['target_group']):
+        observed=polygon_observation(g,group=name,integrity_only=True)
+        shell=observed.get('shell_orientation',{})
+        checks.append({'group':name,**{key:observed.get(key) for key in
+                       ('status','boundary_edges','nonmanifold_edges','orientation_conflicts',
+                        'zero_area_faces','zero_length_edges','duplicate_boundary_faces')},
+                       'positive_closed_shells':shell.get('positive_count'),
+                       'negative_closed_shells':shell.get('negative_count'),
+                       'unverified_shells':shell.get('unverified_count')})
+        if (observed.get('status')!='observed' or any(observed.get(key) for key in
+                ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+                 'zero_length_edges','duplicate_boundary_faces')) or
+                not shell.get('positive_count') or shell.get('negative_count') or shell.get('unverified_count')):
+            return {**base,**counts,'status':'unverified',
+                    'reason':'selection_not_complete_consistent_outward_polygon_solid',
+                    'selection_checks':checks},0
+    copies=[]
+    for prims in selected:
+        copy=hou.Geometry(g)
+        keep={p.number() for p in prims}
+        copy.deletePrims([p for p in copy.prims() if p.number() not in keep],False)
+        # A modified standalone Geometry passed into a SOP Verb must publish
+        # fresh data IDs; otherwise the verb may reuse stale cached inputs.
+        copy.incrementAllDataIds()
+        copies.append(copy)
+    verb=hou.sopNodeTypeCategory().nodeVerb('boolean::2.0')
+    if verb is None:
+        return {**base,**counts,'status':'unverified','reason':'boolean_verb_unavailable',
+                'selection_checks':checks},0
+    try:
+        verb.setParms({'booleanop':1,'asurface':0,'bsurface':0})  # Solid/Solid Intersect; no scene node.
+        intersection=hou.Geometry()
+        verb.execute(intersection,copies)
+        count=len(intersection.prims())
+        if count==0:
+            return {**base,**counts,'status':'pass','overlap_volume':0.0,
+                    'intersection_primitives':0,'selection_checks':checks},pairs
+        if count>5000 or intersection.intrinsicValue('memoryusage')>16*1024*1024:
+            return {**base,**counts,'status':'unverified','reason':'intersection_output_budget_exceeded',
+                    'intersection_primitives':count,'selection_checks':checks},pairs
+        observed=polygon_observation(intersection,integrity_only=True)
+        shell=observed.get('shell_orientation',{})
+        if (observed.get('status')!='observed' or any(observed.get(key) for key in
+                ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+                 'zero_length_edges','duplicate_boundary_faces')) or
+                not shell.get('positive_count') or shell.get('negative_count') or shell.get('unverified_count')):
+            return {**base,**counts,'status':'unverified',
+                    'reason':'intersection_not_complete_consistent_polygon_solid',
+                    'intersection_primitives':count,'selection_checks':checks},pairs
+        volume=math.fsum(float(prim.intrinsicValue('measuredvolume')) for prim in intersection.prims())
+        scale=max(float(v) for copy in copies for v in copy.boundingBox().sizevec())
+        noise_floor=max(scale**3*1e-12,1e-18)
+        if not math.isfinite(volume) or volume<=noise_floor:
+            return {**base,**counts,'status':'unverified',
+                    'reason':'intersection_volume_at_numeric_noise_floor',
+                    'overlap_volume':volume if math.isfinite(volume) else None,
+                    'numeric_noise_floor':noise_floor,'intersection_primitives':count,
+                    'selection_checks':checks},pairs
+        return {**base,**counts,'status':'pass' if volume<=item['max_overlap_volume'] else 'fail',
+                'overlap_volume':volume,'numeric_noise_floor':noise_floor,
+                'intersection_primitives':count,'selection_checks':checks},pairs
+    except (hou.Error, ValueError, TypeError, OverflowError) as error:
+        return {**base,**counts,'status':'unverified','reason':'boolean_intersection_failed',
+                'detail':str(error)[:200],'selection_checks':checks},pairs
 
 
 def _section_proximity(g,item,budget):
@@ -520,7 +705,7 @@ def capture_views(output, views):
     return captures
 
 
-def _control_summary(result, tests, interfaces=None, topology=None):
+def _control_summary(result, tests, interfaces=None, topology=None, baseline_interfaces=None):
     """Keep zero-write baseline failures visible even when results is empty."""
     rows = result.get('results', [])
     by_id = {r['id']: r for r in rows}
@@ -528,25 +713,39 @@ def _control_summary(result, tests, interfaces=None, topology=None):
     for test in tests:
         row = by_id.get(test['id'], {})
         measurements = row.get('measurements', [])
-        cases.append({'id': test['id'], 'status': row.get('status', 'not_run'),
+        cases.append({'id': test['id'],
+                      'status':'fail' if row.get('restored') is False else row.get('status', 'not_run'),
+                      'measurement_status':row.get('status', 'not_run'),
                       'controls': sorted(test['values']),
                       'output_data_changed': row.get('geometry_changed'),
                       'measured_groups': sorted({m['expectation']['group'] for m in measurements
                                                  if m['expectation'].get('group') is not None}),
                       'whole_output_measurements': sum(m['expectation'].get('group') is None for m in measurements),
                       'measurement_count': len(measurements),
+                      'interface_count': len(interfaces or []) + len(test.get('interfaces') or []),
                       'interface_status': row.get('interfaces', {}).get('status') if isinstance(row.get('interfaces'), dict) else 'not_checked',
                       'topology_status': row.get('topology', {}).get('status') if isinstance(row.get('topology'), dict) else 'not_checked',
                       'changed_output_with_failed_measurements': row.get('geometry_changed') is True and any(not m['pass'] for m in measurements)})
     counts = {status: sum(c['status'] == status for c in cases)
               for status in ('pass', 'fail', 'unverified', 'not_run')}
+    baseline_result=result.get('baseline_interfaces')
+    baseline_status=(baseline_result.get('status') if isinstance(baseline_result,dict) else 'not_checked')
+    checked_cases=sum(case['interface_status']!='not_checked' for case in cases)
+    executed_interfaces=(len(baseline_result.get('results',[])) if isinstance(baseline_result,dict) else 0)
+    executed_interfaces+=sum(len(row['interfaces'].get('results',[])) for row in rows
+                             if isinstance(row.get('interfaces'),dict))
+    topology_observed=isinstance(result.get('baseline_topology'),dict) or any(
+        case['topology_status']!='not_checked' for case in cases)
+    declared_interfaces=(len(interfaces or [])+len(baseline_interfaces or [])+
+                         sum(len(test.get('interfaces',[])) for test in tests))
     failures = []
     for row in rows:
-        if row['status'] == 'pass':
+        if row['status'] == 'pass' and row.get('restored') is not False:
             continue
         failed = [m for m in row.get('measurements', []) if not m['pass']]
         failures.append({'id': row['id'], 'status': row['status'],
-                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors', 'parameter_restore') if k in row},
+                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors',
+                                               'parameter_restore', 'geometry_restore') if k in row},
                          'failed_measurements': failed[:8],
                          'failed_measurement_count': len(failed),
                          'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
@@ -555,11 +754,20 @@ def _control_summary(result, tests, interfaces=None, topology=None):
             'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
             'coverage': {'acceptance': 'declared_checks_only',
                          'declared_controls': sorted({name for t in tests for name in t['values']}),
-                         'declared_interfaces': len(interfaces or []),
+                         'declared_interfaces': declared_interfaces,
+                         'baseline_interface_contracts_declared': len(interfaces or [])+len(baseline_interfaces or []),
+                         'case_interface_contracts_declared': sum(len(test.get('interfaces',[])) for test in tests),
+                         'baseline_interface_status': baseline_status,
+                         'cases_with_interface_checks': checked_cases,
+                         'executed_interface_checks': executed_interfaces,
                          'declared_topology_contracts': len(topology or []),
                          'measured_cases': sum(c['measurement_count'] > 0 for c in cases),
-                         'relationship_scope': 'declared_contracts_only' if interfaces or topology else 'not_checked',
-                         'boundary': 'Bounds/count response does not prove attachment, clearance or uniform transforms. '
+                         'relationship_scope': 'declared_contracts_only' if executed_interfaces or topology_observed
+                                               else 'declared_not_run' if declared_interfaces or topology else 'not_checked',
+                         'boundary': 'Declared interface counts are plans; executed counts report observed checks. '
+                                     'Global interfaces cover baseline and every case, baseline_interfaces only baseline, '
+                                     'case interfaces only their perturbed state. '
+                                     'Bounds/count response does not prove attachment, clearance or uniform transforms. '
                                      'A changed output fingerprint with failed metrics is not an unconnected/dead control: '
                                      'inspect local geometry and intended dependencies before rewiring. '
                                      'Fingerprint changes may include attributes, not only point motion. '
@@ -574,18 +782,23 @@ def _control_summary(result, tests, interfaces=None, topology=None):
                 'Correct a mistaken expectation with independent evidence, then rerun affected cases.'))}
 
 
-def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
+def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                  baseline_interfaces=None, views=None, response_only=False):
     result = _test_controls(controller, output, tests, interfaces, allow_foreign,
-                            domain=domain, topology=topology, views=views, response_only=response_only)
-    result['control_summary'] = _control_summary(result, tests, interfaces, topology)
+                            domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
+                            views=views, response_only=response_only)
+    result['control_summary'] = _control_summary(result, tests, interfaces, topology, baseline_interfaces)
     return result
 
 
-def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, views=None, response_only=False):
+def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
+                   baseline_interfaces=None, views=None, response_only=False):
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
-    delta:[min,max]}]. Optional actual-output interfaces are rechecked throughout.
+    delta:[min,max]}]. Global interfaces are checked at baseline and in every
+    case; baseline_interfaces are checked only at baseline; each test may also
+    declare interfaces checked only at its perturbed state.
     Operates only on numeric scalar controller parms, no menus/buttons/multiparms.
     Geometry bgeo fingerprints include primitive intrinsics, not just P. External
     files, Python/solver side effects and user callbacks are NOT transactional.
@@ -599,11 +812,14 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     if not isinstance(tests,list) or not 1 <= len(tests) <= 16:
         raise ValueError('tests must contain 1..16 bounded cases')
     if interfaces is not None:validate_interfaces(interfaces)
+    if baseline_interfaces is not None:
+        validate_interfaces(baseline_interfaces)
+        if interfaces:validate_interfaces(interfaces+baseline_interfaces)
     if domain is not None:validate_domain(domain)
     if topology is not None:validate_topology(topology)
     ids=set();names=set()
     for test in tests:
-        _exact_keys(test, {'id','values','expectations'}, 'control test')
+        _exact_keys(test, {'id','values','expectations','interfaces'}, 'control test')
         if not isinstance(test.get('id'),str) or not test['id'] or test['id'] in ids:
             raise ValueError('test ids must be nonempty and unique')
         ids.add(test['id'])
@@ -628,6 +844,10 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 raise ValueError(f'{name}: perturbation must differ from current value')
             names.add(name)
         for expectation in expectations:_validate_expectation(expectation)
+        if 'interfaces' in test:
+            validate_interfaces(test['interfaces'])
+            if interfaces:
+                validate_interfaces(interfaces + test['interfaces'])
         if expectations and not any(e['delta'][0] > 0 or e['delta'][1] < 0 for e in expectations):
             raise ValueError('each control case needs at least one non-zero expected response; add invariants as additional expectations')
     snapshots=h._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
@@ -637,6 +857,22 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
                 'results':[],'baseline_domain':baseline_domain,'restored':True,'parameter_writes':0,
                 'reason':'baseline outside declared parameter domain','semantic_status':'unverified'}
+    # Normalize evaluation before sampling the baseline: a plain first cook
+    # compared against later force recooks mixes evaluation policy into the
+    # restoration comparison domain and yields signature false positives.
+    baseline_cook=h.cook_node(h._resolve(output), force=True)
+    baseline_state=h._parameter_restore_evidence(snapshots)
+    if not baseline_state['ok'] or float(hou.frame())!=original_frame:
+        raise h.CheckpointError('test_controls baseline cook changed controller or frame before testing',
+                                {'ok':False,'status':'fail','controller':ctrl.path(),
+                                 'output':h._resolve(output).path(),'restored':False,
+                                 'parameter_writes':0,'parameter_restore':baseline_state,
+                                 'frame_restored':float(hou.frame())==original_frame,'results':[]})
+    if not baseline_cook['ok']:
+        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
+                'results':[],'restored':True,'parameter_writes':0,
+                'reason':'baseline cook failed before any control write',
+                'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
     node, baseline=_geometry(output)
     unsupported_types=sorted({p.type().name() for p in baseline.prims()} - {'Polygon','Mesh','Sphere','Tube'})
     if unsupported_types:
@@ -648,17 +884,21 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'parameter_writes':0,'semantic_status':'unverified',
                 'scope':'unsupported output representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
-    baseline_relations=_check_interfaces(baseline,interfaces,50000) if interfaces is not None else None
+    baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
+    baseline_relations=_check_interfaces(baseline,baseline_contracts,50000) if baseline_contracts else None
     baseline_topology=_check_topology(baseline,topology) if topology is not None else None
+    baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,
+                     'baseline_domain':baseline_domain}
     if baseline_topology is not None and not baseline_topology['ok']:
         return {'ok':False,'status':baseline_topology['status'],'controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'baseline_topology':baseline_topology,
+                'frame':original_frame,'checked_at':time.time(),'restored':True,**baseline_checks,
                 'parameter_writes':0,'results':[],'semantic_status':'unverified',
                 'next_action':'Fix the baseline selected surface topology before testing controls; zero parameter writes.'}
     if baseline_relations is not None and not baseline_relations['ok']:
         return {'ok':False,'status':baseline_relations['status'],'controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'baseline_interfaces':baseline_relations,
-                'results':[],'semantic_status':'unverified','next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
+                'frame':original_frame,'checked_at':time.time(),'restored':True,**baseline_checks,
+                'results':[],'parameter_writes':0,'semantic_status':'unverified',
+                'next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
     # Resolve every measurement BEFORE the first write.
     try:
         baselines={test['id']:[_measure(baseline,e) for e in test.get('expectations',[])] for test in tests}
@@ -669,12 +909,12 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if 'range' in exp and not exp['range'][0]<=value<=exp['range'][1]:
                     return {'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
                             'frame':original_frame,'checked_at':time.time(),
-                            'restored':True,'parameter_writes':0,'results':[], 'case_id':test['id'],
+                            'restored':True,'parameter_writes':0,'results':[],**baseline_checks,'case_id':test['id'],
                             'reason':'baseline outside declared absolute range','expectation':exp,'baseline':value,
                             'semantic_status':'unverified'}
     except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
-                'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
+                'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
     rows=[];all_restored=True;restoration=None
     for test in tests:
@@ -710,7 +950,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if not math.isfinite(float(end)):raise UnsupportedEvidence('nonfinite measured value')
                 range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
                 measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
-            relations=_check_interfaces(g,interfaces,50000) if interfaces is not None else None
+            case_interfaces=(interfaces or []) + test.get('interfaces',[])
+            relations=_check_interfaces(g,case_interfaces,50000) if case_interfaces else None
             topology_check=_check_topology(g,topology) if topology is not None else None
             measurements_pass=all(m['pass'] for m in measurements)
             checks=[r for r in (relations,topology_check) if r is not None]
@@ -741,22 +982,30 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if not cook['ok']:
                     raise ValueError(f'restoration cook failed: {cook["errors"]}')
                 _,restored=_geometry(node)
-                geometry_restored=_data_signature(restored)==baseline_hash
+                restored_hash=_data_signature(restored)
+                geometry_restore=_geometry_restore_diagnostic(baseline,restored,baseline_hash,restored_hash)
+                geometry_restored=geometry_restore['matches']
+                if not geometry_restored:errors.append('output bgeo differs from baseline; inspect geometry_restore')
             except Exception as error:
                 errors.append('output restore: '+str(error));geometry_restored=False
+                geometry_restore={'matches':False,'status':'not_verified','reason':str(error)}
             # Read AFTER recooking: expressions/solver/Python code can affect
             # channel state during evaluation even when the bgeo is unchanged.
             restoration=h._parameter_restore_evidence(snapshots)
             errors.extend(restoration['errors'])
             row['parameter_restore']=restoration
+            row['geometry_restore']=geometry_restore
             if float(hou.frame())!=original_frame:
                 errors.append('frame differs after output restoration cook')
             row['restored']=not errors and geometry_restored
             row['restore_errors']=errors
             if not row['restored']:
                 all_restored=False
+                failure={'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
+                         'restored':False,'results':rows+[row],**baseline_checks}
+                failure['control_summary']=_control_summary(failure,tests,interfaces,topology,baseline_interfaces)
                 raise h.CheckpointError('test_controls restoration failed; inspect controller/output before continuing',
-                                        {'ok':False,'output':node.path(),'restored':False,'results':rows+[row]})
+                                        failure)
         rows.append(row)
     ok=all(r['status']=='pass' for r in rows) and (baseline_relations is None or baseline_relations['ok'])
     status='pass' if ok else 'fail' if any(r['status']=='fail' for r in rows) or (baseline_relations and baseline_relations['status']=='fail') else 'unverified'
@@ -764,6 +1013,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             'frame':original_frame,'checked_at':time.time(),'restored':all_restored,'baseline_sha256':baseline_hash,
             'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
-            'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
+            'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,
+                'baseline_interfaces':baseline_interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
             'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships',
             'next_action':'Fix failed responses/interfaces; preserve drafts. Do not claim full controllability from one global geometry change.'}
