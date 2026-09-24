@@ -88,6 +88,26 @@ assert.match(baselineFailure, /not_run is not pass/);
 assert.match(baselineFailure, /baseline outside declared absolute range/);
 assert.match(baselineFailure, /"not_run":1/);
 assert.match(baselineFailure, /"case_id":"reach"/);
+const compactControlFailure = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
+  evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
+    status:'fail',restored:true,requested_cases:4,
+    case_counts:{pass:3,fail:1,unverified:0,not_run:0},
+    cases:[{id:'angle_90',status:'fail'}],
+  }}],
+  verbs:[{verb:'test_controls',ok:true,check_status:'failed',result:{ok:false,status:'fail'}}],
+})[0].text;
+assert.match(compactControlFailure.split('\n')[0], /control-test-verdict.*"pass":3.*"fail":1.*angle_90/,
+  'compact control failures must lead the model-facing result, not hide behind a successful verb call');
+assert.match(compactControlFailure, /restored only means test changes were undone/);
+const integrityWarning = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
+  evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+    status:'observed',risk_status:'needs_review',risk_reasons:['nonmanifold_edges'],
+    boundary_edges:4,boundary_review_status:'open_boundary_unreviewed'}],
+})[0].text;
+assert.match(integrityWarning.split('\n')[0], /polygon-integrity-verdict.*needs_review.*nonmanifold_edges/);
+assert.match(integrityWarning, /open ports may be intentional/);
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

@@ -5113,13 +5113,16 @@ def _summary(values: list) -> dict:
 
 
 def geo_piece_stats(node, piece_attrib: str | None = None,
-                    sample: int = 16, *, inspect: bool = False, group=None, basis=None) -> dict:
+                    sample: int = 16, *, inspect: bool = False, group=None, basis=None,
+                    integrity_only: bool = False) -> dict:
     """按 primitive piece 报局部 bbox/面积，识别整体 bbox 掩盖的局部退化。
 
     ``piece_attrib=None`` 时用原生 Connectivity SOP Verb 在内存副本上生成临时
     primitive ``__dsh_piece``，不向用户网络加节点。也可传已有 primitive int/string
     piece 属性。返回全部 piece 的摘要和有限样本，避免 9000 个实例爆 token。
     inspect=True改为有界Polygon观测：group为精确primitive组，basis为3个正交单位轴；
+    integrity_only=True只统计最终Polygon表面完整性风险，扩大有界预算并跳过昂贵的截面/体积诊断；
+    boundary_edges单独提示核对有意开放接口，不一概当破面。
     返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
     量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合
     闭合/流形与轴向图像）；duplicate_boundary_faces及
@@ -5136,10 +5139,13 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     if source is None:
         raise ValueError(f"节点 {n.path()} 没有 geometry")
     if not isinstance(inspect, bool): raise ValueError('inspect must be boolean')
+    if type(integrity_only) is not bool: raise ValueError('integrity_only must be boolean')
+    if integrity_only and not inspect:
+        raise ValueError('integrity_only requires inspect=True')
     if inspect:
         from dsh_geometry_observation import polygon_observation
         return {'node': n.path(), 'frame': float(hou.frame()), 'checked_at': time.time(),
-                **polygon_observation(source, group, basis)}
+                **polygon_observation(source, group, basis, integrity_only=integrity_only)}
     if group is not None or basis is not None:
         raise ValueError('group/basis require inspect=True (selected polygon observation)')
     geometry = source

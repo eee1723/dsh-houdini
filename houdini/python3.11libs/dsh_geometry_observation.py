@@ -85,17 +85,26 @@ def _center_axis_surface_hits(prims, axes, lower, upper):
     }
 
 
-def polygon_observation(g, group=None, basis=None):
+def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
+    if type(integrity_only) is not bool:
+        raise ValueError('integrity_only must be boolean')
     prims = selected_prims(g, group)
-    result = {'method': 'full selected polygon topology and point extents', 'group': group,
+    result = {'method': ('bounded polygon surface integrity' if integrity_only else
+                         'full selected polygon topology and point extents'), 'group': group,
               'coordinate_space': 'SOP local', 'semantic_status': 'unverified',
               'note': 'Boundaries concern the selected surface, including intentional group cuts; no self-intersection, solid containment or art claim.'}
-    if len(prims) > 20000:
-        return {**result, 'status': 'unverified', 'reason': 'selection exceeds 20000 primitive budget'}
+    if not prims:
+        return {**result, 'status': 'unverified', 'reason': 'empty polygon selection'}
+    primitive_budget = 100000 if integrity_only else 20000
+    vertex_budget = 400000 if integrity_only else 100000
+    if len(prims) > primitive_budget:
+        return {**result, 'status': 'unverified',
+                'reason': f'selection exceeds {primitive_budget} primitive budget'}
     if any(p.type() != hou.primType.Polygon or not p.isClosed() for p in prims):
         return {**result, 'status': 'unverified', 'reason': 'requires closed polygon faces; curves/native/packed are not interpreted as polygon surfaces'}
-    if sum(len(p.vertices()) for p in prims) > 100000:
-        return {**result, 'status': 'unverified', 'reason': 'selection exceeds 100000 vertex budget'}
+    if sum(len(p.vertices()) for p in prims) > vertex_budget:
+        return {**result, 'status': 'unverified',
+                'reason': f'selection exceeds {vertex_budget} vertex budget'}
     axes = basis if basis is not None else [[1,0,0],[0,1,0],[0,0,1]]
     if not isinstance(axes, (list, tuple)) or len(axes) != 3 or any(not isinstance(a,(list,tuple)) or len(a)!=3 for a in axes):
         raise ValueError('basis must contain three orthonormal 3D axes')
@@ -133,6 +142,29 @@ def polygon_observation(g, group=None, basis=None):
         for other in owners[1:]: parent[root(other)] = root(owners[0])
     if any(not math.isfinite(v) for p in pts.values() for v in p):
         return {**result,'status':'unverified','reason':'nonfinite geometry coordinates'}
+    if integrity_only:
+        boundary_count = sum(len(owners) == 1 for owners in edges.values())
+        nonmanifold_count = sum(len(owners) > 2 for owners in edges.values())
+        orientation_count = sum(len(owners) == 2 and directed[a,b] != directed[b,a]
+                                for (a,b), owners in edges.items())
+        risks = [name for name, count in (
+            ('nonmanifold_edges', nonmanifold_count),
+            ('orientation_conflicts', orientation_count),
+            ('zero_area_faces', zero_area),
+            ('zero_length_edges', zero_edges),
+            ('duplicate_boundary_faces', len(repeated_faces)),
+        ) if count]
+        return {**result, 'status': 'observed', 'selected_primitives': len(prims),
+                'selected_points': len(pts), 'boundary_edges': boundary_count,
+                'nonmanifold_edges': nonmanifold_count,
+                'orientation_conflicts': orientation_count,
+                'zero_area_faces': zero_area, 'zero_length_edges': zero_edges,
+                'duplicate_boundary_faces': len(repeated_faces),
+                'duplicate_face_sample': repeated_faces[:8],
+                'risk_status': 'needs_review' if risks else 'no_detected_integrity_risk',
+                'risk_reasons': risks,
+                'boundary_review_status': ('open_boundary_unreviewed' if boundary_count else 'none'),
+                'scope': 'Bounded final polygon surface diagnostic only. Open boundaries can be intentional; no contact, self-intersection, strength, or appearance certification.'}
     coords = [[sum(v*a for v,a in zip(p,axis)) for axis in axes] for p in pts.values()]
     lower = [min(p[i] for p in coords) for i in range(3)]
     upper = [max(p[i] for p in coords) for i in range(3)]

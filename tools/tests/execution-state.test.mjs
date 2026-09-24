@@ -76,4 +76,37 @@ assert.equal(firstAttention.checks[0].invalidated_by,firstInvalidator);
 record(3,{impact:{attempted:true,nodes:[node(1)]}});
 assert.deepEqual(projectExecutionNotice(events),firstAttention,
   'a second edit must not rewrite an already-stale check and force another attention message');
+events.splice(0);
+const surfaceOutput={ledger_index:1,verb:'geo_piece_stats',identity:7,path:'/obj/n7',exists:true};
+const surfaceRisk={ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+  node:'/obj/n7',status:'observed',group:null,risk_status:'needs_review',risk_reasons:['nonmanifold_edges'],
+  boundary_edges:0,boundary_review_status:'none'};
+record(1,{evidence:[surfaceRisk],outputs:[surfaceOutput]});
+assert.equal(projectExecutionState(events).checks[0].status,'warning');
+assert.equal(projectExecutionNotice(events).checks[0].risk_reasons[0],'nonmanifold_edges',
+  'a scoped surface risk remains visible after the tool result');
+record(2,{evidence:[{...surfaceRisk,risk_status:'no_detected_integrity_risk',risk_reasons:[]}],outputs:[surfaceOutput]});
+assert.equal(projectExecutionState(events).checks[0].status,'no_detected_integrity_risk');
+assert.equal(projectExecutionNotice(events),null,'a new clean check supersedes an old risk for the same output and group');
+record(3,{evidence:[{...surfaceRisk,risk_status:'no_detected_integrity_risk',risk_reasons:[],
+  boundary_edges:4,boundary_review_status:'open_boundary_unreviewed'}],outputs:[surfaceOutput]});
+assert.equal(projectExecutionState(events).checks[0].status,'warning',
+  'an open port needs review but is not automatically a broken surface');
+assert.equal(projectExecutionNotice(events),null,
+  'an intentional open-port candidate stays in the check record without becoming a persistent hard-risk reminder');
+record(4,{evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'full selected polygon topology and point extents',
+  node:'/obj/n7',status:'observed'}],outputs:[surfaceOutput]});
+assert.equal(projectExecutionState(events).checks.length,1,
+  'ordinary geometry observations do not overwrite an integrity risk');
+events.splice(0);
+const failedControl={ledgerIndex:1,verb:'test_controls',output:'/obj/n7',ok:false,status:'fail',restored:true};
+const controlOutput={ledger_index:1,verb:'test_controls',identity:7,path:'/obj/n7',exists:true};
+record(1,{evidence:[failedControl],outputs:[controlOutput]});
+assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
+  'restoration does not turn a failed control verdict into a pass');
+record(2,{impact:{attempted:true,nodes:[node(7)]}});
+assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
+  'the original failed verdict remains explicit after a geometry edit makes it stale');
+record(3,{evidence:[{...failedControl,ok:true,status:'pass'}],outputs:[controlOutput]});
+assert.equal(projectExecutionNotice(events),null,'passing retest clears the old failed control check');
 console.log('execution-state projection: dependency invalidation, deleted identities, same-call edits, rollback, replay, timeout, runtime change, out-of-order jobs and pending jobs passed');

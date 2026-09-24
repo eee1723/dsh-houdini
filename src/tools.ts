@@ -113,7 +113,8 @@ function hasCaution(value: unknown): boolean {
   for (const [key,v] of Object.entries(value)) {
     if (['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && v === false) return true
     if ((key === 'status' || key.endsWith('_status')) && typeof v === 'string'
-        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(v)) return true
+        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
+          'no_detected_integrity_risk','none'].includes(v)) return true
     if (/^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key) && nonempty(v)) return true
     if (hasCaution(v)) return true
   }
@@ -130,7 +131,8 @@ function riskFacts(value: unknown, pointer: string): Array<{pointer:string;value
     const at = `${pointer}/${jsonPointerKey(key)}`
     const falseFact = ['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && item === false
     const status = (key === 'status' || key.endsWith('_status')) && typeof item === 'string'
-      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored'].includes(item)
+      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
+        'no_detected_integrity_risk','none'].includes(item)
     const diagnostic = /^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key)
       && item != null && item !== false && item !== '' && (typeof item !== 'object' || Object.keys(item).length > 0)
     if (falseFact || status || diagnostic) rows.push({pointer:at,value:item})
@@ -293,6 +295,33 @@ function renderStreams(value: ExecResult): string[] {
   return parts
 }
 
+/** Put scoped check conclusions before the verbose receipt/ledger in both display modes. */
+function leadingCheckVerdicts(value: ExecResult): string[] {
+  if (!Array.isArray(value.evidence)) return []
+  const verdicts: string[] = []
+  for (const item of value.evidence as any[]) {
+    if (item?.verb === 'test_controls' && item.control_summary) {
+      const summary = item.control_summary
+      const counts = summary.case_counts ?? {}
+      const unresolved = (summary.cases ?? []).filter((row:any) => row.status !== 'pass')
+        .map((row:any) => row.id).slice(0, 6)
+      verdicts.push(`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
+        requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
+        unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
+        unresolved_cases:unresolved,restored:summary.restored ?? null,
+        boundary:'restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`)
+    }
+    if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
+      verdicts.push(`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
+        risk_status:item.risk_status ?? null,reason:item.reason ?? null,
+        boundary_edges:item.boundary_edges ?? null,boundary_review_status:item.boundary_review_status ?? null,
+        risk_reasons:item.risk_reasons ?? [],
+        boundary:'Scoped Polygon integrity observation only; open ports may be intentional and contact/appearance remain separate.'})}`)
+    }
+  }
+  return verdicts.slice(0, 4)
+}
+
 /** Render an exec-shaped canonical value as model-facing text. */
 function renderExec(value: ExecResult) {
   const parts: string[] = []
@@ -303,6 +332,7 @@ function renderExec(value: ExecResult) {
     parts.push(...renderStreams(value))
     return [{ type:'text' as const,text:parts.join('\n\n') }]
   }
+  parts.push(...leadingCheckVerdicts(value))
   if (value.ok) {
     parts.push(Array.isArray(value.checks) && value.checks.length
       ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'

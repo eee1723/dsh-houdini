@@ -173,7 +173,7 @@ export class ExecutorBindingBarrier {
   }
 }
 const NAMES = new Set(['houdini_exec', 'houdini_query', 'houdini_job_submit', 'houdini_job_status', 'houdini_job_cancel'])
-const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_check_interfaces', 'render_view', 'render_frame',
+const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_check_interfaces', 'geo_piece_stats', 'render_view', 'render_frame',
   'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'])
 const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
 
@@ -301,10 +301,15 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
     const byIndex = new Map((e.outputs || []).map((o:any)=>[o.ledger_index,o]))
     for (const item of value.evidence || []) {
       if (!CHECKS.has(item?.verb)) continue
+      if (item.verb === 'geo_piece_stats' && item.method !== 'bounded polygon surface integrity') continue
       const binding:any = byIndex.get(item.ledgerIndex)
       const identity = binding?.identity ?? null
       const dependencyIdentities = (binding?.dependencies || []).map((d:any) => d.identity).filter(Number.isFinite)
-      const checkStatus = item.ok === false || item.restored === false ? 'fail'
+      const checkStatus = item.verb === 'geo_piece_stats'
+        ? item.status === 'unverified' ? 'unverified'
+          : item.risk_status === 'needs_review' || item.boundary_review_status === 'open_boundary_unreviewed' ? 'warning'
+          : item.risk_status === 'no_detected_integrity_risk' ? 'no_detected_integrity_risk' : 'unverified'
+        : item.ok === false || item.restored === false ? 'fail'
         : item.warning_free === false || item.healthy === false ? 'warning'
         : item.status ?? (item.ok === true ? 'observed_pass' : 'unverified')
       const rolledBack = value.transaction?.status === 'rolled_back' || value.transaction?.status === 'recovery_unverified'
@@ -314,12 +319,15 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         : unknownOrder ? 'unverified_change_order_in_call'
         : supersededInCall ? 'stale_after_later_edit_in_same_call'
         : 'historical_observation_only'
-      const portScope = item.verb === 'cop_compare_layers' ? JSON.stringify(binding?.dependencies || [])
+      const portScope = item.verb === 'geo_piece_stats' ? JSON.stringify(item.group ?? null)
+        : item.verb === 'cop_compare_layers' ? JSON.stringify(binding?.dependencies || [])
         : item.verb === 'cop_layer_stats' ? item.output : item.verb === 'test_cop_controls' ? item.output_port : ''
       const key = `${item.verb}:${identity ?? binding?.path ?? item.output ?? item.node ?? item.ledgerIndex}:${portScope}`
       checks.delete(key)
       checks.set(key,{verb:item.verb,identity,output:binding?.path ?? item.output ?? item.node,
         ...(dependencyIdentities.length ? {dependency_identities:dependencyIdentities} : {}),
+        ...(item.verb === 'geo_piece_stats' ? {group:item.group ?? null,
+          boundary_edges:item.boundary_edges ?? null,risk_reasons:item.risk_reasons ?? []} : {}),
         status:checkStatus,validity,scope:item.scope ?? null,frame:item.frame ?? e.frame,
         source_call:callId,event_seq:eventSeq,sequence:e.sequence,
         ...(value.details?.stored ? {result_ref:value.details.sha256,pointer:`/evidence/${value.evidence.indexOf(item)}`} : {})})
@@ -351,9 +359,14 @@ export function projectExecutionNotice(events: readonly Event[]): Record<string,
   const state = projectExecutionState(events) as any
   if (!state) return null
   const checks = (state.checks || []).filter((check: any) =>
-    check.validity.startsWith('stale_') || check.validity.startsWith('unverified_'))
+    check.validity.startsWith('stale_') || check.validity.startsWith('unverified_')
+      || (check.verb === 'test_controls' && ['fail','warning','unverified'].includes(check.status))
+      || (check.verb === 'geo_piece_stats'
+        && (check.status === 'unverified' || (check.risk_reasons || []).length > 0)))
     .map((check: any) => ({verb:check.verb,identity:check.identity,output:check.output,
-      validity:check.validity,source_call:check.source_call,invalidated_by:check.invalidated_by}))
+      status:check.status,validity:check.validity,source_call:check.source_call,
+      result_ref:check.result_ref,group:check.group,boundary_edges:check.boundary_edges,
+      risk_reasons:check.risk_reasons,invalidated_by:check.invalidated_by}))
   // Compare observed foreground identities in execution order, never GUI selection.
   const calls = new Map<string, string>()
   const observations: any[] = []

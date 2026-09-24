@@ -1044,8 +1044,11 @@ def _operation_summary(name: str, result):
             'leaf_box_overlap_count','component_box_overlap_count',
             'required_clearances','achieved_clearances','minimum_clearances',
             'fixed_obstacles','skipped_items','layout_status','restored','restore_errors','scope') if k in result}
-    if name == 'geo_piece_stats' and 'shell_orientation' in r:
-        return {k:r[k] for k in ('node','frame','group','status','reason','boundary_edges','nonmanifold_edges','orientation_conflicts','shell_orientation','zero_area_faces','extents','bounds_min','bounds_max') if k in r}
+    if name == 'geo_piece_stats' and 'method' in r:
+        return {k:r[k] for k in ('node','frame','group','method','status','reason','selected_primitives','selected_points',
+            'boundary_edges','boundary_review_status','nonmanifold_edges','orientation_conflicts',
+            'zero_area_faces','zero_length_edges','duplicate_boundary_faces','duplicate_face_sample',
+            'risk_status','risk_reasons','scope','shell_orientation','extents','bounds_min','bounds_max') if k in r}
     if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
         return {k:r[k] for k in ('ok','status','semantic_status','node','output','output_port','controller',
                 'frame','checked_at','scope','resolution','channels','statistics','sha256','freshness','cache',
@@ -1221,6 +1224,14 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 status=check['evaluation'].get('status')
                 entry['check_status']={'failed':'failed','warning':'warning','unverified':'unverified'}.get(status,'passed')
                 entry['check_scope']='parameter evaluation only; geometry effect unverified'
+            if name == 'geo_piece_stats' and isinstance(check, dict):
+                if check.get('status') == 'unverified':
+                    entry['check_status'] = 'unverified'
+                elif check.get('risk_status') == 'needs_review' or check.get('boundary_review_status') == 'open_boundary_unreviewed':
+                    entry['check_status'] = 'warning'
+                elif check.get('risk_status') == 'no_detected_integrity_risk':
+                    entry['check_status'] = 'passed'
+                entry['check_scope'] = 'Polygon surface integrity only; no contact, self-intersection, appearance or intended-open-port certification'
             if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "viewport_screenshot", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
                 if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
