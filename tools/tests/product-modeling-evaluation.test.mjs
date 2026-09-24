@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,6 +12,7 @@ assert.deepEqual(new Set(manifest.cases.map(item => item.kind)), new Set([
 ]))
 assert.ok(manifest.cases.some(item => item.id === 'sealed-bottle-build'))
 assert.ok(manifest.cases.some(item => item.id === 'bench-vise-build'))
+assert.ok(manifest.cases.some(item => item.id === 'hinged-desk-box-build'))
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-product-modeling-test-'))
 try {
@@ -35,12 +37,23 @@ try {
   assert.equal(vise.task.kind, 'text-to-model')
   assert.doesNotMatch(JSON.stringify(vise.task), /evaluator|checklist|sourceRoot/i)
 
-  const baseline = path.join(scratch, 'prior.hip')
-  fs.writeFileSync(baseline, 'test HIP bytes')
-  const changed = prepareRun({ caseId: 'task-lamp-change', output: path.join(scratch, 'change'), baselineHip: baseline })
-  assert.deepEqual(fs.readFileSync(path.join(changed.destination, 'work.hip')), fs.readFileSync(baseline))
-  assert.ok(changed.task.files.some(file => file.path === 'work.hip'))
-  assert.deepEqual(fs.readdirSync(changed.destination).sort(), ['attachments', 'brief.md', 'task.json', 'work.hip'])
+  const box = prepareRun({ caseId: 'hinged-desk-box-build', output: path.join(scratch, 'box') })
+  assert.deepEqual(fs.readdirSync(box.destination).sort(), ['brief.md', 'task.json'])
+  assert.equal(box.task.kind, 'text-to-model')
+  assert.doesNotMatch(JSON.stringify(box.task), /evaluator|checklist|sourceRoot/i)
+
+  for (const [index, extension] of ['.hip', '.hiplc', '.hipnc', '.HIPLC'].entries()) {
+    const baseline = path.join(scratch, `prior-${index}${extension}`)
+    fs.writeFileSync(baseline, `test ${extension} bytes`)
+    const changed = prepareRun({ caseId: 'task-lamp-change', output: path.join(scratch, `change-${index}`), baselineHip: baseline })
+    const workFile = `work${extension}`
+    assert.deepEqual(fs.readFileSync(path.join(changed.destination, workFile)), fs.readFileSync(baseline))
+    assert.equal(changed.task.files.find(file => file.path === workFile)?.sha256, crypto.createHash('sha256').update(fs.readFileSync(baseline)).digest('hex'))
+    assert.deepEqual(fs.readdirSync(changed.destination).sort(), ['attachments', 'brief.md', 'task.json', workFile].sort())
+  }
+  const invalidBaseline = path.join(scratch, 'prior.txt')
+  fs.writeFileSync(invalidBaseline, 'not a HIP file')
+  assert.throws(() => prepareRun({ caseId: 'task-lamp-change', output: path.join(scratch, 'invalid-baseline'), baselineHip: invalidBaseline }), /\.hip\/\.hiplc\/\.hipnc/)
 
   const corrupted = path.join(scratch, 'corrupted-suite')
   fs.cpSync(suiteRoot, corrupted, { recursive: true })

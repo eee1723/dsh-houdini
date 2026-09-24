@@ -1,0 +1,19 @@
+{
+  "caseId": "hinged-desk-box-build",
+  "reviewerInstructions": "从最终 HIP 的副本独立重开，在同一取景下看合上、半开、充分打开，再看前缘、铰链和内腔近景。先记录控制值和实际零件表面关系，最后读 agent 的完成报告。按形状、关系和可编辑性判断，不按 VEX 或原生 SOP 的使用比例、节点数或面数打分。前缘贴近不等于真实锁止，铰链外观相连不等于经过力学验证。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_closed", "independent_overview_middle", "independent_overview_open", "independent_detail_front", "independent_detail_hinge", "independent_detail_interior", "independent_front_contact_clearance_check", "independent_hinge_alignment_check", "independent_control_restore_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "form-and-scale", "method": "measurement+visual", "critical": true, "expectation": "合盖外形接近 20×12×8 cm；有下盒、上盖、后铰链轴、交错铰耳、前扣、两到三个内部分区和支脚或防滑垫。"},
+    {"id": "hollow-shell", "method": "geometry+visual", "critical": true, "expectation": "下盒有真实内腔、壁厚和封底，上盖有可辨认内沿；表面朝向正确，无明显破面、杂乱法线或仅用实心方块伪装内腔。"},
+    {"id": "closed-rim", "method": "geometry+visual", "critical": true, "expectation": "合上时盒盖前缘与盒身前缘贴近，开口周边对齐，无明显穿透或悬空；不能把整体 bbox 接近当作具体表面贴合。"},
+    {"id": "opening-clearance", "method": "geometry+visual", "critical": true, "expectation": "半开与充分打开时，前缘离开盒身且间隙随角度增长；盒身、分区和支脚不漂移，没有明显新穿插。"},
+    {"id": "hinge-connection", "method": "geometry+visual", "critical": true, "expectation": "铰链轴与交错铰耳在各状态保持同轴并分别连接盖、盒身；近景能看出转动中心，不能只有悬浮圆柱。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "壁厚、盖内沿、前扣、铰链、分区、转角和紧固件在近景有层次，不出现明显倒面、锯齿或粗糙交叠。"},
+    {"id": "opening-control", "method": "control+geometry", "critical": true, "expectation": "同一开盖控制能调出合上、半开、充分打开并准确恢复；前缘关系与铰链连接在各状态成立。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开；完成报告如实说明未实现的扣合锁止、受力和机械公差，不把视觉贴合说成已验证真实锁止。"}
+  ]
+}

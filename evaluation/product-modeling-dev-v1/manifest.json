@@ -84,6 +84,16 @@
       },
       "evaluator": "cases/bench-vise-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "hinged-desk-box-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/hinged-desk-box-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/hinged-desk-box-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }

@@ -77,9 +77,11 @@ export function prepareRun({ caseId, output, baselineHip, root = suiteRoot }) {
   if (fs.existsSync(destination)) throw new Error('run output already exists')
   const files = []
   const baseline = baselineHip ? path.resolve(baselineHip) : null
+  const baselineExtension = baseline ? path.extname(baseline) : null
   if (baseline) {
-    if (!path.isAbsolute(baselineHip) || path.extname(baseline).toLowerCase() !== '.hip' || !fs.statSync(baseline).isFile()) throw new Error('baseline must be an existing absolute .hip file')
-    if (baseline === sourceRoot || inside(sourceRoot, baseline)) throw new Error('baseline must come from a prior run, not the suite source')
+    if (!path.isAbsolute(baselineHip) || !['.hip', '.hiplc', '.hipnc'].includes(baselineExtension.toLowerCase()) || !fs.existsSync(baseline) || !fs.statSync(baseline).isFile()) throw new Error('baseline must be an existing absolute .hip/.hiplc/.hipnc file')
+    const realBaseline = fs.realpathSync(baseline)
+    if (realBaseline === sourceRoot || inside(sourceRoot, realBaseline)) throw new Error('baseline must come from a prior run, not the suite source')
   }
   fs.mkdirSync(destination, { recursive: true })
   try {
@@ -91,7 +93,7 @@ export function prepareRun({ caseId, output, baselineHip, root = suiteRoot }) {
     }
     copy(resolveFile(sourceRoot, item.public.brief), 'brief.md')
     for (const attachment of item.public.attachments) copy(resolveFile(sourceRoot, attachment), `attachments/${path.basename(attachment)}`)
-    if (baseline) copy(baseline, 'work.hip')
+    if (baseline) copy(baseline, `work${baselineExtension}`)
     const task = { schemaVersion: 1, suiteId: manifest.suiteId, caseId: item.id, kind: item.kind, files }
     fs.writeFileSync(path.join(destination, 'task.json'), JSON.stringify(task, null, 2) + '\n')
     return { destination, task }
