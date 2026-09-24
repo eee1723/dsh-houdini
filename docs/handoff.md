@@ -55,8 +55,8 @@
 ### H-04 原始要求与控制/结构验收（QA-01/05/06、RB-06）
 
 - 状态：待验证
-- 现状：合同66自然任务用`solid_overlap`修正支架，最终两侧孔均成立；却只查单支架旁路，漏了开放毂、反向挡盘/线缆、轴与卷筒脱节和整体超尺寸。手写电缆管尾端截面跳90°；Sweep尝试因输入接反/端盖猜错而弃用。四个Network Box在整网children布局后重叠，单件CTRL误置`/obj`。合同68让最终OUT_ASSET的verify_network直接呈现尺寸/表面风险，框后整网打散写前拒绝；Geo内控制和曲线→Sweep路线已收敛，live采用待验。
-- 下一步：用新加载版本验最终输出全成员、物理尺寸、关系、表面和盒布局的自然采用；另补未见Y-up装配、公共Output/空Pack/HDA与复杂PolyBevel GUI反例。不要以局部pass或单次静态图核销整件质量。
+- 现状：合同68同题自然复测中，CTRL进入Geo、线缆采用原生Sweep、整体尺寸/面朝向与9个叶框布局改善；但VEX把自由端中心线写成闭合`poly`，产生4.75cm错误回边，最终闭壳快检仍假绿。合同69给最终OUT_ASSET加上有界Sweep路径风险提示，隔离H21/H22及保存HIP反例通过，live自然采用未验。整件孔轴连接和近景仍须独立核对，不按Agent自报核销。
+- 下一步：新加载版本用不同产品验证曲线开闭、最终成员/关系/表面/盒布局的自然采用；补未见Y-up、公共Output/空Pack/HDA及复杂PolyBevel GUI反例。已知同题进步不算泛化。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[变换反例](../tools/tests/dsh-modeling-identity.test.py)。
 

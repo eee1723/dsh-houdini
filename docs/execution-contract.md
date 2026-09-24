@@ -198,6 +198,9 @@ dry_run只有静态效力。verify_network必须明确output，默认拒绝empty
 稳定最终`OUT_ASSET`的verify_network附带有界Polygon表面复核摘要与真实bbox_size，
 不改其cook健康判定；开放边/反向壳或不支持表示需按最终零件解释，不能用
 `healthy=true`覆盖，也不必对同一状态重复执行整件Polygon快检。
+上游Sweep有Polygon中心线时，另看curve_path_integrity：异常长的闭合回边与两端
+急折只提示核对曲线意图，不把拓扑闭合误当线缆自由端正确；未参与最终输出的
+Switch分支也可能在上游，须结合实际显示判断。
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
 subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
 普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。

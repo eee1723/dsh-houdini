@@ -84,7 +84,7 @@ _HOU_THREAD_ID = threading.get_ident()
 # cancel are authorized by the owning session only.
 # 60: completed result envelopes report bounded artifactCandidates from verb
 # receipts; they are path facts for Agent review, never automatic deliveries.
-_EXECUTION_CONTRACT_VERSION = 68
+_EXECUTION_CONTRACT_VERSION = 69
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -1067,7 +1067,7 @@ def _operation_summary(name: str, result):
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
               'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode',
-              'surface_integrity','scene_unit_length_meters',
+              'surface_integrity','curve_path_integrity','scene_unit_length_meters',
               'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}
     if name == 'verify_network' and isinstance(r.get('geometry'), dict):

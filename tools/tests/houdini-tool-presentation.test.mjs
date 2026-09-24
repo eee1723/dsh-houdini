@@ -150,9 +150,12 @@ const finalOutputRisk = exec.output.render({}, {
     geometry:{points:4040,prims:3768,bbox_size:[.315,.2083,.1696]},
     scene_unit_length_meters:1,
     surface_integrity:{status:'observed',risk_status:'needs_review',boundary_edges:96,
-      negative_closed_shells:3,unverified_shells:1}}],
+      negative_closed_shells:3,unverified_shells:1},
+    curve_path_integrity:{status:'observed',risk_status:'needs_review',suspicious_closure_count:1,
+      samples:[{sweep:'/obj/reel/cable_sweep',backbone:'/obj/reel/cable_curve',closing_edge_ratio:4.12}]}}],
 })[0].text;
 assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
+assert.match(finalOutputRisk.split('\n')[0], /"suspicious_sweep_closures":1.*"closing_edge_ratio":4\.12/);
 assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
 const lateInversion = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({

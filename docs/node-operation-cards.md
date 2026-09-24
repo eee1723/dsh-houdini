@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 17 · Source SHA-256: `ad422dc4d8baf06a191fbc7a1edc3439e650fc1c080f1dace7d795458ccdae3c`
+Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8facff2946ecfda12bc4b263566328`
 
 ## 数据与设计契约
 
@@ -55,7 +55,7 @@ Schema: 2 · Cards: 17 · Source SHA-256: `ad422dc4d8baf06a191fbc7a1edc3439e650f
 ### 操作与边界
 
 - Input 0 is the backbone; input 1 is an optional cross-section. Default custom sections are centered at the origin in the XY plane, +Y up (normal along Z), not placed at the path start.
-- For a circular cable, feed the open centerline to input 0 and use the built-in tube with explicit radius/columns/endcaptype; a second input is only for a custom cross-section. Reversed input order can cook a surface with the wrong shape. The centerline's loose end must meet the preceding tangent smoothly; Sweep cannot remove an upstream sharp turn. For custom sections explicitly establish section plane and path frame/up. tab_create with explicit input 1 reconciles the shipped Sweep 2.0 initializer to surfaceshape=input after wiring; explicit build parms may override this.
+- For a circular cable, feed the open centerline to input 0 and use the built-in tube with explicit radius/columns/endcaptype; a second input is only for a custom cross-section. In VEX addprim(..., "poly", points) makes a closed path; use "polyline" for a free-ended cable. A closed path can Sweep to a clean watertight shell while adding a wrong return segment. Reversed input order can cook a surface with the wrong shape. The centerline's loose end must meet the preceding tangent smoothly; Sweep cannot remove an upstream sharp turn. For custom sections explicitly establish section plane and path frame/up. tab_create with explicit input 1 reconciles the shipped Sweep 2.0 initializer to surfaceshape=input after wiring; explicit build parms may override this.
 - A non-XY section may be intentional with Pitch/Yaw or upstream pre-rotation; do not rotate it blindly. Inspect local section extents and actual end boundaries; world bbox alone cannot prove a tube.
 
 ## polyextrude

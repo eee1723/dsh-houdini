@@ -49,6 +49,48 @@ try:
     assert risk['ok'] and risk['healthy'],'surface advisory must not rewrite cook health'
     assert risk['surface_integrity']['negative_closed_shells']==1,risk['surface_integrity']
     assert risk['surface_integrity']['risk_status']=='needs_review',risk['surface_integrity']
+    # A closed path can produce a perfectly closed, outward Sweep shell while
+    # adding a long unwanted chord from the loose cable end back to its start.
+    cable_curve=root.createNode('attribwrangle','closure_fixture_curve')
+    cable_curve.parm('class').set('detail')
+    cable_code='''int p[];
+for (int i=0; i<=64; i++) {
+    float t=float(i)/64.0;
+    float a=t*8.0*M_PI;
+    p[i]=addpoint(0,set(-.015+.030*t,.030*cos(a),.030*sin(a)));
+}
+for (int k=1; k<=3; k++) {
+    float f=float(k)/3.0;
+    p[64+k]=addpoint(0,set(.015+.006*f,(.030+.005*f)*cos(f),(.030+.005*f)*sin(f)));
+}
+addprim(0,"poly",p);'''
+    cable_curve.parm('snippet').set(cable_code)
+    cable_sweep=root.createNode('sweep::2.0','closure_fixture_sweep')
+    cable_sweep.setInput(0,cable_curve)
+    for name,value in {'surfaceshape':1,'surfacetype':5,'radius':.0032,'cols':12,'endcaptype':1}.items():
+        cable_sweep.parm(name).set(value)
+    root.node('OUT_ASSET').setInput(0,cable_sweep)
+    closed=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+               f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
+    assert closed['healthy'] and closed['surface_integrity']['risk_status']=='no_detected_integrity_risk',closed
+    assert closed['curve_path_integrity']['suspicious_closure_count']==1,closed['curve_path_integrity']
+    assert closed['curve_path_integrity']['samples'][0]['closing_edge_ratio']>3
+    cable_curve.parm('snippet').set(cable_code.replace('addprim(0,"poly",p)',
+                                                   'addprim(0,"polyline",p)'))
+    opened=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+               f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
+    assert opened['healthy'] and opened['curve_path_integrity']['open_backbones']==1,opened
+    assert opened['curve_path_integrity']['suspicious_closure_count']==0,opened
+    cable_curve.parm('snippet').set('''int p[];
+for (int i=0; i<32; i++) {
+    float a=float(i)*2.0*M_PI/32.0;
+    p[i]=addpoint(0,set(.03*cos(a),.03*sin(a),0));
+}
+addprim(0,"poly",p);''')
+    intentional=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+                    f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
+    assert intentional['healthy'] and intentional['curve_path_integrity']['closed_backbones']==1
+    assert intentional['curve_path_integrity']['suspicious_closure_count']==0,intentional
     run(f"connect({root.node('OUT_MODULE').path()!r},{root.node('OUT_ASSET').path()!r},0)")
     assert r['handoff_output']=={'path':root.node('OUT_ASSET').path(),'name':'OUT_ASSET','type':'null',
         'is_null':True,'has_stable_name':True,'is_leaf':True,'status':'stable_null_checkpoint',

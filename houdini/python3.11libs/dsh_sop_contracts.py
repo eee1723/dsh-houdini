@@ -10,6 +10,7 @@ import time
 import math
 import hashlib
 import struct
+import statistics
 import hou
 
 
@@ -166,6 +167,75 @@ def _content_nonempty(geometry, max_prims=100000, max_depth=16):
             'status': 'unverified_content' if unknown else 'empty_content'}
 
 
+def _sweep_backbone_advisory(output):
+    """Flag a likely accidental closing chord on bounded Polygon Sweep paths.
+
+    Closed backbones can be intentional. A long final-to-first edge with two
+    abrupt corners is only a review candidate, never a cook failure. Input
+    ancestry can include an inactive Switch branch, so the result does not
+    certify that a sampled Sweep contributes to the current final surface.
+    """
+    sweeps = sorted((node for node in (output, *output.inputAncestors())
+                     if node.type().name().split('::', 1)[0] == 'sweep'),
+                    key=lambda node: node.path())
+    if not sweeps:
+        return None
+    if len(sweeps) > 16:
+        return {'status':'unverified','risk_status':'unverified',
+                'reason':'sweep_count_exceeds_16','sweep_count':len(sweeps),
+                'scope':'Upstream Sweep backbone review; no path intent or final visibility certification.'}
+    samples = []
+    open_count = closed_count = unverified_count = 0
+    for sweep in sweeps:
+        source = sweep.input(0)
+        if source is None or source.errors():
+            unverified_count += 1
+            continue
+        try:
+            geometry = source.geometry()
+            if (geometry is None or int(geometry.intrinsicValue('primitivecount')) > 16
+                    or int(geometry.intrinsicValue('vertexcount')) > 2048):
+                unverified_count += 1
+                continue
+            for prim in geometry.prims():
+                if prim.type() != hou.primType.Polygon:
+                    unverified_count += 1
+                    continue
+                positions = [vertex.point().position() for vertex in prim.vertices()]
+                if len(positions) < 3:
+                    unverified_count += 1
+                    continue
+                if not prim.isClosed():
+                    open_count += 1
+                    continue
+                closed_count += 1
+                edges = [(b - a).length() for a, b in zip(positions[:-1], positions[1:])]
+                median = statistics.median(edges)
+                closing = (positions[0] - positions[-1]).length()
+                if median <= 1e-12 or not all(math.isfinite(v) for v in (*edges, closing)):
+                    unverified_count += 1
+                    continue
+                def corner(a, b):
+                    return math.degrees(math.acos(max(-1., min(1., float(a.normalized().dot(b.normalized()))))))
+                end_turn = corner(positions[-1] - positions[-2], positions[0] - positions[-1])
+                start_turn = corner(positions[0] - positions[-1], positions[1] - positions[0])
+                ratio = closing / median
+                if ratio > 3.0 and min(end_turn, start_turn) > 90.0:
+                    samples.append({'sweep':sweep.path(),'backbone':source.path(),
+                                    'primitive':prim.number(),'closing_edge_length':closing,
+                                    'median_other_edge_length':median,'closing_edge_ratio':ratio,
+                                    'end_turn_degrees':end_turn,'start_turn_degrees':start_turn})
+        except (ValueError, hou.Error):
+            unverified_count += 1
+    return {'status':'partial' if unverified_count else 'observed',
+            'risk_status':'needs_review' if samples else 'unverified' if unverified_count else 'no_detected_path_risk',
+            'sweep_count':len(sweeps),'open_backbones':open_count,
+            'closed_backbones':closed_count,'unverified_backbones':unverified_count,
+            'suspicious_closure_count':len(samples),'samples':samples[:4],
+            'samples_truncated':len(samples)>4,
+            'scope':'Bounded Polygon path review of upstream Sweep input 0. A long closing chord with sharp turns suggests accidental closure; intentional loops and inactive Switch branches need interpretation. No smoothness, intersection, visibility or final appearance certification.'}
+
+
 def _vex_source_context(report):
     """Best-effort compiler location against an existing Wrangle snippet."""
     error_text='\n'.join(str(error) for error in report.get('errors',[]))
@@ -277,7 +347,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     # advisory as part of the checkpoint already used before saving. Module
     # outputs and unsupported representations remain outside this default.
     surface_integrity = None
+    curve_path_integrity = None
     if out.name().upper() == 'OUT_ASSET' and nonempty is True:
+        curve_path_integrity = _sweep_backbone_advisory(out)
         count = int(geometry.intrinsicValue('primitivecount'))
         vertices = int(geometry.intrinsicValue('vertexcount'))
         if count == 0:
@@ -327,12 +399,14 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'warning_nodes': warnings, 'warning_nodes_count': len(warnings),
             'issues': [r for r in reports if not r['healthy']], 'geometry': summary,
             'surface_integrity':surface_integrity,
+            'curve_path_integrity':curve_path_integrity,
             'scene_unit_length_meters':None,
             'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
             'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
                             'Review final surface boundaries/orientation and declared relations before delivery.' if surface_integrity and (surface_integrity.get('risk_status')=='needs_review' or surface_integrity.get('boundary_edges')) else
+                            'Review suspicious Sweep backbone closure against the intended cable/curve path before delivery.' if curve_path_integrity and curve_path_integrity.get('risk_status')=='needs_review' else
                             'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),
             'note': 'Cook/geometry evidence only; no assertion of relationships, art quality or unsampled HDA internals.'}
     if out.name().upper() == 'OUT_ASSET':
