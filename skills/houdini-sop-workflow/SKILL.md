@@ -16,7 +16,7 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络，包
 
 HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发按名加载 houdini-tool-development，并按需读取其HDA维护reference。涉及 SOP 几何输出时再联用本流程。普通参数赋值/改名仍直接执行并回读。
 
-先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。用户选择会变化，快照不构成foreign修改授权。
+先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。任务给出毫米、厘米或米尺寸时，先读scene_info().unit_length_meters并换算建模数值；口头声明“1单位=1厘米”不会改变HIP的单位设置。用户选择会变化，快照不构成foreign修改授权。
 
 简单、规格完整的编辑直接修改并回读。普通可调模型用几句说明目标、自选尺寸、控制和验证范围。质量敏感、外部真实性或复杂装配在大规模建图前读[质量合同](references/procedural-quality-contract.md)；外部参考会改变方案且research/web可用时实际检索，无来源就标假设。只询问会改变方案的选择，一次给有影响说明的互斥选项，不因“程序化”启动长问卷。
 

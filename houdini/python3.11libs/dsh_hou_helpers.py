@@ -368,7 +368,7 @@ def context_name(category) -> str:
 # --- scene 域 ---------------------------------------------------------------
 
 def scene_info() -> dict:
-    """只读场景/时间线摘要；不移动 playbar、不遍历整张节点图。"""
+    """只读场景/时间线及HIP单位长度摘要；不移动playbar、不遍历节点图。"""
     hip_path = hou.hipFile.path()
     # A user may deliberately save/load a file called untitled.hip. The basename
     # alone is not proof that the scene is new (especially in headless HOM).
@@ -376,6 +376,7 @@ def scene_info() -> dict:
     has_named_path = os.path.basename(hip_path).lower() != "untitled.hip" or file_exists
     has_unsaved_changes = bool(hou.hipFile.hasUnsavedChanges())
     ui_available = bool(hou.isUIAvailable())
+    from dsh_context import unit_length_meters
     return {
         "hip_path": hip_path,
         "hip_name": hou.hipFile.name(),
@@ -385,6 +386,7 @@ def scene_info() -> dict:
         "file_exists": file_exists,
         "clean_on_disk": file_exists and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
+        "unit_length_meters": unit_length_meters(),
         "update_mode": {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         "fps": float(hou.fps()),
         "frame": float(hou.frame()),
