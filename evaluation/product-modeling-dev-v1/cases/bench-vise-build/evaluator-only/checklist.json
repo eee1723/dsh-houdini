@@ -1,0 +1,18 @@
+{
+  "caseId": "bench-vise-build",
+  "reviewerInstructions": "先独立重开最终 HIP，在相同取景下查看合拢、中间和打开状态，再看夹爪与传动局部，最后读 agent 自评。VEX 或任何原生 SOP 都可以使用；按最终可见形状、几何关系和可编辑性判断，不按节点名称或数量打分。分别记录控制值以及固定夹持垫、活动夹持垫与测试块两侧的关系，不能把零距离称为已产生夹紧力。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_overview_closed", "independent_overview_middle", "independent_overview_open", "independent_detail_jaws", "independent_detail_drive", "independent_state_contact_clearance_check", "independent_control_restore_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "form-and-scale", "method": "measurement+visual", "critical": true, "expectation": "整体接近 22×10×10 cm，能辨认底座、固定夹爪、活动夹爪、两侧夹持垫、导向结构、手动丝杠、手柄和底座固定位置。"},
+    {"id": "closed-contact", "method": "geometry+visual", "critical": true, "expectation": "合拢时测试块位于两爪之间，两侧夹持垫分别贴近测试块的相对侧面，没有明显穿透、悬空或仅靠整体包围盒假装接触。"},
+    {"id": "middle-open-clearance", "method": "geometry+visual", "critical": true, "expectation": "中间和充分打开时，固定夹爪与测试块的位置关系不漂移，活动夹持垫与测试块有随开度增大的可见间隙；其他零件没有明显的新穿插。"},
+    {"id": "drive-and-guide", "method": "geometry+visual", "critical": true, "expectation": "活动夹爪沿导向结构移动，丝杠和手柄与运动机构保持对齐、可理解的连接；局部能看出传动路径，不能只有悬空装饰轴。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "夹持垫纹理、导轨或滑槽、丝杠传动、握持处、转角和可见紧固件在近景有层次，表面没有明显倒面、破面或粗糙锯齿。"},
+    {"id": "opening-control", "method": "control+geometry", "critical": true, "expectation": "同一控制可调出合拢、中间、充分打开状态并准确恢复；每个状态下的夹爪、测试块、导向结构和传动件关系保持合理。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "保存的工程可重开；报告如实说明未实现的传动或力学关系，不把几何接触、控制测试通过或外形相似说成实际夹紧力已验证。"}
+  ]
+}

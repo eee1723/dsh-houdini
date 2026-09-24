@@ -74,6 +74,16 @@
       },
       "evaluator": "cases/sealed-bottle-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "bench-vise-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/bench-vise-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/bench-vise-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }

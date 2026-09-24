@@ -10,6 +10,7 @@ assert.deepEqual(new Set(manifest.cases.map(item => item.kind)), new Set([
   'focused-module', 'parameter-change', 'text-to-model',
 ]))
 assert.ok(manifest.cases.some(item => item.id === 'sealed-bottle-build'))
+assert.ok(manifest.cases.some(item => item.id === 'bench-vise-build'))
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-product-modeling-test-'))
 try {
@@ -28,6 +29,11 @@ try {
   assert.deepEqual(fs.readdirSync(bottle.destination).sort(), ['brief.md', 'task.json'])
   assert.equal(bottle.task.kind, 'text-to-model')
   assert.doesNotMatch(JSON.stringify(bottle.task), /evaluator|checklist|sourceRoot/i)
+
+  const vise = prepareRun({ caseId: 'bench-vise-build', output: path.join(scratch, 'vise') })
+  assert.deepEqual(fs.readdirSync(vise.destination).sort(), ['brief.md', 'task.json'])
+  assert.equal(vise.task.kind, 'text-to-model')
+  assert.doesNotMatch(JSON.stringify(vise.task), /evaluator|checklist|sourceRoot/i)
 
   const baseline = path.join(scratch, 'prior.hip')
   fs.writeFileSync(baseline, 'test HIP bytes')
