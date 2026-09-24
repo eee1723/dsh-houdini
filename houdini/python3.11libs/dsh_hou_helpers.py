@@ -5133,6 +5133,8 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     嵌套空腔可有意出现反向内壳，不自动判错；还对比显式N属性与几何面朝向，
     反向着色法线只提示复核，不自动改写几何；
     boundary_edges单独提示核对有意开放接口，不一概当破面。
+    平面大面若以重复点桥接孔，另报shading_review_status供视窗近景复核；
+    这不是拓扑失败，也不证明已有可见着色瑕疵。
     返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
     量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合
     闭合/流形与轴向图像）；duplicate_boundary_faces及

@@ -227,12 +227,24 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
         return n
     pts, zero_area, zero_edges = {}, 0, 0
     face_keys, repeated_faces, areas = set(), [], []
+    planar_repeated_point_ngons = []
     for p in prims:
         ids = [v.point().number() for v in p.vertices()]
         for v in p.vertices(): pts[v.point().number()] = tuple(v.point().position())
         area = float(p.intrinsicValue('measuredarea'))
         areas.append(area)
         coords_face = [pts[i] for i in ids]
+        if integrity_only and len(ids) >= 8 and len(set(ids)) < len(ids):
+            # Boolean can preserve a planar face with bridge vertices around
+            # holes. That is valid topology, yet implicit smooth shading may
+            # make its flat interior look dented while the object rotates.
+            normal = p.normal()
+            if normal.length() > 1e-12:
+                origin = hou.Vector3(coords_face[0])
+                plane_tolerance = max(max(float(v) for v in p.boundingBox().sizevec()) * 1e-6, 1e-9)
+                if all(abs((hou.Vector3(position) - origin).dot(normal.normalized())) <= plane_tolerance
+                       for position in coords_face):
+                    planar_repeated_point_ngons.append(p.number())
         if coords_face:
             # Cyclic boundary equality, not a sorted vertex-set guess. Reverse
             # winding and distinct point identities may still duplicate a face.
@@ -275,6 +287,9 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
                 'zero_area_faces': zero_area, 'zero_length_edges': zero_edges,
                 'duplicate_boundary_faces': len(repeated_faces),
                 'duplicate_face_sample': repeated_faces[:8],
+                'planar_repeated_point_ngons': len(planar_repeated_point_ngons),
+                'planar_repeated_point_sample': planar_repeated_point_ngons[:8],
+                'shading_review_status': ('needs_visual_review' if planar_repeated_point_ngons else 'none'),
                 'shell_orientation': orientation,
                 'shading_normals': shading_normals,
                 'orientation_review_status': ('negative_closed_shells_present' if orientation['negative_count']
@@ -282,7 +297,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
                 'risk_status': 'needs_review' if risks else 'no_detected_integrity_risk',
                 'risk_reasons': risks,
                 'boundary_review_status': ('open_boundary_unreviewed' if boundary_count else 'none'),
-                'scope': 'Bounded final polygon surface diagnostic only. Open boundaries can be intentional; no contact, self-intersection, strength, or appearance certification.'}
+                'scope': 'Bounded final polygon surface diagnostic only. Planar repeated-point n-gons are shading review candidates, not integrity failure. Open boundaries can be intentional; no contact, self-intersection, strength, or appearance certification.'}
     coords = [[sum(v*a for v,a in zip(p,axis)) for axis in axes] for p in pts.values()]
     lower = [min(p[i] for p in coords) for i in range(3)]
     upper = [max(p[i] for p in coords) for i in range(3)]

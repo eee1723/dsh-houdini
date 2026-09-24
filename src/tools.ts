@@ -328,6 +328,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
     if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
       const risk = item.status !== 'observed' || item.risk_status === 'needs_review'
         || item.boundary_review_status === 'open_boundary_unreviewed'
+        || item.shading_review_status === 'needs_visual_review'
       verdicts.push({priority:risk ? 2 : 3,text:`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
         group:item.group ?? null,
         risk_status:item.risk_status ?? null,reason:item.reason ?? null,
@@ -335,8 +336,10 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         orientation_review_status:item.orientation_review_status ?? null,
         negative_closed_shells:item.shell_orientation?.negative_count ?? null,
         opposed_shading_normals:item.shading_normals?.opposed_count ?? null,
+        planar_repeated_point_ngons:item.planar_repeated_point_ngons ?? null,
+        shading_review_status:item.shading_review_status ?? null,
         risk_reasons:item.risk_reasons ?? [],
-        boundary:'Negative closed-shell winding needs exterior/cavity review; Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
+        boundary:'Planar repeated-point n-gons may shade unevenly and need visual review; they are not integrity failures. Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
     }
   }
   return verdicts.sort((a,b) => a.priority - b.priority).slice(0, 4).map(row => row.text)

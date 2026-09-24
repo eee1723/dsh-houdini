@@ -114,6 +114,14 @@ const integrityWarning = exec.output.render({}, {
 })[0].text;
 assert.match(integrityWarning.split('\n')[0], /polygon-integrity-verdict.*needs_review.*nonmanifold_edges/);
 assert.match(integrityWarning, /open ports may be intentional/);
+const shadingCandidate = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
+    method:'bounded polygon surface integrity',status:'observed',
+    risk_status:'no_detected_integrity_risk',planar_repeated_point_ngons:2,
+    shading_review_status:'needs_visual_review'}],
+})[0].text;
+assert.match(shadingCandidate.split('\n')[0], /polygon-integrity-verdict.*"planar_repeated_point_ngons":2.*"shading_review_status":"needs_visual_review"/);
+assert.match(shadingCandidate, /not integrity failures/);
 const groupOnlyIntegrity = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',evidence:[
     {ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',

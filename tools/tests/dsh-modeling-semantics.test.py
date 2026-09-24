@@ -49,6 +49,21 @@ try:
     positive=o.polygon_observation(g)['shell_orientation'];assert positive['positive_count']==1,positive
     quick_positive=o.polygon_observation(g,integrity_only=True)
     assert quick_positive['risk_status']=='no_detected_integrity_risk' and quick_positive['shell_orientation']['positive_count']==1,quick_positive
+    assert quick_positive['planar_repeated_point_ngons']==0
+    # A Boolean-like flat face with bridge vertices around a hole can be
+    # topologically valid yet shade unevenly. Report visual review separately
+    # from geometry integrity.
+    bridge_geo=hou.Geometry()
+    bridge_points=[]
+    for x,z in ((0,0),(4,0),(4,4),(0,4),(1,1),(1,3),(3,3),(3,1)):
+        point=bridge_geo.createPoint();point.setPosition((x,0,z));bridge_points.append(point)
+    bridge_face=bridge_geo.createPolygon()
+    for index in (0,1,2,3,0,4,5,6,7,4):bridge_face.addVertex(bridge_points[index])
+    bridge_obs=o.polygon_observation(bridge_geo,integrity_only=True)
+    assert bridge_obs['planar_repeated_point_ngons']==1 and bridge_obs['shading_review_status']=='needs_visual_review',bridge_obs
+    assert bridge_obs['risk_status']=='no_detected_integrity_risk','shading candidate is not a topology failure'
+    bridge_points[6].setPosition((3,.01,3))
+    assert o.polygon_observation(bridge_geo,integrity_only=True)['planar_repeated_point_ngons']==0
     shading=root.createNode('normal','reversed_shading_normals')
     shading.setInput(0,root.node('source'))
     shading.parm('type').set('typeprim')

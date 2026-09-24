@@ -212,10 +212,12 @@
       ]
     },
     "boolean": {
-      "id": "boolean-input-groups-v1",
+      "id": "boolean-input-groups-and-shading-v2",
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html",
       "notes": [
-        "agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters."
+        "agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters.",
+        "Boolean triangulates inputs internally, then may join triangles back into large n-gons. A cut planar face with repeated bridge points can be closed and correctly wound but shade unevenly in the viewport. When integrity inspection reports planar_repeated_point_ngons, compare the affected Boolean node's Detriangulate=Only Unchanged Polygons with the current result; do not change every Boolean by default. Keep the change only after checking the face and connected parts at representative control states.",
+        "If the face is geometrically flat but shades unevenly, compare a Normal SOP with vertex normals and suitable cusp/face-area weighting after the final Boolean and before placement. Explicit N changes shading, not polygon winding or solid overlap; preserve intended bevel highlights and verify the same closeup in more than one state."
       ]
     }
   }

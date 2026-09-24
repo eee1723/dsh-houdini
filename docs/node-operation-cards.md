@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 17 · Source SHA-256: `84795c2a1decbffece04e2387121c6b49ac956375516918fe8945734a321b4d2`
+Schema: 2 · Cards: 17 · Source SHA-256: `b32ac739b67abff20258e9c42085e11a1bb8e68d4c186cee389e6b30a2746566`
 
 ## 数据与设计契约
 
@@ -315,7 +315,7 @@ Schema: 2 · Cards: 17 · Source SHA-256: `84795c2a1decbffece04e2387121c6b49ac95
 
 ## boolean
 
-标识：`boolean-input-groups-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
+标识：`boolean-input-groups-and-shading-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
 
 精确类型：未另限定（按family匹配）。
 已测版本：此卡未列出，不外推版本保证。
@@ -323,3 +323,5 @@ Schema: 2 · Cards: 17 · Source SHA-256: `84795c2a1decbffece04e2387121c6b49ac95
 ### 操作与边界
 
 - agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters.
+- Boolean triangulates inputs internally, then may join triangles back into large n-gons. A cut planar face with repeated bridge points can be closed and correctly wound but shade unevenly in the viewport. When integrity inspection reports planar_repeated_point_ngons, compare the affected Boolean node's Detriangulate=Only Unchanged Polygons with the current result; do not change every Boolean by default. Keep the change only after checking the face and connected parts at representative control states.
+- If the face is geometrically flat but shades unevenly, compare a Normal SOP with vertex normals and suitable cusp/face-area weighting after the final Boolean and before placement. Explicit N changes shading, not polygon winding or solid overlap; preserve intended bevel highlights and verify the same closeup in more than one state.
