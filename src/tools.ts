@@ -299,6 +299,14 @@ function renderStreams(value: ExecResult): string[] {
 function leadingCheckVerdicts(value: ExecResult): string[] {
   if (!Array.isArray(value.evidence)) return []
   const verdicts: string[] = []
+  const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
+    && item.method === 'bounded polygon surface integrity')
+  if (integrityChecks.some(item => item.group !== null && item.group !== undefined)) {
+    verdicts.push(`polygon-integrity-coverage: ${JSON.stringify({checks:integrityChecks.length,
+      selected_groups:integrityChecks.filter(item => item.group !== null && item.group !== undefined).length,
+      whole_output_checked_in_this_call:integrityChecks.some(item => item.group === null || item.group === undefined),
+      boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`)
+  }
   for (const item of value.evidence as any[]) {
     if (item?.verb === 'test_controls' && item.control_summary) {
       const summary = item.control_summary
@@ -316,6 +324,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
     }
     if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
       verdicts.push(`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
+        group:item.group ?? null,
         risk_status:item.risk_status ?? null,reason:item.reason ?? null,
         boundary_edges:item.boundary_edges ?? null,boundary_review_status:item.boundary_review_status ?? null,
         risk_reasons:item.risk_reasons ?? [],

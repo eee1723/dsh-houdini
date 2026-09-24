@@ -111,6 +111,17 @@ const integrityWarning = exec.output.render({}, {
 })[0].text;
 assert.match(integrityWarning.split('\n')[0], /polygon-integrity-verdict.*needs_review.*nonmanifold_edges/);
 assert.match(integrityWarning, /open ports may be intentional/);
+const groupOnlyIntegrity = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[
+    {ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+      group:'g_gasket',status:'observed',risk_status:'no_detected_integrity_risk'},
+    {ledgerIndex:2,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
+      group:'g_shell_base',status:'observed',risk_status:'no_detected_integrity_risk'},
+  ],
+})[0].text;
+assert.match(groupOnlyIntegrity.split('\n')[0], /polygon-integrity-coverage.*"selected_groups":2.*"whole_output_checked_in_this_call":false/);
+assert.match(groupOnlyIntegrity, /coincident faces across different groups/);
+assert.match(groupOnlyIntegrity, /polygon-integrity-verdict:.*"group":"g_gasket"/);
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

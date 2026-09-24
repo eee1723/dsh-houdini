@@ -180,6 +180,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。
 Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
+多个`geo_piece_stats(...,inspect=True,integrity_only=True,group=...)`同批返回时，Host先标明本批是否检查了未分组的整件输出；局部组各自零风险不能覆盖组与组之间的完全重合面。
 
 ### component 域（普通 SOP 组件交换）
 
