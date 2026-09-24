@@ -104,6 +104,16 @@
       },
       "evaluator": "cases/folding-phone-stand-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "hand-crank-reel-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/hand-crank-reel-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/hand-crank-reel-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }

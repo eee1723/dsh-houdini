@@ -14,6 +14,7 @@ assert.ok(manifest.cases.some(item => item.id === 'sealed-bottle-build'))
 assert.ok(manifest.cases.some(item => item.id === 'bench-vise-build'))
 assert.ok(manifest.cases.some(item => item.id === 'hinged-desk-box-build'))
 assert.ok(manifest.cases.some(item => item.id === 'folding-phone-stand-build'))
+assert.ok(manifest.cases.some(item => item.id === 'hand-crank-reel-build'))
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-product-modeling-test-'))
 try {
@@ -47,6 +48,11 @@ try {
   assert.deepEqual(fs.readdirSync(stand.destination).sort(), ['brief.md', 'task.json'])
   assert.equal(stand.task.kind, 'text-to-model')
   assert.doesNotMatch(JSON.stringify(stand.task), /evaluator|checklist|sourceRoot/i)
+
+  const reel = prepareRun({ caseId: 'hand-crank-reel-build', output: path.join(scratch, 'reel') })
+  assert.deepEqual(fs.readdirSync(reel.destination).sort(), ['brief.md', 'task.json'])
+  assert.equal(reel.task.kind, 'text-to-model')
+  assert.doesNotMatch(JSON.stringify(reel.task), /evaluator|checklist|sourceRoot/i)
 
   for (const [index, extension] of ['.hip', '.hiplc', '.hipnc', '.HIPLC'].entries()) {
     const baseline = path.join(scratch, `prior-${index}${extension}`)
