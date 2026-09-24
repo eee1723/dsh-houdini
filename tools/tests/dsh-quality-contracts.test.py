@@ -83,6 +83,57 @@ try:
     assert result['control_summary']['case_counts']=={'pass':1,'fail':0,'unverified':0,'not_run':0}
     assert result['control_summary']['coverage']['declared_interfaces']==1
     assert result['control_summary']['cases'][0]['interface_status']=='pass'
+    # A case-specific interface checks only the perturbed state; no baseline
+    # contact contract is silently applied to an intentionally open state.
+    conditional=[{'id':'length_case_interface','values':{'length':1.2},'expectations':[
+      {'metric':'bounds_size','axis':0,'delta':[.199,.201]}],'interfaces':[interface]},
+      {'id':'length_no_interface','values':{'length':1.3},'expectations':[
+      {'metric':'bounds_size','axis':0,'delta':[.299,.301]}]}]
+    scoped=h.test_controls(ctrl,out,conditional)
+    assert scoped['ok'] and scoped['baseline_interfaces'] is None and scoped['restored'],scoped
+    assert scoped['control_summary']['coverage']['declared_interfaces']==1,scoped
+    assert scoped['control_summary']['coverage']['case_specific_interface_checks']==1,scoped
+    assert [case['interface_status'] for case in scoped['control_summary']['cases']]==['pass','not_checked'],scoped
+    rejects(lambda:h.test_controls(ctrl,out,[{**conditional[0],
+        'interfaces':[{**interface,'expected_points':0}]}]),'expected_points')
+    assert ctrl.evalParm('length')==1
+    invalid_case=h.test_controls(ctrl,out,[{**conditional[0],
+        'interfaces':[{**interface,'expected_points':1}]}])
+    assert invalid_case['status']=='fail' and invalid_case['restored'] and invalid_case['baseline_interfaces'] is None,invalid_case
+    assert invalid_case['results'][0]['interfaces']['status']=='fail',invalid_case
+    rejects(lambda:h.test_controls(ctrl,out,[conditional[0]],interfaces=[interface]),'unique')
+    # Closed contact and opened separation require different relations. A
+    # global closed-contact invariant should fail on opening; a case-specific
+    # axis gap should pass while retaining automatic control/bgeo restoration.
+    gap_ctrl=root.createNode('null','OPEN_CTRL')
+    h.create_spare_parms(gap_ctrl,spec=[{'type':'float','name':'lift','default':0}])
+    h.build_module(root,[
+      {'name':'gap_base','type':'box','parms':{'sizey':.2,'ty':.1}},
+      {'name':'gap_base_tag','type':'attribwrangle','inputs':['gap_base'],
+       'parms':{'class':'primitive','snippet':'i@group_gap_base=1;'}},
+      {'name':'gap_cap','type':'box','parms':{'sizey':.2,'ty':"ch('../OPEN_CTRL/lift')+0.3"}},
+      {'name':'gap_cap_tag','type':'attribwrangle','inputs':['gap_cap'],
+       'parms':{'class':'primitive','snippet':'i@group_gap_cap=1;'}},
+      {'name':'gap_out','type':'merge','inputs':['gap_base_tag','gap_cap_tag']}],output='gap_out')
+    gap_out=root.node('gap_out')
+    contact={'id':'closed_contact','method':'axis_gap','source_group':'gap_cap','target_group':'gap_base',
+             'axis':1,'gap_range':[-.001,.001],'min_overlap':.9}
+    separated={'id':'opened_gap','method':'axis_gap','source_group':'gap_cap','target_group':'gap_base',
+               'axis':1,'gap_range':[.99,1.01],'min_overlap':.9}
+    assert h.geo_check_interfaces(gap_out,[contact])['ok']
+    open_case=[{'id':'open','values':{'lift':1},'expectations':[
+      {'metric':'bounds_size','axis':1,'delta':[.99,1.01]}],'interfaces':[separated]}]
+    old_global=h.test_controls(gap_ctrl,gap_out,[{k:v for k,v in open_case[0].items() if k!='interfaces'}],
+                               interfaces=[contact])
+    assert old_global['status']=='fail' and old_global['restored'],old_global
+    opened=h.test_controls(gap_ctrl,gap_out,open_case)
+    assert opened['ok'] and opened['restored'] and gap_ctrl.evalParm('lift')==0,opened
+    assert opened['results'][0]['interfaces']['results'][0]['gap']>0.99,opened
+    assert opened['control_summary']['coverage']['relationship_scope']=='declared_contracts_only',opened
+    envelope=b.run_code(f'__result__=test_controls({gap_ctrl.path()!r},{gap_out.path()!r},{open_case!r})')
+    bridge_result=next(item for item in envelope['evidence'] if item.get('verb')=='test_controls')
+    assert bridge_result['control_summary']['coverage']['case_specific_interface_checks']==1,bridge_result
+    assert bridge_result['control_summary']['cases'][0]['interface_status']=='pass',bridge_result
     # Absolute ranges apply to baseline too: a rejected baseline must not look
     # like an empty successful batch when author code prints only results.
     baseline_test=[{'id':'target_only_range','values':{'length':1.2},'expectations':[

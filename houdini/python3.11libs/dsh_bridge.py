@@ -84,7 +84,7 @@ _HOU_THREAD_ID = threading.get_ident()
 # cancel are authorized by the owning session only.
 # 60: completed result envelopes report bounded artifactCandidates from verb
 # receipts; they are path facts for Agent review, never automatic deliveries.
-_EXECUTION_CONTRACT_VERSION = 60
+_EXECUTION_CONTRACT_VERSION = 61
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex

@@ -4942,7 +4942,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
     tests为1..16个case；每个case是
-    {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}]}，
+    {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}],interfaces?}，
     每个case最多16个expectations；同一扰动的大检查按相同values拆成多个case。
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
     point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
@@ -4955,7 +4955,9 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
     修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
-    可同时传geo_check_interfaces接口，默认/扰动均验收；每case最终恢复原参数/keys/frame，
+    顶层interfaces在基准及每次扰动均检查；case内interfaces只在该扰动状态检查，
+    用于合盖接触与开盖分离等不同状态合同。二者均用geo_check_interfaces同一schema；
+    每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
     当前控制输出仅支持Polygon/Mesh/Sphere/Tube及点几何，其他类型写前unverified。

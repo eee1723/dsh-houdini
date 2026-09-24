@@ -590,6 +590,7 @@ def _control_summary(result, tests, interfaces=None, topology=None):
                                                  if m['expectation'].get('group') is not None}),
                       'whole_output_measurements': sum(m['expectation'].get('group') is None for m in measurements),
                       'measurement_count': len(measurements),
+                      'interface_count': len(interfaces or []) + len(test.get('interfaces') or []),
                       'interface_status': row.get('interfaces', {}).get('status') if isinstance(row.get('interfaces'), dict) else 'not_checked',
                       'topology_status': row.get('topology', {}).get('status') if isinstance(row.get('topology'), dict) else 'not_checked',
                       'changed_output_with_failed_measurements': row.get('geometry_changed') is True and any(not m['pass'] for m in measurements)})
@@ -611,11 +612,15 @@ def _control_summary(result, tests, interfaces=None, topology=None):
             'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
             'coverage': {'acceptance': 'declared_checks_only',
                          'declared_controls': sorted({name for t in tests for name in t['values']}),
-                         'declared_interfaces': len(interfaces or []),
+                         'declared_interfaces': len({item['id'] for item in (interfaces or [])
+                                                     + [item for test in tests for item in test.get('interfaces', [])]}),
+                         'case_specific_interface_checks': sum(len(test.get('interfaces', [])) for test in tests),
                          'declared_topology_contracts': len(topology or []),
                          'measured_cases': sum(c['measurement_count'] > 0 for c in cases),
-                         'relationship_scope': 'declared_contracts_only' if interfaces or topology else 'not_checked',
-                         'boundary': 'Bounds/count response does not prove attachment, clearance or uniform transforms. '
+                         'relationship_scope': 'declared_contracts_only' if interfaces or topology
+                                               or any(test.get('interfaces') for test in tests) else 'not_checked',
+                         'boundary': 'Global interfaces cover baseline and every case; case interfaces cover only their perturbed state. '
+                                     'Bounds/count response does not prove attachment, clearance or uniform transforms. '
                                      'A changed output fingerprint with failed metrics is not an unconnected/dead control: '
                                      'inspect local geometry and intended dependencies before rewiring. '
                                      'Fingerprint changes may include attributes, not only point motion. '
@@ -641,7 +646,9 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
-    delta:[min,max]}]. Optional actual-output interfaces are rechecked throughout.
+    delta:[min,max]}]. Global interfaces are checked at baseline and in every
+    case; each test may also declare interfaces checked only at its perturbed
+    state, for example contact while closed and separation while opened.
     Operates only on numeric scalar controller parms, no menus/buttons/multiparms.
     Geometry bgeo fingerprints include primitive intrinsics, not just P. External
     files, Python/solver side effects and user callbacks are NOT transactional.
@@ -659,7 +666,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     if topology is not None:validate_topology(topology)
     ids=set();names=set()
     for test in tests:
-        _exact_keys(test, {'id','values','expectations'}, 'control test')
+        _exact_keys(test, {'id','values','expectations','interfaces'}, 'control test')
         if not isinstance(test.get('id'),str) or not test['id'] or test['id'] in ids:
             raise ValueError('test ids must be nonempty and unique')
         ids.add(test['id'])
@@ -684,6 +691,10 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 raise ValueError(f'{name}: perturbation must differ from current value')
             names.add(name)
         for expectation in expectations:_validate_expectation(expectation)
+        if 'interfaces' in test:
+            validate_interfaces(test['interfaces'])
+            if interfaces:
+                validate_interfaces(interfaces + test['interfaces'])
         if expectations and not any(e['delta'][0] > 0 or e['delta'][1] < 0 for e in expectations):
             raise ValueError('each control case needs at least one non-zero expected response; add invariants as additional expectations')
     snapshots=h._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
@@ -782,7 +793,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if not math.isfinite(float(end)):raise UnsupportedEvidence('nonfinite measured value')
                 range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
                 measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
-            relations=_check_interfaces(g,interfaces,50000) if interfaces is not None else None
+            case_interfaces=(interfaces or []) + test.get('interfaces',[])
+            relations=_check_interfaces(g,case_interfaces,50000) if case_interfaces else None
             topology_check=_check_topology(g,topology) if topology is not None else None
             measurements_pass=all(m['pass'] for m in measurements)
             checks=[r for r in (relations,topology_check) if r is not None]
