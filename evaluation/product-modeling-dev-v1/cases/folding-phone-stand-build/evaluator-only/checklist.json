@@ -1,0 +1,18 @@
+{
+  "caseId": "folding-phone-stand-build",
+  "reviewerInstructions": "只读重开最终 HIP 副本，先读取HIP真实单位长度并换算厘米，再用固定相机看收起、45°、70°。从实际支撑板自由端和底座上表面量贴近/间隙，不用整件bbox代替。检查铰耳、转轴、承托唇随动与脚垫固定，最后读Agent报告。按模型结果和可编辑性判断，不按VEX或原生SOP比例、节点/面数打分。",
+  "requiredEvidence": {
+    "agentSubmitted": ["final_hip", "agent_final_text"],
+    "reviewerProduced": ["reopened_hip", "independent_unit_and_dimensions", "independent_overview_folded", "independent_overview_middle", "independent_overview_open", "independent_detail_hinge", "independent_detail_lip", "independent_detail_grips", "independent_free_end_contact_clearance_check", "independent_hinge_alignment_check", "independent_control_restore_check"],
+    "source": ["public_brief"]
+  },
+  "criteria": [
+    {"id": "physical-scale-and-form", "method": "measurement+visual", "critical": true, "expectation": "从保存HIP的Unit Length换算，底座约12×16cm、支撑板约9×14cm，收起高度接近3cm；能够识别底座、活动板、脚垫、防滑区、承托唇、铰耳和转轴。不得只凭口头单位约定或场景数值判尺寸。"},
+    {"id": "folded-contact", "method": "geometry+visual", "critical": true, "expectation": "收起时活动板的自由端贴近底座上表面，无明显穿透或悬空；实际局部表面关系成立。"},
+    {"id": "opening-clearance", "method": "geometry+visual", "critical": true, "expectation": "45°和70°时自由端从底座抬离，间隙随角度增大；底座与脚垫位置不漂移，没有明显新穿插。"},
+    {"id": "hinge-and-lip", "method": "geometry+visual", "critical": true, "expectation": "转轴穿过固定与活动铰耳，三状态对齐；承托唇与活动板相连并随动，不留在底座原位。若有撑杆/档位，须按公开要求保持合理连接。"},
+    {"id": "near-detail", "method": "visual", "critical": true, "expectation": "近景能看出板厚、铰耳/转轴、承托唇、防滑接触区、边缘处理和紧固件的具体形状；无明显翻面、粗糙锯齿或穿帮。"},
+    {"id": "angle-control", "method": "control+geometry", "critical": true, "expectation": "同一主参数形成收起、45°、70°并准确恢复；活动板/承托唇与固定底座的关系在三态成立。"},
+    {"id": "honest-delivery", "method": "report", "critical": true, "expectation": "工程可重开，报告中的物理尺寸与HIP一致；未做的承重、摩擦定位、制造公差或机构配合如实说明，未测内容不报完成。"}
+  ]
+}

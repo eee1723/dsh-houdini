@@ -94,6 +94,16 @@
       },
       "evaluator": "cases/hinged-desk-box-build/evaluator-only/checklist.json",
       "dependsOn": []
+    },
+    {
+      "id": "folding-phone-stand-build",
+      "kind": "text-to-model",
+      "public": {
+        "brief": "cases/folding-phone-stand-build/public/brief.md",
+        "attachments": []
+      },
+      "evaluator": "cases/folding-phone-stand-build/evaluator-only/checklist.json",
+      "dependsOn": []
     }
   ]
 }

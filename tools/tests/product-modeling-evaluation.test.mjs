@@ -13,6 +13,7 @@ assert.deepEqual(new Set(manifest.cases.map(item => item.kind)), new Set([
 assert.ok(manifest.cases.some(item => item.id === 'sealed-bottle-build'))
 assert.ok(manifest.cases.some(item => item.id === 'bench-vise-build'))
 assert.ok(manifest.cases.some(item => item.id === 'hinged-desk-box-build'))
+assert.ok(manifest.cases.some(item => item.id === 'folding-phone-stand-build'))
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-product-modeling-test-'))
 try {
@@ -41,6 +42,11 @@ try {
   assert.deepEqual(fs.readdirSync(box.destination).sort(), ['brief.md', 'task.json'])
   assert.equal(box.task.kind, 'text-to-model')
   assert.doesNotMatch(JSON.stringify(box.task), /evaluator|checklist|sourceRoot/i)
+
+  const stand = prepareRun({ caseId: 'folding-phone-stand-build', output: path.join(scratch, 'stand') })
+  assert.deepEqual(fs.readdirSync(stand.destination).sort(), ['brief.md', 'task.json'])
+  assert.equal(stand.task.kind, 'text-to-model')
+  assert.doesNotMatch(JSON.stringify(stand.task), /evaluator|checklist|sourceRoot/i)
 
   for (const [index, extension] of ['.hip', '.hiplc', '.hipnc', '.HIPLC'].entries()) {
     const baseline = path.join(scratch, `prior-${index}${extension}`)
