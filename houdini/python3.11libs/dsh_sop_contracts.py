@@ -379,7 +379,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                 'unverified_shells':shell.get('unverified_count'),
                 'planar_repeated_point_ngons':observed.get('planar_repeated_point_ngons'),
                 'shading_review_status':observed.get('shading_review_status'),
-                'scope':'bounded final OUT_ASSET Polygon surface advisory; open ports may be intentional; no self-intersection, connection, dimension, force or visual certification',
+                'planar_face_crossings':observed.get('planar_face_crossings'),
+                'scope':'bounded final OUT_ASSET Polygon surface advisory, including strict interior edge crossings within eligible planar faces; inspect planar_face_crossings coverage/skips; open ports may be intentional; no general 3-D self-intersection, connection, dimension, force or visual certification',
             }
     fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
     reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
@@ -405,7 +406,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
             'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
-                            'Review final surface boundaries/orientation and declared relations before delivery.' if surface_integrity and (surface_integrity.get('risk_status')=='needs_review' or surface_integrity.get('boundary_edges')) else
+                            'Review final surface boundaries/orientation/face crossings and declared relations before delivery.' if surface_integrity and (surface_integrity.get('risk_status')=='needs_review' or surface_integrity.get('boundary_edges')) else
                             'Review suspicious Sweep backbone closure against the intended cable/curve path before delivery.' if curve_path_integrity and curve_path_integrity.get('risk_status')=='needs_review' else
                             'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),
             'note': 'Cook/geometry evidence only; no assertion of relationships, art quality or unsampled HDA internals.'}

@@ -5152,6 +5152,9 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
     boundary_edges单独提示核对有意开放接口，不一概当破面。
     平面大面若以重复点桥接孔，另报shading_review_status供视窗近景复核；
     这不是拓扑失败，也不证明已有可见着色瑕疵。
+    planar_face_crossings只查单个近似平面闭合Polygon内非相邻边的严格内部交叉；
+    每面最多256顶点、总计250000对边，须看coverage/skipped_faces；不查非平面面、
+    端点接触、共线重合或跨面自交，合法洞桥不因重复边判错。已有风险只作非阻断复核。
     返回边界/非流形/边连通/零面积、surface_area与局部extent；center_axis_surface_hits
     量测三条basis轴向包围盒中心线与表面的交点（实心封口通常为2，通孔轴可为0，但须结合
     闭合/流形与轴向图像）；duplicate_boundary_faces及

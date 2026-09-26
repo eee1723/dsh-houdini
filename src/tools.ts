@@ -295,6 +295,14 @@ function renderStreams(value: ExecResult): string[] {
   return parts
 }
 
+function planarFaceCrossingSummary(value: any) {
+  if (!value || typeof value !== 'object') return null
+  return {status:value.status ?? 'unverified',coverage:value.coverage ?? null,
+    crossed_faces:value.crossed_faces ?? null,
+    sample_primitives:[...new Set((Array.isArray(value.samples) ? value.samples : [])
+      .map((sample:any) => sample?.primitive).filter((primitive:any) => Number.isInteger(primitive)))].slice(0, 4)}
+}
+
 /** Put scoped check conclusions before the verbose receipt/ledger in both display modes. */
 function leadingCheckVerdicts(value: ExecResult): string[] {
   if (!Array.isArray(value.evidence)) return []
@@ -313,6 +321,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       const curve = item.curve_path_integrity ?? {}
       const needsReview = surface.status === 'unverified' || surface.risk_status === 'needs_review'
         || (surface.boundary_edges ?? 0) > 0 || surface.shading_review_status === 'needs_visual_review'
+        || surface.planar_face_crossings?.status === 'unverified'
         || curve.risk_status === 'needs_review' || curve.risk_status === 'unverified'
       verdicts.push({priority:needsReview ? 1 : 3,text:`final-output-review: ${JSON.stringify({
         output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
@@ -323,6 +332,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         negative_closed_shells:surface.negative_closed_shells ?? null,
         unverified_shells:surface.unverified_shells ?? null,
         shading_review_status:surface.shading_review_status ?? null,
+        planar_face_crossings:planarFaceCrossingSummary(surface.planar_face_crossings),
         sweep_path_risk_status:curve.risk_status ?? null,
         suspicious_sweep_closures:curve.suspicious_closure_count ?? null,
         sweep_closure_samples:curve.samples ?? [],
@@ -349,6 +359,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       const risk = item.status !== 'observed' || item.risk_status === 'needs_review'
         || item.boundary_review_status === 'open_boundary_unreviewed'
         || item.shading_review_status === 'needs_visual_review'
+        || item.planar_face_crossings?.status === 'unverified'
       verdicts.push({priority:risk ? 2 : 3,text:`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
         group:item.group ?? null,
         risk_status:item.risk_status ?? null,reason:item.reason ?? null,
@@ -358,6 +369,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         opposed_shading_normals:item.shading_normals?.opposed_count ?? null,
         planar_repeated_point_ngons:item.planar_repeated_point_ngons ?? null,
         shading_review_status:item.shading_review_status ?? null,
+        planar_face_crossings:planarFaceCrossingSummary(item.planar_face_crossings),
         risk_reasons:item.risk_reasons ?? [],
         boundary:'Planar repeated-point n-gons may shade unevenly and need visual review; they are not integrity failures. Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
     }

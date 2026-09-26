@@ -1050,6 +1050,7 @@ def _operation_summary(name: str, result):
             'orientation_review_status',
             'zero_area_faces','zero_length_edges','duplicate_boundary_faces','duplicate_face_sample',
             'risk_status','risk_reasons','scope','shell_orientation','shading_normals',
+            'planar_face_crossings',
             'extents','bounds_min','bounds_max') if k in r}
     if name in ('cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'):
         return {k:r[k] for k in ('ok','status','semantic_status','node','output','output_port','controller',

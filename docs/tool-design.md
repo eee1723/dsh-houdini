@@ -183,6 +183,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。已知字符串属性的内部名称表可因cook顺序重排；签名同步重映射索引并比较每个元素的真实字符串，不把等值表顺序误判为几何漂移。
 Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
+`geo_piece_stats(...,inspect=True)`（含integrity_only）与最终输出的`surface_integrity`另含`planar_face_crossings`：只检查单个近似平面闭合Polygon内非相邻边的严格内部交叉，返回面数、原始primitive/边索引/位置样本和检查覆盖。每面最多256顶点、每查询最多250000对边；超预算只使该诊断`status=unverified, coverage=partial`，其他已完成观察仍保留。三角形不可能严格自交，不计作覆盖缺口；非平面/退化面、端点接触、共线重合与跨面交叉不在此诊断范围。合法孔洞桥的重复边不因本项判错。命中加入非阻断`risk_reasons`，不修改`ok/healthy`；未命中不证明任意3D自交不存在。含不支持曲线/native/packed的混合输出仍遵守原来的unverified边界，须检查对应Polygon组或源模块。正反例与覆盖预算见[平面面内交叉回归](../tools/tests/dsh-planar-face-crossings.test.py)，摘要透传见[模型回执回归](../tools/tests/houdini-tool-presentation.test.mjs)。
+
 多个`geo_piece_stats(...,inspect=True,integrity_only=True,group=...)`同批返回时，Host先标明本批是否检查了未分组的整件输出；局部组各自零风险不能覆盖组与组之间的完全重合面。
 
 ### component 域（普通 SOP 组件交换）

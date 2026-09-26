@@ -193,6 +193,93 @@ def _normal_attribute_observation(g, prims):
             'scope': 'Explicit N attributes compared with their own polygon geometric normals. Smoothing, stylized normals and mixed attribute classes require interpretation; this does not establish outward facing.'}
 
 
+def _planar_face_crossings(prims, *, pair_budget=250000, max_face_vertices=256):
+    """Proper crossings inside individual planar faces, not 3-D intersections.
+
+    Endpoint touches and collinear overlaps are deliberately excluded: Boolean
+    n-gons may traverse a bridge twice to represent a hole. A zero Newell normal
+    is not a reason to skip a bow-tie, so derive the plane from point offsets.
+    """
+    checked = triangles = crossed = crossing_pairs = tested_pairs = 0
+    skipped = {'nonplanar': 0, 'degenerate': 0, 'face_vertex_budget': 0, 'pair_budget': 0}
+    samples = []
+    def sub(a, b): return tuple(x-y for x, y in zip(a, b))
+    def dot(a, b): return sum(x*y for x, y in zip(a, b))
+    def cross(a, b):
+        return (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    def orient(a, b, c):
+        return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
+    for prim in prims:
+        vertices = prim.vertices()
+        count = len(vertices)
+        if count == 3:
+            triangles += 1  # Three edges cannot cross strictly in their interiors.
+            continue
+        if count < 3:
+            skipped['degenerate'] += 1
+            continue
+        if count > max_face_vertices:
+            skipped['face_vertex_budget'] += 1
+            continue
+        positions = [tuple(vertex.point().position()) for vertex in vertices]
+        scale = max(max(p[k] for p in positions)-min(p[k] for p in positions) for k in range(3))
+        if scale <= 1e-12:
+            skipped['degenerate'] += 1
+            continue
+        origin = positions[0]
+        offsets = [tuple(value/scale for value in sub(p, origin)) for p in positions]
+        baseline = max(offsets, key=lambda v: dot(v, v))
+        normal = max((cross(baseline, v) for v in offsets), key=lambda v: dot(v, v))
+        normal_length = math.sqrt(dot(normal, normal))
+        if normal_length <= 1e-12:
+            skipped['degenerate'] += 1
+            continue
+        normal = tuple(value/normal_length for value in normal)
+        if any(abs(dot(v, normal)) > max(1e-6, 1e-9/scale) for v in offsets):
+            skipped['nonplanar'] += 1
+            continue
+        pairs = count*(count-3)//2
+        if tested_pairs+pairs > pair_budget:
+            skipped['pair_budget'] += 1
+            continue
+        drop_axis = max(range(3), key=lambda k: abs(normal[k]))
+        axes = [k for k in range(3) if k != drop_axis]
+        projected = [(p[axes[0]], p[axes[1]]) for p in offsets]
+        checked += 1
+        face_crossed = False
+        for i in range(count):
+            a, b = projected[i], projected[(i+1) % count]
+            for j in range(i+2, count):
+                if i == 0 and j == count-1:
+                    continue
+                tested_pairs += 1
+                c, d = projected[j], projected[(j+1) % count]
+                ab_c, ab_d = orient(a, b, c), orient(a, b, d)
+                cd_a, cd_b = orient(c, d, a), orient(c, d, b)
+                # Scale-normalized orientation tolerance excludes touches and
+                # near-collinear ambiguities rather than calling them crossings.
+                eps = 1e-12
+                if not (((ab_c > eps and ab_d < -eps) or (ab_c < -eps and ab_d > eps)) and
+                        ((cd_a > eps and cd_b < -eps) or (cd_a < -eps and cd_b > eps))):
+                    continue
+                crossing_pairs += 1
+                face_crossed = True
+                if len(samples) < 8:
+                    fraction = cd_a/(cd_a-cd_b)
+                    position = [positions[i][k]+fraction*(positions[(i+1) % count][k]-positions[i][k]) for k in range(3)]
+                    samples.append({'primitive': prim.number(), 'edge_indices': [i, j], 'position': position})
+        crossed += int(face_crossed)
+    limited = skipped['face_vertex_budget']+skipped['pair_budget']
+    return {'status': 'unverified' if limited else 'observed',
+            'coverage': 'partial' if limited else 'complete_within_scope',
+            'checked_faces': checked, 'triangle_faces': triangles,
+            'crossed_faces': crossed, 'crossing_pairs': crossing_pairs,
+            'tested_edge_pairs': tested_pairs, 'skipped_faces': skipped,
+            'pair_budget': pair_budget, 'max_face_vertices': max_face_vertices,
+            'samples': samples, 'samples_truncated': crossing_pairs > len(samples),
+            'scope': 'Strict interior crossings of nonadjacent edges within each approximately planar closed Polygon face. Triangles cannot self-cross. Nonplanar/degenerate faces, endpoint touches, collinear overlaps and intersections between different faces are not tested; no general 3-D self-intersection certification.'}
+
+
 def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     if type(integrity_only) is not bool:
         raise ValueError('integrity_only must be boolean')
@@ -200,7 +287,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     result = {'method': ('bounded polygon surface integrity' if integrity_only else
                          'full selected polygon topology and point extents'), 'group': group,
               'coordinate_space': 'SOP local', 'semantic_status': 'unverified',
-              'note': 'Boundaries concern the selected surface, including intentional group cuts; no self-intersection, solid containment or art claim.'}
+              'note': 'Boundaries concern the selected surface, including intentional group cuts; planar face crossings are bounded observations, not general self-intersection, solid containment or art certification.'}
     if not prims:
         return {**result, 'status': 'unverified', 'reason': 'empty polygon selection'}
     primitive_budget = 100000 if integrity_only else 20000
@@ -262,6 +349,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
         for other in owners[1:]: parent[root(other)] = root(owners[0])
     if any(not math.isfinite(v) for p in pts.values() for v in p):
         return {**result,'status':'unverified','reason':'nonfinite geometry coordinates'}
+    face_crossings = _planar_face_crossings(prims)
     if integrity_only:
         orientation, _ = _shell_orientation(prims, edges, directed, root, include_planarity=False)
         shading_normals = _normal_attribute_observation(g, prims)
@@ -275,6 +363,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
             ('zero_area_faces', zero_area),
             ('zero_length_edges', zero_edges),
             ('duplicate_boundary_faces', len(repeated_faces)),
+            ('planar_face_self_crossings', face_crossings['crossed_faces']),
         ) if count]
         if orientation['negative_count']:
             risks.append('negative_closed_shell_winding_requires_review')
@@ -290,6 +379,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
                 'planar_repeated_point_ngons': len(planar_repeated_point_ngons),
                 'planar_repeated_point_sample': planar_repeated_point_ngons[:8],
                 'shading_review_status': ('needs_visual_review' if planar_repeated_point_ngons else 'none'),
+                'planar_face_crossings': face_crossings,
                 'shell_orientation': orientation,
                 'shading_normals': shading_normals,
                 'orientation_review_status': ('negative_closed_shells_present' if orientation['negative_count']
@@ -297,7 +387,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
                 'risk_status': 'needs_review' if risks else 'no_detected_integrity_risk',
                 'risk_reasons': risks,
                 'boundary_review_status': ('open_boundary_unreviewed' if boundary_count else 'none'),
-                'scope': 'Bounded final polygon surface diagnostic only. Planar repeated-point n-gons are shading review candidates, not integrity failure. Open boundaries can be intentional; no contact, self-intersection, strength, or appearance certification.'}
+                'scope': 'Bounded final polygon surface diagnostic only. Planar repeated-point n-gons are shading review candidates, not integrity failure. Planar face crossings cover strict interior edge crossings within eligible faces; inspect their coverage and skipped counts. Open boundaries can be intentional; no contact, general 3-D self-intersection, strength, or appearance certification.'}
     coords = [[sum(v*a for v,a in zip(p,axis)) for axis in axes] for p in pts.values()]
     lower = [min(p[i] for p in coords) for i in range(3)]
     upper = [max(p[i] for p in coords) for i in range(3)]
@@ -316,6 +406,7 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
             'nonmanifold_edges':sum(len(o)>2 for o in edges.values()),
             'orientation_conflicts':sum(len(o)==2 and directed[a,b]!=directed[b,a] for (a,b),o in edges.items()),
             'zero_area_faces':zero_area,'zero_length_edges':zero_edges,'shell_orientation':orientation,
+            'planar_face_crossings':face_crossings,
             'center_axis_surface_hits':center_axis_hits,
             'basis':axes,'bounds_min':lower,'bounds_max':upper,'extents':[b-a for a,b in zip(lower,upper)]}
 

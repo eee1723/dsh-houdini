@@ -157,6 +157,24 @@ const finalOutputRisk = exec.output.render({}, {
 assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
 assert.match(finalOutputRisk.split('\n')[0], /"suspicious_sweep_closures":1.*"closing_edge_ratio":4\.12/);
 assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
+for (const verb of ['geo_piece_stats','verify_network']) {
+  const crossings={status:'observed',coverage:'complete_within_scope',crossed_faces:6,
+    samples:Array.from({length:8},(_,index)=>({primitive:10+Math.floor(index/2),edge_indices:[1,3],position:[0,0,0]}))};
+  const surface={status:'observed',risk_status:'needs_review',risk_reasons:['planar_face_self_crossings'],
+    planar_face_crossings:crossings};
+  const evidence=verb==='geo_piece_stats'
+    ? {verb,method:'bounded polygon surface integrity',...surface}
+    : {verb,output:'/obj/part/OUT_ASSET',ok:true,healthy:true,surface_integrity:surface};
+  const first=exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[evidence]})[0].text.split('\n')[0];
+  assert.match(first,/"planar_face_crossings":\{"status":"observed","coverage":"complete_within_scope","crossed_faces":6,"sample_primitives":\[10,11,12,13\]/);
+  assert.doesNotMatch(first,/edge_indices|"position"/,'leading verdict only carries bounded primitive locations');
+  const skipped={...surface,risk_status:'no_detected_integrity_risk',risk_reasons:[],
+    planar_face_crossings:{status:'unverified',coverage:'partial',crossed_faces:0,samples:[]}};
+  const skippedEvidence=verb==='geo_piece_stats' ? {...evidence,...skipped} : {...evidence,surface_integrity:skipped};
+  const partial=exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[skippedEvidence]})[0].text.split('\n')[0];
+  assert.match(partial,/"planar_face_crossings":\{"status":"unverified","coverage":"partial","crossed_faces":0,"sample_primitives":\[\]/);
+}
+assert.match(finalOutputRisk.split('\n')[0],/"planar_face_crossings":null/,'absent diagnostics are not invented as clean');
 const lateInversion = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({
     ledgerIndex:index+1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
