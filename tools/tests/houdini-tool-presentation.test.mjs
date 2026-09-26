@@ -114,23 +114,31 @@ const blockedFinalAxis = exec.output.render({}, {
         reason:'axis_intersects_final_surface',hit_position:[.4,0,0]},
     ]}],
 })[0].text;
-assert.match(blockedFinalAxis.split('\n')[0], /final-interface-verdict:.*"pass":1,"fail":1,"unverified":0/);
+assert.match(blockedFinalAxis.split('\n')[0], /declared-interface-verdict:.*"checked_outputs":\["\/obj\/fan\/OUT_ASSET"\].*"pass":1,"fail":1,"unverified":0/);
 assert.match(blockedFinalAxis.split('\n')[0], /right_axis.*axis_intersects_final_surface.*\[0\.4,0,0\]/);
 assert.match(blockedFinalAxis, /Axis passage pass clears one centerline, not the full bore/);
 const emptyInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
   evidence:[{verb:'geo_check_interfaces',output:'/obj/fan/OUT_ASSET',status:'unverified',results:[]}]})[0].text;
-assert.match(emptyInterface.split('\n')[0], /final-interface-verdict:.*"declared":0.*"unverified":1.*no_result_rows/);
+assert.match(emptyInterface.split('\n')[0], /declared-interface-verdict:.*"declared":0.*"unverified":1.*no_result_rows/);
 const missingMember = exec.output.render({}, {ok:true,stdout:'',stderr:'',
   evidence:[{verb:'geo_check_interfaces',output:'/obj/enclosure/OUT_ASSET',status:'fail',
     results:[{id:'four_rails',method:'component_count',target_group:'fastening_rails',
       expected_components:4,observed_components:3,status:'fail'}]}]})[0].text;
-assert.match(missingMember.split('\n')[0], /final-interface-verdict:.*four_rails.*"expected_components":4,"observed_components":3/);
+assert.match(missingMember.split('\n')[0], /declared-interface-verdict:.*four_rails.*"expected_components":4,"observed_components":3/);
 const wrongPhysicalSize = exec.output.render({}, {ok:true,stdout:'',stderr:'',
   evidence:[{verb:'geo_check_interfaces',output:'/obj/part/OUT_ASSET',status:'fail',
     results:[{id:'drawing_width',method:'physical_extent',target_group:'housing',status:'fail',
       expected_mm:100,observed_mm:100000,tolerance_mm:0.5,delta_mm:99900}]}]})[0].text;
-assert.match(wrongPhysicalSize.split('\n')[0], /final-interface-verdict:.*drawing_width.*"expected_mm":100,"observed_mm":100000,"tolerance_mm":0\.5,"delta_mm":99900/);
+assert.match(wrongPhysicalSize.split('\n')[0], /declared-interface-verdict:.*drawing_width.*"expected_mm":100,"observed_mm":100000,"tolerance_mm":0\.5,"delta_mm":99900/);
 assert.match(wrongPhysicalSize, /Physical extent depends on an independently checked drawing dimension/);
+const temporaryInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
+  evidence:[{verb:'geo_check_interfaces',output:'/obj/part/OUT_ASSET1',status:'pass',
+    results:[{id:'pin_diameter',method:'physical_extent',status:'pass'}]}]})[0].text;
+assert.match(temporaryInterface.split('\n')[0], /declared-interface-verdict:.*"checked_outputs":\["\/obj\/part\/OUT_ASSET1"\]/,
+  'a temporary node must be named in the check summary even when every declaration passes');
+assert.doesNotMatch(temporaryInterface, /recorded final output/,
+  'the tool cannot promote a temporary node check to final product acceptance');
+assert.match(temporaryInterface, /may be temporary nodes rather than the delivered final output/);
 const integrityWarning = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
   evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',

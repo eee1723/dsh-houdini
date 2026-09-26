@@ -309,6 +309,8 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
   const verdicts: { priority: number; text: string }[] = []
   const interfaceChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_check_interfaces')
   if (interfaceChecks.length) {
+    const checkedOutputs = [...new Set(interfaceChecks.map(item => item.output).filter(
+      (output): output is string => typeof output === 'string' && output.length > 0))]
     const declared = interfaceChecks.reduce((count,item) => count
       + (Array.isArray(item.results) ? item.results.length : 0),0)
     const rows = interfaceChecks.flatMap(item => Array.isArray(item.results) && item.results.length
@@ -317,8 +319,9 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       : [{id:null,status:item.status === 'fail' ? 'fail' : 'unverified',
         output:item.output,reason:item.reason ?? 'no_result_rows'}])
     const unresolved = rows.filter((row:any) => row.status !== 'pass')
-    verdicts.push({priority:unresolved.length ? 0 : 3,text:`final-interface-verdict: ${JSON.stringify({
-      checks:interfaceChecks.length,declared,
+    verdicts.push({priority:unresolved.length ? 0 : 3,text:`declared-interface-verdict: ${JSON.stringify({
+      checks:interfaceChecks.length,declared,checked_outputs:checkedOutputs.slice(0, 4),
+      checked_outputs_omitted:Math.max(0, checkedOutputs.length - 4),
       pass:rows.filter((row:any) => row.status === 'pass').length,
       fail:rows.filter((row:any) => row.status === 'fail').length,
       unverified:rows.filter((row:any) => row.status === 'unverified').length,
@@ -329,7 +332,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         observed_components:row.observed_components ?? null,
         expected_mm:row.expected_mm ?? null,observed_mm:row.observed_mm ?? null,
         tolerance_mm:row.tolerance_mm ?? null,delta_mm:row.delta_mm ?? null})),
-      boundary:'Only declared relations and physical spans on the recorded final output were checked. Physical extent depends on an independently checked drawing dimension and complete part group. Axis passage pass clears one centerline, not the full bore. Later geometry edits require fresh checks.'})}`})
+      boundary:'Checks apply only to the recorded output paths, which may be temporary nodes rather than the delivered final output. Compare with the explicit delivery SOP and rerun after later geometry edits. Physical extent depends on an independently checked drawing dimension and complete part group. Axis passage pass clears one centerline, not the full bore.'})}`})
   }
   const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
     && item.method === 'bounded polygon surface integrity')
