@@ -326,8 +326,10 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         output:row.output,target_group:row.target_group ?? null,reason:row.reason ?? null,
         hit_position:row.hit_position ?? null,
         expected_components:row.expected_components ?? null,
-        observed_components:row.observed_components ?? null})),
-      boundary:'Only declared relations on the recorded final output were checked. Axis passage pass clears one centerline, not the full bore. Later geometry edits require fresh checks.'})}`})
+        observed_components:row.observed_components ?? null,
+        expected_mm:row.expected_mm ?? null,observed_mm:row.observed_mm ?? null,
+        tolerance_mm:row.tolerance_mm ?? null,delta_mm:row.delta_mm ?? null})),
+      boundary:'Only declared relations and physical spans on the recorded final output were checked. Physical extent depends on an independently checked drawing dimension and complete part group. Axis passage pass clears one centerline, not the full bore. Later geometry edits require fresh checks.'})}`})
   }
   const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
     && item.method === 'bounded polygon surface integrity')

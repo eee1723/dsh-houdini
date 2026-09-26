@@ -108,14 +108,23 @@ def validate_interfaces(interfaces):
         solid_overlap = item.get('method') == 'solid_overlap'
         axis_passage = item.get('method') == 'axis_passage'
         component_count = item.get('method') == 'component_count'
-        allowed = {'id','method','target_group','expected_components'} if component_count else {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
+        physical_extent = item.get('method') == 'physical_extent'
+        allowed = {'id','method','target_group','axis','expected_mm','tolerance_mm'} if physical_extent else {'id','method','target_group','expected_components'} if component_count else {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
-        for key in (('id','target_group') if axis_passage or component_count else ('id','source_group','target_group')):
+        for key in (('id','target_group') if axis_passage or component_count or physical_extent else ('id','source_group','target_group')):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f'interface {key} must be nonempty')
         if item['id'] in ids:
             raise ValueError('interface ids must be unique')
         ids.add(item['id'])
+        if physical_extent:
+            if type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2:
+                raise ValueError('physical_extent requires axis=0/1/2')
+            expected=_finite(item.get('expected_mm'),'physical_extent expected_mm')
+            tolerance=_finite(item.get('tolerance_mm'),'physical_extent tolerance_mm')
+            if expected <= 0 or tolerance < 0 or tolerance >= expected:
+                raise ValueError('physical_extent needs positive expected_mm and tolerance_mm in [0, expected_mm)')
+            continue
         if component_count:
             if type(item.get('expected_components')) is not int or not 1 <= item['expected_components'] <= 32:
                 raise ValueError('component_count expected_components must be 1..32')
@@ -316,11 +325,14 @@ def _supported_surface(prim):
     return kind in _SURFACE_TYPES and (kind != 'Polygon' or (bool(prim.intrinsicValue('closed')) and prim.numVertices() >= 3))
 
 
-def _check_interfaces(g, interfaces, max_pairs):
+def _check_interfaces(g, interfaces, max_pairs, output_node=None):
     total_pairs = 0
     selections = []
     results = []
     for item in interfaces:
+        if item.get('method') == 'physical_extent':
+            results.append(_physical_extent(g,item,output_node))
+            continue
         if item.get('method') == 'axis_gap':
             results.append(_axis_gap(g, item))
             continue
@@ -399,9 +411,51 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks one declared line, component_count counts edge-connected islands in a selected final Polygon group',
+            'coverage':'per-method declared selections; physical_extent compares one selected final Polygon group span in scene millimeters, proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks one declared line, component_count counts edge-connected islands in a selected final Polygon group',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared proximity, axis-projection, bounded solid-overlap, single-axis clearance or selected-group component count only; not continuous collision, full bore shape, mechanical strength or unspecified part completeness'}
+            'scope':'declared physical span, proximity, axis-projection, bounded solid-overlap, single-axis clearance or selected-group component count only; not continuous collision, full bore shape, mechanical strength or unspecified part completeness'}
+
+
+def _physical_extent(g,item,node):
+    group=g.findPrimGroup(item['target_group'])
+    prims=list(group.prims()) if group else []
+    base={'id':item['id'],'method':'physical_extent','target_group':item['target_group'],
+          'axis':item['axis'],'expected_mm':item['expected_mm'],
+          'tolerance_mm':item['tolerance_mm'],'target_count':len(prims),
+          'scope':'one final Polygon primitive group, SOP-local axis span converted with HIP unit length; group semantics and shape are not certified'}
+    if not prims:
+        return {**base,'status':'fail','reason':'missing_target_group'}
+    if len(prims)>20000:
+        return {**base,'status':'unverified','reason':'physical_extent_polygon_budget_exceeded'}
+    if any(p.type()!=hou.primType.Polygon or not _supported_surface(p) for p in prims):
+        return {**base,'status':'unverified','reason':'physical_extent_requires_closed_polygon_surfaces'}
+    vertex_count=sum(p.numVertices() for p in prims)
+    if vertex_count>100000:
+        return {**base,'status':'unverified','reason':'physical_extent_vertex_budget_exceeded'}
+    obj=node
+    while obj is not None and obj.type().category()!=hou.objNodeTypeCategory():
+        obj=obj.parent()
+    if obj is None:
+        return {**base,'status':'unverified','reason':'missing_object_transform_context'}
+    matrix=obj.worldTransform().asTuple()
+    if any(not math.isfinite(float(value)) or abs(float(value)-float(identity))>1e-9 for value,identity in
+           zip(matrix,hou.Matrix4(1).asTuple())):
+        return {**base,'status':'unverified','reason':'object_transform_requires_world_space_review'}
+    from dsh_context import unit_length_meters
+    unit=unit_length_meters()
+    if unit is None:
+        return {**base,'status':'unverified','reason':'scene_unit_length_unavailable'}
+    values=[float(point.position()[item['axis']]) for prim in prims for point in prim.points()]
+    if not values or any(not math.isfinite(value) for value in values):
+        return {**base,'status':'unverified','reason':'invalid_selected_point_positions'}
+    span=max(values)-min(values)
+    observed=span*unit*1000
+    delta=observed-item['expected_mm']
+    return {**base,'status':'pass' if abs(delta)<=item['tolerance_mm'] else 'fail',
+            'observed_sop_local_span':span,'scene_unit_length_meters':unit,
+            'observed_mm':observed,'delta_mm':delta,
+            'selected_points':len(values),
+            'boundary':'Checks only this selected group axis. Verify source dimension ownership, complete part identity and other required axes separately.'}
 
 
 def _component_count(g, item):
@@ -633,7 +687,7 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
     if type(max_pairs) is not int or not 1 <= max_pairs <= 100000:
         raise ValueError('max_pairs must be in 1..100000')
     node, g = _geometry(output)
-    result = _check_interfaces(g, interfaces, max_pairs)
+    result = _check_interfaces(g, interfaces, max_pairs, node)
     return {**result,'output':node.path(),'frame':float(hou.frame()),'checked_at':time.time(),
             'geometry_sha256':_data_signature(g),'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest(),
             'semantic_status':'unverified','next_action':'Repair failing declared interfaces then rerun; this does not certify unspecified relationships.'}
@@ -983,7 +1037,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'scope':'unsupported output representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
     baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
-    baseline_relations=_check_interfaces(baseline,baseline_contracts,50000) if baseline_contracts else None
+    baseline_relations=_check_interfaces(baseline,baseline_contracts,50000,node) if baseline_contracts else None
     baseline_topology=_check_topology(baseline,topology) if topology is not None else None
     baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,
                      'baseline_domain':baseline_domain}
@@ -1049,7 +1103,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
                 measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
             case_interfaces=(interfaces or []) + test.get('interfaces',[])
-            relations=_check_interfaces(g,case_interfaces,50000) if case_interfaces else None
+            relations=_check_interfaces(g,case_interfaces,50000,node) if case_interfaces else None
             topology_check=_check_topology(g,topology) if topology is not None else None
             measurements_pass=all(m['pass'] for m in measurements)
             checks=[r for r in (relations,topology_check) if r is not None]

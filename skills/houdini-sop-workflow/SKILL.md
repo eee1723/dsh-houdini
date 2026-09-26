@@ -75,10 +75,11 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 ## 完成范围
 
-用户给出整体物理尺寸时，交付前用最终输出的
-`verify_network.geometry.bbox_size`逐轴取实际跨度，再结合
-`scene_info.unit_length_meters`和OBJ变换换算；bbox_min/max是坐标端点，
-任一端点都不能单独当作整件宽、高或深。
+用户给出物理尺寸时，先核对图纸端点所属零件与尺寸性质，再将少量决定构造的外形尺寸
+用最终零件primitive组的`geo_check_interfaces(method='physical_extent')`声明毫米值、轴和误差；
+最后一次几何修改后复验，失败不能由健康cook或整件包围盒覆盖。该检查不证实图纸归属或组完整。
+整体包络另读最终`verify_network.geometry.bbox_size`与`bbox_size_sop_local_mm`，
+计入OBJ变换；bbox_min/max是端点，不能单独当跨度。
 
 声称“轴穿过铰耳”等真实通孔时，在复制/装配前先检查单个闭合零件的孔道；
 最终同一SOP中的完整闭合实体组可用`geo_check_interfaces(method='solid_overlap')`

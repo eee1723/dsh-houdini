@@ -4960,6 +4960,11 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     expected_components(1..32)测共享边连通岛数；缺组或数目不符fail，
     不支持表示/退化面unverified。期望件数须先从要求得出，不能从幸存件反推；
     数目通过不证明每件身份、对称位置、形状或连接到主体。
+    method='physical_extent'用最终闭合Polygon primitive组target_group、axis(0..2)、
+    expected_mm(正数)和tolerance_mm(0..expected_mm)量选中点的逐轴跨度，按HIP
+    unitlength换算毫米。尺寸归属与允许误差须先由用户/厂家图核对，不能从现有模型反推。
+    缺组或超差fail；非Polygon、单位未知、非单位OBJ变换等为unverified。
+    只证明所选最终组的一轴数值，不证明完整零件身份、孔径、造型或装配。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
