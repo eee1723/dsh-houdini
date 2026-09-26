@@ -374,6 +374,28 @@ try:
     assert hollow_check['status']=='pass' and hollow_check['results'][0]['overlap_volume']==0,hollow_check
     assert hollow_check['results'][0]['intersection_primitives']==0
     assert 'overlap_bounds' not in hollow_check['results'][0],hollow_check
+    bore_check={'id':'full_bore_envelope','method':'bore_clearance','target_group':'lug',
+                'axis':0,'start':[-.012,0,0],'end':[.012,0,0],'radius':.002}
+    clear=h.geo_check_interfaces(hollow_assembly,[bore_check])
+    assert clear['status']=='pass' and clear['results'][0]['overlap_volume']==0,clear
+    filled=h.geo_check_interfaces(solid_assembly,[bore_check])
+    assert filled['status']=='fail' and filled['results'][0]['overlap_volume']>0,filled
+    sliver=root.createNode('box','off_axis_bore_obstruction')
+    h.set_parms(sliver,{'sizex':.001,'sizey':.0004,'sizez':.001,'ty':.0019})
+    sliver_tag=root.createNode('attribwrangle','off_axis_bore_tag')
+    sliver_tag.setInput(0,sliver);sliver_tag.parm('class').set('primitive')
+    sliver_tag.parm('snippet').set('setprimgroup(0,"lug",@primnum,1);')
+    hollow_assembly.setInput(2,sliver_tag)
+    clear_axis={'id':'center_only','method':'axis_passage','target_group':'lug',
+                'axis':0,'start':[-.012,0,0],'end':[.012,0,0]}
+    assert h.geo_check_interfaces(hollow_assembly,[clear_axis])['status']=='pass'
+    obstructed=h.geo_check_interfaces(hollow_assembly,[bore_check])
+    assert obstructed['status']=='fail' and obstructed['results'][0]['overlap_volume']>0,obstructed
+    hollow_assembly.setInput(2,None)
+    assert h.geo_check_interfaces(hollow_assembly,[bore_check])['status']=='pass'
+    rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**bore_check,'radius':0}]),'positive')
+    rejects(lambda:h.geo_check_interfaces(hollow_assembly,[bore_check],max_pairs=1),'budget')
+    assert h.geo_check_interfaces(hollow_assembly,[{**bore_check,'target_group':'missing'}])['status']=='fail'
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[no_overlap],max_pairs=1),'budget')
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'max_overlap_volume':-1}]),'nonnegative')
     assert h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'source_group':'missing'}])['status']=='fail'

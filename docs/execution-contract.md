@@ -233,6 +233,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
 | solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；非零有效交集附SOP局部坐标的整体包围盒便于定位；无交集或阈值内通过 | 包围盒可能涵盖多处分离交集，并非单个接触点；零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
 | axis_passage | 声明的SOP local轴线穿过最终输出指定Polygon组的包络，且沿该线未碰到最终表面 | 整个孔径、孔壁形状、其他孔轴或孔周材料；非Polygon及未跨包络保持unverified |
+| bore_clearance | 声明的SOP local轴向起止区间和正半径构成外切24边棱柱；在最终闭合朝外Polygon部件组上做有界Boolean相交，零交集通过，有效实体侵入失败并返回相交包围盒 | 只证实该区间的圆形空域，不能从组的总包围盒推断板厚；区间外继续通畅、孔周材料、图纸孔位及加工公差仍需另验。开放/不完整实体或数值含糊为unverified |
 | component_count | 最终输出指定Polygon组中共享边连通岛的实际数量与预先声明数量一致 | 各岛的产品身份、对称位置、尺寸或与主体的实际连接；非Polygon/退化面保持unverified |
 | physical_extent | 已核对归属的厂家/用户毫米尺寸与最终闭合Polygon组一轴物理跨度一致；按HIP单位换算，非单位OBJ变换保持unverified | 组是否涵盖完整零件、尺寸归属是否读对、其他轴/孔径/装配；必须在最后修改后复验 |
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |

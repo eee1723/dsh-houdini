@@ -107,11 +107,12 @@ def validate_interfaces(interfaces):
         section = item.get('method') == 'section_proximity'
         solid_overlap = item.get('method') == 'solid_overlap'
         axis_passage = item.get('method') == 'axis_passage'
+        bore_clearance = item.get('method') == 'bore_clearance'
         component_count = item.get('method') == 'component_count'
         physical_extent = item.get('method') == 'physical_extent'
-        allowed = {'id','method','target_group','axis','expected_mm','tolerance_mm'} if physical_extent else {'id','method','target_group','expected_components'} if component_count else {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
+        allowed = {'id','method','target_group','axis','expected_mm','tolerance_mm'} if physical_extent else {'id','method','target_group','expected_components'} if component_count else {'id','method','target_group','axis','start','end','radius'} if bore_clearance else {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
-        for key in (('id','target_group') if axis_passage or component_count or physical_extent else ('id','source_group','target_group')):
+        for key in (('id','target_group') if axis_passage or bore_clearance or component_count or physical_extent else ('id','source_group','target_group')):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f'interface {key} must be nonempty')
         if item['id'] in ids:
@@ -129,19 +130,21 @@ def validate_interfaces(interfaces):
             if type(item.get('expected_components')) is not int or not 1 <= item['expected_components'] <= 32:
                 raise ValueError('component_count expected_components must be 1..32')
             continue
-        if axis_passage:
+        if axis_passage or bore_clearance:
             axis = item.get('axis')
             if type(axis) is not int or not 0 <= axis <= 2:
-                raise ValueError('axis_passage requires axis=0/1/2')
+                raise ValueError(f"{item['method']} requires axis=0/1/2")
             for key in ('start','end'):
                 point = item.get(key)
                 if not isinstance(point,(list,tuple)) or len(point)!=3:
-                    raise ValueError(f'axis_passage {key} must be a 3D SOP-local point')
-                for value in point:_finite(value, f'axis_passage {key}')
+                    raise ValueError(f"{item['method']} {key} must be a 3D SOP-local point")
+                for value in point:_finite(value, f"{item['method']} {key}")
             start,end=item['start'],item['end']
             if abs(float(end[axis])-float(start[axis])) <= 1e-6 or any(
                     abs(float(end[i])-float(start[i])) > 1e-9 for i in range(3) if i!=axis):
-                raise ValueError('axis_passage needs a nonzero axis-aligned segment')
+                raise ValueError(f"{item['method']} needs a nonzero axis-aligned segment")
+            if bore_clearance and _finite(item.get('radius'),'bore_clearance radius') <= 0:
+                raise ValueError('bore_clearance radius must be positive in SOP local units')
             continue
         if axis_gap:
             if type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2:
@@ -347,6 +350,10 @@ def _check_interfaces(g, interfaces, max_pairs, output_node=None):
         if item.get('method') == 'axis_passage':
             results.append(_axis_passage(g,item))
             continue
+        if item.get('method') == 'bore_clearance':
+            row, pairs = _bore_clearance(g,item,max_pairs-total_pairs)
+            results.append(row);total_pairs+=pairs
+            continue
         if item.get('method') == 'component_count':
             results.append(_component_count(g,item))
             continue
@@ -411,9 +418,9 @@ def _check_interfaces(g, interfaces, max_pairs, output_node=None):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; physical_extent compares one selected final Polygon group span in scene millimeters, proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks one declared line, component_count counts edge-connected islands in a selected final Polygon group',
+            'coverage':'per-method declared selections; physical_extent compares one selected final Polygon group span in scene millimeters, proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks one declared line, bore_clearance checks a circumscribed 24-sided prism against the selected final solid, component_count counts edge-connected islands in a selected final Polygon group',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared physical span, proximity, axis-projection, bounded solid-overlap, single-axis clearance or selected-group component count only; not continuous collision, full bore shape, mechanical strength or unspecified part completeness'}
+            'scope':'declared physical span, proximity, axis-projection, bounded solid-overlap, declared cylindrical clearance envelope, single-axis clearance or selected-group component count only; not continuous collision, full bore shape, mechanical strength or unspecified part completeness'}
 
 
 def _physical_extent(g,item,node):
@@ -528,6 +535,117 @@ def _axis_passage(g, item):
                 'hit_distance':float(origin.distanceTo(position))}
     return {**base,'status':'pass','clear_length':float(length),
             'boundary':'Only this centerline is clear; check bore radius, rim geometry and other required axes separately.'}
+
+
+def _bore_clearance(g, item, budget):
+    """Intersect a circumscribed cylinder envelope with one final closed part group."""
+    axis=item['axis'];start=[float(v) for v in item['start']];end=[float(v) for v in item['end']]
+    radius=float(item['radius']);sides=24
+    base={'id':item['id'],'method':'bore_clearance','target_group':item['target_group'],
+          'axis':axis,'start':start,'end':end,'radius':radius,'sides':sides,
+          'coordinate_space':'explicit output SOP local',
+          'scope':'declared straight cylindrical clearance envelope over exactly the start/end interval in one final closed Polygon group; no proof of material around it, continuation beyond either end, nominal bore shape, tolerance, other holes or motion'}
+    group=g.findPrimGroup(item['target_group'])
+    prims=list(group.prims()) if group else []
+    base['target_count']=len(prims)
+    if not prims:
+        return {**base,'status':'fail','reason':'missing_target_group'},0
+    if len(prims)>4000 or len(prims)*sides>budget:
+        raise ValueError('bore_clearance Boolean budget exceeded; narrow the final part group or raise max_pairs')
+    if any(p.type()!=hou.primType.Polygon or not _supported_surface(p) for p in prims):
+        return {**base,'status':'unverified','reason':'bore_clearance_requires_closed_polygon_surfaces'},0
+    lower=[min(float(p.boundingBox().minvec()[i]) for p in prims) for i in range(3)]
+    upper=[max(float(p.boundingBox().maxvec()[i]) for p in prims) for i in range(3)]
+    if (min(start[axis],end[axis]) >= upper[axis]-1e-6
+            or max(start[axis],end[axis]) <= lower[axis]+1e-6
+            or any(not lower[i]+1e-6 < start[i] < upper[i]-1e-6 for i in range(3) if i!=axis)):
+        return {**base,'status':'unverified','reason':'segment_does_not_overlap_target_bounds',
+                'target_bounds':[lower,upper]},0
+    from dsh_geometry_observation import polygon_observation
+    observed=polygon_observation(g,group=item['target_group'],integrity_only=True)
+    shell=observed.get('shell_orientation',{})
+    check={key:observed.get(key) for key in ('status','boundary_edges','nonmanifold_edges',
+            'orientation_conflicts','zero_area_faces','zero_length_edges','duplicate_boundary_faces')}
+    check.update(positive_closed_shells=shell.get('positive_count'),
+                 negative_closed_shells=shell.get('negative_count'),
+                 unverified_shells=shell.get('unverified_count'))
+    if (observed.get('status')!='observed' or any(observed.get(key) for key in
+            ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+             'zero_length_edges','duplicate_boundary_faces')) or
+            not shell.get('positive_count') or shell.get('negative_count') or shell.get('unverified_count')):
+        return {**base,'status':'unverified','reason':'selection_not_complete_consistent_outward_polygon_solid',
+                'selection_check':check},0
+    # The polygon's apothem equals the requested radius. A clear circumscribed
+    # prism therefore contains the whole requested circular cross-section.
+    u,v=((1,2),(2,0),(0,1))[axis]
+    vertex_radius=radius/math.cos(math.pi/sides)
+    envelope=hou.Geometry()
+    rings=[]
+    for axial in (min(start[axis],end[axis]),max(start[axis],end[axis])):
+        ring=[]
+        for index in range(sides):
+            angle=2*math.pi*(index+.5)/sides
+            position=list(start);position[axis]=axial
+            position[u]+=vertex_radius*math.cos(angle)
+            position[v]+=vertex_radius*math.sin(angle)
+            point=envelope.createPoint();point.setPosition(position);ring.append(point)
+        rings.append(ring)
+    def face(points):
+        polygon=envelope.createPolygon()
+        for point in points:polygon.addVertex(point)
+    face(rings[0])
+    face(list(reversed(rings[1])))
+    for index in range(sides):
+        following=(index+1)%sides
+        face((rings[1][index],rings[1][following],rings[0][following],rings[0][index]))
+    envelope_check=polygon_observation(envelope,integrity_only=True)
+    envelope_shell=envelope_check.get('shell_orientation',{})
+    if not envelope_shell.get('positive_count') or envelope_shell.get('negative_count'):
+        return {**base,'status':'unverified','reason':'internal_clearance_envelope_not_outward',
+                'envelope_check':envelope_check},0
+    target=hou.Geometry(g)
+    keep={p.number() for p in prims}
+    target.deletePrims([p for p in target.prims() if p.number() not in keep],False)
+    target.incrementAllDataIds();envelope.incrementAllDataIds()
+    verb=hou.sopNodeTypeCategory().nodeVerb('boolean::2.0')
+    if verb is None:
+        return {**base,'status':'unverified','reason':'boolean_verb_unavailable','selection_check':check},0
+    pairs=len(prims)*sides
+    try:
+        verb.setParms({'booleanop':1,'asurface':0,'bsurface':0})
+        intersection=hou.Geometry()
+        verb.execute(intersection,[target,envelope])
+        count=len(intersection.prims())
+        if not count:
+            return {**base,'status':'pass','intersection_primitives':0,
+                    'overlap_volume':0.0,'selection_check':check},pairs
+        if count>5000 or intersection.intrinsicValue('memoryusage')>16*1024*1024:
+            return {**base,'status':'unverified','reason':'intersection_output_budget_exceeded',
+                    'intersection_primitives':count,'selection_check':check},pairs
+        result=polygon_observation(intersection,integrity_only=True)
+        result_shell=result.get('shell_orientation',{})
+        if (result.get('status')!='observed' or any(result.get(key) for key in
+                ('boundary_edges','nonmanifold_edges','orientation_conflicts','zero_area_faces',
+                 'zero_length_edges','duplicate_boundary_faces')) or
+                not result_shell.get('positive_count') or result_shell.get('negative_count') or result_shell.get('unverified_count')):
+            return {**base,'status':'unverified','reason':'intersection_not_complete_consistent_polygon_solid',
+                    'intersection_primitives':count,'selection_check':check},pairs
+        volume=math.fsum(float(p.intrinsicValue('measuredvolume')) for p in intersection.prims())
+        scale=max(float(v) for v in envelope.boundingBox().sizevec())
+        floor=max(scale**3*1e-12,1e-18)
+        if not math.isfinite(volume) or volume<=floor:
+            return {**base,'status':'unverified','reason':'intersection_volume_at_numeric_noise_floor',
+                    'overlap_volume':volume if math.isfinite(volume) else None,
+                    'numeric_noise_floor':floor,'intersection_primitives':count,'selection_check':check},pairs
+        bounds=intersection.boundingBox()
+        return {**base,'status':'fail','reason':'declared_clearance_intersects_final_solid',
+                'overlap_volume':volume,'numeric_noise_floor':floor,
+                'overlap_bounds':[[float(v) for v in bounds.minvec()],
+                                  [float(v) for v in bounds.maxvec()]],
+                'intersection_primitives':count,'selection_check':check},pairs
+    except (hou.Error,ValueError,TypeError,OverflowError) as error:
+        return {**base,'status':'unverified','reason':'boolean_intersection_failed',
+                'detail':str(error)[:200],'selection_check':check},pairs
 
 
 def _solid_overlap(g, item, budget):

@@ -4956,6 +4956,11 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     位于包络内；在最终Polygon表面上射线碰到任何面即fail，单轴无遮挡才pass。
     缺组fail；不支持表示或线段未跨包络为unverified。只证明这一条中心线，
     不证明孔径、孔壁、周围材料或其他轴；后续增材修改后必须复验。
+    method='bore_clearance'增加正数radius（SOP local单位），在声明的start/end
+    区间内以外切24边棱柱与最终闭合朝外Polygon组做Boolean相交；零交集pass，
+    有效正体积fail，不完整实体/数值含糊unverified。区间须按安装板等实际待验
+    壁厚指定；若组还有远处的铰耳，不要求整组包围盒都被孔轴贯穿。它不证明
+    区间两端之外仍通畅、孔周有材料、图纸孔位正确或加工公差。
     method='component_count'用最终Polygon primitive组target_group和
     expected_components(1..32)测共享边连通岛数；缺组或数目不符fail，
     不支持表示/退化面unverified。期望件数须先从要求得出，不能从幸存件反推；
@@ -4991,7 +4996,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
     case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
     三者均用geo_check_interfaces同一schema；实体禁穿插可用solid_overlap，
-    但所选组须完整闭合，孔轴无遮挡可用axis_passage；二者均不认证整孔形状。
+    但所选组须完整闭合，孔轴无遮挡可用axis_passage，声明孔径空域可用
+    bore_clearance；这些检查均不认证整件孔系或制造公差。
     每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
