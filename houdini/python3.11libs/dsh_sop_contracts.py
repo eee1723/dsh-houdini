@@ -429,6 +429,13 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     if out.name().upper() == 'OUT_ASSET':
         from dsh_context import unit_length_meters
         result['scene_unit_length_meters'] = unit_length_meters()
+        size = (summary or {}).get('bbox_size')
+        unit = result['scene_unit_length_meters']
+        result['bbox_size_sop_local_mm'] = (
+            [round(float(span) * unit * 1000, 6) for span in size]
+            if unit is not None and isinstance(size, (list, tuple)) and len(size) == 3
+            else None
+        )
     if errors:
         result['cook_details']=[{'path':r['path'],'errors':r['errors'],
                                  'source_context':_vex_source_context(r)} for r in reports if not r['ok']][:3]

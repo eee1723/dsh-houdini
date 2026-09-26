@@ -189,7 +189,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
 `geo_piece_stats(...,inspect=True)`（含integrity_only）与最终输出的`surface_integrity`另含`planar_face_crossings`：只检查单个近似平面闭合Polygon内非相邻边的严格内部交叉，返回面数、原始primitive/边索引/位置样本和检查覆盖。每面最多256顶点、每查询最多250000对边；超预算只使该诊断`status=unverified, coverage=partial`，其他已完成观察仍保留。三角形不可能严格自交，不计作覆盖缺口；非平面/退化面、端点接触、共线重合与跨面交叉不在此诊断范围。合法孔洞桥的重复边不因本项判错。命中加入非阻断`risk_reasons`，不修改`ok/healthy`；未命中不证明任意3D自交不存在。含不支持曲线/native/packed的混合输出仍遵守原来的unverified边界，须检查对应Polygon组或源模块。正反例与覆盖预算见[平面面内交叉回归](../tools/tests/dsh-planar-face-crossings.test.py)，摘要透传见[模型回执回归](../tools/tests/houdini-tool-presentation.test.mjs)。
 
-混合输出的最终`surface_integrity`同时返回原由、至多8个纯闭合Polygon最终组候选、最多32组扫描覆盖及局部`geo_piece_stats`复查提示；不自动执行候选检查，不改变整件unverified或`healthy`。
+混合输出的最终`surface_integrity`同时返回原由、至多8个纯闭合Polygon最终组候选、最多32组扫描覆盖及局部`geo_piece_stats`复查提示；不自动执行候选检查，不改变整件unverified或`healthy`。最终`OUT_ASSET`另回`bbox_size_sop_local_mm`，用HIP的`scene_unit_length_meters`换算SOP局部包围盒逐轴跨度；Host摘要同时展示原场景单位与毫米值。仍须核对OBJ缩放及图纸尺寸归属，不凭包围盒认证部件。
 
 多个`geo_piece_stats(...,inspect=True,integrity_only=True,group=...)`同批返回时，Host先标明本批是否检查了未分组的整件输出；局部组各自零风险不能覆盖组与组之间的完全重合面。
 

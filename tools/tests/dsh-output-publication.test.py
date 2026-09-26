@@ -34,11 +34,23 @@ try:
         f"module_out=tab_create({root.path()!r},'null','OUT_MODULE',inputs=[src])\n"
         f"asset_out=tab_create({root.path()!r},'null','OUT_ASSET',inputs=[module_out])\n"
         "sop_set_output(asset_out)")
-    r=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
-          f"nodes={[root.node('module_source').path(), root.node('OUT_MODULE').path(), root.node('OUT_ASSET').path()]!r})")['result']
+    receipt=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+                f"nodes={[root.node('module_source').path(), root.node('OUT_MODULE').path(), root.node('OUT_ASSET').path()]!r})")
+    r=receipt['result']
     assert r['ok'] and r['output']==root.node('OUT_ASSET').path() and r['public_output'] is None
     assert all(abs(v-1)<1e-6 for v in r['geometry']['bbox_size']),r['geometry']
     assert r['scene_unit_length_meters']>0
+    assert all(abs(mm-1000*r['scene_unit_length_meters'])<1e-3 for mm in r['bbox_size_sop_local_mm']),r
+    assert any(e.get('verb')=='verify_network' and e.get('bbox_size_sop_local_mm')==r['bbox_size_sop_local_mm']
+               for e in receipt['evidence']),receipt
+    original_unit=r['scene_unit_length_meters']
+    try:
+        hou.hscript('unitlength 0.001')
+        mm=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+               f"nodes={[root.node('module_source').path(),root.node('OUT_MODULE').path(),root.node('OUT_ASSET').path()]!r})")['result']
+        assert mm['scene_unit_length_meters']==.001 and all(abs(v-1)<1e-3 for v in mm['bbox_size_sop_local_mm']),mm
+    finally:
+        hou.hscript('unitlength '+str(original_unit))
     assert r['surface_integrity']['risk_status']=='no_detected_integrity_risk',r['surface_integrity']
     inverted=root.createNode('reverse','inverted_for_final_advisory')
     inverted.setInput(0,root.node('module_source'))

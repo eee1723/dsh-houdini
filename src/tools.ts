@@ -348,6 +348,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       verdicts.push({priority:needsReview ? 1 : 3,text:`final-output-review: ${JSON.stringify({
         output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
         scene_unit_length_meters:item.scene_unit_length_meters ?? null,
+        bbox_size_sop_local_mm:item.bbox_size_sop_local_mm ?? null,
         surface_status:surface.status ?? 'not_checked',
         surface_reason:surface.reason ?? null,
         polygon_group_candidates:surface.polygon_group_candidates ?? [],
@@ -362,7 +363,7 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         sweep_path_risk_status:curve.risk_status ?? null,
         suspicious_sweep_closures:curve.suspicious_closure_count ?? null,
         sweep_closure_samples:curve.samples ?? [],
-        boundary:'SOP-local size uses HIP units; compare the full span with the user request and account for OBJ transforms. Surface and upstream Sweep path flags need part-level review; healthy cook does not certify assembly or appearance.'})}`})
+        boundary:'SOP-local millimeters are converted from HIP unit length. Compare them with drawing dimensions and account for OBJ transforms; a 1 m unit makes a 160-unit span 160000 mm. Surface and upstream Sweep path flags need part-level review; healthy cook does not certify assembly or appearance.'})}`})
     }
     if (item?.verb === 'test_controls' && item.control_summary) {
       const summary = item.control_summary
