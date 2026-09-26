@@ -18,6 +18,10 @@
 稳定内部名承担接口身份，显示标签与文件夹只影响呈现。改UI不改绑定，更换内部实现时显式迁移绑定。
 控制定义记录在任务需求/计划与最终参数schema中，不建立第二份自动判完成账本。
 
+公共控制按用户操作选择，不以数量衡量程序化能力。自由输入确定用户可独立改变的量，派生尺寸/锚点供各模块共享，内部常量留在可编辑网络；需要展示派生结果时不再添加相互冲突的可写输入。
+主体与附属件必须从同一当前状态求值。尺寸、姿态或接合变化时，仅隐藏失效控件不会修复模型；用户必需操作未覆盖时交付结论保留缺口。已有接口、动画和外部消费者按迁移合同处理，不因新界面更精简而删除。
+领域选参与代表性验证方法只在houdini-parameter-ui的控制与绑定reference维护；候选指导不改变现有工具签名，也不宣称参数空间已完整验证。
+
 多Agent的公共/派生/局部参数归属、接口修订与用户手改保护见[组件协作设计](component-collaboration.md)。
 该路线以普通subnet/spare和原生数据依赖交付，不要求HDA；设计计划不扩大当前绑定工具或ownership范围。
 
@@ -49,9 +53,11 @@ spare的layout默认追加，与HDA整组重建分开。已有spare默认值更�
 bind_controls首版只接受明确数值源与目标以及线性scale/offset，不接管任意已有表达式网络。
 未指定的场景参数不自动变为总控目标；单次allow_foreign只用于用户明确的目标，服务节点不豁免。
 布局、参数读取和绑定回读各自不能证明业务产物正确；领域输出验证继续使用现有cook/verify_network/test_controls合同。
+公共控制先检查默认关系，再逐项观察相关实体响应，最后对相互制约的控制选择代表性组合边界，并包含附属件、应保持的量与真实接口；恢复参数及输出后再验最终外观。仅整体bbox变化不证明联动与接合，有限case不证明全部参数范围。
 
 实现入口为[src/skill.ts](../src/skill.ts)、[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
 [参数UI](../houdini/python3.11libs/dsh_parameter_ui.py)、[绑定](../houdini/python3.11libs/dsh_control_bindings.py)；
 具体签名、版本、限额和未支持范围以[工具设计](tool-design.md)为准。
 文档门为npm run docs:check，HOM在隔离H21/H22执行[控制回归](../tools/tests/dsh-parameter-controls.test.py)及原有UI/执行边界回归；
+少量自由控制通过派生锚点驱动主体/附属件的正反例见[控制设计回归](../tools/tests/dsh-control-design.test.py)，覆盖单项、组合、漏联动与状态恢复。
 机制测试不证明GUI或自然任务泛化，验证记录留在会话/CI，不追加到本页。

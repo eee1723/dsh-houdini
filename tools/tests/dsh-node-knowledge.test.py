@@ -47,7 +47,7 @@ try:
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
     families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
-                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge')
+                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge', 'boolean')
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
@@ -98,6 +98,31 @@ try:
     assert box.parm('type').evalAsString() == 'poly'
     assert len(box.geometry().prims()) == 6
     done('native/poly output and explicit tube closure; Box counterexample')
+
+    # A writable tessellation value may be inactive in the current mode. The
+    # reciprocal modes are both checked against real geometry, not UI labels.
+    sphere = make('sphere', 'resolution_modes',
+                  {'type': 'poly', 'freq': 2, 'rows': 10, 'cols': 12})
+    polygon_counts = (len(sphere.geometry().points()), len(sphere.geometry().prims()))
+    h.set_parms(sphere, {'rows': 20, 'cols': 24})
+    assert (len(sphere.geometry().points()), len(sphere.geometry().prims())) == polygon_counts
+    h.set_parm(sphere, 'freq', 4)
+    assert len(sphere.geometry().prims()) > polygon_counts[1]
+    h.set_parms(sphere, {'type': 'polymesh', 'rows': 10, 'cols': 12, 'freq': 2})
+    mesh_count = len(sphere.geometry().prims())
+    h.set_parm(sphere, 'rows', 20)
+    row_count = len(sphere.geometry().prims())
+    assert row_count > mesh_count
+    h.set_parm(sphere, 'cols', 24)
+    column_count = len(sphere.geometry().prims())
+    assert column_count > row_count
+    h.set_parm(sphere, 'freq', 4)
+    assert len(sphere.geometry().prims()) == column_count
+    explicit_poly_advice = cards.decision_advisories(cards.operation_card('sphere'),
+                                                    {'type': 'poly', 'rows': 20, 'cols': 24})
+    assert {d['id'] for d in explicit_poly_advice} == {'effective_resolution'}
+    assert explicit_poly_advice[0]['always']
+    done('Sphere poly frequency versus Polygon Mesh rows/columns: inactive writes do not refine')
 
     line = make('line', 'path', {'dir': [0, 0, 1]})
     profile = make('circle', 'profile', {'type': 'poly', 'orient': 'xy', 'rad': [.3, .15]})
@@ -175,6 +200,68 @@ try:
     assert {'axis', 'surface_output', 'end_closure', 'surface_orientation'} == card_ids
     assert {d['id'] for d in cards.decision_advisories(cards.operation_card('normal'), {})} == {'winding_vs_normal'}
     done('Revolve cap and winding; Normal attribute versus Reverse vertex order')
+
+    # An ordinary annular solid is already closed/outward. Reversing it alone
+    # makes A-B include cutter material outside A with no Boolean warning.
+    profile_source = ('int pts[]; append(pts,addpoint(0,set(1,0,0))); '
+                      'append(pts,addpoint(0,set(1,1,0))); '
+                      'append(pts,addpoint(0,set(2,1,0))); '
+                      'append(pts,addpoint(0,set(2,0,0))); ')
+    ring_profile = make('attribwrangle', 'solid_profile',
+                        {'class': 'detail', 'snippet': profile_source + 'addprim(0,"poly",pts);'})
+    ring = make('revolve::2.0', 'annular_solid',
+                {'divs': 24, 'surftype': 'quads', 'primtype': 'poly', 'type': 'closed'}, [ring_profile])
+    source_integrity = observed(ring)
+    assert source_integrity['boundary_edges'] == 0
+    assert source_integrity['shell_orientation']['positive_count'] == 1
+    cutter = make('box', 'solid_cutter', {'size': [.8, .8, .8], 't': [1.5, .8, 0]})
+    difference = make('boolean::2.0', 'solid_difference',
+                      {'booleanop': 'subtract', 'subtractchoices': 'aminusb'}, [ring, cutter])
+    correct_positions = positions(difference)
+    assert observed(difference)['boundary_edges'] == 0
+    assert abs(difference.geometry().boundingBox().maxvec()[1] - 1) < 1e-6
+    assert not difference.warnings()
+    h.set_parm(ring, 'reversecrosssections', 1)
+    assert observed(ring)['shell_orientation']['negative_count'] == 1
+    assert difference.geometry().boundingBox().maxvec()[1] > ring.geometry().boundingBox().maxvec()[1] + .1
+    assert not difference.errors() and not difference.warnings(), 'success is not intended subtraction'
+    h.set_parm(ring, 'reversecrosssections', 0)
+    assert positions(difference) == correct_positions
+
+    # The same visible profile with coincident open endpoints has an actual
+    # seam. A targeted Fuse repairs it; the legitimate closed source above
+    # does not need that repair. No blanket Fuse/Reverse policy is warranted.
+    h.set_parm(ring_profile, 'snippet', profile_source +
+               'append(pts,addpoint(0,set(1,0,0))); addprim(0,"polyline",pts);')
+    assert observed(ring)['boundary_edges'] > 0
+    seam_fuse = make('fuse::2.0', 'repair_confirmed_seam', inputs=[ring])
+    assert observed(seam_fuse)['boundary_edges'] == 0
+    assert observed(seam_fuse)['shell_orientation']['positive_count'] == 1
+    difference.setInput(0, seam_fuse)
+    assert positions(difference) == correct_positions
+    assert not difference.errors() and not difference.warnings()
+    boolean_advice = cards.decision_advisories(cards.operation_card('boolean::2.0'),
+                                             {'booleanop': 'subtract', 'subtractchoices': 'aminusb'})
+    assert {d['id'] for d in boolean_advice} == {'solid_input_validity'}
+    done('Boolean A-B outward/inward counterexample and independently repaired profile seam')
+
+    semantic_specs = [
+        {'name': 'advised_sphere', 'type': 'sphere',
+         'parms': {'type': 'poly', 'freq': 2, 'rows': 20, 'cols': 24}},
+        {'name': 'advised_difference', 'type': 'boolean',
+         'parms': {'booleanop': 'subtract', 'subtractchoices': 'aminusb'},
+         'inputs': [seam_fuse.name(), cutter.name()]},
+    ]
+    preview = h.build_module(root, semantic_specs, output='advised_difference', dry_run=True)
+    assert root.node('advised_sphere') is None and root.node('advised_difference') is None
+    semantic_build = h.build_module(root, semantic_specs, output='advised_difference')
+    assert semantic_build['operation_advisories'] == preview['operation_advisories']
+    assert {d['id'] for item in semantic_build['operation_advisories'] for d in item['decisions']} == {
+        'effective_resolution', 'solid_input_validity'}
+    assert bridge._operation_summary('build_module', semantic_build)['operation_advisories'] == semantic_build['operation_advisories']
+    assert len(root.node('advised_sphere').geometry().prims()) == polygon_counts[1], 'advice must not change resolution'
+    assert positions(root.node('advised_difference')) == correct_positions
+    done('Sphere/Boolean semantic caveats reach build_module dry-run, build and Bridge unchanged')
 
     sheet = make('grid', 'sheet', {'rows': 2, 'cols': 2})
     ext = make('polyextrude::2.0', 'thick_sheet', {'dist': .2}, [sheet])

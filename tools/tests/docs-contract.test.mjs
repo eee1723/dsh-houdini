@@ -140,17 +140,21 @@ const moduleContracts = read('skills/houdini-sop-workflow/references/module-qual
 const handoffLayout = read('skills/houdini-sop-workflow/references/network-handoff.md')
 for (const text of [sopWorkflow, moduleContracts]) {
   assert.match(text, /同层.*逻辑模块/, 'ordinary single-author modules must remain flat by default')
-  assert.match(text, /最低共同装配层/, 'cross-module connectors need one owning assembly boundary')
-  assert.match(text, /不因.*自动创建(?:subnet|Subnet)/,
-    'module boundaries must not imply automatic subnet creation')
 }
+// The entry routes conditional assembly rules to their canonical reference;
+// do not require a second copy of those rules in the already large skill.
+assert.match(sopWorkflow, /\]\(references\/module-quality-contracts\.md(?:#[^)]*)?\)/,
+  'the SOP entry must route assembly details to the canonical contract')
+assert.match(moduleContracts, /最低共同装配层/, 'cross-module connectors need one owning assembly boundary')
+assert.match(moduleContracts, /不因.*自动创建(?:subnet|Subnet)/,
+  'module boundaries must not imply automatic subnet creation')
 assert.match(sopWorkflow, /OUT_ASSET/, 'nontrivial editable assets need a stable root handoff output')
-assert.match(sopWorkflow, /绝对.*路径/, 'movable modules must reject hidden absolute dependencies')
+assert.match(moduleContracts, /绝对.*路径/, 'movable modules must reject hidden absolute dependencies')
 assert.match(handoffLayout, /OUT_<MODULE>/, 'flat module checkpoints belong in the handoff contract')
 assert.match(handoffLayout, /不把它埋在assembly框内/, 'the final output needs a distinct presentation role')
 assert.match(sopWorkflow, /世界Y-up/, 'ordinary Houdini assets need an explicit world-up convention')
-assert.match(sopWorkflow, /正式新建.*首个骨架\/源/, 'new assets must start Y-up instead of relying on root repair')
-assert.match(sopWorkflow, /稳定根输出之前/, 'local coordinate adapters must precede the stable root output')
+assert.match(sopWorkflow, /新建资产从首个源使用世界Y-up/, 'new assets must start Y-up instead of relying on root repair')
+assert.match(sopWorkflow, /适配在稳定输出之前/, 'local coordinate adapters must precede the stable root output')
 assert.match(sopWorkflow, /组件大框包含这些小框/, 'handoff must preserve component containers around role cells')
 assert.match(sopWorkflow, /组件.*Cd/, 'requested observation colors must follow stable component identity')
 assert.match(moduleContracts, /X宽、Y高、Z深/, 'module contracts need the default Houdini world frame')

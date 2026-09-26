@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8facff2946ecfda12bc4b263566328`
+Schema: 2 · Cards: 17 · Source SHA-256: `db0313203995497ae2ca1d8efa87337c4d792b2972d5aa7ef534bd7e7b8d6227`
 
 ## 数据与设计契约
 
@@ -99,7 +99,7 @@ Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8fa
 
 ## sphere
 
-标识：`sphere-representation-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/sphere.html)。
+标识：`sphere-representation-and-resolution-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/sphere.html)。
 
 精确类型：`sphere`。
 已测版本：`21.0.440`、`22.0.368`。
@@ -110,10 +110,15 @@ Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8fa
 
 - `representation`：`type`。Choose the representation before face editing: a native sphere is not a polygon mesh. Preserve native/NURBS/packed representations when required by the downstream task.
 
+### 常驻语义提示
+
+- `effective_resolution`：Sphere type=poly (Polygon) uses freq; rows/cols can accept values without changing its geometry. type=polymesh (Polygon Mesh) uses rows/cols and ignores freq. Select the representation first, then vary its effective resolution control and inspect actual polygon count and silhouette; successful parameter assignment is not evidence of finer geometry.
+
 ### 操作与边界
 
 - Direct creation type=prim is an analytic Sphere. Polygon and Polygon Mesh are distinct menu choices with different tessellation controls; use the current menu tokens, not a shared numeric index.
 - For polygon modeling, explicitly choose the polygon representation and inspect actual primitive types and silhouette density. Houdini's generic primitive count also counts native/packed objects; it is not a polygon face count.
+- Inactive tessellation fields retain readable values. A high rows/cols value on type=poly does not establish a smooth surface, and a Normal SOP cannot improve a coarse silhouette. Check resolution on the actual source and again after the consuming operation; do not increase every subdivision control indiscriminately.
 
 ## tube
 
@@ -172,7 +177,7 @@ Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8fa
 
 ## revolve
 
-标识：`revolve-surface-orientation-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
+标识：`revolve-solid-input-v3`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
 
 精确类型：`revolve::2.0`。
 已测版本：`21.0.440`、`22.0.368`。
@@ -187,11 +192,12 @@ Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8fa
 
 ### 常驻语义提示
 
-- `surface_orientation`：After cooking a Polygon surface, check winding and outward direction. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order.
+- `surface_orientation`：Before consuming a revolved Polygon as a solid, use geo_piece_stats(..., inspect=True) to inspect boundary edges and shell orientation. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order. Reverse only a confirmed wrong-facing shell; closed/nonnested orientation evidence does not certify arbitrary intersecting or nested solids.
 
 ### 操作与边界
 
 - Revolve Type closed spans the full circle; Closed Arc adds a point on the axis and produces a different shape. End Caps applies to open input curves. Check the actual profile and final boundaries before instancing.
+- A profile whose open endpoints merely coincide is not topologically closed. Revolution can preserve unshared coincident boundary edges even when it looks sealed. Establish intended profile closure, or target only a confirmed coincident seam with a scale-appropriate Fuse; recheck boundaries and the resulting shape. Do not Fuse intentional gaps or Reverse an already outward closed shell by default.
 
 ## normal
 
@@ -315,10 +321,20 @@ Schema: 2 · Cards: 17 · Source SHA-256: `951141fa7c36a73542998c1d3b084082dc8fa
 
 ## boolean
 
-标识：`boolean-input-groups-and-shading-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
+标识：`boolean-solid-inputs-and-shading-v3`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
 
-精确类型：未另限定（按family匹配）。
-已测版本：此卡未列出，不外推版本保证。
+精确类型：`boolean::2.0`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`booleanop`、`subtractchoices`。
+
+### 构建前决策
+
+- `operation`：`booleanop`。Choose the operation explicitly. For subtraction, inspect subtractchoices and the actual input order: A is input 0, B is input 1; a node name does not establish which solid is removed.
+
+### 常驻语义提示
+
+- `solid_input_validity`：For solid operations, inspect input closure and winding with geo_piece_stats(..., inspect=True); an inward shell can make A-B retain cutter material even when Boolean reports no warning. An ordinary solid A-B cannot extend outside A: expanded output bounds disprove the intended subtraction, while unchanged bounds alone do not prove a valid cut. Check the local cut surface and intended opening after cooking. Sheet operations remain valid with their explicitly chosen surface semantics.
 
 ### 操作与边界
 

@@ -5,7 +5,7 @@ description: 设计、构建、调试和交付 Houdini SOP 程序化网络，包
 
 # Houdini SOP Workflow
 
-以一个正确、可观察的原型推进。新增细节前先确认主要形体和实际连接；每次检查明确输出、方法与范围。
+Agent负责理解参考、选择构造和读图诊断；把共享尺寸、接合轮廓、运动关系和重复几何交给Houdini数据流维护。先做一个能证实最危险构造的局部原型，再扩展成整件；每次检查明确输出、方法与范围。
 
 教程驱动任务联用 `houdini-video-tutorial`：出现差异时先带着输入/目的/预期输出回看原片，
 再核对自身实现，最后才查版本差异或替代；不能因一次失败宣布原生节点不可靠。
@@ -18,7 +18,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 先读Host现场摘要：HIP、版本、frame、选择、候选网络与采集时间。缺失不代表空场景；需要时用scene_info/find_nodes/graph补查。任务给出毫米、厘米或米尺寸时，先读scene_info().unit_length_meters并换算建模数值；口头声明“1单位=1厘米”不会改变HIP的单位设置。用户选择会变化，快照不构成foreign修改授权。
 
-简单、规格完整的编辑直接修改并回读。普通可调模型用几句说明目标、自选尺寸、控制和验证范围。质量敏感、外部真实性或复杂装配在大规模建图前读[质量合同](references/procedural-quality-contract.md)；外部参考会改变方案且research/web可用时实际检索，无来源就标假设。只询问会改变方案的选择，一次给有影响说明的互斥选项，不因“程序化”启动长问卷。
+简单、规格完整的编辑直接修改并回读。复杂产品复用已有prose/todo，简记四项：外形与必需细节、谁连接/跟随谁、用户真正要改的独立量、最不确定的构造及其验证办法；Agent从图片和短要求提取，不要求用户先写零件清单。标明尺寸/图片冲突与假设，只询问会改变方案的选择。质量敏感、外部真实性或复杂装配读[质量合同](references/procedural-quality-contract.md)；外部参考会改变方案且research/web可用时实际检索，无来源不声称真实规格。
 
 单个SOP资产先建Geo，再在该Geo内建`CTRL`并集中尺寸/姿态参数；
 同层节点用相对参数引用。只有用户明确要跨多个OBJ统一控制时，
@@ -32,20 +32,20 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 ## 执行循环
 
-1. **方法与原型**：以人工易接手和构建/cook/修改/验证的整体效率选择曲线/截面/开放表面/实体/实例等表示，按需混合原生SOP与VEX。产品件先考虑原生源，或VEX点/线/截面接原生SOP成形；直接VEX闭壳须有具体理由并验真实绕序与封口。涉及重复资产、VEX职责划分或构造选型时，先读[建模方法](references/modeling-methods.md#1-从表示和构造选方法)。重复资产必须走Copy，保留独立可替换源；VEX按功能与输入输出拆分，不能把整个多功能模块塞进一个Wrangle。集中关键控制，建立named anchors/local frames和稳定piece身份。正式新建的普通Houdini资产从首个骨架/源开始就采用世界Y-up（X宽、Y高、Z深），控制名、表达式、模板点、局部验证和最终输出保持同一轴向；不要先默认Z-up建完再在根部补旋转。只有旧工程修复或确有独立局部坐标理由的模块才允许声明local Z-up，并在稳定根输出之前用一个显式适配器转换，不能让用户靠`OUT_ASSET`之后的旁路Transform纠正。模块化默认先表达为同层的逻辑模块：源、局部处理、放置/复制、检查点输出保持相邻，父装配只消费稳定输出；容器是可选实现，不因“模块”自动创建subnet/HDA。明确模块输入、输出、属性class与不变量；多模块装配读[模块合同](references/module-quality-contracts.md)。
-2. **当前节点知识**：当前模块按不同type集中读node_info；消费operation_card.decisions及不受filter影响的operation_parameters，先决定表示/封口/选择范围/执行层级再build。同版本静态卡可复用，Shelf值和动态菜单仍以实际节点为准。普通参数默认24项；filter是字面子串，空匹配先去掉filter，不为找参数创建一批probe。visible=false用search_tab_entries；未知签名先verb_help。
-3. **骨架门**：复杂装配先用低成本整体代理确定尺度、方向、接口和共享控制，再选择当前风险或质量最关键的模块。GUI可用且用户未禁止时，骨架/首个可辨原型一形成就用render_view看整体或明确侧向图并实际查看原生图像附件，不能等全部建完才第一次预览；仅交付网络/HIP不豁免。主要比例/接口未定不精雕独立零件。用户只要单个部件时不扩建整物。
-4. **模块门**：把当前焦点模块当作独立的局部交付任务，不只是一个代码批次：明确相关原始要求、输入/局部坐标、输出、必须看清的细节和局部完成条件，按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)推进。一个模块可用多个小build_module，空CTRL/helper用tab_create；先验证单元及附属件连接再复制。同层模块用稳定`OUT_<MODULE>`检查点供父装配消费，不让父级接到内部Merge/Group等实现节点；简单短链可省略该检查点。私有细节归模块，跨两个模块的螺栓、销钉、焊缝等连接件归最低共同装配层，不能让任一叶模块隐藏读取兄弟路径。检查实际表面/截面、封口、法线/属性与尺寸；闭合、共享边方向一致和朝外分别查，Normal不修顶点序。实体贯穿孔须证明实体壳合同、沿声明孔轴的中心线无遮挡，并用沿轴视图确认开口；有意交付开放板面时改验开放表面/边界合同，不能套用闭合实体门。消费validation/cook_details，不为清warning丢掉部件身份；局部条件满足或遇到明确依赖阻塞就回到集成，不无限堆细节。
+1. **构造选择**：先读[建模方法](references/modeling-methods.md#1-从表示和构造选方法)，选择能观察中间结果的表示：原生源，或VEX点/线/截面接原生SOP成形；重复资产保留独立源并用Copy，VEX按功能与输入输出拆分。共享尺寸、轴/frame和piece身份只有一个来源；新建且需贴合的壳、边框、盖面从同一接合轮廓派生，独立外部资产则适配明确接口，不能只分别调到看似接近。少量主控驱动这些来源，派生量留在网络。新建资产从首个源使用世界Y-up（X宽、Y高、Z深）；旧工程/必要局部坐标的适配在稳定输出之前完成。多模块读[模块合同](references/module-quality-contracts.md)，默认同层逻辑模块，不因模块化自动建Subnet/HDA。
+2. **有效设置**：按当前模块不同type集中读node_info的operation_card、operation_parameters和构建返回的operation_advisories，先选表示/模式、封口和选择范围；缺少显式选择与模式/输入语义风险两类提示都要处理。分段/精度等模式相关参数要核对当前模式；写入后观察实际轮廓、截面或拓扑响应，值能回读不代表生效。操作卡同版本可复用，动态菜单以现场为准；filter空匹配先去掉filter，visible=false用search_tab_entries，未知签名先verb_help，不批量建probe猜参数。
+3. **原型门**：复杂装配只用低成本整体代理定尺度、方向和接口，随后先做失败会迫使换构造或改接口的最高风险局部。首个可辨原型用render_view查看原生图像：整体回答比例，局部回答预先声明的风险。GUI可用且用户未禁止时，不等全件完成才首看；单部件请求不扩成整件。比例未定不精雕，危险局部未通过不复制铺开；正确原型及时保存。
+4. **局部闭环**：按[聚焦与交接](references/module-quality-contracts.md#模块聚焦与交接)明确输入、输出、必需细节和局部完成条件，小批build_module并消费validation/cook_details。Boolean先查源的Solid/Surface前提、接缝和朝向，再查实际切除/融合效果；不能把菜单正确、最终Null无warning或Normal着色当成形正确。实体通孔查闭合壳、孔轴无遮挡和沿轴视图；有意开放表面改用边界合同。每张关键近景先写实际形态是否符合预期及不确定项；若有缺陷，修一个原因再刷新受影响证据。看不清就换观察范围，不据整体可辨认核销局部。局部通过即集成；依赖阻塞回到装配协调，同一边界两次失败按恢复规则换方法。
 5. **集成关系门**：局部通过与集成通过分开记录。按需求和当前控制状态先导出期望成员/基数，再独立核对最终输出；不能从“实际幸存了什么”反推期望集合。之后测复制/变换后的实例接口；上游模块健康不能发现下游Switch漏件。计数、组、拓扑或输出身份变化时重新评估需测接口，旧状态合同不覆盖新增件。独立表面用适用的interfaces，融合Polygon才用共享拓扑；顶点对最小距离不能证明无穿插，距离不等于插入深度，容差内近邻/无穿插不证明实际承托；支撑任务须说明并验证接触面或连接件。接地按已声明的世界up轴逐足检查；默认Houdini地面为XZ且`Y=0`，不能因为局部模型以Z为高度就把`min Z=0`写成世界接地。合法装配间隙按任务判断，没有可靠方法保留unverified。
-6. **参数门**：代表性控制测响应和需保持的不变量，再恢复。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。顶层interfaces只放所有状态都应成立的不变量；合盖基准接触用baseline_interfaces，开盖分离等扰动专属关系放在对应case的interfaces，不因接触在开盖时正确断开就删去所有关系。若现有方法仍无法表达某项关系，拆成有明确范围且可恢复的检查并保留限制，不能用固定子集声称全覆盖。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
+6. **参数门**：每个交付控制测实际响应和需保持的不变量，再恢复；关联控制另选代表性组合。先读test_controls的control_summary/status/reason，results=[]不等于通过；range覆盖基准与扰动，delta是变化。顶层interfaces只放所有状态都应成立的不变量；合盖基准接触用baseline_interfaces，开盖分离等扰动专属关系放在对应case的interfaces，不因接触在开盖时正确断开就删去所有关系。若现有方法仍无法表达某项关系，拆成有明确范围且可恢复的检查并保留限制，不能用固定子集声称全覆盖。范围来自设计，耦合控制再测边界组合；判据错需独立理由并复跑，不能改窗口凑pass。bbox变化不证明连接、刚体变换或整个参数域。
 7. **交付门**：简单普通geo可直接以明确末端SOP交付；用户要继续编辑的非平凡程序化资产应在根层建立稳定`OUT_ASSET` Null，由它消费最终组装结果、语义观察色和必要的local→world坐标适配，设置display/render，并用verify_network显式验证。它是稳定消费者接口，不是原生公共端口；不要在每条短链后机械加Null。同层逻辑模块按需建立`OUT_<MODULE>` Null，父装配只消费它。只有subnet/HDA的公共交付边界才用sop_set_output(内部`OUT_<MODULE>`,output_index=0)接原生Output，并verify_network(parent,output=内部输出,output_index=0)；多出口逐口声明，内部Null/旗标不替代公共端口。已有显式出口保持其消费者合同，不擅自删除。用户要求或复杂装配需要观察区分时，按稳定`part`/piece身份赋予克制且可辨认的组件`Cd`；同组件保持一致、相邻组件避免近似色，不用随机色或材质网络代替身份组，且不得覆盖用户已有材质/颜色合同。新建或实质扩展的非平凡网络在功能验证后按[网络交接布局](references/network-handoff.md)建立语义Network Box并执行comfortable handoff，其中稳定最终输出应进入output分组；组件与技术阶段都需可见时，先建立并布局source/template-copy/output叶子角色框，再用一层组件大框包含这些小框；这是Network Box展示层级，不是Subnet。单节点/短直链、维护/探针、foreign网络、用户明确不要布局或不受支持项可跳过并说明。最后一次相关修改后刷新统计、关系及颜色/材质之后的交付图像；最终世界姿态必须用声明轴向和带地面/轴参照的证据检查，无地面参照的自动取景图不能证明接地。恢复frame/selection及无关visibility，再保存；未命名HIP须有授权路径及当前HIP校验。内部调试仅切旗标，不重接公共端口。
 
-整体代理→聚焦模块→局部验收→集成复验循环推进，不等所有细节完成才装配。模块是接口/验收边界，不强制每个模块一个subnet；普通单作者任务默认使用同层逻辑模块，Subnet只在用户明确要求层级、模块已有稳定少量公共端口、根网络明显失控、需要独立复用/导出/替换或组件作者时采用。连续曲面、跨模块Boolean、强耦合求解、短链和接口仍频繁变化时保持同层，不为显得专业而嵌套。Subnet内部必须使用相对引用或公共输入/参数，禁止保留工作区/OBJ绝对控制路径；普通同层模块也优先相对兄弟引用，为未来移动/导出留边界。默认同一作者顺序聚焦，不自动启动子agent；简单单参编辑不建模块表。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
+整体代理→危险局部→集成→下一局部循环推进。容器、跨模块连接件归属及相对引用按[模块合同](references/module-quality-contracts.md)；不把容器层次当质量。默认同一作者顺序聚焦，不自动启动子agent；简单单参编辑不建模块表。此处骨架是代理形体，不是KineFX rig；几何父子/FK转rig skill。
 
 ## 执行与恢复
 
 - build_module声明name/type/parms/inputs/output；None表示空输入槽。跨subnet使用Object Merge或明确端口。connect(src,dst,index)直接替换既有输入；Merge先断后接会前移丢分支，消费inputs_after。set_parms保持strict，不能以strict=False绕过构建失败。
-- 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留components/菜单set_value。设置尚未决定时用dry_run集中读operation_advisories再构建；已明确时不强制双调用。advisories只提示缺少显式选择，不改默认值，也不证明选择正确。最终分支保留语义primitive组。
+- 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留components/菜单set_value。设置尚未决定时用dry_run集中读operation_advisories再构建；已明确时不强制双调用。advisories提示缺少显式选择或模式/输入语义风险，不改默认值，也不证明选择正确；已显式设参不消除语义风险。最终分支保留语义primitive组。
 - tab_create返回hou.Node；list_parms/read_parms返回list。菜单用token/set_value，菜单表达式用{expression,language}；普通数值字符串是HScript表达式，VEX在snippet内；tuple表达式用组件字段。见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
 - 更新已有spare默认值用create_spare_parms(update_defaults={name:literal})，当前值另用set_parms；两者回读分开。不支持的参数按verb_help边界报告，不因猜错HOM方法而断言环境不支持。
 - 可独立cook/验收的构建批次分别提交exec；一个焦点模块可以跨多个已提交批次，引用存活输出后另做集成，不可分的修改仍保持同批原子性。看transaction最终状态：同一exec后方失败会撤销前方可撤销修改，不沿用被回滚依赖；陌生回读另开query，模块返回直接使用已知validation，避免尾部格式化错误撤销构建。

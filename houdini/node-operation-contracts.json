@@ -49,7 +49,7 @@
       ]
     },
     "sphere": {
-      "id": "sphere-representation-v1",
+      "id": "sphere-representation-and-resolution-v2",
       "node_types": ["sphere"],
       "tested_versions": ["21.0.440", "22.0.368"],
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/sphere.html",
@@ -57,9 +57,13 @@
       "decisions": [
         {"id": "representation", "any_of": [["type"]], "guidance": "Choose the representation before face editing: a native sphere is not a polygon mesh. Preserve native/NURBS/packed representations when required by the downstream task."}
       ],
+      "always_advisories": [
+        {"id": "effective_resolution", "guidance": "Sphere type=poly (Polygon) uses freq; rows/cols can accept values without changing its geometry. type=polymesh (Polygon Mesh) uses rows/cols and ignores freq. Select the representation first, then vary its effective resolution control and inspect actual polygon count and silhouette; successful parameter assignment is not evidence of finer geometry."}
+      ],
       "notes": [
         "Direct creation type=prim is an analytic Sphere. Polygon and Polygon Mesh are distinct menu choices with different tessellation controls; use the current menu tokens, not a shared numeric index.",
-        "For polygon modeling, explicitly choose the polygon representation and inspect actual primitive types and silhouette density. Houdini's generic primitive count also counts native/packed objects; it is not a polygon face count."
+        "For polygon modeling, explicitly choose the polygon representation and inspect actual primitive types and silhouette density. Houdini's generic primitive count also counts native/packed objects; it is not a polygon face count.",
+        "Inactive tessellation fields retain readable values. A high rows/cols value on type=poly does not establish a smooth surface, and a Normal SOP cannot improve a coarse silhouette. Check resolution on the actual source and again after the consuming operation; do not increase every subdivision control indiscriminately."
       ]
     },
     "tube": {
@@ -106,7 +110,7 @@
       ]
     },
     "revolve": {
-      "id": "revolve-surface-orientation-v2",
+      "id": "revolve-solid-input-v3",
       "node_types": ["revolve::2.0"],
       "tested_versions": ["21.0.440", "22.0.368"],
       "critical_parameters": ["origin", "dir", "divs", "type", "surftype", "primtype", "swaprowcol", "reversecrosssections", "cap"],
@@ -116,11 +120,12 @@
         {"id": "end_closure", "any_of": [["cap"]], "guidance": "Choose whether to cap the ends of an open profile. Closed revolution around the axis alone does not cap those ends."}
       ],
       "always_advisories": [
-        {"id": "surface_orientation", "guidance": "After cooking a Polygon surface, check winding and outward direction. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order."}
+        {"id": "surface_orientation", "guidance": "Before consuming a revolved Polygon as a solid, use geo_piece_stats(..., inspect=True) to inspect boundary edges and shell orientation. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order. Reverse only a confirmed wrong-facing shell; closed/nonnested orientation evidence does not certify arbitrary intersecting or nested solids."}
       ],
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html",
       "notes": [
-        "Revolve Type closed spans the full circle; Closed Arc adds a point on the axis and produces a different shape. End Caps applies to open input curves. Check the actual profile and final boundaries before instancing."
+        "Revolve Type closed spans the full circle; Closed Arc adds a point on the axis and produces a different shape. End Caps applies to open input curves. Check the actual profile and final boundaries before instancing.",
+        "A profile whose open endpoints merely coincide is not topologically closed. Revolution can preserve unshared coincident boundary edges even when it looks sealed. Establish intended profile closure, or target only a confirmed coincident seam with a scale-appropriate Fuse; recheck boundaries and the resulting shape. Do not Fuse intentional gaps or Reverse an already outward closed shell by default."
       ]
     },
     "normal": {
@@ -212,7 +217,16 @@
       ]
     },
     "boolean": {
-      "id": "boolean-input-groups-and-shading-v2",
+      "id": "boolean-solid-inputs-and-shading-v3",
+      "node_types": ["boolean::2.0"],
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["booleanop", "subtractchoices"],
+      "decisions": [
+        {"id": "operation", "any_of": [["booleanop"]], "guidance": "Choose the operation explicitly. For subtraction, inspect subtractchoices and the actual input order: A is input 0, B is input 1; a node name does not establish which solid is removed."}
+      ],
+      "always_advisories": [
+        {"id": "solid_input_validity", "guidance": "For solid operations, inspect input closure and winding with geo_piece_stats(..., inspect=True); an inward shell can make A-B retain cutter material even when Boolean reports no warning. An ordinary solid A-B cannot extend outside A: expanded output bounds disprove the intended subtraction, while unchanged bounds alone do not prove a valid cut. Check the local cut surface and intended opening after cooking. Sheet operations remain valid with their explicitly chosen surface semantics."}
+      ],
       "source": "https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html",
       "notes": [
         "agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters.",
