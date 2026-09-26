@@ -609,8 +609,14 @@ def _solid_overlap(g, item, budget):
                     'overlap_volume':volume if math.isfinite(volume) else None,
                     'numeric_noise_floor':noise_floor,'intersection_primitives':count,
                     'selection_checks':checks},pairs
+        bounds=intersection.boundingBox()
+        bounds_min=[float(v) for v in bounds.minvec()]
+        bounds_max=[float(v) for v in bounds.maxvec()]
         return {**base,**counts,'status':'pass' if volume<=item['max_overlap_volume'] else 'fail',
                 'overlap_volume':volume,'numeric_noise_floor':noise_floor,
+                'overlap_bounds':[bounds_min,bounds_max],
+                'overlap_bounds_center':[(lo+hi)*.5 for lo,hi in zip(bounds_min,bounds_max)],
+                'overlap_bounds_scope':'SOP-local axis-aligned envelope of all Boolean intersection pieces; not a contact point or single-island location',
                 'intersection_primitives':count,'selection_checks':checks},pairs
     except (hou.Error, ValueError, TypeError, OverflowError) as error:
         return {**base,**counts,'status':'unverified','reason':'boolean_intersection_failed',

@@ -231,7 +231,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | named surface proximity | 指定实际表面点到目标表面的最近距离与声明基数 | 实体插入深度、全表面无穿插、强度 |
 | axis_gap | 实际primitive组沿指定轴的投影间隙和横向重叠 | 任意曲面真实接触 |
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
-| solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；无交集或阈值内通过 | 零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
+| solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；非零有效交集附SOP局部坐标的整体包围盒便于定位；无交集或阈值内通过 | 包围盒可能涵盖多处分离交集，并非单个接触点；零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
 | axis_passage | 声明的SOP local轴线穿过最终输出指定Polygon组的包络，且沿该线未碰到最终表面 | 整个孔径、孔壁形状、其他孔轴或孔周材料；非Polygon及未跨包络保持unverified |
 | component_count | 最终输出指定Polygon组中共享边连通岛的实际数量与预先声明数量一致 | 各岛的产品身份、对称位置、尺寸或与主体的实际连接；非Polygon/退化面保持unverified |
 | physical_extent | 已核对归属的厂家/用户毫米尺寸与最终闭合Polygon组一轴物理跨度一致；按HIP单位换算，非单位OBJ变换保持unverified | 组是否涵盖完整零件、尺寸归属是否读对、其他轴/孔径/装配；必须在最后修改后复验 |

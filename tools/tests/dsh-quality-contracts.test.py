@@ -365,9 +365,15 @@ try:
                 'target_group':'shaft','max_overlap_volume':1e-12}
     solid_check=h.geo_check_interfaces(solid_assembly,[no_overlap])
     assert solid_check['status']=='fail' and solid_check['results'][0]['overlap_volume']>2e-7,solid_check
+    overlap=solid_check['results'][0]
+    lo,hi=overlap['overlap_bounds']
+    assert all(a<0<b for a,b in zip(lo,hi)),overlap
+    assert .019<hi[0]-lo[0]<.021 and .003<hi[1]-lo[1]<.005,overlap
+    assert all(abs(v)<1e-5 for v in overlap['overlap_bounds_center']),overlap
     hollow_check=h.geo_check_interfaces(hollow_assembly,[no_overlap])
     assert hollow_check['status']=='pass' and hollow_check['results'][0]['overlap_volume']==0,hollow_check
     assert hollow_check['results'][0]['intersection_primitives']==0
+    assert 'overlap_bounds' not in hollow_check['results'][0],hollow_check
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[no_overlap],max_pairs=1),'budget')
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'max_overlap_volume':-1}]),'nonnegative')
     assert h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'source_group':'missing'}])['status']=='fail'
