@@ -307,6 +307,26 @@ function planarFaceCrossingSummary(value: any) {
 function leadingCheckVerdicts(value: ExecResult): string[] {
   if (!Array.isArray(value.evidence)) return []
   const verdicts: { priority: number; text: string }[] = []
+  const interfaceChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_check_interfaces')
+  if (interfaceChecks.length) {
+    const declared = interfaceChecks.reduce((count,item) => count
+      + (Array.isArray(item.results) ? item.results.length : 0),0)
+    const rows = interfaceChecks.flatMap(item => Array.isArray(item.results) && item.results.length
+      ? item.results.map((row:any) => ({...row,status:row.status ?? 'unverified',
+        output:item.output,check_status:item.status}))
+      : [{id:null,status:item.status === 'fail' ? 'fail' : 'unverified',
+        output:item.output,reason:item.reason ?? 'no_result_rows'}])
+    const unresolved = rows.filter((row:any) => row.status !== 'pass')
+    verdicts.push({priority:unresolved.length ? 0 : 3,text:`final-interface-verdict: ${JSON.stringify({
+      checks:interfaceChecks.length,declared,
+      pass:rows.filter((row:any) => row.status === 'pass').length,
+      fail:rows.filter((row:any) => row.status === 'fail').length,
+      unverified:rows.filter((row:any) => row.status === 'unverified').length,
+      unresolved:unresolved.slice(0, 6).map((row:any) => ({id:row.id,method:row.method ?? 'surface_proximity',
+        output:row.output,target_group:row.target_group ?? null,reason:row.reason ?? null,
+        hit_position:row.hit_position ?? null})),
+      boundary:'Only declared relations on the recorded final output were checked. Axis passage pass clears one centerline, not the full bore. Later geometry edits require fresh checks.'})}`})
+  }
   const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
     && item.method === 'bounded polygon surface integrity')
   if (integrityChecks.some(item => item.group !== null && item.group !== undefined)) {

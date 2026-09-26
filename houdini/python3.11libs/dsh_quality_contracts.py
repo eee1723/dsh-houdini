@@ -106,14 +106,29 @@ def validate_interfaces(interfaces):
         axis_gap = item.get('method') == 'axis_gap'
         section = item.get('method') == 'section_proximity'
         solid_overlap = item.get('method') == 'solid_overlap'
-        allowed = {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
+        axis_passage = item.get('method') == 'axis_passage'
+        allowed = {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
-        for key in ('id', 'source_group', 'target_group'):
+        for key in (('id','target_group') if axis_passage else ('id','source_group','target_group')):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f'interface {key} must be nonempty')
         if item['id'] in ids:
             raise ValueError('interface ids must be unique')
         ids.add(item['id'])
+        if axis_passage:
+            axis = item.get('axis')
+            if type(axis) is not int or not 0 <= axis <= 2:
+                raise ValueError('axis_passage requires axis=0/1/2')
+            for key in ('start','end'):
+                point = item.get(key)
+                if not isinstance(point,(list,tuple)) or len(point)!=3:
+                    raise ValueError(f'axis_passage {key} must be a 3D SOP-local point')
+                for value in point:_finite(value, f'axis_passage {key}')
+            start,end=item['start'],item['end']
+            if abs(float(end[axis])-float(start[axis])) <= 1e-6 or any(
+                    abs(float(end[i])-float(start[i])) > 1e-9 for i in range(3) if i!=axis):
+                raise ValueError('axis_passage needs a nonzero axis-aligned segment')
+            continue
         if axis_gap:
             if type(item.get('axis')) is not int or not 0 <= item['axis'] <= 2:
                 raise ValueError('axis_gap requires axis=0/1/2')
@@ -312,6 +327,9 @@ def _check_interfaces(g, interfaces, max_pairs):
             row, pairs = _solid_overlap(g,item,max_pairs-total_pairs)
             results.append(row);total_pairs+=pairs
             continue
+        if item.get('method') == 'axis_passage':
+            results.append(_axis_passage(g,item))
+            continue
         pg = g.findPointGroup(item['source_group'])
         tg = g.findPrimGroup(item['target_group'])
         points = list(pg.points()) if pg else []
@@ -373,9 +391,45 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections',
+            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks only one declared line through selected final Polygon surfaces',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared proximity, axis-projection or bounded solid-overlap relations only; not continuous collision, mechanical strength or unspecified part clearance'}
+            'scope':'declared proximity, axis-projection, bounded solid-overlap or single-axis clearance only; not continuous collision, full bore shape, mechanical strength or unspecified part clearance'}
+
+
+def _axis_passage(g, item):
+    group=g.findPrimGroup(item['target_group'])
+    prims=list(group.prims()) if group else []
+    base={'id':item['id'],'method':'axis_passage','target_group':item['target_group'],
+          'target_count':len(prims),'axis':item['axis'],'start':list(item['start']),
+          'end':list(item['end']),'scope':'single declared centerline in final SOP-local Polygon group; bore radius and surrounding material are not certified'}
+    if not prims:
+        return {**base,'status':'fail','reason':'missing_target_group'}
+    if any(p.type().name()!='Polygon' or not _supported_surface(p) for p in prims):
+        return {**base,'status':'unverified','reason':'axis_passage_requires_closed_polygon_surfaces'}
+    axis=item['axis'];start=item['start'];end=item['end']
+    lower=[min(float(p.boundingBox().minvec()[i]) for p in prims) for i in range(3)]
+    upper=[max(float(p.boundingBox().maxvec()[i]) for p in prims) for i in range(3)]
+    if (min(float(start[axis]),float(end[axis])) >= lower[axis]-1e-6
+            or max(float(start[axis]),float(end[axis])) <= upper[axis]+1e-6
+            or any(not lower[i]+1e-6 < float(start[i]) < upper[i]-1e-6 for i in range(3) if i!=axis)):
+        return {**base,'status':'unverified','reason':'segment_does_not_cross_target_bounds',
+                'target_bounds':[lower,upper]}
+    origin=hou.Vector3(start)
+    direction=hou.Vector3(end)-origin
+    length=direction.length()
+    direction/=length
+    position=hou.Vector3();normal=hou.Vector3();uvw=hou.Vector3()
+    try:
+        hit=g.intersect(origin,direction,position,normal,uvw,pattern=item['target_group'],
+                        min_hit=0.0,max_hit=length,tolerance=1e-6)
+    except hou.Error as error:
+        return {**base,'status':'unverified','reason':str(error)}
+    if hit >= 0:
+        return {**base,'status':'fail','reason':'axis_intersects_final_surface',
+                'hit_primitive':hit,'hit_position':list(position),
+                'hit_distance':float(origin.distanceTo(position))}
+    return {**base,'status':'pass','clear_length':float(length),
+            'boundary':'Only this centerline is clear; check bore radius, rim geometry and other required axes separately.'}
 
 
 def _solid_overlap(g, item, budget):

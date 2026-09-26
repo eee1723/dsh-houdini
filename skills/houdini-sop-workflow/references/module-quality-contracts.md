@@ -152,6 +152,13 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 恢复失败必须停止继续改场景并检查，不自动抹掉错误；无法测量的类型保持unverified。
 文件I/O、Python/solver状态、未声明外部回调不属参数恢复范围，不要对此类控制运行测试。
 
+实体通孔的最终轴线可声明 `{'id':'mount_axis','method':'axis_passage',
+'target_group':'final_housing','axis':2,'start':[x,y,z0],'end':[x,y,z1]}`，
+在 `geo_check_interfaces(OUT_ASSET, [...])` 或控制测试的interfaces中检查。
+start/end是SOP local坐标，必须位于所选最终Polygon组的轴向包络两侧；缺组fail，
+不跨包络或不支持的面类型保持unverified。pass只证明这条中心线未撞到最终表面，
+孔径、孔壁、孔周承载与其他对称轴仍需单独验证；新增凸台、盖面后重新检查。
+
 ## 读结果与返工
 
 - 先读control_summary的status/reason/case_counts和restored；results=[]可能是基准失败或unsupported，not_run不是pass。摘要保留controller/output、失败case/判据和基准值，不能只打印results后丢掉失败原因。
@@ -170,7 +177,7 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 
 SideFX [Prim.nearestToPosition](https://www.sidefx.com/docs/houdini/hom/hou/Prim.html#nearestToPosition)
 和 [Geometry.freeze/data](https://www.sidefx.com/docs/houdini/hom/hou/Geometry.html)；本项目
-`dsh-quality-contracts.test.py`覆盖连接正例、方向正确但脱开、默认通过/扰动失败、空组、基数、
+`dsh-quality-contracts.test.py`覆盖连接正例、方向正确但脱开、先通后加盖封轴、默认通过/扰动失败、空组、基数、
 自重叠、游离driver点、unsupported target、预算、死控制、原生Tube、表达式/cook恢复、ownership。
 `dsh-interface-evidence.test.py`另覆盖真实实例脱开、允许间隙、接触及相交时顶点距离仍为正的反例。
 工具合同以目标版本回归为据；SOP工作流自然采用仍需新会话验证，不宣称制造认证。

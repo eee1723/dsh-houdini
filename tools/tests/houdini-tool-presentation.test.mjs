@@ -106,6 +106,20 @@ assert.match(compactControlFailure, /restored only means test changes were undon
 assert.match(compactControlFailure.split('\n')[0], /"relationship_scope":"not_checked".*"declared_interfaces":0/,
   'a passing measurement count must not imply component relationships were checked');
 assert.match(compactControlFailure.split('\n')[0], /"baseline_interface_status":"not_checked".*"cases_with_interface_checks":0.*"executed_interface_checks":0/);
+const blockedFinalAxis = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_check_interfaces',
+    output:'/obj/fan/OUT_ASSET',status:'fail',results:[
+      {id:'left_axis',method:'axis_passage',target_group:'final_frame',status:'pass'},
+      {id:'right_axis',method:'axis_passage',target_group:'final_frame',status:'fail',
+        reason:'axis_intersects_final_surface',hit_position:[.4,0,0]},
+    ]}],
+})[0].text;
+assert.match(blockedFinalAxis.split('\n')[0], /final-interface-verdict:.*"pass":1,"fail":1,"unverified":0/);
+assert.match(blockedFinalAxis.split('\n')[0], /right_axis.*axis_intersects_final_surface.*\[0\.4,0,0\]/);
+assert.match(blockedFinalAxis, /Axis passage pass clears one centerline, not the full bore/);
+const emptyInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
+  evidence:[{verb:'geo_check_interfaces',output:'/obj/fan/OUT_ASSET',status:'unverified',results:[]}]})[0].text;
+assert.match(emptyInterface.split('\n')[0], /final-interface-verdict:.*"declared":0.*"unverified":1.*no_result_rows/);
 const integrityWarning = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
   evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',

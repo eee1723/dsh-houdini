@@ -4951,6 +4951,11 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     例：{id:'shaft_clearance',method:'solid_overlap',source_group:'lug',
     target_group:'shaft',max_overlap_volume:0}。须另验同轴和孔壁距离；
     零交集不证明轴已穿孔，逐状态检查也不证明连续扫掠或力学。
+    method='axis_passage'只需最终输出的target_group primitive组、axis(0..2)、
+    start/end两个SOP local轴对齐三维点。两端须在所选组轴向包络之外，横向
+    位于包络内；在最终Polygon表面上射线碰到任何面即fail，单轴无遮挡才pass。
+    缺组fail；不支持表示或线段未跨包络为unverified。只证明这一条中心线，
+    不证明孔径、孔壁、周围材料或其他轴；后续增材修改后必须复验。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
@@ -4977,7 +4982,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
     case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
     三者均用geo_check_interfaces同一schema；实体禁穿插可用solid_overlap，
-    但所选组须完整闭合，并与同轴/孔道检查合用。
+    但所选组须完整闭合，孔轴无遮挡可用axis_passage；二者均不认证整孔形状。
     每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，

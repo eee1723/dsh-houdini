@@ -77,6 +77,42 @@ try:
     unsupported.parm('snippet').set('int a=addpoint(0,set(1,0,0));int b=addpoint(0,set(1,1,0));int pr=addprim(0,"polyline",a,b);setprimgroup(0,"wire",pr,1);')
     assert h.geo_check_interfaces(unsupported,[{**interface,'target_group':'wire'}])['status']=='unverified'
 
+    # The same final output first has an open centerline, then a later added
+    # solid cap blocks it. Checking the original cutter or the earlier result
+    # must not certify the final part.
+    passage_parts=[]
+    for name,parms in (
+            ('wall_top',{'sizey':.25,'ty':.375}),
+            ('wall_bottom',{'sizey':.25,'ty':-.375}),
+            ('wall_front',{'sizez':.25,'tz':.375}),
+            ('wall_back',{'sizez':.25,'tz':-.375})):
+        wall=root.createNode('box',name)
+        for parm,value in parms.items():wall.parm(parm).set(value)
+        passage_parts.append(wall)
+    passage_merge=root.createNode('merge','passage_merge')
+    for index,wall in enumerate(passage_parts):passage_merge.setInput(index,wall)
+    passage_group=root.createNode('attribwrangle','passage_group')
+    passage_group.setInput(0,passage_merge)
+    passage_group.parm('class').set('primitive')
+    passage_group.parm('snippet').set('setprimgroup(0,"housing",@primnum,1);')
+    passage_out=root.createNode('null','passage_out')
+    passage_out.setInput(0,passage_group)
+    passage={'id':'mounting_axis','method':'axis_passage','target_group':'housing',
+             'axis':0,'start':[-1,0,0],'end':[1,0,0]}
+    open_axis=h.geo_check_interfaces(passage_out,[passage])
+    assert open_axis['status']=='pass' and open_axis['results'][0]['clear_length']==2,open_axis
+    cap=root.createNode('box','late_cap')
+    cap.parm('sizex').set(.1);cap.parm('tx').set(.45)
+    passage_merge.setInput(4,cap)
+    blocked_axis=h.geo_check_interfaces(passage_out,[passage])
+    assert blocked_axis['status']=='fail' and blocked_axis['results'][0]['reason']=='axis_intersects_final_surface',blocked_axis
+    assert blocked_axis['geometry_sha256']!=open_axis['geometry_sha256']
+    assert 0.39<blocked_axis['results'][0]['hit_position'][0]<.41,blocked_axis
+    assert h.geo_check_interfaces(passage_out,[{**passage,'target_group':'missing'}])['status']=='fail'
+    assert h.geo_check_interfaces(passage_out,[{**passage,'start':[-.4,0,0]}])['status']=='unverified'
+    rejects(lambda:h.geo_check_interfaces(passage_out,[{**passage,'end':[1,.1,0]}]),'axis-aligned')
+    rejects(lambda:h.geo_check_interfaces(passage_out,[{**passage,'start':[float('nan'),0,0]}]),'finite')
+
     # The relation is also rechecked while the user control is perturbed.
     tests=[{'id':'length_response','values':{'length':1.2},'expectations':[
       {'metric':'bounds_size','axis':0,'delta':[.199,.201]}]}]

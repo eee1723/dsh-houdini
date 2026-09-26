@@ -225,6 +225,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | axis_gap | 实际primitive组沿指定轴的投影间隙和横向重叠 | 任意曲面真实接触 |
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
 | solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；无交集或阈值内通过 | 零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
+| axis_passage | 声明的SOP local轴线穿过最终输出指定Polygon组的包络，且沿该线未碰到最终表面 | 整个孔径、孔壁形状、其他孔轴或孔周材料；非Polygon及未跨包络保持unverified |
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
