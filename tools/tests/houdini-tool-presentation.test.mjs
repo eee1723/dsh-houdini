@@ -120,6 +120,11 @@ assert.match(blockedFinalAxis, /Axis passage pass clears one centerline, not the
 const emptyInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
   evidence:[{verb:'geo_check_interfaces',output:'/obj/fan/OUT_ASSET',status:'unverified',results:[]}]})[0].text;
 assert.match(emptyInterface.split('\n')[0], /final-interface-verdict:.*"declared":0.*"unverified":1.*no_result_rows/);
+const missingMember = exec.output.render({}, {ok:true,stdout:'',stderr:'',
+  evidence:[{verb:'geo_check_interfaces',output:'/obj/enclosure/OUT_ASSET',status:'fail',
+    results:[{id:'four_rails',method:'component_count',target_group:'fastening_rails',
+      expected_components:4,observed_components:3,status:'fail'}]}]})[0].text;
+assert.match(missingMember.split('\n')[0], /final-interface-verdict:.*four_rails.*"expected_components":4,"observed_components":3/);
 const integrityWarning = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
   evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
@@ -171,6 +176,15 @@ const finalOutputRisk = exec.output.render({}, {
 assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
 assert.match(finalOutputRisk.split('\n')[0], /"suspicious_sweep_closures":1.*"closing_edge_ratio":4\.12/);
 assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
+const mixedFinal = exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[{
+  verb:'verify_network',output:'/obj/part/OUT_ASSET',healthy:true,
+  surface_integrity:{status:'unverified',reason:'requires closed polygon faces; curves/native/packed are not interpreted as polygon surfaces',
+    polygon_group_candidates:[{group:'housing',primitives:6}],
+    polygon_group_scan:{scanned:1,total:1,truncated:false},
+    next_action:"Inspect a declared final Polygon group with geo_piece_stats(OUT_ASSET, inspect=True, integrity_only=True, group='<exact group>')"},
+}]})[0].text.split('\n')[0];
+assert.match(mixedFinal,/final-output-review:.*"surface_status":"unverified".*"polygon_group_candidates":\[\{"group":"housing","primitives":6\}\]/);
+assert.match(mixedFinal,/"surface_next_action":"Inspect a declared final Polygon group/);
 for (const verb of ['geo_piece_stats','verify_network']) {
   const crossings={status:'observed',coverage:'complete_within_scope',crossed_faces:6,
     samples:Array.from({length:8},(_,index)=>({primitive:10+Math.floor(index/2),edge_indices:[1,3],position:[0,0,0]}))};

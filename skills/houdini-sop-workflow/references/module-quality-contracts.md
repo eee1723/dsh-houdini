@@ -158,6 +158,10 @@ Packed序列化含随recook变化的数据，暂不把原始bgeo hash当它的�
 start/end是SOP local坐标，必须位于所选最终Polygon组的轴向包络两侧；缺组fail，
 不跨包络或不支持的面类型保持unverified。pass只证明这条中心线未撞到最终表面，
 孔径、孔壁、孔周承载与其他对称轴仍需单独验证；新增凸台、盖面后重新检查。
+对称重复件可先从图纸/要求声明期望个数，再用 `{'id':'rails',
+'method':'component_count','target_group':'final_rails','expected_components':4}`
+查最终Polygon组的共享边连通岛。它能发现少一个或多一个独立岛，不能判断四处
+是否在正确角位，也不能证明螺钉进入承载轨；各实例的真实接口另测。
 
 ## 读结果与返工
 

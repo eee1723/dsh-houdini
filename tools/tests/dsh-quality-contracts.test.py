@@ -99,8 +99,12 @@ try:
     passage_out.setInput(0,passage_group)
     passage={'id':'mounting_axis','method':'axis_passage','target_group':'housing',
              'axis':0,'start':[-1,0,0],'end':[1,0,0]}
+    members={'id':'four_frame_sides','method':'component_count',
+             'target_group':'housing','expected_components':4}
     open_axis=h.geo_check_interfaces(passage_out,[passage])
     assert open_axis['status']=='pass' and open_axis['results'][0]['clear_length']==2,open_axis
+    four_sides=h.geo_check_interfaces(passage_out,[members])
+    assert four_sides['status']=='pass' and four_sides['results'][0]['observed_components']==4,four_sides
     cap=root.createNode('box','late_cap')
     cap.parm('sizex').set(.1);cap.parm('tx').set(.45)
     passage_merge.setInput(4,cap)
@@ -108,10 +112,17 @@ try:
     assert blocked_axis['status']=='fail' and blocked_axis['results'][0]['reason']=='axis_intersects_final_surface',blocked_axis
     assert blocked_axis['geometry_sha256']!=open_axis['geometry_sha256']
     assert 0.39<blocked_axis['results'][0]['hit_position'][0]<.41,blocked_axis
+    passage_merge.setInput(4,None)
+    passage_merge.setInput(3,None)
+    missing_side=h.geo_check_interfaces(passage_out,[members])
+    assert missing_side['status']=='fail' and missing_side['results'][0]['observed_components']==3,missing_side
+    assert missing_side['geometry_sha256']!=four_sides['geometry_sha256']
     assert h.geo_check_interfaces(passage_out,[{**passage,'target_group':'missing'}])['status']=='fail'
     assert h.geo_check_interfaces(passage_out,[{**passage,'start':[-.4,0,0]}])['status']=='unverified'
     rejects(lambda:h.geo_check_interfaces(passage_out,[{**passage,'end':[1,.1,0]}]),'axis-aligned')
     rejects(lambda:h.geo_check_interfaces(passage_out,[{**passage,'start':[float('nan'),0,0]}]),'finite')
+    assert h.geo_check_interfaces(unsupported,[{**members,'target_group':'wire'}])['status']=='unverified'
+    rejects(lambda:h.geo_check_interfaces(passage_out,[{**members,'expected_components':0}]),'1..32')
 
     # The relation is also rechecked while the user control is perturbed.
     tests=[{'id':'length_response','values':{'length':1.2},'expectations':[

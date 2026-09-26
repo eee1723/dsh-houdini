@@ -49,6 +49,29 @@ try:
     assert risk['ok'] and risk['healthy'],'surface advisory must not rewrite cook health'
     assert risk['surface_integrity']['negative_closed_shells']==1,risk['surface_integrity']
     assert risk['surface_integrity']['risk_status']=='needs_review',risk['surface_integrity']
+    # A final mixed surface/curve output must remain unverified while pointing
+    # the author at an exact final Polygon group for local follow-up.
+    grouped=root.createNode('attribwrangle','group_final_box')
+    grouped.setInput(0,root.node('module_source'))
+    grouped.parm('class').set('detail')
+    grouped.parm('snippet').set('for (int i=0; i<nprimitives(0); i++) setprimgroup(0,"housing",i,1);')
+    loose=root.createNode('attribwrangle','loose_curve')
+    loose.parm('class').set('detail')
+    loose.parm('snippet').set('int a=addpoint(0,set(0,0,0)); int b=addpoint(0,set(1,0,0)); addprim(0,"polyline",a,b);')
+    mixed=root.createNode('merge','mixed_final')
+    mixed.setInput(0,grouped);mixed.setInput(1,loose)
+    root.node('OUT_ASSET').setInput(0,mixed)
+    mixed_review=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
+                     f"nodes={[grouped.path(),loose.path(),mixed.path(),root.node('OUT_ASSET').path()]!r})")['result']
+    surface=mixed_review['surface_integrity']
+    assert mixed_review['healthy'] and surface['status']=='unverified',mixed_review
+    assert surface['polygon_group_candidates']==[{'group':'housing','primitives':6}],surface
+    assert surface['polygon_group_scan']=={'scanned':1,'total':1,'truncated':False},surface
+    assert 'geo_piece_stats' in mixed_review['next_action'] and "group='<exact group>'" in mixed_review['next_action']
+    local=run(f"__result__=geo_piece_stats({root.node('OUT_ASSET').path()!r},"
+              "inspect=True,integrity_only=True,group='housing')")['result']
+    assert local['status']=='observed' and local['group']=='housing',local
+    assert local['risk_status']=='no_detected_integrity_risk',local
     # A closed path can produce a perfectly closed, outward Sweep shell while
     # adding a long unwanted chord from the loose cable end back to its start.
     cable_curve=root.createNode('attribwrangle','closure_fixture_curve')

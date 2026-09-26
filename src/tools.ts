@@ -324,7 +324,9 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       unverified:rows.filter((row:any) => row.status === 'unverified').length,
       unresolved:unresolved.slice(0, 6).map((row:any) => ({id:row.id,method:row.method ?? 'surface_proximity',
         output:row.output,target_group:row.target_group ?? null,reason:row.reason ?? null,
-        hit_position:row.hit_position ?? null})),
+        hit_position:row.hit_position ?? null,
+        expected_components:row.expected_components ?? null,
+        observed_components:row.observed_components ?? null})),
       boundary:'Only declared relations on the recorded final output were checked. Axis passage pass clears one centerline, not the full bore. Later geometry edits require fresh checks.'})}`})
   }
   const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
@@ -347,6 +349,10 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
         output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
         scene_unit_length_meters:item.scene_unit_length_meters ?? null,
         surface_status:surface.status ?? 'not_checked',
+        surface_reason:surface.reason ?? null,
+        polygon_group_candidates:surface.polygon_group_candidates ?? [],
+        polygon_group_scan:surface.polygon_group_scan ?? null,
+        surface_next_action:surface.next_action ?? null,
         surface_risk_status:surface.risk_status ?? null,
         boundary_edges:surface.boundary_edges ?? null,
         negative_closed_shells:surface.negative_closed_shells ?? null,

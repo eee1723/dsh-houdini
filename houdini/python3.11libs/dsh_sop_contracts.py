@@ -382,6 +382,21 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                 'planar_face_crossings':observed.get('planar_face_crossings'),
                 'scope':'bounded final OUT_ASSET Polygon surface advisory, including strict interior edge crossings within eligible planar faces; inspect planar_face_crossings coverage/skips; open ports may be intentional; no general 3-D self-intersection, connection, dimension, force or visual certification',
             }
+            if observed.get('status') == 'unverified' and str(observed.get('reason','')).startswith('requires closed polygon faces'):
+                groups = sorted(geometry.primGroups(), key=lambda group:group.name())
+                candidates = []
+                for group in groups[:32]:
+                    prims = group.prims()
+                    if prims and all(prim.type() == hou.primType.Polygon and prim.isClosed() for prim in prims):
+                        candidates.append({'group':group.name(), 'primitives':len(prims)})
+                surface_integrity['polygon_group_candidates'] = candidates[:8]
+                surface_integrity['polygon_group_scan'] = {'scanned':min(len(groups),32),
+                    'total':len(groups), 'truncated':len(groups)>32 or len(candidates)>8}
+                surface_integrity['next_action'] = (
+                    "Inspect a declared final Polygon group with geo_piece_stats(OUT_ASSET, inspect=True, integrity_only=True, group='<exact group>'); "
+                    'then review cross-group interfaces and the mixed final output separately. Group checks do not certify the whole asset.'
+                    if candidates else
+                    'No pure closed Polygon group found within the bounded scan; inspect the source module or author a stable final primitive group, then rerun the final output checkpoint.')
     fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
     reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
     if output_cooked and nonempty is None:
@@ -406,6 +421,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
             'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
                             'Resolve or explicitly explain warning nodes before handoff.' if warnings else
+                            surface_integrity['next_action'] if surface_integrity and surface_integrity.get('next_action') else
                             'Review final surface boundaries/orientation/face crossings and declared relations before delivery.' if surface_integrity and (surface_integrity.get('risk_status')=='needs_review' or surface_integrity.get('boundary_edges')) else
                             'Review suspicious Sweep backbone closure against the intended cable/curve path before delivery.' if curve_path_integrity and curve_path_integrity.get('risk_status')=='needs_review' else
                             'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),

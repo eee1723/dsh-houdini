@@ -107,14 +107,19 @@ def validate_interfaces(interfaces):
         section = item.get('method') == 'section_proximity'
         solid_overlap = item.get('method') == 'solid_overlap'
         axis_passage = item.get('method') == 'axis_passage'
-        allowed = {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
+        component_count = item.get('method') == 'component_count'
+        allowed = {'id','method','target_group','expected_components'} if component_count else {'id','method','target_group','axis','start','end'} if axis_passage else {'id','method','source_group','target_group','axis','gap_range','min_overlap'} if axis_gap else {'id','method','source_group','target_group','axis','plane_at','expected_components','max_distance'} if section else {'id','method','source_group','target_group','max_overlap_volume'} if solid_overlap else {'id','source_group','target_group','max_distance','expected_points'}
         _exact_keys(item, allowed, 'interface')
-        for key in (('id','target_group') if axis_passage else ('id','source_group','target_group')):
+        for key in (('id','target_group') if axis_passage or component_count else ('id','source_group','target_group')):
             if not isinstance(item.get(key), str) or not item[key].strip():
                 raise ValueError(f'interface {key} must be nonempty')
         if item['id'] in ids:
             raise ValueError('interface ids must be unique')
         ids.add(item['id'])
+        if component_count:
+            if type(item.get('expected_components')) is not int or not 1 <= item['expected_components'] <= 32:
+                raise ValueError('component_count expected_components must be 1..32')
+            continue
         if axis_passage:
             axis = item.get('axis')
             if type(axis) is not int or not 0 <= axis <= 2:
@@ -330,6 +335,9 @@ def _check_interfaces(g, interfaces, max_pairs):
         if item.get('method') == 'axis_passage':
             results.append(_axis_passage(g,item))
             continue
+        if item.get('method') == 'component_count':
+            results.append(_component_count(g,item))
+            continue
         pg = g.findPointGroup(item['source_group'])
         tg = g.findPrimGroup(item['target_group'])
         points = list(pg.points()) if pg else []
@@ -391,9 +399,45 @@ def _check_interfaces(g, interfaces, max_pairs):
     results.sort(key=lambda r:order[r['id']])
     status = 'fail' if any(r['status']=='fail' for r in results) else 'unverified' if any(r['status']=='unverified' for r in results) else 'pass'
     return {'ok':status=='pass','status':status,'results':results,'pair_tests':total_pairs,
-            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks only one declared line through selected final Polygon surfaces',
+            'coverage':'per-method declared selections; proximity checks every source vertex against every target surface, solid_overlap uses bounded Boolean intersection of closed Polygon selections, axis_passage checks one declared line, component_count counts edge-connected islands in a selected final Polygon group',
             'coordinate_space':'explicit output SOP local',
-            'scope':'declared proximity, axis-projection, bounded solid-overlap or single-axis clearance only; not continuous collision, full bore shape, mechanical strength or unspecified part clearance'}
+            'scope':'declared proximity, axis-projection, bounded solid-overlap, single-axis clearance or selected-group component count only; not continuous collision, full bore shape, mechanical strength or unspecified part completeness'}
+
+
+def _component_count(g, item):
+    group=g.findPrimGroup(item['target_group'])
+    prims=list(group.prims()) if group else []
+    base={'id':item['id'],'method':'component_count','target_group':item['target_group'],
+          'target_count':len(prims),'expected_components':item['expected_components'],
+          'scope':'edge-connected Polygon islands in one declared final-output group; not semantic part identity, shape or connection to the rest of the asset'}
+    if not prims:
+        return {**base,'status':'fail','reason':'missing_target_group'}
+    if len(prims)>20000:
+        raise ValueError('component_count polygon budget exceeded; narrow the final part group')
+    if any(p.type().name()!='Polygon' or not _supported_surface(p) for p in prims):
+        return {**base,'status':'unverified','reason':'component_count_requires_polygon_surfaces'}
+    parents={p.number():p.number() for p in prims}
+    edges=defaultdict(list);vertices=0
+    def root(n):
+        while parents[n]!=n:
+            parents[n]=parents[parents[n]];n=parents[n]
+        return n
+    for prim in prims:
+        ids=[v.point().number() for v in prim.vertices()]
+        vertices+=len(ids)
+        if vertices>100000:
+            raise ValueError('component_count vertex budget exceeded; narrow the final part group')
+        area=float(prim.intrinsicValue('measuredarea'))
+        if len(set(ids))!=len(ids) or not math.isfinite(area) or area<=0:
+            return {**base,'status':'unverified','reason':'degenerate_selected_polygon'}
+        for a,b in zip(ids,ids[1:]+ids[:1]):
+            edges[tuple(sorted((a,b)))].append(prim.number())
+    for owners in edges.values():
+        for n in owners[1:]:parents[root(n)]=root(owners[0])
+    components=len({root(n) for n in parents})
+    return {**base,'status':'pass' if components==item['expected_components'] else 'fail',
+            'observed_components':components,'selected_vertices':vertices,
+            'boundary':'Only edge connectivity of the declared Polygon group was counted. Declare expected members from the request before inspecting survivors; separately verify each required connection and visible shape.'}
 
 
 def _axis_passage(g, item):

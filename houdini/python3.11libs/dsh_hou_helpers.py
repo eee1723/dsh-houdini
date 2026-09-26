@@ -4956,6 +4956,10 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     位于包络内；在最终Polygon表面上射线碰到任何面即fail，单轴无遮挡才pass。
     缺组fail；不支持表示或线段未跨包络为unverified。只证明这一条中心线，
     不证明孔径、孔壁、周围材料或其他轴；后续增材修改后必须复验。
+    method='component_count'用最终Polygon primitive组target_group和
+    expected_components(1..32)测共享边连通岛数；缺组或数目不符fail，
+    不支持表示/退化面unverified。期望件数须先从要求得出，不能从幸存件反推；
+    数目通过不证明每件身份、对称位置、形状或连接到主体。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)

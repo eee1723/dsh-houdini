@@ -198,6 +198,7 @@ dry_run只有静态效力。verify_network必须明确output，默认拒绝empty
 稳定最终`OUT_ASSET`的verify_network附带有界Polygon表面复核摘要与真实bbox_size，
 不改其cook健康判定；开放边/反向壳或不支持表示需按最终零件解释，不能用
 `healthy=true`覆盖，也不必对同一状态重复执行整件Polygon快检。
+混合曲线/Polygon使整件检查unverified时，回执在最多32个最终primitive组内列出至多8个纯闭合Polygon组和局部复查入口；组检查只覆盖所选面，跨组接口及混合整件仍另验。
 上游Sweep有Polygon中心线时，另看curve_path_integrity：异常长的闭合回边与两端
 急折只提示核对曲线意图，不把拓扑闭合误当线缆自由端正确；未参与最终输出的
 Switch分支也可能在上游，须结合实际显示判断。
@@ -226,6 +227,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 | section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
 | solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；无交集或阈值内通过 | 零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
 | axis_passage | 声明的SOP local轴线穿过最终输出指定Polygon组的包络，且沿该线未碰到最终表面 | 整个孔径、孔壁形状、其他孔轴或孔周材料；非Polygon及未跨包络保持unverified |
+| component_count | 最终输出指定Polygon组中共享边连通岛的实际数量与预先声明数量一致 | 各岛的产品身份、对称位置、尺寸或与主体的实际连接；非Polygon/退化面保持unverified |
 | stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
 
 test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
