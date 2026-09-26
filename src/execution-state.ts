@@ -185,6 +185,11 @@ function needsExecutionAttention(check: any): boolean {
       && (check.status === 'unverified' || (check.risk_reasons || []).length > 0))
 }
 
+function isUnresolvedDeclaredCheck(check: any): boolean {
+  return ['geo_check_interfaces','test_controls'].includes(check.verb)
+    && ['fail','unverified'].includes(check.status)
+}
+
 /** Historical target continuity, not authority to adopt/rebind a new executor.
  * Only correlate original live calls with canonical tool results. A detail read,
  * source excerpt, receipt lookup or replay must not invent a target assignment.
@@ -356,7 +361,12 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
   }
   const allChecks = [...checks.values()]
   const attentionChecks = allChecks.filter(needsExecutionAttention)
-  const retainedChecks = new Set(attentionChecks.slice(-8))
+  // A failed declared product relation must survive a later burst of stale
+  // build/render checkpoints. The notice is still bounded and exposes overflow.
+  const retainedChecks = new Set(attentionChecks.filter(isUnresolvedDeclaredCheck).slice(-8))
+  for (let index=attentionChecks.length-1; index>=0 && retainedChecks.size<8; index--) {
+    retainedChecks.add(attentionChecks[index])
+  }
   for (let index=allChecks.length-1; index>=0 && retainedChecks.size<8; index--) retainedChecks.add(allChecks[index])
   const projectedChecks = allChecks.filter(check => retainedChecks.has(check))
   return {status:'recorded_execution_facts',runtime_id:anchor.e.runtime_id,

@@ -164,6 +164,14 @@ assert.equal(projectExecutionState(events).checks.length,8,'check projection sta
 assert.equal(projectExecutionState(events).coverage.attention_checks_omitted,0);
 assert.equal(projectExecutionNotice(events).checks[0].contract_sha256,failedInterface.contract_sha256,
   'unrelated successful checks cannot evict an unresolved interface failure');
+for(let i=0;i<10;i++) {
+  const id=200+i;
+  record(12+i,{evidence:[{ledgerIndex:1,verb:'build_module',output:'/obj/n'+id,ok:true}],
+    outputs:[{ledger_index:1,verb:'build_module',identity:id,path:'/obj/n'+id,exists:true}],
+    impact:{attempted:true,last_edit_ledger_index:2,nodes:[node(id)]}});
+}
+assert.equal(projectExecutionNotice(events).checks.some(c=>c.contract_sha256===failedInterface.contract_sha256),true,
+  'a burst of stale build checkpoints cannot evict a failed declared relation');
 events.splice(0);
 for(let i=0;i<10;i++) {
   const id=100+i;
