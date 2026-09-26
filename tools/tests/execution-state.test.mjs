@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import {projectExecutionState,projectExecutionNotice} from '../../lib/execution-state.js';
 
 const events=[];
-function record(sequence, {tool='houdini_exec',runtime='R',nodes=[],networkBoxes,impact={},evidence=[],outputs=[],status='committed',ok=true,observed=sequence,jobId,jobStatus}={}) {
+function record(sequence, {tool='houdini_exec',runtime='R',nodes=[],networkBoxes,impact={},evidence=[],outputs=[],status='committed',ok=true,observed=sequence,jobId,jobStatus,details}={}) {
   const id='call-'+events.length;
   events.push({seq:events.length+1,type:'tool/call',data:{callId:id,name:tool}});
   const canonical={ok,transaction:{status,nodes,...(networkBoxes?{network_boxes:networkBoxes}:{})},evidence,
+    ...(details?{details}:{}),
     execution:{runtime_id:runtime,sequence,observed_at:observed,frame:1,
       impact:{attempted:false,nodes:[],...impact},outputs},...(jobId?{jobId,status:jobStatus}:{})};
   events.push({seq:events.length+1,type:'tool/result',data:{meta:{canonical},message:{source:{callId:id},content:[]}}});
@@ -109,4 +110,68 @@ assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
   'the original failed verdict remains explicit after a geometry edit makes it stale');
 record(3,{evidence:[{...failedControl,ok:true,status:'pass'}],outputs:[controlOutput]});
 assert.equal(projectExecutionNotice(events),null,'passing retest clears the old failed control check');
+events.splice(0);
+const interfaceOutput={ledger_index:1,verb:'geo_check_interfaces',identity:11,path:'/obj/asset/OUT_ASSET',exists:true};
+const failedInterface={ledgerIndex:1,verb:'geo_check_interfaces',output:'/obj/asset/OUT_ASSET',
+  ok:false,status:'fail',contract_sha256:'c'.repeat(64),scope:'declared interfaces only',
+  results:[{id:'pin_span',status:'fail'}]};
+const stored={stored:true,sha256:'a'.repeat(64)};
+const failingCall=record(1,{evidence:[failedInterface],outputs:[interfaceOutput],details:stored});
+const interfaceAttention=projectExecutionNotice(events);
+assert.equal(interfaceAttention.checks[0].status,'fail','a failed final interface remains visible after its tool result');
+assert.equal(interfaceAttention.checks[0].output,'/obj/asset/OUT_ASSET');
+assert.equal(interfaceAttention.checks[0].source_call,failingCall);
+assert.equal(interfaceAttention.checks[0].result_ref,stored.sha256);
+assert.equal(interfaceAttention.checks[0].pointer,'/evidence/0');
+assert.equal(interfaceAttention.checks[0].contract_sha256,failedInterface.contract_sha256);
+assert.match(interfaceAttention.boundary,/not whole-product acceptance/);
+record(2,{impact:{attempted:true,nodes:[node(99)]}});
+assert.deepEqual(projectExecutionNotice(events),interfaceAttention,
+  'an unrelated edit does not clear or rewrite a failed interface notice');
+record(3,{evidence:[{...failedInterface,status:'unverified',results:[{id:'pin_span',status:'unverified'}]}],
+  outputs:[interfaceOutput],details:{stored:true,sha256:'b'.repeat(64)}});
+assert.equal(projectExecutionState(events).checks[0].status,'unverified',
+  'interface unverified must not collapse to fail merely because ok is false');
+assert.equal(projectExecutionNotice(events).checks[0].status,'unverified');
+record(4,{evidence:[{...failedInterface,ok:true,status:'pass',results:[{id:'pin_span',status:'pass'}]}],
+  outputs:[interfaceOutput]});
+assert.equal(projectExecutionState(events).checks[0].status,'pass');
+assert.equal(projectExecutionNotice(events),null,
+  'a passing retest clears the scoped attention, without asserting whole-product acceptance');
+events.splice(0);
+record(1,{evidence:[failedInterface],outputs:[interfaceOutput]});
+record(2,{evidence:[{...failedInterface,ok:true,status:'pass',contract_sha256:'d'.repeat(64)}],
+  outputs:[interfaceOutput]});
+assert.equal(projectExecutionState(events).checks.length,2,'distinct contracts on one final output remain distinct');
+assert.equal(projectExecutionNotice(events).checks[0].contract_sha256,failedInterface.contract_sha256,
+  'a changed contract is not a repair of the old failing contract');
+record(3,{evidence:[{...failedInterface,ok:true,status:'pass'}],outputs:[interfaceOutput]});
+assert.equal(projectExecutionNotice(events),null,'only a retest of the original contract clears its failure');
+events.splice(0);
+const unknownContract={...failedInterface};delete unknownContract.contract_sha256;
+record(1,{evidence:[unknownContract],outputs:[interfaceOutput]});
+record(2,{evidence:[{...unknownContract,ok:true,status:'pass'}],outputs:[interfaceOutput]});
+assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
+  'without a contract hash, an apparent pass cannot prove it retested the same declaration');
+events.splice(0);
+record(1,{evidence:[failedInterface],outputs:[interfaceOutput]});
+for(let i=0;i<10;i++) {
+  const id=100+i;
+  record(2+i,{evidence:[{ledgerIndex:1,verb:'verify_network',output:'/obj/n'+id,ok:true}],
+    outputs:[{ledger_index:1,verb:'verify_network',identity:id,path:'/obj/n'+id,exists:true}]});
+}
+assert.equal(projectExecutionState(events).checks.length,8,'check projection stays bounded');
+assert.equal(projectExecutionState(events).coverage.attention_checks_omitted,0);
+assert.equal(projectExecutionNotice(events).checks[0].contract_sha256,failedInterface.contract_sha256,
+  'unrelated successful checks cannot evict an unresolved interface failure');
+events.splice(0);
+for(let i=0;i<10;i++) {
+  const id=100+i;
+  record(i+1,{evidence:[{...failedInterface,contract_sha256:i.toString(16).padStart(64,'0'),
+    output:'/obj/n'+id}],outputs:[{ledger_index:1,verb:'geo_check_interfaces',identity:id,
+    path:'/obj/n'+id,exists:true}]});
+}
+assert.equal(projectExecutionNotice(events).checks.length,8);
+assert.equal(projectExecutionNotice(events).attention_checks_omitted,2,
+  'overflow is explicit rather than silently implying all unresolved contracts fit the notice');
 console.log('execution-state projection: dependency invalidation, deleted identities, same-call edits, rollback, replay, timeout, runtime change, out-of-order jobs and pending jobs passed');

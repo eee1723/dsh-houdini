@@ -177,6 +177,14 @@ const CHECKS = new Set(['build_module', 'verify_network', 'test_controls', 'geo_
   'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls'])
 const RESOLVED_REQUESTS = new Set(['done', 'not_executed', 'job_submitted'])
 
+function needsExecutionAttention(check: any): boolean {
+  return check.validity.startsWith('stale_') || check.validity.startsWith('unverified_')
+    || (check.verb === 'geo_check_interfaces' && ['fail','unverified'].includes(check.status))
+    || (check.verb === 'test_controls' && ['fail','warning','unverified'].includes(check.status))
+    || (check.verb === 'geo_piece_stats'
+      && (check.status === 'unverified' || (check.risk_reasons || []).length > 0))
+}
+
 /** Historical target continuity, not authority to adopt/rebind a new executor.
  * Only correlate original live calls with canonical tool results. A detail read,
  * source excerpt, receipt lookup or replay must not invent a target assignment.
@@ -309,6 +317,9 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         ? item.status === 'unverified' ? 'unverified'
           : item.risk_status === 'needs_review' || item.boundary_review_status === 'open_boundary_unreviewed' ? 'warning'
           : item.risk_status === 'no_detected_integrity_risk' ? 'no_detected_integrity_risk' : 'unverified'
+        : item.verb === 'geo_check_interfaces' ? item.status === 'unverified' ? 'unverified'
+          : item.status === 'fail' || item.ok === false ? 'fail'
+          : item.status === 'pass' && item.ok === true ? 'pass' : 'unverified'
         : item.ok === false || item.restored === false ? 'fail'
         : item.warning_free === false || item.healthy === false ? 'warning'
         : item.status ?? (item.ok === true ? 'observed_pass' : 'unverified')
@@ -319,7 +330,11 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         : unknownOrder ? 'unverified_change_order_in_call'
         : supersededInCall ? 'stale_after_later_edit_in_same_call'
         : 'historical_observation_only'
-      const portScope = item.verb === 'geo_piece_stats' ? JSON.stringify(item.group ?? null)
+      const contractHash = item.verb === 'geo_check_interfaces' && typeof item.contract_sha256 === 'string'
+        && /^[0-9a-f]{64}$/i.test(item.contract_sha256) ? item.contract_sha256.toLowerCase() : null
+      const portScope = item.verb === 'geo_check_interfaces'
+        ? contractHash ?? `unknown_contract:${callId}:${item.ledgerIndex ?? value.evidence.indexOf(item)}`
+        : item.verb === 'geo_piece_stats' ? JSON.stringify(item.group ?? null)
         : item.verb === 'cop_compare_layers' ? JSON.stringify(binding?.dependencies || [])
         : item.verb === 'cop_layer_stats' ? item.output : item.verb === 'test_cop_controls' ? item.output_port : ''
       const key = `${item.verb}:${identity ?? binding?.path ?? item.output ?? item.node ?? item.ledgerIndex}:${portScope}`
@@ -328,6 +343,7 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         ...(dependencyIdentities.length ? {dependency_identities:dependencyIdentities} : {}),
         ...(item.verb === 'geo_piece_stats' ? {group:item.group ?? null,
           boundary_edges:item.boundary_edges ?? null,risk_reasons:item.risk_reasons ?? []} : {}),
+        ...(item.verb === 'geo_check_interfaces' ? {contract_sha256:contractHash} : {}),
         status:checkStatus,validity,scope:item.scope ?? null,frame:item.frame ?? e.frame,
         source_call:callId,event_seq:eventSeq,sequence:e.sequence,
         ...(value.details?.stored ? {result_ref:value.details.sha256,pointer:`/evidence/${value.evidence.indexOf(item)}`} : {})})
@@ -338,17 +354,23 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
   for (const check of checks.values()) if (inFlight || uncertain.some(seq => seq > check.event_seq)) {
     check.validity = 'unverified_after_unobserved_or_inflight_execution'
   }
+  const allChecks = [...checks.values()]
+  const attentionChecks = allChecks.filter(needsExecutionAttention)
+  const retainedChecks = new Set(attentionChecks.slice(-8))
+  for (let index=allChecks.length-1; index>=0 && retainedChecks.size<8; index--) retainedChecks.add(allChecks[index])
+  const projectedChecks = allChecks.filter(check => retainedChecks.has(check))
   return {status:'recorded_execution_facts',runtime_id:anchor.e.runtime_id,
     hip_path:anchor.e.hip_path ?? null,
     last_sequence:current.at(-1)?.e.sequence,last_observed_at:current.at(-1)?.e.observed_at,
     frame:current.at(-1)?.e.frame,
-    nodes:[...nodes.values()].slice(-12),checks:[...checks.values()].slice(-8),
+    nodes:[...nodes.values()].slice(-12),checks:projectedChecks,
     recent_failures:failures.slice(-2),active_jobs:activeJobs,pending_calls:pendingCalls.length,unresolved_requests:activeRequests,
     unresolved_calls:unresolvedCalls.map(row=>row.callId),
     coverage:{execution_records:current.length,older_records_omitted:ordered.length-current.length,
       other_runtime_records_excluded:rows.length-runtimeRows.length,
       other_hip_records_excluded:runtimeRows.length-all.length,nodes_omitted:Math.max(0,nodes.size-12),
-      checks_omitted:Math.max(0,checks.size-8)},
+      checks_omitted:allChecks.length-projectedChecks.length,
+      attention_checks_omitted:attentionChecks.length-projectedChecks.filter(needsExecutionAttention).length},
     boundary:'Historical tool observations only, not current live state or permission. Native dependency hints exclude unobserved GUI edits, last-cook omissions and external/dynamic dependencies. Non-stale does not mean currently valid; recheck relevant state before relying on it.'}
 }
 
@@ -358,14 +380,11 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
 export function projectExecutionNotice(events: readonly Event[]): Record<string, unknown> | null {
   const state = projectExecutionState(events) as any
   if (!state) return null
-  const checks = (state.checks || []).filter((check: any) =>
-    check.validity.startsWith('stale_') || check.validity.startsWith('unverified_')
-      || (check.verb === 'test_controls' && ['fail','warning','unverified'].includes(check.status))
-      || (check.verb === 'geo_piece_stats'
-        && (check.status === 'unverified' || (check.risk_reasons || []).length > 0)))
+  const checks = (state.checks || []).filter(needsExecutionAttention)
     .map((check: any) => ({verb:check.verb,identity:check.identity,output:check.output,
       status:check.status,validity:check.validity,source_call:check.source_call,
-      result_ref:check.result_ref,group:check.group,boundary_edges:check.boundary_edges,
+      result_ref:check.result_ref,pointer:check.pointer,contract_sha256:check.contract_sha256,
+      group:check.group,boundary_edges:check.boundary_edges,
       risk_reasons:check.risk_reasons,invalidated_by:check.invalidated_by}))
   // Compare observed foreground identities in execution order, never GUI selection.
   const calls = new Map<string, string>()
@@ -394,7 +413,8 @@ export function projectExecutionNotice(events: readonly Event[]): Record<string,
   const requests = state.unresolved_requests || [], unresolved = state.unresolved_calls || []
   if (!checks.length && !requests.length && !unresolved.length && !state.pending_calls && !changed) return null
   return {status:'execution_attention',runtime_id:state.runtime_id ?? null,
-    observed_scene_change:changed,checks,unresolved_requests:requests,unresolved_calls:unresolved,
+    observed_scene_change:changed,checks,attention_checks_omitted:state.coverage?.attention_checks_omitted ?? 0,
+    unresolved_requests:requests,unresolved_calls:unresolved,
     pending_calls:state.pending_calls || 0,
-    boundary:'Historical tool evidence, not live state or permission. Resolve uncertain requests by their original reference before repeating mutations. Recheck affected outputs; passive GUI activity is not observed or a new user target.'}
+    boundary:'Historical tool evidence, not live state or permission. A passing declared interface is not whole-product acceptance. Resolve uncertain requests by their original reference before repeating mutations. Recheck affected outputs; passive GUI activity is not observed or a new user target.'}
 }
