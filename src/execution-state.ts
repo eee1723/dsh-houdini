@@ -325,6 +325,10 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         : item.verb === 'geo_check_interfaces' ? item.status === 'unverified' ? 'unverified'
           : item.status === 'fail' || item.ok === false ? 'fail'
           : item.status === 'pass' && item.ok === true ? 'pass' : 'unverified'
+        : item.verb === 'test_controls' ? item.restored === false ? 'fail'
+          : item.status === 'unverified' ? 'unverified'
+          : item.status === 'fail' || item.ok === false ? 'fail'
+          : item.status === 'pass' && item.ok === true ? 'pass' : 'unverified'
         : item.ok === false || item.restored === false ? 'fail'
         : item.warning_free === false || item.healthy === false ? 'warning'
         : item.status ?? (item.ok === true ? 'observed_pass' : 'unverified')
@@ -335,9 +339,10 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         : unknownOrder ? 'unverified_change_order_in_call'
         : supersededInCall ? 'stale_after_later_edit_in_same_call'
         : 'historical_observation_only'
-      const contractHash = item.verb === 'geo_check_interfaces' && typeof item.contract_sha256 === 'string'
+      const declaredContract = item.verb === 'geo_check_interfaces' || item.verb === 'test_controls'
+      const contractHash = declaredContract && typeof item.contract_sha256 === 'string'
         && /^[0-9a-f]{64}$/i.test(item.contract_sha256) ? item.contract_sha256.toLowerCase() : null
-      const portScope = item.verb === 'geo_check_interfaces'
+      const portScope = declaredContract
         ? contractHash ?? `unknown_contract:${callId}:${item.ledgerIndex ?? value.evidence.indexOf(item)}`
         : item.verb === 'geo_piece_stats' ? JSON.stringify(item.group ?? null)
         : item.verb === 'cop_compare_layers' ? JSON.stringify(binding?.dependencies || [])
@@ -348,7 +353,7 @@ export function projectExecutionState(events: readonly Event[]): Record<string, 
         ...(dependencyIdentities.length ? {dependency_identities:dependencyIdentities} : {}),
         ...(item.verb === 'geo_piece_stats' ? {group:item.group ?? null,
           boundary_edges:item.boundary_edges ?? null,risk_reasons:item.risk_reasons ?? []} : {}),
-        ...(item.verb === 'geo_check_interfaces' ? {contract_sha256:contractHash} : {}),
+        ...(declaredContract ? {contract_sha256:contractHash} : {}),
         status:checkStatus,validity,scope:item.scope ?? null,frame:item.frame ?? e.frame,
         source_call:callId,event_seq:eventSeq,sequence:e.sequence,
         ...(value.details?.stored ? {result_ref:value.details.sha256,pointer:`/evidence/${value.evidence.indexOf(item)}`} : {})})

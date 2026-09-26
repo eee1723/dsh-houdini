@@ -100,7 +100,8 @@ record(4,{evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'full selected 
 assert.equal(projectExecutionState(events).checks.length,1,
   'ordinary geometry observations do not overwrite an integrity risk');
 events.splice(0);
-const failedControl={ledgerIndex:1,verb:'test_controls',output:'/obj/n7',ok:false,status:'fail',restored:true};
+const failedControl={ledgerIndex:1,verb:'test_controls',output:'/obj/n7',ok:false,status:'fail',restored:true,
+  contract_sha256:'e'.repeat(64)};
 const controlOutput={ledger_index:1,verb:'test_controls',identity:7,path:'/obj/n7',exists:true};
 record(1,{evidence:[failedControl],outputs:[controlOutput]});
 assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
@@ -108,8 +109,29 @@ assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
 record(2,{impact:{attempted:true,nodes:[node(7)]}});
 assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
   'the original failed verdict remains explicit after a geometry edit makes it stale');
-record(3,{evidence:[{...failedControl,ok:true,status:'pass'}],outputs:[controlOutput]});
+record(3,{evidence:[{...failedControl,ok:true,status:'pass',contract_sha256:'f'.repeat(64)}],
+  outputs:[controlOutput]});
+assert.equal(projectExecutionState(events).checks.length,2,
+  'a narrower passing control test retains the failed contract on the same output');
+assert.equal(projectExecutionNotice(events).checks[0].contract_sha256,failedControl.contract_sha256,
+  'an unrelated passing control test cannot clear the failed control contract');
+record(4,{evidence:[{...failedControl,ok:true,status:'pass'}],outputs:[controlOutput]});
 assert.equal(projectExecutionNotice(events),null,'passing retest clears the old failed control check');
+events.splice(0);
+const unknownControl={...failedControl};delete unknownControl.contract_sha256;
+record(1,{evidence:[unknownControl],outputs:[controlOutput]});
+record(2,{evidence:[{...unknownControl,ok:true,status:'pass'}],outputs:[controlOutput]});
+assert.equal(projectExecutionNotice(events).checks[0].status,'fail',
+  'without a control contract hash, a later pass cannot prove it retested the failed declaration');
+events.splice(0);
+const unverifiedControl={...failedControl,status:'unverified',contract_sha256:'1'.repeat(64)};
+record(1,{evidence:[unverifiedControl],outputs:[controlOutput]});
+record(2,{evidence:[{...unverifiedControl,ok:true,status:'pass',contract_sha256:'2'.repeat(64)}],
+  outputs:[controlOutput]});
+assert.equal(projectExecutionNotice(events).checks[0].status,'unverified',
+  'a different passing control contract cannot hide an unverified declaration');
+record(3,{evidence:[{...unverifiedControl,ok:true,status:'pass'}],outputs:[controlOutput]});
+assert.equal(projectExecutionNotice(events),null,'matching control retest clears unverified attention');
 events.splice(0);
 const interfaceOutput={ledger_index:1,verb:'geo_check_interfaces',identity:11,path:'/obj/asset/OUT_ASSET',exists:true};
 const failedInterface={ledgerIndex:1,verb:'geo_check_interfaces',output:'/obj/asset/OUT_ASSET',
