@@ -194,6 +194,8 @@ try {
     registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
     new AbortController().signal),/fixture projection conflict/)
   await assert.rejects(controller1.getRouter(directory).sceneContextFor(agents[0].session),/fixture projection conflict/)
+  await assert.rejects(controller1.getRouter(directory).prepareComponent(child,records[0],
+    'parent',childWorkspace),/fixture projection conflict/)
   assert.equal(JSON.stringify(routeCounts),beforeRejectedRoute,'projection conflict must precede Bridge traffic')
   hostProjections.stateOf=stateOf
   const oldBridge=await consumerB.resolve(context(1))
