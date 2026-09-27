@@ -70,7 +70,9 @@ try {
     records.push(record);await write(record)
   }
   const flush=async s=>{flushed.push(s.id);return true}
-  const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(flush))
+  const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
+  const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
+    new ExecutorBindingBarrier(flush),identityOf)
   assert.equal((await router.directory.list()).length,2,
     'the exact configured installation must retain its registry records')
   const childWorkspace=path.join(directory,'child-workspace')
@@ -84,7 +86,8 @@ try {
   await assert.rejects(router.prepareComponent(late,records[0],'parent',childWorkspace),/precede every model step/)
   await router.prepareComponent(child,records[0],'parent',childWorkspace)
   assert.equal(recordedExecutorIdentity(child.session.snapshotEvents()),records[0].executor_id)
-  const noFlush=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(async()=>false))
+  const noFlush=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
+    new ExecutorBindingBarrier(async()=>false),identityOf)
   await assert.rejects(noFlush.prepareComponent(child,records[0],'parent',childWorkspace),/durable/)
   const ctx=new Context()
   const projections=new SessionProjectionRegistry(ctx)
@@ -176,7 +179,25 @@ try {
   let consumerA,consumerB
   const presetA=await hostContext.plugin({apply(c){consumerA=executorHost.sharedExecutorConnection(c,directory)}})
   const presetB=await hostContext.plugin({apply(c){consumerB=executorHost.sharedExecutorConnection(c,directory)}})
+  const stateOf=hostProjections.stateOf
+  let identityReads=0
+  hostProjections.stateOf=function(session,key){
+    if(key==='houdiniExecutorIdentity'){
+      identityReads++
+      throw new Error('fixture projection conflict')
+    }
+    return stateOf.call(this,session,key)
+  }
+  const beforeRejectedRoute=JSON.stringify(routeCounts)
+  await assert.rejects(consumerB.resolve(context(1)),/fixture projection conflict/)
+  await assert.rejects(controller1.select({sessionId:agents[0].id,executorId:records[0].executor_id,
+    registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
+    new AbortController().signal),/fixture projection conflict/)
+  await assert.rejects(controller1.getRouter(directory).sceneContextFor(agents[0].session),/fixture projection conflict/)
+  assert.equal(JSON.stringify(routeCounts),beforeRejectedRoute,'projection conflict must precede Bridge traffic')
+  hostProjections.stateOf=stateOf
   const oldBridge=await consumerB.resolve(context(1))
+  assert(identityReads>0,'Host router must consume the registered identity projection')
   await presetA.dispose()
   assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
   await host.dispose()

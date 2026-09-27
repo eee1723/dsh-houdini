@@ -195,7 +195,11 @@ function isUnresolvedDeclaredCheck(check: any): boolean {
  * source excerpt, receipt lookup or replay must not invent a target assignment.
  */
 export function requireExecutorContinuity(events: readonly Event[], current?: string): void {
-  const identity = recordedExecutorIdentity(events)
+  requireExecutorContinuityIdentity(recordedExecutorIdentity(events),current)
+}
+
+/** Same fail-closed continuity rule for callers with a current Session projection. */
+export function requireExecutorContinuityIdentity(identity:string|undefined,current?:string):void {
   if (identity && identity !== current) throw new Error('Houdini task requires recovery: recorded executor differs from the current target. No live request sent. If the original Houdini process is gone, cross-process recovery is not implemented: preserve the saved/crash HIP and inspect retained results; do not start a new task or select another target to bypass ownership. Restore the original binding only when that exact process is still available.')
 }
 

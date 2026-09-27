@@ -63,7 +63,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/image-output.ts](../src/image-output.ts) | Bridge 图像→DSH 原生附件；模型能力检查、字节限额、原生与 Code Mode 图像返回，无工作区副本 |
 | [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/原生图像交付、纯展示函数 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
-| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从持久任务绑定解析登记、验证执行端并固定调用级Bridge，无自动默认或重绑 |
+| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从当前执行器身份投影解析任务绑定、验证登记并固定调用级Bridge；绑定落盘屏障仍核原始事件，无自动默认或重绑 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，使用`agentPreset`及执行器身份投影确认当前任务，严格输入/预留/代际校验，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | Host专用Session投影：折叠持久绑定与原始工具回执的执行器身份；冲突/无效历史拒绝恢复，不从PID、HIP路径或只读回执查询认领执行端 |

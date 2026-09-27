@@ -5,7 +5,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
-import { ExecutorBindingBarrier, recordedExecutorIdentity, requireExecutorContinuity } from './execution-state.js'
+import { ExecutorBindingBarrier, requireExecutorContinuityIdentity } from './execution-state.js'
 
 export interface ExecutorRecord {
   schema:1
@@ -84,7 +84,8 @@ export class ExecutorRouter {
     return signal?AbortSignal.any([signal,this.lifetime.signal]):this.lifetime.signal
   }
   constructor(readonly directory:ExecutorDirectory, private readonly timeoutMs:number,
-    private readonly binding:ExecutorBindingBarrier) {}
+    private readonly binding:ExecutorBindingBarrier,
+    private readonly identityOf:(session:Session)=>string|undefined) {}
 
   private async verified(id:string, taskId:string, signal?:AbortSignal, requireWriter=true):Promise<HoudiniBridge> {
     signal=this.signal(signal)
@@ -105,7 +106,7 @@ export class ExecutorRouter {
     const signal=this.signal(exec.signal)
     const agent=exec.agent
     if(!agent||agent.session.id!==agent.id) throw new Error('Houdini routing requires the exact current agent session')
-    const target=recordedExecutorIdentity(agent.session.snapshotEvents())
+    const target=this.identityOf(agent.session)
     if(!target) throw new Error('Choose a Houdini executor for this task before running live tools; no first/only/latest target is selected automatically')
     const bridge=await this.verified(target,agent.id,signal)
     await this.binding.ensure(agent.session,target,signal)
@@ -113,7 +114,7 @@ export class ExecutorRouter {
   }
 
   async sceneContextFor(session:Session,signal?:AbortSignal):Promise<unknown> {
-    const target=recordedExecutorIdentity(session.snapshotEvents())
+    const target=this.identityOf(session)
     if(!target) throw new Error('No Houdini target selected; ambient scene inspection is disabled')
     const deadline=AbortSignal.timeout(2000)
     const bounded=signal?AbortSignal.any([signal,deadline]):deadline
@@ -128,8 +129,8 @@ export class ExecutorRouter {
       signal.throwIfAborted()
       if(agent.id!==agent.session.id||agent.session.header.parentSession!==parentId
         ||agent.session.header.cwd!==workspace) throw new Error('Component child/workspace identity mismatch; no executor binding')
-      const bound=recordedExecutorIdentity(agent.session.snapshotEvents())
-      requireExecutorContinuity(agent.session.snapshotEvents(),expected.executor_id)
+      const bound=this.identityOf(agent.session)
+      requireExecutorContinuityIdentity(bound,expected.executor_id)
       if(!bound&&agent.session.snapshotEvents().some(e=>['step/start','tool/call','assistant/message'].includes(e.type)))
         throw new Error('Component initial binding must precede every model step and tool call')
     }
@@ -152,7 +153,7 @@ export class ExecutorRouter {
   async selectInitial(agent:{id:string;status:string;session:Session}, id:string, registrationId:string, signal?:AbortSignal, expectedHip?:string):Promise<void> {
     signal=this.signal(signal)
     if(agent.status!=='idle'||agent.id!==agent.session.id) throw new Error('Select a target only for the exact idle agent')
-    requireExecutorContinuity(agent.session.snapshotEvents(),id)
+    requireExecutorContinuityIdentity(this.identityOf(agent.session),id)
     const record=await this.directory.find(id)
     if(expectedHip!==undefined&&record.hip_path!==expectedHip) throw new Error('HIP changed after the selection was displayed; refresh and confirm again')
     if(record.registration_id!==registrationId) throw new Error('Target selection is stale; refresh before confirming')
