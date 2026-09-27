@@ -70,6 +70,17 @@ def start():
         # describe the exact bytes reviewed. Do not rewrite final.hip on stop.
         if hip_name == 'component.hip':
             hou.hipFile.save(str(hip))
+        elif hou.isUIAvailable() and hou.hipFile.hasUnsavedChanges():
+            # A GUI close would open a Save Changes prompt and strand the
+            # supervisor. Report the unsaved final state before it reclaims
+            # this disposable process; never silently overwrite final.hip.
+            marker = root / 'stop-state.json'
+            if not marker.exists():
+                pending = root / 'stop-state.json.tmp'
+                pending.write_text(json.dumps({'status': 'unsaved_final_scene',
+                    'hip_path': str(hip)}), encoding='utf-8')
+                os.replace(pending, marker)
+            return False
         return True
 
     if hou.isUIAvailable():

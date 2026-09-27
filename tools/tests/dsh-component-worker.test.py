@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from houdini_test_environment import isolated_environment
 
+expect_dirty_final = '--expect-dirty-final' in sys.argv
+if expect_dirty_final and '--gui' not in sys.argv:
+    raise ValueError('--expect-dirty-final requires --gui')
+
 
 def request(record, route, body=None):
     req = urllib.request.Request(record['bridge_url'] + route,
@@ -105,8 +109,24 @@ try:
     assert processes[0].wait(timeout=25) == 0
     assert request(records[1], '/health')['executorId'] == records[1]['executor_id']
     assert Path(records[0]['hip_path']).is_file()
+    if expect_dirty_final:
+        dirty_ticket = request(final_record, '/requests/prepare', {'owner_session': final_owner})
+        dirty_result = request(final_record, '/exec', {'owner_session': final_owner,
+            'owner_call': 'edit-after-final-save', 'request_ref': dirty_ticket['requestRef'],
+            'expected_contract': {'version': dirty_ticket['executionContractVersion'],
+                                  'hash': dirty_ticket['verbCatalog']['hash']},
+            'code': "__result__=tab_create('/obj/final_probe','box','after_save').path()"})
+        assert dirty_result['ok'], dirty_result.get('error')
     processes[1].stdin.write('STOP\n'); processes[1].stdin.flush()
-    assert processes[1].wait(timeout=25) == 0
+    final_exit = processes[1].wait(timeout=25)
+    if expect_dirty_final:
+        assert final_exit != 0
+        marker = json.loads((fixture / '1/stop-state.json').read_text(encoding='utf-8'))
+        assert marker['status'] == 'unsaved_final_scene', marker
+        assert marker['hip_path'] == final_record['hip_path'], marker
+        assert 'unsaved scene changes after its explicit save' in (fixture / 'supervisor-1.log').read_text(errors='replace')
+    else:
+        assert final_exit == 0
     assert hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest() == final_hash
     reopen_script = fixture / 'reopen-final.py'
     reopen_script.write_text(
@@ -123,7 +143,8 @@ try:
                               timeout=90, creationflags=subprocess.CREATE_NO_WINDOW)
     assert reopened.returncode == 0 and 'REOPEN_OK' in reopened.stdout, reopened.stdout
     assert hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest() == final_hash
-    print('PASS two component workers, unique HIP/identity/port, isolated stop; fixture:', fixture)
+    print('PASS two component workers, unique HIP/identity/port, '
+          + ('dirty final rejected' if expect_dirty_final else 'isolated stop') + '; fixture:', fixture)
 finally:
     for process in processes:
         if process.poll() is None:

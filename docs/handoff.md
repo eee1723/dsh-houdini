@@ -49,15 +49,15 @@
 ### H-03 超时与不确定请求恢复（RT-02）
 
 - 状态：待修复
-- 现状：同runtime回执及受限worker已具备；风扇退出、Neutrik长调用仍无最终HIP。test36预览后NameError使原生undo挂住，服务非undo修复通过H21/H22隔离GUI；原任务同因未证。卷线盘A/B作者运行无自发进程退出，但共享执行器拒绝Save As；复制HIP虽可独立重开，缺目标保存回执，按交付失败。评审清场后AppHangTransient；隔离H21同HIP副本对照复现：保留服务退出，清场（含先保存）均超时，原弹窗归属未证。
-- 下一步：隔离worker可预留final.hip，H21/H22无模型保存通过；下次在GUI新锁条件验最后修改后的保存/回执/重开，评审独立留失败。继续区分退出、未知请求和保存失败；同runtime仅按request_ref查回，不重发修改。按[多实例与恢复](multi-instance.md)验Qt登记/单端Repair、共享Host退出与旧会话续接；跨进程恢复、GUI/外部替换与恢复授权后置。live未验；不因超时杀Houdini或凭tag认领，图片恢复保留原历史。
+- 现状：同runtime回执和受限worker具备；风扇退出、Neutrik长调用仍无最终HIP。test36的undo挂起已修服务事务边界并经H21/H22隔离GUI验证，原任务同因未证。卷线盘A/B缺目标保存回执；C1最后保存及独立重开成功，C2存后修改未复存并在GUI STOP超时，故未交付。新增脏场景显式拒绝仅通过隔离H21/H22，尚未进入真实作者运行。评审清场在隔离H21复现挂起，保留服务可退出；原弹窗归属未证。
+- 下一步：确认版本后在真实作者路径验最后修改后保存/回执/重开及脏场景拒绝，区分进程退出、未知请求和保存失败；同runtime仅按request_ref查回，不重发修改。按[多实例与恢复](multi-instance.md)验Qt登记/单端Repair、共享Host退出与旧会话续接；跨进程恢复、GUI/外部替换与恢复授权后置。live未验；不因超时杀Houdini或凭tag认领，图片恢复保留原历史。
 - 移除条件：H-01所确认版本的真实路径可区分未执行/执行中/完成/仍未知，查回不重做修改、不重复计账；过期及无法恢复的情况如实报告，不能仅以隔离脚本通过核销。
 - 入口：[Host传输](../src/bridge.ts)、[Bridge队列](../houdini/python3.11libs/dsh_bridge.py)、[预览服务](../houdini/python3.11libs/dsh_hou_helpers.py)、[GUI反例](../tools/tests/run-render-undo-gui.py)、[执行状态测试](../tools/tests/execution-state.test.mjs)。
 
 ### H-04 原始要求与控制/结构验收（QA-01/05/06、RB-06）
 
 - 状态：待验证
-- 现状：最终Polygon组可查孔轴、件数与毫米尺寸；`bore_clearance`按声明区间查孔径空域，H21/H22机制通过并在E6中号自然采用。WAGO评审18.1误判已更正；追加图组12.09 mm³拨杆/壳体重叠在独立副本定位并修复。E6两份HIP重开，孔径与角度关系有证据，但候选叶A/B交叠Boolean不完整仍是unverified。OpenGL锯齿不能直接判为破面。
+- 现状：最终Polygon组可查孔轴、件数、毫米尺寸；`bore_clearance`经H21/H22验证并在E6自然采用。WAGO拨杆/壳体12.09 mm³重叠仅在独立副本修复，E6叶片交叠仍unverified。卷线盘C1已交付HIP却有百倍尺度、失效主控和错位装配；C2检查点尺度/控制改善，但卷筒中心仍实心、握柄脱接且无最终有效保存。OpenGL锯齿不直接判破面。
 - 下一步：不把OpenGL边缘锯齿直接判定为真实缺面；E6同一HIP作者图较平滑而独立重开图锯齿明显。下一种构造类别继续对照最终几何、固定视角近景和实际外观细节。最后修改后对交付SOP逐项复验孔轴、孔径区间、数量、贴合、表面和状态转换（含释放后的保持），明确临时输出与最终输出。未见题继续检查对称基数、承载连接、单位/Y-up及公共Output边界。
 - 移除条件：默认与扰动关系反例能被自然任务发现，未满足核心要求不会被goal/todo完成覆盖；不能只靠固定脚本通过核销。
 - 入口：[证据契约](execution-contract.md)、[控制设计](parameter-controls.md)、[控制回归](../tools/tests/dsh-quality-contracts.test.py)、[共享控制构造反例](../tools/tests/dsh-control-design.test.py)、[节点模式知识回归](../tools/tests/dsh-node-knowledge.test.py)。
@@ -73,7 +73,7 @@
 ### H-06 Trace判据与接口发现误差（QA-03、API、OBS）
 
 - 状态：待验证
-- 现状：Host按合同持续提醒fail/unverified并列出真实检查路径。WAGO新候选自然在最终SOP测尺寸、孔轴与控制，图纸宽度18.7 mm正确；OpenGL近景的锯齿/破碎观感尚不能区分显示伪影与几何问题。Southco 96候选未做最终孔轴或控制合同检查；E6候选做了最终孔径和8项控制测试，但叶A/B交叠为unverified，最终文字未披露此缺口。自建表与健康统计不能证明产品正确；正常入口、语义识图仍未验。
+- 现状：Host持续提醒fail/unverified并列出检查路径；WAGO曾自然检查最终尺寸/孔/控，Southco漏最终合同，E6交叠unverified却未披露。卷线盘B1/C1/C2均把局部数值或控制响应扩成完整装配结论；C2 `test_controls`未声明接口仍报局部pass，存后修改未复存却称交付。健康统计和自建表不能证明产品正确；正常入口与语义识图未验。
 - 下一步：最终报告逐项绑定原要求、交付SOP、最后有效证据和控制转换，区分已测失败/未测/临时输出；继续验自然采用与错误成功判定。声明指标只认证其覆盖范围；正常入口、图像语义和其他接口按原矩阵另验。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。

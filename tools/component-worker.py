@@ -109,10 +109,22 @@ def main():
                 if process.poll() is not None:
                     raise RuntimeError('component worker exited unexpectedly; no restart attempted')
             (directory / 'stop').touch(exist_ok=True)
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError('worker could not stop at an idle checkpoint; owned tree will be reclaimed, outcome unknown')
+            stop_state = directory / 'stop-state.json'
+            stop_deadline = time.monotonic() + 15
+            while process.poll() is None:
+                if stop_state.exists():
+                    state = json.loads(stop_state.read_text(encoding='utf-8'))
+                    if state.get('status') == 'unsaved_final_scene':
+                        raise RuntimeError('final HIP has unsaved scene changes after its explicit save; '
+                                           'no automatic save; owned tree will be reclaimed')
+                if time.monotonic() >= stop_deadline:
+                    raise RuntimeError('worker could not stop at an idle checkpoint; owned tree will be reclaimed, outcome unknown')
+                time.sleep(.05)
+            if stop_state.exists():
+                state = json.loads(stop_state.read_text(encoding='utf-8'))
+                if state.get('status') == 'unsaved_final_scene':
+                    raise RuntimeError('final HIP has unsaved scene changes after its explicit save; '
+                                       'no automatic save; owned tree will be reclaimed')
             if process.returncode != 0:
                 raise RuntimeError('component worker exited with code ' + str(process.returncode))
     finally:

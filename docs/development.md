@@ -405,6 +405,7 @@ PR不得在持有许可证的自托管runner上任意执行；不能让依赖安
 不启动模型、不加载用户HIP；测试创建的临时fixture保留供检查。仅证明首版自包含subnet候选往返，不核销完整组件协作。
 
 组件进程用[双worker测试](../tools/tests/dsh-component-worker.test.py)传hython完整路径；传houdini.exe并加--gui时另验真实预览。
+隔离交付worker预留`final.hip`后不自动保存；GUI若在显式保存后又有场景修改，STOP写`stop-state.json`报告`unsaved_final_scene`并回收自有进程，不弹保存对话框，也不把较早文件算最终交付。用`--gui --expect-dirty-final`验H21/H22拒绝反例。
 [DSH组件链路](../tools/tests/dsh-component-loop.test.py)传Node、已构建的候选DSH bin.js和hython，使用隔离Web profile与确定性adapter，
 验证两子任务在主HIP同目录`dsh-components`下各有独立workspace/执行端、导出/主作者导入/共享控制恢复；
 传未修改DSH并加--expect-cwd-rejection验证首次模型前拒绝。
