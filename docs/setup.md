@@ -112,6 +112,7 @@ H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册
 ## 显式源码开发安装
 
 此路径保留供开发者使用，不是正式发行安装。需要Node/npm、Python或Houdini内置Python；clone/pull时需要Git。
+跨机接续未合并开发时，先按[当前交接](handoff.md)切到对应远端分支再执行源码安装；默认`main`可能缺少正在开发的改动。
 
 ```powershell
 git clone https://github.com/eee1723/dsh-houdini.git

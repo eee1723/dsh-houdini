@@ -57,6 +57,13 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 不能用 main 的旧文档否定尚未合并的开发结果。合并后在目标分支重核索引、交接和生成门禁；
 清理前确认改动已集成、无使用该工作树的进程，且独有工程、证据和忽略文件已妥善保留。
 
+跨电脑接续先从GitHub fetch并切到[当前交接](handoff.md)指定的远端开发分支，核对HEAD、
+`git status`和worktree，再运行`npm install`、`npm run docs:check`、`npm test`；H21/H22隔离HOM与
+正常入口的已加载版本分别复验。`node_modules`、`lib`、`.npm-cache`和`tools/out`不由Git同步，
+前两者按锁文件重建，后两者仅在保留原始实验/离线缓存确有需要时私下迁移。原始评测HIP、
+Session与图、用户HIP及外部依赖、DSH数据/凭据和发行私钥均在仓库外，按敏感程度单独备份；
+旧Session记录不能凭HIP路径在新Houdini进程自动认领写入权限。
+
 ### 交接文档生命周期
 
 `docs/handoff.md`是过程信息进入docs的唯一有限例外，纳入Git与文档索引；跨电脑仍须提交/推送后拉取，
