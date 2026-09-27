@@ -6,6 +6,8 @@ import http from 'node:http'
 import {pathToFileURL,fileURLToPath} from 'node:url'
 import {Context} from '@deepseek-ai/cordis'
 import {Session} from '@deepseek-ai/dsh-session'
+import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
+import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-presets'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
@@ -84,8 +86,19 @@ try {
   const noFlush=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,new ExecutorBindingBarrier(async()=>false))
   await assert.rejects(noFlush.prepareComponent(child,records[0],'parent',childWorkspace),/durable/)
   const ctx=new Context()
+  const projections=new SessionProjectionRegistry(ctx)
+  projections.register(agentPresetProjectionDefinition)
   ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
   const controller=new ExecutorController(ctx,router)
+  assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
+  const different=Session.create('not-houdini',[],{version:3,id:'not-houdini',createdAt:1,
+    isSeeded:false,agentPreset:'houdini'})
+  different.append('agent-preset/selected',{agentPreset:'standard'})
+  agents.push({id:'not-houdini',status:'idle',session:different})
+  await assert.rejects(controller.select({sessionId:'not-houdini',executorId:records[0].executor_id,
+    registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
+    new AbortController().signal),/restricted to Houdini tasks/)
+  agents.pop()
   assert.deepEqual(remoteMethods(controller).map(m=>m.method),['list','select'])
   assert.equal(controller.typertRemote.namespace,'houdiniTargets')
   const legacyList=await controller.list(undefined)
@@ -143,6 +156,8 @@ try {
   const before=calls.length
   // One Host-plane controller survives removal of either preset consumer.
   const hostContext=new Context()
+  const hostProjections=new SessionProjectionRegistry(hostContext)
+  hostProjections.register(agentPresetProjectionDefinition)
   hostContext.provide('agents',{get:id=>agents.find(a=>a.id===id)})
   hostContext.provide('sessions',{flush})
   // Fixture installation must be the actual candidate root used by Host apply.

@@ -54,8 +54,7 @@ Trace按V3 assistant/message结算usage。
 
 preset直接使用当前`dsh-workflow-ptc` provider，不做版本转换。客户端直接使用公开
 `uiWorkspace.openSession`与`uiSession`当前绑定，不保留已移除的Session导航接口。上游已弃用同步Session历史读取，
-但0.1.6仍保留现有API；插件尚未把
-持久状态消费者全部迁移到projection，这一后续风险不得被当前组合启动通过掩盖。Bridge JSON类型继续独立于
+但0.1.6仍保留现有API；共享执行端首次选择已从当前`agentPreset`投影读preset，其余持久状态消费者尚未全部迁移到projection，这一后续风险不得被当前组合启动通过掩盖。Bridge JSON类型继续独立于
 上游tools类型重导出。这些源码适配不代表完成live GUI资格或热卸载验收。
 模块可导入、workflow provider可解析、conversation.view/composer.dock仍有公开类型定义，不等于GUI已经通过。
 候选资格验证必须使用独立DSH_HOME和自建日志；当前源码不提供跨DSH版本的数据迁移或降级路径。

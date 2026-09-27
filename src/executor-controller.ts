@@ -63,10 +63,9 @@ export class ExecutorController extends TypertRemoteService {
     if(!Object.entries(data).every(([k,v])=>typeof v==='string'&&v.length>0&&v.length<=(k==='expectedHip'?4096:256))) throw new Error('Invalid target selection')
     const agent=this.ctx.agents.get(data.sessionId as Parameters<typeof this.ctx.agents.get>[0])
     if(!agent) throw new Error('Open the intended task before selecting its executor; no task is resumed implicitly')
-    let preset=agent.session.header.agentPreset
-    for(const event of agent.session.snapshotEvents() as readonly {type:string;data?:{agentPreset?:string}}[]) {
-      if(event.type==='agent-preset/selected') preset=event.data?.agentPreset
-    }
+    const projections=this.ctx.get('sessionProjections')
+    if(!projections) throw new Error('Session preset projection unavailable; no live request sent')
+    const preset=projections.stateOf(agent.session,'agentPreset')
     if(preset!=='houdini'&&preset!=='houdini-dev') throw new Error('Target selection is restricted to Houdini tasks')
     await this.router.selectInitial(agent,data.executorId as string,data.registrationId as string,signal,data.expectedHip as string)
     return {sessionId:agent.id,executorId:data.executorId,status:'bound',scene_verification:'not_performed'}

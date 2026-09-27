@@ -8,7 +8,7 @@ import {ExecutorBindingBarrier} from './execution-state.js'
 import {ExecutorController} from './executor-controller.js'
 
 export const name='dsh-houdini-executor-host'
-export const inject=['sessions','agents']
+export const inject=['sessions','agents','sessionProjections']
 export interface Config {executorRegistry:string;requestTimeoutMs:number}
 export const Config:Schema<Config>=Schema.object({
   executorRegistry:Schema.string().required(),requestTimeoutMs:Schema.number().default(120000),
