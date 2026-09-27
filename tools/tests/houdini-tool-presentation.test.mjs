@@ -106,6 +106,15 @@ assert.match(compactControlFailure, /restored only means test changes were undon
 assert.match(compactControlFailure.split('\n')[0], /"relationship_scope":"not_checked".*"declared_interfaces":0/,
   'a passing measurement count must not imply component relationships were checked');
 assert.match(compactControlFailure.split('\n')[0], /"baseline_interface_status":"not_checked".*"cases_with_interface_checks":0.*"executed_interface_checks":0/);
+const measurementOnlyPass = exec.output.render({}, {
+  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
+    status:'pass',restored:true,requested_cases:2,case_counts:{pass:2,fail:0,unverified:0,not_run:0},
+    coverage:{relationship_scope:'not_checked',declared_interfaces:0},cases:[],
+  }}],
+})[0].text;
+assert.match(measurementOnlyPass.split('\n')[0], /control-coverage-gap:.*no component\/interface relationships were checked/,
+  'a passing measurement-only test must expose its missing relationship coverage before the verdict');
+assert.match(measurementOnlyPass, /control-test-verdict:.*"status":"pass".*"relationship_scope":"not_checked"/);
 const blockedFinalAxis = exec.output.render({}, {
   ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_check_interfaces',
     output:'/obj/fan/OUT_ASSET',status:'fail',results:[

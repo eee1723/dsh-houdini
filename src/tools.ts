@@ -375,7 +375,11 @@ function leadingCheckVerdicts(value: ExecResult): string[] {
       const counts = summary.case_counts ?? {}
       const unresolved = (summary.cases ?? []).filter((row:any) => row.status !== 'pass')
         .map((row:any) => row.id).slice(0, 6)
-      verdicts.push({priority:0,text:`control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
+      const coverageGap = summary.status === 'pass'
+        && summary.coverage?.relationship_scope === 'not_checked'
+        ? 'control-coverage-gap: declared measurements passed, but no component/interface relationships were checked. Do not claim the complete assembly passed.\n'
+        : ''
+      verdicts.push({priority:0,text:`${coverageGap}control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
         requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
         unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
         relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',

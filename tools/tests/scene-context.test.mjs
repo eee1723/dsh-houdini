@@ -65,6 +65,16 @@ record(uncheckedFailure,1,{name:'houdini_exec',ok:false});
 notice=await step(uncheckedFailure);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
 assert.equal(data(notice.sections[0]).delivery_audit.execution_failures.length,1,
   'a failed execution without check evidence still reaches the next model step');
+const scopedControl=agent();await step(scopedControl,{message:user('scope','完成控制检查')});
+record(scopedControl,1,{name:'houdini_exec',checks:[{ledgerIndex:1,verb:'test_controls',
+  output:'/obj/product/OUT_ASSET',ok:true,status:'pass',restored:true,
+  contract_sha256:'a'.repeat(64),control_summary:{coverage:{relationship_scope:'not_checked',
+    declared_interfaces:0}}}]});
+notice=await step(scopedControl);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
+assert.equal(data(notice.sections[0]).delivery_audit.coverage_limits[0].kind,
+  'control_relationships_not_checked','a measurement pass retains its relation coverage limit');
+assert.equal(data(notice.sections[0]).delivery_audit.unresolved_checks.length,0);
+assert.equal((await step(scopedControl)).sections.length,0,'unchanged scope is not reinjected');
 const uncertain=agent();await step(uncertain,{message:user('u','创建模块')});
 record(uncertain,1,{name:'houdini_exec',execution:false,ok:false,receipt:{request_ref:'ref',status:'unknown',owner_call:'call-1'}});
 notice=await step(uncertain);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);

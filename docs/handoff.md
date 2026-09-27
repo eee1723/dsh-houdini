@@ -73,7 +73,7 @@
 ### H-06 Trace判据与接口发现误差（QA-03、API、OBS）
 
 - 状态：待验证
-- 现状：Host持续提醒fail/unverified并列出检查路径；WAGO曾自然检查最终尺寸/孔/控，Southco漏最终合同，E6交叠unverified却未披露。卷线盘B1/C1/C2均把局部数值或控制响应扩成完整装配结论；C2 `test_controls`未声明接口仍报局部pass，存后修改未复存却称交付。健康统计和自建表不能证明产品正确；正常入口与语义识图未验。
+- 现状：Host提醒fail/unverified并列出检查路径；WAGO曾自然检查最终尺寸/孔/控，Southco漏最终合同，E6交叠未验证却未披露。卷线盘B1/C1/C2均把局部检查扩成整机完成；C2的控制测试未声明接口仍局部pass，存后修改未复存却称交付。现已让工具回执和交付摘要显式保留“关系未检查”，自然采用未验；正常入口与语义识图未验。
 - 下一步：最终报告逐项绑定原要求、交付SOP、最后有效证据和控制转换，区分已测失败/未测/临时输出；继续验自然采用与错误成功判定。声明指标只认证其覆盖范围；正常入口、图像语义和其他接口按原矩阵另验。
 - 移除条件：正反例与已有轨迹回归不误判，不以启发式推导艺术正确性；精确API/表达式写入、求值、cook和效果边界清楚。
 - 入口：[审计提取](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)、[工具接口](../src/tools.ts)。

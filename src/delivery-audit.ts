@@ -6,7 +6,8 @@ type Event = {type:string;seq?:number;data?:any}
 type Row = {callId:string;eventSeq:number;value:any;execution:any}
 type Check = {verb:string;identity:number|null;output:string|null;hip_path:string|null;
   contract_sha256:string|null;status:string;validity:string;source_call:string;
-  sequence:number;event_seq:number;dependency_identities:number[];invalidated_by?:string}
+  sequence:number;event_seq:number;dependency_identities:number[];invalidated_by?:string;
+  relationship_scope?:string;declared_interfaces?:number}
 
 const DECLARED_CHECKS = new Set(['geo_check_interfaces','test_controls'])
 const TERMINAL_RECEIPTS = new Set(['done','not_executed','job_submitted'])
@@ -136,7 +137,12 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
       checks.delete(key)
       checks.set(key,{verb:item.verb,identity,output,hip_path:path,contract_sha256:contract,
         status,validity,source_call:callId,sequence:execution.sequence,event_seq:eventSeq,
-        dependency_identities:dependencyIdentities})
+        dependency_identities:dependencyIdentities,
+        ...(item.verb==='test_controls' ? {
+          relationship_scope:item.control_summary?.coverage?.relationship_scope ?? 'unknown',
+          declared_interfaces:Number.isFinite(item.control_summary?.coverage?.declared_interfaces)
+            ? item.control_summary.coverage.declared_interfaces : 0,
+        } : {})})
     }
     const callName=calls.get(callId)?.name
     if(value.ok===false && (callName==='houdini_exec'
@@ -162,8 +168,16 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
     :expected?'save_receipt_reopen_unverified':'candidate_save_reopen_unverified'
   const allChecks=[...checks.values()]
   const attention=allChecks.filter(check=>check.status!=='pass' || check.validity!=='historical_observation_only')
+  // A passing measurement-only control test cannot certify the mechanical
+  // relations absent from its declaration. This is a coverage warning, not a
+  // failed test or proof that a particular product relation is wrong.
+  const coverageLimits=allChecks.filter(check=>check.verb==='test_controls'
+      && check.status==='pass' && check.relationship_scope==='not_checked')
+    .map(check=>({kind:'control_relationships_not_checked',output:check.output,
+      source_call:check.source_call,contract_sha256:check.contract_sha256,
+      validity:check.validity,declared_interfaces:check.declared_interfaces}))
   const result={status:attention.length || failures.length || unresolvedRequests.length || pendingCalls.length
-      || deliveryStatus==='final_not_saved' || deliveryStatus==='save_precedes_recorded_edit'
+      || coverageLimits.length || deliveryStatus==='final_not_saved' || deliveryStatus==='save_precedes_recorded_edit'
       ? 'delivery_audit_attention':'delivery_audit_observed',
     runtime_id:runtime,current_hip:anchor.execution.hip_path??null,
     delivery:{status:deliveryStatus,expected_final_path:options.expectedFinalPath??null,
@@ -173,8 +187,9 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
       boundary:'A save receipt confirms a nonempty file at save time. Final delivery and independent reopen remain unverified.'},
     checks:allChecks.slice(-16),checks_omitted:Math.max(0,allChecks.length-16),
     unresolved_checks:attention.slice(-12),unresolved_checks_omitted:Math.max(0,attention.length-12),
+    coverage_limits:coverageLimits.slice(-8),coverage_limits_omitted:Math.max(0,coverageLimits.length-8),
     execution_failures:failures.slice(-5),execution_failures_omitted:Math.max(0,failures.length-5),
     unresolved_requests:unresolvedRequests,pending_calls:pendingCalls,
-    boundary:'Historical event audit only. Save As preserves prior failures as needing recheck, never as current-file acceptance. Unobserved GUI or external edits are outside this record.'}
+    boundary:'Historical event audit only. A pass covers only declared measurements; missing relationship checks are not proof of failure or whole-product acceptance. Save As preserves prior failures as needing recheck. Unobserved GUI or external edits are outside this record.'}
   return result
 }

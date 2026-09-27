@@ -30,6 +30,26 @@ assert.equal(projectDeliveryAudit(events).unresolved_checks.length,1);
 assert.equal(projectDeliveryAudit(events).unresolved_checks[0].status,'fail');
 events.splice(0);sequence=0;
 
+// A pass without declared interfaces remains a pass for its measurements,
+// while the final delivery summary retains the missing relationship coverage.
+record({evidence:[{...declared('pass'),verb:'test_controls',restored:true,
+  control_summary:{coverage:{relationship_scope:'not_checked',declared_interfaces:0}}}],
+  outputs:[binding()]});
+let scoped=projectDeliveryAudit(events);
+assert.equal(scoped.checks[0].status,'pass');
+assert.equal(scoped.unresolved_checks.length,0);
+assert.equal(scoped.status,'delivery_audit_attention');
+assert.equal(scoped.coverage_limits[0].kind,'control_relationships_not_checked');
+assert.equal(scoped.coverage_limits[0].declared_interfaces,0);
+events.splice(0);sequence=0;
+record({evidence:[{...declared('pass'),verb:'test_controls',restored:true,
+  control_summary:{coverage:{relationship_scope:'declared_contracts_only',declared_interfaces:2}}}],
+  outputs:[binding()]});
+scoped=projectDeliveryAudit(events);
+assert.equal(scoped.coverage_limits.length,0,
+  'a declared relationship contract is not mislabeled as absent');
+events.splice(0);sequence=0;
+
 // A passing check from before a related edit is historical, not acceptance.
 record({evidence:[declared('pass')],outputs:[binding()]});
 record({impact:{attempted:true,nodes:[{identity:10,path:'/obj/product/OUT_ASSET'}]}});

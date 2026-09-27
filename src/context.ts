@@ -250,10 +250,12 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
       const state = projectExecutionNotice(events)
       const audit = projectDeliveryAudit(events) as any
       const deliveryAttention = audit && (audit.unresolved_checks?.length || audit.execution_failures?.length
-        || audit.unresolved_requests?.length || audit.pending_calls?.length || audit.delivery?.last_save)
+        || audit.coverage_limits?.length || audit.unresolved_requests?.length
+        || audit.pending_calls?.length || audit.delivery?.last_save)
       const deliverySummary = deliveryAttention ? {
         status:audit.status,current_hip:audit.current_hip,delivery:audit.delivery,
         unresolved_checks:audit.unresolved_checks,unresolved_checks_omitted:audit.unresolved_checks_omitted,
+        coverage_limits:audit.coverage_limits,coverage_limits_omitted:audit.coverage_limits_omitted,
         execution_failures:audit.execution_failures,execution_failures_omitted:audit.execution_failures_omitted,
         unresolved_requests:audit.unresolved_requests,pending_calls:audit.pending_calls,
         boundary:audit.boundary,
@@ -275,6 +277,7 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
           unresolved_call_count:(state?.unresolved_calls as unknown[] | undefined)?.length ?? 0,
           affected_check_count:(state?.checks as unknown[] | undefined)?.length ?? 0,
           delivery_audit_counts:deliverySummary ? {unresolved_checks:audit.unresolved_checks.length,
+            coverage_limits:audit.coverage_limits.length,
             execution_failures:audit.execution_failures.length,unresolved_requests:audit.unresolved_requests.length,
             pending_calls:audit.pending_calls.length,last_save:audit.delivery.last_save?.path??null} : null,
           read:'Use houdini_query(request_ref="index") for retained request references; read the original tool results and recheck the affected outputs.',
