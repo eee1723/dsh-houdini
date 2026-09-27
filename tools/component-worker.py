@@ -28,6 +28,8 @@ def main():
     parser.add_argument('--memory-mb', type=int, required=True)
     parser.add_argument('--threads', type=int, required=True)
     parser.add_argument('--startup-timeout', type=float, required=True)
+    parser.add_argument('--hip-name', choices=('component.hip', 'final.hip'), default='component.hip',
+                        help='Initial reserved HIP filename; final.hip is for isolated delivery trials')
     args = parser.parse_args()
     if args.show and not args.gui:
         raise ValueError('--show requires --gui')
@@ -45,7 +47,8 @@ def main():
     workspace = directory / 'workspace'
     workspace.mkdir()
     request = {'workspace': str(workspace), 'registry': str(args.registry.resolve()),
-               'startup_timeout': args.startup_timeout, 'show_ui': args.show}
+               'startup_timeout': args.startup_timeout, 'show_ui': args.show,
+               'hip_name': args.hip_name}
     request_file = directory / 'request.json'
     request_file.write_text(json.dumps(request), encoding='utf-8')
     env = isolated_environment(directory / 'environment', executable=executable, gui=args.gui)

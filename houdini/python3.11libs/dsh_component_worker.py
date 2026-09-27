@@ -22,7 +22,10 @@ def start():
     request = json.loads(request_file.read_text(encoding='utf-8'))
     root = request_file.parent
     workspace = Path(request['workspace']).resolve(strict=True)
-    hip = workspace / 'component.hip'
+    hip_name = request.get('hip_name', 'component.hip')
+    if hip_name not in ('component.hip', 'final.hip'):
+        raise ValueError('unsupported initial HIP filename')
+    hip = workspace / hip_name
     if Path(hou.hipFile.path()).name.lower() != 'untitled.hip' or hip.exists():
         raise RuntimeError('component worker requires a new scene and unused HIP path')
     # Supervisor writes GO only after assigning its exact process to the Job.
@@ -63,7 +66,10 @@ def start():
             return False
         if Path(hou.hipFile.path()).resolve() != hip:
             raise RuntimeError('worker HIP changed; refusing automatic checkpoint/exit')
-        hou.hipFile.save(str(hip))
+        # Delivery trials require the author's explicit final save receipt to
+        # describe the exact bytes reviewed. Do not rewrite final.hip on stop.
+        if hip_name == 'component.hip':
+            hou.hipFile.save(str(hip))
         return True
 
     if hou.isUIAvailable():

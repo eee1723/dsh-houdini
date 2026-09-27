@@ -57,4 +57,4 @@ node evaluation/product-modeling-dev-v1/scripts/validate-review.mjs <run-id>/rev
 
 ## 再次开跑前的执行门
 
-已完成的 A1/B1 `lock.json` 与原始轨迹保持原样，不用本节追溯改判。共享执行器把 HIP 写入预留绑定到启动时的路径，直接 `scene_save_as(final.hip)` 会被拒绝。下一次收费运行前须用无模型的启动/保存探针证实**最终目标路径**已获写入预留，作者提示与该路径一致；最后修改后要有该路径的成功保存回执、文件摘要和独立重开。若只能预留检查点路径，应在新锁条件中改用适合 Save As 的隔离入口，不能让作者靠文件复制满足交付。评审 GUI 每次尝试用新的产物目录，记录退出码、WER 和图像；渲染后保留持久 OpenGL 服务至退出，不在同一进程清空 HIP。
+已完成的 A1/B1 `lock.json` 与原始轨迹保持原样，不用本节追溯改判。共享执行器把 HIP 写入预留绑定到启动时的路径，直接 `scene_save_as(final.hip)` 会被拒绝。下一次收费运行前，隔离 `component-worker.py --hip-name final.hip` 须先用无模型启动/保存探针证实**最终目标路径**已获写入预留，作者提示改为最后修改后 `scene_save(expected_path=...)`；还要取得该路径的成功保存回执、文件摘要和独立重开。若只能预留检查点路径，应在新锁条件中改用适合 Save As 的隔离入口，不能让作者靠文件复制满足交付。评审 GUI 每次尝试用新的产物目录，记录退出码、WER 和图像；渲染后保留持久 OpenGL 服务至退出，不在同一进程清空 HIP。
