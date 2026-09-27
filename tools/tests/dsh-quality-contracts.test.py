@@ -393,6 +393,28 @@ try:
     assert obstructed['status']=='fail' and obstructed['results'][0]['overlap_volume']>0,obstructed
     hollow_assembly.setInput(2,None)
     assert h.geo_check_interfaces(hollow_assembly,[bore_check])['status']=='pass'
+    # A drilled part can pass at its checkpoint while a later solid boss
+    # seals that same bore in the delivered output. Check both final-part
+    # contracts on the downstream output, not on the earlier cutter result.
+    boss=root.createNode('tube','late_solid_boss')
+    h.set_parms(boss,{'type':'poly','orient':'x','cap':1,'rad1':.003,
+                      'rad2':.003,'height':.003,'cols':32,'tx':.0115})
+    boss_tag=root.createNode('attribwrangle','late_boss_tag')
+    boss_tag.setInput(0,boss);boss_tag.parm('class').set('primitive')
+    boss_tag.parm('snippet').set('setprimgroup(0,"lug",@primnum,1);')
+    final_bore=root.createNode('merge','final_bore_with_boss')
+    final_bore.setInput(0,hollow_assembly);final_bore.setInput(1,boss_tag)
+    stale_axis=h.geo_check_interfaces(final_bore,[clear_axis])
+    assert stale_axis['status']=='unverified' and stale_axis['results'][0]['reason']==\
+        'segment_does_not_cross_target_bounds',stale_axis
+    final_axis={**clear_axis,'start':[-.014,0,0],'end':[.014,0,0]}
+    before_boss=h.geo_check_interfaces(hollow_assembly,[final_axis,bore_check])
+    after_boss=h.geo_check_interfaces(final_bore,[final_axis,bore_check])
+    assert before_boss['status']=='pass' and all(
+        row['status']=='pass' for row in before_boss['results']),before_boss
+    assert after_boss['status']=='fail' and all(
+        row['status']=='fail' for row in after_boss['results']),after_boss
+    assert after_boss['geometry_sha256']!=before_boss['geometry_sha256']
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**bore_check,'radius':0}]),'positive')
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[bore_check],max_pairs=1),'budget')
     assert h.geo_check_interfaces(hollow_assembly,[{**bore_check,'target_group':'missing'}])['status']=='fail'

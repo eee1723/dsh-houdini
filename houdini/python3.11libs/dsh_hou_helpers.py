@@ -62,6 +62,21 @@ def _with_render_slot(fn):
     return wrapper
 
 
+def _preserve_render_service_on_undo(fn):
+    """Keep preview service edits out of a caller's deliverable undo group.
+
+    A later Python error in the same exec rolls back authored nodes. If the
+    first preview created an OpenGL ROP inside that group, native undo could
+    delete the persistent renderer after it had rendered. Preview state is
+    restored by render_view itself and its image is an external file effect.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with hou.undos.disabler():
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 class CheckpointError(RuntimeError):
     """A failed operation retains machine-readable evidence in the Bridge ledger."""
     def __init__(self, message, evidence):
@@ -6834,6 +6849,7 @@ def _render_output_color_plan(picture, ocio_spaces=None) -> dict:
 
 
 @_with_render_slot
+@_preserve_render_service_on_undo
 def render_view(node, direction="iso", frame=None,
                 width: int = 1280, height: int = 720, picture=None,
                 framing: str = "full", coverage: float = 0.82,
@@ -7202,6 +7218,14 @@ def render_view(node, direction="iso", frame=None,
         restore_errors = _release_preview_reservation(artifact)
         restore_errors.extend(_restore_obj_visibility(obj_visibility))
         restore_errors.extend(_restore_selection(selection))
+        # _ensure_render_proxy may fail after binding its source but before it
+        # returns. The service is intentionally non-undoable, so idle that
+        # owned partial proxy here instead of relying on Bridge rollback.
+        if proxy is None:
+            partial = hou.node('/obj/' + _RENDER_PROXY_NAME)
+            if (partial is not None and partial.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE
+                    and partial.userData('dsh_render_state') == 'active'):
+                proxy = partial
         if proxy is not None:
             try:
                 proxy.setDisplayFlag(False)
@@ -7210,7 +7234,8 @@ def render_view(node, direction="iso", frame=None,
             # 空闲 proxy 不长期引用用户节点；下一次 render_view 会重新绑定显式 SOP。
             try:
                 source = proxy.node("source")
-                if source is not None and source.parm("objpath1") is not None:
+                if (source is not None and source.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE
+                        and source.parm("objpath1") is not None):
                     source.parm("objpath1").set("")
                     last_target = target.path()
                     last_frame = result_payload.get("frame") if result_payload else f

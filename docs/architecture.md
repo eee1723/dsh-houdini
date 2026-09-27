@@ -68,6 +68,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
 | [src/context.ts](../src/context.ts) | 按需指代采集、message绑定及预算；pre-step按公开surface去重独立补充段，历史替换时恢复，普通查询不追加上下文 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建有限历史状态及未决请求/检查失效/运行身份变化提醒；不按时间戳/计数触发注入，不维护另一事实库 |
+| [src/delivery-audit.ts](../src/delivery-audit.ts) | 从完整会话事件投影保存候选、已知执行失败、声明检查及待查回请求；成功Save As后的旧检查只标待重验，不认证最终文件或跨进程状态 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
 | [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 问答参数结构与错键诊断；不按问句关键词推断意图，不强制选项数量 |
@@ -85,7 +86,7 @@ domain skill及reference维护建模、验证和交付方法。低频对象recip
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context只为现场指代提供用户消息绑定的metadata；execution-state保留未决请求、陈旧检查及失败/未验证的产品合同，按有意义的变化投影提醒，
+scene-context只为现场指代提供用户消息绑定的metadata；execution-state保留未决请求、陈旧检查及失败/未验证的产品合同，delivery-audit补充保存候选与跨Save As的历史待重验项，按有意义的变化投影提醒，
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。

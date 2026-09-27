@@ -30,6 +30,20 @@ try:
     assert all(row['artifact']['output_policy']=='managed' for row in managed)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in managed)
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
+    real_ensure=h._ensure_render_proxy
+    def partial_proxy(target):
+        proxy=hou.node('/obj/'+h._RENDER_PROXY_NAME)
+        proxy.node('source').parm('objpath1').set(target.path())
+        proxy.setUserData('dsh_render_state','active')
+        raise RuntimeError('injected partial proxy setup')
+    h._ensure_render_proxy=partial_proxy
+    try:
+        try:h.render_view(box,picture='partial-proxy.png')
+        except RuntimeError as error:assert 'partial proxy setup' in str(error)
+        else:raise AssertionError('partial proxy setup should reject')
+    finally:h._ensure_render_proxy=real_ensure
+    proxy=hou.node('/obj/'+h._RENDER_PROXY_NAME)
+    assert proxy.userData('dsh_render_state')=='idle' and proxy.node('source').parm('objpath1').evalAsString()==''
     real_fingerprint=h._geometry_fingerprint
     h._geometry_fingerprint=lambda *_args,**_kwargs:{'errors':['injected pre-render failure']}
     try:

@@ -60,6 +60,11 @@ record(edit,2,{name:'houdini_exec',impact:{attempted:true,global:true}});
 let notice=await step(edit);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
 assert.equal(data(notice.sections[0]).checks[0].validity,'stale_after_recorded_change');
 assert.equal((await step(edit)).sections.length,0);record(edit,3);assert.equal((await step(edit)).sections.length,0);
+const uncheckedFailure=agent();await step(uncheckedFailure,{message:user('f','建立模型')});
+record(uncheckedFailure,1,{name:'houdini_exec',ok:false});
+notice=await step(uncheckedFailure);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);
+assert.equal(data(notice.sections[0]).delivery_audit.execution_failures.length,1,
+  'a failed execution without check evidence still reaches the next model step');
 const uncertain=agent();await step(uncertain,{message:user('u','创建模块')});
 record(uncertain,1,{name:'houdini_exec',execution:false,ok:false,receipt:{request_ref:'ref',status:'unknown',owner_call:'call-1'}});
 notice=await step(uncertain);assert.deepEqual(notice.sections.map(s=>s.name),[STATE]);

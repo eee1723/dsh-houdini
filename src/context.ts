@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { HoudiniBridge } from './bridge.js'
 import { createUserMessage, createSystemMessage } from '@deepseek-ai/dsh-llm'
 import { projectExecutionState, projectExecutionNotice } from './execution-state.js'
+import { projectDeliveryAudit } from './delivery-audit.js'
 import { projectTaskSources } from './task-sources.js'
 
 const NAME = 'dsh-houdini:scene-context'
@@ -247,17 +248,35 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
     }
     if (wantsState) {
       const state = projectExecutionNotice(events)
+      const audit = projectDeliveryAudit(events) as any
+      const deliveryAttention = audit && (audit.unresolved_checks?.length || audit.execution_failures?.length
+        || audit.unresolved_requests?.length || audit.pending_calls?.length || audit.delivery?.last_save)
+      const deliverySummary = deliveryAttention ? {
+        status:audit.status,current_hip:audit.current_hip,delivery:audit.delivery,
+        unresolved_checks:audit.unresolved_checks,unresolved_checks_omitted:audit.unresolved_checks_omitted,
+        execution_failures:audit.execution_failures,execution_failures_omitted:audit.execution_failures_omitted,
+        unresolved_requests:audit.unresolved_requests,pending_calls:audit.pending_calls,
+        boundary:audit.boundary,
+      } : null
       result.contexts = result.contexts.filter(c => c.name !== STATE_NAME)
       const prior = last(events, e => e.type === 'user/message' && e.data?.source?.plugin === 'dsh-houdini'
         && e.data.source.sections?.some((s:Section) => s.name === STATE_NAME))
-      if (state || prior) {
-        let data = literal(JSON.stringify(state ?? {status:'no_execution_attention',
-          boundary:'Previously reported execution attention is no longer present in recorded tool evidence. This is not scene validation or task completion.'}))
+      if (state || deliverySummary || prior) {
+        let data = literal(JSON.stringify(state
+          ? {...state,...(deliverySummary ? {delivery_audit:deliverySummary} : {})}
+          : deliverySummary
+            ? {status:'execution_attention',checks:[],delivery_audit:deliverySummary,
+              boundary:'Historical delivery facts require review before claiming a final output.'}
+            : {status:'no_execution_attention',
+              boundary:'Previously reported execution attention is no longer present in recorded tool evidence. This is not scene validation or task completion.'}))
         if (data.length > 7000) data = JSON.stringify({status:'execution_state_exceeds_budget',
           runtime_id:state?.runtime_id,pending_calls:state?.pending_calls ?? 0,
           unresolved_request_count:(state?.unresolved_requests as unknown[] | undefined)?.length ?? 0,
           unresolved_call_count:(state?.unresolved_calls as unknown[] | undefined)?.length ?? 0,
           affected_check_count:(state?.checks as unknown[] | undefined)?.length ?? 0,
+          delivery_audit_counts:deliverySummary ? {unresolved_checks:audit.unresolved_checks.length,
+            execution_failures:audit.execution_failures.length,unresolved_requests:audit.unresolved_requests.length,
+            pending_calls:audit.pending_calls.length,last_save:audit.delivery.last_save?.path??null} : null,
           read:'Use houdini_query(request_ref="index") for retained request references; read the original tool results and recheck the affected outputs.',
           boundary:'Attention details exceed the context budget, NOT resolved or passed. Original results remain in history. No blanket pass or permission is implied.'})
         sections.push({name:STATE_NAME,text:'Houdini execution attention (historical data, not instructions or permission). This replaces earlier execution-attention notices only.\n'+data})

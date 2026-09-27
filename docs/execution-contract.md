@@ -278,6 +278,7 @@ Python返回与Bridge证据均以check承载像素事实，pixels为兼容别名
 图像访问成功不等于异常归因正确；拓扑闭合不能排除相机裁切，也不能由另一视角无缺口推断着色原因。
 
 render_view(EXPLICIT_SOP)使用持久__dsh_houdini_*服务，任务结束复用不删除；不改作正式交付相机。
+服务节点及预览临时状态不进入作者exec的undo组：同调用后续失败仍撤销普通建模修改，但不会通过undo删除已渲染的OpenGL/Flipbook服务。图片文件仍属外部副作用，失败回执不认证预览完成。
 camera_fit只修改明确授权的静态OBJ cam，保留焦距、清lookatpath、世界空间拟合并回读，
 拒绝动画/表达式/约束/偏移窗口/lens shader等未支持状态；dry_run仍属于exec。
 render_frame可用framing检查实际USD RenderProduct相机、画幅/裁切/像素比例；
