@@ -56,6 +56,7 @@ try:
         health = request(record, '/health')
         assert health['executorId'] == record['executor_id']
     final_record = records[1]
+    initial_final_hash = hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest()
     final_owner = 'final-hip-reservation-test'
     assert request(final_record, '/executor/claim', {'task_id': final_owner,
         'registration_id': final_record['registration_id'],
@@ -74,6 +75,20 @@ try:
     assert final_result['result']['bytes'] > 0, final_result
     assert Path(final_record['hip_path']).is_file()
     final_hash = hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest()
+    assert final_hash != initial_final_hash, 'explicit save did not replace the initial empty scene'
+    wrong_target = str(Path(final_record['hip_path']).with_name('unreserved.hip'))
+    wrong_ticket = request(final_record, '/requests/prepare', {'owner_session': final_owner})
+    wrong_code = ("__result__=scene_save_as(path=" + repr(wrong_target)
+                  + ",expected_current_path=" + repr(final_record['hip_path'])
+                  + ",reason='isolated writer reservation negative test')")
+    wrong_result = request(final_record, '/exec', {'owner_session': final_owner,
+        'owner_call': 'reject-unreserved-save', 'request_ref': wrong_ticket['requestRef'],
+        'expected_contract': {'version': wrong_ticket['executionContractVersion'],
+                              'hash': wrong_ticket['verbCatalog']['hash']},
+        'code': wrong_code})
+    assert not wrong_result['ok'], wrong_result
+    assert 'writer reservation' in wrong_result.get('error', '')
+    assert not Path(wrong_target).exists()
     if '--gui' in sys.argv:
         record = records[0]
         owner = 'component-preview-test'
@@ -92,6 +107,21 @@ try:
     assert Path(records[0]['hip_path']).is_file()
     processes[1].stdin.write('STOP\n'); processes[1].stdin.flush()
     assert processes[1].wait(timeout=25) == 0
+    assert hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest() == final_hash
+    reopen_script = fixture / 'reopen-final.py'
+    reopen_script.write_text(
+        "import hou, sys\n"
+        "hou.hipFile.load(sys.argv[1], suppress_save_prompt=True)\n"
+        "shape = hou.node('/obj/final_probe/shape')\n"
+        "assert shape is not None and shape.type().name() == 'box'\n"
+        "print('REOPEN_OK')\n", encoding='utf-8')
+    reopen_executable = (Path(sys.argv[1]).with_name('hython.exe')
+                         if '--gui' in sys.argv else Path(sys.argv[1]))
+    reopened = subprocess.run([str(reopen_executable), str(reopen_script), final_record['hip_path']],
+                              env=isolated_environment(fixture / 'reopen-final'),
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              timeout=90, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert reopened.returncode == 0 and 'REOPEN_OK' in reopened.stdout, reopened.stdout
     assert hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest() == final_hash
     print('PASS two component workers, unique HIP/identity/port, isolated stop; fixture:', fixture)
 finally:
