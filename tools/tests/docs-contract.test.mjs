@@ -106,7 +106,16 @@ const index = read('docs/README.md')
 for (const file of docs) {
   if (file.name !== 'README.md') assert.ok(index.includes(`](${file.name})`), `unindexed document ${file.name}`)
 }
-const docFiles = ['README.md', 'AGENTS.md', ...docs.map(d => 'docs/' + d.name)]
+const currentDocFiles = ['README.md', 'AGENTS.md', ...docs.map(d => 'docs/' + d.name)]
+function markdownFiles(directory) {
+  return fs.readdirSync(path.join(root, directory), { withFileTypes: true }).flatMap(entry => {
+    const relative = `${directory}/${entry.name}`
+    // Run artifacts are not maintained documentation or evaluator contracts.
+    if (entry.isDirectory()) return entry.name === 'runs' ? [] : markdownFiles(relative)
+    return entry.isFile() && entry.name.endsWith('.md') ? [relative] : []
+  })
+}
+const docFiles = [...currentDocFiles, ...markdownFiles('skills'), ...markdownFiles('evaluation')]
 for (const file of docFiles) {
   const content = read(file)
   // Check actual Markdown links, not command examples or arbitrary code strings.
@@ -125,8 +134,10 @@ for (const file of docFiles) {
       assert.ok(headings.includes(decodeURIComponent(anchor)), `${file}: missing heading ${href}`)
     }
   }
-  assert.doesNotMatch(content, /^#{1,6} .*?(?:20\d\d-\d\d-\d\d|v\d+\s*候选|本轮|实施进度|Phase [A-Z])/m,
-    `${file}: iteration-log headings do not belong in current docs`)
+  if (currentDocFiles.includes(file)) {
+    assert.doesNotMatch(content, /^#{1,6} .*?(?:20\d\d-\d\d-\d\d|v\d+\s*候选|本轮|实施进度|Phase [A-Z])/m,
+      `${file}: iteration-log headings do not belong in current docs`)
+  }
 }
 const architecture = read('docs/architecture.md')
 for (const [dir, suffix] of [['src', '.ts'], ['houdini/python3.11libs', '.py']]) {
@@ -167,4 +178,4 @@ for (const leakedRecipe of [/OUT_ASSET/, /Copy to Points/, /component Network Bo
 }
 assert.ok(data.cards.polybevel.notes.some(note => /H21\.0\.440.*crash.*PolyBevel.*guide cook/.test(note)),
   'the observed H21 PolyBevel interaction crash must remain an explicit scoped risk')
-console.log(`documentation contracts passed (${docs.length} current docs, ${Object.keys(data.cards).length} generated cards)`)
+console.log(`documentation contracts passed (${docs.length} current docs, ${docFiles.length} Markdown link surfaces, ${Object.keys(data.cards).length} generated cards)`)

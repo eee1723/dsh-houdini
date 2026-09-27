@@ -38,7 +38,7 @@ skill、流程或节点卡的系统，也不以“自主学习/自进化”作�
 | 质量与成本 | 减少无效重试、重复输入和无关观察，同时保持任务完成质量 | 固定模型、版本、任务信息与预算，分别比较指导、工具和上下文策略；报告重复运行分布及用户问询负担 |
 
 上述验证不通过增加节点数、只减少工具次数、加长提示词或放宽判据来替代结果改善。
-开发验证使用[产品模型开发评测](benchmark-design.md)区分发现案例与未见案例；需要真实模型、云服务或用户live操作的实验按相应授权边界执行。
+开发验证使用[产品模型开发评测](product-modeling-evaluation.md)区分发现案例与未见案例；需要真实模型、云服务或用户live操作的实验按相应授权边界执行。
 实现入口为[任务来源](../src/task-sources.ts)、[执行状态](../src/execution-state.ts)、
 [请求回执](../houdini/python3.11libs/dsh_requests.py)和[质量检查](../houdini/python3.11libs/dsh_quality_contracts.py)；
 工具保证以[执行契约](execution-contract.md)为准，不由本表扩大。
@@ -79,12 +79,13 @@ skill、流程或节点卡的系统，也不以“自主学习/自进化”作�
 
 ### 后续建设重点
 
-1. 用[产品模型开发评测](benchmark-design.md)先测“看图列零件/接点/细节”、给定清单后的建模、独立只读视觉评审和限时细节组件。固定版本、信息、预算与视角，找到遗漏发生的阶段，再决定改工作流、工具还是模型。
+1. 用[产品模型开发评测](product-modeling-evaluation.md)先测“看图列零件/接点/细节”、给定清单后的建模、独立只读视觉评审和限时细节组件。固定版本、信息、预算与视角，找到遗漏发生的阶段，再决定改工作流、工具还是模型。
 2. 验证从简短或详细需求形成有来源的交付边界和模块依赖，避免由goal/todo摘要自行减少核心要求。参数面板/总控使用[共享控制设计](parameter-controls.md)的先UI、模型原型优先或既有场景提炼路径，控制定义/UI/绑定/最终输出分别验证。
 3. 验证集中控制、典型/边界参数和既有网络局部修改；变更后重查受影响的输出、接点和局部细节，不以全局bbox变化替代。
 4. 将[多Agent组件协作](component-collaboration.md)作为条件明确后的优化：主作者负责计算/共享控制/接口与装配，
    子作者在独立Houdini中细化；交付普通subnet或节点网络，不要求HDA。先完成片段往返与绑定隔离，再做真实协作。
-   固定预算与观察条件比较单作者整体、单作者聚焦和多作者隔离，质量、主子总成本与上下文策略分开评价；当前自动链路未实现。
+   固定预算与观察条件比较单作者整体、单作者聚焦和多作者隔离，质量、主子总成本与上下文策略分开评价；显式组件委派与独立 worker 链路已有候选实现，
+   完整依赖迁移、正常入口验收和质量成本收益仍未闭环。
 5. 用不同产品和连续多轮修改检验交付；把来源可读、几何检查、视觉确认和最终保存的各自缺口如实报告。
 
 ## HDA 与工具插件
@@ -116,7 +117,7 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
 
 ### 材料理解
 
-第一版直接面向用户提供的视频教程链接或视频文件，不建设图文教程输入路径。
+目标输入是用户提供的视频教程链接或视频文件，不建设图文教程输入路径；当前脚本只接收本地视频文件，链接下载尚未实现。
 字幕、关键画面和配套工程是视频理解的辅助材料，不要求用户预先整理完毕才能使用。
 先确认材料可访问、允许分析，并识别软件版本、依赖、目标和缺失信息。
 字幕或视频页面可访问，均不等于已经观察了视频中的操作画面。
@@ -203,7 +204,7 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
 
 | 方向 | 现有源码与知识入口 | 验证入口或待建立的验收 |
 |---|---|---|
-| 程序化建模 | [SOP 契约](../houdini/python3.11libs/dsh_sop_contracts.py)、[质量契约](../houdini/python3.11libs/dsh_quality_contracts.py)、[SOP skill](../skills/houdini-sop-workflow/SKILL.md) | [开发维护](development.md)中的隔离 HOM 回归，加[产品模型开发评测](../evaluation/product-modeling-dev-v1/)的未见产品和后续修改任务 |
+| 程序化建模 | [SOP 契约](../houdini/python3.11libs/dsh_sop_contracts.py)、[质量契约](../houdini/python3.11libs/dsh_quality_contracts.py)、[SOP skill](../skills/houdini-sop-workflow/SKILL.md) | [开发维护](development.md)中的隔离 HOM 回归，加[公开开发题](../evaluation/product-modeling-dev-v1/)的回归，以及另行保管的未见产品和后续修改任务 |
 | HDA 与工具插件 | [helpers](../houdini/python3.11libs/dsh_hou_helpers.py)中的 HDA 接口、[工具设计](tool-design.md) | 现有回归之外，按具体交付建立实例、输入、重载及工具生命周期测试 |
 | 教程转教学工程 | [视频解析 skill](../skills/houdini-video-tutorial/SKILL.md)、[处理脚本](../skills/houdini-video-tutorial/scripts/video_tutorial.py)，以及现有领域执行工具 | [离线行为回归](../tools/tests/video-tutorial.test.py)；真实云请求/画面理解、新 session 触发、未见视频及教学 HIP 端到端分别验收 |
 | Copernicus 程序化贴图 | [COP图层与控制实现](../houdini/python3.11libs/dsh_cop_contracts.py)、[COP workflow](../skills/houdini-cop-workflow/SKILL.md)，以及Solaris/MaterialX消费接口 | [COP机制回归](../tools/tests/dsh-cop-contracts.test.py)；真实材质预览、自然采用、平铺与最终交付仍须单独验收 |

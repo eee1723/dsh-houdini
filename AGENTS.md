@@ -29,7 +29,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 ## 单一维护源
 
 - docs/README.md是长期知识索引；架构与代码地图在docs/architecture.md。
-- 接续开发先读docs/handoff.md；它是唯一滚动交接入口，只保留未完成动作/验证缺口，按docs/development.md及时删项。
+- 查询开发状态或接续前先核对git branch -a -vv、git worktree list和相关提交，再读目标分支docs/handoff.md；不把当前目录或main当作全部开发状态。handoff是唯一滚动交接入口，只保留未完成动作/验证缺口，按docs/development.md及时删项。
 - docs/tool-design.md维护动词目录/执行版本；houdini/node-operation-contracts.json维护节点卡，
   docs/node-operation-cards.md只由生成器镜像。领域方法只在skills按需维护。
 - docs只放现役设计、接口、维护规范、稳定测试方法和实现边界。修改时就地替换旧说明，

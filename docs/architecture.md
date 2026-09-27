@@ -33,7 +33,7 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 ### 组件协作的目标接入
 
 [多Agent组件建模](component-collaboration.md)在上述执行端基础上使用独立子作者与普通subnet/节点片段交换，
-主作者只写总装；不要求HDA交付，不引入同HIP多作者或第二套Agent状态机。源码组件预览候选已接原生可续跑子任务、独立worker和pre-step绑定，仍依赖单独构建的DSH provider-cwd候选；普通/受管运行时尚未合并，完整依赖与候选替换尚未完成。接入与验收矩阵在该文档维护。
+主作者只写总装；不要求HDA交付，不引入同HIP多作者或第二套Agent状态机。源码组件预览候选已接原生可续跑子任务、独立worker和pre-step绑定，仍依赖单独构建的DSH provider-cwd候选；普通/受管运行时尚未合并，完整依赖迁移和候选替换的端到端验收尚未完成。接入与验收矩阵在该文档维护。
 
 ### 现役分层
 
@@ -85,7 +85,7 @@ domain skill及reference维护建模、验证和交付方法。低频对象recip
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context只为现场指代提供用户消息绑定的metadata；execution-state按有意义的异常变化提醒，
+scene-context只为现场指代提供用户消息绑定的metadata；execution-state保留未决请求、陈旧检查及失败/未验证的产品合同，按有意义的变化投影提醒，
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
@@ -97,7 +97,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 
 | 源码 | 维护职责 / 深入文档 |
 |---|---|
-| [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；尚无自动派工或更新替换保证 |
+| [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；component_replace已有显式计划与有限迁移，完整依赖迁移和质量验收不由片段往返保证 |
 | [dsh_component_worker.py](../houdini/python3.11libs/dsh_component_worker.py) | 自有组件进程初始化、新HIP/Bridge登记与空闲检查点退出；由tools/component-worker.py监管，不接管live |
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
@@ -165,7 +165,7 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
 [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护受治理分组、语义色、类型化Box provenance、
 presentation快照、handoff两阶段应用与Bridge undo核对。handoff不改变现有children/flow语义，只移动显式选中的
-当前session自有扁平Box及完整自有成员；其他网络项作为固定障碍。
+当前session自有扁平叶子Box及完整自有成员；component模式移动一层组件容器内的叶子框和成员，保留叶内布局。明确授权的既有网络可单次allow_foreign；服务和其他未授权/未选网络项仍固定。
 
 视频教程解析由[video skill](../skills/houdini-video-tutorial/SKILL.md)组织，
 [video_tutorial.py](../skills/houdini-video-tutorial/scripts/video_tutorial.py)在普通宿主进程中执行
@@ -224,4 +224,4 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
 
-程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](benchmark-design.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。
+程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](product-modeling-evaluation.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

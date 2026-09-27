@@ -13,7 +13,7 @@
 [节点操作卡](docs/node-operation-cards.md)、
 [开发维护规范](docs/development.md)。
 
-接续开发先看[当前交接](docs/handoff.md)：只保留待办、验证缺口及下一步，完成即移除，不作历史日志。
+查询开发状态或接续前，先用 `git branch -a -vv`、`git worktree list` 核对工作所在分支，再看该分支的[当前交接](docs/handoff.md)；不要把当前目录或 main 的状态当作未合并分支的状态。交接只保留待办、验证缺口及下一步，完成即移除。
 
 docs保存当前设计、实现和维护方法；当前交接是唯一滚动待办例外，不保存迭代日记或测试流水。节点卡由JSON同源生成，
 其他设计随代码原位更新；构建产物和源码说明都不能证明live版本已加载。
@@ -98,4 +98,4 @@ HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令�
 - 几何/控制检查只能证明声明范围，不认证未测参数域、自交、制造强度或艺术质量。
 - 源码、确定性回归、部署、新session曝光、真实任务质量分别验证；不互相冒充。
 
-程序化产品模型的开发测试集、验收维度和信息隔离见[评测设计](docs/benchmark-design.md)。本插件不依赖其他Houdini MCP服务。
+程序化产品模型的开发测试集、验收维度和信息隔离见[评测设计](docs/product-modeling-evaluation.md)。本插件不依赖其他Houdini MCP服务。

@@ -69,7 +69,7 @@
 | Houdini persona | [presets](../presets/)经persona插件挂载 | preset模板与本次实际生效内容；不能只按磁盘文件断言已加载 |
 | 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
 | 消息指代现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 按需采集一次的独立plugin消息；绑定消息/时间，选择不构成目标或授权；历史整包snapshot按当时来源展示 |
-| 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state/context-recovery | 仅未决请求、检查失效、运行身份变化及历史替换恢复；普通回包/计数不追加，不是现场通过证书 |
+| 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state/context-recovery | 涵盖未决请求、检查失效、失败/未验证的产品合同、运行身份变化及历史替换恢复；保留真实被检路径和合同范围，普通回包/计数不追加，不是现场通过证书 |
 | 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)的dsh-houdini:task-sources | 按需回读与历史替换后的有限恢复；用户/澄清/计划区分，不随普通消息和goal变化追加副本 |
 | 工具定义 | [src/tools.ts](../src/tools.ts)与平台其他提供方，最终可见schema集合 | schema是独立请求组成；工具限制不会自动证明对应guidance也被删除 |
 | 项目指令与其他上下文 | 实际上下文提供方及最终消息 | 来源、角色、顺序；不凭插件名称猜正文或注入位置 |
@@ -178,7 +178,7 @@ taskSources仅记录index发现与原文分页返回；部分页、失败和缺�
 
 当前自动验证入口：
 
-- `npm run docs:check`：文档索引、链接、模块覆盖与节点卡生成一致性。
+- `npm run docs:check`：文档索引、docs/skills/evaluation链接、模块覆盖、节点卡及Trace来源生成一致性。
 - [verb-contract测试](../tools/tests/verb-contract.test.mjs)：目录名称、Host生成契约和Bridge注册/执行版本一致。
 - [client-session-hint测试](../tools/tests/client-session-hint.test.mjs)：client注册与公开trajectory读取适配。
 - [时序测试](../tools/tests/normalized-trace-steps.test.mjs)、[会话解析测试](../tools/tests/trace-session-lib.test.mjs)、

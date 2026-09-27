@@ -15,8 +15,8 @@
 默认Open Workspace仍使用原单实例路线。受管安装保留安装级runtime锁，不能靠删锁或手改签名发行包启用。
 源码集成不证明用户当前进程已加载；菜单/客户端更改需要在保存并结束现有任务后重新打开对应环境。
 
-源码菜单只显示 **Open Workspace**：源码版新开的GUI、已保存的HIP且没有自有前端时，提供默认“Regular workspace”与显式“Component preview”选择；受管版和未保存HIP不显示该选择，仍走普通入口。组件预览还要求HIP不在平台TEMP，
-首次在Houdini内选择带子任务cwd扩展的已构建DSH bin.js、独立Python和Houdini GUI executable。
+源码的工作区启动统一使用 **Open Workspace**；菜单另有版本诊断、共享执行端登记与单端修复入口：源码版新开的GUI、已保存的HIP且没有自有前端时，提供默认“Regular workspace”与显式“Component preview”选择；受管版和未保存HIP不显示该选择，仍走普通入口。组件预览还要求HIP不在平台TEMP，
+首次在Houdini内明确选择带子任务cwd扩展的已构建DSH bin.js（或使用专用组件覆盖）；独立Python与当前Houdini GUI路径可可靠识别时自动采用，缺失时才弹出选择。
 它在LOCALAPPDATA下建立新的隔离profile（不复制旧模型凭据/历史），登记当前HIP为总装执行端，
 从Houdini自有Windows Job启动动态端口的共享Host，并打开内嵌工作区；组件worker由Host按需启动。
 已有单实例前端/不同共享登记拒绝，不停止/接管外部进程；已有自有工作区再次点Open Workspace直接唤起（包括尚未绑定任务但已登记当前HIP的组件预览），不再选择模式、不启动第二个Host。其他共享登记及停止的预览Host仍拒绝自动接管/重启。
@@ -29,7 +29,7 @@
 重复点菜单只唤起同HIP页面；切HIP/退出后的任务恢复未实现，失败保留隔离profile与诊断日志，不自动重发未知修改。
 这不是受管正式发行功能，不自动迁移手工候选Host的会话。
 
-不包含：自动启动/接管共享Host、正常退出时的任务选择对话框、自动重开Houdini、跨进程节点ownership恢复、
+通用共享模式不自动启动或接管外部Host；上文显式组件预览可以启动自有共享Host。尚不包含正常退出时的任务选择对话框、自动重开Houdini、跨进程节点ownership恢复、
 未知操作重放、共享模式的跨路径Save As预留转移，以及GUI/外部程序的全部写入拦截。
 
 ## 身份与职责
@@ -117,7 +117,7 @@
   验认证、选择、真实Houdini领取和实际flush；精确参数和依赖见[开发规范](development.md)。
 
 Qt真实菜单、正常退出/崩溃恢复、已加载发行版和未见模型任务分别验收。测试、源码、签名包、正式Release及live
-加载状态不能互相替代；未见模型任务按[产品模型开发评测](benchmark-design.md)保留失败和未验证项，不用改题面或评审答案掩盖缺口。
+加载状态不能互相替代；未见模型任务按[产品模型开发评测](product-modeling-evaluation.md)保留失败和未验证项，不用改题面或评审答案掩盖缺口。
 
 设计依据：[DSH agent作用域/恢复](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/agent/README.md)、
 [DSH持久会话](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/README.md)、

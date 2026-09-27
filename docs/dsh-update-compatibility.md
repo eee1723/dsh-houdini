@@ -15,7 +15,7 @@ Python/Qt实际支持面仍由H21/H22资格验证决定，不以版本列表代�
 HTTPS/摘要不是签名，签名也不防御本机用户主动替换整个安装器/信任库；不得声称这是抵抗本机账户失陷的安全沙箱。
 
 发布资格顺序：选定提交 → 锁依赖并构建 → Node/安装回归 → H21/H22 隔离与实际用户路径验收 → 生成可复验的资产 → 上传 Draft → 作者明确发布。
-普通 push 只做开发同步/测试，tag 可触发候选打包但不自动转正式。Draft 和 prerelease 不进入默认正式通道；版本比较使用语义版本，不按字符串或 commit 时间推断升级。
+普通 push 只做开发同步/测试；发行工作流只由 workflow_dispatch 显式指定已有 tag 触发，创建 tag 本身不触发打包或正式发布。Draft 和 prerelease 不进入默认正式通道；版本比较使用语义版本，不按字符串或 commit 时间推断升级。
 发布包保留许可证与依赖清单；干净环境必须覆盖无 Git/Node/外部 Python、中文/空格路径、自定义 Houdini 偏好目录、受限网络、本地包安装、磁盘不足/中断/损坏包、多实例、重启启用与数据迁移回退。
 用户机器不重建正式包；发布构建以冻结 lockfile 组装并验证完整依赖树，不能用仅固定 DSH 根包的 npx cache 代替发行锁。
 
@@ -40,7 +40,7 @@ Houdini与Houdini开发模式在所选精确DSH的`standard` Agent能力上叠�
 
 | Surface | 内容 | 变更后的必跑门 |
 |---|---|---|
-| Agent surface | guidance、preset、skills、工具 schema/行为、动词合同 | Node + H21/H22 Houdini 回归；可能影响建模行为时按[产品模型开发评测](benchmark-design.md)运行受影响案例及未见题 |
+| Agent surface | guidance、preset、skills、工具 schema/行为、动词合同 | Node + H21/H22 Houdini 回归；可能影响建模行为时按[产品模型开发评测](product-modeling-evaluation.md)运行受影响案例及未见题 |
 | Compatibility surface | client UI、launcher/manager、Web auth/RPC、profile bundle、QtWebEngine 兼容及随包作者检查器/环境构造 | Node + H21/H22 runtime、浏览器 RPC、Trace、workspace/session、第三方 bundle及受影响作者检查器smoke；纯 UI 修复不自动触发模型质量测试 |
 
 一次变更可以同时影响两边，分别记录实际版本、加载身份和已运行的验证；不能用一边的通过冒充另一边。静态文件哈希不能代替运行资格或产品模型质量；运行时是否加载了新版本仍须按诊断和真实路径核对。
@@ -48,7 +48,7 @@ Houdini与Houdini开发模式在所选精确DSH的`standard` Agent能力上叠�
 ## 新 DSH 版本的资格流程
 
 DSH 0.1.6-alpha.2是当前源码preferred与发行锁目标，由用户明确授权切换以进行Houdini实际验收；
-它是官方最新预发行版。兼容清单只保留这一版本并保留pendingVerification，不代表GUI资格已完成或正式发行已发布。
+它是当前锁定的官方预发行版本，不表示上游最新。兼容清单只保留这一版本并保留pendingVerification，不代表GUI资格已完成或正式发行已发布。
 LLM/system-prompt peer只接受该精确版本；构建使用同版tools/system-prompt。persona只使用当前`prefix`字段，
 Trace按V3 assistant/message结算usage。
 

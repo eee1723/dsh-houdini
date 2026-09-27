@@ -226,6 +226,7 @@ verify_network(...,output_index=同索引)检查其直接接线；不指定索�
 |---|---|---|
 | Polygon inspect | 指定输出/组的边界、共享边连通、非流形、朝向冲突、逐壳条件性有向体积 | 目标外形、自交、实体强度；分组切口可有意开放 |
 | Polygon integrity-only | 近看产品件的最终输出或关键源模块：有界查非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何面朝向冲突、零面积/零边与完全重复面；平面大面重复点桥接孔时另提示着色近景复核，不算几何完整性失败；负号提示核对是否整体反向，合法嵌套空腔须人工解释；开放边另提示核对接口 | 任意共面覆盖、自交、接点关系、控制扰动后的保持、参考外形或艺术质量；超预算与非Polygon保持unverified |
+| planar face crossings | 指定选择中单个近似平面闭合Polygon面的非相邻边严格内部交叉；返回面号、边号、位置样本和预算覆盖 | 不同面之间的三维自交、非平面/退化面、端点接触和共线重叠；零命中不证明整体无自交 |
 | attrib unique | 全量精确tuple唯一性、基数和有限重复样本 | 容差焊接；bbox不变不能排除复制重叠 |
 | point spacing | 明确有序点的全量相邻弦长 | 曲面关系、弧长、实体间隙 |
 | named surface proximity | 指定实际表面点到目标表面的最近距离与声明基数 | 实体插入深度、全表面无穿插、强度 |
@@ -297,8 +298,8 @@ managed分配的独占reservation保持到本次capture明确完成/失败，强
 transport、bootstrap、presentation、semantic inspection四层独立；没有成功语义识图就写视觉未验证。
 viewport_screenshot用于用户屏幕诊断，不能把视口漂移当成最终模型错误。
 
-Network Box属于可使HIP变脏的presentation mutation，不是几何修改或质量证书。`network_boxes`只接受显式
-扁平成员表，并强制dry-run plan后apply；类型化Box registry与节点registry分离，因为不同NetworkMovableItem
+Network Box属于可使HIP变脏的presentation mutation，不是几何修改或质量证书。`network_boxes`接受显式
+直属节点叶子框，或以`boxes`引用既有叶子框的一层`role=component`容器；拒绝混装与第三层嵌套，并强制dry-run plan后apply；类型化Box registry与节点registry分离，因为不同NetworkMovableItem
 子类的sessionId可碰撞。Box名字、标签、颜色、成员、owned parent都不授予权限；foreign仅单次授权，
 render服务永不豁免。移除box保留节点；失败恢复成员、bounds、标签、颜色、选择、成员位置及registry。
 plan hash绑定当前进程generation，同进程Repair保持、换进程失效；preflight拒绝明确scene_writes=0。
@@ -306,8 +307,8 @@ plan hash绑定当前进程generation，同进程Repair保持、换进程失效�
 多次create/update/remove与先前节点移动均由原生undo恢复。无undo的headless环境仅保证动词内部原子性，
 不把后续无关异常冒充整批已回滚。分组不移动节点、不cook、不使现有geometry/render证据因展示变化失效；
 它只使旧network-editor布局观察失效。`layout_nodes(mode='handoff')`是独立、强制两阶段的presentation mutation：
-只接受显式当前session自有扁平Box及其完整自有成员，foreign/service/未选项、Sticky Note与Network Dot固定不动，
-`allow_foreign`不放宽；plan绑定当前process generation、成员/接线/位置、Box状态和障碍，陈旧计划零写入拒绝。
+默认只移动显式当前session自有扁平叶子Box及完整自有成员；用户明确要求修复已命名既有网络时，可在dry-run与apply传同一单次`allow_foreign`授权。service、未授权或未选项、Sticky Note与Network Dot固定不动；plan绑定当前process generation、成员/接线/位置、Box状态和障碍，陈旧计划零写入拒绝。
+`layout_nodes(mode='component')`接受一层组件容器，把叶子框和节点作为整体移动并保留叶内布局；同样要求两阶段计划、逐项身份/授权和固定障碍复核，不允许第三层嵌套。
 comfortable profile用实际节点尺寸设定节点净距、标题/侧/底边距和Box净距；应用只各写一次最终节点位置与Box bounds，
 回读实际节点/Box/固定障碍后重算重叠、containment和取得净距，区分profile要求与实测值；障碍量测失败或应用期间改变时
 fail closed并纳入同一Box journal恢复。成功只证明编辑器排布，不证明几何正确、无接线交叉或语义视觉质量。

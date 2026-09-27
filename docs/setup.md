@@ -77,7 +77,7 @@ Windows源码模式也使用同一Job生命周期：CLI/npx在加入自有Job后
 另一Houdini占用Bridge时拒绝，不杀Houdini、不修改HIP或自动迁移历史。
 Host不再运行不等于HOM已结束；强制停止前后均检查Bridge未完成请求/jobs。旧Bridge缺少完整活动观察时不猜空闲，
 等待现有工作结束、确认场景后完整重开Houdini加载当前Bridge，不绕过此观察缺口强制重启。
-当前退出仍按Job回收自有DSH；独立任务宿主、退出时保留服务选择和崩溃后安全续跑尚未实现。
+默认单实例退出仍按Job回收自有DSH；显式终端共享Host可独立运行，退出时保留服务选择和崩溃后安全续跑尚未实现。
 启动器创建的DSH携带当前Houdini的executor ID，所有Bridge请求核对目标，防止同端口换进程后误操作。
 ID不是密码或节点ownership；进程重开不能凭原HIP路径自动续跑。共享任务入口/多执行端的目标设计、
 身份分层与尚未开放部分见[多执行端与恢复](architecture.md#多houdini执行端与任务恢复)。
@@ -96,7 +96,7 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 ## 工作区使用
 
-源码菜单只有Open Workspace：新开且已保存HIP可显式选择隔离组件预览，普通模式为默认；这只合并菜单，不合并profile/正式运行时，也不自动解除受管安装的runtime锁。
+源码的工作区启动统一为Open Workspace，菜单另保留版本诊断及共享执行端登记/修复：新开且已保存HIP可显式选择隔离组件预览，普通模式为默认；这只合并菜单，不合并profile/正式运行时，也不自动解除受管安装的runtime锁。
 启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
 
 先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。

@@ -15,7 +15,7 @@
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
 | 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
 | 组件协作设计 | [component-collaboration.md](component-collaboration.md) | 普通节点片段/独立作者的接口和实施完成门；当前动作归handoff，执行端运维归multi-instance |
-| 产品模型开发评测 | [产品模型评测集](../evaluation/product-modeling-dev-v1/)与[评测原则](benchmark-design.md) | 案例清单、公开题面、独立评审材料分离；机制回归不代替模型质量 |
+| 产品模型开发评测 | [产品模型评测集](../evaluation/product-modeling-dev-v1/)与[评测原则](product-modeling-evaluation.md) | 案例清单、公开题面、独立评审材料分离；机制回归不代替模型质量 |
 
 ## 2. 构建与生成
 
@@ -30,7 +30,7 @@ npm pack --dry-run
 只用npm，不用pnpm。build自动生成节点卡文档、Host/client词表和Trace组件/来源清单，再运行tsc；不要手改lib或生成区。
 Trace手写界面在client/trace-view.js与trace-view.css；guidance、persona、注册技能及资源从来源生成，
 不在展示代码复制正文。生成漂移由trace-view回归与gen-trace-client --check验证。
-docs:check是只读漂移/索引/链接/模块覆盖检查，不偷偷修正文档；CI应在build前运行，防止生成步骤掩盖漂移。
+docs:check只读检查节点卡和Trace来源生成漂移、文档索引/模块覆盖，以及docs、skills、evaluation内Markdown链接；不偷偷修正文档。CI在build前运行，防止生成步骤掩盖漂移。
 node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加载器、生成器和测试。
 关键参数名对应runtime模板，不能从手册猜数字菜单值或把一次读取的默认值固化为全版本事实。
 
@@ -49,6 +49,13 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 测试代码、稳定验证方法、已知未支持边界应保留；已完成计划、退役原型说明和历史审计不放docs。
 停用功能先迁移有效约束到现役文档，再清理文件及调用者，不建立docs/archive。
 不因为文档声称已修复就删除验证；机器内存和跨项目材料不属于默认同步范围。
+
+### 分支与接续入口
+
+查询开发状态、接续或合并前，先执行 `git status --short`、`git branch -a -vv`、`git worktree list`，
+结合相关提交定位实际开发分支，再读取该分支的交接与实现。不同工作树的文档只描述各自提交，
+不能用 main 的旧文档否定尚未合并的开发结果。合并后在目标分支重核索引、交接和生成门禁；
+清理前确认改动已集成、无使用该工作树的进程，且独有工程、证据和忽略文件已妥善保留。
 
 ### 交接文档生命周期
 
