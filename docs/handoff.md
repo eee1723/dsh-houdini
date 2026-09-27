@@ -49,7 +49,7 @@
 ### H-03 超时与不确定请求恢复（RT-02）
 
 - 状态：待修复
-- 现状：同runtime回执及受限worker已具备；风扇退出、Neutrik长调用仍无最终HIP。test36预览后NameError使原生undo挂住，服务非undo修复通过H21/H22隔离GUI；原任务同因未证。卷线盘A/B作者运行无自发进程退出，但共享执行器拒绝Save As；复制HIP虽可独立重开，缺目标保存回执，按交付失败。独立评审渲染后清空场景出现AppHangTransient并伴随OpenGL报错；改为保留预览服务另存评审副本后两次正常退出，弹窗来源未证。
+- 现状：同runtime回执及受限worker已具备；风扇退出、Neutrik长调用仍无最终HIP。test36预览后NameError使原生undo挂住，服务非undo修复通过H21/H22隔离GUI；原任务同因未证。卷线盘A/B作者运行无自发进程退出，但共享执行器拒绝Save As；复制HIP虽可独立重开，缺目标保存回执，按交付失败。评审清场后AppHangTransient；隔离H21同HIP副本对照复现：保留服务退出，清场（含先保存）均超时，原弹窗归属未证。
 - 下一步：隔离worker可预留final.hip，H21/H22无模型保存通过；下次在GUI新锁条件验最后修改后的保存/回执/重开，评审独立留失败。继续区分退出、未知请求和保存失败；同runtime仅按request_ref查回，不重发修改。按[多实例与恢复](multi-instance.md)验Qt登记/单端Repair、共享Host退出与旧会话续接；跨进程恢复、GUI/外部替换与恢复授权后置。live未验；不因超时杀Houdini或凭tag认领，图片恢复保留原历史。
 - 移除条件：H-01所确认版本的真实路径可区分未执行/执行中/完成/仍未知，查回不重做修改、不重复计账；过期及无法恢复的情况如实报告，不能仅以隔离脚本通过核销。
 - 入口：[Host传输](../src/bridge.ts)、[Bridge队列](../houdini/python3.11libs/dsh_bridge.py)、[预览服务](../houdini/python3.11libs/dsh_hou_helpers.py)、[GUI反例](../tools/tests/run-render-undo-gui.py)、[执行状态测试](../tools/tests/execution-state.test.mjs)。
