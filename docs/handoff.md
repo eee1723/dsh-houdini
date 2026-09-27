@@ -49,8 +49,8 @@
 ### H-03 超时与不确定请求恢复（RT-02）
 
 - 状态：待修复
-- 现状：同runtime回执及受限worker已具备；风扇worker退出和Neutrik长调用unknown_transport均无最终HIP，旧检查点不能代替交付。test36炮塔预览写出PNG但无回执；隔离H21复现预览后NameError触发原生undo挂住。服务非undo修复通过H21/H22隔离GUI；原任务无退出栈，同因未证。跨进程身份、live取消和图片历史恢复未闭环。
-- 下一步：本轮先验中断与最终保存，跨进程自动恢复后置。新加载Host验首次绑定和旧错误会话续接；绑定在pre-step接受、工具期只flush，旧完整文本只追加摘要投影修正。按[多实例与恢复](multi-instance.md)验Qt登记/单端Repair、共享Host启动/退出及续接；默认入口和live未切换。完善Save As预留、GUI/外部替换与恢复授权后再解除受管互斥。退出/崩溃暂停、检查点与跨进程身份恢复待实现；不因超时杀Houdini或重发代码、凭tag认领。发布仍须真实路径验收，不复制账号/会话；图片恢复保留原历史、不改node_modules。
+- 现状：同runtime回执及受限worker已具备；风扇退出、Neutrik长调用仍无最终HIP。test36预览后NameError使原生undo挂住，服务非undo修复通过H21/H22隔离GUI；原任务同因未证。卷线盘A/B作者运行无自发进程退出，但共享执行器拒绝Save As；复制HIP虽可独立重开，缺目标保存回执，按交付失败。独立评审渲染后清空场景出现AppHangTransient并伴随OpenGL报错；改为保留预览服务另存评审副本后两次正常退出，弹窗来源未证。
+- 下一步：复跑前为最终HIP取得写入预留，最后修改后显式保存并记录回执；评审每次用独立目录留住首次失败。继续区分中断、退出、未知请求和保存失败；同runtime仅按request_ref查回，不重发修改。按[多实例与恢复](multi-instance.md)验Qt登记/单端Repair、共享Host启动退出与旧会话续接；跨进程自动恢复、GUI/外部替换与恢复授权后置。默认入口和live未验；不因超时杀Houdini或凭tag认领，图片恢复保留原历史。
 - 移除条件：H-01所确认版本的真实路径可区分未执行/执行中/完成/仍未知，查回不重做修改、不重复计账；过期及无法恢复的情况如实报告，不能仅以隔离脚本通过核销。
 - 入口：[Host传输](../src/bridge.ts)、[Bridge队列](../houdini/python3.11libs/dsh_bridge.py)、[预览服务](../houdini/python3.11libs/dsh_hou_helpers.py)、[GUI反例](../tools/tests/run-render-undo-gui.py)、[执行状态测试](../tools/tests/execution-state.test.mjs)。
 

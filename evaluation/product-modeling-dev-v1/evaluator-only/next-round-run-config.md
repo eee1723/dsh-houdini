@@ -54,3 +54,7 @@ node evaluation/product-modeling-dev-v1/scripts/validate-review.mjs <run-id>/rev
 主结果只报告四项：最终 HIP 是否成功交付、核心结构、参数操作后关系、报告与成品一致性。每项给证据和覆盖范围；调用数、耗时与费用单列。首轮和追加运行全部入分母，分别列出失败原因及未知，不以成功重跑覆盖崩溃或无最终 HIP 的首次运行。已公开题上的改善只能说明这类开发条件有迁移迹象；进一步泛化需封存的未见来源和独立预锁评审。
 
 对应入口：[`prepare-run.mjs`](../scripts/prepare-run.mjs)、[`validate-review.mjs`](../scripts/validate-review.mjs)、[评审协议](../REVIEW_PROTOCOL.md)。本配置只准备隔离试验，不授权重启用户 live、修改原 HIP 或部署发行包。
+
+## 再次开跑前的执行门
+
+已完成的 A1/B1 `lock.json` 与原始轨迹保持原样，不用本节追溯改判。共享执行器把 HIP 写入预留绑定到启动时的路径，直接 `scene_save_as(final.hip)` 会被拒绝。下一次收费运行前须用无模型的启动/保存探针证实**最终目标路径**已获写入预留，作者提示与该路径一致；最后修改后要有该路径的成功保存回执、文件摘要和独立重开。若只能预留检查点路径，应在新锁条件中改用适合 Save As 的隔离入口，不能让作者靠文件复制满足交付。评审 GUI 每次尝试用新的产物目录，记录退出码、WER 和图像；渲染后保留持久 OpenGL 服务至退出，不在同一进程清空 HIP。
