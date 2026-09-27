@@ -42,7 +42,10 @@ class Handler(BaseHTTPRequestHandler):
                         'observed_at':ordinal,'frame':1,'hip_path':str(fixture/'fixture.hip'),'hip_dir':str(fixture),
                         'read_only':False,'impact':{'attempted':True,'global':True,'nodes':[]},
                         'outputs':[{'ledger_index':1,'identity':1,'path':'/obj/fixture/OUT'}]},
-                    evidence=[{'ledgerIndex':1,'verb':'verify_network','ok':True,'output':'/obj/fixture/OUT'}] if ordinal==1 else [])
+                    evidence=([{'ledgerIndex':1,'verb':'geo_check_interfaces','ok':False,'status':'fail',
+                        'output':'/obj/fixture/OUT','contract_sha256':format(ordinal,'064x')}]
+                        if flush_mode else [{'ledgerIndex':1,'verb':'verify_network','ok':True,
+                            'output':'/obj/fixture/OUT'}] if ordinal==1 else []))
         else: raise AssertionError('Unexpected endpoint '+self.path)
         raw=json.dumps(result).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
 fake=ThreadingHTTPServer(('127.0.0.1',0),Handler)

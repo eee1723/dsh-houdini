@@ -88,14 +88,27 @@ export function apply(ctx) {
         assert(options.messages.some(m=>m.source?.kind==='user'&&m.content.some(c=>c.text==='Run one hundred offline fixture changes.')),
           'original user message must survive every consolidation')
         const system=options.messages.filter(m=>m.role==='system').flatMap(m=>m.content.map(c=>c.text||'')).join('\n')
-        assert(system.includes('bounded low-cost visual verification'),'actual preset assembly exposes the new policy')
-        assert(system.includes('Ordinary editable models default to node networks plus HIP'))
-        assert(system.includes('Pure queries, renaming') && system.includes('Honor explicit no-render/budget constraints'))
+        assert(system.includes('Ordinary editable assets default to node networks plus HIP'),
+          'the active preset routes ordinary editable models to node networks')
+        assert(system.includes('The author verifies the requested output, actual relationships and exposed controls')
+          &&system.includes('A successful cook, bbox, count or render proves only its measured scope'),
+          'the active preset requires author verification without expanding a local pass')
+        assert(system.includes('If a core requirement is missing, failed or unverified, report partial/incomplete'),
+          'the active preset must keep missing core requirements out of complete reports')
         const catalog=options.messages.filter(m=>m.source?.kind==='skill-catalog').flatMap(m=>m.content.map(c=>c.text||'')).join('\n')
         assert(catalog.includes('普通可调模型、独立保存HIP不触发'),'actual skill catalog narrows HDA routing before skill loading')
         if(results>=2) {
           const current=JSON.parse(notices.at(-1).source.sections[0].text.split('\n').slice(1).join('\n'))
-          assert.equal(current.checks[0].invalidated_by,'attention-call-'+(results-1),'latest stale evidence is not lost')
+          if(failures.length) {
+            if(current.status==='execution_state_exceeds_budget')
+              assert(current.delivery_audit_counts?.unresolved_checks>0,
+                'over-budget notice must retain the count of unresolved interface failures')
+            else assert(current.checks.some(check=>check.verb==='geo_check_interfaces'
+              &&check.status==='fail'&&check.contract_sha256===results.toString(16).padStart(64,'0')),
+              'the newest failed interface contract survives bounded notice replacement')
+          }
+          else assert.equal(current.checks[0].invalidated_by,'attention-call-1',
+            'the first invalidating edit remains stable across later changes')
         }
         observations.push({results,notices:notices.length,noticeChars:notices.reduce((n,m)=>n+m.content[0].text.length,0)})
         if(results<100) {

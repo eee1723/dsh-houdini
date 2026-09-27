@@ -107,7 +107,7 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 模拟持久化监听器不认证实际DSH文件后端或用户重启路径；这些需新运行态另验。
 绑定回归必须覆盖真实Cordis依赖注入和未完成的多工具交换：pre-step接受绑定、工具期零消息插入、结果完整的旧错误
 交换按原生摘要投影恢复、原记录不变与重复修复幂等；缺结果/其他用户介入拒绝修复，flush失败不能被下一步跳过。
-执行通知使用[有界通知回归](../tools/tests/execution-notice-compaction.test.mjs)验证真实Session、两会话、工具配对和不可改历史；下述agent-loop驱动加`--attention`时以离线adapter检查100次变化的实际请求，最多4条独立execution-state消息；再加`--flush-false`或`--flush-throw`验证持久化失败的多轮重试屏障。
+执行通知使用[有界通知回归](../tools/tests/execution-notice-compaction.test.mjs)验证真实Session、两会话、工具配对和不可改历史；下述agent-loop驱动加`--attention`时以离线adapter检查100次变化的实际请求，最多4条独立execution-state消息；再加`--flush-false`或`--flush-throw`让假Bridge每次返回不同的失败接口合同，实际触发通知压缩并验证持久化失败的多轮重试屏障。超过上下文预算时保留未解失败计数，不把省略明细解释为通过。
 真实agent loop回归用 `python tools/tests/dsh-binding-loop.test.py Node完整路径 DSH-bin.js完整路径`，加`--legacy`
 重现旧版插入位置。使用全新DSH_HOME、本地确定性adapter和严格假Bridge，不读取用户账号、不向外部模型发请求；
 验真实pre-step/工具调度/下一次模型输入顺序，查询不得重复执行。fixture日志保留临时目录，不进入包。
