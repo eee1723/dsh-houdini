@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
 import {ExecutorBindingBarrier} from './execution-state.js'
 import {ExecutorController} from './executor-controller.js'
+import {registerExecutorIdentityProjection} from './executor-identity-projection.js'
 
 export const name='dsh-houdini-executor-host'
 export const inject=['sessions','agents','sessionProjections']
@@ -15,6 +16,7 @@ export const Config:Schema<Config>=Schema.object({
 })
 export function apply(ctx:Context,config:Config):void {
   if(ctx.get('houdiniTargets')) throw new Error('Shared Houdini Host service already mounted; keep exactly one Host-plane instance')
+  registerExecutorIdentityProjection(ctx)
   const directory=new ExecutorDirectory(config.executorRegistry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'))
   const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBindingBarrier(async session=>
     ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0])))

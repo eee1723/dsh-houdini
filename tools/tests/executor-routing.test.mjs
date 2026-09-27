@@ -11,6 +11,7 @@ import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-presets'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
+import {registerExecutorIdentityProjection} from '../../lib/executor-identity-projection.js'
 import * as executorHost from '../../lib/executor-host.js'
 import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/execution-state.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
@@ -88,6 +89,7 @@ try {
   const ctx=new Context()
   const projections=new SessionProjectionRegistry(ctx)
   projections.register(agentPresetProjectionDefinition)
+  registerExecutorIdentityProjection(ctx)
   ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
   const controller=new ExecutorController(ctx,router)
   assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
@@ -107,6 +109,7 @@ try {
   const initialList=await controller.list({sessionId:agents[0].id})
   assert.equal(initialList.candidates.length,2)
   assert.equal(initialList.recovery.status,'unbound')
+  assert(initialList.candidates.every(r=>r.binding_status==='not_confirmed'))
   let gateway
   if(process.env.DSH_TEST_GATEWAY_ROOT) {
     const modules=process.env.DSH_TEST_GATEWAY_ROOT
@@ -133,7 +136,9 @@ try {
   }
   if(gateway) console.log('Real DSH Typert Gateway list/select dispatch passed')
   assert.equal(recordedExecutorIdentity(agents[0].session.snapshotEvents()),records[0].executor_id)
-  assert.equal((await controller.list({sessionId:agents[0].id})).recovery.status,'bound_available')
+  const boundList=await controller.list({sessionId:agents[0].id})
+  assert.equal(boundList.recovery.status,'bound_available')
+  assert(boundList.candidates.every(r=>r.binding_status==='bound'))
   await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/recovery/)
   const defs=new Map()
   registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)},sessions:{flush}},router)
@@ -175,11 +180,13 @@ try {
   await presetA.dispose()
   assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
   await host.dispose()
+  assert.equal(hostProjections.stateOf(agents[0].session,'houdiniExecutorIdentity'),undefined)
   await assert.rejects(async()=>consumerB.resolve(context(1)),/unavailable/)
   await assert.rejects(oldBridge.exec('pass',{sessionId:agents[1].id,callId:'old'}),/unloaded|aborted/)
   assert.equal(calls.length,before,'unloaded service cannot dispatch through a retained Bridge')
   host=await hostContext.plugin(executorHost,{executorRegistry:directory,requestTimeoutMs:1000})
   assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
+  assert.equal(hostProjections.stateOf(agents[0].session,'houdiniExecutorIdentity').identity,records[0].executor_id)
   await consumerB.resolve(context(1))
   await presetB.dispose();await host.dispose()
   for(const record of records) await write(record)

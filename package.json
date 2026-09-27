@@ -78,5 +78,8 @@
     "core-js": "3.45.1",
     "esbuild": "0.25.9",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }

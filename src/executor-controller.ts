@@ -2,8 +2,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-presets'
 import type { ExecutorRecord, ExecutorRouter } from './executor-routing.js'
-import {recordedExecutorIdentity} from './execution-state.js'
+import {projectedExecutorIdentity} from './executor-identity-projection.js'
 
 export function executorRecoveryStatus(recorded:string|undefined,records:readonly ExecutorRecord[],conflict?:unknown):Record<string,unknown> {
   if(conflict!==undefined)return {status:'history_conflict',message:'任务历史含冲突的执行端身份；未发送live请求。请保留HIP与历史证据，当前版本不能自动恢复或换绑。',
@@ -42,14 +43,14 @@ export class ExecutorController extends TypertRemoteService {
       const task=this.ctx.agents.get(sessionId as Parameters<typeof this.ctx.agents.get>[0])
       if(!task)throw new Error('Open the intended task before inspecting its executor binding')
       let recorded:string|undefined
-      try {recorded=recordedExecutorIdentity(task.session.snapshotEvents())}
+      try {recorded=projectedExecutorIdentity(this.ctx,task.session)}
       catch(error) {recovery=executorRecoveryStatus(undefined,records,error)}
       if(recovery===undefined)recovery=executorRecoveryStatus(recorded,records)
     }
     return {candidates:records.map(r=>{
       const owner=r.task_id?this.ctx.agents.get(r.task_id as Parameters<typeof this.ctx.agents.get>[0]):undefined
       let binding_status='not_confirmed'
-      try {if(owner&&recordedExecutorIdentity(owner.session.snapshotEvents())===r.executor_id)binding_status='bound'}
+      try {if(owner&&projectedExecutorIdentity(this.ctx,owner.session)===r.executor_id)binding_status='bound'}
       catch {binding_status='history_conflict'}
       return {...r,connection_status:'unverified',binding_status}
     }),recovery:recovery!,
