@@ -5,6 +5,7 @@
 - [执行和独立评审方法](REVIEW_PROTOCOL.md)
 - [案例清单](manifest.json)
 - [评审侧阶段结论与可迁移证据索引（2026-09-26）](evaluator-only/stage-2026-09-26.md)：已完成开发试验的范围、缺口与接续入口，不交给建模作者。
+- [下一轮单作者试验配置（评审侧）](evaluator-only/next-round-run-config.md)：固定输入、版本与预算，逐次保留中断/最终交付及独立重开证据，不交给建模作者。
 - 校验：`node evaluation/product-modeling-dev-v1/scripts/validate.mjs`
 - 准备隔离任务：`node evaluation/product-modeling-dev-v1/scripts/prepare-run.mjs --case task-lamp-build`
 - 评审侧校验结果：`node evaluation/product-modeling-dev-v1/scripts/validate-review.mjs <评审结果.json>`
