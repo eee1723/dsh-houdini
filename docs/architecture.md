@@ -67,6 +67,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，使用`agentPreset`及执行器身份投影确认当前任务，严格输入/预留/代际校验，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | Host专用Session投影：折叠持久绑定与原始工具回执的执行器身份；冲突/无效历史拒绝恢复，不从PID、HIP路径或只读回执查询认领执行端 |
+| [src/component-host.ts](../src/component-host.ts) | 可选组件作者Host：父任务从身份投影确认装配执行端，子作者独立worker与修订交接；隔离配置、生命周期和失败报告不证明模型质量 |
 | [src/context.ts](../src/context.ts) | 按需指代采集、message绑定及预算；pre-step按公开surface去重独立补充段，历史替换时恢复，普通查询不追加上下文 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建有限历史状态及未决请求/检查失效/运行身份变化提醒；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/delivery-audit.ts](../src/delivery-audit.ts) | 从完整会话事件投影保存候选、已知执行失败、声明检查及待查回请求；成功Save As后的旧检查只标待重验，不认证最终文件或跨进程状态 |

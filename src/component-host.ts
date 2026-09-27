@@ -11,10 +11,10 @@ import os from 'node:os'
 import {fileURLToPath} from 'node:url'
 import type {ExecutorController} from './executor-controller.js'
 import type {ExecutorRecord} from './executor-routing.js'
-import {recordedExecutorIdentity} from './execution-state.js'
+import {projectedExecutorIdentity} from './executor-identity-projection.js'
 
 export const name='dsh-houdini-component-host'
-export const inject=['subagents','agents','sessions','tools','houdiniTargets']
+export const inject=['subagents','agents','sessions','tools','houdiniTargets','sessionProjections']
 export interface Config {
   python:string; houdini:string; workerRoot:string; executorRegistry:string;
   gui:boolean; memoryMb:number; threads:number; startupTimeoutSeconds:number; maxWorkers:number;
@@ -202,7 +202,8 @@ export function apply(ctx:Context, config:Config):void {
   }
 
   const projectWorkerRoot=async(agent:Agent,signal:AbortSignal):Promise<string>=>{
-    const id=recordedExecutorIdentity(agent.session.snapshotEvents())!
+    const id=projectedExecutorIdentity(ctx,agent.session)
+    if(!id)throw new Error('Select the assembly executor first')
     const record=await router().directory.find(id)
     if(record.task_id!==agent.id||!record.hip_path)throw new Error('Assembly HIP has no writer reservation for this task')
     const observed=await router().sceneContextFor(agent.session,signal) as {ok?:boolean;result?:{hip_path?:string}}
@@ -358,7 +359,7 @@ export function apply(ctx:Context, config:Config):void {
     presentCall:()=>({card:'generic',title:'Delegate Houdini component',kind:'execute'}),
     async execute({task},{agent,signal}) {
       if(!agent)throw new Error('Component delegation requires an owning task')
-      if(!recordedExecutorIdentity(agent.session.snapshotEvents()))throw new Error('Select the assembly executor first')
+      if(!projectedExecutorIdentity(ctx,agent.session))throw new Error('Select the assembly executor first')
       if(workers.has(agent.id))throw new Error('Component authors cannot delegate more workers')
       if(typeof task!=='string'||!task.trim()||task.length>24000)throw new Error('Component brief must contain 1..24000 characters')
       if([...workers.values()].filter(w=>!w.exited).length>=config.maxWorkers)throw new Error('Component worker capacity reached; finish and explicitly stop a worker')
