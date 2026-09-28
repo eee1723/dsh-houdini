@@ -46,6 +46,7 @@ HDA/OTL 的 UI、PythonModule、菜单/按钮回调、工具架和部署开发�
 
 ## 执行与恢复
 
+- 自写旋转矩阵先用非零角验证pivot不动及离轴点方向，再复制/接入整机；活动件控制须在最终输出复查与固定承接件的接点，整件bbox响应不证明连接。组、状态及失败边界见[模块合同](references/module-quality-contracts.md#控制契约改变什么什么必须不变)。
 - build_module声明name/type/parms/inputs/output；None表示空输入槽。跨subnet使用Object Merge或明确端口。connect(src,dst,index)直接替换既有输入；Merge先断后接会前移丢分支，消费inputs_after。set_parms保持strict，不能以strict=False绕过构建失败。
 - 组合构建声明required_outputs检查必需分支；preflight多项错误一次修正，保留components/菜单set_value。设置尚未决定时用dry_run集中读operation_advisories再构建；已明确时不强制双调用。advisories提示缺少显式选择或模式/输入语义风险，不改默认值，也不证明选择正确；已显式设参不消除语义风险。最终分支保留语义primitive组。
 - tab_create返回hou.Node；list_parms/read_parms返回list。菜单用token/set_value，菜单表达式用{expression,language}；普通数值字符串是HScript表达式，VEX在snippet内；tuple表达式用组件字段。见[fast path](references/sop-patterns.md#9-小模块构建与检查-fast-path)。
