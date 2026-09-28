@@ -143,20 +143,29 @@ export function installExecutorBinding(ctx:Context,current?:string):void {
   })
 }
 
-/** Uses the public DSH log and durability barrier; never maintains a second binding file. */
+/** Uses the public DSH projection in shared Host and the event log in single-target mode.
+ * Both routes require a durable flush before dispatch and never maintain a second binding file.
+ */
 export class ExecutorBindingBarrier {
   private readonly flushed = new WeakMap<BindingSession, Promise<void>>()
-  constructor(private readonly flush: (session: BindingSession) => Promise<boolean>) {}
+  constructor(private readonly flush: (session: BindingSession) => Promise<boolean>,
+    private readonly stateOf?: (session: BindingSession) => {identity:string|undefined;bindingRecorded:boolean}) {}
+
+  private read(session:BindingSession):{identity:string|undefined;bindingRecorded:boolean} {
+    if(this.stateOf)return this.stateOf(session)
+    const events=session.snapshotEvents()
+    return {identity:recordedExecutorIdentity(events),bindingRecorded:bindingRecords(events).length>0}
+  }
 
   async ensure(session: BindingSession, current?: string, signal?: AbortSignal, allowAppend=true): Promise<void> {
     signal?.throwIfAborted()
-    const events = session.snapshotEvents()
-    requireExecutorContinuity(events, current)
+    const state=this.read(session)
+    requireExecutorContinuityIdentity(state.identity,current)
     if (!current) return // explicitly unbound single-executor route
     if (!/^[0-9a-f]{32}$/.test(current)) throw new Error('Invalid target executor identity')
     let pending = this.flushed.get(session)
     if (!pending) {
-      if (!bindingRecords(events).length) {
+      if (!state.bindingRecorded) {
         if(!allowAppend||pendingTools(surfaceEvents(session)).size) throw new Error('Executor binding must be accepted before model tool calls; no message inserted and no live request sent')
         session.append('user/message',bindingMessage(current),{surfaceOp:'append'})
       }
@@ -169,7 +178,9 @@ export class ExecutorBindingBarrier {
     }
     await pending
     signal?.throwIfAborted()
-    requireExecutorContinuity(session.snapshotEvents(),current)
+    const durable=this.read(session)
+    requireExecutorContinuityIdentity(durable.identity,current)
+    if(!durable.bindingRecorded)throw new Error('Executor binding is absent after the durability barrier; no live request sent')
   }
 }
 const NAMES = new Set(['houdini_exec', 'houdini_query', 'houdini_job_submit', 'houdini_job_status', 'houdini_job_cancel'])

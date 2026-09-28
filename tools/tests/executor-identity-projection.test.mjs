@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import {Context} from '@deepseek-ai/cordis'
 import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
-import {recordedExecutorIdentity} from '../../lib/execution-state.js'
-import {executorIdentityProjection,projectedExecutorIdentity,registerExecutorIdentityProjection}
+import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/execution-state.js'
+import {executorIdentityProjection,projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection}
   from '../../lib/executor-identity-projection.js'
 
 const first='a'.repeat(32), second='b'.repeat(32)
@@ -39,6 +39,10 @@ const cases=[
 ]
 for(const [index,events] of cases.entries())
   assert.deepEqual(projectedOutcome(events),oldOutcome(events),`identity history parity case ${index}`)
+assert.equal(executorIdentityProjection.apply(executorIdentityProjection.init(),binding(first)).bindingRecorded,true)
+let resultOnly=executorIdentityProjection.init()
+for(const event of [call('one'),result('one',first)])resultOnly=executorIdentityProjection.apply(resultOnly,event)
+assert.equal(resultOnly.bindingRecorded,false,'a tool result is identity evidence, not a binding record')
 
 const ctx=new Context()
 new SessionProjectionRegistry(ctx)
@@ -51,4 +55,27 @@ session.append('tool/result',{turn:1,step:1,message:{source:{callId:'one'}},
   meta:{canonical:{execution:{executor_id:first}}}},{surfaceOp:'append'})
 assert.equal(projectedExecutorIdentity(ctx,session),first)
 assert.equal(recordedExecutorIdentity(session.snapshotEvents()),first)
+assert.equal(projectedExecutorBindingState(ctx,session).bindingRecorded,false)
+const fresh=Session.create('projection-barrier'),barrier=new ExecutorBindingBarrier(async()=>true,
+  current=>projectedExecutorBindingState(ctx,current))
+await barrier.ensure(fresh,first)
+assert.deepEqual(projectedExecutorBindingState(ctx,fresh),{identity:first,bindingRecorded:true})
+assert.equal(fresh.snapshotEvents().filter(e=>e.type==='user/message').length,1)
+await barrier.ensure(fresh,first)
+assert.equal(fresh.snapshotEvents().filter(e=>e.type==='user/message').length,1)
+await assert.rejects(barrier.ensure(fresh,second),/requires recovery/)
+const noHistory={snapshotEvents(){throw new Error('full history read')},append(){throw new Error('unexpected append')}}
+await new ExecutorBindingBarrier(async()=>true,()=>projectedExecutorBindingState(ctx,fresh)).ensure(noHistory,first)
+const retry=Session.create('projection-flush-retry')
+let flushes=0
+const flaky=new ExecutorBindingBarrier(async()=>++flushes>1,
+  current=>projectedExecutorBindingState(ctx,current))
+await assert.rejects(flaky.ensure(retry,first),/no durable session backend/)
+await flaky.ensure(retry,first)
+assert.equal(flushes,2)
+assert.equal(retry.snapshotEvents().filter(e=>e.type==='user/message').length,1)
+fresh.append('tool/call',{turn:1,step:1,callId:'other',name:'houdini_exec',arguments:'{}'})
+fresh.append('tool/result',{turn:1,step:1,message:{source:{callId:'other'}},
+  meta:{canonical:{execution:{executor_id:second}}}},{surfaceOp:'append'})
+await assert.rejects(barrier.ensure(fresh,first),/more than one recorded executor identity/)
 console.log('executor identity projection: historical parity and registry materialization passed')

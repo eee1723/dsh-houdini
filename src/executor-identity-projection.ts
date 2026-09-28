@@ -10,7 +10,7 @@ const TOOLS=new Set(['houdini_exec','houdini_query','houdini_job_submit',
   'houdini_job_status','houdini_job_cancel'])
 const ID=/^[0-9a-f]{32}$/
 const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
-  invalid:z.string().nullable(),pending:z.record(z.string(),z.boolean()),
+  invalid:z.string().nullable(),bindingRecorded:z.boolean(),pending:z.record(z.string(),z.boolean()),
   seen:z.record(z.string(),z.boolean())})
 type State=z.infer<typeof State>
 
@@ -30,8 +30,8 @@ function add(state:State,id:unknown):State {
 export const executorIdentityProjection={
   key:'houdiniExecutorIdentity' as const,
   stateSchema:State,
-  stateVersion:1,
-  init:():State=>({identity:null,conflict:false,invalid:null,pending:{},seen:{}}),
+  stateVersion:2,
+  init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},seen:{}}),
   apply(state:State,event:any):State {
     const data=event.data
     if(event.type==='user/message' && data?.source?.kind==='plugin'
@@ -44,7 +44,7 @@ export const executorIdentityProjection={
         catch {return {...next,invalid:'Malformed persisted executor binding; no live request sent'}}
         if(value?.schema!==1||value?.kind!=='executor_binding'||!ID.test(value?.executor_id||''))
           return {...next,invalid:'Invalid persisted executor binding; no live request sent'}
-        next=add(next,value.executor_id)
+        next=add({...next,bindingRecorded:true},value.executor_id)
       }
       return next
     }
@@ -73,12 +73,16 @@ export function registerExecutorIdentityProjection(ctx:Context):void {
   ctx.sessionProjections.register(executorIdentityProjection)
 }
 
-export function projectedExecutorIdentity(ctx:Context,session:Session):string|undefined {
+export function projectedExecutorBindingState(ctx:Context,session:Session):{identity:string|undefined;bindingRecorded:boolean} {
   const registry=ctx.get('sessionProjections')
   if(!registry)throw new Error('Executor identity projection unavailable; no live request sent')
   const state=registry.stateOf(session,'houdiniExecutorIdentity')
   if(!state)throw new Error('Executor identity projection unavailable; no live request sent')
   if(state.invalid)throw new Error(state.invalid)
   if(state.conflict)throw new Error('Houdini task requires recovery: history contains more than one recorded executor identity. No live request sent. Cross-process recovery is not implemented: read retained results, preserve the saved/crash HIP and reconcile the project before any future recovery flow; do not start a new task to bypass this check or infer ownership from the HIP path.')
-  return state.identity??undefined
+  return {identity:state.identity??undefined,bindingRecorded:state.bindingRecorded}
+}
+
+export function projectedExecutorIdentity(ctx:Context,session:Session):string|undefined {
+  return projectedExecutorBindingState(ctx,session).identity
 }

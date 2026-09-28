@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
 import {ExecutorBindingBarrier} from './execution-state.js'
 import {ExecutorController} from './executor-controller.js'
-import {projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
+import {projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
 
 export const name='dsh-houdini-executor-host'
 export const inject=['sessions','agents','sessionProjections']
@@ -19,7 +19,8 @@ export function apply(ctx:Context,config:Config):void {
   registerExecutorIdentityProjection(ctx)
   const directory=new ExecutorDirectory(config.executorRegistry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'))
   const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBindingBarrier(async session=>
-    ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0])),session=>
+    ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0]),session=>
+      projectedExecutorBindingState(ctx,session as Parameters<typeof projectedExecutorBindingState>[1])),session=>
       projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]))
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')
   new ExecutorController(ctx,router)
