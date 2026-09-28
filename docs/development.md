@@ -168,7 +168,8 @@ H21 PolyBevel正常输出cook后仍可能在用户选择/guide阶段走不同原
 该夹具不加载live HIP，也不证明任意拓扑、显卡或后续构建安全。
 `render_view`的持久预览服务另用[隔离GUI撤销回归](../tools/tests/run-render-undo-gui.py)
 验证：给目标H21/H22的`houdini.exe`和仓库外空输出目录，驱动会以新偏好/新HIP分别运行
-单独渲染、渲染后代码失败、同一exec先建普通节点再渲染后失败三种模式。检查每个进程
+单独渲染、渲染后代码失败、同一exec先建普通节点再渲染后失败三种模式。驱动用同安装目录的隔离hython
+读取实际版本，不依赖安装目录名称。检查每个进程
 正常退出、失败有明确Bridge回执、普通编辑被撤销而OpenGL/Flipbook服务仍在；
 `render-returned.json`只证明动词已返回，PNG存在不等于回执完成。示例：
 `python tools/tests/run-render-undo-gui.py --houdini 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/houdini.exe' --output 'C:/Temp/dsh-render-undo-h21' --mode all`。

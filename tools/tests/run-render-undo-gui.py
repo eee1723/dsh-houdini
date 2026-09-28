@@ -31,9 +31,19 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     fixture = ROOT / "tools/tests/dsh-render-undo-gui-fixture.py"
     reports = []
-    version_match = re.search(r"Houdini (21\.0|22\.0)", str(executable), re.IGNORECASE)
-    if not version_match:
-        parser.error("--houdini must point into an H21.0 or H22.0 installation")
+    hython = executable.with_name("hython.exe")
+    if not hython.is_file():
+        parser.error("--houdini must have a sibling hython.exe")
+    with tempfile.TemporaryDirectory(prefix="dsh-render-undo-version-") as version_temp:
+        version_probe = subprocess.run(
+            [str(hython), "-c", "import hou; print('DSH_HOUDINI_VERSION=' + '.'.join(map(str, hou.applicationVersion()[:2])))"],
+            cwd=launch_directory(hython),
+            env=isolated_environment(version_temp, executable=hython),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+    version_match = re.search(r"DSH_HOUDINI_VERSION=(21\.0|22\.0)\b", version_probe.stdout)
+    if version_probe.returncode or not version_match:
+        parser.error("--houdini must be a working H21.0 or H22.0 installation: "
+                     + (version_probe.stderr or version_probe.stdout)[-500:])
     major = version_match.group(1)
     python_version = "3.11" if major == "21.0" else "3.13"
 
