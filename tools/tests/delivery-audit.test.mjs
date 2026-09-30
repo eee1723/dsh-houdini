@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {projectDeliveryAudit} from '../../lib/delivery-audit.js';
+import {projectDeliveryAudit} from '../delivery-audit.mjs';
 
 const OLD='C:/work/checkpoint.hip', FINAL='C:/work/final.hip';
 const contract='a'.repeat(64), otherContract='b'.repeat(64);
@@ -71,7 +71,7 @@ events.splice(0);sequence=0;
 
 // The audit reads immutable history beyond the execution notice's 128 rows.
 record({evidence:[declared('unverified')],outputs:[binding()]});
-for(let i=0;i<130;i++) record({tool:'houdini_query'});
+for(let i=0;i<130;i++) record({tool:'houdini_request'});
 audit=projectDeliveryAudit(events);
 assert.equal(audit.unresolved_checks.length,1);
 assert.equal(audit.unresolved_checks[0].status,'unverified');
@@ -104,7 +104,7 @@ assert.match(audit.execution_failures[0].reason,/Render process exited/);
 assert.equal(audit.status,'delivery_audit_attention');
 const replay=structuredClone(events.at(-1));
 replay.data.message.source.callId='recovered';
-events.push({seq:events.length+1,type:'tool/call',data:{callId:'recovered',name:'houdini_query'}});
+events.push({seq:events.length+1,type:'tool/call',data:{callId:'recovered',name:'houdini_request'}});
 events.push({...replay,seq:events.length+1});
 assert.equal(projectDeliveryAudit(events).execution_failures.length,1,
   'reading the original result again is not a second execution failure');
@@ -119,15 +119,15 @@ assert.equal(projectDeliveryAudit(events).unresolved_checks.length,0,
   'a baseline-failure receipt carrying the declaration hash is replaced by its repaired retest');
 
 events.push({seq:events.length+1,type:'tool/call',data:{callId:'aborted',name:'houdini_exec'}});
-events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'aborted'}},isError:true,error:{code:'ABORTED'}}});
+events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'aborted'},isError:true},error:{code:'ABORTED'}}});
 audit=projectDeliveryAudit(events);
 assert.equal(audit.unresolved_calls[0].call_id,'aborted');
 assert.equal(audit.checks[0].validity,'unverified_after_unknown_execution');
-events.push({seq:events.length+1,type:'tool/call',data:{callId:'recover-aborted',name:'houdini_query'}});
+events.push({seq:events.length+1,type:'tool/call',data:{callId:'recover-aborted',name:'houdini_request'}});
 events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'recover-aborted'}},meta:{canonical:{
   requestReceipt:{request_ref:'aborted-ref',owner_call:'aborted',status:'not_executed'}}}}});
 assert.equal(projectDeliveryAudit(events).unresolved_checks.length,0);
 events.push({seq:events.length+1,type:'tool/call',data:{callId:'job',name:'houdini_job_submit'}});
-events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'job'}},meta:{jobId:'a'.repeat(12)}}});
+events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'job'}},meta:{canonical:{jobId:'a'.repeat(12),status:'queued'}}}});
 assert.equal(projectDeliveryAudit(events).active_jobs.length,1);
 assert.equal(projectDeliveryAudit(events).checks[0].validity,'unverified_after_unknown_execution');

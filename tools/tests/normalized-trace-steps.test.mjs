@@ -84,6 +84,20 @@ assert.equal(toolResultFailed(original.data.message, '\nExecution failed: later'
 assert.deepEqual(parseToolArguments({ x: 1 }), { x: 1 });
 assert.deepEqual(parseToolArguments('null'), { _raw: 'null' });
 
+const childId='parent:ptc:1', nestedValue={ok:true,result:{observed:1},verbs:[{verb:'scene_info',ok:true,args:[],kwargs:{},result:{},ms:1}]};
+const nestedEvents=[
+  {seq:20,time:20,type:'tool/ptc-dispatch-start',data:{subCallId:childId,parentCallId:'parent',name:'houdini_inspect',arguments:{code:'__result__=scene_info()'}}},
+  {seq:21,time:21,type:'tool/ptc-dispatch',data:{subCallId:childId,parentCallId:'parent',name:'houdini_inspect',content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:childId,tool:'houdini_inspect',value:nestedValue})}]}},
+];
+const nested=normalizeTraceSteps(nestedEvents).steps[0];
+assert.deepEqual(nested.canonical,nestedValue);
+assert.equal(nested.parentCallId,'parent');
+assert.equal(nested.canonicalStatus,'retained_in_dispatch');
+assert.equal(nested.verbs[0].verb,'scene_info');
+const unrelated=structuredClone(nestedEvents);
+unrelated[1].data.content[0].text=unrelated[1].data.content[0].text.replace(childId,'wrong-id');
+assert.equal(normalizeTraceSteps(unrelated).steps[0].canonical,null, 'other sub-call records cannot become execution facts');
+
 console.log('normalized trace step tests passed');
 
 const evidenceText = 'operation-evidence:\n' + JSON.stringify([

@@ -195,9 +195,6 @@ def _observe_impact(nodes, impact, descendants=False):
             impact['unavailable'] = True
 
 
-_VERB_ENTRY_LIMIT = 500       # 单次 exec 最多记录的动词调用数
-
-
 def _verb_value(value, _depth: int = 0):
     """把动词的入参/出参转成紧凑 JSON 安全形式（hou.Node → path，逐层递归）。"""
     if _depth > 8:
@@ -251,11 +248,6 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                     if node is not None: observed_nodes[node.sessionId()] = node.path()
                 except hou.Error:
                     pass
-        if len(ledger) >= _VERB_ENTRY_LIMIT:
-            error = f"verb ledger limit {_VERB_ENTRY_LIMIT} reached; split into smaller checkpoints"
-            if len(ledger) == _VERB_ENTRY_LIMIT:
-                ledger.append({"verb": name, "ok": False, "error": error, "args": [], "kwargs": {}, "ms": 0})
-            raise RuntimeError(error)
         start = time.time()
         args_json = _verb_value(list(args))
         kwargs_json = {str(k): _verb_value(v) for k, v in kwargs.items()}

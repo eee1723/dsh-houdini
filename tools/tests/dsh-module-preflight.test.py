@@ -53,7 +53,7 @@ try:
         ([{'name':'bad','type':'tube','parms':{'rad':1.2}}],'bad','tuple needs 2'),
         ([{'name':'bad','type':'sphere','parms':{'rad':1.2}}],'bad','tuple needs 3'),
         ([{'name':'bad','type':'sphere','parms':{'rad':{'expression':'1'}}}],'bad','tuple needs 3'),
-        ([{'name':'bad','type':'xform','inputs':['missing']}],'bad','earlier spec'),
+        ([{'name':'bad','type':'xform','inputs':['missing']}],'bad','declared spec'),
         ([{'name':'valid','type':'box'}],'missing','newly created'),
         ([{'name':'source','type':'box'}],'source','exists'),
         ([{'name':'bad','type':'circle','parms':{'divs':[64]}}],'bad','scalar'),
@@ -81,6 +81,32 @@ try:
         h.build_module(root,specs,output='valid_shape')
         assert len(root.node('valid_shape').geometry().prims())>0
         h.delete_node(root.node('valid_shape'))
+    # Batch declarations are a graph, not an execution order. Forward wires,
+    # expression references and an explicit empty input slot remain exact.
+    unordered = [
+        {'name':'forward_out','type':'null','inputs':['forward_lookup']},
+        {'name':'forward_lookup','type':'attribwrangle','inputs':[None,'later_shape'],
+         'parms':{'class':'detail','snippet':'vector pos=point(1, "P", 0); addpoint(0, pos);'}},
+        {'name':'later_shape','type':'box','parms':{'sizex':'ch("../last_shape/sizex")'}},
+        {'name':'last_shape','type':'box','parms':{'sizex':3}},
+    ]
+    assert h.build_module(root,unordered,output='forward_out',dry_run=True)['valid']
+    built=h.build_module(root,unordered,output='forward_out')
+    assert built['validation']['ok'] and built['validation']['semantic_status']=='unverified'
+    assert root.node('forward_lookup').input(0) is None
+    assert root.node('forward_lookup').input(1)==root.node('later_shape')
+    assert root.node('later_shape').evalParm('sizex')==3
+    assert len(root.node('forward_out').geometry().points())==1
+    for spec in unordered:h.delete_node(root.node(spec['name']))
+    wide=[{'name':f'wide_{i}','type':'box'} for i in range(65)]
+    assert h.build_module(root,wide,output='wide_64',dry_run=True)['node_count']==65
+    assert root.node('wide_0') is None
+    before={n.sessionId() for n in root.children()}
+    try:h.build_module(root,[{'name':'cycle_a','type':'null','inputs':['cycle_b']},
+                              {'name':'cycle_b','type':'null','inputs':['cycle_a']}],output='cycle_a')
+    except Exception:pass
+    else:raise AssertionError('cyclic batch accepted')
+    assert before=={n.sessionId() for n in root.children()}
     # Zero-write information concerns this module, never preceding mutations.
     env=b.run_code(f'set_parm({source.path()!r},"sizex",3)\n'
                    f'build_module({root.path()!r},[{{"name":"hidden","type":"partition"}}],output="hidden")')

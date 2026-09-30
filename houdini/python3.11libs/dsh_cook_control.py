@@ -7,8 +7,8 @@ def require_evaluation(operation):
     """Fail before geometry/camera/render work; cached data is not fresh proof."""
     if hou.updateModeSetting() == hou.updateMode.Manual:
         raise ValueError(f'{operation} requires geometry evaluation, unavailable in Manual mode. '
-                         'Keep metadata inspection/editing in Manual; explicitly authorize '
-                         'set_update_mode before evaluation. No empty/fresh result is inferred.')
+                         'Metadata inspection/editing remains available. Use set_update_mode '
+                         'to change the update policy before evaluation; geometry is unknown, not empty.')
 
 
 _VEX_TOKENS = re.compile(

@@ -353,6 +353,9 @@ for (const timeout of [false,true]) {
 }
 
 const watermark = plain.registrations['houdini-watermark'].component;
+const toolsPage = plain.registrations.houdinitools.component();
+assert.equal(toolsPage.children[2].length,8);
+assert(!JSON.stringify(toolsPage).includes('houdini_product'));
 assert(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'houdini'}}}})}),
   'current projected preset must show Houdini mode');
 assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'cordis'}}}})}),null,
@@ -426,8 +429,7 @@ const blockedRawUsage = {
   gateOutcome: 'blocked',
 };
 const traceProps = {
-  useSession: (select) => select({
-    views: new Map([['trajectory', { eventNodes: [
+  useTrajectory: (select) => select({ eventNodes: [
       {
         kind: 'tool-result', seq: 10, time: 1000,
         call: { name: 'houdini_exec', argsRaw: JSON.stringify({ code: "n = hou.node('/obj')\n__result__ = scene_info()" }) },
@@ -467,8 +469,7 @@ const traceProps = {
           'verbs (2):\n1. [ok] layout_nodes(["/obj"]) -> {"nodes":12} (2ms)\n2. [FAIL] sop_set_output(["/obj/bike/OUT"]) -> error: ambiguous (0ms)',
         ].join('\n\n') }],
       },
-    ] }]]),
-  }),
+    ] }),
 };
 const traceTree = view(traceProps);
 const traceText = textContent(traceTree).replace(/\s+/g, ' ');
@@ -479,7 +480,7 @@ assert.match(traceText, /动词证据/);
 assert.match(traceText, /查看原始工具结果/);
 assert.match(traceText, /提示词与上下文/);
 assert(!traceText.includes('成功修改含动词'), 'analysis metrics must not crowd the main timeline');
-const snapshot = traceProps.useSession(s=>s.views.get('trajectory'));
+const snapshot = traceProps.useTrajectory(s=>s);
 const entries = view.model(snapshot).entries;
 assert.equal(entries[0].rawUsage.gateOutcome, 'read_only');
 assert.equal(entries[0].verbs.length, 1);

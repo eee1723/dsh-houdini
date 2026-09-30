@@ -76,6 +76,7 @@ export function loadSessionEvents(input) {
 
 /** Return the originating call id for a tool/result event, across known schemas. */
 export function toolResultCallId(event) {
+  if (event?.type === 'tool/ptc-dispatch') return event.data?.subCallId || null;
   if (event?.type !== 'tool/result') return null;
   const message = event.data?.message || {};
   return message.source?.callId || message.content?.[0]?.toolCallId || null;
@@ -95,7 +96,7 @@ export function uniqueToolResultEvents(events) {
   const uniqueResults = [];
   const replayedResults = [];
   for (const event of events) {
-    if (event.type !== 'tool/result') continue;
+    if (!['tool/result', 'tool/ptc-dispatch'].includes(event.type)) continue;
     const callId = toolResultCallId(event);
     if (!callId) {
       // Consumers historically ignored uncorrelated results. Preserve them here so

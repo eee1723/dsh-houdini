@@ -1,6 +1,6 @@
 /** Return Houdini images directly through DSH's native attachment channel. */
 import path from 'node:path'
-import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ExecResult, HoudiniBridge } from './bridge.js'
 
 /** Metadata-only preflight: no render, model inference, or scene mutation. */
@@ -28,8 +28,7 @@ export async function visualCapability(exec: any, ctx: any) {
     return {...base,status:supported?'available':'unsupported',image_input:supported,
       attachment_channel:true,limits:attachments.imageLimits,
       ...(supported?{}:{reason:'current model route does not declare image input'}),
-      next_action:supported?'Inspect actual prototype images before expanding detail.'
-        :'Visual semantics remain unverified. Resolve the model route with the user before committing to a visually verified deliverable; do not retry images through a text-only delegate.'}
+      observation:'Declared model input capability. An attached image can be inspected by the model; metadata alone does not describe its content.'}
   } catch(error) {
     return {...base,status:'unavailable',image_input:null,reason:String(error),
       next_action:'Inspect the route/channel configuration; do not infer visual capability from a successful render.'}
@@ -70,12 +69,6 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
   } catch (error) {
     imageAttachments.push(...paths.map(from => ({ from, error: String(error), semantic_status: 'unverified' })))
   }
-  const result = { ...value, imageAttachments }
-  // Nested/code-mode results need explicit multimodal context, as in DSH read_image.
-  const blocks = imageBlocks(result)
-  if (exec.parent !== undefined && blocks.length) exec.deferContext(createUserMessage({
-    content: [{type:'text',text:'Houdini output images: inspect these directly; attachment delivery alone does not verify their content.'}, ...blocks],
-    source: {kind:'plugin',plugin:'dsh-houdini'},
-  }))
-  return result
+  // DSH carries native blocks to the caller and ferries nested images once.
+  return { ...value, imageAttachments }
 }

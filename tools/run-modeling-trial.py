@@ -31,7 +31,6 @@ parser.add_argument('--condition',required=True)
 parser.add_argument('--max-seconds',type=int,default=600)
 parser.add_argument('--max-output-tokens',type=int,default=32000)
 parser.add_argument('--require-image-input',action='store_true',help='Refuse a text-only model catalog for a visual modeling trial')
-parser.add_argument('--product-mode',action='store_true',help='Explicit Host product preconditions; ordinary trials stay unchanged')
 parser.add_argument('--allow-paid',action='store_true')
 args=parser.parse_args()
 if not args.allow_paid:parser.error('explicit --allow-paid required after user authorization')
@@ -96,11 +95,6 @@ def main() -> None:
                     DSH_PERMISSION_MODE="workspace-write")
     run_command(str(NODE), str(DRIVER_ROOT / "tools/tests/prepare-shared-host-fixture.mjs"),
                 str(DSH), str(HOME), str(ROOT), env=host_env)
-    if args.product_mode:
-        preset=HOME/'.agent-presets/houdini/agent.cordis.yml'
-        content=preset.read_text(encoding='utf-8');anchor='    requestTimeoutMs: 120000'
-        if content.count(anchor)!=1 or 'productMode:' in content:raise RuntimeError('Product mode preset anchor is ambiguous')
-        preset.write_text(content.replace(anchor,anchor+'\n    productMode: true'),encoding='utf-8')
     selected=run_command(str(NODE),str(DRIVER_ROOT/'tools/prepare-model-settings.mjs'),
                          str(SETTINGS),str(HOME),PROVIDER,MODEL,env=host_env)
     model_config=json.loads(selected.stdout.strip())
@@ -130,7 +124,7 @@ def main() -> None:
                                "--port", str(port), "--no-open"], node=str(NODE),
                               cwd=TASK, env=host_env, stdout=host_stream,
                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-        supervisor = subprocess.Popen([sys.executable, str(ROOT / "tools/component-worker.py"),
+        supervisor = subprocess.Popen([sys.executable, str(ROOT / "tools/isolated-worker.py"),
                                        "--executable", str(HOUDINI), "--directory", str(WORKER),
                                        "--registry", str(REGISTRY), "--gui", "--hip-name", "final.hip",
                                        "--memory-mb", "8192", "--threads", "4", "--startup-timeout", "120"],
@@ -199,7 +193,7 @@ def main() -> None:
                 "dshVersion": json.loads((DSH.parent.parent/'package.json').read_text(encoding='utf-8'))['version'],
                 "houdiniVersion": record['houdini_version'], "provider": PROVIDER, "model": MODEL,
                 "reasoningEffort": "high", "maxSeconds": MAX_SECONDS,
-                "maxOutputTokens":args.max_output_tokens,"toolBuildSha256":tool_digest(),"productMode":args.product_mode,
+                "maxOutputTokens":args.max_output_tokens,"toolBuildSha256":tool_digest(),
                 "modelConfiguration":model_config,"isolatedSettingsSha256":digest(HOME/'settings.yaml'),
                 "workerThreads": 4, "workerMemoryMb": 8192,
                 "briefSha256": digest(TASK / "brief.md"),

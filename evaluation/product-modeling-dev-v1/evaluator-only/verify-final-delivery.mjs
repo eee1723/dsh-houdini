@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
-import {projectDeliveryAudit} from '../../../lib/delivery-audit.js'
+import {projectDeliveryAudit} from '../../../tools/delivery-audit.mjs'
 
 function fileEvidence(file) {
   if (!file || !fs.existsSync(file)) return null

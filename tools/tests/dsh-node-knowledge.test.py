@@ -1,10 +1,9 @@
-"""H21/H22 isolated HOM: decision cards, real geometry and advisory transport.
+"""H21/H22 isolated HOM: node knowledge, real geometry and metadata transport.
 
 No live connection, HIP load/save or rendering. Defaults use direct creation;
 the separate stool-repair regression exercises the actual Sweep shelf script.
 """
 from pathlib import Path
-from itertools import combinations
 import math
 import sys
 
@@ -118,10 +117,7 @@ try:
     assert column_count > row_count
     h.set_parm(sphere, 'freq', 4)
     assert len(sphere.geometry().prims()) == column_count
-    explicit_poly_advice = cards.decision_advisories(cards.operation_card('sphere'),
-                                                    {'type': 'poly', 'rows': 20, 'cols': 24})
-    assert {d['id'] for d in explicit_poly_advice} == {'effective_resolution'}
-    assert explicit_poly_advice[0]['always']
+    assert {d['id'] for d in cards.operation_card('sphere')['always_advisories']} == {'effective_resolution'}
     done('Sphere poly frequency versus Polygon Mesh rows/columns: inactive writes do not refine')
 
     line = make('line', 'path', {'dir': [0, 0, 1]})
@@ -196,9 +192,10 @@ try:
     reoriented = make('reverse', 'reverse_winding', {'vtxsort': 'reverse'}, [revolved])
     flipped = observed(reoriented)
     assert flipped['shell_orientation']['negative_count'] == 1, flipped
-    card_ids = {d['id'] for d in cards.decision_advisories(cards.operation_card('revolve::2.0'), {})}
+    revolve_card = cards.operation_card('revolve::2.0')
+    card_ids = {d['id'] for d in revolve_card['decisions'] + revolve_card['always_advisories']}
     assert {'axis', 'surface_output', 'end_closure', 'surface_orientation'} == card_ids
-    assert {d['id'] for d in cards.decision_advisories(cards.operation_card('normal'), {})} == {'winding_vs_normal'}
+    assert {d['id'] for d in cards.operation_card('normal')['always_advisories']} == {'winding_vs_normal'}
     done('Revolve cap and winding; Normal attribute versus Reverse vertex order')
 
     # An ordinary annular solid is already closed/outward. Reversing it alone
@@ -240,9 +237,7 @@ try:
     difference.setInput(0, seam_fuse)
     assert positions(difference) == correct_positions
     assert not difference.errors() and not difference.warnings()
-    boolean_advice = cards.decision_advisories(cards.operation_card('boolean::2.0'),
-                                             {'booleanop': 'subtract', 'subtractchoices': 'aminusb'})
-    assert {d['id'] for d in boolean_advice} == {'solid_input_validity'}
+    assert {d['id'] for d in cards.operation_card('boolean::2.0')['always_advisories']} == {'solid_input_validity'}
     done('Boolean A-B outward/inward counterexample and independently repaired profile seam')
 
     semantic_specs = [
@@ -255,13 +250,10 @@ try:
     preview = h.build_module(root, semantic_specs, output='advised_difference', dry_run=True)
     assert root.node('advised_sphere') is None and root.node('advised_difference') is None
     semantic_build = h.build_module(root, semantic_specs, output='advised_difference')
-    assert semantic_build['operation_advisories'] == preview['operation_advisories']
-    assert {d['id'] for item in semantic_build['operation_advisories'] for d in item['decisions']} == {
-        'effective_resolution', 'solid_input_validity'}
-    assert bridge._operation_summary('build_module', semantic_build)['operation_advisories'] == semantic_build['operation_advisories']
-    assert len(root.node('advised_sphere').geometry().prims()) == polygon_counts[1], 'advice must not change resolution'
+    assert semantic_build['validation']['ok'] and preview['valid']
+    assert len(root.node('advised_sphere').geometry().prims()) == polygon_counts[1], 'build preserves declared resolution'
     assert positions(root.node('advised_difference')) == correct_positions
-    done('Sphere/Boolean semantic caveats reach build_module dry-run, build and Bridge unchanged')
+    done('Sphere/Boolean batch preserves declared parameters and real geometry')
 
     sheet = make('grid', 'sheet', {'rows': 2, 'cols': 2})
     ext = make('polyextrude::2.0', 'thick_sheet', {'dist': .2}, [sheet])
@@ -325,54 +317,29 @@ try:
     assert len([v for p in tag.geometry().prims() for v in p.vertices() if v.attribValue('seen') == 1]) == 24
     done('Wrangle execution multiplicity, Numbers counterexample and attribute class')
 
-    # Advice is non-mutating, grouped, bounded and retained by Bridge evidence.
+    # Explicit and omitted choices preserve the actual Houdini parameters.
     spec = [{'name': 'advice_a', 'type': 'tube'}, {'name': 'advice_b', 'type': 'tube'}]
     before = set(root.children())
     plan = h.build_module(root, spec, output='advice_b', dry_run=True)
     assert plan['valid'] and set(root.children()) == before
-    assert plan['operation_advisory_count'] == 1
-    assert plan['operation_advisories'][0]['nodes'] == ['advice_a', 'advice_b']
-    assert {d['id'] for d in plan['operation_advisories'][0]['decisions']} == {'representation', 'end_closure', 'radius_axes'}
-    radius_advice=next(d for d in plan['operation_advisories'][0]['decisions'] if d['id']=='radius_axes')
-    assert radius_advice['always'] and 'never outer/inner' in radius_advice['guidance']
-    assert bridge._operation_summary('build_module', plan)['operation_advisories'] == plan['operation_advisories']
     explicit = [{'name': 'intentional_native', 'type': 'tube', 'parms': {'type': 'prim', 'cap': 0}}]
     built = h.build_module(root, explicit, output='intentional_native')
-    assert built['operation_advisories'] and {d['id'] for d in built['operation_advisories'][0]['decisions']}=={'radius_axes'}
+    assert built['validation']['ok']
     assert root.node('intentional_native').parm('type').evalAsString() == 'prim'
     assert root.node('intentional_native').evalParm('cap') == 0
     inherited = h.build_module(root, [{'name': 'inherit_native', 'type': 'tube'}], output='inherit_native')
-    assert inherited['operation_advisories'] and inherited['validation']['ok']
-    assert root.node('inherit_native').parm('type').evalAsString() == 'prim', 'advice never rewrites defaults'
+    assert inherited['validation']['ok']
+    assert root.node('inherit_native').parm('type').evalAsString() == 'prim', 'build preserves native defaults'
     intentional_all = h.build_module(root, [{'name': 'all_edges', 'type': 'polybevel',
         'inputs': [box.name()], 'parms': {'group': '', 'grouptype': 'edges', 'offset': .01}}], output='all_edges')
-    assert not intentional_all['operation_advisories'] and intentional_all['validation']['ok']
-    assert bridge._operation_summary('build_module', inherited)['operation_advisories']
-    done('dry-run grouping and non-blocking native/open/all-edge intent preservation')
-
-    variants = []
-    for typ, values in [('polyextrude', {'outputfront': 1, 'outputback': 0, 'outputside': 1}),
-                        ('tube', {'type': 'poly', 'cap': 0}),
-                        ('polybevel', {'group': '', 'grouptype': 'edges', 'ignoreflatedges': 1, 'flatangle': 45})]:
-        for count in range(len(values) + 1):
-            for names in combinations(values, count):
-                chosen = {n: values[n] for n in names}
-                metadata = h.node_info(root, typ)['operation_card']
-                if cards.decision_advisories(metadata, chosen):
-                    variants.append({'name': 'variant_' + str(len(variants)), 'type': typ, 'parms': chosen})
-    capped = h.build_module(root, variants, output=variants[-1]['name'], dry_run=True)
-    assert capped['operation_advisory_count'] == len(variants) > 16
-    assert len(capped['operation_advisories']) == 16 and capped['operation_advisories_truncated']
-    assert root.node('variant_0') is None
-    assert not cards.decision_advisories(cards.operation_card('attribwrangle'),
-                                         {'class': {'expression': '2', 'language': 'hscript'}}), 'presence is not expression evaluation'
-    done('bounded heterogeneous advice, explicit truncation and non-evaluating expressions')
+    assert intentional_all['validation']['ok']
+    done('dry-run and native/open/all-edge intent preservation')
 
     before = set(root.children())
     try:
         h.build_module(root, [{'name': 'bad_mode', 'type': 'attribwrangle', 'parms': {'runover': 0}}], output='bad_mode')
     except h.PreflightError as error:
-        assert error.evidence['scene_writes'] == 0 and error.evidence['operation_advisories']
+        assert error.evidence['scene_writes'] == 0
         assert error.evidence['errors'][0]['field'] == 'runover'
     else:
         raise AssertionError('invalid field accepted')
@@ -380,7 +347,7 @@ try:
     try:
         h.build_module(root, [{'name': 'empty_mode', 'type': 'attribwrangle'}], output='empty_mode')
     except h.CheckpointError as error:
-        assert error.evidence['operation_advisories'] and not error.evidence['ok']
+        assert not error.evidence['ok']
     else:
         raise AssertionError('empty wrangle passed')
     assert set(root.children()) == before

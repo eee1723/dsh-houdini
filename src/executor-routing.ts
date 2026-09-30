@@ -5,7 +5,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
-import { ExecutorBindingBarrier, requireExecutorContinuityIdentity } from './executor-binding.js'
+import { ExecutorBinding, requireExecutorContinuityIdentity } from './executor-binding.js'
 
 export interface ExecutorRecord {
   schema:1
@@ -20,7 +20,7 @@ export interface ExecutorRecord {
   task_id:string|null
   hip_path:string|null
 }
-type Session = Parameters<ExecutorBindingBarrier['ensure']>[0] & {id:string}
+type Session = Parameters<ExecutorBinding['ensure']>[0] & {id:string}
 const ID=/^[0-9a-f]{32}$/
 const canonical = (p:string) => process.platform==='win32' ? path.normalize(p).toLowerCase() : path.normalize(p)
 
@@ -84,7 +84,7 @@ export class ExecutorRouter {
     return signal?AbortSignal.any([signal,this.lifetime.signal]):this.lifetime.signal
   }
   constructor(readonly directory:ExecutorDirectory, private readonly timeoutMs:number,
-    private readonly binding:ExecutorBindingBarrier,
+    private readonly binding:ExecutorBinding,
     private readonly identityOf:(session:Session)=>string|undefined) {}
 
   private async verified(id:string, taskId:string, signal?:AbortSignal, requireWriter=true):Promise<HoudiniBridge> {
@@ -119,34 +119,6 @@ export class ExecutorRouter {
     const deadline=AbortSignal.timeout(2000)
     const bounded=signal?AbortSignal.any([signal,deadline]):deadline
     return (await this.verified(target,session.id,bounded)).sceneContext(bounded)
-  }
-
-  /** Host-owned component startup only; never exposed through the target-picker Remote. */
-  async prepareComponent(agent:{id:string;session:Session & {header:{cwd?:string;parentSession?:string}}},
-    expected:ExecutorRecord, parentId:string, workspace:string, signal?:AbortSignal):Promise<void> {
-    signal=this.signal(signal)
-    const guard=()=>{
-      signal.throwIfAborted()
-      if(agent.id!==agent.session.id||agent.session.header.parentSession!==parentId
-        ||agent.session.header.cwd!==workspace) throw new Error('Component child/workspace identity mismatch; no executor binding')
-      const bound=this.identityOf(agent.session)
-      requireExecutorContinuityIdentity(bound,expected.executor_id)
-      if(!bound&&agent.session.snapshotEvents().some(e=>['step/start','tool/call','assistant/message'].includes(e.type)))
-        throw new Error('Component initial binding must precede every model step and tool call')
-    }
-    guard()
-    const record=await this.directory.find(expected.executor_id)
-    if(record.registration_id!==expected.registration_id||record.runtime_id!==expected.runtime_id
-      ||record.hip_path!==expected.hip_path||record.bridge_url!==expected.bridge_url)
-      throw new Error('Component worker registration changed; no automatic recovery')
-    if(record.task_id!==null&&record.task_id!==agent.id) throw new Error('Component worker belongs to another author')
-    const bridge=await this.verified(record.executor_id,agent.id,signal,false)
-    guard()
-    if(record.task_id===null) await bridge.claimWriter(agent.id,record.registration_id,record.hip_path!,signal)
-    await this.verified(record.executor_id,agent.id,signal)
-    guard()
-    await this.binding.ensure(agent.session,record.executor_id,signal)
-    guard()
   }
 
   /** Host/UI only. Initial bind, not a recovery/rebind or model-callable tool. */

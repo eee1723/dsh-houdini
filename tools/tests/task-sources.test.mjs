@@ -69,16 +69,14 @@ for(const [offset,limit] of [[-1,3],[0,0],[0,16001],[1.5,3],[0,NaN],[1e9,10]]) {
 }
 const definitions=new Map();let http=0;
 registerHoudiniTools({tools:{register:d=>definitions.set(d.name,d)}},{exec(){http++;throw Error('unexpected HOM');}});
-const query=definitions.get('houdini_query');
+const query=definitions.get('houdini_resource');
 const context={agent:{id:'task',session:{snapshotEvents:()=>events,header:{}}},signal:new AbortController().signal};
-assert.equal((await query.execute({source_ref:rows[0].source_ref},context)).ok,true);
-assert.equal(query.presentCall({source_ref:'index'}).kind,'read');
-assert.match(query.presentCall({source_ref:'index'}).title,/task source/i);
-await assert.rejects(query.execute({source_ref:'index',code:'print(1)'},context),/exactly one/);
-await assert.rejects(query.execute({source_ref:'index',result_ref:'a'.repeat(64)},context),/exactly one/);
-await assert.rejects(query.execute({source_ref:'index',pointer:'/text'},context),/pointer/);
-await assert.rejects(query.execute({source_ref:'index'},{}),/current agent session/);
-await assert.rejects(query.execute({source_ref:rows[0].source_ref},
+assert.equal((await query.execute({kind:"source",ref:rows[0].source_ref},context)).ok,true);
+assert.equal(query.presentCall({kind:"source",ref:'index'}).kind,'read');
+assert.match(query.presentCall({kind:"source",ref:'index'}).title,/task source/i);
+await assert.rejects(query.execute({kind:"source",ref:'index',pointer:'/text'},context),/pointer/);
+await assert.rejects(query.execute({kind:"source",ref:'index'},{}),/current agent session/);
+await assert.rejects(query.execute({kind:"source",ref:rows[0].source_ref},
   {...context,agent:{session:{snapshotEvents:()=>[]}}}),/not found/);
 assert.equal(http,0,'source retrieval never enters Bridge or HOM');
 console.log('task sources: original provenance, plan separation, replay, exact pagination, session isolation, no HOM and bounded anchors passed');

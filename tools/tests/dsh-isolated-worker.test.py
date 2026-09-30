@@ -1,4 +1,4 @@
-"""Two real disposable component workers; explicit IPC, no live or model calls."""
+"""Two real disposable isolated workers; explicit IPC, no live or model calls."""
 from pathlib import Path
 import hashlib
 import json
@@ -26,7 +26,7 @@ def request(record, route, body=None):
         return json.load(response)
 
 
-fixture = Path(tempfile.mkdtemp(prefix='dsh-component-workers-'))
+fixture = Path(tempfile.mkdtemp(prefix='dsh-isolated-workers-'))
 processes = []
 logs = []
 try:
@@ -34,7 +34,7 @@ try:
     for index in range(2):
         log = (fixture / f'supervisor-{index}.log').open('wb')
         logs.append(log)
-        process = subprocess.Popen([sys.executable, str(ROOT / 'tools/component-worker.py'),
+        process = subprocess.Popen([sys.executable, str(ROOT / 'tools/isolated-worker.py'),
                                     '--executable', sys.argv[1], '--directory', str(fixture / str(index)),
                                     '--registry', str(fixture / 'registry'), '--memory-mb', '4096',
                                     '--threads', '2', '--startup-timeout', '90',
@@ -143,7 +143,7 @@ try:
                               timeout=90, creationflags=subprocess.CREATE_NO_WINDOW)
     assert reopened.returncode == 0 and 'REOPEN_OK' in reopened.stdout, reopened.stdout
     assert hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest() == final_hash
-    print('PASS two component workers, unique HIP/identity/port, '
+    print('PASS two isolated workers, unique HIP/identity/port, '
           + ('dirty final rejected' if expect_dirty_final else 'isolated stop') + '; fixture:', fixture)
 finally:
     for process in processes:

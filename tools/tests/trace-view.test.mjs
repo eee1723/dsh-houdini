@@ -15,6 +15,7 @@ const inventory = traceSources();
 assert(inventory.presets.every(p => p.paragraphStarts[0].startsWith('You are ')),
   'persona identity retains the opening used for historical reading groups');
 assert(inventory.guidance.bytes > 0);
+assert.equal(Object.keys(inventory.tools).length,8);
 assert(inventory.presets.every(p => p.bytes > 0 && !('text' in p)));
 assert(
   inventory.skills.every((s) => s.files.some((f) => f.path === "SKILL.md")),
@@ -589,3 +590,9 @@ tree=render();tree=click('分析');
 assert.match(content(tree),/无动词副作用未知/);
 assert.match(content(tree),/Host 历史结果 \/ 来源回读/);
 console.log('Trace UI raw effects: canonical blocked query/exec, dynamic unknown, historical detail exclusion passed');
+const nestedId='p:ptc:1', nestedFacts={ok:true,result:{actual:1},verbs:[],execution:{read_only:true}};
+const nestedNode={...result(nestedId,'houdini_inspect',21,21),callId:nestedId,
+  call:{name:'houdini_inspect',argsRaw:'{"code":"__result__=hou.frame()"}'},
+  content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:nestedId,tool:'houdini_inspect',value:nestedFacts})}]};
+assert.equal(View.model({eventNodes:[nestedNode]}).entries[0].resultValue.actual,1);
+assert.equal(View.model({eventNodes:[nestedNode]}).entries[0].rawEffect,'read_only_query');

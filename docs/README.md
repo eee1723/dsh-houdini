@@ -11,12 +11,13 @@
 | [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
 | [主要开发方向](development-directions.md) | 四项产品方向、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
 | [Houdini Trace设计](houdini-trace-design.md) | 五看板信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
+| [工具说明](tools.md) | 八个工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
 | [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
 | [多实例与任务恢复](multi-instance.md) | 显式共享Host/多Houdini的身份、绑定、写入预留、单端Repair、启用步骤和未开放的恢复边界 |
-| [多Agent组件建模](component-collaboration.md) | 独立作者/进程、普通subnet与节点片段交付、共享控制、受控装配和实施验收；显式候选已有，完整协作验收未闭环 |
+| [节点片段交换](component-collaboration.md) | 普通节点文件导出、导入与显式替换；无额外Agent模式 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、鉴权/RPC/Qt/profile资格门 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [程序化产品模型开发评测](product-modeling-evaluation.md) | 产品细节、连接、可编辑性和交付的验收原则；公开任务与评审材料隔离，不保存批次结果 |

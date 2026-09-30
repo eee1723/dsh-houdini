@@ -1,6 +1,6 @@
 """Browser-session authentication for DSH Web loopback RPC clients.
 
-DSH 0.1.2 protects every ``/api`` request with the same signed cookie used by
+DSH Web protects every ``/api`` request with the same signed cookie used by
 the browser.  The Web process prints a per-process root URL containing a
 launch token; visiting that URL once mints the cookie.  This module performs
 that documented exchange for the Houdini-side RPC client and exposes the same

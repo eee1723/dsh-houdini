@@ -5,6 +5,7 @@ import {
   rawMethodNames,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
+import { HOUDINI_TOOLS } from '../lib/tool-catalog.js';
 
 function nestedResultContent(message) {
   return (message?.content || [])
@@ -99,9 +100,12 @@ export function unresolvedExecutionRequests(steps) {
 export function normalizeTraceSteps(events) {
   const calls = new Map();
   for (const event of events || []) {
-    if (event?.type === 'tool/call' && event.data?.callId) {
-      calls.set(event.data.callId, {
+    const callId = event?.type === 'tool/call' ? event.data?.callId
+      : event?.type === 'tool/ptc-dispatch-start' ? event.data?.subCallId : null;
+    if (callId) {
+      calls.set(callId, {
         ...event.data,
+        callId,
         eventSeq: event.seq,
         time: event.time,
       });
@@ -124,11 +128,25 @@ export function normalizeTraceSteps(events) {
       continue;
     }
 
-    const message = event.data?.message || {};
+    const nested = event.type === 'tool/ptc-dispatch';
+    const message = nested ? {isError: event.data?.isError,
+      content:[{type:'tool_result',content:event.data?.content || []}]} : event.data?.message || {};
     const args = parseToolArguments(call.arguments);
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
-    const canonical = event.data?.meta?.canonical;
+    let canonical = event.data?.meta?.canonical;
+    if (nested && Object.hasOwn(HOUDINI_TOOLS, call.name)) {
+      for (const block of event.data.content || []) {
+        if (block.type !== 'text') continue;
+        let record;
+        try {record = JSON.parse(block.text)} catch {continue}
+        if (record?.kind === 'dsh-houdini/execution-v1'
+            && record.callId === callId && record.tool === call.name) {
+          canonical = record.value;
+          break;
+        }
+      }
+    }
     const envelope = String(call.name).startsWith('houdini_') && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
     const observation = envelope?.execution;
     const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
@@ -151,6 +169,7 @@ export function normalizeTraceSteps(events) {
     steps.push({
       index: steps.length + 1,
       callId,
+      ...(nested ? {parentCallId:event.data.parentCallId} : {}),
       callSeq: call.eventSeq ?? null,
       resultSeq: event.seq ?? null,
       time: event.time ?? null,
@@ -178,8 +197,9 @@ export function normalizeTraceSteps(events) {
       canonical: envelope,
       recoveredExecution: envelope?.requestReceipt?.retrieved === true,
       executionReplay,
-      canonicalStatus: envelope ? 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
-      executionLocation: call.name === 'houdini_query' && args.result_ref ? 'host_result_artifact' : null,
+      canonicalStatus: envelope ? nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
+      executionLocation: (call.name === 'houdini_resource' && args.kind === 'result')
+        || (call.name === 'houdini_query' && args.result_ref) ? 'host_result_artifact' : null,
       rawUsage,
     });
   }

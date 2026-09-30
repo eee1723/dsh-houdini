@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
-const require=createRequire(import.meta.resolve('@deepseek-ai/dsh-agent-presets'));
+const require=createRequire(import.meta.resolve('@deepseek-ai/dsh-agent-preset'));
 const yaml=require('js-yaml');
 
 export function selectedModelSettings(source,provider,model){

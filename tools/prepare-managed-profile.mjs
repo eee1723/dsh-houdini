@@ -32,16 +32,4 @@ if (fs.existsSync(pluginLink)) {
 }
 const fromProfile = createRequire(path.join(profile, 'package.json')).resolve('dsh-houdini')
 await import(pathToFileURL(fromProfile).href)
-for (const name of ['houdini', 'houdini-dev', 'houdini-product']) {
-  const source = path.join(app, 'node_modules/dsh-houdini/presets', name)
-  const dest = path.join(context.home, '.agent-presets', name)
-  fs.cpSync(source, dest, { recursive: true })
-  const filename = path.join(dest, 'agent.cordis.yml')
-  // Preserve all !!js and prose verbatim; only the known transport URL changes.
-  const input = fs.readFileSync(filename, 'utf8')
-  const marker = 'bridgeUrl: http://127.0.0.1:8765'
-  if (input.split(marker).length !== 2) throw new Error('preset bridge binding is ambiguous')
-  if (!Number.isInteger(context.bridgePort) || context.bridgePort < 1024 || context.bridgePort > 65535) throw new Error('invalid managed bridge port')
-  fs.writeFileSync(filename, input.replace(marker, 'bridgeUrl: http://127.0.0.1:' + context.bridgePort))
-}
-console.log('Isolated DSH profile and presets are ready; no package manager was invoked')
+console.log('Isolated DSH profile is ready; the bundle registers the Houdini preset')

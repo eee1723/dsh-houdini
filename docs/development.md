@@ -1,499 +1,119 @@
 # 开发与文档维护规范
 
-本页是长期维护规则，不是开发日志。入口见[文档索引](README.md)和[系统架构](architecture.md)。
+入口见[文档索引](README.md)和[系统架构](architecture.md)。这里维护开发方法、生成规则和验证入口；尚欠动作只放[交接](handoff.md)。
 
-## 1. 单一事实源
+## 设计原则
 
-| 内容 | 修改位置 | 派生/验证 |
+系统负责让模型获得准确信息、充分操作能力、真实执行反馈、可观察结果和清楚的错误。模型负责理解需求、选择方法、组织步骤和判断效果。领域知识按任务读取，执行接口只落实平台与操作合同。
+
+已完成的功能、工具数量、历史测试和目录结构都可以调整。新增检查应解决实际接口条件或已观察到的失败；模型的一次遗漏或方法选择错误不应成为永久准入门槛。删除策略时同步删除只证明该策略的断言。
+
+继续使用 DSH 的会话、模型、通用 Agent 循环、上下文组合、压缩和原生工具能力。插件维护 Houdini 适配；不要在插件重建一套通用 Agent 状态机或提示词历史。
+
+## 单一维护源
+
+| 内容 | 维护位置 | 派生或验证入口 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证70 个目录入口 |
-| 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
-| 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
-| Agent组合与角色 | 精确DSH标准preset及[生产角色](../presets/houdini/persona.md)/[开发角色](../presets/houdini-dev/persona.md) | [gen-agent-presets](../tools/gen-agent-presets.mjs)生成三份配置，不手改生成的agent.cordis.yml |
-| 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
-| 会话产品要求 | [product-definition.ts](../src/product-definition.ts)的Host工具回执 | 唯一定义/修订与实测覆盖；来源、几何与视觉语义分别验，不维护第二份完成账本 |
-| 领域方法 | [skills](../skills/)的对应SKILL/reference | docs链接原文，不复制recipe |
-| Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，client/下解析、投影、显示分层 | 内容复用来源索引/请求快照；同一客户端bundle按需初始化，不内联技能资源正文 |
-| Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
-| 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
-| 组件协作设计 | [component-collaboration.md](component-collaboration.md) | 普通节点片段/独立作者的接口和实施完成门；当前动作归handoff，执行端运维归multi-instance |
-| 产品模型开发评测 | [产品模型评测集](../evaluation/product-modeling-dev-v1/)与[评测原则](product-modeling-evaluation.md) | 案例清单、公开题面、独立评审材料分离；机制回归不代替模型质量 |
+| Host 工具职责与参数 | [tool-catalog](../src/tool-catalog.ts)、[tools](../src/tools.ts) | gen-tool-docs 生成 docs 工具表；工具注册与前端共用目录 |
+| Houdini 动词签名、执行版本 | [工具设计](tool-design.md)，实现同步 helpers/Bridge | gen-client-catalog 生成 Host 契约和客户端目录；verb-contract 回归 |
+| 节点操作知识 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs 生成[节点卡](node-operation-cards.md)；node-knowledge 验实际参数和几何 |
+| DSH 组合与角色 | 精确 DSH 标准组合及 [Houdini persona](../presets/houdini/persona.md) | [gen-agent-presets](../tools/gen-agent-presets.mjs)生成唯一 Houdini patch |
+| 运行版本与安装组合 | [兼容清单](../dsh-runtime-compatibility.json)、[runtime](../deployment/runtime.json)、[部署锁文件](../deployment/package-lock.json) | 安装、启动、修复共用 preferred 精确组合 |
+| 执行与恢复事实 | Houdini 实际执行/结果模块 | [执行契约](execution-contract.md)；Host 和前端消费 Bridge 回执 |
+| 领域方法 | 对应 [skills](../skills/) 的入口和 references | 按需知识；docs 链接原文，不重复 recipe |
+| Trace 解析与展示 | [Trace 设计](houdini-trace-design.md)、client/ | 使用真实请求和工具记录；按需加载诊断 |
+| 开发评测 | [评测原则](product-modeling-evaluation.md)、evaluation/、tools/ | 公开题面与评审答案隔离；生产面不读取评审材料 |
 
-## 2. 构建与生成
+新增长期生产模块必须加入架构代码地图。新增文档必须加入索引，说明它的职责及源码、验证入口。
+
+## 构建与生成
 
 ```powershell
 npm install
-npm run docs:generate
+npm run build
 npm run docs:check
-npm test
-npm pack --dry-run
 ```
 
-只用npm，不用pnpm。build生成节点卡、三份Agent组合、Host/client词表和Trace组件/来源索引，再运行tsc；不要手改lib或生成区。
-角色在persona.md维护，组合继承精确DSH标准。Trace手写解析、投影、界面在client/下；构建只生成资源来源与指纹，真实历史正文来自请求和工具读取。
-生成漂移由gen-agent-presets、trace-view与gen-trace-client --check验证。
-docs:check只读检查节点卡和Trace来源生成漂移、文档索引/模块覆盖，以及docs、skills、evaluation内Markdown链接；不偷偷修正文档。CI在build前运行，防止生成步骤掩盖漂移。
-node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加载器、生成器和测试。
-关键参数名对应runtime模板，不能从手册猜数字菜单值或把一次读取的默认值固化为全版本事实。
+只用 npm。build 刷新节点卡、唯一 Houdini preset、工具文档、客户端目录和 Trace 资源指纹，再编译 TypeScript。`lib/`、生成区、`presets/houdini/cordis.patch.yml` 不手改。
 
-## 3. 代码变更的文档责任
+角色在 persona.md 维护；组合继承锁定版本 DSH 的标准插件，关闭其他内置 preset，只注册 Houdini。插件以 DSH 0.2 的 `bundle.patch` 装载配置，以原生 context producer 提供现场和执行事实。客户端使用 DSH 的 conversation/trajectory 注册接口。
 
-新增或改变长期维护能力时，修改对应现役设计段落、源码索引和适用边界；不追加版本日志。
-从目标和已观察问题决定设计，可以删除或替换既有机制。涉及缺陷因果时使用能区分原因的反例；纯职责整理不机械增加测试矩阵。
-每次代码变更沿现役索引核对受影响的文档、skill和preset/guidance；规则同源原位维护，不用追加补丁段落代替矛盾清理。
-提示词review同时核对四层边界：persona不复制工具合同或领域recipe，guidance不复制低频skill步骤，tool/verb描述不承担
-任务规划和完成策略，skill不重复跨域授权与运行时安全规则。精简后用Trace来源目录核对实际注入文本，而不是只看YAML/源码行数。
-新生产模块须在architecture代码地图可找到；新文档须进入docs索引，并解释它的唯一职责。
-变更词表签名/执行语义需同步Bridge版本和生成产物；仅整理文档不虚增执行版本。
-节点卡变化要运行生成一致性和目标Houdini的参数/正反例测试。
+`docs:check` 只检查生成漂移、文档索引、模块覆盖和 Markdown 链接，不自动修文档。改动生成源后先 build，再检查最终一致性。
 
-单次运行的耗时、尝试、失败截图、session ID、token、临时目标等只放会话/CI或tools/out等非发布产物。
-测试代码、稳定验证方法、已知未支持边界应保留；已完成计划、退役原型说明和历史审计不放docs。
-停用功能先迁移有效约束到现役文档，再清理文件及调用者，不建立docs/archive。
-不因为文档声称已修复就删除验证；机器内存和跨项目材料不属于默认同步范围。
+## 修改与验证
 
-### 验证范围
+按用户目标和实际问题选择修改范围。工具描述只讲能力和真实调用条件；persona 讲角色和知识路由；领域工作方法只放 skill；操作合同落在执行实现。同一事实不要复制到多层提示词。
 
-日常先构建并运行直接受影响的回归；跨Host、Bridge和前端的基线整理在收口时跑一次现有Node套件与文档门。
-修改执行内核时，在隔离hython验证Raw Gate、节点归属、捕获失败、创建失败、对象父级和场景/网络/渲染等核心边界。
-没有新修改或未解问题时不重复扩大检查；旧策略退役时同步删除只锁定旧策略的断言。GUI、付费模型与发行验收按实际任务需要安排。
-
-### 分支与接续入口
-
-查询开发状态、接续或合并前，先执行 `git status --short`、`git branch -a -vv`、`git worktree list`，
-结合相关提交定位实际开发分支，再读取该分支的交接与实现。不同工作树的文档只描述各自提交，
-不能用 main 的旧文档否定尚未合并的开发结果。合并后在目标分支重核索引、交接和生成门禁；
-清理前确认改动已集成、无使用该工作树的进程，且独有工程、证据和忽略文件已妥善保留。
-
-跨电脑接续先从GitHub fetch并切到[当前交接](handoff.md)指定的远端开发分支，核对HEAD、
-`git status`和worktree，再运行`npm install`、`npm run docs:check`、`npm test`；H21/H22隔离HOM与
-正常入口的已加载版本分别复验。`node_modules`、`lib`、`.npm-cache`和`tools/out`不由Git同步，
-前两者按锁文件重建，后两者仅在保留原始实验/离线缓存确有需要时私下迁移。原始评测HIP、
-Session与图、用户HIP及外部依赖、DSH数据/凭据和发行私钥均在仓库外，按敏感程度单独备份；
-旧Session记录不能凭HIP路径在新Houdini进程自动认领写入权限。
-
-### 交接文档生命周期
-
-`docs/handoff.md`是过程信息进入docs的唯一有限例外，纳入Git与文档索引；跨电脑仍须提交/推送后拉取，
-存在于工作区不等于已同步。只保留下一次接续必须知道的未完成动作、阻塞和验证缺口，不记已完成履历。
-
-- 固定一份文件，原位更新“核对日期”；最多8个活动条目、120行、8000字符。超限先合并同一问题和删除已核销项，
-  不另开按日期/批次命名的交接文档，也不把有效阻塞丢进不可同步的临时文件。
-- 每项包含稳定H编号、状态（待修复/待验证/待决策）、现状、下一步、移除条件和仓库内源码/验证入口。
-  状态只描述尚欠动作；仅缺live或模型验证就写具体缺口，不继续列已经实现的修复。
-- 每次完成实现与所需验证、明确取消或替代该项时，在同一变更中删除整项；不要改成“已完成”继续留着。
-  实现已完成但验收未完成时，只留下验收动作；稳定设计/边界先并回对应现役文档，历史由Git保留。
-- 每次接续与收尾核对全表，不仅追加新条目；无活动项时保留标题、核对日期和“当前无待交接事项”。
-- 不复制完整问题历史、测试计数/日志、私有trace、HIP内容或机器密钥。入口必须能随仓库找到；本机证据可以辅助，
-  不能作为理解或复现该项的唯一材料。长期产品方向留在development-directions，不逐条复制进交接。
-
-`docs:check`只读检查体量、字段、状态、唯一编号和链接，并拒绝已完成勾选项及额外交接副本；
-它不能从代码自动判断业务完成，删项仍须实际核对移除条件。清理交接条目不等于授权删除临时实验、HIP或工作树。
-
-## 4. 回归与发布
-
-正式发布必须经过[发行单元与发布门](dsh-update-compatibility.md#正式发行单元与发布门)：main push不是发布，tag/Draft也不使更新对普通用户可见。
-用户发行包与开发checkout分离；只在发布端构建正式包，Node/DSH/完整依赖树绑定精确组合。安装实现见[setup](setup.md)，尚欠实际验收见[交接](handoff.md)。
-
-部署策略离线回归：[Release边界](../tools/tests/dsh-release-policy.test.py)、[安装/启动精确选择](../tools/tests/dsh-install-runtime.test.py)、
-[兼容清单](../tools/tests/dsh-runtime-compat.test.py)可在Python 3.11+运行，无网络/安装/用户目录写入；
-[管理器](../tools/tests/dsh-manager-update.test.py)、[启动预检](../tools/tests/dsh-launcher-preflight.test.py)及[profile同步](../tools/tests/dsh-profile-sync.test.py)
-用下述隔离H21/H22 hython环境分别执行。各测试使用临时fixture；这组检查不代替真实Qt页面、干净机器安装或已加载身份验收。
-[前端生命周期](../tools/tests/dsh-frontend-lifetime.test.py)在Windows使用自有Node父/子/孙进程验证source/managed共用Job、
-启动放行闸、外部监听者隔离及launcher reload；不启动模型或连接用户live，包含在部署回归的Houdini组。
-[强制修复](../tools/tests/dsh-force-repair.test.py)使用隔离Node监听器验证安装/主入口识别、端口变化拒绝、
-保留进程句柄终止、端口释放和Bridge活动前后检查；不以端口或标记文件授予自动进程所有权。
-多执行端候选用普通Python运行 `tools/tests/dsh-multi-executor.test.py --hython H21完整路径 --hython H22完整路径`。
-同时启动两个隔离hython，使用自建文件作写锁身份夹具但不加载HIP；验证真实HTTP目标绑定、同HIP/硬链接互斥、
-仅结束一个自有进程时另一个可用、正常退出与崩溃释放。共享DSH选择/UI、真实保存与恢复仍需独立验收。
-加 `--host-node Node完整路径` 时，启动测试Host调用两端实际Bridge，使用夹具会话与落盘sink，不启动收费模型。
-`executor-routing.test.mjs`默认使用两个HTTP夹具验证共享工具路由；显式设置DSH_TEST_GATEWAY_ROOT为目标DSH的
-@deepseek-ai包目录时，另用其实际Typert Registry/Gateway验证Remote列表/选择分发。它不认证HTTP鉴权或浏览器UI。
-同一测试还用真实Cordis fiber加载一个Host服务和两个preset消费者：卸载一个消费者不移除服务、Host卸载
-阻止旧Bridge继续发送、重载后消费者重新解析服务、重复Host挂载与配置不一致均拒绝。
-完整共享Host验收为显式、无模型的隔离测试：先运行tools/tests/prepare-shared-host-fixture.mjs，参数为精确DSH bin.js、
-尚不存在的临时DSH_HOME、候选插件根；再运行tools/tests/dsh-shared-host-e2e.test.py，参数依次为Node、DSH bin.js、
-该临时home的父目录、Playwright模块完整路径、目标hython。准备器生成fixture标记，拒绝直接使用用户home。
-浏览器脚本通过原生认证页面、跳过配置密钥、创建空任务、确认执行端并刷新绑定，不发送模型请求；
-截图保留fixture目录。测试Host用自有Job回收，不接管现有端口。CLI/HTTP、实际DSH持久化、浏览器和Qt分别取证。
-双执行端回归还验证共享Repair只改变一个Bridge代际、另一端继续响应，并保留同进程节点ownership。
-[执行端绑定](../tools/tests/executor-binding.test.mjs)验证错目标零派发、握手后目标更换、job/媒体边界，
-以及真实DSH Session记录往返、首次调用等待flush、并发屏障、失败/无后端/取消不发送和历史不重绑。
-模拟持久化监听器不认证实际DSH文件后端或用户重启路径；这些需新运行态另验。
-绑定回归覆盖真实Cordis依赖注入和多工具交换：pre-step接受绑定、工具期不插入消息、发送前flush与并发屏障。
-正常运行不自动改写旧版错误工具交换；旧会话异常由具体诊断处理。
-执行通知使用[有界通知回归](../tools/tests/execution-notice-compaction.test.mjs)验证真实Session、两会话、工具配对和不可改历史；下述agent-loop驱动加`--attention`时以离线adapter检查100次变化的实际请求，最多4条独立execution-state消息；再加`--flush-false`或`--flush-throw`让假Bridge每次返回不同的失败接口合同，实际触发通知压缩并验证持久化失败的多轮重试屏障。超过上下文预算时保留未解失败计数，不把省略明细解释为通过。
-真实agent loop回归用 `python tools/tests/dsh-binding-loop.test.py Node完整路径 DSH-bin.js完整路径`。
-使用全新DSH_HOME、本地确定性adapter和严格假Bridge，不读取用户账号、不向外部模型发请求；
-验真实pre-step/工具调度/下一次模型输入顺序，查询不得重复执行。fixture日志保留临时目录，不进入包。
-
-[表达式分层诊断](../tools/tests/dsh-expression-diagnostics.test.py)在H21/H22验证合法0、原生写入失败、
-错误函数/语法/Python求值、缺失引用warning、无关cook错误和参数/批次动画恢复；求值成功
-但空输出的反例仍由verify_network拒绝，不由set_parm冒充几何验收。
-
-控制恢复用[dsh-control-state-restoration](../tools/tests/dsh-control-state-restoration.test.py)验证几何相同但
-参数/动画错误的反例、恢复cook期间变值、OBJ主控同批设值/追加folder与后续独立undo；请求恢复用[dsh-request-recovery](../tools/tests/dsh-request-recovery.test.py)
-及[Host回包恢复](../tools/tests/request-recovery.test.mjs)覆盖队列、运行中、断联、坏JSON、超时、重复身份、
-结果过期、runtime变更、jobs提交回包丢失、回执索引、队列取消和不重复修改；HTTP拒绝、thread边界与job真实性由
-[dsh-bridge-transport](../tools/tests/dsh-bridge-transport.test.py)覆盖。两者均已纳入tools/run-deployment-tests.py的Houdini组，
-随--hython双版本运行：HTTP /exec、/jobs要求完整owner身份、合同与一次性票据，Job控制按所属会话授权，拒绝操作零副作用。查回jobId只证明提交，
-迟到提交回执不复活已结束job；迟到running/unknown或Bridge结果过期不抹除Host已收到的完成回执。
-AbortSignal取消后的查回验证HTTP客户端，不能代替实际Host停止按钮、丢弃结果与新session用户路径验收。
-[回执注册表](../tools/tests/dsh-request-registry.test.py)不依赖HOM，覆盖小窗口连续请求、并发一次入场、旧票/owner/runtime冲突、
-正文预算/过期、活动job保护与早完成顺序、running不可降级及索引边界；已纳入部署回归的纯Python组。
-
-预览后端变更另跑[版本后端回归](../tools/tests/dsh-preview-backend.test.py)，检查H21原路径与H22 Flipbook参数；
-[managed路径回归](../tools/tests/dsh-managed-preview-paths.test.py)验证命名/拒绝/唯一分配/Save As/reload，
-[viewport恢复回归](../tools/tests/dsh-viewport-screenshot.test.py)用替身注入frame/flipbook/恢复和旧文件失败。
-再在新建隔离GUI验证实际明暗、Cd、截图、重复渲染、相机关联及代理恢复；路径/替身测试不证明GUI或图片质量，
-不得连接用户live进程或源HIP。
-公开UI帮助使用[帮助示例回归](../tools/tests/dsh-ui-public-help.test.py)：直接从运行时verb_help提取示例，
-在普通节点和HDA上预检/应用并检查值；错误tuple默认值保持零新增参数。无需读取插件源码。
-参数回读另验[Ramp回读回归](../tools/tests/dsh-ramp-readback.test.py)：Bridge代码内直接json.dumps，
-覆盖float/color Ramp及原生Color SOP，并确认只读参数状态不变。
-Host反复写文件/运行命令的观察用[Host工作证据回归](../tools/tests/trace-host-work.test.mjs)，
-确认去重后步骤、跨turn/Houdini调用边界以及打印FAIL不被误当工具失败。重复只是候选，
-不能推断语义停滞、执行成功或自动取消权限；真实进展控制尚需单独验证。
-package发现的[投影回归](../tools/tests/dsh-package-info.test.py)覆盖只读、缺GUI、禁用状态、资源截断与环境值不外露；
-它使用原生API替身，不证明GUI加载/重载稳定性。真实package加载仍需独立GUI夹具。
-真实加载用[package GUI回归](../tools/tests/dsh-package-gui.test.py)，普通Python传`--houdini`目标GUI可执行文件；
-在隔离包/偏好目录加载启用与禁用夹具，检查资源、重复查询和场景状态，并要求正常退出。
-该测试不修改当前live包；not_found只表示未出现在当前原生清单，不能断言配置文件不存在。
-Network Box机制分别用[纯矩形核心](../tools/tests/dsh-network-layout.test.py)和
-[受治理Box回归](../tools/tests/dsh-network-boxes.test.py)验证：前者不依赖HOM，后者在隔离H21/H22覆盖
-plan/apply、类型化ownership、语义色、成员/删除保留、local恢复、Bridge同exec undo、Raw Gate及save/reopen。
-它不证明最终handoff布局或GUI文字可读性；真实GUI颜色/undo另用新建临时场景验收，不连接live HIP。
-npm test发现并运行tools/tests下全部Node测试。涉及HOM时在隔离hython、隔离偏好目录中运行
-tools/tests/*.test.py，目标版本覆盖H21/H22；不要连接用户live会话或load/save源HIP。
-至少覆盖Raw Gate、node ownership、caught-failure、tab-create-failure、object-parenting、
-scene/network/render contract；节点知识、构图、控制变更再跑相应回归。
-公共输出/封装变更另跑[输出发布回归](../tools/tests/dsh-output-publication.test.py)及
-[HDA公共接口回归](../tools/tests/dsh-hda-public-contract.test.py)：覆盖空Output、内部显示切换、多端口/身份拒绝、
-嵌套空Pack、新实例和消费者。内容非空不证明必需成员或关系；行为续跑与艺术质量仍须新任务验证。
-H21 PolyBevel正常输出cook后仍可能在用户选择/guide阶段走不同原生路径；用
-[隔离GUI驱动](../tools/tests/run-polybevel-guide-gui.py)对目标H21/H22 GUI各跑一次。它只创建新场景、
-保存临时HIP并依次选SOURCE/BEVEL/OUT/再回SOURCE；进程崩溃或无报告是失败证据，不能因输出verify通过忽略。
-该夹具不加载live HIP，也不证明任意拓扑、显卡或后续构建安全。
-`render_view`的持久预览服务另用[隔离GUI撤销回归](../tools/tests/run-render-undo-gui.py)
-验证：给目标H21/H22的`houdini.exe`和仓库外空输出目录，驱动会以新偏好/新HIP分别运行
-单独渲染、渲染后代码失败、同一exec先建普通节点再渲染后失败三种模式。驱动用同安装目录的隔离hython
-读取实际版本，不依赖安装目录名称。检查每个进程
-正常退出、失败有明确Bridge回执、普通编辑被撤销而OpenGL/Flipbook服务仍在；
-`render-returned.json`只证明动词已返回，PNG存在不等于回执完成。示例：
-`python tools/tests/run-render-undo-gui.py --houdini 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/houdini.exe' --output 'C:/Temp/dsh-render-undo-h21' --mode all`。
-此回归不加载用户HIP；原工程的渲染、进程退出及最终交付仍须分别取证。
+验证与改动相称：先构建并运行直接受影响的回归。检查通过且没有新改动或未解问题时，不继续扩大测试。基线收口运行一次现有 Node 套件与文档门；日常无需每次全跑。
 
 ```powershell
-$env:HOUDINI_PATH='&'
-$env:HOUDINI_NO_ENV_FILE='1'
-# 设置到仓库外隔离偏好目录；路径按本机安装调整。
-$env:HOUDINI_USER_PREF_DIR='C:/Temp/dsh-tests/houdini__HVER__'
-& 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/hython.exe' tools/tests/dsh-node-knowledge.test.py
-node skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs --strict
+# 单个受影响的 Node 回归
+node tools/tests/verb-contract.test.mjs
+# 完整 Node 回归（内部包含 build）
+npm test
 ```
 
-Python验证脚本在Windows使用UTF-8；若hython缺skill校验依赖，使用已有系统Python，不污染Houdini环境。
-不同实例或renderer的正确性必须由相应行为检查证明，不能拿数值/HOM替身测试当成GUI/语义验收。
-部署runner、发行/画廊GUI驱动及作者检查器共用[环境构造](../tools/houdini_test_environment.py)：重建临时偏好/包目录，
-清除继承的Houdini/Python/Qt/DSH配置与模型凭据，仅保留许可证连接；显式受管身份在隔离后由测试驱动传入。
-[环境反例](../tools/tests/dsh-test-environment.test.py)检出调用环境污染；Houdini子进程以目标bin为cwd，
-GUI不继承offscreen或禁用沙箱设置。该隔离不限制可信测试脚本对外部路径的任意访问，不是不可信代码沙箱。
-参数默认值更新用[dsh-spare-defaults](../tools/tests/dsh-spare-defaults.test.py)检查当前值/动画、ownership和失败恢复；
-编译后新增参数用[dsh-spare-dependency](../tools/tests/dsh-spare-dependency.test.py)检查源码刷新、动画保持和失败恢复。
-局部源码更新用[dsh-parameter-patch](../tools/tests/dsh-parameter-patch.test.py)检查版本/锚点零写入、
-整批恢复与真实cook失败；[dsh-module-boundaries](../tools/tests/dsh-module-boundaries.test.py)
-区分独立提交保留、同批原子回滚及签名绑定/内部实现错误。
-执行观察用[dsh-execution-observation](../tools/tests/dsh-execution-observation.test.py)检查实际连线/表达式
-依赖、无额外cook、删除和同调用检查顺序；[execution-state](../tools/tests/execution-state.test.mjs)验证
-事件乱序/replay、runtime更换、未返回修改和job状态不复活旧证据。两者不替代GUI外部修改观察。
-结果分层用[result-details](../tools/tests/result-details.test.mjs)验证canonical可读回、分页/防篡改、
-保存失败不触发修改重试，以及默认文本与完整审计各自的统计口径。
-同次HIP目录和队列时间片由execution-observation、bridge-transport覆盖；Host展示回归检查工作区提醒零额外HOM及agent隔离。
-任务来源用[task-sources](../tools/tests/task-sources.test.mjs)验证用户/注入来源隔离、澄清失败与replay、
-原文分页回读、session隔离及超预算；[scene-context](../tools/tests/scene-context.test.mjs)覆盖首轮claim、
-按需指代、普通查询零追加、独立提醒去重/解除、surface替换恢复、上下文抑制与模板转义，
-并用DSH Session实际deriveMessages检查消息不累积；不以这些测试替代live模型输入及复杂任务规划验收。
-产品定义用[product-definition](../tools/tests/product-definition.test.mjs)验证Host独立调用、来源依据、修订冲突/显式恢复、
-义务删除/退役保留、最终输出和具体状态的回执绑定、旧证据失效与detail/visual不被数值认证。
-长会话另验已审阅来源游标与真实新增要求，不能靠追加所有聊天轮次回避来源边界。
-图像能力用[image-inspection-route](../tools/tests/image-inspection-route.test.mjs)验证metadata预检、模型路由和附件限制；
-它不运行视觉模型、不证明GUI渲染或语义读图。上述Node回归由`npm test`发现运行。
-控制摘要用[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)
-覆盖基准失败及Bridge证据，[dsh-interface-evidence](../tools/tests/dsh-interface-evidence.test.py)
-保留真实实例、合法间隙和顶点距离不能证明无碰撞的反例。
-[dsh-control-review](../tools/tests/dsh-control-review.test.py)在隔离H21/H22验证提前失败与复测的合同标识一致、
-基准/case固定取景与深度包络、越界及截图失败和恢复；渲染调用被仪器化，只证明调度与参数合同。
-失败核销另由[delivery-audit](../tools/tests/delivery-audit.test.mjs)验证Host消费；真实GUI须对两版本另验
-基准/case图像、相机不漂移及越界拒绝，当前作者的语义读图和自然任务采用仍单独验收。
-恢复指纹用[dsh-geometry-fingerprint](../tools/tests/dsh-geometry-fingerprint.test.py)区分组目录排列
-和真实成员/ordered顺序/属性变化；[dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py)
-覆盖零写入拒绝、同批其他修改及创建后失败，防止恢复状态被错误降级。
-module-preflight同时覆盖circle.divs、tube.height/cols、polywire.radius/div的标量、表达式及实际回读，
-并保留单值列表拒绝、真tuple、非有限值和动画恢复反例；不能只验证单独set_parm而漏掉模块预检。
-quality-contracts用“局部变化但整体bbox不变”和“面积响应通过但部件脱离”区分测量与关系覆盖；
-[modeling-identity](../tools/tests/dsh-modeling-identity.test.py)用外包络缩放正确但内部部件额外位移的反例，
-验证stable-ID max_transform_error会拒绝错误均匀缩放，而真实均匀变换可通过。
-聚焦模块的执行基础用[module-integration](../tools/tests/dsh-module-integration.test.py)验证：局部输出健康但下游
-漏件、实例变换造成脱离、独立模块失败保留旧提交、共享控制在实际装配输出上的测试和恢复。
-这只是HOM机制回归；SOP skill的顺序聚焦仍是工作流候选，需同模型/版本/预算的自然任务对照，
-另含简单编辑、单部件、相邻领域和接口未定的反例，不以固定脚本通过证明LLM采用或视觉质量。
-Network Box与交接布局分别由`dsh-network-boxes`、`dsh-network-layout`、`dsh-handoff-layout`覆盖治理、纯规划器、
-两阶段apply/陈旧计划/零写入重复执行、固定障碍与失败恢复，并随部署驱动在H21/H22运行。原生GUI夹具
-`dsh-network-boxes-gui.test.py`仅在新开的隔离Houdini进程中验证角色色、叶子框comfortable handoff、一层组件容器、undo及保存重开；
-产物放`tools/out`或临时目录，不连接live，也不把脚本通过写成自然任务采用或视觉审美证明。
+涉及 Houdini 执行内核时，使用隔离 hython 覆盖必要核心边界：
 
-构建后检查npm包资源、git diff --check及知识引用；测试流水不回填本页。
+| 能力 | 验证入口 |
+|---|---|
+| Raw Gate | [dsh-bridge-raw-gate](../tools/tests/dsh-bridge-raw-gate.test.py) |
+| 节点归属 | [dsh-node-ownership](../tools/tests/dsh-node-ownership.test.py) |
+| 捕获失败与回滚 | [dsh-bridge-caught-failure](../tools/tests/dsh-bridge-caught-failure.test.py) |
+| 创建失败清理 | [dsh-tab-create-failure](../tools/tests/dsh-tab-create-failure.test.py) |
+| OBJ 父级 | [dsh-object-parenting](../tools/tests/dsh-object-parenting.test.py) |
+| 场景、网络、渲染 | [dsh-scene-network-render-contract](../tools/tests/dsh-scene-network-render-contract.test.py) |
+| 批量 SOP 构建 | [dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py) |
 
-[资产作者合同回归](../tools/tests/dsh-authoring-contract.test.py)在隔离H21/H22检查spare/定义参数domain一致、接口preview零写入与成功字段、原生内部identity接续和foreign反例；已纳入部署驱动。
+通过 [houdini_test_environment](../tools/houdini_test_environment.py) 创建临时偏好、空 package 环境和目标安装路径；启动目录使用指定安装的 bin。Python 通过 PYTHONPATH/测试入口兼容 H21/H22，不继承用户插件、Qt override 或模型凭据。隔离检查不连接 live，也不加载用户 HIP。
 
-HDA界面增量使用[dsh-hda-interface-patch](../tools/tests/dsh-hda-interface-patch.test.py)覆盖
-多实例值/keys/locks、新实例默认、预览零写入、过期版本、ownership及磁盘恢复；
-真实按钮/动态菜单和干净进程依赖用[dsh-hda-delivery](../tools/tests/dsh-hda-delivery.test.py)验证。
-两者在H21/H22隔离hython运行；它们不证明GUI布局、自然任务采用或任意插件兼容。
+领域改动选对应回归，例如 [node-knowledge](../tools/tests/dsh-node-knowledge.test.py)、[参数与绑定](../tools/tests/dsh-parameter-controls.test.py)、[控制恢复](../tools/tests/dsh-control-state-restoration.test.py)、[COP](../tools/tests/dsh-cop-contracts.test.py)。不机械把每个领域套件加到普通模块整理上。
 
-[HDA公共接口](../tools/tests/dsh-hda-public-contract.test.py)验证subnet间接输入替换、标准管理标签隐藏而业务标题保持、
-显式端口边界、原生表达式定义往返与两个新实例的公共输出，以及spare冲突写前拒绝/磁盘不变。
-[生命周期回归](../tools/tests/dsh-hda-lifecycle.test.py)经Bridge验证预览/过期/共享实例权限、真实保存与锁定、
-spare重复块/动画提升，以及注入写后失败时库/界面/通道恢复；不代表用户live授权或自然任务泛化。
+功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
-UI组件用[dsh-hda-ui-components](../tools/tests/dsh-hda-ui-components.test.py)验证组件展开、
-数值tuple/颜色、标题开关/条件、Ramp和multiparm增删/重载，以及错误字段/引用诊断。
-可选[原生GUI检查](../tools/tests/dsh-hda-ui-gui.test.py)用--houdini指定安装、--output指定仓库外新目录，
-仅新开自有GUI进程并捕获画廊面板；不连接用户会话、不使用computer-use。进程退出、截图可读性和
-语义布局分别验收。通用JSON与构建命令由[UI组件skill参考](../skills/houdini-parameter-ui/references/ui-components.md)维护。
+## 隔离开发工具
 
-程序化产品模型的开发评测使用[独立评测集](../evaluation/product-modeling-dev-v1/)；公开 brief 与仅供评审看的细节分开，验证改进的未见题在评分前不能进入生产提示或调参过程。执行环境、模型、预算、取景和验收口径须随结果记录；代码快照、静态哈希和构建通过不证明 live 已加载或模型质量改善。
-
-### HDA交付检查器
-
-共享控制接口用[dsh-parameter-controls](../tools/tests/dsh-parameter-controls.test.py)在H21/H22验证普通Null组件、
-先UI后模型/既有网络后加总控、引用与最终几何响应、旧动画/锁定/Ramp保持、计划过期/循环/ownership拒绝及绑定/界面失败恢复。
-层次设计与实施完成门见[控制参数与绑定](parameter-controls.md)，不将固定夹具通过写成自然任务质量保证。
-
-[hda-delivery-check.py](../tools/hda-delivery-check.py)是作者使用的隔离开发检查器，随包携带。
-普通Python进程调用指定hython，把声明HDA和Python目录复制到临时目录，用独立偏好和工作目录
-启动测试；不连接live Bridge或加载用户HIP。资产和回调必须是获授权执行的可信代码，
-进程隔离不是不可信代码沙箱，也不保证回调对绝对路径、网络或外部进程的副作用可恢复。
+[hda-delivery-check.py](../tools/hda-delivery-check.py)在新 hython 中加载声明 HDA，按 manifest 创建实例、设置参数、调用按钮并检查几何/参数/错误。判据应能区分正确与错误结果，例如尺寸控制检查 bounds_size，而非只有点面数。
 
 ```powershell
 python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json
 ```
 
-manifest中资源路径相对manifest目录；每个case创建新实例。最小结构如下，类型、参数与判据按交付物填写：
-
-```json
-{
-  "assets": ["tool.hda"],
-  "python_paths": ["python"],
-  "category": "Object",
-  "type": "studio::tool::1.0",
-  "cases": [
-    {"id": "default-and-repeat", "buttons": ["execute", "execute"],
-     "expect_parms": {"runs": 2}},
-    {"id": "invalid-input", "values": {"gain": -1}, "buttons": ["execute"],
-     "expect_error": "gain must be nonnegative", "expect_parms": {"runs": 0}}
-  ]
-}
-```
-
-category支持Object/Sop；可选menus为参数名→预期token列表；expect_geometry包含实例内相对output及
-points/primitives计数。expect_error匹配真实回调诊断，仍可检验失败后的参数状态。HOM可能吞掉按钮异常，
-检查器捕获原生stderr并结合显式结果判据；无异常返回不单独算通过。最终退出码和报告必须同时成功。
-声明库优先加载，子定义来源必须位于交付副本或目标Houdini安装内，拒绝偷偷回到原开发目录。
-这只证明列出的case和可见实例依赖，不认证动态导入闭包、GUI、Shelf/快捷键或Houdini Engine。
-
-Windows检查器支持--timeout秒数、--memory-mb（默认4096，128..65536）和--cancel-file。
-worker在加载用户资产前等待GO，建立Job Object后才放行；超时或取消文件出现会终止本次自有进程树，
-父进程正常退出也回收仍存活的子进程。取消文件不自动删除，已存在时不启动worker。
-报告worker.status区分completed/failed/timed_out/cancelled/cancelled_before_start；只有报告与退出状态均通过才成功。
-启动失败同样返回failed和error；phase区分spawn/limits/release/run。started仅表示创建了进程，
-released仅表示已发送GO，不证明负载完成；创建进程和建立限额后须再次核对取消/截止时间，过期或取消不放行。
-内存上限约束进程树提交内存，分配失败可能表现为异常或崩溃；不把未知退出归因为OOM，不限制GPU显存、外部服务或用户主Houdini。
-[worker回归](../tools/tests/dsh-worker-limits.test.py)用小型Python进程验证截止时间、取消、分配拒绝和后代回收，
-并验证启动/限额失败、放行前取消/过期与提前退出；
-[HDA回归](../tools/tests/dsh-hda-delivery.test.py)在H21/H22验证真实受限worker。
-HDA按钮若切入Manual或output cook失败，检查器拒绝继续读取几何，不把隐式重算/缓存当作通过。
-
-### 隔离构建与cook/cache/ROP检查
-
-[isolated-houdini-check.py](../tools/isolated-houdini-check.py)随包提供，显式`--trusted`才执行可信构建脚本及其依赖。
-构建脚本在全新hython场景中经Bridge主线程执行，获得hou与现有动词，Raw Gate默认开启；不提供allow_raw/allow_foreign，
-检查目标须为本次builder创建的identity。不加载HIP、不自动快照live场景、不启动HTTP服务或模型，也不恢复/重提未知请求。
-构建代码不是普通`__main__`模块；相对材料用`$HIP/inputs/...`，不依赖`__file__`或调用者cwd。
-
-最小builder与manifest如下，文件路径相对manifest所在目录：
-
-```python
-g = tab_create('/obj', 'geo', name='asset')
-tab_create(g, 'box', name='OUT')
-```
-
-manifest接受UTF-8（可带BOM）。`expect_geometry`可组合`points/primitives`、`bounds_size:[x,y,z]`、
-`point_cd:[r,g,b]`及`tolerance`（默认1e-6）；至少一个判据，output为实例相对路径，SOP公共输出用`.`。
-尺寸使用所选SOP局部单位，point_cd检查全部点（最多100万点，不抽样），不证明材质外观或完整参数域。
-例如普通盒子与宽度变化应使用尺寸判据，不能仅以两者都有8点6面验证宽度绑定：
-
-```json
-{"assets":["asset.hda"],"category":"Sop","type":"example::shape::1.0","cases":[
-  {"id":"default","expect_geometry":{"output":".","bounds_size":[1,1,1],"point_cd":[0.8,0.3,0.1]}},
-  {"id":"wide","values":{"width":2},"expect_geometry":{"output":".","bounds_size":[2,1,1]}}
-]}
-```
-
-字段取决于交付资产真实接口，不自动创建width/Cd。`values`写实例参数，`expect_parms`只回读参数；
-`menus`核对token列表、`buttons`调用真实按钮、`expect_error`匹配预期回调错误。它们不能替代几何响应。
-回归：[交付几何](../tools/tests/dsh-delivery-geometry.test.py)与[完整交付](../tools/tests/dsh-hda-delivery.test.py)
-覆盖正确颜色/尺寸，以及点面数相同但尺寸错、颜色缺失/错误的负例和BOM。
-
-```json
-{"script":"build.py","checks":[{"id":"out","kind":"cache","node":"/obj/asset/OUT","frame":1,"file":"out.bgeo.sc","expect":{"points":8,"primitives":6}}]}
-```
+[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在新场景执行可信 builder，经 Bridge 完成明确 cook/cache/ROP 检查。manifest 指定 script 和 checks；`--trusted` 表示调用方授权执行该脚本。产物目录是仓库外的新目录，报告保留实际执行与文件证据。
 
 ```powershell
 python tools/isolated-houdini-check.py --trusted --manifest path/to/check.json --hython D:/houdini/bin/hython.exe --output-dir D:/checks/run-001 --timeout 120 --memory-mb 4096
 ```
 
-output-dir必须是仓库外尚不存在的目录且父目录已存在；重复目录拒绝，不覆盖旧证据。inputs保留脚本及可选files清单的副本和SHA-256，
-只复制至多32个显式依赖文件、不扫描依赖闭包，拒绝路径别名/穿越/reparse。builder至多1MiB，输入合计至多2GiB，JSON至多4MiB。
-checks为1..16个唯一id的显式node/frame；cook要求非空SOP，cache另写bgeo/bgeo.sc并回读点面数，expect可检查points/primitives。
-render执行明确ROP，以render_frame验证新鲜非空文件与错误；支持常见图片或bgeo输出，文件通过不认证图像内容/渲染器泛化。
-每项产物位于artifacts/id/file；父进程在worker正常退出后复核全部检查、runtime关联及文件字节/SHA-256，不能仅凭ok标记或退出码成功。
-request.json、worker-result.json和report.json保留请求、阶段、Bridge回包和最终worker状态；超时/取消/失败均不自动重试，已有部分产物不算完整交付。
---cancel-file与内存/超时机制复用上述自有进程树合同；timeout约束worker启动后的运行，不包含父进程输入暂存。
-脚本/导入/HDA回调的绝对路径、外部服务和GPU副作用不在隔离/恢复保证内；该工具不是恶意代码沙箱，传入文件必须获准执行。
+[isolated-worker.py](../tools/isolated-worker.py)及 [Houdini worker](../houdini/python3.11libs/dsh_isolated_worker.py)是开发评测使用的自有新进程入口；[worker 回归](../tools/tests/dsh-isolated-worker.test.py)验证明确 IPC、启动与回收。[delivery-audit](../tools/delivery-audit.mjs)只在开发评测中从会话回执读取交付事实。它们不进入模型的生产工具目录。
 
-[离线合同](../tools/tests/dsh-isolated-manifest.test.py)纳入部署runner；[真实worker回归](../tools/tests/dsh-isolated-houdini.test.py)
-在H21/H22覆盖cook/cache/ROP、输入不变、Raw Gate、Manual、空输出、取消/超时与产物篡改；
-[可选Karma CPU回归](../tools/tests/dsh-isolated-render.test.py)验证实际图片尺寸/像素，不替代艺术质量或live端到端验收。
+隔离工具通过自有进程句柄和 Windows Job 管理超时、取消及进程树内存。报告与退出状态都要读取；不把启动成功当作负载完成。任意 Python、回调、绝对路径文件和外部服务的副作用不属于场景恢复保证。
+
+收费任务只在用户授权的模型与预算范围内运行 [run-modeling-trial.py](../tools/run-modeling-trial.py)。使用隔离任务目录、精确 DSH/Node/Houdini 和选定模型配置；自然试验不修改用户 live。评审答案不进入生产提示词或用于未见题调参。
+
+## 分支与接续入口
+
+接续或合并前先核对 `git status --short`、`git branch -a -vv`、`git worktree list` 和相关提交，再读目标分支 handoff。不同工作树的文档描述各自提交，main 不代表全部尚未合并的工作。
+
+现役设计原位替换，不在 docs 追加版本叙事、试验流水或 session 记录。历史保留在 Git；日志、耗时、截图、评测 HIP 和本机材料放会话、CI、tools/out 或仓库外目录。
+
+### 交接文档生命周期
+
+handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动作、阻塞和验证缺口。每项写现状、下一步、移除条件和仓库内入口；完成后删除整项。保持一份文件，不按日期分叉，不把历史成功继续标为活动项。没有待办时写“当前无待交接事项”。
+
+## 运行与发行
+
+Host/Bridge/helper 变更通过 `Version & Diagnostics → Advanced diagnostics → Repair and restart runtime` 加载；package/menu/WebView 变更需要完整重开 Houdini。源码构建通过与 live 已加载分别判断；只有实际版本、握手和用户路径验证后才声明运行更新生效。重启用户进程和修改用户 HIP 需要当前授权。
 
 ### 发行操作与信任配置
 
-运行依赖唯一锁在[deployment/package-lock.json](../deployment/package-lock.json)，根DSH版本与兼容preferred必须一致；
-[runtime.json](../deployment/runtime.json)固定Windows x64、Node版本与官方分发摘要。发布前核对依赖许可证与包内third-party-notices.json；不省略上游LICENSE。
-维护者可用 `node tools/release-sign.mjs import-lock 路径`导入已验证的完整npm锁；生成后必须用npm ci和真实包smoke资格验证，不能只锁根包。
+正式安装流程见 [setup](setup.md)，支持组合及发行门见 [兼容设计](dsh-update-compatibility.md)。发行包使用 deployment 锁定的完整依赖树和 Node 分发摘要；普通源码 build 不等同用户发行安装。
 
-受信发布身份以[公钥清单](../installer/release-trust.json)为准，日常发布复用对应私钥；不重复生成同一key ID，也不提交私钥。
-仅首次建立身份或轮换时使用keygen，并为新身份选用新路径与新key ID：
-
-```powershell
-node tools/release-sign.mjs keygen D:/Secure/dsh-release-next.pem D:/Secure/dsh-public-next.json release-key-next
-# 仅新身份/轮换时执行上行；审核新公钥后合入installer/release-trust.json，不覆盖仍受信的旧key。
-# 以下使用已配置的release-key-1发布，私钥路径换成本机安全存放位置：
-python tools/build-release.py --unsigned --output tools/out/release --key-id release-key-1
-# 在独立签名环境、同一已审核tag checkout中放入上一步产物：
-$env:DSH_RELEASE_SIGNING_KEY='D:/Secure/dsh-release.pem'
-python tools/finalize-release.py --directory tools/out/release --key-id release-key-1
-```
-
-正式构建要求干净checkout、匹配package版本的已存在vMAJOR.MINOR.PATCH标签，以及已提交的公钥。
-构建器生成unsigned payload与release.json，独立finalize才签名并生成release.sig.json、轻量安装器和offline.zip；两者均不发布GitHub Release。
-当前受信key ID为release-key-1；实际私钥不随源码分发，维护者须单独安全备份并配置受保护签名环境。缺少公钥或未知key仍fail-closed。
-显式 `--candidate --trust 临时公钥文件`可对未提交源码做隔离测试；candidate签名包不被普通面板接受，也不可冒充正式验收。
+正式发布前覆盖 H21/H22 必要执行和安装入口。发布使用 [build-release](../tools/build-release.py)、独立 [finalize-release](../tools/finalize-release.py)和受信公钥；私钥只存在于签名环境。main push、tag、Draft 均不构成正式发布。
 
 ```powershell
 python tools/run-deployment-tests.py
-python tools/run-deployment-tests.py --hython 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/hython.exe' --hython 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/hython.exe'
-python tools/tests/dsh-deployment-e2e.test.py --bundle tools/out/release --trust installer/release-trust.json --hython 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/hython.exe' --hython 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/hython.exe'
+python tools/run-deployment-tests.py --hython D:/houdini/bin/hython.exe --hython D:/Houdini22/bin/hython.exe
 ```
 
-离线回归覆盖签名拒绝、路径穿越/别名/重复/特殊文件、取消、磁盘/原子写入失败、进程互斥、数据快照/回退、引导损坏修复和真实Qt控件。
-e2e从真实签名包安装到隔离目录，使用包内Node启动DSH并验证profile、全局/会话端口、401/200鉴权RPC、自有进程回收；
-指定hython后还在实际安装目录执行Node→HTTP→Houdini主线程只读调用及合同握手，不调用收费模型、不访问用户HIP。
-测试产物和截图留在临时目录或tools/out；发行包中不携带测试私钥、会话或测试基准。
-
-真实GUI发行验收使用[GUI测试](../tools/tests/dsh-gui-release.test.py)：
-
-```powershell
-python tools/tests/dsh-gui-release.test.py --bundle tools/out/release --trust installer/release-trust.json --houdini 'C:/Program Files/Side Effects Software/Houdini 21.0.440/bin/houdini.exe' --houdini 'C:/Program Files/Side Effects Software/Houdini 22.0.368/bin/houdini.exe'
-```
-
-测试只新开自有GUI进程、临时偏好和测试HIP，清除模型凭据及系统Node/Git的PATH；覆盖进程启动钩子、Open Workspace、Houdini模式会话、
-真实Qt WebView鉴权、Node→GUI主线程只读调用、重复打开不重启/不新增会话和正常退出码。通过不代表另一台物理机器或模型质量已验证。
-退出测试必须走Houdini主窗口关闭路径，不能从PySide timer抛SystemExit后把崩溃的进程当成功；截图/通过标记也不能代替退出码。
-独立GUI评审在render_view后保留持久OpenGL服务，另存评审工作副本再关主窗口；同进程不清空HIP。
-每次尝试用新的产物目录，记录PID、最后进度、退出码和同期WER，不能用成功重跑覆盖首次失败。
-GUI按厂商快捷方式以对应Houdini安装bin为启动目录，HIP与DSH工作区另用临时目录；H22 Qt子进程的DLL查找不能用任意cwd假设替代，不通过禁用沙箱掩盖环境错误。
-
-[普通CI](../.github/workflows/ci.yml)在push/PR上只做源码检查；[发行流程](../.github/workflows/release.yml)仅显式workflow_dispatch，
-使用Windows/Houdini自托管runner、仓库变量H21_HYTHON/H22_HYTHON/RELEASE_KEY_ID及受保护release环境中的RELEASE_PRIVATE_PEM。
-assemble、sign、verify-signed、draft为分离job：构建/验收只在无签名密钥的自托管环境运行，签名在干净托管runner且不执行payload/npm，草稿上传也不执行payload。
-Actions引用固定commit，签名任务只接受当前审核tag的版本/commit/Node/DSH身份。通过后只上传Draft；启用仓库immutable Releases并完成真实Houdini用户路径后，维护者才明确发布。
-PR不得在持有许可证的自托管runner上任意执行；不能让依赖安装脚本或安装客户端接触发布密钥。
-首发也可由维护者手动执行同样的构建、独立签名、双版本CLI/GUI验收，再上传Draft并验证下载字节；不要求先部署常驻runner。
-手动路径同样先准备全部资产、启用immutable Releases，再明确发布；Git凭据仅用于官方仓库API，私钥不进入构建环境或上传到Git。
-
-## 5. 领域与真实运行验收
-
-普通subnet片段用[隔离驱动](../tools/tests/run-component-exchange.py)接收一个或多个hython完整路径，
-分别运行[片段回归](../tools/tests/dsh-component-exchange.test.py)、[公开帮助示例](../tools/tests/dsh-component-public-help.test.py)与独立export/import/reopen进程。
-加--boundaries运行raw-gate、ownership、caught-failure、tab-create-failure、object-parenting、scene/network/render、公共输出和集成回归。
-不启动模型、不加载用户HIP；测试创建的临时fixture保留供检查。仅证明首版自包含subnet候选往返，不核销完整组件协作。
-
-组件进程用[双worker测试](../tools/tests/dsh-component-worker.test.py)传hython完整路径；传houdini.exe并加--gui时另验真实预览。
-隔离交付worker预留`final.hip`后不自动保存；GUI若在显式保存后又有场景修改，STOP写`stop-state.json`报告`unsaved_final_scene`并回收自有进程，不弹保存对话框，也不把较早文件算最终交付。用`--gui --expect-dirty-final`验H21/H22拒绝反例。
-[DSH组件链路](../tools/tests/dsh-component-loop.test.py)传Node、已构建的候选DSH bin.js和hython，使用隔离Web profile与确定性adapter，
-验证两子任务在主HIP同目录`dsh-components`下各有独立workspace/执行端、导出/主作者导入/共享控制恢复；
-传未修改DSH并加--expect-cwd-rejection验证首次模型前拒绝。
-这些驱动保留临时fixture供复核，日志可能有本次Host鉴权URL，禁止直接对外贴原始token；不访问用户账号或收费模型。
-源码一键组件预览的Host/登记组合用[run-component-preview-registration.py](../tools/tests/run-component-preview-registration.py)
-传已构建cwd候选DSH bin.js和H21/H22 hython完整路径；它在隔离新HIP及profile上验证自有动态Host与执行端发现。
-[run-component-preview-gui.py](../tools/tests/run-component-preview-gui.py)传H21/H22 hython路径验证内嵌页动态origin，
-CLI/Python菜单拒绝反例见[dsh-component-preview.test.py](../tools/tests/dsh-component-preview.test.py)。
-隔离GUI菜单启动用[run-component-preview-menu.py](../tools/tests/run-component-preview-menu.py)传已构建DSH bin.js和H21/H22 houdini.exe，
-只创建夹具HIP/profile、打开内嵌页并回收自有进程；不执行模型。这些测试不证明当前用户live加载或自然任务，
-菜单变更后须完整重开Houdini再验。
-
-教程执行边界用[dsh-tutorial-contracts](../tools/tests/dsh-tutorial-contracts.test.py)在H21/H22隔离回归：
-单层/叠面/实体反例、延迟HDA后代登记与foreign保留、删除后消费者回读、Data参数批次零写拒绝。
-教程优先回看、目的理解及完整交付的自然采用另按video skill复现协议验收，不由机制测试核销。
-
-COP用[dsh-cop-contracts](../tools/tests/dsh-cop-contracts.test.py)在隔离H21/H22通过Bridge验证具名
-源/目标端口、动态签名、零写拒绝/ownership/Gate/回滚、原生多通道/整数图层、对齐差值与预算/Manual。
-大依赖原生HDA组合另验图层差值、控制恢复、sticky Cache及节点/边/时间预算拒绝；H22 USD Material
-精确同型连线与错型零写入分别检查，不将原生预检假阴性扩大成所有COP允许隐式转型。
-控制测试含错口仍cook的反例、正确响应、参数/keys/frame与完整buffer恢复、扰动及恢复故障；
-交付含浮点EXR导出/读回和隔离自建HIP重开。部署runner纳入此套；不连接live，不证明自然模型采用或视觉质量。
-
-计算策略用[隔离cook回归](../tools/tests/dsh-cook-control.test.py)验证已知VEX不终止模式写前拒绝、Manual元数据读取、显式更新模式与普通cook；
-覆盖几何/构建/相机/渲染入口的Manual零计算/零修改、未知输出与空输出区分，以及失败cook后不得隐式重试。
-协作超时依赖原生进度检查点，普通cook成功不证明任意原生操作可取消；内存限制/运行中取消/身份持久恢复仍以handoff待办为准。
-
-视频解析离线回归使用 `python tools/tests/video-tutorial.test.py`（宿主 Python 3.11+，不需要 HOM、
-密钥或网络），覆盖授权、分片覆盖、续跑、失败/未知请求、证据损坏和抽帧边界。
-真实媒体/云验证使用[video skill](../skills/houdini-video-tutorial/SKILL.md)的准备与小片段路径，
-在仓库外运行，云提交需当前用户授权；FFmpeg、服务响应、语义识图和教程复现分别验收。
-不得把默认离线回归改为联网上传教程，测试数据与转录不进入包。
-
-Rig的可执行入口是[rig skill](../skills/houdini-rig-animation-workflow/SKILL.md)、
-[rig参考](../skills/houdini-rig-animation-workflow/references/rig-animation-patterns.md)及
-[隔离KineFX回归](../tools/tests/dsh-kinefx-fk.test.py)，不依赖删除的一次性probe。
-Render真实像素与managed viewport恢复使用[OpenGL smoke](../tools/camera-opengl-smoke.py)或
-[Karma smoke](../tools/camera-karma-smoke.py)，需区分文件/像素与语义识图。
-新技能/提示只有新session能验证曝光；可复现功能测试与未见建模任务的质量/效率证据分开。
-
-产品定义真实Host链路使用 `python tools/tests/dsh-product-loop.test.py <Node完整路径> <精确DSH-bin.js完整路径>`，
-加`--product-mode`另测显式模式：拒绝的执行/任务零Bridge请求、定义前结构化保存、持久化计划后的执行、状态投影与序列化重载。收费试验驱动`tools/run-modeling-trial.py --product-mode`仅修改该试验的隔离作者配置并记录模式；省略则仍为普通模式，不修改用户live或全局设置。
-通过[本地确定性adapter](../tools/tests/product-loop-fixture.mjs)检查首次请求的视觉能力、实际工具canonical落盘、下一步缺项提示、
-最终输出测量绑定和序列化Session重载。使用全新DSH_HOME与严格假Bridge，不调用收费模型或Houdini，不证明自然采用。
-控制截图真实GUI回归使用[独立驱动](../tools/tests/run-control-review-gui.py)：给`--houdini`和仓库外新/空`--output`，
-分别运行H21/H22；[GUI夹具](../tools/tests/dsh-control-review-gui-fixture.py)只创建自有新HIP，检查共享取景/深度、实际PNG、
-越界未渲染但数值报告保留，以及参数/keys/frame/bgeo/selection/flags恢复。隐藏进程超时仅终止本次自有fixture。
-真实出图与固定相机不认证作者看图或产品视觉质量；正常入口live与未见任务另验。
-
-Host/Bridge/helper更新使用诊断中的Repair and restart runtime；package/menu/WebView变更完整重开Houdini。
-只有实际进程版本、工具握手与目标用户路径验证后才能声明live已加载。
-源码检查不授权重启服务；安装与操作流程见[setup](setup.md)，升级兼容门见[兼容设计](dsh-update-compatibility.md)。
-
-原生构造计划与参数状态规划用[配方回归](../tools/tests/dsh-procedural-plans.test.py)在隔离H21/H22验证实际SOP、
-非零旋转中心/方向、附件接点、数量变化、零写入反例及覆盖缺口；空expectations必须拒绝进入控制验收。
-[Packed与高细节回归](../tools/tests/dsh-packed-evidence.test.py)验证内嵌/嵌套内容指纹、真实变换、最终组、
-近千面实体相交、完全包含、超过两万面的分区观察和恢复；磁盘Packed不在展开合同内。
-付费自然任务驱动[run-modeling-trial.py](../tools/run-modeling-trial.py)仅在用户明确模型/付费授权后运行，
-必须显式传--allow-paid、冻结插件副本、新任务目录、精确DSH/Node/Houdini、凭据文件路径及已验证settings.yaml路径；预先登记时限与题面。
-不连接live，不回写源材料，不因失败自动再试到满意；正常结束也须独立重开HIP核对。
-
-自然试验必须通过[配置准备器](../tools/prepare-model-settings.mjs)只继承所选provider/model设置；
-不得只复制凭据后用内置目录推断模型图像能力。--require-image-input使图像任务在缺能力声明时写前拒绝，
-仍需真实图片请求验证传输与语义；源用户配置和其他provider不修改。回归见[设置隔离](../tools/tests/model-settings.test.mjs)。
-[米制与结构回归](../tools/tests/dsh-meter-structure.test.py)在H21/H22验证源量纲转换、1000倍反例、旧单位显式适配、
-全行程范围、表面附着随厚度变化和失败清理；图像模型已能读图不替代这些数值检查。
+这是发行/部署回归入口，日常按改动选择检查。真实安装与 Qt 页面验收在新的自有进程和临时目录中执行；当前缺口只记 handoff，不在这里积累每次尝试。

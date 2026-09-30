@@ -50,7 +50,7 @@ export function taskSources(events: readonly Event[], claimed?: any): Source[] {
     if (event.type === 'tool/result' && questions.has(id) && !settled.has(id)) {
       settled.add(id)
       const blocks = d.message.content
-      if (!Array.isArray(blocks) || d.isError || d.meta?.isError || blocks.some((b: any) => b.isError)) continue
+      if (!Array.isArray(blocks) || d.message.isError || d.isError || d.meta?.isError || blocks.some((b: any) => b.isError)) continue
       add('clarification_answer', event, content(blocks), d.message.id, id)
     }
   }
@@ -86,7 +86,7 @@ export function projectTaskSources(events: readonly Event[], claimed?: any, reco
       objective_excerpt: typeof objective === 'string' ? objective.slice(0, 500) : null,
       text_truncated: typeof objective === 'string' && objective.length > 500,
       provenance: 'Reported plan only; not a replacement for user requirements or proof of completion.' } : null,
-    read: 'houdini_query(source_ref="index", offset=0, limit=6000) lists available sources; source_ref=<hash> reads a source. Pages are JSON text. No Houdini execution.',
+    read: 'houdini_resource(kind="source", ref="index", offset=0, limit=6000) lists available sources; ref=<hash> reads a source. Pages are JSON text. No Houdini execution.',
     boundary: 'Available current-session sources only, not a complete requirement register. Excerpts may omit obligations. Questions are model-authored; answers are recorded tool replies, not inferred choices. Nontext content is not interpreted. Later messages may add, correct or replace work: resolve intent from originals, never from order alone. No authorization or acceptance is derived.' }
 }
 

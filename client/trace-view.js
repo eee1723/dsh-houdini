@@ -221,13 +221,7 @@ function createTraceView(React, catalog, sources, trace, css) {
     return structured(direct ?? value);
   }
   function View(props) {
-    const snapshot =
-      typeof props.useTrajectory === "function"
-        ? props.useTrajectory((s) => s)
-        : props.useSession(
-            (s) =>
-              s?.views?.get?.("trajectory") || { eventNodes: s?.nodes || [] },
-          );
+    const snapshot = props.useTrajectory((s) => s);
     const data = React.useMemo(() => model(snapshot), [snapshot]);
     const [tab, setTab] = React.useState("timeline");
     const [filter, setFilter] = React.useState("all");
@@ -1200,14 +1194,7 @@ function createTraceView(React, catalog, sources, trace, css) {
               ),
               table(
                 ["入口", "职责"],
-                [
-                  ["houdini_query", "只读观察、历史来源与视觉能力预检"],
-                  ["houdini_exec", "场景修改与作者验证"],
-                  ["houdini_job_submit", "长操作排队提交"],
-                  ["houdini_job_status", "状态与结果"],
-                  ["houdini_job_cancel", "协作式取消"],
-                  ["houdini_product", "Host产品定义与历史测量覆盖"],
-                ],
+                Object.entries(sources.tools).map(([name, tool]) => [name, tool.purpose]),
               ),
             )
           : null,

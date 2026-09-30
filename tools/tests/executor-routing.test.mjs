@@ -7,13 +7,13 @@ import {pathToFileURL,fileURLToPath} from 'node:url'
 import {Context} from '@deepseek-ai/cordis'
 import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
-import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-presets'
+import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-preset-registry'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
 import {registerExecutorIdentityProjection} from '../../lib/executor-identity-projection.js'
 import * as executorHost from '../../lib/executor-host.js'
-import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/executor-binding.js'
+import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 
@@ -26,7 +26,7 @@ const routeCounts=[{},{}]
 try {
   for(let i=0;i<2;i++) {
     const id=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='task-'+i
-    const session=Session.create(task,[],{version:3,id:task,createdAt:1,isSeeded:false,agentPreset:'houdini'})
+    const session=Session.create(task,[],{version:4,id:task,createdAt:1,isSeeded:false,agentPreset:'houdini'})
     agents.push({id:task,status:'idle',session})
     const server=http.createServer(async(req,res)=>{
       res.setHeader('content-type','application/json')
@@ -39,7 +39,6 @@ try {
           executionContractVersion:version,verbCatalog:{hash},requestRef:runtime+'.'+'a'.repeat(32)}));return
       }
       if(req.url==='/exec'||req.url==='/jobs') {
-        assert(flushed.includes(task),'never execute before target durability')
         assert.equal(body.owner_session,task,'a shared tool instance sent the other task to this Bridge')
       }
       if(req.url==='/jobs') {
@@ -72,23 +71,9 @@ try {
   const flush=async s=>{flushed.push(s.id);return true}
   const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
-    new ExecutorBindingBarrier(flush),identityOf)
+    new ExecutorBinding(),identityOf)
   assert.equal((await router.directory.list()).length,2,
     'the exact configured installation must retain its registry records')
-  const childWorkspace=path.join(directory,'child-workspace')
-  const child={id:agents[0].id,session:Session.create(agents[0].id,[],{
-    version:3,id:agents[0].id,createdAt:1,isSeeded:false,parentSession:'parent',cwd:childWorkspace})}
-  await assert.rejects(router.prepareComponent(child,records[0],'wrong-parent',childWorkspace),/identity mismatch/)
-  await assert.rejects(router.prepareComponent(child,records[0],'parent',directory),/identity mismatch/)
-  await assert.rejects(router.prepareComponent(child,{...records[0],runtime_id:'f'.repeat(32)},'parent',childWorkspace),/registration changed/)
-  const late={id:agents[0].id,session:{id:agents[0].id,header:child.session.header,
-    snapshotEvents:()=>[{type:'step/start',data:{}}],append:()=>{throw Error('must not append')}}}
-  await assert.rejects(router.prepareComponent(late,records[0],'parent',childWorkspace),/precede every model step/)
-  await router.prepareComponent(child,records[0],'parent',childWorkspace)
-  assert.equal(recordedExecutorIdentity(child.session.snapshotEvents()),records[0].executor_id)
-  const noFlush=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
-    new ExecutorBindingBarrier(async()=>false),identityOf)
-  await assert.rejects(noFlush.prepareComponent(child,records[0],'parent',childWorkspace),/durable/)
   const ctx=new Context()
   const projections=new SessionProjectionRegistry(ctx)
   projections.register(agentPresetProjectionDefinition)
@@ -96,7 +81,7 @@ try {
   ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
   const controller=new ExecutorController(ctx,router)
   assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
-  const different=Session.create('not-houdini',[],{version:3,id:'not-houdini',createdAt:1,
+  const different=Session.create('not-houdini',[],{version:4,id:'not-houdini',createdAt:1,
     isSeeded:false,agentPreset:'houdini'})
   different.append('agent-preset/selected',{agentPreset:'standard'})
   agents.push({id:'not-houdini',status:'idle',session:different})
@@ -144,7 +129,7 @@ try {
   assert(boundList.candidates.every(r=>r.binding_status==='bound'))
   await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/recovery/)
   const defs=new Map()
-  registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)},sessions:{flush}},router)
+  registerHoudiniTools({on(){},tools:{register:d=>defs.set(d.name,d)}},router)
   const values=await Promise.all([0,1].map(i=>defs.get('houdini_exec').execute({code:'pass'},context(i,'exec'))))
   assert.deepEqual(values.map(v=>v.result.target),records.map(r=>r.executor_id))
   await Promise.all([0,1].map(i=>defs.get('houdini_job_submit').execute({code:'pass'},context(i,'submit'))))
@@ -194,8 +179,6 @@ try {
     registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
     new AbortController().signal),/fixture projection conflict/)
   await assert.rejects(controller1.getRouter(directory).sceneContextFor(agents[0].session),/fixture projection conflict/)
-  await assert.rejects(controller1.getRouter(directory).prepareComponent(child,records[0],
-    'parent',childWorkspace),/fixture projection conflict/)
   assert.equal(JSON.stringify(routeCounts),beforeRejectedRoute,'projection conflict must precede Bridge traffic')
   hostProjections.stateOf=stateOf
   const oldBridge=await consumerB.resolve(context(1))
@@ -223,7 +206,7 @@ try {
   await assert.rejects(router.resolve(context(0)),/generation changed/)
   await write({...records[0],task_id:null,hip_path:null})
   await assert.rejects(router.resolve(context(0)),/writer reservation/)
-  console.log('shared executor routing: explicit durable selection, concurrent tools, job isolation, disconnect and fail-closed discovery passed')
+  console.log('shared executor routing: explicit selection, concurrent tools, job isolation, disconnect and fail-closed discovery passed')
 }finally{
   await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))))
   await fs.rm(directory,{recursive:true,force:true})

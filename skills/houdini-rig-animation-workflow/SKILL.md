@@ -8,21 +8,19 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 先选择正确的状态模型，再写 key、建节点或看画面。目标是留下当前 Houdini 版本中可维护、
 可验证的 channel/piece/skeleton/rig，而不是让“有东西动了”替代运动契约。
 
-## 分类门
+## 选择表示
 
-构建前把用户意图归入一个主模型；混合任务可分阶段联用：
+按用户目标、可编辑方式和下游交付选择表示；混合任务可联用：
 
 - 普通参数、对象、灯光、镜头：channels/keyframes；
 - 独立刚体 pieces、装配、魔方：stable identity + packed/template transforms；
-- 新建几何父子机械/FK：KineFX joints；`/obj` 只表示创建位置，不授权 OBJ hierarchy。首个 mutation
-  前必须读 reference §3.1；
-- OBJ parenting 只用于 camera/light/null 等场景装配、既有 legacy、用户明确要求或下游 OBJ 交付；
-  使用 `set_object_parent(child,parent,reason=...)`，不用 `connect`，细节见 reference §3.2；
+- 几何父子机械/FK：OBJ hierarchy、KineFX joints 或显式矩阵都可表达；按所需控制、导出和编辑方式选择。
+  KineFX 的最小构建方法见 reference §3.1；OBJ hierarchy 使用 `set_object_parent(child,parent)`，细节见 §3.2；
 - skeleton + skin：KineFX capture pose + animated pose + Joint Deform；
 - animator-facing controls、constraints、FK/IK：KineFX + APEX；
 - 物理运动：SIM/RBD/ragdoll，不能用 keyframe 完成门代替 solver/cache 契约。
 
-没有完成分类、rest/current state 和身份契约前，不建复杂 rig。
+复杂 rig 宜先明确 rest/current state 和被驱动对象身份，再构建最小可观察单元。
 
 简单的单 channel/单节点编辑直接完成并回读；跨层级、capture/deform、非交换状态、solver 或正式
 动画交付才写下面的紧凑合同。合同可放 prose 或 todo，不为满足格式输出长篇计划。
@@ -43,7 +41,7 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 
 ## 高效执行
 
-- 命中 KineFX §3.1 或 OBJ 例外 §3.2 时先读对应小节；已有 H21/H22 fast path 就直接使用，只探测
+- 选择 KineFX §3.1 或 OBJ §3.2 时可读对应小节；已有 H21/H22 fast path 就直接使用，只探测
   当前任务真正未知的类型、参数或输入。不要把 HDA internals 当默认文档。
 - 未知契约依次用 `verb_help`、Tab/parm/describe、自包含单变量 probe、本机 help；只有公开合同与
   runtime 冲突时才进入 HDA 内部。

@@ -70,7 +70,7 @@
 | 内容 | 权威来源 / 注册入口 | 需要保留的区别 |
 |---|---|---|
 | DSH身份、默认persona及其他系统段 | Host最终组装/模型请求；DSH SystemPrompt注册表 | 开关、作用域遮蔽、顺序、complete覆盖与最终生效情况 |
-| Houdini persona | [persona.md](../presets/houdini/persona.md)、[开发persona](../presets/houdini-dev/persona.md)生成preset，经persona插件挂载 | 手写来源、生成preset路径与本次实际生效内容；不能只按磁盘文件断言已加载 |
+| Houdini persona | [persona.md](../presets/houdini/persona.md)生成preset，经persona插件挂载 | 手写来源、生成preset路径与本次实际生效内容；不能只按磁盘文件断言已加载 |
 | 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
 | 消息指代现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 按需采集一次的独立plugin消息；绑定消息/时间，选择不构成目标或授权；历史整包snapshot按当时来源展示 |
 | 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state/context-recovery | 涵盖未决请求、检查失效、失败/未验证的产品合同、运行身份变化及历史替换恢复；保留真实被检路径和合同范围，普通回包/计数不追加，不是现场通过证书 |

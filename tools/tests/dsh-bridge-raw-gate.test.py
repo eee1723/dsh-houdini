@@ -97,7 +97,7 @@ query_mutation = dsh_bridge.run_code(
     read_only=True,
 )
 assert query_mutation["ok"] is False, query_mutation
-assert "houdini_query is read-only" in query_mutation["error"], query_mutation
+assert "houdini_inspect is read-only" in query_mutation["error"], query_mutation
 assert float(hou.frame()) == original_frame, query_mutation
 
 query_alias = dsh_bridge.run_code(

@@ -56,10 +56,6 @@ if attention:env['DSH_ATTENTION_FIXTURE']='1'
 if flush_mode:env['DSH_ATTENTION_FLUSH_FAILURES']=flush_mode
 subprocess.run([node,str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'),cli,env['DSH_HOME'],str(ROOT)],
     cwd=ROOT,env=env,check=True,timeout=60,capture_output=True)
-for name in ('houdini','houdini-dev'):
-    file=fixture/'home/.agent-presets'/name/'agent.cordis.yml'
-    file.write_text(file.read_text(encoding='utf-8').replace('bridgeUrl: http://127.0.0.1:8765',
-        'bridgeUrl: '+env['DSH_HOUDINI_BRIDGE_URL']),encoding='utf-8')
 overlay=fixture/'fixture.yml'
 overlay.write_text('- insert:\n    - id: binding-fixture\n      name: '+(ROOT/'tools/tests/binding-loop-fixture.mjs').as_uri()+'\n',encoding='utf-8')
 with socket.socket() as probe:probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]

@@ -8,8 +8,8 @@
 
 ## 最小合同
 
-复杂产品可用`houdini_product(action="schema")`读取格式，再define会话需求记录，帮助连续修改时保留要求与证据。`productMode`只提供领域工作提示；模型按任务需要选择记录与检查，代码执行、任务提交和保存不要求先登记数量、尺寸或计划。结构化保存用`houdini_exec(checkpoint={expected_path:已命名HIP})`，与code/allow_raw互斥。
-先用`houdini_query(source_ref="index")`列来源、按引用回读原文；定义只引用当前session的用户材料或澄清回答。
+
+原始资料通过`houdini_resource(kind="source", ref="index")`列目录，再按ref分页读取。
 define必须直接调用Host工具，Code Mode/PTC嵌套写入会拒绝；schema/read/review可用于嵌套读取。
 下表是提取要求的检查角度，不是第二份可写核验表；将相关内容放入定义的要求描述与假设，未知项显式保留：
 
@@ -81,7 +81,7 @@ controls / reference dimensions
 
 按任务目标选择需要的检查，简单修改不必执行完整阶梯。
 
-1. **要求核对**：来源、假设、LOD、控制及各状态关系足以决定建模路径；可选产品定义帮助记录。先查Host视觉能力提示，缺失或路由变化时用`houdini_query(capabilities="visual")`补查。模型能力元数据不证明渲染或识图成功，受限时在投入大量视觉细化前说明。
+1. **要求核对**：来源、假设、LOD、控制及各状态关系足以决定建模路径；可选产品定义帮助记录。先查Host视觉能力提示，缺失或路由变化时用`houdini_capabilities()`补查。模型能力元数据不证明渲染或识图成功，受限时在投入大量视觉细化前说明。
 2. **骨架门**：只建 anchor/中心线/代理体，先验证比例、轮廓和关系，未通过不加装饰。
 3. **模块门**：把当前关键模块作为局部交付物，验证输入/输出、内部几何、属性、cook、细节与参数响应；聚焦与交接的唯一流程见[模块合同](module-quality-contracts.md#模块聚焦与交接)。
 4. **集成门**：先核对必需部件在最终输出中的成员与基数，再按关系清单检查实际实例的连接、包含、间隙、禁止相交和 warning；局部通过与集成通过分开，非退化统计只是其中一项。

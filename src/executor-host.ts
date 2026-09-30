@@ -4,12 +4,12 @@ import Schema from '@deepseek-ai/schemastery'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
-import {ExecutorBindingBarrier} from './executor-binding.js'
+import {ExecutorBinding} from './executor-binding.js'
 import {ExecutorController} from './executor-controller.js'
 import {projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
 
 export const name='dsh-houdini-executor-host'
-export const inject=['sessions','agents','sessionProjections']
+export const inject=['agents','sessionProjections']
 export interface Config {executorRegistry:string;requestTimeoutMs:number}
 export const Config:Schema<Config>=Schema.object({
   executorRegistry:Schema.string().required(),requestTimeoutMs:Schema.number().default(120000),
@@ -18,8 +18,7 @@ export function apply(ctx:Context,config:Config):void {
   if(ctx.get('houdiniTargets')) throw new Error('Shared Houdini Host service already mounted; keep exactly one Host-plane instance')
   registerExecutorIdentityProjection(ctx)
   const directory=new ExecutorDirectory(config.executorRegistry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'))
-  const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBindingBarrier(async session=>
-    ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0]),session=>
+  const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBinding(session=>
       projectedExecutorBindingState(ctx,session as Parameters<typeof projectedExecutorBindingState>[1])),session=>
       projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]))
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')

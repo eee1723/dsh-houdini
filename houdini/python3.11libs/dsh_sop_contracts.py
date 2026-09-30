@@ -208,8 +208,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     p = h._resolve(parent)
     if p.childTypeCategory() != hou.sopNodeTypeCategory():
         raise ValueError("verify_network currently accepts a SOP network parent only")
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2048:
-        raise ValueError("limit must be an integer in 1..2048")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
     if not isinstance(require_valid, bool):
         raise ValueError('require_valid must be bool')
     if output is None:
@@ -260,7 +260,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   'scope_signature':hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),
                   'requested_nodes':[n.path() for n in selected], 'checked_nodes':[], 'node_count':0,
                   'error_nodes':[], 'error_nodes_count':0, 'warning_nodes':[], 'warning_nodes_count':0, 'issues':[],
-                  'next_action':'Manual mode: metadata inspection/editing only; explicitly authorize set_update_mode before evaluation. Geometry is unknown, not empty.'}
+                  'next_action':'Manual mode: metadata inspection/editing remains available. Use set_update_mode before geometry evaluation; geometry is unknown, not empty.'}
         if require_valid:
             raise h.CheckpointError(result['next_action'], result)
         return result
@@ -299,9 +299,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
             'scene_unit_length_meters':None,
             'geometry_status':'evaluated' if output_cooked else 'not_evaluated_cook_failed',
             'output_fingerprint': fingerprint, 'semantic_status': 'unverified',
-            'next_action': ('Fix the explicit output/cook errors, then rerun this checkpoint; do not substitute a different output without revisiting the deliverable.' if reasons else
-                            'Resolve or explicitly explain warning nodes before handoff.' if warnings else
-                            'Cook/output checkpoint passed; relationship and visual acceptance remain separate.'),
+            'next_action': ('Inspect error_nodes and cook_details for the requested output.' if reasons else
+                            'Inspect warning_nodes for the reported diagnostics.' if warnings else
+                            'Requested output cooked successfully and contains geometry.'),
             'note': 'Cook/geometry evidence only; no assertion of relationships, art quality or unsampled HDA internals.'}
     # Unit facts depend on the HIP, never on an author's choice of output name.
     # These remain SOP-local measurements, not an assembly or dimension pass.
@@ -334,12 +334,10 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
         raise ValueError('build_module only creates SOP modules; use primitive verbs for other contexts')
     if not isinstance(dry_run, bool):
         raise ValueError('dry_run must be bool')
-    if not isinstance(nodes, list) or not 1 <= len(nodes) <= 64:
-        raise ValueError('nodes must contain 1..64 small-module specs')
+    if not isinstance(nodes, list) or not nodes:
+        raise ValueError('nodes must contain at least one SOP node spec')
     existing = {n.name(): n for n in p.children()}
-    from dsh_operation_cards import decision_advisories
-    specs, known, preflight_errors = [], set(existing), []
-    advice_by_type = {}
+    specs, names, preflight_errors = [], set(), []
     def problem(name, field, message, **details):
         preflight_errors.append({'node': name, 'field': field, 'message': message, **details})
     for spec in nodes:
@@ -348,44 +346,36 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
         name, typ = spec.get('name'), spec.get('type')
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
             raise ValueError('each new node needs a simple explicit name')
-        if name in known:
+        if name in existing or name in names:
             raise ValueError(f'node exists or duplicate name: {name}')
+        names.add(name)
+    known = set(existing) | names
+    category = p.childTypeCategory()
+    for spec in nodes:
+        name, typ = spec['name'], spec.get('type')
         if not isinstance(typ, str) or not typ:
             raise ValueError(f'{name}: missing type')
-        card = h.node_info(p, typ, limit=256)
-        if not card['visible']:
+        latest = h.resolve_latest_type(category, typ)
+        typ_obj = hou.nodeType(category, latest)
+        if typ_obj is None:
+            raise ValueError(f'{name}: 未知节点类型 {typ!r}; parent={p.path()}')
+        if not h._visible_node_type(typ_obj):
             raise ValueError(f'{name}: hidden/deprecated type {typ}; use search_tab_entries')
-        # Do not misvalidate later parameters against a truncated card.
-        if card['truncated']:
-            raise ValueError(f'{name}: type interface exceeds static preflight budget; use primitive verbs')
         values, inputs = spec.get('parms', {}), spec.get('inputs', [])
         if not isinstance(values, dict) or not isinstance(inputs, list):
             raise ValueError(f'{name}: parms must be dict and inputs must be list')
-        decisions = decision_advisories(card.get('operation_card', {}), values)
-        if decisions:
-            key = (card['type'], tuple(d['id'] for d in decisions),
-                   tuple(tuple(tuple(m) for m in d['missing']) for d in decisions))
-            if key not in advice_by_type:
-                relevant = {n for d in decisions for option in d['alternatives'] for n in option}
-                advice_by_type[key] = {'type': card['type'], 'nodes': [],
-                                       'operation_card': card['operation_card']['id'],
-                                       'decisions': decisions,
-                                       'setting_cards': [p for p in card.get('operation_parameters', []) if p['name'] in relevant],
-                                       'missing_runtime_parameters': card.get('operation_parameters_missing', [])}
-            advice_by_type[key]['nodes'].append(name)
         # Actual numbered multiparm names must be validated against the declared
         # count (or the static default), not the uninstantiated '#' template.
-        typ_obj = hou.nodeType(p.childTypeCategory(), card['type'])
-        card['parameters'] = h._node_parameter_cards(typ_obj, values)
-        allowed = {c['name'] for c in card['parameters']}
-        allowed.update(k for c in card['parameters'] for k in c.get('components', []))
+        parameters = h._node_parameter_cards(typ_obj, values)
+        allowed = {c['name'] for c in parameters}
+        allowed.update(k for c in parameters for k in c.get('components', []))
         unknown = set(values) - allowed
         if unknown:
             import difflib
             for field in sorted(unknown):
                 similar = difflib.get_close_matches(field, sorted(allowed), n=5, cutoff=0.25)
                 problem(name, field, f'unknown parameter(s) {field!r}; candidates={similar}; use node_info with a literal filter', candidates=similar)
-        for parameter in card['parameters']:
+        for parameter in parameters:
             if parameter.get('type') in ('Float', 'Int') and not parameter.get('menu') and not parameter.get('menu_dynamic'):
                 components = parameter.get('components', [])
                 fields = ([parameter['name']] if parameter['name'] in values else [])
@@ -401,52 +391,46 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 if not isinstance(value, dict):
                     try: h._menu_setting(parameter['menu'], value)
                     except ValueError as error: problem(name, parameter['name'], str(error), tokens=tokens)
-        if len(inputs) > card['max_inputs']:
-            problem(name, 'inputs', f'too many input slots ({len(inputs)} > {card["max_inputs"]})')
+        if len(inputs) > typ_obj.maxNumInputs():
+            problem(name, 'inputs', f'too many input slots ({len(inputs)} > {typ_obj.maxNumInputs()})')
         for source in inputs:
             if source is None:
                 continue  # explicit empty input; e.g. Wrangle lookup on input 1
             if not isinstance(source, str) or source not in known:
-                problem(name, 'inputs', f'input {source!r} must be an earlier spec or existing child name')
-        known.add(name)
-        count_names = [c['name'] for c in card['parameters'] if c.get('multiparm_count') and c['name'] in values]
+                problem(name, 'inputs', f'input {source!r} must name a declared spec or existing direct child')
+        count_names = [c['name'] for c in parameters if c.get('multiparm_count') and c['name'] in values]
         ordered_values = {k:values[k] for k in count_names}
         ordered_values.update(values)
-        specs.append({**spec, 'type': card['type'], 'parms': ordered_values, 'inputs': inputs, '_counts':count_names})
+        specs.append({**spec, 'type': latest, 'parms': ordered_values, 'inputs': inputs, '_counts':count_names})
     if output not in {s['name'] for s in specs}:
         raise ValueError('output must name one of the newly created nodes')
     if required_outputs is not None:
-        if not isinstance(required_outputs, list) or not 1 <= len(required_outputs) <= 16 or any(not isinstance(n,str) for n in required_outputs) or len(set(required_outputs)) != len(required_outputs):
-            raise ValueError('required_outputs must contain 1..16 unique new node names')
+        if not isinstance(required_outputs, list) or not required_outputs or any(not isinstance(n,str) for n in required_outputs) or len(set(required_outputs)) != len(required_outputs):
+            raise ValueError('required_outputs must contain unique new node names')
         if any(n not in {s['name'] for s in specs} for n in required_outputs):
             raise ValueError('required_outputs must name newly declared module nodes')
-    advice = {'operation_advisories': list(advice_by_type.values())[:16],
-              'operation_advisory_count': len(advice_by_type),
-              'operation_advisories_truncated': len(advice_by_type) > 16,
-              'operation_advisory_scope': 'Static explicit-field presence plus declared parameter-semantic caveats; advisory, not a rejection or geometric/intent verification. No parameters are changed by this advice.'}
     if preflight_errors:
-        error = h.PreflightError(preflight_errors)
-        error.evidence.update(advice)
-        raise error
-    return p, existing, specs, advice
+        raise h.PreflightError(preflight_errors)
+    return p, existing, specs
 
 
 def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
-    """Create a small SOP module after zero-write type/parameter/input preflight.
+    """Create an explicit SOP batch after zero-write type/parameter/input preflight.
 
-    Inputs reference earlier specs or existing direct children; None retains
-    empty input slots. dry_run cannot prove VEX/cook/geometry. After creation
+    Inputs reference any declared spec or existing direct child; None retains
+    empty input slots. All nodes exist before wiring or parameter expressions.
+    dry_run cannot prove VEX/cook/geometry. After creation
     starts, cleanup and transaction recovery keep their existing strict rules.
     """
     import dsh_hou_helpers as h
     try:
-        p, existing, specs, advice = _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs)
+        p, existing, specs = _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs)
     except h.PreflightError:
         raise
     except (ValueError, TypeError, hou.Error) as error:
         raise h.PreflightError([{'node':'module','field':'preflight','message':str(error)}]) from error
     if dry_run:
-        return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs), **advice,
+        return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs),
                 'output': output, 'interface_status': 'unverified' if interfaces is not None else 'not_requested',
                 'required_outputs': list(required_outputs or []),
                 'note': 'Static preflight only; VEX, dynamic menus, cooking and interface geometry remain unverified.'}
@@ -461,9 +445,18 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     created = {}
     try:
         for spec in specs:
-            n = h.tab_create(p, spec['type'], name=spec['name'],
-                             inputs=[None if s is None else created.get(s) or existing[s] for s in spec['inputs']])
-            created[spec['name']] = n
+            created[spec['name']] = h.tab_create(p, spec['type'], name=spec['name'])
+        sources = existing | created
+        for spec in specs:
+            n = created[spec['name']]
+            input_nodes = [None if s is None else sources[s] for s in spec['inputs']]
+            for index, source in enumerate(input_nodes):
+                if source is not None:
+                    n.setInput(index, source)
+            h._initialize_created_inputs(n, input_nodes)
+            h._snap_into_flow(n)
+        for spec in specs:
+            n = created[spec['name']]
             if spec['parms']:
                 # Counts instantiate parameters. This remains inside the new-
                 # module transaction; any later failure removes the whole batch.
@@ -471,7 +464,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
                     h.set_parm(n,count,spec['parms'][count])
                 remaining={k:v for k,v in spec['parms'].items() if k not in spec['_counts']}
                 if remaining:h.set_parms(n, remaining)
-        validation = verify_network(p, output=created[output], nodes=list(created.values()))
+        validation = verify_network(p, output=created[output], nodes=list(created.values()),
+                                    limit=max(512, len(created)))
         required_checks = []
         for name in required_outputs or []:
             node = created[name]
@@ -489,12 +483,10 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             raise h.CheckpointError('build_module interface contract failed/unverified; new module removed',
                                     {**validation,'ok':False,'failure_reasons':['interface_contract'],
                                      'interface_checks':interface_checks})
-        return {'valid': True, 'dry_run': False, 'parent': p.path(), **advice,
+        return {'valid': True, 'dry_run': False, 'parent': p.path(),
                 'created': {name: n.path() for name, n in created.items()}, 'validation': validation,
                 **({'interface_checks':interface_checks} if interfaces is not None else {})}
     except BaseException as error:
-        if isinstance(getattr(error, 'evidence', None), dict):
-            error.evidence.update(advice)
         for n in reversed(p.children()):
             if n not in baseline:
                 n.destroy()

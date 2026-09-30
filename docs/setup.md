@@ -1,7 +1,7 @@
 # dsh-houdini 安装、更新与开发
 
 Windows x64受管安装把插件、Node、DSH和完整依赖作为一个签名发行单元。普通用户不运行npm/build，不单独升级DSH。
-源码checkout、预构建包、已选版本与正在运行的版本分别判断。发布前尚欠的真实用户路径见[交接](handoff.md#h-01-正常入口加载与受管发行)。
+源码checkout、预构建包、已选版本与正在运行的版本分别判断。发布前尚欠的真实用户路径见[交接](handoff.md#h-01-用户入口与受管发行)。
 
 ## 普通安装
 
@@ -61,7 +61,7 @@ Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程�
 首次Open Workspace在worker里校验/准备，主线程只接收状态并加载HOM模块；安装完成后必须完整重启，不能热切换已打开的Houdini。
 
 新版首次启用从当前受管版本复制独立DSH数据快照，不跟随依赖junction，再由发行包的DSH API初始化profile并检查Node、DSH和插件。
-用户自建preset随数据保留，只重新生成产品拥有的houdini/houdini-dev。state.json损坏时不能猜测当前版本；保留旧目录恢复数据，选择新安装根，不把重装程序当作状态恢复。
+用户自建preset随数据保留，只重新生成产品拥有的唯一houdini。state.json损坏时不能猜测当前版本；保留旧目录恢复数据，选择新安装根，不把重装程序当作状态恢复。
 失败保留当前选择及旧数据；未完成快照另存，重试重新采集仍在用的旧版数据。
 回退恢复旧版保留的数据，新版会话仍在新版data目录；这不是数据格式转换，也不承诺跨版本自动合并。
 预检后选择current不等于前端/Bridge/模型已验证，运行身份仍需独立检查。
@@ -98,15 +98,14 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 源码的工作区启动统一为Open Workspace，菜单另保留版本诊断及共享执行端登记/修复：新开且已保存HIP可显式选择隔离组件预览，普通模式为默认；这只合并菜单，不合并profile/正式运行时，也不自动解除受管安装的runtime锁。
 
-完整产品建模可在新建对话的模式选择中选择 **Houdini 产品建模**（`houdini-product`）；普通 **Houdini 模式**保留轻量编辑。
-产品模式提供领域工作提示；`houdini_product`可按任务需要记录与核对要求，代码执行、任务提交和保存均不要求先填写产品定义。该preset由普通persona生成，启动/修复时同步；旧Host需要重载后才可发现，新模式不自动改写已有对话。
+仅显示 **Houdini 模式**。它通过DSH 0.2的preset注册表由插件bundle声明，领域方法按需加载。
 启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
 
 先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。
 同目录已有页面只唤起，包括隐藏后的重开，不刷新当前草稿；新页/换目录时由DSH原生状态复用有效Houdini任务，
 不会选中归档、其他preset或子agent。确实没有可用任务才创建；导航失败可原位重试，不自动重复建任务。
 未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」，开发插件选择「Houdini开发模式」。
-首次请求houdini_query调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
+首次请求houdini_inspect调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
 图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。最终要交给用户的文件（包括图片）在实际存在并完成验证后由Agent调用`present`声明，右侧交付卡片指向源文件；验证图和缓存不自动声明。`present`不复制文件内容，源文件被移动、删除或改写后，旧卡片的打开结果也会改变。$HIP与Session workspace不同时应使用权威绝对路径，并在切换HIP后重新Open Workspace。
 H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
 会话输入区出现工作区不一致提示时，可展开查看Session workspace与最近一次Houdini调用观察到的$HIP目录；它不是持续监控，切换HIP后须重新Open Workspace，最终文件路径以当前权威回执为准。

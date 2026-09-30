@@ -98,8 +98,7 @@ try:
             assert exc.code == 401
         else:
             raise AssertionError("unauthenticated RPC was accepted")
-        presets = Path(ctx["home"]) / ".agent-presets/houdini/agent.cordis.yml"
-        assert f"bridgeUrl: http://127.0.0.1:{ctx['bridgePort']}" in presets.read_text(encoding="utf-8")
+        assert not (Path(ctx["home"]) / ".agent-presets").exists()
         assert not (install / "app/node_modules/dsh-houdini/node_modules").exists()
         print("Real portable Node + exact DSH + isolated profile + plugin import + 401/200 authenticated RPC passed", flush=True)
         for hython in args.hython:

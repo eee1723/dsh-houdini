@@ -39,7 +39,7 @@ export async function retainResult<T extends ExecResult>(value: T, workspace: st
     }
     return { ...value, details: { stored: true, sha256: digest, path: filename,
       bytes: Buffer.byteLength(bytes), format: 'returned_bridge_envelope_json',
-      read: 'houdini_query(result_ref=sha256, pointer="/evidence", offset=0, limit=6000). JSON Pointer selects a field; pages contain JSON text. No Houdini execution.' } }
+      read: 'houdini_resource(kind="result", ref=sha256, pointer="/evidence", offset=0, limit=6000). JSON Pointer selects a field; pages contain JSON text. No Houdini execution.' } }
   } catch (error) {
     // Retention failure must never convert a successful scene mutation into a
     // failed operation that invites a duplicate submission. Keep full rendering.

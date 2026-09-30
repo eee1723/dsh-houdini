@@ -18,7 +18,7 @@ try {
   registerHoudiniTools({tools:{register:d=>definitions.set(d.name,d)}},
     {async exec(){executions++;return raw;},async hipDir(){return dir;}});
   const context={agent:{id:'agent',session:{header:{cwd:dir}}},callId:'call'};
-  const exec=definitions.get('houdini_exec'),query=definitions.get('houdini_query');
+  const exec=definitions.get('houdini_exec'),query=definitions.get('houdini_resource');
   const before=JSON.stringify(raw);
   const value=await exec.execute({code:'set_parms(...)'},context);
   assert.equal(value.details.stored,true);
@@ -32,14 +32,12 @@ try {
   assert.equal(JSON.stringify(raw),before,'projection and retention do not mutate the original envelope');
   let collected='',offset=0;
   do {
-    const page=await query.execute({result_ref:value.details.sha256,pointer:'/result/payload',offset,limit:16000},context);
+    const page=await query.execute({kind:"result",ref:value.details.sha256,pointer:'/result/payload',offset,limit:16000},context);
     collected+=page.result.text;
     offset=page.result.next_offset;
   }while(offset!==null);
   assert.equal(JSON.parse(collected),raw.result.payload);
   assert.equal(executions,1,'detail retrieval never repeats HOM or scene edits');
-  await assert.rejects(query.execute({code:'x',result_ref:value.details.sha256},context),/exactly one/);
-  await assert.rejects(query.execute({code:'x',pointer:'/result'},context),/require result_ref/);
   await assert.rejects(readResultDetail(dir,'../escape'),/SHA-256/);
   await assert.rejects(readResultDetail(dir,value.details.sha256,'/missing'),/not found/);
   await assert.rejects(readResultDetail(dir,value.details.sha256,'/__proto__'),/not found/);

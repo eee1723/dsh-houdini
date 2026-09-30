@@ -6,7 +6,7 @@
 2. Rigid pieces 与路径依赖状态
 3. Hierarchy / KineFX / skin
    - 3.1 KineFX 机械 FK 与刚体交付
-   - 3.2 OBJ scene parenting 例外
+   - 3.2 OBJ parenting
 4. APEX 与 simulation 边界
 5. 验证矩阵
 6. 探测与失败转向
@@ -201,14 +201,13 @@ Geometry 的交付输出是 captured geometry；不要猜不存在的 skeleton o
 一律钉 `kinefx::rigpose`。`apex::rigpose` 是 H22 更新的节点，但交互重心在 viewer state，
 agent 程序化路径未验证，不进 recipe。
 
-### 3.2 OBJ scene parenting 例外
+### 3.2 OBJ parenting
 
-**Applies when**：camera/light/null 等顶层场景对象跟随、既有 OBJ hierarchy 维护、用户明确要求独立
-OBJ nodes，或下游必须接收 OBJ hierarchy。**Do not use when**：新建几何父子机械/FK；`/obj` 路径
-本身不算授权。
+**Applies when**：任务适合通过独立 OBJ objects 表达父子运动，例如场景对象跟随、机械/FK、
+既有层级维护或下游 OBJ hierarchy 交付。需要 SOP skeleton/skin 或 joint 数据时可选择 KineFX。
 
-使用 `set_object_parent(child, parent, keep_world=True, reason=...)`；不使用通用 `connect`。`reason`
-选 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`。操作后要求
+使用 `set_object_parent(child, parent, keep_world=True)`；通用 `connect` 表达数据流。`reason`
+可选，自由记录用途，不限制表示选择。操作后要求
 `child.inputs()[0] == parent`；`keep_world=True` 时另检查 world transform preserved。若最终合同是几何，
 仍需 Object Merge/导出形成显式 final geometry 并在该输出上验证，Object transforms 不替代交付证据。
 

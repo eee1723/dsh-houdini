@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { ExecutorRecord, ExecutorRouter } from './executor-routing.js'
 import {projectedExecutorIdentity} from './executor-identity-projection.js'
 
@@ -67,7 +67,7 @@ export class ExecutorController extends TypertRemoteService {
     const projections=this.ctx.get('sessionProjections')
     if(!projections) throw new Error('Session preset projection unavailable; no live request sent')
     const preset=projections.stateOf(agent.session,'agentPreset')
-    if(preset!=='houdini'&&preset!=='houdini-dev') throw new Error('Target selection is restricted to Houdini tasks')
+    if(preset!=='houdini') throw new Error('Target selection is restricted to Houdini tasks')
     await this.router.selectInitial(agent,data.executorId as string,data.registrationId as string,signal,data.expectedHip as string)
     return {sessionId:agent.id,executorId:data.executorId,status:'bound',scene_verification:'not_performed'}
   }

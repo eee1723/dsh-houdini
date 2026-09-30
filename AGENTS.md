@@ -12,6 +12,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 已完成的实现、工具数量、目录结构和历史测试不是设计约束。可以删除、合并或替换不再服务目标的功能；在当前项目中直接重构，继续使用DSH提供的会话、模型与通用Agent能力。
 - 执行层负责准确操作和真实反馈；任务策略与领域方法按需加载。不要把模型的一次失败写成永久执行门槛，产品计划不作为操作Houdini的准入条件。
 - 同一事实只有一个维护源；结果、上下文和界面消费同一份执行事实。避免重复状态解释器、兼容补丁和猜测来源的逻辑。
+- 只提供Houdini一种模式，使用DSH的preset注册和通用任务能力。工具各有清楚职责；不建立插件自己的产品完成账本、强制建模流程或会话压缩系统。
 - 避免过度防御：只处理真实接口条件和已观察到的失败，不因假想风险增加审批、拦截、回退或层层校验。
 - 验证与改动相称：优先构建和直接受影响的回归，关键执行边界使用必要的隔离HOM检查。已有检查通过后不重复扩大测试；移除旧策略时同步删除只证明旧策略的断言，不为机械拆分新增测试体系。
 
@@ -23,7 +24,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 ## 命令与入口
 
 - 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡文档、
-  client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
+  唯一preset声明、工具说明、client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
 - 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
   正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
 - 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Diagnostics →
@@ -45,7 +46,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 新增长期生产模块必须进入架构代码索引；新增文档须加入索引并有源码与验证入口。
 - 过程与证据保留在会话/CI或不打包的临时产物，历史在Git；不改机器生成记忆或范围外项目。
 - TypeScript ESM/Cordis，client.js是手写CJS factory；Python通过PYTHONPATH兼容H21/H22。
-  presets承载身份/工作方式并由launcher同步，插件guidance保持persona中性。
+  presets/houdini承载身份/工作方式并通过DSH bundle声明式注册，插件guidance保持persona中性。
 
 ## 不可放宽的执行边界
 

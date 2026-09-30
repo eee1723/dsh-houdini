@@ -27,19 +27,3 @@ def operation_parameters(card, parameters):
     names = card.get('critical_parameters', [])
     return ([by_name[n] for n in names if n in by_name],
             [n for n in names if n not in by_name])
-
-
-def decision_advisories(card, values):
-    """Presence-only advice. No intent inference, VEX parsing, cook or writes.
-
-    Explicit empty groups/open ends/native types remain legal. Specifying a
-    field (including an expression) is not evidence of correct geometry.
-    """
-    missing = [{'id': d['id'], 'alternatives': [list(option) for option in d['any_of']],
-                'missing': [[name for name in option if name not in values] for option in d['any_of']],
-                'guidance': d['guidance']}
-               for d in card.get('decisions', [])
-               if not any(all(name in values for name in option) for option in d['any_of'])]
-    semantic = [{'id': d['id'], 'alternatives': [], 'missing': [], 'always': True,
-                 'guidance': d['guidance']} for d in card.get('always_advisories', [])]
-    return missing + semantic

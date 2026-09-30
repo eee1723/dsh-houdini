@@ -1,19 +1,23 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.1.6-alpha.2",
+  "preferredVersion": "0.2.0-rc.2",
   "releases": [
     {
-      "dshVersion": "0.1.6-alpha.2",
+      "dshVersion": "0.2.0-rc.2",
       "rpcWire": "slash-generated-args-v1",
       "browserAuth": "process-token-signed-cookie-v1",
       "qtWebEngineMinimum": "6.5.3 / Chromium 108",
-      "requiredPolyfills": ["AbortSignal.any", "Promise.withResolvers", "Iterator"],
+      "requiredPolyfills": [
+        "AbortSignal.any",
+        "Promise.withResolvers",
+        "Iterator"
+      ],
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
-      "sessionFormatVersion": 3,
-      "verificationStatus": "user-authorized-default-awaiting-gui-acceptance",
+      "sessionFormatVersion": 4,
+      "verificationStatus": "source-adapted-awaiting-live-webview",
       "verifiedOn": [],
       "pendingVerification": [
-        "H21/H22 live WebView, send/cancel/reconnect and V3 Trace",
+        "H21/H22 live WebView send/cancel/reconnect and single Houdini preset",
         "signed release combination acceptance"
       ]
     }

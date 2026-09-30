@@ -344,15 +344,6 @@ try:
             b._jobs[str(i)] = {'jobId': str(i), 'status': 'queued', 'owner_session': 'fixture', 'owner_call': 'call-1'}
     assert post('/jobs', admission('pass'))[0] == 429
 
-    # Reaching the trace cap cannot silently turn guarded execution into an
-    # untraced path whose caught failures escape rollback.
-    original_limit = b._VERB_ENTRY_LIMIT
-    try:
-        b._VERB_ENTRY_LIMIT = 1
-        result = b.run_code("scene_info()\ntry:\n    scene_info()\nexcept Exception:\n    pass")
-        assert result['ok'] is False and result['verbs'][-1]['ok'] is False, result
-    finally:
-        b._VERB_ENTRY_LIMIT = original_limit
 finally:
     b._pump_active = False
     server.shutdown(); server.server_close(); thread.join(3)

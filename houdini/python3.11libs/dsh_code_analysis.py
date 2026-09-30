@@ -525,7 +525,7 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
 
 
 def _query_mutation_message(code, mutating_verbs) -> str | None:
-    """Reject mutation intent before a ``houdini_query`` reaches Houdini."""
+    """Reject mutation intent before a ``houdini_inspect`` reaches Houdini."""
     analysis = _analysis(code)
     tree = analysis.tree
     if tree is None:
@@ -548,7 +548,7 @@ def _query_mutation_message(code, mutating_verbs) -> str | None:
     if raw:
         detail.append("raw/suspected mutation(s): " + ", ".join(sorted(set(raw))))
     return (
-        "houdini_query is read-only and rejected this code BEFORE execution ("
+        "houdini_inspect is read-only and rejected this code BEFORE execution ("
         + "; ".join(detail)
         + "). Use houdini_exec for scene changes and cooks."
     )

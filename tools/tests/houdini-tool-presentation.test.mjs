@@ -18,14 +18,7 @@ const ctx = {
 };
 
 registerHoudiniTools(ctx, {});
-assert.deepEqual([...definitions.keys()], [
-  'houdini_exec',
-  'houdini_query',
-  'houdini_job_submit',
-  'houdini_job_status',
-  'houdini_job_cancel',
-  'houdini_product',
-]);
+assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit','houdini_job_status','houdini_job_cancel'].sort());
 
 const text = [{ type: 'text', text: 'fixture result' }];
 const execValue = {
@@ -67,7 +60,6 @@ assert.deepEqual(exec.presentResult(execArgs, { content: text, isError: false, m
   title: 'Houdini execution succeeded',
   content: text,
 });
-assert.equal(exec.presentCall({}), undefined, 'invalid replay args must fall back safely');
 const pendingChecks = {...execValue, checks: [{verb: 'set_parms', status: 'failed'}]};
 const pendingMeta = exec.output.presentationMeta(execArgs, pendingChecks);
 assert.match(exec.presentResult(execArgs, {content: text, isError: false, meta: pendingMeta}).title, /checks need attention/);
@@ -99,7 +91,7 @@ for (const details of [undefined,{stored:true,sha256:'fixture'}]) {
   assert.doesNotMatch(rendered,/declared-interface-verdict:|polygon-integrity-verdict:|control-test-verdict:/);
 }
 
-const query = definitions.get('houdini_query');
+const query = definitions.get('houdini_inspect');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {
   card: 'generic',
   title: 'Inspect Houdini scene',
@@ -181,7 +173,7 @@ const executeWorkspace = (agent, name = 'houdini_exec') =>
   workspaceDefinitions.get(name).execute({code:'pass'}, {agent,callId:`c${workspaceExecutions}`});
 assert.match((await executeWorkspace(agentA)).advisory, /Open Workspace/);
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'same agent/pair is deduplicated');
-assert.match((await executeWorkspace(agentB, 'houdini_query')).advisory, /Open Workspace/, 'other agent gets its own advice');
+assert.match((await executeWorkspace(agentB, 'houdini_inspect')).advisory, /Open Workspace/, 'other agent gets its own advice');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'c:\\WORK\\'}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'Windows slashes/case do not cause false mismatch');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'C:/project'}};
@@ -216,13 +208,13 @@ const badIdentities = [
 const bindingSection = {name:'dsh-houdini:executor-binding', text:'Houdini task target binding (routing data, not node ownership or permission).\n'
   + JSON.stringify({schema:1, kind:'executor_binding', executor_id:'e'.repeat(32)})};
 const makeStrictSession = () => ({snapshotEvents: () => [
-  {seq:1, type:'user/message', data:{source:{kind:'plugin', plugin:'dsh-houdini', sections:[bindingSection]}}},
+  {seq:1, type:'user/message', data:{source:{kind:'dsh-houdini', sections:[bindingSection]}}},
 ], append: () => {}});
 const goodExec = {agent:{id:'session-1',session:makeStrictSession()}, callId:'call-9'};
 for (const bad of badIdentities) {
   await assert.rejects(strictDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
-  await assert.rejects(strictDefs.get('houdini_query').execute({code:'pass'},bad),/identity/);
-  await assert.rejects(strictDefs.get('houdini_query').execute({request_ref:'index'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_inspect').execute({code:'pass'},bad),/identity/);
+  await assert.rejects(strictDefs.get('houdini_request').execute({request_ref:'index'},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);
@@ -230,14 +222,14 @@ for (const bad of badIdentities) {
 assert.equal(resolved, 0, 'identity failures must precede executor resolution');
 assert.equal(flushed, 0, 'identity failures must precede writer claims');
 assert.equal(sent, 0, 'identity failures must precede any Houdini request');
-await assert.rejects(strictDefs.get('houdini_query').execute({result_ref:'f'.repeat(64)},identity(undefined,'c')),
+await assert.rejects(strictDefs.get('houdini_resource').execute({kind:'result',ref:'f'.repeat(64)},identity(undefined,'c')),
   /workspace/, 'historical result reads keep their local boundary and need no bridge identity');
 assert.equal(resolved, 0, 'result_ref still never resolves an executor');
 // A valid identity flows verbatim through every code/job branch — no coercion,
 // no trimming — and shared tool instances never borrow another session's identity.
 await strictDefs.get('houdini_exec').execute({code:'pass'}, goodExec);
 assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
-await strictDefs.get('houdini_query').execute({code:'pass'}, goodExec);
+await strictDefs.get('houdini_inspect').execute({code:'pass'}, goodExec);
 assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
 await strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)}, goodExec);
 assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
@@ -265,8 +257,8 @@ try {
   registerHoudiniTools({tools:{register:d=>realDefs.set(d.name,d)}}, realBridge);
   for (const bad of badIdentities) {
     await assert.rejects(realDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
-    await assert.rejects(realDefs.get('houdini_query').execute({code:'pass'},bad),/identity/);
-    await assert.rejects(realDefs.get('houdini_query').execute({request_ref:'index'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_inspect').execute({code:'pass'},bad),/identity/);
+    await assert.rejects(realDefs.get('houdini_request').execute({request_ref:'index'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);

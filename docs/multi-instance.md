@@ -63,7 +63,7 @@
    ```
 
    若端口已占用，先确认所属服务，或为新Host明确选择另一个端口；不能默认结束其他任务。
-   该overlay在Host层挂载一次dsh-houdini/executor-host；houdini/houdini-dev preset只消费同一服务。
+   该overlay在Host层挂载一次dsh-houdini/executor-host；唯一houdini preset只消费同一服务。
    没有配置登记目录时仍用原单实例路线，不隐式新建共享模式。
 
 2. 在各个新Houdini实例中打开/保存各自HIP，使用候选菜单 **Register Shared Executor**，填写同一登记目录。

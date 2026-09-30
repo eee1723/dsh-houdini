@@ -73,24 +73,22 @@ try{
  assert.equal(edits,beforeRecovery,'AbortSignal cancellation after dispatch must recover without executing again');
  const defs=new Map();registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)}},bridge);
  const ref=[...records.keys()][0],ctx={agent:{id:'owner',session:{header:{}}},callId:'recover'};
- const recovered=await defs.get('houdini_query').execute({request_ref:ref},ctx);
+ const recovered=await defs.get('houdini_request').execute({request_ref:ref},ctx);
  assert.equal(recovered.requestReceipt.retrieved,true);assert.equal(recovered.result,1);
- await assert.rejects(defs.get('houdini_query').execute({request_ref:ref,code:'x'},ctx),/exactly one/);
- await assert.rejects(defs.get('houdini_query').execute({request_ref:ref,offset:1},ctx),/does not accept/);
  const events=[{seq:1,type:'tool/call',data:{name:'houdini_exec',callId:'unknown'}},
   {seq:2,type:'tool/result',data:{message:{source:{callId:'unknown'}},meta:{canonical:{ok:false,requestReceipt:{request_ref:ref,status:'unknown_transport'}}}}}];
  assert.equal(projectExecutionState(events).unresolved_requests.length,1);
- events.push({seq:3,type:'tool/call',data:{name:'houdini_query',callId:'recovered'}},
+ events.push({seq:3,type:'tool/call',data:{name:'houdini_request',callId:'recovered'}},
   {seq:4,type:'tool/result',data:{message:{source:{callId:'recovered'}},meta:{canonical:recovered}}});
  assert.equal(projectExecutionState(events).unresolved_requests.length,0);assert.equal(projectExecutionState(events).last_sequence,1);
  const lateReceiptEvents=[...events,
-  {seq:5,type:'tool/call',data:{name:'houdini_query',callId:'late-status'}},
+  {seq:5,type:'tool/call',data:{name:'houdini_request',callId:'late-status'}},
   {seq:6,type:'tool/result',data:{message:{source:{callId:'late-status'}},meta:{canonical:{ok:true,
    requestReceipt:{request_ref:ref,status:'running'}}}}}];
  assert.equal(projectExecutionState(lateReceiptEvents).unresolved_requests.length,0,
   'a delayed running snapshot must not undo an observed completion');
  const expiredAfterRecovery=[...events,
-  {seq:5,type:'tool/call',data:{name:'houdini_query',callId:'expired-status'}},
+  {seq:5,type:'tool/call',data:{name:'houdini_request',callId:'expired-status'}},
   {seq:6,type:'tool/result',data:{message:{source:{callId:'expired-status'}},meta:{canonical:{ok:true,
    requestReceipt:{request_ref:ref,status:'result_expired'}}}}}];
  assert.equal(projectExecutionState(expiredAfterRecovery).unresolved_requests.length,0,
@@ -104,7 +102,7 @@ try{
   {seq:6,type:'tool/result',data:{message:{source:{callId:'repeat-result'}},meta:{canonical:recovered}}}];
  assert.equal(normalizeTraceSteps(replayEvents).uniqueExecutions.length,1);
  assert.equal(normalizeTraceSteps(replayEvents).steps.at(-1).executionReplay,true);
- const waiting=defs.get('houdini_query').output.render({}, {ok:true,stdout:'',stderr:'',requestReceipt:{status:'running',request_ref:ref}})[0].text;
+ const waiting=defs.get('houdini_request').output.render({}, {ok:true,stdout:'',stderr:'',requestReceipt:{status:'running',request_ref:ref}})[0].text;
  assert.ok(waiting.startsWith('Request receipt status: running'));
  assert.ok(!waiting.includes('Executed successfully.'));
  const lostJob=await defs.get('houdini_job_submit').execute({code:'long render'}, {...ctx,callId:'lost-job-call'});
@@ -112,18 +110,18 @@ try{
  const jobText=defs.get('houdini_job_submit').output.render({},lostJob)[0].text;
  assert.ok(!jobText.includes('Started Houdini job undefined'));
  // Simulate Host discarding the original tool result: only call event survives.
- const index=await defs.get('houdini_query').execute({request_ref:'index'},ctx);
+ const index=await defs.get('houdini_request').execute({request_ref:'index'},ctx);
  const discovered=index.requestReceipt.requests.find(r=>r.owner_call==='lost-job-call');
- const jobResult=await defs.get('houdini_query').execute({request_ref:discovered.request_ref},ctx);
+ const jobResult=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
  assert.equal(jobResult.result.jobId,'job-1');assert.equal(jobResult.requestReceipt.status,'job_submitted');assert.equal(jobs,1);
  const jobEvents=[{seq:1,type:'tool/call',data:{name:'houdini_job_submit',callId:'lost-job-call'}},
-  {seq:2,type:'tool/call',data:{name:'houdini_query',callId:'recover-job'}},
+  {seq:2,type:'tool/call',data:{name:'houdini_request',callId:'recover-job'}},
   {seq:3,type:'tool/result',data:{message:{source:{callId:'recover-job'}},meta:{canonical:jobResult}}}];
  assert.equal(projectExecutionState(jobEvents).pending_calls,0);
  assert.equal(projectExecutionState(jobEvents).active_jobs[0][0],'job-1');
  jobEvents.push({seq:4,type:'tool/call',data:{name:'houdini_job_status',callId:'job-done'}},
   {seq:5,type:'tool/result',data:{message:{source:{callId:'job-done'}},meta:{canonical:{ok:true,jobId:'job-1',status:'done'}}}},
-  {seq:6,type:'tool/call',data:{name:'houdini_query',callId:'late-admission'}},
+  {seq:6,type:'tool/call',data:{name:'houdini_request',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
  assert.equal(preparations,edits+jobs+2,'one prepare replaces health; recovery does not prepare or resubmit');

@@ -1,353 +1,140 @@
 # 执行与证据契约
 
-共享参数控制的职责和推进顺序见[控制参数、界面与绑定](parameter-controls.md)。UI追加、HDA定义重建和持续绑定是独立修改：
-create_spare_parms(layout)只追加单节点参数；bind_controls必须预览并核对源/目标状态计划，实际写入仍检查目标ownership。
-node_info只接受`parm_filter`字面子串；create_spare_parms的spec必须使用具名参数。后台job状态/取消只接受Bridge实际生成的12位十六进制id，placeholder在Host侧拒绝，不发送到Houdini。
-旧动画/表达式默认保护，显式替换不扩大foreign授权。绑定回读只证明表达式及当前数值，领域输出需独立验证；
-界面/绑定恢复仅覆盖声明的通道/模板范围，不恢复任意回调、文件、solver或外部进程副作用。
+本页维护工具链真实执行条件和返回事实的含义。用户目标、任务策略及领域方法见对应 [skills](../skills/)；公开工具、动词签名和执行版本见[工具设计](tool-design.md)。系统提供准确操作与反馈，模型决定方法及完成质量。
 
-实现入口：[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)。
-调用签名与版本以[工具设计](tool-design.md)及运行时verb_help为准；本页只维护跨动词边界。
+实现入口：[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[执行内核](../houdini/python3.11libs/dsh_execution.py)、[执行结果](../houdini/python3.11libs/dsh_execution_results.py)、[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)。
 
-## 安全与权限
+## DSH 与工具职责
 
-启动器提供进程级executor ID，Host可由agent作用域配置executorId覆盖；每个请求携带目标头，Bridge先核对
-再进入HTTP路由。错目标返回409，不排队/控制job/读媒体；相同端口与相同工具版本不证明相同Houdini。
-该ID与Bridge runtime代际及节点ownership分离；缺少绑定的独立旧客户端仅兼容，不具备此保护。
-配置覆盖属于宿主路由，不是模型自行认领执行端的接口，也不是本机恶意客户端认证机制。
-HTTP执行与Job控制区分三种身份：executor ID来自宿主配置/登记与绑定，负责路由；owner_session负责本轮操作归属，
-owner_call负责单次调用追踪，两者取自Host工具执行上下文；三者均不是模型自行填写的授权参数，空白/错误类型在发送前拒绝且不裁剪改写。/exec与/jobs必须携带完整
-owner_session、owner_call、expected_contract与一次性request_ref票据，缺失或类型错误返回400，合法形状但合同不匹配返回409，
-票据冲突仍由Registry拒绝；无身份HTTP执行已移除，进程内直接调用run_code/helpers与Python Shell路径不受影响。
-job查询、等待与取消只授权提交会话（仅比较owner_session，不要求当前callId等于提交callId）；未知、跨会话或缺少可信owner的
-job统一404不泄露存在性，job内部身份字段不进入公开返回对象，不得根据路径/tag/请求者声明推断owner。旧Host／新Bridge与
-新Host／旧Bridge在场景执行和Job控制之前互相拒绝（Host先经/health做非HOM合同检查，不签新票）；握手失败不得自动重启live。
-这些校验防止正常Host调用链中的身份遗漏与跨会话误操作，不构成抵御任意本地进程伪造请求的认证系统。
-canonical执行历史含executor_id时，工具入口禁止把原任务的代码/job操作发往不同或未绑定执行端；
-回放结果、材料及回执查询不构成重新绑定。无身份的旧历史保留兼容但不推断目标，完整恢复授权入口尚未开放。
-绑定Host首次现场调用前必须将目标作为plugin来源消息追加到DSH会话，并等待sessions.flush确认持久化监听器参与；
-无后端/落盘失败/取消均不提交现场请求。并发首调用共享屏障，已追加未落盘的记录不删除、不重建第二份绑定文件。
-普通任务通过agent/pre-step的正常消息批次接受绑定，工具执行阶段只能等待已有绑定落盘，不能在assistant工具调用与
-尚未返回的tool结果之间插入user消息。插件须显式声明sessions依赖，不能用可选链绕过Cordis注入边界。
-旧版自身绑定插入造成的顺序错误，只能对结果齐全、纯文本且无其他用户介入的完整工具交换追加摘要投影修正；
-原始事件/结果/绑定保留，不伪造tool结果、不执行工具。缺结果、混合媒体或无关交错拒绝自动修正；修正落盘失败仍阻止下个模型请求。
+DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原生工具能力。插件只注册一个 Houdini preset，并通过 [DSH 适配](../src/dsh-adapter.ts)和原生 context producer 提供 Houdini 事实。领域计划没有执行准入条件；生产工具没有产品要求账本或作者自报完成登记。
 
-- hou仅在Houdini主线程调用；HTTP线程只排队。泵不可用即拒绝，不退回网络线程执行。
-- query使用只读namespace与AST预检；exec负责修改，job负责长操作。Raw Gate默认开启，
-  已有动词覆盖的裸修改不能用allow_raw旁路；parameter/tuple及其set方法的词法赋值别名同样拒绝。
-  同批重绑定保守处理；静态识别不等于任意Python的完整沙箱。仅独立、无动词等价的低层缺口允许单次明确理由。
-- query的result_ref分支只读当前workspace中已返回的历史结果；source_ref只读当前session公开日志中的任务来源，
-  两者不进入Bridge/HOM；request_ref只查Bridge同runtime回执、不执行HOM。加上Host模型图像能力capabilities分支共五种模式，与code互斥，source_ref不接受JSON pointer或跨session路径，
-  不能当现场新观察或ownership授权。新查询、修改和任务产物仍遵守原边界。
-- ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
-  foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
-  持久render服务不可豁免，layout默认仅本session节点。
-- delete_node删除容器前检查全部后代权限；hda_create替换先检查全部实例/后代且拒绝销毁重建源的祖先，
-  再开始删除。不能依赖Undo补救尚未完成的权限预检。
-- 原生OBJ parent/unparent使用set_object_parent并说明reason；generic connect/disconnect只管数据流。
-- loopback并不鉴别所有本地进程。AST和ownership面向正常agent，不是恶意Python安全沙箱。
-  不应向不可信网络暴露Bridge。
+| 工具 | 执行范围 |
+|---|---|
+| houdini_exec | 在目标 Houdini 主线程执行修改或验证批次 |
+| houdini_inspect | 只读 Python 与现场查询；不准备编辑 Undo 和创建登记 |
+| houdini_job_submit/status/cancel | 提交长任务、等待实际状态、取消尚未运行的任务 |
+| houdini_request | 查回原 request_ref 的接收/执行回执，不重发代码 |
+| houdini_resource | 在 Host 读取用户来源或已保留结果的分页正文 |
+| houdini_capabilities | 返回当前模型与附件通道的声明能力 |
 
-## 产品定义与视觉能力
+[工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件；[资源读取](../src/tool-query.ts)只消费历史材料。结果正文或来源不成为新的现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
 
-`productMode: true`是显式Host领域配置，默认false，用于提供产品建模工作提示。`houdini_product`是可选的会话需求资产；模型按任务复杂度决定是否使用，定义状态、部件数量、尺寸和计划不参与exec/job执行条件。执行仍遵守真实的主线程、严格设参、ownership和目标绑定规则。
-houdini_exec接受code与checkpoint二选一。checkpoint={expected_path}只生成scene_save；{path,expected_current_path,reason,overwrite?}只生成scene_save_as。checkpoint不接受code/allow_raw，数据通过JSON解码；原路径、覆盖、Save As授权和执行器身份规则适用。保存与产品需求记录相互独立。
+## 主线程、执行端与归属
 
-Host的houdini_product仅记录当前会话的版本化产品义务，schema与边界见[工具设计](tool-design.md)。
-原始工具记录是唯一持久源；按用户来源核对修订，不以todo完成或作者自报替代测量。检查必须匹配明确最终SOP、
-合同和case/check id，且未被已记录修改失效；measured只覆盖相应量测，不能推断整件/视觉通过。
-未绑定、失败、过期、退休说明及未核对的新来源在pre-step保留；视觉/细节不接受数字检查冒充语义确认。
-未建立定义时不注入缺定义提醒。原生工具参数与schema列出记录格式的必填字段及feature枚举；这些字段约束需求记录本身，不约束场景操作。
-可选members锁定最终组与期望连通件数；contact锁定实际接点组、接收面组、点数与SOP局部距离上限。匹配回执必须同时给出相容预期和实际量测；换组、放宽容差、以零相交代替接触均不核销。既有结构化预期的修订保留字段/原因提示（最近64条及省略数量），不推断用户批准或修改正确。
-review只读投影保存、预期计划、数值与语义阶段，最多返回32条最近最终输出检查定位，带省略数量；不自动绑定、不阻止保存、不认证完成。原始结果仍是权威来源，未声明的要求和成员身份语义不由此推断。
+所有 HOM 调用经 Bridge 主线程队列串行执行。HTTP 线程只接收、排队和等候回包；泵不可用时拒绝，不退回网络线程执行。GUI 线程不得进行阻塞 socket、进程枚举或 netstat 探测。
 
-模型首个可用步骤前按已组装提示词的所选route读取图像输入和附件服务能力，不误用尚未生成或属于上个模型的request/header；换route/服务后重新查询，元数据缓存最长60秒。显式查询为
-houdini_query(capabilities='visual')。此预检不请求模型、不渲染、不自动换模型或启动子agent；
-GUI后端、附件传输和实际语义识图仍分别验收。模型不支持图片或元数据不可用时保持视觉未验证。
-控制截图使用基准与扰动共享取景；越界失败不得漂移相机来伪装可比较，数值恢复保证不因此取消。
-回归入口为[产品定义](../tools/tests/product-definition.test.mjs)、[图像通道](../tools/tests/image-inspection-route.test.mjs)和
-[控制证据](../tools/tests/dsh-control-review.test.py)；捕获调度的隔离替身不证明GPU渲染或自然任务采用。
+执行端、会话和调用分别具有不同身份：executor ID 确定目标进程，owner_session 确定当前作者，owner_call 定位单次调用。身份来自 Host 与执行端登记，模型不自行填写。Bridge 在场景执行前核对目标与执行合同；错目标或版本不一致返回明确错误，不自动重启 live。
 
-## 事务与异步
+首次现场操作前，绑定记录通过 DSH 会话持久化确认；普通上下文组装承担消息插入，工具执行期不在 assistant 工具调用与结果之间插入消息。既有执行历史指定了目标时，不能把同一任务的代码或 job 发送到另一个执行端。回执和材料读取不构成重新绑定。
 
-exec异常恢复Houdini可撤销状态；捕获动词异常不重新抛出会被caught-failure机制拦截。
-同一exec已有失败动词后，后续修改、cook、渲染和保存动词在派发前拒绝，记录零写入证据；
-只读诊断仍可运行，修复须在新exec提交。此前文件写入和任意Python外部副作用不属undo保证。
-消费transaction最终状态：后项失败可能撤销同exec中前面成功的build，不能沿用已回滚节点。
-失败补充清理仅限本调用journal的确切新建identity；foreign后代不自动删除。
-undo复活已删节点时父节点恢复原sessionId，但原生初始化后代（如wrangle内部VOP）由Houdini以新id重建；
-Bridge回滚在恢复登记表后按有界证据重新登记这些后代：收养候选仅限本批删除的登记条目
-（批次开始时存活、回滚前死亡的identity集合），不全量扫描登记表——早前泄漏删除留下的
-陈旧条目不是候选，不能把旧作者身份接到后续批次的复活节点上；逐条证据为旧id已死+
-精确创建路径+登记类型一致+已登记的存活祖先。headless tab失败清理同步注销半成品后代。
-其余无法确认的后代保持foreign，rollback报告reconciled_resurrected_identities。
-可独立cook和验收的模块使用不同exec，集成引用已提交且仍存活的输出；不可分模块内仍批量原子执行。
-独立query失败不撤销此前exec；同exec尾部只读错误仍使整批失败，不按异常类型猜测部分提交。
-动词派发前做实际签名绑定，argument_binding失败附signature、dispatched=false与scene_writes=0；
-该证据只覆盖未派发的当前调用，不能抵消同exec此前的修改。函数内部TypeError仍保留原始原因。
-每个Bridge执行返回execution.runtime_id/sequence/observed_at/frame及hip_path/hip_dir和本次影响观察；
-hip_dir仅在场景有命名路径时提供，Host直接投影工作区提醒，不为展示再次执行HOM。运行实例与节点
-identity共同解释，路径不充当identity。影响包含有界原生outputs和上次cook可见的dependents，删除/改名
-前观察后代，最多256身份；truncated/unavailable/global必须保留，动态/外部依赖和用户GUI修改不在覆盖内。
-last_edit_ledger_index可识别同调用内检查之后的修改；outputs将检查条目绑定到末态节点identity/存活状态。
-这些记录用于让旧证据失效，不证明未列出的依赖不存在，也不证明下一请求时场景未变。
+节点 ownership 来自 runtime 创建的 identity 和会话归属；路径、父网络、节点名称及可复制 userdata 都不授权。foreign 节点可以读和作为输入。单次写入仅在用户明确指定目标时使用非空 allow_foreign，不能形成长期所有权。持久 render 服务永不豁免；删除容器前检查其后代权限，HDA 替换前检查实际待销毁的实例和后代。
 
-Host的scene-context只在用户消息有“这个节点/HDA”“选中对象”“当前场景”等现场指代时采集一次；
-明确节点路径和普通解释/新建任务不采集环境选择。文本匹配只是保守指代提示，未匹配时仍可显式查询。
-选择不等于任务目标或修改授权，用户运行中切换选择、网络、视角和帧不会刷新或触发注入；
-重启Host后只能复用旧消息原快照，不能把重启时的现场重新绑定到旧消息。
+## 查询、修改与 Raw Gate
 
-Host通过[execution-history](../src/execution-history.ts)统一索引公开工具调用与完整结果，execution-state、交付核对和可选产品覆盖读取同一事实源。工具展示按通用JSON结构投影，领域结论来自Bridge的checks/evidence，不由Host展示再次推导。
-execution-state独立于用户消息绑定的scene-context：按runtime/sequence
-去重与排序，保留最近观察、删除、失败、in-flight/未知执行和有限检查范围。运行时或观察到的HIP路径改变不复活旧identity，
-已回滚检查不作当前通过；已记录依赖变化或同调用后续修改使旧检查stale。非stale仍只是历史观察，
-不能认证当前live状态或赋予foreign权限。没有第二份可写任务账本，不自动改写用户原始指代。
-普通成功/失败回包由工具结果直接表达，不再按时间戳、执行序号、计数或节点清单追加摘要。
-自动提醒投影未决修改请求、已记录检查失效、`geo_check_interfaces`的失败/未验证合同、
-`test_controls`失败/未验证及观测到的runtime/HIP身份变化。接口与控制合同按被检查输出身份与合同摘要区分；
-另一份合同通过不能清除旧失败，缺合同摘要时也不能推定后续调用重测了同一要求。
-接口证据保留实际被检查路径；是否等于交付SOP须由作者核对。
-提醒优先保留失败/未验证的声明接口与控制检查，总计最多八项；若仍有省略则报告数量，
-可按结果指针读取原回执。
-状态解除只表示历史记录不再含该提醒，不证明场景通过或未声明的产品要求已测。
-后台任务提交/完成由原工具结果表达，恢复摘要保留仍在运行的job。
-各补充段经agent/pre-step作为独立、可审计的plugin消息加入；按公开session surface中保留的同名正文去重，
-不进入Host整包runtime context，不因执行提醒重发权限或场景快照。拒绝/取消/未提交不消耗补充消息。
-对话历史surface替换后可恢复一次有界执行事实和来源；仅缩短单条tool/result不触发整份恢复，
-普通工具调用不持续重建恢复消息。
+inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。参数对象、tuple 和绑定 setter 的别名同样检查。
 
-Host的task-sources只从source.kind=user消息和已关联的ask_user_question问答建立来源锚；
-注入上下文、自动goal续接和作者自述不提升为用户要求，缺source的历史消息不猜测为用户原文。
-原始消息、澄清答案和目标变化不触发额外全文副本；历史surface替换后的恢复可提供首条与最近来源的有限摘录，
-遗漏数和截断显式报告，目标始终标为作者计划。普通步骤仍可按需回读来源。
-source_ref=index列出可用来源，来源hash分页回读完整文本；非文本仅保留类型标记，不声称读取了图片。
-作用域仅当前session可见的公开日志，不保证被裁除的历史仍存在；不存在的来源明确拒绝而不替换成摘要。
-goal/change只标为报告的计划状态，不覆盖原文或证明完成；来源顺序也不推导用户是否替代旧任务。
-复杂任务的需求/默认/未知、模块依赖风险及续接摘要由preset约定维护，Host不建另一份可写需求库，
-不强制简单编辑建表。来源可回读和提示注入不等于模型已采纳或最终provider输入保留已验证。
-SOP聚焦模块流程复用现有计划和工具事实，方法在[模块合同](../skills/houdini-sop-workflow/references/module-quality-contracts.md#模块聚焦与交接)。
-局部检查与最终输出成员/实际实例关系分别验证；此工作流没有新增Host自动调度、模块通过证书或多作者权限。
+低层逃生舱只接受单次明确用途；不隐式放开整段已覆盖修改。静态分析服务正常模型调用，不是任意 Python 沙箱。已观察的非终止 VEX 删除循环写前拒绝；其他 VEX 仍由原生编译与计算反馈判断。
 
-job仍通过同一主线程队列串行执行。job的授权检查在_jobs_lock内完成，检查通过后才能改变状态、时间戳或advisory；
-长轮询等待仍在锁外，不阻塞worker写终态。排队取消可阻止执行；已开始的代码不能强杀，
-客户端超时/取消不能保证场景未改。重试前检查job结果和实际场景。
-HIP保存、render/cache和HDA库等外部I/O不属于undo保证，失败要单独报告外部副作用。
-Host经POST /requests/prepare取得带owner的单次票和当前合同，不额外增加握手往返。exec的request_ref在进入主线程队列前消费并登记，
-查回走固定只读/requests/status端点，不触发HOM或重新排队。签票不意味着已提交代码，也不进入HOM队列。
-同runtime同身份同payload只返回原状态/结果；payload或owner不符拒绝，不更新原请求。状态not_executed
-仅在Registry同锁确认仍queued时报告，不能将running降级；断联、结果过期、换runtime和查不到回执均不等于未执行。
-结果正文与终结记录有界轮转，不保留无限墓碑；旧票离开待用票池后不能因回执被淘汰而重新执行。仍活动请求不可淘汰。
-Host超时/取消后仍可能存在活动Bridge请求；health/Repair用Registry活动槽观察补足这一边界，缺字段不当空闲。
-回执丢失/过期时需显式观察实际场景再决定下一步，不自动生成新request_ref重做原修改。
-查回带retrieved标记，原执行sequence保留；执行状态投影解除已查明的unknown，离线动词核算不重复计数。
-jobs提交复用同runtime回执但以job_submit类型单独绑定payload；查回jobId只解除提交未知，job仍可能排队/
-运行中。活动job的关联保持到worker终态；worker先结束、后记录admission的顺序同样可释放保护，避免永久占槽。
-terminal job不能被迟到的提交回执重置为排队。队列取消、过载拒绝和worker启动失败保持原执行边界。
-Host历史已保留done/not_executed/job_submitted回执时，迟到的非终态或Bridge保留期结束不将同一引用降级为未知；
-未查回过结果的过期引用仍保持不确定。该规则不把job提交当作执行完成，也不认证当前场景。
-request_ref='index'仅列当前owner最多32条回执，优先活动请求/job关联，再列最近终结记录，以owner_call对齐原调用；无代码/结果正文，
-不能用索引中缺记录自行授权重提。独立执行统计按canonical runtime/sequence去重，传输轮询仍计工具调用；
-只有历史文本或没有序号的结果明确未测，不猜执行身份。
+每次请求解析一次 Python 语法树，分类、准入和执行证据共用结果。动词签名绑定失败返回实际 signature、dispatched=false 和 scene_writes=0；内部 TypeError 保留原始原因。零写入只说明该次未派发调用，不能抵消同批此前修改。
 
-## 参数与创建
+原生 OBJ parent/unparent 使用 set_object_parent，普通 connect/disconnect 表达数据流。set_object_parent 的 reason 是可选自由用途说明；任务可选择 OBJ、KineFX 或其他适用表示，执行层不强制建模方法。
 
-普通set_parm(s)在快照/写入前拒绝Data参数，内嵌Geometry等需其原生初始化流程，不能进入数字恢复。
-新建HDA同步展开延迟定义后登记其初始化后代；后续用户加入的子节点不因父级owned而获得身份。
-delete_node返回受影响消费者与原生删除后的接线；重新创建同名节点不证明恢复了引用、连线或控制关系。
+## 事务、错误与长任务
 
-COP观察/关系/控制动词必须exec，经同一Bridge主线程编组；直接读取ImageLayer而非Geometry代理。
-Manual、失败cook、非图层、预算超限明确拒绝；统计完整buffer但不限制上游GPU cook内存，不隐式抽样。
-层间差值必须相同通道/窗口/空间/帧，公式与操作数随结果保留；未声明预期只量测，不认证语义。
-控制实验复用通道恢复并核对frame、完整buffer及已列元数据；sticky Cache不能认证控制/恢复，
-恢复失败抛CheckpointError并使执行影响保持未知。外部文件/Python/solver状态不在恢复保证内。
-具名connect只验证实际边与端口选择；动态undef签名由原生连线求解。USD Material COP对原生预检假阴性
-仅允许两端具体图层类型完全相同的连线，并回读实际端口；不隐式转换通道，cook/类型通过仍不证明角色正确。
-COP缓存依赖检查保留全部原生input/reference路径，入队去重；上限4096节点、32768条边、两秒检查预算，
-超限拒绝并保留新鲜度未知，不截断冒充通过。预算在原生调用之间检查，不承诺中断阻塞HOM或限制GPU cook。
-COP差值证据绑定before/after/expected_delta的identity与输出口；任一已记录操作数变化都会使旧检查失效。
-不同输出口的统计分别保留；依赖失效仍是历史投影，不监听未记录GUI或外部文件修改。
+exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词异常被代码捕获后仍记录失败；同一 exec 后续修改、cook、渲染及保存在派发前停止，只读诊断可以继续。修复在新批次提交，避免把半成品误报为成功。
 
-HDA section 的写后回读/hash仅证明文本写入；PythonModule语法预检不执行回调，任意命名的嵌入section
-也不自动按Python编译。内部函数测试、真实回调、cook后的交付输出、隔离环境依赖验证分别取证，
-不能互相替代。多section库修改不具备场景undo的原子恢复保证。SOP HDA维护方法见
-[HDA维护路径](../skills/houdini-tool-development/references/hda-maintenance.md)。
+读取 transaction 的最终状态：同批后项失败可能撤销前面成功的构建。headless 没有原生 Undo 时，不报告已完成整批回滚；动词内部清理和实际 rollback.applied 分别返回。补充清理只处理本调用准确登记的新 identity，foreign 后代不自动删除。Undo 复活节点后的原生初始化后代只按本批已登记删除身份、原生类型和存活祖先重新对账，不能认领旧作者节点。
 
-HDA创建的输入/输出上限不是接线证明；实例spare、定义界面、公共端口输出与隔离新实例分别验证。
-hda_create只在本次转换内接续原生延迟内部身份：转换前整段自有、锁定原生定义实际库位于HFS且指纹不变、原生父identity存活、完整相对内部清单/类型匹配、旧identity消失且新identity未登记。超出有界清单或来源不符继续不认领；路径/tag本身不授予权限，allow_foreign不产生长期owner。
-界面整组重建遇实例spare同名覆盖时在库写前拒绝；显式spare提升走hda_edit(promote)。预检各模式返回ok=true/dry_run=true/applied=false/scene_writes=0；不把ok解释成几何或视觉验收。
-界面重建及hda_edit(save/promote)写后失败恢复本调用的定义section、根实例界面/通道和磁盘库，
-定义写入与场景Undo分离，避免外层Undo再次撤销恢复。后续同exec失败不撤销已经成功的库写入，外部副作用不保证。
-hda_edit预览绑定源码/库/定义与共享实例状态；解锁不授予后代ownership，锁定丢弃内容须显式确认及逐后代授权。
-SOP subnet标准输入Label管理字段保留但隐藏，不删除端口或用户自定义标题。
-connect的inputs_before/after保留subnet间接输入为source=null、source_kind=subnet_indirect_input，
-不把非Node连接猜成普通节点；source_output仍为原生连接索引。
+文件写入、HDA 库和任意 Python/solver/外部进程副作用不属于场景 Undo 保证。参数与界面动词的内部恢复范围由各自结果说明；已成功的外部文件写入不会因后续批次失败而声称撤销。
 
-真实Tab/Shelf初始化与静态类型模板不同。node_info提供实际parent下解析的类型、端口和模板，
-不创建scratch；操作卡关键参数不受普通筛选裁切，见[节点卡](node-operation-cards.md)。
-精确菜单用token/set_value；数值表达式字符串是HScript，显式Python要声明语言；
-VEX仅在snippet内。tuple表达式用组件字段，严格设参不允许跳过未知/无效字段假报成功。
-表达式写入和求值分别留证：原生setExpression失败标write/not_run；Parm.eval即使返回0，也检查H21/H22
-原生节点诊断是否新增且明确指向该参数，新增明确错误/非有限值拒绝并恢复原值与keys。不能把合法0当失败。
-旧cook错误在修正后可能仍缓存；无法区分新旧时返回unverified，允许通过显式cook/输出检查验证修复。
-warning和无法精确归属的节点诊断为有范围的warning/unverified，不用旧的其他节点cook错误拒绝合法设参。
-返回的parameter_state_restored/batch_parameter_state_restored仅指本次参数快照；外部Python副作用仍不保证恢复。
-evaluation描述当前frame的求值读取，effect_status保持unverified；空输出或错误实体关系需后续同层验收。
-build_module静态预检与实际数值setter共用值形状校验：size=1及单独组件是标量，接受有限数值、
-HScript字符串或显式expression/language；不接受单元素列表。只有多分量tuple整体值接受等长有限
-数值列表，表达式必须写组件名；菜单继续使用token/set_value策略。静态通过不证明表达式可求值或cook通过。
-默认值和当前值分别修改：create_spare_parms(update_defaults=...)仅更新显式已有scalar spare的
-字面默认值，预检整批再应用，回读默认值并保留当前值/表达式/keys；失败恢复模板与参数状态。
-不更新内建、菜单、tuple、callback、multiparm或表达式默认值，不隐式改变已有创建模式。
-字面字符串局部修改复用set_parm/set_parms的patch对象，必须带原始UTF-8源码expected_sha256和
-每个old/new的精确count；缺锚点、次数不符、版本过期在本节点本批values开始写入前拒绝。
-read_parms(names=[...])按指定标量或tuple字段读取，tuple保留逐分量诊断；string提供source_sha256，有变量展开时raw_value保留原文。
-patch只支持无动画/表达式的可编辑scalar string，拒绝锁定/callback/固定菜单；Wrangle的代码片段
-StringReplace菜单不执行、不阻止源码修改。补丁限定literal replace、不执行脚本/正则；原文和
-结果不超过524288字符，1..32项替换、old/new累计131072字符，每项count为1..256。
-set_parms的patch只允许strict=True，写入失败恢复本批值/keys。其他节点不在本批预检范围内；
-跨节点调用仍遵循exec的undo与外部副作用边界。返回前后hash、字符数和次数，不重复整份源码；
-hash/写入回读证明文本变化，VEX/cook/几何/关系仍需独立的同层验收。
-静态multiparm先设置父/子count，再设置实例；动态或超预算情况用原生动词回读，不猜编号。
-connect替换既有输入，断开后输入可能压缩，后续使用inputs_after而不是旧索引。
+长任务仍在同一主线程串行执行，不提供并发 HOM。queued 任务可在代码运行前取消；running 任务的取消依赖原生协作检查点，不能强杀用户进程。jobId 来自实际提交结果，状态/等待/取消只接受所属会话；后台提交成功不等于计算完成。
 
-## 小模块构建
+HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。运行实例改变或回执过期保留未知，不自动重复修改。
 
-[SOP contracts](../houdini/python3.11libs/dsh_sop_contracts.py)负责新增节点的静态检查、构建、cook与清理。
-build_module只新增1..64个SOP，不覆盖既有节点或输出旗标；inputs引用更早声明/现有直属子节点，
-None为空槽，跨subnet用Object Merge或明确端口。独立静态错误汇总后零创建拒绝。
-类型/参数/输入/输出静态拒绝统一携带phase=static_preflight及scene_writes=0；零写入仅针对
-该模块，同exec内的其他修改、创建后的cook失败仍由事务恢复规则判定。
-operation_advisories只描述缺少显式选择：不替用户封口、选边或转类型；没有提示也不证明正确。
+调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果可在 Host 保留并通过 resource 分页读取；显示压缩不改变执行事实。
 
-output必须是明确新建非空交付；空CTRL/helper用tab_create。required_outputs检查必需分支，
-防止非空Merge掩盖丢件。可附实际interfaces；失败或unsupported会使该构建失败并清理新节点。
-dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
-verify_network返回cook、非空、几何概要、显示出口及单位事实，不按`OUT_ASSET`等名称追加领域检查。
-需要表面完整性或部件关系时，作者按任务显式调用geo_piece_stats、geo_check_interfaces等工具；
-检查范围与未支持表示直接由领域回执说明。
-require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
-subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
-普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。
-verify_network(...,output_index=同索引)检查其直接接线；不指定索引仍是内部构建/显示操作，
-不自动猜祖先、改变OBJ可见性或保存定义。重复索引、成环和未授权foreign出口写入拒绝。
-嵌入Packed的包装点/面不算实际内容：检查器有界访问内嵌几何，空内容拒绝，外部Packed或超限
-无法取证时保持unverified。非空仅说明存在内容，不证明每个必需模块都进入输出；多实例、
-根层显示、颜色/材质与实际关系仍须对应验收。
+## 事实、上下文与观察
 
-## 几何、接口与控制
+每次执行返回 runtime_id、sequence、observed_at、frame、HIP 路径和实际影响记录。节点 identity 与运行实例共同解释；同路径重新创建的节点不是原节点。影响观察来自原生输出和最近计算可见依赖，truncated/unavailable/global 直接保留，不推断未列出的依赖不存在。
 
-[geometry observation](../houdini/python3.11libs/dsh_geometry_observation.py)和
-[quality contracts](../houdini/python3.11libs/dsh_quality_contracts.py)对实际输出做有界检查：
+[execution-history](../src/execution-history.ts)统一关联公开调用、结果与回执；[execution-state](../src/execution-state.ts)只投影最近失败、待决请求和活动 job。几何检查和任务质量判断保留在原结果中，Host 不再用第二套完成状态解释器改变它们。开发评测中的 [delivery-audit](../tools/delivery-audit.mjs)只读取历史，生产上下文不注入评测完成门。
 
-| 方法 | 能证明的范围 | 不能替代 |
-|---|---|---|
-| Polygon inspect | 指定输出/组的边界、共享边连通、非流形、朝向冲突、逐壳条件性有向体积 | 目标外形、自交、实体强度；分组切口可有意开放 |
-| Polygon integrity-only | 近看产品件的最终输出或关键源模块：有界查非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何面朝向冲突、零面积/零边与完全重复面；平面大面重复点桥接孔时另提示着色近景复核，不算几何完整性失败；负号提示核对是否整体反向，合法嵌套空腔须人工解释；开放边另提示核对接口 | 任意共面覆盖、自交、接点关系、控制扰动后的保持、参考外形或艺术质量；超预算与非Polygon保持unverified |
-| planar face crossings | 指定选择中单个近似平面闭合Polygon面的非相邻边严格内部交叉；返回面号、边号、位置样本和预算覆盖 | 不同面之间的三维自交、非平面/退化面、端点接触和共线重叠；零命中不证明整体无自交 |
-| attrib unique | 全量精确tuple唯一性、基数和有限重复样本 | 容差焊接；bbox不变不能排除复制重叠 |
-| point spacing | 明确有序点的全量相邻弦长 | 曲面关系、弧长、实体间隙 |
-| named surface proximity | 指定实际表面点到目标表面的最近距离与声明基数 | 实体插入深度、全表面无穿插、强度 |
-| axis_gap | 实际primitive组沿指定轴的投影间隙和横向重叠 | 任意曲面真实接触 |
-| section_proximity | 实际Polygon截面样本对目标表面距离、声明部件覆盖 | 连续全表面接触 |
-| solid_overlap | 同一最终SOP内两组完整闭合朝外Polygon实体的有界Boolean交集体积；非零有效交集附SOP局部坐标的整体包围盒便于定位；无交集或阈值内通过 | 包围盒可能涵盖多处分离交集，并非单个接触点；零交集不证明同轴、轴已穿孔、连续扫掠、受力；开放/不完整组保持unverified |
-| axis_passage | 声明的SOP local轴线穿过最终输出指定Polygon组的包络，且沿该线未碰到最终表面 | 整个孔径、孔壁形状、其他孔轴或孔周材料；非Polygon及未跨包络保持unverified |
-| bore_clearance | 声明的SOP local轴向起止区间和正半径构成外切24边棱柱；在最终闭合朝外Polygon部件组上做有界Boolean相交，零交集通过，有效实体侵入失败并返回相交包围盒 | 只证实该区间的圆形空域，不能从组的总包围盒推断板厚；区间外继续通畅、孔周材料、图纸孔位及加工公差仍需另验。开放/不完整实体或数值含糊为unverified |
-| component_count | 最终输出指定Polygon组中共享边连通岛的实际数量与预先声明数量一致 | 各岛的产品身份、对称位置、尺寸或与主体的实际连接；非Polygon/退化面保持unverified |
-| physical_extent | 已核对归属的厂家/用户毫米尺寸与最终闭合Polygon组一轴物理跨度一致；按HIP单位换算，非单位OBJ变换保持unverified | 组是否涵盖完整零件、尺寸归属是否读对、其他轴/孔径/装配；必须在最后修改后复验 |
-| stable-ID displacement/transform | 相同Polygon拓扑与唯一point ID下的位移/声明仿射残差 | packed/native primitive内部状态；混合点均值不是设计中心 |
+[scene-context](../src/scene-context.ts)在用户消息有“这个节点”“选中对象”“当前场景”等现场指代时采集一次元数据；明确路径和普通新建任务不采集环境选择。切换视角、网络、选择或 frame 不把新现场绑定到旧消息；当前状态需要显式 inspect。选择是指代线索，不是修改授权。
 
-test_controls必须exec：临时数字控制、声明指标/关系/domain，随后恢复参数、keys、frame和完整bgeo。domain与扰动共用显式数值通道资格，普通spare与HDA定义参数等价；菜单/回调/multiparm成员等不支持目标写前拒绝，不因定义参数报错而删domain。
-顶层interfaces验基准和每个扰动状态；baseline_interfaces只验基准；case内interfaces只验该case的扰动输出。状态不同的关系用不同合同，不能把合盖接触要求原样套到开盖状态，或删掉全部关系只保留bbox通过。三者都采用实际最终SOP表面组、相同预算和失败边界；摘要分别报告声明与实际运行的关系数，基准未验不得说合盖通过，case通过不外推其他case。
-采集基准签名前先显式强制cook并回读通道/frame；基准cook自身改动用户状态时失败，不把零测试写入冒充恢复成功。基准cook失败但状态未变时零参数写入并返回not_run，不用随后geometry读取隐式重试。
-恢复不仅比较bgeo：恢复写入后及最终cook后均回读被测参数的值/表达式/keys，最终核对frame。
-parameter_restore列出快照参数身份、前后字面值或动画匹配及错误；任何不匹配都不能报告restored=true。
-geometry_restore列出基准/恢复签名、是否匹配；不匹配时给出有界的不同bgeo区段与首个差异路径，不能用参数一致或bbox相同覆盖几何失败。
-这些字段证明该次回读，不保证稍后GUI/外部代码不会改值；未采集历史不能据此归因为用户undo。
-恢复指纹排除导出头date和派生group_summary，并按组名整理已知bgeo组目录记录；
-已知GA字符串属性表按字符串排序并同步重映射原索引，避免cook顺序改变内部字典而误报；
-每个元素的实际字符串、组名/成员、ordered group内部顺序、其他用户属性、拓扑和原生primitive数据仍完整比较。未知字符串编码不静默忽略。
-重复组名或无法识别的组目录结构拒绝，不通过忽略真实选择或几何差异放行。
-不支持的表示/菜单/副作用保持unverified；文件/Python/solver副作用不属于恢复保证。
-控制响应非零不等于设计正确，单次case不证明所有参数组合。相关修改使旧证据失效。
-test_controls的control_summary和Bridge证据保留顶层status/reason、失败判据及case_counts。
-逐case还保留output_data_changed、measured_groups、whole_output_measurements和接口/拓扑状态；
-coverage明确只通过声明检查，未请求关系时为not_checked。输出指纹变化但指标失败不证明控制未接线，
-变化也可能来自属性；先查实际受影响部件与预期依赖。全局bounds/count不证明连接、间隙或均匀变换。
-需要均匀/刚体变换时声明stable-ID max_transform_error；需要连接时声明适用的实际表面接口，
-不以范围提示替代关系执行，也不强制简单尺寸调整运行不相关关系检查。
-基准失败可零写返回results=[]，相关case标not_run；range同时约束基准和扰动绝对值，delta约束变化。
-Host在详细证据和stdout前展示摘要；纠正判据后须复跑，不能把未运行或解释过的失败当成通过。
+[context](../src/context.ts)通过 DSH 原生 context section 提供现场、待决执行和声明图像能力；通用历史压缩、消息更新和 token 管理由 DSH 完成。没有另一个可写任务账本或自建 surface 压缩器。
+
+图像能力取当前模型 route 与附件服务元数据；houdini_capabilities 可显式查询。它不请求模型、不渲染、不自动换模型。文件传输、GUI 启动、图像显示及模型实际语义识图分别判断；没有成功内容级识图就保持视觉未验证。
+
+## 类型、参数与网络操作
+
+node_info 读取实际 parent 下的类型、端口和参数模板，不创建 scratch。真实 Tab/Shelf 初始化与静态默认值分别报告；操作卡关键参数保持可读。节点知识只有 [node-operation-contracts.json](../houdini/node-operation-contracts.json)一个来源，不从缺字段自动推导设计缺口。
+
+严格设参拒绝未知字段、非法菜单和不相符值形状。菜单使用真实 token/set_value；标量及单独组件接受有限数值、HScript 字符串或显式 expression/language；多分量 tuple 接受等长数值列表，表达式写组件名。multiparm 先设置 count 再写实例字段。
+
+写入与求值分别报告。合法 0 不算失败；明确新参数诊断、非有限求值或实际写入失败恢复本调用参数及 keys。旧缓存或无法归属的诊断保留 warning/unverified，随后可显式 cook 检查修复。参数求值成功不证明几何响应正确。
+
+read_parms(names=[...])读取明确字段，string 返回 source_sha256。字符串 patch 使用原文 expected_sha256、old/new 与精确 count，锚点不匹配时本批参数写前拒绝；它只做 literal replace，不执行脚本或正则。set_parms 的 patch 继续 strict，写后失败恢复本批值/keys。
+
+connect 返回原生接线，None 保留空槽；subnet 间接输入不猜成普通 Node。disconnect 后输入可能压缩，后续读取 inputs_after。跨 subnet 使用 Object Merge 或明确端口，不猜输出口。delete/rename 返回实际影响，不因同名新节点推断引用恢复。
+
+## SOP 批量构建与检查
+
+[SOP contracts](../houdini/python3.11libs/dsh_sop_contracts.py)负责批量新增、静态检查、计算和清理。build_module 接受非空节点声明列表；inputs 可引用任意声明或现有直属 child。先创建全部节点，再连线和设参，声明顺序自由，表达式也可引用本批任意节点。None 保留空槽；不覆盖既有节点或输出旗标。
+
+dry_run 只检查真实类型、参数和引用，独立静态错误汇总返回；不证明表达式、VEX 或计算结果。没有固定节点数量和 required_outputs 数量上限。实际构建显式指定新 output；required_outputs 和 interfaces 仅在调用方声明时检查。失败清理本批新节点并保留原错误。
+
+verify_network 必须明确 output，默认拒绝 empty/error，require_valid=False 只作诊断。检查返回所选范围的 cook、非空、几何概要、显示/公共出口和单位事实，不按 OUT_ASSET 等名称追加领域检查。limit 是调用方声明的观察范围，不对任务网络大小设另一层硬上限。
+
+Manual 模式不触发 geometry/camera/render 求值，不把缓存当作新鲜结果；需要计算时显式切换更新模式。失败 cook 后不经 geometry() 隐式重算。warning、计算成功和语义正确分别报告。
+
+SOP subnet/HDA 的公共输出用 sop_set_output 发布原生 Output；普通 geo 只需明确最终 SOP 和 display/render。output_index 指定时检查真实公共接线，不自动猜祖先、调整 OBJ 可见性或保存定义。嵌入 Packed 的包装点/面不算实际内容；外部 Packed 或无法展开的表示保持 unverified。
+
+## 几何、关系与控制
+
+[geometry observation](../houdini/python3.11libs/dsh_geometry_observation.py)及 [quality contracts](../houdini/python3.11libs/dsh_quality_contracts.py)量测实际输出。作者按问题选择指标和关系；没有声明的关系不自动加入完成门。
+
+| 观察 | 实际范围 |
+|---|---|
+| Polygon inspect/integrity | 指定输出/组的边界、连通、非流形、朝向、局部退化和条件性壳体积；不证明任意自交或艺术质量 |
+| planar face crossings | 单个近似平面 Polygon 非相邻边的严格内部交叉；不外推三维面间自交 |
+| attrib unique / point spacing | 精确属性唯一性或显式有序点相邻弦长；不替代容差焊接或曲面接触 |
+| named surface / section proximity | 声明实际表面及截面的距离与部件覆盖；不证明连续全表面关系 |
+| axis_gap | 实际 primitive 组的轴向投影间隙及横向重叠 |
+| solid_overlap | 完整闭合朝外 Polygon 操作数的实际 Boolean 交集体积；零交集不证明轴穿孔或接触 |
+| axis_passage / bore_clearance | 显式轴线或声明区间、半径的空域；不从整件 bbox 推断孔径或板厚 |
+| component_count / physical_extent | 声明最终组的连通件数或经 HIP 单位换算的轴向尺寸；组身份仍由作者核对 |
+| stable-ID displacement/transform | 相同 Polygon 拓扑与唯一点 ID 下的位移和仿射残差；driver 点不替代实际成品 |
+
+返回范围、预算和 unsupported/unverified，不能用 bbox、响应非零或无报错冒充实体关系。内嵌 Packed 可在受限副本上展开观察；磁盘/Alembic/Fragment 及超展开预算保持 unverified。
+
+test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后恢复参数值、表达式、keys、frame 及完整 bgeo。顶层 interfaces 适用于基准与所有 case，baseline_interfaces 只验基准，case.interfaces 只验该扰动。具体状态应声明适用关系。
+
+基准计算失败返回 not_run；results=[] 不算通过。恢复前后回读通道和几何，任何不匹配都不能报告 restored=true。外部文件、Python 和 solver 副作用不属恢复保证。单个 case 不外推整个参数域，控制响应非零也不等于设计正确。
+
+## HDA、界面与节点整理
+
+HDA section 的写后回读/hash 只证明文本写入。PythonModule 语法检查不执行回调；真实按钮、内部函数、计算后的公共输出和新实例依赖分别观察。输入/输出上限不是接线证明；实例 spare 与定义界面分开管理。
+
+界面重建与 hda_edit 的预览检查真实共享定义和实例状态；unlock 不授予后代 ownership。写后失败恢复本调用定义 section、实例界面/通道和磁盘库，范围由回执说明；后续 exec 失败不撤销已经成功的库写入。普通 spare 追加、定义重建及持续绑定分别使用对应动词，方法见[控制参数与绑定](parameter-controls.md)。
+
+Network Box 和 layout 是编辑器 presentation mutation，不代表模型几何质量。节点与 Box 使用各自 identity registry；名字、颜色、成员与自有 parent 都不授权。显式两阶段计划绑定实际成员、接线、位置和障碍；应用只移动授权对象，失败恢复声明状态。layout 默认只处理当前会话节点，持久服务与未选障碍保持固定。详细用法见[网络整理](../skills/houdini-sop-workflow/references/network-handoff.md)。
 
 ## 渲染、构图与保存
 
-[camera framing](../houdini/python3.11libs/dsh_camera_framing.py)按八角点在实际普通透视/正交相机中的投影求解；
-coverage=.82表示每侧9%的中央安全框，不是面积。full必须完整包络，detail可主动裁切。
-A/B复用同framing_frame以及覆盖所有状态的framing_bounds与depth_bounds；前者决定取景，
-后者只约束全部实际渲染内容（包含未隔离上下文）的深度。默认depth_bounds取framing_frame的
-proxy全包络；只传framing_bounds时两者使用同一包络，独立关注范围应同时传两者。
-复用返回framing.bounds/depth_bounds并保持方向/画幅/模式不变；越界零渲染失败，不悄悄移动相机。
+[camera framing](../houdini/python3.11libs/dsh_camera_framing.py)按实际透视/正交投影求解。full 完整包络，detail 仅改变二维取景大小。A/B 使用同 framing_frame，并复用覆盖全部状态的 framing_bounds/depth_bounds、方向、画幅和模式；越界不能悄悄移动相机。
 
-detail通过正交宽度或透视镜头视角放大，不靠推进相机。服务相机可调整自身焦距以保持关注范围，
-不改变camera_fit保留正式相机焦距的合同。二维outside_safe_frame可标intentional_crop，
-near_or_behind_camera/far_clip始终失败；返回depth_check报告全部渲染内容的深度范围，
-crop_reasons与错误reasons分开。full中的局部framing_bounds不是ROI，局部观察用focus_group或detail。
-Python返回与Bridge证据均以check承载像素事实，pixels为兼容别名；EXR等未支持像素检查时可为null。
-图像访问成功不等于异常归因正确；拓扑闭合不能排除相机裁切，也不能由另一视角无缺口推断着色原因。
+near/behind/far_clip 错误在渲染前拒绝；detail 的二维 intentional_crop 与深度错误分开。camera_fit 修改明确相机并保留其焦距合同；预览服务相机不改作正式相机。渲染或像素差异不证明模型外形和关系正确。
 
-render_view(EXPLICIT_SOP)使用持久__dsh_houdini_*服务，任务结束复用不删除；不改作正式交付相机。
-服务节点及预览临时状态不进入作者exec的undo组：同调用后续失败仍撤销普通建模修改，但不会通过undo删除已渲染的OpenGL/Flipbook服务。图片文件仍属外部副作用，失败回执不认证预览完成。
-camera_fit只修改明确授权的静态OBJ cam，保留焦距、清lookatpath、世界空间拟合并回读，
-拒绝动画/表达式/约束/偏移窗口/lens shader等未支持状态；dry_run仍属于exec。
-render_frame可用framing检查实际USD RenderProduct相机、画幅/裁切/像素比例；
-未传保留艺术裁切语义，不隐式调整正式相机。预检不保证位移/运动模糊/遮挡或视觉质量。
+render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复用不删除。服务和预览临时状态独立于作者建模 Undo；图片文件是外部效果。返回 source/framing/pixel/check/artifact 的实际事实，无法解码或旧文件不报新鲜图像。
 
-正式渲染/缓存的相对路径仍锚定$HIP，缺后缀拒绝；render_check仅证明文件新鲜度/像素事实。
-render_view与viewport_screenshot的agent验证输出默认使用`$HIP/dsh-visual-checks/<run-id>/`：
-managed只接受省略或安全basename并分配唯一capture，任何路径值须显式选explicit。managed要求已命名HIP，
-不回退cwd/仓库；Save As只影响后续capture，不迁移/删除旧图，也不让图片成为HIP cook依赖。
-artifact记录purpose、policy、实际/相对路径、managed root、run/capture及frame；图片文件是场景undo之外的
-外部效果，后续同exec失败不会宣称已删除。viewport截图只接受本次新建/改变的非空候选，旧匹配文件不算fresh；
-managed分配的独占reservation保持到本次capture明确完成/失败，强制ID碰撞不能复用在途路径；只删除本调用token，
-已有图片和其他调用reservation不动，重定向managed目录拒绝。flipbook派发已尝试但尚无完成证据的任何退出
-（超时、派发异常或轮询中断）均属异步完成未知：保留并报告本次reservation，不把目的地重新投入分配或自动清理。
-只有派发前失败或已完成且实际路径通过复验才释放。viewport候选还须匹配请求frame、连续稳定且由支持解码器读取；
-无效/截断/歧义文件不通过。绑定相机在frame/取景前安全解锁并脱离，恢复frame与默认视图后最后还原关联/锁定；
-临时flipbook、视口显示和取景在成功/失败后逐项回读，setter/恢复错误聚合并拒绝整体成功，不自动重试。
-transport、bootstrap、presentation、semantic inspection四层独立；没有成功语义识图就写视觉未验证。
-viewport_screenshot用于用户屏幕诊断，不能把视口漂移当成最终模型错误。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认分配 `$HIP/dsh-visual-checks/<run-id>/` 唯一文件；managed 要求已命名 HIP，路径值选择 explicit。Save As 只影响后续 capture，不迁移或删除旧图。
 
-Network Box属于可使HIP变脏的presentation mutation，不是几何修改或质量证书。`network_boxes`接受显式
-直属节点叶子框，或以`boxes`引用既有叶子框的一层`role=component`容器；拒绝混装与第三层嵌套，并强制dry-run plan后apply；类型化Box registry与节点registry分离，因为不同NetworkMovableItem
-子类的sessionId可碰撞。Box名字、标签、颜色、成员、owned parent都不授予权限；foreign仅单次授权，
-render服务永不豁免。移除box保留节点；失败恢复成员、bounds、标签、颜色、选择、成员位置及registry。
-plan hash绑定当前进程generation，同进程Repair保持、换进程失效；preflight拒绝明确scene_writes=0。
-有native undo的Bridge在同exec后项失败后只读核对最早pre-exec Box状态并精确对账authority，不重放中间快照；
-多次create/update/remove与先前节点移动均由原生undo恢复。无undo的headless环境仅保证动词内部原子性，
-不把后续无关异常冒充整批已回滚。分组不移动节点、不cook、不使现有geometry/render证据因展示变化失效；
-它只使旧network-editor布局观察失效。`layout_nodes(mode='handoff')`是独立、强制两阶段的presentation mutation：
-默认只移动显式当前session自有扁平叶子Box及完整自有成员；用户明确要求修复已命名既有网络时，可在dry-run与apply传同一单次`allow_foreign`授权。service、未授权或未选项、Sticky Note与Network Dot固定不动；plan绑定当前process generation、成员/接线/位置、Box状态和障碍，陈旧计划零写入拒绝。
-`layout_nodes(mode='component')`接受一层组件容器，把叶子框和节点作为整体移动并保留叶内布局；同样要求两阶段计划、逐项身份/授权和固定障碍复核，不允许第三层嵌套。
-comfortable profile用实际节点尺寸设定节点净距、标题/侧/底边距和Box净距；应用只各写一次最终节点位置与Box bounds，
-回读实际节点/Box/固定障碍后重算重叠、containment和取得净距，区分profile要求与实测值；障碍量测失败或应用期间改变时
-fail closed并纳入同一Box journal恢复。成功只证明编辑器排布，不证明几何正确、无接线交叉或语义视觉质量。
+viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 
-scene_save_as需授权的目标路径及expected_current_path，不开放raw load/clear。
-资产库修改不是普通场景撤销；create_spare_parms/update_hda的写后回读与锁定定义边界以动词合同为准。
+scene_save 只写当前明确路径；scene_save_as 需要用户授权的目标、expected_current_path 和用途说明。raw load/clear 不开放。保存回执是当时文件事实，重开检查、可编辑性与最终结果由对应观察确认。
 
-## 程序化构造与证据表示
+## 验证入口
 
-sop_recipe/control_test_plan是只读计划，不绕过build_module/test_controls，也不对输入节点授予所有权。
-前者返回普通节点spec，后者返回尚无expectations的case；参数赋值、构建、实际关系检查和恢复继续走现有动词。
+日常按改动选检查，完整方法见[开发维护](development.md)。执行内核核心回归覆盖 [Raw Gate](../tools/tests/dsh-bridge-raw-gate.test.py)、[节点归属](../tools/tests/dsh-node-ownership.test.py)、[捕获失败](../tools/tests/dsh-bridge-caught-failure.test.py)、[创建清理](../tools/tests/dsh-tab-create-failure.test.py)、[OBJ 父级](../tools/tests/dsh-object-parenting.test.py)和[场景/网络/渲染](../tools/tests/dsh-scene-network-render-contract.test.py)。
 
-内嵌PackedGeometry通过受限内存副本展开后量测真实变换与表面，原节点不改接线。恢复指纹仍包含原Packed拓扑、
-属性、变换和递归载荷，临时内存地址规范为内容摘要，writer索引不算几何；修改内嵌内容或实例变换仍须检出。
-磁盘/Alembic/Fragment与超过展开预算的表示保持unverified，不能为增加覆盖而加载外部文件或静默简化。
-实体相交采用面包围盒候选筛选但Boolean保留完整闭合操作数，不能因没有表面交线漏掉完全包含。
-命名part/name分区表面检查报告完整部件覆盖、跳过原因与预算；分区健康不证明跨部件接合或无穿插。
-
-[结构故障注入](../tools/tests/dsh-modeling-faults.test.py)要求漏分支、脱离、穿插、重复件在计算健康时仍能被最终输出检查拒绝。
-配方矩阵验证实际非零角变换与接点，参数规划验证缺口；机制结果不替代自然任务和固定条件独立评审。
-
-新建物理资产默认以米作为内部长度单位，modeling_dimensions仅换算已声明的源数量，不改HIP单位。
-尺寸定义可锁定group/axis/expected_m/tolerance_m，状态定义可锁定control_values；覆盖投影检查回执含义匹配，
-不允许另一尺寸、放宽容差或另一控制状态冒充当前要求。feature只提供细节设计意图，不赋予measured/pass。
+批量构建见 [module-preflight](../tools/tests/dsh-module-preflight.test.py)，参数恢复见 [control-state-restoration](../tools/tests/dsh-control-state-restoration.test.py)，请求未知与查回见 [request-recovery](../tools/tests/dsh-request-recovery.test.py)，实际节点知识见 [node-knowledge](../tools/tests/dsh-node-knowledge.test.py)。隔离机制检查不替代用户 live 加载或自然模型任务质量。

@@ -228,9 +228,6 @@ def _operation_summary(name: str, result):
         out['artifact'] = {k:r['artifact'].get(k) for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
             'run_id','capture_id','frame','reservation_retained')}
-    if name == 'build_module':
-        out.update({k: result[k] for k in ('operation_advisories','operation_advisory_count',
-                                          'operation_advisories_truncated','operation_advisory_scope') if k in result})
     if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']
     if 'framing_status' in r:

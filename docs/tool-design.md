@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 73
+Execution contract version: 74
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -44,35 +44,12 @@ render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-visual-che
 省略文件名或安全basename，路径输入须显式选`output_policy='explicit'`。旧图不迁移/自动删除，
 render_frame与ROP/geometry cache输出语义不变。
 
-| 工具 | 作用 |
-|---|---|
-| houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）；request_ref为同runtime请求回执；capabilities='visual'只读当前模型图像输入及附件通道。五分支互斥，后四者不执行HOM；没有allow_raw修改豁免 |
-| houdini_exec | 场景修改与作者验证；code/checkpoint二选一。checkpoint仅当前路径保存或显式Save As，不接受附带代码/allow_raw。产图通过原生附件返回 |
-| houdini_job_submit | 长操作排队异步提交 |
-| houdini_job_status | 状态/结果及可选等待 |
-| houdini_job_cancel | 协作式取消；不强杀已执行HOM |
-| houdini_product | 可选的Host侧会话需求记录，action=schema/define/read/review；不进入Bridge、不修改HIP。define需要definition、expected_revision（首次0）和change_reason；schema入口给出完整格式与示例。read投影定义与逐项历史测量覆盖；review返回保存、计划、数值与语义事实及至多32条最终输出检查定位。记录或覆盖状态不控制执行，不接受作者填写pass |
+顶层工具的作用、输入和返回见[工具说明](tools.md)，由[src/tool-catalog.ts](../src/tool-catalog.ts)生成。现场读取、执行、请求查回、资源读取、视觉能力与长任务控制各有独立接口；任务记录使用DSH已有能力。
 
-工具入口在[src/tools.ts](../src/tools.ts)，通用输出schema与展示在[src/tool-output.ts](../src/tool-output.ts)，本地来源/结果与请求回执查询在[src/tool-query.ts](../src/tool-query.ts)。产品定义按任务需要建立；`productMode`仅提供产品领域提示，不要求先登记数量、尺寸或设计计划。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
-请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
-执行结果的`artifactCandidates`仅列权威文件路径、字节数、来源和用途候选；它不声明最终交付、不复制文件。最终文件仍须由Agent验收后调用标准`present`，验证图和失败产物不能自动提升为交付。
+工具注册在[src/tools.ts](../src/tools.ts)，结果展示在[src/tool-output.ts](../src/tool-output.ts)，来源/历史结果与查回在[src/tool-query.ts](../src/tool-query.ts)。保存与渲染使用执行工具中的动词，不额外提供产品计划或完成认证工具。
 
-`houdini_product`的definition包含title/output/units/source_refs/assumptions/requirements/retired及可选reviewed_through；
-requirements为1..128项{id,kind,description,subjects,state,checks}，kind为part/relation/control/dimension/detail/visual。
-checks初始可空；绑定已有回执时给verb、contract_sha256、check_id，test_controls关系另给case_id=baseline或实际case id。
-只比较明确最终output及历史有效回执；part需component_count、dimension需physical_extent、relation需独立source/target组、control需实际case测量。
-dimension可声明{group,axis,expected_m,tolerance_m}，绑定量测的组/轴/期望量与容差必须一致；control_values可锁定具体数值状态，只有test_controls对应case的actual_values能核销该状态。detail可附feature={family,purpose,attachment,controls,construction,inspection}，family为functional/assembly/support/edge/surface；计划不证明几何存在。
-测量对应记measured，不认证语义匹配、资料归属或完整产品；detail/visual不由数字检查认证。缺项、失败、过期、后来尚未核对的用户来源保持可见。
-删除旧义务须在retired保留id/reason/source_ref，原始修订永久留在会话；来源引用不自动证明删除获得授权。
-define仅允许直接native调用；本版DSH的Code Mode/PTC嵌套写入缺少canonical持久回执，明确拒绝，schema/read不受此限。
-并行冲突修订不静默覆盖；read各候选后用resolve_conflicts给出准确冲突call id列表并合并义务，再顺序提交。定义、覆盖与待办不形成另一可写通过证书；压缩后从不可变工具记录重建。
-reviewed_through为已审阅到的用户/澄清来源hash；将“引用依据”与“已读消息范围”分开，长会话不需把每条继续消息加入source_refs。游标仅作者审阅声明，不证明理解/授权。
+Host比对Bridge词表与合同，结果包含操作记录、执行状态、checks、evidence、图像和文件事实。失败保留具体阶段与恢复结果；模型据此决定下一步。
 
-显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()、component_wait(timeoutSeconds=30)和component_stop(childId)，
-只管理原生子任务和自有worker，不属于上述6个houdini工具或HOM动词目录，默认不挂载。
-
-status只用于一次当前作者子任务/worker快照、权威workspace/HIP及容量，不启动worker，也不证明组件完成；wait在Host内等待最多30秒直到task/worker状态变化，超时只表示期间无状态变化。liveSceneState=unobserved时磁盘大小/mtime不能推导未保存的Houdini现场，等待交付走wait与原生子任务消息，不重复status或轮询文件。
-accepted不代表模型已开始/组件已完成；准备/权限不符在模型请求前拒绝。Host向子作者说明当前HIP由绑定提供、render_view在houdini_exec内，不能把子简报中的Save As路径或取消原始视觉义务当成有效合同。节点片段仍经下面component_*动词显式处理。
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。路径差异通过Open Workspace处理。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
@@ -80,8 +57,7 @@ execution中的hip_dir来自同次场景观察，未命名场景为null；Host�
 票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，
 已消费且回执淘汰的旧票也不能重入队；保留窗口内的重复引用只查原结果，owner/payload不一致仍拒绝。
 HTTP断联、超时、坏JSON或错误状态码
-返回unknown_transport时，用houdini_query(request_ref=...)查回，不重发code。该分支与code/result_ref/
-source_ref互斥，不接受pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
+返回unknown_transport时，用houdini_request(request_ref=...)查回，不重发code。请求查回工具不接受code、pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
 回执窗口最多4096条：正在执行/排队的请求及活动job关联不可淘汰，已终结旧记录按容量轮转，不设累计请求寿命。
 只有全部槽都仍活动时才拒绝新增登记。结果正文最多保留10分钟且总量上限64MiB，超预算先淘汰旧正文；
 过期/预算淘汰明确为result_expired，单条超预算为result_unavailable；记录淘汰后为unknown，不能推断未执行。
@@ -104,7 +80,7 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 这些读取不额外cook或重复求值；表达式通过不证明非空几何、关系或控制效果，继续按显式输出验收。
 控制实验与domain共用显式数值通道解析，支持普通spare和HDA定义参数，也支持显式命名的数值tuple分量；不接收tuple列表值。菜单/动态菜单、回调、multiparm成员、缺失/非数值参数写前拒绝，domain失败不通过删除判据核销。
 大返回在当前workspace成功保存完整Bridge返回JSON后才精简默认文本；result-details提供SHA-256和
-可用读取入口。`houdini_query(result_ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
+可用读取入口。`houdini_resource(kind="result", ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
 文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
 通用展示直接消费Bridge的checks/evidence/execution，不另推导控制、Polygon或接口结论。已归档结果的等价JSON子树使用引用，长正文提供预览与原始字段指针，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。批量verb_help完整显示签名、调用模式和前置条件。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
@@ -142,9 +118,9 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `modeling_dimensions(quantities, require_meter_scene=True)` | 只读源单位换算：quantities={name:{value,unit,min?,max?,source?}}，最多64项；长度m/cm/mm/um/in/ft转米，面积/体积按平方/立方换算，rad转deg、count/ratio不按长度缩放。默认要求当前HIP=1m且不改单位；旧工程须显式False并消费scene_values。返回原始依据、canonical_values、scene_values及米制CTRL spec；不证明最终尺寸 | dict |
 | `sop_recipe(kind, spec=None)` | 只读普通SOP配方，catalog给schema，kind单独调用给结构模板示例；hinge/slider/repeat共享origin/axis及CTRL标量，Merge源与附件→FRAME→Copy；sweep_tube/profile_shell为单中心线/平面薄片成形；guided_slider用真实source/guide投影推导位置并拒绝越界，surface_attach在指定面组投影并取法线frame；gusset/fastener提供带厚度肋板与头杆源。返回nodes/output/required_outputs交给build_module，不创建/cook；不猜坐标、不认领输入、不保证接合。字段、适用前提和反例见SOP配方reference | dict |
 | `control_test_plan(controller, parameters, max_cases=16, domain=None)` | 只读数值参数规划；1..8标量各2..8显式levels，最多4096候选，贪心覆盖levels与两两组合，最多16case。domain只预筛独立无keys标量，记录排除数与missing；返回tests的expectations为空，须由作者补独立指标/状态接口后test_controls执行，不是全域证明 | dict |
-| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型合并缺少显式决策及已声明的参数语义警示，非阻断、不改默认值、不证明语义；Tube始终说明rad1/rad2是X/Y椭圆轴半径而非内外径。dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
+| `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 批量新增{name,type,parms?,inputs?} SOP节点，列表非空；inputs可引用任意声明/现有直属child名，声明顺序自由，None保留空槽。先创建全部节点，再接线、设参，表达式可引用本批任意节点。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，多分量tuple接受等长数值列表，与实际setter同源。dry_run只预检真实类型/参数/引用；操作知识按需读node_info，不从缺字段推断未决设计。required_outputs可显式检查必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理本批新节点，不覆盖已有节点/flags | dict |
 | `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式output，不跟随display。output_index=0..63另验同父网络原生Output接线；默认检查直属范围，可nodes限域，error/空输出默认拒绝。geometry给bbox_min/max/size，所有显式输出均回scene_unit_length_meters与bbox_size_sop_local_mm，须结合OBJ变换核物理尺寸。handoff_output给出名称/type/Null/leaf、显示/渲染旗标及父网络当前出口。不按输出名称追加表面或上游Sweep检查；需要时显式调用geo_piece_stats等领域工具。它不自动发布，不证明OBJ可见、部件关系或艺术质量 | dict |
-| `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
+| `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 为可选自由用途说明，表示与方法由当前任务决定。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
 | `delete_node(node, allow_foreign=None)` | 删除前核对全部后代身份；返回外部参数引用及最多64项affected_connections（目标输入、原源输出及inputs_after），提示原生删除可能旁路重接，同名新节点不继承接线。拒绝删除owner-tagged render_view会话级基础设施。创建时同步新HDA的延迟定义后登记原生后代；不收养后来加入的foreign子节点 | dict |

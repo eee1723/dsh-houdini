@@ -57,29 +57,29 @@ try:
     assert "set_object_parent" in generic["error"], generic
     assert hou.node(child_path).input(0) is None
 
-    missing_reason = run(
-        f"set_object_parent({child_path!r}, {parent_path!r})",
-        "reason-refused",
-    )
-    assert missing_reason["ok"] is False, missing_reason
-    assert "reason" in missing_reason["error"], missing_reason
-    assert hou.node(child_path).input(0) is None
-
     parented = run(
         f"__result__ = set_object_parent({child_path!r}, {parent_path!r}, "
-        "keep_world=True, reason='scene_assembly')",
+        "keep_world=True)",
         "parent",
     )
     assert parented["ok"] is True, parented
     result = parented["result"]
     assert result["child"] == child_path, result
     assert result["parent"] == parent_path, result
+    assert result["reason"] == "", result
     assert result["verified"] is True, result
     assert result["world_transform_preserved"] is True, result
     assert result["world_delta_max"] <= 1e-6, result
     assert hou.node(child_path).input(0).path() == parent_path
     world_after = tuple(hou.node(child_path).worldTransform().asTuple())
     assert max(abs(a - b) for a, b in zip(world_before, world_after)) <= 1e-6
+    freely_described = run(
+        f"__result__ = set_object_parent({child_path!r}, {parent_path!r}, "
+        "reason='mechanical FK chosen for this task')",
+        "free-method",
+    )
+    assert freely_described["ok"] is True, freely_described
+    assert freely_described["result"]["reason"] == 'mechanical FK chosen for this task'
 
     cycle = run(
         f"set_object_parent({parent_path!r}, {child_path!r}, "

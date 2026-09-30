@@ -27,7 +27,7 @@ def start():
         raise ValueError('unsupported initial HIP filename')
     hip = workspace / hip_name
     if Path(hou.hipFile.path()).name.lower() != 'untitled.hip' or hip.exists():
-        raise RuntimeError('component worker requires a new scene and unused HIP path')
+        raise RuntimeError('isolated worker requires a new scene and unused HIP path')
     # Supervisor writes GO only after assigning its exact process to the Job.
     gate = root / 'go'
     deadline = time.monotonic() + request['startup_timeout']
@@ -35,7 +35,7 @@ def start():
         if hou.isUIAvailable():
             raise RuntimeError('GUI initialization arrived before supervisor release')
         if time.monotonic() >= deadline:
-            raise RuntimeError('component worker was not released by its supervisor')
+            raise RuntimeError('isolated worker was not released by its supervisor')
         time.sleep(.01)
     hou.hipFile.save(str(hip))
     bridge.start(0)

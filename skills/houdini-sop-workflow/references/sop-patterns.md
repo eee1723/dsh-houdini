@@ -156,8 +156,8 @@ build_module的独立参数/输入错误一次汇总为preflight errors，按具
 
 准备阶段读node_info的usage_notes/operation_card.decisions/operation_parameters；关键设置不受
 普通参数filter/limit裁切。单节点事实仅由随包操作卡维护，不在reference复制菜单索引或默认值。
-build_module的operation_advisories按类型/缺少的显式选择合并；尚未决定时dry_run后修spec，
-已明确意图可直接build，不为清除提示改变有意开放/native/all-edge输出。零提示不证明几何正确。
+build_module按声明准确构建并返回执行与输出事实；类型、参数或引用有疑问时可先dry_run。
+节点知识按需查询，表示、封口与选边由任务决定；静态预检通过不证明几何正确。
 构造顺序：明确表示和局部坐标→一个单元→inspect实际表面/截面→再复制→按身份集成。
 用geo_piece_stats(out,inspect=True,group=...)观察边界和局部basis extent；非Polygon返回unverified。
 有意分组切口不视作整体实体破损，整体bbox不能证明弯曲薄片有管状截面。

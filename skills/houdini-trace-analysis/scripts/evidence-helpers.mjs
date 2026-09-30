@@ -415,11 +415,12 @@ export function isStructuredHoudiniCall(step) {
 }
 
 export function isHoudiniDetailRead(step) {
-  return step.tool === 'houdini_query' && Boolean(step.args?.result_ref || step.args?.request_ref || step.args?.source_ref);
+  return ['houdini_resource', 'houdini_request'].includes(step.tool)
+    || (step.tool === 'houdini_query' && Boolean(step.args?.result_ref || step.args?.request_ref || step.args?.source_ref));
 }
 
 export function isHoudiniHostCall(step) {
-  return isHoudiniDetailRead(step) || step.tool === 'houdini_product'
+  return isHoudiniDetailRead(step) || ['houdini_capabilities', 'houdini_job_cancel'].includes(step.tool) || step.tool === 'houdini_product'
     || (step.tool === 'houdini_query' && Boolean(step.args?.capabilities));
 }
 
@@ -434,21 +435,22 @@ export function classifyRawEffect(step) {
   const outcome = usage?.gateOutcome;
   const text = String(step.resultText ?? step.resultPreview ?? '');
   if (outcome === 'blocked' || outcome === 'read_only_blocked'
-    || (failed && /raw-hou gate: blocked BEFORE execution|houdini_query is read-only and rejected this code BEFORE execution/i.test(text))) return 'gate_blocked';
+    || (failed && /raw-hou gate: blocked BEFORE execution|houdini_(?:inspect|query) is read-only and rejected this code BEFORE execution/i.test(text))) return 'gate_blocked';
   // Canonical/raw-usage arrays take precedence over method-name heuristics.
   if (usage && !usage._raw) {
     if (usage.coveredMutations?.length) return 'mutation_candidate';
     if (usage.suspectedMutations?.length || outcome === 'exempted') return 'suspected_effect';
   } else if (step.mutatingRawMethods?.length) return 'mutation_candidate';
   if (failed) return 'failed';
-  if (step.tool === 'houdini_query' && step.canonical?.execution?.read_only !== false) return 'read_only_query';
+  if (['houdini_inspect', 'houdini_query'].includes(step.tool) && step.canonical?.execution?.read_only !== false) return 'read_only_query';
   return 'unknown';
 }
 
 export function collectVerbAdoption(steps) {
   const detailReads = steps.filter(isHoudiniDetailRead);
   const hostProducts = steps.filter(step => step.tool === 'houdini_product');
-  const hostCapabilities = steps.filter(step => step.tool === 'houdini_query' && step.args?.capabilities);
+  const hostCapabilities = steps.filter(step => step.tool === 'houdini_capabilities'
+    || (step.tool === 'houdini_query' && step.args?.capabilities));
   const houdini = steps.filter((step) => step.isHoudini && !isHoudiniHostCall(step));
   const structured = houdini.filter(isStructuredHoudiniCall);
   const python = houdini.filter(step=>!isStructuredHoudiniCall(step));
@@ -522,7 +524,7 @@ const RELATION_PATTERN = /(?:coincident|共轴|轴线|anchor(?:ed)? endpoint|锚
 
 export function findQueryMutationSteps(steps) {
   return (steps || []).filter((step) => (
-    step.tool === 'houdini_query'
+    ['houdini_inspect', 'houdini_query'].includes(step.tool)
     && (
       (step.mutatingRawMethods || []).length > 0
       || (step.verbs || []).some((verb) => QUERY_SIDE_EFFECT_VERBS.has(verb.verb))
@@ -785,7 +787,7 @@ function restoredPerturbations(steps) {
   const validations = steps.map((step, offset) => ({
     index: stepIndex(step, offset + 1),
     valid: !step.failed && (
-      step.tool === 'houdini_query'
+      ['houdini_inspect', 'houdini_query'].includes(step.tool)
       || (step.verbs || []).some((verb) => VALIDATION_VERBS.has(verb.verb))
     ),
   })).filter((item) => item.valid).map((item) => item.index);
@@ -849,12 +851,14 @@ function auditReviewEvidence(steps, assistantMessages) {
   const sourceReads=[], inspections=[];
   const excerpt=text=>({text:String(text||'').slice(0,1600),truncated:String(text||'').length>1600});
   for(const step of steps) {
-    if(step.tool==='houdini_query' && typeof step.args?.source_ref==='string') {
+    const sourceRef = step.tool==='houdini_resource' && step.args?.kind==='source'
+      ? step.args?.ref : step.tool==='houdini_query' ? step.args?.source_ref : undefined;
+    if(typeof sourceRef==='string') {
       const page=step.canonical?.result ?? execResultFromPreview(step.resultText??step.resultPreview);
       const available=!step.failed && step.canonical?.ok!==false
-        && page?.source_ref===step.args.source_ref && page?.format==='json_text_page' && typeof page.text==='string';
-      sourceReads.push({index:step.index,source_ref:step.args.source_ref,
-        mode:step.args.source_ref==='index'?'discovery':'source_body',
+        && page?.source_ref===sourceRef && page?.format==='json_text_page' && typeof page.text==='string';
+      sourceReads.push({index:step.index,source_ref:sourceRef,
+        mode:sourceRef==='index'?'discovery':'source_body',
         status:available?'page_returned':step.failed||step.canonical?.ok===false?'read_failed':'return_unverified',
         ...(available?{offset:page.offset,returned_chars:page.text.length,total_chars:page.total_chars,next_offset:page.next_offset}:{}),
       });

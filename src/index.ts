@@ -12,6 +12,7 @@ import { registerHoudiniTools } from './tools.js'
 import { installSceneContext } from './context.js'
 import { sharedExecutorConnection } from './executor-host.js'
 import { installExecutorBinding } from './executor-binding.js'
+import {installHoudiniExecutionLog} from './dsh-adapter.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
@@ -22,8 +23,6 @@ export interface Config {
   /** Per-request timeout for bridge calls; job submission returns long before this. */
   requestTimeoutMs: number
   automaticContext?: boolean
-  /** Optional physical-product focus; never an execution gate. */
-  productMode?: boolean
   /** Explicit target identity for agent-scoped routing; launcher provides the default. */
   executorId?: string
   /** Opt-in candidate shared-Host routing. No automatic target/default migration. */
@@ -34,7 +33,6 @@ export const Config: Schema<Config> = Schema.object({
   bridgeUrl: Schema.string().default('http://127.0.0.1:8765'),
   requestTimeoutMs: Schema.number().default(120000),
   automaticContext: Schema.boolean().default(true),
-  productMode: Schema.boolean().default(false),
   executorId: Schema.string(),
   executorRegistry: Schema.string(),
 })
@@ -48,7 +46,7 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    'Houdini tools address one live scene through its main-thread queue. Use houdini_query for read-only inspection, houdini_exec for edits and checks, and houdini_job_* for long work. Host shell/file tools operate outside live HOM. An uncertain request is recovered by request_ref, never by repeating the edit.',
+    'Use houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue.',
     '',
     'Compose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. Query verb_help for uncertain signatures and node_info for unfamiliar node types. Batch related operations and specify the actual output being checked.',
     '',
@@ -56,13 +54,14 @@ const GUIDANCE: PromptSection = {
     '',
     'Tool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Undo covers only its stated scene effects. Images use DSH native attachments; inspect them with the current model and report unavailable visual understanding accurately.',
     '',
-    'Load domain skills as needed for SOP, COP, HDA/tools, controls, rigging, Solaris or tutorials. houdini_product is an optional requirement record and measurement view; it grants no scene permissions and never blocks construction.',
+    'Load domain skills as needed for SOP, COP, HDA/tools, controls, rigging, Solaris or tutorials. Use DSH task and file facilities to organize complex requirements; choose methods and working order from the task.',
     '',
     'Outputs belong under $HIP. Saving to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
   ].join('\n'),
 }
 
 export function apply(ctx: Context, config: Config) {
+  installHoudiniExecutionLog(ctx)
   installExecutorBinding(ctx,config.executorRegistry ? undefined : config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
   const connection = config.executorRegistry ? sharedExecutorConnection(ctx,config.executorRegistry)
     : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
@@ -70,7 +69,5 @@ export function apply(ctx: Context, config: Config) {
   registerHoudiniTools(ctx, connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)
-  if(config.productMode) ctx.systemPrompt.section({name:'dsh-houdini:product-mode',order:149,text:
-    'Focus on editable product models, useful controls and visible detail. Record complex requirements with houdini_product when helpful, choose the construction method freely, and compare the actual result with the user goal.'})
   if (config.automaticContext !== false) installSceneContext(ctx, connection)
 }

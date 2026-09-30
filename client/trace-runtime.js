@@ -138,6 +138,18 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
       });
     }
     var canonical = node.meta && node.meta.canonical;
+    if (!canonical && Object.prototype.hasOwnProperty.call(sources.tools, info.name)) {
+      for (var recordBlock of blocks) {
+        if (recordBlock.type !== "text") continue;
+        var record = tryJson(recordBlock.text);
+        if (record && record.kind === "dsh-houdini/execution-v1"
+            && record.callId === node.callId && record.tool === info.name) {
+          canonical = record.value;
+          break;
+        }
+      }
+    }
+    info.canonical = canonical;
     if (info.name.indexOf("houdini_") === 0 && canonical && typeof canonical.ok === "boolean") {
       info.resultValue = canonical.result;
       info.resultText = canonical.result === undefined ? null : JSON.stringify(canonical.result, null, 2);

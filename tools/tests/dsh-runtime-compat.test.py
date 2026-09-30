@@ -15,10 +15,10 @@ import dsh_runtime_compat as compat
 
 
 manifest = compat.load_manifest()
-assert manifest["preferredVersion"] == "0.1.6-alpha.2"
-assert compat.verified_versions() == {"0.1.6-alpha.2"}
-compat.require_verified("0.1.6-alpha.2")
-assert compat.preferred_spec() == "@deepseek-ai/dsh@0.1.6-alpha.2"
+assert manifest["preferredVersion"] == "0.2.0-rc.2"
+assert compat.verified_versions() == {"0.2.0-rc.2"}
+compat.require_verified("0.2.0-rc.2")
+assert compat.preferred_spec() == "@deepseek-ai/dsh@0.2.0-rc.2"
 deployment = json.loads((ROOT / "deployment/package.json").read_text(encoding="utf-8"))
 lock = json.loads((ROOT / "deployment/package-lock.json").read_text(encoding="utf-8"))
 assert deployment["dependencies"]["@deepseek-ai/dsh"] == manifest["preferredVersion"]

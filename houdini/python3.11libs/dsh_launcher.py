@@ -5,7 +5,7 @@ frontend and current browser session, starts only missing services, and brings
 the embedded UI forward.
 
 ``launch()`` is the explicit repair/development path used by the diagnostics
-panel. It synchronizes presets, restarts the in-process Houdini bridge, restarts
+panel. It restarts the in-process Houdini bridge, restarts
 the DSH frontend, waits until :3081 and Host RPC are ready, then opens the current
 ``$HIP`` workspace. The native client owns session selection and archive state.
 Use it after ``npm run build``, Houdini-side Python changes, or when
@@ -91,11 +91,6 @@ FRONTEND_COLD_WAIT_TIMEOUT = 600
 NODE = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
 DSH_BIN = ""
 DSH_BIN_ENV = os.environ.get("DSH_HOUDINI_DSH_BIN", "")
-
-# Agent presets live in this repo as templates (presets/<name>/); the dsh host
-# reads them from its configured home/.agent-presets/<name>/. launch() syncs them so prompt
-# or config edits take effect from the menu — no manual Copy-Item step.
-PRESET_SRC = os.path.join(_PROJECT_ROOT, "presets")
 
 # Required profile bundles are declared once at the package root and reconciled
 # through the official `dsh plugin` command before the frontend starts.
@@ -256,22 +251,6 @@ def ensure_dependencies(on_install=None) -> str:
         _append_dependency_failure(probe_output)
         return "dependency restore FAILED (compiled plugin still cannot be imported)"
     return "dependencies restored"
-
-
-def sync_presets() -> str:
-    """Copy repo presets into the same DSH home used by profile synchronization."""
-    if _MANAGED:
-        return "managed presets prepared in the isolated DSH home"
-    if not os.path.isdir(PRESET_SRC):
-        return "no presets/ directory in repo"
-    preset_dst = dsh_profile_sync.dsh_home() / ".agent-presets"
-    synced = []
-    for name in sorted(os.listdir(PRESET_SRC)):
-        src = os.path.join(PRESET_SRC, name)
-        if os.path.isdir(src):
-            shutil.copytree(src, preset_dst / name, dirs_exist_ok=True)
-            synced.append(name)
-    return "presets synced: " + (", ".join(synced) if synced else "(none)")
 
 
 def _port_open(host: str, port: int) -> bool:
@@ -616,6 +595,7 @@ def start_frontend(workspace_dir: str | None = None, *, attempt: dict | None = N
         "cwd": cwd,
         "close_fds": True,
         "env": dict(dsh_managed_runtime.environment(), NPM_CONFIG_CACHE=NPM_CACHE,
+                    DSH_HOUDINI_BRIDGE_URL=f"http://{BRIDGE_HOST}:{BRIDGE_PORT}",
                     DSH_HOUDINI_EXECUTOR_ID=dsh_managed_runtime.executor_identity()),
     }
     if os.name == "nt":
@@ -1255,8 +1235,7 @@ def launch(*, force_frontend=False) -> None:
     workspace, which must track the current hip directory.
     """
     from dsh_executor_registry import is_shared_executor
-    preview = sys.modules.get('dsh_component_preview')
-    if is_shared_executor() or (preview and preview.is_starting()):
+    if is_shared_executor():
         _report('This is a shared executor. Use Repair This Shared Executor; restarting the shared DSH Host is a separate operation affecting all tasks.')
         return
     frontend_cwd = _hip_dir()
@@ -1265,10 +1244,7 @@ def launch(*, force_frontend=False) -> None:
         if error:
             _report("service preflight failed: " + error.splitlines()[-1])
             return
-        detail = "\n".join([
-            sync_presets(),
-            restart_bridge(),
-        ])
+        detail = restart_bridge()
         print("[dsh-houdini] " + detail.replace("\n", "; "))
         open_ui_when_ready(detail, frontend_cwd)
 
@@ -1278,54 +1254,17 @@ def launch(*, force_frontend=False) -> None:
         _dispatch_service_preflight(after_preflight)
 
 
-def _choose_component_preview() -> bool | None:
-    """Source menu only: default ordinary, explicit preview, or cancel."""
-    if _MANAGED or not hou.isUIAvailable() or dsh_managed_runtime.has_owned_frontend():
-        return False
-    try:
-        hip = hou.hipFile.path()
-        if hou.hipFile.isNewFile() or not hip or not os.path.isfile(hip):
-            return False
-    except Exception:
-        return False
-    selected = hou.ui.displayMessage(
-        'Open the regular workspace, or explicitly use the isolated component source preview '
-        'for this saved HIP. Preview has a separate profile and is not the managed release.',
-        buttons=('Regular workspace', 'Component preview', 'Cancel'),
-        default_choice=0, close_choice=2, title='Open Workspace')
-    return True if selected == 1 else None if selected == 2 else False
-
-
-def open_workspace(*, select_mode: bool = False) -> None:
+def open_workspace() -> None:
     """Open the embedded workspace without restarting a healthy frontend.
 
     If the web service is absent, fall back to the full launch path. Keeping
     "open" separate from "restart" avoids destroying a live dsh session just
-    because the user wants to bring its Houdini window to the front. The menu
-    alone offers an explicit source-preview choice on a fresh saved HIP.
+    because the user wants to bring its Houdini window to the front.
     """
     from dsh_executor_registry import is_shared_executor
-    preview = sys.modules.get('dsh_component_preview')
-    if preview and preview.is_starting():
-        _report('This Houdini is preparing its component workspace; wait for that entry to finish. No second Host was started.')
-        return
-    if preview and preview.has_host_attempt():
-        # This is the exact source-preview instance already owned by this Houdini.
-        # Its entry validates the HIP, registration and Host lifetime before reuse;
-        # a stopped Host reports unknown state instead of starting another one.
-        preview.open_workspace()
-        return
     if is_shared_executor():
         _report('This Houdini is registered to another shared Host. Open Workspace cannot restart or adopt it; use its explicit shared-executor entry.')
         return
-    if select_mode:
-        choice = _choose_component_preview()
-        if choice is None:
-            return
-        if choice:
-            import dsh_component_preview
-            dsh_component_preview.open_workspace()
-            return
     frontend_cwd = _hip_dir()
 
     def after_preflight(preflight: dict | None, error: str | None) -> None:
@@ -1338,7 +1277,7 @@ def open_workspace(*, select_mode: bool = False) -> None:
                 f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}"
                 if facts.get("bridge_online") else restart_bridge()
             )
-            detail = "\n".join([sync_presets(), bridge_status])
+            detail = bridge_status
             print("[dsh-houdini] " + detail.replace("\n", "; "))
             open_ui_when_ready(detail, frontend_cwd)
             return

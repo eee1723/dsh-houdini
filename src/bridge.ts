@@ -147,7 +147,7 @@ export class HoudiniBridge {
       return {ok:false,stdout:'',stderr:'',error:String(error),
         requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
           ...(this.executorId ? {executor_id:this.executorId} : {}),
-          next_action:'Use houdini_query(request_ref=...) to retrieve the admitted request. Do not resubmit the scene code.'}}
+          next_action:'Use houdini_request(request_ref=...) to retrieve the admitted request. Do not resubmit the scene code.'}}
     }
   }
 
@@ -174,7 +174,7 @@ export class HoudiniBridge {
       if (!ref) throw error
       return {error:String(error),requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
         ...(this.executorId ? {executor_id:this.executorId} : {}),
-        next_action:'Use houdini_query(request_ref=...) to recover the original jobId. Do not submit this job again.'}}
+        next_action:'Use houdini_request(request_ref=...) to recover the original jobId. Do not submit this job again.'}}
     }
   }
 

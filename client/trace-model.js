@@ -78,7 +78,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
   // UI categories only: these colors do not confer execution permissions.
   const toolKind = (name) => {
     if (name === "skill") return "skill";
-    if (["houdini_query", "houdini_job_status"].includes(name)) return "query";
+    if (["houdini_inspect", "houdini_request", "houdini_resource", "houdini_capabilities", "houdini_query", "houdini_job_status"].includes(name)) return "query";
     if (name.startsWith("houdini_")) return "exec";
     if (["read", "read_file", "glob", "grep", "ls"].includes(name))
       return "read";
@@ -276,7 +276,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         (pending ? n.argsRaw : n.call?.argsRaw) ?? c?.argsRaw ?? "";
       const info = parseEntry({ ...n, call: { name, argsRaw } });
       const parts = info.parts;
-      const canonical = name.startsWith("houdini_") ? n.meta?.canonical : null;
+      const canonical = name.startsWith("houdini_") ? info.canonical : null;
       const transaction = canonical?.transaction ?? json(parts.transaction);
       const req =
         c?.request ||
@@ -311,6 +311,8 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
               )
             : args.request_ref
               ? "查回原请求"
+              : name === "houdini_resource"
+              ? args.kind === "source" ? "读取原始任务来源" : "读取历史工具结果"
               : args.source_ref
               ? "读取原始任务来源"
               : args.result_ref
@@ -319,7 +321,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
               ? "复核输出"
               : args.review_test
                 ? "受控复核实验"
-                : name;
+                : sources.tools?.[name]?.label || name;
       const rollback = transaction
         ? transaction.status === "rolled_back"
         : Boolean(info.rollback?.applied && !info.rollback.error);

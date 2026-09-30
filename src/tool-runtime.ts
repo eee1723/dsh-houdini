@@ -1,7 +1,7 @@
 /** Host provenance, executor routing and result attachment for tool calls. */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ExecResult, HoudiniBridge, OwnershipScope } from './bridge.js'
-import { ExecutorBindingBarrier } from './executor-binding.js'
+import { ExecutorBinding } from './executor-binding.js'
 import { attachImages } from './image-output.js'
 import { retainResult } from './result-details.js'
 
@@ -26,14 +26,11 @@ function ownershipScopeOf(exec: any): OwnershipScope {
 const normPath = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 
 export class HoudiniToolRuntime {
-  private readonly binding: ExecutorBindingBarrier
+  private readonly binding: ExecutorBinding
   private readonly workspaceNotes = new WeakMap<object, string>()
 
   constructor(private readonly ctx: Context, private readonly connection: HoudiniConnection) {
-    this.binding = new ExecutorBindingBarrier(async session => {
-      if (!ctx.sessions?.flush) throw new Error('DSH session durability service unavailable; no live request sent')
-      return ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0])
-    })
+    this.binding = new ExecutorBinding()
   }
 
   /** Validate trusted provenance before resolving or contacting an executor. */

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 
 const source=await fs.readFile(new URL('../../client.js',import.meta.url),'utf8')
 const fragment=source.slice(source.indexOf('    function createExecutorPicker('),source.indexOf('    function apply(ctx) {'))
-const hooks=[],effects=[];let cursor=0,confirm=false,task='task-a',requests=[],response
+const hooks=[],effects=[];let cursor=0,task='task-a',requests=[],response
 const React={
   createElement:(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity)}),
   useRef:value=>{let i=cursor++;return hooks[i]||(hooks[i]={current:value})},
@@ -12,7 +12,7 @@ const React={
   useEffect:(fn,deps)=>{let i=cursor++;if(!hooks[i]||hooks[i].deps[0]!==deps[0]){
     hooks[i]?.dispose?.();hooks[i]={deps};effects.push(()=>hooks[i].dispose=fn())}},
 }
-const context={React,AbortController,setTimeout,clearTimeout,window:{confirm:()=>confirm}}
+const context={React,AbortController,setTimeout,clearTimeout}
 vm.createContext(context);vm.runInContext(fragment+'\nthis.factory=createExecutorPicker;',context)
 const component=context.factory({rpc:{call:async(channel,endpoint,payload,signal)=>{
   requests.push({channel,endpoint,payload,signal});return typeof response==='function'?response():response
@@ -31,9 +31,9 @@ assert.equal(requests[0].endpoint,'houdiniTargets/list')
 assert.equal(requests[0].payload.args.input.sessionId,'task-a')
 assert(nodes(tree).some(n=>n.children.some(c=>typeof c==='string'&&c.includes('本任务尚未绑定'))))
 assert(button(tree,'选择并绑定'))
-button(tree,'选择并绑定').props.onClick();assert.equal(requests.length,1,'cancelled confirmation must not select')
-confirm=true;response={ok:true,value:{status:'bound'}}
+response={ok:true,value:{status:'bound'}}
 button(tree,'选择并绑定').props.onClick();await settle();tree=render()
+assert.equal(requests.length,2,'one explicit choice submits exactly one selection')
 assert.equal(requests[1].channel,'/api')
 assert.equal(requests[1].payload.args.input.sessionId,'task-a')
 assert.equal(requests[1].payload.args.input.expectedHip,record.hip_path)
@@ -48,4 +48,4 @@ assert.equal(button(tree,'选择并绑定'),undefined,'late response must not po
 response={ok:true,value:{candidates:[{...record,task_id:'task-a'}],recovery:{status:'bound_disconnected',message:'原Houdini执行端已断开。'}}}
 button(tree,'Houdini 执行端').props.onClick();await settle();tree=render()
 assert.equal(button(tree,'选择并绑定').props.disabled,true,'other author reservation is not selectable')
-console.log('executor picker: explicit consent, native RPC, captured HIP, stale response and author exclusion passed')
+console.log('executor picker: explicit selection, native RPC, captured HIP, stale response and author exclusion passed')

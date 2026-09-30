@@ -172,7 +172,7 @@ assert.match(sopCheckpoints, /组件大框包含这些小框/, 'handoff must pre
 assert.match(sopCheckpoints, /组件.*Cd/, 'requested observation colors must follow stable component identity')
 assert.match(moduleContracts, /X宽、Y高、Z深/, 'module contracts need the default Houdini world frame')
 assert.match(handoffLayout, /MODULE · SOURCE/, 'handoff reference needs the component-row role-cell pattern')
-const houdiniPreset = read('presets/houdini/agent.cordis.yml')
+const houdiniPreset = read('presets/houdini/persona.md')
 assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tutorial methods belong to those skills/,
   'the persona must route domain methods instead of duplicating them')
 for (const leakedRecipe of [/OUT_ASSET/, /Copy to Points/, /component Network Box/, /world Y-up/]) {

@@ -3,7 +3,7 @@
 ## 运行边界
 
 dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器。TypeScript Host注册
-5个执行/查询工具及1个Host产品定义工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
+8个职责明确的工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
@@ -21,9 +21,6 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ## 职责分层
 
-候选组件调度入口：[component-host.ts](../src/component-host.ts)注册显式组件委派/停止与原生子任务provider，
-监管独立worker，在pre-step核对并持久化绑定；未默认挂载，真实profile/GUI验收仍需完成。
-
 ### 多Houdini执行端与任务恢复
 
 源码已集成显式共享执行端模式：一个DSH Host、多个独立Houdini Bridge、每个任务持久绑定一个执行端。
@@ -31,17 +28,16 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 唯一设计与运维说明见[多实例与任务恢复](multi-instance.md)：身份分层、启动/选择、写入预留、Repair范围、
 退出与恢复边界及验收入口。代码整合和隔离验证不代表当前live已加载，也不代表崩溃自动续跑完成。
 
-### 组件协作的目标接入
+### 节点片段交换
 
-[多Agent组件建模](component-collaboration.md)在上述执行端基础上使用独立子作者与普通subnet/节点片段交换，
-主作者只写总装；不要求HDA交付，不引入同HIP多作者或第二套Agent状态机。源码组件预览候选已接原生可续跑子任务、独立worker和pre-step绑定，仍依赖单独构建的DSH provider-cwd候选；普通/受管运行时尚未合并，完整依赖迁移和候选替换的端到端验收尚未完成。接入与验收矩阵在该文档维护。
+[节点片段交换](component-collaboration.md)维护component_export/import/replace的文件与显式替换能力。它不注册子Agent或提供另一种模式。
 
 ### 现役分层
 
 四个产品方向共用执行内核，不各建一套状态机、权限层或完成证书。
 程序化建模、HDA/工具、视频教学工程与Copernicus的差异由按需workflow和领域模块承载。
 DSH负责会话、模型、通用Agent循环与通用交互；插件只增加Houdini能力与观察。
-执行内核校验真实调用条件，任务计划和建模方法由作者选择。产品记录可选，不形成执行准入。
+执行内核校验真实调用条件，任务计划和建模方法由作者选择。任务记录使用DSH已有能力，不形成执行准入。
 
 | 层 | 唯一职责 | 不承担 |
 |---|---|---|
@@ -62,26 +58,26 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 | 源码 | 维护职责 |
 |---|---|
+| [src/tool-catalog.ts](../src/tool-catalog.ts) | 八个工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
+| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配，集中真实宿主接口 |
+| [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
-| [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；注册可选产品工具 |
+| [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、JSON展示和预览；保留Bridge结构事实，不再次解释领域结论 |
-| [src/product-definition.ts](../src/product-definition.ts) | Host产品定义工具、来源/预期修订、件数/接触绑定、阶段与回执定位投影；不执行HOM，不推导授权或整件通过 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
-| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从当前执行器身份投影解析任务绑定、验证登记并固定调用级Bridge；绑定落盘屏障读取身份及绑定记录投影，首次绑定仍核当前消息批次并flush，无自动默认或重绑 |
+| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从当前执行器身份投影解析任务绑定、验证登记并固定调用级Bridge；按公开身份投影确认目标；持久化由DSH负责 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，使用`agentPreset`及执行器身份投影确认当前任务，严格输入/预留/代际校验，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | Host专用Session投影：折叠绑定记录、原始工具回执与执行器身份；冲突/无效历史拒绝恢复，不从PID、HIP路径或只读回执查询认领执行端 |
-| [src/component-host.ts](../src/component-host.ts) | 可选组件作者Host：父任务从身份投影确认装配执行端，子作者独立worker与修订交接；隔离配置、生命周期和失败报告不证明模型质量 |
-| [src/context.ts](../src/context.ts) | 上下文装配与接受生命周期；一次索引驱动执行、交付与要求视图，按公开surface去重并有界整理通知 |
-| [src/scene-context.ts](../src/scene-context.ts) | 为含现场指代的用户消息采集一次metadata，绑定消息、限制观察大小并在续接时读取原观察 |
+| [src/context.ts](../src/context.ts) | 上下文装配与接受生命周期；使用DSH原生上下文传递现场与执行事实 |
+| [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
-| [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和发送前持久化；在正常pre-step接受绑定，不改写旧工具交换 |
-| [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建有限历史状态及未决请求/检查失效/运行身份变化提醒；不按时间戳/计数触发注入，不维护另一事实库 |
-| [src/delivery-audit.ts](../src/delivery-audit.ts) | 从完整会话事件投影保存候选、已知执行失败、声明检查及待查回请求；成功Save As后的旧检查只标待重验，不认证最终文件或跨进程状态 |
+| [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和正常pre-step目标绑定；DSH负责持久化，不改写旧工具交换 |
+| [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
@@ -93,7 +89,6 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
-productMode是可选产品建模提示，默认关闭，不改变执行准入。产品定义、结构化checkpoint保存和场景执行各自独立；Bridge维持真实执行条件。
 
 提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止、交接及对用户的表达方式；
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
@@ -101,7 +96,7 @@ domain skill及reference维护建模、验证和交付方法。低频对象recip
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context为现场指代提供用户消息绑定的metadata；execution-history统一关联公开工具回执，execution-state和delivery-audit从同一索引生成关注项与保存视图。产品覆盖按call ID读取索引中的证据，不逐项扫描历史，按有意义的变化投影提醒。
+scene-context为每条用户消息提供一次消息绑定的metadata；execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
@@ -114,7 +109,6 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | 源码 | 维护职责 / 深入文档 |
 |---|---|
 | [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；component_replace已有显式计划与有限迁移，完整依赖迁移和质量验收不由片段往返保证 |
-| [dsh_component_worker.py](../houdini/python3.11libs/dsh_component_worker.py) | 自有组件进程初始化、新HIP/Bridge登记与空闲检查点退出；由tools/component-worker.py监管，不接管live |
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP、主线程队列、job、身份与合同；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
 | [dsh_code_analysis.py](../houdini/python3.11libs/dsh_code_analysis.py) | 每请求一次AST解析，共享预检、Raw Gate、只读限制与raw使用分类；执行编译同一AST，无HOM |
 | [dsh_execution.py](../houdini/python3.11libs/dsh_execution.py) | 动词注册、签名绑定/缓存、调用追踪、编辑事务和现场执行事实；只读不准备编辑Undo或journals |
@@ -155,9 +149,8 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径/环境与共用Windows前端生命周期；先建立Job再放行CLI，reload保留句柄。普通路径只收自有树；显式强制Repair可按安装/主入口/原生进程句柄核验并终止旧DSH监听者，不按端口自动认领 |
 | [dsh_executor_registry.py](../houdini/python3.11libs/dsh_executor_registry.py) | 多执行端登记与协作HIP单写租约候选；独立记录、原生文件身份、崩溃释放，不自动路由/重开或截获GUI保存 |
 | [dsh_shared_executor.py](../houdini/python3.11libs/dsh_shared_executor.py) | 候选登记菜单：主线程采集实际HIP/绑定Bridge动态端口，worker持久登记；不启动共享DSH、不保存HIP、不自动绑定任务 |
-| [dsh_component_preview.py](../houdini/python3.11libs/dsh_component_preview.py) | 源码限定的一键组件预览：隔离DSH profile、动态Host端口、当前已保存HIP登记及内嵌页面；不迁移旧任务/账号，不进入受管默认入口 |
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |
-| [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace、源码组件预览与Version & Diagnostics菜单 |
+| [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace与Version & Diagnostics菜单 |
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | worker启动/repair、主线程接入、模块重载与HIP目录意图；只读Host就绪、不再筛选/创建任务，preset/profile共用动态DSH_HOME |
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
@@ -168,9 +161,9 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py) | 安装器/launcher/manager共享唯一精确preferred版本与cache选择；不以缓存时间选择其他版本 |
 | [dsh-runtime-compatibility.json](../dsh-runtime-compatibility.json) | preferred DSH及支持组合的唯一清单 |
 | [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 当前受管profile的项目插件依赖清单 |
-| [cordis.patch.yml](../cordis.patch.yml) | bundle组合与插件配置 |
-| [presets](../presets/) | 手写[Houdini角色](../presets/houdini/persona.md)与[开发角色](../presets/houdini-dev/persona.md)，组合继承精确DSH标准preset |
-| [gen-agent-presets.mjs](../tools/gen-agent-presets.mjs) | 从已安装的精确DSH标准配置和persona.md生成三份Agent配置；产品focus复用Houdini角色，build刷新、docs:check检查漂移 |
+| [Houdini preset patch](../presets/houdini/cordis.patch.yml) | bundle组合与插件配置 |
+| [presets](../presets/) | 唯一Houdini角色与由DSH 0.2标准生成的声明式preset；没有dev/product模式 |
+| [gen-agent-presets.mjs](../tools/gen-agent-presets.mjs) | 使用精确DSH标准patch与persona.md生成唯一preset声明；build刷新、docs:check检查漂移 |
 | [shared-host.cordis.yml](../shared-host.cordis.yml) | 显式候选Host组合；仅共享登记模式使用，不修改现役profile或替用户启动服务 |
 
 GUI线程不得阻塞socket/子进程/netstat探测；进程缓存的UI/package变更需要完整重启Houdini。
@@ -219,7 +212,7 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 图层工具实现独立在 `dsh_cop_contracts.py`，skill 只组织调用；版本与行为门见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)。
 
-执行注意事项由context.ts在正常pre-step接受边界整理：最多4条本插件独立execution-state快照；超限逐条以公开surface replace换为空system消息（不进入模型），原始事件保留，混合来源/未完成工具批次不整理。新状态仍在当前步骤正常追加，未决回执/陈旧证据保留。整理后的持久化确认按会话/替换边界重试，失败后即使无新通知、上下文被抑制或会话重载也不放行模型请求；自身整理不会触发全量recovery；替换会改变缓存前缀，成本收益须独立测量。
+上下文通过DSH原生systemPrompt.context提供现场、运行状态和视觉通道事实。插件不重写会话surface，不自行执行上下文压缩或建立持久化门槛。DSH管理会话与上下文生命周期。
 
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；`scene_save`/`scene_save_as`、`component_export`、`render_frame`、`render_view`及`viewport_screenshot`只报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。

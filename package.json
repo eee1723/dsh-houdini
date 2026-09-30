@@ -16,16 +16,11 @@
       "types": "./lib/executor-host.d.ts",
       "default": "./lib/executor-host.js"
     },
-    "./component-host": {
-      "types": "./lib/component-host.d.ts",
-      "default": "./lib/component-host.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "client.js",
-    "cordis.patch.yml",
     "shared-host.cordis.yml",
     "dsh-profile.requirements.json",
     "dsh-runtime-compatibility.json",
@@ -38,20 +33,21 @@
     "tools/trace-session-lib.mjs",
     "tools/hda-delivery-check.py",
     "tools/isolated-houdini-check.py",
-    "tools/component-worker.py",
-    "tools/prepare-component-profile.mjs",
-    "tools/houdini_test_environment.py"
+    "tools/houdini_test_environment.py",
+    "tools/isolated-worker.py"
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
-    "docs:generate": "node tools/gen-node-card-docs.mjs && node tools/gen-agent-presets.mjs",
-    "docs:check": "node tools/gen-node-card-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
+    "docs:generate": "node tools/gen-node-card-docs.mjs && node tools/gen-agent-presets.mjs && node tools/gen-tool-docs.mjs",
+    "docs:check": "node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
     "prepare": "npm run build"
   },
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./presets/houdini/cordis.patch.yml"
+      ]
     },
     "client": {
       "platform": "web",
@@ -62,18 +58,21 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-llm": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-session-projection": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-system-prompt": "0.1.6-alpha.2"
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-agent-presets": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-session-projection": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-system-prompt": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-tools": "0.1.6-alpha.2",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent-preset": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-web-app": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4",
     "@types/node": "^22",
     "core-js": "3.45.1",
     "esbuild": "0.25.9",

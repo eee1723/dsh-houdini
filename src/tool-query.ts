@@ -1,44 +1,21 @@
-/** Query dispatch keeps local sources and history reads independent of HOM. */
-import type { Context } from '@deepseek-ai/cordis'
-import type { ExecResult } from './bridge.js'
-import { visualCapability } from './image-output.js'
-import { readResultDetail } from './result-details.js'
-import { readTaskSource } from './task-sources.js'
-import { HoudiniToolRuntime, workspaceOf } from './tool-runtime.js'
+/** Host resource reads and recovery use distinct contracts, never live code. */
+import type {ExecResult} from './bridge.js'
+import {readResultDetail} from './result-details.js'
+import {readTaskSource} from './task-sources.js'
+import {HoudiniToolRuntime,workspaceOf} from './tool-runtime.js'
 
-export interface HoudiniQuery {
-  code?: string
-  capabilities?: string
-  source_ref?: string
-  request_ref?: string
-  result_ref?: string
-  pointer?: string
-  offset?: number
-  limit?: number
+export function readResource(args:{kind:'source'|'result';ref:string;pointer?:string;offset?:number;limit?:number},exec:any):Promise<ExecResult>|ExecResult {
+  if(args.kind==='result') return readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit)
+  if(args.kind!=='source') throw Error('kind must be source or result')
+  if(args.pointer!==undefined) throw Error('pointer is only used for result resources')
+  const session=exec?.agent?.session
+  if(!session?.snapshotEvents) throw Error('Task sources require a current agent session')
+  return readTaskSource(session.snapshotEvents(),args.ref,args.offset,args.limit)
 }
 
-export async function executeQuery(args: HoudiniQuery, exec: any,
-  runtime: HoudiniToolRuntime, ctx: Context): Promise<ExecResult> {
-  if ([args.code, args.result_ref, args.source_ref, args.request_ref, args.capabilities]
-    .filter(value => value !== undefined).length !== 1) {
-    throw new Error('provide exactly one of code, result_ref, source_ref, request_ref or capabilities')
-  }
-  const paginated = [args.pointer, args.offset, args.limit].some(value => value !== undefined)
-  if (args.capabilities !== undefined) {
-    if (args.capabilities !== 'visual' || paginated) throw new Error('capabilities requires visual, without pagination/pointer')
-    return { ok: true, stdout: '', stderr: '', result: await visualCapability(exec, ctx) }
-  }
-  if (args.source_ref !== undefined) {
-    if (args.pointer !== undefined) throw new Error('pointer requires result_ref; task sources use offset/limit')
-    if (!exec?.agent) throw new Error('task sources require a current agent session')
-    return readTaskSource(exec.agent.session.snapshotEvents(), args.source_ref, args.offset, args.limit)
-  }
-  if (args.result_ref !== undefined) return readResultDetail(
-    workspaceOf(exec), args.result_ref, args.pointer, args.offset, args.limit)
-  if (args.request_ref !== undefined) {
-    if (paginated) throw new Error('request_ref does not accept pagination or pointer')
+export async function recoverRequest(request_ref:string,exec:any,runtime:HoudiniToolRuntime):Promise<ExecResult> {
     const { bridge, owner } = await runtime.target(exec, false)
-    const receipt = await bridge.requestStatus(args.request_ref, owner, exec.signal)
+    const receipt = await bridge.requestStatus(request_ref, owner, exec.signal)
     const recovered: any = receipt.requestReceipt
     const jobId = recovered?.jobId || (recovered?.status === 'done' && recovered.result?.jobId)
     if (jobId) return { ok: true, stdout: '', stderr: '', result: { jobId }, requestReceipt: {
@@ -53,9 +30,4 @@ export async function executeQuery(args: HoudiniQuery, exec: any,
       },
     }, exec, bridge)
     return receipt
-  }
-  if (paginated) throw new Error('pointer/offset/limit require result_ref')
-  if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
-  const { bridge, owner } = await runtime.target(exec)
-  return runtime.result(await bridge.exec(args.code, owner, exec.signal, undefined, true), exec, bridge, true)
 }

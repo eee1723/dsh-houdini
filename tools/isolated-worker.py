@@ -1,4 +1,4 @@
-"""Explicit component-worker supervisor. JSON readiness on stdout, STOP on stdin.
+"""Explicit isolated-worker supervisor. JSON readiness on stdout, STOP on stdin.
 
 No model or live-engine discovery. A caller supplies the executable, new work
 directory and registry. EOF reclaims only the owned process tree, never a port.
@@ -54,7 +54,7 @@ def main():
     env = isolated_environment(directory / 'environment', executable=executable, gui=args.gui)
     env['HOUDINI_MAXTHREADS'] = str(args.threads)
     env['DSH_COMPONENT_WORKER_REQUEST'] = str(request_file)
-    module = ROOT / 'houdini/python3.11libs/dsh_component_worker.py'
+    module = ROOT / 'houdini/python3.11libs/dsh_isolated_worker.py'
     if args.gui:
         hooks = directory / 'hooks'
         for version in ('3.11', '3.13'):
@@ -62,7 +62,7 @@ def main():
             scripts.mkdir(parents=True)
             (scripts / 'uiready.py').write_text(
                 'import sys\nsys.path.insert(0, ' + repr(str(module.parent)) + ')\n'
-                'import dsh_component_worker\ndsh_component_worker.start()\n', encoding='utf-8')
+                'import dsh_isolated_worker\ndsh_isolated_worker.start()\n', encoding='utf-8')
         env['HOUDINI_PATH'] = str(hooks) + os.pathsep + '&'
         command = [str(executable), '-foreground']
     else:
@@ -90,7 +90,7 @@ def main():
             ready = directory / 'ready.json'
             while not ready.exists():
                 if closing.is_set() or process.poll() is not None or time.monotonic() >= deadline:
-                    raise RuntimeError('component worker did not become ready; inspect worker.log')
+                    raise RuntimeError('isolated worker did not become ready; inspect worker.log')
                 time.sleep(.05)
             # The writer closes ready.json before publishing complete JSON; retry
             # partial reads only here, never retry a Houdini mutation.
@@ -107,7 +107,7 @@ def main():
             print(json.dumps(result), flush=True)
             while not closing.wait(.1):
                 if process.poll() is not None:
-                    raise RuntimeError('component worker exited unexpectedly; no restart attempted')
+                    raise RuntimeError('isolated worker exited unexpectedly; no restart attempted')
             (directory / 'stop').touch(exist_ok=True)
             stop_state = directory / 'stop-state.json'
             stop_deadline = time.monotonic() + 15
@@ -126,7 +126,7 @@ def main():
                     raise RuntimeError('final HIP has unsaved scene changes after its explicit save; '
                                        'no automatic save; owned tree will be reclaimed')
             if process.returncode != 0:
-                raise RuntimeError('component worker exited with code ' + str(process.returncode))
+                raise RuntimeError('isolated worker exited with code ' + str(process.returncode))
     finally:
         if job:
             job.close()

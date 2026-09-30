@@ -1184,6 +1184,15 @@ def _snap_into_flow(node):
     return {'adjusted':True,'status':'adjusted','blockers':[]}
 
 
+def _initialize_created_inputs(node, input_nodes):
+    """Reconcile the shipped Sweep initializer with an explicit second input."""
+    if node.type().name() == 'sweep::2.0' and len(input_nodes) > 1 and input_nodes[1] is not None:
+        shape = node.parm('surfaceshape')
+        if shape is None or 'input' not in shape.menuItems():
+            raise ValueError('Sweep 2.0 input initializer contract changed; cannot select supplied cross-section')
+        shape.set('input')
+
+
 def tab_create(
     parent: hou.Node,
     type_name: str,
@@ -1218,7 +1227,7 @@ def tab_create(
     if parms is not None and (not isinstance(parms, dict) or not parms):
         raise ValueError("parms 必须是非空 {参数名: 值} dict")
     if inputs and cat == hou.objNodeTypeCategory():
-        raise ValueError("Object inputs are parenting; create first, then use set_object_parent with an explicit reason")
+        raise ValueError("Object inputs are parenting; create first, then use set_object_parent")
     input_nodes = [None if source is None else _resolve(source) for source in (inputs or [])]
     for source in input_nodes:
         if source is not None and source.parent() != parent:
@@ -1264,11 +1273,7 @@ def tab_create(
         # Sweep's shipped shelf selects a built-in tube before our explicit
         # second input is connected. Reconcile this known input-dependent
         # initializer after wiring. build_module applies explicit parms later.
-        if latest == 'sweep::2.0' and len(input_nodes) > 1 and input_nodes[1] is not None:
-            shape = node.parm('surfaceshape')
-            if shape is None or 'input' not in shape.menuItems():
-                raise ValueError('Sweep 2.0 input initializer contract changed; cannot select supplied cross-section')
-            shape.set('input')
+        _initialize_created_inputs(node, input_nodes)
         if parms is not None:
             set_parms(node, parms)
         _place_created_node(node)
@@ -1851,15 +1856,6 @@ def describe(node) -> dict:
 
 # --- node 域：写 -----------------------------------------------------------
 
-_OBJECT_PARENT_REASONS = {
-    "scene_assembly",
-    "camera_light_null",
-    "existing_legacy",
-    "explicit_user",
-    "downstream_obj_delivery",
-}
-
-
 def _matrix_values(matrix) -> list[float]:
     return [float(value) for value in matrix.asTuple()]
 
@@ -1868,9 +1864,8 @@ def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
                       index: int = 0, allow_foreign: str | None = None) -> dict:
     """显式设置 OBJ parent，参数顺序是 ``child, parent``。
 
-    这是 scene hierarchy 例外入口，不是新建几何 FK rig 的默认表示。``reason``
-    必须是 ``scene_assembly/camera_light_null/existing_legacy/explicit_user/``
-    ``downstream_obj_delivery`` 之一。``parent=None`` 表示 unparent；普通父级
+    只表达明确的 OBJ hierarchy 操作，建模/rig 表示由当前任务决定。``reason``
+    可记录可选的用途说明，不限制用途。``parent=None`` 表示 unparent；普通父级
     使用 ``index=0``，Blend 等明确多输入对象可指定其他 input。
     ``keep_world=True`` 在改层级后恢复 child 的原世界变换，并回读验证 parent。
     """
@@ -1882,11 +1877,6 @@ def set_object_parent(child, parent, keep_world: bool = True, reason: str = "",
     if p is not None and p.type().category() != obj_category:
         raise ValueError(f"set_object_parent 的 parent 必须是 OBJ 或 None，收到 {p.path()}")
     reason = str(reason or "").strip()
-    if reason not in _OBJECT_PARENT_REASONS:
-        raise ValueError(
-            "reason 必须明确 OBJ parenting 的合法边界，可用："
-            f"{sorted(_OBJECT_PARENT_REASONS)}。新建几何父子机械/FK 请使用 KineFX。"
-        )
     if p is not None and int(p.sessionId()) == int(c.sessionId()):
         raise ValueError("对象不能 parent 到自身")
     index = int(index)
@@ -2007,7 +1997,7 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
     只表达普通网络 dataflow；OBJ→OBJ 是 parenting，明确拒绝并要求
-    ``set_object_parent(child, parent, reason=...)``。
+    ``set_object_parent(child, parent)``。
     返回 ``{"node": dst path, "input": 实际落到的输入口, "position_adjusted": bool}``。
     请求的端口不存在或连接失败时明确拒绝，不尝试改接其他端口。
     index 为目标输入名/索引；keyword-only output 为源输出名/索引，默认0保持兼容。
@@ -2023,8 +2013,7 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
         raise ValueError(
             "connect 只表达网络数据流，不执行 OBJ parenting。"
             f"当前连线会把 {s.path()} 作为 parent、{d.path()} 作为 child；"
-            "请改用 set_object_parent(child, parent, keep_world=True, reason=...)。"
-            "新建几何父子机械/FK 默认使用 KineFX；/obj 只表示创建位置。"
+            "请改用 set_object_parent(child, parent, keep_world=True)。"
         )
     _require_owned(d, "connect destination", allow_foreign)
     if s.parent() != d.parent():
@@ -2259,9 +2248,10 @@ def control_test_plan(controller, parameters, max_cases=16, domain=None) -> dict
 
 
 def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
-    """Build 1..64 NEW SOP nodes from {name,type,parms?,inputs?} specs.
+    """Build NEW SOP nodes from a nonempty {name,type,parms?,inputs?} spec list.
 
-    Inputs are earlier spec/existing direct child names; None skips an input.
+    Inputs name any declared spec or existing direct child; declaration order is
+    free. All nodes exist before wiring and parameter expressions. None retains an empty input.
     For secondary Wrangle lookup use inputs=[None, 'source']. No overwrite or flags.
     dry_run is static preflight (no scratch node); VEX/cook not yet verified.
     Failed creation/parameters/cook removes only this batch's new nodes.
@@ -2274,9 +2264,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     branches, so a healthy merge cannot hide missing deliverable pieces. Empty
     helpers remain allowed when not declared required. Independent static field
     errors are returned together before creation; retain parameter components.
-    operation_advisories group missing explicit decisions by type/fields; use
-    dry_run when these choices are unresolved. Advice never changes defaults or
-    rejects intentional open/native/all-edge geometry, and is not verification.
+    Query node_info for operation knowledge when needed; construction returns
+    execution and output facts without inferring unresolved design choices.
     """
     from dsh_sop_contracts import build_module as build
     return build(parent, nodes, output=output, dry_run=dry_run, interfaces=interfaces, required_outputs=required_outputs)

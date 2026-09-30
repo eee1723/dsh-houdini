@@ -64,11 +64,10 @@ assert shown == [
     {"workspace_dir": r"E:\different", "authenticated_url": "fixture-auth", "force_reload": False},
 ]
 
-# The normal menu path must not rewrite presets merely to show an existing UI.
+# The normal menu path only opens an existing UI; presets are bundle declarations.
 with patch.object(dsh_launcher, "_hip_dir", return_value=r"E:\fixture"), \
      patch.object(dsh_launcher, "_dispatch_service_preflight", side_effect=lambda callback: callback({
          "frontend_online": True, "bridge_online": True}, None)), \
-     patch.object(dsh_launcher, "sync_presets", side_effect=AssertionError("warm open rewrote presets")), \
      patch.object(dsh_launcher, "_report"), \
      patch.object(dsh_launcher, "open_ui", return_value="raised") as opened:
     dsh_launcher.open_workspace()
@@ -94,37 +93,6 @@ with patch.object(dsh_launcher, "_MANAGED", None), \
          patch.object(dsh_launcher, "_plugin_runtime_probe", return_value=(False, "ERR_MODULE_NOT_FOUND")), \
          patch.object(dsh_launcher.subprocess, "run", side_effect=AssertionError("managed npm")):
         assert "managed dependency check FAILED" in dsh_launcher.ensure_dependencies()
-
-
-# Resolve the configured home at synchronization time, just as profile sync does.
-# Changing DSH_HOME after import must not copy presets into the previous home.
-with tempfile.TemporaryDirectory(prefix="dsh-presets-中文 空格-") as temporary:
-    fixture = Path(temporary)
-    source = fixture / "source"
-    preset = source / "houdini"
-    preset.mkdir(parents=True)
-    current_workflow = (
-        "# fixture\n"
-        "    - id: workflow-ptc\n"
-        "      name: '@deepseek-ai/dsh-workflow-ptc'\n"
-    )
-    (preset / "agent.cordis.yml").write_text(current_workflow, encoding="utf-8")
-    with patch.object(dsh_launcher, "_MANAGED", None), \
-         patch.object(dsh_launcher, "PRESET_SRC", str(source)), \
-         patch.object(Path, "home", return_value=fixture / "default-home"):
-        for configured, expected_home in (
-            (str(fixture / "first-home"), fixture / "first-home"),
-            (str(fixture / "second-home"), fixture / "second-home"),
-            ("   ", fixture / "default-home" / ".dsh"),
-        ):
-            with patch.dict(os.environ, {"DSH_HOME": configured}):
-                assert dsh_launcher.sync_presets() == "presets synced: houdini"
-                assert dsh_launcher.dsh_profile_sync.profile_dir("web") == expected_home / "profiles" / "web"
-                copied = expected_home / ".agent-presets" / "houdini" / "agent.cordis.yml"
-                assert copied.read_text(encoding="utf-8") == current_workflow
-        with patch.object(dsh_launcher, "_MANAGED", {"home": str(fixture / "managed")}), \
-             patch.object(dsh_launcher.shutil, "copytree", side_effect=AssertionError("managed preset writes")):
-            assert "managed presets prepared" in dsh_launcher.sync_presets()
 
 
 # Unknown listeners are conflicts, never permission to kill or reuse them.
@@ -160,7 +128,6 @@ for service in ("frontend", "bridge"):
     with patch.object(dsh_launcher, "_hip_dir", return_value=r"E:\fixture"), \
          patch.object(dsh_launcher, "_service_preflight", side_effect=failure), \
          patch.object(dsh_launcher, "_report", side_effect=reports.append), \
-         patch.object(dsh_launcher, "sync_presets", side_effect=AssertionError("conflict changed presets")), \
          patch.object(dsh_launcher, "restart_bridge", side_effect=AssertionError("conflict restarted bridge")), \
          patch.object(dsh_launcher, "open_ui_when_ready", side_effect=AssertionError("conflict started frontend")), \
          patch.object(dsh_launcher, "open_ui", side_effect=AssertionError("conflict opened frontend")):
