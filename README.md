@@ -1,7 +1,7 @@
 # dsh-houdini
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)插件，让agent驱动正在运行的SideFX Houdini会话。
-5个houdini_*工具、67 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
+5个执行/查询工具及1个Host产品定义工具、70 个意图级动词、9个按需skills；Host通过HTTP调用Houdini主线程，不直接使用hou。
 
 ## 文档
 
@@ -70,6 +70,7 @@ python houdini/install.py
 
 配置源为[src/index.ts](src/index.ts)：bridgeUrl默认http://127.0.0.1:8765，
 requestTimeoutMs默认120000，automaticContext默认true。
+productMode默认false；产品建模preset可显式开启，用于提供领域工作提示。产品定义是可选的需求记录，不作为代码执行、任务提交或保存的前提；详见[执行契约](docs/execution-contract.md#产品定义与视觉能力)。此配置不代表当前live已加载。
 兼容DSH由[dsh-runtime-compatibility.json](dsh-runtime-compatibility.json)精确选择，
 profile依赖由[dsh-profile.requirements.json](dsh-profile.requirements.json)管理。
 升级遵循[兼容设计](docs/dsh-update-compatibility.md)，不把npm latest自动当serving版本。
@@ -86,7 +87,7 @@ npm test
 npm pack --dry-run
 ```
 
-npm test运行构建和39 个 Node 确定性测试文件；文件数由文档一致性门禁核对。
+npm test运行构建和现有Node确定性回归；测试入口从tools/tests/*.test.mjs自动发现。
 HOM回归用目标版本的隔离hython跑tools/tests/*.test.py；稳定命令与发布门见[开发维护](docs/development.md)。
 不手改lib或client生成区，不将测试运行结果追加到docs。
 

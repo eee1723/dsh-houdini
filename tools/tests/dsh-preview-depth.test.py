@@ -80,6 +80,7 @@ def rejects(fn, reason):
     visibility={n.path():n.isDisplayFlagSet() for n in hou.node('/obj').children()}
     try:fn()
     except h.CheckpointError as error:
+        assert error.evidence['user_state_restored'] is True,error.evidence
         assert not error.evidence['ok'] and not error.evidence['render_started'],error.evidence
         assert reason in error.evidence['reasons'],error.evidence
         assert bridge._operation_summary('render_view',error.evidence)['depth_check']==error.evidence['depth_check']

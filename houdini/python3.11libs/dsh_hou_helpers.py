@@ -2210,6 +2210,54 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   output_index=output_index)
 
 
+def modeling_dimensions(quantities, require_meter_scene=True) -> dict:
+    """Read-only typed source quantities -> meter/area/volume values and CTRL spec.
+
+    quantities={name:{value:number,unit:m|cm|mm|um|in|ft|m2|cm2|mm2|m3|cm3|mm3|deg|rad|count|ratio,
+    min?:number,max?:number,source?:string}}. Requires actual HIP unit length 1m
+    by default. Existing nonmeter scenes need explicit False and scene_values
+    adaptation; never changes HIP settings. Counts/angles are not length-scaled.
+    Example: modeling_dimensions({'length':{'value':120,'unit':'mm'}})
+    returns canonical_values['length']=0.12. Use converted values in construction.
+    Source meanings and final physical dimensions remain separately verified.
+    """
+    from dsh_modeling_units import modeling_dimensions as convert
+    return convert(quantities,require_meter_scene)
+
+
+def sop_recipe(kind, spec=None) -> dict:
+    """Read-only ordinary SOP specs; kind=catalog/hinge/slider/guided_slider/surface_attach/gusset/fastener/repeat/sweep_tube/profile_shell.
+
+    Read catalog or sop_recipe(kind) for examples of every recipe. guided_slider bounds
+    travel against actual polygon source/guide projections. surface_attach projects
+    a source Y=0 foot to a named receiver surface; complete-foot contact remains
+    separately verified. gusset/fastener generate editable local detail sources.
+    Inputs are direct source children; one
+    named CTRL supplies parameter references and shared frame origin. Returns
+    nodes/output/required_outputs for build_module, never creates/cooks nodes.
+    Hinge uses degrees about a normalized axis and a source-local origin pivot;
+    slider translates along axis; repeat uses integer count 1..256 and spacing.
+    Numeric origin/dimensions or {parm:name} reference one shared controller.
+    No automatic interfaces, world-space conversion, HDA, ownership or acceptance.
+    """
+    from dsh_procedural_plans import sop_recipe as plan
+    return plan(kind, spec)
+
+
+def control_test_plan(controller, parameters, max_cases=16, domain=None) -> dict:
+    """Read scalar current values and plan <=16 pairwise representative cases.
+
+    parameters={scalar:[2..8 explicit boundary/intermediate levels]}, <=8 controls,
+    <=4096 candidate combinations. domain uses test_controls scalar constraints.
+    No writes/cook. Returned tests contain EMPTY expectations: author must add
+    independent response/invariant measurements and state-specific interfaces.
+    Coverage reports exact uncovered requested levels/pairs, never a full-domain
+    proof. Run accepted cases with test_controls; no auto-pass or silent clamping.
+    """
+    from dsh_procedural_plans import control_test_plan as plan
+    return plan(controller, parameters, max_cases, domain)
+
+
 def build_module(parent, nodes: list, output: str, dry_run: bool = False, interfaces=None, *, required_outputs=None) -> dict:
     """Build 1..64 NEW SOP nodes from {name,type,parms?,inputs?} specs.
 
@@ -4991,7 +5039,7 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
 
 
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
-                  baseline_interfaces=None) -> dict:
+                  baseline_interfaces=None, views=None, view_bounds=None) -> dict:
     """数字标量控制的可恢复测试；必须用exec（会临时改参数/cook）。
 
     tests为1..16个case；每个case是
@@ -5016,16 +5064,21 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     每case最终恢复原参数/keys/frame，
     用完整bgeo内容核对输出恢复（包括原生primitive intrinsic）。
     拒绝foreign控制（除单次授权）、menu/button/callback/multiparm/tuple；只声明已测case，
-    当前控制输出仅支持Polygon/Mesh/Sphere/Tube及点几何，其他类型写前unverified。
+    当前控制输出支持Polygon/Mesh/Sphere/Tube及点几何；内嵌PackedGeometry有界内存展开量测，
+    原Packed内容与变换单独做恢复指纹。磁盘/Alembic/Fragment等其他类型写前unverified。
     每case至少一项预期delta排除0；不保证外部文件/Python或solver副作用可撤销。
     可选domain=[{id,left:数值spare参数名,op:lt|le|gt|ge|eq|ne,right:参数名或有限数值}]。
     检查基准和实际扰动值；独立无key控制还可写前拒绝无效测试值。不求解/钳制，不证明全范围。
     可选topology=[{id,groups:[最终primitive组名,...],require_closed:true}]检查融合表面的
     共享边连通/闭合；在基准与每次扰动实际输出上复查。不用于未焊接独立部件的距离/强度证明。
+    views可选最多两个iso/front/side/top；先拍基准，再用相同取景/深度包络拍各case。
+    view_bounds可显式给覆盖全部状态的世界坐标[min_xyz,max_xyz]；省略则锁定基准包络。
+    状态超出包络不重新取景；GUI/图片不可用保持unverified，几何恢复仍执行。图片不证明语义正确。
     """
     from dsh_quality_contracts import test_controls as test
     return test(controller, output, tests, interfaces=interfaces, allow_foreign=allow_foreign,
-                domain=domain, topology=topology, baseline_interfaces=baseline_interfaces)
+                domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
+                views=views, view_bounds=view_bounds)
 
 
 def cop_layer_stats(node, output=0, *, max_pixels=4194304) -> dict:
@@ -6947,6 +7000,8 @@ def render_view(node, direction="iso", frame=None,
         raise
     proxy = proxy_out = cam = aim = rop = None
     result_payload = None
+    failure_payload = None
+    pending_error = None
     try:
         proxy, proxy_out = _ensure_render_proxy(target)
         focus_bounds = None
@@ -7214,6 +7269,11 @@ def render_view(node, direction="iso", frame=None,
                 "不要据此宣称成功，请重新检查并渲染"
             )
         return result_payload
+    except BaseException as error:
+        pending_error = error
+        if isinstance(error, CheckpointError):
+            failure_payload = error.evidence
+        raise
     finally:
         restore_errors = _release_preview_reservation(artifact)
         restore_errors.extend(_restore_obj_visibility(obj_visibility))
@@ -7252,6 +7312,14 @@ def render_view(node, direction="iso", frame=None,
                     )
             except Exception as error:
                 restore_errors.append(f"{proxy.path()}/source: {error}")
+        if failure_payload is not None:
+            failure_payload['user_state_restored'] = not restore_errors
+            if restore_errors:
+                failure_payload['restore_errors'] = restore_errors
+        elif pending_error is not None and restore_errors:
+            raise CheckpointError('render_view failed and user state restoration failed',
+                                  {'ok':False,'user_state_restored':False,'restore_errors':restore_errors,
+                                   'original_error':str(pending_error)[:400]}) from pending_error
         if result_payload is not None:
             result_payload["user_state_restored"] = not restore_errors
             if restore_errors:

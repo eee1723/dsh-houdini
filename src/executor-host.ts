@@ -4,7 +4,7 @@ import Schema from '@deepseek-ai/schemastery'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
-import {ExecutorBindingBarrier} from './execution-state.js'
+import {ExecutorBindingBarrier} from './executor-binding.js'
 import {ExecutorController} from './executor-controller.js'
 import {projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
 

@@ -1,520 +1,14 @@
-/**
- * Houdini tool definitions. Every tool is a thin, typed wrapper over one
- * bridge endpoint; all `hou` semantics live in the Python code the model
- * writes and in the bridge that executes it.
- */
+/** Public tool registration and argument dispatch. HOM stays in the Bridge. */
 import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { registerProductTool } from './product-definition.js'
+import { executeQuery } from './tool-query.js'
+import { HoudiniToolRuntime, type HoudiniConnection } from './tool-runtime.js'
 import {
-  defineTool,
-  type GenericResultView,
-  type ToolResult,
-} from '@deepseek-ai/dsh-tools'
-import type { ExecResult, HoudiniBridge, JobStatus, OwnershipScope, JsonValue } from './bridge.js'
-import { readResultDetail, retainResult } from './result-details.js'
-import { readTaskSource } from './task-sources.js'
-import { attachImages, imageBlocks } from './image-output.js'
-import { ExecutorBindingBarrier } from './execution-state.js'
-
-/** Canonical fields shared by every exec-shaped result. */
-const execOutputProperties = {
-  ok: { type: 'boolean', required: true },
-  stdout: { type: 'string', required: true },
-  stderr: { type: 'string', required: true },
-  result: { type: 'json' },
-  verbs: { type: 'json' },
-  error: { type: 'string' },
-  rollback: { type: 'json' },
-  transaction: { type: 'json' },
-  rawUsage: { type: 'json' },
-  advisory: { type: 'string' },
-  images: { type: 'json' },
-  imageAttachments: { type: 'json' },
-  artifactCandidates: { type: 'json' },
-  checks: { type: 'json' },
-  evidence: { type: 'json' },
-  execution: { type: 'json' },
-  details: { type: 'json' },
-  requestReceipt: { type: 'json' },
-} as const
-
-const execOutputSchema = {
-  type: 'object',
-  properties: execOutputProperties,
-  additionalProperties: false,
-} as const
-
-type PresentationMeta = Record<string, JsonValue>
-
-function asPresentationMeta(value: unknown): PresentationMeta | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as PresentationMeta
-    : undefined
-}
-
-function codePresentationInput(args: { code: string; allow_raw?: string }): unknown {
-  return args.allow_raw === undefined
-    ? args.code
-    : { code: args.code, allow_raw: args.allow_raw }
-}
-
-function execPresentationMeta(value: ExecResult): PresentationMeta {
-  return {
-    ok: value.ok,
-    verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
-    imageCount: Array.isArray(value.imageAttachments) ? value.imageAttachments.filter((a: any) => a.attachment).length : 0,
-    ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
-    ...(value.execution !== undefined || value.details !== undefined || value.requestReceipt !== undefined ? { canonical: value as unknown as JsonValue } : {}),
-  }
-}
-
-function jobPresentationMeta(value: JobStatus): PresentationMeta {
-  return {
-    ok: value.ok,
-    jobId: value.jobId,
-    status: value.status,
-    verbCount: Array.isArray(value.verbs) ? value.verbs.length : 0,
-    imageCount: Array.isArray(value.imageAttachments) ? value.imageAttachments.filter((a: any) => a.attachment).length : 0,
-    ...(value.execution !== undefined || value.details !== undefined ? { canonical: value as unknown as JsonValue } : {}),
-  }
-}
-
-function resultTitle(label: string, result: ToolResult): string {
-  if (result.isError) return `${label} failed`
-  const meta = asPresentationMeta(result.meta)
-  if (meta?.ok === true && meta?.checksPending) return `${label} executed; checks need attention`
-  if (meta?.ok === true) return `${label} succeeded`
-  if (meta?.ok === false) return `${label} failed`
-  return `${label} complete`
-}
-
-function genericResult(title: string, result: ToolResult): GenericResultView {
-  return { card: 'generic', title, content: result.content }
-}
-
-function jobResultTitle(action: string, result: ToolResult): string {
-  if (result.isError) return `${action} failed`
-  const meta = asPresentationMeta(result.meta)
-  const jobId = typeof meta?.jobId === 'string' ? meta.jobId : undefined
-  const status = typeof meta?.status === 'string' ? meta.status : undefined
-  if (jobId !== undefined && status !== undefined) return `Houdini job ${jobId}: ${status}`
-  if (jobId !== undefined) return `${action} ${jobId}`
-  return `${action} complete`
-}
-
-function truncate(text: string, max = 400): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`
-}
-
-/** Render the runtime verb ledger as one compact line per verb call. */
-function hasCaution(value: unknown): boolean {
-  if (value === null || typeof value !== 'object') return false
-  const nonempty = (v:unknown) => Array.isArray(v) ? v.length > 0 : v && typeof v === 'object'
-    ? Object.keys(v).length > 0 : v !== null && v !== undefined && v !== '' && v !== false && v !== 0
-  for (const [key,v] of Object.entries(value)) {
-    if (['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && v === false) return true
-    if ((key === 'status' || key.endsWith('_status')) && typeof v === 'string'
-        && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
-          'no_detected_integrity_risk','none'].includes(v)) return true
-    if (/^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key) && nonempty(v)) return true
-    if (hasCaution(v)) return true
-  }
-  return false
-}
-
-const jsonPointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
-
-/** Risk facts survive even when a ledger points to the single evidence copy. */
-function riskFacts(value: unknown, pointer: string): Array<{pointer:string;value:unknown}> {
-  if (!value || typeof value !== 'object') return []
-  const rows: Array<{pointer:string;value:unknown}> = []
-  for (const [key, item] of Object.entries(value)) {
-    const at = `${pointer}/${jsonPointerKey(key)}`
-    const falseFact = ['ok','healthy','warning_free','restored','fresh','state_matches','animation_matches'].includes(key) && item === false
-    const status = (key === 'status' || key.endsWith('_status')) && typeof item === 'string'
-      && !['passed','pass','ok','success','healthy','valid','committed','no_scene_change','done','restored',
-        'no_detected_integrity_risk','none'].includes(item)
-    const diagnostic = /^(errors?|warnings?|failure_reasons|unsupported|restore_errors)$/.test(key)
-      && item != null && item !== false && item !== '' && (typeof item !== 'object' || Object.keys(item).length > 0)
-    if (falseFact || status || diagnostic) rows.push({pointer:at,value:item})
-    else rows.push(...riskFacts(item,at))
-  }
-  return rows
-}
-
-/** Only known, successful repeated detail is reduced. Unknown and failed
- * branches stay intact; every omission resolves in the immutable raw envelope.
- */
-function compactMeasurementValue(value: any, pointer: string, key = ''): any {
-  if (!value || typeof value !== 'object') return value
-  if (key === 'parameter_restore' && value.ok === true && Array.isArray(value.channels)
-      && Object.keys(value).every(k=>['ok','channels','errors','scope'].includes(k))
-      && value.channels.every((c:any)=>c.state_matches === true) && !hasCaution(value)) {
-    return {ok:true,checked_channels:value.channels.length,scope:value.scope,detail_pointer:pointer}
-  }
-  if (Array.isArray(value)) {
-    if (['domain','baseline_domain'].includes(key) && value.length && value.every(v=>v.status === 'pass' && !hasCaution(v)
-        && Object.keys(v).every(k=>['id','kind','status','condition','left_value','right_value','scope','next_action'].includes(k)))) {
-      return {status:'pass',condition_ids:value.map(v=>v.id),checked_conditions:value.length,
-        scope:'Declared comparisons only; full conditions are retained in the referenced result.',detail_pointer:pointer}
-    }
-    if (['checked_nodes','cook_details','created','node_details'].includes(key)
-        && JSON.stringify(value).length > 1500 && !hasCaution(value)) {
-      return {omitted:true,count:value.length,detail_pointer:pointer}
-    }
-    return value.map((item,i)=>compactMeasurementValue(item,`${pointer}/${i}`))
-  }
-  return Object.fromEntries(Object.entries(value).map(([name,item])=>
-    [name,compactMeasurementValue(item,`${pointer}/${jsonPointerKey(name)}`,name)]))
-}
-
-function compactEvidence(evidence: unknown): unknown {
-  if (!Array.isArray(evidence)) return evidence
-  return evidence.map((item,i)=>item && ['test_controls','verify_network','build_module','node_info'].includes(item.verb)
-    ? compactMeasurementValue(item,`/evidence/${i}`) : item)
-}
-
-/** Reuse only byte-equivalent JSON subtrees of known evidence schemas. The
- * original result remains addressable, and unique wrapper/diagnostic fields
- * are traversed rather than dropped because a neighbouring subtree matched.
- */
-function shareResultEvidence(value: unknown, evidence: unknown) {
-  const represented = new Map<string,{pointer:string;without_tags:boolean}>()
-  const index = (item:any,pointer:string,without_tags=false) => {
-    if (!item || typeof item !== 'object') return
-    const encoded=JSON.stringify(item)
-    if (encoded.length >= 256 && !represented.has(encoded)) represented.set(encoded,{pointer,without_tags})
-    for (const [key,child] of Object.entries(item)) index(child,`${pointer}/${jsonPointerKey(key)}`)
-  }
-  if (Array.isArray(evidence)) evidence.forEach((item,i)=> {
-    if (!item || !['test_controls','verify_network','build_module','node_info'].includes(item.verb)) return
-    const {ledgerIndex,verb,...payload}=item
-    index(payload,`/evidence/${i}`,true)
-  })
-  let changed=false
-  const project = (item:any,pointer:string):any => {
-    if (!item || typeof item !== 'object') return item
-    const match=represented.get(JSON.stringify(item))
-    if (match) {
-      changed=true
-      return {duplicate:true,duplicate_of:match.pointer,detail_pointer:pointer,
-        ...(match.without_tags ? {evidence_tags_excluded:true} : {}),
-        ...Object.fromEntries(['id','ok','status','restored','semantic_status'].filter(k=>Object.hasOwn(item,k)).map(k=>[k,item[k]]))}
-    }
-    return Array.isArray(item) ? item.map((child,i)=>project(child,`${pointer}/${i}`))
-      : Object.fromEntries(Object.entries(item).map(([key,child])=>[key,project(child,`${pointer}/${jsonPointerKey(key)}`)]))
-  }
-  return {value:project(value,'/result'),changed}
-}
-
-function renderVerbs(value: ExecResult): string[] {
-  if (!Array.isArray(value.verbs) || value.verbs.length === 0) return []
-  const lines = (value.verbs as Array<Record<string, unknown>>).map((v, i) => {
-    const ok = v.ok === true
-    let detail = ok
-      ? truncate(JSON.stringify(v.result))
-      : `error: ${truncate(String(v.error))}`
-    const compact = (value.details as any)?.stored === true
-    if (compact) {
-      const pointer = `/verbs/${i}/result`
-      const evidenceIndex = Array.isArray(value.evidence) ? value.evidence.findIndex((e:any)=>e?.ledgerIndex === i+1 && e?.verb === v.verb) : -1
-      const facts = {args_omitted:true,detail_pointer:`/verbs/${i}`,check_status:v.check_status ?? null,
-        ...(evidenceIndex >= 0 ? {evidence_pointer:`/evidence/${evidenceIndex}`} : {}),
-        ...(ok && evidenceIndex < 0 && v.verb !== 'verb_help' ? {result_preview:truncate(JSON.stringify(v.result))} : {}),
-        ...(!ok ? {error:String(v.error)} : {}),attention:riskFacts(v.result,pointer)}
-      return `${i+1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}([]) -> ${JSON.stringify(facts)} (${String(v.ms)}ms)`
-    }
-    const kwargsObj = v.kwargs !== null && typeof v.kwargs === 'object'
-      ? v.kwargs as Record<string, unknown>
-      : null
-    const kwargs = kwargsObj !== null && Object.keys(kwargsObj).length > 0
-      ? `, ${JSON.stringify(kwargsObj)}`
-      : ''
-    return `${i + 1}. [${ok ? 'ok' : 'FAIL'}] ${String(v.verb)}(${JSON.stringify(v.args)}${kwargs}) -> ${detail} (${String(v.ms)}ms)`
-  })
-  return [`verbs (${value.verbs.length}):\n${lines.join('\n')}`]
-}
-
-/** Append captured stdout/stderr/__result__/verbs of one exec-shaped value. */
-function renderStreams(value: ExecResult): string[] {
-  const parts: string[] = []
-  if (value.requestReceipt !== undefined) parts.push(`request-receipt:\n${JSON.stringify(value.requestReceipt)}`)
-  const compact = (value.details as any)?.stored === true
-  if (value.execution !== undefined) {
-    const e:any = value.execution
-    const observation = compact && Array.isArray(e.impact?.nodes) && e.impact.nodes.length > 16
-      ? {...e,impact:{...e.impact,nodes:e.impact.nodes.slice(0,16),nodes_omitted:e.impact.nodes.length-16,detail_pointer:'/execution/impact/nodes'}} : e
-    parts.push(`execution-observation:\n${JSON.stringify(observation)}`)
-  }
-  if (value.transaction !== undefined) parts.push(`transaction:\n${JSON.stringify(value.transaction)}`)
-  if (Array.isArray(value.evidence)) {
-    const summaries = value.evidence.flatMap(item => {
-      if (item === null || typeof item !== 'object' || Array.isArray(item)
-          || item.verb !== 'test_controls') return []
-      const summary = item.control_summary
-      return summary !== null && typeof summary === 'object' && !Array.isArray(summary)
-        ? [{ ledgerIndex: item.ledgerIndex, ...summary }] : []
-    })
-    if (summaries.length && !compact) parts.push(`control-test-summary (not_run is not pass):\n${JSON.stringify(summaries)}`)
-  }
-  if (value.evidence !== undefined) {
-    // Never summarize away failure/warning/unsupported evidence. For healthy
-    // large records only repeated display payloads are eligible for omission.
-    parts.push(`operation-evidence:\n${JSON.stringify(compact ? compactEvidence(value.evidence) : value.evidence)}`)
-  }
-  if (value.checks !== undefined) {
-    parts.push(`CHECKS NEED ATTENTION (execution success is not validation success):\n${JSON.stringify(value.checks)}`)
-  }
-  if (value.stdout) {
-    // The canonical ledger below already carries these tracer echoes, including errors.
-    // Keep user stdout and the raw envelope; only remove duplicate model presentation.
-    const output = Array.isArray(value.verbs) && value.verbs.length
-      ? value.stdout.split('\n').filter(line => !line.startsWith('[verb] ')).join('\n').trim()
-      : value.stdout
-    if (output) parts.push(`stdout:\n${output}`)
-  }
-  if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
-  const helps = compact && Array.isArray(value.verbs) ? value.verbs.filter((v:any)=>v.verb === 'verb_help' && v.ok).map((v:any)=>v.result) : []
-  if (helps.length) parts.push(`verb-help (signatures, call modes and preconditions):\n${JSON.stringify(helps)}`)
-  if (value.result !== undefined) {
-    const projection = compact ? shareResultEvidence(value.result,value.evidence) : {value:value.result,changed:false}
-    const result = JSON.stringify(projection.value, null, 2)
-    const sameHelp = helps.some((help:any)=>JSON.stringify(help) === JSON.stringify(value.result))
-    parts.push(`__result__:\n${sameHelp || compact && !projection.changed && result.length > 4000 && !hasCaution(value.result) ? JSON.stringify({omitted:true,detail_pointer:'/result',chars:result.length,
-      next_action:'Read the selected result fields through result_ref before relying on omitted values.'}) : result}`)
-  }
-  if (value.rollback !== undefined) parts.push(`rollback:\n${JSON.stringify(value.rollback, null, 2)}`)
-  if (value.rawUsage !== undefined) parts.push(`raw-usage:\n${JSON.stringify(value.rawUsage, null, 2)}`)
-  parts.push(...renderVerbs(value))
-  if (Array.isArray(value.imageAttachments)) parts.push('image-attachments:\n' + JSON.stringify(value.imageAttachments));
-  if (Array.isArray(value.artifactCandidates) && value.artifactCandidates.length) {
-    parts.push('artifact-candidates (not delivered; verify requested final files, then call present):\n'
-      + JSON.stringify(value.artifactCandidates))
-  }
-  if (value.advisory) parts.push(`hint:\n${value.advisory}`)
-  if (value.details !== undefined) parts.push(`result-details:\n${JSON.stringify(value.details)}`)
-  return parts
-}
-
-function planarFaceCrossingSummary(value: any) {
-  if (!value || typeof value !== 'object') return null
-  return {status:value.status ?? 'unverified',coverage:value.coverage ?? null,
-    crossed_faces:value.crossed_faces ?? null,
-    sample_primitives:[...new Set((Array.isArray(value.samples) ? value.samples : [])
-      .map((sample:any) => sample?.primitive).filter((primitive:any) => Number.isInteger(primitive)))].slice(0, 4)}
-}
-
-/** Put scoped check conclusions before the verbose receipt/ledger in both display modes. */
-function leadingCheckVerdicts(value: ExecResult): string[] {
-  if (!Array.isArray(value.evidence)) return []
-  const verdicts: { priority: number; text: string }[] = []
-  const interfaceChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_check_interfaces')
-  if (interfaceChecks.length) {
-    const checkedOutputs = [...new Set(interfaceChecks.map(item => item.output).filter(
-      (output): output is string => typeof output === 'string' && output.length > 0))]
-    const declared = interfaceChecks.reduce((count,item) => count
-      + (Array.isArray(item.results) ? item.results.length : 0),0)
-    const rows = interfaceChecks.flatMap(item => Array.isArray(item.results) && item.results.length
-      ? item.results.map((row:any) => ({...row,status:row.status ?? 'unverified',
-        output:item.output,check_status:item.status}))
-      : [{id:null,status:item.status === 'fail' ? 'fail' : 'unverified',
-        output:item.output,reason:item.reason ?? 'no_result_rows'}])
-    const unresolved = rows.filter((row:any) => row.status !== 'pass')
-    verdicts.push({priority:unresolved.length ? 0 : 3,text:`declared-interface-verdict: ${JSON.stringify({
-      checks:interfaceChecks.length,declared,checked_outputs:checkedOutputs.slice(0, 4),
-      checked_outputs_omitted:Math.max(0, checkedOutputs.length - 4),
-      pass:rows.filter((row:any) => row.status === 'pass').length,
-      fail:rows.filter((row:any) => row.status === 'fail').length,
-      unverified:rows.filter((row:any) => row.status === 'unverified').length,
-      unresolved:unresolved.slice(0, 6).map((row:any) => ({id:row.id,method:row.method ?? 'surface_proximity',
-        output:row.output,target_group:row.target_group ?? null,reason:row.reason ?? null,
-        hit_position:row.hit_position ?? null,
-        expected_components:row.expected_components ?? null,
-        observed_components:row.observed_components ?? null,
-        expected_mm:row.expected_mm ?? null,observed_mm:row.observed_mm ?? null,
-        tolerance_mm:row.tolerance_mm ?? null,delta_mm:row.delta_mm ?? null})),
-      boundary:'Checks apply only to the recorded output paths, which may be temporary nodes rather than the delivered final output. Compare with the explicit delivery SOP and rerun after later geometry edits. Physical extent depends on an independently checked drawing dimension and complete part group. Axis passage pass clears one centerline, not the full bore.'})}`})
-  }
-  const integrityChecks = (value.evidence as any[]).filter(item => item?.verb === 'geo_piece_stats'
-    && item.method === 'bounded polygon surface integrity')
-  if (integrityChecks.some(item => item.group !== null && item.group !== undefined)) {
-    verdicts.push({priority:1,text:`polygon-integrity-coverage: ${JSON.stringify({checks:integrityChecks.length,
-      selected_groups:integrityChecks.filter(item => item.group !== null && item.group !== undefined).length,
-      whole_output_checked_in_this_call:integrityChecks.some(item => item.group === null || item.group === undefined),
-      boundary:'A selected group cannot reveal exact coincident faces across different groups. Check the final output without group after the last geometry edit.'})}`})
-  }
-  for (const item of value.evidence as any[]) {
-    if (item?.verb === 'verify_network' && item.output?.toUpperCase().endsWith('/OUT_ASSET')) {
-      const surface = item.surface_integrity ?? {}
-      const curve = item.curve_path_integrity ?? {}
-      const needsReview = surface.status === 'unverified' || surface.risk_status === 'needs_review'
-        || (surface.boundary_edges ?? 0) > 0 || surface.shading_review_status === 'needs_visual_review'
-        || surface.planar_face_crossings?.status === 'unverified'
-        || curve.risk_status === 'needs_review' || curve.risk_status === 'unverified'
-      verdicts.push({priority:needsReview ? 1 : 3,text:`final-output-review: ${JSON.stringify({
-        output:item.output, bbox_size_sop_local:item.geometry?.bbox_size ?? null,
-        scene_unit_length_meters:item.scene_unit_length_meters ?? null,
-        bbox_size_sop_local_mm:item.bbox_size_sop_local_mm ?? null,
-        surface_status:surface.status ?? 'not_checked',
-        surface_reason:surface.reason ?? null,
-        polygon_group_candidates:surface.polygon_group_candidates ?? [],
-        polygon_group_scan:surface.polygon_group_scan ?? null,
-        surface_next_action:surface.next_action ?? null,
-        surface_risk_status:surface.risk_status ?? null,
-        boundary_edges:surface.boundary_edges ?? null,
-        negative_closed_shells:surface.negative_closed_shells ?? null,
-        unverified_shells:surface.unverified_shells ?? null,
-        shading_review_status:surface.shading_review_status ?? null,
-        planar_face_crossings:planarFaceCrossingSummary(surface.planar_face_crossings),
-        sweep_path_risk_status:curve.risk_status ?? null,
-        suspicious_sweep_closures:curve.suspicious_closure_count ?? null,
-        sweep_closure_samples:curve.samples ?? [],
-        boundary:'SOP-local millimeters are converted from HIP unit length. Compare them with drawing dimensions and account for OBJ transforms; a 1 m unit makes a 160-unit span 160000 mm. Surface and upstream Sweep path flags need part-level review; healthy cook does not certify assembly or appearance.'})}`})
-    }
-    if (item?.verb === 'test_controls' && item.control_summary) {
-      const summary = item.control_summary
-      const counts = summary.case_counts ?? {}
-      const unresolved = (summary.cases ?? []).filter((row:any) => row.status !== 'pass')
-        .map((row:any) => row.id).slice(0, 6)
-      const coverageGap = summary.status === 'pass'
-        && summary.coverage?.relationship_scope === 'not_checked'
-        ? 'control-coverage-gap: declared measurements passed, but no component/interface relationships were checked. Do not claim the complete assembly passed.\n'
-        : ''
-      verdicts.push({priority:0,text:`${coverageGap}control-test-verdict: ${JSON.stringify({status:summary.status ?? 'unknown',
-        requested:summary.requested_cases ?? null,pass:counts.pass ?? 0,fail:counts.fail ?? 0,
-        unverified:counts.unverified ?? 0,not_run:counts.not_run ?? 0,
-        relationship_scope:summary.coverage?.relationship_scope ?? 'not_checked',
-        declared_interfaces:summary.coverage?.declared_interfaces ?? 0,
-        baseline_interface_status:summary.coverage?.baseline_interface_status ?? 'not_checked',
-        cases_with_interface_checks:summary.coverage?.cases_with_interface_checks ?? 0,
-        executed_interface_checks:summary.coverage?.executed_interface_checks ?? 0,
-        declared_topology_contracts:summary.coverage?.declared_topology_contracts ?? 0,
-        unresolved_cases:unresolved,restored:summary.restored ?? null,
-        boundary:'Pass covers only declared measurements and relations; restored only means test changes were undone; failed/not-run cases are not accepted. Later geometry edits require a new affected-case test.'})}`})
-    }
-    if (item?.verb === 'geo_piece_stats' && item.method === 'bounded polygon surface integrity') {
-      const risk = item.status !== 'observed' || item.risk_status === 'needs_review'
-        || item.boundary_review_status === 'open_boundary_unreviewed'
-        || item.shading_review_status === 'needs_visual_review'
-        || item.planar_face_crossings?.status === 'unverified'
-      verdicts.push({priority:risk ? 2 : 3,text:`polygon-integrity-verdict: ${JSON.stringify({status:item.status ?? 'unverified',
-        group:item.group ?? null,
-        risk_status:item.risk_status ?? null,reason:item.reason ?? null,
-        boundary_edges:item.boundary_edges ?? null,boundary_review_status:item.boundary_review_status ?? null,
-        orientation_review_status:item.orientation_review_status ?? null,
-        negative_closed_shells:item.shell_orientation?.negative_count ?? null,
-        opposed_shading_normals:item.shading_normals?.opposed_count ?? null,
-        planar_repeated_point_ngons:item.planar_repeated_point_ngons ?? null,
-        shading_review_status:item.shading_review_status ?? null,
-        planar_face_crossings:planarFaceCrossingSummary(item.planar_face_crossings),
-        risk_reasons:item.risk_reasons ?? [],
-        boundary:'Planar repeated-point n-gons may shade unevenly and need visual review; they are not integrity failures. Normal N is not polygon winding; open ports may be intentional; contact/appearance remain separate.'})}`})
-    }
-  }
-  return verdicts.sort((a,b) => a.priority - b.priority).slice(0, 4).map(row => row.text)
-}
-
-/** Render an exec-shaped canonical value as model-facing text. */
-function renderExec(value: ExecResult) {
-  const parts: string[] = []
-  const receipt:any = value.requestReceipt
-  if (receipt && receipt.status !== 'done') {
-    parts.push(`Request receipt status: ${receipt.status}. This reports request recovery state, not successful scene completion.`)
-    if (value.error) parts.push(`Transport detail:\n${value.error}`)
-    parts.push(...renderStreams(value))
-    return [{ type:'text' as const,text:parts.join('\n\n') }]
-  }
-  parts.push(...leadingCheckVerdicts(value))
-  if (value.ok) {
-    parts.push(Array.isArray(value.checks) && value.checks.length
-      ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'
-      : 'Executed successfully.')
-  } else {
-    parts.push(`Execution failed:\n${value.error ?? 'unknown error'}`)
-  }
-  parts.push(...renderStreams(value))
-  return [{ type: 'text' as const, text: parts.join('\n\n') }, ...imageBlocks(value)]
-}
-
-/** Normalize a Windows-ish path for comparison (case, slashes, trailing sep). */
-function normPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-}
-
-/** Session workspace (the dsh sandbox root for filesystem tools), when known. */
-function workspaceOf(execInput: unknown): string | null {
-  const cwd = (execInput as { agent?: { session?: { header?: { cwd?: unknown } } } })
-    .agent?.session?.header?.cwd
-  return typeof cwd === 'string' && cwd ? cwd : null
-}
-
-/** Trusted execution identity comes from dsh's tool context, never model args.
- *  Both fields must be nonempty, non-whitespace strings and are kept verbatim —
- *  no coercion, no trimming. Missing identity is a hard rejection, not an
- *  optional scope: every code execution and job control carries it. */
-function ownershipScopeOf(execInput: unknown): OwnershipScope {
-  const input = (execInput ?? {}) as { agent?: { id?: unknown }; callId?: unknown }
-  const sessionId = input.agent?.id
-  const callId = input.callId
-  const valid = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
-  if (!valid(sessionId) || !valid(callId)) {
-    throw new Error(
-      'Houdini execution requires the current Host session identity (agent.id and callId); '
-      + 'missing, blank or mistyped identity is rejected before any executor resolution or request')
-  }
-  return { sessionId, callId }
-}
-
-/** Advice is a projection of this result, never another scene query after an edit. */
-const workspaceNotes = new WeakMap<object, string>()
-
-function withWorkspaceNote<T extends ExecResult>(value: T, execInput: unknown): T {
-  const cwd = workspaceOf(execInput)
-  const agent = (execInput as { agent?: object }).agent
-  const hip = asPresentationMeta(value.execution)?.hip_dir
-  if (!cwd || !agent || typeof hip !== 'string' || !hip) return value
-  if (normPath(hip) === normPath(cwd)) {
-    workspaceNotes.delete(agent)
-    return value
-  }
-  const key = `${normPath(cwd)}|${normPath(hip)}`
-  if (workspaceNotes.get(agent) === key) return value
-  workspaceNotes.set(agent, key)
-  const note = [
-    `workspace note: this session's workspace is "${cwd}"; this operation observed $HIP at "${hip}".`,
-    'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments;',
-    'use DSH-Houdini > Open Workspace to select the current HIP workspace for other file tools.',
-    'Do not write task outputs into the plugin repository.',
-  ].join(' ')
-  return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
-}
-
-/**
- * Render one job-status canonical value. Unlike `renderExec`, `ok: false` on a
- * queued/running/cancelled job is NOT a failure — the bridge leaves `ok` false
- * until a job settles, so only `failed` reads as an error here.
- */
-function renderJobStatus(value: JobStatus) {
-  const parts: string[] = []
-  switch (value.status) {
-    case 'queued': parts.push('Job queued (waiting for the Houdini execution lock).'); break
-    case 'running': parts.push('Job running.'); break
-    case 'cancelled': parts.push('Job cancelled.'); break
-    case 'failed': parts.push(`Job failed:\n${value.error ?? 'unknown error'}`); break
-    case 'done': parts.push('Job finished successfully.'); break
-  }
-  parts.push(...renderStreams(value))
-  return [{ type: 'text' as const, text: parts.join('\n\n') }, ...imageBlocks(value)]
-}
-
-const jobStatusOutputSchema = {
-  type: 'object',
-  properties: {
-    jobId: { type: 'string', required: true },
-    status: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'], required: true },
-    ...execOutputProperties,
-  },
-  additionalProperties: false,
-} as const
+  codePresentationInput, execOutputSchema, execPresentationMeta, genericResult,
+  jobHandleMeta, jobPresentationMeta, jobResultTitle, jobStatusOutputSchema,
+  renderExec, renderJobHandle, renderJobStatus, resultTitle,
+} from './tool-output.js'
 
 const ALLOW_RAW_PARAM = {
   type: 'string',
@@ -525,34 +19,26 @@ const ALLOW_RAW_PARAM = {
     + 'for those and split them from the low-level batch. Exemptions are recorded in the trace.',
 } as const
 
-/** Register every Houdini tool; disposal of the plugin unregisters them. */
-export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {resolve(exec:any):Promise<HoudiniBridge>}): void {
-  const resolveBridge = (exec:any):Promise<HoudiniBridge> => 'resolve' in connection ? connection.resolve(exec) : Promise.resolve(connection)
-  const binding = new ExecutorBindingBarrier(async session => {
-    if (!ctx.sessions?.flush) throw new Error('DSH session durability service unavailable; no live request sent')
-    return ctx.sessions.flush(session as Parameters<typeof ctx.sessions.flush>[0])
-  })
-  async function requireTaskTarget(exec: any, bridge:HoudiniBridge): Promise<void> {
-    const session = exec.agent?.session
-    if (!session?.snapshotEvents) {
-      if (bridge.targetExecutorId) throw new Error('Bound Houdini operations require a durable agent session')
-      return
-    }
-    await binding.ensure(session,bridge.targetExecutorId,exec.signal,false)
-  }
+/** Register public execution tools and the optional product requirements tool. */
+export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection): void {
+  const runtime = new HoudiniToolRuntime(ctx, connection)
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description:
       'Execute Python code inside the running Houdini session. The code runs with the `hou` '
       + 'module pre-imported and may modify the scene: create or edit nodes, set parameters, '
-      + 'and cook. One call is one execution checkpoint: keep independently verifiable modules in separate calls, '
-      + 'and unfamiliar read-only discovery in houdini_query before or after a committed module. '
+      + 'and cook. One call is one execution checkpoint. '
       + 'When Houdini undo is enabled, a later failure rolls back earlier undoable edits in this same call; inspect transaction/rollback. '
-      + 'Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
+      + 'Use checkpoint={expected_path:...} for an isolated save, or checkpoint={path,expected_current_path,reason,overwrite?} for authorized Save As. Do not combine checkpoint with code/allow_raw. Save an already named HIP with the `scene_save` verb; raw `hou.hipFile.save()` '
       + 'is verb-covered. Print what the agent needs to know; assign a JSON-serializable '
       + 'value to the variable `__result__` to return structured data. Render/screenshot images are returned directly as native image attachments.',
     parameters: {
-      code: { type: 'string', required: true, description: 'Python source to execute' },
+      code: { type: 'string', description: 'Python source; exactly one of code or checkpoint' },
+      checkpoint:{oneOf:[
+        {type:'object',additionalProperties:false,properties:{expected_path:{type:'string',required:true}}},
+        {type:'object',additionalProperties:false,properties:{path:{type:'string',required:true},expected_current_path:{type:'string',required:true},
+          reason:{type:'string',required:true},overwrite:{type:'boolean'}}},
+      ],description:'Structured persistence only; no arbitrary code. Same scene_save/scene_save_as path, overwrite and authorization rules.'},
       allow_raw: ALLOW_RAW_PARAM,
     },
     output: {
@@ -560,7 +46,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
       render: (_args, value) => renderExec(value),
       presentationMeta: (_args, value) => execPresentationMeta(value),
     },
-    presentCall: (args) => !args.code ? undefined : ({
+    presentCall: (args) => args.checkpoint?({card:'generic',title:'Save Houdini checkpoint',kind:'edit',rawInput:args.checkpoint}):!args.code ? undefined : ({
       card: 'generic',
       title: 'Execute Houdini Python',
       kind: 'edit',
@@ -568,12 +54,23 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     }),
     presentResult: (_args, result) => genericResult(resultTitle('Houdini execution', result), result),
     async execute(args, exec) {
-      if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty Python code')
-      const owner = ownershipScopeOf(exec)
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
-      const result = await bridge.exec(args.code, owner, exec.signal, args.allow_raw)
-      return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
+      if((args.code!==undefined)===(args.checkpoint!==undefined)) throw new Error('provide exactly one of code or checkpoint')
+      let code = args.code
+      if (args.checkpoint !== undefined) {
+        if (args.allow_raw !== undefined) throw new Error('checkpoint cannot include allow_raw')
+        const save = args.checkpoint
+        const existing = Object.hasOwn(save, 'expected_path')
+        const required = existing ? ['expected_path'] : ['path', 'expected_current_path', 'reason']
+        const allowed = existing ? required : [...required, 'overwrite']
+        if (Object.keys(save).some(key => !allowed.includes(key))
+          || required.some(key => typeof (save as any)[key] !== 'string' || !(save as any)[key].trim())
+          || ('overwrite' in save && typeof save.overwrite !== 'boolean')) throw new Error('invalid structured checkpoint')
+        code = `import json\n__dsh_checkpoint = json.loads(${JSON.stringify(JSON.stringify(save))})\n`
+          + `__result__ = ${existing ? 'scene_save' : 'scene_save_as'}(**__dsh_checkpoint)`
+      } else if (typeof code !== 'string' || !code.trim()) throw new Error('provide nonempty Python code')
+      const { bridge, owner } = await runtime.target(exec)
+      const result = await bridge.exec(code!, owner, exec.signal, args.allow_raw)
+      return runtime.result(result, exec, bridge, true)
     },
   }))
 
@@ -585,9 +82,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
       + 'modify the scene; use houdini_exec for changes. Assign findings to `__result__` or print them. '
       + 'Alternatively read a retained historical result with result_ref (SHA-256), optional JSON pointer, offset and limit; this reads the workspace artifact without executing Houdini. '
       + 'Read original current-session task material with source_ref="index" or a source hash, offset and limit; no Houdini execution. Questions/plans are not user requirements or permission. '
-      + 'After an uncertain exec response, request_ref retrieves its same-runtime execution receipt without resubmitting code. Exactly one query mode per call.',
+      + 'After an uncertain exec response, request_ref retrieves its same-runtime execution receipt without resubmitting code. Query capabilities="visual" before image-dependent work to inspect the current model route and native attachment channel without rendering. Exactly one query mode per call.',
     parameters: {
-      code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref, source_ref or request_ref' },
+      code: { type: 'string', description: 'Read-only Python; exactly one of code, result_ref, source_ref, request_ref or capabilities' },
+      capabilities: {type:'string',enum:['visual'],description:'Host-only current model image-input/channel preflight; no render or HOM. Exclusive query mode.'},
       source_ref: { type: 'string', description: 'index lists current-session task sources; a listed SHA-256 reads original text with provenance. Nontext blocks are markers, not interpreted references.' },
       request_ref: { type: 'string', description: 'Exec/job receipt after uncertain response; index lists active then recent current-session references if Host discarded the response. No HOM or resubmission; match original owner_call, missing is unknown.' },
       result_ref: { type: 'string', description: 'SHA-256 returned in result-details; historical evidence, not live scene state' },
@@ -602,45 +100,12 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: args.request_ref ? 'Recover Houdini request' : args.source_ref ? 'Read task source' : args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
+      title: args.capabilities ? 'Inspect visual capability' : args.request_ref ? 'Recover Houdini request' : args.source_ref ? 'Read task source' : args.result_ref ? 'Read retained Houdini result' : 'Inspect Houdini scene',
       kind: 'read',
-      rawInput: args.request_ref || args.result_ref || args.source_ref ? args : codePresentationInput(args as { code:string }),
+      rawInput: args.capabilities || args.request_ref || args.result_ref || args.source_ref ? args : codePresentationInput(args as { code:string }),
     }),
     presentResult: (args, result) => genericResult(args.request_ref ? 'Houdini request recovery status' : resultTitle(args.source_ref ? 'Task source' : args.result_ref ? 'Houdini result detail' : 'Houdini inspection', result), result),
-    async execute(args, exec) {
-      if ([args.code,args.result_ref,args.source_ref,args.request_ref].filter(v=>v!==undefined).length !== 1) throw new Error('provide exactly one of code, result_ref, source_ref or request_ref. For original user material use source_ref="index" then a listed source hash; for stored tool output use the SHA-256 from result-details as result_ref; for uncertain execution use request_ref. These references are not interchangeable; query them separately.')
-      if (args.request_ref !== undefined) {
-        if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('request_ref does not accept pagination or pointer')
-        const owner=ownershipScopeOf(exec)
-        const bridge = await resolveBridge(exec)
-        const receipt=await bridge.requestStatus(args.request_ref,owner,exec.signal)
-        const r:any=receipt.requestReceipt
-        if (r?.jobId) return {ok:true,stdout:'',stderr:'',result:{jobId:r.jobId},
-          requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'job_submitted',jobId:r.jobId,
-            retrieved:true,note:'Original job admission recovered, not completed execution. Collect houdini_job_status(jobId).'}}
-        if (r?.status==='done' && r.result) {
-          if (r.result.jobId) return {ok:true,stdout:'',stderr:'',result:{jobId:r.result.jobId},
-            requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'job_submitted',jobId:r.result.jobId,
-              retrieved:true,note:'Original job admission recovered, not completed execution. Collect houdini_job_status(jobId).'}}
-          return retainResult(await attachImages({...r.result,requestReceipt:{request_ref:r.request_ref,runtime_id:r.runtime_id,owner_call:r.owner_call ?? null,status:'done',retrieved:true}},exec,bridge,ctx),workspaceOf(exec))
-        }
-        return receipt
-      }
-      if (args.source_ref !== undefined) {
-        if (args.pointer !== undefined) throw new Error('pointer requires result_ref; task sources use offset/limit')
-        if (!exec.agent) throw new Error('task sources require a current agent session')
-        const session = exec.agent.session as unknown as { snapshotEvents(): Array<{type:string;seq?:number;data?:any}> }
-        return readTaskSource(session.snapshotEvents(),args.source_ref,args.offset,args.limit)
-      }
-      if (args.result_ref !== undefined) return readResultDetail(workspaceOf(exec),args.result_ref,args.pointer,args.offset,args.limit)
-      if ([args.pointer,args.offset,args.limit].some(v=>v!==undefined)) throw new Error('pointer/offset/limit require result_ref')
-      if (typeof args.code !== 'string' || !args.code.trim()) throw new Error('provide nonempty read-only code')
-      const owner = ownershipScopeOf(exec)
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
-      const result = await bridge.exec(args.code, owner, exec.signal, undefined, true)
-      return retainResult(withWorkspaceNote(await attachImages(result, exec, bridge, ctx), exec), workspaceOf(exec))
-    },
+    execute: (args, exec) => executeQuery(args, exec, runtime, ctx),
   }))
 
   ctx.tools.register(defineTool({
@@ -660,11 +125,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
         properties: { jobId: { type: 'string' }, requestReceipt: {type:'json'}, error: {type:'string'} },
         additionalProperties: false,
       },
-      render: (_args, value) => [{ type: 'text' as const, text: value.jobId
-        ? `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).` + (value.requestReceipt ? `\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` : '')
-        : `Job admission uncertain; do not resubmit.\n${value.error || ''}\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` }],
-      presentationMeta: (_args, value) => ({ ...(value.jobId ? {jobId:value.jobId}:{}),
-        ...(value.requestReceipt ? {canonical:{...value,ok:!!value.jobId,stdout:'',stderr:''} as unknown as JsonValue}: {}) }),
+      render: (_args, value) => renderJobHandle(value),
+      presentationMeta: (_args, value) => jobHandleMeta(value),
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -674,9 +136,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
     async execute(args, exec) {
-      const owner = ownershipScopeOf(exec)
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
+      const { bridge, owner } = await runtime.target(exec)
       return bridge.submitJob(args.code, owner, exec.signal, args.allow_raw)
     },
   }))
@@ -693,9 +153,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     },
     output: {
       schema: jobStatusOutputSchema,
-      render: (_args, value) => {
-        return [{ type: 'text' as const, text: `job ${value.jobId}: ${value.status}` }, ...renderJobStatus(value)]
-      },
+      render: (_args, value) => renderJobStatus(value),
       presentationMeta: (_args, value) => jobPresentationMeta(value),
     },
     presentCall: (args) => ({
@@ -708,11 +166,9 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const owner = ownershipScopeOf(exec)
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
+      const { bridge, owner } = await runtime.target(exec)
       const status = await bridge.jobStatus(args.jobId, owner, args.wait, exec.signal)
-      return retainResult(await attachImages(status, exec, bridge, ctx),workspaceOf(exec))
+      return runtime.result(status, exec, bridge)
     },
   }))
 
@@ -728,9 +184,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     },
     output: {
       schema: jobStatusOutputSchema,
-      render: (_args, value) => {
-        return [{ type: 'text' as const, text: `job ${value.jobId}: ${value.status}` }, ...renderJobStatus(value)]
-      },
+      render: (_args, value) => renderJobStatus(value),
       presentationMeta: (_args, value) => jobPresentationMeta(value),
     },
     presentCall: (args) => ({
@@ -743,10 +197,9 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniBridge | {
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const owner = ownershipScopeOf(exec)
-      const bridge = await resolveBridge(exec)
-      await requireTaskTarget(exec,bridge)
-      return retainResult(await bridge.cancelJob(args.jobId, owner, exec.signal),workspaceOf(exec))
+      const { bridge, owner } = await runtime.target(exec)
+      return runtime.retain(await bridge.cancelJob(args.jobId, owner, exec.signal), exec)
     },
   }))
+  registerProductTool(ctx)
 }

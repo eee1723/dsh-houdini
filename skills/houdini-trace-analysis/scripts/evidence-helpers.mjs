@@ -418,6 +418,11 @@ export function isHoudiniDetailRead(step) {
   return step.tool === 'houdini_query' && Boolean(step.args?.result_ref || step.args?.request_ref || step.args?.source_ref);
 }
 
+export function isHoudiniHostCall(step) {
+  return isHoudiniDetailRead(step) || step.tool === 'houdini_product'
+    || (step.tool === 'houdini_query' && Boolean(step.args?.capabilities));
+}
+
 /** Classify evidence, not arbitrary Python semantics. Kept dependency-free so
  * the generated Trace client uses exactly the same rules as offline reports.
  * Gate "read_only" describes static raw scanning, even for mutating verbs;
@@ -442,7 +447,9 @@ export function classifyRawEffect(step) {
 
 export function collectVerbAdoption(steps) {
   const detailReads = steps.filter(isHoudiniDetailRead);
-  const houdini = steps.filter((step) => step.isHoudini && !detailReads.includes(step));
+  const hostProducts = steps.filter(step => step.tool === 'houdini_product');
+  const hostCapabilities = steps.filter(step => step.tool === 'houdini_query' && step.args?.capabilities);
+  const houdini = steps.filter((step) => step.isHoudini && !isHoudiniHostCall(step));
   const structured = houdini.filter(isStructuredHoudiniCall);
   const python = houdini.filter(step=>!isStructuredHoudiniCall(step));
   const withVerbs = houdini.filter((step) => (step.verbs || []).length > 0);
@@ -458,6 +465,8 @@ export function collectVerbAdoption(steps) {
   return {
     houdiniCalls: houdini.length,
     hostResultDetailReads: detailReads.length,
+    ...(hostProducts.length ? {hostProductCalls:hostProducts.length} : {}),
+    ...(hostCapabilities.length ? {hostCapabilityReads:hostCapabilities.length} : {}),
     callsWithVerbs: withVerbs.length,
     callCoveragePct: pct(withVerbs.length, houdini.length),
     verbCalls,

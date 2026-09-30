@@ -44,8 +44,8 @@
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
-    "docs:generate": "node tools/gen-node-card-docs.mjs",
-    "docs:check": "node tools/gen-node-card-docs.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
+    "docs:generate": "node tools/gen-node-card-docs.mjs && node tools/gen-agent-presets.mjs",
+    "docs:check": "node tools/gen-node-card-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
     "prepare": "npm run build"
   },

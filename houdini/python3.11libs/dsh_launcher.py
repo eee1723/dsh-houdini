@@ -360,7 +360,13 @@ def restart_bridge(*, port=None) -> str:
     import dsh_component_contracts
     import dsh_camera_framing
     import dsh_geometry_observation
+    import dsh_geometry_evidence
+    import dsh_procedural_plans
+    import dsh_modeling_units
     import dsh_operation_cards
+    import dsh_code_analysis
+    import dsh_execution_results
+    import dsh_execution
 
     # Recheck on the owning thread: the worker's HTTP snapshot may already be old.
     # This uses only in-process counters; no socket/process probe on the GUI thread.
@@ -385,11 +391,17 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_cop_contracts)
     importlib.reload(dsh_camera_framing)
     importlib.reload(dsh_geometry_observation)
+    importlib.reload(dsh_geometry_evidence)
+    importlib.reload(dsh_procedural_plans)
+    importlib.reload(dsh_modeling_units)
     importlib.reload(dsh_operation_cards)
     importlib.reload(dsh_sop_contracts)
     importlib.reload(dsh_component_contracts)
     importlib.reload(dsh_quality_contracts)
     importlib.reload(dsh_requests)
+    importlib.reload(dsh_code_analysis)
+    importlib.reload(dsh_execution_results)
+    importlib.reload(dsh_execution)        # Rebind verbs after domain/helper reloads.
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(target_port, BRIDGE_HOST)
     return f"bridge restarted on {BRIDGE_HOST}:{target_port}"

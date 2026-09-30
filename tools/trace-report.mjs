@@ -30,7 +30,7 @@ import {
   collectRetryWork,
   collectVerbAdoption,
   classifyRawEffect,
-  isHoudiniDetailRead,
+  isHoudiniHostCall,
   isStructuredHoudiniCall,
   collectValidationCoverage,
   nativeImageEvidence,
@@ -121,7 +121,7 @@ const unknownVerbs = Object.keys(verbCount).filter(
 // 概览统计
 const toolCount = {};
 for (const s of steps) toolCount[s.tool] = (toolCount[s.tool] || 0) + 1;
-const rawHouSteps = steps.filter((s) => s.isHoudini && !isHoudiniDetailRead(s) && !isStructuredHoudiniCall(s) && s.verbs.length === 0);
+const rawHouSteps = steps.filter((s) => s.isHoudini && !isHoudiniHostCall(s) && !isStructuredHoudiniCall(s) && s.verbs.length === 0);
 const failedSteps = steps.filter((s) => s.failed);
 const advisorySteps = steps.filter((s) => s.advisory);
 const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);

@@ -50,6 +50,16 @@ try:
     coverage=q._check_interfaces(named,[interface],50000)['results'][0]
     assert coverage['source_pieces']==['member_a'] and coverage['target_pieces']==['member_b'],coverage
     assert not coverage['piece_coverage_truncated']
+    named.addAttrib(hou.attribType.Prim,'part','')
+    for prim in named.prims():prim.setAttribValue('part','receiver' if prim.number() in target_ids else 'source')
+    mixed=named.createPrimGroup('mixed_surface')
+    mixed.add(named.prims())
+    contaminated=q._check_interfaces(named,[{**interface,'target_group':'mixed_surface'}],50000)['results'][0]
+    assert contaminated['reason']=='source_and_target_overlap_cannot_self_validate',contaminated
+    assert contaminated['shared_point_count']==4,contaminated
+    assert set(contaminated['selection_identities']['part']['target_primitive_memberships'])=={'source','receiver'},contaminated
+    assert contaminated['selection_identities']['part']['source_point_memberships']=={'source':4},contaminated
+    assert q._check_interfaces(named,[interface],50000)['ok'],'Independent coincident vertices must remain valid'
     h.set_parm(root.node('part_b'),'ty',.3)
     detached=h.geo_check_interfaces(out,[interface])
     assert detached['status']=='fail' and detached['results'][0]['failure_count']>0,detached
@@ -295,13 +305,13 @@ try:
     packed_test=[{'id':'packed_size','values':{'length':1.2},'expectations':[
         {'metric':'bounds_size','axis':0,'delta':[.199,.201]}]}]
     packed_result=h.test_controls(ctrl,packed,packed_test)
-    assert packed_result['status']=='unverified' and packed_result['parameter_writes']==0 and ctrl.evalParm('length')==1,packed_result
-    assert packed_result['control_summary']['case_counts']['not_run']==1
-    assert 'restoration oracle' in packed_result['control_summary']['reason']
+    assert packed_result['status']=='pass' and packed_result['restored'] and ctrl.evalParm('length')==1,packed_result
+    assert packed_result['control_summary']['case_counts']['pass']==1
+    assert packed_result['representation']['expanded']
     area_test=[{'id':'packed_area','values':{'length':1.2},'expectations':[
         {'metric':'area','delta':[.1,1]}]}]
     unsupported_area=h.test_controls(ctrl,packed,area_test)
-    assert unsupported_area['status']=='unverified' and ctrl.evalParm('length')==1,unsupported_area
+    assert unsupported_area['status']=='pass' and ctrl.evalParm('length')==1,unsupported_area
     # Expression/keys and frame remain unchanged even if the perturbed cook fails.
     ctrl.parm('length').setExpression('1+0*$F',hou.exprLanguage.Hscript)
     bad=root.createNode('attribwrangle','bad')

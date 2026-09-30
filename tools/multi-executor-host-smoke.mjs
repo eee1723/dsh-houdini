@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import assert from 'node:assert/strict'
 import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorDirectory,ExecutorRouter} from '../lib/executor-routing.js'
-import {ExecutorBindingBarrier} from '../lib/execution-state.js'
+import {ExecutorBindingBarrier} from '../lib/executor-binding.js'
 import {registerHoudiniTools} from '../lib/tools.js'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')

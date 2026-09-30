@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import {HoudiniBridge} from '../../lib/bridge.js'
-import {requireExecutorContinuity,ExecutorBindingBarrier,installExecutorBinding,repairExecutorBindingOrder} from '../../lib/execution-state.js'
+import {requireExecutorContinuity,ExecutorBindingBarrier,installExecutorBinding} from '../../lib/executor-binding.js'
 import {Session} from '@deepseek-ai/dsh-session'
 import {Context} from '@deepseek-ai/cordis'
 import {createAssistantMessage,createToolResultMessage,createUserMessage} from '@deepseek-ai/dsh-llm'
@@ -36,41 +36,6 @@ function protocolValid(session) {
   }
   return pending.size===0
 }
-const baseline=Session.create('legacy-binding')
-await new ExecutorBindingBarrier(async()=>true).ensure(baseline,first)
-const binding=baseline.snapshotEvents()[0].data
-const broken=Session.create('broken-batch')
-assistant(broken)
-broken.append('user/message',binding,{surfaceOp:'append'})
-result(broken,'first-call','Actual query failed before dispatch')
-result(broken,'second-call','User selected metres')
-assert.equal(protocolValid(broken),false)
-const immutablePrefix=JSON.stringify(broken.snapshotEvents())
-assert.equal(repairExecutorBindingOrder(broken),1)
-assert.equal(protocolValid(broken),true)
-assert.equal(JSON.stringify(broken.snapshotEvents().slice(0,JSON.parse(immutablePrefix).length)),immutablePrefix)
-assert(broken.deriveMessages().at(-1).content[0].text.includes('User selected metres'))
-assert.equal(repairExecutorBindingOrder(broken),0)
-requireExecutorContinuity(broken.snapshotEvents(),first)
-let retryHook,repairFlushes=0
-installExecutorBinding({on:(_name,fn)=>retryHook=fn,sessions:{flush:async()=>{if(++repairFlushes===1)throw new Error('flush failed');return true}}},first)
-await assert.rejects(retryHook({agent:{session:broken},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]})),/flush failed/)
-await retryHook({agent:{session:broken},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))
-assert.equal(repairFlushes,2,'a failed repair flush must not be skipped on the next step')
-const userInterleaved=Session.create('user-interleaved')
-assistant(userInterleaved)
-userInterleaved.append('user/message',binding,{surfaceOp:'append'})
-result(userInterleaved,'first-call','first')
-userInterleaved.append('user/message',createUserMessage({content:[{type:'text',text:'Real user intervention'}],source:{kind:'user'}}),{surfaceOp:'append'})
-result(userInterleaved,'second-call','second')
-const userBefore=JSON.stringify(userInterleaved.snapshotEvents())
-assert.throws(()=>repairExecutorBindingOrder(userInterleaved),/unrelated/)
-assert.equal(JSON.stringify(userInterleaved.snapshotEvents()),userBefore,'never compact unrelated user input automatically')
-const incomplete=Session.create('incomplete')
-assistant(incomplete);incomplete.append('user/message',binding,{surfaceOp:'append'});result(incomplete,'first-call','only one result')
-const incompleteBefore=JSON.stringify(incomplete.snapshotEvents())
-assert.throws(()=>repairExecutorBindingOrder(incomplete),/missing or unrelated/)
-assert.equal(JSON.stringify(incomplete.snapshotEvents()),incompleteBefore)
 const busy=Session.create('busy')
 assistant(busy)
 const busyBefore=JSON.stringify(busy.snapshotEvents())

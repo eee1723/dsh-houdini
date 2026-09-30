@@ -6,12 +6,14 @@
 
 | 内容 | 修改位置 | 派生/验证 |
 |---|---|---|
-| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证67 个目录入口 |
+| 工具签名、目录、执行版本 | [tool-design.md](tool-design.md)，实现同步helpers/Bridge | gen-client-catalog生成client目录与Host契约；verb-contract验证70 个目录入口 |
 | 节点知识与决策 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs生成[节点卡文档](node-operation-cards.md)，HOM验证参数与几何语义 |
 | 配置、支持组合 | [src/index.ts](../src/index.ts)、两份runtime/profile JSON | 安装/兼容文档只解释机制，清单不手抄多份 |
+| Agent组合与角色 | 精确DSH标准preset及[生产角色](../presets/houdini/persona.md)/[开发角色](../presets/houdini-dev/persona.md) | [gen-agent-presets](../tools/gen-agent-presets.mjs)生成三份配置，不手改生成的agent.cordis.yml |
 | 权限与证据保证 | 实际guard/事务实现 | [执行契约](execution-contract.md)与失败/恢复反例 |
+| 会话产品要求 | [product-definition.ts](../src/product-definition.ts)的Host工具回执 | 唯一定义/修订与实测覆盖；来源、几何与视觉语义分别验，不维护第二份完成账本 |
 | 领域方法 | [skills](../skills/)的对应SKILL/reference | docs链接原文，不复制recipe |
-| Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，展示在client.js | 内容复用目录/注册表/请求快照；当前源码、已加载能力和历史请求分开，不手抄提示词与技能正文 |
+| Trace页面与同步语义 | [houdini-trace-design.md](houdini-trace-design.md)，client/下解析、投影、显示分层 | 内容复用来源索引/请求快照；同一客户端bundle按需初始化，不内联技能资源正文 |
 | Agent规则 | [AGENTS.md](../AGENTS.md) | 只保留命令、边界和知识路由，不写阶段履历 |
 | 当前开发交接 | [handoff.md](handoff.md) | 唯一滚动入口；docs:check检查结构/体量，开发者按移除条件核销 |
 | 组件协作设计 | [component-collaboration.md](component-collaboration.md) | 普通节点片段/独立作者的接口和实施完成门；当前动作归handoff，执行端运维归multi-instance |
@@ -27,9 +29,9 @@ npm test
 npm pack --dry-run
 ```
 
-只用npm，不用pnpm。build自动生成节点卡文档、Host/client词表和Trace组件/来源清单，再运行tsc；不要手改lib或生成区。
-Trace手写界面在client/trace-view.js与trace-view.css；guidance、persona、注册技能及资源从来源生成，
-不在展示代码复制正文。生成漂移由trace-view回归与gen-trace-client --check验证。
+只用npm，不用pnpm。build生成节点卡、三份Agent组合、Host/client词表和Trace组件/来源索引，再运行tsc；不要手改lib或生成区。
+角色在persona.md维护，组合继承精确DSH标准。Trace手写解析、投影、界面在client/下；构建只生成资源来源与指纹，真实历史正文来自请求和工具读取。
+生成漂移由gen-agent-presets、trace-view与gen-trace-client --check验证。
 docs:check只读检查节点卡和Trace来源生成漂移、文档索引/模块覆盖，以及docs、skills、evaluation内Markdown链接；不偷偷修正文档。CI在build前运行，防止生成步骤掩盖漂移。
 node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加载器、生成器和测试。
 关键参数名对应runtime模板，不能从手册猜数字菜单值或把一次读取的默认值固化为全版本事实。
@@ -37,7 +39,7 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 ## 3. 代码变更的文档责任
 
 新增或改变长期维护能力时，修改对应现役设计段落、源码索引和适用边界；不追加版本日志。
-诊断须先给出最小反例、失败层与因果依据，再修复并验证正反例；换算法后症状消失不能反证原生机制有错。
+从目标和已观察问题决定设计，可以删除或替换既有机制。涉及缺陷因果时使用能区分原因的反例；纯职责整理不机械增加测试矩阵。
 每次代码变更沿现役索引核对受影响的文档、skill和preset/guidance；规则同源原位维护，不用追加补丁段落代替矛盾清理。
 提示词review同时核对四层边界：persona不复制工具合同或领域recipe，guidance不复制低频skill步骤，tool/verb描述不承担
 任务规划和完成策略，skill不重复跨域授权与运行时安全规则。精简后用Trace来源目录核对实际注入文本，而不是只看YAML/源码行数。
@@ -49,6 +51,12 @@ node-operation-cards.md逐项映射JSON，schema新增字段须同时更新加�
 测试代码、稳定验证方法、已知未支持边界应保留；已完成计划、退役原型说明和历史审计不放docs。
 停用功能先迁移有效约束到现役文档，再清理文件及调用者，不建立docs/archive。
 不因为文档声称已修复就删除验证；机器内存和跨项目材料不属于默认同步范围。
+
+### 验证范围
+
+日常先构建并运行直接受影响的回归；跨Host、Bridge和前端的基线整理在收口时跑一次现有Node套件与文档门。
+修改执行内核时，在隔离hython验证Raw Gate、节点归属、捕获失败、创建失败、对象父级和场景/网络/渲染等核心边界。
+没有新修改或未解问题时不重复扩大检查；旧策略退役时同步删除只锁定旧策略的断言。GUI、付费模型与发行验收按实际任务需要安排。
 
 ### 分支与接续入口
 
@@ -112,11 +120,11 @@ Session与图、用户HIP及外部依赖、DSH数据/凭据和发行私钥均在
 [执行端绑定](../tools/tests/executor-binding.test.mjs)验证错目标零派发、握手后目标更换、job/媒体边界，
 以及真实DSH Session记录往返、首次调用等待flush、并发屏障、失败/无后端/取消不发送和历史不重绑。
 模拟持久化监听器不认证实际DSH文件后端或用户重启路径；这些需新运行态另验。
-绑定回归必须覆盖真实Cordis依赖注入和未完成的多工具交换：pre-step接受绑定、工具期零消息插入、结果完整的旧错误
-交换按原生摘要投影恢复、原记录不变与重复修复幂等；缺结果/其他用户介入拒绝修复，flush失败不能被下一步跳过。
+绑定回归覆盖真实Cordis依赖注入和多工具交换：pre-step接受绑定、工具期不插入消息、发送前flush与并发屏障。
+正常运行不自动改写旧版错误工具交换；旧会话异常由具体诊断处理。
 执行通知使用[有界通知回归](../tools/tests/execution-notice-compaction.test.mjs)验证真实Session、两会话、工具配对和不可改历史；下述agent-loop驱动加`--attention`时以离线adapter检查100次变化的实际请求，最多4条独立execution-state消息；再加`--flush-false`或`--flush-throw`让假Bridge每次返回不同的失败接口合同，实际触发通知压缩并验证持久化失败的多轮重试屏障。超过上下文预算时保留未解失败计数，不把省略明细解释为通过。
-真实agent loop回归用 `python tools/tests/dsh-binding-loop.test.py Node完整路径 DSH-bin.js完整路径`，加`--legacy`
-重现旧版插入位置。使用全新DSH_HOME、本地确定性adapter和严格假Bridge，不读取用户账号、不向外部模型发请求；
+真实agent loop回归用 `python tools/tests/dsh-binding-loop.test.py Node完整路径 DSH-bin.js完整路径`。
+使用全新DSH_HOME、本地确定性adapter和严格假Bridge，不读取用户账号、不向外部模型发请求；
 验真实pre-step/工具调度/下一次模型输入顺序，查询不得重复执行。fixture日志保留临时目录，不进入包。
 
 [表达式分层诊断](../tools/tests/dsh-expression-diagnostics.test.py)在H21/H22验证合法0、原生写入失败、
@@ -205,9 +213,18 @@ GUI不继承offscreen或禁用沙箱设置。该隔离不限制可信测试脚�
 原文分页回读、session隔离及超预算；[scene-context](../tools/tests/scene-context.test.mjs)覆盖首轮claim、
 按需指代、普通查询零追加、独立提醒去重/解除、surface替换恢复、上下文抑制与模板转义，
 并用DSH Session实际deriveMessages检查消息不累积；不以这些测试替代live模型输入及复杂任务规划验收。
+产品定义用[product-definition](../tools/tests/product-definition.test.mjs)验证Host独立调用、来源依据、修订冲突/显式恢复、
+义务删除/退役保留、最终输出和具体状态的回执绑定、旧证据失效与detail/visual不被数值认证。
+长会话另验已审阅来源游标与真实新增要求，不能靠追加所有聊天轮次回避来源边界。
+图像能力用[image-inspection-route](../tools/tests/image-inspection-route.test.mjs)验证metadata预检、模型路由和附件限制；
+它不运行视觉模型、不证明GUI渲染或语义读图。上述Node回归由`npm test`发现运行。
 控制摘要用[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)
 覆盖基准失败及Bridge证据，[dsh-interface-evidence](../tools/tests/dsh-interface-evidence.test.py)
 保留真实实例、合法间隙和顶点距离不能证明无碰撞的反例。
+[dsh-control-review](../tools/tests/dsh-control-review.test.py)在隔离H21/H22验证提前失败与复测的合同标识一致、
+基准/case固定取景与深度包络、越界及截图失败和恢复；渲染调用被仪器化，只证明调度与参数合同。
+失败核销另由[delivery-audit](../tools/tests/delivery-audit.test.mjs)验证Host消费；真实GUI须对两版本另验
+基准/case图像、相机不漂移及越界拒绝，当前作者的语义读图和自然任务采用仍单独验收。
 恢复指纹用[dsh-geometry-fingerprint](../tools/tests/dsh-geometry-fingerprint.test.py)区分组目录排列
 和真实成员/ordered顺序/属性变化；[dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py)
 覆盖零写入拒绝、同批其他修改及创建后失败，防止恢复状态被错误降级。
@@ -454,6 +471,29 @@ Render真实像素与managed viewport恢复使用[OpenGL smoke](../tools/camera-
 [Karma smoke](../tools/camera-karma-smoke.py)，需区分文件/像素与语义识图。
 新技能/提示只有新session能验证曝光；可复现功能测试与未见建模任务的质量/效率证据分开。
 
+产品定义真实Host链路使用 `python tools/tests/dsh-product-loop.test.py <Node完整路径> <精确DSH-bin.js完整路径>`，
+加`--product-mode`另测显式模式：拒绝的执行/任务零Bridge请求、定义前结构化保存、持久化计划后的执行、状态投影与序列化重载。收费试验驱动`tools/run-modeling-trial.py --product-mode`仅修改该试验的隔离作者配置并记录模式；省略则仍为普通模式，不修改用户live或全局设置。
+通过[本地确定性adapter](../tools/tests/product-loop-fixture.mjs)检查首次请求的视觉能力、实际工具canonical落盘、下一步缺项提示、
+最终输出测量绑定和序列化Session重载。使用全新DSH_HOME与严格假Bridge，不调用收费模型或Houdini，不证明自然采用。
+控制截图真实GUI回归使用[独立驱动](../tools/tests/run-control-review-gui.py)：给`--houdini`和仓库外新/空`--output`，
+分别运行H21/H22；[GUI夹具](../tools/tests/dsh-control-review-gui-fixture.py)只创建自有新HIP，检查共享取景/深度、实际PNG、
+越界未渲染但数值报告保留，以及参数/keys/frame/bgeo/selection/flags恢复。隐藏进程超时仅终止本次自有fixture。
+真实出图与固定相机不认证作者看图或产品视觉质量；正常入口live与未见任务另验。
+
 Host/Bridge/helper更新使用诊断中的Repair and restart runtime；package/menu/WebView变更完整重开Houdini。
 只有实际进程版本、工具握手与目标用户路径验证后才能声明live已加载。
 源码检查不授权重启服务；安装与操作流程见[setup](setup.md)，升级兼容门见[兼容设计](dsh-update-compatibility.md)。
+
+原生构造计划与参数状态规划用[配方回归](../tools/tests/dsh-procedural-plans.test.py)在隔离H21/H22验证实际SOP、
+非零旋转中心/方向、附件接点、数量变化、零写入反例及覆盖缺口；空expectations必须拒绝进入控制验收。
+[Packed与高细节回归](../tools/tests/dsh-packed-evidence.test.py)验证内嵌/嵌套内容指纹、真实变换、最终组、
+近千面实体相交、完全包含、超过两万面的分区观察和恢复；磁盘Packed不在展开合同内。
+付费自然任务驱动[run-modeling-trial.py](../tools/run-modeling-trial.py)仅在用户明确模型/付费授权后运行，
+必须显式传--allow-paid、冻结插件副本、新任务目录、精确DSH/Node/Houdini、凭据文件路径及已验证settings.yaml路径；预先登记时限与题面。
+不连接live，不回写源材料，不因失败自动再试到满意；正常结束也须独立重开HIP核对。
+
+自然试验必须通过[配置准备器](../tools/prepare-model-settings.mjs)只继承所选provider/model设置；
+不得只复制凭据后用内置目录推断模型图像能力。--require-image-input使图像任务在缺能力声明时写前拒绝，
+仍需真实图片请求验证传输与语义；源用户配置和其他provider不修改。回归见[设置隔离](../tools/tests/model-settings.test.mjs)。
+[米制与结构回归](../tools/tests/dsh-meter-structure.test.py)在H21/H22验证源量纲转换、1000倍反例、旧单位显式适配、
+全行程范围、表面附着随厚度变化和失败清理；图像模型已能读图不替代这些数值检查。

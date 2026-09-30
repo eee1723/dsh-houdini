@@ -5,7 +5,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
-import { ExecutorBindingBarrier, requireExecutorContinuityIdentity } from './execution-state.js'
+import { ExecutorBindingBarrier, requireExecutorContinuityIdentity } from './executor-binding.js'
 
 export interface ExecutorRecord {
   schema:1

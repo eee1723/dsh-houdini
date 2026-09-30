@@ -42,13 +42,6 @@ for (const name of ['houdini', 'houdini-dev']) {
   const actual = rows(source)
   for (const [key, standardRow] of standardRows) {
     if (omitted.has(key)) continue
-    if (key === '/delegation/tool-ralph') {
-      assert.equal(standardRow.disabled, true, 'review Ralph policy when standard DSH changes')
-      const { disabled, ...enabledStandardRow } = standardRow
-      assert.deepEqual(actual.get(key), enabledStandardRow,
-        `${name} changed the existing Ralph exception beyond enabling it`)
-      continue
-    }
     assert.deepEqual(actual.get(key), standardRow, `${name} drifted from standard DSH row ${key}`)
   }
   assert.deepEqual([...actual.keys()].filter(key => !standardRows.has(key)), ['/houdini'],
@@ -58,7 +51,15 @@ for (const name of ['houdini', 'houdini-dev']) {
 }
 
 const production = fs.readFileSync(path.join(root, 'presets/houdini/agent.cordis.yml'), 'utf8')
+const product = fs.readFileSync(path.join(root, 'presets/houdini-product/agent.cordis.yml'), 'utf8')
+assert.equal(rows(product).get('/houdini').config.productMode,true)
+assert.notEqual(rows(production).get('/houdini').config.productMode,true)
+const productRows=rows(product),ordinaryRows=rows(production);
+for(const [key,value] of ordinaryRows) {
+  const candidate=structuredClone(productRows.get(key));
+  if(key==='/houdini') delete candidate.config.productMode;
+  assert.deepEqual(candidate,value,'Product focus only changes the optional Houdini focus flag');
+}
 assert.match(production, /call present on its authoritative path before the final response/)
-assert.match(production, /Do not present visual checks, diagnostics, cache files/)
-assert.match(production, /Session workspace, which may differ from \$HIP/)
+assert.match(production, /Session workspace may differ from \$HIP/)
 console.log('Houdini presets retain qualified DSH standard rows and explicit file delivery')

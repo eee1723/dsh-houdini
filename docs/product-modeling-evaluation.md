@@ -31,3 +31,12 @@
 评测集的结构、实例清单、校验和准备命令见 [评测目录](../evaluation/product-modeling-dev-v1/)；运行产物放在隔离目录，不进入 npm 包或生产知识。开发评测可按具体失败选择少量案例，不能把一次精选样例提升当作通用能力。正式能力主张仍需未见案例、不同产品和重复运行支撑。
 
 评测文件摘要用于核对案例本身是否一致，不能证明新版本已加载或产品模型质量提升。代码与 Houdini 的确定性回归、运行版本资格、真实模型质量分别验收，入口见 [开发维护](development.md) 与 [兼容设计](dsh-update-compatibility.md)。
+
+## 对照汇总
+
+[compare-runs.mjs](../evaluation/product-modeling-dev-v1/scripts/compare-runs.mjs)读取登记的运行数组，
+每项含runId/condition（baseline或candidate）、caseId/inputSha256/model/modelVersion/houdiniVersion/toolBuildSha256/budget/viewProtocol、
+独立quality（complete/partial/failed/unverified）、agentClaim（complete/partial/failed/unclear）、evidence路径，及wallTimeSeconds/tokens/toolCalls（未知写null）。
+按case拒绝材料、模型、工具版本、预算或视角混杂；失败/未完成运行也必须保留。脚本不读图、不评分几何，
+汇总独立质量分布和报告准确性：诚实partial不增加建模成功数，已证失败却报complete单列overclaim。
+小样本只输出开发诊断和成本中位数，不输出泛化提升结论。验收见[对照脚本反例](../tools/tests/modeling-comparison.test.mjs)。

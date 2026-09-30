@@ -37,7 +37,7 @@ canonical执行历史含executor_id时，工具入口禁止把原任务的代码
   已有动词覆盖的裸修改不能用allow_raw旁路；parameter/tuple及其set方法的词法赋值别名同样拒绝。
   同批重绑定保守处理；静态识别不等于任意Python的完整沙箱。仅独立、无动词等价的低层缺口允许单次明确理由。
 - query的result_ref分支只读当前workspace中已返回的历史结果；source_ref只读当前session公开日志中的任务来源，
-  两者不进入Bridge/HOM；request_ref只查Bridge同runtime回执、不执行HOM。四分支与code互斥，source_ref不接受JSON pointer或跨session路径，
+  两者不进入Bridge/HOM；request_ref只查Bridge同runtime回执、不执行HOM。加上Host模型图像能力capabilities分支共五种模式，与code互斥，source_ref不接受JSON pointer或跨session路径，
   不能当现场新观察或ownership授权。新查询、修改和任务产物仍遵守原边界。
 - ownership是runtime创建identity与session provenance，不是路径、父网络、名称或可复制userdata。
   foreign可读/作输入，不等于可写；单次allow_foreign必须绑定用户明确目标与非空授权说明。
@@ -47,6 +47,26 @@ canonical执行历史含executor_id时，工具入口禁止把原任务的代码
 - 原生OBJ parent/unparent使用set_object_parent并说明reason；generic connect/disconnect只管数据流。
 - loopback并不鉴别所有本地进程。AST和ownership面向正常agent，不是恶意Python安全沙箱。
   不应向不可信网络暴露Bridge。
+
+## 产品定义与视觉能力
+
+`productMode: true`是显式Host领域配置，默认false，用于提供产品建模工作提示。`houdini_product`是可选的会话需求资产；模型按任务复杂度决定是否使用，定义状态、部件数量、尺寸和计划不参与exec/job执行条件。执行仍遵守真实的主线程、严格设参、ownership和目标绑定规则。
+houdini_exec接受code与checkpoint二选一。checkpoint={expected_path}只生成scene_save；{path,expected_current_path,reason,overwrite?}只生成scene_save_as。checkpoint不接受code/allow_raw，数据通过JSON解码；原路径、覆盖、Save As授权和执行器身份规则适用。保存与产品需求记录相互独立。
+
+Host的houdini_product仅记录当前会话的版本化产品义务，schema与边界见[工具设计](tool-design.md)。
+原始工具记录是唯一持久源；按用户来源核对修订，不以todo完成或作者自报替代测量。检查必须匹配明确最终SOP、
+合同和case/check id，且未被已记录修改失效；measured只覆盖相应量测，不能推断整件/视觉通过。
+未绑定、失败、过期、退休说明及未核对的新来源在pre-step保留；视觉/细节不接受数字检查冒充语义确认。
+未建立定义时不注入缺定义提醒。原生工具参数与schema列出记录格式的必填字段及feature枚举；这些字段约束需求记录本身，不约束场景操作。
+可选members锁定最终组与期望连通件数；contact锁定实际接点组、接收面组、点数与SOP局部距离上限。匹配回执必须同时给出相容预期和实际量测；换组、放宽容差、以零相交代替接触均不核销。既有结构化预期的修订保留字段/原因提示（最近64条及省略数量），不推断用户批准或修改正确。
+review只读投影保存、预期计划、数值与语义阶段，最多返回32条最近最终输出检查定位，带省略数量；不自动绑定、不阻止保存、不认证完成。原始结果仍是权威来源，未声明的要求和成员身份语义不由此推断。
+
+模型首个可用步骤前按已组装提示词的所选route读取图像输入和附件服务能力，不误用尚未生成或属于上个模型的request/header；换route/服务后重新查询，元数据缓存最长60秒。显式查询为
+houdini_query(capabilities='visual')。此预检不请求模型、不渲染、不自动换模型或启动子agent；
+GUI后端、附件传输和实际语义识图仍分别验收。模型不支持图片或元数据不可用时保持视觉未验证。
+控制截图使用基准与扰动共享取景；越界失败不得漂移相机来伪装可比较，数值恢复保证不因此取消。
+回归入口为[产品定义](../tools/tests/product-definition.test.mjs)、[图像通道](../tools/tests/image-inspection-route.test.mjs)和
+[控制证据](../tools/tests/dsh-control-review.test.py)；捕获调度的隔离替身不证明GPU渲染或自然任务采用。
 
 ## 事务与异步
 
@@ -77,7 +97,8 @@ Host的scene-context只在用户消息有“这个节点/HDA”“选中对象�
 选择不等于任务目标或修改授权，用户运行中切换选择、网络、视角和帧不会刷新或触发注入；
 重启Host后只能复用旧消息原快照，不能把重启时的现场重新绑定到旧消息。
 
-Host的execution-state从公开tool事件重建，独立于用户消息绑定的scene-context：按runtime/sequence
+Host通过[execution-history](../src/execution-history.ts)统一索引公开工具调用与完整结果，execution-state、交付核对和可选产品覆盖读取同一事实源。工具展示按通用JSON结构投影，领域结论来自Bridge的checks/evidence，不由Host展示再次推导。
+execution-state独立于用户消息绑定的scene-context：按runtime/sequence
 去重与排序，保留最近观察、删除、失败、in-flight/未知执行和有限检查范围。运行时或观察到的HIP路径改变不复活旧identity，
 已回滚检查不作当前通过；已记录依赖变化或同调用后续修改使旧检查stale。非stale仍只是历史观察，
 不能认证当前live状态或赋予foreign权限。没有第二份可写任务账本，不自动改写用户原始指代。
@@ -85,7 +106,7 @@ Host的execution-state从公开tool事件重建，独立于用户消息绑定的
 自动提醒投影未决修改请求、已记录检查失效、`geo_check_interfaces`的失败/未验证合同、
 `test_controls`失败/未验证及观测到的runtime/HIP身份变化。接口与控制合同按被检查输出身份与合同摘要区分；
 另一份合同通过不能清除旧失败，缺合同摘要时也不能推定后续调用重测了同一要求。
-即时接口摘要列出实际被检查路径，不把临时节点称为最终交付输出；是否等于交付SOP须由作者核对。
+接口证据保留实际被检查路径；是否等于交付SOP须由作者核对。
 提醒优先保留失败/未验证的声明接口与控制检查，总计最多八项；若仍有省略则报告数量，
 可按结果指针读取原回执。
 状态解除只表示历史记录不再含该提醒，不证明场景通过或未声明的产品要求已测。
@@ -201,13 +222,9 @@ operation_advisories只描述缺少显式选择：不替用户封口、选边或
 output必须是明确新建非空交付；空CTRL/helper用tab_create。required_outputs检查必需分支，
 防止非空Merge掩盖丢件。可附实际interfaces；失败或unsupported会使该构建失败并清理新节点。
 dry_run只有静态效力。verify_network必须明确output，默认拒绝empty/error；
-稳定最终`OUT_ASSET`的verify_network附带有界Polygon表面复核摘要与真实bbox_size，
-不改其cook健康判定；开放边/反向壳或不支持表示需按最终零件解释，不能用
-`healthy=true`覆盖，也不必对同一状态重复执行整件Polygon快检。
-混合曲线/Polygon使整件检查unverified时，回执在最多32个最终primitive组内列出至多8个纯闭合Polygon组和局部复查入口；组检查只覆盖所选面，跨组接口及混合整件仍另验。
-上游Sweep有Polygon中心线时，另看curve_path_integrity：异常长的闭合回边与两端
-急折只提示核对曲线意图，不把拓扑闭合误当线缆自由端正确；未参与最终输出的
-Switch分支也可能在上游，须结合实际显示判断。
+verify_network返回cook、非空、几何概要、显示出口及单位事实，不按`OUT_ASSET`等名称追加领域检查。
+需要表面完整性或部件关系时，作者按任务显式调用geo_piece_stats、geo_check_interfaces等工具；
+检查范围与未支持表示直接由领域回执说明。
 require_valid=False仅诊断，不能用来完成验收。warning、cook成功和语义正确分别报告。
 subnet/HDA公共交付使用sop_set_output(node,output_index=0..63)在同父网络发布原生Output，
 普通geo仅明确最终SOP并设置display/render，不要求创建Output；已有显式公共Output保持原接线合同。
@@ -316,3 +333,21 @@ fail closed并纳入同一Box journal恢复。成功只证明编辑器排布，�
 
 scene_save_as需授权的目标路径及expected_current_path，不开放raw load/clear。
 资产库修改不是普通场景撤销；create_spare_parms/update_hda的写后回读与锁定定义边界以动词合同为准。
+
+## 程序化构造与证据表示
+
+sop_recipe/control_test_plan是只读计划，不绕过build_module/test_controls，也不对输入节点授予所有权。
+前者返回普通节点spec，后者返回尚无expectations的case；参数赋值、构建、实际关系检查和恢复继续走现有动词。
+
+内嵌PackedGeometry通过受限内存副本展开后量测真实变换与表面，原节点不改接线。恢复指纹仍包含原Packed拓扑、
+属性、变换和递归载荷，临时内存地址规范为内容摘要，writer索引不算几何；修改内嵌内容或实例变换仍须检出。
+磁盘/Alembic/Fragment与超过展开预算的表示保持unverified，不能为增加覆盖而加载外部文件或静默简化。
+实体相交采用面包围盒候选筛选但Boolean保留完整闭合操作数，不能因没有表面交线漏掉完全包含。
+命名part/name分区表面检查报告完整部件覆盖、跳过原因与预算；分区健康不证明跨部件接合或无穿插。
+
+[结构故障注入](../tools/tests/dsh-modeling-faults.test.py)要求漏分支、脱离、穿插、重复件在计算健康时仍能被最终输出检查拒绝。
+配方矩阵验证实际非零角变换与接点，参数规划验证缺口；机制结果不替代自然任务和固定条件独立评审。
+
+新建物理资产默认以米作为内部长度单位，modeling_dimensions仅换算已声明的源数量，不改HIP单位。
+尺寸定义可锁定group/axis/expected_m/tolerance_m，状态定义可锁定control_values；覆盖投影检查回执含义匹配，
+不允许另一尺寸、放宽容差或另一控制状态冒充当前要求。feature只提供细节设计意图，不赋予measured/pass。

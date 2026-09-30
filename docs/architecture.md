@@ -3,16 +3,17 @@
 ## 运行边界
 
 dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器。TypeScript Host注册
-5个工具，通过HTTP驱动一个已运行的Houdini；只有Houdini侧Python使用HOM。
+5个执行/查询工具及1个Host产品定义工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
 用户消息 → preset/persona + 按需skill
-         → src/context.ts：每条用户消息至多一次只读现场摘要
-         → src/tools.ts → src/bridge.ts：类型/权限上下文、握手、请求
-         → dsh_bridge.py：HTTP → 主线程队列 → 受限执行/动词追踪
+         → src/context.ts + scene-context.ts：事实上下文与一次现场指代观察
+         → src/tools.ts → tool-runtime.ts / tool-query.ts → src/bridge.ts
+         → dsh_bridge.py：HTTP → 主线程队列 → dsh_execution.py
          → dsh_hou_helpers.py → SOP/几何/相机模块
-         → 结构化结果、operation-evidence、原生图像附件 → Host → client/trace
+         → dsh_execution_results.py：结构化结果与证据
+         → tool-output.ts / execution-history.ts → 模型上下文与client/trace
 ```
 
 静态文档和构建通过不证明live已加载。查看当前/预期版本与重载要求使用[兼容设计](dsh-update-compatibility.md)
@@ -39,6 +40,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 四个产品方向共用执行内核，不各建一套状态机、权限层或完成证书。
 程序化建模、HDA/工具、视频教学工程与Copernicus的差异由按需workflow和领域模块承载。
+DSH负责会话、模型、通用Agent循环与通用交互；插件只增加Houdini能力与观察。
+执行内核校验真实调用条件，任务计划和建模方法由作者选择。产品记录可选，不形成执行准入。
 
 | 层 | 唯一职责 | 不承担 |
 |---|---|---|
@@ -60,27 +63,37 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | 源码 | 维护职责 |
 |---|---|
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
-| [src/image-output.ts](../src/image-output.ts) | Bridge 图像→DSH 原生附件；模型能力检查、字节限额、原生与 Code Mode 图像返回，无工作区副本 |
-| [src/tools.ts](../src/tools.ts) | 五工具schema、参数分支互斥、结果/原生图像交付、纯展示函数 |
+| [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
+| [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；注册可选产品工具 |
+| [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
+| [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
+| [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、JSON展示和预览；保留Bridge结构事实，不再次解释领域结论 |
+| [src/product-definition.ts](../src/product-definition.ts) | Host产品定义工具、来源/预期修订、件数/接触绑定、阶段与回执定位投影；不执行HOM，不推导授权或整件通过 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
 | [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从当前执行器身份投影解析任务绑定、验证登记并固定调用级Bridge；绑定落盘屏障读取身份及绑定记录投影，首次绑定仍核当前消息批次并flush，无自动默认或重绑 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，使用`agentPreset`及执行器身份投影确认当前任务，严格输入/预留/代际校验，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | Host专用Session投影：折叠绑定记录、原始工具回执与执行器身份；冲突/无效历史拒绝恢复，不从PID、HIP路径或只读回执查询认领执行端 |
 | [src/component-host.ts](../src/component-host.ts) | 可选组件作者Host：父任务从身份投影确认装配执行端，子作者独立worker与修订交接；隔离配置、生命周期和失败报告不证明模型质量 |
-| [src/context.ts](../src/context.ts) | 按需指代采集、message绑定及预算；pre-step按公开surface去重独立补充段，历史替换时恢复，普通查询不追加上下文 |
+| [src/context.ts](../src/context.ts) | 上下文装配与接受生命周期；一次索引驱动执行、交付与要求视图，按公开surface去重并有界整理通知 |
+| [src/scene-context.ts](../src/scene-context.ts) | 为含现场指代的用户消息采集一次metadata，绑定消息、限制观察大小并在续接时读取原观察 |
+| [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
+| [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
+| [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和发送前持久化；在正常pre-step接受绑定，不改写旧工具交换 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建有限历史状态及未决请求/检查失效/运行身份变化提醒；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/delivery-audit.ts](../src/delivery-audit.ts) | 从完整会话事件投影保存候选、已知执行失败、声明检查及待查回请求；成功Save As后的旧检查只标待重验，不认证最终文件或跨进程状态 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
-| [src/ask-user-guard.ts](../src/ask-user-guard.ts) | 问答参数结构与错键诊断；不按问句关键词推断意图，不强制选项数量 |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
-| [client.js](../client.js) | 手写CJS factory；原生DSH工作区/任务导航、Houdini Trace、回放解析和生成目录 |
-| [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 五看板、公开Trajectory请求/调用适配、结构化详情、技能证据与类型配色；构建嵌入client.js |
+| [client.js](../client.js) | DSH CJS factory；普通任务导航、模式提示和执行端选择，首次打开Trace时初始化诊断 |
+| [client/trace-runtime.js](../client/trace-runtime.js) | 回包解析与诊断组件创建；构建进入同一个DSH客户端bundle |
+| [client/trace-model.js](../client/trace-model.js) | 公开轨迹的请求/调用索引、关系和统一统计；与React渲染分离 |
+| [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 消费轨迹投影的五看板、历史正文、结构化详情与来源路径展示 |
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
+productMode是可选产品建模提示，默认关闭，不改变执行准入。产品定义、结构化checkpoint保存和场景执行各自独立；Bridge维持真实执行条件。
 
 提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止、交接及对用户的表达方式；
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
@@ -88,7 +101,7 @@ domain skill及reference维护建模、验证和交付方法。低频对象recip
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context只为现场指代提供用户消息绑定的metadata；execution-state保留未决请求、陈旧检查及失败/未验证的产品合同，delivery-audit补充保存候选与跨Save As的历史待重验项，按有意义的变化投影提醒，
+scene-context为现场指代提供用户消息绑定的metadata；execution-history统一关联公开工具回执，execution-state和delivery-audit从同一索引生成关注项与保存视图。产品覆盖按call ID读取索引中的证据，不逐项扫描历史，按有意义的变化投影提醒。
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
@@ -102,7 +115,10 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 |---|---|
 | [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；component_replace已有显式计划与有限迁移，完整依赖迁移和质量验收不由片段往返保证 |
 | [dsh_component_worker.py](../houdini/python3.11libs/dsh_component_worker.py) | 自有组件进程初始化、新HIP/Bridge登记与空闲检查点退出；由tools/component-worker.py监管，不接管live |
-| [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP/main-thread queue、job、Raw Gate、query、transaction、trace envelope；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
+| [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP、主线程队列、job、身份与合同；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
+| [dsh_code_analysis.py](../houdini/python3.11libs/dsh_code_analysis.py) | 每请求一次AST解析，共享预检、Raw Gate、只读限制与raw使用分类；执行编译同一AST，无HOM |
+| [dsh_execution.py](../houdini/python3.11libs/dsh_execution.py) | 动词注册、签名绑定/缓存、调用追踪、编辑事务和现场执行事实；只读不准备编辑Undo或journals |
+| [dsh_execution_results.py](../houdini/python3.11libs/dsh_execution_results.py) | 序列化、操作证据、检查和产物路径，统一编组公开结果信封 |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
 | [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 通用动词实现与领域转接、真实Tab/Shelf、参数、provenance、HDA、USD、render入口；完整目录由tool-design维护 |
 | [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py) | agent视觉检查的managed/explicit路径、唯一capture预留及artifact元数据；不负责渲染或保留策略 |
@@ -118,6 +134,9 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、原生公共Output发布/接线验收、有界Packed内容检查、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
 | [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换 |
+| [dsh_geometry_evidence.py](../houdini/python3.11libs/dsh_geometry_evidence.py) | 有界Packed内存展开、面候选扫描和完整命名部件表面分区；不创建场景节点、不读Packed外部文件 |
+| [dsh_modeling_units.py](../houdini/python3.11libs/dsh_modeling_units.py) | 源数量/单位到米制及显式旧场景适配的只读换算，保留源值和量纲，不改变HIP单位 |
+| [dsh_procedural_plans.py](../houdini/python3.11libs/dsh_procedural_plans.py) | 只读原生SOP构造spec及代表参数状态规划；普通build/test执行仍受现有边界约束 |
 | [dsh_quality_contracts.py](../houdini/python3.11libs/dsh_quality_contracts.py) | 实际接口、拓扑/domain和可恢复control实验 |
 | [dsh_camera_framing.py](../houdini/python3.11libs/dsh_camera_framing.py) | 八角点投影、预览取景/深度分离与镜头缩放、静态OBJ camera_fit、实际USD产品预检 |
 | [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata，无socket/进程探测 |
@@ -150,7 +169,8 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh-runtime-compatibility.json](../dsh-runtime-compatibility.json) | preferred DSH及支持组合的唯一清单 |
 | [dsh-profile.requirements.json](../dsh-profile.requirements.json) | 当前受管profile的项目插件依赖清单 |
 | [cordis.patch.yml](../cordis.patch.yml) | bundle组合与插件配置 |
-| [presets](../presets/) | Houdini生产/开发persona；身份与领域工作方式，不放进插件guidance |
+| [presets](../presets/) | 手写[Houdini角色](../presets/houdini/persona.md)与[开发角色](../presets/houdini-dev/persona.md)，组合继承精确DSH标准preset |
+| [gen-agent-presets.mjs](../tools/gen-agent-presets.mjs) | 从已安装的精确DSH标准配置和persona.md生成三份Agent配置；产品focus复用Houdini角色，build刷新、docs:check检查漂移 |
 | [shared-host.cordis.yml](../shared-host.cordis.yml) | 显式候选Host组合；仅共享登记模式使用，不修改现役profile或替用户启动服务 |
 
 GUI线程不得阻塞socket/子进程/netstat探测；进程缓存的UI/package变更需要完整重启Houdini。
@@ -218,7 +238,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [gen-node-card-docs.mjs](../tools/gen-node-card-docs.mjs) | JSON节点卡→文档，严格schema与漂移检查 |
 | [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取；V3上下文经安装的DSH公开surface校验器折叠，非法或校验器不可用时报告未知，legacy独立兼容 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
-| [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取 |
+| [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取；产品定义/能力预检作为Host调用单列，不计HOM动词采用率或裸执行 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[clean-build.mjs](../tools/clean-build.mjs) | 回归发现与每次构建前清空纯生成lib，避免删除源码后残留旧输出 |
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |

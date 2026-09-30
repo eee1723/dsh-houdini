@@ -12,7 +12,7 @@ const result={ok:false,status:'fail',restored:false,semantic_status:'unverified'
 const raw={ok:true,stdout:'',stderr:'',transaction:{status:'committed'},evidence:[{ledgerIndex:1,verb:'test_controls',...result}],verbs:[{verb:'test_controls',ok:true,args:[],result,ms:1}]};
 const retained={...raw,details:{stored:true,sha256:'a'.repeat(64),read:'houdini_query result_ref'}};
 const original=JSON.stringify(raw);const text=render(retained);
-for(const fact of ['case-8','case-9','restoration-drift-middle','channel mismatch','not_run','not_checked','unverified','"restored":false','detail_pointer','evidence_pointer'])assert(text.includes(fact),fact);
+for(const fact of ['case-8','case-9','restoration-drift-middle','channel mismatch','not_run','not_checked','unverified','"restored":false','detail_pointer','duplicate_of'])assert(text.includes(fact),fact);
 assert(text.length<render(raw).length*.6,[text.length,render(raw).length]);
 assert(text.length<26000,'known bounded 16-case fixture should not spill into a 50k presentation');
 assert.equal(JSON.stringify(raw),original,'formatting is pure');
@@ -33,8 +33,8 @@ assert(differing.includes('unique-top-level-failure') && differing.includes('res
   'distinct top-level evidence must survive alongside the original failure');
 assert(differing.length<30000,'unchanged subtrees may be shared without hiding differing fields');
 const unknownTop={status:'unverified',unknown_payload:{novel:'unique future data'}};
-assert(render({...retained,result:unknownTop}).includes(JSON.stringify(unknownTop,null,2)));
-assert(render({...retained,result,details:{stored:false}}).includes(JSON.stringify(result,null,2)),
+assert(render({...retained,result:unknownTop}).includes(JSON.stringify(unknownTop)));
+assert(render({...retained,result,details:{stored:false}}).includes(JSON.stringify(result)),
   'without a stored original, top-level data must retain the full fallback');
 assert.equal(JSON.stringify(raw),original);
 console.log(`risk-preserving compact results ${text.length}/${render(raw).length} chars; late failure, not-run, unknown schema, help and archive fallback passed`);

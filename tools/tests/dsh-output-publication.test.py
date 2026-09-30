@@ -28,6 +28,7 @@ try:
     assert r['ok'] and r['public_output'] is None
     assert r['handoff_output']['status']=='implementation_output' and not r['handoff_output']['is_null']
     assert root.displayNode()==root.node('plain')
+    assert r['handoff_output']['display_flag'] and r['handoff_output']['render_flag']
     # A nontrivial same-level asset can expose stable logical-module and root
     # Null checkpoints without inventing a subnet/public Output contract.
     run(f"src=tab_create({root.path()!r},'box','module_source')\n"
@@ -43,6 +44,16 @@ try:
     assert all(abs(mm-1000*r['scene_unit_length_meters'])<1e-3 for mm in r['bbox_size_sop_local_mm']),r
     assert any(e.get('verb')=='verify_network' and e.get('bbox_size_sop_local_mm')==r['bbox_size_sop_local_mm']
                for e in receipt['evidence']),receipt
+    # Healthy explicit geometry can coexist with an empty saved display/render
+    # selection; inspection reports it without publishing or changing flags.
+    run(f"empty_ctrl=tab_create({root.path()!r},'null','CTRL')\nsop_set_output(empty_ctrl)")
+    unpublished=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',nodes={[root.node('OUT_ASSET').path()]!r})")
+    pub=unpublished['result']['handoff_output']
+    assert unpublished['result']['ok'] and not pub['display_flag'] and not pub['render_flag']
+    assert pub['active_display_output']==root.node('CTRL').path() and pub['active_render_output']==root.node('CTRL').path()
+    assert root.displayNode()==root.node('CTRL')
+    assert any(e.get('handoff_output')==pub for e in unpublished['evidence'])
+    run(f"sop_set_output({root.node('OUT_ASSET').path()!r})")
     original_unit=r['scene_unit_length_meters']
     try:
         hou.hscript('unitlength 0.001')
@@ -51,18 +62,25 @@ try:
         assert mm['scene_unit_length_meters']==.001 and all(abs(v-1)<1e-3 for v in mm['bbox_size_sop_local_mm']),mm
     finally:
         hou.hscript('unitlength '+str(original_unit))
-    assert r['surface_integrity']['risk_status']=='no_detected_integrity_risk',r['surface_integrity']
+    # Output naming never selects domain review. Surface inspection is an
+    # explicit query with its own evidence and acceptance scope.
+    assert 'surface_integrity' not in r and 'curve_path_integrity' not in r,r
+    surface=run(f"__result__=geo_piece_stats({root.node('OUT_ASSET').path()!r},"
+                "inspect=True,integrity_only=True)")['result']
+    assert surface['risk_status']=='no_detected_integrity_risk',surface
     inverted=root.createNode('reverse','inverted_for_final_advisory')
     inverted.setInput(0,root.node('module_source'))
     inverted.parm('vtxsort').set('reverse')
     run(f"connect({inverted.path()!r},{root.node('OUT_ASSET').path()!r},0)")
     risk=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
              f"nodes={[inverted.path(),root.node('OUT_ASSET').path()]!r})")['result']
-    assert risk['ok'] and risk['healthy'],'surface advisory must not rewrite cook health'
-    assert risk['surface_integrity']['negative_closed_shells']==1,risk['surface_integrity']
-    assert risk['surface_integrity']['risk_status']=='needs_review',risk['surface_integrity']
-    # A final mixed surface/curve output must remain unverified while pointing
-    # the author at an exact final Polygon group for local follow-up.
+    assert risk['ok'] and risk['healthy'],'network checkpoint reports cook health'
+    surface=run(f"__result__=geo_piece_stats({root.node('OUT_ASSET').path()!r},"
+                "inspect=True,integrity_only=True)")['result']
+    assert surface['shell_orientation']['negative_count']==1,surface
+    assert surface['risk_status']=='needs_review',surface
+    # Mixed output remains a valid cooked checkpoint. The author can explicitly
+    # choose a declared Polygon group for a separate local surface observation.
     grouped=root.createNode('attribwrangle','group_final_box')
     grouped.setInput(0,root.node('module_source'))
     grouped.parm('class').set('detail')
@@ -75,61 +93,15 @@ try:
     root.node('OUT_ASSET').setInput(0,mixed)
     mixed_review=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
                      f"nodes={[grouped.path(),loose.path(),mixed.path(),root.node('OUT_ASSET').path()]!r})")['result']
-    surface=mixed_review['surface_integrity']
-    assert mixed_review['healthy'] and surface['status']=='unverified',mixed_review
-    assert surface['polygon_group_candidates']==[{'group':'housing','primitives':6}],surface
-    assert surface['polygon_group_scan']=={'scanned':1,'total':1,'truncated':False},surface
-    assert 'geo_piece_stats' in mixed_review['next_action'] and "group='<exact group>'" in mixed_review['next_action']
+    assert mixed_review['healthy'] and 'surface_integrity' not in mixed_review,mixed_review
     local=run(f"__result__=geo_piece_stats({root.node('OUT_ASSET').path()!r},"
               "inspect=True,integrity_only=True,group='housing')")['result']
     assert local['status']=='observed' and local['group']=='housing',local
     assert local['risk_status']=='no_detected_integrity_risk',local
-    # A closed path can produce a perfectly closed, outward Sweep shell while
-    # adding a long unwanted chord from the loose cable end back to its start.
-    cable_curve=root.createNode('attribwrangle','closure_fixture_curve')
-    cable_curve.parm('class').set('detail')
-    cable_code='''int p[];
-for (int i=0; i<=64; i++) {
-    float t=float(i)/64.0;
-    float a=t*8.0*M_PI;
-    p[i]=addpoint(0,set(-.015+.030*t,.030*cos(a),.030*sin(a)));
-}
-for (int k=1; k<=3; k++) {
-    float f=float(k)/3.0;
-    p[64+k]=addpoint(0,set(.015+.006*f,(.030+.005*f)*cos(f),(.030+.005*f)*sin(f)));
-}
-addprim(0,"poly",p);'''
-    cable_curve.parm('snippet').set(cable_code)
-    cable_sweep=root.createNode('sweep::2.0','closure_fixture_sweep')
-    cable_sweep.setInput(0,cable_curve)
-    for name,value in {'surfaceshape':1,'surfacetype':5,'radius':.0032,'cols':12,'endcaptype':1}.items():
-        cable_sweep.parm(name).set(value)
-    root.node('OUT_ASSET').setInput(0,cable_sweep)
-    closed=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
-               f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
-    assert closed['healthy'] and closed['surface_integrity']['risk_status']=='no_detected_integrity_risk',closed
-    assert closed['curve_path_integrity']['suspicious_closure_count']==1,closed['curve_path_integrity']
-    assert closed['curve_path_integrity']['samples'][0]['closing_edge_ratio']>3
-    cable_curve.parm('snippet').set(cable_code.replace('addprim(0,"poly",p)',
-                                                   'addprim(0,"polyline",p)'))
-    opened=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
-               f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
-    assert opened['healthy'] and opened['curve_path_integrity']['open_backbones']==1,opened
-    assert opened['curve_path_integrity']['suspicious_closure_count']==0,opened
-    cable_curve.parm('snippet').set('''int p[];
-for (int i=0; i<32; i++) {
-    float a=float(i)*2.0*M_PI/32.0;
-    p[i]=addpoint(0,set(.03*cos(a),.03*sin(a),0));
-}
-addprim(0,"poly",p);''')
-    intentional=run(f"__result__=verify_network({root.path()!r},output='OUT_ASSET',"
-                    f"nodes={[cable_curve.path(),cable_sweep.path(),root.node('OUT_ASSET').path()]!r})")['result']
-    assert intentional['healthy'] and intentional['curve_path_integrity']['closed_backbones']==1
-    assert intentional['curve_path_integrity']['suspicious_closure_count']==0,intentional
     run(f"connect({root.node('OUT_MODULE').path()!r},{root.node('OUT_ASSET').path()!r},0)")
-    assert r['handoff_output']=={'path':root.node('OUT_ASSET').path(),'name':'OUT_ASSET','type':'null',
-        'is_null':True,'has_stable_name':True,'is_leaf':True,'status':'stable_null_checkpoint',
-        'scope':'Presentation/readability facts only. A named Null is not a public subnet port, geometry proof, relationship proof or requirement to wrap every simple chain.'}
+    assert {k:r['handoff_output'][k] for k in ('path','name','type','is_null','has_stable_name','is_leaf','status')}=={
+        'path':root.node('OUT_ASSET').path(),'name':'OUT_ASSET','type':'null',
+        'is_null':True,'has_stable_name':True,'is_leaf':True,'status':'stable_null_checkpoint'}
     assert root.displayNode()==root.node('OUT_ASSET') and not root.node('OUT_ASSET').outputs()
     # Recreate native initialization's unconnected output even in headless mode.
     if not sub.node('output0'):

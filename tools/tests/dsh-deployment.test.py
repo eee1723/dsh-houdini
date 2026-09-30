@@ -148,6 +148,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         d.atomic_json(Path(ctx1["home"]) / "session.json", {"value": "old data"})
         d.atomic_json(Path(ctx1["home"]) / ".agent-presets/custom/agent.json", {"name": "user preset"})
         d.atomic_json(Path(ctx1["home"]) / ".agent-presets/houdini/agent.json", {"name": "old managed preset"})
+        d.atomic_json(Path(ctx1["home"]) / ".agent-presets/houdini-product/agent.json", {"name": "old product preset"})
         ident2 = store.stage(second)
         rejects(lambda: store.activate(ident2, "21.0"), "Another")
         assert store.state()["current"] == ident1
@@ -159,6 +160,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         assert d.read_json(Path(ctx2["home"]) / "session.json")["value"] == "old data"
         assert d.read_json(Path(ctx2["home"]) / ".agent-presets/custom/agent.json")["name"] == "user preset"
         assert not (Path(ctx2["home"]) / ".agent-presets/houdini/agent.json").exists()
+        assert not (Path(ctx2["home"]) / ".agent-presets/houdini-product/agent.json").exists()
         d.atomic_json(Path(ctx2["home"]) / "session.json", {"value": "new data"})
         assert store.rollback() == ident1
         lease2.close()

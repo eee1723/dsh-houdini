@@ -5,7 +5,7 @@
 // 为什么走生成而不是运行时拉取：client.js 是手写 CJS 静态 bundle，require
 // 只认平台 seed word（没有 host RPC 符号，见 dsh-client-web getStaticModules），
 // webserver 也不 serve 插件目录——目录只能内联。由本脚本从真相源机械派生，
-// 挂在 `npm run build` 里，手改标记区会被下次构建覆盖，因此不漂移。
+// 挂在 `npm run build` 里；仅打开Trace时初始化目录，手改标记区会被覆盖。
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -39,7 +39,7 @@ if (begin === -1 || end === -1 || end < begin) {
   console.error('client.js 里找不到 catalog 标记区（>>> houdini-catalog / <<< houdini-catalog）');
   process.exit(1);
 }
-const block = `${BEGIN}\n    var CATALOG = ${JSON.stringify(catalog)};\n    ${END}`;
+const block = `${BEGIN}\n    function getTraceCatalog() { return ${JSON.stringify(catalog)}; }\n    ${END}`;
 const next = src.slice(0, begin) + block + src.slice(end + END.length);
 if (next === src) {
   console.log(`client.js catalog unchanged (${catalog.length} domains, ${verbTotal} verbs)`);

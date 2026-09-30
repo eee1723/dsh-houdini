@@ -110,3 +110,24 @@ assert.equal(projectDeliveryAudit(events).execution_failures.length,1,
   'reading the original result again is not a second execution failure');
 
 console.log('delivery audit: local pass, stale edit, Save As, long history, unknown request, checkpoint and unchecked failure passed');
+
+events.splice(0);sequence=0;
+record({evidence:[{...declared('fail'),verb:'test_controls',restored:true,results:[],
+  reason:'baseline outside declared absolute range'}],outputs:[binding()]});
+record({evidence:[{...declared('pass'),verb:'test_controls',restored:true}],outputs:[binding()]});
+assert.equal(projectDeliveryAudit(events).unresolved_checks.length,0,
+  'a baseline-failure receipt carrying the declaration hash is replaced by its repaired retest');
+
+events.push({seq:events.length+1,type:'tool/call',data:{callId:'aborted',name:'houdini_exec'}});
+events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'aborted'}},isError:true,error:{code:'ABORTED'}}});
+audit=projectDeliveryAudit(events);
+assert.equal(audit.unresolved_calls[0].call_id,'aborted');
+assert.equal(audit.checks[0].validity,'unverified_after_unknown_execution');
+events.push({seq:events.length+1,type:'tool/call',data:{callId:'recover-aborted',name:'houdini_query'}});
+events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'recover-aborted'}},meta:{canonical:{
+  requestReceipt:{request_ref:'aborted-ref',owner_call:'aborted',status:'not_executed'}}}}});
+assert.equal(projectDeliveryAudit(events).unresolved_checks.length,0);
+events.push({seq:events.length+1,type:'tool/call',data:{callId:'job',name:'houdini_job_submit'}});
+events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:'job'}},meta:{jobId:'a'.repeat(12)}}});
+assert.equal(projectDeliveryAudit(events).active_jobs.length,1);
+assert.equal(projectDeliveryAudit(events).checks[0].validity,'unverified_after_unknown_execution');

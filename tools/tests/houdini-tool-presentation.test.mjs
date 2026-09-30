@@ -24,6 +24,7 @@ assert.deepEqual([...definitions.keys()], [
   'houdini_job_submit',
   'houdini_job_status',
   'houdini_job_cancel',
+  'houdini_product',
 ]);
 
 const text = [{ type: 'text', text: 'fixture result' }];
@@ -77,167 +78,26 @@ const evidenceValue = {...pendingChecks, stdout:'long verbose node list', eviden
 const evidenceText = exec.output.render(execArgs, evidenceValue)[0].text;
 assert.ok(evidenceText.indexOf('operation-evidence:') < evidenceText.indexOf('stdout:'));
 assert.match(evidenceText, /"pixel_status":"failed"/);
-const baselineFailure = exec.output.render({}, {...execValue, stdout:'[]', evidence:[{
-  ledgerIndex:1, verb:'test_controls', results:[], control_summary:{status:'fail', ok:false,
-    restored:true, reason:'baseline outside declared absolute range', case_id:'reach',
-    baseline:2, expectation:{range:[3,4]}, parameter_writes:0,
-    case_counts:{pass:0,fail:0,unverified:0,not_run:1}},
-}]}).map(c=>c.text||'').join('\n');
-assert(baselineFailure.indexOf('control-test-summary') < baselineFailure.indexOf('stdout:'));
-assert.match(baselineFailure, /not_run is not pass/);
-assert.match(baselineFailure, /baseline outside declared absolute range/);
-assert.match(baselineFailure, /"not_run":1/);
-assert.match(baselineFailure, /"case_id":"reach"/);
-const compactControlFailure = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
-  evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
-    status:'fail',restored:true,requested_cases:4,
-    case_counts:{pass:3,fail:1,unverified:0,not_run:0},
-    coverage:{relationship_scope:'not_checked',declared_interfaces:0,
-      baseline_interface_status:'not_checked',cases_with_interface_checks:0,
-      executed_interface_checks:0,declared_topology_contracts:0},
-    cases:[{id:'angle_90',status:'fail'}],
-  }}],
-  verbs:[{verb:'test_controls',ok:true,check_status:'failed',result:{ok:false,status:'fail'}}],
-})[0].text;
-assert.match(compactControlFailure.split('\n')[0], /control-test-verdict.*"pass":3.*"fail":1.*angle_90/,
-  'compact control failures must lead the model-facing result, not hide behind a successful verb call');
-assert.match(compactControlFailure, /restored only means test changes were undone/);
-assert.match(compactControlFailure.split('\n')[0], /"relationship_scope":"not_checked".*"declared_interfaces":0/,
-  'a passing measurement count must not imply component relationships were checked');
-assert.match(compactControlFailure.split('\n')[0], /"baseline_interface_status":"not_checked".*"cases_with_interface_checks":0.*"executed_interface_checks":0/);
-const measurementOnlyPass = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'test_controls',control_summary:{
-    status:'pass',restored:true,requested_cases:2,case_counts:{pass:2,fail:0,unverified:0,not_run:0},
-    coverage:{relationship_scope:'not_checked',declared_interfaces:0},cases:[],
-  }}],
-})[0].text;
-assert.match(measurementOnlyPass.split('\n')[0], /control-coverage-gap:.*no component\/interface relationships were checked/,
-  'a passing measurement-only test must expose its missing relationship coverage before the verdict');
-assert.match(measurementOnlyPass, /control-test-verdict:.*"status":"pass".*"relationship_scope":"not_checked"/);
-const blockedFinalAxis = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_check_interfaces',
-    output:'/obj/fan/OUT_ASSET',status:'fail',results:[
-      {id:'left_axis',method:'axis_passage',target_group:'final_frame',status:'pass'},
-      {id:'right_axis',method:'axis_passage',target_group:'final_frame',status:'fail',
-        reason:'axis_intersects_final_surface',hit_position:[.4,0,0]},
-    ]}],
-})[0].text;
-assert.match(blockedFinalAxis.split('\n')[0], /declared-interface-verdict:.*"checked_outputs":\["\/obj\/fan\/OUT_ASSET"\].*"pass":1,"fail":1,"unverified":0/);
-assert.match(blockedFinalAxis.split('\n')[0], /right_axis.*axis_intersects_final_surface.*\[0\.4,0,0\]/);
-assert.match(blockedFinalAxis, /Axis passage pass clears one centerline, not the full bore/);
-const emptyInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
-  evidence:[{verb:'geo_check_interfaces',output:'/obj/fan/OUT_ASSET',status:'unverified',results:[]}]})[0].text;
-assert.match(emptyInterface.split('\n')[0], /declared-interface-verdict:.*"declared":0.*"unverified":1.*no_result_rows/);
-const missingMember = exec.output.render({}, {ok:true,stdout:'',stderr:'',
-  evidence:[{verb:'geo_check_interfaces',output:'/obj/enclosure/OUT_ASSET',status:'fail',
-    results:[{id:'four_rails',method:'component_count',target_group:'fastening_rails',
-      expected_components:4,observed_components:3,status:'fail'}]}]})[0].text;
-assert.match(missingMember.split('\n')[0], /declared-interface-verdict:.*four_rails.*"expected_components":4,"observed_components":3/);
-const wrongPhysicalSize = exec.output.render({}, {ok:true,stdout:'',stderr:'',
-  evidence:[{verb:'geo_check_interfaces',output:'/obj/part/OUT_ASSET',status:'fail',
-    results:[{id:'drawing_width',method:'physical_extent',target_group:'housing',status:'fail',
-      expected_mm:100,observed_mm:100000,tolerance_mm:0.5,delta_mm:99900}]}]})[0].text;
-assert.match(wrongPhysicalSize.split('\n')[0], /declared-interface-verdict:.*drawing_width.*"expected_mm":100,"observed_mm":100000,"tolerance_mm":0\.5,"delta_mm":99900/);
-assert.match(wrongPhysicalSize, /Physical extent depends on an independently checked drawing dimension/);
-const temporaryInterface = exec.output.render({}, {ok:true,stdout:'',stderr:'',
-  evidence:[{verb:'geo_check_interfaces',output:'/obj/part/OUT_ASSET1',status:'pass',
-    results:[{id:'pin_diameter',method:'physical_extent',status:'pass'}]}]})[0].text;
-assert.match(temporaryInterface.split('\n')[0], /declared-interface-verdict:.*"checked_outputs":\["\/obj\/part\/OUT_ASSET1"\]/,
-  'a temporary node must be named in the check summary even when every declaration passes');
-assert.doesNotMatch(temporaryInterface, /recorded final output/,
-  'the tool cannot promote a temporary node check to final product acceptance');
-assert.match(temporaryInterface, /may be temporary nodes rather than the delivered final output/);
-const integrityWarning = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',details:{stored:true,sha256:'fixture'},
-  evidence:[{ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
-    status:'observed',risk_status:'needs_review',risk_reasons:['nonmanifold_edges'],
-    boundary_edges:4,boundary_review_status:'open_boundary_unreviewed'}],
-})[0].text;
-assert.match(integrityWarning.split('\n')[0], /polygon-integrity-verdict.*needs_review.*nonmanifold_edges/);
-assert.match(integrityWarning, /open ports may be intentional/);
-const shadingCandidate = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
-    method:'bounded polygon surface integrity',status:'observed',
-    risk_status:'no_detected_integrity_risk',planar_repeated_point_ngons:2,
-    shading_review_status:'needs_visual_review'}],
-})[0].text;
-assert.match(shadingCandidate.split('\n')[0], /polygon-integrity-verdict.*"planar_repeated_point_ngons":2.*"shading_review_status":"needs_visual_review"/);
-assert.match(shadingCandidate, /not integrity failures/);
-const groupOnlyIntegrity = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[
-    {ledgerIndex:1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
-      group:'g_gasket',status:'observed',risk_status:'no_detected_integrity_risk'},
-    {ledgerIndex:2,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
-      group:'g_shell_base',status:'observed',risk_status:'no_detected_integrity_risk'},
-  ],
-})[0].text;
-assert.match(groupOnlyIntegrity.split('\n')[0], /polygon-integrity-coverage.*"selected_groups":2.*"whole_output_checked_in_this_call":false/);
-assert.match(groupOnlyIntegrity, /coincident faces across different groups/);
-assert.match(groupOnlyIntegrity, /polygon-integrity-verdict:.*"group":"g_gasket"/);
-const invertedShell = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'geo_piece_stats',
-    method:'bounded polygon surface integrity',group:'g_shell',status:'observed',
-    risk_status:'needs_review',risk_reasons:['negative_closed_shell_winding_requires_review'],
-    orientation_review_status:'negative_closed_shells_present',
-    shell_orientation:{positive_count:0,negative_count:1,unverified_count:0},
-    shading_normals:{opposed_count:3}}],
-})[0].text;
-assert.match(invertedShell, /"negative_closed_shells":1/);
-assert.match(invertedShell, /"opposed_shading_normals":3/);
-assert.match(invertedShell, /Normal N is not polygon winding/);
-const finalOutputRisk = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[{ledgerIndex:1,verb:'verify_network',ok:true,
-    output:'/obj/reel/OUT_ASSET',healthy:true,warning_free:true,
-    geometry:{points:4040,prims:3768,bbox_size:[.315,.2083,.1696]},
-    scene_unit_length_meters:1,
-    bbox_size_sop_local_mm:[315,208.3,169.6],
-    surface_integrity:{status:'observed',risk_status:'needs_review',boundary_edges:96,
-      negative_closed_shells:3,unverified_shells:1},
-    curve_path_integrity:{status:'observed',risk_status:'needs_review',suspicious_closure_count:1,
-      samples:[{sweep:'/obj/reel/cable_sweep',backbone:'/obj/reel/cable_curve',closing_edge_ratio:4.12}]}}],
-})[0].text;
-assert.match(finalOutputRisk.split('\n')[0], /final-output-review:.*"bbox_size_sop_local":\[0\.315,0\.2083,0\.1696\].*"negative_closed_shells":3/);
-assert.match(finalOutputRisk.split('\n')[0], /"bbox_size_sop_local_mm":\[315,208\.3,169\.6\]/);
-assert.match(finalOutputRisk.split('\n')[0], /"suspicious_sweep_closures":1.*"closing_edge_ratio":4\.12/);
-assert.match(finalOutputRisk, /healthy cook does not certify assembly or appearance/);
-const mixedFinal = exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[{
-  verb:'verify_network',output:'/obj/part/OUT_ASSET',healthy:true,
-  surface_integrity:{status:'unverified',reason:'requires closed polygon faces; curves/native/packed are not interpreted as polygon surfaces',
-    polygon_group_candidates:[{group:'housing',primitives:6}],
-    polygon_group_scan:{scanned:1,total:1,truncated:false},
-    next_action:"Inspect a declared final Polygon group with geo_piece_stats(OUT_ASSET, inspect=True, integrity_only=True, group='<exact group>')"},
-}]})[0].text.split('\n')[0];
-assert.match(mixedFinal,/final-output-review:.*"surface_status":"unverified".*"polygon_group_candidates":\[\{"group":"housing","primitives":6\}\]/);
-assert.match(mixedFinal,/"surface_next_action":"Inspect a declared final Polygon group/);
-for (const verb of ['geo_piece_stats','verify_network']) {
-  const crossings={status:'observed',coverage:'complete_within_scope',crossed_faces:6,
-    samples:Array.from({length:8},(_,index)=>({primitive:10+Math.floor(index/2),edge_indices:[1,3],position:[0,0,0]}))};
-  const surface={status:'observed',risk_status:'needs_review',risk_reasons:['planar_face_self_crossings'],
-    planar_face_crossings:crossings};
-  const evidence=verb==='geo_piece_stats'
-    ? {verb,method:'bounded polygon surface integrity',...surface}
-    : {verb,output:'/obj/part/OUT_ASSET',ok:true,healthy:true,surface_integrity:surface};
-  const first=exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[evidence]})[0].text.split('\n')[0];
-  assert.match(first,/"planar_face_crossings":\{"status":"observed","coverage":"complete_within_scope","crossed_faces":6,"sample_primitives":\[10,11,12,13\]/);
-  assert.doesNotMatch(first,/edge_indices|"position"/,'leading verdict only carries bounded primitive locations');
-  const skipped={...surface,risk_status:'no_detected_integrity_risk',risk_reasons:[],
-    planar_face_crossings:{status:'unverified',coverage:'partial',crossed_faces:0,samples:[]}};
-  const skippedEvidence=verb==='geo_piece_stats' ? {...evidence,...skipped} : {...evidence,surface_integrity:skipped};
-  const partial=exec.output.render({}, {ok:true,stdout:'',stderr:'',evidence:[skippedEvidence]})[0].text.split('\n')[0];
-  assert.match(partial,/"planar_face_crossings":\{"status":"unverified","coverage":"partial","crossed_faces":0,"sample_primitives":\[\]/);
+// Domain evidence is displayed exactly as returned by the Bridge. Host output
+// must neither promote scoped checks nor synthesize a second domain verdict.
+const domainEvidence = [
+  {verb:'test_controls',control_summary:{status:'fail',restored:false,
+    case_counts:{pass:3,fail:1,not_run:1},coverage:{relationship_scope:'not_checked'},
+    cases:[{id:'angle_90',status:'fail'}]},restore_errors:['channel drift']},
+  {verb:'geo_check_interfaces',output:'/obj/part/OUT_ASSET1',status:'fail',results:[
+    {id:'width',method:'physical_extent',status:'fail',expected_mm:100,observed_mm:100000},
+    {id:'axis',method:'axis_passage',status:'unverified',reason:'unsupported surface'}]},
+  {verb:'geo_piece_stats',group:'housing',status:'observed',risk_status:'needs_review',
+    shell_orientation:{negative_count:1},planar_face_crossings:{status:'unverified',coverage:'partial'}},
+  {verb:'verify_network',output:'/obj/model/FINAL',healthy:true,
+    handoff_output:{display_flag:false,active_display_output:'/obj/model/CTRL'}},
+];
+for (const details of [undefined,{stored:true,sha256:'fixture'}]) {
+  const rendered = exec.output.render({}, {ok:true,stdout:'diagnostic',stderr:'',evidence:domainEvidence,details})[0].text;
+  for (const evidence of domainEvidence) assert(rendered.includes(JSON.stringify(evidence)));
+  assert(rendered.indexOf('operation-evidence:') < rendered.indexOf('stdout:'));
+  assert.doesNotMatch(rendered,/declared-interface-verdict:|polygon-integrity-verdict:|control-test-verdict:/);
 }
-assert.match(finalOutputRisk.split('\n')[0],/"planar_face_crossings":null/,'absent diagnostics are not invented as clean');
-const lateInversion = exec.output.render({}, {
-  ok:true,stdout:'',stderr:'',evidence:[...Array.from({length:5}, (_,index) => ({
-    ledgerIndex:index+1,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
-    group:`g_${index}`,status:'observed',risk_status:'no_detected_integrity_risk',
-  })),{ledgerIndex:6,verb:'geo_piece_stats',method:'bounded polygon surface integrity',
-    group:'g_late_inverted',status:'observed',risk_status:'needs_review',
-    shell_orientation:{negative_count:1},risk_reasons:['negative_closed_shell_winding_requires_review']}],
-})[0].text;
-assert.match(lateInversion.split('Executed successfully.')[0], /g_late_inverted/,
-  'a late risk must not be clipped behind earlier clean group results');
 
 const query = definitions.get('houdini_query');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {

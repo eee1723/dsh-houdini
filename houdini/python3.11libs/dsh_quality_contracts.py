@@ -187,9 +187,10 @@ def _geometry(output):
     return node, g.freeze(read_only=True)
 
 
-def _canonical_geometry_payload(data):
+def _canonical_geometry_payload(data, _depth=0):
     """Canonicalize writer order while retaining group members and attribute values."""
-    payload=hjson.loads(data)
+    if _depth>8:raise ValueError('packed fingerprint nesting exceeds 8 levels')
+    payload=hjson.loads(data) if isinstance(data,(bytes,str)) else data
     if (not isinstance(payload,list) or len(payload)%2
             or any(not isinstance(k,str) for k in payload[::2])
             or len(set(payload[::2])) != len(payload[::2])):
@@ -255,6 +256,38 @@ def _canonical_geometry_payload(data):
             # Both are writer-generated descriptions, not user attributes.
             # The actual group names, membership and selection order stay above.
             payload[i+1]={k:v for k,v in value.items() if k not in ('date','group_summary')}
+    if 'sharedprimitivedata' in payload[::2]:
+        shared=payload[payload.index('sharedprimitivedata')+1]
+        if not isinstance(shared,list) or len(shared)%2:raise ValueError('unsupported packed payload schema')
+        remap={};normalized_shared=[]
+        for kind,entries in zip(shared[::2],shared[1::2]):
+            if kind!='PackedGeometry':
+                # Preserve unknown/native shared payload verbatim. Only the
+                # established embedded-packed schema is address-normalized.
+                normalized_shared.extend([kind,entries]);continue
+            if not isinstance(entries,list) or len(entries)%3:
+                raise ValueError('unsupported embedded packed representation')
+            records=[]
+            for i in range(0,len(entries),3):
+                tag,key,child=entries[i:i+3]
+                if tag!='gu:embeddedgeo' or not isinstance(key,str):raise ValueError('unsupported embedded geometry record')
+                canonical=_canonical_geometry_payload(child,_depth+1)
+                digest=hashlib.sha256(json.dumps(canonical,sort_keys=True,allow_nan=False).encode()).hexdigest()
+                remap[key]='content:'+digest;records.append((digest,canonical))
+            normalized=[]
+            for digest,child in sorted(dict(records).items()):normalized.extend(['gu:embeddedgeo','content:'+digest,child])
+            normalized_shared.extend([kind,normalized])
+        payload[payload.index('sharedprimitivedata')+1]=normalized_shared
+        # Writer seek index/byte offsets refer to transient embedded addresses.
+        # The full canonical payload above carries every referenced value.
+        for field in ('index','indexposition'):
+            if remap and field in payload[::2]:payload[payload.index(field)+1]=None
+        for record in payload[payload.index('primitives')+1]:
+            descriptor,body=record
+            if dict(zip(descriptor[::2],descriptor[1::2])).get('type')!='PackedGeometry':continue
+            parameters=body[body.index('parameters')+1]
+            if parameters.get('embedded') not in remap:raise ValueError('missing packed payload')
+            parameters['embedded']=remap[parameters['embedded']]
     return payload
 
 
@@ -364,6 +397,27 @@ def _check_interfaces(g, interfaces, max_pairs, output_node=None):
         base = {'id':item['id'],'source_group':item['source_group'],'target_group':item['target_group'],
                 'source_count':len(points),'target_count':len(prims),'expected_points':item['expected_points'],
                 'tolerance':item['max_distance']}
+        # Diagnostic identities only: labels are author data, not proof of ownership
+        # or semantic completeness. Never silently filter contaminated selections.
+        identities = {}
+        for attr_name in ('name', 'part'):
+            attr = g.findPrimAttrib(attr_name)
+            if attr is None or attr.dataType() != hou.attribData.String:
+                continue
+            source_counts = {}
+            target_counts = {}
+            for point in points:
+                for label in {v.prim().stringAttribValue(attr_name) for v in point.vertices()}:
+                    source_counts[label] = source_counts.get(label, 0) + 1
+            for prim in prims:
+                label = prim.stringAttribValue(attr_name)
+                target_counts[label] = target_counts.get(label, 0) + 1
+            identities[attr_name] = {
+                'source_point_memberships':dict(sorted(source_counts.items())[:32]),
+                'target_primitive_memberships':dict(sorted(target_counts.items())[:32]),
+                'truncated':len(source_counts)>32 or len(target_counts)>32}
+        if identities:
+            base['selection_identities'] = identities
         if g.findPrimAttrib('name'):
             source_names = sorted({v.prim().stringAttribValue('name') for p in points for v in p.vertices()})
             target_names = sorted({p.stringAttribValue('name') for p in prims})
@@ -385,9 +439,11 @@ def _check_interfaces(g, interfaces, max_pairs, output_node=None):
             results.append({**base,'status':'unverified','reason':'source_group_not_on_final_surface_vertices'})
             continue
         target_point_ids = {p.number() for prim in prims for p in prim.points()}
-        if any(p.number() in target_point_ids for p in points):
+        shared_ids = [p.number() for p in points if p.number() in target_point_ids]
+        if shared_ids:
             results.append({**base,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate',
-                            'next_action':'Shared vertices are not an independent-surface distance test. For fused polygon parts use test_controls topology; do not enlarge tolerance or remove correct shared vertices.'})
+                            'shared_point_count':len(shared_ids),'shared_point_ids':shared_ids[:32],
+                            'next_action':'The same point identities occur in source and target; coincident positions on independent parts are allowed. Inspect selection_identities for mixed parts in BOTH groups. Build interface selections from part identity and the actual attachment region before merging; do not silently filter, enlarge tolerance, or remove correct fused vertices. For genuinely fused polygon parts use test_controls topology.'})
             continue
         selections.append((base, points, prims))
     for base, points, prims in selections:
@@ -664,9 +720,12 @@ def _solid_overlap(g, item, budget):
         return {**base,**counts,'status':'fail','reason':'source_and_target_overlap_cannot_self_validate'},0
     if {p.number() for prim in source for p in prim.points()} & {p.number() for prim in target for p in prim.points()}:
         return {**base,**counts,'status':'fail','reason':'source_and_target_share_points_cannot_self_validate'},0
-    pairs=len(source)*len(target)
-    if len(source)>512 or len(target)>512 or pairs>budget:
-        raise ValueError('solid_overlap Boolean budget exceeded; narrow to complete closed part groups')
+    if len(source)>20000 or len(target)>20000:
+        raise ValueError('solid_overlap operand exceeds 20000 face budget; select complete parts')
+    from dsh_geometry_evidence import candidate_face_pairs
+    pairs=candidate_face_pairs(source,target,budget)
+    base['broad_phase']={'candidate_face_pairs':pairs,'cartesian_face_pairs':len(source)*len(target),
+                         'method':'axis sweep of face bounds; full operands retained for Boolean containment'}
     from dsh_geometry_observation import polygon_observation
     checks=[]
     for name in (item['source_group'],item['target_group']):
@@ -811,7 +870,15 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
     if type(max_pairs) is not int or not 1 <= max_pairs <= 100000:
         raise ValueError('max_pairs must be in 1..100000')
     node, g = _geometry(output)
-    result = _check_interfaces(g, interfaces, max_pairs, node)
+    from dsh_geometry_evidence import expanded_view
+    try:
+        observed,representation=expanded_view(g,allow_native_unknown=True)
+    except ValueError as error:
+        return {'ok':False,'status':'unverified','output':node.path(),'reason':str(error),
+                'results':[],'semantic_status':'unverified',
+                'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest()}
+    result = _check_interfaces(observed, interfaces, max_pairs, node)
+    result['representation']=representation
     return {**result,'output':node.path(),'frame':float(hou.frame()),'checked_at':time.time(),
             'geometry_sha256':_data_signature(g),'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest(),
             'semantic_status':'unverified','next_action':'Repair failing declared interfaces then rerun; this does not certify unspecified relationships.'}
@@ -967,15 +1034,34 @@ def validate_capture_views(views):
         raise ValueError('views must be at most two of iso/front/side/top')
 
 
-def capture_views(output, views):
+def capture_views(output, views, *, locks=None, view_bounds=None, frame=None):
     import dsh_hou_helpers as h
     validate_capture_views(views)
     captures=[]
     for view in views:
         if not hou.isUIAvailable():
             captures.append({'view':view,'status':'unverified','reason':'GUI/OpenGL unavailable'});continue
-        result=h.render_view(output,direction=view)
-        captures.append({k:result[k] for k in ('ok','picture','file_status','pixel_status','semantic_status','stale','camera','framing','check','errors','user_state_restored') if k in result} | {'view':view})
+        options = {'frame':frame, 'framing_frame':frame}
+        if locks is not None:
+            lock=locks.get(view)
+            if lock is None:
+                captures.append({'view':view,'status':'unverified','reason':'baseline capture unavailable; camera was not refitted'})
+                continue
+            options.update(framing_bounds=lock['bounds'],depth_bounds=lock['depth_bounds'])
+        elif view_bounds is not None:
+            options.update(framing_bounds=view_bounds,depth_bounds=view_bounds)
+        try:
+            result=h.render_view(output,direction=view,**options)
+        except h.CheckpointError as error:
+            facts=error.evidence
+            if facts.get('render_started') is not False or facts.get('framing_status')!='failed' or facts.get('user_state_restored') is not True:
+                raise
+            captures.append({**facts,'view':view,'status':'unverified','reason':str(error)[:400]})
+            continue
+        except (ValueError, hou.Error) as error:
+            captures.append({'view':view,'status':'unverified','reason':str(error)[:400]})
+            continue
+        captures.append({k:result[k] for k in ('ok','output','picture','artifact','file_status','pixel_status','semantic_status','stale','camera','framing','check','errors','user_state_restored') if k in result} | {'view':view})
         if result.get('user_state_restored') is False:
             raise h.CheckpointError('review capture did not restore user state',{'restored':False,'captures':captures})
     return captures
@@ -1027,6 +1113,7 @@ def _control_summary(result, tests, interfaces=None, topology=None, baseline_int
                          'relation_status': {k: row[k]['status'] for k in ('interfaces', 'topology')
                                              if isinstance(row.get(k), dict)}})
     return {'status': result['status'], 'ok': result['ok'], 'restored': result['restored'],
+            'capture_status':result.get('capture_status','not_requested'),
             'requested_cases': len(tests), 'case_counts': counts, 'cases': cases,
             'coverage': {'acceptance': 'declared_checks_only',
                          'declared_controls': sorted({name for t in tests for name in t['values']}),
@@ -1052,23 +1139,40 @@ def _control_summary(result, tests, interfaces=None, topology=None, baseline_int
             **{k: result[k] for k in ('controller', 'output', 'frame', 'contract_sha256',
                                      'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes') if k in result},
             'next_action': ('Only the declared cases and measurements passed; untested relationships remain unverified.'
-                if result['ok'] else result.get('next_action',
+                if result['ok'] else 'Locked baseline/case captures are incomplete; inspect their framing/backend evidence. Numeric case results and restoration are reported separately; visual semantics remain unverified.'
+                if result.get('capture_status')=='unverified' else result.get('next_action',
                 'Read the top-level failure before results; not_run cases are not passes. '
                 'range applies to baseline AND perturbed values; delta is the signed change. '
                 'Correct a mistaken expectation with independent evidence, then rerun affected cases.'))}
 
 
 def test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
-                  baseline_interfaces=None, views=None, response_only=False):
-    result = _test_controls(controller, output, tests, interfaces, allow_foreign,
-                            domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
-                            views=views, response_only=response_only)
+                  baseline_interfaces=None, views=None, response_only=False, view_bounds=None):
+    # Bind early failures and restoration exceptions to the same declaration as
+    # successful retests. Never use call identity as the contract identity.
+    import dsh_hou_helpers as h
+    declaration={'controller_identity':h._resolve(controller).sessionId(),
+                 'tests':tests,'interfaces':interfaces,'baseline_interfaces':baseline_interfaces,
+                 'domain':domain,'topology':topology}
+    if views or view_bounds is not None:
+        declaration.update(views=views,view_bounds=view_bounds)
+    contract_hash=hashlib.sha256(json.dumps(declaration,sort_keys=True).encode()).hexdigest()
+    try:
+        result = _test_controls(controller, output, tests, interfaces, allow_foreign,
+                                domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
+                                views=views, response_only=response_only, view_bounds=view_bounds)
+    except h.CheckpointError as error:
+        error.evidence['contract_sha256']=contract_hash
+        if isinstance(error.evidence.get('control_summary'),dict):
+            error.evidence['control_summary']['contract_sha256']=contract_hash
+        raise
+    result['contract_sha256']=contract_hash
     result['control_summary'] = _control_summary(result, tests, interfaces, topology, baseline_interfaces)
     return result
 
 
 def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
-                   baseline_interfaces=None, views=None, response_only=False):
+                   baseline_interfaces=None, views=None, response_only=False, view_bounds=None):
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
@@ -1082,9 +1186,19 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     import dsh_hou_helpers as h
     ctrl=h._resolve(controller)
     h._require_owned(ctrl,'test_controls',allow_foreign)
+    from dsh_cook_control import require_evaluation
+    require_evaluation('test_controls')
     if type(response_only) is not bool:raise ValueError('response_only must be boolean')
     views=[] if views is None else views
     validate_capture_views(views)
+    if view_bounds is not None:
+        if not views or not isinstance(view_bounds,(list,tuple)) or len(view_bounds)!=2:
+            raise ValueError('view_bounds requires views and [world_min_xyz,world_max_xyz]')
+        if any(not isinstance(side,(list,tuple)) or len(side)!=3 for side in view_bounds):
+            raise ValueError('view_bounds requires two 3D corners')
+        for i in range(3):
+            if _finite(view_bounds[0][i],'view_bounds') >= _finite(view_bounds[1][i],'view_bounds'):
+                raise ValueError('view_bounds must have positive extent on each world axis')
     if not isinstance(tests,list) or not 1 <= len(tests) <= 16:
         raise ValueError('tests must contain 1..16 bounded cases')
     if interfaces is not None:validate_interfaces(interfaces)
@@ -1150,19 +1264,18 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'reason':'baseline cook failed before any control write',
                 'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
     node, baseline=_geometry(output)
-    unsupported_types=sorted({p.type().name() for p in baseline.prims()} - {'Polygon','Mesh','Sphere','Tube'})
-    if unsupported_types:
-        # Packed serialization may contain recook-varying IDs. A raw bgeo hash
-        # is not an established restoration oracle for those representations.
+    from dsh_geometry_evidence import expanded_view
+    try:
+        measured_baseline,representation=expanded_view(baseline)
+    except ValueError as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
-                'reason':f'control restoration oracle not verified for {unsupported_types}',
-                'parameter_writes':0,'semantic_status':'unverified',
-                'scope':'unsupported output representation; zero parameter writes'}
+                'reason':str(error),'parameter_writes':0,'semantic_status':'unverified',
+                'scope':'unsupported or over-budget evidence representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
     baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
-    baseline_relations=_check_interfaces(baseline,baseline_contracts,50000,node) if baseline_contracts else None
-    baseline_topology=_check_topology(baseline,topology) if topology is not None else None
+    baseline_relations=_check_interfaces(measured_baseline,baseline_contracts,50000,node) if baseline_contracts else None
+    baseline_topology=_check_topology(measured_baseline,topology) if topology is not None else None
     baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,
                      'baseline_domain':baseline_domain}
     if baseline_topology is not None and not baseline_topology['ok']:
@@ -1177,7 +1290,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
     # Resolve every measurement BEFORE the first write.
     try:
-        baselines={test['id']:[_measure(baseline,e) for e in test.get('expectations',[])] for test in tests}
+        baselines={test['id']:[_measure(measured_baseline,e) for e in test.get('expectations',[])] for test in tests}
         if not all(math.isfinite(float(v)) for values in baselines.values() for v in values):
             raise UnsupportedEvidence('nonfinite baseline measurement; zero parameter writes')
         for test in tests:
@@ -1192,6 +1305,10 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
+    baseline_captures=capture_views(node,views,view_bounds=view_bounds,frame=original_frame) if views else []
+    capture_locks={c['view']:c['framing'] for c in baseline_captures
+                   if c.get('ok') is True and not c.get('stale') and c.get('framing',{}).get('bounds')
+                   and c['framing'].get('depth_bounds')}
     rows=[];all_restored=True;restoration=None
     for test in tests:
         row={'id':test['id'],'values':test['values'],'status':'fail'}
@@ -1220,15 +1337,17 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             cook=h.cook_node(node,force=True)
             if not cook['ok']:raise ValueError(f'perturbed cook failed: {cook["errors"]}')
             _,g=_geometry(node)
+            try: measured_geometry,_=expanded_view(g)
+            except ValueError as error: raise UnsupportedEvidence(str(error)) from error
             measurements=[]
             for exp,start in zip(test.get('expectations',[]),baselines[test['id']]):
-                end=_measure(g,exp,baseline);delta=end-start;lo,hi=exp['delta']
+                end=_measure(measured_geometry,exp,measured_baseline);delta=end-start;lo,hi=exp['delta']
                 if not math.isfinite(float(end)):raise UnsupportedEvidence('nonfinite measured value')
                 range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
                 measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
             case_interfaces=(interfaces or []) + test.get('interfaces',[])
-            relations=_check_interfaces(g,case_interfaces,50000,node) if case_interfaces else None
-            topology_check=_check_topology(g,topology) if topology is not None else None
+            relations=_check_interfaces(measured_geometry,case_interfaces,50000,node) if case_interfaces else None
+            topology_check=_check_topology(measured_geometry,topology) if topology is not None else None
             measurements_pass=all(m['pass'] for m in measurements)
             checks=[r for r in (relations,topology_check) if r is not None]
             case_status='fail' if not measurements_pass or any(r['status']=='fail' for r in checks) else 'unverified' if any(r['status']=='unverified' for r in checks) else 'pass'
@@ -1237,7 +1356,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             if not measurements:
                 row['response_status']='responsive' if row['geometry_changed'] else 'unchanged'
                 if row['status']=='pass':row['status']='unverified'
-            if views:row['captures']=capture_views(node,views)
+            if views:row['captures']=capture_views(node,views,locks=capture_locks,frame=original_frame)
         except UnsupportedEvidence as error:
             row.update({'status':'unverified','reason':str(error)})
         except h.CheckpointError:
@@ -1285,11 +1404,16 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         rows.append(row)
     ok=all(r['status']=='pass' for r in rows) and (baseline_relations is None or baseline_relations['ok'])
     status='pass' if ok else 'fail' if any(r['status']=='fail' for r in rows) or (baseline_relations and baseline_relations['status']=='fail') else 'unverified'
+    captures=baseline_captures+[c for row in rows for c in row.get('captures',[])]
+    capture_status=('not_requested' if not views else 'observed' if
+        len(captures)==len(views)*(len(tests)+1) and all(c.get('ok') is True and not c.get('stale') for c in captures)
+        else 'unverified')
+    if views and capture_status!='observed' and status=='pass':
+        status='unverified';ok=False
     return {'ok':ok,'status':status,'controller':ctrl.path(),'output':node.path(),
             'frame':original_frame,'checked_at':time.time(),'restored':all_restored,'baseline_sha256':baseline_hash,
             'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
-            'contract_sha256':hashlib.sha256(json.dumps({'tests':tests,'interfaces':interfaces,
-                'baseline_interfaces':baseline_interfaces,'domain':domain,'topology':topology},sort_keys=True).encode()).hexdigest(),
+            'baseline_captures':baseline_captures,'capture_status':capture_status,'representation':representation,
             'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships',
             'next_action':'Fix failed responses/interfaces; preserve drafts. Do not claim full controllability from one global geometry change.'}

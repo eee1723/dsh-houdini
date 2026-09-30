@@ -25,16 +25,8 @@ for (const relative of currentSurfaces) {
 }
 
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-const agents = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8')
 const development = fs.readFileSync(path.join(root, 'docs', 'development.md'), 'utf8')
 const verbCount = EXPECTED_VERB_NAMES.length
-const nodeTestCount = fs.readdirSync(path.join(root, 'tools', 'tests'))
-  .filter((name) => name.endsWith('.test.mjs')).length
-assert.match(
-  readme,
-  new RegExp(`${nodeTestCount} 个 Node 确定性测试文件`),
-  `README must report the current ${nodeTestCount}-file Node suite`,
-)
 for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
   const skillFile = `skills/${skill}/SKILL.md`
   if (!fs.existsSync(path.join(root, skillFile))) continue
@@ -46,7 +38,6 @@ assert.match(readme, /切换 HIP 后再次点击即可切换任务边界/)
 assert.match(readme, /未保存场景[^\n]*中立 scratch[^\n]*不会扩大到 `dsh-houdini`/)
 assert.match(readme, /Repair and restart runtime/)
 assert.match(readme, new RegExp(`${verbCount} 个意图级动词`))
-assert.match(agents, new RegExp(`dsh_hou_helpers\\.py.（${verbCount} 动词）`))
 assert.match(development, new RegExp(`${verbCount} 个目录入口`))
 assert.match(readme, /set_object_parent\(child, parent/)
 

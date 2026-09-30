@@ -109,11 +109,10 @@ try:
         assert evidence['planar_face_crossings']['crossed_faces'] == 1, evidence
         checkpoint = h.verify_network(root, output=out)
         assert checkpoint['ok'] and checkpoint['healthy'], checkpoint
-        assert checkpoint['surface_integrity']['planar_face_crossings']['crossed_faces'] == 1, checkpoint
-        assert checkpoint['surface_integrity']['risk_status'] == 'needs_review', checkpoint
+        assert 'surface_integrity' not in checkpoint and 'curve_path_integrity' not in checkpoint, checkpoint
         packet = b.run_code(f'__result__=verify_network({root.path()!r},output={out.path()!r})')
         evidence = next(item for item in packet['evidence'] if item.get('verb') == 'verify_network')
-        assert evidence['surface_integrity']['planar_face_crossings']['crossed_faces'] == 1, evidence
+        assert 'surface_integrity' not in evidence and 'curve_path_integrity' not in evidence, evidence
         assert evidence['ok'] and evidence['healthy'], evidence
     # Typical large quad surface remains inside the edge-pair budget.
     grid = root.createNode('grid')

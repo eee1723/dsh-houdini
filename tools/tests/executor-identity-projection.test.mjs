@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {Context} from '@deepseek-ai/cordis'
 import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
-import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/execution-state.js'
+import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {executorIdentityProjection,projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection}
   from '../../lib/executor-identity-projection.js'
 

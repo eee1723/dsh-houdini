@@ -22,7 +22,7 @@ import {
   linkNativeImageResponses,
   collectVerbAdoption,
   classifyRawEffect,
-  isHoudiniDetailRead,
+  isHoudiniHostCall,
   isStructuredHoudiniCall,
   skillCatalogNames,
   findBatchSetParmOpportunities,
@@ -233,7 +233,7 @@ function analyzeTrace(file) {
   const partialParameterFailures = steps.flatMap((step) => step.verbs
     .filter((verb) => verb.verb === 'set_parms' && verb.ok && verb.result?.failed && Object.keys(verb.result.failed).length)
     .map((verb) => ({index: step.index, time: step.time, failed: verb.result.failed})));
-  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !isHoudiniDetailRead(step) && !isStructuredHoudiniCall(step) && !step.verbs.length).map((step) => ({
+  const rawHoudiniNoVerb = steps.filter((step) => step.isHoudini && !isHoudiniHostCall(step) && !isStructuredHoudiniCall(step) && !step.verbs.length).map((step) => ({
     index: step.index,
     time: step.time,
     tool: step.tool,

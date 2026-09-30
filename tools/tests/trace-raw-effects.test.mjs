@@ -70,6 +70,13 @@ for(const ref of ['result_ref','request_ref','source_ref']) {
 }
 
 const root=path.resolve(import.meta.dirname,'../..');
+const hostOnly=collectVerbAdoption([...steps,
+  {tool:'houdini_product',isHoudini:true,args:{action:'define'},verbs:[],failed:false},
+  {tool:'houdini_query',isHoudini:true,args:{capabilities:'visual'},verbs:[],failed:false}]);
+assert.equal(hostOnly.houdiniCalls,stats.houdiniCalls);
+assert.equal(hostOnly.rawUnknownEffectCalls,stats.rawUnknownEffectCalls);
+assert.equal(hostOnly.hostProductCalls,1);
+assert.equal(hostOnly.hostCapabilityReads,1);
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-trace-raw-'));
 try {
   const input=path.join(temp,'session.jsonl.zstd'),output=path.join(temp,'evidence.json');

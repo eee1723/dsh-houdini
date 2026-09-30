@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {SceneContextProvider, installSceneContext, needsSceneReferent} from '../../lib/context.js';
+import {installSceneContext} from '../../lib/context.js';
+import {SceneContextProvider,needsSceneReferent} from '../../lib/scene-context.js';
 import {HoudiniBridge} from '../../lib/bridge.js';
 import {Session} from '@deepseek-ai/dsh-session';
 const SCENE='dsh-houdini:scene-context',STATE='dsh-houdini:execution-state',TASK='dsh-houdini:task-sources',RECOVERY='dsh-houdini:context-recovery';

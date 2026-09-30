@@ -3,6 +3,39 @@ import path from 'node:path'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ExecResult, HoudiniBridge } from './bridge.js'
 
+/** Metadata-only preflight: no render, model inference, or scene mutation. */
+export async function visualCapability(exec: any, ctx: any) {
+  const routed = exec.route ?? exec.agent?.session?.requestHeader?.()?.config
+  const route = {provider:routed?.provider ?? exec.agent?.options?.provider,
+    model:routed?.model ?? exec.agent?.options?.model}
+  const base = {...route, semantic_status:'unverified',
+    render_backend:'not_probed', boundary:'Declared image input and native attachment channel only; GUI renderer, transport and semantic inspection require actual evidence.'}
+  try {
+    const attachments = ctx.get?.('attachments'), llm = ctx.get?.('llm')
+    if (!attachments || !llm || !route.provider || !route.model)
+      throw new Error('native image channel or model route unavailable')
+    const signal = exec.signal ? AbortSignal.any([exec.signal,AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500)
+    signal.throwIfAborted()
+    let onAbort = () => {}
+    const aborted = new Promise<never>((_,reject) => {
+      onAbort = () => reject(new Error('image route lookup aborted'))
+      signal.addEventListener('abort',onAbort,{once:true})
+    })
+    let info:any
+    try { info = await Promise.race([llm.resolveModelInfo(route.provider,route.model,signal),aborted]) }
+    finally { signal.removeEventListener('abort',onAbort) }
+    const supported = info.inputModalities?.includes('image') === true
+    return {...base,status:supported?'available':'unsupported',image_input:supported,
+      attachment_channel:true,limits:attachments.imageLimits,
+      ...(supported?{}:{reason:'current model route does not declare image input'}),
+      next_action:supported?'Inspect actual prototype images before expanding detail.'
+        :'Visual semantics remain unverified. Resolve the model route with the user before committing to a visually verified deliverable; do not retry images through a text-only delegate.'}
+  } catch(error) {
+    return {...base,status:'unavailable',image_input:null,reason:String(error),
+      next_action:'Inspect the route/channel configuration; do not infer visual capability from a successful render.'}
+  }
+}
+
 export function imageBlocks(value: ExecResult): ContentBlock[] {
   return (Array.isArray(value.imageAttachments) ? value.imageAttachments : [])
     .filter((item: any) => item?.attachment)
@@ -16,21 +49,8 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
   const imageAttachments: any[] = []
   try {
     const attachments = ctx.get?.('attachments')
-    const llm = ctx.get?.('llm')
-    const routed = exec.agent?.session?.requestHeader?.()?.config
-    const route = { provider: routed?.provider ?? exec.agent?.options?.provider, model: routed?.model ?? exec.agent?.options?.model }
-    if (!attachments || !llm || !route?.provider || !route?.model) throw new Error('native image channel or model route unavailable')
-    const signal = exec.signal ? AbortSignal.any([exec.signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500)
-    signal.throwIfAborted()
-    let onAbort = () => {}
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(new Error('image route lookup aborted'))
-      signal.addEventListener('abort', onAbort, { once: true })
-    })
-    let info: any
-    try { info = await Promise.race([llm.resolveModelInfo(route.provider, route.model, signal), aborted]) }
-    finally { signal.removeEventListener('abort', onAbort) }
-    if (!info.inputModalities?.includes('image')) throw new Error('current model route does not declare image input')
+    const capability = await visualCapability(exec,ctx)
+    if (capability.status !== 'available') throw new Error(capability.reason)
     let totalBytes = 0
     for (const from of paths) {
       try {

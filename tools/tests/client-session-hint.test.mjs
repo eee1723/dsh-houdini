@@ -377,7 +377,7 @@ const newerUnnamed = workspaceStatus({sessionId:'s',
   ]})});
 assert.equal(newerUnnamed,null, 'latest unnamed HIP clears an older mismatch');
 
-const view = plain.registrations.houdinitrace.component;
+const view = plain.registrations.houdinitrace.component({}).type;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
   + '{"name":"set_keyframes","signature":"(node, channels) -> dict"} (0ms)';
 const tree = view({
@@ -481,11 +481,10 @@ assert.match(traceText, /提示词与上下文/);
 assert(!traceText.includes('成功修改含动词'), 'analysis metrics must not crowd the main timeline');
 const snapshot = traceProps.useSession(s=>s.views.get('trajectory'));
 const entries = view.model(snapshot).entries;
-assert.equal(entries[0].rawMode, 'read_only');
-assert.equal(entries[0].directHouCount, 1);
+assert.equal(entries[0].rawUsage.gateOutcome, 'read_only');
 assert.equal(entries[0].verbs.length, 1);
 assert.equal(entries[1].gateBlocked, true);
-assert.equal(entries[2].rawMode, 'exempted');
+assert.equal(entries[2].exemptionReason, '词表没有 HIP 保存动词');
 assert.equal(entries[3].rollbackApplied, true);
 
 console.log('client launcher-session hint and ledger parser tests passed');

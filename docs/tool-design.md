@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 69
+Execution contract version: 73
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -46,18 +46,31 @@ render_frame与ROP/geometry cache输出语义不变。
 
 | 工具 | 作用 |
 |---|---|
-| houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）；request_ref为同runtime请求回执。四分支互斥，后三者不执行HOM；没有allow_raw修改豁免 |
-| houdini_exec | 场景修改与作者验证；code为必填，产图通过原生附件返回 |
+| houdini_query | code为Houdini只读观察；result_ref为Host历史结果读取（JSON pointer/offset/limit）；source_ref为当前session任务来源读取（index或来源hash，offset/limit）；request_ref为同runtime请求回执；capabilities='visual'只读当前模型图像输入及附件通道。五分支互斥，后四者不执行HOM；没有allow_raw修改豁免 |
+| houdini_exec | 场景修改与作者验证；code/checkpoint二选一。checkpoint仅当前路径保存或显式Save As，不接受附带代码/allow_raw。产图通过原生附件返回 |
 | houdini_job_submit | 长操作排队异步提交 |
 | houdini_job_status | 状态/结果及可选等待 |
 | houdini_job_cancel | 协作式取消；不强杀已执行HOM |
+| houdini_product | 可选的Host侧会话需求记录，action=schema/define/read/review；不进入Bridge、不修改HIP。define需要definition、expected_revision（首次0）和change_reason；schema入口给出完整格式与示例。read投影定义与逐项历史测量覆盖；review返回保存、计划、数值与语义事实及至多32条最终输出检查定位。记录或覆盖状态不控制执行，不接受作者填写pass |
 
-工具schema在[src/tools.ts](../src/tools.ts)。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
+工具入口在[src/tools.ts](../src/tools.ts)，通用输出schema与展示在[src/tool-output.ts](../src/tool-output.ts)，本地来源/结果与请求回执查询在[src/tool-query.ts](../src/tool-query.ts)。产品定义按任务需要建立；`productMode`仅提供产品领域提示，不要求先登记数量、尺寸或设计计划。Host在每次场景调用前核对Bridge实际词表hash和执行版本，
 请求内再附expected_contract校验；失配拒绝并要求重载，不能信任旧成功缓存。
 执行结果的`artifactCandidates`仅列权威文件路径、字节数、来源和用途候选；它不声明最终交付、不复制文件。最终文件仍须由Agent验收后调用标准`present`，验证图和失败产物不能自动提升为交付。
 
+`houdini_product`的definition包含title/output/units/source_refs/assumptions/requirements/retired及可选reviewed_through；
+requirements为1..128项{id,kind,description,subjects,state,checks}，kind为part/relation/control/dimension/detail/visual。
+checks初始可空；绑定已有回执时给verb、contract_sha256、check_id，test_controls关系另给case_id=baseline或实际case id。
+只比较明确最终output及历史有效回执；part需component_count、dimension需physical_extent、relation需独立source/target组、control需实际case测量。
+dimension可声明{group,axis,expected_m,tolerance_m}，绑定量测的组/轴/期望量与容差必须一致；control_values可锁定具体数值状态，只有test_controls对应case的actual_values能核销该状态。detail可附feature={family,purpose,attachment,controls,construction,inspection}，family为functional/assembly/support/edge/surface；计划不证明几何存在。
+测量对应记measured，不认证语义匹配、资料归属或完整产品；detail/visual不由数字检查认证。缺项、失败、过期、后来尚未核对的用户来源保持可见。
+删除旧义务须在retired保留id/reason/source_ref，原始修订永久留在会话；来源引用不自动证明删除获得授权。
+define仅允许直接native调用；本版DSH的Code Mode/PTC嵌套写入缺少canonical持久回执，明确拒绝，schema/read不受此限。
+并行冲突修订不静默覆盖；read各候选后用resolve_conflicts给出准确冲突call id列表并合并义务，再顺序提交。定义、覆盖与待办不形成另一可写通过证书；压缩后从不可变工具记录重建。
+reviewed_through为已审阅到的用户/澄清来源hash；将“引用依据”与“已读消息范围”分开，长会话不需把每条继续消息加入source_refs。游标仅作者审阅声明，不证明理解/授权。
+
 显式候选[component-host](../src/component-host.ts)另提供Host侧component_delegate(task)、component_status()、component_wait(timeoutSeconds=30)和component_stop(childId)，
-只管理原生子任务和自有worker，不属于上述5个houdini工具或HOM动词目录，默认不挂载。
+只管理原生子任务和自有worker，不属于上述6个houdini工具或HOM动词目录，默认不挂载。
+
 status只用于一次当前作者子任务/worker快照、权威workspace/HIP及容量，不启动worker，也不证明组件完成；wait在Host内等待最多30秒直到task/worker状态变化，超时只表示期间无状态变化。liveSceneState=unobserved时磁盘大小/mtime不能推导未保存的Houdini现场，等待交付走wait与原生子任务消息，不重复status或轮询文件。
 accepted不代表模型已开始/组件已完成；准备/权限不符在模型请求前拒绝。Host向子作者说明当前HIP由绑定提供、render_view在houdini_exec内，不能把子简报中的Save As路径或取消原始视觉义务当成有效合同。节点片段仍经下面component_*动词显式处理。
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
@@ -94,7 +107,7 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 可用读取入口。`houdini_query(result_ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
 文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
-已归档的大控制结果只展示一份证据：保留case状态、未运行/未验证范围与全部失败/恢复诊断，成功domain/通道恢复明细指向原始JSON；ledger只保留引用与风险事实，批量verb_help直接显示签名/调用模式/前置条件。顶层直接返回或包装相同控制结果时，仅对已知证据的等价JSON子树使用引用，独有诊断和差异保持可见；未知证据schema保持原字段。保存失败保持原有展示，不把已执行修改报成失败；读取缺失/损坏文件也不得重放原场景修改。
+通用展示直接消费Bridge的checks/evidence/execution，不另推导控制、Polygon或接口结论。已归档结果的等价JSON子树使用引用，长正文提供预览与原始字段指针，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。批量verb_help完整显示签名、调用模式和前置条件。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
 canonical metadata与模型文本分别保留：metadata供原生事件、UI、审计和状态投影；Code Mode仍按Host
 协议返回完整canonical值，嵌套事件可能不含metadata，此时完整值须由result_ref读取，审计明确标缺口。
 
@@ -126,8 +139,11 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
 | `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label，先解析两端及原生兼容性再写入，回读实际源输出。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；parm_filter只作字面子串筛选。operation_card含决策/版本，operation_parameters保留不受筛选/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
+| `modeling_dimensions(quantities, require_meter_scene=True)` | 只读源单位换算：quantities={name:{value,unit,min?,max?,source?}}，最多64项；长度m/cm/mm/um/in/ft转米，面积/体积按平方/立方换算，rad转deg、count/ratio不按长度缩放。默认要求当前HIP=1m且不改单位；旧工程须显式False并消费scene_values。返回原始依据、canonical_values、scene_values及米制CTRL spec；不证明最终尺寸 | dict |
+| `sop_recipe(kind, spec=None)` | 只读普通SOP配方，catalog给schema，kind单独调用给结构模板示例；hinge/slider/repeat共享origin/axis及CTRL标量，Merge源与附件→FRAME→Copy；sweep_tube/profile_shell为单中心线/平面薄片成形；guided_slider用真实source/guide投影推导位置并拒绝越界，surface_attach在指定面组投影并取法线frame；gusset/fastener提供带厚度肋板与头杆源。返回nodes/output/required_outputs交给build_module，不创建/cook；不猜坐标、不认领输入、不保证接合。字段、适用前提和反例见SOP配方reference | dict |
+| `control_test_plan(controller, parameters, max_cases=16, domain=None)` | 只读数值参数规划；1..8标量各2..8显式levels，最多4096候选，贪心覆盖levels与两两组合，最多16case。domain只预筛独立无keys标量，记录排除数与missing；返回tests的expectations为空，须由作者补独立指标/状态接口后test_controls执行，不是全域证明 | dict |
 | `build_module(parent, nodes, output, dry_run=False, interfaces=None, *, required_outputs=None)` | 新增1..64个{name,type,parms?,inputs?} SOP节点，inputs为更早spec/现有child名，None跳输入。独立静态错误汇总零创建拒绝；size=1/组件按标量校验，只有多分量tuple接受等长数值列表，与实际setter同源。operation_advisories按类型合并缺少显式决策及已声明的参数语义警示，非阻断、不改默认值、不证明语义；Tube始终说明rad1/rad2是X/Y椭圆轴半径而非内外径。dry_run用于未决设置。required_outputs可检查1..16必需新分支，可附实际interfaces。返回validation/interface_checks；失败清理新节点，不覆盖已有节点/flags | dict |
-| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式output，不跟随display。output_index=0..63另验同父网络原生Output接线；默认检查直属范围，可nodes限域，error/空输出默认拒绝。geometry给bbox_min/max/size，后者是实际逐轴跨度；稳定`OUT_ASSET`还回scene_unit_length_meters，须结合OBJ变换核物理尺寸。对非空且有界的最终`OUT_ASSET`自动给只读surface_integrity摘要：开放边、反向闭壳、非流形/零面积及Boolean着色候选；非Polygon/超预算保留unverified。上游原生Sweep的input 0若是有界Polygon路径，还给curve_path_integrity：闭合首尾边比其余线段显著更长且两端急折时标复核；闭环或Switch未激活分支可能有意存在，不推断路径意图。这些摘要**不改ok/healthy的cook语义**；整件相同状态不必重复运行geo_piece_stats。handoff_output只说明名称/type/Null/leaf，不证明端口、连接或艺术质量。warning、部件齐全和视觉另验 | dict |
+| `verify_network(parent, output=None, nodes=None, limit=512, require_valid=True, *, output_index=None)` | SOP checkpoint：必须显式output，不跟随display。output_index=0..63另验同父网络原生Output接线；默认检查直属范围，可nodes限域，error/空输出默认拒绝。geometry给bbox_min/max/size，所有显式输出均回scene_unit_length_meters与bbox_size_sop_local_mm，须结合OBJ变换核物理尺寸。handoff_output给出名称/type/Null/leaf、显示/渲染旗标及父网络当前出口。不按输出名称追加表面或上游Sweep检查；需要时显式调用geo_piece_stats等领域工具。它不自动发布，不证明OBJ可见、部件关系或艺术质量 | dict |
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 限 `scene_assembly/camera_light_null/existing_legacy/explicit_user/downstream_obj_delivery`，新建几何 FK 不属例外。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
@@ -173,11 +189,11 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 |---|---|---|
 | `geo_attrib_stats(node, name, attrib_class='point', *, unique=False, max_elements=100000)` | 数值min/max/mean/count；unique=True全量检查精确完整tuple（含字符串），返回unique_count/duplicate_count/all_unique及至多8个重复样本。用P查精确重叠、用id查身份；超预算/非有限拒绝，无容差焊接或自动删除。point/prim/vertex/detail | dict |
 | `geo_point_spacing(node, expected, tolerance, closed=False, order_attrib=None, max_points=10000)` | 全量相邻点弦长验收：默认point number顺序，或唯一数值order_attrib；closed含末→首，SOP local单位；返回全量min/max/failure_count及最多16个最差对与sequence hash。超预算拒绝不抽样；只证明该序列约束，不证明弧长、网格接线或实际零件关系 | dict |
-| `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内1..16实际关系。默认{id,source_group,target_group,max_distance,expected_points}测独立表面点到面距离；method=axis_gap用两个primitive组及axis/gap_range/min_overlap测投影间隙。method=solid_overlap用两个独立完整闭合朝外Polygon实体组和max_overlap_volume，在内存副本做Boolean Intersect量实体相交体积，非零有效交集返回SOP局部包围盒（多处交集仅为外包络）；实心轴穿实心铰耳fail，有孔且留间隙pass，开放/不完整/非Polygon/数值含糊为unverified。method=axis_passage用最终Polygon target_group、axis及SOP local start/end测一条跨越该组包络的轴线；碰到最终表面fail，无遮挡pass，缺组fail，非Polygon/未跨包络unverified。它不证明孔径、孔壁或其他轴；后续增材须复验。solid_overlap每组最多512面且共用max_pairs预算；不建场景节点、不抽样。零交集不证明同轴或真实穿孔；三态分别检查，不证明连续运动、受力或公差。返回实际值/范围/几何hash | dict |
+| `geo_check_interfaces(output, interfaces, max_pairs=50000)` | 同一最终SOP内1..16实际关系。默认{id,source_group,target_group,max_distance,expected_points}测独立表面点到面距离；method=axis_gap用两个primitive组及axis/gap_range/min_overlap测投影间隙。method=solid_overlap用两个独立完整闭合朝外Polygon实体组和max_overlap_volume，在内存副本做Boolean Intersect量实体相交体积，非零有效交集返回SOP局部包围盒（多处交集仅为外包络）；实心轴穿实心铰耳fail，有孔且留间隙pass，开放/不完整/非Polygon/数值含糊为unverified。method=axis_passage用最终Polygon target_group、axis及SOP local start/end测一条跨越该组包络的轴线；碰到最终表面fail，无遮挡pass，缺组fail，非Polygon/未跨包络unverified。它不证明孔径、孔壁或其他轴；后续增材须复验。solid_overlap每组最多20000面；面包围盒扫描筛候选，共用max_pairs候选预算与2000000扫描访问预算，完整实体仍交Boolean处理包含关系；不建场景节点、不抽样。零交集不证明同轴或真实穿孔；三态分别检查，不证明连续运动、受力或公差。返回实际值/范围/几何hash | dict |
 
 `geo_check_interfaces(method='physical_extent')`接受从资料独立核对的`target_group`、`axis=0..2`、`expected_mm>0`、`tolerance_mm>=0`。在最终闭合Polygon组测所选点的SOP局部逐轴跨度，按当前HIP unitlength换算毫米，超差或缺组fail；非Polygon、单位未知、非单位OBJ变换或超预算unverified。它检查声明组的一轴尺寸，不自动认定图纸尺寸归属、分组完整性或其他部件关系；后续编辑须复验，控制扰动可放在`test_controls`的interfaces中。
 `geo_check_interfaces(method='bore_clearance')`接受最终闭合朝外Polygon `target_group`、SOP local `axis`、同轴`start/end`与正数`radius`。以外切24边棱柱覆盖声明圆形空域，只在声明的轴向区间与该组做有界Boolean Intersect；零交集pass，有效侵入fail并给交集包围盒，不完整组/模糊结果unverified。对带铰耳的叶片，区间应覆盖需要打孔的板厚，不能把整件总包围盒当板厚；通过不证明区间外通畅、孔位归属、周围材料或公差。预算为目标面数×24，受`max_pairs`与目标组4000面上限约束。
-| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, baseline_interfaces=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}],interfaces?}`，每个case最多16个expectations；同一扰动的大检查用相同values拆成多个case。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。顶层interfaces在基准和全部case复查，baseline_interfaces只验基准，case内interfaces只验对应扰动；适合合盖接触与开盖分离等不同合同，均用geo_check_interfaces的schema和预算。control_summary区分已声明与实际执行的关系覆盖；基准失败时参数零写入且results=[]明确标not_run。domain/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，其他写前unverified。拒绝callback/menu/button/multiparm/tuple列表值，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
+| `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, baseline_interfaces=None, views=None, view_bounds=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}],interfaces?}`，每个case最多16个expectations；同一扰动的大检查用相同values拆成多个case。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。顶层interfaces在基准和全部case复查，baseline_interfaces只验基准，case内interfaces只验对应扰动；适合合盖接触与开盖分离等不同合同，均用geo_check_interfaces的schema和预算。control_summary区分已声明与实际执行的关系覆盖；基准失败时参数零写入且results=[]明确标not_run。domain/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（内嵌Packed临时地址转内容引用、忽略对应writer索引偏移；排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，嵌入PackedGeometry在内存副本展开量测，原载荷/属性/变换按内容指纹验证恢复，其他写前unverified。拒绝callback/menu/button/multiparm/tuple列表值，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None, integrity_only=False)` | 默认统计primitive piece局部bbox/extent/面积；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent、surface_area、duplicate_boundary_faces、closed_planar_components及center_axis_surface_hits。仅近看Polygon完整性时用inspect=True, integrity_only=True：跳过昂贵的中心线/截面诊断，最多100000 prim/400000顶点引用，返回非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何朝向相反的样本、零面积/零边及完全重复面风险；平面大面以重复点桥接孔时另报planar_repeated_point_ngons/shading_review_status，提示同角度近景复核，不把合法布线判破面。负号提示核对整壳朝向，嵌套空腔的内壳可有意反向，不能自动判错。开放边单列open_boundary_unreviewed，可能是有意接口，需按设计核对。风险/超预算在Bridge摘要与执行提醒中保留；no_detected_integrity_risk只表示本检查未发现列出的风险，不认证任意重叠、自交、接触、外形、着色或强度。普通完整inspect仍保持原预算与语义；不支持或超预算为unverified | dict |
 | `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
 
@@ -189,12 +205,19 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 各岛的位置、身份、完整外形或与主体连接，仍需分别检查。
 
 失败诊断：`verify_network`/`build_module` 的 `cook_details.source_context` 在能映射到Wrangle时返回编译行附近的有限源码摘录；编译行可能属于生成VEX，不能未经核对直接patch。`test_controls` 在基准显式强制cook失败时零参数写入；恢复时的 `geometry_restore` 给出完整bgeo签名与有界差异位置，参数通道匹配不能覆盖几何不匹配。已知字符串属性的内部名称表可因cook顺序重排；签名同步重映射索引并比较每个元素的真实字符串，不把等值表顺序误判为几何漂移。
-Host把`test_controls`的案例通过数和`relationship_scope`、接口/拓扑声明数并列放在结果开头；关系为`not_checked`时，8/8之类的通过数只代表已声明测量，不得外推为装配关系通过。
-`geo_piece_stats(...,inspect=True)`（含integrity_only）与最终输出的`surface_integrity`另含`planar_face_crossings`：只检查单个近似平面闭合Polygon内非相邻边的严格内部交叉，返回面数、原始primitive/边索引/位置样本和检查覆盖。每面最多256顶点、每查询最多250000对边；超预算只使该诊断`status=unverified, coverage=partial`，其他已完成观察仍保留。三角形不可能严格自交，不计作覆盖缺口；非平面/退化面、端点接触、共线重合与跨面交叉不在此诊断范围。合法孔洞桥的重复边不因本项判错。命中加入非阻断`risk_reasons`，不修改`ok/healthy`；未命中不证明任意3D自交不存在。含不支持曲线/native/packed的混合输出仍遵守原来的unverified边界，须检查对应Polygon组或源模块。正反例与覆盖预算见[平面面内交叉回归](../tools/tests/dsh-planar-face-crossings.test.py)，摘要透传见[模型回执回归](../tools/tests/houdini-tool-presentation.test.mjs)。
 
-混合输出的最终`surface_integrity`同时返回原由、至多8个纯闭合Polygon最终组候选、最多32组扫描覆盖及局部`geo_piece_stats`复查提示；不自动执行候选检查，不改变整件unverified或`healthy`。最终`OUT_ASSET`另回`bbox_size_sop_local_mm`，用HIP的`scene_unit_length_meters`换算SOP局部包围盒逐轴跨度；Host摘要同时展示原场景单位与毫米值。仍须核对OBJ缩放及图纸尺寸归属，不凭包围盒认证部件。
+接口距离检查按可用字符串 `name`/`part` 返回有界的源点/目标面身份分布；自我验证拒绝同时返回共享点数量与样本。身份标签只用于诊断，不能认证语义或ownership；共坐标的独立点不被当作共享身份。工具不自动过滤混入零件，也不放宽阈值。
+`test_controls`所有可识别合同的结果（包括基准零写入失败与恢复异常）携带同一contract_sha256；标识包含控制器runtime节点identity，不同控制器的成功不会清除彼此失败，同控制器成功复测可匹配旧失败。
+可选views最多两个iso/front/side/top，先生成baseline_captures，再在每个case复用同一framing/depth包络和frame。
+view_bounds为世界坐标[min_xyz,max_xyz]，应覆盖全部测试状态；省略时锁定基准包络。超界不自动重新取景；
+捕获缺失/失败使capture_status和整体状态保持unverified，数值case结果及恢复证据另保留。observed只证明捕获事实，语义仍未验证。
 
-多个`geo_piece_stats(...,inspect=True,integrity_only=True,group=...)`同批返回时，Host先标明本批是否检查了未分组的整件输出；局部组各自零风险不能覆盖组与组之间的完全重合面。
+`test_controls`回执提供案例通过数和`relationship_scope`、接口/拓扑声明数；Host原样展示。关系为`not_checked`时，通过数只代表已声明测量。
+`geo_piece_stats(...,inspect=True)`（含integrity_only）含`planar_face_crossings`：只检查单个近似平面闭合Polygon内非相邻边的严格内部交叉，返回面数、原始primitive/边索引/位置样本和检查覆盖。每面最多256顶点、每查询最多250000对边；超预算只使该诊断`status=unverified, coverage=partial`，其他已完成观察仍保留。三角形不可能严格自交，不计作覆盖缺口；非平面/退化面、端点接触、共线重合与跨面交叉不在此诊断范围。合法孔洞桥的重复边不因本项判错。命中加入非阻断`risk_reasons`，不修改`ok/healthy`；未命中不证明任意3D自交不存在。含不支持曲线/native/packed的混合输出须检查对应Polygon组或源模块。正反例与覆盖预算见[平面面内交叉回归](../tools/tests/dsh-planar-face-crossings.test.py)，证据展示见[模型回执回归](../tools/tests/houdini-tool-presentation.test.mjs)。
+
+所有显式验证输出均回`bbox_size_sop_local_mm`（不依赖节点名称），用HIP的`scene_unit_length_meters`换算SOP局部包围盒逐轴跨度。仍须核对OBJ缩放及图纸尺寸归属，不凭包围盒认证部件。
+
+`geo_piece_stats(...,group=...)`只检查显式组；局部组各自零风险不能覆盖组与组之间的完全重合面，Host不另推导整件通过。
 
 ### component 域（普通 SOP 组件交换）
 
@@ -286,3 +309,5 @@ list_parms回答“参数叫什么”，read_parms回答“实际值/表达式�
 Bridge返回结构化verbs ledger、rawUsage、operation-evidence和transaction。Trace与离线报告分别保留
 目录广度、调用含动词率、动词密度、成功exec修改覆盖、只读裸探针、Gate拦截与成功裸修改，
 不把used/全部目录称为执行成功率。相关代码地图见[架构](architecture.md)。
+
+内嵌Packed证据视图最多8层/4096实例，展开前按实例累计预算100000面/250000点/400000顶点/32MiB；只支持PackedGeometry，不加载PackedDisk/Alembic/Fragment或任意外部文件。保留组/属性和实际变换，超限/未知表示保持unverified。最终OUT_ASSET表面检查对part/name分区作完整覆盖，不能以各件健康推断件间连接。细节与边界见[配方参考](../skills/houdini-sop-workflow/references/procedural-recipes.md)。

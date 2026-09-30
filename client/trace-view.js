@@ -1,500 +1,7 @@
-function createTraceView(React, catalog, sources, parseEntry, css) {
+function createTraceView(React, catalog, sources, trace, css) {
   "use strict";
   const h = React.createElement;
-  const array = (value) => (Array.isArray(value) ? value : []);
-  const json = (value) => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return null;
-    }
-  };
-  const text = (blocks) =>
-    array(blocks)
-      .filter((b) => b && (b.type === "text" || b.kind === "text"))
-      .map((b) => b.text || "")
-      .join("\n");
-  const format = (n) =>
-    typeof n === "number" && Number.isFinite(n) ? n.toLocaleString() : "未采集";
-  const stamp = (n) =>
-    typeof n === "number" ? new Date(n).toLocaleTimeString() : "时间未采集";
-  const requestKey = (r) => r.purpose + ":" + r.startSeq;
-  const pairKey = (turn, step) => turn + ":" + step;
-  const own = (v, k) => v != null && Object.prototype.hasOwnProperty.call(v, k);
-  // Reading groups inferred from recognizable text, never runtime provenance.
-  // Bodies always come from the selected historical request, including unknowns.
-  const promptRules = [
-    ["DSH 身份与运行环境", "框架身份", "You are an AI agent powered by DeepSeek Harness.", "@deepseek-ai/dsh-system-prompt · packages/core/system-prompt/src/index.ts"],
-    ["DSH 身份与运行环境", "实现目录", "The DeepSeek Harness implementation checkout", "@deepseek-ai/dsh-app-boot · packages/boot/app-boot/src/index.ts"],
-    ["DSH 身份与运行环境", "Web GUI", "You are interacting with the user through the DeepSeek Harness Web GUI", "@deepseek-ai/dsh-web-app · packages/bundle/web-app/src/index.ts"],
-    ["Houdini 身份与工作方式", "Houdini persona", "You are a Houdini automation agent", "presets/houdini/agent.cordis.yml"],
-    ["Houdini 工具执行规则", "插件 guidance", "houdini_* tools operate", "src/index.ts · dsh-houdini:guidance"],
-    ["通用文件、进程与搜索", "文件引用", "Tokens prefixed with @", "@deepseek-ai/dsh-file-reference · lib/index.js"],
-    ["通用文件、进程与搜索", "进程退出码", "Non-zero exits are reported", "packages/shell/tool-pwsh/src/index.ts"],
-    ["通用文件、进程与搜索", "读取文件", "Use the read tool", "packages/fs/tool-fs/src/read.ts"],
-    ["通用文件、进程与搜索", "写入文件", "Use the write tool", "packages/fs/tool-fs/src/write.ts"],
-    ["通用文件、进程与搜索", "编辑文件", "Use the edit tool", "packages/fs/tool-fs/src/edit.ts"],
-    ["通用文件、进程与搜索", "查找文件", "Use the glob tool", "packages/fs/tool-fs-search/src/glob.ts"],
-    ["通用文件、进程与搜索", "搜索内容", "Use the grep tool", "packages/fs/tool-fs-search/src/grep.ts"],
-    ["通用文件、进程与搜索", "后台任务", "Track every background job id", "packages/jobs/tool-jobs/src/index.ts"],
-    ["通用文件、进程与搜索", "联网搜索", "Use the web_search tool", "packages/web/tool-web/src/search.ts"],
-    ["长期目标与多 agent", "Goal", "Use goal tools", "packages/goal/tool-goal/src/index.ts"],
-    ["长期目标与多 agent", "Workflow", "Use the workflow tool ONLY", "packages/workflow/tool-workflow/src/index.ts"],
-    ["长期目标与多 agent", "Ralph", "Use the ralph tool ONLY", "packages/workflow/tool-ralph/src/index.ts"],
-    ["长期目标与多 agent", "Subagent", "Use subagent in the background", "packages/subagent/tool-subagent/src/index.ts · toolName=subagent"],
-    ["长期目标与多 agent", "Subagent fork", "Use subagent_fork in the background", "packages/subagent/tool-subagent/src/index.ts · toolName=subagent_fork"],
-    ["交付展示", "输出文件引用", "When you successfully create or modify files", "packages/client/ui-deliverables/src/index.ts"],
-  ];
-  const promptPrefix = s => s.replaceAll("`", "").trimStart();
-  function systemSections(system) {
-    const parts = String(system ?? "").split(/(\r?\n[ \t]*\r?\n)/);
-    const definitions = [
-      {rule: promptRules[4], text: sources.guidance?.text || ""},
-      ...array(sources.presets).map(p => ({
-        rule: ["Houdini 身份与工作方式", "Persona · " + p.name, "", p.file], text: p.text,
-      })),
-    ];
-    const sections = [];
-    for (let i = 0; i < parts.length; i += 2) {
-      const body = parts[i] + (parts[i + 1] || "");
-      if (!body) continue;
-      const prefix = promptPrefix(parts[i]);
-      let rule = promptRules.find(r => prefix.startsWith(r[2]));
-      if (!rule && prefix.startsWith("Houdini outputs belong under")) rule = promptRules[4];
-      if (!rule) {
-        // Match known paragraph openings, without copying current text into history.
-        const definition = definitions.find(d => String(d.text).split(/\n\s*\n/).some(p => {
-          const start = promptPrefix(p).split("{{")[0].slice(0, 90);
-          return start.length >= 25 && prefix.startsWith(start);
-        }));
-        rule = definition?.rule;
-      }
-      const category = rule?.[0] || "其他／来源未识别";
-      const source = rule?.[3] || "未采集；保留实际请求原文";
-      const last = sections.at(-1);
-      if (last?.source === source && rule) last.text += body;
-      else sections.push({category, title: rule?.[1] || "未知系统片段", source, text: body, index: sections.length + 1});
-    }
-    return sections;
-  }
-  // UI categories only: these colors do not confer execution permissions.
-  const toolKind = (name) => {
-    if (name === "skill") return "skill";
-    if (["houdini_query", "houdini_job_status"].includes(name)) return "query";
-    if (name.startsWith("houdini_")) return "exec";
-    if (["read", "read_file", "glob", "grep", "ls"].includes(name))
-      return "read";
-    if (
-      [
-        "get_goal",
-        "create_goal",
-        "update_goal",
-        "todo_write",
-        "todo",
-        "write_todos",
-        "update_plan",
-      ].includes(name)
-    )
-      return "planning";
-    if (["bash", "pwsh", "shell", "exec_command", "write_stdin"].includes(name))
-      return "shell";
-    if (
-      [
-        "write",
-        "write_file",
-        "edit",
-        "edit_file",
-        "apply_patch",
-        "multiedit",
-      ].includes(name)
-    )
-      return "write";
-    if (["web", "web_search", "web_fetch", "search", "fetch"].includes(name))
-      return "search";
-    if (["ask_user", "ask_user_question", "request_user_input"].includes(name))
-      return "interaction";
-    return "other";
-  };
-  const kindNames = {
-    skill: "技能读取",
-    read: "文件读取",
-    query: "Houdini 查询",
-    exec: "Houdini 执行",
-    planning: "目标与计划",
-    shell: "终端执行",
-    write: "文件写入",
-    search: "搜索与网页",
-    interaction: "用户交互",
-    other: "其他工具",
-  };
-  const domainLabel = (name) =>
-    ({
-      "vocabulary 域": "签名与帮助",
-      类型目录: "类型发现",
-      "node 域": "节点与网络",
-      "parm 域": "参数与动画",
-      "scene 域": "工程与时间线",
-      "geometry 域": "几何与关系",
-      "stage / USD 域": "Solaris / USD",
-      "asset 域": "HDA 资产",
-      "render / sim 域": "渲染与模拟",
-      "viewport 域": "视口与界面",
-    })[name] || name;
-  const verbTitles = {
-    tab_create: "创建节点",
-    tab_apply: "应用节点组合",
-    build_module: "构建模块",
-    set_parm: "修改参数",
-    set_parms: "批量修改参数",
-    verify_network: "检查网络输出",
-    node_info: "查询节点参数",
-    scene_info: "读取场景",
-    render_view: "生成预览",
-    render_check: "检查图像",
-    connect: "连接节点",
-    delete_node: "删除节点",
-    layout_nodes: "整理网络",
-    read_parms: "读取参数",
-    geo_check_interfaces: "检查实体接口",
-    test_controls: "测试控制参数",
-  };
-  function usage(u) {
-    if (
-      !u ||
-      typeof u.inputTokens !== "number" ||
-      typeof u.outputTokens !== "number"
-    )
-      return null;
-    if (
-      ![
-        u.inputTokens,
-        u.outputTokens,
-        u.cacheReadTokens ?? 0,
-        u.cacheWriteTokens ?? 0,
-      ].every((n) => Number.isFinite(n) && n >= 0)
-    )
-      return null;
-    // DSH TokenUsage buckets are DISJOINT: inputTokens excludes cache reads/writes.
-    return {
-      input:
-        u.inputTokens + (u.cacheReadTokens || 0) + (u.cacheWriteTokens || 0),
-      output: u.outputTokens,
-      raw: u,
-    };
-  }
-  function sections(raw) {
-    const out = {};
-    const re =
-      /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|artifact-candidates \(not delivered; verify requested final files, then call present\)|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
-    const matches = [...raw.matchAll(re)];
-    matches.forEach((m, i) => {
-      out[m[1]] = raw
-        .slice(m.index + m[0].length, matches[i + 1]?.index ?? raw.length)
-        .trim();
-    });
-    return out;
-  }
-  function resourcePath(value) {
-    if (typeof value !== "string") return null;
-    const path = value.replaceAll("\\", "/");
-    if (
-      !/^(?:[A-Za-z]:\/|\/)/.test(path) ||
-      path.split("/").some((s) => s === "." || s === "..")
-    )
-      return null;
-    return /^[A-Za-z]:/.test(path)
-      ? path.toLowerCase().replace(/\/+$/, "")
-      : path.replace(/\/+$/, "");
-  }
-  function model(snapshot) {
-    snapshot = snapshot || {};
-    const nodes = array(snapshot.eventNodes);
-    const requests = [];
-    const seenRequests = new Set();
-    for (const r of array(snapshot.requests)) {
-      const key = requestKey(r);
-      if (!seenRequests.has(key)) {
-        requests.push({ ...r, key, accounting: usage(r.usage) });
-        seenRequests.add(key);
-      }
-    }
-    requests.sort((a, b) => a.startSeq - b.startSeq);
-    const requestFor = (turn, step, seq) => {
-      const matches = requests.filter(
-        (r) =>
-          r.purpose === "assistant" &&
-          r.turn === turn &&
-          r.step === step &&
-          (seq == null || r.startSeq <= seq),
-      );
-      return (
-        matches.find((r) => r.resultSeq === seq) ||
-        [...matches].reverse().find((r) => r.status === "complete") ||
-        matches[matches.length - 1] ||
-        null
-      );
-    };
-    const calls = new Map();
-    nodes.forEach((n) => {
-      if (n.kind === "assistant")
-        for (const b of array(n.blocks))
-          if (b.kind === "tool-call" && b.callId)
-            calls.set(b.callId, {
-              ...b,
-              turn: n.turn,
-              step: n.step,
-              seq: n.seq,
-              time: n.time,
-              request: requestFor(n.turn, n.step, n.seq),
-              assistantUsage: usage(n.usage),
-              interrupted: n.interrupted,
-            });
-    });
-    const entries = [];
-    const seenExecutions = new Set();
-    const seen = new Set();
-    function add(n, pending, parent) {
-      const id = n.callId || "unpaired:" + n.seq;
-      if (seen.has(id)) return;
-      seen.add(id);
-      const c = calls.get(id);
-      const location = snapshot.eventLocations?.get?.(n.seq);
-      const turn = c?.turn ?? n.turn ?? location?.step?.turn;
-      const step = c?.step ?? n.step ?? location?.step?.step;
-      const name = (pending ? n.name : n.call?.name) || c?.name || "未知工具";
-      const argsRaw =
-        (pending ? n.argsRaw : n.call?.argsRaw) ?? c?.argsRaw ?? "";
-      const info = parseEntry({ ...n, call: { name, argsRaw } });
-      const parts = sections(info.text);
-      const canonical = name.startsWith("houdini_") ? n.meta?.canonical : null;
-      const transaction = canonical?.transaction ?? json(parts.transaction);
-      const req =
-        c?.request ||
-        requestFor(turn, step, n.seq) ||
-        entries.find((e) => e.id === parent)?.request ||
-        null;
-      const account = req?.accounting || c?.assistantUsage || null;
-      const failed = !pending && (Boolean(n.isError) || info.failed);
-      const executionKey = canonical?.execution?.runtime_id && Number.isFinite(canonical.execution.sequence)
-        ? canonical.execution.runtime_id + ':' + canonical.execution.sequence : null;
-      const repeatedExecution = executionKey && seenExecutions.has(executionKey);
-      if(executionKey)seenExecutions.add(executionKey);
-      const verbs = canonical?.requestReceipt?.retrieved || repeatedExecution ? [] : info.verbs;
-      const parsedArgs = json(argsRaw);
-      const args =
-        parsedArgs &&
-        typeof parsedArgs === "object" &&
-        !Array.isArray(parsedArgs)
-          ? parsedArgs
-          : {};
-      const analysisStep = {tool: name, isHoudini: name.startsWith('houdini_'),
-        args, code: args.code || '', verbs, failed, canonical,
-        rawUsage: info.rawUsage, resultText: info.text};
-      const rawEffect = isHoudiniDetailRead(analysisStep) ? null : classifyRawEffect(analysisStep);
-      const gateBlocked = rawEffect === 'gate_blocked';
-      const title =
-        name === "skill"
-          ? "读取技能 · " + (args.name || "名称缺失")
-          : verbs.length
-            ? [...new Set(verbs.map((v) => verbTitles[v.verb] || v.verb))].join(
-                " / ",
-              )
-            : args.request_ref
-              ? "查回原请求"
-              : args.source_ref
-              ? "读取原始任务来源"
-              : args.result_ref
-              ? "读取历史工具结果"
-              : args.review
-              ? "复核输出"
-              : args.review_test
-                ? "受控复核实验"
-                : name;
-      const rollback = transaction
-        ? transaction.status === "rolled_back"
-        : Boolean(info.rollbackApplied && !info.rollback?.error);
-      const state = pending
-        ? "执行中（最后快照）"
-        : gateBlocked
-          ? "Gate 拦截"
-          : rollback
-            ? "已回滚"
-            : failed
-              ? "失败"
-              : transaction?.status === "committed"
-                ? "已提交"
-                : "已成功";
-      const start = pending ? n.time : (n.callTime ?? c?.time ?? null);
-      const end = pending ? null : n.time;
-      const result = canonical ? canonical.result : json(parts.__result__) ?? info.resultValue;
-      const targets = [
-        ...new Set(
-          verbs.flatMap((v) => {
-            const decoded =
-              json(v.argsText) || json("[" + v.argsText + "]")?.[0];
-            return array(decoded).filter(
-              (x) => typeof x === "string" && x.startsWith("/"),
-            );
-          }),
-        ),
-      ];
-      const target = [
-        args.path,
-        args.file_path,
-        args.node,
-        args.parent,
-        result?.output,
-        ...targets,
-      ]
-        .filter((x) => typeof x === "string" && x)
-        .slice(0, 3)
-        .join(" · ");
-      entries.push({
-        ...info,
-        id,
-        key: id,
-        name,
-        args,
-        argsRaw,
-        analysisStep,
-        rawEffect,
-        gateBlocked,
-        title,
-        target,
-        verbs,
-        failed,
-        pending,
-        parent: parent || n.parentCallId || null,
-        transaction,
-        rollbackApplied: rollback,
-        state,
-        kind: args.request_ref || args.result_ref || args.source_ref ? "read" : toolKind(name),
-        request: req,
-        requestKey: req?.key || (c ? "assistant:" + pairKey(turn, step) : null),
-        accounting: account,
-        start,
-        end,
-        seq: c?.seq ?? n.seq ?? Number.MAX_SAFE_INTEGER,
-        resultSeq: n.seq,
-        duration:
-          typeof start === "number" && typeof end === "number"
-            ? Math.max(0, end - start)
-            : null,
-        resultValue: result,
-        evidence: canonical?.evidence ?? json(parts["operation-evidence"]),
-        parts,
-        blocks: n.content || [],
-        meta: n.meta,
-        committed: !pending && !failed && !rollback,
-        jobId: args.jobId || result?.jobId || null,
-      });
-      array(n.subCalls).forEach((child) =>
-        add(child, child.kind !== "tool-result", id),
-      );
-    }
-    // Collect settlements before pending descendants, even when an earlier parent
-    // snapshot still contains a running child. A replay never replaces the original.
-    const settled = [];
-    const pending = [];
-    const parentHints = new Map();
-    function collect(n, parent) {
-      if (parent && n.callId) parentHints.set(n.callId, parent);
-      (n.kind === "tool-result" ? settled : pending).push({ node: n, parent });
-      array(n.subCalls).forEach((child) => collect(child, n.callId));
-    }
-    nodes.filter((n) => n.kind === "tool-result").forEach((n) => collect(n));
-    array(snapshot.runningCalls).forEach((n) => collect(n));
-    settled
-      .sort((a, b) => a.node.seq - b.node.seq)
-      .forEach(({ node, parent }) =>
-        add(
-          { ...node, subCalls: [] },
-          false,
-          parent || parentHints.get(node.callId),
-        ),
-      );
-    pending.forEach(({ node, parent }) =>
-      add({ ...node, subCalls: [] }, true, parent),
-    );
-    entries.forEach((e) => {
-      if (e.parent && !e.request) {
-        const parent = entries.find((p) => p.id === e.parent);
-        if (parent) {
-          e.request = parent.request;
-          e.requestKey = parent.requestKey;
-          e.accounting = parent.accounting;
-        }
-      }
-    });
-    entries.sort(
-      (a, b) =>
-        (a.start ?? a.end ?? Infinity) - (b.start ?? b.end ?? Infinity) ||
-        a.seq - b.seq,
-    );
-    entries.forEach((e, i) => (e.index = i + 1));
-    const contexts = nodes
-      .filter(
-        (n) =>
-          n.kind === "context" || n.kind === "user" || n.kind === "steering",
-      )
-      .sort((a, b) => a.seq - b.seq);
-    const skillCatalogs = contexts.filter(
-      (n) =>
-        n.source?.kind === "skill-catalog" && Array.isArray(n.source.entries),
-    );
-    const skillLoads = [];
-    function loaded(name, body, seq, callId) {
-      const match = body.match(/^Base directory for this skill: (.+)$/m);
-      const base = resourcePath(
-        match?.[1]
-          ?.replaceAll("&lt;", "<")
-          .replaceAll("&gt;", ">")
-          .replaceAll("&amp;", "&"),
-      );
-      if (base) skillLoads.push({ name, base, seq, callId });
-    }
-    entries
-      .filter(
-        (e) =>
-          e.name === "skill" &&
-          !e.failed &&
-          !e.pending &&
-          typeof e.args.name === "string",
-      )
-      .forEach((e) => loaded(e.args.name, e.text, e.resultSeq, e.id));
-    contexts
-      .filter((n) => n.source?.kind === "skill-invocation")
-      .forEach((n) => loaded(n.source.name, text(n.content), n.seq, null));
-    const resourceReads = [];
-    entries
-      .filter((e) => e.name === "read" && !e.failed && !e.pending)
-      .forEach((e) => {
-        const path =
-          resourcePath(e.meta?.path) || resourcePath(e.args.file_path);
-        if (!path) return;
-        const candidates = skillLoads.filter(
-          (s) => s.seq < e.resultSeq && path.startsWith(s.base + "/"),
-        );
-        const identities = [...new Set(candidates.map((s) => s.name))];
-        if (identities.length !== 1) return;
-        const binding = candidates[candidates.length - 1];
-        resourceReads.push({
-          name: binding.name,
-          path: path.slice(binding.base.length + 1),
-          entry: e,
-          version: "未采集",
-        });
-      });
-    return {
-      entries,
-      requests,
-      contexts,
-      skillCatalogs,
-      resourceReads,
-      nodes,
-      partial: snapshot.partial,
-    };
-  }
+  const { model, usage, systemSections, array, json, text, format, stamp, requestKey, own, toolKind, kindNames, domainLabel, verbTitles } = trace;
   const button = (label, action, active, key) =>
     h(
       "button",
@@ -744,11 +251,11 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
       setDetailOpen(false);
     }, [props.sessionId]);
     const request =
-      data.requests.find((r) => r.key === chosenRequest) ||
-      [...data.requests].reverse().find((r) => r.purpose === "assistant") ||
+      data.requestsByKey.get(chosenRequest) ||
+      data.latestAssistant ||
       null;
     const entry =
-      data.entries.find((e) => e.id === selected) ||
+      data.entriesById.get(selected) ||
       data.entries[data.entries.length - 1];
     const goCall = (e) => {
       setSelected(e.id);
@@ -858,7 +365,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               )
             : null,
           !e.verbs.length && e.rawEffect === "unknown" ? tag("副作用未知") : null,
-          e.rawMode === "exempted" ? tag("低层豁免") : null,
+          e.exemptionReason ? tag("低层豁免") : null,
           e.verbs.length ? tag("动词 ×" + e.verbs.length) : null,
         ),
         h(
@@ -973,11 +480,11 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         e.hint
           ? h("section", null, h("h4", null, "执行提示"), prose(e.hint))
           : null,
-        e.rawMode !== "none"
+        e.rawUsage || e.exemptionReason
           ? h(
               "details",
               null,
-              h("summary", null, "HOM / Raw Gate · " + e.rawMode),
+              h("summary", null, "HOM / Raw Gate · " + (e.rawUsage?.gateOutcome || e.rawEffect || "未采集")),
               structured(e.rawUsage),
               e.exemptionReason ? prose(e.exemptionReason) : null,
             )
@@ -1054,7 +561,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         (e) =>
           filter === "all" ||
           (filter === "houdini" && e.name.startsWith("houdini_")) ||
-          (filter === "error" && (e.failed || e.rawMode === "blocked")),
+          (filter === "error" && (e.failed || e.gateBlocked)),
       );
       const pages = Math.max(1, Math.ceil(visible.length / 50));
       const safePage = Math.min(page < 0 ? pages - 1 : page, pages - 1);
@@ -1319,7 +826,8 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           key: "guidance",
           title: "Houdini 插件系统提示词",
           label: g.name,
-          text: g.text,
+          hash: g.hash,
+          bytes: g.bytes,
           source: g.source,
           order: g.order,
         },
@@ -1327,12 +835,16 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           key: "preset:" + p.name,
           title: "Preset · " + p.name,
           label: "persona 模板",
-          text: p.text,
+          hash: p.hash,
+          bytes: p.bytes,
           source: p.file,
+          presetFile: p.presetFile,
           order: 0,
         })),
       ];
       const s = sourceItems.find((s) => s.key === sourceKey) || sourceItems[0];
+      const sourceSections = sections.filter(section => section.source === s.source
+        || (s.key === "guidance" && section.source === s.source + " · " + s.label));
       const contexts = data.contexts.filter(
         (n) => !request || n.seq < request.startSeq,
       );
@@ -1406,7 +918,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               "section",
               null,
               note(
-                "以下来自当前构建包，自动同步源码；与历史请求分开。完整原文匹配才标出存在，模板未匹配不代表未启用。",
+                "来源路径与摘要来自当前构建包；正文来自所选历史请求。片段前缀只用于阅读定位，不认证历史加载版本。",
               ),
               h(
                 "div",
@@ -1437,40 +949,23 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
                     ["属性", "值"],
                     [
                       ["来源", s.source],
+                      ...(s.presetFile ? [["生成的 preset", s.presetFile]] : []),
                       ["注册 / 模板", s.label],
                       ["定义 order", String(s.order)],
                       [
-                        "请求匹配",
-                        p?.system?.includes(s.text)
-                          ? "完整原文存在于本次 System"
-                          : "未确认；可能变量展开、版本差异或未启用",
+                        "历史片段定位",
+                        sourceSections.length ? sourceSections.length + " 个可识别片段" : "未识别",
                       ],
-                      ["字符数", String(s.text.length)],
+                      ["当前模板大小", String(s.bytes) + " bytes"],
+                      ["当前模板摘要", s.hash.slice(0, 16)],
                     ],
                   ),
-                  s.key === "guidance"
-                    ? note("一个注册系统段；下面按原文段落分组阅读。")
-                    : note("persona模板含变量；实际生效文本查看本次 System。"),
-                  s.text
-                    .split(/\n\n/)
-                    .map((part, i) =>
-                      h(
-                        "details",
-                        { key: i },
-                        h(
-                          "summary",
-                          null,
-                          "段落 " + (i + 1) + " · " + part.length + " 字符",
-                        ),
-                        prose(part),
-                      ),
-                    ),
-                  h(
-                    "details",
-                    null,
-                    h("summary", null, "连续完整原文"),
-                    prose(s.text),
-                  ),
+                  note("当前模板在来源文件维护；下方保留本次请求中的实际片段。"),
+                  sourceSections.length
+                    ? sourceSections.map(section => h("details", {key: section.index},
+                        h("summary", null, section.title + " · " + section.text.length + " 字符"),
+                        h("pre", null, section.text)))
+                    : note("该请求中没有可定位的片段；完整正文可在“实际 System”查看。"),
                 ),
               ),
               h("h4", null, "DSH 与其他插件"),
@@ -1706,11 +1201,12 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
               table(
                 ["入口", "职责"],
                 [
-                  ["houdini_query", "只读观察"],
-                  ["houdini_exec", "场景执行 / review / review_test互斥入口"],
+                  ["houdini_query", "只读观察、历史来源与视觉能力预检"],
+                  ["houdini_exec", "场景修改与作者验证"],
                   ["houdini_job_submit", "长操作排队提交"],
                   ["houdini_job_status", "状态与结果"],
                   ["houdini_job_cancel", "协作式取消"],
+                  ["houdini_product", "Host产品定义与历史测量覆盖"],
                 ],
               ),
             )
@@ -1881,17 +1377,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
                                 file.hash.slice(0, 16),
                             ),
                             note(
-                              "当前构建资源；不替代历史读取返回。参考读取单独按资源目录与绝对路径关联，历史版本未采集；不把当前文件当作过去的返回。",
-                            ),
-                            h(
-                              "details",
-                              { key: file.path, open: true },
-                              h("summary", null, "查看文件内容"),
-                              file.text == null
-                                ? note("非文本或超过内联预算，正文未内联。")
-                                : file.path.endsWith(".md")
-                                  ? prose(file.text)
-                                  : h("pre", null, file.text),
+                              "来源文件：" + source.base + "/" + file.path + "。正文在会话读取记录中查看。",
                             ),
                           )
                         : null,
@@ -1903,15 +1389,9 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
       );
     }
     function analysis() {
-      const entries = data.entries.filter(
-        (e) => e.name.startsWith("houdini_") && !e.pending,
-      );
-      const adoption = collectVerbAdoption(entries.map(e => e.analysisStep));
-      const distinctVerbs = new Set(
-        entries.flatMap((e) => e.verbs.map((v) => v.verb)),
-      );
-      const knownVerbs = catalog.flatMap((d) => d.verbs.map((v) => v.name));
-      const accounts = data.requests.map((r) => r.accounting).filter(Boolean);
+      const stats = data.statistics;
+      const adoption = stats.adoption;
+      const requestUsage = stats.requestUsage;
       const metrics = [
         ["Houdini 已返回调用（排除历史回读）", adoption.houdiniCalls],
         ["Host 历史结果 / 来源回读", adoption.hostResultDetailReads],
@@ -1931,13 +1411,11 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         ["无动词疑似副作用 / 外部操作", adoption.rawSuspectedEffectCalls],
         ["无动词副作用未知", adoption.rawUnknownEffectCalls],
         ["无动词失败（未证明只读）", adoption.rawFailedCalls],
-        ["Raw Gate 拦截", entries.filter((e) => e.gateBlocked).length],
-        ["回滚调用", entries.filter((e) => e.rollbackApplied).length],
+        ["Raw Gate 拦截", stats.gateBlockedCalls],
+        ["回滚调用", stats.rolledBackCalls],
         [
           "目录广度（当前包）",
-          knownVerbs.filter((v) => distinctVerbs.has(v)).length +
-            " / " +
-            knownVerbs.length,
+          stats.usedVerbCount + " / " + stats.knownVerbCount,
         ],
         [
           "动词密度（每次Houdini调用）",
@@ -1945,9 +1423,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         ],
         [
           "回滚动作工作量",
-          entries
-            .filter((e) => e.rollbackApplied)
-            .reduce((n, e) => n + e.verbs.filter((v) => v.ok).length, 0),
+          stats.rolledBackVerbCalls,
         ],
       ];
       return h(
@@ -1970,14 +1446,14 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           "含动词率描述调用形态，成功 exec 包含验证和动态函数，不代表修改采用率或任务完成度。Gate read_only 是静态扫描结果；no_scene_change 不排除文件或 Python 全局副作用。",
         ),
         h("h4", null, "模型请求 usage · 请求去重"),
-        accounts.length
+        requestUsage.reported
           ? table(
               ["已报告 / 已加载请求", "输入合计", "输出合计"],
               [
                 [
-                  accounts.length + " / " + data.requests.length,
-                  format(accounts.reduce((n, u) => n + u.input, 0)),
-                  format(accounts.reduce((n, u) => n + u.output, 0)),
+                  requestUsage.reported + " / " + requestUsage.total,
+                  format(requestUsage.input),
+                  format(requestUsage.output),
                 ],
               ],
             )
@@ -1986,8 +1462,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
           "包含已加载的 assistant / compaction 请求；缺失 usage 不按0补齐。输入合并 DSH 的未缓存和缓存分桶。",
         ),
         h("h4", null, "失败、拦截与回滚"),
-        data.entries
-          .filter((e) => e.failed || e.rollbackApplied)
+        stats.failures
           .map((e) =>
             h(
               "div",
@@ -2010,7 +1485,7 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
             "failed",
           ].map((mode) => [
             mode,
-            String(entries.filter((e) => !e.verbs.length && e.rawEffect === mode).length),
+            String(stats.rawEffectCounts.get(mode) || 0),
           ]),
         ),
         note(
@@ -2018,8 +1493,6 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
         ),
       );
     }
-    const pending = data.entries.filter((e) => e.pending);
-    const recent = data.nodes.reduce((max, n) => Math.max(max, n.time || 0), 0);
     return h(
       "section",
       { className: "dsh-trace" },
@@ -2044,14 +1517,14 @@ function createTraceView(React, catalog, sources, parseEntry, css) {
       h(
         "div",
         { className: "tr-status" },
-        pending.length
-          ? "快照中 " + pending.length + " 个调用执行中"
+        data.pendingCount
+          ? "快照中 " + data.pendingCount + " 个调用执行中"
           : data.partial
             ? "模型正在输出（最后快照）"
             : "已加载 " +
               data.entries.length +
               " 个调用；当前运行状态以 Host 为准",
-        " · 最近记录 " + stamp(recent || null),
+        " · 最近记录 " + stamp(data.recent || null),
       ),
       h(
         "main",

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {attachImages,imageBlocks} from '../../lib/image-output.js';
+import {attachImages,imageBlocks,visualCapability} from '../../lib/image-output.js';
+import {installSceneContext} from '../../lib/context.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-native-images-'));
 const value={ok:true,stdout:'',stderr:'',images:[
@@ -44,3 +45,39 @@ try{
  assert.deepEqual(fs.readdirSync(cwd),[]);
 }finally{assert.equal(path.dirname(cwd),path.resolve(os.tmpdir()));fs.rmdirSync(cwd)}
 console.log('native image attachments: current route, nested context, job output, failures, no media files');
+
+// Preflight runs before any render/HOM and before the first model request.
+const hooks={},contexts=[];let lookups=0;
+let model='text-only';const input={agent:{options:{provider:'stale',model:'stale'},
+  session:{requestHeader:()=>({config:{provider:'current',model}}),snapshotEvents:()=>[],header:{}}},
+  signal:new AbortController().signal};
+const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?['text','image']:['text']}}}};
+const preflightCtx={get:n=>services[n],tools:{register(){}},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f};
+const beforePreflight=fetched;
+assert.equal((await visualCapability(input,preflightCtx)).status,'unsupported');
+assert.equal(fetched,beforePreflight);
+installSceneContext(preflightCtx,{sceneContext(){throw Error('preflight must not render/query HOM')}});
+async function prepare(variables){
+ const assembly={contexts:structuredClone(contexts),tools:[{name:'houdini_query'}],variables};
+ await hooks['system-prompt/assemble'](assembly,{agent:input.agent,scope:{},signal:input.signal},async()=>assembly);
+ return hooks['agent/pre-step'](input,async()=>({kind:'enter',messages:[]}));
+}
+let prepared=await prepare();
+assert(prepared.messages.some(m=>m.content.some(b=>b.text?.includes('"status":"unsupported"'))));
+const lookedUp=lookups;await prepare();assert.equal(lookups,lookedUp,'unchanged route metadata is cached');
+model='vision';prepared=await prepare();
+assert(prepared.messages.some(m=>m.content.some(b=>b.text?.includes('"status":"available"'))));
+assert.equal(lookups,lookedUp+1,'route changes invalidate preflight cache');
+const defs2=new Map();registerHoudiniTools({...preflightCtx,tools:{register:d=>defs2.set(d.name,d)}},{});
+assert.equal((await defs2.get('houdini_query').execute({capabilities:'visual'},input)).result.status,'available');
+await assert.rejects(defs2.get('houdini_query').execute({capabilities:'visual',code:'print(1)'},input),/exactly one/);
+assert.equal(fetched,beforePreflight,'capability route never fetches an image');
+const previousAttachments=services.attachments;delete services.attachments;
+prepared=await prepare();
+assert(prepared.messages.some(m=>m.content.some(b=>b.text?.includes('"status":"unavailable"'))),
+  'channel loss invalidates a previously available same-route preflight');
+services.attachments=previousAttachments;
+model='text-only';
+prepared=await prepare({provider:'current',model:'vision'});
+assert(prepared.messages.some(m=>m.content.some(b=>b.text?.includes('"status":"available"'))),
+  'newly assembled model selection outranks a stale previous request header');

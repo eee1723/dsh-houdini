@@ -13,7 +13,7 @@ import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
 import {registerExecutorIdentityProjection} from '../../lib/executor-identity-projection.js'
 import * as executorHost from '../../lib/executor-host.js'
-import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/execution-state.js'
+import {ExecutorBindingBarrier,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 

@@ -217,14 +217,16 @@ with h._execution_owner('cook-test','setup'):
     cook_calls=[]
     def fail_restoration(*args,**kwargs):
         cook_calls.append((args,kwargs))
-        return real_cook(*args,**kwargs) if len(cook_calls)==1 else failure
+        # Baseline normalization and perturbation are both explicit cooks;
+        # inject the fault only at the subsequent restoration boundary.
+        return real_cook(*args,**kwargs) if len(cook_calls)<=2 else failure
     with patch.object(h,'cook_node',side_effect=fail_restoration), \
          patch.object(q,'_geometry',wraps=q._geometry) as geometry_reads:
         try:h.test_controls(n,n,controls)
         except h.CheckpointError as error:
             evidence=error.evidence
         else:raise AssertionError('failed restoration cook was certified')
-    assert len(cook_calls)==2,cook_calls
+    assert len(cook_calls)==3,cook_calls
     assert geometry_reads.call_count==2,('implicit retry after failed restoration cook',geometry_reads.call_count)
     assert evidence['restored'] is False and evidence['results'][0]['restored'] is False,evidence
     assert any('injected interrupted cook' in error for error in evidence['results'][0]['restore_errors']),evidence

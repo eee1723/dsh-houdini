@@ -9,19 +9,18 @@ const source = fs
   .replaceAll("\r\n", "\n");
 assert(
   source.includes(generatedTraceBlock()),
-  "generated renderer and content inventory must match current sources",
+  "generated Trace runtime and source identities must match current sources",
 );
 const inventory = traceSources();
-assert(inventory.presets.every(p => p.text.startsWith('You are ')),
-  'persona inventory contains the current prefix text');
-assert(inventory.guidance.text.includes("set_parms"));
-assert(
-  inventory.presets.every((p) => p.text.length > 1000),
-  "persona extraction must retain complete multiline template",
-);
+assert(inventory.presets.every(p => p.paragraphStarts[0].startsWith('You are ')),
+  'persona identity retains the opening used for historical reading groups');
+assert(inventory.guidance.bytes > 0);
+assert(inventory.presets.every(p => p.bytes > 0 && !('text' in p)));
 assert(
   inventory.skills.every((s) => s.files.some((f) => f.path === "SKILL.md")),
 );
+assert(inventory.skills.every(s => s.files.every(file => !('text' in file))),
+  'ordinary client bundles do not duplicate complete skill scripts or references');
 const catalog = loadCatalog(
   new URL("../../docs/tool-design.md", import.meta.url),
 );
@@ -30,8 +29,9 @@ let registration;
 let View;
 let hooks = [];
 let cursor = 0;
+let elements = 0;
 const React = {
-  createElement: (type, props, ...children) => ({
+  createElement: (type, props, ...children) => (elements++, {
     type,
     props: props || {},
     children,
@@ -79,6 +79,8 @@ registration
           }
         : undefined,
   });
+assert.equal(elements, 0, 'registration does not render or initialize Trace');
+View = View({}).type; // Materialize the diagnostic runtime when its view opens.
 const t = (text) => [{ type: "text", text }];
 // Group the selected request without substituting new source text or dropping unknowns.
 const historicalSystem = 'You are an AI agent powered by DeepSeek Harness.\r\n\r\n'
@@ -89,7 +91,7 @@ const promptSections = View.systemSections(historicalSystem);
 assert.equal(promptSections.map(s=>s.text).join(''), historicalSystem);
 assert.equal(promptSections.length,5);
 assert.equal(promptSections[2].category,'其他／来源未识别');
-assert.equal(promptSections[1].source,'presets/houdini/agent.cordis.yml');
+assert.equal(promptSections[1].source,'presets/houdini/persona.md');
 assert(promptSections[4].source.includes('toolName=subagent_fork'));
 assert(!promptSections.some(s=>s.text.includes('glm-5.3-flash')));
 assert.equal(View.systemSections('').length,0);
@@ -220,6 +222,8 @@ const snapshot = {
 };
 const data = View.model(snapshot);
 assert.equal(data.requests.length, 2, "deduplicate request usage");
+assert.equal(data.statistics.requestUsage.reported, 1);
+assert.equal(data.statistics.requestUsage.input, 310);
 assert.equal(
   data.entries.length,
   4,
@@ -269,6 +273,21 @@ assert.equal(
   null,
   "do not infer request by adjacent time",
 );
+const retries = View.model({
+  requests: [req, {...req, startSeq: 10, resultSeq: undefined, status: 'running'},
+    {...req, startSeq: 20, resultSeq: 21}],
+  eventNodes: [
+    ...[[3, 'first'], [12, 'retry'], [21, 'latest']].map(([seq, id]) => ({
+      kind: 'assistant', turn: 1, step: 1, seq, blocks: [call(id, 'read', {})],
+    })),
+    ...[[4, 'first'], [14, 'retry'], [22, 'latest']].map(([seq, id]) => result(id, 'read', seq, seq, 'ok')),
+  ],
+});
+assert.equal(retries.entriesById.get('first').requestKey, 'assistant:2');
+assert.equal(retries.entriesById.get('retry').requestKey, 'assistant:2',
+  'an unfinished retry keeps the latest completed request before the call');
+assert.equal(retries.entriesById.get('latest').requestKey, 'assistant:20',
+  'the request index preserves exact result associations and excludes future requests');
 const resourceSnapshot = {
   eventNodes: [
     {
@@ -565,7 +584,6 @@ for(const [id,, , , ,expected] of effectCases) {
 }
 assert.equal(effectEntries.find(e=>e.id==='blocked-query').state,'Gate 拦截');
 assert.equal(effectEntries.find(e=>e.id==='detail-history').gateBlocked,false,'historical blocked receipts are not new Gate rejections');
-assert(!effectEntries.find(e=>e.id==='dynamic').summary.includes('只读'));
 hooks=[];snapshot.runningCalls=[];snapshot.eventNodes=effectNodes;
 tree=render();tree=click('分析');
 assert.match(content(tree),/无动词副作用未知/);

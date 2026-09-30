@@ -2,15 +2,13 @@
  * A save receipt is a file observation at that moment, not a reopened HIP or
  * permission to present it. Earlier checks remain historical after Save As.
  */
-type Event = {type:string;seq?:number;data?:any}
-type Row = {callId:string;eventSeq:number;value:any;execution:any}
+import {executionHistory,type ExecutionHistory,type ExecutionRow as Row,type SessionEvent as Event} from './execution-history.js'
 type Check = {verb:string;identity:number|null;output:string|null;hip_path:string|null;
   contract_sha256:string|null;status:string;validity:string;source_call:string;
-  sequence:number;event_seq:number;dependency_identities:number[];invalidated_by?:string;
+  sequence:number;event_seq:number;ledger_index:number|null;dependency_identities:number[];invalidated_by?:string;
   relationship_scope?:string;declared_interfaces?:number}
 
 const DECLARED_CHECKS = new Set(['geo_check_interfaces','test_controls'])
-const TERMINAL_RECEIPTS = new Set(['done','not_executed','job_submitted'])
 
 function normalizedPath(path:unknown):string|null {
   return typeof path === 'string' && path.trim() ? path.replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase() : null
@@ -33,44 +31,19 @@ function checkStatus(item:any):string {
 /** Optional expectedFinalPath is supplied by the task/evaluation harness.
  * Without it, the audit cannot infer that a checkpoint is the final deliverable.
  */
-export function projectDeliveryAudit(events:readonly Event[], options:{expectedFinalPath?:string}={}):Record<string,unknown>|null {
-  const calls=new Map<string,any>(), seen=new Set<string>(), rows:Row[]=[]
-  const receipts=new Map<string,string>(), resolvedCalls=new Set<string>()
-  for(const event of events) {
-    const data=event.data
-    if(event.type==='tool/call' && typeof data?.callId==='string') calls.set(data.callId,data)
-    if(event.type!=='tool/result') continue
-    const id=data?.message?.source?.callId
-    if(typeof id!=='string' || seen.has(id) || !calls.has(id)) continue
-    seen.add(id)
-    const value=data?.meta?.canonical
-    const receipt=value?.requestReceipt
-    if(typeof receipt?.request_ref==='string'
-        && !TERMINAL_RECEIPTS.has(receipts.get(receipt.request_ref)||'')) {
-      receipts.set(receipt.request_ref,receipt.status)
-    }
-    if(typeof receipt?.owner_call==='string' && TERMINAL_RECEIPTS.has(receipt.status)) resolvedCalls.add(receipt.owner_call)
-    const execution=value?.execution
-    if(execution && typeof execution.runtime_id==='string' && Number.isFinite(execution.sequence)
-        && Number.isFinite(execution.observed_at)) {
-      rows.push({callId:id,eventSeq:event.seq??0,value,execution})
-    }
-  }
-  const unresolvedRequests=[...receipts].filter(([,status])=>!TERMINAL_RECEIPTS.has(status))
-    .map(([request_ref,status])=>({request_ref,status}))
-  const pendingCalls=[...calls].filter(([id,call])=>!seen.has(id) && !resolvedCalls.has(id)
-    && ['houdini_exec','houdini_job_submit'].includes(call.name)).map(([id])=>id)
-  if(!rows.length) return unresolvedRequests.length || pendingCalls.length
+export function projectDeliveryAudit(events:readonly Event[], options:{expectedFinalPath?:string;fullChecks?:boolean}={}, history:ExecutionHistory=executionHistory(events)):Record<string,unknown>|null {
+  const {calls,rows,anchor,pendingCalls}=history
+  const unresolvedCalls=history.unresolvedCalls.map(row=>({call_id:row.callId,request_ref:row.ref}))
+  const activeJobs=history.activeJobs.map(([jobId,status])=>({jobId,status}))
+  const unresolvedRequests=history.activeRequests.map(([request_ref,status])=>({request_ref,status}))
+  if(!rows.length) return unresolvedRequests.length || pendingCalls.length || unresolvedCalls.length || activeJobs.length
     ? {status:'delivery_audit_attention',current_hip:null,delivery:{status:'unverified_no_observed_execution'},
       checks:[],unresolved_checks:[],execution_failures:[],unresolved_requests:unresolvedRequests,pending_calls:pendingCalls,
+      unresolved_calls:unresolvedCalls,active_jobs:activeJobs,
       boundary:'Historical receipts only; missing execution evidence cannot prove that scene code did not run.'}
     : null
 
-  // A late job poll must not move the task back to an older runtime.
-  const foreground=rows.filter(row=>['houdini_exec','houdini_query'].includes(calls.get(row.callId)?.name))
-  const anchor=(foreground.length?foreground:rows).reduce((a,b)=>
-    a.execution.observed_at>b.execution.observed_at
-      || (a.execution.observed_at===b.execution.observed_at && a.execution.sequence>b.execution.sequence)?a:b)
+  if(!anchor) return null
   const runtime=anchor.execution.runtime_id
   const currentHip=normalizedPath(anchor.execution.hip_path)
   const runtimeRowsRaw=rows.filter(row=>row.execution.runtime_id===runtime)
@@ -137,6 +110,7 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
       checks.delete(key)
       checks.set(key,{verb:item.verb,identity,output,hip_path:path,contract_sha256:contract,
         status,validity,source_call:callId,sequence:execution.sequence,event_seq:eventSeq,
+        ledger_index:Number.isInteger(item.ledgerIndex)?item.ledgerIndex:null,
         dependency_identities:dependencyIdentities,
         ...(item.verb==='test_controls' ? {
           relationship_scope:item.control_summary?.coverage?.relationship_scope ?? 'unknown',
@@ -156,7 +130,7 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
         kind:verb.verb,edit_after_save_in_call:(impact.last_edit_ledger_index??0)>index})
     }
   }
-  if(unresolvedRequests.length || pendingCalls.length) for(const check of checks.values())
+  if(unresolvedRequests.length || pendingCalls.length || unresolvedCalls.length || activeJobs.length) for(const check of checks.values())
     check.validity='unverified_after_unknown_execution'
   const expected=normalizedPath(options.expectedFinalPath)
   const matchingSaves=saves.filter(save=>save.normalized_path===(expected??currentHip))
@@ -176,7 +150,7 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
     .map(check=>({kind:'control_relationships_not_checked',output:check.output,
       source_call:check.source_call,contract_sha256:check.contract_sha256,
       validity:check.validity,declared_interfaces:check.declared_interfaces}))
-  const result={status:attention.length || failures.length || unresolvedRequests.length || pendingCalls.length
+  const result={status:attention.length || failures.length || unresolvedRequests.length || pendingCalls.length || unresolvedCalls.length || activeJobs.length
       || coverageLimits.length || deliveryStatus==='final_not_saved' || deliveryStatus==='save_precedes_recorded_edit'
       ? 'delivery_audit_attention':'delivery_audit_observed',
     runtime_id:runtime,current_hip:anchor.execution.hip_path??null,
@@ -185,11 +159,12 @@ export function projectDeliveryAudit(events:readonly Event[], options:{expectedF
         bytes:lastSave.bytes,mtime_ns:lastSave.mtime_ns,kind:lastSave.kind}:null,
       last_checkpoint:saves.at(-1)?{path:saves.at(-1).path,source_call:saves.at(-1).source_call}:null,
       boundary:'A save receipt confirms a nonempty file at save time. Final delivery and independent reopen remain unverified.'},
-    checks:allChecks.slice(-16),checks_omitted:Math.max(0,allChecks.length-16),
+    checks:options.fullChecks?allChecks:allChecks.slice(-16),checks_omitted:options.fullChecks?0:Math.max(0,allChecks.length-16),
     unresolved_checks:attention.slice(-12),unresolved_checks_omitted:Math.max(0,attention.length-12),
     coverage_limits:coverageLimits.slice(-8),coverage_limits_omitted:Math.max(0,coverageLimits.length-8),
     execution_failures:failures.slice(-5),execution_failures_omitted:Math.max(0,failures.length-5),
     unresolved_requests:unresolvedRequests,pending_calls:pendingCalls,
+    unresolved_calls:unresolvedCalls,active_jobs:activeJobs,
     boundary:'Historical event audit only. A pass covers only declared measurements; missing relationship checks are not proof of failure or whole-product acceptance. Save As preserves prior failures as needing recheck. Unobserved GUI or external edits are outside this record.'}
   return result
 }

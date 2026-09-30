@@ -419,7 +419,7 @@ class Store:
             if base.relative_to(source).parts == (".agent-presets",):
                 # Regenerate only product-owned presets; user-created presets
                 # are data and must survive updates along with their sessions.
-                dirs[:] = [name for name in dirs if name not in ("houdini", "houdini-dev")]
+                dirs[:] = [name for name in dirs if name not in ("houdini", "houdini-dev", "houdini-product")]
             target = destination / base.relative_to(source)
             target.mkdir(parents=True, exist_ok=True)
             for name in files:

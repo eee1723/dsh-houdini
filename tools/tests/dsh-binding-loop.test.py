@@ -13,7 +13,6 @@ from houdini_test_environment import isolated_environment
 from dsh_web_auth import DshWebSession
 from dsh_managed_runtime import spawn_frontend,stop_owned
 node,cli=sys.argv[1:3]
-legacy='--legacy' in sys.argv[3:]
 attention='--attention' in sys.argv[3:]
 flush_mode='false,false' if '--flush-false' in sys.argv[3:] else 'throw' if '--flush-throw' in sys.argv[3:] else ''
 assert not flush_mode or attention, 'flush failures require --attention'
@@ -53,7 +52,6 @@ threading.Thread(target=fake.serve_forever,daemon=True).start()
 env=isolated_environment(fixture/'env')
 env.update(DSH_HOME=str(fixture/'home'),DSH_HOUDINI_EXECUTOR_ID=executor,
     DSH_HOUDINI_BRIDGE_URL=f'http://127.0.0.1:{fake.server_port}',DSH_BINDING_FIXTURE_OUT=str(fixture/'passed.json'))
-if legacy:env['DSH_BINDING_REPAIR_FIXTURE']='1'
 if attention:env['DSH_ATTENTION_FIXTURE']='1'
 if flush_mode:env['DSH_ATTENTION_FLUSH_FAILURES']=flush_mode
 subprocess.run([node,str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'),cli,env['DSH_HOME'],str(ROOT)],
@@ -103,7 +101,8 @@ try:
         time.sleep(.25)
     else:raise RuntimeError('Agent loop did not reach the second valid request; inspect '+str(fixture))
     assert sorted(executions)==sorted(f'__result__={i}' for i in range(100 if attention else 2)),executions
-    assert json.loads((fixture/'passed.json').read_text())['repaired'] is legacy
+    result=json.loads((fixture/'passed.json').read_text())
+    assert result['status']=='passed' and result['bindings']==1 and result['results']==(100 if attention else 2),result
     if flush_mode:
         assert resumed_failures==len(flush_mode.split(',')),resumed_failures
         print('PASS persistence retry barriers:',flush_mode,'; zero additional model requests during failures')

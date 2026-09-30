@@ -2,9 +2,18 @@
 
 ## 项目定位
 
-dsh-houdini是DeepSeek Harness插件：src/（5个houdini_*工具）→ HTTP →
-dsh_bridge.py（Houdini主线程队列）→ `dsh_hou_helpers.py`（67 动词）及领域模块。
+dsh-houdini是DeepSeek Harness插件：Host工具与上下文 → HTTP →
+Houdini主线程执行队列 → 动词能力库及领域模块。
 hou只存在于Houdini侧，Node Host不直接调用HOM。
+
+## 设计与重构原则
+
+- 从产品目标和平台事实出发：帮助用户在真实Houdini中完成高质量、可编辑、可继续修改的工程与工具，充分发挥LLM的理解、规划和操作能力。
+- 已完成的实现、工具数量、目录结构和历史测试不是设计约束。可以删除、合并或替换不再服务目标的功能；在当前项目中直接重构，继续使用DSH提供的会话、模型与通用Agent能力。
+- 执行层负责准确操作和真实反馈；任务策略与领域方法按需加载。不要把模型的一次失败写成永久执行门槛，产品计划不作为操作Houdini的准入条件。
+- 同一事实只有一个维护源；结果、上下文和界面消费同一份执行事实。避免重复状态解释器、兼容补丁和猜测来源的逻辑。
+- 避免过度防御：只处理真实接口条件和已观察到的失败，不因假想风险增加审批、拦截、回退或层层校验。
+- 验证与改动相称：优先构建和直接受影响的回归，关键执行边界使用必要的隔离HOM检查。已有检查通过后不重复扩大测试；移除旧策略时同步删除只证明旧策略的断言，不为机械拆分新增测试体系。
 
 ## 面向用户的回复
 
@@ -15,9 +24,8 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 
 - 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡文档、
   client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
-- 文档门：npm run docs:check；测试：npm test。HOM回归在tools/tests/*.test.py，用隔离hython跑；
-  至少raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render；
-  发布前覆盖H21/H22。方法见docs/development.md，结果不写成docs流水账。
+- 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
+  正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
 - 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Diagnostics →
   Advanced diagnostics → Repair and restart runtime；WebView/menu/package变更完整重启Houdini。
   不未经用户授权重启live或修改HIP；构建通过不等于live已加载。

@@ -6,6 +6,9 @@ from pathlib import Path
 import sys
 import tempfile
 import uuid
+import json
+import shutil
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +91,25 @@ try:
         assert result["file_bytes"] > 0, result
         assert result["post_fingerprint"]["sample_sha256"], result
         assert rop.parm("sopoutput").unexpandedString() == original_output, result
+
+        # Exercise the actual Host checkpoint generator against real HOM.
+        # Product mode has no definition here; only the structured save branch
+        # can reach the Bridge. No arbitrary caller code is admitted.
+        node_script = '''import {registerHoudiniTools} from './lib/tools.js';
+const defs=new Map();registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)}},
+ {exec:async code=>({ok:true,stdout:'',stderr:'',result:{code}})},{productMode:true});
+const value=await defs.get('houdini_exec').execute({checkpoint:JSON.parse(process.argv[1])},
+ {agent:{id:'checkpoint-fixture'},callId:'checkpoint'});
+process.stdout.write(JSON.stringify(value.result.code));'''
+        host_target=tmp_path/'中文-checkpoint.hip'
+        for checkpoint in [
+            {'path':str(host_target),'expected_current_path':hou.hipFile.path(),'reason':'Isolated authorized fixture "Save As"'},
+            {'expected_path':str(host_target)},
+        ]:
+            generated=subprocess.run([shutil.which('node'), '--input-type=module','-e',node_script,json.dumps(checkpoint)],
+                cwd=str(ROOT),capture_output=True,text=True,encoding='utf-8',check=True,timeout=30)
+            saved=dsh_bridge.run_code(json.loads(generated.stdout),owner_session=session,owner_call='host-checkpoint')
+            assert saved['ok'] and host_target.stat().st_size>0,saved
 
 finally:
     node = hou.node(parent_path)

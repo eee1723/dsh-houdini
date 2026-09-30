@@ -32,7 +32,7 @@ if (fs.existsSync(pluginLink)) {
 }
 const fromProfile = createRequire(path.join(profile, 'package.json')).resolve('dsh-houdini')
 await import(pathToFileURL(fromProfile).href)
-for (const name of ['houdini', 'houdini-dev']) {
+for (const name of ['houdini', 'houdini-dev', 'houdini-product']) {
   const source = path.join(app, 'node_modules/dsh-houdini/presets', name)
   const dest = path.join(context.home, '.agent-presets', name)
   fs.cpSync(source, dest, { recursive: true })

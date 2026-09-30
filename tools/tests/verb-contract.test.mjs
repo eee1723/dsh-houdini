@@ -22,7 +22,8 @@ const generatedVersion = Number(generated.match(/EXPECTED_EXECUTION_CONTRACT_VER
 const bridgeVersion = Number(bridge.match(/_EXECUTION_CONTRACT_VERSION = (\d+)/)?.[1]);
 assert.ok(generatedVersion > 0);
 assert.equal(generatedVersion, bridgeVersion, 'host/bridge semantic execution version drifted');
-const registry = bridge.match(/_VERBS:\s*dict\[str, object\]\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || '';
+const execution = fs.readFileSync(path.join(root, 'houdini', 'python3.11libs', 'dsh_execution.py'), 'utf8');
+const registry = execution.match(/_VERBS:\s*dict\[str, object\]\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || '';
 const bridgeNames = [...registry.matchAll(/^\s*"([A-Za-z_]\w*)":/gm)].map((match) => match[1]).sort();
 assert.deepEqual(bridgeNames, catalogNames, 'running bridge registry source drifted from tool-design.md');
 assert.match(bridge, /"verbCatalog":\s*\{/);

@@ -7,8 +7,12 @@
 动词定义仍由[工具设计](tool-design.md)维护，领域方法仍由[skills](../skills/)维护；
 本页不复制提示词正文、动词目录或技能 recipe。
 
-本页规定展示契约，不是已部署功能清单。[client.js](../client.js)通过构建嵌入
-[Trace组件](../client/trace-view.js)及[样式](../client/trace-view.css)，消费公开trajectory snapshot。
+本页规定展示契约，不是已部署功能清单。[client.js](../client.js)遵循DSH的客户端CJS factory合同，
+一个插件包交付一个client bundle。构建嵌入独立的[回包解析与初始化](../client/trace-runtime.js)、
+[轨迹投影](../client/trace-model.js)、[Trace组件](../client/trace-view.js)及[样式](../client/trace-view.css)。
+普通入口注册视图；首次打开Trace才初始化目录、来源索引、投影和渲染组件，后续复用。
+这是单bundle内的按需初始化，代码仍随同一个bundle下载，不增加静态资源服务或网络拆包通道。
+投影消费公开trajectory snapshot，集中处理请求/调用关联、回放去重、状态和统计；组件负责阅读与交互。
 五看板已接入请求System/schema/usage、运行中与已返回调用、上下文/技能目录与读取事件。
 逐段运行provenance、注册但隐藏的工具集合、最终messages可见集合及技能正文保留状态尚未由该公开快照提供。
 这些字段标为未采集；当前构建来源目录独立展示，不填充历史缺口。
@@ -19,9 +23,9 @@
 | 看板 | 主要问题 | 展示要求 |
 |---|---|---|
 | 执行过程 | 在 Houdini 中做了什么，结果如何 | 默认页；按调用发起顺序呈现，保留开始、等待、执行中和结果状态；支持全部调用、Houdini 操作、失败与拦截范围 |
-| 提示词与上下文 | 这一请求实际发送了哪些内容 | 来源目录、完整原文、最终 System、完整请求结构；按请求查看，不用当前文件重建历史 |
+| 提示词与上下文 | 这一请求实际发送了哪些内容 | 来源索引、实际 System与schema、上下文记录；按请求查看，不用当前文件重建历史 |
 | 工具 | 能调用什么，我们的动词如何设计 | 动词目录为主，工具入口和设计原则为辅；注册、模型可见、执行限制和已调用分别记录 |
-| 技能 | 能发现什么、实际读了什么 | 目录描述、正文、references、scripts、其他实际资源；逐项读取证据及其时间、调用关联 |
+| 技能 | 能发现什么、实际读了什么 | 当前资源索引、历史目录与正文/资源读取记录；逐项读取证据及其时间、调用关联 |
 | 分析 | 哪些行为值得修改或进一步检查 | tokens、耗时、失败重试、重复观察、动词采用、Gate、回滚和验证缺口；每项可回到原始步骤 |
 
 执行过程顶部只保留当前 agent 状态、当前调用、最近事件时间及必要的验证状态。
@@ -60,13 +64,13 @@
 ## 提示词的完整构成
 
 按最终模型请求保留来源、角色/字段、注册名、顺序、作用域、版本/内容 hash、正文和采集状态。
-字符数、token估算和模型实际 usage 分开；模板原文与变量替换后的文本分别标识。
-源码来源预览不能宣称为请求快照。
+字符数、token估算和模型实际 usage 分开；当前模板的路径、大小和摘要与历史请求正文分别标识。
+构建来源索引不能宣称为请求快照。
 
 | 内容 | 权威来源 / 注册入口 | 需要保留的区别 |
 |---|---|---|
 | DSH身份、默认persona及其他系统段 | Host最终组装/模型请求；DSH SystemPrompt注册表 | 开关、作用域遮蔽、顺序、complete覆盖与最终生效情况 |
-| Houdini persona | [presets](../presets/)经persona插件挂载 | preset模板与本次实际生效内容；不能只按磁盘文件断言已加载 |
+| Houdini persona | [persona.md](../presets/houdini/persona.md)、[开发persona](../presets/houdini-dev/persona.md)生成preset，经persona插件挂载 | 手写来源、生成preset路径与本次实际生效内容；不能只按磁盘文件断言已加载 |
 | 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
 | 消息指代现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 按需采集一次的独立plugin消息；绑定消息/时间，选择不构成目标或授权；历史整包snapshot按当时来源展示 |
 | 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state/context-recovery | 涵盖未决请求、检查失效、失败/未验证的产品合同、运行身份变化及历史替换恢复；保留真实被检路径和合同范围，普通回包/计数不追加，不是现场通过证书 |
@@ -77,8 +81,10 @@
 
 实际System按身份/运行环境、Houdini persona、插件执行规则、通用工具、长期目标/多agent、交付展示分类；未知内容单列。分类与来源片段均默认折叠，点击展开完整历史正文，保留原始序号及完整System原序视图。
 公开快照未提供逐段运行provenance时，来源文件仅标为文本规则匹配提示，不声称验证了历史版本或真实注册边界。不得以当前模板补写历史内容。
-来源目录必须允许展开全部已采集正文，而不只提供关键约束摘要。System原文保留最终组装顺序，
-完整请求结构同时显示System、Tools、Context和Messages；相邻请求的变化按来源定位。
+当前构建来源清单只保存路径、文件大小、内容摘要和用于阅读分组的短段落前缀，不内联完整persona、
+guidance、SKILL.md、references或scripts正文。来源页展示当前定义位置，并从所选历史System定位实际片段。
+历史System和成功读取返回允许展开完整已采集正文；System原文保留最终组装顺序。
+Tools与Context按公开请求和上下文记录展示；最终Messages可见集合未采集时明确缺口，不拼装替代快照。
 配置中的插件清单只证明配置存在，不能代替实际贡献段清单；未采集、未注册、禁用、被覆盖不能混用。
 插件不得为了展示而绕过作用域重新组装另一个agent的提示词；应消费该请求自身的最终公开记录。
 
@@ -97,8 +103,9 @@
 
 ## 技能读取与使用证据
 
-能力清单来自当前作用域的实际注册表，正文和资源来自[随包注册](../src/skill.ts)与实际资源读取。
-组成按真实文件/资源清单展开；agents元数据等文件不能仅因存在就算进入模型上下文。
+可发现目录来自当前作用域的历史注册记录；当前包资源索引从[随包注册](../src/skill.ts)及真实资源文件生成。
+索引保存资源路径、字节数和hash，不携带资源正文。正文展示来自历史skill调用、用户技能注入和实际资源读取，
+不以当前文件内容替换历史返回。agents元数据等文件不能仅因存在就算进入模型上下文。
 
 至少区分：已注册、模型可发现、正文已返回、参考资源已读取、本次上下文保留状态、对应行为证据。
 无读取事件只能说未见读取，记录不完整不能断言未使用。直接文件读取使用此前skill工具返回的
@@ -110,15 +117,15 @@
 
 同步按三种事实分别维护：当前源码定义、进程实际加载的能力、历史请求当时的内容。
 内容来源更新后，在按部署流程加载的进程中生成新快照；旧请求保留原版本，不被新文件覆盖。
-相同内容可按hash复用存储，但要保存可回放的正文/资源引用；只有hash不能恢复原文。
+历史正文由请求与读取记录保存；当前构建hash只标识来源文件，不能恢复或认证历史正文。
 
 | 更新内容 | 当前通道 | Trace维护契约 |
 |---|---|---|
 | 动词名称、领域、目录签名和描述 | [catalog-lib](../tools/catalog-lib.mjs)解析tool-design；[生成器](../tools/gen-client-catalog.mjs)随build刷新client目录和Host契约 | 已有构建同步；UI加载更新包后生效。历史调用显示事实时需区分当时版本与当前目录 |
 | 节点卡 | [JSON源](../houdini/node-operation-contracts.json)生成[文档](node-operation-cards.md)，运行时返回相关证据 | Trace消费对应调用返回，不能拿最新卡替代过去返回 |
 | 工具schema与可见性 | 工具注册与每次请求的最终schema集合 | 已消费公开请求快照；新增工具不要求再维护前端名单。隐藏但已注册集合未采集 |
-| skill正文与资源 | src/skill.ts在模块加载时读取注册SKILL.md，并注册resourceBase | 改文件不热更新已经加载的正文；新增随包skill还需加入注册清单。Trace清单和读取状态由运行时记录同步 |
-| preset / guidance | preset挂载与SystemPrompt组装 | 实际System从请求快照读取；当前包原文经gen-trace-client生成并独立标识，修改来源后重建 |
+| skill正文与资源 | src/skill.ts在模块加载时读取注册SKILL.md，并注册resourceBase | 改文件不热更新已经加载的正文；新增随包skill还需加入注册清单。当前资源索引由gen-trace-client随build刷新，读取正文与状态来自历史记录 |
+| preset / guidance | persona.md生成preset后挂载，guidance参与SystemPrompt组装 | 实际System从请求快照读取；gen-trace-client只生成当前来源身份与短匹配前缀，修改来源后重建 |
 | 动态上下文、读取事件、模型usage | 实际请求、工具结果、上下文及usage事件 | 已通过公开快照关联；最终messages可见集合未采集，历史存在不证明仍在上下文 |
 
 构建更新不等于正在运行的Host或WebView已经加载。具体同步、重载与重启边界遵循
@@ -129,8 +136,11 @@
 
 Trace适配公开事件/快照，按session/agent、请求标识、callId、jobId及事件顺序关联，不依赖
 未声明的Session内部字段。具体字段使用Host提供的公开契约，不能把展示模型当成现有事件API。
+[轨迹投影](../client/trace-model.js)按每份公开快照建立一次请求和调用索引：请求按turn/step分组，
+优先匹配resultSeq，再取调用之前最近的已完成请求或当时最后请求；不以相邻时间猜归属。
+callId索引用于并行调用、父子调用和选中详情关联，UI直接消费投影；回包区块由runtime解析一次并复用。
 [时序归一](../tools/normalized-trace-steps.mjs)与[会话解析](../tools/trace-session-lib.mjs)
-提供结果配对、回放去重和异常结果诊断；生产client当前仍有自己的展示解析，变更时需核对两端口径。
+提供离线结果配对、回放去重和异常结果诊断；客户端投影与离线归一变更时需核对两端口径。
 并发结果按原调用更新，不因返回乱序改写调用顺序；缺失结果保留pending/unknown，不能当成功或自动重试。
 
 模型usage按请求去重。同一次请求的多个工具共享输入/输出usage，不均分或重复累计为各工具独占消耗。
@@ -147,6 +157,7 @@ canonical metadata时标referenced_artifact_only，不能把压缩占位当作�
 不由它们推断完整输入保留状态。验证入口为[请求审计回归](../tools/tests/trace-request-telemetry.test.mjs)。
 
 分析分别记录目录广度、调用含动词率、动词密度、只读query守卫范围、Gate拦截、裸修改候选、疑似/未知副作用及回滚工作量。
+客户端投影集中生成统计，UI只组织指标标签和展示值，不再次扫描请求归属或重新解释副作用。
 客户端分析、离线evidence与HTML共用evidence-helpers的classifyRawEffect/collectVerbAdoption；生成器嵌入同源函数，
 不各自按方法名前缀推导只读。canonical rawUsage优先，blocked/read_only_blocked包含外部复制等疑似操作；
 仅成功query且无副作用候选计rawReadOnlyCalls。动态exec保留unknown，no_scene_change不排除文件/Python全局副作用。
@@ -185,7 +196,7 @@ taskSources仅记录index发现与原文分页返回；部分页、失败和缺�
   [证据测试](../tools/tests/trace-evidence-helpers.test.mjs)：结果关联、去重和证据口径。
 
 [Trace回归](../tools/tests/trace-view.test.mjs)检查公开快照关联、历史System、usage去重与分桶、
-回放去重、看板交互及构建资源漂移。`node tools/gen-trace-client.mjs --check`只读验证组件和内容生成一致。
+回放去重、看板交互及来源索引漂移。`node tools/gen-trace-client.mjs --check`只读验证runtime、投影、组件和来源索引生成一致。
 相应数据通道与renderer的验收必须包含：
 
 - 修改同源定义后，新目录/新请求反映更新；旧请求保留旧内容；移除、重命名与未知工具均有可解释状态。

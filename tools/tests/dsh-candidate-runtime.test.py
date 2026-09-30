@@ -81,10 +81,12 @@ env['DSH_HOUDINI_BRIDGE_URL'] = f'http://127.0.0.1:{bridge_port}'
 context = fixture / 'context.json'
 context.write_text(json.dumps({'home':env['DSH_HOME'], 'install':str(install), 'bridgePort':bridge_port}), encoding='utf-8')
 subprocess.run([node, str(ROOT / 'tools/prepare-managed-profile.mjs'), str(context)], check=True, env=env)
-for preset_name in ('houdini', 'houdini-dev'):
+for preset_name in ('houdini', 'houdini-dev', 'houdini-product'):
     synced = (Path(env['DSH_HOME']) / '.agent-presets' / preset_name / 'agent.cordis.yml').read_text(encoding='utf-8')
     assert "- id: present\n  name: '@deepseek-ai/dsh-tool-present'" in synced.replace('\r\n', '\n'), (
         f'{preset_name} lost standard file delivery during managed preset synchronization')
+    if preset_name=='houdini-product':
+        assert 'productMode: true' in synced and f'bridgeUrl: http://127.0.0.1:{bridge_port}' in synced
 workspace = fixture / 'workspace'
 workspace.mkdir()
 text_file = workspace / '说明 空格.txt'
