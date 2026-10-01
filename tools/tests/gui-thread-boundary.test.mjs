@@ -44,6 +44,6 @@ assert.match(functionBody('open_workspace'), /open_ui\(frontend_cwd\)/);
 assert.doesNotMatch(launcher, /ensure_houdini_session|_select_houdini_session|_open_existing_frontend|archivedSessionIds/);
 assert.doesNotMatch(functionBody('open_workspace'), /_dsh_rpc_wire|session\/create/);
 assert.match(functionBody('open_ui'), /raise_workspace\(workspace_dir\)[\s\S]*?_DSH_WEB_SESSION\.launch_url/);
-assert.match(functionBody('open_ui_when_ready'), /open_ui\(frontend_cwd, force_reload=True\)/);
+assert.match(functionBody('open_ui_when_ready'), /open_ui\(state\["frontend_cwd"\], force_reload=True\)/);
 
 console.log('GUI-thread probe regression passed');

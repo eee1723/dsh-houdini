@@ -54,7 +54,7 @@ assert.deepEqual(exec.presentCall(execArgs), {
   rawInput: execArgs,
 });
 const execMeta = exec.output.presentationMeta(execArgs, execValue);
-assert.deepEqual(execMeta, { ok: true, verbCount: 2, imageCount: 1 });
+assert.deepEqual(execMeta, { ok: true, verbCount: 2, imageCount: 1, canonical: execValue });
 assert.deepEqual(exec.presentResult(execArgs, { content: text, isError: false, meta: execMeta }), {
   card: 'generic',
   title: 'Houdini execution succeeded',
@@ -105,7 +105,7 @@ assert.equal(
 
 const submit = definitions.get('houdini_job_submit');
 const submitMeta = submit.output.presentationMeta({}, { jobId: 'job-7' });
-assert.deepEqual(submitMeta, { jobId: 'job-7' });
+assert.deepEqual(submitMeta, { jobId: 'job-7', canonical: { jobId: 'job-7' } });
 assert.equal(
   submit.presentResult({ code: 'render_frame(rop)' }, { content: text, isError: false, meta: submitMeta }).title,
   'Started Houdini job job-7',
@@ -128,6 +128,7 @@ assert.deepEqual(statusMeta, {
   status: 'running',
   verbCount: 0,
   imageCount: 0,
+  canonical: jobValue,
 });
 assert.deepEqual(status.presentCall({ jobId: 'job-7', wait: 30 }), {
   card: 'generic',

@@ -217,8 +217,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         raise ValueError(f'explicit output required; no display-node fallback. Call verify_network(parent, output=<deliverable SOP>); candidates={candidates}')
     if nodes is not None and not isinstance(nodes, (list, tuple)):
         raise ValueError('nodes must be a list of explicit SOP nodes/paths')
-    selected = list(p.children()) if nodes is None else [h._resolve(n) for n in nodes]
-    out = p.node(output) if isinstance(output, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', output) else h._resolve(output)
+    selected = list(p.children()) if nodes is None else [h._resolve_in_parent(p, n) for n in nodes]
+    out = h._resolve_in_parent(p, output)
     if out is None or out.parent() != p:
         raise ValueError("output must be an explicit direct SOP child")
     handoff_output = {
@@ -430,7 +430,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     except (ValueError, TypeError, hou.Error) as error:
         raise h.PreflightError([{'node':'module','field':'preflight','message':str(error)}]) from error
     if dry_run:
-        return {'valid': True, 'dry_run': True, 'parent': p.path(), 'node_count': len(specs),
+        return {'valid': True, 'dry_run': True, 'scene_writes': 0, 'applied': False,
+                'parent': p.path(), 'node_count': len(specs),
                 'output': output, 'interface_status': 'unverified' if interfaces is not None else 'not_requested',
                 'required_outputs': list(required_outputs or []),
                 'note': 'Static preflight only; VEX, dynamic menus, cooking and interface geometry remain unverified.'}

@@ -42,16 +42,20 @@ env["DSH_HOUDINI_MANAGED_CONTEXT"] = str(Path(ctx["runtimeDir"]) / "context.json
 # remain available, but neither Git nor a system Node/npm is reachable.
 env["PATH"] = str(install / "node") + os.pathsep + str(Path(os.environ["WINDIR"]) / "System32")
 assert env["DSH_HOME"] != str(Path.home() / ".dsh")
-# Verify the profile's root tools as well as per-agent presets bind to this
-# managed Bridge, not a developer's unrelated listener on the default port.
+# Verify browser delivery and scoped tools use the managed installation.
 binding_script = """
 import {loadProfile, composeEntries} from '@deepseek-ai/dsh-app-boot';
 import {interpolate} from '@deepseek-ai/cordis-plugin-loader';
 import path from 'node:path';
 const profile = loadProfile('dsh','web',path.resolve('node_modules/@deepseek-ai/dsh/package.json'));
+if (profile.skippedBundles.length) throw Error(JSON.stringify(profile.skippedBundles));
 const entries = composeEntries([...profile.layers.map(x=>x.patches), profile.patches]);
-const row = entries.find(x=>x.id==='houdini');
-if (!row || interpolate({}, row.config).bridgeUrl !== process.env.DSH_HOUDINI_BRIDGE_URL) throw Error('managed root tool binding is incorrect');
+const carriers=entries.filter(x=>!x.disabled && x.name==='dsh-houdini');
+const presets=entries.filter(x=>!x.disabled && x.name==='@deepseek-ai/dsh-agent-preset');
+if (carriers.length!==1 || presets.length!==1 || presets[0].config.id!=='houdini') throw Error('managed browser/preset composition is incorrect');
+const agents=presets[0].config.plugins.filter(x=>!x.disabled && x.name==='dsh-houdini/agent');
+if (agents.length!==1 || interpolate({},agents[0].config).bridgeUrl!==process.env.DSH_HOUDINI_BRIDGE_URL) throw Error('managed scoped tool binding is incorrect');
+if (entries.some(x=>!x.disabled && x.name==='dsh-houdini/agent')) throw Error('Houdini tools leaked into the root scope');
 """
 subprocess.run([str(install / "node/node.exe"), "--input-type=module", "-e", binding_script],
                cwd=install / "app", env=env, capture_output=True, check=True, timeout=60)
@@ -60,12 +64,41 @@ cwd.mkdir()
 log = Path(ctx["runtimeDir"]) / "frontend.log"
 base = f"http://127.0.0.1:{ctx['frontendPort']}"
 process = None
+composition_file = Path(ctx["runtimeDir"]) / "composition.json"
+inspector = Path(ctx["runtimeDir"]) / "inspect.mjs"
+inspector.write_text("""
+import fs from 'node:fs';
+export const inject=['loader','tools','agentPresets','clientModules'];
+export function apply(ctx) {
+  ctx.effect(() => {
+    let disposed=false;
+    queueMicrotask(async () => {
+      try {
+        await ctx.loader.await();
+        const roster=await ctx.agentPresets.remoteExportList();
+        const lease=await ctx.agentPresets.acquireScope('houdini');
+        try {
+          const tools=ctx.tools.schemas(lease.key).map(tool=>tool.name);
+          const graph=ctx.clientModules.graph();
+          if(!disposed)fs.writeFileSync(process.env.DSH_MANAGED_COMPOSITION_OUT,JSON.stringify({roster,tools,graph}));
+        } finally {await lease[Symbol.asyncDispose]();}
+      } catch(error) {
+        if(!disposed)fs.writeFileSync(process.env.DSH_MANAGED_COMPOSITION_OUT,JSON.stringify({error:String(error.stack||error)}));
+      }
+    });
+    return () => {disposed=true;};
+  });
+}
+""", encoding="utf-8")
+overlay = Path(ctx["runtimeDir"]) / "inspect.patch.yml"
+overlay.write_text('- insert:\n    - id: managed-composition-inspector\n      name: ' + inspector.as_uri() + '\n', encoding="utf-8")
+env["DSH_MANAGED_COMPOSITION_OUT"] = str(composition_file)
 try:
     with log.open("wb") as output:
-        process = subprocess.Popen([str(install / "node/node.exe"), str(install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"), "web", "--port", str(ctx["frontendPort"]), "--no-open"],
+        process = managed.spawn_frontend([str(install / "node/node.exe"), str(install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"), "web", "--patch", str(overlay), "--port", str(ctx["frontendPort"]), "--no-open"],
+                                   node=str(install / "node/node.exe"),
                                    cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        managed.own_process(process)
         d.atomic_json(Path(ctx["runtimeDir"]) / "runtime.json", {"pid": process.pid, "version": ctx["dshVersion"], "authLogOffset": 0, "source": "managed-e2e"})
         auth = DshWebSession(base, str(log), str(Path(ctx["runtimeDir"]) / "runtime.json"))
         deadline = time.monotonic() + 90
@@ -81,7 +114,21 @@ try:
                     result = json.load(response)
                     assert response.status == 200 and result.get("result", {}).get("ok") is True, "RPC must succeed, not merely return HTTP 200"
                     assert isinstance(result["result"].get("value", {}).get("items"), list)
+                if not composition_file.exists():
+                    time.sleep(0.3)
+                    continue
+                facts=json.loads(composition_file.read_text(encoding='utf-8'))
+                assert 'error' not in facts, facts
+                presets=facts['roster']['presets']
+                assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
+                expected={'houdini_inspect','houdini_exec','houdini_request','houdini_resource','houdini_capabilities',
+                    'houdini_job_submit','houdini_job_status','houdini_job_cancel'}
+                assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
+                graph_rows=facts['graph'] if isinstance(facts['graph'],list) else facts['graph']['entries']
+                assert sum(row['id']=='dsh-houdini' for row in graph_rows)==1, facts
                 break
+            except AssertionError:
+                raise
             except Exception as exc:
                 last_error = type(exc).__name__
                 time.sleep(0.3)

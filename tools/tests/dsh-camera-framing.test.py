@@ -60,7 +60,12 @@ try:
         h._register_owned_node(cam)
         before=cam.worldTransform()
         dry=h.camera_fit(cam,box,dry_run=True)
-        assert dry['ok'] and not dry['applied'] and cam.worldTransform()==before
+        assert dry['ok'] and not dry['applied'] and dry['scene_writes']==0 and cam.worldTransform()==before
+        projected=bridge.run_code(
+            f'__result__=camera_fit({cam.path()!r},{box.path()!r},dry_run=True)',
+            owner_session='framing-test',owner_call='camera-plan')
+        assert projected['ok'] and projected['transaction']['status']=='no_scene_change',projected
+        assert projected['execution']['impact']['attempted'] is False,projected
         result=h.camera_fit(cam,box)
         assert result['ok'] and cam.evalParm('focal')==50
         # Failed actual readback restores all channels even outside GUI undo.

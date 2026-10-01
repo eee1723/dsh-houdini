@@ -40,10 +40,14 @@ async function run(href, options = {}) {
     archivedSessionIds: options.archived ?? [], phase: options.workspacePhase ?? 'ready', state:options.workspaceStatus??'idle', error:null,
   });
   let refreshes = 0, reloads = 0, earlyDisposed = false;
+  let navigation = new AbortController();
+  const layout = {beginNavigation:()=>{navigation.abort();navigation=new AbortController();return navigation.signal;},
+    selectPanel:id=>{navigation.abort();panels.push(id);}};
   const openSession = id => {
     assert(sessionStore.getSnapshot().byId[id], 'native session navigation rejects unaddressable IDs');
     opened.push(id);
-    currentSession.set({key:id});
+    if(!options.rejectSelection)currentSession.set({key:id});
+    layout.selectPanel(null);
   };
   const sessions = {
     list: sessionStore,
@@ -89,18 +93,15 @@ async function run(href, options = {}) {
     removeEventListener: (name, fn) => { listeners.get(name)?.delete(fn); },
     __ModuleLoader__: {load:value=>{registration=value;}},
   };
-  if (options.earlyCancelled) window.__dshHoudiniLaunchIntent = {
-    id:url.searchParams.get('dsh-houdini-request'), cancelled:true, dispose:()=>{earlyDisposed=true;},
-  };
   const body = element('body');
   const document = {body, querySelector:()=>({}), createElement:element, head:element('head')};
   const scope = {
     get: name => ({sessions,workspaces,remote,slots,uiSession,uiWorkspace,
-      layout:options.layout===false?undefined:{selectPanel:id=>panels.push(id)}})[name],
+      layout})[name],
     effect: install => { const dispose=install(); if(dispose) disposers.push(dispose); },
   };
   const api = {
-    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,sessions,uiWorkspace,publish,
+    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,sessions,uiWorkspace,publish,layout,
     get refreshes(){return refreshes;},get reloads(){return reloads;},get earlyDisposed(){return earlyDisposed;},
     emit: (name,event={target:body})=>{for(const fn of [...(listeners.get(name)??[])])fn(event);},
     timeout:()=>{for(const fn of [...timers.values()])fn();},
@@ -123,6 +124,7 @@ async function run(href, options = {}) {
   });
   plugin.apply({
     get:scope.get,
+    effect:scope.effect,
     inject:(deps,callback)=>{injected.push([...deps]);callback(scope);},
   });
   await flush();
@@ -133,17 +135,17 @@ const hinted = await run(
   'http://127.0.0.1:3081/?dsh-houdini-session=session-target&retained=yes#conversation',
 );
 assert.deepEqual(hinted.injected, [[
-  'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace',
+  'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace', 'layout',
 ], ['connection']]);
 assert.deepEqual(hinted.opened, ['session-target']);
-assert.deepEqual(hinted.replaced, [{
+assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },
   title: '',
   url: '/?retained=yes#conversation',
 }]);
 
 const plain = await run('http://127.0.0.1:3081/');
-assert.deepEqual(plain.injected, [['connection']]);
+assert.deepEqual(plain.injected, hinted.injected);
 assert.deepEqual(plain.opened, []);
 assert.deepEqual(plain.replaced, []);
 
@@ -159,7 +161,7 @@ for (const layout of [false, true]) {
   assert.equal(current.creates.length,0);
   assert.equal(current.refreshes,0, 'the initial native baseline already loaded the list');
   assert.equal(current.notices().length,0);
-  assert.deepEqual(current.panels,layout?[null]:[]);
+  assert.deepEqual(current.panels,[null]);
   current.dispose();
 }
 const archived = await run(workspaceUrl, {
@@ -175,16 +177,22 @@ const created = await run(workspaceUrl,{rows:[row('other',1,'standard')],current
 assert.deepEqual(created.creates,[{workspaceId:'w',sessionId:'dsh-houdini-navigation-1',agentPreset:'houdini'}]);
 assert.deepEqual(created.opened,['dsh-houdini-navigation-1']);
 assert.equal(created.refreshes,1);
+assert.equal(created.notices().length,0,'newly created task confirmation uses the refreshed workspace membership');
 assert.equal(created.sessionStore.getSnapshot().byId.other.projectionValues.agentPreset,'standard',
   'do not repurpose a user-owned blank task under another preset');
 created.dispose();
 
-const early = await run(workspaceUrl,{earlyCancelled:true});
-assert.equal(early.earlyDisposed,true);
-assert.deepEqual(early.opened,[]);
-assert.deepEqual(early.creates,[]);
-assert.deepEqual(early.workspaceCreates,[]);
-assert(!new URL(early.window.location.href).searchParams.has('dsh-houdini-workspace'));
+// Ordinary input cannot cancel workspace navigation, including while baselines load.
+const inputWaiting = await run(workspaceUrl,{rows:[row('ready')],workspacePhase:'pending'});
+inputWaiting.emit('pointerdown');inputWaiting.emit('keydown',{key:'x',target:inputWaiting.body});
+assert.equal(inputWaiting.notices().length,1);
+inputWaiting.workspaceStore.set({...inputWaiting.workspaceStore.getSnapshot(),phase:'ready'});await flush();
+assert.deepEqual(inputWaiting.opened,['ready']);inputWaiting.dispose();
+
+const wrongSelection = await run(workspaceUrl,{rows:[row('ready')],rejectSelection:true});
+assert.match(wrongSelection.notices()[0].textContent,/DSH 未选中请求的任务/);
+assert(new URL(wrongSelection.window.location.href).searchParams.has('dsh-houdini-workspace'));
+wrongSelection.dispose();
 
 const waiting = await run(workspaceUrl,{rows:[row('ready')],workspacePhase:'pending'});
 assert.deepEqual(waiting.opened,[]);
@@ -218,8 +226,7 @@ assert.equal(disposed.notices().length,0);
 assert.equal(disposed.workspaceStore.listeners.size,0);
 assert.equal(disposed.sessionStore.listeners.size,0);
 
-// Input during a slow registration must supersede the launch before any task
-// creation; input during a create may leave that published task, never open it.
+// Actual DSH navigation supersedes a pending launch, never ordinary input.
 const workspaceGate = deferred();
 const manual = await run(workspaceUrl,{rows:[row('manual',1,'standard')],
   createWorkspace:(_input,api)=>workspaceGate.promise.then(()=>api.workspaceStore.getSnapshot().items[0])});

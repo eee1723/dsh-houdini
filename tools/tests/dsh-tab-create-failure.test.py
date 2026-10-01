@@ -38,6 +38,20 @@ try:
     assert outcome["ok"] is False, outcome
     assert "synthetic shelf initialization failure" in outcome["error"], outcome
     assert parent.children() == (), [child.path() for child in parent.children()]
+    missing = dsh_bridge.run_code(
+        f"tab_create({parent.path()!r}, 'null', inputs=['missing'])",
+        owner_session="tab-create-failure-test", owner_call="call-preflight")
+    assert not missing['ok'] and missing['transaction']['status']=='no_scene_change', missing
+    assert missing['verbs'][0]['summary']['phase']=='preflight', missing
+    assert missing['verbs'][0]['summary']['scene_writes']==0, missing
+    dsh_hou_helpers._run_shelf_tool = original
+    relative = dsh_bridge.run_code(
+        f"p=hou.node({parent.path()!r})\na=tab_create(p,'box',name='source')\n"
+        "b=tab_create(p,'null',name='out',inputs=['source'])\n"
+        "__result__=verify_network(p,output='out',nodes=['source','out'])",
+        owner_session="tab-create-failure-test", owner_call="call-relative")
+    assert relative['ok'] and relative['result']['ok'], relative
+    assert parent.node('out').input(0)==parent.node('source')
 finally:
     dsh_hou_helpers._run_shelf_tool = original
     if parent is not None:

@@ -4,14 +4,18 @@
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
+  "main": "lib/frontend-host.js",
+  "types": "lib/frontend-host.d.ts",
   "exports": {
     ".": {
+      "types": "./lib/frontend-host.d.ts",
+      "default": "./lib/frontend-host.js"
+    },
+    "./client": "./client.js",
+    "./agent": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./client": "./client.js",
     "./executor-host": {
       "types": "./lib/executor-host.d.ts",
       "default": "./lib/executor-host.js"
@@ -31,6 +35,7 @@
     "tools/catalog-lib.mjs",
     "tools/normalized-trace-steps.mjs",
     "tools/trace-session-lib.mjs",
+    "tools/trace-report.mjs",
     "tools/hda-delivery-check.py",
     "tools/isolated-houdini-check.py",
     "tools/houdini_test_environment.py",
@@ -38,8 +43,8 @@
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
-    "docs:generate": "node tools/gen-node-card-docs.mjs && node tools/gen-agent-presets.mjs && node tools/gen-tool-docs.mjs",
-    "docs:check": "node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
+    "docs:generate": "node tools/gen-node-card-docs.mjs && node tools/gen-verb-contract-docs.mjs && node tools/gen-agent-presets.mjs && node tools/gen-tool-docs.mjs",
+    "docs:check": "node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-verb-contract-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
     "prepare": "npm run build"
   },
@@ -53,7 +58,8 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-trajectory"
+        "@deepseek-ai/dsh-client-ui-trajectory",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ]
     }
   },

@@ -1,6 +1,6 @@
 // Trace is materialized only when its conversation view opens. DSH ships one
 // package client bundle; this factory owns its diagnostic parser and view.
-function createTraceRuntime(React, catalog, sources, css, createModel, createView, analysis) {
+function createTraceRuntime(React, catalog, sources, css, createModel, createView, analysis, readHoudiniCanonical) {
   "use strict";
   // `verbs (N):` 块里的一行（host renderVerbs 的渲染格式）：
   // `i. [ok|FAIL] verb(args, kwargs) -> detail (Xms)`
@@ -137,18 +137,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
         detail: parsed.detail, ms: parsed.ms,
       });
     }
-    var canonical = node.meta && node.meta.canonical;
-    if (!canonical && Object.prototype.hasOwnProperty.call(sources.tools, info.name)) {
-      for (var recordBlock of blocks) {
-        if (recordBlock.type !== "text") continue;
-        var record = tryJson(recordBlock.text);
-        if (record && record.kind === "dsh-houdini/execution-v1"
-            && record.callId === node.callId && record.tool === info.name) {
-          canonical = record.value;
-          break;
-        }
-      }
-    }
+    var canonical = readHoudiniCanonical(node);
     info.canonical = canonical;
     if (info.name.indexOf("houdini_") === 0 && canonical && typeof canonical.ok === "boolean") {
       info.resultValue = canonical.result;

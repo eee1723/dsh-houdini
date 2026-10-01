@@ -29,7 +29,7 @@ result('domain-check','houdini_exec',observed(5,{evidence:[{verb:'geo_check_inte
 assert.equal(projectExecutionNotice(events),null,'domain results remain available to the author without a second acceptance interpreter')
 result('failed-job','houdini_job_status',observed(6,{jobId:'failed-render',status:'failed',ok:false,error:'Renderer unavailable'}))
 assert.equal(projectExecutionNotice(events).last_failure.error,'Renderer unavailable','a finished job keeps its actual execution error after foreground work')
-for (const [code,unknown] of [['ABORTED',true],['ABORTED_BEFORE_DISPATCH',false]]) {
+for (const [code,unknown] of [['ABORTED',true],['ABORTED_BEFORE_DISPATCH',false],['TOOL_OUTCOME_UNKNOWN',true],['TOOL_NOT_STARTED',false]]) {
   const failure=[{type:'tool/call',seq:0,data:{callId:'cancel',name:'houdini_exec'}},
     {type:'tool/result',seq:1,data:{message:{isError:true,source:{callId:'cancel'}},error:{name:'ToolAborted',code}}}]
   const state=projectExecutionNotice(failure)

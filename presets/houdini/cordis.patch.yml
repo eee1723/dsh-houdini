@@ -11,6 +11,8 @@
   config:
     default: houdini
 - insert:
+    - id: houdini-frontend
+      name: dsh-houdini
     - id: preset-houdini
       name: '@deepseek-ai/dsh-agent-preset'
       config:
@@ -37,7 +39,7 @@
             config:
               maxBytes: 65536
           - id: houdini
-            name: dsh-houdini
+            name: dsh-houdini/agent
             config:
               bridgeUrl: !!js process.env.DSH_HOUDINI_BRIDGE_URL || 'http://127.0.0.1:8765'
               requestTimeoutMs: 120000

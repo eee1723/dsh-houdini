@@ -92,6 +92,9 @@ def default_packages_dirs() -> list[Path]:
     """
     pref = os.environ.get("HOUDINI_USER_PREF_DIR", "").strip()
     if pref:
+        if "__HVER__" in pref:
+            return [Path(pref.replace("__HVER__", version)) / "packages"
+                    for version in ("21.0", "22.0")]
         return [Path(pref) / "packages"]
     dirs = [d for d in Path.home().glob("Documents/houdini*") if d.is_dir()]
     if dirs:

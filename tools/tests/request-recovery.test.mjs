@@ -93,6 +93,21 @@ try{
    requestReceipt:{request_ref:ref,status:'result_expired'}}}}}];
  assert.equal(projectExecutionState(expiredAfterRecovery).unresolved_requests.length,0,
   'retention expiry cannot erase the original result already present in Host history');
+ assert.deepEqual(projectExecutionState(expiredAfterRecovery).unavailable_results,[],
+  'an already recorded original result stays available after Bridge retention expiry');
+ for(const status of ['result_expired','result_unavailable']) {
+  const finished=[{seq:1,type:'tool/call',data:{name:'houdini_exec',callId:'lost'}},
+   {seq:2,type:'tool/result',data:{message:{isError:true,source:{callId:'lost'}},error:{code:'ABORTED'}}},
+   {seq:3,type:'tool/call',data:{name:'houdini_request',callId:'finished'}},
+   {seq:4,type:'tool/result',data:{message:{source:{callId:'finished'}},meta:{canonical:{ok:true,
+    requestReceipt:{request_ref:ref,status,owner_call:'lost'}}}}}];
+  const state=projectExecutionState(finished);
+  assert.deepEqual(state.unresolved_requests,[]);
+  assert.deepEqual(state.unresolved_calls,[]);
+  assert.equal(state.last_failure,null,'a recovered completion supersedes the Host delivery cancellation');
+  assert.deepEqual(state.unavailable_results,[{request_ref:ref,owner_call:'lost',status:'finished_result_unavailable',
+   retention_status:status,outcome:'unverified'}]);
+ }
  recovered.verbs=[{verb:'set_parm',ok:true,args:['/obj/a','tx',1],result:{value:1},ms:1}];
  const normalized=normalizeTraceSteps(events).steps;
  assert.equal(normalized.at(-1).verbs.length,0,'retrieving old execution does not count its verbs as executed again');

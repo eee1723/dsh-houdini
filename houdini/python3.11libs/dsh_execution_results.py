@@ -211,7 +211,7 @@ def _operation_summary(name: str, result):
         return None
     fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
               'warning_free','failure_reasons','next_action','file_status','pixel_status','semantic_status',
-               'fresh','file_bytes','bytes','stale','capture_unresolved','user_state_restored','restore_errors','dry_run','valid','node','status',
+               'fresh','file_bytes','bytes','stale','capture_unresolved','user_state_restored','restore_errors','dry_run','valid','node','status','scene_writes','applied','restored','phase','dispatched',
               'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
@@ -241,7 +241,7 @@ def _operation_summary(name: str, result):
             out[field + '_count'] = len(values)
     fp = r.get('output_fingerprint') or r.get('source_fingerprint_after')
     if isinstance(fp, dict):
-        out['source'] = {k: fp[k] for k in ('path','frame','signature','points','prims') if k in fp}
+        out['source'] = {k: fp[k] for k in ('path','frame','signature','signature_scope','points','prims') if k in fp}
     check = r.get('check')
     if isinstance(check, dict):
         out['check'] = check

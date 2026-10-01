@@ -124,7 +124,7 @@ export function generatedTraceBlock() {
       var createModel = (${model.trim()});
       var createView = (${view.trim()});
       var createRuntime = (${runtime.trim()});
-      traceView = createRuntime(React, getTraceCatalog(), sources, css, createModel, createView, analysis);
+      traceView = createRuntime(React, getTraceCatalog(), sources, css, createModel, createView, analysis, readHoudiniCanonical);
       return traceView;
     }
     // <<< houdini-trace`;

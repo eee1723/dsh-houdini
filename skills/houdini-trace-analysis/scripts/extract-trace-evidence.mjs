@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadCatalog } from '../../../tools/catalog-lib.mjs';
 import {
   loadSessionEvents,
@@ -32,7 +33,7 @@ import {
   requestedGoalReportedUnverified,
 } from './evidence-helpers.mjs';
 
-const SKILL_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
+const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_ROOT = path.resolve(SKILL_ROOT, '..', '..');
 
 function usage() {
@@ -275,7 +276,7 @@ function analyzeTrace(file) {
     ...classifyVisionEvidence(step),
   }));
   const successfulVisionEvidence = visionEvidence.filter(
-    (item) => item.role === 'inspection' && item.semanticOk === true,
+    (item) => ['inspection','image_access'].includes(item.role) && item.accessOk === true,
   );
   const nativeImages = linkNativeImageResponses(nativeImageEvidence(steps), steps, events);
   const skillActivations = steps.filter((step) => step.tool === 'skill').map((step) => ({
@@ -318,8 +319,8 @@ function analyzeTrace(file) {
   }
   if (renderEvidence.length && !successfulVisionEvidence.length && !nativeImages.some(i=>i.delivered)) {
     completionRisks.push({
-      code: 'render_without_successful_vision',
-      detail: 'Render evidence exists, but no native image attachment delivery or successful legacy image inspection was recorded.',
+      code: 'render_without_image_access',
+      detail: 'Render evidence exists, but no native image attachment delivery or successful image-access/inspection tool was recorded.',
     });
   }
   const renderWarningSteps = renderEvidence.filter((item) => (
@@ -332,7 +333,7 @@ function analyzeTrace(file) {
   if (renderWarningSteps.length) {
     completionRisks.push({
       code: 'render_with_warnings',
-      detail: 'At least one retained render completed with warnings; file/pixel success does not satisfy the render completion gate.',
+      detail: 'At least one retained render completed with warnings; inspect their scope before judging the result.',
       steps: [...new Set(renderWarningSteps)],
     });
   }
@@ -340,10 +341,10 @@ function analyzeTrace(file) {
     code:'native_image_interpretation_requires_review',
     detail:'Native image attachments were delivered to the model channel. Compare subsequent model interpretation with the actual images; delivery does not certify visual semantics and requires no extra vision tool.',
   });
-  if (visionEvidence.some((item) => item.transportOk === false || item.reason)) {
+  if (visionEvidence.some((item) => item.accessOk === false)) {
     completionRisks.push({
       code: 'vision_tool_failed',
-      detail: 'At least one attempted vision inspection failed.',
+      detail: 'At least one attempted image access or inspection returned a failure.',
     });
   }
   const workStarted = steps.length > 0 || assistantMessages.length > 0;
@@ -390,8 +391,8 @@ function analyzeTrace(file) {
   );
   if (completedVisionTodoRisk) {
     completionRisks.push({
-      code: 'completed_vision_todo_without_evidence',
-      detail: 'A vision-related todo was marked complete without a successful semantic image inspection.',
+      code: 'completed_vision_todo_without_image_access',
+      detail: 'A vision-related todo was marked complete without recorded image access. Compare actual image/description evidence before judging completion.',
     });
   }
   const assistantAfterLastTool = lastAssistantTime > lastToolTime;
@@ -422,6 +423,7 @@ function analyzeTrace(file) {
     file: loaded.file,
     frames: loaded.frames,
     frameErrors: loaded.frameErrors,
+    lineErrors: loaded.lineErrors,
     replayedResults,
     unmatchedResults,
     eventCount: events.length,
@@ -429,7 +431,7 @@ function analyzeTrace(file) {
       initial: events.find(e => e.type === 'session')?.agentPreset ?? null,
       changes: events.filter(e => e.type === 'agent-preset/selected').map(e => ({seq:e.seq,time:e.time,preset:e.data?.agentPreset})),
     },
-    observationContexts: events.filter(e => e.type === 'user/message' && e.data?.source?.kind === 'plugin')
+    observationContexts: events.filter(e => e.type === 'user/message' && ['runtime-context','plugin'].includes(e.data?.source?.kind))
       .flatMap(e => (e.data?.source?.sections || []).filter(s => s.name === 'dsh-houdini:scene-context')
         .map(s => ({seq:e.seq,time:e.time,text:s.text}))),
     executionCost: {

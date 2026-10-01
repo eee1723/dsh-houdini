@@ -80,6 +80,14 @@ assert.equal(first.advisory, 'prefer the verb');
 assert.deepEqual(normalized.steps[1].args, { _raw: '{broken' });
 assert.equal(normalized.steps[1].failed, true);
 assert.equal(toolResultText(original.data.message), ledger);
+const currentResult = {role:'tool',source:{kind:'tool',callId:'v4'},
+  content:[{type:'text',text:ledger}]};
+assert.equal(toolResultText(currentResult), ledger, 'DSH 0.2 role=tool text is preserved');
+assert.equal(toolResultText({content:[{type:'tool-result',content:[{type:'text',text:ledger}]}]}), ledger);
+const current = normalizeTraceSteps([call(11,'v4','houdini_inspect',{code:'scene_info()'}),
+  {seq:12,time:1012,type:'tool/result',data:{message:currentResult}}]).steps[0];
+assert.equal(current.resultText.length,ledger.length);
+assert.equal(current.verbs[0].verb,'set_parm');
 assert.equal(toolResultFailed(original.data.message, '\nExecution failed: later'), true);
 assert.deepEqual(parseToolArguments({ x: 1 }), { x: 1 });
 assert.deepEqual(parseToolArguments('null'), { _raw: 'null' });

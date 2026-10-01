@@ -16,6 +16,7 @@
 // 模型可见文本里的 `verbs (N):` 块是动词 ledger 的渲染（src/tools.ts renderVerbs）。
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadCatalog } from './catalog-lib.mjs';
 import {
   loadSessionEvents,
@@ -39,7 +40,7 @@ import {
   requestedGoalReportedUnverified,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOC_PATH = path.join(REPO_ROOT, 'docs', 'tool-design.md');
 
 // ---------- args ----------
@@ -65,7 +66,8 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 // 解析逻辑在 tools/catalog-lib.mjs（与 gen-client-catalog.mjs 共用）。
 
 // ---------- parse trace ----------
-const { events } = loadSessionEvents(sessionFile);
+const loadedSession = loadSessionEvents(sessionFile);
+const { events } = loadedSession;
 const requestTelemetry = collectRequestTelemetry(events);
 const requestContexts = collectRequestContexts(events);
 const normalized = normalizeTraceSteps(events);
@@ -153,8 +155,8 @@ if (unverifiedRequestedGoals.length) {
   });
 }
 const verbAdoption = collectVerbAdoption(steps);
-const visionInspections = validationCoverage.vision.filter((item) => item.role === 'inspection');
-const successfulVisionInspections = visionInspections.filter((item) => item.semanticOk === true);
+const visionInspections = validationCoverage.vision.filter((item) => ['inspection','image_access'].includes(item.role));
+const successfulVisionInspections = visionInspections.filter((item) => item.accessOk === true);
 
 // ---------- HTML ----------
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -172,7 +174,7 @@ const validationHtml = `
     <div class="card"><div class="num">${validationCoverage.geometry.length}</div><div class="cap">geometry A/B</div></div>
     <div class="card"><div class="num">${validationCoverage.renders.length}</div><div class="cap">render calls</div></div>
     <div class="card"><div class="num">${validationCoverage.comparisons.length}</div><div class="cap">image comparisons</div></div>
-    <div class="card"><div class="num">${successfulVisionInspections.length}/${visionInspections.length}</div><div class="cap">semantic vision inspections</div></div>
+    <div class="card"><div class="num">${successfulVisionInspections.length}/${visionInspections.length}</div><div class="cap">图片访问成功（语义需核图）</div></div>
     <div class="card"><div class="num">${nativeImages.filter(item=>item.delivered).length}</div><div class="cap">原生图附件（需人工核图）</div></div>
   </div>
   <p class="dim-text">几何帧: ${frameList(validationCoverage.frames.geometry)} ｜ 渲染帧: ${frameList(validationCoverage.frames.render)} ｜ 锁定构图帧: ${frameList(validationCoverage.frames.framing)} ｜ 图片比较帧: ${frameList(validationCoverage.frames.comparison)} ｜ 视觉检查帧: ${frameList(validationCoverage.frames.visionInspection)}</p>
@@ -182,7 +184,6 @@ const validationHtml = `
 const qualityLoopHtml = `
   <div class="cards">
     <div class="card"><div class="num">${qualityLoopEvidence.applicable ? '是' : '否'}</div><div class="cap">开放式质量任务</div></div>
-    <div class="card"><div class="num">${qualityLoopEvidence.contract.missing.length}</div><div class="cap">合同缺失字段</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.reference.researchSteps.length}</div><div class="cap">research/web 调用</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.skeleton.tabCreatesBeforeFirstRender}</div><div class="cap">首张 render 前建节点</div></div>
     <div class="card"><div class="num">${qualityLoopEvidence.relations.probeSteps.length}</div><div class="cap">关系检查 / 手写测量候选（非正确性认证）</div></div>
@@ -332,6 +333,7 @@ const html = `<!DOCTYPE html>
   </div>
   <div class="col">
     <h2>概览</h2>
+    ${loadedSession.frameErrors.length || loadedSession.lineErrors.length ? `<pre class="err">${esc(JSON.stringify({frameErrors:loadedSession.frameErrors,lineErrors:loadedSession.lineErrors},null,2))}</pre><p>日志读取不完整，结论仅覆盖成功读取的事件。</p>` : ''}
     <div class="cards">
       <div class="card"><div class="num">${steps.length}</div><div class="cap">工具调用</div></div>
       <div class="card"><div class="num">${totalVerbCalls}</div><div class="cap">动词调用</div></div>
@@ -372,7 +374,7 @@ const html = `<!DOCTYPE html>
     <details><summary>逐请求上下文组成与来源（不含推理正文）</summary><pre>${esc(JSON.stringify(requestContexts,null,2))}</pre></details>
     <h2>动画 / 多帧验证覆盖</h2>
     ${validationHtml}
-    <h2>开放式任务质量闭环（HTA-023）</h2>
+    <h2>任务、测量与声明复核线索</h2>
     ${qualityLoopHtml}
     <h2>调用时间线（真实顺序）</h2>
     ${timelineHtml}
@@ -390,5 +392,5 @@ fs.writeFileSync(outFile, html);
 console.log('session :', sessionFile);
 console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length, '| unmatched:', unmatchedResults.length);
 console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision-inspection=[' + validationCoverage.frames.visionInspection.join(',') + ']');
-console.log('quality : applicable=' + qualityLoopEvidence.applicable + ' missing=[' + qualityLoopEvidence.contract.missing.join(',') + '] risks=[' + qualityRisks.map((risk) => risk.code).join(',') + ']');
+console.log('review  : cues=[' + qualityRisks.map((risk) => risk.code).join(',') + ']');
 console.log('report  :', outFile);

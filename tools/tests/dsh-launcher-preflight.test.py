@@ -16,6 +16,38 @@ sys.modules.setdefault("hou", types.SimpleNamespace())
 
 import dsh_launcher
 
+# Preflight and the worker are one startup lifetime. Repeated menu actions
+# select the latest HIP intent rather than spawn a second frontend.
+worker_states = []
+def startup_fixture(state):
+    worker_states.append(state)
+    with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test51'):
+        dsh_launcher.open_workspace()
+        dsh_launcher.open_workspace()
+    state.update(result='ready', detail='fixture ready')
+
+with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test49'), \
+     patch.object(dsh_launcher, '_service_preflight', return_value={'frontend_online': False, 'bridge_online': True}), \
+     patch.object(dsh_launcher.hou, 'isUIAvailable', return_value=False, create=True), \
+     patch.object(dsh_launcher, '_start_and_wait_frontend', side_effect=startup_fixture), \
+     patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as startup_open, \
+     patch.object(dsh_launcher, '_report'):
+    dsh_launcher.open_workspace()
+    assert len(worker_states) == 1
+    startup_open.assert_called_once_with(r'E:\test51', force_reload=True)
+    assert dsh_launcher._ACTIVE_STARTUP is None
+    assert dsh_launcher._SERVICE_PREFLIGHT_ACTIVE is False
+
+# Closing the dialog is a cancellation intent. The same startup stays active
+# until its worker exits, so its dependency/restart stages cannot race a retry.
+canceled_state = {'canceled': True, 'worker_done': False}
+with patch.object(dsh_launcher, '_ACTIVE_STARTUP', canceled_state):
+    dsh_launcher._finish_startup(canceled_state)
+    assert dsh_launcher._ACTIVE_STARTUP is canceled_state
+    canceled_state['worker_done'] = True
+    dsh_launcher._finish_startup(canceled_state)
+    assert dsh_launcher._ACTIVE_STARTUP is None
+
 
 # Startup checks one read-only native RPC. Session creation, preset selection and
 # archive handling belong to the client navigation tests, not a Python mirror.
@@ -52,7 +84,7 @@ webview = types.SimpleNamespace(
 with patch.dict(sys.modules, {"dsh_webview": webview}), \
      patch.object(dsh_launcher._DSH_WEB_SESSION, "launch_url", side_effect=AssertionError("same-page auth")), \
      patch.object(dsh_launcher, "_dsh_rpc_wire", side_effect=AssertionError("same-page session IO")):
-    assert dsh_launcher.open_ui(r"E:\fixture") == "Houdini workspace already open"
+    assert dsh_launcher.open_ui(r"E:\fixture") == "Houdini workspace selection requested"
 assert shown == []
 with patch.dict(sys.modules, {"dsh_webview": webview}), \
      patch.object(dsh_launcher._DSH_WEB_SESSION, "launch_url", return_value="fixture-auth"):

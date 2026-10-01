@@ -1,11 +1,13 @@
 # 工具设计与动词词表
 
-Execution contract version: 74
+Execution contract version: 75
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
 [Bridge注册表](../houdini/python3.11libs/dsh_bridge.py)及运行时verb_help相互校验。
 执行边界详见[执行契约](execution-contract.md)，节点知识见[同源节点卡](node-operation-cards.md)。
+动词的按需输入结构、稳定输出字段与例子维护在[verb-operation-contracts.json](../houdini/verb-operation-contracts.json)，
+[结构合同](verb-contracts.md)由同源生成。Python签名来自真实运行函数；结构说明帮助发现能力，不作为新的执行校验或任务准入。
 
 组件schema-2使用原生节点档案保存内部值，交换快照只比较根公开参数与节点/接线清单；引用/权限/输出检查保留。
 旧schema-1导入拒绝并要求另存导出，不原地升级文件；替换计划仍检查内部状态，详细边界见[组件设计](component-collaboration.md)。
@@ -19,7 +21,7 @@ Execution contract version: 74
 
 - 新动词必须有跨任务独立意图、稳定参数/返回、错误与恢复边界，不能只为单个对象或提高目录覆盖率。
 - 各参数接受Node/path的范围以实际签名为准；涉及foreign修改须单次用户明确授权。
-- 写操作须严格设参、主线程执行、记录真实失败和最终事务状态，不catch失败后继续交付。
+- 写操作须严格设参、主线程执行、记录真实失败和最终事务状态。捕获只读或零写入错误、以及明确恢复成功的错误后可继续操作；未确认恢复的修改失败必须终止当前批次。
 - 多节点setup与单节点创建分开：tab_apply面向受限真实Shelf组合，不把所有setup压进tab_create。
 - 只读describe/list_parms/node_info不能为导航隐式创建或cook重型上游。
 - 所有证据都要带范围，cook、关系、渲染像素和视觉语义不互相代替。
@@ -52,6 +54,8 @@ Host比对Bridge词表与合同，结果包含操作记录、执行状态、chec
 
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。路径差异通过Open Workspace处理。
+Bridge每次启动同时建立新的请求注册表与执行runtime，回执和execution使用同一个runtime_id；
+executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份互换。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
 同时读取词表与执行合同；它替代普通health握手，不增加网络往返，也不进入HOM队列。GET /health不签票。
 票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，
@@ -70,7 +74,9 @@ health的activeRequests由Registry活动槽推导，涵盖未返回exec和活动
 普通更新启用同时检查Host任务、Bridge jobs与activeRequests；显式强制Repair可中断DSH任务，但仍在停止前后
 验证Bridge空闲，并在主线程重载前复查本地请求/jobs/队列。缺失/非法活动观察为unknown，不按0放行；
 进程核验与操作边界见[安装合同](setup.md)，强制DSH退出不授权强杀HOM或重发未知请求。
-没有跨runtime幂等、自动重提、无限期结果保留或强杀HOM保证；实际Host取消路径仍须新session验证。
+没有跨runtime幂等、自动重提、无限期结果保留或强杀HOM保证。排队job取消以真实取消回执结束活动状态；
+result_expired/result_unavailable表示原请求已终结但结果不可取得，outcome保持unverified，不继续当作活动请求轮询。
+DSH的TOOL_OUTCOME_UNKNOWN保留为待查回，TOOL_NOT_STARTED不推断发生过HOM操作。
 表达式设参分别报告language、write_status、evaluation和effect_status；合法零值不算错误。
 H21/H22本次新增的原生求值错误明确指向当前参数，或结果为非有限数值时，抛CheckpointError并恢复原参数状态；
 strict set_parms同时恢复本批前序参数和动画。failure_stage区分写入失败与求值失败，恢复结果另外报告。
@@ -84,8 +90,9 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
 文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
 通用展示直接消费Bridge的checks/evidence/execution，不另推导控制、Polygon或接口结论。已归档结果的等价JSON子树使用引用，长正文提供预览与原始字段指针，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。批量verb_help完整显示签名、调用模式和前置条件。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
-canonical metadata与模型文本分别保留：metadata供原生事件、UI、审计和状态投影；Code Mode仍按Host
-协议返回完整canonical值，嵌套事件可能不含metadata，此时完整值须由result_ref读取，审计明确标缺口。
+canonical是同一份完整工具返回，metadata供原生事件、UI、审计和状态投影，模型文本从它生成可读视图。
+Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用读取规则，取消等无execution字段的回执也保留完整值。
+嵌套事件确实缺少完整值时须由result_ref读取，审计明确标缺口，不从展示文字猜状态。
 
 ## 动词目录
 
@@ -93,7 +100,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `verb_help(name)` | 返回已注入动词的准确 signature、return_type（无注解则null）、call_mode与docstring；name也可为1..16项唯一名称列表，批量返回items/count。未知名列相似项，批次任一未知则整次明确失败。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状 | dict |
+| `verb_help(name)` | 返回已注入动词的准确signature、return_type（无注解则null）、call_mode与docstring；已维护结构合同的动词另返回operation_contract，包含input_schema/output_schema/examples/notes及schema/execution范围。name也可为1..16项唯一名称列表，批量返回items/count。未知名列相似项，批次任一未知则整次明确失败。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状；未维护的结构不伪造完整schema | dict |
 
 ### 类型目录（回答「能建什么」）
 
@@ -107,7 +114,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入和参数形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理并报告恢复结果；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
 | `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
@@ -129,8 +136,8 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
-| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；**已有成员Network Box时，两者无显式nodes的整网重排写前拒绝**，防止把框内节点打散、盒间重叠；明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器。后两者需显式boxes，先dry_run取得绑定节点/障碍/generation的plan_sha256再apply；陈旧计划拒绝，重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
-| `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 受治理Network Box分组：`members`只建直属节点叶子框，`boxes`只建已存在叶子框的一层容器，且**role=component必须用boxes，boxes也必须用role=component**；其他role为controls/placement/source/assembly/output。叶子先建并用handoff布局，再单独建组件容器；禁止节点与box混装、同批引用新叶子、第三层嵌套及其他editor item。apply先dry_run取得同状态plan_sha256，陈旧/缺失计划零写入拒绝。默认role色，已有框保留现色，显式RGB三元组才改色；迁移成员须同批声明来源框最终成员或移除。Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
+| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
+| `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
 
 ### parm 域（依附 node）
 
@@ -140,7 +147,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量或tuple字段，按请求顺序返回且不受changed_only过滤，tuple给聚合value/component_names及逐分量诊断，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
-| `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`，全量预检、失败恢复原 keys、提交后回读/采样并恢复用户 frame。只负责 channel 数据，不代替路径依赖状态机或 KineFX/APEX | dict |
+| `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`。全量预检包含锁定状态，失败恢复原值、表达式、keys和frame，并明确restored/restore_errors；提交后回读/采样并恢复用户frame。只负责channel数据，不代替路径依赖状态机或KineFX/APEX | dict |
 | `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`；spec必须用具名参数，严格上下限字段只接受min_strict/max_strict。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值；当前值另用set_parms。layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
 | `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省：类型/可选定义文件与section、实例interface及definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、tuple look和Ramp类型。include_state返回至多512通道raw值/keys/locks；analyze_ui返回非阻断结构建议。不执行菜单/表达式/cook，不自动修复或创建绑定 | dict |
 | `bind_controls(controller, bindings, *, dry_run=False, expected_plan=None, replace_existing=False, allow_foreign=None)` | 1..32项明确数值绑定：source为控制节点参数名，target为目标参数绝对路径，可选scale/offset。dry_run返回plan_sha256；应用必须expected_plan匹配identity/值/keys/锁定/帧。默认拒绝已有驱动，replace_existing显式替换；拒绝非数值/菜单/回调/multiparm、任意表达式源、批次源目标交叠及重复目标。整数目标只接受整数源与映射系数。实际HScript引用和值回读，失败恢复本批目标通道；不保证领域输出或外部副作用 | dict |
@@ -154,7 +161,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 | `scene_info()` | 只读 HIP/version/fps/current frame/time/frame range/playback range/UI 状态及 `unit_length_meters`（1 个场景单位对应的米数，无法读取时为 null）；明确区分 `has_named_path`、`has_unsaved_changes`、`dirty_reliable`、`clean_on_disk`，不再用路径存在冒充保存完成；hython 的 dirty 不可靠时 clean=null；不移动 playbar、不遍历整张节点图 | dict |
 | `scene_save(expected_path=None)` | 只保存当前已命名 HIP，不承担 Save As/open/new；可选 expected_path 作防串场断言，返回 dirty before/after/reliable、clean（headless=null）、bytes、mtime_ns | dict |
 | `scene_save_as(path, expected_current_path, reason, overwrite=False)` | 用户授权的 Save As：明确绝对 HIP 路径，expected_current_path 防串场，reason 记录路径/覆盖授权；已存在目标必须 overwrite=True。拒绝插件仓库落盘，回报前后路径/dirty/file/workspace_changed。无 load/clear；文件写不可撤销，失败可能留部分新文件，跨目录后 Open Workspace 重新绑定 | dict |
-| `set_timeline(fps=None, frame_range=None, playback_range=None, current_frame=None)` | 设置明确的时间线字段；至少一项，范围校验后回读 scene_info | dict |
+| `set_timeline(fps=None, frame_range=None, playback_range=None, current_frame=None)` | 设置明确的时间线字段；至少一项，所有字段的有限数值/范围写前校验，成功回读scene_info。写入失败恢复fps、两种范围和当前frame并报告restored/restore_errors；不恢复触发的cook或外部副作用 | dict |
 | `list_bookmarks()` | 列出 bookmark id/name/start/end/enabled/visible/comment | list |
 | `create_bookmark(name, start, end, replace=False)` | 创建整数帧 bookmark；同名默认拒绝，replace 精确替换 | dict |
 | `delete_bookmark(name_or_id)` | 按精确名称或 session id 删除，失败列现有项 | dict |
@@ -171,7 +178,7 @@ canonical metadata与模型文本分别保留：metadata供原生事件、UI、�
 `geo_check_interfaces(method='bore_clearance')`接受最终闭合朝外Polygon `target_group`、SOP local `axis`、同轴`start/end`与正数`radius`。以外切24边棱柱覆盖声明圆形空域，只在声明的轴向区间与该组做有界Boolean Intersect；零交集pass，有效侵入fail并给交集包围盒，不完整组/模糊结果unverified。对带铰耳的叶片，区间应覆盖需要打孔的板厚，不能把整件总包围盒当板厚；通过不证明区间外通畅、孔位归属、周围材料或公差。预算为目标面数×24，受`max_pairs`与目标组4000面上限约束。
 | `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, baseline_interfaces=None, views=None, view_bounds=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}],interfaces?}`，每个case最多16个expectations；同一扰动的大检查用相同values拆成多个case。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。顶层interfaces在基准和全部case复查，baseline_interfaces只验基准，case内interfaces只验对应扰动；适合合盖接触与开盖分离等不同合同，均用geo_check_interfaces的schema和预算。control_summary区分已声明与实际执行的关系覆盖；基准失败时参数零写入且results=[]明确标not_run。domain/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（内嵌Packed临时地址转内容引用、忽略对应writer索引偏移；排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，嵌入PackedGeometry在内存副本展开量测，原载荷/属性/变换按内容指纹验证恢复，其他写前unverified。拒绝callback/menu/button/multiparm/tuple列表值，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None, integrity_only=False)` | 默认统计primitive piece局部bbox/extent/面积；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent、surface_area、duplicate_boundary_faces、closed_planar_components及center_axis_surface_hits。仅近看Polygon完整性时用inspect=True, integrity_only=True：跳过昂贵的中心线/截面诊断，最多100000 prim/400000顶点引用，返回非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何朝向相反的样本、零面积/零边及完全重复面风险；平面大面以重复点桥接孔时另报planar_repeated_point_ngons/shading_review_status，提示同角度近景复核，不把合法布线判破面。负号提示核对整壳朝向，嵌套空腔的内壳可有意反向，不能自动判错。开放边单列open_boundary_unreviewed，可能是有意接口，需按设计核对。风险/超预算在Bridge摘要与执行提醒中保留；no_detected_integrity_risk只表示本检查未发现列出的风险，不认证任意重叠、自交、接触、外形、着色或强度。普通完整inspect仍保持原预算与语义；不支持或超预算为unverified | dict |
-| `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较两帧 point 数值属性；可比较时精确返回键 `mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含 sampled_points/tolerance/data_type/size），不是 `mean/max`。不移动 playbar；证明数据是否随时间变化，不单独证明审美/运动语义 | dict |
+| `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用geometryAtFrame比较两帧point数值属性，correspondence为point_number，不能证明跨拓扑变化的稳定身份。可比较时精确返回键`mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含sampled_points/tolerance/data_type/size），不是`mean/max`。不移动playbar；只证明所声明对应与抽样范围内的数据变化，不单独证明审美/运动语义 | dict |
 
 `test_controls` 的顶层、基准及单个case接口均可声明`solid_overlap`；
 有转轴的活动产品要逐状态检查实体禁穿插，并另验同轴与真实孔道。
@@ -266,7 +273,7 @@ Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的
 |---|---|---|
 | `camera_fit(camera, target, direction='iso', coverage=0.82, width=None, height=None, frame=None, *, dry_run=False, allow_foreign=None)` | 将正式静态OBJ cam拟合到显式SOP世界包络；保留焦距，清lookatpath，求距离/正交宽度，实际矩阵投影回验；无渲染/视口改变。尺寸默认相机值，当前frame。拒绝动画/约束/窗口偏移/自定义lens，失败恢复。ownership与单次allow_foreign适用，持久preview服务永不豁免；dry_run仍exec。Solaris需导入并按实际RenderProduct预检 | dict |
 | `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
-| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机/OpenGL，恢复用户状态，服务不删除。output_policy默认managed：picture省略或仅安全basename，唯一文件落`$HIP/dsh-visual-checks/<run-id>/`；路径值必须选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB（无匹配空间时明确gamma近似），EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
+| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed：picture省略或仅安全basename，唯一文件落`$HIP/dsh-visual-checks/<run-id>/`；路径值必须选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
 ### viewport 域（视口/UI）
@@ -285,5 +292,9 @@ list_parms回答“参数叫什么”，read_parms回答“实际值/表达式�
 Bridge返回结构化verbs ledger、rawUsage、operation-evidence和transaction。Trace与离线报告分别保留
 目录广度、调用含动词率、动词密度、成功exec修改覆盖、只读裸探针、Gate拦截与成功裸修改，
 不把used/全部目录称为执行成功率。相关代码地图见[架构](architecture.md)。
+
+执行中的geometry_fingerprint只覆盖点面计数、包围盒和最多257个抽样点的位置，signature_scope随结果返回。
+未抽到的位置、属性值、primitive拓扑/intrinsics和OBJ变换不在该摘要范围；相等只表示未检测到所覆盖变化。
+build_module与camera_fit的dry_run明确applied=false、scene_writes=0，不用动词类别把预览解释成实际修改。
 
 内嵌Packed证据视图最多8层/4096实例，展开前按实例累计预算100000面/250000点/400000顶点/32MiB；只支持PackedGeometry，不加载PackedDisk/Alembic/Fragment或任意外部文件。保留组/属性和实际变换，超限/未知表示保持unverified。最终OUT_ASSET表面检查对part/name分区作完整覆盖，不能以各件健康推断件间连接。细节与边界见[配方参考](../skills/houdini-sop-workflow/references/procedural-recipes.md)。

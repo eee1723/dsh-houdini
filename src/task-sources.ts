@@ -41,17 +41,20 @@ export function taskSources(events: readonly Event[], claimed?: any): Source[] {
     if (event.type === 'user/message' && d?.source?.kind === 'user') {
       add('user_message', event, content(Array.isArray(d.content) ? d.content : []), d.id)
     }
-    if (event.type === 'tool/call' && d?.name === 'ask_user_question' && typeof d.callId === 'string') {
-      questions.add(d.callId)
+    const questionId = event.type === 'tool/call' ? d?.callId
+      : event.type === 'tool/ptc-dispatch-start' ? d?.subCallId : undefined
+    if (d?.name === 'ask_user_question' && typeof questionId === 'string') {
+      questions.add(questionId)
       add('clarification_question', event, { text: typeof d.arguments === 'string'
-        ? d.arguments : JSON.stringify(d.arguments ?? null), nontext_blocks: [] }, undefined, d.callId)
+        ? d.arguments : JSON.stringify(d.arguments ?? null), nontext_blocks: [] }, undefined, questionId)
     }
-    const id = d?.message?.source?.callId
-    if (event.type === 'tool/result' && questions.has(id) && !settled.has(id)) {
+    const id = event.type === 'tool/result' ? d?.message?.source?.callId
+      : event.type === 'tool/ptc-dispatch' ? d?.subCallId : undefined
+    if (typeof id === 'string' && questions.has(id) && !settled.has(id)) {
       settled.add(id)
-      const blocks = d.message.content
-      if (!Array.isArray(blocks) || d.message.isError || d.isError || d.meta?.isError || blocks.some((b: any) => b.isError)) continue
-      add('clarification_answer', event, content(blocks), d.message.id, id)
+      const blocks = event.type === 'tool/result' ? d.message.content : d.content
+      if (!Array.isArray(blocks) || d.message?.isError || d.isError || d.meta?.isError || blocks.some((b: any) => b.isError)) continue
+      add('clarification_answer', event, content(blocks), d.message?.id, id)
     }
   }
   // Claim occurs before user/message is appended; queued but unclaimed input is excluded.

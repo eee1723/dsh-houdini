@@ -13,6 +13,7 @@
 | [Houdini Trace设计](houdini-trace-design.md) | 五看板信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
 | [工具说明](tools.md) | 八个工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
 | [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
+| [按需动词契约](verb-contracts.md) | verb_help读取的输入/成功返回结构、Python示例和作用域；由verb-operation-contracts.json生成 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |

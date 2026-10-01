@@ -704,12 +704,12 @@ def _check_host_ready() -> None:
 
 
 def open_ui(workspace_dir: str, *, force_reload: bool = False) -> str:
-    """Raise the current HIP page or issue one workspace navigation to the client."""
+    """Request selection of the current HIP directory in the native DSH client."""
     _module_path_on_syspath()
     try:
         import dsh_webview
         if not force_reload and dsh_webview.raise_workspace(workspace_dir):
-            return "Houdini workspace already open"
+            return "Houdini workspace selection requested"
         return dsh_webview.show_webview(
             workspace_dir=workspace_dir,
             authenticated_url=_DSH_WEB_SESSION.launch_url(),
@@ -743,6 +743,18 @@ DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refr
 _PENDING: dict = {}
 _MAIN_DISPATCHES: list = []
 _SERVICE_PREFLIGHT_ACTIVE = False
+try:
+    _ACTIVE_STARTUP
+except NameError:
+    _ACTIVE_STARTUP = None
+
+
+def _finish_startup(state):
+    global _ACTIVE_STARTUP
+    if state.get('canceled') and not state.get('worker_done'):
+        return
+    if _ACTIVE_STARTUP is state:
+        _ACTIVE_STARTUP = None
 
 
 def _require_bridge_idle():
@@ -804,6 +816,14 @@ def _service_preflight(*, force_frontend=False) -> dict:
 def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
     """Run blocking listener/process checks off-GUI, then invoke callback on main."""
     global _SERVICE_PREFLIGHT_ACTIVE
+    if _ACTIVE_STARTUP is not None:
+        _ACTIVE_STARTUP['frontend_cwd'] = _hip_dir()
+        dialog = _PENDING.get('dialog')
+        if dialog is not None:
+            dialog.show(); dialog.raise_()
+        _report('startup is stopping' if _ACTIVE_STARTUP.get('canceled') else
+                'startup already in progress; current HIP workspace will open when ready')
+        return
     if _SERVICE_PREFLIGHT_ACTIVE:
         _report("a service preflight is already running")
         return
@@ -847,11 +867,12 @@ def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
         timer.stop()
         if timer in _MAIN_DISPATCHES:
             _MAIN_DISPATCHES.remove(timer)
-        _SERVICE_PREFLIGHT_ACTIVE = False
         try:
             callback(state["result"], state["error"])
         except Exception as exc:
             _report(f"service startup failed: {exc}")
+        finally:
+            _SERVICE_PREFLIGHT_ACTIVE = False
 
     timer.timeout.connect(tick)
     _MAIN_DISPATCHES.append(timer)
@@ -1001,6 +1022,10 @@ def _start_and_wait_frontend(state: dict) -> None:
     except Exception:
         state["error"] = traceback.format_exc()
         state["result"] = "error"
+    finally:
+        state['worker_done'] = True
+        if state.get('canceled'):
+            _finish_startup(state)
 
 
 def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
@@ -1015,23 +1040,33 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     frontend_cwd = 前端进程 cwd（= dsh 默认工作区根），由调用方在主线程经
     _hip_dir() 解析（worker 线程禁止碰 hou）。
     """
+    global _ACTIVE_STARTUP
+    if _ACTIVE_STARTUP is not None:
+        _ACTIVE_STARTUP['frontend_cwd'] = frontend_cwd
+        _report('startup already in progress')
+        return
+    state = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
+    _ACTIVE_STARTUP = state
     try:
         from hutil.Qt import QtCore, QtWidgets
         parent = hou.qt.mainWindow()
     except Exception:
         # hython: run the same worker inline; the UI reports its own availability.
-        headless: dict = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
-        _start_and_wait_frontend(headless)
-        detail += "\n" + headless["detail"]
-        if headless["result"] == "ready":
-            _report(detail + "\n" + open_ui(frontend_cwd, force_reload=True))
-        else:
-            _report(
-                detail
-                + "\n" + (headless["error"].splitlines()[-1] if headless.get("error")
-                           else f"frontend exited without listening on {FRONTEND_URL}") + "; "
-                + f"see log: {FRONTEND_LOG}"
-            )
+        headless = state
+        try:
+            _start_and_wait_frontend(headless)
+            detail += "\n" + headless["detail"]
+            if headless["result"] == "ready":
+                _report(detail + "\n" + open_ui(state["frontend_cwd"], force_reload=True))
+            else:
+                _report(
+                    detail
+                    + "\n" + (headless["error"].splitlines()[-1] if headless.get("error")
+                               else f"frontend exited without listening on {FRONTEND_URL}") + "; "
+                    + f"see log: {FRONTEND_LOG}"
+                )
+        finally:
+            _finish_startup(state)
         return
 
     dialog = QtWidgets.QDialog(parent)
@@ -1109,16 +1144,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     dialog.show()
 
     # 主线程只刷新 worker 快照；前端重启和端口探测全在 worker 线程。
-    state: dict = {
-        "canceled": False,
-        "result": None,
-        "detail": "",
-        "frontend_cwd": frontend_cwd,
-        "progress": 8,
-        "phase": 0,
-        "title": "Preparing startup",
-        "message": "Presets synced and Houdini bridge started",
-    }
+    state.update(progress=8, phase=0, title="Preparing startup", message="Initializing environment")
     launched_at = time.monotonic()
 
     def open_log() -> None:
@@ -1139,6 +1165,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         if state.get("result") != "ready":
             _cancel_startup(state)
         _PENDING.clear()
+        _finish_startup(state)
 
     log_btn.clicked.connect(open_log)
     cancel_btn.clicked.connect(cancel)
@@ -1149,6 +1176,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         timer.stop()
         dialog.close()
         _PENDING.clear()
+        _finish_startup(state)
         _report(detail + "\n" + state["detail"] + "\n" + status)
 
     def fail(message: str) -> None:
@@ -1198,13 +1226,14 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
             timer.stop()
             dialog.close()
             _PENDING.clear()
+            _finish_startup(state)
             print("[dsh-houdini] startup cancelled")
             return
         result = state["result"]
         if result == "ready":
             progress_bar.setValue(100)
             percent_label.setText("100%")
-            finish(open_ui(frontend_cwd, force_reload=True))
+            finish(open_ui(state["frontend_cwd"], force_reload=True))
         elif result == "dead":
             fail(f"The frontend exited before listening on {FRONTEND_URL}")
         elif result == "timeout":

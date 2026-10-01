@@ -4,12 +4,15 @@ export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;surfa
 export type ExecutionRow = {eventSeq:number;callId:string;tool:string;value:any;execution:any}
 
 const LIVE_TOOLS = new Set(['houdini_exec','houdini_inspect','houdini_request','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
-const TERMINAL_REQUESTS = new Set(['done','not_executed','job_submitted'])
+const OBSERVED_REQUESTS = new Set(['done','not_executed','job_submitted'])
+const UNAVAILABLE_RESULTS = new Set(['result_expired','result_unavailable'])
+const TERMINAL_REQUESTS = new Set([...OBSERVED_REQUESTS,...UNAVAILABLE_RESULTS])
 const TERMINAL_JOBS = new Set(['done','failed','cancelled'])
 
 export function executionHistory(events:readonly SessionEvent[]) {
   const calls=new Map<string,any>(), results=new Map<string,any>()
   const rows:ExecutionRow[]=[], receipts=new Map<string,string>(), jobs=new Map<string,string>()
+  const unavailableResults=new Map<string,{request_ref:string;owner_call:string|null;status:'finished_result_unavailable';retention_status:string;outcome:'unverified'}>()
   const resolvedCalls=new Set<string>()
   const uncertain:Array<{seq:number;callId:string;ref?:string}>=[]
   const failedCalls:Array<{seq:number;callId:string;tool:string;error:any}>=[]
@@ -25,13 +28,21 @@ export function executionHistory(events:readonly SessionEvent[]) {
     if (!LIVE_TOOLS.has(name)) continue
     if (outcome.isError) {
       failedCalls.push({seq:event.seq??0,callId:outcome.callId,tool:name,error:outcome.error??{code:'TOOL_FAILED'}})
-      if (outcome.error?.code==='ABORTED' && ['houdini_exec','houdini_job_submit'].includes(name))
+      if (['ABORTED','TOOL_OUTCOME_UNKNOWN'].includes(outcome.error?.code) && ['houdini_exec','houdini_job_submit'].includes(name))
         uncertain.push({seq:event.seq??0,callId:outcome.callId})
     }
     if (!value) continue
     const receipt=value.requestReceipt
-    if (typeof receipt?.request_ref==='string' && !TERMINAL_REQUESTS.has(receipts.get(receipt.request_ref)||''))
-      receipts.set(receipt.request_ref,receipt.status)
+    if (typeof receipt?.request_ref==='string') {
+      const prior=receipts.get(receipt.request_ref)||''
+      if (!TERMINAL_REQUESTS.has(prior) || (!OBSERVED_REQUESTS.has(prior) && OBSERVED_REQUESTS.has(receipt.status)))
+        receipts.set(receipt.request_ref,receipt.status)
+      if (OBSERVED_REQUESTS.has(receipts.get(receipt.request_ref)||'')) unavailableResults.delete(receipt.request_ref)
+      else if (UNAVAILABLE_RESULTS.has(receipt.status)) unavailableResults.set(receipt.request_ref,{
+        request_ref:receipt.request_ref,owner_call:typeof receipt.owner_call==='string'?receipt.owner_call:null,
+        status:'finished_result_unavailable',retention_status:receipt.status,outcome:'unverified',
+      })
+    }
     if (typeof receipt?.owner_call==='string' && TERMINAL_REQUESTS.has(receipt.status)) resolvedCalls.add(receipt.owner_call)
     const job=value.jobId??receipt?.jobId
     if (typeof job==='string') {
@@ -52,7 +63,8 @@ export function executionHistory(events:readonly SessionEvent[]) {
   const anchor=rows.reduce<ExecutionRow|undefined>((latest,row)=>!latest
     ||row.execution.observed_at>latest.execution.observed_at
     ||(row.execution.observed_at===latest.execution.observed_at&&row.execution.sequence>latest.execution.sequence)?row:latest,undefined)
-  return {calls,results,rows,foreground,anchor,unresolvedCalls,pendingCalls,activeRequests,activeJobs,failedCalls}
+  return {calls,results,rows,foreground,anchor,unresolvedCalls,pendingCalls,activeRequests,activeJobs,failedCalls,
+    resolvedCalls,unavailableResults:[...unavailableResults.values()]}
 }
 
 export type ExecutionHistory = ReturnType<typeof executionHistory>

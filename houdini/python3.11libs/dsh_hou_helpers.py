@@ -515,6 +515,8 @@ def _frame_pair(value, label: str) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{label} 必须是 [start, end]")
     start, end = float(value[0]), float(value[1])
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise ValueError(f"{label} 必须是有限帧数")
     if end < start:
         raise ValueError(f"{label} end 不能小于 start：{start}, {end}")
     return start, end
@@ -522,29 +524,58 @@ def _frame_pair(value, label: str) -> tuple[float, float]:
 
 def set_timeline(fps=None, frame_range=None, playback_range=None,
                  current_frame=None) -> dict:
-    """设置时间线；四项均可选，但至少提供一项。"""
-    if all(value is None for value in (fps, frame_range, playback_range, current_frame)):
-        raise ValueError("至少提供 fps/frame_range/playback_range/current_frame 一项")
+    """设置时间线；先验证所有字段，写入失败恢复原fps、范围与当前帧。"""
     changed = {}
-    if fps is not None:
-        value = float(fps)
-        if value <= 0:
-            raise ValueError("fps 必须大于 0")
-        hou.setFps(value)
-        changed["fps"] = value
-    if frame_range is not None:
-        start, end = _frame_pair(frame_range, "frame_range")
-        hou.playbar.setFrameRange(start, end)
-        changed["frame_range"] = [start, end]
-    if playback_range is not None:
-        start, end = _frame_pair(playback_range, "playback_range")
-        hou.playbar.setPlaybackRange(start, end)
-        changed["playback_range"] = [start, end]
-    if current_frame is not None:
-        value = float(current_frame)
-        hou.setFrame(value)
-        changed["current_frame"] = value
-    return {"changed": changed, "scene": scene_info()}
+    try:
+        if all(value is None for value in (fps, frame_range, playback_range, current_frame)):
+            raise ValueError("至少提供 fps/frame_range/playback_range/current_frame 一项")
+        if fps is not None:
+            value = float(fps)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError("fps 必须是大于 0 的有限数值")
+            changed['fps'] = value
+        for key, value in (('frame_range', frame_range), ('playback_range', playback_range)):
+            if value is not None:
+                changed[key] = list(_frame_pair(value, key))
+        if current_frame is not None:
+            value = float(current_frame)
+            if not math.isfinite(value):
+                raise ValueError('current_frame 必须是有限帧数')
+            changed['current_frame'] = value
+        before = scene_info()
+    except (ValueError, TypeError, OverflowError, hou.Error) as error:
+        raise CheckpointError(str(error), {'ok': False, 'phase': 'timeline_preflight',
+            'scene_writes': 0, 'applied': False}) from error
+    setters = {'fps': lambda v: hou.setFps(v),
+               'frame_range': lambda v: hou.playbar.setFrameRange(*v),
+               'playback_range': lambda v: hou.playbar.setPlaybackRange(*v),
+               'current_frame': lambda v: hou.setFrame(v)}
+    writes = 0
+    try:
+        for key, value in changed.items():
+            writes += 1
+            setters[key](value)
+        return {'changed': changed, 'scene': scene_info(), 'scene_writes': writes}
+    except BaseException as error:
+        restore_errors = []
+        # FPS/ranges can affect the frame; restore the original frame last.
+        for key, value in (('fps', before['fps']), ('frame_range', before['frame_range']),
+                           ('playback_range', before['playback_range']), ('current_frame', before['frame'])):
+            try:
+                setters[key](value)
+            except Exception as failure:
+                restore_errors.append(f'{key}: {failure}')
+        try:
+            after = scene_info()
+            for key in ('fps', 'frame_range', 'playback_range', 'frame'):
+                if after[key] != before[key]:
+                    restore_errors.append(f'{key}: restoration readback differs')
+        except Exception as failure:
+            restore_errors.append(f'restoration readback: {failure}')
+        raise CheckpointError(f'set_timeline failed: {error}; restore_errors={restore_errors}',
+            {'ok': False, 'phase': 'timeline_write', 'scene_writes': writes,
+             'restored': not restore_errors, 'restore_errors': restore_errors,
+             'scope': 'timeline state only; cooks and external side effects are not restored'}) from error
 
 
 def list_bookmarks() -> list:
@@ -1193,6 +1224,33 @@ def _initialize_created_inputs(node, input_nodes):
         shape.set('input')
 
 
+def _prepare_tab_create(parent, type_name, inputs, parms):
+    """Resolve creation and wires completely before calling a shelf or createNode."""
+    parent = _resolve(parent)
+    cat = parent.childTypeCategory()
+    ctx = context_name(cat)
+    latest = resolve_latest_type(cat, type_name)
+    node_type = hou.nodeType(cat, latest)
+    if inputs is not None and not isinstance(inputs, list):
+        raise ValueError("inputs 必须是 source 节点/path 的 list")
+    if parms is not None and (not isinstance(parms, dict) or not parms):
+        raise ValueError("parms 必须是非空 {参数名: 值} dict")
+    if inputs and cat == hou.objNodeTypeCategory():
+        raise ValueError("Object inputs are parenting; create first, then use set_object_parent")
+    input_nodes = [None if source is None else _resolve_in_parent(parent, source) for source in (inputs or [])]
+    for source in input_nodes:
+        if source is not None and source.parent() != parent:
+            raise ValueError(f'different_parent: source={source.path()} parent={source.parent().path()}, destination parent={parent.path()}; use an Object Merge inside the destination SOP network or an explicit subnet input, not cross-network wires')
+    if node_type is not None and len(input_nodes) > node_type.maxNumInputs():
+        raise ValueError(f"{latest} 最多接受 {node_type.maxNumInputs()} 个输入，收到 {len(input_nodes)}")
+    if node_type is not None and not _visible_node_type(node_type):
+        raise ValueError(f"节点类型 {latest!r} 在当前 Houdini 中 hidden/deprecated；请用 search_tab_entries(parent, query) 查真实 Tab entry，setup 工具用 tab_apply(parent, tool_id)")
+    if (parent.type().category() == hou.lopNodeTypeCategory()
+            and parent.type().name().split("::", 1)[0] == "materiallibrary"):
+        raise ValueError(f"Material Library 根层不直接创建 {latest!r}；先用 search_tab_entries(parent, query) 选择 Karma/USD/Preview Builder，再用 tab_apply 执行对应 builder tool")
+    return parent, ctx, latest, input_nodes
+
+
 def tab_create(
     parent: hou.Node,
     type_name: str,
@@ -1204,7 +1262,7 @@ def tab_create(
 
     - ``parent``：目标父节点（hou.Node 或 path 字符串，如 '/obj'）。
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
-    - ``inputs``：可选，创建后按序连到 input 0..n（节点或路径均可；
+    - ``inputs``：可选，创建后按序连到 input 0..n（节点、绝对路径或parent相对路径；None保留空槽；
       连接失败会抛错，不会静默跳过）。
     - ``parms``：可选非空严格参数批次，创建/接线后通过set_parms应用；
       任一字段失败会连同新节点一起清理。复杂模块仍优先build_module。
@@ -1216,39 +1274,12 @@ def tab_create(
       Network Dot做有界避障；找不到安全位置则创建失败并由调用事务清理。间距由节点
       实际尺寸推导，见``_place_created_node``。
     """
-    parent = _resolve(parent)  # 铁律 1：hou.Node 或 path 字符串均可
-    cat = parent.childTypeCategory()
-    ctx = context_name(cat)
-    latest = resolve_latest_type(cat, type_name)
-
-    node_type = hou.nodeType(cat, latest)
-    if inputs is not None and not isinstance(inputs, list):
-        raise ValueError("inputs 必须是 source 节点/path 的 list")
-    if parms is not None and (not isinstance(parms, dict) or not parms):
-        raise ValueError("parms 必须是非空 {参数名: 值} dict")
-    if inputs and cat == hou.objNodeTypeCategory():
-        raise ValueError("Object inputs are parenting; create first, then use set_object_parent")
-    input_nodes = [None if source is None else _resolve(source) for source in (inputs or [])]
-    for source in input_nodes:
-        if source is not None and source.parent() != parent:
-            raise ValueError(f'different_parent: source={source.path()} parent={source.parent().path()}, destination parent={parent.path()}; use an Object Merge inside the destination SOP network or an explicit subnet input, not cross-network wires')
-    if node_type is not None and len(input_nodes) > node_type.maxNumInputs():
-        raise ValueError(f"{latest} 最多接受 {node_type.maxNumInputs()} 个输入，收到 {len(input_nodes)}")
-    if node_type is not None and not _visible_node_type(node_type):
-        raise ValueError(
-            f"节点类型 {latest!r} 在当前 Houdini 中 hidden/deprecated；"
-            "请用 search_tab_entries(parent, query) 查真实 Tab entry，"
-            "setup 工具用 tab_apply(parent, tool_id)"
-        )
-    if (
-        parent.type().category() == hou.lopNodeTypeCategory()
-        and parent.type().name().split("::", 1)[0] == "materiallibrary"
-    ):
-        raise ValueError(
-            f"Material Library 根层不直接创建 {latest!r}；"
-            "先用 search_tab_entries(parent, query) 选择 Karma/USD/Preview Builder，"
-            "再用 tab_apply 执行对应 builder tool"
-        )
+    try:
+        parent, ctx, latest, input_nodes = _prepare_tab_create(parent, type_name, inputs, parms)
+    except Exception as error:
+        raise CheckpointError(str(error), {'ok': False, 'phase': 'preflight',
+            'scene_writes': 0, 'dispatched': False, 'restored': True,
+            'scope': 'Tab creation/type/input resolution; no shelf or node creation was dispatched'}) from error
 
     tool = None
     try:
@@ -1277,15 +1308,22 @@ def tab_create(
         if parms is not None:
             set_parms(node, parms)
         _place_created_node(node)
-    except BaseException:
+    except BaseException as error:
         # Headless has no undo stack. Never leave a half-created semantic node
         # or provenance after a failed shelf initializer/input/name operation.
-        for partial in reversed(parent.children()):
-            if partial not in before:
+        restore_errors = []
+        partials = [partial for partial in reversed(parent.children()) if partial not in before]
+        for partial in partials:
+            try:
                 partial.destroy()
+            except BaseException as restore_error:
+                restore_errors.append(str(restore_error))
         _OWNED_NODE_SESSIONS.clear()
         _OWNED_NODE_SESSIONS.update(provenance)
-        raise
+        raise CheckpointError(str(error), {'ok': False, 'phase': 'apply_failure',
+            'scene_writes': None, 'dispatched': True, 'created_node_count': len(partials),
+            'restored': not restore_errors, 'restore_errors': restore_errors,
+            'scope': 'new direct children removed; external shelf/Python side effects are not covered'}) from error
     return node
 
 
@@ -1596,6 +1634,16 @@ def _resolve(node) -> hou.Node:
             raise ValueError(f"no node at path '{node}'")
         return n
     raise ValueError(f"expected a node or path string, got {type(node).__name__}")
+
+
+def _resolve_in_parent(parent, value) -> hou.Node:
+    """A node reference uses an explicit parent, never Houdini's ambient cwd."""
+    if isinstance(value, str) and not value.startswith('/'):
+        node = parent.node(value)
+        if node is None:
+            raise ValueError(f"节点不存在：{value!r} relative to {parent.path()}")
+        return node
+    return _resolve(value)
 
 
 def _val(v):
@@ -2189,8 +2237,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     No viewport changes. output_index=0..63 additionally requires the matching
     native Output to be this source or directly wired to it. Packed wrapper
     counts alone do not prove nonempty embedded content.
-    Final OUT_ASSET adds a bounded, nonblocking surface_integrity advisory and
-    explicit bbox_size/scene_unit_length_meters. Healthy still means cook/output
+    Parent-relative references and absolute paths use the same explicit parent.
+    Healthy still means cook/output
     health, not correct shape, relationship or visual finish.
     healthy != task/visual success; relationships remain unverified.
     """
@@ -2450,7 +2498,8 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
     ``mode='handoff'`` = 对显式叶子Network Box执行comfortable宽松布局；
     ``mode='component'`` = 对显式一层组件容器布局，整体移动其叶子框及节点。
-    两者都强制dry-run plan后apply，其他网络项全部作为固定障碍。
+    两者可直接应用；dry_run和expected_plan供需要预览/确认状态的调用使用。
+    其他网络项全部作为固定障碍。
     """
     if mode not in ("children", "flow", "handoff", "component"):
         raise ValueError(f"mode 必须是 'children'、'flow'、'handoff' 或 'component'，收到 {mode!r}")
@@ -2474,7 +2523,7 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     if nodes is None and any(any(isinstance(item, hou.Node) for item in box.items(recurse=True))
                              for box in p.networkBoxes()):
         raise ValueError("layout_nodes broad children/flow would scatter Network Box members; "
-                         "use mode='handoff' with explicit leaf boxes and dry_run/expected_plan, "
+                         "use mode='handoff' with explicit leaf boxes, "
                          "or pass an explicit node subset for a local edit")
     items = []
     foreign_skipped = []
@@ -2482,7 +2531,7 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
         if not isinstance(nodes, (list, tuple)):
             raise ValueError("nodes 必须是 Node/path 列表或 None（None = 全部子项）")
         for item in nodes:
-            n = _resolve(item)
+            n = _resolve_in_parent(p, item)
             if n.parent() != p:
                 raise ValueError(f"节点 {n.path()} 不属于父网络 {p.path()}")
             _require_owned(n, "layout_nodes", allow_foreign)
@@ -2519,14 +2568,16 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
 
 def network_boxes(parent, groups, *, remove=None, dry_run=False,
                   expected_plan=None, allow_foreign=None) -> dict:
-    """Preview/apply governed Network Box membership, labels and role colors.
+    """Create/update/remove Network Boxes without moving or cooking nodes.
 
-    Apply requires ``expected_plan`` from a fresh ``dry_run=True`` call. This is
-    presentation grouping only: member nodes, geometry and wiring are not moved
-    or evaluated. A group uses exactly one of ``members`` (direct child nodes)
-    or ``boxes`` (already-created leaf boxes). role='component' requires boxes;
-    other roles require members. Create/layout leaf role boxes first, then wrap
-    them in one component-container level. Deeper nesting is rejected.
+    groups=[{name, members?: [Node|absolute|parent-relative path], boxes?: [name],
+    label?: string, role?: string, color?: [r,g,b]}]. members and boxes may coexist;
+    child boxes may be existing or declared anywhere in this batch. Cycles fail
+    before creation. role is a color hint, never a component/leaf restriction.
+    Labels default to names; unknown roles use neutral colors. dry_run previews
+    without writes; expected_plan optionally requires that preview to remain
+    current. By default the call directly applies. Membership and appearance
+    are presentation facts, not geometry or task-quality evidence.
     """
     try:
         p = _resolve(parent)
@@ -2543,7 +2594,7 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
             expected_plan=expected_plan, allow_foreign=allow_foreign,
             active_owner_session=_ACTIVE_OWNER_SESSION,
             active_owner_call=_ACTIVE_OWNER_CALL,
-            resolve_node=_resolve, require_node_owned=_require_owned)
+            resolve_node=lambda value: _resolve_in_parent(p, value), require_node_owned=_require_owned)
     except NetworkBoxOperationError as error:
         raise CheckpointError(str(error), error.evidence) from error
 
@@ -3081,11 +3132,13 @@ def set_parm(node, name: str, value,
         return _set_parm_impl(n, name, value, allow_foreign)
     except BaseException as error:
         restore_errors = _restore_parameters(snapshots)
-        if isinstance(error,CheckpointError) and 'evaluation' in error.evidence:
-            error.evidence.update({'parameter_state_restored':not restore_errors,'parameter_restore_errors':restore_errors,
-                                   'write_status':'restored' if not restore_errors else 'recovery_unverified'})
-        if restore_errors:
-            raise RuntimeError(f"{error}; parameter_restore_errors={restore_errors}") from error
+        evidence = error.evidence if isinstance(error, CheckpointError) else {
+            'ok': False, 'node': n.path(), 'parm': name, 'phase': 'parameter_write'}
+        evidence.update({'restored': not restore_errors,
+            'parameter_state_restored': not restore_errors, 'parameter_restore_errors': restore_errors,
+            'restore_errors': restore_errors, 'write_status': 'restored' if not restore_errors else 'recovery_unverified',
+            'restoration_scope': 'snapshotted parameter values, expressions and keys only; callbacks, cooks and external side effects are separate'})
+        error.evidence = evidence
         raise
 
 
@@ -3297,10 +3350,15 @@ def set_parms(node, values: dict,
             if strict:
                 restore_errors = _restore_parameters(snapshots)
                 if isinstance(e,CheckpointError):
-                    e.evidence.update({'batch_parameter_state_restored':not restore_errors,
-                                       'batch_restore_errors':restore_errors,'write_status':'restored' if not restore_errors else 'recovery_unverified'})
+                    e.evidence.update({'restored':not restore_errors, 'restore_errors':restore_errors,
+                                       'batch_parameter_state_restored':not restore_errors,
+                                       'batch_restore_errors':restore_errors,'write_status':'restored' if not restore_errors else 'recovery_unverified',
+                                       'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'})
                     raise
-                raise RuntimeError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}") from e
+                raise CheckpointError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}",
+                    {'ok':False, 'node':n.path(), 'phase':'parameter_write',
+                     'restored':not restore_errors, 'restore_errors':restore_errors,
+                     'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'}) from e
     out = {"node": n.path(), "ok": not failed, "set": done}
     if patch_plans:
         out['patched'] = list(patch_plans)
@@ -3332,168 +3390,179 @@ def set_keyframes(node, channels: dict, replace: bool = True,
 
     ``channels`` 形如 ``{"tx": [{"frame": 1, "value": 0, "curve": "linear"}]}``。
     curve 仅支持 ``constant/linear/bezier``；它描述从该 key 离开的 segment。
-    所有 channel 在修改前完成校验；任一写入失败会恢复本次涉及参数的原 keyframes。
+    所有 channel 在修改前完成校验；任一写入失败会恢复本次涉及参数的原值、表达式、关键帧与当前帧；恢复错误保留在返回证据。
     ``replace=False`` 保留旧 keys，但拒绝覆盖同一 frame。该动词只负责 channel 数据，
     不替代有序状态机、KineFX/APEX rig logic 或 Animation Editor。
     """
-    n = _resolve(node)
-    _require_owned(n, "set_keyframes", allow_foreign)
-    if not isinstance(channels, dict) or not channels:
-        raise ValueError("channels 必须是非空 dict：{标量参数名: key spec 列表}")
-    if not isinstance(replace, bool):
-        raise ValueError("replace 必须是 bool")
+    try:
+        n = _resolve(node)
+        _require_owned(n, "set_keyframes", allow_foreign)
+        if not isinstance(channels, dict) or not channels:
+            raise ValueError("channels 必须是非空 dict：{标量参数名: key spec 列表}")
+        if not isinstance(replace, bool):
+            raise ValueError("replace 必须是 bool")
 
-    prepared = {}
-    originals = {}
-    for parm_name, specs in channels.items():
-        if not isinstance(parm_name, str) or not parm_name:
-            raise ValueError(f"channel 名必须是非空字符串，收到 {parm_name!r}")
-        parm = n.parm(parm_name)
-        if parm is None:
-            if n.parmTuple(parm_name) is not None:
-                raise ValueError(
-                    f"{n.path()}/{parm_name} 是参数元组；请按组件名分别提供 channel"
+        prepared = {}
+        originals = {}
+        for parm_name, specs in channels.items():
+            if not isinstance(parm_name, str) or not parm_name:
+                raise ValueError(f"channel 名必须是非空字符串，收到 {parm_name!r}")
+            parm = n.parm(parm_name)
+            if parm is None:
+                if n.parmTuple(parm_name) is not None:
+                    raise ValueError(
+                        f"{n.path()}/{parm_name} 是参数元组；请按组件名分别提供 channel"
+                    )
+                suggestions = difflib.get_close_matches(
+                    parm_name, [item.name() for item in n.parms()], n=5, cutoff=0.4
                 )
-            suggestions = difflib.get_close_matches(
-                parm_name, [item.name() for item in n.parms()], n=5, cutoff=0.4
-            )
-            raise ValueError(
-                f"节点 {n.path()} 没有标量参数 {parm_name!r}；相似参数：{suggestions}"
-            )
-        template = parm.parmTemplate()
-        try:
-            template_type = template.type()
-        except Exception:
-            template_type = None
-        if template_type not in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
-            raise ValueError(
-                f"{parm.path()} 不是数值标量参数（类型={template_type}），不能写数值 keyframes"
-            )
-        if not isinstance(specs, (list, tuple)) or not specs:
-            raise ValueError(f"channels[{parm_name!r}] 必须是非空 key spec 列表")
-        if len(specs) > _KEYFRAME_INPUT_LIMIT:
-            raise ValueError(
-                f"channels[{parm_name!r}] 超过 {_KEYFRAME_INPUT_LIMIT} keys；"
-                "请拆分任务或使用缓存/clip 工作流"
-            )
+                raise ValueError(
+                    f"节点 {n.path()} 没有标量参数 {parm_name!r}；相似参数：{suggestions}"
+                )
+            template = parm.parmTemplate()
+            try:
+                template_type = template.type()
+            except Exception:
+                template_type = None
+            if template_type not in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
+                raise ValueError(
+                    f"{parm.path()} 不是数值标量参数（类型={template_type}），不能写数值 keyframes"
+                )
+            if not isinstance(specs, (list, tuple)) or not specs:
+                raise ValueError(f"channels[{parm_name!r}] 必须是非空 key spec 列表")
+            if len(specs) > _KEYFRAME_INPUT_LIMIT:
+                raise ValueError(
+                    f"channels[{parm_name!r}] 超过 {_KEYFRAME_INPUT_LIMIT} keys；"
+                    "请拆分任务或使用缓存/clip 工作流"
+                )
 
-        existing_keys = tuple(parm.keyframes())
-        originals[parm_name] = existing_keys
-        existing_frames = {float(key.frame()) for key in existing_keys}
-        seen_frames = set()
-        keys = []
-        for index, spec in enumerate(specs):
-            path = f"channels[{parm_name!r}][{index}]"
-            if not isinstance(spec, dict):
-                raise ValueError(f"{path} 必须是 dict")
-            unknown = set(spec) - {"frame", "value", "curve"}
-            if unknown:
-                raise ValueError(f"{path} 有未知字段：{sorted(unknown)}")
-            if "frame" not in spec or "value" not in spec:
-                raise ValueError(f"{path} 必须同时提供 frame 和 value")
-            if isinstance(spec["frame"], bool) or isinstance(spec["value"], bool):
-                raise ValueError(f"{path}.frame/value 不能是 bool")
-            frame = float(spec["frame"])
-            value = float(spec["value"])
-            if not math.isfinite(frame) or not math.isfinite(value):
-                raise ValueError(f"{path}.frame/value 必须是有限数值")
-            if frame in seen_frames:
-                raise ValueError(f"{path}.frame={frame} 在同一 channel 重复")
-            if not replace and frame in existing_frames:
-                raise ValueError(
-                    f"{path}.frame={frame} 已存在；replace=False 不允许覆盖旧 key"
-                )
-            seen_frames.add(frame)
-            curve_name = str(spec.get("curve", "bezier")).strip().lower()
-            expression = _KEYFRAME_CURVES.get(curve_name)
-            if expression is None:
-                raise ValueError(
-                    f"{path}.curve={curve_name!r} 不支持；可用 {sorted(_KEYFRAME_CURVES)}"
-                )
-            key = hou.Keyframe(value)
-            key.setFrame(frame)
-            key.setExpression(expression, hou.exprLanguage.Hscript)
-            keys.append(key)
-        prepared[parm_name] = (parm, tuple(sorted(keys, key=lambda key: key.frame())))
+            existing_keys = tuple(parm.keyframes())
+            originals[parm_name] = existing_keys
+            existing_frames = {float(key.frame()) for key in existing_keys}
+            seen_frames = set()
+            keys = []
+            for index, spec in enumerate(specs):
+                path = f"channels[{parm_name!r}][{index}]"
+                if not isinstance(spec, dict):
+                    raise ValueError(f"{path} 必须是 dict")
+                unknown = set(spec) - {"frame", "value", "curve"}
+                if unknown:
+                    raise ValueError(f"{path} 有未知字段：{sorted(unknown)}")
+                if "frame" not in spec or "value" not in spec:
+                    raise ValueError(f"{path} 必须同时提供 frame 和 value")
+                if isinstance(spec["frame"], bool) or isinstance(spec["value"], bool):
+                    raise ValueError(f"{path}.frame/value 不能是 bool")
+                frame = float(spec["frame"])
+                value = float(spec["value"])
+                if not math.isfinite(frame) or not math.isfinite(value):
+                    raise ValueError(f"{path}.frame/value 必须是有限数值")
+                if frame in seen_frames:
+                    raise ValueError(f"{path}.frame={frame} 在同一 channel 重复")
+                if not replace and frame in existing_frames:
+                    raise ValueError(
+                        f"{path}.frame={frame} 已存在；replace=False 不允许覆盖旧 key"
+                    )
+                seen_frames.add(frame)
+                curve_name = str(spec.get("curve", "bezier")).strip().lower()
+                expression = _KEYFRAME_CURVES.get(curve_name)
+                if expression is None:
+                    raise ValueError(
+                        f"{path}.curve={curve_name!r} 不支持；可用 {sorted(_KEYFRAME_CURVES)}"
+                    )
+                key = hou.Keyframe(value)
+                key.setFrame(frame)
+                key.setExpression(expression, hou.exprLanguage.Hscript)
+                keys.append(key)
+            prepared[parm_name] = (parm, tuple(sorted(keys, key=lambda key: key.frame())))
+
+        snapshots = _parameter_snapshot([parm for parm, _ in prepared.values()])
+    except (ValueError, TypeError, OverflowError, hou.Error) as error:
+        raise CheckpointError(str(error), {'ok': False, 'phase': 'keyframes_preflight',
+            'scene_writes': 0, 'applied': False}) from error
 
     saved_frame = float(hou.frame())
-    applied = []
+    writes = 0
     try:
         for parm_name, (parm, keys) in prepared.items():
+            writes += 1
             if replace:
                 parm.deleteAllKeyframes()
             parm.setKeyframes(keys)
-            applied.append(parm_name)
-    except Exception:
-        for parm_name, (parm, _) in prepared.items():
-            try:
-                parm.deleteAllKeyframes()
-                if originals[parm_name]:
-                    parm.setKeyframes(originals[parm_name])
-            except Exception:
-                pass
-        raise
-    finally:
         if float(hou.frame()) != saved_frame:
             hou.setFrame(saved_frame)
-
-    result = {}
-    for parm_name, (parm, _) in prepared.items():
-        keys = tuple(parm.keyframes())
-        frames = [float(key.frame()) for key in keys]
-        key_data = []
-        for key in keys:
-            try:
-                curve = key.expression()
-            except Exception:
-                curve = None
-            key_data.append({
-                "frame": float(key.frame()),
-                "value": float(key.value()),
-                "curve": curve,
-            })
-        if len(key_data) > _KEYFRAME_RESULT_LIMIT:
-            key_preview = (
-                key_data[:_KEYFRAME_RESULT_LIMIT // 2]
-                + key_data[-_KEYFRAME_RESULT_LIMIT // 2:]
-            )
-            keys_truncated = len(key_data) - len(key_preview)
-        else:
-            key_preview = key_data
-            keys_truncated = 0
-        sample_candidates = sorted(set([
-            frames[0],
-            frames[-1],
-            *(
-                (frames[index] + frames[index + 1]) / 2.0
-                for index in range(len(frames) - 1)
-            ),
-        ]))
-        if len(sample_candidates) > _KEYFRAME_SAMPLE_LIMIT:
-            sample_frames = (
-                sample_candidates[:_KEYFRAME_SAMPLE_LIMIT // 2]
-                + sample_candidates[-_KEYFRAME_SAMPLE_LIMIT // 2:]
-            )
-        else:
-            sample_frames = sample_candidates
-        result[parm_name] = {
-            "key_count": len(keys),
-            "first_frame": frames[0],
-            "last_frame": frames[-1],
-            "keys": key_preview,
-            "samples": {
-                str(frame): float(parm.evalAtFrame(frame)) for frame in sample_frames
-            },
-            "replaced_existing": len(originals[parm_name]) if replace else 0,
+        result = {}
+        for parm_name, (parm, _) in prepared.items():
+            keys = tuple(parm.keyframes())
+            frames = [float(key.frame()) for key in keys]
+            key_data = []
+            for key in keys:
+                try:
+                    curve = key.expression()
+                except Exception:
+                    curve = None
+                key_data.append({
+                    "frame": float(key.frame()),
+                    "value": float(key.value()),
+                    "curve": curve,
+                })
+            if len(key_data) > _KEYFRAME_RESULT_LIMIT:
+                key_preview = (
+                    key_data[:_KEYFRAME_RESULT_LIMIT // 2]
+                    + key_data[-_KEYFRAME_RESULT_LIMIT // 2:]
+                )
+                keys_truncated = len(key_data) - len(key_preview)
+            else:
+                key_preview = key_data
+                keys_truncated = 0
+            sample_candidates = sorted(set([
+                frames[0],
+                frames[-1],
+                *(
+                    (frames[index] + frames[index + 1]) / 2.0
+                    for index in range(len(frames) - 1)
+                ),
+            ]))
+            if len(sample_candidates) > _KEYFRAME_SAMPLE_LIMIT:
+                sample_frames = (
+                    sample_candidates[:_KEYFRAME_SAMPLE_LIMIT // 2]
+                    + sample_candidates[-_KEYFRAME_SAMPLE_LIMIT // 2:]
+                )
+            else:
+                sample_frames = sample_candidates
+            result[parm_name] = {
+                "key_count": len(keys),
+                "first_frame": frames[0],
+                "last_frame": frames[-1],
+                "keys": key_preview,
+                "samples": {
+                    str(frame): float(parm.evalAtFrame(frame)) for frame in sample_frames
+                },
+                "replaced_existing": len(originals[parm_name]) if replace else 0,
+            }
+            if keys_truncated:
+                result[parm_name]["keys_truncated"] = keys_truncated
+        return {
+            "node": n.path(),
+            "replace": replace,
+            "channels": result,
+            "frame_restored": float(hou.frame()) == saved_frame,
+            "scene_writes": writes,
         }
-        if keys_truncated:
-            result[parm_name]["keys_truncated"] = keys_truncated
-    return {
-        "node": n.path(),
-        "replace": replace,
-        "channels": result,
-        "frame_restored": float(hou.frame()) == saved_frame,
-    }
+
+    except BaseException as error:
+        restore_errors = _restore_parameters(snapshots)
+        if float(hou.frame()) != saved_frame:
+            try:
+                hou.setFrame(saved_frame)
+            except Exception as failure:
+                restore_errors.append(f'frame: {failure}')
+        if float(hou.frame()) != saved_frame:
+            restore_errors.append('frame: restoration readback differs')
+        raise CheckpointError(f'set_keyframes failed: {error}; restore_errors={restore_errors}',
+            {'ok': False, 'phase': 'keyframes_write', 'scene_writes': writes,
+             'restored': not restore_errors, 'restore_errors': restore_errors,
+             'frame_restored': float(hou.frame()) == saved_frame,
+             'scope': 'snapshotted channel values, expressions, keys and frame; external side effects are separate'}) from error
 
 
 def _spare_spec_template(item: dict, path: str, names: set):
@@ -5413,6 +5482,8 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
     bbox_a, bbox_b = ga.boundingBox(), gb.boundingBox()
     base = {
         "node": n.path(),
+        'correspondence': 'point_number',
+        'scope': 'sampled attribute arrays aligned by point number after count/type checks; stable IDs and matching primitive topology are not verified, so point reordering can appear as change',
         "attrib": attrib,
         "frame_a": fa,
         "frame_b": fb,
@@ -5507,10 +5578,8 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
 # --- render / sim 域 ---------------------------------------------------------
 
 # --- 图片产出登记（media relay 数据源） --------------------------------------
-# 动词产出的图片路径登记在这里；bridge 在每次 exec 结束后把它放进 envelope
-# 的 `images` 字段，host 侧经 /media 端点把字节拉回会话工作区——vision/fs
-# 工具被沙箱限制在工作区内，直接读不到 $HIP 下的产物（2026-08-19 草地任务
-# trace：vision_glance 被 "image escapes the allowed directories" 拦截）。
+# 记录本请求产出的图片路径；Bridge放进images，Host经/media读取字节并写入
+# DSH原生附件存储，不复制到会话工作区。附件送达不代表模型已完成语义观察。
 _PRODUCED_IMAGES: list = []
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"}
 _PREVIEW_IMAGE_EXTS = {
@@ -5759,12 +5828,17 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
             render_err = str(e)
 
         deadline = t0 + float(timeout)
-        while not render_err and time.time() < deadline:
+        # Native render() is synchronous and can exceed the file-wait budget.
+        # Always inspect the output once after it returns before reporting absence.
+        while not render_err:
             post_fingerprint = fingerprint(target)
             if post_fingerprint is not None and post_fingerprint['bytes'] > 0 and post_fingerprint != pre_fingerprint:
                 file_bytes = post_fingerprint["bytes"]
                 break
-            time.sleep(1)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(1, remaining))
     finally:
         restore_errors = _restore_parameters(parameter_state)
         # 渲染帧属于 agent 验证状态，不占用用户 playbar；即使 ROP 失败也还原。
@@ -6689,6 +6763,7 @@ def _geometry_fingerprint(node: hou.Node, frame: float) -> dict:
         "errors": errors,
         "warnings": warnings,
         "signature": signature.hexdigest()[:24],
+        'signature_scope': 'counts, bounds and at most 257 sampled point positions; excludes unsampled positions, attribute values, primitive topology/intrinsics and object transforms. Equal signatures mean no sampled change detected, not complete geometry identity',
     }
 
 

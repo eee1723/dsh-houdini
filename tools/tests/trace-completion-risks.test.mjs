@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import {execFileSync} from 'node:child_process';
+import {Session, SESSION_FORMAT_VERSION} from '@deepseek-ai/dsh-session';
+import {createSystemMessage,createUserMessage,createAssistantMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm';
+import {loadSessionEvents} from '../trace-session-lib.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-trace-risks-'));
@@ -77,8 +80,53 @@ try {
   assert.equal(trace.qualityLoopEvidence.contract.fields.controls, true);
   assert.equal(trace.qualityLoopEvidence.contract.fields.relations, true);
   assert(trace.completionRisks.some((risk) => risk.code === 'render_with_warnings'));
-  assert(!trace.completionRisks.some((risk) => risk.code === 'completed_vision_todo_without_evidence'),
+  assert(!trace.completionRisks.some((risk) => risk.code === 'completed_vision_todo_without_image_access'),
     '`divisions` must not be parsed as the English word `vision`');
+
+  // The current native format must pass through discovery, decompression,
+  // surface reconstruction, result normalization, context extraction and HTML.
+  const current = Session.create('current-trace-fixture');
+  current.append('system/message',{turn:1,step:1,message:createSystemMessage('Houdini fixture.','fixture')},{surfaceOp:'append'});
+  current.append('user/message',createUserMessage({source:{kind:'user'},
+    content:[{type:'text',text:'Inspect the current scene.'}]}),{surfaceOp:'append'});
+  const contextText='Houdini fixture scene: E:/tmp/current/test.hip';
+  current.append('user/message',createUserMessage({source:{kind:'runtime-context',form:'snapshot',
+    sections:[{name:'dsh-houdini:scene-context',text:contextText}]},
+    content:[{type:'text',text:contextText}]}),{surfaceOp:'append'});
+  current.append('request/header',{header:{config:{model:'fixture'},tools:[{name:'houdini_inspect'}]}});
+  current.append('assistant/message',{turn:1,step:1,stream:[],
+    message:createAssistantMessage({source:{provider:'fixture',model:'fixture'},
+      content:[{type:'tool-call',id:'current-call',name:'houdini_inspect',arguments:'{}'}]})},{surfaceOp:'append'});
+  current.append('tool/call',{turn:1,step:1,callId:'current-call',name:'houdini_inspect',arguments:{}});
+  const directText='Current fixture result: scene_info succeeded';
+  current.append('tool/result',{turn:1,step:1,message:createToolResultMessage({callId:'current-call',
+    content:[{type:'text',text:directText}],isError:false}),meta:{canonical:{ok:true,verbs:[],
+      execution:{runtime_id:'fixture-runtime',sequence:1,read_only:true}}}},{surfaceOp:'append'});
+  current.append('assistant/message',{turn:1,step:2,stream:[],
+    message:createAssistantMessage({source:{provider:'fixture',model:'fixture'},
+      content:[{type:'text',text:'Inspection returned the actual scene.'}]})},{surfaceOp:'append'});
+  const nativeEvents=current.snapshotEvents().map(row=>({...row,time:1000+row.seq}));
+  const currentInput=path.join(temp,'session.v4.jsonl.zstd');
+  const currentOutput=path.join(temp,'current-evidence.json');
+  fs.writeFileSync(currentInput,zlib.zstdCompressSync([
+    JSON.stringify({type:'session',version:SESSION_FORMAT_VERSION}),
+    ...nativeEvents.map(row=>JSON.stringify(row)),
+  ].join('\n')));
+  execFileSync(process.execPath,['skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs',
+    temp,'--out',currentOutput],{cwd:root});
+  const currentTrace=JSON.parse(fs.readFileSync(currentOutput,'utf8')).traces[0];
+  assert.equal(currentTrace.file,currentInput);
+  assert.equal(currentTrace.toolCalls,1);
+  assert.equal(currentTrace.unmatchedResults.length,0);
+  assert.equal(currentTrace.executionCost.resultChars,directText.length);
+  assert.deepEqual(currentTrace.observationContexts,[{seq:2,time:1002,text:contextText}]);
+  assert(currentTrace.requestContexts.every(row=>row.projectionComplete));
+  const report=path.join(temp,'current-report.html');
+  execFileSync(process.execPath,['tools/trace-report.mjs',temp,'--out',report],{cwd:root});
+  assert(fs.readFileSync(report,'utf8').includes(directText),'offline HTML retains native role=tool output');
+  const malformed=path.join(temp,'malformed.zstd');
+  fs.writeFileSync(malformed,zlib.zstdCompressSync('not-json\n'+JSON.stringify(nativeEvents[0])));
+  assert.equal(loadSessionEvents(malformed).lineErrors.length,1,'invalid lines remain visible diagnostics');
 } finally {
   assert.equal(path.dirname(path.resolve(temp)), path.resolve(os.tmpdir()));
   assert(path.basename(temp).startsWith('dsh-trace-risks-'));

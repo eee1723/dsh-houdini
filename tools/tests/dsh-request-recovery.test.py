@@ -17,6 +17,23 @@ def ref():
     return prepared[0]['requestRef']
 def body(token,code):return {'code':code,'request_ref':token,'owner_session':owner,
     'owner_call':uuid.uuid4().hex,'expected_contract':{'version':b._EXECUTION_CONTRACT_VERSION,'hash':b._VERB_CATALOG_HASH}}
+
+# The normal lifecycle must publish one runtime identity in both admission and
+# actual execution; importing the module alone cannot verify a restart.
+prior_runtime=b._RUNTIME_ID
+try:
+    for _ in range(2):
+        b.start(port=0)
+        b._pump_active=True
+        token=ref();observed=[]
+        handler('/exec',lambda value,status=200:observed.append(value))._route({**body(token,'__result__=scene_info()'),'read_only':True})
+        assert observed[0]['ok'],observed
+        assert observed[0]['execution']['runtime_id']==observed[0]['requestReceipt']['runtime_id']==b._RUNTIME_ID,observed
+        assert b._RUNTIME_ID!=prior_runtime and token.startswith(b._RUNTIME_ID+'.')
+        prior_runtime=b._RUNTIME_ID
+        b.stop()
+finally:b.stop()
+
 created=[];original=b._pump_active;b._pump_active=True
 try:
     token=ref();name='__request_'+uuid.uuid4().hex[:8]

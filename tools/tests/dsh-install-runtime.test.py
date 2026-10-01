@@ -22,6 +22,12 @@ spec = importlib.util.spec_from_file_location("install_fixture", ROOT / "houdini
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
+with patch.dict(os.environ, {"HOUDINI_USER_PREF_DIR": "D:/HoudiniPrefs/houdini__HVER__"}):
+    assert installer.default_packages_dirs() == [
+        Path("D:/HoudiniPrefs/houdini21.0/packages"),
+        Path("D:/HoudiniPrefs/houdini22.0/packages"),
+    ]
+
 
 def write_cache(cache, key, version, *, name="@deepseek-ai/dsh", binary=True):
     root = cache / "_npx" / key / "node_modules" / "@deepseek-ai" / "dsh"

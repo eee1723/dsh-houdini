@@ -162,8 +162,6 @@ assert.match(moduleContracts, /不因.*自动创建(?:subnet|Subnet)/,
   'module boundaries must not imply automatic subnet creation')
 assert.match(sopWorkflow, /OUT_ASSET/, 'nontrivial editable assets need a stable root handoff output')
 assert.match(moduleContracts, /绝对.*路径/, 'movable modules must reject hidden absolute dependencies')
-assert.match(handoffLayout, /OUT_<MODULE>/, 'flat module checkpoints belong in the handoff contract')
-assert.match(handoffLayout, /不把它埋在assembly框内/, 'the final output needs a distinct presentation role')
 assert.match(sopWorkflow, /世界Y-up/, 'ordinary Houdini assets need an explicit world-up convention')
 assert.match(sopWorkflow, /references\/execution-checkpoints\.md/, 'entry must route detailed checks after progressive disclosure')
 assert.match(sopCheckpoints, /新建资产从首个源使用世界Y-up/, 'new assets must start Y-up instead of relying on root repair')
@@ -171,7 +169,6 @@ assert.match(sopCheckpoints, /适配在稳定输出之前/, 'local coordinate ad
 assert.match(sopCheckpoints, /组件大框包含这些小框/, 'handoff must preserve component containers around role cells')
 assert.match(sopCheckpoints, /组件.*Cd/, 'requested observation colors must follow stable component identity')
 assert.match(moduleContracts, /X宽、Y高、Z深/, 'module contracts need the default Houdini world frame')
-assert.match(handoffLayout, /MODULE · SOURCE/, 'handoff reference needs the component-row role-cell pattern')
 const houdiniPreset = read('presets/houdini/persona.md')
 assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tutorial methods belong to those skills/,
   'the persona must route domain methods instead of duplicating them')

@@ -906,7 +906,7 @@ def show_version_manager() -> None:
         repair_btn.setEnabled(True)
         bridge = "ONLINE" if state.get("bridge_online") else "OFFLINE"
         frontend = "ONLINE" if state.get("frontend_online") else "OFFLINE"
-        service_label.setText(f"Houdini Bridge :8765  {bridge}    ·    DSH Web :3081  {frontend}")
+        service_label.setText(f"Houdini Bridge :{_BRIDGE_PORT}  {bridge}    ·    DSH Web :{_FRONTEND_PORT}  {frontend}")
         detail_label.setText(
             f"DSH: {dsh_detail}\nDSH-Houdini: {plugin_detail}\n{state.get('message', '')}"
         )

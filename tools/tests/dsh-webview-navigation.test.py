@@ -49,7 +49,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         requests.append(self.path)
         body = b'''<!doctype html><script>
-        window.probe = {urlAtBoot: location.href, done: false};
+        window.probe = {urlAtBoot: location.href, done: false, intents: []};
+        window.addEventListener('dsh-houdini-open-workspace', function () {
+          probe.intents.push(location.href);
+        });
         try {
           probe.resourceHost = new URL('dsh-resource://file/session/fixture/example.txt').hostname;
           probe.reviewHost = new URL('dsh-resource://changes-review/session/fixture/1/1').hostname;
@@ -92,16 +95,28 @@ base = "http://127.0.0.1:" + str(server.server_address[1])
 webview.FRONTEND_URL = base
 
 def settle():
-    loop = QEventLoop()
-    QTimer.singleShot(1500, loop.quit)
-    loop.exec()
     rows = []
     loop = QEventLoop()
-    webview._view.page().runJavaScript("JSON.stringify(window.probe)", 0, lambda value: (rows.append(value), loop.quit()))
-    QTimer.singleShot(3000, loop.quit)
+    poll = QTimer()
+    poll.setInterval(100)
+    def received(value):
+        if not value:
+            return
+        observed=json.loads(value)
+        if observed.get('done') or observed.get('error'):
+            rows.append(observed)
+            loop.quit()
+    def probe():
+        webview._view.page().runJavaScript(
+            "window.probe && JSON.stringify(Object.assign({}, window.probe, {urlNow: location.href}))",
+            0, received)
+    poll.timeout.connect(probe)
+    poll.start()
+    QTimer.singleShot(10000, loop.quit)
     loop.exec()
-    assert rows and rows[0], "fixture did not load"
-    return json.loads(rows[0])
+    poll.stop()
+    assert rows, f"fixture did not complete at {webview._view.url().toString()}; requests={requests} failed={webview._load_failed}"
+    return rows[-1]
 
 try:
     webview.show_webview(session_id="task /中文?&", authenticated_url=base + "/?token=" + TOKEN)
@@ -149,32 +164,41 @@ try:
     assert not webview._retry_timer.isActive()
     assert not webview._view.page().scripts().find("dsh-launch-session-hint")
 
-    # A real workspace route keeps the same page across visible/hidden reopening.
+    # Workspace requests publish fresh intents into the same loaded app. The
+    # fixture observes delivery only; actual DSH selection is covered by the
+    # real-client navigation regression, not a Python selected-workspace cache.
     workspace_a, workspace_b = r"E:\fixture A", r"E:\fixture B"
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)
-    assert len(requests) == 7 and query["dsh-houdini-workspace"] == [workspace_a]
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlNow"]).query)
+    assert len(requests) == 6 and query["dsh-houdini-workspace"] == [workspace_a]
     assert query["dsh-houdini-request"][0].startswith("dsh-houdini-")
     assert "dsh-houdini-session" not in query
+    assert observed['intents']==[observed['urlNow']]
+    prior_request=query['dsh-houdini-request'][0]
     assert webview.raise_workspace(workspace_a)
     webview._window.hide()
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
-    assert settle() == observed and len(requests) == 7
-    assert not webview.raise_workspace(workspace_b)
+    repeated=settle()
+    query=urllib.parse.parse_qs(urllib.parse.urlsplit(repeated['urlNow']).query)
+    assert len(requests)==6 and len(repeated['intents'])==3
+    assert query['dsh-houdini-workspace']==[workspace_a] and query['dsh-houdini-request'][0]!=prior_request
+    assert webview.raise_workspace(workspace_b)
     webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN)
     changed = settle()
-    assert len(requests) == 8
-    assert urllib.parse.parse_qs(urllib.parse.urlsplit(changed["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_b]
+    assert len(requests) == 6 and len(changed['intents'])==5
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(changed["urlNow"]).query)["dsh-houdini-workspace"] == [workspace_b]
+    assert not webview._view.page().scripts().find('dsh-launch-session-hint'), 'loaded-page intent must not leak into a later document'
     webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN, force_reload=True)
     restarted = settle()
-    assert len(requests) == 9 and restarted["done"]
-    assert restarted["urlAtBoot"] != changed["urlAtBoot"], "Repair needs a new navigation intent after auth"
+    assert len(requests) == 7 and restarted["done"] and restarted['intents']==[]
+    assert restarted["urlAtBoot"] != changed["urlNow"], "Repair needs a new navigation intent after auth"
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(restarted['urlNow']).query)['dsh-houdini-workspace']==[workspace_b]
 
     # A failed load while the window is hidden has no active retry timer. Raising
     # it must resume the existing intent, not strand an otherwise healthy host.
     fail_auth_once = True
-    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
+    webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN, force_reload=True)
     webview._window.hide()
     loop = QEventLoop()
     QTimer.singleShot(1000, loop.quit)
@@ -182,14 +206,14 @@ try:
     assert webview._load_failed and not webview._retry_timer.isActive()
     assert webview.raise_workspace(workspace_a)
     recovered = settle()
-    assert len(requests) == 10 and recovered["done"]
+    assert len(requests) == 8 and recovered["done"]
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(recovered["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_a]
-    # Component preview uses an independently allocated loopback Host origin.
+    # An independently allocated loopback Host origin requires a new document.
     webview.FRONTEND_URL = 'http://127.0.0.1:1'
     assert not webview.raise_workspace(workspace_a)
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + '/?token=' + TOKEN,
                          frontend_url=base, force_reload=True)
-    assert settle()['done'] and len(requests) == 11
+    assert settle()['done'] and len(requests) == 9
     assert webview.raise_workspace(workspace_a, frontend_url=base)
     assert not webview.raise_workspace(workspace_a)
     webview.FRONTEND_URL = base

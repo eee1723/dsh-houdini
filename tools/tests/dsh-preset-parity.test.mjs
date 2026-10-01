@@ -18,6 +18,8 @@ const parse = file => yaml.load(fs.readFileSync(file, 'utf8'), { schema })
 const standard = parse(path.join(upstreamPackage, 'presets/standard.patch.yml'))[0].insert[0].config.plugins
 const patch = parse(path.join(root, 'presets/houdini/cordis.patch.yml'))
 const declarations = patch.flatMap(row => row.insert || []).filter(row => row.name === '@deepseek-ai/dsh-agent-preset')
+const frontend = patch.flatMap(row => row.insert || []).filter(row => row.name === 'dsh-houdini')
+assert.equal(frontend.length, 1, 'browser delivery has one root entry')
 assert.equal(declarations.length, 1)
 assert.equal(declarations[0].config.id, 'houdini')
 assert.equal(patch.find(row => row.id === 'agent-preset-registry').config.default, 'houdini')
@@ -53,7 +55,7 @@ for (const [key, standardRow] of standardRows) {
   assert.deepEqual(actual.get(key), standardRow, `Houdini drifted from standard DSH row ${key}`)
 }
 assert.deepEqual([...actual.keys()].filter(key => !standardRows.has(key)), ['/houdini'])
-assert.equal(actual.get('/houdini').name, 'dsh-houdini')
+assert.equal(actual.get('/houdini').name, 'dsh-houdini/agent')
 assert.equal(actual.get('/houdini').config.productMode, undefined)
 assert.equal(actual.get('/present').name, '@deepseek-ai/dsh-tool-present')
 assert.match(actual.get('/persona').config.prefix, /call present on its authoritative path before the final response/)

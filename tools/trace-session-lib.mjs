@@ -17,6 +17,7 @@ try {
 } catch { /* collectRequestContexts reports the unavailable validator explicitly */ }
 
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd];
+const SESSION_FILES = ['session.v4.jsonl.zstd', 'session.v3.jsonl.zstd', 'session.jsonl.zstd'];
 
 /** Find the most recently modified trace under the DSH session store. */
 export function newestSessionFile(root = path.join(os.homedir(), '.dsh', 'sessions')) {
@@ -26,7 +27,7 @@ export function newestSessionFile(root = path.join(os.homedir(), '.dsh', 'sessio
     const workspaceDir = path.join(root, workspace);
     if (!fs.statSync(workspaceDir).isDirectory()) continue;
     for (const session of fs.readdirSync(workspaceDir)) {
-      for (const name of ['session.v3.jsonl.zstd', 'session.jsonl.zstd']) {
+      for (const name of SESSION_FILES) {
         const file = path.join(workspaceDir, session, name);
         if (!fs.existsSync(file)) continue;
         const modified = fs.statSync(file).mtimeMs;
@@ -43,8 +44,9 @@ export function resolveSessionFile(input) {
   const absolute = path.resolve(input);
   if (!fs.existsSync(absolute)) throw new Error(`session path does not exist: ${absolute}`);
   if (!fs.statSync(absolute).isDirectory()) return absolute;
-  const v3 = path.join(absolute, 'session.v3.jsonl.zstd');
-  return fs.existsSync(v3) ? v3 : path.join(absolute, 'session.jsonl.zstd');
+  const file = SESSION_FILES.map(name => path.join(absolute, name)).find(file => fs.existsSync(file));
+  if (!file) throw new Error(`no supported session file in: ${absolute}`);
+  return file;
 }
 
 /** Load every JSON event from a concatenated multi-frame zstd session. */
@@ -58,20 +60,23 @@ export function loadSessionEvents(input) {
   }
   const events = [];
   const frameErrors = [];
+  const lineErrors = [];
   for (let i = 0; i < starts.length; i++) {
     const end = i + 1 < starts.length ? starts[i + 1] : buffer.length;
     try {
       const output = zlib.zstdDecompressSync(buffer.subarray(starts[i], end));
-      for (const line of output.toString('utf8').split('\n')) {
+      for (const [lineIndex, line] of output.toString('utf8').split('\n').entries()) {
         const text = line.trim();
         if (!text) continue;
-        try { events.push(JSON.parse(text)); } catch {}
+        try { events.push(JSON.parse(text)); }
+        catch (error) { lineErrors.push({frame:i,line:lineIndex+1,error:String(error)}); }
       }
     } catch (error) {
       frameErrors.push({ frame: i, offset: starts[i], error: String(error) });
     }
   }
-  return { file, events, frames: starts.length, frameErrors };
+  if (!starts.length) frameErrors.push({frame:null,offset:0,error:'No zstd frame found'});
+  return { file, events, frames: starts.length, frameErrors, lineErrors };
 }
 
 /** Return the originating call id for a tool/result event, across known schemas. */

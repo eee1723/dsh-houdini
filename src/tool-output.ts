@@ -55,8 +55,7 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
     imageCount: Array.isArray(value.imageAttachments)
       ? value.imageAttachments.filter(item => object(item)?.attachment).length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
-    ...(value.execution !== undefined || value.details !== undefined || value.requestReceipt !== undefined
-      ? { canonical: value as unknown as JsonValue } : {}),
+    canonical: value as unknown as JsonValue,
   }
 }
 
@@ -67,9 +66,7 @@ export function jobPresentationMeta(value: JobStatus): PresentationMeta {
 export function jobHandleMeta(value: JobHandle): PresentationMeta {
   return {
     ...(value.jobId ? { jobId: value.jobId } : {}),
-    ...(value.requestReceipt ? { canonical: {
-      ...value, ok: !!value.jobId, stdout: '', stderr: '',
-    } as unknown as JsonValue } : {}),
+    canonical: value as unknown as JsonValue,
   }
 }
 

@@ -6,9 +6,12 @@ job registry or background HOM work here.
 from __future__ import annotations
 
 import contextlib
+from copy import deepcopy
 import difflib
 import inspect
+import json
 import os
+from pathlib import Path
 import threading
 import time
 import traceback
@@ -27,6 +30,7 @@ from dsh_execution_results import (
 # Cache the actual callable, not only its name, so repair/reload and test
 # replacements obtain their own precise argument signature.
 _VERB_SIGNATURES = {}
+_VERB_OPERATION_CONTRACTS = None
 
 
 def _verb_signature(name, fn):
@@ -42,7 +46,7 @@ def _verb_signature(name, fn):
 
 
 def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
-    """返回已注入动词的准确签名；列表可一次查询 1..16 个唯一名称。"""
+    """按需读取准确签名/说明和已维护的输入、返回、示例契约；列表可一次查询1..16个名称。"""
     registry = _VERBS
     if isinstance(name, (list, tuple)):
         if not 1 <= len(name) <= 16:
@@ -64,13 +68,26 @@ def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
     signature = str(inspected) if inspected is not None else None
     returns = inspected.return_annotation if inspected is not None else inspect.Signature.empty
     return_type = None if returns is inspect.Signature.empty else inspect.formatannotation(returns)
-    return {
+    result = {
         "name": key,
         "signature": signature,
         "return_type": return_type,
         "call_mode": "exec" if key in _MUTATING_VERB_NAMES else "query_or_exec",
         "doc": inspect.getdoc(fn) or "",
     }
+    global _VERB_OPERATION_CONTRACTS
+    if _VERB_OPERATION_CONTRACTS is None:
+        source = Path(__file__).resolve().parent.parent / 'verb-operation-contracts.json'
+        _VERB_OPERATION_CONTRACTS = json.loads(source.read_text(encoding='utf8'))
+    contract = _VERB_OPERATION_CONTRACTS['verbs'].get(key)
+    if contract is not None:
+        result['operation_contract'] = {
+            'schema_version': _VERB_OPERATION_CONTRACTS['schema_version'],
+            'schema_scope': _VERB_OPERATION_CONTRACTS['schema_scope'],
+            'execution_scope': _VERB_OPERATION_CONTRACTS['execution_scope'],
+            **deepcopy(contract),
+        }
+    return result
 
 
 _VERBS: dict[str, object] = {
@@ -235,6 +252,16 @@ class _VerbArgumentError(TypeError):
         self.evidence = evidence
 
 
+def _unrecovered_mutation(entry):
+    """Only a failed dispatched write without recovery evidence poisons a batch."""
+    if entry.get('ok') or entry.get('verb') not in _MUTATING_VERB_NAMES:
+        return False
+    facts = entry.get('summary') or {}
+    restored = facts.get('restored', facts.get('batch_parameter_state_restored',
+                                               facts.get('parameter_state_restored')))
+    return facts.get('scene_writes') != 0 and restored is not True
+
+
 def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
     # Give a precise, zero-write recovery path for repeated discovery mistakes;
     # do not label TypeErrors raised inside the implementation as argument errors.
@@ -253,16 +280,17 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
         kwargs_json = {str(k): _verb_value(v) for k, v in kwargs.items()}
         try:
             if name in _MUTATING_VERB_NAMES:
-                failed = next((entry for entry in ledger if not entry.get('ok', False)), None)
+                failed = next((entry for entry in ledger if _unrecovered_mutation(entry)), None)
                 if failed is not None:
                     raise _DispatchBlockedError(
                         f"{name} blocked before dispatch: earlier verb {failed['verb']} failed; "
-                        "this exec cannot commit. Read-only diagnostics may continue; repair in a new exec.",
+                        "its scene recovery is unverified. Read-only diagnostics may continue; repair in a new exec.",
                         {'ok': False, 'phase': 'prior_verb_failure', 'scene_writes': 0,
                          'dispatched': False, 'failed_verb': failed['verb']})
+            bound_arguments = {}
             if discovery_signature is not None:
                 try:
-                    discovery_signature.bind(*args, **kwargs)
+                    bound_arguments = discovery_signature.bind(*args, **kwargs).arguments
                 except TypeError as error:
                     hint = ( ' parent is an existing creation network, not a category. '
                              'For SOPs use node_info(existing_geo, "box"); if no geometry container exists, '
@@ -276,7 +304,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                         'next_action': f'verb_help("{name}")'}) from error
             targets = []
             edits_content = name in _MUTATING_VERB_NAMES and name not in _OBSERVATION_VERBS
-            if name in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit') and kwargs.get('dry_run') is True:
+            if bound_arguments.get('dry_run') is True:
                 edits_content = False
             if impact is not None and edits_content:
                 impact['attempted'] = True
@@ -307,7 +335,10 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 "args": args_json,
                 "kwargs": kwargs_json,
                 "ok": True,
-                "result": _verb_value(result),
+                # Help is already pure JSON. Preserve its nested schema rather
+                # than converting fields beyond the compact HOM snapshot depth
+                # to repr strings; __result__ and ledger then carry one contract.
+                "result": _jsonable(result) if name == 'verb_help' else _verb_value(result),
                 "ms": round((time.time() - start) * 1000, 1),
             }
             check = result.get("validation", result) if isinstance(result, dict) else None
@@ -353,10 +384,13 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 "ms": round((time.time() - start) * 1000, 1),
             })
             if isinstance(e, dsh_hou_helpers.CheckpointError):
-                ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence))
+                ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence) or e.evidence)
                 ledger[-1]['check_status'] = 'failed'
             if isinstance(e, (dsh_hou_helpers.PreflightError, dsh_hou_helpers.ParameterPatchError,
                               _DispatchBlockedError, _VerbArgumentError)):
+                ledger[-1]['summary'] = _jsonable(e.evidence)
+                ledger[-1]['check_status'] = 'failed'
+            elif not isinstance(e, dsh_hou_helpers.CheckpointError) and isinstance(getattr(e, 'evidence', None), dict):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
                 ledger[-1]['check_status'] = 'failed'
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
@@ -374,7 +408,7 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     undo group is still open, so the normal failure path can roll back every
     Houdini-undoable edit in the batch.
     """
-    failed = [entry for entry in verb_ledger if not entry.get("ok", False)]
+    failed = [entry for entry in verb_ledger if _unrecovered_mutation(entry)]
     if not failed:
         return
     names = ", ".join(str(entry.get("verb", "?")) for entry in failed[:8])
@@ -383,7 +417,7 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     raise RuntimeError(
         "agent code caught and suppressed a verb exception "
         f"({names}); the exec is failed so undoable scene edits can roll back. "
-        "Do not catch mutation failures unless you re-raise them."
+        "The failed mutation has no confirmed zero-write or restored state; re-raise it."
     )
 
 
@@ -566,7 +600,8 @@ class ExecutionRuntime:
             raw_usage=raw_usage, gate_outcome=gate_outcome, allow_raw=allow_raw,
             namespace=namespace, advisories=advisories)
         mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
-            not (v['verb'] in ('hda_set_interface', 'create_spare_parms', 'bind_controls', 'hda_edit', 'network_boxes', 'layout_nodes') and (v.get('summary') or {}).get('scene_writes') == 0)
+            (v.get('summary') or {}).get('scene_writes') != 0 and
+            (v.get('ok') or (v.get('summary') or {}).get('restored') is not True)
             for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
         if error is None:
             transaction_status = 'committed' if mutation_attempted else 'no_scene_change'

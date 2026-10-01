@@ -112,12 +112,12 @@ try:
                    f'build_module({root.path()!r},[{{"name":"hidden","type":"partition"}}],output="hidden")')
     assert not env['ok'] and env['transaction']['status']=='rolled_back',env
     assert source.evalParm('sizex')==1
-    # A caught static failure followed by a mutation still fails the whole exec.
+    # A handled zero-write preflight failure may be corrected in the same batch.
     env=b.run_code(f'try:\n build_module({root.path()!r},[{{"name":"hidden","type":"partition"}}],output="hidden")\n'
                    f'except ValueError:\n pass\nset_parm({source.path()!r},"sizex",4)')
-    assert not env['ok'] and env['transaction']['status']=='no_scene_change',env
-    assert env['verbs'][-1]['summary']['dispatched'] is False,env
-    assert source.evalParm('sizex')==1
+    assert env['ok'] and env['transaction']['status']=='committed',env
+    assert env['verbs'][0]['summary']['scene_writes']==0 and env['verbs'][-1]['ok'],env
+    assert source.evalParm('sizex')==4
     # Cook/VEX failure happens AFTER writes and may never acquire zero-write metadata.
     env=b.run_code(f'build_module({root.path()!r},[{{"name":"made","type":"box"}},'
                    '{"name":"bad_vex","type":"attribwrangle","inputs":["made"],'

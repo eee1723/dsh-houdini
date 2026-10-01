@@ -435,7 +435,8 @@ class Store:
         for args, cwd, expected in (
             ([str(node), "--version"], install, "v" + context["nodeVersion"]),
             ([str(node), str(install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"), "--version"], install, context["dshVersion"]),
-            ([str(node), "--input-type=module", "-e", "await import('dsh-houdini')"], install / "app", None),
+            ([str(node), "--input-type=module", "-e",
+              "await import('dsh-houdini'); await import('dsh-houdini/agent')"], install / "app", None),
         ):
             progress("Checking the bundled Node, DSH and plugin")
             result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True,

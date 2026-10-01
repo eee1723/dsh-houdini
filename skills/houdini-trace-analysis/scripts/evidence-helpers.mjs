@@ -369,14 +369,14 @@ export function linkNativeImageResponses(images, steps, events) {
 export function classifyVisionEvidence(step) {
   const tool = String(step.tool || '');
   const semanticTools = new Set([
-    'read_image', 'vision_glance', 'vision_ground', 'vision_detect',
+    'vision_glance', 'vision_ground', 'vision_detect',
     'vision_long_screenshot_ocr',
   ]);
   const role = tool === 'vision_present'
     ? 'presentation'
     : tool === 'vision_bootstrap'
       ? 'setup'
-      : semanticTools.has(tool)
+      : tool === 'read_image' ? 'image_access' : semanticTools.has(tool)
         ? 'inspection'
         : 'pixel';
   const transportOk = !step.failed;
@@ -393,10 +393,14 @@ export function classifyVisionEvidence(step) {
   return {
     role,
     transportOk,
-    semanticOk: role === 'inspection' ? !semanticFailure : null,
-    // Backward-compatible summary: setup/presentation can succeed as tools,
-    // but callers must require role=inspection && semanticOk for visual proof.
-    ok: role === 'inspection' ? !semanticFailure : transportOk && !structuredFailure,
+    accessOk: !semanticFailure,
+    // A returned description is evidence to review, never an automatic verdict
+    // on whether the actual image matches the task or that description.
+    descriptionText: role === 'inspection' && !semanticFailure ? text || null : null,
+    semanticOk: ['inspection','image_access'].includes(role) && semanticFailure ? false : null,
+    semanticStatus: ['inspection','image_access'].includes(role)
+      ? semanticFailure ? 'access_failed' : 'requires_image_comparison' : 'not_semantic_inspection',
+    ok: !semanticFailure,
     reason: !transportOk
       ? 'tool_transport_failed'
       : structuredFailure
@@ -667,15 +671,15 @@ function visualFreshness(indexed, assistantMessages) {
         source:result.source||null});
     }
     const vision=classifyVisionEvidence(step);
-    if(vision.role!=='inspection')continue;
+    if(!['inspection','image_access'].includes(vision.role))continue;
     for(const path of vision.images) {
       const image=[...produced].reverse().find(p=>p.aliases.includes(key(path)));
-      const row={index:step.index,path,accessSucceeded:vision.semanticOk===true,
+      const row={index:step.index,path,accessSucceeded:vision.accessOk,
         view:image?.view??null,
         productionIndex:image?.index??null,target:image?.target??null,
-        status:!vision.semanticOk?'inspection_access_failed':!image?'unlinked_image':image.invalidTransaction?'invalidated_transaction':'no_recorded_change',
+        status:!vision.accessOk?'inspection_access_failed':!image?'unlinked_image':image.invalidTransaction?'invalidated_transaction':'no_recorded_change',
         changedAt:[]};
-      if(image&&vision.semanticOk&&!image.invalidTransaction)for(const later of indexed.filter(s=>s.index>image.index)) {
+      if(image&&vision.accessOk&&!image.invalidTransaction)for(const later of indexed.filter(s=>s.index>image.index)) {
         const uncertain=later.transaction?.status==='recovery_unverified'||later.rollback?.error
           || (later.failed&&later.rollback?.supported===false);
         if(!sceneMutation(later)&&!uncertain)continue;
@@ -864,10 +868,11 @@ function auditReviewEvidence(steps, assistantMessages) {
       });
     }
     const vision=classifyVisionEvidence(step);
-    const nextTime=vision.role==='inspection'
+    const hasImageAccess=['inspection','image_access'].includes(vision.role);
+    const nextTime=hasImageAccess
       ? steps.reduce((next,s)=>Number.isFinite(s.time)&&s.time>step.time?Math.min(next,s.time):next,Infinity) : Infinity;
-    if(vision.role==='inspection')inspections.push({index:step.index,images:vision.images,
-      accessSucceeded:vision.semanticOk===true,
+    if(hasImageAccess)inspections.push({index:step.index,images:vision.images,
+      accessSucceeded:vision.accessOk,
       toolResult:excerpt(step.resultText??step.resultPreview),
       // Image-only tools have no semantic prose. Retain subsequent model text
       // separately: successful image delivery never certifies that judgement.
@@ -889,8 +894,8 @@ function auditReviewEvidence(steps, assistantMessages) {
 }
 
 /**
- * Deterministic evidence for the open-ended quality loop (HTA-023 family).
- * It reports observable gates; it does not pretend regexes can judge artistic quality.
+ * Task, measurement and claim evidence. Lexical fields are navigation cues;
+ * they cannot mandate a modeling workflow or certify completion.
  */
 export function collectQualityLoopEvidence({
   steps = [], userMessages = [], assistantMessages = [], availableTools = [], activatedSkills = [],
@@ -934,22 +939,11 @@ export function collectQualityLoopEvidence({
   };
   const requiresControls = /(?:总控|统一调整|联动|程序化|可调|可以调节|参数化|controls?|procedural|parameter[- ]driven|adjustable|configurable|parameterized)/i.test(agreedRequest);
   const requiresRelations = /(?:连接|装配|机械|结构|穿插|间隙|自行车|汽车|车辆|产品|建筑|角色|assembly|mechanical|structur|intersection|clearance)/i.test(agreedRequest);
-  const requiredContractFields = [
-    'referenceStatus', 'qualityLod', 'simplifications',
-    ...(requiresControls ? ['controls'] : []),
-    ...(requiresRelations ? ['relations'] : []),
-    'evidencePlan',
-  ];
-  const missingContractFields = requiredContractFields.filter((name) => !contractFields[name]);
 
   const researchSteps = indexed.filter((step) => /(?:web_search|browser|research)/i.test(String(step.tool || '')))
     .map((step) => step.index);
   const userProvidedReference = /(?:https?:\/\/|参考(?:图|文件|链接|如下)|规格表|用户提供|attached reference|reference (?:image|file|link))/i.test(request);
   const userAuthorizedNoResearch = /(?:不要|无需|不需要|不用).{0,12}(?:外部)?参考|(?:风格化|抽象).{0,12}(?:即可|就行)|(?:比例|尺寸|造型).{0,12}(?:你决定|自行决定)|no (?:external )?reference|do not research/i.test(request);
-  const qualityContractLoadSteps = indexed.filter((step) => (
-    /#\s*程序化 SOP 质量合同/i.test(String(step.resultText ?? step.resultPreview ?? ''))
-    || /#\s*Procedural SOP Quality Contract/i.test(String(step.resultText ?? step.resultPreview ?? ''))
-  )).map((step) => step.index);
   const externalTruthClaims = (assistantMessages || []).filter((message) => EXTERNAL_TRUTH_SIGNAL.test(String(message.text || '')));
   const unsupportedExternalTruthClaims = externalTruthClaims.filter(
     (message) => !ASSUMPTION_BOUNDARY.test(String(message.text || '')),
@@ -1045,14 +1039,11 @@ export function collectQualityLoopEvidence({
       firstMutationIndex: firstMutation?.index ?? null,
       requirements: { controls: requiresControls, relations: requiresRelations },
       fields: contractFields,
-      missing: missingContractFields,
     },
     reference: {
       researchSteps,
       userProvidedReference,
       userAuthorizedNoResearch,
-      qualityContractRequired: applicable && activatedSkills.includes('houdini-sop-workflow'),
-      qualityContractLoadSteps,
       externalTruthClaimCount: externalTruthClaims.length,
       unsupportedExternalTruthClaims,
       assumptionBoundaryDisclosed,
@@ -1107,18 +1098,6 @@ export function qualityLoopRisks(evidence) {
     code:'visual_completion_claim_with_stale_evidence',
     detail:'Final visual-pass language coexists with latest inspected views preceding a recorded target change. Review claim scope; this is not an automatic artistic-quality verdict.',
     inspections:visual.latestInspections.filter(r=>r.status==='stale_after_recorded_target_change')});
-  if (evidence.applicable && evidence.contract.missing.length) {
-    risks.push({
-      code: 'quality_contract_incomplete',
-      detail: `Open-ended quality contract is missing: ${evidence.contract.missing.join(', ')}.`,
-    });
-  }
-  if (evidence.reference.qualityContractRequired && !evidence.reference.qualityContractLoadSteps.length) {
-    risks.push({
-      code: 'quality_contract_reference_not_loaded',
-      detail: 'houdini-sop-workflow was active for an open-ended quality task, but its procedural quality contract was not loaded.',
-    });
-  }
   if (evidence.available.webSearch
       && evidence.reference.externalTruthClaimCount
       && !evidence.reference.userProvidedReference
@@ -1135,26 +1114,17 @@ export function qualityLoopRisks(evidence) {
       detail: `${evidence.reference.unsupportedExternalTruthClaims.length} external-truth claim(s) lack a source or an assumption boundary.`,
     });
   }
-  if (evidence.applicable
-      && evidence.skeleton.firstRenderIndex
-      && evidence.skeleton.tabCreatesBeforeFirstRender >= 20
-      && !evidence.skeleton.checkpointMentions.length) {
-    risks.push({
-      code: 'late_first_visual_validation',
-      detail: `${evidence.skeleton.tabCreatesBeforeFirstRender} nodes were created before the first render without an explicit skeleton/proxy checkpoint.`,
-    });
-  }
-  if (evidence.applicable && evidence.contract.fields.controls && !evidence.perturbation.restored.length
+  if (evidence.contract.requirements.controls && !evidence.perturbation.restored.length
       && !(evidence.perturbation.controlTests || []).some(t => (t.ok === true || t.executed === true) && t.restored === true && t.results?.length)) {
     risks.push({
       code: 'procedural_control_not_perturbed',
-      detail: 'The task promised configurable controls, but no set → validate → restore perturbation was observed on a declared user-control node.',
+      detail: 'User control intent was detected, but no set → validate → restore observation was recorded. Review whether this matters to the requested delivery; this is not a mandatory workflow.',
     });
   }
-  if (evidence.applicable && evidence.contract.fields.relations && !evidence.relations.probeSteps.length) {
+  if (evidence.contract.requirements.relations && !evidence.relations.probeSteps.length) {
     risks.push({
       code: 'relationship_contract_without_evidence',
-      detail: 'The pre-mutation contract promised module relationships, but no relationship-oriented probe was observed.',
+      detail: 'Relationship intent was detected in the user task, but no relationship-oriented measurement was recorded. Review scope against the requested result; geometry or visual evidence may use other methods.',
     });
   }
   const contradictoryRelationCandidates=(evidence.relations.candidates||[]).filter(candidate=>{
@@ -1282,7 +1252,7 @@ export function collectValidationCoverage(steps) {
   const comparisonFrames = uniqueFrames(comparisons.flatMap((item) => item.frames));
   const visionFrames = uniqueFrames(vision.flatMap((item) => item.frames));
   const visionInspectionFrames = uniqueFrames(
-    vision.filter((item) => item.role === 'inspection').flatMap((item) => item.frames),
+    vision.filter((item) => ['inspection','image_access'].includes(item.role)).flatMap((item) => item.frames),
   );
   return {
     geometry,

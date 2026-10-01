@@ -7,7 +7,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
-用户消息 → preset/persona + 按需skill
+浏览器 → bare dsh-houdini frontend-host → DSH根client graph与Houdini Trace
+用户消息 → Houdini preset内dsh-houdini/agent + persona + 按需skill
          → src/context.ts + scene-context.ts：事实上下文与一次现场指代观察
          → src/tools.ts → tool-runtime.ts / tool-query.ts → src/bridge.ts
          → dsh_bridge.py：HTTP → 主线程队列 → dsh_execution.py
@@ -62,6 +63,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配，集中真实宿主接口 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
+| [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，只在Host根Loader登记前端模块；模型工具与会话能力通过preset内dsh-houdini/agent加载 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
@@ -179,8 +181,9 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
 `$HIP/dsh-visual-checks/<run-id>/`，不建立第二条图片复制管线。
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
-[dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护受治理分组、语义色、类型化Box provenance、
-presentation快照、handoff两阶段应用与Bridge undo核对。handoff不改变现有children/flow语义，只移动显式选中的
+[dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护可直接应用的Network Box分组、可选role颜色注解、
+同批任意声明顺序的members/boxes嵌套、类型化Box provenance、presentation快照与Bridge undo核对。普通分组不要求预览hash；
+布局handoff按其具体移动计划保留预览与应用。handoff不改变现有children/flow语义，只移动显式选中的
 当前session自有扁平叶子Box及完整自有成员；component模式移动一层组件容器内的叶子框和成员，保留叶内布局。明确授权的既有网络可单次allow_foreign；服务和其他未授权/未选网络项仍固定。
 
 视频教程解析由[video skill](../skills/houdini-video-tutorial/SKILL.md)组织，
@@ -229,6 +232,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [gen-trace-client.mjs](../tools/gen-trace-client.mjs) | 同源提取guidance/preset/注册技能与资源，嵌入手写Trace组件、样式及evidence-helpers副作用分类/采用统计函数；--check只读漂移验证 |
 | [gen-web-polyfills.mjs](../tools/gen-web-polyfills.mjs) | 从锁定core-js生成Chrome 108兼容资产与许可证；web-polyfills与双版本Qt导航回归验证 |
 | [gen-node-card-docs.mjs](../tools/gen-node-card-docs.mjs) | JSON节点卡→文档，严格schema与漂移检查 |
+| [verb-operation-contracts.json](../houdini/verb-operation-contracts.json)、[gen-verb-contract-docs.mjs](../tools/gen-verb-contract-docs.mjs) | 按需动词输入/成功返回结构与示例的唯一源；dsh_execution.py的verb_help读取，生成[动词契约](verb-contracts.md)，不参与执行校验或常驻提示拼接 |
 | [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取；V3上下文经安装的DSH公开surface校验器折叠，非法或校验器不可用时报告未知，legacy独立兼容 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取；产品定义/能力预检作为Host调用单列，不计HOM动词采用率或裸执行 |

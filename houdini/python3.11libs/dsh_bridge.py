@@ -71,7 +71,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 74
+_EXECUTION_CONTRACT_VERSION = 75
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -687,12 +687,13 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     In GUI mode call this from the main thread (Python Shell / menu — the
     documented entry points are) so the execution pump binds to the Qt loop.
     """
-    global _server, _RUNTIME_ID, _request_registry
+    global _server, _RUNTIME_ID, _request_registry, _runtime
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("start must run on Houdini's owning thread")
     stop()
     _RUNTIME_ID=uuid.uuid4().hex
     _request_registry=RequestRegistry(_RUNTIME_ID)
+    _runtime=ExecutionRuntime(_HOU_THREAD_ID, _RUNTIME_ID, _EXECUTOR_ID)
     if hou.isUIAvailable() and not _install_gui_pump():
         raise RuntimeError("Cannot start bridge without a Houdini GUI main-thread pump")
     try:

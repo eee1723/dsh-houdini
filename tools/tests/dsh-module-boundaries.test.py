@@ -55,6 +55,25 @@ try:
     for name, mode, returned in [('tab_create','exec','Node'),('list_parms','query_or_exec','list'),('read_parms','query_or_exec','list')]:
         info=b._verb_help(name)
         assert info['call_mode']==mode and returned in info['return_type'],info
+    # On-demand schemas describe real callable arguments. The successful Node
+    # ledger snapshot is an observation; return a path explicitly for a later exec.
+    import inspect
+    import json
+    source=json.loads((Path(__file__).resolve().parents[2]/'houdini/verb-operation-contracts.json').read_text(encoding='utf8'))
+    for name, contract in source['verbs'].items():
+        help_item=b._verb_help(name)
+        args=inspect.signature(b._VERBS[name]).parameters
+        assert set(contract['input_schema']['properties'])<=set(args),(name,contract,args)
+        assert help_item['operation_contract']['examples']==contract['examples'],name
+        help_item['operation_contract']['examples'][0]['code']='changed consumer copy'
+        assert b._verb_help(name)['operation_contract']['examples'][0]['code']!='changed consumer copy',name
+    documentation=b._verb_help('build_module')['operation_contract']
+    assert documentation['output_schema']['anyOf'][1]['required']==['valid','dry_run','parent','created','validation'],documentation
+    discovered=run("__result__=verb_help(['build_module','tab_create','network_boxes'])",read_only=True)
+    assert discovered['ok'] and discovered['verbs'][0]['result']==discovered['result'],discovered
+    example=run("node=tab_create("+repr(root.path())+", 'null', name='path_example')\n__result__={'node_path':node.path()}")
+    assert example['ok'] and example['result']['node_path']==root.path()+'/path_example',example
+    assert example['verbs'][0]['result']=={'node':root.path()+'/path_example'},example
     batch=b._verb_help(['tab_create','read_parms'])
     assert batch['count']==2 and [item['name'] for item in batch['items']]==['tab_create','read_parms'],batch
     for bad in ([], ['tab_create','tab_create'], ['tab_create', 3]):

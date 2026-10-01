@@ -7,6 +7,7 @@ import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {executionHistory} from '../../lib/execution-history.js'
+import {projectExecutionNotice} from '../../lib/execution-state.js'
 import {installHoudiniExecutionLog} from '../../lib/dsh-adapter.js'
 
 const ctx=new Context()
@@ -20,7 +21,9 @@ ctx.provide('attachments',{imageLimits:{mediaTypes:['image/png'],maxImageBytes:1
   async saveImage({data}){return {attachmentId:'image-'+(++savedImages),mediaType:'image/png',bytes:data.length,width:1,height:1}}})
 let executed=0
 registerHoudiniTools(ctx,{async fetchMedia(){return Buffer.from('image')},async exec(){executed++;return {ok:true,stdout:'',stderr:'',result:{box:executed},images:['C:/fixture/output.png'],
-  execution:{runtime_id:'runtime',sequence:executed,observed_at:executed}}}})
+  execution:{runtime_id:'runtime',sequence:executed,observed_at:executed}}},
+  async submitJob(){return {jobId:'a'.repeat(12),requestReceipt:{request_ref:'b'.repeat(32)+'.'+'c'.repeat(32),status:'job_submitted'}}},
+  async cancelJob(){return {jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}}})
 // The registry's real PTC bridge receives the provider's binding calls.
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
   const value=await request.bindings[0].functions.houdini_exec({code:'__result__ = "nested"'})
@@ -50,4 +53,14 @@ assert(!nested.content[0].text.includes('dsh-houdini/execution-v1'),'the durable
 const persisted=validateStoredEvents(session.header,JSON.parse(JSON.stringify(session.snapshotEvents())))
 const restored=Session.create(session.id,persisted,session.header)
 assert.deepEqual(executionHistory(restored.snapshotEvents()).rows.map(row=>row.value.result.box),[1,2])
+const submit=await tools.execute({callId:'job-submit',name:'houdini_job_submit',arguments:{code:'pass'},agent,signal})
+assert.equal(submit.isError,false)
+assert.deepEqual(submit.meta.canonical,submit.value,'native admission stores the same value as nested dispatch, without invented execution success')
+logNative('job-submit','houdini_job_submit',{code:'pass'},submit)
+assert.equal(projectExecutionNotice(session.snapshotEvents()).active_jobs.length,1)
+const cancel=await tools.execute({callId:'job-cancel',name:'houdini_job_cancel',arguments:{jobId:'a'.repeat(12)},agent,signal})
+assert.equal(cancel.isError,false)
+assert.deepEqual(cancel.meta.canonical,cancel.value,'queued cancellation is retained even without an execution observation')
+logNative('job-cancel','houdini_job_cancel',{jobId:'a'.repeat(12)},cancel)
+assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'real DSH metadata clears the cancelled job from recorded active work')
 console.log('DSH 0.2 API: real native and nested registry dispatch, one execution each, durable fact round-trip passed')

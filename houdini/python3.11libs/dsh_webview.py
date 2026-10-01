@@ -128,9 +128,9 @@ _retry_timer: QTimer | None = None
 _target_url = FRONTEND_URL
 _after_auth_url: str | None = None
 _quit_connected = False
-_workspace_dir: str | None = None
 _active_frontend_url: str | None = None
 _load_failed = False
+_page_loading = False
 
 
 def _register_dsh_resource_scheme() -> None:
@@ -154,13 +154,13 @@ def _register_dsh_resource_scheme() -> None:
 
 def _dispose_webview() -> None:
     """Release our page before its profile/application; do not touch other views."""
-    global _window, _view, _retry_timer, _after_auth_url, _workspace_dir, _active_frontend_url, _load_failed
+    global _window, _view, _retry_timer, _after_auth_url, _active_frontend_url, _load_failed, _page_loading
     window, view, timer = _window, _view, _retry_timer
     _window = _view = _retry_timer = None
     _after_auth_url = None
-    _workspace_dir = None
     _active_frontend_url = None
     _load_failed = False
+    _page_loading = False
     if timer is not None:
         timer.stop()
     if view is not None:
@@ -182,9 +182,15 @@ def _retry_load() -> None:
     _view.load(QUrl(_target_url))
 
 
+def _load_started() -> None:
+    global _page_loading
+    _page_loading = True
+
+
 def _load_finished(ok: bool) -> None:
     """Run the page patch on success, or schedule one cancellable async retry."""
-    global _target_url, _after_auth_url, _load_failed
+    global _target_url, _after_auth_url, _load_failed, _page_loading
+    _page_loading = False
     _load_failed = not ok
     if ok:
         if _retry_timer is not None:
@@ -195,7 +201,7 @@ def _load_finished(ok: bool) -> None:
             _target_url = target
             # The token exchange already redirects to the app. Navigating here
             # bootstraps it twice and aborts its inventory/inspect RPCs. The
-            # The first document already has its intent; the client selects the
+            # first document already has its intent; the client selects the
             # task when the native workspace/session snapshots arrive.
         if _view is not None:
             _clear_launch_session_hint(_view)
@@ -221,14 +227,25 @@ def _bring_to_front(win: QWidget) -> None:
 
 
 def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | None = None) -> bool:
-    """Raise our existing page without authentication, navigation or session IO."""
+    """Raise the page, issuing an explicit directory intent when requested.
+
+    True means the existing WebView accepted the request. DSH's actual selected
+    session confirms completion in the client; Python keeps no selected-cwd cache.
+    """
+    global _after_auth_url
     if _window is None or _view is None:
         return False
     if _active_frontend_url != (frontend_url or FRONTEND_URL):
         return False
-    if workspace_dir is not None and _workspace_dir != os.path.normcase(os.path.abspath(workspace_dir)):
-        return False
     _bring_to_front(_window)
+    if workspace_dir is not None:
+        target_url = _navigation_url(workspace_dir, None, frontend_url)
+        # If auth/app initialization is still in flight, the next document must
+        # receive the newest intent. A loaded app consumes the same intent now.
+        _install_launch_session_hint(_view, target_url if _page_loading or _load_failed else None)
+        if _after_auth_url is not None:
+            _after_auth_url = target_url
+        _view.page().runJavaScript(_launch_intent_js(target_url))
     if _load_failed and _retry_timer is not None and not _retry_timer.isActive():
         _retry_timer.start(0)
     return True
@@ -285,33 +302,26 @@ def _install_launch_session_hint(view: QWebEngineView, target_url: str | None) -
     script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
     script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
     script.setRunsOnSubFrames(False)
-    script.setSourceCode("""
+    script.setSourceCode(_launch_intent_js(target_url))
+    view.page().scripts().insert(script)
+
+
+def _launch_intent_js(target_url: str) -> str:
+    """Publish directory/session intent; only the client can confirm selection."""
+    return """
 (function(){
   var target = new URL(%s);
   var current = new URL(window.location.href);
   if (current.origin !== target.origin || current.pathname !== target.pathname
       || current.searchParams.has('token')) return;
   ['dsh-houdini-workspace', 'dsh-houdini-session', 'dsh-houdini-request'].forEach(function(key){
+    current.searchParams.delete(key);
     if (target.searchParams.has(key)) current.searchParams.set(key, target.searchParams.get(key));
   });
   window.history.replaceState(window.history.state, '', current.pathname + current.search + current.hash);
-  // User intent can arrive before the client plugin finishes loading. Carry only
-  // this document's cancellation bit, never a second copy of DSH session state.
-  var intent = {id: target.searchParams.get('dsh-houdini-request'), cancelled: false};
-  var cancel = function(event){
-    if (['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
-    intent.cancelled = true;
-  };
-  window.addEventListener('pointerdown', cancel, true);
-  window.addEventListener('keydown', cancel, true);
-  intent.dispose = function(){
-    window.removeEventListener('pointerdown', cancel, true);
-    window.removeEventListener('keydown', cancel, true);
-  };
-  window.__dshHoudiniLaunchIntent = intent;
+  window.dispatchEvent(new Event('dsh-houdini-open-workspace'));
 })()
-""" % json.dumps(target_url))
-    view.page().scripts().insert(script)
+""" % json.dumps(target_url)
 
 
 def show_webview(
@@ -331,7 +341,7 @@ def show_webview(
             "show_webview() 必须在主线程调用（Houdini 菜单 / Python Shell 即主线程）。"
         )
 
-    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _workspace_dir, _active_frontend_url, _load_failed
+    global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _active_frontend_url, _load_failed, _page_loading
     base = frontend_url or FRONTEND_URL
     parsed = urllib.parse.urlsplit(base)
     if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.port is None or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
@@ -364,6 +374,7 @@ def show_webview(
         retry_timer = QTimer(view)
         retry_timer.setSingleShot(True)
         retry_timer.timeout.connect(_retry_load)
+        view.loadStarted.connect(_load_started)
         view.loadFinished.connect(_load_finished)
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -378,10 +389,10 @@ def show_webview(
 
     _after_auth_url = target_url if authenticated_url is not None else None
     _install_launch_session_hint(_view, target_url if workspace_dir is not None or session_id is not None else None)
-    _workspace_dir = os.path.normcase(os.path.abspath(workspace_dir)) if workspace_dir is not None else None
     _active_frontend_url = base
     _target_url = initial_url
     _load_failed = False
+    _page_loading = True
     _retry_timer.stop()
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))

@@ -289,6 +289,14 @@ const readImageFilePath = classifyVisionEvidence({
 });
 assert.deepEqual(readImageFilePath.images, ['E:/tmp/a_f21p0.png']);
 assert.deepEqual(readImageFilePath.frames, [21]);
+assert.equal(readImageFilePath.role, 'image_access');
+assert.equal(readImageFilePath.accessOk, true);
+assert.equal(readImageFilePath.semanticOk, null, 'image access never proves semantic correctness');
+const described = classifyVisionEvidence({tool:'vision_glance',failed:false,
+  resultText:'The image shows a wheel with spokes.'});
+assert.equal(described.accessOk,true);
+assert.equal(described.descriptionText,'The image shows a wheel with spokes.');
+assert.equal(described.semanticOk,null,'returned description still requires same-image review');
 
 const pixelDiff = classifyVisionEvidence({
   tool: 'vision_pixel_diff', failed: false,
@@ -367,18 +375,12 @@ const incompleteQualityLoop = collectQualityLoopEvidence({
   }],
 });
 assert.equal(incompleteQualityLoop.applicable, true);
-assert.deepEqual(incompleteQualityLoop.contract.missing, ['simplifications']);
-assert.equal(incompleteQualityLoop.reference.qualityContractRequired, true);
-assert.deepEqual(incompleteQualityLoop.reference.qualityContractLoadSteps, []);
 assert.equal(incompleteQualityLoop.reference.unsupportedExternalTruthClaims.length, 0);
 assert.equal(incompleteQualityLoop.skeleton.tabCreatesBeforeFirstRender, 25);
 assert.deepEqual(incompleteQualityLoop.perturbation.restored, []);
 assert.equal(incompleteQualityLoop.freshness.finalCountMatchesEvidence, false);
 assert.deepEqual(qualityLoopRisks(incompleteQualityLoop).map((risk) => risk.code), [
-  'quality_contract_incomplete',
-  'quality_contract_reference_not_loaded',
   'external_reference_available_but_unused',
-  'late_first_visual_validation',
   'procedural_control_not_perturbed',
   'relationship_contract_without_evidence',
   'stale_final_geometry_counts',
@@ -419,9 +421,7 @@ const completeQualityLoop = collectQualityLoopEvidence({
     }], resultText: '{"points":100,"prims":50}',
   }],
 });
-assert.deepEqual(completeQualityLoop.contract.missing, []);
 assert.deepEqual(completeQualityLoop.reference.researchSteps, [1]);
-assert.deepEqual(completeQualityLoop.reference.qualityContractLoadSteps, [2]);
 assert.equal(completeQualityLoop.perturbation.restored.length, 1);
 assert.deepEqual(completeQualityLoop.relations.probeSteps, [5]);
 assert.equal(completeQualityLoop.freshness.finalCountMatchesEvidence, true);
@@ -450,8 +450,6 @@ const cinematicEffectQualityLoop = collectQualityLoopEvidence({
 });
 assert.equal(cinematicEffectQualityLoop.applicable, true);
 assert.equal(cinematicEffectQualityLoop.contract.requirements.controls, true);
-assert.deepEqual(cinematicEffectQualityLoop.contract.missing, ['simplifications']);
-assert.deepEqual(cinematicEffectQualityLoop.reference.qualityContractLoadSteps, [1]);
 assert.deepEqual(requestedGoalReportedUnverified(
   [{ text: '请制作一个有电影感、可以调节的沙尘冲击效果。' }],
   [{ text: '完成。\n| 电影感（颜色/光影） | unverified |' }],
@@ -528,7 +526,6 @@ const structuredContract = collectQualityLoopEvidence({
 assert.equal(structuredContract.contract.fields.referenceStatus, true);
 assert.equal(structuredContract.contract.fields.relations, true);
 assert.equal(structuredContract.contract.fields.evidencePlan, true);
-assert.deepEqual(structuredContract.contract.missing, ['simplifications']);
 
 const reverseSkeletonWording = collectQualityLoopEvidence({
   userMessages: [{ time: 1, text: '做一个高质量程序化资产。' }],

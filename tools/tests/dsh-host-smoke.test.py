@@ -25,6 +25,7 @@ import dsh_managed_runtime as runtime
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime-cache', type=Path, required=True)
+parser.add_argument('--browser-module', type=Path)
 args = parser.parse_args()
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
@@ -49,7 +50,7 @@ env['DSH_COMPOSITION_FIXTURE_OUT'] = str(output_file)
 inspector = fixture / 'inspect.mjs'
 inspector.write_text("""
 import fs from 'node:fs';
-export const inject=['loader','tools','agentPresets'];
+export const inject=['loader','tools','agentPresets','clientModules','agents'];
 export function apply(ctx) {
   ctx.effect(() => {
     let disposed=false;
@@ -60,13 +61,31 @@ export function apply(ctx) {
         const lease=await ctx.agentPresets.acquireScope('houdini');
         try {
           const tools=ctx.tools.schemas(lease.key).map(tool=>tool.name);
-          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({roster,tools}));
+          const graph=ctx.clientModules.graph();
+          const rootEntries=[...ctx.loader.entries()].map(entry=>({name:entry.options.name,disabled:entry.disabled}));
+          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({roster,tools,graph,rootEntries}));
         } finally {await lease[Symbol.asyncDispose]();}
       } catch(error) {
         if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({error:String(error.stack||error)}));
       }
     });
-    return () => {disposed=true;};
+    // Seed only the owned browser fixture's log, never inbox/run(). This makes
+    // the official nonempty conversation surface visible without a model call.
+    let seedDone=false;
+    const seedFile=process.env.DSH_COMPOSITION_FIXTURE_OUT+'.seed';
+    const seedTimer=setInterval(() => {
+      if(seedDone||!fs.existsSync(seedFile))return;
+      try {
+        const id=fs.readFileSync(seedFile,'utf8').trim();
+        const agent=ctx.agents.get(id);
+        if(!agent)return;
+        agent.session.append('user/message',{role:'user',source:{kind:'user'},
+          content:[{type:'text',text:'Isolated UI fixture: inspect Trace and tool documentation.'}]},{surfaceOp:'append'});
+        seedDone=true;
+        fs.writeFileSync(seedFile+'.done','ok');
+      } catch(error) {fs.writeFileSync(seedFile+'.error',String(error.stack||error));}
+    },100);
+    return () => {disposed=true;clearInterval(seedTimer);};
   });
 }
 """, encoding='utf-8')
@@ -101,11 +120,27 @@ with log.open('wb') as output:
             'houdini_job_submit','houdini_job_status','houdini_job_cancel'}
         assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
         assert 'present' in facts['tools'] and 'skill' in facts['tools'], facts
+        assert any(row['name'] == 'dsh-houdini' and not row['disabled']
+                   for row in facts['rootEntries']), facts
+        graph_rows = facts['graph'] if isinstance(facts['graph'], list) else facts['graph']['entries']
+        assert sum(row['id'] == 'dsh-houdini' for row in graph_rows) == 1, [row['id'] for row in graph_rows]
         auth.authorize(timeout=5)
         assert rpc('agentPresets/list', {}) == facts['roster']
         created=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'cwd':str(fixture)}})
         assert created['agentPreset']=='houdini', created
-        print('Exact DSH Web: one usable Houdini preset, eight scoped tools, standard skills/present and default session passed', flush=True)
+        print('Exact DSH Web: browser module delivered, one Houdini preset, eight scoped tools and default session passed', flush=True)
+        if args.browser_module:
+            first, second = fixture / 'test49', fixture / 'test51'
+            first.mkdir(); second.mkdir()
+            browser_config = fixture / 'browser-config.json'
+            browser_config.write_text(json.dumps({'base': f'http://127.0.0.1:{port}/',
+                'first': str(first), 'second': str(second), 'output': str(fixture),
+                'seedFile': str(output_file)+'.seed',
+                'browser': r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                'cookies': [{'name': cookie.name, 'value': cookie.value,
+                    'url': f'http://127.0.0.1:{port}/', 'httpOnly': True} for cookie in auth._cookies]}), encoding='utf-8')
+            subprocess.run([node, str(ROOT / 'tools/tests/dsh-client-navigation.mjs'),
+                str(args.browser_module.resolve()), str(browser_config)], cwd=ROOT, env=env, check=True, timeout=90)
     finally:
         runtime.stop_owned(process)
         process.wait(timeout=15)

@@ -8,9 +8,9 @@ import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mj
 import { HOUDINI_TOOLS } from '../lib/tool-catalog.js';
 
 function nestedResultContent(message) {
-  return (message?.content || [])
-    .filter((item) => item?.type === 'tool_result' || Array.isArray(item?.content))
-    .flatMap((item) => item.content || []);
+  return (message?.content || []).flatMap(item =>
+    ['tool_result', 'tool-result'].includes(item?.type)
+      ? nestedResultContent(item) : [item]);
 }
 
 export function toolResultText(message) {

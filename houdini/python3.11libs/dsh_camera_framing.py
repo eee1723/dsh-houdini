@@ -290,7 +290,7 @@ def fit_camera(camera, target, direction, coverage, width, height, frame, dry_ru
                   'orthowidth': plan['orthowidth'] or lens['orthowidth']}
     predicted = check(points, plan['matrix'], width, height, coverage=coverage, **fitted_lens)
     if dry_run:
-        return {**common, **predicted, 'applied': False}
+        return {**common, **predicted, 'applied': False, 'scene_writes': 0}
     try:
         cam.parm('lookatpath').set('', follow_parm_reference=False)
         cam.setWorldTransform(plan['matrix'], fail_on_locked_parms=True)

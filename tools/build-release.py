@@ -132,7 +132,8 @@ def build(args):
     (payload / "node").mkdir()
     for name in ("node.exe", "LICENSE"):
         shutil.copyfile(node_home / name, payload / "node" / name)
-    run([node, "--input-type=module", "-e", "await import('dsh-houdini')"], cwd=app, env=env)
+    run([node, "--input-type=module", "-e",
+         "await import('dsh-houdini'); await import('dsh-houdini/agent')"], cwd=app, env=env)
     notices = []
     for file in sorted((app / "node_modules").rglob("package.json")):
         try:

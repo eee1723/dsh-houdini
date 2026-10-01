@@ -15,6 +15,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 只提供Houdini一种模式，使用DSH的preset注册和通用任务能力。工具各有清楚职责；不建立插件自己的产品完成账本、强制建模流程或会话压缩系统。
 - 避免过度防御：只处理真实接口条件和已观察到的失败，不因假想风险增加审批、拦截、回退或层层校验。
 - 验证与改动相称：优先构建和直接受影响的回归，关键执行边界使用必要的隔离HOM检查。已有检查通过后不重复扩大测试；移除旧策略时同步删除只证明旧策略的断言，不为机械拆分新增测试体系。
+- 跨层改动验证消费方实际取得的状态：真实DSH组合、前端选中任务、原生/嵌套回执与现场身份。配置存在、局部调用成功和旧fixture通过不能替代完整连接；发现范围与未验证部分明确记录。
 
 ## 面向用户的回复
 
@@ -23,7 +24,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 
 ## 命令与入口
 
-- 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡文档、
+- 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡与动词结构文档、
   唯一preset声明、工具说明、client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
 - 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
   正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
@@ -40,13 +41,14 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - docs/README.md是长期知识索引；架构与代码地图在docs/architecture.md。
 - 查询开发状态或接续前先核对git branch -a -vv、git worktree list和相关提交，再读目标分支docs/handoff.md；不把当前目录或main当作全部开发状态。handoff是唯一滚动交接入口，只保留未完成动作/验证缺口，按docs/development.md及时删项。
 - docs/tool-design.md维护动词目录/执行版本；houdini/node-operation-contracts.json维护节点卡，
-  docs/node-operation-cards.md只由生成器镜像。领域方法只在skills按需维护。
+  docs/node-operation-cards.md只由生成器镜像；houdini/verb-operation-contracts.json维护按需输入/输出说明与例子，docs/verb-contracts.md由同源生成，签名仍来自运行函数且说明不参与执行校验。领域方法只在skills按需维护。
 - docs只放现役设计、接口、维护规范、稳定测试方法和实现边界。修改时就地替换旧说明，
   docs/handoff.md仅例外容纳必要交接；不追加版本叙事、尝试/测试流水、session记录，不建立docs/archive或按日期分叉交接。
 - 新增长期生产模块必须进入架构代码索引；新增文档须加入索引并有源码与验证入口。
 - 过程与证据保留在会话/CI或不打包的临时产物，历史在Git；不改机器生成记忆或范围外项目。
 - TypeScript ESM/Cordis，client.js是手写CJS factory；Python通过PYTHONPATH兼容H21/H22。
   presets/houdini承载身份/工作方式并通过DSH bundle声明式注册，插件guidance保持persona中性。
+  根级dsh-houdini承载前端，preset内dsh-houdini/agent承载工具与现场上下文；根客户端图不能由preset scope替代。
 
 ## 不可放宽的执行边界
 

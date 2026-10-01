@@ -25,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Print
 powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -PackagesDir 'D:/HoudiniPrefs/packages' -Root 'D:/DSH-Houdini'
 ```
 
-`HOUDINI_USER_PREF_DIR`优先，必须含`__HVER__`占位符，否则Houdini会忽略它；显式目录可用-PackagesDir。ExecutionPolicy只作用于该次引导进程，不永久改系统策略；
+`HOUDINI_USER_PREF_DIR`优先，必须含`__HVER__`占位符，安装器分别展开为21.0/22.0后注册对应package，否则Houdini会忽略它；显式目录可用-PackagesDir。ExecutionPolicy只作用于该次引导进程，不永久改系统策略；
 企业策略禁止脚本时遵循管理员要求，不关闭安全功能绕过。此前package原子备份到安装根的package-backups。
 重复运行可信安装器可修复损坏管理器：复制到新目录再切换注册，不覆盖已加载模块。
 完整包在检测到标准Houdini安装中的内置Python时直接暂存；未检测到时，在面板选择原解压目录的release.json。
@@ -59,6 +59,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 下载 → 签名/资产摘要验证 → 新目录安全解压 → 全量文件检查 → 原子记录pending。
 Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程执行哈希、网络或进程探测。
 首次Open Workspace在worker里校验/准备，主线程只接收状态并加载HOM模块；安装完成后必须完整重启，不能热切换已打开的Houdini。
+同一次启动尚未结束时，重复Open Workspace共用现有启动状态，并更新最新HIP目录意图，不另开一套启动worker。
 
 新版首次启用从当前受管版本复制独立DSH数据快照，不跟随依赖junction，再由发行包的DSH API初始化profile并检查Node、DSH和插件。
 用户自建preset随数据保留，只重新生成产品拥有的唯一houdini。state.json损坏时不能猜测当前版本；保留旧目录恢复数据，选择新安装根，不把重装程序当作状态恢复。
@@ -96,15 +97,18 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 ## 工作区使用
 
-源码的工作区启动统一为Open Workspace，菜单另保留版本诊断及共享执行端登记/修复：新开且已保存HIP可显式选择隔离组件预览，普通模式为默认；这只合并菜单，不合并profile/正式运行时，也不自动解除受管安装的runtime锁。
+工作区启动统一为Open Workspace，菜单另保留版本诊断及共享执行端登记/修复。
 
 仅显示 **Houdini 模式**。它通过DSH 0.2的preset注册表由插件bundle声明，领域方法按需加载。
+根级`dsh-houdini`装载前端扩展，Houdini preset内的`dsh-houdini/agent`注册工具和现场上下文；
+两者来自同一插件包。正常会话的内容视图提供 **Houdini Trace** 和 **Houdini 工具**，空白新会话仍由DSH显示起始页。
 启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
 
 先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。
-同目录已有页面只唤起，包括隐藏后的重开，不刷新当前草稿；新页/换目录时由DSH原生状态复用有效Houdini任务，
-不会选中归档、其他preset或子agent。确实没有可用任务才创建；导航失败可原位重试，不自动重复建任务。
-未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」，开发插件选择「Houdini开发模式」。
+已有同源页面通过新的目录意图切换，包括隐藏后的重开，不刷新当前草稿。前端通过DSH原生workspace/session状态复用有效Houdini任务，
+不会选中归档、其他preset或子agent。确实没有可用任务才创建；创建后读取更新后的workspace成员，再确认实际选中的任务、preset与cwd。
+启动URL和窗口缓存不证明切换完成；导航失败可原位重试，不自动重复建任务。普通点击或打字不取消正在完成的导航。
+未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」。
 首次请求houdini_inspect调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
 图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。最终要交给用户的文件（包括图片）在实际存在并完成验证后由Agent调用`present`声明，右侧交付卡片指向源文件；验证图和缓存不自动声明。`present`不复制文件内容，源文件被移动、删除或改写后，旧卡片的打开结果也会改变。$HIP与Session workspace不同时应使用权威绝对路径，并在切换HIP后重新Open Workspace。
 H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
@@ -114,7 +118,7 @@ H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册
 ## 显式源码开发安装
 
 此路径保留供开发者使用，不是正式发行安装。需要Node/npm、Python或Houdini内置Python；clone/pull时需要Git。
-跨机接续未合并开发时，先按[当前交接](handoff.md)切到对应远端分支再执行源码安装；默认`main`可能缺少正在开发的改动。
+接续时先核对main提交与各工作树的未提交改动，再读[当前交接](handoff.md)；所有现役改动合入main，不从目录名称推断已加载版本。
 
 ```powershell
 git clone https://github.com/eee1723/dsh-houdini.git
@@ -126,7 +130,7 @@ python houdini/install.py
 
 `houdini/install.py --print`只预览package；`--skip-dsh-profile`只注册源码package。
 lib和node_modules不提交，生成区不手改；更新源码执行git pull --ff-only、npm install、npm run build。
-源码安装仍使用系统Node与项目npx缓存，只锁DSH根包，不具有完整受管发行保证。共用面板不拉main、不原地构建。
+源码安装仍使用系统Node与项目npx缓存，只锁DSH根包，不具有完整受管发行保证。profile同时校验根前端入口和preset工具入口；共用面板不拉main、不原地构建。
 开发者命令行构建仍是明确路径，受管界面不提供构建源码或启用未发布checkout按钮。
 
 默认安装/启动/修复共用[兼容清单](../dsh-runtime-compatibility.json)的preferred精确DSH。

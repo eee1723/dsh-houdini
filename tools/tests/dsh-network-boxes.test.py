@@ -1,4 +1,4 @@
-"""H21/H22 governed Network Box, ownership and local recovery regression."""
+"""H21/H22 Network Box operations, ownership and local recovery regression."""
 from __future__ import annotations
 from pathlib import Path
 import importlib,sys,tempfile,uuid
@@ -58,10 +58,10 @@ try:
       {'name':'assembly','label':'Assembly processing','role':'assembly','members':[paths['assemble']]},
       {'name':'delivery','label':'Published output','role':'output','members':[paths['OUT']]},
     ]
-    bad_component={'name':'bad_component','label':'Must wrap leaves','role':'component',
-                   'members':[paths['ctrl']]}
-    rejected_component=call(f"__result__=network_boxes({parent!r},[{bad_component!r}],dry_run=True)")
-    assert not rejected_component['ok'] and 'component role requires boxes' in rejected_component['error']
+    component_members={'name':'component_members','role':'component','members':['ctrl']}
+    component_preview=preview(parent,[component_members])
+    assert component_preview['boxes'][0]['members']==[paths['ctrl']]
+    assert component_preview['boxes'][0]['label']=='component_members'
     dry=preview(parent,groups)
     assert dry['dry_run'] and not dry['applied'] and dry['scene_writes']==0
     query_blocked=bridge.run_code(f"network_boxes({parent!r},{groups!r},dry_run=True)",read_only=True,owner_session=session)
@@ -90,8 +90,7 @@ try:
     broad_flow=call(f"__result__=layout_nodes({parent!r},mode='flow')")
     assert not broad_flow['ok'] and 'mode=\'handoff\'' in broad_flow['error'],broad_flow
 
-    # Component presentation hierarchy is exactly two levels: first create
-    # and lay out leaf role boxes, then wrap existing leaves in one container.
+    # Role annotations do not constrain ordinary presentation hierarchies.
     nested=ok(
         f"p=tab_create('/obj','geo',name='__nested_boxes_{suffix}')\n"
         "s=tab_create(p,'box',name='source')\nq=tab_create(p,'null',name='points')\n"
@@ -130,12 +129,30 @@ try:
     assert not wrong_mode['ok'] and 'top-level component container' in wrong_mode['error']
     repeated=preview(nested_parent,component);repeated_apply=apply(nested_parent,component,repeated['plan_sha256'])
     assert repeated_apply['ok'] and repeated_apply['result']['scene_writes']==0
-    mixed={**component[0],'members':[nested['nodes'][0]]}
-    mixed_call=call(f"__result__=network_boxes({nested_parent!r},[{mixed!r}],dry_run=True)")
-    assert not mixed_call['ok'] and 'exactly one' in mixed_call['error']
-    deep={'name':'too_deep','label':'Too deep','role':'component','boxes':['part_component']}
-    deep_call=call(f"__result__=network_boxes({nested_parent!r},[{deep!r}],dry_run=True)")
-    assert not deep_call['ok'] and 'already a component container' in deep_call['error']
+    direct_member=ok(f"__result__=tab_create({nested_parent!r},'null',name='direct_member').path()")['result']
+    mixed={**component[0],'members':[direct_member]}
+    mixed_call=ok(f"__result__=network_boxes({nested_parent!r},[{mixed!r}])")
+    assert {item.path() for item in outer.items(recurse=False) if isinstance(item,hou.Node)}=={direct_member}
+    assert {box.name() for box in outer.networkBoxes()}==set(leaf_names)
+    assert apply(nested_parent,component,None)['ok']
+    duplicate_containment={**component[0],'members':[nested['nodes'][0]]}
+    rejected=call(f"__result__=network_boxes({nested_parent!r},[{duplicate_containment!r}],dry_run=True)")
+    assert not rejected['ok'] and 'also contained by a child box' in rejected['error']
+    # Forward references are sorted by dependencies; normal depth is unrestricted.
+    hierarchy=[{'name':'root_container','boxes':['middle_container']},
+               {'name':'middle_container','boxes':['part_component']}]
+    hierarchy_call=ok(f"__result__=network_boxes({nested_parent!r},{hierarchy!r})")
+    middle=hou.node(nested_parent).findNetworkBox('middle_container')
+    root=hou.node(nested_parent).findNetworkBox('root_container')
+    assert outer.parentNetworkBox()==middle and middle.parentNetworkBox()==root
+    assert hierarchy_call['result']['created']==['middle_container','root_container']
+    cycle=[{'name':'root_container','boxes':['middle_container']},
+           {'name':'middle_container','boxes':['root_container']}]
+    cycle_call=call(f"__result__=network_boxes({nested_parent!r},{cycle!r})")
+    assert not cycle_call['ok'] and 'cycle' in cycle_call['error']
+    assert cycle_call['evidence'][0]['scene_writes']==0
+    removed_hierarchy=ok(f"__result__=network_boxes({nested_parent!r},[],remove=['root_container','middle_container'])")
+    assert outer.parentNetworkBox() is None
     remove_outer=preview(nested_parent,[],remove=['part_component'])
     assert apply(nested_parent,[],remove_outer['plan_sha256'],remove=['part_component'])['ok']
     assert all(hou.node(nested_parent).findNetworkBox(name).parentNetworkBox() is None for name in leaf_names)
@@ -345,18 +362,21 @@ try:
     assert compensated['rollback']['network_boxes']['ok'] is True,compensated
     assert {x.path() for x in hou.node(parent).findNetworkBox('controls').items(recurse=False)}=={paths['ctrl']}
 
+    # Apply current intent directly; a preview hash is optional and still checks staleness.
+    direct=ok(f"__result__=network_boxes({parent!r},{groups!r})")
+    assert not direct['result']['applied'] and direct['result']['scene_writes']==0
+    assert direct['transaction']['status']=='no_scene_change'
+    annotation=preview(parent,[{**groups[0],'role':'status_green'}])
+    assert annotation['boxes'][0]['role']=='status_green'
+    optional=preview(parent,[{'name':'plain_group','members':['ctrl']}])
+    assert optional['boxes'][0]['role'] is None and optional['boxes'][0]['label']=='plain_group'
     # Strict argument/structure preflight stays zero-write.
-    missing=call(f"__result__=network_boxes({parent!r},{groups!r})")
-    assert not missing['ok'] and 'stale or missing' in missing['error']
-    assert missing['evidence'][0]['phase']=='preflight' and missing['evidence'][0]['scene_writes']==0
-    assert missing['transaction']['status']=='no_scene_change'
     mixed=call(f"rename_node({paths['spare']!r},'spare_temp')\nnetwork_boxes({parent!r},[],dry_run=1)")
     assert not mixed['ok'] and mixed['rollback']['applied'] is True,mixed
     assert mixed['evidence'][-1]['phase']=='preflight' and mixed['evidence'][-1]['scene_writes']==0
     assert hou.node(paths['spare']) is not None and hou.node(parent+'/spare_temp') is None
     for bad_group,needle in (
-        ({**groups[0],'role':'status_green'},'unknown'),
-        ({**groups[0],'unexpected':1},'name,label,role'),
+        ({**groups[0],'unexpected':1},'optional label,role'),
         ({**groups[0],'members':[paths['ctrl'],paths['ctrl']]},'multiple groups'),
     ):
         bad_call=call(f"__result__=network_boxes({parent!r},[{bad_group!r}],dry_run=True)")
@@ -367,15 +387,16 @@ try:
     occupied=call(f"__result__=network_boxes({parent!r},[{collision!r}],dry_run=True)")
     assert not occupied['ok'] and 'occupied by a node' in occupied['error']
     minimized=hou.node(parent).createNetworkBox('minimized_user');minimized.addItem(hou.node(paths['spare']));minimized.setMinimized(True)
-    minimized_group={'name':'minimized_user','label':'Unsupported','role':'source','members':[paths['spare']]}
-    unsupported=call(f"__result__=network_boxes({parent!r},[{minimized_group!r}],dry_run=True,allow_foreign='fixture')")
-    assert not unsupported['ok'] and 'minimized' in unsupported['error'];minimized.destroy(destroy_contents=False)
+    minimized_group={'name':'minimized_user','label':'Minimized presentation','role':'source','members':[paths['spare']]}
+    supported=ok(f"__result__=network_boxes({parent!r},[{minimized_group!r}],allow_foreign='fixture')")
+    assert minimized.isMinimized() and minimized.comment()=='Minimized presentation'
+    minimized.destroy(destroy_contents=False)
     outer=hou.node(parent).createNetworkBox('outer_user');inner=hou.node(parent).createNetworkBox('inner_user')
     outer.addNetworkBox(inner);inner.addItem(hou.node(paths['spare']))
     too_deep=hou.node(parent).createNetworkBox('too_deep_user');too_deep.addNetworkBox(outer)
-    deep_group={'name':'deep_target','label':'Unsupported third level','role':'component','boxes':['inner_user']}
-    unsupported_nested=call(f"__result__=network_boxes({parent!r},[{deep_group!r}],dry_run=True,allow_foreign='fixture')")
-    assert not unsupported_nested['ok'] and ('deeper than one' in unsupported_nested['error'] or 'component container' in unsupported_nested['error'])
+    deep_group={'name':'deep_target','label':'Nested member move','boxes':['inner_user']}
+    supported_nested=ok(f"__result__=network_boxes({parent!r},[{deep_group!r}],dry_run=True,allow_foreign='fixture')")
+    assert supported_nested['result']['boxes'][0]['boxes']==['inner_user']
     too_deep.removeNetworkBox(outer);outer.removeNetworkBox(inner)
     inner.destroy(destroy_contents=False);outer.destroy(destroy_contents=False);too_deep.destroy(destroy_contents=False)
     sticky=hou.node(parent).createStickyNote('note');note_box=hou.node(parent).createNetworkBox('note_box');note_box.addItem(sticky)
@@ -389,12 +410,13 @@ try:
     assert not foreign_member_refusal['ok'] and 'foreign node' in foreign_member_refusal['error']
     ctrl_box.removeItem(foreign_member);foreign_member.destroy()
 
-    # Moving a node out of an unmentioned source box is rejected.
-    bad=[dict(row) for row in groups if row['name']!='sources']
-    bad[3 if len(bad)>3 else -1]=dict(bad[3 if len(bad)>3 else -1])
-    bad[-1]['members']=list(bad[-1]['members'])+[paths['proto_b']]
-    refused=call(f"__result__=network_boxes({parent!r},{bad!r},dry_run=True)")
-    assert not refused['ok'] and 'unmentioned box' in refused['error'],refused
+    # Explicitly selected owned members may move from an unmentioned source box.
+    move_group={**groups[-1],'members':list(groups[-1]['members'])+[paths['proto_b']]}
+    moved=ok(f"__result__=network_boxes({parent!r},[{move_group!r}])")
+    assert hou.node(paths['proto_b']).parentNetworkBox().name()==groups[-1]['name']
+    assert {item.path() for item in source_box.items(recurse=False)}=={paths['proto_a']}
+    restored_members=ok(f"__result__=network_boxes({parent!r},{groups!r})")
+    assert hou.node(paths['proto_b']).parentNetworkBox()==source_box
 
     # Removal preserves nodes, wires and positions.
     remove_plan=preview(parent,[row for row in groups if row['name']!='delivery'],remove=['delivery'])
@@ -526,6 +548,6 @@ try:
         hip=(Path(tmp)/'boxes.hip').as_posix();hou.hipFile.save(hip);hou.hipFile.load(hip,suppress_save_prompt=True)
         reopened_parent=hou.node(parent);reopened=reopened_parent.findNetworkBox('controls')
         assert reopened is not None and boxes.box_provenance(reopened,session)['status']=='foreign'
-    print('governed Network Box contract passed on '+hou.applicationVersionString())
+    print('Network Box operations and recovery contract passed on '+hou.applicationVersionString())
 finally:
     if parent and hou.node(parent) is not None:hou.node(parent).destroy()

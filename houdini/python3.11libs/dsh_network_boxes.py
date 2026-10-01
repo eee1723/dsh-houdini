@@ -1,4 +1,4 @@
-"""Governed Houdini Network Box grouping, provenance and recovery."""
+"""Houdini Network Box presentation, provenance and local recovery."""
 
 from __future__ import annotations
 
@@ -157,6 +157,10 @@ def _set_box_bounds(box,target): box.setBounds(hou.BoundingRect(*target))
 def _content_bounds(nodes=(), boxes=()):
     rectangles = [_node_rect(node) for node in nodes]
     rectangles.extend(_effective_box_rect(box) for box in boxes)
+    return _padded_content_bounds(rectangles)
+
+
+def _padded_content_bounds(rectangles):
     if not rectangles:
         raise ValueError('Network Box needs at least one node or child box')
     combined = union(rectangles)
@@ -176,22 +180,16 @@ def _box_items(box):
 def _unsupported_box_reason(box):
     if box.isMinimized(): return 'minimized box'
     if box.parentNetworkBox() is not None: return 'nested box'
-    if box.networkBoxes(): return 'box contains nested boxes'
+    if box.networkBoxes(recurse=False): return 'box contains nested boxes'
     unsupported = [item.path() for item in _box_items(box) if not isinstance(item, hou.Node)]
     return f'unsupported non-node items: {unsupported[:8]}' if unsupported else None
 
 
 def _network_group_box_reason(box):
-    """Reject unsupported editor items while permitting one governed nesting level."""
-    if box.isMinimized(): return 'minimized box'
+    """Snapshots currently cover nodes and boxes, not other editor item types."""
     unsupported = [item.path() for item in _box_items(box)
                    if not isinstance(item, (hou.Node, hou.NetworkBox))]
     if unsupported: return f'unsupported non-node/non-box items: {unsupported[:8]}'
-    parent_box = box.parentNetworkBox()
-    if parent_box is not None and parent_box.parentNetworkBox() is not None:
-        return 'Network Box nesting deeper than one component container is unsupported'
-    if box.networkBoxes() and parent_box is not None:
-        return 'a component container cannot itself be nested'
     return None
 
 
@@ -209,7 +207,7 @@ def _state(box):
         'members': [{'identity': int(item.sessionId()), 'path': item.path()}
                     for item in items if isinstance(item, hou.Node)],
         'nested_boxes': [{'identity': int(item.sessionId()), 'name': item.name()}
-                         for item in box.networkBoxes()],
+                         for item in box.networkBoxes(recurse=False)],
         'parent_box': ({'identity': int(parent_box.sessionId()), 'name': parent_box.name()}
                        if parent_box is not None else None),
         'owner': ({key:value for key,value in owner.items()
@@ -323,7 +321,7 @@ def _restore(snapshot):
                 try: box.removeItem(item)
                 except Exception as error: errors.append(f"{state['name']} remove extra {item.path()}: {error}")
         wanted_boxes = {item['identity'] for item in state.get('nested_boxes',[])}
-        for child in list(box.networkBoxes()):
+        for child in list(box.networkBoxes(recurse=False)):
             if int(child.sessionId()) not in wanted_boxes:
                 try: box.removeNetworkBox(child)
                 except Exception as error: errors.append(f"{state['name']} remove extra box {child.name()}: {error}")
@@ -341,7 +339,7 @@ def _restore(snapshot):
             if member['identity'] not in current:
                 try: box.addItem(node)
                 except Exception as error: errors.append(f"{state['name']} add {member['path']}: {error}")
-        current_boxes = {int(item.sessionId()) for item in box.networkBoxes()}
+        current_boxes = {int(item.sessionId()) for item in box.networkBoxes(recurse=False)}
         remap_by_old = {row['old_identity']:row['new_identity'] for row in remapped}
         for child_state in state.get('nested_boxes',[]):
             child_identity = remap_by_old.get(child_state['identity'],child_state['identity'])
@@ -560,24 +558,22 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
     normalized, all_nodes, all_child_boxes, target_names = [], {}, {}, set()
     allowed_keys = {'name', 'label', 'role', 'members', 'boxes', 'color'}
     for group in groups:
-        if not isinstance(group, dict) or set(group) - allowed_keys or not {'name','label','role'} <= set(group):
-            raise ValueError('each group must contain name,label,role and one of members/boxes; optional color only')
-        name, label, role = _safe_name(group['name']), _label(group['label']), group['role']
+        if not isinstance(group, dict) or set(group) - allowed_keys or 'name' not in group:
+            raise ValueError('each group needs name; optional label,role,members,boxes,color')
+        name = _safe_name(group['name'])
+        label, role = _label(group.get('label', name)), group.get('role')
         if name in RESERVED_SERVICE_NAMES:
             raise ValueError(f'{name} is reserved for the persistent render service')
         if name in target_names: raise ValueError(f'duplicate group name: {name}')
         target_names.add(name)
-        if role not in ROLE_COLORS: raise ValueError(f'unknown Network Box role: {role}')
+        if role is not None and (not isinstance(role, str) or not role.strip()):
+            raise ValueError(f'{name}: role must be a nonempty string or None')
         members = group.get('members', [])
         box_names = group.get('boxes', [])
         if not isinstance(members, (list, tuple)) or not isinstance(box_names, (list, tuple)):
             raise ValueError(f'{name}: members/boxes must be lists')
-        if bool(members) == bool(box_names):
-            raise ValueError(f'{name}: provide exactly one nonempty members or boxes list')
-        if role == 'component' and members:
-            raise ValueError(f'{name}: component role requires boxes=[existing leaf boxes], not direct node members')
-        if box_names and role != 'component':
-            raise ValueError(f'{name}: boxes= requires role=component')
+        if not members and not box_names:
+            raise ValueError(f'{name}: provide nonempty members or boxes')
         resolved = []
         for item in members:
             node = resolve_node(item)
@@ -595,22 +591,18 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
         for child_name in box_names:
             child_name = _safe_name(child_name)
             if child_name == name: raise ValueError(f'{name}: box cannot contain itself')
-            if child_name in declared_names:
-                raise ValueError(f'{name}: child boxes must already exist; create/layout leaf boxes before component containers')
             child = existing.get(child_name)
-            if child is None: raise ValueError(f'{name}: child Network Box does not exist: {child_name}')
-            reason = _network_group_box_reason(child)
-            if reason: raise ValueError(f'{child.path()} unsupported: {reason}')
-            if child.networkBoxes():
-                raise ValueError(f'{name}: child {child_name} is already a component container')
-            child_items=_box_items(child)
-            if not child_items or any(not isinstance(item,hou.Node) for item in child_items):
-                raise ValueError(f'{name}: child {child_name} must be a nonempty node-only leaf box')
-            _require_box(child, 'network_boxes nested member', active_owner_session, allow_foreign)
-            identity = int(child.sessionId())
-            if identity in all_child_boxes:
-                raise ValueError(f'{child.path()} appears in multiple component containers')
-            all_child_boxes[identity] = child; resolved_boxes.append(child)
+            if child is None and child_name not in declared_names:
+                raise ValueError(f'{name}: child Network Box does not exist: {child_name}')
+            if child_name in remove:
+                raise ValueError(f'{name}: child box {child_name} is also removed')
+            if child is not None:
+                reason = _network_group_box_reason(child)
+                if reason: raise ValueError(f'{child.path()} unsupported: {reason}')
+                _require_box(child, 'network_boxes nested member', active_owner_session, allow_foreign)
+            if child_name in all_child_boxes:
+                raise ValueError(f'{child_name} appears in multiple container groups')
+            all_child_boxes[child_name] = child; resolved_boxes.append(child_name)
         color = _rgb(group['color']) if 'color' in group else None
         normalized.append({'name': name, 'label': label, 'role': role,
                            'members': resolved, 'boxes': resolved_boxes, 'color': color})
@@ -621,7 +613,6 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
         if name not in existing: raise ValueError(f'Network Box to remove does not exist: {name}')
 
     affected = {}
-    batch_names = target_names | set(remove)
     for group in normalized:
         box = existing.get(group['name'])
         if box is not None:
@@ -636,27 +627,22 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
         reason = _network_group_box_reason(box)
         if reason: raise ValueError(f'{box.path()} unsupported: {reason}')
         _require_box(box, 'network_boxes remove', active_owner_session, allow_foreign)
-        previous = box.parentNetworkBox()
-        if previous is not None and previous.name() not in batch_names:
-            raise ValueError(f'{box.path()} is nested in unmentioned component box {previous.name()}; include or remove the parent container')
         affected[name] = box
 
     for group in normalized:
         for node in group['members']:
             previous = node.parentNetworkBox()
             if previous is None or previous.name() == group['name']: continue
-            if previous.name() not in batch_names:
-                raise ValueError(f'{node.path()} currently belongs to unmentioned box {previous.name()}; include its complete final membership or remove it')
             reason = _network_group_box_reason(previous)
             if reason: raise ValueError(f'{previous.path()} unsupported: {reason}')
             _require_box(previous, 'network_boxes source membership', active_owner_session, allow_foreign)
             affected[previous.name()] = previous
     for group in normalized:
-        for child in group['boxes']:
+        for child_name in group['boxes']:
+            child = existing.get(child_name)
+            if child is None: continue
             previous = child.parentNetworkBox()
             if previous is None or previous.name() == group['name']: continue
-            if previous.name() not in batch_names:
-                raise ValueError(f'{child.path()} currently belongs to unmentioned component box {previous.name()}; include its complete final boxes list or remove it')
             reason = _network_group_box_reason(previous)
             if reason: raise ValueError(f'{previous.path()} unsupported: {reason}')
             _require_box(previous, 'network_boxes source nesting', active_owner_session, allow_foreign)
@@ -669,15 +655,23 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
 
     affected_nodes = dict(all_nodes)
     for child in all_child_boxes.values():
-        affected[child.name()] = child
-    nested_affected={}
-    for box in list(affected.values()):
-        for child in box.networkBoxes():
+        if child is not None: affected[child.name()] = child
+    # Every touched ancestor/descendant has presentation state affected by
+    # membership; capture exactly this closure for local compensation.
+    pending = list(affected.values())
+    scanned = set()
+    while pending:
+        box = pending.pop()
+        if box.name() in scanned: continue
+        scanned.add(box.name())
+        relatives = list(box.networkBoxes(recurse=False))
+        if box.parentNetworkBox() is not None: relatives.append(box.parentNetworkBox())
+        for child in relatives:
             if is_service_box(child):
                 raise ValueError(f'{child.path()} belongs to the persistent render service')
             _require_box(child,'network_boxes affected nested member',active_owner_session,allow_foreign)
-            nested_affected[child.name()]=child
-    affected.update(nested_affected)
+            affected[child.name()] = child
+            pending.append(child)
     for box in affected.values():
         if is_service_box(box):
             raise ValueError(f'{box.path()} belongs to the persistent render service')
@@ -700,7 +694,7 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
         'parent': {'identity': int(parent.sessionId()), 'path': parent.path()},
         'intent': [{'name': row['name'], 'label': row['label'], 'role': row['role'],
                     'members': [int(node.sessionId()) for node in row['members']],
-                    'boxes': [int(box.sessionId()) for box in row['boxes']], 'color': row['color']}
+                    'boxes': row['boxes'], 'color': row['color']}
                    for row in normalized],
         'remove': remove,
         'boxes': [_state(box) for box in sorted(affected.values(), key=lambda item: item.name())],
@@ -713,9 +707,39 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
                              for name in sorted(target_names)},
     }
     plan_sha = _hash(state_payload)
-    if not dry_run and expected_plan != plan_sha:
-        raise ValueError('stale or missing Network Box plan; preview again with dry_run=True')
-    return {'groups': normalized, 'remove': remove, 'existing': existing,
+    if not dry_run and expected_plan is not None and expected_plan != plan_sha:
+        raise ValueError('stale Network Box plan; preview again or directly apply the current intent')
+    # Sort declared groups by final nesting. Resolve references to new boxes in
+    # the same call, and reject actual cycles rather than arbitrary role/depth.
+    by_name = {group['name']: group for group in normalized}
+    graph = {name: [child.name() for child in box.networkBoxes(recurse=False)]
+             for name, box in existing.items() if name not in remove}
+    graph.update({name: group['boxes'] for name, group in by_name.items()})
+    desired_parent = {child: row['name'] for row in normalized for child in row['boxes']}
+    for name, children in graph.items():
+        graph[name] = [child for child in children if child not in remove and
+                       (child not in desired_parent or desired_parent[child] == name)]
+    visiting, visited, ordered = set(), set(), []
+    def visit(name):
+        if name in visiting: raise ValueError(f'Network Box nesting cycle at {name}')
+        if name in visited: return
+        visiting.add(name)
+        for child_name in graph.get(name, []): visit(child_name)
+        visiting.remove(name); visited.add(name)
+        if name in by_name: ordered.append(by_name[name])
+    for name in by_name: visit(name)
+    final_members = {name: {int(node.sessionId()) for node in group['members']}
+                     for name, group in by_name.items()}
+    def contained_members(name):
+        direct = final_members.get(name, {int(item.sessionId()) for item in _box_items(existing[name])
+                                        if isinstance(item, hou.Node)} if name in existing else set())
+        nested = set()
+        for child_name in graph.get(name, []): nested.update(contained_members(child_name))
+        if direct & nested:
+            raise ValueError(f'{name}: a direct member is also contained by a child box')
+        return direct | nested
+    for name in by_name: contained_members(name)
+    return {'groups': ordered, 'remove': remove, 'existing': existing,
             'affected_boxes': list(affected.values()), 'affected_nodes': list(affected_nodes.values()),
             'affected_box_count':affected_box_count,
             'plan_sha256': plan_sha, 'state_payload': state_payload}
@@ -728,8 +752,10 @@ def _would_write(prepared):
         if box is None:return True
         current={int(item.sessionId()) for item in _box_items(box) if isinstance(item,hou.Node)}
         desired={int(node.sessionId()) for node in group['members']}
-        current_boxes={int(item.sessionId()) for item in box.networkBoxes()}
-        desired_boxes={int(item.sessionId()) for item in group['boxes']}
+        current_boxes={int(item.sessionId()) for item in box.networkBoxes(recurse=False)}
+        desired_boxes={int(prepared['existing'][name].sessionId())
+                       for name in group['boxes'] if name in prepared['existing']}
+        if any(name not in prepared['existing'] for name in group['boxes']): return True
         if current!=desired or current_boxes!=desired_boxes or box.comment()!=group['label']:return True
         if group['color'] is not None and any(abs(a-b)>1e-6 for a,b in zip(_color(box),group['color'])):
             return True
@@ -749,30 +775,35 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             'applied':False,'phase':'preflight','scene_writes':0,
             'parent':parent.path(),'restored':True,'restore_errors':[],
             'layout_status':'not_performed',
-            'scope':'direct-child nodes plus one component-container Network Box level; preflight made zero scene writes'}) from error
+            'scope':'direct-child nodes and Network Box presentation; preflight made zero scene writes'}) from error
     base = {'ok': True, 'dry_run': bool(dry_run), 'applied': False,
             'phase': 'preview' if dry_run else 'apply', 'scene_writes': 0,
             'plan_sha256': prepared['plan_sha256'], 'parent': parent.path(),
             'layout_status': 'not_performed',
-            'scope': 'direct-child nodes plus one component-container Network Box level; grouping/presentation, no node movement or geometry evaluation'}
+            'scope': 'direct-child nodes and Network Box presentation; no node movement or geometry evaluation'}
     if dry_run:
         planned_boxes = []
+        planned_bounds = {}
         for group in prepared['groups']:
             existing = prepared['existing'].get(group['name'])
             current_members = ({int(item.sessionId()) for item in _box_items(existing)
                                 if isinstance(item, hou.Node)} if existing is not None else set())
             desired = {int(node.sessionId()) for node in group['members']}
-            current_boxes = ({int(item.sessionId()) for item in existing.networkBoxes()}
+            current_boxes = ({int(item.sessionId()) for item in existing.networkBoxes(recurse=False)}
                              if existing is not None else set())
-            desired_boxes = {int(item.sessionId()) for item in group['boxes']}
+            desired_boxes = {int(prepared['existing'][name].sessionId())
+                             for name in group['boxes'] if name in prepared['existing']}
+            content = _padded_content_bounds([_node_rect(node) for node in group['members']] +
+                            [planned_bounds[name] if name in planned_bounds else
+                             _effective_box_rect(prepared['existing'][name]) for name in group['boxes']])
             if existing is None:
-                bounds = _content_bounds(group['members'],group['boxes'])
-                color = list(group['color'] or ROLE_COLORS[group['role']])
-                color_source = 'explicit' if group['color'] is not None else 'role_default'
+                bounds = content
+                color = list(group['color'] or ROLE_COLORS.get(group['role'], (.42, .46, .52)))
+                color_source = 'explicit' if group['color'] is not None else 'role_default' if group['role'] in ROLE_COLORS else 'neutral_default'
             else:
                 membership_changed = current_members != desired or current_boxes != desired_boxes
                 bounds = (_box_rect(existing) if not membership_changed else
-                          union([_box_rect(existing), _content_bounds(group['members'],group['boxes'])]))
+                          union([_box_rect(existing), content]))
                 color = list(group['color']) if group['color'] is not None else _color(existing)
                 color_source = 'explicit' if group['color'] is not None else 'preserved'
             planned_boxes.append({
@@ -780,8 +811,9 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
                 'name':group['name'],'label':group['label'],'role':group['role'],
                 'color':color,'color_source':color_source,
                 'members':[node.path() for node in group['members']],
-                'boxes':[box.name() for box in group['boxes']],
+                'boxes':group['boxes'],
                 'bounds':bounds.as_list()})
+            planned_bounds[group['name']] = bounds
         return {**base, 'boxes': planned_boxes,
                 'created': [], 'updated': [], 'removed': [], 'unchanged': [],
                 'protected_items': []}
@@ -812,8 +844,8 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             current_members = {int(item.sessionId()): item for item in _box_items(box)
                                if isinstance(item, hou.Node)}
             desired = {int(node.sessionId()): node for node in group['members']}
-            current_boxes = {int(item.sessionId()): item for item in box.networkBoxes()}
-            desired_boxes = {int(item.sessionId()): item for item in group['boxes']}
+            current_boxes = {int(item.sessionId()): item for item in box.networkBoxes(recurse=False)}
+            desired_boxes = {int(boxes[name].sessionId()): boxes[name] for name in group['boxes']}
             changed = is_new
             for identity, item in current_members.items():
                 if identity not in desired:
@@ -832,13 +864,14 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             color_source = 'preserved'
             requested_color = group['color']
             if is_new and requested_color is None:
-                requested_color = list(ROLE_COLORS[group['role']]); color_source = 'role_default'
+                requested_color = list(ROLE_COLORS.get(group['role'], (.42, .46, .52)))
+                color_source = 'role_default' if group['role'] in ROLE_COLORS else 'neutral_default'
             elif requested_color is not None:
                 color_source = 'explicit'
             if requested_color is not None and any(abs(a-b) > 1e-6 for a,b in zip(_color(box), requested_color)):
                 writes += 1; box.setColor(hou.Color(tuple(requested_color))); changed = True
             if is_new or set(current_members) != set(desired) or set(current_boxes) != set(desired_boxes):
-                target_bounds = _content_bounds(group['members'],group['boxes'])
+                target_bounds = _content_bounds(group['members'],desired_boxes.values())
                 if not is_new: target_bounds = union([_box_rect(box), target_bounds])
                 if not _rect_close(_box_rect(box), target_bounds):
                     writes += 1; box.setBounds(hou.BoundingRect(*target_bounds.as_list())); changed = True
@@ -860,20 +893,20 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             actual = {int(item.sessionId()) for item in _box_items(box) if isinstance(item, hou.Node)}
             expected = {int(node.sessionId()) for node in group['members']}
             if actual != expected: raise RuntimeError(f"membership readback mismatch: {group['name']}")
-            actual_boxes = {int(item.sessionId()) for item in box.networkBoxes()}
-            expected_boxes = {int(item.sessionId()) for item in group['boxes']}
+            actual_boxes = {int(item.sessionId()) for item in box.networkBoxes(recurse=False)}
+            expected_boxes = {int(boxes[name].sessionId()) for name in group['boxes']}
             if actual_boxes != expected_boxes: raise RuntimeError(f"nested box readback mismatch: {group['name']}")
             if box.comment()!=group['label']:
                 raise RuntimeError(f"label readback mismatch: {group['name']}")
             expected_color=(group['color'] if group['color'] is not None else
-                            list(ROLE_COLORS[group['role']]) if group['name'] in created else
+                            list(ROLE_COLORS.get(group['role'], (.42, .46, .52))) if group['name'] in created else
                             before_box_state[group['name']]['color'])
             if any(abs(a-b)>1e-5 for a,b in zip(_color(box),expected_color)):
                 raise RuntimeError(f"color readback mismatch: {group['name']}")
             previous=before_box_state.get(group['name'])
             previous_members={row['identity'] for row in previous['members']} if previous else set()
             previous_boxes={row['identity'] for row in previous.get('nested_boxes',[])} if previous else set()
-            expected_bounds=_content_bounds(group['members'],group['boxes'])
+            expected_bounds=_content_bounds(group['members'],[boxes[name] for name in group['boxes']])
             if previous is not None and (previous_members!=expected or previous_boxes!=expected_boxes):
                 expected_bounds=union([Rect(*previous['bounds']),expected_bounds])
             elif previous is not None:
@@ -897,7 +930,8 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             state = _state(box)
             state['role'] = group['role']
             state['color_source'] = ('explicit' if group['color'] is not None else
-                                     'role_default' if group['name'] in created else 'preserved')
+                                     ('role_default' if group['role'] in ROLE_COLORS else 'neutral_default')
+                                     if group['name'] in created else 'preserved')
             final_boxes.append(state)
         if writes:
             _journal(snapshot, 'network_boxes');journaled=True
@@ -930,7 +964,7 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
 def _effective_box_rect(box):
     rectangles=[_box_rect(box)]
     rectangles.extend(_node_rect(item) for item in _box_items(box) if isinstance(item,hou.Node))
-    rectangles.extend(_effective_box_rect(child) for child in box.networkBoxes())
+    rectangles.extend(_effective_box_rect(child) for child in box.networkBoxes(recurse=False))
     return union(rectangles)
 
 
@@ -1036,7 +1070,7 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
                  'boxes':[_state(box) for box in selected],'nodes':node_rows,'edges':sorted(edges),
                  'obstacles':sorted(obstacles),'profile':profile,'planned':planned}
         plan_sha=_hash(current)
-        if not dry_run and expected_plan!=plan_sha:raise ValueError('stale or missing handoff layout plan; preview again')
+        if not dry_run and expected_plan is not None and expected_plan!=plan_sha:raise ValueError('stale handoff layout plan; preview again or directly apply')
     except BaseException as error:
         raise NetworkBoxOperationError(str(error),{'ok':False,'mode':'handoff','dry_run':bool(dry_run) if type(dry_run)is bool else None,
             'applied':False,'phase':'preflight','scene_writes':0,'layout_status':'blocked','restored':True,
@@ -1138,12 +1172,12 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
             if outer.parentNetworkBox() is not None:raise ValueError(f'{outer.path()} must be a top-level component container')
             if any(isinstance(item,hou.Node) for item in _box_items(outer)):
                 raise ValueError(f'{outer.path()} component container must contain leaf boxes only')
-            children=list(outer.networkBoxes())
+            children=list(outer.networkBoxes(recurse=False))
             if not children:raise ValueError(f'{outer.path()} has no leaf role boxes')
             _require_box(outer,'component layout container',active_owner_session,allow_foreign)
             selected.append(outer)
             for leaf in children:
-                if leaf.networkBoxes():raise ValueError(f'{leaf.path()} is not a leaf box')
+                if leaf.networkBoxes(recurse=False):raise ValueError(f'{leaf.path()} is not a leaf box')
                 if leaf.isMinimized():raise ValueError(f'{leaf.path()} is minimized')
                 if leaf.parentNetworkBox()!=outer:raise ValueError(f'{leaf.path()} has inconsistent component parent')
                 _require_box(leaf,'component layout leaf',active_owner_session,allow_foreign)
@@ -1196,7 +1230,7 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
                           for identity,node in sorted(movable_nodes.items())],
                  'edges':sorted(edges),'obstacles':sorted(obstacles),'profile':profile,'planned':planned}
         plan_sha=_hash(current)
-        if not dry_run and expected_plan!=plan_sha:raise ValueError('stale or missing component layout plan; preview again')
+        if not dry_run and expected_plan is not None and expected_plan!=plan_sha:raise ValueError('stale component layout plan; preview again or directly apply')
     except BaseException as error:
         raise NetworkBoxOperationError(str(error),{'ok':False,'mode':'component',
             'dry_run':bool(dry_run) if type(dry_run)is bool else None,'applied':False,'phase':'preflight',

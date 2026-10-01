@@ -38,6 +38,18 @@ assert.equal(taskSources([question,rejected,answer]).length,1,'replay cannot pro
 const unknown=user('old','MISSING SOURCE');delete unknown.data.source;
 assert.equal(taskSources([unknown,user('goal','AUTO CONTINUE',1,'goal')]).length,0);
 assert.equal(taskSources([answer]).length,0,'uncorrelated answer is not elevated');
+const nestedQuestion={type:'tool/ptc-dispatch-start',seq:12,data:{name:'ask_user_question',subCallId:'program:ptc:1',
+  arguments:{questions:[{id:'format',question:'请选择交付形式'}]}}};
+const nestedAnswer={type:'tool/ptc-dispatch',seq:13,data:{name:'ask_user_question',subCallId:'program:ptc:1',isError:false,
+  content:[{type:'text',text:JSON.stringify({answers:[{id:'format',selected:['HDA']}]})}]}};
+const nestedSources=taskSources([nestedQuestion,nestedAnswer]);
+assert.deepEqual(nestedSources.map(row=>row.kind),['clarification_question','clarification_answer']);
+assert.equal(nestedSources[0].text,JSON.stringify(nestedQuestion.data.arguments));
+assert.equal(nestedSources[1].text,nestedAnswer.data.content[0].text);
+assert(nestedSources.every(row=>row.call_id==='program:ptc:1'&&row.message_id===null));
+assert.equal(taskSources([nestedQuestion,{...nestedAnswer,data:{...nestedAnswer.data,isError:true}}]).length,1,
+  'failed nested questions retain the question without claiming a user answer');
+assert.equal(taskSources([nestedAnswer]).length,0,'nested answers require their recorded question');
 const image=user('image','参考图片');image.data.content.push({type:'image',attachment:{data:'PRIVATE IMAGE BYTES'}});
 const imageSource=taskSources([image])[0];
 assert.deepEqual(imageSource.nontext_blocks,['image']);
