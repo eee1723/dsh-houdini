@@ -37,6 +37,11 @@ def start():
         if time.monotonic() >= deadline:
             raise RuntimeError('isolated worker was not released by its supervisor')
         time.sleep(.01)
+    if request.get('seed_hip'):
+        # Explicit developer input, before any Bridge registration or model
+        # request. Existing nodes retain their identities and remain foreign.
+        seed = Path(request['seed_hip']).resolve(strict=True)
+        hou.hipFile.load(str(seed), suppress_save_prompt=True, ignore_load_warnings=True)
     hou.hipFile.save(str(hip))
     bridge.start(0)
     facts = prepare_registration()

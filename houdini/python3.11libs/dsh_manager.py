@@ -42,7 +42,6 @@ if _module_dir not in sys.path:
     sys.path.append(_module_dir)
 import dsh_web_auth
 import dsh_runtime_compat
-import dsh_release_policy
 import dsh_managed_runtime
 
 _MANAGED = dsh_managed_runtime.context(_PROJECT_ROOT)
@@ -67,22 +66,6 @@ def _read_json(path: str) -> dict:
         return value if isinstance(value, dict) else {}
     except Exception:
         return {}
-
-
-def _run_process(args: list[str], timeout: int = 20, *, env: dict | None = None):
-    return subprocess.run(
-        args, cwd=_PROJECT_ROOT, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=timeout,
-        creationflags=_CREATE_NO_WINDOW if os.name == "nt" else 0, env=env,
-    )
-
-
-def _run(args: list[str], timeout: int = 20, *, env: dict | None = None) -> str:
-    proc = _run_process(args, timeout, env=env)
-    if proc.returncode != 0:
-        message = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-        raise RuntimeError(message.splitlines()[-1])
-    return proc.stdout.strip()
 
 
 def _port_open(port: int) -> bool:
@@ -118,20 +101,6 @@ def _port_pid(port: int) -> int | None:
                 except ValueError:
                     pass
     return None
-
-
-def _plugin_identity() -> tuple[str, str, bool]:
-    version = _read_json(os.path.join(_PROJECT_ROOT, "package.json")).get("version", "unknown")
-    # ZIP installs have no Git; do not inspect an unrelated parent repository.
-    if os.path.exists(os.path.join(_PROJECT_ROOT, ".git")) and shutil.which("git"):
-        try:
-            branch = _run(["git", "branch", "--show-current"], 5) or "detached"
-            commit = _run(["git", "rev-parse", "--short", "HEAD"], 5)
-            dirty = bool(_run(["git", "status", "--porcelain"], 5))
-            return str(version), f"source {branch}@{commit}", dirty
-        except Exception:
-            return str(version), "source (Git identity unavailable)", False
-    return str(version), "source (no Git identity)", False
 
 
 def _selected_cached_dsh_version() -> str | None:
@@ -170,11 +139,12 @@ def _runtime_dsh_info() -> dict:
     verified = bool(
         listener_pid is not None and isinstance(marker_pid, int)
         and marker_pid == listener_pid and isinstance(version, str) and version
+        and dsh_managed_runtime.owns_pid(listener_pid)
     )
     if verified:
         note = f"PID {listener_pid} · {marker.get('source', 'unknown')}"
     else:
-        note = "Running service predates version tracking; restart once to verify"
+        note = "Listener ownership or recorded runtime identity is unverified; no running version can be confirmed"
         version = None
     return {"online": True, "verified": verified, "version": version, "note": note}
 
@@ -483,31 +453,24 @@ def _run_npx_dsh(version: str, on_progress=None) -> str:
 
 
 def _summary_for_state(state: dict) -> str:
-    if state.get("busy"):
-        return state.get("message") or "Checking versions…"
-    statuses = [state.get("dsh_status"), state.get("plugin_status")]
-    if "error" in statuses:
-        return "Some version information could not be verified"
-    if "blocked" in statuses:
-        return "An update is available but needs attention"
-    count = sum(status in ("update", "offline", "unknown", "staged") for status in statuses)
-    if count:
-        verb = "needs" if count == 1 else "need"
-        return f"{count} component{'s' if count != 1 else ''} {verb} attention"
-    if statuses == ["current", "current"]:
-        return "Everything is up to date"
-    if state.get("plugin_status") == "unpublished":
-        return "No stable plugin release is published; source installation is unchanged"
-    if state.get("plugin_status") == "release":
-        return "Published release information is available; source installation is unchanged"
-    return "Version status is not checked yet"
+    status = state.get("dsh_status")
+    if status == "blocked" and state.get("dsh_action") == "Await compatibility":
+        return "配套版本尚未通过兼容检查，暂不能启用。"
+    return {
+        "current": "运行环境与配套版本一致。",
+        "blocked": "运行版本由安装包或启动配置管理。",
+        "staged": "配套版本已就绪，可在空闲时启用。",
+        "update": "当前运行版本与插件配套版本不同。",
+        "offline": "运行环境尚未启动。",
+        "unknown": "服务已启动，运行版本尚未核验。",
+        "error": "无法核验运行环境，请查看技术详情。",
+    }.get(status, "正在检查运行环境…")
 
 
 def _check_updates(state: dict) -> None:
     updates = {
         "busy": False, "result": "render", "checked": True,
-        "dsh_can_update": False, "plugin_can_update": False,
-        "plugin_release_url": None,
+        "dsh_can_update": False,
         "frontend_online": False, "bridge_online": False,
     }
     try:
@@ -523,7 +486,9 @@ def _check_updates(state: dict) -> None:
             dsh_latest=latest, dsh_target=latest,
             dsh_cached_ready=selected == latest,
         )
-        if override:
+        if runtime["verified"] and runtime["version"] == latest:
+            updates.update(dsh_status="current", dsh_action="Up to date")
+        elif override:
             updates.update(dsh_status="blocked", dsh_action="Pinned", dsh_note=f"Pinned by {override}")
         elif not compatible:
             updates.update(
@@ -534,8 +499,6 @@ def _check_updates(state: dict) -> None:
                     f"serving remains on {runtime['version'] or selected or 'the last verified release'}"
                 ),
             )
-        elif runtime["verified"] and runtime["version"] == latest:
-            updates.update(dsh_status="current", dsh_action="Up to date")
         elif selected == latest:
             action = "Start required version"
             updates.update(
@@ -550,38 +513,6 @@ def _check_updates(state: dict) -> None:
         updates.update(
             dsh_status="error", dsh_latest="Unavailable", dsh_action="Unavailable",
             dsh_note=f"DSH check failed: {exc}",
-        )
-    try:
-        version, revision, dirty = _plugin_identity()
-        note = revision + (" · local changes" if dirty else "")
-        updates.update(
-            plugin_current=f"{version} · {revision}",
-            plugin_latest="No stable release", plugin_status="unpublished",
-            plugin_action="No release", plugin_note=note,
-        )
-        release = dsh_release_policy.latest_stable_release()
-        if release is not None:
-            try:
-                newer = dsh_release_policy.stable_version(release["version"]) > dsh_release_policy.stable_version(version)
-            except ValueError:
-                newer = False  # Unknown/dev identities cannot prove upgrade order.
-            updates.update(
-                plugin_latest=release["version"], plugin_status="update" if newer else "release",
-                plugin_action="View release", plugin_can_update=True,
-                plugin_release_url=release["url"],
-                plugin_note=note + "; publication only, compatibility and installation are not verified. "
-                "In-app installation is not available yet; this action only opens release information.",
-            )
-    except Exception as exc:
-        try:
-            version, revision, dirty = _plugin_identity()
-            current = f"{version} · {revision.split('@')[-1]}"
-            note = ("local changes · " if dirty else "") + f"remote check failed: {exc}"
-        except Exception:
-            current, note = "Unknown", f"remote check failed: {exc}"
-        updates.update(
-            plugin_current=current, plugin_latest="Unavailable", plugin_status="error",
-            plugin_action="Unavailable", plugin_note=note,
         )
     updates["bridge_online"] = _port_open(_BRIDGE_PORT)
     updates["message"] = _summary_for_state(updates)
@@ -658,9 +589,10 @@ def _update_dsh(state: dict) -> None:
 
 
 def show_version_manager() -> None:
-    """Show a non-modal, version-focused panel on Houdini's GUI thread."""
+    """Show runtime facts and explicit repair, separate from release installation."""
     global _WINDOW, _TIMER
     from hutil.Qt import QtCore, QtGui, QtWidgets
+    from dsh_ui_style import style_dialog, confirm_dialog
 
     if _WINDOW is not None and _WINDOW.isVisible():
         _WINDOW.raise_()
@@ -668,284 +600,177 @@ def show_version_manager() -> None:
         return
 
     dialog = QtWidgets.QDialog(hou.qt.mainWindow())
-    dialog.setWindowTitle("DSH-Houdini - Version status")
+    dialog.setWindowTitle("DSH-Houdini · 运行诊断")
     dialog.setWindowModality(QtCore.Qt.NonModal)
-    dialog.setMinimumWidth(720)
-    dialog.setStyleSheet(
-        "QDialog { background: #202327; color: #E8EAED; }"
-        "QLabel#title { color: #F3F4F5; font: 600 21px 'Segoe UI'; }"
-        "QLabel#summary { color: #C8CDD2; font: 12px 'Segoe UI'; padding-bottom: 6px; }"
-        "QLabel#column { color: #7F8891; font: 10px 'Segoe UI'; }"
-        "QLabel#name { color: #F1F2F3; font: 600 13px 'Segoe UI'; }"
-        "QLabel#version { color: #E3E6E8; font: 12px 'Consolas'; }"
-        "QLabel#note { color: #929AA2; font: 11px 'Segoe UI'; }"
-        "QFrame#rail { background: #292D32; border: 1px solid #3A4047; border-radius: 5px; }"
-        "QFrame#advanced { background: #25292D; border-top: 1px solid #373C42; }"
-        "QPushButton { color: #E7E9EB; background: #343940; border: 1px solid #48505A;"
-        " border-radius: 4px; padding: 6px 12px; font: 11px 'Segoe UI'; }"
-        "QPushButton:hover { background: #40464E; }"
-        "QPushButton:disabled { color: #777F87; background: #2C3035; border-color: #383D43; }"
-        "QPushButton#update { background: #C85F19; border-color: #E97824; color: white; }"
-        "QPushButton#update:hover { background: #DE6D21; }"
-        "QPushButton#quiet { background: transparent; border-color: transparent; color: #A8AFB6; }"
-        "QProgressBar { background: #343940; border: none; border-radius: 3px;"
-        " height: 7px; color: transparent; }"
-        "QProgressBar::chunk { background: #E97824; border-radius: 3px; }"
-    )
-
+    dialog.setMinimumWidth(620)
+    style_dialog(dialog)
     layout = QtWidgets.QVBoxLayout(dialog)
-    layout.setContentsMargins(22, 20, 22, 18)
-    layout.setSpacing(10)
+    layout.setContentsMargins(24, 24, 24, 20)
+    layout.setSpacing(16)
+
+    def label(text, name=None):
+        widget = QtWidgets.QLabel(text)
+        widget.setTextFormat(QtCore.Qt.PlainText)
+        widget.setWordWrap(True)
+        if name:
+            widget.setObjectName(name)
+        return widget
+
     heading = QtWidgets.QHBoxLayout()
-    title = QtWidgets.QLabel("Version status")
-    title.setObjectName("title")
-    refresh_btn = QtWidgets.QPushButton("Refresh")
-    refresh_btn.setObjectName("quiet")
-    refresh_btn.setToolTip("Check required DSH and published stable plugin releases; never pull Git")
-    heading.addWidget(title)
+    heading.addWidget(label("运行诊断", "title"))
     heading.addStretch(1)
+    refresh_btn = QtWidgets.QPushButton("刷新状态")
+    refresh_btn.setObjectName("quiet")
     heading.addWidget(refresh_btn)
     layout.addLayout(heading)
-    summary_label = QtWidgets.QLabel("Checking installed and latest versions…")
-    summary_label.setObjectName("summary")
+    summary_label = label("正在检查运行环境…", "summary")
     layout.addWidget(summary_label)
+    frame = QtWidgets.QFrame()
+    frame.setObjectName("rail")
+    grid = QtWidgets.QGridLayout(frame)
+    grid.setContentsMargins(18, 16, 18, 16)
+    grid.setHorizontalSpacing(24)
+    grid.setVerticalSpacing(8)
+    grid.addWidget(label("当前运行 DSH", "caption"), 0, 0)
+    grid.addWidget(label("插件配套 DSH", "caption"), 0, 1)
+    dsh_current = label("检查中…", "version")
+    dsh_latest = label("检查中…", "version")
+    grid.addWidget(dsh_current, 1, 0)
+    grid.addWidget(dsh_latest, 1, 1)
+    service_label = label("", "caption")
+    grid.addWidget(service_label, 2, 0, 1, 2)
+    layout.addWidget(frame)
 
-    columns = QtWidgets.QGridLayout()
-    columns.setContentsMargins(14, 0, 14, 0)
-    columns.setHorizontalSpacing(16)
-    for column in range(3):
-        columns.setColumnStretch(column, 2)
-    columns.setColumnStretch(3, 0)
-    for column, text in ((1, "CURRENT / SOURCE"), (2, "REQUIRED / PUBLISHED")):
-        label = QtWidgets.QLabel(text)
-        label.setObjectName("column")
-        columns.addWidget(label, 0, column)
-    layout.addLayout(columns)
-
-    def component_rail(name: str):
-        frame = QtWidgets.QFrame()
-        frame.setObjectName("rail")
-        grid = QtWidgets.QGridLayout(frame)
-        grid.setContentsMargins(14, 12, 14, 11)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(5)
-        for column in range(3):
-            grid.setColumnStretch(column, 2)
-        grid.setColumnStretch(3, 0)
-        name_label = QtWidgets.QLabel(name)
-        name_label.setObjectName("name")
-        current_label = QtWidgets.QLabel("Checking…")
-        current_label.setObjectName("version")
-        latest_label = QtWidgets.QLabel("Checking…")
-        latest_label.setObjectName("version")
-        action_btn = QtWidgets.QPushButton("Checking…")
-        action_btn.setMinimumWidth(132)
-        note_label = QtWidgets.QLabel("")
-        note_label.setObjectName("note")
-        note_label.setWordWrap(True)
-        grid.addWidget(name_label, 0, 0)
-        grid.addWidget(current_label, 0, 1)
-        grid.addWidget(latest_label, 0, 2)
-        grid.addWidget(action_btn, 0, 3)
-        grid.addWidget(note_label, 1, 0, 1, 4)
-        layout.addWidget(frame)
-        return current_label, latest_label, action_btn, note_label
-
-    dsh_current, dsh_latest, dsh_action, dsh_note = component_rail("Required DSH runtime")
-    plugin_current, plugin_latest, plugin_action, plugin_note = component_rail("DSH-Houdini")
-    download_panel = QtWidgets.QFrame()
-    download_panel.setObjectName("rail")
-    download_layout = QtWidgets.QVBoxLayout(download_panel)
-    download_layout.setContentsMargins(14, 10, 14, 11)
-    download_layout.setSpacing(7)
+    actions = QtWidgets.QHBoxLayout()
+    dsh_action = QtWidgets.QPushButton("准备配套版本")
+    dsh_action.setObjectName("primary")
+    dsh_action.hide()
+    repair_btn = QtWidgets.QPushButton("修复并重启运行环境…")
+    log_btn = QtWidgets.QPushButton("打开运行日志")
+    actions.addWidget(dsh_action)
+    actions.addWidget(repair_btn)
+    actions.addWidget(log_btn)
+    actions.addStretch(1)
+    layout.addLayout(actions)
     download_bar = QtWidgets.QProgressBar()
     download_bar.setTextVisible(False)
-    download_label = QtWidgets.QLabel("")
-    download_label.setObjectName("note")
-    download_label.setWordWrap(True)
-    download_layout.addWidget(download_bar)
-    download_layout.addWidget(download_label)
-    download_panel.setVisible(False)
-    layout.addWidget(download_panel)
-    advanced_toggle = QtWidgets.QPushButton("Advanced diagnostics  ▸")
+    download_bar.hide()
+    layout.addWidget(download_bar)
+    advanced_toggle = QtWidgets.QPushButton("技术详情")
     advanced_toggle.setObjectName("quiet")
+    advanced_toggle.setStyleSheet("text-align: left; padding-left: 0;")
     advanced_toggle.setCheckable(True)
-    advanced_toggle.setStyleSheet("text-align: left;")
     layout.addWidget(advanced_toggle)
-    advanced = QtWidgets.QFrame()
-    advanced.setObjectName("advanced")
-    advanced_layout = QtWidgets.QVBoxLayout(advanced)
-    advanced_layout.setContentsMargins(12, 10, 12, 8)
-    service_label = QtWidgets.QLabel("Service state is checked in the background.")
-    service_label.setObjectName("note")
-    detail_label = QtWidgets.QLabel("")
-    detail_label.setObjectName("note")
-    detail_label.setWordWrap(True)
-    advanced_buttons = QtWidgets.QHBoxLayout()
-    repair_btn = QtWidgets.QPushButton("Repair and restart runtime")
-    log_btn = QtWidgets.QPushButton("Open frontend log")
-    advanced_buttons.addWidget(repair_btn)
-    advanced_buttons.addWidget(log_btn)
-    advanced_buttons.addStretch(1)
-    advanced_layout.addWidget(service_label)
-    advanced_layout.addWidget(detail_label)
-    advanced_layout.addLayout(advanced_buttons)
-    advanced.setVisible(False)
-    layout.addWidget(advanced)
+    details = QtWidgets.QPlainTextEdit()
+    details.setReadOnly(True)
+    details.setFixedHeight(160)
+    details.hide()
+    layout.addWidget(details)
+    state = {"busy": False, "result": None, "dsh_status": None,
+             "dsh_can_update": False, "operation": "check"}
 
-    state = {
-        "busy": False, "result": None, "checked": False,
-        "message": "Checking installed and latest versions…",
-        "dsh_status": None, "plugin_status": None,
-        "dsh_can_update": False, "plugin_can_update": False,
-    }
-
-    def set_busy(message: str) -> bool:
+    def set_busy(message, operation):
         if state["busy"]:
             return False
-        state.update(busy=True, result=None, message=message, download_progress=None)
-        download_panel.setVisible(False)
+        state.update(busy=True, result=None, message=message, download_progress=None, operation=operation)
         summary_label.setText(message)
-        for button in (refresh_btn, dsh_action, plugin_action, repair_btn):
+        for button in (refresh_btn, dsh_action, repair_btn):
             button.setEnabled(False)
         return True
 
-    def check_updates() -> None:
-        if set_busy("Checking required DSH and published stable plugin releases…"):
+    def check_updates():
+        if set_busy("正在检查运行版本和连接…", "check"):
             threading.Thread(target=_check_updates, args=(state,), daemon=True).start()
 
-    def update_dsh() -> None:
+    def update_dsh():
         if state.get("dsh_status") == "staged":
-            if set_busy("Checking whether the runtime is idle…"):
+            if set_busy("正在检查运行环境是否空闲…", "activate"):
                 threading.Thread(target=_prepare_activation, args=(state, "dsh"), daemon=True).start()
             return
-        target = state.get("dsh_target", "the plugin-required version")
-        answer = QtWidgets.QMessageBox.question(
-            dialog, "Install required DSH runtime",
-            f"Download DSH {target} and restart services when the runtime is idle?\n\n"
-            "Package count, received bytes, and download speed remain visible throughout. "
-            "There is no automatic total timeout.\n\n"
-            "If an agent turn or Houdini job is active, the restart will be deferred.",
-        )
-        if answer == QtWidgets.QMessageBox.Yes and set_busy(f"Downloading and verifying DSH {target}…"):
+        target = state.get("dsh_target", "配套版本")
+        answer = confirm_dialog(
+            dialog, "准备配套运行环境", f"下载并校验 DSH {target}？\n\n"
+            "完成后会在空闲时重启运行环境。有对话任务或 Houdini 操作正在执行时，将推迟重启。",
+            "继续")
+        if answer and set_busy("正在下载并校验配套运行环境…", "update"):
             threading.Thread(target=_update_dsh, args=(state,), daemon=True).start()
 
-    def update_plugin() -> None:
-        url = state.get("plugin_release_url")
-        if url and not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
-            summary_label.setText("Could not open the release page: " + url)
+    def repair_runtime():
+        answer = confirm_dialog(
+            dialog, "修复并重启运行环境",
+            "停止本安装的 DSH 服务并重新启动？\n\n"
+            "进行中的对话和外部工具可能被中断；会话文件会保留，但未完成的结果可能丢失。\n\n"
+            "此操作不会关闭 Houdini。Houdini 仍在执行操作，或无法确认空闲时，将拒绝重启。",
+            "继续")
+        if answer and set_busy("正在核验服务身份并准备修复…", "repair"):
+            threading.Thread(target=_prepare_activation, args=(state, "repair", "运行环境已准备好修复。"),
+                             kwargs={"force_frontend": True}, daemon=True).start()
 
-    def repair_runtime() -> None:
-        answer = QtWidgets.QMessageBox.question(
-            dialog, "Repair runtime",
-            "Force-stop this installation's DSH frontend and restart the runtime?\n\n"
-            "Active agent turns and external tool work may be interrupted; session files are kept, "
-            "but unfinished results may be lost. Verified stale DSH listeners can also be stopped.\n\n"
-            "Houdini and other applications will not be killed. Bridge restart is refused while "
-            "Houdini execution is active or cannot be verified idle.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
-        )
-        if answer == QtWidgets.QMessageBox.Yes and set_busy("Preparing guarded force repair…"):
-            threading.Thread(
-                target=_prepare_activation,
-                args=(state, "repair", "Runtime repair is ready."),
-                kwargs={"force_frontend": True},
-                daemon=True,
-            ).start()
-
-    def open_log() -> None:
+    def open_log():
         if not os.path.isfile(_FRONTEND_LOG):
-            detail_label.setText("No frontend log exists yet. Start the service once, then try again.")
+            summary_label.setText("尚无运行日志，请先打开一次工作区。")
             return
-        try:
-            os.startfile(_FRONTEND_LOG)  # type: ignore[attr-defined]
-        except Exception as exc:
-            detail_label.setText(f"Could not open the log: {exc} · {_FRONTEND_LOG}")
+        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(_FRONTEND_LOG)):
+            summary_label.setText("无法打开日志，文件位置已放入技术详情。")
+            details.appendPlainText(_FRONTEND_LOG)
 
-    def toggle_advanced(checked: bool) -> None:
-        advanced.setVisible(checked)
-        advanced_toggle.setText("Advanced diagnostics  ▾" if checked else "Advanced diagnostics  ▸")
+    def toggle_advanced(checked):
+        details.setVisible(checked)
+        advanced_toggle.setText("收起技术详情" if checked else "技术详情")
         dialog.adjustSize()
 
-    def launch_services(*, force_frontend=False) -> None:
+    def launch_services(force_frontend=False):
         dialog.close()
         import dsh_launcher
         importlib.reload(dsh_launcher)
-        if force_frontend:
-            dsh_launcher.launch(force_frontend=True)
-        else:
-            dsh_launcher.launch()
+        dsh_launcher.launch(force_frontend=True) if force_frontend else dsh_launcher.launch()
 
-    def render_state() -> None:
-        download_panel.setVisible(False)
-        summary_label.setText(state.get("message") or _summary_for_state(state))
-        dsh_current.setText(str(state.get("dsh_current", "Unknown")))
-        dsh_latest.setText(str(state.get("dsh_latest", "Unknown")))
-        dsh_detail = str(state.get("dsh_note", ""))
-        show_dsh_note = state.get("dsh_status") in ("blocked", "error", "unknown", "offline", "staged")
-        dsh_note.setText(dsh_detail if show_dsh_note else "")
-        dsh_note.setVisible(show_dsh_note)
-        plugin_current.setText(str(state.get("plugin_current", "Unknown")))
-        plugin_latest.setText(str(state.get("plugin_latest", "Unknown")))
-        plugin_detail = str(state.get("plugin_note", ""))
-        show_plugin_note = bool(plugin_detail)
-        plugin_note.setText(plugin_detail if show_plugin_note else "")
-        plugin_note.setVisible(show_plugin_note)
-        dsh_action.setText(str(state.get("dsh_action", "Unavailable")))
-        plugin_action.setText(str(state.get("plugin_action", "Unavailable")))
-        for button, enabled in (
-            (dsh_action, bool(state.get("dsh_can_update"))),
-            (plugin_action, bool(state.get("plugin_can_update"))),
-        ):
-            button.setObjectName("update" if enabled else "")
-            button.style().unpolish(button)
-            button.style().polish(button)
-            button.setEnabled(enabled)
-        refresh_btn.setEnabled(True)
-        repair_btn.setEnabled(True)
-        bridge = "ONLINE" if state.get("bridge_online") else "OFFLINE"
-        frontend = "ONLINE" if state.get("frontend_online") else "OFFLINE"
-        service_label.setText(f"Houdini Bridge :{_BRIDGE_PORT}  {bridge}    ·    DSH Web :{_FRONTEND_PORT}  {frontend}")
-        detail_label.setText(
-            f"DSH: {dsh_detail}\nDSH-Houdini: {plugin_detail}\n{state.get('message', '')}"
-        )
-
-    def render_download_progress() -> None:
-        progress = state.get("download_progress")
-        if not isinstance(progress, dict):
-            download_panel.setVisible(False)
-            summary_label.setText(state.get("message") or "Working…")
-            return
-        total = int(progress.get("packages_total") or 0)
-        done = int(progress.get("packages_done") or 0)
-        if total:
-            download_bar.setRange(0, total)
-            download_bar.setValue(min(done, total))
-        else:
-            download_bar.setRange(0, 0)
-        message = _download_progress_message(progress)
-        download_label.setText(message)
+    def render_state():
+        download_bar.hide()
+        message = _summary_for_state(state)
+        if state.get("operation") in ("repair", "activate"):
+            message = "暂未重启，请查看技术详情中的原因。"
+        elif state.get("operation") == "update" and state.get("dsh_status") == "error":
+            message = "配套运行环境准备失败，请查看技术详情。"
         summary_label.setText(message)
-        dsh_note.setText(message)
-        dsh_note.setVisible(True)
-        download_panel.setVisible(True)
+        current = str(state.get("dsh_current", "Unknown"))
+        dsh_current.setText({"Unknown": "未核验", "Not running": "未启动"}.get(current, current))
+        required = str(state.get("dsh_latest", "Unavailable"))
+        dsh_latest.setText("无法读取" if required == "Unavailable" else required)
+        frontend = "服务端口可用" if state.get("frontend_online") else "服务端口未开启"
+        bridge = "Houdini 端口可用" if state.get("bridge_online") else "Houdini 端口未开启"
+        service_label.setText(frontend + " · " + bridge)
+        dsh_action.setText("启用配套版本" if state.get("dsh_status") == "staged" else "准备配套版本")
+        dsh_action.setVisible(bool(state.get("dsh_can_update")))
+        for button in (refresh_btn, dsh_action, repair_btn):
+            button.setEnabled(True)
+        details.setPlainText(f"DSH 服务端口：{_FRONTEND_PORT}\nHoudini 连接端口：{_BRIDGE_PORT}\n"
+                             + str(state.get("dsh_note", "")) + "\n" + str(state.get("message", "")))
+        dialog.adjustSize()
 
-    def tick() -> None:
+    def tick():
         if state.get("busy"):
-            render_download_progress()
-            return
-        if state.get("result") is None:
+            progress = state.get("download_progress")
+            if isinstance(progress, dict):
+                total, done = int(progress.get("packages_total") or 0), int(progress.get("packages_done") or 0)
+                download_bar.setRange(0, total)
+                if total:
+                    download_bar.setValue(min(done, total))
+                download_bar.show()
+                summary_label.setText(f"正在准备依赖 · 已完成 {done}/{total or '…'} 个包 · "
+                                      f"{_format_bytes(progress.get('bytes_downloaded', 0))}")
+                details.setPlainText(_download_progress_message(progress))
             return
         result = state.pop("result", None)
         if result == "activate":
             activation = state.pop("activation", None)
-            if activation in ('services', 'force-services'):
-                launch_services(force_frontend=activation == 'force-services')
+            if activation in ("services", "force-services"):
+                launch_services(force_frontend=activation == "force-services")
                 return
-        render_state()
+        if result is not None:
+            render_state()
 
-    def cleanup(_code: int) -> None:
+    def cleanup(_code):
         global _WINDOW, _TIMER
         if _TIMER is not None:
             _TIMER.stop()
@@ -954,7 +779,6 @@ def show_version_manager() -> None:
 
     refresh_btn.clicked.connect(check_updates)
     dsh_action.clicked.connect(update_dsh)
-    plugin_action.clicked.connect(update_plugin)
     advanced_toggle.toggled.connect(toggle_advanced)
     repair_btn.clicked.connect(repair_runtime)
     log_btn.clicked.connect(open_log)
@@ -962,8 +786,7 @@ def show_version_manager() -> None:
     timer = QtCore.QTimer(dialog)
     timer.timeout.connect(tick)
     timer.start(100)
-    _WINDOW = dialog
-    _TIMER = timer
+    _WINDOW, _TIMER = dialog, timer
     dialog.show()
     QtCore.QTimer.singleShot(0, check_updates)
 

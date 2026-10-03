@@ -25,7 +25,7 @@ import dsh_managed_runtime
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineUrlScheme
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = 3081
@@ -131,6 +131,9 @@ _quit_connected = False
 _active_frontend_url: str | None = None
 _load_failed = False
 _page_loading = False
+_renderer_failed = False
+_failure_panel = None
+_failure_label = None
 
 
 def _register_dsh_resource_scheme() -> None:
@@ -155,12 +158,15 @@ def _register_dsh_resource_scheme() -> None:
 def _dispose_webview() -> None:
     """Release our page before its profile/application; do not touch other views."""
     global _window, _view, _retry_timer, _after_auth_url, _active_frontend_url, _load_failed, _page_loading
+    global _renderer_failed, _failure_panel, _failure_label
     window, view, timer = _window, _view, _retry_timer
     _window = _view = _retry_timer = None
     _after_auth_url = None
     _active_frontend_url = None
     _load_failed = False
     _page_loading = False
+    _renderer_failed = False
+    _failure_panel = _failure_label = None
     if timer is not None:
         timer.stop()
     if view is not None:
@@ -177,7 +183,7 @@ def _on_main_thread() -> bool:
 
 def _retry_load() -> None:
     """QWebEngine 异步加载失败后重试；GUI 线程不做 socket 探测。"""
-    if _view is None or _window is None or not _window.isVisible():
+    if _renderer_failed or _view is None or _window is None or not _window.isVisible():
         return
     _view.load(QUrl(_target_url))
 
@@ -192,6 +198,9 @@ def _load_finished(ok: bool) -> None:
     global _target_url, _after_auth_url, _load_failed, _page_loading
     _page_loading = False
     _load_failed = not ok
+    if _renderer_failed:
+        # A crashed renderer is not a transient Host/HTTP readiness failure.
+        return
     if ok:
         if _retry_timer is not None:
             _retry_timer.stop()
@@ -210,6 +219,34 @@ def _load_finished(ok: bool) -> None:
     if (_retry_timer is not None and _window is not None
             and _window.isVisible() and not _retry_timer.isActive()):
         _retry_timer.start(_RETRY_INTERVAL_MS)
+
+
+def _render_process_terminated(status, exit_code) -> None:
+    """Keep a native recovery surface when the embedded renderer has exited."""
+    global _renderer_failed, _load_failed, _page_loading
+    if _view is None or _window is None:
+        return
+    _renderer_failed = _load_failed = True
+    _page_loading = False
+    if _retry_timer is not None:
+        _retry_timer.stop()
+    status_name = getattr(status, "name", str(status))
+    diagnostic = f"{status_name} · 退出码 {exit_code} (0x{exit_code & 0xffffffff:08X})"
+    if _failure_label is not None:
+        _failure_label.setText("内嵌页面进程已退出，已停止自动重试。\n"
+                               "可以重新加载页面；若仍失败，请在 Version & Updates... 的高级设置中查看运行诊断。\n"
+                               + diagnostic)
+    if _failure_panel is not None:
+        _failure_panel.show()
+
+
+def _retry_renderer() -> None:
+    """User requested a fresh page load after a renderer failure."""
+    global _renderer_failed, _load_failed
+    _renderer_failed = _load_failed = False
+    if _failure_panel is not None:
+        _failure_panel.hide()
+    _retry_load()
 
 
 def _bring_to_front(win: QWidget) -> None:
@@ -246,7 +283,7 @@ def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | Non
         if _after_auth_url is not None:
             _after_auth_url = target_url
         _view.page().runJavaScript(_launch_intent_js(target_url))
-    if _load_failed and _retry_timer is not None and not _retry_timer.isActive():
+    if _load_failed and not _renderer_failed and _retry_timer is not None and not _retry_timer.isActive():
         _retry_timer.start(0)
     return True
 
@@ -276,6 +313,8 @@ def _install_abort_signal_polyfill(view: QWebEngineView) -> None:
     script.setSourceCode(
         _POLYFILL_ABORT_SIGNAL_ANY_JS + ";\n" + _POLYFILL_PROMISE_WITH_RESOLVERS_JS
         + ";\n" + _POLYFILL_DSH_RESOURCE_URL_JS
+        # Generated core-js asset includes Iterator helpers and Array.toSorted,
+        # which DSH's model selection/settings call during their first render.
         + ";\n" + Path(__file__).with_name("dsh_iterator_polyfill.js").read_text(encoding="utf-8")
     )
     view.page().scripts().insert(script)
@@ -342,6 +381,7 @@ def show_webview(
         )
 
     global _window, _view, _retry_timer, _target_url, _after_auth_url, _quit_connected, _active_frontend_url, _load_failed, _page_loading
+    global _renderer_failed, _failure_panel, _failure_label
     base = frontend_url or FRONTEND_URL
     parsed = urllib.parse.urlsplit(base)
     if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or parsed.port is None or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
@@ -361,6 +401,8 @@ def show_webview(
         _register_dsh_resource_scheme()
         win = QWidget()
         win.setWindowTitle("DSH-Houdini")
+        from dsh_ui_style import style_dialog
+        style_dialog(win)
         view = QWebEngineView(win)
         # Never share Houdini's disk-based default browser profile between
         # processes/versions. Server-side DSH data remains persistent; browser
@@ -376,13 +418,29 @@ def show_webview(
         retry_timer.timeout.connect(_retry_load)
         view.loadStarted.connect(_load_started)
         view.loadFinished.connect(_load_finished)
+        view.page().renderProcessTerminated.connect(_render_process_terminated)
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(view)
+        failure_panel = QFrame(win)
+        failure_panel.setObjectName("rail")
+        failure_layout = QHBoxLayout(failure_panel)
+        failure_layout.setContentsMargins(18, 16, 18, 16)
+        failure_label = QLabel()
+        failure_label.setTextFormat(Qt.PlainText)
+        failure_label.setWordWrap(True)
+        retry_button = QPushButton("重新加载页面")
+        retry_button.setObjectName("primary")
+        retry_button.clicked.connect(_retry_renderer)
+        failure_layout.addWidget(failure_label, 1)
+        failure_layout.addWidget(retry_button)
+        failure_panel.hide()
+        lay.addWidget(failure_panel)
+        lay.addWidget(view, 1)
         win.resize(1200, 800)
         _window = win
         _view = view
         _retry_timer = retry_timer
+        _failure_panel, _failure_label = failure_panel, failure_label
         if not _quit_connected:
             QCoreApplication.instance().aboutToQuit.connect(_dispose_webview)
             _quit_connected = True
@@ -393,6 +451,8 @@ def show_webview(
     _target_url = initial_url
     _load_failed = False
     _page_loading = True
+    _renderer_failed = False
+    _failure_panel.hide()
     _retry_timer.stop()
     _bring_to_front(_window)
     _view.load(QUrl(_target_url))

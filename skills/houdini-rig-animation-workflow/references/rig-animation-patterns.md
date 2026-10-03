@@ -252,7 +252,7 @@ RBD、ragdoll、secondary motion 等具有 solver state、substeps、collision�
 - 优先读本 reference 的对应模式，再查动词、Tab entry、parm 与 `describe`；不要先枚举整个类型表。
 - 精确类型存在但参数/数据不符时，用一个最小 joint 或 piece probe，先证明输入/输出合同，再扩成
   完整资产。probe 不与正式网络交叉接线，验证后删除。
-- 两次同边界失败后按层换策略：skeleton 失败回到属性/拓扑；capture 失败先查 name class 与 packing；
+- 重复失败没有新信息时按层定位：skeleton 失败回到属性/拓扑；capture 失败先查 name class 与 packing；
   deform 失败查 boneCapture、capture/animated pose 对齐；画面失败先查 driven output，不先调相机。
 - 锁定 HDA internals 只用于“公开参数和本机 help 无法解释实际结果”的诊断。内部节点名不是公共
   合同，不得写入正式 recipe 或依赖其跨版本稳定。

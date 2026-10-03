@@ -26,6 +26,8 @@ import dsh_managed_runtime as runtime
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime-cache', type=Path, required=True)
 parser.add_argument('--browser-module', type=Path)
+parser.add_argument('--context-loop', action='store_true', help='Run a scripted provider through the real DSH loop and local Bridge fixture')
+parser.add_argument('--outcome-fixture', type=Path, help='Exact receipts exported by isolated caught-failure HOM regression')
 args = parser.parse_args()
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
@@ -42,6 +44,13 @@ bridge_socket = socket.socket()
 bridge_socket.bind(('127.0.0.1', 0))
 env['DSH_HOUDINI_BRIDGE_URL'] = f'http://127.0.0.1:{bridge_socket.getsockname()[1]}'
 env['DSH_HOUDINI_EXECUTOR_ID'] = uuid.uuid4().hex
+context_output = fixture / 'context-loop.json'
+if args.context_loop:
+    # The fixture plugin owns this port and never opens or executes a real HIP.
+    bridge_socket.close()
+    env['DSH_CONTEXT_FIXTURE_OUT'] = str(context_output)
+    if args.outcome_fixture:
+        env['DSH_OUTCOME_FIXTURE'] = str(args.outcome_fixture.resolve(strict=True))
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
@@ -81,6 +90,15 @@ export function apply(ctx) {
         if(!agent)return;
         agent.session.append('user/message',{role:'user',source:{kind:'user'},
           content:[{type:'text',text:'Isolated UI fixture: inspect Trace and tool documentation.'}]},{surfaceOp:'append'});
+        for (const [callId,name,args,result] of [
+          ['ui-inspect','houdini_inspect',{code:'__result__ = scene_info()'},{ok:true,result:{objects:[]},execution:{hip_dir:null,hip_is_new:true}}],
+          ['ui-create','houdini_exec',{code:'tab_create("/obj", "geo", "asset")'},{ok:true,verbs:[{verb:'tab_create',ms:5,args:['/obj','geo','asset'],ok:true,result:'/obj/asset'}],execution:{hip_dir:null,hip_is_new:true}}],
+          ['ui-failure','houdini_exec',{code:'set_parms("/obj/asset", {unknown: 1})'},{ok:false,error:'参数不存在：unknown',verbs:[{verb:'set_parms',args:['/obj/asset',{unknown:1}],ms:1,ok:false,error:'参数不存在：unknown'}],execution:{hip_dir:null,hip_is_new:true}}],
+        ]) {
+          agent.session.append('tool/call',{turn:1,step:1,callId,name,arguments:JSON.stringify(args)});
+          agent.session.append('tool/result',{turn:1,step:1,message:{role:'tool',source:{kind:'tool',callId},
+            content:[{type:'text',text:JSON.stringify(result)}],isError:!result.ok},meta:{canonical:result}},{surfaceOp:'append'});
+        }
         seedDone=true;
         fs.writeFileSync(seedFile+'.done','ok');
       } catch(error) {fs.writeFileSync(seedFile+'.error',String(error.stack||error));}
@@ -90,7 +108,10 @@ export function apply(ctx) {
 }
 """, encoding='utf-8')
 overlay = fixture / 'inspect.patch.yml'
-overlay.write_text('- insert:\n    - id: composition-inspector\n      name: ' + inspector.as_uri() + '\n', encoding='utf-8')
+overlay_text = '- insert:\n    - id: composition-inspector\n      name: ' + inspector.as_uri() + '\n'
+if args.context_loop:
+    overlay_text += '    - id: context-loop-fixture\n      name: ' + (ROOT / 'tools/tests/dsh-context-loop-fixture.mjs').as_uri() + '\n'
+overlay.write_text(overlay_text, encoding='utf-8')
 log = fixture / 'host.log'
 auth = DshWebSession(f'http://127.0.0.1:{port}', str(log), str(fixture / 'runtime.json'))
 def rpc(method, arguments):
@@ -129,6 +150,15 @@ with log.open('wb') as output:
         created=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'cwd':str(fixture)}})
         assert created['agentPreset']=='houdini', created
         print('Exact DSH Web: browser module delivered, one Houdini preset, eight scoped tools and default session passed', flush=True)
+        if args.context_loop:
+            deadline=time.monotonic()+90
+            while not context_output.exists():
+                assert process.poll() is None, 'Host exited; inspect ' + str(log)
+                assert time.monotonic()<deadline, 'Context loop timed out; inspect ' + str(log)
+                time.sleep(.25)
+            context_facts=json.loads(context_output.read_text(encoding='utf-8'))
+            assert context_facts.get('ok') is True, context_facts.get('error', context_facts)
+            print('Exact DSH loop: settled errors/repair do not repeat scene/vision; uncertain requests and active jobs retain recovery context', flush=True)
         if args.browser_module:
             first, second = fixture / 'test49', fixture / 'test51'
             first.mkdir(); second.mkdir()

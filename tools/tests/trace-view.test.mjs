@@ -28,6 +28,7 @@ const catalog = loadCatalog(
 assert(catalog.every((d) => d.verbs.every((v) => v.returns)));
 let registration;
 let View;
+const viewIds=[];
 let hooks = [];
 let cursor = 0;
 let elements = 0;
@@ -75,12 +76,14 @@ registration
         ? {
             inject: (_s, fn) => fn(),
             register: (config, component) => {
+              if(config.name==='conversation.view')viewIds.push(config.id);
               if (config.id === "houdinitrace") View = component;
             },
           }
         : undefined,
   });
 assert.equal(elements, 0, 'registration does not render or initialize Trace');
+assert.deepEqual(viewIds,['houdinitrace'],'Houdini has one conversation view; tool information lives in Trace');
 View = View({}).type; // Materialize the diagnostic runtime when its view opens.
 const t = (text) => [{ type: "text", text }];
 // Group the selected request without substituting new source text or dropping unknowns.
@@ -225,6 +228,13 @@ const data = View.model(snapshot);
 assert.equal(data.requests.length, 2, "deduplicate request usage");
 assert.equal(data.statistics.requestUsage.reported, 1);
 assert.equal(data.statistics.requestUsage.input, 310);
+assert.equal(data.statistics.knownToolCount,8);
+assert.equal(data.statistics.usedToolCount,1);
+assert.equal(data.statistics.toolCalls,1,'current tool catalog summary excludes legacy names, retained in request visibility');
+assert.equal(data.statistics.toolUsage.get('houdini_exec').calls,1,'replayed and stale running results do not inflate counts');
+assert.equal(data.statistics.toolUsage.get('houdini_query').pending,1);
+assert.equal(data.statistics.verbUsage.get('set_parms').calls,1);
+assert.equal(data.statistics.verbCalls,1);
 assert.equal(
   data.entries.length,
   4,
@@ -406,11 +416,12 @@ assert.equal(
   "failed recovery is not a successful rollback",
 );
 
+let selectedSnapshot=snapshot,selectedSession='fixture';
 function render() {
   cursor = 0;
   return View({
-    sessionId: "fixture",
-    useTrajectory: (select) => select(snapshot),
+    sessionId: selectedSession,
+    useTrajectory: (select) => select(selectedSnapshot),
   });
 }
 function content(n) {
@@ -434,7 +445,16 @@ function click(label) {
   b.props.onClick();
   return render();
 }
-let tree = click("提示词与上下文");
+let tree = render();
+const primaryNav = all(tree).find(n => n.type === 'nav');
+const activePage = tree => all(all(tree).find(n=>n.type==='nav')).filter(n=>n.type==='button' && n.props['aria-pressed']).map(content);
+assert.deepEqual(all(primaryNav).filter(n => n.type === 'button').map(content), ['执行记录', '能力资料', '高级诊断']);
+assert.deepEqual(activePage(tree), ['执行记录']);
+assert(!all(tree).some(n => n.type === 'button' && content(n) === '上一页'), 'single-page traces omit pagination controls');
+assert(!all(tree).some(n => n.props.className === 'tr-call-tokens'), 'model usage is not repeated on every call');
+assert(!content(tree).includes('颜色区分工具用途'), 'reading the timeline needs no color legend');
+tree = click("高级诊断");
+assert.deepEqual(activePage(tree), ['高级诊断'], 'primary selection matches the content immediately');
 assert.match(content(tree), /NEW SYSTEM/);
 const picker = all(tree).find((n) => n.type === "select");
 picker.props.onChange({ target: { value: "assistant:2" } });
@@ -446,17 +466,42 @@ assert(
 );
 tree = click("本次工具定义");
 assert.match(content(tree), /old skill description/);
+tree = click("能力资料");
+assert.deepEqual(activePage(tree), ['能力资料'], 'changing groups clears the old primary selection');
 tree = click("技能");
+assert.deepEqual(activePage(tree), ['能力资料'], 'the skills page belongs to the same capability group');
 assert.match(content(tree), /old description/);
 assert.match(content(tree), /OLD SKILL BODY/);
 assert(!content(tree).includes("REPLAY MUST NOT REPLACE ORIGINAL"));
+assert.equal(all(tree).find(n=>n.props['aria-label']==='技能加载命令').props.value,'/houdini-sop-workflow');
+assert.match(content(tree),/正文返回 1 次/);
+assert.match(content(tree),/当前上下文是否仍保留正文未采集/);
 tree = click("工具");
+assert.match(content(tree),/当前包提供 8 个工具/);
+assert.match(content(tree),/本任务已用 1 个/);
+for(const [name,tool] of Object.entries(inventory.tools)) {
+  assert(content(tree).includes(name),'full tool catalog includes '+name);
+  assert(content(tree).includes(tool.purpose),'tool purpose comes from the shared catalog');
+  assert(content(tree).includes(tool.input)&&content(tree).includes(tool.output));
+}
+assert.match(content(tree),/本任务调用 1 次/);
+tree=click('动词目录');
 assert.match(content(tree), /返回类型/);
 assert.match(content(tree), /build_module/);
-tree = click("分析");
+assert.match(content(tree),/本任务执行 0 次/);
+tree=click('请求可见工具');
+assert.match(content(tree),/houdini_query/,'legacy tools stay visible through historical requests/calls');
+selectedSnapshot={};selectedSession='empty-fixture';
+tree=click('工具目录');
+assert.equal((content(tree).match(/本任务调用 0 次/g)||[]).length,8,'another selected task does not inherit usage');
+tree=click('技能');
+assert(!content(tree).includes('正文返回 1 次'),'current package skills do not become actual loads in a fresh task');
+selectedSnapshot=snapshot;selectedSession='fixture';
+tree = click("高级诊断");
+tree = click("执行统计");
 assert.match(content(tree), /310/);
 assert.match(content(tree), /1 \/ 2/);
-tree = click("执行过程");
+tree = click("执行记录");
 assert(
   !content(tree).includes("成功修改含动词"),
   "analysis separated from timeline",
@@ -527,12 +572,50 @@ const recoveredRequest=View.model({eventNodes:[{...result('recover','houdini_que
   meta:{canonical:{ok:true,requestReceipt:{status:'done',retrieved:true},verbs:[{verb:'set_parm',ok:true,args:[],result:{value:1},ms:1}]}}}]}).entries[0];
 assert.equal(recoveredRequest.verbs.length,0,'recovered execution is not a second mutation in the timeline');
 assert.equal(recoveredRequest.title,'查回原请求');
+// Request transport/admission and background execution are not scene success.
+// Top-level canonical job identities also connect submit/status/cancel records.
+for (const [name, canonical, expected] of [
+  ['houdini_job_submit',{jobId:'job-fixture',requestReceipt:{status:'job_submitted'}},'后台任务已提交'],
+  ['houdini_job_status',{ok:true,jobId:'job-fixture',status:'queued'},'后台任务排队中'],
+  ['houdini_job_status',{ok:true,jobId:'job-fixture',status:'running'},'后台任务执行中'],
+  ['houdini_job_cancel',{ok:false,jobId:'job-fixture',status:'cancelled'},'后台任务已取消'],
+  ['houdini_job_submit',{error:'lost response',requestReceipt:{status:'unknown_transport'}},'结果未知 · 需要查回'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'not_executed'}},'未执行'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'result_expired'}},'已结束 · 结果已过期'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'result_unavailable'}},'已结束 · 结果不可用'],
+]) {
+  const entry = View.model({eventNodes:[{...result('state-fixture',name,1,10),meta:{canonical}}]}).entries[0];
+  assert.equal(entry.state,expected);
+  if(canonical.jobId) assert.equal(entry.jobId,canonical.jobId);
+  if(['unknown_transport','result_expired','result_unavailable'].includes(canonical.requestReceipt?.status))
+    assert.equal(entry.attention,true,'uncertain/unavailable outcomes remain in the attention filter');
+}
+const historicalReceipt = View.model({eventNodes:[result('old-receipt','houdini_request',1,10,
+  'Request receipt status: unknown.\n\nrequest-receipt:\n{"status":"unknown"}\n\nexecution-observation:\n{"hip_dir":null}\n\nresult-details:\n{"stored":false}')]}).entries[0];
+assert.equal(historicalReceipt.state,'请求结果未知','plain historical recovery receipts keep their explicit status');
+assert.equal(historicalReceipt.requestReceipt.status,'unknown');
+const sameExecution={ok:false,execution:{runtime_id:'runtime',sequence:1},verbs:[
+  {verb:'set_parms',ok:true,args:[],ms:1},{verb:'set_parms',ok:false,args:[],error:'bad parameter',ms:1},
+]};
+const counted=View.model({eventNodes:[
+  {...result('counted','houdini_exec',1,10),meta:{canonical:sameExecution}},
+  {...result('replayed','houdini_exec',2,20),meta:{canonical:sameExecution}},
+],runningCalls:[{callId:'still-running',name:'houdini_exec',argsRaw:'{}',time:30}]}).statistics;
+assert.equal(counted.toolUsage.get('houdini_exec').calls,3,'count distinct tool invocations including pending and failed calls');
+assert.equal(counted.toolUsage.get('houdini_exec').failed,2);
+assert.equal(counted.toolUsage.get('houdini_exec').pending,1);
+assert.equal(counted.verbUsage.get('set_parms').calls,2,'count each recorded action while deduplicating an execution replay');
+assert.equal(counted.verbUsage.get('set_parms').failed,1);
 const sourceRead=View.model({eventNodes:[{...result('source','houdini_query',3,30,'Executed successfully.'),
   call:{name:'houdini_query',argsRaw:JSON.stringify({source_ref:'index'})}}]}).entries[0];
 assert.equal(sourceRead.kind,'read');
 assert.equal(sourceRead.title,'读取原始任务来源');
-tree=click('失败 / 拦截');assert.equal(callRows(tree).length,1);assert.match(content(tree),/permission denied/);
-console.log('Compact timeline: tool colors, 124 calls, top pagination, direct page selection and detail navigation passed');
+tree=click('需要关注');assert.equal(callRows(tree).length,1);assert.match(content(tree),/permission denied/);
+const rawDetail=all(tree).find(n=>n.type==='details' && n.props.className==='tr-raw');
+assert(rawDetail && !rawDetail.props.open && content(rawDetail).includes('调用标识：failure'), 'raw identifiers remain available in a closed disclosure');
+const usageDetail=all(tree).find(n=>n.type==='details' && content(n.children[0])==='关联模型请求');
+assert(usageDetail && !usageDetail.props.open, 'model usage is available on demand');
+console.log('Trace navigation: focused timeline, conditional pagination, accessible details and grouped diagnostics passed');
 
 // Exercise the actual detail renderer, not only the parsed model. Failed Bridge
 // ledger rows legitimately carry error/summary with no result at all.
@@ -546,12 +629,14 @@ const detailCases = [
   {verb:'read_parms',ok:true,args:[],result:false,ms:1},
   {verb:'read_parms',ok:true,args:[],result:0,ms:1},
   {verb:'read_parms',ok:true,args:[],result:'',ms:1},
+  {name:'do-not-infer-a-verb',ok:false,error:'fixture missing operation fields'},
+  {result:null},
 ];
 for (const [i, ledger] of detailCases.entries()) {
   hooks=[];
   snapshot.runningCalls=[];
   snapshot.eventNodes=[{...result('detail-case-'+i,'houdini_exec',1,10,'Executed successfully.'),
-    meta:{canonical:{ok:ledger.ok,verbs:[ledger]}}}];
+    meta:{canonical:{ok:ledger.ok ?? true,verbs:[ledger]}}}];
   const before=JSON.stringify(snapshot);
   const entry=View.model(snapshot).entries[0];
   tree=render();callRows(tree)[0].props.onClick();tree=render();
@@ -560,6 +645,14 @@ for (const [i, ledger] of detailCases.entries()) {
   if(ledger.summary) assert(displayed.includes('补充证据') && displayed.includes('scene_writes' in ledger.summary ? 'scene_writes' : '/obj/g/OUT'));
   if(!Object.hasOwn(ledger,'result')) assert(displayed.includes('返回值未记录'),'missing is not a successful null return');
   else assert.equal(entry.verbs[0].detail,JSON.stringify(ledger.result));
+  if (!ledger.verb) {
+    assert(displayed.includes('操作名称未记录'), 'incomplete public operation receipts have an explicit missing-name label');
+    assert(!displayed.includes('do-not-infer-a-verb'), 'a foreign name field is not evidence of an operation name');
+    assert(!all(tree).some(n=>n.type==='button' && content(n)==='查看动词契约 →'), 'missing names do not produce dead contract links');
+  }
+  if (ledger.ms == null) assert(displayed.includes('耗时未记录'), 'missing elapsed time is not displayed as undefined or zero');
+  if (ledger.ok == null) assert(displayed.includes('状态未记录'), 'a missing operation status is not called a failure');
+  assert(!displayed.includes('undefined'), 'missing public fields never leak JavaScript sentinels into display text');
   assert.equal(JSON.stringify(snapshot),before,'rendering cannot rewrite canonical evidence');
   tree=click('← 返回步骤列表');
   assert.equal(callRows(tree).length,1,'a failure detail must not remove the trace');
@@ -586,10 +679,41 @@ for(const [id,, , , ,expected] of effectCases) {
 assert.equal(effectEntries.find(e=>e.id==='blocked-query').state,'Gate 拦截');
 assert.equal(effectEntries.find(e=>e.id==='detail-history').gateBlocked,false,'historical blocked receipts are not new Gate rejections');
 hooks=[];snapshot.runningCalls=[];snapshot.eventNodes=effectNodes;
-tree=render();tree=click('分析');
+tree=render();tree=click('高级诊断');tree=click('执行统计');
 assert.match(content(tree),/无动词副作用未知/);
 assert.match(content(tree),/Host 历史结果 \/ 来源回读/);
 console.log('Trace UI raw effects: canonical blocked query/exec, dynamic unknown, historical detail exclusion passed');
+
+const caughtOutcome={batch:'completed',operations:{total:2,failed:1},checks:{failed:0,warning:0,unverified:0}};
+const returnedCheckOutcome={batch:'completed',operations:{total:1,failed:0},checks:{failed:1,warning:0,unverified:0}};
+const caughtCanonical={ok:true,result:{fallback:[]},outcome:caughtOutcome,
+  execution:{runtime_id:'outcome-fixture',sequence:1},transaction:{status:'no_scene_change'},
+  verbs:[{verb:'describe',ok:false,error:'missing node',args:[],ms:1},
+    {verb:'find_nodes',ok:true,result:[],args:[],ms:1}]};
+const outcomeModel=View.model({eventNodes:[
+  {...result('caught-read','houdini_inspect',1,10),meta:{canonical:caughtCanonical}},
+  {...result('failed-check','houdini_exec',2,20),meta:{canonical:{ok:true,outcome:returnedCheckOutcome,
+    verbs:[{verb:'verify_network',ok:true,check_status:'failed',result:{ok:false},args:[],ms:1}]}}},
+  {...result('retrieved-caught','houdini_request',3,30),meta:{canonical:{...caughtCanonical,requestReceipt:{retrieved:true,status:'done'}}}},
+]});
+assert.equal(outcomeModel.entries[0].failed,false,'a caught read does not become a tool failure');
+assert.equal(outcomeModel.entries[0].state,'已完成 · 子操作失败');
+assert.equal(outcomeModel.entries[1].state,'已完成 · 检查需关注');
+assert.equal(outcomeModel.statistics.failedToolCalls,0);
+assert.equal(outcomeModel.statistics.failedVerbCalls,1);
+assert.equal(outcomeModel.statistics.operationAttentionCalls,1,'retrieved receipt does not count operations again');
+assert.equal(outcomeModel.statistics.checkAttentionCalls,1,'raised operations are not returned failed checks');
+assert.equal(outcomeModel.statistics.verbCalls,3);
+const legacyCaught=View.model({eventNodes:[{...result('legacy-caught','houdini_exec',1,10),
+  meta:{canonical:{ok:true,verbs: caughtCanonical.verbs}}}]}).entries[0];
+assert.equal(legacyCaught.state,'已完成 · 子操作失败','old records use direct ledger errors without inventing checks');
+assert.equal(legacyCaught.checkCounts,null);
+const textOutcome=View.model({eventNodes:[result('text-outcome','houdini_exec',1,10,
+  'Batch completed; one or more operations raised errors.\n\nexecution-outcome:\n'+JSON.stringify(caughtOutcome)
+  +'\n\noperation-errors:\n[{"verb":"describe","error":"missing node"}]')]}).entries[0];
+assert.equal(textOutcome.state,'已完成 · 子操作失败','text-only projection preserves the producer outcome');
+assert.equal(textOutcome.failed,false);
+console.log('Trace separates batch, caught operation and returned check outcomes without recounting recovery receipts');
 const nestedId='p:ptc:1', nestedFacts={ok:true,result:{actual:1},verbs:[],execution:{read_only:true}};
 const nestedNode={...result(nestedId,'houdini_inspect',21,21),callId:nestedId,
   call:{name:'houdini_inspect',argsRaw:'{"code":"__result__=hou.frame()"}'},

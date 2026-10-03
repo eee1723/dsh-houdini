@@ -4,7 +4,7 @@
   "execution_scope": "All Python examples run inside one Houdini exec/inspect request. Live hou.Node values and Python locals are scoped to that request. Persist explicit path strings in __result__ and use those strings in later requests; ledger {node:path} snapshots are observations, not callable Node objects.",
   "verbs": {
     "verb_help": {
-      "summary": "Discover actual callable signatures and the available on-demand argument/result contracts.",
+      "summary": "Read actual callable signatures and brief purpose; detail='full' adds complete documentation, argument/result schemas and examples.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -23,6 +23,12 @@
                 "uniqueItems": true
               }
             ]
+          },
+          "detail": {
+            "type": "string",
+            "enum": ["brief", "full"],
+            "default": "brief",
+            "description": "Brief returns callable facts and concise purpose. Full adds complete doc and maintained operation_contract; applies to one name or every item in a batch."
           }
         },
         "required": [
@@ -61,8 +67,17 @@
               "call_mode": {
                 "type": "string"
               },
+              "detail": {
+                "type": "string",
+                "enum": ["brief", "full"]
+              },
               "doc": {
-                "type": "string"
+                "type": "string",
+                "description": "Concise purpose in brief mode; complete callable documentation in full mode."
+              },
+              "full_help": {
+                "type": "string",
+                "description": "Executable full-help query, supplied in brief mode."
               },
               "operation_contract": {
                 "type": "object"
@@ -73,6 +88,7 @@
               "signature",
               "return_type",
               "call_mode",
+              "detail",
               "doc"
             ],
             "additionalProperties": true
@@ -102,12 +118,18 @@
         {
           "title": "Inspect a focused group",
           "code": "__result__ = verb_help(['build_module', 'network_boxes', 'node_info', 'tab_create'])",
-          "read_result": "items contains one actual signature per name; operation_contract is present where documented.",
+          "read_result": "items contains actual signatures, return types, execution modes, concise purposes and executable full_help queries. No full schemas are included by default.",
+          "tool": "houdini_inspect"
+        },
+        {
+          "title": "Read the complete contract for a selected operation",
+          "code": "__result__ = verb_help('build_module', detail='full')",
+          "read_result": "doc contains the complete callable documentation; operation_contract, where maintained, supplies input/output schemas and executable examples.",
           "tool": "houdini_inspect"
         }
       ],
       "notes": [
-        "List input returns items/count, not a mapping keyed by verb name. Other verbs still supply runtime signature, return_type, call_mode and doc.",
+        "List input returns items/count, not a mapping keyed by verb name. Both scalar and list inputs default to brief; use detail='full' when complete documentation or nested input/output shapes are needed.",
         "call_mode=exec means houdini_exec or houdini_job_submit; query_or_exec is also available through houdini_inspect. Python names, live Node objects and local variables do not persist across separate tool calls."
       ]
     },
@@ -145,6 +167,10 @@
           "type": {
             "type": "string"
           },
+          "requested_type": {
+            "type": "string",
+            "description": "The caller's requested family or exact type. type is the actual resolved version used by creation."
+          },
           "category": {
             "type": "string"
           },
@@ -178,6 +204,7 @@
         },
         "required": [
           "parent",
+          "requested_type",
           "type",
           "category",
           "parameters",
@@ -202,7 +229,8 @@
         }
       ],
       "notes": [
-        "parm_filter is a literal substring, not regex, glob or a pipe-separated list. Static defaults and menus do not describe shelf initialization or dynamic menus on a live node."
+        "parm_filter is a literal substring, not regex, glob or a pipe-separated list. Static defaults and menus do not describe shelf initialization or dynamic menus on a live node.",
+        "parent must be an existing creation network. Unknown types report nearby visible registered names/labels in that context; suggestions do not substitute for the requested type."
       ]
     },
     "tab_create": {
@@ -1383,7 +1411,7 @@
         }
       ],
       "notes": [
-        "Simplified spec supports recursive folders and toggle/int/float/string scalars. Use verb_help(hda_set_interface) for the complete layout vocabulary; do not mix layout fields into simplified spec.",
+        "Simplified spec supports recursive folders and toggle/int/float/string scalars. Use verb_help('hda_set_interface', detail='full') for the complete layout vocabulary; do not mix layout fields into simplified spec.",
         "layout is exclusive with spec/defaults/update_defaults; dry_run is available in layout mode. update_defaults changes existing spare defaults and preserves current values/keys."
       ]
     },
@@ -1477,7 +1505,7 @@
       ]
     },
     "render_view": {
-      "summary": "Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations.",
+      "summary": "Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations. Managed output accepts an omitted picture or a basename; paths require output_policy='explicit'.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1504,7 +1532,8 @@
                 "minItems": 3,
                 "maxItems": 3
               }
-            ]
+            ],
+            "description": "World-space target-to-camera direction. Named previews are fixed: iso=[1,0.7,1], front=[0,0.25,1], side=[1,0.25,0], top=[0.001,1,0.001]; front/side include elevation and are not object-relative orthographic axes. Pass a nonzero xyz vector for a specific object axis; orthographic projection alone does not choose that axis."
           },
           "frame": {
             "anyOf": [

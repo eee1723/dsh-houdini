@@ -384,21 +384,16 @@ def context_name(category) -> str:
 
 def scene_info() -> dict:
     """只读场景/时间线及HIP单位长度摘要；不移动playbar、不遍历节点图。"""
-    hip_path = hou.hipFile.path()
-    # A user may deliberately save/load a file called untitled.hip. The basename
-    # alone is not proof that the scene is new (especially in headless HOM).
-    file_exists = os.path.isfile(hip_path)
-    has_named_path = os.path.basename(hip_path).lower() != "untitled.hip" or file_exists
+    from dsh_context import hip_file_state, unit_length_meters
+    hip = hip_file_state()
+    file_exists = hip['file_exists']
     has_unsaved_changes = bool(hou.hipFile.hasUnsavedChanges())
     ui_available = bool(hou.isUIAvailable())
-    from dsh_context import unit_length_meters
     return {
-        "hip_path": hip_path,
+        **hip,
         "hip_name": hou.hipFile.name(),
-        "has_named_path": has_named_path,
         "has_unsaved_changes": has_unsaved_changes,
         "dirty_reliable": ui_available,
-        "file_exists": file_exists,
         "clean_on_disk": file_exists and not has_unsaved_changes if ui_available else None,
         "version": hou.applicationVersionString(),
         "unit_length_meters": unit_length_meters(),
@@ -450,7 +445,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     ``expected_current_path`` must match the current scene. Existing targets
     require explicit ``overwrite=True`` and user authorization in ``reason``.
     File I/O is not undoable; a failed save may leave a partial new target.
-    After a workspace change, reopen Open Workspace to rebind the DSH session.
+    After a workspace change, use Open Workspace to select the matching DSH session.
     """
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("reason 必须记录用户对目标路径/覆盖的明确授权")
@@ -508,7 +503,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
             "dirty_reliable": reliable, "clean_on_disk": not dirty_after if reliable else None,
             "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
             "workspace_changed": os.path.normcase(os.path.dirname(current)) != os.path.normcase(os.path.dirname(target)),
-            "note": "File I/O is not undoable. Open Workspace after changing project directory."}
+            "note": "文件写入不能撤销。更换工程目录后，请选择 DSH-Houdini → Open Workspace。"}
 
 
 def _frame_pair(value, label: str) -> tuple[float, float]:
@@ -1228,6 +1223,11 @@ def _prepare_tab_create(parent, type_name, inputs, parms):
     """Resolve creation and wires completely before calling a shelf or createNode."""
     parent = _resolve(parent)
     cat = parent.childTypeCategory()
+    if cat is None:
+        raise ValueError(
+            f'tab_create parent={parent.path()!r} is not a network that can create nodes; '
+            f'use its existing creation network {parent.parent().path()!r}'
+        )
     ctx = context_name(cat)
     latest = resolve_latest_type(cat, type_name)
     node_type = hou.nodeType(cat, latest)
@@ -2636,9 +2636,16 @@ def _parm_template_card(tpl) -> dict:
         entry["components"] = [tpl.name()]
     else:
         scheme = tpl.namingScheme().name()
-        suffixes = {"XYZW": "xyzw", "RGBA": "rgba", "UVW": "uvw", "XYWH": "xywh"}.get(scheme)
+        entry['naming_scheme'] = scheme
+        suffixes = {"XYZW": "xyzw", "RGBA": "rgba", "UVW": "uvw", "XYWH": "xywh",
+                    "MinMax": ("min", "max"), "MaxMin": ("max", "min"),
+                    "StartEnd": ("start", "end")}.get(scheme)
         if suffixes:
             entry["components"] = [tpl.name() + s for s in suffixes[:tpl.numComponents()]]
+        elif scheme == "BeginEnd":
+            # Built-in H21/H22 tuples use prefixes (beginangle/endangle),
+            # unlike the suffix-based StartEnd scheme. No scratch node needed.
+            entry["components"] = [s + tpl.name() for s in ("begin", "end")[:tpl.numComponents()]]
         elif scheme in ("Base0", "Base1"):
             start = 0 if scheme == "Base0" else 1
             entry["components"] = [tpl.name() + str(i + start) for i in range(tpl.numComponents())]
@@ -2697,8 +2704,36 @@ def _node_parameter_cards(typ, counts=None):
     return cards
 
 
+def _node_type_suggestions(category, requested):
+    """Suggest registered visible types by name/label, without resolving aliases."""
+    query = _VERSION_RE.sub(r'\1', requested).lower()
+    candidates = []
+    for name, typ in category.nodeTypes().items():
+        if not _visible_node_type(typ):
+            continue
+        family = _VERSION_RE.sub(r'\1', name).lower()
+        label = (typ.description() or name).lower()
+        score = max(difflib.SequenceMatcher(None, query, family).ratio(),
+                    difflib.SequenceMatcher(None, query, label).ratio())
+        if query == family or query in family or query in label:
+            score = max(score, 0.9)
+        if score >= 0.85:
+            version = _VERSION_RE.match(name)
+            candidates.append((score, _version_key(version.group(2)) if version else (),
+                               family, name, typ.description() or name))
+    # One visible version per family, keeping the newest registered candidate.
+    result, seen = [], set()
+    for _, _, family, name, label in sorted(candidates, reverse=True):
+        if family not in seen:
+            result.append({'type': name, 'label': label})
+            seen.add(family)
+        if len(result) == 6:
+            break
+    return result
+
+
 def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) -> dict:
-    """Read a version-resolved node card BEFORE creating a node (no scratch nodes).
+    """Read a static version-resolved node card in an existing network (no scratch nodes).
 
     parm_filter is a literal case-insensitive substring, NOT regex or glob.
     An empty match is not an empty type: retry with parm_filter=''.
@@ -2706,7 +2741,9 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     ``list_parms`` on an actual node; this card does not run shelf scripts.
     operation_parameters additionally carries unfiltered critical settings and
     operation_card.decisions; retain these even when filtering other parameters.
-    ``parent`` supplies the real creation context, not a guessed category.
+    ``parent`` supplies an existing creation network, not a guessed category.
+    requested_type preserves your input; type is the exact resolved node type.
+    Unknown types report nearby registered visible types; no alias is created.
     SOP example: ``node_info(existing_geo, "box")``. With no SOP container,
     first create one via ``tab_create("/obj", "geo", name=...)`` in exec;
     querying ``node_info("/obj", "box")`` cannot discover an SOP Box.
@@ -2714,10 +2751,23 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     if isinstance(parent, str) and not parent.startswith('/'):
         raise ValueError('node_info(parent,type): parent must be an existing absolute network path, not a category; create the geometry container with tab_create("/obj","geo",name) first')
     p = _resolve(parent)
+    if not p.isNetwork() or p.childTypeCategory() is None:
+        raise ValueError(f'node_info parent={p.path()!r} is not a network that can create nodes; use its existing creation network {p.parent().path()!r}')
+    if not isinstance(type_name, str) or not type_name.strip():
+        raise ValueError('type_name must be a non-empty registered type name; e.g. node_info(existing_geo, "box")')
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 256:
         raise ValueError("limit 必须在 1..256")
     cat = p.childTypeCategory()
-    latest = resolve_latest_type(cat, type_name)
+    try:
+        latest = resolve_latest_type(cat, type_name)
+    except ValueError as error:
+        candidates = _node_type_suggestions(cat, type_name)
+        raise ValueError(
+            f'Unknown node type {type_name!r}; existing parent={p.path()!r} creates {cat.name()} nodes. '
+            f'Registered visible name/label suggestions (not replacements): {candidates}. '
+            f'Use search_tab_entries({p.path()!r}, query="part of a type name or label") to discover this context. '
+            'For SOP nodes the parent must be an existing geometry network, not /obj.'
+        ) from error
     typ = hou.nodeType(cat, latest)
     if typ is None:
         raise ValueError(f"未知节点类型：{type_name}; parent={p.path()} creates {cat.name()} nodes. For SOP types use an existing geometry container, not /obj; search_tab_entries(parent,query) lists valid types.")
@@ -2728,7 +2778,7 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
     operation = operation_card(latest)
     important, missing = operation_parameters(operation, all_parameters) if operation else ([], [])
     parameters = [c for c in all_parameters if not parm_filter or parm_filter.lower() in (c['name'] + ' ' + c['label']).lower()]
-    return {"parent": p.path(), "type": latest, "category": cat.name(),
+    return {"parent": p.path(), "requested_type": type_name, "type": latest, "category": cat.name(),
             **({'usage_notes': operation['notes'], 'operation_card': operation_metadata(operation),
                 'operation_parameters': important, 'operation_parameters_missing': missing,
                 'operation_parameter_scope': 'Unfiltered critical static templates; defaults are not Shelf-created values. Missing fields require runtime inspection, not guessed replacements.'} if operation else {}),
@@ -2791,17 +2841,20 @@ def list_parms(node) -> list:
 
 
 def read_parms(node, changed_only: bool = True, *, names: list | None = None) -> list:
-    """参数**值**：默认只看「非默认 + 带表达式 + 被引用」的参数（意图解读用）。
+    """参数值：默认保留非默认值、表达式、引用、关键帧或时间依赖的参数。
 
     带表达式的参数会顺带解析引用目标（``referenced_parm``），被其他参数引用的
     参数会标 ``referenced_by``——两个方向的依赖对 agent 判断「动谁会波及谁」都需要。
     返回 ``list[dict]``，每项至少有 ``name/value``；不是 name→value 字典。
     Ramp value为{type:'ramp',basis:[名称],keys:[位置],values:[标量或RGB数组]}，
     可直接json.dumps；仅当前求值控制点，不证明动画恢复，也不是setter输入格式。
+    changed_only必须为bool；选择名称用read_parms(node, names=['radius', 'scale'])。
     names可显式选1..32个唯一标量或tuple参数，按请求顺序返回且不受changed_only过滤；
     tuple返回聚合value和带完整诊断的components；缺失字段报错。
     无动画的string含原始UTF-8源码source_sha256；求值不同于原文时另含raw_value。
     """
+    if type(changed_only) is not bool:
+        raise ValueError("changed_only must be boolean; select parameters with read_parms(node, names=['radius', 'scale'])")
     n = _resolve(node)
     out = []
     requested = None
@@ -2833,10 +2886,6 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
     else:
         parameters = n.parms()
     for p in parameters:
-        try:
-            is_default = p.isDefault()
-        except Exception:
-            is_default = False
         # hou.Parm 没有 hasExpression()（H21/H22 均无；静默 try/except 曾让表达式
         # 维度整个失效）。正确判定：expression() 在无表达式时抛 OperationFailed。
         try:
@@ -2858,10 +2907,16 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
             time_dependent = bool(p.isTimeDependent())
         except Exception:
             time_dependent = False
-        if names is None and changed_only and is_default and not has_expr and not is_ref and not keys and not time_dependent:
-            continue
-        entry: dict = {"name": p.name()}
         tpl = p.parmTemplate()
+        if (names is None and changed_only and not has_expr and not is_ref
+                and not keys and not time_dependent):
+            # A ramp's ordinary default query only covers its multiparm count;
+            # the dedicated API compares its actual knots and values.
+            is_default = (p.isAtRampDefault() if tpl is not None and tpl.type() == hou.parmTemplateType.Ramp
+                          else p.isAtDefault())
+            if is_default:
+                continue
+        entry: dict = {"name": p.name()}
         if tpl is not None:
             try:
                 entry["label"] = tpl.label()
@@ -3142,18 +3197,23 @@ def set_parm(node, name: str, value,
         raise
 
 
-def _validate_numeric_parameter_value(value, components=()) -> None:
+def _validate_numeric_parameter_value(value, components=(), *, size=None) -> None:
     """Shared static/runtime value-shape check; never evaluate an expression.
 
     A size-one template names a scalar Parm, not a ParmTuple-only setter.
     Full numeric tuples accept finite literals; scalar/component fields accept
     literals or explicit expressions. Menus retain their separate token policy.
     """
-    if len(components) > 1:
-        if not isinstance(value, (list, tuple)) or len(value) != len(components):
-            raise ValueError(f'tuple needs {len(components)} components: {list(components)}')
+    # Tuple width is a template fact, independent of whether its naming scheme
+    # is known here. An unrecognized scheme must never turn a tuple into scalar.
+    size = size if size is not None else len(components) or 1
+    if size > 1:
+        names = f': {list(components)}' if components else ''
+        if not isinstance(value, (list, tuple)) or len(value) != size:
+            raise ValueError(f'tuple needs {size} components{names}')
         if any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in value):
-            raise ValueError(f'numeric tuple requires finite numeric values; expressions use component names {list(components)}')
+            target = str(list(components)) if components else 'from list_parms on the created node'
+            raise ValueError(f'numeric tuple requires finite numeric values; expressions use component names {target}')
         return
     if isinstance(value, str):
         return  # Numeric strings are HScript, not implicit menu tokens.
@@ -3294,7 +3354,7 @@ def _set_parm_impl(node, name: str, value,
     names = [pp.name() for pp in n.parms()]
     suggestions = difflib.get_close_matches(name, names, n=5, cutoff=0.4)
     raise ValueError(
-        f"节点 '{n.path()}' 没有参数 '{name}'。相似参数：{suggestions}"
+        f"节点 '{n.path()}' (type={n.type().name()}) 没有参数 '{name}'。相似参数：{suggestions}；请用 list_parms 查询实际节点"
     )
 
 
@@ -3324,7 +3384,7 @@ def set_parms(node, values: dict,
             parm = n.parm(key)
             targets = (parm,) if parm is not None else n.parmTuple(key)
             if targets is None:
-                raise ValueError(f"{n.path()} 没有参数 {key!r}；请用 list_parms")
+                raise ValueError(f"{n.path()} (type={n.type().name()}) 没有参数 {key!r}；请用 list_parms 查询实际节点")
             for target in targets:
                 if target.name() in snapshots:
                     raise ValueError(f"同批参数重叠：{key!r} 与 {target.name()!r}")
@@ -3743,7 +3803,7 @@ def create_spare_parms(node, code_parm: str = "snippet",
     layout可选模式：与spec/defaults/update_defaults互斥，复用houdini-parameter-ui
     组件，默认追加到单节点而不改HDA定义。dry_run=True返回展开界面/建议且零写入。
     拒绝同名模板/通道；保持已有值/keys/locks，失败恢复旧接口和通道；不创建绑定。
-    菜单/颜色tuple/ramp等完整layout字段和可执行示例见verb_help('hda_set_interface')；
+    菜单/颜色tuple/ramp等完整layout字段和可执行示例见verb_help('hda_set_interface', detail='full')；
     下方简化spec只支持folder与scalar，不要将完整layout字段混入简化spec。
 
     对齐 Wrangle 参数编辑器的 Create Parameters 意图，但要求默认值显式可审计；
@@ -5102,6 +5162,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
 
     tests为1..16个case；每个case是
     {id,values:{parm:number},expectations:[{metric,axis?,group?,id_attrib?,delta:[min,max],range?}],interfaces?}，
+    values只放相对当前基准实际改变的参数；未变化字段和基准状态不要作为扰动case传入。
     每个case最多16个expectations；同一扰动的大检查按相同values拆成多个case。
     metric精确枚举：bounds_size、bounds_center、bounds_min、bounds_max（axis0..2）、
     point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count（Polygon共享边）。
@@ -5639,8 +5700,19 @@ def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
         raise ValueError("output_policy must be 'managed' or 'explicit'")
     scene = scene_info()
     hip_path = scene["hip_path"] if scene["has_named_path"] else None
-    from dsh_preview_paths import allocate_managed, explicit_artifact
+    from dsh_preview_paths import allocate_managed, explicit_artifact, _safe_component
     if output_policy == "managed":
+        # Validate literal caller input before expansion/allocation. Only this
+        # pure filename check proves zero scene writes; later failures keep
+        # their own recovery semantics (including expression/renderer effects).
+        if isinstance(path, str):
+            try:
+                _safe_component(path, field="filename")
+            except ValueError as error:
+                raise CheckpointError(str(error), {
+                    'ok': False, 'phase': 'output_path_preflight', 'scene_writes': 0,
+                    'field': 'filename', 'output_policy': output_policy,
+                }) from error
         artifact = allocate_managed(
             hip_path,
             path,

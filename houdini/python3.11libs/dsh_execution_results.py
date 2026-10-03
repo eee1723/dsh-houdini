@@ -254,6 +254,18 @@ def project_result(*, ledger, images, stdout, stderr, error, rollback, raw_usage
     """Build the public result solely from captured facts; no scene inspection."""
     verb_ledger = ledger
     envelope = {'ok': error is None, 'stdout': stdout, 'stderr': stderr}
+    # Execution completion, raised operations and returned validation findings
+    # are distinct facts. A caught read error can coexist with a useful fallback;
+    # neither batch completion nor a passed check certifies the user's task.
+    check_counts = {status: sum(v.get('ok') is True and v.get('check_status') == status
+                                for v in verb_ledger)
+                    for status in ('failed', 'warning', 'unverified')}
+    envelope['outcome'] = {
+        'batch': 'completed' if error is None else 'failed',
+        'operations': {'total': len(verb_ledger),
+                       'failed': sum(v.get('ok') is False for v in verb_ledger)},
+        'checks': check_counts,
+    }
     # Only images produced by this request enter the Host's native attachments.
     if images:
         envelope["images"] = images
@@ -267,7 +279,8 @@ def project_result(*, ledger, images, stdout, stderr, error, rollback, raw_usage
         if evidence:
             envelope['evidence'] = evidence
         checks = [{"verb": v["verb"], "status": v["check_status"]}
-                  for v in verb_ledger if v.get("check_status") in ("failed", "warning", "unverified")]
+                  for v in verb_ledger if v.get('ok') is True
+                  and v.get("check_status") in ("failed", "warning", "unverified")]
         if checks:
             envelope["checks"] = checks
     if (

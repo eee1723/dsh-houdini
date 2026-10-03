@@ -23,7 +23,9 @@ _SURFACE_TYPES = {'Polygon', 'Mesh', 'Sphere', 'Tube'}
 
 
 class UnsupportedEvidence(ValueError):
-    pass
+    def __init__(self, message, *, diagnostic=None):
+        super().__init__(message)
+        self.diagnostic = diagnostic or {}
 
 
 def validate_domain(domain):
@@ -1024,9 +1026,31 @@ def _measure(g, item, reference=None):
         for prim in prims[1:]:bbox.enlargeToContain(prim.boundingBox())
         values = {'bounds_min':bbox.minvec(),'bounds_max':bbox.maxvec(),'bounds_size':bbox.sizevec(),'bounds_center':bbox.center()}
         return float(values[metric][item['axis']])
-    if any(not _supported_surface(p) for p in prims):
-        raise UnsupportedEvidence('area not verified for this primitive representation')
+    unsupported = [p for p in prims if not _supported_surface(p)]
+    if unsupported:
+        raise UnsupportedEvidence('area not verified for this primitive representation', diagnostic={
+            'selected_primitives': len(prims), 'unsupported_primitives': len(unsupported),
+            'primitive_types': dict(Counter(p.type().name() for p in prims)),
+            'unsupported_sample': [{'primitive': p.number(), 'type': p.type().name(),
+                                    'vertices': p.numVertices(),
+                                    **({'closed': bool(p.intrinsicValue('closed'))}
+                                       if p.type() == hou.primType.Polygon else {})} for p in unsupported[:8]],
+            'sample_truncated': len(unsupported) > 8,
+            'supported_surfaces': 'closed Polygon faces with at least three vertices, Mesh, Sphere, Tube',
+            'next_action': 'Inspect the reported primitive selection. For surface area select an actual surface group; for curves choose a measurement of the intended curve behavior. Changing the metric does not verify the original claim.',
+        })
     return sum(float(p.intrinsicValue('measuredarea')) for p in prims)
+
+
+def _measure_case(g, test, index, item, reference=None):
+    """Attach the exact failed selection, without changing measurement semantics."""
+    try:
+        return _measure(g, item, reference)
+    except UnsupportedEvidence as error:
+        raise UnsupportedEvidence(str(error), diagnostic={
+            'case_id': test['id'], 'expectation_index': index,
+            'expectation': item, **error.diagnostic,
+        }) from error
 
 
 def validate_capture_views(views):
@@ -1106,7 +1130,7 @@ def _control_summary(result, tests, interfaces=None, topology=None, baseline_int
             continue
         failed = [m for m in row.get('measurements', []) if not m['pass']]
         failures.append({'id': row['id'], 'status': row['status'],
-                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors',
+                         **{k: row[k] for k in ('reason', 'restored', 'geometry_changed', 'restore_errors', 'measurement_failure',
                                                'parameter_restore', 'geometry_restore') if k in row},
                          'failed_measurements': failed[:8],
                          'failed_measurement_count': len(failed),
@@ -1137,7 +1161,8 @@ def _control_summary(result, tests, interfaces=None, topology=None, baseline_int
                                      'No inference about undeclared controls, relationships or the full parameter domain.'},
             'failures': failures[:8], 'failure_count': len(failures),
             **{k: result[k] for k in ('controller', 'output', 'frame', 'contract_sha256',
-                                     'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes') if k in result},
+                                     'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes',
+                                     'measurement_failure') if k in result},
             'next_action': ('Only the declared cases and measurements passed; untested relationships remain unverified.'
                 if result['ok'] else 'Locked baseline/case captures are incomplete; inspect their framing/backend evidence. Numeric case results and restoration are reported separately; visual semantics remain unverified.'
                 if result.get('capture_status')=='unverified' else result.get('next_action',
@@ -1165,9 +1190,11 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         error.evidence['contract_sha256']=contract_hash
         if isinstance(error.evidence.get('control_summary'),dict):
             error.evidence['control_summary']['contract_sha256']=contract_hash
+            error.evidence['next_action']=error.evidence['control_summary']['next_action']
         raise
     result['contract_sha256']=contract_hash
     result['control_summary'] = _control_summary(result, tests, interfaces, topology, baseline_interfaces)
+    result['next_action'] = result['control_summary']['next_action']
     return result
 
 
@@ -1290,7 +1317,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'next_action':'Fix the baseline interface before perturbing controls; zero parameter writes.'}
     # Resolve every measurement BEFORE the first write.
     try:
-        baselines={test['id']:[_measure(measured_baseline,e) for e in test.get('expectations',[])] for test in tests}
+        baselines={test['id']:[_measure_case(measured_baseline,test,i,e)
+                              for i,e in enumerate(test.get('expectations',[]))] for test in tests}
         if not all(math.isfinite(float(v)) for values in baselines.values() for v in values):
             raise UnsupportedEvidence('nonfinite baseline measurement; zero parameter writes')
         for test in tests:
@@ -1304,6 +1332,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
+                'parameter_writes':0, 'measurement_failure':error.diagnostic,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
     baseline_captures=capture_views(node,views,view_bounds=view_bounds,frame=original_frame) if views else []
     capture_locks={c['view']:c['framing'] for c in baseline_captures
@@ -1340,8 +1369,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             try: measured_geometry,_=expanded_view(g)
             except ValueError as error: raise UnsupportedEvidence(str(error)) from error
             measurements=[]
-            for exp,start in zip(test.get('expectations',[]),baselines[test['id']]):
-                end=_measure(measured_geometry,exp,measured_baseline);delta=end-start;lo,hi=exp['delta']
+            for index,(exp,start) in enumerate(zip(test.get('expectations',[]),baselines[test['id']])):
+                end=_measure_case(measured_geometry,test,index,exp,measured_baseline);delta=end-start;lo,hi=exp['delta']
                 if not math.isfinite(float(end)):raise UnsupportedEvidence('nonfinite measured value')
                 range_pass='range' not in exp or exp['range'][0]<=end<=exp['range'][1]
                 measurements.append({'expectation':exp,'baseline':start,'measured':end,'delta':delta,'pass':lo<=delta<=hi and range_pass})
@@ -1358,7 +1387,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 if row['status']=='pass':row['status']='unverified'
             if views:row['captures']=capture_views(node,views,locks=capture_locks,frame=original_frame)
         except UnsupportedEvidence as error:
-            row.update({'status':'unverified','reason':str(error)})
+            row.update({'status':'unverified','reason':str(error),'measurement_failure':error.diagnostic})
         except h.CheckpointError:
             # Restoring numeric controls cannot erase a broader user-state fault.
             raise
@@ -1415,5 +1444,4 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
             'baseline_captures':baseline_captures,'capture_status':capture_status,'representation':representation,
-            'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships',
-            'next_action':'Fix failed responses/interfaces; preserve drafts. Do not claim full controllability from one global geometry change.'}
+            'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships'}

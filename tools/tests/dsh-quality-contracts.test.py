@@ -142,6 +142,18 @@ try:
     assert result['control_summary']['case_counts']=={'pass':1,'fail':0,'unverified':0,'not_run':0}
     assert result['control_summary']['coverage']['declared_interfaces']==1
     assert result['control_summary']['cases'][0]['interface_status']=='pass'
+    assert result['next_action']==result['control_summary']['next_action']
+    assert 'passed' in result['next_action'] and 'Fix failed' not in result['next_action']
+    # Missing captures must not turn passing numeric cases into a success claim.
+    original_capture=q.capture_views
+    try:
+        q.capture_views=lambda *args,**kwargs:[{'view':'front','status':'unverified','reason':'injected unavailable capture'}]
+        uncaptured=h.test_controls(ctrl,out,tests,views=['front'])
+    finally:q.capture_views=original_capture
+    assert uncaptured['status']=='unverified' and uncaptured['restored']
+    assert uncaptured['control_summary']['case_counts']['pass']==1
+    assert uncaptured['next_action']==uncaptured['control_summary']['next_action']
+    assert 'captures are incomplete' in uncaptured['next_action']
     # A case-specific interface checks only the perturbed state; no baseline
     # contact contract is silently applied to an intentionally open state.
     conditional=[{'id':'length_case_interface','values':{'length':1.2},'expectations':[
@@ -206,6 +218,8 @@ try:
     baseline_failed=h.test_controls(gap_ctrl,gap_out,open_case,baseline_interfaces=[bad_baseline])
     assert baseline_failed['status']=='fail' and baseline_failed['parameter_writes']==0,baseline_failed
     assert baseline_failed['results']==[] and gap_ctrl.evalParm('lift')==0,baseline_failed
+    assert baseline_failed['next_action']==baseline_failed['control_summary']['next_action']
+    assert 'baseline interface' in baseline_failed['next_action']
     baseline_coverage=baseline_failed['control_summary']['coverage']
     assert baseline_coverage['baseline_interface_status']=='fail',baseline_failed
     assert baseline_coverage['cases_with_interface_checks']==0 and baseline_coverage['executed_interface_checks']==1,baseline_failed
@@ -218,6 +232,8 @@ try:
     assert bridge_result['control_summary']['coverage']['baseline_interface_status']=='pass',bridge_result
     assert bridge_result['control_summary']['coverage']['executed_interface_checks']==2,bridge_result
     assert bridge_result['control_summary']['cases'][0]['interface_status']=='pass',bridge_result
+    assert bridge_result['next_action']==bridge_result['control_summary']['next_action']==envelope['result']['next_action']
+    assert 'passed' in bridge_result['next_action']
     # Absolute ranges apply to baseline too: a rejected baseline must not look
     # like an empty successful batch when author code prints only results.
     baseline_test=[{'id':'target_only_range','values':{'length':1.2},'expectations':[
@@ -238,6 +254,8 @@ try:
     result=h.test_controls(ctrl,out,[{'id':'dead','values':{'unused':2},'expectations':[
       {'metric':'bounds_size','axis':0,'delta':[.1,2]}]}])
     assert not result['ok'] and result['restored'] and ctrl.evalParm('unused')==1,result
+    assert result['next_action']==result['control_summary']['next_action']
+    assert 'top-level failure' in result['next_action']
     failure=result['control_summary']['failures'][0]
     assert failure['id']=='dead' and failure['failed_measurement_count']==1
     assert failure['failed_measurements'][0]['delta']==0
@@ -312,6 +330,41 @@ try:
         {'metric':'area','delta':[.1,1]}]}]
     unsupported_area=h.test_controls(ctrl,packed,area_test)
     assert unsupported_area['status']=='pass' and ctrl.evalParm('length')==1,unsupported_area
+    # An unsupported measurement identifies the exact case and primitives.
+    # A mixed surface/curve output must not turn an area test into a silent
+    # partial surface measurement or make all not-run cases look passed.
+    area_surface=root.createNode('attribwrangle','area_surface')
+    area_surface.setInput(0,root.node('part_a'))
+    area_surface.parm('class').set('primitive')
+    area_surface.parm('snippet').set('setprimgroup(0,"area_surface",@primnum,1);')
+    area_curve=root.createNode('line','area_curve')
+    area_mixed=root.createNode('merge','area_mixed')
+    area_mixed.setInput(0,area_surface);area_mixed.setInput(1,area_curve)
+    blocked_tests=[
+        {'id':'size_before_area','values':{'length':1.2},'expectations':[{'metric':'bounds_size','axis':0,'delta':[.19,.21]}]},
+        {'id':'mixed_area','values':{'length':1.2},'expectations':[{'metric':'area','delta':[.79,.81]}]},
+    ]
+    blocked=h.test_controls(ctrl,area_mixed,blocked_tests)
+    assert blocked['status']=='unverified' and blocked['parameter_writes']==0 and blocked['restored'],blocked
+    assert blocked['control_summary']['case_counts']=={'pass':0,'fail':0,'unverified':0,'not_run':2},blocked
+    assert blocked['next_action']==blocked['control_summary']['next_action']
+    assert 'not_run cases are not passes' in blocked['next_action']
+    diagnostic=blocked['control_summary']['measurement_failure']
+    assert diagnostic['case_id']=='mixed_area' and diagnostic['expectation_index']==0,diagnostic
+    assert diagnostic['expectation']['metric']=='area' and diagnostic['unsupported_primitives']==1,diagnostic
+    assert diagnostic['unsupported_sample'][0]['type']=='Polygon' and diagnostic['unsupported_sample'][0]['closed'] is False,diagnostic
+    assert ctrl.evalParm('length')==1
+    selected=h.test_controls(ctrl,area_mixed,[{'id':'selected_area','values':{'length':1.2},
+        'expectations':[{'metric':'area','group':'area_surface','delta':[.79,.81]}]}])
+    assert selected['ok'] and selected['restored'] and ctrl.evalParm('length')==1,selected
+    # When the representation changes only after perturbation, the same
+    # diagnostic follows that case, and the ordinary restoration still runs.
+    area_switch=root.createNode('switch','area_switch')
+    area_switch.setInput(0,area_surface);area_switch.setInput(1,area_curve)
+    changed=h.test_controls(area_switch,area_switch,[{'id':'curve_after_write','values':{'input':1},
+        'expectations':[{'metric':'area','delta':[-6,-.1]}]}])
+    assert changed['status']=='unverified' and changed['restored'] and area_switch.evalParm('input')==0,changed
+    assert changed['control_summary']['failures'][0]['measurement_failure']['case_id']=='curve_after_write',changed
     # Expression/keys and frame remain unchanged even if the perturbed cook fails.
     ctrl.parm('length').setExpression('1+0*$F',hou.exprLanguage.Hscript)
     bad=root.createNode('attribwrangle','bad')
@@ -328,7 +381,15 @@ try:
         return errors+['injected restoration report failure']
     try:
         h._restore_parameters=restore_then_report_failure
-        rejects(lambda:h.test_controls(ctrl,out,tests_group),'restoration failed')
+        try:
+            h.test_controls(ctrl,out,tests_group)
+        except h.CheckpointError as error:
+            assert 'restoration failed' in str(error),str(error)
+            assert error.evidence['restored'] is False and error.evidence['status']=='fail'
+            assert error.evidence['next_action']==error.evidence['control_summary']['next_action']
+            assert 'passed' not in error.evidence['next_action']
+            assert error.evidence['control_summary']['failures'][0]['restore_errors']
+        else:raise AssertionError('expected restoration failure')
     finally:h._restore_parameters=original_restore
     assert ctrl.parm('length').expression()=='1+0*$F'
 

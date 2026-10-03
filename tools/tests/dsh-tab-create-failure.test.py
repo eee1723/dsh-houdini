@@ -52,6 +52,14 @@ try:
         owner_session="tab-create-failure-test", owner_call="call-relative")
     assert relative['ok'] and relative['result']['ok'], relative
     assert parent.node('out').input(0)==parent.node('source')
+    not_network = dsh_bridge.run_code(
+        f"tab_create({parent.node('out').path()!r}, 'box', name='invalid_child')",
+        owner_session="tab-create-failure-test", owner_call="call-leaf-parent")
+    assert not not_network['ok'], not_network
+    assert 'is not a network that can create nodes' in not_network['error'], not_network
+    assert repr(parent.path()) in not_network['error'], not_network
+    assert not_network['verbs'][0]['summary']['scene_writes'] == 0, not_network
+    assert not_network['transaction']['status'] == 'no_scene_change', not_network
 finally:
     dsh_hou_helpers._run_shelf_tool = original
     if parent is not None:

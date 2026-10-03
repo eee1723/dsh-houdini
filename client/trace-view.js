@@ -15,6 +15,16 @@ function createTraceView(React, catalog, sources, trace, css) {
     );
   const note = (s) => h("div", { className: "tr-note" }, s);
   const empty = (s) => h("div", { className: "tr-empty" }, s);
+  const fold = (label, ...children) =>
+    h("details", null, h("summary", null, label), ...children);
+  const verbName = (verb) => typeof verb.verb === "string" && verb.verb.trim() ? verb.verb : null;
+  const callTitle = (entry) => {
+    if (entry.verbs.some(verb => !verbName(verb)))
+      return [...new Set(entry.verbs.map(verb => verbName(verb)
+        ? verbTitles[verb.verb] || verb.verb : "操作名称未记录"))].join(" / ");
+    if (!entry.title) return "调用名称未记录";
+    return entry.title === entry.name ? kindNames[entry.kind] || entry.title : entry.title;
+  };
   const tag = (s, bad = false) =>
     h("span", { className: "tr-pill" + (bad ? " tr-bad" : "") }, s);
   const typeTag = (name) =>
@@ -207,6 +217,7 @@ function createTraceView(React, catalog, sources, trace, css) {
     );
   }
   function verbArguments(value) {
+    if (value == null || value === "") return note("参数未记录。");
     const direct = json(value);
     const wrapped = json("[" + value + "]");
     if (
@@ -229,7 +240,7 @@ function createTraceView(React, catalog, sources, trace, css) {
     const [chosenRequest, setRequest] = React.useState(null);
     const [domain, setDomain] = React.useState("node 域");
     const [chosenVerb, setVerb] = React.useState("build_module");
-    const [toolPage, setToolPage] = React.useState("verbs");
+    const [toolPage, setToolPage] = React.useState("entry");
     const [promptPage, setPromptPage] = React.useState("actual");
     const [sourceKey, setSourceKey] = React.useState("guidance");
     const [skillName, setSkill] = React.useState(null);
@@ -294,10 +305,10 @@ function createTraceView(React, catalog, sources, trace, css) {
                 (i + 1) +
                 " · " +
                 (r.purpose === "assistant"
-                  ? "轮次 " + r.turn + " / step " + r.step
+                  ? "第 " + r.turn + " 轮 · 步骤 " + r.step
                   : "压缩") +
                 " · " +
-                r.status,
+                ({ complete: "已完成", running: "进行中", failed: "失败", error: "失败", aborted: "已中止" }[r.status] || r.status),
             ),
           ),
         ),
@@ -310,23 +321,22 @@ function createTraceView(React, catalog, sources, trace, css) {
       const verbRows = e.verbs.map((v, i) =>
         h(
           "details",
-          { key: i, open: e.verbs.length <= 3 },
+          { key: i, open: v.ok === false },
           h(
             "summary",
-            { title: v.argsText + " -> " + v.detail },
+            { title: [v.argsText, v.detail].filter(value => value != null && value !== "").join(" → ") || undefined },
             i +
               1 +
               ". " +
-              v.verb +
+              (verbName(v) || "操作名称未记录") +
               " · " +
-              (v.ok
+              (v.ok === true
                 ? e.rollbackApplied
                   ? "已执行后回滚"
                   : "动作返回成功"
-                : "动作失败") +
+                : v.ok === false ? "动作失败" : "状态未记录") +
               " · " +
-              v.ms +
-              " ms",
+              (typeof v.ms === "number" && Number.isFinite(v.ms) ? v.ms + " ms" : "耗时未记录"),
           ),
           h("h4", null, "参数"),
           verbArguments(v.argsText),
@@ -340,27 +350,20 @@ function createTraceView(React, catalog, sources, trace, css) {
           typeof v.detail === "string" && v.detail.endsWith("…")
             ? note("Host 动词摘要已截断；完整证据以操作证据和结构化返回为准。")
             : null,
-          button("查看动词契约 →", () => goVerb(v.verb)),
+          verbName(v) && catalog.some(domain => domain.verbs.some(item => item.name === v.verb))
+            ? button("查看动词契约 →", () => goVerb(v.verb)) : null,
         ),
       );
       return h(
         "aside",
         { className: "tr-detail" },
-        h("div", { className: "tr-meta" }, "调用 #" + e.index + " · " + e.id),
-        h("h3", null, e.title),
+        h("div", { className: "tr-meta" }, "记录 #" + e.index),
+        h("h3", null, callTitle(e)),
         h(
           "div",
           { className: "tr-buttons" },
-          typeTag(e.name),
-          tag(e.state, e.failed),
-          e.rawEffect === "read_only_query"
-            ? tag(
-                "只读 query（守卫范围）",
-              )
-            : null,
-          !e.verbs.length && e.rawEffect === "unknown" ? tag("副作用未知") : null,
-          e.exemptionReason ? tag("低层豁免") : null,
-          e.verbs.length ? tag("动词 ×" + e.verbs.length) : null,
+          tag(e.state, e.failed || e.attention),
+          h("span", { className: "tr-meta" }, e.name),
         ),
         h(
           "div",
@@ -372,18 +375,27 @@ function createTraceView(React, catalog, sources, trace, css) {
         e.failed
           ? h(
               "section",
-              null,
-              h("h4", null, "失败原因"),
+              { className: "tr-attention" },
+              h("h4", null, e.recoveryNeeded ? "结果待核对" : "失败原因"),
               prose(e.errorText || e.statusText || "工具返回错误"),
               e.rollbackApplied
                 ? note("可撤销范围已回滚；外部文件等副作用不属于恢复保证。")
                 : e.gateBlocked
                   ? note("Raw Gate 在执行前拒绝。")
-                  : note("场景影响按事务与操作证据判断。"),
+                  : e.recoveryNeeded
+                    ? note("连接失败不代表操作未执行。请查回原请求状态，不要直接重复执行。")
+                    : note("场景影响按事务与操作证据判断。"),
             )
           : null,
-        h("h4", null, "请求参数"),
-        Object.keys(e.args).some((k) => k !== "code")
+        e.attention && !e.failed
+          ? h("section", { className: "tr-attention" },
+              h("h4", null, "需要关注"),
+              e.recoveryNeeded ? prose("尚不能确认这次操作的结果。请按原请求回执查回状态；结果已过期或不可用时，应检查当前场景，不要直接重复执行。") : null,
+              e.operationFailures ? prose(e.operationFailures + " 个操作发生错误，详情见下方执行步骤。") : null,
+              e.checkAttention ? prose("检查结果需要关注，请展开检查证据查看。") : null)
+          : null,
+        e.requestReceipt ? fold("请求回执", structured(e.requestReceipt)) : null,
+        fold("请求参数", Object.keys(e.args).some((k) => k !== "code")
           ? structured(
               Object.fromEntries(
                 Object.entries(e.args).filter(([k]) => k !== "code"),
@@ -393,24 +405,15 @@ function createTraceView(React, catalog, sources, trace, css) {
               e.code
                 ? "Python 执行请求 · " +
                     e.code.split("\n").length +
-                    " 行；具体动作见下方动词证据，完整代码在末层展开。"
+                    " 行；完整代码见原始记录。"
                 : "未记录额外参数。",
-            ),
+            )),
         e.transaction
-          ? h(
-              "section",
-              null,
-              h("h4", null, "事务最终状态"),
-              structured(e.transaction),
-            )
+          ? fold("场景变更状态", structured(e.transaction))
           : null,
         e.evidence
-          ? h(
-              "section",
-              null,
-              h("h4", null, "操作与检查证据"),
-              structured(e.evidence),
-            )
+          ? h("details", { open: e.attention || undefined },
+              h("summary", null, "操作与检查证据"), structured(e.evidence))
           : null,
         raw["control-test-summary (not_run is not pass)"]
           ? h(
@@ -440,23 +443,13 @@ function createTraceView(React, catalog, sources, trace, css) {
             )
           : null,
         e.verbs.length
-          ? h("section", null, h("h4", null, "动词证据"), verbRows)
+          ? h("section", null, h("h4", null, "执行步骤 · " + e.verbs.length), verbRows)
           : null,
         e.resultValue != null
-          ? h(
-              "section",
-              null,
-              h("h4", null, "结构化返回"),
-              structured(e.resultValue),
-            )
+          ? fold("工具返回", structured(e.resultValue))
           : null,
         !e.name.startsWith("houdini_") && e.text
-          ? h(
-              "section",
-              null,
-              h("h4", null, "工具返回"),
-              structured(json(e.text) ?? e.text),
-            )
+          ? fold("工具返回", structured(json(e.text) ?? e.text))
           : null,
         raw.stdout
           ? h(
@@ -528,21 +521,17 @@ function createTraceView(React, catalog, sources, trace, css) {
               ),
             )
           : null,
-        e.parent ? note("子调用 · 父 callId " + e.parent) : null,
-        h("h4", null, "关联模型请求 tokens"),
-        usageView(e.accounting),
-        h(
-          "div",
-          { className: "tr-meta" },
-          "工具返回 " + e.text.length + " 字符 · token长度未估算",
-        ),
-        e.request
-          ? button("查看本步提示词与上下文 →", () => goPrompt(e))
-          : note("请求关联未采集，不按相邻时间猜测。"),
+        fold("关联模型请求",
+          usageView(e.accounting),
+          e.request
+            ? button("查看提示词与上下文", () => goPrompt(e))
+            : note("未记录关联的模型请求。")),
         h(
           "details",
           { className: "tr-raw" },
-          h("summary", null, "原始请求与结果 · 开发排查"),
+          h("summary", null, "原始记录"),
+          h("div", { className: "tr-meta" }, "调用标识：" + e.id),
+          e.parent ? note("父调用：" + e.parent) : null,
           h("h4", null, "执行代码"),
           h("pre", null, e.code || e.argsRaw),
           h("h4", null, "查看原始工具结果"),
@@ -555,7 +544,7 @@ function createTraceView(React, catalog, sources, trace, css) {
         (e) =>
           filter === "all" ||
           (filter === "houdini" && e.name.startsWith("houdini_")) ||
-          (filter === "error" && (e.failed || e.gateBlocked)),
+          (filter === "error" && (e.failed || e.gateBlocked || e.attention)),
       );
       const pages = Math.max(1, Math.ceil(visible.length / 50));
       const safePage = Math.min(page < 0 ? pages - 1 : page, pages - 1);
@@ -570,10 +559,6 @@ function createTraceView(React, catalog, sources, trace, css) {
           latestScroll.current.pending = false;
         }
       };
-      const compactNumber = (n) =>
-        n < 1000
-          ? String(n)
-          : (n / 1000).toFixed(n < 10000 ? 2 : 1).replace(/\.?0+$/, "") + "k";
       const movePage = (next) => {
         setPage(next);
         setSelected(null);
@@ -598,7 +583,7 @@ function createTraceView(React, catalog, sources, trace, css) {
             [
               ["all", "全部"],
               ["houdini", "Houdini"],
-              ["error", "失败 / 拦截"],
+              ["error", "需要关注"],
             ].map(([k, label]) =>
               button(
                 label,
@@ -620,8 +605,8 @@ function createTraceView(React, catalog, sources, trace, css) {
                 ? `${safePage * 50 + 1}–${safePage * 50 + listed.length} / ${visible.length}`
                 : "0 个调用",
             ),
-            pagerButton("上一页", safePage - 1, safePage === 0),
-            h(
+            pages > 1 ? pagerButton("上一页", safePage - 1, safePage === 0) : null,
+            pages > 1 ? h(
               "label",
               null,
               h("span", { className: "tr-sr-only" }, "选择步骤页码"),
@@ -640,8 +625,8 @@ function createTraceView(React, catalog, sources, trace, css) {
                   ),
                 ),
               ),
-            ),
-            pagerButton("下一页", safePage + 1, safePage === pages - 1),
+            ) : null,
+            pages > 1 ? pagerButton("下一页", safePage + 1, safePage === pages - 1) : null,
             h(
               "button",
               {
@@ -701,18 +686,14 @@ function createTraceView(React, catalog, sources, trace, css) {
                       : e.duration < 1000
                         ? e.duration + "ms"
                         : (e.duration / 1000).toFixed(1) + "s";
-                  const tokens = e.accounting
-                    ? `↑${compactNumber(e.accounting.input)} ↓${compactNumber(e.accounting.output)}`
-                    : "tokens —";
                   return h(
                     "button",
                     {
                       type: "button",
                       className: "tr-call-row",
                       key: e.id,
-                      "data-kind": e.kind,
                       "aria-pressed": visibleEntry?.id === e.id,
-                      "aria-label": `调用 #${e.index} · ${e.title} · ${e.name} · ${e.state}`,
+                      "aria-label": `调用 #${e.index} · ${callTitle(e)} · ${e.name} · ${e.state}`,
                       onClick: () => {
                         setSelected(e.id);
                         setDetailOpen(true);
@@ -724,21 +705,16 @@ function createTraceView(React, catalog, sources, trace, css) {
                       h("span", { className: "tr-call-index" }, "#" + e.index),
                       h(
                         "span",
-                        { className: "tr-call-title", title: e.title },
-                        e.title,
+                        { className: "tr-call-title", title: callTitle(e) },
+                        callTitle(e),
                       ),
                       h(
                         "span",
                         {
                           className:
-                            "tr-call-state" + (e.failed ? " tr-bad" : ""),
+                            "tr-call-state" + (e.failed || e.attention ? " tr-bad" : ""),
                         },
                         shortState(e),
-                      ),
-                      h(
-                        "span",
-                        { className: "tr-call-time", title: "工具执行耗时" },
-                        time,
                       ),
                     ),
                     h(
@@ -757,16 +733,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                         { className: "tr-call-target", title: target },
                         target,
                       ),
-                      h(
-                        "span",
-                        {
-                          className: "tr-call-tokens",
-                          title: e.accounting
-                            ? `关联模型请求输入 ${format(e.accounting.input)} / 输出 ${format(e.accounting.output)} tokens；多个工具可能共享本次请求。`
-                            : "模型请求 usage 未采集",
-                        },
-                        tokens,
-                      ),
+                      h("span", { className: "tr-call-time", title: "工具执行耗时" }, time),
                     ),
                   );
                 }),
@@ -790,23 +757,6 @@ function createTraceView(React, catalog, sources, trace, css) {
             ),
             details(visibleEntry),
           ),
-        ),
-        h(
-          "div",
-          { className: "tr-timeline-footer" },
-          h(
-            "span",
-            null,
-            "颜色区分工具用途 · ",
-            [...new Set(listed.map((e) => e.kind))].map((kind) =>
-              h(
-                "span",
-                { className: "tr-kind-legend", "data-kind": kind, key: kind },
-                kindNames[kind],
-              ),
-            ),
-          ),
-          h("span", null, "↑ 输入 / ↓ 输出 tokens · 共享请求不重复累计"),
         ),
       );
     }
@@ -848,15 +798,15 @@ function createTraceView(React, catalog, sources, trace, css) {
         h(
           "div",
           { className: "tr-toolbar" },
-          h("h3", null, "提示词完整构成"),
+          h("h3", null, "提示词与上下文"),
           requestPicker(),
         ),
         h(
           "div",
           { className: "tr-buttons" },
           [
-            ["actual", "实际 System"],
-            ["sources", "插件来源与组成"],
+            ["actual", "系统提示词"],
+            ["sources", "来源"],
             ["tools", "本次工具定义"],
             ["context", "上下文记录"],
           ].map(([k, s]) =>
@@ -867,10 +817,10 @@ function createTraceView(React, catalog, sources, trace, css) {
           ? h(
               "section",
               null,
-              h("h4", null, "最终 System · 按请求记录原文"),
+              h("h4", null, "请求中的系统提示词"),
               p
                 ? h("div", {className:"tr-prompt-groups", key: requestKey(request)},
-                    note("按职责与已知来源规则分组，默认折叠。来源为文本匹配提示，未采集运行时注册 provenance；正文始终来自所选请求，未知内容完整保留。"),
+                    note("内容来自所选历史请求。分组来源按文本匹配，仅供定位；不代表已验证加载版本。"),
                     [...new Set(sections.map(s => s.category))].map(category => {
                       const items = sections.filter(s => s.category === category);
                       return h("details", {className:"tr-prompt-group", key:category},
@@ -880,7 +830,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                           h("pre", {className:"tr-prompt-raw"}, s.text))));
                     }),
                     h("details", {className:"tr-prompt-group"},
-                      h("summary", null, "完整 System 原文 · 原始顺序"),
+                      h("summary", null, "完整原文 · 原始顺序"),
                       h("pre", {className:"tr-prompt-raw"}, p.system || "此请求未包含 System 正文")))
                 : empty("此请求没有公开的提示词快照。"),
               request?.promptChange
@@ -902,9 +852,6 @@ function createTraceView(React, catalog, sources, trace, css) {
                     prose(request.promptChange.previous.system),
                   )
                 : null,
-              note(
-                "分类不改变实际 System 顺序。展开完整原文可核对；不能用当前源码替换历史请求，也不能将匹配来源当作已验证加载版本。",
-              ),
             )
           : null,
         promptPage === "sources"
@@ -959,12 +906,12 @@ function createTraceView(React, catalog, sources, trace, css) {
                     ? sourceSections.map(section => h("details", {key: section.index},
                         h("summary", null, section.title + " · " + section.text.length + " 字符"),
                         h("pre", null, section.text)))
-                    : note("该请求中没有可定位的片段；完整正文可在“实际 System”查看。"),
+                    : note("该请求中没有可定位的片段；完整正文可在“系统提示词”查看。"),
                 ),
               ),
               h("h4", null, "DSH 与其他插件"),
               note(
-                "完整内容在“实际 System”；其他插件的逐段来源与注册状态未由公开接口提供，不将配置名单冒充生效段。",
+                "其他插件的逐段来源与注册状态未采集；完整内容见“系统提示词”。",
               ),
             )
           : null,
@@ -1037,22 +984,23 @@ function createTraceView(React, catalog, sources, trace, css) {
       const v = d?.verbs.find((v) => v.name === chosenVerb) || d?.verbs[0];
       const schemas = array(request?.prompt?.tools);
       const total = catalog.reduce((n, d) => n + d.verbs.length, 0);
+      const stats = data.statistics;
       return h(
         "div",
         { className: "tr-board" },
         h(
           "div",
           { className: "tr-toolbar" },
-          h("h3", null, "工具与动词设计"),
+          h("h3", null, "工具与动词"),
           requestPicker(),
         ),
         h(
           "div",
           { className: "tr-buttons tr-domains" },
           [
+            ["entry", "工具目录"],
             ["verbs", "动词目录"],
-            ["entry", "工具入口与可见性"],
-            ["principles", "设计原则"],
+            ["visible", "请求可见工具"],
           ].map(([k, s]) => button(s, () => setToolPage(k), toolPage === k)),
         ),
         toolPage === "verbs"
@@ -1060,11 +1008,11 @@ function createTraceView(React, catalog, sources, trace, css) {
               "section",
               null,
               note(
-                "模型工具入口 → 动词意图接口 → Bridge 主线程 → HOM。当前构建目录 " +
+                "动词是工具里可组合调用的具体操作。当前目录 " +
                   total +
                   " 个动词 / " +
                   catalog.length +
-                  " 个分组，含历史兼容项；目录不是 live 版本证明。",
+                  " 个分组。选择动词查看用途和本任务记录。",
               ),
               h(
                 "div",
@@ -1098,6 +1046,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                             onClick: () => setVerb(v.name),
                           },
                           h("code", null, v.name),
+                          h("span", { className: "tr-meta" }, (stats.verbUsage.get(v.name)?.calls || 0) + " 次"),
                           h(
                             "span",
                             { className: "tr-meta" },
@@ -1110,6 +1059,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                       "article",
                       { className: "tr-detail" },
                       h("h3", null, v.name),
+                      h("div", { className: "tr-meta" }, "本任务执行 " + (stats.verbUsage.get(v.name)?.calls || 0) + " 次 · 失败 " + (stats.verbUsage.get(v.name)?.failed || 0) + " 次"),
                       d.domain.includes("compatibility")
                         ? tag("仅历史兼容")
                         : null,
@@ -1129,17 +1079,29 @@ function createTraceView(React, catalog, sources, trace, css) {
                           .filter((e) => e.verbs.some((x) => x.verb === v.name))
                           .map(openCallLink),
                       ),
-                      h(
-                        "div",
-                        { className: "tr-meta" },
-                        "维护源：docs/tool-design.md · 随构建生成，签名和说明不在前端另抄。",
-                      ),
                     ),
                   )
                 : null,
             )
           : null,
         toolPage === "entry"
+          ? h("section", null,
+              h("div", { className: "tr-meta" }, "当前包提供 " + stats.knownToolCount + " 个工具 · 本任务已用 " + stats.usedToolCount + " 个"),
+              Object.entries(sources.tools).map(([name, tool]) => {
+                const count = stats.toolUsage.get(name) || { calls: 0, failed: 0, pending: 0 };
+                const visible = request?.prompt ? schemas.some(t => t.name === name) ? "所选请求可见" : "未在所选请求中" : "请求可见性未采集";
+                return h("article", { key: name, className: "tr-row" },
+                  h("h4", null, tool.label, " · ", h("code", null, name)),
+                  h("div", { className: "tr-meta" }, "本任务调用 " + count.calls + " 次" + (count.failed ? " · 失败 " + count.failed + " 次" : "") + (count.operationAttention ? " · 子操作失败 " + count.operationAttention + " 次" : "") + (count.pending ? " · 进行中 " + count.pending + " 次" : "")),
+                  prose(tool.purpose),
+                  h("details", null, h("summary", null, "输入、输出与调用记录"),
+                    note(visible),
+                    table(["项目", "说明"], [["输入", tool.input], ["输出", tool.output], ["执行位置", tool.execution]]),
+                    h("div", { className: "tr-buttons" }, data.entries.filter(e => e.name === name).map(openCallLink)),
+                    !count.calls ? note("本任务已加载记录中没有此工具调用。") : null));
+              }))
+          : null,
+        toolPage === "visible"
           ? h(
               "section",
               null,
@@ -1174,30 +1136,6 @@ function createTraceView(React, catalog, sources, trace, css) {
               ),
             )
           : null,
-        toolPage === "principles"
-          ? h(
-              "section",
-              null,
-              table(
-                ["层", "职责"],
-                [
-                  ["Preset", "身份、工作方式"],
-                  ["Guidance", "跨领域稳定契约"],
-                  ["Skill", "按需领域方法和完成范围"],
-                  ["工具入口", "请求编组、只读/执行/异步生命周期"],
-                  ["动词与 guard", "稳定意图、严格参数、权限及恢复边界"],
-                  ["节点卡", "节点类型、关键操作决策"],
-                ],
-              ),
-              note(
-                "一次工具调用可执行多个动词，一个动词可创建多个节点。已覆盖修改不能以裸 hou 旁路；只读 HOM 保留观察能力。",
-              ),
-              table(
-                ["入口", "职责"],
-                Object.entries(sources.tools).map(([name, tool]) => [name, tool.purpose]),
-              ),
-            )
-          : null,
       );
     }
     function skills() {
@@ -1214,6 +1152,7 @@ function createTraceView(React, catalog, sources, trace, css) {
             .filter((e) => e.name === "skill")
             .map((e) => e.args.name)
             .filter(Boolean),
+          ...data.contexts.filter(n => n.source?.kind === "skill-invocation").map(n => n.source.name),
         ]),
       ];
       const name = names.includes(skillName) ? skillName : names[0];
@@ -1232,11 +1171,11 @@ function createTraceView(React, catalog, sources, trace, css) {
         h(
           "div",
           { className: "tr-toolbar" },
-          h("h3", null, "技能组成与读取证据"),
+          h("h3", null, "技能"),
           requestPicker(),
         ),
         note(
-          "可发现目录取所选请求之前最近的记录；读取记录展示会话全部已加载调用，不表示该请求之前已经读入。文件组成来自当前构建包，保留状态与规则遵守分别判断。",
+          "技能提供按需加载的工作方法。复制命令，返回对话后发送即可加载。",
         ),
         h(
           "div",
@@ -1262,8 +1201,9 @@ function createTraceView(React, catalog, sources, trace, css) {
                 h(
                   "span",
                   { className: "tr-meta" },
+                  sources.skills.some(s => s.name === n) ? "当前包可用 · " : "历史记录 · ",
                   observed.some((s) => s.name === n)
-                    ? "最近目录可发现"
+                    ? "最近可发现"
                     : latest
                       ? "不在最近目录中"
                       : "运行目录未采集",
@@ -1271,15 +1211,13 @@ function createTraceView(React, catalog, sources, trace, css) {
                 h(
                   "span",
                   { className: "tr-meta" },
-                  data.entries.some(
+                  "正文返回 " + data.entries.filter(
                     (e) =>
                       e.name === "skill" &&
                       e.args.name === n &&
                       !e.failed &&
                       !e.pending,
-                  )
-                    ? "会话中正文已返回"
-                    : "未见成功读取",
+                  ).length + " 次 · 手动加载 " + data.contexts.filter(n2 => n2.source?.kind === "skill-invocation" && n2.source.name === n).length + " 次",
                 ),
               ),
             ),
@@ -1289,12 +1227,14 @@ function createTraceView(React, catalog, sources, trace, css) {
                 "article",
                 { className: "tr-detail" },
                 h("h3", null, name),
+                h("label", { className: "tr-meta" }, "选中命令，复制到对话",
+                  h("input", { "aria-label": "技能加载命令", value: "/" + name, readOnly: true, onFocus: event => event.target.select() })),
                 prose(
                   observed.find((s) => s.name === name)?.description ||
                     source?.description ||
                     "",
                 ),
-                h("h4", null, "正文读取记录 · 会话全部已加载调用"),
+                h("h4", null, "加载记录"),
                 !reads.length && !injections.length
                   ? note("未见读取；记录可能不完整，不断言未使用。")
                   : null,
@@ -1318,7 +1258,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                     ),
                   ),
                 note(
-                  "当前上下文保留状态未采集；读取证据不证明规则已全部遵守。",
+                  "当前上下文是否仍保留正文未采集；加载记录不代表规则已全部遵守。",
                 ),
                 h("h4", null, "参考资源读取"),
                 data.resourceReads
@@ -1380,6 +1320,10 @@ function createTraceView(React, catalog, sources, trace, css) {
       const adoption = stats.adoption;
       const requestUsage = stats.requestUsage;
       const metrics = [
+        ["Houdini 工具失败（已返回调用）", stats.failedToolCalls],
+        ["动词异常 / 动词调用", stats.failedVerbCalls + " / " + stats.verbCalls],
+        ["含动词异常的执行", stats.operationAttentionCalls],
+        ["正常返回但检查需关注的执行", stats.checkAttentionCalls],
         ["Houdini 已返回调用（排除历史回读）", adoption.houdiniCalls],
         ["Host 历史结果 / 来源回读", adoption.hostResultDetailReads],
         [
@@ -1416,11 +1360,12 @@ function createTraceView(React, catalog, sources, trace, css) {
       return h(
         "div",
         { className: "tr-board" },
-        h("h3", null, "执行分析 · 当前加载记录"),
+        h("h3", null, "执行统计"),
+        note("统计范围为本任务已加载记录。执行完成或检查通过，不代表任务质量已经确认。"),
         h(
           "div",
           { className: "tr-metrics" },
-          metrics.map(([label, value]) =>
+          metrics.slice(0, 4).map(([label, value]) =>
             h(
               "div",
               { key: label },
@@ -1429,26 +1374,8 @@ function createTraceView(React, catalog, sources, trace, css) {
             ),
           ),
         ),
-        note(
-          "含动词率描述调用形态，成功 exec 包含验证和动态函数，不代表修改采用率或任务完成度。Gate read_only 是静态扫描结果；no_scene_change 不排除文件或 Python 全局副作用。",
-        ),
-        h("h4", null, "模型请求 usage · 请求去重"),
-        requestUsage.reported
-          ? table(
-              ["已报告 / 已加载请求", "输入合计", "输出合计"],
-              [
-                [
-                  requestUsage.reported + " / " + requestUsage.total,
-                  format(requestUsage.input),
-                  format(requestUsage.output),
-                ],
-              ],
-            )
-          : note("请求 usage 未采集。"),
-        note(
-          "包含已加载的 assistant / compaction 请求；缺失 usage 不按0补齐。输入合并 DSH 的未缓存和缓存分桶。",
-        ),
-        h("h4", null, "失败、拦截与回滚"),
+        h("h4", null, "需要关注的记录"),
+        !stats.failures.length ? note("已加载记录中没有失败、检查关注或回滚。") : null,
         stats.failures
           .map((e) =>
             h(
@@ -1460,8 +1387,15 @@ function createTraceView(React, catalog, sources, trace, css) {
               h("div", { className: "tr-meta" }, e.errorText || e.statusText),
             ),
           ),
-        h("h4", null, "无动词调用的副作用证据"),
-        table(
+        fold("详细执行统计", table(["指标", "数值"], metrics),
+          note("工具失败与操作异常分别统计；捕获异常后批次仍可完成。检查关注只统计正常返回的验证，历史回读不算新执行。")),
+        fold("模型用量",
+          requestUsage.reported ? table(
+            ["已报告 / 已加载请求", "输入合计", "输出合计"],
+            [[requestUsage.reported + " / " + requestUsage.total, format(requestUsage.input), format(requestUsage.output)]])
+            : note("模型用量未采集。"),
+          note("按模型请求去重；缺失用量不计为零。输入合并未缓存输入和缓存分桶。")),
+        fold("低层调用的副作用证据", table(
           ["分类", "调用数"],
           [
             "read_only_query",
@@ -1474,10 +1408,9 @@ function createTraceView(React, catalog, sources, trace, css) {
             mode,
             String(stats.rawEffectCounts.get(mode) || 0),
           ]),
-        ),
-        note(
+        ), note(
           "历史回读不计新执行。unknown 包含动态 exec；疑似外部副作用与裸修改候选不证明实际发生，失败也不证明没有副作用。原始 Gate 回包在调用详情保留。",
-        ),
+        )),
       );
     }
     return h(
@@ -1487,31 +1420,21 @@ function createTraceView(React, catalog, sources, trace, css) {
       h(
         "header",
         null,
-        h("h2", null, "H / Houdini Trace"),
-        h("small", null, "执行记录与能力来源"),
+        h("h2", null, "Houdini 记录"),
+        h("span", { className: "tr-status", role: "status" },
+          data.pendingCount
+            ? "快照中 " + data.pendingCount + " 项执行中"
+            : data.partial ? "模型输出中（快照）" : "已载入 " + data.entries.length + " 条记录",
+          data.recent ? " · " + stamp(data.recent) : ""),
       ),
       h(
         "nav",
         { "aria-label": "Trace 看板" },
         [
-          ["timeline", "执行过程"],
-          ["prompt", "提示词与上下文"],
-          ["tools", "工具"],
-          ["skills", "技能"],
-          ["analysis", "分析"],
-        ].map(([k, s]) => button(s, () => setTab(k), tab === k)),
-      ),
-      h(
-        "div",
-        { className: "tr-status" },
-        data.pendingCount
-          ? "快照中 " + data.pendingCount + " 个调用执行中"
-          : data.partial
-            ? "模型正在输出（最后快照）"
-            : "已加载 " +
-              data.entries.length +
-              " 个调用；当前运行状态以 Host 为准",
-        " · 最近记录 " + stamp(data.recent || null),
+          ["timeline", "执行记录", ["timeline"]],
+          ["tools", "能力资料", ["tools", "skills"]],
+          ["prompt", "高级诊断", ["prompt", "analysis"]],
+        ].map(([k, s, members]) => button(s, () => setTab(k), members.includes(tab))),
       ),
       h(
         "main",
@@ -1519,6 +1442,11 @@ function createTraceView(React, catalog, sources, trace, css) {
           className:
             "tr-content" + (tab === "timeline" ? " tr-content-timeline" : ""),
         },
+        tab !== "timeline" ? h("div", { className: "tr-subnav tr-buttons", role: "group", "aria-label": "页面分类" },
+          (tab === "tools" || tab === "skills"
+            ? [["tools", "工具"], ["skills", "技能"]]
+            : [["prompt", "提示词与上下文"], ["analysis", "执行统计"]])
+            .map(([k, label]) => button(label, () => setTab(k), tab === k))) : null,
         { timeline, prompt, tools, skills, analysis }[tab](),
       ),
     );

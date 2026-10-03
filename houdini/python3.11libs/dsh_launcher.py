@@ -120,43 +120,33 @@ _DSH_WEB_SESSION = dsh_web_auth.shared_session(
 )
 
 
-# hip 未保存时的中立工作区（仓库的兄弟目录，按需创建）：产出永不落仓库。
-_FALLBACK_WORKSPACE = os.path.join(os.path.dirname(_PROJECT_ROOT), "dsh-houdini-workspace")
+# Each Houdini process gets its own unsaved scratch workspace, never a prior
+# project's directory or the plugin checkout. Keep its files after closing.
+_FALLBACK_WORKSPACE = os.path.join(tempfile.gettempdir(), "dsh-houdini", "workspaces")
 if _MANAGED:
     _FALLBACK_WORKSPACE = os.path.join(_MANAGED["root"], "workspaces", "unsaved")
+_UNSAVED_WORKSPACE = globals().get('_UNSAVED_WORKSPACE')
 
 
 def _hip_dir() -> str:
-    """当前 hip 文件的目录——前端工作区种子。
+    """Resolve the current scene's workspace on Houdini's main thread.
 
-    dsh 的默认工作区 = 前端进程的启动目录（"the invoking directory is the
-    default workspace root"）。工作区决定 workspace-write 沙箱的边界和
-    vision 等 dsh 侧工具的可读范围，所以它必须对准 $HIP，而不是插件仓库
-    （2026-08-18 复盘：工作区=仓库时，agent 为让 vision 工具读到截图被迫
-    把产出写进仓库根目录）。hip 从未保存过时用中立的后备工作区目录，
-    再失败才回退项目根。注意：访问 hou —— 只能在主线程调用本函数。
+    Unsaved scenes share this process's stable scratch workspace. Opening a
+    named HIP selects its directory and retires the scratch reference, so the
+    next unsaved workspace starts fresh. No HIP callbacks or scene writes.
+    The native DSH client receives this explicit intent even with a warm Host.
     """
-    try:
-        p = hou.hipFile.path()
-        if p and os.path.basename(p).lower() != "untitled.hip":
-            d = os.path.dirname(os.path.abspath(p))
-            if os.path.isdir(d):
-                return d
-    except Exception:
-        pass
-    # An unsaved scene has no project boundary. Use a neutral scratch directory
-    # outside the plugin repository; never widen tool access to source code just
-    # because the preferred sibling directory cannot be created.
-    for candidate in (
-        _FALLBACK_WORKSPACE,
-        os.path.join(tempfile.gettempdir(), "dsh-houdini-workspace"),
-    ):
-        try:
-            os.makedirs(candidate, exist_ok=True)
-            return candidate
-        except Exception:
-            continue
-    raise RuntimeError("cannot create a neutral workspace for the unsaved Houdini scene")
+    global _UNSAVED_WORKSPACE
+    from dsh_context import hip_file_state
+    hip = hip_file_state()
+    if hip['hip_dir']:
+        _UNSAVED_WORKSPACE = None
+        return hip['hip_dir']
+    if _UNSAVED_WORKSPACE is None:
+        os.makedirs(_FALLBACK_WORKSPACE, exist_ok=True)
+        _UNSAVED_WORKSPACE = tempfile.mkdtemp(
+            prefix=f"untitled-{os.getpid()}-", dir=_FALLBACK_WORKSPACE)
+    return _UNSAVED_WORKSPACE
 
 # Helper processes (netstat / frontend tree) must never pop a
 # visible terminal window when launched from Houdini's GUI.
@@ -222,7 +212,7 @@ def ensure_dependencies(on_install=None) -> str:
         ok, message = _plugin_runtime_probe()
         if not ok:
             _append_dependency_failure(message)
-            return "managed dependency check FAILED; use Version & Diagnostics to install / repair the signed package"
+            return "managed dependency check FAILED; use DSH-Houdini > Version & Updates... > 高级设置 to install / repair the signed package"
         return "managed dependencies ok (no package manager)"
     probe_ok, probe_output = _plugin_runtime_probe()
     if probe_ok:
@@ -324,6 +314,7 @@ def restart_bridge(*, port=None) -> str:
     if type(target_port) is not int or not 1024 <= target_port <= 65535:
         raise ValueError('Invalid Bridge restart port')
     import dsh_bridge
+    import dsh_context
     import dsh_requests
     import dsh_preview_paths
     import dsh_network_layout
@@ -359,6 +350,7 @@ def restart_bridge(*, port=None) -> str:
             or not dsh_bridge._work_queue.empty()):
         raise RuntimeError('Bridge restart deferred: scene work arrived after preflight; no modules were reloaded')
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
+    importlib.reload(dsh_context)           # shared HIP facts before helper wrappers
     importlib.reload(dsh_preview_paths)     # path policy before helper wrappers
     importlib.reload(dsh_network_layout)
     importlib.reload(dsh_network_boxes)
@@ -720,7 +712,7 @@ def open_ui(workspace_dir: str, *, force_reload: bool = False) -> str:
         _report(message)
         try:
             hou.ui.displayMessage(
-                message + "\nOpen DSH-Houdini > Version & Diagnostics to inspect the log.",
+                message + "\n可打开 DSH-Houdini > Version & Updates... > 高级设置 > 运行诊断，查看日志。",
                 severity=hou.severityType.Error,
                 title="DSH-Houdini",
             )
@@ -740,9 +732,11 @@ DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refr
 
 # Keeps the spawned frontend process / QTimer / QProgressDialog alive across
 # event-loop turns (GC would kill them).
-_PENDING: dict = {}
-_MAIN_DISPATCHES: list = []
-_SERVICE_PREFLIGHT_ACTIVE = False
+# Runtime repair reloads this module. Preserve the existing operation/timers so
+# a second menu action cannot create a competing preflight or lose its dialog.
+_PENDING: dict = globals().get("_PENDING", {})
+_MAIN_DISPATCHES: list = globals().get("_MAIN_DISPATCHES", [])
+_SERVICE_PREFLIGHT_ACTIVE = globals().get("_SERVICE_PREFLIGHT_ACTIVE", False)
 try:
     _ACTIVE_STARTUP
 except NameError:
@@ -933,12 +927,12 @@ def _start_and_wait_frontend(state: dict) -> None:
     """
     try:
         details = []
-        _set_startup_state(state, 12, 1, "Checking plugin environment", "Verifying local dependencies")
+        _set_startup_state(state, 12, 1, "正在检查插件环境", "检查本地依赖")
 
         def on_install(missing: list[str]) -> None:
             _set_startup_state(
-                state, 18, 1, "Installing plugin dependencies",
-                "The first install may take several minutes: " + ", ".join(missing),
+                state, 18, 1, "正在安装插件依赖",
+                "首次安装可能需要几分钟：" + ", ".join(missing),
             )
 
         dependency_status = ensure_dependencies(on_install)
@@ -948,17 +942,17 @@ def _start_and_wait_frontend(state: dict) -> None:
         if state["canceled"]:
             return
 
-        _set_startup_state(state, 28, 2, "Stopping previous frontend", f"Releasing port {FRONTEND_PORT}")
+        _set_startup_state(state, 28, 2, "正在准备服务", f"释放当前服务连接")
         details.append(restart_frontend())
 
         _set_startup_state(
-            state, 38, 2, "Synchronizing DSH plugins", "Checking the complete Houdini profile",
+            state, 38, 2, "正在准备插件", "检查 Houdini 工作配置",
         )
 
         def on_plugin_install(specs: list[str]) -> None:
             _set_startup_state(
-                state, 42, 2, "Installing required DSH plugins",
-                "The first install may take several minutes: " + ", ".join(specs),
+                state, 42, 2, "正在安装所需插件",
+                "首次安装可能需要几分钟：" + ", ".join(specs),
             )
 
         details.append(sync_profile_plugins(on_plugin_install))
@@ -966,7 +960,7 @@ def _start_and_wait_frontend(state: dict) -> None:
             return
 
         _set_startup_state(
-            state, 52, 2, "Starting DSH", f"Creating frontend process: {DSH_SPEC}",
+            state, 52, 2, "正在启动 DSH", f"启动工作区服务",
         )
         details.append(start_frontend(state.get("frontend_cwd"), attempt=state))
         if state["canceled"]:
@@ -983,14 +977,14 @@ def _start_and_wait_frontend(state: dict) -> None:
 
         started_at = time.monotonic()
         _set_startup_state(
-            state, 62, 3, "Waiting for DSH service",
-            f"Connecting to {FRONTEND_URL} ({source}; limit {wait_timeout}s)",
+            state, 62, 3, "正在连接 DSH",
+            f"等待本地服务就绪…",
         )
         while not state["canceled"]:
             if _frontend_online():
                 _write_frontend_runtime_state(_port_pid(FRONTEND_PORT) or proc.pid)
                 _set_startup_state(
-                    state, 82, 4, "Checking DSH service", "Waiting for the native session API",
+                    state, 82, 4, "正在检查连接", "等待对话服务就绪…",
                 )
                 try:
                     _check_host_ready()
@@ -1005,8 +999,8 @@ def _start_and_wait_frontend(state: dict) -> None:
                     time.sleep(FRONTEND_WAIT_INTERVAL)
                     continue
                 _set_startup_state(
-                    state, 90, 4, "Opening Houdini workspace",
-                    "The native client will restore this workspace's Houdini task",
+                    state, 90, 4, "正在打开工作区",
+                    "即将打开当前工程的对话",
                 )
                 state["result"] = "ready"
                 return
@@ -1070,61 +1064,26 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         return
 
     dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("dsh-houdini")
+    dialog.setWindowTitle("DSH-Houdini · 打开工作区")
     dialog.setWindowModality(QtCore.Qt.NonModal)
-    dialog.setMinimumWidth(500)
-    dialog.setStyleSheet(
-        "QDialog { background: #23262b; }"
-        "QLabel#eyebrow { color: #ff8a2a; font: 700 10px 'Segoe UI'; }"
-        "QLabel#main { color: #eef0f2; font: 600 17px 'Segoe UI'; }"
-        "QLabel#percent { color: #eef0f2; font: 700 28px 'Consolas'; }"
-        "QLabel#sub { color: #a9afb7; font: 12px 'Segoe UI'; }"
-        "QLabel#pipeline { color: #7f8791; font: 11px 'Segoe UI'; }"
-        "QLabel#elapsed { color: #7f8791; font: 11px 'Consolas'; }"
-        "QProgressBar { background: #34383f; border: none; border-radius: 3px;"
-        " height: 6px; text-align: center; color: transparent; }"
-        "QProgressBar::chunk { background: #ff8a2a; border-radius: 3px; }"
-        "QPushButton { color: #e8eaed; background: #373b42; border: 1px solid #474c55;"
-        " border-radius: 4px; padding: 6px 16px; }"
-        "QPushButton:hover { background: #444952; }"
-    )
+    dialog.setMinimumWidth(440)
+    from dsh_ui_style import style_dialog
+    style_dialog(dialog)
 
-    eyebrow = QtWidgets.QLabel("DSH / HOUDINI  STARTUP")
-    eyebrow.setObjectName("eyebrow")
-    main_label = QtWidgets.QLabel("Preparing startup")
-    main_label.setObjectName("main")
-    percent_label = QtWidgets.QLabel("08%")
-    percent_label.setObjectName("percent")
-    header = QtWidgets.QHBoxLayout()
-    header.addWidget(main_label)
-    header.addStretch(1)
-    header.addWidget(percent_label)
-
+    main_label = QtWidgets.QLabel("正在准备工作区")
+    main_label.setObjectName("version")
     progress_bar = QtWidgets.QProgressBar()
-    progress_bar.setRange(0, 100)
-    progress_bar.setValue(8)
+    # These are startup stages, not measurable download/build percentages.
+    progress_bar.setRange(0, 0)
     progress_bar.setTextVisible(False)
-    pipeline_label = QtWidgets.QLabel()
-    pipeline_label.setObjectName("pipeline")
-
-    def pipeline_text(active: int) -> str:
-        names = ["ENV", "PLUGIN", "FRONTEND", "SERVICE", "WORKSPACE"]
-        rendered = []
-        for index, name in enumerate(names):
-            color = "#ff8a2a" if index == active else ("#d4d8dd" if index < active else "#707781")
-            marker = "[x]" if index <= active else "[ ]"
-            rendered.append(f'<span style="color:{color}">{marker} {name}</span>')
-        return "&nbsp;&nbsp;--&nbsp;&nbsp;".join(rendered)
-
-    pipeline_label.setText(pipeline_text(0))
-    sub_label = QtWidgets.QLabel("Presets synced and Houdini bridge started")
-    sub_label.setObjectName("sub")
+    sub_label = QtWidgets.QLabel("正在初始化环境…")
+    sub_label.setObjectName("summary")
     sub_label.setWordWrap(True)
-    elapsed_label = QtWidgets.QLabel("00:00")
-    elapsed_label.setObjectName("elapsed")
-    log_btn = QtWidgets.QPushButton("Open Log")
+    elapsed_label = QtWidgets.QLabel("已用时 00:00")
+    elapsed_label.setObjectName("caption")
+    log_btn = QtWidgets.QPushButton("查看日志")
     log_btn.setVisible(False)
-    cancel_btn = QtWidgets.QPushButton("Stop")
+    cancel_btn = QtWidgets.QPushButton("取消启动")
 
     buttons = QtWidgets.QHBoxLayout()
     buttons.addWidget(elapsed_label)
@@ -1132,19 +1091,16 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     buttons.addWidget(log_btn)
     buttons.addWidget(cancel_btn)
     layout = QtWidgets.QVBoxLayout(dialog)
-    layout.setContentsMargins(22, 20, 22, 18)
-    layout.setSpacing(11)
-    layout.addWidget(eyebrow)
-    layout.addLayout(header)
-    layout.addWidget(progress_bar)
-    layout.addWidget(pipeline_label)
+    layout.setContentsMargins(24, 24, 24, 20)
+    layout.setSpacing(16)
+    layout.addWidget(main_label)
     layout.addWidget(sub_label)
-    layout.addSpacing(4)
+    layout.addWidget(progress_bar)
     layout.addLayout(buttons)
     dialog.show()
 
     # 主线程只刷新 worker 快照；前端重启和端口探测全在 worker 线程。
-    state.update(progress=8, phase=0, title="Preparing startup", message="Initializing environment")
+    state.update(phase=0, title="正在准备工作区", message="正在初始化环境…")
     launched_at = time.monotonic()
 
     def open_log() -> None:
@@ -1181,13 +1137,15 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
 
     def fail(message: str) -> None:
         timer.stop()
-        main_label.setText("Startup failed")
-        sub_label.setText(message + "\nOpen the log to inspect Node, npm, network, or DSH configuration errors.")
+        main_label.setText("工作区未能启动")
+        sub_label.setText(message + "\n可查看日志，了解连接或依赖配置的具体问题。")
+        progress_bar.setRange(0, 1)
+        progress_bar.setValue(0)
         progress_bar.setStyleSheet(
             "QProgressBar::chunk { background: #e85d55; border-radius: 3px; }"
         )
         log_btn.setVisible(True)
-        cancel_btn.setText("Close")
+        cancel_btn.setText("关闭")
         try:
             cancel_btn.clicked.disconnect(cancel)
         except Exception:
@@ -1200,12 +1158,8 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
 
     def tick() -> None:
         elapsed = int(time.monotonic() - launched_at)
-        elapsed_label.setText(f"{elapsed // 60:02d}:{elapsed % 60:02d}")
-        progress = state.get("progress", 8)
-        progress_bar.setValue(progress)
-        percent_label.setText(f"{progress:02d}%")
-        main_label.setText(state.get("title", "Starting"))
-        pipeline_label.setText(pipeline_text(state.get("phase", 0)))
+        elapsed_label.setText(f"已用时 {elapsed // 60:02d}:{elapsed % 60:02d}")
+        main_label.setText(state.get("title", "正在启动"))
         message = state.get("message", "")
         wait_timeout = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
         source = state.get("frontend_source", "unknown")
@@ -1213,13 +1167,12 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
         if elapsed >= warning_after and state.get("phase") == 3:
             if source == "npx-cold":
                 message += (
-                    "\nThe first CLI download is taking longer than expected. "
-                    f"Check the network; this attempt stops after {wait_timeout} seconds."
+                    "\n首次下载耗时较长，请检查网络。"
+                    f"本次尝试将在 {wait_timeout} 秒后停止。"
                 )
             else:
                 message += (
-                    "\nA local CLI should start quickly. This attempt will stop after "
-                    f"{wait_timeout} seconds; inspect the log for a startup deadlock."
+                    f"\n启动耗时较长，本次尝试将在 {wait_timeout} 秒后停止；可查看日志了解原因。"
                 )
         sub_label.setText(message)
         if state["canceled"]:
@@ -1231,21 +1184,20 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
             return
         result = state["result"]
         if result == "ready":
-            progress_bar.setValue(100)
-            percent_label.setText("100%")
+            progress_bar.setRange(0, 1)
+            progress_bar.setValue(1)
             finish(open_ui(state["frontend_cwd"], force_reload=True))
         elif result == "dead":
-            fail(f"The frontend exited before listening on {FRONTEND_URL}")
+            fail("DSH 服务在连接就绪前退出。")
         elif result == "timeout":
             seconds = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
             source = state.get("frontend_source", "unknown")
             fail(
-                f"DSH did not become ready within {seconds} seconds "
-                f"using {source}. This startup was stopped."
+                f"DSH 在 {seconds} 秒内未能就绪，已停止本次启动。"
             )
         elif result == "error":
             error_tail = state.get("error", "unknown").splitlines()[-1]
-            fail("Startup error: " + error_tail)
+            fail("启动遇到问题：" + error_tail)
 
     timer = QtCore.QTimer(parent)
     timer.timeout.connect(tick)
@@ -1265,17 +1217,15 @@ def launch(*, force_frontend=False) -> None:
     """
     from dsh_executor_registry import is_shared_executor
     if is_shared_executor():
-        _report('This is a shared executor. Use Repair This Shared Executor; restarting the shared DSH Host is a separate operation affecting all tasks.')
+        _report('当前为共享执行端。请使用 Version & Updates... > 高级设置 > 修复共享连接；重启共享 DSH 服务会影响所有任务，须单独操作。')
         return
-    frontend_cwd = _hip_dir()
-
     def after_preflight(preflight: dict | None, error: str | None) -> None:
         if error:
             _report("service preflight failed: " + error.splitlines()[-1])
             return
         detail = restart_bridge()
         print("[dsh-houdini] " + detail.replace("\n", "; "))
-        open_ui_when_ready(detail, frontend_cwd)
+        open_ui_when_ready(detail, _hip_dir())
 
     if force_frontend:
         _dispatch_service_preflight(after_preflight, force_frontend=True)
@@ -1292,14 +1242,15 @@ def open_workspace() -> None:
     """
     from dsh_executor_registry import is_shared_executor
     if is_shared_executor():
-        _report('This Houdini is registered to another shared Host. Open Workspace cannot restart or adopt it; use its explicit shared-executor entry.')
+        _report('当前 Houdini 已登记到共享服务。请在共享 DSH 的「Houdini 执行端」中选择当前工程；如需修复，使用 Version & Updates... > 高级设置 > 修复共享连接。')
         return
-    frontend_cwd = _hip_dir()
-
     def after_preflight(preflight: dict | None, error: str | None) -> None:
         if error:
             _report("service preflight failed: " + error.splitlines()[-1])
             return
+        # Preflight performs slow port/process checks. The user can switch HIP
+        # while it runs, so read the actual scene again on this GUI callback.
+        frontend_cwd = _hip_dir()
         facts = preflight or {}
         if not facts.get("frontend_online"):
             bridge_status = (

@@ -61,13 +61,13 @@ try:
     import json
     source=json.loads((Path(__file__).resolve().parents[2]/'houdini/verb-operation-contracts.json').read_text(encoding='utf8'))
     for name, contract in source['verbs'].items():
-        help_item=b._verb_help(name)
+        help_item=b._verb_help(name, detail='full')
         args=inspect.signature(b._VERBS[name]).parameters
         assert set(contract['input_schema']['properties'])<=set(args),(name,contract,args)
         assert help_item['operation_contract']['examples']==contract['examples'],name
         help_item['operation_contract']['examples'][0]['code']='changed consumer copy'
-        assert b._verb_help(name)['operation_contract']['examples'][0]['code']!='changed consumer copy',name
-    documentation=b._verb_help('build_module')['operation_contract']
+        assert b._verb_help(name, detail='full')['operation_contract']['examples'][0]['code']!='changed consumer copy',name
+    documentation=b._verb_help('build_module', detail='full')['operation_contract']
     assert documentation['output_schema']['anyOf'][1]['required']==['valid','dry_run','parent','created','validation'],documentation
     discovered=run("__result__=verb_help(['build_module','tab_create','network_boxes'])",read_only=True)
     assert discovered['ok'] and discovered['verbs'][0]['result']==discovered['result'],discovered
@@ -76,7 +76,26 @@ try:
     assert example['verbs'][0]['result']=={'node':root.path()+'/path_example'},example
     batch=b._verb_help(['tab_create','read_parms'])
     assert batch['count']==2 and [item['name'] for item in batch['items']]==['tab_create','read_parms'],batch
-    for bad in ([], ['tab_create','tab_create'], ['tab_create', 3]):
+    # Real test56 discovery requested 12 help records; default help should supply
+    # executable callable facts without automatically attaching full schemas.
+    names=['build_module','modeling_dimensions','create_spare_parms','tab_create',
+           'verify_network','sop_recipe','geo_piece_stats','render_view','layout_nodes',
+           'set_parms','test_controls','geo_check_interfaces']
+    brief=b._verb_help(names)
+    full=b._verb_help(names, detail='full')
+    assert len(json.dumps(brief, ensure_ascii=False)) < len(json.dumps(full, ensure_ascii=False)) / 3
+    for short, complete in zip(brief['items'], full['items']):
+        assert short['detail']=='brief' and 'operation_contract' not in short,short
+        assert complete['detail']=='full',complete
+        for field in ('name','signature','return_type','call_mode'):
+            assert short[field]==complete[field],(field,short,complete)
+        followup=run('__result__='+short['full_help'], read_only=True)
+        assert followup['ok'] and followup['result']==complete,followup
+    assert b._verb_help('hda_set_interface')['doc'] != b._verb_help('hda_set_interface', detail='full')['doc']
+    try:b._verb_help('build_module', detail='unknown')
+    except ValueError as error:assert "detail='full'" in str(error)
+    else:raise AssertionError('unknown help detail accepted')
+    for bad in ([], ['tab_create','tab_create'], ['tab_create', 3], ['tab_create'] * 17):
         try:b._verb_help(bad)
         except ValueError:pass
         else:raise AssertionError('invalid verb_help batch accepted: '+repr(bad))

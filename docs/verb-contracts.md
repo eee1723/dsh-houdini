@@ -5,8 +5,8 @@
 
 ## 使用方式与维护范围
 
-模型通过 `verb_help("build_module")` 或名称列表按需查询；不把本页全部内容拼入常驻提示。
-`signature`、`return_type`、`call_mode` 和 `doc` 从真实函数取得。已维护的动词还返回 `operation_contract`，
+模型通过 `verb_help("build_module")` 或名称列表取得简明调用资料；使用 `detail="full"` 按需查询完整说明，不把本页全部内容拼入常驻提示。
+`signature`、`return_type`、`call_mode` 从真实函数取得；brief 的 `doc` 是简短用途，full 才含完整 `doc`。已维护的动词在 full 中还返回 `operation_contract`，
 包含输入和返回字段、可执行 Python 示例、结果读取方式及接口边界。其他动词仍使用运行时签名与说明。
 
 JSON Schema subsets describe serializable arguments and successful verb-ledger result projections. Additional properties remain open unless the actual nested input spec is closed. Runtime signature/doc remains authoritative; these schemas are discovery metadata, not dispatch validation.
@@ -39,7 +39,7 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 
 ## verb_help
 
-Discover actual callable signatures and the available on-demand argument/result contracts.
+Read actual callable signatures and brief purpose; detail='full' adds complete documentation, argument/result schemas and examples.
 
 ### 输入结构
 
@@ -62,6 +62,15 @@ Discover actual callable signatures and the available on-demand argument/result 
           "uniqueItems": true
         }
       ]
+    },
+    "detail": {
+      "type": "string",
+      "enum": [
+        "brief",
+        "full"
+      ],
+      "default": "brief",
+      "description": "Brief returns callable facts and concise purpose. Full adds complete doc and maintained operation_contract; applies to one name or every item in a batch."
     }
   },
   "required": [
@@ -105,8 +114,20 @@ Discover actual callable signatures and the available on-demand argument/result 
         "call_mode": {
           "type": "string"
         },
+        "detail": {
+          "type": "string",
+          "enum": [
+            "brief",
+            "full"
+          ]
+        },
         "doc": {
-          "type": "string"
+          "type": "string",
+          "description": "Concise purpose in brief mode; complete callable documentation in full mode."
+        },
+        "full_help": {
+          "type": "string",
+          "description": "Executable full-help query, supplied in brief mode."
         },
         "operation_contract": {
           "type": "object"
@@ -117,6 +138,7 @@ Discover actual callable signatures and the available on-demand argument/result 
         "signature",
         "return_type",
         "call_mode",
+        "detail",
         "doc"
       ],
       "additionalProperties": true
@@ -152,11 +174,21 @@ Discover actual callable signatures and the available on-demand argument/result 
 __result__ = verb_help(['build_module', 'network_boxes', 'node_info', 'tab_create'])
 ```
 
-items contains one actual signature per name; operation_contract is present where documented.
+items contains actual signatures, return types, execution modes, concise purposes and executable full_help queries. No full schemas are included by default.
+
+### Read the complete contract for a selected operation
+
+调用工具：`houdini_inspect`。
+
+```python
+__result__ = verb_help('build_module', detail='full')
+```
+
+doc contains the complete callable documentation; operation_contract, where maintained, supplies input/output schemas and executable examples.
 
 ### 接口边界
 
-- List input returns items/count, not a mapping keyed by verb name. Other verbs still supply runtime signature, return_type, call_mode and doc.
+- List input returns items/count, not a mapping keyed by verb name. Both scalar and list inputs default to brief; use detail='full' when complete documentation or nested input/output shapes are needed.
 - call_mode=exec means houdini_exec or houdini_job_submit; query_or_exec is also available through houdini_inspect. Python names, live Node objects and local variables do not persist across separate tool calls.
 
 ## node_info
@@ -203,6 +235,10 @@ Read static node type and parameter templates in a real creation network without
     "type": {
       "type": "string"
     },
+    "requested_type": {
+      "type": "string",
+      "description": "The caller's requested family or exact type. type is the actual resolved version used by creation."
+    },
     "category": {
       "type": "string"
     },
@@ -236,6 +272,7 @@ Read static node type and parameter templates in a real creation network without
   },
   "required": [
     "parent",
+    "requested_type",
     "type",
     "category",
     "parameters",
@@ -271,6 +308,7 @@ This query requires example_geo to exist; /obj creates OBJ nodes and cannot supp
 ### 接口边界
 
 - parm_filter is a literal substring, not regex, glob or a pipe-separated list. Static defaults and menus do not describe shelf initialization or dynamic menus on a live node.
+- parent must be an existing creation network. Unknown types report nearby visible registered names/labels in that context; suggestions do not substitute for the requested type.
 
 ## tab_create
 
@@ -1617,7 +1655,7 @@ CTRL must exist. Explicit spec returns node/mode/created/leaf_values; it does no
 
 ### 接口边界
 
-- Simplified spec supports recursive folders and toggle/int/float/string scalars. Use verb_help(hda_set_interface) for the complete layout vocabulary; do not mix layout fields into simplified spec.
+- Simplified spec supports recursive folders and toggle/int/float/string scalars. Use verb_help('hda_set_interface', detail='full') for the complete layout vocabulary; do not mix layout fields into simplified spec.
 - layout is exclusive with spec/defaults/update_defaults; dry_run is available in layout mode. update_defaults changes existing spare defaults and preserves current values/keys.
 
 ## sop_set_output
@@ -1725,7 +1763,7 @@ Read node/source/display/render. A named Null alone is not a public subnet port;
 
 ## render_view
 
-Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations.
+Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations. Managed output accepts an omitted picture or a basename; paths require output_policy='explicit'.
 
 ### 输入结构
 
@@ -1756,7 +1794,8 @@ Render an explicit SOP through the Houdini GUI preview service and return real i
           "minItems": 3,
           "maxItems": 3
         }
-      ]
+      ],
+      "description": "World-space target-to-camera direction. Named previews are fixed: iso=[1,0.7,1], front=[0,0.25,1], side=[1,0.25,0], top=[0.001,1,0.001]; front/side include elevation and are not object-relative orthographic axes. Pass a nonzero xyz vector for a specific object axis; orthographic projection alone does not choose that axis."
     },
     "frame": {
       "anyOf": [

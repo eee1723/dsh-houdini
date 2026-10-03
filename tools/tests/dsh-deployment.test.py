@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import io
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -88,6 +89,34 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         subprocess.run([NODE, str(ROOT / "tools/release-sign.mjs"), "sign", str(source / "release.json"), str(source / "release.sig.json"), "fixture"], env=env, check=True)
         return source
     first, second = bundle(), bundle("1.1.0")
+    # Finalization builds the bootstrap/installer from the signing checkout.
+    # A correct unsigned artifact and tag cannot authorize dirty installer files.
+    builder_spec = importlib.util.spec_from_file_location("release_builder_fixture", ROOT / "tools/build-release.py")
+    builder = importlib.util.module_from_spec(builder_spec)
+    builder_spec.loader.exec_module(builder)
+    signing_source = temp / "signing-source"
+    d.atomic_json(signing_source / "package.json", {"version": "1.0.0"})
+    d.atomic_json(signing_source / "deployment/runtime.json", {"nodeVersion": "24.17.0"})
+    d.atomic_json(signing_source / "deployment/package.json", {"dependencies": {"@deepseek-ai/dsh": "0.1.6-alpha.2"}})
+    signing_trust = signing_source / "installer/release-trust.json"
+    d.atomic_json(signing_trust, trust)
+    for dirty_kind in ("tracked", "untracked"):
+        commands = []
+        def signing_command(args, **kwargs):
+            commands.append(args)
+            assert args[0] == "git", "a dirty signing checkout must never invoke the signer"
+            if args[1] == "rev-parse":
+                return "a" * 40
+            if args[1] == "diff":
+                return "changed installer" if dirty_kind == "tracked" else ""
+            if args[1] == "ls-files":
+                return "installer/unreviewed.py"
+            if args[1] == "describe":
+                return "v1.0.0"
+            raise AssertionError(args)
+        with patch.object(builder, "ROOT", signing_source), patch.object(builder, "run", signing_command):
+            rejects(lambda: builder.finalize(first, signing_trust, "fixture", NODE), "clean checkout")
+            assert any(command[1] == "diff" for command in commands)
     store = d.Store(temp / "managed", trust)
     initial = store.state()
     # Online discovery still passes through the same signature/asset gates.
@@ -184,6 +213,12 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         assert not (Path(ctx2["home"]) / ".agent-presets/houdini/agent.json").exists()
         assert not (Path(ctx2["home"]) / ".agent-presets/houdini-product/agent.json").exists()
         d.atomic_json(Path(ctx2["home"]) / "session.json", {"value": "new data"})
+        before_rollback = store.state()
+        def cancel_rollback(message):
+            if "Preparing rollback" in message:
+                raise InterruptedError("rollback cancelled after verification")
+        rejects(lambda: store.rollback(cancel_rollback), "rollback cancelled")
+        assert store.state() == before_rollback, "cancellation before selection commit cannot prepare a rollback"
         assert store.rollback() == ident1
         lease2.close()
         ctx_old, lease_old = store.activate(ident1, "21.0")

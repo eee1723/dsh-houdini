@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 17 · Source SHA-256: `db0313203995497ae2ca1d8efa87337c4d792b2972d5aa7ef534bd7e7b8d6227`
+Schema: 2 · Cards: 21 · Source SHA-256: `fdcfa0ae2a320d7162dfd2d0d32624d687352c85b62a649969b174ae6598d2de`
 
 ## 数据与设计契约
 
@@ -20,6 +20,10 @@ Schema: 2 · Cards: 17 · Source SHA-256: `db0313203995497ae2ca1d8efa87337c4d792
 
 ## 卡片目录
 
+- [mirror](#mirror)
+- [bend](#bend)
+- [skin](#skin)
+- [pathdeform](#pathdeform)
 - [sweep](#sweep)
 - [polyextrude](#polyextrude)
 - [polybevel](#polybevel)
@@ -37,6 +41,69 @@ Schema: 2 · Cards: 17 · Source SHA-256: `db0313203995497ae2ca1d8efa87337c4d792
 - [cam](#cam)
 - [karmarendersettings](#karmarendersettings)
 - [boolean](#boolean)
+
+## mirror
+
+标识：`mirror-plane-and-seam-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/mirror.html)。
+
+精确类型：`mirror`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`operation`、`dirtype`、`origin`、`dir`、`t`、`r`、`dist`、`keepOriginal`、`consolidatepts`、`consolidatetol`、`consolidateunshared`、`reversenml`。
+
+### 操作与边界
+
+- Input 0 is geometry to mirror. operation=all reflects all selected primitives; operation=clip first keeps the positive side of the mirror plane. keepOriginal is case-sensitive. Default direction plane is X=0; dist offsets it along its normal.
+- consolidatepts joins eligible original/reflected points on the plane within consolidatetol, optionally restricted to unshared edges. It is not a union operation for overlapping solids. Check seam connectivity separately from symmetry or matching coordinates; an intentional open sheet remains open after joining its seam. Retain the editable half/source upstream so later width/detail changes propagate.
+- Isolated evidence covers polygon sheet copy/clip, optional shared seam and an upstream width edit; it does not certify overlapping solid unions.
+
+## bend
+
+标识：`bend-capture-and-enables-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/bend.html)。
+
+精确类型：`bend`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`dodeform`、`enablebend`、`bendmode`、`bend`、`enabletwist`、`twist`、`origin`、`dir`、`length`、`upvectorcontrol`、`up`、`limit_deformation`、`userest`。
+
+### 操作与边界
+
+- Input 0 is geometry to deform; optional input 1 supplies rest positions when userest is enabled. origin/dir/length define the capture spine; up sets the bending plane. Bend in angle mode and Twist use degrees. A different axis or capture length changes the resulting shape even at the same angle.
+- Bend moves existing points; it does not add samples. A two-point segment remains a straight chord after bending, so retain enough upstream samples for the requested silhouette. Twist is off by default; a point on its axis does not move. With limited bend, geometry beyond the capture end follows the end transform rigidly; disabling the limit continues curvature. Recheck intended curvature, dimensions and local overlaps after editing rather than inferring them from successful angle assignment.
+- Isolated geometry evidence covers sampled line bending and twisting, capture axes/length/limits and inactive Twist; other deformation modes and rest-input combinations are not covered by those fixtures.
+
+## skin
+
+标识：`skin-ordered-sections-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/skin.html)。
+
+精确类型：`skin`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`uprims`、`vprims`、`surftype`、`keepshape`、`closev`、`skinops`、`prim`、`polys`。
+
+### 操作与边界
+
+- For a one-direction loft, input 0 contains the ordered section primitives. Input 1 supplies optional V sections for a different, cross-skin construction; it is not simply the next section in the loft.
+- Section order, direction and seam correspondence define the surface. Reordering three valid sections can still cook without errors while joining nonadjacent sections. Preserve separate editable section sources and inspect their correspondence before and after edits.
+- With polygon circles, keepshape=1, polys=1 and surftype=quads produce polygon strips through the section vertices. Output Polygons does not convert NURBS/Bezier outputs. closev closes the loft direction; it is not an end-cap switch. An intentionally open loft is a valid surface.
+- Isolated evidence covers equal-point polygon sections and a local section edit, not automatic correspondence for arbitrary mixed curves.
+
+## pathdeform
+
+标识：`path-deform-source-frame-and-mapping-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/pathdeform.html)。
+
+精确类型：`pathdeform`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`geo_controlaxis`、`geo_controlup`、`curve_controlup`、`geo_origin`、`geo_centeroncurve`、`geo_offsetunit`、`geo_capturestart`、`geo_captureend`、`curve_endunit`、`curve_posend`、`curve_posoffset`、`startbehavior`、`endbehavior`。
+
+### 操作与边界
+
+- Input 0 is existing geometry to deform; input 1 is the spine curve. Unlike Sweep, this reshapes an already modeled source. Source subdivisions must support the intended bend; deformation does not add sampling along a coarse source.
+- Establish the source forward/up axes and curve up separately. Defaults are geo_controlaxis=z, geo_controlup=y and curve_controlup=yaxis. A wrong source axis can cook without errors while stretching the cross-section across the whole curve. Custom axis modes have separate vector parameters; inspect the active templates.
+- curve_endunit=fractioncurvelength with curve_posend=1 spans the full curve; fractiongeolength with 1 preserves the source length along its forward axis. These are different valid intents. Capture bounds and centering determine which source interval bends; uncaptured regions can extend along the endpoint tangents.
+- Retain the source and spine independently. After changing the path, check corresponding source landmarks, section orientation and thickness, and endpoint placement against the selected length/capture policy. Nonempty output and unchanged topology do not prove correct mapping.
+- Isolated evidence covers a subdivided polygon solid mapped onto a planar sampled arc with a fixed up axis; complex spatial twist, rigidity and arbitrary self-intersection remain outside that fixture.
 
 ## sweep
 

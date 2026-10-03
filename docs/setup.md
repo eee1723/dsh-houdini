@@ -32,34 +32,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 已完成安装不依赖原下载解压目录，不要求系统Git、Node、额外Python或管理员权限。
 启动桩按[SideFX脚本位置](https://www.sidefx.com/docs/houdini/hom/locations)分别生成在python3.11libs/pythonrc.py和python3.13libs/pythonrc.py，共享同一份Python模块实现。
 
-## Version & Diagnostics
+## Version & Updates（版本与更新）
 
-受管模式顶部两列分别是 **This Houdini process** 与 **Next Houdini start**，不是两个独立更新的产品。
-源码和受管安装共用此主面板及 **Advanced runtime diagnostics** 入口；面板明确显示安装模式和路径。
-源码模式右列为 **Source on disk**，只展示磁盘package版本，当前运行态标为未核验；实际加载身份在高级诊断中检查。
-源码模式提供正式发行页、源码版本刷新和Git/npm更新说明，不创建受管安装状态，安装修复/回退/取消切换按钮不可用。
-源码模式可直接打开高级诊断来检查尚未启动的运行时；以下操作表描述受管模式。
+源码和受管安装共用中文主面板。默认只显示版本、更新状态和「检查更新」；发现适用的新版本后才出现安装或发行页入口。未检查、检查失败、没有正式发行和已是最新分别显示；源码版本只是磁盘 package 版本，不认证实际加载状态。
+有下次启动待切换版本时才显示第二列。安装路径、源码更新说明、维护操作、运行诊断、日志和共享执行端实验入口统一收在「高级设置」。无适用对象的修复/回退/取消切换操作隐藏，正在工作时才显示进度与取消。
 
 | 操作 | 行为 |
 |---|---|
-| Check for a release / Install | 只查明确发布的稳定Release；在线安装要求不可变Release、受信签名与完整资产 |
-| Install local package | 选择与ZIP、release.sig.json同目录的release.json；离线也要求受信签名，没有忽略签名按钮 |
-| Repair current version | 重新下载并暂存当前版本的完整包，不升级DSH/latest、不覆盖损坏目录；离线时选择同版本地包 |
-| Verify installation | 检查全量文件哈希、缺失/多余文件、包版本和依赖锁；通过不证明live加载 |
-| Prepare rollback | 下次启动使用上一套程序及它的独立数据，新版数据保留但不自动合并 |
-| Cancel pending change | 取消下次切换，不删除任何版本、数据或下载 |
-| Advanced runtime diagnostics | 运行态加载后才可进入Host/Bridge诊断；repair仍受活动任务保护 |
+| 检查更新 / 安装更新 | 只查明确发布的稳定Release；在线安装要求不可变Release、受信签名与完整资产 |
+| 安装本地包 | 选择与ZIP、release.sig.json同目录的release.json；离线也要求受信签名 |
+| 修复当前版本 | 重新下载并暂存当前版本完整包，不升级DSH/latest、不覆盖损坏目录；离线时选择同版本地包 |
+| 检查安装文件 | 检查全量文件哈希、缺失/多余文件、包版本和依赖锁；通过不证明live加载 |
+| 回退到上一版本 | 下次启动使用上一套程序及其独立数据，新版数据保留但不自动合并 |
+| 取消下次切换 | 取消待切换状态，不删除版本、数据或下载 |
+| 运行诊断 | 查看实际运行版本、连接和依赖；修复并重启仍受活动任务保护，不重复插件发行检查 |
 
 网络失败/限流不冒充已是最新。Draft、prerelease、push与tag不进入默认更新通道；目前没有面向普通用户的预览通道。
-后台下载/解压可取消；提交pending是原子步骤，提交后使用Cancel pending change取消下一次切换。
+后台下载/解压可取消；提交pending是原子步骤，提交后使用「取消下次切换」取消下一次切换。
 独立管理器不依赖Node、DSH或插件lib，缺依赖时仍可打开。
 
 ## 正式发行与受管安装合同
 
 下载 → 签名/资产摘要验证 → 新目录安全解压 → 全量文件检查 → 原子记录pending。
 Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程执行哈希、网络或进程探测。
-首次Open Workspace在worker里校验/准备，主线程只接收状态并加载HOM模块；安装完成后必须完整重启，不能热切换已打开的Houdini。
-同一次启动尚未结束时，重复Open Workspace共用现有启动状态，并更新最新HIP目录意图，不另开一套启动worker。
+首次打开工作区在worker里校验/准备，主线程只接收状态并加载HOM模块；安装完成后必须完整重启，不能热切换已打开的Houdini。
+同一次启动尚未结束时，重复打开工作区共用现有启动状态，并更新最新HIP目录意图，不另开一套启动worker。
 
 新版首次启用从当前受管版本复制独立DSH数据快照，不跟随依赖junction，再由发行包的DSH API初始化profile并检查Node、DSH和插件。
 用户自建preset随数据保留，只重新生成产品拥有的唯一houdini。state.json损坏时不能猜测当前版本；保留旧目录恢复数据，选择新安装根，不把重装程序当作状态恢复。
@@ -70,7 +67,7 @@ Houdini启动时只读取小型状态并固定本进程选择，不在GUI线程�
 同时只允许一个Houdini进程使用受管DSH工作区；其他实例可管理/暂存更新，待前一实例退出后再启动工作区。
 动态loopback端口隔离独立DSH/开发Bridge，Windows Job Object只管理自有Node进程树，退出时收回，不按端口停止外部服务。
 Windows源码模式也使用同一Job生命周期：CLI/npx在加入自有Job后才开始执行，启动器重载及UI清理不丢失所有权。
-普通Open Workspace/启动不接管外部监听者。Repair确认后强制停止本Houdini拥有的前端树，允许中断DSH agent；
+普通打开工作区/启动不接管外部监听者。Repair确认后强制停止本Houdini拥有的前端树，允许中断DSH agent；
 对旧版无Job前端，只允许经真实可执行文件、精确DSH主入口/参数及本安装CLI路径核验的监听进程，
 保留原生进程句柄并在终止前重查端口，防止PID复用误杀。源码限本项目npx缓存，受管限本发行安装；
 未知程序/自定义入口拒绝，不能仅凭端口、node.exe名称或runtime.json终止。未登记的旧进程后代不凭端口推定归属。
@@ -82,6 +79,7 @@ Host不再运行不等于HOM已结束；强制停止前后均检查Bridge未完�
 启动器创建的DSH携带当前Houdini的executor ID，所有Bridge请求核对目标，防止同端口换进程后误操作。
 ID不是密码或节点ownership；进程重开不能凭原HIP路径自动续跑。共享任务入口/多执行端的目标设计、
 身份分层与尚未开放部分见[多执行端与恢复](architecture.md#多houdini执行端与任务恢复)。
+内嵌网页渲染进程异常退出时显示原生恢复面板和实际退出码，停止自动重试，由用户选择重新加载；普通HTTP服务尚未就绪继续异步重试。错误显示不等于底层渲染依赖已修复。
 WebView使用独立的内存浏览器profile，不争用Houdini默认磁盘profile或其他版本的浏览器锁；浏览器cookie/缓存随窗口生命周期结束，DSH会话与配置仍在受管data目录持久化。
 H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快捷方式或以安装bin为工作目录启动。不要把Houdini进程cwd改成源码/安装暂存目录；DSH工作区仍独立跟随HIP目录，插件不改Houdini的cwd或关闭浏览器沙箱。
 安装器不删除旧版本、旧数据、HIP或工作区。清理下载、暂存及旧版本须另行确认。
@@ -97,22 +95,22 @@ H22.0.368的Qt helper依赖启动目录查找原生DLL；使用Houdini常规快�
 
 ## 工作区使用
 
-工作区启动统一为Open Workspace，菜单另保留版本诊断及共享执行端登记/修复。
+常规菜单只保留「Open Workspace」和「Version & Updates...」。菜单标签使用ASCII英文，兼容Houdini原生菜单；窗口内部保留中文。共享执行端登记/修复在版本面板的高级设置中。
 
 仅显示 **Houdini 模式**。它通过DSH 0.2的preset注册表由插件bundle声明，领域方法按需加载。
 根级`dsh-houdini`装载前端扩展，Houdini preset内的`dsh-houdini/agent`注册工具和现场上下文；
-两者来自同一插件包。正常会话的内容视图提供 **Houdini Trace** 和 **Houdini 工具**，空白新会话仍由DSH显示起始页。
+两者来自同一插件包。正常会话只有一个 **执行记录**（Houdini Trace）入口，工具和技能资料在其「能力资料」中。打开记录时隐藏底部普通输入区和任务浮层，审批/澄清等原生交互仍可处理；返回对话时恢复原草稿；空白新会话仍由DSH显示起始页。
 启用步骤、数据目录约束、单端Repair和未实现的退出/恢复能力唯一维护在[多实例与任务恢复](multi-instance.md)。
 
-先保存HIP，再Open Workspace：HIP父目录成为DSH workspace；切换HIP后再点一次切换边界。
+已保存HIP使用其父目录作为DSH工作区；未保存工程也可直接打开。保存、另存或切换HIP后再次打开工作区，选择对应目录的对话。
 已有同源页面通过新的目录意图切换，包括隐藏后的重开，不刷新当前草稿。前端通过DSH原生workspace/session状态复用有效Houdini任务，
 不会选中归档、其他preset或子agent。确实没有可用任务才创建；创建后读取更新后的workspace成员，再确认实际选中的任务、preset与cwd。
 启动URL和窗口缓存不证明切换完成；导航失败可原位重试，不自动重复建任务。普通点击或打字不取消正在完成的导航。
-未保存场景使用仓库外中立scratch，源码与发行目录不是任务工作区。新会话选择「Houdini模式」。
+未保存场景使用仓库外、每个Houdini进程独立的临时工作区，重复打开或重载保持稳定；连续新建未保存工程共用该临时目录。打开已命名HIP的工作区后，再进入未保存工程会分配新的临时目录，不继承已保存项目目录或默认用户目录，不自动删除历史对话和文件。源码与发行目录不是任务工作区。新会话使用「Houdini模式」。
 首次请求houdini_inspect调用scene_info并列出/obj节点，确认工具、Trace和合同握手。
-图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。最终要交给用户的文件（包括图片）在实际存在并完成验证后由Agent调用`present`声明，右侧交付卡片指向源文件；验证图和缓存不自动声明。`present`不复制文件内容，源文件被移动、删除或改写后，旧卡片的打开结果也会改变。$HIP与Session workspace不同时应使用权威绝对路径，并在切换HIP后重新Open Workspace。
+图像使用DSH原生附件，不安装额外视觉工具；没有成功语义识图仍需报告视觉未验证。最终要交给用户的文件（包括图片）在实际存在并完成验证后由Agent调用`present`声明，右侧交付卡片指向源文件；验证图和缓存不自动声明。`present`不复制文件内容，源文件被移动、删除或改写后，旧卡片的打开结果也会改变。$HIP与Session workspace不同时应使用权威绝对路径，并在切换HIP后重新打开工作区。
 H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
-会话输入区出现工作区不一致提示时，可展开查看Session workspace与最近一次Houdini调用观察到的$HIP目录；它不是持续监控，切换HIP后须重新Open Workspace，最终文件路径以当前权威回执为准。
+仅在最近一次调用明确观察到已保存工程且目录不一致时，在输入区上方显示可展开的中文提示。未保存状态清除旧目录提示。提示以执行观察时间/序列为准，回读历史结果不会冒充新现场。它不是持续监控，切换HIP后须重新打开工作区，最终文件路径以当前权威回执为准。
 视频教程等可选能力的FFmpeg和云服务凭据不属于核心离线运行依赖，仍需按对应skill准备；Houdini和模型服务授权不随插件分发。
 
 ## 显式源码开发安装

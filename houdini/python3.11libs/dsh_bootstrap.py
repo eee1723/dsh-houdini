@@ -24,6 +24,9 @@ _LEASE = None
 _TIMER = None
 _BUSY = False
 _EVENTS = queue.Queue()
+_BOOTSTRAP_MODULES = frozenset((
+    "dsh_bootstrap", "dsh_deployment", "dsh_release_policy", "dsh_install_ui", "dsh_ui_style",
+))
 
 
 def store():
@@ -88,12 +91,15 @@ def open_workspace():
     if _BUSY:
         return
     import hou
+    # Opening source diagnostics already imports runtime/path modules, without
+    # importing the launcher. Those cached modules cannot serve another release.
+    if any(name.startswith("dsh_") and name not in _BOOTSTRAP_MODULES
+           and module is not None for name, module in tuple(sys.modules.items())):
+        hou.ui.displayMessage("当前进程已加载源码版或其他版本的运行模块。请完整重开 Houdini，再使用受管安装。")
+        return
     from hutil.Qt import QtCore
     # Capture HOM data on the GUI thread; workers never call hou.
     version = ".".join(str(x) for x in hou.applicationVersion()[:2])
-    if any(name in sys.modules for name in ("dsh_launcher", "dsh_bridge", "dsh_hou_helpers")):
-        hou.ui.displayMessage("A source/other plugin runtime is already loaded. Restart Houdini to use the managed installation.")
-        return
     _BUSY = True
     def worker():
         try:

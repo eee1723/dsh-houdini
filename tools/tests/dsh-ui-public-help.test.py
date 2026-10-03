@@ -9,7 +9,7 @@ def run(code):
  r=b.run_code(code,owner_session=owner)
  assert r['ok'],r.get('error')
  return r.get('result')
-help=run("__result__=verb_help('hda_set_interface')")
+help=run("__result__=verb_help('hda_set_interface', detail='full')")
 doc=help['doc']
 example=doc[doc.index('    layout = '):doc.index('\n普通Null') if '\n普通Null' in doc else doc.index('\n    普通Null')]
 import textwrap

@@ -46,19 +46,60 @@ try:
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
     families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
-                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge', 'boolean')
+                'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge', 'boolean',
+                'mirror', 'bend', 'skin', 'pathdeform')
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
         assert info['operation_parameters'] and not info['operation_parameters_missing'], info
         actual = make(info['type'], 'template_' + family)
         for setting in info['operation_parameters']:
-            assert actual.parmTuple(setting['name']) is not None, setting
+            actual_tuple = actual.parmTuple(setting['name'])
+            assert actual_tuple is not None, setting
+            assert setting['size'] == len(actual_tuple), setting
+            assert setting['components'] == [p.name() for p in actual_tuple], setting
             if setting.get('menu') and not setting.get('menu_dynamic'):
                 assert {m['token'] for m in setting['menu']} == set(actual.parm(setting['name']).menuItems())
         actual.destroy()
     assert h.node_info(root, 'box', parm_filter='size')['filter'] == 'size'
     assert set(root.children()) == before
+    resolved = h.node_info(root, 'polybevel', limit=1)
+    assert resolved['requested_type'] == 'polybevel'
+    assert resolved['type'] == h.resolve_latest_type(hou.sopNodeTypeCategory(), 'polybevel')
+    # Failed discovery reports the actual network and real visible candidates;
+    # no guessed aliases, implicit type replacement or scratch nodes.
+    for requested in ('tube::999.0', 'polybevl'):
+        try:
+            h.node_info(root, requested)
+        except ValueError as error:
+            message = str(error)
+            expected = 'tube' if requested.startswith('tube') else 'polybevel'
+            assert root.path() in message and 'Sop' in message and expected in message, message
+            assert 'search_tab_entries' in message and 'not replacements' in message, message
+        else:
+            raise AssertionError('invalid node type accepted: ' + requested)
+    for row in h._node_type_suggestions(hou.sopNodeTypeCategory(), 'polybevl'):
+        typ = hou.nodeType(hou.sopNodeTypeCategory(), row['type'])
+        assert typ is not None and h._visible_node_type(typ), row
+    leaf = make('null', 'discovery_leaf')
+    try:
+        h.node_info(leaf, 'box')
+    except ValueError as error:
+        assert 'not a network' in str(error) and root.path() in str(error), str(error)
+    else:
+        raise AssertionError('leaf accepted as node creation network')
+    leaf.destroy()
+    assert set(root.children()) == before
+    # MaxMin is another built-in naming scheme not exposed by the SOP cards.
+    legacy_cop = root.createNode('cop2net', 'tuple_naming_fixture', run_init_scripts=False)
+    try:
+        mapping = legacy_cop.createNode('colormap', run_init_scripts=False)
+        actual_tuple = mapping.parmTuple('from')
+        card = h._parm_template_card(actual_tuple.parmTemplate())
+        assert card['size'] == len(actual_tuple) == 2, card
+        assert card['components'] == [p.name() for p in actual_tuple] == ['frommax', 'frommin'], card
+    finally:
+        legacy_cop.destroy()
     assert cards.operation_card('polybevel::2.0') is None
     assert cards.operation_card('sweep::99.0') is None
     assert cards.operation_card('revolve::99.0') is None
@@ -97,6 +138,183 @@ try:
     assert box.parm('type').evalAsString() == 'poly'
     assert len(box.geometry().prims()) == 6
     done('native/poly output and explicit tube closure; Box counterexample')
+
+    # Mirror keeps copy choice and a confirmed seam separate. This fixture is an
+    # intentionally open sheet, not a solid that should become watertight.
+    half = make('grid', 'mirror_half', {'rows': 2, 'cols': 2, 'size': [1, 1], 't': [.5, 0, 0]})
+    mirrored = make('mirror', 'editable_mirror', {'operation': 'all', 'dirtype': 'direction',
+                    'origin': [0, 0, 0], 'dir': [1, 0, 0], 'keepOriginal': 1,
+                    'consolidatepts': 0}, [half])
+    assert len(mirrored.geometry().points()) == 8 and observed(mirrored)['boundary_edges'] == 8
+    h.set_parm(mirrored, 'consolidatepts', 1)
+    assert len(mirrored.geometry().points()) == 6 and observed(mirrored)['boundary_edges'] == 6
+    h.set_parm(mirrored, 'keepOriginal', 0)
+    assert len(mirrored.geometry().prims()) == 1
+    assert {p[0] for p in positions(mirrored)} == {-1., 0.}
+    h.set_parm(mirrored, 'keepOriginal', 1)
+    h.set_parms(half, {'size': [2, 1], 't': [1, 0, 0]})
+    assert {p[0] for p in positions(mirrored)} == {-2., 0., 2.}
+    assert observed(mirrored)['boundary_edges'] == 6, 'source width edit retains the shared seam'
+    # A full-width source crossing the plane is duplicated by all, not clipped.
+    h.set_parm(half, 'tx', 0)
+    assert len(mirrored.geometry().points()) == 8 and len(positions(mirrored)) == 4
+    h.set_parm(mirrored, 'operation', 'clip')
+    assert len(mirrored.geometry().points()) == len(positions(mirrored)) == 6
+    assert observed(mirrored)['boundary_edges'] == 6
+    done('Mirror copy versus replace, optional seam and upstream width edit; clip versus overlapping full source')
+
+    # Bend moves existing points. It does not refine a two-point segment, infer the
+    # capture axis, or enable Twist merely because a nonzero twist angle was set.
+    spine = make('line', 'bend_spine', {'origin': [0, 0, 0], 'dir': [0, 0, 1], 'dist': 2, 'points': 2})
+    deform = make('bend', 'editable_bend', {'origin': [0, 0, 0], 'dir': [0, 0, 1],
+                  'upvectorcontrol': 'custom', 'up': [0, 1, 0], 'length': 2,
+                  'bendmode': 'angle', 'bend': 90}, [spine])
+    coarse = [p.position() for p in deform.geometry().points()]
+    assert len(coarse) == 2
+    assert (coarse[-1] - hou.Vector3(0, 4 / math.pi, 4 / math.pi)).length() < 1e-5
+    h.set_parm(spine, 'points', 17)
+    dense = [p.position() for p in deform.geometry().points()]
+    assert len(dense) == 17 and (dense[-1] - coarse[-1]).length() < 1e-5
+    assert (dense[8] - (coarse[0] + coarse[-1]) * .5).length() > .3
+    h.set_parm(deform, 'bend', 45)
+    assert deform.geometry().points()[-1].position()[2] > 1.8
+    h.set_parms(deform, {'bend': 90, 'dir': [0, 1, 0], 'up': [1, 0, 0]})
+    assert positions(deform) == positions(spine), 'points at the capture origin plane do not bend along the intended Z span'
+    h.set_parms(deform, {'dir': [0, 0, 1], 'up': [0, 1, 0], 'length': 1, 'limit_deformation': 1})
+    limited = [p.position() for p in deform.geometry().points()]
+    assert abs(limited[-1][2] - 2 / math.pi) < 1e-5
+    assert abs((limited[-1] - limited[8]).length() - 1) < 1e-5, 'outside span follows the end tangent rigidly'
+    h.set_parm(deform, 'limit_deformation', 0)
+    assert abs(deform.geometry().points()[-1].position()[2]) < 1e-5, 'unlimited bend continues curvature beyond capture end'
+    h.set_parms(spine, {'origin': [1, 0, 0], 'points': 3})
+    h.set_parms(deform, {'enablebend': 0, 'enabletwist': 0, 'twist': 90, 'length': 2, 'limit_deformation': 1})
+    assert positions(deform) == positions(spine), 'inactive Twist value does not deform'
+    h.set_parm(deform, 'enabletwist', 1)
+    assert (deform.geometry().points()[-1].position() - hou.Vector3(0, 1, 2)).length() < 1e-5
+    h.set_parm(deform, 'length', 4)
+    assert (deform.geometry().points()[-1].position() - hou.Vector3(2**-.5, 2**-.5, 2)).length() < 1e-5
+    h.set_parms(deform, {'length': 2, 'twist': 180})
+    assert (deform.geometry().points()[-1].position() - hou.Vector3(-1, 0, 2)).length() < 1e-5
+    h.set_parm(deform, 'originx', 1)
+    assert positions(deform) == positions(spine), 'a point on the capture axis has no twist displacement'
+    assert not deform.errors() and not mirrored.errors()
+    done('Bend/Twist axis, sampled shape, enable state, capture limit and editable angle/length/origin')
+
+    # Loft keeps editable section inputs. Correct topology/counts alone cannot
+    # distinguish an ordered loft from a cooked, wrong-order connection.
+    sections = [make('circle', 'loft_section_' + str(i),
+                     {'type': 'poly', 'orient': 'xy', 'rad': [r, r],
+                      't': [0, 0, i], 'divs': 12})
+                for i, r in enumerate((.5, 1, .75))]
+    section_stack = make('merge', 'loft_sections', inputs=sections)
+    loft = make('skin', 'section_loft',
+                {'keepshape': 1, 'polys': 1, 'surftype': 'quads',
+                 'closev': 'nonewv', 'prim': 0}, [section_stack])
+    assert len(loft.geometry().prims()) == 24
+    assert all(p.type() == hou.primType.Polygon for p in loft.geometry().prims())
+    assert observed(loft)['boundary_edges'] == 24
+    assert positions(loft) == set().union(*(positions(s) for s in sections))
+    old_ends = {p for p in positions(loft) if p[2] in (0, 2)}
+    h.set_parm(sections[1], 'radx', 1.5)
+    changed = positions(loft)
+    assert {p for p in changed if p[2] in (0, 2)} == old_ends
+    assert abs(max(abs(p[0]) for p in changed if p[2] == 1) - 1.5) < 1e-6
+    assert changed == set().union(*(positions(s) for s in sections))
+    def loft_z_spans():
+        return [max(v.point().position()[2] for v in p.vertices())
+                - min(v.point().position()[2] for v in p.vertices())
+                for p in loft.geometry().prims()]
+    assert max(loft_z_spans()) == 1
+    section_stack.setInput(1, sections[2]); section_stack.setInput(2, sections[1])
+    assert not loft.errors() and len(loft.geometry().prims()) == 24
+    assert max(loft_z_spans()) == 2, 'wrong section order must remain an observed counterexample'
+    section_stack.setInput(1, sections[1]); section_stack.setInput(2, sections[2])
+    assert max(loft_z_spans()) == 1
+    done('Skin ordered sections, local section edit and error-free wrong-order counterexample')
+
+    # An asymmetric polygon solid makes source orientation/width/height
+    # observable after bending. Its nine rings retain point correspondence.
+    def fixture_point(geometry, position):
+        point = geometry.createPoint(); point.setPosition(position)
+        return point
+    def fixture_stash(name, geometry):
+        node = make('stash', name); node.parm('stash').set(geometry)
+        return node
+    straight = hou.Geometry()
+    rings = [[fixture_point(straight, (x, y, j / 4.0))
+              for x, y in ((-.1, -.05), (.1, -.05), (.1, .05), (-.1, .05))]
+             for j in range(9)]
+    for j in range(8):
+        for k in range(4):
+            face = straight.createPolygon()
+            for point in (rings[j][k], rings[j][(k+1)%4],
+                          rings[j+1][(k+1)%4], rings[j+1][k]):
+                face.addVertex(point)
+    for ring in (list(reversed(rings[0])), rings[-1]):
+        face = straight.createPolygon()
+        for point in ring: face.addVertex(point)
+    source = fixture_stash('path_deform_source', straight)
+    def quarter_arc(radius):
+        geometry = hou.Geometry(); curve = geometry.createPolygon(is_closed=False)
+        for i in range(65):
+            angle = math.pi * .5 * i / 64
+            curve.addVertex(fixture_point(geometry,
+                (radius * (1-math.cos(angle)), 0, radius * math.sin(angle))))
+        return geometry
+    spine = fixture_stash('path_deform_spine', quarter_arc(2))
+    deform = make('pathdeform', 'existing_geometry_bend', {
+        'geo_controlaxis': 'z', 'geo_controlup': 'y', 'curve_controlup': 'yaxis',
+        'curve_orientpointattribs': 0, 'geo_origin': 'relativebbox',
+        'geo_centeroncurve': 1, 'geo_offsetunit': 'fractiongeolength',
+        'geo_capturestart': 0, 'geo_captureend': 1,
+        'curve_endunit': 'fractioncurvelength', 'curve_posend': 1,
+        'startbehavior': 'extend', 'endbehavior': 'extend'}, [source, spine])
+    source_topology = [tuple(v.point().number() for v in p.vertices())
+                       for p in source.geometry().prims()]
+    def ring_centers():
+        points = [p.position() for p in deform.geometry().points()]
+        assert len(points) == 36 and not deform.errors(), deform.errors()
+        return [sum(points[i:i+4], hou.Vector3()) / 4 for i in range(0, 36, 4)]
+    def check_bent_sections(radius):
+        centers = ring_centers()
+        points = [p.position() for p in deform.geometry().points()]
+        assert [tuple(v.point().number() for v in p.vertices())
+                for p in deform.geometry().prims()] == source_topology
+        assert observed(deform)['boundary_edges'] == 0
+        for j, center in enumerate(centers):
+            angle = math.pi * .5 * j / 8
+            expected = hou.Vector3(radius * (1-math.cos(angle)), 0, radius * math.sin(angle))
+            assert (center - expected).length() < 1e-5, (center, expected)
+            i = j * 4
+            assert abs((points[i+1]-points[i]).length() - .2) < 1e-5
+            assert abs((points[i+2]-points[i+1]).length() - .1) < 1e-5
+            assert (points[i+2]-points[i+1]).normalized().dot(hou.Vector3(0,1,0)) > .999
+    check_bent_sections(2)
+    h.set_parm(deform, 'curve_endunit', 'fractiongeolength')
+    end = ring_centers()[-1]
+    # Source length is 2, quarter-circle length is pi; preserving source
+    # length reaches approximately angle=1 radian, not the curve endpoint.
+    expected = hou.Vector3(2*(1-math.cos(1)), 0, 2*math.sin(1))
+    assert (end-expected).length() < .001 and (end-hou.Vector3(2,0,2)).length() > 1
+    h.set_parms(deform, {'curve_endunit': 'fractioncurvelength',
+                         'geo_capturestart': .25, 'geo_captureend': .75})
+    centers = ring_centers()
+    assert centers[2].length() < 1e-5
+    assert (centers[6]-hou.Vector3(2,0,2)).length() < 1e-5
+    # Uncaptured half-unit ends extend along the actual sampled end tangents.
+    path_points = [p.position() for p in spine.geometry().points()]
+    tangent_start = (path_points[1]-path_points[0]).normalized()
+    tangent_end = (path_points[-1]-path_points[-2]).normalized()
+    assert (centers[0] + tangent_start*.5).length() < 1e-5
+    assert (centers[-1] - hou.Vector3(2,0,2) - tangent_end*.5).length() < 1e-5
+    h.set_parms(deform, {'geo_capturestart': 0, 'geo_captureend': 1})
+    spine.parm('stash').set(quarter_arc(3))
+    check_bent_sections(3)
+    h.set_parm(deform, 'geo_controlaxis', 'x')
+    assert ring_centers()[0].length() > 1 and not deform.errors()
+    h.set_parm(deform, 'geo_controlaxis', 'z')
+    check_bent_sections(3)
+    done('Path Deform source frame, length/capture mapping, local path edit and wrong-axis counterexample')
 
     # A writable tessellation value may be inactive in the current mode. The
     # reciprocal modes are both checked against real geometry, not UI labels.

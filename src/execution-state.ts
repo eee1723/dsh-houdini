@@ -22,10 +22,19 @@ export function projectExecutionState(events:readonly SessionEvent[],history=exe
   }
 }
 
-/** Carry only unresolved work and the latest failed observation into context. */
+/** Carry only work that still needs recovery/collection into dynamic context.
+ * A settled synchronous failure is already in its tool result. Repeating it
+ * here makes DSH append an entire context snapshot after both failure and repair.
+ * Keep this projection stable across unrelated observations, including their
+ * changing execution sequence, paths and timestamps. */
 export function projectExecutionNotice(events:readonly SessionEvent[],history=executionHistory(events)):Record<string,unknown>|null {
-  const state = projectExecutionState(events,history)
-  if (!state || (!state.last_failure && !state.active_jobs.length && !state.pending_calls
-      && !state.unresolved_requests.length && !state.unresolved_calls.length && !state.unavailable_results.length)) return null
-  return {...state,boundary:'Recorded request and execution facts. Recover an unknown request by its original request_ref before repeating the operation. A finished_result_unavailable receipt confirms the original call finished, but its outcome and result are unavailable; inspect the current scene instead of polling that expired result or repeating the operation. Current scene and result quality can be inspected with Houdini tools.'}
+  const {activeJobs,pendingCalls,activeRequests,unresolvedCalls,unavailableResults}=history
+  if (!activeJobs.length && !pendingCalls.length && !activeRequests.length
+      && !unresolvedCalls.length && !unavailableResults.length) return null
+  return {
+    active_jobs:activeJobs,pending_calls:pendingCalls.length,
+    unresolved_requests:activeRequests,unresolved_calls:unresolvedCalls.map(row=>row.callId),
+    unavailable_results:unavailableResults,
+    boundary:'Recorded outstanding work, not current scene state. Recover uncertain operations with houdini_request using the original request_ref (or its index when the reference is missing) before repeating them. Collect active jobs with houdini_job_status. A finished_result_unavailable receipt confirms completion but not the outcome; inspect the scene rather than polling the expired result or repeating the operation.',
+  }
 }

@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 75
+Execution contract version: 82
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -89,7 +89,7 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 可用读取入口。`houdini_resource(kind="result", ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
 文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
-通用展示直接消费Bridge的checks/evidence/execution，不另推导控制、Polygon或接口结论。已归档结果的等价JSON子树使用引用，长正文提供预览与原始字段指针，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。批量verb_help完整显示签名、调用模式和前置条件。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
+通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback但必须可见。已归档结果的等价JSON子树使用引用，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。verb_help默认返回简明调用资料，完整契约按需读取。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
 canonical是同一份完整工具返回，metadata供原生事件、UI、审计和状态投影，模型文本从它生成可读视图。
 Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用读取规则，取消等无execution字段的回执也保留完整值。
 嵌套事件确实缺少完整值时须由result_ref读取，审计明确标缺口，不从展示文字猜状态。
@@ -100,7 +100,7 @@ Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `verb_help(name)` | 返回已注入动词的准确signature、return_type（无注解则null）、call_mode与docstring；已维护结构合同的动词另返回operation_contract，包含input_schema/output_schema/examples/notes及schema/execution范围。name也可为1..16项唯一名称列表，批量返回items/count。未知名列相似项，批次任一未知则整次明确失败。Bridge对签名绑定错误返回真实signature和零写入证据，实施内部TypeError不冒充绑定失败。用于在调用前发现契约，不靠失败或读取仓库源码猜参数/返回形状；未维护的结构不伪造完整schema | dict |
+| `verb_help(name, detail='brief')` | 按需发现动词。默认brief返回准确signature、return_type、call_mode与简短用途，并明确full_help入口；detail='full'返回完整doc及已有operation_contract（input_schema/output_schema/examples/notes），说明不参与执行校验。name可为1..16项唯一名称列表，批量返回items/count；未知名列相似项，任一未知整次明确失败。Bridge签名绑定错误给真实signature与零派发事实，内部TypeError保留真实原因 | dict |
 
 ### 类型目录（回答「能建什么」）
 

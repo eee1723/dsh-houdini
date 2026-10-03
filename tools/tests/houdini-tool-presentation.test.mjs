@@ -49,7 +49,7 @@ assert.match(candidateText, /"role":"visual-check"/);
 const execArgs = { code: 'set_parm(node, "tx", 1)', allow_raw: 'fixture gap' };
 assert.deepEqual(exec.presentCall(execArgs), {
   card: 'generic',
-  title: 'Execute Houdini Python',
+  title: '执行操作',
   kind: 'edit',
   rawInput: execArgs,
 });
@@ -57,13 +57,28 @@ const execMeta = exec.output.presentationMeta(execArgs, execValue);
 assert.deepEqual(execMeta, { ok: true, verbCount: 2, imageCount: 1, canonical: execValue });
 assert.deepEqual(exec.presentResult(execArgs, { content: text, isError: false, meta: execMeta }), {
   card: 'generic',
-  title: 'Houdini execution succeeded',
+  title: '执行操作 · 成功',
   content: text,
 });
 const pendingChecks = {...execValue, checks: [{verb: 'set_parms', status: 'failed'}]};
 const pendingMeta = exec.output.presentationMeta(execArgs, pendingChecks);
-assert.match(exec.presentResult(execArgs, {content: text, isError: false, meta: pendingMeta}).title, /checks need attention/);
+assert.match(exec.presentResult(execArgs, {content: text, isError: false, meta: pendingMeta}).title, /检查需要关注/);
 assert.match(exec.output.render(execArgs, pendingChecks)[0].text, /checks failed or contain warnings/);
+const caughtRead = {...execValue, result:{fallback:'available'},
+  outcome:{batch:'completed',operations:{total:2,failed:1},checks:{failed:0,warning:0,unverified:0}},
+  verbs:[{verb:'describe',ok:false,error:'missing query node'}, {verb:'find_nodes',ok:true,result:[]}]};
+const caughtMeta = exec.output.presentationMeta(execArgs,caughtRead);
+assert.match(exec.presentResult(execArgs,{content:text,isError:false,meta:caughtMeta}).title,/批次完成，部分操作失败/);
+const caughtText=exec.output.render(execArgs,caughtRead)[0].text;
+assert.match(caughtText,/Batch completed; one or more operations raised errors/);
+assert.match(caughtText,/missing query node/);
+assert(caughtText.indexOf('operation-errors:') < caughtText.indexOf('__result__:'));
+assert.match(caughtText,/"fallback":"available"/);
+assert.doesNotMatch(caughtText,/Executed successfully/);
+assert.match(statusTextForReceipt(),/unknown_transport/);
+function statusTextForReceipt() {
+  return exec.output.render({}, {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}})[0].text;
+}
 const evidenceValue = {...pendingChecks, stdout:'long verbose node list', evidence:[
   {ledgerIndex:1,verb:'render_view',ok:false,output:'Z:/project/render/image.png',pixel_status:'failed',semantic_status:'unverified'},
 ]};
@@ -94,13 +109,13 @@ for (const details of [undefined,{stored:true,sha256:'fixture'}]) {
 const query = definitions.get('houdini_inspect');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {
   card: 'generic',
-  title: 'Inspect Houdini scene',
+  title: '观察现场',
   kind: 'read',
   rawInput: '__result__ = find_nodes(root="/obj")',
 });
 assert.equal(
   query.presentResult({ code: '__result__ = []' }, { content: text, isError: true }).title,
-  'Houdini inspection failed',
+  '观察现场 · 失败',
 );
 
 const submit = definitions.get('houdini_job_submit');
@@ -108,10 +123,15 @@ const submitMeta = submit.output.presentationMeta({}, { jobId: 'job-7' });
 assert.deepEqual(submitMeta, { jobId: 'job-7', canonical: { jobId: 'job-7' } });
 assert.equal(
   submit.presentResult({ code: 'render_frame(rop)' }, { content: text, isError: false, meta: submitMeta }).title,
-  'Started Houdini job job-7',
+  '提交长任务 · job-7',
 );
 
 const status = definitions.get('houdini_job_status');
+const finishedCheckText = status.output.render({}, {...pendingChecks,jobId:'job-7',status:'done'})[0].text;
+assert.match(finishedCheckText,/checks failed or contain warnings/,'finished jobs share the same check-aware completion summary');
+assert.doesNotMatch(finishedCheckText,/finished successfully/);
+const caughtJobMeta=status.output.presentationMeta({}, {...caughtRead,jobId:'job-7',status:'done'});
+assert.match(status.presentResult({jobId:'job-7'}, {content:text,isError:false,meta:caughtJobMeta}).title,/批次完成，部分操作失败/);
 await assert.rejects(status.execute({jobId:'update_placeholder'},{agent:{}}),/placeholders are never sent/);
 const jobValue = {
   jobId: 'job-7',
@@ -132,26 +152,26 @@ assert.deepEqual(statusMeta, {
 });
 assert.deepEqual(status.presentCall({ jobId: 'job-7', wait: 30 }), {
   card: 'generic',
-  title: 'Inspect Houdini job job-7',
+  title: '等待长任务 · job-7',
   kind: 'read',
   rawInput: { jobId: 'job-7', wait: 30 },
 });
 assert.equal(
   status.presentResult({ jobId: 'job-7' }, { content: text, isError: false, meta: statusMeta }).title,
-  'Houdini job job-7: running',
+  '长任务 job-7 · 执行中',
 );
 
 const cancel = definitions.get('houdini_job_cancel');
 await assert.rejects(cancel.execute({jobId:'none'},{agent:{}}),/placeholders are never sent/);
 assert.deepEqual(cancel.presentCall({ jobId: 'job-7' }), {
   card: 'generic',
-  title: 'Cancel Houdini job job-7',
+  title: '取消长任务 · job-7',
   kind: 'execute',
   rawInput: 'job-7',
 });
 assert.equal(
   cancel.presentResult({ jobId: 'job-7' }, { content: text, isError: true }).title,
-  'Houdini job cancellation failed',
+  '取消长任务 · 失败',
 );
 
 // Presentation is a replay-time pure projection: repeated calls are identical

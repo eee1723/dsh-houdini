@@ -10,14 +10,15 @@
       "requiredPolyfills": [
         "AbortSignal.any",
         "Promise.withResolvers",
-        "Iterator"
+        "Iterator",
+        "Array.prototype.toSorted"
       ],
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
       "verificationStatus": "source-adapted-awaiting-live-webview",
       "verifiedOn": [],
       "pendingVerification": [
-        "H21/H22 live WebView send/cancel/reconnect and single Houdini preset",
+        "H21/H22 live WebView model menus, Trace, send/cancel/reconnect and single Houdini preset",
         "signed release combination acceptance"
       ]
     }

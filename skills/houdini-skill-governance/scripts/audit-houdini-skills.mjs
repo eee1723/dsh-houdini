@@ -53,7 +53,7 @@ function inside(root, path) {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
 }
 
-function reachableMarkdown(skillDir, startFile, issues) {
+function reachableMarkdown(skillDir, startFile, issues, repositoryRoot) {
   const seen = new Set()
   const queue = [startFile]
   while (queue.length) {
@@ -64,13 +64,15 @@ function reachableMarkdown(skillDir, startFile, issues) {
     const text = readFileSync(key, 'utf8')
     for (const link of markdownLinks(text)) {
       const target = resolve(dirname(key), link)
-      if (!inside(skillDir, target)) {
-        issues.push({ code: 'LINK_ESCAPES_SKILL', file: relative(skillDir, key), link })
+      if (!inside(repositoryRoot, target)) {
+        issues.push({ code: 'LINK_ESCAPES_REPOSITORY', file: relative(skillDir, key), link })
         continue
       }
       if (!existsSync(target)) {
         issues.push({ code: 'MISSING_LINK', file: relative(skillDir, key), link })
-      } else if (statSync(target).isFile() && target.toLowerCase().endsWith('.md')) {
+      } else if (inside(skillDir, target) && statSync(target).isFile() && target.toLowerCase().endsWith('.md')) {
+        // Repository docs and other skills are valid references, but their
+        // descendants do not make this skill's own resources reachable.
         queue.push(target)
       }
     }
@@ -118,7 +120,7 @@ for (const dir of dirs) {
     else names.set(parsed.name, dir)
   }
 
-  const reachable = reachableMarkdown(skillDir, skillFile, issues)
+  const reachable = reachableMarkdown(skillDir, skillFile, issues, root)
   const referenceFiles = walkFiles(join(skillDir, 'references'))
     .filter((file) => file.toLowerCase().endsWith('.md'))
   const orphanReferences = referenceFiles

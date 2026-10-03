@@ -20,6 +20,12 @@ try:
  assert scalar['type']=='ramp' and scalar['basis']==['Linear','Constant'],scalar
  assert scalar['keys']==[0.,1.] and abs(scalar['values'][0]-.2)<1e-6
  assert color['values']==[[1.,0.,0.],[0.,.5,1.]],color
+ # Editing ramp values without changing its point count must retain the
+ # aggregate ramp, not merely expose isolated multiparm children.
+ filtered=b.run_code(f'__result__=read_parms({n.path()!r})',owner_session='ramp-reader',read_only=True)
+ assert filtered['ok'],filtered
+ filtered_values={row['name']:row['value'] for row in filtered['result']}
+ assert filtered_values.get('curve')==scalar and filtered_values.get('colors')==color,filtered_values
  assert n.asCode()==before
  c=g.createNode('color')
  r=b.run_code(f"import json\n__result__=json.loads(json.dumps(read_parms({c.path()!r},changed_only=False)))",owner_session='ramp-reader',read_only=True)

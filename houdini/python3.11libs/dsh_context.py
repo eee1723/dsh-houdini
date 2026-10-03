@@ -2,11 +2,26 @@
 import time
 import threading
 import re
+import os
 import hou
 
 
 def _node(node):
     return {'path': node.path(), 'type': node.type().name()}
+
+
+def hip_file_state():
+    """Read the current HIP identity; a default $HIP is not a saved project."""
+    path = hou.hipFile.path()
+    is_new = bool(hou.hipFile.isNewFile())
+    file_exists = os.path.isfile(path)
+    # HOM reports a loaded/saved default-name HIP as new in hython. In a GUI
+    # its native flag is authoritative, including .hiplc and .hipnc scenes.
+    if not hou.isUIAvailable() and is_new and file_exists:
+        is_new = False
+    return {'hip_path': path, 'hip_is_new': is_new,
+            'hip_dir': None if is_new else os.path.dirname(path),
+            'has_named_path': not is_new, 'file_exists': file_exists}
 
 
 def unit_length_meters():
@@ -30,7 +45,7 @@ def scene_context(runtime_id, owner_thread):
     result = {
         'schema_version': 1, 'runtime_id': runtime_id,
         'observed_at': time.time(), 'version': hou.applicationVersionString(),
-        'hip_path': hou.hipFile.path(), 'frame': float(hou.frame()),
+        **hip_file_state(), 'frame': float(hou.frame()),
         'unit_length_meters': unit_length_meters(),
         'update_mode': {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         'ui_available': ui, 'dirty_reliable': ui,

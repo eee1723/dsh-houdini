@@ -3,8 +3,8 @@
 本页是多Houdini执行端的唯一长期设计/运维说明；代码地图见[架构](architecture.md)，活动缺口只在
 [交接](handoff.md)维护。默认启动、发行资格与数据迁移仍遵循[安装合同](setup.md)和[兼容门](dsh-update-compatibility.md)。
 
-[组件协作设计](component-collaboration.md)单独维护独立子作者、普通subnet/节点片段交付和装配计划；
-它复用本页执行端边界，不表示共享模式已经提供自动多Agent建模或跨进程ownership恢复。
+[节点片段交换](component-collaboration.md)维护普通节点文件的导出、导入与显式替换；
+共享执行端只解决任务连接目标，不提供多作者建模或跨进程ownership恢复。
 
 ## 当前可用范围
 
@@ -12,25 +12,16 @@
 每个任务只能绑定一个执行端，每个执行端只能有一个场景作者。H21.0.440/H22.0.368的隔离双实例、真实DSH
 认证/浏览器选择/预留/落盘具有测试入口；不是任意DSH版本、任意平台或已发布安装的保证。
 
-默认Open Workspace仍使用原单实例路线。受管安装保留安装级runtime锁，不能靠删锁或手改签名发行包启用。
+默认打开工作区仍使用原单实例路线。受管安装保留安装级runtime锁，不能靠删锁或手改签名发行包启用。
 源码集成不证明用户当前进程已加载；菜单/客户端更改需要在保存并结束现有任务后重新打开对应环境。
 
-源码的工作区启动统一使用 **Open Workspace**；菜单另有版本诊断、共享执行端登记与单端修复入口：源码版新开的GUI、已保存的HIP且没有自有前端时，提供默认“Regular workspace”与显式“Component preview”选择；受管版和未保存HIP不显示该选择，仍走普通入口。组件预览还要求HIP不在平台TEMP，
-首次在Houdini内明确选择带子任务cwd扩展的已构建DSH bin.js（或使用专用组件覆盖）；独立Python与当前Houdini GUI路径可可靠识别时自动采用，缺失时才弹出选择。
-它在LOCALAPPDATA下建立新的隔离profile（不复制旧模型凭据/历史），登记当前HIP为总装执行端，
-从Houdini自有Windows Job启动动态端口的共享Host，并打开内嵌工作区；组件worker由Host按需启动。
-已有单实例前端/不同共享登记拒绝，不停止/接管外部进程；已有自有工作区再次点Open Workspace直接唤起（包括尚未绑定任务但已登记当前HIP的组件预览），不再选择模式、不启动第二个Host。其他共享登记及停止的预览Host仍拒绝自动接管/重启。
-首次在新profile配置模型后，页面仍需明确选择总装HIP的执行端；accepted不等于子作者已完成。
-点击菜单时当前已保存的HIP就是总装HIP；首次委派时Host重新核对任务绑定、现场HIP和任务工作区，
-然后在该HIP同目录创建`dsh-components/<child-id>/workspace/component.hip`，各子作者各用独立进程/工程。
-预览profile的账号、登记和进程配置仍留在LOCALAPPDATA；旧profile的Host要在正常结束后重新加载源码才能使用新目录策略，
-不迁移或删除旧子工程。主工作区的文件工具也能访问其下的子目录，所以这不是文件系统层面的主子隔离；
-主作者只能通过可信片段导入，不直接改子HIP，子作者仍受自己的workspace-write与HOM身份边界约束。
-重复点菜单只唤起同HIP页面；切HIP/退出后的任务恢复未实现，失败保留隔离profile与诊断日志，不自动重发未知修改。
-这不是受管正式发行功能，不自动迁移手工候选Host的会话。
+工作区入口统一使用 **Open Workspace**。普通启动由当前Houdini拥有自己的Host与Bridge，
+任务无需手动选择执行端，聊天区不显示绑定按钮。只有下述显式共享Host挂载了执行端服务，
+浏览器读取到该实际能力后才显示选择入口；连接中断或服务不可用时隐藏入口。
+菜单中的共享执行端登记与单端修复仅用于该可选共享路线。
 
-通用共享模式不自动启动或接管外部Host；上文显式组件预览可以启动自有共享Host。尚不包含正常退出时的任务选择对话框、自动重开Houdini、跨进程节点ownership恢复、
-未知操作重放、共享模式的跨路径Save As预留转移，以及GUI/外部程序的全部写入拦截。
+共享模式不自动启动或接管外部Host。尚不包含退出时的任务选择、自动重开Houdini、跨进程节点归属恢复、
+未知操作重放、共享模式跨路径Save As的预留转移，以及GUI/外部程序的全部写入拦截。
 
 ## 身份与职责
 
@@ -66,7 +57,7 @@
    该overlay在Host层挂载一次dsh-houdini/executor-host；唯一houdini preset只消费同一服务。
    没有配置登记目录时仍用原单实例路线，不隐式新建共享模式。
 
-2. 在各个新Houdini实例中打开/保存各自HIP，使用候选菜单 **Register Shared Executor**，填写同一登记目录。
+2. 在各个新Houdini实例中打开/保存各自HIP，使用 **Version & Updates → 高级设置 → 登记共享执行端**，填写同一登记目录。
    先采集主线程实际HIP/版本，直接绑定动态Bridge端口，再由worker发布登记；不先探测端口后关闭重绑。
    已拥有单实例DSH前端的Houdini拒绝直接转换；不要趁agent短暂没调用HOM时切换工作模式。
 
@@ -91,7 +82,7 @@
 共享模式不同目标路径的scene_save_as在创建文件前拒绝，不能以普通Save As授权替代尚未实现的预留转移。
 需要另一个工程时，先按明确的工程交接方案处理，不在同一exec中绕过raw load/clear/setName。
 
-**Repair This Shared Executor**只重载本Houdini Bridge，并重新发布运行代际；不结束共享DSH或另一个Houdini。
+高级设置中的 **修复共享连接**只重载本Houdini Bridge，并重新发布运行代际；不结束共享DSH或另一个Houdini。
 活动请求/jobs/队列阻止重载。同进程helper重载保留精确节点identity登记，新进程不继承它。
 普通单实例Repair在共享实例上拒绝并指向该入口，不能将“修复一端”变成“重启全部任务”。
 

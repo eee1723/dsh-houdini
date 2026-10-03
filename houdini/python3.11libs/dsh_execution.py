@@ -45,8 +45,15 @@ def _verb_signature(name, fn):
     return signature
 
 
-def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
-    """按需读取准确签名/说明和已维护的输入、返回、示例契约；列表可一次查询1..16个名称。"""
+def _verb_help(name: str | list[str] | tuple[str, ...], detail: str = 'brief') -> dict:
+    """Read callable signatures and brief purpose; detail='full' adds complete docs/contracts.
+
+    name may be one verb or a list of 1..16 unique names. Both forms default to
+    brief help. Full help includes maintained input/output schemas and examples;
+    these are discovery metadata, not execution validation.
+    """
+    if detail not in ('brief', 'full'):
+        raise ValueError("detail must be 'brief' or 'full'; e.g. verb_help('build_module', detail='full')")
     registry = _VERBS
     if isinstance(name, (list, tuple)):
         if not 1 <= len(name) <= 16:
@@ -56,7 +63,7 @@ def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
         keys = [item.strip() for item in name]
         if len(set(keys)) != len(keys):
             raise ValueError("name 列表中的动词名必须唯一")
-        return {"items": [_verb_help(key) for key in keys], "count": len(keys)}
+        return {"items": [_verb_help(key, detail=detail) for key in keys], "count": len(keys)}
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name 必须是非空动词名或 1..16 项名称列表")
     key = name.strip()
@@ -68,19 +75,26 @@ def _verb_help(name: str | list[str] | tuple[str, ...]) -> dict:
     signature = str(inspected) if inspected is not None else None
     returns = inspected.return_annotation if inspected is not None else inspect.Signature.empty
     return_type = None if returns is inspect.Signature.empty else inspect.formatannotation(returns)
+    doc = inspect.getdoc(fn) or ''
     result = {
         "name": key,
         "signature": signature,
         "return_type": return_type,
         "call_mode": "exec" if key in _MUTATING_VERB_NAMES else "query_or_exec",
-        "doc": inspect.getdoc(fn) or "",
+        "detail": detail,
+        "doc": doc,
     }
     global _VERB_OPERATION_CONTRACTS
     if _VERB_OPERATION_CONTRACTS is None:
         source = Path(__file__).resolve().parent.parent / 'verb-operation-contracts.json'
         _VERB_OPERATION_CONTRACTS = json.loads(source.read_text(encoding='utf8'))
     contract = _VERB_OPERATION_CONTRACTS['verbs'].get(key)
-    if contract is not None:
+    if detail == 'brief':
+        # Use the maintained concise purpose where available; keep doc readable
+        # for existing consumers that print it, without shipping entire schemas.
+        result['doc'] = contract['summary'] if contract else doc.split('\n', 1)[0]
+        result['full_help'] = f'verb_help({key!r}, detail="full")'
+    elif contract is not None:
         result['operation_contract'] = {
             'schema_version': _VERB_OPERATION_CONTRACTS['schema_version'],
             'schema_scope': _VERB_OPERATION_CONTRACTS['schema_scope'],
@@ -389,10 +403,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
             if isinstance(e, (dsh_hou_helpers.PreflightError, dsh_hou_helpers.ParameterPatchError,
                               _DispatchBlockedError, _VerbArgumentError)):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
-                ledger[-1]['check_status'] = 'failed'
             elif not isinstance(e, dsh_hou_helpers.CheckpointError) and isinstance(getattr(e, 'evidence', None), dict):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
-                ledger[-1]['check_status'] = 'failed'
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> ERROR: {e}")
             raise
@@ -638,7 +650,7 @@ class ExecutionRuntime:
         scene = dsh_hou_helpers.scene_info()
         envelope['execution'] = {'runtime_id': self.runtime_id, 'executor_id': self.executor_id, 'sequence': execution_sequence,
             'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
-            'hip_dir': os.path.dirname(scene['hip_path']) if scene['has_named_path'] else None,
+            'hip_dir': scene['hip_dir'], 'hip_is_new': scene['hip_is_new'],
             'update_mode': scene['update_mode'],
             'owner_session': owner_session, 'read_only': read_only,
             'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},

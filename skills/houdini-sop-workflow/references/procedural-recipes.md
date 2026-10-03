@@ -4,11 +4,11 @@
 不适用：直接生成整件产品、任意CAD装配求解、连续碰撞认证、外部资产自动坐标猜测。
 配方只输出可审查的普通SOP spec；创建仍由build_module经过所有权、严格设参和失败清理。
 
-## 最小路径
+## 按需选用
 
-物理产品先调用modeling_dimensions，把原要求的毫米/厘米等转换为米，并保留source说明。
-返回controller_spec可直接用于create_spare_parms；默认要求HIP unitlength=1m，工具不替你改场景单位。
-已有非米制工程必须显式使用scene_values适配。最终物理尺寸仍由原始要求导出physical_extent检查，不能用归一化表自证。
+来源尺寸需要单位换算时可用modeling_dimensions，并保留source说明；已统一的场景值无需重复换算。
+返回controller_spec可直接用于create_spare_parms，scene_values用于适配现有单位；工具不修改场景单位。
+换算表只记录输入解释，最终物理尺寸仍从实际输出检查。
 
 ```python
 dims = modeling_dimensions({'length':{'value':120,'unit':'mm'},
@@ -17,11 +17,11 @@ create_spare_parms(ctrl, spec=dims['controller_spec'])
 # length=0.12m、travel=0.03m；构造从CTRL读值，不再把原始120/30写入SOP。
 ```
 
-quantities是按参数名索引的dict。换算失败先修调用；未取得有效换算结果不能假定原数值已经是米。
+quantities是按参数名索引的dict；原始数值与单位需一起解释。
 
-先读`sop_recipe('catalog')`，所有类型均支持`sop_recipe(kind)`取得完整示例；空dict不是schema查询。输入是同一parent已有直属源节点；controller是同层CTRL名。
+不确定模板种类时读`sop_recipe('catalog')`；已知kind可直接`sop_recipe(kind)`取得完整示例，空dict不是schema查询。输入是同一parent已有直属源节点；controller是同层CTRL名。
 复制模板先核点数与位置：零尺寸Box仍有多个重合点，不能当单点；复制后核真实件数，外观位置数和图元数都不能替代。融合后的装饰特征不适用独立连通件数验收。
-先建一份CTRL及部件局部原型，检查源原点、轴向和接合表面，再取配方：
+模板需要明确源与控制入口，可以复用已有节点。例如把已知源和附件共同放到一个转轴上：
 
 ```python
 plan = sop_recipe('hinge', {

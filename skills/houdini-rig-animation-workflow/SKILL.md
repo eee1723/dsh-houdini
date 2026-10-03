@@ -45,7 +45,7 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
   当前任务真正未知的类型、参数或输入。不要把 HDA internals 当默认文档。
 - 未知契约依次用 `verb_help`、Tab/parm/describe、自包含单变量 probe、本机 help；只有公开合同与
   runtime 冲突时才进入 HDA 内部。
-- 同一模块边界连续两次失败后回到最后一个健康 checkpoint，说明失败在 driver、binding 还是
+- 重复失败且没有新信息时回到最后一个健康 checkpoint，说明失败在 driver、binding 还是
   deliverable，查 fast path 后换策略；不要继续堆猜测式补丁。
 - 每批只跨一个可验证边界。核心求值或最终形态修改后，只刷新受影响的下游证据；最终报告使用
   最后一轮数据，不重复包装旧结果。

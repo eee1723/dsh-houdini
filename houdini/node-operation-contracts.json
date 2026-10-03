@@ -1,6 +1,127 @@
 {
   "schema_version": 2,
   "cards": {
+    "mirror": {
+      "id": "mirror-plane-and-seam-v1",
+      "node_types": [
+        "mirror"
+      ],
+      "tested_versions": [
+        "21.0.440",
+        "22.0.368"
+      ],
+      "critical_parameters": [
+        "operation",
+        "dirtype",
+        "origin",
+        "dir",
+        "t",
+        "r",
+        "dist",
+        "keepOriginal",
+        "consolidatepts",
+        "consolidatetol",
+        "consolidateunshared",
+        "reversenml"
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/mirror.html",
+      "notes": [
+        "Input 0 is geometry to mirror. operation=all reflects all selected primitives; operation=clip first keeps the positive side of the mirror plane. keepOriginal is case-sensitive. Default direction plane is X=0; dist offsets it along its normal.",
+        "consolidatepts joins eligible original/reflected points on the plane within consolidatetol, optionally restricted to unshared edges. It is not a union operation for overlapping solids. Check seam connectivity separately from symmetry or matching coordinates; an intentional open sheet remains open after joining its seam. Retain the editable half/source upstream so later width/detail changes propagate.",
+        "Isolated evidence covers polygon sheet copy/clip, optional shared seam and an upstream width edit; it does not certify overlapping solid unions."
+      ]
+    },
+    "bend": {
+      "id": "bend-capture-and-enables-v1",
+      "node_types": [
+        "bend"
+      ],
+      "tested_versions": [
+        "21.0.440",
+        "22.0.368"
+      ],
+      "critical_parameters": [
+        "dodeform",
+        "enablebend",
+        "bendmode",
+        "bend",
+        "enabletwist",
+        "twist",
+        "origin",
+        "dir",
+        "length",
+        "upvectorcontrol",
+        "up",
+        "limit_deformation",
+        "userest"
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/bend.html",
+      "notes": [
+        "Input 0 is geometry to deform; optional input 1 supplies rest positions when userest is enabled. origin/dir/length define the capture spine; up sets the bending plane. Bend in angle mode and Twist use degrees. A different axis or capture length changes the resulting shape even at the same angle.",
+        "Bend moves existing points; it does not add samples. A two-point segment remains a straight chord after bending, so retain enough upstream samples for the requested silhouette. Twist is off by default; a point on its axis does not move. With limited bend, geometry beyond the capture end follows the end transform rigidly; disabling the limit continues curvature. Recheck intended curvature, dimensions and local overlaps after editing rather than inferring them from successful angle assignment.",
+        "Isolated geometry evidence covers sampled line bending and twisting, capture axes/length/limits and inactive Twist; other deformation modes and rest-input combinations are not covered by those fixtures."
+      ]
+    },
+    "skin": {
+      "id": "skin-ordered-sections-v1",
+      "node_types": [
+        "skin"
+      ],
+      "tested_versions": [
+        "21.0.440",
+        "22.0.368"
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/skin.html",
+      "critical_parameters": [
+        "uprims",
+        "vprims",
+        "surftype",
+        "keepshape",
+        "closev",
+        "skinops",
+        "prim",
+        "polys"
+      ],
+      "notes": [
+        "For a one-direction loft, input 0 contains the ordered section primitives. Input 1 supplies optional V sections for a different, cross-skin construction; it is not simply the next section in the loft.",
+        "Section order, direction and seam correspondence define the surface. Reordering three valid sections can still cook without errors while joining nonadjacent sections. Preserve separate editable section sources and inspect their correspondence before and after edits.",
+        "With polygon circles, keepshape=1, polys=1 and surftype=quads produce polygon strips through the section vertices. Output Polygons does not convert NURBS/Bezier outputs. closev closes the loft direction; it is not an end-cap switch. An intentionally open loft is a valid surface.",
+        "Isolated evidence covers equal-point polygon sections and a local section edit, not automatic correspondence for arbitrary mixed curves."
+      ]
+    },
+    "pathdeform": {
+      "id": "path-deform-source-frame-and-mapping-v1",
+      "node_types": [
+        "pathdeform"
+      ],
+      "tested_versions": [
+        "21.0.440",
+        "22.0.368"
+      ],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/pathdeform.html",
+      "critical_parameters": [
+        "geo_controlaxis",
+        "geo_controlup",
+        "curve_controlup",
+        "geo_origin",
+        "geo_centeroncurve",
+        "geo_offsetunit",
+        "geo_capturestart",
+        "geo_captureend",
+        "curve_endunit",
+        "curve_posend",
+        "curve_posoffset",
+        "startbehavior",
+        "endbehavior"
+      ],
+      "notes": [
+        "Input 0 is existing geometry to deform; input 1 is the spine curve. Unlike Sweep, this reshapes an already modeled source. Source subdivisions must support the intended bend; deformation does not add sampling along a coarse source.",
+        "Establish the source forward/up axes and curve up separately. Defaults are geo_controlaxis=z, geo_controlup=y and curve_controlup=yaxis. A wrong source axis can cook without errors while stretching the cross-section across the whole curve. Custom axis modes have separate vector parameters; inspect the active templates.",
+        "curve_endunit=fractioncurvelength with curve_posend=1 spans the full curve; fractiongeolength with 1 preserves the source length along its forward axis. These are different valid intents. Capture bounds and centering determine which source interval bends; uncaptured regions can extend along the endpoint tangents.",
+        "Retain the source and spine independently. After changing the path, check corresponding source landmarks, section orientation and thickness, and endpoint placement against the selected length/capture policy. Nonempty output and unchanged topology do not prove correct mapping.",
+        "Isolated evidence covers a subdivided polygon solid mapped onto a planar sampled arc with a fixed up axis; complex spatial twist, rigidity and arbitrary self-intersection remain outside that fixture."
+      ]
+    },
     "sweep": {
       "id": "sweep-cross-section-v2",
       "node_types": ["sweep::2.0"],

@@ -31,7 +31,7 @@ $files = @{
     'python3.13libs/pythonrc.py' = (Join-Path $PSScriptRoot 'scripts/pythonrc.py')
     'release-trust.json' = (Join-Path $PSScriptRoot 'release-trust.json')
 }
-foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_deployment.py', 'dsh_release_policy.py')) {
+foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_ui_style.py', 'dsh_deployment.py', 'dsh_release_policy.py')) {
     $files["python/$name"] = Join-Path $sourceRoot "houdini/python3.11libs/$name"
 }
 foreach ($file in $files.Values) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Installer file missing: $file" } }
@@ -101,7 +101,7 @@ if (Test-Path -LiteralPath (Join-Path $sourceRoot 'release.json')) {
         & $interpreters[0].FullName (Join-Path $bootstrap 'python/dsh_deployment.py') stage --root $installRoot --trust (Join-Path $bootstrap 'release-trust.json') --directory $sourceRoot
         if ($LASTEXITCODE -ne 0) { throw 'Offline package was not installed. The manager is available for diagnosis.' }
     } else {
-        Write-Output 'Open Version & Diagnostics and use Install local package to select release.json from this folder.'
+        Write-Output 'Open Version & Updates..., expand advanced settings, and choose release.json from this folder as a local package.'
     }
 }
-Write-Output 'Open Houdini > DSH-Houdini > Version & Diagnostics. System Node/Python were not changed.'
+Write-Output 'Open Houdini > DSH-Houdini > Version & Updates... to manage installation. System Node/Python were not changed.'

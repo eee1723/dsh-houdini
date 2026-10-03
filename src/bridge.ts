@@ -17,6 +17,8 @@ export interface ExecResult {
   result?: JsonValue
   /** Runtime ledger of verb-vocabulary calls, when any were traced. */
   verbs?: JsonValue
+  /** Bridge projection: batch execution, raised operations and returned checks. */
+  outcome?: JsonValue
   /** Python traceback, present when `ok` is false. */
   error?: string
   /** Failure-time Houdini undo rollback outcome, when execution reached Python. */
@@ -197,7 +199,7 @@ export class HoudiniBridge {
       if (owner && (typeof health.runtimeId !== 'string' || typeof health.requestRef !== 'string'
           || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(health.requestRef)
           || !health.requestRef.startsWith(health.runtimeId + '.'))) {
-        throw new Error('Houdini bridge did not prepare a valid same-runtime request ticket; no scene code was submitted. Repair and restart runtime before retrying.')
+        throw new Error('Houdini bridge did not prepare a valid same-runtime request ticket; no scene code was submitted. 修复并重启运行时 before retrying.')
       }
       return health
     }
@@ -215,10 +217,9 @@ export class HoudiniBridge {
       health.error ? `health=${health.error}` : '',
     ].filter(Boolean).join('; ')
     throw new Error(
-      `Houdini bridge contract mismatch: ${detail}. `
-      + 'The host and the running Houdini bridge are different generations; '
-      + 'open DSH-Houdini > Version & Diagnostics > Advanced diagnostics and run '
-      + 'Repair and restart runtime before retrying.',
+      'Houdini 连接版本不一致。请打开「DSH-Houdini → Version & Updates → 高级设置 → 运行诊断」，'
+      + '选择「修复并重启运行环境」后重试。'
+      + `\n诊断信息：Houdini bridge contract mismatch: ${detail}.`,
     )
   }
 

@@ -66,10 +66,66 @@ try:
     assert 'nonmanifold_edges' in bridge_bad['evidence'][0]['risk_reasons'],bridge_bad
     torus_axes=torus_report['center_axis_surface_hits']['axes']
     assert torus_axes[1]['status']=='observed' and torus_axes[1]['surface_hits']==0,torus_axes
+    # A fan covers a concave face's exterior. Its bbox-center ray must agree
+    # with the actual polygon, independent of vertex start or winding. This U
+    # has no surface at the ray, while the old fan-union reported one cap.
+    outline=[(-2,-2,0),(2,-2,0),(2,2,0),(1,2,0),(1,-1,0),(-1,-1,0),(-1,2,0),(-2,2,0)]
+    for start in range(len(outline)):
+        for reverse in (False,True):
+            concave=hou.Geometry();face=concave.createPolygon()
+            coordinates=outline[start:]+outline[:start]
+            if reverse:coordinates=list(reversed(coordinates))
+            for coordinate in coordinates:
+                p=concave.createPoint();p.setPosition(coordinate);face.addVertex(p)
+            position,normal,uvw=hou.Vector3(),hou.Vector3(),hou.Vector3()
+            assert concave.intersect(hou.Vector3(0,0,1),hou.Vector3(0,0,-1),position,normal,uvw)==-1
+            ray=o.polygon_observation(concave)['center_axis_surface_hits']['axes'][2]
+            assert ray['status']=='observed' and ray['surface_hits']==0,ray
+    # Repeated bridge vertices are how native polygons can retain hole loops.
+    holed=hou.Geometry();face=holed.createPolygon();points=[]
+    for coordinate in [(-2,-2,0),(2,-2,0),(2,2,0),(-2,2,0),(-1,-1,0),(-1,1,0),(1,1,0),(1,-1,0)]:
+        p=holed.createPoint();p.setPosition(coordinate);points.append(p)
+    for index in (0,1,2,3,0,4,5,6,7,4):face.addVertex(points[index])
+    assert holed.intersect(hou.Vector3(0,0,1),hou.Vector3(0,0,-1),position,normal,uvw)==-1
+    ray=o.polygon_observation(holed)['center_axis_surface_hits']['axes'][2]
+    assert ray['status']=='observed' and ray['surface_hits']==0,ray
+    # Degenerate primitives must remain diagnostic data, not crash an integrity
+    # query. Test both an entirely empty selection and one mixed with a box.
+    empty_face=hou.Geometry();empty_face.createPolygon()
+    for integrity in (False,True):
+        empty_report=o.polygon_observation(empty_face,integrity_only=integrity)
+        assert empty_report['status']=='unverified' and empty_report['zero_area_faces']==1,empty_report
+    empty_face.merge(tube.geometry())
+    mixed=o.polygon_observation(empty_face,integrity_only=True)
+    assert mixed['risk_status']=='needs_review' and mixed['zero_area_faces']==1,mixed
+    assert mixed['shell_orientation']['unverified_count']==1,mixed
+    warped=hou.Geometry();face=warped.createPolygon()
+    for coordinate in [(-1,-1,0),(1,-1,0),(1,1,1),(-1,1,0)]:
+        p=warped.createPoint();p.setPosition(coordinate);face.addVertex(p)
+    assert all(row['status']=='unverified' for row in o.polygon_observation(warped)['center_axis_surface_hits']['axes'])
     group=ext.geometry().freeze();pg=group.createPrimGroup('one_face');pg.add(group.prim(0))
     assert o.polygon_observation(group,'one_face')['boundary_edges']>0,'group cuts are intentional boundaries'
     rejects(lambda:o.polygon_observation(group,'missing'),'missing')
     rejects(lambda:o.polygon_observation(group,basis=[[1,0,0]]*3),'orthonormal')
+    # A selection with nonzero primitive/point numbers is independent of invalid
+    # geometry outside it; a later observation must read edited coordinates.
+    selected_geo=hou.Geometry(tube.geometry())
+    first_faces=len(selected_geo.prims())
+    first_points=len(selected_geo.points())
+    selected_geo.merge(tube.geometry())
+    shell=selected_geo.createPrimGroup('selected_shell')
+    shell.add(selected_geo.prims()[first_faces:])
+    selected_geo.point(0).setPosition((float('nan'),0,0))
+    assert o.polygon_observation(selected_geo,integrity_only=True)['status']=='unverified'
+    selected_before=o.polygon_observation(selected_geo,'selected_shell')
+    assert selected_before['shell_orientation']['positive_count']==1,selected_before
+    assert selected_before['selected_primitives']==first_faces
+    for point in selected_geo.points()[first_points:]:
+        point.setPosition(point.position()+hou.Vector3(7,0,0))
+    selected_after=o.polygon_observation(selected_geo,'selected_shell')
+    assert selected_after['shell_orientation']['positive_count']==1,selected_after
+    assert abs(selected_after['bounds_min'][0]-selected_before['bounds_min'][0]-7)<1e-6
+    assert all(abs(a-b)<1e-6 for a,b in zip(selected_before['extents'],selected_after['extents']))
     line=root.createNode('line');line.parmTuple('dir').set((0,0,1))
     assert h.geo_piece_stats(line,inspect=True)['status']=='unverified','curves are not closed surfaces'
     assert h.geo_piece_stats(line,inspect=True,integrity_only=True)['status']=='unverified'

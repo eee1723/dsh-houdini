@@ -85,7 +85,7 @@ const query=definitions.get('houdini_resource');
 const context={agent:{id:'task',session:{snapshotEvents:()=>events,header:{}}},signal:new AbortController().signal};
 assert.equal((await query.execute({kind:"source",ref:rows[0].source_ref},context)).ok,true);
 assert.equal(query.presentCall({kind:"source",ref:'index'}).kind,'read');
-assert.match(query.presentCall({kind:"source",ref:'index'}).title,/task source/i);
+assert.match(query.presentCall({kind:"source",ref:'index'}).title,/读取任务资料/);
 await assert.rejects(query.execute({kind:"source",ref:'index',pointer:'/text'},context),/pointer/);
 await assert.rejects(query.execute({kind:"source",ref:'index'},{}),/current agent session/);
 await assert.rejects(query.execute({kind:"source",ref:rows[0].source_ref},

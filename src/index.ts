@@ -48,7 +48,7 @@ const GUIDANCE: PromptSection = {
   text: [
     'Use houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue.',
     '',
-    'Compose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. Query verb_help for uncertain signatures and node_info for unfamiliar node types. Batch related operations and specify the actual output being checked.',
+    'Compose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. verb_help gives brief signatures and a full_help entry for detailed contracts; node_info reads an existing parent network and its actual node types. Batch related operations and specify the actual output being checked.',
     '',
     `Current catalog: ${VERB_CATALOG_SUMMARY}`,
     '',

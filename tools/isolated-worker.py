@@ -30,6 +30,8 @@ def main():
     parser.add_argument('--startup-timeout', type=float, required=True)
     parser.add_argument('--hip-name', choices=('component.hip', 'final.hip'), default='component.hip',
                         help='Initial reserved HIP filename; final.hip is for isolated delivery trials')
+    parser.add_argument('--seed-hip', type=Path, help='Explicit developer-owned seed, loaded only into this new worker')
+    parser.add_argument('--plugin', type=Path, default=ROOT, help='Frozen plugin root supplying the worker and Bridge')
     args = parser.parse_args()
     if args.show and not args.gui:
         raise ValueError('--show requires --gui')
@@ -49,12 +51,14 @@ def main():
     request = {'workspace': str(workspace), 'registry': str(args.registry.resolve()),
                'startup_timeout': args.startup_timeout, 'show_ui': args.show,
                'hip_name': args.hip_name}
+    if args.seed_hip:
+        request['seed_hip'] = str(args.seed_hip.resolve(strict=True))
     request_file = directory / 'request.json'
     request_file.write_text(json.dumps(request), encoding='utf-8')
     env = isolated_environment(directory / 'environment', executable=executable, gui=args.gui)
     env['HOUDINI_MAXTHREADS'] = str(args.threads)
     env['DSH_COMPONENT_WORKER_REQUEST'] = str(request_file)
-    module = ROOT / 'houdini/python3.11libs/dsh_isolated_worker.py'
+    module = args.plugin.resolve(strict=True) / 'houdini/python3.11libs/dsh_isolated_worker.py'
     if args.gui:
         hooks = directory / 'hooks'
         for version in ('3.11', '3.13'):

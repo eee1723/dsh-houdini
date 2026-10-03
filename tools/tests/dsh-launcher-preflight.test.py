@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib
 import os
 import sys
 import tempfile
@@ -15,9 +16,66 @@ sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
 sys.modules.setdefault("hou", types.SimpleNamespace())
 
 import dsh_launcher
+import dsh_context
+
+# Opening diagnostics during startup can reload the launcher implementation.
+# The live preflight/worker lifetime and its UI references must survive it.
+original_tracking = (dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES,
+                     dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP)
+try:
+    pending, dispatches, active = {"dialog": object()}, [object()], {"canceled": False}
+    dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES = pending, dispatches
+    dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP = True, active
+    importlib.reload(dsh_launcher)
+    assert dsh_launcher._PENDING is pending and dsh_launcher._MAIN_DISPATCHES is dispatches
+    assert dsh_launcher._SERVICE_PREFLIGHT_ACTIVE and dsh_launcher._ACTIVE_STARTUP is active
+finally:
+    (dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES,
+     dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP) = original_tracking
+
+# Unsaved scenes must never reopen the last saved project. Their scratch
+# workspace remains stable until a named project is selected in this process.
+with tempfile.TemporaryDirectory(prefix='dsh-unsaved-workspace-') as temporary:
+    current = {'path': str(Path(temporary) / 'untitled.hiplc'), 'new': True}
+    hip_file = types.SimpleNamespace(path=lambda: current['path'], isNewFile=lambda: current['new'])
+    fake_hou = types.SimpleNamespace(hipFile=hip_file, isUIAvailable=lambda: True)
+    with patch.object(dsh_launcher, 'hou', fake_hou), patch.object(dsh_context, 'hou', fake_hou), \
+         patch.object(dsh_launcher, '_FALLBACK_WORKSPACE', str(Path(temporary) / 'workspaces')), \
+         patch.object(dsh_launcher, '_UNSAVED_WORKSPACE', None):
+        first = dsh_launcher._hip_dir()
+        assert Path(first).is_dir() and Path(first).parent == Path(temporary) / 'workspaces'
+        assert first != str(Path(current['path']).parent)
+        assert dsh_launcher._hip_dir() == first
+        # Distinct default extensions and even an unrelated existing default
+        # filename do not override the authoritative GUI new-file flag.
+        for suffix in ('.hip', '.hiplc', '.hipnc'):
+            current['path'] = str(Path(temporary) / ('untitled' + suffix))
+            Path(current['path']).touch()
+            assert dsh_launcher._hip_dir() == first
+            assert dsh_context.hip_file_state()['hip_dir'] is None
+        # A saved file named untitled is still a real project in the GUI.
+        current['new'] = False
+        assert dsh_launcher._hip_dir() == temporary
+        assert dsh_launcher._UNSAVED_WORKSPACE is None
+        current['path'] = str(Path(temporary) / 'other-project' / 'saved.hip')
+        assert dsh_launcher._hip_dir() == str(Path(temporary) / 'other-project')
+        current.update(path=str(Path(temporary) / 'untitled.hip'), new=True)
+        second = dsh_launcher._hip_dir()
+        assert second != first and Path(first).is_dir()
+
 
 # Preflight and the worker are one startup lifetime. Repeated menu actions
 # select the latest HIP intent rather than spawn a second frontend.
+callbacks = []
+with patch.object(dsh_launcher, '_dispatch_service_preflight', side_effect=callbacks.append), \
+     patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\before-preflight') as current_workspace, \
+     patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as delayed_open, \
+     patch.object(dsh_launcher, '_report'):
+    dsh_launcher.open_workspace()
+    current_workspace.return_value = r'E:\changed-during-preflight'
+    callbacks[0]({'frontend_online': True, 'bridge_online': True}, None)
+    delayed_open.assert_called_once_with(r'E:\changed-during-preflight')
+
 worker_states = []
 def startup_fixture(state):
     worker_states.append(state)
@@ -77,10 +135,9 @@ for invalid_items in (None, {}, "unknown"):
 
 # Raising a healthy same-HIP page performs no auth, RPC or browser reload.
 shown = []
-webview = types.SimpleNamespace(
-    raise_workspace=lambda path: True,
-    show_webview=lambda **kwargs: shown.append(kwargs) or "shown",
-)
+webview = types.ModuleType('dsh_webview')
+webview.raise_workspace = lambda path: True
+webview.show_webview = lambda **kwargs: shown.append(kwargs) or "shown"
 with patch.dict(sys.modules, {"dsh_webview": webview}), \
      patch.object(dsh_launcher._DSH_WEB_SESSION, "launch_url", side_effect=AssertionError("same-page auth")), \
      patch.object(dsh_launcher, "_dsh_rpc_wire", side_effect=AssertionError("same-page session IO")):

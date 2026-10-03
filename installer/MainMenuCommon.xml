@@ -11,7 +11,7 @@ dsh_bootstrap.open_workspace()
 ]]></scriptCode>
       </scriptItem>
       <scriptItem id="dsh.version_manager">
-        <label>Version &amp; Diagnostics...</label>
+        <label>Version &amp; Updates...</label>
         <scriptCode><![CDATA[
 import dsh_bootstrap
 dsh_bootstrap.show_manager()

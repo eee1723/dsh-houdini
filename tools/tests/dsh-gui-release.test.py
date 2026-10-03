@@ -87,11 +87,11 @@ def start_gui_probe():
             plugin = Path(ctx["install"]) / "app/node_modules/dsh-houdini"
             script = """
 const {HoudiniBridge} = await import(process.argv[1]);
-const result = await new HoudiniBridge(process.argv[2],15000).exec("__result__ = hou.node('/obj').path()",undefined,undefined,{sessionId:'gui-release',callId:'read'},true);
+const result = await new HoudiniBridge(process.argv[2],15000,process.argv[3]).exec("__result__ = hou.node('/obj').path()",{sessionId:'gui-release',callId:'read'},undefined,undefined,true);
 if(!result.ok || result.result!=='/obj') throw Error('readonly GUI bridge call failed');
 """
             subprocess.run([str(Path(ctx["install"]) / "node/node.exe"), "--input-type=module", "-e", script,
-                            (plugin / "lib/bridge.js").as_uri(), f"http://127.0.0.1:{ctx['bridgePort']}"],
+                            (plugin / "lib/bridge.js").as_uri(), f"http://127.0.0.1:{ctx['bridgePort']}", launcher.dsh_managed_runtime.executor_identity()],
                             env=deployment.runtime_env(ctx), capture_output=True, check=True, timeout=30,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             messages.put(("probe", {"sessionId": sid, "pid": pid, "nodeVersion": ctx["nodeVersion"],
@@ -188,10 +188,18 @@ def main():
     ident = store.stage(args.bundle, lambda text: None)
     for executable in args.houdini:
         executable = executable.resolve(strict=True)
-        match = re.search(r"Houdini (21|22)\.0", str(executable))
+        # Installation folder names are user-selected; query the paired HOM
+        # runtime instead of certifying a version from a directory label.
+        hython = executable.with_name("hython.exe")
+        version_env = isolated_environment(fixture / ("version-probe-" + executable.parent.parent.name), executable=hython)
+        probe = subprocess.run([str(hython), "-c", "import hou; print('DSH_GUI_VERSION=' + '.'.join(map(str, hou.applicationVersion()[:2])))"],
+                               cwd=launch_directory(hython), env=version_env, check=True, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=60,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        match = re.search(r"DSH_GUI_VERSION=(21\.0|22\.0)", probe.stdout)
         if not match:
-            raise ValueError("test requires explicit H21/H22 executable paths")
-        version = match[1] + ".0"
+            raise ValueError("test requires actual supported H21/H22 runtimes")
+        version = match[1]
         py_version = "3.11" if version == "21.0" else "3.13"
         env = isolated_environment(fixture / ('gui-' + version), executable=executable, gui=True)
         prefs_pattern = env['HOUDINI_USER_PREF_DIR']

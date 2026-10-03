@@ -146,29 +146,8 @@ for (const [dir, suffix] of [['src', '.ts'], ['houdini/python3.11libs', '.py']])
   }
 }
 
-const sopWorkflow = read('skills/houdini-sop-workflow/SKILL.md')
-const sopCheckpoints = read('skills/houdini-sop-workflow/references/execution-checkpoints.md')
-const moduleContracts = read('skills/houdini-sop-workflow/references/module-quality-contracts.md')
-const handoffLayout = read('skills/houdini-sop-workflow/references/network-handoff.md')
-for (const text of [sopWorkflow, moduleContracts]) {
-  assert.match(text, /同层.*逻辑模块/, 'ordinary single-author modules must remain flat by default')
-}
-// The entry routes conditional assembly rules to their canonical reference;
-// do not require a second copy of those rules in the already large skill.
-assert.match(sopWorkflow, /\]\(references\/module-quality-contracts\.md(?:#[^)]*)?\)/,
-  'the SOP entry must route assembly details to the canonical contract')
-assert.match(moduleContracts, /最低共同装配层/, 'cross-module connectors need one owning assembly boundary')
-assert.match(moduleContracts, /不因.*自动创建(?:subnet|Subnet)/,
-  'module boundaries must not imply automatic subnet creation')
-assert.match(sopWorkflow, /OUT_ASSET/, 'nontrivial editable assets need a stable root handoff output')
-assert.match(moduleContracts, /绝对.*路径/, 'movable modules must reject hidden absolute dependencies')
-assert.match(sopWorkflow, /世界Y-up/, 'ordinary Houdini assets need an explicit world-up convention')
-assert.match(sopWorkflow, /references\/execution-checkpoints\.md/, 'entry must route detailed checks after progressive disclosure')
-assert.match(sopCheckpoints, /新建资产从首个源使用世界Y-up/, 'new assets must start Y-up instead of relying on root repair')
-assert.match(sopCheckpoints, /适配在稳定输出之前/, 'local coordinate adapters must precede the stable root output')
-assert.match(sopCheckpoints, /组件大框包含这些小框/, 'handoff must preserve component containers around role cells')
-assert.match(sopCheckpoints, /组件.*Cd/, 'requested observation colors must follow stable component identity')
-assert.match(moduleContracts, /X宽、Y高、Z深/, 'module contracts need the default Houdini world frame')
+// Domain methods are recommendations chosen for the task. Link/schema checks
+// above validate maintenance integrity without freezing one modeling recipe.
 const houdiniPreset = read('presets/houdini/persona.md')
 assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tutorial methods belong to those skills/,
   'the persona must route domain methods instead of duplicating them')

@@ -359,14 +359,10 @@ for (const timeout of [false,true]) {
   failed.dispose();
 }
 
-const watermark = plain.registrations['houdini-watermark'].component;
-const toolsPage = plain.registrations.houdinitools.component();
-assert.equal(toolsPage.children[2].length,8);
-assert(!JSON.stringify(toolsPage).includes('houdini_product'));
-assert(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'houdini'}}}})}),
-  'current projected preset must show Houdini mode');
-assert.equal(watermark({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:'cordis'}}}})}),null,
-  'non-Houdini projected preset must not show the watermark');
+assert.equal(plain.registrations['houdini-watermark'], undefined, 'content is not covered by a decorative watermark');
+assert.equal(plain.registrations.houdinitools, undefined, 'Houdini tool documentation belongs to Trace');
+assert.equal(plain.registrations.houdinitrace.options.label, '执行记录');
+assert.equal(plain.registrations['houdini-workspace-status'].options.name, 'conversation.input.dock');
 
 const workspaceStatus = plain.registrations['houdini-workspace-status'].component;
 const statusProps = (hip, cwd = 'E:/work') => ({sessionId:'s',
@@ -386,6 +382,30 @@ const newerUnnamed = workspaceStatus({sessionId:'s',
     {kind:'tool-result',call:{name:'houdini_query'},meta:{canonical:{execution:{hip_dir:null}}}},
   ]})});
 assert.equal(newerUnnamed,null, 'latest unnamed HIP clears an older mismatch');
+for (const execution of [
+  {hip_dir:'C:/Users/test',hip_is_new:true},
+  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hip'},
+  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hiplc'},
+  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hipnc'},
+]) {
+  const props = statusProps(null);
+  props.useTrajectory=fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},meta:{canonical:{execution}}}]});
+  assert.equal(workspaceStatus(props),null,'new scene or legacy untitled receipt must not invent a mismatch');
+}
+const namedUntitled=statusProps(null);
+namedUntitled.useTrajectory=fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},
+  meta:{canonical:{execution:{hip_dir:'E:/saved',hip_is_new:false,hip_path:'E:/saved/untitled.hip'}}}}]});
+assert(workspaceStatus(namedUntitled),'explicit saved-state wins over legacy filename inference');
+for (const latestHip of [null, 'E:/work']) {
+  const recoveredOld = statusProps(null);
+  recoveredOld.useTrajectory = fn => fn({eventNodes:[
+    {kind:'tool-result',seq:1,call:{name:'houdini_exec'},meta:{canonical:{execution:{hip_dir:'E:/old',observed_at:100,sequence:1}}}},
+    {kind:'tool-result',seq:2,call:{name:'houdini_inspect'},meta:{canonical:{execution:{hip_dir:latestHip,observed_at:200,sequence:2}}}},
+    {kind:'tool-result',seq:3,call:{name:'houdini_request'},meta:{canonical:{requestReceipt:{retrieved:true},execution:{hip_dir:'E:/old',observed_at:100,sequence:1}}}},
+  ]});
+  assert.equal(workspaceStatus(recoveredOld),null,'retrieving an older result cannot restore a stale workspace warning');
+}
+
 
 const view = plain.registrations.houdinitrace.component({}).type;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
@@ -401,19 +421,8 @@ const tree = view({
     }],
   }),
 });
-const titles = [];
-const visit = (node) => {
-  if (node === null || node === undefined || typeof node !== 'object') return;
-  if (typeof node.props?.title === 'string') titles.push(node.props.title);
-  for (const child of node.children ?? []) {
-    if (Array.isArray(child)) child.forEach(visit);
-    else visit(child);
-  }
-};
-visit(tree);
-assert(titles.includes(
-  '["set_keyframes"] -> {"name":"set_keyframes","signature":"(node, channels) -> dict"}',
-));
+assert(textContent(tree).includes('(node, channels) -> dict'),
+  'legacy verb response remains available in the expandable execution details');
 
 function textContent(node) {
   if (node === null || node === undefined) return '';
@@ -483,9 +492,9 @@ const traceText = textContent(traceTree).replace(/\s+/g, ' ');
 assert.match(traceText, /Gate 拦截/);
 assert.match(traceText, /已回滚/);
 assert.match(traceText, /执行代码/);
-assert.match(traceText, /动词证据/);
+assert.match(traceText, /执行步骤/);
 assert.match(traceText, /查看原始工具结果/);
-assert.match(traceText, /提示词与上下文/);
+assert.match(traceText, /高级诊断/);
 assert(!traceText.includes('成功修改含动词'), 'analysis metrics must not crowd the main timeline');
 const snapshot = traceProps.useTrajectory(s=>s);
 const entries = view.model(snapshot).entries;

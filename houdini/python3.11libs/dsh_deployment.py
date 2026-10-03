@@ -337,13 +337,15 @@ class Store:
             atomic_json(self.root / "state.json", state)
             return install_id
 
-    def rollback(self):
+    def rollback(self, progress=lambda s: None):
         with FileLease(self.root / "install.lock"):
             state = self.state()
             if not state["previous"]:
                 raise ValueError("No previous installation is available")
+            progress("Verifying the previous installation before rollback")
             manifest = self.manifest(state["previous"])
-            verify_inventory(self.installation(state["previous"]), manifest)
+            verify_inventory(self.installation(state["previous"]), manifest, progress)
+            progress("Preparing rollback for the next Houdini start")
             state["pending"] = state["previous"]
             atomic_json(self.root / "state.json", state)
         return state["pending"]

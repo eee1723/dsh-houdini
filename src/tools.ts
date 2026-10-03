@@ -35,8 +35,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
       render: (_args, value) => renderExec(value),
       presentationMeta: (_args, value) => execPresentationMeta(value),
     },
-    presentCall: args=>({card:'generic',title:'Execute Houdini Python',kind:'edit',rawInput:codePresentationInput(args)}),
-    presentResult: (_args,result)=>genericResult(resultTitle('Houdini execution',result),result),
+    presentCall: args=>({card:'generic',title:HOUDINI_TOOLS.houdini_exec.label,kind:'edit',rawInput:codePresentationInput(args)}),
+    presentResult: (_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_exec.label,result),result),
     async execute(args,exec) {
       if(!args.code?.trim()) throw Error('Provide nonempty Python code')
       const {bridge,owner}=await runtime.target(exec)
@@ -49,8 +49,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   ctx.tools.register(defineTool({
     name:'houdini_inspect',description:HOUDINI_TOOLS.houdini_inspect.purpose+' Run read-only Python, with hou and verbs available. Assign __result__ or print. Use exec for edits and control experiments.',
     parameters:{code:{type:'string',required:true,description:'Read-only Python code.'}},output:readOutput,
-    presentCall:args=>({card:'generic',title:'Inspect Houdini scene',kind:'read',rawInput:args.code}),
-    presentResult:(_args,result)=>genericResult(resultTitle('Houdini inspection',result),result),
+    presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_inspect.label,kind:'read',rawInput:args.code}),
+    presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_inspect.label,result),result),
     async execute(args,exec) {
       if(!args.code?.trim()) throw Error('Provide nonempty read-only Python code')
       const {bridge,owner}=await runtime.target(exec)
@@ -60,8 +60,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   ctx.tools.register(defineTool({
     name:'houdini_request',description:HOUDINI_TOOLS.houdini_request.purpose+' Receipt recovery reads the original execution; never resubmits code. Missing receipts mean unknown, not proof of no execution.',
     parameters:{request_ref:{type:'string',required:true,description:'Original request_ref, or index for current-session recent references.'}},output:readOutput,
-    presentCall:args=>({card:'generic',title:'Recover Houdini request',kind:'read',rawInput:args}),
-    presentResult:(_args,result)=>genericResult('Houdini request status',result),
+    presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_request.label,kind:'read',rawInput:args}),
+    presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_request.label,result),result),
     execute:(args,exec)=>recoverRequest(args.request_ref,exec,runtime),
   }))
   ctx.tools.register(defineTool({
@@ -69,15 +69,15 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     parameters:{kind:{type:'string',enum:['source','result'],required:true},ref:{type:'string',required:true,description:'source: index or listed hash; result: SHA-256 from details.'},
       pointer:{type:'string',description:'Result JSON Pointer, default root. Not used for sources.'},
       offset:{type:'number',description:'Character offset, default 0.'},limit:{type:'number',description:'Page characters 1..16000, default 6000.'}},output:readOutput,
-    presentCall:args=>({card:'generic',title:args.kind==='source'?'Read task source':'Read retained Houdini result',kind:'read',rawInput:args}),
-    presentResult:(_args,result)=>genericResult('Houdini resource',result),
+    presentCall:args=>({card:'generic',title:args.kind==='source'?'读取任务资料':'读取完整操作结果',kind:'read',rawInput:args}),
+    presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_resource.label,result),result),
     execute:async(args,exec)=>readResource(args,exec),
   }))
   ctx.tools.register(defineTool({
     name:'houdini_capabilities',description:HOUDINI_TOOLS.houdini_capabilities.purpose,
     parameters:{},output:readOutput,
-    presentCall:()=>({card:'generic',title:'Inspect observation channels',kind:'read'}),
-    presentResult:(_args,result)=>genericResult('Houdini observation channels',result),
+    presentCall:()=>({card:'generic',title:HOUDINI_TOOLS.houdini_capabilities.label,kind:'read'}),
+    presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_capabilities.label,result),result),
     execute:async(_args,exec)=>({ok:true,stdout:'',stderr:'',result:await visualCapability(exec,ctx)}),
   }))
 
@@ -99,11 +99,11 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: 'Start Houdini background job',
+      title: HOUDINI_TOOLS.houdini_job_submit.label,
       kind: 'execute',
       rawInput: codePresentationInput(args),
     }),
-    presentResult: (_args, result) => genericResult(jobResultTitle('Started Houdini job', result), result),
+    presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_submit.label, result), result),
     async execute(args, exec) {
       const { bridge, owner } = await runtime.target(exec)
       return bridge.submitJob(args.code, owner, exec.signal, args.allow_raw)
@@ -124,11 +124,11 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: `Inspect Houdini job ${args.jobId}`,
+      title: `${HOUDINI_TOOLS.houdini_job_status.label} · ${args.jobId}`,
       kind: 'read',
       rawInput: args.wait === undefined ? args.jobId : { jobId: args.jobId, wait: args.wait },
     }),
-    presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job status', result), result),
+    presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_status.label, result), result),
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
@@ -151,11 +151,11 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     },
     presentCall: (args) => ({
       card: 'generic',
-      title: `Cancel Houdini job ${args.jobId}`,
+      title: `${HOUDINI_TOOLS.houdini_job_cancel.label} · ${args.jobId}`,
       kind: 'execute',
       rawInput: args.jobId,
     }),
-    presentResult: (_args, result) => genericResult(jobResultTitle('Houdini job cancellation', result), result),
+    presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_cancel.label, result), result),
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')

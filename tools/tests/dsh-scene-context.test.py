@@ -1,10 +1,49 @@
 """Metadata must not evaluate geometry or alter shared UI state."""
-import sys, pathlib, threading, types
+import sys, pathlib, threading, types, tempfile, importlib
+from unittest.mock import patch
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import hou
 import dsh_context as c
 import dsh_bridge as b
 import dsh_hou_helpers as h
+import dsh_launcher as launcher
+
+# Real HIP lifecycle on this isolated hython: the unsaved workspace stays local
+# to this process, and saved/loaded identities feed metadata and tool receipts.
+with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
+    with patch.object(launcher, '_FALLBACK_WORKSPACE', temporary):
+        hou.hipFile.clear(suppress_save_prompt=True)
+        callbacks = hou.hipFile.eventCallbacks()
+        first = launcher._hip_dir()
+        assert launcher._hip_dir() == first
+        assert c.hip_file_state()['hip_is_new'] and c.hip_file_state()['hip_dir'] is None
+        assert hou.hipFile.eventCallbacks() == callbacks
+        importlib.reload(launcher)
+        assert launcher._hip_dir() == first and hou.hipFile.eventCallbacks() == callbacks
+        launcher._FALLBACK_WORKSPACE = temporary
+        hou.hipFile.clear(suppress_save_prompt=True)
+        assert launcher._hip_dir() == first
+        for filename in ('saved.hip', 'other/renamed.hip', 'untitled.hip'):
+            # Native Windows save/load paths stay valid: opening the plugin
+            # must not register a callback that exposes H21's kwargs bug.
+            destination = str(pathlib.Path(temporary) / filename)
+            pathlib.Path(destination).parent.mkdir(parents=True, exist_ok=True)
+            hou.hipFile.save(destination)
+            expected = str(pathlib.Path(destination).parent)
+            assert pathlib.Path(launcher._hip_dir()) == pathlib.Path(expected)
+            observed = c.scene_context('hip-lifecycle', threading.get_ident())
+            assert observed['hip_is_new'] is False and pathlib.Path(observed['hip_dir']) == pathlib.Path(expected)
+            receipt = b.run_code('__result__ = scene_info()', read_only=True, owner_session='hip-lifecycle')
+            assert receipt['ok'], receipt
+            assert receipt['result']['has_named_path'] and receipt['execution']['hip_is_new'] is False
+            assert pathlib.Path(receipt['execution']['hip_dir']) == pathlib.Path(expected)
+            hou.hipFile.clear(suppress_save_prompt=True)
+            assert c.hip_file_state()['hip_dir'] is None
+            assert launcher._UNSAVED_WORKSPACE is None
+            hou.hipFile.load(destination, suppress_save_prompt=True)
+            assert c.hip_file_state()['hip_is_new'] is False
+    hou.hipFile.clear(suppress_save_prompt=True)
+
 headless=c.scene_context('test',threading.get_ident())
 assert headless['frame']==hou.frame() and not headless['ui_available']
 assert headless['geometry_selection']['status']=='not_observed'
@@ -52,7 +91,7 @@ class Pane:
     def currentNode(self):return Node()
 real=c.hou
 c.hou=types.SimpleNamespace(isUIAvailable=lambda:True,
-    applicationVersionString=lambda:'fixture',hipFile=types.SimpleNamespace(path=lambda:'x.hip',hasUnsavedChanges=lambda:True),
+    applicationVersionString=lambda:'fixture',hipFile=types.SimpleNamespace(path=lambda:'x.hip',isNewFile=lambda:False,hasUnsavedChanges=lambda:True),
     hscript=lambda command:('Unit Length: 0.01 meters\n',''),
     frame=lambda:10,selectedNodes=lambda:[Node()]*20,playbar=types.SimpleNamespace(isPlaying=lambda:False),
     ui=types.SimpleNamespace(paneTabs=lambda:[Pane(),Pane()]),

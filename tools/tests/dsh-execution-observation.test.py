@@ -6,6 +6,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11lib
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
+from dsh_execution import _observe_impact
 with h._execution_owner('observation-owner','setup'):
     root=h.tab_create('/obj','geo','__execution_observation')
     ctrl=h.tab_create(root,'null','CTRL')
@@ -64,12 +65,12 @@ try:
         def path(self):return '/test/'+str(self.i)
         def outputs(self):return [Many(self.i+1)] if self.i<300 else []
         def dependents(self,include_children=False):return []
-    b._observe_impact([Many(1)],impact)
+    _observe_impact([Many(1)],impact)
     assert len(impact['nodes'])==256 and impact['truncated']
     class Unavailable(Many):
         def outputs(self):raise RuntimeError('dependency provider unavailable')
     unavailable={'nodes':{},'global':False,'unavailable':False,'truncated':False}
-    b._observe_impact([Unavailable(1)],unavailable)
+    _observe_impact([Unavailable(1)],unavailable)
     assert unavailable['unavailable'],'diagnostic lookup failure must be marked, not escape into operation failure'
 finally:
     root.destroy()

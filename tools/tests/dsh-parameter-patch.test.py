@@ -2,6 +2,7 @@
 import hashlib
 import sys
 from pathlib import Path
+from unittest.mock import patch as mock_patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import hou
 import dsh_hou_helpers as h
@@ -29,6 +30,36 @@ with h._execution_owner('patch-owner', 'test'):
     h.create_spare_parms(n,spec=[{'type':'string','name':'label','default':'alpha alpha'},
                                {'type':'float','name':'amplitude','default':1}])
     try:
+        # Real changed-only reads retain dependencies/animation at default
+        # values, while excluding unrelated defaults. This used to silently
+        # return everything because hou.Parm.isDefault() does not exist.
+        probe=h.tab_create(root,'null','read_filter')
+        h.create_spare_parms(probe,spec=[{'type':'float','name':name,'default':1}
+            for name in ('plain','changed','expression','animated','referenced')])
+        h.set_parms(probe,{'changed':2,'expression':'1'})
+        key=hou.Keyframe();key.setFrame(1);key.setValue(1)
+        probe.parm('animated').setKeyframe(key)
+        consumer=h.tab_create(root,'null','read_filter_consumer')
+        h.create_spare_parms(consumer,spec=[{'type':'float','name':'linked','default':1}])
+        h.set_parm(consumer,'linked','ch("../read_filter/referenced")')
+        filtered=b.run_code(f'__result__=read_parms({probe.path()!r})',read_only=True)
+        assert filtered['ok'] and filtered['transaction']['status']=='no_scene_change',filtered
+        by_name={row['name']:row for row in filtered['result']}
+        assert 'plain' not in by_name and by_name['changed']['value']==2,by_name
+        assert by_name['expression']['expression']=='1' and by_name['expression']['value']==1
+        assert by_name['animated']['key_count']==1 and by_name['animated']['value']==1
+        assert by_name['referenced']['referenced_by'] and by_name['referenced']['value']==1
+        assert 'plain' in {row['name'] for row in h.read_parms(probe,False)}
+        assert h.read_parms(probe,names=['plain'])[0]['value']==1
+        for invalid in (['changed','missing'],1,None):
+            rejected=b.run_code(f'__result__=read_parms({probe.path()!r},{invalid!r})',read_only=True)
+            assert not rejected['ok'] and 'changed_only must be boolean' in rejected['error'],rejected
+            assert 'names=' in rejected['error'] and rejected['transaction']['status']=='no_scene_change'
+        rejects(lambda:h.read_parms(probe,names=['changed','missing']),'missing scalar')
+        with mock_patch.object(hou.Parm,'isAtDefault',side_effect=RuntimeError('native default query failed')):
+            rejects(lambda:h.read_parms(probe),'native default query failed')
+            assert h.read_parms(probe,names=['plain'])[0]['value']==1
+            assert h.read_parms(probe,False)
         assert h.cook_node(n,force=True)['ok'] and len(n.geometry().points())==2
         row=next(x for x in h.read_parms(n) if x['name']=='snippet')
         assert row['source_sha256']==sha(source)

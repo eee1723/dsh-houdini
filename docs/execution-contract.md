@@ -31,7 +31,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 ## 查询、修改与 Raw Gate
 
-inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。参数对象、tuple 和绑定 setter 的别名同样检查。
+inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。参数对象、tuple、绑定修改方法和HIP生命周期别名同样检查；Python set方法豁免只用于可确定为set且未重绑定的接收者。
 
 低层逃生舱只接受单次明确用途；不隐式放开整段已覆盖修改。静态分析服务正常模型调用，不是任意 Python 沙箱。已观察的非终止 VEX 删除循环写前拒绝；其他 VEX 仍由原生编译与计算反馈判断。
 
@@ -41,7 +41,9 @@ inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供
 
 ## 事务、错误与长任务
 
-exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词异常被代码捕获后仍记录失败；同一 exec 后续修改、cook、渲染及保存在派发前停止，只读诊断可以继续。修复在新批次提交，避免把半成品误报为成功。
+exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词异常被代码捕获后仍记录失败；修改失败且恢复未确认时，同一 exec 后续修改、cook、渲染及保存在派发前停止，只读诊断可以继续。此类修复在新批次提交；零写入或已确认恢复的失败按实际回执处理，避免把半成品误报为成功。
+
+结果投影的 `outcome` 分开报告批次完成/失败、动词异常次数和实际返回的验证状态。捕获只读查询错误后使用合法fallback，可保留批次成功与返回数据，但模型和Trace必须显示子操作失败。已被动词确认恢复、零写入的失败不冒充未恢复修改；既有mutation阻断规则仍按实际恢复事实判断。验证未通过、操作抛异常、传输未知分别表达，不合成为任务是否完成。
 
 读取 transaction 的最终状态：同批后项失败可能撤销前面成功的构建。headless 没有原生 Undo 时，不报告已完成整批回滚；动词内部清理和实际 rollback.applied 分别返回。补充清理只处理本调用准确登记的新 identity，foreign 后代不自动删除。Undo 复活节点后的原生初始化后代只按本批已登记删除身份、原生类型和存活祖先重新对账，不能认领旧作者节点。
 
@@ -51,15 +53,15 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。运行实例改变或回执过期保留未知，不自动重复修改。
 
-调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果可在 Host 保留并通过 resource 分页读取；显示压缩不改变执行事实。
+调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果在 Host 保留并通过 resource 分页读取；模型正文优先返回显式选择的结果、检查与恢复事实，完整 canonical 仍供 Trace 和历史投影使用。重复帮助、已呈现的动词结果和稳定身份清单可用明确详情指针表示；未知诊断、失败与恢复异常不因体积大而静默丢弃。归档失败时保留完整反馈，显示精简不改变执行事实。
 
 ## 事实、上下文与观察
 
 每次执行返回 runtime_id、sequence、observed_at、frame、HIP 路径和实际影响记录。节点 identity 与运行实例共同解释；同路径重新创建的节点不是原节点。影响观察来自原生输出和最近计算可见依赖，truncated/unavailable/global 直接保留，不推断未列出的依赖不存在。
 
-[execution-history](../src/execution-history.ts)统一关联公开调用、结果与回执；[execution-state](../src/execution-state.ts)只投影最近失败、待决请求和活动 job。几何检查和任务质量判断保留在原结果中，Host 不再用第二套完成状态解释器改变它们。开发评测中的 [delivery-audit](../tools/delivery-audit.mjs)只读取历史，生产上下文不注入评测完成门。
+[execution-history](../src/execution-history.ts)统一关联公开调用、结果与回执；[execution-state](../src/execution-state.ts)的完整观察保留最近失败，动态上下文只携带未决请求、活动 job 及原结果不可取得的恢复事实。已送达的普通同步错误留在原工具结果，后续成功不再触发整份现场快照重发；无关观察的sequence、时间和路径也不改变未决提醒。几何检查和任务质量判断保留在原结果中，Host 不建立第二套完成状态解释器。开发评测中的 [delivery-audit](../tools/delivery-audit.mjs)只读取历史，生产上下文不注入评测完成门。
 
-[scene-context](../src/scene-context.ts)在用户消息有“这个节点”“选中对象”“当前场景”等现场指代时采集一次元数据；明确路径和普通新建任务不采集环境选择。切换视角、网络、选择或 frame 不把新现场绑定到旧消息；当前状态需要显式 inspect。选择是指代线索，不是修改授权。
+[scene-context](../src/scene-context.ts)为每条收到的用户消息采集一次轻量元数据，帮助解释“这个节点”“选中对象”“当前场景”等现场指代。切换视角、网络、选择或 frame 不把新现场绑定到旧消息；当前状态需要显式 inspect。选择是指代线索，不是修改授权。
 
 [context](../src/context.ts)通过 DSH 原生 context section 提供现场、待决执行和声明图像能力；通用历史压缩、消息更新和 token 管理由 DSH 完成。没有另一个可写任务账本或自建 surface 压缩器。
 
@@ -69,7 +71,11 @@ HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过
 
 node_info 读取实际 parent 下的类型、端口和参数模板，不创建 scratch。真实 Tab/Shelf 初始化与静态默认值分别报告；操作卡关键参数保持可读。节点知识只有 [node-operation-contracts.json](../houdini/node-operation-contracts.json)一个来源，不从缺字段自动推导设计缺口。
 
+`verb_help(name)` 默认返回标注brief的真实签名、执行入口、返回类型和简短用途；`detail='full'`取得完整说明及已维护的结构契约。批量名称遵循同一规则。`node_info`要求现有创建网络，返回请求名称与解析后的实际类型；未知类型只提供真实可见名称候选，不自动替换为猜测的建模方法。
+
 严格设参拒绝未知字段、非法菜单和不相符值形状。菜单使用真实 token/set_value；标量及单独组件接受有限数值、HScript 字符串或显式 expression/language；多分量 tuple 接受等长数值列表，表达式写组件名。multiparm 先设置 count 再写实例字段。
+
+静态参数卡、批量预检与实时设参以原生模板维数为准，分量名称推导缺失不能把多分量误判成标量。内置BeginEnd、StartEnd、MinMax、MaxMin等命名按目标版本真实HOM回读验证；参数错误同时指出实际解析的节点类型，避免将旧版本参数用于新节点。
 
 写入与求值分别报告。合法 0 不算失败；明确新参数诊断、非有限求值或实际写入失败恢复本调用参数及 keys。旧缓存或无法归属的诊断保留 warning/unverified，随后可显式 cook 检查修复。参数求值成功不证明几何响应正确。
 
@@ -96,6 +102,7 @@ SOP subnet/HDA 的公共输出用 sop_set_output 发布原生 Output；普通 ge
 | 观察 | 实际范围 |
 |---|---|
 | Polygon inspect/integrity | 指定输出/组的边界、连通、非流形、朝向、局部退化和条件性壳体积；不证明任意自交或艺术质量 |
+| center-axis surface hits | bbox中心轴与实际平面多边形边界的交点，覆盖凹面；非平面估算及共面射线保留unverified，不以扇形覆盖空洞证明表面存在 |
 | planar face crossings | 单个近似平面 Polygon 非相邻边的严格内部交叉；不外推三维面间自交 |
 | attrib unique / point spacing | 精确属性唯一性或显式有序点相邻弦长；不替代容差焊接或曲面接触 |
 | named surface / section proximity | 声明实际表面及截面的距离与部件覆盖；不证明连续全表面关系 |
@@ -110,6 +117,8 @@ SOP subnet/HDA 的公共输出用 sop_set_output 发布原生 Output；普通 ge
 test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后恢复参数值、表达式、keys、frame 及完整 bgeo。顶层 interfaces 适用于基准与所有 case，baseline_interfaces 只验基准，case.interfaces 只验该扰动。具体状态应声明适用关系。
 
 基准计算失败返回 not_run；results=[] 不算通过。恢复前后回读通道和几何，任何不匹配都不能报告 restored=true。外部文件、Python 和 solver 副作用不属恢复保证。单个 case 不外推整个参数域，控制响应非零也不等于设计正确。
+
+测量方法不支持所选表示时，`measurement_failure`指出实际case、判据与选择；area额外给不支持的primitive类型、编号和开闭样本。基准失败零参数写入，所有未执行case仍标not_run；扰动后出现同类问题仍执行原恢复流程。诊断帮助选择适用方法，不自动改变测量指标或把局部支持部分冒充整个选择。
 
 ## HDA、界面与节点整理
 

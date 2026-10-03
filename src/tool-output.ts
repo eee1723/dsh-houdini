@@ -10,6 +10,7 @@ const execOutputProperties = {
   stderr: { type: 'string', required: true },
   result: { type: 'json' },
   verbs: { type: 'json' },
+  outcome: { type: 'json' },
   error: { type: 'string' },
   rollback: { type: 'json' },
   transaction: { type: 'json' },
@@ -55,6 +56,7 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
     imageCount: Array.isArray(value.imageAttachments)
       ? value.imageAttachments.filter(item => object(item)?.attachment).length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
+    ...(value.outcome ? { outcome: value.outcome } : {}),
     canonical: value as unknown as JsonValue,
   }
 }
@@ -71,12 +73,15 @@ export function jobHandleMeta(value: JobHandle): PresentationMeta {
 }
 
 export function resultTitle(label: string, result: ToolResult): string {
-  if (result.isError) return `${label} failed`
+  if (result.isError) return `${label} · 失败`
   const meta = object(result.meta)
-  if (meta?.ok === true && meta?.checksPending) return `${label} executed; checks need attention`
-  if (meta?.ok === true) return `${label} succeeded`
-  if (meta?.ok === false) return `${label} failed`
-  return `${label} complete`
+  const outcome = object(meta?.outcome)
+  if (meta?.ok === true && Number(object(outcome?.operations)?.failed) > 0)
+    return `${label} · 批次完成，部分操作失败`
+  if (meta?.ok === true && meta?.checksPending) return `${label} · 已执行，检查需要关注`
+  if (meta?.ok === true) return `${label} · 成功`
+  if (meta?.ok === false) return `${label} · 失败`
+  return `${label} · 已返回`
 }
 
 export function genericResult(title: string, result: ToolResult): GenericResultView {
@@ -84,80 +89,147 @@ export function genericResult(title: string, result: ToolResult): GenericResultV
 }
 
 export function jobResultTitle(action: string, result: ToolResult): string {
-  if (result.isError) return `${action} failed`
+  if (result.isError) return `${action} · 失败`
   const meta = object(result.meta)
+  if (typeof meta?.jobId === 'string' && meta.status === 'done')
+    return resultTitle(`长任务 ${meta.jobId}`, result)
+  const states: Record<string, string> = { queued: '排队中', running: '执行中', failed: '失败', cancelled: '已取消' }
   if (typeof meta?.jobId === 'string') return typeof meta.status === 'string'
-    ? `Houdini job ${meta.jobId}: ${meta.status}` : `${action} ${meta.jobId}`
-  return `${action} complete`
+    ? `长任务 ${meta.jobId} · ${states[meta.status] ?? meta.status}` : `${action} · ${meta.jobId}`
+  return `${action} · 已返回`
 }
 
 const pointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
 
-/** Repeated JSON values and long text have one addressable copy. No verb
- * schema, status vocabulary or geometry heuristic participates in projection. */
-function retainedProjection() {
+/** Identical JSON values have one addressable copy. Never truncate arbitrary
+ * result text: a diagnostic at its end is as important as one at its start. */
+function retainedProjection(stored: boolean) {
   const seen = new Map<string, string>()
-  const project = (value: unknown, pointer: string, diagnostic = false): unknown => {
-    if (!diagnostic && typeof value === 'string' && value.length > 2000) return {
-      preview: value.slice(0, 400), chars: value.length, detail_pointer: pointer,
-    }
-    if (value === null || typeof value !== 'object') return value
+  const duplicate = (prior: string, pointer: string) => ({
+    duplicate_of: prior, ...(stored ? { detail_pointer: pointer } : {}),
+  })
+  const project = (value: unknown, pointer: string): unknown => {
+    if (!stored && seen.size === 0) return value
+    if (value === null || (typeof value !== 'object' && typeof value !== 'string')) return value
     const encoded = JSON.stringify(value)
     if (encoded.length >= 256) {
       const prior = seen.get(encoded)
-      if (prior !== undefined) return { duplicate_of: prior, detail_pointer: pointer }
-      seen.set(encoded, pointer)
+      if (prior !== undefined) return duplicate(prior, pointer)
+      if (stored) seen.set(encoded, pointer)
     }
+    if (typeof value === 'string') return value
     return Array.isArray(value)
-      ? value.map((child, index) => project(child, `${pointer}/${index}`, diagnostic))
+      ? value.map((child, index) => project(child, `${pointer}/${index}`))
       : Object.fromEntries(Object.entries(value).map(([key, child]) =>
-        [key, project(child, `${pointer}/${pointerKey(key)}`, diagnostic
-          || /^(errors?|warnings?|unsupported|restore_errors|failure_reasons|reason)$/.test(key))]))
+        [key, project(child, `${pointer}/${pointerKey(key)}`)]))
   }
-  return project
+  // Help stays immediately executable, including long docs and nested input
+  // schemas. Remember the full value so __result__ cannot repeat the same help.
+  const remember = (value: unknown, pointer: string): void => {
+    const encoded = JSON.stringify(value)
+    if (encoded && encoded.length >= 256 && !seen.has(encoded)) seen.set(encoded, pointer)
+    if (stored && value !== null && typeof value === 'object') Object.entries(value).forEach(([key, child]) =>
+      remember(child, `${pointer}/${pointerKey(key)}`))
+  }
+  const help = (value: unknown, pointer: string): unknown => {
+    const encoded = JSON.stringify(value)
+    if (encoded && encoded.length >= 256) {
+      const prior = seen.get(encoded)
+      if (prior !== undefined) return duplicate(prior, pointer)
+    }
+    remember(value, pointer)
+    return value
+  }
+  return { project, help }
 }
 
 function renderFields(value: ExecResult): string[] {
   const parts: string[] = []
   const retained = object(value.details)?.stored === true
-  const project = retained ? retainedProjection() : (item: unknown) => item
+  // Without an archive, only complete help values already shown in this reply
+  // are shared. All other results keep their full inline fallback.
+  const projection = retainedProjection(retained)
+  const project = projection.project
   const field = (label: string, key: keyof ExecResult, compact = true) => {
     if (value[key] !== undefined) parts.push(`${label}:\n${JSON.stringify(
       compact ? project(value[key], `/${key}`) : value[key])}`)
   }
   field('request-receipt', 'requestReceipt', false)
+  field('execution-outcome', 'outcome', false)
   field('checks', 'checks', false)
-  field('operation-evidence', 'evidence')
-  field('execution-observation', 'execution')
-  field('transaction', 'transaction')
+  // The Host may spill large tool text. Put request, recovery and observation
+  // facts before any unbounded selected payload, help, stdout or ledger.
+  if (value.transaction !== undefined) {
+    const transaction = object(value.transaction)
+    parts.push(`transaction:\n${JSON.stringify(retained && transaction
+      && ['committed', 'no_scene_change'].includes(String(transaction.status))
+      ? auditNodes(transaction, '/transaction', project) : project(value.transaction, '/transaction'))}`)
+  }
+  field('rollback', 'rollback', false)
+  field('raw-usage', 'rawUsage', false)
+  const operationErrors = Array.isArray(value.verbs) ? value.verbs.flatMap((item, index) => {
+    const verb = object(item)
+    return verb?.ok === false ? [{ ledgerIndex: index + 1, verb: verb.verb, error: verb.error }] : []
+  }) : []
+  if (operationErrors.length) parts.push(`operation-errors:\n${JSON.stringify(operationErrors)}`)
+  if (value.evidence !== undefined) {
+    const evidence = retained && value.result !== undefined && object(value.execution)?.read_only === true
+      && Array.isArray(value.evidence) ? value.evidence.map((item, index) =>
+        selectedNodeCard(item, `/evidence/${index}`, project)) : project(value.evidence, '/evidence')
+    parts.push(`operation-evidence:\n${JSON.stringify(evidence)}`)
+  }
+  if (value.execution !== undefined) {
+    const execution = object(value.execution)
+    const impact = object(execution?.impact)
+    parts.push(`execution-observation:\n${JSON.stringify(retained && execution && impact
+      ? Object.fromEntries(Object.entries(execution).map(([key, item]) => [key, key === 'impact'
+        ? auditNodes(impact, '/execution/impact', project) : project(item, `/execution/${pointerKey(key)}`)]))
+      : project(value.execution, '/execution'))}`)
+  }
+  if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
+  const verbs = Array.isArray(value.verbs) ? value.verbs : []
+  const help = verbs.flatMap((item, index) => object(item)?.verb === 'verb_help'
+    && object(item)?.ok === true ? [{ result: object(item)?.result, index }] : [])
+  if (help.length) parts.push(`verb-help:\n${JSON.stringify(help.map((item, index) =>
+    projection.help(item.result, retained ? `/verbs/${item.index}/result` : `verb-help[${index}]`)))}`)
+  // The code author's selected output precedes routine ledger details, while
+  // independent Bridge checks and recovery facts have already been shown.
+  if (value.result !== undefined && !help.some(item =>
+    JSON.stringify(item.result) === JSON.stringify(value.result))) field('__result__', 'result')
   if (value.stdout) {
     const stdout = Array.isArray(value.verbs) && value.verbs.length
       ? value.stdout.split('\n').filter(line => !line.startsWith('[verb] ')).join('\n').trim()
       : value.stdout
     if (stdout) parts.push(`stdout:\n${stdout}`)
   }
-  if (value.stderr) parts.push(`stderr:\n${value.stderr}`)
-  // Help is executable interface documentation and remains immediately usable.
-  const help = Array.isArray(value.verbs) ? value.verbs.filter(item =>
-    object(item)?.verb === 'verb_help' && object(item)?.ok === true) : []
-  if (help.length) parts.push(`verb-help:\n${JSON.stringify(help.map(item => object(item)?.result))}`)
-  if (value.result !== undefined && !help.some(item =>
-    JSON.stringify(object(item)?.result) === JSON.stringify(value.result))) field('__result__', 'result')
-  field('rollback', 'rollback', false)
-  field('raw-usage', 'rawUsage', false)
-  if (Array.isArray(value.verbs) && value.verbs.length) {
-    const ledger = value.verbs.map((item, index) => {
+  if (verbs.length) {
+    const ledger = verbs.map((item, index) => {
       const verb = object(item)
       if (!verb) return project(item, `/verbs/${index}`)
-      if (!retained) return verb
-      const { args, kwargs, result, ...entry } = verb
+      if (!retained) return project(verb, `/verbs/${index}`)
+      const { args, kwargs, result, summary, ...entry } = verb
+      const evidenceIndex = Array.isArray(value.evidence) ? value.evidence.findIndex(item =>
+        object(item)?.ledgerIndex === index + 1 && object(item)?.verb === verb.verb) : -1
+      const evidence = evidenceIndex >= 0 ? object((value.evidence as JsonValue[])[evidenceIndex]) : undefined
+      const { ledgerIndex: _ledgerIndex, verb: _verb, ...sourceSummary } = evidence ?? {}
+      const sameSummary = summary !== undefined && evidence !== undefined
+        && JSON.stringify(summary) === JSON.stringify(sourceSummary)
+      // An explicit Bridge summary or passed check supports focused output.
+      // Unknown/unclassified results stay inline even when Python succeeded.
+      const hasSelectedResult = value.result !== undefined && verb.ok === true && verb.check_status === 'passed'
+      const needsAttention = verb.ok === false || ['failed', 'warning', 'unverified'].includes(String(verb.check_status))
       return {
         ...entry, detail_pointer: `/verbs/${index}`,
+        ...(summary !== undefined ? { summary: sameSummary
+          ? { evidence_pointer: `/evidence/${evidenceIndex}`, detail_pointer: `/verbs/${index}/summary` }
+          : project(summary, `/verbs/${index}/summary`) } : {}),
         ...(verb.verb !== 'verb_help' && result !== undefined
-          ? { result: project(result, `/verbs/${index}/result`) } : {}),
+          ? { result: !needsAttention && (sameSummary || hasSelectedResult)
+            ? { detail_pointer: `/verbs/${index}/result` }
+            : project(result, `/verbs/${index}/result`) } : {}),
       }
     })
-    parts.push(`verbs (${value.verbs.length}):\n${JSON.stringify(ledger)}`)
+    parts.push(`verbs (${verbs.length}):\n${JSON.stringify(ledger)}`)
   }
   field('image-attachments', 'imageAttachments', false)
   if (Array.isArray(value.artifactCandidates) && value.artifactCandidates.length) {
@@ -168,15 +240,51 @@ function renderFields(value: ExecResult): string[] {
   return parts
 }
 
-export function renderExec(value: ExecResult) {
+/** These two envelope lists contain audit identities, not operation results.
+ * Keep incomplete/unusual rows and identity changes inline; only an ordinary
+ * stable identity inventory can move behind the retained detail reference. */
+function auditNodes(value: PresentationMeta, pointer: string,
+  project: (value: unknown, pointer: string) => unknown): unknown {
+  const nodes = value.nodes
+  if (!Array.isArray(nodes) || nodes.length <= 8 || !nodes.every(item => {
+    const row = object(item)
+    return row && Object.keys(row).every(key => ['identity', 'prior_path', 'exists', 'path'].includes(key))
+      && row.exists !== false && (row.prior_path == null || row.prior_path === row.path)
+  })) return project(value, pointer)
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key === 'nodes'
+    ? { count: nodes.length, detail_pointer: `${pointer}/nodes` }
+    : project(item, `${pointer}/${pointerKey(key)}`)]))
+}
+
+/** Static node-card metadata has an explicit discovery scope. When inspect
+ * code selects __result__, do not append the complete parameter catalog again.
+ * Keep type/version, usage/decision notes and scope; the two catalog arrays
+ * remain individually readable. No execution/check evidence uses this shape. */
+function selectedNodeCard(value: unknown, pointer: string,
+  project: (value: unknown, pointer: string) => unknown): unknown {
+  const card = object(value)
+  if (!card || typeof card.operation_parameter_scope !== 'string' || typeof card.parameter_scope !== 'string'
+      || !Array.isArray(card.setting_cards) || !Array.isArray(card.operation_parameters)) return project(value, pointer)
+  return Object.fromEntries(Object.entries(card).map(([key, item]) => [key,
+    ['setting_cards', 'operation_parameters'].includes(key) && Array.isArray(item) && JSON.stringify(item).length > 1000
+      ? { count: item.length, detail_pointer: `${pointer}/${key}` }
+      : project(item, `${pointer}/${pointerKey(key)}`)]))
+}
+
+function executionSummary(value: ExecResult): string {
   const receipt = object(value.requestReceipt)
-  const summary = receipt && receipt.status !== 'done'
+  return receipt && receipt.status !== 'done'
     ? `Request receipt status: ${receipt.status}. This reports request recovery state, not successful scene completion.${value.error ? `\n${value.error}` : ''}`
     : !value.ok ? `Execution failed:\n${value.error ?? 'unknown error'}`
+    : Number(object(object(value.outcome)?.operations)?.failed) > 0
+      ? 'Batch completed; one or more operations raised errors. Any fallback result is separate from the failed operations; inspect operation-errors and checks.'
     : Array.isArray(value.checks) && value.checks.length
       ? 'Operation executed; checks failed or contain warnings/unverified results. Inspect checks before continuing.'
       : 'Executed successfully.'
-  return [{ type: 'text' as const, text: [summary, ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]
+}
+
+export function renderExec(value: ExecResult) {
+  return [{ type: 'text' as const, text: [executionSummary(value), ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]
 }
 
 export function renderJobStatus(value: JobStatus) {
@@ -185,7 +293,7 @@ export function renderJobStatus(value: JobStatus) {
     running: 'Job running.',
     cancelled: 'Job cancelled.',
     failed: `Job failed:\n${value.error ?? 'unknown error'}`,
-    done: 'Job finished successfully.',
+    done: executionSummary(value),
   }[value.status]
   return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, summary,
     ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]

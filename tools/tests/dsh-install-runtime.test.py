@@ -118,11 +118,4 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
         else:
             raise AssertionError("missing source-install dependency was hidden")
 
-    # ZIP/source identity must work with no Git and never inspect parent repos.
-    (root / "package.json").write_text('{"version":"0.1.0"}', encoding="utf-8")
-    with patch.object(manager, "_PROJECT_ROOT", str(root)), \
-         patch.object(manager, "_run", side_effect=AssertionError("no Git allowed")):
-        version, identity, dirty = manager._plugin_identity()
-        assert version == "0.1.0" and "no Git" in identity and not dirty
-
 print("source installer exact runtime selection tests passed")

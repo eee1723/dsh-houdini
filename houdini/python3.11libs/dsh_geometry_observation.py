@@ -16,7 +16,7 @@ def selected_prims(g, group=None):
     return prims
 
 
-def _center_axis_surface_hits(prims, axes, lower, upper):
+def _center_axis_surface_hits(prims, axes, lower, upper, face_positions):
     """Intersect each basis-aligned bbox-center line with polygon triangles.
 
     This is surface evidence, not a solid classifier. In particular, zero hits
@@ -40,22 +40,45 @@ def _center_axis_surface_hits(prims, axes, lower, upper):
                 a[2] * b[0] - a[0] * b[2],
                 a[0] * b[1] - a[1] * b[0]]
 
+    def contains_axis(polygon, axis):
+        """Even/odd winding in the ray projection, including the real boundary.
+
+        Fan triangles can cover the exterior of a concave planar polygon. Test
+        the polygon boundary itself; bridge edges around holes cancel twice.
+        """
+        u, v = [i for i in range(3) if i != axis]
+        inside = False
+        for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            ax, ay, bx, by = a[u], a[v], b[u], b[v]
+            length = math.hypot(bx - ax, by - ay)
+            if (abs(ax * by - ay * bx) <= position_epsilon * length
+                    and min(ax, bx) - position_epsilon <= 0 <= max(ax, bx) + position_epsilon
+                    and min(ay, by) - position_epsilon <= 0 <= max(ay, by) + position_epsilon):
+                return True
+            if (ay > 0) != (by > 0) and ax + (bx - ax) * (-ay) / (by - ay) > 0:
+                inside = not inside
+        return inside
+
     rows = []
     for axis in range(3):
         direction = [1.0 if i == axis else 0.0 for i in range(3)]
-        hits, coplanar = [], 0
+        hits, coplanar, nonplanar = [], 0, 0
         for prim in prims:
-            polygon = [projected(v.point().position()) for v in prim.vertices()]
+            polygon = [projected(position) for position in face_positions[prim.number()]]
             if len(polygon) < 3:
                 continue
+            face_hits, face_normal, normal_squared = [], None, 0
             for index in range(1, len(polygon) - 1):
                 a, b, c = polygon[0], polygon[index], polygon[index + 1]
                 edge1, edge2 = sub(b, a), sub(c, a)
+                normal = cross(edge1, edge2)
+                length_squared = dot(normal, normal)
+                if length_squared > normal_squared:
+                    face_normal, normal_squared = normal, length_squared
                 h = cross(direction, edge2)
                 determinant = dot(edge1, h)
                 if abs(determinant) <= determinant_epsilon:
-                    normal = cross(edge1, edge2)
-                    if dot(normal, normal) > determinant_epsilon * determinant_epsilon and abs(dot(normal, a)) <= position_epsilon * math.sqrt(dot(normal, normal)):
+                    if length_squared > determinant_epsilon * determinant_epsilon and abs(dot(normal, a)) <= position_epsilon * math.sqrt(length_squared):
                         coplanar += 1
                     continue
                 inverse = 1.0 / determinant
@@ -65,7 +88,17 @@ def _center_axis_surface_hits(prims, axes, lower, upper):
                 v = inverse * dot(direction, q)
                 if u < -barycentric_epsilon or v < -barycentric_epsilon or u + v > 1.0 + barycentric_epsilon:
                     continue
-                hits.append(inverse * dot(edge2, q))
+                face_hits.append(inverse * dot(edge2, q))
+            planar = face_normal is not None and all(
+                abs(dot(face_normal, sub(point, polygon[0]))) <= position_epsilon * math.sqrt(normal_squared)
+                for point in polygon)
+            if not planar:
+                # Native triangulation of a warped n-gon is not defined by
+                # this diagnostic's fan. Keep the estimate explicitly unknown.
+                nonplanar += 1
+                hits.extend(face_hits)
+            elif face_hits and contains_axis(polygon, axis):
+                hits.extend(face_hits)
         unique = []
         for value in sorted(hits):
             if not unique or abs(value - unique[-1]) > position_epsilon:
@@ -75,17 +108,18 @@ def _center_axis_surface_hits(prims, axes, lower, upper):
             'surface_hits': len(unique),
             'positions': unique[:16],
             'positions_truncated': len(unique) > 16,
-            'status': 'unverified' if coplanar else 'observed',
+            'status': 'unverified' if coplanar or nonplanar else 'observed',
             'coplanar_triangles': coplanar,
+            'nonplanar_faces': nonplanar,
         })
     return {
         'origin': center,
         'axes': rows,
-        'scope': 'Intersections of each basis-aligned line through the selected bbox center with fan-triangulated polygon surfaces. Zero hits is not alone proof of a through-hole; combine it with closed/manifold checks and an axis-aligned image.',
+        'scope': 'Intersections of each basis-aligned line through the selected bbox center with planar polygon boundaries, including concave faces. Nonplanar fan estimates and coplanar rays remain unverified. Zero hits is not alone proof of a through-hole; combine it with closed/manifold checks and an axis-aligned image.',
     }
 
 
-def _shell_orientation(prims, edges, directed, root, *, include_planarity):
+def _shell_orientation(prims, edges, directed, root, face_positions, face_areas, *, include_planarity):
     """Report winding of each edge-connected shell; sign alone is not a solid classifier."""
     shells = defaultdict(list)
     for prim in prims:
@@ -101,7 +135,12 @@ def _shell_orientation(prims, edges, directed, root, *, include_planarity):
                          for (a,b), owners in shell_edges)
         row = {'component': component, 'primitive_count': len(faces),
                'closed': closed, 'consistent': consistent}
-        vertices = [tuple(vertex.point().position()) for face in faces for vertex in face.vertices()]
+        vertices = [position for face in faces for position in face_positions[face.number()]]
+        if not vertices:
+            row.update(status='unverified', planar=False,
+                       reason='polygon shell has no vertices')
+            rows.append(row)
+            continue
         low = [min(vertex[i] for vertex in vertices) for i in range(3)]
         high = [max(vertex[i] for vertex in vertices) for i in range(3)]
         scale = max(high[i] - low[i] for i in range(3))
@@ -109,7 +148,7 @@ def _shell_orientation(prims, edges, directed, root, *, include_planarity):
             center = hou.Vector3(vertices[0])
             normal = None
             for face in faces:
-                polygon = [vertex.point().position() for vertex in face.vertices()]
+                polygon = [hou.Vector3(position) for position in face_positions[face.number()]]
                 for index in range(1, len(polygon) - 1):
                     candidate = (polygon[index] - polygon[0]).cross(polygon[index + 1] - polygon[0])
                     if candidate.length() > max(scale * scale, 1e-24) * 1e-12:
@@ -120,7 +159,7 @@ def _shell_orientation(prims, edges, directed, root, *, include_planarity):
             row['planar'] = normal is not None and all(
                 abs((hou.Vector3(vertex) - center).dot(normal)) <= max(scale, 1e-12) * 1e-8
                 for vertex in vertices)
-        if not closed or not consistent or any(float(face.intrinsicValue('measuredarea')) <= 1e-16
+        if not closed or not consistent or any(face_areas[face.number()] <= 1e-16
                                                 for face in faces):
             row.update(status='unverified',
                        reason='requires closed, consistently wound, nondegenerate polygon shell')
@@ -128,7 +167,7 @@ def _shell_orientation(prims, edges, directed, root, *, include_planarity):
             origin = hou.Vector3([(a + b) * .5 for a,b in zip(low, high)])
             terms = []
             for face in faces:
-                face_vertices = [vertex.point().position() - origin for vertex in face.vertices()]
+                face_vertices = [hou.Vector3(position) - origin for position in face_positions[face.number()]]
                 # HOM polygon winding is opposite the right-handed fan product.
                 terms.extend(-face_vertices[0].dot(face_vertices[index].cross(face_vertices[index + 1])) / 6
                              for index in range(1, len(face_vertices) - 1))
@@ -193,7 +232,7 @@ def _normal_attribute_observation(g, prims):
             'scope': 'Explicit N attributes compared with their own polygon geometric normals. Smoothing, stylized normals and mixed attribute classes require interpretation; this does not establish outward facing.'}
 
 
-def _planar_face_crossings(prims, *, pair_budget=250000, max_face_vertices=256):
+def _planar_face_crossings(prims, *, pair_budget=250000, max_face_vertices=256, face_positions=None):
     """Proper crossings inside individual planar faces, not 3-D intersections.
 
     Endpoint touches and collinear overlaps are deliberately excluded: Boolean
@@ -210,8 +249,9 @@ def _planar_face_crossings(prims, *, pair_budget=250000, max_face_vertices=256):
     def orient(a, b, c):
         return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
     for prim in prims:
-        vertices = prim.vertices()
-        count = len(vertices)
+        positions = face_positions[prim.number()] if face_positions is not None else None
+        vertices = prim.vertices() if positions is None else None
+        count = len(vertices) if positions is None else len(positions)
         if count == 3:
             triangles += 1  # Three edges cannot cross strictly in their interiors.
             continue
@@ -221,7 +261,8 @@ def _planar_face_crossings(prims, *, pair_budget=250000, max_face_vertices=256):
         if count > max_face_vertices:
             skipped['face_vertex_budget'] += 1
             continue
-        positions = [tuple(vertex.point().position()) for vertex in vertices]
+        if positions is None:
+            positions = [tuple(vertex.point().position()) for vertex in vertices]
         scale = max(max(p[k] for p in positions)-min(p[k] for p in positions) for k in range(3))
         if scale <= 1e-12:
             skipped['degenerate'] += 1
@@ -314,13 +355,24 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
         return n
     pts, zero_area, zero_edges = {}, 0, 0
     face_keys, repeated_faces, areas = set(), [], []
+    # One call-local coordinate snapshot: every selected point is read once,
+    # then topology, crossings and shell winding use the same exact positions.
+    # Repeated HOM Vector3 iteration dominated dense-mesh observations; this
+    # preserves every selected vertex and does not cache across scene changes.
+    face_positions, face_areas = {}, {}
     planar_repeated_point_ngons = []
     for p in prims:
-        ids = [v.point().number() for v in p.vertices()]
-        for v in p.vertices(): pts[v.point().number()] = tuple(v.point().position())
+        ids = []
+        for point in p.points():
+            point_id = point.number()
+            ids.append(point_id)
+            if point_id not in pts:
+                pts[point_id] = tuple(point.position())
         area = float(p.intrinsicValue('measuredarea'))
         areas.append(area)
         coords_face = [pts[i] for i in ids]
+        face_positions[p.number()] = coords_face
+        face_areas[p.number()] = area
         if integrity_only and len(ids) >= 8 and len(set(ids)) < len(ids):
             # Boolean can preserve a planar face with bridge vertices around
             # holes. That is valid topology, yet implicit smooth shading may
@@ -347,11 +399,15 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
             if a==b or pts[a]==pts[b]: zero_edges += 1
     for owners in edges.values():
         for other in owners[1:]: parent[root(other)] = root(owners[0])
+    if not pts:
+        return {**result, 'status': 'unverified', 'reason': 'polygon selection has no vertices',
+                'selected_primitives': len(prims), 'selected_points': 0, 'zero_area_faces': zero_area}
     if any(not math.isfinite(v) for p in pts.values() for v in p):
         return {**result,'status':'unverified','reason':'nonfinite geometry coordinates'}
-    face_crossings = _planar_face_crossings(prims)
+    face_crossings = _planar_face_crossings(prims, face_positions=face_positions)
     if integrity_only:
-        orientation, _ = _shell_orientation(prims, edges, directed, root, include_planarity=False)
+        orientation, _ = _shell_orientation(prims, edges, directed, root, face_positions, face_areas,
+                                           include_planarity=False)
         shading_normals = _normal_attribute_observation(g, prims)
         boundary_count = sum(len(owners) == 1 for owners in edges.values())
         nonmanifold_count = sum(len(owners) > 2 for owners in edges.values())
@@ -392,9 +448,9 @@ def polygon_observation(g, group=None, basis=None, *, integrity_only=False):
     lower = [min(p[i] for p in coords) for i in range(3)]
     upper = [max(p[i] for p in coords) for i in range(3)]
     boundary = [edge for edge,owners in edges.items() if len(owners)==1]
-    orientation, closed_planar_count = _shell_orientation(prims, edges, directed, root,
+    orientation, closed_planar_count = _shell_orientation(prims, edges, directed, root, face_positions, face_areas,
                                                           include_planarity=True)
-    center_axis_hits = _center_axis_surface_hits(prims, axes, lower, upper)
+    center_axis_hits = _center_axis_surface_hits(prims, axes, lower, upper, face_positions)
     return {**result, 'status': 'observed', 'selected_primitives':len(prims), 'selected_points':len(pts),
             'surface_area': math.fsum(areas),
             'duplicate_boundary_faces':len(repeated_faces), 'duplicate_face_sample':repeated_faces[:16],

@@ -290,6 +290,25 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       const repeatedExecution = executionKey && seenExecutions.has(executionKey);
       if(executionKey)seenExecutions.add(executionKey);
       const verbs = canonical?.requestReceipt?.retrieved || repeatedExecution ? [] : info.verbs;
+      const outcome = canonical?.outcome ?? json(parts['execution-outcome']);
+      // New results consume the Bridge projection. Old records only expose
+      // direct ledger facts; absent validation coverage remains unknown.
+      const operationFailures = outcome?.operations?.failed ?? info.verbs.filter(v => v.ok === false).length;
+      const checkCounts = outcome?.checks || null;
+      const checkAttention = checkCounts ? Object.values(checkCounts).reduce((n, count) => n + count, 0) : 0;
+      const requestReceipt = canonical?.requestReceipt ?? json(parts['request-receipt']);
+      const receiptStatus = requestReceipt?.status;
+      const recoveryNeeded = ['unknown_transport', 'unknown_runtime', 'unknown', 'result_expired', 'result_unavailable'].includes(receiptStatus);
+      const receiptState = {
+        queued: '请求已排队', running: '请求执行中', job_submitted: '后台任务已提交',
+        not_executed: '未执行', unknown_transport: '结果未知 · 需要查回',
+        unknown_runtime: '运行环境已变化 · 结果未知', unknown: '请求结果未知',
+        result_expired: '已结束 · 结果已过期', result_unavailable: '已结束 · 结果不可用',
+        index: '已读取请求索引',
+      }[receiptStatus];
+      const jobStatus = canonical?.jobId ? canonical.status : null;
+      const jobState = {queued: '后台任务排队中', running: '后台任务执行中', cancelled: '后台任务已取消'}[jobStatus];
+      const attention = operationFailures > 0 || checkAttention > 0 || recoveryNeeded;
       const parsedArgs = json(argsRaw);
       const args =
         parsedArgs &&
@@ -327,15 +346,20 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         : Boolean(info.rollback?.applied && !info.rollback.error);
       const state = pending
         ? "执行中（最后快照）"
-        : gateBlocked
+        : jobState || receiptState || (name === 'houdini_job_submit' && canonical?.jobId ? '后台任务已提交' : null)
+          || (gateBlocked
           ? "Gate 拦截"
           : rollback
             ? "已回滚"
             : failed
               ? "失败"
+              : operationFailures
+                ? "已完成 · 子操作失败"
+                : checkAttention
+                  ? "已完成 · 检查需关注"
               : transaction?.status === "committed"
                 ? "已提交"
-                : "已成功";
+                : "已成功");
       const start = pending ? n.time : (n.callTime ?? c?.time ?? null);
       const end = pending ? null : n.time;
       const result = canonical ? canonical.result : json(parts.__result__) ?? info.resultValue;
@@ -376,6 +400,15 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         verbs,
         failed,
         pending,
+        outcome,
+        operationFailures,
+        checkCounts,
+        checkAttention,
+        attention,
+        requestReceipt,
+        recoveryNeeded,
+        jobStatus,
+        repeatedExecution: Boolean(repeatedExecution || canonical?.requestReceipt?.retrieved),
         parent: parent || n.parentCallId || null,
         transaction,
         rollbackApplied: rollback,
@@ -398,7 +431,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         blocks: n.content || [],
         meta: n.meta,
         committed: !pending && !failed && !rollback,
-        jobId: args.jobId || result?.jobId || null,
+        jobId: canonical?.jobId || requestReceipt?.jobId || args.jobId || result?.jobId || null,
       };
       entries.push(entry);
       entriesById.set(id, entry);
@@ -520,6 +553,22 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
     const used = new Set(returned.flatMap(entry => entry.verbs.map(verb => verb.verb)));
     const known = catalog.flatMap(domain => domain.verbs.map(verb => verb.name));
     const accounts = requests.map(request => request.accounting).filter(Boolean);
+    const toolUsage = new Map(), verbUsage = new Map();
+    for (const entry of entries) {
+      const count = toolUsage.get(entry.name) || { calls: 0, failed: 0, pending: 0, operationAttention: 0 };
+      count.calls++;
+      count.failed += Number(entry.failed);
+      count.pending += Number(entry.pending);
+      count.operationAttention += Number(!entry.pending && !entry.repeatedExecution && entry.operationFailures > 0);
+      toolUsage.set(entry.name, count);
+    }
+    for (const entry of returned) for (const verb of entry.verbs) {
+      const count = verbUsage.get(verb.verb) || { calls: 0, failed: 0 };
+      count.calls++;
+      count.failed += Number(verb.ok === false);
+      verbUsage.set(verb.verb, count);
+    }
+    const toolNames = Object.keys(sources.tools || {});
     const rawEffectCounts = new Map();
     let gateBlockedCalls = 0, rolledBackCalls = 0, rolledBackVerbCalls = 0;
     for (const entry of returned) {
@@ -533,13 +582,23 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
     }
     return {
       adoption: collectVerbAdoption(returned.map(entry => entry.analysisStep)),
+      toolUsage,
+      verbUsage,
+      knownToolCount: toolNames.length,
+      usedToolCount: toolNames.filter(name => toolUsage.has(name)).length,
+      toolCalls: toolNames.reduce((count, name) => count + (toolUsage.get(name)?.calls || 0), 0),
+      verbCalls: [...verbUsage.values()].reduce((count, verb) => count + verb.calls, 0),
+      failedToolCalls: returned.filter(entry => entry.failed).length,
+      failedVerbCalls: [...verbUsage.values()].reduce((count, verb) => count + verb.failed, 0),
+      operationAttentionCalls: returned.filter(entry => !entry.repeatedExecution && entry.operationFailures > 0).length,
+      checkAttentionCalls: returned.filter(entry => !entry.repeatedExecution && entry.checkAttention > 0).length,
       knownVerbCount: known.length,
       usedVerbCount: known.reduce((count, name) => count + Number(used.has(name)), 0),
       gateBlockedCalls,
       rolledBackCalls,
       rolledBackVerbCalls,
       rawEffectCounts,
-      failures: entries.filter(entry => entry.failed || entry.rollbackApplied),
+      failures: entries.filter(entry => entry.failed || entry.rollbackApplied || entry.attention),
       requestUsage: {
         reported: accounts.length,
         total: requests.length,

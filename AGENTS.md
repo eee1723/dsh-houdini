@@ -28,8 +28,9 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
   唯一preset声明、工具说明、client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
 - 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
   正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
-- 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Diagnostics →
-  Advanced diagnostics → Repair and restart runtime；WebView/menu/package变更完整重启Houdini。
+- Houdini原生菜单标签仅使用ASCII英文（中文在部分安装中无法显示）；Qt窗口与网页界面使用中文。
+- 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Updates → 高级设置 →
+  运行诊断 → 修复并重启运行环境；WebView/menu/package变更完整重启Houdini。
   不未经用户授权重启live或修改HIP；构建通过不等于live已加载。
 - 部署：main push/tag/Draft不算正式发布；安装/启动/修复默认共用兼容清单preferred精确DSH。
   正式受管安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。

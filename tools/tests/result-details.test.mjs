@@ -12,7 +12,7 @@ try {
   const raw={ok:true,stdout:'useful diagnostic',stderr:'',
     execution:{runtime_id:'runtime',sequence:1,observed_at:1,impact:{attempted:false,nodes:[]}},
     transaction:{status:'committed',nodes:[{identity:1,path:'/obj/a',exists:true}]},
-    verbs:[{verb:'set_parms',ok:true,args:['/obj/a',{snippet:code}],kwargs:{},result:{ok:true,set:{snippet:code}},ms:1}],
+    verbs:[{verb:'set_parms',ok:true,check_status:'passed',args:['/obj/a',{snippet:code}],kwargs:{},result:{ok:true,set:{snippet:code}},ms:1}],
     result:{payload:'原始结果'.repeat(5000)}};
   const definitions=new Map();let executions=0;
   registerHoudiniTools({tools:{register:d=>definitions.set(d.name,d)}},

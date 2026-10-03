@@ -40,6 +40,12 @@ def zip_tree(source, target):
                 archive.write(file, relative)
 
 
+def require_clean_checkout():
+    if run(["git", "diff", "--no-ext-diff", "HEAD", "--"], capture=True) or run(
+            ["git", "ls-files", "--others", "--exclude-standard"], capture=True):
+        raise RuntimeError("Production release requires a clean checkout")
+
+
 def build(args):
     if os.name != "nt":
         raise RuntimeError("Build the win32-x64 release on Windows, including native dependencies")
@@ -59,8 +65,7 @@ def build(args):
         raise RuntimeError("Signing key id is not in the installer trust store")
     commit = run(["git", "rev-parse", "HEAD"], capture=True)
     if not args.candidate:
-        if run(["git", "diff", "--no-ext-diff", "HEAD", "--"], capture=True) or run(["git", "ls-files", "--others", "--exclude-standard"], capture=True):
-            raise RuntimeError("Production release requires a clean checkout")
+        require_clean_checkout()
         if run(["git", "describe", "--tags", "--exact-match", "HEAD"], capture=True) != "v" + package["version"]:
             raise RuntimeError("Production release must be built from its exact version tag")
         if args.trust.resolve() != (ROOT / "installer/release-trust.json").resolve():
@@ -177,6 +182,9 @@ def finalize(output, trust_path, key_id, node, *, candidate=False):
             or manifest["nodeVersion"] != config["nodeVersion"] or manifest["dshVersion"] != required):
         raise RuntimeError("Unsigned artifact identity does not match the checked-out release source")
     if not candidate:
+        # The installer is assembled here from this checkout, independently of
+        # the unsigned payload. Its files must belong to the verified revision.
+        require_clean_checkout()
         if run(["git", "describe", "--tags", "--exact-match", "HEAD"], capture=True) != "v" + manifest["version"]:
             raise RuntimeError("Signing requires the exact release tag")
         if trust_path.resolve() != (ROOT / "installer/release-trust.json").resolve():
@@ -198,7 +206,7 @@ def finalize(output, trust_path, key_id, node, *, candidate=False):
     shutil.copyfile(ROOT / "Install.cmd", installer / "Install.cmd")
     shutil.copytree(ROOT / "installer", installer / "installer")
     shutil.copyfile(trust_path, installer / "installer/release-trust.json")
-    for filename in ("dsh_bootstrap.py", "dsh_install_ui.py", "dsh_deployment.py", "dsh_release_policy.py"):
+    for filename in ("dsh_bootstrap.py", "dsh_install_ui.py", "dsh_ui_style.py", "dsh_deployment.py", "dsh_release_policy.py"):
         shutil.copyfile(ROOT / "houdini/python3.11libs" / filename, installer / "houdini/python3.11libs" / filename)
     zip_tree(installer, output / "dsh-houdini-installer.zip")
     # Offline wrapper: installer plus the exact signed payload, without recompression.

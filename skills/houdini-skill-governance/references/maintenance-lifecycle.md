@@ -1,131 +1,48 @@
-# Houdini skills 长期维护生命周期
+# Houdini skills 长期维护
 
-## 1. 状态模型
+## 1. 维护依据
 
-```text
-observation
-  → candidate
-    → accepted
-      → verified
-        → released
-candidate/accepted → rejected
-released → superseded → deprecated → removed
-```
+根据真实任务问题、实现变化和Houdini版本变化更新知识。Skill可以新增、修改、合并或删除，
+不需要经过固定的candidate/accepted/verified/released状态机。描述当前事实和已验证范围即可。
 
-- `observation`：原始事实，尚未决定是否属于 skill。
-- `candidate`：目标 skill、规则和验收已提出；不得写成硬规则。
-- `accepted`：证据门和设计评审通过，可实施。
-- `verified`：结构、行为、版本和反例测试通过。
-- `released`：已注册、打包、部署，并由新 session 确认曝光/触发。
-- `superseded/deprecated`：替代已存在，保留迁移期。
-- `removed`：调用者、注册、资源和文档已迁移，且删除门通过。
+Git保存版本与历史。稳定知识留在现有skill/reference；过程证据留会话、CI或不打包临时产物；
+未完成事项由仓库`docs/handoff.md`统一维护，不新建候选队列、发布账本或历史文档分叉。
 
-Git 历史是本地 skill 的版本与回滚基础；OpenAI hosted Skills API 另有 immutable versions，
-但 dsh-houdini 当前不依赖远程 Skill API，不要混用发布状态。
+## 2. 何时检查
 
-## 2. 事件驱动维护
+| 变化 | 检查重点 |
+|---|---|
+| trace出现问题 | 实际曝光与加载、模型判断、工具返回、执行及观察分别定位；一次失败不自动变成规则 |
+| 用户提供视频或工程 | 区分平台事实、作者选择和未知；只吸收与任务有关的知识 |
+| Houdini版本或Python ABI变化 | 直接受影响的节点、参数、数据和恢复行为，标明实际版本差异 |
+| skill注册、资源或触发范围变化 | catalog、资源可读和相关加载路径；源码配置不证明live曝光 |
+| 发布 | 遵循项目发行合同，核对实际安装与支持版本，区分构建、加载和使用结果 |
+| 明显重复、失效或误触发 | 调整唯一维护源、窄化触发或直接拆并删除，同步实际消费者 |
 
-### 每个符合条件的 trace 后
+普通任务可报告知识问题；修改生产skill仍需在用户授权的开发任务范围内。
+已经获得修复或重构授权时不再要求独立治理审批。不得借知识维护修改用户HIP或共享库。
 
-- 生成 skill delta proposal；
-- 检查是 activation、知识、工具还是验证层问题；
-- 更新 known pattern 的证据等级；
-- 只有当前任务明确授权且达到准入门时才修改 skill。
+## 3. 验证范围
 
-### 每次用户提供视频/工程后
+以受影响行为选择验证，方法见[质量规范](quality-standard.md#验证与改动相称)。
+文案、引用和失效策略清理不机械触发整套HOM、GUI或模型评测；
+版本敏感算法、状态恢复与正式发行覆盖对应实际边界。
 
-- 先走 provenance/隐私/版本记录；
-- 提取候选 claim 和反例；
-- 不直接发布，安排官方/本机/独立任务复核。
+若声称模型决策或产物质量提高，用适用任务观察；局部修复不冒充泛化。
+评测的题目实例、私有答案和评分细节不进入生产知识，也不用未见任务调参。
+源码修改、打包与当前运行态是不同事实，只有实际加载检查才能说明live已收到变更。
 
-### 每次 Houdini major/minor 或 Python ABI 更新
+## 4. 观察维护效果
 
-- 审查 domain skill 的关键 node/tool/context claim；
-- 对 H21/H22 等受支持矩阵运行 discovery 与最小基准；
-- 更新版本差异，不为了最新版本破坏旧基线；
-- 未验证的版本明确标 unsupported/untested。
+根据当前问题选择有解释力的事实，例如误加载/漏加载、重复探测、执行失败、
+恢复状态、用户纠正、最终输出质量和耗时。不设固定任务数、trace数量或字数作为去留门槛。
+低频不等于无用，调用多也不证明方法正确。
 
-### 每次发布前
+管理方法本身同样可以精简。只保留能帮助定位、修改与验证的规则，
+不要求管理skill才能修改另一个skill，也不给治理文件设置额外自保护门。
 
-1. 运行治理 audit、目标 skill quick validation 和 build；
-2. 检查注册/打包资源；
-3. 跑每个变更 skill 的 canonical positive + counterexample；
-4. 若变更来自 benchmark，另跑未见同族实例，并确认 agent-visible surfaces 没有泄漏实例标识、
-   对象配方、目标参数或评分答案；
-5. 检查 system guidance 重复和 skill description 冲突；
-6. 新 session 验证 catalog、implicit activation 与资源可读；
-7. development 记录实际状态、测试和回滚点。
+## 5. 回滚
 
-### 定期健康审查
-
-以事件为主，时间为兜底。建议每季度或积累 10 个新 Houdini traces 后做一次：
-
-- 来源链接/版本是否过期；
-- description 误触发/漏触发；
-- SKILL.md 是否被不断追加而失去路由作用；
-- reference 是否孤儿、重复或无调用；
-- 三个以上任务中是否出现稳定 split/merge/deprecate 证据；
-- 支持版本与真实测试是否一致。
-
-## 3. 健康指标
-
-不要用 skill 字数或数量单独评价质量。按 trace 观察：
-
-- activation precision：不相关任务是否误加载；
-- activation recall：相关任务是否及时加载；
-- 首次正确模块/状态所需时间和调用数；
-- 用户纠正次数；
-- 硬失败、rollback、raw-hou exemptions；
-- 已有能力 MISSED vs 真实 MISSING；
-- warning/error 与完成门覆盖；
-- 视觉/数值证据冲突是否诚实裁决；
-- H21/H22 行为差异；
-- skill 间重复规则和选择错误。
-
-指标用于定位原因，不作为机械 KPI。例如加载次数低可能只是领域不适用，不支持删除。
-
-## 4. 自进化安全门
-
-- ordinary task 不得悄悄修改 skill；修改生产知识是独立外部副作用，需要当前任务授权。
-- trace analyzer 可以自动生成候选，不得绕过 governance 直接把 E1 写成强规则。
-- domain skill 不直接修改其他 skill；它报告 evidence/delta，由治理 skill协调唯一维护位置。
-- governance skill 不自证自己的改动。修改自身需用户明确授权，并至少满足：跨两个领域重复问题、
-  可复现流程缺陷，或官方 skill 规范变化 + 本地验证。
-- 所有变更保持最小、可 diff、可回滚；大重构分 checkpoint，不一次改完所有 skills。
-- 发现冲突时允许 NO_CHANGE、REJECT 或降级旧规则；演化不是只增不减。
-
-## 5. 长期路线
-
-### M0：治理地基
-
-- 发布本治理 skill；
-- 确定性 inventory/registration/reference audit；
-- trace skill 在“用户要求更新 skills”时路由治理 skill；
-- 文档登记 evidence levels 和变更状态。
-
-### M1：当前五类 skills 标准化
-
-- 审查 trace、SOP、Solaris/Karma、rig/animation、governance 的 trigger、结构、来源与完成门；
-- 消除跨文件重复，建立 canonical positive/counterexample；
-- 给关键版本 claim 补 H21/H22 状态。
-
-### M2：新领域准入
-
-- COP：至少覆盖图像生成/处理、材质或纹理接口、缓存/颜色空间/输出三个真实任务；
-- SIM：至少覆盖 solver setup、缓存、时间/随机性、长 job/取消、交付验证；
-- project analysis：至少覆盖普通 HIP、缺依赖 HIP、HDA/外部缓存工程的只读边界；
-- 达到准入再建 skill，不预建空壳目录。
-
-### M3：持续知识刷新
-
-- Houdini 版本事件触发官方文档 + 本机帮助 + runtime 三角复核；
-- trace/video/project 形成候选队列；
-- 发布前 eval matrix 和新 session activation 检查；
-- 基于 S3 证据做 split/merge/deprecation，控制 skill 数量和 prompt 暴露成本。
-
-## 6. 回滚
-
-每次发布记录：修改文件、来源、证据等级、验证命令、支持版本和已知反例。回滚优先恢复上一个
-通过验证的 Git revision；不要用删除整个 `skills/`、覆盖用户工作区或重建无关文件的方式回滚。
-如果已发布 description 导致严重误触发，先窄化 description/dispatch，再回退领域内容；如果
-知识规则错误，保留反例和 rejected 记录，避免未来再次引入。
+回滚范围与失败变更一致，使用相关Git版本或明确文件差异，保护其他在途修改。
+触发规则有问题时修正description或加载路径；领域知识错误时在其维护源纠正或移除，
+保留有用的适用边界。无需为了回滚重建无关目录或复制历史整套文档。

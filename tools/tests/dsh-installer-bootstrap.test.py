@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import sys
 import tempfile
+import types
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as tempo
     hosted = Path(package["path"])
     assert hosted.resolve().is_relative_to(install.resolve())
     assert (hosted / "python/dsh_install_ui.py").is_file()
+    assert (hosted / "python/dsh_ui_style.py").is_file()
     assert (hosted / "python3.11libs/pythonrc.py").is_file()
     assert (hosted / "python3.13libs/pythonrc.py").is_file()
     # Repeated invocation preserves user-owned prior registration instead of deleting it.
@@ -63,6 +65,19 @@ with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as tempo
         d.atomic_json(install / "state.json", {**d.empty_state(), "pending": next_id})
         bootstrap.initialize()
         assert bootstrap._PINNED is None
+    # Merely opening source runtime diagnostics caches source-side paths and
+    # compatibility modules. It must not allow a later managed activation.
+    messages = []
+    fake_hou = types.SimpleNamespace(ui=types.SimpleNamespace(displayMessage=messages.append))
+    for runtime_module in ("dsh_manager", "dsh_runtime_compat", "dsh_context", "dsh_webview"):
+        with patch.dict(sys.modules, {"hou": fake_hou, runtime_module: types.ModuleType(runtime_module)}), \
+             patch.object(bootstrap, "_PINNED", next_id), \
+             patch.object(bootstrap, "_CONTEXT", None), \
+             patch.object(bootstrap, "_ERROR", None), \
+             patch.object(d.Store, "activate", side_effect=AssertionError("mixed runtime activated")):
+            bootstrap.open_workspace()
+            assert "完整重开" in messages[-1]
+            assert bootstrap._BUSY is False
     if Path(sys.executable).name.lower().startswith("hython"):
         import hou
         version = ".".join(str(x) for x in hou.applicationVersion()[:2])

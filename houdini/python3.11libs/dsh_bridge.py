@@ -71,7 +71,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 75
+_EXECUTION_CONTRACT_VERSION = 82
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex

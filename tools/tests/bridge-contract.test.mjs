@@ -78,7 +78,7 @@ try {
 
   await assert.rejects(
     new HoudiniBridge(url, 1000).exec('__result__ = 1', owner),
-    /contract mismatch.*Repair and restart runtime/,
+    /修复并重启运行环境[\s\S]*contract mismatch/,
   );
   assert.equal(execCalls, 0, 'mismatch must fail before scene code reaches /exec');
 

@@ -22,7 +22,7 @@ description: 在 Houdini Copernicus 中构建、诊断和验证程序纹理与�
    先用 `verb_help`、`search_tab_entries`、`list_parms` 等现有能力；不猜 API、不绕 Raw Gate。
 4. **关系 checkpoint**：多层组合、随机驱动或控制任务先读 [关系与控制验证](references/relations-and-controls.md)。
    分开检查数据有效性、实际依赖和预期响应；异常先校准测量对象/公式，再改资产。
-   同一模块边界连续两次失败时停止猜参，回到已验证 checkpoint，查目标版本帮助或换一个最小诊断。
+   重复失败没有新信息时，回到已验证 checkpoint，查目标版本帮助或换一个最小诊断。
 5. **按需集成**：要导出、处理缓存、法线或交给材质时读 [缓存与交付](references/cache-and-delivery.md)。
    跨到复杂几何/UV 时加载 `houdini-sop-workflow`，进入 USD/MaterialX/Karma 时加载
    `houdini-solaris-karma-workflow`；需要集中控制界面才加载 `houdini-parameter-ui`。

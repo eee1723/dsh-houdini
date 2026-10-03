@@ -38,6 +38,31 @@ try:
     source_path = created["result"]["source"]
     target_path = created["result"]["target"]
 
+    # Invalid literal managed filenames fail before allocation/cook/render.
+    # Fake only GUI availability: the actual path validator and Bridge run.
+    with patch.object(hou, 'isUIAvailable', return_value=True), \
+         patch.object(dsh_hou_helpers, '_geometry_fingerprint', side_effect=AssertionError('preflight cooked geometry')):
+        preview = f"render_view({target_path!r}, picture='nested/preview.png')"
+        rejected = dsh_bridge.run_code(preview, owner_session=session, owner_call='preview-path-only')
+        assert not rejected['ok'] and rejected['transaction']['status'] == 'no_scene_change', rejected
+        assert rejected['verbs'][0]['summary']['phase'] == 'output_path_preflight', rejected
+        assert rejected['verbs'][0]['summary']['scene_writes'] == 0, rejected
+        assert not rejected['execution']['impact']['attempted'], rejected
+        before_tx = hou.node(target_path).parm('tx').eval()
+        mixed = dsh_bridge.run_code(
+            f"set_parm({target_path!r}, 'tx', 2)\n" + preview,
+            owner_session=session, owner_call='preview-path-after-edit')
+        assert not mixed['ok'] and mixed['transaction']['status'] == 'rolled_back', mixed
+        assert hou.node(target_path).parm('tx').eval() == before_tx, mixed
+        caught = dsh_bridge.run_code(
+            "try:\n    " + preview + "\nexcept Exception:\n    pass\n"
+            + f"set_parm({target_path!r}, 'tx', 1)",
+            owner_session=session, owner_call='preview-path-caught')
+        assert caught['ok'] and caught['outcome']['operations']['failed'] == 1, caught
+        assert hou.node(target_path).parm('tx').eval() == 1, caught
+        assert dsh_bridge.run_code(f"set_parm({target_path!r}, 'tx', {before_tx!r})",
+                                  owner_session=session)['ok']
+
     # Static errors must not partially change global timeline or animation.
     timeline = dsh_hou_helpers.scene_info()
     invalid_timeline = dsh_bridge.run_code(

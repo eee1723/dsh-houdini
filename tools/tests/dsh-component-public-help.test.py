@@ -18,7 +18,7 @@ def run(code):
 
 with tempfile.TemporaryDirectory(prefix='dsh-component-help-') as directory:
     hou.hipFile.save(str(Path(directory) / 'assembly.hip'))
-    help_query = bridge.run_code("__result__=verb_help('component_export')", owner_session='component-help',
+    help_query = bridge.run_code("__result__=verb_help('component_export', detail='full')", owner_session='component-help',
                                  read_only=True)
     assert help_query['ok'], help_query.get('error', help_query)
     help_result = help_query['result']

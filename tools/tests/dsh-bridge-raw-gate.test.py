@@ -125,6 +125,57 @@ assert clear_blocked["ok"] is False, clear_blocked
 assert "hou.hipFile.clear() is forbidden" in clear_blocked["error"], clear_blocked
 assert hou.hipFile.path() == original_hip, clear_blocked
 
+# Ordinary Python aliases must retain the lifecycle prohibition in both exec
+# and inspect. Previously the first form cleared the scene from a read-only
+# request and still reported transaction=no_scene_change.
+sentinel = hou.node('/obj').createNode('geo', '__lifecycle_alias_sentinel')
+for code in (
+    "hip = hou.hipFile\nhip.clear(suppress_save_prompt=True)",
+    "import hou as H\nH.hipFile.clear(suppress_save_prompt=True)",
+    "from hou import hipFile as scene\nscene.clear(suppress_save_prompt=True)",
+    "H = hou\nscene = H.hipFile\nreset = scene.clear\nreset(suppress_save_prompt=True)",
+    "scene, unused = hou.hipFile, 0\nreset = scene.clear\nagain = reset\nagain()",
+    "scene = hou.hipFile\nload_scene = scene.load\nload_scene('/not-executed.hip')",
+    "getattr(hou, 'hipFile').clear(suppress_save_prompt=True)",
+    "scene = getattr(hou, 'hipFile')\nscene.clear(suppress_save_prompt=True)",
+    "scene = hou.hipFile\ngetattr(scene, 'clear')(suppress_save_prompt=True)",
+    "getattr(getattr(hou, 'hipFile'), 'clear')(suppress_save_prompt=True)",
+):
+    for query in (False, True):
+        blocked = dsh_bridge.run_code(code, read_only=query, allow_raw='cannot exempt scene reset')
+        assert not blocked['ok'] and 'is forbidden' in blocked['error'], blocked
+        assert blocked['rawUsage']['gateOutcome'] == 'forbidden', blocked
+        assert hou.node(sentinel.path()) == sentinel
+        assert hou.hipFile.path() == original_hip
+assert dsh_bridge.run_code("items = {1: 2}\nitems.clear()", read_only=True)['ok']
+sentinel.destroy()
+
+# A callable alias or literal reflection is still the same covered operation;
+# neither inspect nor an exec allow_raw reason may authorize it. Save/Save As
+# must retain their target/current-HIP/user-authorization verb contract.
+import tempfile
+with tempfile.TemporaryDirectory(prefix='dsh-raw-save-alias-') as raw_dir:
+    target = str(Path(raw_dir) / 'unauthorized.hip')
+    for code, operation in (
+        ("create = hou.node('/obj').createNode\ncreate('geo','__bound_raw_creation')", 'createNode'),
+        ("getattr(hou.node('/obj'), 'createNode')('geo','__bound_raw_creation')", 'createNode'),
+        (f"write = hou.hipFile.save\nwrite({target!r})", 'hipFile.save'),
+        (f"scene = hou.hipFile\nscene.save({target!r})", 'hipFile.save'),
+        (f"scene = getattr(hou,'hipFile')\nwrite = getattr(scene,'save')\nwrite({target!r})", 'hipFile.save'),
+        (f"rename = hou.hipFile.setName\nrename({target!r})", 'hipFile.setName'),
+    ):
+        for query in (False, True):
+            rejected = dsh_bridge.run_code(code, read_only=query, allow_raw='cannot exempt covered writes')
+            assert not rejected['ok'], rejected
+            assert rejected['rawUsage']['coveredMutations'][0]['name'] == operation, rejected
+            assert hou.node('/obj/__bound_raw_creation') is None
+            assert not Path(target).exists()
+            assert hou.hipFile.path() == original_hip
+    reflected_parm = dsh_bridge._raw_usage_analysis("p = hou.node('/obj').parm('x'); write = getattr(p, 'set'); write(9)")
+    assert reflected_parm['coveredMutations'] == [{'name': 'parm().set', 'count': 1, 'verb': 'set_parm'}], reflected_parm
+    bound_box = dsh_bridge._raw_usage_analysis("box=hou.node('/obj').findNetworkBox('x'); paint=box.setColor; paint((1,0,0))")
+    assert bound_box['coveredMutations'] == [{'name': 'networkBox.setColor', 'count': 1, 'verb': 'network_boxes'}], bound_box
+
 # A recursive source scan in the Bridge once held a component GUI queue for
 # minutes. Reject the call before it can run, including common import aliases.
 for code in (
@@ -166,6 +217,41 @@ set_query = dsh_bridge.run_code(
 assert set_query["ok"] is True, set_query
 assert set_query["result"] == ["Cd"], set_query
 assert "rawUsage" not in set_query, set_query
+
+# The same aggregation used tuple unpacking in a real repair trace. Match each
+# receiver to its initializer; a neighboring HOM receiver must stay gated.
+unpacked_query = dsh_bridge.run_code(
+    "slat_x, rails, slat_y = set(), [], set()\n"
+    "slat_x.add(1); slat_y.add(2); rails.append(3)\n"
+    "__result__ = [sorted(slat_x), rails, sorted(slat_y)]"
+)
+assert unpacked_query['ok'] and unpacked_query['result'] == [[1], [3], [2]], unpacked_query
+mixed_usage = dsh_bridge._raw_usage_analysis(
+    "names, geo = set(), hou.Geometry()\nnames.add('Cd')\ngeo.addAttrib(0, 'Cd', 0)"
+)
+assert mixed_usage['suspectedMutations'] == [{'name':'addAttrib', 'count':1}], mixed_usage
+
+# A prior set initializer is not receiver identity after a rebinding. Exercise
+# actual HOM PointGroup.add against a persistent, mutable geometry fixture.
+mutable = hou.Geometry()
+mutable.createPoint()
+selection = mutable.createPointGroup('selected')
+hou.session._dsh_adversarial_geometry = mutable
+group_expr = "hou.session._dsh_adversarial_geometry.findPointGroup('selected')"
+try:
+    for prefix in (
+        f"group, unused = set(), 0\ngroup = {group_expr}\n",
+        f"group = set()\ngroup = {group_expr}\n",
+        f"group = set()\nfor group in [{group_expr}]:\n    pass\n",
+        f"set = lambda: {group_expr}\ngroup = set()\n",
+    ):
+        result = dsh_bridge.run_code(prefix + "group.add(hou.session._dsh_adversarial_geometry.point(0))",
+                                     read_only=True)
+        assert not result['ok'] and 'read-only' in result['error'], result
+        assert result['rawUsage']['suspectedMutations'] == [{'name': 'add', 'count': 1}], result
+        assert not selection.points(), result
+finally:
+    del hou.session._dsh_adversarial_geometry
 
 # Uncovered low-level mutation is blocked first, then allowed as an isolated,
 # trace-visible vocabulary-gap exemption.

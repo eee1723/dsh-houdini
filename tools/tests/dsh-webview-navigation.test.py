@@ -62,6 +62,10 @@ class Handler(BaseHTTPRequestHandler):
           if (typeof Iterator.prototype.join !== 'function') Iterator.prototype.join = function(s) {return [...this].join(s);};
           probe.iterator = [1,2].values().map(x => x*2).toArray().join(',');
           probe.iteratorSome = new Map([[1,2]]).values().some(x => x === 2);
+          const providers = ['custom', 'deepseek-official', 'deepseek-account'];
+          const rank = id => id === 'deepseek-account' ? 0 : id === 'deepseek-official' ? 1 : 2;
+          probe.modelProviders = providers.toSorted((a,b) => rank(a) - rank(b)).join(',');
+          probe.originalProviders = providers.join(',');
         } catch(e) { probe.iteratorError = String(e); }
         Promise.all(['/api/inventory', '/api/syncInspectManifest'].map(path =>
           fetch(path, {method:'POST', body:'{}'}).then(r => r.json())))
@@ -125,6 +129,8 @@ try:
     assert len(requests) == 1, f"auth bootstrap loaded the app {len(requests)} times: {requests}"
     assert observed["done"] and "error" not in observed, observed
     assert observed.get("iterator") == "2,4" and observed.get("iteratorSome") is True, observed
+    assert observed.get("modelProviders") == "deepseek-account,deepseek-official,custom", observed
+    assert observed.get("originalProviders") == "custom,deepseek-official,deepseek-account", observed
     assert observed.get("resourceHost") == "file", observed
     assert observed.get("reviewHost") == "changes-review" and observed.get("ordinaryHost") == "example.org", observed
     assert "iteratorError" not in observed, observed

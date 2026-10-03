@@ -44,7 +44,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
   // Host 输出由空行分隔，每个区块有稳定标题。按标题边界切分，避免 stdout
   // 自己包含空行时把后续 rollback/raw-usage/verbs 吞进一个大文本块。
   function parseResultSections(text) {
-    var marker = /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|operation-evidence|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|artifact-candidates \(not delivered; verify requested final files, then call present\)|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
+    var marker = /(?:^|\n\n)(stdout|stderr|__result__|rollback|transaction|request-receipt|execution-outcome|execution-observation|operation-errors|checks|operation-evidence|verb-help|result-details|control-test-summary \(not_run is not pass\)|CHECKS NEED ATTENTION \(execution success is not validation success\)|raw-usage|image-attachments|artifact-candidates \(not delivered; verify requested final files, then call present\)|hint|verbs \(\d+\)|media(?: [^\n:]*)?):\n/g;
     var matches = [];
     var match;
     while ((match = marker.exec(text)) !== null) {

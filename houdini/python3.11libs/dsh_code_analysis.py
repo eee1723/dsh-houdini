@@ -89,6 +89,17 @@ _REPO_WRITE_HINTS = (
 )
 
 
+def _literal_attribute(value):
+    """Static attribute syntax, including the equivalent literal getattr form."""
+    if isinstance(value, ast.Attribute):
+        return value.value, value.attr
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+            and value.func.id == 'getattr' and 2 <= len(value.args) <= 3
+            and isinstance(value.args[1], ast.Constant) and isinstance(value.args[1].value, str)):
+        return value.args[0], value.args[1].value
+    return None, None
+
+
 def _network_box_mutation_calls(tree) -> dict[int, str]:
     """Receiver-aware raw classification for proven Network Box variables."""
     boxes = set()
@@ -115,17 +126,28 @@ def _network_box_mutation_calls(tree) -> dict[int, str]:
                 boxes.add(target.id)
         if len(boxes) == previous:
             break
-    result = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        attr, receiver = node.func.attr, node.func.value
+    setters = {}
+    def mutation(value):
+        if isinstance(value, ast.Name):
+            return setters.get(value.id)
+        receiver, attr = _literal_attribute(value)
+        if attr not in _NETWORK_BOX_MUTATORS:
+            return None
         proven = isinstance(receiver, ast.Name) and receiver.id in boxes
         proven = proven or (isinstance(receiver, ast.Call)
-            and isinstance(receiver.func, ast.Attribute)
-            and receiver.func.attr in ('createNetworkBox', 'findNetworkBox', 'networkBoxBySessionId'))
-        if proven and attr in _NETWORK_BOX_MUTATORS:
-            result[id(node)] = 'networkBox.' + attr
+            and _literal_attribute(receiver.func)[1] in ('createNetworkBox', 'findNetworkBox', 'networkBoxBySessionId'))
+        return 'networkBox.' + attr if proven else None
+    for _ in range(len(assignments) + 1):
+        previous = len(setters)
+        for target, value in assignments:
+            if isinstance(target, ast.Name) and (method := mutation(value)):
+                setters[target.id] = method
+        if len(setters) == previous:
+            break
+    result = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and (method := mutation(node.func)):
+            result[id(node)] = method
     return result
 
 
@@ -147,24 +169,50 @@ def _call_path(node: ast.AST) -> str | None:
 
 
 def _python_set_names(tree: ast.AST) -> set[str]:
-    """Find local names definitely initialized as Python ``set`` containers."""
+    """Find set receivers whose bindings all prove a Python set initializer."""
     names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        value = node.value
+    proven_bindings = set()
+    rebound = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+               and isinstance(node.ctx, (ast.Store, ast.Del))}
+    rebound.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
+    rebound.update(node.name for node in ast.walk(tree)
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    rebound.update(item.asname or item.name.split('.')[0] for node in ast.walk(tree)
+                   if isinstance(node, (ast.Import, ast.ImportFrom)) for item in node.names)
+    def bind(target, value):
+        if (isinstance(target, (ast.Tuple, ast.List))
+                and isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)):
+            for item, initial in zip(target.elts, value.elts):
+                bind(item, initial)
+            return
         is_set = isinstance(value, ast.Set) or (
             isinstance(value, ast.Call)
             and isinstance(value.func, ast.Name)
             and value.func.id == "set"
+            and 'set' not in rebound
         )
-        if not is_set:
+        if is_set and isinstance(target, ast.Name):
+            names.add(target.id)
+            proven_bindings.add(id(target))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         for target in targets:
-            if isinstance(target, ast.Name):
-                names.add(target.id)
-    return names
+            bind(target, node.value)
+    # A later assignment, loop binding, argument or import can replace the set
+    # with a HOM group. An exemption based on any earlier initializer would
+    # then let group.add mutate geometry through the read-only query path.
+    unknown_bindings = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+                        and isinstance(node.ctx, (ast.Store, ast.Del))
+                        and id(node) not in proven_bindings}
+    unknown_bindings.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
+    unknown_bindings.update(node.name for node in ast.walk(tree)
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+    unknown_bindings.update(item.asname or item.name.split('.')[0] for node in ast.walk(tree)
+                            if isinstance(node, (ast.Import, ast.ImportFrom)) for item in node.names)
+    return names - unknown_bindings
 
 
 def _is_safe_python_method(node: ast.Call, python_sets: set[str]) -> bool:
@@ -191,11 +239,11 @@ def _parameter_write_calls(tree):
     parms, setters = set(), set()
     def parameter(expr):
         return (isinstance(expr, ast.Name) and expr.id in parms or
-                isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)
-                and expr.func.attr in ('parm', 'parmTuple'))
+                isinstance(expr, ast.Call) and _literal_attribute(expr.func)[1] in ('parm', 'parmTuple'))
     def setter(expr):
+        receiver, attr = _literal_attribute(expr)
         return (isinstance(expr, ast.Name) and expr.id in setters or
-                isinstance(expr, ast.Attribute) and expr.attr == 'set' and parameter(expr.value))
+                attr == 'set' and parameter(receiver))
     assignments = []
     def bind(target, value):
         if isinstance(target, ast.Name):
@@ -221,6 +269,45 @@ def _parameter_write_calls(tree):
     return {id(node) for node in ast.walk(tree) if isinstance(node, ast.Call) and setter(node.func)}
 
 
+def _bound_mutation_calls(tree, python_sets):
+    """Keep known raw methods classified after binding them to local names."""
+    aliases, assignments = {}, []
+    def bind(target, value):
+        if isinstance(target, ast.Name):
+            assignments.append((target.id, value))
+        elif (isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)):
+            for item, initial in zip(target.elts, value.elts):
+                bind(item, initial)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            bind(node.target, node.value)
+    def classify(value):
+        if isinstance(value, ast.Name):
+            return aliases.get(value.id)
+        receiver, attr = _literal_attribute(value)
+        if attr in _RAW_HOU_VERB_MAP:
+            return 'coveredMutations', attr
+        if (attr is None or attr in _GATE_SAFE_PYTHON_METHODS or attr in _GATE_READ_ONLY_PREFIX_COLLISIONS
+                or attr == 'add' and isinstance(receiver, ast.Name) and receiver.id in python_sets):
+            return None
+        if attr.startswith(_GATE_MUTATING_PREFIXES):
+            return 'suspectedMutations', attr
+        return None
+    for _ in range(len(assignments) + 1):
+        previous = len(aliases)
+        for name, value in assignments:
+            if mutation := classify(value):
+                aliases[name] = mutation
+        if len(aliases) == previous:
+            break
+    return {id(node): mutation for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and (mutation := classify(node.func)) is not None}
+
+
 def _raw_usage_from_tree(tree: ast.AST) -> dict:
     """Describe raw HOM syntax and gate-relevant mutations for UI/auditing.
 
@@ -231,6 +318,8 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
     python_sets = _python_set_names(tree)
     parameter_writes = _parameter_write_calls(tree)
     box_writes = _network_box_mutation_calls(tree)
+    hip_calls = _hip_file_calls(tree)
+    bound_mutations = _bound_mutation_calls(tree, python_sets)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
@@ -241,6 +330,18 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
             continue
         if id(node) in parameter_writes:
             covered['parm().set'] = covered.get('parm().set', 0) + 1
+            continue
+        if hip_calls.get(id(node)) in ('save', 'setName'):
+            key = 'hipFile.' + hip_calls[id(node)]
+            covered[key] = covered.get(key, 0) + 1
+            path = _call_path(node.func)
+            if path is not None:
+                direct[path] = direct.get(path, 0) + 1
+            continue
+        if id(node) in bound_mutations and not isinstance(node.func, ast.Attribute):
+            kind, key = bound_mutations[id(node)]
+            target = covered if kind == 'coveredMutations' else suspected
+            target[key] = target.get(key, 0) + 1
             continue
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
@@ -339,8 +440,65 @@ def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
     )
 
 
+def _hip_file_calls(tree):
+    """Share resolved HIP operations between lifecycle and covered-write rules."""
+    modules, hip_files, methods = {'hou'}, set(), {}
+    assignments = []
+
+    def bind(target, value):
+        if isinstance(target, ast.Name):
+            assignments.append((target.id, value))
+        elif (isinstance(target, (ast.Tuple, ast.List))
+                and isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)):
+            for item, initial in zip(target.elts, value.elts):
+                bind(item, initial)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(item.asname or item.name for item in node.names if item.name == 'hou')
+        elif isinstance(node, ast.ImportFrom) and node.module == 'hou':
+            hip_files.update(item.asname or item.name for item in node.names if item.name == 'hipFile')
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            bind(node.target, node.value)
+
+    def is_hip_file(value):
+        receiver, attr = _literal_attribute(value)
+        return (isinstance(value, ast.Name) and value.id in hip_files or
+                attr == 'hipFile' and isinstance(receiver, ast.Name) and receiver.id in modules)
+
+    def lifecycle_method(value):
+        if isinstance(value, ast.Name):
+            return methods.get(value.id)
+        receiver, attr = _literal_attribute(value)
+        if attr in ('load', 'clear', 'save', 'setName') and is_hip_file(receiver):
+            return attr
+        return None
+
+    # Like the parameter-setter analysis, resolve lexical aliases without
+    # evaluating submitted code. Binding a method must not discard the known
+    # lifecycle operation; arbitrary dynamic Python remains outside this scan.
+    for _ in range(len(assignments) + 1):
+        previous = (len(modules), len(hip_files), len(methods))
+        for name, value in assignments:
+            if isinstance(value, ast.Name) and value.id in modules:
+                modules.add(name)
+            if is_hip_file(value):
+                hip_files.add(name)
+            method = lifecycle_method(value)
+            if method:
+                methods[name] = method
+        if previous == (len(modules), len(hip_files), len(methods)):
+            break
+    return {id(node): method for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and (method := lifecycle_method(node.func)) is not None}
+
+
 def _forbidden_hip_lifecycle_message(code: str) -> str | None:
-    """Reject direct HIP replacement/reset calls before execution.
+    """Reject known HIP replacement/reset calls before execution.
 
     Loading a HIP resets the scene/process lifecycle that owns this very bridge
     request: H21 GUI reproduction lost results/images and eventually restarted
@@ -349,19 +507,8 @@ def _forbidden_hip_lifecycle_message(code: str) -> str | None:
     tree = _analysis(code).tree
     if tree is None:
         return None
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr not in ("load", "clear"):
-            continue
-        owner = node.func.value
-        if (
-            isinstance(owner, ast.Attribute)
-            and owner.attr == "hipFile"
-            and isinstance(owner.value, ast.Name)
-            and owner.value.id == "hou"
-        ):
-            method = node.func.attr
+    for method in _hip_file_calls(tree).values():
+        if method in ('load', 'clear'):
             return (
                 f"hou.hipFile.{method}() is forbidden inside dsh-houdini bridge exec: "
                 "HIP replacement/reset invalidates the active exec/bridge lifecycle and can "

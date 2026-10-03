@@ -31,6 +31,43 @@ try:
         h.set_parm(root.node(node),field,value)
         assert root.node(node).evalParm(field)==value
     for spec in reversed(scalar_specs):h.delete_node(root.node(spec['name']))
+    # Native BeginEnd tuples use prefixes, including names beyond angle.
+    # Static cards, dry-run, creation and live setters must agree on width/name.
+    for typ,field in [('revolve','angle'),('torus','angleu'),('uvtransform','tandeg'),
+                      ('delete','range'),('agentlookat','distancerange')]:
+        info=h.node_info(root,typ,parm_filter=field)
+        card=next(c for c in info['parameters'] if c['name']==field)
+        native=h.tab_create(root,typ,'native_tuple_probe')
+        assert native.type().name()==info['type'],(typ,info['type'],native.type().name())
+        pt=native.parmTuple(field)
+        assert card['size']==len(pt)==2,card
+        assert card['components']==[p.name() for p in pt],card
+        h.set_parm(native,field,list(pt.eval()))
+        h.delete_node(native)
+    for parms,expected in [({'angle':[0,180]},(0,180)),
+                           ({'beginangle':{'expression':'10+5','language':'hscript'},'endangle':180},(15,180))]:
+        specs=[{'name':'revolved','type':'revolve','inputs':['source'],'parms':parms}]
+        before={n.sessionId() for n in root.children()}
+        assert h.build_module(root,specs,output='revolved',dry_run=True)['valid']
+        assert before=={n.sessionId() for n in root.children()}
+        h.build_module(root,specs,output='revolved')
+        assert root.node('revolved').parmTuple('angle').eval()==expected
+        h.delete_node(root.node('revolved'))
+    # A missing component-name mapping still has a reliable template width.
+    # It must not reintroduce the contradictory scalar/list preflight behavior.
+    original_cards=h._node_parameter_cards
+    def unnamed_components(typ,counts=None):
+        return [{**c,'components':[]} if c['name']=='angle' else c
+                for c in original_cards(typ,counts)]
+    h._node_parameter_cards=unnamed_components
+    try:
+        specs=[{'name':'unnamed_tuple','type':'revolve','parms':{'angle':[0,180]}}]
+        assert h.build_module(root,specs,output='unnamed_tuple',dry_run=True)['valid']
+        specs[0]['parms']['angle']=180
+        try:h.build_module(root,specs,output='unnamed_tuple',dry_run=True)
+        except h.PreflightError as error:assert 'tuple needs 2' in str(error)
+        else:raise AssertionError('unnamed tuple became scalar')
+    finally:h._node_parameter_cards=original_cards
     # Reject nonfinite literals in dry-run before creating nodes, and preserve
     # existing parameter animation in the primitive setter's failure path.
     for field,value in [('sizex',float('nan')),('size',[1,float('inf'),1])]:
@@ -51,6 +88,9 @@ try:
         ([{'name':'unknown','type':'nonexistent_test_type'}],'unknown','未知节点类型'),
         ([{'name':'bad','type':'box','parms':{'bad_parm':1}}],'bad','unknown parameter'),
         ([{'name':'bad','type':'tube','parms':{'rad':1.2}}],'bad','tuple needs 2'),
+        ([{'name':'bad','type':'revolve','parms':{'angle':360}}],'bad','tuple needs 2'),
+        ([{'name':'bad','type':'revolve','parms':{'angle':[0,180,360]}}],'bad','tuple needs 2'),
+        ([{'name':'bad','type':'revolve','parms':{'endangle':[180]}}],'bad','scalar'),
         ([{'name':'bad','type':'sphere','parms':{'rad':1.2}}],'bad','tuple needs 3'),
         ([{'name':'bad','type':'sphere','parms':{'rad':{'expression':'1'}}}],'bad','tuple needs 3'),
         ([{'name':'bad','type':'xform','inputs':['missing']}],'bad','declared spec'),

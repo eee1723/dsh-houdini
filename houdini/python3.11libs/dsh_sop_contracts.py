@@ -374,7 +374,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
             import difflib
             for field in sorted(unknown):
                 similar = difflib.get_close_matches(field, sorted(allowed), n=5, cutoff=0.25)
-                problem(name, field, f'unknown parameter(s) {field!r}; candidates={similar}; use node_info with a literal filter', candidates=similar)
+                problem(name, field, f'unknown parameter(s) {field!r} on resolved type {latest!r}; candidates={similar}; use node_info with the same parent/type and a literal filter', candidates=similar, resolved_type=latest)
         for parameter in parameters:
             if parameter.get('type') in ('Float', 'Int') and not parameter.get('menu') and not parameter.get('menu_dynamic'):
                 components = parameter.get('components', [])
@@ -382,7 +382,8 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 fields += [c for c in components if c != parameter['name'] and c in values]
                 for field in fields:
                     try:
-                        h._validate_numeric_parameter_value(values[field], components if field == parameter['name'] else ())
+                        h._validate_numeric_parameter_value(values[field], components if field == parameter['name'] else (),
+                                                            size=parameter['size'] if field == parameter['name'] else 1)
                     except (ValueError, OverflowError) as error:
                         problem(name, field, str(error), components=components)
             if parameter['name'] in values and parameter.get('menu') and parameter.get('type') in ('Menu','Int') and not parameter.get('menu_dynamic'):

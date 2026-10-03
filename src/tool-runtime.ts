@@ -62,7 +62,11 @@ export class HoudiniToolRuntime {
     const observation = value.execution !== null && typeof value.execution === 'object'
       && !Array.isArray(value.execution) ? value.execution : undefined
     const hip = observation?.hip_dir
-    if (!cwd || !agent || typeof hip !== 'string' || !hip) return value
+    if (!cwd || !agent) return value
+    if (observation?.hip_is_new === true || typeof hip !== 'string' || !hip) {
+      if (observation && ('hip_dir' in observation || observation.hip_is_new === true)) this.workspaceNotes.delete(agent)
+      return value
+    }
     if (normPath(hip) === normPath(cwd)) {
       this.workspaceNotes.delete(agent)
       return value

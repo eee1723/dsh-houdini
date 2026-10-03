@@ -26,7 +26,7 @@ python houdini/install.py
 
 本项目锁定官方 **DSH 0.2.0-rc.2**，由[兼容清单](dsh-runtime-compatibility.json)决定启动/修复版本。唯一Houdini preset通过插件bundle声明式注册，源码在[presets/houdini](presets/houdini/)。
 
-Host/Bridge/helper重载使用 **Version & Diagnostics → Advanced diagnostics → Repair and restart runtime**；客户端、menu或package变化需要完整重开Houdini。构建通过不能证明已有进程加载了新代码。
+Host/Bridge/helper重载使用 **Version & Updates → 高级设置 → 运行诊断 → 修复并重启运行环境**；客户端、menu或package变化需要完整重开Houdini。构建通过不能证明已有进程加载了新代码。
 
 ## 领域资料
 
