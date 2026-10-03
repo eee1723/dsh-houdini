@@ -77,7 +77,7 @@ _POLYFILL_ABORT_SIGNAL_ANY_JS = """
 """
 
 # 当前 DSH client/runtime 间接使用 ES2024
-# Promise.withResolvers。H21/H22 的 QtWebEngine 6.5.3（Chrome 108）没有该
+# Promise.withResolvers。H21 的 Chrome 108 与 H22 的 Chrome 122 都缺少该
 # API，会在 Cordis inventory 建立前抛错，随后所有 RPC 都退化成 Failed to
 # fetch。与 AbortSignal.any 一样必须在 DocumentCreation、MainWorld 注入。
 _POLYFILL_PROMISE_WITH_RESOLVERS_JS = """

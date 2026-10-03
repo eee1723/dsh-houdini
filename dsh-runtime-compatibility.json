@@ -15,10 +15,13 @@
       ],
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
-      "verificationStatus": "source-adapted-awaiting-live-webview",
-      "verifiedOn": [],
+      "verificationStatus": "source-gui-verified-awaiting-release-acceptance",
+      "verifiedOn": [
+        "Houdini 21.0.440 / Qt 6.5.3 / Chromium 108: isolated source GUI",
+        "Houdini 22.0.368 / Qt 6.8.3 / Chromium 122: isolated source GUI"
+      ],
       "pendingVerification": [
-        "H21/H22 live WebView model menus, Trace, send/cancel/reconnect and single Houdini preset",
+        "H21/H22 GUI model send/cancel/reconnect with a controlled provider",
         "signed release combination acceptance"
       ]
     }

@@ -29,7 +29,7 @@ DSH负责模型调用、会话与持久化、Agent循环、任务/计划、通�
 
 [preset检查](../tools/tests/dsh-preset-parity.test.mjs)核对只有一个Houdini声明和同版标准能力；[DSH适配检查](../tools/tests/dsh-adapter.test.mjs)核对原生/嵌套结果与持久历史。一次隔离Host启动确认真实包能加载插件、列出模式与工具，使用自建DSH_HOME和临时端口，不需要收费模型。
 
-Houdini WebView采用H21/H22实际QtWebEngine。修复Host与Bridge、重开客户端以及正式安装组合的验证各自说明；编译通过不代表已有进程加载。已知浏览器接口补齐由[webview](../houdini/python3.11libs/dsh_webview.py)与[polyfill生成器](../tools/gen-web-polyfills.mjs)管理，不修改上游缓存。
+Houdini WebView采用H21/H22实际QtWebEngine。源码GUI资格由[真实Qt验收](../tools/tests/dsh-source-webview.test.py)读取实际浏览器版本、界面交互和文件资源，不以Chrome或普通Qt窗口替代。测试启动器按[开发规范](development.md)排除开发宿主的MSIX身份继承。修复Host与Bridge、重开客户端以及正式安装组合的验证各自说明；编译通过不代表已有进程加载。已知浏览器接口补齐由[webview](../houdini/python3.11libs/dsh_webview.py)与[polyfill生成器](../tools/gen-web-polyfills.mjs)管理，不修改上游缓存。
 
 ## 正式发行单元与发布门
 

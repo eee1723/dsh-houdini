@@ -22,7 +22,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from houdini_test_environment import isolated_environment, launch_directory
+from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
 
 
 def start_gui_probe():
@@ -166,6 +166,7 @@ def main():
     parser.add_argument("--houdini", type=Path, action="append", required=True)
     parser.add_argument("--candidate", action="store_true")
     args = parser.parse_args()
+    reexec_unpacked_test_cli()
     sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
     import dsh_deployment as deployment
     import dsh_managed_runtime as managed
