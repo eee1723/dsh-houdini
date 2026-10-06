@@ -135,6 +135,7 @@ body:not([data-ds-dark-theme]) .dsh-trace {
   padding: 2px 7px;
 }
 .dsh-trace .tr-bad { color: var(--tr-red); }
+.dsh-trace .tr-warning { color: var(--tr-orange); }
 .dsh-trace .tr-attention {
   background: var(--tr-error-bg);
   border: 1px solid var(--tr-error-border);
@@ -143,6 +144,10 @@ body:not([data-ds-dark-theme]) .dsh-trace {
   border-radius: 8px;
 }
 .dsh-trace .tr-attention h4 { margin-top: 0; color: var(--tr-red); }
+.dsh-trace .tr-attention-warning,
+.dsh-trace .tr-attention-unknown { background: var(--tr-panel); border-color: var(--tr-line); }
+.dsh-trace .tr-attention-warning h4 { color: var(--tr-orange); }
+.dsh-trace .tr-attention-unknown h4 { color: var(--tr-muted); }
 .dsh-trace .tr-type { color: var(--tr-muted); font-size: 12px; }
 .dsh-trace table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; }
 .dsh-trace th,

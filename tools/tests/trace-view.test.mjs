@@ -698,7 +698,7 @@ const outcomeModel=View.model({eventNodes:[
 ]});
 assert.equal(outcomeModel.entries[0].failed,false,'a caught read does not become a tool failure');
 assert.equal(outcomeModel.entries[0].state,'已完成 · 子操作失败');
-assert.equal(outcomeModel.entries[1].state,'已完成 · 检查需关注');
+assert.equal(outcomeModel.entries[1].state,'已完成 · 检查未通过');
 assert.equal(outcomeModel.statistics.failedToolCalls,0);
 assert.equal(outcomeModel.statistics.failedVerbCalls,1);
 assert.equal(outcomeModel.statistics.operationAttentionCalls,1,'retrieved receipt does not count operations again');
@@ -720,3 +720,59 @@ const nestedNode={...result(nestedId,'houdini_inspect',21,21),callId:nestedId,
   content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:nestedId,tool:'houdini_inspect',value:nestedFacts})}]};
 assert.equal(View.model({eventNodes:[nestedNode]}).entries[0].resultValue.actual,1);
 assert.equal(View.model({eventNodes:[nestedNode]}).entries[0].rawEffect,'read_only_query');
+
+// Classification comes only from the receipt. Later successful calls cannot
+// erase a historical failure or certify a model's semantic correctness.
+const checkCases = ['failed','warning','unverified'].map((status,i) => ({
+  ...result('check-'+status,'houdini_exec',i+1,(i+1)*10,'Executed successfully.'),
+  meta:{canonical:{ok:true,outcome:{batch:'completed',operations:{total:1,failed:0},
+    checks:{failed:0,warning:0,unverified:0,[status]:1}},
+    verbs:[{verb:'verify_network',ok:true,args:[],check_status:status,
+      result:{validation:{output:'/obj/check/OUT',warnings:['fixture diagnostic '+status]}}}]}}
+}));
+const cleanSemantic={...result('clean-semantic','houdini_exec',4,40,'Executed successfully.'),
+  meta:{canonical:{ok:true,outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},
+    verbs:[{verb:'render_view',ok:true,args:[],check_status:'passed',result:{semantic_status:'unverified'}}]}}};
+const checksSnapshot={eventNodes:[...checkCases,cleanSemantic]};
+const checksModel=View.model(checksSnapshot);
+assert.equal(checksModel.entries[0].state,'已完成 · 检查未通过');
+assert.equal(checksModel.entries[1].state,'已完成 · 检查有警告');
+assert.equal(checksModel.entries[2].state,'已完成 · 检查未验证');
+assert.equal(checksModel.entries[3].attention,false,'semantic unknown is not a producer check failure');
+assert.deepEqual(Array.from(checksModel.entries.slice(0,3),e=>e.attentionLevel),['error','warning','unknown']);
+assert.equal(checksModel.entries[1].checkFindings[0].target,'/obj/check/OUT');
+assert.equal(checksModel.entries[1].checkFindings[0].reason,'fixture diagnostic warning');
+hooks=[];selectedSnapshot=checksSnapshot;
+tree=render();tree=click('需要关注');
+assert.equal(callRows(tree).length,3);
+assert.match(content(tree),/历史记录不代表当前仍未修复/);
+callRows(tree)[1].props.onClick();tree=render();
+assert.match(content(tree),/检查有警告 1 项/);
+assert.match(content(tree),/fixture diagnostic warning/);
+assert.match(content(tree),/\/obj\/check\/OUT/);
+assert(all(tree).some(n=>n.props.className==='tr-attention tr-attention-warning'));
+const textChecks=View.model({eventNodes:[result('text-checks','houdini_exec',1,10,
+  'Executed successfully.\n\nexecution-outcome:\n'+JSON.stringify(returnedCheckOutcome)
+  +'\n\nchecks:\n[{"verb":"test_controls","status":"failed"}]')]}).entries[0];
+assert.equal(textChecks.checkFindings[0].label,'检查未通过');
+assert.equal(textChecks.checkFindings[0].reason,null,'absent reasons are not inferred');
+const summaryOnly={...result('summary-only','houdini_exec',1,10,'Executed successfully.'),
+  meta:{canonical:{ok:true,outcome:returnedCheckOutcome}}};
+hooks=[];selectedSnapshot={eventNodes:[summaryOnly]};
+tree=render();callRows(tree)[0].props.onClick();tree=render();
+assert.match(content(tree),/回执只提供检查计数/);
+const nestedCheckId='parent:ptc:check', nestedCheck={...checkCases[1],callId:nestedCheckId,meta:undefined,
+  content:t(JSON.stringify({kind:'dsh-houdini/execution-v1',callId:nestedCheckId,tool:'houdini_exec',value:checkCases[1].meta.canonical}))};
+assert.equal(View.model({eventNodes:[nestedCheck]}).entries[0].checkFindings[0].reason,'fixture diagnostic warning');
+console.log('Trace attention: reasons, unknown scope, nested/text receipts and historical failure preservation passed');
+for (const [verb, facts, target, reason] of [
+  ['build_module',{validation:{output:'/obj/fixture/OUT',issues:[{path:'/obj/fixture/source',warnings:['channel source absent']}]}},'/obj/fixture/OUT','/obj/fixture/source channel source absent'],
+  ['geo_piece_stats',{node:'/obj/fixture/shape',risk_reasons:['duplicate_boundary_faces']},'/obj/fixture/shape','duplicate_boundary_faces'],
+  ['test_controls',{output:'/obj/fixture/OUT',control_summary:{failures:[{id:'width',status:'fail'}]}},'/obj/fixture/OUT','测试 width：fail'],
+]) {
+  const node={...result('structured-reason','houdini_exec',1,10,'Executed successfully.'),
+    meta:{canonical:{ok:true,outcome:returnedCheckOutcome,
+      verbs:[{verb,ok:true,check_status:'failed',result:facts}]}}};
+  const finding=View.model({eventNodes:[node]}).entries[0].checkFindings[0];
+  assert.equal(finding.target,target);assert.equal(finding.reason,reason);
+}

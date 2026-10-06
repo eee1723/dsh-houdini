@@ -6,6 +6,7 @@ the separate stool-repair regression exercises the actual Sweep shelf script.
 from pathlib import Path
 import math
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import hou
@@ -534,6 +535,31 @@ try:
     assert tag.geometry().findVertexAttrib('seen') and tag.geometry().findPrimAttrib('seen') is None
     assert len([v for p in tag.geometry().prims() for v in p.vertices() if v.attribValue('seen') == 1]) == 24
     done('Wrangle execution multiplicity, Numbers counterexample and attribute class')
+
+    # Include location is a file path; Evaluation Node Path controls ch(), not
+    # include resolution. Exercise both an intentional node base and the
+    # observed filesystem-base mistake using an owned temporary library.
+    with tempfile.TemporaryDirectory(prefix='dsh-vex-include-') as directory:
+        library = Path(directory) / 'shared.h'
+        library.write_text('float shared_value(){return 2.0;}\n', encoding='utf-8')
+        controller = make('null', 'include_controls')
+        h.create_spare_parms(controller, spec=[{'name': 'gain', 'label': 'Gain', 'type': 'float', 'default': 3.0}])
+        code = f'#include "{library.as_posix()}"\nf@value=shared_value()*chf("../include_controls/gain");'
+        included = make('attribwrangle', 'include_consumer', {'class': 'detail', 'snippet': code})
+        assert included.geometry().attribValue('value') == 6.0
+        h.set_parm(included, 'vex_cwdpath', directory.replace('\\', '/'))
+        assert included.geometry().attribValue('value') == 0.0, 'filesystem base must not resolve a sibling channel'
+        h.set_parm(included, 'vex_cwdpath', '.')
+        assert included.geometry().attribValue('value') == 6.0
+        h.set_parms(included, {'vex_cwdpath': controller.path(),
+                              'snippet': code.replace('../include_controls/gain', 'gain')})
+        assert included.geometry().attribValue('value') == 6.0, 'intentional node-relative override stays supported'
+        library.write_text('float shared_value(){return 5.0;}\n', encoding='utf-8')
+        h.set_parms(included, {'vex_cwdpath': '.', 'snippet': code + '\n// library revision 2'})
+        assert included.geometry().attribValue('value') == 15.0, 'verify changed behavior after actual recompilation'
+        included.destroy()
+        controller.destroy()
+    done('Wrangle external include and channel evaluation use distinct paths; edited library actually recompiles')
 
     # Explicit and omitted choices preserve the actual Houdini parameters.
     spec = [{'name': 'advice_a', 'type': 'tube'}, {'name': 'advice_b', 'type': 'tube'}]

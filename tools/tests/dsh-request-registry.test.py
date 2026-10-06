@@ -44,6 +44,55 @@ class Requests(unittest.TestCase):
         self.assertEqual(outcomes.count(True), 1)
         self.assertEqual(len(self.registry.records), 1)
 
+    def test_navigation_cancel_before_and_after_admission(self):
+        payload = {'request_kind': 'node_navigation', 'owner_call': 'click'}
+        issued = self.registry.issue(self.owner, 'node_navigation')
+        self.assertEqual(self.registry.cancel_navigation(issued, self.owner),
+                         {'status': 'not_executed', 'cancelled': True})
+        with self.assertRaisesRegex(ValueError, 'consumed or unknown'):
+            self.registry.reserve(issued, self.owner, payload)
+        queued = self.registry.issue(self.owner, 'node_navigation')
+        self.assertTrue(self.registry.reserve(queued, self.owner, payload))
+        self.assertEqual(self.registry.cancel_navigation(queued, self.owner)['status'], 'not_executed')
+        self.assertFalse(self.registry.running(queued), 'cancelled UI work cannot reach the pump')
+        self.assertFalse(self.registry.reserve(queued, self.owner, payload), 'replay cannot reactivate navigation')
+        self.assertEqual(self.registry.active_count(), 0)
+
+    def test_navigation_cancel_does_not_cancel_running_or_generic_work(self):
+        payload = {'request_kind': 'node_navigation'}
+        running = self.registry.issue(self.owner, 'node_navigation')
+        self.registry.reserve(running, self.owner, payload)
+        self.assertTrue(self.registry.running(running))
+        self.assertEqual(self.registry.cancel_navigation(running, self.owner),
+                         {'status': 'running', 'cancelled': False})
+        self.registry.complete(running, {'ok': True})
+        self.assertEqual(self.registry.cancel_navigation(running, self.owner),
+                         {'status': 'done', 'cancelled': False})
+        generic = self.registry.issue(self.owner)
+        with self.assertRaisesRegex(ValueError, 'unavailable for this owner'):
+            self.registry.cancel_navigation(generic, self.owner)
+        self.registry.reserve(generic, self.owner, self.payload)
+        with self.assertRaisesRegex(ValueError, 'unavailable for this owner'):
+            self.registry.cancel_navigation(generic, self.owner)
+        self.assertTrue(self.registry.running(generic))
+        foreign = self.registry.issue(self.owner, 'node_navigation')
+        with self.assertRaisesRegex(ValueError, 'unavailable for this owner'):
+            self.registry.cancel_navigation(foreign, 'other')
+        self.assertTrue(self.registry.reserve(foreign, self.owner, payload))
+        with self.assertRaisesRegex(ValueError, 'unavailable for this owner'):
+            self.registry.cancel_navigation(foreign, 'other')
+        self.assertTrue(self.registry.running(foreign))
+
+    def test_navigation_ticket_cannot_be_used_for_ordinary_execution(self):
+        typed = self.registry.issue(self.owner, 'node_navigation')
+        with self.assertRaisesRegex(ValueError, 'kind conflict'):
+            self.registry.reserve(typed, self.owner, self.payload)
+        self.assertTrue(self.registry.reserve(typed, self.owner, {'request_kind': 'node_navigation'}))
+        generic = self.registry.issue(self.owner)
+        with self.assertRaisesRegex(ValueError, 'kind conflict'):
+            self.registry.reserve(generic, self.owner, {'request_kind': 'node_navigation'})
+        self.assertTrue(self.registry.reserve(generic, self.owner, self.payload))
+
     def test_twelve_thousand_completions_with_bounded_memory(self):
         active = self.admit()
         self.registry.running(active)

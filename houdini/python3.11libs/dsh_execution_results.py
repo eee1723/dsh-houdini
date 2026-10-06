@@ -119,6 +119,10 @@ def _artifact_candidates(ledger, images, execution_ok):
             add(result.get('path'), 'scene', role, name)
         elif name == 'component_export':
             add(result.get('file'), 'component', role, name)
+        elif name in ('hda_create', 'hda_fork'):
+            add(result.get('hda_file'), 'asset', role, name)
+        elif name == 'tool_package_create':
+            add(result.get('package_file'), 'tool-package', role, name)
         elif name == 'render_frame':
             add(result.get('output'), 'render', role, name)
         elif name in ('render_view', 'viewport_screenshot'):
@@ -128,7 +132,7 @@ def _artifact_candidates(ledger, images, execution_ok):
             if not path:
                 path = result.get('output') if name == 'render_view' else result.get('path')
             default_role = 'visual-check' if name == 'render_view' else 'diagnostic'
-            add(path, 'image', role if policy == 'explicit' and verified else default_role if verified else 'diagnostic', name)
+            add(path, 'image', role if policy in ('explicit', 'delivery') and verified else default_role if verified else 'diagnostic', name)
     for path in images:
         if len(found) >= 16:
             break
@@ -145,6 +149,22 @@ def _operation_summary(name: str, result):
     """Small, untruncated evidence before verbose node lists/service metadata."""
     if not isinstance(result, dict):
         return None
+    if name.startswith('tool_package_'):
+        return {k: result[k] for k in (
+            'ok', 'action', 'dry_run', 'applied', 'phase', 'restored', 'restore_errors',
+            'package_file', 'resource_root', 'created', 'config_sha256', 'config_unchanged', 'source_unchanged',
+            'declared_resource_roots', 'effective_resource_roots', 'resource_roots', 'runtime_only', 'enabled_in_config',
+            'file_count', 'bytes', 'conflicts', 'blockers', 'affected_instances', 'unsupported_resource_locations', 'missing_resource_roots',
+            'runtime', 'runtime_root_matches_config', 'cached_python_modules', 'restart_required_for_python_cache',
+            'startup_directory_detected', 'startup_load_verified', 'package_exists', 'registration_created',
+            'cleanup_errors', 'native_action_attempted', 'scene_writes', 'file_writes', 'dispatched', 'scope',
+            'source_files_retained', 'unverified') if k in result}
+    if name in ('hda_create', 'hda_fork'):
+        return {k: result[k] for k in (
+            'ok', 'node', 'category', 'type', 'hda_file', 'source_node', 'source_type', 'source_library',
+            'copied', 'source_instances_migrated', 'instances_created', 'min_inputs', 'max_inputs', 'max_outputs',
+            'pending_spare_parameter_count', 'verification_scope', 'next_action', 'phase', 'restored',
+            'restore_errors', 'scene_writes') if k in result}
     r = result.get('validation', result) if name == 'build_module' else result
     if name in ('set_parm','set_parms') and ('evaluation' in r or 'evaluations' in r):
         return r
@@ -178,6 +198,10 @@ def _operation_summary(name: str, result):
         return {k: result[k] for k in ('ok', 'mode', 'node', 'dry_run', 'applied', 'phase',
                 'scene_writes', 'before_sha256', 'after_sha256', 'current_state_preserved',
                 'preserved_channels', 'restored', 'restore_errors', 'scope') if k in result}
+    if name in ('present_nodes','focus_node'):
+        return {k:result[k] for k in ('kind','scene_writes','requires_save','id','path','parent','network_current','parameter_current','scope') if k in result}
+    if name == 'network_controls':
+        return {k:result[k] for k in ('ok','parent','scene_writes','declared','removed','scope') if k in result}
     if name == 'network_boxes':
         return {k: result[k] for k in (
             'ok','dry_run','applied','phase','scene_writes','plan_sha256','parent',

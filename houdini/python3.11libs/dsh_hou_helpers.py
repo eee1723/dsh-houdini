@@ -112,7 +112,9 @@ _RENDER_OWNER_KEY = "dsh_houdini_owner"
 _RENDER_OWNER_VALUE = "render_view_v2"
 _RENDER_OBJ_BOX_NAME = "__dsh_houdini_render_service"
 _RENDER_OUT_BOX_NAME = "__dsh_houdini_render_service"
-_RENDER_BOX_COMMENT = "DSH-Houdini Render Service (persistent; do not delete during session)"
+# A semicolon in a native Network Box comment breaks its saved metadata load
+# on H21/H22, resetting the title and fixed bounds to their defaults.
+_RENDER_BOX_COMMENT = "DSH-Houdini Render Service (persistent)"
 
 # Ordinary task nodes use runtime provenance, not their parent/path/name, as the
 # authority boundary.  A user can create or duplicate a node inside an
@@ -1659,46 +1661,6 @@ def _val(v):
 
 # --- node 域：查 -----------------------------------------------------------
 
-def package_info(name: str | None = None, limit: int = 64) -> dict:
-    """Native loaded-package summaries, or bounded resources for one exact name.
-
-    No disk scan/install/reload; environment values omitted. Active is not
-    compatibility or edit permission. Missing GUI API is unavailable, not empty.
-    """
-    import json
-    if name is not None and (not isinstance(name,str) or not name.strip()):
-        raise ValueError('name must be an exact nonempty package name or None')
-    if type(limit) is not int or not 1 <= limit <= 256:
-        raise ValueError('limit must be 1..256')
-    base={'source':'hou.ui.packageInfo','houdini_version':hou.applicationVersionString(),
-          'checked_at':time.time(),'scope':'native package metadata; not compatibility or permission',
-          'environment_values_omitted':True}
-    if not hou.isUIAvailable() or not hasattr(getattr(hou,'ui',None),'packageInfo'):
-        return {**base,'ok':False,'status':'unavailable','reason':'GUI packageInfo API unavailable','packages':None}
-    raw=hou.ui.packageInfo()
-    if len(raw)>8*1024*1024:
-        return {**base,'ok':False,'status':'unavailable','reason':'metadata exceeds 8 MiB','packages':None}
-    data=json.loads(raw)
-    if not isinstance(data,dict):raise ValueError('unexpected native packageInfo schema')
-    selected=sorted(data) if name is None else [name] if name in data else []
-    rows=[]
-    for key in selected[:limit]:
-        p=data[key]
-        if not isinstance(p,dict):raise ValueError('unexpected package entry')
-        resources=p.get('Resources') or {}
-        row={'name':key,'config_path':p.get('File path'),'active':p.get('Active'),
-             'auto_load':p.get('Auto load'),'version':p.get('Version'),
-             'warnings':p.get('Warnings',[]),'resource_root':resources.get('Root folder'),
-             'publisher':'unverified'}
-        if name is not None:
-            row['resources']={k:v[:limit] for k,v in resources.items() if isinstance(v,list)}
-            row['resource_counts']={k:len(v) for k,v in resources.items() if isinstance(v,list)}
-            row['resources_truncated']=any(len(v)>limit for v in resources.values() if isinstance(v,list))
-        rows.append(row)
-    return {**base,'ok':True,'status':'observed' if name is None or rows else 'not_found',
-            'total':len(data),'matched':len(selected),'truncated':len(selected)>limit,'packages':rows}
-
-
 def find_nodes(pattern: str = "*", category=None, node_type=None, root=None) -> list:
     """在场景里找**已存在**的节点，返回扁平 path 列表（按路径排序）。
 
@@ -2496,7 +2458,8 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     ``mode='flow'`` = 自研拓扑分层（``_layout_flow``）：深度 0 最上、
     y = −depth × 垂直间距，同深度按当前 x 排序居中，环上边兜底不断裂。
     ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
-    ``mode='handoff'`` = 对显式叶子Network Box执行comfortable宽松布局；
+    ``mode='handoff'`` = 对显式叶子Network Box排布；comfortable保留宽松分层，
+    readable让连续主输入链竖直对齐、侧支分列，并把声明的控制/检查区分开。
     ``mode='component'`` = 对显式一层组件容器布局，整体移动其叶子框及节点。
     两者可直接应用；dry_run和expected_plan供需要预览/确认状态的调用使用。
     其他网络项全部作为固定障碍。
@@ -2791,6 +2754,54 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
             **({'next_action': "No literal matches; retry node_info with parm_filter='' before creating a probe. Pipe/glob/regex syntax is not interpreted."} if parm_filter and not parameters else {}),
             "truncated": len(parameters) > limit, "help_url": typ.defaultHelpUrl(),
             "note": "Static type contract; dynamic menus and shelf initialization may add parameters."}
+
+
+def network_controls(parent, controls=None, *, remove=None,
+                     allow_foreign: str | None = None) -> dict:
+    """Declare or list the actual user control entry nodes in a network.
+
+    controls=[{'node':'CTRL_ENGINEERING','label':'Engineering controls'}] explicitly
+    marks explicit nodes inside parent with a label saved in their HIP userData.
+    remove is an explicit node/path list. Neither names nor spare parms imply a role.
+    Omit controls/remove to list declared entries recursively without cooking.
+    Declarations only aid navigation; they prove no bindings or model correctness.
+    present_nodes publishes these entries as clickable node delivery cards.
+    """
+    from dsh_network_navigation import declare_controls, list_controls
+    p = _resolve(parent)
+    if controls is None and remove is None:
+        return {'parent': p.path(), 'controls': list_controls(p), 'scene_writes': 0}
+    return declare_controls(p, controls if controls is not None else [],
+                            remove if remove is not None else [],
+                            require_owned=_require_owned, allow_foreign=allow_foreign)
+
+
+def present_nodes(nodes, *, allow_foreign: str | None = None) -> dict:
+    """Declare clickable node entries for delivery alongside DSH's file cards.
+
+    nodes=[{'node':'/obj/asset/CTRL','label':'Engineering controls','role':'control',
+            'description':'Adjust dimensions and repetition'},
+           {'node':'/obj/asset/OUT','label':'Model output','role':'output'}].
+    Saves a persistent reference ID on explicit nodes when absent; ownership applies.
+    Save the named HIP after first declaration so cards survive reopening it.
+    role is navigation intent, never control/geometry certification. new_identity=True
+    is for explicitly renewing a copied entry and invalidates its previous ID.
+    Return this value as __result__ to publish cards from the ordinary tool result.
+    """
+    from dsh_network_navigation import present_nodes as present
+    return present(nodes, require_owned=_require_owned, allow_foreign=allow_foreign)
+
+
+def focus_node(reference, *, expected_hip: str) -> dict:
+    """Explicit UI navigation by a delivered persistent ID in the expected HIP.
+
+    Used by node delivery clicks through the main-thread queue. Expands containing
+    boxes, locates the actual node and opens parameters; no geometry/parameter
+    edits or HIP load/save. Renames and same-HIP reopen keep the entry valid;
+    missing or duplicated IDs and a different HIP are reported without guessing.
+    """
+    from dsh_network_navigation import focus_reference
+    return focus_reference(reference, expected_hip=expected_hip)
 
 
 def list_parms(node) -> list:
@@ -4109,16 +4120,19 @@ def hda_create(
 ) -> dict:
     """把已有节点（通常 subnet）转为 HDA；默认写到 ``$HIP/otls``。
 
-    ``replace=False`` 遇到同名已安装类型会报错且零修改。``replace=True`` 会先
-    销毁同类型的全部现有实例，再逐一定义 ``destroy()``（只删目标定义，不会粗暴
-    uninstall 整个多资产库），最后从传入的源节点重建。传入源节点本身不能已经是
-    待替换类型，否则销毁实例后就没有可供重建的源节点。
+    同名已安装类型或已存在目标文件在写前拒绝。replace=True不再支持；维护已有
+    工具时用hda_fork复制到全新类型和独立文件，原实例与定义保持不变。
     max_outputs可选1..64，None保留原生默认；这是端口上限，不会自动接线。
     实例spare不保证进入定义；返回pending_spare_parameters与原地hda_edit('promote')指引。
     不以创建成功替代新实例/公共输出验证；转换只接续可证明来自同一锁定原生定义的自有后代。
     """
     n = _resolve(node)
     _require_owned(n, "hda_create", allow_foreign)
+    if type(replace) is not bool:
+        raise ValueError('replace must be boolean')
+    if replace:
+        raise ValueError('hda_create replace=True is not supported: it would destroy shared instances/definitions. '
+                         'Use hda_fork with a new type name and new independent library file; migrate only explicitly selected instances separately.')
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name 必须是非空 HDA 类型名")
     name = name.strip()
@@ -4134,78 +4148,21 @@ def hda_create(
 
     category = n.type().category()
     existing_type = category.nodeTypes().get(name)
-    definitions = []
-    instances = []
     if existing_type is not None:
-        try:
-            definitions = list(existing_type.allInstalledDefinitions())
-        except Exception:
-            d = existing_type.definition()
-            definitions = [d] if d is not None else []
-        try:
-            instances = list(existing_type.instances())
-        except Exception:
-            instances = []
-
-    # 不能用 replace 抢占 Houdini 原生/编译节点类型；否则 instances() 会把场景里
-    # 所有同类原生节点都列出来，按“替换 HDA”语义销毁将造成灾难性误删。
-    if existing_type is not None and not definitions:
-        raise ValueError(
-            f"类型名 '{name}' 已被 Houdini 原生/无可编辑 definition 的节点类型占用；"
-            "replace 也不会覆盖它，请换一个带项目/工作室命名空间的 HDA 类型名"
-        )
-
-    if (definitions or instances) and not replace:
+        definitions = list(existing_type.allInstalledDefinitions())
         files = sorted({d.libraryFilePath() for d in definitions})
-        paths = sorted(i.path() for i in instances)
-        raise ValueError(
-            f"HDA 类型 '{name}' 已存在；definitions={files}，instances={paths}。"
-            "确认要整体重建时传 replace=True"
-        )
-    if replace and existing_type is n.type():
-        raise ValueError(
-            f"源节点 '{n.path()}' 本身就是待替换类型 '{name}'；"
-            "请先建一个普通 subnet 作为重建源，避免 replace 销毁源节点"
-        )
-    if replace:
-        # Preflight the entire destructive set before destroying any instance
-        # or creating a directory. A later foreign instance must not leave an
-        # earlier instance deleted when undo is disabled.
-        ancestors = set()
-        ancestor = n.parent()
-        while ancestor is not None:
-            ancestors.add(int(ancestor.sessionId()))
-            ancestor = ancestor.parent()
-        for inst in instances:
-            if int(inst.sessionId()) in ancestors:
-                raise ValueError('hda_create replacement source is inside an instance that would be destroyed')
-            _require_owned(inst, 'hda_create replace instance', allow_foreign)
-            for child in inst.allSubChildren():
-                _require_owned(child, 'hda_create replace descendant', allow_foreign)
+        raise ValueError(f"HDA 类型 '{name}' 已存在或为原生类型；definitions={files}。"
+                         "请使用新类型名；已有工具用hda_fork，不覆盖共享定义。")
 
     target = _default_hda_file(name) if hda_file is None else hou.expandString(str(hda_file))
     target = os.path.abspath(target)
+    from dsh_hda_interfaces import require_library_location
+    require_library_location(target)
+    if os.path.lexists(target):
+        raise ValueError(f'HDA target file already exists: {target}; use a new independent library file, never append to or replace an existing shared library')
     parent_dir = os.path.dirname(target)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
-
-    destroyed = []
-    removed_definitions = []
-    if replace:
-        # 子实例先删，避免父实例删除后子路径失效。
-        for inst in sorted(instances, key=lambda x: x.path().count("/"), reverse=True):
-            _require_owned(inst, "hda_create replace instance", allow_foreign)
-            path = inst.path()
-            session_ids = [int(inst.sessionId())]
-            session_ids.extend(int(child.sessionId()) for child in inst.allSubChildren())
-            inst.destroy()
-            for session_id in session_ids:
-                _OWNED_NODE_SESSIONS.pop(session_id, None)
-            destroyed.append(path)
-        for definition in definitions:
-            file_path = definition.libraryFilePath()
-            definition.destroy()
-            removed_definitions.append(file_path)
 
     source_identity = int(n.sessionId())
     source_owner = _OWNED_NODE_SESSIONS.get(source_identity)
@@ -4217,13 +4174,15 @@ def hda_create(
         min_num_inputs=min_inputs,
         max_num_inputs=max_inputs,
         change_node_type=True,
-        create_backup=not replace,
+        create_backup=True,
     )
     definition = created.type().definition()
     if definition is None:
         raise RuntimeError(f"createDigitalAsset 返回后类型 '{name}' 没有 definition")
     if max_outputs is not None:
         definition.setMaxNumOutputs(max_outputs)
+    from dsh_hda_interfaces import register_created_definition
+    register_created_definition(definition)
     # Conversion invalidates native delayed internals (e.g. a Wrangle's VOP).
     # Materialize only captured native anchors within this serialized mutation,
     # never arbitrary user definitions or a future cook/adoption rule.
@@ -4256,10 +4215,61 @@ def hda_create(
                         "Verify a fresh instance before considering replacement."
                         if pending_spares else "Verify fresh-instance parameters and public outputs; later internal edits require hda_edit save."),
         "verification_scope": "definition created; spare migration, public outputs and fresh-instance behavior require separate verification",
-        "replaced": bool(replace),
-        "destroyed_instances": destroyed,
-        "removed_definitions": removed_definitions,
+        "replaced": False,
+        "destroyed_instances": [],
+        "removed_definitions": [],
     }
+
+
+def hda_fork(node, name: str, hda_file: str, description: str | None = None) -> dict:
+    """Copy the source's actual HDA definition into a NEW type and NEW library.
+
+    Reading the source does not require node ownership. Never copies unsaved
+    instance edits, changes the original definition, migrates original instances,
+    or creates an instance. The new type is installed only in this process; use
+    tab_create with the returned exact type and verify its public behavior.
+    """
+    n, source = _hda_definition(node)
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError('name must be an explicit nonempty new HDA type name')
+    name = name.strip()
+    category = n.type().category()
+    if name == n.type().name() or name in category.nodeTypes():
+        raise ValueError('hda_fork requires a new type name; never shadows an installed type or migrates its instances')
+    if not isinstance(hda_file, str) or not hda_file.strip():
+        raise ValueError('hda_file must be an explicit new independent library path')
+    if description is not None and (not isinstance(description, str) or not description.strip()):
+        raise ValueError('description must be a nonempty string or None')
+    target = os.path.abspath(hou.expandString(hda_file))
+    from dsh_hda_interfaces import require_library_location
+    require_library_location(target)
+    if os.path.lexists(target):
+        raise ValueError(f'HDA target file already exists: {target}; fork requires a new independent library')
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    source_file = source.libraryFilePath()
+    try:
+        source.copyToHDAFile(target, new_name=name, new_menu_name=description)
+        hou.hda.installFile(target)
+        fork_type = category.nodeTypes().get(name)
+        definition = fork_type.definition() if fork_type else None
+        if definition is None or os.path.normcase(os.path.realpath(definition.libraryFilePath())) != os.path.normcase(os.path.realpath(target)):
+            raise RuntimeError('fork did not resolve to its newly created library')
+        from dsh_hda_interfaces import register_created_definition
+        register_created_definition(definition)
+    except Exception:
+        # Only this absent-before file/new type is eligible for failed-copy cleanup.
+        for loaded in hou.hda.loadedFiles():
+            if os.path.normcase(os.path.realpath(loaded)) == os.path.normcase(os.path.realpath(target)):
+                hou.hda.uninstallFile(loaded)
+        if os.path.isfile(target):
+            os.unlink(target)
+        raise
+    return {'ok': True, 'category': category.name(), 'type': definition.nodeTypeName(),
+            'description': definition.description(), 'hda_file': definition.libraryFilePath(),
+            'source_node': n.path(), 'source_type': n.type().name(), 'source_library': source_file,
+            'copied': 'current definition only; unsaved instance changes excluded',
+            'source_instances_migrated': 0, 'instances_created': 0,
+            'next_action': 'Create an instance with tab_create using this exact type, then verify controls, public outputs and dependencies.'}
 
 
 def hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None) -> dict:
@@ -4495,12 +4505,16 @@ def _write_hda_section(definition: hou.HDADefinition, section: str, code: str) -
 
 def hda_set_section(node, section: str, code: str,
                     allow_foreign: str | None = None) -> dict:
-    """全量写 HDA section；PythonModule 写前编译、写后逐字读回校验。"""
+    """Shared-definition/library authorization and recovery; PythonModule compiles first."""
     n, definition = _hda_definition(node)
     _require_owned(n, "hda_set_section", allow_foreign)
     if not isinstance(section, str) or not section.strip():
         raise ValueError("section 必须是非空字符串")
-    out = _write_hda_section(definition, section.strip(), code)
+    section = section.strip()
+    _validate_section_code(section, code)
+    from dsh_hda_interfaces import definition_write_guard
+    with definition_write_guard(n, 'hda_set_section', allow_foreign):
+        out = _write_hda_section(definition, section, code)
     out["node"] = n.path()
     return out
 
@@ -4530,7 +4544,10 @@ def hda_patch_section(
             "0 次说明锚点过期，多于期望说明锚点不唯一，请扩大 old 上下文"
         )
     patched = source.replace(old, new, count)
-    out = _write_hda_section(definition, section, patched)
+    _validate_section_code(section, patched)
+    from dsh_hda_interfaces import definition_write_guard
+    with definition_write_guard(n, 'hda_patch_section', allow_foreign):
+        out = _write_hda_section(definition, section, patched)
     out.update({"node": n.path(), "replacements": count})
     return out
 
@@ -4721,7 +4738,14 @@ def _build_interface_template(
     elif kind == "string":
         default = str(item.get("default", ""))
         file_kind = item.get("file")
+        string_kind = item.get('string_type', 'regular')
+        if string_kind not in ('regular', 'node'):
+            raise ValueError(f'{path}.string_type must be regular/node')
+        if string_kind == 'node' and file_kind is not None:
+            raise ValueError(f'{path}: node reference and file selector are mutually exclusive')
         kwargs = {"default_value": (default,)}
+        if string_kind == 'node':
+            kwargs['string_type'] = hou.stringParmType.NodeReference
         if file_kind is not None:
             file_key = str(file_kind).strip().lower()
             file_types = {
@@ -4944,6 +4968,8 @@ def _rebuild_hda_interface(node, spec=None, keep_std=True, hide_builtin_tabs=Fal
         raise ValueError('dry_run must be boolean')
     n, definition = _hda_definition(node)
     _require_owned(n, "hda_set_interface", allow_foreign)
+    from dsh_hda_interfaces import require_definition_owned
+    require_definition_owned(definition, 'hda_set_interface rebuild', allow_foreign)
     for instance in n.type().instances():
         _require_owned(instance, 'hda_set_interface rebuild affected instance', allow_foreign)
     if not isinstance(spec, (list, tuple)):
@@ -5696,12 +5722,12 @@ def _resolve_output_path(path, *, frame, default_subdir="render") -> str:
 def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
                       default_subdir, allowed_extensions=_PREVIEW_IMAGE_EXTS):
     """Resolve preview output policy before renderer/viewer state changes."""
-    if output_policy not in ("managed", "explicit"):
-        raise ValueError("output_policy must be 'managed' or 'explicit'")
+    if output_policy not in ("managed", "delivery", "explicit"):
+        raise ValueError("output_policy must be 'managed', 'delivery' or 'explicit'")
     scene = scene_info()
     hip_path = scene["hip_path"] if scene["has_named_path"] else None
     from dsh_preview_paths import allocate_managed, explicit_artifact, _safe_component
-    if output_policy == "managed":
+    if output_policy in ("managed", "delivery"):
         # Validate literal caller input before expansion/allocation. Only this
         # pure filename check proves zero scene writes; later failures keep
         # their own recovery semantics (including expression/renderer effects).
@@ -5724,6 +5750,7 @@ def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
             default_extension=".png",
             allowed_extensions=allowed_extensions,
             expand=lambda value: hou.expandStringAtFrame(value, float(frame)),
+            output_policy=output_policy,
         )
         return artifact["actual_path"], artifact, hip_path
     if path is None:
@@ -6347,7 +6374,8 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
 
     Managed output (the default) accepts only an omitted filename or safe
     basename and writes under ``$HIP/dsh-visual-checks/<run-id>/``. Deliberate
-    destinations use ``output_policy='explicit'``.  The capture is a user-screen
+    Delivery images use ``output_policy='delivery'`` under ``$HIP/dsh-render``;
+    custom destinations use ``output_policy='explicit'``. The capture is a user-screen
     diagnostic: readable pixels are required, but visual semantics remain
     unverified.  H21/H22 require stashed flipbook and viewport-camera state;
     unsupported restoration combinations reject before mutation.
@@ -6721,6 +6749,18 @@ def _owned_node(parent: hou.Node, name: str, type_name: str) -> hou.Node:
         return node
     node = parent.createNode(type_name, node_name=name)
     node.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
+    # H22 may add a flipbook renderer to a HIP that already has H21's OpenGL
+    # renderer. Place only this newly created root service node beside the
+    # existing service group; its default origin would enlarge the box again.
+    if (parent.path() in ('/obj', '/out')
+            and parent.findNetworkBox(_RENDER_OBJ_BOX_NAME) is not None):
+        existing = [child for child in parent.children()
+                    if child != node
+                    and child.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE]
+        if existing:
+            node.setPosition(hou.Vector2(
+                min(float(child.position()[0]) for child in existing),
+                min(float(child.position()[1]) for child in existing) - 1.5))
     return node
 
 
@@ -6730,6 +6770,8 @@ def _render_service_box(parent: hou.Node, name: str,
 
     Only the first creation chooses a position. Subsequent calls preserve any
     placement the user made while still repairing box membership/comment.
+    Persist a fixed fit. The title must round-trip through HIP metadata; an
+    invalid native title can reset the bounds to the origin on the next load.
     """
     box = parent.findNetworkBox(name)
     created = box is None
@@ -6747,12 +6789,20 @@ def _render_service_box(parent: hou.Node, name: str,
         for index, node in enumerate(nodes):
             node.setPosition(hou.Vector2(anchor_x, anchor_y - index * 1.5))
 
+    # A HIP can retain both H21's OpenGL ROP and H22's flipbook ROP. They are
+    # persistent service nodes even when only one is used by this preview.
+    owned = {
+        child for child in parent.children()
+        if child.userData(_RENDER_OWNER_KEY) == _RENDER_OWNER_VALUE
+    }
     members = set(box.items(recurse=False))
-    for node in nodes:
-        if node not in members:
-            box.addItem(node)
+    for item in members - owned:
+        box.removeItem(item)
+    for node in owned - members:
+        box.addItem(node)
     box.setComment(_RENDER_BOX_COMMENT)
-    box.setColor(hou.Color((0.16, 0.30, 0.48)))
+    box.setColor(hou.Color((0.12, 0.20, 0.30)))
+    box.setAutoFit(False)
     box.fitAroundContents()
     from dsh_network_boxes import register_service_box
     register_service_box(box)
@@ -7060,7 +7110,8 @@ def render_view(node, direction="iso", frame=None,
     - ``frame``：帧号；None = 当前帧。
     - ``picture/output_policy``：默认managed，只接收省略或安全basename并写入
       ``$HIP/dsh-visual-checks/<run-id>/``；用户明确目的地或隔离测试路径须传
-      ``output_policy='explicit'``。两种模式均返回``artifact``路径事实。
+      最终交付用``output_policy='delivery'``分配到``$HIP/dsh-render/``；自定路径用
+      ``output_policy='explicit'``。各模式均返回``artifact``路径事实，输出位置不证明验收通过。
     - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
       detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。
     - ``coverage``：full中央安全框宽/高占比（0.1..0.95）；.82为每侧至少9%边距。

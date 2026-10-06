@@ -11,7 +11,7 @@ import dsh_release_policy as releases
 
 _WINDOW = None
 
-from dsh_ui_style import style_dialog, confirm_dialog
+from dsh_ui_style import style_dialog, confirm_dialog, show_tool_window
 
 
 def show_source(*, parent=None):
@@ -29,8 +29,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     if _WINDOW is not None:
         if context_provider is not None:
             _WINDOW._dsh_context_provider = context_provider
-        _WINDOW.raise_()
-        _WINDOW.activateWindow()
+        show_tool_window(_WINDOW)
         return _WINDOW
     if parent is None:
         import hou

@@ -319,6 +319,7 @@ def restart_bridge(*, port=None) -> str:
     import dsh_preview_paths
     import dsh_network_layout
     import dsh_network_boxes
+    import dsh_network_navigation
     import dsh_hou_helpers
     import dsh_hda_interfaces
     import dsh_parameter_ui
@@ -354,6 +355,7 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_preview_paths)     # path policy before helper wrappers
     importlib.reload(dsh_network_layout)
     importlib.reload(dsh_network_boxes)
+    importlib.reload(dsh_network_navigation)
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
     importlib.reload(dsh_hda_interfaces)
     importlib.reload(dsh_parameter_ui)
@@ -814,7 +816,8 @@ def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
         _ACTIVE_STARTUP['frontend_cwd'] = _hip_dir()
         dialog = _PENDING.get('dialog')
         if dialog is not None:
-            dialog.show(); dialog.raise_()
+            from dsh_ui_style import show_tool_window
+            show_tool_window(dialog)
         _report('startup is stopping' if _ACTIVE_STARTUP.get('canceled') else
                 'startup already in progress; current HIP workspace will open when ready')
         return

@@ -48,6 +48,15 @@ try:
         assert rejected['verbs'][0]['summary']['phase'] == 'output_path_preflight', rejected
         assert rejected['verbs'][0]['summary']['scene_writes'] == 0, rejected
         assert not rejected['execution']['impact']['attempted'], rejected
+        for policy in ('managed', 'delivery'):
+            for filename in ('nested/preview.png', '`python("1")`.png'):
+                allocated = dsh_bridge.run_code(
+                    f"render_view({target_path!r}, picture={filename!r}, output_policy={policy!r})",
+                    owner_session=session, owner_call='allocated-path-preflight')
+                assert not allocated['ok'] and allocated['transaction']['status'] == 'no_scene_change', allocated
+                assert allocated['verbs'][0]['summary']['phase'] == 'output_path_preflight', allocated
+                assert allocated['verbs'][0]['kwargs']['output_policy'] == policy, allocated
+                assert not allocated['execution']['impact']['attempted'], allocated
         before_tx = hou.node(target_path).parm('tx').eval()
         mixed = dsh_bridge.run_code(
             f"set_parm({target_path!r}, 'tx', 2)\n" + preview,

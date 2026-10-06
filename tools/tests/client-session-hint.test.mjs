@@ -136,7 +136,7 @@ const hinted = await run(
 );
 assert.deepEqual(hinted.injected, [[
   'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace', 'layout',
-], ['connection']]);
+], ['connection'], ['connection', 'uiConversation']]);
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },
@@ -365,6 +365,15 @@ assert.equal(plain.registrations.houdinitrace.options.label, '执行记录');
 assert.equal(plain.registrations['houdini-workspace-status'].options.name, 'conversation.input.dock');
 
 const workspaceStatus = plain.registrations['houdini-workspace-status'].component;
+const deliveryScope = plain.registrations['houdini-delivery-scope'].component;
+assert.equal(plain.registrations['houdini-delivery-scope'].options.name,'conversation.chat.turnTail');
+for (const preset of ['houdini','standard',undefined]) {
+  const marker=deliveryScope({sessionId:'s',useSessions:fn=>fn({byId:{s:{projectionValues:{agentPreset:preset}}}})});
+  if (preset==='houdini') {
+    assert.equal(marker.props.hidden,true);
+    assert.equal(marker.props['data-houdini-workspace'],true);
+  } else assert.equal(marker,null,'delivery appearance must remain local to Houdini tasks');
+}
 const statusProps = (hip, cwd = 'E:/work') => ({sessionId:'s',
   useSessions:fn=>fn({byId:{s:{cwd,projectionValues:{agentPreset:'houdini'}}}}),
   useTrajectory:fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},

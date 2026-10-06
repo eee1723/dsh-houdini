@@ -8,7 +8,7 @@ import hou
 
 def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None):
     import dsh_hou_helpers as h
-    from dsh_hda_interfaces import definition_write_guard, _snapshot, _restore, parameter_states
+    from dsh_hda_interfaces import definition_write_guard, require_definition_owned, _snapshot, _restore, parameter_states
     n, definition = h._hda_definition(node)
     if action not in ('unlock', 'save', 'lock', 'promote'):
         raise ValueError('action must be unlock, save, lock or promote; flatten/unpack is not supported')
@@ -17,6 +17,8 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
     if discard_changes and action != 'lock':
         raise ValueError('discard_changes is only valid for lock')
     h._require_owned(n, 'hda_edit '+action, allow_foreign)
+    if action in ('save', 'promote'):
+        require_definition_owned(definition, 'hda_edit '+action, allow_foreign)
     library = definition.libraryFilePath()
     if not os.path.isfile(library) or os.path.islink(library) or os.path.getsize(library)>32*1024*1024:
         raise ValueError('hda_edit requires a regular disk library <=32 MiB')

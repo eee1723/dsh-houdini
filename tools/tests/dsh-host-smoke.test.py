@@ -94,6 +94,10 @@ export function apply(ctx) {
           ['ui-inspect','houdini_inspect',{code:'__result__ = scene_info()'},{ok:true,result:{objects:[]},execution:{hip_dir:null,hip_is_new:true}}],
           ['ui-create','houdini_exec',{code:'tab_create("/obj", "geo", "asset")'},{ok:true,verbs:[{verb:'tab_create',ms:5,args:['/obj','geo','asset'],ok:true,result:'/obj/asset'}],execution:{hip_dir:null,hip_is_new:true}}],
           ['ui-failure','houdini_exec',{code:'set_parms("/obj/asset", {unknown: 1})'},{ok:false,error:'参数不存在：unknown',verbs:[{verb:'set_parms',args:['/obj/asset',{unknown:1}],ms:1,ok:false,error:'参数不存在：unknown'}],execution:{hip_dir:null,hip_is_new:true}}],
+          ['ui-warning','houdini_exec',{code:'verify_network("/obj/asset", output="/obj/asset/OUT")'},
+            {ok:true,outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:1,unverified:0}},
+             verbs:[{verb:'verify_network',ok:true,check_status:'warning',args:['/obj/asset'],ms:1,
+               result:{output:'/obj/asset/OUT',warnings:['夹具：输出存在属性警告']}}],execution:{hip_dir:null,hip_is_new:true}}],
         ]) {
           agent.session.append('tool/call',{turn:1,step:1,callId,name,arguments:JSON.stringify(args)});
           agent.session.append('tool/result',{turn:1,step:1,message:{role:'tool',source:{kind:'tool',callId},

@@ -30,6 +30,15 @@ try:
     assert all(row['artifact']['output_policy']=='managed' for row in managed)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in managed)
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
+    delivered=[h.render_view(box,picture='final.png',output_policy='delivery') for _ in range(2)]
+    assert len({row['output'] for row in delivered})==2
+    assert all(Path(row['output']).parent.resolve()==(Path(tmp)/'dsh-render').resolve() for row in delivered)
+    assert all(row['artifact']['output_policy']=='delivery' for row in delivered)
+    assert all(row['artifact']['actual_path']==row['output'] for row in delivered)
+    assert all(row['artifact']['hip_relative_path'].startswith('dsh-render/') for row in delivered)
+    assert all(row['artifact']['purpose']==managed[0]['artifact']['purpose'] for row in delivered)
+    assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in delivered)
+    assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
     real_ensure=h._ensure_render_proxy
     def partial_proxy(target):
         proxy=hou.node('/obj/'+h._RENDER_PROXY_NAME)
@@ -54,11 +63,13 @@ try:
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
     h.render_frame=lambda *_args,**_kwargs:(_ for _ in ()).throw(RuntimeError('injected renderer failure'))
     try:
-        try:h.render_view(box,picture='renderer-failure.png')
-        except RuntimeError as error:assert 'injected renderer failure' in str(error)
-        else:raise AssertionError('renderer failure should propagate')
+        for policy in ('managed','delivery'):
+            try:h.render_view(box,picture='renderer-failure.png',output_policy=policy)
+            except RuntimeError as error:assert 'injected renderer failure' in str(error)
+            else:raise AssertionError('renderer failure should propagate')
     finally:h.render_frame=render
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
     result=h.render_view(box,picture=tmp+'/first.png',output_policy='explicit')
     r=calls[-1]
     if hou.applicationVersion()[0]>=22:

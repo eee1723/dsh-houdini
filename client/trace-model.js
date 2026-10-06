@@ -22,6 +22,28 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
   const requestKey = (r) => r.purpose + ":" + r.startSeq;
   const pairKey = (turn, step) => turn + ":" + step;
   const own = (v, k) => v != null && Object.prototype.hasOwnProperty.call(v, k);
+  const checkLabels = {failed: "检查未通过", warning: "检查有警告", unverified: "检查未验证"};
+  // Read producer-assigned check status, never infer it from geometry or prose.
+  function checkFindings(canonical, parts) {
+    const ledger = array(canonical?.verbs);
+    const rows = ledger.length ? ledger : array(json(parts.checks));
+    return rows.flatMap(v => {
+      const status = ledger.length ? v.check_status : v.status;
+      if (!own(checkLabels, status)) return [];
+      const result = v.result?.validation ?? v.result;
+      const facts = {...(result && typeof result === 'object' ? result : {}), ...v.summary};
+      const target = facts.output || facts.path || facts.node;
+      const reasons = [facts.reason, facts.error, ...array(facts.failure_reasons),
+        ...array(facts.risk_reasons), ...array(facts.errors), ...array(facts.warnings),
+        ...array(facts.issues).flatMap(issue => [...array(issue.errors), ...array(issue.warnings)]
+          .filter(reason => typeof reason === 'string').map(reason => `${issue.path || ''} ${reason}`.trim())),
+        ...array(facts.control_summary?.failures).map(failure => `测试 ${failure.id ?? '未记录'}：${failure.status ?? '未记录'}`)]
+        .filter(reason => typeof reason === 'string' && reason);
+      return [{status, label: checkLabels[status], verb: v.verb,
+        target: typeof target === 'string' ? target : null,
+        reason: [...new Set(reasons)].join('；') || null}];
+    });
+  }
   // Reading groups inferred from recognizable text, never runtime provenance.
   // Bodies always come from the selected historical request, including unknowns.
   const promptRules = [
@@ -296,6 +318,9 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       const operationFailures = outcome?.operations?.failed ?? info.verbs.filter(v => v.ok === false).length;
       const checkCounts = outcome?.checks || null;
       const checkAttention = checkCounts ? Object.values(checkCounts).reduce((n, count) => n + count, 0) : 0;
+      const checkSummary = Object.entries(checkLabels).filter(([status]) => checkCounts?.[status] > 0)
+        .map(([status, label]) => `${label} ${checkCounts[status]} 项`).join(' · ');
+      const findings = checkFindings(canonical, parts);
       const requestReceipt = canonical?.requestReceipt ?? json(parts['request-receipt']);
       const receiptStatus = requestReceipt?.status;
       const recoveryNeeded = ['unknown_transport', 'unknown_runtime', 'unknown', 'result_expired', 'result_unavailable'].includes(receiptStatus);
@@ -356,7 +381,8 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
               : operationFailures
                 ? "已完成 · 子操作失败"
                 : checkAttention
-                  ? "已完成 · 检查需关注"
+                  ? "已完成 · " + (checkCounts.failed > 0 ? checkLabels.failed
+                    : checkCounts.warning > 0 ? checkLabels.warning : checkLabels.unverified)
               : transaction?.status === "committed"
                 ? "已提交"
                 : "已成功");
@@ -404,6 +430,10 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         operationFailures,
         checkCounts,
         checkAttention,
+        checkSummary,
+        checkFindings: findings,
+        attentionLevel: failed || operationFailures > 0 || checkCounts?.failed > 0 ? 'error'
+          : checkCounts?.warning > 0 || recoveryNeeded ? 'warning' : 'unknown',
         attention,
         requestReceipt,
         recoveryNeeded,

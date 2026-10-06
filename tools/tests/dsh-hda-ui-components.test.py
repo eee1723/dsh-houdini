@@ -64,7 +64,7 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
             assert not n.parm('profile_ramp').isHidden()
             assert not n.parm('direction_weight').isDisabled()
             assert len(n.parm('profile_ramp').evalAsRamp().keys())==2
-        else:
+        elif name=='attribute_controls':
             assert n.parmTemplateGroup().find('range_heading').columnLabels()==('Value Range',)
             assert n.parmTuple('preview_color').eval()==(0.2,0.6,0.9)
             assert n.evalParm('entries')==2 and n.parm('entry_name2') is not None
@@ -74,6 +74,23 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
             assert n.evalParm('entry_name3')=='second'
             n.parm('entries').removeMultiParmInstance(1)
             assert n.evalParm('entry_name2')=='second'
+        else:
+            assert n.parm('source_node').parmTemplate().stringType()==hou.stringParmType.NodeReference
+            assert n.parm('source_node').parmTemplate().tags()['opfilter']=='!!SOP!!'
+            assert n.parm('source_node').parmTemplate().label()=='参考节点'
+            n.updateParmStates()
+            assert n.evalParm('value_source')==0 and n.parm('value_source').evalAsString()=='constant'
+            assert not n.parm('amount').isHidden()
+            assert n.parm('attribute_name').isHidden() and n.parm('texture_file').isHidden()
+            run(f"set_parms({path!r},{{'value_source':1,'source_node':'..'}})")
+            n.updateParmStates()
+            assert n.parm('amount').isHidden() and not n.parm('attribute_name').isHidden()
+            assert n.evalParm('source_node')=='..'
+            assert n.evalParm('regions')==1
+            n.parm('regions').insertMultiParmInstance(1)
+            n.parm('region_name1').set('近景');n.parm('region_name2').set('远景')
+            n.parm('region_enabled1').set(0);n.updateParmStates()
+            assert n.parm('region_weight1').isDisabled()
         # Header/help/controls survive save/reload, without serializing user assets.
         hip=Path(temp)/(name+'.hip')
         hou.hipFile.save(str(hip))
@@ -82,6 +99,12 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
         assert n is not None
         if name=='attribute_controls':
             assert n.evalParm('entry_name2')=='second'
+        if name=='artist_controls':
+            n.updateParmStates()
+            assert n.evalParm('region_name2')=='远景'
+            assert n.parm('value_source').evalAsString()=='attribute'
+            assert not n.parm('attribute_name').isHidden() and n.parm('texture_file').isHidden()
+            assert n.evalParm('source_node')=='..'
         # Save optional generic gallery artifacts only when a caller explicitly supplies a directory.
         output=os.environ.get('DSH_UI_GALLERY_OUTPUT')
         if output:
@@ -96,6 +119,9 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
             ([{'component':'section','name':'s','parms':[],'enabld':True}],'unknown'),
             ([{'type':'float','name':'vec','components':3,'default':[0,1]}],'match components'),
             ([{'component':'repeater','name':'items','parms':[{'type':'float','name':'value'}]}],'placeholders'),
+            ([{'component':'mode','name':'source','default':'missing','choices':[{'token':'constant','parms':[]}]}],'default'),
+            ([{'component':'mode','name':'source','choices':[{'token':'x','parms':[]},{'token':'x','parms':[]}]}],'unique'),
+            ([{'type':'string','name':'source','string_type':'node','file':'geo'}],'file'),
         ]:
             before=n.type().definition().sections()['DialogScript'].contents()
             rejects(lambda: h.hda_set_interface(n,layout=layout,keep_std=False,
@@ -106,6 +132,10 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
     # No restriction that all UIs use components: one plain control stays one control.
     plain=[{'type':'float','name':'simple','default':1}]
     assert expand_layout(plain)==plain
+    # A local condition remains in force when its mode becomes visible.
+    gated=expand_layout([{'component':'mode','name':'m','choices':[{'token':'a','parms':[
+        {'type':'float','name':'value','hide_when':'{ local == 0 }'}]}]}])
+    assert gated[1]['parms'][0]['hide_when']=='{ local == 0 } { m != a }'
     hou.hipFile.clear(suppress_save_prompt=True)
 
 print('UI components/conditions/tuples/ramp/multiparm/reload passed on '+hou.applicationVersionString())

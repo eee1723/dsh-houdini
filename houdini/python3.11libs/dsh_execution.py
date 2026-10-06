@@ -21,6 +21,10 @@ import hou
 import dsh_hou_helpers
 import dsh_component_contracts
 import dsh_network_boxes
+import dsh_network_navigation
+import dsh_tool_catalog
+import dsh_tool_packages
+import dsh_package_discovery
 from dsh_code_analysis import CodeAnalysis, _raw_hou_advisory, _repo_write_advisory
 from dsh_execution_results import (
     _MAX_STREAM_BYTES, _CappedStringIO, _jsonable,
@@ -108,7 +112,12 @@ _VERBS: dict[str, object] = {
     "component_export": dsh_component_contracts.component_export,
     "component_import": dsh_component_contracts.component_import,
     "component_replace": dsh_component_contracts.component_replace,
-    "package_info": dsh_hou_helpers.package_info,
+    "package_catalog": dsh_package_discovery.package_catalog,
+    "package_inspect": dsh_package_discovery.package_inspect,
+    "tool_catalog": dsh_tool_catalog.tool_catalog,
+    "tool_inspect": dsh_tool_catalog.tool_inspect,
+    "tool_package_create": dsh_tool_packages.tool_package_create,
+    "tool_package_action": dsh_tool_packages.tool_package_action,
     "verb_help": _verb_help,
     "scene_info": dsh_hou_helpers.scene_info,
     "scene_save": dsh_hou_helpers.scene_save,
@@ -142,6 +151,9 @@ _VERBS: dict[str, object] = {
     "visible_objects": dsh_hou_helpers.visible_objects,
     "layout_nodes": dsh_hou_helpers.layout_nodes,
     "network_boxes": dsh_hou_helpers.network_boxes,
+    "network_controls": dsh_hou_helpers.network_controls,
+    "present_nodes": dsh_hou_helpers.present_nodes,
+    "focus_node": dsh_hou_helpers.focus_node,
     "list_parms": dsh_hou_helpers.list_parms,
     "read_parms": dsh_hou_helpers.read_parms,
     "set_parm": dsh_hou_helpers.set_parm,
@@ -151,6 +163,7 @@ _VERBS: dict[str, object] = {
     "parameter_ui": dsh_hou_helpers.parameter_ui,
     "bind_controls": dsh_hou_helpers.bind_controls,
     "hda_create": dsh_hou_helpers.hda_create,
+    "hda_fork": dsh_hou_helpers.hda_fork,
     "hda_edit": dsh_hou_helpers.hda_edit,
     "hda_get_section": dsh_hou_helpers.hda_get_section,
     "hda_set_section": dsh_hou_helpers.hda_set_section,
@@ -179,13 +192,14 @@ _VERBS: dict[str, object] = {
 
 
 _MUTATING_VERB_NAMES = {
+    "tool_package_create", "tool_package_action",
     "component_export", "component_import", "component_replace",
     "cop_layer_stats", "cop_compare_layers", "test_cop_controls",
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "sop_set_output",
-    "set_object_visible", "layout_nodes", "network_boxes", "set_parm", "set_parms",
-    "set_keyframes", "create_spare_parms", "hda_create", "hda_set_section",
+    "set_object_visible", "layout_nodes", "network_boxes", "network_controls", "present_nodes", "set_parm", "set_parms",
+    "set_keyframes", "create_spare_parms", "hda_create", "hda_fork", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
 }
@@ -195,8 +209,8 @@ _OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_control
     'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
 
 
-_GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_set_section', 'bind_controls',
-                     'hda_patch_section', 'hda_set_interface', 'hda_edit'}
+_GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_fork', 'hda_set_section', 'bind_controls',
+                     'hda_patch_section', 'hda_set_interface', 'hda_edit', 'tool_package_create', 'tool_package_action'}
 
 
 def _observe_impact(nodes, impact, descendants=False):
@@ -318,6 +332,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                         'next_action': f'verb_help("{name}")'}) from error
             targets = []
             edits_content = name in _MUTATING_VERB_NAMES and name not in _OBSERVATION_VERBS
+            if name == 'network_controls' and bound_arguments.get('controls') is None and bound_arguments.get('remove') is None:
+                edits_content = False
             if bound_arguments.get('dry_run') is True:
                 edits_content = False
             if impact is not None and edits_content:
@@ -433,7 +449,7 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     )
 
 
-def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal):
+def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal):
     """Execute one admitted edit batch and restore the same ownership on undo."""
     error = rollback = None
     undo_enabled = bool(hou.undos.areEnabled())
@@ -526,6 +542,22 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal):
                 "scope": "Houdini undo stack disabled (commonly headless)",
             }
             error = traceback.format_exc()
+    if error is not None and control_journal.get('entries'):
+        # The enclosing exec may fail after a successful declaration. Native
+        # Headless Undo is off; verify/compensate this metadata independently
+        # after the GUI's native Undo as well.
+        # Compensate only the recorded key on surviving runtime identities;
+        # native scene Undo/reconciliation has already finished above.
+        try:
+            with hou.undos.disabler():
+                control_reconciliation = dsh_network_navigation.reconcile_transaction(control_journal)
+        except BaseException as recovery_error:
+            control_reconciliation = {'ok': False, 'entry_count': len(control_journal['entries']),
+                'errors': [str(recovery_error)], 'scope': 'control declaration compensation only'}
+        rollback['network_controls'] = control_reconciliation
+        if not control_reconciliation['ok']:
+            detail = 'Control declaration rollback failed: ' + '; '.join(control_reconciliation['errors'])
+            rollback['error'] = (rollback.get('error', '') + '; ' + detail).lstrip('; ')
     return error, rollback
 
 
@@ -571,8 +603,10 @@ class ExecutionRuntime:
         gate_outcome = "not_applicable"
         creation_scope = contextlib.nullcontext(set()) if read_only else dsh_hou_helpers._track_created_nodes()
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
+        control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
         with (dsh_hou_helpers._execution_owner(owner_session, owner_call),
-              creation_scope as created_nodes, box_scope as box_journal):
+              creation_scope as created_nodes, box_scope as box_journal,
+              control_scope as control_journal):
             # Each serialized request reports only its own produced media,
             # including requests rejected during preflight.
             dsh_hou_helpers._PRODUCED_IMAGES.clear()
@@ -601,7 +635,7 @@ class ExecutionRuntime:
                             exec(compiled, namespace)
                             _raise_caught_verb_failure(verb_ledger)
                         else:
-                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal)
+                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal)
                 except BaseException:
                     if error is None:
                         error = traceback.format_exc()
@@ -640,6 +674,11 @@ class ExecutionRuntime:
                 'entry_count': len(box_journal['entries']), 'box_count': box_journal['boxes'],
                 'node_count': box_journal['nodes'],
                 'scope': 'typed Network Box presentation snapshots; never node identities or geometry evidence'}
+        if control_journal.get('entries'):
+            envelope['transaction']['network_controls'] = {
+                'entry_count': len(control_journal['entries']),
+                'node_count': len({row['identity'] for snapshot in control_journal['entries'] for row in snapshot}),
+                'scope': 'explicit control declaration snapshots on runtime node identities'}
         if transaction_status != 'no_scene_change':
             _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
             if raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'):

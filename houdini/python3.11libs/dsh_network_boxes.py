@@ -16,13 +16,14 @@ from dsh_network_layout import Rect, contains, union
 
 
 ROLE_COLORS = {
-    'controls': (0.30, 0.48, 0.70),
-    'component': (0.42, 0.46, 0.52),
-    'placement': (0.27, 0.58, 0.55),
-    'source': (0.68, 0.50, 0.25),
-    'assembly': (0.56, 0.40, 0.65),
-    'output': (0.39, 0.59, 0.31),
+    'controls': (0.14, 0.23, 0.34),
+    'component': (0.19, 0.21, 0.24),
+    'placement': (0.13, 0.28, 0.26),
+    'source': (0.31, 0.23, 0.12),
+    'assembly': (0.26, 0.18, 0.30),
+    'output': (0.17, 0.27, 0.14),
 }
+NEUTRAL_COLOR = (0.19, 0.21, 0.24)
 MAX_BOXES = 64
 MAX_NODES = 512
 SCHEMA = 2
@@ -98,6 +99,18 @@ def _live_owner(box):
     if entry is None: return None
     try: return entry if entry.get('native_object') == box else None
     except Exception: return None
+
+
+def _layout_role(box):
+    """Use explicit runtime annotations or the node's persistent control label."""
+    from dsh_network_navigation import CONTROL_KEY
+    owner = _live_owner(box)
+    if owner is not None and owner.get('role'):
+        return owner['role']
+    nodes = [item for item in box.items(recurse=True) if isinstance(item, hou.Node)]
+    if nodes and all(node.userData(CONTROL_KEY) for node in nodes):
+        return 'controls'
+    return None
 
 
 def _validate_allow_foreign(value):
@@ -515,6 +528,8 @@ def _label(value):
     if (not isinstance(value, str) or not value.strip() or len(value) > 200
             or any(ord(char) < 32 and char not in '\n\t' for char in value)):
         raise ValueError('Network Box label must be nonempty, at most 200 characters, without control characters')
+    if ';' in value or '\n' in value or '\r' in value:
+        raise ValueError('Network Box titles containing ASCII semicolons or line breaks do not survive native HIP save/reopen on H21/H22; use a single-line title with / or :')
     return value
 
 
@@ -798,7 +813,7 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
                              _effective_box_rect(prepared['existing'][name]) for name in group['boxes']])
             if existing is None:
                 bounds = content
-                color = list(group['color'] or ROLE_COLORS.get(group['role'], (.42, .46, .52)))
+                color = list(group['color'] or ROLE_COLORS.get(group['role'], NEUTRAL_COLOR))
                 color_source = 'explicit' if group['color'] is not None else 'role_default' if group['role'] in ROLE_COLORS else 'neutral_default'
             else:
                 membership_changed = current_members != desired or current_boxes != desired_boxes
@@ -861,10 +876,13 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
                     writes += 1; box.addNetworkBox(child); changed = True
             if box.comment() != group['label']:
                 writes += 1; box.setComment(group['label']); changed = True
+            owner = _live_owner(box)
+            if owner is not None:
+                owner['role'] = group['role']
             color_source = 'preserved'
             requested_color = group['color']
             if is_new and requested_color is None:
-                requested_color = list(ROLE_COLORS.get(group['role'], (.42, .46, .52)))
+                requested_color = list(ROLE_COLORS.get(group['role'], NEUTRAL_COLOR))
                 color_source = 'role_default' if group['role'] in ROLE_COLORS else 'neutral_default'
             elif requested_color is not None:
                 color_source = 'explicit'
@@ -899,7 +917,7 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
             if box.comment()!=group['label']:
                 raise RuntimeError(f"label readback mismatch: {group['name']}")
             expected_color=(group['color'] if group['color'] is not None else
-                            list(ROLE_COLORS.get(group['role'], (.42, .46, .52))) if group['name'] in created else
+                            list(ROLE_COLORS.get(group['role'], NEUTRAL_COLOR)) if group['name'] in created else
                             before_box_state[group['name']]['color'])
             if any(abs(a-b)>1e-5 for a,b in zip(_color(box),expected_color)):
                 raise RuntimeError(f"color readback mismatch: {group['name']}")
@@ -1014,7 +1032,7 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
     try:
         _validate_allow_foreign(allow_foreign)
         if type(dry_run) is not bool:raise ValueError('dry_run must be boolean')
-        if profile!='comfortable':raise ValueError("profile must be 'comfortable'")
+        if profile not in ('comfortable','readable'):raise ValueError("profile must be 'comfortable' or 'readable'")
         if not isinstance(box_refs,(list,tuple)) or not 1<=len(box_refs)<=MAX_BOXES:
             raise ValueError('boxes must contain 1..64 exact names or identities')
         selected=[]
@@ -1043,15 +1061,18 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
         if not movable_nodes:raise ValueError('handoff boxes contain no movable nodes')
         if len(movable_nodes)>MAX_NODES:raise ValueError('handoff exceeds 512 movable nodes')
         node_group={int(item.sessionId()):box.name() for box in selected for item in _box_items(box) if isinstance(item,hou.Node)}
-        node_rows=[{'key':str(identity),'group':node_group[identity],'rect':_node_rect(node).as_list()}
+        node_rows=[{'key':str(identity),'group':node_group[identity],'rect':_node_rect(node).as_list(),
+                    **({'label':node.name()} if profile=='readable' else {})}
                    for identity,node in sorted(movable_nodes.items())]
         group_rows=[{'key':box.name(),'members':[str(int(item.sessionId())) for item in _box_items(box) if isinstance(item,hou.Node)],
-                     'rect':_box_rect(box).as_list()} for box in selected]
+                     'rect':_box_rect(box).as_list(),
+                     **({'role':_layout_role(box)} if profile=='readable' else {})} for box in selected]
         edges=[]
         for identity,node in movable_nodes.items():
-            for source in node.inputs():
+            for input_index,source in enumerate(node.inputs()):
                 if source is not None and int(source.sessionId()) in movable_nodes:
-                    edges.append([str(int(source.sessionId())),str(identity)])
+                    edges.append([str(int(source.sessionId())),str(identity)] +
+                                 ([input_index] if profile=='readable' else []))
         skipped=[]
         selected_ids={int(box.sessionId()) for box in selected}
         max_width=max(_node_rect(node).width for node in movable_nodes.values())
@@ -1061,7 +1082,7 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
             excluded_box_ids=selected_ids,dot_footprint=dot_footprint)
         if len(obstacles)>MAX_NODES:raise ValueError('fixed obstacle budget exceeds 512')
         from dsh_network_layout import plan_handoff
-        planned=plan_handoff(node_rows,group_rows,edges,obstacles)
+        planned=plan_handoff(node_rows,group_rows,edges,obstacles,style=profile)
         if not planned['ok']:
             return {'ok':False,'mode':'handoff','dry_run':dry_run,'applied':False,'scene_writes':0,
                     'layout_status':'blocked','reason':planned.get('reason'),'fixed_obstacles':obstacles,
@@ -1086,7 +1107,8 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
     base={'ok':True,'mode':'handoff','dry_run':dry_run,'applied':False,'scene_writes':0,
           'plan_sha256':plan_sha,'profile':profile,'parent':parent.path(),'box_count':len(selected),
           'movable_node_count':len(movable_nodes),'fixed_obstacles':obstacles,'skipped_items':skipped,
-          **planned_evidence,'scope':'owned or individually authorized flat boxes; presentation only; no wire crossing claim'}
+          **planned_evidence,**({'readability':planned.get('readability')} if profile=='readable' else {}),
+          'scope':'owned or individually authorized flat boxes; presentation only; no wire crossing claim'}
     if dry_run:return {**base,'layout_status':'planned','node_positions':planned['node_positions'],'box_bounds':planned['box_bounds'],
                        'moved_nodes':[],'changed_boxes':[],'restored':None,'restore_errors':[]}
     will_write=(any(box.autoFit() or not _rect_close(_box_rect(box),Rect(*planned['box_bounds'][box.name()]),1e-4) for box in selected)
@@ -1158,7 +1180,7 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
     try:
         _validate_allow_foreign(allow_foreign)
         if type(dry_run) is not bool:raise ValueError('dry_run must be boolean')
-        if profile!='comfortable':raise ValueError("profile must be 'comfortable'")
+        if profile not in ('comfortable','readable'):raise ValueError("profile must be 'comfortable' or 'readable'")
         if not isinstance(box_refs,(list,tuple)) or not 1<=len(box_refs)<=MAX_BOXES:
             raise ValueError('boxes must contain 1..64 exact component container names or identities')
         selected=[];leaf_boxes={};movable_nodes={};leaf_group={}
@@ -1197,11 +1219,13 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
                     if node_identity in movable_nodes:raise ValueError(f'{node.path()} appears in multiple leaf boxes')
                     movable_nodes[node_identity]=node
         if len(movable_nodes)>MAX_NODES:raise ValueError('component layout exceeds 512 movable nodes')
-        item_rows=[{'key':str(identity),'group':leaf_group[identity],'rect':_box_rect(leaf).as_list()}
+        item_rows=[{'key':str(identity),'group':leaf_group[identity],'rect':_box_rect(leaf).as_list(),
+                    **({'label':leaf.name()} if profile=='readable' else {})}
                    for identity,leaf in sorted(leaf_boxes.items())]
         group_rows=[{'key':outer.name(),'members':[str(identity) for identity,leaf in sorted(leaf_boxes.items())
                                                   if leaf.parentNetworkBox()==outer],
-                     'rect':_box_rect(outer).as_list()} for outer in selected]
+                     'rect':_box_rect(outer).as_list(),
+                     **({'role':_layout_role(outer)} if profile=='readable' else {})} for outer in selected]
         node_leaf={int(node.sessionId()):int(node.parentNetworkBox().sessionId()) for node in movable_nodes.values()}
         edges=set()
         for identity,node in movable_nodes.items():
@@ -1218,7 +1242,8 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
             excluded_box_ids=selected_box_ids,dot_footprint=(max_width*.25,max_height*.25))
         if len(obstacles)>MAX_NODES:raise ValueError('fixed obstacle budget exceeds 512')
         from dsh_network_layout import plan_handoff
-        planned=plan_handoff(item_rows,group_rows,sorted(edges),obstacles)
+        planned=plan_handoff(item_rows,group_rows,sorted(edges),obstacles,style=profile,
+                             **({'item_kind':'box'} if profile=='readable' else {}))
         if not planned['ok']:
             return {'ok':False,'mode':'component','dry_run':dry_run,'applied':False,'scene_writes':0,
                     'layout_status':'blocked','reason':planned.get('reason'),'fixed_obstacles':obstacles,

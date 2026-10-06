@@ -11,7 +11,7 @@ import dsh_bridge as bridge
 with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as temporary:
     root = Path(temporary)
     paths = {name: root / name for name in ('scene.hip', 'piece.dshcomponent', 'preview.png',
-                                           'final.exr', 'viewport.png', 'unreported.png')}
+                                           'final.exr', 'viewport.png', 'unreported.png', 'tool.hda', 'tool.json')}
     for item in paths.values():
         item.write_bytes(b'fixture')
     missing = root / 'missing.png'
@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as tempo
         {'verb': 'viewport_screenshot', 'ok': True, 'result': {'ok': True, 'path': str(paths['viewport.png']),
             'artifact': {'actual_path': str(paths['viewport.png']), 'output_policy': 'managed'}}},
         {'verb': 'render_frame', 'ok': True, 'result': {'output': str(missing), 'fresh': True}},
+        {'verb': 'hda_fork', 'ok': True, 'result': {'hda_file': str(paths['tool.hda'])}},
+        {'verb': 'tool_package_create', 'ok': True, 'result': {'package_file': str(paths['tool.json'])}},
     ]
     images = [str(paths['preview.png']), str(paths['unreported.png'])]
     candidates = bridge._artifact_candidates(ledger, images, True)
@@ -35,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as tempo
     assert by_name['viewport.png']['role'] == 'diagnostic'
     assert by_name['final.exr']['role'] == 'delivery-candidate'
     assert by_name['unreported.png']['source'] == 'reported-image'
+    assert by_name['tool.hda']['kind'] == 'asset' and by_name['tool.json']['kind'] == 'tool-package'
     assert all(item['bytes'] == 7 and Path(item['path']).is_absolute() for item in candidates)
     assert all(item['role'] == 'diagnostic' for item in bridge._artifact_candidates(ledger, images, False))
     rejected = bridge._artifact_candidates([
@@ -46,6 +49,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as tempo
             'artifact': {'actual_path': str(paths['preview.png']), 'output_policy': 'explicit'}}},
     ], [], True)
     assert len(rejected) == 2 and all(item['role'] == 'diagnostic' for item in rejected)
+    # Location alone cannot certify a delivery: successful final-image policy
+    # is a candidate, while warnings and failed batches remain diagnostics.
+    delivery = {'verb': 'render_view', 'ok': True, 'result': {'ok': True,
+        'output': str(paths['preview.png']),
+        'artifact': {'actual_path': str(paths['preview.png']), 'output_policy': 'delivery'}}}
+    assert bridge._artifact_candidates([delivery], [], True)[0]['role'] == 'delivery-candidate'
+    assert bridge._artifact_candidates([delivery], [], False)[0]['role'] == 'diagnostic'
+    delivery['result']['warnings'] = ['fixture warning']
+    assert bridge._artifact_candidates([delivery], [], True)[0]['role'] == 'diagnostic'
     link = root / 'linked.png'
     try:
         link.symlink_to(paths['preview.png'])

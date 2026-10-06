@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.parse
 
-from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer, Qt
 from PySide6.QtWidgets import QApplication
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -139,33 +139,55 @@ try:
     assert "token=" not in observed["urlAtBoot"], "launch token must not reach the app URL"
     assert not webview._view.page().scripts().find("dsh-launch-session-hint"), "one-navigation hint must be retired"
 
+    # Tools remain above Houdini, but background page callbacks honor the user's
+    # minimize. An explicit Open Workspace restores the same page and draft.
+    flags = webview._window.windowFlags()
+    assert not flags & Qt.WindowStaysOnTopHint and flags & Qt.WindowMinimizeButtonHint
+    assert flags & Qt.WindowCloseButtonHint and flags & Qt.WindowSystemMenuHint
+    import hou
+    owner = hou.qt.mainWindow() if hou.isUIAvailable() else None
+    assert webview._window.isWindow() and webview._window.parentWidget() is owner
+    window, view = webview._window, webview._view
+    window.showMinimized()
+    app.processEvents()
+    assert window.isMinimized()
+    webview._load_finished(True)
+    webview._retry_load()
+    observed = settle()
+    assert window.isMinimized(), "background load must not restore a user-minimized tool"
+    assert webview.raise_workspace()
+    app.processEvents()
+    assert not window.isMinimized() and window.isVisible()
+    assert webview._window is window and webview._view is view
+    assert window.windowFlags() == flags, "explicit reopen must not change owner or window hints"
+
     # Plain reopen does not reload or switch the existing selected task.
     webview.show_webview()
     assert settle() == observed
-    assert len(requests) == 1
+    assert len(requests) == 2
     # A new explicit target replaces the old hint without an extra app bootstrap.
     webview.show_webview(session_id="next", authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
-    assert len(requests) == 2
+    assert len(requests) == 3
     assert observed["done"] and urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["next"]
     webview.show_webview(authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
-    assert len(requests) == 3 and observed["urlAtBoot"] == base + "/"
+    assert len(requests) == 4 and observed["urlAtBoot"] == base + "/"
     assert observed["done"]
     webview.show_webview(session_id="direct")
     observed = settle()
-    assert len(requests) == 4 and observed["done"]
+    assert len(requests) == 5 and observed["done"]
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["direct"]
     # A later ordinary document must not receive a stale injected session hint.
     webview._view.load(webview.QUrl(base + "/"))
     observed = settle()
-    assert len(requests) == 5 and observed["urlAtBoot"] == base + "/"
+    assert len(requests) == 6 and observed["urlAtBoot"] == base + "/"
     # Failed auth must retain the pending hint across the existing async retry.
     fail_auth_once = True
     webview._RETRY_INTERVAL_MS = 100
     webview.show_webview(session_id="retry", authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
-    assert not fail_auth_once and len(requests) == 6
+    assert not fail_auth_once and len(requests) == 7
     assert observed["done"] and urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlAtBoot"]).query)["dsh-houdini-session"] == ["retry"]
     assert not webview._retry_timer.isActive()
     assert not webview._view.page().scripts().find("dsh-launch-session-hint")
@@ -177,7 +199,7 @@ try:
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
     observed = settle()
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(observed["urlNow"]).query)
-    assert len(requests) == 6 and query["dsh-houdini-workspace"] == [workspace_a]
+    assert len(requests) == 7 and query["dsh-houdini-workspace"] == [workspace_a]
     assert query["dsh-houdini-request"][0].startswith("dsh-houdini-")
     assert "dsh-houdini-session" not in query
     assert observed['intents']==[observed['urlNow']]
@@ -187,17 +209,17 @@ try:
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + "/?token=" + TOKEN)
     repeated=settle()
     query=urllib.parse.parse_qs(urllib.parse.urlsplit(repeated['urlNow']).query)
-    assert len(requests)==6 and len(repeated['intents'])==3
+    assert len(requests)==7 and len(repeated['intents'])==3
     assert query['dsh-houdini-workspace']==[workspace_a] and query['dsh-houdini-request'][0]!=prior_request
     assert webview.raise_workspace(workspace_b)
     webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN)
     changed = settle()
-    assert len(requests) == 6 and len(changed['intents'])==5
+    assert len(requests) == 7 and len(changed['intents'])==5
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(changed["urlNow"]).query)["dsh-houdini-workspace"] == [workspace_b]
     assert not webview._view.page().scripts().find('dsh-launch-session-hint'), 'loaded-page intent must not leak into a later document'
     webview.show_webview(workspace_dir=workspace_b, authenticated_url=base + "/?token=" + TOKEN, force_reload=True)
     restarted = settle()
-    assert len(requests) == 7 and restarted["done"] and restarted['intents']==[]
+    assert len(requests) == 8 and restarted["done"] and restarted['intents']==[]
     assert restarted["urlAtBoot"] != changed["urlNow"], "Repair needs a new navigation intent after auth"
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(restarted['urlNow']).query)['dsh-houdini-workspace']==[workspace_b]
 
@@ -212,14 +234,14 @@ try:
     assert webview._load_failed and not webview._retry_timer.isActive()
     assert webview.raise_workspace(workspace_a)
     recovered = settle()
-    assert len(requests) == 8 and recovered["done"]
+    assert len(requests) == 9 and recovered["done"]
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(recovered["urlAtBoot"]).query)["dsh-houdini-workspace"] == [workspace_a]
     # An independently allocated loopback Host origin requires a new document.
     webview.FRONTEND_URL = 'http://127.0.0.1:1'
     assert not webview.raise_workspace(workspace_a)
     webview.show_webview(workspace_dir=workspace_a, authenticated_url=base + '/?token=' + TOKEN,
                          frontend_url=base, force_reload=True)
-    assert settle()['done'] and len(requests) == 9
+    assert settle()['done'] and len(requests) == 10
     assert webview.raise_workspace(workspace_a, frontend_url=base)
     assert not webview.raise_workspace(workspace_a)
     webview.FRONTEND_URL = base

@@ -67,8 +67,18 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
     window = ui.show(d.Store(root, {"schemaVersion": 1, "keys": []}), parent=parent,
                      context_provider=lambda: (None, running["loaded"]))
     app.processEvents()
+    assert not window.windowFlags() & QtCore.Qt.WindowStaysOnTopHint
+    assert window.windowFlags() & QtCore.Qt.WindowMinimizeButtonHint
+    assert window.windowFlags() & QtCore.Qt.WindowCloseButtonHint
+    assert window.windowFlags() & QtCore.Qt.WindowSystemMenuHint
+    assert window.parentWidget() is parent and window.isWindow()
     assert visible_buttons(window) == ["检查更新", "高级设置"], visible_buttons(window)
+    window.showMinimized()
+    app.processEvents()
+    assert window.isMinimized()
     assert ui.show(d.Store(root, {"schemaVersion": 1, "keys": []}), parent=parent) is window
+    app.processEvents()
+    assert not window.isMinimized(), "explicit Version & Updates reopen must restore the same tool"
     assert window.grab().save(str(output / f"deployment-ui-{suffix}.png"))
     button(window, "高级设置").click()
     assert button(window, "安装本地包…").isVisible()
@@ -275,6 +285,12 @@ with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), c
     manager.show_version_manager()
     window = manager._WINDOW
     wait_until(lambda: button(window, "刷新状态").isEnabled() and "运行环境与配套版本一致。" in labels(window))
+    window.showMinimized()
+    app.processEvents()
+    assert window.isMinimized()
+    manager.show_version_manager()
+    app.processEvents()
+    assert manager._WINDOW is window and not window.isMinimized()
     assert "准备配套版本" not in visible_buttons(window)
     assert window.grab().save(str(output / f"runtime-ui-{suffix}.png"))
     window.close()
@@ -292,6 +308,15 @@ with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), c
     launcher.open_ui_when_ready("isolated UI fixture", frontend_cwd=str(ROOT))
     window = launcher._PENDING["dialog"]
     wait_until(lambda: "正在准备插件" in labels(window))
+    active_startup = launcher._ACTIVE_STARTUP
+    window.showMinimized()
+    app.processEvents()
+    assert window.isMinimized()
+    launcher._dispatch_service_preflight(lambda *_: (_ for _ in ()).throw(
+        AssertionError("repeat Open Workspace must not start another preflight")))
+    app.processEvents()
+    assert launcher._PENDING["dialog"] is window and not window.isMinimized()
+    assert launcher._ACTIVE_STARTUP is active_startup
     progress = window.findChild(QtWidgets.QProgressBar)
     assert progress.minimum() == progress.maximum() == 0, "startup stages must not invent a completion percentage"
     assert not progress.isTextVisible()

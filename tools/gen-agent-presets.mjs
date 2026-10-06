@@ -19,7 +19,7 @@ const metadata=yaml.load(fs.readFileSync(path.join(directory,'preset.yml'),'utf8
 const plugins=standard.filter(entry=>!['persona','tool-plugin-manager'].includes(entry.id))
 plugins.unshift({id:'persona',name:'@deepseek-ai/dsh-persona',config:{
   prefix:fs.readFileSync(path.join(directory,'persona.md'),'utf8').trim()}})
-plugins.splice(plugins.findIndex(entry=>entry.id==='agent-instructions')+1,0,{id:'houdini',name:'dsh-houdini/agent',config:{
+plugins.splice(plugins.findIndex(entry=>entry.id==='agent-instructions')+1,0,{id:'houdini',name:'dsh-houdini/agent',isolate:{houdiniNodeDelivery:true},config:{
   bridgeUrl:new Expression("process.env.DSH_HOUDINI_BRIDGE_URL || 'http://127.0.0.1:8765'"),
   requestTimeoutMs:120000,
   executorRegistry:new Expression('process.env.DSH_HOUDINI_EXECUTOR_REGISTRY || undefined')}})

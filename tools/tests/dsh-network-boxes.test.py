@@ -90,6 +90,11 @@ try:
     broad_flow=call(f"__result__=layout_nodes({parent!r},mode='flow')")
     assert not broad_flow['ok'] and 'mode=\'handoff\'' in broad_flow['error'],broad_flow
 
+    # The native title serializer cannot round-trip these observed separators.
+    for invalid_label in ('Frame; Fork','Frame;Fork','Frame\nFork'):
+        rejected=call(f"network_boxes({parent!r},[{{'name':'bad_native_title','label':{invalid_label!r},'members':[{paths['ctrl']!r}]}}])")
+        assert not rejected['ok'] and 'do not survive native HIP' in rejected['error'],rejected
+        assert hou.node(parent).findNetworkBox('bad_native_title') is None
     # Role annotations do not constrain ordinary presentation hierarchies.
     nested=ok(
         f"p=tab_create('/obj','geo',name='__nested_boxes_{suffix}')\n"

@@ -81,9 +81,13 @@ npm test
 
 执行结果应同时核对原生与Code Mode嵌套事件、取消/未知/过期回执及现场runtime身份；展示投影不得丢失无execution的真实回执。trace用真实当前版本日志校验可见内容、调用关联和解析缺口，不以旧fixture或旧session文件名证明新格式可读。用例保持针对已观察到的边界，旧策略删除后保留操作、权限和恢复检查，移除只证明策略存在的断言。
 
+节点交付的定向入口为[Host路由](../tools/tests/node-delivery.test.mjs)、[原生/嵌套卡片投影](../tools/tests/node-delivery-client.test.mjs)、[持久标识HOM](../tools/tests/dsh-node-delivery.test.py)及[排队取消HTTP/HOM](../tools/tests/dsh-node-navigation-cancel.test.py)。跨层修改还需在精确DSH组合和新建的隐藏GUI进程中，由真实Agent工具循环产生原生/嵌套回执，选中对应任务点击实际卡片，回读网络/参数页；重开同HIP并改名后再点击旧卡片，切HIP核对错误提示，暂停队列后切任务并恢复队列核对旧导航没有生效。局部模拟通道不能替代这条连接；测试脚本、截屏、完整结果和运行目录留在仓库外证据目录。服务框保存重开由[服务框回归](../tools/tests/dsh-render-service-box.test.py)核对标题、固定边界、真实成员与用户节点位置。
+
 ## 隔离开发工具
 
 [hda-delivery-check.py](../tools/hda-delivery-check.py)在新 hython 中加载声明 HDA，按 manifest 创建实例、设置参数、调用按钮并检查几何/参数/错误。判据应能区分正确与错误结果，例如尺寸控制检查 bounds_size，而非只有点面数。
+
+工具制作的机制检查包括[真实工具目录](../tools/tests/dsh-tool-catalog.test.py)、[共享定义与分叉](../tools/tests/dsh-hda-definition-ownership.test.py)、[参数组件](../tools/tests/dsh-hda-ui-components.test.py)、[原生Package配置发现](../tools/tests/dsh-package-discovery.test.py)和[注册/运行态失败](../tools/tests/dsh-tool-packages.test.py)。[发现GUI](../tools/tests/dsh-package-gui.test.py)核对已配置、条件与实际加载的不同状态；[Package GUI](../tools/tests/dsh-tool-packages-gui.test.py)以普通包名JSON直接指向唯一源目录，核对干净启动发现/当前加载、HDA/Shelf/Panel实际来源与公开入口、旧内容保持，以及启停不改变配置或源。已有包新增资源后从新进程验证，不靠隐式reload证明更新安全。Shelf和Viewer State需要回到Houdini外层事件循环后再验状态；installFile/sys.path不替代此路径。不同载体的结果保留实际范围，不从固定例子外推任意工具泛化。
 
 ```powershell
 python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json

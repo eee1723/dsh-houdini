@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 21 · Source SHA-256: `fdcfa0ae2a320d7162dfd2d0d32624d687352c85b62a649969b174ae6598d2de`
+Schema: 2 · Cards: 21 · Source SHA-256: `a7ad0c01ad63b36fae3c90eee7cd12b389f7c324528bbf65d15d0f253dd11d42`
 
 ## 数据与设计契约
 
@@ -344,12 +344,12 @@ Schema: 2 · Cards: 21 · Source SHA-256: `fdcfa0ae2a320d7162dfd2d0d32624d687352
 
 ## attribwrangle
 
-标识：`wrangle-execution-v3`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/attribwrangle.html)。
+标识：`wrangle-execution-v4`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/attribwrangle.html)。
 
 精确类型：`attribwrangle`。
 已测版本：`21.0.440`、`22.0.368`。
 
-关键运行时参数：`class`、`group`、`grouptype`、`vex_numcount`。
+关键运行时参数：`class`、`group`、`grouptype`、`vex_numcount`、`vex_cwdpath`。
 
 ### 构建前决策
 
@@ -358,6 +358,7 @@ Schema: 2 · Cards: 21 · Source SHA-256: `fdcfa0ae2a320d7162dfd2d0d32624d687352
 ### 操作与边界
 
 - The snippet is VEX; numeric parameter expressions outside the snippet are HScript unless explicitly tagged Python. Do not copy VEX chf/chi calls into HScript parameter expressions.
+- vex_cwdpath is Evaluation Node Path: it changes the node-relative base for VEX ch() parameter lookup, not the filesystem directory for #include. Keep the default '.' unless deliberately evaluating relative to another node. Use an explicit project-relative include such as #include "$HIP/vex/shared.h" for an external file; check parameter values and actual output after changes.
 - Declare attribute class/type and input slots. Use stable names/ids for module interfaces rather than recovering identity from bounding-box sort order.
 - Run Over uses parameter class: detail executes once, point executes per input point (none on empty input), number repeats Number Count times. A snippet already looping over the entire generation domain usually needs detail, not number. Intentional Numbers generators use elemnum/numelem; do not change their mode blindly.
 - Before Copy to Points, verify the template count and exact P/id tuple uniqueness with geo_attrib_stats(..., unique=True). Nonempty output and unchanged bounds do not rule out overlapping copies.

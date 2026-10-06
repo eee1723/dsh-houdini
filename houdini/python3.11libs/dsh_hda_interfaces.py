@@ -12,6 +12,82 @@ from contextlib import contextmanager
 import hou
 
 
+# A created instance never grants authority to its shared definition/library.
+# These entries are recorded only by successful new-file authoring, not by paths,
+# userData, existing instances, package metadata or a one-call exemption.
+if globals().get('_DEFINITION_OWNER_PID') != os.getpid():
+    _DEFINITION_OWNER_PID = os.getpid()
+    _OWNED_DEFINITIONS = {}
+
+
+def _definition_key(definition):
+    library = definition.libraryFilePath()
+    if library == 'Embedded':
+        raise ValueError('definition writes require a disk library; fork the embedded asset first')
+    return (os.path.normcase(os.path.realpath(library)),
+            definition.nodeTypeCategory().name(), definition.nodeTypeName())
+
+
+def require_library_location(library):
+    """Authoring never edits the vendor installation, including explicit exemptions."""
+    target = os.path.normcase(os.path.realpath(library))
+    factory = os.path.normcase(os.path.realpath(hou.text.expandString('$HFS')))
+    try:
+        inside = os.path.commonpath([target, factory]) == factory
+    except ValueError:  # different Windows volumes
+        inside = False
+    if inside:
+        raise ValueError('HDA authoring does not write inside $HFS; fork to a new independent library outside the Houdini installation')
+
+
+def _definition_fingerprint(definition):
+    library = definition.libraryFilePath()
+    require_library_location(library)
+    if not os.path.isfile(library) or os.path.islink(library) or os.path.getsize(library) > 32*1024*1024:
+        raise ValueError('definition write requires a regular disk library <=32 MiB')
+    with open(library, 'rb') as stream:
+        disk = hashlib.sha256(stream.read()).hexdigest()
+    sections = {name: hashlib.sha256(bytes(section.binaryContents())).hexdigest()
+                for name, section in definition.sections().items()}
+    return {'library_sha256': disk, 'sections': sections}
+
+
+def register_created_definition(definition):
+    """Record a successfully created, previously absent standalone library."""
+    import dsh_hou_helpers as h
+    _OWNED_DEFINITIONS[_definition_key(definition)] = {
+        'session': h._ACTIVE_OWNER_SESSION, 'call': h._ACTIVE_OWNER_CALL,
+        'fingerprint': _definition_fingerprint(definition),
+    }
+
+
+def require_definition_owned(definition, operation, allow_foreign=None):
+    import dsh_hou_helpers as h
+    if allow_foreign is not None and (not isinstance(allow_foreign, str) or not allow_foreign.strip()):
+        raise ValueError('allow_foreign must be a nonempty explicit authorization reason string, or None')
+    key = _definition_key(definition)
+    fingerprint = _definition_fingerprint(definition)
+    entry = _OWNED_DEFINITIONS.get(key)
+    if h._ACTIVE_OWNER_SESSION is None:
+        return False
+    if entry and entry['session'] == h._ACTIVE_OWNER_SESSION and entry['fingerprint'] == fingerprint:
+        return True
+    if allow_foreign is not None:
+        print(f'[ownership] foreign-definition exemption for {operation}: {key[1]}/{key[2]} in {definition.libraryFilePath()} — {allow_foreign.strip()}')
+        return False
+    cause = 'library/definition changed outside its authoring calls' if entry else 'library was not created by this session'
+    raise ValueError(f'definition ownership guard: {operation} refuses {key[1]}/{key[2]} in '
+                     f'{definition.libraryFilePath()}: {cause}; an owned instance does not authorize its shared library. '
+                     'Fork to a new type/file, or use one-call allow_foreign for the explicitly authorized definition.')
+
+
+def _refresh_created_definition(definition):
+    import dsh_hou_helpers as h
+    entry = _OWNED_DEFINITIONS.get(_definition_key(definition))
+    if entry and entry['session'] == h._ACTIVE_OWNER_SESSION:
+        entry['fingerprint'] = _definition_fingerprint(definition)
+
+
 def interface_revision(node):
     definition = node.type().definition()
     if definition is None:
@@ -167,8 +243,8 @@ def definition_write_guard(node, operation, allow_foreign=None):
     # interface restoration in the scene undo group would undo the restoration
     # a second time and replace original channel values with definition defaults.
     with hou.undos.disabler():
-        with _definition_write_guard(node, operation, allow_foreign):
-            yield
+        with _definition_write_guard(node, operation, allow_foreign) as states:
+            yield states
 
 
 @contextmanager
@@ -176,7 +252,8 @@ def _definition_write_guard(node, operation, allow_foreign=None):
     """Restore this call's disk definition/root interfaces on failure; not scene undo."""
     import dsh_hou_helpers as h
     definition = node.type().definition()
-    instances = list(node.type().instances())
+    registered_authority = require_definition_owned(definition, operation, allow_foreign)
+    instances = [n for n in node.type().instances() if n.type().definition() == definition]
     if len(instances) > 64:
         raise ValueError('definition write supports at most 64 affected instances')
     for instance in instances:
@@ -192,7 +269,12 @@ def _definition_write_guard(node, operation, allow_foreign=None):
     interfaces = [(n, n.parmTemplateGroup()) for n in instances]
     states = _snapshot(instances)
     try:
-        yield
+        yield states
+        if node.type().definition() != definition:
+            raise RuntimeError('definition identity changed during write')
+        _definition_fingerprint(definition)  # disk/source readback before renewing authority
+        if registered_authority:
+            _refresh_created_definition(definition)
     except Exception as error:
         failures = []
         try:
@@ -202,7 +284,11 @@ def _definition_write_guard(node, operation, allow_foreign=None):
             for name, content in sections.items():
                 definition.addSection(name, content)
             for instance, interface in interfaces:
-                instance.setParmTemplateGroup(interface)
+                # Native definition restoration already restores matching
+                # instances. Reassigning an equal group creates an unwanted
+                # spare/instance override on H21/H22.
+                if instance.parmTemplateGroup().asDialogScript(full_info=True) != interface.asDialogScript(full_info=True):
+                    instance.setParmTemplateGroup(interface)
             failures.extend(_restore(states))
             actual = {name: bytes(s.binaryContents()) for name, s in definition.sections().items()}
             if actual != sections:
@@ -266,6 +352,7 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
     import dsh_hou_helpers as h
     n, definition = h._hda_definition(node)
     h._require_owned(n, 'hda_set_interface patch', allow_foreign)
+    require_definition_owned(definition, 'hda_set_interface patch', allow_foreign)
     if type(dry_run) is not bool:
         raise ValueError('dry_run must be boolean')
     if not isinstance(edits, list) or not 1 <= len(edits) <= 32:
@@ -357,13 +444,7 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
     updated_dialog = _interface_dialog(original_dialog, group)
     if dry_run:
         return {**result, 'scene_writes': 0, 'applied': False}
-    library = definition.libraryFilePath()
-    if not os.path.isfile(library):
-        raise ValueError('patch requires a disk-backed HDA library')
-    with open(library, 'rb') as stream:
-        original_file = stream.read()
-    states = _snapshot(instances)
-    try:
+    with definition_write_guard(n, 'hda_set_interface patch', allow_foreign) as states:
         definition.addSection('DialogScript', updated_dialog)
         actual = hou.ParmTemplateGroup()
         actual.setToDialogScript(definition.sections()['DialogScript'].contents())
@@ -383,19 +464,3 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
             raise RuntimeError(f'channel restoration failed: {errors}')
         return {**result, 'applied': True, 'after_sha256': interface_revision(n),
                 'current_state_preserved': True, 'preserved_channels': len(states)}
-    except Exception as error:
-        failures = []
-        try:
-            definition.addSection('DialogScript', original_dialog)
-        except Exception as restore_error:
-            failures.append(str(restore_error))
-        failures.extend(_restore(states))
-        try:
-            _replace_bytes(library, original_file)
-            if interface_revision(n) != before_hash:
-                failures.append('in-memory interface revision differs after rollback')
-        except Exception as restore_error:
-            failures.append(str(restore_error))
-        raise h.CheckpointError(f'interface patch failed: {error}; restoration errors={failures}',
-                                {'ok': False, 'mode': 'patch', 'restored': not failures,
-                                 'restore_errors': failures, 'scope': 'this call interface/channels/library only'}) from error

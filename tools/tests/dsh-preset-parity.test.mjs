@@ -56,10 +56,13 @@ for (const [key, standardRow] of standardRows) {
 }
 assert.deepEqual([...actual.keys()].filter(key => !standardRows.has(key)), ['/houdini'])
 assert.equal(actual.get('/houdini').name, 'dsh-houdini/agent')
+assert.deepEqual(actual.get('/houdini').isolate,{houdiniNodeDelivery:true},
+  'the preset navigation service must live in the DSH isolate realm')
 assert.equal(actual.get('/houdini').config.productMode, undefined)
 assert.equal(actual.get('/present').name, '@deepseek-ai/dsh-tool-present')
-assert.match(actual.get('/persona').config.prefix, /call present on its authoritative path before the final response/)
-assert.match(actual.get('/persona').config.prefix, /Session workspace may differ from \$HIP/)
+assert.equal(actual.get('/persona').config.prefix,
+  fs.readFileSync(path.join(root, 'presets/houdini/persona.md'), 'utf8').trim(),
+  'the delivered persona must be the maintained source, not a second prompt copy')
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.deepEqual(manifest.dsh.bundle.patch, ['./presets/houdini/cordis.patch.yml'])
 assert.equal(fs.existsSync(path.join(root, 'cordis.patch.yml')), false, 'Houdini mounts only in its preset scope')

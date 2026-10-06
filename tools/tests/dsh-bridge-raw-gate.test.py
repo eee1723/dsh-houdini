@@ -297,4 +297,11 @@ assert save_analysis["suspectedMutations"] == [], save_analysis
 # deliberately heuristic-only rather than falsely advertised as layout_nodes.
 assert dsh_bridge._raw_hou_calls("p.setPosition((0.0, 0.0, 0.0))") == {}
 
+# Removing archive delivery/reload from the vocabulary must not turn those
+# native package mutations into read-only escape paths.
+for operation in ('reloadPackage', 'loadPackageArchive'):
+    denied = dsh_bridge.run_code(f"hou.ui.{operation}('never-dispatched')", read_only=True)
+    assert denied['ok'] is False and operation in denied['error'], denied
+    assert denied['rawUsage']['suspectedMutations'][0]['name'] == operation, denied
+
 print("raw-hou gate regression passed")

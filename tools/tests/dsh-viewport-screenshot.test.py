@@ -216,6 +216,13 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert viewer.viewport.settings().guideEnabled('guide-one') and viewer.reference.isVisible()
     assert result['artifact']['output_policy'] == 'managed'
     assert not list(Path(result['artifact']['managed_root']).glob('*.reserve'))
+    _, _, delivery = run(Viewer(), hip, path='final.png', output_policy='delivery')
+    assert delivery['ok'] and delivery['fresh'] and delivery['user_state_restored']
+    assert delivery['artifact']['output_policy'] == 'delivery'
+    assert delivery['artifact']['purpose'] == 'viewport_diagnostic'
+    assert Path(delivery['path']).parent.resolve() == (base / 'dsh-render').resolve()
+    assert delivery['artifact']['actual_path'] == delivery['path']
+    assert not list((base / 'dsh-render').glob('*.reserve'))
 
     linked = Viewer(linked=True); linked_camera = linked.viewport.camera()
     parms_before, keys_before = dict(linked_camera.parms), dict(linked_camera.keys)
@@ -225,12 +232,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert linked_camera.parms == parms_before and linked_camera.keys == keys_before
     assert linked.viewport.defaultCamera().values['translation'] == (1, 2, 3)
 
-    viewer = Viewer(linked=True)
-    with installed(viewer, hip) as (fake, bbox_frames):
-        try: h.viewport_screenshot('../bad.png', frame=5, frame_target='target')
-        except ValueError as error: assert 'basename' in str(error), error
-        else: raise AssertionError('managed traversal should fail')
-        assert bbox_frames == [] and fake.frame_calls == [] and viewer.calls == 0
+    for policy in ('managed', 'delivery'):
+        viewer = Viewer(linked=True)
+        with installed(viewer, hip) as (fake, bbox_frames):
+            try: h.viewport_screenshot('../bad.png', frame=5, frame_target='target', output_policy=policy)
+            except h.CheckpointError as error:
+                assert 'basename' in str(error), error
+                assert error.evidence['phase'] == 'output_path_preflight' and error.evidence['scene_writes'] == 0
+            else: raise AssertionError('allocated traversal should fail')
+            assert bbox_frames == [] and fake.frame_calls == [] and viewer.calls == 0
 
     viewer = Viewer(can_stash=False)
     with installed(viewer, hip) as (fake, bbox_frames):
@@ -265,34 +275,34 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
         except h.CheckpointError as error: assert not error.evidence['fresh']
         else: raise AssertionError('stale screenshot should fail')
 
-    # A managed timeout is unresolved: its exclusive reservation remains so a
+    # An allocated timeout is unresolved: its exclusive reservation remains so a
     # late asynchronous writer cannot race a reused destination.
-    unresolved_root = None
-    original_token_hex = preview_paths.secrets.token_hex
-    preview_paths.secrets.token_hex = lambda _size: 'lateforced'
-    late_viewer = Viewer(mode='late')
-    try:
-        with fast_timeout():
-            try: run(late_viewer, hip, path='unresolved.png', clean=False)
-            except h.CheckpointError as error:
-                assert error.evidence['capture_unresolved'] is True
-                assert error.evidence['artifact']['reservation_retained'] is True
-                unresolved_root = Path(error.evidence['artifact']['managed_root'])
-                unresolved_path = Path(error.evidence['path'])
-            else: raise AssertionError('managed timeout should fail')
+    for policy in ('managed', 'delivery'):
+        original_token_hex = preview_paths.secrets.token_hex
+        preview_paths.secrets.token_hex = lambda _size: 'lateforced'
+        late_viewer = Viewer(mode='late')
         try:
-            preview_paths.allocate_managed(str(hip), 'unresolved.png', frame=5,
-                purpose='test', owner_session=None, repository_root=ROOT,
-                default_label='viewport', allowed_extensions={'.png'})
-        except RuntimeError as error:
-            assert 'unique' in str(error), error
-        else: raise AssertionError('unresolved reservation must block forced destination reuse')
-        late_viewer.writer_event.set();late_viewer.writer_thread.join(timeout=2)
-        assert not late_viewer.writer_thread.is_alive()
-        assert unresolved_path.is_file() and h._screenshot_readable(str(unresolved_path))
-    finally:
-        preview_paths.secrets.token_hex = original_token_hex
-    assert len(list(unresolved_root.glob('*.reserve'))) == 1
+            with fast_timeout():
+                try: run(late_viewer, hip, path='unresolved.png', clean=False, output_policy=policy)
+                except h.CheckpointError as error:
+                    assert error.evidence['capture_unresolved'] is True
+                    assert error.evidence['artifact']['reservation_retained'] is True
+                    unresolved_root = Path(error.evidence['artifact']['managed_root'])
+                    unresolved_path = Path(error.evidence['path'])
+                else: raise AssertionError('allocated timeout should fail')
+            try:
+                preview_paths.allocate_managed(str(hip), 'unresolved.png', frame=5,
+                    purpose='test', owner_session=None, repository_root=ROOT,
+                    default_label='viewport', allowed_extensions={'.png'}, output_policy=policy)
+            except RuntimeError as error:
+                assert 'unique' in str(error), error
+            else: raise AssertionError('unresolved reservation must block forced destination reuse')
+            late_viewer.writer_event.set();late_viewer.writer_thread.join(timeout=2)
+            assert not late_viewer.writer_thread.is_alive()
+            assert unresolved_path.is_file() and h._screenshot_readable(str(unresolved_path))
+        finally:
+            preview_paths.secrets.token_hex = original_token_hex
+        assert len(list(unresolved_root.glob('*.reserve'))) == 1
 
     # Dispatch can queue a late writer and still raise. Attempted dispatch is
     # completion-unknown and must retain exclusion until that writer finishes.

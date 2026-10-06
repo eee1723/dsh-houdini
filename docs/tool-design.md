@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 82
+Execution contract version: 89
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -42,9 +42,9 @@ read_parms的Ramp值为JSON对象：type=ramp、basis插值名称、keys控制�
 render_view的H22后端为Flipbook/Vulkan，使用独立Work Lights与OCIO颜色空间；
 H21保持既有OpenGL ROP和设置。两者共用显式SOP代理、相机/深度包络、状态恢复与新鲜度检查。
 H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户Flipbook节点，不删除旧持久服务。
-render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-visual-checks/<run-id>/`；managed只接收
-省略文件名或安全basename，路径输入须显式选`output_policy='explicit'`。旧图不迁移/自动删除，
-render_frame与ROP/geometry cache输出语义不变。
+render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-visual-checks/<run-id>/`；最终交付显式选
+`output_policy='delivery'`写入`$HIP/dsh-render/`。两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
+自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP按明确目标设置`$HIP/dsh-render/...`，已有用户指定输出保留。
 
 顶层工具的作用、输入和返回见[工具说明](tools.md)，由[src/tool-catalog.ts](../src/tool-catalog.ts)生成。现场读取、执行、请求查回、资源读取、视觉能力与长任务控制各有独立接口；任务记录使用DSH已有能力。
 
@@ -138,6 +138,9 @@ Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用�
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
 | `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
 | `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
+| `network_controls(parent, controls=None, *, remove=None, allow_foreign=None)` | 明确声明实际控制入口：controls为node/label对象列表，remove为显式节点列表，目标须在parent范围内且遵守ownership。声明保存在节点userData，随HIP保存、改名保留；省略controls/remove只读列出parent内的已声明入口，不按名字或参数数量猜角色、不cook。节点交付卡片复用同一控制声明；不证明联动或正确性 | dict |
+| `present_nodes(nodes, *, allow_foreign=None)` | 明确交付节点入口，nodes为node及可选label/role/description/new_identity的1..16项列表；role为control/output/node，只表达导航用途，description为<=200字符的单行操作说明。返回context来自真实节点类别，说明和路径属于交付时观察。缺少持久标识时在目标节点userData写UUID，真实修改遵守ownership；显式new_identity只用于续新标识，旧引用失效。作为__result__进入成功原工具回执后显示节点卡片，与DSH文件交付并列。声明后保存同一HIP，重开/改名仍可定位；不存在或复制导致重复不按历史路径猜目标，不写独立交付账本 | dict |
+| `focus_node(reference, *, expected_hip)` | 在Bridge主线程队列按持久id与原交付HIP进行显式界面导航，适用于节点卡片点击。定位同一实际节点并打开参数页、展开祖先框；不同HIP、缺失或重复id明确拒绝。只改变导航/框展开，不改模型参数/几何或加载保存HIP；历史runtime sessionId不作为持久节点身份 | dict |
 
 ### parm 域（依附 node）
 
@@ -214,7 +217,8 @@ view_bounds为世界坐标[min_xyz,max_xyz]，应覆盖全部测试状态；省�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `package_info(name=None, limit=64)` | 官方运行态package清单；精确name另给有界资源路径。省略环境变量值，不扫磁盘、不加载或改包；GUI接口不可用返回unavailable而非空清单。Active不证明兼容/授权，publisher未验证；Bridge回执提供runtime身份 | dict |
+| `tool_catalog(query='', kind=None, category=None, origin=None, offset=0, limit=64)` | 当前Houdini实际node_type/Shelf/Panel/Viewer State/Radial注册目录，分页有界查名称/标签；category精确原生类别，origin按资源位置区分factory/external/embedded/unknown，不认证发行方。保留hidden/deprecated，GUI缺失明确unavailable，不扫描磁盘或执行工具；不是授权/安装账本 | dict |
+| `tool_inspect(kind, name, category=None, include_code=False, max_chars=16000)` | 精确读取当前工具来源、HDA实际/候选定义、界面和实例，按需读取有界公开脚本；node_type/viewer_state要求category，不建临时实例。Package归属只报告原生root路径关系；编译节点内部实现、独立state源码未知不猜测。发现不授权修改 | dict |
 
 ### cop 域（Copernicus 图层与关系）
 
@@ -231,15 +235,27 @@ view_bounds为世界坐标[min_xyz,max_xyz]，应覆盖全部测试状态；省�
 | `usd_stage_summary(node, max_paths=64)` | 概览某 LOP 输出 stage 的 geometry/material/light/camera/RenderSettings/Product/Var，材质绑定、time-sampled 属性及 cook warning；路径按组限量但计数完整 | dict |
 | `usd_prim_info(node, prim_path, max_properties=200)` | 检查单个 USD prim 的属性、primvar、relationship、material binding、time samples；points/topology 等大数组只报结构不整段拉取 | dict |
 
+### tool package 域（原生工具包开发与注册）
+
+Package是原生加载配置，不是任意代码沙箱。默认JSON直接指向用户确认的唯一资源源码目录，不复制为构建/安装副本、不生成ZIP、不限定DSH名称或版本目录。工具创建/维护与归入旧包/新包分别选择；明确源码位置及注册JSON位置，已确认选择沿用。扩展旧包通常使用现有DSH文件工具及HDA动词维护相关文件，路径已覆盖时不修改注册JSON；未知字段/条件/依赖保留。发现、注册和当前进程动作分别报告事实，不建额外包账本。
+
+| 动词 | 行为与边界 | 返回 |
+|---|---|---|
+| `package_catalog(directories=None, query='', offset=0, limit=64)` | 顶层原生JSON配置与当前Houdini加载记录合并查询；默认实际扫描目录或明确目录，区分磁盘配置/条件/加载，不读全部源码、不递归子目录。支持普通包名、多个资源位置和未加载包，未知动态条件不猜算 | dict |
+| `package_inspect(package_file, *, files=None)` | 精确只读原生注册配置、hash、多资源路径、当前加载及浅资源/显式文件事实；兼容hpath/path/env写法，公共脱敏投影不能当原文件写回。注册名称冲突由action预览检查；实际来源不证明授权、可用性或完整依赖，条件未知明确unresolved | dict |
+| `tool_package_create(resource_root, package_file, *, houdini_versions=None, enable=True)` | 仅创建全新原生JSON，追加指向明确的既有源目录；不复制源、不加载、不创建无用途目录，不覆盖已有JSON或写$HFS。兼容版本声明可选，是加载条件而非测试证书，返回真实注册和源码位置 | dict |
+| `tool_package_action(package_file, action, *, dry_run=True, expected_sha256=None)` | 明确原生配置的当前进程load/activate/deactivate/unload，预览默认零写入，可核对配置hash；不改持久enable/条件/依赖，不删除注册或源，不强制清理缓存/窗口。保护当前HDA实例依赖，加载/根错位/部分失败保留真实状态；当前动作不证明下次启动状态 | dict |
+
 ### asset 域（HDA / 数字资产）
 
-通用参数界面和绑定属于parm域，HDA入口保留资产语义。
+通用参数界面和绑定属于parm域，HDA入口保留资产语义。定义写入同时核对session创建库的真实指纹与全部受影响实例；已有库必须单次明确allow_foreign，不由自有新实例授予写入权。所有路径拒绝写$HFS；单次授权不认领已有定义。代码、界面与保存复用同一调用的定义/库恢复合同。
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None, *, max_outputs=None)` | 把已有节点（通常 subnet）转为数字资产：自动建 otls 目录、默认 `$HIP/otls/<name>.hda`。max_outputs可显式声明1..64个输出上限，None保留原生默认；非法值写前拒绝。返回输入/输出上限、实例/定义顶层参数条目数和verification_scope，不承诺spare自动迁移或公共输出正确。`replace=True` = 整体重建：所有待销毁实例逐项通过 ownership guard 后，卸载旧定义并覆盖文件；否则同名冲突报错并提示 replace | dict |
+| `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None, *, max_outputs=None)` | 转为全新独立类型/库，默认 `$HIP/otls/<name>.hda`；已有类型/目标文件和replace=True拒绝，不破坏旧实例或多资产库。成功登记实际新库与定义的session写入来源，实例ownership不授予外部定义权限。max_outputs为1..64端口上限；spare迁移、新实例和公共输出仍须验证 | dict |
+| `hda_fork(node, name, hda_file, description=None)` | 只读复制实际源HDA定义到不存在的新类型/独立库，保留源定义及所有实例；不自动建实例或迁移用户内容。成功登记新库/定义，返回category/type/source_library等真实身份；官方可见可编辑HDA也可分叉，编译实现不支持 | dict |
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
-| `hda_set_section(node, section, code, allow_foreign=None)` | 全量写 section。`PythonModule` 先 `compile()` 预检语法（带行号报错，不写脏）；写后读回校验一致 | dict |
+| `hda_set_section(node, section, code, allow_foreign=None)` | 全量写section；先语法预检，核对库来源与共享实例，写后逐字回读，失败恢复本调用sections/库/根界面/通道。后续exec失败不撤销此前成功库写入，任意回调副作用不属恢复范围 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |
 | `hda_set_interface(node, spec=None, keep_std=True, hide_builtin_tabs=False, allow_foreign=None, *, edits=None, expected_sha256=None, dry_run=False, layout=None)` | spec/layout整组重建，均检查共享实例ownership；layout与spec/edits互斥，最多512条/12层。支持label/ramp、tuple、multiparm、条件及组件；SOP标准输入Label隐藏。dry_run各模式统一返回ok=true、dry_run=true、applied=false、scene_writes=0，只表示预检成功；spare冲突写前拒绝。edits成功保留旧通道，重建成功不保证旧通道；重建写后失败恢复本调用定义section、实例界面/通道及磁盘库（<=32MiB、64实例、每实例512通道），返回restored/restore_errors。定义写入独立于场景Undo，后续exec失败不撤销已成功的库写入，外部副作用不保证恢复 | dict |
 | `hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None)` | 受控unlock/save/lock/promote，不拆包。先dry_run取得plan_sha256，应用须expected_plan匹配库/定义/源码/实例状态；<=32MiB库、512后代、64实例、2MiB源码。save要求解锁且无实例界面覆盖；promote显式提升源spare界面并保留已有根参数/keys/locks，拒绝其他实例覆盖与既有模板删除/变型。共享写入检查所有实例；lock丢弃内部修改须discard_changes=True且后代也获授权；unlock不授予后代ownership。save/promote写后失败恢复本调用定义/根界面/通道/磁盘，不保证外部副作用或后续exec失败恢复。返回状态/哈希不证明公共输出、回调、GUI或依赖通过 | dict |
@@ -261,6 +277,7 @@ float/int的components(1..4)、等长default和look(regular/vector/color)，colo
 folder_type增加multiparm_list/multiparm_tabs/multiparm_scroll，default为0..64实例；子字段每层重复需要一个#占位。
 普通folder支持ends_tab_group与tab_hide_when/tab_disable_when（单页/单区），multiparm不支持tab条件；hide_when/disable_when为普通模板条件。
 通用字段增加hidden/hide_label/disable_when。菜单条件核对实际token，不能从eval返回的索引猜条件值。
+string的string_type为regular/node；node使用原生NodeReference并与file互斥。mode组件生成稳定token菜单与相应按需显示区；只是UI结构，不生成业务依赖。
 
 layout组件的字段、选择标准和完整可编辑样例唯一维护于[UI组件参考](../skills/houdini-parameter-ui/references/ui-components.md)。
 layout写后检查标签/顺序、类型、tags、默认、组件数、join及条件；原生归并后的folder-set名字需回读，不承诺提交名字原样保留。
@@ -273,14 +290,14 @@ Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的
 |---|---|---|
 | `camera_fit(camera, target, direction='iso', coverage=0.82, width=None, height=None, frame=None, *, dry_run=False, allow_foreign=None)` | 将正式静态OBJ cam拟合到显式SOP世界包络；保留焦距，清lookatpath，求距离/正交宽度，实际矩阵投影回验；无渲染/视口改变。尺寸默认相机值，当前frame。拒绝动画/约束/窗口偏移/自定义lens，失败恢复。ownership与单次allow_foreign适用，持久preview服务永不豁免；dry_run仍exec。Solaris需导入并按实际RenderProduct预检 | dict |
 | `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
-| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed：picture省略或仅安全basename，唯一文件落`$HIP/dsh-visual-checks/<run-id>/`；路径值必须选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
+| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed用于验证；delivery分配最终图到`$HIP/dsh-render/`，两者picture省略或仅安全basename、唯一不覆盖；路径值选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
 ### viewport 域（视口/UI）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed')` | **用户屏幕诊断工具**：managed/explicit路径和artifact合同同render_view；无命名HIP时managed零状态修改拒绝。PNG/JPEG/BMP/TGA为支持截图格式。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
+| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed')` | **用户屏幕诊断工具**：managed/delivery/explicit路径和artifact合同同render_view；delivery直接生成到`$HIP/dsh-render/`，无命名HIP时两种分配拒绝。PNG/JPEG/BMP/TGA为支持截图格式。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
 
 ## 自省、帮助与追踪
 

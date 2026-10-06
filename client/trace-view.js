@@ -25,6 +25,8 @@ function createTraceView(React, catalog, sources, trace, css) {
     if (!entry.title) return "调用名称未记录";
     return entry.title === entry.name ? kindNames[entry.kind] || entry.title : entry.title;
   };
+  const stateTone = e => e.failed || e.attentionLevel === 'error' ? ' tr-bad'
+    : e.attentionLevel === 'warning' ? ' tr-warning' : '';
   const tag = (s, bad = false) =>
     h("span", { className: "tr-pill" + (bad ? " tr-bad" : "") }, s);
   const typeTag = (name) =>
@@ -362,7 +364,7 @@ function createTraceView(React, catalog, sources, trace, css) {
         h(
           "div",
           { className: "tr-buttons" },
-          tag(e.state, e.failed || e.attention),
+          h("span", {className: "tr-pill" + stateTone(e)}, e.state),
           h("span", { className: "tr-meta" }, e.name),
         ),
         h(
@@ -387,12 +389,17 @@ function createTraceView(React, catalog, sources, trace, css) {
                     : note("场景影响按事务与操作证据判断。"),
             )
           : null,
-        e.attention && !e.failed
-          ? h("section", { className: "tr-attention" },
-              h("h4", null, "需要关注"),
+        e.attention
+          ? h("section", { className: "tr-attention tr-attention-" + e.attentionLevel },
+              h("h4", null, e.checkSummary || (e.operationFailures ? "子操作失败" : "结果待查回")),
               e.recoveryNeeded ? prose("尚不能确认这次操作的结果。请按原请求回执查回状态；结果已过期或不可用时，应检查当前场景，不要直接重复执行。") : null,
               e.operationFailures ? prose(e.operationFailures + " 个操作发生错误，详情见下方执行步骤。") : null,
-              e.checkAttention ? prose("检查结果需要关注，请展开检查证据查看。") : null)
+              e.checkFindings.map((finding, index) => h("div", {key: index},
+                h("strong", null, finding.label + " · " + (verbTitles[finding.verb] || finding.verb || "操作未记录")),
+                finding.target ? h("div", {className: "tr-meta"}, finding.target) : null,
+                finding.reason ? prose(finding.reason) : note("具体原因请展开操作与检查证据；本条摘要未记录。"))),
+              e.checkAttention && !e.checkFindings.length ? note("回执只提供检查计数，未记录逐项原因；请查看完整返回。") : null,
+              note("这是本次调用当时的结果，不是当前工程的问题清单；后续修复不会改写历史记录。"))
           : null,
         e.requestReceipt ? fold("请求回执", structured(e.requestReceipt)) : null,
         fold("请求参数", Object.keys(e.args).some((k) => k !== "code")
@@ -595,6 +602,7 @@ function createTraceView(React, catalog, sources, trace, css) {
               ),
             ),
           ),
+          filter === "error" ? note("包含操作失败、检查未通过/警告/未验证及待查回结果。历史记录不代表当前仍未修复，也不评定成品质量。") : null,
           h(
             "div",
             { className: "tr-pager", "aria-label": "步骤分页" },
@@ -712,7 +720,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                         "span",
                         {
                           className:
-                            "tr-call-state" + (e.failed || e.attention ? " tr-bad" : ""),
+                            "tr-call-state" + stateTone(e),
                         },
                         shortState(e),
                       ),

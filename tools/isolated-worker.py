@@ -83,8 +83,14 @@ def main():
     job = None
     try:
         with (directory / 'worker.log').open('xb') as log:
+            startup = None
+            if os.name == 'nt' and args.gui and not args.show:
+                startup = subprocess.STARTUPINFO()
+                startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup.wShowWindow = 0
             process = subprocess.Popen(command, cwd=launch_directory(executable), env=env,
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                       startupinfo=startup,
                                        creationflags=subprocess.CREATE_NO_WINDOW)
             job = WorkerJob(process, args.memory_mb)
             if closing.is_set():

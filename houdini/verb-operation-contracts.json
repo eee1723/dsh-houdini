@@ -26,7 +26,10 @@
           },
           "detail": {
             "type": "string",
-            "enum": ["brief", "full"],
+            "enum": [
+              "brief",
+              "full"
+            ],
             "default": "brief",
             "description": "Brief returns callable facts and concise purpose. Full adds complete doc and maintained operation_contract; applies to one name or every item in a batch."
           }
@@ -69,7 +72,10 @@
               },
               "detail": {
                 "type": "string",
-                "enum": ["brief", "full"]
+                "enum": [
+                  "brief",
+                  "full"
+                ]
               },
               "doc": {
                 "type": "string",
@@ -857,6 +863,249 @@
         "output is keyword-only. Port strings are exact port names, not labels. connect replaces the current occupant; OBJ parenting is a separate set_object_parent operation."
       ]
     },
+    "network_controls": {
+      "summary": "Declare persistent control entry labels on explicit nodes, or list the same declarations for native navigation. Names and parameter counts do not infer control roles.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string"
+          },
+          "controls": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "node": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allow_foreign": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent"
+        ]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "type": "string"
+          },
+          "controls": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "title": "Declare the actual controller",
+          "code": "__result__ = network_controls('/obj/example_geo', [{'node': 'CTRL_ENGINEERING', 'label': 'Engineering controls'}])",
+          "tool": "houdini_exec",
+          "read_result": "controls contains the current declared paths and labels; this does not verify parameter bindings."
+        },
+        {
+          "title": "Read declarations without cooking",
+          "code": "__result__ = network_controls('/obj/example_geo')",
+          "tool": "houdini_exec",
+          "read_result": "The exec entry's listing branch performs no scene writes or cooking; controls is read from the actual node declarations."
+        }
+      ],
+      "notes": [
+        "Declarations are presentation metadata stored on the actual nodes. Ownership is still checked for every explicit write; a control role does not grant edit permissions.",
+        "Node delivery cards consume these same declarations. No named-path registry or CTRL-name inference is maintained."
+      ]
+    },
+    "present_nodes": {
+      "summary": "Publish explicit node entry cards from the original execution result. Persistent IDs are stored on actual nodes and saved with the HIP; navigation roles do not verify control bindings or geometry.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "properties": {
+                "node": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "control",
+                    "output",
+                    "node"
+                  ]
+                },
+                "new_identity": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "A short, explicit description of what the user can edit or do at this entry. This is not a validation certificate."
+                }
+              },
+              "required": [
+                "node"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "allow_foreign": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodes"
+        ]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "houdini/node-delivery-v1"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "context": {
+                  "type": "string",
+                  "description": "Actual Houdini node category at delivery time."
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "scene_writes": {
+            "type": "integer"
+          },
+          "requires_save": {
+            "type": "boolean"
+          }
+        }
+      },
+      "examples": [
+        {
+          "title": "Deliver saved control and output entries",
+          "tool": "houdini_exec",
+          "code": "entries = present_nodes([{'node':'/obj/asset/CTRL','label':'工程控制','role':'control','description':'调整尺寸和重复数量'}, {'node':'/obj/asset/OUT','label':'模型输出','role':'output'}])\nscene_save(expected_path='D:/project/asset.hip')\n__result__ = entries",
+          "read_result": "The successful original result supplies the node cards. Save after declaration to persist newly assigned entry IDs; files remain delivered through DSH present."
+        }
+      ],
+      "notes": [
+        "Requires a named HIP. Metadata writes use the same ownership boundary as other edits; references never grant geometry mutation permissions.",
+        "Reopening the same HIP and renaming a node preserve the reference. Deletion or duplicate IDs are reported; an old path is never used as a fallback.",
+        "new_identity=True explicitly changes a copied node's ID and invalidates earlier references to that particular ID."
+      ]
+    },
+    "focus_node": {
+      "summary": "Navigate to a persistent delivered node ID in its expected current HIP through the main-thread queue. No HIP loading/saving or model parameter edits.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "expected_hip": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "expected_hip"
+        ]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "network_current": {
+            "type": "string"
+          },
+          "parameter_current": {
+            "type": "string"
+          },
+          "scene_writes": {
+            "type": "integer",
+            "const": 0
+          }
+        }
+      },
+      "examples": [
+        {
+          "title": "Locate an explicitly delivered entry",
+          "tool": "houdini_inspect",
+          "code": "__result__ = focus_node({'id':'0123456789abcdef0123456789abcdef'}, expected_hip='D:/project/asset.hip')",
+          "read_result": "Use an actual ID from present_nodes. This only changes editor navigation and reveals containing boxes; missing/duplicated IDs or a different HIP are rejected."
+        }
+      ],
+      "notes": [
+        "The Host's node card click re-reads the original execution fact and current task binding. Browser-supplied paths, UUIDs or Bridge URLs are not accepted as target authority."
+      ]
+    },
     "network_boxes": {
       "summary": "Create, update or remove presentation groups without moving or cooking nodes.",
       "input_schema": {
@@ -1505,7 +1754,7 @@
       ]
     },
     "render_view": {
-      "summary": "Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations. Managed output accepts an omitted picture or a basename; paths require output_policy='explicit'.",
+      "summary": "Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations. Managed checks and delivery images accept an omitted picture or safe basename; custom paths require output_policy='explicit'.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1585,8 +1834,10 @@
             "type": "string",
             "enum": [
               "managed",
+              "delivery",
               "explicit"
-            ]
+            ],
+            "description": "managed: temporary visual checks under $HIP/dsh-visual-checks/<run-id>. delivery: requested final image under $HIP/dsh-render, safe basename only, unique filename returned. explicit: caller supplied destination."
           },
           "focus_group": {
             "anyOf": [
@@ -1725,8 +1976,9 @@
         }
       ],
       "notes": [
-        "Requires the GUI preview service; headless renderer checks use render_frame. Managed outputs are under $HIP/dsh-visual-checks; explicit destinations require output_policy=explicit.",
-        "A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics."
+        "Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-visual-checks/<run-id>; delivery images are under $HIP/dsh-render. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.",
+        "A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics.",
+        "最终图片可选delivery：生成时就进入$HIP/dsh-render，读取artifact.actual_path或实际output/path再present；该位置不证明视觉语义或任务完成。不自动搬动已公开文件，清理只针对明确的本任务临时产物。"
       ]
     },
     "scene_save": {
@@ -1801,6 +2053,436 @@
       ],
       "notes": [
         "scene_save does not perform Save As, load or clear. expected_path is optional but, when given, must match the actual current HIP."
+      ]
+    },
+    "tool_catalog": {
+      "summary": "按需查询当前Houdini实际工具注册目录、来源和版本；不执行工具或推断修改授权。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "node_type",
+              "shelf",
+              "panel",
+              "viewer_state",
+              "radial"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "factory",
+              "external",
+              "embedded",
+              "unknown"
+            ]
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "最小明确调用",
+          "code": "__result__=tool_catalog(query='scatter', kind='node_type', category='Sop', limit=32)",
+          "read_result": "通过__result__读取本次真实结果；失败、部分写入与未验证范围以原始回执为准。",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "分页查询当前注册事实，不扫磁盘；factory仅代表$HFS资源位置，不认证发行方。",
+        "GUI-only registry缺失明确unavailable；未生效Shelf/Panel定义、独立state源码与编译内部实现不猜测。"
+      ]
+    },
+    "tool_inspect": {
+      "summary": "精确读取当前工具来源、HDA实际/候选定义、界面与有界公开代码；不创建实例。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "include_code": {
+            "type": "boolean"
+          },
+          "max_chars": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "最小明确调用",
+          "code": "__result__=tool_inspect('node_type','scatteralign',category='Sop',include_code=False)",
+          "read_result": "通过__result__读取本次真实结果；失败、部分写入与未验证范围以原始回执为准。",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "node_type/viewer_state要求准确category；include_code为明确读取公开文本，不执行回调。",
+        "实际来源不代表库写入权限；Package只报告原生资源根路径关系。"
+      ]
+    },
+    "hda_create": {
+      "summary": "从明确节点创建全新独立HDA类型与库，保留其他工具；不支持整体replace。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "hda_file": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "min_inputs": {
+            "type": "integer"
+          },
+          "max_inputs": {
+            "type": "integer"
+          },
+          "max_outputs": {
+            "type": "integer"
+          },
+          "replace": {
+            "type": "boolean"
+          },
+          "allow_foreign": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "name"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "最小明确调用",
+          "code": "n=tab_create('/obj','subnet',name='my_tool_source')\n__result__=hda_create(n,'artist_tools::my_tool::1.0',hda_file='$HIP/otls/my_tool_1_0.hda')",
+          "read_result": "通过__result__读取本次真实结果；失败、部分写入与未验证范围以原始回执为准。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "已有目标库和类型冲突写前拒绝；replace=True拒绝并提示分叉或原位维护。",
+        "成功的新库登记当前session定义来源，节点ownership不授予已有共享库权限；spare迁移、新实例和输出另验。"
+      ]
+    },
+    "hda_fork": {
+      "summary": "复制实际HDA定义到全新类型和独立库；不修改或迁移原实例。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "hda_file": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "name",
+          "hda_file"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "最小明确调用",
+          "code": "__result__=hda_fork('/obj/existing_tool','artist_tools::derived_tool::1.0','$HIP/otls/derived_tool_1_0.hda')",
+          "read_result": "通过__result__读取本次真实结果；失败、部分写入与未验证范围以原始回执为准。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "源只读，可来自用户明确参考的自定义或官方可编辑HDA；编译内部实现不支持。",
+        "目标类型及文件必须不存在，返回真实category/type/source_library；后续另建新实例，不自动修改原工具。"
+      ]
+    },
+    "tool_package_action": {
+      "summary": "对明确原生JSON执行当前进程load/activate/deactivate/unload，源配置与资源保持。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "package_file": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "load",
+              "activate",
+              "deactivate",
+              "unload"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "expected_sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_file",
+          "action"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "明确原生Package目标",
+          "code": "__result__=tool_package_action('C:/Users/artist/Documents/houdini21.0/packages/MyTools.json','load',dry_run=True)",
+          "read_result": "通过__result__读取配置、声明路径和本进程原生加载事实；未知条件和未验证范围保持明确。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "dry_run默认只预览；正式执行明确传False，可核对先读的config_sha256。",
+        "load不隐式reload已加载工具。运行态动作不编辑enable/条件/依赖、不删除JSON或源、不强清Python模块/窗口。",
+        "停用前核对当前实际资源/HDA实例，加载检查注册名称冲突与声明/实际路径；未知动态路径不冒充安全正确。",
+        "前置拒绝明确零派发，原生派发失败后保留原错误、回读错误与实际部分状态，不把sceneUndo当完整恢复。"
+      ]
+    },
+    "package_catalog": {
+      "summary": "有界发现原生注册JSON与当前Houdini加载事实，支持任意包名和多个资源位置。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "directories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "明确原生Package目标",
+          "code": "__result__=package_catalog(query='Tools',limit=32)",
+          "read_result": "通过__result__读取配置、声明路径和本进程原生加载事实；未知条件和未验证范围保持明确。",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "只扫默认原生搜索目录/已加载配置父目录及明确追加目录的顶层JSON；不递归全盘源码。",
+        "磁盘已配置、声明条件和实际运行态分别报告；动态package_path、跨包变量或条件不自行执行猜算。",
+        "发现不授予修改权限。用户已选目标直接核对，缺开发归属才询问已有包扩展或新包及两个位置。"
+      ]
+    },
+    "package_inspect": {
+      "summary": "精确读取普通原生Package配置、hash、多路径、加载关系及浅资源/显式文件事实。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "package_file": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "package_file"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "明确原生Package目标",
+          "code": "__result__=package_inspect('C:/Users/artist/Documents/houdini21.0/packages/MyTools.json',files=['toolbar/mytools.shelf'])",
+          "read_result": "通过__result__读取配置、声明路径和本进程原生加载事实；未知条件和未验证范围保持明确。",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "兼容env/path/hpath与未知字段结构；敏感值脱敏，不执行模块或未知条件。",
+        "共享运行态路径关系不是发行方或独占ownership；声明与加载不一致时不能猜测实际源码。",
+        "扩展已有包若原搜索路径已覆盖新资源，直接在确认源目录维护相关文件，保留原JSON字节。"
+      ]
+    },
+    "tool_package_create": {
+      "summary": "仅创建新原生JSON追加注册明确的唯一源目录，不复制、归档或加载资源。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "resource_root": {
+            "type": "string"
+          },
+          "package_file": {
+            "type": "string"
+          },
+          "houdini_versions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resource_root",
+          "package_file"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "明确原生Package目标",
+          "code": "__result__=tool_package_create('E:/HoudiniTools/MyTools','C:/Users/artist/Documents/houdini21.0/packages/MyTools.json',houdini_versions=['21.0'],enable=True)",
+          "read_result": "通过__result__读取配置、声明路径和本进程原生加载事实；未知条件和未验证范围保持明确。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "用户先确认资源源码位置与JSON注册位置，已有授权沿用；文件名不限制DSH前缀或版本目录。",
+        "目标JSON必须不存在；不覆盖旧配置、不改已有资源、不写$HFS。版本表达式只是声明加载条件，不证明兼容。",
+        "需要多路径或更复杂条件时沿用完整原生JSON与DSH通用write/edit，明确字段与影响，不造额外文件工具。"
+      ]
+    },
+    "viewport_screenshot": {
+      "summary": "Capture the user viewport for diagnosis, or a requested delivery image. This observes the user display state; it does not prove model geometry or semantic quality.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "output_policy": {
+            "type": "string",
+            "enum": [
+              "managed",
+              "delivery",
+              "explicit"
+            ],
+            "description": "managed defaults to $HIP/dsh-visual-checks/<run-id>. delivery allocates under $HIP/dsh-render. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "artifact": {
+            "type": "object"
+          },
+          "fresh": {
+            "type": "boolean"
+          },
+          "user_state_restored": {
+            "type": "boolean"
+          },
+          "semantic_status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "path",
+          "artifact",
+          "fresh",
+          "user_state_restored",
+          "semantic_status"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "Capture a requested delivery image",
+          "code": "__result__ = viewport_screenshot(path='viewport.png', output_policy='delivery')",
+          "read_result": "Read the actual path and artifact before present. fresh and user_state_restored describe capture/recovery; semantic_status remains unverified until the image is actually inspected.",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "Consume the actual returned path/artifact.actual_path for presentation. Allocation never overwrites an existing image. A dispatched capture whose completion is unknown retains its reservation; do not remove it as ordinary temporary debris."
       ]
     }
   }

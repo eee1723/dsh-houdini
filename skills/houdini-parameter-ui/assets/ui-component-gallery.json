@@ -60,5 +60,31 @@
       {"type":"separator","name":"output_gap","tags":{"sidefx::look":"blank","sidefx::layout_height":"small"}},
       {"type":"string","name":"output_name","label":"Output Attribute","default":"result"}
     ]}
+  ],
+  "artist_controls": [
+    {"type":"string","name":"source_node","label":"参考节点","string_type":"node","default":"","tags":{"opfilter":"!!SOP!!","oprelative":"."},"help":"选择 SOP 节点作为参考。这里只声明输入，不会自动修改该节点。"},
+    {"component":"mode","name":"value_source","label":"数值来源","default":"constant","help":"先选择来源，再调整该来源需要的设置。菜单 token 是稳定接口。","choices":[
+      {"token":"constant","label":"固定数值","parms":[
+        {"type":"float","name":"amount","label":"强度","default":1,"min":0,"max":2}
+      ]},
+      {"token":"attribute","label":"输入属性","parms":[
+        {"type":"string","name":"attribute_name","label":"属性","default":"weight","help":"填写输入几何中的属性名。此示例没有动态属性菜单，也不 cook 输入。"},
+        {"type":"float","name":"attribute_scale","label":"缩放","default":1}
+      ]},
+      {"token":"texture","label":"纹理采样","parms":[
+        {"type":"string","name":"texture_file","label":"纹理","file":"image","default":""},
+        {"type":"menu","name":"texture_space","label":"坐标","menu":{"items":["uv","position"],"labels":["UV","位置"]},"default":0}
+      ]}
+    ]},
+    {"component":"section","name":"distribution","label":"分布与响应","collapsed":false,"parms":[
+      {"type":"float","name":"range_min","label":"最小值","default":0,"tags":{"sidefx::slider":"none"}},
+      {"type":"float","name":"range_max","label":"最大值","default":1,"tags":{"sidefx::slider":"none"}},
+      {"component":"remap","name":"response","label":"Ramp 重映射","enabled":true,"help":"曲线横轴是输入分布，纵轴是响应；没有附带业务算法。"}
+    ]},
+    {"component":"repeater","name":"regions","label":"区域","style":"tabs","count":1,"label_ref":"region_name#","parms":[
+      {"type":"string","name":"region_name#","label":"名称","default":"区域"},
+      {"type":"toggle","name":"region_enabled#","label":"启用","default":true},
+      {"type":"float","name":"region_weight#","label":"权重","default":1,"min":0,"max":1,"disable_when":"{ region_enabled# == 0 }"}
+    ]}
   ]
 }

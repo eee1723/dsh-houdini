@@ -18,7 +18,11 @@ export function apply(ctx) {
   const output = process.env.DSH_CONTEXT_FIXTURE_OUT
   const outcomeReceipts = process.env.DSH_OUTCOME_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
-  const finalStep = outcomeReceipts ? 11 : 9
+  const finalStep = outcomeReceipts ? 12 : 10
+  const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
+    .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
+  const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
   const requests = [], bridgeCalls = [], receipts = new Map()
   let sequence = 0, jobPolls = 0, failure
   const writeReport = value => {
@@ -99,6 +103,17 @@ export function apply(ctx) {
         assert(!failure, failure)
         const step = requests.length
         assert(step <= finalStep, 'fixture must converge within scripted requests')
+        const system = options.messages.filter(message => message.role === 'system')
+          .flatMap(message => message.content.filter(block => block.type === 'text').map(block => block.text))
+          .join('\n').replaceAll('\r\n','\n')
+        for (const paragraph of personaBody) assert.equal(system.split(paragraph).length-1,1,
+          'the actual provider must receive each maintained persona section exactly once')
+        assert(!system.includes(skillBody),'domain methods must not be eagerly duplicated in System')
+        if (step === finalStep) {
+          const skillResult=options.messages.filter(message=>message.role==='tool')
+            .flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n')
+          assert(skillResult.replaceAll('\r\n','\n').includes(skillBody),'on-demand skill reaches the actual provider intact')
+        }
         const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
           .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
         const current = snapshots.at(-1)
@@ -168,6 +183,7 @@ export function apply(ctx) {
           ['houdini_inspect',{code:'fixture_job_observation'}], ['houdini_job_status',{jobId}], ['houdini_job_status',{jobId}],
           ...(outcomeReceipts ? [['houdini_inspect',{code:'fixture_outcome_caught_read'}],
             ['houdini_exec',{code:'fixture_outcome_failed_check'}]] : []),
+          ['skill',{name:'houdini-sop-workflow'}],
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]

@@ -11,6 +11,7 @@ import {executionHistory} from '../../lib/execution-history.js'
 import {projectExecutionNotice} from '../../lib/execution-state.js'
 import {installHoudiniExecutionLog} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
+import {apply as applySpillPolicy} from '@deepseek-ai/dsh-spill-policy'
 
 const ctx=new Context()
 const outcomeFixtures=process.env.DSH_OUTCOME_FIXTURE
@@ -99,4 +100,37 @@ if (outcomeFixtures) {
   }
   console.log('Exact Houdini receipts: caught read/fallback and failed validation survive native/PTC dispatch')
 }
-console.log('DSH 0.2 API: real native and nested registry dispatch, one execution each, durable fact round-trip passed')
+// Use the released middleware, not a hand-written truncator. A display spill
+// must never cut the PTC audit JSON in its middle or lose later failure facts.
+const spillCtx=new Context()
+new SystemPrompt(spillCtx,{})
+const spillRuntime=new ToolRuntime(spillCtx,{mode:'both'})
+const spillCopies=[]
+spillCtx.provide('spillStore',{async saveText(input){spillCopies.push(input.content);return {
+  locator:'fixture:retained',retrievalHint:'Read the retained fixture',bytes:Buffer.byteLength(input.content)}}})
+applySpillPolicy(spillCtx,{maxInlineTokens:1000})
+installHoudiniExecutionLog(spillCtx)
+const spillSession=Session.create('dsh02-spill-audit')
+const spillAgent={id:spillSession.id,session:spillSession,options:{provider:'fixture',model:'text'}}
+const largeReceipt={ok:false,stdout:'large process log '.repeat(12000),stderr:'',error:'FINAL_WRITE_FAILED',
+  result:{kind:'houdini/node-delivery-v1',nodes:[]},outcome:{batch:'failed',operations:{failed:1}},
+  execution:{owner_session:spillSession.id,executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),sequence:1,observed_at:1,hip_path:'fixture.hip'},
+  verbs:[{verb:'tool_package_create',ok:false,error:'FINAL_WRITE_FAILED',summary:{restored:false,package_exists:true}}]}
+let spillExecuted=0
+registerHoudiniTools(spillCtx,{async exec(){spillExecuted++;return structuredClone(largeReceipt)}})
+spillCtx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
+  return {value:await request.bindings[0].functions.houdini_exec({code:'fixture'}),logs:[]}
+}})
+spillSession.append('tool/call',{turn:1,step:1,callId:'large-program',name:'run_code',arguments:JSON.stringify({code:'fixture'})})
+const spilled=await spillRuntime.execute({callId:'large-program',name:'run_code',
+  arguments:{code:'return await tools.houdini_exec({code:"fixture"})',description:'Retain original audit facts'},agent:spillAgent,signal})
+assert.equal(spilled.isError,false)
+assert(spillCopies.length>0&&spilled.content[0].text.includes('Full formatted result stored at:'),'the actual model display policy remains active')
+assert(!spilled.content[0].text.includes('dsh-houdini/execution-v1'),'audit framing is not model-facing text')
+assert.equal(spillExecuted,1,'retention never retries a scene operation')
+const durable=spillSession.snapshotEvents().find(e=>e.type==='tool/ptc-dispatch')
+const durableValue=JSON.parse(durable.data.content[0].text).value
+assert.deepEqual(durableValue,largeReceipt,'large PTC audit JSON remains valid and complete after the released spill policy')
+const spillStored=validateStoredEvents(spillSession.header,JSON.parse(JSON.stringify(spillSession.snapshotEvents())))
+assert.deepEqual(executionHistory(Session.create(spillSession.id,spillStored,spillSession.header).snapshotEvents()).rows[0].value,largeReceipt)
+console.log('DSH 0.2 API: native/nested dispatch, durable replay, exact large receipts with real display spill, one execution each passed')

@@ -112,6 +112,12 @@ try {
   const traceBounds=await page.locator('.dsh-trace').boundingBox()
   assert.ok(traceBounds.height>700 && traceBounds.y+traceBounds.height<=1001,'Trace fills the available viewport')
   await page.screenshot({path:path.join(config.output,'browser-trace.png')})
+  await page.getByRole('button',{name:'需要关注',exact:true}).click()
+  await page.getByRole('button',{name:/调用 #.*检查有警告/}).click()
+  await page.locator('.tr-attention-warning').getByText('夹具：输出存在属性警告',{exact:true}).waitFor()
+  assert.match(await page.locator('.tr-detail').innerText(),/\/obj\/asset\/OUT/)
+  assert.match(await page.locator('.tr-detail').innerText(),/后续修复不会改写历史记录/)
+  await page.screenshot({path:path.join(config.output,'browser-trace-attention.png')})
   assert.deepEqual([...interactionFixtures].sort(), ['approval','questions'])
   await page.evaluate(sessionId => {
     window.__dshFixtureApproval(sessionId, {toolName:'fixture',reason:'隔离审批可见性检查'})
@@ -160,7 +166,7 @@ try {
       'houdini_job_submit','houdini_job_status','houdini_job_cancel']) {
     assert.ok(toolsText.includes(name),'missing tool documentation '+name)
   }
-  for(const label of ['当前包提供 8 个工具','本任务已用 2 个','本任务调用 2 次']) {
+  for(const label of ['当前包提供 8 个工具','本任务已用 2 个','本任务调用 3 次']) {
     assert.ok(toolsText.includes(label),'missing task usage statistic '+label)
   }
   await page.screenshot({path:path.join(config.output,'browser-tools.png')})

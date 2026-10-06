@@ -18,6 +18,14 @@
 稳定内部名承担接口身份，显示标签与文件夹只影响呈现。改UI不改绑定，更换内部实现时显式迁移绑定。
 控制定义记录在任务需求/计划与最终参数schema中，不建立第二份自动判完成账本。
 
+用户控制入口通过`network_controls`在真实节点的`dsh_houdini_control` userData明确声明可读标签，随HIP保存；它是导航注解，不复制参数定义、不证明联动、不承担ownership。交付时用`present_nodes`声明控制卡片，直接从对话进入当前工程的节点和参数页，不另加原生查找菜单；不从CTRL名字、颜色或spare数量猜入口。共享控制区的排布与组件工序阅读方法见[网络交接](../skills/houdini-sop-workflow/references/network-handoff.md)。
+
+卡片通过DSH公开Conversation投影与回复尾部插槽消费原始成功工具回执；点击只提交任务与原事件坐标，Host重读原回执，经该任务的执行端进入Bridge主线程队列。持久入口ID随节点保存，改名或同HIP重开仍可定位；历史路径不作回退。原生复制会复制入口ID，多个同ID节点存在时拒绝含糊跳转，可对复制品明确重新声明ID。若原件删除后只剩保留同ID的复制品，入口随该标识保留；ID不是节点血缘或修改ownership。
+
+节点卡片默认只显示用途标题、一行作者明确提供的`description`与主操作，宽度上限480px；右侧独立省略号展开完整名称、说明、中文角色、真实HOM上下文、类型、路径和工程。成功反馈短暂显示在操作位置，错误完整换行展示。文件卡片继续由DSH维护，与节点卡片共用紧凑石墨色和细边缘外观；插件只在Houdini任务的语义交付表面统一外观，使用精确兼容组合中的`data-presented-file`/`data-presented-description`，不读取编译类名、不复制文件状态或覆盖错误反馈。
+
+导航具有独立的排队取消合同：切换任务或取消点击时，尚未执行的导航票据/队列项被取消，队列恢复后不会再改变面板；已开始的主线程导航不强杀。此合同不扩展普通同步HOM修改的取消或回滚保证。实现为[节点交付Host](../src/node-delivery.ts)、[节点卡片](../client/node-delivery.js)与[导航](../houdini/python3.11libs/dsh_network_navigation.py)；原生/嵌套结果及任务路由见[Host回归](../tools/tests/node-delivery.test.mjs)、[客户端回归](../tools/tests/node-delivery-client.test.mjs)，持久入口见[HOM回归](../tools/tests/dsh-node-delivery.test.py)。
+
 公共控制按用户操作选择，不以数量衡量程序化能力。自由输入确定用户可独立改变的量，派生尺寸/锚点供各模块共享，内部常量留在可编辑网络；需要展示派生结果时不再添加相互冲突的可写输入。
 主体与附属件必须从同一当前状态求值。尺寸、姿态或接合变化时，仅隐藏失效控件不会修复模型；用户必需操作未覆盖时交付结论保留缺口。已有接口、动画和外部消费者按迁移合同处理，不因新界面更精简而删除。
 领域选参与代表性验证方法只在houdini-parameter-ui的控制与绑定reference维护；候选指导不改变现有工具签名，也不宣称参数空间已完整验证。
@@ -49,6 +57,7 @@
 ## 当前实施边界
 
 parameter_ui是不依赖HDA的统一只读界面入口；create_spare_parms与hda_set_interface共用组件展开。
+`mode`组件把稳定menu token映射为按需显示的原生参数区，`string_type='node'`使用NodeReference选择；组件只组织界面，不生成业务绑定或回调。高级交互的用途与原生参考见[艺术家界面](../skills/houdini-parameter-ui/references/artist-ui-patterns.md)。
 spare的layout默认追加，与HDA整组重建分开。已有spare默认值更新用update_defaults；HDA增量编辑用edits。
 bind_controls首版只接受明确数值源与目标以及线性scale/offset，不接管任意已有表达式网络。
 未指定的场景参数不自动变为总控目标；单次allow_foreign只用于用户明确的目标，服务节点不豁免。

@@ -2,7 +2,7 @@
 
 ## Provenance 与决策
 
-本 skill 统一维护 HDA UI、脚本、工具架与快捷键开发指导，范围为 dsh-houdini 源码。SideFX 公开帮助仅提炼必要机制并链接，不复制手册/示例或用户资产代码。官网原页核对时间：2026-09-10；所查在线文档标识 Houdini 22.0，支持目标为H21/H22，未获得对应本机行为复现的项目保持未验证。
+本skill维护工具入口、HDA/脚本生命周期与分发；参数UI唯一正文在houdini-parameter-ui。SideFX公开帮助仅提炼必要机制并链接，不复制手册/示例或用户资产代码。在线文档标识Houdini 22.0，支持目标为H21/H22，未获得对应本机行为复现的项目保持未验证。
 
 职责边界是：SOP workflow负责几何交付，tool-development负责UI、context、脚本加载和分发的独立完成门；HDA维护合同只在本skill维护。执行与所有权继续以仓库合同为准。
 
@@ -15,7 +15,7 @@
 | package 组织资源搜索路径；外部模块是有效分发选项 | [Packages](https://www.sidefx.com/docs/houdini/ref/plugins.html) | 多文件工具；单 HDA 不需强加外部包 | 干净环境确认实际加载路径及缺依赖失败 |
 | Panel 是独立 UI 入口，不据在线旧提示断言 Qt 兼容 | [Panel Editor](https://www.sidefx.com/docs/houdini/ref/windows/pythonpaneleditor.html) | 复杂工作台；普通按钮优先原生参数 | 目标版本绑定、重复开关与引用释放 |
 
-官网机制是文档证据，尚未达到“官方资料 + 目标版本本机复现”的 E2 门；工作流整体为 candidate。既有 HDA 维护路径保留 E1 状态。UI 分组、薄入口和代码布局是项目设计建议，不作为所有 Houdini 项目的强制规定。未采纳个人默认键位、固定 Qt import、未经本机验证的脆弱 API 片段或“所有工具都必须单 HDA”。
+官网机制、特定本机复现和未见自然任务各自陈述；工作流整体为candidate。UI分组、薄入口和代码布局是项目设计建议，不作为所有Houdini项目的强制规定。默认不分发个人键位、不外推Qt组件版本，也不要求所有工具都必须单HDA。
 
 ## 机制验证与行为验收入口
 
@@ -29,7 +29,11 @@ tools/tests/dsh-hda-interface-patch.test.py、tools/tests/dsh-hda-delivery.test.
 缺Python模块和子HDA偷偷加载原开发路径。对应机制具备双版本实验依据，整体skill仍为candidate；
 这些固定夹具不证明新session采用、未见任务质量、GUI布局或Shelf/快捷键交互。
 
-可选布局组件的来源、已知失败面和双版本机制测试在[UI组件](ui-components.md)维护；原生GUI画廊仅验证独立示例的面板，不外推用户原资产效果或任意窄面板。
+可选布局组件的来源、已知失败面和双版本机制测试在[UI组件](ui-components.md)维护。原生GUI画廊在H21.0.440/H22.0.368的420px浮动参数面板核对中文、mode显隐、重复条目命名与禁用；不外推其它字体配置、用户原资产效果或任意窄面板。测试worker完成报告后由launcher回收，不把原生floating pane的回调关闭当作已验证生命周期。
+
+`tools/tests/dsh-tool-entry-ui-gui.test.py`从仅含声明资源的package发现原生Panel、Viewer State和Shelf，覆盖Panel重载、搜索、chooser信号输入、窄窗口，以及真实Shelf进入状态后退出且场景保持。H21例子使用继承宿主主题的QTreeView，因为该版没有hou.qt.TreeView。物理节点选择器选择、视口鼠标/键盘与高级handles仍未验证；入口例子不是完整业务工具或任意工具制作泛化证据。
+
+原生Package通过dsh-package-discovery、dsh-package-gui与dsh-tool-packages回归检查配置/加载分离、多资源路径、敏感值、名称冲突和失败事实。dsh-tool-packages-gui在H21/H22的干净启动中，以普通JSON直接注册唯一源目录，验证真实HDA/Shelf/Panel和原场景保持、运行态动作不改JSON/源；向已注册源添加Shelf后由下一新进程发现。此范围不外推动态插件依赖、任意用户工具生命周期或模型自然选择。
 
 以下为完整行为矩阵；上述机制回归只覆盖相应子集，其余仍待执行。使用隔离 H21/H22 环境和自建夹具；agent 对live场景的操作走 Bridge。离线纯语法/打包检查不等同于 GUI 或自然任务验收。
 

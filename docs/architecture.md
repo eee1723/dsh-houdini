@@ -60,10 +60,11 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | 源码 | 维护职责 |
 |---|---|
 | [src/tool-catalog.ts](../src/tool-catalog.ts) | 八个工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
-| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配，集中真实宿主接口 |
+| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配；PTC原回执在公开日志middleware外层定型，避免展示spill截坏审计JSON，不改变模型展示或执行值 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块并提供只读前端能力查询；执行端入口取决于Host实际挂载的共享服务，模型工具通过preset内dsh-houdini/agent加载 |
+| [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
@@ -88,13 +89,14 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [client/trace-runtime.js](../client/trace-runtime.js) | 回包解析与诊断组件创建；构建进入同一个DSH客户端bundle |
 | [client/trace-model.js](../client/trace-model.js) | 公开轨迹的请求/调用索引、关系和统一统计；与React渲染分离 |
 | [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 消费轨迹投影的记录/资料/高级诊断、历史正文、结构化详情与来源路径展示 |
+| [client/node-delivery.js](../client/node-delivery.js) | 原生/嵌套回执的节点卡片投影，使用DSH公开Conversation与回复尾部插槽；文件交付继续由DSH负责 |
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
 
-提示词按唯一职责分层，避免同一规则在多处漂移：preset persona只维护身份、任务推进、完成/停止、交接及对用户的表达方式；
+提示词按唯一职责分层，避免同一规则在多处漂移：preset persona维护身份、质量/总成本目标、任务推进、观察判断与交付表达；
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
-domain skill及reference维护建模、验证和交付方法。低频对象recipe不得进入persona/guidance；一个规则需要跨层出现时，
+domain skill给出本领域默认方法、例外和按需路由，reference维护具体构造、验证与依赖方法。SOP的原生编辑入口偏好由SOP skill维护，不进入执行准入。低频对象recipe不得进入persona/guidance；一个规则需要跨层出现时，
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
@@ -117,11 +119,15 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_execution_results.py](../houdini/python3.11libs/dsh_execution_results.py) | 序列化、操作证据、检查和产物路径，统一编组公开结果信封 |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
 | [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 通用动词实现与领域转接、真实Tab/Shelf、参数、provenance、HDA、USD、render入口；完整目录由tool-design维护 |
-| [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py) | agent视觉检查的managed/explicit路径、唯一capture预留及artifact元数据；不负责渲染或保留策略 |
+| [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py) | 验证/交付图片的managed/delivery/explicit路径、唯一capture预留及artifact元数据；不负责渲染或保留策略 |
 | [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py) | 无HOM、确定性的矩形/净距、局部避障与Box handoff规划 |
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance、handoff应用及Bridge恢复journal |
+| [dsh_network_navigation.py](../houdini/python3.11libs/dsh_network_navigation.py) | 真实节点上的控制声明、持久交付标识、无cook读取与队列内定位；注解不代替控制有效性或ownership |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
+| [dsh_tool_catalog.py](../houdini/python3.11libs/dsh_tool_catalog.py) | 当前原生节点/Shelf/Panel/State/Radial目录、实际来源与候选HDA定义；只读不建临时实例，不维护安装账本 |
+| [dsh_package_discovery.py](../houdini/python3.11libs/dsh_package_discovery.py) | 原生Package配置与当前加载的唯一观察/解析边界；顶层磁盘目录、多资源/模块路径关系、未知条件与敏感值处理，不执行源码或推断修改权 |
+| [dsh_tool_packages.py](../houdini/python3.11libs/dsh_tool_packages.py) | 原生JSON直接注册唯一源码目录、资源冲突自省和当前进程加载/启停；不复制源、不产归档、不改旧持久条件或删资源，保留部分失败和缓存事实 |
 | [dsh_hda_lifecycle.py](../houdini/python3.11libs/dsh_hda_lifecycle.py) | HDA解锁/保存/锁定/参数提升的版本预览、共享实例权限和状态回读；不拆包或认领后代 |
 | [dsh_parameter_ui.py](../houdini/python3.11libs/dsh_parameter_ui.py) | 共享组件展开、布局预检/诊断、单节点spare追加及状态保留 |
 | [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
@@ -178,9 +184,9 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 ## 视觉、追踪和开发工具
 
-[dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护agent视觉检查的managed/explicit路径策略、唯一capture分配
+[dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护验证与交付图片的managed/delivery/explicit路径策略、唯一capture分配
 和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
-`$HIP/dsh-visual-checks/<run-id>/`，不建立第二条图片复制管线。
+`$HIP/dsh-visual-checks/<run-id>/`，delivery直接生成到`$HIP/dsh-render/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
 [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护可直接应用的Network Box分组、可选role颜色注解、
 同批任意声明顺序的members/boxes嵌套、类型化Box provenance、presentation快照与Bridge undo核对。普通分组不要求预览hash；
@@ -221,6 +227,7 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；`scene_save`/`scene_save_as`、`component_export`、`render_frame`、`render_view`及`viewport_screenshot`只报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
+节点交付使用普通执行结果中的显式引用，由DSH公开Conversation回放和回复尾部插槽展示。Root导航RPC重读原事件，使用`agentPresets.serviceFor`取得该任务隔离preset内的连接；与普通工具共用执行端绑定。Bridge导航路由只接受持久节点ID和原工程身份，主线程执行固定定位动作；票据/排队取消由同一RequestRegistry负责，不扩展普通同步HOM修改的取消语义。节点ID保存在HIP节点上，原路径只作历史显示，不另写节点交付账本。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
 大结果保存到workspace的.dsh-houdini-results后才精简模型文本。该目录是工具返回副本，不是HIP内容输出。
 失败/警告/unsupported/恢复错误、媒体路径和权限提示保留；未知结果可通过已提供的result_ref按字段读取。

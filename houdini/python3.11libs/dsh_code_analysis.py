@@ -54,6 +54,11 @@ _RAW_HOU_VERB_MAP = {
     "setKeyframes": "set_keyframes",
     "deleteAllKeyframes": "set_keyframes or set_parm",
     "addSection": "hda_set_section",
+    "copyToHDAFile": "hda_fork",
+    "loadPackage": "tool_package_action",
+    "unloadPackage": "tool_package_action",
+    "activatePackage": "tool_package_action",
+    "deactivatePackage": "tool_package_action",
     "setConditional": "hda_set_interface",
 }
 
@@ -68,7 +73,7 @@ _NETWORK_BOX_MUTATORS = {
 _GATE_MUTATING_PREFIXES = (
     "set", "add", "create", "delete", "destroy", "remove", "rename",
     "save", "cook", "render", "bake", "lock", "unlock", "install",
-    "copy", "move", "enable", "disable", "press",
+    "copy", "move", "enable", "disable", "press", "reloadPackage", "loadPackageArchive",
 )
 
 

@@ -27,7 +27,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 首次现场操作前，绑定记录通过 DSH 会话持久化确认；普通上下文组装承担消息插入，工具执行期不在 assistant 工具调用与结果之间插入消息。既有执行历史指定了目标时，不能把同一任务的代码或 job 发送到另一个执行端。回执和材料读取不构成重新绑定。
 
-节点 ownership 来自 runtime 创建的 identity 和会话归属；路径、父网络、节点名称及可复制 userdata 都不授权。foreign 节点可以读和作为输入。单次写入仅在用户明确指定目标时使用非空 allow_foreign，不能形成长期所有权。持久 render 服务永不豁免；删除容器前检查其后代权限，HDA 替换前检查实际待销毁的实例和后代。
+节点 ownership 来自 runtime 创建的 identity 和会话归属；路径、父网络、节点名称及可复制 userdata 都不授权。foreign 节点可以读和作为输入。单次写入仅在用户明确指定目标时使用非空 allow_foreign，不能形成长期所有权。持久 render 服务永不豁免；删除容器前检查其后代权限。HDA库权限与实例分开；整体销毁旧实例的replace拒绝，分叉只产生独立新类型和库。
 
 ## 查询、修改与 Raw Gate
 
@@ -124,7 +124,9 @@ test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后
 
 HDA section 的写后回读/hash 只证明文本写入。PythonModule 语法检查不执行回调；真实按钮、内部函数、计算后的公共输出和新实例依赖分别观察。输入/输出上限不是接线证明；实例 spare 与定义界面分开管理。
 
-界面重建与 hda_edit 的预览检查真实共享定义和实例状态；unlock 不授予后代 ownership。写后失败恢复本调用定义 section、实例界面/通道和磁盘库，范围由回执说明；后续 exec 失败不撤销已经成功的库写入。普通 spare 追加、定义重建及持续绑定分别使用对应动词，方法见[控制参数与绑定](parameter-controls.md)。
+section、界面与save/promote复用共享定义写入保护：实际新库/定义的session登记及指纹、全部受影响实例同时检查。自建已有类型实例不授权原共享库；外部改写后的旧登记不继续有效。单次明确allow_foreign不永久认领定义；所有作者写入拒绝$HFS。unlock不授予后代ownership。写后失败恢复本调用定义section、实际变化的实例界面/通道和磁盘库，范围由回执说明；后续exec失败不撤销已经成功的库写入。普通spare追加、定义重建及持续绑定分别使用对应动词，方法见[控制参数与绑定](parameter-controls.md)。
+
+原生工具Package默认JSON直接指向用户确认的唯一资源源目录，不复制或归档；开发前区分工具修改意图与已有包扩展/新包及两个存放位置。创建注册只写全新JSON；旧配置由明确目标的通用文件编辑最小维护，原有条件/依赖/未知字段保留。当前进程load/activate/deactivate/unload不编辑持久enable、不删除配置/源或强清模块缓存。配置文件与实际原生Package/定义分别回读，停用/卸载不能从磁盘文件存在与否推断场景依赖；部分失败保留真实文件、回读错误与加载状态，不承诺撤销任意回调效果。
 
 Network Box 和 layout 是编辑器 presentation mutation，不代表模型几何质量。节点与 Box 使用各自 identity registry；名字、颜色、成员与自有 parent 都不授权。显式两阶段计划绑定实际成员、接线、位置和障碍；应用只移动授权对象，失败恢复声明状态。layout 默认只处理当前会话节点，持久服务与未选障碍保持固定。详细用法见[网络整理](../skills/houdini-sop-workflow/references/network-handoff.md)。
 
@@ -136,7 +138,7 @@ near/behind/far_clip 错误在渲染前拒绝；detail 的二维 intentional_cro
 
 render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复用不删除。服务和预览临时状态独立于作者建模 Undo；图片文件是外部效果。返回 source/framing/pixel/check/artifact 的实际事实，无法解码或旧文件不报新鲜图像。
 
-渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认分配 `$HIP/dsh-visual-checks/<run-id>/` 唯一文件；managed 要求已命名 HIP，路径值选择 explicit。Save As 只影响后续 capture，不迁移或删除旧图。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-visual-checks/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-render/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 

@@ -43,7 +43,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-public-hda-') as temp:
     # Known native definition save, not an assertion that a missing authoring
     # step is a serialization bug. Direct HOM is restricted to this test fixture.
     source.node('shape').parm('sizex').setExpression('ch("../width")', hou.exprLanguage.Hscript)
-    source.type().definition().updateFromNode(source)
+    plan = run(f"__result__=hda_edit({source.path()!r},'save',dry_run=True)")['result']
+    run(f"hda_edit({source.path()!r},'save',expected_plan={plan['plan_sha256']!r})")
     source.matchCurrentDefinition()
     run("a=tab_create('/obj/public_fixture','contract_test::solid::1.0',name='a')\n"
         "b=tab_create('/obj/public_fixture','contract_test::solid::1.0',name='b')\n"

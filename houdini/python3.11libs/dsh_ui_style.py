@@ -38,17 +38,44 @@ STYLE = """
 """
 
 
-def style_dialog(dialog):
-    from hutil.Qt import QtGui
+def style_dialog(dialog, *, tool_window=True):
+    """Style persistent tools consistently; confirmations retain dialog controls.
+
+    Apply window hints before the first show. Houdini-owned top-level windows
+    stay above their owner through the native window relationship, not system
+    topmost. Other applications can cover them; background updates do not wake
+    a minimized tool. Standalone tools remain normal application windows.
+    """
+    from hutil.Qt import QtCore, QtGui
+    if tool_window:
+        # Adding a minimize hint makes Qt use explicit caption controls. A
+        # QWidget created with Qt.Window then loses its implicit close button;
+        # on Windows SC_CLOSE becomes disabled even though an X is drawn.
+        # Specify the complete tool caption before its first native show.
+        dialog.setWindowFlags((dialog.windowFlags() & ~QtCore.Qt.WindowStaysOnTopHint)
+                              | QtCore.Qt.WindowTitleHint
+                              | QtCore.Qt.WindowSystemMenuHint
+                              | QtCore.Qt.WindowMinimizeButtonHint
+                              | QtCore.Qt.WindowCloseButtonHint)
     dialog.setFont(QtGui.QFont("Microsoft YaHei UI", 10))
     dialog.setStyleSheet(STYLE)
+
+
+def show_tool_window(window):
+    """Explicit user open: restore a minimized tool and give it focus once."""
+    if window.isMinimized():
+        window.showNormal()
+    else:
+        window.show()
+    window.raise_()
+    window.activateWindow()
 
 
 def confirm_dialog(parent, title, message, accept_text):
     """Explicit Chinese labels, independent of the Houdini Qt locale."""
     from hutil.Qt import QtCore, QtWidgets
     dialog = QtWidgets.QMessageBox(parent)
-    style_dialog(dialog)
+    style_dialog(dialog, tool_window=False)
     dialog.setWindowTitle(title)
     dialog.setTextFormat(QtCore.Qt.PlainText)
     dialog.setText(message)

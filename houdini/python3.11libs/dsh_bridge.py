@@ -71,7 +71,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 82
+_EXECUTION_CONTRACT_VERSION = 89
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -438,12 +438,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({'ok':True,'result':result})
             return
         if self.path == '/requests/prepare':
-            if set(body) != {'owner_session'} or not isinstance(body['owner_session'], str) or not body['owner_session'].strip():
+            if (set(body) not in ({'owner_session'}, {'owner_session', 'request_kind'})
+                    or not isinstance(body.get('owner_session'), str) or not body['owner_session'].strip()
+                    or ('request_kind' in body and body['request_kind'] != 'node_navigation')):
                 self._send({'ok': False, 'error': 'owner_session required'}, status=400)
                 return
             # POST shares the JSON/no-Origin boundary. A health probe never
             # allocates tickets, and preparing one never enters the HOM queue.
-            self._send({**self._health(), 'requestRef': _request_registry.issue(body['owner_session'])})
+            self._send({**self._health(), 'requestRef': _request_registry.issue(
+                body['owner_session'], body.get('request_kind', 'exec'))})
             return
         if self.path == '/requests/status':
             if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v.strip() for v in body.values()):
@@ -464,6 +467,68 @@ class _Handler(BaseHTTPRequestHandler):
             except (TimeoutError, RuntimeError) as exc:
                 self._send({'ok': False, 'status': 'unavailable', 'reason': str(exc)})
             return
+        if self.path in ('/nodes/navigate', '/nodes/cancel'):
+            # UI navigation has a fixed payload and its own cancellable tickets.
+            # Generic /exec and job admission/cancellation retain their contract.
+            rejection = _owner_error(body) or _contract_error(body.get('expected_contract'))
+            fields = {'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
+            if self.path == '/nodes/navigate':
+                fields |= {'reference', 'expected_hip'}
+            if rejection is None and (set(body) != fields or not isinstance(body.get('request_ref'), str)):
+                rejection = 400, 'Expected an explicit node navigation request envelope'
+            if rejection is not None:
+                self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
+                return
+            owner_session, ref = body['owner_session'], body['request_ref']
+            if self.path == '/nodes/cancel':
+                try:
+                    cancelled = _request_registry.cancel_navigation(ref, owner_session)
+                except ValueError as error:
+                    self._send({'ok': False, 'error': str(error)}, status=409)
+                    return
+                self._send({'ok': True, 'request_ref': ref, **cancelled})
+                return
+            reference, expected_hip = body.get('reference'), body.get('expected_hip')
+            identifier = reference.get('id') if isinstance(reference, dict) else None
+            if (not isinstance(reference, dict) or set(reference) != {'id'}
+                    or not isinstance(identifier, str) or len(identifier) != 32
+                    or any(char not in '0123456789abcdef' for char in identifier)
+                    or not isinstance(expected_hip, str) or not expected_hip.strip()):
+                self._send({'ok': False, 'error': 'Node navigation requires a persistent id and expected HIP'}, status=400)
+                return
+            try:
+                admitted = _request_registry.reserve(ref, owner_session, {**body, 'request_kind': 'node_navigation'})
+            except ValueError as error:
+                self._send({'ok': False, 'error': str(error)}, status=409)
+                return
+            if not admitted:
+                receipt = _request_registry.status(ref, owner_session)
+                if receipt['status'] == 'done':
+                    self._send(receipt['result'])
+                else:
+                    self._send({'ok': False, 'stdout': '', 'stderr': '', 'requestReceipt': receipt,
+                                'error': 'Node navigation is no longer pending; no new navigation dispatched'})
+                return
+            def navigate():
+                if not _request_registry.running(ref):
+                    return {'ok': False, 'stdout': '', 'stderr': '',
+                            'requestReceipt': _request_registry.status(ref, owner_session),
+                            'error': 'Node navigation cancelled before dispatch'}
+                code = '__result__=focus_node(' + json.dumps(reference) + ', expected_hip=' + json.dumps(expected_hip) + ')'
+                try:
+                    result = run_code(code, None, owner_session, body['owner_call'], True)
+                except BaseException:
+                    result = {'ok': False, 'stdout': '', 'stderr': '', 'error': traceback.format_exc()}
+                result['requestReceipt'] = {'request_ref': ref, 'runtime_id': _RUNTIME_ID, 'status': 'done'}
+                _request_registry.complete(ref, result)
+                return result
+            try:
+                result = _execute(navigate)
+            except BaseException as error:
+                _request_registry.fail_before_dispatch(ref, error)
+                raise
+            self._send(result)
+            return
         if self.path in ("/exec", "/jobs"):
             # Complete admission envelope before anything is queued or consumed:
             # Host identity, contract and a one-time ticket. Untracked execution
@@ -475,6 +540,8 @@ class _Handler(BaseHTTPRequestHandler):
                 rejection = 400, "code must be a string"
             if rejection is None and (not isinstance(body.get("request_ref"), str) or not body["request_ref"]):
                 rejection = 400, "request_ref ticket is required; untracked HTTP execution is not supported"
+            if rejection is None and body.get('request_kind') == 'node_navigation':
+                rejection = 400, 'Node navigation tickets are accepted only by the fixed node navigation route'
             if rejection is not None:
                 self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return

@@ -592,11 +592,10 @@ def show_version_manager() -> None:
     """Show runtime facts and explicit repair, separate from release installation."""
     global _WINDOW, _TIMER
     from hutil.Qt import QtCore, QtGui, QtWidgets
-    from dsh_ui_style import style_dialog, confirm_dialog
+    from dsh_ui_style import style_dialog, confirm_dialog, show_tool_window
 
     if _WINDOW is not None and _WINDOW.isVisible():
-        _WINDOW.raise_()
-        _WINDOW.activateWindow()
+        show_tool_window(_WINDOW)
         return
 
     dialog = QtWidgets.QDialog(hou.qt.mainWindow())

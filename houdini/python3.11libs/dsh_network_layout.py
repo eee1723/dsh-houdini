@@ -278,54 +278,286 @@ def evaluate_handoff(node_rects, box_rects, node_groups, obstacles, required):
             'achieved_clearances':achieved}
 
 
-def plan_handoff(nodes, groups, edges, obstacles, *, max_candidates=MAX_CANDIDATES):
-    """Plan box-internal rows then group-DAG placement from plain numeric data."""
+def _wire_edges(edges):
+    result=[]
+    for edge in edges:
+        if not isinstance(edge,(list,tuple)) or len(edge) not in (2,3):
+            raise ValueError('edges require [source,target] or [source,target,input_index]')
+        index=None if len(edge)==2 else edge[2]
+        if index is not None and (type(index) is not int or index<0):
+            raise ValueError('input_index must be a nonnegative integer')
+        result.append((str(edge[0]),str(edge[1]),index))
+    return sorted(set(result),key=lambda row:(row[0],row[1],-1 if row[2] is None else row[2]))
+
+
+def _readable_members(node_map, members, edges, profile):
+    """Keep primary wire chains vertical and pack separate families beside them."""
+    def stable(key):return (node_map[key]['label'],key)
+    members=set(members)
+    incoming={key:[] for key in members};outgoing={key:[] for key in members}
+    for source,target,index in edges:
+        if source in members and target in members and source!=target:
+            incoming[target].append((source,index));outgoing[source].append(target)
+    def input_order(row):
+        source,index=row
+        return (index if index is not None else MAX_OBSTACLES,stable(source))
+    for rows in incoming.values():rows.sort(key=input_order)
+    pairs=[(source,target) for source,target,_index in edges if source in members and target in members]
+    remaining=_depths(members,[(target,source) for source,target in pairs])
+    primary_parent={key:rows[0][0] for key,rows in incoming.items() if rows}
+    primary_children={key:[] for key in members}
+    for child,parent in primary_parent.items():primary_children[parent].append(child)
+    lengths={}
+    def chain_length(key):
+        if key not in lengths:
+            lengths[key]=1+max((chain_length(child) for child in primary_children[key]),default=0)
+        return lengths[key]
+    retained_child={key:sorted(children,key=lambda child:(-chain_length(child),stable(child)))[0]
+                    for key,children in primary_children.items() if children}
+    retained_parent={child:parent for parent,child in retained_child.items()}
+    chains=[];node_chain={}
+    for start in sorted((key for key in members if key not in retained_parent),key=stable):
+        chain=[];current=start
+        while current is not None:
+            node_chain[current]=len(chains);chain.append(current);current=retained_child.get(current)
+        chains.append(chain)
+    neighbors={key:set(outgoing[key])|{row[0] for row in incoming[key]} for key in members}
+    families=[];unvisited=set(members)
+    while unvisited:
+        first=min(unvisited,key=stable);pending=[first];family=set()
+        while pending:
+            key=pending.pop()
+            if key in family:continue
+            family.add(key);pending.extend(neighbors[key]-family)
+        unvisited-=family;families.append(family)
+    positions={};footprints={};family_rows=[];cursor=0.0
+    step_y=profile['height_unit']+profile['node_vertical_clearance']
+    for family in families:
+        ordered=[];seen=set()
+        def visit_chain(identity):
+            if identity in seen:return
+            seen.add(identity);ordered.append(identity)
+            for target in reversed(chains[identity]):
+                for source,_index in incoming[target]:visit_chain(node_chain[source])
+        sinks=sorted((key for key in family if not outgoing[key]),key=stable)
+        for key in sinks:visit_chain(node_chain[key])
+        for key in sorted(family,key=stable):visit_chain(node_chain[key])
+        family_start=cursor
+        for identity in ordered:
+            lane_width=0.0
+            for key in chains[identity]:
+                source=node_map[key]['rect'];label=node_map[key]['label']
+                # A font-independent allowance, not a measurement of the GUI label.
+                characters=sum(2 if ord(character)>127 else 1 for character in label)
+                # Native labels start beside the tile, not inside it. Reserve
+                # the full name; GUI review of long SOP names exposed overlap
+                # when an assumed first 12 characters were discounted.
+                label_extra=characters*source.width*.13
+                footprint=Rect(cursor,remaining[key]*step_y,
+                    cursor+source.width+label_extra,remaining[key]*step_y+source.height)
+                positions[key]=[footprint.min_x-source.min_x,footprint.min_y-source.min_y]
+                footprints[key]=footprint;lane_width=max(lane_width,footprint.width)
+            cursor+=lane_width+profile['node_horizontal_clearance']
+        family_rows.append({'members':sorted(family,key=stable),
+                            'chains':[list(chains[identity]) for identity in ordered],
+                            'left':family_start,'right':cursor-profile['node_horizontal_clearance']})
+        cursor+=profile['width_unit']
+    return positions,footprints,{'families':family_rows,'label_clearance':'estimated',
+        'primary_edges':sorted([[parent,child] for parent,child in retained_child.items()])}
+
+
+def _group_depths_readable(keys, edges):
+    """A valid node DAG may produce cycles when nodes are collected into boxes."""
+    adjacency={key:set() for key in keys}
+    for source,target in edges:adjacency[source].add(target)
+    indices={};low={};stack=[];on_stack=set();components=[]
+    def visit(key):
+        indices[key]=low[key]=len(indices);stack.append(key);on_stack.add(key)
+        for target in sorted(adjacency[key]):
+            if target not in indices:visit(target);low[key]=min(low[key],low[target])
+            elif target in on_stack:low[key]=min(low[key],indices[target])
+        if low[key]==indices[key]:
+            component=[]
+            while True:
+                member=stack.pop();on_stack.remove(member);component.append(member)
+                if member==key:break
+            components.append(sorted(component))
+    for key in sorted(keys):
+        if key not in indices:visit(key)
+    membership={key:str(index) for index,component in enumerate(components) for key in component}
+    condensed={(membership[a],membership[b]) for a,b in edges if membership[a]!=membership[b]}
+    depths=_depths(set(membership.values()),condensed)
+    return {key:depths[identity] for key,identity in membership.items()}
+
+
+def _packing_width(rectangles, gap_x, gap_y):
+    items=list(rectangles)
+    return max(max(item.width for item in items),
+               math.sqrt(sum((item.width+gap_x)*(item.height+gap_y) for item in items))*1.25)
+
+
+def _shelf_rows(keys, rectangles, width, gap_x, gap_y, *, top=0.0):
+    """Pack actual rectangle sizes in bounded rows, preserving the supplied order."""
+    result={};cursor=0.0;row_bottom=top
+    for key in keys:
+        source=rectangles[key]
+        if cursor and cursor+source.width>width+TOLERANCE:
+            top=row_bottom-gap_y;cursor=0.0;row_bottom=top
+        placed=Rect(cursor,top-source.height,cursor+source.width,top)
+        result[key]=placed;row_bottom=min(row_bottom,placed.min_y)
+        cursor=placed.max_x+gap_x
+    return result
+
+
+def _ranked_box_rows(keys, rectangles, edges, gap_x, gap_y, stable):
+    depths=_group_depths_readable(keys,edges)
+    width=_packing_width((rectangles[key] for key in keys),gap_x,gap_y)
+    result={};top=0.0
+    for depth in sorted(set(depths.values())):
+        row=sorted((key for key in keys if depths[key]==depth),key=stable)
+        packed=_shelf_rows(row,rectangles,width,gap_x,gap_y,top=top)
+        result.update(packed);top=min(item.min_y for item in packed.values())-gap_y
+    return result,width
+
+
+def _readable_box_members(node_map, members, edges, profile):
+    members=set(members);pairs={(source,target) for source,target,_index in edges
+                               if source in members and target in members and source!=target}
+    sources={key:node_map[key]['rect'] for key in members}
+    packed,width=_ranked_box_rows(members,sources,pairs,
+        profile['node_horizontal_clearance'],profile['node_vertical_clearance'],
+        lambda key:(node_map[key]['label'],key))
+    offsets={key:[item.min_x-sources[key].min_x,item.min_y-sources[key].min_y]
+             for key,item in packed.items()}
+    return offsets,packed,{'item_kind':'box','packing_width':width,
+        'label_clearance':'included_in_box_bounds','families':[],'primary_edges':[]}
+
+
+def _readable_box_groups(group_rows, local_boxes, group_edges, fixed, profile, max_candidates):
+    gap_x=profile['box_horizontal_clearance'];gap_y=profile['box_vertical_clearance']
+    regions={role:sorted(key for key,row in group_rows.items() if row.get('role')==role)
+             for role in ('controls','output','checks')}
+    special={key for rows in regions.values() for key in rows}
+    normal=sorted(set(group_rows)-special);desired={}
+    if normal:
+        desired,_width=_ranked_box_rows(normal,local_boxes,
+            {(a,b) for a,b in group_edges if a in normal and b in normal},gap_x,gap_y,lambda key:key)
+        construction=union(desired.values())
+    else:construction=Rect(0,0,0,0)
+    for role in ('controls','output','checks'):
+        keys=regions[role]
+        if not keys:continue
+        width=_packing_width((local_boxes[key] for key in keys),gap_x,gap_y)
+        if role in ('controls','output'):width=max(width,construction.width)
+        packed=_shelf_rows(keys,local_boxes,width,gap_x,gap_y);bounds=union(packed.values())
+        if role=='controls':dx=construction.min_x;dy=construction.max_y+gap_y-bounds.min_y
+        elif role=='output':dx=construction.min_x;dy=construction.min_y-gap_y-bounds.max_y
+        else:dx=construction.max_x+gap_x;dy=construction.max_y-bounds.max_y
+        desired.update({key:item.translated(dx,dy) for key,item in packed.items()})
+    placed=[];offsets={};rectangles={}
+    for key in regions['controls']+normal+regions['output']+regions['checks']:
+        source=local_boxes[key];target=desired[key]
+        proposal=find_free_translation(source,fixed+placed,
+            preferred=(target.min_x-source.min_x,target.min_y-source.min_y),
+            step=(profile['width_unit']+gap_x,profile['height_unit']+gap_y),
+            clearance=(gap_x,gap_y),max_candidates=max_candidates)
+        if not proposal['ok']:return proposal
+        offsets[key]=proposal['translation'];rectangles[key]=source.translated(*offsets[key])
+        placed.append((key,rectangles[key]))
+    return {'ok':True,'offsets':offsets,'rectangles':rectangles}
+
+
+def plan_handoff(nodes, groups, edges, obstacles, *, max_candidates=MAX_CANDIDATES,
+                 style='comfortable', item_kind='node'):
+    """Plan box contents and group placement without Houdini or scene mutation."""
     if not isinstance(nodes,(list,tuple)) or not 1<=len(nodes)<=MAX_OBSTACLES:raise ValueError('nodes must contain 1..512 entries')
     if not isinstance(groups,(list,tuple)) or not 1<=len(groups)<=MAX_BOXES:raise ValueError('groups must contain 1..64 entries')
     if not isinstance(obstacles,(list,tuple)) or len(obstacles)>MAX_OBSTACLES-len(groups):
         raise ValueError('fixed obstacles plus movable boxes must fit the 512 rectangle budget')
+    if style not in ('comfortable','readable'):raise ValueError("style must be 'comfortable' or 'readable'")
+    if item_kind not in ('node','box'):raise ValueError("item_kind must be 'node' or 'box'")
     node_map={};sizes=[]
     for item in nodes:
-        if set(item)!={'key','group','rect'}:raise ValueError('node rows require key,group,rect')
+        if not {'key','group','rect'}<=set(item) or set(item)-{'key','group','rect','label'}:
+            raise ValueError('node rows require key,group,rect and optional label')
         key=str(item['key']);rectangle=rect(item['rect'])
         if key in node_map or rectangle.width<=0 or rectangle.height<=0:raise ValueError('node keys unique and rectangles nonzero')
-        node_map[key]={'key':key,'group':str(item['group']),'rect':rectangle};sizes.append((rectangle.width,rectangle.height))
+        node_map[key]={'key':key,'group':str(item['group']),'rect':rectangle,
+                       'label':str(item.get('label',key))};sizes.append((rectangle.width,rectangle.height))
     group_rows={str(row['key']):row for row in groups}
-    if len(group_rows)!=len(groups) or any(set(row)!={'key','members','rect'} for row in groups):raise ValueError('group rows require unique key,members,rect')
+    if len(group_rows)!=len(groups) or any(not {'key','members','rect'}<=set(row)
+        or set(row)-{'key','members','rect','role'} for row in groups):
+        raise ValueError('group rows require unique key,members,rect and optional role')
     if set(item['group'] for item in node_map.values())!=set(group_rows):raise ValueError('group membership mismatch')
     for key,row in group_rows.items():
         if set(map(str,row['members']))!={item['key'] for item in node_map.values() if item['group']==key}:raise ValueError('group members must be exact')
-    width=max(v[0] for v in sizes);height=max(v[1] for v in sizes);profile=comfortable_profile(width,height)
-    edge_rows=[(str(a),str(b)) for a,b in edges]
-    positions={};local_boxes={}
+    if style=='readable' and item_kind=='box':
+        height=min(v[1] for v in sizes);width=min(min(v[0] for v in sizes),4*height)
+    else:width=max(v[0] for v in sizes);height=max(v[1] for v in sizes)
+    profile=comfortable_profile(width,height)
+    if style=='readable' and item_kind=='node':
+        # Leave room for the native node type, name and lock badges between tiles.
+        profile['node_vertical_clearance']=2.75*height
+    wire_edges=_wire_edges(edges);edge_rows=[(a,b) for a,b,_index in wire_edges]
+    positions={};local_boxes={};readability={}
     for group_key in sorted(group_rows):
         members=sorted(map(str,group_rows[group_key]['members']),key=lambda key:(node_map[key]['rect'].min_x,key))
-        member_edges=[(a,b) for a,b in edge_rows if a in members and b in members]
-        depths=_depths(members,member_edges);rows={}
-        for key in members:rows.setdefault(depths[key],[]).append(key)
-        local_rects=[]
-        for depth,row in sorted(rows.items()):
-            cursor=0.0
-            for key in sorted(row,key=lambda name:(node_map[name]['rect'].min_x,name)):
-                source=node_map[key]['rect'];x=cursor;y=-depth*(height+profile['node_vertical_clearance'])
-                positions[key]=[x-source.min_x,y-source.min_y];placed=source.translated(*positions[key]);local_rects.append(placed)
-                cursor=placed.max_x+profile['node_horizontal_clearance']
+        if style=='readable':
+            operation=_readable_box_members if item_kind=='box' else _readable_members
+            offsets,footprints,readability[group_key]=operation(node_map,members,wire_edges,profile)
+            positions.update(offsets);local_rects=list(footprints.values())
+        else:
+            member_edges=[(a,b) for a,b in edge_rows if a in members and b in members]
+            depths=_depths(members,member_edges);rows={}
+            for key in members:rows.setdefault(depths[key],[]).append(key)
+            local_rects=[]
+            for depth,row in sorted(rows.items()):
+                cursor=0.0
+                for key in sorted(row,key=lambda name:(node_map[name]['rect'].min_x,name)):
+                    source=node_map[key]['rect'];x=cursor;y=-depth*(height+profile['node_vertical_clearance'])
+                    positions[key]=[x-source.min_x,y-source.min_y];placed=source.translated(*positions[key]);local_rects.append(placed)
+                    cursor=placed.max_x+profile['node_horizontal_clearance']
         content=union(local_rects);local_boxes[group_key]=content.padded(
             profile['box_side_padding'],profile['box_side_padding'],profile['box_bottom_padding'],profile['box_title_allowance'])
     group_edges={(node_map[a]['group'],node_map[b]['group']) for a,b in edge_rows if a in node_map and b in node_map and node_map[a]['group']!=node_map[b]['group']}
-    group_depth=_depths(group_rows,group_edges);by_depth={}
+    group_depth=(_group_depths_readable(group_rows,group_edges) if style=='readable'
+                 else _depths(group_rows,group_edges));by_depth={}
+    if style=='readable':
+        normal_depth=max((depth for key,depth in group_depth.items()
+            if group_rows[key].get('role') not in ('controls','output','checks')),default=0)
+        for key in group_depth:
+            role=group_rows[key].get('role')
+            if role=='controls':group_depth[key]=-1
+            elif role=='output':group_depth[key]=normal_depth+1
     for key,depth in group_depth.items():by_depth.setdefault(depth,[]).append(key)
     fixed=[(str(key),rect(value)) for key,value in obstacles];placed=[];box_offsets={};box_rects={}
     max_box_height=max(item.height for item in local_boxes.values())
-    for depth,row in sorted(by_depth.items()):
+    check_rows=[key for key in group_rows if style=='readable' and group_rows[key].get('role')=='checks']
+    if style=='readable' and item_kind=='box':
+        packed=_readable_box_groups(group_rows,local_boxes,group_edges,fixed,profile,max_candidates)
+        if not packed['ok']:return {'ok':False,'layout_status':'blocked','reason':packed['reason'],'blocked_by':packed['blocked_by']}
+        box_offsets=packed['offsets'];box_rects=packed['rectangles'];check_rows=[]
+    for depth,row in ([] if style=='readable' and item_kind=='box' else sorted(by_depth.items())):
         cursor=0.0
-        for key in sorted(row,key=lambda name:(rect(group_rows[name]['rect']).min_x,name)):
+        ordered=(sorted(row) if style=='readable' else sorted(row,key=lambda name:(rect(group_rows[name]['rect']).min_x,name)))
+        for key in ordered:
+            if key in check_rows:continue
             local=local_boxes[key];preferred=(cursor-local.min_x,-depth*(max_box_height+profile['box_vertical_clearance'])-local.min_y)
             proposal=find_free_translation(local,fixed+placed,preferred=preferred,
                 step=(width+profile['box_horizontal_clearance'],height+profile['box_vertical_clearance']),
                 clearance=(profile['box_horizontal_clearance'],profile['box_vertical_clearance']),max_candidates=max_candidates)
             if not proposal['ok']:return {'ok':False,'layout_status':'blocked','reason':proposal['reason'],'blocked_by':proposal['blocked_by']}
             offset=proposal['translation'];box_offsets[key]=offset;box_rects[key]=local.translated(*offset);placed.append((key,box_rects[key]));cursor=box_rects[key].max_x+profile['box_horizontal_clearance']
+    check_x=max((item.max_x for item in box_rects.values()),default=0)+profile['box_horizontal_clearance']
+    check_y=0.0
+    for key in sorted(check_rows):
+        local=local_boxes[key]
+        proposal=find_free_translation(local,fixed+placed,preferred=(check_x-local.min_x,check_y-local.max_y),
+            step=(width+profile['box_horizontal_clearance'],height+profile['box_vertical_clearance']),
+            clearance=(profile['box_horizontal_clearance'],profile['box_vertical_clearance']),max_candidates=max_candidates)
+        if not proposal['ok']:return {'ok':False,'layout_status':'blocked','reason':proposal['reason'],'blocked_by':proposal['blocked_by']}
+        offset=proposal['translation'];box_offsets[key]=offset;box_rects[key]=local.translated(*offset)
+        placed.append((key,box_rects[key]));check_y=box_rects[key].min_y-profile['box_vertical_clearance']
     final_positions={}
     for key,item in node_map.items():
         gx,gy=box_offsets[item['group']];dx,dy=positions[key];final_positions[key]=[item['rect'].min_x+dx+gx,item['rect'].min_y+dy+gy]
@@ -333,4 +565,5 @@ def plan_handoff(nodes, groups, edges, obstacles, *, max_candidates=MAX_CANDIDAT
     evidence=evaluate_handoff(node_rects,box_rects,
         {key:item['group'] for key,item in node_map.items()},fixed,profile)
     return {**evidence,'profile':profile,'node_positions':final_positions,
+            **({'style':style,'item_kind':item_kind,'readability':readability} if style=='readable' else {}),
             'box_bounds':{key:value.as_list() for key,value in box_rects.items()}}

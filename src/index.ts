@@ -13,6 +13,7 @@ import { installSceneContext } from './context.js'
 import { sharedExecutorConnection } from './executor-host.js'
 import { installExecutorBinding } from './executor-binding.js'
 import {installHoudiniExecutionLog} from './dsh-adapter.js'
+import {installNodeDeliveryNavigation} from './node-delivery.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
@@ -46,17 +47,17 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    'Use houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue.',
+    'Houdini tool routing:\nUse houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue.',
     '',
-    'Compose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. verb_help gives brief signatures and a full_help entry for detailed contracts; node_info reads an existing parent network and its actual node types. Batch related operations and specify the actual output being checked.',
+    'Execution boundary and discovery:\nCompose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. verb_help(name, detail="full") reads detailed contracts; pass a list as name for multiple verbs. node_info(parent, type_name) reads types available in an existing parent network. Batch related operations and specify the actual output being checked.',
     '',
     `Current catalog: ${VERB_CATALOG_SUMMARY}`,
     '',
-    'Tool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Undo covers only its stated scene effects. Images use DSH native attachments; inspect them with the current model and report unavailable visual understanding accurately.',
+    'Result and recovery contract:\nTool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Recover uncertain execution by its original request reference before retrying. Undo covers only its stated scene effects. Images use DSH native attachments; image delivery and pixel checks do not establish visual understanding. Report unavailable visual understanding accurately.',
     '',
-    'Load domain skills as needed for SOP, COP, HDA/tools, controls, rigging, Solaris or tutorials. Use DSH task and file facilities to organize complex requirements; choose methods and working order from the task.',
+    'Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris or tutorials. Construction methods and their tradeoffs belong to those skills; tool contracts do not select a modeling strategy.',
     '',
-    'Outputs belong under $HIP. Saving to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
+    'Files and runtime:\nTask outputs anchor under $HIP; reusable tool resources and native Package JSON use the explicitly chosen source and registration locations. Preserve existing resources and conditions. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
   ].join('\n'),
 }
 
@@ -67,6 +68,7 @@ export function apply(ctx: Context, config: Config) {
     : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
       config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
   registerHoudiniTools(ctx, connection)
+  installNodeDeliveryNavigation(ctx,connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)
   if (config.automaticContext !== false) installSceneContext(ctx, connection)

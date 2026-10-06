@@ -266,6 +266,11 @@ PAGE_ACCEPTANCE = r"""
     editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:'Qt 验收未发送草稿'}));
     await wait(()=>editor.innerText.includes('Qt 验收未发送草稿'),'draft input settled');
     const draft=editor.innerText;
+    state.phase='caption-close';
+    await wait(()=>window.__dshQtCaptionReopened,'native caption close and reopen');
+    check(editor.innerText===draft,'caption close/reopen lost the draft');
+    check(window.__dshHoudiniSelection().sessionId===selected.sessionId,'caption close/reopen replaced selection');
+    state.facts.draftAfterCaptionClose=true;
     (await wait(()=>tab('执行记录'),'Trace tab')).click();
     await wait(()=>visible(document.querySelector('.dsh-trace')),'Trace visible');
     const traceRows=await wait(()=>{const rows=[...document.querySelectorAll('.tr-call-row')];
@@ -318,6 +323,7 @@ def start_gui_probe():
     console, loads, renderer = [], [], []
     state = {'started': time.monotonic(), 'phase': 'page-load', 'injected': False,
              'inflight': False, 'command': None, 'response': None, 'finished': False, 'reopened': False,
+             'captionClosed': False, 'captionReopened': False,
              'lastObserved': None, 'lastDiagnostic': 0, 'lastPoll': None, 'lastCallback': None,
              'emptyCallbacks': 0, 'injectionAck': False}
     output = Path(config['output'])
@@ -331,6 +337,36 @@ def start_gui_probe():
     webview.show_webview(workspace_dir=config['workspace'], authenticated_url=config['authenticatedUrl'], frontend_url=config['base'])
     webview._window.move(12000, 12000)
     webview._window.resize(1440, 1000)
+    # Native ownership keeps this tool above Houdini while allowing another
+    # application to cover the whole group. Qt hints alone cannot prove this.
+    window = webview._window
+    main = hou.qt.mainWindow()
+    assert window.isWindow() and window.parentWidget() is main
+    assert not window.windowFlags() & QtCore.Qt.WindowStaysOnTopHint
+    assert window.windowFlags() & QtCore.Qt.WindowMinimizeButtonHint
+    assert window.windowFlags() & QtCore.Qt.WindowCloseButtonHint
+    assert window.windowFlags() & QtCore.Qt.WindowSystemMenuHint
+    owner_facts = {'qtOwnedByHoudini': True, 'systemTopmost': False}
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        user = ctypes.WinDLL('user32', use_last_error=True)
+        user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user.GetWindow.restype = wintypes.HWND
+        user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user.GetWindowLongW.restype = ctypes.c_long
+        user.GetSystemMenu.argtypes = [wintypes.HWND, wintypes.BOOL]
+        user.GetSystemMenu.restype = wintypes.HMENU
+        user.GetMenuState.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.UINT]
+        user.GetMenuState.restype = wintypes.UINT
+        user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user.PostMessageW.restype = wintypes.BOOL
+        native_owner = int(user.GetWindow(int(window.winId()), 4) or 0)
+        native_topmost = bool(user.GetWindowLongW(int(window.winId()), -20) & 8)
+        assert native_owner == int(main.winId()) and not native_topmost
+        close_state = int(user.GetMenuState(user.GetSystemMenu(int(window.winId()), False), 0xF060, 0))
+        assert close_state != 0xffffffff and not close_state & 3, 'native SC_CLOSE is missing or disabled'
+        owner_facts.update(nativeOwnedByHoudini=True, systemTopmost=native_topmost, nativeCloseEnabled=True)
     page = webview._view.page()
     page.loadFinished.connect(lambda ok: loads.append(bool(ok)))
     page.renderProcessTerminated.connect(lambda status, code: renderer.append({'status': str(status), 'code': code}))
@@ -348,7 +384,8 @@ def start_gui_probe():
                   'phase': state['phase'], 'detail': detail, 'loads': loads, 'renderer': renderer,
                   'console': console[-60:], 'hipUntouched': hip_untouched,
                   'hipBefore': initial_hip, 'hipAfter': final_hip, 'lastObserved': state['lastObserved'],
-                  'offTheRecord': page.profile().isOffTheRecord(), 'screenshot': 'pending'}
+                  'offTheRecord': page.profile().isOffTheRecord(), 'windowOwner': owner_facts,
+                  'screenshot': 'pending'}
         # Preserve failure evidence even if the native render/grab path stalls.
         atomic_json(output, result)
         try:
@@ -389,6 +426,26 @@ def start_gui_probe():
                 state['reopened'] = True
                 webview.show_webview(workspace_dir=config['workspace'], frontend_url=config['base'])
                 page.runJavaScript('window.__dshQtReopened=true', 0)
+            if phase == 'caption-close' and not state['captionClosed']:
+                state['captionClosed'] = True
+                if os.name == 'nt':
+                    # Use the native command issued by the caption X, rather
+                    # than QWidget.close(), so the native close path is tested.
+                    assert user.PostMessageW(int(window.winId()), 0x112, 0xF060, 0)
+                else:
+                    window.close()
+            elif phase == 'caption-close' and not state['captionReopened']:
+                assert not window.isVisible(), 'native caption command did not close the tool'
+                assert webview._view.page() is page, 'close destroyed the current page'
+                webview._load_finished(True)
+                webview._retry_load()
+                assert not window.isVisible(), 'background callback reopened a closed tool'
+                webview.show_webview(frontend_url=config['base'])
+                assert webview._window is window and webview._view.page() is page
+                assert window.isVisible()
+                state['captionReopened'] = True
+                owner_facts.update(nativeCloseHides=True, samePageOnCloseReopen=True)
+                page.runJavaScript('window.__dshQtCaptionReopened=true', 0)
             command = probe.get('command')
             if command and command['id'] != state['command']:
                 state['command'] = command['id']

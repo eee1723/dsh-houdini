@@ -14,6 +14,7 @@ import unicodedata
 
 
 MANAGED_DIRECTORY = "dsh-visual-checks"
+DELIVERY_DIRECTORY = "dsh-render"
 _PROCESS_PID = os.getpid()
 if globals().get("_PROCESS_NONCE_PID") != _PROCESS_PID:
     _PROCESS_NONCE_PID = _PROCESS_PID
@@ -34,6 +35,8 @@ def _inside(root: str, target: str) -> bool:
 def _safe_component(value: str, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ValueError(f"{field} must be a nonempty basename")
+    if '`' in value:
+        raise ValueError(f"managed {field} cannot contain executable expressions")
     if value != os.path.basename(value) or os.path.isabs(value) or os.path.splitdrive(value)[0]:
         raise ValueError(f"managed {field} accepts a basename only; use output_policy='explicit' for a path")
     if (any(mark in value for mark in ("/", "\\", ":", '<', '>', '"', '|', '?', '*'))
@@ -85,6 +88,7 @@ def allocate_managed(
     default_extension: str = ".png",
     allowed_extensions=(),
     expand=None,
+    output_policy="managed",
 ) -> dict:
     """Allocate one collision-resistant capture path under a named HIP.
 
@@ -92,6 +96,8 @@ def allocate_managed(
     before the managed directory is created.  The caller remains responsible
     for producing the image and for reporting the actual emitted filename.
     """
+    if output_policy not in ('managed', 'delivery'):
+        raise ValueError('allocated output_policy must be managed or delivery')
     if not isinstance(hip_path, str) or not hip_path.strip():
         raise ValueError("managed visual checks require a named HIP; use scene_save_as with an authorized target first")
     hip = _real(os.path.dirname(hip_path))
@@ -99,8 +105,9 @@ def allocate_managed(
         raise ValueError("managed visual checks require an existing named HIP directory")
     repo = _real(repository_root)
     run_id = _run_id(owner_session)
-    expected_base = os.path.abspath(os.path.join(hip, MANAGED_DIRECTORY))
-    expected_root = os.path.abspath(os.path.join(expected_base, run_id))
+    directory = MANAGED_DIRECTORY if output_policy == 'managed' else DELIVERY_DIRECTORY
+    expected_base = os.path.abspath(os.path.join(hip, directory))
+    expected_root = os.path.abspath(os.path.join(expected_base, run_id)) if output_policy == 'managed' else expected_base
     root = _real(expected_root)
     if not _inside(hip, root):
         raise ValueError("managed visual-check root escapes the HIP directory")
@@ -174,7 +181,7 @@ def allocate_managed(
                 continue
             return {
                 "purpose": str(purpose),
-                "output_policy": "managed",
+                "output_policy": output_policy,
                 "actual_path": target.replace("\\", "/"),
                 "hip_relative_path": os.path.relpath(target, hip).replace("\\", "/"),
                 "managed_root": root.replace("\\", "/"),
@@ -248,14 +255,14 @@ def with_actual_path(artifact: dict, actual_path, hip_path) -> dict:
     actual = _real(actual_path)
     planned = os.path.abspath(os.fspath(result['actual_path']))
     planned_dir = os.path.dirname(planned)
-    if result.get('output_policy') == 'managed':
+    if result.get('output_policy') in ('managed', 'delivery'):
         managed_root = os.path.abspath(os.fspath(result['managed_root']))
         if (os.path.normcase(planned_dir) != os.path.normcase(managed_root)
                 or os.path.normcase(_real(managed_root)) != os.path.normcase(managed_root)):
             raise ValueError('managed preview directory was redirected after allocation')
     if os.path.normcase(os.path.dirname(actual)) != os.path.normcase(planned_dir):
         raise ValueError('emitted preview path left its validated output directory')
-    if result.get('output_policy') == 'managed' and not _inside(result['managed_root'], actual):
+    if result.get('output_policy') in ('managed', 'delivery') and not _inside(result['managed_root'], actual):
         raise ValueError('emitted managed preview path left its run directory')
     result["actual_path"] = actual.replace("\\", "/")
     result["hip_relative_path"] = None

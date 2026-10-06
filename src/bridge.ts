@@ -153,6 +153,42 @@ export class HoudiniBridge {
     }
   }
 
+  /** Fixed UI-only navigation. Cancellation retires its issued/queued ticket;
+   *  native navigation already running on the main thread completes normally. */
+  async navigateNode(reference:{id:string}, expectedHip:string, owner:OwnershipScope, signal?:AbortSignal):Promise<ExecResult> {
+    assertOwnership(owner,'Houdini node navigation')
+    const interaction=AbortSignal.any([AbortSignal.timeout(this.timeoutMs),
+      ...(signal?[signal]:[]),...(this.lifetime?[this.lifetime]:[])])
+    const {requestRef:ref}=await this.checkContract(interaction,owner,'node_navigation')
+    let cancellation:Promise<unknown>|undefined
+    let cancellationError:unknown
+    const cancel=()=>{
+      if(cancellation)return
+      // The interaction and plugin lifetime may both have ended. This cleanup
+      // must still reach the registry, so only its own transport timeout applies.
+      cancellation=this.requestJson<{ok:boolean;error?:string}>('/nodes/cancel',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({request_ref:ref,owner_session:owner.sessionId,owner_call:owner.callId,
+          expected_contract:this.expectedContract()}),
+      },undefined,0,false).then(result=>{
+        if(!result.ok)throw new Error(result.error||'Node navigation cancellation failed')
+      }).catch(error=>{cancellationError=error})
+    }
+    interaction.addEventListener('abort',cancel,{once:true})
+    try {
+      if(interaction.aborted)cancel()
+      interaction.throwIfAborted()
+      return await this.post<ExecResult>('/nodes/navigate',{
+        reference,expected_hip:expectedHip,owner_session:owner.sessionId,owner_call:owner.callId,
+        expected_contract:this.expectedContract(),request_ref:ref,
+      },interaction)
+    } finally {
+      interaction.removeEventListener('abort',cancel)
+      if(cancellation)await cancellation
+      if(cancellationError)throw new Error('Node navigation cancellation could not be confirmed: '+String(cancellationError))
+    }
+  }
+
   /** Queue Python code as a bridge-side background job; returns immediately. */
   async submitJob(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string): Promise<JobHandle> {
     assertOwnership(owner, 'Houdini job submission')
@@ -184,11 +220,12 @@ export class HoudiniBridge {
     return { version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH }
   }
 
-  private async checkContract(signal?: AbortSignal, owner?: OwnershipScope): Promise<BridgeHealth> {
+  private async checkContract(signal?: AbortSignal, owner?: OwnershipScope, requestKind?:'node_navigation'): Promise<BridgeHealth> {
     // No cached handshake: the process can restart on the same port. Preparing
     // a ticket also returns the contract, so admission costs no extra round trip.
     const health = owner
-      ? await this.post<BridgeHealth>('/requests/prepare', { owner_session: owner.sessionId }, signal)
+      ? await this.post<BridgeHealth>('/requests/prepare', { owner_session: owner.sessionId,
+        ...(requestKind?{request_kind:requestKind}:{}) }, signal)
       : await this.get<BridgeHealth>('/health', signal)
     const actual = health.verbCatalog
     if (this.executorId && health.executorId !== this.executorId) {
@@ -303,9 +340,9 @@ export class HoudiniBridge {
     return this.post('/requests/status',{request_ref:ref,owner_session:owner.sessionId},signal)
   }
 
-  private withTimeout(signal: AbortSignal | undefined, extraMs = 0): AbortSignal {
+  private withTimeout(signal: AbortSignal | undefined, extraMs = 0, honorLifetime = true): AbortSignal {
     const timeout = AbortSignal.timeout(this.timeoutMs + extraMs)
-    return AbortSignal.any([timeout,...(signal?[signal]:[]),...(this.lifetime?[this.lifetime]:[])])
+    return AbortSignal.any([timeout,...(signal?[signal]:[]),...(honorLifetime&&this.lifetime?[this.lifetime]:[])])
   }
 
   private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -325,13 +362,14 @@ export class HoudiniBridge {
     init: RequestInit,
     signal?: AbortSignal,
     extraMs = 0,
+    honorLifetime = true,
   ): Promise<T> {
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
         headers: {...Object.fromEntries(new Headers(init.headers)), ...this.targetHeaders()},
-        signal: this.withTimeout(signal, extraMs),
+        signal: this.withTimeout(signal, extraMs, honorLifetime),
       })
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)

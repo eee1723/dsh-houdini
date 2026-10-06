@@ -30,7 +30,7 @@ class RequestRegistry:
         with self.lock:
             return len(self.records) - len(self._finished)
 
-    def issue(self, owner):
+    def issue(self, owner, kind='exec'):
         """Prepare one request without submitting code or occupying the HOM queue."""
         if not isinstance(owner, str) or not owner:
             raise ValueError('request tracking requires owner_session')
@@ -40,12 +40,12 @@ class RequestRegistry:
             while len(self._tickets) >= self.limit:
                 self._tickets.popitem(last=False)
             ref = self.runtime_id + '.' + uuid.uuid4().hex
-            self._tickets[ref] = (now, owner)
+            self._tickets[ref] = (now, owner, kind)
             return ref
 
     def _expire_tickets(self, now):
         while self._tickets:
-            issued, _owner = next(iter(self._tickets.values()))
+            issued, _owner, _kind = next(iter(self._tickets.values()))
             if now - issued <= self.ticket_retention:
                 break
             self._tickets.popitem(last=False)
@@ -88,6 +88,8 @@ class RequestRegistry:
                 raise ValueError('request ticket expired, consumed or unknown; inspect the original receipt, do not resubmit')
             if ticket[1] != owner:
                 raise ValueError('request ticket owner conflict')
+            if (ticket[2] == 'node_navigation') != (payload.get('request_kind') == 'node_navigation'):
+                raise ValueError('request ticket kind conflict')
             del self._tickets[ref]
             while len(self.records) >= self.limit:
                 if not self._finished:
@@ -102,6 +104,33 @@ class RequestRegistry:
                 'kind': payload.get('request_kind', 'exec'), 'admitted_at': time.time(),
             }
             return True
+
+    def cancel_navigation(self, ref, owner):
+        """Cancel only an issued or queued UI navigation, atomically with admission.
+
+        Removing an unused ticket prevents a delayed HTTP request from reserving
+        it. A queued receipt becomes terminal before the pump can claim it.
+        Running navigation is short native UI work and is never interrupted.
+        Ordinary execution/job tickets and receipts cannot be cancelled here.
+        """
+        with self.lock:
+            if not isinstance(ref, str) or not ref.startswith(self.runtime_id + '.'):
+                raise ValueError('navigation request_ref runtime mismatch')
+            self._expire_tickets(time.monotonic())
+            ticket = self._tickets.get(ref)
+            if ticket is not None:
+                if ticket[1] != owner or ticket[2] != 'node_navigation':
+                    raise ValueError('navigation ticket unavailable for this owner')
+                del self._tickets[ref]
+                return {'status': 'not_executed', 'cancelled': True}
+            record = self.records.get(ref)
+            if record is None or record['owner'] != owner or record['kind'] != 'node_navigation':
+                raise ValueError('navigation receipt unavailable for this owner')
+            if record['status'] == 'queued':
+                record.update(status='not_executed', reason='Node navigation cancelled before dispatch',
+                              finished=time.monotonic())
+                self._finished[ref] = None
+            return {'status': record['status'], 'cancelled': record['status'] == 'not_executed'}
 
     def running(self, ref):
         with self.lock:

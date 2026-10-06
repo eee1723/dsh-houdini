@@ -77,6 +77,14 @@ try:
  try:failed=call(f"layout_nodes({parent!r},mode='handoff',boxes={selected!r},expected_plan={fail_plan['plan_sha256']!r})")
  finally:boxes._set_node_position=original_position
  assert not failed['ok'] and failed['evidence'][0]['restored'] is True,failed
+ # The readable adapter must preserve model state and remain stable on reapply.
+ readable=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},profile='readable')")['result']
+ assert readable['layout_status']=='passed' and readable['readability'],readable
+ assert not readable['clearance_failures'] and not readable['containment_failures']
+ assert {path:[item.path() if item else None for item in hou.node(path).inputs()] for path in paths}==wires
+ assert {path:(hou.node(path).isDisplayFlagSet(),hou.node(path).isRenderFlagSet(),hou.node(path).needsToCook()) for path in paths}==flags
+ stable=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},profile='readable')")
+ assert not stable['result']['applied'] and stable['transaction']['status']=='no_scene_change',stable
  print('handoff layout contract passed on '+hou.applicationVersionString())
 finally:
  if parent and hou.node(parent) is not None:hou.node(parent).destroy()

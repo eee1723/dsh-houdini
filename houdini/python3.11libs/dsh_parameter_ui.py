@@ -10,6 +10,14 @@ import re
 def expand_layout(layout):
     """Expand opt-in components to editable primitive specs; never inject callbacks."""
     budget = [0]
+    def gate_leaves(items, field, condition):
+        for child in items:
+            if child.get('type') not in ('folder', 'separator', 'label'):
+                prior = child.get(field, '').strip()
+                if prior and not prior.startswith('{'):
+                    prior = '{ '+prior+' }'
+                child[field] = (prior+' '+condition).strip()
+            gate_leaves(child.get('parms', []), field, condition)
     def expand(items, depth=0):
         if not isinstance(items, (list, tuple)) or depth > 12:
             raise ValueError('layout requires lists with at most 12 nesting levels')
@@ -30,6 +38,7 @@ def expand_layout(layout):
                 'section': {'name', 'label', 'parms', 'enabled', 'collapsed', 'header_parm', 'help'},
                 'remap': {'name', 'label', 'enabled', 'ramp_type', 'help'},
                 'repeater': {'name', 'label', 'parms', 'style', 'count', 'label_ref', 'help'},
+                'mode': {'name', 'label', 'default', 'choices', 'help'},
             }
             if component not in allowed or set(item) - allowed[component]:
                 raise ValueError(f'unknown component/fields: {component}')
@@ -47,6 +56,34 @@ def expand_layout(layout):
             label = item.get('label', name)
             if 'enabled' in item and type(item['enabled']) is not bool:
                 raise ValueError('component enabled must be boolean')
+            if component == 'mode':
+                choices = item.get('choices')
+                if not isinstance(choices, (list, tuple)) or not choices:
+                    raise ValueError('mode choices must be a non-empty list')
+                tokens, labels, sections = [], [], []
+                for choice in choices:
+                    if not isinstance(choice, dict) or set(choice) - {'token', 'label', 'parms'}:
+                        raise ValueError('mode choices support token/label/parms')
+                    token = choice.get('token')
+                    if not isinstance(token, str) or not re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', token) or token in tokens:
+                        raise ValueError('mode tokens must be unique stable identifiers')
+                    tokens.append(token)
+                    labels.append(choice.get('label', token))
+                    children = expand(choice.get('parms', []), depth+1)
+                    condition = '{ '+name+' != '+token+' }'
+                    gate_leaves(children, 'hide_when', condition)
+                    sections.append({'type': 'folder', 'name': name+'_mode_'+token,
+                        'label': choice.get('label', token), 'folder_type': 'simple',
+                        'tags': {'sidefx::look': 'blank'}, 'tab_hide_when': condition,
+                        'parms': children})
+                default = item.get('default', tokens[0])
+                if default not in tokens:
+                    raise ValueError('mode default must be one of its tokens')
+                result.append({'type': 'menu', 'name': name, 'label': label,
+                    'menu': {'items': tokens, 'labels': labels}, 'default': tokens.index(default),
+                    'help': item.get('help', '')})
+                result.extend(sections)
+                continue
             if component == 'remap':
                 result.extend([
                     {'type': 'toggle', 'name': name+'_enabled', 'label': label,
@@ -81,15 +118,7 @@ def expand_layout(layout):
                                'default': item['enabled']})
                 tags['sidefx::header_toggle'] = toggle_name
                 section['disable_when'] = '{ '+toggle_name+' == 0 }'
-                def gate_children(items):
-                    for child in items:
-                        if child['type'] not in ('folder', 'separator', 'label'):
-                            prior = child.get('disable_when', '').strip()
-                            if prior and not prior.startswith('{'):
-                                prior = '{ '+prior+' }'
-                            child['disable_when'] = (prior+' '+section['disable_when']).strip()
-                        gate_children(child.get('parms', []))
-                gate_children(children)
+                gate_leaves(children, 'disable_when', section['disable_when'])
             result.append(section)
         return result
     return expand(layout)
@@ -101,7 +130,7 @@ def validate_layout_spec(spec):
     kinds = {'folder': {'parms', 'folder_type', 'default', 'ends_tab_group', 'tab_hide_when', 'tab_disable_when'},
              'float': {'default', 'min', 'max', 'min_strict', 'max_strict', 'components', 'look'},
              'int': {'default', 'min', 'max', 'min_strict', 'max_strict', 'components', 'look', 'menu'},
-             'toggle': {'default'}, 'menu': {'default', 'menu'}, 'string': {'default', 'file'},
+             'toggle': {'default'}, 'menu': {'default', 'menu'}, 'string': {'default', 'file', 'string_type'},
              'button': {'callback'}, 'separator': set(), 'label': set(),
              'ramp': {'ramp_type', 'basis', 'points', 'show_controls'}}
     def walk(items):

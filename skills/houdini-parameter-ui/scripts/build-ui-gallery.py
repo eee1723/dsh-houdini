@@ -35,6 +35,14 @@ __result__={{'node':asset['node'],'analysis':check['ui_analysis']}}
         if not result['ok']:
             raise RuntimeError(result['error'])
         nodes[name] = result['result']['node']
+        if name == 'artist_controls':
+            # Show the native label_ref with distinct example names. The HDA's
+            # default remains one item; no domain-specific fields are required.
+            seed = bridge.run_code(f"set_parms({nodes[name]!r}, {{'regions': 2}})\n"
+                f"set_parms({nodes[name]!r}, {{'region_name1': '地面', 'region_name2': '坡面'}})",
+                owner_session='ui-gallery-author', owner_call='name-gallery-regions')
+            if not seed['ok']:
+                raise RuntimeError(seed['error'])
     result = bridge.run_code(
         f"__result__=scene_save_as({str(output/'ui-gallery.hip')!r}, expected_current_path={hou.hipFile.path()!r}, reason='explicit UI gallery output')",
         owner_session='ui-gallery-author', owner_call='save-gallery')

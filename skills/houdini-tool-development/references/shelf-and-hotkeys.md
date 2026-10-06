@@ -28,4 +28,20 @@ H20.5 起新体系区分动作、context 与默认绑定，对应 `HotkeyActions
 
 Panel 的 `.pypanel` 是入口定义，复杂逻辑仍放模块；按实际 Qt/Python 版本核对绑定及生命周期，覆盖多次打开关闭、selection 改变与对象删除后的引用处理。SideFX [Python Panel Editor](https://www.sidefx.com/docs/houdini/ref/windows/pythonpaneleditor.html) 是定义格式入口；当前 online 页面有混杂的旧版本提示，不能直接当 H21/H22 Qt 兼容表。
 
-Viewer State 开发先核对目标版本 Type Properties 的 Interactive/State Script 与原生生成器，明确进入、操作、取消和退出的状态恢复。参考 [Operator Type Properties](https://www.sidefx.com/docs/houdini/ref/windows/optype.html) 的 Interactive 部分；此处只提供选择与完成门，具体事件/API 尚需本机帮助及最小交互实验，不声称已有通用验证配方。
+Viewer State开发先核对目标版本Type Properties的Interactive/State Script与原生生成器，明确进入、操作、取消和退出的状态恢复。用唯一状态名绑定factory；参数、handles与guide按业务需要添加。连续修改用状态undo边界，退出/中断后不留下工具私有选择、提示或监听。参考 [Python states](https://www.sidefx.com/docs/houdini/hom/python_states.html)；不同viewer能力与实验HUD保持实际版本边界，不声称一个状态适用于全部上下文。
+
+## 可继续修改的入口源码
+
+[入口资源构建器](../scripts/build-entry-examples.py)按目标Python版本把[源码资产](../assets/tool-entry-examples/dsh_artist_example_panel.py)组织为独立资源树，不安装或修改用户配置：
+
+```powershell
+python skills/houdini-tool-development/scripts/build-entry-examples.py --python-version 3.13 --output E:/tmp/artist-entry-resources
+```
+
+只在明确的空输出目录运行；3.11/3.13是此例的声明目标，不能据目录存在外推其它版本。派生用户工具时，先选定已有包或新包及唯一源码位置；已有注册路径覆盖资源时不用改JSON。新包用tool_package_create令注册JSON直接指向该资源目录，按已有授权另行加载，不生成ZIP或构建/安装副本。资产源码是此例维护源；派生后在用户选定源码同步入口，不保留两个可独立手改的权威副本。
+
+- Panel例子用原生NodeChooserButton、SearchLineEdit和TreeView浏览明确SOP的参数模板，不cook、不修改节点；.pypanel仅转发创建、销毁与HIP/导航生命周期。参数双向编辑若需要可嵌入hou.qt.ParmDialog，仍须验证用户的动画/表达式和目标范围。
+- [Viewer State例子](../assets/tool-entry-examples/dsh_artist_example_state.py)是nodeless XZ平面坐标读取，包含进入、鼠标事件、提示与退出；Shelf薄入口进入同一状态，不建节点。它不是geometry拾取、handles编辑或完整建模工具，需按任务继续实现与验收。
+- 资源构建器保留模块名和状态ID示例前缀；派生新工具时同时更换Python模块、Panel、Shelf、Viewer State标识，避免重复加载遮蔽。实例业务不依赖DSH注入或开发机绝对路径。
+
+原生菜单ASCII标签与中文面板/提示分开。声明可移机时在无仓库Python路径的新进程仅加载生成资源和声明依赖；注册状态、内部函数或Shelf脚本文本存在不等于真实视口鼠标交互已通过。

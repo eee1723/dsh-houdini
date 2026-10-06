@@ -250,17 +250,9 @@ def _retry_renderer() -> None:
 
 
 def _bring_to_front(win: QWidget) -> None:
-    """把窗口带到 Houdini 主窗口之上。
-
-    Windows 的焦点策略下，新顶层窗口常被已在前台的主窗口压住；短暂开一下
-    置顶再立刻取消，是最可靠的提神方式（不会常驻置顶）。
-    """
-    win.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-    win.show()
-    win.raise_()
-    win.activateWindow()
-    win.setWindowFlag(Qt.WindowStaysOnTopHint, False)
-    win.show()
+    """显式打开恢复窗口；置顶规则由共享工具样式维护。"""
+    from dsh_ui_style import show_tool_window
+    show_tool_window(win)
 
 
 def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | None = None) -> bool:
@@ -399,8 +391,13 @@ def show_webview(
 
     if _window is None:
         _register_dsh_resource_scheme()
-        win = QWidget()
-        win.setWindowTitle("DSH-Houdini")
+        import hou
+        # A normal top-level window owned by Houdini stays above Houdini but
+        # follows it behind other applications. Keep the independent minimize
+        # and close behavior instead of making the WebView a child widget.
+        parent = hou.qt.mainWindow() if hou.isUIAvailable() else None
+        win = QWidget(parent, Qt.Window)
+        win.setWindowTitle("DSH-Houdini · 工作区")
         from dsh_ui_style import style_dialog
         style_dialog(win)
         view = QWebEngineView(win)

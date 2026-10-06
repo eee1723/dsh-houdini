@@ -39,6 +39,10 @@ export function installHoudiniExecutionLog(ctx:Context):void {
     if (!calls) {calls=new Map();settled.set(exec.agent,calls)}
     calls.set(exec.callId,result.value)
   })
+  // Finalize the durable structure outside display policies. rc.2's spill
+  // middleware also prepends: an inner JSON wrapper is otherwise cut in its
+  // middle as ordinary text. This hook changes only the log copy, never the
+  // program value, model-facing retention or execution admission.
   ctx.on('tools/ptc-dispatch-log',async(dispatch,next)=>{
     const content = await next()
     if (!dispatch.agent || !isHoudiniTool(dispatch.name)) return content
@@ -47,7 +51,7 @@ export function installHoudiniExecutionLog(ctx:Context):void {
     const value = calls.get(dispatch.subCallId)!
     calls.delete(dispatch.subCallId)
     return [{type:'text',text:JSON.stringify({kind:LOG_KIND,callId:dispatch.subCallId,tool:dispatch.name,value})}]
-  })
+  }, {prepend:true})
 }
 
 /** Read the declared canonical value, never infer facts from prose. */

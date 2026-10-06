@@ -149,8 +149,8 @@ for (const [dir, suffix] of [['src', '.ts'], ['houdini/python3.11libs', '.py']])
 // Domain methods are recommendations chosen for the task. Link/schema checks
 // above validate maintenance integrity without freezing one modeling recipe.
 const houdiniPreset = read('presets/houdini/persona.md')
-assert.match(houdiniPreset, /detailed modeling, rigging, UI, COP, Solaris and tutorial methods belong to those skills/,
-  'the persona must route domain methods instead of duplicating them')
+// Wording is editable; actual persona delivery and on-demand skill loading are
+// exercised by dsh-context-loop-fixture, not certified by a sentence match.
 for (const leakedRecipe of [/OUT_ASSET/, /Copy to Points/, /component Network Box/, /world Y-up/]) {
   assert.doesNotMatch(houdiniPreset, leakedRecipe, 'domain recipes belong to the matching skill, not the persona')
 }
