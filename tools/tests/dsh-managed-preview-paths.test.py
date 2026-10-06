@@ -52,7 +52,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     assert len(list(Path(first['managed_root']).glob('*.reserve'))) == 2
     delivery = allocate(hip, '最终交付.png', output_policy='delivery')
     another_delivery = allocate(hip, '最终交付.png', output_policy='delivery')
-    assert Path(delivery['actual_path']).parent == base / 'dsh-render'
+    # Windows CI may expose TEMP through an 8.3 alias; the allocator resolves
+    # that alias to the same directory's long spelling.
+    assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-render')
     assert delivery['output_policy'] == 'delivery' and delivery['hip_relative_path'].startswith('dsh-render/')
     assert delivery['actual_path'] != another_delivery['actual_path']
     assert paths.with_actual_path(delivery, delivery['actual_path'], str(hip))['output_policy'] == 'delivery'
