@@ -14,6 +14,13 @@ const paragraphStarts = (text) => text.split(/\n\s*\n/)
   .map(part => part.replaceAll("`", "").trimStart().split("{{")[0].slice(0, 90))
   .filter(start => start.length >= 25);
 const sourceIdentity = (text) => ({ hash: hash(text), bytes: Buffer.byteLength(text) });
+export function resourceIdentity(file, bytes) {
+  // Text resources describe repository content, independent of checkout EOLs.
+  // Keep binary resources byte-exact, including any CRLF byte sequences.
+  if (/\.(?:md|py|m?js|json|ya?ml)$/i.test(file))
+    bytes = Buffer.from(bytes.toString("utf8").replaceAll("\r\n", "\n"));
+  return { hash: hash(bytes), bytes: bytes.length };
+}
 function initializer(file, name, bindings = {}) {
   const source = ts.createSourceFile(
     file,
@@ -63,8 +70,7 @@ export function traceSources() {
           const bytes = fs.readFileSync(path.join(root, file));
           files.push({
             path: file.slice(base.length + 1),
-            hash: hash(bytes),
-            bytes: bytes.length,
+            ...resourceIdentity(file, bytes),
           });
         }
       }

@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import vm from "node:vm";
-import { generatedTraceBlock, traceSources } from "../gen-trace-client.mjs";
+import { generatedTraceBlock, resourceIdentity, traceSources } from "../gen-trace-client.mjs";
 import { loadCatalog } from "../catalog-lib.mjs";
+
+const lfResource = Buffer.from("中文工具说明\n第二行\n");
+const crlfResource = Buffer.from("中文工具说明\r\n第二行\r\n");
+for (const extension of ["md", "py", "mjs", "js", "json", "yaml", "yml"]) {
+  assert.deepEqual(resourceIdentity(`resource.${extension}`, crlfResource),
+    resourceIdentity(`resource.${extension}`, lfResource),
+    `${extension} resource inventory must survive Git checkout line-ending changes`);
+  assert.equal(resourceIdentity(`resource.${extension}`, crlfResource).bytes, lfResource.length);
+}
+assert.notEqual(resourceIdentity("resource.md", lfResource).hash,
+  resourceIdentity("resource.md", Buffer.from("修改后的工具说明\n第二行\n")).hash);
+for (const extension of ["hda", "bin"]) {
+  assert.deepEqual(resourceIdentity(`resource.${extension}`, crlfResource), {
+    hash: crypto.createHash("sha256").update(crlfResource).digest("hex"),
+    bytes: crlfResource.length,
+  }, "binary resource inventory must retain original CRLF bytes");
+}
 
 const source = fs
   .readFileSync(new URL("../../client.js", import.meta.url), "utf8")
