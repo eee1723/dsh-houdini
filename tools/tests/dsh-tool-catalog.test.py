@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-tool-catalog-') as directory:
     assert tuple(n.path() for n in hou.node('/').allSubChildren()) == before
     native = catalog.tool_inspect('node_type', 'geo', category='Object', include_code=True)
     assert native['entry']['implementation'] == 'native_or_compiled' and native['code_status'].endswith('unavailable')
-    tool = hou.shelves.newTool(name='catalog_test_shelf', label='目录测试', file_path=str(Path(directory)/'catalog.shelf'), script='raise RuntimeError("must never execute")')
+    tool = hou.shelves.newTool(name='catalog_test_shelf', label='目录测试', file_path=(Path(directory)/'catalog.shelf').as_posix(), script='raise RuntimeError("must never execute")')
     shelf = catalog.tool_inspect('shelf', tool.name(), include_code=True, max_chars=256)
     assert 'must never execute' in shelf['code'] and shelf['language'] == 'Python'
     tool.destroy()
