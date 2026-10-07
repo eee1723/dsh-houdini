@@ -72,7 +72,7 @@ npm test
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
-HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/dsh-hda-lifecycle.test.py)；Sticky Note的归属、局部维护、Raw Gate和失败恢复用[dsh-network-notes](../tools/tests/dsh-network-notes.test.py)；原生参数/网络截图与用户状态保持用[dsh-ui-capture-gui](../tools/tests/dsh-ui-capture-gui.test.py)。截图测试在自有GUI检查实际目标与图像，生成文件存在不代替人工识图；不连接用户live或改用户HIP。
+HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/dsh-hda-lifecycle.test.py)；Sticky Note的归属、局部维护、Raw Gate和失败恢复用[dsh-network-notes](../tools/tests/dsh-network-notes.test.py)；已有pane/Qt窗口/停靠面板发现、精确裁框、当前内容与用户状态保持用[dsh-ui-surfaces-gui](../tools/tests/dsh-ui-surfaces-gui.test.py)，包含真实HTTP发现→目标截图→同票据恢复。[headless拒绝](../tools/tests/dsh-ui-capture.test.py)与[HTTP边界](../tools/tests/dsh-bridge-transport.test.py)分别核对无GUI、旧node/view/尺寸输入与请求事实。界面测试在自有GUI检查实际目标与图像，生成文件存在不代替人工识图，不连接用户live或改用户HIP。
 
 跨层修改应验证消费方最终取得的状态，局部函数返回或静态配置存在不足以证明链路可用。入口/preset/client改动用精确DSH的实际模块图确认根前端与工具scope，再由真实页面确认内容视图和选中任务；工作区切换同时核对DSH store中的session、preset、cwd及workspace成员。入口可用空会话验启动，但Trace页需要普通有内容会话验收。Host组合检查的`--context-loop`使用自有HTTP Bridge夹具与脚本化模型适配器，核对真实DSH最终请求中的错误、未决回执、后台任务和上下文更新；可用`--outcome-fixture`接入隔离HOM导出的真实回执，核对捕获的操作异常、fallback和验证状态。不调用收费模型或用户Houdini。相关入口为[Host组合](../tools/tests/dsh-host-smoke.test.py)和[真实页面导航](../tools/tests/dsh-client-navigation.mjs)。
 
@@ -105,7 +105,9 @@ python tools/isolated-houdini-check.py --trusted --manifest path/to/check.json -
 
 隔离工具通过自有进程句柄和 Windows Job 管理超时、取消及进程树内存。报告与退出状态都要读取；不把启动成功当作负载完成。任意 Python、回调、绝对路径文件和外部服务的副作用不属于场景恢复保证。
 
-收费任务只在用户授权的模型与预算范围内运行 [run-modeling-trial.py](../tools/run-modeling-trial.py)。使用隔离任务目录、精确 DSH/Node/Houdini 和选定模型配置；自然试验不修改用户 live。评审答案不进入生产提示词或用于未见题调参。
+收费任务只在用户授权的模型与预算范围内运行 [run-modeling-trial.py](../tools/run-modeling-trial.py)。使用隔离任务目录、精确 DSH/Node/Houdini 和明确provider/model，只复制所选路由及必要credential reference，不修改用户设置或live。评审答案不进入生产提示词或用于未见题调参。
+
+可视化试验须以真实DSH `llm.resolveModelInfo` 的inputModalities确认当前路由，而非从准备配置摘要推断。锁定DSH的pi-ai模型配置使用`input`，发现/解析结果使用`inputModalities`；两者不能原样互换。原生GUI观察用`--show-gui`，`--observe-model-images`通过透明observer记录实际LOOP图像引用及供应商完成，`--probe-frontend`检查同一真实会话的QtWebEngine消费。供应商单独图像探针、模型实际收到工具图像、前端预览及工程重开分别核对，不互相代替；观察器仅用于隔离开发试验，不进入生产插件图。
 
 ## 分支与接续入口
 

@@ -7,7 +7,7 @@ description: 让用户找到、理解并继续编辑Houdini成果：交付节点
 
 交付的起点是用户下一步要在哪里操作。文件说明工程在哪里，节点入口说明从哪里开始，网络分组与注释说明怎样继续编辑。这些呈现不证明功能、几何或视觉正确，仍由对应领域方法检查。
 
-本skill只维护跨领域的导航与网络交接。参数布局和参数面板观察用houdini-parameter-ui；HDA定义、原生工具入口及依赖用houdini-tool-development；SOP/COP/LOP/rig和教程的构造与验收保留在各自skill。
+本skill只维护跨领域的导航与网络交接。参数布局及面板判断用houdini-parameter-ui；HDA定义、原生工具入口、依赖和通用界面观察方法用houdini-tool-development；SOP/COP/LOP/rig和教程的构造与验收保留在各自skill。
 
 ## 主动交付实际入口
 
@@ -47,6 +47,6 @@ Box回答“哪些节点一起编辑”，Note回答“从哪里开始、输入�
 
 ## 观察与交付
 
-布局有拥挤、标签或线交叉疑问时，调用顶层`houdini_ui_screenshot`，以明确parent路径作为node、view='network'观察网络；不放进Python批次。参数界面截图方法归houdini-parameter-ui。截图和原生图像附件只证明捕获/送达；实际读图后再说明可读性。无GUI或当前模型不能识图时，继续结构和业务检查，明确视觉未验证，不反复盲拍。
+布局有拥挤、标签或线交叉疑问时观察相关网络，具体目标选择见[网络布局观察](references/network-layout.md#布局观察)。实际读图后再说明可读性；截图不证明数据流和业务输出。无需观察的小维护不追加固定截图流程。
 
 文件、图片的实际路径与用途见[文件与图片交付](references/file-delivery.md)。最终回复先说新成果及最直接的操作入口，再说明原内容保持、依赖和未验证范围。节点卡、文件卡和文字应对应同一实际成果。

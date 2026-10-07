@@ -2,7 +2,7 @@
 
 节点导航归本skill，文件使用DSH `present`。先核对实际文件与必要依赖，再发布权威路径；Session workspace可能不同于$HIP。HDA、HIP、贴图、缓存或脚本各自说明使用和加载条件，不把其中一个存在当成整项完成。
 
-需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确参数或网络界面；用途不同，不互相代替。
+需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 
 最终图片用`output_policy='delivery'`生成到已命名HIP旁的`dsh-render/`，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。普通managed观察图在`dsh-visual-checks/<run-id>/`，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
 

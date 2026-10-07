@@ -162,11 +162,11 @@ try {
     'Houdini tool information belongs to the single Trace entry')
   await page.getByRole('navigation',{name:'Trace 看板'}).getByRole('button',{name:'能力资料',exact:true}).click()
   const toolsText=await page.locator('body').innerText()
-  for(const name of ['houdini_inspect','houdini_exec','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
+  for(const name of ['houdini_inspect','houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
       'houdini_job_submit','houdini_job_status','houdini_job_cancel']) {
     assert.ok(toolsText.includes(name),'missing tool documentation '+name)
   }
-  for(const label of ['当前包提供 8 个工具','本任务已用 2 个','本任务调用 3 次']) {
+  for(const label of ['当前包提供 10 个工具','本任务已用 2 个','本任务调用 3 次']) {
     assert.ok(toolsText.includes(label),'missing task usage statistic '+label)
   }
   await page.screenshot({path:path.join(config.output,'browser-tools.png')})

@@ -117,6 +117,11 @@ def main():
             print(json.dumps(result), flush=True)
             while not closing.wait(.1):
                 if process.poll() is not None:
+                    (directory/'unexpected-exit.json').write_text(json.dumps({
+                        'pid':process.pid,'returncode':process.returncode,
+                        'configuredMemoryMb':args.memory_mb,
+                        'limits':'owned process tree; aggregate committed-memory cap and kill on Job close',
+                        'stopRequested':closing.is_set(),'cause':'unverified'}),encoding='utf-8')
                     raise RuntimeError('isolated worker exited unexpectedly; no restart attempted')
             (directory / 'stop').touch(exist_ok=True)
             stop_state = directory / 'stop-state.json'

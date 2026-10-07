@@ -415,7 +415,7 @@ export function classifyVisionEvidence(step) {
 
 /** Metrics that separate vocabulary breadth from actual execution adoption. */
 export function isStructuredHoudiniCall(step) {
-  return step.tool==='houdini_ui_screenshot'
+  return ['houdini_ui_list','houdini_ui_screenshot'].includes(step.tool)
     || step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
 }
 

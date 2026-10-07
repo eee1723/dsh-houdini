@@ -41,8 +41,8 @@ def start():
         # Explicit developer input, before any Bridge registration or model
         # request. Existing nodes retain their identities and remain foreign.
         seed = Path(request['seed_hip']).resolve(strict=True)
-        hou.hipFile.load(str(seed), suppress_save_prompt=True, ignore_load_warnings=True)
-    hou.hipFile.save(str(hip))
+        hou.hipFile.load(seed.as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
+    hou.hipFile.save(hip.as_posix())
     bridge.start(0)
     facts = prepare_registration()
 
@@ -74,7 +74,7 @@ def start():
         # Delivery trials require the author's explicit final save receipt to
         # describe the exact bytes reviewed. Do not rewrite final.hip on stop.
         if hip_name == 'component.hip':
-            hou.hipFile.save(str(hip))
+            hou.hipFile.save(hip.as_posix())
         elif hou.isUIAvailable() and hou.hipFile.hasUnsavedChanges():
             # A GUI close would open a Save Changes prompt and strand the
             # supervisor. Report the unsaved final state before it reclaims

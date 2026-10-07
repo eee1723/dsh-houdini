@@ -27,20 +27,26 @@ parser.add_argument('--houdini',required=True,type=Path)
 parser.add_argument('--credentials',required=True,type=Path)
 parser.add_argument('--settings',required=True,type=Path,help='Verified user settings; only the selected provider/model is copied')
 parser.add_argument('--model',required=True)
+parser.add_argument('--provider',default='deepseek-official',help='Explicit provider route copied from the verified settings')
+parser.add_argument('--show-gui',action='store_true',help='Show only the owned GUI worker for an authorized visible-surface trial')
 parser.add_argument('--condition',required=True)
 parser.add_argument('--seed-hip',type=Path,help='Explicit developer-owned input; never a live/user HIP')
 parser.add_argument('--followup',type=Path,action='append',default=[],help='Same-author next phase, sent only after the preceding phase becomes idle')
 parser.add_argument('--goal-rounds',type=int,default=0,help='Use native DSH Goal for the first phase with this round cap')
 parser.add_argument('--smoke',action='store_true',help='No model calls: verify session/model route, seed and real GUI preview')
 parser.add_argument('--scripted-smoke',action='store_true',help='With --smoke, intercept every model stream locally to exercise native Goal and followups')
+parser.add_argument('--smoke-delivery',action='store_true',help='With scripted smoke, exercise mounted capture/read_image/present/node-entry carriers without a paid model')
+parser.add_argument('--observe-model-images',action='store_true',help='Read-only evidence of real DSH LOOP image attachments and provider completion')
+parser.add_argument('--probe-frontend',action='store_true',help='Inspect the selected real session and its delivery in the owned Houdini QtWebEngine before stop')
 parser.add_argument('--max-seconds',type=int,default=600)
-parser.add_argument('--max-output-tokens',type=int,default=32000)
+parser.add_argument('--max-output-tokens',type=int,default=32000,help='Per-request DeepSeek override; other providers retain their selected profile defaults')
 parser.add_argument('--memory-mb',type=int,default=8192,help='Owned Houdini process-tree memory limit in MiB')
-parser.add_argument('--require-image-input',action='store_true',help='Refuse a text-only model catalog for a visual modeling trial')
+parser.add_argument('--require-image-input',action='store_true',help='Refuse a route whose actual pinned Host model resolver does not report image input')
 parser.add_argument('--allow-paid',action='store_true')
 args=parser.parse_args()
 if not args.allow_paid and not args.smoke:parser.error('explicit --allow-paid required after user authorization')
 if args.scripted_smoke and not args.smoke:parser.error('scripted-smoke requires smoke')
+if args.smoke_delivery and not args.scripted_smoke:parser.error('smoke-delivery requires scripted-smoke')
 if not 60<=args.max_seconds<=14400:parser.error('max-seconds must be 60..14400 for all model phases combined')
 if args.goal_rounds<0:parser.error('goal-rounds must be nonnegative')
 if not 1024<=args.max_output_tokens<=262144:parser.error('max-output-tokens must be 1024..262144 per request')
@@ -52,12 +58,12 @@ TASK=RUN/'task';RUNTIME=RUN/'runtime';HOME=RUNTIME/'home';REGISTRY=RUNTIME/'regi
 NODE=args.node.resolve(strict=True);DSH=args.dsh.resolve(strict=True);HOUDINI=args.houdini.resolve(strict=True)
 HYTHON=HOUDINI.with_name('hython.exe');CREDENTIALS=args.credentials.resolve(strict=True)
 SETTINGS=args.settings.resolve(strict=True)
-MODEL=args.model;PROVIDER='deepseek-official';MAX_SECONDS=args.max_seconds
+MODEL=args.model;PROVIDER=args.provider;MAX_SECONDS=args.max_seconds
 DRIVER_ROOT=Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(DRIVER_ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
-from houdini_test_environment import isolated_environment, launch_directory
+from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
 from dsh_web_auth import DshWebSession
 from dsh_managed_runtime import spawn_frontend, stop_owned
 
@@ -90,6 +96,7 @@ def run_command(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None,
 
 
 def main() -> None:
+    reexec_unpacked_test_cli()
     if RUNTIME.exists() or WORKER.exists() or (RUN / "lock.json").exists():
         raise RuntimeError("This run already started; never overwrite its input or evidence")
     if not TASK.is_dir() or not (TASK / "brief.md").is_file() or not (TASK / "task.json").is_file():
@@ -104,24 +111,44 @@ def main() -> None:
                     DSH_PERMISSION_MODE="workspace-write")
     if args.scripted_smoke:
         host_env['DSH_MODELING_TRIAL_SMOKE_OUT']=str(RAW/'scripted-requests.json')
+    if args.smoke_delivery:
+        smoke_workspace=WORKER/'workspace'
+        host_env['DSH_MODELING_TRIAL_DELIVERY_SMOKE']=json.dumps({'hip':str(smoke_workspace/'final.hip'),
+            'image':str(smoke_workspace/'native-ui-smoke.png'),'source':str(smoke_workspace/'task.json')})
+    if args.observe_model_images or args.require_image_input:
+        host_env['DSH_MODELING_TRIAL_OBSERVER_OUT']=str(RAW/'model-image-consumption.jsonl')
+        host_env['DSH_MODELING_TRIAL_MODEL_INFO_OUT']=str(RAW/'model-resolved-info.json')
+        host_env['DSH_MODELING_TRIAL_PROVIDER']=PROVIDER
+        host_env['DSH_MODELING_TRIAL_MODEL']=MODEL
     run_command(str(NODE), str(DRIVER_ROOT / "tools/tests/prepare-shared-host-fixture.mjs"),
                 str(DSH), str(HOME), str(ROOT), env=host_env)
     selected=run_command(str(NODE),str(DRIVER_ROOT/'tools/prepare-model-settings.mjs'),
                          str(SETTINGS),str(HOME),PROVIDER,MODEL,str(DSH),str(CREDENTIALS),env=host_env)
     model_config=json.loads(selected.stdout.strip())
-    if args.require_image_input and 'image' not in model_config['inputModalities']:
-        raise RuntimeError('Selected trial model does not declare image input; no model request sent')
     overlay = RUNTIME / "model-host.patch.yml"
     overlay.write_text((ROOT / "shared-host.cordis.yml").read_text(encoding="utf-8")
                        + "\n- id: credentials\n  config:\n    path: "
                        + (HOME/'.credentials.yaml').as_posix() + "\n    watch: false\n"
                        + (HOME/'selected-model.patch.yml').read_text(encoding='utf-8')
-                       + "- id: llm-deepseek\n  config:\n    reasoningEffort: high\n"
-                       + "    maxTokens: " + str(args.max_output_tokens) + "\n", encoding="utf-8")
+                       + ("- id: llm-deepseek\n  config:\n    reasoningEffort: high\n"
+                          + "    maxTokens: " + str(args.max_output_tokens) + "\n"
+                          if PROVIDER=='deepseek-official' else ''), encoding="utf-8")
     if args.scripted_smoke:
+        scripted_plugin=RUNTIME/'scripted-plugin'
+        scripted_plugin.mkdir()
+        write_json(scripted_plugin/'package.json',{'name':'dsh-modeling-trial-scripted','type':'module','main':'index.mjs'})
+        shutil.copy2(DRIVER_ROOT/'tools/tests/modeling-trial-scripted.mjs',scripted_plugin/'index.mjs')
         with overlay.open('a',encoding='utf-8') as stream:
             stream.write('- insert:\n    - id: modeling-trial-scripted-smoke\n      name: '
-                +(DRIVER_ROOT/'tools/tests/modeling-trial-scripted.mjs').as_uri()+'\n')
+                +(scripted_plugin/'index.mjs').as_uri()+'\n')
+    if args.observe_model_images or args.require_image_input:
+        observer_plugin=RUNTIME/'observer-plugin'
+        observer_plugin.mkdir()
+        write_json(observer_plugin/'package.json',{'name':'dsh-modeling-trial-observer','type':'module','main':'index.mjs'})
+        shutil.copy2(DRIVER_ROOT/'tools/tests/modeling-trial-observer.mjs',observer_plugin/'index.mjs')
+        with overlay.open('a',encoding='utf-8') as stream:
+            stream.write('- insert:\n    - id: modeling-trial-image-observer\n      name: '
+                +(observer_plugin/'index.mjs').as_uri()+'\n')
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -146,6 +173,7 @@ def main() -> None:
                                        "--plugin",str(ROOT),
                                        "--registry", str(REGISTRY), "--gui", "--hip-name", "final.hip",
                                        "--memory-mb", str(args.memory_mb), "--threads", "4", "--startup-timeout", "120"]
+                                      + (["--show"] if args.show_gui else [])
                                       + (["--seed-hip",str(args.seed_hip.resolve(strict=True))] if args.seed_hip else []),
                                       cwd=ROOT, env=isolated_environment(RUNTIME / "supervisor-env"),
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -195,16 +223,68 @@ def main() -> None:
         else:
             raise RuntimeError("Isolated DSH Host did not become ready")
 
+        if args.require_image_input:
+            resolved_file=RAW/'model-resolved-info.json'
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline:
+                live_model=json.loads(resolved_file.read_text(encoding='utf-8')) if resolved_file.exists() else {}
+                if live_model.get('ok'):break
+                time.sleep(.1)
+            if not live_model.get('ok') or 'image' not in live_model['model'].get('inputModalities',[]):
+                raise RuntimeError('Actual pinned Host model resolver does not report image input; no model request sent')
+            model_config['actualResolvedModel']=live_model['model']
+
+        # Registration is published by a startup thread. The first queue-backed
+        # observation can still precede GUI readiness; wait only on this owned,
+        # read-only health endpoint before claiming the executor.
+        deadline=time.monotonic()+30
+        while time.monotonic()<deadline:
+            try:
+                request=urllib.request.Request(record['bridge_url']+'/health',
+                    headers={'X-DSH-Houdini-Executor':record['executor_id']})
+                with urllib.request.urlopen(request,timeout=2) as response:health=json.load(response)
+                if health.get('ok') and health.get('runtimeId')==record['runtime_id']:break
+            except (OSError,ValueError):pass
+            if supervisor.poll() is not None:raise RuntimeError('Owned worker exited before its health endpoint became ready')
+            time.sleep(.1)
+        else:raise RuntimeError('Owned worker health did not become ready before session binding')
+
         session_id = str(uuid.uuid4())
         result["sessionId"] = session_id
+        registered=rpc('workspace/create',{'request':{'path':str(workspace)}})
+        workspace_id=registered['workspace']['workspaceId']
+        result['workspaceId']=workspace_id
         rpc("session/create", {"request": {"sessionId": session_id,
-                                            "cwd": str(workspace), "agentPreset": "houdini"}})
+                                            "workspaceId": workspace_id, "agentPreset": "houdini"}})
         rpc("houdiniTargets/select", {"input": {"sessionId": session_id,
             "executorId": record["executor_id"], "registrationId": record["registration_id"],
             "expectedHip": str(hip)}})
         bound = True
         rpc("session/selectModel", {"request": {"sessionId": session_id,
                                                 "provider": PROVIDER, "model": MODEL}})
+        def owned_bridge_exec(code,call):
+            headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']}
+            request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
+                data=json.dumps({'owner_session':session_id}).encode(),headers=headers)
+            with urllib.request.urlopen(request,timeout=20) as response:ticket=json.load(response)
+            request=urllib.request.Request(record['bridge_url']+'/exec',data=json.dumps({
+                'owner_session':session_id,'owner_call':call,'request_ref':ticket['requestRef'],
+                'expected_contract':{'version':ticket['executionContractVersion'],'hash':ticket['verbCatalog']['hash']},
+                'code':code}).encode(),headers=headers)
+            with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
+        setup_module=str(DRIVER_ROOT/'tools/tests/modeling-trial-gui-setup.py')
+        setup=owned_bridge_exec('import runpy\n__result__=runpy.run_path('+repr(setup_module)+
+            ')["dismiss_owned_start_here"]()','trial-owned-gui-setup')
+        if not setup.get('ok') or setup['result']['pid']!=record['pid']:
+            raise RuntimeError('Owned GUI welcome setup identity failed before any model request')
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            observation=owned_bridge_exec('import runpy\n__result__=runpy.run_path('+repr(setup_module)+
+                ')["observe_owned_start_here"]()','trial-owned-gui-setup-readback')
+            if observation.get('ok') and observation['result']['pid']==record['pid'] and observation['result']['visibleCount']==0:break
+            time.sleep(.1)
+        else:raise RuntimeError('Owned Start Here window did not close before task observation')
+        write_json(RAW/'owned-gui-setup.json',{'request':setup,'readback':observation})
         prompt = ("请读取当前工作目录中的 brief.md 和 task.json，完成这项公开开发任务。"
                   + ("你操作的是载入指定任务起始工程的隔离 Houdini 场景。" if args.seed_hip else "你操作的是新建的隔离 Houdini 场景。")
                   + "最终文件已预留为 " + str(hip)
@@ -217,8 +297,9 @@ def main() -> None:
                 "clientTimeZone":"Asia/Shanghai",
                 "dshVersion": json.loads((DSH.parent.parent/'package.json').read_text(encoding='utf-8'))['version'],
                 "houdiniVersion": record['houdini_version'], "provider": PROVIDER, "model": MODEL,
-                "reasoningEffort": "high", "maxSeconds": MAX_SECONDS,
-                "maxOutputTokens":args.max_output_tokens,"toolBuildSha256":tool_digest(),
+                "reasoningEffort": "high" if PROVIDER=='deepseek-official' else 'selected_profile_default', "maxSeconds": MAX_SECONDS,
+                "maxOutputTokens":args.max_output_tokens if PROVIDER=='deepseek-official' else None,
+                "showOwnedGui":args.show_gui,"toolBuildSha256":tool_digest(),
                 "modelConfiguration":model_config,"isolatedSettingsSha256":digest(HOME/'selected-model.patch.yml'),
                 "workerThreads": 4, "workerMemoryMb": args.memory_mb,
                 "briefSha256": digest(TASK / "brief.md"),
@@ -321,11 +402,46 @@ def main() -> None:
                 result["cancelError"] = type(exc).__name__ + ": " + str(exc)[:300]
             time.sleep(10)
         result["elapsedSeconds"] = int(time.monotonic() - started)
+        if result['result']=='worker_exit':
+            try:
+                rpc('session/cancel',{'request':{'sessionId':session_id}},15)
+                result['cancelRequested']=True
+                result['cancelReason']='owned Houdini worker exited; no continuation against a dead runtime'
+            except Exception as exc:
+                result['cancelError']=type(exc).__name__
         result['phases']=phase_records
         result['endedAt']=utc()
         if args.goal_rounds:
             result['goalState']=rpc('goals/get',{'agentId':session_id})
         result["finalSessionItem"] = item if "item" in locals() else None
+        if args.probe_frontend and result['result']=='idle_after_prompt':
+            frontend_config=RAW/'frontend-probe-config.json'
+            frontend_output=RAW/'frontend-probe-result.json'
+            session_file=next((HOME/'sessions').glob('*/'+session_id+'/session.v4.jsonl.zstd'))
+            run_command(str(NODE),str(DRIVER_ROOT/'tools/tests/modeling-trial-ui-artifacts.mjs'),
+                str(session_file),str(RAW/'ui-capture-artifacts.json'))
+            ui_artifacts=json.loads((RAW/'ui-capture-artifacts.json').read_text(encoding='utf-8'))
+            write_json(frontend_config,{'base':base,'authenticatedUrl':auth.launch_url(),
+                'sessionId':session_id,'output':str(frontend_output),'uiImageNames':[a['name'] for a in ui_artifacts],
+                'modelRunKind':'scripted-no-paid-carrier' if args.smoke else 'paid-agent-task'})
+            request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
+                data=json.dumps({'owner_session':session_id}).encode(),
+                headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']})
+            with urllib.request.urlopen(request,timeout=30) as response:ticket=json.load(response)
+            code=("import runpy\n__result__=runpy.run_path("+repr(str(DRIVER_ROOT/'tools/tests/modeling-trial-frontend-probe.py'))
+                +")[\"start\"]("+repr(str(frontend_config))+")")
+            request=urllib.request.Request(record['bridge_url']+'/exec',
+                data=json.dumps({'owner_session':session_id,'owner_call':'trial-frontend-observation',
+                  'request_ref':ticket['requestRef'],'expected_contract':{'version':ticket['executionContractVersion'],
+                  'hash':ticket['verbCatalog']['hash']},'code':code}).encode(),
+                headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']})
+            with urllib.request.urlopen(request,timeout=45) as response:admission=json.load(response)
+            write_json(RAW/'frontend-probe-admission.json',admission)
+            deadline=time.monotonic()+120
+            while admission.get('ok') and not frontend_output.exists() and time.monotonic()<deadline:
+                if supervisor.poll() is not None:break
+                time.sleep(.25)
+            result['frontendProbe']=json.loads(frontend_output.read_text(encoding='utf-8')) if frontend_output.exists() else {'ok':False,'error':'Frontend probe did not finish; see admission'}
         result["hipSha256BeforeStop"] = digest(hip) if hip.is_file() else None
         result["hipChangedFromInitial"] = (result["hipSha256BeforeStop"] is not None
                                             and result["hipSha256BeforeStop"] != initial_hash)

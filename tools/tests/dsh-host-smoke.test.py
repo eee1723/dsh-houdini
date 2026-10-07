@@ -141,7 +141,7 @@ with log.open('wb') as output:
         presets=facts['roster']['presets']
         assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
         assert 'broken' not in presets[0], facts
-        expected={'houdini_inspect','houdini_exec','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
+        expected={'houdini_inspect','houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
             'houdini_job_submit','houdini_job_status','houdini_job_cancel'}
         assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
         assert 'present' in facts['tools'] and 'skill' in facts['tools'], facts

@@ -27,12 +27,17 @@ ctx.provide('attachments',{imageLimits:{mediaTypes:['image/png'],maxImageBytes:1
   async saveImage({data}){return {attachmentId:'image-'+(++savedImages),mediaType:'image/png',bytes:data.length,width:1,height:1}}})
 let executed=0
 let capturesExecuted=0
+let listsExecuted=0
 let bridgeReceipt
 registerHoudiniTools(ctx,{targetExecutorId:outcomeFixtures?.caught_read?.execution?.executor_id,
+  async listUi(owner){listsExecuted++;return {ok:true,stdout:'',stderr:'',result:{surfaces:[{target:'ui:qt-fixture',kind:'qt_window',supported:true}]},
+    evidence:[{operation:'ui_list',scene_writes:0}],transaction:{status:'no_scene_change'},
+    execution:{runtime_id:'capture-runtime',sequence:listsExecuted,observed_at:9},
+    requestReceipt:{request_ref:'list-'+listsExecuted,owner_call:owner.callId,status:'done'}}},
   async fetchMedia(){return Buffer.from('image')},async exec(){executed++;if(bridgeReceipt)return structuredClone(bridgeReceipt);return {ok:true,stdout:'',stderr:'',result:{box:executed},images:['C:/fixture/output.png'],
   execution:{runtime_id:'runtime',sequence:executed,observed_at:executed}}},
   async captureUi(args,owner){capturesExecuted++;return {ok:true,stdout:'',stderr:'',
-    result:{node:args.node,path:'C:/fixture/ui.png',scene_writes:0,semantic_status:'unverified',user_state_restored:true},
+    result:{node:args.node??null,target:args.target??null,path:'C:/fixture/ui.png',scene_writes:0,semantic_status:'unverified',user_state_restored:true},
     images:['C:/fixture/ui.png'],evidence:[{operation:'ui_capture',scene_writes:0,semantic_status:'unverified'}],
     outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},transaction:{status:'no_scene_change'},
     execution:{runtime_id:'capture-runtime',sequence:capturesExecuted,observed_at:10+capturesExecuted},
@@ -42,8 +47,10 @@ registerHoudiniTools(ctx,{targetExecutorId:outcomeFixtures?.caught_read?.executi
 // The registry's real PTC bridge receives the provider's binding calls.
 let ptcBindingValue
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
-  const value=String(request.program).includes('houdini_ui_screenshot')
-    ? await request.bindings[0].functions.houdini_ui_screenshot({node:'/obj/demo/CTRL',view:'parameters'})
+  const value=String(request.program).includes('houdini_ui_list')
+    ? await request.bindings[0].functions.houdini_ui_list({})
+    : String(request.program).includes('houdini_ui_screenshot')
+    ? await request.bindings[0].functions.houdini_ui_screenshot({target:'ui:qt-fixture'})
     : await request.bindings[0].functions.houdini_exec({code:'__result__ = "nested"'})
   ptcBindingValue=value
   return {value,logs:[]}
@@ -82,15 +89,28 @@ assert.equal(cancel.isError,false)
 assert.deepEqual(cancel.meta.canonical,cancel.value,'queued cancellation is retained even without an execution observation')
 logNative('job-cancel','houdini_job_cancel',{jobId:'a'.repeat(12)},cancel)
 assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'real DSH metadata clears the cancelled job from recorded active work')
-const nativeCapture=await tools.execute({callId:'capture-native',name:'houdini_ui_screenshot',arguments:{node:'/obj/demo/CTRL'},agent,signal})
+const nativeList=await tools.execute({callId:'list-native',name:'houdini_ui_list',arguments:{},agent,signal})
+assert.equal(nativeList.isError,false,JSON.stringify(nativeList))
+logNative('list-native','houdini_ui_list',{},nativeList)
+assert.equal(nativeList.value.result.surfaces[0].target,'ui:qt-fixture')
+const nestedList=await tools.execute({callId:'list-program',name:'run_code',arguments:{
+  code:'return await tools.houdini_ui_list({})',description:'Discover visible UI targets'},agent,signal})
+assert.equal(nestedList.isError,false,JSON.stringify(nestedList))
+logNative('list-program','run_code',{},nestedList)
+assert.equal(listsExecuted,2,'native/nested discovery dispatches only once each')
+const listRows=executionHistory(session.snapshotEvents()).rows.filter(row=>row.tool==='houdini_ui_list')
+assert.equal(listRows.length,2)
+assert(listRows.every(row=>row.value.evidence[0].operation==='ui_list'&&!row.value.images&&!row.value.verbs))
+const nativeCapture=await tools.execute({callId:'capture-native',name:'houdini_ui_screenshot',arguments:{target:'ui:qt-fixture'},agent,signal})
 assert.equal(nativeCapture.isError,false,JSON.stringify(nativeCapture))
-logNative('capture-native','houdini_ui_screenshot',{node:'/obj/demo/CTRL'},nativeCapture)
+logNative('capture-native','houdini_ui_screenshot',{target:'ui:qt-fixture'},nativeCapture)
 assert.equal(nativeCapture.meta.canonical.result.scene_writes,0)
 assert.equal(nativeCapture.meta.canonical.result.semantic_status,'unverified')
+assert.equal(nativeCapture.meta.canonical.result.target,'ui:qt-fixture')
 assert.equal(nativeCapture.meta.canonical.verbs,undefined,'native UI observation has no fake Python ledger')
 assert.equal(nativeCapture.content.filter(block=>block.type==='image').length,1)
 const nestedCapture=await tools.execute({callId:'capture-program',name:'run_code',arguments:{
-  code:'return await tools.houdini_ui_screenshot({node:"/obj/demo/CTRL"})',description:'Observe native parameter layout'},agent,signal})
+  code:'return await tools.houdini_ui_screenshot({target:"ui:qt-fixture"})',description:'Observe visible native UI'},agent,signal})
 assert.equal(nestedCapture.isError,false,JSON.stringify(nestedCapture))
 logNative('capture-program','run_code',{},nestedCapture)
 assert.equal(nestedCapture.additionalContexts.length,1)

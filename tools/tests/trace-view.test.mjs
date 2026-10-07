@@ -33,7 +33,7 @@ const inventory = traceSources();
 assert(inventory.presets.every(p => p.paragraphStarts[0].startsWith('You are ')),
   'persona identity retains the opening used for historical reading groups');
 assert(inventory.guidance.bytes > 0);
-assert.equal(Object.keys(inventory.tools).length,9);
+assert.equal(Object.keys(inventory.tools).length,10);
 assert(inventory.presets.every(p => p.bytes > 0 && !('text' in p)));
 assert(
   inventory.skills.every((s) => s.files.some((f) => f.path === "SKILL.md")),
@@ -246,7 +246,7 @@ const data = View.model(snapshot);
 assert.equal(data.requests.length, 2, "deduplicate request usage");
 assert.equal(data.statistics.requestUsage.reported, 1);
 assert.equal(data.statistics.requestUsage.input, 310);
-assert.equal(data.statistics.knownToolCount,9);
+assert.equal(data.statistics.knownToolCount,10);
 assert.equal(data.statistics.usedToolCount,1);
 assert.equal(data.statistics.toolCalls,1,'current tool catalog summary excludes legacy names, retained in request visibility');
 assert.equal(data.statistics.toolUsage.get('houdini_exec').calls,1,'replayed and stale running results do not inflate counts');
@@ -495,7 +495,7 @@ assert.equal(all(tree).find(n=>n.props['aria-label']==='技能加载命令').pro
 assert.match(content(tree),/正文返回 1 次/);
 assert.match(content(tree),/当前上下文是否仍保留正文未采集/);
 tree = click("工具");
-assert.match(content(tree),/当前包提供 9 个工具/);
+assert.match(content(tree),/当前包提供 10 个工具/);
 assert.match(content(tree),/本任务已用 1 个/);
 for(const [name,tool] of Object.entries(inventory.tools)) {
   assert(content(tree).includes(name),'full tool catalog includes '+name);
@@ -511,7 +511,7 @@ tree=click('请求可见工具');
 assert.match(content(tree),/houdini_query/,'legacy tools stay visible through historical requests/calls');
 selectedSnapshot={};selectedSession='empty-fixture';
 tree=click('工具目录');
-assert.equal((content(tree).match(/本任务调用 0 次/g)||[]).length,9,'another selected task does not inherit usage');
+assert.equal((content(tree).match(/本任务调用 0 次/g)||[]).length,10,'another selected task does not inherit usage');
 tree=click('技能');
 assert(!content(tree).includes('正文返回 1 次'),'current package skills do not become actual loads in a fresh task');
 selectedSnapshot=snapshot;selectedSession='fixture';

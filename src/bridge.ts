@@ -66,11 +66,8 @@ export interface OwnershipScope {
 }
 
 export interface UiCaptureOptions {
-  node: string
+  target: string
   path?: string
-  view?: 'parameters' | 'network'
-  width?: number
-  height?: number
   output_policy?: 'managed' | 'delivery' | 'explicit'
 }
 
@@ -213,6 +210,24 @@ export class HoudiniBridge {
         request_ref:ref!,runtime_id:runtimeId!,status:'unknown_transport',
         ...(this.executorId?{executor_id:this.executorId}:{}),
         next_action:'Use houdini_request with this original reference to recover the UI capture. Do not start another capture while its result is unknown.',
+      }}
+    }
+  }
+
+  /** Discover currently visible UI targets on the existing main-thread queue. */
+  async listUi(owner:OwnershipScope, signal?:AbortSignal):Promise<ExecResult> {
+    assertOwnership(owner,'Houdini UI discovery')
+    const {runtimeId,requestRef:ref}=await this.checkContract(signal,owner)
+    try {
+      return await this.post<ExecResult>('/ui/list',{
+        owner_session:owner.sessionId,owner_call:owner.callId,
+        expected_contract:this.expectedContract(),request_ref:ref,
+      },signal)
+    } catch(error) {
+      return {ok:false,stdout:'',stderr:'',error:String(error),requestReceipt:{
+        request_ref:ref!,runtime_id:runtimeId!,status:'unknown_transport',
+        ...(this.executorId?{executor_id:this.executorId}:{}),
+        next_action:'Use houdini_request with this original reference to recover the UI target discovery.',
       }}
     }
   }

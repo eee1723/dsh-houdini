@@ -64,6 +64,8 @@ bind_controls首版只接受明确数值源与目标以及线性scale/offset，�
 布局、参数读取和绑定回读各自不能证明业务产物正确；领域输出验证继续使用现有cook/verify_network/test_controls合同。
 公共控制先检查默认关系，再逐项观察相关实体响应，最后对相互制约的控制选择代表性组合边界，并包含附属件、应保持的量与真实接口；恢复参数及输出后再验最终外观。仅整体bbox变化不证明联动与接合，有限case不证明全部参数范围。
 
+实际布局可通过顶层界面工具观察：`houdini_ui_list`发现当前可见表面，`houdini_ui_screenshot`用返回target捕获当前pane/Qt窗口。截图不切页、滚动、改节点、重排、缩放、打开或关闭界面；打开节点或定宽布局检查是单独的明确交互，之后再捕获实际显示。通用观察方法唯一维护在[工具开发reference](../skills/houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)，参数UI只维护控件布局的判断依据。目标可发现、真实PNG、附件送达和语义读图分别判断；未支持的表面与当前模型不能识图的范围保持视觉未验证。
+
 实现入口为[src/skill.ts](../src/skill.ts)、[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
 [参数UI](../houdini/python3.11libs/dsh_parameter_ui.py)、[绑定](../houdini/python3.11libs/dsh_control_bindings.py)；
 具体签名、版本、限额和未支持范围以[工具设计](tool-design.md)为准。

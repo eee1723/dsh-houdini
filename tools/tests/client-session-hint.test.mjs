@@ -24,7 +24,7 @@ function element(tag) {
 }
 async function run(href, options = {}) {
   let registration;
-  const opened = [], replaced = [], injected = [], creates = [], workspaceCreates = [], panels = [], disposers = [];
+  const opened = [], replaced = [], injected = [], creates = [], workspaceCreates = [], panels = [], disposers = [], bootstrapSignals = [];
   const registrations = {}, listeners = new Map(), timers = new Map();
   const url = new URL(href);
   const path = url.searchParams.get('dsh-houdini-workspace') ?? 'E:\\fixture';
@@ -49,6 +49,27 @@ async function run(href, options = {}) {
     if(!options.rejectSelection)currentSession.set({key:id});
     layout.selectPanel(null);
   };
+  // Native uiWorkspace registers its constructor's watcher before consumers.
+  // At ready it synchronously starts navigation, then awaits connection and
+  // checks that signal before committing. Model this actual DSH lifecycle.
+  if (options.bootstrapRestore) {
+    let started = false;
+    const restore = () => {
+      if (started || workspaceStore.getSnapshot().phase !== 'ready' || sessionStore.getSnapshot().phase !== 'ready') return;
+      started = true;
+      const signal = layout.beginNavigation(); bootstrapSignals.push(signal);
+      options.bootstrapRestore.wait.then(() => {
+        if (!signal.aborted) {
+          // Native restoration preserves the selected global panel, unlike a
+          // user's openSession action which reveals Conversation.
+          opened.push(options.bootstrapRestore.sessionId);
+          currentSession.set({key:options.bootstrapRestore.sessionId});
+        }
+      });
+    };
+    disposers.push(workspaceStore.subscribe(restore), sessionStore.subscribe(restore));
+    restore();
+  }
   const sessions = {
     list: sessionStore,
     refresh: async () => { refreshes++; if (options.refresh) await options.refresh(api); },
@@ -101,7 +122,7 @@ async function run(href, options = {}) {
     effect: install => { const dispose=install(); if(dispose) disposers.push(dispose); },
   };
   const api = {
-    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,sessions,uiWorkspace,publish,layout,
+    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,currentSession,sessions,uiWorkspace,publish,layout,bootstrapSignals,
     get refreshes(){return refreshes;},get reloads(){return reloads;},get earlyDisposed(){return earlyDisposed;},
     emit: (name,event={target:body})=>{for(const fn of [...(listeners.get(name)??[])])fn(event);},
     timeout:()=>{for(const fn of [...timers.values()])fn();},
@@ -203,6 +224,36 @@ assert.deepEqual(waiting.opened,['ready']);
 assert.equal(waiting.workspaceStore.listeners.size,0);
 waiting.dispose();
 
+// Initial native restoration is an earlier bootstrap, not user navigation.
+// Its async connection may finish later but must not replace the launch task.
+const bootstrapConnection = deferred();
+const bootstrap = await run(workspaceUrl,{rows:[row('bootstrap',1,'standard'),row('launch',2)],workspacePhase:'pending',
+  bootstrapRestore:{sessionId:'bootstrap',wait:bootstrapConnection.promise}});
+assert(new URL(bootstrap.window.location.href).searchParams.has('dsh-houdini-workspace'));
+assert.deepEqual(bootstrap.opened,[]);
+bootstrap.workspaceStore.set({...bootstrap.workspaceStore.getSnapshot(),phase:'ready'});
+await flush();
+assert.equal(bootstrap.bootstrapSignals.length,1);
+assert.equal(bootstrap.bootstrapSignals[0].aborted,true,'explicit launch cancels the earlier native restoration');
+assert.deepEqual(bootstrap.opened,['launch']);
+bootstrapConnection.resolve();await flush();
+assert.deepEqual(bootstrap.opened,['launch'],'late bootstrap completion cannot overwrite the explicit selection');
+assert(!new URL(bootstrap.window.location.href).searchParams.has('dsh-houdini-workspace'));
+bootstrap.dispose();
+
+// Native restoration checks phases, not the workspace's refresh state. Its
+// commit during a ready-but-loading baseline must not consume the launch.
+const loadingConnection = deferred();
+const loadingBootstrap = await run(workspaceUrl,{rows:[row('bootstrap',1,'standard'),row('launch',2)],workspaceStatus:'loading',
+  bootstrapRestore:{sessionId:'bootstrap',wait:loadingConnection.promise}});
+loadingConnection.resolve();await flush();
+assert.deepEqual(loadingBootstrap.opened,['bootstrap']);
+assert(new URL(loadingBootstrap.window.location.href).searchParams.has('dsh-houdini-workspace'));
+loadingBootstrap.workspaceStore.set({...loadingBootstrap.workspaceStore.getSnapshot(),state:'idle'});
+await flush();
+assert.deepEqual(loadingBootstrap.opened,['bootstrap','launch']);
+loadingBootstrap.dispose();
+
 const reconnecting = await run(workspaceUrl,{rows:[row('old'),row('new',2)],current:'old',workspaceStatus:'loading'});
 assert.deepEqual(reconnecting.opened,[],'ready phase can retain a stale archive baseline during reconnect');
 reconnecting.workspaceStore.set({...reconnecting.workspaceStore.getSnapshot(),state:'idle',archivedSessionIds:['old']});
@@ -225,6 +276,7 @@ assert.deepEqual(disposed.opened,[]);
 assert.equal(disposed.notices().length,0);
 assert.equal(disposed.workspaceStore.listeners.size,0);
 assert.equal(disposed.sessionStore.listeners.size,0);
+assert.equal(disposed.currentSession.listeners.size,0);
 
 // Actual DSH navigation supersedes a pending launch, never ordinary input.
 const workspaceGate = deferred();

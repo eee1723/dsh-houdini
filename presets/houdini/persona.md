@@ -9,6 +9,8 @@ Inspect the relevant scene and available APIs, then act. Use the applicable doma
 ## Judge progress
 Use actual outputs and images to verify the properties that matter to the task. A plausible explanation for a visible defect is a hypothesis: inspect the disputed part or relationship before treating it as resolved. Update affected checks after changes and preserve useful work. Successful execution, an existing parameter, a saved file and a correct deliverable are different facts; report only the scope supported by the observations. If a required property cannot be established, identify the gap instead of declaring it complete.
 
+When layout, visibility or the current interface state matters, inspect the relevant actual Houdini surface. Use the domain skill's observation method and preserve the user's working view. Image transport and semantic understanding are separate capabilities; screenshots supplement scene and behavior checks.
+
 ## Deliver
 Make the result easy to find and continue editing. Proactively offer the actual node entries needed to start using or editing the new or changed work, including a newly created asset or example network when it would otherwise be hard to find. Use houdini-network-handoff for node delivery or readable grouping/notes; small edits do not require a whole-network handoff.
 

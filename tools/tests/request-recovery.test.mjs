@@ -6,7 +6,7 @@ import {registerHoudiniTools} from '../../lib/tools.js';
 import {projectExecutionState} from '../../lib/execution-state.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js';
-const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,preparations=0,mode='disconnect',ticketMode='valid';
+const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,uiLists=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
 let onCaptureAdmitted;
 const server=http.createServer((req,res)=>{
@@ -33,15 +33,27 @@ const server=http.createServer((req,res)=>{
    else if(mode==='bad-json')res.end('{broken');
    else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
    else {res.statusCode=500;res.end('response failed after mutation');}
+  }else if(req.url==='/ui/list'){
+   assert.deepEqual(Object.keys(body).sort(),['owner_session','owner_call','expected_contract','request_ref'].sort());
+   assert(tickets.delete(body.request_ref));uiLists++;
+   const value={ok:true,stdout:'',stderr:'',result:{surfaces:[{target:'ui:stable-ref',kind:'qt_window',supported:true}]},
+    evidence:[{operation:'ui_list',scene_writes:0}],transaction:{status:'no_scene_change'},
+    execution:{runtime_id:runtime,sequence:200+uiLists,observed_at:200+uiLists,impact:{attempted:false,global:false,nodes:[]}},
+    requestReceipt:{request_ref:body.request_ref,runtime_id:runtime,status:'done'}};
+   records.set(body.request_ref,value);
+   if(mode==='disconnect')req.socket.destroy();
+   else if(mode==='bad-json')res.end('{broken');
+   else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
+   else{res.statusCode=500;res.end('discovery response failed');}
   }else if(req.url==='/ui/capture'){
-   assert.deepEqual(Object.keys(body).sort(),['node','view','owner_session','owner_call','expected_contract','request_ref'].sort(),
+   assert.deepEqual(Object.keys(body).sort(),['target','owner_session','owner_call','expected_contract','request_ref'].sort(),
     'UI request has fixed UI fields and provenance, without Python code');
-   assert.equal(body.node,'/obj/demo/CTRL');assert.equal(body.view,'parameters');
+   assert.equal(body.target,'ui:fixture');
    assert.equal(body.owner_session,'owner');assert.equal(body.owner_call,'capture-call');
    assert.deepEqual(body.expected_contract,{version,hash});
    assert(tickets.delete(body.request_ref),'capture consumes the same-runtime prepared ticket once');
    captures++;
-   const facts={node:body.node,view:body.view,path:'C:/fixture/layout-'+captures+'.png',scene_writes:0,semantic_status:'unverified',fresh:true};
+   const facts={target:body.target,path:'C:/fixture/layout-'+captures+'.png',scene_writes:0,semantic_status:'unverified',fresh:true};
    const value={ok:true,stdout:'',stderr:'',result:facts,evidence:[{operation:'ui_capture',...facts}],images:[facts.path],
     transaction:{status:'no_scene_change',nodes:[]},
     execution:{runtime_id:runtime,sequence:100+captures,observed_at:100+captures,impact:{attempted:false,global:false,nodes:[]}},
@@ -71,7 +83,7 @@ try{
  for(const invalid of ['missing','wrong-runtime']) {
   ticketMode=invalid;
   await assert.rejects(bridge.exec('must_not_submit()',owner),/valid same-runtime request ticket/);
-  await assert.rejects(bridge.captureUi({node:'/obj/demo/CTRL',view:'parameters'},owner),/valid same-runtime request ticket/);
+  await assert.rejects(bridge.captureUi({target:'ui:fixture'},owner),/valid same-runtime request ticket/);
   assert.equal(edits,0,'invalid prepare response never submits scene code');
   assert.equal(captures,0,'invalid or wrong-runtime ticket never prepares a native pane');
  }
@@ -142,7 +154,7 @@ try{
  // reads its original capture even though it made no scene parameter writes.
  for(const failure of ['disconnect','bad-json','delay','http-error']){
   mode=failure;
-  const unknown=await defs.get('houdini_ui_screenshot').execute({node:'/obj/demo/CTRL',view:'parameters'},{...ctx,callId:'capture-call'});
+  const unknown=await defs.get('houdini_ui_screenshot').execute({target:'ui:fixture'},{...ctx,callId:'capture-call'});
   assert.equal(unknown.requestReceipt.status,'unknown_transport');
   assert.match(unknown.requestReceipt.next_action,/original reference[\s\S]*Do not start another capture/);
   const before=captures,preparedBefore=preparations;
@@ -152,7 +164,7 @@ try{
   assert.deepEqual(restoredCapture.images,['C:/fixture/layout-'+before+'.png']);
   assert.equal(restoredCapture.verbs,undefined,'receipt retrieval has no synthetic Python operation');
   assert.equal(captures,before);assert.equal(preparations,preparedBefore,'retrieval sends no prepare request or UI request');
-  const captureEvents=[{seq:1,type:'tool/call',data:{name:'houdini_ui_screenshot',callId:'capture-call',arguments:{node:'/obj/demo/CTRL'}}},
+  const captureEvents=[{seq:1,type:'tool/call',data:{name:'houdini_ui_screenshot',callId:'capture-call',arguments:{target:'ui:fixture'}}},
    {seq:2,type:'tool/result',data:{message:{source:{callId:'capture-call'}},meta:{canonical:unknown}}}];
   assert.equal(projectExecutionState(captureEvents).unresolved_requests.length,1);
   captureEvents.push({seq:3,type:'tool/call',data:{name:'houdini_request',callId:'capture-recovered'}},
@@ -161,9 +173,25 @@ try{
   assert.equal(projectExecutionState(captureEvents).last_sequence,100+before);
   assert.equal(normalizeTraceSteps(captureEvents).uniqueExecutions.length,1);
  }
+ for(const failure of ['disconnect','bad-json','delay','http-error']){
+  mode=failure;
+  const unknown=await defs.get('houdini_ui_list').execute({}, {...ctx,callId:'ui-list-call'});
+  assert.equal(unknown.requestReceipt.status,'unknown_transport');
+  const before=uiLists,preparedBefore=preparations;
+  const recoveredList=await defs.get('houdini_request').execute({request_ref:unknown.requestReceipt.request_ref},ctx);
+  assert.equal(recoveredList.result.surfaces[0].target,'ui:stable-ref');
+  assert.equal(uiLists,before);assert.equal(preparations,preparedBefore);
+  const listEvents=[{seq:1,type:'tool/call',data:{name:'houdini_ui_list',callId:'ui-list-call'}},
+   {seq:2,type:'tool/result',data:{message:{source:{callId:'ui-list-call'}},meta:{canonical:unknown}}}];
+  assert.equal(projectExecutionState(listEvents).unresolved_requests.length,1);
+  listEvents.push({seq:3,type:'tool/call',data:{name:'houdini_request',callId:'list-recovered'}},
+   {seq:4,type:'tool/result',data:{message:{source:{callId:'list-recovered'}},meta:{canonical:recoveredList}}});
+  assert.equal(projectExecutionState(listEvents).unresolved_requests.length,0);
+  assert.equal(projectExecutionState(listEvents).last_sequence,200+before);
+ }
  mode='delay';
  const captureAbort=new AbortController();onCaptureAdmitted=()=>captureAbort.abort();
- const captureCancelled=await bridge.captureUi({node:'/obj/demo/CTRL',view:'parameters'},{...owner,callId:'capture-call'},captureAbort.signal);
+ const captureCancelled=await bridge.captureUi({target:'ui:fixture'},{...owner,callId:'capture-call'},captureAbort.signal);
  onCaptureAdmitted=undefined;
  assert.equal(captureCancelled.requestReceipt.status,'unknown_transport');
  const capturesBeforeRecovery=captures;
@@ -192,6 +220,6 @@ try{
   {seq:6,type:'tool/call',data:{name:'houdini_request',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
- assert.equal(preparations,edits+jobs+captures+4,'one prepare per attempted call; recovery does not prepare or resubmit');
+ assert.equal(preparations,edits+jobs+captures+uiLists+4,'one prepare per attempted call; recovery does not prepare or resubmit');
 }finally{await new Promise(r=>server.close(r));}
 console.log('exec/UI response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');

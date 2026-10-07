@@ -53,7 +53,7 @@ Boolean按输入的Solid/Surface前提、接缝、朝向及实际切除结果判
 - 跨OBJ汇总实际装配时显式处理Object Merge坐标空间；要保留场景放置就使用`Into This Object`等价模式，local-space合并只在有意忽略OBJ变换时成立。用于关系或渲染的代理需核对实际成员、变换及world bbox；warning按属性用途与下游影响判断，见[属性传播](sop-patterns.md#4-属性传播)。
 - 每图绑定问题和部件。render_view用focus_group/isolate选关注范围；full保证完整入镜，detail仅允许画框裁切，不允许近远裁面切断。framing_bounds在full中不是局部ROI。A/B同时复用framing.bounds和framing.depth_bounds（全部渲染内容）及方向/画幅/模式；深度或完整构图越界零渲染失败，不漂移相机。普通预览不必创建正式相机调用camera_fit。
 - 消费render_view.check（pixels兼容别名）与framing.depth_check；看到断口先排除深度裁切，不能用拓扑pass或不同条件的图确诊着色问题。空白、近黑、错误目标不通过；detail有意裁框仍须读图确认所需局部可辨认。直接查看工具结果中的原生图像附件，先描述事实再核销疑点；遮挡不等于缺件，无地面参照不能断言接地。
-- viewport_screenshot只用于SceneViewer实际显示，参数面板/网络观察使用houdini_ui_screenshot并分别读取参数UI/网络交接skill；模型本体优先render_view(明确最终SOP)，复用版本原生低成本后端与持久__dsh_houdini_*服务。两者默认managed，把验证图放进`$HIP/dsh-visual-checks/<run-id>/`；只有用户明确要交付路径或隔离测试自管目的地时才传`output_policy='explicit'`，不得为方便把agent预览散放HIP根目录。原型和最后一次相关修改后各检查必要视角，关键接口看局部，不对每次无关调用重复追图。纯查询/改名/无可见变化的维护不强制预览；无GUI、预览/识图失败或用户明确禁止时报告具体限制与视觉未验证，不默认改走Karma。未请求成品图片不是省略建模视觉验证的理由。
+- viewport_screenshot只用于SceneViewer实际显示；参数/网络布局判断分别读参数UI/网络交接skill，当前Spreadsheet或其他工作界面的捕获按[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)选择可见目标。模型本体优先render_view(明确最终SOP)，复用版本原生低成本后端与持久__dsh_houdini_*服务。两者默认managed，把验证图放进`$HIP/dsh-visual-checks/<run-id>/`；只有用户明确要交付路径或隔离测试自管目的地时才传`output_policy='explicit'`，不得为方便把agent预览散放HIP根目录。原型和最后一次相关修改后各检查必要视角，关键接口看局部，不对每次无关调用重复追图。纯查询/改名/无可见变化的维护不强制预览；无GUI、预览/识图失败或用户明确禁止时报告具体限制与视觉未验证，不默认改走Karma。未请求成品图片不是省略建模视觉验证的理由。
 - 动画至少两个相隔帧的实际几何/固定构图图像证据；A/B同framing_frame且覆盖帧包络。完全静止/方向错误是反例；细微审美无法裁定交给用户播放判断，不无限追图。
 
 ## 完成范围

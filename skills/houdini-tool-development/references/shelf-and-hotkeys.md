@@ -28,6 +28,10 @@ H20.5 起新体系区分动作、context 与默认绑定，对应 `HotkeyActions
 
 Panel 的 `.pypanel` 是入口定义，复杂逻辑仍放模块；按实际 Qt/Python 版本核对绑定及生命周期，覆盖多次打开关闭、selection 改变与对象删除后的引用处理。SideFX [Python Panel Editor](https://www.sidefx.com/docs/houdini/ref/windows/pythonpaneleditor.html) 是定义格式入口；当前 online 页面有混杂的旧版本提示，不能直接当 H21/H22 Qt 兼容表。
 
+预览与成功反馈应说明对应的目标和输入状态。相关输入或选择变化后，更新结果或标明仍是上次结果，不能继续暗示当前输入已验证；实时预览按实际更新行为判断。
+
+场景修改的 Undo 粒度按用户操作组织：一次明确应用通常应能一次撤销，持续拖动按交互起止归组。文件、库与外部副作用另说明恢复范围，不承诺场景 Undo 覆盖。
+
 Viewer State开发先核对目标版本Type Properties的Interactive/State Script与原生生成器，明确进入、操作、取消和退出的状态恢复。用唯一状态名绑定factory；参数、handles与guide按业务需要添加。连续修改用状态undo边界，退出/中断后不留下工具私有选择、提示或监听。参考 [Python states](https://www.sidefx.com/docs/houdini/hom/python_states.html)；不同viewer能力与实验HUD保持实际版本边界，不声称一个状态适用于全部上下文。
 
 ## 可继续修改的入口源码

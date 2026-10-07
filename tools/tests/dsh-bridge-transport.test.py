@@ -156,8 +156,8 @@ try:
     # occurred and must release the admitted receipt instead of pinning running.
     ui_owner = 'ui-transport-fixture'
     ui_ref = prepare(ui_owner)
-    ui_body = {'node': '/obj', 'owner_session': ui_owner, 'owner_call': 'ui-unavailable',
-               'request_ref': ui_ref, 'expected_contract': contract(), 'view': 'network'}
+    ui_body = {'target': 'ui:transport-fixture', 'owner_session': ui_owner, 'owner_call': 'ui-unavailable',
+               'request_ref': ui_ref, 'expected_contract': contract()}
     active_before_ui = b._request_registry.active_count()
     status, unavailable = post('/ui/capture', ui_body)
     assert status == 200 and unavailable['ok'] is False, unavailable
@@ -169,6 +169,23 @@ try:
         status, duplicate = post('/ui/capture', ui_body)
     assert status == 200 and duplicate['requestReceipt']['status'] == 'not_executed', duplicate
     assert b._work_queue.empty(), 'unavailable/duplicate capture must not leave queued HOM'
+
+    list_body = {'owner_session': ui_owner, 'owner_call': 'list-unavailable',
+                 'request_ref': prepare(ui_owner), 'expected_contract': contract()}
+    status, unavailable_list = post('/ui/list', list_body)
+    assert status == 500 and 'pump is unavailable' in unavailable_list['error'], unavailable_list
+    status, list_receipt = post('/requests/status', {'request_ref': list_body['request_ref'], 'owner_session': ui_owner})
+    assert list_receipt['requestReceipt']['status'] == 'not_executed', list_receipt
+    with patch.object(b, '_execute', side_effect=AssertionError('duplicate discovered another UI surface')):
+        status, duplicate_list = post('/ui/list', list_body)
+    assert status == 200 and duplicate_list['requestReceipt']['status'] == 'not_executed'
+    for route, invalid in [('/ui/list', {**list_body, 'code': 'hou.ui.panes()'}),
+                           ('/ui/capture', {**ui_body, 'node': '/obj'}),
+                           ('/ui/capture', {**ui_body, 'view': 'network'}),
+                           ('/ui/capture', {**list_body, 'target': 'ui:made-up', 'width': 420})]:
+        with patch.object(b, '_execute', side_effect=AssertionError('invalid UI options reached the GUI queue')):
+            status, rejected = post(route, invalid)
+        assert status == 400, (route, rejected)
 
     # Transport-only staged fixture: no GUI/HOM runs on the HTTP worker.
     # The real registry claims inside preparation; a final observation error
@@ -182,7 +199,7 @@ try:
     ui_stage_calls = []
     def prepare_ui_fixture(**options):
         ui_stage_calls.append('prepare')
-        assert options == {'node': '/obj', 'view': 'network'}, options
+        assert options == {'target': 'ui:transport-fixture'}, options
         return stage_state
     def finish_ui_fixture(state):
         assert state is stage_state
@@ -220,6 +237,18 @@ try:
     def inspect_via_http():
         try:
             responses.append(post('/exec', admission("__result__ = scene_info()['version']", read_only=True)))
+            body = {'owner_session': ui_owner, 'owner_call': 'list-headless',
+                    'request_ref': prepare(ui_owner), 'expected_contract': contract()}
+            responses.append(post('/ui/list', body))
+            responses.append(post('/ui/list', body))
+            # An admitted observation must terminate even if its optional UI
+            # module cannot import. No GUI executes in this headless fixture.
+            with patch.dict(sys.modules, {'dsh_ui_capture': None}):
+                failed_body = {**body, 'request_ref': prepare(ui_owner), 'owner_call': 'list-import-failure'}
+                responses.append(post('/ui/list', failed_body))
+                responses.append(post('/ui/list', failed_body))
+                failed_capture = {**failed_body, 'request_ref': prepare(ui_owner), 'owner_call': 'capture-import-failure', 'target':'ui:transport-fixture'}
+                responses.append(post('/ui/capture', failed_capture))
         finally:
             finished.set()
     b._pump_active = True
@@ -251,6 +280,16 @@ try:
         'same-payload replay returns the original execution without running code again'
     b._pump_active = False
     assert responses and responses[0][0] == 200 and responses[0][1]['result'] == b._HOU_VERSION, responses
+    assert responses[1][0] == 200 and responses[1][1]['ok'] is False, responses
+    assert 'requires Houdini GUI' in responses[1][1]['error'], responses
+    assert responses[1][1]['evidence'][0]['operation'] == 'ui_list'
+    assert responses[1][1]['execution']['read_only'] and not responses[1][1].get('images')
+    assert responses[1][1]['requestReceipt']['status'] == 'done'
+    assert responses[2] == responses[1], 'headless unsupported result is the same retained observation, not a second UI discovery'
+    assert responses[3][0] == 200 and responses[3][1]['ok'] is False and 'dsh_ui_capture' in responses[3][1]['error']
+    assert responses[3][1]['requestReceipt']['status'] == 'done'
+    assert responses[4] == responses[3], 'failed import is a terminal retained list observation'
+    assert responses[5][0] == 200 and responses[5][1]['requestReceipt']['status'] == 'not_executed'
 
     # Stopping a pump releases waiting clients and does not replay queued work
     # if a new pump later starts.

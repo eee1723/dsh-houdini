@@ -71,7 +71,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 90
+_EXECUTION_CONTRACT_VERSION = 91
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -321,11 +321,11 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
     A normal GUI event-loop turn builds native controls between preparation
     and capture. The per-request state is a local closure, not a new registry.
     """
-    import dsh_ui_capture as capture
     state = None
     facts = None
     error = None
     try:
+        import dsh_ui_capture as capture
         def prepare():
             if not _request_registry.running(request_ref):
                 raise RuntimeError('UI capture request is no longer queued; no new capture dispatched')
@@ -352,7 +352,7 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
                     'restore_errors': [str(cleanup_error)]}
                 error += '; owned UI cleanup failed: ' + str(cleanup_error)
     try:
-        return _execute(lambda: _runtime.ui_capture_result(facts, error, owner_session))
+        return _execute(lambda: _runtime.ui_observation_result(facts, error, owner_session))
     except BaseException as observation_error:
         # No worker-thread HOM fallback and no invented execution identity.
         # The HTTP route still completes a dispatched request's real error.
@@ -472,14 +472,62 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path == '/ui/list':
+            rejection = _owner_error(body) or _contract_error(body.get('expected_contract'))
+            fields = {'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
+            if rejection is None and (set(body) != fields or not isinstance(body.get('request_ref'), str)):
+                rejection = 400, 'UI discovery accepts only the explicit request envelope'
+            if rejection is not None:
+                self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
+                return
+            ref, owner_session = body['request_ref'], body['owner_session']
+            try:
+                admitted = _request_registry.reserve(ref, owner_session, {**body, 'request_kind': 'ui_list'})
+            except ValueError as error:
+                self._send({'ok': False, 'error': str(error)}, status=409)
+                return
+            if not admitted:
+                receipt = _request_registry.status(ref, owner_session)
+                self._send(receipt['result'] if receipt['status'] == 'done' else {
+                    'ok': False, 'stdout': '', 'stderr': '', 'requestReceipt': receipt,
+                    'error': 'UI discovery already admitted; retrieve its original result'})
+                return
+            def discover():
+                if not _request_registry.running(ref):
+                    return {'ok': False, 'stdout': '', 'stderr': '',
+                        'error': 'UI discovery no longer queued',
+                        'requestReceipt': _request_registry.status(ref, owner_session)}
+                facts, error = None, None
+                try:
+                    import dsh_ui_capture as capture
+                    facts = capture.discover_ui_surfaces()
+                except BaseException as exc:
+                    facts, error = getattr(exc, 'evidence', None), str(exc)
+                try:
+                    result = _runtime.ui_observation_result(facts, error, owner_session, operation='ui_list')
+                except BaseException as exc:
+                    result = {'ok': False, 'stdout': '', 'stderr': '', 'result': facts or {},
+                        'error': (error + '; ' if error else '') + 'UI observation unavailable: ' + str(exc)}
+                result['requestReceipt'] = {'request_ref': ref, 'runtime_id': _RUNTIME_ID, 'status': 'done'}
+                _request_registry.complete(ref, result)
+                return result
+            try:
+                result = _execute(discover)
+            except BaseException as exc:
+                _request_registry.fail_before_dispatch(ref, exc)
+                raise
+            self._send(result)
+            return
         if self.path == '/ui/capture':
             rejection = _owner_error(body) or _contract_error(body.get('expected_contract'))
-            required = {'node', 'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
-            optional = {'path', 'view', 'width', 'height', 'output_policy'}
+            required = {'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
+            optional = {'target', 'path', 'output_policy'}
+            target = body.get('target')
+            valid_target = isinstance(target, str) and bool(target.strip())
             if rejection is None and (not required <= set(body) or set(body) - required - optional
-                    or not isinstance(body.get('node'), str) or not body['node'].startswith('/')
+                    or not valid_target
                     or not isinstance(body.get('request_ref'), str)):
-                rejection = 400, 'UI capture requires an explicit node and fixed capture options'
+                rejection = 400, 'Choose the exact displayed target returned by houdini_ui_list; capture does not accept node/view/width/height or change the UI'
             if rejection is not None:
                 self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
                 return
@@ -495,7 +543,7 @@ class _Handler(BaseHTTPRequestHandler):
                     'ok': False, 'stdout': '', 'stderr': '', 'requestReceipt': receipt,
                     'error': 'UI capture already admitted; retrieve its original result instead of recapturing'})
                 return
-            options = {key: body[key] for key in ('node', *optional) if key in body}
+            options = {key: body[key] for key in optional if key in body}
             result = _capture_ui(options, owner_session, ref, body['owner_call'])
             if _request_registry.status(ref, owner_session)['status'] == 'queued':
                 _request_registry.fail_before_dispatch(ref, result.get('error', 'UI capture could not enter the main-thread queue'))

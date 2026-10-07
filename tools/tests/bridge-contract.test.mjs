@@ -10,8 +10,10 @@ import {
 let stale = true;
 let execCalls = 0;
 let uiCalls = 0;
+let uiListCalls = 0;
 let lastExecBody = null;
 let lastUiBody = null;
+let lastUiListBody = null;
 let lastPrepareBody = null;
 let semanticVersion = EXPECTED_EXECUTION_CONTRACT_VERSION;
 const server = http.createServer((request, response) => {
@@ -67,6 +69,16 @@ const server = http.createServer((request, response) => {
     });
     return;
   }
+  if (request.url === '/ui/list') {
+    let body='';request.setEncoding('utf8');
+    request.on('data',chunk=>{body+=chunk;});
+    request.on('end',()=>{
+      uiListCalls++;lastUiListBody=JSON.parse(body);
+      response.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{surfaces:[{target:'ui:fixture',kind:'qt_window',supported:true}]},
+        requestReceipt:{request_ref:lastUiListBody.request_ref,runtime_id:'c'.repeat(32),status:'done'}}));
+    });
+    return;
+  }
   if (request.url === '/ui/capture') {
     let body = '';
     request.setEncoding('utf8');
@@ -94,7 +106,7 @@ try {
     /修复并重启运行环境[\s\S]*contract mismatch/,
   );
   assert.equal(execCalls, 0, 'mismatch must fail before scene code reaches /exec');
-  await assert.rejects(new HoudiniBridge(url,1000).captureUi({node:'/obj/demo/CTRL'},owner),/contract mismatch/);
+  await assert.rejects(new HoudiniBridge(url,1000).captureUi({target:'ui:fixture'},owner),/contract mismatch/);
   assert.equal(uiCalls,0,'stale catalog rejects capture before the UI business route; prepare remains the non-HOM handshake');
 
   stale = false;
@@ -114,19 +126,29 @@ try {
   await bridge.exec('__result__ = 3', owner, undefined, undefined, true);
   assert.equal(lastExecBody.read_only, 'true', 'query must use the read-only bridge boundary');
   assert.equal(execCalls, 2, 'one admitted exec per public scene call; no hidden workspace probe');
-  const uiOptions={node:'/obj/demo/CTRL',view:'parameters',width:420,height:720,path:'layout.png',output_policy:'managed'};
+  const uiOptions={target:'ui:fixture',path:'layout.png',output_policy:'managed'};
   const uiResult=await bridge.captureUi(uiOptions,owner);
   assert.equal(uiResult.ok,true);assert.equal(uiCalls,1);
   assert.deepEqual(lastUiBody,{...uiOptions,owner_session:owner.sessionId,owner_call:owner.callId,
     expected_contract:{version:EXPECTED_EXECUTION_CONTRACT_VERSION,hash:EXPECTED_VERB_CATALOG_HASH},
     request_ref:'c'.repeat(32)+'.'+'d'.repeat(32)},'capture submits fixed UI options and the prepared same-runtime ticket, with no Python code');
   assert.equal(Object.hasOwn(lastUiBody,'code'),false);
+  const listed=await bridge.listUi(owner);
+  assert.equal(listed.result.surfaces[0].target,'ui:fixture');assert.equal(uiListCalls,1);
+  assert.deepEqual(lastUiListBody,{owner_session:owner.sessionId,owner_call:owner.callId,
+    expected_contract:{version:EXPECTED_EXECUTION_CONTRACT_VERSION,hash:EXPECTED_VERB_CATALOG_HASH},
+    request_ref:'c'.repeat(32)+'.'+'d'.repeat(32)},'discovery carries only its original request provenance');
+  await bridge.captureUi({target:'ui:fixture',path:'existing.png'},owner);
+  assert.equal(uiCalls,2);
+  assert.deepEqual(Object.keys(lastUiBody).sort(),['target','path','owner_session','owner_call','expected_contract','request_ref'].sort());
   semanticVersion--;
   await assert.rejects(bridge.captureUi(uiOptions,owner),/contract mismatch.*semantics/);
-  assert.equal(uiCalls,1,'fresh prepare checks reject same-name stale semantics before any UI preparation request');
+  await assert.rejects(bridge.listUi(owner),/contract mismatch.*semantics/);
+  assert.equal(uiCalls,2,'fresh prepare checks reject same-name stale semantics before any UI preparation request');
+  assert.equal(uiListCalls,1,'UI target discovery also refuses stale contracts before dispatch');
   semanticVersion=EXPECTED_EXECUTION_CONTRACT_VERSION;
   await assert.rejects(new HoudiniBridge(url,1000,'a'.repeat(32)).captureUi(uiOptions,owner),/executor mismatch/);
-  assert.equal(uiCalls,1,'explicit target mismatch stops at ticket/contract facts before preparing any native UI');
+  assert.equal(uiCalls,2,'explicit target mismatch stops at ticket/contract facts before preparing any native UI');
 
   // Identity is validated before ANY network activity: /health, /requests/prepare
   // and business routes all stay untouched for missing/blank/mistyped owners.
@@ -147,7 +169,8 @@ try {
       await assert.rejects(counted.submitJob('pass', bad), /identity/);
       await assert.rejects(counted.jobStatus('a'.repeat(12), bad), /identity/);
       await assert.rejects(counted.cancelJob('a'.repeat(12), bad), /identity/);
-      await assert.rejects(counted.captureUi({node:'/obj/demo/CTRL'},bad),/identity/);
+      await assert.rejects(counted.captureUi({target:'ui:fixture'},bad),/identity/);
+      await assert.rejects(counted.listUi(bad),/identity/);
     }
     assert.equal(countedRequests, 0, 'invalid owner must fail before /health, /requests/prepare and business routes');
   } finally {

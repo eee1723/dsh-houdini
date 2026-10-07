@@ -593,21 +593,21 @@ class ExecutionRuntime:
                 'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
                 'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
 
-    def ui_capture_result(self, facts, error=None, owner_session=None):
+    def ui_observation_result(self, facts, error=None, owner_session=None, *, operation='ui_capture'):
         """Project one finished staged UI observation using the normal facts.
 
         No Python batch or synthetic verb runs here. Only this operation's
         verified path becomes an image, independent of other queued requests.
         """
         if threading.get_ident() != self.thread_id:
-            raise RuntimeError('UI capture results must be observed on Houdini main thread')
+            raise RuntimeError('UI observation results must be observed on Houdini main thread')
         self.sequence += 1
         facts = _jsonable(facts or {})
         path = facts.get('path')
-        images = [os.path.abspath(path)] if (isinstance(path, str) and facts.get('fresh') is True
+        images = [os.path.abspath(path)] if (operation == 'ui_capture' and isinstance(path, str) and facts.get('fresh') is True
             and facts.get('file_status') == 'passed' and os.path.isfile(path)) else []
         envelope = {'ok': error is None, 'stdout': '', 'stderr': '', 'result': facts,
-            'evidence': [{'operation': 'ui_capture', **facts}],
+            'evidence': [{'operation': operation, **facts}],
             'outcome': {'batch': 'completed' if error is None else 'failed',
                 'operations': {'total': 1, 'failed': int(error is not None)},
                 'checks': {'failed': 0, 'warning': 0, 'unverified': 0}},

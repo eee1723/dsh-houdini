@@ -100,7 +100,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
   // UI categories only: these colors do not confer execution permissions.
   const toolKind = (name) => {
     if (name === "skill") return "skill";
-    if (["houdini_inspect", "houdini_ui_screenshot", "houdini_request", "houdini_resource", "houdini_capabilities", "houdini_query", "houdini_job_status"].includes(name)) return "query";
+    if (["houdini_inspect", "houdini_ui_list", "houdini_ui_screenshot", "houdini_request", "houdini_resource", "houdini_capabilities", "houdini_query", "houdini_job_status"].includes(name)) return "query";
     if (name.startsWith("houdini_")) return "exec";
     if (["read", "read_file", "glob", "grep", "ls"].includes(name))
       return "read";

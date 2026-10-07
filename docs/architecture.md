@@ -3,7 +3,7 @@
 ## 运行边界
 
 dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器。TypeScript Host注册
-8个职责明确的工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
+职责明确的工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
@@ -105,6 +105,8 @@ task-sources是按需回读/历史替换恢复用的原始材料索引。补充�
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
 导航由DSH公开session/workspace store提供当前任务、归档及重连状态，Python只提供HIP目录意图。
+启动意图等原生列表基线就绪后才接管layout导航信号，避免把DSH初始恢复误认成用户离开；
+后续导航取消、实际已选任务和意图消费仍取原生状态，不读取私有启动标记或另建选择缓存。
 同HIP已有页仅唤起，换目录/新页/Repair才触发一次选择；有效当前Houdini任务优先，再选同目录非归档根任务，
 确实没有才经公开Remote创建明确preset。原位重试复用同request ID，不刷新草稿；用户操作或新意图取消旧导航。
 
@@ -124,7 +126,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance、handoff应用及Bridge恢复journal |
 | [dsh_network_navigation.py](../houdini/python3.11libs/dsh_network_navigation.py) | 真实节点上的控制声明、持久交付标识、无cook读取与队列内定位；注解不代替控制有效性或ownership |
 | [dsh_network_notes.py](../houdini/python3.11libs/dsh_network_notes.py) | 明确名称的Sticky Note读取/局部修改、独立运行身份归属、失败补偿与编辑事务恢复；说明不承担任务完成状态 |
-| [dsh_ui_capture.py](../houdini/python3.11libs/dsh_ui_capture.py) | 明确节点的原生参数面板/网络截图、自有浮动pane、分阶段准备/绑定刷新/捕获；经Bridge主线程队列让GUI正常绘制，不建另一捕获登记表，捕获不认证语义 |
+| [dsh_ui_capture.py](../houdini/python3.11libs/dsh_ui_capture.py) | 当前可见pane/Qt窗口/停靠面板发现、实际对象引用与精确区域截图；只观察已有界面，不创建/导航/调整面板；同一Bridge队列/回执/图片事实，不建另一登记表或认证语义 |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
 | [dsh_tool_catalog.py](../houdini/python3.11libs/dsh_tool_catalog.py) | 当前原生节点/Shelf/Panel/State/Radial目录、实际来源与候选HDA定义；只读不建临时实例，不维护安装账本 |
