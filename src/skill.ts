@@ -22,6 +22,7 @@ const SKILLS = [
   { name: 'houdini-cop-workflow', dir: 'houdini-cop-workflow' },
   { name: 'houdini-tool-development', dir: 'houdini-tool-development' },
   { name: 'houdini-parameter-ui', dir: 'houdini-parameter-ui' },
+  { name: 'houdini-network-handoff', dir: 'houdini-network-handoff' },
   { name: 'houdini-solaris-karma-workflow', dir: 'houdini-solaris-karma-workflow' },
   { name: 'houdini-rig-animation-workflow', dir: 'houdini-rig-animation-workflow' },
   { name: 'houdini-skill-governance', dir: 'houdini-skill-governance' },

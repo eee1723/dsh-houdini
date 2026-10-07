@@ -4,7 +4,7 @@
 
 本skill维护工具入口、HDA/脚本生命周期与分发；参数UI唯一正文在houdini-parameter-ui。SideFX公开帮助仅提炼必要机制并链接，不复制手册/示例或用户资产代码。在线文档标识Houdini 22.0，支持目标为H21/H22，未获得对应本机行为复现的项目保持未验证。
 
-职责边界是：SOP workflow负责几何交付，tool-development负责UI、context、脚本加载和分发的独立完成门；HDA维护合同只在本skill维护。执行与所有权继续以仓库合同为准。
+职责边界是：SOP等领域负责业务输出；parameter-ui负责参数布局/控件与面板观察；tool-development负责公开工具入口、context、脚本生命周期和分发验收；network-handoff负责节点导航、分组与说明。HDA维护合同只在本skill维护，执行与所有权继续以仓库合同为准。
 
 | Claim / 决策影响 | 来源 | 适用与反例 | 最小复核 |
 |---|---|---|---|

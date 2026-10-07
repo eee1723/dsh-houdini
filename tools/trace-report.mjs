@@ -352,7 +352,7 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num" style="color:${unmatchedResults.length ? 'var(--bad)' : 'var(--ok)'}">${unmatchedResults.length}</div><div class="cap">无匹配 call 的 result</div></div>
     </div>
     <p class="dim-text">工具分布: ${Object.entries(toolCount).map(([k, v]) => `${esc(k)} ×${v}`).join(' ｜ ')}</p>
-    <p class="dim-text">成功 exec 含动词 ${verbAdoption.successfulExecWithVerbs}/${verbAdoption.successfulExecCalls}（${verbAdoption.successfulExecVerbCoveragePct ?? '—'}%）只描述调用形态，分母包含验证/动态函数；不代表修改采用率。Gate read_only 是静态扫描结果，no_scene_change 不排除文件或 Python 全局副作用；零裸修改候选不证明没有修改。</p>
+    <p class="dim-text">成功 exec 含动词 ${verbAdoption.successfulExecWithVerbs}/${verbAdoption.successfulExecCalls}（${verbAdoption.successfulExecVerbCoveragePct ?? '—'}%）只描述调用形态，分母包含验证/动态函数；不代表修改采用率。${verbAdoption.structuredCalls ? `另有${verbAdoption.structuredCalls}次结构化调用不执行Python，已从无动词裸调用统计排除；Python调用含动词${verbAdoption.callsWithVerbs}/${verbAdoption.pythonCalls}。` : ''}Gate read_only 是静态扫描结果，no_scene_change 不排除文件或 Python 全局副作用；零裸修改候选不证明没有修改。</p>
     ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
     ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}

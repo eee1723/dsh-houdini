@@ -1334,6 +1334,8 @@ function createTraceView(React, catalog, sources, trace, css) {
         ["正常返回但检查需关注的执行", stats.checkAttentionCalls],
         ["Houdini 已返回调用（排除历史回读）", adoption.houdiniCalls],
         ["Host 历史结果 / 来源回读", adoption.hostResultDetailReads],
+        ...(adoption.structuredCalls ? [["结构化调用（不执行 Python）", adoption.structuredCalls],
+          ["Python 调用含动词", adoption.callsWithVerbs + " / " + adoption.pythonCalls]] : []),
         [
           "调用含动词",
           adoption.callsWithVerbs + " / " + adoption.houdiniCalls,

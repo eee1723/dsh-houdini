@@ -82,6 +82,26 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   }))
 
   ctx.tools.register(defineTool({
+    name:'houdini_ui_screenshot',
+    description:HOUDINI_TOOLS.houdini_ui_screenshot.purpose+' Captures only an owned native pane after normal GUI refresh. Does not change model parameters or save the scene. Native attachment transport is not semantic visual verification.',
+    parameters:{
+      node:{type:'string',required:true,description:'Existing absolute node path; network view shows the contents of this parent.'},
+      view:{type:'string',enum:['parameters','network'],description:'Default parameters; network requires a network node.'},
+      width:{type:'number',description:'Logical widget pixels, integer 1..4096, default 820.'},
+      height:{type:'number',description:'Logical widget pixels, integer 1..4096, default 720.'},
+      path:{type:'string',description:'Safe PNG basename for managed/delivery, or absolute temporary path for explicit.'},
+      output_policy:{type:'string',enum:['managed','delivery','explicit'],description:'Default managed observation; explicit can capture an unnamed scene without Save As.'},
+    },output:readOutput,
+    presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_ui_screenshot.label,kind:'read',rawInput:args}),
+    presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_ui_screenshot.label,result),result),
+    async execute(args,exec) {
+      if(!args.node?.trim())throw Error('Provide the actual node path to observe')
+      const {bridge,owner}=await runtime.target(exec)
+      return runtime.result(await bridge.captureUi(args,owner,exec.signal),exec,bridge,true)
+    },
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'houdini_job_submit',
     description: HOUDINI_TOOLS.houdini_job_submit.purpose,
     parameters: {

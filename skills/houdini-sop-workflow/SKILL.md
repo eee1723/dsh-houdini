@@ -34,7 +34,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 | 模块输入输出、共享控制、装配关系 | [模块合同](references/module-quality-contracts.md) |
 | 小批构建、修改与检查语法 | [SOP patterns](references/sop-patterns.md#9-小模块构建与检查-fast-path) |
 | Boolean、拓扑、坐标、控制恢复与图像范围 | [执行与观察边界](references/execution-checkpoints.md) |
-| 节点网络分组和交接布局 | [网络交接](references/network-handoff.md) |
+| 节点入口、分组说明和交接布局 | 按名加载houdini-network-handoff |
 | 用户明确要求多作者组件协作 | [组件协作](references/module-design-collaboration.md) |
 
 参数界面使用`houdini-parameter-ui`，骨架或FK使用`houdini-rig-animation-workflow`，材质与正式渲染使用`houdini-solaris-karma-workflow`。教程任务从`houdini-video-tutorial`读取来源与目标；HDA/回调/工具打包使用`houdini-tool-development`。
@@ -53,6 +53,6 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 
 非平凡资产保留清楚的最终输出，例如`OUT_ASSET`。Subnet/HDA公共接口用原生Output明确发布。工程交付检查最后修改后的相关输出并保存实际HIP，说明有效控制；仅索要代码或说明时按请求提供，不额外包装工程。
 
-用户需要接手复杂网络时，按[网络交接](references/network-handoff.md)组织组件与完整工序链，明确声明实际控制入口；`readable`排布让主链、侧支和控制区可读。正式交付图片使用该资料中的`delivery`输出路径与实际文件回执；整理本次已确认无用的临时探针时保留依赖和交付引用。分框和控制声明是导航，不证明联动或成品质量。
+用户接手新增资产、示例或多支路网络时，按名加载houdini-network-handoff，主动交付实际入口并按需要组织框与说明；不复制领域外的交接流程。文件与图片路径见其[文件交付](../houdini-network-handoff/references/file-delivery.md)。
 
 结合本次操作回执、实际文件和图像核对要求。未观察到的细节与视觉结果由作者继续核对。续接时读取原要求、已有输出和新增需求，按实际变更继续构建。

@@ -130,23 +130,59 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
         node.destroy()
     hou.hda.uninstallFile(str(library))
 
-# Repair must pick up changed interface code, without opening a server in this test.
+# Repair must pick up changed domain code and aliases without opening a server.
 import dsh_launcher as launcher
+import dsh_hda_lifecycle as lifecycle
+import dsh_network_boxes as boxes
+import dsh_network_notes as notes
+import dsh_ui_capture as capture
+import dsh_package_discovery as discovery
+import dsh_tool_catalog as catalog
+import dsh_tool_packages as packages
 reload_module = launcher.importlib.reload
 stop_bridge, start_bridge = b.stop, b.start
 events = []
-original_states = api.parameter_states
+fixture = run("__result__=tab_create('/obj','geo',name='repair_note_fixture').path()")
+run(f"network_notes({fixture!r},[{{'name':'README','text':'Retain exact note ownership after repair'}}])")
+note = hou.node(fixture).findStickyNote('README')
+note_identity = note.sessionId()
+note_registry = notes._OWNED_NOTES
+stale_functions = [(api, 'parameter_states'), (lifecycle, '_interface_differences'),
+    (boxes, 'collect_editor_obstacles'), (notes, 'apply_network_notes'), (capture, 'ui_screenshot'),
+    (discovery, 'read_package_config'), (catalog, 'tool_catalog'), (packages, 'tool_package_create')]
+selected_modules = {module for module, _name in stale_functions}
+original_functions = {(module, name): getattr(module, name) for module, name in stale_functions}
+def reload_selected(module):
+    events.append(module.__name__)
+    return reload_module(module) if module in selected_modules else module
 try:
-    api.parameter_states = lambda node: 'stale interface module'
+    for module, name in stale_functions:
+        setattr(module, name, lambda *args, **kwargs: 'stale domain module')
     b.stop = lambda: events.append('stop')
     b.start = lambda *args: events.append('start')
-    launcher.importlib.reload = lambda module: reload_module(module) if module is api else module
+    launcher.importlib.reload = reload_selected
     launcher.restart_bridge()
-    assert api.parameter_states is not original_states
-    assert api.parameter_states.__module__ == 'dsh_hda_interfaces'
-    assert events == ['stop', 'start']
+    for module, name in stale_functions:
+        assert getattr(module, name).__module__ == module.__name__, (module.__name__, name)
+        assert getattr(module, name) is not original_functions[(module, name)]
+    assert events[0] == 'stop' and events[-1] == 'start', events
+    for source, consumer in (('dsh_network_layout','dsh_network_boxes'),
+            ('dsh_network_boxes','dsh_network_notes'), ('dsh_network_navigation','dsh_network_notes'),
+            ('dsh_hou_helpers','dsh_hda_lifecycle'), ('dsh_hda_interfaces','dsh_hda_lifecycle'),
+            ('dsh_hou_helpers','dsh_ui_capture'), ('dsh_package_discovery','dsh_tool_packages'),
+            ('dsh_tool_catalog','dsh_execution'), ('dsh_tool_packages','dsh_execution')):
+        assert events.index(source) < events.index(consumer), (source, consumer, events)
+    assert notes.collect_editor_obstacles is boxes.collect_editor_obstacles
+    assert packages.read_package_config is discovery.read_package_config
+    assert notes._OWNED_NOTES is note_registry and note.sessionId() == note_identity
+    assert notes.note_provenance(note, 'tool-author')['status'] == 'owned_current_session'
+    run(f"network_notes({fixture!r},[{{'name':'README','text':'Actual repaired note operation'}}])")
+    assert note.text() == 'Actual repaired note operation'
 finally:
     launcher.importlib.reload = reload_module
     b.stop, b.start = stop_bridge, start_bridge
+    for module, name in stale_functions:
+        if getattr(module, name).__module__ != module.__name__:
+            setattr(module, name, original_functions[(module, name)])
 
 print('HDA interface preview/state/ownership/rollback/reload passed on ' + hou.applicationVersionString())

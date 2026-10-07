@@ -141,7 +141,7 @@ with log.open('wb') as output:
         presets=facts['roster']['presets']
         assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
         assert 'broken' not in presets[0], facts
-        expected={'houdini_inspect','houdini_exec','houdini_request','houdini_resource','houdini_capabilities',
+        expected={'houdini_inspect','houdini_exec','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
             'houdini_job_submit','houdini_job_status','houdini_job_cancel'}
         assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
         assert 'present' in facts['tools'] and 'skill' in facts['tools'], facts
@@ -153,7 +153,7 @@ with log.open('wb') as output:
         assert rpc('agentPresets/list', {}) == facts['roster']
         created=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'cwd':str(fixture)}})
         assert created['agentPreset']=='houdini', created
-        print('Exact DSH Web: browser module delivered, one Houdini preset, eight scoped tools and default session passed', flush=True)
+        print('Exact DSH Web: browser module delivered, one Houdini preset, scoped tools and default session passed', flush=True)
         if args.context_loop:
             deadline=time.monotonic()+90
             while not context_output.exists():

@@ -87,6 +87,15 @@ const typedAdoption=collectVerbAdoption([
 assert.equal(typedAdoption.structuredCalls,3);
 assert.equal(typedAdoption.rawReadOnlyCalls,1);
 assert.equal(typedAdoption.successfulExecVerbCoveragePct,100);
+const capturedAdoption=collectVerbAdoption([
+  {tool:'houdini_ui_screenshot',isHoudini:true,failed:false,args:{node:'/obj/demo/CTRL'},verbs:[],canonical:{transaction:{status:'no_scene_change'}}},
+  {tool:'houdini_ui_screenshot',isHoudini:true,failed:true,args:{node:'/obj/demo'},verbs:[],canonical:{ok:false}},
+  {tool:'houdini_exec',isHoudini:true,failed:false,code:'tab_create(...)',verbs:[{verb:'tab_create'}]},
+]);
+assert.equal(capturedAdoption.structuredCalls,2);assert.equal(capturedAdoption.pythonCalls,1);
+assert.equal(capturedAdoption.pythonCallCoveragePct,100);
+assert.equal(capturedAdoption.rawUnknownEffectCalls,0);assert.equal(capturedAdoption.rawFailedCalls,0);
+assert.equal(classifyRawEffect({tool:'houdini_ui_screenshot',canonical:{ok:false}}),null,'a failed UI capture is not a failed raw Python mutation');
 assert.equal(isMutatingRawMethodName('displayNode'), false);
 assert.equal(isMutatingRawMethodName('render'), true);
 

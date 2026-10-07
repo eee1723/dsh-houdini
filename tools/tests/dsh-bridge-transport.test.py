@@ -151,6 +151,69 @@ try:
     status, error = post('/exec', admission('raise Exception("must not execute")'))
     assert status == 500 and 'pump is unavailable' in error['error'], error
 
+    # The fixed UI route owns the same one-use receipt, without executing a
+    # caller-supplied Python batch. An unavailable pump proves no preparation
+    # occurred and must release the admitted receipt instead of pinning running.
+    ui_owner = 'ui-transport-fixture'
+    ui_ref = prepare(ui_owner)
+    ui_body = {'node': '/obj', 'owner_session': ui_owner, 'owner_call': 'ui-unavailable',
+               'request_ref': ui_ref, 'expected_contract': contract(), 'view': 'network'}
+    active_before_ui = b._request_registry.active_count()
+    status, unavailable = post('/ui/capture', ui_body)
+    assert status == 200 and unavailable['ok'] is False, unavailable
+    assert 'pump is unavailable' in unavailable['error'], unavailable
+    assert unavailable['requestReceipt']['status'] == 'not_executed', unavailable
+    assert 'execution' not in unavailable, 'worker failure must not invent a HOM snapshot'
+    assert b._request_registry.active_count() == active_before_ui, unavailable
+    with patch.object(b, '_execute', side_effect=AssertionError('duplicate dispatched another UI stage')):
+        status, duplicate = post('/ui/capture', ui_body)
+    assert status == 200 and duplicate['requestReceipt']['status'] == 'not_executed', duplicate
+    assert b._work_queue.empty(), 'unavailable/duplicate capture must not leave queued HOM'
+
+    # Transport-only staged fixture: no GUI/HOM runs on the HTTP worker.
+    # The real registry claims inside preparation; a final observation error
+    # then becomes a retained terminal failure, never another capture.
+    import dsh_ui_capture as ui_capture
+    ready = threading.Event(); ready.set()
+    stage_state = {'ready': ready, 'closed': False}
+    stage_facts = {'ok': False, 'phase': 'transport-only fixture; no native capture',
+                   'fresh': False, 'file_status': 'failed', 'semantic_status': 'unverified',
+                   'scene_writes': 0}
+    ui_stage_calls = []
+    def prepare_ui_fixture(**options):
+        ui_stage_calls.append('prepare')
+        assert options == {'node': '/obj', 'view': 'network'}, options
+        return stage_state
+    def finish_ui_fixture(state):
+        assert state is stage_state
+        ui_stage_calls.append('finish')
+        state['closed'] = True
+        return dict(stage_facts)
+    def refresh_ui_fixture(state):
+        assert state is stage_state
+        ui_stage_calls.append('refresh')
+    def staged_queue_fixture(fn):
+        if len(ui_stage_calls) == 3:
+            raise RuntimeError('injected final UI observation queue failure')
+        return fn()  # Only the patched no-HOM preparation/finish functions run.
+    ui_body = {**ui_body, 'request_ref': prepare(ui_owner), 'owner_call': 'ui-final-error'}
+    active_before_ui = b._request_registry.active_count()
+    with patch.object(b, '_execute', side_effect=staged_queue_fixture), \
+         patch.object(ui_capture, 'prepare_ui_capture', side_effect=prepare_ui_fixture), \
+         patch.object(ui_capture, 'refresh_ui_capture', side_effect=refresh_ui_fixture), \
+         patch.object(ui_capture, 'finish_ui_capture', side_effect=finish_ui_fixture), \
+         patch.object(ui_capture, 'abort_ui_capture', side_effect=AssertionError('closed stage was aborted again')):
+        status, terminal_ui = post('/ui/capture', ui_body)
+    assert status == 200 and terminal_ui['ok'] is False, terminal_ui
+    assert terminal_ui['result'] == stage_facts and 'final UI observation queue failure' in terminal_ui['error'], terminal_ui
+    assert terminal_ui['requestReceipt']['status'] == 'done' and 'execution' not in terminal_ui, terminal_ui
+    assert ui_stage_calls == ['prepare', 'refresh', 'finish'] and b._request_registry.active_count() == active_before_ui
+    with patch.object(b, '_execute', side_effect=AssertionError('terminal duplicate dispatched another UI stage')):
+        status, duplicate_ui = post('/ui/capture', ui_body)
+    assert status == 200 and duplicate_ui == terminal_ui, (duplicate_ui, terminal_ui)
+    status, retained_ui = post('/requests/status', {'request_ref': ui_body['request_ref'], 'owner_session': ui_owner})
+    assert retained_ui['requestReceipt']['status'] == 'done' and retained_ui['requestReceipt']['result'] == terminal_ui
+
     # Real HTTP -> queue -> owning-thread HOM -> JSON response, in this
     # disposable hython process (no live Houdini session is contacted).
     responses, finished = [], threading.Event()

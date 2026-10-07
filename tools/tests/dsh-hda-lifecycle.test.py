@@ -6,6 +6,7 @@ import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
 import dsh_hda_interfaces as interfaces
+from dsh_hda_lifecycle import _interface_differences
 
 def run(code, ok=True, owner='lifecycle-author', query=False):
     r=b.run_code(code,owner_session=owner,owner_call='lifecycle-test',read_only=query)
@@ -91,6 +92,87 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-lifecycle-') as tmp:
         h._rebuild_hda_interface=original
     assert failed['rollback']['applied'] and n.evalParm('width')==7
     assert library.read_bytes()==before
+    # A normal empty-label separator is serialized differently in the native
+    # instance and definition DialogScripts. It is not an interface overlay.
+    semantic_library=Path(tmp)/'semantic.hda'
+    semantic_layout=[
+        {'type':'float','name':'gain','label':'Gain','default':2.},
+        {'type':'separator','name':'sep','label':'','hidden':True}]
+    run("g=tab_create('/obj','geo',name='semantic')\np=tab_create(g,'subnet',name='source')\n"
+        f"hda_create(p,'contract::semantic::1.0',hda_file={str(semantic_library)!r})\n"
+        f"hda_set_interface('/obj/semantic/source',layout={semantic_layout!r},keep_std=False)\n"
+        "other=tab_create(g,'contract::semantic::1.0',name='other')")
+    source=hou.node('/obj/semantic/source')
+    other=hou.node('/obj/semantic/other')
+    definition=source.type().definition()
+    for instance in (source,other):
+        group=instance.parmTemplateGroup()
+        assert not instance.spareParms()
+        assert group==definition.parmTemplateGroup()
+        assert group.asDialogScript(full_info=True)!=definition.parmTemplateGroup().asDialogScript(full_info=True)
+    edit(source.path(),'save')
+
+    def override(group,name,change):
+        template=group.find(name)
+        change(template)
+        group.replace(name,template)
+
+    # Native template equality omits help/conditionals. Verify real HOM groups,
+    # including nested templates, rather than rely on native equality/asCode.
+    reference=hou.ParmTemplateGroup((hou.FolderParmTemplate('controls','Controls',(
+        hou.FloatParmTemplate('gain','Gain',1,default_value=(2.,)),hou.SeparatorParmTemplate('sep'))),))
+    assert not _interface_differences(reference,reference)
+    changes=[
+        ('label',lambda group: override(group,'gain',lambda t: t.setLabel('Changed')),'gain'),
+        ('default',lambda group: override(group,'gain',lambda t: t.setDefaultValue((9.,))),'gain'),
+        ('type',lambda group: group.replace('gain',hou.IntParmTemplate('gain','Gain',1,default_value=(2,))),'gain: type'),
+        ('help',lambda group: override(group,'gain',lambda t: t.setHelp('Changed help')),'gain: help'),
+        ('disable',lambda group: override(group,'gain',lambda t: t.setConditional(hou.parmCondType.DisableWhen,'{ gain == 0 }')),'gain: conditionals'),
+        ('hide',lambda group: override(group,'gain',lambda t: t.setConditional(hou.parmCondType.HideWhen,'{ gain == 0 }')),'gain: conditionals'),
+        ('tab',lambda group: override(group,'controls',lambda t: t.setTabConditional(hou.parmCondType.HideWhen,'{ gain == 0 }')),'controls: tab conditionals'),
+        ('export',lambda group: override(group,'gain',lambda t: t._setExportLevel(1)),'gain'),
+        ('default expression language',lambda group: override(group,'gain',lambda t: t.setDefaultExpressionLanguage((hou.scriptLanguage.Python,))),'gain'),
+    ]
+    for name,change,difference in changes:
+        group=hou.ParmTemplateGroup(reference.entries())
+        change(group)
+        actual=_interface_differences(group,reference)
+        assert any(difference in item for item in actual),(name,actual)
+    # Houdini ignores required definition parms' label/default/type changes at
+    # the instance setter. Arrange actual supported per-instance overrides.
+    actual_overrides=[
+        ('hidden',lambda group: group.hide('gain',True),'gain'),
+        ('spare',lambda group: group.append(hou.FloatParmTemplate('extra','Extra',1)),'template order/names'),
+        ('reorder',lambda group: (group.remove('gain'),group.append(reference.find('gain'))),'template order/names'),
+    ]
+    for action,target in (('save',source),('promote',other)):
+        for name,change,difference in actual_overrides:
+            group=definition.parmTemplateGroup()
+            change(group)
+            target.setParmTemplateGroup(group)  # Adversarial state in our fixture only.
+            old_bytes=semantic_library.read_bytes()
+            before_states=interfaces.parameter_states(target)
+            failed=run(f"hda_edit({source.path()!r},{action!r},dry_run=True)",False)
+            assert difference in failed['error'], (action,name,failed)
+            if action=='promote':
+                assert other.path() in failed['error'],failed
+            assert semantic_library.read_bytes()==old_bytes
+            assert interfaces.parameter_states(target)==before_states
+            target.removeSpareParms()
+    # Ordinary other instances must allow additive promotion; animated/current
+    # channel values remain distinct while the new definition gains the spare.
+    source.parm('gain').setExpression('$F*2',hou.exprLanguage.Hscript)
+    other.parm('gain').set(7.)
+    group=source.parmTemplateGroup()
+    group.append(hou.FloatParmTemplate('additional','Additional',1,default_value=(4.,)))
+    source.setParmTemplateGroup(group)
+    source.parm('additional').set(6.)
+    promoted=edit(source.path(),'promote')
+    assert promoted['promoted_templates']==['additional']
+    assert source.parm('gain').expression()=='$F*2' and other.evalParm('gain')==7
+    assert source.evalParm('additional')==6 and not source.parm('additional').isSpare()
+    assert other.parm('additional') is not None and not other.parm('additional').isSpare()
+    print('PASS semantic interface save/promote separator and real overlays')
     # A different asset family: additive spare UI with multiparm and animation,
     # promoted before any modeling recipe. No example-asset constants.
     migration_library=Path(tmp)/'migration.hda'

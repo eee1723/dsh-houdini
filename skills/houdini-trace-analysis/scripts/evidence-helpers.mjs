@@ -415,7 +415,8 @@ export function classifyVisionEvidence(step) {
 
 /** Metrics that separate vocabulary breadth from actual execution adoption. */
 export function isStructuredHoudiniCall(step) {
-  return step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
+  return step.tool==='houdini_ui_screenshot'
+    || step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
 }
 
 export function isHoudiniDetailRead(step) {
@@ -434,6 +435,7 @@ export function isHoudiniHostCall(step) {
  * no_scene_change excludes neither file I/O nor module/global side effects.
  */
 export function classifyRawEffect(step) {
+  if (isStructuredHoudiniCall(step)) return null;
   const usage = step.canonical?.rawUsage ?? step.rawUsage;
   const failed = step.failed || step.canonical?.ok === false;
   const outcome = usage?.gateOutcome;

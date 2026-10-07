@@ -26,16 +26,25 @@ ctx.provide('llm',{async resolveModelInfo(){return {inputModalities:['text','ima
 ctx.provide('attachments',{imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:200,maxImagesPerMessage:4},
   async saveImage({data}){return {attachmentId:'image-'+(++savedImages),mediaType:'image/png',bytes:data.length,width:1,height:1}}})
 let executed=0
+let capturesExecuted=0
 let bridgeReceipt
 registerHoudiniTools(ctx,{targetExecutorId:outcomeFixtures?.caught_read?.execution?.executor_id,
   async fetchMedia(){return Buffer.from('image')},async exec(){executed++;if(bridgeReceipt)return structuredClone(bridgeReceipt);return {ok:true,stdout:'',stderr:'',result:{box:executed},images:['C:/fixture/output.png'],
   execution:{runtime_id:'runtime',sequence:executed,observed_at:executed}}},
+  async captureUi(args,owner){capturesExecuted++;return {ok:true,stdout:'',stderr:'',
+    result:{node:args.node,path:'C:/fixture/ui.png',scene_writes:0,semantic_status:'unverified',user_state_restored:true},
+    images:['C:/fixture/ui.png'],evidence:[{operation:'ui_capture',scene_writes:0,semantic_status:'unverified'}],
+    outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},transaction:{status:'no_scene_change'},
+    execution:{runtime_id:'capture-runtime',sequence:capturesExecuted,observed_at:10+capturesExecuted},
+    requestReceipt:{request_ref:'ui-'+capturesExecuted,owner_call:owner.callId,status:'done'}}},
   async submitJob(){return {jobId:'a'.repeat(12),requestReceipt:{request_ref:'b'.repeat(32)+'.'+'c'.repeat(32),status:'job_submitted'}}},
   async cancelJob(){return {jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}}})
 // The registry's real PTC bridge receives the provider's binding calls.
 let ptcBindingValue
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
-  const value=await request.bindings[0].functions.houdini_exec({code:'__result__ = "nested"'})
+  const value=String(request.program).includes('houdini_ui_screenshot')
+    ? await request.bindings[0].functions.houdini_ui_screenshot({node:'/obj/demo/CTRL',view:'parameters'})
+    : await request.bindings[0].functions.houdini_exec({code:'__result__ = "nested"'})
   ptcBindingValue=value
   return {value,logs:[]}
 }})
@@ -73,6 +82,31 @@ assert.equal(cancel.isError,false)
 assert.deepEqual(cancel.meta.canonical,cancel.value,'queued cancellation is retained even without an execution observation')
 logNative('job-cancel','houdini_job_cancel',{jobId:'a'.repeat(12)},cancel)
 assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'real DSH metadata clears the cancelled job from recorded active work')
+const nativeCapture=await tools.execute({callId:'capture-native',name:'houdini_ui_screenshot',arguments:{node:'/obj/demo/CTRL'},agent,signal})
+assert.equal(nativeCapture.isError,false,JSON.stringify(nativeCapture))
+logNative('capture-native','houdini_ui_screenshot',{node:'/obj/demo/CTRL'},nativeCapture)
+assert.equal(nativeCapture.meta.canonical.result.scene_writes,0)
+assert.equal(nativeCapture.meta.canonical.result.semantic_status,'unverified')
+assert.equal(nativeCapture.meta.canonical.verbs,undefined,'native UI observation has no fake Python ledger')
+assert.equal(nativeCapture.content.filter(block=>block.type==='image').length,1)
+const nestedCapture=await tools.execute({callId:'capture-program',name:'run_code',arguments:{
+  code:'return await tools.houdini_ui_screenshot({node:"/obj/demo/CTRL"})',description:'Observe native parameter layout'},agent,signal})
+assert.equal(nestedCapture.isError,false,JSON.stringify(nestedCapture))
+logNative('capture-program','run_code',{},nestedCapture)
+assert.equal(nestedCapture.additionalContexts.length,1)
+assert.equal(nestedCapture.additionalContexts[0].content.filter(block=>block.type==='image').length,1)
+assert.equal(capturesExecuted,2,'native/nested persistence cannot repeat a UI request')
+assert.equal(executed,2,'UI captures do not execute Python scene operations')
+const captureRows=executionHistory(session.snapshotEvents()).rows.filter(row=>row.tool==='houdini_ui_screenshot')
+assert.equal(captureRows.length,2)
+assert(captureRows.every(row=>row.value.verbs===undefined&&row.value.result.scene_writes===0))
+assert(captureRows.every(row=>row.value.requestReceipt.status==='done'&&row.value.imageAttachments.length===1))
+assert(captureRows.every(row=>row.value.evidence[0].operation==='ui_capture'&&row.value.outcome.checks.unverified===0),
+  'semantic status remains in UI observation facts, not a fabricated Python check')
+const captureStored=validateStoredEvents(session.header,JSON.parse(JSON.stringify(session.snapshotEvents())))
+assert.deepEqual(executionHistory(Session.create(session.id,captureStored,session.header).snapshotEvents()).rows.filter(row=>row.tool==='houdini_ui_screenshot').map(row=>row.value),captureRows.map(row=>row.value))
+assert.equal(projectExecutionNotice(session.snapshotEvents()),null)
+console.log('UI captures: real native/PTC registry, image attachments, durable exact facts and one request each passed')
 // Optional exact receipts from the isolated HOM caught-failure regression:
 // same bytes reach real native and PTC registry paths, with no hand-built
 // outcome oracle standing in for the Python producer.

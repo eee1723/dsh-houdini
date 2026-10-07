@@ -6,6 +6,51 @@ import os
 import hou
 
 
+def _interface_differences(actual, expected):
+    """Compare native templates, including fields omitted by HOM equality.
+
+    DialogScript may replace a separator's empty label with its name even
+    though the native templates are identical. Native equality preserves
+    properties such as export level that asCode does not recreate, but H21/
+    H22 omit help and conditional strings; compare those explicitly, including
+    folder children and tab conditionals.
+    """
+    differences = []
+
+    def compare(entries, reference, parent=''):
+        names = tuple(t.name() for t in entries)
+        reference_names = tuple(t.name() for t in reference)
+        if names != reference_names:
+            differences.append(f'{parent or "<root>"}: template order/names {names!r} != {reference_names!r}')
+        for template, source in zip(entries, reference):
+            if template.name() != source.name():
+                continue
+            path = '/'.join(filter(None, (parent, template.name())))
+            fields = []
+            if template.type() != source.type():
+                fields.append('type')
+            else:
+                left, right = template, source
+                if isinstance(template, hou.FolderParmTemplate):
+                    left, right = template.clone(), source.clone()
+                    left.setParmTemplates(())
+                    right.setParmTemplates(())
+                    compare(template.parmTemplates(), source.parmTemplates(), path)
+                    if template.tabConditionals() != source.tabConditionals():
+                        fields.append('tab conditionals')
+                if left != right:
+                    fields.append('template properties')
+                if template.help() != source.help():
+                    fields.append('help')
+                if template.conditionals() != source.conditionals():
+                    fields.append('conditionals')
+            if fields:
+                differences.append(path+': '+', '.join(fields))
+
+    compare(actual.entries(), expected.entries())
+    return differences
+
+
 def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None):
     import dsh_hou_helpers as h
     from dsh_hda_interfaces import definition_write_guard, require_definition_owned, _snapshot, _restore, parameter_states
@@ -40,15 +85,18 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
         for child in descendants:
             h._require_owned(child, 'hda_edit lock discarded descendant', allow_foreign)
     if action=='save':
-        source_interface=n.parmTemplateGroup().asDialogScript(full_info=True)
-        definition_interface=definition.parmTemplateGroup().asDialogScript(full_info=True)
-        if source_interface != definition_interface:
-            raise ValueError('save refuses instance spare/overridden interface; migrate the interface explicitly first')
+        differences=_interface_differences(n.parmTemplateGroup(),definition.parmTemplateGroup())
+        if differences:
+            raise ValueError('save refuses instance spare/overridden interface; migrate the interface explicitly first: '
+                             +'; '.join(differences))
     if action=='promote':
-        definition_interface=definition.parmTemplateGroup().asDialogScript(full_info=True)
+        definition_interface=definition.parmTemplateGroup()
         for other in affected:
-            if other != n and other.parmTemplateGroup().asDialogScript(full_info=True)!=definition_interface:
-                raise ValueError('promote refuses other instance interface overrides')
+            if other != n:
+                differences=_interface_differences(other.parmTemplateGroup(),definition_interface)
+                if differences:
+                    raise ValueError('promote refuses other instance interface overrides at '+other.path()+': '
+                                     +'; '.join(differences))
         # This operation promotes an additive interface, never silently deletes
         # or changes existing definition parameter types.
         source_group=n.parmTemplateGroup()

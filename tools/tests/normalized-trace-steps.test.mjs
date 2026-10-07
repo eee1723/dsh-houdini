@@ -6,6 +6,7 @@ import {
   toolResultText,
   unresolvedExecutionRequests,
 } from '../normalized-trace-steps.mjs';
+import {isStructuredHoudiniCall,collectVerbAdoption,nativeImageEvidence} from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 
 const call = (seq, callId, name, args) => ({
   seq,
@@ -128,3 +129,51 @@ assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),rec
 assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done','one','other')]).length,1);
 assert.equal(unresolvedExecutionRequests([receiptStep(1,'done'),receiptStep(2,'unknown_transport')]).length,0);
 assert.equal(unresolvedExecutionRequests([{index:1,resultText:'request-receipt:\n'+JSON.stringify({runtime_id:'one',request_ref:'q',status:'unknown_transport'})}]).length,1);
+
+const captureValue={ok:true,result:{node:'/obj/demo/CTRL',path:'C:/capture.png',scene_writes:0,semantic_status:'unverified'},
+  images:['C:/capture.png'],imageAttachments:[{from:'C:/capture.png',attachment:{attachmentId:'ui-image'}}],
+  evidence:[{operation:'ui_capture',scene_writes:0,semantic_status:'unverified'}],
+  outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},
+  transaction:{status:'no_scene_change'},execution:{runtime_id:'ui-runtime',sequence:1,observed_at:30},
+  requestReceipt:{request_ref:'ui-ref',runtime_id:'ui-runtime',owner_call:'capture',status:'done'}};
+const captureNative=result(31,'capture','Native pane captured; visual interpretation unverified.');
+captureNative.data.meta={canonical:captureValue};
+const captureRecovery=result(35,'recover-ui','Original native capture recovered.');
+captureRecovery.data.meta={canonical:{...captureValue,requestReceipt:{...captureValue.requestReceipt,retrieved:true}}};
+const captureNestedId='program:capture';
+const captures=normalizeTraceSteps([
+  call(30,'capture','houdini_ui_screenshot',{node:'/obj/demo/CTRL',view:'parameters'}),captureNative,
+  {seq:32,time:32,type:'tool/ptc-dispatch-start',data:{subCallId:captureNestedId,parentCallId:'program',name:'houdini_ui_screenshot',arguments:{node:'/obj/demo',view:'network'}}},
+  {seq:33,time:33,type:'tool/ptc-dispatch',data:{subCallId:captureNestedId,parentCallId:'program',name:'houdini_ui_screenshot',content:[{type:'text',text:JSON.stringify({
+    kind:'dsh-houdini/execution-v1',callId:captureNestedId,tool:'houdini_ui_screenshot',value:{...captureValue,execution:{...captureValue.execution,sequence:2}}})}]}},
+]);
+assert.equal(captures.steps.length,2);
+assert.equal(captures.uniqueExecutions.length,2);
+assert.deepEqual(captures.uniqueExecutions.map(row=>row.verbCalls),[0,0],'capture has no fabricated Python verb ledger');
+for(const step of captures.steps){
+  assert.equal(step.code,'');assert.deepEqual(step.verbs,[]);assert.equal(step.transaction.status,'no_scene_change');
+  assert.equal(isStructuredHoudiniCall(step),true);
+  assert.deepEqual(step.canonical.images,['C:/capture.png']);
+  assert.equal(step.canonical.result.semantic_status,'unverified');
+  assert.equal(step.canonical.evidence[0].operation,'ui_capture');
+}
+const captureAdoption=collectVerbAdoption(captures.steps);
+assert.equal(captureAdoption.structuredCalls,2);assert.equal(captureAdoption.pythonCalls,0);
+assert.equal(captureAdoption.rawUnknownEffectCalls,0);assert.equal(captureAdoption.rawFailedCalls,0);
+assert.equal(captureAdoption.execCalls,0);
+assert.equal(nativeImageEvidence(captures.steps).filter(row=>row.delivered).length,2);
+assert(nativeImageEvidence(captures.steps).every(row=>row.semanticStatus==='unverified'));
+const recoveredTrace=normalizeTraceSteps([
+  call(30,'capture','houdini_ui_screenshot',{node:'/obj/demo/CTRL'}),captureNative,
+  call(34,'recover-ui','houdini_request',{request_ref:'ui-ref'}),captureRecovery,
+]);
+assert.equal(recoveredTrace.uniqueExecutions.length,1,'request recovery does not invent a second capture');
+assert.equal(recoveredTrace.steps[1].executionReplay,true);
+assert.equal(recoveredTrace.steps[1].recoveredExecution,true);
+assert.deepEqual(recoveredTrace.steps[1].canonical.images,captureValue.images);
+assert.deepEqual(recoveredTrace.steps[1].verbs,[]);
+const unknownCapture={index:1,tool:'houdini_ui_screenshot',canonical:{requestReceipt:{request_ref:'ui-q',runtime_id:'ui-runtime',status:'unknown_transport'}}};
+const recoveredCapture={index:2,tool:'houdini_request',canonical:{...captureValue,requestReceipt:{request_ref:'ui-q',runtime_id:'ui-runtime',status:'done',retrieved:true}}};
+assert.equal(unresolvedExecutionRequests([unknownCapture]).length,1);
+assert.equal(unresolvedExecutionRequests([unknownCapture,recoveredCapture]).length,0);
+console.log('UI capture trace: native/nested canonical images, structured non-Python classification and recovery passed');

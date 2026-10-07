@@ -59,7 +59,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 | 源码 | 维护职责 |
 |---|---|
-| [src/tool-catalog.ts](../src/tool-catalog.ts) | 八个工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
+| [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
 | [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配；PTC原回执在公开日志middleware外层定型，避免展示spill截坏审计JSON，不改变模型展示或执行值 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
@@ -123,6 +123,8 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py) | 无HOM、确定性的矩形/净距、局部避障与Box handoff规划 |
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance、handoff应用及Bridge恢复journal |
 | [dsh_network_navigation.py](../houdini/python3.11libs/dsh_network_navigation.py) | 真实节点上的控制声明、持久交付标识、无cook读取与队列内定位；注解不代替控制有效性或ownership |
+| [dsh_network_notes.py](../houdini/python3.11libs/dsh_network_notes.py) | 明确名称的Sticky Note读取/局部修改、独立运行身份归属、失败补偿与编辑事务恢复；说明不承担任务完成状态 |
+| [dsh_ui_capture.py](../houdini/python3.11libs/dsh_ui_capture.py) | 明确节点的原生参数面板/网络截图、自有浮动pane、分阶段准备/绑定刷新/捕获；经Bridge主线程队列让GUI正常绘制，不建另一捕获登记表，捕获不认证语义 |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
 | [dsh_tool_catalog.py](../houdini/python3.11libs/dsh_tool_catalog.py) | 当前原生节点/Shelf/Panel/State/Radial目录、实际来源与候选HDA定义；只读不建临时实例，不维护安装账本 |

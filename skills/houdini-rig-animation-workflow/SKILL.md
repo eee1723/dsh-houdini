@@ -92,6 +92,8 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 
 ## 完成门
 
+用户接手新rig或动画工程时，联用houdini-network-handoff交付实际控制/资产入口和网络说明；不以分框代替driver、binding和最终输出验证。
+
 - 控制器和 keyframes 回读正确，frame 单位/curve/replace 语义明确，用户 frame 已恢复。
 - stable identity、rest/current transform 和属性 class 可自省；所有 warning/error 已解释。
 - rigid pieces 保持刚体，活动集合用 P + orient/transform 验证。

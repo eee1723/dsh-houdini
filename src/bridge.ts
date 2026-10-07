@@ -65,6 +65,15 @@ export interface OwnershipScope {
   callId: string
 }
 
+export interface UiCaptureOptions {
+  node: string
+  path?: string
+  view?: 'parameters' | 'network'
+  width?: number
+  height?: number
+  output_policy?: 'managed' | 'delivery' | 'explicit'
+}
+
 /** Runtime identity check for callers that bypass TypeScript types. Values
  *  must be nonempty, non-whitespace strings and are sent verbatim — never
  *  coerced or trimmed. Runs before any network request. */
@@ -186,6 +195,25 @@ export class HoudiniBridge {
       interaction.removeEventListener('abort',cancel)
       if(cancellation)await cancellation
       if(cancellationError)throw new Error('Node navigation cancellation could not be confirmed: '+String(cancellationError))
+    }
+  }
+
+  /** Native UI preparation, binding refresh and capture yield to the normal GUI loop between
+   *  main-thread queue stages. The original ticket remains recoverable. */
+  async captureUi(options:UiCaptureOptions, owner:OwnershipScope, signal?:AbortSignal):Promise<ExecResult> {
+    assertOwnership(owner,'Houdini UI capture')
+    const {runtimeId,requestRef:ref}=await this.checkContract(signal,owner)
+    try {
+      return await this.post<ExecResult>('/ui/capture',{
+        ...options,owner_session:owner.sessionId,owner_call:owner.callId,
+        expected_contract:this.expectedContract(),request_ref:ref,
+      },signal)
+    } catch(error) {
+      return {ok:false,stdout:'',stderr:'',error:String(error),requestReceipt:{
+        request_ref:ref!,runtime_id:runtimeId!,status:'unknown_transport',
+        ...(this.executorId?{executor_id:this.executorId}:{}),
+        next_action:'Use houdini_request with this original reference to recover the UI capture. Do not start another capture while its result is unknown.',
+      }}
     }
   }
 

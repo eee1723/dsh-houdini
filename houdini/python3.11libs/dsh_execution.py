@@ -21,6 +21,7 @@ import hou
 import dsh_hou_helpers
 import dsh_component_contracts
 import dsh_network_boxes
+import dsh_network_notes
 import dsh_network_navigation
 import dsh_tool_catalog
 import dsh_tool_packages
@@ -151,6 +152,7 @@ _VERBS: dict[str, object] = {
     "visible_objects": dsh_hou_helpers.visible_objects,
     "layout_nodes": dsh_hou_helpers.layout_nodes,
     "network_boxes": dsh_hou_helpers.network_boxes,
+    "network_notes": dsh_hou_helpers.network_notes,
     "network_controls": dsh_hou_helpers.network_controls,
     "present_nodes": dsh_hou_helpers.present_nodes,
     "focus_node": dsh_hou_helpers.focus_node,
@@ -198,14 +200,14 @@ _MUTATING_VERB_NAMES = {
     "scene_save", "scene_save_as", "build_module", "verify_network", "test_controls", "set_timeline", "create_bookmark", "delete_bookmark",
     "tab_create", "tab_apply", "connect", "set_object_parent", "disconnect_input", "rename_node",
     "delete_node", "cook_node", "sop_set_output",
-    "set_object_visible", "layout_nodes", "network_boxes", "network_controls", "present_nodes", "set_parm", "set_parms",
+    "set_object_visible", "layout_nodes", "network_boxes", "network_notes", "network_controls", "present_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_fork", "hda_set_section",
     "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
 }
 
 
-_OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls', 'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes', 'network_boxes',
+_OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_controls', 'scene_save', 'create_bookmark', 'delete_bookmark', 'layout_nodes', 'network_boxes', 'network_notes',
     'cook_node', 'verify_network', 'test_controls', 'render_frame', 'render_view', 'viewport_screenshot'}
 
 
@@ -449,7 +451,7 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     )
 
 
-def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal):
+def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal, note_journal):
     """Execute one admitted edit batch and restore the same ownership on undo."""
     error = rollback = None
     undo_enabled = bool(hou.undos.areEnabled())
@@ -558,6 +560,19 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
         if not control_reconciliation['ok']:
             detail = 'Control declaration rollback failed: ' + '; '.join(control_reconciliation['errors'])
             rollback['error'] = (rollback.get('error', '') + '; ' + detail).lstrip('; ')
+    if error is not None and note_journal.get('entries'):
+        # Undo may be disabled. Notes have exact presentation snapshots;
+        # verify/compensate those without claiming unrelated scene restoration.
+        try:
+            with hou.undos.disabler():
+                note_reconciliation = dsh_network_notes.reconcile_transaction(note_journal)
+        except BaseException as recovery_error:
+            note_reconciliation = {'ok': False, 'entry_count': len(note_journal['entries']),
+                'errors': [str(recovery_error)], 'scope': 'Sticky Note presentation compensation only'}
+        rollback['network_notes'] = note_reconciliation
+        if not note_reconciliation['ok']:
+            detail = 'Sticky Note rollback failed: ' + '; '.join(note_reconciliation['errors'])
+            rollback['error'] = (rollback.get('error', '') + '; ' + detail).lstrip('; ')
     return error, rollback
 
 
@@ -567,6 +582,47 @@ class ExecutionRuntime:
         self.runtime_id = runtime_id
         self.executor_id = executor_id
         self.sequence = 0
+
+    def _execution_snapshot(self, sequence, owner_session, read_only, impact):
+        scene = dsh_hou_helpers.scene_info()
+        return {'runtime_id': self.runtime_id, 'executor_id': self.executor_id, 'sequence': sequence,
+            'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
+            'hip_dir': scene['hip_dir'], 'hip_is_new': scene['hip_is_new'],
+            'update_mode': scene['update_mode'], 'owner_session': owner_session, 'read_only': read_only,
+            'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
+                'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
+                'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
+
+    def ui_capture_result(self, facts, error=None, owner_session=None):
+        """Project one finished staged UI observation using the normal facts.
+
+        No Python batch or synthetic verb runs here. Only this operation's
+        verified path becomes an image, independent of other queued requests.
+        """
+        if threading.get_ident() != self.thread_id:
+            raise RuntimeError('UI capture results must be observed on Houdini main thread')
+        self.sequence += 1
+        facts = _jsonable(facts or {})
+        path = facts.get('path')
+        images = [os.path.abspath(path)] if (isinstance(path, str) and facts.get('fresh') is True
+            and facts.get('file_status') == 'passed' and os.path.isfile(path)) else []
+        envelope = {'ok': error is None, 'stdout': '', 'stderr': '', 'result': facts,
+            'evidence': [{'operation': 'ui_capture', **facts}],
+            'outcome': {'batch': 'completed' if error is None else 'failed',
+                'operations': {'total': 1, 'failed': int(error is not None)},
+                'checks': {'failed': 0, 'warning': 0, 'unverified': 0}},
+            'transaction': {'status': 'no_scene_change', 'nodes': [], 'nodes_truncated': False,
+                'scope': 'native UI observation; no model parameter edits or HIP save'}}
+        if images:
+            envelope['images'] = images
+            envelope['artifactCandidates'] = [{'path': images[0], 'kind': 'image',
+                'role': 'inspection', 'source': 'ui_capture', 'bytes': os.path.getsize(images[0])}]
+        if error is not None:
+            envelope['error'] = error
+        impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+        envelope['execution'] = self._execution_snapshot(self.sequence, owner_session, True, impact)
+        envelope['execution']['outputs'] = []
+        return envelope
 
     def run_code(self, code: str, allow_raw: str | None = None,
                  owner_session: str | None = None,
@@ -604,9 +660,10 @@ class ExecutionRuntime:
         creation_scope = contextlib.nullcontext(set()) if read_only else dsh_hou_helpers._track_created_nodes()
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
         control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
+        note_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_notes.transaction_journal()
         with (dsh_hou_helpers._execution_owner(owner_session, owner_call),
               creation_scope as created_nodes, box_scope as box_journal,
-              control_scope as control_journal):
+              control_scope as control_journal, note_scope as note_journal):
             # Each serialized request reports only its own produced media,
             # including requests rejected during preflight.
             dsh_hou_helpers._PRODUCED_IMAGES.clear()
@@ -635,7 +692,7 @@ class ExecutionRuntime:
                             exec(compiled, namespace)
                             _raise_caught_verb_failure(verb_ledger)
                         else:
-                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal)
+                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal, note_journal)
                 except BaseException:
                     if error is None:
                         error = traceback.format_exc()
@@ -679,6 +736,10 @@ class ExecutionRuntime:
                 'entry_count': len(control_journal['entries']),
                 'node_count': len({row['identity'] for snapshot in control_journal['entries'] for row in snapshot}),
                 'scope': 'explicit control declaration snapshots on runtime node identities'}
+        if note_journal.get('entries'):
+            envelope['transaction']['network_notes'] = {
+                'entry_count': len(note_journal['entries']),
+                'scope': 'explicit Sticky Note presentation snapshots; no node or geometry recovery evidence'}
         if transaction_status != 'no_scene_change':
             _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
             if raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'):
@@ -686,15 +747,7 @@ class ExecutionRuntime:
                 impact['attempted'] = True
         else:
             impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
-        scene = dsh_hou_helpers.scene_info()
-        envelope['execution'] = {'runtime_id': self.runtime_id, 'executor_id': self.executor_id, 'sequence': execution_sequence,
-            'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
-            'hip_dir': scene['hip_dir'], 'hip_is_new': scene['hip_is_new'],
-            'update_mode': scene['update_mode'],
-            'owner_session': owner_session, 'read_only': read_only,
-            'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
-                'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
-                'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
+        envelope['execution'] = self._execution_snapshot(execution_sequence, owner_session, read_only, impact)
         bindings = []
         for item in envelope.get('evidence', []):
             if len(bindings) >= 64:

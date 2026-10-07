@@ -320,8 +320,11 @@ def restart_bridge(*, port=None) -> str:
     import dsh_network_layout
     import dsh_network_boxes
     import dsh_network_navigation
+    import dsh_network_notes
     import dsh_hou_helpers
     import dsh_hda_interfaces
+    import dsh_hda_lifecycle
+    import dsh_ui_capture
     import dsh_parameter_ui
     import dsh_control_bindings
     import dsh_cook_control
@@ -337,6 +340,9 @@ def restart_bridge(*, port=None) -> str:
     import dsh_operation_cards
     import dsh_code_analysis
     import dsh_execution_results
+    import dsh_package_discovery
+    import dsh_tool_catalog
+    import dsh_tool_packages
     import dsh_execution
 
     # Recheck on the owning thread: the worker's HTTP snapshot may already be old.
@@ -356,8 +362,11 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_network_layout)
     importlib.reload(dsh_network_boxes)
     importlib.reload(dsh_network_navigation)
+    importlib.reload(dsh_network_notes)    # Rebind box/layout aliases, preserving live note owners.
     importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
     importlib.reload(dsh_hda_interfaces)
+    importlib.reload(dsh_hda_lifecycle)
+    importlib.reload(dsh_ui_capture)
     importlib.reload(dsh_parameter_ui)
     importlib.reload(dsh_control_bindings)
     importlib.reload(dsh_cook_control)
@@ -374,6 +383,9 @@ def restart_bridge(*, port=None) -> str:
     importlib.reload(dsh_requests)
     importlib.reload(dsh_code_analysis)
     importlib.reload(dsh_execution_results)
+    importlib.reload(dsh_package_discovery)
+    importlib.reload(dsh_tool_catalog)
+    importlib.reload(dsh_tool_packages)    # Rebind native package observation aliases.
     importlib.reload(dsh_execution)        # Rebind verbs after domain/helper reloads.
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(target_port, BRIDGE_HOST)

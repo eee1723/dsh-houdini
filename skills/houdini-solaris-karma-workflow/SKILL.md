@@ -49,6 +49,8 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 
 ## 完成门
 
+新建或扩展的材质/渲染网络交付入口与分组说明由houdini-network-handoff维护；仍按本skill验材质、相机和渲染结果。
+
 - 节点来自当前 parent 的可见 Tab entry；setup tool 的全部配套节点存在。
 - material prim 有明确 `outputs:kma`/`outputs:mtlx`/preview context，且绑定到目标 prim。
 - camera、lights、RenderSettings、RenderProduct 与 USD Render ROP 路径可自省。

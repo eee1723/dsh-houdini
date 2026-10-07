@@ -2114,6 +2114,9 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
     box_deletion = prepare_parent_deletion(
         n, active_owner_session=_ACTIVE_OWNER_SESSION,
         allow_foreign=allow_foreign, require_node_owned=_require_owned)
+    from dsh_network_notes import prepare_parent_deletion as prepare_note_deletion, commit_parent_deletion as commit_note_deletion
+    note_deletion = prepare_note_deletion(
+        n, active_owner_session=_ACTIVE_OWNER_SESSION, allow_foreign=allow_foreign)
     refs = sorted(x.path() for x in n.parmsReferencingThis())
     session_ids = [int(n.sessionId())]
     session_ids.extend(int(child.sessionId()) for child in n.allSubChildren())
@@ -2125,6 +2128,7 @@ def delete_node(node, allow_foreign: str | None = None) -> dict:
     path = n.path()
     n.destroy()
     commit_parent_deletion(box_deletion)
+    commit_note_deletion(note_deletion)
     for session_id in session_ids:
         _OWNED_NODE_SESSIONS.pop(session_id, None)
     result: dict = {"deleted": path}
@@ -2560,6 +2564,21 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
             resolve_node=lambda value: _resolve_in_parent(p, value), require_node_owned=_require_owned)
     except NetworkBoxOperationError as error:
         raise CheckpointError(str(error), error.evidence) from error
+
+
+def network_notes(parent, notes=None, *, remove=None, allow_foreign=None) -> dict:
+    """Read or locally maintain named Sticky Notes without changing nodes.
+
+    With no notes/remove, return actual text/position/size/color/provenance.
+    notes=[{name,text,position?:[x,y],size?:[w,h],color?:[r,g,b]}] upserts only
+    explicit notes. New notes default beside existing network content. remove
+    names are explicit; a name or owned parent never grants note ownership.
+    Notes remain standalone fixed layout obstacles, not implicit Box members.
+    """
+    from dsh_network_notes import apply_network_notes
+    return apply_network_notes(_resolve(parent), notes, remove=remove,
+        active_owner_session=_ACTIVE_OWNER_SESSION, active_owner_call=_ACTIVE_OWNER_CALL,
+        allow_foreign=allow_foreign)
 
 
 # --- parm 域 ---------------------------------------------------------------

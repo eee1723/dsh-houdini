@@ -3,7 +3,8 @@ import { executionCall,executionResult } from './dsh-adapter.js'
 export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;surfaceOp?:string|{op:string}}
 export type ExecutionRow = {eventSeq:number;callId:string;tool:string;value:any;execution:any}
 
-const LIVE_TOOLS = new Set(['houdini_exec','houdini_inspect','houdini_request','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
+const LIVE_TOOLS = new Set(['houdini_exec','houdini_inspect','houdini_ui_screenshot','houdini_request','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
+const RECOVERABLE_CALLS = new Set(['houdini_exec','houdini_ui_screenshot','houdini_job_submit'])
 const OBSERVED_REQUESTS = new Set(['done','not_executed','job_submitted'])
 const UNAVAILABLE_RESULTS = new Set(['result_expired','result_unavailable'])
 const TERMINAL_REQUESTS = new Set([...OBSERVED_REQUESTS,...UNAVAILABLE_RESULTS])
@@ -28,7 +29,7 @@ export function executionHistory(events:readonly SessionEvent[]) {
     if (!LIVE_TOOLS.has(name)) continue
     if (outcome.isError) {
       failedCalls.push({seq:event.seq??0,callId:outcome.callId,tool:name,error:outcome.error??{code:'TOOL_FAILED'}})
-      if (['ABORTED','TOOL_OUTCOME_UNKNOWN'].includes(outcome.error?.code) && ['houdini_exec','houdini_job_submit'].includes(name))
+      if (['ABORTED','TOOL_OUTCOME_UNKNOWN'].includes(outcome.error?.code) && RECOVERABLE_CALLS.has(name))
         uncertain.push({seq:event.seq??0,callId:outcome.callId})
     }
     if (!value) continue
@@ -56,10 +57,10 @@ export function executionHistory(events:readonly SessionEvent[]) {
       uncertain.push({seq:event.seq??0,callId:outcome.callId,ref:receipt.request_ref})
   }
   const unresolvedCalls=uncertain.filter(row=>!resolvedCalls.has(row.callId)&&(!row.ref||!TERMINAL_REQUESTS.has(receipts.get(row.ref)||'')))
-  const pendingCalls=[...calls].filter(([id,call])=>!results.has(id)&&!resolvedCalls.has(id)&&['houdini_exec','houdini_job_submit'].includes(call.name)).map(([id])=>id)
+  const pendingCalls=[...calls].filter(([id,call])=>!results.has(id)&&!resolvedCalls.has(id)&&RECOVERABLE_CALLS.has(call.name)).map(([id])=>id)
   const activeRequests=[...receipts].filter(([,status])=>!TERMINAL_REQUESTS.has(status))
   const activeJobs=[...jobs].filter(([,status])=>!TERMINAL_JOBS.has(status))
-  const foreground=rows.filter(row=>['houdini_exec','houdini_inspect'].includes(row.tool))
+  const foreground=rows.filter(row=>['houdini_exec','houdini_inspect','houdini_ui_screenshot'].includes(row.tool))
   const anchor=rows.reduce<ExecutionRow|undefined>((latest,row)=>!latest
     ||row.execution.observed_at>latest.execution.observed_at
     ||(row.execution.observed_at===latest.execution.observed_at&&row.execution.sequence>latest.execution.sequence)?row:latest,undefined)

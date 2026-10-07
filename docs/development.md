@@ -72,6 +72,8 @@ npm test
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
+HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/dsh-hda-lifecycle.test.py)；Sticky Note的归属、局部维护、Raw Gate和失败恢复用[dsh-network-notes](../tools/tests/dsh-network-notes.test.py)；原生参数/网络截图与用户状态保持用[dsh-ui-capture-gui](../tools/tests/dsh-ui-capture-gui.test.py)。截图测试在自有GUI检查实际目标与图像，生成文件存在不代替人工识图；不连接用户live或改用户HIP。
+
 跨层修改应验证消费方最终取得的状态，局部函数返回或静态配置存在不足以证明链路可用。入口/preset/client改动用精确DSH的实际模块图确认根前端与工具scope，再由真实页面确认内容视图和选中任务；工作区切换同时核对DSH store中的session、preset、cwd及workspace成员。入口可用空会话验启动，但Trace页需要普通有内容会话验收。Host组合检查的`--context-loop`使用自有HTTP Bridge夹具与脚本化模型适配器，核对真实DSH最终请求中的错误、未决回执、后台任务和上下文更新；可用`--outcome-fixture`接入隔离HOM导出的真实回执，核对捕获的操作异常、fallback和验证状态。不调用收费模型或用户Houdini。相关入口为[Host组合](../tools/tests/dsh-host-smoke.test.py)和[真实页面导航](../tools/tests/dsh-client-navigation.mjs)。
 
 内嵌页面使用[真实源码Qt验收](../tools/tests/dsh-source-webview.test.py)在新Houdini GUI中检查认证、实际工作区选择、模型菜单、Trace与原生交互、草稿和文件预览。此入口不调用模型、不连接用户Bridge、不加载或保存HIP，并确认自有GUI与Qt后代退出。普通Chrome检查不能替代Qt结果。

@@ -27,6 +27,7 @@ _RAW_HOU_VERB_MAP = {
     "layoutChildren": "layout_nodes",
     "moveToGoodPosition": "layout_nodes",
     "createNetworkBox": "network_boxes",
+    "createStickyNote": "network_notes",
     "networkBox.addItem": "network_boxes",
     "networkBox.addNode": "network_boxes",
     "networkBox.removeItem": "network_boxes",
@@ -68,6 +69,13 @@ _NETWORK_BOX_MUTATORS = {
     'setAlpha', 'setAutoFit', 'setBounds', 'setMinimized',
     'fitAroundContents', 'destroy',
 }
+
+_NETWORK_NOTE_MUTATORS = {
+    'setText', 'setPosition', 'move', 'shiftPosition', 'setSize', 'resize', 'setBounds',
+    'setColor', 'setTextColor', 'setTextSize', 'setMinimized', 'setDrawBackground',
+    'setName', 'setSelected', 'setPicked', 'setFromData', 'destroy',
+}
+_RAW_HOU_VERB_MAP.update({'stickyNote.' + method: 'network_notes' for method in _NETWORK_NOTE_MUTATORS})
 
 
 _GATE_MUTATING_PREFIXES = (
@@ -154,6 +162,66 @@ def _network_box_mutation_calls(tree) -> dict[int, str]:
         if isinstance(node, ast.Call) and (method := mutation(node.func)):
             result[id(node)] = method
     return result
+
+
+def _network_note_mutation_calls(tree) -> dict[int, str]:
+    """Classify only proven Sticky Note receivers, including bound setters."""
+    notes, lists, setters, factory_aliases, assignments = set(), set(), {}, {}, []
+    factories = {'createStickyNote', 'findStickyNote', 'stickyNoteBySessionId'}
+    rebound = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+    def factory(value):
+        if isinstance(value, ast.Name): return factory_aliases.get(value.id)
+        attr = _literal_attribute(value)[1]
+        return 'note' if attr in factories else 'list' if attr == 'stickyNotes' else None
+    def note_expression(value):
+        if isinstance(value, ast.Name): return value.id in notes
+        if isinstance(value, ast.Subscript):
+            return not isinstance(value.slice, ast.Slice) and list_expression(value.value)
+        if not isinstance(value, ast.Call): return False
+        if factory(value.func) == 'note': return True
+        attr = _literal_attribute(value.func)[1]
+        if attr == 'itemBySessionId' and value.args:
+            return _literal_attribute(value.args[0])[1] == 'StickyNote'
+        return False
+    def list_expression(value):
+        if isinstance(value, ast.Name): return value.id in lists
+        if isinstance(value, ast.Subscript):
+            return isinstance(value.slice, ast.Slice) and list_expression(value.value)
+        if not isinstance(value, ast.Call): return False
+        if factory(value.func) == 'list': return True
+        return (isinstance(value.func, ast.Name) and value.func.id in ('list', 'tuple')
+                and value.func.id not in rebound and len(value.args) == 1 and not value.keywords
+                and list_expression(value.args[0]))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            assignments.extend((target, node.value) for target in node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            assignments.append((node.target, node.value))
+    for _ in range(len(assignments) + 2):
+        previous = (len(notes), len(lists), len(factory_aliases))
+        for target, value in assignments:
+            if isinstance(target, ast.Name):
+                if kind := factory(value): factory_aliases[target.id] = kind
+                if note_expression(value): notes.add(target.id)
+                if list_expression(value): lists.add(target.id)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.For, ast.comprehension)) and isinstance(node.target, ast.Name) and list_expression(node.iter):
+                notes.add(node.target.id)
+        if previous == (len(notes), len(lists), len(factory_aliases)): break
+    def mutation(value):
+        if isinstance(value, ast.Name): return setters.get(value.id)
+        receiver, attr = _literal_attribute(value)
+        if attr not in _NETWORK_NOTE_MUTATORS: return None
+        proven = note_expression(receiver) or _literal_attribute(receiver)[1] in ('StickyNote', 'OpStickyNote', 'UniStickyNote')
+        return 'stickyNote.' + attr if proven else None
+    for _ in range(len(assignments) + 1):
+        previous = len(setters)
+        for target, value in assignments:
+            if isinstance(target, ast.Name) and (method := mutation(value)):
+                setters[target.id] = method
+        if len(setters) == previous: break
+    return {id(node): method for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and (method := mutation(node.func))}
 
 
 def _call_path(node: ast.AST) -> str | None:
@@ -323,12 +391,17 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
     python_sets = _python_set_names(tree)
     parameter_writes = _parameter_write_calls(tree)
     box_writes = _network_box_mutation_calls(tree)
+    note_writes = _network_note_mutation_calls(tree)
     hip_calls = _hip_file_calls(tree)
     bound_mutations = _bound_mutation_calls(tree, python_sets)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
     for node in ast.walk(tree):
+        if id(node) in note_writes:
+            key = note_writes[id(node)]
+            covered[key] = covered.get(key, 0) + 1
+            continue
         if id(node) in box_writes:
             key = box_writes[id(node)]
             covered[key] = covered.get(key, 0) + 1

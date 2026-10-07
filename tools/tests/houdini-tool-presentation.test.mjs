@@ -18,7 +18,7 @@ const ctx = {
 };
 
 registerHoudiniTools(ctx, {});
-assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit','houdini_job_status','houdini_job_cancel'].sort());
+assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit','houdini_job_status','houdini_job_cancel'].sort());
 
 const text = [{ type: 'text', text: 'fixture result' }];
 const execValue = {

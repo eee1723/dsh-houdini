@@ -48,6 +48,7 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [package_inspect](#package_inspect)
 - [tool_package_create](#tool_package_create)
 - [viewport_screenshot](#viewport_screenshot)
+- [network_notes](#network_notes)
 
 ## verb_help
 
@@ -2950,3 +2951,162 @@ Read the actual path and artifact before present. fresh and user_state_restored 
 ### 接口边界
 
 - Consume the actual returned path/artifact.actual_path for presentation. Allocation never overwrites an existing image. A dispatched capture whose completion is unknown retains its reservation; do not remove it as ordinary temporary debris.
+
+## network_notes
+
+Read or locally maintain named native Sticky Notes. Notes have their own runtime identity/owner; a parent or name does not grant write authority.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "parent": {
+      "type": "string"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Native ASCII item name. Existing node/box/item name collisions are rejected."
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "position": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "size": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "color": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "remove": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "allow_foreign": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "parent"
+  ],
+  "additionalProperties": false
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "parent": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "scene_writes": {
+      "type": "integer"
+    },
+    "restored": {
+      "type": "boolean"
+    },
+    "restore_errors": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "ok",
+    "parent",
+    "notes",
+    "scene_writes"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Place concise instructions beside a network
+
+调用工具：`houdini_exec`。
+
+```python
+__result__ = network_notes("/obj/example", [{"name":"start_here", "text":"Start from ARRAY. Replace PATH or SOURCE to change the inputs."}])
+```
+
+Read actual text, position, size and provenance. Inspect placement when visual clarity matters; notes do not prove functional correctness.
+
+### Read actual existing notes
+
+调用工具：`houdini_exec`。
+
+```python
+__result__ = network_notes("/obj/example")
+```
+
+Omitted notes/remove performs no presentation writes; actual runtime mode remains exec.
+
+### 接口边界
+
+- Only explicit standalone notes are changed. Notes already in Network Boxes are refused before writing because the current Box recovery scope does not include note members; native Houdini itself supports note membership. Names, labels, colors, and an owned parent never establish note ownership.
+- The same ownership preflight also applies when delete_node would destroy a parent containing notes. Runtime identity is removed on successful deletion and only a causally restored note can recover its prior owner.

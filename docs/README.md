@@ -11,7 +11,7 @@
 | [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
 | [主要开发方向](development-directions.md) | 四项产品方向、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
 | [Houdini Trace设计](houdini-trace-design.md) | 记录/资料/诊断信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
-| [工具说明](tools.md) | 八个工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
+| [工具说明](tools.md) | 工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
 | [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [按需动词契约](verb-contracts.md) | verb_help读取的输入/成功返回结构、Python示例和作用域；由verb-operation-contracts.json生成 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
@@ -26,6 +26,8 @@
 | [控制参数、界面与绑定设计](parameter-controls.md) | 跨建模/场景总控/HDA的分层职责、多种推进顺序与实施完成门 |
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
+
+[网络交接skill](../skills/houdini-network-handoff/SKILL.md)维护跨SOP/COP/LOP/rig/工具的主动节点入口、Network Box、Sticky Note和布局观察；参数面板观察仍由参数UI skill负责，功能验收留在各领域。注册入口为[src/skill.ts](../src/skill.ts)，执行与验证入口见[开发维护](development.md)。
 
 教程工程的目的/原片回看/差异核对/替代顺序及交付门唯一维护在
 [复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)，由video skill进入复现阶段时读取。

@@ -6,7 +6,7 @@ DSH负责模型、会话和Agent循环；插件提供真实场景信息、批量
 
 ## 工具
 
-八个工具分别负责观察、执行、请求查回、历史资料、图像通道和长任务控制。每个工具为何存在、输入和返回详见[工具说明](docs/tools.md)，在界面的 **Houdini 工具** 页也可以查看。
+工具分别负责现场观察、执行、原生界面截图、请求查回、历史资料、图像通道和长任务控制。每个工具为何存在、输入和返回详见[工具说明](docs/tools.md)，在界面的 **Houdini 工具** 页也可以查看。
 
 Python能力目录见[动词词表](docs/tool-design.md)。陌生节点可用node_info，准确动词签名可用verb_help；对象父级使用set_object_parent。构造方法与操作顺序由模型根据任务选择。
 
@@ -36,6 +36,7 @@ Host/Bridge/helper重载使用 **Version & Updates → 高级设置 → 运行�
 | [COP](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层 |
 | [工具开发](skills/houdini-tool-development/SKILL.md) | HDA、脚本、界面、回调和交付 |
 | [参数界面](skills/houdini-parameter-ui/SKILL.md) | 共享控制与参数绑定 |
+| [网络交接](skills/houdini-network-handoff/SKILL.md) | 主动节点入口、跨领域分组说明与布局观察 |
 | [Rig与动画](skills/houdini-rig-animation-workflow/SKILL.md) | 动画、骨架和运动 |
 | [Solaris与Karma](skills/houdini-solaris-karma-workflow/SKILL.md) | 材质、USD与正式渲染 |
 | [视频教程](skills/houdini-video-tutorial/SKILL.md) | 资料读取与教学工程 |

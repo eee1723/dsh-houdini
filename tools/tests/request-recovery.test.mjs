@@ -6,8 +6,9 @@ import {registerHoudiniTools} from '../../lib/tools.js';
 import {projectExecutionState} from '../../lib/execution-state.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js';
-const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,preparations=0,mode='disconnect',ticketMode='valid';
+const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
+let onCaptureAdmitted;
 const server=http.createServer((req,res)=>{
  res.setHeader('content-type','application/json');
  let text='';req.on('data',b=>text+=b);req.on('end',()=>{
@@ -32,6 +33,24 @@ const server=http.createServer((req,res)=>{
    else if(mode==='bad-json')res.end('{broken');
    else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
    else {res.statusCode=500;res.end('response failed after mutation');}
+  }else if(req.url==='/ui/capture'){
+   assert.deepEqual(Object.keys(body).sort(),['node','view','owner_session','owner_call','expected_contract','request_ref'].sort(),
+    'UI request has fixed UI fields and provenance, without Python code');
+   assert.equal(body.node,'/obj/demo/CTRL');assert.equal(body.view,'parameters');
+   assert.equal(body.owner_session,'owner');assert.equal(body.owner_call,'capture-call');
+   assert.deepEqual(body.expected_contract,{version,hash});
+   assert(tickets.delete(body.request_ref),'capture consumes the same-runtime prepared ticket once');
+   captures++;
+   const facts={node:body.node,view:body.view,path:'C:/fixture/layout-'+captures+'.png',scene_writes:0,semantic_status:'unverified',fresh:true};
+   const value={ok:true,stdout:'',stderr:'',result:facts,evidence:[{operation:'ui_capture',...facts}],images:[facts.path],
+    transaction:{status:'no_scene_change',nodes:[]},
+    execution:{runtime_id:runtime,sequence:100+captures,observed_at:100+captures,impact:{attempted:false,global:false,nodes:[]}},
+    requestReceipt:{request_ref:body.request_ref,runtime_id:runtime,status:'done'}};
+   records.set(body.request_ref,value);onCaptureAdmitted?.();
+   if(mode==='disconnect')req.socket.destroy();
+   else if(mode==='bad-json')res.end('{broken');
+   else if(mode==='delay')setTimeout(()=>res.end(JSON.stringify(value)),150);
+   else{res.statusCode=500;res.end('response failed after capture');}
   }else if(req.url==='/jobs'){
    assert.equal(body.owner_session,'owner','job admission carries the session identity');
    assert.equal(body.owner_call,'lost-job-call','job admission carries the current callId');
@@ -52,7 +71,9 @@ try{
  for(const invalid of ['missing','wrong-runtime']) {
   ticketMode=invalid;
   await assert.rejects(bridge.exec('must_not_submit()',owner),/valid same-runtime request ticket/);
+  await assert.rejects(bridge.captureUi({node:'/obj/demo/CTRL',view:'parameters'},owner),/valid same-runtime request ticket/);
   assert.equal(edits,0,'invalid prepare response never submits scene code');
+  assert.equal(captures,0,'invalid or wrong-runtime ticket never prepares a native pane');
  }
  ticketMode='valid';
  for(const failure of ['disconnect','bad-json','delay','http-error']){
@@ -117,6 +138,38 @@ try{
   {seq:6,type:'tool/result',data:{message:{source:{callId:'repeat-result'}},meta:{canonical:recovered}}}];
  assert.equal(normalizeTraceSteps(replayEvents).uniqueExecutions.length,1);
  assert.equal(normalizeTraceSteps(replayEvents).steps.at(-1).executionReplay,true);
+ // The fixed UI endpoint has the same uncertain-response contract. Recovery
+ // reads its original capture even though it made no scene parameter writes.
+ for(const failure of ['disconnect','bad-json','delay','http-error']){
+  mode=failure;
+  const unknown=await defs.get('houdini_ui_screenshot').execute({node:'/obj/demo/CTRL',view:'parameters'},{...ctx,callId:'capture-call'});
+  assert.equal(unknown.requestReceipt.status,'unknown_transport');
+  assert.match(unknown.requestReceipt.next_action,/original reference[\s\S]*Do not start another capture/);
+  const before=captures,preparedBefore=preparations;
+  const restoredCapture=await defs.get('houdini_request').execute({request_ref:unknown.requestReceipt.request_ref},ctx);
+  assert.equal(restoredCapture.requestReceipt.retrieved,true);assert.equal(restoredCapture.requestReceipt.status,'done');
+  assert.equal(restoredCapture.result.scene_writes,0);assert.equal(restoredCapture.result.semantic_status,'unverified');
+  assert.deepEqual(restoredCapture.images,['C:/fixture/layout-'+before+'.png']);
+  assert.equal(restoredCapture.verbs,undefined,'receipt retrieval has no synthetic Python operation');
+  assert.equal(captures,before);assert.equal(preparations,preparedBefore,'retrieval sends no prepare request or UI request');
+  const captureEvents=[{seq:1,type:'tool/call',data:{name:'houdini_ui_screenshot',callId:'capture-call',arguments:{node:'/obj/demo/CTRL'}}},
+   {seq:2,type:'tool/result',data:{message:{source:{callId:'capture-call'}},meta:{canonical:unknown}}}];
+  assert.equal(projectExecutionState(captureEvents).unresolved_requests.length,1);
+  captureEvents.push({seq:3,type:'tool/call',data:{name:'houdini_request',callId:'capture-recovered'}},
+   {seq:4,type:'tool/result',data:{message:{source:{callId:'capture-recovered'}},meta:{canonical:restoredCapture}}});
+  assert.equal(projectExecutionState(captureEvents).unresolved_requests.length,0);
+  assert.equal(projectExecutionState(captureEvents).last_sequence,100+before);
+  assert.equal(normalizeTraceSteps(captureEvents).uniqueExecutions.length,1);
+ }
+ mode='delay';
+ const captureAbort=new AbortController();onCaptureAdmitted=()=>captureAbort.abort();
+ const captureCancelled=await bridge.captureUi({node:'/obj/demo/CTRL',view:'parameters'},{...owner,callId:'capture-call'},captureAbort.signal);
+ onCaptureAdmitted=undefined;
+ assert.equal(captureCancelled.requestReceipt.status,'unknown_transport');
+ const capturesBeforeRecovery=captures;
+ const cancelledRecovered=await bridge.requestStatus(captureCancelled.requestReceipt.request_ref,owner);
+ assert.equal(cancelledRecovered.requestReceipt.result.result.scene_writes,0);
+ assert.equal(captures,capturesBeforeRecovery,'cancelled post-dispatch capture is recovered without another capture');
  const waiting=defs.get('houdini_request').output.render({}, {ok:true,stdout:'',stderr:'',requestReceipt:{status:'running',request_ref:ref}})[0].text;
  assert.ok(waiting.startsWith('Request receipt status: running'));
  assert.ok(!waiting.includes('Executed successfully.'));
@@ -139,6 +192,6 @@ try{
   {seq:6,type:'tool/call',data:{name:'houdini_request',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
- assert.equal(preparations,edits+jobs+2,'one prepare replaces health; recovery does not prepare or resubmit');
+ assert.equal(preparations,edits+jobs+captures+4,'one prepare per attempted call; recovery does not prepare or resubmit');
 }finally{await new Promise(r=>server.close(r));}
-console.log('exec response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');
+console.log('exec/UI response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');

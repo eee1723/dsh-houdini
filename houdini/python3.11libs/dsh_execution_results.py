@@ -209,6 +209,10 @@ def _operation_summary(name: str, result):
             'current_state_preserved','restored','restore_errors','identity_remaps',
             'original_error','recovery_exception','journaled','scope','layout_status') if k in result} | {
             'box_count': len(result.get('boxes') or [])}
+    if name == 'network_notes':
+        return {k: result[k] for k in ('ok','parent','phase','scene_writes','created','updated','removed','unchanged',
+                                      'restored','restore_errors','identity_remaps','scope') if k in result} | {
+            'note_count': len(result.get('notes') or [])}
     if name == 'layout_nodes' and result.get('mode') in ('handoff','component'):
         return {k:result[k] for k in ('ok','mode','dry_run','applied','scene_writes','plan_sha256','profile','parent',
             'box_count','movable_node_count','moved_node_count','changed_box_count','node_overlap_count',

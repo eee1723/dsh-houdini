@@ -11,6 +11,7 @@
 | `houdini_request` · 查回执行 | 回答某个未知响应的请求是否执行、是否完成；避免重复修改。 | request_ref，或index列出本会话可查回请求。 | 原执行状态与可取得的原始结果；不会重发代码。 | Bridge请求记录，无HOM |
 | `houdini_resource` · 读取资料 | 按需读取原始用户资料与完整历史工具结果。 | kind=source/result、ref及可选分页；result可选JSON Pointer。 | 原文或JSON分页及继续读取位置。 | DSH Host，无HOM |
 | `houdini_capabilities` · 观察通道 | 确认当前模型能否接收图片，以及附件通道是否可用。 | 无需参数。 | 当前模型与附件能力事实；不会渲染或判断画面。 | DSH Host，无HOM |
+| `houdini_ui_screenshot` · 观察界面 | 截图明确节点的原生参数面板或父网络，查看布局、显隐与网络说明；需GUI、自有临时窗口完整在屏内且无遮挡。 | node及可选view、width/height、path/output_policy；不传Python代码。 | 真实PNG附件、实际尺寸、目标和清理事实；识图与捕获分别判断。 | Bridge主线程队列分阶段准备/刷新/捕获，中间让GUI正常刷新 |
 | `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini队列并立即返回。 | Python代码；与exec相同的操作能力。 | jobId及提交回执。 | Houdini串行队列 |
 | `houdini_job_status` · 等待长任务 | 读取或等待长任务状态和结果。 | jobId及可选wait秒数。 | queued/running/done/failed/cancelled及实际结果。 | Bridge任务记录 |
 | `houdini_job_cancel` · 取消长任务 | 取消尚未执行的任务，并对运行中的任务发出取消意图。 | jobId。 | 实际取消状态；运行中的HOM操作不会被强杀。 | Bridge任务控制 |
