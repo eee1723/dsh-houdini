@@ -2430,6 +2430,36 @@
       "input_schema": {
         "type": "object",
         "properties": {
+          "path": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "default": null,
+            "description": "Omit or pass a safe PNG basename for managed/delivery output; explicit accepts a caller destination. Consume the returned allocated path."
+          },
+          "frame": {
+            "anyOf": [{ "type": "number" }, { "type": "null" }],
+            "default": null,
+            "description": "Finite frame to capture; null uses the current frame. The original frame is restored."
+          },
+          "clean": {
+            "type": "boolean",
+            "default": true,
+            "description": "Temporarily hide supported viewport guides and decorations, then restore them."
+          },
+          "frame_target": {
+            "anyOf": [{ "type": "string" }, { "const": true }, { "type": "null" }],
+            "default": null,
+            "description": "Optional node path to frame temporarily; true selects the first displayed OBJ child. Null preserves the current framing. Live hou.Node values are also accepted inside one request."
+          },
+          "textures": {
+            "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+            "default": null,
+            "description": "Optional temporary texture display override; null preserves the current setting."
+          },
+          "backface_cull": {
+            "type": "boolean",
+            "default": false,
+            "description": "Temporarily enable backface culling when true; false preserves the current setting."
+          },
           "output_policy": {
             "type": "string",
             "enum": [

@@ -51,7 +51,7 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 长任务仍在同一主线程串行执行，不提供并发 HOM。queued 任务可在代码运行前取消；running 任务的取消依赖原生协作检查点，不能强杀用户进程。jobId 来自实际提交结果，状态/等待/取消只接受所属会话；后台提交成功不等于计算完成。
 
-HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。运行实例改变或回执过期保留未知，不自动重复修改。
+HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
 
 调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果在 Host 保留并通过 resource 分页读取；模型正文优先返回显式选择的结果、检查与恢复事实，完整 canonical 仍供 Trace 和历史投影使用。重复帮助、已呈现的动词结果和稳定身份清单可用明确详情指针表示；未知诊断、失败与恢复异常不因体积大而静默丢弃。归档失败时保留完整反馈，显示精简不改变执行事实。
 
@@ -78,6 +78,8 @@ node_info 读取实际 parent 下的类型、端口和参数模板，不创建 s
 静态参数卡、批量预检与实时设参以原生模板维数为准，分量名称推导缺失不能把多分量误判成标量。内置BeginEnd、StartEnd、MinMax、MaxMin等命名按目标版本真实HOM回读验证；参数错误同时指出实际解析的节点类型，避免将旧版本参数用于新节点。
 
 写入与求值分别报告。合法 0 不算失败；明确新参数诊断、非有限求值或实际写入失败恢复本调用参数及 keys。旧缓存或无法归属的诊断保留 warning/unverified，随后可显式 cook 检查修复。参数求值成功不证明几何响应正确。
+
+multiparm数量修改的快照包含全部嵌套实例。失败恢复先重建数量与结构，再按原节点identity/参数名恢复值、表达式、keys和锁定状态，并回读确认；仅数量相同不构成恢复成功。render_frame的临时输出/前台参数或frame恢复失败同样进入未恢复修改处理，同批后续写入和保存停止，已写出的外部图像/缓存仍保留为独立事实。
 
 read_parms(names=[...])读取明确字段，string 返回 source_sha256。字符串 patch 使用原文 expected_sha256、old/new 与精确 count，锚点不匹配时本批参数写前拒绝；它只做 literal replace，不执行脚本或正则。set_parms 的 patch 继续 strict，写后失败恢复本批值/keys。
 
@@ -147,6 +149,8 @@ Windows H21/H22按已有原生窗口句柄截取所选区域；使用const effec
 near/behind/far_clip 错误在渲染前拒绝；detail 的二维 intentional_crop 与深度错误分开。camera_fit 修改明确相机并保留其焦距合同；预览服务相机不改作正式相机。渲染或像素差异不证明模型外形和关系正确。
 
 render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复用不删除。服务和预览临时状态独立于作者建模 Undo；图片文件是外部效果。返回 source/framing/pixel/check/artifact 的实际事实，无法解码或旧文件不报新鲜图像。
+
+画面检查的共用合同独立于所选原生后端。H21的OpenGL与H22的Flipbook沿用[工具设计](tool-design.md)中已验证的兼容边界；节点存在和不透明图像成功不证明几何透明、颜色接口或所有参数等价。render_view仍只支持当前GUI合同；原生Flipbook的headless能力不因此被否定，也未扩展为本接口的已验证范围。
 
 渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-visual-checks/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-render/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
 

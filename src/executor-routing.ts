@@ -31,47 +31,58 @@ export class ExecutorDirectory {
   requireRoot(root:string):void {
     if(!path.isAbsolute(root)||canonical(root)!==canonical(this.root)) throw new Error('Shared Houdini registry configuration differs from the Host service; no fallback to a different registry')
   }
+  private async read(id:string,expectedDirectory:string,expectedInstall:string):Promise<ExecutorRecord|undefined> {
+    const filename=path.join(this.root,'endpoints',id+'.json')
+    let stat
+    try {stat=await fs.lstat(filename)}
+    catch(error) {if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error}
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16384||canonical(path.dirname(await fs.realpath(filename)))!==expectedDirectory) throw new Error('Invalid executor record path/size')
+    const text=await fs.readFile(filename,'utf8')
+    if(Buffer.byteLength(text)>16384) throw new Error('Executor record exceeds read budget')
+    const r=JSON.parse(text)
+    if(!r||r.schema!==1||r.executor_id!==id||!ID.test(r.registration_id)||!ID.test(r.runtime_id)
+      ||typeof r.installation!=='string'||!path.isAbsolute(r.installation)
+      ||typeof r.bridge_url!=='string'||!/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/.test(r.bridge_url)
+      ||!Number.isInteger(r.pid)||r.pid<=0||!['registered','disconnected'].includes(r.state)
+      ||typeof r.houdini_version!=='string'||!/^\d+\.\d+\.\d+$/.test(r.houdini_version)
+      ||!(r.task_id===null||typeof r.task_id==='string'&&r.task_id.length>0)
+      ||!(r.hip_path===null||typeof r.hip_path==='string'&&path.isAbsolute(r.hip_path))) throw new Error('Invalid executor record')
+    const port=Number(new URL(r.bridge_url).port)
+    if(port<1024||port>65535) throw new Error('Invalid registered Bridge port')
+    // Accept the configured spelling or its resolved installation identity;
+    // a foreign installation is never loaded to resolve an endpoint record.
+    const recordedInstall=canonical(r.installation)
+    if(recordedInstall!==canonical(this.installation)&&recordedInstall!==expectedInstall)return undefined
+    return r
+  }
   async list(): Promise<ExecutorRecord[]> {
     let files:string[]
     const directory=path.join(this.root,'endpoints')
     try { files=await fs.readdir(directory) }
     catch(error) { if((error as NodeJS.ErrnoException).code==='ENOENT') return [];throw error }
     files=files.filter(f=>f.endsWith('.json')).sort()
-    if(files.length>256) throw new Error('Executor discovery budget exceeded')
-    const configuredInstall=canonical(this.installation)
     const expectedInstall=canonical(await fs.realpath(this.installation))
     const expectedDirectory=canonical(await fs.realpath(directory))
     const records:ExecutorRecord[]=[]
+    let registered=0
     for(const file of files) {
       if(!ID.test(file.slice(0,-5))) throw new Error('Invalid executor record filename')
-      const filename=path.join(directory,file), stat=await fs.lstat(filename)
-      if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16384||canonical(path.dirname(await fs.realpath(filename)))!==expectedDirectory) throw new Error('Invalid executor record path/size')
-      const text=await fs.readFile(filename,'utf8')
-      if(Buffer.byteLength(text)>16384) throw new Error('Executor record exceeds read budget')
-      const r=JSON.parse(text)
-      if(!r||r.schema!==1||r.executor_id!==file.slice(0,-5)||!ID.test(r.registration_id)||!ID.test(r.runtime_id)
-        ||typeof r.installation!=='string'||!path.isAbsolute(r.installation)
-        ||typeof r.bridge_url!=='string'||!/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/.test(r.bridge_url)
-        ||!Number.isInteger(r.pid)||r.pid<=0||!['registered','disconnected'].includes(r.state)
-        ||typeof r.houdini_version!=='string'||!/^\d+\.\d+\.\d+$/.test(r.houdini_version)
-        ||!(r.task_id===null||typeof r.task_id==='string'&&r.task_id.length>0)
-        ||!(r.hip_path===null||typeof r.hip_path==='string'&&path.isAbsolute(r.hip_path))) throw new Error('Invalid executor record')
-      const port=Number(new URL(r.bridge_url).port)
-      if(port<1024||port>65535) throw new Error('Invalid registered Bridge port')
-      // A missing foreign installation is not a reason to load or execute it.
-      // Windows runners can canonicalize a temporary installation differently
-      // through realpath (for example a junction or a long-path alias). The
-      // exact configured spelling is still our installation, so accept it as
-      // well as its resolved spelling; never adopt an unrelated location.
-      const recordedInstall=canonical(r.installation)
-      if(recordedInstall!==configuredInstall&&recordedInstall!==expectedInstall) continue
-      records.push(r)
+      const record=await this.read(file.slice(0,-5),expectedDirectory,expectedInstall)
+      if(!record)continue
+      // Retired process evidence remains available to recovery diagnostics.
+      // It does not consume the budget for this installation's registered targets.
+      if(record.state==='registered'&&++registered>256)throw new Error('Registered executor discovery budget exceeded')
+      records.push(record)
     }
     return records
   }
   async find(id:string):Promise<ExecutorRecord> {
     if(!ID.test(id)) throw new Error('Invalid executor identity')
-    const record=(await this.list()).find(r=>r.executor_id===id)
+    let record:ExecutorRecord|undefined
+    try {
+      record=await this.read(id,canonical(await fs.realpath(path.join(this.root,'endpoints'))),
+        canonical(await fs.realpath(this.installation)))
+    } catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
     if(!record||record.state!=='registered') throw new Error('Bound Houdini is disconnected or absent; no automatic target substitution')
     return record
   }

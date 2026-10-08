@@ -254,6 +254,6 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；GUI验收CLI可隔离开发宿主的MSIX身份，保留自有进程树清理，不改变用户进程环境 |
 | [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
-| [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-opengl-smoke.py](../tools/camera-opengl-smoke.py) | 隔离真实renderer/GUI验收入口，不代替语义识图 |
+| [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-preview-smoke.py](../tools/camera-preview-smoke.py) | 隔离真实renderer/GUI验收；预览入口核对取景、透明几何/实体背板合成与用户状态恢复，不代替任意材质的语义识图 |
 
 程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](product-modeling-evaluation.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

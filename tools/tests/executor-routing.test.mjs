@@ -206,6 +206,36 @@ try {
   await assert.rejects(router.resolve(context(0)),/generation changed/)
   await write({...records[0],task_id:null,hip_path:null})
   await assert.rejects(router.resolve(context(0)),/writer reservation/)
+  // Normal process retirement preserves recovery evidence without exhausting
+  // discovery or making each bound tool enumerate the entire registry history.
+  const retired=Array.from({length:256},(_,index)=>({...records[1],
+    executor_id:index.toString(16).padStart(32,'0'),state:'disconnected'}))
+  await Promise.all(retired.map(write))
+  const withHistory=await router.directory.list()
+  assert.equal(withHistory.length,258)
+  assert.equal(withHistory.filter(r=>r.state==='disconnected').length,256)
+  assert.equal((await router.directory.find(records[1].executor_id)).executor_id,records[1].executor_id)
+  await assert.rejects(router.directory.find(retired[0].executor_id),/disconnected/)
+  const foreign={...records[1],executor_id:'e'.repeat(32),installation:path.join(directory,'other-install')}
+  await write(foreign)
+  await assert.rejects(router.directory.find(foreign.executor_id),/disconnected or absent/)
+  assert.equal((await router.directory.list()).length,258)
+  const malformed='f'.repeat(32)
+  const malformedFile=path.join(endpoints,malformed+'.json')
+  await fs.writeFile(malformedFile,'{}')
+  assert.equal((await router.directory.find(records[1].executor_id)).executor_id,records[1].executor_id,
+    'unrelated malformed history cannot redirect or block an already bound target')
+  await assert.rejects(router.directory.find(malformed),/Invalid executor record/)
+  await assert.rejects(router.directory.list(),/Invalid executor record/)
+  await fs.unlink(malformedFile)
+  await assert.rejects(router.directory.find('../outside'),/Invalid executor identity/)
+  await fs.symlink(directory,malformedFile,process.platform==='win32'?'junction':'dir')
+  await assert.rejects(router.directory.find(malformed),/Invalid executor record path\/size/)
+  await fs.unlink(malformedFile)
+  await Promise.all(retired.map(record=>write({...record,state:'registered'})))
+  await assert.rejects(router.directory.list(),/Registered executor discovery budget exceeded/)
+  assert.equal((await router.directory.find(records[1].executor_id)).executor_id,records[1].executor_id,
+    'discovery capacity cannot block an existing bound identity')
   console.log('shared executor routing: explicit selection, concurrent tools, job isolation, disconnect and fail-closed discovery passed')
 }finally{
   await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))))

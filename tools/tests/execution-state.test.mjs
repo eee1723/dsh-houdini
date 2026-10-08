@@ -79,3 +79,31 @@ for (const [code,unknown] of [['ABORTED',true],['ABORTED_BEFORE_DISPATCH',false]
   assert.equal(projectExecutionNotice(failure)?.unresolved_calls.length??0,Number(unknown))
 }
 console.log('UI capture execution facts: native/nested pending, unknown, recovery and scene-write-free observations passed')
+
+for (const nested of [false,true]) {
+  const history=[]
+  const append=(id,name,value)=>history.push(...(nested?[
+    {type:'tool/ptc-dispatch-start',data:{subCallId:id,name}},
+    {type:'tool/ptc-dispatch',data:{subCallId:id,name,content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:id,tool:name,value})}]}}
+  ]:[{type:'tool/call',data:{callId:id,name}},{type:'tool/result',data:{message:{source:{callId:id}},meta:{canonical:value}}}]))
+  const receipt={request_ref:'job-admission',owner_call:'submit',jobId:'retained-job',status:'job_submitted'}
+  append('submit','houdini_job_submit',{jobId:receipt.jobId,requestReceipt:receipt})
+  append('expired-admission','houdini_request',{ok:true,requestReceipt:{...receipt,status:'result_expired',job_finished:false,job_status:'running',job_result_available:false}})
+  assert.deepEqual(projectExecutionNotice(history).active_jobs,[[receipt.jobId,'running']])
+  assert.deepEqual(projectExecutionNotice(history).unavailable_results,[],'admission expiry does not mean a running job is finished')
+  append('finished','houdini_request',{ok:true,requestReceipt:{...receipt,status:'result_expired',job_finished:true,job_status:'done',job_result_available:true}})
+  assert.deepEqual(projectExecutionNotice(history).active_jobs,[[receipt.jobId,'finished_result_uncollected']])
+  append('late-running','houdini_request',{ok:true,requestReceipt:{...receipt,job_finished:false,job_status:'running'}})
+  assert.deepEqual(projectExecutionNotice(history).active_jobs,[[receipt.jobId,'finished_result_uncollected']],
+    'an older running observation does not undo confirmed completion awaiting collection')
+  append('pruned','houdini_request',{ok:true,requestReceipt:{...receipt,status:'result_expired',job_finished:true,job_result_available:false}})
+  assert.deepEqual(projectExecutionNotice(history).active_jobs,[])
+  assert.equal(projectExecutionNotice(history).unavailable_results[0].job_id,receipt.jobId)
+  append('late-admission','houdini_request',{ok:true,requestReceipt:receipt})
+  assert.equal(projectExecutionNotice(history).unavailable_results.length,1,'late admission cannot erase the unavailable outcome')
+  append('actual-result','houdini_job_status',{ok:true,jobId:receipt.jobId,status:'done'})
+  assert.equal(projectExecutionNotice(history),null,'a real collected result resolves the unavailable outcome')
+  append('late-pruned','houdini_request',{ok:true,requestReceipt:{...receipt,status:'result_expired',job_finished:true,job_result_available:false}})
+  assert.equal(projectExecutionNotice(history),null,'late expiry does not erase an already collected result')
+}
+console.log('Job recovery preserves admission expiry, uncollected results and terminal unavailable outcomes')

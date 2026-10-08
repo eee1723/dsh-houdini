@@ -66,7 +66,7 @@ def _normalized_path(value: str, anchor: Path) -> str:
     candidate = Path(raw)
     if not candidate.is_absolute():
         candidate = anchor / candidate
-    return os.path.normcase(os.path.abspath(candidate)).replace("\\", "/").rstrip("/")
+    return os.path.normcase(str(candidate.resolve())).replace("\\", "/").rstrip("/")
 
 
 def _installed_manifest(root: Path, package_name: str) -> dict | None:
@@ -131,13 +131,24 @@ def inspect_profile(
             reasons.append("package not installed")
 
         if requirement.get("source") == "project":
+            expected_source = _project_source(requirement, project_root)
             if dependency is not None:
                 actual = _normalized_path(str(dependency), root)
                 expected = _normalized_path(
-                    str(_project_source(requirement, project_root)), root
+                    str(expected_source), root
                 )
                 if actual != expected:
                     reasons.append(f"project link points to {actual}")
+            # The manifest records intent; Node loads the actual installation.
+            # samefile accepts junctions and other valid spellings of this source.
+            installed_source = root / "node_modules" / name
+            if package is not None:
+                try:
+                    matches_source = installed_source.samefile(expected_source)
+                except OSError:
+                    matches_source = False
+                if not matches_source:
+                    reasons.append(f"installed project resolves to {installed_source.resolve()}")
         else:
             expected_version = requirement.get("version")
             if expected_version and package_version != expected_version:

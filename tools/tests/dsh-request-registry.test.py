@@ -189,8 +189,10 @@ class Requests(unittest.TestCase):
             ref = self.admit(registry)
             registry.complete(ref, {'ok': True})
         self.assertEqual(registry.status(job, self.owner)['jobId'], 'long-job')
+        self.assertFalse(registry.status(job, self.owner)['job_finished'])
         self.assertEqual(registry.recent(self.owner)['requests'][0]['owner_call'], 'lost-job')
         registry.finish_job(job)
+        self.assertTrue(registry.status(job, self.owner)['job_finished'])
         # The oldest completed routine receipt can be retired first; both slots
         # eventually rotate now that the job worker is terminal.
         for _ in range(2):

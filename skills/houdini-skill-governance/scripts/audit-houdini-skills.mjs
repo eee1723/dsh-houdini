@@ -84,7 +84,10 @@ const args = parseArgs(process.argv.slice(2))
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const root = resolve(args.root ?? join(scriptDir, '..', '..', '..'))
 const skillsRoot = join(root, 'skills')
-const registryPath = join(root, 'src', 'skill.ts')
+// Source checkouts audit the maintained registration. Installed packages audit
+// its compiled copy; no second skill list is maintained by this command.
+const sourceRegistry = join(root, 'src', 'skill.ts')
+const registryPath = existsSync(sourceRegistry) ? sourceRegistry : join(root, 'lib', 'skill.js')
 const issues = []
 const warnings = []
 
@@ -155,6 +158,8 @@ for (const registration of registrations) {
 const report = {
   schemaVersion: 1,
   root,
+  registry: { path: relative(root, registryPath).replaceAll('\\', '/'),
+    kind: registryPath === sourceRegistry ? 'source' : 'installed' },
   summary: {
     skills: skills.length,
     registrations: registrations.length,

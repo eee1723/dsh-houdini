@@ -170,6 +170,22 @@ try:
     tiny.reserve(job_ref,owner,{'request_kind':'job_submit'})
     tiny.complete(job_ref,{'jobId':'long-job'})
     assert tiny.status(job_ref,owner)['jobId']=='long-job'
+    assert tiny.status(job_ref,owner)['job_finished'] is False
+    # A finished job's admission and execution bodies can expire independently.
+    # The public recovery response must not turn a retired job back into active work.
+    b._job_meta[jid] = time.time()-601
+    b._prune_jobs()
+    expired=[]
+    retained_seconds=b._request_registry.retention
+    b._request_registry.retention=-1
+    try:
+        handler('/requests/status',lambda value,status=200:expired.append(value))._route(
+            {'request_ref':job_token,'owner_session':owner})
+    finally:b._request_registry.retention=retained_seconds
+    expired_receipt=expired[0]['requestReceipt']
+    assert expired_receipt['status']=='result_expired' and expired_receipt['jobId']==jid,expired_receipt
+    assert expired_receipt['job_finished'] is True and expired_receipt['job_result_available'] is False,expired_receipt
+    assert hou.node('/obj/'+job_name) is not None,'expiry never undoes the completed scene operation'
     registry=RequestRegistry('a'*32,limit=1,result_bytes=1000,retention=-1);old=registry.issue(owner)
     assert registry.reserve(old,owner,{'code':'x'})
     registry.running(old);registry.complete(old,{'ok':True})

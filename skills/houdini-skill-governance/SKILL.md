@@ -31,8 +31,8 @@ description: 创建、审查、精简和维护 dsh-houdini 的领域 skills，�
 - 设计触发范围、正文、方法自由度和验证范围：[质量规范](references/quality-standard.md)。
 - 从trace、官方文档、视频或工程提炼知识：[证据吸收](references/evidence-ingestion.md)。
 - 版本升级、发布、移除或回滚：[长期维护](references/maintenance-lifecycle.md)。
-- 需要验证治理决策行为时：[验收案例](references/eval-cases.md)。历史案例按当时授权和接口理解，
-  不把旧目录数量、实例答案或历史发布步骤转成当前限制。
+- 需要验证治理决策行为时：[验收案例](references/eval-cases.md)。按当前任务授权和接口选择正反例，
+  不把实例答案或目录数量转成设计限制。
 
 ## 验证与报告
 
@@ -40,13 +40,17 @@ description: 创建、审查、精简和维护 dsh-houdini 的领域 skills，�
 检查直接受影响的实际行为；改变模型选择的指导可用代表性任务观察。单纯删去失效提示无需机械
 重跑整个Houdini、GUI或模型矩阵。结构通过不证明任务质量提高，源码修改不证明live已加载。
 
-目录审计入口：
+目录审计入口（将`$skillDir`替换为当前skill的绝对目录，不依赖任务cwd）：
 
 ```powershell
-node skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs --strict
+$skillDir = 'C:/path/to/dsh-houdini/skills/houdini-skill-governance'
+node "$skillDir/scripts/audit-houdini-skills.mjs" --strict
 ```
 
-它检查目录、注册和引用，不裁定方法是否有用。项目构建及文档门见仓库开发规范。
+默认审计脚本所属的插件；`--root`可明确指定另一份源码或安装包。源码树读取`src/skill.ts`，
+安装包读取同源编译产物`lib/skill.js`，结果标明注册来源。它检查目录、注册和引用，
+不裁定方法是否有用，也不证明Host已加载。开发修改在源码维护并构建，不手改安装包的`lib`；
+安装包检查失败应回到源码/发行流程修复。项目构建及文档门见仓库开发规范。
 说明修改了什么、依据是什么、实际检查了什么和仍未知什么；过程证据留会话或临时产物，
 未完成工作使用现有handoff，不新建技能状态账本。
 

@@ -194,7 +194,8 @@ class RequestRegistry:
                         'note': 'Receipt unavailable or outside the retained window; missing does not prove not executed.'}
             return {**base, 'status': record['status'],
                     'owner_call': record['owner_call'], 'kind': record['kind'],
-                    **({'jobId': record['job_id']} if record.get('job_id') else {}),
+                    **({'jobId': record['job_id'], 'job_finished': bool(record.get('job_finished'))}
+                       if record.get('job_id') else {}),
                     **({'result': json.loads(record['payload'])} if record['payload'] is not None else {}),
                     **({'reason': record['reason']} if 'reason' in record else {}),
                     'note': 'Same-runtime receipt only. Read status/results; never repeat a mutation to retrieve its result.'}

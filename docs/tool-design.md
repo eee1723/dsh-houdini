@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 91
+Execution contract version: 92
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、
@@ -42,6 +42,12 @@ read_parms的Ramp值为JSON对象：type=ramp、basis插值名称、keys控制�
 render_view的H22后端为Flipbook/Vulkan，使用独立Work Lights与OCIO颜色空间；
 H21保持既有OpenGL ROP和设置。两者共用显式SOP代理、相机/深度包络、状态恢复与新鲜度检查。
 H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户Flipbook节点，不删除旧持久服务。
+后端分流不是因为H21缺少Flipbook：两版均有该节点，但参数和渲染行为不完全相同。
+当前支持的H21.0.440在Flipbook Work Lights下不能正确合成几何Alpha，原OpenGL仍可；
+只有新的H21候选构建通过真实透明物体/实体背板对照及状态恢复，才可取消该分流。
+Flipbook没有OpenGL的旧LUT/gamma接口，不能按同名参数或不透明测试外推全部替代。
+平台依据：[Flipbook](https://www.sidefx.com/docs/houdini/nodes/out/flipbook.html)、
+[OpenGL退役说明](https://www.sidefx.com/docs/houdini/nodes/out/opengl.html)；本项目的稳定验证入口见[开发规范](development.md)。
 render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-visual-checks/<run-id>/`；最终交付显式选
 `output_policy='delivery'`写入`$HIP/dsh-render/`。两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
 自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP按明确目标设置`$HIP/dsh-render/...`，已有用户指定输出保留。

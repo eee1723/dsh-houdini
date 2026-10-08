@@ -167,6 +167,7 @@ import dsh_network_layout as network_layout
 import dsh_network_boxes as network_boxes_module
 real_reload=importlib.reload
 real_stop,real_start=bridge.stop,bridge.start
+expected_wrangle_card=cards.operation_card('attribwrangle')
 started=[]
 try:
     bridge.stop=lambda:None
@@ -184,7 +185,7 @@ try:
     assert callable(preview_paths.allocate_managed)
     assert callable(network_layout.union) and callable(network_boxes_module.apply_network_boxes)
     assert network_boxes_module._OWNED_BOXES is box_registry
-    assert cards.operation_card('attribwrangle')['id']=='wrangle-execution-v3'
+    assert cards.operation_card('attribwrangle')==expected_wrangle_card
     assert len(started)==1
 finally:
     importlib.reload=real_reload

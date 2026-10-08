@@ -9,6 +9,7 @@ import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HAS
 const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,uiLists=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
 let onCaptureAdmitted;
+let receiptOverride;
 const server=http.createServer((req,res)=>{
  res.setHeader('content-type','application/json');
  let text='';req.on('data',b=>text+=b);req.on('end',()=>{
@@ -70,6 +71,9 @@ const server=http.createServer((req,res)=>{
    assert(tickets.delete(body.request_ref));
    jobs++;records.set(body.request_ref,{jobId:'job-'+jobs});req.socket.destroy();
   }else if(req.url==='/requests/status'){
+   if(receiptOverride && body.request_ref!=='index'){
+    res.end(JSON.stringify({ok:true,stdout:'',stderr:'',requestReceipt:receiptOverride}));return;
+   }
    res.end(JSON.stringify({ok:true,stdout:'',stderr:'',requestReceipt:body.request_ref==='index'
     ? {runtime_id:runtime,status:'index',requests:[...records.keys()].map(ref=>({request_ref:ref,owner_call:sourceCalls.get(ref)}))}
     : {request_ref:body.request_ref,owner_call:sourceCalls.get(body.request_ref),runtime_id:runtime,status:'done',result:records.get(body.request_ref)}}));
@@ -220,6 +224,21 @@ try{
   {seq:6,type:'tool/call',data:{name:'houdini_request',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
+ const expiredAdmission={request_ref:discovered.request_ref,runtime_id:runtime,owner_call:'lost-job-call',
+  kind:'job_submit',jobId:'job-1',status:'result_expired',job_finished:false,job_status:'running',job_result_available:false};
+ receiptOverride=expiredAdmission;
+ const stillRunning=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
+ assert.equal(stillRunning.requestReceipt.status,'result_expired');
+ assert.equal(stillRunning.requestReceipt.job_finished,false,'expired admission is not completed work');
+ assert.match(stillRunning.requestReceipt.note,/Collect houdini_job_status/);
+ receiptOverride={...expiredAdmission,job_finished:true};delete receiptOverride.job_status;
+ const gone=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
+ assert.equal(gone.requestReceipt.status,'result_expired');assert.equal(gone.requestReceipt.job_finished,true);
+ assert.equal(gone.requestReceipt.job_result_available,false);assert.match(gone.requestReceipt.note,/Do not poll/);
+ const goneText=defs.get('houdini_request').output.render({},gone)[0].text;
+ assert.ok(goneText.startsWith('Request receipt status: result_expired'));
+ assert.ok(!goneText.includes('Executed successfully.'));
+ receiptOverride=undefined;
  assert.equal(preparations,edits+jobs+captures+uiLists+4,'one prepare per attempted call; recovery does not prepare or resubmit');
 }finally{await new Promise(r=>server.close(r));}
 console.log('exec/UI response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');

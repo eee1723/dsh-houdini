@@ -18,13 +18,15 @@ export function apply(ctx) {
   const output = process.env.DSH_CONTEXT_FIXTURE_OUT
   const outcomeReceipts = process.env.DSH_OUTCOME_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
-  const finalStep = outcomeReceipts ? 12 : 10
+  const expiryStart = outcomeReceipts ? 12 : 10
+  const finalStep = expiryStart + 4
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
     .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
   const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
     .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
   const requests = [], bridgeCalls = [], receipts = new Map()
-  let sequence = 0, jobPolls = 0, failure
+  let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, failure
+  const expiredJob = 'c'.repeat(12)
   const writeReport = value => {
     fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2))
     fs.renameSync(output+'.tmp',output)
@@ -73,11 +75,18 @@ export function apply(ctx) {
           : observed({result:{operation:body.code},requestReceipt:receipt})
       } else if (req.url === '/requests/status') {
         assert(receipts.has(body.request_ref), 'must retrieve an original reference')
-        value = {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
-          result:observed({result:{recovered:true}})}}
+        value = body.request_ref===expiryRef
+          ? {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
+              status:'result_expired',jobId:expiredJob,job_finished:++expiryPolls>1,
+              job_result_available:false,...(expiryPolls===1?{job_status:'running'}:{})}}
+          : {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
+              result:observed({result:{recovered:true}})}}
       } else if (req.url === '/jobs') {
-        value = {jobId,requestReceipt:{request_ref:body.request_ref,owner_call:body.owner_call,
-          runtime_id:runtimeId,status:'job_submitted',jobId}}
+        const submittedJob=body.code==='fixture_expiring_work'?expiredJob:jobId
+        value = {jobId:submittedJob,requestReceipt:{request_ref:body.request_ref,owner_call:body.owner_call,
+          runtime_id:runtimeId,status:'job_submitted',jobId:submittedJob}}
+        receipts.set(body.request_ref,value.requestReceipt)
+        if(submittedJob===expiredJob)expiryRef=body.request_ref
       } else if (req.url === '/jobs/' + jobId + '/status') {
         value = observed({jobId,status:++jobPolls === 1 ? 'running' : 'done',result:{fixture:true}})
       } else throw Error('Unexpected Bridge route: ' + req.url)
@@ -173,6 +182,19 @@ export function apply(ctx) {
           assert.deepEqual(canonical.result,expected.result,'fallback and scoped validation are preserved')
           assert.equal(snapshots.length,requests[9].snapshotCount,'caught read/returned validation adds no duplicate scene snapshot')
         }
+        if(step===expiryStart+2){
+          assert(current.includes('running')&&current.includes(expiredJob),'admission expiry must retain genuinely running work')
+          assert(current.includes('"unavailable_results":[]'),'running work is not an unavailable finished result')
+        }
+        if(step>=expiryStart+3){
+          assert(current.includes('"active_jobs":[]')&&current.includes('finished_result_unavailable'),
+            'the actual provider must receive terminal unavailable outcome without an active-job loop')
+          assert(current.includes(expiredJob),'unavailable execution retains its job identity')
+          const recoveredMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(expiryStart+2))
+          assert(recoveredMessage?.content.some(b=>b.type==='text'&&b.text.includes('Do not poll the missing job')),
+            'the actual tool response must tell the provider not to poll or resubmit a pruned job')
+          if(step===finalStep)assert.equal(snapshots.length,requests[expiryStart+3].snapshotCount,'unrelated reads do not repeat expired-result context')
+        }
         const uncertain = ctx.sessions.get(options.sessionId).snapshotEvents()
           .find(event => event.type === 'tool/result' && event.data?.message?.source?.callId === 'context-2')
         const ref = uncertain?.data?.meta?.canonical?.requestReceipt?.request_ref
@@ -184,6 +206,10 @@ export function apply(ctx) {
           ...(outcomeReceipts ? [['houdini_inspect',{code:'fixture_outcome_caught_read'}],
             ['houdini_exec',{code:'fixture_outcome_failed_check'}]] : []),
           ['skill',{name:'houdini-sop-workflow'}],
+          ['houdini_job_submit',{code:'fixture_expiring_work'}],
+          ['houdini_request',{request_ref:expiryRef}],
+          ['houdini_request',{request_ref:expiryRef}],
+          ['houdini_inspect',{code:'fixture_after_expired_job'}],
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]

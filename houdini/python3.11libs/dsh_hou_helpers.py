@@ -3062,17 +3062,51 @@ def _clear_animation(p) -> str | None:
     return desc
 
 
+class _ParameterReference:
+    """Stable channel address while native multiparm instances are recreated."""
+    def __init__(self, parm):
+        self.node_identity = parm.node().sessionId()
+        self.name = parm.name()
+        self.path = parm.path()
+        self.locked = parm.isLocked()
+        self.multiparm = parm.isMultiParmParent()
+        self.depth = len(parm.multiParmInstanceIndices())
+        self.instances = tuple(p.name() for p in parm.multiParmInstances()) if self.multiparm else None
+
+    def resolve(self):
+        node = hou.nodeBySessionId(self.node_identity)
+        parm = node.parm(self.name) if node is not None else None
+        if parm is None:
+            raise RuntimeError(f'{self.path}: original parameter identity no longer exists')
+        return parm
+
+
 def _parameter_snapshot(targets) -> dict:
-    snapshots = {}
+    """Snapshot explicit channels and every instance removed by a count edit."""
+    targets = tuple(targets)
     for target in targets:
-        if target.parmTemplate().type() == hou.parmTemplateType.Data:
-            raise ValueError(f'{target.path()}: data parameters are not scalar values; zero writes. Use the documented node initialization workflow (for example Stash Input), not set_parm(s) on embedded geometry.')
         if target.isLocked():
             raise ValueError(f"参数已锁定：{target.path()}")
+    snapshots = {}
+
+    def capture(target):
+        if target.name() in snapshots:
+            return
+        if target.parmTemplate().type() == hou.parmTemplateType.Data:
+            raise ValueError(f'{target.path()}: data parameters are not scalar values; zero writes. Use the documented node initialization workflow (for example Stash Input), not set_parm(s) on embedded geometry.')
         keys = tuple(target.keyframes())
         value = (target.unexpandedString() if target.parmTemplate().type() == hou.parmTemplateType.String
                  else target.eval()) if not keys else None
-        snapshots[target.name()] = (target, keys, value)
+        reference = _ParameterReference(target)
+        snapshots[reference.name] = (reference, keys, value)
+        if reference.multiparm:
+            # HOM returns immediate instances only; nested count channels need
+            # their own complete snapshots before any outer count can shrink.
+            for instance in target.multiParmInstances():
+                capture(instance)
+
+    for target in targets:
+        capture(target)
     return snapshots
 
 
@@ -3083,41 +3117,62 @@ def _parameter_restore_evidence(snapshots) -> dict:
     that could now identify a replacement node. No parameter or geometry writes.
     """
     errors, channels = [], []
-    for target, keys, value in snapshots.values():
+    for reference, keys, value in snapshots.values():
         try:
-            node = target.node()
-            current = hou.nodeBySessionId(node.sessionId())
-            p = current.parm(target.name()) if current is not None else None
-            if p is None:
-                raise RuntimeError('original parameter identity no longer exists')
+            p = reference.resolve()
             actual_keys = tuple(p.keyframes())
             raw = (p.unexpandedString() if p.parmTemplate().type() == hou.parmTemplateType.String
                    else p.eval()) if not actual_keys else None
-            exact = actual_keys == keys and (bool(keys) or raw == value)
-            channels.append({'node_identity':node.sessionId(),'parameter':p.path(),
+            # H21 Ramp equality is not a structural channel comparison. The
+            # basis, knot positions and values are the native ramp payload.
+            value_matches = (raw.basis() == value.basis() and raw.keys() == value.keys()
+                             and raw.values() == value.values()
+                             if isinstance(raw, hou.Ramp) and isinstance(value, hou.Ramp)
+                             else raw == value)
+            exact = actual_keys == keys and (bool(keys) or value_matches)
+            structure_matches = (not reference.multiparm or
+                p.isMultiParmParent() and tuple(child.name() for child in p.multiParmInstances()) == reference.instances)
+            exact = exact and structure_matches and p.isLocked() == reference.locked
+            channels.append({'node_identity':reference.node_identity,'parameter':p.path(),
                 'key_count_before':len(keys),'key_count_after':len(actual_keys),
                 'state_matches':exact,
+                **({'multiparm_structure_matches':structure_matches} if reference.multiparm else {}),
                 **({'expected_value':_val(value),'actual_value':_val(raw)} if not keys
                    else {'animation_matches':actual_keys == keys})})
             if not exact:
-                errors.append(f'{p.path()}: restored value/expression/keyframes differ from snapshot')
+                errors.append(f'{p.path()}: restored value/expression/keyframes/lock or multiparm structure differ from snapshot')
         except Exception as error:
             errors.append(f'parameter restoration readback: {error}')
     return {'ok':not errors,'channels':channels,'errors':errors,
-            'scope':'exact state of snapshotted channels only; no external side effects or future-state guarantee'}
+            'scope':'exact snapshotted channels and multiparm instance structure only; no external side effects or future-state guarantee'}
 
 
 def _restore_parameters(snapshots) -> list:
     errors = []
-    for target, keys, value in snapshots.values():
+    # Counts rebuild the parameter tree, outermost first. Restore leaves only
+    # after all counts exist, irrespective of the caller's dictionary order.
+    ordered = sorted(snapshots.values(), key=lambda state: (
+        not state[0].multiparm, state[0].depth))
+    for reference, keys, value in ordered:
         try:
-            target.deleteAllKeyframes()
-            if keys:
-                target.setKeyframes(keys)
-            else:
-                target.set(value, follow_parm_reference=False)
+            target = reference.resolve()
+            # An implicit instance may originally be locked. Its containing
+            # count was authorized, so restore its data and original lock as
+            # one state. A newly locked, originally unlocked target still
+            # reports a restoration failure rather than overriding callbacks.
+            if reference.locked:
+                target.lock(False)
+            try:
+                target.deleteAllKeyframes()
+                if keys:
+                    target.setKeyframes(keys)
+                else:
+                    target.set(value, follow_parm_reference=False)
+            finally:
+                if reference.locked:
+                    target.lock(True)
         except Exception as error:
-            errors.append(f"{target.path()}: {error}")
+            errors.append(f"{reference.path}: {error}")
     errors.extend(_parameter_restore_evidence(snapshots)['errors'])
     return errors
 
@@ -3191,6 +3246,7 @@ def set_parm(node, name: str, value,
 
     失败恢复本参数的值/表达式/关键帧，不跟随引用修改其他节点。菜单动画可显式传
     {"expression": "...", "language": "hscript"|"python"}。外部回调不属回滚范围。
+    multiparm数量修改同时快照全部嵌套实例；恢复先重建数量/结构，再恢复实例通道与锁定状态。
     Data/内嵌Geometry参数在快照与写入前拒绝；按节点原生初始化流程处理，不用标量setter。
     字面string可用{"expected_sha256":原始UTF8源码hash,"patch":[{"old":锚点,"new":替换,"count":精确次数}]}。
     1..32项顺序替换，先验证全部锚点/版本；拒绝锁定、动画/表达式、callback和固定菜单。
@@ -3393,6 +3449,7 @@ def set_parms(node, values: dict,
     """批量设参：``{name: value}`` 逐项走 ``set_parm`` 同一套语义（含表达式/关键帧清除）。
 
     默认 strict：预检参数名，失败恢复本批参数（含表达式/关键帧）并抛错。
+    multiparm数量包含其全部嵌套实例快照；恢复后回读实例结构、值、keys与锁定状态。
     ``strict=False`` 仅用于明确允许部分成功的诊断/恢复，返回 ``ok/set/failed``。
     参数回调的外部副作用不能靠参数快照回滚，复杂批次仍需 Bridge undo 事务。
     value支持set_parm的字面string patch对象；只允许strict=True，整批patch验证通过后才写任何参数。
@@ -3410,15 +3467,17 @@ def set_parms(node, values: dict,
     if not strict and any(isinstance(v, dict) and 'patch' in v for v in values.values()):
         raise ParameterPatchError('literal patches require strict=True', n.path())
     if strict:
+        explicit_targets = {}
         for key in values:
             parm = n.parm(key)
             targets = (parm,) if parm is not None else n.parmTuple(key)
             if targets is None:
                 raise ValueError(f"{n.path()} (type={n.type().name()}) 没有参数 {key!r}；请用 list_parms 查询实际节点")
             for target in targets:
-                if target.name() in snapshots:
+                if target.name() in explicit_targets:
                     raise ValueError(f"同批参数重叠：{key!r} 与 {target.name()!r}")
-                snapshots.update(_parameter_snapshot((target,)))
+                explicit_targets[target.name()] = target
+        snapshots = _parameter_snapshot(explicit_targets.values())
         # Validate EVERY patch before the first regular or patch parameter write.
         for key, value in values.items():
             if isinstance(value, dict) and 'patch' in value:
@@ -3752,8 +3811,7 @@ def _update_spare_defaults(n, updates):
 
     def restore_values():
         # Reacquire parms after replacing their templates.
-        return _restore_parameters({name: (n.parm(name), keys, value)
-                                    for name, (_, keys, value) in snapshots.items()})
+        return _restore_parameters(snapshots)
 
     try:
         n.setParmTemplateGroup(group, rename_conflicting_parms=False)
@@ -3800,8 +3858,7 @@ def _apply_spare_interface(n, group, code_parm):
     before = n.parmTemplateGroup()
 
     def refresh():
-        errors = _restore_parameters({name: (n.parm(name), keys, value)
-                                      for name, (_, keys, value) in snapshots.items()})
+        errors = _restore_parameters(snapshots)
         if errors:
             raise RuntimeError(f'code dependency refresh failed: {errors}')
         for name, (_, keys, value) in snapshots.items():
@@ -5965,9 +6022,27 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
                 hou.setFrame(original_frame)
             except Exception as error:
                 restore_errors.append(f'frame: {error}')
+        if float(hou.frame()) != original_frame:
+            restore_errors.append('frame: restoration readback differs')
+        if restore_errors:
+            # Failed image/output checks are ordinary returned diagnostics.
+            # An unrecovered temporary scene write is different: retain its
+            # evidence and let the existing exec protocol block later writes,
+            # cooks, renders and saves even when agent code catches this error.
+            raise CheckpointError('render_frame temporary state restoration failed', {
+                'ok': False, 'phase': 'render_restore', 'restored': False,
+                'restore_errors': restore_errors,
+                'frame_restored': float(hou.frame()) == original_frame,
+                'path': n.path(), 'output': target, 'frame': f,
+                'fresh': file_bytes is not None, 'file_bytes': file_bytes,
+                'pre_fingerprint': pre_fingerprint, 'post_fingerprint': post_fingerprint,
+                'errors': ([render_err] if render_err else []) +
+                          [f'restore failed: {error}' for error in restore_errors],
+                'scope': 'snapshotted output/foreground parameters and frame only; '
+                         'written files, renderer and callback side effects are separate',
+            })
 
     errors: list[str] = []
-    errors.extend(f'restore failed: {error}' for error in restore_errors)
     if render_err:
         errors.append(render_err)
     try:
@@ -6768,7 +6843,7 @@ def _owned_node(parent: hou.Node, name: str, type_name: str) -> hou.Node:
         return node
     node = parent.createNode(type_name, node_name=name)
     node.setUserData(_RENDER_OWNER_KEY, _RENDER_OWNER_VALUE)
-    # H22 may add a flipbook renderer to a HIP that already has H21's OpenGL
+    # A current preview may add Flipbook to a HIP retaining the legacy OpenGL
     # renderer. Place only this newly created root service node beside the
     # existing service group; its default origin would enlarge the box again.
     if (parent.path() in ('/obj', '/out')
@@ -6808,7 +6883,7 @@ def _render_service_box(parent: hou.Node, name: str,
         for index, node in enumerate(nodes):
             node.setPosition(hou.Vector2(anchor_x, anchor_y - index * 1.5))
 
-    # A HIP can retain both H21's OpenGL ROP and H22's flipbook ROP. They are
+    # A HIP can retain both a legacy OpenGL ROP and the current Flipbook ROP. They are
     # persistent service nodes even when only one is used by this preview.
     owned = {
         child for child in parent.children()
@@ -7001,7 +7076,7 @@ _NAMED_DIRECTIONS = {
 
 
 # ``render_view`` is a visual-inspection/presentation path, so its default PNG
-# must be display encoded.  OpenGL ROP renders scene-linear values; writing
+# must be display encoded. The viewport renderer produces scene-linear values; writing
 # those values unchanged to an 8-bit PNG makes ordinary image viewers treat
 # linear samples as sRGB and crushes the shadows.  EXR/HDR remain scene-linear
 # for compositing applications such as Nuke.
@@ -7265,6 +7340,10 @@ def render_view(node, direction="iso", frame=None,
         cam = _owned_node(obj, _RENDER_CAMERA_NAME, "cam")
         cam.parm('projection').set('ortho' if projection == 'orthographic' else 'perspective')
         aim = _owned_node(obj, _RENDER_TARGET_NAME, "null")
+        # Both supported versions provide Flipbook, but H21.0.440 Work Lights
+        # ignore geometry Alpha; its original OpenGL path still composites it.
+        # Keep the tested renderer boundary until the supported H21 build also
+        # passes the real transparency contract, not only the shared node schema.
         use_flipbook = hou.applicationVersion()[0] >= 22
         rop = _owned_node(out, _RENDER_FLIPBOOK_NAME if use_flipbook else _RENDER_ROP_NAME,
                           "flipbook" if use_flipbook else "opengl")

@@ -419,10 +419,9 @@ def main() -> None:
             frontend_output=RAW/'frontend-probe-result.json'
             session_file=next((HOME/'sessions').glob('*/'+session_id+'/session.v4.jsonl.zstd'))
             run_command(str(NODE),str(DRIVER_ROOT/'tools/tests/modeling-trial-ui-artifacts.mjs'),
-                str(session_file),str(RAW/'ui-capture-artifacts.json'))
-            ui_artifacts=json.loads((RAW/'ui-capture-artifacts.json').read_text(encoding='utf-8'))
+                str(session_file),str(RAW/'frontend-artifacts.json'),str(workspace),session_id)
             write_json(frontend_config,{'base':base,'authenticatedUrl':auth.launch_url(),
-                'sessionId':session_id,'output':str(frontend_output),'uiImageNames':[a['name'] for a in ui_artifacts],
+                'sessionId':session_id,'output':str(frontend_output),
                 'modelRunKind':'scripted-no-paid-carrier' if args.smoke else 'paid-agent-task'})
             request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
                 data=json.dumps({'owner_session':session_id}).encode(),

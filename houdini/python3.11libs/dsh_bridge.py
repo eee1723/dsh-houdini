@@ -71,7 +71,7 @@ _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 91
+_EXECUTION_CONTRACT_VERSION = 92
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -261,6 +261,20 @@ def _public_job(job: dict) -> dict:
     """API-visible snapshot of a job record; internal owner fields never leak
     into status/cancel responses or tool output schemas."""
     return {key: value for key, value in job.items() if key not in ("owner_session", "owner_call")}
+
+
+def _request_status(ref, owner):
+    """Admission retention and execution-result retention are separate facts."""
+    receipt = _request_registry.status(ref, owner)
+    if receipt.get('jobId'):
+        with _jobs_lock:
+            job = _jobs.get(receipt['jobId'])
+            if job is not None and job.get('owner_session') == owner:
+                receipt['job_status'] = job['status']
+                receipt['job_result_available'] = job['status'] in ('done', 'failed', 'cancelled')
+            elif receipt.get('job_finished'):
+                receipt['job_result_available'] = False
+    return receipt
 
 
 def _job_activity() -> dict:
@@ -581,7 +595,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._send({'ok':True,'stdout':'','stderr':'',
                         'requestReceipt':(_request_registry.recent(body['owner_session']) if body['request_ref']=='index'
-                                          else _request_registry.status(body['request_ref'],body['owner_session']))})
+                                          else _request_status(body['request_ref'],body['owner_session']))})
             return
         if self.path == '/context':
             if type(body.get('schema_version')) is not int or body.get('schema_version') != 1 or set(body) != {'schema_version'}:

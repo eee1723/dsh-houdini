@@ -323,7 +323,13 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       const findings = checkFindings(canonical, parts);
       const requestReceipt = canonical?.requestReceipt ?? json(parts['request-receipt']);
       const receiptStatus = requestReceipt?.status;
-      const recoveryNeeded = ['unknown_transport', 'unknown_runtime', 'unknown', 'result_expired', 'result_unavailable'].includes(receiptStatus);
+      const jobResultUnavailable = Boolean(requestReceipt?.jobId && requestReceipt.job_finished === true && requestReceipt.job_result_available === false);
+      const recoveryNeeded = jobResultUnavailable || ['unknown_transport', 'unknown_runtime', 'unknown', 'result_expired', 'result_unavailable'].includes(receiptStatus);
+      const receiptJobState = requestReceipt?.jobId
+        ? jobResultUnavailable ? '后台任务已结束 · 结果不可用'
+          : requestReceipt.job_finished === true && requestReceipt.job_result_available === true ? '后台任务已结束 · 待收集结果'
+          : {queued: '后台任务排队中', running: '后台任务执行中'}[requestReceipt.job_status]
+        : null;
       const receiptState = {
         queued: '请求已排队', running: '请求执行中', job_submitted: '后台任务已提交',
         not_executed: '未执行', unknown_transport: '结果未知 · 需要查回',
@@ -371,7 +377,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         : Boolean(info.rollback?.applied && !info.rollback.error);
       const state = pending
         ? "执行中（最后快照）"
-        : jobState || receiptState || (name === 'houdini_job_submit' && canonical?.jobId ? '后台任务已提交' : null)
+        : jobState || receiptJobState || receiptState || (name === 'houdini_job_submit' && canonical?.jobId ? '后台任务已提交' : null)
           || (gateBlocked
           ? "Gate 拦截"
           : rollback

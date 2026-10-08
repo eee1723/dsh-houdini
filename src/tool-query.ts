@@ -18,11 +18,17 @@ export async function recoverRequest(request_ref:string,exec:any,runtime:Houdini
     const receipt = await bridge.requestStatus(request_ref, owner, exec.signal)
     const recovered: any = receipt.requestReceipt
     const jobId = recovered?.jobId || (recovered?.status === 'done' && recovered.result?.jobId)
-    if (jobId) return { ok: true, stdout: '', stderr: '', result: { jobId }, requestReceipt: {
-      request_ref: recovered.request_ref, runtime_id: recovered.runtime_id,
-      owner_call: recovered.owner_call ?? null, status: 'job_submitted', jobId, retrieved: true,
-      note: 'Original job admission recovered, not completed execution. Collect houdini_job_status(jobId).',
-    } }
+    if (jobId) {
+      const {result:_admission,...facts}=recovered
+      const unavailable=recovered.job_finished===true && recovered.job_result_available===false
+      return { ok: true, stdout: '', stderr: '', result: { jobId }, requestReceipt: {
+        ...facts, owner_call: recovered.owner_call ?? null,
+        status: recovered.status==='done' ? 'job_submitted' : recovered.status, jobId, retrieved: true,
+        note: unavailable
+          ? 'Original job has finished and its execution result is no longer retained. Outcome unverified; inspect the scene. Do not poll the missing job or resubmit it.'
+          : 'Original job admission recovered, not its execution result. Collect houdini_job_status(jobId); expiry of the admission body does not mean the job has ended.',
+      } }
+    }
     if (recovered?.status === 'done' && recovered.result) return runtime.result({
       ...recovered.result, requestReceipt: {
         request_ref: recovered.request_ref, runtime_id: recovered.runtime_id,

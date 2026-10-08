@@ -45,7 +45,7 @@ class State:
 
 
 def createViewerStateTemplate():
-    template = hou.ViewerStateTemplate(STATE_NAME, 'XZ 平面坐标', hou.sopNodeTypeCategory())
+    template = hou.ViewerStateTemplate(STATE_NAME, 'Inspect XZ Plane', hou.sopNodeTypeCategory())
     template.bindFactory(State)
     template.bindIcon('SOP_null')
     return template

@@ -158,7 +158,7 @@ expectation可带range=[min,max]检查基准及扰动绝对范围，例如封闭
 每个case先改值/cook，再测指标与接口，最后恢复原值、表达式、关键帧、frame，并核对实际
 output完整bgeo解码数据恢复：排除导出头date和派生group_summary，已知组目录按组名规范排列；
 保留所有组成员、ordered group内部顺序、用户属性及几何。原生Tube/Sphere半径不靠P-only判定。控制测试当前仅支持
-Polygon/Mesh/Sphere/Tube及点几何；Packed/NURBS/volume等在写参数前返回unverified。
+Polygon/Mesh/Sphere/Tube、点几何及预算内的内嵌PackedGeometry；外部Packed、NURBS、volume等在写参数前返回unverified。
 内嵌PackedGeometry的临时地址规范为递归内容标识，实际载荷/属性/变换仍完整比较；不使用未经规范的原始bgeo hash判断恢复。外部Packed等未支持表示仍写前unverified。
 恢复失败必须停止继续改场景并检查，不自动抹掉错误；无法测量的类型保持unverified。
 文件I/O、Python/solver状态、未声明外部回调不属参数恢复范围，不要对此类控制运行测试。

@@ -270,9 +270,8 @@ def read_candidates(root, *, installation):
     if not folder.exists():
         return []
     files = sorted(folder.glob('*.json'))
-    if len(files) > 256:
-        raise ValueError('executor discovery exceeds 256 records; explicit maintenance required')
     rows = []
+    registered = 0
     for file in files:
         if file.is_symlink() or file.resolve().parent != folder.resolve() or file.stat().st_size > 16384:
             raise ValueError('invalid endpoint record path/size')
@@ -287,5 +286,9 @@ def read_candidates(root, *, installation):
         if not 1024 <= int(value['bridge_url'].rsplit(':', 1)[1]) <= 65535:
             raise ValueError('invalid registered port')
         if value.get('installation') == install:
+            if value['state'] == 'registered':
+                registered += 1
+                if registered > 256:
+                    raise ValueError('executor discovery exceeds 256 registered records; explicit maintenance required')
             rows.append({**value, 'connection_status': 'unverified'})
     return rows

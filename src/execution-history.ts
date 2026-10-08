@@ -8,12 +8,13 @@ const RECOVERABLE_CALLS = new Set(['houdini_exec','houdini_ui_list','houdini_ui_
 const OBSERVED_REQUESTS = new Set(['done','not_executed','job_submitted'])
 const UNAVAILABLE_RESULTS = new Set(['result_expired','result_unavailable'])
 const TERMINAL_REQUESTS = new Set([...OBSERVED_REQUESTS,...UNAVAILABLE_RESULTS])
-const TERMINAL_JOBS = new Set(['done','failed','cancelled'])
+const COLLECTED_JOBS = new Set(['done','failed','cancelled'])
+const TERMINAL_JOBS = new Set([...COLLECTED_JOBS,'finished_result_unavailable'])
 
 export function executionHistory(events:readonly SessionEvent[]) {
   const calls=new Map<string,any>(), results=new Map<string,any>()
   const rows:ExecutionRow[]=[], receipts=new Map<string,string>(), jobs=new Map<string,string>()
-  const unavailableResults=new Map<string,{request_ref:string;owner_call:string|null;status:'finished_result_unavailable';retention_status:string;outcome:'unverified'}>()
+  const unavailableResults=new Map<string,{request_ref:string;owner_call:string|null;status:'finished_result_unavailable';retention_status:string;outcome:'unverified';job_id?:string}>()
   const resolvedCalls=new Set<string>()
   const uncertain:Array<{seq:number;callId:string;ref?:string}>=[]
   const failedCalls:Array<{seq:number;callId:string;tool:string;error:any}>=[]
@@ -34,21 +35,33 @@ export function executionHistory(events:readonly SessionEvent[]) {
     }
     if (!value) continue
     const receipt=value.requestReceipt
+    const job=value.jobId??receipt?.jobId
+    const missingJobResult=typeof job==='string' && receipt?.job_finished===true && receipt?.job_result_available===false
     if (typeof receipt?.request_ref==='string') {
       const prior=receipts.get(receipt.request_ref)||''
       if (!TERMINAL_REQUESTS.has(prior) || (!OBSERVED_REQUESTS.has(prior) && OBSERVED_REQUESTS.has(receipt.status)))
         receipts.set(receipt.request_ref,receipt.status)
-      if (OBSERVED_REQUESTS.has(receipts.get(receipt.request_ref)||'')) unavailableResults.delete(receipt.request_ref)
-      else if (UNAVAILABLE_RESULTS.has(receipt.status)) unavailableResults.set(receipt.request_ref,{
+      if (missingJobResult && !COLLECTED_JOBS.has(jobs.get(job)||'')) unavailableResults.set(receipt.request_ref,{
+        request_ref:receipt.request_ref,owner_call:typeof receipt.owner_call==='string'?receipt.owner_call:null,
+        status:'finished_result_unavailable',retention_status:receipt.status,outcome:'unverified',job_id:job,
+      })
+      else if (OBSERVED_REQUESTS.has(receipts.get(receipt.request_ref)||'')
+        && (!unavailableResults.get(receipt.request_ref)?.job_id || COLLECTED_JOBS.has(jobs.get(job)||''))) unavailableResults.delete(receipt.request_ref)
+      else if (UNAVAILABLE_RESULTS.has(receipt.status) && typeof job!=='string') unavailableResults.set(receipt.request_ref,{
         request_ref:receipt.request_ref,owner_call:typeof receipt.owner_call==='string'?receipt.owner_call:null,
         status:'finished_result_unavailable',retention_status:receipt.status,outcome:'unverified',
       })
     }
     if (typeof receipt?.owner_call==='string' && TERMINAL_REQUESTS.has(receipt.status)) resolvedCalls.add(receipt.owner_call)
-    const job=value.jobId??receipt?.jobId
     if (typeof job==='string') {
-      const status=value.status??'queued_or_unknown'
-      if (!TERMINAL_JOBS.has(jobs.get(job)||'') || TERMINAL_JOBS.has(status)) jobs.set(job,status)
+      const status=value.status??(missingJobResult?'finished_result_unavailable'
+        : COLLECTED_JOBS.has(receipt?.job_status)?'finished_result_uncollected':receipt?.job_status??'queued_or_unknown')
+      const previous=jobs.get(job)||''
+      if (!COLLECTED_JOBS.has(previous)
+        && (previous!=='finished_result_uncollected' || TERMINAL_JOBS.has(status))
+        && (!TERMINAL_JOBS.has(previous) || TERMINAL_JOBS.has(status))) jobs.set(job,status)
+      if (COLLECTED_JOBS.has(status)) for (const [ref,entry] of unavailableResults)
+        if (entry.job_id===job) unavailableResults.delete(ref)
     }
     const execution=value.execution
     if (execution && typeof execution.runtime_id==='string' && Number.isFinite(execution.sequence) && Number.isFinite(execution.observed_at))

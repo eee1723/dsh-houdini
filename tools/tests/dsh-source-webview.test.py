@@ -135,6 +135,7 @@ const require=createRequire(process.env.DSH_SOURCE_RUNTIME_BIN);
 const {scopeTarget}=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-scope')));
 const {createAssistantMessage}=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-llm')));
 const config=JSON.parse(fs.readFileSync(process.env.DSH_SOURCE_GUI_CONFIG,'utf8'));
+const {HOUDINI_TOOLS}=await import(config.toolCatalogUrl);
 const write=(path,value)=>{fs.writeFileSync(path+'.tmp',JSON.stringify(value));fs.renameSync(path+'.tmp',path)};
 export const inject=['loader','tools','agentPresets','clientModules','agents'];
 export function apply(ctx) {
@@ -146,7 +147,7 @@ export function apply(ctx) {
         await ctx.loader.await();
         const roster=await ctx.agentPresets.remoteExportList();
         const lease=await ctx.agentPresets.acquireScope('houdini');
-        try {write(config.composition,{roster,tools:ctx.tools.schemas(lease.key).map(t=>t.name),
+        try {write(config.composition,{roster,tools:ctx.tools.schemas(lease.key).map(t=>t.name),expectedHoudiniTools:Object.keys(HOUDINI_TOOLS),
           graph:ctx.clientModules.graph(),rootEntries:[...ctx.loader.entries()].map(e=>({name:e.options.name,disabled:e.disabled}))});}
         finally {await lease[Symbol.asyncDispose]();}
       } catch(error) {write(config.composition,{error:String(error.stack||error)});}
@@ -549,6 +550,7 @@ def main():
         resource = workspace / 'plain.txt'
         resource.write_text('ISOLATED QT TEXT RESOURCE CONTENT\n', encoding='utf-8')
         config = {'base': 'http://127.0.0.1:'+str(port), 'workspace': str(workspace), 'resource': str(resource),
+                  'toolCatalogUrl': (ROOT / 'lib/tool-catalog.js').as_uri(),
                   'composition': str(run / 'composition.json'), 'command': str(run / 'command.json'),
                   'response': str(run / 'response.json'), 'output': str(run / 'result.json'), 'timeout': args.timeout}
         config_path = run / 'config.json'
@@ -576,7 +578,7 @@ def main():
                 assert 'error' not in composition, composition
                 presets = composition['roster']['presets']
                 assert len(presets) == 1 and presets[0]['id'] == 'houdini' and presets[0]['isDefault'], composition
-                assert len([name for name in composition['tools'] if name.startswith('houdini_')]) == 8, composition
+                assert sorted(name for name in composition['tools'] if name.startswith('houdini_')) == sorted(composition['expectedHoudiniTools']), composition
                 assert any(row['name'] == 'dsh-houdini' and not row['disabled'] for row in composition['rootEntries']), composition
                 auth = DshWebSession(config['base'], str(host_log), str(run / 'runtime.json'))
                 deadline = time.monotonic()+10

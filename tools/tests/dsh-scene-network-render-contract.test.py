@@ -209,6 +209,42 @@ try:
         assert result["post_fingerprint"]["sample_sha256"], result
         assert rop.parm("sopoutput").unexpandedString() == original_output, result
 
+        # Ordinary renderer/output failure remains a returned check failure;
+        # confirmed restoration permits the next explicit scene operation.
+        rop.parm('soppath').set('/obj/__missing_render_source__')
+        check_failed = dsh_bridge.run_code(
+            f"__result__=render_frame({rop.path()!r},picture={(tmp_path / 'failed.bgeo.sc').as_posix()!r},timeout=.01)\n"
+            f"set_parm({target_path!r},'tx',2)", owner_session=session)
+        assert check_failed['ok'] and check_failed['result']['errors'], check_failed
+        assert check_failed['outcome']['checks']['failed'] == 1, check_failed
+        assert hou.node(target_path).evalParm('tx') == 2
+        assert rop.parm('sopoutput').unexpandedString() == original_output
+        rop.parm('soppath').set(source_path)
+
+        # A real native post-render callback makes the temporary output write
+        # impossible to restore. This is a failed mutation, not image quality.
+        rop.parm('lpostrender').set('python')
+        rop.parm('postrender').set("hou.pwd().parm('sopoutput').lock(True)")
+        saved_mtime = hip_path.stat().st_mtime_ns
+        try:
+            restore_failed = dsh_bridge.run_code(
+                f"try:\n render_frame({rop.path()!r},picture={(tmp_path / 'locked.bgeo.sc').as_posix()!r},timeout=.01)\n"
+                f"except Exception:\n pass\ntry:\n set_parm({target_path!r},'tx',999)\n"
+                "except Exception:\n pass\ntry:\n scene_save()\nexcept Exception:\n pass\n"
+                f"describe({target_path!r})", owner_session=session)
+            assert not restore_failed['ok'], restore_failed
+            failure = restore_failed['verbs'][0]['summary']
+            assert failure['phase'] == 'render_restore' and failure['restored'] is False, restore_failed
+            assert failure['fresh'] is True and failure['restore_errors'], restore_failed
+            assert all(row['summary']['dispatched'] is False for row in restore_failed['verbs'][1:3]), restore_failed
+            assert restore_failed['verbs'][3]['ok'] is True, restore_failed
+            assert hou.node(target_path).evalParm('tx') == 2
+            assert hip_path.stat().st_mtime_ns == saved_mtime
+            assert (tmp_path / 'locked.bgeo.sc').is_file()  # External file is retained.
+        finally:
+            rop.parm('sopoutput').lock(False)
+            rop.parm('postrender').set('')
+
 
 finally:
     node = hou.node(parent_path)

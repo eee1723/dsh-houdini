@@ -2,7 +2,7 @@
 
 核对日期：2026-10-08
 
-当前源码使用执行合同91，支持当前可见原生pane/Qt窗口/停靠面板的发现与精确观察；交付与领域判断由各skill维护。唯一Houdini模式，DSH精确版本0.2.0-rc.2。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+当前源码使用执行合同92，支持当前可见原生pane/Qt窗口/停靠面板的发现与精确观察；交付与领域判断由各skill维护。唯一Houdini模式，DSH精确版本0.2.0-rc.2。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 

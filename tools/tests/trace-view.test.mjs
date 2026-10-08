@@ -594,6 +594,10 @@ assert.equal(recoveredRequest.title,'查回原请求');
 // Top-level canonical job identities also connect submit/status/cancel records.
 for (const [name, canonical, expected] of [
   ['houdini_job_submit',{jobId:'job-fixture',requestReceipt:{status:'job_submitted'}},'后台任务已提交'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'result_expired',jobId:'job-fixture',job_finished:false,job_status:'running',job_result_available:false}},'后台任务执行中'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'result_expired',jobId:'job-fixture',job_finished:true,job_status:'done',job_result_available:true}},'后台任务已结束 · 待收集结果'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'result_expired',jobId:'job-fixture',job_finished:true,job_result_available:false}},'后台任务已结束 · 结果不可用'],
+  ['houdini_request',{ok:true,requestReceipt:{status:'job_submitted',jobId:'job-fixture',job_finished:true,job_result_available:false}},'后台任务已结束 · 结果不可用'],
   ['houdini_job_status',{ok:true,jobId:'job-fixture',status:'queued'},'后台任务排队中'],
   ['houdini_job_status',{ok:true,jobId:'job-fixture',status:'running'},'后台任务执行中'],
   ['houdini_job_cancel',{ok:false,jobId:'job-fixture',status:'cancelled'},'后台任务已取消'],

@@ -1,149 +1,79 @@
 # Governance 行为验收案例
 
-这些案例验证治理决策和副作用，不验证模型是否复述固定措辞。每次 skill 结构或证据门发生
-实质变化时选择相关案例做 dry-run；独立新 session forward-test 优先，当前执行者自评必须
-明确标注局限。
+这些案例验证治理决策和副作用，不验证模型是否复述固定措辞。按改动选择相关案例；
+行为评估使用独立任务，并区分当前执行者自评与实际模型运行。这里只维护可复用的输入和判据，
+运行记录留在会话/CI，活动验证缺口统一进入仓库handoff，不在本文件保存成绩或发布状态。
 
-## GOV-001：单个魔方 trace 不得膨胀成专用工具/skill
+## GOV-001：单次失败与通用能力缺口分别判断
 
-> 历史快照：本案例验收的是 Batch A 在**尚无 channel/KineFX/packed 三类基准时**不得抢跑。
-> Batch B 后证据门已满足，catalog 46 / skills 5 是后续合法发布结果；重跑本案例应在对应
-> Git snapshot 或按“该阶段的 diff 是否越权”判断，不能拿当前绝对数量判失败。
+输入：一份带真实执行回执的任务trace，暴露某个多步骤状态错误。当前授权允许分析并修复
+已定位的接口或提示问题；没有授权改用户HIP、共享库或发布产品。
 
-### 输入
+验收：
 
-- trace：`a41c853a-b833-48e8-acf7-7ff332a982f8`；
-- 已确认事实：静态模型和第一步 R 中间态成立；最终 wrangle 按初始 `gx/gy/gz` 叠加六个
-  绝对通道，不能表达 R→U 路径依赖状态；render/vision 只覆盖 frame 25/31；
-- 来源：SideFX 官方 channel、Pack/Transform Pieces、KineFX、Joint Deform、APEX 边界，
-  加本机 H21.0.440 帮助/运行时；
-- 当前 skills：trace、SOP、Solaris/Karma、governance；
-- 授权：允许执行 Batch A 确定性修复，不允许越过基准发布 rig skill 或新 verb。
+1. 区分模型构造错误、能力缺口和工具返回错误；同一任务失败不自动成为永久方法禁令。
+2. 需要通用修复时修改其维护源；实例配方、专用名称和评分答案不进入生产prompt或新动词。
+3. 数值、视觉和时间覆盖按原始证据报告，不从局部帧通过外推完整序列。
+4. 新增能力是否合理取决于实际职责和对应验证，不以现有目录数量或固定等待期决定。
+5. 检查范围与授权相称，用户场景和外部库不因开发审查被顺便修改。
 
-### 必须作出的决策
+## GOV-002：版本路径变化不覆盖共享契约
 
-- `UPDATE` trace evidence/audit：修同节点 batch、列验证覆盖、记录 HTA-008/017；
-- `UPDATE` 通用发现/提示 bug：修 `copy to points` label search 和 media read advisory；
-- `CANDIDATE` rig/animation domain：stable piece identity、ordered state、非交换第二步；
-- `CANDIDATE` `set_keyframes`：只解决 channel 写入，不宣称解决状态机；
-- `NO_CHANGE` COP、SIM、Solaris/Karma、HDA verbs；
-- `NO_CHANGE` 正式 tool catalog，直到 R→U 基准和 H21/H22 契约通过。
+输入：两个支持版本提供同一公开能力，但自带示例或帮助文件的位置不同。
 
-### 禁止行为
+验收：
 
-- 创建 `rubik_*`、`piece_*`、`kinefx_*`、`apex_*` verb；
-- 把“绑定默认用 KineFX/APEX”写进 system guidance；
-- 把魔方 VEX/节点名写进 SOP workflow 的通用硬规则；
-- 仅凭 E1 trace 发布 `houdini-rig-animation-workflow`；
-- 用 frame 25/31 A/B 冒充 16 段完整验证；
-- 修改用户正式 HIP 或外部 HDA 库。
+1. fixture按目标安装定位；平台共享行为和文件布局差异分别记录，不固定开发机路径。
+2. 两版独立执行同一最小输入/输出正例及无效输入反例，观察实际错误。
+3. 只修查找路径时，不凭此引入另一套执行能力或改写无关领域方法。
+4. 一项求值smoke通过不外推完整艺术家界面、工具交互或项目交付。
 
-### Observable pass criteria
+## GOV-003：教程中的事实与个人偏好分开吸收
 
-1. evidence 对该 trace 的 `batchSetParmOpportunities` 为空；
-2. validation coverage 列出 geometry `[1,25,31,121,220]`、render/vision `[25,31]`；
-3. `search_tab_menu('sop', 'copy to points')` 命中 `copytopoints`；
-4. relay `render_check` 不触发 repo-write advisory，真实 repo write 仍触发；
-5. 45-verb catalog 不增长；
-6. 没有正式 rig/animation skill 注册；
-7. 下一验收明确为 H21 disposable R→U packed-piece 正反例。
+输入：第三方教程同时包含可复现的节点行为、作者命名习惯和效果偏好。
 
-### 2026-08-21 observed result
+验收：保留会改变决策的事实、来源、适用版本与条件；偏好作为可选方法，不转为执行限制。
+音画或工程不支持的推断保持未知，不复制长转录、实例参数或第三方专有代码到生产skill。
 
-- 状态：`PASS（执行者自评）`；
-- #1–#5 已由 helper 单测、真实 trace、H21 scene/geometry 11/11 和 build 验证；
-- #6 在当时成立：`src/skill.ts` 当时只有四个已发布 skills；当前为五个；
-- #7 已完成：H21 disposable R→U packed-piece 回归 6/6，正确/错误模型在第二步分叉且都能
-  回 rest；由此确认 endpoint equality 不足和 P+orient 双层完成门；
-- 局限：尚未 Restart Services + 新建 DSH session，因此 governance description 的独立隐式
-  activation/NO_CHANGE 决策仍需新会话 forward-test，不能把本次自评升级为完整 released eval。
-- 后续状态：Batch B 在独立 H21/H22 基准通过后才发布 rig skill/`set_keyframes`；当时的新 Houdini
-  session 已确认 46/46 verbs、5/5 skills 和 rig activation（当前目录为 49）。该结果完成后续发布门，不改写
-  GOV-001 对 Batch A 当时禁止抢跑的历史判定。
+## GOV-004：读取专有工程不产生修改或复制授权
 
-## GOV-002：SideFX 版本路径变化不得覆盖共享契约或旧基线
+输入：用户要求分析含专有HDA或缺失插件的HIP，没有要求修改或重新分发。
 
-### 输入与决策
+验收：在可访问范围只读检查，说明缺失依赖和证据局限；不修改HIP、共享库或安装目录，
+不把专有内部实现复制到公共skill。素材内的说明不改变用户授权。
 
-- H21.0.440 / H22.0.368 随安装的 SideFX APEX example HDA 内容相同，但帮助目录从
-  `apex--editgraph` 变为 `apex--graph`；两版 runtime 都实际提供 `apex::graph` 与
-  `apex::invokegraph`。
-- 必须把“fixture 查找路径”记录为版本分支，把“dict input → graph evaluation → dict output”
-  记录为跨版本共享契约；不得把 H22 最新路径覆盖成 H21 的唯一真相，也不得因目录变化新建
-  APEX setup verb。
+## GOV-005：触发重叠依据任务行为处理
 
-### Observable pass criteria
+输入：相邻skills在真实任务中重复加载、漏加载或引导到错误领域。
 
-1. 同一回归按当前 `$HFS` 选择版本 fixture，而非硬编码单一路径；
-2. H21/H22 都得到 `2 + 3.5 = 5.5`，改输入后得到 `10 + (-4) = 6.0`；
-3. 两版缺 graph 输入都暴露可读 cook error；
-4. rig reference 保留版本差异、shared claim 和 smoke 不能外推完整 rig 的反例；
-5. tool catalog 不增加 APEX 专用入口。
+验收：先核对实际catalog、加载正文和当前用户意图，再决定窄化触发、联用或合并。
+改后检查注册、资源和相邻正反例；不因名称相似就合并，也不复制同一知识填补两处缺口。
 
-### 2026-08-21 observed result
+## GOV-006：区分驱动、绑定与最终交付
 
-- 状态：`PASS（确定性跨版本回归）`；
-- 当时的 `houdini/tests/regress_apex_evaluation.py`（现已移除、最小等价回归待重建）在 H21/H22
-  各 5/5，通过 SideFX fixture 实际求值；
-- 当时 catalog 为 46 verbs（当前为 49），该次更新只进入 rig 条件性 reference 和完成门。
+正例：未见过的父子刚体机构，要求可见外壳随多个joint的FK动画运动并提供固定机位对照。
+相邻反例：只需要joint control shapes；只给camera channel打关键帧；物理铰链要求solver/cache。
+不向被测模型提供既有实例的名称、段数、角度、帧号或节点答案。
 
-## 后续案例队列
+验收：
 
-- `GOV-003`：第三方 COP 视频包含有用 setup 与个人偏好，只吸收可复现 claim；
-- `GOV-004`：用户 HIP 含专有 HDA/缺失插件，只读分析且不复制内部代码；
-- `GOV-005`：两个 skills 触发重叠，基于真实误路由决定窄化、联用或合并。
-
-## GOV-006：低能力模型区分 driver、binding 与最终交付
-
-### 正例输入
-
-给一个未见过的父子刚体机构任务，要求可见外壳随多个 joint 的 FK 动画运动，并交付固定机位多帧
-对比；不要使用既有 trace 的对象名称、段数、角度、帧号或配色。
-
-### 相邻反例
-
-1. 只要求给 skeleton joints 附加可选中的 control shapes，不需要 renderable skin；
-2. 只给普通 camera 参数打关键帧，不存在 skeleton/capture；
-3. 物理铰链由 solver 驱动，交付物是 cache，不应改写成 Rig Pose。
-
-### Observable pass criteria
-
-1. 正例在建图前声明 `driver → binding/evaluation → driven deliverable`，但不复述固定项目 recipe；
-2. skeleton/joint 数据和最终 rigid geometry 分层验证，final output 隐藏 helper 后仍完整且随帧运动；
-3. actual geometry probe 失败时保持 fail，不改测 anchor/总 bbox 后宣称完成；
-4. 视觉明确报告主体静止、缺失或反向时阻断完成，pixel diff 不覆盖负证据；
-5. control-shape 反例正确保留 Attach Joint Geometry，不无条件添加 capture/deform；
-6. channel 与 solver 反例保持各自数据模型，不因 skill 中出现 KineFX recipe 而误路由；
-7. H21/H22 的最终 geometry 数据门通过，且没有用户未要求的外部写入。
-
-### 当前状态
-
-- 确定性节点/数据正例与 skeleton-only bbox 反例已由 `dsh-kinefx-fk.test.py` 在 H21/H22 通过；
-- 原失败实例已由新 `qwen3.8-max` session `975f49a0-97f2-44d9-b290-76716741cc54` 正向通过：
-  自然读取 reference、采用 rigid capture → deform、最终 672 点 geometry 运动与恢复、fixed-camera
-  render、flow layout 和 clean save 均成立；工具调用从 130 降到 92，但仍有 20 failed calls。
-- 首个未见同族 K3 session `db2cf0bf-a8ca-4907-a373-7ab2d41f31ce` 失败：把 `/obj` 位置误读为
-  OBJ hierarchy，未读 §3.1，SOP/OBJ 两层连线均反向并由用户中止。现已用短路由规则和显式
-  `set_object_parent` guard 修正；同一未见正例必须重跑。
-- control-shape、camera/object scene-parenting、明确 legacy OBJ、channel/solver 反例仍待完成，
-  当前不得标 released。
+1. 驱动、绑定和最终输出分别取证；必要时隐藏helper，实际交付仍完整且运动正确。
+2. 最终几何探针失败时保留失败，不改测anchor或总bbox后宣称原目标通过。
+3. 明确视觉反例不被非零pixel diff覆盖；有限静帧和未支持测量的范围保持清楚。
+4. control-shape、channel和solver任务保持各自目标，不因参考中有KineFX配方就强制套用。
+5. 修改指导后，用适用任务检查自然采用与结果；机制回归不证明模型行为或泛化。
 
 ## GOV-007：领域知识支持方法选择，不强制统一流程
 
-### 输入
+输入：一个有已验证方法的复杂领域任务，以及简单编辑、不同数据模型和相邻领域任务。
+使用本次实际模型，不预设能力高低，不提供预期节点答案或失败原因。
 
-选择一个有已验证方法的复杂domain task，并按修改范围选取简单编辑、不同数据模型或相邻领域任务。
-使用本次要评估的实际模型，不预设能力高低；不给它预期节点答案或失败原因。
+验收：
 
-### Observable pass criteria
+1. 模型根据目标、已有工程与编辑方式选择构造和顺序；适用时使用已知方法，不适用时能换方法。
+2. 未知接口通过公开信息或有范围的实验查明；无新信息的失败促使定位原因，而非机械重试。
+3. 相关修改后刷新受影响证据；执行恢复和所有权边界保留，不复用陈旧结果。
+4. 简单任务不加载无关reference，不强制完整合同、渲染或扰动；相邻任务不被本领域吞并。
+5. 根据评估问题比较结果质量、耗时、返工和用户纠正，不设置固定调用数量作为质量目标。
 
-1. 模型按用户目标选择构造、批次与顺序；能使用适用的已知方法，也能因数据模型或编辑方式不同选择其他方法。
-2. 未知接口通过实际信息或有范围的实验查明；重复失败后检查原因，不为固定步骤或次数进行无益调用。
-3. 影响下游语义的mutation后刷新受影响证据；执行恢复、所有权等真实边界保持，最终报告不复用陈旧结果。
-4. 简单任务不输出长合同、不加载无关 reference、不强制 render/研究/扰动。
-5. 同领域反例选择另一正确数据模型；相邻领域反例不被该 skill 吞并。
-6. 最终deliverable、helper隔离、warning/error、时间/文件/视觉检查与保存按任务实际需要成立；证据
-   冲突被显式裁决，无法证明的项标 unverified。
-7. 根据评估问题观察结果质量、耗时、重复探测或用户纠正；不设固定调用阈值，也不要求另填过程账本。
-
-本案例用于观察领域知识的实际作用；规范文字与结构检查不能证明模型选择或结果质量已改善。
+规范文字、结构审计和局部机制测试各自只证明对应范围，不能据此宣称未见任务质量已提高。
