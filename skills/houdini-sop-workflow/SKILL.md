@@ -39,6 +39,8 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 
 参数界面使用`houdini-parameter-ui`，骨架或FK使用`houdini-rig-animation-workflow`，材质与正式渲染使用`houdini-solaris-karma-workflow`。教程任务从`houdini-video-tutorial`读取来源与目标；HDA/回调/工具打包使用`houdini-tool-development`。
 
+建模进入连续涂装、标识/贴花、图像校正或纹理遮罩时，按[表面表示选择](references/modeling-methods.md#表面表示与外观制作)决定载体；需要制作图像数据就联用`houdini-cop-workflow`。纯几何、已有贴图消费和常量材质参数不为此额外建COP网络。
+
 ## 观察与修改
 
 按用户目标选择检查，观察能直接回答当前问题的输出。`verify_network`检查明确输出的计算与非空状态；表面完整性通过`geo_piece_stats(..., inspect=True, integrity_only=True)`显式读取。接合、数量、物理尺寸用相应几何检查；需要验证参数系统行为时用`test_controls`执行代表性状态并消费恢复结果，单次定值修改可直接回读相关输出。检查范围与结果一同报告。

@@ -4,6 +4,7 @@ import threading
 import re
 import os
 import hou
+from dsh_project_paths import project_layout
 
 
 def _node(node):
@@ -21,7 +22,8 @@ def hip_file_state():
         is_new = False
     return {'hip_path': path, 'hip_is_new': is_new,
             'hip_dir': None if is_new else os.path.dirname(path),
-            'has_named_path': not is_new, 'file_exists': file_exists}
+            'has_named_path': not is_new, 'file_exists': file_exists,
+            'project_layout': project_layout(path, has_named_path=not is_new)}
 
 
 def unit_length_meters():

@@ -176,6 +176,7 @@ class FakeHou:
 @contextmanager
 def installed(viewer, hip):
     fake = FakeHou(viewer); bbox_frames = []
+    fake.hipFile = SimpleNamespace(path=lambda: str(hip))
     old = (h.hou, h.scene_info, h._webview_was_minimized, h._restore_webview_window,
            h._resolve, h._display_bbox)
     h.hou = fake
@@ -215,6 +216,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert viewer.live.output() == 'original.png' and viewer.live.leaveFrameAtEnd() is True
     assert viewer.viewport.settings().guideEnabled('guide-one') and viewer.reference.isVisible()
     assert result['artifact']['output_policy'] == 'managed'
+    assert result['artifact']['role'] == 'visual_check'
+    assert Path(result['artifact']['project_root']).samefile(base)
     assert not list(Path(result['artifact']['managed_root']).glob('*.reserve'))
     _, _, delivery = run(Viewer(), hip, path='final.png', output_policy='delivery')
     assert delivery['ok'] and delivery['fresh'] and delivery['user_state_restored']
@@ -223,6 +226,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert Path(delivery['path']).parent.resolve() == (base / 'dsh-render').resolve()
     assert delivery['artifact']['actual_path'] == delivery['path']
     assert not list((base / 'dsh-render').glob('*.reserve'))
+    _, _, explicit = run(Viewer(), hip, path='explicit-ui.png', output_policy='explicit')
+    assert explicit['ok'] and explicit['artifact']['role'] == 'visual_check'
+    assert Path(explicit['path']) == base / 'dsh-visual-checks' / 'explicit-ui.png'
 
     linked = Viewer(linked=True); linked_camera = linked.viewport.camera()
     parms_before, keys_before = dict(linked_camera.parms), dict(linked_camera.keys)

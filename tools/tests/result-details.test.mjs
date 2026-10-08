@@ -38,6 +38,10 @@ try {
   }while(offset!==null);
   assert.equal(JSON.parse(collected),raw.result.payload);
   assert.equal(executions,1,'detail retrieval never repeats HOM or scene edits');
+  const catalog=Array.from({length:1100},(_,i)=>({name:'parameter_'+i,menu:[{token:'x',label:'X'}]}));
+  const catalogEnvelope=await retainResult({ok:true,stdout:'',stderr:'',verbs:[{verb:'list_parms',ok:true,result:catalog}]},dir);
+  const leaf=await readResultDetail(dir,catalogEnvelope.details.sha256,'/verbs/0/result/1099/menu/0/token');
+  assert.equal(JSON.parse(leaf.result.text),'x','large typed catalogs remain addressable below the array item');
   await assert.rejects(readResultDetail(dir,'../escape'),/SHA-256/);
   await assert.rejects(readResultDetail(dir,value.details.sha256,'/missing'),/not found/);
   await assert.rejects(readResultDetail(dir,value.details.sha256,'/__proto__'),/not found/);

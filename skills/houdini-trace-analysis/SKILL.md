@@ -35,6 +35,7 @@ node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out 
 ## 证据边界
 
 - 工具成功、动词成功、事务提交、结果正确和交付完成分别判断；失败的子动词也完整保留。回滚成功不能抹掉已尝试操作和外部文件/Python副作用。
+- 终端工具返回成功不等于子进程退出成功。分别读取`processFailures`、`processInterruptions`和原始退出事实；缺少结构化退出字段或明确尾标时保持unknown，不从stdout含Error或没有报错推断。
 - 实际 runtime、execution sequence、request_ref 与 session/author 身份不可互相代替。未知响应必须用同一请求和运行代际查回，后续成功查询或已有文件不能证明原请求没执行。
 - `capabilitySnapshots` 描述当时曝光；当前目录只提供现役背景。目录广度、调用含动词率、动词密度、只读裸探针、Gate 拦截、成功裸修改候选与未知副作用分别解释。
 - 图片资料访问、附件送达、返回内容描述、正确语义核对分别记录。`read_image` 成功只证明访问通道；视觉工具的描述也是待核证据。逐图核对原图、版本/目标、后续描述与最终声称，没有核图保持语义未验证。像素、bbox、亮度与变化不能自动认证对象、连接或质量。

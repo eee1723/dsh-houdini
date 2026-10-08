@@ -89,6 +89,8 @@ Tools与Context按公开请求和上下文记录展示；最终Messages可见集
 
 ## 工具与动词设计视图
 
+命令工具的送达结果与子进程退出分别记录。`processOutcome`优先使用结构化退出字段，否则只识别DSH命令工具明确的尾部退出/超时/停止/信号标记；stdout中的错误字样不是失败证据。`processFailures`与`processInterruptions`分开统计，没有退出事实保持unknown。前端、HTML报告与证据提取使用同源规则；原生调用和PTC子调用使用同一语义。验证见[进程结果回归](../tools/tests/trace-process-outcome.test.mjs)。
+
 动词是稳定的操作意图接口，域只是导航，不是权限分类。工具入口展示职责和执行限制；动词目录
 按实际来源分组、计数，包含兼容项标识，不硬编码总数。签名与语义不确定时以运行时verb_help核对。
 

@@ -3,6 +3,7 @@ import {
   mutatingRawMethodNames,
   parseVerbLedgerLine,
   rawMethodNames,
+  processOutcomeFor,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
 import { HOUDINI_TOOLS } from '../lib/tool-catalog.js';
@@ -62,9 +63,10 @@ export function parseVerbLedger(text) {
   });
 }
 
-export function toolResultFailed(message, text = toolResultText(message)) {
-  return Boolean(message?.isError || message?.content?.some((item) => item?.isError))
-    || /^Execution failed\b/.test(text)
+export function toolResultFailed(message, text = toolResultText(message), tool) {
+  const deliveredError = Boolean(message?.isError || message?.content?.some((item) => item?.isError));
+  if (deliveredError || processOutcomeFor(tool, text)) return deliveredError;
+  return /^Execution failed\b/.test(text)
     || /\nExecution failed:/.test(text)
     || /^Error:/.test(text);
 }
@@ -179,7 +181,8 @@ export function normalizeTraceSteps(events) {
       step: event.data?.step ?? null,
       tool: call.name || '?',
       isHoudini: String(call.name || '').startsWith('houdini_'),
-      failed: toolResultFailed(message, resultText) || (envelope?.status ? envelope.status === 'failed' : envelope?.ok === false),
+      failed: toolResultFailed(message, resultText, call.name) || (envelope?.status ? envelope.status === 'failed' : envelope?.ok === false),
+      processOutcome: processOutcomeFor(call.name, resultText, event.data?.meta),
       args,
       code,
       resultText,

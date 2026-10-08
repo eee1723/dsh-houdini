@@ -17,6 +17,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
         first = launcher._hip_dir()
         assert launcher._hip_dir() == first
         assert c.hip_file_state()['hip_is_new'] and c.hip_file_state()['hip_dir'] is None
+        assert c.hip_file_state()['project_layout']['available'] is False
+        assert h.scene_info()['project_layout']['directories'] == {}
         assert hou.hipFile.eventCallbacks() == callbacks
         importlib.reload(launcher)
         assert launcher._hip_dir() == first and hou.hipFile.eventCallbacks() == callbacks
@@ -37,6 +39,11 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
             assert receipt['ok'], receipt
             assert receipt['result']['has_named_path'] and receipt['execution']['hip_is_new'] is False
             assert pathlib.Path(receipt['execution']['hip_dir']) == pathlib.Path(expected)
+            layout = observed['project_layout']
+            assert layout == receipt['result']['project_layout'] and layout['available'] is True
+            assert pathlib.Path(layout['project_root']).samefile(expected)
+            assert pathlib.Path(layout['directories']['texture']) == pathlib.Path(expected).resolve() / 'dsh-texture'
+            assert not any(pathlib.Path(path).exists() for path in layout['directories'].values())
             hou.hipFile.clear(suppress_save_prompt=True)
             assert c.hip_file_state()['hip_dir'] is None
             assert launcher._UNSAVED_WORKSPACE is None

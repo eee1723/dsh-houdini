@@ -101,7 +101,8 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
     var rawUsage = tryJson(sections["raw-usage"] || "");
     var resultValue = tryJson(sections.__result__ || "");
     var status = sections.status || "";
-    var failed = node.isError === true || status.indexOf("Execution failed") === 0 || status.indexOf("Job failed") === 0;
+    var processOutcome = analysis.processOutcomeFor(call.name, text, node.meta);
+    var failed = node.isError === true || !processOutcome && (status.indexOf("Execution failed") === 0 || status.indexOf("Job failed") === 0);
     var info = {
       key: String(node.seq),
       time: node.time || node.callTime || null,
@@ -119,6 +120,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
       rollback: rollback,
       rawUsage: rawUsage,
       failed: failed,
+      processOutcome: processOutcome,
       statusText: status,
       errorText: failed ? status.replace(/^Execution failed:\s*/i, "").replace(/^Job failed:\s*/i, "") : null,
       text: text,

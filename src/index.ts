@@ -14,6 +14,7 @@ import { sharedExecutorConnection } from './executor-host.js'
 import { installExecutorBinding } from './executor-binding.js'
 import {installHoudiniExecutionLog} from './dsh-adapter.js'
 import {installNodeDeliveryNavigation} from './node-delivery.js'
+import {registerImageTools} from './image-generation.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
@@ -57,7 +58,7 @@ const GUIDANCE: PromptSection = {
     '',
     'Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris, tutorials or network handoff. Construction and presentation methods belong to those skills; tool contracts do not select a modeling strategy.',
     '',
-    'Files and runtime:\nTask outputs anchor under $HIP; reusable tool resources and native Package JSON use the explicitly chosen source and registration locations. Preserve existing resources and conditions. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
+    'Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored to the actual named HIP; the DSH workspace may differ. Managed image generation selects reference or texture purpose and returns its actual path; explicit destinations keep DSH filesystem semantics and need no Houdini. Use the returned reference_downloaded directory when saving network reference images. Reusable tool resources and native Package JSON keep their chosen locations. Do not migrate or clean directories implicitly. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
   ].join('\n'),
 }
 
@@ -68,6 +69,7 @@ export function apply(ctx: Context, config: Config) {
     : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
       config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
   registerHoudiniTools(ctx, connection)
+  registerImageTools(ctx,connection)
   installNodeDeliveryNavigation(ctx,connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)

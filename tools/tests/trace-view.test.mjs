@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import vm from "node:vm";
 import { generatedTraceBlock, resourceIdentity, traceSources } from "../gen-trace-client.mjs";
 import { loadCatalog } from "../catalog-lib.mjs";
+import { PLUGIN_TOOLS } from '../../lib/tool-catalog.js';
 
 const lfResource = Buffer.from("中文工具说明\n第二行\n");
 const crlfResource = Buffer.from("中文工具说明\r\n第二行\r\n");
@@ -33,7 +34,7 @@ const inventory = traceSources();
 assert(inventory.presets.every(p => p.paragraphStarts[0].startsWith('You are ')),
   'persona identity retains the opening used for historical reading groups');
 assert(inventory.guidance.bytes > 0);
-assert.equal(Object.keys(inventory.tools).length,10);
+assert.deepEqual(Object.keys(inventory.tools).sort(),Object.keys(PLUGIN_TOOLS).sort());
 assert(inventory.presets.every(p => p.bytes > 0 && !('text' in p)));
 assert(
   inventory.skills.every((s) => s.files.some((f) => f.path === "SKILL.md")),
@@ -246,7 +247,7 @@ const data = View.model(snapshot);
 assert.equal(data.requests.length, 2, "deduplicate request usage");
 assert.equal(data.statistics.requestUsage.reported, 1);
 assert.equal(data.statistics.requestUsage.input, 310);
-assert.equal(data.statistics.knownToolCount,10);
+assert.equal(data.statistics.knownToolCount,Object.keys(PLUGIN_TOOLS).length);
 assert.equal(data.statistics.usedToolCount,1);
 assert.equal(data.statistics.toolCalls,1,'current tool catalog summary excludes legacy names, retained in request visibility');
 assert.equal(data.statistics.toolUsage.get('houdini_exec').calls,1,'replayed and stale running results do not inflate counts');
@@ -495,7 +496,7 @@ assert.equal(all(tree).find(n=>n.props['aria-label']==='技能加载命令').pro
 assert.match(content(tree),/正文返回 1 次/);
 assert.match(content(tree),/当前上下文是否仍保留正文未采集/);
 tree = click("工具");
-assert.match(content(tree),/当前包提供 10 个工具/);
+assert(content(tree).includes(`当前包提供 ${Object.keys(PLUGIN_TOOLS).length} 个工具`));
 assert.match(content(tree),/本任务已用 1 个/);
 for(const [name,tool] of Object.entries(inventory.tools)) {
   assert(content(tree).includes(name),'full tool catalog includes '+name);
@@ -511,7 +512,7 @@ tree=click('请求可见工具');
 assert.match(content(tree),/houdini_query/,'legacy tools stay visible through historical requests/calls');
 selectedSnapshot={};selectedSession='empty-fixture';
 tree=click('工具目录');
-assert.equal((content(tree).match(/本任务调用 0 次/g)||[]).length,10,'another selected task does not inherit usage');
+assert.equal((content(tree).match(/本任务调用 0 次/g)||[]).length,Object.keys(PLUGIN_TOOLS).length,'another selected task does not inherit usage');
 tree=click('技能');
 assert(!content(tree).includes('正文返回 1 次'),'current package skills do not become actual loads in a fresh task');
 selectedSnapshot=snapshot;selectedSession='fixture';
@@ -800,3 +801,34 @@ for (const [verb, facts, target, reason] of [
   const finding=View.model({eventNodes:[node]}).entries[0].checkFindings[0];
   assert.equal(finding.target,target);assert.equal(finding.reason,reason);
 }
+// Same shell outcome projection as the offline audit; do not label a failed
+// child process as an unsuccessful tool delivery or as a successful command.
+const shellEvents=JSON.parse(fs.readFileSync(new URL('./fixtures/test69-shell-exits.json',import.meta.url),'utf8'));
+const shellNodes=shellEvents.filter(e=>e.type==='tool/result').map(e=>{
+  const c=shellEvents.find(c=>c.type==='tool/call'&&c.data.callId===e.data.message.source.callId);
+  return {...result(c.data.callId,'pwsh',e.seq,e.time,e.data.message.content[0].text),isError:false};
+});
+const processModel=View.model({eventNodes:shellNodes});
+assert.equal(processModel.statistics.failedProcesses,2);
+assert.equal(processModel.statistics.toolUsage.get('pwsh').failed,0);
+for(const entry of processModel.entries){
+  assert.equal(entry.failed,false);
+  assert.equal(entry.processOutcome.exitCode,1);
+  assert.equal(entry.processFailed,true);
+  assert.equal(entry.state,'进程失败 · 退出 1');
+  assert.equal(entry.attentionLevel,'error');
+}
+hooks=[];selectedSnapshot={eventNodes:shellNodes};
+tree=render();tree=click('需要关注');
+assert.equal(callRows(tree).length,2);
+callRows(tree)[0].props.onClick();tree=render();
+assert.match(content(tree),/命令进程退出失败/);
+assert.match(content(tree),/工具调用已返回/);
+const interruptedNode=result('interrupted-process','pwsh',900,900,'[timed out after 30000ms]\n[exit code: 1]');
+interruptedNode.isError=false;
+const interruptedModel=View.model({eventNodes:[interruptedNode]});
+assert.equal(interruptedModel.statistics.failedProcesses,0);
+assert.equal(interruptedModel.statistics.interruptedProcesses,1);
+assert.equal(interruptedModel.entries[0].state,'进程已终止 · 超时');
+assert.equal(interruptedModel.entries[0].committed,false);
+assert.equal(interruptedModel.entries[0].attentionLevel,'warning');

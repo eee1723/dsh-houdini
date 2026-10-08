@@ -1,6 +1,6 @@
 # Houdini 工具说明
 
-本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。参数及执行以[src/tools.ts](../src/tools.ts)为准。
+本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。Houdini参数及执行以[src/tools.ts](../src/tools.ts)为准，Host生图以[image-generation](../src/image-generation.ts)为准。
 
 系统提供准确的场景信息、充分的批量操作、真实反馈和观察结果。理解需求、选择方法、安排步骤与判断效果由模型负责；领域知识按任务需要读取。
 
@@ -16,6 +16,8 @@
 | `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini队列并立即返回。 | Python代码；与exec相同的操作能力。 | jobId及提交回执。 | Houdini串行队列 |
 | `houdini_job_status` · 等待长任务 | 读取或等待长任务状态和结果。 | jobId及可选wait秒数。 | queued/running/done/failed/cancelled及实际结果。 | Bridge任务记录 |
 | `houdini_job_cancel` · 取消长任务 | 取消尚未执行的任务，并对运行中的任务发出取消意图。 | jobId。 | 实际取消状态；运行中的HOM操作不会被强杀。 | Bridge任务控制 |
+| `image_models` · 发现生图模型 | 读取DSH已配置的OpenAI兼容API路由和模型名称，供指定生图模型使用；不调用模型，不证明图片接口可用。 | 可选provider和模型名称子串query，默认image。 | 配置中的provider/model及图片接口支持尚未验证的说明；不返回凭据。 | DSH Host，无HOM |
+| `image_generate` · 生成参考或纹理图 | 使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。 | provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。 | 实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。 | DSH Host HTTP与文件；managed只读查询所选Houdini现场 |
 
 观察现场和读取历史分开，是因为前者读取当前Houdini，后者可以在Houdini离线时使用。查回执行分开，是因为响应丢失后应取回原结果。长任务的提交、等待和取消分开表达各自真实状态。
 

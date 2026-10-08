@@ -242,32 +242,27 @@ def _observe_impact(nodes, impact, descendants=False):
             impact['unavailable'] = True
 
 
-def _verb_value(value, _depth: int = 0):
-    """把动词的入参/出参转成紧凑 JSON 安全形式（hou.Node → path，逐层递归）。"""
-    if _depth > 8:
-        return repr(value)
+def _hom_json_leaf(value):
+    """Convert HOM leaves; shared serialization owns containers and limits."""
     if isinstance(value, hou.Node):
         try:
             return {"node": value.path()}
         except Exception:
             return {"node": repr(value)}
     if isinstance(value, (hou.Vector2, hou.Vector3, hou.Vector4)):
-        return [_jsonable(float(x)) for x in value]
+        return [float(x) for x in value]
     if isinstance(value, hou.Color):
-        return [_jsonable(float(x)) for x in (
+        return [float(x) for x in (
             value.r(), value.g(), value.b(), value.a(),
         )]
     if isinstance(value, (hou.Matrix3, hou.Matrix4)):
-        return [[_jsonable(float(x)) for x in row] for row in value]
-    if isinstance(value, (list, tuple)):
-        if len(value) > 50:
-            return repr(value)
-        return [_verb_value(v, _depth + 1) for v in value]
-    if isinstance(value, dict):
-        if len(value) > 50:
-            return repr(value)
-        return {str(k): _verb_value(v, _depth + 1) for k, v in value.items()}
-    return _jsonable(value)
+        return [[float(x) for x in row] for row in value]
+    return NotImplemented
+
+
+def _verb_value(value, _depth: int = 0):
+    """Typed, bounded snapshot of verb arguments/results, including HOM leaves."""
+    return _jsonable(value, _depth, _transform=_hom_json_leaf, _max_depth=8)
 
 
 class _DispatchBlockedError(RuntimeError):
@@ -286,7 +281,7 @@ def _unrecovered_mutation(entry):
     """Only a failed dispatched write without recovery evidence poisons a batch."""
     if entry.get('ok') or entry.get('verb') not in _MUTATING_VERB_NAMES:
         return False
-    facts = entry.get('summary') or {}
+    facts = entry.get('summary') if isinstance(entry.get('summary'), dict) else {}
     restored = facts.get('restored', facts.get('batch_parameter_state_restored',
                                                facts.get('parameter_state_restored')))
     return facts.get('scene_writes') != 0 and restored is not True

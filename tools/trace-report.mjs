@@ -125,6 +125,8 @@ const toolCount = {};
 for (const s of steps) toolCount[s.tool] = (toolCount[s.tool] || 0) + 1;
 const rawHouSteps = steps.filter((s) => s.isHoudini && !isHoudiniHostCall(s) && !isStructuredHoudiniCall(s) && s.verbs.length === 0);
 const failedSteps = steps.filter((s) => s.failed);
+const processFailures = steps.filter(s => s.processOutcome?.status === 'failed');
+const processInterruptions = steps.filter(s => s.processOutcome?.status === 'interrupted');
 const advisorySteps = steps.filter((s) => s.advisory);
 const totalVerbCalls = Object.values(verbCount).reduce((a, b) => a + b, 0);
 const validationCoverage = collectValidationCoverage(
@@ -213,6 +215,8 @@ const timelineHtml = steps.map((s, i) => {
   ).join('');
   const badges = [
     s.failed ? chip('失败', 'fail') : '',
+    s.processOutcome?.status === 'failed' ? chip(`进程退出 ${s.processOutcome.exitCode}`, 'fail') : '',
+    s.processOutcome?.status === 'interrupted' ? chip(`进程终止 · ${s.processOutcome.interruption}`, 'warn') : '',
     s.rawMethods.length > 0 ? chip(
       `裸 HOM ×${s.rawMethods.length}`,
       s.mutatingRawMethods.length ? 'bad' : 'warn',
@@ -224,11 +228,12 @@ const timelineHtml = steps.map((s, i) => {
   if (s.code) detailParts.push(`<div class="lbl">code</div><pre>${esc(s.code)}</pre>`);
   if (Object.keys(s.args).length && !s.code) detailParts.push(`<div class="lbl">args</div><pre>${esc(JSON.stringify(s.args, null, 2))}</pre>`);
   if (s.advisory) detailParts.push(`<div class="lbl">advisory</div><pre class="adv">${esc(s.advisory)}</pre>`);
+  if (s.processOutcome) detailParts.push(`<div class="lbl">process outcome (separate from tool delivery)</div><pre>${esc(JSON.stringify(s.processOutcome))}</pre>`);
   detailParts.push(`<div class="lbl">model-facing result</div><pre>${esc(s.resultText)}</pre>`);
   if (s.canonical) detailParts.push(`<div class="lbl">canonical returned envelope (audit metadata)</div><pre>${esc(JSON.stringify(s.canonical,null,2))}</pre>`);
   else if(s.canonicalStatus==='referenced_artifact_only')detailParts.push('<p>Full envelope is referenced by result-details; this trace event has no canonical metadata. Do not treat omitted fields as absent facts.</p>');
   return `
-  <div class="step ${s.failed ? 'failed' : ''}">
+  <div class="step ${s.failed || s.processOutcome?.status === 'failed' ? 'failed' : ''}">
     <div class="step-head">
       <span class="t">${fmtTime(s.time)}</span>
       <span class="seq">#${i + 1}</span>
@@ -347,6 +352,8 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num">${verbAdoption.successfulVerblessRawMutationCalls}</div><div class="cap">成功返回的无动词裸修改候选</div></div>
       <div class="card"><div class="num">${verbAdoption.blockedVerblessRawMutationCalls}</div><div class="cap">Gate 执行前拦截</div></div>
       <div class="card"><div class="num" style="color:${failedSteps.length ? 'var(--bad)' : 'var(--ok)'}">${failedSteps.length}</div><div class="cap">失败调用</div></div>
+      <div class="card"><div class="num" style="color:${processFailures.length ? 'var(--bad)' : 'var(--ok)'}">${processFailures.length}</div><div class="cap">命令进程退出失败（独立统计）</div></div>
+      <div class="card"><div class="num">${processInterruptions.length}</div><div class="cap">命令进程终止（超时、停止或信号）</div></div>
       <div class="card"><div class="num">${advisorySteps.length}</div><div class="cap">advisory 触发</div></div>
       <div class="card"><div class="num">${replayedResults.length}</div><div class="cap">compaction replay</div></div>
       <div class="card"><div class="num" style="color:${unmatchedResults.length ? 'var(--bad)' : 'var(--ok)'}">${unmatchedResults.length}</div><div class="cap">无匹配 call 的 result</div></div>

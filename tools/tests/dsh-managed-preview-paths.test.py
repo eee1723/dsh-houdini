@@ -14,6 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 import dsh_preview_paths as paths
+import dsh_project_paths as project_paths
 
 
 def reject(fn, expected):
@@ -39,10 +40,26 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     base = Path(tmp)
     hip = base / '项目 scene.hip'
     hip.touch()
+    # Metadata is a read-only observation of the named HIP, not a workspace
+    # fallback, mkdir operation, or permission claim.
+    layout = project_paths.project_layout(str(hip), has_named_path=True)
+    assert layout['available'] and layout['schema_version'] == 1
+    assert Path(layout['project_root']).samefile(base)
+    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'render', 'visual_check'}
+    assert Path(layout['directories']['reference_downloaded']) == base.resolve() / 'dsh-reference' / 'downloaded'
+    assert Path(layout['directories']['reference_generated']) == base.resolve() / 'dsh-reference' / 'generated'
+    assert Path(layout['directories']['texture']) == base.resolve() / 'dsh-texture'
+    assert {entry.name for entry in base.iterdir()} == {hip.name}
+    for filename, named in ((str(hip), False), (None, False), ('relative.hip', True)):
+        missing = project_paths.project_layout(filename, has_named_path=named)
+        assert missing['available'] is False and missing['directories'] == {}
+        assert missing['hip_path'] is None and missing['project_root'] is None
     first = allocate(hip)
     second = allocate(hip, '中文 wide view.$F4.png')
     third = allocate(hip, owner='session-b')
     assert first['output_policy'] == 'managed'
+    assert first['role'] == 'visual_check' and first['lifecycle'] == 'visual-check'
+    assert first['project_root'] == layout['project_root']
     assert Path(first['actual_path']).parent.parent.name == 'dsh-visual-checks'
     assert Path(first['managed_root']) == Path(first['actual_path']).parent
     assert first['hip_relative_path'].startswith('dsh-visual-checks/')
@@ -56,6 +73,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     # that alias to the same directory's long spelling.
     assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-render')
     assert delivery['output_policy'] == 'delivery' and delivery['hip_relative_path'].startswith('dsh-render/')
+    assert delivery['role'] == 'render' and delivery['lifecycle'] == 'render-output'
+    assert delivery['project_root'] == layout['project_root']
     assert delivery['actual_path'] != another_delivery['actual_path']
     assert paths.with_actual_path(delivery, delivery['actual_path'], str(hip))['output_policy'] == 'delivery'
     assert paths.release_reservation(delivery) == [] and paths.release_reservation(another_delivery) == []
@@ -143,6 +162,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     other_hip = other / 'renamed.hip'
     other_hip.touch()
     after_save_as = allocate(other_hip)
+    assert after_save_as['project_root'] != first['project_root']
+    assert paths.with_actual_path(first, first['actual_path'], str(hip))['project_root'] == layout['project_root']
     # CI may create the fixture under an 8.3 short user path while the managed
     # allocator resolves it to the long spelling. Compare filesystem paths,
     # not those two lexical spellings of the same directory.
@@ -170,6 +191,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
                                       capture_output=True, text=True)
                 symlink_checked = made.returncode == 0
         if symlink_checked:
+            visible = project_paths.project_layout(str(redirected_hip), has_named_path=True)
+            role = 'visual_check' if policy == 'managed' else 'render'
+            assert Path(visible['directories'][role]) == redirected.resolve() / folder
             reject(lambda: allocate(redirected_hip, output_policy=policy), 'redirected')
             os.rmdir(link)
             outside_store = base / ('outside-store-' + policy)
@@ -244,5 +268,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
                                        frame=1, purpose='delivery')
     assert explicit['output_policy'] == 'explicit'
     assert explicit['managed_root'] is None and explicit['capture_id'] is None
+    assert explicit['role'] == 'visual_check' and explicit['project_root'] == layout['project_root']
+    outside = paths.explicit_artifact(None, base / 'outside-named-project.png', frame=1, purpose='existing_ui')
+    assert outside['project_root'] is None and outside['hip_relative_path'] is None
 
 print('managed preview path policy passed')

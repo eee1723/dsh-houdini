@@ -216,15 +216,23 @@ function renderFields(value: ExecResult): string[] {
         && JSON.stringify(summary) === JSON.stringify(sourceSummary)
       // An explicit Bridge summary or passed check supports focused output.
       // Unknown/unclassified results stay inline even when Python succeeded.
-      const hasSelectedResult = value.result !== undefined && verb.ok === true && verb.check_status === 'passed'
+      const parameterCatalog = object(summary)?.kind === 'parameter_catalog'
+      const hasSelectedResult = !parameterCatalog && value.result !== undefined && verb.ok === true && verb.check_status === 'passed'
       const needsAttention = verb.ok === false || ['failed', 'warning', 'unverified'].includes(String(verb.check_status))
+        || (typeof result === 'string' && result.startsWith('[dsh-houdini: JSON value omitted:'))
+      // A catalogue is discovery data, not a passed validation. With no
+      // selected output its full contents are the answer; with __result__ the
+      // caller's filtering wins and the typed catalogue stays in the archive.
+      const summarizedResult = sameSummary && (!parameterCatalog
+        || (verb.verb === 'list_parms' && verb.ok === true && verb.check_status === undefined
+          && Array.isArray(result) && object(summary)?.parameter_count === result.length && value.result !== undefined))
       return {
         ...entry, detail_pointer: `/verbs/${index}`,
         ...(summary !== undefined ? { summary: sameSummary
           ? { evidence_pointer: `/evidence/${evidenceIndex}`, detail_pointer: `/verbs/${index}/summary` }
           : project(summary, `/verbs/${index}/summary`) } : {}),
         ...(verb.verb !== 'verb_help' && result !== undefined
-          ? { result: !needsAttention && (sameSummary || hasSelectedResult)
+          ? { result: !needsAttention && (summarizedResult || hasSelectedResult)
             ? { detail_pointer: `/verbs/${index}/result` }
             : project(result, `/verbs/${index}/result`) } : {}),
       }

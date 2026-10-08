@@ -188,6 +188,7 @@ function analyzeTrace(file) {
       tool: source.tool,
       isHoudini: source.isHoudini,
       failed: source.failed,
+      processOutcome: source.processOutcome,
       args: compact && code ? { ...source.args, code: undefined } : source.args,
       codeChars: code.length,
       codeHash: code ? digest(code) : null,
@@ -227,6 +228,14 @@ function analyzeTrace(file) {
     time: step.time,
     tool: step.tool,
     resultPreview: step.resultPreview,
+  }));
+  const processFailures = steps.filter(step => step.processOutcome?.status === 'failed').map(step => ({
+    index:step.index,callSeq:step.callSeq,resultSeq:step.resultSeq,time:step.time,
+    tool:step.tool,toolFailed:step.failed,...step.processOutcome,resultPreview:step.resultPreview,
+  }));
+  const processInterruptions = steps.filter(step => step.processOutcome?.status === 'interrupted').map(step => ({
+    index:step.index,callSeq:step.callSeq,resultSeq:step.resultSeq,time:step.time,
+    tool:step.tool,toolFailed:step.failed,...step.processOutcome,resultPreview:step.resultPreview,
   }));
   const failedVerbCalls = steps.flatMap((step) => step.verbs
     .filter((verb) => !verb.ok)
@@ -484,6 +493,8 @@ function analyzeTrace(file) {
       usedDomains: usedDomains.sort(),
     },
     failedCalls,
+    processFailures,
+    processInterruptions,
     failedVerbCalls,
     partialParameterFailures,
     rawHoudiniNoVerb,
@@ -546,6 +557,8 @@ const output = {
   traceCount: traces.length,
   aggregate: {
     toolCalls: traces.reduce((sum, trace) => sum + trace.toolCalls, 0),
+    processFailures: traces.reduce((sum, trace) => sum + trace.processFailures.length, 0),
+    processInterruptions: traces.reduce((sum, trace) => sum + trace.processInterruptions.length, 0),
     verbCalls: traces.reduce((sum, trace) => sum + trace.verbCalls, 0),
     toolCounts: sortCounts(aggregateToolCounts),
     verbCounts: sortCounts(aggregateVerbCounts),

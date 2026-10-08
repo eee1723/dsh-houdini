@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import hou
@@ -115,6 +116,7 @@ try:
         path=h._resolve_output_path('preview.$F4.png', frame=3, default_subdir='render')
         assert Path(path)==base/'render'/'preview.0003.png', path
         assert Path(h._resolve_output_path('render/preview.png', frame=1, default_subdir='render'))==base/'render'/'preview.png'
+        assert Path(h._resolve_output_path('preview.png', frame=1)) == base/'dsh-render'/'preview.png'
         reject(lambda:h._resolve_output_path('../outside.png',frame=1,default_subdir='render'), 'outside')
         reject(lambda:h._resolve_output_path('no_extension',frame=1,default_subdir='render'), 'extension')
         reject(lambda:h._resolve_output_path(str(Path(__file__).resolve().parents[2]/'bad.png'),frame=1,default_subdir='render'), 'repository')
@@ -124,6 +126,7 @@ try:
                 output_policy='managed', default_label='preview', default_subdir='render')
         assert Path(managed).parent.parent==base/'dsh-visual-checks'
         assert managed_artifact['output_policy']=='managed' and '0003' in Path(managed).name
+        assert managed_artifact['role']=='visual_check' and Path(managed_artifact['project_root'])==base
         assert h._release_preview_reservation(managed_artifact)==[]
         explicit, explicit_artifact, _ = h._preview_artifact(
             (base/'delivery'/'preview.png').as_posix(), frame=3,
@@ -131,6 +134,12 @@ try:
             default_label='preview', default_subdir='render')
         assert Path(explicit)==base/'delivery'/'preview.png'
         assert explicit_artifact['managed_root'] is None
+        assert explicit_artifact['role']=='visual_check' and explicit_artifact['lifecycle']=='visual-check'
+        from dsh_project_paths import directory_path
+        explicit_name, _, _ = h._preview_artifact(
+            'current-ui.png', frame=3, purpose='existing_ui', output_policy='explicit',
+            default_label='ui', default_subdir=directory_path('visual_check'))
+        assert Path(explicit_name)==base/'dsh-visual-checks'/'current-ui.png'
         reject(lambda:h._preview_artifact('../bad.png',frame=1,purpose='test',
             output_policy='managed',default_label='x',default_subdir='render'),'basename')
         rop=hou.node('/out').createNode('geometry','__checkpoint_rop')
@@ -144,6 +153,34 @@ try:
             reject(lambda:h.render_frame(rop,picture='no_extension',frame=4), 'extension')
             assert rop.parm('sopoutput').unexpandedString()==old
         finally:rop.destroy()
+        # Native image ROP routing is resolved before render/parameter writes;
+        # stop at that boundary so this path check does not need a GUI renderer.
+        image_rop=hou.node('/out').createNode('opengl','__checkpoint_image_rop')
+        original_resolve=h._resolve_output_path
+        resolved=[]
+        class PathObserved(Exception): pass
+        def observe_path(*args, **kwargs):
+            resolved.append(original_resolve(*args, **kwargs))
+            raise PathObserved('resolved before rendering')
+        try:
+            before=image_rop.parm('picture').unexpandedString()
+            with patch.object(h,'_resolve_output_path',observe_path):
+                reject(lambda:h.render_frame(image_rop,picture='beauty.$F4.png',frame=3),'resolved before rendering')
+            assert Path(resolved[0])==base/'dsh-render'/'beauty.0003.png'
+            assert image_rop.parm('picture').unexpandedString()==before
+        finally:image_rop.destroy()
+        # A tiny real COP export proves the distinct dependency default and
+        # original node parameter restoration without creating a USD renderer.
+        copnet=root.createNode('copnet','path_textures')
+        layer=copnet.createNode('layer','value')
+        h.set_parms(layer,{'setres':1,'resx':16,'resy':8,'f1':.5})
+        image_rop=copnet.createNode('rop_image','export_value')
+        h.set_parms(image_rop,{'coppath':layer.path(),'colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0})
+        before=image_rop.parm('copoutput').unexpandedString()
+        texture=h.render_frame(image_rop,picture='roughness.$F4.exr',frame=3,timeout=10)
+        assert Path(texture['output'])==base/'dsh-texture'/'roughness.0003.exr'
+        assert Path(texture['output']).is_file() and texture['fresh'] and texture['file_bytes']>0
+        assert image_rop.parm('copoutput').unexpandedString()==before
 finally:root.destroy()
 
 print('explicit output/path/checkpoint regressions passed')

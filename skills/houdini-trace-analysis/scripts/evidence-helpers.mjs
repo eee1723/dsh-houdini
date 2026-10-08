@@ -4,6 +4,35 @@ function tryJson(text) {
   catch { return null; }
 }
 
+/** A shell tool can deliver normally while its child exits unsuccessfully.
+ * Only the known shell formatter's final trailer (or structured metadata) is
+ * an exit fact. Printed Error/FAIL text, arbitrary tools and partial output
+ * cannot establish a process outcome. Shared by extraction and the client.
+ */
+export function processOutcomeFor(tool, text, metadata) {
+  if (tool !== 'pwsh' && tool !== 'bash') return null;
+  let exitCode = null, source = 'not_recorded', interruption = null;
+  if (metadata && ['exitCode','timedOut','aborted','stopped','signal'].some(key => Object.prototype.hasOwnProperty.call(metadata, key))) {
+    exitCode = Number.isSafeInteger(metadata.exitCode) ? metadata.exitCode : null;
+    source = 'structured_metadata';
+    interruption = metadata.timedOut === true ? 'timed_out' : metadata.aborted === true || typeof metadata.stopped === 'string'
+      ? 'stopped' : typeof metadata.signal === 'string' ? 'signal' : null;
+  } else {
+    const lines = typeof text === 'string' ? text.replaceAll('\r', '').trimEnd().split('\n') : [];
+    for (let index = lines.length - 1; index >= 0; index--) {
+      const marker = /^\[(?:exit code: (-?\d+)|timed out after (\d+)ms|stopped: ([^\]]*)|killed by signal: ([^\]]+))\]$/.exec(lines[index]);
+      if (!marker) break;
+      source = 'shell_result_trailer';
+      if (exitCode === null && marker[1] !== undefined && Number.isSafeInteger(Number(marker[1]))) exitCode = Number(marker[1]);
+      if (marker[2] !== undefined) interruption = 'timed_out';
+      else if (marker[3] !== undefined && interruption !== 'timed_out') interruption = 'stopped';
+      else if (marker[4] !== undefined && interruption === null) interruption = 'signal';
+    }
+  }
+  return {status: interruption ? 'interrupted' : exitCode === null ? 'unknown' : exitCode === 0 ? 'succeeded' : 'failed',
+    exitCode, source, ...(interruption ? {interruption} : {})};
+}
+
 /** Diagnostic retry candidates, not semantic equivalence or avoidable cost.
  * Input must be normalized unique calls; replay removal belongs upstream.
  */
@@ -75,8 +104,9 @@ export function collectHostWork(steps = []) {
       // Exact text only; do not assume different commands share effects, or
       // infer execution success from printed PASS/FAIL words.
       const item = commands.get(command) || {commandPreview:command.slice(0,240),
-        truncated:command.length>240,steps:[],failedCalls:0};
+        truncated:command.length>240,steps:[],failedCalls:0,processFailures:0};
       item.steps.push(s.index);if(s.failed)item.failedCalls++;
+      if(s.processOutcome?.status==='failed')item.processFailures++;
       commands.set(command,item);
     }
     if (s.isHoudini || s.tool?.startsWith('houdini_')) { finish(); continue; }
@@ -91,7 +121,7 @@ export function collectHostWork(steps = []) {
     repeatedCommands:[...commands.values()].filter(x=>x.steps.length>1)
       .sort((a,b)=>b.steps.length-a.steps.length),
     hostIntervalsWithoutHoudiniCalls:runs,
-    scope:'Exact host write/edit targets and shell commands in deduplicated steps. Intervals may include reads/research. No inference of semantic progress, file contents, subprocess success, geometry correctness or a reason to stop. Failed calls count only normalized tool failures; printed FAIL is not a structured verdict.'};
+    scope:'Exact host write/edit targets and shell commands in deduplicated steps. Intervals may include reads/research. No inference of semantic progress, file contents or geometry correctness. failedCalls records tool failures; processFailures records known shell exit facts separately. Printed Error/FAIL alone is not an exit verdict.'};
 }
 
 export function extractAvailableSkills(text) {

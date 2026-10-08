@@ -13,3 +13,11 @@ export const HOUDINI_TOOLS = {
 } as const
 
 export type HoudiniToolName=keyof typeof HOUDINI_TOOLS
+
+/** Host media requests are not Houdini executions or entries in the verb ledger. */
+export const IMAGE_TOOLS = {
+  image_models:{label:'发现生图模型',purpose:'读取DSH已配置的OpenAI兼容API路由和模型名称，供指定生图模型使用；不调用模型，不证明图片接口可用。',input:'可选provider和模型名称子串query，默认image。',output:'配置中的provider/model及图片接口支持尚未验证的说明；不返回凭据。',execution:'DSH Host，无HOM'},
+  image_generate:{label:'生成参考或纹理图',purpose:'使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。',input:'provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。',output:'实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。',execution:'DSH Host HTTP与文件；managed只读查询所选Houdini现场'},
+} as const
+
+export const PLUGIN_TOOLS = {...HOUDINI_TOOLS,...IMAGE_TOOLS} as const

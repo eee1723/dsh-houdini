@@ -131,6 +131,30 @@ assert(render({...chosenCard,details:{stored:false}}).includes('parameter23'),'c
 const differentSummary=render({ok:true,stdout:'',stderr:'',details:{stored:true},evidence:[{ledgerIndex:1,verb:'future',ok:true}],
   verbs:[{verb:'future',ok:true,summary:{ok:true,novel:'unmatched-summary-fact'},result:{scope:'full result'}}]});
 assert(differentSummary.includes('unmatched-summary-fact'),'only the exact Bridge summary can be replaced by its evidence pointer');
+// test69 seq676/677: Python already selects a few fields, but the original
+// successful list_parms ledger used to repeat an unfiltered Python repr.
+const parameters=Array.from({length:1100},(_,i)=>({name:'field_'+i,label:'Field '+i,components:['field_'+i],locked_components:[],type:'Float'}));
+const catalogSummary={kind:'parameter_catalog',parameter_count:parameters.length,scope:'Live parameter metadata only'};
+const catalogResult={ok:true,stdout:'',stderr:'',result:{selected:parameters[0]},details:{stored:true},
+  evidence:[{ledgerIndex:1,verb:'list_parms',...catalogSummary}],
+  verbs:[{verb:'list_parms',ok:true,args:['/stage/settings'],result:parameters,summary:catalogSummary}]};
+const catalogText=render(catalogResult);
+assert(catalogText.includes('field_0') && !catalogText.includes('field_1099'));
+assert(catalogText.includes('"detail_pointer":"/verbs/0/result"'));
+assert(catalogText.includes('"parameter_count":1100'));
+assert(render({...catalogResult,result:undefined}).includes('field_1099'),'an unselected catalog is the full requested answer');
+assert(render({...catalogResult,details:{stored:false}}).includes('field_1099'),'failed retention keeps the full catalog inline');
+assert(render({...catalogResult,verbs:[{...catalogResult.verbs[0],ok:false,error:'catalog failed at field_1099'}]}).includes('catalog failed at field_1099'));
+for(const status of ['failed','warning','unverified','future_unknown']){
+  assert(render({...catalogResult,verbs:[{...catalogResult.verbs[0],check_status:status}]}).includes('field_1099'),'catalog with '+status+' status keeps full result');
+}
+assert(render({...catalogResult,verbs:[{...catalogResult.verbs[0],ok:undefined}]}).includes('field_1099'),'unknown operation success keeps full catalog');
+const omittedCatalog={...catalogResult,verbs:[{...catalogResult.verbs[0],result:'[dsh-houdini: JSON value omitted: exceeds byte budget]'}]};
+assert(render(omittedCatalog).includes('JSON value omitted'),'incomplete serialization is not hidden behind the observed parameter count');
+assert(render({...omittedCatalog,verbs:[{...omittedCatalog.verbs[0],check_status:'passed'}]}).includes('JSON value omitted'),'an unrelated validation flag cannot hide an omitted catalog');
+assert(render({ok:true,stdout:'',stderr:'',result:{selected:'small'},details:{stored:true},
+  verbs:[{verb:'verify_network',ok:true,check_status:'passed',result:omittedCatalog.verbs[0].result}]}).includes('JSON value omitted'),
+  'a successful operation still exposes unavailable serialized facts');
 console.log(`risk-preserving compact results ${text.length}/${render(raw).length} chars; late failure, not-run, unknown schema, help and archive fallback passed`);
 
 console.log(`top-level result projection: direct=${direct.length}, wrapped=${wrapped.length}, differing=${differing.length} chars`);

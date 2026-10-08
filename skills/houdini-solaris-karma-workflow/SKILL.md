@@ -17,8 +17,9 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
    仅消费现有贴图时不加载它。图层数值调试不靠反复最终渲染。
 3. 对实际 parent 调 `search_tab_entries(parent, query)`。不要把全局 node type 注册表当作
    用户 Tab 菜单，不要用裸 `createNode` 绕过 hidden/deprecated 或 builder tab mask。
-4. 新 Karma 材质默认从 Material Library 内的 **Karma Material Builder** 开始；用
-   `tab_apply(matlib, 'vop_karmamtlxsubnet')` 取得预配置的 Karma/MaterialX subnet。
+4. 按材质载体选择入口：普通shader网络可从Material Library内的 **Karma Material Builder** 开始，
+   `tab_apply(matlib, 'vop_karmamtlxsubnet')`提供预配置的Karma/MaterialX subnet。H22以COP纹理为主要输入时
+   也可使用Texture Material Library + USD Material COP；H21不提供这组H22节点，按实际发现使用图像输入。
 5. 新最终渲染默认用 `/stage` 的 **Karma (Setup)**；调用
    `tab_apply('/stage', 'lop_karma_setup')`，保留它生成的 Karma Render Settings 与
    USD Render ROP 及二者表达式。普通 `karma` LOP 或传统 Principled 能出图不代表这是
@@ -40,6 +41,8 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
   交付中说明；不要把自动 USD Preview 转换误报成原 shader 的 XPU 完整支持。
 - 几何颜色进入 USD 后通常是 `displayColor`；在 MaterialX 中显式用 geometry property/
   primvar reader 连接到 surface，不依赖旧 shader 的隐式 Cd 行为。
+- 连续涂装、logo/贴花和微表面由材质读取UV对应的遮罩/纹理；不要按每个面的首顶点Cd猜材质类别。
+  图像制作按需联用houdini-cop-workflow；稳定部件身份与观察色分开，常量材质值直接设参。
 
 ## 按需参考
 

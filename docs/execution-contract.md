@@ -16,6 +16,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 | houdini_request | 查回原 request_ref 的接收/执行回执，不重发代码 |
 | houdini_resource | 在 Host 读取用户来源或已保留结果的分页正文 |
 | houdini_capabilities | 返回当前模型与附件通道的声明能力 |
+| image_models / image_generate | Host读取配置或请求图片API；managed目的地经Bridge只读观察所选HIP，explicit不查询Houdini；不修改场景、不提供几何验证 |
 
 [工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件；[资源读取](../src/tool-query.ts)只消费历史材料。结果正文或来源不成为新的现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
 
@@ -54,6 +55,8 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
 
 调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果在 Host 保留并通过 resource 分页读取；模型正文优先返回显式选择的结果、检查与恢复事实，完整 canonical 仍供 Trace 和历史投影使用。重复帮助、已呈现的动词结果和稳定身份清单可用明确详情指针表示；未知诊断、失败与恢复异常不因体积大而静默丢弃。归档失败时保留完整反馈，显示精简不改变执行事实。
+
+参数目录保留数组/字典结构，不因条目多改成Python repr。每份JSON快照在转换期间使用4 MiB预算及深度上限；循环、超预算或深层内容明确标记省略，不能当作完整数据。作者已选择`__result__`、原始归档成功且`list_parms`确为完整成功目录时，模型正文可用目录数量与详情指针代替重复全表；失败、未知和省略诊断仍显示。对应验证为[参数目录](../tools/tests/dsh-parameter-catalog.test.py)、[投影](../tools/tests/compact-results.test.mjs)及[原生/嵌套DSH消费](../tools/tests/dsh-host-smoke.test.py)。
 
 ## 事实、上下文与观察
 

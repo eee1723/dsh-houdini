@@ -1,6 +1,10 @@
 # 工具设计与动词词表
 
-Execution contract version: 92
+Execution contract version: 94
+
+USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
+
+工程目录角色由[project-layout.json](../houdini/project-layout.json)统一维护，现场通过`scene_info().project_layout`返回实际HIP锚点；使用与生命周期见[工程文件](project-files.md)。目录位置不构成交付、清理许可或视觉验证。
 
 本页是动词目录唯一真相源；构建从表格生成Host预期名称/hash与client目录。
 实现以[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)、

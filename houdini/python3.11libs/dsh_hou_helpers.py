@@ -46,6 +46,7 @@ from typing import Any
 
 import hou
 import dsh_cook_control as _cook_control
+from dsh_project_paths import directory_path as _project_directory
 import toolutils
 
 
@@ -329,6 +330,7 @@ _CATEGORIES = {
     "sop": hou.sopNodeTypeCategory,
     "dop": hou.dopNodeTypeCategory,
     "chop": hou.chopNodeTypeCategory,
+    "cop": hou.copNodeTypeCategory,
     "cop2": hou.cop2NodeTypeCategory,
     "shop": hou.shopNodeTypeCategory,
     "vop": hou.vopNodeTypeCategory,
@@ -343,7 +345,7 @@ _CATEGORY_ALIASES = {
     "driver": "rop", "drivers": "rop", "out": "rop", "dops": "dop",
     "chops": "chop", "vops": "vop", "tops": "top", "lops": "lop",
     "stage": "lop", "material": "shop", "materials": "shop",
-    "shopnet": "shop", "cop": "cop2", "cops": "cop2", "img": "cop2",
+    "shopnet": "shop", "copernicus": "cop", "cops": "cop", "img": "cop2",
 }
 
 _VERSION_RE = re.compile(r"^(.*)::(\d+(?:\.\d+)*)$")
@@ -385,7 +387,7 @@ def context_name(category) -> str:
 # --- scene 域 ---------------------------------------------------------------
 
 def scene_info() -> dict:
-    """只读场景/时间线及HIP单位长度摘要；不移动playbar、不遍历节点图。"""
+    """只读场景/时间线、HIP单位及project_layout目录；不创建目录、不证明写权限。"""
     from dsh_context import hip_file_state, unit_length_meters
     hip = hip_file_state()
     file_exists = hip['file_exists']
@@ -1455,6 +1457,7 @@ def _usd_relationships(prim) -> list:
 
 def usd_stage_summary(node, max_paths: int = 64) -> dict:
     """只读概览 LOP 的 USD stage：prim 类型、材质绑定、渲染和时间采样语义。"""
+    from pxr import UsdLux
     node, stage = _lop_stage(node)
     max_paths = int(max_paths)
     if max_paths < 1 or max_paths > 500:
@@ -1484,12 +1487,12 @@ def usd_stage_summary(node, max_paths: int = 64) -> dict:
         total_prims += 1
         path = str(prim.GetPath())
         type_name = str(prim.GetTypeName() or "")
-        if type_name in geometry_types:
+        if prim.HasAPI(UsdLux.LightAPI):
+            group = "lights"
+        elif type_name in geometry_types:
             group = "geometry"
         elif type_name == "Material":
             group = "materials"
-        elif type_name.endswith("Light") or type_name == "Light":
-            group = "lights"
         elif type_name == "Camera":
             group = "cameras"
         elif type_name == "RenderSettings":
@@ -1500,9 +1503,15 @@ def usd_stage_summary(node, max_paths: int = 64) -> dict:
             group = "render_vars"
         else:
             group = "other"
-        group_counts[group] += 1
-        if len(groups[group]) < max_paths:
-            groups[group].append({"path": path, "type": type_name or None})
+        roles = [group]
+        # Applied light APIs do not erase the prim's geometry role. An emissive
+        # mesh must remain discoverable as geometry as well as a light source.
+        if group == "lights" and type_name in geometry_types:
+            roles.append("geometry")
+        for role in roles:
+            group_counts[role] += 1
+            if len(groups[role]) < max_paths:
+                groups[role].append({"path": path, "type": type_name or None})
 
         relationships = _usd_relationships(prim)
         bindings = [
@@ -5762,13 +5771,14 @@ def report_image(path: str) -> str:
     return p
 
 
-def _resolve_output_path(path, *, frame, default_subdir="render") -> str:
+def _resolve_output_path(path, *, frame, default_subdir=None) -> str:
     """Resolve output files BEFORE mutation; never use the process cwd.
 
-    A bare filename goes to $HIP/default_subdir; a relative subpath is $HIP
+    A bare filename goes to $HIP/default_subdir (dsh-render by default); a relative subpath is $HIP
     relative. Absolute paths remain explicit caller intent except repository
     paths. Relative traversal/junction escapes and extensionless files fail.
     """
+    default_subdir = _project_directory('render') if default_subdir is None else default_subdir
     raw = os.fspath(path)
     if not isinstance(raw, str) or not raw.strip() or '\x00' in raw:
         raise ValueError('output path must be a nonempty file path')
@@ -5904,6 +5914,8 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
       ``outputimage`` 优先于 USD ``lopoutput``，Karma/Mantra/geometry 等 ROP 都覆盖。
       有 ``soho_foreground`` 时调用期临时等待渲染完成并在 finally 恢复。
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
+      裸文件名按输出用途放入$HIP/dsh-render；COP copoutput放入dsh-texture，
+      几何/模拟缓存保持geo。已有含目录的ROP路径和显式绝对目的地不改写。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
       （host 侧桥请求超时 120s），本动词面向单帧测试渲染。
@@ -5944,8 +5956,12 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     # Resolving before any parameter/frame write also rejects extensionless
     # outputs and relative files outside the project with zero scene effects.
     original_output = p.unexpandedString()
+    output_subdir = ('geo' if p.name() in ('sopoutput', 'dopoutput') else
+                     _project_directory('texture') if p.name() == 'copoutput' else
+                     _project_directory('render') if p.name() in ('picture', 'vm_picture', 'outputimage') else
+                     'render')
     target = _resolve_output_path(original_output if picture is None else picture, frame=f,
-                                  default_subdir='geo' if p.name() in ('sopoutput','dopoutput') else 'render')
+                                  default_subdir=output_subdir)
     original_frame = float(hou.frame())
     foreground_parm = n.parm("soho_foreground")
     original_foreground = foreground_parm.eval() if foreground_parm is not None else None
@@ -6469,7 +6485,8 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     Managed output (the default) accepts only an omitted filename or safe
     basename and writes under ``$HIP/dsh-visual-checks/<run-id>/``. Deliberate
     Delivery images use ``output_policy='delivery'`` under ``$HIP/dsh-render``;
-    custom destinations use ``output_policy='explicit'``. The capture is a user-screen
+    custom destinations use ``output_policy='explicit'``; an explicit bare
+    filename goes under ``$HIP/dsh-visual-checks/``. The capture is a user-screen
     diagnostic: readable pixels are required, but visual semantics remain
     unverified.  H21/H22 require stashed flipbook and viewport-camera state;
     unsupported restoration combinations reject before mutation.
@@ -6529,7 +6546,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
 
     path, artifact, artifact_hip_path = _preview_artifact(
         path, frame=f, purpose='viewport_diagnostic', output_policy=output_policy,
-        default_label='viewport', default_subdir='screenshots',
+        default_label='viewport', default_subdir=_project_directory('visual_check'),
         allowed_extensions={'.png', '.jpg', '.jpeg', '.bmp', '.tga'})
 
     import glob as _glob
@@ -7203,9 +7220,10 @@ def render_view(node, direction="iso", frame=None,
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
     - ``picture/output_policy``：默认managed，只接收省略或安全basename并写入
-      ``$HIP/dsh-visual-checks/<run-id>/``；用户明确目的地或隔离测试路径须传
+      ``$HIP/dsh-visual-checks/<run-id>/``。
       最终交付用``output_policy='delivery'``分配到``$HIP/dsh-render/``；自定路径用
-      ``output_policy='explicit'``。各模式均返回``artifact``路径事实，输出位置不证明验收通过。
+      ``output_policy='explicit'``，其中裸文件名放进``$HIP/dsh-visual-checks/``。
+      各模式均返回``artifact``路径事实，输出位置不证明验收通过。
     - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
       detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。
     - ``coverage``：full中央安全框宽/高占比（0.1..0.95）；.82为每侧至少9%边距。
@@ -7263,7 +7281,7 @@ def render_view(node, direction="iso", frame=None,
         purpose='model_visual_verification',
         output_policy=output_policy,
         default_label=f'{target.name()}_{direction_label}',
-        default_subdir='render',
+        default_subdir=_project_directory('visual_check'),
     )
     try:
         image_ext = os.path.splitext(picture)[1].lower()

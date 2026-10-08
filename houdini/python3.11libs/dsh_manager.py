@@ -646,11 +646,13 @@ def show_version_manager() -> None:
     dsh_action.hide()
     repair_btn = QtWidgets.QPushButton("修复并重启运行环境…")
     log_btn = QtWidgets.QPushButton("打开运行日志")
+    network_btn = QtWidgets.QPushButton("联网诊断与代理设置…")
     actions.addWidget(dsh_action)
     actions.addWidget(repair_btn)
     actions.addWidget(log_btn)
     actions.addStretch(1)
     layout.addLayout(actions)
+    layout.addWidget(network_btn)
     download_bar = QtWidgets.QProgressBar()
     download_bar.setTextVisible(False)
     download_bar.hide()
@@ -712,6 +714,19 @@ def show_version_manager() -> None:
         if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(_FRONTEND_LOG)):
             summary_label.setText("无法打开日志，文件位置已放入技术详情。")
             details.appendPlainText(_FRONTEND_LOG)
+
+    def open_network():
+        import dsh_launcher
+        import dsh_network_diagnostics
+        try:
+            command, shell, _source, _timeout = dsh_launcher._frontend_command()
+            if shell or not isinstance(command, list):
+                raise RuntimeError('请先准备配套 DSH；联网诊断不会自动下载或运行 npx。')
+            dsh_network_diagnostics.show(node=command[0], cli=command[1],
+                cwd=dsh_launcher._hip_dir(), env=dsh_managed_runtime.environment(),
+                bridge_url=f'http://127.0.0.1:{_BRIDGE_PORT}', parent=dialog)
+        except Exception as error:
+            summary_label.setText(str(error))
 
     def toggle_advanced(checked):
         details.setVisible(checked)
@@ -781,6 +796,7 @@ def show_version_manager() -> None:
     advanced_toggle.toggled.connect(toggle_advanced)
     repair_btn.clicked.connect(repair_runtime)
     log_btn.clicked.connect(open_log)
+    network_btn.clicked.connect(open_network)
     dialog.finished.connect(cleanup)
     timer = QtCore.QTimer(dialog)
     timer.timeout.connect(tick)

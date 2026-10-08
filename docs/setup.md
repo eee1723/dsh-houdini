@@ -51,6 +51,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 后台下载/解压可取消；提交pending是原子步骤，提交后使用「取消下次切换」取消下一次切换。
 独立管理器不依赖Node、DSH或插件lib，缺依赖时仍可打开。
 
+### 网页抓取与代理诊断
+
+在 **高级设置 → 运行诊断 → 联网诊断与代理设置** 中，先读取配套 DSH 的原生启动配置，再按需测试公开网页。测试使用同一精确 DSH、当前 DSH_HOME 和工作目录的独立新进程，不续跑会话、不调用收费搜索，也不证明已经运行的 Host 已加载新配置。搜索组件是否安装、网页抓取实际结果、本地 Bridge 路由分别显示；搜索返回来源链接不等于网页正文已读。
+
+公开域名在 Fake-IP 网络环境中可能解析到 `198.18.*` 等非公网地址。DSH 的直连抓取会拒绝该地址；不要关闭地址检查或把保留网段改成公网。可将当前 Windows 手动 HTTP 代理作为建议填入，核对后明确保存到实际 **DSH_HOME/.env**。系统代理不会自动覆盖 DSH：启动环境和用户 `.env` 的最终优先级由配套 DSH 自己解析，界面显示生效来源。只保存所填协议，保留其他配置、注释、ALL_PROXY 和 NO_PROXY；留空不删除旧值。含凭据的代理地址在诊断与确认中脱敏。
+
+代理配置只影响下次启动的 DSH。此入口不改系统全局环境、不热改或重启当前服务；有进行中的任务时先结束并保存，再按既有运行环境修复入口重启。也可在 DSH 用户 `.env` 中手动配置 HTTP_PROXY/HTTPS_PROXY；项目目录的 `.env` 不能携带代理设置。受管安装使用本版本独立数据目录中的 `.env`，不修改旧版或独立 `~/.dsh`。
+
+代理模式将域名解析与目的地路由交给用户信任的代理，直连仍执行原生 DNS 校验和地址固定。HTTP(S)/URL 凭据检查、非公网 IP 字面地址拒绝、loopback 直连、重定向限制仍保留；不能把使用代理描述为与直连完全相同的 DNS 验证。上游尚不自动识别 Windows 系统代理、PAC 或 SOCKS，插件不维护第二套隐式代理优先级。
+
+实现与维护入口为 [网络诊断](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生探针](../houdini/python3.11libs/dsh_network_probe.mjs)；配置保留回归见 [代理配置检查](../tools/tests/dsh-network-proxy-config.test.py)，Qt 交互见 [界面检查](../tools/tests/dsh-network-ui.test.py)。[实际 DSH 网络检查](../tools/tests/dsh-network-diagnostics.test.py)用独立 DSH_HOME 启动精确 CLI，验证用户 `.env`、启动环境优先级及 loopback 传输；显式传 `--proxy` 才执行匿名外网抓取，不调用模型。
 ## 正式发行与受管安装合同
 
 下载 → 签名/资产摘要验证 → 新目录安全解压 → 全量文件检查 → 原子记录pending。
@@ -114,6 +125,16 @@ WebView使用独立的内存浏览器profile，不争用Houdini默认磁盘profi
 H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
 仅在最近一次调用明确观察到已保存工程且目录不一致时，在输入区上方显示可展开的中文提示。未保存状态清除旧目录提示。提示以执行观察时间/序列为准，回读历史结果不会冒充新现场。它不是持续监控，切换HIP后须重新打开工作区，最终文件路径以当前权威回执为准。
 视频教程等可选能力的FFmpeg和云服务凭据不属于核心离线运行依赖，仍需按对应skill准备；Houdini和模型服务授权不随插件分发。
+
+## 指定图片模型
+
+Houdini模式提供`image_models`与`image_generate`，复用DSH模型设置中的显式OpenAI兼容API路由（`api`、`baseURL`、`apiKeyEnv`），不维护第二份服务商配置或密钥文件。当前接入Images API的base64图片响应，普通对话/OAuth路由和URL-only响应不冒充已支持。目录出现某个模型只证明配置存在，图片接口是否可用由实际请求决定；模型名按用户指定原样发送，不自动替换。
+
+有参考图时传本地`references`，工具将原始像素上传到`images/edits`；把URL写进prompt不等于参考图已送达。默认managed输出读取当前所选Houdini的真实HIP，purpose选择reference或texture；output省略或仅给basename，返回实际唯一文件名。未保存工程、离线或用户自定目的地使用explicit，相对路径才按DSH workspace解析，Host不展开`$HIP`。已有文件不覆盖，文件操作遵从当前DSH策略；目录、检查图分组与Save As边界见[工程文件](project-files.md)。
+
+生成原图和模型观察用预览分别保存。原图指纹不使用预览附件的指纹代替；目标写盘失败时，已取得的原始文件附件仍可恢复。预览尺寸限制、解码或附件存储失败不撤销已保存原图。请求规格与实际图片尺寸分别报告，提供方返回不同尺寸时不自动缩放或重新计费。请求后的断联/超时保留结果未知，不自动重试；HTTP拒绝、返回格式不支持与图片质量不合格分别判断。编辑和生成都可能产生提供方费用，按用户已授权的模型及用途调用。
+
+接口依据：[OpenAI Images API](https://developers.openai.com/api/docs/guides/image-generation)。兼容服务的实际支持需单独验证。验证入口见[开发维护](development.md)，实现见[image-generation.ts](../src/image-generation.ts)。
 
 ## 显式源码开发安装
 

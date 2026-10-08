@@ -391,7 +391,9 @@ function createTraceView(React, catalog, sources, trace, css) {
           : null,
         e.attention
           ? h("section", { className: "tr-attention tr-attention-" + e.attentionLevel },
-              h("h4", null, e.checkSummary || (e.operationFailures ? "子操作失败" : "结果待查回")),
+              h("h4", null, e.checkSummary || (e.processFailed ? "命令进程退出失败" : e.processInterrupted ? "命令进程已终止" : e.operationFailures ? "子操作失败" : "结果待查回")),
+              e.processFailed ? prose("工具调用已返回，命令进程以退出码 " + e.processOutcome.exitCode + " 结束；这与工具传递失败分别记录。") : null,
+              e.processInterrupted ? prose("结果记录了超时、停止或信号终止；不能当作正常完成或普通命令错误。") : null,
               e.recoveryNeeded ? prose("尚不能确认这次操作的结果。请按原请求回执查回状态；结果已过期或不可用时，应检查当前场景，不要直接重复执行。") : null,
               e.operationFailures ? prose(e.operationFailures + " 个操作发生错误，详情见下方执行步骤。") : null,
               e.checkFindings.map((finding, index) => h("div", {key: index},
@@ -1100,7 +1102,7 @@ function createTraceView(React, catalog, sources, trace, css) {
                 const visible = request?.prompt ? schemas.some(t => t.name === name) ? "所选请求可见" : "未在所选请求中" : "请求可见性未采集";
                 return h("article", { key: name, className: "tr-row" },
                   h("h4", null, tool.label, " · ", h("code", null, name)),
-                  h("div", { className: "tr-meta" }, "本任务调用 " + count.calls + " 次" + (count.failed ? " · 失败 " + count.failed + " 次" : "") + (count.operationAttention ? " · 子操作失败 " + count.operationAttention + " 次" : "") + (count.pending ? " · 进行中 " + count.pending + " 次" : "")),
+                  h("div", { className: "tr-meta" }, "本任务调用 " + count.calls + " 次" + (count.failed ? " · 失败 " + count.failed + " 次" : "") + (count.processFailures ? " · 进程失败 " + count.processFailures + " 次" : "") + (count.operationAttention ? " · 子操作失败 " + count.operationAttention + " 次" : "") + (count.pending ? " · 进行中 " + count.pending + " 次" : "")),
                   prose(tool.purpose),
                   h("details", null, h("summary", null, "输入、输出与调用记录"),
                     note(visible),
@@ -1329,6 +1331,7 @@ function createTraceView(React, catalog, sources, trace, css) {
       const requestUsage = stats.requestUsage;
       const metrics = [
         ["Houdini 工具失败（已返回调用）", stats.failedToolCalls],
+        ["命令进程退出失败（独立统计）", stats.failedProcesses],
         ["动词异常 / 动词调用", stats.failedVerbCalls + " / " + stats.verbCalls],
         ["含动词异常的执行", stats.operationAttentionCalls],
         ["正常返回但检查需关注的执行", stats.checkAttentionCalls],

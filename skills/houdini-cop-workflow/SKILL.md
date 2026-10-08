@@ -1,6 +1,6 @@
 ---
 name: houdini-cop-workflow
-description: 在 Houdini Copernicus 中构建、诊断和验证程序纹理与图像处理网络，包括 COP 教程复现、图层关系、材质贴图和导出。仅在需要操作或检查 COP 数据流时加载；不用于只解析视频、仅消费现有贴图的 Karma 渲染或普通 SOP 建模。
+description: 在 Houdini Copernicus 中制作、诊断和验证程序纹理与图像处理网络，包括建模中的涂装遮罩、标识/贴花、图像校正、微表面纹理、COP教程复现和文件导出。需要制作或修改图像数据时加载；纯几何建模、常量材质参数、只解析视频或仅消费已有贴图不触发。
 ---
 
 # Houdini COP / Copernicus Workflow
@@ -9,9 +9,13 @@ description: 在 Houdini Copernicus 中构建、诊断和验证程序纹理与�
 教程证据由 `houdini-video-tutorial` 负责，源几何与最终渲染分别按需联用 SOP、Solaris/Karma workflow。
 不自动加载所有领域或所有参考文件，不以视频中的操作顺序代替依赖顺序。
 
+COP是外观数据的一种可编辑载体，不是所有建模的必经阶段。宏观轮廓与接合留在几何，布局/调试可以用属性，
+常量材质值直接设参。输出用于材质时保持图层角色和UV/空间对应，连续边界由实际材质采样，不再量化成逐面颜色分类或删面。
+
 ## 任务边界与执行脊柱
 
 1. **分类与版本**：确认 runtime、实际 parent、Copernicus 或旧 Compositing/COP2；旧网络不静默迁移。
+   类别查询用`cop`/`copernicus`，旧网络明确`cop2`；已有parent优先`search_tab_entries(parent,query)`。
    简单单参数编辑只做对应回读；跨模块、缓存、材质绑定或文件交付时，在现有任务笔记中写紧凑合同：
    交付物、允许差异、模块输入/输出角色、核心关系、预览与最终规格。不要建立第二份完成证书。
 2. **最小骨架**：从当前 parent 的 Tab 发现可见节点，先打通一个可检查的输入→操作→输出。

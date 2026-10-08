@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "directories": {
+    "reference_downloaded": { "path": "dsh-reference/downloaded", "lifecycle": "reference" },
+    "reference_generated": { "path": "dsh-reference/generated", "lifecycle": "reference" },
+    "texture": { "path": "dsh-texture", "lifecycle": "project-dependency" },
+    "render": { "path": "dsh-render", "lifecycle": "render-output" },
+    "visual_check": { "path": "dsh-visual-checks", "lifecycle": "visual-check" }
+  }
+}

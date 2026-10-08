@@ -65,11 +65,15 @@ try{
  }else facts.textPreview=null;
  const imageFile=expected.files.find(file=>uiImagePaths.includes(normalizedPath(file.resolvedPath))&&/\.(png|jpe?g|gif|webp)$/i.test(file.name))??
   expected.files.find(file=>/\.(png|jpe?g|gif|webp)$/i.test(file.name));
- const imageRow=imageFile&&fileRows().find(e=>matchesFile(e,imageFile));
- if(imageFile){const button=imageRow?.querySelector('button[class*=cardPreview]');if(!button)throw Error('Missing declared image preview: '+imageFile.name);button.click();
-  const image=await wait(()=>{const i=previewFor(imageFile)?.querySelector('[data-image-preview] img');return i&&i.complete&&i.naturalWidth>0&&i;},'actual delivered image preview');
-  facts.imagePreview={name:imageFile.name,path:imageFile.resolvedPath,width:image.naturalWidth,height:image.naturalHeight,uiArtifactMatched:uiImagePaths.includes(normalizedPath(imageFile.resolvedPath))};
- }else facts.imagePreview=null;
+ const imageFiles=config.previewAllImages?expected.files.filter(file=>/\.(png|jpe?g|gif|webp)$/i.test(file.name)):(imageFile?[imageFile]:[]);
+ facts.imagePreviews=[];
+ for(const file of imageFiles){const row=fileRows().find(e=>matchesFile(e,file));
+  const button=row?.querySelector('button[class*=cardPreview]');if(!button)throw Error('Missing declared image preview: '+file.name);button.click();
+  const image=await wait(()=>{const i=previewFor(file)?.querySelector('[data-image-preview] img');return i&&i.complete&&i.naturalWidth>0&&i;},'actual delivered image preview: '+file.name);
+  if(config.imageDimensions&&(image.naturalWidth!==config.imageDimensions[0]||image.naturalHeight!==config.imageDimensions[1]))throw Error('Delivered image dimensions differ: '+file.name);
+  facts.imagePreviews.push({name:file.name,path:file.resolvedPath,width:image.naturalWidth,height:image.naturalHeight,uiArtifactMatched:uiImagePaths.includes(normalizedPath(file.resolvedPath))});
+ }
+ facts.imagePreview=facts.imagePreviews.find(image=>image.path===imageFile?.resolvedPath)??null;
  const node=expected.nodes.length?[...document.querySelectorAll('.dsh-houdini-node-card')].find(row=>expected.nodes.some(item=>nodePath(row)===item.path)):null;
  if(node){const codes=[...node.querySelectorAll('code')].map(e=>e.textContent);facts.clickedNode={role:node.dataset.houdiniNodeDelivery,label:node.querySelector('.dsh-houdini-node-title')?.textContent,
   path:codes.filter(x=>x.startsWith('/')).at(-1)};node.querySelector('.dsh-houdini-node-open').click();
@@ -109,7 +113,8 @@ def start(config_path):
     widget=webview._view
     timer=QtCore.QTimer(widget)
     state={'begun':False,'busy':False,'started':time.monotonic()}
-    script=SCRIPT.replace('__CONFIG__',json.dumps({'sessionId':config['sessionId'],'artifacts':artifacts},ensure_ascii=True))
+    script=SCRIPT.replace('__CONFIG__',json.dumps({'sessionId':config['sessionId'],'artifacts':artifacts,
+        'previewAllImages':config.get('previewAllImages',False),'imageDimensions':config.get('imageDimensions')},ensure_ascii=True))
     def complete(report):
         if state.get('done'):return
         state['done']=True;timer.stop()

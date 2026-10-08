@@ -307,6 +307,9 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         null;
       const account = req?.accounting || c?.assistantUsage || null;
       const failed = !pending && (Boolean(n.isError) || info.failed);
+      const processOutcome = pending ? null : info.processOutcome;
+      const processFailed = processOutcome?.status === 'failed';
+      const processInterrupted = processOutcome?.status === 'interrupted';
       const executionKey = canonical?.execution?.runtime_id && Number.isFinite(canonical.execution.sequence)
         ? canonical.execution.runtime_id + ':' + canonical.execution.sequence : null;
       const repeatedExecution = executionKey && seenExecutions.has(executionKey);
@@ -339,7 +342,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       }[receiptStatus];
       const jobStatus = canonical?.jobId ? canonical.status : null;
       const jobState = {queued: '后台任务排队中', running: '后台任务执行中', cancelled: '后台任务已取消'}[jobStatus];
-      const attention = operationFailures > 0 || checkAttention > 0 || recoveryNeeded;
+      const attention = operationFailures > 0 || checkAttention > 0 || recoveryNeeded || processFailed || processInterrupted;
       const parsedArgs = json(argsRaw);
       const args =
         parsedArgs &&
@@ -384,6 +387,9 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
             ? "已回滚"
             : failed
               ? "失败"
+              : processOutcome ? (processFailed ? "进程失败 · 退出 " + processOutcome.exitCode
+                : processInterrupted ? "进程已终止 · " + ({timed_out:'超时',stopped:'停止',signal:'信号'}[processOutcome.interruption] || '原因未记录')
+                : processOutcome.status === 'succeeded' ? "进程退出 0" : "已返回 · 进程状态未采集")
               : operationFailures
                 ? "已完成 · 子操作失败"
                 : checkAttention
@@ -431,6 +437,9 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         target,
         verbs,
         failed,
+        processOutcome,
+        processFailed,
+        processInterrupted,
         pending,
         outcome,
         operationFailures,
@@ -438,8 +447,8 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         checkAttention,
         checkSummary,
         checkFindings: findings,
-        attentionLevel: failed || operationFailures > 0 || checkCounts?.failed > 0 ? 'error'
-          : checkCounts?.warning > 0 || recoveryNeeded ? 'warning' : 'unknown',
+        attentionLevel: failed || processFailed || operationFailures > 0 || checkCounts?.failed > 0 ? 'error'
+          : checkCounts?.warning > 0 || recoveryNeeded || processInterrupted ? 'warning' : 'unknown',
         attention,
         requestReceipt,
         recoveryNeeded,
@@ -466,7 +475,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         parts,
         blocks: n.content || [],
         meta: n.meta,
-        committed: !pending && !failed && !rollback,
+        committed: !pending && !failed && !processFailed && !processInterrupted && !rollback,
         jobId: canonical?.jobId || requestReceipt?.jobId || args.jobId || result?.jobId || null,
       };
       entries.push(entry);
@@ -591,9 +600,11 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
     const accounts = requests.map(request => request.accounting).filter(Boolean);
     const toolUsage = new Map(), verbUsage = new Map();
     for (const entry of entries) {
-      const count = toolUsage.get(entry.name) || { calls: 0, failed: 0, pending: 0, operationAttention: 0 };
+      const count = toolUsage.get(entry.name) || { calls: 0, failed: 0, pending: 0, operationAttention: 0, processFailures: 0, processInterruptions: 0 };
       count.calls++;
       count.failed += Number(entry.failed);
+      count.processFailures += Number(entry.processFailed);
+      count.processInterruptions += Number(entry.processInterrupted);
       count.pending += Number(entry.pending);
       count.operationAttention += Number(!entry.pending && !entry.repeatedExecution && entry.operationFailures > 0);
       toolUsage.set(entry.name, count);
@@ -625,6 +636,8 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       toolCalls: toolNames.reduce((count, name) => count + (toolUsage.get(name)?.calls || 0), 0),
       verbCalls: [...verbUsage.values()].reduce((count, verb) => count + verb.calls, 0),
       failedToolCalls: returned.filter(entry => entry.failed).length,
+      failedProcesses: entries.filter(entry => entry.processFailed).length,
+      interruptedProcesses: entries.filter(entry => entry.processInterrupted).length,
       failedVerbCalls: [...verbUsage.values()].reduce((count, verb) => count + verb.failed, 0),
       operationAttentionCalls: returned.filter(entry => !entry.repeatedExecution && entry.operationFailures > 0).length,
       checkAttentionCalls: returned.filter(entry => !entry.repeatedExecution && entry.checkAttention > 0).length,

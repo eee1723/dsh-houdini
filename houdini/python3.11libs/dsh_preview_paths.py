@@ -11,10 +11,11 @@ import os
 import re
 import secrets
 import unicodedata
+from dsh_project_paths import directory_path, lifecycle, project_layout
 
 
-MANAGED_DIRECTORY = "dsh-visual-checks"
-DELIVERY_DIRECTORY = "dsh-render"
+MANAGED_DIRECTORY = directory_path('visual_check')
+DELIVERY_DIRECTORY = directory_path('render')
 _PROCESS_PID = os.getpid()
 if globals().get("_PROCESS_NONCE_PID") != _PROCESS_PID:
     _PROCESS_NONCE_PID = _PROCESS_PID
@@ -105,6 +106,7 @@ def allocate_managed(
         raise ValueError("managed visual checks require an existing named HIP directory")
     repo = _real(repository_root)
     run_id = _run_id(owner_session)
+    role = 'visual_check' if output_policy == 'managed' else 'render'
     directory = MANAGED_DIRECTORY if output_policy == 'managed' else DELIVERY_DIRECTORY
     expected_base = os.path.abspath(os.path.join(hip, directory))
     expected_root = os.path.abspath(os.path.join(expected_base, run_id)) if output_policy == 'managed' else expected_base
@@ -181,6 +183,9 @@ def allocate_managed(
                 continue
             return {
                 "purpose": str(purpose),
+                "role": role,
+                "project_root": hip.replace("\\", "/"),
+                "lifecycle": lifecycle(role),
                 "output_policy": output_policy,
                 "actual_path": target.replace("\\", "/"),
                 "hip_relative_path": os.path.relpath(target, hip).replace("\\", "/"),
@@ -227,7 +232,7 @@ def retain_reservation(artifact: dict) -> None:
         artifact['reservation_retained'] = True
 
 
-def explicit_artifact(hip_path, target, *, frame, purpose: str) -> dict:
+def explicit_artifact(hip_path, target, *, frame, purpose: str, role='visual_check') -> dict:
     """Return additive metadata for a caller-resolved explicit destination."""
     actual = _real(target)
     hip_relative = None
@@ -237,6 +242,9 @@ def explicit_artifact(hip_path, target, *, frame, purpose: str) -> dict:
             hip_relative = os.path.relpath(actual, hip).replace("\\", "/")
     return {
         "purpose": str(purpose),
+        "role": role,
+        "project_root": project_layout(hip_path, has_named_path=bool(hip_path))['project_root'],
+        "lifecycle": lifecycle(role),
         "output_policy": "explicit",
         "actual_path": actual.replace("\\", "/"),
         "hip_relative_path": hip_relative,

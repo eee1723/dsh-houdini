@@ -317,6 +317,7 @@ def restart_bridge(*, port=None) -> str:
     import dsh_context
     import dsh_requests
     import dsh_preview_paths
+    import dsh_project_paths
     import dsh_network_layout
     import dsh_network_boxes
     import dsh_network_navigation
@@ -357,6 +358,7 @@ def restart_bridge(*, port=None) -> str:
             or not dsh_bridge._work_queue.empty()):
         raise RuntimeError('Bridge restart deferred: scene work arrived after preflight; no modules were reloaded')
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
+    importlib.reload(dsh_project_paths)     # shared directory contract before observations/allocators
     importlib.reload(dsh_context)           # shared HIP facts before helper wrappers
     importlib.reload(dsh_preview_paths)     # path policy before helper wrappers
     importlib.reload(dsh_network_layout)

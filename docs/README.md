@@ -15,6 +15,7 @@
 | [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
 | [按需动词契约](verb-contracts.md) | verb_help读取的输入/成功返回结构、Python示例和作用域；由verb-operation-contracts.json生成 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
+| [工程文件与图像目录](project-files.md) | 同源目录角色、真实HIP锚点、显式目的地、Save As与文件生命周期 |
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
 | [多实例与任务恢复](multi-instance.md) | 显式共享Host/多Houdini的身份、绑定、写入预留、单端Repair、启用步骤和未开放的恢复边界 |

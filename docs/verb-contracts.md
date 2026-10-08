@@ -49,6 +49,9 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [tool_package_create](#tool_package_create)
 - [viewport_screenshot](#viewport_screenshot)
 - [network_notes](#network_notes)
+- [cop_layer_stats](#cop_layer_stats)
+- [cop_compare_layers](#cop_compare_layers)
+- [test_cop_controls](#test_cop_controls)
 
 ## verb_help
 
@@ -3171,3 +3174,608 @@ Omitted notes/remove performs no presentation writes; actual runtime mode remain
 
 - Only explicit standalone notes are changed. Notes already in Network Boxes are refused before writing because the current Box recovery scope does not include note members; native Houdini itself supports note membership. Names, labels, colors, and an owned parent never establish note ownership.
 - The same ownership preflight also applies when delete_node would destroy a parent containing notes. Runtime identity is removed on successful deletion and only a causally restored note can recover its prior owner.
+
+## cop_layer_stats
+
+Read the explicit native Copernicus ImageLayer in exec; report full-buffer numeric facts and freshness separately from appearance.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string",
+      "description": "Exact existing Copernicus node path. Live hou.Node is also accepted inside one request."
+    },
+    "output": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Actual source output index or exact name from describe(node).ports."
+    },
+    "max_pixels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777216,
+      "description": "Full buffer pixel limit; does not cap upstream GPU cook allocation."
+    }
+  },
+  "required": [
+    "node"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unverified"
+      ]
+    },
+    "node": {
+      "type": "string"
+    },
+    "output": {
+      "type": "integer"
+    },
+    "output_name": {
+      "type": "string"
+    },
+    "resolution": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "channels": {
+      "type": "integer"
+    },
+    "storage_type": {
+      "type": "string"
+    },
+    "statistics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "integer"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nonfinite_count": {
+            "type": "integer"
+          },
+          "mean_abs_gradient_u": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mean_abs_gradient_v": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      }
+    },
+    "sha256": {
+      "type": "string"
+    },
+    "freshness": {
+      "type": "string"
+    },
+    "cache": {
+      "type": "object"
+    },
+    "sampled": {
+      "const": false
+    },
+    "semantic_status": {
+      "const": "unverified"
+    }
+  },
+  "required": [
+    "ok",
+    "status",
+    "node",
+    "output",
+    "resolution",
+    "channels",
+    "statistics",
+    "sha256",
+    "freshness",
+    "sampled"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Inspect a bounded scalar calibration layer
+
+调用工具：`houdini_exec`。
+
+```python
+g = tab_create('/obj', 'geo', name='cop_stats_example')
+c = tab_create(g, 'copnet', name='images')
+a = tab_create(c, 'layer', name='source')
+set_parms(a, {'setres': 1, 'resx': 32, 'resy': 16, 'f1': 0.25})
+__result__ = cop_layer_stats(a, output=0, max_pixels=512)
+```
+
+Expect resolution [32,16], one channel and mean 0.25. Read status and freshness; these values do not certify visual appearance or external-source freshness.
+
+### 接口边界
+
+- Must use houdini_exec: cooking and reading native layers are not inspect-only operations.
+- Supports Float16/Float32 and signed Int8/Int16/Int32 buffers with 1..4 channels. Unsupported storage, empty/oversized output and failed cook reject without implicit conversion or sampling.
+- A valid all-zero data layer is not an empty image. Use the declared channel/range meaning, not render_check nonblack heuristics.
+- Sticky upstream Cache yields unverified freshness. Dynamic/external dependencies and GPU allocations remain outside the bounded native dependency observation.
+
+## cop_compare_layers
+
+Measure aligned native layer AFTER - BEFORE; optionally test a declared increment without resampling or semantic inference.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "before": {
+      "type": "string",
+      "description": "Exact existing Copernicus node path. Live hou.Node is also accepted inside one request."
+    },
+    "after": {
+      "type": "string",
+      "description": "Exact existing Copernicus node path. Live hou.Node is also accepted inside one request."
+    },
+    "before_output": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Actual source output index or exact name from describe(node).ports."
+    },
+    "after_output": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Actual source output index or exact name from describe(node).ports."
+    },
+    "expected_delta": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "description": "Exact existing Copernicus node path. Live hou.Node is also accepted inside one request."
+            },
+            "output": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ],
+              "description": "Actual source output index or exact name from describe(node).ports."
+            }
+          },
+          "required": [
+            "node"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tolerance": {
+      "type": "number",
+      "minimum": 0
+    },
+    "max_pixels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777216,
+      "description": "Full buffer pixel limit; does not cap upstream GPU cook allocation."
+    }
+  },
+  "required": [
+    "before",
+    "after"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "before": {
+      "type": "object"
+    },
+    "after": {
+      "type": "object"
+    },
+    "formula": {
+      "type": "string"
+    },
+    "statistics": {
+      "type": "array"
+    },
+    "max_abs_difference": {
+      "type": "number"
+    },
+    "expected_delta": {
+      "type": "object"
+    },
+    "max_abs_error": {
+      "type": "number"
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "ok": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unverified"
+      ]
+    },
+    "semantic_status": {
+      "const": "unverified"
+    }
+  },
+  "required": [
+    "before",
+    "after",
+    "formula",
+    "statistics",
+    "max_abs_difference",
+    "ok",
+    "status",
+    "semantic_status"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Check a declared additive relation
+
+调用工具：`houdini_exec`。
+
+```python
+g = tab_create('/obj', 'geo', name='cop_relation_example')
+c = tab_create(g, 'copnet', name='images')
+a = tab_create(c, 'layer', name='source')
+set_parms(a, {'setres': 1, 'resx': 32, 'resy': 16, 'f1': 0.25})
+b = tab_create(c, 'layer', name='after')
+d = tab_create(c, 'layer', name='increment')
+set_parms(b, {'setres': 1, 'resx': 32, 'resy': 16, 'f1': 0.75})
+set_parms(d, {'setres': 1, 'resx': 32, 'resy': 16, 'f1': 0.5})
+__result__ = cop_compare_layers(a, b, expected_delta={'node': d}, tolerance=1e-6, max_pixels=512)
+```
+
+Here after-before equals increment, so max_abs_error is zero. This calibrates the formula; it does not prove that an arbitrary artistic operation should be additive.
+
+### 接口边界
+
+- Must use exec. Without expected_delta returns measurements with status=unverified and ok=null.
+- Channel count, dimensions, data/display windows, pixel scale/aspect, transforms, projection and frame must align. Nonfinite data rejects; no automatic resizing, color conversion or coordinate mapping.
+- Sticky Cache cannot certify the relation. The caller names the operands and mathematical role; a successful difference is not a material or visual verdict.
+
+## test_cop_controls
+
+Temporarily perturb declared scalar controls, measure their explicit COP output, then restore channels/frame and compare the full native layer fingerprint.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "controller": {
+      "type": "string",
+      "description": "Exact current-session control node path, or explicitly authorized existing target."
+    },
+    "output": {
+      "type": "string",
+      "description": "Exact existing Copernicus node path. Live hou.Node is also accepted inside one request."
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "values": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 8,
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "expectations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "metric": {
+                  "type": "string",
+                  "enum": [
+                    "mean",
+                    "min",
+                    "max",
+                    "mean_abs_change",
+                    "max_abs_change"
+                  ]
+                },
+                "channel": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "delta": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "Finite ordered [min,max]."
+                },
+                "range": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "Finite ordered [min,max]."
+                }
+              },
+              "required": [
+                "metric",
+                "channel",
+                "delta"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "id",
+          "values",
+          "expectations"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "output_port": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Actual source output index or exact name from describe(node).ports."
+    },
+    "max_pixels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777216,
+      "description": "Full buffer pixel limit; does not cap upstream GPU cook allocation."
+    },
+    "allow_foreign": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "One-call explicit user authorization for the specified existing controller; never inferred from paths or selection."
+    }
+  },
+  "required": [
+    "controller",
+    "output",
+    "tests"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unverified"
+      ]
+    },
+    "restored": {
+      "type": "boolean"
+    },
+    "controller": {
+      "type": "string"
+    },
+    "output": {
+      "type": "string"
+    },
+    "parameter_writes": {
+      "type": "integer"
+    },
+    "baseline": {
+      "type": "object"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "semantic_status": {
+      "const": "unverified"
+    }
+  },
+  "required": [
+    "ok",
+    "status",
+    "restored",
+    "controller",
+    "output",
+    "parameter_writes",
+    "results",
+    "semantic_status"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Test and restore a real scalar response
+
+调用工具：`houdini_exec`。
+
+```python
+g = tab_create('/obj', 'geo', name='cop_control_example')
+c = tab_create(g, 'copnet', name='images')
+a = tab_create(c, 'layer', name='source')
+set_parms(a, {'setres': 1, 'resx': 32, 'resy': 16, 'f1': 0.25})
+tests = [{'id': 'gain', 'values': {'f1': 0.5}, 'expectations': [{'metric': 'mean', 'channel': 0, 'delta': [0.249, 0.251], 'range': [0, 1]}]}]
+__result__ = test_cop_controls(a, a, tests, output_port=0, max_pixels=512)
+```
+
+The baseline is 0.25 and the requested value is 0.5. Inspect status, each actual_values/measurement and restored; after the call f1 and the full layer must be back at baseline. A restored failed test remains fail.
+
+### 接口边界
+
+- Must use exec. Each case needs at least one nonzero expected delta. Invariants can be additional expectations; range checks both baseline and perturbed values.
+- Only changed scalar numeric components are supported. Menus, buttons, callbacks, multiparms, tuples, sticky Cache, unsupported storage and invalid baseline reject before testing.
+- mean_abs_change/max_abs_change use a zero baseline. Their nonzero response proves only the declared pixel change, not the intended region, edge or artistic effect.
+- Normal returns include restored=true even when a declared measurement fails. Restoration failure raises CheckpointError with evidence; do not continue editing.
+- Restoration covers snapshotted parameters, expressions/keys, frame and full layer fingerprint. External files, arbitrary Python/solver effects and unobserved dynamic dependencies are not transactional.

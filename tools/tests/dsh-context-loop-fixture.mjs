@@ -6,6 +6,7 @@ import http from 'node:http'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
+import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
@@ -19,7 +20,13 @@ export function apply(ctx) {
   const outcomeReceipts = process.env.DSH_OUTCOME_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
   const expiryStart = outcomeReceipts ? 12 : 10
-  const finalStep = expiryStart + 4
+  const catalogReceipt = process.env.DSH_CATALOG_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.DSH_CATALOG_FIXTURE,'utf8')) : null
+  // Exercise both official DSH transports only in this owned fixture scope;
+  // production Houdini stays in its configured presentation mode.
+  if(catalogReceipt)ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
+  const catalogStart = expiryStart + 4
+  const finalStep = catalogStart + (catalogReceipt ? 6 : 0)
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
     .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
   const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
@@ -63,7 +70,9 @@ export function apply(ctx) {
           res.end(JSON.stringify({error:'fixture transport lost after admission'}))
           return
         }
-        value = outcomeReceipts && body.code.startsWith('fixture_outcome_')
+        value = catalogReceipt && body.code === 'fixture_catalog'
+          ? observed({...catalogReceipt,requestReceipt:receipt})
+          : outcomeReceipts && body.code.startsWith('fixture_outcome_')
           ? observed({...outcomeReceipts[body.code.slice('fixture_outcome_'.length)],requestReceipt:receipt})
           : body.code === 'fixture_sync_failure'
           ? observed({ok:false,error:'FIXTURE_UNKNOWN_PARAMETER: expected angle tuple',
@@ -195,6 +204,43 @@ export function apply(ctx) {
             'the actual tool response must tell the provider not to poll or resubmit a pruned job')
           if(step===finalStep)assert.equal(snapshots.length,requests[expiryStart+3].snapshotCount,'unrelated reads do not repeat expired-result context')
         }
+        const currentEvents=ctx.sessions.get(options.sessionId).snapshotEvents()
+        const nativeCatalog=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+catalogStart)?.data?.meta?.canonical
+        if(catalogReceipt && step>catalogStart){
+          assert.deepEqual(nativeCatalog.result,catalogReceipt.result,'native provider result preserves the selected catalog fields')
+          assert.deepEqual(nativeCatalog.verbs[0].result,catalogReceipt.verbs[0].result,'native canonical catalog stays typed and complete')
+          const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+catalogStart)
+          const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')
+          assert(visible.includes('resolutiony')&&visible.includes('parameter_catalog')&&visible.includes('/verbs/0/result'))
+          assert(!visible.includes('Full formatted result stored'),'selected catalog no longer triggers DSH spill')
+          assert(visible.length<JSON.stringify(catalogReceipt.verbs[0].result).length/2,'full ledger does not undo Python selection')
+        }
+        if(catalogReceipt && step>catalogStart+1){
+          const nested=currentEvents.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_inspect')
+          const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
+            .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          assert.deepEqual(canonical?.result,catalogReceipt.result,'real PTC execution receives the selected result')
+          assert.deepEqual(canonical?.verbs[0].result,catalogReceipt.verbs[0].result,'PTC durable catalog stays typed')
+          const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(catalogStart+1))
+          const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')
+          assert(visible.includes('resolutiony')&&!visible.includes('parameter_catalog'),'PTC returns only its selected value, not durable audit data')
+        }
+        if(catalogReceipt && step>catalogStart+2){
+          const read=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+(catalogStart+2))?.data?.meta?.canonical
+          assert.equal(JSON.parse(read.result.text),catalogReceipt.verbs[0].result.at(-1).name,'real resource tool resolves a nested catalog leaf')
+        }
+        if(catalogReceipt && step>catalogStart+3){
+          const read=currentEvents.filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_resource').at(-1)
+          const canonical=read?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
+            .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          assert.equal(JSON.parse(canonical.result.text),catalogReceipt.verbs[0].result.at(-1).name,'PTC resource read resolves the same typed leaf')
+        }
+        if(catalogReceipt && step===finalStep){
+          const processes=normalizeTraceSteps(currentEvents).steps.filter(s=>s.tool==='pwsh')
+          assert.equal(processes.length,2,'real native and PTC shell calls both returned')
+          assert(processes.every(s=>!s.failed&&s.processOutcome?.exitCode===7&&s.processOutcome?.status==='failed'),
+            'actual DSH native/nested process exits remain separate from successful tool delivery')
+        }
         const uncertain = ctx.sessions.get(options.sessionId).snapshotEvents()
           .find(event => event.type === 'tool/result' && event.data?.message?.source?.callId === 'context-2')
         const ref = uncertain?.data?.meta?.canonical?.requestReceipt?.request_ref
@@ -210,6 +256,14 @@ export function apply(ctx) {
           ['houdini_request',{request_ref:expiryRef}],
           ['houdini_request',{request_ref:expiryRef}],
           ['houdini_inspect',{code:'fixture_after_expired_job'}],
+          ...(catalogReceipt ? [
+            ['houdini_inspect',{code:'fixture_catalog'}],
+            ['run_code',{code:'const value = await tools.houdini_inspect({code:"fixture_catalog"}); return {selected:value.result};',description:'Inspect selected native parameter metadata'}],
+            ['houdini_resource',{kind:'result',ref:nativeCatalog?.details?.sha256,pointer:'/verbs/0/result/'+(catalogReceipt.verbs[0].result.length-1)+'/name'}],
+            ['run_code',{code:'const value = await tools.houdini_resource('+JSON.stringify({kind:'result',ref:nativeCatalog?.details?.sha256,pointer:'/verbs/0/result/'+(catalogReceipt.verbs[0].result.length-1)+'/name'})+'); return value.result;',description:'Read an archived parameter catalog leaf'}],
+            ['pwsh',{command:"Write-Output 'process-outcome-fixture'; exit 7",description:'Exercise an isolated known process exit'}],
+            ['run_code',{code:'return await tools.pwsh({command:"Write-Output \'process-outcome-fixture\'; exit 7",description:"Exercise nested known process exit"});',description:'Observe a shell process exit through PTC'}],
+          ] : []),
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]

@@ -8,17 +8,15 @@ import io
 import json
 import math
 import os
+import reprlib
 
 _MAX_STREAM_BYTES = 1024 * 1024          # cap captured stdout/stderr per exec
 
 
-_MAX_RESULT_BYTES = 4 * 1024 * 1024      # cap the serialized __result__
+_MAX_RESULT_BYTES = 4 * 1024 * 1024      # cap each typed JSON snapshot
 
 
 _MAX_RESULT_DEPTH = 20                   # recursion depth for __result__ coercion
-
-
-_MAX_RESULT_ITEMS = 1000                 # items per container before repr fallback
 
 
 _VERB_VALUE_CHARS = 2000      # 单个入参/出参序列化后的截断长度
@@ -44,35 +42,78 @@ class _CappedStringIO(io.StringIO):
         return len(s)
 
 
-def _jsonable(value, _depth: int = 0):
-    """Deep-coerce `value` to a JSON-safe object; non-JSON leaves become `repr`."""
-    if _depth > _MAX_RESULT_DEPTH:
-        return repr(value)
-    if value is None or isinstance(value, (bool, str)):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return repr(value)
-        # dsh-tools requires lossless JSON and deliberately rejects -0 because a
-        # normal JSON snapshot may collapse it to +0. Houdini vectors/matrices and
-        # quaternion probes commonly produce -0.0, so normalize it at the single
-        # bridge boundary used by __result__ and the verb ledger.
-        return 0.0 if value == 0.0 else value
-    if isinstance(value, (list, tuple)):
-        if len(value) > _MAX_RESULT_ITEMS:
-            return repr(value)
-        return [_jsonable(v, _depth + 1) for v in value]
-    if isinstance(value, dict):
-        if len(value) > _MAX_RESULT_ITEMS:
-            return repr(value)
-        return {str(k): _jsonable(v, _depth + 1) for k, v in value.items()}
+def _jsonable(value, _depth: int = 0, *, _transform=None, _max_depth=_MAX_RESULT_DEPTH):
+    """Take a typed JSON snapshot within one traversal/serialized-byte budget.
+
+    Large catalogs must not turn into Python repr strings merely because they
+    have many entries. Conversely, checking size only after conversion permits
+    shared/cyclic containers to expand exponentially on Houdini's main thread.
+    A limit failure omits the entire value explicitly, never a partial catalog.
+    The execution layer may supply a HOM leaf conversion; this module owns the
+    single container traversal and has no HOM dependency.
+    """
+    remaining = _MAX_RESULT_BYTES
+    active = set()
+
+    class SnapshotLimit(Exception):
+        pass
+
+    def charge(size):
+        nonlocal remaining
+        remaining -= size
+        if remaining < 0:
+            raise SnapshotLimit(f'exceeds {_MAX_RESULT_BYTES} serialized bytes')
+
+    def leaf(item):
+        # JSON's default ensure_ascii makes characters and encoded bytes equal.
+        # Reject a huge string before allocating its escaped representation.
+        if isinstance(item, str) and len(item) > remaining:
+            raise SnapshotLimit(f'exceeds {_MAX_RESULT_BYTES} serialized bytes')
+        charge(len(json.dumps(item, allow_nan=False)))
+        return item
+
+    def visit(item, depth):
+        if depth > _max_depth:
+            return leaf(f'[dsh-houdini: JSON depth exceeds {_max_depth}; bounded repr: {reprlib.repr(item)}]')
+        if _transform is not None:
+            converted = _transform(item)
+            if converted is not NotImplemented:
+                item = converted
+        if isinstance(item, (list, tuple, dict)):
+            identity = id(item)
+            if identity in active:
+                raise SnapshotLimit('cyclic container reference')
+            active.add(identity)
+            charge(2)  # opening and closing delimiter
+            try:
+                if isinstance(item, dict):
+                    result = {}
+                    for index, (key, child) in enumerate(item.items()):
+                        if index:
+                            charge(2)  # comma and space
+                        key = leaf(str(key))
+                        charge(2)  # colon and space
+                        result[key] = visit(child, depth + 1)
+                    return result
+                result = []
+                for index, child in enumerate(item):
+                    if index:
+                        charge(2)
+                    result.append(visit(child, depth + 1))
+                return result
+            finally:
+                active.remove(identity)
+        if isinstance(item, float):
+            # dsh-tools rejects nonfinite and negative-zero JSON numbers.
+            item = repr(item) if not math.isfinite(item) else 0.0 if item == 0.0 else item
+        elif item is not None and not isinstance(item, (bool, str, int)):
+            item = repr(item)
+        return leaf(item)
+
     try:
-        json.dumps(value, allow_nan=False)
-        return value
-    except (TypeError, ValueError):
-        return repr(value)
+        return visit(value, _depth)
+    except SnapshotLimit as error:
+        return f'[dsh-houdini: JSON value omitted: {error}]'
 
 
 def _clip(obj) -> str:
@@ -147,6 +188,9 @@ def _artifact_candidates(ledger, images, execution_ok):
 
 def _operation_summary(name: str, result):
     """Small, untruncated evidence before verbose node lists/service metadata."""
+    if name == 'list_parms' and isinstance(result, list):
+        return {'kind': 'parameter_catalog', 'parameter_count': len(result),
+                'scope': 'Live parameter names, templates, menus and locks; not parameter values or validation'}
     if not isinstance(result, dict):
         return None
     if name.startswith('tool_package_'):
@@ -255,6 +299,7 @@ def _operation_summary(name: str, result):
     if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
         out['artifact'] = {k:r['artifact'].get(k) for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
+            'role','project_root','lifecycle',
             'run_id','capture_id','frame','reservation_retained')}
     if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']
@@ -328,11 +373,5 @@ def project_result(*, ledger, images, stdout, stderr, error, rollback, raw_usage
     if error is not None:
         envelope["error"] = error
     if error is None and "__result__" in namespace:
-        result = _jsonable(namespace["__result__"])
-        try:
-            if len(json.dumps(result, allow_nan=False)) > _MAX_RESULT_BYTES:
-                result = f"[dsh-houdini: __result__ serialized to more than {_MAX_RESULT_BYTES} bytes; omitted]"
-        except (TypeError, ValueError):
-            result = repr(result)
-        envelope["result"] = result
+        envelope["result"] = _jsonable(namespace["__result__"])
     return envelope

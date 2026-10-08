@@ -46,6 +46,23 @@ __result__=c.path()
 root = setup['result']
 a, z, inc, uv, noise = [root + '/' + x for x in ('a','b','increment','coordinates','noise')]
 try:
+    for category in ('cop', 'cops', 'copernicus'):
+        found=value(f'search_tab_menu({category!r},"fractalnoise")')
+        assert found['latest_of_query']=='fractalnoise',found
+    assert not value('search_tab_menu("cop2","fractalnoise")')['families']
+    assert not value('search_tab_menu("img","fractalnoise")')['families']
+    discovered=value(f'search_tab_entries({root!r},"Fractal Noise")')
+    assert discovered['child_category']=='Cop' and any(e['name']=='fractalnoise' for e in discovered['entries']),discovered
+    # Examples come from the same full-help contract loaded by an ordinary
+    # model request, not a separately maintained copy of their Python syntax.
+    for name in ('cop_layer_stats','cop_compare_layers','test_cop_controls'):
+        help=value(f'verb_help({name!r},detail="full")')
+        assert help['call_mode']=='exec' and help['operation_contract']['examples'],help
+        for example in help['operation_contract']['examples']:
+            assert example['tool']=='houdini_exec'
+            observed=call(example['code'])['result']
+            assert observed['status']=='pass',observed
+            if name=='test_cop_controls':assert observed['restored'],observed
     # Two ordinary native HDAs exceeded the old 512-node freshness limit.
     call(f'''
 large=tab_create('/obj/__cop_contracts','copnet',name='large')

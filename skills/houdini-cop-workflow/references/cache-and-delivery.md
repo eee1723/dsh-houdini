@@ -30,8 +30,10 @@ Compiled cook 可减少不需要的中间存储，但不是无条件更快，官
 ## 材质接口
 
 仅当需要查看实际材质才加载 `houdini-solaris-karma-workflow`。交接图层角色、输出定位、
-坐标空间、颜色解释和预期效果；由它选择当前版本可用的 Texture Material Library / USD Material COP、
-Quick Surface Material 或 Karma Material Builder 路径，不同时搭建多套接口。
+坐标空间、颜色解释和预期效果；选择当前版本可用的材质接口，不同时搭建多套实现。
+Texture Material Library LOP与USD Material COP始于H22；H21不能照搬这组节点名，采用当前parent可见的
+Karma/MaterialX图像节点或对应Preview Material路线，并验证实际绑定与采样。H22纹理驱动材质可选择
+Texture Material Library；已有Karma Material Builder也可直接消费贴图，不必重建。
 `op:` 引用必须确认实际输出及消费端支持；不能假设外部进程、重开或其他渲染器都能解析当前会话引用。
 可移植交付应验证依赖或使用获授权烘焙文件。SOP UV/材质绑定检查先于完整细节和最终渲染。
 
@@ -44,11 +46,19 @@ Karma 的几何/渲染法线与 shader normal map 输入不能因同属 RGB 而�
 ## 文件合同
 
 反复导出使用可复现的 Image ROP/ROP Image Output；回读源输出到文件 AOV/Port 的映射。
+新建项目的纹理使用`scene_info()['project_layout']['directories']['texture']`对应的目录（默认`$HIP/dsh-texture/`），保留原用户目的地；先确认实际HIP目录。参考、成图与检查图的分工统一由[工程文件](../../../docs/project-files.md)维护，不按来源把所有生成图都当参考图。
+在ROP中保留可重开的`$HIP`路径，以`render_frame`执行，消费返回的实际文件后按需present，不猜文件名。
+现有通用导出可直接使用此路径，无需另一个纹理执行工具。临时图片/校准图和正式纹理分别说明用途。
 更新 AOV 列表可能替换现有配置，先看实际 multiparm，不把同名 AOV 当作端口已正确绑定。
 输出按用途分别声明：尺寸、通道、数据精度/编码、颜色空间、路径/帧范围和允许误差。
 颜色纹理按消费端色彩管理；高度/粗糙度/遮罩/ID 等数据不能烘入显示变换。
 HDR、负值、精细高度优先评估浮点格式；受限整数格式需显式范围映射、还原方式与误差预算，
 不默默 clamp 到 0..1。不要仅凭扩展名推断实际位深。
+
+`render_frame`只证明写盘新鲜度、非空文件及ROP错误范围，不自动证明图层内容。全黑roughness、
+零height或透明alpha可能是合法数据；用File COP读回指定输出，再核通道、范围与来源关系。
+`render_check`是RGB展示诊断：黑PNG会提示no_nonblack_content，EXR解码不支持；这些不能判定数据贴图失败。
+需要模型看EXR效果时另出说明编码/范围的PNG预览，保留原始浮点文件，不把显示变换烘入数据通道。
 
 File 节点在线 H22 帮助的 Raw 标签与描述方向存在歧义；不根据标签猜 on/off。
 H21.0.440/H22.0.368 的单通道浮点 EXR 已验证 File colorspace=raw、对应 AOV raw=1 的原值读取；
@@ -60,3 +70,7 @@ OCIO 转换或其他格式正确；目标版本仍发现实际菜单 token 与�
 写完逐文件读头并解码必要数据，与最后有效 COP 输出比较尺寸、通道、范围和编码误差；
 只测一张不外推全部。按实际需求再查 U/V 平铺与最终材质。保存成功后的打印错误不撤销文件 I/O，
 先核对回执和文件；重开与依赖验收缺失时明确未验证，不重复保存来掩盖未知。
+
+可移交的材质还要在实际消费端核对：颜色/数据纹理所接输入正确、UV两维与方向正确、alpha和过滤边缘按意图生效。
+校准用非对称、有明确方向和通道含义的小图；仅看数值非零或整图均值不能发现错UV/错通道。
+保存HIP及文件依赖后，在独立同版本进程重开并重渲对应观察，不能以原会话缓存证明可继续使用。

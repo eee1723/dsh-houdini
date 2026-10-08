@@ -28,6 +28,7 @@ parser.add_argument('--runtime-cache', type=Path, required=True)
 parser.add_argument('--browser-module', type=Path)
 parser.add_argument('--context-loop', action='store_true', help='Run a scripted provider through the real DSH loop and local Bridge fixture')
 parser.add_argument('--outcome-fixture', type=Path, help='Exact receipts exported by isolated caught-failure HOM regression')
+parser.add_argument('--catalog-fixture', type=Path, help='Exact receipt exported by isolated parameter-catalog HOM regression')
 args = parser.parse_args()
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
@@ -51,6 +52,8 @@ if args.context_loop:
     env['DSH_CONTEXT_FIXTURE_OUT'] = str(context_output)
     if args.outcome_fixture:
         env['DSH_OUTCOME_FIXTURE'] = str(args.outcome_fixture.resolve(strict=True))
+    if args.catalog_fixture:
+        env['DSH_CATALOG_FIXTURE'] = str(args.catalog_fixture.resolve(strict=True))
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
