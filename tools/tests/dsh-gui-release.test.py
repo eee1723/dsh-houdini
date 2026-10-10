@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,7 +49,10 @@ def start_gui_probe():
     else:
         hou.hipFile.save(str(scene))
     messages = queue.Queue()
-    state = {"phase": "opening", "started": time.monotonic(), "probe": False, "js": None, "first": None, "lastPhase": None}
+    state = {"phase": "opening", "started": time.monotonic(), "probe": False, "js": None, "first": None,
+             "lastPhase": None, "finished": False, "inflight": False, "lastPoll": None,
+             "lastCallback": None, "emptyCallbacks": 0, "parseError": None, "loads": [], "renderer": [],
+             "page": None, "lastDiagnostic": -2}
     # Only this test instance's dialogs are intercepted to make failures finite
     # and observable; production code and the user's Houdini are untouched.
     original_message = hou.ui.displayMessage
@@ -60,11 +64,21 @@ def start_gui_probe():
     window.move(12000, 12000)
     bootstrap.open_workspace()
     timer = QtCore.QTimer(hou.qt.mainWindow())
+    def observations():
+        return {"phase": state["phase"], "elapsed": round(time.monotonic()-state["started"], 2),
+                "contextReady": bootstrap._CONTEXT is not None, "inflight": state["inflight"],
+                "lastPoll": state["lastPoll"], "lastCallback": state["lastCallback"],
+                "emptyCallbacks": state["emptyCallbacks"], "parseError": state["parseError"],
+                "loads": state["loads"], "renderer": state["renderer"], "lastObserved": state["js"]}
     def finish(ok, detail):
+        if state["finished"]:
+            return
+        state["finished"] = True
         timer.stop()
         hou.ui.displayMessage = original_message
         deployment.atomic_json(output, {"ok": ok, "houdini": hou.applicationVersionString(), "gui": True,
-            "installId": config["installId"], "phase": state["phase"], "detail": detail})
+            "installId": config["installId"], "phase": state["phase"], "detail": detail,
+            "observed": observations()})
         # hou.exit raises SystemExit; from a PySide timer that can finalize
         # Python before Houdini's C++ UI destructors. Exercise the real window
         # close route instead, then require a clean process exit in the driver.
@@ -84,6 +98,9 @@ def start_gui_probe():
                     and (row.get("projections") or {}).get("values", {}).get("agentPreset") == "houdini"]
             assert len(rows) == 1, "The native client must create/reuse exactly one Houdini-preset task"
             sid = rows[0]["sessionId"]
+            selected = state["js"]["selection"]
+            assert selected["sessionId"] == sid and selected["agentPreset"] == "houdini", "WebView selected a different task or preset"
+            assert Path(selected["cwd"]).resolve() == scene.parent.resolve(), "WebView selected a different workspace"
             plugin = Path(ctx["install"]) / "app/node_modules/dsh-houdini"
             script = """
 const {HoudiniBridge} = await import(process.argv[1]);
@@ -95,10 +112,28 @@ if(!result.ok || result.result!=='/obj') throw Error('readonly GUI bridge call f
                             env=deployment.runtime_env(ctx), capture_output=True, check=True, timeout=30,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             messages.put(("probe", {"sessionId": sid, "pid": pid, "nodeVersion": ctx["nodeVersion"],
-                                    "dshVersion": ctx["dshVersion"], "workspace": str(scene.parent), "frontendPort": ctx["frontendPort"]}))
+                                    "dshVersion": ctx["dshVersion"], "workspace": str(scene.parent), "frontendPort": ctx["frontendPort"],
+                                    "selected": selected}))
         except Exception as exc:
             messages.put(("error", type(exc).__name__ + ": " + str(exc)))
+    def received(value):
+        state["inflight"] = False
+        state["lastCallback"] = round(time.monotonic()-state["started"], 2)
+        if state["finished"]:
+            return
+        if not value:
+            state["emptyCallbacks"] += 1
+            return
+        try:
+            state["js"] = json.loads(urllib.parse.unquote(value))
+            state["parseError"] = None
+        except Exception as exc:
+            state["parseError"] = type(exc).__name__ + ": " + str(exc)
     def javascript(page):
+        if state["inflight"]:
+            return
+        state["inflight"] = True
+        state["lastPoll"] = round(time.monotonic()-state["started"], 2)
         page.runJavaScript("""
 if (!window.__releaseSmoke) {
   window.__releaseSmoke = {pending:true};
@@ -106,10 +141,17 @@ if (!window.__releaseSmoke) {
     .then(async r=>{const j=await r.json();window.__releaseSmoke={status:r.status,ok:j.result?.ok===true,count:j.result?.value?.items?.length};})
     .catch(e=>{window.__releaseSmoke={error:String(e)}});
 }
-JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0,6000),rpc:window.__releaseSmoke,tokenInUrl:new URL(location.href).searchParams.has('token'),navigationPending:new URL(location.href).searchParams.has('dsh-houdini-workspace'),navigationError:document.querySelector('#dsh-houdini-navigation[role="alert"]')?.textContent});
-""", 0, lambda value: state.update(js=json.loads(value) if value else None))
+encodeURIComponent(JSON.stringify({ready:document.readyState,textChars:document.body?.innerText?.length||0,
+selectionFunction:typeof window.__dshHoudiniSelection,selection:window.__dshHoudiniSelection?.(),
+rpc:window.__releaseSmoke,tokenInUrl:new URL(location.href).searchParams.has('token'),
+navigationPending:new URL(location.href).searchParams.has('dsh-houdini-workspace'),
+navigationError:document.querySelector('#dsh-houdini-navigation[role="alert"]')?.textContent||null}));
+""", 0, received)
     def tick():
         try:
+            if time.monotonic()-state["started"]-state["lastDiagnostic"] >= 2:
+                state["lastDiagnostic"] = time.monotonic()-state["started"]
+                deployment.atomic_json(output.with_suffix(".observed.json"), observations())
             if time.monotonic() - state["started"] > 600:
                 finish(False, "GUI acceptance timed out; inspect the isolated runtime log")
                 return
@@ -133,7 +175,7 @@ JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0
                     assert webview._window.grab().save(str(output.with_suffix(".webview.png")))
                     assert window.grab().save(str(output.with_suffix(".manager.png")))
                     finish(True, {**value, "webRpc": True, "sameSessionOnReopen": True, "samePidOnReopen": True,
-                                  "bodyText": state["js"]["text"][:2000]})
+                                  "selectedWorkspace": True, "selectedHoudiniPreset": True})
                     return
             if bootstrap._CONTEXT is None:
                 return
@@ -141,12 +183,23 @@ JSON.stringify({ready:document.readyState,text:document.body?.innerText?.slice(0
             if webview._view is None:
                 return
             webview._window.move(12000, 12000)
-            javascript(webview._view.page())
+            page = webview._view.page()
+            if state["page"] is not page:
+                state["page"] = page
+                page.loadFinished.connect(lambda ok: state["loads"].append(bool(ok)))
+                page.renderProcessTerminated.connect(lambda status, code: state["renderer"].append({"status": str(status), "code": code}))
+            if state["renderer"]:
+                finish(False, "QtWebEngine renderer terminated")
+                return
+            javascript(page)
             observed = state["js"]
             if observed and observed.get("navigationError"):
                 finish(False, observed["navigationError"])
                 return
-            if (observed and observed.get("ready") == "complete" and len(observed.get("text") or "") > 80
+            selected = (observed or {}).get("selection") or {}
+            if (observed and observed.get("ready") == "complete" and selected.get("sessionId")
+                    and selected.get("agentPreset") == "houdini"
+                    and selected.get("cwd") and Path(selected["cwd"]).resolve() == scene.parent.resolve()
                     and observed.get("rpc", {}).get("ok") and observed["rpc"].get("count", 0) >= 1
                     and not observed.get("tokenInUrl") and not observed.get("navigationPending") and not state["probe"]):
                 state["probe"] = True
@@ -165,6 +218,8 @@ def main():
     parser.add_argument("--trust", type=Path, required=True)
     parser.add_argument("--houdini", type=Path, action="append", required=True)
     parser.add_argument("--candidate", action="store_true")
+    parser.add_argument("--reuse-fixture", type=Path,
+                        help="Reuse only this test's verified installation; GUI preferences and HIP remain new")
     args = parser.parse_args()
     reexec_unpacked_test_cli()
     sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
@@ -185,8 +240,45 @@ def main():
                     import shutil
                     shutil.copyfileobj(source, target)
     install_root = fixture / "managed"
+    if args.reuse_fixture:
+        previous_fixture = args.reuse_fixture.resolve(strict=True)
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        if (previous_fixture.parent != temp_root or not previous_fixture.name.startswith("dsh-full-gui-中文 空格-")
+                or previous_fixture.is_symlink()):
+            raise ValueError("Reuse requires an existing own GUI-test fixture under the temporary directory")
+        old_configs = list(previous_fixture.glob("config-*.json"))
+        if not old_configs:
+            raise ValueError("Reuse fixture has no original GUI-test configuration")
+        configs = [deployment.read_json(path) for path in old_configs]
+        if any(Path(config["root"]).resolve() != previous_fixture
+               or Path(config["managed"]).resolve() != previous_fixture / "managed"
+               or bool(config.get("candidate")) != args.candidate for config in configs):
+            raise ValueError("Original fixture configuration does not identify this isolated installation")
+        old_ids = {config["installId"] for config in configs}
+        if len(old_ids) != 1:
+            raise ValueError("Original fixture configurations disagree on the installation identity")
+        install_root = previous_fixture / "managed"
     store = deployment.Store(install_root, deployment.read_json(args.trust), allow_candidate=args.candidate)
-    ident = store.stage(args.bundle, lambda text: None)
+    if args.reuse_fixture:
+        ident = next(iter(old_ids))
+        saved_state = store.state()
+        if ((saved_state["current"] != ident or saved_state["pending"] not in (None, ident))
+                and (saved_state["pending"] != ident or saved_state["current"] not in (None, ident))):
+            raise ValueError("Installation current/pending identity differs from the own fixture configuration")
+        requested_manifest = deployment.load_signed(args.bundle, store.trust, allow_candidate=args.candidate)
+        installed_manifest = store.manifest(ident)
+        if requested_manifest != installed_manifest:
+            raise ValueError("Reuse installation is not the entire exact signed release manifest requested")
+        archive = args.bundle / requested_manifest["asset"]["name"]
+        if archive.stat().st_size != requested_manifest["asset"]["size"] or deployment.digest(archive) != requested_manifest["asset"]["sha256"]:
+            raise ValueError("Requested release archive differs from its signed manifest")
+        inventory = deployment.verify_inventory(store.installation(ident), installed_manifest)
+        deployment.atomic_json(fixture / "reuse-verification.json", {
+            "manifest": installed_manifest, "installId": ident, "filesVerified": len(inventory),
+            "originalFixture": str(previous_fixture), "state": saved_state})
+        print("Exact signed installation reverified:", ident, len(inventory), "files", flush=True)
+    else:
+        ident = store.stage(args.bundle, lambda text: None)
     for executable in args.houdini:
         executable = executable.resolve(strict=True)
         # Installation folder names are user-selected; query the paired HOM

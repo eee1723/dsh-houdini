@@ -308,9 +308,28 @@ try:
             child_env = isolated_environment(prefs, executable=hython, base=env)
             # Restore only this fixture's explicitly created managed identity.
             child_env.update(DSH_HOME=ctx['home'], DSH_HOUDINI_MANAGED_CONTEXT=env['DSH_HOUDINI_MANAGED_CONTEXT'])
-            subprocess.run([str(hython), str(ROOT / "tools/tests/dsh-managed-houdini.test.py")],
-                           cwd=launch_directory(hython), env=child_env, check=True, timeout=120,
+            traceback_file = test_root / (hython.parent.parent.name + "-managed-traceback.txt")
+            child_script = """import runpy,sys,traceback
+from pathlib import Path
+try:
+    runpy.run_path(sys.argv[1],run_name='__main__')
+except BaseException:
+    Path(sys.argv[2]).write_text(traceback.format_exc(),encoding='utf-8')
+    raise
+"""
+            completed = subprocess.run([str(hython), "-u", "-c", child_script,
+                                       str(ROOT / "tools/tests/dsh-managed-houdini.test.py"), str(traceback_file)],
+                           cwd=launch_directory(hython), env=child_env, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=120,
                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            (test_root / (hython.parent.parent.name + "-managed-output.log")).write_text(
+                completed.stdout + "\n--- stderr ---\n" + completed.stderr, encoding="utf-8")
+            if completed.returncode:
+                if traceback_file.exists():
+                    print(traceback_file.read_text(encoding="utf-8"), flush=True)
+                print(completed.stdout[-4000:] + "\n" + completed.stderr[-4000:], flush=True)
+                raise subprocess.CalledProcessError(completed.returncode, completed.args)
+            print(completed.stdout.strip(), flush=True)
 finally:
     managed.stop_owned()
     if process is not None:

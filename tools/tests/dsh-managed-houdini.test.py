@@ -30,7 +30,9 @@ assert not Path(launcher._FALLBACK_WORKSPACE).is_relative_to(Path(ctx["install"]
 assert launcher._frontend_command()[2] == "managed-cli"
 assert launcher.ensure_dependencies() == "managed dependencies ok (no package manager)"
 runtime = manager._runtime_dsh_info()
-assert runtime["verified"] and runtime["version"] == ctx["dshVersion"], runtime
+# The parent already checked its bundled version and authenticated RPC. This
+# new Houdini process must observe that Host without claiming its parent Job.
+assert runtime["online"] and not runtime["verified"] and runtime["version"] is None, runtime
 try:
     launcher._service_preflight()
 except RuntimeError as exc:
@@ -63,5 +65,7 @@ finally:
         process.kill()
         process.wait(timeout=10)
     bridge.stop()
-assert manager._runtime_dsh_info()["verified"], "the bridge smoke must not stop the independent frontend"
+runtime = manager._runtime_dsh_info()
+assert runtime["online"] and not runtime["verified"] and runtime["version"] is None, \
+    "the bridge smoke must not stop or adopt the independent frontend"
 print("Installed managed bindings and readonly transport passed on", hou.applicationVersionString())
