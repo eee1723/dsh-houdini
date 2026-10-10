@@ -135,7 +135,7 @@ if(!result.ok || result.result!=='/obj') throw Error('readonly GUI bridge call f
         state["inflight"] = True
         state["lastPoll"] = round(time.monotonic()-state["started"], 2)
         page.runJavaScript("""
-if (!window.__releaseSmoke) {
+if (!window.__releaseSmoke && window.__dshHoudiniSelection?.()?.sessionId) {
   window.__releaseSmoke = {pending:true};
   fetch('/api/session/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'gui-release',method:'session/list',payload:{args:{_request:{}}}})})
     .then(async r=>{const j=await r.json();window.__releaseSmoke={status:r.status,ok:j.result?.ok===true,count:j.result?.value?.items?.length};})
