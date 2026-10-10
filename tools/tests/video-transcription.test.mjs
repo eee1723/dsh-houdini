@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {videoModels,transcribeVideo,registerVideoTools,runVideoProcess} from '../../lib/video-transcription.js'
 
-const root=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-video-host-'))
+const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-video-host-')))
 const work=path.join(root,'教程 audio');await fs.mkdir(work)
 const secret='asr-test-private-value'
 const profile={api:'openai-completions',baseURL:'https://speech.example/v1',apiKeyEnv:'ASR_TEST'}
