@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {selectedModelSettings,selectedCredentials} from '../prepare-model-settings.mjs';
+import {selectedModelSettings,selectedCredentials,withServiceProfile,trialCredentials} from '../prepare-model-settings.mjs';
 const text=JSON.stringify({'agent-default-model':{provider:'other'},'unrelated':{token:'do-not-copy'},
   'llm-deepseek':{protocol:'messages',models:[{id:'deepseek-v4-flash',inputModalities:['text','image']},
     {id:'other',inputModalities:['text']}]}});
@@ -38,3 +38,18 @@ assert.throws(()=>selectedModelSettings(JSON.stringify({'llm-pi-ai':{providers:{
 assert.throws(()=>selectedModelSettings(JSON.stringify({'llm-pi-ai':{providers:{p:{apiKeyEnv:'K',
   models:[{id:'m',inputModalities:['text']}],headers:{Authorization:'secret'}}}}}),'p','m'),/Inline secrets/);
 console.log('trial settings: selected provider/catalog preserved, missing route refused, unrelated settings excluded');
+
+const service={provider:'tutorial-speech',api:'openai-completions',baseURL:'https://speech.example/v1',apiKeyEnv:'SPEECH_KEY',model:'Exact/ASR',models:[{id:'Real/Chat',input:['text']}],python:'C:/Python/python.exe'};
+const augmented=withServiceProfile(piResult,service);
+assert.deepEqual(Object.keys(augmented['llm-pi-ai'].providers),['selected','tutorial-speech']);
+assert.deepEqual(augmented['llm-pi-ai'].providers['tutorial-speech'],{api:service.api,baseURL:service.baseURL,apiKeyEnv:service.apiKeyEnv,models:service.models});
+assert.deepEqual(augmented['houdini-frontend'],{videoProvider:'tutorial-speech',videoModel:'Exact/ASR',videoPython:'C:/Python/python.exe'});
+assert.deepEqual(Object.keys(piResult['llm-pi-ai'].providers),['selected'],'must not mutate chat selection');
+assert.throws(()=>withServiceProfile(piResult,{...service,provider:'selected'}),/replace/);
+assert.throws(()=>withServiceProfile(piResult,{...service,models:undefined}),/real chat model catalog/);
+assert.throws(()=>withServiceProfile(piResult,{...service,apiKey:'secret'}),/only/);
+assert.throws(()=>withServiceProfile(piResult,{...service,baseURL:'https://user:secret@speech.example/v1'}),/credential-free/);
+const selectedStore=JSON.stringify({version:1,refs:{CHAT:'selected',UNRELATED:'never-copy'},records:{'browser/grant':'never-copy'}});
+assert.deepEqual(trialCredentials(selectedStore,['CHAT','SPEECH_KEY'],{SPEECH_KEY:'ambient-secret'}),{version:1,refs:{CHAT:'selected'},records:{}});
+assert.throws(()=>trialCredentials(selectedStore,['MISSING'],{}),/missing/);
+console.log('trial service profile: exact auxiliary route, environment credential reference and no unrelated secrets');

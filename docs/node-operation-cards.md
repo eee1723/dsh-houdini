@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 21 · Source SHA-256: `a7ad0c01ad63b36fae3c90eee7cd12b389f7c324528bbf65d15d0f253dd11d42`
+Schema: 2 · Cards: 21 · Source SHA-256: `f9fa5a18f222dea041f4b91c8de4b0edabf2d6b0a89c2e153ed14a5e820eb486`
 
 ## 数据与设计契约
 
@@ -121,9 +121,11 @@ Schema: 2 · Cards: 21 · Source SHA-256: `a7ad0c01ad63b36fae3c90eee7cd12b389f7c
 
 ### 操作与边界
 
-- Input 0 is the backbone; input 1 is an optional cross-section. Default custom sections are centered at the origin in the XY plane, +Y up (normal along Z), not placed at the path start.
+- With an explicit backbone, input 0 supplies the backbone and input 1 supplies optional custom cross-sections. Custom sections normally use the origin in the XY plane, +Y up (normal along Z), not the path start.
+- When input 0 contains no backbone curve, Sweep can use an implicit backbone with one vertex per input-1 cross-section, all at the origin. An unconnected input 0 with multiple sections on input 1 is supported when surfaceshape=input; it does not infer a spatial path from section centers. closeifnocurveinput closes that section sequence, not the cross-sections themselves or end caps. Inspect section order/correspondence and the actual generated surface for this input arrangement.
 - For a circular cable, feed the open centerline to input 0 and use the built-in tube with explicit radius/columns/endcaptype; a second input is only for a custom cross-section. In VEX addprim(..., "poly", points) makes a closed path; use "polyline" for a free-ended cable. A closed path can Sweep to a clean watertight shell while adding a wrong return segment. Reversed input order can cook a surface with the wrong shape. The centerline's loose end must meet the preceding tangent smoothly; Sweep cannot remove an upstream sharp turn. For custom sections explicitly establish section plane and path frame/up. tab_create with explicit input 1 reconciles the shipped Sweep 2.0 initializer to surfaceshape=input after wiring; explicit build parms may override this.
 - A non-XY section may be intentional with Pitch/Yaw or upstream pre-rotation; do not rotate it blindly. Inspect local section extents and actual end boundaries; world bbox alone cannot prove a tube.
+- On the listed tested versions, isolated Bridge evidence covers Tab-visible Sweep 2.0 with input 0 unconnected and two equal-count open polylines on input 1: input sections, default section order, quadrilateral surfaces and no caps produced the corresponding open quad strip. tab_create and build_module both preserved the None input slot. This scope does not certify unequal-count or other curve representations, implicit loop closure, arbitrary section correspondence, self-intersections, GUI appearance or artistic quality.
 
 ## polyextrude
 

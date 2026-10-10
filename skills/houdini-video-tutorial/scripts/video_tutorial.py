@@ -1,19 +1,27 @@
-"""Local video evidence and explicitly authorized SiliconFlow ASR. Python 3.11+, no HOM."""
+"""Local tutorial media/evidence and explicitly authorized compatible ASR. Python 3.11+, no HOM."""
 import argparse
+import base64
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from contextvars import ContextVar
 from fractions import Fraction
-from functools import wraps
+from functools import partial, wraps
 import hashlib
+import http.client
 import json
 import math
 import os
 from pathlib import Path
 import re
+import socket
+import ssl
 import subprocess
 import struct
 import sys
+from threading import Event, Lock
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -30,6 +38,12 @@ class Failure(Exception):
 def check(condition, message):
     if not condition:
         raise Failure(message)
+
+
+def media_executable(name):
+    """The default is the versioned private runtime, never a global PATH tool."""
+    suffix = ".exe" if os.name == "nt" else ""
+    return str(PACKAGE / "runtime" / "video" / "ffmpeg" / "bin" / (name + suffix))
 
 
 def file_signature(path):
@@ -124,20 +138,156 @@ def lock(work):
 
 
 def run(command, *, stderr=False):
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=300)
-    check(result.returncode == 0, "Media command failed; inspect input and executable")
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=300)
+    except FileNotFoundError:
+        raise Failure(f"Executable unavailable: {Path(command[0]).name}; managed installs: repair the current version in "
+                      "Version & Updates. Source checkout: run tools/prepare-video-runtime.py for private media dependencies, "
+                      "or pass the explicit executable path") from None
+    except subprocess.TimeoutExpired:
+        raise Failure(f"{Path(command[0]).name} exceeded 300 seconds; inspect the media and narrow the requested operation") from None
+    check(result.returncode == 0,
+          f"{Path(command[0]).name} failed (exit {result.returncode}): "
+          + result.stderr.decode("utf-8", errors="replace")[-2000:].strip())
     return result.stderr if stderr else result.stdout
 
 
-def probe(video, executable):
-    data = json.loads(run([executable, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(video)]))
+def media_info(path, executable):
+    data = json.loads(run([executable, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)]))
     duration = float(data["format"]["duration"])
     check(math.isfinite(duration) and duration > 0, "Unknown/invalid media duration")
-    streams = [{k: item[k] for k in ("index", "codec_type", "codec_name", "width", "height", "r_frame_rate")
+    streams = [{k: item[k] for k in ("index", "codec_type", "codec_name", "width", "height", "r_frame_rate", "start_time", "duration")
                 if k in item} for item in data["streams"]]
+    return {"duration": duration, "start_time": data["format"].get("start_time"), "streams": streams}
+
+
+def probe(video, executable):
+    info = media_info(video, executable)
+    streams = info["streams"]
     check(any(item.get("codec_type") == "video" for item in streams), "Video stream required")
-    return duration, streams
+    return info["duration"], streams
+
+
+def ingest(args):
+    """Snapshot explicit or unambiguous local tracks; no download or cloud calls."""
+    source_dir = getattr(args, "input", None)
+    video_path, audio_path = getattr(args, "video", None), getattr(args, "audio", None)
+    check(bool(source_dir) != bool(video_path), "Use --input directory or --video file")
+    check(not source_dir or not audio_path, "Use --video with --audio for an explicit pair")
+    ignored, candidates = [], []
+    if source_dir:
+        folder = Path(source_dir)
+        check(folder.is_absolute() and folder.is_dir(), "Absolute input directory required")
+        paths = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() != ".aria2"), key=lambda p: p.name)
+    else:
+        paths = [Path(video_path)] + ([Path(audio_path)] if audio_path else [])
+    for path in paths:
+        check(path.is_absolute() and path.is_file(), f"Local media file missing: {path}")
+        path = path.resolve()
+        signature = file_signature(path)
+        try:
+            info = media_info(path, args.ffprobe)
+        except Failure as error:
+            check(file_signature(path) == signature,
+                  f"Source is changing (download may still be running): {path}; wait for completion, then ingest again")
+            if not source_dir:
+                raise
+            marker = path.with_name(path.name + ".aria2")
+            check(not marker.exists(),
+                  f"Download-marked source is not readable yet: {path}; wait for completion or select --video/--audio explicitly")
+            ignored.append({"path": str(path), "reason": str(error)})
+            continue
+        check(file_signature(path) == signature,
+              f"Source is changing (download may still be running): {path}; wait for completion, then ingest again")
+        types = {s.get("codec_type") for s in info["streams"]}
+        if "video" not in types and "audio" not in types:
+            ignored.append({"path": str(path), "reason": "No audio/video streams"})
+            continue
+        candidates.append({"path": path, "signature": signature, "info": info, "types": types})
+    if source_dir:
+        videos = [c for c in candidates if "video" in c["types"]]
+        audios = [c for c in candidates if "audio" in c["types"] and "video" not in c["types"]]
+        listing = "; ".join(f"{c['path'].name} ({'/'.join(sorted(c['types']))})" for c in candidates) or "none"
+        check(len(videos) == 1 and len(audios) <= 1,
+              f"No unique media pairing in directory: {listing}. Pass --video and optional --audio explicitly")
+        selected_video = videos[0]
+        check(not audios or "audio" not in selected_video["types"],
+              f"Video already has audio and a separate audio candidate exists: {listing}. Choose explicit --video/--audio")
+        selected_audio = audios[0] if audios else None
+    else:
+        selected_video = next((c for c in candidates if c["path"] == Path(video_path).resolve()), None)
+        selected_audio = next((c for c in candidates if audio_path and c["path"] == Path(audio_path).resolve()), None)
+        check(selected_video is not None and "video" in selected_video["types"], "--video must contain a video stream")
+        check(not audio_path or selected_audio is not None and "audio" in selected_audio["types"],
+              "--audio must contain an audio stream")
+        check(not selected_audio or selected_audio["path"] != selected_video["path"],
+              "Separate --video and --audio must name different files; omit --audio for an embedded track")
+    selected = [selected_video] + ([selected_audio] if selected_audio else [])
+    sources = []
+    for index, item in enumerate(selected):
+        digest = sha(item["path"])
+        check(file_signature(item["path"]) == item["signature"],
+              f"Source is changing (download may still be running): {item['path']}; wait for completion, then ingest again")
+        marker = item["path"].with_name(item["path"].name + ".aria2")
+        sources.append({"role": "video" if index == 0 else "audio", "path": str(item["path"]),
+                        "sha256": digest, "bytes": item["signature"][2], **item["info"],
+                        "download_marker": str(marker) if marker.exists() else None})
+    output = directory(args.output, new=True)
+    partial, destination = output / "media.partial.mp4", output / "media.mp4"
+    command = [args.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-xerror",
+               "-err_detect", "explode", "-i", str(selected_video["path"])]
+    if selected_audio:
+        command += ["-err_detect", "explode", "-i", str(selected_audio["path"])]
+    command += ["-map", "0:v:0", "-map", "1:a:0" if selected_audio else "0:a:0?",
+                "-c", "copy", "-map_metadata", "-1", "-movflags", "+faststart", str(partial)]
+    try:
+        run(command)
+        result = media_info(partial, args.ffprobe)
+        for item, source in zip(selected, sources):
+            check(file_signature(item["path"]) == item["signature"] and sha(item["path"]) == source["sha256"],
+                  f"Source changed while importing: {item['path']}; download may still be running; no completed snapshot was published")
+        # A remux can exit successfully on an incomplete tail. Compare each selected
+        # stream's declared span, allowing one encoded frame/packet at the boundary.
+        duration_checks = []
+        for kind, item in (("video", selected_video), ("audio", selected_audio or selected_video)):
+            before = next((s for s in item["info"]["streams"] if s.get("codec_type") == kind), None)
+            if before is None:
+                continue
+            after = next((s for s in result["streams"] if s.get("codec_type") == kind), None)
+            check(after is not None, f"Imported media lost the {kind} stream")
+            source_duration, output_duration = before.get("duration"), after.get("duration")
+            basis = "stream"
+            # For a single track starting at zero, the container duration is an
+            # available declared bound when e.g. Matroska omits stream.duration.
+            if source_duration in (None, "N/A") and item["types"] == {kind} and float(item["info"]["start_time"] or 0) == 0:
+                source_duration, basis = item["info"]["duration"], "single_track_container"
+                output_duration = output_duration or result["duration"]
+            if source_duration not in (None, "N/A") and output_duration not in (None, "N/A"):
+                frame_rate = before.get("r_frame_rate", "0/1")
+                rate = Fraction(frame_rate) if frame_rate not in ("0/0", "N/A") else Fraction(0)
+                tolerance = max(.1, float(1 / rate) if rate > 0 else .1)
+                check(float(output_duration) + tolerance >= float(source_duration),
+                      f"Imported {kind} ends before its declared source duration; source may be incomplete. Wait for the download to finish")
+                duration_checks.append({"stream": kind, "status": "checked", "basis": basis,
+                                        "source_seconds": float(source_duration), "output_seconds": float(output_duration)})
+            else:
+                duration_checks.append({"stream": kind, "status": "unverified", "reason": "Comparable declared stream duration unavailable"})
+        media_hash = sha(partial)
+        partial.rename(destination)
+        manifest = {"schema": 1, "kind": "tutorial_media_ingest", "sources": sources,
+                    "media": {"path": str(destination), "sha256": media_hash, **result},
+                    "operation": "stream_copy", "timing": "Input starts normalized by FFmpeg; no content-based synchronization",
+                    "integrity": {"packet_read": "ffmpeg_error_fatal", "duration_checks": duration_checks, "full_decode": "not_performed"},
+                    "ignored": ignored, "semantic_inspection": "not_performed"}
+        save(output / "source-manifest.json", manifest)
+    except Failure as error:
+        raise Failure(f"{error}. Incomplete import retained at {output}; original files were not modified") from None
+    return {"status": "imported", "video": str(destination), "source_manifest": str(output / "source-manifest.json"),
+            "source_sha256": media_hash, "duration": result["duration"],
+            "has_audio": any(s.get("codec_type") == "audio" for s in result["streams"]),
+            "sources": sources, "ignored": ignored,
+            "note": "Stable stream-copy snapshot; a leftover download marker does not by itself establish incompleteness. Use video with prepare/scan."}
 
 
 def ranges(start, duration, total, chunk, overlap):
@@ -200,13 +350,40 @@ def load(work):
     return manifest
 
 
-def config(work, model=None):
+def asr_endpoint(value, protocol="openai-transcriptions"):
+    check(isinstance(value, str) and value and not any(c.isspace() for c in value), "ASR endpoint must be an absolute HTTPS URL")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        parsed.port  # Validate the port before recording any possibly billed attempt.
+    except ValueError:
+        raise Failure("ASR endpoint contains an invalid host or port") from None
+    check(parsed.hostname and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+          and (parsed.scheme == "https" or parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")),
+          "ASR endpoint requires HTTPS (HTTP only for local loopback), without credentials, query or fragment")
+    suffix = {"openai-transcriptions": "/audio/transcriptions", "qwen-chat-asr": "/chat/completions",
+              "dashscope-asr": "/api/v1/services/aigc/multimodal-generation/generation"}.get(protocol)
+    check(suffix is not None, "Unsupported ASR protocol")
+    check(parsed.path.rstrip("/").endswith(suffix), f"ASR endpoint must end in {suffix}")
+    return value
+
+
+def config(work, model=None, endpoint=None, protocol=None, request_options=None):
     path = work / "asr-config.json"
-    expected = {"endpoint": ENDPOINT, "model": model, "manifest_sha256": sha(work / "manifest.json")}
+    expected = {"endpoint": endpoint or ENDPOINT, "model": model, "manifest_sha256": sha(work / "manifest.json")}
+    if protocol and protocol != "openai-transcriptions":
+        expected["protocol"] = protocol
+    if request_options:
+        expected["request_options"] = request_options
     if path.exists():
         actual = read(path)
         if model is None:
             expected["model"] = actual["model"]
+            if "protocol" in actual:
+                expected["protocol"] = actual["protocol"]
+            if "request_options" in actual:
+                expected["request_options"] = actual["request_options"]
+            if endpoint is None:
+                expected["endpoint"] = asr_endpoint(actual["endpoint"], actual.get("protocol", "openai-transcriptions"))
         check(actual == expected, "ASR configuration/source changed; do not mix models or evidence")
         return actual
     if model is not None:
@@ -239,16 +416,18 @@ def latest(work, item):
     return len(attempts), outcome
 
 
-def key_from_environment():
-    key = os.environ.get("SILICONFLOW_API_KEY", "").strip()
-    if not key and os.name == "nt":
+def key_from_environment(name="SILICONFLOW_API_KEY"):
+    check(isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name), "Invalid credential environment variable name")
+    key = os.environ.get(name, "").strip()
+    if not key and os.name == "nt" and name == "SILICONFLOW_API_KEY":
         import winreg
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as handle:
                 key = winreg.QueryValueEx(handle, "SILICONFLOW_API_KEY")[0].strip()
         except FileNotFoundError:
             pass
-    check(bool(key), "SILICONFLOW_API_KEY missing; do not put keys in command arguments")
+    check(bool(key), f"{name} missing; configure the credential through DSH model settings or this environment variable; do not put keys in command arguments")
+    check(not any(c in key for c in "\r\n"), "Credential contains invalid line breaks")
     return key
 
 
@@ -257,30 +436,203 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def post(audio, model, key):
+def timing_text(value):
+    """Ignore only whitespace/case when checking coverage; never align edited text."""
+    return re.sub(r"\s+", "", value).casefold()
+
+
+def provider_timestamps(data, protocol, text):
+    """Retain final native offsets without mistaking a current sentence for all audio."""
+    result = {"basis": "provider_audio_offset_milliseconds", "unit": "seconds", "coverage": "none",
+              "text_coverage": "unverified", "sentences": [], "diagnostics": []}
+    if protocol != "dashscope-asr":
+        result["diagnostics"].append("This protocol has no verified sentence/word timestamp adapter")
+        return result
+    output = data.get("output", {})
+    details = output.get("output", output)
+    values = details.get("sentences", output.get("sentences"))
+    collection = isinstance(values, list)
+    if not collection:
+        values = [details["sentence"]] if isinstance(details.get("sentence"), dict) else []
+    previous = -1
+    invalid_sentences = False
+    for index, sentence in enumerate(values):
+        if not isinstance(sentence, dict):
+            invalid_sentences = True
+            result["diagnostics"].append(f"Sentence {index} is not an object")
+            continue
+        begin, end = sentence.get("begin_time"), sentence.get("end_time")
+        if (sentence.get("sentence_end") is not True or type(begin) not in (int, float)
+                or type(end) not in (int, float) or not all(math.isfinite(t) for t in (begin, end))
+                or not 0 <= begin < end or begin < previous or not isinstance(sentence.get("text"), str)):
+            invalid_sentences = True
+            result["diagnostics"].append(f"Sentence {index} has incomplete/invalid/nonchronological timing")
+            continue
+        previous = begin
+        row = {"provider_sentence_id": sentence.get("sentence_id"), "speaker_id": sentence.get("speaker_id"),
+               "channel_id": sentence.get("channel_id"), "start": begin / 1000, "end": end / 1000,
+               "text": sentence["text"], "words": []}
+        words = sentence.get("words", [])
+        if not isinstance(words, list):
+            result["diagnostics"].append(f"Sentence {index} has no valid word array")
+            words = []
+        word_previous = begin
+        for word_index, word in enumerate(words):
+            if not isinstance(word, dict):
+                result["diagnostics"].append(f"Sentence {index} word {word_index} is not an object")
+                continue
+            left, right = word.get("begin_time"), word.get("end_time")
+            if (word.get("fixed") is not True or type(left) not in (int, float)
+                    or type(right) not in (int, float) or not all(math.isfinite(t) for t in (left, right))
+                    or not begin <= left < right <= end or left < word_previous
+                    or not isinstance(word.get("text"), str) or not isinstance(word.get("punctuation", ""), str)):
+                result["diagnostics"].append(f"Sentence {index} word {word_index} has unfinalized/invalid timing")
+                continue
+            word_previous = left
+            row["words"].append({"start": left / 1000, "end": right / 1000, "text": word["text"],
+                                 "punctuation": word.get("punctuation", ""), "fixed": True,
+                                 "speaker_id": word.get("speaker_id")})
+        row["word_text_coverage"] = ("full" if row["words"] and timing_text("".join(
+            word["text"] + word["punctuation"] for word in row["words"])) == timing_text(row["text"])
+            else "mismatch" if row["words"] else "none")
+        if row["word_text_coverage"] == "mismatch":
+            result["diagnostics"].append(f"Sentence {index} words differ from its text; do not align normalized text to these words")
+        result["sentences"].append(row)
+    if not result["sentences"]:
+        result["coverage"] = "unverified" if values else "none"
+        return result
+    joined = timing_text("".join(row["text"] for row in result["sentences"]))
+    full = timing_text(text)
+    result["text_coverage"] = "full" if joined == full else "partial" if joined and joined in full else "mismatch"
+    result["coverage"] = ("full" if result["text_coverage"] == "full" and not invalid_sentences
+        else "partial" if result["text_coverage"] == "partial" else "unverified")
+    if not collection and result["text_coverage"] != "full":
+        result["diagnostics"].append("Only the current/last sentence was returned; its times do not cover the full transcript")
+    if result["text_coverage"] == "mismatch":
+        result["diagnostics"].append("Sentence text differs from the accumulated transcript; preserve both without invented alignment")
+    return result
+
+
+def validate_asr_options(value, model, protocol):
+    check(isinstance(value, dict) and not set(value) - {"vocabulary", "speaker_diarization_enabled"},
+          "ASR options support only vocabulary and speaker_diarization_enabled")
+    check(not value or protocol == "dashscope-asr", "ASR options require the native DashScope protocol")
+    if "vocabulary" in value:
+        words = value["vocabulary"]
+        check(isinstance(words, dict) and len(words) <= 2000 and all(
+            isinstance(word, str) and bool(word.strip()) and type(weight) is int and weight in (1, 2, 3, 4, 5, 50)
+            for word, weight in words.items()), "Vocabulary must contain at most 2000 words with weight 1..5 or 50")
+        check(sum(weight == 50 for weight in words.values()) <= 50, "At most 50 super hotwords with weight 50 are supported")
+    if "speaker_diarization_enabled" in value:
+        check(type(value["speaker_diarization_enabled"]) is bool and model == "qwen-audio-3.1-asr-flash",
+              "Speaker diarization requires qwen-audio-3.1-asr-flash and a boolean value")
+    return value
+
+
+def post(audio, model, key, endpoint=ENDPOINT, protocol="openai-transcriptions", request_options=None):
     """Upload the immutable, manifest-checked bytes supplied by transcribe."""
     check(isinstance(audio, bytes), "ASR upload requires prepared audio bytes, not a path")
-    boundary = "dsh" + uuid.uuid4().hex
-    head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n"
-            "Content-Type: audio/wav\r\n\r\n").encode()
-    body = head + audio + f"\r\n--{boundary}--\r\n".encode()
-    request = urllib.request.Request(ENDPOINT, data=body, headers={"Authorization": f"Bearer {key}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
-    with urllib.request.build_opener(NoRedirect()).open(request, timeout=60) as response:
+    request_options = validate_asr_options({} if request_options is None else request_options, model, protocol)
+    headers = {"Authorization": f"Bearer {key}"}
+    if protocol in ("qwen-chat-asr", "dashscope-asr"):
+        encoded = base64.b64encode(audio).decode("ascii")
+        check(len(encoded) <= 10_000_000, "Qwen ASR Base64 audio exceeds 10 MB; prepare smaller chunks")
+        messages = [{"role": "user", "content": [{"type": "input_audio",
+                    "input_audio": {"data": "data:audio/wav;base64," + encoded}}]}]
+        if protocol == "dashscope-asr":
+            payload = {"model": model, "input": {"messages": messages},
+                       "parameters": {"format": "wav", "sample_rate": "16000"}}
+            payload["parameters"].update(request_options)
+            headers["X-DashScope-SSE"] = "disable"
+        else:
+            payload = {"model": model, "messages": messages, "stream": False,
+                       "asr_options": {"enable_itn": False}}
+        body = json.dumps(payload).encode("utf-8")
+        content_type = "application/json"
+    else:
+        boundary = "dsh" + uuid.uuid4().hex
+        head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n"
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n"
+                "Content-Type: audio/wav\r\n\r\n").encode()
+        body = head + audio + f"\r\n--{boundary}--\r\n".encode()
+        content_type = f"multipart/form-data; boundary={boundary}"
+    headers["Content-Type"] = content_type
+    request = urllib.request.Request(asr_endpoint(endpoint, protocol), data=body, headers=headers, method="POST")
+    with urllib.request.build_opener(NoRedirect()).open(request, timeout=300) as response:
         payload = response.read(2_000_001)
         check(len(payload) <= 2_000_000, "ASR response too large")
         data = json.loads(payload)
-        check(response.status == 200 and isinstance(data, dict) and isinstance(data.get("text"), str),
-              "Invalid ASR response")
-        # Preserve original text, not provider error bodies or arbitrary fields.
-        return data["text"], response.headers.get("x-siliconcloud-trace-id")
+        check(response.status == 200 and isinstance(data, dict), "Invalid ASR response")
+        if protocol == "qwen-chat-asr":
+            choices = data.get("choices")
+            check(isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict)
+                  and choices[0].get("finish_reason") == "stop" and isinstance(choices[0].get("message"), dict),
+                  "Qwen ASR response incomplete or invalid")
+            text = choices[0]["message"].get("content")
+        elif protocol == "dashscope-asr":
+            output = data.get("output")
+            check(isinstance(output, dict), "DashScope ASR response incomplete or invalid")
+            # The HTTP reference uses output.sentence; the Qianwen platform
+            # documents output.output.sentence. output.text is the accumulated
+            # full transcript in both; a current sentence cannot replace it.
+            details = output.get("output", output)
+            check(isinstance(details, dict), "DashScope ASR response incomplete or invalid")
+            sentence = details.get("sentence")
+            check(not isinstance(sentence, dict) or sentence.get("sentence_end") is not False,
+                  "DashScope ASR response incomplete or invalid")
+            text = output.get("text")
+            check(isinstance(text, str), "DashScope ASR response lacks the complete transcript")
+        else:
+            text = data.get("text")
+        check(isinstance(text, str), "Invalid ASR response text")
+        # Only a validated successful body is retained; never response headers or
+        # provider failure bodies. A credential echo in any field rejects it.
+        trace = response.headers.get("x-request-id") or response.headers.get("x-siliconcloud-trace-id")
+        if protocol == "dashscope-asr" and not trace:
+            trace = data.get("request_id")
+        evidence = {"schema": 1, "protocol": protocol, "raw_response": data,
+                    "usage": data.get("usage") if isinstance(data.get("usage"), dict) else None,
+                    "timestamps": provider_timestamps(data, protocol, text)}
+        check(not key or key not in json.dumps([text, trace, evidence], ensure_ascii=False, allow_nan=False),
+              "Credential echoed in response; response rejected")
+        return text, trace, evidence
 
 
-def transcribe(args, sender=post, get_key=key_from_environment):
+def concurrency_failure(error):
+    """Only overload/server failures and actual transport loss can lower concurrency."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or 500 <= error.code <= 599
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return False
+    if isinstance(reason, socket.gaierror):
+        return reason.errno == socket.EAI_AGAIN
+    return isinstance(reason, (TimeoutError, ConnectionError, http.client.IncompleteRead))
+
+
+def transcribe(args, sender=None, get_key=None):
     check(args.allow_upload, "Cloud upload requires explicit user authorization and --allow-upload")
     check(re.fullmatch(r"[A-Za-z0-9_.:/-]{1,160}", args.model), "Invalid model identifier")
+    protocol = getattr(args, "protocol", "openai-transcriptions")
+    endpoint = asr_endpoint(getattr(args, "endpoint", ENDPOINT), protocol)
+    options_file = getattr(args, "asr_options_file", None)
+    request_options = None
+    if options_file is not None:
+        path = Path(options_file)
+        check(path.is_absolute() and path.is_file() and not path.is_symlink(), "Absolute ASR options JSON file required")
+        check(path.stat().st_size <= 1_000_000, "ASR options file exceeds 1 MB")
+        request_options = validate_asr_options(read(path), args.model, protocol)
+    key_env = getattr(args, "key_env", "SILICONFLOW_API_KEY")
+    check(isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key_env), "Invalid credential environment variable name")
+    sender = sender or (lambda audio, model, key: post(audio, model, key, endpoint, protocol, request_options))
+    get_key = get_key or (lambda: key_from_environment(key_env))
     check(type(args.max_chunks) is int and 1 <= args.max_chunks <= 100, "max-chunks must be 1..100")
+    concurrency = getattr(args, "concurrency", 64)
+    check(type(concurrency) is int and 1 <= concurrency <= 64, "concurrency must be 1..64")
+    requests_per_second = getattr(args, "requests_per_second", 8)
+    check(requests_per_second is None or type(requests_per_second) in (int, float)
+          and math.isfinite(requests_per_second) and 0 < requests_per_second <= 100,
+          "requests-per-second must be greater than 0 and at most 100")
     retry_budget = getattr(args, "max_retries", None)
     if retry_budget is None:
         retry_budget = 1 if args.retry_failed else 0
@@ -301,7 +653,7 @@ def transcribe(args, sender=post, get_key=key_from_environment):
         check(not any(count for _, count, _ in states) or (work / "asr-config.json").is_file(),
               "Missing ASR config for existing attempts; restore the original asr-config.json from a known backup, "
               "or start a separately authorized new task without changing this history. Cannot reconstruct model identity")
-        config(work, args.model)
+        config(work, args.model, endpoint, protocol, request_options)
         queue, planned_retries = [], 0
         for item, count, outcome in states:
             if item["id"] not in selected or outcome and outcome["status"] == "success":
@@ -313,36 +665,145 @@ def transcribe(args, sender=post, get_key=key_from_environment):
             queue.append((item, count))
             planned_retries += bool(count)
         key = None
-        sent = retried = 0
-        for item, count in queue:
-            audio_path = work / item["audio"]
-            check(not audio_path.is_symlink(), f"Audio symlink rejected for chunk {item['id']}; not submitted")
-            with audio_path.open("rb") as stream:
-                audio = stream.read(50_000_000)
-            check(len(audio) < 50_000_000, f"Audio exceeds upload bound for chunk {item['id']}; not submitted")
-            check(hashlib.sha256(audio).hexdigest() == item["sha256"],
-                  f"Audio changed before upload for chunk {item['id']}; not submitted; {sent} prior successes preserved")
-            if key is None:
-                key = get_key()
-            number = count + 1
-            save(work / f"attempt-{item['id']}-{number}.json",
-                 {"id": item["id"], "attempt": number, "audio_sha256": item["sha256"]})
+        submitted = completed = succeeded = failed = retried = peak_inflight = 0
+        active_requests = 0
+        current_concurrency = concurrency
+        transitions, wave_failures, failure_details = [], [], []
+        stopped, dispatch_guard = Event(), Lock()
+        request_failure, local_failure = None, None
+
+        def submit_audio(audio, item):
+            # Only HTTP work runs in threads. The coordinator owns all artifact
+            # writes and the task lock; each sender receives immutable bytes.
+            nonlocal active_requests, peak_inflight
+            with dispatch_guard:
+                active_requests += 1
+                peak_inflight = max(peak_inflight, active_requests)
             try:
-                text, trace = sender(audio, args.model, key)
+                response = sender(audio, args.model, key)
+                check(isinstance(response, (tuple, list)) and len(response) in (2, 3), "Invalid ASR response")
+                text, trace = response[:2]
                 check(isinstance(text, str), "Invalid ASR text")
-                check(not key or key not in text, "Credential echoed in response; response rejected")
+                check(trace is None or isinstance(trace, str), "Invalid ASR trace identifier")
+                check(not key or key not in text and (not trace or key not in trace),
+                      "Credential echoed in response; response rejected")
                 result = {"status": "success", "text": text, "text_sha256": text_sha(text),
                           "audio_sha256": item["sha256"], "trace_id": trace}
+                if len(response) == 3:
+                    evidence = response[2]
+                    check(isinstance(evidence, dict), "Invalid ASR provider evidence")
+                    encoded = json.dumps(evidence, ensure_ascii=False, allow_nan=False)
+                    check(not key or key not in encoded, "Credential echoed in response; response rejected")
+                    result["provider_evidence"] = evidence
             except Exception as error:
                 result = {"status": "http_error" if isinstance(error, urllib.error.HTTPError) else "unknown",
-                          "http_status": error.code if isinstance(error, urllib.error.HTTPError) else None}
-                save(work / f"outcome-{item['id']}-{number}.json", result)
-                raise Failure(f"ASR failed on chunk {item['id']} after {sent} successful submissions; "
-                              "evidence retained, no automatic retry") from None
-            save(work / f"outcome-{item['id']}-{number}.json", result)
-            sent += 1
-            retried += bool(count)
-            print(json.dumps({"chunk": item["id"], "status": "saved", "characters": len(text)}), flush=True)
+                          "http_status": error.code if isinstance(error, urllib.error.HTTPError) else None,
+                          "error_type": type(error).__name__,
+                          "concurrency_related": concurrency_failure(error)}
+                # Our validation messages contain known facts, not provider error
+                # bodies. Retain the reason so a truncated result can be diagnosed.
+                if isinstance(error, Failure):
+                    result["reason"] = str(error).replace(key, "[redacted]") if key else str(error)
+                if isinstance(error, urllib.error.HTTPError):
+                    error.close()
+                # Pause dispatch immediately; the coordinator first drains and
+                # saves this wave before deciding whether new chunks can resume.
+                with dispatch_guard:
+                    stopped.set()
+            finally:
+                with dispatch_guard:
+                    active_requests -= 1
+            return result
+
+        if queue:
+            with ThreadPoolExecutor(max_workers=min(concurrency, len(queue))) as executor:
+                active, next_index = {}, 0
+                next_dispatch = time.monotonic()
+                while True:
+                    if stopped.is_set() and not active:
+                        if (local_failure or not wave_failures or current_concurrency <= 16
+                                or any(not row["concurrency_related"] for row in wave_failures)):
+                            break
+                        lower = 32 if current_concurrency > 32 else 16
+                        transitions.append({"from": current_concurrency, "to": lower,
+                                            "after_submitted": submitted, "after_completed": completed,
+                                            "causes": wave_failures})
+                        current_concurrency = lower
+                        wave_failures = []
+                        # Lowering concurrency is not authorization to retry.
+                        # Continue only untouched chunks in the original budget.
+                        queue = queue[:next_index] + [row for row in queue[next_index:] if not row[1]]
+                        stopped.clear()
+                    if not active and next_index >= len(queue):
+                        break
+                    while next_index < len(queue) and len(active) < current_concurrency and not stopped.is_set():
+                        delay = next_dispatch - time.monotonic()
+                        if delay > 0:
+                            if active:
+                                break  # Save completions while waiting for the next permitted dispatch.
+                            stopped.wait(min(delay, .1))
+                            continue
+                        item, count = queue[next_index]
+                        try:
+                            audio_path = work / item["audio"]
+                            check(not audio_path.is_symlink(), f"Audio symlink rejected for chunk {item['id']}; not submitted")
+                            with audio_path.open("rb") as stream:
+                                audio = stream.read(50_000_000)
+                            check(len(audio) < 50_000_000, f"Audio exceeds upload bound for chunk {item['id']}; not submitted")
+                            check(hashlib.sha256(audio).hexdigest() == item["sha256"],
+                                  f"Audio changed before upload for chunk {item['id']}; not submitted")
+                            if protocol in ("qwen-chat-asr", "dashscope-asr"):
+                                check(item["end"] - item["start"] <= 300 and 4 * ((len(audio) + 2) // 3) <= 10_000_000,
+                                      "Qwen ASR accepts at most 5 minutes and 10 MB Base64 audio; prepare smaller chunks; not submitted")
+                            if key is None:
+                                key = get_key()
+                            with dispatch_guard:
+                                if stopped.is_set():
+                                    break
+                                number = count + 1
+                                save(work / f"attempt-{item['id']}-{number}.json",
+                                     {"id": item["id"], "attempt": number, "audio_sha256": item["sha256"]})
+                                active[executor.submit(submit_audio, audio, item)] = (item, number)
+                                submitted += 1
+                                retried += bool(count)
+                                next_index += 1
+                                if requests_per_second is not None:
+                                    next_dispatch = time.monotonic() + 1 / requests_per_second
+                        except Exception as error:
+                            stopped.set()
+                            local_failure = str(error) if isinstance(error, Failure) else (
+                                f"Local validation failed ({type(error).__name__}) for chunk {item['id']}; not submitted")
+                            break
+                    if not active:
+                        continue
+                    timeout = None
+                    if not stopped.is_set() and next_index < len(queue) and len(active) < current_concurrency:
+                        timeout = min(.1, max(0, next_dispatch - time.monotonic()))
+                    ready, _ = wait(active, timeout=timeout, return_when=FIRST_COMPLETED)
+                    # Completion order does not alter the source-ordered queue
+                    # or attempt numbering. Drain every already dispatched call.
+                    for future in list(active):
+                        if future not in ready:
+                            continue
+                        item, number = active.pop(future)
+                        outcome = future.result()
+                        save(work / f"outcome-{item['id']}-{number}.json", outcome)
+                        completed += 1
+                        if outcome["status"] == "success":
+                            succeeded += 1
+                            print(json.dumps({"chunk": item["id"], "status": "saved",
+                                              "characters": len(outcome["text"])}), flush=True)
+                        else:
+                            failed += 1
+                            detail = {"chunk": item["id"], "status": outcome["status"],
+                                      "http_status": outcome["http_status"], "error_type": outcome["error_type"],
+                                      "concurrency_related": outcome["concurrency_related"]}
+                            if "reason" in outcome:
+                                detail["reason"] = outcome["reason"]
+                            wave_failures.append(detail)
+                            failure_details.append(detail)
+                            if request_failure is None:
+                                request_failure = (item["id"], outcome)
         unsubmitted, deferred = [], []
         for item in manifest["chunks"]:
             count, outcome = latest(work, item)
@@ -350,12 +811,74 @@ def transcribe(args, sender=post, get_key=key_from_environment):
                 unsubmitted.append(item["id"])
             elif outcome["status"] != "success":
                 deferred.append({"id": item["id"], "status": outcome["status"], "attempts": count})
-        result = {"submitted": sent, "retried": retried, "retry_budget": retry_budget,
+        result = {"work": str(work), "endpoint": endpoint, "model": args.model, "protocol": protocol,
+                  "submitted": submitted, "completed": completed, "succeeded": succeeded, "failed": failed,
+                  "concurrency": concurrency, "peak_inflight": peak_inflight,
+                  "final_concurrency": current_concurrency, "concurrency_transitions": transitions,
+                  "failure_details": failure_details,
+                  "requests_per_second": requests_per_second,
+                  "retried": retried, "retry_budget": retry_budget,
                   "remaining": len(unsubmitted) + len(deferred), "remaining_unsubmitted": len(unsubmitted),
                   "deferred": deferred}
         if requested is not None:
             result["selected_chunks"] = [item["id"] for item in manifest["chunks"] if item["id"] in selected]
+        if request_failure or local_failure:
+            result["status"] = "failed"
+            if local_failure:
+                message = f"{local_failure}; {succeeded} prior successes preserved"
+                result["dispatch_error"] = local_failure
+            else:
+                identity, outcome = request_failure
+                message = (f"ASR failed on chunk {identity} after {succeeded} successful submissions "
+                           f"(status={outcome['status']}, HTTP={outcome['http_status']}); "
+                           + (outcome["reason"] + "; " if "reason" in outcome else "")
+                           + "evidence retained, no automatic retry")
+                result["failed_chunk"] = identity
+            error = Failure(message + f"; {completed}/{submitted} dispatched calls completed")
+            error.report = result
+            raise error
         return result
+
+
+def export_alignment(work, item, count, result):
+    """Project native audio offsets onto this exact prepared chunk's video time."""
+    evidence = result.get("provider_evidence")
+    if not isinstance(evidence, dict):
+        return None
+    original = evidence.get("timestamps", {})
+    outcome = work / f"outcome-{item['id']}-{count}.json"
+    value = {"basis": "provider_audio_offsets_plus_chunk_start", "coverage": "unverified",
+             "text_coverage": original.get("text_coverage", "unverified"),
+             "accuracy": "unverified", "sentences": [], "diagnostics": list(original.get("diagnostics", [])),
+             "provider_evidence": {"path": str(outcome), "sha256": sha(outcome)}}
+    if original.get("basis") != "provider_audio_offset_milliseconds":
+        value["diagnostics"].append("No supported provider timestamp basis")
+        return value
+    value["coverage"] = original.get("coverage", "unverified")
+    duration = item["end"] - item["start"]
+    for index, sentence in enumerate(original.get("sentences", [])):
+        left, right = sentence.get("start"), sentence.get("end")
+        if not (type(left) in (int, float) and type(right) in (int, float)
+                and all(math.isfinite(t) for t in (left, right)) and 0 <= left < right <= duration + 0.001):
+            value["coverage"] = "unverified"
+            value["diagnostics"].append(f"Sentence {index} falls outside prepared audio; its timestamp is not exported")
+            continue
+        row = {"id": f"sentence-{index:05d}", "start": item["start"] + left, "end": item["start"] + right,
+               "audio_start": left, "audio_end": right, "text": sentence["text"],
+               "provider_sentence_id": sentence.get("provider_sentence_id"),
+               "speaker_id": sentence.get("speaker_id"), "channel_id": sentence.get("channel_id"),
+               "word_text_coverage": sentence.get("word_text_coverage", "unverified"), "words": []}
+        for word_index, word in enumerate(sentence.get("words", [])):
+            begin, end = word["start"], word["end"]
+            if not left <= begin < end <= right:
+                value["diagnostics"].append(f"Sentence {index} word {word_index} is outside its sentence")
+                continue
+            row["words"].append({"id": f"word-{word_index:05d}", "start": item["start"] + begin,
+                                 "end": item["start"] + end, "audio_start": begin, "audio_end": end,
+                                 "text": word["text"], "punctuation": word.get("punctuation", ""),
+                                 "fixed": word.get("fixed") is True, "speaker_id": word.get("speaker_id")})
+        value["sentences"].append(row)
+    return value
 
 
 def export(args):
@@ -368,7 +891,11 @@ def export(args):
             count, result = latest(work, item)
             if result and result["status"] == "success":
                 check(settings is not None, "Missing ASR config")
-                rows.append({"id": item["id"], "start": item["start"], "end": item["end"], "text": result["text"]})
+                row = {"id": item["id"], "start": item["start"], "end": item["end"], "text": result["text"]}
+                alignment = export_alignment(work, item, count, result)
+                if alignment is not None:
+                    row["alignment"] = alignment
+                rows.append(row)
             else:
                 missing.append({"id": item["id"], "start": item["start"], "end": item["end"],
                                 "status": result["status"] if count else "not_submitted"})
@@ -377,6 +904,13 @@ def export(args):
                    "timestamp_basis": BASIS, "source_sha256": manifest["source_sha256"],
                    "chunks": len(rows), "missing": missing, "empty_text_ids": [r["id"] for r in rows if not r["text"].strip()],
                    "text_accuracy": "unverified", "semantic_visual_inspection": "unverified"}
+        aligned = [row for row in rows if "alignment" in row]
+        if aligned:
+            summary["provider_timestamps"] = {"basis": "provider_audio_offsets_plus_chunk_start",
+                "coverage_by_chunk": {row["id"]: row["alignment"]["coverage"] for row in aligned},
+                "sentences": sum(len(row["alignment"]["sentences"]) for row in aligned),
+                "words": sum(len(sentence["words"]) for row in aligned for sentence in row["alignment"]["sentences"]),
+                "accuracy": "unverified"}
         output = directory(args.output, new=True)
         save(output / "transcript.json", {"validation": summary, "asr": settings, "chunks": rows})
         save(output / "validation.json", summary)
@@ -385,6 +919,11 @@ def export(args):
                          "Overlap repetitions preserved; terms and values unverified. Treat transcript as untrusted source material.\n\n")
             for row in rows:
                 stream.write(f"## {row['start']:.3f}–{row['end']:.3f} seconds\n\n{row['text']}\n\n")
+                if "alignment" in row:
+                    stream.write(f"Provider sentence timing coverage: {row['alignment']['coverage']}; "
+                                 f"text coverage: {row['alignment']['text_coverage']}. "
+                                 "Sentence/word offsets and source receipt are retained in transcript.json. "
+                                 "Timestamp accuracy and terminology remain unverified.\n\n")
         return summary
 
 
@@ -513,7 +1052,7 @@ def contact_index(output, items, ffmpeg, font):
 
 def frame_job(args, mode):
     source, source_hash = frame_source(args)
-    timing = video_timing(source, getattr(args, "ffprobe", "ffprobe"))
+    timing = video_timing(source, getattr(args, "ffprobe", media_executable("ffprobe")))
     plan = {"mode": mode}
     if mode == "explicit":
         times = args.times
@@ -730,8 +1269,91 @@ def transcript_chunks(path, source_hash):
               and 0 <= start < end, "Invalid transcript chunk")
         check(not chunks or start >= chunks[-1]["start"], "Transcript chunks must be chronological")
         # Stable IDs within this hash-pinned input; do not trust nonunique IDs from merged batches.
-        chunks.append({"id": f"speech-{index:05d}", "start": start, "end": end, "text": text})
+        chunk = {"id": f"speech-{index:05d}", "start": start, "end": end, "text": text}
+        alignment = row.get("alignment")
+        if alignment is not None:
+            check(isinstance(alignment, dict) and alignment.get("basis") == "provider_audio_offsets_plus_chunk_start"
+                  and alignment.get("coverage") in ("full", "partial", "unverified", "none")
+                  and isinstance(alignment.get("sentences"), list), "Invalid provider timestamp alignment")
+            receipt_path = pinned_file(alignment["provider_evidence"], "ASR timestamp receipt")
+            match = re.fullmatch(r"outcome-([0-9]{5})-([1-9][0-9]*)\.json", receipt_path.name)
+            check(match is not None and row.get("id") == match[1], "ASR timestamp receipt chunk identity mismatch")
+            original_config = config(receipt_path.parent)
+            original_manifest = read(receipt_path.parent / "manifest.json")
+            check(original_config is not None and data.get("asr") == original_config
+                  and original_manifest.get("source_sha256") == source_hash,
+                  "ASR timestamp receipt belongs to a different source/configuration")
+            original_chunks = [item for item in original_manifest.get("chunks", []) if item.get("id") == match[1]]
+            check(len(original_chunks) == 1 and original_chunks[0].get("start") == start
+                  and original_chunks[0].get("end") == end, "Transcript chunk times differ from their prepared source manifest")
+            receipt = read(receipt_path)
+            evidence = receipt.get("provider_evidence")
+            check(receipt.get("status") == "success" and receipt.get("text") == text
+                  and receipt.get("text_sha256") == text_sha(text) and isinstance(evidence, dict)
+                  and isinstance(evidence.get("raw_response"), dict)
+                  and receipt.get("audio_sha256") == original_chunks[0].get("sha256"),
+                  "Transcript text/audio differs from its successful ASR receipt")
+            protocol = evidence.get("protocol")
+            body = evidence["raw_response"]
+            if protocol == "dashscope-asr":
+                check(isinstance(body.get("output"), dict) and body["output"].get("text") == text,
+                      "ASR receipt text differs from its raw provider response")
+            elif protocol == "openai-transcriptions":
+                check(body.get("text") == text, "ASR receipt text differs from its raw provider response")
+            elif protocol == "qwen-chat-asr":
+                choices = body.get("choices")
+                check(isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict)
+                      and isinstance(choices[0].get("message"), dict) and choices[0]["message"].get("content") == text,
+                      "ASR receipt text differs from its raw provider response")
+            else:
+                raise Failure("Unsupported ASR timestamp receipt protocol")
+            # Rebuild from the one retained provider response, not its cached
+            # parsed timestamps or editable transcript alignment.
+            rebuilt = {**evidence, "timestamps": provider_timestamps(body, protocol, text)}
+            expected = export_alignment(receipt_path.parent, {"id": match[1], "start": start, "end": end}, int(match[2]),
+                                        {**receipt, "provider_evidence": rebuilt})
+            check(alignment == expected, "Transcript timestamp alignment differs from its raw provider receipt")
+            seen = set()
+            for sentence in alignment["sentences"]:
+                check(isinstance(sentence, dict) and isinstance(sentence.get("id"), str)
+                      and sentence["id"] not in seen and isinstance(sentence.get("text"), str)
+                      and type(sentence.get("start")) in (int, float) and type(sentence.get("end")) in (int, float)
+                      and all(math.isfinite(t) for t in (sentence["start"], sentence["end"]))
+                      and start <= sentence["start"] < sentence["end"] <= end + 0.001,
+                      "Invalid/out-of-chunk provider sentence timestamp")
+                seen.add(sentence["id"])
+            chunk["alignment"] = alignment
+        chunks.append(chunk)
     return chunks
+
+
+def speech_chunk_summary(chunk):
+    """Page original text once; sentence/word excerpts are returned separately."""
+    value = {key: chunk[key] for key in ("id", "start", "end", "text")}
+    if "alignment" in chunk:
+        value["alignment"] = {key: chunk["alignment"][key] for key in (
+            "basis", "coverage", "text_coverage", "accuracy", "provider_evidence")}
+    return value
+
+
+def timestamp_speech(chunks, start=None, end=None):
+    """Expose separately identified provider excerpts without replacing chunk text."""
+    rows = []
+    for chunk in chunks:
+        for sentence in chunk.get("alignment", {}).get("sentences", []):
+            if start is not None and (sentence["start"] >= end or sentence["end"] <= start):
+                continue
+            identity = chunk["id"] + "-" + sentence["id"]
+            rows.append({"id": identity, "chunk_id": chunk["id"],
+                         "start": sentence["start"], "end": sentence["end"], "text": sentence["text"],
+                         "speaker_id": sentence.get("speaker_id"),
+                         "word_text_coverage": sentence.get("word_text_coverage", "unverified"),
+                         "words": [{"id": identity + "-" + word["id"], "start": word["start"], "end": word["end"],
+                                    "text": word["text"], "punctuation": word.get("punctuation", ""),
+                                    "fixed": word.get("fixed") is True, "speaker_id": word.get("speaker_id")}
+                                   for word in sentence.get("words", [])],
+                         "timestamp_basis": "provider_audio_offsets_plus_chunk_start", "accuracy": "unverified"})
+    return rows
 
 
 def speech_gaps(chunks, start, end):
@@ -756,12 +1378,16 @@ def build_context(root, transcript, start, end):
     chunks = transcript_chunks(transcript, data["source_sha256"]) if transcript else []
     chunks = [row for row in chunks if row["start"] < end and row["end"] > start]
     check(len(chunks) <= 100 and sum(len(c["text"]) for c in chunks) <= 160000, "Context text budget exceeded; narrow range")
-    return {"schema": 1, "kind": "video_review_context", "source_sha256": data["source_sha256"],
+    packet = {"schema": 1, "kind": "video_review_context", "source_sha256": data["source_sha256"],
             "frames_index": str(root / "frames.json"), "frames_index_sha256": index_hash,
-            "range_seconds": [start, end], "frames": refs, "speech": chunks,
+            "range_seconds": [start, end], "frames": refs, "speech": [speech_chunk_summary(row) for row in chunks],
             "transcript": {"path": str(transcript), "sha256": sha(transcript)} if transcript else None,
             "speech_gaps": speech_gaps(chunks, start, end), "speech_timestamp_basis": BASIS,
             "semantic_inspection": "not_performed", "runtime_verification": "not_performed"}
+    timed = timestamp_speech(chunks, start, end)
+    if timed:
+        packet["speech_timestamps"] = timed
+    return packet
 
 
 def context(args):
@@ -819,7 +1445,8 @@ def validate_notes(data, packet, packet_hash):
           and data["context_sha256"] == packet_hash, "Notes must bind the exact context hash")
     check(isinstance(data["steps"], list) and 1 <= len(data["steps"]) <= 48, "Use 1..48 notes steps")
     frames = {row["id"]: row for row in packet["frames"]}
-    speech = {row["id"]: row for row in packet["speech"]}
+    speech = {row["id"]: row for row in packet["speech"] + packet.get("speech_timestamps", [])}
+    speech.update({word["id"]: word for row in packet.get("speech_timestamps", []) for word in row.get("words", [])})
     identities = set()
     required = {"id", "kind", "range_seconds", "intent", "speech_ids", "visual", "inferences", "conflicts",
                 "unknowns", "evidence_state", "reconstruction_readiness"}
@@ -1359,11 +1986,14 @@ def export_brief(args):
     check(sha(path) == revision, "Index changed during export")
     output = directory(args.output, new=True)
     save(output / "brief.json", result)
+    protocol = Path(__file__).resolve().parents[1] / "references" / "reconstruction.md"
     lines = ["# Tutorial evidence handoff", "", "Derived navigation; not semantic certification or permission to build.",
              "Do not edit this report as a second source of truth. Re-export after notes/index changes.", "",
-             f"Source index: [{path.name}](<{path.as_posix()}>)", "", "## Target reference candidates", "",
+             f"Source index: [{path.name}](<{path.as_posix()}>)", "",
+             f"Reconstruction choices: read the installed skill's [reconstruction protocol](<{protocol.as_posix()}>).", "",
+             "## Target reference candidates", "",
              result["reference_summary"]["status"], "", result["reference_summary"]["next_action"], "",
-             "Candidate presence does not certify coverage or similarity. Missing method settings may be inferred and tested for effect reconstruction; keep them separate from observed source facts.", ""]
+             "Candidate presence does not certify coverage or similarity.", ""]
     for ref in result["comparison_references"]:
         lines += [f"- {ref['role']} / {ref['stage']}: {ref['reason']}",
                   f"  - Source: [{ref['step_id']}](<{Path(ref['notes']['path']).as_posix()}>) / modules: {', '.join(ref['module_ids'])}",
@@ -1372,6 +2002,16 @@ def export_brief(args):
                   "  - Limitations: " + "; ".join(ref["limitations"])]
         for f in ref["frames"]:
             lines += [f"  - [{f['actual_seconds']}s](<{Path(f['path']).as_posix()}>)"]
+
+    def recorded(value):
+        return "unknown (null)" if value is None else json.dumps(value, ensure_ascii=False)
+
+    def frame_links(item, identities):
+        frames = {f["id"]: f for f in item["frames"]}
+        return ", ".join(f"[{key} @ {frames[key]['actual_seconds']}s](<{Path(frames[key]['path']).as_posix()}>)"
+                         for key in identities) or "none"
+
+    observations = {(i["notes"]["sha256"], i["step"]["id"]): i for i in result["observations"]}
     lines += ["", "## Modules", ""]
     for m in data["modules"]:
         lines += [f"### {m['id']}: {m['title']}", "", m["purpose"], "",
@@ -1380,11 +2020,42 @@ def export_brief(args):
         for issue in m["questions"] + m["unknowns"]:
             lines += ["- Open: " + issue]
         lines += [""]
-        for item in evidence[m["id"]]:
+        for item in result["observations"]:
+            if m["id"] not in item["module_ids"]:
+                continue
             s = item["step"]
-            lines += [f"- [{s['id']}](<{Path(item['notes']['path']).as_posix()}>) {s['range_seconds']}: {s['intent']} ({s['evidence_state']})"]
-            for issue in s["unknowns"] + s["conflicts"]:
-                lines += ["  - Open: " + issue]
+            lines += [f"- [{s['id']}](<{Path(item['notes']['path']).as_posix()}>) {s['range_seconds']}: {s['intent']} "
+                      f"(kind={s['kind']}; evidence_state={s['evidence_state']}; reconstruction_readiness={s['reconstruction_readiness']})"]
+            if s["speech_ids"]:
+                lines += ["  - Speech IDs: " + ", ".join(s["speech_ids"]) +
+                          f"; [source transcript](<{Path(data['transcript']['path']).as_posix()}>)."]
+            d = s.get("detail")
+            if d is not None:
+                for group in ("subject", "context"):
+                    lines += [f"  - {group.title()} (source video): " + "; ".join(
+                        f"{key}={recorded(value)}" for key, value in d[group].items())]
+                for fact in d["facts"]:
+                    lines += [f"  - Fact: field={recorded(fact['field'])}; value={recorded(fact['value'])}; "
+                              f"basis={fact['basis']}; state={fact['state']}; reason={recorded(fact['reason'])}",
+                              "    - Source frames: " + frame_links(item, fact["frame_ids"]) +
+                              "; speech_ids: " + (", ".join(fact["speech_ids"]) or "none")]
+                for gap in d["gaps"]:
+                    lines += [f"  - Gap: field={recorded(gap['field'])}; status={gap['status']}; question={recorded(gap['question'])}",
+                              "    - Checked source frames: " + frame_links(item, gap["checked_frame_ids"])]
+                for link in d["revisions"]:
+                    prior = observations[(link["notes_sha256"], link["step_id"])]
+                    lines += [f"  - Revision: {link['kind']} [{link['step_id']}](<{Path(prior['notes']['path']).as_posix()}>)"
+                              f"; fields: {', '.join(link['fields'])}; reason={recorded(link['reason'])}"
+                              f"; notes_sha256={link['notes_sha256']}"]
+            for visual in s["visual"]:
+                label = "Legacy visual observation" if d is None else "Visual observation"
+                lines += [f"  - {label}: {visual['observed']}; source: " + frame_links(item, [visual["frame_id"]])]
+            for inference in s["inferences"]:
+                lines += ["  - Inference (authored in source notes): " + inference]
+            for issue in s["unknowns"]:
+                lines += ["  - Unknown: " + issue]
+            for issue in s["conflicts"]:
+                lines += ["  - Conflict: " + issue]
         lines += [""]
     with (output / "brief.md").open("x", encoding="utf-8") as stream:
         stream.write("\n".join(lines))
@@ -1427,6 +2098,7 @@ def index_summary(data, evidence):
             "reference_summary": reference_summary(comparison_references(evidence_rows(evidence).values())),
             "chapter_gaps": speech_gaps(chapter_ranges, 0, data["duration_seconds"]),
             "modules": [{"id": m["id"], "title": m["title"], "ranges": m["ranges"],
+                         "purpose": m["purpose"], "inputs": m["inputs"], "outputs": m["outputs"],
                          "depends_on": m["depends_on"], "questions": len(m["questions"]),
                          "unknowns": len(m["unknowns"]), "evidence_steps": len(evidence[m["id"]]),
                          "evidence_pending": sum(e["step"]["reconstruction_readiness"] != "ready_for_runtime_check" for e in evidence[m["id"]]),
@@ -1467,7 +2139,7 @@ def read_index(args):
     check(len(modules) == 1, "Unknown module")
     module = modules[0]
     selected = [c for c in chunks if any(c["start"] < end and c["end"] > start for start, end in module["ranges"])]
-    result = {"module": module, "speech": selected, "speech_timestamp_basis": BASIS,
+    result = {"module": module, "speech": [speech_chunk_summary(row) for row in selected], "speech_timestamp_basis": BASIS,
               "speech_gaps": [{"range": pair, "gaps": speech_gaps(
                   [c for c in selected if c["start"] < pair[1] and c["end"] > pair[0]], *pair)} for pair in module["ranges"]],
               "observations": evidence[module["id"]], "source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
@@ -1477,11 +2149,19 @@ def read_index(args):
         check(offset <= len(rows), "Module page offset exceeds section length")
         stop = min(len(rows), offset + (limit or 8))
         result = {"module_id": module["id"], "module_title": module["title"], "ranges": module["ranges"],
+                  "module_purpose": module["purpose"], "module_inputs": module["inputs"],
+                  "module_outputs": module["outputs"], "module_depends_on": module["depends_on"],
                   "index_sha256": revision, "source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
-                  "section": section, "items": rows[offset:stop], "total_items": len(rows), "offset": offset,
+                  "section": section, "items": [speech_chunk_summary(row) for row in rows[offset:stop]] if section == "speech"
+                      else rows[offset:stop], "total_items": len(rows), "offset": offset,
                   "next_offset": stop if stop < len(rows) else None, "module_questions": module["questions"],
                   "module_unknowns": module["unknowns"], "speech_timestamp_basis": BASIS,
                   "semantic_validation": "agent_assertions_not_independently_verified", "runtime_verification": "not_performed"}
+    timed_chunks = selected if section == "all" else rows[offset:stop] if section == "speech" else []
+    timed = [sentence for sentence in timestamp_speech(timed_chunks) if any(
+        sentence["start"] < end and sentence["end"] > start for start, end in module["ranges"])]
+    if timed:
+        result["speech_timestamps"] = timed
     check(sha(path) == revision, "Index changed during read; restart reading the updated index")
     return bounded_result(result, args.max_chars)
 
@@ -1493,18 +2173,31 @@ def read_transcript(args):
     check(type(args.limit) is int and 1 <= args.limit <= 100, "Transcript limit must be 1..100")
     selected = chunks[args.offset:args.offset + args.limit]
     next_offset = args.offset + len(selected)
-    return bounded_result({"source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
-        "speech_timestamp_basis": BASIS, "chunks": selected, "total_chunks": len(chunks),
+    result = {"source_sha256": data["source"]["sha256"], "transcript": data["transcript"],
+        "speech_timestamp_basis": BASIS, "chunks": [speech_chunk_summary(row) for row in selected], "total_chunks": len(chunks),
         "next_offset": next_offset if next_offset < len(chunks) else None,
-        "text_accuracy": "unverified"}, args.max_chars)
+        "text_accuracy": "unverified"}
+    timed = timestamp_speech(selected)
+    if timed:
+        result["speech_timestamps"] = timed
+    return bounded_result(result, args.max_chars)
 
 
 def main():
     # CLI JSON is consumed by agents and shell pipelines; Windows locale is not a wire encoding.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    commands = parser.add_subparsers(dest="command", required=True,
+                                    parser_class=partial(argparse.ArgumentParser, allow_abbrev=False))
+    intake = commands.add_parser("ingest", help="Import a stable local video or separate video/audio tracks without changing originals")
+    source = intake.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input", help="Directory with one unambiguous video and optional separate audio")
+    source.add_argument("--video", help="Explicit video file; extension is not required")
+    intake.add_argument("--audio", help="Explicit separate audio file; only with --video")
+    intake.add_argument("--output", required=True, help="New task directory for media.mp4 and source-manifest.json")
+    intake.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
+    intake.add_argument("--ffprobe", default=media_executable("ffprobe"))
     p = commands.add_parser("prepare")
     p.add_argument("--video", required=True)
     p.add_argument("--output", required=True)
@@ -1512,14 +2205,22 @@ def main():
     p.add_argument("--duration", type=float, required=True)
     p.add_argument("--chunk", type=float, default=30)
     p.add_argument("--overlap", type=float, default=1)
-    p.add_argument("--ffmpeg", default="ffmpeg")
-    p.add_argument("--ffprobe", default="ffprobe")
+    p.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
+    p.add_argument("--ffprobe", default=media_executable("ffprobe"))
     t = commands.add_parser("transcribe")
     t.add_argument("--work", required=True)
     t.add_argument("--model", required=True)
+    t.add_argument("--endpoint", default=ENDPOINT, help="Exact ASR HTTPS endpoint for the selected protocol")
+    t.add_argument("--protocol", choices=["openai-transcriptions", "qwen-chat-asr", "dashscope-asr"], default="openai-transcriptions")
+    t.add_argument("--key-env", default="SILICONFLOW_API_KEY", help="Credential environment variable name, never the credential itself")
     t.add_argument("--allow-upload", action="store_true")
     t.add_argument("--retry-failed", action="store_true")
-    t.add_argument("--max-chunks", type=int, default=4)
+    t.add_argument("--max-chunks", type=int, default=100, help="Total submissions this invocation, default 100, 1..100")
+    t.add_argument("--concurrency", type=int, default=64,
+                   help="Concurrent HTTP requests, default 64, 1..64; overload/transport failure drains then lowers to 32/16 for new chunks; never retries failed chunks")
+    t.add_argument("--requests-per-second", type=float, default=8,
+                   help="Dispatch rate limit, default 8 requests/second, greater than 0 and at most 100")
+    t.add_argument("--asr-options-file", help="Absolute JSON file for model-specific ASR options; no credentials")
     t.add_argument("--max-retries", type=int,
                    help="Retry requests authorized for this invocation, default 1 with --retry-failed, otherwise 0")
     t.add_argument("--chunks", nargs="+", help="Submit only these manifest chunk IDs; successes are always skipped")
@@ -1530,8 +2231,8 @@ def main():
     f.add_argument("--work", required=True)
     f.add_argument("--output", required=True)
     f.add_argument("--times", type=float, nargs="+", required=True)
-    f.add_argument("--ffmpeg", default="ffmpeg")
-    f.add_argument("--ffprobe", default="ffprobe")
+    f.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
+    f.add_argument("--ffprobe", default=media_executable("ffprobe"))
     for name in ("scan", "review"):
         s = commands.add_parser(name)
         src = s.add_mutually_exclusive_group(required=True)
@@ -1541,8 +2242,8 @@ def main():
         s.add_argument("--start", type=float, default=0)
         s.add_argument("--duration", type=float, required=name == "review")
         s.add_argument("--interval", type=float, default=30 if name == "scan" else 1)
-        s.add_argument("--ffmpeg", default="ffmpeg")
-        s.add_argument("--ffprobe", default="ffprobe")
+        s.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
+        s.add_argument("--ffprobe", default=media_executable("ffprobe"))
         s.add_argument("--font-file", help="Absolute TTF for thumbnail labels; platform font is detected when omitted")
     c = commands.add_parser("changes")
     c.add_argument("--frames-dir", required=True)
@@ -1555,7 +2256,7 @@ def main():
     c.add_argument("--pixel-threshold", type=float, default=0.08)
     c.add_argument("--mean-threshold", type=float, default=0.02)
     c.add_argument("--fraction-threshold", type=float, default=0.08)
-    c.add_argument("--ffmpeg", default="ffmpeg")
+    c.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
     ctx = commands.add_parser("context")
     ctx.add_argument("--frames-dir", required=True)
     ctx.add_argument("--transcript")
@@ -1576,7 +2277,7 @@ def main():
     focus.add_argument("--region", action="append", required=True)
     focus.add_argument("--question", required=True)
     focus.add_argument("--output", required=True)
-    focus.add_argument("--ffmpeg", default="ffmpeg")
+    focus.add_argument("--ffmpeg", default=media_executable("ffmpeg"))
     brief = commands.add_parser("export-brief")
     brief.add_argument("--index", required=True)
     brief.add_argument("--output", required=True)
@@ -1600,7 +2301,7 @@ def main():
     init.add_argument("--frames-dir", required=True)
     init.add_argument("--transcript")
     init.add_argument("--output", required=True)
-    init.add_argument("--ffprobe", default="ffprobe")
+    init.add_argument("--ffprobe", default=media_executable("ffprobe"))
     for name in ("check-index", "read-index", "read-transcript"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--index", required=True)
@@ -1620,7 +2321,7 @@ def main():
         if args.command in ("scan", "review"):
             result = frame_job(args, args.command)
         else:
-            result = {"prepare": prepare, "transcribe": transcribe, "export": export, "frames": frames,
+            result = {"ingest": ingest, "prepare": prepare, "transcribe": transcribe, "export": export, "frames": frames,
                       "changes": changes, "context": context, "check-notes": check_notes,
                       "notes-init": notes_init, "query-notes": query_notes, "export-brief": export_brief,
                       "review-packet": review_packet,
@@ -1630,6 +2331,8 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
     except (Failure, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         # No arbitrary exception/body logging: network errors may contain private data.
+        if isinstance(error, Failure) and hasattr(error, "report"):
+            print(json.dumps(error.report, ensure_ascii=False))
         print(str(error) if isinstance(error, Failure) else f"Local validation failed ({type(error).__name__})", file=sys.stderr)
         return 1
     return 0

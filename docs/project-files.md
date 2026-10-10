@@ -1,6 +1,6 @@
 # 工程文件与图像目录
 
-适用于参考资料、生成图、COP贴图、渲染和视觉检查的默认输出。目录角色由[project-layout.json](../houdini/project-layout.json)唯一维护，Houdini与Host读取同源；下面的目录表由[生成器](../tools/gen-project-layout-docs.mjs)更新。它不是用户资产数据库，不记录完成状态或替代DSH会话。
+适用于参考资料、分析产物、生成图、COP贴图、工程缓存、渲染和视觉检查的默认输出。目录角色由[project-layout.json](../houdini/project-layout.json)唯一维护，Houdini与Host读取同源；下面的目录表由[生成器](../tools/gen-project-layout-docs.mjs)更新。它不是用户资产数据库，不记录完成状态或替代DSH会话。
 
 ## 默认目录与用途
 
@@ -10,11 +10,15 @@
 | 下载的参考资料（`reference_downloaded`） | `dsh-reference/downloaded/` | `reference` |
 | 生成的辅助参考（`reference_generated`） | `dsh-reference/generated/` | `reference` |
 | 材质与工程依赖（`texture`） | `dsh-texture/` | `project-dependency` |
+| 几何、模拟与通道缓存（`cache`） | `dsh-cache/` | `project-dependency` |
+| 教程与任务分析资料（`analysis`） | `dsh-analysis/` | `analysis-evidence` |
 | 渲染输出（`render`） | `dsh-render/` | `render-output` |
 | 过程视觉检查（`visual_check`） | `dsh-visual-checks/` | `visual-check` |
 <!-- project-layout:generated:end -->
 
 按用途选择目录：生成图片直接用于材质时属于texture；生成的多视角草图属于reference_generated。渲染是否正式交付与目录位置分开，`present`负责明确交付。目录按实际写入需要创建，不预创建整套空目录。
+
+教程切片、转录、抽帧、索引、记录和资料交接放在`dsh-analysis/<tutorial>/`，Trace分析报告也使用analysis角色。纯离线解析没有命名HIP时，按用户明确的任务工作区选择该目录；CLI仍接受显式输出，不强制保存HIP或改写用户目的地。导入媒体属于reference_downloaded，缓存属于cache。旧analysis或geo目录不自动迁移。
 
 `visual_check`的受管捕获继续在目录下使用`run-*`分组，保留唯一capture文件名和在途reservation。它是观察证据，不是自动可删除缓存。原生截图超时或中断后可能仍有晚到写入，不能删除其预留或复用路径。
 
@@ -33,7 +37,7 @@
 - `image_generate`默认`output_policy='managed'`、`purpose='reference'`。`output`省略或安全basename，生成到reference_generated；`purpose='texture'`进入texture。目录来自当前任务所选Houdini的实际现场，结果带角色、工程根、原HIP和观察身份。`output_policy='explicit'`必须给目的地，相对路径沿DSH workspace解释，不查询Houdini。
 - 网络资料保存先读取`project_layout.directories.reference_downloaded`，再用可用的通用下载能力明确选择该目录。精确DSH的`web_fetch`只读取网页文本，不提供二进制下载；本插件没有把它伪装成下载工具或复制一套网络安全策略。取得链接不等于图片已下载或已经看过。
 - `render_view`、`viewport_screenshot`与界面截图默认managed用于视觉检查；选择delivery生成到render。原有run-id、唯一分配、用户状态恢复和捕获验证保持不变。explicit裸文件名进入visual_check根目录；只有managed自动添加run分组。
-- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认render、COP的`copoutput`默认texture；几何/模拟缓存仍按geo用途处理。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
+- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认render、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-cache`。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
 
 ## 生命周期与交付
 

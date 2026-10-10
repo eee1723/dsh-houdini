@@ -147,7 +147,7 @@ try:
             rop.parm('soppath').set(source.path())
             old=rop.parm('sopoutput').unexpandedString()
             result=h.render_frame(rop,picture='cache.$F4.bgeo.sc',frame=3,timeout=5)
-            assert Path(result['output'])==base/'geo'/'cache.0003.bgeo.sc', result
+            assert Path(result['output'])==base/'dsh-cache'/'cache.0003.bgeo.sc', result
             assert Path(result['output']).exists() and result['fresh']
             assert rop.parm('sopoutput').unexpandedString()==old
             reject(lambda:h.render_frame(rop,picture='no_extension',frame=4), 'extension')
@@ -169,6 +169,16 @@ try:
             assert Path(resolved[0])==base/'dsh-render'/'beauty.0003.png'
             assert image_rop.parm('picture').unexpandedString()==before
         finally:image_rop.destroy()
+        # The native USD export ROP uses the same declared render directory
+        # for a bare output; its existing explicit path remains untouched.
+        usd_rop=hou.node('/out').createNode('usd','__checkpoint_usd_rop')
+        try:
+            before=usd_rop.parm('lopoutput').unexpandedString()
+            with patch.object(h,'_resolve_output_path',observe_path):
+                reject(lambda:h.render_frame(usd_rop,picture='stage.$F4.usd',frame=3),'resolved before rendering')
+            assert Path(resolved[-1])==base/'dsh-render'/'stage.0003.usd'
+            assert usd_rop.parm('lopoutput').unexpandedString()==before
+        finally:usd_rop.destroy()
         # A tiny real COP export proves the distinct dependency default and
         # original node parameter restoration without creating a USD renderer.
         copnet=root.createNode('copnet','path_textures')

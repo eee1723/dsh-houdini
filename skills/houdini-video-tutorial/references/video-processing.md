@@ -2,59 +2,97 @@
 
 ## 范围与依赖
 
-Applies when：用户提供可读的本地视频，允许抽取音频/画面，并在云转录时授权 SiliconFlow。
+Applies when：用户提供可读的本地视频或分离音视频，允许抽取音频/画面，并在云转录时授权所选服务。
 Do not use when：需要绕过平台访问控制、把原视频上传当作音频转录、或仅靠 ASR 证明视觉操作。
 纯静音视频仍可 `prepare` / `frames`，`transcribe` 明确拒绝，`export` 不冒充转录完成。
 
-使用宿主 Python 3.11+ 标准库、FFmpeg 与 ffprobe，无需 Whisper、PyTorch 或第三方 Python 包。
+使用当前Houdini安装内的普通Python 3.11+标准库进程与插件版本私有的FFmpeg/ffprobe，无需Whisper、PyTorch或第三方Python包。Host从HFS定位当前Houdini Python，不用全局PATH上的python；旧默认`python`/`python.exe`也按自动选择处理。
 脚本在本机文件/进程工具中执行，不经 `houdini_exec`，不导入 `hou`。
-可传 `--ffmpeg` / `--ffprobe` 绝对路径；找不到依赖时报告缺失，不擅自改全局环境。
+FFmpeg/ffprobe默认位于插件的`runtime/video/ffmpeg/bin/`，不自动回退到全局PATH。可传`--ffmpeg`/`--ffprobe`绝对路径；找不到依赖时报告缺失。正式安装使用Version & Updates的同版修复恢复整份版本；源码开发运行`python tools/prepare-video-runtime.py`准备本目录锁定媒体工具，不擅自改全局环境。
 缩略图标签需要 FFmpeg 的 drawtext/scale/pad/tile 滤镜和可用字体；默认查找系统常见字体，
 找不到时传 `--font-file` 的绝对 TTF 路径，不自动安装字体。原分辨率证据不加文字或裁切。
 
-密钥从进程环境变量 `SILICONFLOW_API_KEY` 获取；Windows 也支持读取同名用户环境变量。
-不接受命令行密钥，不打印密钥、鉴权头或原始异常正文，不遍历其他凭据位置。
+正常插件入口使用 `video_models` / `video_process` / `video_transcribe`：根级「教程视频」设置只存默认 provider/model/Python，
+Host 从 DSH 同一模型路由和凭据服务解析账户，将密钥仅传入子进程环境；Agent 看不到密钥，Python
+继续维护唯一的 manifest/attempt/outcome，不另建 Host 转录状态账本。保存设置与本机依赖检查不会上传媒体。
+任务内自动运行时从所选Houdini健康信息取得实际Python、版本与身份，不受共享Host父环境HFS影响；显式Python完整路径优先。
+没有任务上下文的设置页检查只描述Host启动环境，不能证明选中任务的运行时。旧Bridge缺少运行时事实时如实诊断，不猜另一版本。
+本地处理优先用`video_process`，options使用对应CLI的下划线参数名：`review`的`video/output/start/duration/interval`，
+`read-index`的`index/module/section/offset/limit/max_chars`，`query-notes`的`index/subject/field/view`等；路径必须绝对。
+Host只调用随包离线命令和私有媒体工具；读取直接返回原JSON，写入限定当前DSH策略允许的新output目录。它不经shell，不获取凭据、不调用云、不执行HOM；
+实际退出码、错误和部分进度分别返回，失败不自动重试，不修改ACL或放宽策略。原CLI继续维护全部hash/格式/索引与文件，不另建记录。
+独立CLI所有ingest/prepare/scan/export等命令必须使用`video_models.runtime`返回的`python`和`script`绝对路径；不以裸`python`从全局PATH启动。CLI默认从同一插件根定位私有FFmpeg，显式媒体工具覆盖仍使用绝对路径。
+设置完整读取已配置供应商，转录模型下拉来自所选供应商当前模型目录；目录不认证转录协议。语音用途模型未进入聊天目录时，通过「其他转录模型」填准确ID，不把它注册成对话模型。
+支持显式OpenAI兼容`/audio/transcriptions`，以及`qwen3-asr-flash`及日期快照的`/chat/completions + input_audio`协议。后者从同一已校验WAV bytes构造Data URL、`stream=false`、自动识别语种、关闭逆文本规范化以保留原话；要求完整`finish_reason=stop`结果。单片不超过5分钟和10MB Base64，超限在提交前拒绝。MiMo、实时语音及云厂商异步Filetrans仍未接入。服务的`api/baseURL/apiKeyEnv`配置和凭据仍在DSH「模型」维护。
+
+`qwen-audio-3.0-asr-flash`与`qwen-audio-3.1-asr-flash`使用`dashscope-asr`原生同步协议：同域名`/api/v1/services/aigc/multimodal-generation/generation`、`input.messages`、WAV/16kHz参数及`X-DashScope-SSE: disable`。Host只从供应商明确的`/compatible-mode/v1`或`/api/v1`基址映射该路径，不猜其它网关，不切换模型或域名。完整正文读取`output.text`，缺累计正文不以当前句代替全片。成功原始响应、usage与request_id保存在唯一outcome，原生句词时间从音频毫秒转为秒，再加原片起点；只导出稳定且界内的词。句文本/词文本与累计正文分别核覆盖，不以收到时间字段就宣称全文对齐或准确。
+
+3.1可显式传`speaker_diarization=true`取得提供方的句数组；不会替用户隐式开启该选项。原生词表用`vocabulary:[{word:"Houdini",weight:3}]`，权重按官方为1..5或50，未知节点名不能强推成“纠错”。选项与模型/endpoint固定进任务配置，续跑不得混配。接口见[原生HTTP参考](https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api)。
+
+独立 CLI 保留 SiliconFlow 默认值：密钥从进程环境变量 `SILICONFLOW_API_KEY` 获取；Windows 也支持同名用户环境变量。
+`transcribe --endpoint <完整转录URL> --protocol openai-transcriptions|qwen-chat-asr|dashscope-asr --key-env <环境变量名>`可指定路由，endpoint/model/非默认protocol一起固定到任务。省略protocol的既有任务仍按兼容audio/transcriptions读取，不静默重写历史。
+不接受命令行密钥，不打印密钥、鉴权头或原始异常正文。Host 不把当前聊天模型自动替换成转录模型。
 
 官方接口：[Audio Transcriptions](https://docs.siliconflow.cn/docs/api/audio-transcriptions-post)。
 已核接口为 `POST https://api.siliconflow.cn/v1/audio/transcriptions`，multipart 的 `model` 和音频 `file`，
 响应契约只依赖 `text`。请求限制按官方为单文件不超过 1 小时、50MB；本脚本使用更短音频切片。
 Claim：该契约没有承诺逐句时间戳，所以本工具只标分片范围。边界：其他模型/接口将来若提供对齐，
 须另行验证后接入，不能把本工具时间标注当作模型对齐。验证：响应字段校验与覆盖测试。
-接口核对日期：2026-09-08；模型列表和价格需调用前核实，不固化“永久免费”或静默换模型。
-`Qwen/Qwen3-ASR-1.7B` 是可配置模型示例，是否可用以账户 `/v1/models` 和短段实际请求为准。
+模型列表和价格需调用前核实，不固化“永久免费”或静默换模型。
+千问官方接口：[Qwen-ASR API](https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference)。`qwen3-asr-flash`不返回句级/词级时间戳，本工具同样只标音频切片范围；官方Filetrans时间戳不能套用到Chat响应。普通百炼地址与地域配置见[安装设置](../../../docs/setup.md#教程视频与转录设置)，Token Plan不代替语音API。开源`Qwen/Qwen3-ASR-1.7B`须由实际服务提供方部署并公布兼容接口与准确ID，不假设硅基流动默认提供该模型。
 
 ## 最短执行路径
 
 以下在 PowerShell 中执行；将路径替换为当前任务明确的绝对路径，`$videoScript` 指随包资源。
 `prepare` 无网络写入；所有目录参数要求绝对路径且不能位于本插件目录。
+新任务的派生分析资料统一进入任务根的 `dsh-analysis/<tutorial>/`，下载与合并后的源媒体
+进入 `dsh-reference/downloaded/<tutorial>/`；子目录按步骤分工，不要求子目录再次带 `dsh-`。
+有已命名 HIP 时读取 `project_layout.directories.analysis/reference_downloaded`；只做离线解析时
+用明确任务根。脚本尊重显式 `--output` / `--work`，不改写旧目录或自动搬移用户资料。
 
 ```powershell
-$videoScript = 'C:/path/to/skills/houdini-video-tutorial/scripts/video_tutorial.py'
-python $videoScript prepare --video 'D:/task/tutorial.mp4' --output 'D:/task/video-sample' --start 0 --duration 90
-python $videoScript transcribe --work 'D:/task/video-sample' --model 'Qwen/Qwen3-ASR-1.7B' --allow-upload --max-chunks 4
-python $videoScript export --work 'D:/task/video-sample' --output 'D:/task/sample-export'
-python $videoScript frames --work 'D:/task/video-sample' --output 'D:/task/sample-frames' --times 15 45 75
-python $videoScript scan --video 'D:/task/tutorial.mp4' --output 'D:/task/overview' --interval 30
-python $videoScript review --video 'D:/task/tutorial.mp4' --output 'D:/task/detail' --start 120 --duration 12 --interval 1
-python $videoScript changes --frames-dir 'D:/task/overview' --output 'D:/task/change-candidates'
-python $videoScript context --frames-dir 'D:/task/detail' --transcript 'D:/task/sample-export/transcript.json' --start 120 --end 132 --output 'D:/task/evidence'
-python $videoScript check-notes --context 'D:/task/evidence/context.json' --notes 'D:/task/notes.json' --output 'D:/task/checked-notes'
+# 从 video_models.runtime 的真实结果填写，不照抄或猜测安装目录。
+$videoPython = '<runtime.python 返回的绝对路径>'
+$videoScript = '<runtime.script 返回的绝对路径>'
+# 目录或分离轨输入：只在下载完成后导入，不修改原文件。
+& $videoPython $videoScript ingest --input 'D:/task/downloaded-tutorial' --output 'D:/task/dsh-reference/downloaded/tutorial'
+# 单个已含音轨的视频可直接 prepare；合并产物为 dsh-reference/downloaded/tutorial/media.mp4。
+& $videoPython $videoScript prepare --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/video-sample' --start 0 --duration 90
+& $videoPython $videoScript transcribe --work 'D:/task/dsh-analysis/tutorial/video-sample' --model 'qwen3-asr-flash' --endpoint 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' --protocol qwen-chat-asr --key-env DASHSCOPE_API_KEY --allow-upload --max-chunks 4
+& $videoPython $videoScript export --work 'D:/task/dsh-analysis/tutorial/video-sample' --output 'D:/task/dsh-analysis/tutorial/sample-export'
+& $videoPython $videoScript frames --work 'D:/task/dsh-analysis/tutorial/video-sample' --output 'D:/task/dsh-analysis/tutorial/sample-frames' --times 15 45 75
+& $videoPython $videoScript scan --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/overview' --interval 30
+& $videoPython $videoScript review --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/detail' --start 120 --duration 12 --interval 1
+& $videoPython $videoScript changes --frames-dir 'D:/task/dsh-analysis/tutorial/overview' --output 'D:/task/dsh-analysis/tutorial/change-candidates'
+& $videoPython $videoScript context --frames-dir 'D:/task/dsh-analysis/tutorial/detail' --transcript 'D:/task/dsh-analysis/tutorial/sample-export/transcript.json' --start 120 --end 132 --output 'D:/task/dsh-analysis/tutorial/evidence'
+& $videoPython $videoScript check-notes --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes.json' --output 'D:/task/dsh-analysis/tutorial/checked-notes'
 ```
 
+在 DSH 中，prepare 后优先使用 `video_transcribe({work:"D:/task/dsh-analysis/tutorial/video-sample",allow_upload:true,max_chunks:2})`。
+省略 provider/model 时使用「教程视频」的选择；显式参数可覆盖本次调用，但不能更换已有任务固定的模型/endpoint。
+`video_models` 返回配置与凭据是否存在、协议范围和诊断，不上传音频；Python/FFmpeg/ffprobe 检查入口在设置页。
+
+`ingest` 支持 `--input` 目录，或明确 `--video` 与可选 `--audio`。按 ffprobe 实际流类型找唯一配对，
+不依赖扩展名；多个候选明确要求指定路径。H.264/AAC等MP4支持的编码使用 stream-copy，不重编码改变画面。
+源文件变化、截断或流不匹配返回失败，保留已有诊断产物，不发布成功清单；残留 `.aria2` 只作下载线索，
+不单独判定媒体损坏。成功目录含 `media.mp4` 和 `source-manifest.json`，记录原路径/hash/流与合并结果。
+两轨必须来自同一视频并有可对应的时间轴；时长相同不自动证明语义配对。未知来源先核对，不能靠文件名推断。
+
 `prepare` 默认每片 30 秒、重叠 1 秒；`--duration` 必填，限制默认全片处理。
-短段成功后另建完整范围任务，或复用已准备的完整任务继续提交；不要重新提交已经成功的音频来取文本。
-`transcribe --max-chunks` 限制本次网络请求总数（包括重试），缺省 4，最大 100。
+优先准备完整授权范围并先提交少量片，成功后在同一任务继续；局部问题才单独准备短段。不要重新提交成功音频来取文本。
+`transcribe --max-chunks` 限制本次网络请求总数（包括重试），CLI与Host均缺省100，最大100；少量试转录应明确使用更小预算。
+`--concurrency`限制同时在途请求，范围1..64，CLI与Host均默认64；`--requests-per-second`独立控制启动节奏，均默认8。429、5xx、实际传输断联或超时、临时DNS查询失败会立即暂停新派发；保存这一轮全部在途结果后，并发从64降32再降16，在本次预算内继续尚未尝试的新片。显式选择其它并发时，只向更低的32/16档降级；16及以下再次失败则停止。认证、证书/地址/永久DNS错误、模型/响应语义错误或本地文件错误直接停止，不降级掩盖；未分类的OS错误不推断成并发问题。已失败/未知片即使有本次重试预算也不会在降级阶段自动再发；所有结果按原片与尝试序号保留，最终仍报告本次失败。报告含实际submitted/completed/succeeded/failed/peak_inflight、final_concurrency、concurrency_transitions和逐项failure_details，不能把上限当实际峰值。强制取消仍可能留下已计费的unknown。
 可用 `--chunks 00002 00005` 只处理指定 manifest 片 ID；实际按源时间顺序执行，不重传成功片。
 未知/重复 ID、无效预算在读取凭据和发请求前拒绝。同一任务第一次请求固定模型；改模型应明确说明并
 新建任务，不混合来源。已有尝试记录却丢失 asr-config.json 时拒绝猜补其模型身份。
 应从已知备份恢复原配置；无法恢复时，只能另获授权后建新任务，保留原历史，不删除 attempt/outcome 解锁重发。
 
 用户批准上传是运行 `--allow-upload` 的前提，标志本身不能制造授权。
-确认价格后才提交；无余额、无模型、429、5xx 或超时均停止本次批处理，不后台重试。
+确认价格后才提交；无余额、无模型或不支持的响应停止本次批处理。429、5xx或传输断联/超时仅按上述调度降级处理，不后台重试失败片。
 使用相同命令可继续尚未尝试的片；失败/未知片默认记为 deferred，不重发，也不阻断其他未提交片。
-只有用户接受可能的重复处理/费用后才用 `--retry-failed`；`--max-retries N` 是本次获授权的重试请求数，
+只有用户已有授权覆盖可能的重复处理/费用才用 `--retry-failed`，不为预算内已授权重试反复询问；`--max-retries N` 是本次获授权的重试请求数，
 不是历史尝试上限。有 retry-failed 时默认 1，否则 0；显式非零预算必须同时有 retry-failed，最大 100，
-仍受 max-chunks 限制。一次调用每片最多提交一次，失败立即停止，不在同批内自动再试。
+仍受 max-chunks 限制。一次调用每片最多提交一次，不在同批内自动再试；降级只继续尚未尝试的新片。
 需要重试指定片时组合 `--chunks 00002 --retry-failed --max-retries 1`；排查后另次获准可继续第 3 次及以后，
 按数值序号追加 attempt/outcome，旧日志不改写，成功片永不重发。
 结果分别返回本次 submitted/retried/retry_budget、全任务 remaining_unsubmitted、失败/未知 deferred 列表与
@@ -139,7 +177,8 @@ JSON 保留 PTS 精度。一般获得请求点之后的第一张可解码帧，�
 ## 文件与状态
 
 - `manifest.json`：版本、源路径/hash、视频时长与流、解析区间、音频片 id/时间/hash。
-- `asr-config.json`：固定 endpoint、模型与 manifest hash；不含密钥。
+- `source-manifest.json`：ingest的原始轨道与合并媒体身份；原件保持不变。
+- `asr-config.json`：固定endpoint、模型、非默认协议、明确模型选项与manifest hash；不含密钥，并发/启动速率是本次调度参数。
 - `attempt-*.json`：先于请求写入，记录片 id/尝试次数；未有 outcome 的请求为未知。
 - `outcome-*.json`：HTTP/传输状态或成功原文与 hash；不保存服务端错误正文或鉴权头。
 - `export` 输出 `transcript.json`、`transcript.md`、`validation.json`：缺失区间、空文本片、
@@ -161,12 +200,12 @@ Agent结合粗图和分批读取的原文建立索引，然后用讲解线索、
 脚本不调用LLM、不按关键词自动划定语义章节、不伪造逐句时间，也不自动发起云请求或HOM执行。
 
 ```powershell
-python $videoScript index-init --frames-dir 'D:/task/overview' --transcript 'D:/task/export/transcript.json' --output 'D:/task/catalog'
-python $videoScript read-transcript --index 'D:/task/catalog/index.json' --offset 0 --limit 8
+& $videoPython $videoScript index-init --frames-dir 'D:/task/dsh-analysis/tutorial/overview' --transcript 'D:/task/dsh-analysis/tutorial/sample-export/transcript.json' --output 'D:/task/dsh-analysis/tutorial/catalog'
+& $videoPython $videoScript read-transcript --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --offset 0 --limit 8
 # Agent读取原文与粗图后，在index.json填写chapters/modules；再检查及按模块读取。
-python $videoScript check-index --index 'D:/task/catalog/index.json'
-python $videoScript read-index --index 'D:/task/catalog/index.json'
-python $videoScript read-index --index 'D:/task/catalog/index.json' --module distribution
+& $videoPython $videoScript check-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json'
+& $videoPython $videoScript read-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json'
+& $videoPython $videoScript read-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --module distribution
 ```
 
 `index-init`从已完成的粗图索引和ffprobe建立source/overview/transcript的路径、hash及媒体时长；
@@ -207,13 +246,13 @@ duration_seconds是容器时长，video_duration_seconds是可取帧的视频跨
 
 ```json
 {
-  "context": {"path": "D:/task/evidence/context.json", "sha256": "实际context文件hash"},
-  "notes": {"path": "D:/task/notes.json", "sha256": "实际notes文件hash"},
+  "context": {"path": "D:/task/dsh-analysis/tutorial/evidence/context.json", "sha256": "实际context文件hash"},
+  "notes": {"path": "D:/task/dsh-analysis/tutorial/notes.json", "sha256": "实际notes文件hash"},
   "step_ids": ["step-01"]
 }
 ```
 
-hash用本地SHA-256计算，例如PowerShell `(Get-FileHash -LiteralPath 'D:/task/notes.json' -Algorithm SHA256).Hash.ToLowerInvariant()`。
+hash用本地SHA-256计算，例如PowerShell `(Get-FileHash -LiteralPath 'D:/task/dsh-analysis/tutorial/notes.json' -Algorithm SHA256).Hash.ToLowerInvariant()`。
 notes指Agent填写的原始notes JSON，不是check-notes生成的报告。引用步骤须完整落在某个模块范围内。
 check-index重新校验视频、粗图、转录、context、notes及步骤范围；来源跨视频、转录版本不一致或内容变化均拒绝。
 新观察另存新的context/notes后更新引用，保留旧资料；不要只刷新hash来掩盖需要重新核对的内容。
@@ -343,22 +382,22 @@ network_path是视频网络，不是本地工程路径。panel_target独立记�
   limitations均为非空文本列表；未知灯光或无法判断隐藏结构也需显式记录。motion至少两张不同时间图，
   仍不证明完整动画；final_claim只是作者对参考阶段的判断，不是自动认证。按目标覆盖选图，不按片尾或美观排名。
   成品展示可在开头；先定位目标画面再提取实现步骤。目标原图清楚但隐藏参数未知时，两者分别记录：
-  final参考不抹去方法unknowns，未知方法也不自动否定可见目标。严格原值复原与效果推演的执行边界见复现协议。
+  final参考不抹去方法unknowns，未知方法也不自动否定可见目标。作者方法、必要适配及可切回优化的边界见复现协议。
 
 #### 多入口查询与资料交接
 
 ```powershell
-python $videoScript notes-init --context 'D:/task/evidence/context.json' --output 'D:/task/notes-draft'
-python $videoScript review-packet --context 'D:/task/evidence/context.json' --frame-ids frame-0000.png frame-0001.png --region panel:0.7:0:0.3:1 --question '面板数值是否改变？' --output 'D:/task/focus'
+& $videoPython $videoScript notes-init --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --output 'D:/task/dsh-analysis/tutorial/notes-draft'
+& $videoPython $videoScript review-packet --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --frame-ids frame-0000.png frame-0001.png --region panel:0.7:0:0.3:1 --question '面板数值是否改变？' --output 'D:/task/dsh-analysis/tutorial/focus'
 # 实际核对并填写notes后：
-python $videoScript check-notes --context 'D:/task/evidence/context.json' --notes 'D:/task/notes-draft/notes.json' --output 'D:/task/checked'
-python $videoScript index-link --index 'D:/task/catalog/index.json' --module distribution --context 'D:/task/evidence/context.json' --notes 'D:/task/notes-draft/notes.json' --step-ids observation-01 --output 'D:/task/catalog-next'
-python $videoScript query-notes --index 'D:/task/catalog-next/index.json' --module distribution --view issues
-python $videoScript query-notes --index 'D:/task/catalog-next/index.json' --subject source-filter --field parameter.scale --view final
-python $videoScript query-notes --index 'D:/task/catalog-next/index.json' --view references
-python $videoScript export-brief --index 'D:/task/catalog-next/index.json' --output 'D:/task/brief'
-# 效果复刻的资料交接：先记录并核对成品参考；只解析/讲解不用强制该门。
-python $videoScript export-brief --index 'D:/task/catalog-next/index.json' --require-final-reference --output 'D:/task/effect-brief'
+& $videoPython $videoScript check-notes --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes-draft/notes.json' --output 'D:/task/dsh-analysis/tutorial/checked'
+& $videoPython $videoScript index-link --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --module distribution --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes-draft/notes.json' --step-ids observation-01 --output 'D:/task/dsh-analysis/tutorial/catalog-next'
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --module distribution --view issues
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --subject source-filter --field parameter.scale --view final
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --view references
+& $videoPython $videoScript export-brief --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --output 'D:/task/dsh-analysis/tutorial/brief'
+# 资料交接：同时回查作者方法与成品参考；需要已有成品候选时选此导出检查，不作为建网准入条件。
+& $videoPython $videoScript export-brief --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --require-final-reference --output 'D:/task/dsh-analysis/tutorial/effect-brief'
 ```
 
 示例区域仅为语法，不是默认布局。review-packet从已有context选1..12帧、一个显式归一化区域，
@@ -386,7 +425,9 @@ export-brief生成只读派生brief.json/brief.md：成品参考入口先于模�
 原图路径/实际时间、判据/条件/限制；不丢弃preview/intermediate或竞争候选，Agent须实际看图决定适用范围。
 --require-final-reference只在没有上述成品候选时于创建输出目录前拒绝；默认解析导出仍允许无参考并显式报告。
 这个门不要求补造未知参数，也不是相似度或复刻完成门。报告不成为可写事实源；资料更新后重新导出。
-JSON保留完整观察供查询，Markdown只导航。runtime映射、推演实验与最终比较属于复刻，不改写原始来源事实。
+JSON保留完整观察供查询；Markdown从同源记录展示对象/上下文、事实字段与依据、观察、推断和缺口，仍只是派生导航，不替代实际原图/原音核对。
+模块概览和分页继续携带目的、输入、输出与依赖，不能因分段读取丢掉作者方法的数据语义。
+runtime映射、必要适配、优化收益与切换方式留工程说明，不改写原始来源事实；选择规则由[复现协议](reconstruction.md)维护。
 
 ## 维护验收
 
@@ -414,7 +455,7 @@ final查询不选最新试调、共享证据去重、参考图适用范围、成
 布局/鼠标干扰、长片续跑；另有只需讲解与静音反例。事先人工标注待核对操作和可见事实，记录找回/遗漏、
 错误确定声明、取证原图数与实际送入模型图片数、原文重读、输入/cache/output token、耗时及复现返工。
 工程侧核对首次分叉定位、受影响模块复验、参数实验、阶段输出和保存重开。另验成品在开头/后段试调、
-有最终目标但缺隐藏设置时主动推演、局部改善导致整体退化时恢复最佳候选、严格原参数复原不被自动改成效果拟合；
+方法明确时尽量还原、隐藏设置优先在原方法内补全、版本/软件/资源缺口在具体范围内适配、有明显收益时保留可切回优化；
 不能用更多图片或节点数替代最终参考差异减少。结果留会话/CI，未见视频、
 新session自然采用、语义判断与H21/H22工程验收保持独立待测，不能由离线通过核销。
 

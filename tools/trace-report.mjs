@@ -26,6 +26,7 @@ import {
   collectRequestContexts,
 } from './trace-session-lib.mjs';
 import { normalizeTraceSteps, unresolvedExecutionRequests } from './normalized-trace-steps.mjs';
+import { executionHistory } from '../lib/execution-history.js';
 import {
   collectQualityLoopEvidence,
   collectRetryWork,
@@ -68,6 +69,7 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 // ---------- parse trace ----------
 const loadedSession = loadSessionEvents(sessionFile);
 const { events } = loadedSession;
+const executionObservations = executionHistory(events);
 const requestTelemetry = collectRequestTelemetry(events);
 const requestContexts = collectRequestContexts(events);
 const normalized = normalizeTraceSteps(events);
@@ -148,6 +150,12 @@ const unresolvedRequests = unresolvedExecutionRequests(normalized.steps);
 if (unresolvedRequests.length) qualityRisks.push({code:'unresolved_execution_receipt',
   detail:'Missing execution ledger does not mean not executed; artifacts do not resolve a request receipt.',
   requests:unresolvedRequests});
+if (executionObservations.activeJobs.length) qualityRisks.push({code:'active_houdini_jobs',
+  detail:'Retained job observations are nonterminal or results remain uncollected; a recovered submission receipt does not prove completion. This is trace scope, not current live status.',
+  jobs:executionObservations.activeJobs});
+if (executionObservations.unavailableResults.length) qualityRisks.push({code:'execution_result_unavailable',
+  detail:'Retained execution/job results are unavailable; finished does not establish their outcome.',
+  results:executionObservations.unavailableResults});
 const unverifiedRequestedGoals = requestedGoalReportedUnverified(userMsgs, assistantMsgs);
 if (unverifiedRequestedGoals.length) {
   qualityRisks.push({
@@ -364,6 +372,11 @@ const html = `<!DOCTYPE html>
     ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
     <p class="dim-text">有canonical运行序号的独立执行：${normalized.uniqueExecutions.length}；独立执行内动词 ${normalized.uniqueExecutions.reduce((n,e)=>n+e.verbCalls,0)}。仅覆盖实际保留runtime/sequence的事件，不代表旧轨迹无执行；轮询和查回仍是独立工具调用，不能重复计场景执行。</p>
+    <h2>执行回执与后台任务范围</h2>
+    <p>提交/执行回执未查回 ${unresolvedRequests.length} 项；后台任务仍在进行或结果尚未领取 ${executionObservations.activeJobs.length} 项；已结束但结果不可取得 ${executionObservations.unavailableResults.length} 项。</p>
+    <p class="dim-text">这些状态复用 executionHistory 对原始会话事件的投影，只描述日志中最后保留的观察，包含原生和嵌套调用的提交回执；不是当前现场查询。无未查回回执不等于全部后台任务已完成；提交成功、任务结束、结果可取与结果正确分别判断。缺失结果或过期结果保持结果未验证。</p>
+    ${executionObservations.activeJobs.length ? `<details open><summary>后台任务的最后保留状态</summary><pre>${esc(JSON.stringify(executionObservations.activeJobs,null,2))}</pre></details>` : ''}
+    ${executionObservations.unavailableResults.length ? `<details open><summary>不可取得的执行结果（未验证）</summary><pre>${esc(JSON.stringify(executionObservations.unavailableResults,null,2))}</pre></details>` : ''}
     <h2>回滚与近重复重试候选</h2>
     <p>提交代码 ${retryWork.totalCodeChars} 字符；失败调用代码 ${retryWork.failedCodeChars} 字符；已应用回滚 ${retryWork.appliedRollbackCalls} 次，涉及代码 ${retryWork.appliedRollbackCodeChars} 字符。
     ${retryWork.successfulBuildEntriesInAppliedRollbacks.length} 个成功的 build_module ledger 条目随后被所在调用回滚；近重复重试候选 ${retryWork.candidates.length} 对。</p>
@@ -400,4 +413,5 @@ console.log('session :', sessionFile);
 console.log('events  :', events.length, '| steps:', steps.length, '| verbs:', totalVerbCalls, `(${usedVerbs}/${catalogVerbs})`, '| replays:', replayedResults.length, '| unmatched:', unmatchedResults.length);
 console.log('frames  : geometry=[' + validationCoverage.frames.geometry.join(',') + '] render=[' + validationCoverage.frames.render.join(',') + '] vision-inspection=[' + validationCoverage.frames.visionInspection.join(',') + ']');
 console.log('review  : cues=[' + qualityRisks.map((risk) => risk.code).join(',') + ']');
+console.log('state   : unresolvedRequests=' + unresolvedRequests.length + ' activeJobs=' + executionObservations.activeJobs.length + ' unavailableResults=' + executionObservations.unavailableResults.length + ' (last retained trace observations; not current live status)');
 console.log('report  :', outFile);

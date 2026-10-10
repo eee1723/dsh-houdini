@@ -197,6 +197,18 @@ def tool_inspect(kind, name, category=None, include_code=False, max_chars=16000)
                                'current': candidate == definition, 'preferred': candidate.isPreferred(),
                                'version': candidate.version()})
         result['definitions'] = candidates
+        components = item.nameComponents()
+        result['type_version'] = components[3]
+        result['definition_version_metadata'] = definition.version() if definition else None
+        related = [nt for nt in item.category().nodeTypes().values()
+                   if nt.nameComponents()[:3] == components[:3] and nt.definition() is not None]
+        result['type_versions'] = [dict(type=nt.name(), type_version=nt.nameComponents()[3],
+                                       library_file=_path(nt.definition().libraryFilePath()))
+                                   for nt in sorted(related, key=lambda nt: nt.name())[:64]]
+        result['type_versions_truncated'] = len(related) > 64
+        result['maintenance'] = {'library_file': row.get('source'),
+                                 'version_operation': 'hda_version', 'switch_operation': 'hda_switch_version',
+                                 'note': 'Maintain the actual source library/package. Version metadata is not the native ::version suffix; fork only for an independent tool.'}
         result['instances'] = [n.path() for n in item.instances()][:256]
         result['instances_truncated'] = len(item.instances()) > 256
         if definition:

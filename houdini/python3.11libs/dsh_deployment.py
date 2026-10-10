@@ -434,11 +434,16 @@ class Store:
         install = Path(context["install"])
         node = install / "node/node.exe"
         env = runtime_env(context)
+        plugin = read_json(install / "app/node_modules/dsh-houdini/package.json")
+        exports = plugin.get("exports")
+        imports = "await import('dsh-houdini')"
+        if isinstance(exports, dict) and exports.get("./agent") is not None:
+            imports += "; await import('dsh-houdini/agent')"
         for args, cwd, expected in (
             ([str(node), "--version"], install, "v" + context["nodeVersion"]),
             ([str(node), str(install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"), "--version"], install, context["dshVersion"]),
             ([str(node), "--input-type=module", "-e",
-              "await import('dsh-houdini'); await import('dsh-houdini/agent')"], install / "app", None),
+              imports], install / "app", None),
         ):
             progress("Checking the bundled Node, DSH and plugin")
             result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True,

@@ -6,6 +6,8 @@ lib/
 .dsh-runtime.json
 .window-events.log
 tools/out/
+runtime/video/
+runtime/video.previous-*/
 __pycache__/
 
 # Publishing private keys/certificate bundles must stay outside the repository.

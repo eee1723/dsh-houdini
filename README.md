@@ -1,6 +1,8 @@
 # dsh-houdini
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)的Houdini插件。通过自然语言、参考资料和教程，在真实Houdini中完成高质量、可编辑、能持续修改的工程与工具。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)的Houdini插件，提供场景读取、节点操作、执行记录和领域资料。目标是帮助用户在真实Houdini中做出可编辑、能继续修改的工程与工具。
+
+插件仍在完善，复杂任务的稳定性、成品质量和后续修改效果需要继续验证。试用时建议先在练习工程里做容易检查的小任务，按实际结果判断哪些部分有帮助。
 
 DSH负责模型、会话和Agent循环；插件提供真实场景信息、批量操作、执行反馈、图像与文件。Houdini界面只显示 **Houdini 模式**，按任务读取领域知识。
 
@@ -33,7 +35,7 @@ Host/Bridge/helper重载使用 **Version & Updates → 高级设置 → 运行�
 | 资料 | 用途 |
 |---|---|
 | [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化模型、局部修改和几何观察 |
-| [COP](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层 |
+| [COP（按需能力）](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层；完整材质与教程交付仍待验收 |
 | [工具开发](skills/houdini-tool-development/SKILL.md) | HDA、脚本、界面、回调和交付 |
 | [参数界面](skills/houdini-parameter-ui/SKILL.md) | 共享控制与参数绑定 |
 | [网络交接](skills/houdini-network-handoff/SKILL.md) | 主动节点入口、跨领域分组说明与布局观察 |

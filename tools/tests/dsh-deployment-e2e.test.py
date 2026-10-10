@@ -2,6 +2,7 @@
 
 No Houdini scene is loaded, no model call is made, and no user service is stopped.
 Usage: python ... --bundle <signed-build-dir> --trust <trusted-public-keys.json>
+       [--previous-bundle <previous-signed-build-dir>]
 """
 from __future__ import annotations
 import argparse
@@ -23,18 +24,170 @@ import dsh_bootstrap as bootstrap
 import dsh_managed_runtime as managed
 from dsh_web_auth import DshWebSession
 
+
+def progress(message):
+    print(message, flush=True)
+
+
+def fixture_data(home, label):
+    # Inert session/config artifacts test Store's byte-preserving snapshot.
+    # They do not claim native DSH session-format conversion or model resume.
+    files = {
+        "release-e2e/session.json": {"id": "dummy-session", "messages": [{"role": "user", "content": label}]},
+        "release-e2e/config.json": {"fixture": label, "models": [], "credentials": {}},
+    }
+    for name, value in files.items():
+        d.atomic_json(home / name, value)
+    return {name: (home / name).read_bytes() for name in files}
+
+
+def assert_data(home, expected):
+    for name, content in expected.items():
+        assert (home / name).read_bytes() == content, (home, name)
+
+
+def failure_snapshot(store, ident, old_context):
+    old_home = Path(old_context["home"])
+    expected_old = fixture_data(old_home, "old data before failed activation")
+    state = store.state()
+    failed_home = store.root / "data" / ident
+    def prepare_then_fail(context, notify):
+        bootstrap._prepare(context, notify)
+        d.atomic_json(Path(context["home"]) / "release-e2e/failed-attempt.json", {"fixture": "retain this incomplete snapshot"})
+        raise RuntimeError("authored failure after real profile preparation")
+    try:
+        store.activate(ident, "21.0", progress, prepare_then_fail)
+    except RuntimeError as error:
+        if "authored failure after real profile preparation" not in str(error):
+            raise
+    else:
+        raise AssertionError("authored activation failure was not reported")
+    assert store.state() == state, "failed preparation changed the active selection"
+    assert_data(old_home, expected_old)
+    assert_data(failed_home, expected_old)
+    assert (failed_home / "release-e2e/failed-attempt.json").is_file()
+    # A retry must collect changes made in the still-active old data, instead
+    # of silently reusing the stale failed snapshot.
+    expected_retry = fixture_data(old_home, "old data changed before retry")
+    context, lease = store.activate(ident, "21.0", progress, bootstrap._prepare)
+    try:
+        assert Path(context["home"]) != old_home
+        assert_data(Path(context["home"]), expected_retry)
+        assert_data(old_home, expected_retry)
+        assert not (Path(context["home"]) / "release-e2e/failed-attempt.json").exists()
+        retained = [path for path in (store.root / "data").glob("incomplete-*")
+                    if (path / "release-e2e/failed-attempt.json").is_file()]
+        assert len(retained) == 1, "incomplete activation data was lost or reused"
+        assert_data(retained[0], expected_old)
+        assert store.state()["current"] == ident and store.state()["previous"] == old_context["installId"]
+        return context, lease, expected_retry, str(retained[0])
+    except BaseException:
+        lease.close()
+        raise
+
+
+def rollback_and_repair(store, context, bundle, old_context=None, expected_old=None):
+    home = Path(context["home"])
+    newer = fixture_data(home, "new version data")
+    new_only = home / "release-e2e/new-session.json"
+    d.atomic_json(new_only, {"id": "new-only-dummy-session", "messages": []})
+    if old_context is not None:
+        old_ident = old_context["installId"]
+        assert store.rollback(progress) == old_ident
+        restored, lease = store.activate(old_ident, "21.0", progress, bootstrap._prepare)
+        try:
+            assert restored["home"] == old_context["home"]
+            assert_data(Path(restored["home"]), expected_old)
+            assert not (Path(restored["home"]) / "release-e2e/new-session.json").exists()
+            assert_data(home, newer)
+            assert new_only.is_file(), "rollback removed new-version data"
+        finally:
+            lease.close()
+        # Return to the retained newer version for its same-version repair.
+        assert store.rollback(progress) == context["installId"]
+        resumed, lease = store.activate(context["installId"], "21.0", progress, bootstrap._prepare)
+        try:
+            assert resumed["home"] == context["home"]
+            assert_data(home, newer)
+            assert new_only.is_file()
+        finally:
+            lease.close()
+        print("Real signed previous/new selection, independent data and non-merging rollback passed", flush=True)
+    install = Path(context["install"])
+    media_names = ["app/node_modules/dsh-houdini/runtime/video/ffmpeg/bin/ffmpeg.exe",
+                   "app/node_modules/dsh-houdini/runtime/video/ffmpeg/bin/ffprobe.exe"]
+    inventory = d.read_json(install / "inventory.json")
+    media = [d.checked_path(install, name) for name in media_names]
+    assert all(path.is_file() and name in inventory for path, name in zip(media, media_names)), "signed bundle lacks its private media executables"
+    expected_media = [inventory[name] for name in media_names]
+    media[0].write_bytes(b"authored damaged private ffmpeg fixture")
+    media[1].unlink()  # Only this test-created installation's explicit file.
+    state = store.state()
+    try:
+        store.activate(context["installId"], "21.0", progress, bootstrap._prepare)
+    except ValueError as error:
+        assert "damaged" in str(error) or "missing" in str(error), str(error)
+    else:
+        raise AssertionError("damaged private media installation was accepted")
+    assert store.state() == state
+    assert_data(home, newer)
+    repair_id = store.stage(bundle, progress)
+    assert repair_id != context["installId"], "repair overwrote the serving installation"
+    repaired, lease = store.activate(repair_id, "21.0", progress, bootstrap._prepare)
+    try:
+        assert repaired["version"] == context["version"] and repaired["dshVersion"] == context["dshVersion"]
+        assert repaired["install"] != context["install"] and repaired["home"] != context["home"]
+        assert_data(Path(repaired["home"]), newer)
+        assert (Path(repaired["home"]) / "release-e2e/new-session.json").read_bytes() == new_only.read_bytes()
+        assert_data(home, newer)
+        restored_media = [d.checked_path(Path(repaired["install"]), name) for name in media_names]
+        assert [d.digest(path) for path in restored_media] == expected_media
+        assert media[0].read_bytes() == b"authored damaged private ffmpeg fixture" and not media[1].exists()
+        versions = []
+        for path in restored_media:
+            result = subprocess.run([str(path), "-version"], cwd=path.parent, env=d.runtime_env(repaired),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            assert result.returncode == 0, result.stderr
+            versions.append(result.stdout.splitlines()[0])
+        if old_context is not None:
+            assert_data(Path(old_context["home"]), expected_old)
+        return {"repairInstallId": repair_id, "repairHome": repaired["home"], "mediaVersions": versions,
+                "rollbackChecked": old_context is not None}
+    finally:
+        lease.close()
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--bundle", type=Path, required=True)
 parser.add_argument("--trust", type=Path, required=True)
+parser.add_argument("--previous-bundle", type=Path,
+                    help="also verify real signed previous activation, failed snapshot retry and rollback")
 parser.add_argument("--hython", action="append", type=Path, default=[])
 args = parser.parse_args()
 trust = d.read_json(args.trust)
 # Persistent test output is intentionally outside user data; retain failure evidence.
 test_root = Path(tempfile.mkdtemp(prefix="dsh-real-install-中文 空格-"))
 print("Isolated test directory:", test_root, flush=True)
+environment = isolated_environment(test_root / "environment")
+os.environ.clear()
+os.environ.update(environment)
 store = d.Store(test_root / "managed", trust, allow_candidate=True)
-ident = store.stage(args.bundle, lambda text: print(text, flush=True))
-ctx, lease = store.activate(ident, "21.0", lambda text: print(text, flush=True), bootstrap._prepare)
+old_context = None
+expected_old = None
+retained_snapshot = None
+if args.previous_bundle is not None:
+    previous_manifest = d.load_signed(args.previous_bundle, trust, allow_candidate=True)
+    current_manifest = d.load_signed(args.bundle, trust, allow_candidate=True)
+    assert previous_manifest["version"] != current_manifest["version"], "previous bundle must be a different version"
+    previous_id = store.stage(args.previous_bundle, progress)
+    old_context, old_lease = store.activate(previous_id, "21.0", progress, bootstrap._prepare)
+    old_lease.close()
+ident = store.stage(args.bundle, progress)
+if old_context is not None:
+    ctx, lease, expected_old, retained_snapshot = failure_snapshot(store, ident, old_context)
+else:
+    ctx, lease = store.activate(ident, "21.0", progress, bootstrap._prepare)
 install = Path(ctx["install"])
 env = d.runtime_env(ctx)
 env["DSH_HOUDINI_MANAGED_CONTEXT"] = str(Path(ctx["runtimeDir"]) / "context.json")
@@ -145,7 +298,8 @@ try:
             assert exc.code == 401
         else:
             raise AssertionError("unauthenticated RPC was accepted")
-        assert not (Path(ctx["home"]) / ".agent-presets").exists()
+        assert not any((Path(ctx["home"]) / ".agent-presets" / name).exists()
+                       for name in ("houdini", "houdini-dev", "houdini-product"))
         assert not (install / "app/node_modules/dsh-houdini/node_modules").exists()
         print("Real portable Node + exact DSH + isolated profile + plugin import + 401/200 authenticated RPC passed", flush=True)
         for hython in args.hython:
@@ -164,3 +318,8 @@ finally:
     lease.close()
 assert process.returncode is not None
 print("Owned frontend terminated; no external process or user HIP was touched", flush=True)
+recovery = rollback_and_repair(store, ctx, args.bundle, old_context, expected_old)
+d.atomic_json(test_root / "lifecycle-evidence.json", {"currentVersion": ctx["version"],
+    "previousVersion": old_context["version"] if old_context else None,
+    "incompleteSnapshot": retained_snapshot, "recovery": recovery, "state": store.state()})
+print("Real signed same-version repair restored private FFmpeg/ffprobe and preserved independent data", flush=True)

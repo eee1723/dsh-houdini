@@ -23,7 +23,7 @@ import uuid
 import dsh_managed_runtime
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, QUrl
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineUrlScheme
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings, QWebEngineUrlScheme
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -39,16 +39,41 @@ REQUEST_HINT_PARAM = "dsh-houdini-request"
 
 _RETRY_INTERVAL_MS = 2000
 
-# 性能实测（2026-08-18，经桥在真实 Houdini webview 里测）：设置弹窗的遮罩用
-# backdrop-filter 全屏毛玻璃，Houdini 的 QtWebEngine 6.5.3（Chrome 108）走软件
-# 光栅，每次滚动都对整屏背景重新模糊 —— 滚动 FPS 6 → 关闭后 45。遮罩仍保留
-# 半透明底色，只是没有模糊，观感几乎无损。SPA 单页注入一次即可。
-_DISABLE_BACKDROP_FILTER_JS = """
+# Keep the software-rendered Qt view free of expensive backdrop blur. DSH's
+# shared menu materials depend on that blur to hide underlying text, so their
+# fills must become opaque together (including the GoalBar pseudo-element).
+# Use DSH's existing light/dark menu-header RGB, not component class hashes.
+# Modal dimmers, disabled controls and hover overlays retain their own alpha.
+_WEBVIEW_STYLE_JS = """
 (function(){
-  if (document.getElementById('dsh-perf-no-backdrop-filter')) return;
+  if (document.getElementById('dsh-qtwebengine-style')) return;
   var s = document.createElement('style');
-  s.id = 'dsh-perf-no-backdrop-filter';
-  s.textContent = '* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }';
+  s.id = 'dsh-qtwebengine-style';
+  s.textContent = `
+    body {
+      --dsw-menu-surface-fill: #f8f9fa !important;
+      --dsw-specific-menu: #f8f9fa !important;
+      --dsw-alias-menu-group-header-fill: #f8f9fa !important;
+      --dsw-menu-backdrop-filter: none !important;
+    }
+    body[data-ds-dark-theme] {
+      --dsw-menu-surface-fill: #303136 !important;
+      --dsw-specific-menu: #303136 !important;
+      --dsw-alias-menu-group-header-fill: #303136 !important;
+    }
+    *, *::before, *::after {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
+    /* Chromium 108 rejects the entire composer background when its zero-alpha
+       stop uses color-mix(). Transparent is equivalent and supported. */
+    @supports not (color: color-mix(in srgb, red, blue)) {
+      [data-phase="active"] [data-composer-seat],
+      [data-content-phase="active"] [data-composer-seat] {
+        background-image: linear-gradient(180deg, transparent 0px, var(--dsw-alias-bg-base) 36px) !important;
+      }
+    }
+  `;
   document.head.appendChild(s);
 })()
 """
@@ -214,7 +239,7 @@ def _load_finished(ok: bool) -> None:
             # task when the native workspace/session snapshots arrive.
         if _view is not None:
             _clear_launch_session_hint(_view)
-            _view.page().runJavaScript(_DISABLE_BACKDROP_FILTER_JS)
+            _view.page().runJavaScript(_WEBVIEW_STYLE_JS)
         return
     if (_retry_timer is not None and _window is not None
             and _window.isVisible() and not _retry_timer.isActive()):
@@ -407,6 +432,11 @@ def show_webview(
         # The view is created before the profile so its page is destroyed first.
         profile = QWebEngineProfile(win)
         view.setPage(QWebEnginePage(profile, view))
+        # DSH's shared copy helper uses navigator.clipboard.writeText. Qt
+        # disables this by default: H21 rejects, H22 waits for an unanswered
+        # ClipboardReadWrite request. Enable writes on our page; clipboard
+        # reading/paste permission remains at Qt's default (disabled).
+        view.page().settings().setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
         _install_abort_signal_polyfill(view)
         # QWebEngine 的网络加载是异步的：成功后注入性能修复 CSS，失败则由
         # cancellable QTimer 重试。主线程不再同步探测 localhost 端口。

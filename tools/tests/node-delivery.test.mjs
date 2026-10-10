@@ -87,7 +87,7 @@ try {
     return {session:{id:request.sessionId},target:event}
   }})
   const frontend=new HoudiniFrontend(root)
-  assert.deepEqual(remoteMethods(frontend).map(method=>method.method),['capabilities','openNode'])
+  assert.deepEqual(remoteMethods(frontend).map(method=>method.method),['videoSettings','videoDiagnostics','capabilities','openNode'])
   assert.equal(frontend.capabilities().nodeDeliveries,true)
   const coordinates=i=>({sessionId:agents[i].id,eventSeq:20,index:0})
   assert.deepEqual(await Promise.all([0,1].map(i=>frontend.openNode(coordinates(i),signal))),

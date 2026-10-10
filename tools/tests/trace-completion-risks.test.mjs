@@ -119,11 +119,66 @@ try {
   assert.equal(currentTrace.toolCalls,1);
   assert.equal(currentTrace.unmatchedResults.length,0);
   assert.equal(currentTrace.executionCost.resultChars,directText.length);
+  assert.deepEqual(currentTrace.activeJobs,[]);
+  assert.deepEqual(currentTrace.unavailableResults,[]);
   assert.deepEqual(currentTrace.observationContexts,[{seq:2,time:1002,text:contextText}]);
   assert(currentTrace.requestContexts.every(row=>row.projectionComplete));
   const report=path.join(temp,'current-report.html');
   execFileSync(process.execPath,['tools/trace-report.mjs',temp,'--out',report],{cwd:root});
   assert(fs.readFileSync(report,'utf8').includes(directText),'offline HTML retains native role=tool output');
+  assert(fs.readFileSync(report,'utf8').includes('无未查回回执不等于全部后台任务已完成'));
+
+  // Submission recovery and background completion are separate. Use original
+  // native/nested events: normalization excludes admission-only operations.
+  const jobEvents=[];
+  let jobSeq=100;
+  const jobResult=(id,name,value,nested=false)=>{
+    jobEvents.push(event(jobSeq++,nested?'tool/ptc-dispatch-start':'tool/call',nested
+      ? {subCallId:id,parentCallId:'program',name,arguments:{}}
+      : {callId:id,name,arguments:{}}));
+    jobEvents.push(event(jobSeq++,nested?'tool/ptc-dispatch':'tool/result',nested
+      ? {subCallId:id,parentCallId:'program',name,
+         content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:id,tool:name,value})}]}
+      : {message:{source:{callId:id},content:[{type:'text',text:'Retained job observation'}]},meta:{canonical:value}}));
+  };
+  jobResult('running-submit','houdini_job_submit',{jobId:'native-running',requestReceipt:{
+    request_ref:'running-admission',owner_call:'running-submit',status:'job_submitted'}});
+  jobResult('running-recovery','houdini_request',{jobId:'native-running',requestReceipt:{
+    request_ref:'running-admission',owner_call:'running-submit',status:'job_submitted',
+    job_status:'running',job_finished:false}});
+  jobResult('nested-submit','houdini_job_submit',{jobId:'nested-queued',requestReceipt:{
+    request_ref:'nested-admission',owner_call:'nested-submit',status:'job_submitted'}},true);
+  jobResult('missing-result','houdini_request',{jobId:'missing-result-job',requestReceipt:{
+    request_ref:'missing-admission',owner_call:'missing-submit',status:'result_expired',
+    job_status:'done',job_finished:true,job_result_available:false}});
+  jobResult('cleared-submit','houdini_job_submit',{jobId:'collected-job',requestReceipt:{
+    request_ref:'cleared-admission',owner_call:'cleared-submit',status:'job_submitted'}});
+  jobResult('cleared-status','houdini_job_status',{jobId:'collected-job',status:'done',ok:true});
+  jobResult('late-admission','houdini_request',{jobId:'collected-job',requestReceipt:{
+    request_ref:'cleared-admission',owner_call:'cleared-submit',status:'job_submitted'}});
+  jobEvents.push(event(jobSeq++,'turn/end',{turn:1,reason:{kind:'aborted'}}));
+  const jobInput=path.join(temp,'job-session.jsonl.zstd');
+  const jobOutput=path.join(temp,'job-evidence.json');
+  const jobReport=path.join(temp,'job-report.html');
+  fs.writeFileSync(jobInput,zlib.zstdCompressSync(jobEvents.map(row=>JSON.stringify(row)).join('\n')));
+  execFileSync(process.execPath,['skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs',
+    jobInput,'--out',jobOutput],{cwd:root});
+  const jobTrace=JSON.parse(fs.readFileSync(jobOutput,'utf8')).traces[0];
+  assert.deepEqual(jobTrace.unresolvedRequests,[],'all submission receipts were recovered; jobs stay separate');
+  assert.deepEqual(jobTrace.activeJobs,[['native-running','running'],['nested-queued','queued_or_unknown']],
+    'native/nested admissions remain visible without reviving a collected job');
+  assert.deepEqual(jobTrace.unavailableResults,[{request_ref:'missing-admission',owner_call:'missing-submit',
+    status:'finished_result_unavailable',retention_status:'result_expired',outcome:'unverified',job_id:'missing-result-job'}]);
+  assert(jobTrace.completionRisks.some(risk=>risk.code==='active_houdini_jobs'));
+  assert(jobTrace.completionRisks.some(risk=>risk.code==='execution_result_unavailable'));
+  assert(jobTrace.executionObservationScope.includes('last retained observations'));
+  const jobStdout=execFileSync(process.execPath,['tools/trace-report.mjs',jobInput,'--out',jobReport],{cwd:root,encoding:'utf8'});
+  const jobHtml=fs.readFileSync(jobReport,'utf8');
+  assert(jobStdout.includes('activeJobs=2 unavailableResults=1'));
+  assert(jobStdout.includes('cues=[active_houdini_jobs,execution_result_unavailable'));
+  assert(jobHtml.includes('后台任务仍在进行或结果尚未领取 2 项'));
+  assert(jobHtml.includes('已结束但结果不可取得 1 项'));
+  assert(jobHtml.includes('native-running')&&jobHtml.includes('nested-queued')&&jobHtml.includes('missing-result-job'));
   const malformed=path.join(temp,'malformed.zstd');
   fs.writeFileSync(malformed,zlib.zstdCompressSync('not-json\n'+JSON.stringify(nativeEvents[0])));
   assert.equal(loadSessionEvents(malformed).lineErrors.length,1,'invalid lines remain visible diagnostics');

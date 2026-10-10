@@ -124,7 +124,24 @@ WebView使用独立的内存浏览器profile，不争用Houdini默认磁盘profi
 工作区、版本与更新、运行诊断等工具窗口通过原生窗口归属关系保持在 Houdini 上方，不使用系统全局置顶；其他应用切到 Houdini 前方时也可以遮挡插件窗口。独立安装器没有 Houdini 父窗口时使用普通应用窗口。工具明确启用原生标题栏的关闭、系统菜单和最小化按钮；关闭工作区只隐藏窗口，保留当前页面、任务和草稿，再次明确打开时复用；关闭版本面板会请求取消该面板尚未完成的操作并停止刷新。用户手动最小化后，页面加载和后台状态刷新不会自动恢复。再次通过明确打开入口唤起时，恢复已有窗口，不建立新的工作区或安装操作。窗口规则由[dsh_ui_style.py](../houdini/python3.11libs/dsh_ui_style.py)统一维护。
 H21/H22内嵌QtWebEngine的`dsh-resource`解析由插件在创建页面前注册；旧进程必须按WebView变更规则完整重开Houdini才会加载这一修复。
 仅在最近一次调用明确观察到已保存工程且目录不一致时，在输入区上方显示可展开的中文提示。未保存状态清除旧目录提示。提示以执行观察时间/序列为准，回读历史结果不会冒充新现场。它不是持续监控，切换HIP后须重新打开工作区，最终文件路径以当前权威回执为准。
-视频教程等可选能力的FFmpeg和云服务凭据不属于核心离线运行依赖，仍需按对应skill准备；Houdini和模型服务授权不随插件分发。
+视频教程使用当前Houdini安装内的普通Python 3.11+进程与版本私有的FFmpeg/ffprobe。正式发行随版本打包媒体工具，不依赖系统Python、FFmpeg或全局PATH；Houdini和模型服务授权不随插件分发。
+完整包保留FFmpeg、zlib、FreeType、HarfBuzz、dav1d、MinGW-w64、LLVM七份对应完整源码和原始许可，位于插件`runtime/video/sources`与`licenses`。zlib支持PNG读写，dav1d提供普通电脑上的AV1软件解码；同时提供实际编译配置、Windows对象响应文件构建补丁、DLL依赖和文件摘要。媒体工具在发行端由固定来源编译，普通安装不下载编译器或运行源码构建。来源和维护入口见[开发规范](development.md#修改与验证)。
+
+## 教程视频与转录设置
+
+在DSH设置中打开「教程视频」，选择「转录服务供应商」，再从该供应商的已配置模型目录下拉选择转录模型。页面完整显示已配置的目录型与自定义供应商，并标出当前能否复用音频API地址；出现在列表中不代表支持转录。语音模型未列在聊天目录时，选择「其他转录模型」填写供应商公布的准确ID。API地址和密钥继续在「模型」页面统一配置；独立的转录用途选择不会改变当前对话模型，插件不另建密钥库。
+
+当前支持显式OpenAI兼容路由的`/audio/transcriptions`，千问`qwen3-asr-flash`及日期快照的音频Chat接口，以及`qwen-audio-3.0-asr-flash`/`qwen-audio-3.1-asr-flash`的DashScope原生同步接口。千问直接提交经过校验的本地WAV切片，自动识别语种，单片不超过5分钟或10MB Base64。成功原始响应和句词时间保留在任务中；导出同时给切片范围与有真实依据的句词时间，分别声明正文覆盖和未核对的时间精度，缺失时间不插值。3.1可显式开启说话人分离取得句数组，转录工具可指定术语词表。异步Filetrans、实时语音及其它未接入型号会在上传前明确拒绝。
+
+精确DSH的第三方目录包含千问Token Plan路由，普通百炼语音API仍需在「模型」添加自定义OpenAI兼容API。北京地址可填`https://dashscope.aliyuncs.com/compatible-mode/v1`，新加坡为`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`；也可按[阿里云官方API参考](https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference)填写业务空间专属域名。凭据必须匹配地域，Token Plan不代替普通百炼语音服务。DSH要求自定义供应商有可用的真实聊天目录，不能用空目录代替，也不要把ASR模型伪装成聊天模型；在教程页单独选择`qwen3-asr-flash`即可。模型可用性和价格以提供方当前目录与短段实际请求为准，配置存在不等于转录成功。
+
+千问AI平台对应的兼容基址为`https://maas.qianwenaiapi.com/compatible-mode/v1`，见[完整Qwen-ASR参考](https://platform.qianwenai.com/docs/api-reference/speech-recognition/qwen-asr/api-reference)。官网DashScope SDK示例的`/api/v1`属于另一请求协议，不能把它当成普通聊天兼容基址。教程页选择`qwen-audio-3.0-asr-flash`时，插件从同一供应商明确的`/compatible-mode/v1`或`/api/v1`基址映射到同域名`/api/v1/services/aigc/multimodal-generation/generation`，使用原生`input.messages`请求与`X-DashScope-SSE: disable`；不切换账号、域名或模型。响应读取`output.text`完整累计正文，当前句不能代替它。其它网关路径不推断，接口依据见[原生HTTP参考](https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api)。
+
+「本机依赖与高级设置」检查当前Houdini Python和版本私有FFmpeg/ffprobe，并允许开发者指定绝对路径。保存与检查不会安装全局软件或上传媒体。正式安装缺失或损坏媒体工具时，使用Version & Updates中的同版修复恢复整份受管版本；源码开发使用私有媒体工具准备入口，见[视频运行契约](../skills/houdini-video-tutorial/references/video-processing.md)。真正的短段转录由Agent在用户已允许的服务、范围与费用内执行；普通用户无需把密钥写进聊天或额外维护环境变量。
+
+给Agent提供完整视频或包含分离音视频的目录即可。Agent先导入稳定资料、试转录少量音频并定位成品画面，再按问题回看原图、另存有依据的纠错与章节/模块资料；需要复现时才构建工程。转录工具支持1..64并发和独立启动速率，CLI与Host默认64并发、8次每秒、每次最多100次提交；这不是服务商的配额保证。遇到429、5xx或传输断联/超时时先停止派发、保存全部在途结果，再降为32或16继续预算内尚未尝试的新片；16及以下再次失败则停止。认证、模型/响应语义错误和本地文件错误直接停止，失败/未知片不自动重试。结果如实保留失败和降级记录，成功片续跑不重传；目录被强制取消时的unknown不能冒充未计费。下载中的文件需先完成下载。转录文字、画面检查和Houdini工程验证分别报告，文字覆盖完整不代表复刻成功。入口为`video_models`/`video_transcribe`与[视频教程skill](../skills/houdini-video-tutorial/SKILL.md)。
+工程默认尽量还原作者方法；必要适配以及明显更优方案的并列说明和切换入口，按[视频复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)处理。插件实现允许重构不改变这一目标。
+本地抽帧、查询与资料整理使用`video_process`，运行时自动跟随当前任务所选Houdini，显式Python配置仍优先；不依赖终端重定向、全局Python/FFmpeg或ACL修补。设置页无任务上下文时明确仅检查Host启动环境。独立CLI继续可用，来源与文件校验由同一脚本维护。
 
 ## 指定图片模型
 

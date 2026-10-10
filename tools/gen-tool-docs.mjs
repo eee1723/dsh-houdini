@@ -6,7 +6,7 @@ const exports={}
 new Function('exports',code)(exports)
 const rows=Object.entries(exports.PLUGIN_TOOLS)
 const text='# Houdini 工具说明\n\n'
-  +'本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。Houdini参数及执行以[src/tools.ts](../src/tools.ts)为准，Host生图以[image-generation](../src/image-generation.ts)为准。\n\n'
+  +'本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。Houdini参数及执行以[src/tools.ts](../src/tools.ts)为准，Host生图以[image-generation](../src/image-generation.ts)、教程离线处理以[video-process](../src/video-process.ts)、转录以[video-transcription](../src/video-transcription.ts)为准。\n\n'
   +'系统提供准确的场景信息、充分的批量操作、真实反馈和观察结果。理解需求、选择方法、安排步骤与判断效果由模型负责；领域知识按任务需要读取。\n\n'
   +'| 工具 | 为什么存在 | 输入 | 返回 | 执行位置 |\n|---|---|---|---|---|\n'
   +rows.map(([name,row])=>`| \`${name}\` · ${row.label} | ${row.purpose} | ${row.input} | ${row.output} | ${row.execution} |`).join('\n')

@@ -79,6 +79,47 @@ assert.match(statusTextForReceipt(),/unknown_transport/);
 function statusTextForReceipt() {
   return exec.output.render({}, {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}})[0].text;
 }
+// Exercise the public recovery tool with Bridge receipt envelopes: HTTP
+// lookup success must not advertise a still-running or unavailable operation.
+const recoveryDefinitions = new Map();
+let recoveryReceipt;
+registerHoudiniTools({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}, {
+  async requestStatus() { return structuredClone(recoveryReceipt); },
+});
+const recovery = recoveryDefinitions.get('houdini_request');
+const recoveryArgs = {request_ref:'a'.repeat(32)+'.'+'b'.repeat(32)};
+const recoveryExec = {agent:{id:'receipt-owner'},callId:'receipt-lookup'};
+for (const [receipt, expected] of [
+  [{status:'running'},'请求执行中'],
+  [{status:'not_executed'},'未执行'],
+  [{status:'result_expired'},'已结束 · 结果已过期'],
+  [{status:'result_unavailable'},'已结束 · 结果不可用'],
+  [{status:'queued'},'请求已排队'],
+  [{status:'job_submitted',jobId:'job-7'},'后台任务已提交'],
+  [{status:'result_expired',jobId:'job-7',job_finished:false,job_status:'running',job_result_available:false},'后台任务执行中'],
+  [{status:'result_expired',jobId:'job-7',job_finished:true,job_result_available:true},'后台任务已结束 · 待收集结果'],
+  [{status:'result_expired',jobId:'job-7',job_finished:true,job_result_available:false},'后台任务已结束 · 结果不可用'],
+]) {
+  recoveryReceipt = {ok:true,stdout:'',stderr:'',requestReceipt:{
+    request_ref:recoveryArgs.request_ref,runtime_id:'a'.repeat(32),owner_call:'original-operation',...receipt,
+  }};
+  const value = await recovery.execute(recoveryArgs,recoveryExec);
+  const content = recovery.output.render(recoveryArgs,value);
+  const meta = recovery.output.presentationMeta(recoveryArgs,value);
+  const title = recovery.presentResult(recoveryArgs,{content,isError:false,meta}).title;
+  assert.equal(title,`查回执行 · ${expected}`);
+  assert.doesNotMatch(title,/成功|失败/,'receipt lookup is distinct from execution outcome');
+  assert.match(content[0].text,/not successful scene completion/);
+  assert.equal(meta.canonical.requestReceipt.status,receipt.status,'presentation preserves the original receipt');
+}
+const uncertainDelivery = {ok:false,stdout:'',stderr:'',error:'connection lost',
+  requestReceipt:{request_ref:recoveryArgs.request_ref,status:'unknown_transport'}};
+for (const isError of [false,true]) {
+  const content = exec.output.render(execArgs,uncertainDelivery);
+  const meta = exec.output.presentationMeta(execArgs,uncertainDelivery);
+  assert.equal(exec.presentResult(execArgs,{content,isError,meta}).title,'执行操作 · 结果未知 · 需要查回',
+    'lost Host delivery does not prove a failed Houdini operation');
+}
 const evidenceValue = {...pendingChecks, stdout:'long verbose node list', evidence:[
   {ledgerIndex:1,verb:'render_view',ok:false,output:'Z:/project/render/image.png',pixel_status:'failed',semantic_status:'unverified'},
 ]};

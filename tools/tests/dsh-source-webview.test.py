@@ -1,8 +1,10 @@
 """Source-mode acceptance in a fresh real Houdini GUI and its QtWebEngine.
 
-Requires a built checkout and the exact preferred DSH npm cache. No model is
-called, no Bridge is contacted, and no HIP is loaded, saved or modified. The
-driver owns its temporary Host and GUI handles; it never restarts a live app.
+Requires a built checkout and the exact preferred DSH npm cache. Verifies real
+light/dark floating surfaces and native-click clipboard writes alongside source
+composition and navigation. Clipboard MIME bytes are preserved and restored.
+No model is called, no Bridge is contacted, and no HIP is loaded, saved or
+modified. The driver owns its temporary Host/GUI and never restarts a live app.
 
 python tools/tests/dsh-source-webview.test.py --runtime-cache <cache> \
     --houdini D:/houdini/bin/houdini.exe --houdini D:/Houdini22/bin/houdini.exe
@@ -28,6 +30,11 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from houdini_test_environment import isolated_environment, launch_directory
+
+ASSISTANT_TEXT = ('Qt fixture complete. The declared text file is available below.\n\n'
+                  + '\n\n'.join('UI layer evidence line '+str(index)+': visible conversation text behind the floating surfaces. '
+                                 'The isolated fixture performs no modeling or model request.' for index in range(1, 13))
+                  + '\n\n```python\nprint("Qt clipboard fixture")\n```')
 
 
 def atomic_json(path, value):
@@ -167,6 +174,7 @@ export function apply(ctx) {
           agent.session.append('user/message',{role:'user',source:{kind:'user'},content:[
             {type:'text',text:'Isolated Qt fixture: inspect Trace and native resources.'}]},{surfaceOp:'append'});
           agent.session.append('step/start',{turn:1,step:1});
+          await new Promise(resolve=>setTimeout(resolve,60));
           const canonical={ok:true,stdout:'',stderr:'',result:{fixture:true},
             execution:{runtime_id:'qt-fixture',sequence:1,observed_at:1,hip_dir:null,hip_is_new:true}};
           agent.session.append('tool/call',{turn:1,step:1,callId:'qt-inspect',name:'houdini_inspect',arguments:'{"code":"__result__ = scene_info()"}'});
@@ -177,10 +185,18 @@ export function apply(ctx) {
           agent.session.append('tool/result',{turn:1,step:1,message:{role:'tool',source:{kind:'tool',callId:'qt-present'},
             content:[{type:'text',text:'Fixture resource declared.'}],isError:false}},{surfaceOp:'append'});
           agent.session.append('assistant/message',{turn:1,step:1,stream:[],message:createAssistantMessage({source:{provider:'qt-fixture',model:'static-no-model'},content:[
-            {type:'text',text:'Qt fixture complete. The declared text file is available below.'}]})},{surfaceOp:'append'});
+            {type:'text',text:config.assistantText}]})},{surfaceOp:'append'});
           agent.session.append('step/end',{turn:1,step:1});
           agent.session.append('turn/end',{turn:1,reason:{kind:'completed'}});
+          const goalTime=Date.now();
+          for(const [operation,phase,revision] of [['create','active',1],['pause','paused',2]])
+            agent.session.append('goal/change',{kind:'goal/change',version:1,operation,
+              goal:{id:'qt-goal',revision,objective:'Qt paused goal fixture',phase,maxGoalRounds:1},
+              roundsStarted:0,createdAt:goalTime,updatedAt:goalTime});
           result={seeded:true};
+        } else if(request.action==='snapshot') {
+          result={header:agent.session.header,events:agent.session.snapshotEvents()};
+          write(config.history||config.response+'.history.json',result);
         } else if(request.action==='approval') {
           result=await ctx.waterfall(scopeTarget(agent,agent),'approval/request',{
             agent,toolName:'isolated-ui-fixture',reason:'仅测试审批界面，不执行任何操作',signal:lifetime.signal},()=>Promise.resolve('unavailable'));
@@ -205,7 +221,7 @@ PAGE_ACCEPTANCE = r"""
 (() => {
   if (window.__dshSourceAcceptance) return;
   const config=CONFIG_JSON;
-  const state=window.__dshSourceAcceptance={phase:'selection',done:false,facts:{}};
+  const state=window.__dshSourceAcceptance={phase:'selection',done:false,facts:{surfaces:[],clipboard:[],uiFailures:[]}};
   const visible=el=>{if(!el)return false;const box=el.getBoundingClientRect();return box.width>0&&box.height>0&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none'};
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const wait=async(fn,label)=>{const end=Date.now()+30000;while(Date.now()<end){const value=fn();if(value)return value;await sleep(100)}throw Error('Timed out: '+label)};
@@ -226,13 +242,68 @@ PAGE_ACCEPTANCE = r"""
       body:JSON.stringify({type:'client-request',rpcId:'qt-fixture-'+Date.now(),method,payload:{args}})});
     const wire=await response.json();check(response.ok&&wire.result?.ok,'RPC '+method+' failed');return wire.result.value;
   }
+  function surface(element,label,pseudo=null) {
+    const style=getComputedStyle(element,pseudo),color=style.backgroundColor;
+    const alpha=color==='transparent'?0:color.startsWith('rgba(')?Number(color.slice(5,-1).split(',')[3]):color.startsWith('rgb(')?1:null;
+    state.facts.surfaces.push({label,pseudo,color,alpha,filter:style.backdropFilter,opacity:style.opacity});
+    if(alpha!==1||Number(style.opacity)!==1)state.facts.uiFailures.push(label+' is not opaque: '+color);
+    if(style.backdropFilter!=='none')state.facts.uiFailures.push(label+' still applies backdrop blur');
+  }
+  function material(element) {
+    return [...element.querySelectorAll('*')].find(el=>getComputedStyle(el).position==='absolute'&&getComputedStyle(el).zIndex==='-1')||element;
+  }
+  async function screenshot(label) {
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    await sleep(350);
+    state.capture=label;await wait(()=>window.__dshQtCapture===label,'Qt screenshot '+label);
+  }
+  async function copy(element,label,expected) {
+    state.phase='clipboard-'+label;
+    element.scrollIntoView({block:'center'});await sleep(200);
+    const rect=element.getBoundingClientRect(),id=label+'-'+Date.now();
+    state.clipboard={id,label,expected,x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+    const result=await wait(()=>window.__dshQtClipboard?.id===id?window.__dshQtClipboard:null,'Qt clipboard '+label);
+    state.facts.clipboard.push(result);
+    if(!result.matches)state.facts.uiFailures.push(label+' did not copy the expected text');
+  }
   async function checkModels(label) {
     state.phase=label;
     const model=await wait(()=>[...document.querySelectorAll('button')].find(el=>visible(el)&&/^(请选择模型|选择模型，当前 )/.test(el.getAttribute('aria-label')||'')),label+' model selector');
     check(!model.disabled,label+' model selector disabled');model.click();
     const menu=await wait(()=>[...document.querySelectorAll('[role=menu]')].find(el=>visible(el)&&el.getAttribute('aria-label')==='模型与推理等级'),label+' model menu');
-    menu.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    surface(material(menu),label+'-root');
+    const modelRow=[...menu.querySelectorAll('[role=menuitem]')].find(el=>el.textContent.startsWith('模型'));
+    check(modelRow,label+' model row absent');modelRow.click();
+    await wait(()=>menu.querySelector('[role=menu][aria-label="模型"]'),'model list');
+    surface(material(menu),label);await screenshot(label);
+    const scroller=[menu,...menu.querySelectorAll('*')].find(el=>el.scrollHeight>el.clientHeight+20&&/auto|scroll/.test(getComputedStyle(el).overflowY));
+    if(scroller){scroller.scrollTop=24;await sleep(150);
+      for(const heading of menu.querySelectorAll('[data-stuck]'))surface(heading,label+'-stuck-header');}
+    model.click();
     await wait(()=>!visible(menu),label+' menu close');state.facts[label]=true;
+  }
+  async function theme(scheme) {
+    state.phase='theme-'+scheme;
+    (await wait(()=>button('设置'),'settings button')).click();
+    (await wait(()=>button(scheme==='dark'?'深色':'浅色'),'appearance choice')).click();
+    await wait(()=>document.body.hasAttribute('data-ds-dark-theme')===(scheme==='dark'),'actual theme '+scheme);
+    state.facts['theme-'+scheme]=document.documentElement.getAttribute('data-ds-theme-source');
+    const close=await wait(()=>button('关闭设置')||button('关闭'),'close settings');close.click();
+    await wait(()=>!visible(close),'settings dismissed');
+  }
+  async function checkSurfaces(scheme) {
+    await theme(scheme);await checkModels(scheme+'-model');
+    const goal=await wait(()=>document.querySelector('[data-goal-bar] > div'),'paused goal bar');
+    surface(goal,scheme+'-goal','::before');
+    const seat=document.querySelector('[data-composer-seat]'),background=getComputedStyle(seat).backgroundImage;
+    state.facts.surfaces.push({label:scheme+'-composer-gradient',background});
+    if(background==='none')state.facts.uiFailures.push(scheme+' composer gradient missing');
+    await screenshot(scheme+'-goal');
+    const stats=await wait(()=>[...document.querySelectorAll('button[aria-haspopup="dialog"]')].find(el=>visible(el)&&/1 轮.*1 步/.test(el.getAttribute('aria-label')||'')),'session statistics trigger');
+    stats.click();const dialog=await wait(()=>[...document.querySelectorAll('[role=dialog]')].find(visible),'statistics dialog');
+    surface(dialog,scheme+'-statistics-dialog');await screenshot(scheme+'-statistics-dialog');
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    await wait(()=>!visible(dialog),'statistics dialog closed');
   }
   (async()=>{
     state.facts.userAgent=navigator.userAgent;
@@ -262,6 +333,13 @@ PAGE_ACCEPTANCE = r"""
     state.phase='seed';await command('seed');
     await wait(()=>document.body.innerText.includes('Isolated Qt fixture: inspect Trace and native resources.'),'seeded conversation');
     await checkModels('conversationModel');
+    await checkSurfaces('dark');await checkSurfaces('light');await theme('dark');
+    const userCopy=await wait(()=>document.querySelector('[data-clock="start"] button[aria-label="复制"]'),'user message copy');
+    await copy(userCopy,'user-message','Isolated Qt fixture: inspect Trace and native resources.');
+    const assistantCopy=await wait(()=>document.querySelector('[data-clock="end"] button[aria-label="复制"]'),'assistant message copy');
+    await copy(assistantCopy,'assistant-message',config.assistantText);
+    const codeCopy=await wait(()=>[...document.querySelectorAll('button[aria-label="复制"]')].find(el=>visible(el)&&!el.closest('[data-clock]')),'Markdown code copy');
+    await copy(codeCopy,'markdown-code','print("Qt clipboard fixture")');
     const editor=await wait(()=>document.querySelector('[data-composer-input][contenteditable="true"]'),'native draft editor');
     editor.focus();document.execCommand('insertText',false,'Qt 验收未发送草稿');
     editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:'Qt 验收未发送草稿'}));
@@ -303,7 +381,7 @@ PAGE_ACCEPTANCE = r"""
     check(resourceUrl.hostname==='file','file resource URL lost its authority');state.facts.resourceAuthority=true;
     const preview=await wait(()=>[...document.querySelectorAll('[data-presented-file] button')].find(el=>visible(el)&&(el.getAttribute('aria-label')||'').startsWith('在侧边栏预览 ')&&(el.getAttribute('aria-label')||'').includes('plain.txt')),'fixture text file card');
     preview.click();await wait(()=>document.body.innerText.includes('ISOLATED QT TEXT RESOURCE CONTENT'),'native DSH file resource read');state.facts.textResource=true;
-    state.phase='complete';state.done=true;state.ok=true;
+    state.phase='complete';check(!state.facts.uiFailures.length,state.facts.uiFailures.join('; '));state.done=true;state.ok=true;
   })().catch(error=>{state.done=true;state.ok=false;state.error=String(error.stack||error)});
 })();
 """
@@ -312,21 +390,31 @@ PAGE_ACCEPTANCE = r"""
 def start_gui_probe():
     """uiready entry in a fresh Houdini GUI; all network work is elsewhere."""
     import hou
-    from hutil.Qt import QtCore
-    from PySide6.QtWebEngineCore import QWebEnginePage
+    from hutil.Qt import QtCore, QtWidgets
+    from PySide6.QtTest import QTest
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     config = json.loads(Path(os.environ['DSH_SOURCE_GUI_CONFIG']).read_text(encoding='utf-8'))
+    if config.get('authenticationFile'):
+        config.update(json.loads(Path(config['authenticationFile']).read_text(encoding='utf-8')))
     sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
     import dsh_webview as webview
     assert hou.isUIAvailable(), 'acceptance requires actual Houdini GUI'
     initial_hip = {'path': hou.hipFile.path(), 'isNew': bool(hou.hipFile.isNewFile()),
                    'dirty': bool(hou.hipFile.hasUnsavedChanges())}
-    assert initial_hip['isNew'] and not initial_hip['dirty'], 'fixture must start in a clean unsaved GUI scene'
+    if config.get('fixtureHipChanges'):
+        assert not initial_hip['isNew'] and not initial_hip['dirty'], 'interaction fixture must start at its own saved baseline'
+        assert Path(initial_hip['path']).resolve().parent == Path(config['workspace']).resolve()
+    else:
+        assert initial_hip['isNew'] and not initial_hip['dirty'], 'fixture must start in a clean unsaved GUI scene'
     console, loads, renderer = [], [], []
     state = {'started': time.monotonic(), 'phase': 'page-load', 'injected': False,
              'inflight': False, 'command': None, 'response': None, 'finished': False, 'reopened': False,
              'captionClosed': False, 'captionReopened': False,
              'lastObserved': None, 'lastDiagnostic': 0, 'lastPoll': None, 'lastCallback': None,
              'emptyCallbacks': 0, 'injectionAck': False}
+    clipboard = QtWidgets.QApplication.clipboard()
+    original_clipboard = [(mime, bytes(clipboard.mimeData().data(mime))) for mime in clipboard.mimeData().formats()]
+    state.update(clipboard=None, capture=None)
     output = Path(config['output'])
 
     class ProbePage(QWebEnginePage):
@@ -369,7 +457,12 @@ def start_gui_probe():
         assert close_state != 0xffffffff and not close_state & 3, 'native SC_CLOSE is missing or disabled'
         owner_facts.update(nativeOwnedByHoudini=True, systemTopmost=native_topmost, nativeCloseEnabled=True)
     page = webview._view.page()
-    page.loadFinished.connect(lambda ok: loads.append(bool(ok)))
+    def loaded(ok):
+        loads.append(bool(ok))
+        # A callback from the old document can arrive after loadStarted. Only
+        # the completed new document should rearm the acceptance injection.
+        state['injected'] = False
+    page.loadFinished.connect(loaded)
     page.renderProcessTerminated.connect(lambda status, code: renderer.append({'status': str(status), 'code': code}))
     timer = QtCore.QTimer(hou.qt.mainWindow())
 
@@ -380,12 +473,18 @@ def start_gui_probe():
         timer.stop()
         final_hip = {'path': hou.hipFile.path(), 'isNew': bool(hou.hipFile.isNewFile()),
                      'dirty': bool(hou.hipFile.hasUnsavedChanges())}
-        hip_untouched = initial_hip == final_hip and not initial_hip['dirty'] and not final_hip['dirty']
-        result = {'ok': ok and hip_untouched and not renderer and any(loads) and not any('ErrorMessageLevel' in entry.get('level', '') for entry in console), 'gui': True, 'houdini': hou.applicationVersionString(),
+        hip_untouched = (not config.get('fixtureHipChanges') and initial_hip == final_hip
+                         and not initial_hip['dirty'] and not final_hip['dirty'])
+        fixture_hip_valid = (config.get('fixtureHipChanges') and not final_hip['isNew']
+                             and not final_hip['dirty']
+                             and Path(final_hip['path']).resolve().parent == Path(config['workspace']).resolve())
+        result = {'ok': ok and (hip_untouched or fixture_hip_valid) and not renderer and any(loads) and not any('ErrorMessageLevel' in entry.get('level', '') for entry in console), 'gui': True, 'houdini': hou.applicationVersionString(),
                   'phase': state['phase'], 'detail': detail, 'loads': loads, 'renderer': renderer,
                   'console': console[-60:], 'hipUntouched': hip_untouched,
-                  'hipBefore': initial_hip, 'hipAfter': final_hip, 'lastObserved': state['lastObserved'],
+                  'hipBefore': initial_hip, 'hipAfter': final_hip, 'fixtureHipChanges': bool(fixture_hip_valid), 'lastObserved': state['lastObserved'],
                   'offTheRecord': page.profile().isOffTheRecord(), 'windowOwner': owner_facts,
+                  'clipboardSettings': {'write': page.settings().testAttribute(QWebEngineSettings.JavascriptCanAccessClipboard),
+                                        'read': page.settings().testAttribute(QWebEngineSettings.JavascriptCanPaste)},
                   'screenshot': 'pending'}
         # Preserve failure evidence even if the native render/grab path stalls.
         atomic_json(output, result)
@@ -393,6 +492,13 @@ def start_gui_probe():
             result['screenshot'] = 'saved' if webview._window.grab().save(str(output.with_suffix('.png'))) else 'save_failed'
         except Exception as error:
             result['screenshot'] = str(error)
+        atomic_json(output, result)
+        restored = QtCore.QMimeData()
+        for mime, data in original_clipboard:
+            restored.setData(mime, QtCore.QByteArray(data))
+        clipboard.setMimeData(restored)
+        result['clipboardRestored'] = all(bytes(clipboard.mimeData().data(mime)) == data for mime, data in original_clipboard)
+        result['ok'] = result['ok'] and result['clipboardRestored']
         atomic_json(output, result)
         webview._dispose_webview()
         QtCore.QTimer.singleShot(100, hou.qt.mainWindow().close)
@@ -414,7 +520,10 @@ def start_gui_probe():
                     and observed.get('selectionFunction') == 'function'
                     and urllib.parse.urlsplit(observed.get('href', '')).netloc == urllib.parse.urlsplit(config['base']).netloc):
                 state['injected'] = True
-                source = PAGE_ACCEPTANCE.replace('CONFIG_JSON', json.dumps({'workspace': config['workspace']}))
+                acceptance = (Path(config['acceptanceScript']).read_text(encoding='utf-8')
+                              if config.get('acceptanceScript') else PAGE_ACCEPTANCE)
+                source = acceptance.replace('CONFIG_JSON', json.dumps({key:config[key] for key in
+                    ('workspace','assistantText','provider','model') if key in config}))
                 page.runJavaScript(source, 0, lambda _value: state.update(injectionAck=True))
             probe = observed.get('probe')
             if not probe:
@@ -451,6 +560,54 @@ def start_gui_probe():
             if command and command['id'] != state['command']:
                 state['command'] = command['id']
                 atomic_json(config['command'], command)
+            capture = probe.get('capture')
+            if capture and capture != state['capture']:
+                state['capture'] = capture
+                assert webview._window.grab().save(str(output.with_name(capture+'.png')))
+                page.runJavaScript('window.__dshQtCapture='+json.dumps(capture), 0)
+            if probe.get('nativeCapture') and probe['nativeCapture'] != state.get('nativeCapture'):
+                state['nativeCapture'] = probe['nativeCapture']
+                network = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+                target = hou.node('/obj/artist_guide/post_array_example')
+                assert network and target, 'authored example and native network pane must exist'
+                network.setPwd(target.parent())
+                target.setCurrent(True, clear_all_selected=True)
+                network.homeToSelection()
+                viewport = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
+                if viewport:
+                    viewport.curViewport().frameSelected()
+                def native_captured(label=probe['nativeCapture']):
+                    assert main.grab().save(str(output.with_name(label+'.png')))
+                    page.runJavaScript('window.__dshNativeCapture='+json.dumps(label), 0)
+                QtCore.QTimer.singleShot(1000, native_captured)
+            copy_request = probe.get('clipboard')
+            if copy_request and copy_request['id'] != state['clipboard']:
+                state['clipboard'] = copy_request['id']
+                clipboard.setText('DSH Qt clipboard sentinel '+copy_request['id'])
+                target = webview._view.focusProxy() or webview._view
+                point = QtCore.QPoint(round(copy_request['x']), round(copy_request['y']))
+                QTest.mouseMove(target, point)
+                QTest.mouseClick(target, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, point)
+                def copied(request=copy_request):
+                    result = {'id': request['id'], 'label': request['label'],
+                              'matches': clipboard.text().replace('\r\n', '\n') == request['expected'],
+                              'characters': len(clipboard.text()), 'actualPreview': clipboard.text()[:200]}
+                    page.runJavaScript('window.__dshQtClipboard='+json.dumps(result), 0)
+                QtCore.QTimer.singleShot(700, copied)
+            input_request = probe.get('input')
+            if input_request and input_request['id'] != state.get('input'):
+                state['input'] = input_request['id']
+                clipboard.setText(input_request['text'])
+                target = webview._view.focusProxy() or webview._view
+                window.activateWindow()
+                target.setFocus(QtCore.Qt.OtherFocusReason)
+                point = QtCore.QPoint(round(input_request['x']), round(input_request['y']))
+                QTest.mouseMove(target, point)
+                QTest.mouseClick(target, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, point)
+                QTest.keyClick(target, QtCore.Qt.Key_A, QtCore.Qt.ControlModifier)
+                QTest.keyClick(target, QtCore.Qt.Key_V, QtCore.Qt.ControlModifier)
+                QtCore.QTimer.singleShot(400, lambda request=input_request:
+                    page.runJavaScript('window.__dshQtInput='+json.dumps(request['id']), 0))
             if probe.get('done'):
                 finish(probe.get('ok') is True, probe)
         except Exception:
@@ -485,7 +642,7 @@ def start_gui_probe():
         state['lastPoll'] = round(elapsed, 2)
         # ASCII-only PySide result transport avoids H21's Unicode conversion bug.
         page.runJavaScript("""encodeURIComponent(JSON.stringify({ready:document.readyState,hasBody:!!document.body,
-          href:location.href,visibility:document.visibilityState,language:document.documentElement.lang,probe:window.__dshSourceAcceptance,
+          href:location.href,visibility:document.visibilityState,language:document.documentElement?.lang,probe:window.__dshSourceAcceptance,
           selectionFunction:typeof window.__dshHoudiniSelection,selection:window.__dshHoudiniSelection?.(),
           navigationPending:new URL(location.href).searchParams.has('dsh-houdini-workspace'),
           navigationError:document.querySelector('#dsh-houdini-navigation[role=alert]')?.textContent,
@@ -550,6 +707,7 @@ def main():
         resource = workspace / 'plain.txt'
         resource.write_text('ISOLATED QT TEXT RESOURCE CONTENT\n', encoding='utf-8')
         config = {'base': 'http://127.0.0.1:'+str(port), 'workspace': str(workspace), 'resource': str(resource),
+                  'assistantText': ASSISTANT_TEXT,
                   'toolCatalogUrl': (ROOT / 'lib/tool-catalog.js').as_uri(),
                   'composition': str(run / 'composition.json'), 'command': str(run / 'command.json'),
                   'response': str(run / 'response.json'), 'output': str(run / 'result.json'), 'timeout': args.timeout}
@@ -640,7 +798,7 @@ def main():
                     managed.stop_owned(host)
                     host.wait(timeout=20)
                     bridge_reservation.close()
-    print('Actual source QtWebEngine selection, model menus, Trace, interactions, draft and file resource checks passed', flush=True)
+    print('Actual source QtWebEngine composition, opaque surfaces, native clipboard, Trace, interactions, draft and file resource checks passed', flush=True)
 
 
 if __name__ == '__main__':

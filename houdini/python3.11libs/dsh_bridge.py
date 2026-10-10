@@ -69,9 +69,19 @@ import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
 # threads must not call HOM, including for seemingly harmless health metadata.
 _HOU_VERSION = hou.applicationVersionString()
 _HOU_THREAD_ID = threading.get_ident()
+# sys.exec_prefix is the interpreter actually embedded by this Houdini process;
+# sys.executable is houdini/hython, not the standalone Python used by media work.
+# Cache HOM once here. Health handlers only read these installation facts.
+_PYTHON_RUNTIME = {
+    "hfs": hou.getenv("HFS") or "",
+    "python": os.path.normpath(os.path.join(sys.exec_prefix, "python.exe") if os.name == "nt" else
+                               os.path.join(sys.exec_prefix, "bin", "python3")),
+    "pythonVersion": ".".join(str(value) for value in sys.version_info[:3]),
+    "executable": sys.executable,
+}
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 94
+_EXECUTION_CONTRACT_VERSION = 95
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -401,6 +411,7 @@ class _Handler(BaseHTTPRequestHandler):
             "ok": True, "houVersion": _HOU_VERSION, "rawGate": _raw_gate,
             "executionContractVersion": _EXECUTION_CONTRACT_VERSION, "runtimeId": _RUNTIME_ID,
             "executorId": _EXECUTOR_ID,
+            "runtime": _PYTHON_RUNTIME,
             "verbCatalog": {"hash": _VERB_CATALOG_HASH, "count": len(_VERB_NAMES), "names": list(_VERB_NAMES)},
             "activeRequests": _request_registry.active_count(),
             **_job_activity(),

@@ -94,6 +94,9 @@ registration
       name === "slots"
         ? {
             inject: (_s, fn) => fn(),
+            registerFactory: () => () => {},
+            entriesOfSlot: () => [],
+            subscribe: () => () => {},
             register: (config, component) => {
               if(config.name==='conversation.view')viewIds.push(config.id);
               if (config.id === "houdinitrace") View = component;

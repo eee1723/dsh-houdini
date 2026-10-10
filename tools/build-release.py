@@ -7,6 +7,7 @@ normal manager. This command never creates or publishes a GitHub Release.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
 import dsh_deployment as deployment
+
+_video_spec = importlib.util.spec_from_file_location("dsh_video_builder", ROOT / "tools/build-video-runtime.py")
+video_builder = importlib.util.module_from_spec(_video_spec)
+_video_spec.loader.exec_module(video_builder)
 
 
 def run(args, *, cwd=ROOT, env=None, capture=False):
@@ -38,6 +43,27 @@ def zip_tree(source, target):
                 relative = file.relative_to(source).as_posix()
                 deployment.checked_path(source, relative)
                 archive.write(file, relative)
+
+
+def stage_video_runtime(destination, scratch, config, *, cache=None, prepared=None):
+    """Clean-tag assembly builds locked sources; local reuse verifies the same full provision."""
+    spec = config["videoRuntime"]["ffmpeg"]
+    destination, scratch = Path(destination), Path(scratch)
+    video_builder.prepare(destination, scratch, config["videoRuntime"], cache=cache, prepared=prepared)
+    for name in ("ffmpeg.exe", "ffprobe.exe"):
+        executable = destination / "ffmpeg/bin" / name
+        if not executable.is_file():
+            raise ValueError("Tutorial media runtime is missing " + name)
+        version = run([executable, "-version"], capture=True).splitlines()[0]
+        if spec["version"] not in version:
+            raise ValueError("Tutorial media executable version mismatch: " + name)
+    configuration = run([destination / "ffmpeg/bin/ffmpeg.exe", "-hide_banner", "-buildconf"], capture=True)
+    if "--enable-gpl" in configuration or "--enable-nonfree" in configuration:
+        raise ValueError("Tutorial media runtime must use the locked LGPL build")
+    return {"name": "FFmpeg / ffprobe", "version": spec["version"], "license": spec["license"],
+            "path": destination.as_posix(), "source": spec["source"]["url"],
+            "libraries": [{"name": name, "version": item["version"], "license": item["license"],
+                           "source": item["url"]} for name, item in spec["librarySources"].items()]}
 
 
 def require_clean_checkout():
@@ -133,13 +159,17 @@ def build(args):
     runtime_pkg.pop("scripts", None)
     runtime_pkg.pop("devDependencies", None)
     deployment.atomic_json(plugin / "package.json", runtime_pkg)
+    print("Preparing pinned private tutorial media runtime", flush=True)
+    media_notice = stage_video_runtime(plugin / "runtime/video", work / "media", config,
+        cache=args.media_cache, prepared=args.media_runtime)
     shutil.copyfile(ROOT / "tools/prepare-managed-profile.mjs", app / "prepare-profile.mjs")
     (payload / "node").mkdir()
     for name in ("node.exe", "LICENSE"):
         shutil.copyfile(node_home / name, payload / "node" / name)
     run([node, "--input-type=module", "-e",
          "await import('dsh-houdini'); await import('dsh-houdini/agent')"], cwd=app, env=env)
-    notices = []
+    media_notice["path"] = (plugin / "runtime/video").relative_to(payload).as_posix()
+    notices = [media_notice]
     for file in sorted((app / "node_modules").rglob("package.json")):
         try:
             info = deployment.read_json(file)
@@ -225,6 +255,8 @@ if __name__ == "__main__":
     parser.add_argument("--key-id", required=True)
     parser.add_argument("--trust", type=Path, default=ROOT / "installer/release-trust.json")
     parser.add_argument("--node-archive", type=Path)
+    parser.add_argument("--media-cache", type=Path, help="Reuse verified media source/compiler downloads")
+    parser.add_argument("--media-runtime", type=Path, help="Reuse a complete source-built runtime after inventory/input verification")
     parser.add_argument("--candidate", action="store_true")
     parser.add_argument("--unsigned", action="store_true")
     build(parser.parse_args())

@@ -45,10 +45,12 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     layout = project_paths.project_layout(str(hip), has_named_path=True)
     assert layout['available'] and layout['schema_version'] == 1
     assert Path(layout['project_root']).samefile(base)
-    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'render', 'visual_check'}
+    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'cache', 'analysis', 'render', 'visual_check'}
     assert Path(layout['directories']['reference_downloaded']) == base.resolve() / 'dsh-reference' / 'downloaded'
     assert Path(layout['directories']['reference_generated']) == base.resolve() / 'dsh-reference' / 'generated'
     assert Path(layout['directories']['texture']) == base.resolve() / 'dsh-texture'
+    assert Path(layout['directories']['cache']) == base.resolve() / 'dsh-cache'
+    assert Path(layout['directories']['analysis']) == base.resolve() / 'dsh-analysis'
     assert {entry.name for entry in base.iterdir()} == {hip.name}
     for filename, named in ((str(hip), False), (None, False), ('relative.hip', True)):
         missing = project_paths.project_layout(filename, has_named_path=named)

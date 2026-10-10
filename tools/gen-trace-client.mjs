@@ -111,6 +111,7 @@ export function traceSources() {
     tools: initializer('src/tool-catalog.ts', 'PLUGIN_TOOLS', {
       HOUDINI_TOOLS: initializer('src/tool-catalog.ts', 'HOUDINI_TOOLS'),
       IMAGE_TOOLS: initializer('src/tool-catalog.ts', 'IMAGE_TOOLS'),
+      VIDEO_TOOLS: initializer('src/tool-catalog.ts', 'VIDEO_TOOLS'),
     }),
   };
 }

@@ -11,6 +11,7 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 ## 选择表示
 
 按用户目标、可编辑方式和下游交付选择表示；混合任务可联用：
+教程复刻先保留作者的驱动、求值/局部时间和绑定方法，来源未规定部分再按下列建议选择；必要适配和可切回优化沿[视频复现协议](../houdini-video-tutorial/references/reconstruction.md)。
 
 - 普通参数、对象、灯光、镜头：channels/keyframes；
 - 独立刚体 pieces、装配、魔方：stable identity + packed/template transforms；

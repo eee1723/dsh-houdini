@@ -3,5 +3,136 @@
   "platform": "win32-x64",
   "nodeVersion": "24.17.0",
   "nodeArchiveSha256": "f2aa33b35b75aca5f3f7b85675a6f6423201053e9381911e64961f3bda2528ab",
+  "videoRuntime": {
+    "python": "current-houdini-3.11+",
+    "ffmpeg": {
+      "version": "8.1.3-dsh-video-1",
+      "license": "LGPL-2.1-or-later",
+      "build": "source-shared-v1",
+      "source": {
+        "url": "https://github.com/FFmpeg/FFmpeg/archive/330caae0c1acccd2222edc52a05940c574561ce5.zip",
+        "sha256": "632a9dd587973bc19c9e601707d9b62e9305db7e6db8b0db78bc46797334d0d8",
+        "root": "FFmpeg-330caae0c1acccd2222edc52a05940c574561ce5",
+        "file": "ffmpeg-source.zip",
+        "revision": "330caae0c1acccd2222edc52a05940c574561ce5",
+        "licenseFiles": ["COPYING.LGPLv2.1", "COPYING.GPLv2", "COPYING.GPLv3", "COPYING.LGPLv3", "LICENSE.md"]
+      },
+      "librarySources": {
+        "zlib": {
+          "version": "1.3.2.1-motley",
+          "revision": "767c4c947852e143f582c85f14cf573411df1b35",
+          "license": "Zlib",
+          "url": "https://github.com/madler/zlib/archive/767c4c947852e143f582c85f14cf573411df1b35.zip",
+          "sha256": "7416fc424ed245c961e998e149ffca387c572db63db25a86bf17f81306ed4201",
+          "root": "zlib-767c4c947852e143f582c85f14cf573411df1b35",
+          "file": "zlib-source.zip",
+          "licenseFiles": ["LICENSE", "zlib.h"]
+        },
+        "dav1d": {
+          "version": "1.5.4",
+          "revision": "9711965b60bb692ae24004659acf61f5c7d9ed61",
+          "license": "BSD-2-Clause",
+          "url": "https://github.com/videolan/dav1d/archive/9711965b60bb692ae24004659acf61f5c7d9ed61.zip",
+          "sha256": "095b17b7029947fcd0a1ad5a0dee427565088990f8f5843bef630638591c3541",
+          "root": "dav1d-9711965b60bb692ae24004659acf61f5c7d9ed61",
+          "file": "dav1d-source.zip",
+          "licenseFiles": ["COPYING"]
+        },
+        "freetype": {
+          "version": "2.14.1",
+          "license": "FTL",
+          "url": "https://github.com/freetype/freetype/archive/refs/tags/VER-2-14-1.zip",
+          "sha256": "9ca6e4df3e5e2ccc4839ba55501e9168dbad7b32ef3b970cb681fd89479c75a3",
+          "root": "freetype-VER-2-14-1",
+          "file": "freetype-source.zip",
+          "licenseFiles": ["LICENSE.TXT", "docs/FTL.TXT", "docs/GPLv2.TXT"]
+        },
+        "harfbuzz": {
+          "version": "14.6.0",
+          "license": "MIT",
+          "url": "https://github.com/harfbuzz/harfbuzz/releases/download/14.6.0/harfbuzz-14.6.0.tar.xz",
+          "sha256": "d07a007327277708a2a73ae437887cdbaf282937f6d03ca5467723e9099af586",
+          "root": "harfbuzz-14.6.0",
+          "file": "harfbuzz-source.tar.xz",
+          "licenseFiles": ["COPYING", "src/ms-use/COPYING"]
+        },
+        "mingw": {
+          "version": "a3d93999ef0521681d45e445c39964a7af0f593f",
+          "license": "ZPL-2.1 AND BSD-3-Clause AND MIT",
+          "url": "https://github.com/mingw-w64/mingw-w64/archive/a3d93999ef0521681d45e445c39964a7af0f593f.zip",
+          "sha256": "0c1782ddad33420c3aebcaffac9da3c9c9b38d63bcda1481002963a8825bdb6f",
+          "root": "mingw-w64-a3d93999ef0521681d45e445c39964a7af0f593f",
+          "file": "mingw-source.zip",
+          "licenseFiles": ["COPYING", "COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt", "COPYING.MinGW-w64/COPYING.MinGW-w64.txt", "mingw-w64-libraries/winpthreads/COPYING"]
+        },
+        "llvm": {
+          "version": "23.1.3",
+          "license": "Apache-2.0 WITH LLVM-exception",
+          "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/llvm-project-23.1.3.src.tar.xz",
+          "sha256": "c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34",
+          "root": "llvm-project-23.1.3.src",
+          "file": "llvm-source.tar.xz",
+          "licenseFiles": ["LICENSE.TXT", "compiler-rt/LICENSE.TXT", "libcxx/LICENSE.TXT", "libcxxabi/LICENSE.TXT", "libunwind/LICENSE.TXT"]
+        }
+      },
+      "recipeSource": {
+        "url": "https://github.com/mstorsjo/llvm-mingw/archive/refs/tags/20261006.zip",
+        "sha256": "32fba426e71086c43a2a1f5aae7e995a1b732585bcc5f9e0408fb2bd2f6d2acf",
+        "root": "llvm-mingw-20261006",
+        "file": "llvm-mingw-source.zip"
+      },
+      "buildTools": {
+        "meson": {
+          "version": "1.9.1",
+          "url": "https://github.com/mesonbuild/meson/archive/refs/tags/1.9.1.zip",
+          "sha256": "a07d676bf71cbef4a8dd7713e7284daacfca44fdc1a4f52bbd22d444f4d90162",
+          "root": "meson-1.9.1",
+          "file": "meson-source.zip"
+        },
+        "nasm": {
+          "version": "2.16.03",
+          "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip",
+          "sha256": "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6",
+          "root": "nasm-2.16.03",
+          "file": "nasm.zip"
+        },
+        "toolchain": {
+          "version": "20261006",
+          "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-x86_64.zip",
+          "sha256": "317492c456aa27ee607a5919f1d2d38dcdc1112516a24d0bf4b00d078f52d17a",
+          "root": "llvm-mingw-20261006-ucrt-x86_64",
+          "file": "llvm-mingw.zip"
+        },
+        "cmake": {
+          "version": "4.4.4",
+          "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip",
+          "sha256": "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536",
+          "root": "cmake-4.4.4-windows-x86_64",
+          "file": "cmake.zip"
+        },
+        "ninja": {
+          "version": "1.13.2",
+          "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+          "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+          "root": "",
+          "file": "ninja.zip"
+        },
+        "pkgconf": {
+          "version": "2.5.1",
+          "url": "https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz",
+          "sha256": "cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243",
+          "root": "pkgconf-2.5.1",
+          "file": "pkgconf.tar.xz"
+        }
+      },
+      "cmakeOptions": {
+        "zlib": ["-DZLIB_BUILD_SHARED=ON", "-DZLIB_BUILD_STATIC=OFF", "-DZLIB_BUILD_TESTING=OFF"],
+        "freetype": ["-DFT_DISABLE_ZLIB=TRUE", "-DFT_DISABLE_BZIP2=TRUE", "-DFT_DISABLE_PNG=TRUE", "-DFT_DISABLE_HARFBUZZ=TRUE", "-DFT_DISABLE_BROTLI=TRUE"],
+        "harfbuzz": ["-DHB_BUILD_UTILS=OFF", "-DHB_BUILD_SUBSET=OFF", "-DHB_BUILD_RASTER=OFF", "-DHB_BUILD_VECTOR=OFF", "-DHB_BUILD_GPU=OFF", "-DHB_BUILD_GPU_DEMO=OFF", "-DHB_HAVE_FREETYPE=ON", "-DHB_HAVE_GLIB=OFF", "-DHB_HAVE_ICU=OFF", "-DHB_HAVE_GOBJECT=OFF", "-DBUILD_TESTING=OFF"]
+      },
+      "mesonOptions": {"dav1d": ["-Denable_asm=true", "-Denable_tools=false", "-Denable_tests=false", "-Denable_examples=false", "-Dxxhash_muxer=disabled"]},
+      "configureOptions": ["--disable-autodetect", "--disable-network", "--enable-x86asm", "--x86asmexe=nasm", "--disable-doc", "--disable-debug", "--disable-ffplay", "--enable-shared", "--disable-static", "--enable-zlib", "--enable-libfreetype", "--enable-libharfbuzz", "--enable-libdav1d", "--extra-version=dsh-video-1"]
+    }
+  },
   "houdini": ["21.0", "22.0"]
 }

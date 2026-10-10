@@ -166,6 +166,8 @@ _VERBS: dict[str, object] = {
     "bind_controls": dsh_hou_helpers.bind_controls,
     "hda_create": dsh_hou_helpers.hda_create,
     "hda_fork": dsh_hou_helpers.hda_fork,
+    "hda_version": dsh_hou_helpers.hda_version,
+    "hda_switch_version": dsh_hou_helpers.hda_switch_version,
     "hda_edit": dsh_hou_helpers.hda_edit,
     "hda_get_section": dsh_hou_helpers.hda_get_section,
     "hda_set_section": dsh_hou_helpers.hda_set_section,
@@ -202,7 +204,7 @@ _MUTATING_VERB_NAMES = {
     "delete_node", "cook_node", "sop_set_output",
     "set_object_visible", "layout_nodes", "network_boxes", "network_notes", "network_controls", "present_nodes", "set_parm", "set_parms",
     "set_keyframes", "create_spare_parms", "hda_create", "hda_fork", "hda_set_section",
-    "hda_patch_section", "hda_set_interface", "hda_edit", "render_frame", "render_view",
+    "hda_patch_section", "hda_set_interface", "hda_edit", "hda_version", "hda_switch_version", "render_frame", "render_view",
     "viewport_screenshot", "camera_fit", "bind_controls", "set_update_mode",
 }
 
@@ -212,7 +214,7 @@ _OBSERVATION_VERBS = {'cop_layer_stats', 'cop_compare_layers', 'test_cop_control
 
 
 _GLOBAL_EDIT_VERBS = {'set_timeline', 'set_update_mode', 'scene_save_as', 'hda_create', 'hda_fork', 'hda_set_section', 'bind_controls',
-                     'hda_patch_section', 'hda_set_interface', 'hda_edit', 'tool_package_create', 'tool_package_action'}
+                     'hda_patch_section', 'hda_set_interface', 'hda_edit', 'hda_version', 'tool_package_create', 'tool_package_action'}
 
 
 def _observe_impact(nodes, impact, descendants=False):

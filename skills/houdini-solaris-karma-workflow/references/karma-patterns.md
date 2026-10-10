@@ -75,6 +75,8 @@ LOP scene chain -> Karma Render Settings
 - AOV/denoiser 不在简单 beauty 测试时强制开启；用户要求合成、深度、Cryptomatte、
   去噪或生产 EXR 时才配置并用 stage summary 检查 RenderVar/Product。
 
+查看EXR的颜色与材质前，确认实际scene-linear空间及显示变换。不要直接把线性通道裁到8位，或固定猜测另一个OCIO版本的display/view名字；这种转换可能把正确的材质看成过暗或过饱和。Houdini侧可以只读`PyOpenColorIO.GetCurrentConfig()`，用`getColorSpace('scene_linear').getName()`、`getDisplays()`及`getViews(display)`读取当前事实，`hou.getenv('OCIO')`确认本进程配置。再查当前随Houdini的`iconvert --help`，以同一配置中真实存在的输入空间和display/view转成可读PNG；记录这些转换条件。终端返回或工具外层成功不能覆盖转换进程非零退出，也不重复渲染来处理纯显示转换问题。
+
 静态整物镜头使用camera_fit：显式OBJ cam与SOP目标，保留焦距、清lookatpath、写入世界构图并回验。
 width/height应与最终产品一致；list_parms的locked_components能识别setup派生字段，不解锁表达式来凑分辨率。
 Scene Import后用render_frame的framing={target:实际USD资产路径,coverage:.82}预检，不认为OBJ通过就等于USD通过。

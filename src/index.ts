@@ -15,6 +15,7 @@ import { installExecutorBinding } from './executor-binding.js'
 import {installHoudiniExecutionLog} from './dsh-adapter.js'
 import {installNodeDeliveryNavigation} from './node-delivery.js'
 import {registerImageTools} from './image-generation.js'
+import {registerVideoTools} from './video-transcription.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
@@ -70,6 +71,7 @@ export function apply(ctx: Context, config: Config) {
       config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
   registerHoudiniTools(ctx, connection)
   registerImageTools(ctx,connection)
+  registerVideoTools(ctx,connection)
   installNodeDeliveryNavigation(ctx,connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)

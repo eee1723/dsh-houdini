@@ -13,6 +13,7 @@ import {
   collectRequestContexts,
 } from '../../../tools/trace-session-lib.mjs';
 import { normalizeTraceSteps, unresolvedExecutionRequests } from '../../../tools/normalized-trace-steps.mjs';
+import { executionHistory } from '../../../lib/execution-history.js';
 import {
   collectValidationCoverage,
   collectRetryWork,
@@ -93,6 +94,7 @@ function directText(content) {
 function analyzeTrace(file) {
   const loaded = loadSessionEvents(file);
   const { events } = loaded;
+  const executionObservations = executionHistory(events);
   const normalized = normalizeTraceSteps(events);
   const { replayedResults, unmatchedResults } = normalized;
 
@@ -306,6 +308,12 @@ function analyzeTrace(file) {
   if (unresolvedRequests.length) completionRisks.push({code: 'unresolved_execution_receipt',
     detail: `${unresolvedRequests.length} request outcome(s) remain unknown; missing ledger does not mean not executed.`,
     steps: unresolvedRequests.map(item => item.index)});
+  if (executionObservations.activeJobs.length) completionRisks.push({code: 'active_houdini_jobs',
+    detail: 'Retained job observations are nonterminal or their results remain uncollected. A recovered submission receipt does not establish job completion; these are trace observations, not current live status.',
+    jobs: executionObservations.activeJobs});
+  if (executionObservations.unavailableResults.length) completionRisks.push({code: 'execution_result_unavailable',
+    detail: 'Execution/job results were observed unavailable after retention. Finished does not establish their outcome; retained observations remain unverified.',
+    results: executionObservations.unavailableResults});
   const turnEnd = [...events].reverse().find((event) => event.type === 'turn/end') || null;
   const terminalReason = turnEnd?.data?.reason || null;
   const terminalMessage = String(
@@ -512,6 +520,9 @@ function analyzeTrace(file) {
     suppressedCookFailureSteps,
     renderEvidence,
     unresolvedRequests,
+    activeJobs: executionObservations.activeJobs,
+    unavailableResults: executionObservations.unavailableResults,
+    executionObservationScope: 'executionHistory(raw_session_events): last retained observations in this trace, including native/nested submission receipts. No unresolved request receipt does not prove all background jobs completed; absent or unavailable results do not establish an execution outcome. Not a current live-state query.',
     visionEvidence,
     nativeImages,
     completionRisks,

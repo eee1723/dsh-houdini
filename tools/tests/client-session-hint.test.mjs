@@ -76,6 +76,9 @@ async function run(href, options = {}) {
   };
   const uiSession = {adapter:{current:currentSession}};
   const uiWorkspace = {openSession};
+  // This launcher fixture does not serve any settings namespaces. DSH still
+  // provides the shared form service; whileServed leaves their pages absent.
+  const configForms = {whileServed: () => () => {}};
   function publish(request, preset = 'houdini', attached = true) {
     const previous = sessionStore.getSnapshot();
     sessionStore.set({...previous, ids:[...new Set([...previous.ids,request.sessionId])],
@@ -103,6 +106,9 @@ async function run(href, options = {}) {
   const slots = {
     inject: (_name, install) => { install(); },
     register: (options, component) => { registrations[options.id] = {options,component}; return () => {}; },
+    registerFactory: () => () => {},
+    entriesOfSlot: () => [],
+    subscribe: () => () => {},
   };
   const window = {
     location: { href, reload: () => { reloads++; } },
@@ -118,7 +124,7 @@ async function run(href, options = {}) {
   const document = {body, querySelector:()=>({}), createElement:element, head:element('head')};
   const scope = {
     get: name => ({sessions,workspaces,remote,slots,uiSession,uiWorkspace,
-      layout})[name],
+      layout,configForms})[name],
     effect: install => { const dispose=install(); if(dispose) disposers.push(dispose); },
   };
   const api = {
@@ -157,7 +163,7 @@ const hinted = await run(
 );
 assert.deepEqual(hinted.injected, [[
   'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace', 'layout',
-], ['connection'], ['connection', 'uiConversation']]);
+], ['connection', 'configForms'], ['connection'], ['connection', 'uiConversation']]);
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },

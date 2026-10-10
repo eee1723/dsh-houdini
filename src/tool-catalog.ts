@@ -20,4 +20,10 @@ export const IMAGE_TOOLS = {
   image_generate:{label:'生成参考或纹理图',purpose:'使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。',input:'provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。',output:'实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。',execution:'DSH Host HTTP与文件；managed只读查询所选Houdini现场'},
 } as const
 
-export const PLUGIN_TOOLS = {...HOUDINI_TOOLS,...IMAGE_TOOLS} as const
+export const VIDEO_TOOLS = {
+  video_process:{label:'处理教程资料',purpose:'在Host受控进程中导入/抽帧和查询/整理本地教程证据，复用原脚本的来源校验及唯一文件记录。',input:'operation与options；只接受随包离线命令，路径绝对，写入使用工作区内新output目录。',output:'原命令JSON、进度、实际退出状态、选定Houdini的Python/私有媒体工具与输出路径；不认证语义。',execution:'DSH Host普通Python子进程，无shell/密钥/云请求/HOM'},
+  video_models:{label:'发现转录配置',purpose:'读取教程视频的转录用途配置、DSH服务商和凭据状态；不上传音频，不证明转录接口可用。',input:'可选provider和模型名称子串query。',output:'默认用途、API路由、模型建议和缺失配置诊断；不返回凭据。',execution:'DSH Host，无HOM'},
+  video_transcribe:{label:'转录教程音频',purpose:'用DSH中选定服务商与转录模型并行处理已准备的教程音频，复用原任务的分片和请求记录。',input:'work、allow_upload；可选provider/model、chunks、max_chunks、concurrency、requests_per_second、术语词表、说话人分离及明确授权的重试预算。',output:'逐片进度、实际在途峰值与成功/失败、剩余/未知请求、原任务目录及准确模型；原始响应和时间戳在同源outcome中，密钥只交给受控子进程。',execution:'DSH Host Python子进程与HTTP，无HOM'},
+} as const
+
+export const PLUGIN_TOOLS = {...HOUDINI_TOOLS,...IMAGE_TOOLS,...VIDEO_TOOLS} as const

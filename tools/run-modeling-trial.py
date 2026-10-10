@@ -28,10 +28,14 @@ parser.add_argument('--credentials',required=True,type=Path)
 parser.add_argument('--settings',required=True,type=Path,help='Verified user settings; only the selected provider/model is copied')
 parser.add_argument('--model',required=True)
 parser.add_argument('--provider',default='deepseek-official',help='Explicit provider route copied from the verified settings')
+parser.add_argument('--service-profile',type=Path,help='Explicit JSON transcription route; only its selected credential reference is copied or inherited')
 parser.add_argument('--show-gui',action='store_true',help='Show only the owned GUI worker for an authorized visible-surface trial')
 parser.add_argument('--condition',required=True)
 parser.add_argument('--seed-hip',type=Path,help='Explicit developer-owned input; never a live/user HIP')
 parser.add_argument('--followup',type=Path,action='append',default=[],help='Same-author next phase, sent only after the preceding phase becomes idle')
+parser.add_argument('--no-feedback',action='store_true',help='One initial public task only; forbid followups and send no added implementation instructions')
+parser.add_argument('--approval-policy',choices=('ask','never'),default='never',help='Native DSH approval policy; the sandbox remains workspace-write')
+parser.add_argument('--cancel-file',type=Path,help='External controller can create this file to cancel; defaults to RUN/cancel')
 parser.add_argument('--goal-rounds',type=int,default=0,help='Use native DSH Goal for the first phase with this round cap')
 parser.add_argument('--smoke',action='store_true',help='No model calls: verify session/model route, seed and real GUI preview')
 parser.add_argument('--scripted-smoke',action='store_true',help='With --smoke, intercept every model stream locally to exercise native Goal and followups')
@@ -47,12 +51,15 @@ args=parser.parse_args()
 if not args.allow_paid and not args.smoke:parser.error('explicit --allow-paid required after user authorization')
 if args.scripted_smoke and not args.smoke:parser.error('scripted-smoke requires smoke')
 if args.smoke_delivery and not args.scripted_smoke:parser.error('smoke-delivery requires scripted-smoke')
+if args.no_feedback and args.followup:parser.error('no-feedback forbids followups')
+if args.no_feedback and args.approval_policy!='never':parser.error('no-feedback requires approval-policy never')
 if not 60<=args.max_seconds<=14400:parser.error('max-seconds must be 60..14400 for all model phases combined')
 if args.goal_rounds<0:parser.error('goal-rounds must be nonnegative')
 if not 1024<=args.max_output_tokens<=262144:parser.error('max-output-tokens must be 1024..262144 per request')
 if not 128<=args.memory_mb<=65536:parser.error('memory-mb must be 128..65536')
 ROOT=args.plugin.resolve(strict=True)
 RUN=args.run.resolve(strict=True)
+CANCEL=args.cancel_file.resolve() if args.cancel_file else RUN/'cancel'
 if RUN.is_relative_to(ROOT) or ROOT.is_relative_to(RUN):parser.error('frozen plugin and run must be separate trees')
 TASK=RUN/'task';RUNTIME=RUN/'runtime';HOME=RUNTIME/'home';REGISTRY=RUNTIME/'registry';RAW=RUN/'raw';WORKER=RUN/'worker'
 NODE=args.node.resolve(strict=True);DSH=args.dsh.resolve(strict=True);HOUDINI=args.houdini.resolve(strict=True)
@@ -88,6 +95,76 @@ def utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def trial_permissions_overlay(policy: str) -> str:
+    # Fresh DSH sessions pin the permission preset, including its approval knob.
+    # Changing approval.config alone would still initialize workspace-write+ask.
+    return ("\n- id: approval\n  config:\n    policy: " + policy
+            + "\n- id: permission\n  config:\n    defaultPreset: workspace-write\n"
+              "    presets:\n      workspace-write:\n        sandbox: workspace-write\n"
+              "        approval: " + policy + "\n")
+
+
+def verify_trial_permissions(baseline: dict, records: list, policy: str) -> dict:
+    selected = baseline.get('values', {}).get('permissions', {}).get('currentValue')
+    knobs = {}
+    for row in records:
+        event = row.get('event', {})
+        if event.get('type') == 'sandbox/mode': knobs['sandbox'] = event['data']['mode']
+        if event.get('type') == 'approval/policy': knobs['approval'] = event['data']['policy']
+    if selected != 'workspace-write' or knobs != {'sandbox': 'workspace-write', 'approval': policy}:
+        raise RuntimeError('Actual DSH session permission differs from the frozen trial policy: '
+                           + repr({'preset': selected, **knobs}))
+    return {'preset': selected, **knobs, 'asOfSeq': baseline['asOfSeq']}
+
+
+def pending_approvals(records: list) -> list:
+    """Observe the native audit pair in one current-turn page, without answering it."""
+    pending = {}
+    for row in records:
+        event = row.get('event', {})
+        data = event.get('data', {})
+        if event.get('type') == 'approval/asked': pending[data['id']] = data
+        if event.get('type') == 'approval/decided': pending.pop(data['id'], None)
+    return list(pending.values())
+
+
+def clear_trial_credentials() -> dict:
+    copied = HOME / '.credentials.yaml'
+    if not copied.is_file(): return {'copiedCredentialStoreCleared': True, 'copyPresent': False}
+    copied.write_text('version: 1\nrefs: {}\nrecords: {}\n', encoding='utf-8')
+    return {'copiedCredentialStoreCleared': True, 'copyPresent': True}
+
+
+def stop_trial_processes(supervisor, host, streams, result: dict) -> None:
+    try:
+        if supervisor is not None and supervisor.poll() is None:
+            try:
+                supervisor.stdin.write('STOP\n')
+                supervisor.stdin.flush()
+                supervisor.wait(timeout=30)
+            except Exception as exc:
+                result['workerStopError'] = type(exc).__name__
+                try:
+                    supervisor.stdin.close()  # EOF invokes the owned supervisor's Job cleanup.
+                    supervisor.wait(timeout=20)
+                except Exception:
+                    result['workerStopUncertain'] = True
+        if supervisor is not None:
+            result['supervisorExitCode'] = supervisor.poll()
+            result['supervisorStopped'] = supervisor.poll() is not None
+    finally:
+        try:
+            if host is not None:
+                result['hostStopped'] = host.poll() is not None
+            stop_owned()  # Only the frontend Job created by this driver.
+            if host is not None:
+                result['hostExitCode'] = host.poll()
+                result['hostStopped'] = host.poll() is not None
+        finally:
+            for stream in streams:
+                if stream is not None: stream.close()
+
+
 def run_command(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None,
                 timeout: int = 90) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, env=env, check=True, timeout=timeout,
@@ -95,8 +172,11 @@ def run_command(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None,
                           creationflags=subprocess.CREATE_NO_WINDOW)
 
 
-def main() -> None:
-    reexec_unpacked_test_cli()
+def run_trial(result: dict) -> None:
+    if CANCEL.exists():
+        result['result'] = 'external_cancelled'
+        result['cancelReason'] = 'external controller cancel file before startup'
+        return
     if RUNTIME.exists() or WORKER.exists() or (RUN / "lock.json").exists():
         raise RuntimeError("This run already started; never overwrite its input or evidence")
     if not TASK.is_dir() or not (TASK / "brief.md").is_file() or not (TASK / "task.json").is_file():
@@ -109,6 +189,22 @@ def main() -> None:
     host_env = isolated_environment(RUNTIME / "host-env")
     host_env.update(DSH_HOME=str(HOME), DSH_HOUDINI_EXECUTOR_REGISTRY=str(REGISTRY),
                     DSH_PERMISSION_MODE="workspace-write")
+    if args.service_profile:
+        service_spec=json.loads(args.service_profile.resolve(strict=True).read_text(encoding='utf-8'))
+        reference=service_spec.get('apiKeyEnv')
+        import re
+        if not isinstance(reference,str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',reference):
+            raise RuntimeError('Explicit service credential reference required')
+        value=os.environ.get(reference,'')
+        if not value and os.name=='nt':
+            import winreg
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,'Environment') as environment:
+                    value=winreg.QueryValueEx(environment,reference)[0]
+            except FileNotFoundError:
+                pass
+        if isinstance(value,str) and value.strip():
+            host_env[reference]=value
     if args.scripted_smoke:
         host_env['DSH_MODELING_TRIAL_SMOKE_OUT']=str(RAW/'scripted-requests.json')
     if args.smoke_delivery:
@@ -122,8 +218,9 @@ def main() -> None:
         host_env['DSH_MODELING_TRIAL_MODEL']=MODEL
     run_command(str(NODE), str(DRIVER_ROOT / "tools/tests/prepare-shared-host-fixture.mjs"),
                 str(DSH), str(HOME), str(ROOT), env=host_env)
+    service_arguments=['--service-profile',str(args.service_profile.resolve())] if args.service_profile else []
     selected=run_command(str(NODE),str(DRIVER_ROOT/'tools/prepare-model-settings.mjs'),
-                         str(SETTINGS),str(HOME),PROVIDER,MODEL,str(DSH),str(CREDENTIALS),env=host_env)
+                         str(SETTINGS),str(HOME),PROVIDER,MODEL,str(DSH),str(CREDENTIALS),*service_arguments,env=host_env)
     model_config=json.loads(selected.stdout.strip())
     overlay = RUNTIME / "model-host.patch.yml"
     overlay.write_text((ROOT / "shared-host.cordis.yml").read_text(encoding="utf-8")
@@ -132,7 +229,8 @@ def main() -> None:
                        + (HOME/'selected-model.patch.yml').read_text(encoding='utf-8')
                        + ("- id: llm-deepseek\n  config:\n    reasoningEffort: high\n"
                           + "    maxTokens: " + str(args.max_output_tokens) + "\n"
-                          if PROVIDER=='deepseek-official' else ''), encoding="utf-8")
+                          if PROVIDER=='deepseek-official' else '')
+                       + trial_permissions_overlay(args.approval_policy), encoding="utf-8")
     if args.scripted_smoke:
         scripted_plugin=RUNTIME/'scripted-plugin'
         scripted_plugin.mkdir()
@@ -159,15 +257,13 @@ def main() -> None:
     host = None
     supervisor = None
     bound = False
-    result = {"schema": 1, "case": args.condition, "startedAt": utc(),
-              "startedAtBeijing":datetime.now(timezone(timedelta(hours=8))).isoformat(),
-              "sourceCommit": head, "provider": PROVIDER, "model": MODEL,
-              "result": "not_started", "sessionId": None}
+    result['sourceCommit'] = head
     try:
         host = spawn_frontend([str(NODE), str(DSH), "web", "--patch", str(overlay),
                                "--port", str(port), "--no-open"], node=str(NODE),
                               cwd=TASK, env=host_env, stdout=host_stream,
                               stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+        result['hostPid'] = host.pid
         supervisor = subprocess.Popen([sys.executable, str(DRIVER_ROOT / "tools/isolated-worker.py"),
                                        "--executable", str(HOUDINI), "--directory", str(WORKER),
                                        "--plugin",str(ROOT),
@@ -179,6 +275,7 @@ def main() -> None:
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=supervisor_stream, text=True,
                                       creationflags=subprocess.CREATE_NO_WINDOW)
+        result['supervisorPid'] = supervisor.pid
         ready_lines: queue.Queue[str] = queue.Queue()
         threading.Thread(target=lambda: ready_lines.put(supervisor.stdout.readline()),
                          daemon=True).start()
@@ -189,6 +286,9 @@ def main() -> None:
         if not ready.get("ok"):
             raise RuntimeError("Worker readiness failed: " + str(ready.get("error", "unknown")))
         record = ready["record"]
+        result['workerPid'] = record['pid']
+        result['executorId'] = record['executor_id']
+        result['runtimeId'] = record['runtime_id']
         hip = Path(record["hip_path"])
         workspace = hip.parent
         for entry in TASK.iterdir():
@@ -262,6 +362,14 @@ def main() -> None:
         bound = True
         rpc("session/selectModel", {"request": {"sessionId": session_id,
                                                 "provider": PROVIDER, "model": MODEL}})
+        def session_audit():
+            baseline = rpc('session/projections', {'request': {'sessionId': session_id}})
+            page = rpc('session/page', {'request': {'address': {'kind': 'session', 'sessionId': session_id},
+                'throughSeq': baseline['asOfSeq'], 'maxMessages': 50,
+                'turnWindow': {'minMessages': 1, 'minTurns': 1}}})
+            return baseline, page['records']
+        baseline, records = session_audit()
+        result['actualPermissions'] = verify_trial_permissions(baseline, records, args.approval_policy)
         def owned_bridge_exec(code,call):
             headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']}
             request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
@@ -292,6 +400,10 @@ def main() -> None:
                   "scene_save(expected_path=" + repr(str(hip))
                   + ") 显式保存，并验证最终输出与主要控制。"
                   "最后说明已完成、失败和未验证的要求，给出最终 HIP 的绝对路径。")
+        if args.no_feedback:
+            prompt = ("请读取当前工作目录中的 brief.md 和 task.json，完成其中的用户任务。"
+                      + ("当前隔离场景载入了 task 指定的起始工程。" if args.seed_hip else "当前是新建的隔离 Houdini 场景。")
+                      + "工作目录是 " + str(workspace) + "，预留的工程路径是 " + str(hip) + "。")
         lock = {"schema": 1, "case": args.condition, "condition": args.condition,
                 "createdAt": utc(), "sourceCommit": head,
                 "clientTimeZone":"Asia/Shanghai",
@@ -300,6 +412,7 @@ def main() -> None:
                 "reasoningEffort": "high" if PROVIDER=='deepseek-official' else 'selected_profile_default', "maxSeconds": MAX_SECONDS,
                 "maxOutputTokens":args.max_output_tokens if PROVIDER=='deepseek-official' else None,
                 "showOwnedGui":args.show_gui,"toolBuildSha256":tool_digest(),
+                "noFeedback":args.no_feedback,"actualPermissions":result['actualPermissions'],
                 "modelConfiguration":model_config,"isolatedSettingsSha256":digest(HOME/'selected-model.patch.yml'),
                 "workerThreads": 4, "workerMemoryMb": args.memory_mb,
                 "briefSha256": digest(TASK / "brief.md"),
@@ -344,6 +457,10 @@ def main() -> None:
             if not smoke.get('ok'):raise RuntimeError('isolated smoke failed; see raw/smoke.json')
             result['smoke']={'ok':True,'executionContractVersion':ticket['executionContractVersion'],
                 'preview':smoke['result']['preview']['output'],'modelRequestSent':False}
+        if CANCEL.exists():
+            result['result'] = 'external_cancelled'
+            result['cancelReason'] = 'external controller cancel file before model admission'
+            return
         if not args.smoke or args.scripted_smoke:
             admit(prompt,goal=args.goal_rounds>0)
         result["result"] = "running"
@@ -354,6 +471,10 @@ def main() -> None:
         phase_index = 0
         phase_records = []
         while time.monotonic() - started < MAX_SECONDS:
+            if CANCEL.exists():
+                result['result'] = 'external_cancelled'
+                result['cancelReason'] = 'external controller cancel file'
+                break
             if host.poll() is not None:
                 result["result"] = "host_exit"
                 break
@@ -395,6 +516,12 @@ def main() -> None:
             time.sleep(5)
         else:
             result["result"] = "wall_time_limit"
+            result['wallTimeLimitReached'] = True
+        if result['result'] in {'wall_time_limit', 'external_cancelled'}:
+            baseline, records = session_audit()
+            result['pendingApprovalsBeforeStop'] = pending_approvals(records)
+            if result['pendingApprovalsBeforeStop'] and result['result'] != 'external_cancelled':
+                result['result'] = 'approval_pending'
             try:
                 rpc("session/cancel", {"request": {"sessionId": session_id}}, 15)
                 result["cancelRequested"] = True
@@ -414,6 +541,13 @@ def main() -> None:
         if args.goal_rounds:
             result['goalState']=rpc('goals/get',{'agentId':session_id})
         result["finalSessionItem"] = item if "item" in locals() else None
+        if host.poll() is None:
+            baseline, records = session_audit()
+            result.setdefault('pendingApprovalsBeforeStop', pending_approvals(records))
+            if result['pendingApprovalsBeforeStop'] and result['result'] != 'external_cancelled':
+                result['result'] = 'approval_pending'
+                rpc('session/cancel', {'request': {'sessionId': session_id}}, 15)
+                result['cancelRequested'] = True
         if args.probe_frontend and result['result']=='idle_after_prompt':
             frontend_config=RAW/'frontend-probe-config.json'
             frontend_output=RAW/'frontend-probe-result.json'
@@ -467,25 +601,56 @@ def main() -> None:
             result["candidateSha256"] = digest(candidate)
         write_json(RUN / "run-result.json", result)
         print("RESULT_FILE=" + str(RUN / "run-result.json"), flush=True)
+    except KeyboardInterrupt:
+        result['result'] = 'external_cancelled'
+        result['cancelReason'] = 'driver KeyboardInterrupt'
+        if bound and host is not None and host.poll() is None:
+            try:
+                rpc('session/cancel', {'request': {'sessionId': result['sessionId']}}, 15)
+                result['cancelRequested'] = True
+            except Exception as exc:
+                result['cancelError'] = type(exc).__name__
+        raise
     except Exception as exc:
         result["result"] = "driver_error"
         result["driverError"] = type(exc).__name__ + ": " + str(exc)[:1000]
         write_json(RUN / "run-result.json", result)
         raise
     finally:
-        if supervisor is not None and supervisor.poll() is None:
-            try:
-                supervisor.stdin.write("STOP\n")
-                supervisor.stdin.flush()
-                supervisor.wait(timeout=30)
-            except Exception:
-                result["workerStopUncertain"] = True
-                try: supervisor.stdin.close(); supervisor.wait(timeout=20)
-                except Exception: pass
-                write_json(RUN / "run-result.json", result)
-        stop_owned()
-        host_stream.close()
-        supervisor_stream.close()
+        stop_trial_processes(supervisor, host, (host_stream, supervisor_stream), result)
+
+
+def main() -> None:
+    reexec_unpacked_test_cli()
+    result = {"schema": 1, "case": args.condition, "startedAt": utc(),
+              "startedAtBeijing": datetime.now(timezone(timedelta(hours=8))).isoformat(),
+              "provider": PROVIDER, "model": MODEL, "result": "not_started", "sessionId": None}
+    # Do not alter an existing trial or its credential evidence, even on refusal.
+    if RUNTIME.exists() or WORKER.exists() or (RUN/'lock.json').exists():
+        raise RuntimeError('This run already started; never overwrite its input or evidence')
+    try:
+        run_trial(result)
+    except KeyboardInterrupt:
+        result['result'] = 'external_cancelled'
+        result.setdefault('cancelReason', 'driver KeyboardInterrupt')
+        raise
+    except Exception as exc:
+        result['result'] = 'driver_error'
+        result['driverError'] = type(exc).__name__ + ': ' + str(exc)[:1000]
+        raise
+    finally:
+        try:
+            result['credentialCleanup'] = clear_trial_credentials()
+        except Exception as exc:
+            result['credentialCleanup'] = {'copiedCredentialStoreCleared': False, 'error': type(exc).__name__}
+        result['endedAt'] = utc()
+        if result.get('workerStopUncertain') or result.get('supervisorStopped') is False or result.get('hostStopped') is False:
+            result['resultBeforeCleanupFailure'] = result['result']
+            result['result'] = 'process_stop_uncertain'
+        if not result['credentialCleanup']['copiedCredentialStoreCleared']:
+            result['resultBeforeCredentialCleanupFailure'] = result['result']
+            result['result'] = 'credential_cleanup_failed'
+        write_json(RUN/'run-result.json', result)
 
 
 if __name__ == "__main__":

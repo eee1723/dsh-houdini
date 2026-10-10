@@ -4206,7 +4206,8 @@ def hda_create(
     """把已有节点（通常 subnet）转为 HDA；默认写到 ``$HIP/otls``。
 
     同名已安装类型或已存在目标文件在写前拒绝。replace=True不再支持；维护已有
-    工具时用hda_fork复制到全新类型和独立文件，原实例与定义保持不变。
+    工具用hda_version在来源库追加原生版本，再hda_switch_version切换指定实例。
+    hda_fork仅用于独立衍生新工具；项目新工具默认$HIP/otls，共享新工具指定package资源路径。
     max_outputs可选1..64，None保留原生默认；这是端口上限，不会自动接线。
     实例spare不保证进入定义；返回pending_spare_parameters与原地hda_edit('promote')指引。
     不以创建成功替代新实例/公共输出验证；转换只接续可证明来自同一锁定原生定义的自有后代。
@@ -4217,7 +4218,7 @@ def hda_create(
         raise ValueError('replace must be boolean')
     if replace:
         raise ValueError('hda_create replace=True is not supported: it would destroy shared instances/definitions. '
-                         'Use hda_fork with a new type name and new independent library file; migrate only explicitly selected instances separately.')
+                         'Maintain the source with hda_version, then hda_switch_version on selected instances. Use hda_fork only for an independent derived tool.')
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name 必须是非空 HDA 类型名")
     name = name.strip()
@@ -4237,14 +4238,15 @@ def hda_create(
         definitions = list(existing_type.allInstalledDefinitions())
         files = sorted({d.libraryFilePath() for d in definitions})
         raise ValueError(f"HDA 类型 '{name}' 已存在或为原生类型；definitions={files}。"
-                         "请使用新类型名；已有工具用hda_fork，不覆盖共享定义。")
+                         "已有工具用hda_version在来源库追加版本，再hda_switch_version；独立衍生才用hda_fork。")
 
     target = _default_hda_file(name) if hda_file is None else hou.expandString(str(hda_file))
     target = os.path.abspath(target)
     from dsh_hda_interfaces import require_library_location
-    require_library_location(target)
+    require_library_location(target, new_asset=True)
     if os.path.lexists(target):
-        raise ValueError(f'HDA target file already exists: {target}; use a new independent library file, never append to or replace an existing shared library')
+        raise ValueError(f'HDA target file already exists: {target}; hda_create only creates new tools/libraries. '
+                         'For existing tool maintenance use hda_version to append a type version in its actual source library.')
     parent_dir = os.path.dirname(target)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
@@ -4327,7 +4329,7 @@ def hda_fork(node, name: str, hda_file: str, description: str | None = None) -> 
         raise ValueError('description must be a nonempty string or None')
     target = os.path.abspath(hou.expandString(hda_file))
     from dsh_hda_interfaces import require_library_location
-    require_library_location(target)
+    require_library_location(target, new_asset=True)
     if os.path.lexists(target):
         raise ValueError(f'HDA target file already exists: {target}; fork requires a new independent library')
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -4355,6 +4357,33 @@ def hda_fork(node, name: str, hda_file: str, description: str | None = None) -> 
             'copied': 'current definition only; unsaved instance changes excluded',
             'source_instances_migrated': 0, 'instances_created': 0,
             'next_action': 'Create an instance with tab_create using this exact type, then verify controls, public outputs and dependencies.'}
+
+
+def hda_version(node, version: str, *, dry_run=False, allow_foreign=None) -> dict:
+    """Append a native ::version type to the actual SOURCE library; preserve older definitions.
+
+    version is a numeric suffix such as 1.1, not HDADefinition Version metadata.
+    Copies saved definition only, preserves scope/namespace, never migrates instances.
+    Refuses duplicate types; restores library/new type on failure. Foreign library
+    needs one-call allow_foreign and is not adopted by creating a version inside it.
+    Then hda_switch_version the selected instance before editing the new definition.
+    """
+    from dsh_hda_versions import create_version
+    return create_version(node, version, dry_run=dry_run, allow_foreign=allow_foreign)
+
+
+def hda_switch_version(node, type_name: str, *, dry_run=False, allow_foreign=None) -> dict:
+    """Switch one locked HDA instance to an exact installed version of the same family.
+
+    Native changeNodeType keeps name/common parameter channels and connections,
+    loads target contents; never migrates other instances or adopts descendants.
+    Read tool_inspect type_versions and source libraries first; dry_run reports scope.
+    Unlocked contents require hda_edit save/lock or explicit discard before switching.
+    Node and replaced descendants require ownership or one-call allow_foreign.
+    Scene undo covers scene edits only; arbitrary asset callback effects are excluded.
+    """
+    from dsh_hda_versions import switch_version
+    return switch_version(node, type_name, dry_run=dry_run, allow_foreign=allow_foreign)
 
 
 def hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None) -> dict:
@@ -5915,7 +5944,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
       有 ``soho_foreground`` 时调用期临时等待渲染完成并在 finally 恢复。
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
       裸文件名按输出用途放入$HIP/dsh-render；COP copoutput放入dsh-texture，
-      几何/模拟缓存保持geo。已有含目录的ROP路径和显式绝对目的地不改写。
+      几何/模拟/通道缓存放入dsh-cache。已有含目录的ROP路径和显式绝对目的地不改写。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
       （host 侧桥请求超时 120s），本动词面向单帧测试渲染。
@@ -5956,10 +5985,9 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     # Resolving before any parameter/frame write also rejects extensionless
     # outputs and relative files outside the project with zero scene effects.
     original_output = p.unexpandedString()
-    output_subdir = ('geo' if p.name() in ('sopoutput', 'dopoutput') else
+    output_subdir = (_project_directory('cache') if p.name() in ('sopoutput', 'dopoutput', 'choutput') else
                      _project_directory('texture') if p.name() == 'copoutput' else
-                     _project_directory('render') if p.name() in ('picture', 'vm_picture', 'outputimage') else
-                     'render')
+                     _project_directory('render'))
     target = _resolve_output_path(original_output if picture is None else picture, frame=f,
                                   default_subdir=output_subdir)
     original_frame = float(hou.frame())

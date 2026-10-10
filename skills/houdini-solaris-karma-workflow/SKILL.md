@@ -7,6 +7,8 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 
 目标是留下当前 Houdini 版本中用户通过 Tab 菜单能理解和继续维护的 USD/Karma 网络，
 不以“有一张图片”替代材质、stage 和渲染契约。
+本skill的Karma架构偏好用于用户选择Karma或来源未规定渲染方法的任务。教程已明确其他渲染器/材质时先复现其方法；
+确认软件、版本或资源缺口需要适配Karma，或另建优化分支时再使用本skill，选择与切换沿[视频复现协议](../houdini-video-tutorial/references/reconstruction.md)。
 
 ## 执行顺序
 
@@ -20,7 +22,7 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 4. 按材质载体选择入口：普通shader网络可从Material Library内的 **Karma Material Builder** 开始，
    `tab_apply(matlib, 'vop_karmamtlxsubnet')`提供预配置的Karma/MaterialX subnet。H22以COP纹理为主要输入时
    也可使用Texture Material Library + USD Material COP；H21不提供这组H22节点，按实际发现使用图像输入。
-5. 新最终渲染默认用 `/stage` 的 **Karma (Setup)**；调用
+5. 来源未规定架构的新Karma最终渲染默认用 `/stage` 的 **Karma (Setup)**；调用
    `tab_apply('/stage', 'lop_karma_setup')`，保留它生成的 Karma Render Settings 与
    USD Render ROP 及二者表达式。普通 `karma` LOP 或传统 Principled 能出图不代表这是
    当前默认架构。
@@ -37,8 +39,8 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 - Karma XPU 或新通用 Karma look-dev：Karma Material Builder + MaterialX/Karma 节点。
 - 需要纯 MaterialX、跨 Hydra renderer 可移植：USD MaterialX Builder。
 - 只需要通用 viewport/Storm preview：USD Preview Material Builder。
-- 传统 Principled/VEX 只在用户明确要求 Karma CPU/旧资产兼容且接受限制时使用，并在
-  交付中说明；不要把自动 USD Preview 转换误报成原 shader 的 XPU 完整支持。
+- 教程或现有资产明确采用传统 Principled/VEX，或任务需要 Karma CPU/旧资产兼容时，核对实际支持范围并在
+  交付中说明限制；不要把自动 USD Preview 转换误报成原 shader 的 XPU 完整支持。
 - 几何颜色进入 USD 后通常是 `displayColor`；在 MaterialX 中显式用 geometry property/
   primvar reader 连接到 surface，不依赖旧 shader 的隐式 Cd 行为。
 - 连续涂装、logo/贴花和微表面由材质读取UV对应的遮罩/纹理；不要按每个面的首顶点Cd猜材质类别。

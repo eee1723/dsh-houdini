@@ -52,6 +52,8 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [cop_layer_stats](#cop_layer_stats)
 - [cop_compare_layers](#cop_compare_layers)
 - [test_cop_controls](#test_cop_controls)
+- [hda_version](#hda_version)
+- [hda_switch_version](#hda_switch_version)
 
 ## verb_help
 
@@ -3779,3 +3781,113 @@ The baseline is 0.25 and the requested value is 0.5. Inspect status, each actual
 - mean_abs_change/max_abs_change use a zero baseline. Their nonzero response proves only the declared pixel change, not the intended region, edge or artistic effect.
 - Normal returns include restored=true even when a declared measurement fails. Restoration failure raises CheckpointError with evidence; do not continue editing.
 - Restoration covers snapshotted parameters, expressions/keys, frame and full layer fingerprint. External files, arbitrary Python/solver effects and unobserved dynamic dependencies are not transactional.
+
+## hda_version
+
+在来源库内追加原生类型版本，保留原类型和其他定义；不会切换实例。
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "allow_foreign": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "node",
+    "version"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "additionalProperties": true
+}
+```
+
+### 原库原生版本维护
+
+调用工具：`houdini_exec`。
+
+```python
+__result__=hda_version('/obj/my_tool','1.1',allow_foreign='用户明确要求升级此原工具')
+```
+
+回读精确类型、来源库、applied和实际受影响实例；再验证新版公开入口。
+
+### 接口边界
+
+- HDADefinition.version元数据与::version类型版本不同；不以setVersion冒充原生版本并存。
+- 已有package资产维护始终沿用实际来源库。独立衍生才用hda_fork；新工具选择工程otls或package资源目录。
+
+## hda_switch_version
+
+将明确实例切换到同家族精确版本，保留公共参数并加载目标内部网络。
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "type_name": {
+      "type": "string"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "allow_foreign": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "node",
+    "type_name"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "additionalProperties": true
+}
+```
+
+### 原库原生版本维护
+
+调用工具：`houdini_exec`。
+
+```python
+__result__=hda_switch_version('/obj/my_tool','artist_tools::my_tool::1.1',allow_foreign='用户明确要求切换此实例')
+```
+
+回读精确类型、来源库、applied和实际受影响实例；再验证新版公开入口。
+
+### 接口边界
+
+- HDADefinition.version元数据与::version类型版本不同；不以setVersion冒充原生版本并存。
+- 已有package资产维护始终沿用实际来源库。独立衍生才用hda_fork；新工具选择工程otls或package资源目录。

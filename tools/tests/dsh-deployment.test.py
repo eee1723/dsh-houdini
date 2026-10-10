@@ -52,6 +52,12 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         return actual_run([NODE, *args[1:]], **kwargs)
     with patch.object(d.subprocess, "run", run_probe):
         rejects(lambda: d.Store.probe(probe_context), "agent.js")
+        d.atomic_json(probe_plugin / "package.json", {"name": "dsh-houdini", "type": "module",
+            "exports": {".": "./frontend.js"}})
+        d.Store.probe(probe_context)
+        d.atomic_json(probe_plugin / "package.json", {"name": "dsh-houdini", "type": "module",
+            "exports": {".": "./frontend.js", "./agent": "./agent.js"}})
+        rejects(lambda: d.Store.probe(probe_context), "agent.js")
         (probe_plugin / "agent.js").write_text("export function apply() {}", encoding="utf-8")
         d.Store.probe(probe_context)
     private, public = temp / "private.pem", temp / "trust.json"

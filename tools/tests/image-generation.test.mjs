@@ -28,7 +28,7 @@ const filesystem={
 let mode='workspace-write',previewError=false,recoveryError=false,resolveCount=0,recordReads=0
 const context={fs:filesystem,sandboxPolicy:{resolve:()=>({mode,workspaceRoot:root})},
   settings:{describe:()=>[{ns:'model-test',value:{providers:{chosen:profile}}}]},
-  llm:{listConfigurableProviders:()=>[{provider:'chosen',settingsNs:'model-test',settingsPath:['providers','chosen']}],
+  llm:{listProviders:()=>[{id:'chosen',name:'Chosen'}],listConfigurableProviders:()=>[{provider:'chosen',settingsNs:'model-test',settingsPath:['providers','chosen']}],
     listModels:async()=>[{id:'gpt-image-2.5-sunburst',name:'Requested image model'},{id:'chat',name:'Chat'}],
     resolveModelInfo:async()=>({inputModalities:['text','image']})},
   credentials:{resolve:async ref=>{assert.equal(ref,'IMAGE_TEST_KEY');resolveCount++;return {value:secret}},readRecord:()=>{recordReads++;throw Error('must not guess private adapter records')}},

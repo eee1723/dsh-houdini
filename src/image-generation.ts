@@ -11,6 +11,7 @@ import { workspaceOf, HoudiniToolRuntime, type HoudiniConnection } from './tool-
 import { imageOutputLocation, verifyManagedImageDirectory, type ImageOutputOptions } from './project-paths.js'
 import { visualCapability } from './image-output.js'
 import { IMAGE_TOOLS } from './tool-catalog.js'
+import {configuredApiRoutes,apiEndpoint,apiCredential} from './api-route.js'
 
 const LIMIT = 64 * 1024 * 1024
 const formats: Record<string, {format: string; mediaType: string}> = {
@@ -35,26 +36,11 @@ function encodedType(data:Buffer) {
 }
 
 function routes(ctx:any) {
-  const llm = service(ctx,'llm'), settings = service(ctx,'settings')
-  if (!llm || !settings) throw Error('DSH model/settings services are unavailable')
-  const descriptors = settings.describe({redactSecrets:false})
-  return llm.listConfigurableProviders().flatMap((entry:any) => {
-    const descriptor = descriptors.find((d:any) => d.ns === entry.settingsNs)
-    let profile = descriptor?.value
-    for (const field of entry.settingsPath) profile = profile?.[field]
-    // Only explicit OpenAI-compatible API routes. Catalog/OAuth defaults and
-    // unrelated transports are not guessed from a provider or model name.
-    if (!profile || !['openai-completions','openai-responses'].includes(profile.api) || !profile.baseURL) return []
-    return [{provider:entry.provider,profile:structuredClone(profile)}]
-  })
+  return configuredApiRoutes(ctx)
 }
 
 function endpoint(baseURL:string, operation:string) {
-  const base = new URL(baseURL)
-  if (!['https:','http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash)
-    throw Error('Image provider requires an HTTP(S) API base URL without embedded credentials, query or fragment')
-  if (!base.pathname.endsWith('/')) base.pathname += '/'
-  return new URL(`images/${operation}`,base)
+  return apiEndpoint(baseURL,`images/${operation}`,'Image')
 }
 
 /** Lists configured IDs, not a claim that a chat catalog certifies Images API support. */
@@ -73,13 +59,7 @@ export async function imageModels(ctx:any, query='image', provider?:string) {
 }
 
 async function credential(ctx:any, provider:string, profile:any) {
-  const credentials=service(ctx,'credentials')
-  if (!credentials) throw Error('DSH credential service is unavailable')
-  if (!profile.apiKeyEnv) throw Error('This Images API route needs an explicit apiKeyEnv credential reference in DSH model settings; OAuth/adapter-private credentials are not reused')
-  const value=(await credentials.resolve(profile.apiKeyEnv))?.value
-  if (!value) throw Error('No API key configured for this image route; configure its credential in DSH model settings')
-  if (value.trim() !== value || /[\r\n]/.test(value)) throw Error('Configured API key has invalid whitespace')
-  return value
+  return apiCredential(ctx,profile,'Images')
 }
 
 async function outputTarget(ctx:any, exec:any, args:ImageGenerateArgs, connection?:HoudiniConnection) {

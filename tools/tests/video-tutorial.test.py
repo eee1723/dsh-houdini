@@ -2,12 +2,18 @@
 import importlib.util
 from collections import Counter
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import sys
 import shutil
+import socket
+import subprocess
 from types import SimpleNamespace as Args
 import unittest
 from unittest.mock import patch
@@ -42,7 +48,8 @@ class VideoTests(unittest.TestCase):
              "has_audio": True, "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
              "timestamp_basis": video.BASIS, "chunks": self.chunks}
         video.save(self.work / "manifest.json", self.manifest)
-        self.args = Args(work=str(self.work), model="test/asr", allow_upload=True, max_chunks=2, retry_failed=False)
+        self.args = Args(work=str(self.work), model="test/asr", allow_upload=True, max_chunks=2, retry_failed=False,
+                         concurrency=1, requests_per_second=None)
         self.calls = []
 
     def sender(self, audio, model, key):
@@ -54,6 +61,32 @@ class VideoTests(unittest.TestCase):
 
     def write_manifest(self):
         (self.work / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+
+    def many_chunks(self, count):
+        self.chunks, self.audio_names = [], {}
+        for index in range(count):
+            audio = self.work / f"audio-{index:05d}.wav"
+            payload = f"synthetic test chunk {index}".encode()
+            audio.write_bytes(payload)
+            self.audio_names[payload] = audio.name
+            self.chunks.append({"id": f"{index:05d}", "start": index, "end": index + 1,
+                                "audio": audio.name, "sha256": video.sha(audio)})
+        self.manifest.update(duration=count, start=0, end=count, chunk=1, overlap=0, chunks=self.chunks)
+        self.write_manifest()
+
+    def local_server(self, handler):
+        class Server(ThreadingHTTPServer):
+            request_queue_size = 128
+        server = Server(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        def close():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+        self.addCleanup(close)
+        self.args.endpoint = f"http://127.0.0.1:{server.server_port}/v1/audio/transcriptions"
+        return server
 
     def seed_attempts(self, chunk_index, count):
         video.config(self.work, self.args.model)
@@ -76,7 +109,13 @@ class VideoTests(unittest.TestCase):
 
     def test_resume_skips_success(self):
         self.assertEqual(self.transcribe()["submitted"], 2)
-        self.assertEqual(self.transcribe(), {"submitted": 1, "retried": 0, "retry_budget": 0,
+        self.assertEqual(self.transcribe(), {"work": str(self.work), "endpoint": video.ENDPOINT, "model": self.args.model,
+                                           "protocol": "openai-transcriptions",
+                                           "submitted": 1, "retried": 0, "retry_budget": 0,
+                                           "completed": 1, "succeeded": 1, "failed": 0,
+                                           "concurrency": 1, "peak_inflight": 1, "requests_per_second": None,
+                                           "final_concurrency": 1, "concurrency_transitions": [],
+                                           "failure_details": [],
                                            "remaining": 0, "remaining_unsubmitted": 0, "deferred": []})
         self.assertEqual(self.transcribe()["submitted"], 0)
         self.assertEqual(len(set(self.calls)), 3)
@@ -192,6 +231,8 @@ class VideoTests(unittest.TestCase):
         variants += [{"max_retries": value, "retry_failed": True} for value in (-1, 101, 1.5, True)]
         variants += [{"max_retries": 1, "retry_failed": False}]
         variants += [{"max_chunks": value} for value in (0, 101, 1.5, True)]
+        variants += [{"concurrency": value} for value in (0, 65, 1.5, True)]
+        variants += [{"requests_per_second": value} for value in (0, -1, 101, float("nan"), float("inf"), True)]
         for fields in variants:
             with self.subTest(fields=fields):
                 args = Args(**(vars(self.args) | fields))
@@ -237,16 +278,345 @@ class VideoTests(unittest.TestCase):
         self.assertIn("--chunks", output)
         self.assertIn("--max-retries", output)
         self.assertIn("this invocation", output)
+        self.assertIn("dashscope-asr", output)
+        self.assertIn("--concurrency", output)
+        self.assertIn("--requests-per-second", output)
+
+    def test_certificate_url_and_permanent_dns_errors_do_not_degrade(self):
+        for reason in (video.ssl.SSLCertVerificationError(1, "certificate verification failed"),
+                       socket.gaierror(socket.EAI_NONAME, "name is invalid"),
+                       ValueError("invalid URL"), OSError("unclassified OS error")):
+            with self.subTest(reason=type(reason).__name__):
+                self.assertFalse(video.concurrency_failure(video.urllib.error.URLError(reason)))
+
+    def test_temporary_dns_timeout_and_connection_loss_can_degrade(self):
+        for reason in (socket.gaierror(socket.EAI_AGAIN, "temporary lookup failure"),
+                       TimeoutError("timed out"), ConnectionResetError("connection reset"),
+                       ConnectionRefusedError("connection refused"), video.http.client.IncompleteRead(b"partial")):
+            with self.subTest(reason=type(reason).__name__):
+                self.assertTrue(video.concurrency_failure(video.urllib.error.URLError(reason)))
+
+    def test_concurrent_http_requests_overlap_within_bound_and_resume_skips_successes(self):
+        barrier, guard = threading.Barrier(2), threading.Lock()
+        state = {"active": 0, "peak": 0, "calls": [], "errors": []}
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                with guard:
+                    state["calls"].append(body)
+                    ordinal = len(state["calls"])
+                    state["active"] += 1
+                    state["peak"] = max(state["peak"], state["active"])
+                try:
+                    if ordinal <= 2:
+                        barrier.wait(timeout=3)
+                    payload = b'{"text":"local HTTP transcript"}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except Exception as error:
+                    with guard:
+                        state["errors"].append(type(error).__name__)
+                    self.send_error(500)
+                finally:
+                    with guard:
+                        state["active"] -= 1
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.args.endpoint = f"http://127.0.0.1:{server.server_port}/v1/audio/transcriptions"
+        self.args.concurrency, self.args.max_chunks = 2, 3
+        try:
+            result = video.transcribe(self.args, get_key=lambda: "loopback-test-key")
+            self.assertEqual((result["submitted"], result["completed"], result["succeeded"], result["failed"]), (3, 3, 3, 0))
+            self.assertEqual((result["peak_inflight"], state["peak"]), (2, 2))
+            self.assertFalse(state["errors"])
+            self.assertEqual(len(state["calls"]), 3)
+            for payload in self.audio_names:
+                self.assertEqual(sum(payload in body for body in state["calls"]), 1)
+            resumed = video.transcribe(self.args, get_key=lambda: self.fail("unneeded key"))
+            self.assertEqual((resumed["submitted"], resumed["completed"], resumed["peak_inflight"]), (0, 0, 0))
+            self.assertEqual(len(state["calls"]), 3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_default_cli_http_overload_drains_64_then_32_and_preserves_budget_and_failed_facts(self):
+        # Real requests are held until each wave fills. This checks actual peaks,
+        # worker draining, two separate provider errors, and the CLI defaults.
+        self.many_chunks(101)
+        work = self.work
+        barriers = [threading.Barrier(64), threading.Barrier(32)]
+        guard = threading.Lock()
+        state = {"active": [0, 0, 0], "peak": [0, 0, 0], "calls": [], "errors": []}
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                with guard:
+                    ordinal = len(state["calls"])
+                    state["calls"].append(body)
+                    wave = 0 if ordinal < 64 else 1 if ordinal < 96 else 2
+                    state["active"][wave] += 1
+                    state["peak"][wave] = max(state["peak"][wave], state["active"][wave])
+                    if wave:
+                        state["errors"] += ["previous wave not drained"] if any(state["active"][:wave]) else []
+                try:
+                    if wave < 2:
+                        barriers[wave].wait(timeout=15)
+                        if ordinal not in (0, 64):
+                            deadline = time.monotonic() + 3
+                            failed_path = work / f"outcome-{0 if wave == 0 else 64:05d}-1.json"
+                            while not failed_path.exists() and time.monotonic() < deadline:
+                                time.sleep(.005)
+                    payload = b'{"text":"retained local HTTP transcript"}'
+                    self.send_response(429 if ordinal == 0 else 503 if ordinal == 64 else 200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except Exception as error:
+                    with guard:
+                        state["errors"].append(type(error).__name__)
+                finally:
+                    with guard:
+                        state["active"][wave] -= 1
+        self.local_server(Handler)
+        env = dict(os.environ, LOCAL_ASR_TEST="local-only-credential", PYTHONUTF8="1")
+        run = subprocess.run([sys.executable, str(Path(video.__file__)), "transcribe", "--work", str(self.work),
+                              "--model", self.args.model, "--endpoint", self.args.endpoint,
+                              "--allow-upload", "--key-env", "LOCAL_ASR_TEST"],
+                             env=env, capture_output=True, text=True, timeout=45)
+        report = json.loads(run.stdout.splitlines()[-1])
+        self.assertEqual(run.returncode, 1, "Recovered throughput cannot hide the failed chunk facts")
+        self.assertEqual((report["concurrency"], report["final_concurrency"], report["requests_per_second"]), (64, 16, 8))
+        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (100, 100, 98, 2))
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual((report["remaining"], report["remaining_unsubmitted"], report["retried"]), (3, 1, 0))
+        self.assertEqual([(row["from"], row["to"], row["after_submitted"], row["after_completed"])
+                          for row in report["concurrency_transitions"]], [(64, 32, 64, 64), (32, 16, 96, 96)])
+        self.assertEqual([row["causes"][0]["http_status"] for row in report["concurrency_transitions"]], [429, 503])
+        self.assertEqual(state["peak"], [64, 32, 1])
+        self.assertFalse(state["errors"], state["errors"])
+        self.assertEqual(len(state["calls"]), 100)
+        self.assertEqual(len(list(self.work.glob("attempt-*.json"))), 100)
+        self.assertEqual(len(list(self.work.glob("outcome-*.json"))), 100)
+        self.assertEqual([row["id"] for row in report["deferred"]], ["00000", "00064"])
+        self.args.max_chunks = 100
+        resumed = self.transcribe()
+        self.assertEqual((resumed["submitted"], resumed["remaining"], resumed["retried"]), (1, 2, 0))
+        self.assertEqual(self.calls, ["audio-00100.wav"])
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 1)
+
+    def test_transport_disconnect_lowers_concurrency_for_new_chunks_without_retry(self):
+        self.many_chunks(5)
+        work = self.work
+        guard, barrier = threading.Lock(), threading.Barrier(3)
+        calls = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                with guard:
+                    ordinal = len(calls)
+                    calls.append(body)
+                if ordinal < 3:
+                    barrier.wait(timeout=3)
+                if ordinal == 0:
+                    self.close_connection = True
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.connection.close()
+                    return
+                if ordinal < 3:
+                    deadline = time.monotonic() + 3
+                    while not (work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
+                        time.sleep(.005)
+                payload = b'{"text":"transport survivor"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        self.local_server(Handler)
+        self.args.concurrency, self.args.requests_per_second, self.args.max_chunks = 64, 8, 5
+        with self.assertRaises(video.Failure) as failure:
+            video.transcribe(self.args, get_key=lambda: "local-test-key")
+        report = failure.exception.report
+        self.assertEqual((report["submitted"], report["completed"], report["failed"], report["retried"]), (5, 5, 1, 0))
+        self.assertEqual([(row["from"], row["to"]) for row in report["concurrency_transitions"]], [(64, 32)])
+        self.assertEqual(report["deferred"], [{"id": "00000", "status": "unknown", "attempts": 1}])
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 1)
+
+    def test_auth_model_and_response_errors_stop_without_concurrency_degradation(self):
+        for label, statuses, bodies in [
+                ("auth", [401, 200, 200], [b'{"error":"unauthorized"}', b'{"text":"ok"}', b'{"text":"ok"}']),
+                ("model", [400, 200, 200], [b'{"error":"bad model"}', b'{"text":"ok"}', b'{"text":"ok"}']),
+                ("semantic", [200, 200, 200], [b'{"missing_text":true}', b'{"text":"ok"}', b'{"text":"ok"}']),
+                ("mixed", [429, 403, 200], [b'{}', b'{}', b'{"text":"ok"}'])]:
+            with self.subTest(label=label):
+                self.work = self.root / ("work-" + label)
+                self.work.mkdir()
+                self.args.work = str(self.work)
+                self.many_chunks(4)
+                work = self.work
+                guard, barrier = threading.Lock(), threading.Barrier(3)
+                calls = []
+                class Handler(BaseHTTPRequestHandler):
+                    def log_message(self, *args): pass
+                    def do_POST(self):
+                        body = self.rfile.read(int(self.headers["Content-Length"]))
+                        with guard:
+                            ordinal = len(calls)
+                            calls.append(body)
+                        if ordinal < 3:
+                            barrier.wait(timeout=3)
+                            if ordinal:
+                                deadline = time.monotonic() + 3
+                                while not (work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
+                                    time.sleep(.005)
+                        payload = bodies[ordinal] if ordinal < 3 else b'{"text":"unexpected"}'
+                        self.send_response(statuses[ordinal] if ordinal < 3 else 200)
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers()
+                        self.wfile.write(payload)
+                self.local_server(Handler)
+                self.args.concurrency, self.args.requests_per_second, self.args.max_chunks = 64, 8, 4
+                with self.assertRaises(video.Failure) as failure:
+                    video.transcribe(self.args, get_key=lambda: "local-test-key")
+                report = failure.exception.report
+                self.assertEqual((report["final_concurrency"], report["concurrency_transitions"]), (64, []))
+                self.assertEqual((report["submitted"], report["completed"], report["remaining_unsubmitted"]), (3, 3, 1))
+                self.assertFalse((self.work / "attempt-00003-1.json").exists())
+
+    def test_failure_at_16_drains_then_stops_new_dispatch(self):
+        self.many_chunks(20)
+        work = self.work
+        guard, barrier = threading.Lock(), threading.Barrier(16)
+        calls = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                with guard:
+                    ordinal = len(calls)
+                    calls.append(body)
+                barrier.wait(timeout=3)
+                if ordinal:
+                    deadline = time.monotonic() + 3
+                    while not (work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
+                        time.sleep(.005)
+                payload = b'{"text":"floor survivor"}'
+                self.send_response(429 if ordinal == 0 else 200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        self.local_server(Handler)
+        self.args.concurrency, self.args.requests_per_second, self.args.max_chunks = 16, 100, 20
+        with self.assertRaises(video.Failure) as failure:
+            video.transcribe(self.args, get_key=lambda: "local-test-key")
+        report = failure.exception.report
+        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (16, 16, 15, 1))
+        self.assertEqual((report["final_concurrency"], report["concurrency_transitions"]), (16, []))
+        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (5, 4))
+
+    def test_concurrent_failure_drains_inflight_success_without_dispatching_next_and_retries_explicitly(self):
+        second_started, fail_first, release_second = threading.Event(), threading.Event(), threading.Event()
+        self.args.concurrency, self.args.max_chunks = 2, 3
+        started = []
+        guard = threading.Lock()
+        def controlled(audio, model, key):
+            name = self.audio_names[audio]
+            with guard:
+                started.append(name)
+            if name == "audio-00000.wav":
+                if not fail_first.wait(timeout=3):
+                    raise AssertionError("failure was not released")
+                raise video.urllib.error.HTTPError("https://local.test", 429, "test-only-secret", {}, None)
+            if name == "audio-00001.wav":
+                second_started.set()
+                if not release_second.wait(timeout=3):
+                    raise AssertionError("inflight success was not released")
+            return "preserved inflight transcript", "test-trace"
+        with ThreadPoolExecutor(max_workers=1) as runner:
+            future = runner.submit(self.transcribe, controlled)
+            try:
+                self.assertTrue(second_started.wait(timeout=3))
+                with self.assertRaisesRegex(video.Failure, "Task locked"):
+                    self.transcribe(lambda *args: self.fail("duplicate work request"))
+                fail_first.set()
+                deadline = time.monotonic() + 3
+                while not (self.work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue((self.work / "outcome-00000-1.json").exists())
+                self.assertFalse((self.work / "attempt-00002-1.json").exists())
+                self.assertFalse(future.done())
+                self.assertTrue((self.work / ".lock").exists())
+            finally:
+                fail_first.set()
+                release_second.set()
+            with self.assertRaisesRegex(video.Failure, "no automatic retry") as failure:
+                future.result(timeout=3)
+        report = failure.exception.report
+        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (2, 2, 1, 1))
+        self.assertEqual(report["peak_inflight"], 2)
+        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (2, 1))
+        self.assertEqual(video.latest(self.work, self.chunks[1])[1]["text"], "preserved inflight transcript")
+        self.assertEqual(video.latest(self.work, self.chunks[0])[1]["http_status"], 429)
+        self.assertNotIn("test-only-secret", json.dumps(report))
+        self.assertFalse((self.work / ".lock").exists())
+        self.assertEqual(set(started), {"audio-00000.wav", "audio-00001.wav"})
+        resumed = self.transcribe()
+        self.assertEqual((resumed["submitted"], resumed["remaining"], resumed["remaining_unsubmitted"]), (1, 1, 0))
+        self.assertEqual(self.calls, ["audio-00002.wav"])
+        self.args.retry_failed, self.args.max_retries = True, 1
+        retried = self.transcribe()
+        self.assertEqual((retried["submitted"], retried["retried"], retried["remaining"]), (1, 1, 0))
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 2)
+        self.assertEqual(self.calls, ["audio-00002.wav", "audio-00000.wav"])
+
+    def test_dispatch_rate_uses_spacing_without_delaying_inflight_completion(self):
+        self.args.concurrency, self.args.max_chunks, self.args.requests_per_second = 3, 3, 20
+        starts = []
+        guard = threading.Lock()
+        def paced(audio, model, key):
+            with guard:
+                starts.append(time.monotonic())
+            time.sleep(.09)
+            return self.sender(audio, model, key)
+        result = self.transcribe(paced)
+        self.assertEqual((result["submitted"], result["completed"]), (3, 3))
+        self.assertEqual(result["requests_per_second"], 20)
+        self.assertEqual(result["peak_inflight"], 2)
+        self.assertTrue(all(b - a >= .045 for a, b in zip(starts, starts[1:])), starts)
+
+    def test_rate_wait_saves_completed_response_before_the_next_dispatch(self):
+        self.args.concurrency, self.args.max_chunks, self.args.requests_per_second = 2, 2, .5
+        with ThreadPoolExecutor(max_workers=1) as runner:
+            future = runner.submit(self.transcribe)
+            deadline = time.monotonic() + 1
+            while not (self.work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue((self.work / "outcome-00000-1.json").exists())
+            self.assertFalse((self.work / "attempt-00001-1.json").exists())
+            self.assertFalse(future.done())
+            result = future.result(timeout=3)
+        self.assertEqual((result["submitted"], result["completed"], result["peak_inflight"]), (2, 2, 1))
 
     def test_later_audio_change_is_not_submitted_or_logged_as_an_unknown_request(self):
         target = self.work / "audio-00001.wav"
         original = target.read_bytes()
-        self.args.max_chunks = 3
+        self.args.concurrency, self.args.requests_per_second, self.args.max_chunks = 64, 8, 3
         def change_next_chunk(audio, model, key):
             target.write_bytes(b"changed during the first submission")
             return self.sender(audio, model, key)
-        with self.assertRaisesRegex(video.Failure, "chunk 00001; not submitted; 1 prior successes preserved"):
+        with self.assertRaisesRegex(video.Failure, "chunk 00001; not submitted; 1 prior successes preserved") as failure:
             self.transcribe(change_next_chunk)
+        self.assertEqual((failure.exception.report["final_concurrency"],
+                          failure.exception.report["concurrency_transitions"],
+                          failure.exception.report["failure_details"]), (64, [], []))
         self.assertEqual(self.calls, ["audio-00000.wav"])
         self.assertFalse((self.work / "attempt-00001-1.json").exists())
         self.assertFalse((self.work / "outcome-00001-1.json").exists())
@@ -299,6 +669,238 @@ class VideoTests(unittest.TestCase):
         with self.assertRaises(video.Failure):
             self.transcribe()
         self.assertEqual(len(self.calls), 2)
+
+    def test_custom_endpoint_is_pinned_and_exported_without_credential(self):
+        self.args.endpoint = "https://asr.example.test/v1/audio/transcriptions"
+        self.args.key_env = "DSH_VIDEO_TRANSCRIPTION_KEY"
+        result = self.transcribe()
+        self.assertEqual(result["endpoint"], self.args.endpoint)
+        self.assertEqual(result["work"], str(self.work))
+        self.assertEqual(result["model"], self.args.model)
+        settings = video.read(self.work / "asr-config.json")
+        self.assertEqual(settings["endpoint"], self.args.endpoint)
+        output = self.root / "custom-export"
+        video.export(Args(work=str(self.work), output=str(output)))
+        self.assertEqual(video.read(output / "transcript.json")["asr"], settings)
+        self.assertNotIn("test-only-secret", json.dumps(settings))
+        self.args.endpoint = "https://other.example.test/v1/audio/transcriptions"
+        with self.assertRaisesRegex(video.Failure, "configuration/source changed"):
+            self.transcribe()
+        self.assertEqual(len(self.calls), 2)
+
+    def test_qwen_protocol_resume_and_export_preserve_chunk_timing(self):
+        self.args.protocol = "qwen-chat-asr"
+        self.args.endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        self.args.model = "qwen3-asr-flash"
+        self.assertEqual(self.transcribe()["submitted"], 2)
+        settings = video.read(self.work / "asr-config.json")
+        self.assertEqual(settings["protocol"], "qwen-chat-asr")
+        self.assertEqual(self.transcribe()["submitted"], 1)
+        self.assertEqual(self.transcribe()["submitted"], 0)
+        output = self.root / "qwen-export"
+        result = video.export(Args(work=str(self.work), output=str(output)))
+        self.assertEqual(result["timestamp_basis"], video.BASIS)
+        self.assertEqual(video.read(output / "transcript.json")["asr"], settings)
+        self.args.protocol = "openai-transcriptions"
+        self.args.endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions"
+        with self.assertRaisesRegex(video.Failure, "configuration/source changed"):
+            self.transcribe()
+        self.assertEqual(len(self.calls), 3)
+
+    def test_qwen_input_limit_rejects_before_credential_or_attempt(self):
+        self.args.protocol = "qwen-chat-asr"
+        self.args.endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        payload = b"a" * 7_500_003
+        (self.work / "audio-00000.wav").write_bytes(payload)
+        self.manifest["chunks"][0]["sha256"] = video.sha(self.work / "audio-00000.wav")
+        self.write_manifest()
+        with self.assertRaisesRegex(video.Failure, "10 MB"):
+            video.transcribe(self.args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+        self.assertFalse((self.work / "attempt-00000-1.json").exists())
+
+    def test_dashscope_protocol_resume_and_export_keep_model_and_chunk_bounds(self):
+        self.args.protocol = "dashscope-asr"
+        self.args.endpoint = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+        self.args.model = "qwen-audio-3.0-asr-flash"
+        self.assertEqual(self.transcribe()["submitted"], 2)
+        settings = video.read(self.work / "asr-config.json")
+        self.assertEqual(settings["protocol"], "dashscope-asr")
+        self.assertEqual(settings["model"], self.args.model)
+        self.assertEqual(self.transcribe()["submitted"], 1)
+        self.assertEqual(self.transcribe()["submitted"], 0)
+        output = self.root / "dashscope-export"
+        result = video.export(Args(work=str(self.work), output=str(output)))
+        transcript = video.read(output / "transcript.json")
+        self.assertEqual(result["timestamp_basis"], video.BASIS)
+        self.assertEqual(transcript["asr"], settings)
+        self.assertEqual([(row["start"], row["end"]) for row in transcript["chunks"]],
+                         [(item["start"], item["end"]) for item in self.chunks])
+        self.args.protocol = "qwen-chat-asr"
+        self.args.endpoint = "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions"
+        with self.assertRaisesRegex(video.Failure, "configuration/source changed"):
+            self.transcribe()
+        self.assertEqual(len(self.calls), 3)
+
+    def test_dashscope_transport_preserves_full_text_in_both_documented_shapes(self):
+        self.args.protocol = "dashscope-asr"
+        self.args.endpoint = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+        self.args.model = "qwen-audio-3.0-asr-flash"
+        self.args.max_chunks = 1
+        requests = []
+        full_text = "First complete sentence. Second complete sentence."
+        sentence = {"text": "Second complete sentence.", "sentence_id": 2, "sentence_end": True,
+                    "begin_time": 2000, "end_time": 4000, "words": []}
+        class Response:
+            status = 200
+            headers = {}
+            def __init__(self, payload): self.payload = payload
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return json.dumps(self.payload).encode("utf-8")
+        for nested in (False, True):
+            with self.subTest(nested=nested):
+                output = {"text": full_text, **({"output": {"sentence": sentence}} if nested else {"sentence": sentence})}
+                def open_request(request, timeout):
+                    requests.append(request)
+                    return Response({"output": output, "request_id": "native-request-id", "usage": {"duration": 5}})
+                with patch.object(video.urllib.request, "build_opener", return_value=Args(open=open_request)):
+                    if nested:
+                        result = video.transcribe(self.args, get_key=lambda: "selected-test-key")
+                        self.assertEqual(result["submitted"], 1)
+                        outcome = video.latest(self.work, self.chunks[0])[1]
+                        self.assertEqual(outcome["text"], full_text)
+                        self.assertEqual(outcome["trace_id"], "native-request-id")
+                        self.assertNotIn("selected-test-key", json.dumps(outcome))
+                    else:
+                        reply = video.post(b"prepared wav bytes", self.args.model, "selected-test-key",
+                                           self.args.endpoint, self.args.protocol)
+                        self.assertEqual(reply[:2], (full_text, "native-request-id"))
+                        self.assertEqual(reply[2]["raw_response"]["output"], output)
+                request = requests[-1]
+                self.assertEqual(request.full_url, self.args.endpoint)
+                self.assertEqual(request.get_header("Authorization"), "Bearer selected-test-key")
+                self.assertEqual(request.get_header("X-dashscope-sse"), "disable")
+                payload = json.loads(request.data)
+                self.assertEqual(set(payload), {"model", "input", "parameters"})
+                self.assertEqual(payload["model"], self.args.model)
+                self.assertEqual(payload["parameters"], {"format": "wav", "sample_rate": "16000"})
+                self.assertEqual(payload["input"]["messages"][0]["role"], "user")
+                audio = payload["input"]["messages"][0]["content"][0]
+                self.assertEqual(audio["type"], "input_audio")
+                self.assertTrue(audio["input_audio"]["data"].startswith("data:audio/wav;base64,"))
+
+    def test_dashscope_base64_limit_precedes_credential_and_attempt(self):
+        self.args.protocol = "dashscope-asr"
+        self.args.endpoint = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+        self.args.model = "qwen-audio-3.0-asr-flash"
+        payload = b"a" * 7_500_003
+        (self.work / "audio-00000.wav").write_bytes(payload)
+        self.manifest["chunks"][0]["sha256"] = video.sha(self.work / "audio-00000.wav")
+        self.write_manifest()
+        with self.assertRaisesRegex(video.Failure, "10 MB"):
+            video.transcribe(self.args, sender=lambda *a: self.fail("network"), get_key=lambda: self.fail("key"))
+        self.assertFalse((self.work / "attempt-00000-1.json").exists())
+
+    def test_dashscope_missing_full_text_is_unknown_and_never_automatically_retried(self):
+        self.args.protocol = "dashscope-asr"
+        self.args.endpoint = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+        self.args.model = "qwen-audio-3.0-asr-flash"
+        self.args.max_chunks = 1
+        self.args.chunks = ["00000"]
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit):
+                return b'{"output":{"output":{"sentence":{"text":"current sentence","sentence_id":1,"sentence_end":true}}}}'
+        with patch.object(video.urllib.request, "build_opener", return_value=Args(open=lambda *a, **kw: Response())):
+            with self.assertRaisesRegex(video.Failure, "evidence retained, no automatic retry"):
+                video.transcribe(self.args, get_key=lambda: "selected-test-key")
+        outcome = video.read(self.work / "outcome-00000-1.json")
+        self.assertEqual(outcome["status"], "unknown")
+        self.assertEqual(outcome["reason"], "DashScope ASR response lacks the complete transcript")
+        self.assertNotIn("text", outcome)
+        result = video.transcribe(self.args, sender=lambda *a: self.fail("automatic retry"),
+                                 get_key=lambda: self.fail("unneeded credential"))
+        self.assertEqual(result["submitted"], 0)
+        self.assertEqual(result["deferred"], [{"id": "00000", "status": "unknown", "attempts": 1}])
+
+    def test_dashscope_unfinished_or_choices_only_response_is_rejected(self):
+        endpoint = "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation"
+        class Response:
+            status = 200
+            headers = {}
+            def __init__(self, payload): self.payload = payload
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return json.dumps(self.payload).encode("utf-8")
+        for payload in ({"output": {"text": "partial", "sentence": {"sentence_end": False}}},
+                        {"choices": [{"finish_reason": "stop", "message": {"content": "different protocol"}}]}):
+            with self.subTest(payload=payload), \
+                    patch.object(video.urllib.request, "build_opener", return_value=Args(open=lambda *a, **kw: Response(payload))):
+                with self.assertRaisesRegex(video.Failure, "DashScope ASR response incomplete or invalid"):
+                    video.post(b"prepared wav bytes", "qwen-audio-3.0-asr-flash", "selected-test-key", endpoint, "dashscope-asr")
+
+    def test_qwen_truncated_response_is_retained_as_unknown(self):
+        self.args.protocol = "qwen-chat-asr"
+        self.args.endpoint = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit):
+                return b'{"choices":[{"finish_reason":"length","message":{"content":"partial text"}}]}'
+        with patch.object(video.urllib.request, "build_opener", return_value=Args(open=lambda *a, **kw: Response())), \
+                patch.dict(os.environ, {"SILICONFLOW_API_KEY": "test-only-secret"}):
+            with self.assertRaisesRegex(video.Failure, "evidence retained"):
+                video.transcribe(self.args)
+        outcome = video.read(self.work / "outcome-00000-1.json")
+        self.assertEqual(outcome["status"], "unknown")
+        self.assertEqual(outcome["reason"], "Qwen ASR response incomplete or invalid")
+        self.assertNotIn("text", outcome)
+
+    def test_endpoint_and_credential_reference_reject_invalid_input_before_network(self):
+        for endpoint in ("http://remote.example/v1/audio/transcriptions", "https://key@asr.example/audio/transcriptions",
+                         "https://asr.example/audio/transcriptions?api_key=private", "https://asr.example/v1/chat/completions",
+                         "https://asr.example:bad/v1/audio/transcriptions"):
+            self.args.endpoint = endpoint
+            with self.assertRaises(video.Failure):
+                self.transcribe()
+        self.args.endpoint = "http://127.0.0.1:3131/v1/audio/transcriptions"
+        self.args.key_env = "NOT AN ENV NAME"
+        with self.assertRaisesRegex(video.Failure, "environment variable name"):
+            self.transcribe()
+        self.assertFalse(self.calls)
+        self.assertFalse((self.work / "asr-config.json").exists())
+
+    def test_custom_credential_comes_only_from_selected_process_environment(self):
+        with patch.dict(os.environ, {"DSH_VIDEO_TRANSCRIPTION_KEY": "selected-test-key", "SILICONFLOW_API_KEY": "other-key"}):
+            self.assertEqual(video.key_from_environment("DSH_VIDEO_TRANSCRIPTION_KEY"), "selected-test-key")
+            with self.assertRaisesRegex(video.Failure, "DSH_MISSING_TEST_KEY missing"):
+                video.key_from_environment("DSH_MISSING_TEST_KEY")
+
+    def test_default_transport_uses_custom_endpoint_and_injected_environment(self):
+        self.args.endpoint = "https://asr.example.test/v1/audio/transcriptions"
+        self.args.key_env = "DSH_VIDEO_TRANSCRIPTION_KEY"
+        self.args.max_chunks = 1
+        requests = []
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return b'{"text":"custom route transcript"}'
+        def open_request(request, timeout):
+            requests.append(request)
+            return Response()
+        with patch.dict(os.environ, {"DSH_VIDEO_TRANSCRIPTION_KEY": "selected-test-key"}), \
+                patch.object(video.urllib.request, "build_opener", return_value=Args(open=open_request)):
+            result = video.transcribe(self.args)
+        self.assertEqual(requests[0].full_url, self.args.endpoint)
+        self.assertEqual(requests[0].get_header("Authorization"), "Bearer selected-test-key")
+        self.assertNotIn("selected-test-key", json.dumps(result))
 
     def test_corrupt_response_is_not_missing(self):
         self.transcribe()
@@ -432,6 +1034,11 @@ class VideoTests(unittest.TestCase):
     def test_credential_echo_rejected(self):
         with self.assertRaises(video.Failure):
             self.transcribe(lambda *args: ("test-only-secret", "trace"))
+        self.assertNotIn("test-only-secret", (self.work / "outcome-00000-1.json").read_text())
+
+    def test_credential_echo_in_request_id_is_rejected(self):
+        with self.assertRaisesRegex(video.Failure, "Credential echoed in response"):
+            self.transcribe(lambda *args: ("complete transcript", "test-only-secret"))
         self.assertNotIn("test-only-secret", (self.work / "outcome-00000-1.json").read_text())
 
     def test_empty_text_is_visible(self):
@@ -825,6 +1432,29 @@ class TutorialIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(video.Failure, "Select speech"):
             video.read_index(self.query)
 
+    def test_module_navigation_and_pages_keep_source_purpose_and_interfaces(self):
+        module = self.catalog["modules"][0]
+        module.update(purpose="Preserve authored attribute processing and local time",
+                      inputs=["geometry with stable IDs", "local time"], outputs=["deformed geometry with IDs"],
+                      depends_on=["source-data"])
+        self.catalog["modules"].insert(0, {"id": "source-data", "title": "Source", "ranges": [[0, 1]],
+            "purpose": "Prepare source attributes", "inputs": [], "outputs": ["geometry with stable IDs"],
+            "depends_on": [], "questions": [], "unknowns": [], "evidence": []})
+        self.write_catalog()
+        overview = video.read_index(Args(index=str(self.path), module=None, max_chars=24000))
+        entry = next(m for m in overview["modules"] if m["id"] == module["id"])
+        whole = video.read_index(self.query)
+        for field in ("purpose", "inputs", "outputs", "depends_on"):
+            self.assertEqual(entry[field], module[field])
+            self.assertEqual(whole["module"][field], module[field])
+        for section in ("speech", "observations"):
+            page = video.read_index(Args(index=str(self.path), module=module["id"], section=section,
+                                         offset=0, limit=1, max_chars=24000))
+            for field in ("purpose", "inputs", "outputs", "depends_on"):
+                self.assertEqual(page["module_" + field], module[field])
+            self.assertEqual(page["module_unknowns"], module["unknowns"])
+            self.assertEqual(page["runtime_verification"], "not_performed")
+
     def test_overview_does_not_expand_transcript_or_observations(self):
         self.query.module = None
         result = video.read_index(self.query)
@@ -1012,6 +1642,116 @@ class TutorialIndexTests(unittest.TestCase):
         with patch.object(video.hashlib, "file_digest", change_during_hash):
             with self.assertRaisesRegex(video.Failure, "changed while hashing"):
                 video.read_index(self.query)
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/ffprobe not installed; offline unit tests still run")
+class MediaIngestTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="dsh-video-ingest-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.input = self.root / "separate tracks"
+        self.input.mkdir()
+        self.visual = self.input / "video-track-without-extension"
+        self.audio = self.input / "audio-track-without-extension"
+        video.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "lavfi", "-i",
+                   "testsrc2=size=96x64:rate=10:duration=3", "-c:v", "mpeg4", "-movflags", "+faststart", "-f", "mp4", str(self.visual)])
+        video.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-f", "lavfi", "-i",
+                   "sine=frequency=440:sample_rate=16000:duration=3", "-c:a", "aac", "-f", "ipod", str(self.audio)])
+        self.args = Args(input=str(self.input), video=None, audio=None, output=str(self.root / "imported"), ffmpeg="ffmpeg", ffprobe="ffprobe")
+
+    def test_directory_pairs_extensionless_tracks_and_preserves_originals_with_stale_marker(self):
+        marker = self.visual.with_name(self.visual.name + ".aria2")
+        marker.write_bytes(b"leftover download bookkeeping, not evidence of activity")
+        originals = {p: p.read_bytes() for p in (self.visual, self.audio, marker)}
+        result = video.ingest(self.args)
+        self.assertTrue(result["has_audio"])
+        self.assertEqual(result["status"], "imported")
+        manifest = video.read(Path(result["source_manifest"]))
+        self.assertEqual(manifest["sources"][0]["download_marker"], str(marker))
+        self.assertEqual(manifest["media"]["sha256"], video.sha(Path(result["video"])))
+        for path, contents in originals.items():
+            self.assertEqual(path.read_bytes(), contents)
+        def decoded_hash(path):
+            return video.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:v:0", "-f", "md5", "-"])
+        self.assertEqual(decoded_hash(self.visual), decoded_hash(result["video"]))
+        prepared = video.prepare(Args(video=result["video"], output=str(self.root / "prepared"), start=0,
+                                      duration=3, chunk=2, overlap=0, ffmpeg="ffmpeg", ffprobe="ffprobe"))
+        self.assertEqual((prepared["has_audio"], prepared["chunks"]), (True, 2))
+
+    def test_ambiguous_directory_names_candidates_but_explicit_pair_works(self):
+        extra = self.input / "another-video"
+        shutil.copyfile(self.visual, extra)
+        with self.assertRaisesRegex(video.Failure, "No unique media pairing.*another-video"):
+            video.ingest(self.args)
+        self.assertFalse(Path(self.args.output).exists())
+        self.args.input, self.args.video, self.args.audio = None, str(self.visual), str(self.audio)
+        result = video.ingest(self.args)
+        self.assertTrue(result["has_audio"])
+        self.assertEqual([s["path"] for s in result["sources"]], [str(self.visual), str(self.audio)])
+
+    def test_changing_download_is_reported_before_output(self):
+        info = video.media_info
+        def append_after_probe(path, executable):
+            result = info(path, executable)
+            if path == self.visual:
+                with path.open("ab") as stream:
+                    stream.write(b"new download bytes")
+            return result
+        with patch.object(video, "media_info", side_effect=append_after_probe):
+            with self.assertRaisesRegex(video.Failure, "Source is changing.*download may still be running"):
+                video.ingest(self.args)
+        self.assertFalse(Path(self.args.output).exists())
+
+    def test_unreadable_download_audio_is_not_misreported_as_silent(self):
+        self.audio.write_bytes(b"incomplete media header")
+        self.audio.with_name(self.audio.name + ".aria2").write_bytes(b"download bookkeeping")
+        with self.assertRaisesRegex(video.Failure, "Download-marked source is not readable yet"):
+            video.ingest(self.args)
+        self.assertFalse(Path(self.args.output).exists())
+
+    def test_missing_stream_duration_does_not_claim_full_decode(self):
+        info = video.media_info
+        def without_stream_duration(path, executable):
+            result = info(path, executable)
+            if path == self.visual:
+                for stream in result["streams"]:
+                    stream.pop("duration", None)
+            return result
+        with patch.object(video, "media_info", side_effect=without_stream_duration):
+            result = video.ingest(self.args)
+        integrity = video.read(Path(result["source_manifest"]))["integrity"]
+        self.assertEqual(integrity["full_decode"], "not_performed")
+        self.assertEqual(integrity["duration_checks"][0]["basis"], "single_track_container")
+
+    def test_source_change_during_remux_does_not_publish_completed_snapshot(self):
+        run = video.run
+        def change_after_remux(command, **kwargs):
+            result = run(command, **kwargs)
+            if str(command[-1]).endswith("media.partial.mp4"):
+                with self.visual.open("ab") as stream:
+                    stream.write(b"download continued")
+            return result
+        with patch.object(video, "run", side_effect=change_after_remux):
+            with self.assertRaisesRegex(video.Failure, "Source changed while importing"):
+                video.ingest(self.args)
+        self.assertFalse((Path(self.args.output) / "source-manifest.json").exists())
+        self.assertFalse((Path(self.args.output) / "media.mp4").exists())
+        self.assertTrue((Path(self.args.output) / "media.partial.mp4").exists())
+
+    def test_truncated_packet_source_is_not_published_as_a_complete_video(self):
+        contents = self.visual.read_bytes()
+        self.visual.write_bytes(contents[:len(contents) * 2 // 3])
+        with self.assertRaises(video.Failure):
+            video.ingest(self.args)
+        self.assertFalse((Path(self.args.output) / "source-manifest.json").exists())
+        self.assertFalse((Path(self.args.output) / "media.mp4").exists())
+
+    def test_cli_accepts_explicit_single_silent_video(self):
+        result = json.loads(video.run([sys.executable, str(Path(video.__file__)), "ingest", "--video", str(self.visual),
+                                      "--output", self.args.output]).decode("utf-8"))
+        self.assertFalse(result["has_audio"])
+        self.assertEqual(len(result["sources"]), 1)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/ffprobe not installed; offline unit tests still run")
@@ -1239,6 +1979,62 @@ class NotesQueryTests(unittest.TestCase):
         self.assertEqual(video.sha(self.path), before)
         self.assertEqual(len(video.read(Path(result["index"]))["modules"][0]["evidence"]), 2)
         self.assertEqual(video.query_notes(Args(index=result["index"]))["total_items"], 1)
+
+    def test_brief_markdown_keeps_source_methods_basis_and_trial_without_final_upgrade(self):
+        later = self.add_revision()
+        data = video.read(later)
+        step = data["steps"][0]
+        step.update(inferences=["Hidden mapping may use local coordinates"], unknowns=["Hidden mapping not shown"],
+                    reconstruction_readiness="needs_more_evidence")
+        step["detail"]["facts"] += [
+            {"field": "method.intent", "value": "Preserve the local deformation order", "basis": "speech",
+             "frame_ids": [], "speech_ids": ["speech-00001"], "state": "observed", "reason": "Author explanation"},
+            {"field": "method.mapping", "value": "Possible local-coordinate mapping", "basis": "inference",
+             "frame_ids": [], "speech_ids": [], "state": "unknown", "reason": "Hypothesis from the source context"}]
+        later.write_text(json.dumps(data), encoding="utf-8")
+        self.catalog["modules"][0]["evidence"][-1]["notes"] = video.file_reference(later)
+        self.write_catalog()
+        protected = [self.path, self.notes_path, later, self.context_path]
+        before = [video.sha(p) for p in protected]
+        output = self.root / "methods-brief"
+        video.export_brief(Args(index=str(self.path), output=str(output)))
+        brief = video.read(output / "brief.json")
+        text = (output / "brief.md").read_text(encoding="utf-8")
+        queried = video.query_notes(Args(index=str(self.path), view="history"))["items"]
+        self.assertEqual([row["step"] for row in brief["observations"]], [row["step"] for row in queried])
+        for row in queried:
+            for fact in row["step"]["detail"]["facts"]:
+                for key in ("field", "value", "reason"):
+                    self.assertIn(json.dumps(fact[key], ensure_ascii=False), text)
+                self.assertIn("basis=" + fact["basis"], text)
+                self.assertIn("state=" + fact["state"], text)
+        self.assertIn("/img/a", text)
+        self.assertIn("Later trial", text)
+        self.assertIn("Hidden mapping may use local coordinates", text)
+        self.assertIn("Hidden mapping not shown", text)
+        self.assertIn("speech-00001", text)
+        self.assertIn(self.frames.joinpath("frame-0002.png").as_posix(), text)
+        final = video.query_notes(Args(index=str(self.path), view="final", field="method.mapping"))
+        self.assertEqual(final["field_claims"][0]["status"], "unknown")
+        self.assertIsNone(final["field_claims"][0]["value"])
+        self.assertEqual([video.sha(p) for p in protected], before)
+        self.assertEqual(brief["runtime_verification"], "not_performed")
+
+    def test_brief_legacy_observations_stay_unassigned_and_source_linked(self):
+        output = self.root / "legacy-methods-brief"
+        video.export_brief(Args(index=str(self.path), output=str(output)))
+        brief = video.read(output / "brief.json")
+        text = (output / "brief.md").read_text(encoding="utf-8")
+        step = brief["observations"][0]["step"]
+        self.assertNotIn("detail", step)
+        for visual in step["visual"]:
+            self.assertIn(visual["observed"], text)
+            self.assertIn(visual["frame_id"], text)
+        for speech_id in step["speech_ids"]:
+            self.assertIn(speech_id, text)
+        self.assertNotIn("Fact: field=", text)
+        self.assertIn(self.notes_path.as_posix(), text)
+        self.assertIn((Path(video.__file__).resolve().parents[1] / "references/reconstruction.md").as_posix(), text)
 
     def install_reference(self, stage="final_claim", role="overall", unknown_method=False):
         data = self.install_structured()

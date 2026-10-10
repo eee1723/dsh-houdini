@@ -35,8 +35,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ### 现役分层
 
-四个产品方向共用执行内核，不各建一套状态机、权限层或完成证书。
-程序化建模、HDA/工具、视频教学工程与Copernicus的差异由按需workflow和领域模块承载。
+程序化建模、HDA/工具和视频教学工程共用执行内核，不各建一套状态机、权限层或完成证书。
+各方向与保留的Copernicus按需能力由workflow和领域模块承载，产品范围见[主要开发方向](development-directions.md)。
 DSH负责会话、模型、通用Agent循环与通用交互；插件只增加Houdini能力与观察。
 执行内核校验真实调用条件，任务计划和建模方法由作者选择。任务记录使用DSH已有能力，不形成执行准入。
 
@@ -63,10 +63,14 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配；PTC原回执在公开日志middleware外层定型，避免展示spill截坏审计JSON，不改变模型展示或执行值 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
-| [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块并提供只读前端能力查询；执行端入口取决于Host实际挂载的共享服务，模型工具通过preset内dsh-houdini/agent加载 |
+| [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
 | [src/image-generation.ts](../src/image-generation.ts) | Host图片生成/编辑：复用DSH配置/凭据、上传参考图原字节；managed经Bridge只读观察所选HIP，原图与预览分别保存，不修改场景、不自动重试或替换模型 |
+| [src/api-route.ts](../src/api-route.ts) | 图片与转录共用的DSH显式API路由、endpoint和凭据解析；不猜测模型协议、不维护第二份账号注册表 |
+| [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，读取根配置后把单次凭据经环境传给普通Python子进程；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
+| [src/video-runtime.ts](../src/video-runtime.ts) | 当前任务所选Houdini健康信息中的Python与版本私有FFmpeg/ffprobe路径事实；无任务上下文时明确Host启动环境范围，不依赖全局PATH、不安装系统软件 |
+| [src/video-process.ts](../src/video-process.ts) | 随包离线媒体/证据CLI的Host入口，消费DSH文件策略与选定执行器运行时，直接返回原JSON/退出事实；无shell/凭据/云/HOM，不另建证据记录 |
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
@@ -135,6 +139,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_package_discovery.py](../houdini/python3.11libs/dsh_package_discovery.py) | 原生Package配置与当前加载的唯一观察/解析边界；顶层磁盘目录、多资源/模块路径关系、未知条件与敏感值处理，不执行源码或推断修改权 |
 | [dsh_tool_packages.py](../houdini/python3.11libs/dsh_tool_packages.py) | 原生JSON直接注册唯一源码目录、资源冲突自省和当前进程加载/启停；不复制源、不产归档、不改旧持久条件或删资源，保留部分失败和缓存事实 |
 | [dsh_hda_lifecycle.py](../houdini/python3.11libs/dsh_hda_lifecycle.py) | HDA解锁/保存/锁定/参数提升的版本预览、共享实例权限和状态回读；不拆包或认领后代 |
+| [dsh_hda_versions.py](../houdini/python3.11libs/dsh_hda_versions.py) | 原库追加原生类型版本、失败恢复和明确实例切换；保留旧定义，不迁移其他实例或认领foreign库/后代 |
 | [dsh_parameter_ui.py](../houdini/python3.11libs/dsh_parameter_ui.py) | 共享组件展开、布局预检/诊断、单节点spare追加及状态保留 |
 | [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
 | [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | Manual计算边界、单次批量依赖预检与规范不终止VEX模式识别；未知控制流不认证安全，不设隐藏上游节点数门，无跨调用缓存 |
@@ -170,7 +175,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_network_diagnostics.py](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生网络探针](../houdini/python3.11libs/dsh_network_probe.mjs) | worker内复用精确DSH的环境解析/代理/抓取；区分新进程测试与live、搜索组件与实际搜索；显式编辑DSH用户.env，不自动继承系统代理、不改全局环境 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
-| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
+| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、共享浮层材质/输入区背景兼容、页面剪贴板写入、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
 | [dsh_iterator_polyfill.js](../houdini/python3.11libs/dsh_iterator_polyfill.js) | 构建生成的core-js Iterator与Array.toSorted兼容实现，附MIT许可证；仅缺失/不兼容API补齐，不手改 |
 | [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py) | process-token→signed cookie、RPC wire与会话请求 |
 | [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步当前profile声明的项目依赖 |
@@ -208,18 +213,20 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 局部 `context` 汇集 hash 绑定的图像与转录，`check-notes` 校验 agent 填写的状态/操作记录，
 只提供引用和结构验证，不证明语义真实性，不执行其中内容，也不据此授权工程修改。
 同脚本的index-init/check-index维护来源绑定的章节/多时间段模块索引；read-transcript分页原文，
-read-index按模块或section分页读取原文和既有notes引用，固定跨页索引版本；容器与视频跨度分别校验。
+read-index按模块或section分页读取原文和既有notes引用，固定跨页索引版本并保留模块目的、输入输出和依赖；容器与视频跨度分别校验。
 检查依赖、证据失效和预算，不自动划分语义或认证工程完成。
 同脚本notes-init生成schema-2草稿或显式迁移旧notes，记录视频对象/网络/面板上下文、逐项事实引用、
 跨包修正和参考图；index-link追加到新索引版本。query-notes按模块/对象/上下文/时间/字段查询，
 保留冲突与历史；final视图只汇总作者声明，不自动选最新值。review-packet从已校验原帧生成局部观察入口，
-export-brief派生资料交接，不维护第二份事实源。回归仍在tools/tests/video-tutorial.test.py。
+export-brief从同源记录派生JSON与Markdown，保留对象/网络、方法事实和依据、观察/推断及缺口，不维护第二份事实源。
+作者方法优先、必要适配与可切回优化由[视频复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)维护，领域workflow引用该协议，不由工具建立准入或完成账本。回归仍在tools/tests/video-tutorial.test.py。
 索引查询的SHA与context校验在单次命令内去重，文件身份/大小/时间变化则拒绝；成功返回前每个依赖
 再做一次独立SHA核验，防止同大小且保留mtime的新内容绑定旧摘要。失败后释放作用域，下一次命令重新验证。
 该优化不提供跨命令新鲜度保证，也不把多文件读取当成文件系统原子快照。
 ASR按本次片段选择和请求/重试预算推进，失败/未知片默认延后，不阻断未提交片；重试另需明确授权。
+网络线程有界并发且单任务锁覆盖全部已派发请求的结果保存；派发速率与在途上限分开。失败停止新派发，已在途成功/失败回执分别保留。成功outcome维护原始提供方响应、usage和句词时间的唯一源，export/context/分页从该出处校验正文和真实时间偏移，不维护第二份转录状态或按字数生成时间戳。另存纠错依据与整理稿不改变原ASR。
 上传只使用逐片校验过的同一份bytes；现有日志缺原模型配置时不猜补，历史格式与原始尝试记录保留。
-依赖宿主 Python、FFmpeg、SiliconFlow 凭据及当前模型的原生图像输入能力；注册 skill 不会安装依赖。
+普通Python进程复用当前Houdini安装，FFmpeg/ffprobe由正式发行随版本提供；源码开发用私有依赖准备工具。注册skill和保存设置不会安装全局软件。DSH统一管理供应商与凭据，转录支持兼容音频接口及Qwen3-ASR-Flash的音频Chat接口；接口配置与真实转录支持分别判断。图像理解仍依赖当前模型的原生图像输入能力。
 原视频、切片、转录及画面依据保存在仓库外任务目录，不进入包或 Trace 来源目录。
 输入目前为本地视频，脚本不下载链接、不做语义识图，也不自动复现工程或更新生产知识。
 
@@ -250,9 +257,11 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [verb-operation-contracts.json](../houdini/verb-operation-contracts.json)、[gen-verb-contract-docs.mjs](../tools/gen-verb-contract-docs.mjs) | 按需动词输入/成功返回结构与示例的唯一源；dsh_execution.py的verb_help读取，生成[动词契约](verb-contracts.md)，不参与执行校验或常驻提示拼接 |
 | [normalized-trace-steps.mjs](../tools/normalized-trace-steps.mjs)、[trace-session-lib.mjs](../tools/trace-session-lib.mjs) | 多帧zstd/回放去重、调用结果时序归一；逐请求usage去重及字段算术、逐轮错误/目标变更/压缩事件提取；V3上下文经安装的DSH公开surface校验器折叠，非法或校验器不可用时报告未知，legacy独立兼容 |
 | [trace-report.mjs](../tools/trace-report.mjs) | 独立可读HTML目录与时间线 |
-| [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取；资源读取/能力预检作为Host调用单列，不计HOM动词采用率或裸执行 |
+| [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取；资源读取/能力预检作为Host调用单列，不计HOM动词采用率或裸执行；后台任务与结果保留范围复用executionHistory，不将提交回执完整误认为任务完成 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[clean-build.mjs](../tools/clean-build.mjs) | 回归发现与每次构建前清空纯生成lib，避免删除源码后残留旧输出 |
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
+| [prepare-video-runtime.py](../tools/prepare-video-runtime.py) | 源码开发的私有媒体工具准备；复用正式发行的锁定来源与SHA校验，不修改系统PATH或用户全局工具 |
+| [build-video-runtime.py](../tools/build-video-runtime.py) | 发行端从固定源码与工具链构建FFmpeg/zlib/FreeType/HarfBuzz/dav1d共享库，提供CPU AV1解码与PNG；保留七份对应源码、原始许可、实际Windows对象响应文件补丁、命令、DLL依赖与文件摘要，不进入普通用户安装步骤 |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；GUI验收CLI可隔离开发宿主的MSIX身份，保留自有进程树清理，不改变用户进程环境 |

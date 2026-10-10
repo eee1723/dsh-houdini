@@ -13,7 +13,7 @@ import hou
 
 
 # A created instance never grants authority to its shared definition/library.
-# These entries are recorded only by successful new-file authoring, not by paths,
+# These entries are recorded only by new-file authoring or versioning an owned library, not by paths,
 # userData, existing instances, package metadata or a one-call exemption.
 if globals().get('_DEFINITION_OWNER_PID') != os.getpid():
     _DEFINITION_OWNER_PID = os.getpid()
@@ -28,7 +28,7 @@ def _definition_key(definition):
             definition.nodeTypeCategory().name(), definition.nodeTypeName())
 
 
-def require_library_location(library):
+def require_library_location(library, *, new_asset=False):
     """Authoring never edits the vendor installation, including explicit exemptions."""
     target = os.path.normcase(os.path.realpath(library))
     factory = os.path.normcase(os.path.realpath(hou.text.expandString('$HFS')))
@@ -38,6 +38,18 @@ def require_library_location(library):
         inside = False
     if inside:
         raise ValueError('HDA authoring does not write inside $HFS; fork to a new independent library outside the Houdini installation')
+    if new_asset:
+        preferences = hou.text.expandString('$HOUDINI_USER_PREF_DIR')
+        for folder in ('otls', 'hda'):
+            unmanaged = os.path.normcase(os.path.realpath(os.path.join(preferences, folder)))
+            try:
+                inside = os.path.commonpath([target, unmanaged]) == unmanaged
+            except ValueError:
+                inside = False
+            if inside:
+                raise ValueError('New assets must use the project otls directory or an explicit package resource directory, '
+                                 'not the unmanaged user-preferences otls/hda directory. '
+                                 'Maintain an existing asset in its actual source library with hda_version.')
 
 
 def _definition_fingerprint(definition):
@@ -53,7 +65,7 @@ def _definition_fingerprint(definition):
 
 
 def register_created_definition(definition):
-    """Record a successfully created, previously absent standalone library."""
+    """Record a new definition in a newly created or already owned library."""
     import dsh_hou_helpers as h
     _OWNED_DEFINITIONS[_definition_key(definition)] = {
         'session': h._ACTIVE_OWNER_SESSION, 'call': h._ACTIVE_OWNER_CALL,
@@ -78,14 +90,31 @@ def require_definition_owned(definition, operation, allow_foreign=None):
     cause = 'library/definition changed outside its authoring calls' if entry else 'library was not created by this session'
     raise ValueError(f'definition ownership guard: {operation} refuses {key[1]}/{key[2]} in '
                      f'{definition.libraryFilePath()}: {cause}; an owned instance does not authorize its shared library. '
-                     'Fork to a new type/file, or use one-call allow_foreign for the explicitly authorized definition.')
+                     'Use one-call allow_foreign for the explicitly authorized source definition/library. '
+                     'Maintain versions in that library with hda_version; fork only when making an independent derived tool.')
 
 
 def _refresh_created_definition(definition):
     import dsh_hou_helpers as h
-    entry = _OWNED_DEFINITIONS.get(_definition_key(definition))
+    key = _definition_key(definition)
+    entry = _OWNED_DEFINITIONS.get(key)
     if entry and entry['session'] == h._ACTIVE_OWNER_SESSION:
-        entry['fingerprint'] = _definition_fingerprint(definition)
+        previous_hash = entry['fingerprint']['library_sha256']
+        updates = [(entry, _definition_fingerprint(definition))]
+        # Appending/editing one owned version changes the shared file hash.
+        # Preserve authority for unchanged owned siblings, never renew an
+        # externally changed section or an already-stale library fingerprint.
+        for sibling in hou.hda.definitionsInFile(definition.libraryFilePath()):
+            sibling_key = _definition_key(sibling)
+            other = _OWNED_DEFINITIONS.get(sibling_key)
+            if (sibling_key == key or not other or other['session'] != h._ACTIVE_OWNER_SESSION
+                    or other['fingerprint']['library_sha256'] != previous_hash):
+                continue
+            fingerprint = _definition_fingerprint(sibling)
+            if fingerprint['sections'] == other['fingerprint']['sections']:
+                updates.append((other, fingerprint))
+        for record, fingerprint in updates:
+            record['fingerprint'] = fingerprint
 
 
 def interface_revision(node):

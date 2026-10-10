@@ -3232,6 +3232,88 @@
         "Normal returns include restored=true even when a declared measurement fails. Restoration failure raises CheckpointError with evidence; do not continue editing.",
         "Restoration covers snapshotted parameters, expressions/keys, frame and full layer fingerprint. External files, arbitrary Python/solver effects and unobserved dynamic dependencies are not transactional."
       ]
+    },
+    "hda_version": {
+      "summary": "在来源库内追加原生类型版本，保留原类型和其他定义；不会切换实例。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "allow_foreign": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "version"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "原库原生版本维护",
+          "code": "__result__=hda_version('/obj/my_tool','1.1',allow_foreign='用户明确要求升级此原工具')",
+          "read_result": "回读精确类型、来源库、applied和实际受影响实例；再验证新版公开入口。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "HDADefinition.version元数据与::version类型版本不同；不以setVersion冒充原生版本并存。",
+        "已有package资产维护始终沿用实际来源库。独立衍生才用hda_fork；新工具选择工程otls或package资源目录。"
+      ]
+    },
+    "hda_switch_version": {
+      "summary": "将明确实例切换到同家族精确版本，保留公共参数并加载目标内部网络。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "type_name": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "allow_foreign": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "type_name"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "原库原生版本维护",
+          "code": "__result__=hda_switch_version('/obj/my_tool','artist_tools::my_tool::1.1',allow_foreign='用户明确要求切换此实例')",
+          "read_result": "回读精确类型、来源库、applied和实际受影响实例；再验证新版公开入口。",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "HDADefinition.version元数据与::version类型版本不同；不以setVersion冒充原生版本并存。",
+        "已有package资产维护始终沿用实际来源库。独立衍生才用hda_fork；新工具选择工程otls或package资源目录。"
+      ]
     }
   }
 }

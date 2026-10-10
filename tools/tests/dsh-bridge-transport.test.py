@@ -84,6 +84,25 @@ try:
     good={'Content-Type':'application/json','X-DSH-Houdini-Executor':identity}
     status,prepared=post('/requests/prepare',{'owner_session':'bound-client'},good)
     assert status==200 and prepared['executorId']==identity,(status,prepared)
+    expected_runtime = {
+        'hfs': b.hou.getenv('HFS') or '',
+        'python': str(Path(sys.exec_prefix) / ('python.exe' if sys.platform == 'win32' else 'bin/python3')),
+        'pythonVersion': '.'.join(str(value) for value in sys.version_info[:3]),
+        'executable': sys.executable,
+    }
+    assert prepared['runtime'] == expected_runtime, (prepared['runtime'], expected_runtime)
+    assert Path(prepared['runtime']['python']).is_file(), prepared['runtime']
+    # Every HTTP handler reads the same owning-thread cache, even with HOM
+    # unavailable on handler threads. Health must never queue a scene query.
+    with patch.object(b.hou, 'getenv', side_effect=AssertionError('HTTP health called HOM')), \
+         patch.object(b.hou, 'applicationVersionString', side_effect=AssertionError('HTTP health called HOM')):
+        connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+        connection.request('GET','/health',headers={'X-DSH-Houdini-Executor':identity})
+        response=connection.getresponse()
+        health=json.loads(response.read());connection.close()
+        assert response.status == 200 and health['runtime'] == expected_runtime, health
+        assert post('/requests/prepare', {'owner_session':'cached-runtime'}, good)[1]['runtime'] == expected_runtime
+    assert b._work_queue.empty(), 'runtime health metadata must not enqueue HOM work'
     # The Qt callback yields after a slow item, rather than draining an entire
     # scene backlog in one tick. The next tick resumes FIFO, including failures.
     order = []

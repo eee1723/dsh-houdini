@@ -84,12 +84,21 @@ function assertOwnership(owner: OwnershipScope, action: string): void {
   }
 }
 
-interface BridgeHealth {
+/** Immutable installation/interpreter facts cached on Houdini's owning thread. */
+export interface HoudiniRuntimeFacts {
+  hfs: string
+  python: string
+  pythonVersion: string
+  executable: string
+}
+
+export interface BridgeHealth {
   ok: boolean
   executorId?: string
   runtimeId?: string
   requestRef?: string
   houVersion?: string
+  runtime?: HoudiniRuntimeFacts
   rawGate?: boolean
   executionContractVersion?: number
   verbCatalog?: {
@@ -304,8 +313,8 @@ export class HoudiniBridge {
   }
 
   /** Poll a bridge-side background job. Pass `wait` (seconds) to long-poll:
-   *  the bridge holds the request until the job reaches a terminal state or
-   *  the wait elapses, so callers get the outcome in one round trip.
+   *  the call waits for a terminal state or the requested duration. Read-only
+   *  status queries are split below Node fetch's 300s response-header timeout.
    *  Job control is authorized by the owning session, so the request carries
    *  the current identity and expected contract; a non-HOM health check runs
    *  first so an old Bridge that ignores owner fields is rejected before any
@@ -318,11 +327,20 @@ export class HoudiniBridge {
       owner_call: owner.callId,
       expected_contract: this.expectedContract(),
     }
-    if (wait && wait > 0) body.wait = wait
-    // Long polls must outlive the wait itself — extend the per-request
-    // timeout past it (bridge caps the wait at 600s).
-    const extraMs = wait && wait > 0 ? Math.min(wait, 600) * 1000 + 10000 : 0
-    return this.post(`/jobs/${encodeURIComponent(jobId)}/status`, body, signal, extraMs)
+    const route = `/jobs/${encodeURIComponent(jobId)}/status`
+    if (!wait || wait <= 0) return this.post(route, body, signal)
+    const deadline = performance.now() + Math.min(wait, 600) * 1000
+    while (true) {
+      signal?.throwIfAborted()
+      // Extending AbortSignal alone does not extend Undici's default 300s
+      // headersTimeout. Keep each status wait below it without changing the
+      // process-wide dispatcher or retrying uncertain requests/submissions.
+      const remaining = Math.max(0, (deadline - performance.now()) / 1000)
+      const pollSeconds = Math.min(remaining, 240)
+      const status = await this.post<JobStatus>(route, {...body, wait:pollSeconds},
+        signal, pollSeconds * 1000 + 10000)
+      if (!['queued','running'].includes(status.status) || performance.now() >= deadline) return status
+    }
   }
 
   /** Cooperatively cancel a queued or running bridge-side job. */
@@ -384,7 +402,9 @@ export class HoudiniBridge {
   }
 
   private withTimeout(signal: AbortSignal | undefined, extraMs = 0, honorLifetime = true): AbortSignal {
-    const timeout = AbortSignal.timeout(this.timeoutMs + extraMs)
+    // Monotonic-clock poll budgets can contain fractional milliseconds. The
+    // native timer requires an integer; round up so transport keeps its margin.
+    const timeout = AbortSignal.timeout(Math.ceil(this.timeoutMs + extraMs))
     return AbortSignal.any([timeout,...(signal?[signal]:[]),...(honorLifetime&&this.lifetime?[this.lifetime]:[])])
   }
 

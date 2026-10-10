@@ -44,7 +44,7 @@ bridge._pump_active = True
 script = """
 const { HoudiniBridge } = await import(process.argv[1]);
 const bridge = new HoudiniBridge(process.argv[2], 15000);
-const result = await bridge.exec("__result__ = hou.node('/obj').path()", undefined, undefined, {sessionId:'deployment-smoke',callId:'readonly'}, true);
+const result = await bridge.exec("__result__ = hou.node('/obj').path()", {sessionId:'deployment-smoke',callId:'readonly'}, undefined, undefined, true);
 if (!result.ok || result.result !== '/obj') throw new Error(JSON.stringify(result));
 console.log('Managed Node/Bridge contract handshake and main-thread readonly HTTP exec passed');
 """

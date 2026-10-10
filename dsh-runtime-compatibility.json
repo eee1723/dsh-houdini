@@ -21,7 +21,6 @@
         "Houdini 22.0.368 / Qt 6.8.3 / Chromium 122: isolated source GUI"
       ],
       "pendingVerification": [
-        "H21/H22 GUI model send/cancel/reconnect with a controlled provider",
         "signed release combination acceptance"
       ]
     }

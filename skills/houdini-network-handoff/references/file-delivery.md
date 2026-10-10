@@ -2,7 +2,7 @@
 
 节点导航归本skill，文件使用DSH `present`。先核对实际文件与必要依赖，再发布权威路径；Session workspace可能不同于$HIP。HDA、HIP、贴图、缓存或脚本各自说明使用和加载条件，不把其中一个存在当成整项完成。
 
-工程目录按用途统一，实际位置读取`scene_info()['project_layout']['directories']`：网络参考使用`reference_downloaded`，生成辅助参考使用`reference_generated`，材质依赖使用`texture`，成图使用`render`，过程检查使用`visual_check`。目录角色与生命周期合同见[工程文件](../../../docs/project-files.md)，不要另建资料清单来替代原始来源或DSH回执。自动输出返回实际路径后再交付；不因另存为而移动历史图片或重写旧卡片。
+工程目录按用途统一，实际位置读取`scene_info()['project_layout']['directories']`：网络参考使用`reference_downloaded`，生成辅助参考使用`reference_generated`，材质依赖使用`texture`，几何/模拟/通道缓存使用`cache`，教程与任务分析使用`analysis`，成图使用`render`，过程检查使用`visual_check`。目录角色与生命周期合同见[工程文件](../../../docs/project-files.md)，不要另建资料清单来替代原始来源或DSH回执。自动输出返回实际路径后再交付；不因另存为而移动历史图片或重写旧卡片。
 
 需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 

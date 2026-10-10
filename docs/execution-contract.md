@@ -129,6 +129,8 @@ test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后
 
 HDA section 的写后回读/hash 只证明文本写入。PythonModule 语法检查不执行回调；真实按钮、内部函数、计算后的公共输出和新实例依赖分别观察。输入/输出上限不是接线证明；实例 spare 与定义界面分开管理。
 
+HDA维护沿用实际来源库。hda_version在同库追加原生`::version`类型，保持scope/namespace/base与旧定义，失败恢复本调用的库/新增类型，不自动迁移实例或认领foreign库；Version元数据不代表类型版本。hda_switch_version只切换明确已锁定实例，原生保留共同参数通道和连线、加载新版内部内容，不认领新版后代。未保存内部内容先由hda_edit处理。新建/独立衍生资产不得写入用户偏好otls/hda，选择工程目录或明确Package资源目录；既有资产的原位维护不因此被重定向。跨进程Package加载、任意回调外部效果和GUI菜单须分别验证，见[HDA维护](../skills/houdini-tool-development/references/hda-maintenance.md)。
+
 section、界面与save/promote复用共享定义写入保护：实际新库/定义的session登记及指纹、全部受影响实例同时检查。自建已有类型实例不授权原共享库；外部改写后的旧登记不继续有效。单次明确allow_foreign不永久认领定义；所有作者写入拒绝$HFS。unlock不授予后代ownership。写后失败恢复本调用定义section、实际变化的实例界面/通道和磁盘库，范围由回执说明；后续exec失败不撤销已经成功的库写入。普通spare追加、定义重建及持续绑定分别使用对应动词，方法见[控制参数与绑定](parameter-controls.md)。
 
 原生工具Package默认JSON直接指向用户确认的唯一资源源目录，不复制或归档；开发前区分工具修改意图与已有包扩展/新包及两个存放位置。创建注册只写全新JSON；旧配置由明确目标的通用文件编辑最小维护，原有条件/依赖/未知字段保留。当前进程load/activate/deactivate/unload不编辑持久enable、不删除配置/源或强清模块缓存。配置文件与实际原生Package/定义分别回读，停用/卸载不能从磁盘文件存在与否推断场景依赖；部分失败保留真实文件、回读错误与加载状态，不承诺撤销任意回调效果。

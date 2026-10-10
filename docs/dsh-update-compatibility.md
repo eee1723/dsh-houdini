@@ -31,6 +31,10 @@ DSH负责模型调用、会话与持久化、Agent循环、任务/计划、通�
 
 Houdini WebView采用H21/H22实际QtWebEngine。源码GUI资格由[真实Qt验收](../tools/tests/dsh-source-webview.test.py)读取实际浏览器版本、界面交互和文件资源，不以Chrome或普通Qt窗口替代。测试启动器按[开发规范](development.md)排除开发宿主的MSIX身份继承。修复Host与Bridge、重开客户端以及正式安装组合的验证各自说明；编译通过不代表已有进程加载。已知浏览器接口补齐由[webview](../houdini/python3.11libs/dsh_webview.py)与[polyfill生成器](../tools/gen-web-polyfills.mjs)管理，不修改上游缓存。
 
+内嵌视图关闭背景模糊时，同步将DSH共用菜单材质、浮层和分组标题底色改为随主题切换的不透明色，涵盖使用伪元素的目标栏；不改变遮罩、禁用态或悬停效果的透明度。H21的Chromium 108不支持`color-mix()`，活动对话输入区的渐变使用等价透明起点，避免整条背景失效。样式消费主题token与稳定DOM属性，不依赖构建生成的类名。
+
+页面显式开启Qt的`JavascriptCanAccessClipboard`，让DSH共用复制入口写入系统剪贴板；`JavascriptCanPaste`保持默认关闭，不自动授予读取权限。回归使用实际用户/助手消息与Markdown代码块复制按钮的Qt鼠标事件，核对系统剪贴板内容并恢复原MIME数据；按钮出现或点击回调执行不代表复制成功。
+
 ## 正式发行单元与发布门
 
 正式发行交付一个精确组合：插件源码提交、Node、DSH、完整依赖、平台/Houdini支持范围以及文件摘要。受管安装使用签名release.json和离线包，详见[安装](setup.md#正式发行与受管安装合同)。

@@ -73,8 +73,23 @@ export function jobHandleMeta(value: JobHandle): PresentationMeta {
 }
 
 export function resultTitle(label: string, result: ToolResult): string {
-  if (result.isError) return `${label} · 失败`
   const meta = object(result.meta)
+  const receipt = object(object(meta?.canonical)?.requestReceipt)
+  // A successful receipt lookup is not successful HOM execution. Use the
+  // original receipt before the Host delivery flag, including lost transport.
+  if (receipt && typeof receipt.status === 'string' && receipt.status !== 'done') {
+    const state = receipt.jobId && receipt.job_finished === true
+      ? receipt.job_result_available === false ? '后台任务已结束 · 结果不可用'
+        : receipt.job_result_available === true ? '后台任务已结束 · 待收集结果' : undefined
+      : receipt.jobId ? ({queued:'后台任务排队中',running:'后台任务执行中'} as Record<string,string>)[String(receipt.job_status)] : undefined
+    const states: Record<string,string> = {
+      queued:'请求已排队',running:'请求执行中',job_submitted:'后台任务已提交',not_executed:'未执行',
+      unknown_transport:'结果未知 · 需要查回',unknown_runtime:'运行环境已变化 · 结果未知',unknown:'请求结果未知',
+      result_expired:'已结束 · 结果已过期',result_unavailable:'已结束 · 结果不可用',index:'已读取请求索引',
+    }
+    return `${label} · ${state ?? states[receipt.status] ?? '请求状态已返回'}`
+  }
+  if (result.isError) return `${label} · 失败`
   const outcome = object(meta?.outcome)
   if (meta?.ok === true && Number(object(outcome?.operations)?.failed) > 0)
     return `${label} · 批次完成，部分操作失败`
