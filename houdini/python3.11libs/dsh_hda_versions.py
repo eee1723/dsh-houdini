@@ -125,7 +125,12 @@ def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
     if dry_run or n.type() == target_type:
         return dict(result, scene_writes=0)
     source_id = int(n.sessionId())
+    descendant_ids = {int(child.sessionId()) for child in descendants}
     owner = h._OWNED_NODE_SESSIONS.get(source_id)
+    owned = owner is not None and owner['session'] == h._ACTIVE_OWNER_SESSION
+    # Existing identities anywhere in the scene must not become ours if an
+    # asset callback moves them underneath the switched instance.
+    existing_ids = {int(item.sessionId()) for item in hou.node('/').allSubChildren()} if owned else set()
     # Native keep_parms preserves matching channels; old internal contents must
     # not overwrite the new version. No descendant is adopted by path or type.
     changed = n.changeNodeType(type_name, keep_name=True, keep_parms=True, keep_network_contents=False)
@@ -137,5 +142,13 @@ def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
             h._CREATION_JOURNAL.add(int(changed.sessionId()))
         if hou.nodeBySessionId(source_id) is None:
             h._OWNED_NODE_SESSIONS.pop(source_id, None)
+    if owned:
+        # Materialize this call's new definition now, before an unrelated cook
+        # can introduce descendants. Keep the root's transferred provenance;
+        # only genuinely new internal identities receive this call's owner.
+        h._register_owned_node(changed, exclude_ids=existing_ids | {int(changed.sessionId())})
+        for identity in descendant_ids:
+            if hou.nodeBySessionId(identity) is None:
+                h._OWNED_NODE_SESSIONS.pop(identity, None)
     return dict(result, applied=True, node=changed.path(), identity=int(changed.sessionId()),
                 matches_definition=changed.matchesCurrentDefinition())

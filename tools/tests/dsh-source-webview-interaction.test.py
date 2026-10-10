@@ -51,7 +51,7 @@ PAGE = r"""
     const prompts={BUILD:'创建可调的立柱阵列，提供数量、高度、柱宽和间距控制，封装成 HDA 并保存工程。',
       STOP:'开始一段长回复，稍后我会点击停止。',UNKNOWN:'将示例立柱高度改为 1.4 并保存；回执未知时查回原请求。',
       RECONNECT:'继续讲解这个示例，在回复过程中我会重连页面。',AFTER:'读取当前示例控制和实际输出，确认重连后仍是同一工程。',
-      IMAGE:'生成这个示例输出的检查图片，保留真实工具图片回执。'};
+      DELIVER:'通过嵌套工具重新交付本任务节点入口。',NAVCHECK:'检查刚才卡片定位后的实际网络与参数页。',IMAGE:'生成这个示例输出的检查图片，保留真实工具图片回执。'};
     const value=prompts[stage]+'\nGUI_CASE_'+stage,rect=editor.getBoundingClientRect(),id='input-'+stage+'-'+Date.now();
     state.input={id,text:value,x:rect.x+Math.min(100,rect.width/2),y:rect.y+Math.min(20,rect.height/2)};
     await wait(()=>window.__dshQtInput===id&&document.querySelector('[data-composer-input]')?.innerText.trim()===value,'actual native input');
@@ -75,6 +75,20 @@ PAGE = r"""
       const builtSnapshot=await command('snapshot');
       const buildResult=builtSnapshot.events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='qt-build')?.data?.meta?.canonical;
       check(buildResult?.ok===true,buildResult?.error||'real authored build did not succeed');
+      check(buildResult.result?.entries?.kind==='houdini/node-delivery-v1','fixture must wrap delivery inside business result');
+      const nativeCard=await wait(()=>[...document.querySelectorAll('.dsh-houdini-node-card')].find(element=>visible(element)&&element.textContent.includes('阵列控制')),'native delivery card');
+      nativeCard.querySelector('.dsh-houdini-node-open').click();
+      await wait(()=>nativeCard.querySelector('[data-phase="opened"]'),'native node card click');
+      await send('DELIVER');await settled('DELIVER');
+      const nestedCard=await wait(()=>[...document.querySelectorAll('.dsh-houdini-node-card')].find(element=>visible(element)&&element.textContent.includes('继续调整阵列')),'PTC delivery card');
+      nestedCard.querySelector('.dsh-houdini-node-open').click();
+      await wait(()=>nestedCard.querySelector('[data-phase="opened"]'),'PTC node card click');
+      await send('NAVCHECK');await settled('NAVCHECK');
+      const navSnapshot=await command('snapshot');
+      const nav=navSnapshot.events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='qt-navcheck')?.data?.meta?.canonical;
+      check(nav?.ok===true&&nav.result?.network.includes('/obj/artist_guide/post_array_example')&&nav.result?.parameter.includes('/obj/artist_guide/post_array_example'),'actual network/parameter target');
+      check(navSnapshot.events.some(event=>event.type==='tool/ptc-dispatch'&&event.data?.name==='houdini_exec'),'real nested tool dispatch missing');
+      state.facts.nodeDelivery={native:true,nested:true,wrappedReturn:true,actualNavigation:nav.result};
       state.facts.build=true;await screenshot('qt-built-example');
       state.nativeCapture='houdini-post-array';await wait(()=>window.__dshNativeCapture===state.nativeCapture,'actual Houdini example screenshot');
       await send('IMAGE');await settled('IMAGE');
@@ -88,14 +102,11 @@ PAGE = r"""
       const turnProcess=document.querySelector('[data-turn-process="'+imageEvent.data.turn+'"][aria-expanded="false"]');
       if(turnProcess)turnProcess.click();await sleep(100);
       for(const process of document.querySelectorAll('[data-process-activity][aria-expanded="false"]'))if(visible(process))process.click();
-      const imageTool=await wait(()=>[...document.querySelectorAll('[data-tool="houdini_exec"]')].find(element=>visible(element)&&element.textContent.includes('artist-guide-check.png')),'original visible tool image card');
-      state.facts.imageConsumerSurface='standard DSH conversation tool result';
-      const expand=imageTool.querySelector('[data-disclosure-row][aria-expanded="false"]');if(expand)expand.click();
-      await wait(()=>imageTool.querySelector('[data-disclosure-row]')?.getAttribute('aria-expanded')==='true','native tool result expanded');
-      imageTool.scrollIntoView({block:'center'});
-      const shown=await wait(()=>[...imageTool.querySelectorAll('img')].find(image=>visible(image)&&image.complete&&image.naturalWidth===480&&image.naturalHeight===320),'native tool result image decode');
-      state.facts.inlineImage={width:shown.naturalWidth,height:shown.naturalHeight,sourceScheme:new URL(shown.src,location.href).protocol,alt:shown.alt};
-      await screenshot('qt-native-tool-image');
+      const imageTool=await wait(()=>[...document.querySelectorAll('[data-tool="houdini_exec"]')].filter(element=>visible(element)).at(-1),'original visible tool image card');
+      check(!imageTool.hasAttribute('data-houdini-tool-result'),'custom Houdini renderer remains installed');
+      state.facts.imageConsumerSurface='DSH native generic tool row; model attachment retained, no custom inline gallery';
+      state.facts.nativeToolPresentation=true;
+      await screenshot('qt-native-tool-row');
       [...document.querySelectorAll('[role=tab]')].find(element=>element.textContent.trim()==='对话').click();
       await send('STOP');await wait(()=>button('停止生成'),'native stop');button('停止生成').click();
       await wait(()=>!button('停止生成'),'stop settled');check(!document.body.innerText.includes('GUI_STOP_DONE'),'stop allowed scripted completion');
@@ -176,8 +187,9 @@ example=tab_create(g,'artistguide::post_array::1.0',name='post_array_example',pa
 sop_set_output(example)
 layout_nodes(g)
 verify_network(g,output=example)
-__result__=present_nodes([{{'node':example.path(),'label':'阵列控制','role':'control','description':'调整数量、高度、柱宽和间距'}}])
+entries=present_nodes([{{'node':example.path(),'label':'阵列控制','role':'control','description':'调整数量、高度、柱宽和间距'}}])
 scene_save(expected_path={hip!r})
+__result__={{'entries':entries,'checked':True}}
 """
 
 
@@ -306,6 +318,8 @@ def main():
             'toolCatalogUrl':(ROOT/'lib/tool-catalog.js').as_uri(),'composition':str(run/'composition.json'),
             'command':str(run/'command.json'),'response':str(run/'response.json'),'history':str(run/'session-history.json'),
             'output':str(run/'result.json'),'timeout':args.timeout,'fixtureHipChanges':True,'buildCode':build_code(workspace),
+            'deliveryCode':"entries=present_nodes([{'node':'/obj/artist_guide/post_array_example','label':'继续调整阵列','role':'control'}])\n__result__={'entries':entries,'other':'wrapped PTC return'}",
+            'navigationCode':"__result__={'network':[p.currentNode().path() for p in hou.ui.paneTabs() if p.type()==hou.paneTabType.NetworkEditor and p.currentNode()], 'parameter':[p.currentNode().path() for p in hou.ui.paneTabs() if p.type()==hou.paneTabType.Parm and p.currentNode()]}",
             'imageCode':f"__result__=render_view('/obj/artist_guide/post_array_example',width=480,height=320,picture='artist-guide-check.png')\nscene_save(expected_path={hip!r})",
             'unknownCode':f"__gui_unknown_transport__=True\nset_parms('/obj/artist_guide/post_array_example',{{'height':1.4}})\nscene_save(expected_path={hip!r})\n__result__={{'height':hou.node('/obj/artist_guide/post_array_example').parm('height').eval()}}",
             'inspectCode':"n=hou.node('/obj/artist_guide/post_array_example')\n__result__={'height':n.parm('height').eval(),'count':n.parm('count').eval(),'primitives':n.geometry().intrinsicValue('primitivecount')}"}

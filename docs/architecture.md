@@ -65,6 +65,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
+| [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
 | [src/image-generation.ts](../src/image-generation.ts) | Host图片生成/编辑：复用DSH配置/凭据、上传参考图原字节；managed经Bridge只读观察所选HIP，原图与预览分别保存，不修改场景、不自动重试或替换模型 |
 | [src/api-route.ts](../src/api-route.ts) | 图片与转录共用的DSH显式API路由、endpoint和凭据解析；不猜测模型协议、不维护第二份账号注册表 |

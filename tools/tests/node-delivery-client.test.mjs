@@ -10,7 +10,7 @@ import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {installHoudiniExecutionLog} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
-import {generatedNodeDeliveryBlock} from '../gen-trace-client.mjs'
+import {generatedNodeDeliveryBlock,generatedNodeDeliveryFactory} from '../gen-trace-client.mjs'
 
 const read = file => fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8').replaceAll('\r\n','\n')
 const client = read('client.js')
@@ -19,7 +19,7 @@ assert(client.includes('conversation.events.register(delivery.definition)'))
 assert(client.includes('conversation.views.register(delivery.view)'))
 assert(client.includes('name: "conversation.chat.turnTail", id: "houdini-node-delivery"'))
 const parser = client.slice(client.indexOf('    function readHoudiniCanonical('),client.indexOf('    // This is a last-observed fact'))
-const factory = vm.runInNewContext('('+read('client/node-delivery.js')+')',{AbortController,setTimeout,clearTimeout})
+const factory = vm.runInNewContext('('+generatedNodeDeliveryFactory()+')',{AbortController,setTimeout,clearTimeout})
 const readCanonical = vm.runInNewContext(parser+'\nreadHoudiniCanonical;')
 const projection = factory({},readCanonical)
 
@@ -48,6 +48,9 @@ const receipt={ok:true,stdout:'',stderr:'',result:{kind:'houdini/node-delivery-v
   {id:uuid,path:'/obj/bicycle/CTRL',label:'工程控制',role:'control',type:'null',context:'Sop',description:'调整尺寸和重复数量'},
   {id:'d'.repeat(32),path:'/obj/bicycle/OUT',label:'模型输出',role:'output',type:'null'}
 ]},execution:{executor_id:executorId,runtime_id:'b'.repeat(32),hip_path:'E:/fixture/bicycle.hip',owner_session:session.id}}
+receipt.verbs=[{verb:'present_nodes',ok:true,result:receipt.result}]
+// Wrapping or omitting the model return must not suppress the original declaration.
+receipt.result={entries:receipt.result,other:'unrelated result'}
 let executed=0
 registerHoudiniTools(ctx,{targetExecutorId:executorId,async exec(){executed++;return structuredClone(receipt)}})
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
@@ -67,7 +70,7 @@ async function run(callId,name,args) {
 }
 await run('native','houdini_exec',{code:'delivery'})
 const nativeEvent=session.snapshotEvents().find(event=>event.type==='tool/result')
-receipt.result.nodes[0].path='/obj/bicycle/CTRL_RENAMED'
+receipt.verbs[0].result.nodes[0].path='/obj/bicycle/CTRL_RENAMED'
 await run('program','run_code',{code:'return await tools.houdini_exec({code:"delivery"})',description:'Deliver Houdini nodes'})
 assert.equal(executed,2,'projection must not repeat scene operations')
 const nestedEvent=session.snapshotEvents().find(event=>event.type==='tool/ptc-dispatch')
@@ -99,6 +102,7 @@ const empty=projection.definition.start({},start)
 function rejected(event) {
   assert.equal(projection.definition.update({state:empty},{event}),empty)
 }
+rejected(fake('tool/result',{message:{source:{callId:'invalid'}},meta:{canonical:{...receipt,verbs:[],result:receipt.verbs[0].result}}}))
 rejected(fake('tool/result',{message:{source:{callId:'invalid'},isError:true},meta:{canonical:receipt}}))
 rejected(fake('tool/result',{message:{source:{callId:'invalid'},isError:false},meta:{canonical:{...receipt,ok:false}}}))
 rejected(fake('tool/result',{message:{source:{callId:'invalid'},isError:false},meta:{canonical:{...receipt,outcome:{operations:{failed:1}}}}}))
@@ -115,9 +119,13 @@ assert.equal(projection.definition.match(fake('tool/result',{message:{source:{ca
 
 // Invalid array members retain their original index; the Host resolves that
 // exact event coordinate rather than trusting any browser-supplied node path.
-const indexed={...receipt,result:{kind:receipt.result.kind,nodes:[{id:'bad'},receipt.result.nodes[1]]}}
+const indexed={...receipt,verbs:[{verb:'present_nodes',ok:true,result:{kind:'houdini/node-delivery-v1',nodes:[{id:'bad'},receipt.verbs[0].result.nodes[1]]}}]}
 const indexState=projection.definition.update({state:empty},{event:fake('tool/result',{message:{source:{callId:'invalid'}},meta:{canonical:indexed}})})
 assert.equal(indexState.nodes[0].index,1)
+const declarations={...receipt,result:null,verbs:[receipt.verbs[0],{verb:'present_nodes',ok:true,result:{kind:'houdini/node-delivery-v1',nodes:[receipt.verbs[0].result.nodes[0]]}}]}
+const multiple=projection.definition.update({state:empty},{event:fake('tool/result',{message:{source:{callId:'invalid'}},meta:{canonical:declarations}})})
+assert.equal(multiple.nodes.length,3,'each explicit declaration is retained even without a Python return')
+assert.equal(multiple.nodes[2].index,2,'Host and client share flattened verb-declaration coordinates')
 const liveAssembler=assemble(events.slice(0,2))
 for(const event of events.slice(2)){liveAssembler.append({type:'event',event});liveAssembler.flush()}
 assert.equal(JSON.stringify(projection.forClosing(liveAssembler.snapshot(projection.view.target),owner)),JSON.stringify(cards),'live append and reopened history have the same facts')

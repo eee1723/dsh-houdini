@@ -126,7 +126,7 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
                   discarded_descendants=plan['descendants'] if action=='lock' and not matches else [],
                   promoted_templates=sorted(h._all_template_names(n.parmTemplateGroup().entries())
                       - h._all_template_names(definition.parmTemplateGroup().entries())) if action=='promote' else [],
-                  scope='definition lifecycle only; no output/callback/GUI validation or descendant ownership grant')
+                  scope='definition lifecycle only; only fresh identities rebuilt for current-session owned instances are registered; no output/callback/GUI validation')
     if dry_run:
         return {**result,'scene_writes':0}
     if expected_plan != revision:
@@ -136,16 +136,17 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
         if n.isLockedHDA():
             raise RuntimeError('unlock readback failed')
     elif action=='lock':
-        n.matchCurrentDefinition()
+        with h._track_owned_definition_rebuilds([n]):
+            n.matchCurrentDefinition()
         if not n.isLockedHDA() or not n.matchesCurrentDefinition():
             raise RuntimeError('lock readback failed')
     elif action=='save':
-        with definition_write_guard(n,'hda_edit save',allow_foreign):
+        with h._track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit save',allow_foreign):
             definition.updateFromNode(n)
             if n.type().definition()!=definition or not os.path.isfile(library):
                 raise RuntimeError('saved definition identity/library readback failed')
     else:
-        with definition_write_guard(n,'hda_edit promote',allow_foreign):
+        with h._track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit promote',allow_foreign):
             states=_snapshot(affected)
             group=n.parmTemplateGroup()
             if n.type().category()==hou.sopNodeTypeCategory():

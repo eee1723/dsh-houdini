@@ -106,7 +106,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 内嵌页面使用[真实源码Qt验收](../tools/tests/dsh-source-webview.test.py)在新Houdini GUI中检查认证、实际工作区选择、模型菜单、Trace与原生交互、草稿和文件预览，并核对深浅主题浮层/目标栏的实际背景、H21输入区渐变与原生点击后的系统剪贴板内容（检查结束恢复原MIME数据）。此入口不调用模型、不连接用户Bridge、不加载或保存HIP，并确认自有GUI与Qt后代退出。普通Chrome检查不能替代Qt结果。
 
-[真实Qt工具循环](../tools/tests/dsh-source-webview-interaction.test.py)复用同一驱动，以本地[受控流式提供方](../tools/tests/dsh-source-webview-provider.mjs)核对原生输入、实际工具回执、停止、丢响应后的原请求查回和页面重载后同一任务继续。图像检查核对真实render_view原图、DSH附件、HTTP请求中的像素身份和普通工具卡的实际解码显示；受控回复不证明模型语义识图。示例HIP及声明HDA依赖在独立项目重开后检查控制、实例保持与保存，不连接用户live或调用收费模型。
+[真实Qt工具循环](../tools/tests/dsh-source-webview-interaction.test.py)复用同一驱动，以本地[受控流式提供方](../tools/tests/dsh-source-webview-provider.mjs)核对原生输入、实际工具回执、停止、丢响应后的原请求查回和页面重载后同一任务继续。图像检查核对真实render_view原图、DSH附件、HTTP请求中的像素身份；对话工具行由DSH原生展示，普通Houdini调用不另加内嵌图库，图片查看使用DSH原生read_image或文件展示；受控回复不证明模型语义识图。示例HIP及声明HDA依赖在独立项目重开后检查控制、实例保持与保存，不连接用户live或调用收费模型。
 
 从MSIX打包的开发宿主运行GUI验收时，测试CLI先调用`reexec_unpacked_test_cli()`。继承宿主包身份会使Windows使用打包程序DLL搜索规则，即使PATH含HFS/bin也可能找不到Qt helper依赖。此入口使用Windows桌面应用启动属性，并在继续前核对新进程没有包身份；保留标准输入输出、退出码及自有进程树清理，不修改用户安装、机器环境、令牌或Chromium沙箱。普通桌面CLI原地继续。实现与回归分别在[测试环境](../tools/houdini_test_environment.py)与[隔离回归](../tools/tests/dsh-test-environment.test.py)。依据为[Windows DLL搜索规则](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)和[桌面应用进程属性](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)。
 

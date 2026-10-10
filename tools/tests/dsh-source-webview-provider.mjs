@@ -68,6 +68,8 @@ export function apply(ctx) {
       const finish=()=>{send({},'stop');res.end('data: [DONE]\n\n')}
       const emitTool=(callId,name,args)=>{send({role:'assistant'});send({tool_calls:[{index:0,id:callId,type:'function',function:{name,arguments:JSON.stringify(args)}}]});send({},'tool_calls');res.end('data: [DONE]\n\n')}
       if(stage==='BUILD'&&!tool('qt-build')){emitTool('qt-build','houdini_exec',{code:config.buildCode});return}
+      if(stage==='DELIVER'&&!tool('qt-deliver')){emitTool('qt-deliver','run_code',{code:'return await tools.houdini_exec({code:'+JSON.stringify(config.deliveryCode)+'})',description:'Publish wrapped node entries'});return}
+      if(stage==='NAVCHECK'&&!tool('qt-navcheck')){emitTool('qt-navcheck','houdini_inspect',{code:config.navigationCode});return}
       if(stage==='IMAGE'&&!tool('qt-image')){emitTool('qt-image','houdini_exec',{code:config.imageCode});return}
       if(stage==='UNKNOWN'&&!tool('qt-unknown')){emitTool('qt-unknown','houdini_exec',{code:config.unknownCode});return}
       if(stage==='UNKNOWN'&&!tool('qt-recover')) {

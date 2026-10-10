@@ -165,35 +165,22 @@ def _cleanup_failed_creations(created, ownership_before):
     return removed
 
 
-def _reconcile_undo_resurrected(deleted_by_batch):
-    """Re-register native descendants resurrected by our own undo with fresh ids.
+def _reconcile_undo_resurrected(owned_at_start, *, exclude_ids=()):
+    """Restore fresh native identities after this batch's own Undo.
 
-    Houdini undo resurrects a deleted node with its original sessionId but gives
-    recreated native init-script children NEW ids (probe: wrangle keeps its id,
-    inner attribvop gets a fresh one). Without this reconcile the resurrected
-    subtree stays foreign forever and even delete_node is refused.
-
-    ``deleted_by_batch`` maps identity -> (registry entry, path at batch start).
-    Eligibility is causally bound to the batch that performed the undo: only
-    identities alive at batch start and dead after the batch's own deletions
-    are candidates — exactly what this undo can resurrect. Targets are located
-    by the BATCH-START path, never by path_at_creation: a rename between the
-    creation batch and this batch (or a user node recreated at the old creation
-    path) must not redirect adoption. path_at_creation stays audit-only.
-    Additional bounded evidence per entry: the node now sitting at the
-    batch-start path has the recorded node type, is not already registered, and
-    has a registered live ancestor. Adoption consumes the dead entry. Undo
-    resurrection does not preserve userData, so the durable owner tag is not
-    evidence here; a same-path replacement of a different node type stays
-    foreign, and paths alone never grant ownership — when the evidence does not
-    identify the resurrected node unambiguously, it stays foreign.
+    Candidates are owned identities alive at batch start, resolved at their
+    batch-start path and type only after the original identity disappeared.
+    exclude_ids contains every identity alive just before Undo, so an existing
+    foreign replacement cannot be adopted. Undo can itself replace children
+    that were still alive before rollback (not just resurrect deleted nodes).
+    A registered live ancestor and an unconsumed record are also required.
     """
     restored = []
-    for old_id, (entry, batch_start_path) in deleted_by_batch.items():
+    for old_id, (entry, batch_start_path) in owned_at_start.items():
         if hou.nodeBySessionId(old_id) is not None:
             continue
         candidate = hou.node(batch_start_path) if isinstance(batch_start_path, str) else None
-        if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS:
+        if candidate is None or int(candidate.sessionId()) in _OWNED_NODE_SESSIONS or int(candidate.sessionId()) in exclude_ids:
             continue
         if entry.get('type') is not None and candidate.type().name() != entry['type']:
             continue
@@ -239,8 +226,8 @@ def _execution_owner(session_id: str | None, call_id: str | None):
         _restore_execution_owner(previous)
 
 
-def _register_owned_node(node) -> None:
-    """Record a verb-created node and its initialized subtree."""
+def _register_owned_node(node, *, exclude_ids=()) -> None:
+    """Record a verb-created subtree, excluding identities predating a replacement."""
     if node is None or _ACTIVE_OWNER_SESSION is None:
         return
     items = [node]
@@ -252,6 +239,8 @@ def _register_owned_node(node) -> None:
     except Exception:
         pass
     for item in items:
+        if int(item.sessionId()) in exclude_ids:
+            continue
         entry = {
             "session": _ACTIVE_OWNER_SESSION,
             "call": _ACTIVE_OWNER_CALL,
@@ -264,6 +253,39 @@ def _register_owned_node(node) -> None:
         item.setUserData(_TASK_OWNER_KEY, _ACTIVE_OWNER_SESSION)
         if _ACTIVE_OWNER_CALL:
             item.setUserData(_TASK_OWNER_CALL_KEY, _ACTIVE_OWNER_CALL)
+
+
+@contextlib.contextmanager
+def _track_owned_definition_rebuilds(instances):
+    """Attribute only fresh identities produced by this explicit native operation.
+
+    An explicitly allowed foreign instance stays foreign. Existing identities,
+    including user children moved during a callback, never become owned.
+    Materialize delayed definitions inside this boundary, before later cooks.
+    """
+    owned = [n for n in instances if _ACTIVE_OWNER_SESSION is not None and
+             _OWNED_NODE_SESSIONS.get(int(n.sessionId()), {}).get('session') == _ACTIVE_OWNER_SESSION]
+    before = {int(n.sessionId()) for n in hou.node('/').allSubChildren()} if owned else set()
+    descendants = {int(child.sessionId()) for n in owned for child in n.allSubChildren()}
+    foreign_before = before - {identity for identity, entry in _OWNED_NODE_SESSIONS.items()
+                               if entry.get('session') == _ACTIVE_OWNER_SESSION}
+    try:
+        yield
+    finally:
+        for n in owned:
+            if hou.nodeBySessionId(int(n.sessionId())) is not None:
+                blocked = set(before)
+                for child in n.allSubChildren(sync_delayed_definition=True):
+                    ancestor = child
+                    while ancestor != n:
+                        if int(ancestor.sessionId()) in foreign_before:
+                            blocked.add(int(child.sessionId()))
+                            break
+                        ancestor = ancestor.parent()
+                _register_owned_node(n, exclude_ids=blocked)
+        for identity in descendants:
+            if hou.nodeBySessionId(identity) is None:
+                _OWNED_NODE_SESSIONS.pop(identity, None)
 
 
 def node_provenance(node) -> dict:
@@ -2814,7 +2836,8 @@ def present_nodes(nodes, *, allow_foreign: str | None = None) -> dict:
     Save the named HIP after first declaration so cards survive reopening it.
     role is navigation intent, never control/geometry certification. new_identity=True
     is for explicitly renewing a copied entry and invalidates its previous ID.
-    Return this value as __result__ to publish cards from the ordinary tool result.
+    The successful verb receipt publishes cards independently of __result__ wrapping.
+    Failed batches do not publish cards; the returned value remains inspectable.
     """
     from dsh_network_navigation import present_nodes as present
     return present(nodes, require_owned=_require_owned, allow_foreign=allow_foreign)
@@ -4243,7 +4266,7 @@ def hda_create(
     target = _default_hda_file(name) if hda_file is None else hou.expandString(str(hda_file))
     target = os.path.abspath(target)
     from dsh_hda_interfaces import require_library_location
-    require_library_location(target, new_asset=True)
+    require_library_location(target)
     if os.path.lexists(target):
         raise ValueError(f'HDA target file already exists: {target}; hda_create only creates new tools/libraries. '
                          'For existing tool maintenance use hda_version to append a type version in its actual source library.')
@@ -4329,7 +4352,7 @@ def hda_fork(node, name: str, hda_file: str, description: str | None = None) -> 
         raise ValueError('description must be a nonempty string or None')
     target = os.path.abspath(hou.expandString(hda_file))
     from dsh_hda_interfaces import require_library_location
-    require_library_location(target, new_asset=True)
+    require_library_location(target)
     if os.path.lexists(target):
         raise ValueError(f'HDA target file already exists: {target}; fork requires a new independent library')
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -4376,7 +4399,9 @@ def hda_switch_version(node, type_name: str, *, dry_run=False, allow_foreign=Non
     """Switch one locked HDA instance to an exact installed version of the same family.
 
     Native changeNodeType keeps name/common parameter channels and connections,
-    loads target contents; never migrates other instances or adopts descendants.
+    loads target contents; never migrates other instances. For a current-session
+    instance, only internal identities newly created by this switch are registered;
+    existing identities and foreign instances never gain ownership from a switch.
     Read tool_inspect type_versions and source libraries first; dry_run reports scope.
     Unlocked contents require hda_edit save/lock or explicit discard before switching.
     Node and replaced descendants require ownership or one-call allow_foreign.

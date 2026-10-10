@@ -18,7 +18,7 @@
 稳定内部名承担接口身份，显示标签与文件夹只影响呈现。改UI不改绑定，更换内部实现时显式迁移绑定。
 控制定义记录在任务需求/计划与最终参数schema中，不建立第二份自动判完成账本。
 
-用户控制入口通过`network_controls`在真实节点的`dsh_houdini_control` userData明确声明可读标签，随HIP保存；它是导航注解，不复制参数定义、不证明联动、不承担ownership。交付时用`present_nodes`声明控制卡片，直接从对话进入当前工程的节点和参数页，不另加原生查找菜单；不从CTRL名字、颜色或spare数量猜入口。跨领域的节点交付、分组和说明方法见[网络交接skill](../skills/houdini-network-handoff/SKILL.md)。
+用户控制入口通过`network_controls`在真实节点的`dsh_houdini_control` userData明确声明可读标签，随HIP保存；它是导航注解，不复制参数定义、不证明联动、不承担ownership。交付时用`present_nodes`声明控制卡片，Host与客户端从同一成功动词回执提取入口，不依赖`__result__`是否直接返回声明；失败批次不发布。直接从对话进入当前工程的节点和参数页，不另加原生查找菜单；不从CTRL名字、颜色或spare数量猜入口。跨领域的节点交付、分组和说明方法见[网络交接skill](../skills/houdini-network-handoff/SKILL.md)。
 
 卡片通过DSH公开Conversation投影与回复尾部插槽消费原始成功工具回执；点击只提交任务与原事件坐标，Host重读原回执，经该任务的执行端进入Bridge主线程队列。持久入口ID随节点保存，改名或同HIP重开仍可定位；历史路径不作回退。原生复制会复制入口ID，多个同ID节点存在时拒绝含糊跳转，可对复制品明确重新声明ID。若原件删除后只剩保留同ID的复制品，入口随该标识保留；ID不是节点血缘或修改ownership。
 

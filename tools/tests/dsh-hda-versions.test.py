@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11
 import hou
 import dsh_bridge as bridge
 import dsh_hda_versions as versions
+import dsh_hou_helpers as helpers
 
 
 def run(code, ok=True, owner='version-author', query=False):
@@ -77,6 +78,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-versions-') as tmp:
     assert changed.parm('width').keyframes()[0].frame() == 12
     assert changed.parm('width').keyframes()[0].value() == 2.5
     assert changed.input(0) == upstream and downstream.input(0) == changed
+    foreign_provenance = run(f"__result__=[node_provenance(n) for n in hou.node({path!r}).allSubChildren(sync_delayed_definition=True)]")['result']
+    assert foreign_provenance and all(row['status'] == 'foreign' for row in foreign_provenance)
     # Adding a version to a foreign library never grants later write authority.
     run(f"hda_set_section({path!r},'PythonModule','VALUE = 3\\n')", False)
     run(f"hda_switch_version({path!r},'test::other::1.0',allow_foreign={auth!r})", False)
@@ -100,10 +103,34 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-versions-') as tmp:
     # Raw paths now have actionable supported operations; query cannot mutate.
     run(f"hou.node({path!r}).changeNodeType('test::nested::asset::1.1')", False)
     run(f"hda_switch_version({path!r},'test::nested::asset::1.1',allow_foreign={auth!r})", False, query=True)
-    for folder in ('otls', 'hda'):
-        unwanted = str(Path(hou.expandString('$HOUDINI_USER_PREF_DIR')) / folder / 'new_asset.hda')
-        failure = run(f"hda_fork({path!r},'test::unwanted::1.0',{unwanted!r})", False)
-        assert 'unmanaged user-preferences' in failure['error'] and not Path(unwanted).exists()
+    # Directory preference is a task decision, not an execution prohibition.
+    # Use a private preference root even when this test is launched manually.
+    original_preferences=hou.getenv('HOUDINI_USER_PREF_DIR')
+    private_preferences=Path(tmp)/'personal-preferences'
+    hou.putenv('HOUDINI_USER_PREF_DIR',str(private_preferences))
+    try:
+        for folder in ('otls','hda'):
+            destination=private_preferences/folder/'independent.hda'
+            fork=run(f"__result__=hda_fork({path!r},'test::personal_{folder}::1.0',{str(destination)!r})")['result']
+            assert Path(fork['hda_file']).resolve()==destination.resolve() and destination.is_file()
+            saved=destination.read_bytes()
+            failure=run(f"hda_fork({path!r},'test::collision_{folder}::1.0',{str(destination)!r})",False)
+            assert 'already exists' in failure['error'] and destination.read_bytes()==saved
+            own_library=private_preferences/folder/'new_tool.otl'
+            result=run(f"n=tab_create('/obj','subnet','personal_{folder}'); "
+                f"__result__=hda_create(n,'test::new_personal_{folder}::1.0',hda_file={str(own_library)!r})")['result']
+            assert own_library.is_file()
+            assert Path(hou.node(result['node']).type().definition().libraryFilePath()).resolve()==own_library.resolve()
+        vendor=Path(hou.expandString('$HFS'))/'otls'/'dsh_forbidden_fixture.hda'
+        rejected=run(f"hda_fork({path!r},'test::vendor_forbidden::1.0',{str(vendor)!r})",False)
+        assert '$HFS' in rejected['error'] and not vendor.exists()
+        target=run("__result__=tab_create('/obj','subnet','vendor_forbidden').path()")['result']
+        rejected=run(f"hda_create({target!r},'test::vendor_new_forbidden::1.0',hda_file={str(vendor)!r})",False)
+        assert '$HFS' in rejected['error'] and not vendor.exists()
+    finally:
+        if original_preferences is None: hou.unsetenv('HOUDINI_USER_PREF_DIR')
+        else: hou.putenv('HOUDINI_USER_PREF_DIR',original_preferences)
+    print('PASS explicit personal otls/hda creation and fork; collisions and vendor writes refused')
 
     # An owned library and owned root can version without adopting foreign content.
     owned = str(Path(tmp) / 'owned.hda')
@@ -131,5 +158,24 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-versions-') as tmp:
     finally:
         interfaces.register_created_definition = register
     run(f"hda_version({ownpath!r},'1.2')")
+
+    # A verb-created, nonempty instance owns its initialized contents even when
+    # its shared definition belongs to someone else. Switching must preserve
+    # that usability after an ordinary geometry observation materializes it.
+    fresh = run("__result__=tab_create('/obj/fixture','test::nested::asset::1.1','owned_instance').path()")['result']
+    for target_name in ('test::nested::asset', 'test::nested::asset::1.1'):
+        previous_ids = {int(child.sessionId()) for child in hou.node(fresh).allSubChildren()}
+        run(f"hda_switch_version({fresh!r},{target_name!r})")
+        observed = run(f"__result__=describe({fresh!r})", query=True)['result']
+        assert observed['geometry']['points'] == 8 and observed['geometry']['prims'] == 6
+        provenance = run(f"__result__=[node_provenance(n) for n in hou.node({fresh!r}).allSubChildren()]", query=True)['result']
+        assert provenance and all(row['status'] == 'owned_current_session' for row in provenance)
+        assert previous_ids.isdisjoint(row['session_id'] for row in provenance)
+        assert not previous_ids.intersection(helpers._OWNED_NODE_SESSIONS)
+    # Neither a version switch nor the new internal ownership grants the
+    # foreign shared definition to this author or the instance to another task.
+    run(f"hda_set_section({fresh!r},'PythonModule','VALUE = 99\\n')", False)
+    run(f"hda_switch_version({fresh!r},'test::nested::asset')", False, owner='other-author')
+    run(f"delete_node({fresh!r})")
 
 print('PASS native HDA versions, source package library, coexistence, selective switch, rollback, authority and channels ' + hou.applicationVersionString())

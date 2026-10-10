@@ -204,7 +204,9 @@ class TimestampTests(unittest.TestCase):
         output, _ = self.export()
         chunks = video.transcript_chunks(output / "transcript.json", video.sha(self.source))
         index_path = self.root / "index.json"
-        module = {"id": "wrangle", "title": "Wrangle", "ranges": [[22, 24]], "questions": [], "unknowns": []}
+        module = {"id": "wrangle", "title": "Wrangle", "ranges": [[22, 24]],
+                  "purpose": "Identify the spoken VEX operation", "inputs": ["source audio"],
+                  "outputs": ["operation name"], "depends_on": [], "questions": [], "unknowns": [], "evidence": []}
         data = {"source": video.file_reference(self.source), "transcript": video.file_reference(output / "transcript.json"),
                 "modules": [module]}
         video.save(index_path, data)

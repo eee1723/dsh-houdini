@@ -8,8 +8,9 @@ import {executionCall,executionResult,isHoudiniTool} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
 import type {ExecResult} from './bridge.js'
 import {HoudiniToolRuntime,type HoudiniConnection} from './tool-runtime.js'
+import {nodeDeliveryRows} from './node-delivery-record.js'
 
-export const NODE_DELIVERY_KIND='houdini/node-delivery-v1'
+export {NODE_DELIVERY_KIND} from './node-delivery-record.js'
 const ID=/^[0-9a-f]{32}$/
 const object=(value:unknown):Record<string,any>|undefined =>
   value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,any>:undefined
@@ -52,7 +53,7 @@ export function nodeDeliveryCoordinates(input:unknown):NodeDeliveryCoordinates {
 /** Extract the same canonical execution facts for native and nested DSH calls. */
 export function recordedNodeDelivery(event:SessionEvent,coordinates:NodeDeliveryCoordinates):RecordedNodeDelivery {
   const result=executionResult(event)
-  const value=object(result?.value),execution=object(value?.execution),delivery=object(value?.result)
+  const value=object(result?.value),execution=object(value?.execution)
   const operations=object(object(value?.outcome)?.operations)
   if(!result||result.isError||value?.ok!==true||Number(operations?.failed)>0
     ||(Array.isArray(value.verbs)&&value.verbs.some((verb:unknown)=>object(verb)?.ok===false)))
@@ -65,8 +66,7 @@ export function recordedNodeDelivery(event:SessionEvent,coordinates:NodeDelivery
     ||typeof execution.runtime_id!=='string'||!ID.test(execution.runtime_id)
     ||typeof execution.hip_path!=='string'||!execution.hip_path.trim()||execution.hip_is_new===true)
     throw new Error('Node delivery has no saved HIP and executor identity')
-  const row=delivery?.kind===NODE_DELIVERY_KIND&&Array.isArray(delivery.nodes)
-    ?object(delivery.nodes[coordinates.index]):undefined
+  const row=object(nodeDeliveryRows(value)[coordinates.index])
   if(!row||typeof row.id!=='string'||!ID.test(row.id)||typeof row.path!=='string'||!row.path.startsWith('/')
     ||typeof row.label!=='string'||!row.label.trim()||!['control','output','node'].includes(row.role)
     ||typeof row.type!=='string'||!row.type.trim()

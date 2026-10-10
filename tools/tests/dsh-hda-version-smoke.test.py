@@ -37,6 +37,8 @@ from pathlib import Path
 sys.path.insert(0,{str(ROOT/'houdini/python3.11libs')!r})
 import hou,dsh_bridge as b
 n=hou.node('/obj').createNode('subnet','asset')
+geo=n.createNode('geo','contents')
+geo.createNode('box','shape')
 n=n.createDigitalAsset('fixture::asset',{str(library)!r})
 n.type().definition().addSection('PythonModule','VALUE = 1\\n')
 n.matchCurrentDefinition()

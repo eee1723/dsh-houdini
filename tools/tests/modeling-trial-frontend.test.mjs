@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import {generatedNodeDeliveryFactory} from '../gen-trace-client.mjs';
 import {frontendArtifacts} from './modeling-trial-ui-artifacts.mjs';
 import {attachImages} from '../../lib/image-output.js';
 
@@ -12,13 +13,15 @@ const options={cwd:'C:/task',sessionId:'trial'};
 const files=paths=>frontendArtifacts([{type:'deliverables/presented',data:{files:paths.map(path=>({path}))}}],[],options).files;
 const canonical={ok:true,result:{kind:'houdini/node-delivery-v1',nodes:nodes.map(node=>({...node,id:'c'.repeat(32),type:'geo'}))},
   execution:{executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),hip_path:'C:/task/model.hip',owner_session:'trial'}};
+canonical.verbs=[{verb:'present_nodes',ok:true,result:canonical.result}];
+canonical.result={entries:canonical.result};
 const artifacts=frontendArtifacts(events,[{tool:'houdini_exec',canonical}],options);
 assert.deepEqual(artifacts.files,[{path:'C:/task/model.hip',resolvedPath:'C:/task/model.hip',name:'model.hip',resourceAddress:'dsh-resource://file/session/trial/model.hip'}]);
 assert.equal(files(['relative/model.hip'])[0].resolvedPath,'C:/task/relative/model.hip');
 assert.deepEqual(artifacts.nodes,nodes);
 assert.deepEqual(artifacts.uiCaptures,[]);
 assert.deepEqual(frontendArtifacts([],[{tool:'houdini_exec',failed:true,canonical}]).nodes,[]);
-const nodeFactory=vm.runInNewContext('('+fs.readFileSync(new URL('../../client/node-delivery.js',import.meta.url),'utf8')+')');
+const nodeFactory=vm.runInNewContext('('+generatedNodeDeliveryFactory()+')');
 for(const value of [canonical,{...canonical,outcome:{operations:{failed:1}}},{...canonical,verbs:[{verb:'set_parms',ok:false}]}]){
   const projected=nodeFactory({},()=>value).definition.start(null,{event:{seq:2,type:'tool/ptc-dispatch',data:{name:'houdini_exec',subCallId:'node-call'}}});
   const collected=frontendArtifacts([],[{tool:'houdini_exec',canonical:value}],options);

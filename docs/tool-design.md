@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 95
+Execution contract version: 98
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -150,7 +150,7 @@ Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用�
 | `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
 | `network_controls(parent, controls=None, *, remove=None, allow_foreign=None)` | 明确声明实际控制入口：controls为node/label对象列表，remove为显式节点列表，目标须在parent范围内且遵守ownership。声明保存在节点userData，随HIP保存、改名保留；省略controls/remove只读列出parent内的已声明入口，不按名字或参数数量猜角色、不cook。节点交付卡片复用同一控制声明；不证明联动或正确性 | dict |
 | `network_notes(parent, notes=None, *, remove=None, allow_foreign=None)` | 读取或局部维护明确名称的Sticky Note；省略notes/remove只读返回实际text/position/size/color与归属。notes项需要name/text，可选position/size/color；默认新Note放在现有内容旁，显式remove不扫全网。Note按实际session identity独立归属，不因名称/parent认领，渲染服务永不豁免；预检及失败恢复保留事实。Note不隐式加入Box，是后续布局固定障碍；文字不证明业务正确或维护完成账本 | dict |
-| `present_nodes(nodes, *, allow_foreign=None)` | 明确交付节点入口，nodes为node及可选label/role/description/new_identity的1..16项列表；role为control/output/node，只表达导航用途，description为<=200字符的单行操作说明。返回context来自真实节点类别，说明和路径属于交付时观察。缺少持久标识时在目标节点userData写UUID，真实修改遵守ownership；显式new_identity只用于续新标识，旧引用失效。作为__result__进入成功原工具回执后显示节点卡片，与DSH文件交付并列。声明后保存同一HIP，重开/改名仍可定位；不存在或复制导致重复不按历史路径猜目标，不写独立交付账本 | dict |
+| `present_nodes(nodes, *, allow_foreign=None)` | 明确交付节点入口，nodes为node及可选label/role/description/new_identity的1..16项列表；role为control/output/node，只表达导航用途，description为<=200字符的单行操作说明。返回context来自真实节点类别，说明和路径属于交付时观察。缺少持久标识时在目标节点userData写UUID，真实修改遵守ownership；显式new_identity只用于续新标识，旧引用失效。成功批次从present_nodes动词回执显示节点卡片，不依赖__result__包装，与DSH文件交付并列。声明后保存同一HIP，重开/改名仍可定位；不存在或复制导致重复不按历史路径猜目标，不写独立交付账本 | dict |
 | `focus_node(reference, *, expected_hip)` | 在Bridge主线程队列按持久id与原交付HIP进行显式界面导航，适用于节点卡片点击。定位同一实际节点并打开参数页、展开祖先框；不同HIP、缺失或重复id明确拒绝。只改变导航/框展开，不改模型参数/几何或加载保存HIP；历史runtime sessionId不作为持久节点身份 | dict |
 
 ### parm 域（依附 node）
@@ -266,7 +266,7 @@ Package是原生加载配置，不是任意代码沙箱。默认JSON直接指向
 | `hda_create(node, name, description=None, hda_file=None, min_inputs=0, max_inputs=0, replace=False, allow_foreign=None, *, max_outputs=None)` | 转为全新独立类型/库，默认 `$HIP/otls/<name>.hda`；已有类型/目标文件和replace=True拒绝，不破坏旧实例或多资产库。成功登记实际新库与定义的session写入来源，实例ownership不授予外部定义权限。max_outputs为1..64端口上限；spare迁移、新实例和公共输出仍须验证 | dict |
 | `hda_fork(node, name, hda_file, description=None)` | 只读复制实际源HDA定义到不存在的新类型/独立库，保留源定义及所有实例；不自动建实例或迁移用户内容。成功登记新库/定义，返回category/type/source_library等真实身份；官方可见可编辑HDA也可分叉，编译实现不支持 | dict |
 | `hda_version(node, version, *, dry_run=False, allow_foreign=None)` | 在实际来源库追加同scope/namespace/base的原生::version定义，旧版本/其他定义保持，不另存交付副本、不迁移实例；重复目标拒绝，本调用失败恢复库和新增类型。foreign库授权单次且不认领。仅复制已保存定义 | dict |
-| `hda_switch_version(node, type_name, *, dry_run=False, allow_foreign=None)` | 指定单个已锁定实例切换同家族精确已安装HDA版本；原生保留名字/公共参数通道/连线，使用新版内部网络。未保存内容先hda_edit处理；根/被替换后代须授权，不认领新版后代。回调外部副作用不受scene undo保证 | dict |
+| `hda_switch_version(node, type_name, *, dry_run=False, allow_foreign=None)` | 指定单个已锁定实例切换同家族精确已安装HDA版本；原生保留名字/公共参数通道/连线，使用新版内部网络。未保存内容先hda_edit处理；根/被替换后代须授权。当前session自有实例仅登记本次切换新建的内部identity，不认领已有节点或foreign实例的后代。回调外部副作用不受scene undo保证 | dict |
 | `hda_get_section(node, section='PythonModule')` | 读 HDA section 内容；section 不存在时列出现有 section 名供自纠 | dict |
 | `hda_set_section(node, section, code, allow_foreign=None)` | 全量写section；先语法预检，核对库来源与共享实例，写后逐字回读，失败恢复本调用sections/库/根界面/通道。后续exec失败不撤销此前成功库写入，任意回调副作用不属恢复范围 | dict |
 | `hda_patch_section(node, section, old, new, count=1, allow_foreign=None)` | 锚点局部替换：`old` 必须恰好出现 `count` 次（0 = 锚点没找到，>count = 锚点不唯一需加长），替换后同样过语法预检；**模块改局部时用它，不要全文重发** | dict |

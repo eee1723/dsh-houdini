@@ -226,9 +226,7 @@ domain = [{'id':'clearance', 'left':'travel', 'op':'lt',
 不执行表达式字符串、不自动钳制；它只验证声明case。至少选一个接近耦合边界的组合，
 对真实输出关系复验，不能用两个公开参数大小关系代替全部派生锚点。
 
-闭合壳的观察分三层：boundary_edges、orientation_conflicts、shell_orientation。
-后者positive只在简单非嵌套壳条件下解释为外向；自交/嵌套未测，开放表面不推断内外。
-双面预览能掩盖反向面；按HOM primitive normal与已知外表面方向核对，不能任取叉积约定。
+源件朝向、着色与复用后的检查范围统一见[源构件与成形检查](modeling-methods.md#源构件与成形检查)。
 
 实现回归见`dsh-modeling-semantics.test.py`；过程证据留在会话/CI或非发布临时产物，
 新模型自然采用及质量提升仍待新会话验收。

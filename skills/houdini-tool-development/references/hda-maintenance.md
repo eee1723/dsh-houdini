@@ -16,7 +16,7 @@ SOP公共端口用sop_set_output(末端,output_index=端口索引)复用/创建�
 原实例spare不会自动证明定义已携带参数；冲突写前拒绝时保留源实例，用显式promote迁移，不能删除唯一状态来赌修复。
 
 “解锁内容”“将修改保存到定义”“匹配定义重新锁定”“拆解/移除资产封装”是不同动作。
-重新匹配会丢弃未保存的内部修改，保存定义会影响共享实例；都不等于普通参数编辑，也不扩大后代ownership。
+重新匹配会丢弃未保存的内部修改，保存定义会影响共享实例；都不等于普通参数编辑。执行层只接续本次明确操作为自有实例重建的新identity，已有或foreign后代不被认领；失败回滚的身份恢复也由执行层核对，不自行用allow_foreign绕过。
 hda_edit分别提供unlock/save/lock/promote；每次先dry_run，核对plan_sha256、共享实例与丢弃范围，应用时传expected_plan。
 save要求已解锁且无实例界面覆盖；promote显式把源spare提升到定义，保留已有根参数/keys/locks，拒绝其他实例覆盖。
 lock对未匹配内容要求discard_changes=True及后代权限；先保存再锁定也须重新预览，不能把保存当成授权丢弃其他内容。
@@ -29,7 +29,7 @@ unlock不认领后代，不递归解锁嵌套HDA；不能通过裸HOM或拆包�
 
 ## 修改与恢复
 
-维护已有资产默认沿用实际来源库；若来自Package，始终在该Package原库内通过原生类型版本维护，不另存到用户偏好otls、工程目录或另一个安装副本。新建工具才选择工程`$HIP/otls`或明确的新/已有Package资源目录；独立衍生是新工具，需有对应用户意图。来源未知时回读tool_inspect的实际library与packages，不按文件名猜包归属。
+维护已有资产默认沿用实际来源库；若来自Package，始终在该Package原库内通过原生类型版本维护，不另存到用户偏好otls、工程目录或另一个安装副本。新建/独立衍生工具的目标位置按[工具归属决策](../SKILL.md#先明确会改变交付的选择)选择：优先已有工具包，用户选择独立资产时可用工程或个人otls/hda目录；独立衍生需有对应用户意图。来源未知时回读tool_inspect的实际library与packages，不按文件名猜包归属。
 
 **原生版本与Version元数据是两套机制**：`name::1.1`才是可并存/切换的类型版本；`HDADefinition.setVersion()`只改用户自定义元数据，不能用来冒充原生版本升级。保持scope/namespace/base，先`hda_version(node,'1.1',allow_foreign=明确原库授权)`在来源库追加已保存定义，再`hda_switch_version(node,精确新版类型,allow_foreign=明确实例授权)`切换需要维护的实例，随后在新版上修改section/界面/内部内容。旧版定义和其他实例保留。用tool_inspect的type_versions、type_version和definition_version_metadata分别回读；新建精确新版实例验证公开入口。版本创建不复制未保存内部修改；切换前先通过hda_edit保存/锁定或显式处理丢弃，不把旧内部网络带入新版。任意资产回调的外部副作用不受scene undo保证。
 

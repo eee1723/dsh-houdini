@@ -68,6 +68,8 @@ try {
       result:{kind:NODE_DELIVERY_KIND,nodes:[{id:String(i+5).repeat(32),path:'/obj/old_control_'+i,
         label:'工程控制 '+i,role:'control',type:'null'}]},
       execution:{executor_id:executor,runtime_id:'9'.repeat(32),hip_path:hip,owner_session:task}}
+    value.verbs=[{verb:'present_nodes',ok:true,result:value.result}]
+    value.result={entries:value.result,other:'wrapped business result'}
     events.set(task,native(value))
   }
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),2000,new ExecutorBinding(),
@@ -112,7 +114,7 @@ try {
   await rejectEvent(event=>{event.data.meta.canonical.execution.owner_session=agents[1].id},/another task/)
   await rejectEvent(event=>{event.data.meta.canonical.execution.executor_id=records[1].executor_id},/another Houdini executor/)
   await rejectEvent(event=>{event.data.meta.canonical.execution.hip_is_new=true},/saved HIP/)
-  await rejectEvent(event=>{event.data.meta.canonical.result.nodes[0].id='malicious code()'},/not found/)
+  await rejectEvent(event=>{event.data.meta.canonical.verbs[0].result.nodes[0].id='malicious code()'},/not found/)
   await rejectEvent(event=>{event.type='assistant/message'},/successful original batch/)
   await rejectEvent(event=>{event.data.message.source.callId='file-call'},/not a recorded Houdini tool/)
   await rejectEvent(event=>{event.data.message.source.callId='unknown-call'},/not a recorded Houdini tool/)

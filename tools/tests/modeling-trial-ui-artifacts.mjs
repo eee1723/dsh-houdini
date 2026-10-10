@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {loadSessionEvents} from '../trace-session-lib.mjs';
+import {nodeDeliveryRows} from '../../lib/node-delivery-record.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {pathToFileURL} from 'node:url';
 import {fileAddressFor,resolveWorkspacePath} from '@deepseek-ai/dsh-util-workspace-path';
@@ -25,9 +26,7 @@ export function frontendArtifacts(events,steps,{cwd,sessionId}={}){
     if(step.failed||step.canonical?.ok!==true||Number(step.canonical.outcome?.operations?.failed)>0||
       Array.isArray(step.canonical.verbs)&&step.canonical.verbs.some(verb=>verb?.ok===false))continue;
     const result=step.canonical.result;
-    if(result?.kind==='houdini/node-delivery-v1'){
-      for(const node of result.nodes??[])if(typeof node.path==='string')nodes.set(node.path,{path:node.path,role:node.role,label:node.label});
-    }
+    for(const node of nodeDeliveryRows(step.canonical))if(typeof node?.path==='string')nodes.set(node.path,{path:node.path,role:node.role,label:node.label});
     if(step.tool!=='houdini_ui_screenshot')continue;
     const capture=result;
     if(capture?.fresh!==true||capture.file_status!=='passed'||typeof capture.path!=='string')continue;

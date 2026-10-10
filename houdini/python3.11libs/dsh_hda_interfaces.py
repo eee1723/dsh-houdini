@@ -28,7 +28,7 @@ def _definition_key(definition):
             definition.nodeTypeCategory().name(), definition.nodeTypeName())
 
 
-def require_library_location(library, *, new_asset=False):
+def require_library_location(library):
     """Authoring never edits the vendor installation, including explicit exemptions."""
     target = os.path.normcase(os.path.realpath(library))
     factory = os.path.normcase(os.path.realpath(hou.text.expandString('$HFS')))
@@ -38,18 +38,6 @@ def require_library_location(library, *, new_asset=False):
         inside = False
     if inside:
         raise ValueError('HDA authoring does not write inside $HFS; fork to a new independent library outside the Houdini installation')
-    if new_asset:
-        preferences = hou.text.expandString('$HOUDINI_USER_PREF_DIR')
-        for folder in ('otls', 'hda'):
-            unmanaged = os.path.normcase(os.path.realpath(os.path.join(preferences, folder)))
-            try:
-                inside = os.path.commonpath([target, unmanaged]) == unmanaged
-            except ValueError:
-                inside = False
-            if inside:
-                raise ValueError('New assets must use the project otls directory or an explicit package resource directory, '
-                                 'not the unmanaged user-preferences otls/hda directory. '
-                                 'Maintain an existing asset in its actual source library with hda_version.')
 
 
 def _definition_fingerprint(definition):

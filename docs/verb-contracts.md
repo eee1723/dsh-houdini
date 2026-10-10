@@ -1256,7 +1256,7 @@ scene_save(expected_path='D:/project/asset.hip')
 __result__ = entries
 ```
 
-The successful original result supplies the node cards. Save after declaration to persist newly assigned entry IDs; files remain delivered through DSH present.
+Successful present_nodes verb receipts supply the node cards even when __result__ is nested or omitted; failed batches publish none. Save after declaration to persist newly assigned entry IDs; files remain delivered through DSH present.
 
 ### 接口边界
 

@@ -481,28 +481,20 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
             removed_residuals = []
             reconciled = []
             try:
-                # Causal binding, part 2: the deleted set is computed
-                # BEFORE the undo - identities alive at batch start that
-                # are dead after this batch's own deletions. Exactly
-                # these can be resurrected by the undo below.
-                deleted_by_batch = {identity: alive_at_start[identity]
-                                    for identity in alive_at_start
-                                    if hou.nodeBySessionId(identity) is None}
+                # Undo itself can replace native HDA children that are still
+                # alive here. Exclude every pre-undo identity from adoption;
+                # only fresh restored counterparts of batch-start records qualify.
                 labels = list(hou.undos.undoLabels())
                 if labels and labels[0] == label:
+                    before_undo_ids = {int(n.sessionId()) for n in hou.node('/').allSubChildren()}
                     hou.undos.performUndo()
                     applied = True
                     dsh_hou_helpers._OWNED_NODE_SESSIONS.clear()
                     dsh_hou_helpers._OWNED_NODE_SESSIONS.update(ownership_before)
                     removed_residuals = dsh_hou_helpers._cleanup_failed_creations(created_nodes, ownership_before)
-                    # Undo resurrects deleted nodes with their original ids but gives
-                    # recreated native children fresh ones; re-register those with the
-                    # bounded evidence of the pre-batch record. Adoption is causally
-                    # bound to THIS batch (deleted_by_batch) and locates candidates
-                    # by the path each identity actually held at batch start -
-                    # path_at_creation is audit-only and must never select targets
-                    # after renames.
-                    reconciled = dsh_hou_helpers._reconcile_undo_resurrected(deleted_by_batch)
+                    # Reconcile only fresh post-undo counterparts of exact
+                    # batch-start records; pre-undo foreign identities stay foreign.
+                    reconciled = dsh_hou_helpers._reconcile_undo_resurrected(alive_at_start, exclude_ids=before_undo_ids)
                     dsh_component_contracts._IMPORT_RECORDS.clear()
                     dsh_component_contracts._IMPORT_RECORDS.update(imports_before)
                     box_reconciliation = dsh_network_boxes.reconcile_transaction(box_journal)

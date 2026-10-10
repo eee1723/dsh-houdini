@@ -246,4 +246,64 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-lifecycle-') as tmp:
     with hou.undos.disabler():
         run(f'delete_node({replacement!r})',False)
     assert hou.node(replacement) is not None and foreign_child.parent()==hou.node(replacement)
+    # Native definition refresh creates children in existing owned instances.
+    # They must remain editable/cleanable without allow_foreign (test76).
+    rebuild_library=Path(tmp)/'rebuild.hda'
+    root='/obj/rebuild_fixture'
+    asset=root+'/source'
+    run(f"g=tab_create('/obj','geo',name='rebuild_fixture'); n=tab_create(g,'subnet',name='source'); "
+        f"w=tab_create(n,'attribwrangle',name='shape'); sop_set_output(w,output_index=0); "
+        f"hda_create(n,'contract::rebuild::1.0',hda_file={str(rebuild_library)!r})")
+    edit(asset,'save')
+    run(f"tab_create({root!r},'contract::rebuild::1.0',name='consumer')")
+    run(f"tab_create({asset!r},'switch',name='new_mode')")
+    edit(asset,'save')
+    run(f"cook_node({root+'/consumer'!r})")
+    def assert_owned(target):
+        facts=run(f"__result__=[node_provenance(n) for n in hou.node({target!r}).allSubChildren()]",query=True)['result']
+        assert facts and all(n['status']=='owned_current_session' for n in facts),facts
+    assert_owned(root+'/consumer')
+    edit(asset,'lock',discard_changes=True)
+    assert_owned(asset)
+    edit(asset,'unlock')
+    # A failed batch can make Undo recreate nested native nodes that were alive
+    # immediately before Undo. Recovery must retain exact ownership.
+    before_owned={c.sessionId():c.path() for c in hou.node(asset).allSubChildren()}
+    at_undo={}
+    original_undo=hou.undos.performUndo
+    def observe_undo():
+        at_undo.update({identity:hou.nodeBySessionId(identity) is not None for identity in before_owned})
+        return original_undo()
+    hou.undos.performUndo=observe_undo
+    try:
+        failed=run(f"p=hda_edit({asset!r},'lock',dry_run=True,discard_changes=True); "
+            f"hda_edit({asset!r},'lock',expected_plan=p['plan_sha256'],discard_changes=True); "
+            "raise RuntimeError('after native lock')",False)
+    finally:
+        hou.undos.performUndo=original_undo
+    assert failed.get('rollback',{}).get('applied'),failed
+    assert_owned(asset)
+    replaced_during_undo=[path for identity,path in before_owned.items()
+                          if at_undo.get(identity) and hou.nodeBySessionId(identity) is None]
+    assert replaced_during_undo, 'fixture must cover children replaced by Undo itself'
+    print('PASS identities alive before Undo and restored with new IDs:',replaced_during_undo)
+    run(f"delete_node({root+'/consumer'!r})")
+    # Foreign/other-session instances are still protected. Explicit one-shot
+    # library maintenance does not grant their new children lasting ownership.
+    foreign=hou.node(root).createNode('contract::rebuild::1.0','foreign_consumer')
+    run(f"tab_create({root!r},'contract::rebuild::1.0',name='other_consumer')",owner='other-session')
+    if hou.node(asset).isLockedHDA(): edit(asset,'unlock')
+    run(f"tab_create({asset!r},'null',name='second_mode')")
+    assert 'ownership' in run(f"hda_edit({asset!r},'save',dry_run=True)",False)['error']
+    edit(asset,'save',allow_foreign='fixture explicitly authorizes shared definition write')
+    for target in [foreign.path(),root+'/other_consumer']:
+        fact=run(f"__result__=node_provenance({target+'/second_mode'!r})",query=True)['result']
+        assert fact['status']=='foreign',fact
+    # Pre-existing user child in an owned authoring network remains foreign.
+    user_child=hou.node(asset).createNode('subnet','user_child')
+    user_nested=user_child.createNode('attribwrangle','nested')
+    edit(asset,'save',allow_foreign='fixture shared definition')
+    assert run(f"__result__=node_provenance({user_nested.path()!r})",query=True)['result']['status']=='foreign'
+    assert 'ownership' in run(f"hda_edit({asset!r},'lock',discard_changes=True,dry_run=True)",False)['error']
+    print('PASS native definition rebuild ownership, rollback and foreign boundaries')
     print('PASS lifecycle and definition write recovery',hou.applicationVersionString())

@@ -430,6 +430,24 @@ try:
     source_integrity = observed(ring)
     assert source_integrity['boundary_edges'] == 0
     assert source_integrity['shell_orientation']['positive_count'] == 1
+    # Identical profile positions in reverse order change facing, not shape.
+    # A hardcoded reversecrosssections=True would break the original source.
+    original_positions = sorted(positions(ring))
+    reversed_profile = make('reverse', 'reversed_solid_profile',
+                            {'vtxsort': 'reverse'}, [ring_profile])
+    ring.setInput(0, reversed_profile)
+    reversed_integrity = observed(ring)
+    assert reversed_integrity['boundary_edges'] == 0
+    assert reversed_integrity['orientation_conflicts'] == 0
+    assert reversed_integrity['shell_orientation']['negative_count'] == 1
+    assert sorted(positions(ring)) == original_positions
+    h.set_parm(ring, 'reversecrosssections', 1)
+    assert observed(ring)['shell_orientation']['positive_count'] == 1
+    ring.setInput(0, ring_profile)
+    assert observed(ring)['shell_orientation']['negative_count'] == 1
+    h.set_parm(ring, 'reversecrosssections', 0)
+    assert observed(ring)['shell_orientation']['positive_count'] == 1
+    done('Revolve reversed profile: same closed shape, opposite facing, input-dependent correction')
     cutter = make('box', 'solid_cutter', {'size': [.8, .8, .8], 't': [1.5, .8, 0]})
     difference = make('boolean::2.0', 'solid_difference',
                       {'booleanop': 'subtract', 'subtractchoices': 'aminusb'}, [ring, cutter])

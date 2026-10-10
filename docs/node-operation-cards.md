@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 21 · Source SHA-256: `f9fa5a18f222dea041f4b91c8de4b0edabf2d6b0a89c2e153ed14a5e820eb486`
+Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d54806d4ae48b470114ba6c3167d`
 
 ## 数据与设计契约
 
@@ -246,7 +246,7 @@ Schema: 2 · Cards: 21 · Source SHA-256: `f9fa5a18f222dea041f4b91c8de4b0edabf2d
 
 ## revolve
 
-标识：`revolve-solid-input-v3`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
+标识：`revolve-solid-input-v4`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/revolve.html)。
 
 精确类型：`revolve::2.0`。
 已测版本：`21.0.440`、`22.0.368`。
@@ -261,12 +261,16 @@ Schema: 2 · Cards: 21 · Source SHA-256: `f9fa5a18f222dea041f4b91c8de4b0edabf2d
 
 ### 常驻语义提示
 
-- `surface_orientation`：Before consuming a revolved Polygon as a solid, use geo_piece_stats(..., inspect=True) to inspect boundary edges and shell orientation. reversecrosssections and swaprowcol can reverse its facing; a Normal SOP can flip the N attribute without changing vertex order. Reverse only a confirmed wrong-facing shell; closed/nonnested orientation evidence does not certify arbitrary intersecting or nested solids.
+- `surface_orientation`：A revolved Polygon may be closed and consistently wound yet face inward. Before instancing or solid operations, inspect a representative source with geo_piece_stats(..., inspect=True, integrity_only=True): read boundary_edges, orientation_conflicts and shell_orientation separately. Confirm facing against a known exterior face; then correct one direction control and recheck. Never default reversecrosssections=True or use Normal to repair winding.
 
 ### 操作与边界
 
+- Facing comes from the ordered profile swept around the chosen axis, not from closure or cook success. With the same axis/settings, reversing profile vertex order reverses surface facing. Inspect the actual profile order and origin/dir; looking clockwise in an arbitrary viewport is not an orientation test.
+- reversecrosssections treats the input curves as reversed. Toggling swaprowcol also reverses facing while changing grid ordering. For a confirmed inward simple shell, change one relevant setting or the profile order, then read the output again; toggling both can cancel the facing correction. There is no universal outward value of reversecrosssections.
 - Revolve Type closed spans the full circle; Closed Arc adds a point on the axis and produces a different shape. End Caps applies to open input curves. Check the actual profile and final boundaries before instancing.
-- A profile whose open endpoints merely coincide is not topologically closed. Revolution can preserve unshared coincident boundary edges even when it looks sealed. Establish intended profile closure, or target only a confirmed coincident seam with a scale-appropriate Fuse; recheck boundaries and the resulting shape. Do not Fuse intentional gaps or Reverse an already outward closed shell by default.
+- A profile whose open endpoints merely coincide is not topologically closed. Establish intended profile closure, or target only a confirmed coincident seam with a scale-appropriate Fuse; recheck boundaries and shape. Fuse repairs connectivity, not facing; preserve intentional gaps.
+- Normal computes or flips N without changing polygon vertex order. Double-sided shading, zero boundary edges and zero orientation_conflicts do not prove outward facing. shell_orientation positive follows outward HOM winding only for simple unnested closed shells; nested cavities, self-intersections and open surfaces need separate interpretation. Check mixed-direction profiles separately instead of reversing the entire output.
+- After changing the profile order, axis or grid-direction settings, refresh the affected source check and its Copy/Boolean consumers. A passed group does not certify other profiles or the complete assembly.
 
 ## normal
 

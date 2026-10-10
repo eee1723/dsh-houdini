@@ -16,11 +16,15 @@ export function apply(ctx) {
   const text=value=>[{type:'block-start',index:0,blockType:'text'},
     {type:'block-end',index:0,block:{type:'text',text:value}},{type:'finish',reason:{kind:'stop'}}]
   const auth="allow_foreign='Fixture user explicitly authorized this library and selected instance'"
+  const switchOwned=type=>`hda_switch_version('/obj/owned',${JSON.stringify(type)})\nshape=describe('/obj/owned/contents/shape')\n__result__={'type':hou.node('/obj/owned').type().name(),'geometry':shape['geometry'],'provenance':[node_provenance(n) for n in hou.node('/obj/owned').allSubChildren()]}`
   const calls=[
     ['houdini_inspect',{code:"__result__=verb_help(['hda_version','hda_switch_version'],detail='full')"}],
     ['houdini_exec',{code:`__result__=hda_version('/obj/asset','1.1',${auth})`}],
     ['run_code',{code:'const value = await tools.houdini_exec('+JSON.stringify({code:`hda_switch_version('/obj/asset','fixture::asset::1.1',${auth})\nhda_set_section('/obj/asset','PythonModule','VALUE = 2\\n',${auth})\n__result__=hou.node('/obj/asset').type().name()`})+'); return value;',description:'Switch selected fixture to its native version and edit it'}],
     ['houdini_inspect',{code:"__result__={'selected_type':hou.node('/obj/asset').type().name(),'selected_value':hou.node('/obj/asset').hdaModule().VALUE,'peer_type':hou.node('/obj/peer').type().name(),'peer_value':hou.node('/obj/peer').hdaModule().VALUE,'tool':tool_inspect('node_type','fixture::asset::1.1',category='Object')}"}],
+    ['houdini_exec',{code:"__result__=tab_create('/obj','fixture::asset::1.1','owned').path()"}],
+    ['run_code',{code:'const value = await tools.houdini_exec('+JSON.stringify({code:switchOwned('fixture::asset')})+'); return value;',description:'Switch the owned nonempty asset and observe its geometry'}],
+    ['houdini_exec',{code:switchOwned('fixture::asset::1.1')}],
   ]
   class Driver extends LlmAdapter {
     async listModels(){return [{provider:'hda-fixture',id:'scripted',name:'HDA version fixture',inputModalities:['text']}]}
@@ -31,6 +35,13 @@ export function apply(ctx) {
         const step=steps++
         const events=ctx.sessions.get(options.sessionId).snapshotEvents()
         const native=id=>events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical
+        const checkOwned=(r,type)=>{
+          assert(r?.ok,JSON.stringify(r));assert.equal(r.result.type,type)
+          assert.equal(r.result.geometry.points,8);assert.equal(r.result.geometry.prims,6)
+          assert(r.result.provenance.length>=2)
+          assert(r.result.provenance.every(row=>row.status==='owned_current_session'&&row.runtime_owner.session===options.sessionId))
+          receipts.push(r)
+        }
         if(step>0){
           const message=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='hda-'+(step-1))
           assert(message && !message.data.message.isError,JSON.stringify(message))
@@ -46,6 +57,16 @@ export function apply(ctx) {
           const r=native('hda-3');assert.equal(r.result.selected_value,2);assert.equal(r.result.peer_value,1)
           assert.equal(r.result.peer_type,'fixture::asset');assert.equal(r.result.tool.type_version,'1.1')
           assert.equal(r.result.tool.type_versions.length,2);receipts.push(r)
+        }
+        if(step===5){const r=native('hda-4');assert(r.ok,r.error);assert.equal(r.result,'/obj/owned');receipts.push(r)}
+        if(step===6){
+          const dispatch=events.filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec').at(-1)
+          assert(dispatch&&!dispatch.data.isError,JSON.stringify(dispatch))
+          const r=dispatch.data.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          checkOwned(r,'fixture::asset')
+        }
+        if(step===7){
+          checkOwned(native('hda-6'),'fixture::asset::1.1')
           const ids=new Set(receipts.map(r=>r.execution.executor_id));assert.deepEqual([...ids],[process.env.DSH_HOUDINI_EXECUTOR_ID])
           assert(receipts.every(r=>r.execution.owner_session===options.sessionId))
           yield*text('Native versions verified through the selected Houdini session.');return
@@ -66,7 +87,7 @@ export function apply(ctx) {
       setSandboxMode(ctx.sessions.get(sessionId),'workspace-write')
       await ctx.sessionController.selectModel({sessionId,provider:'hda-fixture',model:'scripted'})
       await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Upgrade the fixture asset in its original package library and preserve its peer.'}]},AbortSignal.timeout(90000))
-      const agent=ctx.agents.get(sessionId);await agent.whenIdle();assert(!failure,failure);assert.equal(steps,5)
+      const agent=ctx.agents.get(sessionId);await agent.whenIdle();assert(!failure,failure);assert.equal(steps,8)
       await ctx.sessions.flush(agent.session)
       report({ok:true,sessionId,steps,receipts,boundary:'Real pinned DSH native/PTC and HOM main-thread Bridge. Scripted model; no GUI/version-menu claim.'})
     } catch(error){report({ok:false,error:String(error.stack||error),steps,receipts})}

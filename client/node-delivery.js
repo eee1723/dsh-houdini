@@ -2,9 +2,9 @@
 // DSH owns history, Session lifetime and the completed-Turn slot. This module
 // projects only declared execution facts; node addresses remain Host-owned.
 function createNodeDelivery(React, readHoudiniCanonical) {
+  /* NODE_DELIVERY_RECORD */
   var KIND = "houdini-node-delivery";
   var TARGET = "houdini-node-deliveries";
-  var MARKER = "houdini/node-delivery-v1";
 
   function rootCall(event) {
     var data = event && event.data;
@@ -28,14 +28,12 @@ function createNodeDelivery(React, readHoudiniCanonical) {
       meta: nested ? undefined : data.meta,
       content: nested ? data.content : []
     });
-    var result = canonical && canonical.result, execution = canonical && canonical.execution;
-    if (!canonical || canonical.ok !== true || !result || result.kind !== MARKER || !Array.isArray(result.nodes) || !execution ||
-        Number(canonical.outcome && canonical.outcome.operations && canonical.outcome.operations.failed) > 0 ||
-        Array.isArray(canonical.verbs) && canonical.verbs.some(function (verb) { return verb && verb.ok === false; })) return state;
+    var rows = nodeDeliveryRows(canonical), execution = canonical && canonical.execution;
+    if (!rows.length || !execution) return state;
     if (![execution.executor_id, execution.runtime_id].every(function (value) { return typeof value === "string" && /^[0-9a-f]{32}$/.test(value); }) ||
         ![execution.hip_path, execution.owner_session].every(function (value) { return typeof value === "string" && value.trim().length > 0; }) || execution.hip_is_new === true) return state;
     var nodes = [];
-    result.nodes.forEach(function (node, index) {
+    rows.forEach(function (node, index) {
       if (!node || typeof node.id !== "string" || !/^[0-9a-f]{32}$/.test(node.id) || typeof node.path !== "string" || node.path.charAt(0) !== "/" ||
           typeof node.label !== "string" || !node.label.trim() || typeof node.type !== "string" || !node.type.trim() ||
           ["control", "output", "node"].indexOf(node.role) < 0) return;
