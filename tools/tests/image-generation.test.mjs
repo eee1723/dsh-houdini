@@ -8,7 +8,7 @@ import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generateImage,imageModels,registerImageTools} from '../../lib/image-generation.js'
 
-const root=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-unit-'))
+const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-unit-')))
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8S8AAAAASUVORK5CYII=','base64')
 const secret='test-secret-never-present-in-result'
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -120,8 +120,8 @@ filesystem.resolve=realResolve
 
 // A project's actual HIP and the DSH workspace may differ. The current
 // observation, never the workspace or an old scene message, owns managed paths.
-const project=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-project-'))
-const secondProject=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-save-as-'))
+const project=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-project-')))
+const secondProject=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-save-as-')))
 const layout=JSON.parse(await fs.readFile(new URL('../../houdini/project-layout.json',import.meta.url),'utf8'))
 let hip=path.join(project,'模型.hip'),newScene=false,observations=0,routes=0,failBridge=false,layoutMismatch=false
 const connection={resolve:async actualExec=>{
@@ -217,7 +217,7 @@ assert.equal(bindingReads,1)
 
 // A managed folder must remain in the visible HIP tree, including an alias
 // redirected inside that tree; following a symlink is not a managed allocation.
-const redirectedProject=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-redirect-'))
+const redirectedProject=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-redirect-')))
 const redirectTarget=path.join(redirectedProject,'elsewhere');await fs.mkdir(redirectTarget)
 await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-reference'),process.platform==='win32'?'junction':'dir')
 hip=path.join(redirectedProject,'redirect.hip')
