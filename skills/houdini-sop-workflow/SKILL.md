@@ -17,6 +17,8 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 
 **直接生成网格的例外：**所需自定义拓扑/对应关系超出适用原生方法、必须使用专用库，或同等输出下已测得计算瓶颈时，可用VEX/Python或混合构造。数量多、公式复杂、熟悉代码或少写节点，本身不是重写标准成形的理由。性能看构建、计算、验证与后续修改总成本，不按节点数或Wrangle比例评分。
 
+重复构造把数量、采样和变化规律保留为运行参数：VEX内循环生成模板点或中心线，再由Copy/Sweep成形；避免在Python里逐件、逐点拼接重复VEX语句。具体选择、外部数据例外及下游编译观察见[重复规律与代码生成](references/modeling-methods.md#重复规律与代码生成)。
+
 用户明确指定实现方式时遵从要求；教程已明确的方法沿[视频复现协议](../houdini-video-tutorial/references/reconstruction.md)，未规定部分再按这里选择。接口调用失败先查实际输入、模式和参数，不能据此认定原生方法不适用。
 
 ## 当前问题与资料
@@ -26,6 +28,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 | 当前决策 | 资料或入口 |
 |---|---|
 | 路径、截面、重复源如何组合 | [建模方法](references/modeling-methods.md#1-从表示和构造选方法) |
+| 重复细节数量增长、VEX代码生成和下游编译失败 | [重复规律与代码生成](references/modeling-methods.md#重复规律与代码生成) |
 | 大量复制前验源；闭合却反向；同源错误扩散 | [源构件与成形检查](references/modeling-methods.md#源构件与成形检查)；Revolve先读`node_info(parent,'revolve')`的方向说明 |
 | 倒角、细节、表面表示 | [局部操作](references/modeling-methods.md#2-选择先于倒角与局部操作)、[分层细化](references/modeling-methods.md#3-一个模块分层细化)、[表面表示](references/modeling-methods.md#表面表示与外观制作) |
 | 转轴、滑轨、重复、管线、附着 | [构造模板](references/procedural-recipes.md) |

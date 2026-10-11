@@ -13,7 +13,7 @@ PURE = ["dsh-test-environment", "dsh-request-registry", "dsh-executor-discovery"
 HOUDINI = ["dsh-manager-update", "dsh-launcher-preflight", "dsh-frontend-lifetime", "dsh-force-repair", "dsh-profile-sync", "dsh-install-ui", "dsh-network-ui",
            "dsh-bridge-raw-gate", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
            "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-multiparm-restoration", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-preview-backend", "dsh-render-color-management", "dsh-render-service-box", "dsh-cop-contracts",
-           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts"]
+           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout"]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--hython", action="append", type=Path, default=[])
 args = parser.parse_args()

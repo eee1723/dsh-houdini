@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import {fileURLToPath} from 'node:url'
 import {createHash,randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
@@ -24,9 +25,13 @@ export function apply(ctx) {
     ? JSON.parse(fs.readFileSync(process.env.DSH_CATALOG_FIXTURE,'utf8')) : null
   // Exercise both official DSH transports only in this owned fixture scope;
   // production Houdini stays in its configured presentation mode.
-  if(catalogReceipt)ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
+  if(catalogReceipt || process.env.DSH_REPETITION_METHOD_FIXTURE==='1')ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
   const catalogStart = expiryStart + 4
-  const finalStep = catalogStart + (catalogReceipt ? 6 : 0)
+  const repetitionMethod = process.env.DSH_REPETITION_METHOD_FIXTURE === '1'
+  const repetitionStart = catalogStart + (catalogReceipt ? 6 : 0)
+  const finalStep = repetitionStart + (repetitionMethod ? 2 : 0)
+  const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
+  const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
     .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
   const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
@@ -205,6 +210,18 @@ export function apply(ctx) {
           if(step===finalStep)assert.equal(snapshots.length,requests[expiryStart+3].snapshotCount,'unrelated reads do not repeat expired-result context')
         }
         const currentEvents=ctx.sessions.get(options.sessionId).snapshotEvents()
+        if(repetitionMethod && step>repetitionStart){
+          const reference = options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+repetitionStart)
+          const visible=reference?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n').replaceAll('\r\n','\n')
+          const section=methodText.split('### 重复规律与代码生成')[1].split('### 源构件与成形检查')[0]
+          const relevant=section.split('\n').filter(line=>line.trim()&&!line.startsWith('```'))
+          assert(relevant.every(line=>visible?.includes(line)), 'the actual provider must receive the shipped repetition method and exact VEX example')
+        }
+        if(repetitionMethod && step===finalStep){
+          const events=normalizeTraceSteps(currentEvents).steps.filter(s=>s.tool==='read')
+          assert.equal(events.length,2,'native and nested on-demand reference reads both execute')
+          assert(events.every(s=>!s.failed),'reference delivery cannot be inferred from configuration')
+        }
         const nativeCatalog=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+catalogStart)?.data?.meta?.canonical
         if(catalogReceipt && step>catalogStart){
           assert.deepEqual(nativeCatalog.result,catalogReceipt.result,'native provider result preserves the selected catalog fields')
@@ -263,6 +280,10 @@ export function apply(ctx) {
             ['run_code',{code:'const value = await tools.houdini_resource('+JSON.stringify({kind:'result',ref:nativeCatalog?.details?.sha256,pointer:'/verbs/0/result/'+(catalogReceipt.verbs[0].result.length-1)+'/name'})+'); return value.result;',description:'Read an archived parameter catalog leaf'}],
             ['pwsh',{command:"Write-Output 'process-outcome-fixture'; exit 7",description:'Exercise an isolated known process exit'}],
             ['run_code',{code:'return await tools.pwsh({command:"Write-Output \'process-outcome-fixture\'; exit 7",description:"Exercise nested known process exit"});',description:'Observe a shell process exit through PTC'}],
+          ] : []),
+          ...(repetitionMethod ? [
+            ['read',{file_path:methodFile}],
+            ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:methodFile})+');',description:'Read the shipped repeated-layout method through the mounted tool'}],
           ] : []),
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }

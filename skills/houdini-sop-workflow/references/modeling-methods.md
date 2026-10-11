@@ -2,7 +2,7 @@
 
 适用：SOP组合、分件、硬表面与重复细节。只读当前问题对应的小节；单节点参数与版本行为读`node_info`操作卡。
 
-导航：[构造组合](#1-从表示和构造选方法) · [源与朝向检查](#源构件与成形检查) · [局部操作](#2-选择先于倒角与局部操作) · [细化](#3-一个模块分层细化) · [表面表示](#表面表示与外观制作) · [诊断与验收](#4-停止与验收)
+导航：[构造组合](#1-从表示和构造选方法) · [重复规律与代码生成](#重复规律与代码生成) · [源与朝向检查](#源构件与成形检查) · [局部操作](#2-选择先于倒角与局部操作) · [细化](#3-一个模块分层细化) · [表面表示](#表面表示与外观制作) · [诊断与验收](#4-停止与验收)
 
 ## 1. 从表示和构造选方法
 
@@ -37,6 +37,37 @@
 仓库源码测试`tools/tests/dsh-node-knowledge.test.py`。
 参数化Primitive也属于Houdini primitive，不意味着它包含可编辑的多边形面；不要只看primitive count。
 原生节点不会修正错误输入；穿插后倒角不等于融合后的连接缝。
+
+### 重复规律与代码生成
+
+数量增长应增加模板数据或运行迭代，而非成比例增加编译指令。Python负责节点、参数和接线；重复几何的公式留在VEX循环中，共用数量、间距、采样、种子等控制。形体由可替换的源与Copy/Sweep处理，复杂度来自实际输出和算法，而不是把每个点的常数坐标写成独立语句。已测得更合适的原生节点、专用算法或外部数据方式仍按编辑目标选择。
+
+例如多条起伏中心线可用一个Detail Wrangle；`count/samples/spacing/length/amplitude`在该节点创建对应spare参数，参数引用与控制来源由当前工程决定：
+
+```vex
+int count = chi("count");
+int samples = max(2, chi("samples"));
+float spacing = ch("spacing");
+float length = ch("length");
+float amplitude = ch("amplitude");
+for (int piece = 0; piece < count; piece++) {
+    int vertices[];
+    for (int sample = 0; sample < samples; sample++) {
+        float u = float(sample) / (samples - 1);
+        vector pos = set(piece * spacing, amplitude * sin(2 * M_PI * u), length * u);
+        int point = addpoint(0, pos);
+        setpointattrib(0, "id", point, piece * samples + sample);
+        append(vertices, point);
+    }
+    addprim(0, "polyline", vertices);
+}
+```
+
+上例修改数量或长度无需重新生成源码；曲线身份、点序和参数变化仍需按交付用途核对。大批不规则实测数据可以作为几何属性或显式文件输入，不必为每个样本生成代码；小型固定轮廓、算法所需静态表或非重复的大型代码不因长度自动无效。跨样本数修改时，上例的point `id`对应关系会变化，不能据此声明稳定拓扑形变。
+
+H21.0.440/H22.0.368已复现：大量展开的点构造可单独计算成功，随后接属性处理时却在原生VEX编译器中崩溃；相应重复构造改为循环后，完整网络可计算。源节点单独cook或独立编译不能认证下游安全，字符数也没有已验证的通用安全阈值。观察实际源→成形→属性→最终输出；若遇到同类原生崩溃，检查重复展开的生成来源，保留有效数据流并改变生成方式，再验证完整消费者。单纯缩小Python调用批次、拆文件或换短属性语句未必改变实际编译输入。
+
+本机已验证的循环方式不证明全部资产、版本或任意VEX安全；原生崩溃的内部根因与厂商修复版本分别核实。不得将进程退出当作普通可捕获节点错误，或自动重试结果未知的修改。H21/H22方法验证见`tools/tests/dsh-repeated-layout.test.py`；独立原生展开/循环对照见`tools/reproduce-vex-codegen.py`。VEX循环语法与属性操作依据SideFX[语言参考](https://www.sidefx.com/docs/houdini/vex/lang.html)和[addpoint](https://www.sidefx.com/docs/houdini/vex/functions/addpoint.html)。
 
 ### 源构件与成形检查
 

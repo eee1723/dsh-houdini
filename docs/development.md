@@ -76,6 +76,8 @@ npm test
 
 原生USD退出问题用[reproduce-usd-exit](../tools/reproduce-usd-exit.py)在指定`--hython`中运行独立的导入、内存stage和LOP对照，可重复传版本路径并用`--repeat`检查复现率。每次使用新偏好/package目录和明确HFS，不加载用户HIP或DSH插件；保留脚本主体完成标记、真实退出码与stdout/stderr。主体完成但进程非零退出仍属异常；相同退出码不能证明同一根因，headless结果不能外推GUI行为。证据写到新临时目录，不修改系统崩溃报告或用户配置。
 
+重复细节的代码生成方法在[SOP建模资料](../skills/houdini-sop-workflow/references/modeling-methods.md#重复规律与代码生成)维护。[重复布局检查](../tools/tests/dsh-repeated-layout.test.py)在隔离H21/H22通过Bridge执行随包示例，核对模板位置与ID、Sweep后的字符串属性、参数修改、空输出回滚和foreign边界。[VEX代码生成诊断](../tools/reproduce-vex-codegen.py)以`--hython <明确版本> --form both`在各自原生新进程对照展开语句与循环，保留源计算、下游计算和进程退出事实；展开形式可能崩溃，厂商修复后也可以成功，不把旧崩溃或字符数设为永久测试预期。默认`--form loop`。示例与诊断通过不代替真实模型采用、全部资产安全或GUI观察。
+
 COP接入材质使用[dsh-cop-material-delivery](../tools/tests/dsh-cop-material-delivery.test.py)在新建隔离工程中验证曲面贴图、材质直接采样alpha、粗糙度控制、`$HIP/dsh-texture`读回与同版本独立进程重开。完整纹理网络不以数值变化代替实际图片检查。跨版本节点/算法默认值可能不同，分别验证各版消费和重开，不默认像素一致。
 
 指定生图接入使用[图像请求回归](../tools/tests/image-generation.test.mjs)覆盖精确路由、参考图片字节、防覆盖/文件策略、原图恢复与不自动重试；[真实DSH图片消费](../tools/tests/dsh-image-generation-smoke.test.py)用自有HTTP夹具验证动态设置/凭据、原生及PTC请求、真实附件与交付，默认不调用收费模型。真实提供方测试另记录实际model、请求、原图与视觉范围，不把夹具通过当成外部API可用。
