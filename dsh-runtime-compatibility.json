@@ -15,17 +15,17 @@
       ],
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
-      "verificationStatus": "base-signed-release-verified-runtime-fixes-source-verified",
+      "verificationStatus": "signed-release-verified-with-runtime-fixes",
       "verifiedOn": [
         "Base DSH without local fixes: Houdini 21.0.440 / Qt 6.5.3 / Chromium 108, isolated source and signed-install GUI",
         "Base DSH without local fixes: Houdini 22.0.368 / Qt 6.8.3 / Chromium 122, isolated source and signed-install GUI",
         "Local runtime fixes: Windows kernel sandbox, real native/PTC network and image workflow, selected-task browser result display",
         "Windows system network: current-user settings, native PAC, per-request route capture and changes, real model/search calls, read-only H21/H22 diagnostics",
-        "Local runtime fixes: Houdini 21.0.440 and 22.0.368 actual QtWebEngine source composition, task selection, Trace, resource and native UI interactions"
+        "Local runtime fixes: Houdini 21.0.440 and 22.0.368 actual QtWebEngine source composition, task selection, Trace, resource and native UI interactions",
+        "Signed runtime-fixes installation: Houdini 21.0.440 and 22.0.368 managed Node 24.17.0, authenticated RPC, Bridge, normal GUI workspace/reopen and same-version repair"
       ],
       "pendingVerification": [
-        "normal user entry actual model image route and semantic image understanding",
-        "signed managed installation containing the current local runtime fixes on H21/H22"
+        "normal user entry Houdini-generated image route and semantic image understanding"
       ]
     }
   ],

@@ -22,11 +22,18 @@ await test('ACL diagnosis is read-only even with legacy AllowRoot and an applica
 await test('owned Modify directory initializes without retaining owner WRITE_OWNER or FullControl',async()=>{
  const work=folder('workspace'),outside=folder('outside'),before=acl(work),original=path.join(outside,'keep.txt');
  fs.writeFileSync(original,'keep');
+ // A release assembly may live in a private OWNER RIGHTS directory. The
+ // restricted child's ACL probe must load its own readable fixture dependency,
+ // not depend on access to the assembly directory being tested by its parent.
+ const koffiFixture=path.join(work,'node_modules/koffi');
+ fs.cpSync(path.dirname(require.resolve('koffi')),koffiFixture,{recursive:true});
+ const nativePackage=`@koromix/koffi-${process.platform}-${process.arch}`;
+ if(fs.existsSync(path.join(cache,'node_modules',nativePackage)))fs.cpSync(path.join(cache,'node_modules',nativePackage),path.join(work,'node_modules',nativePackage),{recursive:true});
  const box=new AclSandbox({writableDirs:[work],tempDir:null,writeSid:workspaceWriteSid(fs.realpathSync.native(work)),mode:'workspace-write'});
  try{
   await box.init();
   const code=`const fs=require('fs');const outcomes={};fs.writeFileSync(${JSON.stringify(path.join(work,'ok.txt'))},'ok');
-  const koffi=require(${JSON.stringify(require.resolve('koffi'))});
+  const koffi=require(${JSON.stringify(koffiFixture)});
   const setSecurity=koffi.load('advapi32.dll').func('uint32 __stdcall SetNamedSecurityInfoW(str16, int, uint32, void *, void *, void *, void *)');
   outcomes.aclWrite=setSecurity(${JSON.stringify(work)},1,4,null,null,null,null);
   for(const [name,action] of Object.entries({write:()=>fs.writeFileSync(${JSON.stringify(path.join(outside,'bad.txt'))},'bad'),remove:()=>fs.unlinkSync(${JSON.stringify(original)})})){
