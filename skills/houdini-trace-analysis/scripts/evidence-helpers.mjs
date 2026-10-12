@@ -11,6 +11,15 @@ function tryJson(text) {
  */
 export function processOutcomeFor(tool, text, metadata) {
   if (tool !== 'pwsh' && tool !== 'bash') return null;
+  if (metadata && Object.prototype.hasOwnProperty.call(metadata, 'shellExit')) {
+    if (!metadata.shellExit || typeof metadata.shellExit !== 'object' || Array.isArray(metadata.shellExit))
+      return {status:'unknown',exitCode:null,source:'structured_metadata'};
+    metadata = metadata.shellExit;
+  }
+  if (!metadata || !['exitCode','timedOut','aborted','stopped','signal'].some(key=>Object.prototype.hasOwnProperty.call(metadata,key))) {
+    const record = typeof text === 'string' ? /\n\[process-result: (\{[^\n]*\})\]\s*$/.exec(text) : null;
+    if (record) metadata = tryJson(record[1]) || {exitCode:null};
+  }
   let exitCode = null, source = 'not_recorded', interruption = null;
   if (metadata && ['exitCode','timedOut','aborted','stopped','signal'].some(key => Object.prototype.hasOwnProperty.call(metadata, key))) {
     exitCode = Number.isSafeInteger(metadata.exitCode) ? metadata.exitCode : null;
@@ -30,7 +39,7 @@ export function processOutcomeFor(tool, text, metadata) {
     }
   }
   return {status: interruption ? 'interrupted' : exitCode === null ? 'unknown' : exitCode === 0 ? 'succeeded' : 'failed',
-    exitCode, source, ...(interruption ? {interruption} : {})};
+    exitCode, source, ...(typeof metadata?.hasStderr === 'boolean' ? {hasStderr:metadata.hasStderr} : {}), ...(interruption ? {interruption} : {})};
 }
 
 /** Diagnostic retry candidates, not semantic equivalence or avoidable cost.

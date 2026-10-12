@@ -122,13 +122,20 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     cancel_pending = QtWidgets.QPushButton("取消下次切换")
     diagnostics = QtWidgets.QPushButton("运行诊断…")
     diagnostics.setToolTip("查看真实运行版本、连接状态及重启选项")
+    network = QtWidgets.QPushButton("联网诊断…")
+    network.setToolTip("只读查看网络来源与实际连接，不修改代理设置")
     maintenance.addWidget(local, 0, 0)
     maintenance.addWidget(verify_button, 0, 1)
     maintenance.addWidget(repair, 1, 0)
     maintenance.addWidget(rollback, 1, 1)
     maintenance.addWidget(cancel_pending, 2, 0)
-    maintenance.addWidget(diagnostics, 1 if source_mode else 2, 0 if source_mode else 1)
     advanced_layout.addLayout(maintenance)
+    diagnostic_group = QtWidgets.QWidget()
+    diagnostic_row = QtWidgets.QHBoxLayout(diagnostic_group)
+    diagnostic_row.setContentsMargins(0, 0, 0, 0)
+    diagnostic_row.addWidget(diagnostics)
+    diagnostic_row.addWidget(network)
+    advanced_layout.addWidget(diagnostic_group)
     shared_label = label("实验功能 · 将当前 Houdini 连接到共享服务", "caption")
     shared_buttons = QtWidgets.QHBoxLayout()
     shared_register = QtWidgets.QPushButton("登记共享执行端…")
@@ -151,7 +158,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     cancelled = threading.Event()
     state = {"busy": False, "release": None, "checked": False, "source_version": None,
              "version": None, "pending": None, "error": bool(startup_error)}
-    buttons = [online, install, local, verify_button, repair, rollback, cancel_pending, diagnostics,
+    buttons = [online, install, local, verify_button, repair, rollback, cancel_pending, diagnostics, network,
                shared_register, shared_repair]
 
     def toggle_advanced(checked):
@@ -202,7 +209,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         for button in (repair, rollback, cancel_pending):
             button.hide()
         runtime_available = source_mode or loaded is not None
-        diagnostics.setVisible(runtime_available)
+        diagnostic_group.setVisible(runtime_available)
         shared_label.setVisible(runtime_available)
         shared_register.setVisible(runtime_available)
         shared_repair.setVisible(runtime_available)
@@ -385,6 +392,15 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         import dsh_manager
         dsh_manager.show_version_manager()
 
+    def network_diagnostics():
+        try:
+            import dsh_network_diagnostics
+            dsh_network_diagnostics.show_current(parent=window)
+        except Exception as error:
+            message = '无法打开联网诊断：' + str(error)
+            status.setText(message)
+            details.appendPlainText(message)
+
     def shared_action(repair=False):
         import dsh_shared_executor
         dsh_shared_executor.show_registration(repair=repair)
@@ -403,6 +419,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     cancel_pending.clicked.connect(lambda: run(lambda: store.cancel_pending() or "已取消下次切换，版本和数据保留。"))
     cancel.clicked.connect(request_cancel)
     diagnostics.clicked.connect(runtime_diagnostics)
+    network.clicked.connect(network_diagnostics)
     shared_register.clicked.connect(lambda: shared_action())
     shared_repair.clicked.connect(lambda: shared_action(repair=True))
     advanced_toggle.toggled.connect(toggle_advanced)

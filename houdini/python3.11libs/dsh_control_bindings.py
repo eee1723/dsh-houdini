@@ -1,6 +1,11 @@
 """Explicit numeric controller bindings with preflight revisions and channel rollback."""
 from __future__ import annotations
 
+import dsh_errors
+import dsh_node_access
+import dsh_ownership
+import dsh_parameter_values
+
 import hashlib
 import json
 import math
@@ -48,7 +53,7 @@ def _numeric(p, source=False):
 
 def bind_controls(controller, bindings, dry_run=False, expected_plan=None,
                   replace_existing=False, allow_foreign=None):
-    import dsh_hou_helpers as h
+
     try:
         plan, prepared = _prepare(controller, bindings, dry_run, replace_existing, allow_foreign)
         if dry_run:
@@ -56,10 +61,10 @@ def bind_controls(controller, bindings, dry_run=False, expected_plan=None,
         if expected_plan != plan['plan_sha256']:
             raise ValueError('stale or missing binding plan; preview again with dry_run=True')
         # _parameter_snapshot keys by name; targets on different nodes may have the same name.
-        snapshots = {target.path(): next(iter(h._parameter_snapshot([target]).values()))
+        snapshots = {target.path(): next(iter(dsh_parameter_values._parameter_snapshot([target]).values()))
                      for source, target, expression, value in prepared}
     except Exception as error:
-        raise h.CheckpointError(str(error), {'ok': False, 'phase': 'binding_preflight',
+        raise dsh_errors.CheckpointError(str(error), {'ok': False, 'phase': 'binding_preflight',
                                 'scene_writes': 0, 'applied': False}) from error
     try:
         installed = []
@@ -82,15 +87,15 @@ def bind_controls(controller, bindings, dry_run=False, expected_plan=None,
                 'bindings': installed, 'plan_sha256': plan['plan_sha256'],
                 'scope': 'binding expression/current channel value only; domain output unverified'}
     except Exception as error:
-        failures = h._restore_parameters(snapshots)
-        raise h.CheckpointError(f'binding failed: {error}; restoration errors={failures}',
+        failures = dsh_parameter_values._restore_parameters(snapshots)
+        raise dsh_errors.CheckpointError(f'binding failed: {error}; restoration errors={failures}',
             {'ok': False, 'restored': not failures, 'restore_errors': failures,
              'scope': 'target channel values/keys only; external effects unverified'}) from error
 
 
 def _prepare(controller, bindings, dry_run, replace_existing, allow_foreign):
-    import dsh_hou_helpers as h
-    n = h._resolve(controller)
+
+    n = dsh_node_access._resolve(controller)
     if type(dry_run) is not bool or type(replace_existing) is not bool:
         raise ValueError('dry_run/replace_existing must be boolean')
     if not isinstance(bindings, list) or not 1 <= len(bindings) <= 32:
@@ -104,7 +109,7 @@ def _prepare(controller, bindings, dry_run, replace_existing, allow_foreign):
         source, target = n.parm(item['source']), hou.parm(item['target'])
         source_value = _numeric(source, source=True)
         old_value = _numeric(target)
-        h._require_owned(target.node(), 'bind_controls target', allow_foreign)
+        dsh_ownership.require_owned(target.node(), 'bind_controls target', allow_foreign)
         if target.path() in targets:
             raise ValueError('duplicate binding target')
         targets.add(target.path()); sources.add(source.path())

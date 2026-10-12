@@ -3,16 +3,18 @@
 Exercises the execution mechanisms used by focused module work. This is not an
 LLM behavior test and makes no visual-quality or full-domain acceptance claim.
 """
+
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
 import dsh_quality_contracts as q
 
 OWNER = 'module-integration-fixture'
-with h._execution_owner(OWNER, 'setup'):
+with dsh_ownership.execution_owner(OWNER, 'setup'):
     root = h.tab_create('/obj', 'geo', '__module_integration')
 try:
     def run(code, **options):
@@ -40,7 +42,7 @@ try:
     ], 'OUT_B')
     identities = [a.sessionId(), receiver.sessionId()]
     signatures = [q._data_signature(n.geometry()) for n in (a, receiver)]
-    with h._execution_owner(OWNER, 'controls'):
+    with dsh_ownership.execution_owner(OWNER, 'controls'):
         ctrl = h.tab_create(root, 'null', 'CTRL')
         h.create_spare_parms(ctrl, spec=[{'type':'float','name':'offset','default':0}])
         h.tab_create(root, 'null', 'EMPTY')

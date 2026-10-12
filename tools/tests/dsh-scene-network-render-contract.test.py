@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from pathlib import Path
 import sys
 import tempfile
@@ -14,6 +15,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
+import dsh_errors
+import dsh_geometry_queries
 
 import hou
 import dsh_bridge
@@ -41,7 +44,7 @@ try:
     # Invalid literal managed filenames fail before allocation/cook/render.
     # Fake only GUI availability: the actual path validator and Bridge run.
     with patch.object(hou, 'isUIAvailable', return_value=True), \
-         patch.object(dsh_hou_helpers, '_geometry_fingerprint', side_effect=AssertionError('preflight cooked geometry')):
+         patch.object(dsh_geometry_queries, '_geometry_fingerprint', side_effect=AssertionError('preflight cooked geometry')):
         preview = f"render_view({target_path!r}, picture='nested/preview.png')"
         rejected = dsh_bridge.run_code(preview, owner_session=session, owner_call='preview-path-only')
         assert not rejected['ok'] and rejected['transaction']['status'] == 'no_scene_change', rejected
@@ -96,7 +99,7 @@ try:
         try:
             dsh_hou_helpers.set_timeline(fps=60, frame_range=[2, 12])
             raise AssertionError('timeline write failure expected')
-        except dsh_hou_helpers.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert error.evidence['restored'] is True, error.evidence
     assert dsh_hou_helpers.scene_info()['fps'] == timeline['fps']
     assert dsh_hou_helpers.scene_info()['frame_range'] == timeline['frame_range']
@@ -118,7 +121,7 @@ try:
             dsh_hou_helpers.set_keyframes(animated,
                 {'tx': [{'frame': 1, 'value': 0}], 'ty': [{'frame': 1, 'value': 1}]})
             raise AssertionError('second-channel failure expected')
-        except dsh_hou_helpers.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert error.evidence['restored'] is True, error.evidence
             assert error.evidence['restore_errors'] == [], error.evidence
     assert animated.parm('tx').eval() == 5

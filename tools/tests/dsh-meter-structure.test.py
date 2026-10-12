@@ -1,8 +1,10 @@
 """Meter conversion, actual guide extents, surface-attached details and failures."""
+
 from pathlib import Path
 import sys,math
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_context
@@ -32,7 +34,7 @@ rejects(lambda:h.modeling_dimensions({'bad':{'value':1,'unit':[]}}),'unsupported
 rejects(lambda:h.modeling_dimensions({'bad':{'value':True,'unit':'mm'}}),'finite scalar')
 rejects(lambda:h.modeling_dimensions({'bad':{'value':2.2,'unit':'count'}}),'integers')
 
-with h._execution_owner('meter-structure','fixture'):
+with dsh_ownership.execution_owner('meter-structure','fixture'):
     root=h.tab_create('/obj','geo','meter_structure');ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=q['controller_spec'])
     base=h.tab_create(root,'box','base');h.set_parms(base,{'sizex':"ch('../CTRL/base_l')",'sizey':"ch('../CTRL/base_h')",'sizez':"ch('../CTRL/base_w')",'ty':"ch('../CTRL/base_h')/2"})

@@ -54,6 +54,8 @@ def dsh_command_prefix() -> tuple[list[str] | str, bool]:
         cached = dsh_runtime_compat.preferred_cached_bin(NPM_CACHE) if node else None
         if cached is not None:
             return [node, str(cached)], False
+        if node and dsh_runtime_compat.load_manifest().get("runtimeFixes"):
+            raise RuntimeError("配套 DSH 修复尚未准备；请先在源码目录运行 npm run runtime:prepare，再重新安装。")
         dsh_spec = dsh_runtime_compat.preferred_spec()
 
     npx = shutil.which("npx")

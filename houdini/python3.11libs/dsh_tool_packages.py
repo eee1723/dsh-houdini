@@ -6,6 +6,8 @@ Call all HOM through the Bridge serialized main-thread queue.
 """
 from __future__ import annotations
 
+import dsh_errors
+
 import hashlib
 import importlib.machinery
 import json
@@ -56,8 +58,8 @@ def _outside_hfs(path):
 
 
 def _checkpoint(error, phase, **facts):
-    import dsh_hou_helpers as helpers
-    raise helpers.CheckpointError(str(error), {'ok': False, 'phase': phase, **facts}) from error
+
+    raise dsh_errors.CheckpointError(str(error), {'ok': False, 'phase': phase, **facts}) from error
 
 
 def _versions(values):

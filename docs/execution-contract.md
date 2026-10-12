@@ -2,7 +2,7 @@
 
 本页维护工具链真实执行条件和返回事实的含义。用户目标、任务策略及领域方法见对应 [skills](../skills/)；公开工具、动词签名和执行版本见[工具设计](tool-design.md)。系统提供准确操作与反馈，模型决定方法及完成质量。
 
-实现入口：[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[执行内核](../houdini/python3.11libs/dsh_execution.py)、[执行结果](../houdini/python3.11libs/dsh_execution_results.py)、[helpers](../houdini/python3.11libs/dsh_hou_helpers.py)。
+实现入口：[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[执行内核](../houdini/python3.11libs/dsh_execution.py)、[执行结果](../houdini/python3.11libs/dsh_execution_results.py)、[节点归属](../houdini/python3.11libs/dsh_ownership.py)、[动词导出](../houdini/python3.11libs/dsh_hou_helpers.py)。
 
 ## DSH 与工具职责
 
@@ -29,6 +29,8 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 首次现场操作前，绑定记录通过 DSH 会话持久化确认；普通上下文组装承担消息插入，工具执行期不在 assistant 工具调用与结果之间插入消息。既有执行历史指定了目标时，不能把同一任务的代码或 job 发送到另一个执行端。回执和材料读取不构成重新绑定。
 
 节点 ownership 来自 runtime 创建的 identity 和会话归属；路径、父网络、节点名称及可复制 userdata 都不授权。foreign 节点可以读和作为输入。单次写入仅在用户明确指定目标时使用非空 allow_foreign，不能形成长期所有权。持久 render 服务永不豁免；删除容器前检查其后代权限。HDA库权限与实例分开；整体销毁旧实例的replace拒绝，分叉只产生独立新类型和库。
+
+节点登记、当前作者、嵌套创建记录和原生身份接续只由ownership模块写入。领域模块通过作用域、不可变快照及恢复接口调用，不读取或回写其私有注册表。只有外层Undo边界采集一次存活identity及当时路径；局部创建清理不重复遍历现场。组件导入记录的恢复由component模块执行，图片由media_output的请求作用域收集，异常退出不得污染后续请求。公开动词入口仅导出能力；运行环境修复在无活动请求时按依赖顺序重载实现，再绑定动词与Bridge。
 
 ## 查询、修改与 Raw Gate
 

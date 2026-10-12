@@ -175,6 +175,7 @@ def worker(request_file):
         import hou
         import dsh_bridge as bridge
         import dsh_hou_helpers as h
+        import dsh_ownership
         session = 'isolated-' + request['run_id']
         result['runtime'] = {'houdini': hou.applicationVersionString(), 'runtime_id': bridge._RUNTIME_ID,
                              'execution_contract': bridge._EXECUTION_CONTRACT_VERSION,
@@ -213,8 +214,8 @@ def worker(request_file):
                     node = hou.node(check['node'])
                     if node is None:
                         raise ValueError('missing explicit output: ' + check['node'])
-                    with h._execution_owner(session, check['id']):
-                        h._require_owned(node, 'isolated check')
+                    with dsh_ownership.execution_owner(session, check['id']):
+                        dsh_ownership.require_owned(node, 'isolated check')
                     frame_code = f'set_timeline(current_frame={check["frame"]!r})\n'
                     if check['kind'] == 'render':
                         artifact = artifact_target(directory, check)

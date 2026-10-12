@@ -51,17 +51,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 后台下载/解压可取消；提交pending是原子步骤，提交后使用「取消下次切换」取消下一次切换。
 独立管理器不依赖Node、DSH或插件lib，缺依赖时仍可打开。
 
-### 网页抓取与代理诊断
+### 网络继承与诊断
 
-在 **高级设置 → 运行诊断 → 联网诊断与代理设置** 中，先读取配套 DSH 的原生启动配置，再按需测试公开网页。测试使用同一精确 DSH、当前 DSH_HOME 和工作目录的独立新进程，不续跑会话、不调用收费搜索，也不证明已经运行的 Host 已加载新配置。搜索组件是否安装、网页抓取实际结果、本地 Bridge 路由分别显示；搜索返回来源链接不等于网页正文已读。
+Windows 下，没有显式代理环境覆盖时，配套 DSH 使用当前用户的系统网络设置。手动 HTTP/HTTPS 代理、系统例外列表和 PAC/WPAD 由同一个 DSH 网络模块解析；自动代理脚本由 Windows 原生 API 在后台线程处理。模型、搜索、网页抓取和图片下载共用实际请求的路由。每次新请求重新取得系统选择，已派发请求保持其原路线；关闭系统代理后不用重启 Houdini 来清除端口。不会因连接失败自动改走直连或重发付费请求。
 
-公开域名在 Fake-IP 网络环境中可能解析到 `198.18.*` 等非公网地址。DSH 的直连抓取会拒绝该地址；不要关闭地址检查或把保留网段改成公网。可将当前 Windows 手动 HTTP 代理作为建议填入，核对后明确保存到实际 **DSH_HOME/.env**。系统代理不会自动覆盖 DSH：启动环境和用户 `.env` 的最终优先级由配套 DSH 自己解析，界面显示生效来源。只保存所填协议，保留其他配置、注释、ALL_PROXY 和 NO_PROXY；留空不删除旧值。含凭据的代理地址在诊断与确认中脱敏。
+插件不保存代理端口、模型直连域名或自己的分流规则。从 **DSH-Houdini → Version & Updates... → 高级设置 → 联网诊断…** 打开只读窗口；入口与「运行诊断…」并排，位于共享执行端实验功能上方，可查看实际来源、目标地址路线与失败原因，并由用户点击打开 Windows 网络设置。测试在独立新进程中使用同一精确 DSH，不修改系统设置、不续跑会话、不调用收费搜索；结果不证明已有 Host 已加载相同版本。模型服务、搜索服务的地址/凭据仍由 DSH 自身配置；搜索组件存在不证明搜索调用成功。
 
-代理配置只影响下次启动的 DSH。此入口不改系统全局环境、不热改或重启当前服务；有进行中的任务时先结束并保存，再按既有运行环境修复入口重启。也可在 DSH 用户 `.env` 中手动配置 HTTP_PROXY/HTTPS_PROXY；项目目录的 `.env` 不能携带代理设置。受管安装使用本版本独立数据目录中的 `.env`，不修改旧版或独立 `~/.dsh`。
+用户或部署显式设置的 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY、NO_PROXY 仍沿用 DSH 的环境优先级，覆盖系统继承；诊断会说明来源。插件不会自动修改这些用户设置，项目目录的 .env 也不能选择网络路线。发行包不携带开发者的端口、域名例外或凭据。非 Windows 平台保持原有 DSH 环境行为，本项目没有宣称读取其原生系统代理。
 
-代理模式将域名解析与目的地路由交给用户信任的代理，直连仍执行原生 DNS 校验和地址固定。HTTP(S)/URL 凭据检查、非公网 IP 字面地址拒绝、loopback 直连、重定向限制仍保留；不能把使用代理描述为与直连完全相同的 DNS 验证。上游尚不自动识别 Windows 系统代理、PAC 或 SOCKS，插件不维护第二套隐式代理优先级。
+系统 HTTP 代理通过原有传输连接；SOCKS-only 设置会明确报不支持，不擅自直连。企业认证代理、企业私有证书和 PAC 的多代理故障切换未获得完整验证。应用直连仍使用系统 DNS/VPN/TUN。公开网页的非公网地址检查、HTTP(S)/URL 凭据限制和重定向边界保持；Fake-IP 返回值不是公网地址，不能靠关闭检查解决。用户配置的代理负责代理路线的 DNS，直连路线仍执行原生解析与地址固定。任意 shell/模型自写网络脚本不承诺使用同样的传输；联网资料使用原生工具。
 
-实现与维护入口为 [网络诊断](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生探针](../houdini/python3.11libs/dsh_network_probe.mjs)；配置保留回归见 [代理配置检查](../tools/tests/dsh-network-proxy-config.test.py)，Qt 交互见 [界面检查](../tools/tests/dsh-network-ui.test.py)。[实际 DSH 网络检查](../tools/tests/dsh-network-diagnostics.test.py)用独立 DSH_HOME 启动精确 CLI，验证用户 `.env`、启动环境优先级及 loopback 传输；显式传 `--proxy` 才执行匿名外网抓取，不调用模型。
+实现入口为 [网络诊断](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生探针](../houdini/python3.11libs/dsh_network_probe.mjs)及[DSH修复声明](../deployment/dsh-runtime-fixes/manifest.json)。[系统代理检查](../tools/tests/dsh-system-proxy-check.mjs)验证同进程切换、系统例外、原生PAC、取消与失败不换路；[界面检查](../tools/tests/dsh-network-ui.test.py)确认只读和主线程不阻塞；[DSH检查](../tools/tests/dsh-network-diagnostics.test.py)覆盖显式覆盖、凭据脱敏和loopback。
+
+参考图片继续使用 `web_download`，支持通过公开CDN重定向下载。回执记录请求实际路线，网络错误带底层原因；访问返回403等站点拒绝不等同于电脑断网。命令退出0但有标准错误输出时显示诊断提示，需阅读具体输出；单凭退出0不能断言脚本内每项操作成功。
+
+源码首次启动或运行修复声明变更后，执行 `npm run runtime:prepare`，或从源码运行诊断准备配套环境。修复从固定DSH源码和依赖锁构建到独立缓存，当前Host不会被替换或自动重启。正式安装包在发布组装时完成同一构建，用户安装不运行源码编译；详见[版本适配](dsh-update-compatibility.md)。
 ## 正式发行与受管安装合同
 
 下载 → 签名/资产摘要验证 → 新目录安全解压 → 全量文件检查 → 原子记录pending。

@@ -5,6 +5,14 @@ No renderer, viewport, network service, or implicit user-camera mutation here.
 """
 from __future__ import annotations
 
+import dsh_view_state
+
+import dsh_errors
+import dsh_node_access
+import dsh_ownership
+import dsh_parameter_values
+import dsh_service_constants
+
 import itertools
 import math
 
@@ -253,11 +261,11 @@ def sop_bounds(target, frame):
 
 def fit_camera(camera, target, direction, coverage, width, height, frame, dry_run, allow_foreign):
     import hou
-    import dsh_hou_helpers as h
-    cam, target = h._resolve(camera), h._resolve(target)
-    h._require_owned(cam, 'camera_fit', allow_foreign)
+
+    cam, target = dsh_node_access._resolve(camera), dsh_node_access._resolve(target)
+    dsh_ownership.require_owned(cam, 'camera_fit', allow_foreign)
     # Even allow_foreign must not repurpose the persistent preview service.
-    if cam.userData(h._RENDER_OWNER_KEY) == h._RENDER_OWNER_VALUE:
+    if cam.userData(dsh_service_constants._RENDER_OWNER_KEY) == dsh_service_constants._RENDER_OWNER_VALUE:
         raise ValueError('camera_fit cannot edit render_view service cameras')
     if not isinstance(dry_run, bool):
         raise ValueError('dry_run must be bool')
@@ -268,7 +276,7 @@ def fit_camera(camera, target, direction, coverage, width, height, frame, dry_ru
     width = cam.evalParm('resx') if width is None else width
     height = cam.evalParm('resy') if height is None else height
     points = sop_bounds(target, f)
-    direction = h._NAMED_DIRECTIONS.get(direction, direction) if isinstance(direction, str) else direction
+    direction = dsh_view_state._NAMED_DIRECTIONS.get(direction, direction) if isinstance(direction, str) else direction
     plan = solve(points, direction, width, height, coverage=coverage, **{k:lens[k] for k in ('projection','focal','aperture','aspect','near')})
     # Snapshot every channel setWorldTransform may alter; never follow references.
     names = ('t','r','s','p','pr','shear')
@@ -282,7 +290,7 @@ def fit_camera(camera, target, direction, coverage, width, height, frame, dry_ru
         raise ValueError('camera_fit refuses animated/expression-driven camera channels')
     if cam.parm('constraints_on') is not None and cam.evalParm('constraints_on'):
         raise ValueError('camera_fit refuses constrained cameras')
-    state = h._parameter_snapshot(parms)
+    state = dsh_parameter_values._parameter_snapshot(parms)
     common = {'camera': cam.path(), 'target': target.path(), 'frame': f,
               'dry_run': dry_run, 'bounds': plan['bounds'], 'eye': plan['eye'],
               'center': plan['center'], 'dist': plan['dist'], 'direction': plan['direction']}
@@ -299,12 +307,12 @@ def fit_camera(camera, target, direction, coverage, width, height, frame, dry_ru
             cam.parm(name).set(value, follow_parm_reference=False)
         actual = check(points, cam.worldTransform(), width, height, coverage=coverage, **obj_lens(cam))
         if not cam.worldTransform().isAlmostEqual(plan['matrix'], 1e-6):
-            raise h.CheckpointError('camera_fit cannot realize the requested world transform (parent scale/shear/pretransform)', actual)
+            raise dsh_errors.CheckpointError('camera_fit cannot realize the requested world transform (parent scale/shear/pretransform)', actual)
         if not actual['ok']:
-            raise h.CheckpointError('camera_fit actual camera failed framing', actual)
+            raise dsh_errors.CheckpointError('camera_fit actual camera failed framing', actual)
         return {**common, **actual, 'applied': True}
     except BaseException:
-        errors = h._restore_parameters(state)
+        errors = dsh_parameter_values._restore_parameters(state)
         if errors:
             raise RuntimeError(f'camera_fit restoration failed: {errors}')
         raise

@@ -1,7 +1,9 @@
 """Generic HDA save/lock and definition-failure contracts; isolated hython only."""
+
 import sys, tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_hda_operations
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -69,27 +71,27 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-lifecycle-') as tmp:
     n=hou.node(path)
     n.parm('width').set(7.)
     sections={key:bytes(value.binaryContents()) for key,value in n.type().definition().sections().items()}
-    original=h._rebuild_hda_interface
+    original=dsh_hda_operations._rebuild_hda_interface
     def injected(*args,**kwargs):
         value=original(*args,**kwargs)
         if not kwargs.get('dry_run'):
             raise RuntimeError('injected AFTER definition write')
         return value
-    h._rebuild_hda_interface=injected
+    dsh_hda_operations._rebuild_hda_interface=injected
     try:
         failed=run(f"hda_set_interface({path!r},layout=[{{'type':'float','name':'replacement','default':9}}])",False)
     finally:
-        h._rebuild_hda_interface=original
+        dsh_hda_operations._rebuild_hda_interface=original
     assert 'injected AFTER' in failed['error']
     assert library.read_bytes()==before
     assert n.evalParm('width')==7 and n.parm('replacement') is None, (n.evalParm('width'),n.parm('replacement'),failed)
     assert {key:bytes(value.binaryContents()) for key,value in n.type().definition().sections().items()}==sections
     # Definition recovery must not disable unrelated edits' outer scene undo.
-    h._rebuild_hda_interface=injected
+    dsh_hda_operations._rebuild_hda_interface=injected
     try:
         failed=run(f"set_parms({path!r},{{'width':11}})\nhda_set_interface({path!r},layout=[{{'type':'float','name':'replacement','default':9}}])",False)
     finally:
-        h._rebuild_hda_interface=original
+        dsh_hda_operations._rebuild_hda_interface=original
     assert failed['rollback']['applied'] and n.evalParm('width')==7
     assert library.read_bytes()==before
     # A normal empty-label separator is serialized differently in the native

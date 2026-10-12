@@ -6,6 +6,7 @@ that creates one partial node and then raises.
 
 from __future__ import annotations
 
+
 from pathlib import Path
 import sys
 import uuid
@@ -13,6 +14,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
+import dsh_node_creation
 
 import hou
 import dsh_bridge
@@ -20,7 +22,7 @@ import dsh_hou_helpers
 
 
 parent = hou.node("/obj").createNode("geo", f"__dsh_tab_failure_{uuid.uuid4().hex[:8]}")
-original = dsh_hou_helpers._run_shelf_tool
+original = dsh_node_creation._run_shelf_tool
 
 
 def fail_after_partial_create(tool, target, type_name):
@@ -29,7 +31,7 @@ def fail_after_partial_create(tool, target, type_name):
 
 
 try:
-    dsh_hou_helpers._run_shelf_tool = fail_after_partial_create
+    dsh_node_creation._run_shelf_tool = fail_after_partial_create
     outcome = dsh_bridge.run_code(
         f"tab_create({parent.path()!r}, 'copytopoints')",
         owner_session="tab-create-failure-test",
@@ -44,7 +46,7 @@ try:
     assert not missing['ok'] and missing['transaction']['status']=='no_scene_change', missing
     assert missing['verbs'][0]['summary']['phase']=='preflight', missing
     assert missing['verbs'][0]['summary']['scene_writes']==0, missing
-    dsh_hou_helpers._run_shelf_tool = original
+    dsh_node_creation._run_shelf_tool = original
     relative = dsh_bridge.run_code(
         f"p=hou.node({parent.path()!r})\na=tab_create(p,'box',name='source')\n"
         "b=tab_create(p,'null',name='out',inputs=['source'])\n"
@@ -61,7 +63,7 @@ try:
     assert not_network['verbs'][0]['summary']['scene_writes'] == 0, not_network
     assert not_network['transaction']['status'] == 'no_scene_change', not_network
 finally:
-    dsh_hou_helpers._run_shelf_tool = original
+    dsh_node_creation._run_shelf_tool = original
     if parent is not None:
         parent.destroy()
 

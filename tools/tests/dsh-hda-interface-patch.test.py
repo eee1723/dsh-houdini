@@ -1,10 +1,12 @@
 """Real HDA definition edits: old channels, multiple instances, preview and rollback."""
+
 import hashlib
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -75,7 +77,7 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     assert bad['transaction']['status'] == 'no_scene_change', bad
     assert library.read_bytes() == snapshot
     revision = api.interface_revision(n)
-    with h._execution_owner('tool-author', 'negative'):
+    with dsh_ownership.execution_owner('tool-author', 'negative'):
         for bad_edits, message in [
             ([{'op': 'update', 'name': 'amount', 'fields': {'label': 'Never applied'}},
               {'op': 'update', 'name': 'missing', 'fields': {'label': 'x'}}], 'missing template'),
@@ -92,7 +94,7 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
             assert library.read_bytes() == snapshot
     # Definition affects all instances, even when the explicitly targeted node is owned.
     foreign = run("__result__=tab_create('/obj', 'dsh_fixture::interface::1.0', name='foreign').path()", owner='other')
-    with h._execution_owner('tool-author', 'foreign'):
+    with dsh_ownership.execution_owner('tool-author', 'foreign'):
         edit = [{'op': 'update', 'name': 'amount', 'fields': {'help': 'Updated help'}}]
         reject(lambda: h.hda_set_interface(n, edits=edit, expected_sha256=revision), 'ownership guard')
     assert library.read_bytes() == snapshot
@@ -113,14 +115,14 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
         return errors + (['injected restoration failure'] if len(calls) == 1 else [])
     try:
         api._restore = fail_once
-        with h._execution_owner('tool-author', 'rollback'):
+        with dsh_ownership.execution_owner('tool-author', 'rollback'):
             reject(lambda: h.hda_set_interface(n, edits=edit, expected_sha256=revision), 'injected restoration failure')
     finally:
         api._restore = original_restore
     assert library.read_bytes() == snapshot and api.interface_revision(n) == revision
     assert n.parm('amount').keyframes() and n.parm('resource').isLocked()
     before_condition_keys = n.parm('count').keyframes()
-    with h._execution_owner('tool-author', 'conditional'):
+    with dsh_ownership.execution_owner('tool-author', 'conditional'):
         result = h.hda_set_interface(n, edits=[{'op': 'update', 'name': 'count', 'fields': {
             'disable_when': '{ enabled == 0 }', 'hide_when': '{ enabled == 0 }'}}], expected_sha256=revision)
     assert n.parm('count').parmTemplate().conditionals()[hou.parmCondType.DisableWhen] == '{ enabled == 0 }'
@@ -139,6 +141,11 @@ import dsh_ui_capture as capture
 import dsh_package_discovery as discovery
 import dsh_tool_catalog as catalog
 import dsh_tool_packages as packages
+import dsh_node_creation as creation
+import dsh_parameter_values as values
+import dsh_render as render
+import dsh_hda_versions as versions
+import dsh_execution as execution
 reload_module = launcher.importlib.reload
 stop_bridge, start_bridge = b.stop, b.start
 events = []
@@ -148,9 +155,11 @@ note = hou.node(fixture).findStickyNote('README')
 note_identity = note.sessionId()
 note_registry = notes._OWNED_NOTES
 stale_functions = [(api, 'parameter_states'), (lifecycle, '_interface_differences'),
-    (boxes, 'collect_editor_obstacles'), (notes, 'apply_network_notes'), (capture, 'ui_screenshot'),
-    (discovery, 'read_package_config'), (catalog, 'tool_catalog'), (packages, 'tool_package_create')]
-selected_modules = {module for module, _name in stale_functions}
+    (boxes, 'collect_editor_obstacles'), (notes, 'apply_network_notes'), (capture, 'prepare_ui_capture'),
+    (discovery, 'read_package_config'), (catalog, 'tool_catalog'), (packages, 'tool_package_create'),
+    (creation, 'tab_create'), (values, 'set_parms'), (render, 'render_view'),
+    (dsh_ownership, 'require_owned'), (versions, 'switch_version')]
+selected_modules = {module for module, _name in stale_functions} | {h, execution}
 original_functions = {(module, name): getattr(module, name) for module, name in stale_functions}
 def reload_selected(module):
     events.append(module.__name__)
@@ -165,11 +174,14 @@ try:
     for module, name in stale_functions:
         assert getattr(module, name).__module__ == module.__name__, (module.__name__, name)
         assert getattr(module, name) is not original_functions[(module, name)]
+    for module, name in ((creation, 'tab_create'), (values, 'set_parms'), (render, 'render_view')):
+        assert getattr(h, name) is getattr(module, name), 'public export retained an old implementation'
+        assert execution._VERBS[name] is getattr(module, name), 'dispatch retained an old implementation'
     assert events[0] == 'stop' and events[-1] == 'start', events
     for source, consumer in (('dsh_network_layout','dsh_network_boxes'),
             ('dsh_network_boxes','dsh_network_notes'), ('dsh_network_navigation','dsh_network_notes'),
-            ('dsh_hou_helpers','dsh_hda_lifecycle'), ('dsh_hda_interfaces','dsh_hda_lifecycle'),
-            ('dsh_hou_helpers','dsh_ui_capture'), ('dsh_package_discovery','dsh_tool_packages'),
+            ('dsh_ownership','dsh_hda_lifecycle'), ('dsh_hda_interfaces','dsh_hda_lifecycle'),
+            ('dsh_media_output','dsh_ui_capture'), ('dsh_package_discovery','dsh_tool_packages'),
             ('dsh_tool_catalog','dsh_execution'), ('dsh_tool_packages','dsh_execution')):
         assert events.index(source) < events.index(consumer), (source, consumer, events)
     assert notes.collect_editor_obstacles is boxes.collect_editor_obstacles

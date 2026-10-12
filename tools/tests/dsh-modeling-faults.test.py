@@ -3,13 +3,15 @@
 These generic fixtures are production mechanism regressions, not product task
 answers or a visual benchmark. Healthy cook is deliberately insufficient.
 """
+
 from pathlib import Path
 import sys,json
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 
-with h._execution_owner('fault-injection','fixture'):
+with dsh_ownership.execution_owner('fault-injection','fixture'):
     root=h.tab_create('/obj','geo','fault_fixture')
     a=h.tab_create(root,'box','a')
     a_tag=h.tab_create(root,'attribwrangle','a_tag');h.connect(a,a_tag,0)

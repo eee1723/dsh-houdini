@@ -4,12 +4,14 @@ Run in isolated hython with --directory <new external directory> --mode build,
 then in another isolated same-version hython with the same directory and mode
 reopen. No model, GUI, user HIP, global preferences or external source images.
 """
+
 from pathlib import Path
 import argparse,json,sys
 import numpy as np
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
+import dsh_image_pixels
 import hou
 import dsh_bridge as bridge
 import dsh_hou_helpers as h
@@ -32,7 +34,7 @@ def call(code):
     return reply.get('result')
 
 def pixels(path):
-    decoded=h._read_pixels_qt(str(path));assert decoded is not None,path
+    decoded=dsh_image_pixels._read_pixels_qt(str(path));assert decoded is not None,path
     width,height,rows=decoded
     image=rows.image
     raw=np.frombuffer(image.constBits(),dtype=np.uint8).reshape(height,image.bytesPerLine())

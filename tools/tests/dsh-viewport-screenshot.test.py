@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hou
+import time
+
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +18,14 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
+import dsh_errors
+import dsh_media_output
+import dsh_node_access
+import dsh_viewport
+import dsh_media_output
+import dsh_scene
 import hou
+import dsh_scene
 import dsh_hou_helpers as h
 import dsh_preview_paths as preview_paths
 
@@ -160,7 +170,7 @@ class FakeHou:
         self._frame = 1.0; self.frame_calls = []; self.fail_restore = False
         self.paneTabType = SimpleNamespace(SceneViewer=object())
         self.viewportGuide = SimpleNamespace(**{name: ('guide-one' if index == 0 else f'guide-{index}')
-                                               for index, name in enumerate(h._CLEAN_GUIDES)})
+                                               for index, name in enumerate(dsh_viewport._CLEAN_GUIDES)})
         desktop = SimpleNamespace(paneTabOfType=lambda _kind: viewer)
         self.ui = SimpleNamespace(curDesktop=lambda: desktop)
     def isUIAvailable(self): return True
@@ -177,18 +187,19 @@ class FakeHou:
 def installed(viewer, hip):
     fake = FakeHou(viewer); bbox_frames = []
     fake.hipFile = SimpleNamespace(path=lambda: str(hip))
-    old = (h.hou, h.scene_info, h._webview_was_minimized, h._restore_webview_window,
-           h._resolve, h._display_bbox)
-    h.hou = fake
-    h.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
-    h._webview_was_minimized = lambda: False
-    h._restore_webview_window = lambda _was=None: None
-    h._resolve = lambda value: SimpleNamespace(path=lambda: str(value))
-    h._display_bbox = lambda _node: (bbox_frames.append(fake.frame()) or object())
+    old = (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window,
+           dsh_node_access._resolve, dsh_viewport._display_bbox)
+    dsh_viewport.hou = dsh_media_output.hou = fake
+    dsh_scene.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
+    dsh_viewport._webview_was_minimized = lambda: False
+    dsh_viewport._restore_webview_window = lambda _was=None: None
+    dsh_node_access._resolve = lambda value: SimpleNamespace(path=lambda: str(value))
+    dsh_viewport._display_bbox = lambda _node: (bbox_frames.append(fake.frame()) or object())
     try: yield fake, bbox_frames
     finally:
-        (h.hou, h.scene_info, h._webview_was_minimized, h._restore_webview_window,
-         h._resolve, h._display_bbox) = old
+        (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window,
+         dsh_node_access._resolve, dsh_viewport._display_bbox) = old
+        dsh_media_output.hou = dsh_viewport.hou
 
 
 def run(viewer, hip, **kwargs):
@@ -199,11 +210,11 @@ def run(viewer, hip, **kwargs):
 
 @contextmanager
 def fast_timeout():
-    old_time, old_sleep = h.time.time, h.time.sleep; clock = [0]
-    h.time.time = lambda: (clock.__setitem__(0, clock[0] + 5) or clock[0])
-    h.time.sleep = lambda _seconds: None
+    old_time, old_sleep = time.time, time.sleep; clock = [0]
+    time.time = lambda: (clock.__setitem__(0, clock[0] + 5) or clock[0])
+    time.sleep = lambda _seconds: None
     try: yield
-    finally: h.time.time, h.time.sleep = old_time, old_sleep
+    finally: time.time, time.sleep = old_time, old_sleep
 
 
 with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
@@ -242,7 +253,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
         viewer = Viewer(linked=True)
         with installed(viewer, hip) as (fake, bbox_frames):
             try: h.viewport_screenshot('../bad.png', frame=5, frame_target='target', output_policy=policy)
-            except h.CheckpointError as error:
+            except dsh_errors.CheckpointError as error:
                 assert 'basename' in str(error), error
                 assert error.evidence['phase'] == 'output_path_preflight' and error.evidence['scene_writes'] == 0
             else: raise AssertionError('allocated traversal should fail')
@@ -259,7 +270,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     linked_camera = viewer.viewport.camera(); parms_before = dict(linked_camera.parms)
     with installed(viewer, hip):
         try: h.viewport_screenshot('guide-failure.png', frame=5, clean=True, frame_target='target')
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'partial guide setter' in str(error)
             assert error.evidence['user_state_restored'] is True
             assert error.evidence['capture_unresolved'] is False
@@ -270,7 +281,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     viewer = Viewer(noop_restore=True)
     with installed(viewer, hip):
         try: h.viewport_screenshot('noop.png', frame=5, clean=True)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert not error.evidence['user_state_restored']
             assert any('guide' in item for item in error.evidence['restore_errors'])
         else: raise AssertionError('no-op restoration should fail')
@@ -278,7 +289,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     stale = base / 'stale.png'; stale.write_bytes(tiny_png())
     with fast_timeout():
         try: run(Viewer(mode='none'), hip, path=str(stale), clean=False, output_policy='explicit')
-        except h.CheckpointError as error: assert not error.evidence['fresh']
+        except dsh_errors.CheckpointError as error: assert not error.evidence['fresh']
         else: raise AssertionError('stale screenshot should fail')
 
     # An allocated timeout is unresolved: its exclusive reservation remains so a
@@ -290,7 +301,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
         try:
             with fast_timeout():
                 try: run(late_viewer, hip, path='unresolved.png', clean=False, output_policy=policy)
-                except h.CheckpointError as error:
+                except dsh_errors.CheckpointError as error:
                     assert error.evidence['capture_unresolved'] is True
                     assert error.evidence['artifact']['reservation_retained'] is True
                     unresolved_root = Path(error.evidence['artifact']['managed_root'])
@@ -305,7 +316,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
             else: raise AssertionError('unresolved reservation must block forced destination reuse')
             late_viewer.writer_event.set();late_viewer.writer_thread.join(timeout=2)
             assert not late_viewer.writer_thread.is_alive()
-            assert unresolved_path.is_file() and h._screenshot_readable(str(unresolved_path))
+            assert unresolved_path.is_file() and dsh_viewport._screenshot_readable(str(unresolved_path))
         finally:
             preview_paths.secrets.token_hex = original_token_hex
         assert len(list(unresolved_root.glob('*.reserve'))) == 1
@@ -317,7 +328,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     dispatch_viewer = Viewer(mode='raise-late')
     try:
         try: run(dispatch_viewer, hip, path='dispatch.png', clean=False)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'post-dispatch failure' in str(error)
             assert error.evidence['capture_unresolved'] is True
             assert error.evidence['artifact']['reservation_retained'] is True
@@ -339,12 +350,12 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     # the observer never established settlement.
     original_token_hex = preview_paths.secrets.token_hex
     preview_paths.secrets.token_hex = lambda _size: 'pollforced'
-    real_readable = h._screenshot_readable
-    h._screenshot_readable = lambda _candidate: (_ for _ in ()).throw(
+    real_readable = dsh_viewport._screenshot_readable
+    dsh_viewport._screenshot_readable = lambda _candidate: (_ for _ in ()).throw(
         KeyboardInterrupt('injected polling interruption'))
     try:
         try: run(Viewer(), hip, path='poll-interrupt.png', clean=False)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'polling interruption' in str(error)
             assert error.evidence['capture_unresolved'] is True
             assert error.evidence['artifact']['reservation_retained'] is True
@@ -356,27 +367,27 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
         except RuntimeError as error: assert 'unique' in str(error), error
         else: raise AssertionError('poll-interrupt reservation must block forced reuse')
     finally:
-        h._screenshot_readable = real_readable
+        dsh_viewport._screenshot_readable = real_readable
         preview_paths.secrets.token_hex = original_token_hex
 
     readable_calls = []
-    real_readable = h._screenshot_readable
-    h._screenshot_readable = lambda candidate: (readable_calls.append(candidate) or real_readable(candidate))
+    real_readable = dsh_viewport._screenshot_readable
+    dsh_viewport._screenshot_readable = lambda candidate: (readable_calls.append(candidate) or real_readable(candidate))
     try:
         with fast_timeout():
             try: run(Viewer(mode='invalid'), hip, path=str(base / 'invalid.png'), clean=False, output_policy='explicit')
-            except h.CheckpointError as error: assert 'stable readable' in str(error), error
+            except dsh_errors.CheckpointError as error: assert 'stable readable' in str(error), error
             else: raise AssertionError('invalid screenshot should fail')
     finally:
-        h._screenshot_readable = real_readable
+        dsh_viewport._screenshot_readable = real_readable
     assert readable_calls, 'invalid-image negative must exercise the decoder'
     with fast_timeout():
         try: run(Viewer(mode='wrong-suffix'), hip, path=str(base / 'wrong-suffix.png'), clean=False, output_policy='explicit')
-        except h.CheckpointError as error: assert 'stable readable' in str(error), error
+        except dsh_errors.CheckpointError as error: assert 'stable readable' in str(error), error
         else: raise AssertionError('wrong-frame screenshot should fail')
     assert (base / 'wrong-suffix.0004.png').is_file()
     try: run(Viewer(mode='ambiguous'), hip, path=str(base / 'ambiguous.png'), clean=False, output_policy='explicit')
-    except h.CheckpointError as error: assert 'ambiguous' in str(error), error
+    except dsh_errors.CheckpointError as error: assert 'ambiguous' in str(error), error
     else: raise AssertionError('ambiguous screenshot should fail')
 
     _, _, partial = run(Viewer(mode='partial'), hip, path=str(base / 'partial.png'),
@@ -392,37 +403,38 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     real_with_actual = preview_paths.with_actual_path
     preview_paths.with_actual_path = lambda *_args, **_kwargs: (_ for _ in ()).throw(
         ValueError('injected emitted-path validation failure'))
-    h._PRODUCED_IMAGES.clear()
+    dsh_media_output._PRODUCED_IMAGES.clear()
     try:
         try: run(Viewer(), hip, path=str(base / 'invalid-emitted.png'), clean=False,
                  output_policy='explicit')
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'emitted-path validation failure' in str(error)
-            assert not error.evidence['fresh'] and not h._PRODUCED_IMAGES
+            assert not error.evidence['fresh'] and not dsh_media_output._PRODUCED_IMAGES
         else: raise AssertionError('emitted path validation should fail')
     finally:
         preview_paths.with_actual_path = real_with_actual
 
     viewer = Viewer(mode='raise')
     try: run(viewer, hip, path=str(base / 'failure.png'), clean=False, output_policy='explicit')
-    except h.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         assert 'injected flipbook failure' in str(error) and error.evidence['user_state_restored']
     else: raise AssertionError('flipbook failure should propagate')
 
     viewer = Viewer(); fake = FakeHou(viewer); fake.fail_restore = True
-    old = (h.hou, h.scene_info, h._webview_was_minimized, h._restore_webview_window)
-    h.hou = fake; h.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
-    h._webview_was_minimized = lambda: False; h._restore_webview_window = lambda _was=None: None
-    h._PRODUCED_IMAGES.clear()
+    old = (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window)
+    dsh_viewport.hou = dsh_media_output.hou = fake; dsh_scene.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
+    dsh_viewport._webview_was_minimized = lambda: False; dsh_viewport._restore_webview_window = lambda _was=None: None
+    dsh_media_output._PRODUCED_IMAGES.clear()
     try:
         try: h.viewport_screenshot('restore.png', frame=5, clean=False)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert error.evidence['fresh'] and not error.evidence['user_state_restored']
-            assert Path(error.evidence['path']).resolve() in {Path(item).resolve() for item in h._PRODUCED_IMAGES}
+            assert Path(error.evidence['path']).resolve() in {Path(item).resolve() for item in dsh_media_output._PRODUCED_IMAGES}
             assert not error.evidence['artifact'].get('reservation_retained')
             assert not Path(error.evidence['path'] + '.reserve').exists()
         else: raise AssertionError('restore failure should reject success')
     finally:
-        h.hou, h.scene_info, h._webview_was_minimized, h._restore_webview_window = old
+        dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window = old
+        dsh_media_output.hou = dsh_viewport.hou
 
 print('viewport screenshot lifecycle, decode, requested-frame and failure simulation passed (no GUI claim)')

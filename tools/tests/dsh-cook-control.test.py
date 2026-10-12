@@ -1,8 +1,12 @@
 """Bounded risk rejection and Manual metadata behavior, no unsafe loops executed."""
+
 from pathlib import Path
 import sys
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_node_operations
+import dsh_ownership
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -130,7 +134,7 @@ try:
     assert hou.updateModeSetting()==hou.updateMode.AutoUpdate
 finally:
     native_set_mode(original_mode)
-with h._execution_owner('cook-test','setup'):
+with dsh_ownership.execution_owner('cook-test','setup'):
     g=h.tab_create('/obj','geo',name='cook_test')
     n=h.tab_create(g,'box')
     w=h.tab_create(g,'attribwrangle')
@@ -146,7 +150,7 @@ with h._execution_owner('cook-test','setup'):
     assert report['failure_reasons']==['not_evaluated_manual'],report
     assert n.cookCount()==count and hou.updateModeSetting()==hou.updateMode.Manual
     try:h.verify_network(g,output=n)
-    except h.CheckpointError as error:assert error.evidence['status']=='not_evaluated_manual'
+    except dsh_errors.CheckpointError as error:assert error.evidence['status']=='not_evaluated_manual'
     else:raise AssertionError('Manual verification was certified')
     for operation in (lambda:h.geo_attrib_stats(n,'P'), lambda:h.geo_piece_stats(n),
                       lambda:h.geo_frame_diff(n,1,2), lambda:h.geo_point_spacing(n,1,.1)):
@@ -220,10 +224,10 @@ with h._execution_owner('cook-test','setup'):
         # Baseline normalization and perturbation are both explicit cooks;
         # inject the fault only at the subsequent restoration boundary.
         return real_cook(*args,**kwargs) if len(cook_calls)<=2 else failure
-    with patch.object(h,'cook_node',side_effect=fail_restoration), \
+    with patch.object(dsh_node_operations,'cook_node',side_effect=fail_restoration), \
          patch.object(q,'_geometry',wraps=q._geometry) as geometry_reads:
         try:h.test_controls(n,n,controls)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             evidence=error.evidence
         else:raise AssertionError('failed restoration cook was certified')
     assert len(cook_calls)==3,cook_calls
@@ -232,7 +236,7 @@ with h._execution_owner('cook-test','setup'):
     assert any('injected interrupted cook' in error for error in evidence['results'][0]['restore_errors']),evidence
     assert evidence['results'][0]['parameter_restore']['ok'],evidence
     assert (n.evalParm('sizex'),tuple(n.parm('sizex').keyframes()),hou.frame(),n.sessionId())==state
-    with patch.object(h,'_cook_node',return_value=failure), \
+    with patch.object(dsh_node_operations,'_cook_node',return_value=failure), \
          patch.object(hou.SopNode,'geometry',side_effect=AssertionError('implicit retry after failed cook')):
         failed=h.verify_network(g,output=n,nodes=[n],require_valid=False)
     assert failed['failure_reasons']==['cook_error'] and failed['nonempty'] is None,failed

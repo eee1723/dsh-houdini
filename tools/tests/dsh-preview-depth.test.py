@@ -1,10 +1,14 @@
 """Preview framing/depth separation, real HOM with a renderer stub (no live HIP)."""
+
 from pathlib import Path
 import sys
 import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
 import hou
 import dsh_camera_framing as f
+import dsh_image_pixels
+import dsh_render
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 
@@ -53,7 +57,7 @@ group=root.createNode('groupcreate','tag');group.setInput(0,box);group.parm('gro
 surround=root.createNode('box','context');surround.parmTuple('size').set((160,8,90));surround.parm('ty').set(4)
 merge=root.createNode('merge','OUT');merge.setInput(0,group);merge.setInput(1,surround)
 sentinel=hou.node('/obj').createNode('null','preview_sentinel');sentinel.setSelected(True,clear_all_selected=True)
-real_ui,real_render,real_check=hou.isUIAvailable,h.render_frame,h.render_check
+real_ui,real_render,real_check=hou.isUIAvailable,dsh_render.render_frame,dsh_image_pixels.render_check
 hou.isUIAvailable=lambda:True
 calls=[]
 
@@ -70,8 +74,8 @@ def render(rop,picture=None,frame=None,**kwargs):
     return {'fresh':True,'file_bytes':1,'errors':[],'output':picture}
 
 
-h.render_frame=render
-h.render_check=lambda *a,**kw:{'path':a[0],'content_bbox':[1,1,128,72],'presentation':{'needs_review':False}}
+dsh_render.render_frame=render
+dsh_image_pixels.render_check=lambda *a,**kw:{'path':a[0],'content_bbox':[1,1,128,72],'presentation':{'needs_review':False}}
 
 
 def rejects(fn, reason):
@@ -79,7 +83,7 @@ def rejects(fn, reason):
     before_selection=tuple(hou.selectedNodes())
     visibility={n.path():n.isDisplayFlagSet() for n in hou.node('/obj').children()}
     try:fn()
-    except h.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         assert error.evidence['user_state_restored'] is True,error.evidence
         assert not error.evidence['ok'] and not error.evidence['render_started'],error.evidence
         assert reason in error.evidence['reasons'],error.evidence
@@ -136,7 +140,7 @@ try:
         try:rejects(lambda:h.render_view(merge,framing='detail',projection='orthographic',picture=path,output_policy='explicit'),'far_clip')
         finally:f.obj_lens=original
 finally:
-    hou.isUIAvailable=real_ui;h.render_frame=real_render;h.render_check=real_check
+    hou.isUIAvailable=real_ui;dsh_render.render_frame=real_render;dsh_image_pixels.render_check=real_check
     root.destroy();sentinel.destroy()
 
 print(f'preview depth: {cases} math cases, {len(calls)} safe rendered HOM states, frozen-envelope/fault/alias checks passed on {hou.applicationVersionString()} (renderer stub)')

@@ -42,6 +42,12 @@ npm run docs:check
 
 `docs:check` 只检查生成漂移、文档索引、模块覆盖和 Markdown 链接，不自动修文档。改动生成源后先 build，再检查最终一致性。
 
+[系统网络检查](../tools/tests/dsh-system-proxy-check.mjs)接收配套缓存根目录，使用隔离设置快照与真实Windows PAC API验证新请求切换和已选路线保持，不改当前用户注册表。
+
+DSH运行修复的源码、上游提交和编译包清单由[修复声明](../deployment/dsh-runtime-fixes/manifest.json)维护；`npm run runtime:prepare`准备独立缓存。[运行修复反例](../tools/tests/dsh-runtime-fixes-check.mjs)接受该缓存根目录，实测Windows权限保持/回滚、内核拒绝、只读诊断、文件策略与网络边界。[网络全流程](../tools/tests/dsh-network-workflow.test.py)使用 `--runtime-cache <根目录>` 跟随Windows系统网络；可选 `--proxy <明确HTTP代理>` 仅在隔离测试数据中覆盖路线。该测试以受控回复驱动真实DSH网页取证、下载、读图和普通/嵌套调用；`--browser-module <Playwright入口>`另检查真实选中任务和命令退出状态。测试只访问公开资料，不调用收费模型；这些结果不证明自主模型选择或所有外部网站可用。
+
+[已有工作区生命周期](../tools/tests/dsh-workspace-lifecycle-check.mjs)接受缓存根目录，核对预存文件的更新/重命名/删除、硬链接与目录联接的外部权限保持、显式保护、只读token、重复授权和撤销。[网页传输反例](../tools/tests/dsh-web-transport-check.mjs)验证公开CDN跳转、私网/凭据/降级拒绝、混合DNS答案、真实失败原因及代理凭据脱敏。全流程还验证下载到预存目录后的整理，以及退出0诊断在原生/嵌套调用和实际页面中的一致性。编译器的 `--development` 仅可写 `tools/out` 中无完成标记的试验运行目录；正式缓存必须从声明补丁与锁文件构建。客户端构建使用同版上游预设，缺失的打包依赖必须使构建失败，不能把未解析依赖发布到浏览器。
+
 ## 修改与验证
 
 按用户目标和实际问题选择修改范围。工具描述只讲能力和真实调用条件；persona 讲角色和知识路由；领域工作方法只放 skill；操作合同落在执行实现。同一事实不要复制到多层提示词。
@@ -73,6 +79,8 @@ npm test
 领域改动选对应回归，例如 [node-knowledge](../tools/tests/dsh-node-knowledge.test.py)、[参数与绑定](../tools/tests/dsh-parameter-controls.test.py)、[控制恢复](../tools/tests/dsh-control-state-restoration.test.py)、[COP](../tools/tests/dsh-cop-contracts.test.py)。不机械把每个领域套件加到普通模块整理上。
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
+
+执行模块重构保持公开动词签名与结果合同；节点归属回归同时核对不可变快照、嵌套创建记录和作者作用域恢复，execution-runtime核对请求图片隔离及组件快照。HDA界面回归将故障注入实际实现模块，验证修复重载后公开导出与执行分派使用新函数，不能只改facade上的别名来模拟下游失败。真实GUI捕获夹具只调整自有临时窗口的显示顺序，不放宽生产捕获的遮挡/屏内要求。
 
 原生USD退出问题用[reproduce-usd-exit](../tools/reproduce-usd-exit.py)在指定`--hython`中运行独立的导入、内存stage和LOP对照，可重复传版本路径并用`--repeat`检查复现率。每次使用新偏好/package目录和明确HFS，不加载用户HIP或DSH插件；保留脚本主体完成标记、真实退出码与stdout/stderr。主体完成但进程非零退出仍属异常；相同退出码不能证明同一根因，headless结果不能外推GUI行为。证据写到新临时目录，不修改系统崩溃报告或用户配置。
 

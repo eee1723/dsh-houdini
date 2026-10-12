@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+import hashlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -77,10 +78,42 @@ try:
             bin_path = package / "lib" / "bin.js"
             bin_path.write_text("// test", encoding="utf-8")
             os.utime(bin_path, (index, index))
+            if version == target:
+                definition = json.loads((ROOT / 'deployment/dsh-runtime-fixes/manifest.json').read_text(encoding='utf8'))
+                paths = [f"node_modules/@deepseek-ai/dsh-{p['name']}/lib/{e}.js" for p in definition['hostPackages'] for e in p['entries']]
+                paths += [f"node_modules/@deepseek-ai/dsh-{p['name']}/{a}" for p in definition['hostPackages'] for a in p.get('assets', [])]
+                paths += [f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages']]
+                files = {}
+                for relative in paths:
+                    item = npx_root / str(index) / relative
+                    item.parent.mkdir(parents=True, exist_ok=True)
+                    item.write_text('// isolated inventory fixture', encoding='utf8')
+                    files[relative] = hashlib.sha256(item.read_bytes()).hexdigest()
+                (npx_root / str(index) / '.dsh-runtime-fixes.json').write_text(json.dumps({
+                    'schemaVersion':1, 'revision':definition['revision'], 'dshVersion':version,
+                    'patchSha256':definition['patchSha256'], 'files':files}), encoding='utf8')
 
         assert manager._selected_cached_dsh_version() == target
         manager._require_cached_dsh(target)
         assert manager._selected_cached_dsh_version() == target
+        # GUI metadata lookup stays cheap; the startup worker checks actual bytes.
+        verified = manager.dsh_runtime_compat.runtime_fix_identity(bin_path, verify_files=True)
+        assert verified['filesVerified']
+        item.write_text('// tampered implementation', encoding='utf8')
+        assert not manager.dsh_runtime_compat.runtime_fix_identity(bin_path)['filesVerified']
+        try:
+            manager._require_cached_dsh(target)
+        except RuntimeError as exc:
+            assert 'differs' in str(exc), exc
+        else:
+            raise AssertionError('startup accepted a changed runtime implementation')
+        item.write_text('// isolated inventory fixture', encoding='utf8')
+        proof_path = npx_root / '2' / '.dsh-runtime-fixes.json'
+        proof = json.loads(proof_path.read_text(encoding='utf8'))
+        missing = dict(proof, files={key:value for key,value in files.items() if key != relative})
+        proof_path.write_text(json.dumps(missing), encoding='utf8')
+        assert manager._selected_cached_dsh_version() is None, 'incomplete runtime inventory selected'
+        proof_path.write_text(json.dumps(proof), encoding='utf8')
         try:
             manager._require_cached_dsh("0.1.1-rc.2")
         except RuntimeError as exc:
@@ -133,7 +166,7 @@ originals = {
     "port_open": manager._port_open,
     "rpc_wire": manager._dsh_rpc_wire,
     "http": manager._http_json,
-    "run_npx": manager._run_npx_dsh,
+    "run_npx": manager._prepare_source_dsh,
     "cached": manager._require_cached_dsh,
     "activity": manager._runtime_activity,
 }
@@ -282,14 +315,14 @@ try:
             })
         return version
 
-    manager._run_npx_dsh = fake_run_npx
+    manager._prepare_source_dsh = fake_run_npx
     manager._require_cached_dsh = lambda version: None
     state = {"busy": True, "dsh_target": target}
     manager._update_dsh(state)
     assert state["result"] == "activate", state
     assert state["download_progress"] is None, state
     state = {"busy": True, "dsh_target": "0.1.1-rc.2"}
-    manager._run_npx_dsh = forbidden_process
+    manager._prepare_source_dsh = forbidden_process
     manager._update_dsh(state)
     assert state["result"] == "render" and state["dsh_status"] == "error", state
     assert "refresh" in state["message"], state
@@ -304,7 +337,7 @@ finally:
     manager._port_open = originals["port_open"]
     manager._dsh_rpc_wire = originals["rpc_wire"]
     manager._http_json = originals["http"]
-    manager._run_npx_dsh = originals["run_npx"]
+    manager._prepare_source_dsh = originals["run_npx"]
     manager._require_cached_dsh = originals["cached"]
     manager._runtime_activity = originals["activity"]
 

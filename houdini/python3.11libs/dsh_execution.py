@@ -5,6 +5,10 @@ job registry or background HOM work here.
 """
 from __future__ import annotations
 
+import dsh_errors
+import dsh_media_output
+import dsh_ownership
+
 import contextlib
 from copy import deepcopy
 import difflib
@@ -412,13 +416,13 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 "error": str(e),
                 "ms": round((time.time() - start) * 1000, 1),
             })
-            if isinstance(e, dsh_hou_helpers.CheckpointError):
+            if isinstance(e, dsh_errors.CheckpointError):
                 ledger[-1]['summary'] = _jsonable(_operation_summary(name, e.evidence) or e.evidence)
                 ledger[-1]['check_status'] = 'failed'
-            if isinstance(e, (dsh_hou_helpers.PreflightError, dsh_hou_helpers.ParameterPatchError,
+            if isinstance(e, (dsh_errors.PreflightError, dsh_errors.ParameterPatchError,
                               _DispatchBlockedError, _VerbArgumentError)):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
-            elif not isinstance(e, dsh_hou_helpers.CheckpointError) and isinstance(getattr(e, 'evidence', None), dict):
+            elif not isinstance(e, dsh_errors.CheckpointError) and isinstance(getattr(e, 'evidence', None), dict):
                 ledger[-1]['summary'] = _jsonable(e.evidence)
             kw = f", {_clip(kwargs_json)}" if kwargs_json else ""
             print(f"[verb] {name}({_clip(args_json)}{kw}) -> ERROR: {e}")
@@ -454,22 +458,11 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
     undo_enabled = bool(hou.undos.areEnabled())
     if undo_enabled:
         label = f"dsh-houdini exec {uuid.uuid4().hex}"
-        ownership_before = dict(dsh_hou_helpers._OWNED_NODE_SESSIONS)
+        ownership_before = dsh_ownership.snapshot(include_live=True)
         # Component provenance rides the same transaction as the scene:
         # a rollback must restore _IMPORT_RECORDS together with the nodes,
         # or a later expected_contract operation sees stale provenance.
-        imports_before = dict(dsh_component_contracts._IMPORT_RECORDS)
-        # Causal binding, part 1: only entries whose identity was ALIVE
-        # at batch start are eligible for undo-resurrection adoption,
-        # and each records the path it ACTUALLY held at batch start
-        # (renames included). Stale entries left by a leaked deletion
-        # route (destroy without unregister) were already dead before
-        # this batch; their undo cannot resurrect anything.
-        alive_at_start = {}
-        for _identity, _entry in dsh_hou_helpers._OWNED_NODE_SESSIONS.items():
-            _live = hou.nodeBySessionId(_identity)
-            if _live is not None:
-                alive_at_start[_identity] = (_entry, _live.path())
+        imports_before = dsh_component_contracts.snapshot_imports()
         try:
             with hou.undos.group(label):
                 exec(compiled, namespace)
@@ -489,14 +482,9 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
                     before_undo_ids = {int(n.sessionId()) for n in hou.node('/').allSubChildren()}
                     hou.undos.performUndo()
                     applied = True
-                    dsh_hou_helpers._OWNED_NODE_SESSIONS.clear()
-                    dsh_hou_helpers._OWNED_NODE_SESSIONS.update(ownership_before)
-                    removed_residuals = dsh_hou_helpers._cleanup_failed_creations(created_nodes, ownership_before)
-                    # Reconcile only fresh post-undo counterparts of exact
-                    # batch-start records; pre-undo foreign identities stay foreign.
-                    reconciled = dsh_hou_helpers._reconcile_undo_resurrected(alive_at_start, exclude_ids=before_undo_ids)
-                    dsh_component_contracts._IMPORT_RECORDS.clear()
-                    dsh_component_contracts._IMPORT_RECORDS.update(imports_before)
+                    removed_residuals, reconciled = dsh_ownership.restore_after_undo(
+                        ownership_before, created_nodes, exclude_ids=before_undo_ids)
+                    dsh_component_contracts.restore_imports(imports_before)
                     box_reconciliation = dsh_network_boxes.reconcile_transaction(box_journal)
                     if not box_reconciliation['ok']:
                         raise RuntimeError('Network Box rollback reconciliation failed: ' +
@@ -646,16 +634,16 @@ class ExecutionRuntime:
         analysis = CodeAnalysis(code)
         raw_usage = analysis.raw_usage
         gate_outcome = "not_applicable"
-        creation_scope = contextlib.nullcontext(set()) if read_only else dsh_hou_helpers._track_created_nodes()
+        creation_scope = contextlib.nullcontext(set()) if read_only else dsh_ownership.track_created_nodes()
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
         control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
         note_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_notes.transaction_journal()
-        with (dsh_hou_helpers._execution_owner(owner_session, owner_call),
+        with (dsh_ownership.execution_owner(owner_session, owner_call),
               creation_scope as created_nodes, box_scope as box_journal,
-              control_scope as control_journal, note_scope as note_journal):
+              control_scope as control_journal, note_scope as note_journal,
+              dsh_media_output.image_scope() as produced_images):
             # Each serialized request reports only its own produced media,
             # including requests rejected during preflight.
-            dsh_hou_helpers._PRODUCED_IMAGES.clear()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 try:
                     if not read_only:
@@ -685,7 +673,7 @@ class ExecutionRuntime:
                 except BaseException:
                     if error is None:
                         error = traceback.format_exc()
-            images = [p for p in dsh_hou_helpers._PRODUCED_IMAGES if os.path.isfile(p)]
+            images = [p for p in produced_images if os.path.isfile(p)]
         advisories = [a for a in (_raw_hou_advisory(analysis, verb_ledger), _repo_write_advisory(code)) if a]
         envelope = project_result(ledger=verb_ledger, images=images,
             stdout=stdout.getvalue(), stderr=stderr.getvalue(), error=error, rollback=rollback,

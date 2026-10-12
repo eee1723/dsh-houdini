@@ -3,6 +3,7 @@
 Records real images, camera evidence and exact numeric/user-state restoration.
 It never opens a user HIP and does not certify image semantics.
 """
+
 from pathlib import Path
 import json, os, sys, traceback
 import hou, hdefereval
@@ -15,10 +16,11 @@ def record(name,value):
 def run():
     hip=OUT/'fixture.hip'
     try:
+        import dsh_ownership
         import dsh_hou_helpers as h
         import dsh_quality_contracts as qc
         result={'version':hou.applicationVersionString(),'real_gui':hou.isUIAvailable(),'semantic_status':'unverified'}
-        with h._execution_owner('capture-review','fixture'):
+        with dsh_ownership.execution_owner('capture-review','fixture'):
             root=h.tab_create('/obj','geo','__capture_review')
             ctrl=h.tab_create(root,'null','CTRL')
             h.create_spare_parms(ctrl,spec=[{'type':'float','name':'width','default':1.0}])
@@ -38,7 +40,7 @@ def run():
                         'selected':[n.path() for n in hou.selectedNodes()],
                         'display':root.isDisplayFlagSet(),'render':out.isRenderFlagSet()}
             baseline=state();result['baseline_state']=baseline
-            original=h.render_view
+            original=dsh_render.render_view
             raw=[]
             def observe(*args,**kwargs):
                 try:
@@ -50,7 +52,7 @@ def run():
                     raw.append({'kwargs':kwargs,'width':ctrl.evalParm('width'),'error_type':type(e).__name__,'error':str(e),'evidence':getattr(e,'evidence',{})})
                     record('raw-renders.json',raw)
                     raise
-            h.render_view=observe
+            dsh_render.render_view=observe
             for label,extra in [('shared',{'view_bounds':[[-2,-2,-2],[2,2,2]]}),('baseline_lock',{})]:
                 record('progress.json',{'phase':label,'version':result['version']})
                 try:
@@ -61,7 +63,7 @@ def run():
                 result[label]['state_after']=state()
                 result[label]['state_restored']=state()==baseline
                 record('results.json',result)
-            h.render_view=original
+            dsh_render.render_view=original
             result['raw_render_count']=len(raw)
             result['images']=[{'output':r['result'].get('output'),'exists':Path(r['result'].get('output','')).is_file(),
                               'semantic':r['result'].get('semantic_status')} for r in raw if 'result' in r]

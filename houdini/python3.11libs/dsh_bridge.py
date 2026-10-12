@@ -50,6 +50,8 @@ without bound.
 
 from __future__ import annotations
 
+import dsh_ownership
+
 import hashlib
 import json
 import os
@@ -63,7 +65,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
-import dsh_hou_helpers  # noqa: F401  (verb vocabulary: see docs/tool-design.md)
+
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
 # threads must not call HOM, including for seemingly harmless health metadata.
@@ -81,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 98
+_EXECUTION_CONTRACT_VERSION = 99
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -353,9 +355,9 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
         def prepare():
             if not _request_registry.running(request_ref):
                 raise RuntimeError('UI capture request is no longer queued; no new capture dispatched')
-            import dsh_hou_helpers as helpers
-            with helpers._execution_owner(owner_session, owner_call):
-                return capture.prepare_ui_capture(**options)
+
+            with dsh_ownership.execution_owner(owner_session, owner_call):
+                return capture.prepare_ui_capture(**options, runtime_id=_RUNTIME_ID)
         state = _execute(prepare)
         if not state['ready'].wait(10):
             raise TimeoutError('Houdini native UI did not finish a normal GUI refresh before capture')
@@ -525,7 +527,7 @@ class _Handler(BaseHTTPRequestHandler):
                 facts, error = None, None
                 try:
                     import dsh_ui_capture as capture
-                    facts = capture.discover_ui_surfaces()
+                    facts = capture.discover_ui_surfaces(runtime_id=_RUNTIME_ID)
                 except BaseException as exc:
                     facts, error = getattr(exc, 'evidence', None), str(exc)
                 try:

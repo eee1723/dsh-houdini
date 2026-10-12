@@ -19,8 +19,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
-from dsh_network_diagnostics import probe, update_home_proxy, DEFAULT_URL
+from dsh_network_diagnostics import probe, DEFAULT_URL
 import dsh_managed_runtime as owned
+
+
+def write_proxy_fixture(home, changes):
+    # Only this test's disposable files, never a production configuration editor.
+    filename = Path(home) / '.env'
+    fields = dict(line.split('=', 1) for line in filename.read_text(encoding='utf8').splitlines()
+                  if '=' in line and not line.startswith('#')) if filename.exists() else {}
+    fields.update({('NO_PROXY' if key == 'no_proxy' else key.upper() + '_PROXY'): json.dumps(value)
+                   for key, value in changes.items()})
+    filename.write_text(''.join(key + '=' + value + '\n' for key, value in fields.items()), encoding='utf8')
 
 INSPECTOR = r"""
 import fs from 'node:fs';
@@ -37,7 +47,7 @@ export function apply(ctx){ctx.effect(()=>{
   try{
    await ctx.loader.await();
    const url=new URL(process.env.DSH_NETWORK_TEST_URL);
-   report.proxied=proxyRouteFor(url).proxied;
+   report.proxied=(await proxyRouteFor(url)).proxied;
    report.proxySource=launchEnvironmentOf(ctx).get('HTTPS_PROXY')?.source||null;
    try{const r=await ctx.web.fetch({url:url.href},AbortSignal.timeout(25000));
     report.fetch={status:r.statusCode,chars:r.body.content.length,truncated:r.truncated};}
@@ -47,7 +57,7 @@ export function apply(ctx){ctx.effect(()=>{
    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
    const local=new URL('http://127.0.0.1:'+server.address().port+'/health');
    const response=await fetch(local,{signal:AbortSignal.timeout(5000)});
-   report.loopback={proxied:proxyRouteFor(local).proxied,status:response.status,text:await response.text()};
+   report.loopback={proxied:(await proxyRouteFor(local)).proxied,status:response.status,text:await response.text()};
    try{await ctx.web.fetch({url:local.href},AbortSignal.timeout(5000));report.blockedLoopback='not_blocked';}
    catch(e){report.blockedLoopback=e.code;}
    report.loopback.hits=hits;
@@ -67,6 +77,7 @@ def main():
     parser.add_argument('--expect-fake-ip', action='store_true')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    args.runtime_bin = args.runtime_bin.resolve()
     node = shutil.which('node')
     assert node and args.runtime_bin.is_file()
     results = {}
@@ -81,10 +92,11 @@ def main():
         env['DSH_HOME'] = str(home)
         result = probe(node, args.runtime_bin, workspace, env=env, inspect_only=True)
         assert not result.get('error'), result
-        assert not result['route']['proxied'] and not result['bridgeRoute']['proxied']
+        assert result['configuration']['source'] == ('windows' if os.name == 'nt' else 'direct')
+        assert not result['bridgeRoute']['proxied']
         assert result['search']['componentInstalled'] and not result['search']['tested']
         results['no_proxy_config'] = result
-        update_home_proxy(home, {'http': 'http://lower:1000', 'https': 'http://user:private-fixture@127.0.0.1:7897'})
+        write_proxy_fixture(home, {'http': 'http://lower:1000', 'https': 'http://user:private-fixture@127.0.0.1:7897'})
         result = probe(node, args.runtime_bin, workspace, env=env, inspect_only=True)
         assert result['route']['proxied'] and not result['bridgeRoute']['proxied'], result
         assert 'private-fixture' not in json.dumps(result) and 'user@' not in json.dumps(result)
@@ -94,6 +106,19 @@ def main():
         result = probe(node, args.runtime_bin, workspace, env=overridden, inspect_only=True)
         assert result['route']['proxy'].rstrip('/') == 'http://127.0.0.1:1234', result
         assert any(e['source'] == 'process' for e in result['proxyEntries'])
+        write_proxy_fixture(home, {'http': 'http://127.0.0.1:1', 'https': 'http://127.0.0.1:1',
+                                 'no_proxy': 'api.deepseek.com,api.apikey.fan'})
+        model = probe(node, args.runtime_bin, workspace, env=env,
+                      url='https://api.deepseek.com/models', inspect_only=True)
+        assert not model['route']['proxied'], model
+        blocked = probe(node, args.runtime_bin, workspace, env=env, url='https://example.com/')
+        assert blocked['fetch']['proxyUnavailable'], blocked
+        results['stopped_proxy'] = blocked
+        write_proxy_fixture(home, {'no_proxy': '*'})
+        direct = probe(node, args.runtime_bin, workspace, env=env, inspect_only=True)
+        assert not direct['route']['proxied'] and direct['noProxy'] == '*', direct
+        results['explicit_direct'] = direct
+        write_proxy_fixture(home, {'no_proxy': ''})
         results['process_over_user'] = result
         # A project cannot choose a network route over the user's .env.
         (workspace / '.env').write_text('HTTPS_PROXY=http://127.0.0.1:1235\n', encoding='utf8')
@@ -121,9 +146,9 @@ boot.initProfile(boot.resolveProfileDir('web'),boot.PROFILE_TEMPLATES.web.bundle
                 (home / '.env').write_text('# fixture user configuration\nUNRELATED=value\n', encoding='utf8')
                 launch_env = dict(env)
                 if mode == 'home_proxy':
-                    update_home_proxy(home, {'http': args.proxy, 'https': args.proxy})
+                    write_proxy_fixture(home, {'http': args.proxy, 'https': args.proxy})
                 elif mode == 'process_override':
-                    update_home_proxy(home, {'http': 'http://127.0.0.1:1', 'https': 'http://127.0.0.1:1'})
+                    write_proxy_fixture(home, {'http': 'http://127.0.0.1:1', 'https': 'http://127.0.0.1:1'})
                     launch_env.update(HTTP_PROXY=args.proxy, HTTPS_PROXY=args.proxy)
                 report_file = base / (mode + '.json')
                 launch_env.update(DSH_NETWORK_TEST_CLI=str(args.runtime_bin.resolve()),

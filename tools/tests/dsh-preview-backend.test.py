@@ -1,18 +1,24 @@
 """Real H21/H22 ROP settings; stub pixels, no GUI claims."""
+
 import sys,tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_geometry_queries
+import dsh_render
+import dsh_render_service
 import hou
+import dsh_image_pixels
+import dsh_render
 import dsh_hou_helpers as h
-old_ui,old_render,old_check=hou.isUIAvailable,h.render_frame,h.render_check
+old_ui,old_render,old_check=hou.isUIAvailable,dsh_render.render_frame,dsh_image_pixels.render_check
 hou.isUIAvailable=lambda:True
 calls=[]
 def render(rop,picture=None,frame=None,**kwargs):
     calls.append(rop)
     return {'fresh':True,'file_bytes':1,'errors':[],'output':picture}
-h.render_frame=render
-h.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
-warning_gate=h._render_validation(
+dsh_render.render_frame=render
+dsh_image_pixels.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
+warning_gate=dsh_render._render_validation(
     {'fresh':True,'file_bytes':1,'errors':[]},
     {'presentation':{'needs_review':False}},
     False,
@@ -39,35 +45,35 @@ try:
     assert all(row['artifact']['purpose']==managed[0]['artifact']['purpose'] for row in delivered)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in delivered)
     assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
-    real_ensure=h._ensure_render_proxy
+    real_ensure=dsh_render_service._ensure_render_proxy
     def partial_proxy(target):
-        proxy=hou.node('/obj/'+h._RENDER_PROXY_NAME)
+        proxy=hou.node('/obj/'+dsh_render_service._RENDER_PROXY_NAME)
         proxy.node('source').parm('objpath1').set(target.path())
         proxy.setUserData('dsh_render_state','active')
         raise RuntimeError('injected partial proxy setup')
-    h._ensure_render_proxy=partial_proxy
+    dsh_render_service._ensure_render_proxy=partial_proxy
     try:
         try:h.render_view(box,picture='partial-proxy.png')
         except RuntimeError as error:assert 'partial proxy setup' in str(error)
         else:raise AssertionError('partial proxy setup should reject')
-    finally:h._ensure_render_proxy=real_ensure
-    proxy=hou.node('/obj/'+h._RENDER_PROXY_NAME)
+    finally:dsh_render_service._ensure_render_proxy=real_ensure
+    proxy=hou.node('/obj/'+dsh_render_service._RENDER_PROXY_NAME)
     assert proxy.userData('dsh_render_state')=='idle' and proxy.node('source').parm('objpath1').evalAsString()==''
-    real_fingerprint=h._geometry_fingerprint
-    h._geometry_fingerprint=lambda *_args,**_kwargs:{'errors':['injected pre-render failure']}
+    real_fingerprint=dsh_geometry_queries._geometry_fingerprint
+    dsh_geometry_queries._geometry_fingerprint=lambda *_args,**_kwargs:{'errors':['injected pre-render failure']}
     try:
         try:h.render_view(box,picture='preflight.png')
         except ValueError as error:assert 'injected pre-render failure' in str(error)
         else:raise AssertionError('pre-render failure should reject')
-    finally:h._geometry_fingerprint=real_fingerprint
+    finally:dsh_geometry_queries._geometry_fingerprint=real_fingerprint
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
-    h.render_frame=lambda *_args,**_kwargs:(_ for _ in ()).throw(RuntimeError('injected renderer failure'))
+    dsh_render.render_frame=lambda *_args,**_kwargs:(_ for _ in ()).throw(RuntimeError('injected renderer failure'))
     try:
         for policy in ('managed','delivery'):
             try:h.render_view(box,picture='renderer-failure.png',output_policy=policy)
             except RuntimeError as error:assert 'injected renderer failure' in str(error)
             else:raise AssertionError('renderer failure should propagate')
-    finally:h.render_frame=render
+    finally:dsh_render.render_frame=render
     assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
     assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
     result=h.render_view(box,picture=tmp+'/first.png',output_policy='explicit')
@@ -99,6 +105,6 @@ try:
     assert not warned['ok'] and warned['file_status']=='passed' and warned['pixel_status']=='passed'
     assert warned['warnings'] and 'cannot pass acceptance' in warned['errors'][-1]
 finally:
- hou.isUIAvailable=old_ui;h.render_frame=old_render;h.render_check=old_check
+ hou.isUIAvailable=old_ui;dsh_render.render_frame=old_render;dsh_image_pixels.render_check=old_check
  g.destroy()
 print('PASS version-specific preview backend '+hou.applicationVersionString())

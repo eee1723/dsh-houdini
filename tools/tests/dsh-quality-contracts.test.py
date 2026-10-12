@@ -1,7 +1,12 @@
 """H21/H22: final-geometry interface checks and reversible control contracts."""
+
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_errors
+import dsh_ownership
+import dsh_parameter_values
+import dsh_service_constants
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
@@ -375,34 +380,34 @@ try:
     assert not result['ok'] and result['restored'] and hou.frame()==frame,result
     assert ctrl.parm('length').expression()=='1+0*$F'
     # Never continue silently when restoration itself reports a problem.
-    original_restore=h._restore_parameters
+    original_restore=dsh_parameter_values._restore_parameters
     def restore_then_report_failure(values):
         errors=original_restore(values)
         return errors+['injected restoration report failure']
     try:
-        h._restore_parameters=restore_then_report_failure
+        dsh_parameter_values._restore_parameters=restore_then_report_failure
         try:
             h.test_controls(ctrl,out,tests_group)
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'restoration failed' in str(error),str(error)
             assert error.evidence['restored'] is False and error.evidence['status']=='fail'
             assert error.evidence['next_action']==error.evidence['control_summary']['next_action']
             assert 'passed' not in error.evidence['next_action']
             assert error.evidence['control_summary']['failures'][0]['restore_errors']
         else:raise AssertionError('expected restoration failure')
-    finally:h._restore_parameters=original_restore
+    finally:dsh_parameter_values._restore_parameters=original_restore
     assert ctrl.parm('length').expression()=='1+0*$F'
 
     # Foreign controllers cannot be perturbed just because the output is readable.
-    with h._execution_owner('different-session','test'):
+    with dsh_ownership.execution_owner('different-session','test'):
         rejects(lambda:h.test_controls(ctrl,out,tests),'ownership guard')
         allowed=h.test_controls(ctrl,out,tests_group,allow_foreign='user explicitly authorized testing this controller')
         assert allowed['restored'],allowed
     # Persistent service protection does not accept foreign exemptions.
-    ctrl.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
-    with h._execution_owner('different-session','service-test'):
+    ctrl.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
+    with dsh_ownership.execution_owner('different-session','service-test'):
         rejects(lambda:h.test_controls(ctrl,out,tests,allow_foreign='test'),'persistent')
-    ctrl.destroyUserData(h._RENDER_OWNER_KEY)
+    ctrl.destroyUserData(dsh_service_constants._RENDER_OWNER_KEY)
     query=b.run_code(f'test_controls({ctrl.path()!r},{out.path()!r},[])',read_only=True)
     assert not query['ok'] and 'read-only' in query['error'],query
 

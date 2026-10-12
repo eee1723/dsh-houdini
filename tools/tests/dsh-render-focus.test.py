@@ -1,19 +1,23 @@
 """Camera/proxy contract using real HOM and a stub renderer; NOT a GUI pixel test."""
+
 import sys,pathlib,tempfile
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
 import hou
+import dsh_image_pixels
+import dsh_render
 import dsh_hou_helpers as h
 root=hou.node('/obj').createNode('geo','focus_test')
 box=root.createNode('box');group=root.createNode('groupcreate');group.setInput(0,box)
 group.parm('groupname').set('target')
-real_ui=hou.isUIAvailable;real_render=h.render_frame;real_check=h.render_check
+real_ui=hou.isUIAvailable;real_render=dsh_render.render_frame;real_check=dsh_image_pixels.render_check
 hou.isUIAvailable=lambda:True
 calls=[]
 def render(rop,picture=None,frame=None,**kwargs):
     calls.append(rop.parm('camera').eval())
     return {'fresh':True,'file_bytes':1,'errors':[],'output':picture}
-h.render_frame=render
-h.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
+dsh_render.render_frame=render
+dsh_image_pixels.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
 try:
     with tempfile.TemporaryDirectory() as tmp:
         a=h.render_view(group,focus_group='target',isolate=True,projection='orthographic',picture=tmp+'/a.png',output_policy='explicit')
@@ -26,7 +30,7 @@ try:
         assert b['framing']['bounds_source']=='explicit'
         box.parm('sizex').set(4)
         try:h.render_view(group,focus_group='target',projection='orthographic',framing_bounds=a['framing']['bounds'],picture=tmp+'/clip.png',output_policy='explicit')
-        except h.CheckpointError as e:assert e.evidence['render_started'] is False
+        except dsh_errors.CheckpointError as e:assert e.evidence['render_started'] is False
         else:raise AssertionError('a locked, undersized A/B envelope must reject before rendering')
         c=h.render_view(group,picture=tmp+'/c.png',output_policy='explicit')
         assert hou.node(c['camera']).evalParm('projection')==0,'previous ortho mode must not leak'
@@ -36,6 +40,6 @@ try:
         else:raise AssertionError('empty focus silently rendered whole object')
         assert len(calls)==3
 finally:
-    hou.isUIAvailable=real_ui;h.render_frame=real_render;h.render_check=real_check
+    hou.isUIAvailable=real_ui;dsh_render.render_frame=real_render;dsh_image_pixels.render_check=real_check
     root.destroy()
 print('render focus camera/proxy contract passed (renderer stub): '+hou.applicationVersionString())

@@ -1,9 +1,11 @@
 """USD light schema classification, with no renderer, GUI or user scene."""
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_usd_inspection
 import hou
 from pxr import Usd,UsdLux,UsdGeom
 import dsh_hou_helpers as h
@@ -20,7 +22,7 @@ def check():
     # would not contribute to the schema check. The material-delivery test
     # separately exercises the actual LOP, DomeLight_1 and consumer render.
     node=SimpleNamespace(path=lambda:'/in_memory/light_summary_fixture',errors=lambda:(),warnings=lambda:())
-    with patch.object(h,'_lop_stage',return_value=(node,stage)):
+    with patch.object(dsh_usd_inspection,'_lop_stage',return_value=(node,stage)):
         summary=h.usd_stage_summary(node)
     assert {p['path'] for p in summary['prims']['lights']}=={'/Dome','/EmissiveMesh'},summary
     assert {p['path'] for p in summary['prims']['geometry']}=={'/EmissiveMesh'},summary

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -46,6 +47,25 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
     cache = root / "cache"
     target = compat.preferred_version()
     required = write_cache(cache, "required", target)
+    # Version equality alone is insufficient: default install, launch and repair
+    # must all require the same prepared runtime identity and file inventory.
+    definition = json.loads((ROOT / "deployment/dsh-runtime-fixes/manifest.json").read_text(encoding="utf8"))
+    runtime_root = required.parents[4]
+    names = {f"node_modules/@deepseek-ai/dsh-{p['name']}/lib/{entry}.js"
+             for p in definition['hostPackages'] for entry in p['entries']}
+    names.update(f"node_modules/@deepseek-ai/dsh-{p['name']}/{asset}"
+                 for p in definition['hostPackages'] for asset in p.get('assets', []))
+    names.update(f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages'])
+    inventory = {}
+    for name in names:
+        file = runtime_root / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b'// isolated runtime fixture')
+        inventory[name] = hashlib.sha256(file.read_bytes()).hexdigest()
+    (runtime_root / '.dsh-runtime-fixes.json').write_text(json.dumps({
+        'schemaVersion': 1, 'revision': definition['revision'], 'dshVersion': target,
+        'patchSha256': definition['patchSha256'], 'files': inventory}), encoding='utf8')
+    write_cache(cache, "unpatched-same-version", target)
     newest = write_cache(cache, "newest", "99.9.9")
     os.utime(required, (1, 1))
     os.utime(newest, (9999, 9999))
@@ -87,9 +107,13 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
         with patch.object(installer, "NPM_CACHE", root / "empty"), \
              patch.object(launcher, "NPM_CACHE", str(root / "empty")), \
              patch.object(manager, "_NPM_CACHE", str(root / "empty")):
-            cold, shell = installer.dsh_command_prefix()
-            assert compat.preferred_spec() in cold
-            assert compat.preferred_spec() in launcher._frontend_command()[0]
+            for select in (installer.dsh_command_prefix, launcher._frontend_command):
+                try:
+                    select()
+                except RuntimeError as exc:
+                    assert "npm run runtime:prepare" in str(exc)
+                else:
+                    raise AssertionError("unpatched upstream runtime was accepted for default startup")
             assert manager._selected_cached_dsh_version() is None
 
         # Explicit developer overrides are preserved, not silently substituted.

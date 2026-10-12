@@ -6,6 +6,7 @@ made between agent tool calls; bridge executions themselves use verbs only.
 
 from __future__ import annotations
 
+
 from pathlib import Path
 import sys
 import uuid
@@ -13,6 +14,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
+import dsh_ownership
 
 import hou
 import dsh_bridge
@@ -118,7 +120,7 @@ try:
     assert wr["ok"] is True, wr
     wrangle2_path = wr["result"]["wrangle"]
     geo2_path = wr["result"]["geo"]
-    snapshot = dict(dsh_hou_helpers._OWNED_NODE_SESSIONS)
+    snapshot = dict(dsh_ownership._OWNED_NODE_SESSIONS)
     gone = dsh_bridge.run_code(
         f"delete_node({wrangle2_path!r})",
         owner_session=session_a,
@@ -129,9 +131,9 @@ try:
     assert replacement.type().name() != "attribwrangle"
     snapshot_now = {identity: (entry, entry.get('path_at_creation'))
                     for identity, entry in snapshot.items()}
-    restored = dsh_hou_helpers._reconcile_undo_resurrected(snapshot_now)
+    restored = dsh_ownership._reconcile_undo_resurrected(snapshot_now)
     assert restored == [], restored
-    assert int(replacement.sessionId()) not in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored
+    assert int(replacement.sessionId()) not in dsh_ownership._OWNED_NODE_SESSIONS, restored
     replacement.destroy()
 
     # Negative (cross-author): a same-path node registered by another session is
@@ -148,9 +150,9 @@ try:
     b_wrangle_path = bg["result"]
     assert b_wrangle_path == wrangle2_path, (b_wrangle_path, wrangle2_path)
     b_id = int(hou.node(b_wrangle_path).sessionId())
-    restored_b = dsh_hou_helpers._reconcile_undo_resurrected(snapshot_now)
+    restored_b = dsh_ownership._reconcile_undo_resurrected(snapshot_now)
     assert restored_b == [], restored_b
-    assert b_id in dsh_hou_helpers._OWNED_NODE_SESSIONS, restored_b
+    assert b_id in dsh_ownership._OWNED_NODE_SESSIONS, restored_b
     prov_b = dsh_bridge.run_code(
         f"__result__ = node_provenance({b_wrangle_path!r})",
         owner_session=session_b,
@@ -170,9 +172,9 @@ try:
     # recorded type, another session's authorship) to simulate that leak class
     # deterministically; everything after it runs through the real bridge.
     stale_id = 900000000 + int(suffix, 36) % 100000
-    assert hou.nodeBySessionId(stale_id) is None and stale_id not in dsh_hou_helpers._OWNED_NODE_SESSIONS
+    assert hou.nodeBySessionId(stale_id) is None and stale_id not in dsh_ownership._OWNED_NODE_SESSIONS
     stale_path = f"/obj/causal_geo_{suffix}/causal_wrangle/attribvop1"
-    dsh_hou_helpers._OWNED_NODE_SESSIONS[stale_id] = {
+    dsh_ownership._OWNED_NODE_SESSIONS[stale_id] = {
         "session": session_a, "call": "leaked-deletion-from-earlier-batch",
         "path_at_creation": stale_path, "type": "attribwranglecore",
     }
@@ -215,7 +217,7 @@ try:
     causal_cleanup = dsh_bridge.run_code(f"delete_node({same_paths['result']['geo']!r})", owner_session=session_b,
                                          owner_call="call-causal-cleanup")
     assert causal_cleanup["ok"] is True, causal_cleanup
-    dsh_hou_helpers._OWNED_NODE_SESSIONS.pop(stale_id, None)  # purge the injected poison
+    dsh_ownership._OWNED_NODE_SESSIONS.pop(stale_id, None)  # purge the injected poison
 
     # Rename + user node at the old creation path + undo: adoption must locate
     # candidates by the batch-start path, never by path_at_creation (audit-only).
@@ -373,13 +375,58 @@ try:
     # exact runtime identities, never adopt nodes merely because paths match.
     import importlib
     import dsh_hou_helpers as helpers
-    registry = helpers._OWNED_NODE_SESSIONS
+    registry = dsh_ownership._OWNED_NODE_SESSIONS
+    importlib.reload(dsh_ownership)
     importlib.reload(helpers)
-    assert helpers._OWNED_NODE_SESSIONS is registry
+    assert dsh_ownership._OWNED_NODE_SESSIONS is registry
     same_owner = dsh_bridge.run_code(f'__result__=node_provenance({owned_path!r})', owner_session=session_a)
     assert same_owner['result']['status'] == 'owned_current_session', same_owner
     other_owner = dsh_bridge.run_code(f'__result__=node_provenance({owned_path!r})', owner_session=session_b)
     assert other_owner['result']['status'] == 'owned_other_session', other_owner
+
+    # Detached observations/snapshots cannot grant authority to a different actor.
+    from unittest.mock import patch
+    with patch.object(hou, 'nodeBySessionId', side_effect=AssertionError('local registration snapshot performed a HOM sweep')):
+        captured = dsh_ownership.snapshot()
+    detached = dsh_ownership.records()
+    identity = int(hou.node(owned_path).sessionId())
+    detached[identity]['session'] = session_b
+    try:
+        captured.records[identity]['session'] = session_b
+    except TypeError:
+        pass
+    else:
+        raise AssertionError('ownership snapshot exposed writable entries')
+    try:
+        captured.records = {}
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError('ownership snapshot could be replaced')
+    assert dsh_ownership.records()[identity]['session'] == session_a
+
+    # A failed nested construction must still be in the enclosing journal.
+    # Otherwise outer Undo cleanup silently misses exact created identities.
+    with dsh_ownership.execution_owner(session_a, 'outer-journal'):
+        with dsh_ownership.track_created_nodes() as outer:
+            try:
+                with dsh_ownership.track_created_nodes() as inner:
+                    child = helpers.tab_create(parent, 'null', 'nested_journal_failure')
+                    nested_id = int(child.sessionId())
+                    raise RuntimeError('injected nested construction failure')
+            except RuntimeError:
+                pass
+            assert nested_id in inner and nested_id in outer
+            try:
+                with dsh_ownership.execution_owner(session_b, 'nested-actor'):
+                    assert dsh_ownership.current_session() == session_b
+                    raise KeyboardInterrupt('injected owner-scope interruption')
+            except KeyboardInterrupt:
+                pass
+            assert dsh_ownership.current_session() == session_a
+            assert dsh_ownership.current_call() == 'outer-journal'
+            helpers.delete_node(child)
+    assert dsh_ownership.current_session() is None
 
 finally:
     # Test cleanup is outside a host-owned bridge execution on purpose; direct

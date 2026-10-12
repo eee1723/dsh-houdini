@@ -3,6 +3,8 @@
 Plans are inspectable inputs to existing governed verbs, not node creation or
 quality certificates. The recipe never owns or adopts its input nodes.
 """
+
+import dsh_node_access
 import itertools
 import math
 import re
@@ -186,9 +188,9 @@ def _structural_recipe(kind,spec):
 
 
 def control_test_plan(controller,parameters,max_cases=16,domain=None):
-    import dsh_hou_helpers as h
+
     from dsh_quality_contracts import _control_parameter,domain_checks,validate_domain
-    ctrl=h._resolve(controller)
+    ctrl=dsh_node_access._resolve(controller)
     if not isinstance(parameters,dict) or not 1<=len(parameters)<=8:raise ValueError('parameters needs 1..8 named scalar level lists')
     if type(max_cases) is not int or not 1<=max_cases<=16:raise ValueError('max_cases must be 1..16')
     if domain is not None:

@@ -1,13 +1,15 @@
 """Actual editable recipes, arbitrary shared pivots and pairwise test planning."""
+
 import sys,math
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 import dsh_quality_contracts as q
 
-with h._execution_owner('recipe-author','fixture'):
+with dsh_ownership.execution_owner('recipe-author','fixture'):
     # Every catalog entry supports the same discovery call; it must not require
     # guessing a partially populated spec or execute scene changes.
     before_objects=tuple(hou.node('/obj').children())

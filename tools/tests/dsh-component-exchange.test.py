@@ -1,4 +1,5 @@
 """Isolated ordinary subnet exchange; no user scene or HDA definition writes."""
+
 from pathlib import Path
 import sys
 import tempfile
@@ -7,6 +8,8 @@ import json
 import re
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_node_operations
+import dsh_ownership
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -47,7 +50,7 @@ if len(sys.argv) > 1 and sys.argv[1] != '--parameters':
                 "box=tab_create(s,'box','shape')\nsop_set_output(box,output_index=0)")
             source = hou.node(f'/obj/source{index}/module')
             # Test fixture authors a public spare and a relative expression.
-            with h._execution_owner('source', 'fixture'):
+            with dsh_ownership.execution_owner('source', 'fixture'):
                 ptg = source.parmTemplateGroup()
                 ptg.append(hou.FloatParmTemplate('width', 'Width', 1, default_value=(1,)))
                 ptg.append(hou.FloatParmTemplate('thickness', 'Thickness', 1, default_value=(0.08,)))
@@ -79,7 +82,7 @@ if len(sys.argv) > 1 and sys.argv[1] != '--parameters':
         for index in range(2):
             root = hou.node(f'/obj/assembly/part{index}')
             assert abs(root.geometry().boundingBox().sizevec()[0] - (index+2)) < 1e-6
-            with h._execution_owner('assembly', 'reopen'):
+            with dsh_ownership.execution_owner('assembly', 'reopen'):
                 assert h.node_provenance(root)['status'] == 'foreign'
     else:
         raise ValueError(mode)
@@ -164,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     )
     assert uppercase['sha256'] == exported['sha256']
     run('delete_node("/obj/assembly/uppercase_digest")', owner='assembly')
-    with h._execution_owner('assembly', 'check'):
+    with dsh_ownership.execution_owner('assembly', 'check'):
         assert all(h.node_provenance(n)['status'] == 'owned_current_session' for n in (root, *root.allSubChildren()))
     run(f'set_parms({root.node("shape").path()!r},{{"sizex":2}})', owner='assembly')
     assert abs(root.geometry().boundingBox().sizevec()[0] - 2) < 1e-6
@@ -182,7 +185,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     # A failed downstream cook restores the original wire without removing either module.
     run('connect("/obj/assembly/renamed","/obj/assembly/consumer")', owner='assembly')
     preview = run('__result__=component_replace("/obj/assembly/renamed","/obj/assembly/replacement")', owner='assembly')
-    with patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+    with patch.object(dsh_node_operations, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         run(f'component_replace("/obj/assembly/renamed","/obj/assembly/replacement",dry_run=False,expected_plan={preview["plan"]!r})', owner='assembly', ok=False)
     assert hou.node('/obj/assembly/consumer').input(0) == root
     # A: expected_contract pins the candidate to the contract recorded at import.
@@ -247,7 +250,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert 'migration inputs/parameters/consumers changed after preview' in drift, drift
     run('set_parms("/obj/assembly/oldmod",{"width":3})', owner='assembly')
     preview = run('__result__=component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",migration={"inputs":{"0":0},"public_parms":["width"]})', owner='assembly')
-    with patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+    with patch.object(dsh_node_operations, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         fail_with(f'component_replace("/obj/assembly/oldmod","/obj/assembly/newmod",dry_run=False,expected_plan={preview["plan"]!r},'
                   'migration={"inputs":{"0":0},"public_parms":["width"]})')
     assert hou.node('/obj/assembly/oldmod').input(0).path() == '/obj/assembly/feeder'
@@ -298,7 +301,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         parm.set(123.0)
         corruption.append(parm.eval())
         raise RuntimeError('injected failure after the real write, before the commit returns')
-    with h._execution_owner('assembly', 'direct-partial-write'):
+    with dsh_ownership.execution_owner('assembly', 'direct-partial-write'):
         with patch.object(components, '_restore_parm', corrupt_then_raise):
             try:
                 components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
@@ -362,7 +365,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
             raise RuntimeError('injected restore failure')
         return real_restore(parm, captured)
     with patch.object(components, '_restore_parm', restore_fails_on_rollback), \
-            patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+            patch.object(dsh_node_operations, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
         failed = fail_with(f'component_replace("/obj/assembly/oldmod2","/obj/assembly/newmod2",dry_run=False,'
                            f'expected_plan={preview["plan"]!r},migration={{"inputs":{{"0":0}},"public_parms":["width"]}})')
     assert 'component replacement restoration failed' in failed and 'injected restore failure' in failed, failed
@@ -373,7 +376,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert not hou.node('/obj/assembly/newmod2').parm('width').keyframes()
     # Direct call (no bridge undo): the internal partial restore is visible —
     # every ledger entry except the failing one was restored in reverse order.
-    with h._execution_owner('assembly', 'direct-replace'):
+    with dsh_ownership.execution_owner('assembly', 'direct-replace'):
         direct_preview = components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2',
                                                       dry_run=True, migration={'inputs': {'0': 0}, 'public_parms': ['width']})
         flaky2 = {'n': 0}
@@ -383,7 +386,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
                 raise RuntimeError('injected restore failure')
             return real_restore(parm, captured)
         with patch.object(components, '_restore_parm', restore_fails_direct), \
-                patch.object(h, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
+                patch.object(dsh_node_operations, 'cook_node', side_effect=RuntimeError('injected consumer cook failure')):
             try:
                 components.component_replace('/obj/assembly/oldmod2', '/obj/assembly/newmod2', dry_run=False,
                                              expected_plan=direct_preview['plan'],
@@ -538,7 +541,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run('create_spare_parms("/obj/assembly/segold",layout=[{"type":"float","name":"speed","default":1}])', owner='assembly')
     run('create_spare_parms("/obj/assembly/segnew",layout=[{"type":"float","name":"speed","default":2}])', owner='assembly')
     seg_old = hou.parm('/obj/assembly/segold/speed')
-    with h._execution_owner('assembly', 'segment-state-fixture'):
+    with dsh_ownership.execution_owner('assembly', 'segment-state-fixture'):
         first_raw = hou.Keyframe(5.0)
         first_raw.setFrame(2)
         first_raw.setSlope(1.5)
@@ -671,7 +674,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     legacy_ns = {'hou': hou, 're': re}
     exec(CAPTURE_0EFFE03, legacy_ns)
     exec(RESTORE_0EFFE03, legacy_ns)
-    with h._execution_owner('assembly', 'segment-state-fixture'):
+    with dsh_ownership.execution_owner('assembly', 'segment-state-fixture'):
         scratch = hou.node('/obj/assembly/segnew').createNode('null', 'legacyscratch')
         ptg = scratch.parmTemplateGroup()
         ptg.append(hou.FloatParmTemplate('speed', 'speed', 1, default_value=(0,)))
@@ -779,7 +782,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         'create_spare_parms("/obj/assembly/ctrl8",layout=[{"type":"float","name":"drive","default":0}])\n'
         f'set_parms("/obj/assembly/ctrl8",{{"drive":{py_expr!r}}})', owner='assembly')
     run('create_spare_parms("/obj/assembly/ctrl8",layout=[{"type":"string","name":"brief","default":"x"}])', owner='assembly')
-    with h._execution_owner('assembly', 'r3-scope'):
+    with dsh_ownership.execution_owner('assembly', 'r3-scope'):
         hou.node('/obj/assembly/ctrl8').parm('brief').setExpression('ch("../pyold/gain") * 2', hou.exprLanguage.Python)
     python_refused = fail_with('component_replace("/obj/assembly/pyold","/obj/assembly/pynnew",dry_run=False,'
                                'migration={"inputs":{},"public_parms":["gain"]})')
@@ -799,7 +802,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     # A pure string constant is data end to end: no actual call, nothing to
     # rewrite, the text survives byte-identical.
     constant_expr = '"see ch(\\"../pyold/gain\\") docs"'
-    with h._execution_owner('assembly', 'r3-scope'):
+    with dsh_ownership.execution_owner('assembly', 'r3-scope'):
         hou.node('/obj/assembly/ctrl8').parm('brief').setExpression(constant_expr, hou.exprLanguage.Hscript)
     try:
         _repoint(hou.node('/obj/assembly/ctrl8').parm('brief'),

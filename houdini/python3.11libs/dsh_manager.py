@@ -113,8 +113,10 @@ def _require_cached_dsh(version: str) -> None:
     dsh_runtime_compat.require_verified(version)
     if version != dsh_runtime_compat.preferred_version():
         raise RuntimeError("DSH repair must use the plugin-required version")
-    if dsh_runtime_compat.preferred_cached_bin(_NPM_CACHE) is None:
+    binary = dsh_runtime_compat.preferred_cached_bin(_NPM_CACHE)
+    if binary is None:
         raise RuntimeError(f"DSH {version} finished but was not found in {_NPM_CACHE}")
+    dsh_runtime_compat.runtime_fix_identity(binary, verify_files=True)
 
 
 def _dsh_launch_override() -> str | None:
@@ -146,7 +148,17 @@ def _runtime_dsh_info() -> dict:
     else:
         note = "Listener ownership or recorded runtime identity is unverified; no running version can be confirmed"
         version = None
-    return {"online": True, "verified": verified, "version": version, "note": note}
+    fixes_current = not bool(dsh_runtime_compat.load_manifest().get('runtimeFixes'))
+    if verified and not fixes_current and marker.get('bin'):
+        try:
+            expected = dsh_runtime_compat.runtime_fix_identity(marker['bin'])
+            observed = marker.get('runtimeFixes') or {}
+            fixes_current = bool(expected and observed.get('filesVerified') is True
+                and observed.get('patchSha256') == expected['patchSha256'])
+            note += ' · ' + (observed.get('revision', '兼容修复未核验') if fixes_current else '尚未加载当前兼容修复')
+        except (OSError, ValueError, RuntimeError):
+            note += ' · 当前兼容修复尚未核验'
+    return {"online": True, "verified": verified, "version": version, "note": note, "fixes_current": fixes_current}
 
 
 def _http_json(url: str, data: dict | None = None, timeout: int = 5) -> dict:
@@ -340,13 +352,15 @@ class _NpmDownloadTracker:
         }
 
 
-def _run_npx_dsh(version: str, on_progress=None) -> str:
+def _prepare_source_dsh(version: str, on_progress=None) -> str:
     if not _PACKAGE_VERSION_RE.fullmatch(version):
         raise RuntimeError(f"refusing invalid DSH version: {version!r}")
-    npx = shutil.which("npx")
-    if not npx:
-        raise RuntimeError("npx was not found; check the Node.js installation")
-    args = [npx, "--yes", "--loglevel=silly", f"@deepseek-ai/dsh@{version}", "--version"]
+    fixes = bool(dsh_runtime_compat.load_manifest().get('runtimeFixes'))
+    executable = shutil.which('node' if fixes else 'npx')
+    if not executable:
+        raise RuntimeError('Node.js/npm was not found; check the source installation')
+    args = ([executable, os.path.join(_PROJECT_ROOT, 'tools', 'prepare-dsh-runtime.mjs')] if fixes else
+            [executable, "--yes", "--loglevel=silly", f"@deepseek-ai/dsh@{version}", "--version"])
     env = dict(
         os.environ,
         NPM_CONFIG_CACHE=_NPM_CACHE,
@@ -355,7 +369,7 @@ def _run_npx_dsh(version: str, on_progress=None) -> str:
     )
     command: list[str] | str = args
     use_shell = False
-    if os.name == "nt":
+    if os.name == "nt" and not fixes:
         # .CMD launchers require cmd.exe. There is deliberately no total
         # timeout: large first-time DSH installs can legitimately take tens of
         # minutes. The UI remains live because output and cache growth stream
@@ -446,6 +460,9 @@ def _run_npx_dsh(version: str, on_progress=None) -> str:
     if proc.returncode != 0:
         message = "\n".join(output_tail).strip() or f"exit {proc.returncode}"
         raise RuntimeError(message[-12000:])
+    if fixes:
+        _require_cached_dsh(version)
+        return version
     reported = next((line.strip() for line in reversed(output_tail) if line.strip() == version), "")
     if not reported:
         raise RuntimeError(f"DSH {version} installed but its CLI did not report the expected version")
@@ -486,7 +503,7 @@ def _check_updates(state: dict) -> None:
             dsh_latest=latest, dsh_target=latest,
             dsh_cached_ready=selected == latest,
         )
-        if runtime["verified"] and runtime["version"] == latest:
+        if runtime["verified"] and runtime["version"] == latest and runtime.get('fixes_current', False):
             updates.update(dsh_status="current", dsh_action="Up to date")
         elif override:
             updates.update(dsh_status="blocked", dsh_action="Pinned", dsh_note=f"Pinned by {override}")
@@ -571,7 +588,7 @@ def _update_dsh(state: dict) -> None:
                 dsh_note=message,
             )
 
-        output = _run_npx_dsh(latest, on_progress=publish_progress)
+        output = _prepare_source_dsh(latest, on_progress=publish_progress)
         _require_cached_dsh(latest)
         state.update(
             dsh_latest=latest, dsh_target=latest, dsh_status="staged",
@@ -646,13 +663,11 @@ def show_version_manager() -> None:
     dsh_action.hide()
     repair_btn = QtWidgets.QPushButton("修复并重启运行环境…")
     log_btn = QtWidgets.QPushButton("打开运行日志")
-    network_btn = QtWidgets.QPushButton("联网诊断与代理设置…")
     actions.addWidget(dsh_action)
     actions.addWidget(repair_btn)
     actions.addWidget(log_btn)
     actions.addStretch(1)
     layout.addLayout(actions)
-    layout.addWidget(network_btn)
     download_bar = QtWidgets.QProgressBar()
     download_bar.setTextVisible(False)
     download_bar.hide()
@@ -714,19 +729,6 @@ def show_version_manager() -> None:
         if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(_FRONTEND_LOG)):
             summary_label.setText("无法打开日志，文件位置已放入技术详情。")
             details.appendPlainText(_FRONTEND_LOG)
-
-    def open_network():
-        import dsh_launcher
-        import dsh_network_diagnostics
-        try:
-            command, shell, _source, _timeout = dsh_launcher._frontend_command()
-            if shell or not isinstance(command, list):
-                raise RuntimeError('请先准备配套 DSH；联网诊断不会自动下载或运行 npx。')
-            dsh_network_diagnostics.show(node=command[0], cli=command[1],
-                cwd=dsh_launcher._hip_dir(), env=dsh_managed_runtime.environment(),
-                bridge_url=f'http://127.0.0.1:{_BRIDGE_PORT}', parent=dialog)
-        except Exception as error:
-            summary_label.setText(str(error))
 
     def toggle_advanced(checked):
         details.setVisible(checked)
@@ -796,7 +798,6 @@ def show_version_manager() -> None:
     advanced_toggle.toggled.connect(toggle_advanced)
     repair_btn.clicked.connect(repair_runtime)
     log_btn.clicked.connect(open_log)
-    network_btn.clicked.connect(open_network)
     dialog.finished.connect(cleanup)
     timer = QtCore.QTimer(dialog)
     timer.timeout.connect(tick)

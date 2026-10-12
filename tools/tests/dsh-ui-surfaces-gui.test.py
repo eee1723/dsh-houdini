@@ -6,6 +6,7 @@ dialog text is changed between captures to detect stale framebuffers. Tests
 never connect to or alter a user's Houdini process.
 """
 from __future__ import annotations
+
 import argparse
 import importlib.util
 import json
@@ -25,13 +26,17 @@ from houdini_test_environment import isolated_environment, launch_directory, ree
 
 
 def present_owned_fixture_window(widget):
-    """Fixture setup only: expose its own window without foreground activation."""
+    """Expose only this disposable worker's windows, without taking focus.
+
+    Keep fixture windows above unrelated desktop overlays for pixel checks.
+    This changes no borrowed user window and ends when the worker is closed.
+    """
     import ctypes
     from ctypes import wintypes as w
     api = ctypes.WinDLL('user32', use_last_error=True)
     api.SetWindowPos.argtypes = [w.HWND,w.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,w.UINT]
     api.SetWindowPos.restype = w.BOOL
-    assert api.SetWindowPos(int(widget.effectiveWinId()),None,0,0,0,0,0x0013)
+    assert api.SetWindowPos(int(widget.effectiveWinId()),w.HWND(-1),0,0,0,0,0x0013)
 
 
 def dismiss_owned_startup_dialogs():
@@ -72,6 +77,8 @@ def probe():
     from hutil.Qt import QtCore, QtGui, QtWidgets, QtCompat
     sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
     import dsh_ui_capture as capture
+    import dsh_errors
+    import dsh_media_output
     import dsh_hou_helpers as helpers
     import dsh_bridge as bridge
     output = Path(os.environ['DSH_UI_SURFACES_OUTPUT'])
@@ -105,7 +112,7 @@ def probe():
 
     def list_surfaces():
         before = snapshot()
-        result = capture.discover_ui_surfaces()
+        result = capture.discover_ui_surfaces(runtime_id=bridge._RUNTIME_ID)
         after = snapshot()
         assert before == after, 'discovery changed scene or UI: ' + repr([(i, repr(a), repr(b)) for i,(a,b) in enumerate(zip(before,after)) if a != b])
         assert result['runtime_id'] == bridge._RUNTIME_ID and result['scene_writes'] == 0
@@ -120,7 +127,7 @@ def probe():
     def shot(row, label, callback=None):
         assert row['supported'], row
         before = snapshot()
-        prepared = capture.prepare_ui_capture(target=row['target'], path=label + '.png')
+        prepared = capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=row['target'], path=label + '.png')
         state['busy'] = True
         bound = False
         deadline = time.monotonic() + 10
@@ -141,7 +148,7 @@ def probe():
                 assert result['surface']['target'] == row['target'] and result['semantic_status'] == 'unverified'
                 assert result['actual_size'] == row['screen_geometry'][2:], result
                 assert result['cleanup_pending'] is False and not Path(result['path'] + '.reserve').exists()
-                assert os.path.abspath(result['path']) in helpers._PRODUCED_IMAGES
+                assert os.path.abspath(result['path']) in dsh_media_output._PRODUCED_IMAGES
                 after = snapshot()
                 if before != after:
                     raise AssertionError('borrowed capture changed UI/scene: ' + repr([(i, repr(a), repr(b)) for i, (a,b) in enumerate(zip(before,after)) if a != b]))
@@ -163,7 +170,7 @@ def probe():
         try:
             func()
             raise AssertionError('accepted invalid UI target: ' + label)
-        except (ValueError, RuntimeError, helpers.CheckpointError) as error:
+        except (ValueError, RuntimeError, dsh_errors.CheckpointError) as error:
             assert phrase in str(error), (label, str(error))
             state['failures'].append({'case': label, 'error': str(error)})
         assert before == snapshot(), 'invalid target changed UI/scene: ' + label
@@ -274,11 +281,11 @@ def probe():
                 changed = sum(ia.pixel(x,y) != ib.pixel(x,y) for y in range(top,bottom) for x in range(left,right))
                 assert changed >= 32, ('dialog stale pixels', changed)
                 state['changed_text_pixels'] = changed
-                expect_failure('forged_ref', lambda: capture.prepare_ui_capture(target='ui:invented'), 'no longer displayed')
+                expect_failure('forged_ref', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target='ui:invented'), 'no longer displayed')
                 original_runtime = bridge._RUNTIME_ID
                 bridge._RUNTIME_ID = original_runtime + '-new-fixture-runtime'
                 try:
-                    expect_failure('stale_runtime', lambda: capture.prepare_ui_capture(target=state['dialog_ref']), 'another runtime')
+                    expect_failure('stale_runtime', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=state['dialog_ref']), 'another runtime')
                 finally:
                     bridge._RUNTIME_ID = original_runtime
                 modal = QtWidgets.QDialog(hou.qt.mainWindow()); modal.setWindowTitle('Modal Fixture')
@@ -288,18 +295,18 @@ def probe():
             elif state['step'] == 10:
                 row = next(r for r in list_surfaces() if r.get('object_name') == 'capture_modal_fixture')
                 assert not row['supported'] and row['modal'], row
-                expect_failure('modal_unsupported', lambda: capture.prepare_ui_capture(target=row['target']), 'unverified')
+                expect_failure('modal_unsupported', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=row['target']), 'unverified')
                 state['modal'].close(); state['modal'].deleteLater()
                 hidden = state['parm'].pane().createTab(hou.paneTabType.NetworkEditor)
                 state['hidden_replacement'] = hidden
             elif state['step'] == 11:
                 assert not state['parm'].isCurrentTab()
                 assert not any(r['target'] == state['parm_ref'] for r in list_surfaces())
-                expect_failure('hidden_tab', lambda: capture.prepare_ui_capture(target=state['parm_ref']), 'no longer displayed')
+                expect_failure('hidden_tab', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=state['parm_ref']), 'no longer displayed')
                 state['parm'].setIsCurrentTab()
                 state['dialog'].hide()
             elif state['step'] == 12:
-                expect_failure('hidden_window', lambda: capture.prepare_ui_capture(target=state['dialog_ref']), 'no longer displayed')
+                expect_failure('hidden_window', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=state['dialog_ref']), 'no longer displayed')
                 state['dialog'].show(); present_owned_fixture_window(state['dialog'])
                 overlay = QtWidgets.QDialog(hou.qt.mainWindow()); overlay.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
                 overlay.setWindowTitle('Overlay Fixture'); overlay.resize(100,80)
@@ -308,11 +315,11 @@ def probe():
             elif state['step'] == 13:
                 row = next(r for r in list_surfaces() if r['target'] == state['dialog_ref'])
                 assert not row['supported'] and 'covered' in row['reason'], row
-                expect_failure('covered_window', lambda: capture.prepare_ui_capture(target=state['dialog_ref']), 'covered')
+                expect_failure('covered_window', lambda: capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=state['dialog_ref']), 'covered')
                 state['overlay'].hide(); state['overlay'].close(); state['overlay'].deleteLater()
                 # Reject a surface destroyed after request admission without
                 # closing or otherwise changing any surviving user surface.
-                state['deletion_prepared'] = capture.prepare_ui_capture(target=state['dialog_ref'], path='deleted.png')
+                state['deletion_prepared'] = capture.prepare_ui_capture(runtime_id=bridge._RUNTIME_ID, target=state['dialog_ref'], path='deleted.png')
                 state['dialog'].close(); state['dialog'].deleteLater()
             elif state['step'] == 14:
                 prepared = state['deletion_prepared']

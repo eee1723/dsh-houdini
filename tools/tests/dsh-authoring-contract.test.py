@@ -1,7 +1,10 @@
 """Scalar definition/spare parity and conversion-bound native provenance, isolated HOM."""
+
 from pathlib import Path
 import sys,tempfile,json
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
+import dsh_service_constants
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -25,13 +28,13 @@ with tempfile.TemporaryDirectory(prefix='dsh-authoring-contract-') as tmp:
     domain=[{'id':'gain_min','left':'gain','op':'ge','right':1}]
     before=result(f'test_controls({p!r},{out!r},{cases!r},domain={domain!r})')
     assert before['ok'] and before['restored']
-    with h._execution_owner("author","capture-before-conversion"):
-        one_shot=h._snapshot_native_conversion(hou.node(p))
+    with dsh_ownership.execution_owner("author","capture-before-conversion"):
+        one_shot=dsh_ownership.snapshot_native_conversion(hou.node(p))
     created=result(f'hda_create({p!r},"contract::authoring::1.0",hda_file={lib!r})')
     assert created['pending_spare_parameters']==['gain'] and 'promote' in created['next_action']
     assert created['native_identity_transfers'],created
-    with h._execution_owner('author','repeat-reconcile'):
-        assert h._reconcile_native_conversion(one_shot)==[], 'mapping is consumed, never a future adoption rule'
+    with dsh_ownership.execution_owner('author','repeat-reconcile'):
+        assert dsh_ownership.reconcile_native_conversion(one_shot)==[], 'mapping is consumed, never a future adoption rule'
     run(f'cook_node({p!r})')
     assert all(n['status']=='owned_current_session' for n in result(f'[node_provenance(n) for n in hou.node({p!r}).allSubChildren()]'))
     for action in ['unlock','promote']:
@@ -86,34 +89,34 @@ with tempfile.TemporaryDirectory(prefix='dsh-authoring-contract-') as tmp:
     assert result('node_provenance("/obj/authoring/mixed/other_author")')['status']=='owned_other_session'
     # A copied audit tag on an unregistered GUI-created node grants nothing.
     foreign=hou.node('/obj/authoring/mixed').createNode('null','manual')
-    foreign.setUserData(h._TASK_OWNER_KEY,'author')
+    foreign.setUserData(dsh_ownership._TASK_OWNER_KEY,'author')
     assert result('node_provenance("/obj/authoring/mixed/manual")')['status']=='foreign'
     # Unlocked/modified native definition is outside the reconciliation whitelist.
     run("s=tab_create('/obj/authoring','subnet','modified_native')\nw=tab_create(s,'attribwrangle','w')")
     native=hou.node('/obj/authoring/modified_native/w');native.allowEditingOfContents()
-    native.createNode('null','manual_internal').setUserData(h._TASK_OWNER_KEY,'author')
+    native.createNode('null','manual_internal').setUserData(dsh_ownership._TASK_OWNER_KEY,'author')
     run(f'hda_create("/obj/authoring/modified_native","contract::modified_native::1.0",hda_file={str(Path(tmp)/"modified.hda")!r})')
     assert result('node_provenance("/obj/authoring/modified_native/w/manual_internal")')['status']=='foreign'
     # A same-path replacement cannot satisfy the surviving-native-anchor condition.
     run("s=tab_create('/obj/authoring','subnet','slot')\nw=tab_create(s,'attribwrangle','native')\ncook_node(w)")
-    with h._execution_owner('author','capture'):
-        captured=h._snapshot_native_conversion(hou.node('/obj/authoring/slot'))
+    with dsh_ownership.execution_owner('author','capture'):
+        captured=dsh_ownership.snapshot_native_conversion(hou.node('/obj/authoring/slot'))
     assert captured
     run('delete_node("/obj/authoring/slot/native")')
     replacement=hou.node('/obj/authoring/slot').createNode('attribwrangle','native')
-    replacement.setUserData(h._TASK_OWNER_KEY,'author')
-    with h._execution_owner('author','reconcile'):
-        assert h._reconcile_native_conversion(captured)==[]
+    replacement.setUserData(dsh_ownership._TASK_OWNER_KEY,'author')
+    with dsh_ownership.execution_owner('author','reconcile'):
+        assert dsh_ownership.reconcile_native_conversion(captured)==[]
     assert result('node_provenance("/obj/authoring/slot/native")')['status']=='foreign'
     # A user-library definition, even locked, is never a trusted native anchor.
     run("s=tab_create('/obj/authoring','subnet','user_definition')\ntab_create(s,'box','shape')\n"+
         f'hda_create(s,"contract::user_definition::1.0",hda_file={str(Path(tmp)/"user.hda")!r})')
     custom=hou.node('/obj/authoring/user_definition');custom.matchCurrentDefinition()
-    assert custom.isLockedHDA() and h._native_definition_identity(custom,{}) is None
+    assert custom.isLockedHDA() and dsh_ownership._native_definition_identity(custom,{}) is None
     # Render-service tags exclude a whole native subtree from transfer.
     run("s=tab_create('/obj/authoring','subnet','service_case')\nw=tab_create(s,'attribwrangle','native')\ncook_node(w)")
     internal=hou.node('/obj/authoring/service_case/native/attribvop1')
-    internal.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
+    internal.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
     service_result=result(f'hda_create("/obj/authoring/service_case","contract::service_case::1.0",hda_file={str(Path(tmp)/"service.hda")!r})')
     assert service_result['native_identity_transfers']==[]
     assert result('node_provenance("/obj/authoring/service_case/native/attribvop1")')['status']!='owned_current_session'

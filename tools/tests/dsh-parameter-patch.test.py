@@ -1,10 +1,14 @@
 """Literal source patches: all anchors before writes, exact state and real cook."""
+
 import hashlib
 import sys
 from pathlib import Path
 from unittest.mock import patch as mock_patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
+import dsh_parameter_values
 import hou
+import dsh_parameter_values
 import dsh_hou_helpers as h
 import dsh_bridge as b
 
@@ -22,7 +26,7 @@ def rejects(fn, expected):
     else:
         raise AssertionError('expected '+expected)
 
-with h._execution_owner('patch-owner', 'test'):
+with dsh_ownership.execution_owner('patch-owner', 'test'):
     root = h.tab_create('/obj','geo','__parameter_patch')
     source = 'int n=2; for(int i=0;i<n;i++) addpoint(0,set(i,0,0));'
     n = h.tab_create(root,'attribwrangle','generator')
@@ -41,7 +45,7 @@ with h._execution_owner('patch-owner', 'test'):
         probe.parm('animated').setKeyframe(key)
         consumer=h.tab_create(root,'null','read_filter_consumer')
         h.create_spare_parms(consumer,spec=[{'type':'float','name':'linked','default':1}])
-        h.set_parm(consumer,'linked','ch("../read_filter/referenced")')
+        dsh_parameter_values.set_parm(consumer,'linked','ch("../read_filter/referenced")')
         filtered=b.run_code(f'__result__=read_parms({probe.path()!r})',read_only=True)
         assert filtered['ok'] and filtered['transaction']['status']=='no_scene_change',filtered
         by_name={row['name']:row for row in filtered['result']}
@@ -73,42 +77,42 @@ with h._execution_owner('patch-owner', 'test'):
         rejects(lambda:h.read_parms(n,names=['label','missing']),'missing scalar')
         rejects(lambda:h.read_parms(n,names=['label','label']),'unique scalar')
         proposal=patch(source,'n=2','n=3')
-        result=h.set_parm(n,'snippet',proposal)
+        result=dsh_parameter_values.set_parm(n,'snippet',proposal)
         changed=source.replace('n=2','n=3')
         assert result['patch']['after_sha256']==sha(changed) and result['value_omitted']
         assert h.cook_node(n,force=True)['ok'] and len(n.geometry().points())==3
         # Reapplying a stale proposal never restores/rewrites the parameter.
-        restore=h._restore_parameters
+        restore=dsh_parameter_values._restore_parameters
         restores=[]
         try:
             def spy(snapshots):
                 restores.append(1)
                 return restore(snapshots)
-            h._restore_parameters=spy
-            rejects(lambda:h.set_parm(n,'snippet',proposal),'stale source')
+            dsh_parameter_values._restore_parameters=spy
+            rejects(lambda:dsh_parameter_values.set_parm(n,'snippet',proposal),'stale source')
             assert not restores
         finally:
-            h._restore_parameters=restore
+            dsh_parameter_values._restore_parameters=restore
         for bad, reason in [(patch(changed,'not found','x'),'found 0'),
                             (patch('alpha alpha','alpha','beta'),'found 2'),
                             (patch(changed,'n=3','n=3'),'different new'),
                             (patch(changed,'n=3','n=4',True),'integer count')]:
             field='label' if reason=='found 2' else 'snippet'
-            rejects(lambda:h.set_parm(n,field,bad),reason)
+            rejects(lambda:dsh_parameter_values.set_parm(n,field,bad),reason)
         # A late bad patch prevents even earlier ORDINARY writes in set_parms.
-        setter=h.set_parm
+        setter=dsh_parameter_values.set_parm
         writes=[]
         try:
             def write_spy(*args,**kwargs):
                 writes.append(1)
                 return setter(*args,**kwargs)
-            h.set_parm=write_spy
+            dsh_parameter_values.set_parm=write_spy
             rejects(lambda:h.set_parms(n,{'amplitude':9,'snippet':patch(changed,'n=3','n=4'),
                                           'label':patch('alpha alpha','missing','x')}),'found 0')
             assert not writes and n.evalParm('amplitude')==1
             assert n.parm('snippet').unexpandedString()==changed
         finally:
-            h.set_parm=setter
+            dsh_parameter_values.set_parm=setter
         # Sequential edits are validated against the proposed intermediate text.
         edits=patch(changed,'n=3','n=4')
         edits['patch'].append({'old':'n=4','new':'n=5','count':1})
@@ -117,32 +121,32 @@ with h._execution_owner('patch-owner', 'test'):
         assert n.evalParm('label')=='β β'
         assert h.cook_node(n,force=True)['ok'] and len(n.geometry().points())==5
         # Hashes describe RAW strings, not evaluated $HIP expansions.
-        h.set_parm(n,'label','$HIP/旧文本')
+        dsh_parameter_values.set_parm(n,'label','$HIP/旧文本')
         label=next(x for x in h.read_parms(n) if x['name']=='label')
         assert label['raw_value']=='$HIP/旧文本' and label['source_sha256']==sha('$HIP/旧文本')
-        h.set_parm(n,'label',patch('$HIP/旧文本','旧','新'))
+        dsh_parameter_values.set_parm(n,'label',patch('$HIP/旧文本','旧','新'))
         assert n.parm('label').unexpandedString()=='$HIP/新文本'
         rejects(lambda:h.set_parms(n,{'label':patch('$HIP/新文本','新','旧')},strict=False),'strict=True')
-        rejects(lambda:h.set_parm(n,'amplitude',patch('1','1','2')),'scalar string')
+        rejects(lambda:dsh_parameter_values.set_parm(n,'amplitude',patch('1','1','2')),'scalar string')
         n.parm('label').setExpression(repr('literal'),hou.exprLanguage.Python)
         keys=n.parm('label').keyframes()
-        rejects(lambda:h.set_parm(n,'label',patch('literal','literal','changed')),'expression-driven')
+        rejects(lambda:dsh_parameter_values.set_parm(n,'label',patch('literal','literal','changed')),'expression-driven')
         assert n.parm('label').keyframes()==keys
-        h.set_parm(n,'label','plain')
+        dsh_parameter_values.set_parm(n,'label','plain')
         n.parm('label').lock(True)
-        rejects(lambda:h.set_parm(n,'label',patch('plain','plain','changed')),'locked')
+        rejects(lambda:dsh_parameter_values.set_parm(n,'label',patch('plain','plain','changed')),'locked')
         n.parm('label').lock(False)
         callback=hou.StringParmTemplate('callback','Callback',1,default_value=('plain',))
         callback.setScriptCallback('raise RuntimeError("must not run")')
         callback.setScriptCallbackLanguage(hou.scriptLanguage.Python)
         n.addSpareParmTuple(callback)
-        rejects(lambda:h.set_parm(n,'callback',patch('plain','plain','next')),'callback')
+        rejects(lambda:dsh_parameter_values.set_parm(n,'callback',patch('plain','plain','next')),'callback')
         # Inject a failure on the SECOND physical patch; all current values and
         # unrelated animation in the batch restore, independently of Bridge undo.
         n.parm('amplitude').setExpression('2+$F',hou.exprLanguage.Hscript)
         keys=n.parm('amplitude').keyframes()
         before=n.parm('snippet').unexpandedString()
-        apply=h._apply_parameter_patch
+        apply=dsh_parameter_values._apply_parameter_patch
         attempts=[]
         def fail_second(p,plan):
             attempts.append(p.name())
@@ -150,11 +154,11 @@ with h._execution_owner('patch-owner', 'test'):
                 raise RuntimeError('injected second write failure')
             return apply(p,plan)
         try:
-            h._apply_parameter_patch=fail_second
+            dsh_parameter_values._apply_parameter_patch=fail_second
             rejects(lambda:h.set_parms(n,{'amplitude':9,'snippet':patch(before,'n=5','n=7'),
                                           'label':patch('plain','plain','next')}),'injected second write')
         finally:
-            h._apply_parameter_patch=apply
+            dsh_parameter_values._apply_parameter_patch=apply
         assert n.parm('snippet').unexpandedString()==before and n.evalParm('label')=='plain'
         assert n.parm('amplitude').keyframes()==keys
         # Real exec: a valid text patch may produce invalid VEX; the explicit

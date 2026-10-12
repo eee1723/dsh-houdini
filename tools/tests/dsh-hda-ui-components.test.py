@@ -1,4 +1,5 @@
 """Native recreation of generic HDA layout patterns; no reference asset code."""
+
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -112,7 +114,7 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
             out=Path(output);out.mkdir(parents=True,exist_ok=True)
             shutil.copy2(library,out/library.name)
     # Schema failures occur before writing the targeted definition.
-    with h._execution_owner('layout-author','reject'):
+    with dsh_ownership.execution_owner('layout-author','reject'):
         # HIP reload changes provenance, so the selected self-created fixture is explicit here.
         for layout,part in [
             ([{'component':'row','parms':[{'type':'ramp','name':'curve'}]}],'leaf'),

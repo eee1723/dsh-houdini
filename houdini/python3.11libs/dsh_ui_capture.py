@@ -7,6 +7,9 @@ Capture does not create, navigate, select, resize or close a user interface.
 """
 from __future__ import annotations
 
+import dsh_errors
+import dsh_media_output
+
 import os
 import threading
 import base64
@@ -76,13 +79,12 @@ def _rect_data(rect):
     return [rect.x(), rect.y(), rect.width(), rect.height()]
 
 
-def _surface_target(kind, identity):
-    import dsh_bridge
-    value = json.dumps([dsh_bridge._RUNTIME_ID, kind, *identity], separators=(',', ':'), ensure_ascii=True)
+def _surface_target(runtime_id, kind, identity):
+    value = json.dumps([runtime_id, kind, *identity], separators=(',', ':'), ensure_ascii=True)
     return 'ui:' + base64.urlsafe_b64encode(value.encode('ascii')).decode('ascii').rstrip('=')
 
 
-def _surface_rows():
+def _surface_rows(runtime_id):
     """Read actual pane/window identities; never resolve a title or wrap a pointer.
 
     References carry only identity, not desktop coordinates. Every use repeats
@@ -109,7 +111,7 @@ def _surface_rows():
             current_node = current.path() if current is not None else None
             network_path = parent.path() if parent is not None else None
             node = network_path if isinstance(pane, hou.NetworkEditor) else current_node or network_path
-        record = {'target': _surface_target('pane', [hash(pane), pane.name(), pane_type, QtCompat.getCppPointer(widget)]),
+        record = {'target': _surface_target(runtime_id, 'pane', [hash(pane), pane.name(), pane_type, QtCompat.getCppPointer(widget)]),
             'kind': 'pane', 'label': pane.name(), 'pane_type': pane_type, 'node': node,
             'current_node': current_node, 'network_path': network_path,
             'screen_geometry': _rect_data(area), 'modal': False,
@@ -127,7 +129,7 @@ def _surface_rows():
         if area.isEmpty():
             continue  # Qt bootstrap shells have no displayed client surface.
         modal = widget.windowModality() != QtCore.Qt.NonModal
-        record = {'target': _surface_target('qt_window', [pointer, widget.metaObject().className(), widget.objectName()]),
+        record = {'target': _surface_target(runtime_id, 'qt_window', [pointer, widget.metaObject().className(), widget.objectName()]),
             'kind': 'qt_window', 'label': widget.windowTitle() or widget.objectName() or widget.metaObject().className(),
             'qt_class': widget.metaObject().className(), 'object_name': widget.objectName(),
             'screen_geometry': _rect_data(area), 'modal': modal,
@@ -145,7 +147,7 @@ def _surface_rows():
         area = QtCore.QRect(dock.mapToGlobal(QtCore.QPoint(0, 0)), QtWidgets.QWidget.size(dock))
         if area.isEmpty():
             continue
-        record = {'target': _surface_target('qt_panel', [QtCompat.getCppPointer(dock), QtCompat.getCppPointer(widget), dock.objectName()]),
+        record = {'target': _surface_target(runtime_id, 'qt_panel', [QtCompat.getCppPointer(dock), QtCompat.getCppPointer(widget), dock.objectName()]),
             'kind': 'qt_panel', 'label': dock.windowTitle() or dock.objectName() or 'QDockWidget',
             'qt_class': dock.metaObject().className(), 'object_name': dock.objectName(),
             'screen_geometry': _rect_data(area), 'modal': widget.windowModality() != QtCore.Qt.NonModal,
@@ -168,20 +170,19 @@ def _surface_rows():
     return rows
 
 
-def discover_ui_surfaces() -> dict:
+def discover_ui_surfaces(*, runtime_id) -> dict:
     """List current displayed native panes and same-process Qt windows, read-only."""
-    import dsh_bridge
-    return {'ok': True, 'runtime_id': dsh_bridge._RUNTIME_ID,
-        'surfaces': [row[0] for row in _surface_rows()], 'scene_writes': 0,
+    return {'ok': True, 'runtime_id': runtime_id,
+        'surfaces': [row[0] for row in _surface_rows(runtime_id)], 'scene_writes': 0,
         'scope': 'Houdini current displayed panes, visible same-process Qt windows and their displayed dock panels; hidden tabs/popups excluded',
         'target_lifetime': 'current runtime and actual native object; rediscover after close, rename or replacement',
         'semantic_status': 'unverified'}
 
 
-def _resolve_surface(target):
+def _resolve_surface(target, runtime_id):
     if not isinstance(target, str) or not target.startswith('ui:') or len(target) > 2048:
         raise ValueError('target must be the exact reference returned by houdini_ui_list')
-    matches = [row for row in _surface_rows() if row[0]['target'] == target]
+    matches = [row for row in _surface_rows(runtime_id) if row[0]['target'] == target]
     if len(matches) != 1:
         raise ValueError('UI target is no longer displayed or belongs to another runtime; run houdini_ui_list again')
     row = matches[0]
@@ -251,17 +252,17 @@ def _close(state):
     return errors
 
 
-def prepare_ui_capture(target, path=None, *, output_policy='managed') -> dict:
+def prepare_ui_capture(target, path=None, *, output_policy='managed', runtime_id) -> dict:
     """Admit an exact displayed surface and yield to the ordinary GUI loop."""
-    import dsh_hou_helpers as h
+
     from dsh_project_paths import directory_path
     _gui()
-    surface, pane, widget, area = _resolve_surface(target)
+    surface, pane, widget, area = _resolve_surface(target, runtime_id)
     frame = float(hou.frame())
-    destination, artifact, hip_path = h._preview_artifact(
+    destination, artifact, hip_path = dsh_media_output._preview_artifact(
         path, frame=frame, purpose='existing_ui', output_policy=output_policy,
         default_label='ui_' + surface['kind'], default_subdir=directory_path('visual_check'), allowed_extensions={'.png'})
-    state = {'surface': surface, 'pane': pane, 'widget': widget,
+    state = {'runtime_id': runtime_id, 'surface': surface, 'pane': pane, 'widget': widget,
         'node_path': surface.get('node'), 'view': 'existing',
         'width': area.width(), 'height': area.height(), 'destination': destination,
         'artifact': artifact, 'hip_path': hip_path, 'frame': frame,
@@ -274,7 +275,7 @@ def prepare_ui_capture(target, path=None, *, output_policy='managed') -> dict:
         cleanup = _close(state)
         evidence = _evidence(state)
         evidence.update(user_state_restored=not cleanup, restore_errors=cleanup, errors=[str(error)] + cleanup)
-        raise h.CheckpointError('existing UI preparation failed: ' + '; '.join(evidence['errors']), evidence) from error
+        raise dsh_errors.CheckpointError('existing UI preparation failed: ' + '; '.join(evidence['errors']), evidence) from error
 
 
 def refresh_ui_capture(state) -> None:
@@ -288,7 +289,7 @@ def _current_borrowed_surface(state):
     from hutil.Qt import QtCompat
     if state.get('closed') or not QtCompat.isValid(state['widget']):
         raise ValueError('selected UI surface was closed; run houdini_ui_list again')
-    surface, pane, widget, area = _resolve_surface(state['surface']['target'])
+    surface, pane, widget, area = _resolve_surface(state['surface']['target'], state['runtime_id'])
     if widget != state['widget'] or pane != state['pane']:
         raise ValueError('selected UI surface was replaced; run houdini_ui_list again')
     return surface, pane, widget, area
@@ -305,7 +306,7 @@ def _grab_surface(widget, area):
 
 def finish_ui_capture(state) -> dict:
     """Capture the exact current native surface without changing its UI."""
-    import dsh_hou_helpers as h
+
     from dsh_preview_paths import with_actual_path
     _, QtCore, QtGui, _ = _gui()
     if state.get('closed'):
@@ -345,13 +346,13 @@ def finish_ui_capture(state) -> dict:
     finally:
         cleanup = _close(state)
     if result is not None:
-        h.report_image(state['destination'])
+        dsh_media_output.report_image(state['destination'])
         result.update(user_state_restored=not cleanup, restore_errors=cleanup)
     if capture_error is not None or cleanup:
         evidence = result or _evidence(state)
         evidence.update(ok=False, user_state_restored=not cleanup, restore_errors=cleanup,
                         errors=([str(capture_error)] if capture_error is not None else []) + cleanup)
-        raise h.CheckpointError('native UI screenshot failed: ' + '; '.join(evidence['errors']), evidence) from capture_error
+        raise dsh_errors.CheckpointError('native UI screenshot failed: ' + '; '.join(evidence['errors']), evidence) from capture_error
     return result
 
 

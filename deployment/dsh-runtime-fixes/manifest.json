@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "revision": "windows-network-3",
+  "dshVersion": "0.2.0-rc.2",
+  "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+  "tag": "dsh-v0.2.0-rc.2",
+  "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+  "patch": "fixes.patch",
+  "hostPackages": [
+    {
+      "source": "util/http-proxy",
+      "name": "http-proxy",
+      "entries": [
+        "index",
+        "windows-worker"
+      ]
+    },
+    {
+      "source": "sandbox/sandbox",
+      "name": "sandbox",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "sandbox/sandbox-windows-acl",
+      "name": "sandbox-windows-acl",
+      "entries": [
+        "index",
+        "runner"
+      ],
+      "assets": [
+        "assets/diagnose-windows-sandbox-acl/SKILL.md",
+        "assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1"
+      ]
+    },
+    {
+      "source": "fs/fs",
+      "name": "fs",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "fs/fs-local",
+      "name": "fs-local",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "fs/fs-sandbox",
+      "name": "fs-sandbox",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "web/web",
+      "name": "web",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "web/web-fetch-http",
+      "name": "web-fetch-http",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "web/tool-web",
+      "name": "tool-web",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "shell/shell",
+      "name": "shell",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "shell/tool-pwsh",
+      "name": "tool-pwsh",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "shell/tool-bash",
+      "name": "tool-bash",
+      "entries": [
+        "index"
+      ]
+    }
+  ],
+  "clientPackages": [
+    "ui-conversation",
+    "ui-tool"
+  ],
+  "patchSha256": "e503e389ff70cdecd3669f5a503ad849e19f65ae7a27b3e61be9a4178a819f29"
+}

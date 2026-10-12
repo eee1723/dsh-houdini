@@ -1,0 +1,3007 @@
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index 78b26f7..23ccecd 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -368,6 +368,7 @@ export const zh = {
+   'queue.steerFailed': '插话发送失败，请重试。',
+   'terminal.signal': '信号 {signal}',
+   'terminal.exitCode': '退出码 {code}',
++  'terminal.diagnosticOutput': '有诊断输出（退出码 {code}）',
+   'terminal.noExitCode': '未正常退出',
+   'terminal.running': '运行中',
+   'terminal.failed': '失败',
+@@ -744,6 +745,7 @@ export const en = {
+   'queue.steerFailed': 'Steering failed. Try again.',
+   'terminal.signal': 'signal {signal}',
+   'terminal.exitCode': 'exit code {code}',
++  'terminal.diagnosticOutput': 'Diagnostic output (exit code {code})',
+   'terminal.noExitCode': 'no exit code',
+   'terminal.running': 'Running',
+   'terminal.failed': 'Failed',
+diff --git a/packages/client/ui-tool/README.md b/packages/client/ui-tool/README.md
+index 5f42432..e3ba388 100644
+--- a/packages/client/ui-tool/README.md
++++ b/packages/client/ui-tool/README.md
+@@ -144,3 +144,9 @@ None.
+ </details>
+ 
+ **Runtime invariant:** No companion is published. Tool composition is browser-only and contributes no events or cross-plugin mutable state; slot ownership is checked by ui-slots.
++
++## Shell failure summaries
++
++Collapsed shell rows show the actual exit code or signal. Persisted process metadata is authoritative even when stdout contains a fabricated exit marker or a spill preview. Historical text-only results retain their trailing-marker interpretation.
++
++Standard error is a separate process observation. A settled exit-zero shell row with hasStderr is shown with an amber diagnostic cue; stdout cannot forge this fact and stderr alone never invents a failing exit code.
+diff --git a/packages/client/ui-tool/README.zh.md b/packages/client/ui-tool/README.zh.md
+index c1b396e..654d6a7 100644
+--- a/packages/client/ui-tool/README.zh.md
++++ b/packages/client/ui-tool/README.zh.md
+@@ -144,3 +144,9 @@ terminal model 使用浏览器安全入口 `@deepseek-ai/dsh-spill-policy/notice
+ </details>
+ 
+ **运行时不变式：** 不发布伴生入口。工具组合只存在于浏览器，不贡献事件或跨插件可变状态；slot 所有权由 ui-slots 校验。
++
++## 命令失败摘要
++
++折叠的命令行显示实际退出码或信号。持久化进程元数据优先于 stdout 中伪造的退出标记或溢出预览；只有历史纯文本结果沿用末尾标记解释。
++
++标准错误输出是独立执行事实。退出0且hasStderr为真时以黄色提示诊断；stdout文字不能伪造这一事实，stderr本身也不构成非零退出码。
+diff --git a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
+index d91a72d..28e3d7c 100644
+--- a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
++++ b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
+@@ -13,7 +13,7 @@ import { CHAT_READ_MAX_LINES, type ReadCardModel } from '../models/read-card-mod
+ import type { ImageCardModel } from '../models/image-card-model.ts'
+ import { CHAT_SEARCH_MAX_LINES, type SearchCardModel } from '../models/search-card-model.ts'
+ import {
+-  localizeTerminalCardModel, terminalBlockLabels, type TerminalCardModel,
++  localizeTerminalCardModel, terminalBlockLabels, terminalDiagnosticSummary, type TerminalCardModel,
+ } from '../models/terminal-card-model.ts'
+ import {
+   codeToolbarLabels, diffBlockLabels, readBlockLabels, searchBlockLabels, webBlockLabels,
+@@ -181,7 +181,8 @@ export const ToolRow = memo(function ToolRow({
+   // the ordinary summary red. An interruption turns the tool-owned summary
+   // amber while retaining the business icon and hidden state announcement.
+   const failureLine = state === 'error' ? errorSummary ?? normalSummary : null
+-  const summaryText = failureLine ?? normalSummary
++  const diagnosticLine = terminalDiagnosticSummary(terminal ?? null, t)
++  const summaryText = failureLine ?? diagnosticLine ?? normalSummary
+   // The tool row keeps the diff's +/- totals visible while its body is collapsed.
+   // An explicit summarySuffix overrides the diff totals.
+   const diffStat = useMemo(() => diffBody === null ? null : diffTotals(diffBody.card.diffs), [diffBody])
+@@ -236,7 +237,7 @@ export const ToolRow = memo(function ToolRow({
+           className={clsx(
+             css.summary,
+             state === 'error' && css.errorSummary,
+-            state === 'stopped' && css.stoppedSummary,
++            (state === 'stopped' || diagnosticLine !== null) && css.stoppedSummary,
+           )}
+         >
+           <TextShimmer>{summaryText}</TextShimmer>
+@@ -248,7 +249,7 @@ export const ToolRow = memo(function ToolRow({
+         </TextShimmer>
+       )}
+     </>
+-  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, summaryText])
++  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, summaryText, diagnosticLine])
+   const expandedContent = useMemo(() => open ? (
+     <div className={clsx(css.bodyWrap, detailsBody !== null && css.detailsBodyWrap)}>
+       {askQuestionBody !== null
+@@ -354,7 +355,8 @@ export const ToolRow = memo(function ToolRow({
+     variant, bodyText, cardBody, outputText, state,
+   ])
+   return (
+-    <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}>
++    <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}
++      data-diagnostic={diagnosticLine !== null || undefined}>
+       {status !== null && <span className={css.visuallyHidden}>{status}</span>}
+       <DisclosureRow
+         rowClassName={css.row}
+diff --git a/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts b/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
+index ca77777..e2e25c3 100644
+--- a/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
++++ b/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
+@@ -38,6 +38,8 @@ export function terminalBlockLabels(t: TranslateNS<'conversation'>): TerminalBlo
+  * each render site.
+  */
+ export interface TerminalCardModel {
++  /** Independent process interruption facts from the persisted tool result. */
++  process?: {timedOut: boolean; aborted: boolean; stopped?: string; hasStderr?: boolean}
+   /**
+    * The locale-neutral props {@link TerminalBlock} draws. The render site adds
+    * `command` after resolving {@link copy} through its locale seat.
+@@ -94,7 +96,23 @@ export function localizeTerminalCardModel(
+  */
+ export function terminalFailed(model: TerminalCardModel): boolean {
+   const { exitCode, signal, running } = model.card
+-  return running !== true && ((exitCode !== undefined && exitCode !== 0) || signal !== undefined)
++  return running !== true && (model.process?.timedOut === true || model.process?.aborted === true ||
++    model.process?.stopped !== undefined || (exitCode !== undefined && exitCode !== 0) || signal !== undefined)
++}
++
++/** Localized collapsed-row failure fact, independent of the command description. */
++export function terminalFailureSummary(model: TerminalCardModel | null, t: TranslateNS<'conversation'>): string | null {
++  if (model === null || !terminalFailed(model)) return null
++  if (model.process?.timedOut || model.process?.aborted || model.process?.stopped !== undefined) return t('terminal.failed')
++  if (model.card.signal !== undefined) return t('terminal.signal', {signal:model.card.signal})
++  if (model.card.exitCode === null) return t('terminal.noExitCode')
++  return t('terminal.exitCode', {code:model.card.exitCode!})
++}
++
++/** Stderr is an independent observation, not an invented failing process exit. */
++export function terminalDiagnosticSummary(model: TerminalCardModel | null, t: TranslateNS<'conversation'>): string | null {
++  return model?.process?.hasStderr === true && model.card.exitCode === 0 && !terminalFailed(model)
++    ? t('terminal.diagnosticOutput', {code:0}) : null
+ }
+ 
+ /**
+@@ -266,7 +284,7 @@ function terminalSendCall(name: string, args: Record<string, unknown>): Terminal
+ function parseExitStatus(text: string): { output: string; exitCode?: number; signal?: string } {
+   const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(text)
+   if (signal?.[1] !== undefined) return { output: text.slice(0, signal.index), signal: signal[1] }
+-  const exit = /\n\[exit code: (\d+)\]$/.exec(text)
++  const exit = /\n\[exit code: (-?\d+)\]\s*$/.exec(text)
+   if (exit?.[1] !== undefined) return { output: text.slice(0, exit.index), exitCode: Number(exit[1]) }
+   return { output: text, exitCode: 0 }
+ }
+@@ -306,12 +324,35 @@ export function terminalCardModel(
+       },
+     }
+   }
+-  if (block.isError || (call.kind === 'shell' && call.persistent) || isSpilledShellCall(block)) return null
++  if (block.isError || (call.kind === 'shell' && call.persistent)) return null
+   const output = singleResultText(block)
+   if (output === undefined) return null
+-  const status = call.kind === 'terminal-send' ? { output } : parseExitStatus(output)
++  const meta = typeof block.meta === 'object' && block.meta !== null && !Array.isArray(block.meta)
++    ? block.meta as Record<string,unknown> : undefined
++  const trailer = /\n\[process-result: (\{[^\n]*\})\]\s*$/.exec(output)
++  let recorded: unknown
++  if (trailer?.[1] !== undefined) {
++    try { recorded = JSON.parse(trailer[1]) } catch { return null }
++  }
++  const declared = meta && Object.prototype.hasOwnProperty.call(meta, 'shellExit') ? meta.shellExit : recorded
++  let process: TerminalCardModel['process']
++  let status: {output: string; exitCode?: number | null; signal?: string}
++  if (call.kind === 'shell' && declared !== undefined) {
++    if (typeof declared !== 'object' || declared === null || Array.isArray(declared)) return null
++    const facts = declared as Record<string,unknown>
++    if (!(facts.exitCode === null || typeof facts.exitCode === 'number' && Number.isInteger(facts.exitCode)) ||
++        !(facts.signal === null || typeof facts.signal === 'string') || typeof facts.timedOut !== 'boolean' ||
++        typeof facts.aborted !== 'boolean' || !(facts.stopped === undefined || typeof facts.stopped === 'string')) return null
++    status = {output:trailer ? output.slice(0,trailer.index) : output, exitCode:facts.exitCode, ...facts.signal === null ? {} : {signal:facts.signal}}
++    process = {timedOut:facts.timedOut,aborted:facts.aborted,...facts.stopped === undefined ? {} : {stopped:facts.stopped},
++      ...typeof facts.hasStderr === 'boolean' ? {hasStderr:facts.hasStderr} : {}}
++  } else {
++    if (isSpilledShellCall(block)) return null
++    status = call.kind === 'terminal-send' ? {output} : parseExitStatus(output)
++  }
+   return {
+     copy,
++    ...process === undefined ? {} : {process},
+     card: {
+       cwd,
+       output: status.output,
+diff --git a/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx b/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
+index bc0faac..9145fd7 100644
+--- a/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
++++ b/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
+@@ -7,7 +7,7 @@ import type { ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
+ import { readCardModel } from '../models/read-card-model.ts'
+ import { diffCardModel } from '../models/diff-card-model.ts'
+ import { searchCardModel } from '../models/search-card-model.ts'
+-import { terminalCardModel, terminalFailed } from '../models/terminal-card-model.ts'
++import { terminalCardModel, terminalFailed, terminalFailureSummary } from '../models/terminal-card-model.ts'
+ import { webCardModel } from '../models/web-card-model.ts'
+ import { toolRowModel, type ToolRowVariant } from '../models/tool-call-model.ts'
+ import { localizeAutoReviewDenial } from '../models/auto-review-denial.ts'
+@@ -60,7 +60,7 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
+       // single-file AND carries a card, so the card expands under the path link.
+       bodyRaw={singleFile || autoReview !== null ? null : model.bodyRaw}
+       output={autoReview?.output ?? model.output}
+-      errorSummary={autoReview?.summary ?? model.errorSummary}
++      errorSummary={autoReview?.summary ?? terminalFailureSummary(terminal, t) ?? model.errorSummary}
+       terminal={terminal}
+       diff={diff}
+       read={read}
+diff --git a/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx b/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
+index d8fd803..cdeda8b 100644
+--- a/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
++++ b/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
+@@ -14,6 +14,8 @@ import {
+   terminalBlockLabels,
+   terminalCardModel,
+   terminalFailed,
++  terminalFailureSummary,
++  terminalDiagnosticSummary,
+ } from '../models/terminal-card-model.ts'
+ import { formatToolBody, toolRowModel, toolTitleKey, type ToolRowState } from '../models/tool-call-model.ts'
+ import { PreparingToolRow } from '../components/PreparingToolRow.tsx'
+@@ -74,9 +76,10 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
+     [genericBody, model.bodyRaw, model.variant, open],
+   )
+   const normalSummary = terminal?.description ?? model.summary
++  const diagnosticLine = terminalDiagnosticSummary(terminalModel, t)
+   const settlementLine = state === 'error'
+-    ? model.errorSummary ?? normalSummary
+-    : state === 'stopped' ? t('bash.stopped') : null
++    ? terminalFailureSummary(terminalModel, t) ?? model.errorSummary ?? normalSummary
++    : state === 'stopped' ? t('bash.stopped') : diagnosticLine
+   const running = state === 'running'
+   const toggleFromKeyboard = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+     if (!expandable || (event.key !== 'Enter' && event.key !== ' ')) return
+@@ -100,6 +103,7 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
+         data-sample="bash"
+         data-variant="bash"
+         data-state={state}
++        data-diagnostic={diagnosticLine !== null || undefined}
+         data-expandable={expandable || undefined}
+         role={expandable ? 'button' : undefined}
+         tabIndex={expandable ? 0 : undefined}
+@@ -115,7 +119,7 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
+           <span className={clsx(
+             css.summary,
+             state === 'error' && css.errorSummary,
+-            state === 'stopped' && css.stoppedSummary,
++            (state === 'stopped' || diagnosticLine !== null) && css.stoppedSummary,
+           )}>
+             <TextShimmer>{settlementLine ?? normalSummary}</TextShimmer>
+           </span>
+diff --git a/packages/fs/fs-local/README.md b/packages/fs/fs-local/README.md
+index 9c00544..1221db6 100644
+--- a/packages/fs/fs-local/README.md
++++ b/packages/fs/fs-local/README.md
+@@ -149,3 +149,7 @@ None.
+ </details>
+ 
+ **Runtime invariant:** No companion is published. This package exposes no independent event sequence or mutable data relation beyond contracts enforced at its owning seam.
++
++## Binary creation
++
++writeBytes uses the same per-target lock, private staging, cancellation and create-if-absent publication as guarded text creation. It does not produce a text diff or decode the payload.
+diff --git a/packages/fs/fs-local/README.zh.md b/packages/fs/fs-local/README.zh.md
+index 3adc249..b45b970 100644
+--- a/packages/fs/fs-local/README.zh.md
++++ b/packages/fs/fs-local/README.zh.md
+@@ -149,3 +149,7 @@ Chokidar 通过 OS 事件观察单个文件或目录的直接子项，不使用
+ </details>
+ 
+ **运行时不变式：** 不发布伴生入口。本包没有独立事件序列或可变数据关系，相关约定在所属 seam 强制执行。
++
++## 二进制文件创建
++
++writeBytes 复用文本受保护创建的目标锁、私有暂存、取消与仅目标不存在时发布机制，不生成文本差异或解码负载。
+diff --git a/packages/fs/fs-local/src/fsio.ts b/packages/fs/fs-local/src/fsio.ts
+index a9d97fd..6e76c2d 100644
+--- a/packages/fs/fs-local/src/fsio.ts
++++ b/packages/fs/fs-local/src/fsio.ts
+@@ -587,7 +587,7 @@ async function throwGuardedCreateFailure(
+  */
+ export async function writeFileAtomic(
+   absolutePath: string,
+-  content: string,
++  content: string | Uint8Array,
+   mode: number | undefined,
+   signal: AbortSignal | undefined,
+   internals: FsIoInternals = {},
+diff --git a/packages/fs/fs-local/src/index.ts b/packages/fs/fs-local/src/index.ts
+index 17033e5..cb8992c 100644
+--- a/packages/fs/fs-local/src/index.ts
++++ b/packages/fs/fs-local/src/index.ts
+@@ -254,6 +254,14 @@ export class LocalFileSystem extends FileSystem {
+     })
+   }
+ 
++  override async writeBytes(target: FsTarget, content: Uint8Array, signal?: AbortSignal): Promise<{version: FsVersion; target: FsTarget}> {
++    return this.withLock(target.targetKey, async () => {
++      if (await probe(target.targetKey)) throw new FsError(`cannot overwrite existing "${target.displayPath}"`, 'FS_NOT_OBSERVED')
++      await writeFileAtomic(target.targetKey, content, undefined, signal, this.internals, {displayPath: target.displayPath})
++      return {version: this.versionAfterWrite(await probe(target.targetKey), target), target}
++    })
++  }
++
+   override async editText(
+     target: FsTarget,
+     edit: FsEditRequest,
+diff --git a/packages/fs/fs-sandbox/README.md b/packages/fs/fs-sandbox/README.md
+index fde670f..2b51293 100644
+--- a/packages/fs/fs-sandbox/README.md
++++ b/packages/fs/fs-sandbox/README.md
+@@ -135,3 +135,7 @@ None.
+ </details>
+ 
+ **Runtime invariant:** No companion is published. This stateless adapter delegates policy and filesystem relations to their owning seams.
++
++## Binary creation
++
++Binary creation resolves and checks the destination under the calling session policy immediately before delegating to the local writer. The returned target is the one actually checked and written.
+diff --git a/packages/fs/fs-sandbox/README.zh.md b/packages/fs/fs-sandbox/README.zh.md
+index ff58cd0..6638c7d 100644
+--- a/packages/fs/fs-sandbox/README.zh.md
++++ b/packages/fs/fs-sandbox/README.zh.md
+@@ -135,3 +135,7 @@ kind: "package-reference"
+ </details>
+ 
+ **运行时不变式：** 不发布伴生入口。这个无状态适配器把策略与文件系统关系委托给各自所属的 seam。
++
++## 二进制文件创建
++
++二进制创建在交给本地写入器之前，按调用会话策略重新解析并检查目标，返回实际检查并写入的目标。
+diff --git a/packages/fs/fs-sandbox/src/index.ts b/packages/fs/fs-sandbox/src/index.ts
+index 60dd6b3..1c29ba3 100644
+--- a/packages/fs/fs-sandbox/src/index.ts
++++ b/packages/fs/fs-sandbox/src/index.ts
+@@ -87,6 +87,11 @@ export class SandboxedFileSystem extends LocalFileSystem {
+     return super.writeText(await this.checkedTarget(target, sandboxPolicy), content, expected, signal)
+   }
+ 
++  override async writeBytes(target: FsTarget, content: Uint8Array, signal?: AbortSignal,
++    sandboxPolicy?: SandboxExecutionPolicy): Promise<{version: FsVersion; target: FsTarget}> {
++    return super.writeBytes(await this.checkedTarget(target, sandboxPolicy), content, signal)
++  }
++
+   /**
+    * Fence the edit by the per-call policy, then delegate to the inherited
+    * atomic edit. See {@link checkedTarget}.
+diff --git a/packages/fs/fs/README.md b/packages/fs/fs/README.md
+index 549da2a..ffb2d98 100644
+--- a/packages/fs/fs/README.md
++++ b/packages/fs/fs/README.md
+@@ -125,3 +125,7 @@ These limits define when the contract is a poor fit or needs special operational
+ None.
+ 
+ </details>
++
++## Binary creation
++
++writeBytes creates a complete new binary file and returns its actual resolved target and version. It refuses an existing destination. Providers without this operation report FS_UNSUPPORTED; text writes and edits retain their existing contracts.
+diff --git a/packages/fs/fs/README.zh.md b/packages/fs/fs/README.zh.md
+index c9b9191..c656e4a 100644
+--- a/packages/fs/fs/README.zh.md
++++ b/packages/fs/fs/README.zh.md
+@@ -125,3 +125,7 @@ kind: "package-reference"
+ 无。
+ 
+ </details>
++
++## 二进制文件创建
++
++writeBytes 创建完整的新二进制文件，返回实际解析的目标及版本，拒绝覆盖已有目标。不支持此操作的提供方返回 FS_UNSUPPORTED；文本写入和编辑合同保持原职责。
+diff --git a/packages/fs/fs/src/index.ts b/packages/fs/fs/src/index.ts
+index 1158a6d..a793ad4 100644
+--- a/packages/fs/fs/src/index.ts
++++ b/packages/fs/fs/src/index.ts
+@@ -271,6 +271,19 @@ export abstract class FileSystem extends Service {
+     sandboxPolicy?: SandboxExecutionPolicy,
+   ): Promise<FsWriteOutcome>
+ 
++  /**
++   * Atomically create a complete binary file; an existing destination is refused.
++   * @param target - resolved destination in this provider's execution world.
++   * @param content - complete bytes, bounded by the consumer.
++   * @param signal - aborts before publication.
++   * @param sandboxPolicy - resolved calling-session file policy.
++   * @returns the published file version, without a text diff or copied payload.
++   */
++  async writeBytes(target: FsTarget, content: Uint8Array, signal?: AbortSignal,
++    sandboxPolicy?: SandboxExecutionPolicy): Promise<{version: FsVersion; target: FsTarget}> {
++    throw new FsError('binary creation is unsupported by this filesystem', 'FS_UNSUPPORTED')
++  }
++
+   /**
+    * Atomically edit literal text. When supplied, the version guard is checked
+    * before matching so stale content reports `FS_STALE_VERSION`; omission edits
+diff --git a/packages/fs/fs/src/types.ts b/packages/fs/fs/src/types.ts
+index a3464f1..74cb93e 100644
+--- a/packages/fs/fs/src/types.ts
++++ b/packages/fs/fs/src/types.ts
+@@ -173,6 +173,7 @@ export interface FsEditOutcome {
+  * results so retry/permission/UI layers can branch without parsing messages.
+  */
+ export type FsErrorCode =
++  | 'FS_UNSUPPORTED'
+   | 'FS_NOT_FOUND'
+   | 'FS_NOT_DIRECTORY'
+   | 'FS_NOT_TEXT'
+diff --git a/packages/sandbox/sandbox-windows-acl/README.md b/packages/sandbox/sandbox-windows-acl/README.md
+index dbb5fde..afc2ef3 100644
+--- a/packages/sandbox/sandbox-windows-acl/README.md
++++ b/packages/sandbox/sandbox-windows-acl/README.md
+@@ -206,3 +206,9 @@ The warn-only posture for unusually wide directories and FAT-class volumes is do
+ </details>
+ 
+ **Runtime invariant:** No companion is published. This package exposes no independent event sequence or mutable data relation beyond the fail-closed contracts it enforces at each Win32 call boundary.
++
++## Owned workspace initialization
++
++An ordinary caller-owned directory can initialize without a standing WRITE_OWNER grant. Initialization borrows a non-inheriting owner right while holding the directory open, applies the required Low label, and restores the final capability DACL without that borrowed right. Explicit label-write denies and reparse-point bootstrap targets are refused. Failed initialization restores the original label and DACL or reports restoration failures; it never starts an unrestricted child.
++
++Existing ordinary owned descendants are provisioned through pinned native object handles. Reparse points, multiply linked files, protected DACLs, other owners and explicit non-Low labels are not broadened. Per-object query/set avoids Win32 automatic inheritance touching outside links; capability revocation visits the same ordinary objects. Temporary owner access never inherits and rolls back on failure.
+diff --git a/packages/sandbox/sandbox-windows-acl/README.zh.md b/packages/sandbox/sandbox-windows-acl/README.zh.md
+index bf66691..a76232e 100644
+--- a/packages/sandbox/sandbox-windows-acl/README.zh.md
++++ b/packages/sandbox/sandbox-windows-acl/README.zh.md
+@@ -208,3 +208,9 @@ Windows 上多一个目录条目：技能描述随目录进入上下文，正文
+ </details>
+ 
+ **运行时不变式：** 不发布伴生入口。本包没有独立事件序列或可变数据关系；fail-closed 约定在每个 Win32 调用处强制。
++
++## 自有工作区初始化
++
++普通的调用者自有目录无需预先保留 WRITE_OWNER 权限。初始化在持有目录句柄期间临时取得不继承的所有者权限，设置所需的低完整性标签，再提交不包含该临时权限的能力 DACL。明确的标签写入拒绝及重解析点初始化目标会被拒绝。失败时恢复原标签和 DACL，恢复失败单独报告；不会启动不受限的子进程。
++
++已有普通自有内容通过固定对象句柄逐一准备权限和Low标签；跳过目录联接、多硬链接文件、受保护DACL、其他所有者及显式非Low标签。原生逐对象读写避免Win32自动传播影响外部链接；撤销遍历相同范围。临时标签写权限不继承，失败恢复原对象权限。
+diff --git a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
+index c0d9e67..e6df319 100644
+--- a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
++++ b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
+@@ -1,63 +1,23 @@
+ ---
+ name: diagnose-windows-sandbox-acl
+-description: 'Use on Windows for unexpected DSH sandbox access denials: workspace writes or listing fail, or an ordinarily readable path cannot be read. One bundled command inspects the path and every ancestor and repairs the ACL problems it proves in that same run. Expected confinement denials need no ACL repair.'
++description: Read-only diagnosis of unexpected Windows sandbox setup failures. Reports the actual caller, owner, effective rights and ACL observations; never repairs permissions or widens the session automatically.
+ ---
+ 
+-# Diagnose Windows sandbox ACL failures
++# Diagnose Windows sandbox setup
+ 
+-**Write every approval request in plain words, in the user's language.** The prompt is all the user reads before widening access, so it must stand alone: which folder the script touches, that it adds the signed-in user's full-control entry where a right is missing and removes foreign package entries, that file contents and owners are unchanged, and that the printed recovery command undoes each change. Keep error codes, `WRITE_DAC`/`WRITE_OWNER`, `S-1-15-2-*` SIDs, `icacls`, ACL, ACE, verdict names and switches out of the request: write Windows file permissions, not ACL or ACE. Ask once, for one command.
++Distinguish failure before a command starts from a command that ran and failed. An ordinary file write can succeed while security-label initialization lacks a right. Caller-owned directories are initialized by the sandbox backend without retaining additional owner rights; a denied or foreign directory is not authority to take ownership or change other applications' permissions.
+ 
+-## One command diagnoses and repairs
++Use the original error and actual runtime identity first. Expected workspace/read-only denials need no repair. A TLS client failure, unsupported web content type, or nonzero process exit is not evidence of an ACL problem. Use web_download for a reference file and read_image to inspect it; webpage text belongs to web_fetch.
+ 
+-The script has no modes. `-Path`, `-AllowRoot` and `-Out` read the path and every ancestor and repair what the observations prove, in the same run:
+-
+-- directories on that chain that lack effective `WRITE_DAC` or `WRITE_OWNER` receive a full-control allow ACE for the signed-in user, because DSH cannot provision its workspace grant without them;
+-- explicit AppContainer package allow ACEs (`S-1-15-2-*`, except the well-known groups ending in 1 or 2) are removed at their sources, ancestor first, which also removes those packages' access;
+-- a directory the sandbox cannot provision — the state its provisioning error reports on the workspace root — or the authorized root itself also has its subtree searched for those ACEs in the same run, so a deeper entry needs no second request. That bounded walk reports `truncated` and unreadable directories; if truncated, pass the still-failing deeper path once more.
+-
+-Every change is backed up, then verified by re-reading it. `-AllowRoot` bounds all of it: an object is changed only when it is that directory or strictly inside it, so a workspace root can repair itself. Never split this into a diagnostic call and a repair call, never ask twice for one repair, and never pass a mode switch that does not exist.
++The bundled command only observes by default:
+ 
+ ```powershell
+-& '<skill-directory>\scripts\diagnose-windows-sandbox-acl.ps1' -Path '<failing-path>' -AllowRoot '<authorized-directory>' -Out '<recovery-directory>'
++& '<skill-directory>\scripts\diagnose-windows-sandbox-acl.ps1' -Path '<failing-path>'
+ exit $LASTEXITCODE
+ ```
+ 
+-Substitute full, quoted paths. Keep `-Out` persistent and user-owned, preferably beside the failing workspace; never use the skill resource directory, which is deleted when the skill unloads. Pass one path per invocation.
+-
+-## Run it
+-
+-Repeat the failing operation once confined. The script writes permissions, which the confined token cannot do — run it there and it would report the sandbox's own restriction as a missing right — so request approval for that one command and run it unconfined. A confined run of the script is never useful. Unconfined does not elevate the Windows token.
+-
+-Diagnose unexpected denials of workspace writes, listing, or plainly readable paths; explain expected ones instead: writes outside the workspace, any write in `read-only`, piped grandchild `spawn EPERM`, ConstrainedLanguage errors. If approval is refused or unavailable, report the path as undiagnosed and stop.
+-
+-## Read the output
+-
+-Every record reaches stdout, the `acl-report-*.jsonl` file under `-Out`, and the final `RECAP` line, which carries the verdicts, changes, verifications, refusals and scans. Tool output keeps only its tail, so read the recap first, and read specific records from the report when it is not enough. Trust `verification` records, never `completed` actions. Decide from `details.nextAction`:
+-
+-| `nextAction` | Meaning |
+-|---|---|
+-| `verify_original_confined_operation` | Repairs verified; repeat the original operation confined. |
+-| `stop` | Nothing repaired, or a refusal ended the run. Report and stop. |
+-| `restore_pending_then_stop` | Rollback unverified. Run the printed recovery commands in order, then stop. |
+-
+-A deny ACE's presence alone does not establish causation, and the script never removes one; DSH's `S-1-4-*` grants and the Everyone `DeleteSubdirectoriesAndFiles` deny are expected, not conflicts. A deny that blocks the repair ends the run without a repair (`REPAIR_REFUSED`, or `GRANT_FAILED`) after restoring what it attempted. Each change leaves two files in `-Out` (`acl-backup-<id>.json` and its `.ps1`), and the run prints the matching `ROLLBACK` command.
+-
+-## After a repair, and when it stops
+-
+-Repeat the original failed operation confined. A verified repair is not undone because the original operation fails for a further reason: continue from the new observations, and if a deeper path is still denied, run the same one command there — again one call, one approval.
+-
+-**Stop after any failed or refused repair, or failed verification.** The script already restored that invocation's changes; do not repeat it or start another repair, and never remove a deny ACE by hand.
+-
+-**A stopped run still owes the user a decision.** Name the blocking object and the right or ACE it lacks, what changed and what was rolled back, the recovery commands in order, and the report path. Only the user can lift confinement, so ask them to switch this session to **full access** (Chinese UI: 完全权限) temporarily, and say what that opens: keep working under it, or ask you to keep investigating this file-permission problem, since the report already records the mechanism and the evidence. Then ask them to send this session as feedback, quoting the report records that matter, so the unhandled scenario reaches us — only what reaches this conversation travels with it. For example:
+-
+-> 这个工作区被 Windows 文件权限挡住了：`<对象>` 上 `<缺哪个权限 / 哪条权限项>`。你可以把本会话切到「完全权限」(full access) 临时继续工作；切完之后既能直接干活，也可以让我继续排查这个文件权限问题（报告里已经有机制和证据）。也麻烦把这个会话作为反馈发出去，好让我们补上这个场景。
+->
+-> This workspace is blocked by Windows file permissions: `<object>` `<missing right / offending entry>`. Switch this session to full access (完全权限) to keep working meanwhile; then either continue your work or have me keep investigating this file-permission problem from the report. Please also send this session as feedback so we can cover the case.
+-
+-## Never
++An optional -Out writes a new report to an explicitly chosen directory. AllowRoot alone does not authorize or trigger a permission change. The report identifies the token under which it ran; a restricted token's denied rights do not prove that the interactive user lacks them. If the execution environment cannot start this read-only diagnosis, report that limitation and use available application diagnostics. Do not repeatedly retry the command or request full access as a way to finish the original task.
+ 
+-- edit ACLs by hand, change an owner, erase a deny, or replace child permissions recursively;
+-- run the script elevated, through UAC or `runas`;
+-- widen `-AllowRoot` to reach an ancestor, or repeat a denied or failed call.
++Read the caller, path observations, errors and final RECAP. The presence of an application-package ACE does not establish causation. Report incomplete observations as unknown; do not infer a safe repair from a path, owner name or error string alone.
+ 
+-Report in the user's language: analyzed paths, changes, verification, recovery commands, next step. Label an authorized unconfined run as such, not as a sandbox repair.
++Do not add FullControl, remove package ACEs, erase deny rules, change ownership, or suggest disabling the sandbox. Historical recovery remains available only through an explicit user request to restore a known backup: -Restore requires one exact -Path and -AllowRoot and verifies the saved record. It is not an automatic response to a failed operation.
+diff --git a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1 b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
+index 81c742c..913d6ce 100644
+--- a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
++++ b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
+@@ -1,59 +1,11 @@
+ <#
+ .SYNOPSIS
+-    Diagnose the DSH sandbox ACL failures on Windows and repair them in one run.
+-
++    Observe Windows sandbox ACL facts without changing permissions.
+ .DESCRIPTION
+-    A denial inside the DSH sandbox is worth diagnosing only when it contradicts
+-    what the active mode promises: writes inside the workspace, or reads that the
+-    signed-in user should plainly have. One invocation reads each requested path
+-    and every ancestor, then repairs what it can in the same run:
+-
+-      * every directory on that chain inside -AllowRoot that lacks effective
+-        WRITE_DAC or WRITE_OWNER gets a FullControl allow ACE for the current
+-        user, so the sandbox can provision the grant it needs; and
+-      * every explicit AppContainer package allow ACE (S-1-15-2-*, excluding the
+-        well-known groups ending in 1 or 2) is removed at its source, ancestor
+-        first, which also removes that package's access to the tree.
+-
+-    A directory the caller cannot provision is the state the sandbox reports on the
+-    workspace root, while the conflicting entry often sits deeper; the authorized root
+-    is examined for the same reason. For either case the same run also collects explicit
+-    package allow ACEs under the requested directory, so they do not need a second call.
+-    The walk is bounded, enters no reparse point or managed application tree, and reports
+-    truncation and unreadable directories instead of claiming a complete walk.
+-
+-    Every observation, change, verification and recovery command is printed as it
+-    happens, so one run shows the caller the complete set of actions.
+-
+-    -AllowRoot bounds every change: an object is modified only when it is that
+-    directory or strictly inside it, so a caller can repair its own workspace
+-    root. Reparse paths and managed application trees are refused. Each modified
+-    object is backed up first, with an independent recovery script, and every DACL
+-    write is verified by re-reading it. A failed repair restores all attempted
+-    DACL changes from this invocation in reverse order and stops.
+-
+-    The script never creates, deletes, or writes the contents of any file. Its
+-    only writes are the recovery artifacts under -Out and the DACLs it repairs.
+-
+-.PARAMETER Path
+-    One or more failing paths. Each is diagnosed and repaired together with its ancestors.
+-
+-.PARAMETER AllowRoot
+-    Required. Every modified object must be this directory or strictly inside it.
+-
+-.PARAMETER Out
+-    Required for a repair. Receives one recovery record and one recovery script
+-    per change, so an object repaired twice keeps both recovery points.
+-
+-.PARAMETER Restore
+-    Restore the DACL recovery record for exactly one -Path instead of repairing.
+-    Requires -AllowRoot and WRITE_DAC, preserves owner and SACL.
+-
+-.EXAMPLE
+-    pwsh -File diagnose-windows-sandbox-acl.ps1 -Path '<failing path>' -AllowRoot '<authorized directory>' -Out '<recovery directory>'
+-
+-.EXAMPLE
+-    pwsh -File diagnose-windows-sandbox-acl.ps1 -Path '<failing path>' -AllowRoot '<authorized directory>' -Restore '<recovery record>'
++    The default invocation reads the caller, requested paths and ancestors.
++    -Out optionally writes a new report. No automatic grants, package-ACE
++    removal or recursive permission changes occur. -Restore is explicit
++    recovery of a known historical backup and requires -AllowRoot.
+ #>
+ [CmdletBinding()]
+ param(
+@@ -278,48 +230,6 @@ function Get-RepairRefusal {
+ # under it, so one approved run examines that subtree for explicit package allow
+ # ACEs instead of leaving them for a second call. Directories only: DSH grants and
+ # traverses directories, and no reparse point or managed application tree is entered.
+-function Get-SubtreePackageSources {
+-  param([string]$Root, [int]$Limit)
+-  $sources = @()
+-  $visited = 0
+-  $enqueued = 0
+-  $failed = 0
+-  $truncated = $false
+-  $queue = [System.Collections.Generic.Queue[string]]::new()
+-  # Unreadable directories are skipped, never guessed at: the caller reports the count.
+-  try {
+-    foreach ($child in [System.IO.Directory]::EnumerateDirectories($Root)) {
+-      if ($enqueued -ge $Limit) { $truncated = $true; break }
+-      $queue.Enqueue($child); $enqueued++
+-    }
+-  } catch [System.UnauthorizedAccessException] { $failed++ }
+-  catch [System.IO.IOException] { $failed++ }
+-  while ($queue.Count -gt 0) {
+-    if ($visited -ge $Limit) { $truncated = $true; break }
+-    $current = $queue.Dequeue()
+-    $visited++
+-    if (Test-DangerousRoot -FullPath $current) { continue }
+-    $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+-    if ($null -eq $item) { $failed++; continue }
+-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+-    try {
+-      $acl = Get-Acl -LiteralPath $current
+-      foreach ($rule in $acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])) {
+-        if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -match $PACKAGE_SID) { $sources += $current; break }
+-      }
+-    } catch [System.UnauthorizedAccessException] { $failed++ }
+-    catch [System.IO.IOException] { $failed++ }
+-    try {
+-      foreach ($child in [System.IO.Directory]::EnumerateDirectories($current)) {
+-        if ($enqueued -ge $Limit) { $truncated = $true; break }
+-        $queue.Enqueue($child); $enqueued++
+-      }
+-    } catch [System.UnauthorizedAccessException] { $failed++ }
+-    catch [System.IO.IOException] { $failed++ }
+-  }
+-  return [ordered]@{ sources = @($sources); visited = $visited; truncated = $truncated; failed = $failed }
+-}
+-
+ function Get-OwnDaclSddl {
+   param([string]$Sddl)
+   # Inherited ACEs follow their parent: repeating them in a saved DACL forces them
+@@ -336,37 +246,6 @@ function Get-AceSet {
+   return @([regex]::Matches($Sddl, '\([^()]*\)') | ForEach-Object { $_.Value } | Sort-Object)
+ }
+ 
+-function Save-AclBackup {
+-  param([string]$FullPath, [string]$Directory, [string]$Root)
+-  $fullDirectory = [System.IO.Path]::GetFullPath($Directory)
+-  if (-not (Test-Path -LiteralPath $fullDirectory)) {
+-    Invoke-ReportedOperation create_backup_directory $fullDirectory 'The requested recovery directory does not exist; create it before writing backup files.' files {
+-      New-Item -ItemType Directory -Path $fullDirectory | Out-Null
+-    }
+-  }
+-  $record = Join-Path $fullDirectory ('acl-backup-{0}.json' -f ([guid]::NewGuid().ToString('N')))
+-  # The skill's extracted directory expires with its registration. Recovery must
+-  # remain runnable from the recovery directory after that registration is gone.
+-  $restoreScript = $record + '.ps1'
+-  $command = "pwsh -NoProfile -File '{0}' -Path '{1}' -AllowRoot '{2}' -Restore '{3}'" -f
+-    $restoreScript.Replace("'", "''"), $FullPath.Replace("'", "''"), ([System.IO.Path]::GetFullPath($Root)).Replace("'", "''"), $record.Replace("'", "''")
+-  Write-Report decision backup $FullPath selected 'The recovery record and an independent recovery script are written before the ACL change.' @{ files = @($record, $restoreScript) }
+-  Invoke-ReportedOperation backup $FullPath 'Save the original DACL and an independent recovery command before changing permissions.' files {
+-    $backupAcl = Get-Acl -LiteralPath $FullPath
+-    $observed = $backupAcl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)
+-    @{
+-      Path = $FullPath
+-      Dacl = Get-OwnDaclSddl -Sddl $observed
+-      Protected = $backupAcl.AreAccessRulesProtected
+-      Observed = $observed
+-    } | ConvertTo-Json | Set-Content -LiteralPath $record -Encoding utf8
+-    Copy-Item -LiteralPath $PSCommandPath -Destination $restoreScript
+-  }
+-  $script:recoveries.Add(@{ path = $FullPath; record = $record; script = $restoreScript; command = $command; attempted = $false; restored = $false })
+-  Write-Report observation recovery $FullPath available 'These files can restore the saved DACL; no rollback has been executed.' $script:recoveries[-1]
+-  Write-Line ('BACKUP {0} -> {1}' -f $FullPath, $record)
+-  Write-Line ('ROLLBACK {0}' -f $command)
+-}
+ function Restore-SavedDacl {
+   param([string]$FullPath, [string]$Record, [string]$Root)
+   $refusal = Get-RepairRefusal -FullPath $FullPath -Root $Root -AllowEqual
+@@ -505,15 +384,14 @@ $exitCode = 0
+ $observationFailures = 0
+ $scanTruncated = $false
+ $currentPath = ''
+-$mode = if ($Restore) { 'restore' } else { 'repair' }
++$mode = if ($Restore) { 'restore' } else { 'diagnose' }
+ 
+ try {
+   $requestedPaths = @($Path | ForEach-Object { [System.IO.Path]::GetFullPath($_) })
+-  Write-Report invocation $mode '' started 'Inspect the requested paths, then repair the ACL problems this run can prove, before anything else is attempted.' @{
++  Write-Report invocation $mode '' started 'Read caller and filesystem security observations. Default diagnosis does not change permissions.' @{
+     paths = $Path; allowRoot = $AllowRoot; outputDirectory = $Out; recoveryRecord = $Restore
+   }
+-  if (-not $AllowRoot) { throw [System.ArgumentException]::new('Every modification requires -AllowRoot') }
+-  if (-not $Restore -and -not $Out) { throw [System.ArgumentException]::new('A repair requires -Out for its recovery artifacts') }
++  if ($Restore -and -not $AllowRoot) { throw [System.ArgumentException]::new('Explicit recovery requires -AllowRoot') }
+   if ($Restore -and $Path.Count -ne 1) { throw [System.ArgumentException]::new('-Restore requires exactly one -Path') }
+   if ($Out) {
+     Invoke-ReportedOperation prepare_report $Out 'Create the recovery directory and a new JSONL report that keeps every record, because tool output is truncated to its tail.' files {
+@@ -571,44 +449,8 @@ try {
+     $needsPrecondition = (-not $unreadable) -and
+       ((-not $targetFacts.HasWriteDac) -or (-not $targetFacts.HasWriteOwner))
+ 
+-    # A directory the caller cannot provision is the workspace root half the time: the sandbox
+-    # reports its own failure there while the conflicting entry sits deeper. Examine that
+-    # subtree before the verdict so the classification and its packageObjects describe what
+-    # this run will actually repair.
+-    $ownsRoot = $full -ieq (Get-NormalizedPath $AllowRoot)
+-    if (-not $Restore -and $targetFacts.Errors.Count -eq 0 -and [System.IO.Directory]::Exists($full) -and ($needsPrecondition -or $ownsRoot)) {
+-      $scan = Get-SubtreePackageSources -Root $full -Limit $SCAN_LIMIT
+-      foreach ($object in $scan.sources) {
+-        if ($packageTargets -notcontains $object) { $packageTargets += $object }
+-        if (-not $factsByPath.ContainsKey($object)) {
+-          $scanned = Get-ObjectFacts -FullPath $object -MeSid $meSid
+-          $factsByPath[$scanned.Object] = $scanned
+-        }
+-      }
+-      Write-Report observation subtree_scan $full $(if ($scan.failed -gt 0) { 'partial' } else { 'read' }) 'The caller cannot provision this directory, or it is the authorized root, so explicit package allow ACEs under it were collected in the same run; no reparse point or managed application tree is entered.' @{
+-        visited = $scan.visited; packageSources = @($scan.sources); truncated = [bool]$scan.truncated; unreadable = [int]$scan.failed
+-      }
+-      Write-Line ('SCAN {0} VISITED={1} PACKAGE_SOURCES={2}{3}{4}' -f $full, $scan.visited, @($scan.sources).Count, $(if ($scan.truncated) { ' TRUNCATED' } else { '' }), $(if ($scan.failed -gt 0) { " UNREADABLE=$($scan.failed)" } else { '' }))
+-      if ($scan.truncated) { $script:scanTruncated = $true }
+-    }
+-
+-    if ($targetFacts.Errors.Count -gt 0) {
+-      $verdict = 'INCOMPLETE'
+-      $reason = 'Some observations failed; missing evidence is not evidence that a right is absent or a repair is safe.'
+-    } elseif ($packageTargets.Count -gt 0) {
+-      $blocked = @($packageTargets | Where-Object { -not $factsByPath[$_].HasWriteDac })
+-      $verdict = if ($needsPrecondition -or $blocked.Count -gt 0) { 'BOTH' } else { 'CULPRIT' }
+-      $reason = 'Package allow ACEs were observed. Required access checks determine whether the caller can perform the requested repair; other causes remain possible.'
+-    } elseif ($unreadable) {
+-      $verdict = 'UNREADABLE'
+-      $reason = 'The requested ACL could not be read; its entries and the cause of denial are unknown.'
+-    } elseif ($needsPrecondition) {
+-      $verdict = 'PRECONDITION'
+-      $reason = 'The caller cannot open the requested object with both WRITE_DAC and WRITE_OWNER. The reported allow and deny ACEs are evidence, not an attribution to one rule.'
+-    } else {
+-      $verdict = 'NOT_THIS_CLASS'
+-      $reason = 'No package allow ACE was observed and both required rights are available. Other ACL restrictions and causes of the original failure are not ruled out.'
+-    }
++    $verdict = if ($targetFacts.Errors.Count -gt 0) { 'INCOMPLETE' } else { 'OBSERVED' }
++    $reason = 'Owner, effective rights and ACL entries are observations, not proof of causation or authorization to repair.'
+     Write-Line ('VERDICT={0}' -f $verdict)
+     Write-Report decision classify $full $verdict $reason @{ writeDac = $targetFacts.HasWriteDac; writeOwner = $targetFacts.HasWriteOwner; packageObjects = @($packageTargets) }
+ 
+@@ -616,136 +458,12 @@ try {
+       Restore-SavedDacl -FullPath $full -Record $Restore -Root $AllowRoot
+       continue
+     }
+-    if ($targetFacts.Errors.Count -gt 0) {
+-      Write-Decision $mode $full refused 'Required observations are incomplete; no repair was attempted for this path.'
+-      $refused++
+-      break paths
+-    }
+-
+-    # Nothing is changed while a package source or a grant target is out of reach: a
+-    # repair that cannot finish would leave the tree half repaired before refusing.
+-    foreach ($packagePath in $packageTargets) {
+-      $refusal = Get-RepairRefusal -FullPath $packagePath -Root $AllowRoot -AllowEqual
+-      if ($refusal) { Write-Line ('REPAIR_REFUSED {0}' -f $refusal); Write-Decision $mode $packagePath refused $refusal; $refused++; break paths }
+-      if ($factsByPath[$packagePath].Errors.Count -gt 0) {
+-        Write-Decision $mode $packagePath refused 'The ACL observations are incomplete; collateral changes could not be verified.'
+-        $refused++
+-        break paths
+-      }
+-    }
+-
+-    # Missing WRITE_DAC or WRITE_OWNER on a directory in the chain is what stops DSH
+-    # from provisioning the workspace grant. One approved run repairs every such
+-    # directory, including the authorized root itself.
+-    $grantTargets = @($inspectOrder | Where-Object {
+-      [System.IO.Directory]::Exists($_) -and $factsByPath[$_].Readable -and $factsByPath[$_].Errors.Count -eq 0 -and
+-      ((-not $factsByPath[$_].HasWriteDac) -or (-not $factsByPath[$_].HasWriteOwner)) -and
+-      -not (Get-RepairRefusal -FullPath $_ -Root $AllowRoot -AllowEqual)
+-    })
+-    # Writing a DACL needs WRITE_DAC: refuse a target that lacks it before anything is
+-    # changed, instead of failing mid-repair and marking a recovery for an object that
+-    # the rollback then cannot restore either.
+-    foreach ($object in $grantTargets) {
+-      if (-not $factsByPath[$object].HasWriteDac) {
+-        Write-Line ('REPAIR_REFUSED {0} needs WRITE_DAC; stop for permission-policy review' -f $object)
+-        Write-Decision $mode $object refused 'Effective WRITE_DAC is absent; adding the grant requires that right.'
+-        $refused++
+-        break paths
+-      }
+-    }
+-    if ($grantTargets.Count -gt 0) {
+-      Write-Report decision grant_targets $full selected 'These directories lack effective WRITE_DAC or WRITE_OWNER; each is backed up, then receives a FullControl allow ACE for the current user.' @{ paths = @($grantTargets) }
+-    }
+-    foreach ($object in $grantTargets) {
+-      $grantBefore = $factsByPath[$object]
+-      Save-AclBackup -FullPath $object -Directory $Out -Root $AllowRoot
+-      $grantAcl = Get-Acl -LiteralPath $object
+-      $grantAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+-        [System.Security.Principal.SecurityIdentifier]::new($meSid),
+-        [System.Security.AccessControl.FileSystemRights]::FullControl,
+-        [System.Security.AccessControl.AccessControlType]::Allow))
+-      Invoke-ReportedOperation grant_dacl $object "WRITE_DAC or WRITE_OWNER is missing; add a FullControl allow ACE for $meSid while preserving deny ACEs, owner and SACL." acl {
+-        [Dsh.TokenInfo]::SetDacl($object, $grantAcl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access))
+-      }
+-      $grantAfter = Get-ObjectFacts -FullPath $object -MeSid $meSid -CompactRecord
+-      $factsByPath[$object] = $grantAfter
+-      $verified = $grantAfter.Readable -and $grantAfter.Errors.Count -eq 0 -and $grantAfter.HasWriteDac -and $grantAfter.HasWriteOwner
+-      Write-Report verification grant $object $(if ($verified) { 'verified' } else { 'failed' }) 'The DACL write completed; recheck effective access before claiming that provisioning can succeed. On failure, restore this invocation and stop.' @{
+-        before = @{ writeDac = $grantBefore.HasWriteDac; writeOwner = $grantBefore.HasWriteOwner }
+-        after = @{ writeDac = $grantAfter.HasWriteDac; writeOwner = $grantAfter.HasWriteOwner }
+-        recovery = $recoveries[-1].command
+-      }
+-      if ($verified) {
+-        Write-Line ('GRANTED {0} SID={1}' -f $object, $meSid); $granted++
+-      } else {
+-        Write-Line ('GRANT_FAILED {0}; effective WRITE_DAC and WRITE_OWNER were not both confirmed; restore this invocation and stop' -f $object)
+-        $refused++
+-        break paths
+-      }
+-    }
+-
+-    $sources = @($packageTargets | Where-Object {
+-      @($factsByPath[$_].Aces | Where-Object { $_.type -eq 'Allow' -and $_.sid -match $PACKAGE_SID -and -not $_.inherited }).Count -gt 0
+-    })
+-    # Ancestor first, for chain and scan-discovered sources alike.
+-    $sources = @($sources | Sort-Object -Property @{ Expression = { $_.Split([char]92).Count } }, @{ Expression = { $_ } })
+-    foreach ($source in $sources) {
+-      if (-not $factsByPath[$source].HasWriteDac) {
+-        Write-Line ('REPAIR_REFUSED {0} needs WRITE_DAC; stop for permission-policy review' -f $source)
+-        Write-Decision $mode $source refused 'Effective WRITE_DAC is absent; removing a package allow ACE requires that right.'
+-        $refused++
+-        break paths
+-      }
+-    }
+-    if ($sources.Count -gt 0) {
+-      Write-Report decision remove_package_sources $full selected 'Remove explicit package allow ACEs from their sources, ancestor first, leaving inheritance enabled so inherited copies follow their repaired source.' @{
+-        sources = @($sources); affectedPaths = @($packageTargets)
+-      }
+-    }
+-    foreach ($source in $sources) {
+-      Save-AclBackup -FullPath $source -Directory $Out -Root $AllowRoot
+-      $sids = @($factsByPath[$source].Aces | Where-Object { $_.type -eq 'Allow' -and $_.sid -match $PACKAGE_SID -and -not $_.inherited } | ForEach-Object { $_.sid } | Sort-Object -Unique)
+-      foreach ($sid in $sids) {
+-        Invoke-ReportedOperation remove_package_allow $source "Remove the observed package allow ACE for $sid; preserve deny ACEs and all other principals." acl {
+-          $output = @(icacls $source /remove:g "*$sid" 2>&1)
+-          if ($LASTEXITCODE -ne 0) { throw "icacls removal exit $($LASTEXITCODE): $($output -join [char]10)" }
+-        }
+-      }
+-    }
++    Write-Decision diagnose $full observed 'Read-only diagnosis completed; no ACL was modified.'
+ 
+-    # A package deny can share the removed allow's SID; only allow ACEs were removed.
+-    foreach ($packagePath in $packageTargets) {
+-      $fixBefore = $factsByPath[$packagePath]
+-      $fixAfter = Get-ObjectFacts -FullPath $packagePath -MeSid $meSid -CompactRecord
+-      # Compare the object's own ACEs as sorted sets: listing order and inherited
+-      # entries follow the parent, so neither proves a collateral change.
+-      $rowOf = { param($ace) '{0}|{1}|{2}|{3}|{4}' -f $ace.type, $ace.sid, $ace.rights, $ace.inheritance, $ace.propagation }
+-      $ownAfter = @($fixAfter.Aces | Where-Object { -not $_.inherited } | ForEach-Object { & $rowOf $_ } | Sort-Object)
+-      $expectedOwn = @($fixBefore.Aces | Where-Object { -not $_.inherited -and -not ($_.type -eq 'Allow' -and $_.sid -match $PACKAGE_SID) } | ForEach-Object { & $rowOf $_ } | Sort-Object)
+-      $collateral = (@($expectedOwn) -join [char]10) -eq (@($ownAfter) -join [char]10)
+-      $verified = $fixAfter.Readable -and $fixAfter.Errors.Count -eq 0 -and $fixAfter.PackageAces.Count -eq 0 -and $collateral
+-      Write-Report verification fix $packagePath $(if ($verified) { 'verified' } else { 'failed' }) 'The removal command completed; verify that package allow ACEs disappeared and other own ACEs remained unchanged. On failure, restore this invocation and stop.' @{
+-        remainingPackageAces = $fixAfter.PackageAces; otherEntriesUnchanged = $collateral
+-      }
+-      if ($verified) {
+-        $removedSids = @($fixBefore.Aces | Where-Object { $_.type -eq 'Allow' -and $_.sid -match $PACKAGE_SID -and -not $_.inherited } | ForEach-Object { $_.sid } | Sort-Object -Unique)
+-        foreach ($sid in $removedSids) {
+-          Write-Line ('FIXED {0} SID={1}' -f $packagePath, $sid); $fixed++
+-        }
+-      } else {
+-        Write-Line ('FIX_FAILED {0} collateral_change={1}' -f $packagePath, (-not $collateral))
+-        $refused++
+-        break paths
+-      }
+-    }
+-
+-    if ($packageTargets.Count -eq 0 -and $grantTargets.Count -eq 0) {
+-      Write-Decision $mode $full skipped 'No package allow ACE and no missing WRITE_DAC or WRITE_OWNER was observed on the inspected objects; no ACL change was needed.'
+-    }
+   }
+ } catch {
+   $exitCode = if ($_.Exception -is [System.ArgumentException]) { 2 } else { 1 }
+-  Write-Report error $mode $currentPath stopped 'Execution stopped after an exception. An interrupted write may have changed state; attempted repairs will be restored before the final summary.' @{ error = (Get-HResultChain $_.Exception); location = $_.InvocationInfo.PositionMessage }
++  Write-Report error $mode $currentPath stopped 'Diagnosis or explicit recovery stopped. Read-only diagnosis made no permission changes; inspect the recorded operation before reporting a recovery outcome.' @{ error = (Get-HResultChain $_.Exception); location = $_.InvocationInfo.PositionMessage }
+ } finally {
+   if ($refused -gt 0 -and $exitCode -eq 0) { $exitCode = 2 }
+   if ($exitCode -ne 0 -and -not $Restore) {
+@@ -767,7 +485,7 @@ try {
+   $pending = @($recoveries | Where-Object { $_.attempted -and -not $_.restored } | ForEach-Object { $_.command })
+   [array]::Reverse($pending)
+   $repaired = ($fixed + $granted) -gt 0
+-  $nextAction = if ($rollbackStatus -eq 'failed') { 'restore_pending_then_stop' } elseif ($exitCode -ne 0 -or $observationFailures -gt 0) { 'stop' } elseif ($repaired) { 'verify_original_confined_operation' } else { 'stop' }
++  $nextAction = if ($rollbackStatus -eq 'failed') { 'restore_pending_then_stop' } elseif ($exitCode -ne 0 -or $observationFailures -gt 0) { 'stop' } elseif ($repaired) { 'verify_original_confined_operation' } else { 'inspect_original_failure' }
+   # The tool keeps only the tail of stdout. Recapitulate the decisions here so the
+   # records a reader needs survive truncation; the report file holds every record.
+   $recap = [ordered]@{
+diff --git a/packages/sandbox/sandbox-windows-acl/src/acl.ts b/packages/sandbox/sandbox-windows-acl/src/acl.ts
+index 82f7030..81a9e48 100644
+--- a/packages/sandbox/sandbox-windows-acl/src/acl.ts
++++ b/packages/sandbox/sandbox-windows-acl/src/acl.ts
+@@ -1,31 +1,17 @@
+ /**
+- * ACL editing helpers: grant/revoke a capability SID on a directory via
+- * SetEntriesInAclW + SetNamedSecurityInfoW (the same calls the POC uses, with
+- * the failure handling the POC lacks). Every API call is checked and every
+- * failure is reported with the API name, the exact Win32 code, the formatted
+- * system text, and the affected path.
+- *
+- * Each grant applies three edits in ONE SetNamedSecurityInfoW call: the
+- * capability-SID allow ACE, a Deny ACE that removes the ambient
+- * `FILE_DELETE_CHILD` right from the world SID, and a Low no-write-up
+- * mandatory label ({@link buildLowLabelAcl}). The deny is what keeps one
+- * granted root out of another's reach: Windows also authorizes a delete from
+- * the parent directory's `FILE_DELETE_CHILD` right, which the token's
+- * write-restricted intersection does not reach, and every granted root carries
+- * the Low label that clears the integrity check.
+- *
+- * Concurrency: grants are read-merge-write against the directory's CURRENT
+- * DACL, and the whole get-merge-set sequence runs under a per-path exclusive
+- * LockFileEx lock (see {@link withPathLock}) so concurrent sandbox instances
+- * cannot clobber each other's ACEs.
++ * Confined per-object ACL and Low-integrity initialization for owned workspaces.
++ * Existing ordinary descendants receive the same capability as newly created files.
++ * Native held-handle updates avoid Win32 tree propagation through outside hard links;
++ * explicit protection, ownership, deny rules and reparse points remain boundaries.
++ * Temporary label-write access is non-inheriting and always restored on failure.
+  * @module @deepseek-ai/dsh-sandbox-windows-acl/acl
+  */
+ 
+ import { createHash } from 'node:crypto'
+-import { mkdirSync } from 'node:fs'
++import { mkdirSync, readdirSync } from 'node:fs'
+ import { dirname, join } from 'node:path'
+ 
+-import { allocOverlapped, allocPtrSlot, decodePtr, decodeUint8At, decodeUint16At, decodeUint32At, getTempPath, isInvalidHandle, isNullPtr, ptrAddress, sameSidAt, throwLastError, throwWin32 } from './ffi.ts'
++import { allocOverlapped, allocPtrSlot, allocUint32, decodePtr, decodePtrAt, decodeUint32, decodeUint8At, decodeUint16At, decodeUint32At, getTempPath, isInvalidHandle, isNullPtr, ptrAddress, sameSidAt, throwLastError, throwWin32 } from './ffi.ts'
+ import type { NativePtr, Win32Bindings } from './ffi.ts'
+ import * as abi from './win32-abi.ts'
+ 
+@@ -141,16 +127,15 @@ export function withPathLock<T>(api: Win32Bindings, path: string, action: () =>
+ function readCurrentSecurity(
+   api: Win32Bindings,
+   path: string,
++  handle: NativePtr,
+ ): { oldAcl: NativePtr | null; labelAcl: NativePtr | null; descriptor: NativePtr | null } {
+   const ownerSlot = allocPtrSlot()
+   const groupSlot = allocPtrSlot()
+   const daclSlot = allocPtrSlot()
+   const saclSlot = allocPtrSlot()
+   const descriptorSlot = allocPtrSlot()
+-  const readResult = api.getNamedSecurityInfoW(
+-    path, abi.SE_FILE_OBJECT, abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
+-    ownerSlot, groupSlot, daclSlot, saclSlot, descriptorSlot,
+-  )
++  const readResult = api.getObjectSecurity(handle, abi.SE_FILE_OBJECT, abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
++    ownerSlot, groupSlot, daclSlot, saclSlot, descriptorSlot)
+   if (readResult !== abi.ERROR_SUCCESS) throwWin32(api, 'GetNamedSecurityInfoW', readResult, path)
+   return { oldAcl: decodePtr(daclSlot), labelAcl: decodePtr(saclSlot), descriptor: decodePtr(descriptorSlot) }
+ }
+@@ -210,21 +195,125 @@ function hasExactLabel(labelAcl: NativePtr, lowLabelSidPtr: NativePtr): boolean
+  */
+ type LabelEdit = { kind: 'apply'; acl: NativePtr } | { kind: 'clear' } | { kind: 'keep' }
+ 
++/** Refuse bootstrap over an applicable label-write deny, including object/callback ACEs. */
++function hasLabelWriteDeny(acl: NativePtr): boolean {
++  const size = decodeUint16At(acl, 2), count = decodeUint16At(acl, 4)
++  if (size < 8 || size > 1_048_576) return true
++  let offset = 8
++  for (let index = 0; index < count; index++) {
++    if (offset + 8 > size) return true
++    const length = decodeUint16At(acl, offset + 2)
++    if (length < 8 || offset + length > size) return true
++    if ([1, 6, 10, 12].includes(decodeUint8At(acl, offset)) &&
++        (decodeUint8At(acl, offset + 1) & 8) === 0 &&
++        (decodeUint32At(acl, offset + 4) & (0x80000 | 0x10000000)) !== 0) return true
++    offset += length
++  }
++  return false
++}
++
+ /**
+- * Shared tail of grantWrite and revokeWrite: merge `entries` into `oldAcl`
+- * (null = no explicit DACL yet; SetEntriesInAclW builds one from scratch),
+- * free the descriptor before applying the merged ACL, apply the merged DACL
+- * together with the label edit in one SetNamedSecurityInfoW call, then free
+- * every ACL this call owns — checking each call and reporting with the
+- * caller's label. The entry count derives from the buffer, so a grant can
+- * carry its capability ACE and its ambient-delete deny in one merge.
+- * @param api - the binding table.
+- * @param path - the directory the DACL and label edits apply to.
+- * @param entries - packed EXPLICIT_ACCESS_W records to merge (grant, deny, or revoke).
+- * @param oldAcl - the current explicit DACL (from {@link readCurrentSecurity}).
+- * @param labelEdit - the label change to apply alongside the DACL.
+- * @param descriptor - the descriptor allocation owning `oldAcl`.
+- * @param label - the caller's name for error details.
++ * Set a label on a caller-owned directory whose ordinary ACL lacks WRITE_OWNER.
++ * The owner already has WRITE_DAC. Borrow a non-inheriting WRITE_OWNER ACE only
++ * long enough to acquire the label-write handle; the final DACL excludes it.
++ * Hold a no-delete-share handle throughout so this directory cannot be replaced.
++ * Never take ownership, remove a deny, relabel a link, or retain broader rights.
++ */
++function applyOwnedDirectoryLabel(
++  api: Win32Bindings, path: string, oldAcl: NativePtr | null,
++  finalAcl: NativePtr, label: NativePtr | null,
++  directoryOnly = true,
++  pinned?: NativePtr,
++): void {
++  const READ_CONTROL = 0x20000, WRITE_DAC = 0x40000, WRITE_OWNER = 0x80000
++  const DIRECTORY_OPEN = 0x02000000 | 0x00200000 // backup semantics, open reparse point itself
++  const cleanup: (() => void)[] = []
++  const errors: unknown[] = []
++  let held: NativePtr | undefined
++  let writer: NativePtr | undefined
++  let originalLabel: NativePtr | null = null
++  let labelChanged = false
++  let temporaryApplied = false
++  const ownHandle = (handle: NativePtr, operation: string): NativePtr => {
++    if (isInvalidHandle(handle)) throwLastError(api, 'CreateFileW', operation)
++    cleanup.push(() => { if (api.closeHandle(handle) === 0) throwLastError(api, 'CloseHandle', operation) })
++    return handle
++  }
++  const ownMemory = (memory: NativePtr | null): void => {
++    if (memory !== null) cleanup.push(() => {
++      if (!isNullPtr(api.localFree(memory))) throwLastError(api, 'LocalFree', 'owner label initialization')
++    })
++  }
++  try {
++    if (oldAcl === null || hasLabelWriteDeny(oldAcl)) {
++      throw new Error('sandbox label write access is explicitly denied or cannot be established; the existing DACL is unchanged')
++    }
++    held = pinned ?? ownHandle(api.createFileW(path, 0x20000 | 0x40000,
++      abi.FILE_SHARE_READ | abi.FILE_SHARE_WRITE, null, 3, DIRECTORY_OPEN, null), path)
++    const info = Buffer.alloc(52)
++    if (api.getFileInformationByHandle(held, info) === 0) throwLastError(api, 'GetFileInformationByHandle', path)
++    if ((directoryOnly && (info.readUInt32LE(0) & 0x10) === 0) || (info.readUInt32LE(0) & 0x400) !== 0
++        || ((info.readUInt32LE(0) & 0x10) === 0 && info.readUInt32LE(40) !== 1)) {
++      throw new Error('sandbox label initialization requires an ordinary owned object, not a reparse point or hard link')
++    }
++    const ownerSlot = allocPtrSlot(), unused = allocPtrSlot(), labelSlot = allocPtrSlot(), descriptor = allocPtrSlot()
++    const read = api.getObjectSecurity(held, abi.SE_FILE_OBJECT, 1 | abi.LABEL_SECURITY_INFORMATION, ownerSlot, unused, unused, labelSlot, descriptor)
++    if (read !== 0) throwWin32(api, 'GetSecurityInfo', read, path)
++    ownMemory(decodePtr(descriptor))
++    originalLabel = decodePtr(labelSlot)
++    const owner = decodePtr(ownerSlot)
++    const processHandle = ownHandle(api.openProcess(abi.PROCESS_QUERY_INFORMATION, 0, process.pid), 'current process')
++    const tokenSlot = allocPtrSlot()
++    if (api.openProcessToken(processHandle, abi.TOKEN_QUERY, tokenSlot) === 0) throwLastError(api, 'OpenProcessToken', path)
++    const token = decodePtr(tokenSlot)
++    if (token === null) throw new Error('OpenProcessToken returned no token')
++    ownHandle(token, 'current token')
++    const needed = allocUint32()
++    api.getTokenInformation(token, 1, null, 0, needed)
++    const length = decodeUint32(needed)
++    if (length < 16 || length > 1024) throw new Error('invalid TokenUser size')
++    const userBuffer = Buffer.alloc(length)
++    if (api.getTokenInformation(token, 1, userBuffer, length, needed) === 0) throwLastError(api, 'GetTokenInformation', 'TokenUser')
++    const user = decodePtrAt(userBuffer, 0)
++    if (owner === null || user === null || !sameSidAt(owner, 0, user, 0)) {
++      throw new Error('sandbox initialization needs label-write access; the current user does not own this directory. No ownership or ACL repair was performed')
++    }
++    const temporarySlot = allocPtrSlot()
++    const merged = api.setEntriesInAclW(1, buildExplicitAccess(user, abi.GRANT_ACCESS, WRITE_OWNER, 0), oldAcl, temporarySlot)
++    if (merged !== 0) throwWin32(api, 'SetEntriesInAclW', merged, path)
++    const temporaryAcl = decodePtr(temporarySlot)
++    ownMemory(temporaryAcl)
++    if (temporaryAcl === null) throw new Error('owner label initialization returned no DACL')
++    const granted = api.setObjectSecurity(held, abi.DACL_SECURITY_INFORMATION, temporaryAcl, null)
++    if (granted !== 0) throwWin32(api, 'NtSetSecurityObject', granted, 'temporary label access')
++    temporaryApplied = true
++    writer = ownHandle(api.createFileW(path, READ_CONTROL | WRITE_DAC | WRITE_OWNER,
++      abi.FILE_SHARE_READ | abi.FILE_SHARE_WRITE | 4, null, 3, DIRECTORY_OPEN, null), 'label write handle')
++    const applied = api.setObjectSecurity(writer, abi.LABEL_SECURITY_INFORMATION, null, label)
++    if (applied !== 0) throwWin32(api, 'NtSetSecurityObject', applied, 'confined directory label')
++    labelChanged = true
++    const committed = api.setObjectSecurity(held, abi.DACL_SECURITY_INFORMATION, finalAcl, null)
++    if (committed !== 0) throwWin32(api, 'NtSetSecurityObject', committed, 'final confined directory DACL')
++    temporaryApplied = false
++  } catch (error) {
++    errors.push(error)
++  } finally {
++    if (temporaryApplied && held !== undefined) {
++      if (labelChanged && writer !== undefined) {
++        const restoredLabel = api.setObjectSecurity(writer, abi.LABEL_SECURITY_INFORMATION, null, originalLabel)
++        if (restoredLabel !== 0) errors.push(new Error(`original label restoration failed (Win32 ${restoredLabel})`))
++      }
++      const restored = api.setObjectSecurity(held, abi.DACL_SECURITY_INFORMATION, oldAcl, null)
++      if (restored !== 0) errors.push(new Error(`temporary owner access restoration failed (Win32 ${restored})`))
++    }
++    for (const release of cleanup.reverse()) { try { release() } catch (error) { errors.push(error) } }
++  }
++  if (errors.length === 1) throw errors[0]
++  if (errors.length > 1) throw new AggregateError(errors, 'sandbox label initialization or restoration failed: ' + errors.map(error => error instanceof Error ? error.message : String(error)).join('; '))
++}
++
++/** Merge one object's capability entries, apply on its held handle and free owned buffers.
++ * Label edits use temporary owner access; a failed edit restores the original object state.
+  */
+ function mergeAndApply(
+   api: Win32Bindings,
+@@ -234,6 +323,8 @@ function mergeAndApply(
+   labelEdit: LabelEdit,
+   descriptor: NativePtr | null,
+   label: string,
++  pinned: NativePtr,
++  directoryOnly = true,
+ ): void {
+   const newAclSlot = allocPtrSlot()
+   const mergeResult = api.setEntriesInAclW(entries.length / abi.EXPLICIT_ACCESS_W_SIZE, entries, oldAcl, newAclSlot)
+@@ -249,17 +340,21 @@ function mergeAndApply(
+     throwWin32(api, 'SetEntriesInAclW', api.getLastError(), `${label}(${path}): null new ACL`)
+   }
+ 
+-  // The descriptor block (oldAcl included) is dead after the merge — free it
+-  // before applying, exactly like the POC.
++  // Retain the original descriptor through owner-label initialization and any rollback.
++  let applyResult = labelEdit.kind === 'keep'
++    ? api.setObjectSecurity(pinned, abi.DACL_SECURITY_INFORMATION, newAcl, null) : 5
++  let ownerError: unknown
++  if (applyResult === 5 && labelEdit.kind !== 'keep' && oldAcl !== null) {
++    try {
++      applyOwnedDirectoryLabel(api, path, oldAcl, newAcl, labelEdit.kind === 'apply' ? labelEdit.acl : null, directoryOnly, pinned)
++      applyResult = 0
++    } catch (error) { ownerError = error }
++  }
+   const freedDescriptor = descriptor !== null ? api.localFree(descriptor) : null
+-  const applyResult = api.setNamedSecurityInfoW(
+-    path, abi.SE_FILE_OBJECT,
+-    labelEdit.kind === 'keep' ? abi.DACL_SECURITY_INFORMATION : abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
+-    null, null, newAcl, labelEdit.kind === 'apply' ? labelEdit.acl : null,
+-  )
+   const freedNew = api.localFree(newAcl)
+   const freedLabel = labelEdit.kind === 'apply' ? api.localFree(labelEdit.acl) : null
+-  if (applyResult !== abi.ERROR_SUCCESS) throwWin32(api, 'SetNamedSecurityInfoW', applyResult, `${label}(${path})`)
++  if (ownerError !== undefined) throw ownerError
++  if (applyResult !== abi.ERROR_SUCCESS) throwWin32(api, 'NtSetSecurityObject', applyResult, `${label}(${path})`)
+   if (freedDescriptor !== null && !isNullPtr(freedDescriptor)) throwLastError(api, 'LocalFree', `${label}(${path}) descriptor`)
+   if (!isNullPtr(freedNew)) throwLastError(api, 'LocalFree', `${label}(${path}) new ACL`)
+   if (freedLabel !== null && !isNullPtr(freedLabel)) throwLastError(api, 'LocalFree', `${label}(${path}) label ACL`)
+@@ -350,39 +445,24 @@ function hasForeignGrant(oldAcl: NativePtr, sidPtr: NativePtr): boolean {
+   return false
+ }
+ 
+-/**
+- * Grant `GRANT_MASK` (Write+Delete, displays as "Modify") to the capability SID
+- * on `path`, deny the world SID the ambient `FILE_DELETE_CHILD` right, and
+- * apply the Low mandatory label — one merge. The deny inherits to containers
+- * only: the right is evaluated on directories, and inheriting its bit onto
+- * files would deny every `FILE_ALL_ACCESS`/`GENERIC_ALL` open inside the root
+- * (0x40 is a member of that mask). The capability ACE's DELETE bit is then the
+- * only delete authority inside the root, so a file whose own DACL grants no
+- * DELETE is no longer deletable through its parent's rights.
+- *
+- * Idempotent: the exact ACE, deny, and label together SKIP the
+- * SetNamedSecurityInfoW apply, which would otherwise re-propagate the
+- * identical descriptor across the whole tree (eager inheritance; minutes on
+- * large workspaces). Otherwise read-merge-write, so pre-existing explicit ACEs
+- * survive (same shape as {@link revokeWrite}). Runs under the per-path lock.
+- * The directory must be owned by the caller AND grant WRITE_OWNER (the label
+- * lives in the SACL; owner-implicit rights cover only READ_CONTROL and
+- * WRITE_DAC) — a Full-control workspace satisfies both.
+- * @param api - the binding table.
+- * @param path - the directory whose DACL and label gain the grant (the workspace or temp root).
+- * @param sidPtr - the capability SID the ACE names.
+- * @param lowLabelSidPtr - the Low integrity SID the mandatory label names.
+- * @param worldSidPtr - the Everyone SID the ambient-delete deny names.
++/** Initialize the authorized root. Existing grants are idempotent; unrelated ACEs remain.
++ * The Everyone DELETE_CHILD deny prevents deletion through ambient parent authority.
++ * New objects inherit the capability and Low label; existing objects are visited explicitly.
+  */
+-export function grantWrite(
++function grantRootWrite(
+   api: Win32Bindings,
+   path: string,
+   sidPtr: NativePtr,
+   lowLabelSidPtr: NativePtr,
+   worldSidPtr: NativePtr,
++  pinned: NativePtr,
+ ): void {
+   withPathLock(api, path, () => {
+-    const { oldAcl, labelAcl, descriptor } = readCurrentSecurity(api, path)
++    const { oldAcl, labelAcl, descriptor } = readCurrentSecurity(api, path, pinned)
++    if (oldAcl !== null && hasCapabilityWriteDeny(oldAcl, sidPtr)) {
++      if (descriptor !== null) api.localFree(descriptor)
++      throw new Error("workspace capability write is explicitly denied; permissions are unchanged")
++    }
+     if (oldAcl !== null && labelAcl !== null
+       && hasExactGrant(oldAcl, sidPtr) && hasExactDeny(oldAcl, worldSidPtr)
+       && hasExactLabel(labelAcl, lowLabelSidPtr)) {
+@@ -408,11 +488,129 @@ export function grantWrite(
+         buildExplicitAccess(worldSidPtr, abi.DENY_ACCESS, abi.FILE_DELETE_CHILD, abi.CONTAINER_INHERIT_ACE),
+         buildExplicitAccess(sidPtr, abi.GRANT_ACCESS, abi.GRANT_MASK),
+       ]),
+-      oldAcl, { kind: 'apply', acl: label }, descriptor, 'grantWrite',
++      oldAcl, { kind: 'apply', acl: label }, descriptor, 'grantWrite', pinned,
+     )
+   })
+ }
+ 
++/** Copy the current user's SID; unlike a pointer into TOKEN_USER, this survives the query buffer.
++ * @param api - native bindings.
++ * @returns a LocalAlloc SID which the caller frees.
++ */
++function copyCurrentUserSid(api: Win32Bindings): NativePtr {
++  const processHandle = api.openProcess(abi.PROCESS_QUERY_INFORMATION, 0, process.pid)
++  if (isNullPtr(processHandle)) throwLastError(api, 'OpenProcess', 'workspace labels')
++  const slot = allocPtrSlot()
++  let token: NativePtr | null = null
++  try {
++    if (!api.openProcessToken(processHandle, abi.TOKEN_QUERY, slot)) throwLastError(api, 'OpenProcessToken', 'workspace labels')
++    token = decodePtr(slot)
++    if (token === null) throw new Error('current-user token unavailable')
++    const needed = allocUint32()
++    api.getTokenInformation(token, 1, null, 0, needed)
++    const size = decodeUint32(needed)
++    if (size < 16 || size > 1024) throw new Error('invalid TokenUser size')
++    const buffer = Buffer.alloc(size)
++    if (!api.getTokenInformation(token, 1, buffer, size, needed)) throwLastError(api, 'GetTokenInformation', 'TokenUser')
++    const user = decodePtrAt(buffer, 0)
++    if (user === null) throw new Error('current-user SID unavailable')
++    const length = api.getLengthSid(user)
++    if (!length) throwLastError(api, 'GetLengthSid', 'TokenUser')
++    const copy = api.localAlloc(0, length)
++    if (isNullPtr(copy)) throwLastError(api, 'LocalAlloc', 'TokenUser SID')
++    if (!api.copySid(length, copy, user)) { const error = api.getLastError(); api.localFree(copy); throwWin32(api, 'CopySid', error, 'TokenUser') }
++    return copy
++  } finally { if (token !== null) api.closeHandle(token); api.closeHandle(processHandle) }
++}
++
++/** Whether the object's current DACL already permits this workspace capability to write it. */
++function hasEffectiveWriteGrant(acl: NativePtr, sid: NativePtr): boolean {
++  const size = decodeUint16At(acl, 2), count = decodeUint16At(acl, 4)
++  let offset = 8
++  for (let index = 0; index < count; index++) {
++    const length = decodeUint16At(acl, offset + 2)
++    if (length < 8 || offset + length > size) return false
++    if (decodeUint8At(acl, offset) === abi.ACCESS_ALLOWED_ACE_TYPE
++        && !(decodeUint8At(acl, offset + 1) & 8)
++        && (decodeUint32At(acl, offset + 4) & abi.GRANT_MASK) === abi.GRANT_MASK
++        && sameSidAt(acl, offset + 8, sid, 0)) return true
++    offset += length
++  }
++  return false
++}
++
++/** Pin an object without following reparse points or permitting it to be replaced during a label edit. */
++function withPinnedObject<T>(api: Win32Bindings, path: string, body: (handle: NativePtr, info: Buffer) => T): T {
++  const handle = api.createFileW(path, 0x20000 | 0x40000, abi.FILE_SHARE_READ | abi.FILE_SHARE_WRITE,
++    null, 3, 0x02000000 | 0x00200000, null)
++  if (isInvalidHandle(handle)) throwLastError(api, 'CreateFileW', path)
++  try {
++    const info = Buffer.alloc(52)
++    if (!api.getFileInformationByHandle(handle, info)) throwLastError(api, 'GetFileInformationByHandle', path)
++    return body(handle, info)
++  } finally { if (!api.closeHandle(handle)) throwLastError(api, 'CloseHandle', path) }
++}
++
++/** Provision existing owned objects without automatic tree propagation.
++ * Ancestor handles stay pinned throughout descent. Links, foreign owners, protected DACLs and
++ * existing non-Low integrity policies remain unchanged. Ancestor handles prevent path replacement.
++ */
++function labelExistingChildren(api: Win32Bindings, path: string, sid: NativePtr, low: NativePtr, user: NativePtr, world: NativePtr): void {
++  for (const entry of readdirSync(path, { withFileTypes: true })) {
++    if (entry.isSymbolicLink() || !entry.isDirectory() && !entry.isFile()) continue
++    const child = join(path, entry.name)
++    withPinnedObject(api, child, (handle, info) => {
++      const attributes = info.readUInt32LE(0), directory = Boolean(attributes & 0x10)
++      if (attributes & 0x400 || !directory && info.readUInt32LE(40) !== 1) return
++      const ownerSlot = allocPtrSlot(), aclSlot = allocPtrSlot(), labelSlot = allocPtrSlot(), sdSlot = allocPtrSlot()
++      const read = api.getObjectSecurity(handle, abi.SE_FILE_OBJECT, 1 | abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
++        ownerSlot, allocPtrSlot(), aclSlot, labelSlot, sdSlot)
++      if (read) throwWin32(api, 'GetSecurityInfo', read, child)
++      let descriptor = decodePtr(sdSlot)
++      try {
++        const owner = decodePtr(ownerSlot), acl = decodePtr(aclSlot), label = decodePtr(labelSlot)
++        if (owner === null || !sameSidAt(owner, 0, user, 0) || acl === null) return
++        const control = Buffer.alloc(2)
++        if (descriptor === null || !api.getSecurityDescriptorControl(descriptor, control, allocUint32())) throwLastError(api, 'GetSecurityDescriptorControl', child)
++        if (control.readUInt16LE(0) & 0x1000) return
++        if (label !== null && !hasLowLabel(label, low)) return
++        if (hasLabelWriteDeny(acl) || hasCapabilityWriteDeny(acl, sid)) return
++        if (!hasEffectiveWriteGrant(acl, sid)) {
++          // Materialize the capability object-by-object. A root-wide propagation would also edit
++          // the security descriptor shared by a hard link outside this workspace.
++          const entries = [buildExplicitAccess(sid, abi.GRANT_ACCESS, abi.GRANT_MASK, directory ? 3 : 0)]
++          if (directory) entries.unshift(buildExplicitAccess(world, abi.DENY_ACCESS, abi.FILE_DELETE_CHILD, 2))
++          const edit: LabelEdit = label === null ? {kind:'apply',acl:buildLowLabelAcl(api,low)} : {kind:'keep'}
++          const ownedDescriptor = descriptor; descriptor = null
++          mergeAndApply(api,child,Buffer.concat(entries),acl,edit,ownedDescriptor,'grant existing object',handle,false)
++        } else if (label === null) {
++          const fresh = buildLowLabelAcl(api, low)
++          try { applyOwnedDirectoryLabel(api, child, acl, acl, fresh, false, handle) }
++          finally { api.localFree(fresh) }
++        }
++        if (directory) labelExistingChildren(api, child, sid, low, user, world)
++      } finally { if (descriptor !== null) api.localFree(descriptor) }
++    })
++  }
++}
++
++/** Materialize a confined write root and its pre-existing ordinary contents.
++ * @param api - native bindings.
++ * @param path - canonical writable directory.
++ * @param sidPtr - workspace capability.
++ * @param lowLabelSidPtr - Low integrity SID.
++ * @param worldSidPtr - Everyone SID for ambient-delete protection.
++ */
++export function grantWrite(api: Win32Bindings, path: string, sidPtr: NativePtr, lowLabelSidPtr: NativePtr, worldSidPtr: NativePtr): void {
++  withPinnedObject(api, path, (handle, info) => {
++    if (!(info.readUInt32LE(0) & 0x10) || info.readUInt32LE(0) & 0x400) throw new Error('write root must be an ordinary directory, not a reparse point')
++    grantRootWrite(api, path, sidPtr, lowLabelSidPtr, worldSidPtr, handle)
++    const user = copyCurrentUserSid(api)
++    try { withPathLock(api, path, () => labelExistingChildren(api, path, sidPtr, lowLabelSidPtr, user, worldSidPtr)) }
++    finally { api.localFree(user) }
++  })
++}
++
+ /**
+  * Remove every ACE for the capability SID from the directory DACL (REVOKE_ACCESS
+  * merge — other entries are preserved). The shared Low label is cleared only
+@@ -429,20 +627,92 @@ export function grantWrite(
+  * @returns whether an ACE removal was attempted (false when the directory carries no DACL at all).
+  */
+ export function revokeWrite(api: Win32Bindings, path: string, sidPtr: NativePtr): boolean {
+-  return withPathLock(api, path, () => {
+-    const { oldAcl, descriptor } = readCurrentSecurity(api, path)
+-    if (oldAcl === null) {
+-      if (descriptor !== null) {
+-        const freed = api.localFree(descriptor)
+-        if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `revokeWrite(${path}) descriptor`)
+-      }
+-      return false
+-    }
+-    mergeAndApply(
+-      api, path, buildExplicitAccess(sidPtr, abi.REVOKE_ACCESS, 0), oldAcl,
+-      hasForeignGrant(oldAcl, sidPtr) ? { kind: 'keep' } : { kind: 'clear' },
+-      descriptor, 'revokeWrite',
+-    )
+-    return true
++  return withPinnedObject(api, path, (handle, info) => {
++    if (!(info.readUInt32LE(0) & 0x10) || info.readUInt32LE(0) & 0x400) throw new Error('revoke root must be an ordinary directory, not a reparse point')
++    const user = copyCurrentUserSid(api)
++    try {
++      return withPathLock(api, path, () => {
++        revokeObject(api, path, handle, sidPtr)
++        const walk = (parent: string): void => {
++          for (const entry of readdirSync(parent, {withFileTypes:true})) {
++            if (entry.isSymbolicLink() || !entry.isDirectory() && !entry.isFile()) continue
++            const child = join(parent, entry.name)
++            withPinnedObject(api, child, (held, childInfo) => {
++              const directory = Boolean(childInfo.readUInt32LE(0) & 0x10)
++              if (childInfo.readUInt32LE(0) & 0x400 || !directory && childInfo.readUInt32LE(40) !== 1) return
++              const owner = allocPtrSlot(), sd = allocPtrSlot()
++              const read = api.getObjectSecurity(held, 1, 1, owner, allocPtrSlot(), allocPtrSlot(), allocPtrSlot(), sd)
++              if (read) throwWin32(api, 'NtQuerySecurityObject', read, child)
++              const descriptor = decodePtr(sd), ownerPtr = decodePtr(owner)
++              const owned = ownerPtr !== null && sameSidAt(ownerPtr, 0, user, 0)
++              if (descriptor !== null) api.localFree(descriptor)
++              if (!owned) return
++              revokeObject(api, child, held, sidPtr)
++              if (directory) walk(child)
++            })
++          }
++        }
++        walk(path)
++        return true
++      })
++    } finally { api.localFree(user) }
+   })
+ }
++
++/** Remove only this capability and its unshared Low label, without propagating through links. */
++function revokeObject(api: Win32Bindings, path: string, handle: NativePtr, sid: NativePtr): void {
++  const {oldAcl, labelAcl, descriptor} = readCurrentSecurity(api, path, handle)
++  if (oldAcl === null || !hasEffectiveWriteGrant(oldAcl, sid)) {
++    if (descriptor !== null) api.localFree(descriptor)
++    return
++  }
++  mergeAndApply(api, path, buildExplicitAccess(sid, abi.REVOKE_ACCESS, 0), oldAcl,
++    labelAcl !== null && hasLowIntegrityLabel(labelAcl) && !hasForeignGrant(oldAcl, sid) ? {kind:'clear'} : {kind:'keep'},
++    descriptor, 'revokeWrite', handle, false)
++}
++
++/** Applicable Low no-write-up label, regardless of file/directory inheritance flags. */
++function hasLowLabel(acl: NativePtr, low: NativePtr): boolean {
++  const size = decodeUint16At(acl, 2), count = decodeUint16At(acl, 4)
++  let offset = 8
++  for (let index = 0; index < count; index++) {
++    const length = decodeUint16At(acl, offset + 2)
++    if (length < 8 || offset + length > size) return false
++    if (decodeUint8At(acl, offset) === abi.SYSTEM_MANDATORY_LABEL_ACE_TYPE
++      && !(decodeUint8At(acl, offset + 1) & 8) && (decodeUint32At(acl, offset + 4) & 1)
++      && sameSidAt(acl, offset + 8, low, 0)) return true
++    offset += length
++  }
++  return false
++}
++
++/** SetEntriesInAcl must not turn an existing capability deny into a grant. */
++function hasCapabilityWriteDeny(acl: NativePtr, sid: NativePtr): boolean {
++  const size = decodeUint16At(acl, 2), count = decodeUint16At(acl, 4)
++  let offset = 8
++  for (let index = 0; index < count; index++) {
++    const length = decodeUint16At(acl, offset + 2), kind = decodeUint8At(acl, offset)
++    if (length < 8 || offset + length > size) return true
++    if ([1,6,10,12].includes(kind) && !(decodeUint8At(acl, offset + 1) & 8)
++      && (decodeUint32At(acl, offset + 4) & (abi.GRANT_MASK | 0x50000000))
++      && ([6,12].includes(kind) || sameSidAt(acl, offset + 8, sid, 0))) return true
++    offset += length
++  }
++  return false
++}
++
++/** Preserve unrelated integrity policy when removing the sandbox's label. */
++function hasLowIntegrityLabel(acl: NativePtr): boolean {
++  const size = decodeUint16At(acl, 2), count = decodeUint16At(acl, 4)
++  let offset = 8
++  for (let index = 0; index < count; index++) {
++    const length = decodeUint16At(acl, offset + 2)
++    if (length < 20 || offset + length > size) return false
++    if (decodeUint8At(acl, offset) === abi.SYSTEM_MANDATORY_LABEL_ACE_TYPE
++      && decodeUint8At(acl, offset + 8) === 1 && decodeUint8At(acl, offset + 9) === 1
++      && [10,11,12,13,14].every(byte => decodeUint8At(acl, offset + byte) === 0)
++      && decodeUint8At(acl, offset + 15) === 16 && decodeUint32At(acl, offset + 16) === 4096) return true
++    offset += length
++  }
++  return false
++}
+diff --git a/packages/sandbox/sandbox-windows-acl/src/ffi.ts b/packages/sandbox/sandbox-windows-acl/src/ffi.ts
+index 5ef39a4..45bd56d 100644
+--- a/packages/sandbox/sandbox-windows-acl/src/ffi.ts
++++ b/packages/sandbox/sandbox-windows-acl/src/ffi.ts
+@@ -3,6 +3,7 @@
+ import { createLazyRequire } from '@deepseek-ai/dsh-lazy-require'
+ import {
+   ERROR_INSUFFICIENT_BUFFER,
++  allocPtrSlot, allocUint32, decodePtr,
+   Win32Error,
+   extendWin32ProcessBindings,
+   isNullPtr,
+@@ -37,6 +38,16 @@ function ffiTypes(): { PVOID: Ptr; PPVOID: Ptr } {
+ 
+ /** ACL/token calls composed with the generic Win32 process binding table. */
+ export interface Win32Bindings extends Win32ProcessBindings {
++  /** Set one held object's descriptor, without Win32 tree propagation. Returns a Win32 error. */
++  setObjectSecurity(handle: NativePtr, information: number, dacl: NativePtr | null, label: NativePtr | null): number
++  getObjectSecurity(handle: NativePtr, objectType: number, information: number,
++    owner: NativePtr, group: NativePtr, dacl: NativePtr, sacl: NativePtr, descriptor: NativePtr): number
++  getSecurityDescriptorControl(descriptor: NativePtr, control: Buffer, revision: NativePtr): number
++  getSecurityInfo(handle: NativePtr, objectType: number, information: number,
++    owner: NativePtr, group: NativePtr, dacl: NativePtr, sacl: NativePtr, descriptor: NativePtr): number
++  setSecurityInfo(handle: NativePtr, objectType: number, information: number,
++    owner: null, group: null, dacl: NativePtr | null, sacl: NativePtr | null): number
++  getFileInformationByHandle(handle: NativePtr, information: Buffer): number
+   openProcess(desiredAccess: number, inheritHandle: number, pid: number): NativePtr
+   openProcessToken(process: NativePtr, desiredAccess: number, tokenHandle: NativePtr): number
+   localAlloc(flags: number, bytes: number): NativePtr
+@@ -234,7 +245,61 @@ function bindings(): Win32Bindings {
+   if (cached !== undefined) return cached
+   const koffi = requireKoffi()
+   const { PVOID, PPVOID } = ffiTypes()
++  const ntdll = koffi.load('ntdll.dll')
++  const ntSetSecurity = ntdll.func('int32 __stdcall NtSetSecurityObject(void *, uint32, void *)')
++  const ntQuerySecurity = ntdll.func('int32 __stdcall NtQuerySecurityObject(void *, uint32, void *, uint32, void *)')
++  const toWin32 = ntdll.func('uint32 __stdcall RtlNtStatusToDosError(int32)')
++  const adv = koffi.load('advapi32.dll')
++  const getDacl = adv.func('int __stdcall GetSecurityDescriptorDacl(void *, void *, void *, void *)')
++  const getSacl = adv.func('int __stdcall GetSecurityDescriptorSacl(void *, void *, void *, void *)')
++  const getOwner = adv.func('int __stdcall GetSecurityDescriptorOwner(void *, void *, void *)')
++  const getGroup = adv.func('int __stdcall GetSecurityDescriptorGroup(void *, void *, void *)')
+   cached = extendWin32ProcessBindings(({ kernel32, advapi32, bind }) => ({
++    getObjectSecurity(handle: NativePtr, _objectType: number, information: number,
++      owner: NativePtr, group: NativePtr, dacl: NativePtr, sacl: NativePtr, descriptor: NativePtr): number {
++      // GetSecurityInfo synthesizes protection/inheritance when a parent has changed.
++      // Query the held object's actual descriptor before deciding whether it is protected.
++      const needed = Buffer.alloc(4)
++      const probe = ntQuerySecurity(handle, information, null, 0, needed) as number
++      const size = needed.readUInt32LE(0)
++      if (!size && probe < 0) return toWin32(probe) as number
++      if (!size || size > 1_048_576) return 1338
++      const sd = cached!.localAlloc(0, size)
++      if (isNullPtr(sd)) return 8
++      const status = ntQuerySecurity(handle, information, sd, size, needed) as number
++      if (status < 0) { cached!.localFree(sd); return toWin32(status) as number }
++      const present = Buffer.alloc(4), defaulted = Buffer.alloc(4)
++      if (!getDacl(sd, present, dacl, defaulted) || !getSacl(sd, present, sacl, defaulted)
++        || !getOwner(sd, owner, defaulted) || !getGroup(sd, group, defaulted)) {
++        const error = cached!.getLastError(); cached!.localFree(sd); return error
++      }
++      koffi.encode(descriptor, 'void *', sd)
++      return 0
++    },
++    setObjectSecurity(handle: NativePtr, information: number, dacl: NativePtr | null, label: NativePtr | null): number {
++      // Absolute SECURITY_DESCRIPTOR, x64 layout. Native per-object updates preserve child
++      // descriptors; SetSecurityInfo's automatic inheritance can edit outside hard links.
++      const sd = Buffer.alloc(40)
++      sd.writeUInt8(1, 0)
++      const descriptor = allocPtrSlot(), unused = allocPtrSlot(), control = Buffer.alloc(2)
++      const read = cached!.getObjectSecurity(handle, 1, information, unused, unused, unused, unused, descriptor)
++      if (read) return read
++      const original = decodePtr(descriptor)
++      if (original === null) return 1338
++      try {
++        if (!cached!.getSecurityDescriptorControl(original, control, allocUint32())) return cached!.getLastError()
++        // The edit preserves the object's existing inheritance/protection state.
++        sd.writeUInt16LE((control.readUInt16LE(0) & 0x3c00) | (information & 4 ? 4 : 0) | (information & 16 ? 16 : 0), 2)
++      } finally { cached!.localFree(original) }
++      if (label !== null) sd.writeBigUInt64LE(ptrAddress(label), 24)
++      if (dacl !== null) sd.writeBigUInt64LE(ptrAddress(dacl), 32)
++      const status = ntSetSecurity(handle, information, sd) as number
++      return status >= 0 ? 0 : toWin32(status) as number
++    },
++    getSecurityInfo: bind(advapi32, 'GetSecurityInfo', 'uint32', [PVOID, 'int', 'uint32', PPVOID, PPVOID, PPVOID, PPVOID, PPVOID]),
++    setSecurityInfo: bind(advapi32, 'SetSecurityInfo', 'uint32', [PVOID, 'int', 'uint32', PVOID, PVOID, PVOID, PVOID]),
++    getFileInformationByHandle: bind(kernel32, 'GetFileInformationByHandle', 'int', [PVOID, PVOID]),
++    getSecurityDescriptorControl: bind(advapi32, 'GetSecurityDescriptorControl', 'int', [PVOID, PVOID, PVOID]),
+     openProcess: bind(kernel32, 'OpenProcess', PVOID, ['uint32', 'int', 'uint32']),
+     openProcessToken: bind(advapi32, 'OpenProcessToken', 'int', [PVOID, 'uint32', PPVOID]),
+     localAlloc: bind(kernel32, 'LocalAlloc', PVOID, ['uint32', 'size_t']),
+diff --git a/packages/sandbox/sandbox/README.md b/packages/sandbox/sandbox/README.md
+index 5e089c4..7d7f498 100644
+--- a/packages/sandbox/sandbox/README.md
++++ b/packages/sandbox/sandbox/README.md
+@@ -183,3 +183,7 @@ This Dev Note is working context for maintainers: undecided directions and open
+ The [sandbox decision](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.md) lists deferred phases — an optional `subagent-acp` consumer that confines child agents (unconfined default) and environment-coherent capability group examples. Neither is decided; the Windows chain that note listed as deferred has since shipped through the ACL restricted-token rung of `sandbox-local`.
+ 
+ </details>
++
++## Platform temporary roots
++
++Windows uses its actual system temporary directory; the Unix /tmp spelling is not resolved onto the current Windows drive. This avoids authorizing sibling projects under a drive-local tmp directory.
+diff --git a/packages/sandbox/sandbox/README.zh.md b/packages/sandbox/sandbox/README.zh.md
+index dc38008..c6f140e 100644
+--- a/packages/sandbox/sandbox/README.zh.md
++++ b/packages/sandbox/sandbox/README.zh.md
+@@ -183,3 +183,7 @@ sandbox mode "<mode>" is requested but no sandbox backend is usable on this host
+ [沙箱决策](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.zh.md)列出延期阶段——可选的 `subagent-acp` 消费方（隔离子 agent（智能体），默认不隔离）与环境一致的能力组示例。两者均未决定；该笔记列为延期的 Windows 链已通过 `sandbox-local` 的 ACL 受限令牌档交付。
+ 
+ </details>
++
++## 平台临时目录
++
++Windows 使用实际系统临时目录，不把 Unix 的 /tmp 拼法解析到当前 Windows 盘。因此不会意外授权同盘 tmp 目录中的其他项目。
+diff --git a/packages/sandbox/sandbox/src/roots.ts b/packages/sandbox/sandbox/src/roots.ts
+index 1215f3d..6aaed66 100644
+--- a/packages/sandbox/sandbox/src/roots.ts
++++ b/packages/sandbox/sandbox/src/roots.ts
+@@ -51,5 +51,8 @@ export function canonicalPath(path: string): string {
+  */
+ export function writableRoots(policy: SandboxExecutionPolicy): string[] {
+   if (policy.mode !== 'workspace-write') return []
+-  return [...new Set([policy.workspaceRoot, '/tmp', tmpdir()].map(canonicalPath))]
++  // On Windows, '/tmp' resolves against the current drive (for example E:\tmp).
++  // It is not the platform temp directory and must not authorize sibling projects.
++  const unixTemp = process.platform === 'win32' ? [] : ['/tmp']
++  return [...new Set([policy.workspaceRoot, ...unixTemp, tmpdir()].map(canonicalPath))]
+ }
+diff --git a/packages/shell/shell/README.md b/packages/shell/shell/README.md
+index b72440a..8a3c1c5 100644
+--- a/packages/shell/shell/README.md
++++ b/packages/shell/shell/README.md
+@@ -145,3 +145,5 @@ These limits define what the seam does not provide. They are current package con
+ None.
+ 
+ </details>
++
++Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
+diff --git a/packages/shell/shell/README.zh.md b/packages/shell/shell/README.zh.md
+index 272ffc8..6259e4a 100644
+--- a/packages/shell/shell/README.zh.md
++++ b/packages/shell/shell/README.zh.md
+@@ -145,3 +145,5 @@ seam 本身不是执行器：每个组合只挂载一个提供方，工具即可
+ None.
+ 
+ </details>
++
++每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
+diff --git a/packages/shell/shell/src/index.ts b/packages/shell/shell/src/index.ts
+index 939aff2..1957e83 100644
+--- a/packages/shell/shell/src/index.ts
++++ b/packages/shell/shell/src/index.ts
+@@ -24,7 +24,7 @@ export type {
+   DshEnvironment,
+   DshEnvironmentKey,
+ } from './types.ts'
+-export { parseExitStatus } from './render.ts'
++export { parseExitStatus, shellProcessOutcome } from './render.ts'
+ export type { ParsedExitStatus } from './render.ts'
+ 
+ declare module '@deepseek-ai/cordis' {
+diff --git a/packages/shell/shell/src/render.ts b/packages/shell/shell/src/render.ts
+index 8fc924e..a08ad9b 100644
+--- a/packages/shell/shell/src/render.ts
++++ b/packages/shell/shell/src/render.ts
+@@ -10,9 +10,18 @@
+  * The exit status recovered from a rendered result, with the output body that
+  * status was split off from.
+  */
+-export type ParsedExitStatus =
+-  & { body: string }
+-  & ({ exitCode: number } | { signal: string })
++export type ParsedExitStatus = { body: string; exitCode?: number; signal?: string }
++
++/**
++ * Project actual process facts without interpreting command output.
++ * @param result - settled process facts from the executor.
++ * @returns JSON-safe facts shared by metadata and the final rendered record.
++ */
++export function shellProcessOutcome(result: {exitCode:number|null;signal:string|null;timedOut:boolean;aborted?:boolean;stopped?:string;stderr?:{text:string;truncated?:boolean}}) {
++  return {exitCode:result.exitCode,signal:result.signal,timedOut:result.timedOut,aborted:result.aborted===true,
++    ...result.stderr === undefined ? {} : {hasStderr:result.stderr.text.length > 0 || result.stderr.truncated === true},
++    ...result.stopped === undefined ? {} : {stopped:result.stopped}}
++}
+ 
+ /**
+  * Split a rendered shell-tool result string into its output body and the
+@@ -35,6 +44,18 @@ export type ParsedExitStatus =
+  * @returns the marker-free body plus the recovered terminal exit code or signal.
+  */
+ export function parseExitStatus(text: string): ParsedExitStatus {
++  const record = /\n\[process-result: (\{[^\n]*\})\]\s*$/.exec(text)
++  if (record?.[1] !== undefined) {
++    let value: unknown
++    try { value = JSON.parse(record[1]) } catch { return {body:text} }
++    if (typeof value === 'object' && value !== null) {
++      const facts = value as Record<string, unknown>
++      const body = text.slice(0, record.index)
++      if (typeof facts.signal === 'string') return {body,signal:facts.signal}
++      if (typeof facts.exitCode === 'number' && Number.isSafeInteger(facts.exitCode)) return {body,exitCode:facts.exitCode}
++    }
++    return {body:text}
++  }
+   const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(text)
+   if (signal?.[1] !== undefined) return { body: text.slice(0, signal.index), signal: signal[1] }
+   const exit = /\n\[exit code: (\d+)\]$/.exec(text)
+diff --git a/packages/shell/tool-bash/README.md b/packages/shell/tool-bash/README.md
+index 357fe0a..70cf67d 100644
+--- a/packages/shell/tool-bash/README.md
++++ b/packages/shell/tool-bash/README.md
+@@ -224,3 +224,9 @@ These limits define when the tool is a poor fit or needs special care. They are
+ None.
+ 
+ </details>
++
++## Process outcomes
++
++Foreground results persist shellExit metadata independently of stdout: exit code, signal, timeout, abort and external stop facts. A nonzero command exit remains a completed tool invocation, while the UI displays the process failure explicitly.
++
++Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
+diff --git a/packages/shell/tool-bash/README.zh.md b/packages/shell/tool-bash/README.zh.md
+index 578e613..2039ef8 100644
+--- a/packages/shell/tool-bash/README.zh.md
++++ b/packages/shell/tool-bash/README.zh.md
+@@ -224,3 +224,9 @@ renderer 输出依数据而定的 stdout 尾部，再输出可选的 `[stderr]`
+ 无。
+ 
+ </details>
++
++## 进程结果
++
++前台结果把退出码、信号、超时、取消和外部停止事实作为 shellExit 元数据保存，与 stdout 分开。非零命令退出仍属于已返回的工具调用，界面明确显示进程失败。
++
++每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
+diff --git a/packages/shell/tool-bash/src/index.ts b/packages/shell/tool-bash/src/index.ts
+index 8226ad2..90e8b4e 100644
+--- a/packages/shell/tool-bash/src/index.ts
++++ b/packages/shell/tool-bash/src/index.ts
+@@ -25,7 +25,7 @@ import type {} from '@deepseek-ai/dsh-shell-env'
+ import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
+ import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+ import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
+-import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
++import { DSH_ENV_PREFIX, shellProcessOutcome } from '@deepseek-ai/dsh-shell'
+ import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
+ import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
+ import { parseExitStatus, renderJobRead, renderPromoted, renderResult } from './render.ts'
+@@ -468,6 +468,8 @@ export function apply(ctx: Context, config: Config = {}): void {
+             },
+           ],
+         },
++        presentationMeta: (_args, value) => value.kind === 'foreground'
++          ? {shellExit: shellProcessOutcome(value)} : null,
+         render: (_args, value) => [{
+           type: 'text',
+           text: value.kind === 'background'
+diff --git a/packages/shell/tool-bash/src/render.ts b/packages/shell/tool-bash/src/render.ts
+index 55e7609..8ffc204 100644
+--- a/packages/shell/tool-bash/src/render.ts
++++ b/packages/shell/tool-bash/src/render.ts
+@@ -4,6 +4,7 @@
+  * @module @deepseek-ai/dsh-tool-bash/render
+  */
+ 
++import { shellProcessOutcome } from '@deepseek-ai/dsh-shell'
+ import type { ShellRunResult, ShellSandboxInfo, CollectedOutput } from '@deepseek-ai/dsh-shell'
+ import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
+ import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+@@ -59,7 +60,7 @@ export function renderResult(
+   } else if (result.exitCode !== 0) {
+     markers.push(`[exit code: ${result.exitCode}]`)
+   }
+-  if (markers.length === 0) return body
++  markers.push(`[process-result: ${JSON.stringify(shellProcessOutcome(result))}]`)
+ 
+   if (!body.endsWith('\n')) body += '\n'
+   return body + markers.join('\n')
+diff --git a/packages/shell/tool-pwsh/README.md b/packages/shell/tool-pwsh/README.md
+index 14b9053..ab3d381 100644
+--- a/packages/shell/tool-pwsh/README.md
++++ b/packages/shell/tool-pwsh/README.md
+@@ -216,3 +216,9 @@ These limits define when the tool is a poor fit or needs special care. They are
+ None.
+ 
+ </details>
++
++## Process outcomes
++
++Foreground results persist shellExit metadata independently of stdout: exit code, signal, timeout, abort and external stop facts. A nonzero command exit remains a completed tool invocation, while the UI displays the process failure explicitly.
++
++Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
+diff --git a/packages/shell/tool-pwsh/README.zh.md b/packages/shell/tool-pwsh/README.zh.md
+index 54a8770..23d9168 100644
+--- a/packages/shell/tool-pwsh/README.zh.md
++++ b/packages/shell/tool-pwsh/README.zh.md
+@@ -216,3 +216,9 @@ Non-zero exits are reported as `[exit code: N]` markers; investigate failures be
+ 无。
+ 
+ </details>
++
++## 进程结果
++
++前台结果把退出码、信号、超时、取消和外部停止事实作为 shellExit 元数据保存，与 stdout 分开。非零命令退出仍属于已返回的工具调用，界面明确显示进程失败。
++
++每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
+diff --git a/packages/shell/tool-pwsh/src/index.ts b/packages/shell/tool-pwsh/src/index.ts
+index cbebd6d..3252ee5 100644
+--- a/packages/shell/tool-pwsh/src/index.ts
++++ b/packages/shell/tool-pwsh/src/index.ts
+@@ -35,7 +35,7 @@ import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandb
+ import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+ import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
+ import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
+-import { parseExitStatus } from '@deepseek-ai/dsh-shell'
++import { parseExitStatus, shellProcessOutcome } from '@deepseek-ai/dsh-shell'
+ import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
+ import { renderPwshJobRead, renderPwshPromoted, renderPwshResult } from './render.ts'
+ import type { RenderablePwshResult } from './render.ts'
+@@ -485,6 +485,8 @@ export function apply(ctx: Context, config: Config = {}): void {
+           ],
+         },
+         /* jscpd:ignore-end */
++        presentationMeta: (_args, value) => value.kind === 'foreground'
++          ? {shellExit: shellProcessOutcome(value)} : null,
+         render: (_args, value) => [{
+           type: 'text',
+           text: value.kind === 'background'
+diff --git a/packages/shell/tool-pwsh/src/render.ts b/packages/shell/tool-pwsh/src/render.ts
+index f15bd1a..2e84d2e 100644
+--- a/packages/shell/tool-pwsh/src/render.ts
++++ b/packages/shell/tool-pwsh/src/render.ts
+@@ -10,6 +10,7 @@
+  * @module @deepseek-ai/dsh-tool-pwsh/render
+  */
+ 
++import { shellProcessOutcome } from '@deepseek-ai/dsh-shell'
+ import type { ShellSandboxInfo, CollectedOutput } from '@deepseek-ai/dsh-shell'
+ import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
+ import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+@@ -38,7 +39,7 @@ export interface RenderablePwshResult {
+ /**
+  * Shape one finished run into the text the model sees: stdout, then a marked
+  * stderr section, then exit-status markers, matching the bash tool's story —
+- * a clean exit (0, no signal) produces no marker.
++ * every completion carries a final process record independent of stdout.
+  * @param result - the completed foreground run from the executor.
+  * @param escalationModes - the escalation targets this composition advertises;
+  *   non-empty adds the same-turn escalation hint after a denial marker
+@@ -79,7 +80,7 @@ export function renderPwshResult(
+   } else if (result.exitCode !== 0) {
+     markers.push(`[exit code: ${result.exitCode}]`)
+   }
+-  if (markers.length === 0) return body
++  markers.push(`[process-result: ${JSON.stringify(shellProcessOutcome(result))}]`)
+ 
+   if (!body.endsWith('\n')) body += '\n'
+   return body + markers.join('\n')
+diff --git a/packages/util/http-proxy/README.md b/packages/util/http-proxy/README.md
+index 9b09843..ac25fe6 100644
+--- a/packages/util/http-proxy/README.md
++++ b/packages/util/http-proxy/README.md
+@@ -1,5 +1,5 @@
+ ---
+-description: "Outbound HTTP proxy support for the harness: how one policy resolved from the launch environment reaches every request Node's fetch would otherwise send direct."
++description: "One outbound route for DSH HTTP requests, inherited from explicit environment settings or Windows."
+ kind: "package-reference"
+ ---
+ 
+@@ -7,118 +7,34 @@ kind: "package-reference"
+ 
+ English | [中文](README.zh.md)
+ 
+-## Summary
++This library installs the process-wide dispatcher used by Node fetch, model adapters, web search, and HTTP consumers. It does not expose an agent tool or edit network settings. Windows users without explicit proxy environment settings inherit the current user's system configuration. Other platforms retain environment-based routing.
+ 
+-Use this package to apply one outbound HTTP proxy policy to Harness requests that use Node's built-in `fetch`, including LLM, web-search, and HTTP MCP traffic. The launcher reads standard proxy environment variables once, and ordinary `fetch` callers require no extra imports or changes. Local loopback traffic stays direct, while unsupported proxy URLs are reported and skipped for the affected scheme. Public helpers let callers route transports with their own proxy settings, prepare child-process environments, or clear proxy variables for isolated replays.
++## Routing and lifetime
+ 
+-## Table of Contents
++The launcher calls installProxyFromEnvironment once. Nonempty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY or NO_PROXY (including their lowercase spellings) explicitly select the established environment policy. Environment precedence and validation stay with the launcher and policy module; a project .env cannot choose proxy settings.
+ 
+-- [Use this package](#use-this-package)
+-- [Understand the implementation](#understand-the-implementation)
+-- [Further Exploration](#further-exploration)
+-- [Model Experience](#model-experience)
+-- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+-- [Dev Note](#dev-note)
++When no explicit proxy setting exists on Windows, every new request reads the system's current connection settings. Manual HTTP/HTTPS proxies, scheme-specific entries and Windows bypass patterns use one resolver. PAC/WPAD is evaluated by WinHTTP on an owned worker, outside the Host event loop. Automatic discovery finding no PAC uses the system's manual fallback; an invalid or unreachable explicit PAC reports failure. Changing system settings affects later requests without restarting the Host. Connections already selected for a request retain their route.
+ 
+------
++proxyRouteFor(url, signal) is asynchronous. Its proxied result includes the dispatcher captured for that specific route. A caller such as web-fetch-http must await it and use that dispatcher, rather than selecting the route again after checking the URL. proxyConfiguration() describes the active source without duplicating resolution in a UI. Loopback always stays direct.
+ 
+-<a id="use-this-package"></a>
+-## Use this package
++Ordinary fetch callers need no per-provider proxy code. The global dispatcher consults the same resolver. No failed request is automatically retried directly or on a different proxy. System settings are not copied into process environment variables: a descendant DSH reads the system itself rather than inheriting a stale port. Explicit environment mode retains proxyEnvironmentForChild's existing overlay semantics.
+ 
+-Nothing to mount, and nothing to configure. The `dsh` launcher resolves and installs the policy for every profile before the first plugin loads, so a user who exports `HTTPS_PROXY` is proxied everywhere. This is a library rather than a plugin because transport policy has one answer per process: there is no second implementation to swap and no scope narrower than the process to give one.
++## Scope and diagnostics
+ 
+-### Writing a new outbound call
++Houdini and other embedding applications should consume these facts, not maintain their own proxy profiles or provider/domain rules. API addresses and credentials remain service configuration; successful network transport does not prove authentication, model availability or native search support.
+ 
+-Plain `fetch()` is proxied, and so is any SDK that reaches `globalThis.fetch` — the MCP HTTP transport and the pi-ai provider stack both do. Verify each SDK's actual transport; exceptions belong under [Known Limitations and Deferred Work](#known-limitations-and-deferred-work).
++Windows SOCKS-only settings fail explicitly. Authenticated enterprise proxies, private certificate authorities and PAC multi-proxy failover are not fully qualified. Non-Windows system-proxy integration is not implemented. An arbitrary child program, model-authored script or transport that does not use this dispatcher is not covered; model tools should use the Host's native network capabilities. Telemetry's existing direct transport is unchanged.
+ 
+-| You are writing | Use |
+-|---|---|
+-| A plain request, or an SDK that reaches `globalThis.fetch` | nothing — the global dispatcher already routes it |
+-| A call that must branch on whether this request is proxied | `proxyRouteFor(url)` |
+-| An SDK that takes a proxy URL of its own | `proxyRouteFor(url)`, and pass `route.proxy` |
+-| A spawn whose environment you build yourself | apply `proxyEnvironmentForChild()` to it (`undefined` means remove) |
+-| A harness that must reach its own fixture server | apply `clearedProxyEnv()` to the spawn |
+-
+-`proxyRouteFor` answers with the transport that answer assumed, not just the answer: its proxied arm carries the dispatcher already routing by this policy. A caller that read the policy and then built its own transport could have an unmount land between the two and send the request somewhere its branch never cleared.
+-
+-Constructing `new Agent(...)` and passing it as `dispatcher` overrides the global one and silently bypasses the proxy. `verify-no-bare-dispatcher` rejects that outside this package. One call site legitimately owns its transport — `web-fetch-http` pins a request to addresses it validated, which is per-request state a process-wide dispatcher cannot hold — and says so with a `proxy-exempt:` comment on the line.
+-
+-That gate cannot see inside an SDK, so each outbound call site carries an `egress.spec.ts` that drives its actual transport through a fake proxy and checks the observed route. Every new outbound call site must include that transport test. Telemetry asserts its direct-route exception. These tests detect dependency changes that alter routing without changing the call site.
+-
+-### What the policy reads
+-
+-`http_proxy`, `https_proxy`, `no_proxy`, and `all_proxy`, lowercase first and uppercase as the fallback, with a blank value treated as unset. `ALL_PROXY` backs both schemes, and HTTPS falls back to the HTTP proxy last — neither Node nor undici derives the first of these on its own. Values come from the launcher's snapshot: an exported variable first, then `$DSH_HOME/.env`. A project's own `.env` cannot carry these names — that file arrives with a clone, and the launcher refuses to start rather than let a repository choose where the harness sends its traffic.
+-
+-Loopback is always bypassed — `localhost`, the whole `127.0.0.0/8` range, `::1`, `0.0.0.0`, and the IPv4-mapped spellings of those. The harness's own Web UI, Connection transport, and every local test server would otherwise route through the proxy and loop. The published bypass list names only the four literal entries an environment reader can match; `proxyForUrl` recognises the range itself, because a list entry cannot express one.
+-
+-### Failures
+-
+-A proxy value the package cannot use — a SOCKS or PAC URL, an unparseable string, an unsupported scheme — is reported and skipped, and that scheme connects directly. The variable may have been exported for other tools, so it must not stop the agent from starting.
++Direct public-web requests retain DNS validation and address pinning. Proxied requests let the configured proxy resolve the destination; an explicit non-public IP literal is still rejected by the web fetcher. In a Fake-IP/TUN environment, application-direct is not equivalent to physical-network-direct.
+ 
+------
++## Source and verification
+ 
+-<a id="understand-the-implementation"></a>
+-## Understand the implementation
+-
+-### Design philosophy
+-
+-**One resolution, one matcher.** `proxyForUrl()` and the installed dispatcher must never disagree about a URL, or `dsh-web-fetch-http` would pin a connection the dispatcher meant to tunnel. The dispatcher is therefore an `Agent` whose per-origin `factory` calls `proxyForUrl()` itself, so there is no second parser to drift from the first. undici's `EnvHttpProxyAgent` cannot serve here: with no `HTTPS_PROXY` present it reuses the HTTP proxy for `https:`, which would tunnel a scheme this package keeps direct after refusing the URL the user named for it.
+-
+-**A child inherits the user's own values, and the resolved policy for what they left unset.** A scheme the user named in either casing reaches a child exactly as they wrote it, so a SOCKS proxy `curl` uses is never replaced by an HTTP one named for another scheme. A scheme they named in neither casing carries the resolved value instead, because otherwise the child's routing diverges from its parent's: Node's `NODE_USE_ENV_PROXY` does not read `ALL_PROXY`. The bypass list is always the resolved one — it only ever adds the loopback entries, so nothing the user wrote is lost. The cost of one routing answer for parent and child alike is that `curl` also sees the `https:` proxy this package derives from the HTTP one. One exception protects the child itself: when a value it receives is one this package refused — a SOCKS URL kept for `curl` — the `NODE_USE_ENV_PROXY` flag is withheld, because Node parses `HTTP_PROXY` and `HTTPS_PROXY` under that flag before running the program and exits on such a value. A child Node then connects directly, as this process already reported for that scheme, instead of failing to start.
+-
+-### Source map
+-
+-| File | Holds |
++| Source | Responsibility |
+ |---|---|
+-| `src/policy.ts` | Resolution and bypass matching; a diagnostic names the variable, never its value. Imports no transport, so it stays loadable where undici is absent. |
+-| `src/install.ts` | The global dispatcher, the active-policy record, the route, and the child environment. Imports undici dynamically. |
+-| `src/index.ts` | The package face: four functions and one type. |
+-
+-### Bypass matching
+-
+-An entry names a host and matches it together with every subdomain under it: `NO_PROXY=example.com` also bypasses `api.example.com`. A leading `.` or `*.` is accepted and means the same thing. An entry may carry a `:port`, and `*` bypasses everything. A bracketed or bare IPv6 literal matches either way — a bare `::1` is *not* read as host `:` port `1`, which is how undici's own matcher fails and why the resolved list carries both `::1` and `[::1]`. CIDR is not matched: an operating system's bypass list often carries `10.0.0.0/8`, which has to be rewritten as suffixes.
+-
+------
+-
+-<a id="further-exploration"></a>
+-## Further Exploration
+-
+-- [Network proxy guide](../../../docs/user/guide/network-proxy.md) — what to export, and why a browser is proxied when a terminal is not.
+-- [`dsh-web-fetch-http`](../../web/web-fetch-http/README.md) — the one consumer whose safety rules change under a proxy.
+-
+------
+-
+-<a id="model-experience"></a>
+-## Model Experience
+-
+-None, as transport policy only: it changes how bytes reach the network and registers no prompt, schema, or result text.
+-
+-#### KV Cache effect
+-
+-No direct invalidation: the package contributes no request tokens and never mutates a request prefix, so provider cache reuse is unaffected.
+-
+-## Known Limitations and Deferred Work
+-
+-<a id="known-limitations-and-deferred-work"></a>
+-
+-
+-These limits define when the package is a poor fit. They are current package constraints.
+-
+-- **No SOCKS, PAC, or operating-system proxy detection** — only `http(s)://` proxy URLs from the environment. A macOS or Windows system-proxy setting is not read, so a user who only toggled it in a proxy application must still export the variables; a SOCKS URL is reported and that scheme stays direct rather than borrowing another scheme's proxy.
+-- **No custom certificate authority** — a TLS-intercepting corporate proxy needs `NODE_EXTRA_CA_CERTS` set on the process before launch, which this package neither sets nor validates.
+-- **A spawned child honors the policy only on a new enough runtime, and only when every value it inherits is one Node accepts** — it reads the published environment through Node's `NODE_USE_ENV_PROXY` (22.21+, 24+), and the engines range admits 22.19 and 22.20, where such a child stays direct. A user whose environment also names a SOCKS or otherwise refused proxy leaves every child Node direct: the flag is withheld so the child can start at all. A child also matches bypass entries with Node's own `NO_PROXY` rules, which differ from this package's in their separators and IPv4-range support. Nothing in this process depends on a Node version: every in-process request reaches the global dispatcher.
+-- **Telemetry is direct by design** — the OTLP exporter posts through `node:http`, which no global dispatcher reaches. Routing it would need either an `http.Agent` whose `proxyEnv` option post-dates the lowest supported Node, or the SDK's `fetch` transport, which has no compression while the shipped profile enables gzip. Telemetry is the one channel whose loss costs the user nothing, so it stays where it was; `DSH_TELEMETRY_MODE=DISABLED` turns it off.
+-- **Model-authored programs receive no proxy settings** — the Node ptc-runtime process and workflow worker do not inherit a proxy URL that may contain `user:password`. Their direct requests need their own configuration and remain subject to the execution sandbox.
+-- **The regression gate sees source, not dependencies** — `verify-no-bare-dispatcher` parses `packages/*/*/src` and `apps/*/src`; tests, scripts, and the internals of a third-party SDK are outside it. That is why every outbound call site also carries an `egress.spec.ts`.
+-
+-<a id="dev-note"></a>
+-### Dev Note
+-
+-<details>
+-<summary>Working context for maintainers — click to expand</summary>
+-
+-Reaching Node's built-in `fetch` from a userland undici relies on both writing the legacy `Symbol.for('undici.globalDispatcher.1')` slot. That is an implicit cross-version coupling, not a contract — see [corepack#834](https://github.com/nodejs/corepack/issues/834) for it breaking. `tests/install.spec.ts` asserts a real request reaches a loopback proxy, so a version bump that breaks the coupling fails there rather than in the field.
+-
+-</details>
++| src/policy.ts | Existing explicit environment resolution and NO_PROXY matching |
++| src/install.ts | Dispatcher lifecycle, per-request selection and source facts |
++| src/windows-native.ts | Read current-user Windows settings; WinHTTP PAC evaluation and allocation cleanup |
++| src/windows.ts | Windows proxy/bypass interpretation and owned worker lifetime |
++| src/windows-worker.ts | Blocking OS automatic-proxy evaluation away from the Host event loop |
+ 
+-**Runtime invariant:** No companion is published. The one piece of mutable state here — the active policy — is asserted against the dispatcher it installs by unit tests that dispose the registration and observe a real loopback proxy.
++The integration checks exercise actual dispatch through local proxies, same-process setting changes, captured-route stability, explicit overrides, loopback, public-web protections, native PAC and cancellation. They inject settings snapshots instead of changing the current user's registry. Exact packaged-runtime verification belongs to the consuming distribution; source compilation alone does not establish that a running Host loaded the change.
+diff --git a/packages/util/http-proxy/README.zh.md b/packages/util/http-proxy/README.zh.md
+index 70b8142..979163f 100644
+--- a/packages/util/http-proxy/README.zh.md
++++ b/packages/util/http-proxy/README.zh.md
+@@ -1,5 +1,5 @@
+ ---
+-description: "Harness 的出站 HTTP 代理支持：从启动环境解析出的一份策略，如何覆盖到 Node fetch 本来会直连的每一个请求。"
++description: "DSH HTTP请求使用统一路线，继承显式环境配置或Windows系统设置。"
+ kind: "package-reference"
+ ---
+ 
+@@ -7,118 +7,28 @@ kind: "package-reference"
+ 
+ [English](README.md) | 中文
+ 
+-## 概述
++本库安装Node fetch、模型适配器、网页搜索及HTTP调用共用的进程dispatcher，不提供agent工具，也不编辑网络设置。Windows下没有显式代理环境配置时，使用当前用户的系统设置；其他平台保留原有环境模式。
+ 
+-使用本包可为采用 Node 内置 `fetch` 的 Harness 请求应用一份出站 HTTP 代理策略，包括 LLM（大语言模型）、web 搜索与 HTTP MCP 流量。启动器只读取一次标准代理环境变量，普通 `fetch` 调用方无需额外引入或改动。loopback 流量保持直连；不受支持的代理 URL 会被报告，并针对受影响的协议跳过。公共辅助函数可让调用方路由采用自有代理设置的传输、准备子进程环境，或为隔离回放清除代理变量。
++## 选路与生命周期
+ 
+-## 目录
++启动器调用一次installProxyFromEnvironment。非空HTTP_PROXY、HTTPS_PROXY、ALL_PROXY或NO_PROXY（包括小写形式）显式选择原有环境策略，优先级和校验仍由启动器及policy模块负责；项目.env不能选择代理。
+ 
+-- [使用本包](#use-this-package)
+-- [理解实现](#understand-the-implementation)
+-- [进一步探索](#further-exploration)
+-- [模型体验](#model-experience)
+-- [已知限制与延期工作](#known-limitations-and-deferred-work)
+-- [开发备注](#dev-note)
++Windows系统模式中，每个新请求读取当前连接设置。手动HTTP/HTTPS代理、分协议地址及系统例外共用一个解析器。PAC/WPAD由专用worker调用WinHTTP，不阻塞Host事件循环。自动发现没有找到PAC时使用系统手动后备配置，显式PAC无效或无法下载时报告失败。系统变化影响后续请求，已选定的请求不换路，不需重启Host。
+ 
+------
++proxyRouteFor(url, signal)异步返回本次路线；代理结果同时携带已经选定的dispatcher。web-fetch-http等调用者必须await并使用该dispatcher，不能校验地址后再选一次路线。proxyConfiguration()提供实际来源，界面不重复解释配置。Loopback始终直连。
+ 
+-<a id="use-this-package"></a>
+-## 使用本包
++普通fetch不需要每个供应商分别配置代理，全局dispatcher使用同一解析器。失败请求不自动切到直连或其他代理。系统设置不写进进程环境，DSH子实例自行继承系统，避免固定旧端口；显式环境模式保留proxyEnvironmentForChild的原有语义。
+ 
+-无需挂载，也无需配置。`dsh` 启动器会在第一个插件加载之前，为每个 profile 解析并安装策略，因此导出了 `HTTPS_PROXY` 的用户在所有位置都会走代理。本包是库而非插件，因为传输策略每个进程只有一个答案：没有第二个实现可替换，也没有比进程更窄的作用域可赋予。
++## 范围与诊断
+ 
+-### 编写新的出站调用
++Houdini等宿主只消费实际来源和错误，不维护另一套代理档案或供应商/域名分流。API地址与凭据仍是服务配置，网络连通不证明鉴权、模型可用或原生搜索支持。
+ 
+-普通 `fetch()` 会走代理，任何使用 `globalThis.fetch` 的 SDK 也一样——MCP HTTP 传输与 pi-ai 提供方栈都使用它。应验证每个 SDK 的实际传输；例外见[已知限制与延后工作](#known-limitations-and-deferred-work)。
++Windows SOCKS-only明确报不支持。企业认证代理、私有证书和PAC多代理故障切换尚未完整验证。未实现其他平台原生系统代理。任意子程序、模型自写脚本及不使用该dispatcher的传输不属于保证范围，联网工具应使用Host原生能力；遥测原有直连行为保持。
+ 
+-| 你要写的东西 | 使用 |
+-|---|---|
+-| 普通请求，或最终落到 `globalThis.fetch` 的 SDK | 什么都不用——全局 dispatcher 已经在路由它 |
+-| 需要按“这次请求是否走代理”分支的调用 | `proxyRouteFor(url)` |
+-| 接受自有代理 URL 的 SDK | `proxyRouteFor(url)`，把 `route.proxy` 传进去 |
+-| 由你自己构造环境的 spawn | 把 `proxyEnvironmentForChild()` 应用到该 spawn（`undefined` 表示删除） |
+-| 必须连到自带 fixture（测试前置数据）服务器的 harness | 把 `clearedProxyEnv()` 应用到该 spawn |
++公开网页直连保留DNS校验和地址固定，代理路线由用户配置的代理解析目标，显式非公网IP字面地址仍被网页抓取器拒绝。Fake-IP/TUN环境下，应用直连不等于物理网络直连。
+ 
+-`proxyRouteFor` 给出的不只是答案，还有该答案所假定的传输：走代理的那一支携带着此刻正按该策略路由的 dispatcher。若调用方先读策略、再自建传输，卸载就可能落在两次读取之间，把请求发往其分支从未放行的去处。
++## 源码与验证
+ 
+-构造 `new Agent(...)` 再作为 `dispatcher` 传入会覆盖全局 dispatcher，从而静默绕开代理。`verify-no-bare-dispatcher` 会在本包之外拒绝该写法。有一处调用点确实自有传输——`web-fetch-http` 会把请求钉在它已校验过的地址上，而这是进程级 dispatcher 无法承载的单次请求状态——它在该行用 `proxy-exempt:` 注释说明。
++policy.ts维护显式环境规则；install.ts维护dispatcher与来源事实；windows-native.ts读取系统设置并释放原生资源；windows.ts解释系统返回并管理worker；windows-worker.ts隔离可能阻塞的自动代理解析。
+ 
+-该门禁看不进 SDK 内部，因此每个出网点都配有 `egress.spec.ts`，通过假代理驱动实际传输并检查观察到的路由。每个新的出网点必须包含该传输测试。遥测断言其直连例外。这些测试可发现调用点不变但依赖变更改变路由的情况。
+-
+-### 策略读取哪些值
+-
+-`http_proxy`、`https_proxy`、`no_proxy` 与 `all_proxy`，小写优先、大写兜底，空值视为未设置。`ALL_PROXY` 为两种协议兜底，HTTPS 最后回退到 HTTP 代理——其中第一条 Node 与 undici 都不会自行推导。取值来自启动器的快照：先看导出的环境变量，再看 `$DSH_HOME/.env`。项目自己的 `.env` 不能携带这些名字——那个文件随 clone 一起到来，启动器宁可拒绝启动，也不让一个仓库决定 Harness 把流量发往何处。
+-
+-loopback 始终被绕过——`localhost`、整个 `127.0.0.0/8` 段、`::1`、`0.0.0.0`，以及它们的 IPv4 映射写法。否则 Harness 自己的 Web UI、Connection 传输以及每一个本地测试服务器都会经由代理并形成回环。发布出去的绕过列表只包含读取环境的消费者能匹配的四个字面量条目；`proxyForUrl` 自行识别整个网段，因为列表条目无法表达一个范围。
+-
+-### 失败处理
+-
+-本包无法使用的代理值——SOCKS 或 PAC URL、无法解析的字符串、不受支持的协议——会被报告并跳过，该 scheme 转为直连。该变量可能是用户为其他工具导出的，不应因此阻止 agent（智能体）启动。
+-
+------
+-
+-<a id="understand-the-implementation"></a>
+-## 理解实现
+-
+-### 设计理念
+-
+-**一次解析，一个匹配器。** `proxyForUrl()` 与已安装的 dispatcher 绝不能对同一个 URL 给出不同答案，否则 `dsh-web-fetch-http` 会把 dispatcher 本打算隧道转发的连接固定到某个地址上。因此该 dispatcher 是一个 `Agent`，其按 origin 调用的 `factory` 自身调用 `proxyForUrl()`，不存在可能与第一个解析器产生漂移的第二个解析器。undici 的 `EnvHttpProxyAgent` 在此无法胜任：没有 `HTTPS_PROXY` 时它让 `https:` 复用 HTTP 代理，于是本包在拒绝用户为该 scheme 指定的 URL 后本应保持直连的 scheme 仍会被隧道转发。
+-
+-**子进程继承用户自己的值，以及用户未设置部分的解析结果。** 用户以任一大小写指定过的 scheme，会以他们书写的形式原样传给子进程，因此用户为 `curl` 设置的 SOCKS 代理绝不会被替换成为其他 scheme 指定的 HTTP 代理。两种大小写都未指定的 scheme 则携带解析值，否则子进程的路由会与父进程分歧：Node 的 `NODE_USE_ENV_PROXY` 不读 `ALL_PROXY`。绕过列表始终采用解析结果——它只会追加 loopback 条目，用户写下的内容不会丢失。让父子进程只有一个路由答案的代价是：`curl` 也会看到本包由 HTTP 代理推导出的 `https:` 代理。有一处例外是为了保护子进程自身：当子进程收到的某个值是本包拒绝过的——比如为 `curl` 保留的 SOCKS URL——就不再设置 `NODE_USE_ENV_PROXY`，因为 Node 在该标志下会在运行程序之前先解析 `HTTP_PROXY` 与 `HTTPS_PROXY`，遇到这类值直接退出。此时子 Node 直连（本进程已为该协议如此报告），而不是根本起不来。
+-
+-### 源码地图
+-
+-| 文件 | 承载 |
+-|---|---|
+-| `src/policy.ts` | 解析与绕过匹配；诊断只点名变量，从不带出它的值。不引入任何传输实现，因此在没有 undici 的环境中仍可加载。 |
+-| `src/install.ts` | 全局 dispatcher、生效策略记录、路由与子进程环境。动态引入 undici。 |
+-| `src/index.ts` | 本包的对外接口：四个函数与一个类型。 |
+-
+-### 绕过匹配
+-
+-一个条目写的是主机名，它连同其下所有子域名一起匹配：`NO_PROXY=example.com` 也会放行 `api.example.com`。前缀 `.` 或 `*.` 可以写，含义相同。条目可带 `:port`，`*` 则放行全部。带方括号与裸写的 IPv6 字面量都能匹配——裸写的 `::1` **不会**被读成主机 `:` 端口 `1`，而 undici 自带的匹配器正是这样出错的，这也是解析结果中同时携带 `::1` 与 `[::1]` 的原因。CIDR 不参与匹配：操作系统的绕过列表常含 `10.0.0.0/8`，必须改写成后缀形式。
+-
+------
+-
+-<a id="further-exploration"></a>
+-## 进一步探索
+-
+-- [网络代理指南](../../../docs/user/guide/network-proxy.zh.md)——需要导出什么，以及为什么浏览器走代理而终端不走。
+-- [`dsh-web-fetch-http`](../../web/web-fetch-http/README.zh.md)——唯一一个安全规则会因代理而改变的消费方。
+-
+------
+-
+-<a id="model-experience"></a>
+-## 模型体验
+-
+-无。本包只承担传输策略：它改变字节如何抵达网络，不注册任何提示词、schema 或结果文本。
+-
+-#### KV Cache 影响
+-
+-不会直接失效：本包不贡献任何请求 token，也从不改变请求前缀，因此提供方缓存复用不受影响。
+-
+-## 已知限制与延期工作
+-
+-<a id="known-limitations-and-deferred-work"></a>
+-
+-
+-这些限制界定了本包不适用的场景，属于当前的包级约束。
+-
+-- **不支持 SOCKS、PAC 或操作系统代理探测**——只接受来自环境的 `http(s)://` 代理 URL。不会读取 macOS 或 Windows 的系统代理设置，因此仅在代理软件里拨了开关的用户仍须导出环境变量；SOCKS URL 会被报告，且该协议保持直连，不会借用另一协议的代理。
+-- **不支持自定义证书颁发机构**——做 TLS 拦截的企业代理需要在启动前为进程设置 `NODE_EXTRA_CA_CERTS`，本包既不设置也不校验它。
+-- **spawn 出的子进程只在足够新的运行时上遵循策略，且仅当它继承的每个值都是 Node 接受的**——它通过 Node 的 `NODE_USE_ENV_PROXY` 读取已发布的环境（22.21+、24+），而 engines 范围允许 22.19 与 22.20，在这两个版本上这样的子进程保持直连。若用户环境里还有 SOCKS 或其他被拒的代理，所有子 Node 都保持直连：不设置该标志，子进程才起得来。子进程还会按 Node 自己的 `NO_PROXY` 规则匹配绕过条目，其分隔符与 IPv4 区间处理与本包不同。本进程内不依赖任何 Node 版本：每一次进程内请求都会落到全局 dispatcher。
+-- **遥测按设计直连**——OTLP 导出器通过 `node:http` 投递，全局 dispatcher 触及不到。要让它走代理，要么依赖 `http.Agent` 的 `proxyEnv`，而该选项晚于本项目支持的最低 Node 版本；要么改用 SDK 的 `fetch` 传输，但它没有压缩能力，而随附配置启用了 gzip。遥测是唯一一条丢失后不会让用户付出任何代价的通道，因此维持原状；`DSH_TELEMETRY_MODE=DISABLED` 可关闭它。
+-- **模型编写的程序不接收代理配置**——Node ptc-runtime 进程与 workflow worker 不继承可能含有 `user:password` 的代理 URL。其直接请求需要自行配置，并继续受到执行沙箱的约束。
+-- **防回归门禁只看源码，看不到依赖内部**——`verify-no-bare-dispatcher` 解析 `packages/*/*/src` 与 `apps/*/src`；测试、脚本以及第三方 SDK 的内部都在其之外。这正是每个出网点还各配一份 `egress.spec.ts` 的原因。
+-
+-<a id="dev-note"></a>
+-### 开发备注
+-
+-<details>
+-<summary>面向维护者的工作上下文——点击展开</summary>
+-
+-userland undici 能触及 Node 内置的 `fetch`，依赖的是两者都会写入 legacy 的 `Symbol.for('undici.globalDispatcher.1')` 槽位。那是跨版本的隐式耦合，不是约定——参见 [corepack#834](https://github.com/nodejs/corepack/issues/834) 中它失效的实例。`tests/install.spec.ts` 断言真实请求会抵达一个 loopback 代理，因此破坏该耦合的版本升级会在那里失败，而不是流到线上。
+-
+-</details>
+-
+-**运行时不变式：** 不发布伴生入口。本包唯一的可变状态——生效中的策略——由单元测试对照它所安装的 dispatcher 断言：测试会对该注册执行 dispose（资源释放）并观察一个真实的 loopback 代理。
++集成检查以真实本地代理验证同进程切换、已选路线保持、显式覆盖、loopback、网页保护、原生PAC和取消。设置快照注入只用于测试，不修改当前用户注册表。精确运行包资格由消费方验证，源码编译不代表正在运行的Host已经加载。
+diff --git a/packages/util/http-proxy/package.json b/packages/util/http-proxy/package.json
+index 2275e12..a43777f 100644
+--- a/packages/util/http-proxy/package.json
++++ b/packages/util/http-proxy/package.json
+@@ -23,6 +23,8 @@
+   },
+   "files": [
+     "lib/index.js",
++    "lib/windows-worker.js",
++    "lib/types-*.js",
+     "lib/types/**/*.d.ts"
+   ],
+   "license": "MIT",
+@@ -30,6 +32,7 @@
+     "@deepseek-ai/cordis": "workspace:~"
+   },
+   "dependencies": {
++    "koffi": "3.1.1",
+     "undici": "^8.10.0"
+   },
+   "devDependencies": {
+diff --git a/packages/util/http-proxy/src/index.ts b/packages/util/http-proxy/src/index.ts
+index f12de6f..ec34a03 100644
+--- a/packages/util/http-proxy/src/index.ts
++++ b/packages/util/http-proxy/src/index.ts
+@@ -1,16 +1,5 @@
+-/**
+- * Outbound HTTP proxy support for DeepSeek Harness.
+- *
+- * Node's built-in `fetch` ignores `HTTP_PROXY` and friends, so every harness request would connect
+- * directly no matter what the user exported. The launcher resolves one policy from the launch
+- * environment and installs it as undici's global dispatcher, which is what `fetch` resolves — so
+- * LLM adapters, web search, MCP over HTTP, and telemetry are covered without touching their code.
+- *
+- * This is a library, not a plugin: transport policy has one answer per process, so there is nothing
+- * for a composition to mount, swap, or scope.
+- *
+- * Four functions, one per way a caller needs the policy — install it, ask how to send one request,
+- * build a child's environment, and strip the ambient one for a replay.
++/** Process-wide outbound HTTP routing. Explicit environment settings override Windows system
++ * inheritance; all supported Host consumers share the same per-request decision.
+  * @module @deepseek-ai/dsh-http-proxy
+  */
+ 
+@@ -19,5 +8,7 @@ export {
+   installProxyFromEnvironment,
+   proxyEnvironmentForChild,
+   proxyRouteFor,
++  proxyConfiguration,
+   type ProxyRoute,
+ } from './install.ts'
++export type { SystemProxySource } from './windows.ts'
+diff --git a/packages/util/http-proxy/src/install.ts b/packages/util/http-proxy/src/install.ts
+index b3aacad..be8aa0b 100644
+--- a/packages/util/http-proxy/src/install.ts
++++ b/packages/util/http-proxy/src/install.ts
+@@ -8,6 +8,7 @@
+  */
+ 
+ import type { Dispatcher, Pool } from 'undici'
++import type { SystemProxySource } from './windows.ts'
+ import {
+   isSupportedProxyUrl,
+   POLICY_ENV_NAMES,
+@@ -36,6 +37,8 @@ let inheritedProxyEnv: Readonly<Record<string, string | undefined>> | undefined
+ 
+ /** The dispatcher installed with {@link active}, so a route can hand back the one already routing. */
+ let installed: Dispatcher | undefined
++let environmentSelected = false
++let systemRouting: { source: SystemProxySource; route(url: URL, signal?: AbortSignal): Promise<ProxyRoute> } | undefined
+ 
+ /**
+  * How this process must send one request.
+@@ -59,7 +62,8 @@ const DIRECT_ROUTE: ProxyRoute = { proxied: false }
+  * @param url - the request URL.
+  * @returns the proxied route with its proxy URL and dispatcher, or the direct route.
+  */
+-export function proxyRouteFor(url: URL): ProxyRoute {
++export async function proxyRouteFor(url: URL, signal?: AbortSignal): Promise<ProxyRoute> {
++  if (systemRouting) return systemRouting.route(url, signal)
+   const policy = active
+   const dispatcher = installed
+   if (policy === undefined || dispatcher === undefined) return DIRECT_ROUTE
+@@ -67,6 +71,52 @@ export function proxyRouteFor(url: URL): ProxyRoute {
+   return proxy === undefined ? DIRECT_ROUTE : { proxied: true, proxy, dispatcher }
+ }
+ 
++/** Read the active transport's source without reconstructing its decision in a UI. */
++export function proxyConfiguration(): { source: string; manualProxy?: boolean; autoConfig?: boolean; autoDetect?: boolean } {
++  return systemRouting?.source.describe() ?? { source: environmentSelected ? 'environment' : 'direct' }
++}
++
++/** One decision is captured per request; subsequent OS changes affect only later requests. */
++async function installSystemProxy(source: SystemProxySource): Promise<() => Promise<void>> {
++  const { Agent, ProxyAgent, getGlobalDispatcher, setGlobalDispatcher } = await import('undici')
++  const previous = getGlobalDispatcher(), previousSystem = systemRouting, previousPolicy = active
++  const restoreEnv = inheritedProxyEnv === undefined ? undefined : writeProxyEnv(inheritedProxyEnv)
++  const direct = new Agent()
++  const proxies = new Map<string, Dispatcher>()
++  let closed = false
++  const route = async (url: URL, signal?: AbortSignal): Promise<ProxyRoute> => {
++    if (closed) throw new Error('System proxy transport is closed')
++    const proxy = await source.resolve(url, signal)
++    if (closed) throw new Error('System proxy transport is closed')
++    if (!proxy) return DIRECT_ROUTE
++    let dispatcher = proxies.get(proxy)
++    if (!dispatcher) { dispatcher = new ProxyAgent({ uri: proxy }); proxies.set(proxy, dispatcher) }
++    return { proxied: true, proxy, dispatcher }
++  }
++  const dispatcher = direct.compose(dispatch => (options, handler) => {
++    // Dispatcher.path is a request target, not a relative URL: // stays a path.
++    const origin = new URL(String(options.origin)).origin
++    const url = new URL(origin + (options.path.startsWith('/') ? options.path : '/' + options.path))
++    void route(url).then(result => {
++      if (result.proxied) result.dispatcher.dispatch(options, handler)
++      else dispatch(options, handler)
++    }).catch(error => handler.onResponseError?.(null!, error))
++    return true
++  })
++  systemRouting = { source, route }
++  active = { source: 'none', noProxy: '' }
++  setGlobalDispatcher(dispatcher)
++  return async () => {
++    closed = true
++    setGlobalDispatcher(previous)
++    systemRouting = previousSystem
++    active = previousPolicy
++    restoreEnv?.()
++    await source.close()
++    await Promise.all([direct.close(), ...[...proxies.values()].map(agent => agent.close())])
++  }
++}
++
+ /**
+  * Publish a policy through the proxy environment variables, which is how the consumers that read an
+  * environment rather than a policy object — `node:http`'s `proxyEnv` and every spawned child — see
+@@ -171,7 +221,18 @@ async function createPolicyDispatcher(policy: ProxyPolicy): Promise<Dispatcher>
+  * @param policy - the resolved policy to install.
+  * @returns a disposer restoring the previous dispatcher, policy, and environment, then closing the agent.
+  */
+-async function installGlobalProxy(policy: ProxyPolicy): Promise<() => Promise<void>> {
++async function installGlobalProxy(policy: ProxyPolicy, explicit: boolean): Promise<() => Promise<void>> {
++  const previousSystem = systemRouting
++  const previousSelection = environmentSelected
++  environmentSelected = explicit
++  systemRouting = undefined
++  try {
++    const dispose = await installEnvironmentProxy(policy)
++    return async () => { systemRouting = previousSystem; environmentSelected = previousSelection; await dispose() }
++  } catch (error) { systemRouting = previousSystem; environmentSelected = previousSelection; throw error }
++}
++
++async function installEnvironmentProxy(policy: ProxyPolicy): Promise<() => Promise<void>> {
+   const previousPolicy = active
+   if (policy.source === 'none') {
+     // A direct policy mounted over an installed one must actually stop proxying. Recording the policy
+@@ -260,6 +321,8 @@ async function installGlobalProxy(policy: ProxyPolicy): Promise<() => Promise<vo
+  *   object when no proxy is active.
+  */
+ export function proxyEnvironmentForChild(): Readonly<Record<string, string | undefined>> {
++  // Do not turn an OS setting into a fixed environment override in a descendant DSH.
++  if (systemRouting) return {}
+   const policy = active
+   const inherited = inheritedProxyEnv
+   if (policy === undefined || policy.source === 'none' || inherited === undefined) return {}
+@@ -296,10 +359,16 @@ export function proxyEnvironmentForChild(): Readonly<Record<string, string | und
+ export async function installProxyFromEnvironment(
+   env: EnvLookup,
+   report: (message: string) => void,
++  options: { systemProxy?: SystemProxySource } = {},
+ ): Promise<() => Promise<void>> {
++  const explicit = PROXY_ENV_NAMES.some(name => Boolean(env.get(name)?.value.trim()))
++  if (!explicit && (process.platform === 'win32' || options.systemProxy)) {
++    const source = options.systemProxy ?? (await import('./windows.ts')).createWindowsProxySource()
++    return await installSystemProxy(source)
++  }
+   const { policy, diagnostics } = resolveProxyPolicy(env)
+   for (const diagnostic of diagnostics) report(diagnostic.message)
+-  return await installGlobalProxy(policy)
++  return await installGlobalProxy(policy, explicit)
+ }
+ 
+ /**
+diff --git a/packages/util/http-proxy/src/windows-native.ts b/packages/util/http-proxy/src/windows-native.ts
+new file mode 100644
+index 0000000..6c85fd0
+--- /dev/null
++++ b/packages/util/http-proxy/src/windows-native.ts
+@@ -0,0 +1,65 @@
++/** Native Windows connection settings. No registry writes or proxy configuration of our own. */
++import koffi from 'koffi'
++
++const configType = koffi.struct({ autoDetect: 'int', autoConfigUrl: 'void *', proxy: 'void *', bypass: 'void *' })
++const infoType = koffi.struct({ accessType: 'uint32', proxy: 'void *', bypass: 'void *' })
++const optionsType = koffi.struct({ flags: 'uint32', detectFlags: 'uint32', autoConfigUrl: 'str16', reserved: 'void *', reservedFlags: 'uint32', autoLogon: 'int' })
++const winhttp = koffi.load('winhttp.dll')
++const kernel = koffi.load('kernel32.dll')
++const readConfig = winhttp.func('__stdcall', 'WinHttpGetIEProxyConfigForCurrentUser', 'int', [koffi.out(koffi.pointer(configType))])
++const open = winhttp.func('void * __stdcall WinHttpOpen(str16 agent, uint32 access, str16 proxy, str16 bypass, uint32 flags)')
++const close = winhttp.func('int __stdcall WinHttpCloseHandle(void *handle)')
++const timeouts = winhttp.func('int __stdcall WinHttpSetTimeouts(void *handle, int resolve, int connect, int send, int receive)')
++const resolve = winhttp.func('__stdcall', 'WinHttpGetProxyForUrl', 'int', ['void *', 'str16', koffi.pointer(optionsType), koffi.out(koffi.pointer(infoType))])
++const lastError = kernel.func('uint32 __stdcall GetLastError()')
++const free = kernel.func('void * __stdcall GlobalFree(void *memory)')
++
++type Pointer = unknown
++function text(pointer: Pointer): string {
++  return pointer == null ? '' : koffi.decode(pointer, 'char16_t', -1) as string
++}
++function release(...pointers: Pointer[]): void { for (const pointer of pointers) if (pointer != null) free(pointer) }
++
++export interface WindowsProxySettings {
++  autoDetect: boolean
++  autoConfigUrl: string
++  proxy: string
++  bypass: string
++}
++
++/** Read current-user Windows connection settings and free every OS allocation.
++ * @returns the current settings, with no retained native pointers.
++ */
++export function readWindowsProxySettings(): WindowsProxySettings {
++  const config: Record<string, unknown> = {}
++  if (!readConfig(config)) throw new Error(`Windows proxy settings unavailable (Win32 ${lastError()})`)
++  try {
++    return { autoDetect: Boolean(config.autoDetect), autoConfigUrl: text(config.autoConfigUrl), proxy: text(config.proxy), bypass: text(config.bypass) }
++  } finally { release(config.autoConfigUrl, config.proxy, config.bypass) }
++}
++
++/** Runs only in the owned worker: PAC/WPAD may perform blocking OS network operations.
++ * @param url - full request URL evaluated by Windows.
++ * @param config - settings captured for this request.
++ * @returns Windows' proxy or direct decision; discovery absence uses the configured manual fallback.
++ */
++export function resolveWindowsAutoProxy(url: string, config: WindowsProxySettings): { proxy: string; bypass: string; direct: boolean } {
++  const handle = open('DeepSeek Harness system proxy', 1, null, null, 0)
++  if (handle == null) throw new Error(`Windows proxy session failed (Win32 ${lastError()})`)
++  const info: Record<string, unknown> = {}
++  try {
++    timeouts(handle, 8000, 8000, 8000, 8000)
++    const ok = resolve(handle, url, {
++      flags: config.autoConfigUrl ? 2 : 1,
++      detectFlags: config.autoConfigUrl ? 0 : 3,
++      autoConfigUrl: config.autoConfigUrl || null, reserved: null, reservedFlags: 0, autoLogon: 0,
++    }, info)
++    if (!ok) {
++      const code = lastError()
++      // Automatic discovery finding no PAC is the normal OS fallback to manual settings.
++      if (!config.autoConfigUrl && code === 12180) return { proxy: config.proxy, bypass: config.bypass, direct: !config.proxy }
++      throw new Error(`Windows PAC/WPAD resolution failed (Win32 ${code}); system settings were not bypassed`)
++    }
++    return { proxy: text(info.proxy), bypass: text(info.bypass), direct: info.accessType === 1 }
++  } finally { release(info.proxy, info.bypass); close(handle) }
++}
+diff --git a/packages/util/http-proxy/src/windows-worker.ts b/packages/util/http-proxy/src/windows-worker.ts
+new file mode 100644
+index 0000000..5724149
+--- /dev/null
++++ b/packages/util/http-proxy/src/windows-worker.ts
+@@ -0,0 +1,8 @@
++/** OS PAC evaluation stays off the Host event loop, including GetLastError on the calling thread. */
++import { parentPort } from 'node:worker_threads'
++import { resolveWindowsAutoProxy } from './windows-native.ts'
++
++parentPort!.on('message', ({ id, url, settings }) => {
++  try { parentPort!.postMessage({ id, result: resolveWindowsAutoProxy(url, settings) }) }
++  catch (error) { parentPort!.postMessage({ id, error: error instanceof Error ? error.message : String(error) }) }
++})
+diff --git a/packages/util/http-proxy/src/windows.ts b/packages/util/http-proxy/src/windows.ts
+new file mode 100644
+index 0000000..0676d11
+--- /dev/null
++++ b/packages/util/http-proxy/src/windows.ts
+@@ -0,0 +1,102 @@
++/** Interpret Windows' own proxy decision; this module stores no user routing rules. */
++import { isIP } from 'node:net'
++import { Worker } from 'node:worker_threads'
++import { isLoopbackHost, isSupportedProxyUrl } from './policy.ts'
++import { readWindowsProxySettings, type WindowsProxySettings } from './windows-native.ts'
++
++export interface SystemProxySource {
++  resolve(url: URL, signal?: AbortSignal): Promise<string | undefined>
++  describe(): { source: 'windows'; manualProxy: boolean; autoConfig: boolean; autoDetect: boolean }
++  close(): Promise<void>
++}
++
++/** Windows bypass patterns differ from NO_PROXY: * is a wildcard, and <local> names unqualified hosts.
++ * @param list - native Windows bypass list.
++ * @param url - request destination.
++ * @returns whether Windows' list exempts this destination.
++ */
++export function windowsBypasses(list: string, url: URL): boolean {
++  if (isLoopbackHost(url.hostname)) return true
++  const host = url.hostname.replace(/^\[|\]$/g, '')
++  const port = url.port || (url.protocol === 'https:' ? '443' : '80')
++  for (const item of list.split(/[;\s]+/).filter(Boolean)) {
++    if (item.toLowerCase() === '<local>') { if (!host.includes('.') && !isIP(host)) return true; continue }
++    const pattern = new RegExp('^' + item.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i')
++    if ([host, `${host}:${port}`, url.origin].some(value => pattern.test(value))) return true
++  }
++  return false
++}
++
++/** Choose the first applicable HTTP proxy without retrying a request through other entries.
++ * @param url - request destination.
++ * @param proxyList - proxy list returned by Windows.
++ * @param bypass - accompanying Windows bypass list.
++ * @returns proxy URL, or undefined for a direct decision.
++ */
++export function windowsProxyFor(url: URL, proxyList: string, bypass: string): string | undefined {
++  if (windowsBypasses(bypass, url)) return undefined
++  const candidates = proxyList.split(/[;\s]+/).filter(Boolean)
++  const scheme = url.protocol.slice(0, -1)
++  const specific = candidates.find(value => value.toLowerCase().startsWith(scheme + '='))
++  const selected = specific?.slice(scheme.length + 1) ?? candidates.find(value => !value.includes('='))
++  if (!selected) {
++    if (candidates.some(value => /^socks=/i.test(value))) throw new Error('Windows selected a SOCKS proxy; this DSH HTTP transport does not support it')
++    return undefined
++  }
++  const proxy = selected.includes('://') ? selected : 'http://' + selected
++  if (!isSupportedProxyUrl(proxy)) throw new Error('Windows selected an unsupported proxy scheme; system settings were not bypassed')
++  return proxy
++}
++
++/** Settings are read per request, so closing a proxy application does not leave a pinned port.
++ * @param readSettings - native settings reader; tests supply isolated snapshots without registry writes.
++ * @returns the owned Windows resolver, which must be closed with its transport.
++ */
++export function createWindowsProxySource(readSettings = readWindowsProxySettings): SystemProxySource {
++  let worker: Worker | undefined
++  let nextId = 0
++  let closed = false
++  const pending = new Map<number, { resolve(value: AutoResult): void; reject(error: Error): void }>()
++  type AutoResult = { proxy: string; bypass: string; direct: boolean }
++  function fail(error: Error): void { for (const item of pending.values()) item.reject(error); pending.clear() }
++  function auto(url: URL, settings: WindowsProxySettings, signal?: AbortSignal): Promise<AutoResult> {
++    if (closed) return Promise.reject(new Error('System proxy resolver is closed'))
++    signal?.throwIfAborted()
++    if (!worker) {
++      worker = new Worker(new URL('./windows-worker.js', import.meta.url))
++      worker.on('message', ({ id, result, error }) => {
++        const item = pending.get(id); pending.delete(id)
++        if (error) item?.reject(new Error(error)); else item?.resolve(result)
++        if (!pending.size) worker?.unref()
++      })
++      worker.on('error', fail)
++      worker.on('exit', code => { if (pending.size) fail(new Error(`System proxy worker exited (${code})`)); worker = undefined })
++      worker.unref()
++    }
++    const id = ++nextId
++    return new Promise((resolve, reject) => {
++      const abort = () => { pending.delete(id); if (!pending.size) worker?.unref(); reject(signal!.reason) }
++      const finish = () => signal?.removeEventListener('abort', abort)
++      pending.set(id, { resolve(value) { finish(); resolve(value) }, reject(error) { finish(); reject(error) } })
++      worker!.ref()
++      signal?.addEventListener('abort', abort, { once: true })
++      worker!.postMessage({ id, url: url.href, settings })
++    })
++  }
++  return {
++    async resolve(url, signal) {
++      signal?.throwIfAborted()
++      if (isLoopbackHost(url.hostname)) return undefined
++      const settings = readSettings()
++      if (!settings.autoConfigUrl && !settings.autoDetect) return windowsProxyFor(url, settings.proxy, settings.bypass)
++      const result = await auto(url, settings, signal)
++      signal?.throwIfAborted()
++      return result.direct ? undefined : windowsProxyFor(url, result.proxy, result.bypass)
++    },
++    describe() {
++      const settings = readSettings()
++      return { source: 'windows', manualProxy: Boolean(settings.proxy), autoConfig: Boolean(settings.autoConfigUrl), autoDetect: settings.autoDetect }
++    },
++    async close() { closed = true; fail(new Error('System proxy resolver closed')); if (worker) await worker.terminate() },
++  }
++}
+diff --git a/packages/util/http-proxy/tests/install.spec.ts b/packages/util/http-proxy/tests/install.spec.ts
+index a717bec..4c6e998 100644
+--- a/packages/util/http-proxy/tests/install.spec.ts
++++ b/packages/util/http-proxy/tests/install.spec.ts
+@@ -163,10 +163,10 @@ describe('installProxyFromEnvironment', () => {
+     const beforeEnv = process.env.HTTP_PROXY
+     const { dispose } = await install(proxyAll())
+     expect(getGlobalDispatcher()).not.toBe(before)
+-    expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(true)
++    expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(true)
+     await dispose()
+     expect(getGlobalDispatcher()).toBe(before)
+-    expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(false)
++    expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(false)
+     expect(process.env.HTTP_PROXY).toBe(beforeEnv)
+     await expect((await fetch(originUrl)).text()).resolves.toBe('DIRECT')
+   })
+@@ -179,7 +179,7 @@ describe('installProxyFromEnvironment', () => {
+       expect(getGlobalDispatcher()).toBe(before)
+       expect(process.env.HTTP_PROXY).toBe('http://untouched.example')
+       expect(reported).toEqual([])
+-      expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
++      expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
+     } finally {
+       await dispose()
+       delete process.env.HTTP_PROXY
+@@ -209,7 +209,7 @@ describe('installProxyFromEnvironment', () => {
+ describe('proxyRouteFor', () => {
+   it('carries the dispatcher already routing, so a branch and its request agree', async () => {
+     const { dispose } = await install(proxyAll())
+-    const route = proxyRouteFor(new URL(proxyTarget))
++    const route = (await proxyRouteFor(new URL(proxyTarget)))
+     expect(route).toMatchObject({ proxied: true, proxy: proxyUrl })
+     if (!route.proxied) throw new Error('unreachable: asserted proxied above')
+     // One transport, not a copy: a caller that branched on this route sends its request through the
+@@ -227,17 +227,17 @@ describe('proxyRouteFor', () => {
+   it('is direct for a bypassed URL, and direct with nothing installed', async () => {
+     const { dispose } = await install(proxyAll('origin.test'))
+     try {
+-      expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
++      expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
+     } finally {
+       await dispose()
+     }
+-    expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
++    expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
+   })
+ 
+   it('is direct for a loopback URL under a policy that proxies everything', async () => {
+     const { dispose } = await install(proxyAll())
+     try {
+-      expect(proxyRouteFor(new URL(originUrl))).toEqual({ proxied: false })
++      expect((await proxyRouteFor(new URL(originUrl)))).toEqual({ proxied: false })
+     } finally {
+       await dispose()
+     }
+@@ -375,13 +375,13 @@ describe('installing over an existing installation', () => {
+         // launcher's agent keeps tunnelling. A direct hop needs a host that answers, so this one
+         // reaches the real origin rather than the name only the proxy can resolve.
+         await expect((await fetch(originUrl)).text()).resolves.toBe('DIRECT')
+-        expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
++        expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
+       } finally {
+         await off.dispose()
+       }
+       // Disposing the direct policy restores the proxy the launcher installed.
+       await expect((await fetch(proxyTarget)).text()).resolves.toBe('VIA-PROXY')
+-      expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(true)
++      expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(true)
+     } finally {
+       await outer.dispose()
+     }
+diff --git a/packages/web/tool-web/README.md b/packages/web/tool-web/README.md
+index c102023..031af03 100644
+--- a/packages/web/tool-web/README.md
++++ b/packages/web/tool-web/README.md
+@@ -266,3 +266,7 @@ This Dev Note is working context for maintainers: open questions and undecided d
+ Exposing `max_results` as a model argument instead of a config bound stays deferred; the seam Agent Note names it a later step. A model-facing bound would move cost control into the prompt, so the decision needs deployment experience first.
+ 
+ </details>
++
++## web_download
++
++When filesystem and sandbox-policy services are present, web_download saves a public resource to a new permitted path. It checks destination policy before requesting data and again at publication, preserves existing files, and reports the final URL, media type, byte count and SHA-256. Downloaded bytes remain untrusted data; use read_image to inspect an image.
+diff --git a/packages/web/tool-web/README.zh.md b/packages/web/tool-web/README.zh.md
+index eecc474..47e4fd7 100644
+--- a/packages/web/tool-web/README.zh.md
++++ b/packages/web/tool-web/README.zh.md
+@@ -266,3 +266,7 @@ schema 校验会在执行前拒绝缺失或非数组的 `queries` 字段以及
+ 把 `max_results` 作为模型参数而非配置上限公开仍被推迟；seam Agent Note 将其列为后续步骤。面向模型的上限会把成本控制移入提示词，因此该决定需要先有部署经验。
+ 
+ </details>
++
++## web_download
++
++文件系统和沙箱策略服务存在时，web_download 将公开资源保存到允许的新路径。请求前检查目标策略，发布时再次检查，保留已有文件，并返回最终 URL、媒体类型、字节数和 SHA-256。下载内容仍是不可信数据；图片使用 read_image 检查。
+diff --git a/packages/web/tool-web/package.json b/packages/web/tool-web/package.json
+index 70796d9..964c5f4 100644
+--- a/packages/web/tool-web/package.json
++++ b/packages/web/tool-web/package.json
+@@ -31,7 +31,10 @@
+     "@deepseek-ai/dsh-llm": "workspace:*",
+     "@deepseek-ai/dsh-system-prompt": "workspace:*",
+     "@deepseek-ai/dsh-tools": "workspace:*",
+-    "@deepseek-ai/dsh-web": "workspace:*"
++    "@deepseek-ai/dsh-web": "workspace:*",
++    "@deepseek-ai/dsh-fs": "workspace:*",
++    "@deepseek-ai/dsh-sandbox": "workspace:*",
++    "@deepseek-ai/dsh-sandbox-policy": "workspace:*"
+   },
+   "dependencies": {
+     "@deepseek-ai/dsh-util-values": "workspace:*",
+diff --git a/packages/web/tool-web/src/download.ts b/packages/web/tool-web/src/download.ts
+new file mode 100644
+index 0000000..8586942
+--- /dev/null
++++ b/packages/web/tool-web/src/download.ts
+@@ -0,0 +1,56 @@
++import {networkSchema} from './network.ts'
++/** Public-resource bytes to a new file through the calling session's filesystem. */
++import type {Context} from '@deepseek-ai/cordis'
++import {createHash} from 'node:crypto'
++import {defineTool} from '@deepseek-ai/dsh-tools'
++import {WebError} from '@deepseek-ai/dsh-web'
++import {FsError} from '@deepseek-ai/dsh-fs'
++import type {} from '@deepseek-ai/dsh-sandbox-policy'
++import {writableRoots} from '@deepseek-ai/dsh-sandbox'
++
++/** Register a file download that cannot overwrite or widen the session's file policy. */
++export function applyWebDownloadTool(ctx: Context, timeoutMs: number): void {
++  ctx.tools.register(defineTool({
++    name: 'web_download',
++    description: 'Download complete bytes from a public HTTP(S) URL to a new permitted file. Use this for reference images instead of web_fetch, which returns page text. Existing files are preserved. Downloaded content is untrusted data; read_image can inspect saved images.',
++    parameters: {
++      url: {type: 'string', required: true, description: 'Public resource URL discovered from a source page or supplied by the user.'},
++      path: {type: 'string', required: true, description: 'New destination, absolute or relative to the current workspace.'},
++      image: {type: 'boolean', description: 'Require an image content type. This does not replace decoding/visual inspection.'},
++    },
++    timeoutMs,
++    output: {
++      schema: {type: 'object', additionalProperties: false, properties: {
++        network: networkSchema,
++        path: {type:'string',required:true}, url:{type:'string',required:true},
++        mediaType:{type:'string',required:true}, bytes:{type:'integer',required:true}, sha256:{type:'string',required:true},
++      }},
++      render: (_args,value) => [{type:'text',text:JSON.stringify(value)}],
++    },
++    async execute(args, exec) {
++      if (!args.url.trim() || !args.path.trim()) throw new Error('url and path must be nonempty')
++      if (!exec.agent) throw new Error('download requires a calling session')
++      const policy = ctx.sandboxPolicy.resolve({session:exec.agent.session})
++      const target = await ctx.fs.resolve(args.path,{cwd:policy.workspaceRoot,signal:exec.signal})
++      if (policy.mode === 'read-only') throw new FsError('download destination is read-only; no request sent','FS_SANDBOX_DENIED')
++      if (policy.mode !== 'danger-full-access') {
++        let permitted = false
++        for (const directory of writableRoots(policy)) {
++          if (ctx.fs.contains(await ctx.fs.resolve(directory,{signal:exec.signal}),target)) permitted = true
++        }
++        if (!permitted) throw new FsError('download destination is outside the writable workspace; no request sent','FS_SANDBOX_DENIED')
++      }
++      if (await ctx.fs.stat(target,exec.signal)) throw new FsError('download destination already exists; choose a new path','FS_NOT_OBSERVED')
++      const resource = await ctx.web.download({url:args.url},exec.signal)
++      if (resource.statusCode < 200 || resource.statusCode >= 300) throw new WebError(`download returned HTTP ${resource.statusCode}; no file written`,'WEB_DOWNLOAD_HTTP')
++      if (!(resource.bytes instanceof Uint8Array) || resource.bytes.byteLength > 20*1024*1024) throw new WebError('download exceeds the 20 MiB tool limit','WEB_FETCH_TOO_LARGE')
++      if (args.image && !resource.mediaType.startsWith('image/')) throw new WebError(`expected an image, received ${resource.mediaType}; no file written`,'WEB_UNSUPPORTED_CONTENT_TYPE')
++      const written = await ctx.fs.writeBytes(target,resource.bytes,exec.signal,policy)
++      return {...(resource.network ? {network: resource.network.map(hop => ({...hop}))} : {}),path:ctx.fs.processPath(written.target),url:resource.url,mediaType:resource.mediaType,
++        bytes:resource.bytes.byteLength,sha256:createHash('sha256').update(resource.bytes).digest('hex')}
++    },
++    presentCall: args => ({card:'generic',title:args.url,rawInput:args.path,
++      content:[{type:'text',text:args.path}]}),
++    presentResult: (_args,result) => ({card:'generic',content:result.content.filter(block=>block.type==='text')}),
++  }))
++}
+diff --git a/packages/web/tool-web/src/fetch.ts b/packages/web/tool-web/src/fetch.ts
+index f4a644d..9d1078b 100644
+--- a/packages/web/tool-web/src/fetch.ts
++++ b/packages/web/tool-web/src/fetch.ts
+@@ -1,3 +1,4 @@
++import {networkSchema} from './network.ts'
+ /**
+  * The model-facing `web_fetch` tool. This module owns its schema, validation, and presentation;
+  * `ctx.web` owns retrieval. Timeout is deployment policy, not a model argument: config becomes
+@@ -390,7 +391,7 @@ export interface WebFetchMeta {
+  * @returns the URL, status code, and effective truncation flag.
+  */
+ export function fetchMetaFromValue(value: WebFetchResult, maxOutputChars: number): JsonValue {
+-  return { url: value.url, statusCode: value.statusCode, truncated: renderFetchOutput(value, maxOutputChars).truncated }
++  return { ...(value.network ? {network: value.network.map(hop => ({...hop}))} : {}), url: value.url, statusCode: value.statusCode, truncated: renderFetchOutput(value, maxOutputChars).truncated }
+ }
+ 
+ /**
+@@ -464,6 +465,7 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
+         type: 'object',
+         additionalProperties: false,
+         properties: {
++          network: networkSchema,
+           url: { type: 'string', required: true },
+           statusCode: { type: 'integer', required: true },
+           body: {
+@@ -507,6 +509,7 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
+         statusCode: result.statusCode,
+         body: { kind: result.body.kind, content: result.body.content },
+         truncated: result.truncated,
++        ...(result.network ? {network: result.network.map(hop => ({...hop}))} : {}),
+       }
+     },
+     presentCall: presentFetchCall,
+diff --git a/packages/web/tool-web/src/index.ts b/packages/web/tool-web/src/index.ts
+index 4145fde..e2220ad 100644
+--- a/packages/web/tool-web/src/index.ts
++++ b/packages/web/tool-web/src/index.ts
+@@ -11,6 +11,7 @@ import z from '@deepseek-ai/schemastery'
+ import type {} from '@deepseek-ai/dsh-web'
+ import { applyWebSearchTool, WEB_SEARCH_MAX_QUERIES, WEB_SEARCH_MAX_RESULTS } from './search.ts'
+ import { applyWebFetchTool } from './fetch.ts'
++import { applyWebDownloadTool } from './download.ts'
+ 
+ export { WEB_SEARCH_MAX_QUERIES, WEB_SEARCH_MAX_RESULTS, applyWebSearchTool, formatSearchOutput, presentSearchCall, presentSearchResult, searchMetaFromValue, searchMetaFromResult } from './search.ts'
+ export type { WebSearchMeta } from './search.ts'
+@@ -92,4 +93,5 @@ export function apply(ctx: Context, config: Config): void {
+     applyWebSearchTool(ctx, resolved.searchMaxResults, resolved.searchMaxQueries, resolved.searchTimeoutMs, resolved.fetch)
+   }
+   if (resolved.fetch) applyWebFetchTool(ctx, resolved.fetchTimeoutMs, resolved.fetchMaxOutputChars)
++  if (resolved.fetch) ctx.inject(['fs','sandboxPolicy'], downloadCtx => applyWebDownloadTool(downloadCtx, resolved.fetchTimeoutMs))
+ }
+diff --git a/packages/web/tool-web/src/network.ts b/packages/web/tool-web/src/network.ts
+new file mode 100644
+index 0000000..0bd458d
+--- /dev/null
++++ b/packages/web/tool-web/src/network.ts
+@@ -0,0 +1,8 @@
++/** Public-request transport observations, shared by fetch and download outputs. */
++export const networkSchema = {
++  type: 'array', items: {type: 'object', additionalProperties: false, properties: {
++    origin: {type: 'string', required: true},
++    route: {type: 'string', enum: ['direct', 'proxy'], required: true},
++    proxy: {type: 'string'}, statusCode: {type: 'integer', required: true},
++  }},
++} as const
+diff --git a/packages/web/web-fetch-http/README.md b/packages/web/web-fetch-http/README.md
+index a3e6da0..94969fa 100644
+--- a/packages/web/web-fetch-http/README.md
++++ b/packages/web/web-fetch-http/README.md
+@@ -144,3 +144,9 @@ These limits define when the provider is unsafe or a poor fit. They are current
+ None.
+ 
+ </details>
++
++## Complete resources
++
++download reuses the text fetcher’s URL, public-address, proxy, redirect and cancellation policy. Binary responses are returned only in full; both declared and streamed byte-limit overflow reject instead of returning a truncated file.
++
++Anonymous cross-origin public redirects are allowed with fresh route/address validation at every hop. Private literals, credentialed URLs, non-HTTP schemes, HTTPS downgrades and excess hops remain blocked. Results retain origin/route/proxy-origin/status observations; transport failures retain bounded machine error codes without copying credential-bearing messages.
+diff --git a/packages/web/web-fetch-http/README.zh.md b/packages/web/web-fetch-http/README.zh.md
+index d57d105..f84c9e8 100644
+--- a/packages/web/web-fetch-http/README.zh.md
++++ b/packages/web/web-fetch-http/README.zh.md
+@@ -144,3 +144,9 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
+ 无。
+ 
+ </details>
++
++## 完整资源
++
++download 复用文本抓取的 URL、公网地址、代理、重定向与取消策略。二进制响应只完整返回；声明长度或实际流超过上限均拒绝，不返回截断文件。
++
++匿名公开跨域跳转逐跳重新选择路线并检查地址；仍拒绝私网字面地址、URL凭据、非HTTP协议、HTTPS降级及过多跳转。回执记录来源、实际路线、代理来源和HTTP状态；失败保留有限的底层错误码，不复制可能含凭据的异常消息。
+diff --git a/packages/web/web-fetch-http/src/policy.ts b/packages/web/web-fetch-http/src/policy.ts
+index 3d2f98b..3f56890 100644
+--- a/packages/web/web-fetch-http/src/policy.ts
++++ b/packages/web/web-fetch-http/src/policy.ts
+@@ -54,9 +54,8 @@ export function validateFetchUrl(input: string): URL {
+ }
+ 
+ /**
+- * Two URLs are same-origin when scheme, hostname, and port match. A redirect
+- * that crosses origins is refused so each new origin requires a fresh tool call
+- * and public-address validation.
++ * Two URLs are same-origin when scheme, hostname, and port match.
++ * Redirect policy independently validates every public destination.
+  *
+  * @param a - one of the two URLs to compare.
+  * @param b - the other URL to compare.
+diff --git a/packages/web/web-fetch-http/src/provider.ts b/packages/web/web-fetch-http/src/provider.ts
+index a6ddbe0..63fed79 100644
+--- a/packages/web/web-fetch-http/src/provider.ts
++++ b/packages/web/web-fetch-http/src/provider.ts
+@@ -1,19 +1,19 @@
+ /**
+  * Safe HTTP(S) retrieval for `ctx.web`: validates and pins public IP destinations, follows
+- * only same-origin redirects, enforces time and size limits, classifies and decodes text,
++ * validated public redirects, enforces time and size limits, classifies and decodes text,
+  * and leaves presentation to `@deepseek-ai/dsh-tool-web`. Requests carry no browser cookies
+  * or ambient credentials.
+  * @module @deepseek-ai/dsh-web-fetch-http/provider
+  */
+ 
+ import { WebError } from '@deepseek-ai/dsh-web'
+-import type { WebFetchBody, WebFetchProvider, WebFetchRequest, WebFetchResult } from '@deepseek-ai/dsh-web'
++import type { WebNetworkHop, WebDownloadResult, WebFetchBody, WebFetchProvider, WebFetchRequest, WebFetchResult } from '@deepseek-ai/dsh-web'
+ import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
+ import type { Response } from 'undici'
+ import { proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
+ import { isNonPublicIpLiteral, publicHttpNetwork } from './network.ts'
+ import type { PublicAddress } from './network.ts'
+-import { classifyContentType, decoderForCharset, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
++import { classifyContentType, decoderForCharset, parseCharset, validateFetchUrl } from './policy.ts'
+ 
+ /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
+ export interface HttpFetchLimits {
+@@ -23,7 +23,7 @@ export interface HttpFetchLimits {
+   maxBodyChars: number
+   /** Default fetch timeout in milliseconds. */
+   timeoutMs: number
+-  /** Maximum number of (same-origin) redirect hops to follow. */
++  /** Maximum number of public redirect hops to follow. */
+   maxRedirects: number
+   /** `User-Agent` header sent on every request. */
+   userAgent: string
+@@ -59,17 +59,32 @@ export class HttpFetchProvider implements WebFetchProvider {
+     // One signal stops both the request and body read. The deadline's TimeoutReason later
+     // distinguishes this provider's timeout from caller or outer-deadline cancellation.
+     using d = deadline(signal, this.limits.timeoutMs, 'WEB_FETCH_TIMEOUT')
+-    return await this.followAndRead(request.url, d.signal)
++    return await this.followAndRead(request.url, d.signal, (response, url, signal) => this.readBody(response, url, signal))
+   }
+ 
+-  /** Follow same-origin redirects up to the hop cap, then read the final response. */
+-  private async followAndRead(initialUrl: string, signal: AbortSignal): Promise<WebFetchResult> {
++  /** Retrieve complete bytes with the same URL, redirect, proxy and size policy. */
++  async download(request: WebFetchRequest, signal?: AbortSignal): Promise<WebDownloadResult> {
++    if (signal?.aborted) throw new WebError('web download aborted', 'WEB_ABORTED')
++    using d = deadline(signal, this.limits.timeoutMs, 'WEB_FETCH_TIMEOUT')
++    return this.followAndRead(request.url, d.signal, async (response, url, signal) => {
++      const {bytes, truncatedByBytes} = await this.readCapped(response, signal)
++      if (truncatedByBytes) throw new WebError('download exceeds the byte limit; no partial file is returned', 'WEB_FETCH_TOO_LARGE')
++      return {url: url.href, statusCode: response.status,
++        mediaType: (response.headers.get('content-type') ?? 'application/octet-stream').split(';')[0]!.trim().toLowerCase(), bytes}
++    }, '*/*')
++  }
++
++  /** Follow validated public redirects up to the hop cap, then read the final response. */
++  private async followAndRead<T extends object>(initialUrl: string, signal: AbortSignal,
++    read: (response: Response, url: URL, signal: AbortSignal) => Promise<T>, accept?: string): Promise<T> {
+     let currentUrl = validateFetchUrl(initialUrl)
+     let redirectsFollowed = 0
++    const network: WebNetworkHop[] = []
+ 
+     for (;;) {
+-      const request = await this.requestOnce(currentUrl, signal)
++      const request = await this.requestOnce(currentUrl, signal, accept)
+       const { response } = request
++      network.push({...request.network, statusCode: response.status})
+       try {
+         if (isRedirectStatus(response.status)) {
+           // Enforce the redirect budget before resolving or validating the next hop.
+@@ -91,9 +106,9 @@ export class HttpFetchProvider implements WebFetchProvider {
+           let validatedTarget: URL
+           try {
+             validatedTarget = validateFetchUrl(target.toString())
+-            if (!isSameOrigin(validatedTarget, currentUrl)) {
++            if (currentUrl.protocol === 'https:' && validatedTarget.protocol === 'http:') {
+               throw new WebError(
+-                `cross-origin redirect to ${validatedTarget.origin} is not followed automatically; retry against that URL directly`,
++                'HTTPS to HTTP redirect is not allowed',
+                 'WEB_REDIRECT_BLOCKED',
+               )
+             }
+@@ -107,19 +122,27 @@ export class HttpFetchProvider implements WebFetchProvider {
+           continue
+         }
+ 
+-        return await this.readBody(response, currentUrl, signal)
++        return {...await read(response, currentUrl, signal), network}
++      } catch (error) {
++        if (error instanceof WebError && error.code === 'WEB_PROVIDER_ERROR') {
++          const hop = request.network
++          throw new WebError(`${error.message} (${hop.origin} via ${hop.route}${hop.proxy ? ' ' + hop.proxy : ''})`, error.code, {cause:error})
++        }
++        throw error
+       } finally {
+         await request.close()
+       }
+     }
+   }
+ 
+-  private async requestOnce(url: URL, signal: AbortSignal) {
++  private async requestOnce(url: URL, signal: AbortSignal, accept?: string) {
+     const headers = {
+       'user-agent': this.limits.userAgent,
+-      'accept': 'text/html,application/xhtml+xml,text/*;q=0.9,application/json;q=0.8',
++      'accept': accept ?? 'text/html,application/xhtml+xml,text/*;q=0.9,application/json;q=0.8',
+     }
++    let routeDescription = `${url.origin} via unresolved system route`
+     try {
++      if (isNonPublicIpLiteral(url.hostname)) throw new WebError('URL resolves to a non-public IP literal', 'WEB_BLOCKED_URL')
+       // A proxied hop skips public-address resolution and pinning: the proxy performs the origin's
+       // DNS, so there is no local address to validate, and pinning one would connect directly and
+       // bypass the proxy. A hop the policy bypasses — every loopback and every `NO_PROXY` entry —
+@@ -131,15 +154,19 @@ export class HttpFetchProvider implements WebFetchProvider {
+       // An IP literal the address checks would refuse never takes it. The proxy would resolve
+       // nothing — the address is already stated — so the shortcut would spend the checks for
+       // nothing and let a proxy on this machine reach the very service they keep out of reach.
+-      const route = proxyRouteFor(url)
+-      if (route.proxied && !isNonPublicIpLiteral(url.hostname)) {
+-        return await publicHttpNetwork.requestVia(route.dispatcher, url, headers, signal)
++      const route = await proxyRouteFor(url, signal)
++      const network = route.proxied
++        ? {origin: url.origin, route: 'proxy' as const, proxy: new URL(route.proxy).origin}
++        : {origin: url.origin, route: 'direct' as const}
++      routeDescription = `${network.origin} via ${network.route}${network.proxy ? ' ' + network.proxy : ''}`
++      if (route.proxied) {
++        return {...await publicHttpNetwork.requestVia(route.dispatcher, url, headers, signal), network}
+       }
+       const addresses = await this.resolveAddresses(url.hostname, signal)
+-      return await publicHttpNetwork.request(url, addresses, headers, signal)
++      return {...await publicHttpNetwork.request(url, addresses, headers, signal), network}
+     } catch (error: unknown) {
+       if (error instanceof WebError) throw error
+-      throw translateAbortOrNetwork(error, signal)
++      throw translateAbortOrNetwork(error, signal, routeDescription)
+     }
+   }
+ 
+@@ -249,7 +276,7 @@ function resolveRedirect(location: string, base: URL): URL {
+     return new URL(location, base)
+   } catch (error: unknown) {
+     /* v8 ignore next 2 -- URL resolution against a valid absolute base effectively never throws; defensive guard. */
+-    throw new WebError(`invalid redirect Location "${location}"`, 'WEB_PROVIDER_ERROR', { cause: error })
++    throw new WebError('invalid redirect Location', 'WEB_PROVIDER_ERROR', { cause: error })
+   }
+ }
+ 
+@@ -263,9 +290,24 @@ function resolveRedirect(location: string, base: URL): URL {
+  * nesting — is `WEB_ABORTED`; a throw with the signal NOT aborted is a
+  * transport/network failure (`WEB_PROVIDER_ERROR`).
+  */
+-function translateAbortOrNetwork(error: unknown, signal: AbortSignal): WebError {
++function translateAbortOrNetwork(error: unknown, signal: AbortSignal, route?: string): WebError {
+   const timeout = timeoutOf(signal, 'WEB_FETCH_TIMEOUT')
+   if (timeout !== undefined) return new WebError('web fetch timed out', 'WEB_FETCH_TIMEOUT', { cause: timeout })
+   if (signal.aborted) return new WebError('web fetch aborted', 'WEB_ABORTED', { cause: error })
+-  return new WebError(`web fetch failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
++  return new WebError(`web fetch failed${route ? ' (' + route + ')' : ''}: ${networkFailureCodes(error).join(', ') || 'transport failure'}`, 'WEB_PROVIDER_ERROR', { cause: error })
++}
++
++/** Retain bounded machine error codes, never arbitrary exception messages containing secrets. */
++function networkFailureCodes(error: unknown): string[] {
++  const result = new Set<string>(), seen = new Set<unknown>(), pending = [error]
++  while (pending.length && seen.size < 16) {
++    const value = pending.shift()
++    if (!value || typeof value !== 'object' || seen.has(value)) continue
++    seen.add(value)
++    const record = value as {code?: unknown; cause?: unknown; errors?: unknown}
++    if (typeof record.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(record.code)) result.add(record.code)
++    if (record.cause) pending.push(record.cause)
++    if (Array.isArray(record.errors)) pending.push(...record.errors.slice(0, 8))
++  }
++  return [...result]
+ }
+diff --git a/packages/web/web/README.md b/packages/web/web/README.md
+index 157c6d9..71814bf 100644
+--- a/packages/web/web/README.md
++++ b/packages/web/web/README.md
+@@ -167,3 +167,7 @@ This Dev Note is working context for maintainers: open questions and undecided d
+ No provider-change event or capability-status query exists; consumers observe availability only by executing a call and routing the thrown code. Restoring a small observation surface is possible if a consumer needs per-provider reasons, but the archived simplification note records why the earlier one was dropped.
+ 
+ </details>
++
++## File downloads
++
++download selects the configured fetch provider and requests complete bytes. A provider without download support reports WEB_DOWNLOAD_UNSUPPORTED. Filesystem effects belong to the consumer; the web service does not choose a destination.
+diff --git a/packages/web/web/README.zh.md b/packages/web/web/README.zh.md
+index f937fc1..045c2d0 100644
+--- a/packages/web/web/README.zh.md
++++ b/packages/web/web/README.zh.md
+@@ -167,3 +167,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
+ 没有提供方变更事件或能力状态查询；消费方只能通过执行调用并按抛出的 code 路由来观测可用性。如果消费方需要逐提供方原因，恢复一个小的观测接口是可行的，但已归档的简化笔记记录了为何放弃此前的那个接口。
+ 
+ </details>
++
++## 文件下载
++
++download 选择已配置的抓取提供方并请求完整字节；提供方不支持时返回 WEB_DOWNLOAD_UNSUPPORTED。文件写入由消费方负责，Web 服务不选择保存位置。
+diff --git a/packages/web/web/src/index.ts b/packages/web/web/src/index.ts
+index fe36c7a..a4c71e4 100644
+--- a/packages/web/web/src/index.ts
++++ b/packages/web/web/src/index.ts
+@@ -9,6 +9,7 @@
+ import { Context, Service } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import type {
++  WebDownloadResult,
+   WebFetchProvider,
+   WebFetchRequest,
+   WebFetchResult,
+@@ -22,6 +23,8 @@ export {
+   WebError,
+ } from './types.ts'
+ export type {
++  WebNetworkHop,
++  WebDownloadResult,
+   WebFetchBody,
+   WebFetchProvider,
+   WebFetchRequest,
+@@ -161,6 +164,19 @@ export class WebRuntime extends Service {
+     })
+     return provider.fetch(request, signal)
+   }
++
++  /**
++   * Retrieve complete file bytes through the configured fetch provider.
++   * @param request - anonymous resource URL.
++   * @param signal - cancellation forwarded to the provider.
++   * @returns bounded complete bytes, never a truncated file.
++   */
++  async download(request: WebFetchRequest, signal?: AbortSignal): Promise<WebDownloadResult> {
++    const provider = resolveProvider({providers: this.fetchProviders,
++      ...this.fetchProviderId !== undefined ? {configuredId: this.fetchProviderId} : {}})
++    if (!provider.download) throw new WebError('selected provider does not support file downloads', 'WEB_DOWNLOAD_UNSUPPORTED')
++    return provider.download(request, signal)
++  }
+ }
+ 
+ interface ResolvableProvider {
+diff --git a/packages/web/web/src/types.ts b/packages/web/web/src/types.ts
+index 9e94bac..590892f 100644
+--- a/packages/web/web/src/types.ts
++++ b/packages/web/web/src/types.ts
+@@ -65,6 +65,23 @@ export interface WebFetchRequest {
+   readonly url: string
+ }
+ 
++/** Observed transport facts for a single public request, without credentials or URL query data. */
++export interface WebNetworkHop {
++  readonly origin: string
++  readonly route: 'direct' | 'proxy'
++  readonly proxy?: string
++  readonly statusCode: number
++}
++
++/** Complete bounded bytes for a file consumer; never serialized into model text. */
++export interface WebDownloadResult {
++  readonly network?: readonly WebNetworkHop[]
++  readonly url: string
++  readonly statusCode: number
++  readonly mediaType: string
++  readonly bytes: Uint8Array
++}
++
+ /**
+  * Normalized fetch outcome. A successful network fetch of a non-2xx response is
+  * a result, not an error: the status code is part of the fetched resource
+@@ -72,6 +89,7 @@ export interface WebFetchRequest {
+  * represent the resource.
+  */
+ export interface WebFetchResult {
++  readonly network?: readonly WebNetworkHop[]
+   /** The final URL after allowed redirects (the request URL is in the request). */
+   readonly url: string
+   /** HTTP status code of the fetched response. */
+@@ -117,6 +135,8 @@ export interface WebFetchProvider {
+   available(): boolean
+   /** Retrieve one URL; honor `signal` for cancellation. */
+   fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult>
++  /** Retrieve complete bytes under the same network policy, or omit when unsupported. */
++  download?(request: WebFetchRequest, signal?: AbortSignal): Promise<WebDownloadResult>
+ }
+ 
+ /**

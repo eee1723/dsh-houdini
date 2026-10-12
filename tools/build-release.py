@@ -145,6 +145,7 @@ def build(args):
     for name in ("package.json", "package-lock.json"):
         shutil.copyfile(ROOT / "deployment" / name, app / name)
     run([*npm, "ci", "--omit=dev", "--no-audit", "--no-fund"], cwd=app, env=env)
+    run([node, ROOT / "tools/prepare-dsh-runtime.mjs", "--apply-to", app], env=env)
     plugin = app / "node_modules/dsh-houdini"
     for entry in files:
         name = entry["path"]

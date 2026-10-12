@@ -1,13 +1,16 @@
 """In-memory packed observation, dense solid intersection and restoration."""
+
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_quality_contracts as q
 from dsh_geometry_evidence import expanded_view
 
-with h._execution_owner('packed-evidence','fixture'):
+with dsh_ownership.execution_owner('packed-evidence','fixture'):
     root=h.tab_create('/obj','geo','packed_evidence')
     ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=[{'type':'float','name':'offset','default':3.0}])
@@ -32,7 +35,7 @@ with h._execution_owner('packed-evidence','fixture'):
     assert len(root.children())==count and q._data_signature(packed.geometry())==original
     tests=[{'id':'move','values':{'offset':4.0},'expectations':[{'metric':'bounds_center','group':'b','axis':0,'delta':[.999,1.001]}]}]
     try: tested=h.test_controls(ctrl,packed,tests,interfaces=overlap)
-    except h.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         print(error.evidence["results"][-1]["geometry_restore"]);raise
     assert tested['status']=='pass' and tested['restored'],tested
     assert q._data_signature(packed.geometry())==original

@@ -5,6 +5,8 @@ HDA candidates and public code are read only for an explicitly selected entry.
 """
 from __future__ import annotations
 
+import dsh_parameter_templates
+
 import hashlib
 import os
 
@@ -187,9 +189,9 @@ def tool_inspect(kind, name, category=None, include_code=False, max_chars=16000)
     item = objects[key]
     result = {'ok': True, 'entry': row, 'packages': _packages(row.get('source'))}
     if kind == 'node_type':
-        import dsh_hou_helpers as h
+
         definition = item.definition()
-        result['interface'] = [h._template_info(t, 0, 8) for t in item.parmTemplateGroup().entries()]
+        result['interface'] = [dsh_parameter_templates._template_info(t, 0, 8) for t in item.parmTemplateGroup().entries()]
         candidates = []
         for candidate in item.allInstalledDefinitions():
             path = _path(candidate.libraryFilePath())

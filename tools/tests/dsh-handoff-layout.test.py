@@ -1,8 +1,11 @@
 """H21/H22 governed handoff layout regression with fixed obstacles."""
+
 from pathlib import Path
 import sys,uuid
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
+import dsh_render_service
+import dsh_service_constants
 import hou
 import dsh_bridge as bridge
 import dsh_network_boxes as boxes
@@ -33,8 +36,8 @@ try:
  foreign_box=hou.node(parent).createNetworkBox('foreign_box');foreign_box.addItem(foreign);foreign_box.setBounds(hou.BoundingRect(-2,-10,3,-6));foreign_bounds=(tuple(foreign_box.position()),tuple(foreign_box.size()))
  note=hou.node(parent).createStickyNote('fixed_user_note');note.setText('Fixed user note');note.setPosition(hou.Vector2(8,-6));note.setSize(hou.Vector2(4,2))
  dot=hou.node(parent).createNetworkDot();dot.setPosition(hou.Vector2(14,-4));dot_pos=tuple(dot.position())
- service_node=hou.node(parent).createNode('null','service_node');service_node.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
- service=h._render_service_box(hou.node(parent),h._RENDER_OBJ_BOX_NAME,[service_node]);service_bounds=(tuple(service.position()),tuple(service.size()))
+ service_node=hou.node(parent).createNode('null','service_node');service_node.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
+ service=dsh_render_service._render_service_box(hou.node(parent),dsh_service_constants._RENDER_OBJ_BOX_NAME,[service_node]);service_bounds=(tuple(service.position()),tuple(service.size()))
  frame=float(hou.frame());selection=tuple(node.path() for node in hou.selectedNodes())
  wires={path:[item.path() if item else None for item in hou.node(path).inputs()] for path in paths}
  flags={path:(hou.node(path).isDisplayFlagSet(),hou.node(path).isRenderFlagSet(),hou.node(path).needsToCook()) for path in paths}

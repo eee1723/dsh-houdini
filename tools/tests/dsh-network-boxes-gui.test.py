@@ -1,4 +1,5 @@
 """Sacrificial GUI fixture for native Network Box colors/undo/save-reopen."""
+
 from pathlib import Path
 import json,os,sys,traceback,uuid
 import hdefereval,hou
@@ -10,6 +11,8 @@ def run():
  try:
   import dsh_bridge as bridge
   import dsh_network_boxes as boxes
+  import dsh_render_service
+  import dsh_service_constants
   import dsh_hou_helpers as helpers
   session='box-gui-'+uuid.uuid4().hex[:8]
   def call(code):
@@ -38,8 +41,8 @@ def run():
   note=hou.node(parent).createStickyNote('fixed_review_note');note.setText('Fixed review note');note.setPosition(hou.Vector2(8,-6));note.setSize(hou.Vector2(4,2))
   dot=hou.node(parent).createNetworkDot();dot.setPosition(hou.Vector2(14,-4))
   service_node=hou.node(parent).createNode('null','service_node');service_node.setPosition(hou.Vector2(14,0))
-  service_node.setUserData(helpers._RENDER_OWNER_KEY,helpers._RENDER_OWNER_VALUE)
-  service_box=helpers._render_service_box(hou.node(parent),helpers._RENDER_OBJ_BOX_NAME,[service_node])
+  service_node.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
+  service_box=dsh_render_service._render_service_box(hou.node(parent),dsh_service_constants._RENDER_OBJ_BOX_NAME,[service_node])
   obstacle_before={'node':[float(v) for v in foreign.position()],
                    'box':[float(v) for v in (*foreign_box.position(),*foreign_box.size())],
                    'note':[float(v) for v in (*note.position(),*note.size())],

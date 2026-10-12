@@ -1,9 +1,13 @@
 """Real HOM camera geometry assertions. No live HIP and no renderer required."""
+
 import math
 import pathlib
 import sys
 import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_ownership
+import dsh_service_constants
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
@@ -12,7 +16,7 @@ import dsh_camera_framing as f
 
 def rejected(fn, needle):
     try: fn()
-    except (ValueError, PermissionError, h.CheckpointError) as exc:
+    except (ValueError, PermissionError, dsh_errors.CheckpointError) as exc:
         assert needle in str(exc), str(exc)
     else: raise AssertionError('expected rejection: '+needle)
 
@@ -56,8 +60,8 @@ parent=hou.node('/obj').createNode('null','fit_test_parent')
 parent.parmTuple('t').set((3,6,-4)); parent.parmTuple('r').set((10,25,-20))
 cam.setInput(0,parent)
 try:
-    with h._execution_owner('framing-test','create'):
-        h._register_owned_node(cam)
+    with dsh_ownership.execution_owner('framing-test','create'):
+        dsh_ownership.register_owned_node(cam)
         before=cam.worldTransform()
         dry=h.camera_fit(cam,box,dry_run=True)
         assert dry['ok'] and not dry['applied'] and dry['scene_writes']==0 and cam.worldTransform()==before
@@ -92,13 +96,13 @@ try:
         key=hou.Keyframe(1);cam.parm('tx').setKeyframe(key)
         rejected(lambda:h.camera_fit(cam,box),'animated')
         cam.parm('tx').deleteAllKeyframes()
-    with h._execution_owner('other','try'):
+    with dsh_ownership.execution_owner('other','try'):
         rejected(lambda:h.camera_fit(cam,box),'foreign')
         rejected(lambda:h.camera_fit(cam,box,allow_foreign=''),'nonempty')
         assert h.camera_fit(cam,box,allow_foreign='test explicit camera authorization')['ok']
-        cam.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
+        cam.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
         rejected(lambda:h.camera_fit(cam,box,allow_foreign='test explicit camera authorization'),'persistent')
-        cam.destroyUserData(h._RENDER_OWNER_KEY)
+        cam.destroyUserData(dsh_service_constants._RENDER_OWNER_KEY)
     response=bridge.run_code(f'camera_fit({cam.path()!r},{box.path()!r})',read_only=True,owner_session='framing-test')
     assert not response['ok'],response
 finally:

@@ -1,5 +1,6 @@
 """Native registration, source isolation and truthful failure receipts; isolated hython."""
 from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
+import dsh_errors
 import hou
 import dsh_tool_packages as packages
 import dsh_package_discovery as discovery
@@ -20,7 +22,7 @@ def fails(function, match, phase='package_action_preflight'):
     try:
         function()
         raise AssertionError('operation unexpectedly succeeded')
-    except helpers.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         assert match in str(error), str(error)
         assert error.evidence['phase'] == phase, error.evidence
         return error.evidence

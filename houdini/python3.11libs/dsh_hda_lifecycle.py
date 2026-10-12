@@ -1,4 +1,8 @@
 """Bounded, preview-bound HDA lifecycle; never flatten or adopt descendants."""
+
+import dsh_node_access
+import dsh_ownership
+import dsh_parameter_templates
 import hashlib
 import json
 import os
@@ -52,16 +56,16 @@ def _interface_differences(actual, expected):
 
 
 def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=False, allow_foreign=None):
-    import dsh_hou_helpers as h
+
     from dsh_hda_interfaces import definition_write_guard, require_definition_owned, _snapshot, _restore, parameter_states
-    n, definition = h._hda_definition(node)
+    n, definition = dsh_node_access._hda_definition(node)
     if action not in ('unlock', 'save', 'lock', 'promote'):
         raise ValueError('action must be unlock, save, lock or promote; flatten/unpack is not supported')
     if type(dry_run) is not bool or type(discard_changes) is not bool:
         raise ValueError('dry_run/discard_changes must be boolean')
     if discard_changes and action != 'lock':
         raise ValueError('discard_changes is only valid for lock')
-    h._require_owned(n, 'hda_edit '+action, allow_foreign)
+    dsh_ownership.require_owned(n, 'hda_edit '+action, allow_foreign)
     if action in ('save', 'promote'):
         require_definition_owned(definition, 'hda_edit '+action, allow_foreign)
     library = definition.libraryFilePath()
@@ -74,7 +78,7 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
     if len(affected)>64:
         raise ValueError('hda_edit supports at most 64 affected instances')
     for instance in affected:
-        h._require_owned(instance, 'hda_edit affected instance', allow_foreign)
+        dsh_ownership.require_owned(instance, 'hda_edit affected instance', allow_foreign)
     locked = n.isLockedHDA()
     matches = n.matchesCurrentDefinition()
     if action in ('save','promote') and locked:
@@ -83,7 +87,7 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
         raise ValueError('lock discards internal edits; explicitly set discard_changes=True after reviewing the plan')
     if action=='lock' and not matches:
         for child in descendants:
-            h._require_owned(child, 'hda_edit lock discarded descendant', allow_foreign)
+            dsh_ownership.require_owned(child, 'hda_edit lock discarded descendant', allow_foreign)
     if action=='save':
         differences=_interface_differences(n.parmTemplateGroup(),definition.parmTemplateGroup())
         if differences:
@@ -124,8 +128,8 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
     result.update(ok=True,plan_sha256=revision,dry_run=dry_run,applied=False,
                   descendant_count=len(descendants),
                   discarded_descendants=plan['descendants'] if action=='lock' and not matches else [],
-                  promoted_templates=sorted(h._all_template_names(n.parmTemplateGroup().entries())
-                      - h._all_template_names(definition.parmTemplateGroup().entries())) if action=='promote' else [],
+                  promoted_templates=sorted(dsh_parameter_templates._all_template_names(n.parmTemplateGroup().entries())
+                      - dsh_parameter_templates._all_template_names(definition.parmTemplateGroup().entries())) if action=='promote' else [],
                   scope='definition lifecycle only; only fresh identities rebuilt for current-session owned instances are registered; no output/callback/GUI validation')
     if dry_run:
         return {**result,'scene_writes':0}
@@ -136,17 +140,17 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
         if n.isLockedHDA():
             raise RuntimeError('unlock readback failed')
     elif action=='lock':
-        with h._track_owned_definition_rebuilds([n]):
+        with dsh_ownership.track_owned_definition_rebuilds([n]):
             n.matchCurrentDefinition()
         if not n.isLockedHDA() or not n.matchesCurrentDefinition():
             raise RuntimeError('lock readback failed')
     elif action=='save':
-        with h._track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit save',allow_foreign):
+        with dsh_ownership.track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit save',allow_foreign):
             definition.updateFromNode(n)
             if n.type().definition()!=definition or not os.path.isfile(library):
                 raise RuntimeError('saved definition identity/library readback failed')
     else:
-        with h._track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit promote',allow_foreign):
+        with dsh_ownership.track_owned_definition_rebuilds(affected), definition_write_guard(n,'hda_edit promote',allow_foreign):
             states=_snapshot(affected)
             group=n.parmTemplateGroup()
             if n.type().category()==hou.sopNodeTypeCategory():
@@ -164,8 +168,8 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
             errors=_restore(states)
             if errors:
                 raise RuntimeError('promotion post-save restoration failed: '+str(errors))
-            expected=h._all_template_names(group.entries())
-            actual=h._all_template_names(definition.parmTemplateGroup().entries())
+            expected=dsh_parameter_templates._all_template_names(group.entries())
+            actual=dsh_parameter_templates._all_template_names(definition.parmTemplateGroup().entries())
             if not expected<=actual:
                 raise RuntimeError('promoted definition omitted templates')
     with open(library,'rb') as stream:

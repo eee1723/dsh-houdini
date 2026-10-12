@@ -4,6 +4,12 @@ Invoked only through helpers/Bridge on Houdini's owning thread. No network,
 disk writes, geometry proxies or implicit sampling. GPU cook allocation itself
 is not bounded by max_pixels; use the isolated worker for unknown graphs.
 """
+
+import dsh_errors
+import dsh_node_access
+import dsh_node_operations
+import dsh_ownership
+import dsh_parameter_values
 import hashlib
 import json
 import math
@@ -12,10 +18,6 @@ import time
 import hou
 import numpy as np
 
-
-def _helpers():
-    import dsh_hou_helpers
-    return dsh_hou_helpers
 
 
 def _finite(value, label):
@@ -88,15 +90,14 @@ _ALIGNMENT = ('resolution', 'channels', 'data_window', 'display_window', 'pixel_
 
 def _read(node, output, max_pixels):
     _budget(max_pixels)
-    h = _helpers()
     from dsh_cook_control import require_evaluation
     require_evaluation('COP layer observation')
-    n = h._resolve(node)
+    n = dsh_node_access._resolve(node)
     if not isinstance(n, hou.CopNode):
         raise ValueError('requires a Copernicus node, not COP2/SOP/ROP')
-    port = h._resolve_port(n, output, 'output')
+    port = dsh_node_operations._resolve_port(n, output, 'output')
     cache = _cache_evidence(n)
-    cooked = h.cook_node(n)
+    cooked = dsh_node_operations.cook_node(n)
     if not cooked['ok']:
         raise ValueError('COP cook failed; layer was not read: ' + str(cooked['errors']))
     frame = float(hou.frame())
@@ -220,12 +221,11 @@ def _measure(data, baseline, expectation):
 
 
 def test_controls(controller, output, tests, *, output_port=0, max_pixels=4194304, allow_foreign=None):
-    h = _helpers()
     from dsh_cook_control import require_evaluation
     require_evaluation('test_cop_controls')
     _budget(max_pixels)
-    ctrl = h._resolve(controller)
-    h._require_owned(ctrl, 'test_cop_controls', allow_foreign)
+    ctrl = dsh_node_access._resolve(controller)
+    dsh_ownership.require_owned(ctrl, 'test_cop_controls', allow_foreign)
     if not isinstance(tests, list) or not 1 <= len(tests) <= 16:
         raise ValueError('tests requires 1..16 cases')
     names, ids = set(), set()
@@ -267,11 +267,11 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
             nonzero |= low > 0 or high < 0
             if 'range' in e: _range(e['range'], 'range')
         if not nonzero: raise ValueError('each case needs a nonzero expected response')
-    snapshots = h._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
+    snapshots = dsh_parameter_values._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
     frame = float(hou.frame())
     meta, baseline = _read(output, output_port, max_pixels)
-    if not h._parameter_restore_evidence(snapshots)['ok'] or float(hou.frame()) != frame:
-        raise h.CheckpointError('baseline evaluation changed controller/frame; stop editing',
+    if not dsh_parameter_values._parameter_restore_evidence(snapshots)['ok'] or float(hou.frame()) != frame:
+        raise dsh_errors.CheckpointError('baseline evaluation changed controller/frame; stop editing',
                                dict(ok=False, restored=False, controller=ctrl.path(), output=meta['node']))
     _require_finite(baseline)
     if meta['cache']['sticky_cache_nodes']:
@@ -292,7 +292,7 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
         row = {'id': test['id'], 'values': test['values'], 'status': 'fail'}
         try:
             writes += len(test['values'])
-            h.set_parms(ctrl, test['values'], allow_foreign=allow_foreign)
+            dsh_parameter_values.set_parms(ctrl, test['values'], allow_foreign=allow_foreign)
             actual = {name: ctrl.parm(name).eval() for name in test['values']}
             if any(not math.isclose(actual[n], v, rel_tol=1e-9, abs_tol=1e-12) for n,v in test['values'].items()):
                 raise ValueError('requested perturbation not applied exactly')
@@ -310,12 +310,12 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
             row.update(status='pass' if all(c['status']=='pass' for c in checks) else 'fail',
                        measurements=checks, actual_values=actual, output_changed=not np.array_equal(current, baseline),
                        output_sha256=current_meta['sha256'], warnings=current_meta['warnings'])
-        except h.CheckpointError:
+        except dsh_errors.CheckpointError:
             raise
         except Exception as error:
             row.update(status='fail', reason=str(error))
         finally:
-            errors = h._restore_parameters(snapshots)
+            errors = dsh_parameter_values._restore_parameters(snapshots)
             if float(hou.frame()) != frame:
                 try: hou.setFrame(frame)
                 except Exception as error: errors.append('frame restore: ' + str(error))
@@ -324,13 +324,13 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
                 same = restored_meta['sha256'] == meta['sha256'] and not restored_meta['cache']['sticky_cache_nodes']
             except Exception as error:
                 errors.append('output restore: ' + str(error)); same = False
-            evidence = h._parameter_restore_evidence(snapshots)
+            evidence = dsh_parameter_values._parameter_restore_evidence(snapshots)
             errors.extend(evidence['errors'])
             if float(hou.frame()) != frame: errors.append('frame changed during restoration cook')
             row.update(restored=not errors and same, parameter_restore=evidence, restore_errors=errors,
                        output_restored=same)
             if not row['restored']:
-                raise h.CheckpointError('test_cop_controls restoration failed; stop editing',
+                raise dsh_errors.CheckpointError('test_cop_controls restoration failed; stop editing',
                     dict(ok=False, status='fail', restored=False, controller=ctrl.path(), output=meta['node'], results=rows+[row]))
         rows.append(row)
     ok = all(row['status'] == 'pass' for row in rows)

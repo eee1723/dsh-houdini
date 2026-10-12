@@ -314,37 +314,6 @@ def restart_bridge(*, port=None) -> str:
     if type(target_port) is not int or not 1024 <= target_port <= 65535:
         raise ValueError('Invalid Bridge restart port')
     import dsh_bridge
-    import dsh_context
-    import dsh_requests
-    import dsh_preview_paths
-    import dsh_project_paths
-    import dsh_network_layout
-    import dsh_network_boxes
-    import dsh_network_navigation
-    import dsh_network_notes
-    import dsh_hou_helpers
-    import dsh_hda_interfaces
-    import dsh_hda_lifecycle
-    import dsh_ui_capture
-    import dsh_parameter_ui
-    import dsh_control_bindings
-    import dsh_cook_control
-    import dsh_cop_contracts
-    import dsh_quality_contracts
-    import dsh_sop_contracts
-    import dsh_component_contracts
-    import dsh_camera_framing
-    import dsh_geometry_observation
-    import dsh_geometry_evidence
-    import dsh_procedural_plans
-    import dsh_modeling_units
-    import dsh_operation_cards
-    import dsh_code_analysis
-    import dsh_execution_results
-    import dsh_package_discovery
-    import dsh_tool_catalog
-    import dsh_tool_packages
-    import dsh_execution
 
     # Recheck on the owning thread: the worker's HTTP snapshot may already be old.
     # This uses only in-process counters; no socket/process probe on the GUI thread.
@@ -358,37 +327,68 @@ def restart_bridge(*, port=None) -> str:
             or not dsh_bridge._work_queue.empty()):
         raise RuntimeError('Bridge restart deferred: scene work arrived after preflight; no modules were reloaded')
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
-    importlib.reload(dsh_project_paths)     # shared directory contract before observations/allocators
-    importlib.reload(dsh_context)           # shared HIP facts before helper wrappers
-    importlib.reload(dsh_preview_paths)     # path policy before helper wrappers
-    importlib.reload(dsh_network_layout)
-    importlib.reload(dsh_network_boxes)
-    importlib.reload(dsh_network_navigation)
-    importlib.reload(dsh_network_notes)    # Rebind box/layout aliases, preserving live note owners.
-    importlib.reload(dsh_hou_helpers)      # 拾取最新 helper
-    importlib.reload(dsh_hda_interfaces)
-    importlib.reload(dsh_hda_lifecycle)
-    importlib.reload(dsh_ui_capture)
-    importlib.reload(dsh_parameter_ui)
-    importlib.reload(dsh_control_bindings)
-    importlib.reload(dsh_cook_control)
-    importlib.reload(dsh_cop_contracts)
-    importlib.reload(dsh_camera_framing)
-    importlib.reload(dsh_geometry_observation)
-    importlib.reload(dsh_geometry_evidence)
-    importlib.reload(dsh_procedural_plans)
-    importlib.reload(dsh_modeling_units)
-    importlib.reload(dsh_operation_cards)
-    importlib.reload(dsh_sop_contracts)
-    importlib.reload(dsh_component_contracts)
-    importlib.reload(dsh_quality_contracts)
-    importlib.reload(dsh_requests)
-    importlib.reload(dsh_code_analysis)
-    importlib.reload(dsh_execution_results)
-    importlib.reload(dsh_package_discovery)
-    importlib.reload(dsh_tool_catalog)
-    importlib.reload(dsh_tool_packages)    # Rebind native package observation aliases.
-    importlib.reload(dsh_execution)        # Rebind verbs after domain/helper reloads.
+    # Dependency order is explicit; helpers is the public export facade and
+    # execution binds its functions only after every implementation is refreshed.
+    # Ownership retains native identities across this idle, same-process repair.
+    for module_name in (
+        'dsh_errors',
+        'dsh_service_constants',
+        'dsh_node_access',
+        'dsh_view_state',
+        'dsh_code_analysis',
+        'dsh_cook_control',
+        'dsh_project_paths',
+        'dsh_execution_results',
+        'dsh_package_discovery',
+        'dsh_geometry_observation',
+        'dsh_image_pixels',
+        'dsh_network_layout',
+        'dsh_operation_cards',
+        'dsh_requests',
+        'dsh_ownership',
+        'dsh_parameter_templates',
+        'dsh_usd_inspection',
+        'dsh_context',
+        'dsh_preview_paths',
+        'dsh_tool_packages',
+        'dsh_geometry_evidence',
+        'dsh_geometry_queries',
+        'dsh_hda_interfaces',
+        'dsh_node_types',
+        'dsh_parameter_values',
+        'dsh_tool_catalog',
+        'dsh_modeling_units',
+        'dsh_network_navigation',
+        'dsh_scene',
+        'dsh_hda_lifecycle',
+        'dsh_hda_versions',
+        'dsh_hda_sections',
+        'dsh_camera_framing',
+        'dsh_control_bindings',
+        'dsh_keyframes',
+        'dsh_parameter_ui',
+        'dsh_network_boxes',
+        'dsh_media_output',
+        'dsh_hda_operations',
+        'dsh_spare_parameters',
+        'dsh_network_notes',
+        'dsh_render_service',
+        'dsh_ui_capture',
+        'dsh_viewport',
+        'dsh_node_layout',
+        'dsh_render',
+        'dsh_node_creation',
+        'dsh_node_operations',
+        'dsh_cop_contracts',
+        'dsh_node_inspection',
+        'dsh_quality_contracts',
+        'dsh_procedural_plans',
+        'dsh_sop_contracts',
+        'dsh_component_contracts',
+        'dsh_hou_helpers',
+        'dsh_execution',
+    ):
+        importlib.reload(importlib.import_module(module_name))
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
     dsh_bridge.start(target_port, BRIDGE_HOST)
     return f"bridge restarted on {BRIDGE_HOST}:{target_port}"
@@ -443,6 +443,7 @@ def _write_frontend_runtime_state(pid: int | None) -> None:
         "authLogOffset": _PENDING.get("auth_log_offset", 0),
         "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
+    payload['runtimeFixes'] = _PENDING.get('runtime_fixes')
     temporary = FRONTEND_RUNTIME_STATE + ".tmp"
     try:
         with open(temporary, "w", encoding="utf-8") as handle:
@@ -479,6 +480,7 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
         binary = os.path.join(_MANAGED["install"], "app", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
         if not os.path.isfile(binary):
             raise RuntimeError("Managed DSH is missing. Install / repair the signed package.")
+        dsh_runtime_compat.runtime_fix_identity(binary)
         return [NODE, binary, "web", "--port", str(FRONTEND_PORT), "--no-open"], False, "managed-cli", FRONTEND_WARM_WAIT_TIMEOUT
 
     if DSH_BIN_ENV:
@@ -511,6 +513,9 @@ def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
             [NODE, bin_path, "web", "--port", str(FRONTEND_PORT), "--no-open"],
             False, source, FRONTEND_WARM_WAIT_TIMEOUT,
         )
+
+    if DSH_SPEC == DEFAULT_DSH_SPEC and dsh_runtime_compat.load_manifest().get('runtimeFixes'):
+        raise RuntimeError('Compatible DSH runtime fixes are not prepared. Run npm run runtime:prepare in the plugin source, then reopen the workspace.')
 
     if not DSH_SPEC.strip():
         raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
@@ -589,12 +594,14 @@ def start_frontend(workspace_dir: str | None = None, *, attempt: dict | None = N
     # from an earlier launch and misreport it as the newly created frontend.
     for key in (
         "proc", "frontend_source", "frontend_bin", "frontend_version",
-        "wait_timeout", "auth_log_offset",
+        "wait_timeout", "auth_log_offset", "runtime_fixes",
     ):
         _PENDING.pop(key, None)
 
     try:
         cmd, use_shell, source, wait_timeout = _frontend_command()
+        if not use_shell and source in ('cached-cli', 'managed-cli'):
+            _PENDING['runtime_fixes'] = dsh_runtime_compat.runtime_fix_identity(cmd[1], verify_files=True)
     except RuntimeError as exc:
         return str(exc)
 

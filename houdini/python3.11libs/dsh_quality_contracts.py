@@ -7,6 +7,13 @@ continuous collision solver. Unsupported representations stay unverified.
 """
 from __future__ import annotations
 
+import dsh_errors
+import dsh_node_access
+import dsh_node_operations
+import dsh_ownership
+import dsh_parameter_values
+import dsh_render
+
 import hashlib
 from collections import Counter, defaultdict
 import json
@@ -174,8 +181,8 @@ def validate_interfaces(interfaces):
 
 
 def _geometry(output):
-    import dsh_hou_helpers as h
-    node = h._resolve(output)
+
+    node = dsh_node_access._resolve(output)
     if node.type().category() != hou.sopNodeTypeCategory():
         raise ValueError('explicit output must be a SOP')
     from dsh_cook_control import require_evaluation
@@ -1059,7 +1066,7 @@ def validate_capture_views(views):
 
 
 def capture_views(output, views, *, locks=None, view_bounds=None, frame=None):
-    import dsh_hou_helpers as h
+
     validate_capture_views(views)
     captures=[]
     for view in views:
@@ -1075,8 +1082,8 @@ def capture_views(output, views, *, locks=None, view_bounds=None, frame=None):
         elif view_bounds is not None:
             options.update(framing_bounds=view_bounds,depth_bounds=view_bounds)
         try:
-            result=h.render_view(output,direction=view,**options)
-        except h.CheckpointError as error:
+            result=dsh_render.render_view(output,direction=view,**options)
+        except dsh_errors.CheckpointError as error:
             facts=error.evidence
             if facts.get('render_started') is not False or facts.get('framing_status')!='failed' or facts.get('user_state_restored') is not True:
                 raise
@@ -1087,7 +1094,7 @@ def capture_views(output, views, *, locks=None, view_bounds=None, frame=None):
             continue
         captures.append({k:result[k] for k in ('ok','output','picture','artifact','file_status','pixel_status','semantic_status','stale','camera','framing','check','errors','user_state_restored') if k in result} | {'view':view})
         if result.get('user_state_restored') is False:
-            raise h.CheckpointError('review capture did not restore user state',{'restored':False,'captures':captures})
+            raise dsh_errors.CheckpointError('review capture did not restore user state',{'restored':False,'captures':captures})
     return captures
 
 
@@ -1175,8 +1182,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
                   baseline_interfaces=None, views=None, response_only=False, view_bounds=None):
     # Bind early failures and restoration exceptions to the same declaration as
     # successful retests. Never use call identity as the contract identity.
-    import dsh_hou_helpers as h
-    declaration={'controller_identity':h._resolve(controller).sessionId(),
+
+    declaration={'controller_identity':dsh_node_access._resolve(controller).sessionId(),
                  'tests':tests,'interfaces':interfaces,'baseline_interfaces':baseline_interfaces,
                  'domain':domain,'topology':topology}
     if views or view_bounds is not None:
@@ -1186,7 +1193,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         result = _test_controls(controller, output, tests, interfaces, allow_foreign,
                                 domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
                                 views=views, response_only=response_only, view_bounds=view_bounds)
-    except h.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         error.evidence['contract_sha256']=contract_hash
         if isinstance(error.evidence.get('control_summary'),dict):
             error.evidence['control_summary']['contract_sha256']=contract_hash
@@ -1210,9 +1217,9 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
     Geometry bgeo fingerprints include primitive intrinsics, not just P. External
     files, Python/solver side effects and user callbacks are NOT transactional.
     """
-    import dsh_hou_helpers as h
-    ctrl=h._resolve(controller)
-    h._require_owned(ctrl,'test_controls',allow_foreign)
+
+    ctrl=dsh_node_access._resolve(controller)
+    dsh_ownership.require_owned(ctrl,'test_controls',allow_foreign)
     from dsh_cook_control import require_evaluation
     require_evaluation('test_controls')
     if type(response_only) is not bool:raise ValueError('response_only must be boolean')
@@ -1267,26 +1274,26 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 validate_interfaces(interfaces + test['interfaces'])
         if expectations and not any(e['delta'][0] > 0 or e['delta'][1] < 0 for e in expectations):
             raise ValueError('each control case needs at least one non-zero expected response; add invariants as additional expectations')
-    snapshots=h._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
+    snapshots=dsh_parameter_values._parameter_snapshot([ctrl.parm(n) for n in sorted(names)])
     original_frame=float(hou.frame())
     baseline_domain=domain_checks(ctrl,domain or [])
     if any(r['status']=='fail' for r in baseline_domain):
-        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
+        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':dsh_node_access._resolve(output).path(),
                 'results':[],'baseline_domain':baseline_domain,'restored':True,'parameter_writes':0,
                 'reason':'baseline outside declared parameter domain','semantic_status':'unverified'}
     # Normalize evaluation before sampling the baseline: a plain first cook
     # compared against later force recooks mixes evaluation policy into the
     # restoration comparison domain and yields signature false positives.
-    baseline_cook=h.cook_node(h._resolve(output), force=True)
-    baseline_state=h._parameter_restore_evidence(snapshots)
+    baseline_cook=dsh_node_operations.cook_node(dsh_node_access._resolve(output), force=True)
+    baseline_state=dsh_parameter_values._parameter_restore_evidence(snapshots)
     if not baseline_state['ok'] or float(hou.frame())!=original_frame:
-        raise h.CheckpointError('test_controls baseline cook changed controller or frame before testing',
+        raise dsh_errors.CheckpointError('test_controls baseline cook changed controller or frame before testing',
                                 {'ok':False,'status':'fail','controller':ctrl.path(),
-                                 'output':h._resolve(output).path(),'restored':False,
+                                 'output':dsh_node_access._resolve(output).path(),'restored':False,
                                  'parameter_writes':0,'parameter_restore':baseline_state,
                                  'frame_restored':float(hou.frame())==original_frame,'results':[]})
     if not baseline_cook['ok']:
-        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':h._resolve(output).path(),
+        return {'ok':False,'status':'fail','controller':ctrl.path(),'output':dsh_node_access._resolve(output).path(),
                 'results':[],'restored':True,'parameter_writes':0,
                 'reason':'baseline cook failed before any control write',
                 'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
@@ -1353,7 +1360,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                              'restored':True,'parameter_writes':0})
                 continue
         try:
-            h.set_parms(ctrl,test['values'],allow_foreign=allow_foreign)
+            dsh_parameter_values.set_parms(ctrl,test['values'],allow_foreign=allow_foreign)
             actual={name:ctrl.parm(name).eval() for name in test['values']}
             row['actual_values']=actual
             if any(not math.isclose(float(actual[name]),float(value),rel_tol=1e-9,abs_tol=1e-12)
@@ -1363,7 +1370,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 row['domain']=domain_checks(ctrl,domain)
                 if any(r['status']=='fail' for r in row['domain']):
                     raise ValueError('actual perturbed values outside declared parameter domain')
-            cook=h.cook_node(node,force=True)
+            cook=dsh_node_operations.cook_node(node,force=True)
             if not cook['ok']:raise ValueError(f'perturbed cook failed: {cook["errors"]}')
             _,g=_geometry(node)
             try: measured_geometry,_=expanded_view(g)
@@ -1388,18 +1395,18 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             if views:row['captures']=capture_views(node,views,locks=capture_locks,frame=original_frame)
         except UnsupportedEvidence as error:
             row.update({'status':'unverified','reason':str(error),'measurement_failure':error.diagnostic})
-        except h.CheckpointError:
+        except dsh_errors.CheckpointError:
             # Restoring numeric controls cannot erase a broader user-state fault.
             raise
         except Exception as error:
             row.update({'status':'fail','reason':str(error)})
         finally:
-            errors=h._restore_parameters(snapshots)
+            errors=dsh_parameter_values._restore_parameters(snapshots)
             if float(hou.frame())!=original_frame:
                 try:hou.setFrame(original_frame)
                 except Exception as error:errors.append('frame: '+str(error))
             try:
-                cook=h.cook_node(node,force=True)
+                cook=dsh_node_operations.cook_node(node,force=True)
                 # geometry() can implicitly retry a failed/interrupted cook.
                 # Missing restoration evidence must remain unknown, not trigger
                 # another evaluation after the explicit attempt already failed.
@@ -1415,7 +1422,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 geometry_restore={'matches':False,'status':'not_verified','reason':str(error)}
             # Read AFTER recooking: expressions/solver/Python code can affect
             # channel state during evaluation even when the bgeo is unchanged.
-            restoration=h._parameter_restore_evidence(snapshots)
+            restoration=dsh_parameter_values._parameter_restore_evidence(snapshots)
             errors.extend(restoration['errors'])
             row['parameter_restore']=restoration
             row['geometry_restore']=geometry_restore
@@ -1428,7 +1435,7 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 failure={'ok':False,'status':'fail','controller':ctrl.path(),'output':node.path(),
                          'restored':False,'results':rows+[row],**baseline_checks}
                 failure['control_summary']=_control_summary(failure,tests,interfaces,topology,baseline_interfaces)
-                raise h.CheckpointError('test_controls restoration failed; inspect controller/output before continuing',
+                raise dsh_errors.CheckpointError('test_controls restoration failed; inspect controller/output before continuing',
                                         failure)
         rows.append(row)
     ok=all(r['status']=='pass' for r in rows) and (baseline_relations is None or baseline_relations['ok'])

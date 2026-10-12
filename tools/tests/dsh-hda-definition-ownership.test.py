@@ -3,11 +3,13 @@
 Run only in fresh isolated H21/H22 hython. Native HOM creates adversarial fixture
 assets; all operations under test run through the normal Bridge contracts.
 """
+
 from pathlib import Path
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_hda_sections
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -44,11 +46,11 @@ with tempfile.TemporaryDirectory(prefix='dsh-definition-ownership-') as temporar
 
     # Every section write, including an added section, restores the entire
     # original library/loaded sections/root channels after a write failure.
-    original = h._write_hda_section
+    original = dsh_hda_sections._write_hda_section
     def fail_after_write(*args, **kwargs):
         original(*args, **kwargs)
         raise RuntimeError('injected section post-write failure')
-    h._write_hda_section = fail_after_write
+    dsh_hda_sections._write_hda_section = fail_after_write
     try:
         for section in ('PythonModule', 'new_payload'):
             failed = run(f'hda_set_section({path!r},{section!r},"VALUE = 9\\n")', False)
@@ -57,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-definition-ownership-') as temporar
         failed = run(f'hda_patch_section({path!r},"PythonModule","VALUE = 1","VALUE = 9")', False)
         assert owned_file.read_bytes() == before and sections(definition) == before_sections
     finally:
-        h._write_hda_section = original
+        dsh_hda_sections._write_hda_section = original
     run(f'hda_patch_section({path!r},"PythonModule","VALUE = 1","VALUE = 2")')
     assert definition.sections()['PythonModule'].contents() == 'VALUE = 2\n'
     run(f'hda_set_section({path!r},"PythonModule","VALUE = 3\\n")')

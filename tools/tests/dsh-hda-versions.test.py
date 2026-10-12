@@ -1,9 +1,11 @@
 """Real native versions: source library, old definitions, channels, wires and failure recovery."""
+
 from pathlib import Path
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_bridge as bridge
 import dsh_hda_versions as versions
@@ -171,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-versions-') as tmp:
         provenance = run(f"__result__=[node_provenance(n) for n in hou.node({fresh!r}).allSubChildren()]", query=True)['result']
         assert provenance and all(row['status'] == 'owned_current_session' for row in provenance)
         assert previous_ids.isdisjoint(row['session_id'] for row in provenance)
-        assert not previous_ids.intersection(helpers._OWNED_NODE_SESSIONS)
+        assert not previous_ids.intersection(dsh_ownership._OWNED_NODE_SESSIONS)
     # Neither a version switch nor the new internal ownership grants the
     # foreign shared definition to this author or the instance to another task.
     run(f"hda_set_section({fresh!r},'PythonModule','VALUE = 99\\n')", False)

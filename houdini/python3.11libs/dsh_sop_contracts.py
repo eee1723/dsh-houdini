@@ -5,6 +5,19 @@ the original primitive API independent of this higher-level composition layer.
 """
 from __future__ import annotations
 
+import dsh_node_operations
+
+import dsh_errors
+import dsh_geometry_queries
+import dsh_node_access
+import dsh_node_creation
+import dsh_node_inspection
+import dsh_node_layout
+import dsh_node_types
+import dsh_ownership
+import dsh_parameter_values
+import dsh_quality_contracts
+
 import re
 import time
 import math
@@ -23,8 +36,8 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
     Reject oversize inputs instead of silently sampling and missing an interior
     defect. Failed constraints return measured evidence (diagnostic read).
     """
-    import dsh_hou_helpers as h
-    n = h._resolve(node)
+
+    n = dsh_node_access._resolve(node)
     expected, tolerance = float(expected), float(tolerance)
     if not math.isfinite(expected) or expected <= 0 or not math.isfinite(tolerance) or tolerance < 0:
         raise ValueError('expected must be positive/finite; tolerance nonnegative/finite (SOP local units)')
@@ -72,55 +85,12 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
             'note': 'Only the specified point sequence/chord spacing is checked; not curve arc length or final surface/assembly correctness.'}
 
 
-def _output_ports(parent):
-    return [n for n in parent.children() if n.type().name() == 'output']
 
 
-def _output_index(index):
-    if type(index) is not int or not 0 <= index <= 63:
-        raise ValueError('output_index must be an integer in 0..63, or None for display-only')
 
 
-def _public_output(parent, source, index):
-    _output_index(index)
-    ports = [n for n in _output_ports(parent) if n.evalParm('outputidx') == index]
-    port = ports[0] if len(ports) == 1 else None
-    valid = port is not None and (port == source or any(
-        c.inputIndex() == 0 and c.inputNode() == source and c.outputIndex() == 0
-        for c in port.inputConnections()))
-    return {'ok': valid, 'index': index, 'node': port.path() if port else None,
-            'source': source.path(), 'matches': [n.path() for n in ports],
-            'reason': None if valid else 'missing_duplicate_or_unwired_public_output',
-            'scope': 'direct Output wiring only; not ancestor visibility or fresh-instance behavior'}
 
 
-def publish_output(source, index, allow_foreign=None):
-    """Explicit port authoring, no cooking or automatic ancestor publication."""
-    import dsh_hou_helpers as h
-    _output_index(index)
-    parent = source.parent()
-    ports = [n for n in _output_ports(parent) if n.evalParm('outputidx') == index]
-    if len(ports) > 1:
-        raise ValueError(f'duplicate Output index {index}; inspect and resolve explicitly')
-    port = ports[0] if ports else None
-    if source.type().name() == 'output':
-        if port != source:
-            raise ValueError('source is an Output with a different index; edit the port explicitly')
-    else:
-        if port is not None and port in source.inputAncestors():
-            raise ValueError('publishing this source would create an Output dependency cycle')
-        # An owned child does not authorize replacing a foreign public interface.
-        h._require_owned(parent, 'publish SOP output', allow_foreign)
-        if port is not None:
-            h._require_owned(port, 'publish SOP output', allow_foreign)
-        else:
-            port = h.tab_create(parent, 'output', name=f'output{index}')
-            h.set_parms(port, {'outputidx': index})
-        h.connect(source, port, allow_foreign=allow_foreign)
-    result = _public_output(parent, source, index)
-    if not result['ok']:
-        raise ValueError('public Output wiring readback failed')
-    return result
 
 
 def _content_nonempty(geometry, max_prims=100000, max_depth=16):
@@ -204,8 +174,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     Surface/path review is explicit through geometry queries; output names never
     select extra domain checks.
     """
-    import dsh_hou_helpers as h
-    p = h._resolve(parent)
+
+    p = dsh_node_access._resolve(parent)
     if p.childTypeCategory() != hou.sopNodeTypeCategory():
         raise ValueError("verify_network currently accepts a SOP network parent only")
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -217,8 +187,8 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         raise ValueError(f'explicit output required; no display-node fallback. Call verify_network(parent, output=<deliverable SOP>); candidates={candidates}')
     if nodes is not None and not isinstance(nodes, (list, tuple)):
         raise ValueError('nodes must be a list of explicit SOP nodes/paths')
-    selected = list(p.children()) if nodes is None else [h._resolve_in_parent(p, n) for n in nodes]
-    out = h._resolve_in_parent(p, output)
+    selected = list(p.children()) if nodes is None else [dsh_node_access._resolve_in_parent(p, n) for n in nodes]
+    out = dsh_node_access._resolve_in_parent(p, output)
     if out is None or out.parent() != p:
         raise ValueError("output must be an explicit direct SOP child")
     handoff_output = {
@@ -238,9 +208,9 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         'scope': ('SOP publication/readability facts only; OBJ visibility and viewport framing are separate. A named Null is not a public subnet port, geometry proof, '
                   'relationship proof or requirement to wrap every simple chain.'),
     }
-    public = _public_output(p, out, output_index) if output_index is not None else None
+    public = dsh_node_operations._public_output(p, out, output_index) if output_index is not None else None
     if public is not None and public['node']:
-        selected.append(h._resolve(public['node']))
+        selected.append(dsh_node_access._resolve(public['node']))
     if out not in selected:
         selected.append(out)
     selected = list(dict.fromkeys(selected))
@@ -262,24 +232,24 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                   'error_nodes':[], 'error_nodes_count':0, 'warning_nodes':[], 'warning_nodes_count':0, 'issues':[],
                   'next_action':'Manual mode: metadata inspection/editing remains available. Use set_update_mode before geometry evaluation; geometry is unknown, not empty.'}
         if require_valid:
-            raise h.CheckpointError(result['next_action'], result)
+            raise dsh_errors.CheckpointError(result['next_action'], result)
         return result
     # This internal read-only batch authors no source or wiring changes. Scan
     # its complete dependency union once, before the first cook; do not retain
     # validation across calls or use an upstream-size cap as a danger signal.
     from dsh_cook_control import preflight
     preflight(selected)
-    reports = [h._cook_node(n, preflight=False) for n in selected]
+    reports = [dsh_node_operations._cook_node(n, preflight=False) for n in selected]
     errors = [r['path'] for r in reports if not r['ok']]
     warnings = [r['path'] for r in reports if not r['warning_free']]
     output_cooked = next(r['ok'] for r in reports if r['path'] == out.path())
     # Never turn a failed/interrupted explicit cook into an unbounded implicit
     # retry through geometry()/geometryAtFrame(), or certify its stale cache.
     geometry = out.geometry() if output_cooked else None
-    summary = h._geo_summary(geometry) if geometry is not None else None
+    summary = dsh_node_inspection._geo_summary(geometry) if geometry is not None else None
     content = _content_nonempty(geometry) if geometry is not None else {'nonempty':None, 'status':'not_evaluated'}
     nonempty = content['nonempty']
-    fingerprint = h._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
+    fingerprint = dsh_geometry_queries._geometry_fingerprint(out, hou.frame()) if nonempty and not out.errors() else None
     reasons = (['cook_error'] if errors else []) + (['empty_output'] if output_cooked and not nonempty else [])
     if output_cooked and nonempty is None:
         reasons = [r for r in reasons if r != 'empty_output'] + ['unverified_output_content']
@@ -319,17 +289,17 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
                                  'source_context':_vex_source_context(r)} for r in reports if not r['ok']][:3]
     if reasons and require_valid:
         details=result.get('cook_details',[])
-        raise h.CheckpointError(f'verify_network failed: {reasons}; output={out.path()}; errors={errors}; cook_details={str(details)[:3000]}. {result["next_action"]}', result)
+        raise dsh_errors.CheckpointError(f'verify_network failed: {reasons}; output={out.path()}; errors={errors}; cook_details={str(details)[:3000]}. {result["next_action"]}', result)
     return result
 
 
 def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs):
     """Read-only validation boundary: no creation, parameter edits or flag changes."""
-    import dsh_hou_helpers as h
+
     if interfaces is not None:
         from dsh_quality_contracts import validate_interfaces
         validate_interfaces(interfaces)
-    p = h._resolve(parent)
+    p = dsh_node_access._resolve(parent)
     if p.childTypeCategory() != hou.sopNodeTypeCategory():
         raise ValueError('build_module only creates SOP modules; use primitive verbs for other contexts')
     if not isinstance(dry_run, bool):
@@ -355,18 +325,18 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
         name, typ = spec['name'], spec.get('type')
         if not isinstance(typ, str) or not typ:
             raise ValueError(f'{name}: missing type')
-        latest = h.resolve_latest_type(category, typ)
+        latest = dsh_node_types.resolve_latest_type(category, typ)
         typ_obj = hou.nodeType(category, latest)
         if typ_obj is None:
             raise ValueError(f'{name}: 未知节点类型 {typ!r}; parent={p.path()}')
-        if not h._visible_node_type(typ_obj):
+        if not dsh_node_types._visible_node_type(typ_obj):
             raise ValueError(f'{name}: hidden/deprecated type {typ}; use search_tab_entries')
         values, inputs = spec.get('parms', {}), spec.get('inputs', [])
         if not isinstance(values, dict) or not isinstance(inputs, list):
             raise ValueError(f'{name}: parms must be dict and inputs must be list')
         # Actual numbered multiparm names must be validated against the declared
         # count (or the static default), not the uninstantiated '#' template.
-        parameters = h._node_parameter_cards(typ_obj, values)
+        parameters = dsh_node_types._node_parameter_cards(typ_obj, values)
         allowed = {c['name'] for c in parameters}
         allowed.update(k for c in parameters for k in c.get('components', []))
         unknown = set(values) - allowed
@@ -382,7 +352,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 fields += [c for c in components if c != parameter['name'] and c in values]
                 for field in fields:
                     try:
-                        h._validate_numeric_parameter_value(values[field], components if field == parameter['name'] else (),
+                        dsh_parameter_values._validate_numeric_parameter_value(values[field], components if field == parameter['name'] else (),
                                                             size=parameter['size'] if field == parameter['name'] else 1)
                     except (ValueError, OverflowError) as error:
                         problem(name, field, str(error), components=components)
@@ -390,7 +360,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 value = values[parameter['name']]
                 tokens = [item['token'] for item in parameter['menu']]
                 if not isinstance(value, dict):
-                    try: h._menu_setting(parameter['menu'], value)
+                    try: dsh_parameter_values._menu_setting(parameter['menu'], value)
                     except ValueError as error: problem(name, parameter['name'], str(error), tokens=tokens)
         if len(inputs) > typ_obj.maxNumInputs():
             problem(name, 'inputs', f'too many input slots ({len(inputs)} > {typ_obj.maxNumInputs()})')
@@ -411,7 +381,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
         if any(n not in {s['name'] for s in specs} for n in required_outputs):
             raise ValueError('required_outputs must name newly declared module nodes')
     if preflight_errors:
-        raise h.PreflightError(preflight_errors)
+        raise dsh_errors.PreflightError(preflight_errors)
     return p, existing, specs
 
 
@@ -423,13 +393,13 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     dry_run cannot prove VEX/cook/geometry. After creation
     starts, cleanup and transaction recovery keep their existing strict rules.
     """
-    import dsh_hou_helpers as h
+
     try:
         p, existing, specs = _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs)
-    except h.PreflightError:
+    except dsh_errors.PreflightError:
         raise
     except (ValueError, TypeError, hou.Error) as error:
-        raise h.PreflightError([{'node':'module','field':'preflight','message':str(error)}]) from error
+        raise dsh_errors.PreflightError([{'node':'module','field':'preflight','message':str(error)}]) from error
     if dry_run:
         return {'valid': True, 'dry_run': True, 'scene_writes': 0, 'applied': False,
                 'parent': p.path(), 'node_count': len(specs),
@@ -439,7 +409,7 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     from dsh_cook_control import require_evaluation
     require_evaluation('build_module')
     baseline = set(p.children())
-    provenance = dict(h._OWNED_NODE_SESSIONS)
+    provenance = dsh_ownership.snapshot()
     # renderNode() can fall back to displayNode() even without a render flag.
     # Snapshot flags themselves; restoring the effective node would add a flag.
     display_flags = {n for n in baseline if n.isDisplayFlagSet()}
@@ -447,7 +417,7 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     created = {}
     try:
         for spec in specs:
-            created[spec['name']] = h.tab_create(p, spec['type'], name=spec['name'])
+            created[spec['name']] = dsh_node_creation.tab_create(p, spec['type'], name=spec['name'])
         sources = existing | created
         for spec in specs:
             n = created[spec['name']]
@@ -455,17 +425,17 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             for index, source in enumerate(input_nodes):
                 if source is not None:
                     n.setInput(index, source)
-            h._initialize_created_inputs(n, input_nodes)
-            h._snap_into_flow(n)
+            dsh_node_creation._initialize_created_inputs(n, input_nodes)
+            dsh_node_layout._snap_into_flow(n)
         for spec in specs:
             n = created[spec['name']]
             if spec['parms']:
                 # Counts instantiate parameters. This remains inside the new-
                 # module transaction; any later failure removes the whole batch.
                 for count in spec['_counts']:
-                    h.set_parm(n,count,spec['parms'][count])
+                    dsh_parameter_values.set_parm(n,count,spec['parms'][count])
                 remaining={k:v for k,v in spec['parms'].items() if k not in spec['_counts']}
-                if remaining:h.set_parms(n, remaining)
+                if remaining:dsh_parameter_values.set_parms(n, remaining)
         validation = verify_network(p, output=created[output], nodes=list(created.values()),
                                     limit=max(512, len(created)))
         required_checks = []
@@ -475,14 +445,14 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             content = _content_nonempty(geometry) if geometry is not None else {'nonempty':None, 'status':'not_evaluated'}
             required_checks.append({'output':node.path(), **content, 'errors':list(node.errors())})
         if any(not row['nonempty'] or row['errors'] for row in required_checks):
-            raise h.CheckpointError('required module output is empty or has cook errors; newly created module removed',
+            raise dsh_errors.CheckpointError('required module output is empty or has cook errors; newly created module removed',
                                     {**validation, 'ok':False, 'failure_reasons':['required_output'], 'required_outputs':required_checks})
         if required_checks: validation['required_outputs'] = required_checks
         if not validation['ok']:
             raise RuntimeError(f'module cook/output failed: {validation["issues"]}; nonempty={validation["nonempty"]}')
-        interface_checks = h.geo_check_interfaces(created[output], interfaces) if interfaces is not None else None
+        interface_checks = dsh_quality_contracts.geo_check_interfaces(created[output], interfaces) if interfaces is not None else None
         if interface_checks is not None and not interface_checks['ok']:
-            raise h.CheckpointError('build_module interface contract failed/unverified; new module removed',
+            raise dsh_errors.CheckpointError('build_module interface contract failed/unverified; new module removed',
                                     {**validation,'ok':False,'failure_reasons':['interface_contract'],
                                      'interface_checks':interface_checks})
         return {'valid': True, 'dry_run': False, 'parent': p.path(),
@@ -492,8 +462,7 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
         for n in reversed(p.children()):
             if n not in baseline:
                 n.destroy()
-        h._OWNED_NODE_SESSIONS.clear()
-        h._OWNED_NODE_SESSIONS.update(provenance)
+        dsh_ownership.restore(provenance)
         raise
     finally:
         # Creation may auto-select a display node; existing flags stay user-owned.

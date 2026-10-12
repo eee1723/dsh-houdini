@@ -3,16 +3,20 @@
 Shelf replay uses the real shipped script, with UI node creation stubbed. It is
 not a substitute for live GUI acceptance. No user HIP is loaded or saved.
 """
+
+import toolutils
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_node_creation
 import hou, soptoolutils
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 import dsh_quality_contracts as q
 
 root=hou.node('/obj').createNode('geo','stool_repair_fixture')
-old_editor=h._network_editor;old_test=h.toolutils.testTool;old_generic=soptoolutils.genericTool
+old_editor=dsh_node_creation._network_editor;old_test=toolutils.testTool;old_generic=soptoolutils.genericTool
 class Pane:
     parent=root
     def pwd(self):return self.parent
@@ -28,7 +32,7 @@ def test_tool(tool, kwargs):
 try:
     line=root.createNode('line');line.parmTuple('dir').set((0,0,1))
     profile=root.createNode('circle');profile.parm('type').set('poly');profile.parm('orient').set('xy');profile.parmTuple('rad').set((.025,.025))
-    h._network_editor=lambda:pane;h.toolutils.testTool=test_tool
+    dsh_node_creation._network_editor=lambda:pane;toolutils.testTool=test_tool
     n=h.tab_create(root,'sweep','custom',inputs=[line,profile])
     assert seen[-1]=='tube','shipped initializer must exercise the original failure'
     assert n.parm('surfaceshape').evalAsString()=='input'
@@ -39,14 +43,14 @@ try:
                         'parms':{'surfaceshape':'tube','radius':.04}}],output='override')
     assert root.node('override').parm('surfaceshape').evalAsString()=='tube','explicit build parms win after initialization'
     assert abs(root.node('override').geometry().boundingBox().sizevec()[0]-.08)<1e-6
-    h._network_editor=old_editor;h.toolutils.testTool=old_test;soptoolutils.genericTool=old_generic
+    dsh_node_creation._network_editor=old_editor;toolutils.testTool=old_test;soptoolutils.genericTool=old_generic
 
     before=set(root.children())
     spec=[{'name':'bad_circle','type':'circle','parms':{'rad':['ch("x")',1]}},
           {'name':'bad_transform','type':'xform','inputs':[line.name()],'parms':{'scalex':1,'scaley':1}},
           {'name':'bad_tube','type':'tube','parms':{'radx':.1,'orient':'nonsense'}}]
     try:h.build_module(root,spec,output='bad_tube')
-    except h.PreflightError as e:
+    except dsh_errors.PreflightError as e:
         assert e.evidence['scene_writes']==0
         assert e.evidence['error_count']==5,e.evidence
         assert {r['node'] for r in e.evidence['errors']}=={'bad_circle','bad_transform','bad_tube'}
@@ -61,7 +65,7 @@ try:
     parts=[{'name':'good','type':'box'},{'name':'empty','type':'null'},
            {'name':'merged','type':'merge','inputs':['good','empty']}]
     try:h.build_module(root,parts,output='merged',required_outputs=['empty'])
-    except h.CheckpointError as e:assert e.evidence['failure_reasons']==['required_output']
+    except dsh_errors.CheckpointError as e:assert e.evidence['failure_reasons']==['required_output']
     else:raise AssertionError('empty required branch passed aggregate output gate')
     assert root.node('good') is None and root.node('empty') is None
     h.build_module(root,parts,output='merged',required_outputs=['good'])
@@ -105,6 +109,6 @@ try:
     except ValueError:pass
     else:raise AssertionError('boolean axis accepted')
 finally:
-    h._network_editor=old_editor;h.toolutils.testTool=old_test;soptoolutils.genericTool=old_generic
+    dsh_node_creation._network_editor=old_editor;toolutils.testTool=old_test;soptoolutils.genericTool=old_generic
     root.destroy()
 print('stool repair lifecycle/preflight/required branches/axis gap/restoration passed: '+hou.applicationVersionString())

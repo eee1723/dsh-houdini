@@ -2,12 +2,15 @@
 
 Run only in disposable hython; the live scene is never contacted.
 """
+
 from pathlib import Path
 import sys
 import tempfile
 import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_media_output
+import dsh_ownership
 import hou
 import dsh_bridge as bridge
 import dsh_hou_helpers as h
@@ -84,7 +87,7 @@ try:
     if display_before is not None: display_before.setDisplayFlag(False)
     if render_before is not None: render_before.setRenderFlag(False)
     flags_before = {n.path(): (n.isDisplayFlagSet(), n.isRenderFlagSet()) for n in root.children()}
-    with h._execution_owner('module-owner', 'module-test'):
+    with dsh_ownership.execution_owner('module-owner', 'module-test'):
         h.build_module(root, [{'name': 'owned_unit', 'type': 'box'}], output='owned_unit')
         assert h.node_provenance(root.node('owned_unit'))['status'] == 'owned_current_session'
     assert {n.path(): (n.isDisplayFlagSet(), n.isRenderFlagSet()) for n in root.children() if n.path() in flags_before} == flags_before
@@ -157,7 +160,7 @@ try:
 
     # Rejected calls may not relay a previous call's image.
     with tempfile.NamedTemporaryFile(suffix='.png') as image:
-        h._PRODUCED_IMAGES.append(image.name)
+        dsh_media_output._PRODUCED_IMAGES.append(image.name)
         blocked = bridge.run_code("hou.node('/obj').createNode('geo')")
         assert not blocked.get('images'), blocked
     errors = []

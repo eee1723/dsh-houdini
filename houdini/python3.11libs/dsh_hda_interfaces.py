@@ -1,6 +1,12 @@
 """Bounded definition-interface patches; no callback execution or scene loading."""
 from __future__ import annotations
 
+import dsh_parameter_templates
+
+import dsh_errors
+import dsh_node_access
+import dsh_ownership
+
 import hashlib
 import json
 import math
@@ -54,23 +60,37 @@ def _definition_fingerprint(definition):
 
 def register_created_definition(definition):
     """Record a new definition in a newly created or already owned library."""
-    import dsh_hou_helpers as h
+
     _OWNED_DEFINITIONS[_definition_key(definition)] = {
-        'session': h._ACTIVE_OWNER_SESSION, 'call': h._ACTIVE_OWNER_CALL,
+        'session': dsh_ownership.current_session(), 'call': dsh_ownership.current_call(),
         'fingerprint': _definition_fingerprint(definition),
     }
 
 
+def snapshot_library_owners(definition):
+    """Detached definition authority for one library's native version operation."""
+    from copy import deepcopy
+    library = _definition_key(definition)[0]
+    return deepcopy({key: value for key, value in _OWNED_DEFINITIONS.items() if key[0] == library})
+
+
+def restore_library_owners(snapshot, *, discard):
+    """Restore authority after the caller's library recovery; never edit the HIP."""
+    from copy import deepcopy
+    _OWNED_DEFINITIONS.pop(discard, None)
+    _OWNED_DEFINITIONS.update(deepcopy(snapshot))
+
+
 def require_definition_owned(definition, operation, allow_foreign=None):
-    import dsh_hou_helpers as h
+
     if allow_foreign is not None and (not isinstance(allow_foreign, str) or not allow_foreign.strip()):
         raise ValueError('allow_foreign must be a nonempty explicit authorization reason string, or None')
     key = _definition_key(definition)
     fingerprint = _definition_fingerprint(definition)
     entry = _OWNED_DEFINITIONS.get(key)
-    if h._ACTIVE_OWNER_SESSION is None:
+    if dsh_ownership.current_session() is None:
         return False
-    if entry and entry['session'] == h._ACTIVE_OWNER_SESSION and entry['fingerprint'] == fingerprint:
+    if entry and entry['session'] == dsh_ownership.current_session() and entry['fingerprint'] == fingerprint:
         return True
     if allow_foreign is not None:
         print(f'[ownership] foreign-definition exemption for {operation}: {key[1]}/{key[2]} in {definition.libraryFilePath()} — {allow_foreign.strip()}')
@@ -83,10 +103,10 @@ def require_definition_owned(definition, operation, allow_foreign=None):
 
 
 def _refresh_created_definition(definition):
-    import dsh_hou_helpers as h
+
     key = _definition_key(definition)
     entry = _OWNED_DEFINITIONS.get(key)
-    if entry and entry['session'] == h._ACTIVE_OWNER_SESSION:
+    if entry and entry['session'] == dsh_ownership.current_session():
         previous_hash = entry['fingerprint']['library_sha256']
         updates = [(entry, _definition_fingerprint(definition))]
         # Appending/editing one owned version changes the shared file hash.
@@ -95,7 +115,7 @@ def _refresh_created_definition(definition):
         for sibling in hou.hda.definitionsInFile(definition.libraryFilePath()):
             sibling_key = _definition_key(sibling)
             other = _OWNED_DEFINITIONS.get(sibling_key)
-            if (sibling_key == key or not other or other['session'] != h._ACTIVE_OWNER_SESSION
+            if (sibling_key == key or not other or other['session'] != dsh_ownership.current_session()
                     or other['fingerprint']['library_sha256'] != previous_hash):
                 continue
             fingerprint = _definition_fingerprint(sibling)
@@ -267,14 +287,14 @@ def definition_write_guard(node, operation, allow_foreign=None):
 @contextmanager
 def _definition_write_guard(node, operation, allow_foreign=None):
     """Restore this call's disk definition/root interfaces on failure; not scene undo."""
-    import dsh_hou_helpers as h
+
     definition = node.type().definition()
     registered_authority = require_definition_owned(definition, operation, allow_foreign)
     instances = [n for n in node.type().instances() if n.type().definition() == definition]
     if len(instances) > 64:
         raise ValueError('definition write supports at most 64 affected instances')
     for instance in instances:
-        h._require_owned(instance, operation + ' affected instance', allow_foreign)
+        dsh_ownership.require_owned(instance, operation + ' affected instance', allow_foreign)
     library = definition.libraryFilePath()
     if not os.path.isfile(library) or os.path.islink(library) or os.path.getsize(library) > 32*1024*1024:
         raise ValueError('definition write requires a regular disk library <=32 MiB')
@@ -319,7 +339,7 @@ def _definition_write_guard(node, operation, allow_foreign=None):
                     failures.append('library bytes differ after restoration')
         except Exception as restore_error:
             failures.append(str(restore_error))
-        raise h.CheckpointError(f'{operation} failed: {error}; restoration errors={failures}',
+        raise dsh_errors.CheckpointError(f'{operation} failed: {error}; restoration errors={failures}',
             {'ok':False,'phase':'write','restored':not failures,'restore_errors':failures,
              'scope':'this call definition sections/root interfaces/channels/library; external effects excluded'}) from error
 
@@ -330,13 +350,13 @@ def _interface_dialog(original, group):
     setParmTemplateGroup reintroduces/renames subnet switchers on H21. Emit full
     native templates instead of baseparm references, retaining the original header.
     """
-    import dsh_hou_helpers as h
+
     def blocks(text):
         result, end = [], 0
         for match in re.finditer(r'(?m)^[ \t]*(\w+)[ \t]*\{[ \t]*\r?$', text):
             if match.start() < end:
                 continue
-            end = h._balanced_block_end(text, match.start())
+            end = dsh_parameter_templates._balanced_block_end(text, match.start())
             if match.group(1) == 'parm' or match.group(1).startswith('group'):
                 result.append((match.start(), end))
         return result
@@ -353,22 +373,22 @@ def _interface_dialog(original, group):
 
 
 def patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
-    import dsh_hou_helpers as h
+
     try:
         with hou.undos.disabler():
             return _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign)
-    except h.CheckpointError:
+    except dsh_errors.CheckpointError:
         raise
     except Exception as error:
-        raise h.CheckpointError(str(error), {'ok': False, 'mode': 'patch',
+        raise dsh_errors.CheckpointError(str(error), {'ok': False, 'mode': 'patch',
                                 'phase': 'preflight', 'scene_writes': 0,
                                 'applied': False}) from error
 
 
 def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
-    import dsh_hou_helpers as h
-    n, definition = h._hda_definition(node)
-    h._require_owned(n, 'hda_set_interface patch', allow_foreign)
+
+    n, definition = dsh_node_access._hda_definition(node)
+    dsh_ownership.require_owned(n, 'hda_set_interface patch', allow_foreign)
     require_definition_owned(definition, 'hda_set_interface patch', allow_foreign)
     if type(dry_run) is not bool:
         raise ValueError('dry_run must be boolean')
@@ -381,7 +401,7 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
     if len(instances) > 64:
         raise ValueError('patch supports at most 64 affected instances')
     for instance in instances:
-        h._require_owned(instance, 'hda_set_interface patch affected instance', allow_foreign)
+        dsh_ownership.require_owned(instance, 'hda_set_interface patch affected instance', allow_foreign)
         if instance.parmTemplateGroup().asDialogScript(full_info=True) != definition.parmTemplateGroup().asDialogScript(full_info=True):
             raise ValueError('instance-specific interface overrides are not supported by definition patch')
     group = hou.ParmTemplateGroup()
@@ -396,10 +416,10 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
             t = group.find(edit['name'])
             if t is None:
                 raise ValueError(f'missing template {edit["name"]}')
-            before = h._template_info(t, 0, 20)
+            before = dsh_parameter_templates._template_info(t, 0, 20)
             group.replace(edit['name'], _update(t, edit['fields']))
             changes.append({'op': op, 'name': edit['name'], 'before': before,
-                            'after': h._template_info(group.find(edit['name']), 0, 20)})
+                            'after': dsh_parameter_templates._template_info(group.find(edit['name']), 0, 20)})
         elif op == 'add' and set(edit) <= {'op', 'spec', 'folder'} and 'spec' in edit:
             names = {t.name() for t in _walk(group.entries())}
             spec = edit['spec']
@@ -433,11 +453,11 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
                     if not valid:
                         raise ValueError('add has invalid literal default')
                 if kind == 'button':
-                    h._validate_section_code('PythonModule', item.get('callback'))
+                    dsh_parameter_templates._validate_section_code('PythonModule', item.get('callback'))
                 for child in item.get('parms', []):
                     validate_spec(child)
             validate_spec(spec)
-            template = h._build_interface_template(spec, 'add.spec', names, {})
+            template = dsh_parameter_templates._build_interface_template(spec, 'add.spec', names, {})
             for added in _walk([template]):
                 if added.type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
                     _update(added, {'min': added.minValue()})  # validates limits/default, no scene writes
@@ -466,8 +486,8 @@ def _patch_interface(node, edits, expected_sha256, dry_run, allow_foreign):
         actual = hou.ParmTemplateGroup()
         actual.setToDialogScript(definition.sections()['DialogScript'].contents())
         # Compare the native normalized templates, not just the submitted JSON.
-        intended = [h._template_info(t, 0, 20) for t in group.entries()]
-        observed = [h._template_info(t, 0, 20) for t in actual.entries()]
+        intended = [dsh_parameter_templates._template_info(t, 0, 20) for t in group.entries()]
+        observed = [dsh_parameter_templates._template_info(t, 0, 20) for t in actual.entries()]
         if intended != observed:
             def differences(a, b, path='interface'):
                 if isinstance(a, dict) and isinstance(b, dict):

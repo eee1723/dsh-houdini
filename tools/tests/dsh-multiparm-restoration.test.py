@@ -1,9 +1,11 @@
 """Count rollback preserves real nested instances, channels and recovery facts."""
+
 from pathlib import Path
 import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_parameter_values
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
@@ -106,11 +108,11 @@ try:
 
     # A same-path replacement must never become the snapshot's target.
     old = root.createNode('xform', 'replacement')
-    state = h._parameter_snapshot([old.parm('tx')])
+    state = dsh_parameter_values._parameter_snapshot([old.parm('tx')])
     old.destroy()
     replacement = root.createNode('xform', 'replacement')
     replacement.parm('tx').set(31)
-    assert h._restore_parameters(state)
+    assert dsh_parameter_values._restore_parameters(state)
     assert replacement.evalParm('tx') == 31
 finally:
     root.destroy()

@@ -1,8 +1,10 @@
 """Fused surfaces vs independent contacts + full bgeo export-date normalization."""
+
 from pathlib import Path
 import copy,json
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_parameter_values
 import hou,hjson
 import dsh_hou_helpers as h
 import dsh_quality_contracts as q
@@ -97,10 +99,10 @@ try:
     assert q._data_signature(tube.geometry())!=before
     tube.destroy()
     # A report error from restoration still blocks even if topology itself passed.
-    restore=h._restore_parameters
+    restore=dsh_parameter_values._restore_parameters
     try:
-        h._restore_parameters=lambda saved:restore(saved)+['injected failure']
+        dsh_parameter_values._restore_parameters=lambda saved:restore(saved)+['injected failure']
         rejects(test_move,'restoration failed')
-    finally:h._restore_parameters=restore
+    finally:dsh_parameter_values._restore_parameters=restore
 finally:root.destroy()
 print('surface topology/representation/perturbed disconnect/full-payload restoration tests passed')

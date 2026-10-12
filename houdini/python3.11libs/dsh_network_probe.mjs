@@ -30,11 +30,13 @@ try {
   const transport=await load('@deepseek-ai/dsh-http-proxy')
   report.proxyDiagnostics=[]
   dispose=await transport.installProxyFromEnvironment(environment,message=>report.proxyDiagnostics.push(message))
+  report.configuration=transport.proxyConfiguration()
+  report.noProxy=transport.proxyEnvironmentForChild().NO_PROXY||''
   const url=new URL(request.url)
-  const route=transport.proxyRouteFor(url)
+  const route=await transport.proxyRouteFor(url)
   report.route={proxied:route.proxied,proxy:route.proxied?redact(route.proxy):null}
   const bridgeUrl=new URL(request.bridgeUrl||'http://127.0.0.1:8765')
-  report.bridgeRoute={url:bridgeUrl.origin,proxied:transport.proxyRouteFor(bridgeUrl).proxied,
+  report.bridgeRoute={url:bridgeUrl.origin,proxied:(await transport.proxyRouteFor(bridgeUrl)).proxied,
     observed:'routing_only_no_bridge_request'}
   try {
   report.search={componentInstalled:!!require.resolve('@deepseek-ai/dsh-web-search-deepseek'),
@@ -53,6 +55,21 @@ try {
     } catch(error) {
       report.fetch={ok:false,url:url.href,code:error.code||null,message:error.message,
         elapsedMs:Date.now()-started}
+      const causes=[],seen=new Set()
+      const collect=value=>{
+        if(!value||typeof value!=='object'||seen.has(value))return
+        seen.add(value)
+        if(value.code)causes.push({code:value.code,address:value.address,port:value.port})
+        collect(value.cause)
+        if(Array.isArray(value.errors))value.errors.forEach(collect)
+      }
+      collect(error)
+      report.fetch.causes=causes
+      if(route.proxied){
+        const target=new URL(route.proxy)
+        report.fetch.proxyUnavailable=causes.some(e=>e.code==='ECONNREFUSED'&&Number(e.port)===Number(target.port||(target.protocol==='https:'?443:80))&&
+          (e.address===target.hostname||target.hostname==='localhost'&&['127.0.0.1','::1'].includes(e.address)))
+      }
       if(error.code==='WEB_BLOCKED_URL') {
         try {report.fetch.resolvedAddresses=(await lookup(url.hostname,{all:true})).map(row=>row.address)}
         catch { /* The provider's original failure remains authoritative. */ }

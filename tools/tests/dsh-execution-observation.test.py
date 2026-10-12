@@ -1,13 +1,15 @@
 """Ordered runtime observations and bounded native dependency impact, without extra cooks."""
+
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
 from dsh_execution import _observe_impact
-with h._execution_owner('observation-owner','setup'):
+with dsh_ownership.execution_owner('observation-owner','setup'):
     root=h.tab_create('/obj','geo','__execution_observation')
     ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=[{'type':'float','name':'width','default':1}])

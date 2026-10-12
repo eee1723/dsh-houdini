@@ -1,12 +1,14 @@
 """Independent exec checkpoints survive later modules/discovery/integration failures."""
+
 import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
 
-with h._execution_owner('boundary-owner','setup'):
+with dsh_ownership.execution_owner('boundary-owner','setup'):
     root=h.tab_create('/obj','geo','__module_boundaries')
 try:
     def run(code, **options):

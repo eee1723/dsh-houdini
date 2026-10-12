@@ -1,22 +1,26 @@
 """Focused checks for shared analysis and queries that never prepare edits."""
+
 from pathlib import Path
 import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
 
 import hou
 import dsh_bridge as bridge
 import dsh_code_analysis as analysis
 import dsh_execution as execution
 import dsh_hou_helpers as helpers
+import dsh_media_output
+import dsh_component_contracts
 import dsh_network_boxes as boxes
 
 
 # Queries, including failed queries, do not touch editing journals or the undo
 # stack. Their ordinary ledger/result facts still flow through the same runtime.
 with (patch.object(hou.undos, 'areEnabled', side_effect=AssertionError('query inspected undo')),
-      patch.object(helpers, '_track_created_nodes', side_effect=AssertionError('query prepared creation journal')),
+      patch.object(dsh_ownership, 'track_created_nodes', side_effect=AssertionError('query prepared creation journal')),
       patch.object(boxes, 'transaction_journal', side_effect=AssertionError('query prepared box journal'))):
     with patch.object(analysis.ast, 'parse', wraps=analysis.ast.parse) as parsed:
         result = bridge.run_code('__result__ = scene_info()["frame"]', read_only=True)
@@ -55,4 +59,32 @@ with patch.object(execution.inspect, 'signature', wraps=execution.inspect.signat
     finally:
         execution._VERBS['scene_info'] = original
 
-print('single analysis / query without edit preparation / callable signature cache passed on ' + hou.applicationVersionString())
+# Nested image scopes survive failure and never leak into the next request.
+with dsh_media_output.image_scope() as outer_images:
+    helpers.report_image('outer.png')
+    try:
+        with dsh_media_output.image_scope() as inner_images:
+            helpers.report_image('inner.png')
+            raise RuntimeError('injected media failure')
+    except RuntimeError:
+        pass
+    helpers.report_image('after.png')
+    assert [__import__('os').path.basename(p) for p in outer_images] == ['outer.png','after.png']
+    assert [__import__('os').path.basename(p) for p in inner_images] == ['inner.png']
+with dsh_media_output.image_scope() as next_images:
+    assert next_images == []
+
+# Component rollback owns a deep snapshot, including nested contract metadata.
+baseline = dsh_component_contracts.snapshot_imports()
+try:
+    dsh_component_contracts.restore_imports({'fixture': {'nested': {'hash': 'original'}}})
+    captured = dsh_component_contracts.snapshot_imports()
+    captured['fixture']['nested']['hash'] = 'detached'
+    assert dsh_component_contracts.snapshot_imports()['fixture']['nested']['hash'] == 'original'
+    dsh_component_contracts.restore_imports(captured)
+    captured['fixture']['nested']['hash'] = 'changed after restore'
+    assert dsh_component_contracts.snapshot_imports()['fixture']['nested']['hash'] == 'detached'
+finally:
+    dsh_component_contracts.restore_imports(baseline)
+
+print('single analysis / query isolation / callable signature cache / nested media / detached component rollback passed on ' + hou.applicationVersionString())

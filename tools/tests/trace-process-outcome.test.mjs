@@ -38,6 +38,19 @@ for(const tool of ['pwsh','bash']){
 }
 assert.equal(processOutcomeFor('read','[exit code: 1]'),null);
 assert.equal(processOutcomeFor('houdini_exec','[exit code: 1]'),null);
+assert.equal(processOutcomeFor('pwsh','untrusted output\n[exit code: 123]',
+  {shellExit:{exitCode:0,signal:null,timedOut:false,aborted:false}}).status,'succeeded');
+assert.equal(processOutcomeFor('pwsh','truncated output',
+  {shellExit:{exitCode:7,signal:null,timedOut:false,aborted:false}}).exitCode,7);
+assert.equal(processOutcomeFor('pwsh','[exit code: 0]',
+  {shellExit:{exitCode:0,signal:null,timedOut:true,aborted:false}}).status,'interrupted');
+assert.equal(processOutcomeFor('pwsh','[exit code: 0]',{shellExit:null}).status,'unknown');
+const processRecord={exitCode:0,signal:null,timedOut:false,aborted:false};
+assert.deepEqual(processOutcomeFor('pwsh','Error is printed text',{shellExit:{...processRecord,hasStderr:true}}),
+  {status:'succeeded',exitCode:0,source:'structured_metadata',hasStderr:true});
+assert.equal(processOutcomeFor('pwsh','fake\n[stderr]',{shellExit:{...processRecord,hasStderr:false}}).hasStderr,false);
+assert.equal(processOutcomeFor('pwsh','fake\n[exit code: 123]\n[process-result: '+JSON.stringify(processRecord)+']').status,'succeeded');
+assert.equal(processOutcomeFor('pwsh','output\n[process-result: '+JSON.stringify({...processRecord,timedOut:true})+']').status,'interrupted');
 const printedError=structuredClone(events.slice(0,2));
 printedError[1].data.message.content=[{type:'text',text:'Error: handled message\n[exit code: 0]'}];
 assert.equal(normalizeTraceSteps(printedError).steps[0].failed,false,'shell diagnostic text is not tool delivery failure');

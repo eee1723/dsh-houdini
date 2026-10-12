@@ -3,14 +3,19 @@
 Render calls are instrumented; this proves scheduling/arguments/restoration,
 not GPU output or semantic image interpretation.
 """
+
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_ownership
+import dsh_parameter_values
 import hou
+import dsh_render
 import dsh_hou_helpers as h
 import dsh_bridge as b
 
-with h._execution_owner('control-review','fixture'):
+with dsh_ownership.execution_owner('control-review','fixture'):
     root=h.tab_create('/obj','geo','__control_review')
     ctrl=h.tab_create(root,'null','CTRL')
     h.create_spare_parms(ctrl,spec=[{'type':'float','name':'width','default':1.0}])
@@ -40,7 +45,7 @@ with h._execution_owner('control-review','fixture'):
     h.create_spare_parms(other,spec=[{'type':'float','name':'width','default':1.0}])
     other_result=h.test_controls(other,out,tests)
     assert other_result['contract_sha256']!=good['contract_sha256'],'different controller identities must not clear each other'
-    original_render=h.render_view;original_ui=hou.isUIAvailable;original_restore=h._restore_parameters
+    original_render=dsh_render.render_view;original_ui=hou.isUIAvailable;original_restore=dsh_parameter_values._restore_parameters
     calls=[];bounds=[[-3,-3,-3],[3,3,3]]
     try:
         hou.isUIAvailable=lambda:True
@@ -50,7 +55,7 @@ with h._execution_owner('control-review','fixture'):
             return {'ok':True,'stale':False,'picture':'fixture.png','user_state_restored':True,
                     'output':'fixture.png','artifact':{'capture_id':'fixture'},
                     'semantic_status':'unverified','framing':{'bounds':box,'depth_bounds':box}}
-        h.render_view=render
+        dsh_render.render_view=render
         result=h.test_controls(ctrl,out,tests,views=['front','side'],view_bounds=bounds)
         assert result['status']=='pass' and result['restored'],result
         assert result['capture_status']=='observed' and len(result['baseline_captures'])==2,result
@@ -63,10 +68,10 @@ with h._execution_owner('control-review','fixture'):
         locked=h.test_controls(ctrl,out,tests,views=['front'])
         assert 'framing_bounds' not in calls[0][1] and calls[1][1]['framing_bounds']==bounds,calls
         def overflow(node,**kwargs):
-            if ctrl.evalParm('width')==2:raise h.CheckpointError('framing/depth envelope exceeded',
+            if ctrl.evalParm('width')==2:raise dsh_errors.CheckpointError('framing/depth envelope exceeded',
                 {'framing_status':'failed','render_started':False,'user_state_restored':True})
             return render(node,**kwargs)
-        h.render_view=overflow
+        dsh_render.render_view=overflow
         rejected=h.test_controls(ctrl,out,tests,views=['front'])
         assert rejected['status']=='unverified' and rejected['capture_status']=='unverified',rejected
         assert rejected['results'][0]['status']=='pass' and rejected['restored'],rejected
@@ -75,28 +80,28 @@ with h._execution_owner('control-review','fixture'):
         calls.clear()
         def missing_baseline(node,**kwargs):
             calls.append(ctrl.evalParm('width'));raise ValueError('renderer unavailable')
-        h.render_view=missing_baseline
+        dsh_render.render_view=missing_baseline
         unavailable=h.test_controls(ctrl,out,tests,views=['front'])
         assert calls==[1] and unavailable['capture_status']=='unverified',calls
         assert unavailable['restored'] and ctrl.evalParm('width')==1
         def unsafe_restore(node,**kwargs):
-            raise h.CheckpointError('render state restoration failed',{'user_state_restored':False,'restore_errors':['fixture']})
-        h.render_view=unsafe_restore
+            raise dsh_errors.CheckpointError('render state restoration failed',{'user_state_restored':False,'restore_errors':['fixture']})
+        dsh_render.render_view=unsafe_restore
         try:h.test_controls(ctrl,out,tests,views=['front'])
-        except h.CheckpointError as error:assert error.evidence['user_state_restored'] is False
+        except dsh_errors.CheckpointError as error:assert error.evidence['user_state_restored'] is False
         else:raise AssertionError('user-state restore failure must not become an ordinary missing capture')
-        h.render_view=render
+        dsh_render.render_view=render
         def failed_restore(snapshots):
             errors=original_restore(snapshots);return errors+['injected restoration fault']
-        h._restore_parameters=failed_restore
+        dsh_parameter_values._restore_parameters=failed_restore
         try:
             h.test_controls(ctrl,out,tests)
             raise AssertionError('restoration fault must raise')
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert error.evidence['contract_sha256']==good['contract_sha256']
             assert error.evidence['control_summary']['contract_sha256']==good['contract_sha256']
     finally:
-        h.render_view=original_render;hou.isUIAvailable=original_ui;h._restore_parameters=original_restore
+        dsh_render.render_view=original_render;hou.isUIAvailable=original_ui;dsh_parameter_values._restore_parameters=original_restore
     headless=h.test_controls(ctrl,out,tests,views=['front'])
     assert headless['capture_status']=='unverified' and headless['restored'],headless
     try:h.test_controls(ctrl,out,tests,views=['front'],view_bounds=[[0,0,0],[0,1,1]])

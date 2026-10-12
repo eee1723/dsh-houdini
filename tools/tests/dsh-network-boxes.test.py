@@ -1,9 +1,12 @@
 """H21/H22 Network Box operations, ownership and local recovery regression."""
 from __future__ import annotations
+
 from pathlib import Path
 import importlib,sys,tempfile,uuid
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
+import dsh_render_service
+import dsh_service_constants
 import hou
 import dsh_bridge as bridge
 import dsh_hou_helpers as h
@@ -443,8 +446,8 @@ try:
 
     # Render-service registration is exact identity protection and cannot be bypassed.
     service_node=hou.node(parent).createNode('null','service_probe')
-    service_node.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
-    service=h._render_service_box(hou.node(parent),h._RENDER_OBJ_BOX_NAME,[service_node])
+    service_node.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
+    service=dsh_render_service._render_service_box(hou.node(parent),dsh_service_constants._RENDER_OBJ_BOX_NAME,[service_node])
     service_group={'name':service.name(),'label':'no','role':'assembly','members':[service_node.path()]}
     protected=call(f"__result__=network_boxes({parent!r},[{service_group!r}],dry_run=True,allow_foreign='test bypass')")
     assert not protected['ok'] and 'service' in protected['error'].lower(),protected
@@ -455,7 +458,7 @@ try:
     protected_remove=call(f"__result__=network_boxes({parent!r},[],remove=['renamed_service_box'],dry_run=True,allow_foreign='test bypass')")
     assert not protected_remove['ok'] and 'service' in protected_remove['error'].lower(),protected_remove
     service_parent=hou.node('/obj').createNode('geo','service_parent_'+suffix)
-    service_parent.setUserData(h._RENDER_OWNER_KEY,h._RENDER_OWNER_VALUE)
+    service_parent.setUserData(dsh_service_constants._RENDER_OWNER_KEY,dsh_service_constants._RENDER_OWNER_VALUE)
     untagged=service_parent.createNode('null','untagged_child')
     service_parent_group={'name':'child_box','label':'No bypass','role':'assembly','members':[untagged.path()]}
     ancestor_protected=call(f"__result__=network_boxes({service_parent.path()!r},[{service_parent_group!r}],dry_run=True,allow_foreign='test bypass')")

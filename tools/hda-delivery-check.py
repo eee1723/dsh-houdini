@@ -117,6 +117,7 @@ def worker(manifest_path, result_path):
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / 'houdini/python3.11libs'))
     import dsh_hou_helpers as h
+    import dsh_ownership
     manifest = load_manifest(manifest_path)
     for path in reversed(manifest.get('python_paths', [])):
         sys.path.insert(0, path)
@@ -144,8 +145,8 @@ def worker(manifest_path, result_path):
                 allowed_libraries = {Path(x).resolve() for x in manifest['assets']}
                 factory_root = Path(hou.text.expandString('$HFS')).resolve()
                 result['node_definitions'] = definition_inventory(node, allowed_libraries, factory_root)
-                with h._execution_owner('delivery-check', case['id']):
-                    h._register_owned_node(node)  # trusted fixture creation, no user nodes
+                with dsh_ownership.execution_owner('delivery-check', case['id']):
+                    dsh_ownership.register_owned_node(node)  # trusted fixture creation, no user nodes
                     if case.get('values'):
                         h.set_parms(node, case['values'])
                 callback_error = None
@@ -193,7 +194,7 @@ def worker(manifest_path, result_path):
                     output = node if expected['output'] in ('', '.') else node.node(expected['output'])
                     if output is None or output.type().category() != hou.sopNodeTypeCategory():
                         raise AssertionError('expected SOP output is missing')
-                    with h._execution_owner('delivery-check', case['id']):
+                    with dsh_ownership.execution_owner('delivery-check', case['id']):
                         cooked = h.cook_node(output)
                     if cooked.get('ok') is not True:
                         raise AssertionError('output cook did not complete: ' + json.dumps(cooked, ensure_ascii=False))

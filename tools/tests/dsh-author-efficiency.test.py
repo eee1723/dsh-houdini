@@ -1,7 +1,9 @@
 """Isolated real HOM regression for author failures and diagnostic completeness."""
+
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
@@ -11,7 +13,7 @@ def rejects(fn, message):
     except Exception as e:assert message in str(e),(message,str(e))
     else:raise AssertionError('expected rejection: '+message)
 
-with h._execution_owner('efficiency','setup'):
+with dsh_ownership.execution_owner('efficiency','setup'):
     root=h.tab_create('/obj','geo','__author_efficiency')
     source=h.tab_create(root,'box','source')
     ctrl=h.tab_create(root,'null','CTRL')
@@ -31,7 +33,7 @@ try:
         assert not env['ok'] and 'node_info(parent, type_name' in env['error'],env
         assert 'existing_geo' in env['error'] and 'houdini_exec' in env['error'],env
         assert env['transaction']['status']=='no_scene_change',env
-    with h._execution_owner('efficiency','test'):
+    with dsh_ownership.execution_owner('efficiency','test'):
         rejects(lambda:h.set_parm(switch,'input','chi("../CTRL/enabled")'),'Unknown function')
         # Native fault injection still exercises cook error refresh; the public
         # setter now rejects this expression before it can be committed.
@@ -74,7 +76,7 @@ try:
             # automatically eligible for cleanup.
             with hou.undos.disabler():
                 n=root.createNode('null','residual')
-                h._register_owned_node(n)
+                dsh_ownership.register_owned_node(n)
                 residual.append(n.sessionId())
                 root.createNode('null','user_node')
         try:

@@ -82,10 +82,11 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
     assert window.grab().save(str(output / f"deployment-ui-{suffix}.png"))
     button(window, "高级设置").click()
     assert button(window, "安装本地包…").isVisible()
-    for text in ("修复当前版本", "回退到上一版本", "运行诊断…", "登记共享执行端…"):
+    for text in ("修复当前版本", "回退到上一版本", "运行诊断…", "联网诊断…", "登记共享执行端…"):
         assert not button(window, text).isVisible(), text
     running["loaded"] = {"installId": "1.0.0-aaaaaaaaaaaa-bbbbbbbb"}
     wait_until(lambda: button(window, "运行诊断…").isVisible())
+    assert button(window, "联网诊断…").isVisible()
     close(window)
 
     source = root / "source checkout"
@@ -114,11 +115,15 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
         diagnostics.show_version_manager = lambda: called.append("diagnostics")
         shared = types.ModuleType("dsh_shared_executor")
         shared.show_registration = lambda **kw: called.append(kw)
-        with patch.dict(sys.modules, {"dsh_manager": diagnostics, "dsh_shared_executor": shared}):
+        network = types.ModuleType("dsh_network_diagnostics")
+        network.show_current = lambda **kw: called.append(('network', kw['parent'] is window))
+        with patch.dict(sys.modules, {"dsh_manager": diagnostics, "dsh_shared_executor": shared,
+                                     "dsh_network_diagnostics": network}):
             button(window, "运行诊断…").click()
+            button(window, "联网诊断…").click()
             button(window, "登记共享执行端…").click()
             button(window, "修复共享连接…").click()
-        assert called == ["diagnostics", {"repair": False}, {"repair": True}], called
+        assert called == ["diagnostics", ('network', True), {"repair": False}, {"repair": True}], called
         assert window.grab().save(str(output / f"source-advanced-ui-{suffix}.png"))
         button(window, "收起高级设置").click()
 
@@ -270,6 +275,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
     with patch.object(ui, "show_source") as entry:
         exec(script, {})
         entry.assert_called_once_with()
+    assert menu.find(".//scriptItem[@id='dsh.network_settings']") is None
 
 # Render the real runtime dialog with deterministic worker facts. All probes
 # and restarts are mocked; Qt event delivery and the user action path are real.
@@ -278,7 +284,7 @@ import dsh_manager as manager
 with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), create=True), \
      patch.dict(sys.modules, {"dsh_install_ui": types.ModuleType("old_bootstrap_ui")}), \
      patch.object(manager, "_runtime_dsh_info", return_value={"online": True, "verified": True,
-                      "version": manager.dsh_runtime_compat.preferred_version(), "note": "fixture runtime"}), \
+                      "version": manager.dsh_runtime_compat.preferred_version(), "fixes_current": True, "note": "fixture runtime"}), \
      patch.object(manager, "_selected_cached_dsh_version", return_value=manager.dsh_runtime_compat.preferred_version()), \
      patch.object(manager, "_dsh_launch_override", return_value=None), \
      patch.object(manager, "_port_open", return_value=True):
@@ -292,6 +298,7 @@ with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), c
     app.processEvents()
     assert manager._WINDOW is window and not window.isMinimized()
     assert "准备配套版本" not in visible_buttons(window)
+    assert "联网诊断…" not in visible_buttons(window), 'network diagnostics has one entry in Version & Updates advanced settings'
     assert window.grab().save(str(output / f"runtime-ui-{suffix}.png"))
     window.close()
     app.processEvents()

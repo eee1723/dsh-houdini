@@ -3,12 +3,16 @@
 No live connection, HIP load/save or rendering. Defaults use direct creation;
 the separate stool-repair regression exercises the actual Sweep shelf script.
 """
+
 from pathlib import Path
 import math
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_errors
+import dsh_node_types
+import dsh_parameter_templates
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
@@ -79,9 +83,9 @@ try:
             assert 'search_tab_entries' in message and 'not replacements' in message, message
         else:
             raise AssertionError('invalid node type accepted: ' + requested)
-    for row in h._node_type_suggestions(hou.sopNodeTypeCategory(), 'polybevl'):
+    for row in dsh_node_types._node_type_suggestions(hou.sopNodeTypeCategory(), 'polybevl'):
         typ = hou.nodeType(hou.sopNodeTypeCategory(), row['type'])
-        assert typ is not None and h._visible_node_type(typ), row
+        assert typ is not None and dsh_node_types._visible_node_type(typ), row
     leaf = make('null', 'discovery_leaf')
     try:
         h.node_info(leaf, 'box')
@@ -96,7 +100,7 @@ try:
     try:
         mapping = legacy_cop.createNode('colormap', run_init_scripts=False)
         actual_tuple = mapping.parmTuple('from')
-        card = h._parm_template_card(actual_tuple.parmTemplate())
+        card = dsh_parameter_templates._parm_template_card(actual_tuple.parmTemplate())
         assert card['size'] == len(actual_tuple) == 2, card
         assert card['components'] == [p.name() for p in actual_tuple] == ['frommax', 'frommin'], card
     finally:
@@ -600,7 +604,7 @@ try:
     before = set(root.children())
     try:
         h.build_module(root, [{'name': 'bad_mode', 'type': 'attribwrangle', 'parms': {'runover': 0}}], output='bad_mode')
-    except h.PreflightError as error:
+    except dsh_errors.PreflightError as error:
         assert error.evidence['scene_writes'] == 0
         assert error.evidence['errors'][0]['field'] == 'runover'
     else:
@@ -608,7 +612,7 @@ try:
     assert set(root.children()) == before
     try:
         h.build_module(root, [{'name': 'empty_mode', 'type': 'attribwrangle'}], output='empty_mode')
-    except h.CheckpointError as error:
+    except dsh_errors.CheckpointError as error:
         assert not error.evidence['ok']
     else:
         raise AssertionError('empty wrangle passed')

@@ -218,7 +218,7 @@ try:
     ui_stage_calls = []
     def prepare_ui_fixture(**options):
         ui_stage_calls.append('prepare')
-        assert options == {'target': 'ui:transport-fixture'}, options
+        assert options == {'target': 'ui:transport-fixture', 'runtime_id': b._RUNTIME_ID}, options
         return stage_state
     def finish_ui_fixture(state):
         assert state is stage_state

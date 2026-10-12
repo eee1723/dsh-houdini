@@ -4,9 +4,11 @@ An abstract adjustable plate, end cap and surface attachment exercise shared
 derived coordinates. This tests the existing measurement/restore mechanism,
 not an LLM's design choices, arbitrary collision freedom or visual quality.
 """
+
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_quality_contracts as q
@@ -33,7 +35,7 @@ def case(name, length=2.0, width=1.0):
     ]}
 
 
-with h._execution_owner('control-design-fixture', 'isolated-test'):
+with dsh_ownership.execution_owner('control-design-fixture', 'isolated-test'):
     root = h.tab_create('/obj', 'geo', '__control_design')
     try:
         ctrl = h.tab_create(root, 'null', 'CTRL')

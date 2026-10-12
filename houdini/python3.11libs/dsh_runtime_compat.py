@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import hashlib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -78,8 +79,43 @@ def preferred_cached_bin(cache_root: Path | str, path: Path = MANIFEST_PATH) -> 
             continue
         binary = manifest.parent / "lib" / "bin.js"
         if package.get("version") == required and binary.is_file():
+            try:
+                runtime_fix_identity(binary, path)
+            except (OSError, ValueError, RuntimeError):
+                continue
             return binary
     return None
+
+
+def runtime_fix_identity(binary: Path | str, path: Path = MANIFEST_PATH, *, verify_files=False) -> dict | None:
+    """Read revision metadata; only the startup worker requests full file verification."""
+    location = load_manifest(path).get('runtimeFixes')
+    if location is None:
+        return None
+    definition_path = path.parent / location
+    definition = json.loads(definition_path.read_text(encoding='utf8'))
+    expected_patch = definition['patchSha256']
+    runtime_root = Path(binary).resolve().parents[4]
+    applied = json.loads((runtime_root / '.dsh-runtime-fixes.json').read_text(encoding='utf8'))
+    if (not isinstance(applied, dict) or applied.get('schemaVersion') != 1 or applied.get('revision') != definition['revision']
+            or applied.get('dshVersion') != preferred_version(path) or applied.get('patchSha256') != expected_patch):
+        raise RuntimeError('DSH runtime fixes do not match this plugin source; run npm run runtime:prepare')
+    files = applied.get('files')
+    if not isinstance(files, dict) or not files:
+        raise RuntimeError('DSH runtime fix file inventory is missing')
+    required = {f"node_modules/@deepseek-ai/dsh-{package['name']}/lib/{entry}.js"
+                for package in definition['hostPackages'] for entry in package['entries']}
+    required.update(f"node_modules/@deepseek-ai/dsh-{package['name']}/{asset}"
+                    for package in definition['hostPackages'] for asset in package.get('assets', []))
+    required.update(f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages'])
+    if not required.issubset(files):
+        raise RuntimeError('DSH runtime fix inventory omits a required implementation or asset')
+    if verify_files:
+        for relative, expected in files.items():
+            target = (runtime_root / relative).resolve()
+            if not target.is_relative_to(runtime_root) or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+                raise RuntimeError('DSH runtime fix file differs from its prepared inventory: ' + str(relative))
+    return {'revision': applied['revision'], 'patchSha256': applied['patchSha256'], 'filesVerified': verify_files}
 
 
 def require_verified(version: str, path: Path = MANIFEST_PATH) -> None:

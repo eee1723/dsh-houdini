@@ -1,7 +1,11 @@
 """Existing spare defaults: literal updates, state preservation and fail-closed ownership."""
+
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_ownership
+import dsh_parameter_values
+import dsh_service_constants
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
@@ -16,7 +20,7 @@ def rejects(fn, message):
         raise AssertionError('expected rejection: ' + message)
 
 
-with h._execution_owner('defaults-owner', 'setup'):
+with dsh_ownership.execution_owner('defaults-owner', 'setup'):
     ctrl = h.tab_create('/obj', 'null', '__spare_defaults')
     h.create_spare_parms(ctrl, spec=[{'type': 'folder', 'name': 'controls', 'parms': [
         {'type': 'float', 'name': 'length', 'default': 2., 'min': 0, 'min_strict': True},
@@ -33,7 +37,7 @@ try:
     ctrl.parm('other').lock(True)
     keys = {name: ctrl.parm(name).keyframes() for name in ('length', 'count')}
     old_frame = hou.frame()
-    with h._execution_owner('defaults-owner', 'edit'):
+    with dsh_ownership.execution_owner('defaults-owner', 'edit'):
         result = h.create_spare_parms(ctrl, update_defaults={'length': 3.5, 'count': 7, 'enabled': False, 'label': 'new'})
     assert result['ok'] and result['mode'] == 'update_defaults' and result['current_state_preserved'], result
     assert ctrl.parm('length').parmTemplate().defaultValue() == (3.5,)
@@ -46,7 +50,7 @@ try:
     # A reset now uses the new default, independently from the existing current value.
     ctrl.parm('label').revertToDefaults()
     assert ctrl.evalParm('label') == 'new'
-    with h._execution_owner('defaults-owner', 'negative'):
+    with dsh_ownership.execution_owner('defaults-owner', 'negative'):
         before = ctrl.parmTemplateGroup().asDialogScript()
         for updates, message in [({}, '1..32'), ({'length': 8, 'missing': 1}, 'existing spare'),
                                  ({'tx': 1}, 'existing spare'), ({'length': -1}, 'strict'),
@@ -65,17 +69,17 @@ try:
     ctrl.addSpareParmTuple(callback)
     expression_default = hou.FloatParmTemplate('dynamic', 'Dynamic', 1, default_expression=('1+2',))
     ctrl.addSpareParmTuple(expression_default)
-    with h._execution_owner('defaults-owner', 'unsupported'):
+    with dsh_ownership.execution_owner('defaults-owner', 'unsupported'):
         for name, message in [('vectorx', 'scalar'), ('choice', 'menu'), ('callback', 'scalar'), ('dynamic', 'expression defaults')]:
             rejects(lambda: h.create_spare_parms(ctrl, update_defaults={name: 1}), message)
-    with h._execution_owner('different-owner', 'foreign'):
+    with dsh_ownership.execution_owner('different-owner', 'foreign'):
         rejects(lambda: h.create_spare_parms(ctrl, update_defaults={'length': 6}), 'ownership guard')
         allowed = h.create_spare_parms(ctrl, update_defaults={'length': 6}, allow_foreign='User explicitly chose this controller')
         assert allowed['ok']
-    ctrl.setUserData(h._RENDER_OWNER_KEY, h._RENDER_OWNER_VALUE)
-    with h._execution_owner('different-owner', 'service'):
+    ctrl.setUserData(dsh_service_constants._RENDER_OWNER_KEY, dsh_service_constants._RENDER_OWNER_VALUE)
+    with dsh_ownership.execution_owner('different-owner', 'service'):
         rejects(lambda: h.create_spare_parms(ctrl, update_defaults={'length': 7}, allow_foreign='explicit target'), 'persistent')
-    ctrl.destroyUserData(h._RENDER_OWNER_KEY)
+    ctrl.destroyUserData(dsh_service_constants._RENDER_OWNER_KEY)
     # Bridge denies query and raw template application even with an exemption.
     query = b.run_code(f'create_spare_parms({ctrl.path()!r}, update_defaults={{"length":7}})',
                        owner_session='defaults-owner', read_only=True)
@@ -89,18 +93,18 @@ try:
                      owner_session='defaults-owner', allow_raw='attempt to bypass covered defaults update')
     assert not raw['ok'] and 'cannot exempt' in raw['error']
     # A failed readback restores the entire previous template and current animation.
-    original_restore = h._restore_parameters
+    original_restore = dsh_parameter_values._restore_parameters
     calls = []
     def fail_once(snapshots):
         errors = original_restore(snapshots); calls.append(1)
         return errors + (['injected restore failure'] if len(calls) == 1 else [])
     old = ctrl.parm('length').parmTemplate().defaultValue()
     try:
-        h._restore_parameters = fail_once
-        with h._execution_owner('defaults-owner', 'restore'):
+        dsh_parameter_values._restore_parameters = fail_once
+        with dsh_ownership.execution_owner('defaults-owner', 'restore'):
             rejects(lambda: h.create_spare_parms(ctrl, update_defaults={'length': 8}), 'injected restore failure')
     finally:
-        h._restore_parameters = original_restore
+        dsh_parameter_values._restore_parameters = original_restore
     assert ctrl.parm('length').parmTemplate().defaultValue() == old
     assert ctrl.parm('length').keyframes() == keys['length']
 finally:

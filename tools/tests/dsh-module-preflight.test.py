@@ -1,7 +1,10 @@
 """Static module errors carry zero writes; preceding or subsequent edits do not."""
+
 import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_node_types
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
@@ -55,25 +58,25 @@ try:
         h.delete_node(root.node('revolved'))
     # A missing component-name mapping still has a reliable template width.
     # It must not reintroduce the contradictory scalar/list preflight behavior.
-    original_cards=h._node_parameter_cards
+    original_cards=dsh_node_types._node_parameter_cards
     def unnamed_components(typ,counts=None):
         return [{**c,'components':[]} if c['name']=='angle' else c
                 for c in original_cards(typ,counts)]
-    h._node_parameter_cards=unnamed_components
+    dsh_node_types._node_parameter_cards=unnamed_components
     try:
         specs=[{'name':'unnamed_tuple','type':'revolve','parms':{'angle':[0,180]}}]
         assert h.build_module(root,specs,output='unnamed_tuple',dry_run=True)['valid']
         specs[0]['parms']['angle']=180
         try:h.build_module(root,specs,output='unnamed_tuple',dry_run=True)
-        except h.PreflightError as error:assert 'tuple needs 2' in str(error)
+        except dsh_errors.PreflightError as error:assert 'tuple needs 2' in str(error)
         else:raise AssertionError('unnamed tuple became scalar')
-    finally:h._node_parameter_cards=original_cards
+    finally:dsh_node_types._node_parameter_cards=original_cards
     # Reject nonfinite literals in dry-run before creating nodes, and preserve
     # existing parameter animation in the primitive setter's failure path.
     for field,value in [('sizex',float('nan')),('size',[1,float('inf'),1])]:
         before={n.sessionId() for n in root.children()}
         try:h.build_module(root,[{'name':'nonfinite','type':'box','parms':{field:value}}],output='nonfinite',dry_run=True)
-        except h.PreflightError as error:assert 'finite' in str(error)
+        except dsh_errors.PreflightError as error:assert 'finite' in str(error)
         else:raise AssertionError('nonfinite preflight accepted')
         assert before=={n.sessionId() for n in root.children()}
     source.parm('sizex').setExpression('1+0*$F',hou.exprLanguage.Hscript)

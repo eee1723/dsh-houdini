@@ -1,6 +1,11 @@
 """Optional UI composition and structural diagnostics, independent of asset recipes."""
 from __future__ import annotations
 
+import dsh_parameter_values
+
+import dsh_errors
+import dsh_parameter_templates
+
 from collections import Counter
 from copy import deepcopy
 import math
@@ -158,7 +163,7 @@ def validate_layout_spec(spec):
 
 def apply_spare_layout(node, layout, code_parm='snippet', dry_run=False):
     """Append UI to one node. Shared components never imply shared HDA edits."""
-    import dsh_hou_helpers as h
+
     from dsh_hda_interfaces import _snapshot, _restore
     if type(dry_run) is not bool:
         raise ValueError('dry_run must be boolean')
@@ -167,16 +172,16 @@ def apply_spare_layout(node, layout, code_parm='snippet', dry_run=False):
     if not spec:
         raise ValueError('layout must not be empty')
     before = node.parmTemplateGroup()
-    names = h._all_template_names(before.entries())
+    names = dsh_parameter_templates._all_template_names(before.entries())
     before_names = set(names)
-    templates = [h._build_interface_template(item, f'layout[{i}]', names, {}) for i, item in enumerate(spec)]
+    templates = [dsh_parameter_templates._build_interface_template(item, f'layout[{i}]', names, {}) for i, item in enumerate(spec)]
     for name in names - before_names:
         if '#' not in name and (node.parm(name) is not None or node.parmTuple(name) is not None):
             raise ValueError(f'layout conflicts with existing channel {name}')
     group = node.parmTemplateGroup()
     for template in templates:
         group.append(template)
-    info = [h._template_info(t, 0, 20) for t in group.entries()]
+    info = [dsh_parameter_templates._template_info(t, 0, 20) for t in group.entries()]
     result = {'node': node.path(), 'mode': 'layout', 'ok': True,
               'created': sorted(names - before_names), 'ui_analysis': analyze_ui(info)}
     if dry_run:
@@ -186,7 +191,7 @@ def apply_spare_layout(node, layout, code_parm='snippet', dry_run=False):
         raise ValueError('code parameter is locked; cannot refresh dependencies')
     states = _snapshot([node])
     try:
-        refreshed = h._apply_spare_interface(node, group, code_parm)
+        refreshed = dsh_parameter_values._apply_spare_interface(node, group, code_parm)
         failures = _restore(states)
         if failures:
             raise RuntimeError(f'spare layout channel restore failed: {failures}')
@@ -197,7 +202,7 @@ def apply_spare_layout(node, layout, code_parm='snippet', dry_run=False):
         if len(tail) != len(templates):
             raise RuntimeError('created spare template count mismatch')
         for template, actual in zip(templates, tail):
-            if h._template_info(actual, 0, 20) != h._template_info(template, 0, 20):
+            if dsh_parameter_templates._template_info(actual, 0, 20) != dsh_parameter_templates._template_info(template, 0, 20):
                 # Native tags and tab names normalize. Required leaf properties
                 # are checked independently instead of weakening all validation.
                 def check(wanted, observed):
@@ -228,7 +233,7 @@ def apply_spare_layout(node, layout, code_parm='snippet', dry_run=False):
         except Exception as restoration_error:
             failures.append(str(restoration_error))
         failures.extend(_restore(states))
-        raise h.CheckpointError(f'spare layout failed: {error}; restoration errors={failures}',
+        raise dsh_errors.CheckpointError(f'spare layout failed: {error}; restoration errors={failures}',
             {'ok': False, 'mode': 'layout', 'restored': not failures, 'restore_errors': failures}) from error
 
 

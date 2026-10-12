@@ -1,6 +1,8 @@
 """v13: setting contracts, connection feedback, shell orientation and surface sections."""
+
 import sys, pathlib
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
 import hou
 import dsh_hou_helpers as h
 import dsh_quality_contracts as q
@@ -25,7 +27,7 @@ try:
     assert h.verify_network(root,output='tint')['ok']
     before=set(root.children())
     try:h.build_module(root,[{'name':'bad','type':'color','inputs':['source'],'parms':{'class':'not_a_token'}}],output='bad')
-    except h.PreflightError:pass
+    except dsh_errors.PreflightError:pass
     else:raise AssertionError('invalid token not statically rejected')
     assert set(root.children())==before
     # Int menu with token-valued storage must not confuse storage values and indices.

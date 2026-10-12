@@ -1,10 +1,14 @@
 """Disposable H21/H22 regression: explicit outputs, bounded evidence and paths."""
+
 from pathlib import Path
 import sys
 import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
+import dsh_media_output
+import dsh_ownership
+import dsh_render
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
@@ -77,14 +81,14 @@ try:
     assert failed_check['evidence'][0]['failure_count']==4
 
     # Missing evidence cannot become success simply because Python returned.
-    missing = h._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'error':'decode'}, False)
+    missing = dsh_render._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'error':'decode'}, False)
     assert not missing['ok'] and missing['pixel_status'] == 'failed'
     ledger=[]
     bridge._make_tracer('render_view', lambda:{**missing,'output':'Z:/test/render/a.png','frame':1,'check':{'error':'decode'}},ledger)()
     assert ledger[0]['check_status']=='failed' and ledger[0]['summary']['pixel_status']=='failed'
-    hdr = h._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, None, False, pixel_supported=False)
+    hdr = dsh_render._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, None, False, pixel_supported=False)
     assert hdr['ok'] and hdr['pixel_status'] == 'unverified'
-    stale = h._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'presentation':{}}, True)
+    stale = dsh_render._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'presentation':{}}, True)
     assert not stale['ok']
     artifact = {'purpose':'viewport_diagnostic','output_policy':'managed',
         'actual_path':'Z:/checks/run/a.png','hip_relative_path':'dsh-visual-checks/run/a.png',
@@ -113,22 +117,22 @@ try:
     with tempfile.TemporaryDirectory(prefix='dsh-checkpoint-') as tmp:
         base=Path(tmp); hip=base/'project.hip'
         hou.hipFile.save(hip.as_posix())
-        path=h._resolve_output_path('preview.$F4.png', frame=3, default_subdir='render')
+        path=dsh_media_output._resolve_output_path('preview.$F4.png', frame=3, default_subdir='render')
         assert Path(path)==base/'render'/'preview.0003.png', path
-        assert Path(h._resolve_output_path('render/preview.png', frame=1, default_subdir='render'))==base/'render'/'preview.png'
-        assert Path(h._resolve_output_path('preview.png', frame=1)) == base/'dsh-render'/'preview.png'
-        reject(lambda:h._resolve_output_path('../outside.png',frame=1,default_subdir='render'), 'outside')
-        reject(lambda:h._resolve_output_path('no_extension',frame=1,default_subdir='render'), 'extension')
-        reject(lambda:h._resolve_output_path(str(Path(__file__).resolve().parents[2]/'bad.png'),frame=1,default_subdir='render'), 'repository')
-        with h._execution_owner('managed-checkpoint-session','capture'):
-            managed, managed_artifact, _ = h._preview_artifact(
+        assert Path(dsh_media_output._resolve_output_path('render/preview.png', frame=1, default_subdir='render'))==base/'render'/'preview.png'
+        assert Path(dsh_media_output._resolve_output_path('preview.png', frame=1)) == base/'dsh-render'/'preview.png'
+        reject(lambda:dsh_media_output._resolve_output_path('../outside.png',frame=1,default_subdir='render'), 'outside')
+        reject(lambda:dsh_media_output._resolve_output_path('no_extension',frame=1,default_subdir='render'), 'extension')
+        reject(lambda:dsh_media_output._resolve_output_path(str(Path(__file__).resolve().parents[2]/'bad.png'),frame=1,default_subdir='render'), 'repository')
+        with dsh_ownership.execution_owner('managed-checkpoint-session','capture'):
+            managed, managed_artifact, _ = dsh_media_output._preview_artifact(
                 '检查 图.$F4.png', frame=3, purpose='model_visual_verification',
                 output_policy='managed', default_label='preview', default_subdir='render')
         assert Path(managed).parent.parent==base/'dsh-visual-checks'
         assert managed_artifact['output_policy']=='managed' and '0003' in Path(managed).name
         assert managed_artifact['role']=='visual_check' and Path(managed_artifact['project_root'])==base
-        assert h._release_preview_reservation(managed_artifact)==[]
-        explicit, explicit_artifact, _ = h._preview_artifact(
+        assert dsh_media_output._release_preview_reservation(managed_artifact)==[]
+        explicit, explicit_artifact, _ = dsh_media_output._preview_artifact(
             (base/'delivery'/'preview.png').as_posix(), frame=3,
             purpose='model_visual_verification', output_policy='explicit',
             default_label='preview', default_subdir='render')
@@ -136,11 +140,11 @@ try:
         assert explicit_artifact['managed_root'] is None
         assert explicit_artifact['role']=='visual_check' and explicit_artifact['lifecycle']=='visual-check'
         from dsh_project_paths import directory_path
-        explicit_name, _, _ = h._preview_artifact(
+        explicit_name, _, _ = dsh_media_output._preview_artifact(
             'current-ui.png', frame=3, purpose='existing_ui', output_policy='explicit',
             default_label='ui', default_subdir=directory_path('visual_check'))
         assert Path(explicit_name)==base/'dsh-visual-checks'/'current-ui.png'
-        reject(lambda:h._preview_artifact('../bad.png',frame=1,purpose='test',
+        reject(lambda:dsh_media_output._preview_artifact('../bad.png',frame=1,purpose='test',
             output_policy='managed',default_label='x',default_subdir='render'),'basename')
         rop=hou.node('/out').createNode('geometry','__checkpoint_rop')
         try:
@@ -156,7 +160,7 @@ try:
         # Native image ROP routing is resolved before render/parameter writes;
         # stop at that boundary so this path check does not need a GUI renderer.
         image_rop=hou.node('/out').createNode('opengl','__checkpoint_image_rop')
-        original_resolve=h._resolve_output_path
+        original_resolve=dsh_media_output._resolve_output_path
         resolved=[]
         class PathObserved(Exception): pass
         def observe_path(*args, **kwargs):
@@ -164,7 +168,7 @@ try:
             raise PathObserved('resolved before rendering')
         try:
             before=image_rop.parm('picture').unexpandedString()
-            with patch.object(h,'_resolve_output_path',observe_path):
+            with patch.object(dsh_media_output,'_resolve_output_path',observe_path):
                 reject(lambda:h.render_frame(image_rop,picture='beauty.$F4.png',frame=3),'resolved before rendering')
             assert Path(resolved[0])==base/'dsh-render'/'beauty.0003.png'
             assert image_rop.parm('picture').unexpandedString()==before
@@ -174,7 +178,7 @@ try:
         usd_rop=hou.node('/out').createNode('usd','__checkpoint_usd_rop')
         try:
             before=usd_rop.parm('lopoutput').unexpandedString()
-            with patch.object(h,'_resolve_output_path',observe_path):
+            with patch.object(dsh_media_output,'_resolve_output_path',observe_path):
                 reject(lambda:h.render_frame(usd_rop,picture='stage.$F4.usd',frame=3),'resolved before rendering')
             assert Path(resolved[-1])==base/'dsh-render'/'stage.0003.usd'
             assert usd_rop.parm('lopoutput').unexpandedString()==before

@@ -1,12 +1,15 @@
 """Expression write/evaluation is distinct from cook/effect; zero is legitimate."""
+
 import sys,json
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
+import dsh_errors
+import dsh_ownership
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
 
-with h._execution_owner('expression-owner','test'):
+with dsh_ownership.execution_owner('expression-owner','test'):
     root=h.tab_create('/obj','geo','__expression_diagnostics')
     box=h.tab_create(root,'box','shape')
     try:
@@ -23,7 +26,7 @@ with h._execution_owner('expression-owner','test'):
             try:
                 h.set_parm(box,'tx',{'expression':expression,'language':language})
                 raise AssertionError('evaluation failure was accepted')
-            except h.CheckpointError as error:
+            except dsh_errors.CheckpointError as error:
                 assert reason in str(error),(reason,str(error))
                 assert error.evidence['parameter_state_restored'] and error.evidence['write_status']=='restored',error.evidence
                 assert error.evidence['evaluation']['status']=='failed'
@@ -61,7 +64,7 @@ with h._execution_owner('expression-owner','test'):
         try:
             h.set_parms(box,{'ty':8,'tz':{'expression':'1/0','language':'python'}})
             raise AssertionError('bad batch accepted')
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert error.evidence['batch_parameter_state_restored'],error.evidence
         assert box.parm('ty').keyframes()==keys and box.evalParm('tz')==0
         native_set=hou.Parm.setExpression
@@ -72,7 +75,7 @@ with h._execution_owner('expression-owner','test'):
         try:
             hou.Parm.setExpression=refuse_write
             try:h.set_parm(box,'tx','0');raise AssertionError('write failure expected')
-            except h.CheckpointError as error:
+            except dsh_errors.CheckpointError as error:
                 assert error.evidence['failure_stage']=='write' and error.evidence['evaluation']['status']=='not_run'
                 assert error.evidence['parameter_state_restored']
         finally:hou.Parm.setExpression=native_set
@@ -87,7 +90,7 @@ with h._execution_owner('expression-owner','test'):
         try:
             h.verify_network(root,output=switch,nodes=[switch])
             raise AssertionError('valid expression must not certify empty output')
-        except h.CheckpointError as error:
+        except dsh_errors.CheckpointError as error:
             assert 'empty_output' in str(error),str(error)
         h.set_parm(switch,'input','0')
         assert h.cook_node(switch)['ok']

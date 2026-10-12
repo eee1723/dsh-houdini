@@ -1,4 +1,8 @@
 """Native HDA type versions in their source library, and explicit instance switching."""
+
+import dsh_errors
+import dsh_node_access
+import dsh_ownership
 import os
 import re
 
@@ -19,11 +23,11 @@ def _copy_version(source, library, name):
 
 
 def create_version(node, version, *, dry_run=False, allow_foreign=None):
-    import dsh_hou_helpers as h
+
     from dsh_hda_interfaces import (require_definition_owned, _replace_bytes,
                                     _refresh_created_definition, register_created_definition,
-                                    _OWNED_DEFINITIONS, _definition_key)
-    n, source = h._hda_definition(node)
+                                    snapshot_library_owners, restore_library_owners, _definition_key)
+    n, source = dsh_node_access._hda_definition(node)
     if not isinstance(version, str) or not re.fullmatch(r'\d+(?:\.\d+)*', version):
         raise ValueError('version must be a native numeric type suffix, e.g. 1.1; not Version metadata')
     if type(dry_run) is not bool:
@@ -51,7 +55,7 @@ def create_version(node, version, *, dry_run=False, allow_foreign=None):
     before = {(d.nodeTypeCategory().name(), d.nodeTypeName()): _sections(d) for d in definitions}
     source_key = _definition_key(source)
     target_key = (source_key[0], category.name(), name)
-    prior_owners = {key: dict(value) for key, value in _OWNED_DEFINITIONS.items() if key[0] == source_key[0]}
+    prior_owners = snapshot_library_owners(source)
     try:
         # Library edits are not covered by the enclosing scene undo group.
         with hou.undos.disabler():
@@ -91,9 +95,8 @@ def create_version(node, version, *, dry_run=False, allow_foreign=None):
                     failures.append('definition sections differ after restoration')
             except Exception as restore_error:
                 failures.append(str(restore_error))
-        _OWNED_DEFINITIONS.pop(target_key, None)
-        _OWNED_DEFINITIONS.update(prior_owners)
-        raise h.CheckpointError(f'hda_version failed: {error}; restoration errors={failures}',
+        restore_library_owners(prior_owners, discard=target_key)
+        raise dsh_errors.CheckpointError(f'hda_version failed: {error}; restoration errors={failures}',
                                 {'ok': False, 'restored': not failures, 'restore_errors': failures,
                                  'scope': 'this call library/new type; external callbacks excluded'}) from error
     return dict(plan, applied=True, definition_version_metadata=target.version(),
@@ -101,11 +104,11 @@ def create_version(node, version, *, dry_run=False, allow_foreign=None):
 
 
 def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
-    import dsh_hou_helpers as h
-    n, source = h._hda_definition(node)
+
+    n, source = dsh_node_access._hda_definition(node)
     if type(dry_run) is not bool:
         raise ValueError('dry_run must be boolean')
-    h._require_owned(n, 'hda_switch_version', allow_foreign)
+    dsh_ownership.require_owned(n, 'hda_switch_version', allow_foreign)
     if not isinstance(type_name, str) or not type_name:
         raise ValueError('type_name must be an exact installed type name from tool_inspect')
     target_type = n.type().category().nodeTypes().get(type_name)
@@ -116,7 +119,7 @@ def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
         raise ValueError('source has unlocked contents; save/lock or explicitly discard through hda_edit before switching versions')
     descendants = list(n.allSubChildren())
     for child in descendants:
-        h._require_owned(child, 'hda_switch_version replaced descendant', allow_foreign)
+        dsh_ownership.require_owned(child, 'hda_switch_version replaced descendant', allow_foreign)
     result = {'ok': True, 'dry_run': dry_run, 'applied': False, 'node': n.path(),
               'source_type': n.type().name(), 'type': type_name,
               'source_library': source.libraryFilePath(), 'hda_file': target.libraryFilePath(),
@@ -126,8 +129,9 @@ def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
         return dict(result, scene_writes=0)
     source_id = int(n.sessionId())
     descendant_ids = {int(child.sessionId()) for child in descendants}
-    owner = h._OWNED_NODE_SESSIONS.get(source_id)
-    owned = owner is not None and owner['session'] == h._ACTIVE_OWNER_SESSION
+    captured_identity = dsh_ownership.capture_identity(n)
+    owner = captured_identity[1]
+    owned = owner is not None and owner['session'] == dsh_ownership.current_session()
     # Existing identities anywhere in the scene must not become ours if an
     # asset callback moves them underneath the switched instance.
     existing_ids = {int(item.sessionId()) for item in hou.node('/').allSubChildren()} if owned else set()
@@ -136,19 +140,14 @@ def switch_version(node, type_name, *, dry_run=False, allow_foreign=None):
     changed = n.changeNodeType(type_name, keep_name=True, keep_parms=True, keep_network_contents=False)
     if changed.type() != target_type or changed.type().definition() != target:
         raise RuntimeError('native switch resolved to a different type/definition')
-    if owner is not None:
-        h._OWNED_NODE_SESSIONS[int(changed.sessionId())] = dict(owner)
-        if h._CREATION_JOURNAL is not None and source_id in h._CREATION_JOURNAL:
-            h._CREATION_JOURNAL.add(int(changed.sessionId()))
-        if hou.nodeBySessionId(source_id) is None:
-            h._OWNED_NODE_SESSIONS.pop(source_id, None)
+    dsh_ownership.transfer_identity(captured_identity, changed)
     if owned:
         # Materialize this call's new definition now, before an unrelated cook
         # can introduce descendants. Keep the root's transferred provenance;
         # only genuinely new internal identities receive this call's owner.
-        h._register_owned_node(changed, exclude_ids=existing_ids | {int(changed.sessionId())})
+        dsh_ownership.register_owned_node(changed, exclude_ids=existing_ids | {int(changed.sessionId())})
         for identity in descendant_ids:
             if hou.nodeBySessionId(identity) is None:
-                h._OWNED_NODE_SESSIONS.pop(identity, None)
+                dsh_ownership.forget(identity)
     return dict(result, applied=True, node=changed.path(), identity=int(changed.sessionId()),
                 matches_definition=changed.matchesCurrentDefinition())

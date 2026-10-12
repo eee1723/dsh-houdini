@@ -225,6 +225,7 @@ const timelineHtml = steps.map((s, i) => {
     s.failed ? chip('失败', 'fail') : '',
     s.processOutcome?.status === 'failed' ? chip(`进程退出 ${s.processOutcome.exitCode}`, 'fail') : '',
     s.processOutcome?.status === 'interrupted' ? chip(`进程终止 · ${s.processOutcome.interruption}`, 'warn') : '',
+    s.processOutcome?.status === 'succeeded' && s.processOutcome.hasStderr ? chip('有诊断输出 · 进程退出 0', 'warn') : '',
     s.rawMethods.length > 0 ? chip(
       `裸 HOM ×${s.rawMethods.length}`,
       s.mutatingRawMethods.length ? 'bad' : 'warn',

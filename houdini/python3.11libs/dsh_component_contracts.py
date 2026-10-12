@@ -6,6 +6,14 @@ No module import side effects; HOM callers are serialized by the Bridge.
 """
 from __future__ import annotations
 
+import dsh_cook_control
+import dsh_node_access
+import dsh_node_creation
+import dsh_node_operations
+import dsh_ownership
+import dsh_service_constants
+import dsh_sop_contracts
+
 import base64
 import hashlib
 import json
@@ -27,9 +35,17 @@ NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,79}$')
 _IMPORT_RECORDS = {}
 
 
-def _h():
-    import dsh_hou_helpers
-    return dsh_hou_helpers
+def snapshot_imports():
+    """Detached transaction state owned by component exchange."""
+    from copy import deepcopy
+    return deepcopy(_IMPORT_RECORDS)
+
+
+def restore_imports(snapshot):
+    from copy import deepcopy
+    _IMPORT_RECORDS.clear()
+    _IMPORT_RECORDS.update(deepcopy(snapshot))
+
 
 
 def _json(value):
@@ -116,7 +132,6 @@ def _snapshot(root, *, check_owned=False):
     Native archives retain internal values. Only root spare parameters are
     mirrored for interface comparison; dependency inspection remains independent.
     """
-    h = _h()
     nodes = _nodes(root)
     if any(root.inputs()):
         raise ValueError('connected component root inputs are not yet supported; export a self-contained candidate')
@@ -128,7 +143,7 @@ def _snapshot(root, *, check_owned=False):
         sidefx_instance = _sidefx_definition_ancestor(node, root, hfs)
         if check_owned:
             try:
-                h._require_owned(node, 'component export')
+                dsh_ownership.require_owned(node, 'component export')
             except ValueError as ownership_error:
                 # Some SideFX HDAs materialize implementation children only on
                 # their first cook. Those child session ids were not present when
@@ -138,8 +153,8 @@ def _snapshot(root, *, check_owned=False):
                 # foreign direct child or a custom HDA still fails normally.
                 if sidefx_instance is None:
                     raise ownership_error
-                h._require_owned(sidefx_instance, 'component export built-in HDA instance')
-        if node.eventCallbacks() or node.userData(h._RENDER_OWNER_KEY):
+                dsh_ownership.require_owned(sidefx_instance, 'component export built-in HDA instance')
+        if node.eventCallbacks() or node.userData(dsh_service_constants._RENDER_OWNER_KEY):
             raise ValueError('component cannot contain callbacks or persistent service nodes')
         definition = node.type().definition()
         if definition:
@@ -231,13 +246,12 @@ def _contract(contract):
 
 
 def _verify(root, contract):
-    h = _h()
     checks = []
     for index in contract['outputs']:
         ports = [n for n in root.children() if n.type().name() == 'output' and n.parm('outputidx').eval() == index]
         if len(ports) != 1 or ports[0].input(0) is None:
             raise ValueError('missing/ambiguous/unconnected public output ' + str(index))
-        checks.append(h.verify_network(root, output=ports[0].input(0), output_index=index))
+        checks.append(dsh_sop_contracts.verify_network(root, output=ports[0].input(0), output_index=index))
     if any(not c.get('healthy') for c in checks):
         raise ValueError('component public output is not healthy')
     return checks
@@ -269,9 +283,8 @@ def component_export(node, filename, contract):
     sha256 and contract for the parent to verify before explicit trusted import.
     Neither the hash nor a successful export certifies geometry or visual quality.
     """
-    h = _h()
-    h._cook_control.require_evaluation('component_export')
-    root = h._resolve(node)
+    dsh_cook_control.require_evaluation('component_export')
+    root = dsh_node_access._resolve(node)
     contract = _contract(contract)
     target = _path(filename, writing=True)
     before = _snapshot(root, check_owned=True)
@@ -302,12 +315,11 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
     archives. No automatic child report acceptance. Creates only a new candidate,
     never replaces a live module or its wires. All new identities belong to caller.
     """
-    h = _h()
     if trusted is not True:
         raise ValueError('native archives can execute code; explicit trusted=True is required')
-    h._cook_control.require_evaluation('component_import')
-    parent = h._resolve(parent)
-    h._require_owned(parent, 'component_import')
+    dsh_cook_control.require_evaluation('component_import')
+    parent = dsh_node_access._resolve(parent)
+    dsh_ownership.require_owned(parent, 'component_import')
     if parent.childTypeCategory() != hou.sopNodeTypeCategory():
         raise ValueError('SOP parent required')
     name = _name(name)
@@ -328,12 +340,12 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
     contract = _contract(package['contract'])
     _name(package['root_name'])
     payload = base64.b64decode(package['payload'], validate=True)
-    state = h._capture_tab_user_state(None)
+    state = dsh_node_creation._capture_tab_user_state(None)
     stage = None
     created = []
     try:
         stage = parent.createNode('subnet', node_name='__component_stage', run_init_scripts=False)
-        h._register_owned_node(stage)
+        dsh_ownership.register_owned_node(stage)
         with tempfile.TemporaryDirectory(prefix='dsh-component-import-') as temp:
             archive = Path(temp) / 'nodes.cpio'
             archive.write_bytes(payload)
@@ -344,7 +356,7 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
         candidate = created[0]
         if _snapshot(candidate) != package['snapshot']:
             raise ValueError('archive node content differs from export snapshot')
-        h._register_owned_node(candidate)
+        dsh_ownership.register_owned_node(candidate)
         _verify(candidate, contract)
         # Houdini may recreate identities when relocating nodes across networks.
         # Register only this exact returned subtree, never the destination parent.
@@ -354,10 +366,10 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
         created = [moved]
         if _snapshot(moved) != package['snapshot']:
             raise ValueError('relocation changed component references')
-        h._register_owned_node(moved)
+        dsh_ownership.register_owned_node(moved)
         live_ids = {n.sessionId() for n in (moved, *moved.allSubChildren())}
         for identity in set(previous_ids) - live_ids:
-            h._OWNED_NODE_SESSIONS.pop(identity, None)
+            dsh_ownership.forget(identity)
         _verify(moved, contract)
         _IMPORT_RECORDS[moved.sessionId()] = {'module_id': contract['module_id'], 'revision': contract['revision'],
                                               'inputs': contract.get('inputs', []), 'sha256': expected_sha256}
@@ -369,15 +381,15 @@ def component_import(parent, filename, expected_sha256, name, *, trusted=False):
                 ids = [n.sessionId() for n in (node, *node.allSubChildren())]
                 node.destroy()
                 for identity in ids:
-                    h._OWNED_NODE_SESSIONS.pop(identity, None)
+                    dsh_ownership.forget(identity)
         raise
     finally:
         if stage is not None:
             ids = [n.sessionId() for n in (stage, *stage.allSubChildren())]
             stage.destroy()
             for identity in ids:
-                h._OWNED_NODE_SESSIONS.pop(identity, None)
-        h._apply_tab_user_state(state)
+                dsh_ownership.forget(identity)
+        dsh_node_creation._apply_tab_user_state(state)
 
 
 def _replacement_state(root, *, migratable_public=frozenset()):
@@ -387,14 +399,13 @@ def _replacement_state(root, *, migratable_public=frozenset()):
     public parameters explicitly listed in migratable_public (handled by the
     migration plan).
     """
-    h = _h()
     nodes = _nodes(root)
     members = set(nodes)
     public = {p.path() for p in root.spareParms()}
     rows = []
     external_refs = []
     for node in nodes:
-        h._require_owned(node, 'component_replace')
+        dsh_ownership.require_owned(node, 'component_replace')
         parms = []
         for parm in node.parms():
             value = _parm_value(parm)
@@ -748,12 +759,11 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
     This checks network health, not visual quality or cross-component contacts;
     rerun those afterward.
     """
-    h = _h()
-    h._cook_control.require_evaluation('component_replace')
-    old, new = h._resolve(node), h._resolve(candidate)
+    dsh_cook_control.require_evaluation('component_replace')
+    old, new = dsh_node_access._resolve(node), dsh_node_access._resolve(candidate)
     if old == new or old.parent() != new.parent():
         raise ValueError('distinct ordinary subnets with the same parent required')
-    h._require_owned(old.parent(), 'component_replace')
+    dsh_ownership.require_owned(old.parent(), 'component_replace')
     record = _IMPORT_RECORDS.get(new.sessionId())
     if expected_contract is not None:
         _expected_contract(expected_contract)
@@ -803,7 +813,7 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
         source = hou.nodeBySessionId(row['identity'])
         if source is None or source.path() != row['source']:
             raise ValueError('input source identity changed')
-        h._require_owned(source, 'component_replace input source')
+        dsh_ownership.require_owned(source, 'component_replace input source')
         if row['slot'] not in migration['inputs']:
             raise ValueError('connected old component input slot %d is not covered by the migration plan' % row['slot'])
     candidate_inputs = _input_wires(new)
@@ -823,7 +833,7 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
         consumer = wire.outputNode()
         if consumer == new:
             raise ValueError('replacement candidate depends on old component output')
-        h._require_owned(consumer, 'component_replace consumer')
+        dsh_ownership.require_owned(consumer, 'component_replace consumer')
         wires.append({'consumer': consumer.path(), 'identity': consumer.sessionId(),
                       'input': wire.inputIndex(), 'output': wire.outputIndex()})
     if not wires:
@@ -844,7 +854,7 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
                     continue
                 if consumer.node() in new_members:
                     raise ValueError('replacement candidate depends on an old component public parameter: ' + consumer.path())
-                h._require_owned(consumer.node(), 'component_replace consumer')
+                dsh_ownership.require_owned(consumer.node(), 'component_replace consumer')
                 # A consumer referencing several migrated channels is aggregated:
                 # one rewritten expression, one commit - never one row per channel.
                 consumer_channels.setdefault(consumer.path(), {'consumer': consumer, 'channels': set()})['channels'].add(public_parm.name())
@@ -961,7 +971,7 @@ def component_replace(node, candidate, *, dry_run=True, expected_plan=None, expe
             consumer.setInput(row['input'], new, row['output'])
             changed.append((consumer, row))
         for consumer, _ in changed:
-            result = h.cook_node(consumer)
+            result = dsh_node_operations.cook_node(consumer)
             if not result.get('healthy'):
                 raise ValueError('replacement consumer is not healthy')
         _IMPORT_RECORDS.pop(new.sessionId(), None)
