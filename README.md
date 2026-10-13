@@ -34,6 +34,7 @@ Host/Bridge/helper重载使用 **Version & Updates → 高级设置 → 运行�
 
 | 资料 | 用途 |
 |---|---|
+| [任务拆分](skills/houdini-task-decomposition/SKILL.md) | 按编辑目标和依赖逐模块构建、观察与集成 |
 | [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化模型、局部修改和几何观察 |
 | [COP（按需能力）](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层；完整材质与教程交付仍待验收 |
 | [工具开发](skills/houdini-tool-development/SKILL.md) | HDA、脚本、界面、回调和交付 |

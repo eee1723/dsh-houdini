@@ -93,7 +93,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情从原生/嵌套工具回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
-| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
+| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
@@ -111,6 +111,8 @@ automaticContext默认开启。超时不取消已开始的HOM修改，重试前�
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；
 domain skill给出本领域默认方法、例外和按需路由，reference维护具体构造、验证与依赖方法。SOP的原生编辑入口偏好由SOP skill维护，不进入执行准入。低频对象recipe不得进入persona/guidance；一个规则需要跨层出现时，
 上层只保留路由或不可补救的硬约束，并指向下层唯一细节源。
+
+复杂任务由persona路由到[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)，按编辑用途和依赖选择可观察单元；SOP的完整源组件由[建模方法](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护，网络分组由[网络交接skill](../skills/houdini-network-handoff/SKILL.md)消费实际职责。DSH计划记录当前工作，执行回执提供事实，不增加模块状态机、完成账本或执行门槛。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
 scene-context为每条用户消息提供一次消息绑定的metadata；execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。

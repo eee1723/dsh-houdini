@@ -28,6 +28,8 @@
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
+[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域的模块粒度、依赖、逐模块观察与集成；[完整源组件](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护SOP的组件内部构造、布局与装配分工。由preset按需路由，注册入口为[src/skill.ts](../src/skill.ts)，上下文与方法验证见[开发维护](development.md)。
+
 [网络交接skill](../skills/houdini-network-handoff/SKILL.md)维护跨SOP/COP/LOP/rig/工具的主动节点入口、Network Box、Sticky Note和布局判断；参数布局判断由参数UI skill负责，通用已有界面的发现/捕获方法由[工具开发证据指导](../skills/houdini-tool-development/references/evidence-and-validation.md)维护，功能验收留在各领域。注册入口为[src/skill.ts](../src/skill.ts)，执行与验证入口见[开发维护](development.md)。
 
 教程工程的目的/原片回看/差异核对/替代顺序及交付门唯一维护在

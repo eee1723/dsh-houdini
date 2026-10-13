@@ -29,12 +29,14 @@ export function apply(ctx) {
   const catalogStart = expiryStart + 4
   const repetitionMethod = process.env.DSH_REPETITION_METHOD_FIXTURE === '1'
   const repetitionStart = catalogStart + (catalogReceipt ? 6 : 0)
-  const finalStep = repetitionStart + (repetitionMethod ? 2 : 0)
+  const finalStep = repetitionStart + (repetitionMethod ? 2 : 0) + 1
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
     .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
   const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
+  const decompositionBody = fs.readFileSync(new URL('../../skills/houdini-task-decomposition/SKILL.md',import.meta.url),'utf8')
     .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
   const requests = [], bridgeCalls = [], receipts = new Map()
   let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, failure
@@ -132,10 +134,12 @@ export function apply(ctx) {
         for (const paragraph of personaBody) assert.equal(system.split(paragraph).length-1,1,
           'the actual provider must receive each maintained persona section exactly once')
         assert(!system.includes(skillBody),'domain methods must not be eagerly duplicated in System')
+        assert(!system.includes(decompositionBody),'task decomposition must remain an on-demand skill')
         if (step === finalStep) {
           const skillResult=options.messages.filter(message=>message.role==='tool')
             .flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n')
           assert(skillResult.replaceAll('\r\n','\n').includes(skillBody),'on-demand skill reaches the actual provider intact')
+          assert(skillResult.replaceAll('\r\n','\n').includes(decompositionBody),'registered decomposition skill reaches the actual provider intact')
         }
         const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
           .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
@@ -216,6 +220,9 @@ export function apply(ctx) {
           const section=methodText.split('### 重复规律与代码生成')[1].split('### 源构件与成形检查')[0]
           const relevant=section.split('\n').filter(line=>line.trim()&&!line.startsWith('```'))
           assert(relevant.every(line=>visible?.includes(line)), 'the actual provider must receive the shipped repetition method and exact VEX example')
+          const componentSection=methodText.split('### 完整源组件与布局')[1].split('### 重复规律与代码生成')[0]
+          assert(componentSection.split('\n').filter(line=>line.trim()).every(line=>visible?.includes(line)),
+            'the actual provider must receive the complete component-source reference through the mounted read tool')
         }
         if(repetitionMethod && step===finalStep){
           const events=normalizeTraceSteps(currentEvents).steps.filter(s=>s.tool==='read')
@@ -285,6 +292,7 @@ export function apply(ctx) {
             ['read',{file_path:methodFile}],
             ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:methodFile})+');',description:'Read the shipped repeated-layout method through the mounted tool'}],
           ] : []),
+          ['skill',{name:'houdini-task-decomposition'}],
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]
