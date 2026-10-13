@@ -98,7 +98,8 @@ def runtime_fix_identity(binary: Path | str, path: Path = MANIFEST_PATH, *, veri
     runtime_root = Path(binary).resolve().parents[4]
     applied = json.loads((runtime_root / '.dsh-runtime-fixes.json').read_text(encoding='utf8'))
     if (not isinstance(applied, dict) or applied.get('schemaVersion') != 1 or applied.get('revision') != definition['revision']
-            or applied.get('dshVersion') != preferred_version(path) or applied.get('patchSha256') != expected_patch):
+            or applied.get('dshVersion') != preferred_version(path) or applied.get('patchSha256') != expected_patch
+            or applied.get('inputs') != runtime_fix_inputs(path, definition)):
         raise RuntimeError('DSH runtime fixes do not match this plugin source; run npm run runtime:prepare')
     files = applied.get('files')
     if not isinstance(files, dict) or not files:
@@ -116,6 +117,14 @@ def runtime_fix_identity(binary: Path | str, path: Path = MANIFEST_PATH, *, veri
             if not target.is_relative_to(runtime_root) or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
                 raise RuntimeError('DSH runtime fix file differs from its prepared inventory: ' + str(relative))
     return {'revision': applied['revision'], 'patchSha256': applied['patchSha256'], 'filesVerified': verify_files}
+
+
+def runtime_fix_inputs(path: Path = MANIFEST_PATH, definition: dict | None = None) -> dict:
+    """The manifest names the same dependency/build inputs used by the Node builder."""
+    if definition is None:
+        definition = json.loads((path.parent / load_manifest(path)['runtimeFixes']).read_text(encoding='utf8'))
+    return {name: hashlib.sha256((path.parent / name).read_bytes()).hexdigest()
+            for name in definition['inputFiles']}
 
 
 def require_verified(version: str, path: Path = MANIFEST_PATH) -> None:

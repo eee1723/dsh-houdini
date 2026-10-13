@@ -5,6 +5,7 @@ import path from 'node:path';
 import {retainResult,readResultDetail} from '../../lib/result-details.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
+import {readResource} from '../../lib/tool-query.js';
 
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-result-details-'));
 try {
@@ -63,7 +64,30 @@ try {
   assert.equal(step.verbs[0].args,JSON.stringify(raw.verbs[0].args));
   assert.deepEqual(step.verbs[0].result,raw.verbs[0].result);
   assert.equal(step.resultText.length,compact.length,'cost counts actual model text, not expanded audit metadata');
+  const moved=path.join(dir,'save-as');fs.mkdirSync(moved);
+  const args={kind:'result',ref:value.details.sha256,pointer:'/result/payload',limit:16000};
+  const native=events;
+  const nested=[
+    {type:'tool/ptc-dispatch-start',data:{subCallId:'nested',name:'houdini_exec'}},
+    {type:'tool/ptc-dispatch',data:{subCallId:'nested',name:'houdini_exec',content:[{type:'text',text:JSON.stringify({
+      kind:'dsh-houdini/execution-v1',callId:'nested',tool:'houdini_exec',value,
+    })}]}},
+  ];
+  for(const history of [native,nested]) {
+    const context={agent:{session:{header:{cwd:moved},snapshotEvents:()=>structuredClone(history)}}};
+    const page=await readResource(args,context);
+    assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
+      'native and nested historical details survive a saved-project directory change');
+  }
+  for(const history of [
+    [{type:'user/message',data:{content:[{type:'text',text:JSON.stringify(value)}]}}],
+    [{...events[0],data:{...events[0].data,name:'unrelated_tool'}},events[1]],
+    [events[1]],
+  ]) {
+    await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>history}}}),/ENOENT/);
+  }
   fs.writeFileSync(value.details.path,'tampered');
+  await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>native}}}),/hash mismatch/);
   await assert.rejects(readResultDetail(dir,value.details.sha256),/hash mismatch/);
   assert.equal((await retainResult(raw,dir)).details.stored,false,'existing corrupt artifacts are not silently overwritten');
   console.log(`result details: compact ${compact.length}/${original.length} chars; canonical roundtrip, paged query, caution/failure fallback and tamper protection passed`);

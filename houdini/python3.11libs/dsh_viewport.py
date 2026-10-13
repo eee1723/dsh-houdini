@@ -506,7 +506,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         failure_evidence['errors'] = reasons
         raise dsh_errors.CheckpointError('viewport screenshot failed: ' + '; '.join(reasons), failure_evidence)
 
-    result: dict[str, Any] = {
+    result: dict = {
         'ok': True, 'path': actual, 'artifact': artifact,
         'viewer': viewer.name(), 'viewport': vp.name(), 'frame': f,
         'bytes': os.path.getsize(actual), 'fresh': True, 'file_status': 'passed',

@@ -131,6 +131,10 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 执行结果应同时核对原生与Code Mode嵌套事件、取消/未知/过期回执及现场runtime身份；展示投影不得丢失无execution的真实回执。trace用真实当前版本日志校验可见内容、调用关联和解析缺口，不以旧fixture或旧session文件名证明新格式可读。用例保持针对已观察到的边界，旧策略删除后保留操作、权限和恢复检查，移除只证明策略存在的断言。
 
+普通大结果的历史引用使用原生/嵌套工具回执中记录的路径，文件仍须通过hash校验；不能因Save As改变cwd而只查新目录，也不能从用户正文取得任意文件路径。[结果详情回归](../tools/tests/result-details.test.mjs)覆盖跨目录、伪造来源和篡改拒绝；`dsh-scene-recovery-e2e --save-as`在真实DSH/浏览器/HOM组合中同时核对原目录的普通/嵌套详情在进程重开后可读。
+
+运行缓存身份包括[修复声明](../deployment/dsh-runtime-fixes/manifest.json)中inputFiles列出的依赖锁与构建器，不能只比较补丁hash。依赖更新保持精确DSH版本，更新开发与发行两份npm锁；[输入身份回归](../tools/tests/runtime-fix-inputs.test.mjs)核对Node/Python一致和仅依赖变化时的缓存失效，[文档依赖回归](../tools/tests/dependency-runtime.test.mjs)通过实际文档组件解析的fflate检查普通ZIP与畸形ZIP64，可传新缓存根目录验证发行组合。缓存准备不更新正在运行的Host，正式安装/Qt资格验证仍单独执行。
+
 节点交付的定向入口为[Host路由](../tools/tests/node-delivery.test.mjs)、[原生/嵌套卡片投影](../tools/tests/node-delivery-client.test.mjs)、[持久标识HOM](../tools/tests/dsh-node-delivery.test.py)及[排队取消HTTP/HOM](../tools/tests/dsh-node-navigation-cancel.test.py)。跨层修改还需在精确DSH组合和新建的隐藏GUI进程中，由真实Agent工具循环产生原生/嵌套回执，选中对应任务点击实际卡片，回读网络/参数页；重开同HIP并改名后再点击旧卡片，切HIP核对错误提示，暂停队列后切任务并恢复队列核对旧导航没有生效。局部模拟通道不能替代这条连接；测试脚本、截屏、完整结果和运行目录留在仓库外证据目录。服务框保存重开由[服务框回归](../tools/tests/dsh-render-service-box.test.py)核对标题、固定边界、真实成员与用户节点位置。
 
 ## 隔离开发工具

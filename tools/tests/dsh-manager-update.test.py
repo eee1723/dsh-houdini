@@ -91,7 +91,7 @@ try:
                     files[relative] = hashlib.sha256(item.read_bytes()).hexdigest()
                 (npx_root / str(index) / '.dsh-runtime-fixes.json').write_text(json.dumps({
                     'schemaVersion':1, 'revision':definition['revision'], 'dshVersion':version,
-                    'patchSha256':definition['patchSha256'], 'files':files}), encoding='utf8')
+                    'patchSha256':definition['patchSha256'], 'inputs':manager.dsh_runtime_compat.runtime_fix_inputs(), 'files':files}), encoding='utf8')
 
         assert manager._selected_cached_dsh_version() == target
         manager._require_cached_dsh(target)

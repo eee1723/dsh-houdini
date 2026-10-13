@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
         inventory[name] = hashlib.sha256(file.read_bytes()).hexdigest()
     (runtime_root / '.dsh-runtime-fixes.json').write_text(json.dumps({
         'schemaVersion': 1, 'revision': definition['revision'], 'dshVersion': target,
-        'patchSha256': definition['patchSha256'], 'files': inventory}), encoding='utf8')
+        'patchSha256': definition['patchSha256'], 'inputs': compat.runtime_fix_inputs(), 'files': inventory}), encoding='utf8')
     write_cache(cache, "unpatched-same-version", target)
     newest = write_cache(cache, "newest", "99.9.9")
     os.utime(required, (1, 1))
@@ -75,6 +75,12 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
     malformed.mkdir(parents=True)
     (malformed / "package.json").write_text("[]", encoding="utf-8")
     assert compat.preferred_cached_bin(cache) == required
+    proof_path = runtime_root / '.dsh-runtime-fixes.json'
+    proof = json.loads(proof_path.read_text(encoding='utf8'))
+    stale = {**proof, 'inputs': {**proof['inputs'], 'deployment/package-lock.json': '0' * 64}}
+    proof_path.write_text(json.dumps(stale), encoding='utf8')
+    assert compat.preferred_cached_bin(cache) is None, 'same patch cannot reuse an older dependency lock'
+    proof_path.write_text(json.dumps(proof), encoding='utf8')
 
     # Even another verified version does not replace preferred based on mtime.
     policy_file = root / "compat.json"

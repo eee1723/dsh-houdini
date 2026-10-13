@@ -233,13 +233,13 @@ const agentA = {id:'a',session:{header:{cwd:'C:/work'}}};
 const agentB = {id:'b',session:{header:{cwd:'C:/work'}}};
 const executeWorkspace = (agent, name = 'houdini_exec') =>
   workspaceDefinitions.get(name).execute({code:'pass'}, {agent,callId:`c${workspaceExecutions}`});
-assert.match((await executeWorkspace(agentA)).advisory, /Open Workspace/);
+assert.match((await executeWorkspace(agentA)).advisory, /successful Save As.*next model step/);
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'same agent/pair is deduplicated');
-assert.match((await executeWorkspace(agentB, 'houdini_inspect')).advisory, /Open Workspace/, 'other agent gets its own advice');
+assert.match((await executeWorkspace(agentB, 'houdini_inspect')).advisory, /successful Save As.*next model step/, 'other agent gets its own advice');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'c:\\WORK\\'}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'Windows slashes/case do not cause false mismatch');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'C:/project'}};
-assert.match((await executeWorkspace(agentA)).advisory, /Open Workspace/, 'a newly changed workspace is explained again');
+assert.match((await executeWorkspace(agentA)).advisory, /successful Save As.*next model step/, 'a newly changed workspace is explained again');
 workspaceResult = {...workspaceResult, execution:{hip_dir:null}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'unnamed HIP is not a known project');
 workspaceResult = {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}};

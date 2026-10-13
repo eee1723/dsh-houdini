@@ -77,7 +77,7 @@ export class HoudiniToolRuntime {
     this.workspaceNotes.set(agent, key)
     const note = `workspace note: this session's workspace is "${cwd}"; this operation observed $HIP at "${hip}". `
       + 'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments; '
-      + 'use DSH-Houdini > Open Workspace to select the current HIP workspace for other file tools. '
+      + 'A successful Save As follows the project directory at the next model step; check that step before using other file tools. '
       + 'Do not write task outputs into the plugin repository.'
     return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
   }

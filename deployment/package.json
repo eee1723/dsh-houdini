@@ -5,5 +5,10 @@
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2",
     "koffi": "3.1.1"
+  },
+  "overrides": {
+    "@deepseek-ai/libreoffice-kit": {
+      "fflate": "0.8.3"
+    }
   }
 }

@@ -191,7 +191,7 @@ def render_check(path: str, ref=None) -> dict:
             f"无法解码 '{path}'（支持 PNG/JPEG/BMP/TGA，EXR 等请裸写 hou.image）"
         )
     w, h, pixels = result
-    out: dict[str, Any] = {
+    out: dict = {
         "path": path,
         "width": w,
         "height": h,

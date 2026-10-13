@@ -76,7 +76,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     ``expected_current_path`` must match the current scene. Existing targets
     require explicit ``overwrite=True`` and user authorization in ``reason``.
     File I/O is not undoable; a failed save may leave a partial new target.
-    After a workspace change, use Open Workspace to select the matching DSH session.
+    The current conversation follows a successful Save As at the next model step.
     """
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("reason 必须记录用户对目标路径/覆盖的明确授权")
@@ -136,7 +136,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
             "dirty_reliable": reliable, "clean_on_disk": not dirty_after if reliable else None,
             "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
             "workspace_changed": os.path.normcase(os.path.dirname(current)) != os.path.normcase(os.path.dirname(target)),
-            "note": "文件写入不能撤销。更换工程目录后，请选择 DSH-Houdini → Open Workspace。"}
+            "note": "文件写入不能撤销。当前对话会在下一模型步骤接续成功另存后的工程目录。"}
 
 
 def _frame_pair(value, label: str) -> tuple[float, float]:

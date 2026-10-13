@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
+import {runtimeFixInputs} from './runtime-fix-inputs.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const [sourceArg,targetArg,buildToolsArg,mode]=process.argv.slice(2);
@@ -17,12 +18,19 @@ if(development&&!target.startsWith(path.join(root,'tools','out')+path.sep))throw
 if(development)fs.rmSync(path.join(target,'.dsh-runtime-fixes.json'),{force:true});
 const specification=path.join(root,'deployment/dsh-runtime-fixes');
 const manifest=JSON.parse(fs.readFileSync(path.join(specification,'manifest.json'),'utf8'));
+const inputs=runtimeFixInputs(root,manifest);
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const patchSha256=sha(fs.readFileSync(path.join(specification,manifest.patch)));
 if(patchSha256!==manifest.patchSha256)throw Error('Runtime source patch differs from its declared SHA-256');
 const installed=JSON.parse(fs.readFileSync(path.join(target,'node_modules/@deepseek-ai/dsh/package.json'),'utf8'));
 if(installed.version!==manifest.dshVersion)throw Error('Runtime patch requires the exact declared DSH version');
 if(!development){
+ for(const [actual,expected] of [
+  [path.join(target,'package.json'),'deployment/package.json'],
+  [path.join(target,'package-lock.json'),'deployment/package-lock.json'],
+  [path.join(buildTools,'package.json'),'deployment/dsh-runtime-fixes/build-package.json'],
+  [path.join(buildTools,'package-lock.json'),'deployment/dsh-runtime-fixes/build-package-lock.json'],
+ ])if(sha(fs.readFileSync(actual))!==inputs[expected])throw Error('Runtime dependency inputs differ from the declared build: '+expected);
  const head=spawnSync('git',['rev-parse','HEAD'],{cwd:source,encoding:'utf8',windowsHide:true});
  if(head.status!==0||head.stdout.trim()!==manifest.commit)throw Error('Build source is not the pinned upstream commit');
  // New files produced by git apply must participate in the exact diff, too.
@@ -99,7 +107,7 @@ try{
  for(const name of ['manifest.json',manifest.patch])fs.copyFileSync(path.join(specification,name),path.join(proof,name));
  fs.copyFileSync(path.join(source,'LICENSE'),path.join(proof,'UPSTREAM-LICENSE'));
  if(!development)fs.writeFileSync(path.join(target,'.dsh-runtime-fixes.json'),JSON.stringify({schemaVersion:1,revision:manifest.revision,dshVersion:manifest.dshVersion,
-  sourceCommit:manifest.commit,patchSha256,files},null,2)+'\n');
+  sourceCommit:manifest.commit,patchSha256,inputs,files},null,2)+'\n');
 }finally{
  // These are only the junctions this build created, never package directories.
  for(const link of linked.reverse())if(fs.lstatSync(link).isSymbolicLink())fs.unlinkSync(link);

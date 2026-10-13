@@ -92,7 +92,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和正常pre-step目标绑定；DSH负责持久化，不改写旧工具交换 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
-| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；加载警告只按原生恢复记录中的hash/路径读取，跨目录/重启仍可查；不执行HOM |
+| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情从原生/嵌套工具回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
@@ -276,7 +276,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [trace evidence extractor](../skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs)、[evidence helpers](../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs) | 确定性调用/安全/视觉/证据提取；资源读取/能力预检作为Host调用单列，不计HOM动词采用率或裸执行；后台任务与结果保留范围复用executionHistory，不将提交回执完整误认为任务完成 |
 | [run-node-tests.mjs](../tools/run-node-tests.mjs)、[clean-build.mjs](../tools/clean-build.mjs) | 回归发现与每次构建前清空纯生成lib，避免删除源码后残留旧输出 |
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
-| [prepare-dsh-runtime.mjs](../tools/prepare-dsh-runtime.mjs)、[build-dsh-runtime-fixes.mjs](../tools/build-dsh-runtime-fixes.mjs)、[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json) | 固定上游提交、完整补丁摘要及依赖锁，构建独立DSH缓存/发行目录，记录产物摘要与许可；Windows系统网络继承由http-proxy维护，原生PAC在专用worker解析；sandbox-windows-acl逐对象准备工作区，web-fetch-http提供实际路线，shell提供进程事实，ui-tool/Trace消费同源结果；session/persistence/workspace维护原生目录迁移，agent-loop与session-controller同步模型上下文及前端当前目录；不手改活动Host，不在Houdini插件重复实现这些通用能力 |
+| [prepare-dsh-runtime.mjs](../tools/prepare-dsh-runtime.mjs)、[build-dsh-runtime-fixes.mjs](../tools/build-dsh-runtime-fixes.mjs)、[runtime-fix-inputs.mjs](../tools/runtime-fix-inputs.mjs)、[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json) | 固定上游提交、完整补丁摘要及依赖锁；声明的inputFiles共同决定缓存身份，Node构建与Python启动核对同一份输入摘要，依赖或构建器变化须生成新缓存。记录产物摘要与许可；Windows系统网络继承由http-proxy维护，原生PAC在专用worker解析；sandbox-windows-acl逐对象准备工作区，web-fetch-http提供实际路线，shell提供进程事实，ui-tool/Trace消费同源结果；session/persistence/workspace维护原生目录迁移，agent-loop与session-controller同步模型上下文及前端当前目录；不手改活动Host，不在Houdini插件重复实现这些通用能力 |
 | [prepare-video-runtime.py](../tools/prepare-video-runtime.py) | 源码开发的私有媒体工具准备；复用正式发行的锁定来源与SHA校验，不修改系统PATH或用户全局工具 |
 | [build-video-runtime.py](../tools/build-video-runtime.py) | 发行端从固定源码与工具链构建FFmpeg/zlib/FreeType/HarfBuzz/dav1d共享库，提供CPU AV1解码与PNG；保留七份对应源码、原始许可、实际Windows对象响应文件补丁、命令、DLL依赖与文件摘要，不进入普通用户安装步骤 |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |

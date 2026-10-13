@@ -48,6 +48,17 @@ def positions(node):
 
 
 try:
+    with tempfile.TemporaryDirectory(prefix='dsh-node-discovery-') as asset_dir:
+        asset = root.createNode('subnet', 'namespaced_asset').createDigitalAsset(
+            name='discovery_fixture::inspection_asset::1.0',
+            hda_file_name=str(Path(asset_dir) / 'inspection.hda'),
+        )
+        assert asset.path() in h.find_nodes(root=root, node_type='inspection_asset')
+        assert asset.path() in h.find_nodes(root=root, node_type='DISCOVERY_FIXTURE::INSPECTION_ASSET::1.0')
+        assert asset.path() not in h.find_nodes(root=root, node_type='discovery_fixture')
+        asset.destroy()
+    done('namespaced asset discovery uses the native base type name')
+
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
     families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',

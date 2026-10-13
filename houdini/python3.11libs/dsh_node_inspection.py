@@ -28,7 +28,7 @@ def find_nodes(pattern: str = "*", category=None, node_type=None, root=None) -> 
             continue
         if qtype is not None:
             tname = n.type().name()
-            base = tname.split("::", 1)[0]
+            base = n.type().nameComponents()[2]
             if qtype not in (tname.lower(), base.lower()):
                 continue
         results.append(n.path())
@@ -169,7 +169,7 @@ def describe(node) -> dict:
                 if up is not None and up.type().category() == hou.sopNodeTypeCategory():
                     up_geo = up.geometry()
                     if up_geo is not None:
-                        delta: dict[str, Any] = {}
+                        delta: dict = {}
                         for intrinsic, cls in (
                             ("pointattributes", "point"),
                             ("primitiveattributes", "prim"),

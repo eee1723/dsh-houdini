@@ -17,7 +17,12 @@ export function apply(ctx){
  const file=path.join(folder,saveAs?'saved-as/project.hip':'project.hip').replaceAll('\\','/'),output=path.join(folder,phase+'-result.json')
  const report=value=>fs.writeFileSync(output,JSON.stringify(value,null,2));let step=0,failure,modelStarted=false
  const text=function*(value){yield {type:'block-start',index:0,blockType:'text'};yield {type:'block-end',index:0,block:{type:'text',text:value}};yield {type:'finish',reason:{kind:'stop'}}}
+ const historicalCode="__result__={'payload':'ARCHIVED_BEFORE_SAVE_AS-'*5000}"
  const calls=phase==='save'?[
+  ...(saveAs?[
+   ['houdini_inspect',{code:historicalCode}],
+   ['run_code',{code:'return await tools.houdini_inspect('+JSON.stringify({code:historicalCode.replace('SAVE_AS','NESTED_SAVE_AS')})+');',description:'Retain nested historical details before Save As'}],
+  ]:[]),
   ['houdini_exec',{code:`p=tab_create('/obj','geo',name='asset')\nn=tab_create(p,'box',name='source')\n__result__=scene_save_as(${JSON.stringify(file)},scene_info()['hip_path'],'User requested this isolated fixture destination')`}],
   ...(saveAs?[['write',{file_path:'continuation.txt',content:'The same conversation follows Save As.'}]]:[]),
   ['houdini_exec',{code:"set_parms('/obj/asset/source',{'sizex':3})\n__result__=hou.node('/obj/asset/source').parm('sizex').eval()"}],
@@ -33,14 +38,24 @@ export function apply(ctx){
    try{
     modelStarted=true
     const events=ctx.sessions.get(sessionId).snapshotEvents()
-    if(saveAs&&(phase==='resume'||step>0)){
+    if(saveAs&&(phase==='resume'||step>2)){
      assert.equal(path.resolve(ctx.sessions.get(sessionId).header.cwd).toLowerCase(),path.resolve(path.dirname(file)).toLowerCase(),'actual session cwd follows the saved HIP')
-     if(phase==='save'&&step===1)assert(JSON.stringify(options).includes('Saved-as workspace fixture instructions.'),'next model request receives the new workspace instructions')
+     if(phase==='save'&&step===3)assert(JSON.stringify(options).includes('Saved-as workspace fixture instructions.'),'next model request receives the new workspace instructions')
      const runtime=events.filter(e=>e.type==='user/message'&&e.data.source?.kind==='runtime-context').at(-1)
      const policy=runtime?.data.source.sections?.find(section=>section.name==='sandbox-policy')
      assert(JSON.stringify(policy??runtime).toLowerCase().includes('saved-as'),'model runtime context must use the relocated file policy immediately')
     }
     if(phase==='resume'&&step===0){
+     if(saveAs){
+      const original=events.find(e=>e.type==='tool/result'&&e.data.message.source?.callId==='save-0')?.data.meta.canonical
+      const nested=events.find(e=>e.type==='tool/ptc-dispatch'&&e.data.name==='houdini_inspect')
+      const nestedValue=nested?.data.content.map(x=>{try{return JSON.parse(x.text)}catch{return null}}).find(x=>x?.kind==='dsh-houdini/execution-v1')?.value
+      for(const value of [original,nestedValue]){
+       assert(value?.details?.stored,'actual original native/nested result was retained')
+       assert(path.resolve(value.details.path).startsWith(path.resolve(cwd)+path.sep),'artifact stays in the original project directory')
+       calls.unshift(['houdini_resource',{kind:'result',ref:value.details.sha256,pointer:'/result/payload',limit:1000}])
+      }
+     }
      assert(events.some(e=>e.type==='user/message'&&e.data.source?.kind==='user'
        &&e.data.content?.some(part=>part.type==='text'&&part.text==='继续')),
        'the resumed turn must originate from the actual browser composer')
@@ -81,7 +96,8 @@ export function apply(ctx){
      const result=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===phase+'-'+(step-1))
      assert(result&&!result.data.message.isError,JSON.stringify(result))
      if(phase==='resume'&&calls[step-1][0]==='houdini_resource'){
-      assert(result.data.meta.canonical.result.text.includes('MIDDLE_DIAGNOSTIC_MARKER'),'existing tool retrieves omitted original without HOM execution')
+      const page=result.data.meta.canonical.result.text
+      assert(page.includes(saveAs?'ARCHIVED_BEFORE_':'MIDDLE_DIAGNOSTIC_MARKER'),'existing tool retrieves original details after directory/process changes without HOM execution')
      }
      if(phase==='resume'&&calls[step-1][0]==='houdini_inspect'){
       const value=result.data.meta.canonical;assert(value.ok,JSON.stringify(value));assert.equal(value.result.size,1,'unsaved old progress must not masquerade as saved')

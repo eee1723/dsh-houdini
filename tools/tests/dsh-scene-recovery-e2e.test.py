@@ -143,7 +143,10 @@ def main():
                 result=wait_file(folder/(phase+'-result.json'),host)
                 assert result['ok'],(str(folder),result)
                 if phase=='save':
-                    checkpoint=result['receipts'][0]['execution']['scene_recovery']['checkpoint_id']
+                    checkpoints = [receipt['execution']['scene_recovery']['checkpoint_id']
+                                   for receipt in result['receipts'] if receipt.get('execution', {}).get('scene_recovery', {}).get('checkpoint_id')]
+                    assert checkpoints, (str(folder), 'No successful saved checkpoint receipt')
+                    checkpoint = checkpoints[-1]
                     wait_file(folder/'recovery/checkpoints'/(checkpoint+'.json'),process,15)
                 elif args.dirty_choice or args.original_choice:
                     (folder/'probe-request').touch()

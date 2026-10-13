@@ -4,6 +4,8 @@ import fs from 'node:fs/promises'
 import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import type { ExecResult } from './bridge.js'
+import {executionCall,executionResult,isHoudiniTool} from './dsh-adapter.js'
+import type {SessionEvent} from './execution-history.js'
 
 const DIRECTORY = '.dsh-houdini-results'
 const policy=JSON.parse(readFileSync(new URL('../houdini/result-detail-policy.json',import.meta.url),'utf8'))
@@ -12,6 +14,22 @@ if(policy.schemaVersion!==1||['maxArchiveBytes','detailThresholdChars','loadWarn
 const MAX_BYTES:number = policy.maxArchiveBytes
 export const DETAIL_THRESHOLD:number = policy.detailThresholdChars
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
+
+/** A session move changes cwd, not the location of its original returned artifacts. */
+export function recordedResultPath(events:readonly SessionEvent[],ref:string):string|undefined {
+  const calls=new Set<string>()
+  let retained:string|undefined
+  for(const event of events) {
+    const call=executionCall(event)
+    if(call&&isHoudiniTool(call.name))calls.add(call.callId)
+    const result=executionResult(event)
+    if(!result||result.isError||!calls.has(result.callId))continue
+    const detail=result.value?.details
+    if(detail?.stored===true&&detail.sha256===ref&&detail.format==='returned_bridge_envelope_json'
+      &&typeof detail.path==='string')retained=detail.path
+  }
+  return retained
+}
 
 async function directory(workspace: string, create = false): Promise<string> {
   const root = await fs.realpath(workspace)
