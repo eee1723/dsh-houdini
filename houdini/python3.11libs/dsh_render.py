@@ -112,6 +112,8 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
       裸文件名按输出用途放入$HIP/dsh-render；COP copoutput放入dsh-texture，
       几何/模拟/通道缓存放入dsh-cache。已有含目录的ROP路径和显式绝对目的地不改写。
+      诊断/测试图显式传picture='$HIP/dsh-visual-checks/<task>/check.png'，
+      不把过程检查写入成图目录；目录位置本身不证明已经交付或视觉正确。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
       （host 侧桥请求超时 120s），本动词面向单帧测试渲染。

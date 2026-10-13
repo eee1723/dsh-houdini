@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "maxArchiveBytes": 33554432,
+  "detailThresholdChars": 12000,
+  "loadWarningPreviewBytes": 4096
+}

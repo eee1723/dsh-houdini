@@ -26,7 +26,9 @@ export function recoveryMessage(value:RecoveryBinding) {
   return houdiniSnapshot({name:'dsh-houdini:executor-binding',text:
     'Houdini connection reconciled with a verified saved checkpoint. Historical results are not current scene state. '
     +'Inspect the actual scene and external outputs before repeating interrupted operations; do not poll old jobs. '
-    +'Unrestored nodes remain foreign. No user confirmation of technical success is needed.\n'
+    +'Unrestored nodes remain foreign. No user confirmation of technical success is needed. '
+    +'Load warnings must be checked against affected nodes and dependencies; reconnection does not certify cross-version compatibility. '
+    +(value.load_warning_details?'Warning previews may omit the middle. If stored, read the original using houdini_resource(kind="result", ref=load_warning_details.sha256, pointer="/result/load_warnings"). If unavailable, missing detail remains unverified. ':'')+'\n'
     +literalData(JSON.stringify(value))})
 }
 
@@ -77,32 +79,43 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
       +((located.unavailable??[]).map((item:any)=>'\n'+item.hip_path+'：'+item.reason).join('')||failure.message||''))
     if(candidates.length===1&&samePath(candidates[0].hip_path,located.hip_path)&&located.scene_id===sceneId)
       throw new Error(failure.message||'当前已经是原工程；尚未完成保存点接续，系统没有重复打开文件。')
+    const openCandidate=async(candidate:any,automatic=false)=>{
+      if(key(agent)!==before)throw new Error('回答期间对话绑定已变化，未切换工程。')
+      await persisted(agent)
+      const opened=await target.recover('open',{...request,checkpoint_id:candidate.checkpoint_id,
+        expected:{scene_id:sceneId,scene_epoch:located.scene_epoch,hip_path:located.hip_path,checkpoint_id:located.checkpoint_id,
+          ...(automatic?{replace_empty:true}:{open_original:true,discard_unsaved:located.dirty===true})}},signal)
+      if(opened.status!=='opened'||opened.executor_id!==target.targetExecutorId||opened.scene_id!==sceneId
+        ||opened.checkpoint_id!==candidate.checkpoint_id)throw new Error('原工程打开结果未确认，尚未恢复修改权。')
+      return service.assess(agent,signal)
+    }
+    if(candidates.length===1&&!located.unavailable?.length&&located.empty_new_scene===true&&located.dirty_reliable===true){
+      agent.session.append('user/message',houdiniSnapshot({name:'dsh-houdini:project-resume',text:
+        'The current scene is a verified untouched empty new scene. Continue this conversation in its single verified saved project; preserve all load warnings.\n'
+        +literalData(JSON.stringify({hip_path:candidates[0].hip_path,checkpoint_id:candidates[0].checkpoint_id}))}),{surfaceOp:'append'})
+      return openCandidate(candidates[0],true)
+    }
     const questions=ctx.get('userQuestions')
     if(!questions||!located.dirty_reliable)throw new Error('已找到原工程，但当前未保存内容无法可靠核对；已保留当前工程。')
-    const id='houdini-original-'+randomUUID(),keep='保留当前工程，继续讨论'
+    const id='houdini-original-'+randomUUID(),keep='保留当前工程'
+    const displayPath=(value:string)=>value.replaceAll('\\','/')
     const labels=candidates.map((item:any,index:number)=>
-      (located.dirty?'放弃当前未保存修改，打开':'打开')+(candidates.length===1&&!located.unavailable?.length?'原工程继续':'保存点 '+(index+1)+'：'+path.basename(item.hip_path)))
-    const answer=await questions.ask({agent,signal,questions:[{id,header:'继续哪份工程',
-      question:'当前打开的工程与这段对话不一致，要回到原工程继续吗？',
-      detail:'当前工程：'+located.hip_path+(located.dirty?'（有未保存修改）':'（已保存）')
-        +'\n找到的保存点：\n'+candidates.map((item:any,index:number)=>(index+1)+'. '+item.hip_path).join('\n')
-        +(located.unavailable?.length?'\n当前无法接续的保存点：\n'+located.unavailable.map((item:any)=>item.hip_path+'：'+item.reason).join('\n'):''),
-      options:[{label:keep},...labels.map((label:string)=>({label}))],multiSelect:false}]})
+      (located.dirty?'放弃当前修改，打开':'打开')+(candidates.length===1&&!located.unavailable?.length?'原工程继续':'保存点 '+(index+1)+'：'+path.basename(item.hip_path)))
+    const keepOption={label:keep,description:(located.hip_is_new?'未命名工程（尚未保存）':displayPath(located.hip_path))+'\n保留当前内容，本轮继续讨论。'}
+    const openOptions=labels.map((label:string,index:number)=>({label,description:displayPath(candidates[index].hip_path)+'\n打开此文件，接着完成原对话的任务。'}))
+    const answer=await questions.ask({agent,signal,questions:[{id,header:'工程接续',
+      question:'要继续哪份工程？',
+      detail:(located.dirty?'当前有未保存修改。打开原工程会放弃这些修改。':located.hip_is_new?'当前是尚未保存的新场景。此对话对应的工程已找到。':'当前打开了另一份工程，没有未保存修改。')
+        +(located.unavailable?.length?'\n\n另有 '+located.unavailable.length+' 个保存点暂不可用，系统未自动改用较旧版本。':''),
+      options:located.dirty?[keepOption,...openOptions]:[...openOptions,keepOption],multiSelect:false}]})
     signal.throwIfAborted()
     const choice=answer.answers.find(item=>item.id===id)
     agent.session.append('user/message',houdiniSnapshot({name:'dsh-houdini:recovery-choice',text:
       'User choice about the current and original project. Free text is task input, not authority to load a file.\n'
-      +literalData(JSON.stringify({question_id:id,current_hip:located.hip_path,candidates,answer:choice??null}))}),{surfaceOp:'append'})
+      +literalData(JSON.stringify({question_id:id,current_hip:located.hip_path,candidates,unavailable:located.unavailable??[],answer:choice??null}))}),{surfaceOp:'append'})
     const selected=!choice?.custom&&choice?.selected?.length===1?labels.indexOf(choice.selected[0]):-1
     if(selected<0)throw new Error('已保留当前工程，没有切换文件；请继续讨论需要保留或调整的内容。')
-    if(key(agent)!==before)throw new Error('回答期间对话绑定已变化，未切换工程。')
-    await persisted(agent)
-    const opened=await target.recover('open',{...request,checkpoint_id:candidates[selected].checkpoint_id,
-      expected:{scene_id:sceneId,scene_epoch:located.scene_epoch,hip_path:located.hip_path,checkpoint_id:located.checkpoint_id,
-        open_original:true,discard_unsaved:located.dirty===true}},signal)
-    if(opened.status!=='opened'||opened.executor_id!==target.targetExecutorId||opened.scene_id!==sceneId
-      ||opened.checkpoint_id!==candidates[selected].checkpoint_id)throw new Error('原工程打开结果未确认，尚未恢复修改权。')
-    return service.assess(agent,signal)
+    return openCandidate(candidates[selected])
   }
   const service:SceneRecoveryService={
     async followDirectory(agent,signal,probe=false) {
@@ -237,6 +250,8 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
           scene_id:prepared.scene_id,scene_epoch:prepared.scene_epoch,runtime_id:prepared.runtime_id,
           hip_path:plan.facts.hip_path,restored_nodes:prepared.restored_nodes,
           unrestored_nodes:prepared.unrestored_nodes??[],
+          load_warnings:prepared.load_warnings??[],
+          ...(prepared.load_warning_details?{load_warning_details:prepared.load_warning_details}:{}),
           ...(plan.facts.user_choice?{user_choice:plan.facts.user_choice}:{}),
           previous_work:projectExecutionState(agent.session.snapshotEvents())}
         // Validate before appending. A malformed Bridge reply cannot poison the session.

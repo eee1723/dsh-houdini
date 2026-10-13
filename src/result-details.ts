@@ -1,12 +1,16 @@
 /** Immutable copies of returned envelopes, readable without another HOM call. */
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import type { ExecResult } from './bridge.js'
 
 const DIRECTORY = '.dsh-houdini-results'
-const MAX_BYTES = 32 * 1024 * 1024
-export const DETAIL_THRESHOLD = 12000
+const policy=JSON.parse(readFileSync(new URL('../houdini/result-detail-policy.json',import.meta.url),'utf8'))
+if(policy.schemaVersion!==1||['maxArchiveBytes','detailThresholdChars','loadWarningPreviewBytes'].some(key=>
+  !Number.isSafeInteger(policy[key])||policy[key]<=0)||policy.loadWarningPreviewBytes<128)throw Error('Unsupported result detail policy')
+const MAX_BYTES:number = policy.maxArchiveBytes
+export const DETAIL_THRESHOLD:number = policy.detailThresholdChars
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 async function directory(workspace: string, create = false): Promise<string> {
@@ -48,8 +52,8 @@ export async function retainResult<T extends ExecResult>(value: T, workspace: st
   }
 }
 
-export async function readResultDetail(workspace: string | null, ref: string, pointer = '', offset = 0, limit = 6000): Promise<ExecResult> {
-  if (!workspace) throw new Error('result details require a current session workspace')
+export async function readResultDetail(workspace: string | null, ref: string, pointer = '', offset = 0, limit = 6000, retainedPath?:string): Promise<ExecResult> {
+  if (!workspace&&!retainedPath) throw new Error('result details require a current session workspace or a recorded artifact')
   if (!/^[0-9a-f]{64}$/.test(ref)) throw new Error('result_ref must be a SHA-256 returned by this tool')
   if (typeof pointer !== 'string' || pointer.length > 2048 || (pointer !== '' && !pointer.startsWith('/'))) {
     throw new Error('pointer must be an empty string or JSON Pointer beginning with /')
@@ -57,7 +61,8 @@ export async function readResultDetail(workspace: string | null, ref: string, po
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {
     throw new Error('offset must be a nonnegative integer; limit must be 1..16000 characters')
   }
-  const filename = path.join(await directory(workspace), `${ref}.json`)
+  if(retainedPath&&(!path.isAbsolute(retainedPath)||path.basename(retainedPath)!==`${ref}.json`))throw Error('recorded result path does not match its reference')
+  const filename = retainedPath??path.join(await directory(workspace!), `${ref}.json`)
   const stat = await fs.lstat(filename)
   if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error('invalid result artifact')
   const bytes = await fs.readFile(filename)

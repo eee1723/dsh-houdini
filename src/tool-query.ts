@@ -3,9 +3,13 @@ import type {ExecResult} from './bridge.js'
 import {readResultDetail} from './result-details.js'
 import {readTaskSource} from './task-sources.js'
 import {HoudiniToolRuntime,workspaceOf} from './tool-runtime.js'
+import {recordedLoadWarningPath} from './executor-identity-projection.js'
 
 export function readResource(args:{kind:'source'|'result';ref:string;pointer?:string;offset?:number;limit?:number},exec:any):Promise<ExecResult>|ExecResult {
-  if(args.kind==='result') return readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit)
+  if(args.kind==='result') {
+    const events=exec?.agent?.session?.snapshotEvents?.()??[]
+    return readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit,recordedLoadWarningPath(events,args.ref))
+  }
   if(args.kind!=='source') throw Error('kind must be source or result')
   if(args.pointer!==undefined) throw Error('pointer is only used for result resources')
   const session=exec?.agent?.session

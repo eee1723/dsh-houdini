@@ -83,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 100
+_EXECUTION_CONTRACT_VERSION = 101
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -895,6 +895,15 @@ class _Handler(BaseHTTPRequestHandler):
     def _recover(self, body):
         """Host/UI only; no user-supplied code, file path or ownership manifest."""
         from dsh_executor_registry import is_shared_executor
+        def loaded(operation):
+            value, warning, failure = _execute(lambda: _recovery.with_load_warning(operation), timeout=30)
+            if warning is not None:
+                warning.persist()  # HTTP worker; neither large hashing nor disk I/O blocks the actor.
+                if value is not None:
+                    value['load_warning_details'] = warning.reference()
+            if failure is not None:
+                raise failure
+            return value
         if is_shared_executor():
             raise RuntimeError('共享执行端恢复尚未开放；保留原绑定和工程。')
         rejection = _contract_error(body.get('expected_contract'))
@@ -948,7 +957,7 @@ class _Handler(BaseHTTPRequestHandler):
                 digest, stamp = _recovery.store.file_digest(record['hip_path'])
                 if digest != record['file_sha256']:
                     raise RuntimeError('原工程文件已变化，未按旧保存点切换。')
-                value = _execute(lambda: _recovery.open_original(record, owner, body['expected']), timeout=30)
+                value = loaded(lambda: _recovery.open_original(record, owner, body['expected']))
                 checked, _ = _recovery.store.file_digest(record['hip_path'], stamp)
                 if checked != digest:
                     raise RuntimeError('原工程在打开期间被替换，未恢复修改权。')
@@ -981,8 +990,8 @@ class _Handler(BaseHTTPRequestHandler):
             value = _execute(lambda: _recovery.preview(record, owner, previous, expected_scene), timeout=2)
             if action == 'prepare':
                 _recovery.store.retain_executor(_EXECUTOR_ID)
-                value = _execute(lambda: _recovery.prepare(record, owner, previous,
-                    body['operation_id'], body['expected'], body.get('reload_saved') is True, expected_scene), timeout=30)
+                value = loaded(lambda: _recovery.prepare(record, owner, previous,
+                    body['operation_id'], body['expected'], body.get('reload_saved') is True, expected_scene))
                 # Reload can run native callbacks; file replacement during it
                 # must not be mistaken for the file whose identities we mapped.
                 try:

@@ -2310,7 +2310,7 @@ Read output/artifact and errors, framing, check, stale. The returned image is se
 
 - Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-visual-checks/<run-id>; delivery images are under $HIP/dsh-render. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.
 - A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics.
-- 最终图片可选delivery：生成时就进入$HIP/dsh-render，读取artifact.actual_path或实际output/path再present；该位置不证明视觉语义或任务完成。不自动搬动已公开文件，清理只针对明确的本任务临时产物。
+- 过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-render，核对artifact.actual_path后再present。目录不证明已验收或已交付，不自动移动历史图片。
 
 ## scene_save
 

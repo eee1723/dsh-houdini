@@ -13,6 +13,7 @@ import uuid
 import hou
 import dsh_ownership
 import dsh_recovery_store as store
+from dsh_load_warnings import LoadWarning
 from dsh_managed_runtime import executor_identity
 
 CHECKPOINT_KEY = 'dsh_houdini_checkpoint'
@@ -43,6 +44,10 @@ if '_PROVEN' not in globals():
     _PROVEN = None
 if '_SAVE_SERIAL' not in globals():
     _SAVE_SERIAL = 0
+if '_LOAD_WARNINGS' not in globals():
+    _LOAD_WARNINGS = None
+elif isinstance(_LOAD_WARNINGS, list):
+    _LOAD_WARNINGS = LoadWarning('\n'.join(_LOAD_WARNINGS)) if _LOAD_WARNINGS else None
 
 
 def _main():
@@ -69,12 +74,20 @@ def _nodes():
 
 def facts():
     _main()
+    from dsh_context import hip_file_state
+    hip = hip_file_state()
+    dirty = bool(hou.hipFile.hasUnsavedChanges())
+    dirty_reliable = bool(hou.isUIAvailable())
+    empty_new = dirty_reliable and hip['hip_is_new'] and not dirty and not any(node.children() for node in hou.node('/').children())
     return {'scene_epoch': _EPOCH, 'scene_id': _SCENE,
-            'checkpoint_id': _checkpoint(), 'hip_path': hou.hipFile.path(),
-            'loaded_checkpoint': _LOADED, 'dirty': bool(hou.hipFile.hasUnsavedChanges()),
+            'checkpoint_id': _checkpoint(), 'hip_path': hip['hip_path'],
+            'hip_is_new': hip['hip_is_new'], 'file_exists': hip['file_exists'],
+            'empty_new_scene': bool(empty_new),
+            'load_warning_details': _LOAD_WARNINGS.reference() if _LOAD_WARNINGS else None,
+            'loaded_checkpoint': _LOADED, 'dirty': dirty,
             'loaded_stamp': _LOADED_STAMP,
             'successful_save': {'checkpoint_id': _SAVED[0], 'hip_path': _SAVED[1]} if _SAVED else None,
-            'dirty_reliable': bool(hou.isUIAvailable()), 'checkpoint': dict(_STATUS)}
+            'dirty_reliable': dirty_reliable, 'checkpoint': dict(_STATUS)}
 
 
 def before_save():
@@ -190,7 +203,9 @@ def save_unverified(reason):
 
 def invalidate():
     global _EPOCH, _SCENE, _LOADED, _LOADED_STAMP, _LOADED_NODES, _PREPARED, _SAVED, _STATUS, _PROVEN
+    global _LOAD_WARNINGS
     _main()
+    _LOAD_WARNINGS = None
     _EPOCH, _SCENE = uuid.uuid4().hex, uuid.uuid4().hex
     _LOADED, _LOADED_NODES, _PREPARED, _SAVED = None, {}, None, None
     _LOADED_STAMP = None
@@ -337,6 +352,27 @@ def _live_mapping(record, baseline, owner=None):
     return mapping, missing
 
 
+def _load_checkpoint(path):
+    """A LoadWarning reports a loaded HIP, not a failed load; identity is checked by the caller."""
+    global _LOAD_WARNINGS
+    warning = None
+    try:
+        hou.hipFile.load(path.replace('\\', '/'), suppress_save_prompt=True)
+    except hou.LoadWarning as error:
+        warning = LoadWarning(str(error))
+    capture_loaded()
+    _LOAD_WARNINGS = warning
+
+
+def with_load_warning(operation):
+    """Capture the diagnostic alongside the actor result before yielding to another scene."""
+    _main()
+    try:
+        return operation(), _LOAD_WARNINGS, None
+    except Exception as error:
+        return None, _LOAD_WARNINGS, error
+
+
 def prepare(record, owner, previous, operation, expected, reload_saved=False, expected_scene=None):
     """Freeze one verified load's exact identities. Does not grant ownership."""
     _main()
@@ -355,14 +391,16 @@ def prepare(record, owner, previous, operation, expected, reload_saved=False, ex
         discard = expected.get('discard_unsaved') is True
         if not reload_saved or not current['dirty_reliable'] or (current['dirty'] and not discard):
             raise RuntimeError('接续需要重新打开当前 HIP；未保存修改须先保留，或由用户在对话中明确选择放弃。')
-        hou.hipFile.load(current['hip_path'].replace('\\', '/'), suppress_save_prompt=True)
-        capture_loaded()
+        _load_checkpoint(current['hip_path'])
+        if _LOADED != record['checkpoint_id'] or _SCENE != record['scene_id']:
+            raise RuntimeError('打开后的工程身份与保存点不符，未恢复修改权。')
     proven = _PROVEN if _PROVEN and _PROVEN['epoch'] == _EPOCH and _PROVEN['record']['checkpoint_id'] == record['checkpoint_id'] else None
     if not proven and _LOADED != record['checkpoint_id']:
         raise RuntimeError('No observed load of the verified checkpoint')
     mapping, missing = _live_mapping(record, proven['nodes'] if proven else _LOADED_NODES, owner)
     value = {'owner': owner, 'previous': previous, 'operation': operation,
-             'record': record, 'epoch': _EPOCH, 'mapping': mapping, 'missing': missing, 'active': False}
+             'record': record, 'epoch': _EPOCH, 'mapping': mapping, 'missing': missing,
+             'load_warning': _LOAD_WARNINGS, 'active': False}
     _OPERATIONS[operation] = value
     return public_prepared(value)
 
@@ -373,12 +411,14 @@ def open_original(record, owner, expected):
     current = status(owner)
     if any(current[key] != expected.get(key) for key in ('scene_epoch', 'hip_path', 'checkpoint_id')):
         raise RuntimeError('回答期间当前工程已切换，未将旧选择应用到新工程。')
-    if expected.get('open_original') is not True:
+    automatic = expected.get('replace_empty') is True and current['empty_new_scene']
+    if expected.get('replace_empty') is True and not automatic:
+        raise RuntimeError('当前已不再是空白新场景，未自动切换工程。')
+    if not automatic and expected.get('open_original') is not True:
         raise RuntimeError('切换到原工程需要用户在对话中明确选择。')
     if not current['dirty_reliable'] or (current['dirty'] and expected.get('discard_unsaved') is not True):
         raise RuntimeError('当前工程存在未确认的未保存内容，未切换工程。')
-    hou.hipFile.load(record['hip_path'].replace('\\', '/'), suppress_save_prompt=True)
-    capture_loaded()
+    _load_checkpoint(record['hip_path'])
     if _LOADED != record['checkpoint_id'] or _SCENE != record['scene_id']:
         raise RuntimeError('打开后的工程身份与保存点不符，未恢复修改权。')
     return {**status(owner), 'status': 'opened'}
@@ -389,6 +429,8 @@ def public_prepared(value):
             'checkpoint_id': value['record']['checkpoint_id'], 'scene_id': value['record']['scene_id'],
             'executor_id': executor_identity(), 'previous_executor': value['previous'],
             'restored_nodes': len(value['mapping']), 'unrestored_nodes': value.get('missing', []),
+            'load_warnings': value['load_warning'].excerpt() if value.get('load_warning') and not value['active'] else [],
+            'load_warning_details': value['load_warning'].reference() if value.get('load_warning') else None,
             'status': 'active' if value['active'] else 'prepared'}
 
 

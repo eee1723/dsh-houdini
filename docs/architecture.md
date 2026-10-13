@@ -92,11 +92,12 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和正常pre-step目标绑定；DSH负责持久化，不改写旧工具交换 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
-| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、原workspace内分页JSON Pointer读取、损坏校验和保存失败回退；不执行HOM |
+| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；加载警告只按原生恢复记录中的hash/路径读取，跨目录/重启仍可查；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
+| [dsh_load_warnings.py](../houdini/python3.11libs/dsh_load_warnings.py)、[结果预算](../houdini/result-detail-policy.json) | 主线程只采集有界首尾预览，HTTP worker按既有结果格式保存完整警告；同内容复用hash文件，后续现场仅引用，失败不回填全文；预算与Host结果读取同源 |
 | [client.js](../client.js) | DSH CJS factory；普通任务导航、工作区提示和执行端选择，首次打开Trace时初始化诊断 |
 | [client/trace-runtime.js](../client/trace-runtime.js) | 回包解析与诊断组件创建；构建进入同一个DSH客户端bundle |
 | [client/trace-model.js](../client/trace-model.js) | 公开轨迹的请求/调用索引、关系和统一统计；与React渲染分离 |

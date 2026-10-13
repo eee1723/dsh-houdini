@@ -10,12 +10,22 @@ import type {SessionEvent} from './execution-history.js'
 const TARGET_SECTION='dsh-houdini:executor-binding'
 const LIVE=new Set(['houdini_exec','houdini_inspect','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
 const ID=/^[0-9a-f]{32}$/
+const WarningCounts={capture_id:z.string().regex(ID),original_chars:z.number().int().nonnegative(),
+  omitted_chars:z.number().int().nonnegative(),truncated:z.boolean()}
+const WarningDetails=z.discriminatedUnion('status',[
+  z.object({...WarningCounts,status:z.literal('stored'),stored:z.literal(true),
+    sha256:z.string().regex(/^[0-9a-f]{64}$/),path:z.string().min(1),bytes:z.number().int().positive(),
+    format:z.literal('returned_bridge_envelope_json')}),
+  z.object({...WarningCounts,status:z.literal('unavailable'),stored:z.literal(false),error:z.string()}),
+])
 const Recovery=z.object({schema:z.literal(2),kind:z.literal('executor_recovery'),
   previous_executor:z.string().regex(ID),executor_id:z.string().regex(ID),
   operation_id:z.string().regex(ID),checkpoint_id:z.string().regex(ID),scene_id:z.string().regex(ID),
   scene_epoch:z.string().regex(ID),runtime_id:z.string().regex(ID),hip_path:z.string().min(1),
   restored_nodes:z.number().int().nonnegative(),previous_work:z.unknown().optional(),
   unrestored_nodes:z.array(z.object({path:z.string(),reason:z.string()})).optional(),
+  load_warnings:z.array(z.string()).optional(),
+  load_warning_details:WarningDetails.optional(),
   user_choice:z.record(z.string(),z.unknown()).optional()})
 export type RecoveryBinding=z.infer<typeof Recovery>
 const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
@@ -91,6 +101,17 @@ export function foldExecutorState(events:readonly SessionEvent[]) {
   for (const event of events) state=executorIdentityProjection.apply(state,event)
   executorBindingState(state)
   return state
+}
+
+/** Read-only artifacts are authorized by a valid native recovery event, including historical ones. */
+export function recordedLoadWarningPath(events:readonly SessionEvent[],ref:string):string|undefined {
+  let state=executorIdentityProjection.init(),path:string|undefined
+  for(const event of events){
+    state=executorIdentityProjection.apply(state,event)
+    const detail=state.recovery?.load_warning_details
+    if(!state.invalid&&!state.conflict&&detail?.status==='stored'&&detail.stored&&detail.sha256===ref)path=detail.path
+  }
+  return path
 }
 
 export function registerExecutorIdentityProjection(ctx:Context):void {

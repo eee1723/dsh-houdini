@@ -5,11 +5,14 @@ import path from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
+import {literalData} from '../../lib/prompt-data.js'
 export const inject=['loader','llm','sessions','agents','sessionController','sandboxPolicy','workspaceRegistry']
 export function apply(ctx){
  const folder=process.env.DSH_RECOVERY_TEST_ROOT,phase=process.env.DSH_RECOVERY_PHASE,sessionId=process.env.DSH_RECOVERY_TASK
  const dirtyChoice=phase==='resume'?process.env.DSH_RECOVERY_DIRTY_CHOICE:''
  const originalChoice=phase==='resume'?process.env.DSH_RECOVERY_ORIGINAL_CHOICE:'',keepDirty=dirtyChoice==='keep'||originalChoice==='keep'
+ const longWarning=phase==='resume'&&process.env.DSH_RECOVERY_LONG_WARNING==='1'
+ const warningArchiveFailure=process.env.DSH_RECOVERY_WARNING_ARCHIVE_FAILURE==='1'
  const saveAs=process.env.DSH_RECOVERY_SAVE_AS==='1',cwd=saveAs?path.join(folder,'original'):folder
  const file=path.join(folder,saveAs?'saved-as/project.hip':'project.hip').replaceAll('\\','/'),output=path.join(folder,phase+'-result.json')
  const report=value=>fs.writeFileSync(output,JSON.stringify(value,null,2));let step=0,failure,modelStarted=false
@@ -51,13 +54,39 @@ export function apply(ctx){
      assert(events.some(e=>e.type==='user/message'&&e.data.source?.sections?.some(s=>s.name==='dsh-houdini:executor-binding'
        &&s.text.includes('"kind":"executor_recovery"'))),
        'automatic recovery must commit before the first model tool call')
+     if(process.env.DSH_RECOVERY_EXPECT_WARNING==='1'){
+      const binding=events.filter(e=>e.type==='user/message').flatMap(e=>e.data.source?.sections??[])
+       .filter(s=>s.name==='dsh-houdini:executor-binding').at(-1)
+      const value=JSON.parse(binding.text.slice(binding.text.indexOf('\n')+1))
+      assert(value.load_warnings?.some(text=>text.includes('skysaturation')),'actual cross-version load warnings must reach the same resumed model step')
+     }
+     if(longWarning){
+      const binding=events.filter(e=>e.type==='user/message').flatMap(e=>e.data.source?.sections??[])
+       .filter(s=>s.name==='dsh-houdini:executor-binding').at(-1)
+      const value=JSON.parse(binding.text.slice(binding.text.indexOf('\n')+1)),detail=value.load_warning_details
+      assert(detail.truncated&&detail.original_chars>100000)
+      assert(Buffer.byteLength(literalData(JSON.stringify(value.load_warnings)))<=4096)
+      assert(!JSON.stringify(options).includes('MIDDLE_DIAGNOSTIC_MARKER'),'model receives no hidden original before reading the resource')
+      if(warningArchiveFailure){assert.equal(detail.status,'unavailable');assert.equal(detail.stored,false);assert(!detail.sha256)}
+      else{
+       assert(detail.stored)
+       const original=JSON.parse(fs.readFileSync(detail.path,'utf8')).result.load_warnings[0]
+       const serialized=JSON.stringify(original,null,2),offset=serialized.indexOf('MIDDLE_DIAGNOSTIC_MARKER')
+       assert(offset>4096)
+       calls.unshift(['houdini_resource',{kind:'result',ref:detail.sha256,pointer:'/result/load_warnings/0',offset,limit:1000}])
+      }
+     }
     }
     if(step){
      const result=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===phase+'-'+(step-1))
      assert(result&&!result.data.message.isError,JSON.stringify(result))
-     if(phase==='resume'&&step===1){
+     if(phase==='resume'&&calls[step-1][0]==='houdini_resource'){
+      assert(result.data.meta.canonical.result.text.includes('MIDDLE_DIAGNOSTIC_MARKER'),'existing tool retrieves omitted original without HOM execution')
+     }
+     if(phase==='resume'&&calls[step-1][0]==='houdini_inspect'){
       const value=result.data.meta.canonical;assert(value.ok,JSON.stringify(value));assert.equal(value.result.size,1,'unsaved old progress must not masquerade as saved')
       assert.equal(value.result.owner.status,'owned_current_session');assert.equal(value.execution.executor_id,process.env.DSH_HOUDINI_EXECUTOR_ID)
+      if(longWarning){assert(!Object.hasOwn(value.execution.scene_recovery,'load_warnings'));assert.equal(value.execution.scene_recovery.load_warning_details.status,warningArchiveFailure?'unavailable':'stored')}
      }
     }
     if(step===calls.length){yield*text(phase==='resume'?'Fixture resumed through the normal conversation.':'Fixture complete');return}

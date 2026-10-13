@@ -113,6 +113,7 @@ def worker(mode, folder):
     assert 'error' in call('open', **opened_args), 'hython cannot certify the dirty flag for a destructive load'
     assert 'error' in call('open', **opened_args, hip_path=str(hip)), 'there is no caller-selected arbitrary path opener'
     assert recovery.scene_epoch() == before_epoch and not ownership.records()
+    assert 'error' in call('open', **{**opened_args, 'expected': {**expected, 'open_original': False, 'replace_empty': True}}), 'a nonempty scene cannot use the empty-scene continuation'
     saved_bytes = hip.read_bytes()
     try:
         hip.write_bytes(b'changed after the conversation question')
@@ -121,6 +122,33 @@ def worker(mode, folder):
     finally:
         hip.write_bytes(saved_bytes)
     load()  # The fixture restored bytes; observe the new file stamp normally.
+    original_load, original_facts = hou.hipFile.load, recovery.facts
+    def load_with_warning(*args, **kwargs):
+        original_load(*args, **kwargs)
+        raise hou.LoadWarning('fixture: native compatibility warning after a successful load')
+    try:
+        hou.hipFile.load = load_with_warning
+        recovery.facts = lambda: {**original_facts(), 'dirty': False, 'dirty_reliable': True}
+        recovery._LOADED, recovery._PROVEN = None, None
+        assessment = call('assess')['value']
+        warning_operation = uuid.uuid4().hex
+        prepared_warning = call('prepare', operation_id=warning_operation, expected=assessment, reload_saved=True)['value']
+        assert prepared_warning['load_warnings'] and 'compatibility warning' in prepared_warning['load_warnings'][0]
+        assert not ownership.records(), 'a loaded warning does not bypass explicit activation'
+        assert 'load_warnings' not in recovery.facts(), 'later scene receipts contain references, not repeated preview text'
+        detail = prepared_warning['load_warning_details']
+        assert detail['stored'] and recovery.facts()['load_warning_details'] == detail
+        assert json.loads(Path(detail['path']).read_text())['result']['load_warnings'] == prepared_warning['load_warnings']
+        hou.hipFile.load = lambda *a, **k: (_ for _ in ()).throw(hou.OperationFailed('fixture: fatal load'))
+        recovery._LOADED, recovery._PROVEN = None, None
+        fatal_operation = uuid.uuid4().hex
+        assessment = call('assess')['value']
+        assert 'error' in call('prepare', operation_id=fatal_operation, expected=assessment, reload_saved=True)
+        assert fatal_operation not in recovery._OPERATIONS
+    finally:
+        hou.hipFile.load, recovery.facts = original_load, original_facts
+    load()
+    assert recovery.facts()['load_warning_details'] is None
     # Old records may include regenerated locked-definition members. Classify
     # only through an exact surviving HDA ancestor; never materialize the child.
     legacy = recovery.store.read(original['checkpoint'])

@@ -50,6 +50,10 @@ DSH运行修复的源码、上游提交和编译包清单由[修复声明](../de
 
 同一组合的`--original-choice open|keep --gui`改为在同目录打开无关HIP并制造真实未保存修改，浏览器在普通“继续”后通过原生对话选择切回原工程或保留当前内容；独立HOM探针检查最终路径、参数、脏状态。`dsh-recovery-locate.test.py`核对保存链分叉、缺失/替换文件与无记录复制品；`scene-recovery-original.test.mjs`核对自由文本、绑定变化和落盘失败不能触发打开；`dsh-scene-recovery.test.py`覆盖仍活跃的原作者、过期现场、任意路径拒绝和打开前文件变化。
 
+`--original-choice auto --gui`检查空白新场景直接接续，非空场景不能利用该入口跳过选择；原生提问另外核对宽窄屏、路径换行及单题无分页。可用`--save-hython <H22路径> --hython <H21路径> --original-choice open --gui`建立带H22 Flipbook参数的保存点，核对真实加载警告能进入同一恢复回执和模型步骤。只验证已加载场景及警告传播，不证明复杂HIP跨版本兼容。
+
+同一组合增加`--long-warning`，在真实加载后注入大段诊断，检查原生模型步骤只收到有界首尾预览，再经`houdini_resource`读出被省略的中段；后续HOM回执只能含引用。`--warning-archive-failure`只破坏诊断归档位置，验证恢复仍可继续且不回填全文。[警告边界](../tools/tests/load-warning.test.py)覆盖转义、原文无损、同内容复用、配额/存储/篡改和主线程隔离；[跨语言资源读取](../tools/tests/load-warning-resource.test.mjs)读取真实Python归档，核对换工作区、后续恢复、伪造消息及hash校验。
+
 [已有工作区生命周期](../tools/tests/dsh-workspace-lifecycle-check.mjs)接受缓存根目录，核对预存文件的更新/重命名/删除、硬链接与目录联接的外部权限保持、显式保护、只读token、重复授权和撤销。[网页传输反例](../tools/tests/dsh-web-transport-check.mjs)验证公开CDN跳转、私网/凭据/降级拒绝、混合DNS答案、真实失败原因及代理凭据脱敏。全流程还验证下载到预存目录后的整理，以及退出0诊断在原生/嵌套调用和实际页面中的一致性。编译器的 `--development` 仅可写 `tools/out` 中无完成标记的试验运行目录；正式缓存必须从声明补丁与锁文件构建。客户端构建使用同版上游预设，缺失的打包依赖必须使构建失败，不能把未解析依赖发布到浏览器。
 
 ## 修改与验证

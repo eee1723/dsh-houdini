@@ -309,6 +309,123 @@ index d8fd803..cdeda8b 100644
            )}>
              <TextShimmer>{settlementLine ?? normalSummary}</TextShimmer>
            </span>
+diff --git a/packages/client/ui-user-questions/README.md b/packages/client/ui-user-questions/README.md
+index c8c1824..8a1f8b7 100644
+--- a/packages/client/ui-user-questions/README.md
++++ b/packages/client/ui-user-questions/README.md
+@@ -129,3 +129,5 @@ None.
+ </details>
+ 
+ **Runtime invariant:** The Host Session projection is authoritative for durable timed questions. Browser storage only preserves unfinished input and never creates or keeps a question open. No runtime invariant companion is published because the Host validates and projects the durable state before this client package renders it.
++
++Question detail aligns with the title. Option descriptions are separate multiline text below their labels and wrap long paths inside the card. Single-question requests omit pagination; multi-question navigation and answer semantics are unchanged.
+diff --git a/packages/client/ui-user-questions/README.zh.md b/packages/client/ui-user-questions/README.zh.md
+index 03ed5fc..be97d27 100644
+--- a/packages/client/ui-user-questions/README.zh.md
++++ b/packages/client/ui-user-questions/README.zh.md
+@@ -129,3 +129,5 @@ Web 客户端在聊天输入框旁显示 agent（智能体）的提问。用户
+ </details>
+ 
+ **运行时不变式：** Host 会话投影是持久计时问题的权威来源。浏览器存储只保留未完成输入，绝不会创建问题或让问题继续保持打开。此包不发布运行时不变量 companion，因为 Host 会先校验并投影持久状态，客户端随后才渲染它。
++
++问题补充说明与标题对齐。选项说明独立放在标签下方，保留分行，长路径在卡片内换行。单题请求不显示分页；多题导航和回答语义保持不变。
+diff --git a/packages/client/ui-user-questions/src/client/QuestionComposer.module.css b/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
+index 5f2eb47..919da10 100644
+--- a/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
++++ b/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
+@@ -104,7 +104,9 @@
+ }
+ 
+ .detail {
+-  margin: 0 2px 8px;
++  margin: 12px 24px 4px;
++  color: var(--dsw-alias-label-secondary);
++  overflow-wrap: anywhere;
+ }
+ 
+ .footerActions {
+@@ -168,7 +170,7 @@
+ .options {
+   display: flex;
+   flex-direction: column;
+-  gap: 1px;
++  gap: 6px;
+   margin: 8px 0 0;
+   padding: 4px 12px;
+ }
+@@ -285,6 +287,7 @@
+   font-size: 14px;
+   line-height: 24px;
+   font-weight: 500;
++  overflow-wrap: anywhere;
+ }
+ 
+ .badge {
+@@ -298,10 +301,14 @@
+ }
+ 
+ .description {
+-  color: var(--dsw-alias-label-tertiary);
+-  font-size: 14px;
+-  line-height: 24px;
++  display: block;
++  margin-top: 3px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++  line-height: 19px;
+   font-weight: 400;
++  white-space: pre-line;
++  overflow-wrap: anywhere;
+ }
+ 
+ /* Read-only note standing in for a question the user skipped: it takes the
+@@ -453,6 +460,10 @@
+     padding: 4px 8px;
+   }
+ 
++  .detail {
++    margin-inline: 18px;
++  }
++
+   .title {
+     font-size: 15px;
+     line-height: 21px;
+diff --git a/packages/client/ui-user-questions/src/client/QuestionComposer.tsx b/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
+index 33bbcbe..b1c7fed 100644
+--- a/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
++++ b/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
+@@ -527,10 +527,10 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
+                           {display.recommended && (
+                             <span className={css.badge}>{t('option.recommended')}</span>
+                           )}
+-                          {option.description !== undefined && (
+-                            <span className={css.description}>{option.description}</span>
+-                          )}
+                         </span>
++                        {option.description !== undefined && (
++                          <span className={css.description}>{option.description}</span>
++                        )}
+                       </span>
+                     </button>
+                   )
+@@ -588,7 +588,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
+             </div>
+ 
+             <footer className={css.footer}>
+-              <div className={css.pager}>
++              {questions.length > 1 && <div className={css.pager}>
+                 <button
+                   type="button" className={css.iconButton} aria-label={t('nav.prev')}
+                   disabled={index === 0 || busy !== null}
+@@ -604,7 +604,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
+                 >
+                   <IconChevronRightOutlineRegular />
+                 </button>
+-              </div>
++              </div>}
+               <div className={css.feedback} role="status">
+                 {error === null ? null : 'key' in error ? t(error.key) : error.text}
+               </div>
 diff --git a/packages/context/file-reference-local/README.md b/packages/context/file-reference-local/README.md
 index b80f586..9425262 100644
 --- a/packages/context/file-reference-local/README.md

@@ -15,6 +15,7 @@ let page
 const errors=[],repairRequests=[]
 try{
  page=await browser.newPage({viewport:{width:1100,height:850}})
+ await page.emulateMedia({colorScheme:'dark'})
  page.on('pageerror',error=>errors.push(String(error)))
  page.on('request',request=>{if(request.url().includes('houdiniFrontend/recoverTask'))repairRequests.push(request.url())})
  await page.goto(url.href)
@@ -36,14 +37,20 @@ try{
  await composer.waitFor({state:'visible',timeout:15000})
  await composer.fill('继续')
  await composer.press('Enter')
- if(dirtyChoice||originalChoice){
+ if(dirtyChoice||(originalChoice&&originalChoice!=='auto')){
   const question=page.locator('[data-question-key]')
   await question.waitFor({state:'visible',timeout:20000})
-  const choice=originalChoice?(originalChoice==='keep'?'保留当前工程，继续讨论':'放弃当前未保存修改，打开原工程继续')
+  const choice=originalChoice?(originalChoice==='keep'?'保留当前工程':'放弃当前修改，打开原工程继续')
     :dirtyChoice==='keep'?'保留当前修改，继续讨论':'放弃未保存修改，从保存点继续'
   if(originalChoice){const detail=await question.innerText();assert(detail.includes('other.hip')&&detail.includes('project.hip'))}
-  await question.getByText(choice,{exact:true}).click()
+  assert.equal(await question.getByText(/^1\s*\/\s*1$/).count(),0,'single questions have no redundant pager')
   await page.screenshot({path:path.join(path.dirname(log),'recovery-question.png')})
+  await question.screenshot({path:path.join(path.dirname(log),'recovery-question-card.png')})
+  await page.setViewportSize({width:420,height:850})
+  await page.screenshot({path:path.join(path.dirname(log),'recovery-question-narrow.png')})
+  assert(await question.evaluate(el=>el.scrollWidth<=el.clientWidth),'question must wrap long paths without horizontal overflow')
+  await page.setViewportSize({width:1100,height:850})
+  await question.getByText(choice,{exact:true}).click()
   await question.getByRole('button',{name:/提交|完成|确认|发送/}).click()
   await question.waitFor({state:'detached',timeout:15000})
  }

@@ -21,8 +21,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-cache',required=True,type=Path)
     parser.add_argument('--save-as',action='store_true',help='Follow a real cross-directory Save As in the same conversation')
-    parser.add_argument('--original-choice',choices=('keep','open'),help='GUI only: keep another HIP or choose the verified original through conversation')
+    parser.add_argument('--original-choice',choices=('keep','open','auto'),help='GUI only: keep another HIP, choose the original, or resume from an untouched empty scene')
     parser.add_argument('--hython',required=True,type=Path)
+    parser.add_argument('--save-hython',type=Path,help='Optional H22 producer; include its native Flipbook preview node in the saved HIP')
+    parser.add_argument('--long-warning',action='store_true',help='Inject a long load diagnostic after a real successful load and verify resource pagination')
+    parser.add_argument('--warning-archive-failure',action='store_true',help='Make only warning archival unavailable; recovery must still return bounded evidence')
     parser.add_argument('--browser-module',required=True,type=Path)
     parser.add_argument('--gui',action='store_true',help='Use the matching Houdini GUI; load HIP before plugin activation')
     parser.add_argument('--dirty-choice',choices=('keep','discard'),help='GUI only: change the loaded HIP before plugin activation and answer the native conversation question')
@@ -45,6 +48,9 @@ def main():
                DSH_RECOVERY_DIRTY_CHOICE=args.dirty_choice or '')
     env['DSH_RECOVERY_SAVE_AS']='1' if args.save_as else ''
     env['DSH_RECOVERY_ORIGINAL_CHOICE']=args.original_choice or ''
+    env['DSH_RECOVERY_EXPECT_WARNING']='1' if args.save_hython else ''
+    env['DSH_RECOVERY_LONG_WARNING']='1' if args.long_warning else ''
+    env['DSH_RECOVERY_WARNING_ARCHIVE_FAILURE']='1' if args.warning_archive_failure else ''
     subprocess.run([node,str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'),str(cli),env['DSH_HOME'],str(ROOT)],cwd=ROOT,env=env,check=True,capture_output=True,timeout=60)
     overlay=folder/'fixture.json'
     overlay.write_text(json.dumps([{'insert':[{'id':'recovery-fixture','name':(ROOT/'tools/tests/dsh-scene-recovery-fixture.mjs').as_uri()}]}]),encoding='utf-8')
@@ -61,6 +67,12 @@ def main():
             assert process.poll() is None and time.monotonic()<deadline, str(folder)+' waiting for '+path.name
             time.sleep(.1)
     for phase in ('save','resume'):
+        if phase=='resume' and args.warning_archive_failure:
+            (folder/'recovery/load-warnings').write_text('fixture: not a directory',encoding='utf-8')
+        hython=(args.save_hython if phase=='save' and args.save_hython else args.hython).resolve()
+        phase_env=isolated_environment(folder/(phase+'-env'),executable=hython,gui=args.gui)
+        phase_env.update({key:value for key,value in env.items() if key.startswith('DSH_')})
+        env=phase_env
         bridgeport,hostport=port(),port();env['DSH_RECOVERY_PHASE']=phase
         worker=folder/(phase+'-bridge.py');ready=folder/(phase+'-bridge-ready.json')
         load=f"hou.hipFile.load({hip.as_posix()!r},suppress_save_prompt=True)\n" if phase=='resume' else ''
@@ -69,6 +81,9 @@ def main():
             load=("hou.hipFile.clear(suppress_save_prompt=True)\np=hou.node('/obj').createNode('geo','unrelated')\n"
                   +"p.createNode('box','source')\n"+f"hou.hipFile.save({(folder/'other.hip').as_posix()!r})\n")
             dirty="hou.node('/obj/unrelated/source').parm('sizex').set(9)\nassert hou.hipFile.hasUnsavedChanges()\n"
+            if args.original_choice=='auto':
+                load="hou.hipFile.clear(suppress_save_prompt=True)\n"
+                dirty=''
         probe=''
         if phase=='resume' and (args.dirty_choice or args.original_choice):
             probe_node='/obj/unrelated/source' if args.original_choice=='keep' else '/obj/asset/source'
@@ -81,8 +96,13 @@ def main():
             +(load if args.gui else '')
             +dirty
             +f"sys.path.insert(0,{str(ROOT/'houdini/python3.11libs')!r})\nimport dsh_bridge as b\n"
+            +("preview=hou.node('/out').createNode('flipbook','__dsh_houdini_flipbook')\npreview.parm('skysaturation').set(0.73)\n" if phase=='save' and args.save_hython else '')
+            +("original_load=hou.hipFile.load\ndef warning_load(*a,**k):\n"
+              +" message='HEAD load diagnostic'\n try: original_load(*a,**k)\n except hou.LoadWarning as error: message=str(error)\n"
+              +" raise hou.LoadWarning(message+'\\n'+('Repeated {parameter} warning 🚀\\n'*20000)+'MIDDLE_DIAGNOSTIC_MARKER'+('another warning\\n'*5000)+'TAIL_MISSING_ASSET')\nhou.hipFile.load=warning_load\n"
+              if phase=='resume' and args.long_warning else '')
             +(load if not args.gui else '')
-            +f"b.start({bridgeport});b._pump_active=True\nPath({str(ready)!r}).write_text(json.dumps({{'executor':b._EXECUTOR_ID,'dirty':hou.hipFile.hasUnsavedChanges()}}))\n"
+            +f"b.start({bridgeport});b._pump_active=True\nPath({str(ready)!r}).write_text(json.dumps({{'executor':b._EXECUTOR_ID,'dirty':hou.hipFile.hasUnsavedChanges(),'empty_new_scene':b._recovery.facts()['empty_new_scene']}}))\n"
             +probe
             +("" if args.gui else "while True:\n b._pump();time.sleep(.02)\n"),encoding='utf-8')
         with (folder/(phase+'-bridge.log')).open('wb') as blog,(folder/(phase+'-host.log')).open('wb') as hlog:
@@ -111,7 +131,8 @@ def main():
             try:
                 identity=wait_file(ready,process,40)
                 if phase=='resume' and (args.dirty_choice or args.original_choice):
-                    assert identity['dirty'],(str(folder),identity)
+                    if args.original_choice=='auto':assert identity['empty_new_scene'],(str(folder),identity)
+                    else:assert identity['dirty'],(str(folder),identity)
                 env.update(DSH_HOUDINI_EXECUTOR_ID=identity['executor'],DSH_HOUDINI_BRIDGE_URL=f'http://127.0.0.1:{bridgeport}')
                 host=spawn_frontend([node,str(cli),'web','--patch',str(overlay),'--port',str(hostport),'--no-open'],node=node,cwd=folder,env=env,stdout=hlog,stderr=subprocess.STDOUT)
                 if phase=='resume' or args.save_as:

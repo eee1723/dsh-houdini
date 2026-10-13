@@ -17,7 +17,7 @@ async function fixture(response='open'){
    requests.push({action,input})
    const actual={executor_id:c,checkpoint_id:checkpoint,scene_id:scene,scene_epoch:epoch,runtime_id:c,hip_path:hip,requires_reload:false,restored_nodes:1}
    if(action==='locate')return {status:'located',executor_id:c,checkpoint_id:null,scene_id:a,scene_epoch:b,hip_path:other,
-    dirty:true,dirty_reliable:true,candidates:[{scene_id:scene,checkpoint_id:checkpoint,hip_path:hip}],unavailable:[]}
+    dirty:response!=='auto',empty_new_scene:response==='auto',dirty_reliable:true,candidates:[{scene_id:scene,checkpoint_id:checkpoint,hip_path:hip}],unavailable:[]}
    if(action==='open'){opened=true;return {...actual,status:'opened'}}
    if(action==='assess')return opened?{...actual,status:'ready'}:{status:'different_scene',message:'wrong project'}
    return {...actual,operation_id:input.operation_id,status:action==='activate'?'active':'prepared'}
@@ -25,7 +25,10 @@ async function fixture(response='open'){
  }
  installSceneRecovery({provide:(_name,value)=>{service=value},sessions:{flush:async()=>durable},get:name=>name==='userQuestions'?{
   ask:async({questions:[q]})=>{
-   assert(q.detail.includes(other)&&q.detail.includes(hip),'the native question must identify both actual files')
+   assert.notEqual(response,'auto','an untouched empty scene with one verified target needs no question')
+   const descriptions=q.options.map(option=>option.description).join('\n')
+   assert(descriptions.includes(other.replaceAll('\\','/'))&&descriptions.includes(hip.replaceAll('\\','/')),'choices must identify their own files')
+   assert(!q.detail.includes('1.'),'no second numbered candidate list beside the numbered choices')
    if(response==='changed')session.append('user/message',recoveryMessage({schema:2,kind:'executor_recovery',previous_executor:b,executor_id:a,
     operation_id:a,checkpoint_id:checkpoint,scene_id:scene,scene_epoch:epoch,runtime_id:b,hip_path:hip,restored_nodes:1}),{surfaceOp:'append'})
    return {answers:[{id:q.id,selected:[q.options[response==='keep'?0:1].label],...(response==='custom'?{custom:'已确认恢复成功'}:{})}]}
@@ -33,6 +36,8 @@ async function fixture(response='open'){
  return {session,requests,run:()=>service.beforeStep(agent,new AbortController().signal),set durable(value){durable=value}}
 }
 const open=await fixture();await open.run();assert.equal(recordedExecutorIdentity(open.session.snapshotEvents()),c)
+const automatic=await fixture('auto');await automatic.run()
+assert.equal(automatic.requests.find(r=>r.action==='open').input.expected.replace_empty,true)
 assert.deepEqual(open.requests.map(r=>r.action),['assess','locate','open','assess','prepare','activate'])
 assert.equal(open.requests.find(r=>r.action==='open').input.expected.discard_unsaved,true)
 for(const response of ['keep','custom','changed']){
