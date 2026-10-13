@@ -24,4 +24,23 @@ assert.equal(decision.messages.length,1)
 fresh.append('user/message',decision.messages[0],{surfaceOp:'append'})
 assert.equal((await hook({agent:{session:fresh},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))).messages.length,0)
 await assert.rejects(binding.ensure(Session.create('binding-missing'),first,undefined,false),/selected before model tool/)
+let continued
+installExecutorBinding({on:(_name,fn)=>continued=fn},second)
+const unavailable=await continued({agent:{session},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))
+assert.equal(unavailable.kind,'enter','a missing Houdini must not disable conversation or historical work')
+assert.equal(unavailable.messages[0].source.sections[0].name,'dsh-houdini:recovery-required')
+session.append('user/message',unavailable.messages[0],{surfaceOp:'append'})
+assert.equal((await continued({agent:{session},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))).messages.length,0)
+assert.equal(recordedExecutorIdentity(session.snapshotEvents()),first,'a recovery notice must never rebind the task')
+await assert.rejects(binding.ensure(session,second),/recorded executor differs/)
+let automaticStep,assessments=0
+installExecutorBinding({on:(_name,fn)=>automaticStep=fn,get:()=>({beforeStep:async()=>{assessments++;throw new Error('kept unsaved content')}})},second)
+const userMessage={source:{kind:'user'},content:[{type:'text',text:'继续'}]}
+const payload={agent:{session},signal:new AbortController().signal}
+assert.deepEqual(await automaticStep(payload,async()=>({kind:'reject'})),{kind:'reject'})
+assert.equal(assessments,0,'a rejected DSH step must not inspect, reload, ask or append recovery')
+await automaticStep(payload,async()=>({kind:'enter',messages:[userMessage]}))
+assert.equal(assessments,1)
+await automaticStep(payload,async()=>({kind:'enter',messages:[]}))
+assert.equal(assessments,1,'model/tool continuations without new human input must not ask again')
 console.log('executor binding: one DSH message, target continuity and normal step admission passed')

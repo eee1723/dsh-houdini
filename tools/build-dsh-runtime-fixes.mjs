@@ -58,11 +58,14 @@ try{
  for(const pkg of manifest.hostPackages){
   const location=path.join(source,'packages',pkg.source),output=path.join(target,'node_modules/@deepseek-ai/dsh-'+pkg.name,'lib');
   const config=path.join(sourceBuild,pkg.name+'.json');
+  const declarations=path.join(sourceBuild,pkg.name+'-types');
   fs.writeFileSync(config,JSON.stringify({compilerOptions:{target:'ES2024',module:'NodeNext',moduleResolution:'NodeNext',strict:true,skipLibCheck:true,
-   allowImportingTsExtensions:true,rewriteRelativeImportExtensions:true,declaration:true,rootDir:path.join(location,'src'),outDir:path.join(output,'types'),types:['node'],
+   allowImportingTsExtensions:true,rewriteRelativeImportExtensions:true,declaration:true,rootDir:path.join(location,'src'),outDir:declarations,types:['node'],
+   paths:{['@deepseek-ai/dsh-'+pkg.name]:[path.join(location,'src/index.ts')],['@deepseek-ai/dsh-'+pkg.name+'/*']:[path.join(location,'src/*.ts')]},
    typeRoots:[path.join(root,'node_modules/@types'),path.join(buildTools,'node_modules/@types')]},
    include:[...pkg.entries.map(e=>path.join(location,'src',e+'.ts')),path.join(location,'src/*.d.ts')]}));
   run(process.execPath,[path.join(root,'node_modules/typescript/bin/tsc'),'-p',config]);
+  fs.cpSync(declarations,path.join(output,'types'),{recursive:true});
   const result=await build({entryPoints:Object.fromEntries(pkg.entries.map(e=>[e,path.join(output,'types',e+'.js')])),outdir:output,format:'esm',platform:'node',target:'node24',
    bundle:true,splitting:true,packages:'external',chunkNames:'types-[hash]',metafile:true,logLevel:'warning'});
   for(const filename of Object.keys(result.metafile.outputs)){const full=path.resolve(root,filename);files[path.relative(target,full).replaceAll('\\','/')]=sha(fs.readFileSync(full));}
@@ -73,12 +76,12 @@ try{
   console.log('Compiled DSH fix:',pkg.name);
  }
  const tsdownRequire=createRequire(path.join(buildTools,'package.json'));
- for(const name of manifest.clientPackages){
+ for(const {name,source:packageSource} of manifest.clientPackages){
   const config=path.join(sourceBuild,name+'.config.ts');
   const preset=pathToFileURL(path.join(source,'packages/client/tsdown.client.ts')).href;
-  const entry=path.join(source,'packages/client',name,'src/client/index.ts');
-  const output=path.join(target,'node_modules/@deepseek-ai/dsh-client-'+name,'lib');
-  fs.writeFileSync(config,`import {clientBundle} from ${JSON.stringify(preset)};\nconst rows=clientBundle('@deepseek-ai/dsh-client-${name}',[])({env:{}});\nconst base=rows[rows.length-1];\nexport default {...base,inputOptions:{...base.inputOptions,onwarn(warning,handler){if(warning.code==='UNRESOLVED_IMPORT')throw new Error(warning.message);handler(warning)}},entry:{client:${JSON.stringify(entry)}},outDir:${JSON.stringify(output)}};\n`);
+  const entry=path.join(source,'packages',packageSource,'src/client/index.ts');
+  const output=path.join(target,'node_modules/@deepseek-ai/dsh-'+name,'lib');
+  fs.writeFileSync(config,`import {clientBundle} from ${JSON.stringify(preset)};\nconst rows=clientBundle('@deepseek-ai/dsh-${name}',[])({env:{}});\nconst base=rows[rows.length-1];\nexport default {...base,inputOptions:{...base.inputOptions,onwarn(warning,handler){if(warning.code==='UNRESOLVED_IMPORT')throw new Error(warning.message);handler(warning)}},entry:{client:${JSON.stringify(entry)}},outDir:${JSON.stringify(output)}};\n`);
   run(process.execPath,[tsdownRequire.resolve('tsdown/run'),'--config',config],{cwd:source});
   // Locale namespaces are consumed through the installed declaration surface too.
   const locales=path.join(path.dirname(entry),'locales.ts');

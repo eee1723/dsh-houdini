@@ -234,13 +234,17 @@ try:
         return fn()  # Only the patched no-HOM preparation/finish functions run.
     ui_body = {**ui_body, 'request_ref': prepare(ui_owner), 'owner_call': 'ui-final-error'}
     active_before_ui = b._request_registry.active_count()
+    # Scene admission is covered by the real actor/HTTP cases. This fixture
+    # replaces every owning-thread stage with no-HOM functions on the worker.
     with patch.object(b, '_execute', side_effect=staged_queue_fixture), \
+         patch.object(b, '_require_request_scene', return_value=None) as scene_fence, \
          patch.object(ui_capture, 'prepare_ui_capture', side_effect=prepare_ui_fixture), \
          patch.object(ui_capture, 'refresh_ui_capture', side_effect=refresh_ui_fixture), \
          patch.object(ui_capture, 'finish_ui_capture', side_effect=finish_ui_fixture), \
          patch.object(ui_capture, 'abort_ui_capture', side_effect=AssertionError('closed stage was aborted again')):
         status, terminal_ui = post('/ui/capture', ui_body)
     assert status == 200 and terminal_ui['ok'] is False, terminal_ui
+    scene_fence.assert_called_once_with(ui_body['request_ref'], ui_owner)
     assert terminal_ui['result'] == stage_facts and 'final UI observation queue failure' in terminal_ui['error'], terminal_ui
     assert terminal_ui['requestReceipt']['status'] == 'done' and 'execution' not in terminal_ui, terminal_ui
     assert ui_stage_calls == ['prepare', 'refresh', 'finish'] and b._request_registry.active_count() == active_before_ui

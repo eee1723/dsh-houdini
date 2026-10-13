@@ -107,7 +107,7 @@ def runtime_fix_identity(binary: Path | str, path: Path = MANIFEST_PATH, *, veri
                 for package in definition['hostPackages'] for entry in package['entries']}
     required.update(f"node_modules/@deepseek-ai/dsh-{package['name']}/{asset}"
                     for package in definition['hostPackages'] for asset in package.get('assets', []))
-    required.update(f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages'])
+    required.update(f"node_modules/@deepseek-ai/dsh-{item['name']}/lib/client.js" for item in definition['clientPackages'])
     if not required.issubset(files):
         raise RuntimeError('DSH runtime fix inventory omits a required implementation or asset')
     if verify_files:

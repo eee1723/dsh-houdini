@@ -83,12 +83,14 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 99
+_EXECUTION_CONTRACT_VERSION = 100
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
 from dsh_requests import RequestRegistry
 _request_registry = RequestRegistry(_RUNTIME_ID)
+import dsh_scene_recovery as _recovery
+_recovery.install()
 # --- limits (kept small so a runaway agent cannot exhaust Houdini) ----------
 _MAX_BODY_BYTES = 16 * 1024 * 1024       # reject oversized HTTP bodies
 _MAX_JOBS = 1000                         # terminal-job registry cap
@@ -134,6 +136,21 @@ def run_code(code: str, allow_raw: str | None = None,
              read_only: bool = False) -> dict:
     """Main-thread execution entry shared by HTTP and isolated Python callers."""
     return _runtime.run_code(code, allow_raw, owner_session, owner_call, read_only, raw_gate=_raw_gate)
+
+
+def _require_request_scene(ref, owner):
+    epoch = _request_registry.scene_epoch(ref)
+    if epoch is not None:
+        _recovery.require_target(owner, epoch)
+
+
+def _begin_request(ref, owner):
+    try:
+        _require_request_scene(ref, owner)
+    except Exception as error:
+        _request_registry.fail_before_dispatch(ref, error)
+        return False
+    return _request_registry.running(ref)
 
 
 def _contract_error(expected) -> tuple[int, str] | None:
@@ -303,12 +320,14 @@ def _job_activity() -> dict:
 
 def _job_body(job_id: str, code: str, allow_raw: str | None = None,
               owner_session: str | None = None,
-              owner_call: str | None = None) -> dict | None:
+              owner_call: str | None = None, request_ref: str | None = None) -> dict | None:
     """Job work item, run on the main thread via `_execute`.
 
     Re-checks cancellation AT execution time: a job cancelled while waiting in
     the queue returns None and its code never runs — no scene side effects.
     """
+    if request_ref is not None:
+        _require_request_scene(request_ref, owner_session)
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None or job["status"] == "cancelled":
@@ -323,7 +342,7 @@ def _run_job(job_id: str, code: str, allow_raw: str | None = None,
     try:
         try:
             outcome = _execute(
-                lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call)
+                lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call, request_ref)
             )
         except BaseException:
             outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
@@ -353,7 +372,7 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
     try:
         import dsh_ui_capture as capture
         def prepare():
-            if not _request_registry.running(request_ref):
+            if not _begin_request(request_ref, owner_session):
                 raise RuntimeError('UI capture request is no longer queued; no new capture dispatched')
 
             with dsh_ownership.execution_owner(owner_session, owner_call):
@@ -499,6 +518,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path.startswith('/recovery/'):
+            try:
+                return self._recover(body)
+            except (RuntimeError, OSError, ValueError) as error:
+                self._send({'ok': False, 'error': str(error)})
+                return
         if self.path == '/ui/list':
             rejection = _owner_error(body) or _contract_error(body.get('expected_contract'))
             fields = {'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
@@ -520,7 +545,7 @@ class _Handler(BaseHTTPRequestHandler):
                     'error': 'UI discovery already admitted; retrieve its original result'})
                 return
             def discover():
-                if not _request_registry.running(ref):
+                if not _begin_request(ref, owner_session):
                     return {'ok': False, 'stdout': '', 'stderr': '',
                         'error': 'UI discovery no longer queued',
                         'requestReceipt': _request_registry.status(ref, owner_session)}
@@ -597,10 +622,11 @@ class _Handler(BaseHTTPRequestHandler):
                     or ('request_kind' in body and body['request_kind'] != 'node_navigation')):
                 self._send({'ok': False, 'error': 'owner_session required'}, status=400)
                 return
-            # POST shares the JSON/no-Origin boundary. A health probe never
-            # allocates tickets, and preparing one never enters the HOM queue.
+            # Read the actor-published generation without waiting behind a cook.
+            # The actor checks both task and scene again at actual dispatch.
+            epoch = _recovery.scene_epoch()
             self._send({**self._health(), 'requestRef': _request_registry.issue(
-                body['owner_session'], body.get('request_kind', 'exec'))})
+                body['owner_session'], body.get('request_kind', 'exec'), epoch)})
             return
         if self.path == '/requests/status':
             if set(body)!={'request_ref','owner_session'} or not all(isinstance(v,str) and v.strip() for v in body.values()):
@@ -664,7 +690,7 @@ class _Handler(BaseHTTPRequestHandler):
                                 'error': 'Node navigation is no longer pending; no new navigation dispatched'})
                 return
             def navigate():
-                if not _request_registry.running(ref):
+                if not _begin_request(ref, owner_session):
                     return {'ok': False, 'stdout': '', 'stderr': '',
                             'requestReceipt': _request_registry.status(ref, owner_session),
                             'error': 'Node navigation cancelled before dispatch'}
@@ -724,7 +750,7 @@ class _Handler(BaseHTTPRequestHandler):
                                 'error':'Request already admitted; retrieve status instead of resubmitting.'})
                 return
             def tracked():
-                if not _request_registry.running(ref):
+                if not _begin_request(ref, owner_session):
                     return {'ok':False,'stdout':'','stderr':'',
                             'requestReceipt':_request_registry.status(ref,owner_session),
                             'error':'Request no longer queued; original code was not started again.'}
@@ -865,6 +891,109 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(snapshot)
             return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
+
+    def _recover(self, body):
+        """Host/UI only; no user-supplied code, file path or ownership manifest."""
+        from dsh_executor_registry import is_shared_executor
+        if is_shared_executor():
+            raise RuntimeError('共享执行端恢复尚未开放；保留原绑定和工程。')
+        rejection = _contract_error(body.get('expected_contract'))
+        if rejection:
+            self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
+            return
+        owner = body.get('session_id')
+        if not isinstance(owner, str) or not owner.strip():
+            raise ValueError('Recovery requires the selected task identity')
+        allowed = {'session_id', 'expected_contract', 'previous_executor', 'source_executors',
+                   'operation_id', 'expected', 'reload_saved', 'checkpoint_id'}
+        if set(body) - allowed:
+            raise ValueError('Unexpected recovery field')
+        action = self.path.removeprefix('/recovery/')
+        if action == 'activate':
+            value = _execute(lambda: _recovery.activate(body['operation_id'], owner), timeout=5)
+            self._send({'ok': True, **value})
+            return
+        if action not in ('assess', 'prepare', 'locate', 'open'):
+            raise ValueError('Unsupported recovery action')
+        previous = _recovery.store.identity(body.get('previous_executor'))
+        sources = body.get('source_executors', [previous])
+        if not isinstance(sources, list) or not sources or any(not isinstance(s, str) for s in sources):
+            raise ValueError('Recovery requires recorded executor history')
+        expected_scene = body.get('expected', {}).get('scene_id')
+        if expected_scene is not None:
+            _recovery.store.identity(expected_scene)
+        current = _execute(lambda: _recovery.status(owner), timeout=2)
+        if action in ('locate', 'open'):
+            if expected_scene is None:
+                raise ValueError('原工程定位需要对话中已有的工程身份，不能按目录猜测。')
+            if action == 'locate':
+                located = _recovery.store.locate(expected_scene, owner, sources)
+                available = []
+                for candidate in located['candidates']:
+                    producer = _recovery.store.read(candidate['checkpoint_id'])['executor_id']
+                    try:
+                        with _recovery.store.retired_sources(previous, producer, _EXECUTOR_ID):
+                            available.append(candidate)
+                    except RuntimeError as error:
+                        located['unavailable'].append({**candidate, 'reason': str(error)})
+                located['candidates'] = available
+                self._send({'ok': True, **current, **located, 'status': 'located',
+                            'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID})
+                return
+            record = _recovery.store.read(body['checkpoint_id'])
+            _recovery.store.require_task_source(record, owner, sources)
+            if record['scene_id'] != expected_scene:
+                raise RuntimeError('所选保存点不属于原对话工程，未切换工程。')
+            with _recovery.store.retired_sources(previous, record['executor_id'], _EXECUTOR_ID):
+                digest, stamp = _recovery.store.file_digest(record['hip_path'])
+                if digest != record['file_sha256']:
+                    raise RuntimeError('原工程文件已变化，未按旧保存点切换。')
+                value = _execute(lambda: _recovery.open_original(record, owner, body['expected']), timeout=30)
+                checked, _ = _recovery.store.file_digest(record['hip_path'], stamp)
+                if checked != digest:
+                    raise RuntimeError('原工程在打开期间被替换，未恢复修改权。')
+            self._send({'ok': True, **value, 'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID})
+            return
+        if action == 'assess' and previous == _EXECUTOR_ID and current['connected']:
+            self._send({'ok': True, **current, 'status': 'connected',
+                        'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID,
+                        'message': '当前任务仍连接此工程。'})
+            return
+        if not current['checkpoint_id']:
+            self._send({'ok': True, **current, 'status': 'unavailable',
+                        'message': '当前 HIP 没有可验证的任务保存点。请打开原任务的保存文件；旧版文件不能自动认领节点。'})
+            return
+        try:
+            record = _recovery.store.read(current['checkpoint_id'])
+        except (OSError, ValueError):
+            self._send({'ok': True, **current, 'status': 'unavailable',
+                        'message': '此 HIP 的恢复材料缺失或未完成提交。请保留文件并选择已有可信保存点；不会自动认领节点。'})
+            return
+        _recovery.store.require_task_source(record, owner, sources)
+        # The previous process retains this lease until it exits. A timeout or
+        # stale registration cannot silently transfer a still-live author.
+        with _recovery.store.retired_sources(previous, record['executor_id'], _EXECUTOR_ID):
+            digest, stamp = _recovery.store.file_digest(current['hip_path'])
+            if digest != record['file_sha256']:
+                raise RuntimeError('磁盘 HIP 与任务保存点不一致，需要核对内容，不能自动恢复归属。')
+            if current['loaded_checkpoint'] == current['checkpoint_id'] and tuple(current['loaded_stamp'] or ()) != stamp:
+                raise RuntimeError('HIP 在加载后被外部替换，请保留未保存修改后重新打开文件。')
+            value = _execute(lambda: _recovery.preview(record, owner, previous, expected_scene), timeout=2)
+            if action == 'prepare':
+                _recovery.store.retain_executor(_EXECUTOR_ID)
+                value = _execute(lambda: _recovery.prepare(record, owner, previous,
+                    body['operation_id'], body['expected'], body.get('reload_saved') is True, expected_scene), timeout=30)
+                # Reload can run native callbacks; file replacement during it
+                # must not be mistaken for the file whose identities we mapped.
+                try:
+                    checked, _ = _recovery.store.file_digest(current['hip_path'], stamp)
+                    if checked != digest:
+                        raise RuntimeError('HIP changed while preparing recovery')
+                except BaseException:
+                    _execute(lambda: _recovery.discard_prepared(body['operation_id'], owner), timeout=2)
+                    raise
+        self._send({'ok': True, **value, 'status': value.get('status', 'ready'),
+                    'checkpoint_executor': record['executor_id'], 'runtime_id': _RUNTIME_ID})
 
 
 _server: ThreadingHTTPServer | None = None

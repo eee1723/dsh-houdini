@@ -32,6 +32,9 @@
 
 现有`references/`、`textures/`、渲染和检查文件不自动迁移。Save As也不是依赖迁移指令；需要搬工程时显式复制所需依赖、核对引用与重开，再决定是否处理原文件。
 
+目录组织不证明工程内容连续：同工作区可有无关HIP，跨目录另存也可属于同一工程。
+任务默认跟随成功Save As、工程分支/保存点判断及DSH工作区权限迁移的待实现合同见[工程接续设计](multi-instance.md#工程接续设计)；当前路径观察不等于该恢复流程已经可用。
+
 ## 各入口的默认行为
 
 - `image_generate`默认`output_policy='managed'`、`purpose='reference'`。`output`省略或安全basename，生成到reference_generated；`purpose='texture'`进入texture。目录来自当前任务所选Houdini的实际现场，结果带角色、工程根、原HIP和观察身份。`output_policy='explicit'`必须给目的地，相对路径沿DSH workspace解释，不查询Houdini。

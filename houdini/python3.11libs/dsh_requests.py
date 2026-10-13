@@ -30,7 +30,7 @@ class RequestRegistry:
         with self.lock:
             return len(self.records) - len(self._finished)
 
-    def issue(self, owner, kind='exec'):
+    def issue(self, owner, kind='exec', scene_epoch=None):
         """Prepare one request without submitting code or occupying the HOM queue."""
         if not isinstance(owner, str) or not owner:
             raise ValueError('request tracking requires owner_session')
@@ -40,12 +40,12 @@ class RequestRegistry:
             while len(self._tickets) >= self.limit:
                 self._tickets.popitem(last=False)
             ref = self.runtime_id + '.' + uuid.uuid4().hex
-            self._tickets[ref] = (now, owner, kind)
+            self._tickets[ref] = (now, owner, kind, scene_epoch)
             return ref
 
     def _expire_tickets(self, now):
         while self._tickets:
-            issued, _owner, _kind = next(iter(self._tickets.values()))
+            issued, _owner, _kind, _scene = next(iter(self._tickets.values()))
             if now - issued <= self.ticket_retention:
                 break
             self._tickets.popitem(last=False)
@@ -102,6 +102,7 @@ class RequestRegistry:
                 'owner': owner, 'digest': digest, 'status': 'queued', 'payload': None,
                 'finished': None, 'bytes': 0, 'owner_call': payload.get('owner_call'),
                 'kind': payload.get('request_kind', 'exec'), 'admitted_at': time.time(),
+                'scene_epoch': ticket[3],
             }
             return True
 
@@ -131,6 +132,10 @@ class RequestRegistry:
                               finished=time.monotonic())
                 self._finished[ref] = None
             return {'status': record['status'], 'cancelled': record['status'] == 'not_executed'}
+
+    def scene_epoch(self, ref):
+        with self.lock:
+            return self.records[ref].get('scene_epoch')
 
     def running(self, ref):
         with self.lock:

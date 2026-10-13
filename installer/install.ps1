@@ -30,6 +30,7 @@ $files = @{
     'python3.11libs/pythonrc.py' = (Join-Path $PSScriptRoot 'scripts/pythonrc.py')
     'python3.13libs/pythonrc.py' = (Join-Path $PSScriptRoot 'scripts/pythonrc.py')
     'release-trust.json' = (Join-Path $PSScriptRoot 'release-trust.json')
+    'scripts/afterscenesave.py' = (Join-Path $sourceRoot 'houdini/scripts/afterscenesave.py')
 }
 foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_ui_style.py', 'dsh_deployment.py', 'dsh_release_policy.py')) {
     $files["python/$name"] = Join-Path $sourceRoot "houdini/python3.11libs/$name"

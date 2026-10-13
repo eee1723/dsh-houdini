@@ -46,6 +46,10 @@ npm run docs:check
 
 DSH运行修复的源码、上游提交和编译包清单由[修复声明](../deployment/dsh-runtime-fixes/manifest.json)维护；`npm run runtime:prepare`准备独立缓存。[运行修复反例](../tools/tests/dsh-runtime-fixes-check.mjs)接受该缓存根目录，实测Windows权限保持/回滚、内核拒绝、只读诊断、文件策略与网络边界。[网络全流程](../tools/tests/dsh-network-workflow.test.py)使用 `--runtime-cache <根目录>` 跟随Windows系统网络；可选 `--proxy <明确HTTP代理>` 仅在隔离测试数据中覆盖路线。该测试以受控回复驱动真实DSH网页取证、下载、读图和普通/嵌套调用；`--browser-module <Playwright入口>`另检查真实选中任务和命令退出状态。测试只访问公开资料，不调用收费模型；这些结果不证明自主模型选择或所有外部网站可用。
 
+[目录接续组合](../tools/tests/dsh-workspace-continuity.test.py)使用`--runtime-cache <根目录>`启动原生DSH，检查会话/历史保持、实际文件工具与附件搜索、新目录范围和写入失败；在元数据提交与工作区归属更新之间终止隔离Host，再验证启动自动完成。[Houdini接续组合](../tools/tests/dsh-scene-recovery-e2e.test.py)增加`--save-as --gui --hython <路径> --browser-module <Playwright入口>`，在H21/H22实际保存后检查下一模型步骤取得新工程说明，写文件落到新目录，重开后浏览器原会话普通输入“继续”恢复HOM与嵌套工具。测试仅终止自身创建的进程，不修改用户HIP。
+
+同一组合的`--original-choice open|keep --gui`改为在同目录打开无关HIP并制造真实未保存修改，浏览器在普通“继续”后通过原生对话选择切回原工程或保留当前内容；独立HOM探针检查最终路径、参数、脏状态。`dsh-recovery-locate.test.py`核对保存链分叉、缺失/替换文件与无记录复制品；`scene-recovery-original.test.mjs`核对自由文本、绑定变化和落盘失败不能触发打开；`dsh-scene-recovery.test.py`覆盖仍活跃的原作者、过期现场、任意路径拒绝和打开前文件变化。
+
 [已有工作区生命周期](../tools/tests/dsh-workspace-lifecycle-check.mjs)接受缓存根目录，核对预存文件的更新/重命名/删除、硬链接与目录联接的外部权限保持、显式保护、只读token、重复授权和撤销。[网页传输反例](../tools/tests/dsh-web-transport-check.mjs)验证公开CDN跳转、私网/凭据/降级拒绝、混合DNS答案、真实失败原因及代理凭据脱敏。全流程还验证下载到预存目录后的整理，以及退出0诊断在原生/嵌套调用和实际页面中的一致性。编译器的 `--development` 仅可写 `tools/out` 中无完成标记的试验运行目录；正式缓存必须从声明补丁与锁文件构建。客户端构建使用同版上游预设，缺失的打包依赖必须使构建失败，不能把未解析依赖发布到浏览器。
 
 ## 修改与验证

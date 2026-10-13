@@ -346,6 +346,8 @@ def restart_bridge(*, port=None) -> str:
         'dsh_operation_cards',
         'dsh_requests',
         'dsh_ownership',
+        'dsh_recovery_store',
+        'dsh_scene_recovery',
         'dsh_parameter_templates',
         'dsh_usd_inspection',
         'dsh_context',

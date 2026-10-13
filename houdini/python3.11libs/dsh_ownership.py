@@ -51,6 +51,27 @@ def records():
     return {identity: dict(entry) for identity, entry in _OWNED_NODE_SESSIONS.items()}
 
 
+def clear_for_scene_load():
+    """A native Open/New ends every runtime identity's causal scope."""
+    _OWNED_NODE_SESSIONS.clear()
+
+
+def restore_checkpoint(mapping, session, marker_key):
+    """Only the recovery actor's verified load mapping may restore ownership."""
+    checked = []
+    for identity, row in mapping:
+        node = hou.nodeBySessionId(identity)
+        if (node is None or row['owner']['session'] != session
+                or node.userData(marker_key) != row['node_id']
+                or node.type().name() != row['type']
+                or node.type().category().name() != row['category']
+                or node.userData(dsh_service_constants._RENDER_OWNER_KEY) == dsh_service_constants._RENDER_OWNER_VALUE
+                or (identity in _OWNED_NODE_SESSIONS and _OWNED_NODE_SESSIONS[identity] != row['owner'])):
+            raise RuntimeError('Checkpoint node changed before ownership activation')
+        checked.append((identity, dict(row['owner'])))
+    _OWNED_NODE_SESSIONS.update(checked)
+
+
 def forget(identity):
     """Retire an exact identity after its native destruction."""
     _OWNED_NODE_SESSIONS.pop(int(identity), None)

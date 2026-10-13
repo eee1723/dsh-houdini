@@ -562,7 +562,9 @@ class ExecutionRuntime:
 
     def _execution_snapshot(self, sequence, owner_session, read_only, impact):
         scene = dsh_hou_helpers.scene_info()
+        import dsh_scene_recovery
         return {'runtime_id': self.runtime_id, 'executor_id': self.executor_id, 'sequence': sequence,
+            'scene_recovery': dsh_scene_recovery.facts(),
             'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
             'hip_dir': scene['hip_dir'], 'hip_is_new': scene['hip_is_new'],
             'update_mode': scene['update_mode'], 'owner_session': owner_session, 'read_only': read_only,

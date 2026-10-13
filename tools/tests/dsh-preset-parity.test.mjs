@@ -56,8 +56,8 @@ for (const [key, standardRow] of standardRows) {
 }
 assert.deepEqual([...actual.keys()].filter(key => !standardRows.has(key)), ['/houdini'])
 assert.equal(actual.get('/houdini').name, 'dsh-houdini/agent')
-assert.deepEqual(actual.get('/houdini').isolate,{houdiniNodeDelivery:true},
-  'the preset navigation service must live in the DSH isolate realm')
+assert.deepEqual(actual.get('/houdini').isolate,{houdiniNodeDelivery:true,houdiniRecovery:true},
+  'navigation and recovery must both live in the selected preset isolate realm')
 assert.equal(actual.get('/houdini').config.productMode, undefined)
 assert.equal(actual.get('/present').name, '@deepseek-ai/dsh-tool-present')
 assert.equal(actual.get('/persona').config.prefix,

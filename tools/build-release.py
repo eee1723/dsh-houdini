@@ -239,6 +239,8 @@ def finalize(output, trust_path, key_id, node, *, candidate=False):
     shutil.copyfile(trust_path, installer / "installer/release-trust.json")
     for filename in ("dsh_bootstrap.py", "dsh_install_ui.py", "dsh_ui_style.py", "dsh_deployment.py", "dsh_release_policy.py"):
         shutil.copyfile(ROOT / "houdini/python3.11libs" / filename, installer / "houdini/python3.11libs" / filename)
+    (installer / 'houdini/scripts').mkdir(parents=True)
+    shutil.copyfile(ROOT / 'houdini/scripts/afterscenesave.py', installer / 'houdini/scripts/afterscenesave.py')
     zip_tree(installer, output / "dsh-houdini-installer.zip")
     # Offline wrapper: installer plus the exact signed payload, without recompression.
     with zipfile.ZipFile(output / f"dsh-houdini-{package['version']}-offline.zip", "x", compression=zipfile.ZIP_STORED) as offline:

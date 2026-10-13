@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
              for p in definition['hostPackages'] for entry in p['entries']}
     names.update(f"node_modules/@deepseek-ai/dsh-{p['name']}/{asset}"
                  for p in definition['hostPackages'] for asset in p.get('assets', []))
-    names.update(f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages'])
+    names.update(f"node_modules/@deepseek-ai/dsh-{item['name']}/lib/client.js" for item in definition['clientPackages'])
     inventory = {}
     for name in names:
         file = runtime_root / name

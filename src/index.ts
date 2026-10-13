@@ -12,6 +12,7 @@ import { registerHoudiniTools } from './tools.js'
 import { installSceneContext } from './context.js'
 import { sharedExecutorConnection } from './executor-host.js'
 import { installExecutorBinding } from './executor-binding.js'
+import {installSceneRecovery} from './scene-recovery.js'
 import {installHoudiniExecutionLog} from './dsh-adapter.js'
 import {installNodeDeliveryNavigation} from './node-delivery.js'
 import {registerImageTools} from './image-generation.js'
@@ -69,6 +70,7 @@ export function apply(ctx: Context, config: Config) {
   const connection = config.executorRegistry ? sharedExecutorConnection(ctx,config.executorRegistry)
     : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
       config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
+  installSceneRecovery(ctx,connection)
   registerHoudiniTools(ctx, connection)
   registerImageTools(ctx,connection)
   registerVideoTools(ctx,connection)

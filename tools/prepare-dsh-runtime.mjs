@@ -14,7 +14,7 @@ const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex'
 if(fs.existsSync(marker)){
  const data=JSON.parse(fs.readFileSync(marker,'utf8'));
  const required=manifest.hostPackages.flatMap(p=>[...p.entries.map(e=>`node_modules/@deepseek-ai/dsh-${p.name}/lib/${e}.js`),...(p.assets??[]).map(a=>`node_modules/@deepseek-ai/dsh-${p.name}/${a}`)])
-  .concat(manifest.clientPackages.map(name=>`node_modules/@deepseek-ai/dsh-client-${name}/lib/client.js`));
+  .concat(manifest.clientPackages.map(pkg=>`node_modules/@deepseek-ai/dsh-${pkg.name}/lib/client.js`));
  if(data.patchSha256!==patchSha256||data.dshVersion!==manifest.dshVersion||!data.files||!required.every(name=>name in data.files)||!Object.entries(data.files).every(([name,value])=>fs.existsSync(path.join(target,name))&&hash(path.join(target,name))===value))throw Error('Prepared runtime integrity mismatch; preserve it and build in a new revision directory');
  console.log('Verified prepared runtime:',path.join(target,'node_modules/@deepseek-ai/dsh/lib/bin.js'));process.exit(0);
 }
@@ -31,7 +31,7 @@ if(apply!==0){
 const source=path.join(work,'source');
 run('git',['clone','--filter=blob:none','--no-checkout','--depth','1','--branch',manifest.tag,manifest.repository,source]);
 run('git',['sparse-checkout','init','--cone'],source);
-run('git',['sparse-checkout','set','packages/sandbox','packages/fs','packages/shell','packages/web','packages/util/http-proxy','packages/client/ui-tool','packages/client/ui-conversation','packages/client/modules','packages/client/web','scripts'],source);
+run('git',['sparse-checkout','set',...new Set([...manifest.hostPackages,...manifest.clientPackages].map(pkg=>'packages/'+pkg.source)),'packages/client/modules','packages/client/web','docs','scripts'],source);
 run('git',['checkout'],source);
 const commit=spawnSync('git',['rev-parse','HEAD'],{cwd:source,encoding:'utf8',windowsHide:true});
 if(commit.status!==0||commit.stdout.trim()!==manifest.commit)throw Error('Upstream tag did not resolve to the pinned source commit');

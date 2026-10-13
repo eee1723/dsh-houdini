@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as tempo
     assert (hosted / "python/dsh_ui_style.py").is_file()
     assert (hosted / "python3.11libs/pythonrc.py").is_file()
     assert (hosted / "python3.13libs/pythonrc.py").is_file()
+    assert (hosted / 'scripts/afterscenesave.py').read_bytes() == (ROOT / 'houdini/scripts/afterscenesave.py').read_bytes()
     # Repeated invocation preserves user-owned prior registration instead of deleting it.
     execute(args)
     assert d.read_json(target) == package

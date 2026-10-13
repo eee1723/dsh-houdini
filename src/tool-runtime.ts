@@ -41,6 +41,7 @@ export class HoudiniToolRuntime {
       const session = exec?.agent?.session
       if (session?.snapshotEvents) await this.binding.ensure(session, bridge.targetExecutorId, exec.signal, false)
       else if (bridge.targetExecutorId) throw new Error('Bound Houdini operations require a durable agent session')
+      if(exec.agent)await this.ctx.get?.('houdiniRecovery')?.ensure(exec.agent,exec.signal)
     }
     return { bridge, owner }
   }

@@ -82,7 +82,7 @@ try:
                 definition = json.loads((ROOT / 'deployment/dsh-runtime-fixes/manifest.json').read_text(encoding='utf8'))
                 paths = [f"node_modules/@deepseek-ai/dsh-{p['name']}/lib/{e}.js" for p in definition['hostPackages'] for e in p['entries']]
                 paths += [f"node_modules/@deepseek-ai/dsh-{p['name']}/{a}" for p in definition['hostPackages'] for a in p.get('assets', [])]
-                paths += [f"node_modules/@deepseek-ai/dsh-client-{name}/lib/client.js" for name in definition['clientPackages']]
+                paths += [f"node_modules/@deepseek-ai/dsh-{item['name']}/lib/client.js" for item in definition['clientPackages']]
                 files = {}
                 for relative in paths:
                     item = npx_root / str(index) / relative

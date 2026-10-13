@@ -44,7 +44,13 @@ def scene_save(expected_path: str | None = None) -> dict:
         if os.path.normcase(expected) != os.path.normcase(path):
             raise ValueError(f"expected_path 与当前 HIP 不一致：expected={expected!r}, current={path!r}")
     dirty_before = bool(hou.hipFile.hasUnsavedChanges())
-    hou.hipFile.save()
+    from dsh_scene_recovery import after_save
+    try:
+        hou.hipFile.save()
+    except BaseException:
+        after_save(path, False)
+        raise
+    after_save(path, True)
     dirty_after = bool(hou.hipFile.hasUnsavedChanges())
     dirty_reliable = bool(hou.isUIAvailable())
     if not os.path.isfile(path):
@@ -112,6 +118,8 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     try:
         # H21 file-event callbacks do not consistently escape Windows backslashes.
         hou.hipFile.save(file_name=target.replace("\\", "/"))
+        from dsh_scene_recovery import after_save
+        after_save(target, True)
         if os.path.normcase(os.path.realpath(hou.hipFile.path())) != os.path.normcase(target):
             raise RuntimeError("Save As 返回后当前 HIP 路径与目标不一致")
         stat = os.stat(target)

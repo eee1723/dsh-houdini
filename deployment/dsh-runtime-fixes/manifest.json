@@ -1,12 +1,70 @@
 {
   "schemaVersion": 1,
-  "revision": "windows-network-3",
+  "revision": "workspace-continuity-1",
   "dshVersion": "0.2.0-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.0-rc.2",
   "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
   "patch": "fixes.patch",
   "hostPackages": [
+    {
+      "source": "core/session",
+      "name": "session",
+      "entries": [
+        "index",
+        "invariant",
+        "types",
+        "fork",
+        "surface"
+      ]
+    },
+    {
+      "source": "core/agent-loop",
+      "name": "agent-loop",
+      "entries": [
+        "index",
+        "invariant"
+      ]
+    },
+    {
+      "source": "session/session-persistence",
+      "name": "session-persistence",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "session/session-persistence-jsonl",
+      "name": "session-persistence-jsonl",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "workspace/workspace",
+      "name": "workspace",
+      "entries": [
+        "index",
+        "invariant",
+        "types"
+      ]
+    },
+    {
+      "source": "context/file-reference-local",
+      "name": "file-reference-local",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "api/session-controller",
+      "name": "api-session-controller",
+      "entries": [
+        "index",
+        "types",
+        "remote-events"
+      ]
+    },
     {
       "source": "util/http-proxy",
       "name": "http-proxy",
@@ -99,8 +157,18 @@
     }
   ],
   "clientPackages": [
-    "ui-conversation",
-    "ui-tool"
+    {
+      "source": "client/ui-conversation",
+      "name": "client-ui-conversation"
+    },
+    {
+      "source": "client/ui-tool",
+      "name": "client-ui-tool"
+    },
+    {
+      "source": "api/session-controller",
+      "name": "api-session-controller"
+    }
   ],
-  "patchSha256": "e503e389ff70cdecd3669f5a503ad849e19f65ae7a27b3e61be9a4178a819f29"
+  "patchSha256": "ebc0b828f24dca2e42f0724f5d31318a09f92a8a58b6279be636d0090580b9a7"
 }

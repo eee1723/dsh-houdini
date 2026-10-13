@@ -57,6 +57,7 @@
             name: dsh-houdini/agent
             isolate:
               houdiniNodeDelivery: true
+              houdiniRecovery: true
             config:
               bridgeUrl: !!js process.env.DSH_HOUDINI_BRIDGE_URL || 'http://127.0.0.1:8765'
               requestTimeoutMs: 120000

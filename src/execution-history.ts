@@ -1,5 +1,6 @@
 /** Correlate native and nested calls, results and same-runtime receipts. */
 import { executionCall,executionResult } from './dsh-adapter.js'
+import {foldExecutorState} from './executor-identity-projection.js'
 export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;surfaceOp?:string|{op:string}}
 export type ExecutionRow = {eventSeq:number;callId:string;tool:string;value:any;execution:any}
 
@@ -12,6 +13,10 @@ const COLLECTED_JOBS = new Set(['done','failed','cancelled'])
 const TERMINAL_JOBS = new Set([...COLLECTED_JOBS,'finished_result_unavailable'])
 
 export function executionHistory(events:readonly SessionEvent[]) {
+  let recoverySeq=0
+  try {recoverySeq=foldExecutorState(events).recoverySeq}
+  catch { /* Invalid bindings retire no evidence; live admission reports the conflict. */ }
+  if(recoverySeq)events=events.filter(event=>(event.seq??0)>recoverySeq)
   const calls=new Map<string,any>(), results=new Map<string,any>()
   const rows:ExecutionRow[]=[], receipts=new Map<string,string>(), jobs=new Map<string,string>()
   const unavailableResults=new Map<string,{request_ref:string;owner_call:string|null;status:'finished_result_unavailable';retention_status:string;outcome:'unverified';job_id?:string}>()

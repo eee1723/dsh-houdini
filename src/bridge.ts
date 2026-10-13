@@ -134,6 +134,14 @@ export class HoudiniBridge {
   async inspectExecutor(signal?: AbortSignal): Promise<BridgeHealth> {
     return this.checkContract(signal)
   }
+
+  /** Fixed Host/UI recovery protocol. No model-authored Python or file paths. */
+  async recover(action:'assess'|'prepare'|'activate'|'locate'|'open',input:Record<string,unknown>,signal?:AbortSignal):Promise<any> {
+    await this.checkContract(signal)
+    const result=await this.post<any>('/recovery/'+action,{...input,expected_contract:this.expectedContract()},signal)
+    if(result.ok!==true)throw new Error(result.error||'工程接续未完成')
+    return result
+  }
   async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal):Promise<void> {
     const result=await this.post<{ok:boolean;error?:string}>('/executor/claim',{
       task_id:taskId,registration_id:registrationId,expected_hip:expectedHip},signal)
