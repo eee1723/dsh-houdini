@@ -45,9 +45,11 @@ def start_gui_probe():
     if Path(hou.hipFile.path()).name.lower() != "untitled.hip":
         raise RuntimeError("test GUI unexpectedly opened a non-fixture HIP")
     if scene.exists():
-        hou.hipFile.load(str(scene), suppress_save_prompt=True, ignore_load_warnings=True)
+        hou.hipFile.load(scene.as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
     else:
-        hou.hipFile.save(str(scene))
+        # H21 interpolates afterscenesave kwargs into Python; backslashes can
+        # turn a Windows path into an invalid unicode escape and leave a callback dialog.
+        hou.hipFile.save(scene.as_posix())
     messages = queue.Queue()
     state = {"phase": "opening", "started": time.monotonic(), "probe": False, "js": None, "first": None,
              "lastPhase": None, "finished": False, "inflight": False, "lastPoll": None,
