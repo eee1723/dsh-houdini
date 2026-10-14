@@ -53,6 +53,30 @@ try:
     assert pub['active_display_output']==root.node('CTRL').path() and pub['active_render_output']==root.node('CTRL').path()
     assert root.displayNode()==root.node('CTRL')
     assert any(e.get('handoff_output')==pub for e in unpublished['evidence'])
+    # A logical module's clean outlet does not affect a consumer still wired
+    # to its old intermediate output. Repeated verification must retain the
+    # actual Merge warning; correcting the consumer must change the payload.
+    run(f"g=tab_create({root.path()!r},'subnet','consumer_chain')\n"
+        "a=tab_create(g,'box','tagged_source')\n"
+        "tag=tab_create(g,'attribwrangle','tag',inputs=[a],parms={'snippet':'i@fixture_marker=@ptnum;'})\n"
+        "plain=tab_create(g,'box','plain_source',parms={'tx':2})\n"
+        "out=tab_create(g,'null','OUT_MODULE',inputs=[tag])\n"
+        "m=tab_create(g,'merge','assembly',inputs=[tag,plain])\n"
+        "tab_create(g,'null','OUT',inputs=[m])")
+    chain=root.node('consumer_chain')
+    def check_chain():
+        return run(f"__result__=verify_network({chain.path()!r},output='OUT')")['result']
+    assert not check_chain()['warning_free']
+    run(f"c=tab_create({chain.path()!r},'attribdelete','clean',inputs=['tag'],parms={{'ptdel':'fixture_marker'}})\n"
+        f"connect(c,{chain.node('OUT_MODULE').path()!r})")
+    for _ in range(2):
+        result=check_chain()
+        assert chain.node('assembly').path() in result['warning_nodes'] and not result['healthy'],result
+        assert chain.node('OUT').geometry().findPointAttrib('fixture_marker') is not None
+    run(f"connect({chain.node('OUT_MODULE').path()!r},{chain.node('assembly').path()!r},0)")
+    assert check_chain()['healthy']
+    assert chain.node('OUT').geometry().findPointAttrib('fixture_marker') is None
+    run(f"delete_node({chain.path()!r})")
     run(f"sop_set_output({root.node('OUT_ASSET').path()!r})")
     original_unit=r['scene_unit_length_meters']
     try:

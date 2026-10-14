@@ -492,7 +492,27 @@ try:
         row['status']=='fail' for row in after_boss['results']),after_boss
     assert after_boss['geometry_sha256']!=before_boss['geometry_sha256']
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**bore_check,'radius':0}]),'positive')
-    rejects(lambda:h.geo_check_interfaces(hollow_assembly,[bore_check],max_pairs=1),'budget')
+    limited=h.geo_check_interfaces(hollow_assembly,[bore_check],max_pairs=1)
+    assert limited['status']=='unverified' and limited['results'][0]['reason']=='pair_budget_exceeded',limited
+    assert limited['pair_tests']==0 and limited['results'][0]['budget']['required_pairs']>1
+    assert b.run_code("__result__=verb_help('geo_check_interfaces', detail='full')",read_only=True)['result']['runtime_limits']==limited['runtime_limits']
+    # A capacity observation is not a failed write: preserve earlier changes
+    # in the same request while exposing the actual target size and hard limit.
+    capacity=b.run_code('''
+g=tab_create('/obj','geo','capacity_observation')
+c=tab_create(g,'null','CTRL'); create_spare_parms(c,spec=[{'type':'float','name':'marker','label':'Marker','default':0}])
+t=tab_create(g,'tube','dense',parms={'type':'poly','cap':True,'cols':4100})
+out=tab_create(g,'attribwrangle','tag',inputs=[t],parms={'class':'primitive','snippet':'setprimgroup(0,"solid",@primnum,1);'})
+set_parm(c,'marker',2)
+__result__=geo_check_interfaces(out,[{'id':'hole','method':'bore_clearance','target_group':'solid','axis':1,'start':[0,-1,0],'end':[0,1,0],'radius':.1}],max_pairs=100000)
+''',owner_session='capacity-fixture')
+    assert capacity['ok'] and capacity['transaction']['status']=='committed',capacity
+    assert capacity['result']['status']=='unverified'
+    row=capacity['result']['results'][0]
+    assert row['target_count']>row['budget']['max_target_primitives']
+    assert row['reason']=='target_primitive_limit_exceeded' and 'cannot remove' in row['next_action']
+    assert hou.node('/obj/capacity_observation/CTRL').evalParm('marker')==2
+    b.run_code("delete_node('/obj/capacity_observation')",owner_session='capacity-fixture')
     assert h.geo_check_interfaces(hollow_assembly,[{**bore_check,'target_group':'missing'}])['status']=='fail'
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[no_overlap],max_pairs=1),'budget')
     rejects(lambda:h.geo_check_interfaces(hollow_assembly,[{**no_overlap,'max_overlap_volume':-1}]),'nonnegative')

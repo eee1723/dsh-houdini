@@ -110,6 +110,9 @@ def _verb_help(name: str | list[str] | tuple[str, ...], detail: str = 'brief') -
             'execution_scope': _VERB_OPERATION_CONTRACTS['execution_scope'],
             **deepcopy(contract),
         }
+    if detail == 'full' and key == 'geo_check_interfaces':
+        from dsh_quality_contracts import interface_limits
+        result['runtime_limits'] = interface_limits()
     return result
 
 

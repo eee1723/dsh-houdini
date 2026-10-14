@@ -63,6 +63,10 @@ def start_gui_probe():
         return 0
     hou.ui.displayMessage = record_dialog
     window = bootstrap.show_manager()
+    from hutil.Qt import QtWidgets
+    manager_labels = lambda: [item.text() for item in window.findChildren(QtWidgets.QLabel) if item.isVisible()]
+    assert "版本已准备好，完整重开 Houdini 后生效。" not in manager_labels(), "fresh startup already pinned this installation"
+    assert "版本已就绪，打开工作区即可使用。" in manager_labels()
     window.move(12000, 12000)
     bootstrap.open_workspace()
     timer = QtCore.QTimer(hou.qt.mainWindow())
@@ -174,10 +178,13 @@ navigationError:document.querySelector('#dsh-houdini-navigation[role="alert"]')?
                         return
                     assert value["sessionId"] == state["first"]["sessionId"], "reopen created a duplicate session"
                     assert value["pid"] == state["first"]["pid"], "reopen restarted the serving runtime"
+                    assert "当前版本已加载。尚未检查更新。" in manager_labels(), "manager retained the pre-activation instruction"
+                    assert "当前运行" in manager_labels()
                     assert webview._window.grab().save(str(output.with_suffix(".webview.png")))
                     assert window.grab().save(str(output.with_suffix(".manager.png")))
                     finish(True, {**value, "webRpc": True, "sameSessionOnReopen": True, "samePidOnReopen": True,
-                                  "selectedWorkspace": True, "selectedHoudiniPreset": True})
+                                  "selectedWorkspace": True, "selectedHoudiniPreset": True,
+                                  "managerTracksLoadedVersion": True})
                     return
             if bootstrap._CONTEXT is None:
                 return

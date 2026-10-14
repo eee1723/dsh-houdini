@@ -12,7 +12,11 @@ import dsh_ownership
 import dsh_parameter_templates
 
 
-def _menu_setting(entries, value):
+def _menu_setting(entries, value, *, bitmask=False):
+    if bitmask and type(value) is int:
+        if 0 <= value < (1 << len(entries)):
+            return value
+        raise ValueError('invalid button-strip bitmask; use 0 or combine the declared set_value bits')
     if isinstance(value, str):
         for item in entries:
             if item['token'] == value: return item['set_value']
@@ -25,7 +29,11 @@ def _menu_setting(entries, value):
 
 
 def list_parms(node) -> list:
-    """参数**目录**：名字/标签/类型/帮助，不给值（导航用，回答「想改的参数叫什么」）。"""
+    """参数目录：名字/类型/菜单赋值与自身conditionals，不给当前值。
+
+    toggle_strip的set_value是位值，0清空、组合整数精确替换；不是点击切换。
+    conditionals保留原生规则，不推断当前启用状态或父folder条件。
+    """
     n = dsh_node_access._resolve(node)
     out = []
     for pt in n.parmTuples():
@@ -58,7 +66,7 @@ def list_parms(node) -> list:
                     pass
             try:
                 card = dsh_parameter_templates._parm_template_card(tpl)
-                entry.update({k: v for k, v in card.items() if k in ("menu", "menu_dynamic", "default")})
+                entry.update({k: v for k, v in card.items() if k in ("menu", "menu_dynamic", "menu_kind", "menu_setting", "conditionals", "default")})
                 if len(pt) == 1:
                     tokens, labels = pt[0].menuItems(), pt[0].menuLabels()
                     if tokens:
@@ -597,7 +605,8 @@ def _set_parm_impl(node, name: str, value,
             if tpl.type() == hou.parmTemplateType.Menu: raise
             tokens = ()  # plain integer controls are not menus
         if tokens or tpl.type() == hou.parmTemplateType.Menu:
-            setting = _menu_setting(dsh_parameter_templates._menu_entries(tpl, tokens, p.menuLabels()), value)
+            setting = _menu_setting(dsh_parameter_templates._menu_entries(tpl, tokens, p.menuLabels()), value,
+                                    bitmask=dsh_parameter_templates._menu_kind(tpl) == 'toggle_strip')
             cleared = _clear_animation(p)
             p.set(setting)
             return {"parm": p.name(), "value": dsh_node_access._val(p.eval()), "menu_token": p.evalAsString(),

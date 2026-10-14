@@ -250,7 +250,7 @@ ASR按本次片段选择和请求/重试预算推进，失败/未知片默认延
 
 教程复现按阶段选择领域 workflow；[COP skill](../skills/houdini-cop-workflow/SKILL.md)独立维护
 Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](../src/skill.ts) 注册。
-正文与参考按需读取，不扩充默认 guidance；SOP 源几何与 Solaris 材质消费仍由各自 workflow 负责。
+正文与参考按需读取，不扩充默认 guidance；[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)统一维护参考分析、外观程度、来源选择与SOP的常量/文件/COP预览，SOP源几何与Solaris正式渲染仍各自负责。preset提供简短路由，src/skill.ts注册完整技能，具体参考由DSH原生skill/read按需送入模型；不引入材质账本或第二套供应商配置。COP的[图案设计](../skills/houdini-cop-workflow/references/pattern-design.md)按结构关系组织图层，不绑定产品题型。
 图层工具实现独立在 `dsh_cop_contracts.py`，skill 只组织调用；版本与行为门见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)。
 

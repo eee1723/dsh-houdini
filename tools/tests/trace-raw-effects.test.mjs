@@ -27,6 +27,8 @@ const rows = [
     usage:{coveredMutations:[{name:'setInput',count:1}]},effect:'mutation_candidate'},
   {tool:'houdini_exec',code:'set_parms(target, values)',ok:true,
     usage:{gateOutcome:'read_only'},verbs:[{verb:'set_parms',ok:true}],effect:'unknown'},
+  {tool:'houdini_exec',code:'render_view(target)',ok:false,
+    receipt:{status:'unknown_transport',request_ref:'pending-render',runtime_id:'fixture'},effect:'unknown'},
 ];
 const events=[];
 for(const [index,row] of rows.entries()) {
@@ -35,7 +37,7 @@ for(const [index,row] of rows.entries()) {
   events.push({seq:seq+1,time:seq+1,type:'tool/result',data:{
     // Intentionally uninformative model text: canonical evidence must win.
     message:{source:{callId},content:[{type:'tool_result',content:[{type:'text',text:'See retained result.'}]}]},
-    meta:{canonical:{ok:row.ok,verbs:row.verbs||[],rawUsage:row.usage,
+    meta:{canonical:{ok:row.ok,verbs:row.verbs||[],rawUsage:row.usage,requestReceipt:row.receipt,
       transaction:{status:'no_scene_change'},execution:{read_only:row.tool==='houdini_query'}}},
   }});
 }
@@ -44,7 +46,7 @@ assert.deepEqual(steps.map(classifyRawEffect),rows.map(r=>r.effect));
 assert.deepEqual(steps[0].mutatingRawMethods,[],'copy2 is deliberately not matched by the old name heuristic');
 const stats=collectVerbAdoption(steps);
 assert.equal(stats.rawReadOnlyCalls,1);
-assert.equal(stats.rawUnknownEffectCalls,2);
+assert.equal(stats.rawUnknownEffectCalls,3);
 assert.equal(stats.rawSuspectedEffectCalls,1);
 assert.equal(stats.rawFailedCalls,1);
 assert.equal(stats.blockedVerblessRawMutationCalls,2);

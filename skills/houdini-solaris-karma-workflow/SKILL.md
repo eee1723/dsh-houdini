@@ -36,6 +36,8 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 
 ## 材质选择
 
+SOP阶段的表面表示、参考分析、UV和常量/图片/COP统一入口由[表面外观skill](../houdini-surface-workflow/SKILL.md)维护。进入本skill时消费已有表面意图和有效来源，按正式渲染需求扩展；不因使用Solaris自动重建一套纹理。
+
 - Karma XPU 或新通用 Karma look-dev：Karma Material Builder + MaterialX/Karma 节点。
 - 需要纯 MaterialX、跨 Hydra renderer 可移植：USD MaterialX Builder。
 - 只需要通用 viewport/Storm preview：USD Preview Material Builder。

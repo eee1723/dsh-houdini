@@ -128,6 +128,13 @@ assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),rec
 assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done','two')]).length,1);
 assert.equal(unresolvedExecutionRequests([receiptStep(1,'unknown_transport'),receiptStep(2,'done','one','other')]).length,1);
 assert.equal(unresolvedExecutionRequests([receiptStep(1,'done'),receiptStep(2,'unknown_transport')]).length,0);
+const runningReceipts=[receiptStep(1,'unknown_transport'),receiptStep(2,'queued'),receiptStep(3,'running')];
+assert.equal(unresolvedExecutionRequests(runningReceipts)[0].status,'running');
+assert.equal(unresolvedExecutionRequests(runningReceipts)[0].index,3,'report locates the latest observation');
+for(const terminal of ['result_expired','result_unavailable','done','not_executed']){
+  assert.deepEqual(unresolvedExecutionRequests([...runningReceipts,receiptStep(4,terminal)]),[],
+    'expired results and confirmed terminal receipts are not still-running or transport-unknown requests');
+}
 assert.equal(unresolvedExecutionRequests([{index:1,resultText:'request-receipt:\n'+JSON.stringify({runtime_id:'one',request_ref:'q',status:'unknown_transport'})}]).length,1);
 
 const captureValue={ok:true,result:{node:'/obj/demo/CTRL',path:'C:/capture.png',scene_writes:0,semantic_status:'unverified'},

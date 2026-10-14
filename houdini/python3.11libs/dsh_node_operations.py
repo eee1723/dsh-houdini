@@ -180,17 +180,18 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     # Native isInputCompatible reports false while they are still 'undef'.
     dynamic_type = (isinstance(d, hou.CopNode) and
                     (index >= len(d.inputDataTypes()) or d.inputDataTypes()[index] == 'undef'))
-    # H22 USD Material COP reports incompatible even for native RGB->RGB
-    # and Mono->Mono wires that setInput accepts. Keep the exception narrow:
-    # concrete, identical image signatures only; no implicit channel coercion.
-    material_signature = False
-    if (isinstance(s, hou.CopNode) and isinstance(d, hou.CopNode)
-            and d.type().nameComponents()[2] == 'usdmaterial'):
+    # CopNode's documented contract accepts identical data types. In H21/H22
+    # isInputCompatible can disagree with setInput even for RGB->RGB Null
+    # replacement (also observed on USD Material). Use the actual image port
+    # types, not an expanding node-name exception list. Other types/conversions
+    # still use the native check; setInput and exact wire readback remain final.
+    image_signature = False
+    if isinstance(s, hou.CopNode) and isinstance(d, hou.CopNode):
         source_types, target_types = s.outputDataTypes(), d.inputDataTypes()
-        material_signature = (output < len(source_types) and index < len(target_types)
+        image_signature = (output < len(source_types) and index < len(target_types)
                               and source_types[output] == target_types[index]
                               and source_types[output] in ('Mono', 'UV', 'RGB', 'RGBA'))
-    if compatible is not None and not dynamic_type and not material_signature and not compatible(index, s, output):
+    if compatible is not None and not dynamic_type and not image_signature and not compatible(index, s, output):
         raise ValueError(f'incompatible ports: {s.path()} output {output} -> {d.path()} input {index}; zero connection writes')
     before = _input_state(d)
     try:
@@ -204,7 +205,7 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
             'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
             'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,
-            'type_check': 'cop_material_exact_signature' if material_signature else 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
+            'type_check': 'cop_exact_image_signature' if image_signature else 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
             'verified': True, 'semantic_status': 'unverified', "position_adjusted": placement['adjusted'],
             'placement_status':placement['status'],'placement_blockers':placement['blockers'],
             'inputs_before':before, 'inputs_after':_input_state(d),

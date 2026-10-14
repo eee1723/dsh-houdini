@@ -28,11 +28,14 @@ parser.add_argument('--runtime-cache', type=Path, required=True)
 parser.add_argument('--browser-module', type=Path)
 parser.add_argument('--context-loop', action='store_true', help='Run a scripted provider through the real DSH loop and local Bridge fixture')
 parser.add_argument('--repetition-method', action='store_true', help='Also verify native/nested reference delivery to the scripted provider')
+parser.add_argument('--surface-method', action='store_true', help='Verify surface/COP skills and native/nested reference delivery at the actual provider')
 parser.add_argument('--outcome-fixture', type=Path, help='Exact receipts exported by isolated caught-failure HOM regression')
 parser.add_argument('--catalog-fixture', type=Path, help='Exact receipt exported by isolated parameter-catalog HOM regression')
 args = parser.parse_args()
 if args.repetition_method and not args.context_loop:
     parser.error('--repetition-method requires --context-loop')
+if args.surface_method and not args.context_loop:
+    parser.error('--surface-method requires --context-loop')
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
 assert node
@@ -55,6 +58,8 @@ if args.context_loop:
     env['DSH_CONTEXT_FIXTURE_OUT'] = str(context_output)
     if args.repetition_method:
         env['DSH_REPETITION_METHOD_FIXTURE'] = '1'
+    if args.surface_method:
+        env['DSH_SURFACE_METHOD_FIXTURE'] = '1'
     if args.outcome_fixture:
         env['DSH_OUTCOME_FIXTURE'] = str(args.outcome_fixture.resolve(strict=True))
     if args.catalog_fixture:

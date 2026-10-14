@@ -306,7 +306,7 @@ function analyzeTrace(file) {
   const completionRisks = [];
   const unresolvedRequests = unresolvedExecutionRequests(normalized.steps);
   if (unresolvedRequests.length) completionRisks.push({code: 'unresolved_execution_receipt',
-    detail: `${unresolvedRequests.length} request outcome(s) remain unknown; missing ledger does not mean not executed.`,
+    detail: `${unresolvedRequests.length} request(s) have nonterminal or uncertain observations; running/queued differ from unknown transport. These are retained trace states, not live checks or completed outcomes.`,
     steps: unresolvedRequests.map(item => item.index)});
   if (executionObservations.activeJobs.length) completionRisks.push({code: 'active_houdini_jobs',
     detail: 'Retained job observations are nonterminal or their results remain uncollected. A recovered submission receipt does not establish job completion; these are trace observations, not current live status.',

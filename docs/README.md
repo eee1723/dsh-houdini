@@ -41,6 +41,8 @@
 由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)，注册由 `src/skill.ts` 维护。
 
+[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)维护跨任务的参考分析、表面细化程度、纹理来源、UV与SOP统一预览；[生成贴图](../skills/houdini-surface-workflow/references/generated-textures.md)维护图像角色、提示词、文件消费与混合加工；[COP图案方法](../skills/houdini-cop-workflow/references/pattern-design.md)维护可编辑图层设计。注册、模型上下文传输及隔离SOP显示验证见[开发维护](development.md)，正式渲染沿Solaris/Karma。
+
 HDA封装、PythonModule/回调、脚本打包、Shelf/Tab、快捷键及Panel/Viewer State由
 [Houdini 工具开发 skill](../skills/houdini-tool-development/SKILL.md)维护；共享控制定义、参数UI组件与绑定由
 [参数界面skill](../skills/houdini-parameter-ui/SKILL.md)维护，适用于普通控制节点和HDA。注册入口为

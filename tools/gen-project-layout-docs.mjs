@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 const contract=JSON.parse(fs.readFileSync(new URL('../houdini/project-layout.json',import.meta.url),'utf8'))
 if(contract.schemaVersion!==1)throw Error('Unsupported project layout schema')
-const labels={reference_downloaded:'下载的参考资料',reference_generated:'生成的辅助参考',texture:'材质与工程依赖',cache:'几何、模拟与通道缓存',analysis:'分析资料与诊断报告',render:'供用户保留的成图与渲染输出',visual_check:'过程检查与诊断对照图'}
+const labels={reference_downloaded:'下载的参考资料',reference_generated:'生成的辅助参考',texture:'材质与工程依赖',cache:'几何、模拟与通道缓存',analysis:'分析资料与诊断报告',documentation:'供用户阅读的工程与工具说明',render:'供用户保留的成图与渲染输出',visual_check:'过程检查与诊断对照图'}
 const rows=Object.entries(contract.directories)
 if(rows.length!==Object.keys(labels).length || rows.some(([role])=>!Object.hasOwn(labels,role)))throw Error('Project layout roles do not match the documented interface')
 const paths=new Set()

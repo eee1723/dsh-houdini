@@ -26,7 +26,18 @@ import hjson
 _MAX_GEOMETRY_BYTES = 32 * 1024 * 1024
 _MAX_POINTS = 250000
 _MAX_PRIMS = 100000
+_MAX_INTERFACE_PAIRS = 100000
+_BORE_MAX_PRIMS = 4000
+_BORE_SIDES = 24
 _SURFACE_TYPES = {'Polygon', 'Mesh', 'Sphere', 'Tube'}
+
+
+def interface_limits():
+    """Execution-owned limits, shared by full help and measurement feedback."""
+    return {'max_pairs': {'minimum': 1, 'maximum': _MAX_INTERFACE_PAIRS},
+            'bore_clearance': {'max_target_primitives': _BORE_MAX_PRIMS,
+                               'envelope_sides': _BORE_SIDES,
+                               'cost': 'target primitive count * envelope_sides'}}
 
 
 class UnsupportedEvidence(ValueError):
@@ -605,7 +616,7 @@ def _axis_passage(g, item):
 def _bore_clearance(g, item, budget):
     """Intersect a circumscribed cylinder envelope with one final closed part group."""
     axis=item['axis'];start=[float(v) for v in item['start']];end=[float(v) for v in item['end']]
-    radius=float(item['radius']);sides=24
+    radius=float(item['radius']);sides=_BORE_SIDES
     base={'id':item['id'],'method':'bore_clearance','target_group':item['target_group'],
           'axis':axis,'start':start,'end':end,'radius':radius,'sides':sides,
           'coordinate_space':'explicit output SOP local',
@@ -615,8 +626,18 @@ def _bore_clearance(g, item, budget):
     base['target_count']=len(prims)
     if not prims:
         return {**base,'status':'fail','reason':'missing_target_group'},0
-    if len(prims)>4000 or len(prims)*sides>budget:
-        raise ValueError('bore_clearance Boolean budget exceeded; narrow the final part group or raise max_pairs')
+    required=len(prims)*sides
+    if len(prims)>_BORE_MAX_PRIMS or required>budget:
+        capacity=len(prims)>_BORE_MAX_PRIMS
+        return {**base,'status':'unverified',
+                'reason':'target_primitive_limit_exceeded' if capacity else 'pair_budget_exceeded',
+                'budget':{'required_pairs':required,'remaining_pairs':max(0,budget),
+                          'max_target_primitives':_BORE_MAX_PRIMS},
+                'next_action':('Increasing max_pairs cannot remove the target primitive limit. '
+                               'Choose a smaller complete final solid or another measurement with an explicit scope; '
+                               'do not discard faces of the required solid to claim the same clearance.' if capacity else
+                               'Use the reported required_pairs and runtime_limits to choose a sufficient budget, '
+                               'or check a smaller complete final solid. No partial clearance was tested.')},0
     if any(p.type()!=hou.primType.Polygon or not _supported_surface(p) for p in prims):
         return {**base,'status':'unverified','reason':'bore_clearance_requires_closed_polygon_surfaces'},0
     lower=[min(float(p.boundingBox().minvec()[i]) for p in prims) for i in range(3)]
@@ -876,8 +897,8 @@ def _axis_gap(g, item):
 def geo_check_interfaces(output, interfaces, max_pairs=50000):
     """Measure declared surface interfaces in ONE actual output, not proxy nodes."""
     validate_interfaces(interfaces)
-    if type(max_pairs) is not int or not 1 <= max_pairs <= 100000:
-        raise ValueError('max_pairs must be in 1..100000')
+    if type(max_pairs) is not int or not 1 <= max_pairs <= _MAX_INTERFACE_PAIRS:
+        raise ValueError(f'max_pairs must be in 1..{_MAX_INTERFACE_PAIRS}')
     node, g = _geometry(output)
     from dsh_geometry_evidence import expanded_view
     try:
@@ -888,9 +909,14 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
                 'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest()}
     result = _check_interfaces(observed, interfaces, max_pairs, node)
     result['representation']=representation
+    result['runtime_limits']=interface_limits()
     return {**result,'output':node.path(),'frame':float(hou.frame()),'checked_at':time.time(),
             'geometry_sha256':_data_signature(g),'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest(),
-            'semantic_status':'unverified','next_action':'Repair failing declared interfaces then rerun; this does not certify unspecified relationships.'}
+            'semantic_status':'unverified','next_action':(
+                'Inspect the unverified measurements and their reasons; they do not establish a geometric failure. '
+                'Use a supported measurement for the required property.' if result['status']=='unverified' else
+                'Repair failing declared interfaces then rerun; this does not certify unspecified relationships.' if result['status']=='fail' else
+                'Only the declared interfaces passed; unspecified relationships remain unverified.')}
 
 
 def validate_topology(topology):

@@ -1,6 +1,6 @@
 # 工程文件与图像目录
 
-适用于参考资料、分析产物、生成图、COP贴图、工程缓存、渲染和视觉检查的默认输出。目录角色由[project-layout.json](../houdini/project-layout.json)唯一维护，Houdini与Host读取同源；下面的目录表由[生成器](../tools/gen-project-layout-docs.mjs)更新。它不是用户资产数据库，不记录完成状态或替代DSH会话。
+适用于参考资料、分析产物、使用说明、生成图、COP贴图、工程缓存、渲染和视觉检查的默认输出。目录角色由[project-layout.json](../houdini/project-layout.json)唯一维护，Houdini与Host读取同源；下面的目录表由[生成器](../tools/gen-project-layout-docs.mjs)更新。它不是用户资产数据库，不记录完成状态或替代DSH会话。
 
 ## 默认目录与用途
 
@@ -12,11 +12,14 @@
 | 材质与工程依赖（`texture`） | `dsh-texture/` | `project-dependency` |
 | 几何、模拟与通道缓存（`cache`） | `dsh-cache/` | `project-dependency` |
 | 分析资料与诊断报告（`analysis`） | `dsh-analysis/` | `analysis-evidence` |
+| 供用户阅读的工程与工具说明（`documentation`） | `dsh-docs/` | `user-documentation` |
 | 供用户保留的成图与渲染输出（`render`） | `dsh-render/` | `render-output` |
 | 过程检查与诊断对照图（`visual_check`） | `dsh-visual-checks/` | `visual-check` |
 <!-- project-layout:generated:end -->
 
 按用途选择目录：生成图片直接用于材质时属于texture；生成的多视角草图属于reference_generated。渲染是否正式交付与目录位置分开，`present`负责明确交付。目录按实际写入需要创建，不预创建整套空目录。
+
+`documentation`用于用户接手工程或工具所需的说明及其专用资源，与分析证据分开。工程命名、版本、直接文件交付和说明格式由[文件交付方法](../skills/houdini-network-handoff/references/file-delivery.md)维护；目录投影本身不生成文档、不转换格式或整理旧文件。
 
 `dsh-render`用于准备交给用户或作为渲染输出保留的成图，不能从目录名推断“已验收/已最终交付”。`dsh-visual-checks`用于建模过程中的观察、故障诊断和A/B对照，包含截图与测试渲染；不是只有截图才放这里。`render_view`等捕获默认选择检查用途，只有明确要保留/交付的图片才选择`delivery`。正式ROP尊重已配置的用户路径；用它做检查时明确把本次`picture`指向visual_check目录，不沿用成图目录存诊断图。相同图片也可能被重复渲染或显式写入不同目录，系统不按文件内容猜测用途或移动历史文件。
 

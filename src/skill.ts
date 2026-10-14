@@ -20,6 +20,7 @@ const SKILLS = [
   { name: 'houdini-trace-analysis', dir: 'houdini-trace-analysis' },
   { name: 'houdini-task-decomposition', dir: 'houdini-task-decomposition' },
   { name: 'houdini-sop-workflow', dir: 'houdini-sop-workflow' },
+  { name: 'houdini-surface-workflow', dir: 'houdini-surface-workflow' },
   { name: 'houdini-cop-workflow', dir: 'houdini-cop-workflow' },
   { name: 'houdini-tool-development', dir: 'houdini-tool-development' },
   { name: 'houdini-parameter-ui', dir: 'houdini-parameter-ui' },

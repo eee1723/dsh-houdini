@@ -33,6 +33,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 | 重复细节数量增长、VEX代码生成和下游编译失败 | [重复规律与代码生成](references/modeling-methods.md#重复规律与代码生成) |
 | 大量复制前验源；闭合却反向；同源错误扩散 | [源构件与成形检查](references/modeling-methods.md#源构件与成形检查)；Revolve先读`node_info(parent,'revolve')`的方向说明 |
 | 倒角、细节、表面表示 | [局部操作](references/modeling-methods.md#2-选择先于倒角与局部操作)、[分层细化](references/modeling-methods.md#3-一个模块分层细化)、[表面表示](references/modeling-methods.md#表面表示与外观制作) |
+| 新模型/部件外观、参考图细节、UV与统一SOP预览 | 按名加载[表面外观skill](../houdini-surface-workflow/SKILL.md)，决定细化程度；纯色也有明确表面入口 |
 | 转轴、滑轨、重复、管线、附着 | [构造模板](references/procedural-recipes.md) |
 | 模块接口、共享控制与关系检查 | [模块合同](references/module-quality-contracts.md) |
 | 所声称性质该测什么；图像与统计冲突 | [质量与检查选择](references/procedural-quality-contract.md) |

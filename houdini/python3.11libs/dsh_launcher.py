@@ -842,11 +842,11 @@ def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
         if dialog is not None:
             from dsh_ui_style import show_tool_window
             show_tool_window(dialog)
-        _report('startup is stopping' if _ACTIVE_STARTUP.get('canceled') else
-                'startup already in progress; current HIP workspace will open when ready')
+        _report('正在取消启动，请稍候。' if _ACTIVE_STARTUP.get('canceled') else
+                '工作区正在启动，请稍候。')
         return
     if _SERVICE_PREFLIGHT_ACTIVE:
-        _report("a service preflight is already running")
+        _report("正在检查运行环境，请稍候。")
         return
     _SERVICE_PREFLIGHT_ACTIVE = True
     preflight = (lambda: _service_preflight(force_frontend=True)) if force_frontend else _service_preflight
@@ -1064,7 +1064,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     global _ACTIVE_STARTUP
     if _ACTIVE_STARTUP is not None:
         _ACTIVE_STARTUP['frontend_cwd'] = frontend_cwd
-        _report('startup already in progress')
+        _report('工作区正在启动，请稍候。')
         return
     state = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
     _ACTIVE_STARTUP = state

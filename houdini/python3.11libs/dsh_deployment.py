@@ -257,7 +257,7 @@ def verify_inventory(root: Path, manifest: dict, progress=lambda s: None):
 
 class FileLease:
     """OS lifetime lock: crash/reboot releases it without deleting a stale lock."""
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, busy_message="资源正在被其他操作使用，请稍后重试。"):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.handle = path.open("a+b")
         try:
@@ -274,7 +274,7 @@ class FileLease:
                 fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             self.handle.close()
-            raise RuntimeError("Another install/runtime operation is active. Close the other managed Houdini workspace and retry.") from exc
+            raise RuntimeError(busy_message) from exc
 
     def close(self):
         self.handle.close()
@@ -319,7 +319,7 @@ class Store:
     def stage(self, directory: Path, progress=lambda s: None):
         """Never overwrite the serving directory; interruption leaves only staging."""
         manifest = load_signed(directory, self.trust, allow_candidate=self.allow_candidate)
-        with FileLease(self.root / "install.lock"):
+        with FileLease(self.root / "install.lock", busy_message="另一项安装操作正在进行，请稍后重试。"):
             state = self.state()
             progress("Verifying the signed package")
             staging = self.root / "staging"
@@ -338,7 +338,7 @@ class Store:
             return install_id
 
     def rollback(self, progress=lambda s: None):
-        with FileLease(self.root / "install.lock"):
+        with FileLease(self.root / "install.lock", busy_message="另一项安装操作正在进行，请稍后重试。"):
             state = self.state()
             if not state["previous"]:
                 raise ValueError("No previous installation is available")
@@ -351,7 +351,7 @@ class Store:
         return state["pending"]
 
     def cancel_pending(self):
-        with FileLease(self.root / "install.lock"):
+        with FileLease(self.root / "install.lock", busy_message="另一项安装操作正在进行，请稍后重试。"):
             state = self.state()
             state["pending"] = None
             atomic_json(self.root / "state.json", state)
@@ -362,12 +362,13 @@ class Store:
         Returns a lifetime runtime lease; keep it alive until Houdini exits.
         Runtime is exclusive across managed Houdini instances, but staging is not.
         """
-        lease = FileLease(self.root / "runtime.lock")
+        lease = FileLease(self.root / "runtime.lock", busy_message=
+                          "DSH 工作区正在另一个 Houdini 中运行。请在那里继续，或退出那个 Houdini 后重试。")
         try:
-            with FileLease(self.root / "install.lock"):
+            with FileLease(self.root / "install.lock", busy_message="另一项安装操作正在进行，请稍后重试。"):
                 state = self.state()
                 if pinned_id not in (state["current"], state["pending"]) or not pinned_id:
-                    raise ValueError("Installation selection changed. Restart Houdini before opening the workspace.")
+                    raise ValueError("安装版本已切换，请重开 Houdini 后再打开工作区。")
                 manifest = self.manifest(pinned_id)
                 if houdini_version not in manifest["houdini"]:
                     raise ValueError("This release does not support this Houdini version")

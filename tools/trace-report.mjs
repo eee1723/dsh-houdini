@@ -148,7 +148,7 @@ const qualityLoopEvidence = collectQualityLoopEvidence({
 const qualityRisks = qualityLoopRisks(qualityLoopEvidence);
 const unresolvedRequests = unresolvedExecutionRequests(normalized.steps);
 if (unresolvedRequests.length) qualityRisks.push({code:'unresolved_execution_receipt',
-  detail:'Missing execution ledger does not mean not executed; artifacts do not resolve a request receipt.',
+  detail:'Requests have nonterminal or uncertain observations. Running/queued differ from unknown transport; retained trace states do not establish current live state or completed outcomes.',
   requests:unresolvedRequests});
 if (executionObservations.activeJobs.length) qualityRisks.push({code:'active_houdini_jobs',
   detail:'Retained job observations are nonterminal or results remain uncollected; a recovered submission receipt does not prove completion. This is trace scope, not current live status.',
@@ -374,7 +374,7 @@ const html = `<!DOCTYPE html>
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
     <p class="dim-text">有canonical运行序号的独立执行：${normalized.uniqueExecutions.length}；独立执行内动词 ${normalized.uniqueExecutions.reduce((n,e)=>n+e.verbCalls,0)}。仅覆盖实际保留runtime/sequence的事件，不代表旧轨迹无执行；轮询和查回仍是独立工具调用，不能重复计场景执行。</p>
     <h2>执行回执与后台任务范围</h2>
-    <p>提交/执行回执未查回 ${unresolvedRequests.length} 项；后台任务仍在进行或结果尚未领取 ${executionObservations.activeJobs.length} 项；已结束但结果不可取得 ${executionObservations.unavailableResults.length} 项。</p>
+    <p>请求仍在排队/执行或状态未确定 ${unresolvedRequests.length} 项；后台任务仍在进行或结果尚未领取 ${executionObservations.activeJobs.length} 项；已结束但结果不可取得 ${executionObservations.unavailableResults.length} 项。</p>
     <p class="dim-text">这些状态复用 executionHistory 对原始会话事件的投影，只描述日志中最后保留的观察，包含原生和嵌套调用的提交回执；不是当前现场查询。无未查回回执不等于全部后台任务已完成；提交成功、任务结束、结果可取与结果正确分别判断。缺失结果或过期结果保持结果未验证。</p>
     ${executionObservations.activeJobs.length ? `<details open><summary>后台任务的最后保留状态</summary><pre>${esc(JSON.stringify(executionObservations.activeJobs,null,2))}</pre></details>` : ''}
     ${executionObservations.unavailableResults.length ? `<details open><summary>不可取得的执行结果（未验证）</summary><pre>${esc(JSON.stringify(executionObservations.unavailableResults,null,2))}</pre></details>` : ''}

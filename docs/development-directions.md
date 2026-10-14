@@ -234,6 +234,8 @@ HDA 文件和外部库操作不属于普通 Houdini undo 的完整恢复范围�
 
 ## COP 按需能力与边界
 
+表面外观作为跨建模、场景、工具和教程的通用能力，由[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)维护参考图分析、细化程度、来源选择与UV。新SOP资产使用COP Preview Material与稳定COP颜色输出统一预览，简单表面用小尺寸纯色图层，按需丰富；不强制烘纯色文件，相同表面复用，已有有效材质保持。第一验证范围是SOP预览与继续编辑，正式渲染扩展沿Solaris/Karma。
+
 需要制作或修改图像数据时，仍可加载 [COP workflow](../skills/houdini-cop-workflow/SKILL.md)，
 使用现有节点、图层、关系与控制工具，并按需联用 SOP、教程与 Solaris/Karma。
 构造方法和验收范围由该 skill 及其[验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)维护。

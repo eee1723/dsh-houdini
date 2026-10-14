@@ -98,7 +98,21 @@ npm test
 
 COP接入材质使用[dsh-cop-material-delivery](../tools/tests/dsh-cop-material-delivery.test.py)在新建隔离工程中验证曲面贴图、材质直接采样alpha、粗糙度控制、`$HIP/dsh-texture`读回与同版本独立进程重开。完整纹理网络不以数值变化代替实际图片检查。跨版本节点/算法默认值可能不同，分别验证各版消费和重开，不默认像素一致。
 
+SOP表面入口使用[dsh-sop-surface](../tools/tests/dsh-sop-surface.test.py)：`python tools/tests/dsh-sop-surface.test.py --houdini <明确houdini.exe> --output <新建仓库外目录>`，分别在H21/H22隔离GUI验证同一个COP Preview Material的纯色COP→图案→文件输入、vertex UV跨尺寸修改、render_view代理、用户视窗和文件依赖重开。像素标记只证明校准图案生效，不能替代自然任务外观判断；法线、透明度和正式渲染按受影响范围另验。首次显示Constant后切换纹理的刷新范围与稳定COP输入分开，不把后者通过扩大为前者已修复。表面路由与按需资料传输复用[dsh-host-smoke](../tools/tests/dsh-host-smoke.test.py)的`--context-loop --surface-method`，在精确DSH中核对实际provider收到的persona、完整skill及原生/嵌套read内容，不用源码正则断言代替消费方验证。这是受控模型传输检查，不证明自主选用。
+
 指定生图接入使用[图像请求回归](../tools/tests/image-generation.test.mjs)覆盖精确路由、参考图片字节、防覆盖/文件策略、原图恢复与不自动重试；[真实DSH图片消费](../tools/tests/dsh-image-generation-smoke.test.py)用自有HTTP夹具验证动态设置/凭据、原生及PTC请求、真实附件与交付，默认不调用收费模型。真实提供方测试另记录实际model、请求、原图与视觉范围，不把夹具通过当成外部API可用。
+
+复杂表面使用[dsh-surface-textures](../tools/tests/dsh-surface-textures.test.py)：`python tools/tests/dsh-surface-textures.test.py --houdini <明确houdini.exe> --output <新建仓库外目录> [--texture <已生成PNG>]`。隔离GUI覆盖共享图案的底色/粗糙度/高度与法线、图案编辑、圆柱vertex UV的物理尺度、File COP及混合图层、用户视窗与同版本独立重开。默认只使用程序生成文件；可传外部生图结果，脚本不调用收费模型。像素变化只证明消费或参数响应，重复边界、法线方向与外观仍须看实际图；文件输入通过不等于任意生图服务或Karma通过。
+
+参数模式与条件使用[dsh-parameter-conditions](../tools/tests/dsh-parameter-conditions.test.py)在隔离H21/H22核对原生toggle/exclusive条的存储值、合法组合、非法值、归属和回滚，以及COP逐轴尺度在关闭/开启模式时的真实图层响应。参数目录的conditionals、menu_kind与set_value经过[目录回归](../tools/tests/dsh-parameter-catalog.test.py)保存实际回执；以`DSH_CATALOG_FIXTURE_OUT=<外部JSON>`导出，再用dsh-host-smoke的`--context-loop --catalog-fixture <JSON>`核对真实DSH原生/嵌套消费。几何表面方法的反例应区分全局UV范围与各目标面映射、部件单独正确与装配关系正确；自然任务验证不以技能读取或全局包络响应代替这些性质。
+
+UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-construction.test.py)在隔离H21/H22核对：矩形面板开孔前传递UV、开孔后连续映射、切割体新增面的来源和UV、顶点硬切投影轴反例，以及尺寸/切割位置变化后的固定纹理密度。它不认证任意曲面展开或审美效果。PolyBevel用[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)对照不同圆柱分段数、默认小角度与按几何选边；组件消费者用[输出回归](../tools/tests/dsh-output-publication.test.py)对照清理支路被绕过和正确重连后的实际属性/警告。Boolean/PolyBevel节点卡由上述目录回执一起送到真实DSH，表面方法继续沿`--surface-method`验证按需资料读取；无须新建生产验证框架或固定建模顺序。
+
+忙碌请求的状态投影使用[请求查回回归](../tools/tests/request-recovery.test.mjs)、[执行状态回归](../tools/tests/execution-state.test.mjs)和[trace归一化回归](../tools/tests/normalized-trace-steps.test.mjs)，核对通信未知→queued/running→终态、过期结果分流及重复查回不增加上下文。真实DSH的`--context-loop`还通过原生/嵌套工具检查状态解释实际送到provider，且未重发原操作。此范围不证明具体COP/渲染原生阻塞已修复，也不证明模型必然正确采用诊断。
+
+资产主入口与后加模块用[dsh-asset-edit-entry](../tools/tests/dsh-asset-edit-entry.test.py)在隔离H21/H22验证：从当前模块值初始化公共控制，数值/开关单向引用，SOP主控驱动真实COP图层与最终材质消费者，两个COP容器的上层分组、原入口说明更新，以及同版本独立重开。跨进程图层对照使用完整buffer和明确元数据，不能把包含进程内identity的观察hash当跨进程内容标识。上述真实DSH的`--surface-method`同时验证参数与网络交接资料的按需消费。机制通过不证明自然模型会选对公共参数，或实际GUI布局已经验收。
+
+孔径检查的能力范围由[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)核对：几何违反条件、检查能力/预算不足、非法参数分别保留不同结果；能力不足不回滚同批正常修改。完整帮助的runtime_limits与执行来自同一维护源。目录回执导出的interface_observation由上述真实DSH循环同时核对原生/嵌套消费，不能只检查Python返回字典。
 
 教程媒体使用[视频回归](../tools/tests/video-tutorial.test.py)核对分离轨导入、源变化、时间依据、部分转录与续跑；[离线Host处理](../tools/tests/video-process.test.mjs)核对新输出/导出锁目录的文件策略、精确参数、私有执行工具和取消进程树，[真实DSH离线处理](../tools/tests/dsh-video-process-smoke.test.py)核对选中执行器运行时与原生/PTC消费。[Host转录回归](../tools/tests/video-transcription.test.mjs)核对DSH路由/凭据、工作区策略、子进程取消及敏感值不进入回执。[真实DSH转录](../tools/tests/dsh-video-transcription-smoke.test.py)用合成媒体和本地HTTP服务贯通实际Python、设置持久化、原生/PTC工具和成功片复用，不调用收费模型。[教程设置Qt检查](../tools/tests/dsh-video-settings.test.py)复用源码GUI驱动核对实际页面注册、配置保存/切页重开、依赖检查与宽窄布局；不把包装驱动中未执行的其他检查列作通过。真实教程另核对实际音画、模型取得的信息、可编辑工程、控制与独立重开，不能用上述接口通过代替成品质量。
 

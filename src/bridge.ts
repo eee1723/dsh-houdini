@@ -446,7 +446,7 @@ export class HoudiniBridge {
       const reason = cause instanceof Error ? cause.message : String(cause)
       throw new Error(
         `Houdini bridge request ${path} at ${this.baseUrl} failed (${reason}); `
-        + (init.method === 'POST' && (path === '/exec' || path === '/jobs')
+        + (init.method === 'POST' && ['/exec','/jobs','/ui/list','/ui/capture'].includes(path)
           ? 'execution may still be queued/running or already applied; inspect scene/job state before retrying, and do not blindly resubmit.'
           : 'check bridge availability; see README'),
       )

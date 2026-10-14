@@ -221,10 +221,10 @@ def _operation_summary(name: str, result):
         components = [{'name':p['name'],'components':p['components']} for p in r.get('parameters',[]) if len(p.get('components',[]))>1]
         return {k:r[k] for k in ('parent','type','version','visible','operation_card','usage_notes','operation_parameters','operation_parameters_missing','operation_parameter_scope','filter_mode','filter','parameter_count','total_parameter_count','next_action') if k in r} | {
             'tuple_components':components[:20], 'tuple_components_truncated':len(components)>20,
-            'setting_cards':[{k:p[k] for k in ('name','type','components','default','menu','menu_dynamic') if k in p}
+            'setting_cards':[{k:p[k] for k in ('name','type','components','default','menu','menu_dynamic','menu_kind','menu_setting','conditionals') if k in p}
                              for p in r.get('parameters',[])[:24]],
             'setting_cards_truncated':len(r.get('parameters',[]))>24,
-            'parameter_scope':'returned filtered parameter card only; retain components and menu set_value when summarizing'}
+            'parameter_scope':'returned filtered parameter card only; retain components, menu setting semantics and parameter-local conditionals; not evaluated enablement or inherited folder conditions'}
     if name in ('connect','disconnect_input'):
         return result
     if name == 'camera_fit':
@@ -289,7 +289,7 @@ def _operation_summary(name: str, result):
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
               'baseline_captures','capture_status','representation',
-              'pair_tests','reason','parameter_writes','required_outputs','geometry_status','update_mode',
+              'pair_tests','reason','runtime_limits','parameter_writes','required_outputs','geometry_status','update_mode',
               'scene_unit_length_meters','bbox_size_sop_local_mm','handoff_output',
               'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}

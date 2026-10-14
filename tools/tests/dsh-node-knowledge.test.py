@@ -529,6 +529,18 @@ try:
     sharp_count = len(bevel.geometry().prims())
     assert sharp_count < all_count and positions(bevel) != all_positions, (sharp_count, all_count)
     assert observed(bevel)['boundary_edges'] == 0
+    # Enabling the toggle is insufficient when its default angle is below
+    # the side segmentation angle. The policy must follow actual geometry.
+    for segments in (32, 96):
+        h.set_parm(cylinder, 'cols', segments)
+        h.set_parms(bevel, {'ignoreflatedges': 0, 'flatangle': 2})
+        unfiltered_count = len(bevel.geometry().prims())
+        h.set_parm(bevel, 'ignoreflatedges', 1)
+        assert len(bevel.geometry().prims()) == unfiltered_count
+        h.set_parm(bevel, 'flatangle', (360.0/segments + 90.0)/2)
+        assert len(bevel.geometry().prims()) < unfiltered_count
+        assert observed(bevel)['boundary_edges'] == 0
+    h.set_parm(cylinder, 'cols', 12)
     h.set_parm(bevel, 'flatangle', 100)
     assert positions(bevel) == positions(cylinder), 'larger threshold excludes 90 degree ring edges too'
     assert len(bevel.geometry().prims()) == len(cylinder.geometry().prims())

@@ -12,6 +12,18 @@ const TERMINAL_REQUESTS = new Set([...OBSERVED_REQUESTS,...UNAVAILABLE_RESULTS])
 const COLLECTED_JOBS = new Set(['done','failed','cancelled'])
 const TERMINAL_JOBS = new Set([...COLLECTED_JOBS,'finished_result_unavailable'])
 
+/** Receipt transitions are shared by live context and historical trace views. */
+export function mergeRequestStatus(previous:string|undefined, observed:string):string {
+  return !TERMINAL_REQUESTS.has(previous??'') || (!OBSERVED_REQUESTS.has(previous??'') && OBSERVED_REQUESTS.has(observed))
+    ? observed : previous!
+}
+export const isPendingRequestStatus=(status:string):boolean => !TERMINAL_REQUESTS.has(status)
+
+export function requestStatusGuidance(status:unknown):string|undefined {
+  if(status==='running')return 'The same-runtime Bridge confirms this request is still executing. This is not a crash report or a progress estimate. HTTP timeout did not cancel the work. Scene queries and UI discovery/capture share its main-thread queue and may wait behind it; use this original request_ref for status, without resubmitting. An empty shell process listing does not override this receipt.'
+  if(status==='queued')return 'The same-runtime Bridge confirms this request is admitted and waiting for main-thread dispatch. It has not started. Scene queries and UI discovery/capture also use that queue; they are not independent liveness probes. Read this original request_ref again to observe a later state; do not resubmit.'
+}
+
 export function executionHistory(events:readonly SessionEvent[]) {
   let recoverySeq=0
   try {recoverySeq=foldExecutorState(events).recoverySeq}
@@ -43,9 +55,7 @@ export function executionHistory(events:readonly SessionEvent[]) {
     const job=value.jobId??receipt?.jobId
     const missingJobResult=typeof job==='string' && receipt?.job_finished===true && receipt?.job_result_available===false
     if (typeof receipt?.request_ref==='string') {
-      const prior=receipts.get(receipt.request_ref)||''
-      if (!TERMINAL_REQUESTS.has(prior) || (!OBSERVED_REQUESTS.has(prior) && OBSERVED_REQUESTS.has(receipt.status)))
-        receipts.set(receipt.request_ref,receipt.status)
+      receipts.set(receipt.request_ref,mergeRequestStatus(receipts.get(receipt.request_ref),receipt.status))
       if (missingJobResult && !COLLECTED_JOBS.has(jobs.get(job)||'')) unavailableResults.set(receipt.request_ref,{
         request_ref:receipt.request_ref,owner_call:typeof receipt.owner_call==='string'?receipt.owner_call:null,
         status:'finished_result_unavailable',retention_status:receipt.status,outcome:'unverified',job_id:job,
@@ -71,7 +81,7 @@ export function executionHistory(events:readonly SessionEvent[]) {
     const execution=value.execution
     if (execution && typeof execution.runtime_id==='string' && Number.isFinite(execution.sequence) && Number.isFinite(execution.observed_at))
       rows.push({eventSeq:event.seq??0,callId:outcome.callId,tool:name,value,execution})
-    else if (receipt && !TERMINAL_REQUESTS.has(receipt.status))
+    else if (receipt && name!=='houdini_request' && !TERMINAL_REQUESTS.has(receipt.status))
       uncertain.push({seq:event.seq??0,callId:outcome.callId,ref:receipt.request_ref})
   }
   const unresolvedCalls=uncertain.filter(row=>!resolvedCalls.has(row.callId)&&(!row.ref||!TERMINAL_REQUESTS.has(receipts.get(row.ref)||'')))

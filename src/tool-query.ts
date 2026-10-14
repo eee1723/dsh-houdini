@@ -4,6 +4,7 @@ import {readResultDetail,recordedResultPath} from './result-details.js'
 import {readTaskSource} from './task-sources.js'
 import {HoudiniToolRuntime,workspaceOf} from './tool-runtime.js'
 import {recordedLoadWarningPath} from './executor-identity-projection.js'
+import {requestStatusGuidance} from './execution-history.js'
 
 export function readResource(args:{kind:'source'|'result';ref:string;pointer?:string;offset?:number;limit?:number},exec:any):Promise<ExecResult>|ExecResult {
   if(args.kind==='result') {
@@ -40,5 +41,6 @@ export async function recoverRequest(request_ref:string,exec:any,runtime:Houdini
         owner_call: recovered.owner_call ?? null, status: 'done', retrieved: true,
       },
     }, exec, bridge)
-    return receipt
+    const guidance=requestStatusGuidance(recovered?.status)
+    return guidance ? {...receipt,requestReceipt:{...recovered,note:guidance}} : receipt
 }

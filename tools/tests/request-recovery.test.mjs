@@ -205,6 +205,18 @@ try{
  const waiting=defs.get('houdini_request').output.render({}, {ok:true,stdout:'',stderr:'',requestReceipt:{status:'running',request_ref:ref}})[0].text;
  assert.ok(waiting.startsWith('Request receipt status: running'));
  assert.ok(!waiting.includes('Executed successfully.'));
+ for(const status of ['queued','running']){
+  receiptOverride={request_ref:ref,runtime_id:runtime,owner_call:'call',status};
+  const before={edits,captures,uiLists};
+  const recovered=await defs.get('houdini_request').execute({request_ref:ref},ctx);
+  assert.equal(recovered.requestReceipt.status,status);
+  assert.match(recovered.requestReceipt.note,/same-runtime Bridge/);
+  assert.match(recovered.requestReceipt.note,/main-thread/);
+  assert.match(recovered.requestReceipt.note,status==='running'?/HTTP timeout did not cancel/:/has not started/);
+  assert.deepEqual({edits,captures,uiLists},before,'busy receipt inspection does not queue scene/UI probes or repeat work');
+  assert(defs.get('houdini_request').output.render({},recovered)[0].text.includes(recovered.requestReceipt.note));
+ }
+ receiptOverride=undefined;
  const lostJob=await defs.get('houdini_job_submit').execute({code:'long render'}, {...ctx,callId:'lost-job-call'});
  assert.equal(lostJob.jobId,undefined);assert.equal(lostJob.requestReceipt.status,'unknown_transport');
  const jobText=defs.get('houdini_job_submit').output.render({},lostJob)[0].text;

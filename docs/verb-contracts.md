@@ -326,6 +326,7 @@ This query requires example_geo to exist; /obj creates OBJ nodes and cannot supp
 ### 接口边界
 
 - parm_filter is a literal substring, not regex, glob or a pipe-separated list. Static defaults and menus do not describe shelf initialization or dynamic menus on a live node.
+- Parameter cards preserve their own native conditionals, not evaluated enablement or inherited folder conditions. menu_kind=toggle_strip uses integer bits from menu.set_value (0 clears all); exclusive_strip uses indices. These are storage facts, not permission to enable a mode automatically.
 - parent must be an existing creation network. Unknown types report nearby visible registered names/labels in that context; suggestions do not substitute for the requested type.
 
 ## tab_create
@@ -918,6 +919,7 @@ Read set/evaluations. A parameter write does not itself certify downstream geome
 ### 接口边界
 
 - Parameter names and menu set_value come from node_info/list_parms/read_parms. Numeric tuple literals use full components; tuple expressions use individual component names.
+- Toggle button/icon strips accept an exact integer bitmask: 0 clears all, combine declared set_value bits for multiple choices. A token selects only that entry's bit, not an incremental toggle. Writing a conditional parameter does not automatically enable its controlling mode or prove an output effect.
 - strict defaults to True. strict=False allows explicit partial diagnostic success and returns failed; it is not required for ordinary editing. Restoration covers parameter values/expressions/keys, not external callback effects.
 
 ## connect

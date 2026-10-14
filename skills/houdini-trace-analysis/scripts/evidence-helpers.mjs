@@ -486,6 +486,9 @@ export function classifyRawEffect(step) {
     if (usage.coveredMutations?.length) return 'mutation_candidate';
     if (usage.suspectedMutations?.length || outcome === 'exempted') return 'suspected_effect';
   } else if (step.mutatingRawMethods?.length) return 'mutation_candidate';
+  // A transport failure has no completed ledger. It is not evidence that
+  // Python itself failed or that the operation used no verbs.
+  if (step.canonical?.requestReceipt?.status === 'unknown_transport') return 'unknown';
   if (failed) return 'failed';
   if (['houdini_inspect', 'houdini_query'].includes(step.tool) && step.canonical?.execution?.read_only !== false) return 'read_only_query';
   return 'unknown';

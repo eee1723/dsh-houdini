@@ -22,6 +22,7 @@ node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out 
 
 检查 `frameErrors`、`lineErrors`、`unmatchedResults`、`replayedResults`、有效请求 surface 与末轮终止原因。存在读取缺口时说明缺了什么。报告 HTML 是导航，关键因果回到原始 call/result、runtime-context、执行回执及用户消息。完整结果已转存时按 result_ref 定位原始产物，不能把摘要省略当作没有事实。
 分别读取 `unresolvedRequests`、`activeJobs` 和 `unavailableResults`：提交回执已查回不等于后台任务已结束，任务结束也不证明结果可取或正确。后台状态复用客户端的 `executionHistory`，仅表示此日志最后保留的观察，不代表当前 live；不为审计另写状态解释器。
+请求状态沿运行时共用的归并规则：后续running/queued应替换unknown_transport，结果过期由unavailableResults单独表达。houdini_request不经过HOM队列；场景查询和界面发现/捕获会排在主线程计算之后。Shell进程枚举没有结果只说明该执行环境没有观察到进程，不能推翻同代Bridge的运行回执或证明崩溃；超时本身不证明取消。
 
 ## 因果分析
 

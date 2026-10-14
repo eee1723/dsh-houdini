@@ -179,6 +179,25 @@ try {
   assert(jobHtml.includes('后台任务仍在进行或结果尚未领取 2 项'));
   assert(jobHtml.includes('已结束但结果不可取得 1 项'));
   assert(jobHtml.includes('native-running')&&jobHtml.includes('nested-queued')&&jobHtml.includes('missing-result-job'));
+  // A lost HTTP reply and a still-running original operation are different
+  // observations. Both report consumers must retain the newest receipt.
+  jobEvents.length=0;
+  const requestReceipt={runtime_id:'fixture-runtime',request_ref:'busy-request',owner_call:'busy'};
+  jobResult('busy','houdini_exec',{ok:false,requestReceipt:{...requestReceipt,status:'unknown_transport'}});
+  jobResult('busy-query','houdini_request',{ok:true,requestReceipt:{...requestReceipt,status:'queued'}});
+  jobResult('busy-query-nested','houdini_request',{ok:true,requestReceipt:{...requestReceipt,status:'running'}},true);
+  const busyInput=path.join(temp,'busy-session.jsonl.zstd');
+  const busyOutput=path.join(temp,'busy-evidence.json');
+  const busyReport=path.join(temp,'busy-report.html');
+  fs.writeFileSync(busyInput,zlib.zstdCompressSync(jobEvents.map(row=>JSON.stringify(row)).join('\n')));
+  execFileSync(process.execPath,['skills/houdini-trace-analysis/scripts/extract-trace-evidence.mjs',busyInput,'--out',busyOutput],{cwd:root});
+  const busyTrace=JSON.parse(fs.readFileSync(busyOutput,'utf8')).traces[0];
+  assert.equal(busyTrace.unresolvedRequests.length,1);
+  assert.equal(busyTrace.unresolvedRequests[0].status,'running');
+  assert.equal(busyTrace.unresolvedRequests[0].index,3);
+  execFileSync(process.execPath,['tools/trace-report.mjs',busyInput,'--out',busyReport],{cwd:root});
+  const busyHtml=fs.readFileSync(busyReport,'utf8');
+  assert(busyHtml.includes('&quot;status&quot;: &quot;running&quot;'));
   const malformed=path.join(temp,'malformed.zstd');
   fs.writeFileSync(malformed,zlib.zstdCompressSync('not-json\n'+JSON.stringify(nativeEvents[0])));
   assert.equal(loadSessionEvents(malformed).lineErrors.length,1,'invalid lines remain visible diagnostics');

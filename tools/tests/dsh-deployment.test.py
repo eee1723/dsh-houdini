@@ -207,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         d.atomic_json(Path(ctx1["home"]) / ".agent-presets/houdini/agent.json", {"name": "old managed preset"})
         d.atomic_json(Path(ctx1["home"]) / ".agent-presets/houdini-product/agent.json", {"name": "old product preset"})
         ident2 = store.stage(second)
-        rejects(lambda: store.activate(ident2, "21.0"), "Another")
+        rejects(lambda: store.activate(ident2, "21.0"), "退出那个 Houdini 后重试")
         assert store.state()["current"] == ident1
         lease1.close()
         rejects(lambda: store.activate(ident2, "99.0"), "support")
@@ -245,5 +245,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
     with d.FileLease(lock):
         assert subprocess.run(command, capture_output=True).returncode != 0
     assert subprocess.run(command, capture_output=True).returncode == 0
+    with d.FileLease(store.root / "install.lock"):
+        rejects(store.cancel_pending, "另一项安装操作正在进行")
 
 print("signed deployment: signature, traversal, cancellation, disk/write failures, exclusive activation, data snapshot and rollback passed")

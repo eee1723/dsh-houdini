@@ -178,6 +178,10 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         if state["pending"]:
             return "版本已准备好，完整重开 Houdini 后生效。"
         if not state["checked"]:
+            if loaded is not None:
+                return "当前版本已加载。尚未检查更新。"
+            if pinned:
+                return "版本已就绪，打开工作区即可使用。"
             return None
         if release is None:
             return "暂未发布正式版本。"
@@ -221,18 +225,22 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
             install.hide()
             data = store.state()
             ident = data["current"]
-            state["version"] = ident.split("-")[0] if ident else None
             process_ident = loaded["installId"] if loaded else pinned
-            next_ident = data["pending"] or (ident if process_ident and process_ident != ident else None)
+            selected_ident = process_ident or ident
+            state["version"] = selected_ident.split("-")[0] if selected_ident else None
+            target_ident = data["pending"] or ident
+            # pending is committed only when the workspace activates. A fresh
+            # Houdini can already have pinned it without loading the runtime.
+            next_ident = target_ident if target_ident != process_ident and (process_ident or data["pending"]) else None
             state["pending"] = next_ident
-            current_heading.setText("当前运行" if loaded else "当前安装")
-            current.setText(loaded["installId"].split("-")[0] if loaded else state["version"] or "尚未安装")
+            current_heading.setText("当前运行" if loaded else "本次启动" if pinned else "当前安装")
+            current.setText(state["version"] or "尚未安装")
             pending.setText(next_ident.split("-")[0] if next_ident else "")
             pending.setVisible(bool(next_ident))
             pending_heading.setVisible(bool(next_ident))
             runtime_note.setText("受管安装 · 本次运行版本已加载" if loaded else
                                  "版本已选定，尚未启动工作区" if pinned else "从正式发行包安装，或在高级设置中选择本地包")
-            repair.setVisible(bool(data["current"]))
+            repair.setVisible(bool(selected_ident))
             rollback.setVisible(bool(data["previous"]))
             cancel_pending.setVisible(bool(data["pending"]))
             verify_button.setVisible(bool(data["pending"] or data["current"]))
@@ -335,7 +343,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
 
     def repair_current():
         def task():
-            ident = store.state()["current"]
+            ident = loaded["installId"] if loaded else pinned or store.state()["current"]
             manifest = store.manifest(ident)
             metadata = releases._read_json(releases.REPOSITORY_API + "/releases/tags/v" + manifest["version"])
             release = releases.validate_published_release(metadata)
@@ -355,7 +363,9 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                 pinned, loaded = new_pinned, new_loaded
                 if not state["busy"]:
                     try:
-                        refresh()
+                        summary = refresh()
+                        if summary and not state["error"]:
+                            status.setText(summary)
                     except Exception as exc:
                         details.appendPlainText(str(exc))
         while not events.empty():

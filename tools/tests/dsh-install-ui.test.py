@@ -223,6 +223,63 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
             assert "版本已准备好，完整重开 Houdini 后生效。" in labels(window)
     close(window)
 
+    # A fresh Houdini pins the staged install before workspace activation commits
+    # it as current. Its manager must show that selection, not request another restart.
+    store.data = {"current": "1.0.0-current", "previous": "0.9.0-previous", "pending": "1.1.0-pending"}
+    context = [store.data["pending"], None]
+    window = ui.show(store, parent=parent, pinned=context[0],
+                     context_provider=lambda: tuple(context))
+    assert "本次启动" in labels(window)
+    assert "版本已就绪，打开工作区即可使用。" in labels(window)
+    assert "版本已准备好，完整重开 Houdini 后生效。" not in labels(window)
+    assert [w.text() for w in window.findChildren(QtWidgets.QLabel)
+            if w.objectName() == "version" and w.isVisible()] == ["1.1.0"]
+    button(window, "高级设置").click()
+    with patch.object(store, "manifest", return_value={"version": "1.1.0"}, create=True) as manifest, \
+         patch.object(ui.releases, "_read_json", return_value={}), \
+         patch.object(ui.releases, "validate_published_release", return_value=release("1.1.0")), \
+         patch.object(ui.deployment, "fetch_release", return_value=root / "verified-package"), \
+         patch.object(store, "stage", return_value=context[0]):
+        button(window, "修复当前版本").click()
+        wait_until(lambda: button(window, "检查更新").isEnabled())
+        assert manifest.call_args.args == (context[0],), "repair must target the displayed selection, not the previous disk current"
+    # Real context-provider timer: no click/check-update is needed to dismiss
+    # an obsolete instruction once the selected workspace has loaded.
+    store.data.update(current=context[0], pending=None)
+    context[1] = {"installId": context[0]}
+    wait_until(lambda: "当前版本已加载。尚未检查更新。" in labels(window))
+    assert "当前运行" in labels(window)
+    assert "版本已就绪，打开工作区即可使用。" not in labels(window)
+    close(window)
+
+    # Version comparisons before activation use the pinned selection. Failures
+    # remain visible when context refreshes; loaded does not mean latest/healthy.
+    store.data.update(current="1.0.0-current", pending="1.1.0-pending")
+    context = [store.data["pending"], None]
+    window = ui.show(store, parent=parent, pinned=context[0],
+                     context_provider=lambda: tuple(context))
+    check = button(window, "检查更新")
+    with patch.object(ui.releases, "latest_stable_release", return_value=release("1.1.0")):
+        check.click()
+        wait_until(check.isEnabled)
+        assert "已是最新正式版本。" in labels(window)
+        assert not any(text.startswith("更新至") for text in visible_buttons(window))
+    with patch.object(ui.releases, "latest_stable_release", side_effect=TimeoutError("offline fixture")):
+        check.click()
+        wait_until(check.isEnabled)
+    store.data.update(current=context[0], pending=None)
+    context[1] = {"installId": context[0]}
+    wait_until(lambda: "当前运行" in labels(window))
+    assert "操作未完成，请展开高级设置查看原因。" in labels(window)
+    close(window)
+
+    # Same-version repair changes installation identity and still needs restart.
+    store.data.update(pending="1.1.0-repaired")
+    window = ui.show(store, parent=parent, loaded=context[1])
+    assert "版本已准备好，完整重开 Houdini 后生效。" in labels(window)
+    close(window)
+    store.data = {"current": "1.0.0-current", "previous": "0.9.0-previous", "pending": "1.1.0-pending"}
+
     # Rollback verifies potentially large payloads. Cancel and close must reach
     # its last checkpoint before any next-start selection is changed.
     for close_while_running in (False, True):

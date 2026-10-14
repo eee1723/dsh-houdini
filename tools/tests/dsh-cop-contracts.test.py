@@ -120,6 +120,22 @@ set_parms(cache,{'clearonchange':0})
     finally:
         cop._DEPENDENCY_SECONDS=old_seconds
 
+    call(f'''
+c=hou.node({root!r})
+flat=tab_create(c,'layer','flat_color',parms={{'signature':'f3','f3':(.1,.4,.7)}})
+pattern=tab_create(c,'checkerboard','replacement_color',parms={{'signature':'f3'}})
+out=tab_create(c,'null','OUT_color',inputs=[flat])
+cook_node(out)
+''')
+    outlet=root+'/OUT_color'
+    replacement=root+'/replacement_color'
+    linked=value(f'connect({replacement!r},{outlet!r})')
+    assert linked['type_check']=='cop_exact_image_signature',linked
+    assert hou.node(outlet).input(0).path()==replacement
+    rejects(f'connect({replacement!r},{outlet!r})','foreign',owner='other')
+    rejects(f'connect({(root+"/flat_color")!r},{outlet!r})\nraise RuntimeError("restore_replaced_color")','restore_replaced_color')
+    assert hou.node(outlet).input(0).path()==replacement
+
     if hou.applicationVersion()[0]>=22:
         call('''
 tml=tab_create('/stage','texturemateriallibrary',name='__cop_material_contract')
@@ -133,7 +149,7 @@ set_parms(mono,{'signature':'f1'})
         mono='/stage/__cop_material_contract/mono'
         for src, port in ((rgb,0),(mono,3),(mono,12)):
             linked=value(f'connect({src!r},{material!r},{port})')
-            assert linked['type_check']=='cop_material_exact_signature',linked
+            assert linked['type_check']=='cop_exact_image_signature',linked
             assert hou.node(material).input(port).path()==src
         prior=hou.node(material).input(0)
         rejects(f'connect({mono!r},{material!r},0)','incompatible')

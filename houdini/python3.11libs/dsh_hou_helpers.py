@@ -124,6 +124,9 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     有效正体积fail，不完整实体/数值含糊unverified。区间须按安装板等实际待验
     壁厚指定；若组还有远处的铰耳，不要求整组包围盒都被孔轴贯穿。它不证明
     区间两端之外仍通畅、孔周有材料、图纸孔位正确或加工公差。
+    bore_clearance超出目标面数或剩余预算时返回unverified、实际规模和下一步，
+    不把未检查当作几何失败。当前数值限制见完整verb_help的runtime_limits；
+    提高max_pairs不能解除目标面数限制，不能裁掉待验实体的一部分面来冒充完整检查。
     method='component_count'用最终Polygon primitive组target_group和
     expected_components(1..32)测共享边连通岛数；缺组或数目不符fail，
     不支持表示/退化面unverified。期望件数须先从要求得出，不能从幸存件反推；

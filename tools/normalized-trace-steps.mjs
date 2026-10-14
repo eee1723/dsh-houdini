@@ -7,6 +7,7 @@ import {
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
 import { HOUDINI_TOOLS } from '../lib/tool-catalog.js';
+import { mergeRequestStatus, isPendingRequestStatus } from '../lib/execution-history.js';
 
 function nestedResultContent(message) {
   return (message?.content || []).flatMap(item =>
@@ -71,27 +72,23 @@ export function toolResultFailed(message, text = toolResultText(message), tool) 
     || /^Error:/.test(text);
 }
 
-/** Unknown execution receipts stay unknown until the SAME runtime/ref is resolved.
- * A later successful unrelated query or an image file is not an execution receipt.
+/** Present the latest same-runtime receipt using the live transition policy.
+ * Nonterminal running/queued observations replace transport uncertainty.
+ * A later successful unrelated query or an image file is not a receipt.
  */
 export function unresolvedExecutionRequests(steps) {
-  const pending = new Map();
-  const resolved = new Set();
+  const observations = new Map();
   for (const step of steps) {
     const receipt = step.canonical?.requestReceipt ?? parseJsonBlock(step.resultText || '', 'request-receipt');
     if (!receipt?.request_ref || !receipt.runtime_id) continue;
     const key = JSON.stringify([receipt.runtime_id, receipt.request_ref]);
-    if (['done', 'not_executed', 'job_submitted'].includes(receipt.status)) {
-      pending.delete(key);
-      resolved.add(key);
-    } else if (['unknown_transport', 'unknown', 'expired', 'runtime_changed'].includes(receipt.status)
-               && !resolved.has(key)) {
-      pending.set(key, {index: step.index, time: step.time, tool: step.tool,
-        request_ref: receipt.request_ref, runtime_id: receipt.runtime_id, status: receipt.status,
-        scope: 'execution outcome unknown; no inference from absent ledger or existing artifacts'});
-    }
+    const prior=observations.get(key);
+    const status=mergeRequestStatus(prior?.status,receipt.status);
+    observations.set(key,{index:step.index,time:step.time,tool:step.tool,
+      request_ref:receipt.request_ref,runtime_id:receipt.runtime_id,status,
+      scope:'last retained request observation, not current live state or completed execution outcome'});
   }
-  return [...pending.values()];
+  return [...observations.values()].filter(row=>isPendingRequestStatus(row.status));
 }
 
 /**

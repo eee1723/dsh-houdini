@@ -29,7 +29,7 @@ Compiled cook 可减少不需要的中间存储，但不是无条件更快，官
 
 ## 材质接口
 
-仅当需要查看实际材质才加载 `houdini-solaris-karma-workflow`。交接图层角色、输出定位、
+SOP材质预览沿[表面外观skill](../../houdini-surface-workflow/SKILL.md)的COP Preview Material入口；纯色、文件和COP输出在同一节点消费，不要求Solaris。正式USD/Karma渲染才加载 `houdini-solaris-karma-workflow`。交接图层角色、输出定位、
 坐标空间、颜色解释和预期效果；选择当前版本可用的材质接口，不同时搭建多套实现。
 Texture Material Library LOP与USD Material COP始于H22；H21不能照搬这组节点名，采用当前parent可见的
 Karma/MaterialX图像节点或对应Preview Material路线，并验证实际绑定与采样。H22纹理驱动材质可选择

@@ -241,7 +241,9 @@ def node_info(parent, type_name: str, parm_filter: str = "", limit: int = 24) ->
 
     parm_filter is a literal case-insensitive substring, NOT regex or glob.
     An empty match is not an empty type: retry with parm_filter=''.
-    Static templates include menu tokens/labels/defaults. Dynamic menus require
+    Static templates include menu tokens/labels/defaults, button-strip storage
+    semantics and parameter-local conditionals (not evaluated UI enablement).
+    Dynamic menus require
     ``list_parms`` on an actual node; this card does not run shelf scripts.
     operation_parameters additionally carries unfiltered critical settings and
     operation_card.decisions; retain these even when filtering other parameters.

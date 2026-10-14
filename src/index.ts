@@ -56,7 +56,7 @@ const GUIDANCE: PromptSection = {
     '',
     `Current catalog: ${VERB_CATALOG_SUMMARY}`,
     '',
-    'Result and recovery contract:\nTool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Recover uncertain execution by its original request reference before retrying. Undo covers only its stated scene effects. Images use DSH native attachments; image delivery and pixel checks do not establish visual understanding. Report unavailable visual understanding accurately.',
+    'Result and recovery contract:\nTool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Recover uncertain execution by its original request reference before retrying. HTTP timeout does not cancel native work or establish a process crash. houdini_request reads receipts without the HOM queue; scene queries and UI discovery/capture share that queue and may wait behind running work. A shell process listing only describes what that shell can observe, not whether the bound Houdini executor has exited. Undo covers only its stated scene effects. Images use DSH native attachments; image delivery and pixel checks do not establish visual understanding. Report unavailable visual understanding accurately.',
     '',
     'Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris, tutorials or network handoff. Construction and presentation methods belong to those skills; tool contracts do not select a modeling strategy.',
     '',

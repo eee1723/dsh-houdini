@@ -7,15 +7,23 @@ import hou
 import dsh_node_access
 
 
+def _menu_kind(tpl):
+    """Native button strips use indices or bit fields, not icon-name values."""
+    if isinstance(tpl, hou.MenuParmTemplate) and (tpl.isButtonStrip() or tpl.isIconStrip()):
+        return 'toggle_strip' if tpl.menuType() == hou.menuType.StringToggle else 'exclusive_strip'
+    return None
+
+
 def _menu_entries(tpl, tokens, labels):
     """One setting-value contract for static cards and live setters."""
     numeric = tpl.type() == hou.parmTemplateType.Int
     try: use_tokens = bool(tpl.menuUseToken())
     except (AttributeError, hou.Error): use_tokens = False
+    kind = _menu_kind(tpl)
     rows = []
     for i, token in enumerate(tokens):
-        value = i if numeric else token
-        if numeric and use_tokens:
+        value = (1 << i) if kind == 'toggle_strip' else i if kind == 'exclusive_strip' or numeric else token
+        if numeric and use_tokens and kind is None:
             try: value = int(token)
             except ValueError:
                 raise ValueError('integer token-valued menu contains noninteger tokens; use an explicit expression')
@@ -54,11 +62,19 @@ def _parm_template_card(tpl) -> dict:
         tokens, labels = tpl.menuItems(), tpl.menuLabels()
         if tokens:
             entry["menu"] = _menu_entries(tpl, tokens, labels)
-            entry['menu_setting'] = 'token_or_set_value; explicit expression object for numeric menu expressions'
+            kind = _menu_kind(tpl)
+            if kind:
+                entry['menu_kind'] = kind
+            entry['menu_setting'] = ('integer_bitmask; 0 clears all; combine set_value bits; a token selects only that bit, not a toggle'
+                                     if kind == 'toggle_strip' else
+                                     'token_or_set_value; explicit expression object for numeric menu expressions')
         elif tpl.itemGeneratorScript():
             entry["menu_dynamic"] = True
     except (AttributeError, hou.Error):
         pass
+    conditions = {_enum_name(k): v for k, v in tpl.conditionals().items()}
+    if conditions:
+        entry['conditionals'] = conditions
     return entry
 
 

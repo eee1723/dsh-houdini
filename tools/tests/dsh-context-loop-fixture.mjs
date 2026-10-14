@@ -25,11 +25,31 @@ export function apply(ctx) {
     ? JSON.parse(fs.readFileSync(process.env.DSH_CATALOG_FIXTURE,'utf8')) : null
   // Exercise both official DSH transports only in this owned fixture scope;
   // production Houdini stays in its configured presentation mode.
-  if(catalogReceipt || process.env.DSH_REPETITION_METHOD_FIXTURE==='1')ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
+  ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
   const catalogStart = expiryStart + 4
   const repetitionMethod = process.env.DSH_REPETITION_METHOD_FIXTURE === '1'
   const repetitionStart = catalogStart + (catalogReceipt ? 6 : 0)
-  const finalStep = repetitionStart + (repetitionMethod ? 2 : 0) + 1
+  const surfaceMethod = process.env.DSH_SURFACE_METHOD_FIXTURE === '1'
+  const surfaceStart = repetitionStart + (repetitionMethod ? 2 : 0) + 1
+  const surfaceResources = [
+    ['skill','houdini-surface-workflow','houdini-surface-workflow/SKILL.md'],
+    ['read',null,'houdini-surface-workflow/references/appearance-and-sources.md'],
+    ['read',null,'houdini-surface-workflow/references/generated-textures.md'],
+    ['nested',null,'houdini-surface-workflow/references/sop-preview-and-uv.md'],
+    ['skill','houdini-cop-workflow','houdini-cop-workflow/SKILL.md'],
+    ['nested',null,'houdini-cop-workflow/references/pattern-design.md'],
+    ['skill','houdini-parameter-ui','houdini-parameter-ui/SKILL.md'],
+    ['nested',null,'houdini-parameter-ui/references/control-bindings.md'],
+    ['skill','houdini-network-handoff','houdini-network-handoff/SKILL.md'],
+    ['read',null,'houdini-network-handoff/references/network-layout.md'],
+    ['nested',null,'houdini-network-handoff/references/file-delivery.md'],
+  ].map(([kind,name,relative])=>{
+    const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
+    const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
+    return {kind,name,file,body:kind==='skill'?source.replace(/^---\n[\s\S]*?\n---\n/,'').trim():source.trim()}
+  })
+  const receiptStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
+  const finalStep = receiptStart + 5
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
@@ -39,7 +59,7 @@ export function apply(ctx) {
   const decompositionBody = fs.readFileSync(new URL('../../skills/houdini-task-decomposition/SKILL.md',import.meta.url),'utf8')
     .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
   const requests = [], bridgeCalls = [], receipts = new Map()
-  let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, failure
+  let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, busyRef, busyPolls=0, failure
   const expiredJob = 'c'.repeat(12)
   const writeReport = value => {
     fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2))
@@ -72,7 +92,8 @@ export function apply(ctx) {
       } else if (req.url === '/exec') {
         const receipt = {request_ref:body.request_ref, owner_call:body.owner_call, runtime_id:runtimeId, status:'done'}
         receipts.set(body.request_ref, receipt)
-        if (body.code === 'fixture_transport_unknown') {
+        if (body.code === 'fixture_transport_unknown' || body.code === 'fixture_busy_receipt') {
+          if(body.code==='fixture_busy_receipt')busyRef=body.request_ref
           res.writeHead(502, {'Content-Type':'application/json'})
           res.end(JSON.stringify({error:'fixture transport lost after admission'}))
           return
@@ -91,7 +112,9 @@ export function apply(ctx) {
           : observed({result:{operation:body.code},requestReceipt:receipt})
       } else if (req.url === '/requests/status') {
         assert(receipts.has(body.request_ref), 'must retrieve an original reference')
-        value = body.request_ref===expiryRef
+        value = body.request_ref===busyRef && ++busyPolls<4
+          ? {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),status:busyPolls===1?'queued':'running'}}
+          : body.request_ref===expiryRef
           ? {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
               status:'result_expired',jobId:expiredJob,job_finished:++expiryPolls>1,
               job_result_available:false,...(expiryPolls===1?{job_status:'running'}:{})}}
@@ -135,6 +158,21 @@ export function apply(ctx) {
           'the actual provider must receive each maintained persona section exactly once')
         assert(!system.includes(skillBody),'domain methods must not be eagerly duplicated in System')
         assert(!system.includes(decompositionBody),'task decomposition must remain an on-demand skill')
+        for(const resource of surfaceResources)assert(!system.includes(resource.body),'surface methods must remain on demand')
+        if(surfaceMethod){
+          assert(system.includes('houdini-surface-workflow'),'surface routing must reach the provider')
+          for(const [index,resource] of surfaceResources.entries()){
+            if(step<=surfaceStart+index)continue
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(surfaceStart+index))
+            const raw=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            const visible=raw.replaceAll('\r\n','\n')
+            // Native read is text; nested read may be JSON encoded. Preserve
+            // literal backslash-n in code examples rather than unescaping all text.
+            const missing=resource.body.split('\n').filter(line=>line.trim())
+              .find(line=>!visible.includes(line)&&!visible.includes(JSON.stringify(line).slice(1,-1)))
+            assert(!missing,`complete ${resource.kind} resource must reach the actual provider: ${resource.file}; missing: ${missing}`)
+          }
+        }
         if (step === finalStep) {
           const skillResult=options.messages.filter(message=>message.role==='tool')
             .flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n')
@@ -153,6 +191,24 @@ export function apply(ctx) {
           runtimeEventCount:runtimeEvents.length,messages:options.messages}
         requests.push(row)
         fs.writeFileSync(output+'.requests.json',JSON.stringify(requests,null,2))
+        if(step>=receiptStart+2){
+          const expected=step===receiptStart+2?'queued':'running'
+          if(step<finalStep)assert(current.includes(JSON.stringify([busyRef,expected])),
+            'latest same-runtime receipt state reaches the real provider')
+          for(let offset=1;offset<=Math.min(step-receiptStart-1,3);offset++){
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(receiptStart+offset))
+            const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            assert(visible.includes(offset===1?'not independent liveness probes':'HTTP timeout did not cancel'),
+              'native and nested receipt values deliver the queue/recovery meaning')
+          }
+          if(step===receiptStart+4)assert.equal(snapshots.length,requests[receiptStart+3].snapshotCount,
+            'repeating the same running receipt does not append a new context snapshot')
+          if(step===finalStep){
+            assert(!current.includes(busyRef),'completion retires this request without clearing unrelated facts')
+            assert.equal(bridgeCalls.filter(c=>c.path==='/exec'&&c.body.code==='fixture_busy_receipt').length,1,
+              'status recovery never resubmits the original operation')
+          }
+        }
         if (step === 1 || step === 2) {
           assert.equal(snapshots.length,requests[0].snapshotCount,'settled failure/repair must not append scene and vision again')
           const error = options.messages.find(message => message.role === 'tool' && message.toolCallId === 'context-0')
@@ -211,7 +267,7 @@ export function apply(ctx) {
           const recoveredMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(expiryStart+2))
           assert(recoveredMessage?.content.some(b=>b.type==='text'&&b.text.includes('Do not poll the missing job')),
             'the actual tool response must tell the provider not to poll or resubmit a pruned job')
-          if(step===finalStep)assert.equal(snapshots.length,requests[expiryStart+3].snapshotCount,'unrelated reads do not repeat expired-result context')
+          if(step===receiptStart)assert.equal(snapshots.length,requests[expiryStart+3].snapshotCount,'unrelated reads do not repeat expired-result context')
         }
         const currentEvents=ctx.sessions.get(options.sessionId).snapshotEvents()
         if(repetitionMethod && step>repetitionStart){
@@ -226,16 +282,32 @@ export function apply(ctx) {
         }
         if(repetitionMethod && step===finalStep){
           const events=normalizeTraceSteps(currentEvents).steps.filter(s=>s.tool==='read')
-          assert.equal(events.length,2,'native and nested on-demand reference reads both execute')
+          assert.equal(events.length,2+(surfaceMethod?surfaceResources.filter(r=>r.kind!=='skill').length:0),'native and nested on-demand reference reads both execute')
           assert(events.every(s=>!s.failed),'reference delivery cannot be inferred from configuration')
         }
         const nativeCatalog=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+catalogStart)?.data?.meta?.canonical
         if(catalogReceipt && step>catalogStart){
           assert.deepEqual(nativeCatalog.result,catalogReceipt.result,'native provider result preserves the selected catalog fields')
+          if(catalogReceipt.result.conditions){
+            const conditions=nativeCatalog.result.conditions
+            assert.deepEqual(conditions,catalogReceipt.result.conditions,'native conditionals and bit-field settings are execution facts')
+            const materialParameters=conditions.static.parameters
+            assert(materialParameters.some(p=>p.name==='elementscale'&&p.conditionals?.HideWhen),'native parameter enablement must remain visible')
+          }
           assert.deepEqual(nativeCatalog.verbs[0].result,catalogReceipt.verbs[0].result,'native canonical catalog stays typed and complete')
           const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+catalogStart)
           const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')
           assert(visible.includes('resolutiony')&&visible.includes('parameter_catalog')&&visible.includes('/verbs/0/result'))
+          if(catalogReceipt.result.conditions)assert(visible.includes('HideWhen')&&visible.includes('toggle_strip'),
+            'actual provider text retains native parameter conditions and strip semantics')
+          for(const card of Object.values(catalogReceipt.result.surface_cards??{})){
+            assert(card.usage_notes.every(note=>visible.includes(note)),
+              'actual provider receives the current Boolean/PolyBevel operation knowledge')
+          }
+          if(catalogReceipt.result.interface_observation){
+            assert(visible.includes('target_primitive_limit_exceeded')&&visible.includes('required_pairs')&&visible.includes('runtime_limits'),
+              'actual provider receives capacity reasons and execution-owned limits without a fabricated geometric failure')
+          }
           assert(!visible.includes('Full formatted result stored'),'selected catalog no longer triggers DSH spill')
           assert(visible.length<JSON.stringify(catalogReceipt.verbs[0].result).length/2,'full ledger does not undo Python selection')
         }
@@ -248,6 +320,16 @@ export function apply(ctx) {
           const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(catalogStart+1))
           const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')
           assert(visible.includes('resolutiony')&&!visible.includes('parameter_catalog'),'PTC returns only its selected value, not durable audit data')
+          if(catalogReceipt.result.conditions)assert(visible.includes('HideWhen')&&visible.includes('toggle_strip'),
+            'nested selected values retain parameter conditions and strip semantics at the actual provider')
+          for(const card of Object.values(catalogReceipt.result.surface_cards??{})){
+            assert(card.usage_notes.every(note=>visible.includes(note)),
+              'nested selected values retain complete Boolean/PolyBevel operation knowledge')
+          }
+          if(catalogReceipt.result.interface_observation){
+            assert(visible.includes('target_primitive_limit_exceeded')&&visible.includes('Increasing max_pairs cannot remove'),
+              'nested selected results preserve the supported recovery action')
+          }
         }
         if(catalogReceipt && step>catalogStart+2){
           const read=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+(catalogStart+2))?.data?.meta?.canonical
@@ -293,6 +375,15 @@ export function apply(ctx) {
             ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:methodFile})+');',description:'Read the shipped repeated-layout method through the mounted tool'}],
           ] : []),
           ['skill',{name:'houdini-task-decomposition'}],
+          ...(surfaceMethod ? surfaceResources.map(resource=>resource.kind==='skill'
+            ? ['skill',{name:resource.name}]
+            : resource.kind==='read' ? ['read',{file_path:resource.file}]
+            : ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:resource.file})+');',description:'Read the relevant surface method through the mounted tool'}]) : []),
+          ['houdini_exec',{code:'fixture_busy_receipt'}],
+          ['houdini_request',{request_ref:busyRef}],
+          ['run_code',{code:'return await tools.houdini_request('+JSON.stringify({request_ref:busyRef})+');',description:'Read the same busy request through the nested tool'}],
+          ['houdini_request',{request_ref:busyRef}],
+          ['houdini_request',{request_ref:busyRef}],
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]

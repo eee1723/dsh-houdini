@@ -21,6 +21,8 @@ layout_nodes('/obj/example', mode='handoff', boxes=['inputs', 'tool'], profile='
 
 已成框后，不对整网再调用children/flow布局打散成员。handoff处理明确叶子框，component处理支持的一层组件容器；局部改动可只指定nodes。预览按需要使用，不是强制准入。查看layout_status、重叠、containment/clearance失败与实际净距，不仅检查调用ok。
 
+后续增加子网、材质、COP或消费节点时，先读取相关已有框的成员，再把新节点加入合适的上层分组；更新一个框时保留仍有效的原成员。布局同时考虑新模块与实际消费者的位置，不只整理子网内部。材质/COP路径等隐式依赖可以没有节点连线，分组仍按用户编辑职责明确指定。孤立位置或未分组不是自动错误；对最终输出有用且需要用户继续编辑的内容，应能从交付入口找到。
+
 ## Sticky Note
 
 用`network_notes(parent)`只读现有说明；用明确name/text局部维护。新说明默认放到现有内容旁，可指定网络坐标position、size与颜色。先整理框，再加相邻说明。当前动词只支持独立Note，已在Box中的Note写前拒绝，因为现有Box恢复合同不覆盖Note成员；这不是Houdini原生能力限制。后续框布局将相邻Note作为固定障碍。

@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d54806d4ae48b470114ba6c3167d`
+Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944bc4f1308cb31c40df9ebef3f7eeb`
 
 ## 数据与设计契约
 
@@ -20,6 +20,8 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 
 ## 卡片目录
 
+- [fractalnoise](#fractalnoise)
+- [coppreviewmaterial](#coppreviewmaterial)
 - [mirror](#mirror)
 - [bend](#bend)
 - [skin](#skin)
@@ -41,6 +43,37 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 - [cam](#cam)
 - [karmarendersettings](#karmarendersettings)
 - [boolean](#boolean)
+
+## fractalnoise
+
+标识：`cop-fractal-noise-scale-mode-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/cop/fractalnoise.html)。
+
+精确类型：`fractalnoise`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`elementsize`、`elementsizetype`、`elementscale`、`percomp`、`dotiled`、`tilesize`、`amp`、`center`。
+
+### 操作与边界
+
+- Element Scale is conditional on Per-Component Controls (elementsizetype). On the tested versions this is a one-bit toggle icon strip: set_value=1 enables per-axis scaling; 0 disables it. Changing elementscale alone in uniform mode stores the value but does not change the noise. Discover the current menu_kind/set_value and conditionals, then check output response; setters do not enable modes automatically.
+- percomp controls independent noise across output channels, not spatial anisotropy. size_ref supplies dimensions/metadata, while pos supplies the sampling coordinates. Long directional structures require both an effective coordinate/scale choice and the intended surface mapping; node names or nonzero image variance are not proof.
+- Use the tile domain and pixel aspect appropriate to the image. Test direction and scale in the current layer and on a representative surface before reusing it across an asset; no fixed wood/noise recipe or universal aesthetic threshold.
+
+## coppreviewmaterial
+
+标识：`sop-surface-sources-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/coppreviewmaterial.html)。
+
+精确类型：`coppreviewmaterial`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`group`、`basecolorsource`、`constantbasecolor`、`basecolorfile`、`basecolorpath`、`tintwithcdswitch`、`roughnesssource`、`constantspecularroughness`、`roughnessfile`、`roughnesspath`。
+
+### 操作与边界
+
+- SOP geometry is input 0; Group limits primitive assignment. One entry supports constant, file and COP sources independently per channel. Pure constant surfaces need no image, COP network or UV; preserve existing user materials instead of migrating them merely for consistency.
+- Source menu tokens are file/cop/constant. basecolor and roughness are UI headings, not the writable values: constantbasecolor is the RGB tuple and constantspecularroughness is the scalar. basecolorfile/basecolorpath select file/COP input. Discover current menus and writable parameter types before setting other channels.
+- Spatial textures require suitable UVs and normal maps require matching tangent/encoding conventions. Tint With Cd multiplies base color; keep intentional tinting but avoid accidental multiplication by upstream diagnostic colors. Check the actual final SOP and viewport after upstream resizing, copying or deformation.
+- The version list covers native parameter discovery. SOP preview, file dependencies, renderer support and visual quality have separate validation scopes; consult the surface workflow and development checks.
 
 ## mirror
 
@@ -148,7 +181,7 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 
 ## polybevel
 
-标识：`bevel-selection-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html)。
+标识：`bevel-selection-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/polybevel.html)。
 
 精确类型：`polybevel::3.0`。
 已测版本：`21.0.440`、`22.0.368`。
@@ -157,11 +190,12 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 
 ### 构建前决策
 
-- `bevel_selection`：`group` + `grouptype` **或** `ignoreflatedges` + `flatangle`。Choose a typed selection or an explicit flat-edge policy. Empty group can intentionally mean all eligible edges; angle filtering alone is not a semantic part selection.
+- `bevel_selection`：`group` + `grouptype` **或** `ignoreflatedges` + `flatangle`。Choose the intended construction boundaries, using a typed group or an angle policy derived from the actual input. Empty group can intentionally mean all eligible edges; merely enabling flat-edge filtering does not select the intended boundaries.
 
 ### 操作与边界
 
-- Direct creation has empty group, grouptype=guess, ignoreflatedges=0. Maximum Normal Angle is flatangle (degrees): with ignoreflatedges=1, smaller adjacent face-normal angles are excluded. It is not a maximum angle to bevel.
+- Direct creation has empty group, grouptype=guess, ignoreflatedges=0 and flatangle=2 degrees on the tested versions. Exclusions is a parameter section; its expanded/collapsed display is not the filtering switch. With ignoreflatedges=1, adjacent face-normal angles smaller than flatangle are excluded. It is not a maximum angle to bevel.
+- Polygon segments approximating a smooth curved surface are distinct from a cap rim or an intentional hard crease. An N-sided straight cylinder has adjacent side-face angles of about 360/N degrees; if the threshold is smaller, all those longitudinal edges still qualify. Prefer construction-boundary edge groups where available, or choose a threshold between the actual unwanted and wanted angles and recheck after resolution changes. No fixed angle is a universal default.
 - For controlled hard-surface fillets, build a procedural edge group from construction boundaries/part identity and geometric criteria, then set group and grouptype=edges. Avoid persistent hard-coded edge numbers after topology changes. Explicit all-edge or point bevels remain valid intents.
 - Choose width against local feature spacing and inspect the selected edges and resulting corner geometry; nonempty output/collision options do not prove no overlap or correct detail. Increasing divisions cannot fix a wrong selection.
 - On H21.0.440, a complex network has crashed during PolyBevel viewport guide cook despite successful output cook/render/save. A simple H21/H22 GUI smoke passed. For a risky final topology, retain a bypassable source and test its actual GUI selection/guide path before claiming it stable.
@@ -395,7 +429,7 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 
 ## boolean
 
-标识：`boolean-solid-inputs-and-shading-v3`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
+标识：`boolean-solid-inputs-and-shading-v4`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/boolean.html)。
 
 精确类型：`boolean::2.0`。
 已测版本：`21.0.440`、`22.0.368`。
@@ -415,3 +449,4 @@ Schema: 2 · Cards: 21 · Source SHA-256: `85255fe74c60de2a44e7ca8380f147a2e356d
 - agroup/bgroup select INPUT primitive groups, not output names. Tag input primitives upstream and inspect groups on actual output; topology/group counts may change with parameters.
 - Boolean triangulates inputs internally, then may join triangles back into large n-gons. A cut planar face with repeated bridge points can be closed and correctly wound but shade unevenly in the viewport. When integrity inspection reports planar_repeated_point_ngons, compare the affected Boolean node's Detriangulate=Only Unchanged Polygons with the current result; do not change every Boolean by default. Keep the change only after checking the face and connected parts at representative control states.
 - If the face is geometrically flat but shades unevenly, compare a Normal SOP with vertex normals and suitable cusp/face-area weighting after the final Boolean and before placement. Explicit N changes shading, not polygon winding or solid overlap; preserve intended bevel highlights and verify the same closeup in more than one state.
+- Boolean interpolates point/vertex attributes and copies primitive attributes. Establish stable source UVs before cutting when preserving an existing pattern, and inspect new cutter-derived faces; alternatively compute UVs afterward from explicit surface regions and continuous local coordinates. Triangulation alone does not invalidate a planar mapping. Vertex-by-vertex switching between incompatible projection axes within one face produces interpolation distortion; UV ordering, surface segmentation and mapping formula are separate decisions.
