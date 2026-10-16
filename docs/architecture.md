@@ -195,6 +195,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_workbench_entry.py](../houdini/python3.11libs/dsh_workbench_entry.py) | 私有uiready启动钩子的Houdini侧接入；主线程捕获实际文件/场景，worker发布并回交同一次启动，不复制任务或凭路径认领节点 |
 | [dsh_houdini_installations.py](../houdini/python3.11libs/dsh_houdini_installations.py) | Windows安装目录/版本发现与跨Houdini子进程环境；保留用户路径与启动脚本，不通过启动Houdini来探测安装 |
 | [dsh_workbench_start.py](../houdini/python3.11libs/dsh_workbench_start.py)、[Open Workspace.cmd](../Open%20Workspace.cmd)、[open-workbench.ps1](../installer/open-workbench.ps1) | 不依赖运行中Houdini的源码/受管工作台入口；复用签名激活与单例租约。安装器创建带图标的本机快捷方式 |
+| [产品Logo原图](../assets/dsh-houdini.png)、[设计说明](../assets/dsh-houdini.prompt.txt)、[ICO编码工具](../tools/build-workbench-icon.py) | 产品标志的唯一原图与多尺寸Windows图标生成；工作台和安装器快捷方式共用派生ICO |
 | [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 源码/受管共用独立Qt主面板，高级设置并排提供运行与联网诊断入口；源码仅查看/更新说明，受管安装/同版修复/校验/回退，worker队列与取消 |
 | [dsh_ui_style.py](../houdini/python3.11libs/dsh_ui_style.py) | 原生窗口共享主题与中文确认框；由独立管理器和当前运行版本各自随包交付，避免跨版本模块依赖 |
 | [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | RSA签名/资产/全量文件校验、安全解压、OS锁、旁路安装、独立数据快照和回退；无Node/hou/Qt依赖 |

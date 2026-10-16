@@ -36,7 +36,7 @@
 
 标题和工程标识的[定向回归](../tools/tests/workbench-project.test.mjs)核对原生自动/手动标题、显式重新命名、排队消息/晚回执、未保存与同名文件。隔离工作台另核对实际Qt页头短名/完整路径、绑定后自动标题及另存不迁移其他对话；不把历史标识解释为在线状态。
 
-工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对自动绑定、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。图标使用[编码工具](../tools/build-workbench-icon.py)生成多尺寸ICO，运行时不依赖Pillow。
+工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对自动绑定、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
 
 独立工作台使用[隔离组合验收](../tools/tests/dsh-workbench.test.py)：普通Python/Qt桌面、真实DSH持久与preset、H21/H22 Bridge、同目录不同HIP、重复打开、实际浏览器选中对话及目录、工具修改/另存、单端崩溃、手动重开原工程和工作台重启保留历史。本地脚本提供方驱动实际Agent循环生成原生/嵌套回执与可冷加载日志，不调用外部模型；不证明模型自主行为或正式签名安装组合。测试的Qt调试端口仅属于该隔离进程，正常运行不主动启用。受管安装入口仍需随新版bootstrap和签名运行包单独验收。
 

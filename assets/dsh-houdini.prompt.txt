@@ -1,5 +1,9 @@
-Generated using the built-in image_gen tool with assets/deepseek-color.png as the brand reference.
+Generated and refined using the built-in image_gen tool. The user-selected PNG is the single product-logo source.
 
-Design one production Windows taskbar application icon for DSH-Houdini, combining the DeepSeek whale identity in the reference with the recognizable orange spiral/curl idea of Houdini. A single coherent playful but sophisticated compact silhouette: a confident blue whale curling into or around a bold orange spiral, not two separate logos pasted together. Flat vector-like geometry, generous negative space, crisp edges, minimal shapes, optically balanced and immediately legible at 16, 24, 32 and 48 pixels. No text, no letters, no captions, no mockup, no app-window frame, no gradients, no drop shadow, no tiny decorative detail. Square composition, symbol fills about 82 percent of the image with clean padding. Truly transparent background. A polished distinctive two-colour blue-and-orange mark suited to both dark and light Windows taskbars.
+Design: a complete graphite-black origami whale facing left, with a broad faceted head, a small cyan eye, two angular gray flippers and a raised orange double-fluke tail. Preserve the whole whale silhouette, with a broader torso and a compact composition that fills most of the square canvas. Large black/slate triangular planes give the body depth. The whale remains the dominant subject.
+
+A complete open angular Houdini-inspired spiral sits behind the whale, formed from medium-weight orange connectors and round orange control points. Solid orange centers and deep burnt-orange edge definition make the points and lines readable on light backgrounds. Keep the open spiral shape, crisp connectors and flat orange point cores. Avoid yellow/white lightbulb centers, large halos and faint pale hairlines.
+
+The taskbar/product PNG uses a truly transparent background. Preserve the complete dark whale and its gray facets, orange tail and bold point-line spiral. Empty exterior and gaps are transparent, without a dark rectangular matte. Icon encoding preserves this foreground and alpha channel. No text, number, watermark or surrounding UI.
 
 The PNG is the selected artwork. tools/build-workbench-icon.py encodes the Windows ICO at 16, 20, 24, 32, 40, 48, 64, 128 and 256 pixels without changing the artwork.

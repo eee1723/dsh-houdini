@@ -1,5 +1,7 @@
 # dsh-houdini
 
+<img src="assets/dsh-houdini.png" alt="DSH-Houdini Logo" width="160">
+
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)的Houdini插件，提供场景读取、节点操作、执行记录和领域资料。目标是帮助用户在真实Houdini中做出可编辑、能继续修改的工程与工具。
 
 插件仍在完善，复杂任务的稳定性、成品质量和后续修改效果需要继续验证。试用时建议先在练习工程里做容易检查的小任务，按实际结果判断哪些部分有帮助。
