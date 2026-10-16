@@ -1,19 +1,13 @@
 """Launcher and runtime-refresh paths for dsh-houdini.
 
-``open_workspace()`` is the normal menu action. It preserves a healthy DSH
-frontend and current browser session, starts only missing services, and brings
-the embedded UI forward.
+``open_workspace()`` registers this Houdini with the independent workbench and
+opens its exact native DSH conversation. Desktop/Host lifetime is not owned by
+this Houdini. ``launch()`` repairs the current Bridge when already registered,
+or opens the workbench when nothing is running. It never replaces another
+Houdini's Host. Reloading Host code requires closing/reopening the workbench.
 
-``launch()`` is the explicit repair/development path used by the diagnostics
-panel. It restarts the in-process Houdini bridge, restarts
-the DSH frontend, waits until :3081 and Host RPC are ready, then opens the current
-``$HIP`` workspace. The native client owns session selection and archive state.
-Use it after ``npm run build``, Houdini-side Python changes, or when
-the runtime/workspace needs repair; it intentionally replaces the frontend.
-
-The frontend boots the `web` profile WITHOUT a patch overlay; the `houdini`
-agent preset mounts dsh-houdini (by package name, after
-`dsh plugin --profile web add E:/dsh-houdini`).
+The embedded startup helpers remain for explicit legacy-runtime repair and
+isolated compatibility checks; they are not the normal Open Workspace route.
 
 Use it from Houdini's Python Shell (after installing the package):
 
@@ -109,7 +103,7 @@ _MANAGED = dsh_managed_runtime.context(_PROJECT_ROOT)
 if _MANAGED:
     NODE = os.path.join(_MANAGED["install"], "node", "node.exe")
     FRONTEND_PORT = _MANAGED["frontendPort"]
-    BRIDGE_PORT = _MANAGED["bridgePort"]
+    BRIDGE_PORT = _MANAGED.get("bridgePort", 0)
     FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
     FRONTEND_LOG = os.path.join(_MANAGED["runtimeDir"], "frontend.log")
     FRONTEND_RUNTIME_STATE = os.path.join(_MANAGED["runtimeDir"], "runtime.json")
@@ -294,9 +288,12 @@ def _frontend_online() -> bool:
     pid = _port_pid(FRONTEND_PORT)
     if not dsh_managed_runtime.owns_pid(pid):
         raise RuntimeError(
-            f"frontend port conflict on {FRONTEND_URL}: listener PID {pid or 'unknown'} "
-            "is not owned by this Houdini. No external process was stopped; "
-            "close it from its owning application or choose an isolated installation."
+            ("插件的工作区地址已有服务，但未能确认它属于哪个窗口，当前窗口暂不接管。\n" if pid is None else
+             "插件的工作区地址正被另一个进程使用，当前窗口不能接管它。\n")
+            +
+            "如果另一个 Houdini 已打开插件，请在那里继续；若要切换，先保存并正常退出那个 Houdini，再重试 Open Workspace。"
+            "仅关闭插件面板不会释放占用。无法确认占用者时，请把技术详情交给开发者。\n技术信息："
+            f"frontend port conflict on {FRONTEND_URL}: listener PID {pid or 'unknown'} is not owned by this Houdini."
         )
     return True
 
@@ -341,6 +338,7 @@ def restart_bridge(*, port=None) -> str:
         'dsh_execution_results',
         'dsh_package_discovery',
         'dsh_geometry_observation',
+        'dsh_bgeo_fingerprint',
         'dsh_image_pixels',
         'dsh_network_layout',
         'dsh_operation_cards',
@@ -763,6 +761,7 @@ DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refr
 _PENDING: dict = globals().get("_PENDING", {})
 _MAIN_DISPATCHES: list = globals().get("_MAIN_DISPATCHES", [])
 _SERVICE_PREFLIGHT_ACTIVE = globals().get("_SERVICE_PREFLIGHT_ACTIVE", False)
+_LAST_STARTUP_FAILURE = globals().get('_LAST_STARTUP_FAILURE')
 try:
     _ACTIVE_STARTUP
 except NameError:
@@ -815,9 +814,12 @@ def _service_preflight(*, force_frontend=False) -> dict:
     bridge_pid = _port_pid(BRIDGE_PORT) if bridge_online else None
     if bridge_online and bridge_pid != os.getpid():
         raise RuntimeError(
-            f"bridge port conflict on {BRIDGE_HOST}:{BRIDGE_PORT}: listener PID {bridge_pid or 'unknown'} "
-            "is not this Houdini process. No external process was stopped; "
-            "close it from its owning application or choose an isolated installation."
+            ("Houdini 的连接地址已有服务，但未能确认它属于哪个窗口，当前窗口暂不连接。\n" if bridge_pid is None else
+             "Houdini 的连接地址正被另一个进程使用，当前窗口尚未连接插件。\n")
+            +
+            "如果另一个 Houdini 已打开插件，请在那里继续；若要切换，先保存并正常退出那个 Houdini，再重试 Open Workspace。"
+            "仅关闭插件面板不会释放占用。无法确认占用者时，请把技术详情交给开发者。\n技术信息："
+            f"bridge port conflict on {BRIDGE_HOST}:{BRIDGE_PORT}: listener PID {bridge_pid or 'unknown'} is not this Houdini process."
         )
     if force_frontend:
         if bridge_online:
@@ -835,7 +837,10 @@ def _service_preflight(*, force_frontend=False) -> dict:
 
 def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
     """Run blocking listener/process checks off-GUI, then invoke callback on main."""
-    global _SERVICE_PREFLIGHT_ACTIVE
+    global _SERVICE_PREFLIGHT_ACTIVE, _LAST_STARTUP_FAILURE
+    from dsh_ui_style import clear_startup_problem
+    clear_startup_problem()
+    _LAST_STARTUP_FAILURE = None
     if _ACTIVE_STARTUP is not None:
         _ACTIVE_STARTUP['frontend_cwd'] = _hip_dir()
         dialog = _PENDING.get('dialog')
@@ -876,8 +881,8 @@ def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
     def worker() -> None:
         try:
             state["result"] = preflight()
-        except Exception:
-            state["error"] = traceback.format_exc()
+        except Exception as error:
+            state["error"] = str(error) + '\n技术信息：' + traceback.format_exc()
         finally:
             state["done"] = True
 
@@ -904,6 +909,20 @@ def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
 def _report(detail: str) -> None:
     """最终状态只输出到 Houdini 控制台（右下角），不再弹模态窗口。"""
     print("[dsh-houdini] " + detail.replace("\n", "; "))
+
+
+def _startup_failure(error):
+    global _PROBLEM_WINDOW, _LAST_STARTUP_FAILURE
+    detail = str(error)
+    _LAST_STARTUP_FAILURE = detail
+    _report('service preflight failed: ' + detail)
+    if not hou.isUIAvailable():
+        return
+    from dsh_ui_style import show_startup_problem
+    message = detail.split('\n技术信息：', 1)[0]
+    if message.startswith('Traceback'):
+        message = '工作区暂时无法启动。可以查看技术详情，并通过「报告问题」把运行记录交给开发者。'
+    _PROBLEM_WINDOW = show_startup_problem(message, detail, hou.qt.mainWindow())
 
 
 def _set_startup_state(
@@ -1233,7 +1252,7 @@ def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
     timer.start(DIALOG_TICK_MS)
 
 
-def launch(*, force_frontend=False) -> None:
+def repair_current_runtime(*, force_frontend=False) -> None:
     """Restart the bridge, then restart the frontend and open the UI when ready.
 
     The frontend restart/poll happens on a worker thread inside
@@ -1244,11 +1263,16 @@ def launch(*, force_frontend=False) -> None:
     """
     from dsh_executor_registry import is_shared_executor
     if is_shared_executor():
+        from dsh_executor_registry import active_registration
+        if active_registration().workbench:
+            from dsh_shared_executor import show_registration
+            show_registration(repair=True)
+            return
         _report('当前为共享执行端。请使用 Version & Updates... > 高级设置 > 修复共享连接；重启共享 DSH 服务会影响所有任务，须单独操作。')
         return
     def after_preflight(preflight: dict | None, error: str | None) -> None:
         if error:
-            _report("service preflight failed: " + error.splitlines()[-1])
+            _startup_failure(error)
             return
         detail = restart_bridge()
         print("[dsh-houdini] " + detail.replace("\n", "; "))
@@ -1260,7 +1284,7 @@ def launch(*, force_frontend=False) -> None:
         _dispatch_service_preflight(after_preflight)
 
 
-def open_workspace() -> None:
+def open_embedded_workspace() -> None:
     """Open the embedded workspace without restarting a healthy frontend.
 
     If the web service is absent, fall back to the full launch path. Keeping
@@ -1273,7 +1297,7 @@ def open_workspace() -> None:
         return
     def after_preflight(preflight: dict | None, error: str | None) -> None:
         if error:
-            _report("service preflight failed: " + error.splitlines()[-1])
+            _startup_failure(error)
             return
         # Preflight performs slow port/process checks. The user can switch HIP
         # while it runs, so read the actual scene again on this GUI callback.
@@ -1298,6 +1322,21 @@ def open_workspace() -> None:
         _report("\n".join(details))
 
     _dispatch_service_preflight(after_preflight)
+
+
+def open_workspace() -> None:
+    from dsh_workbench_client import open_workspace as open_desktop
+    try:
+        open_desktop(sys.modules[__name__])
+    except Exception as error:
+        _startup_failure(str(error))
+
+
+def launch(*, force_frontend=False) -> None:
+    from dsh_executor_registry import is_shared_executor
+    if is_shared_executor() or dsh_managed_runtime.has_owned_frontend():
+        return repair_current_runtime(force_frontend=force_frontend)
+    return open_workspace()
 
 
 if __name__ == "__main__":

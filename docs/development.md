@@ -24,11 +24,23 @@
 | 执行与恢复事实 | Houdini 实际执行/结果模块 | [执行契约](execution-contract.md)；Host 和前端消费 Bridge 回执 |
 | 领域方法 | 对应 [skills](../skills/) 的入口和 references | 按需知识；docs 链接原文，不重复 recipe |
 | Trace 解析与展示 | [Trace 设计](houdini-trace-design.md)、client/ | 使用真实请求和工具记录；按需加载诊断 |
+| 故障报告 | [诊断包合同](support-reports.md)、DSH原生会话读取、唯一Python收集器 | 精确会话/竞态、脱敏/恶意ZIP、H21/H22 Qt下载及真实DSH组合；不把诊断采集当作现场恢复 |
+| 连接与占用反馈 | [接续边界](multi-instance.md#单实例保存点恢复)、[接续诊断](../src/connection-status.ts) | [只读/身份回归](../tools/tests/connection-status.test.mjs)、[前端可见边界](../tools/tests/executor-picker.test.mjs)、[双进程锁](../tools/tests/dsh-runtime-occupancy.test.py) |
 | 开发评测 | [评测原则](product-modeling-evaluation.md)、evaluation/、tools/ | 公开题面与评审答案隔离；生产面不读取评审材料 |
+
+普通聊天区不增加常驻连接提示或检查按钮；[DSH报告组合](../tools/tests/run-support-dsh.py)同时核对切换会话后没有此类额外UI。真实场景恢复使用[dsh-scene-recovery.test.py](../tools/tests/dsh-scene-recovery.test.py)的隔离H21/H22入口。[原生启动提示](../tools/tests/run-support-qt.py)增加`--startup-feedback`，核对占用者说明、重试清除及报告取得当前启动原因；窗口测试使用受控启动输入，不代替正式安装包的双Houdini菜单验收。
 
 新增长期生产模块必须加入架构代码地图。新增文档必须加入索引，说明它的职责及源码、验证入口。
 
 ## 构建与生成
+
+标题和工程标识的[定向回归](../tools/tests/workbench-project.test.mjs)核对原生自动/手动标题、显式重新命名、排队消息/晚回执、未保存与同名文件。隔离工作台另核对实际Qt页头短名/完整路径、绑定后自动标题及另存不迁移其他对话；不把历史标识解释为在线状态。
+
+工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对自动绑定、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。图标使用[编码工具](../tools/build-workbench-icon.py)生成多尺寸ICO，运行时不依赖Pillow。
+
+独立工作台使用[隔离组合验收](../tools/tests/dsh-workbench.test.py)：普通Python/Qt桌面、真实DSH持久与preset、H21/H22 Bridge、同目录不同HIP、重复打开、实际浏览器选中对话及目录、工具修改/另存、单端崩溃、手动重开原工程和工作台重启保留历史。本地脚本提供方驱动实际Agent循环生成原生/嵌套回执与可冷加载日志，不调用外部模型；不证明模型自主行为或正式签名安装组合。测试的Qt调试端口仅属于该隔离进程，正常运行不主动启用。受管安装入口仍需随新版bootstrap和签名运行包单独验收。
+
+[原生菜单调用链](../tools/tests/dsh-workbench-menu.test.py)接受一个houdini.exe路径，使用全新偏好中的uiready调用真实Open Workspace入口，核对空白工程、实际Qt选中会话和正常退出Houdini后桌面存活，不替代物理菜单点击或签名安装验证。[写入反例](../tools/tests/dsh-workbench-registry.test.py)覆盖占用目标、保存失败、文件身份/硬链接、发布失败保留租约和旧场景选择。既有[执行回归](../tools/run-deployment-tests.py)支持重复传入`--suite`选择受影响检查，保持偏好与恢复材料隔离。
 
 ```powershell
 npm install
@@ -88,9 +100,13 @@ npm test
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
-任务拆分与完整源组件的方法改动，先用[skill审计](../skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs)、preset组合与下述`--context-loop`验证注册、资料路由和实际模型输入。自然采用另用同模型、同要求的独立工程对照：观察源组件的局部检查是否影响后续构建，再执行换源、改布局、局部细化或共享尺寸变化，检查最终消费者与修改范围；用另一类任务验证领域外适用性。保留质量、返工及计算成本的实际证据，不按节点数、截图数或技能关键词评分。受控模型能取到技能不证明自主分治或质量提升，过程产物留会话/临时目录。
+[图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP图片。它在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。受控响应不证明真实模型识图或token费用下降；比较像素和编码字节时分别记录格式变化，不把较小分辨率当成较小传输。记录实际Node/DSH/运行修复身份，标准preset通过不扩大为Houdini preset、GUI或正式发行验证。实际模型的预算对照仍沿下述授权试验入口。
+
+任务拆分与完整源组件的方法改动，先用[skill审计](../skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs)、preset组合与下述`--context-loop`验证注册、资料路由和实际模型输入。自然采用另用同模型、同要求、同预算的独立工程对照：观察源组件的局部检查是否影响后续构建，再执行换源、改布局、局部细化或共享尺寸变化，检查最终消费者与修改范围；用另一类任务验证领域外适用性。源本来应为Box、共享连续表面和先代理后细化都是合法反例，不按节点数、截图数或技能关键词评分。审查需包含能推翻自报成功的情况，例如实际开口被封堵但模板未变、同包围范围的错误形状和局部遮挡；模板或生成公式通过不能升级为最终实体关系通过。trace的原生图片与显式读图记录通过nextToolStep定位观察返回后提交的下一动作，引用原时间线而不推断修改、因果或成功；并发中先提交后返回的动作不算后续决策。受控模型能取到技能不证明自主分治或质量提升，保留质量、返工及计算成本的实际证据，过程产物留会话/临时目录。
 
 执行模块重构保持公开动词签名与结果合同；节点归属回归同时核对不可变快照、嵌套创建记录和作者作用域恢复，execution-runtime核对请求图片隔离及组件快照。HDA界面回归将故障注入实际实现模块，验证修复重载后公开导出与执行分派使用新函数，不能只改facade上的别名来模拟下游失败。真实GUI捕获夹具只调整自有临时窗口的显示顺序，不放宽生产捕获的遮挡/屏内要求。
+
+默认能力还需验证实际组合。[HDA生命周期](../tools/tests/dsh-hda-lifecycle.test.py)在H21/H22将原生COP预览与普通源共同封装，核对公共参数、新实例几何、保存/锁定/解锁、失败Undo和完整内部identity；锁定嵌套定义不计作者工作量，但解锁内部后仍受同一工作量边界约束。foreign实例或后代不因组合测试获得豁免。这类检查不证明预览图像外观或任意大型HDA兼容。
 
 原生USD退出问题用[reproduce-usd-exit](../tools/reproduce-usd-exit.py)在指定`--hython`中运行独立的导入、内存stage和LOP对照，可重复传版本路径并用`--repeat`检查复现率。每次使用新偏好/package目录和明确HFS，不加载用户HIP或DSH插件；保留脚本主体完成标记、真实退出码与stdout/stderr。主体完成但进程非零退出仍属异常；相同退出码不能证明同一根因，headless结果不能外推GUI行为。证据写到新临时目录，不修改系统崩溃报告或用户配置。
 
@@ -105,6 +121,8 @@ SOP表面入口使用[dsh-sop-surface](../tools/tests/dsh-sop-surface.test.py)�
 复杂表面使用[dsh-surface-textures](../tools/tests/dsh-surface-textures.test.py)：`python tools/tests/dsh-surface-textures.test.py --houdini <明确houdini.exe> --output <新建仓库外目录> [--texture <已生成PNG>]`。隔离GUI覆盖共享图案的底色/粗糙度/高度与法线、图案编辑、圆柱vertex UV的物理尺度、File COP及混合图层、用户视窗与同版本独立重开。默认只使用程序生成文件；可传外部生图结果，脚本不调用收费模型。像素变化只证明消费或参数响应，重复边界、法线方向与外观仍须看实际图；文件输入通过不等于任意生图服务或Karma通过。
 
 参数模式与条件使用[dsh-parameter-conditions](../tools/tests/dsh-parameter-conditions.test.py)在隔离H21/H22核对原生toggle/exclusive条的存储值、合法组合、非法值、归属和回滚，以及COP逐轴尺度在关闭/开启模式时的真实图层响应。参数目录的conditionals、menu_kind与set_value经过[目录回归](../tools/tests/dsh-parameter-catalog.test.py)保存实际回执；以`DSH_CATALOG_FIXTURE_OUT=<外部JSON>`导出，再用dsh-host-smoke的`--context-loop --catalog-fixture <JSON>`核对真实DSH原生/嵌套消费。几何表面方法的反例应区分全局UV范围与各目标面映射、部件单独正确与装配关系正确；自然任务验证不以技能读取或全局包络响应代替这些性质。
+
+HDA回执呈现使用H21/H22的[dsh-hda-lifecycle](../tools/tests/dsh-hda-lifecycle.test.py)，以`DSH_HDA_PRESENTATION_FIXTURE=<外部JSON>`导出真实锁定预览；再运行dsh-host-smoke的`--context-loop --hda-fixture <JSON>`，核对原生文本、嵌套选择结果、完整归档及provider实际取得的可编辑范围。目录清单摘要不改变丢弃或归属范围，旧回执不能补造范围。任务持续推进与阶段反馈由persona维护，领域知识按当前决策加载；上下文夹具证明送达，行为收益另用有效provider/模型/推理档、API路线、参考输入和预算相匹配的新任务验证。相同模型名、更多反馈文字或更少调用都不能单独证明效率和质量提升。
 
 UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-construction.test.py)在隔离H21/H22核对：矩形面板开孔前传递UV、开孔后连续映射、切割体新增面的来源和UV、顶点硬切投影轴反例，以及尺寸/切割位置变化后的固定纹理密度。它不认证任意曲面展开或审美效果。PolyBevel用[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)对照不同圆柱分段数、默认小角度与按几何选边；组件消费者用[输出回归](../tools/tests/dsh-output-publication.test.py)对照清理支路被绕过和正确重连后的实际属性/警告。Boolean/PolyBevel节点卡由上述目录回执一起送到真实DSH，表面方法继续沿`--surface-method`验证按需资料读取；无须新建生产验证框架或固定建模顺序。
 
@@ -155,7 +173,13 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 ## 隔离开发工具
 
+模型对照用run-modeling-trial的`--reasoning-effort`与统一的`--max-output-tokens`固定请求参数；自定义PI模型确需声明能力时，另显式传`--reasoning-wire-value`，只改隔离副本。开始模型请求前核对原生resolveModelInfo的实际defaultEffort。缺推理声明不等于后端没有推理：适配器可能只省略推理参数，不能从模型名称补造能力。回环HTTP测试[dsh-image-consumption-fixture](../tools/tests/dsh-image-consumption-fixture.mjs)核对真实reasoning_effort、附件身份及请求变体；实际模型语义另验。`--smoke --scripted-smoke --smoke-continuity --followup <文件>`通过真实DSH和Houdini跑两轮同网络创建/修改，模型流完全本地拦截；[共享连接反例](../tools/tests/dsh-shared-continuity.test.py)保留其他执行端/工程及跨进程动作拒绝。
+
+源码文件同步复用[参数补丁回归](../tools/tests/dsh-parameter-patch.test.py)，核对UTF-8原文、完整source写入、相同内容不写、过期hash整批零写入及原有恢复。大型控制回执可由dsh-scoped-observation导出`DSH_HDA_PRESENTATION_FIXTURE`到诊断目录，再用dsh-host-smoke的`--context-loop --geometry-fixture <回执>`验证实际provider取得geometry_scope、完整恢复证据及原生/嵌套一致性；导出变量只用于测试夹具，不是生产状态。
+
 [hda-delivery-check.py](../tools/hda-delivery-check.py)在新 hython 中加载声明 HDA，按 manifest 创建实例、设置参数、调用按钮并检查几何/参数/错误。判据应能区分正确与错误结果，例如尺寸控制检查 bounds_size，而非只有点面数。
+
+传 `--output` 时完整报告写入指定文件，stdout 保留每个用例的结果、实测量、错误和进程状态；原生内部节点清单改为计数及报告内 JSON Pointer，并返回文件路径/hash/字节数。未指定输出文件时保留完整 stdout。不要将输出丢到 `Out-Null` 后只看退出码，也不要把新实例求值和包围尺寸通过当成部件关系或成品质量通过。[报告呈现回归](../tools/tests/dsh-hda-report.test.py)覆盖大清单中后部失败、未知诊断和归档失败；[实际CLI回归](../tools/tests/dsh-delivery-geometry.test.py)在隔离H21/H22对照 stdout 与磁盘报告及正确/错误几何判据。
 
 原库版本维护用[HDA版本机制回归](../tools/tests/dsh-hda-versions.test.py)覆盖多定义保留、同库追加、参数/关键帧/表达式/锁定/连线、失败恢复和权限；[DSH版本维护贯通](../tools/tests/dsh-hda-version-smoke.test.py)以`--runtime-cache <精确DSH缓存> --hython <目标hython>`启动隔离真实Bridge和DSH会话，核对普通/嵌套调用的回执、会话/现场身份、新旧定义行为及下一进程Package发现。规划模型为受控夹具；这些检查不证明用户GUI版本菜单、任意回调或自然任务自主采用。
 
@@ -165,7 +189,9 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json
 ```
 
-[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在新场景执行可信 builder，经 Bridge 完成明确 cook/cache/ROP 检查。manifest 指定 script 和 checks；`--trusted` 表示调用方授权执行该脚本。产物目录是仓库外的新目录，报告保留实际执行与文件证据。
+[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在独立进程执行可信builder或明确保存HIP的副本，经Bridge完成cook/cache/ROP检查。manifest在script与hip中二选一，files保留声明依赖的相对结构，checks指定实际输出；`--trusted`沿用户授权的工程/代码计算范围，不是未知HIP的沙箱。产物目录是仓库外的新目录，report.json与worker-result.json保留来源hash、实际执行、部分进度和产物。`--status --output-dir <run>`只读最后记录，不当作进程存活；`--cancel --output-dir <run>`请求停止该run自有进程树，不启动或重试任务。默认取消文件在run内，原输入保持核对，未保存现场和未声明外部依赖不包含在快照证明中。
+
+[快照回归](../tools/tests/dsh-snapshot-worker.test.py)在H21/H22核对真实图像/ROP、来源不变、缺输出、启动前/运行中取消；[输入回归](../tools/tests/dsh-isolated-manifest.test.py)覆盖状态身份和不完整回执。大型最终输出的[选择回归](../tools/tests/dsh-scoped-observation.test.py)使用百万面背景与明确目标组，验证正例、错尺寸、无组拒绝和未选部件漂移。整件恢复使用[流式BJSON指纹](../houdini/python3.11libs/dsh_bgeo_fingerprint.py)，按本机SideFX `UT_JSONDefines.h`读取；[指纹反例](../tools/tests/dsh-bgeo-fingerprint.test.py)验证写入时间可变化，但与日期共用字符串token的用户属性仍不能被忽略。大型流指纹不承诺任意编码/属性表布局变更等价；无法建立相同完整内容时保留恢复未确认。
 
 ```powershell
 python tools/isolated-houdini-check.py --trusted --manifest path/to/check.json --hython D:/houdini/bin/hython.exe --output-dir D:/checks/run-001 --timeout 120 --memory-mb 4096

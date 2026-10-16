@@ -46,6 +46,23 @@ export function apply(ctx){
     requests.push({sessionId:options.sessionId,purpose:options.purpose??null,
       provider:options.provider,model:options.model,messages:options.messages});
     fs.writeFileSync(output,JSON.stringify({networkRequests:0,requests},null,2));
+    if(process.env.DSH_MODELING_TRIAL_CONTINUITY&&!options.purpose){
+      const texts=options.messages.flatMap(m=>m.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+      if(texts.includes('The requested Houdini project is unavailable.'))throw Error('Healthy same-executor continuation was blocked');
+      const phase=options.messages.filter(m=>m.role==='user'&&m.source?.kind==='user').length>=2?2:1;
+      const id='continuity-'+phase;
+      const done=options.messages.find(m=>m.role==='tool'&&m.toolCallId===id);
+      if(done){
+        const actual=ctx.agents.get(options.sessionId).session.snapshotEvents().findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical;
+        if(!actual?.ok||Math.abs(actual.result.width-phase)>1e-6)throw Error('Actual same-network width did not match the phase');
+      }else{
+        const code=(phase===1?"g=tab_create('/obj','geo','continuity_fixture'); n=tab_create(g,'box','OUT')\n":"set_parms('/obj/continuity_fixture/OUT',{'sizex':2})\n")
+          +"__result__={'width':hou.node('/obj/continuity_fixture/OUT').geometry().boundingBox().sizevec()[0]}\nscene_save(expected_path="+JSON.stringify(process.env.DSH_MODELING_TRIAL_CONTINUITY)+")";
+        yield {type:'block-start',index:0,blockType:'tool-call'};
+        yield {type:'block-end',index:0,block:{type:'tool-call',id,name:'houdini_exec',arguments:JSON.stringify({code})}};
+        yield {type:'finish',reason:{kind:'tool-calls'}};return;
+      }
+    }
     if(delivery&&!options.purpose){
       const events=ctx.agents.get(options.sessionId).session.snapshotEvents();
       const block=nextDeliveryCall(options.messages,events,delivery);

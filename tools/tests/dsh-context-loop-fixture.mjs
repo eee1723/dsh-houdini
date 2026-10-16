@@ -23,6 +23,10 @@ export function apply(ctx) {
   const expiryStart = outcomeReceipts ? 12 : 10
   const catalogReceipt = process.env.DSH_CATALOG_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_CATALOG_FIXTURE,'utf8')) : null
+  const hdaReceipt = process.env.DSH_HDA_PRESENTATION_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.DSH_HDA_PRESENTATION_FIXTURE,'utf8')) : null
+  const geometryReceipt = process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE,'utf8')) : null
   // Exercise both official DSH transports only in this owned fixture scope;
   // production Houdini stays in its configured presentation mode.
   ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
@@ -48,7 +52,9 @@ export function apply(ctx) {
     const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
     return {kind,name,file,body:kind==='skill'?source.replace(/^---\n[\s\S]*?\n---\n/,'').trim():source.trim()}
   })
-  const receiptStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
+  const geometryStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
+  const hdaStart = geometryStart + (geometryReceipt ? 2 : 0)
+  const receiptStart = hdaStart + (hdaReceipt ? 2 : 0)
   const finalStep = receiptStart + 5
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
@@ -98,7 +104,11 @@ export function apply(ctx) {
           res.end(JSON.stringify({error:'fixture transport lost after admission'}))
           return
         }
-        value = catalogReceipt && body.code === 'fixture_catalog'
+        value = geometryReceipt && body.code === 'fixture_geometry'
+          ? observed({...geometryReceipt,requestReceipt:receipt})
+          : hdaReceipt && body.code === 'fixture_hda'
+          ? observed({...hdaReceipt,requestReceipt:receipt})
+          : catalogReceipt && body.code === 'fixture_catalog'
           ? observed({...catalogReceipt,requestReceipt:receipt})
           : outcomeReceipts && body.code.startsWith('fixture_outcome_')
           ? observed({...outcomeReceipts[body.code.slice('fixture_outcome_'.length)],requestReceipt:receipt})
@@ -181,6 +191,35 @@ export function apply(ctx) {
         }
         const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
           .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
+        if(geometryReceipt && step>geometryStart){
+          for(let offset=0;offset<Math.min(2,step-geometryStart);offset++){
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(geometryStart+offset))
+            const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            for(const fact of ['selected_final_primitives','geometry_scope','full_output',geometryReceipt.result.results[0].geometry_restore.full_output.baseline.sha256])assert(visible.includes(fact),fact);
+          }
+          const canonical=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+geometryStart)?.data?.meta?.canonical
+          assert.deepEqual(canonical?.result,geometryReceipt.result,'final-output selection and whole-output restoration stay canonical')
+        }
+        if(hdaReceipt && step>hdaStart){
+          for(let offset=0;offset<Math.min(2,step-hdaStart);offset++){
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(hdaStart+offset))
+            const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            assert(visible.length<22000,'native and nested HDA results must reach the provider without a giant native inventory')
+            for(const fact of [offset===0?'definition_rebuild_descendants':'editable_discarded_descendants',hdaReceipt.result.plan_sha256])assert(visible.includes(fact),fact)
+            for(const [node] of hdaReceipt.result.editable_discarded_descendants)assert(visible.includes(node),'editable discard target stays visible')
+          }
+          const native=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'
+            && e.data?.message?.source?.callId==='context-'+hdaStart)?.data?.meta?.canonical
+          assert(native?.details?.stored,'full native receipt must be retained before projection')
+          const archive=fs.readFileSync(native.details.path)
+          assert.equal(createHash('sha256').update(archive).digest('hex'),native.details.sha256)
+          assert.deepEqual(JSON.parse(archive).result,hdaReceipt.result,'HDA scope and identity facts survive archival')
+          if(step>hdaStart+1){
+            const nested=ctx.sessions.get(options.sessionId).snapshotEvents().filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec').at(-1)
+            const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+            assert.deepEqual(canonical?.result,hdaReceipt.result,'nested execution retains the same complete HDA facts')
+          }
+        }
         const current = snapshots.at(-1)
         assert(current, 'provider must receive the real scene context')
         assert(current.includes('Houdini image input capability'), 'provider must receive image capability')
@@ -379,6 +418,14 @@ export function apply(ctx) {
             ? ['skill',{name:resource.name}]
             : resource.kind==='read' ? ['read',{file_path:resource.file}]
             : ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:resource.file})+');',description:'Read the relevant surface method through the mounted tool'}]) : []),
+          ...(geometryReceipt ? [
+            ['houdini_exec',{code:'fixture_geometry'}],
+            ['run_code',{code:'const v=await tools.houdini_exec({code:"fixture_geometry"}); return {control_summary:v.result.control_summary,geometry_scope:v.result.geometry_scope,restored:v.result.restored,full_output:v.result.results[0].geometry_restore.full_output};',description:'Read exact selection and complete restoration evidence'}],
+          ] : []),
+          ...(hdaReceipt ? [
+            ['houdini_exec',{code:'fixture_hda'}],
+            ['run_code',{code:'const v=await tools.houdini_exec({code:"fixture_hda"}); const r=v.result; return {node:r.node, plan_sha256:r.plan_sha256, applied:r.applied, affected_instances:r.affected_instances, descendant_count:r.descendant_count, editable_discarded_descendants:r.editable_discarded_descendants, details:v.details};',description:'Select the HDA lifecycle plan through the nested tool; canonical details stay complete'}],
+          ] : []),
           ['houdini_exec',{code:'fixture_busy_receipt'}],
           ['houdini_request',{request_ref:busyRef}],
           ['run_code',{code:'return await tools.houdini_request('+JSON.stringify({request_ref:busyRef})+');',description:'Read the same busy request through the nested tool'}],

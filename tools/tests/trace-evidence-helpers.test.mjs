@@ -750,3 +750,50 @@ for(const conclusion of ['右侧支架明显脱离主体。','右侧支架与主
   assert.equal(comparison.finalStatement.text,finalVisual[0].text);
   assert.equal(comparison.verdict,'requires_semantic_review','semantic contradictions must remain explicit review material, not a lexical pass/fail');
 }
+
+// Image-only observation followed directly by a tool call has no narrative
+// correction. Preserve a pointer to the actual next call for manual review.
+// Result order alone is insufficient when calls overlap or are nested.
+const feedbackImage={...inspect,index:1,time:200,resultSeq:20,callSeq:18};
+const pendingBeforeImage={index:2,time:210,callTime:190,callSeq:19,resultSeq:21,
+  tool:'houdini_exec',code:"set_parms('old_pending', {'value': 1})",verbs:[]};
+const laterReadReturnsFirst={index:3,time:250,callTime:230,callSeq:23,resultSeq:24,
+  tool:'houdini_inspect',code:'__result__=scene_info()',verbs:[]};
+const actualNextCall={index:4,time:300,callTime:220,callSeq:22,resultSeq:26,
+  tool:'houdini_exec',code:"set_parms('SUPPORT_PROFILE', {'curve': 0.8})",verbs:[],
+  failed:true,transaction:{status:'rolled_back'}};
+const feedbackSteps=[feedbackImage,pendingBeforeImage,laterReadReturnsFirst,actualNextCall];
+const preservedSteps=structuredClone(feedbackSteps);
+const feedbackReview=collectQualityLoopEvidence({steps:feedbackSteps}).manualReview.visualComparison;
+assert.deepEqual(feedbackReview.inspections[0].followingAssistant,[]);
+assert.deepEqual(feedbackReview.inspections[0].nextToolStep,
+  {index:4,tool:'houdini_exec',orderEvidence:'call_seq_after_observation_result'},
+  'the next submitted call can return after another later call; pending earlier calls are not follow-ups');
+assert.deepEqual(feedbackSteps,preservedSteps,'follow-up references never rewrite failure, rollback or original execution facts');
+assert.equal(feedbackReview.verdict,'requires_semantic_review','a correction command is not a corrected model');
+const metadataFirst={...actualNextCall,tool:'houdini_inspect',code:'__result__=scene_info()'};
+assert.equal(collectQualityLoopEvidence({steps:[feedbackImage,metadataFirst]}).manualReview.visualComparison
+  .inspections[0].nextToolStep.tool,'houdini_inspect','follow-up metadata is not inferred to be geometry refinement');
+const timeOnlyImage={...feedbackImage,resultSeq:undefined};
+const timeOnlyCall={...actualNextCall,callSeq:undefined};
+assert.equal(collectQualityLoopEvidence({steps:[timeOnlyImage,pendingBeforeImage,timeOnlyCall]}).manualReview.visualComparison
+  .inspections[0].nextToolStep.orderEvidence,'call_time_after_observation_result');
+const conflictingClock={...pendingBeforeImage,callTime:240};
+assert.equal(collectQualityLoopEvidence({steps:[feedbackImage,conflictingClock]}).manualReview.visualComparison
+  .inspections[0].nextToolStep,null,'a known earlier call sequence cannot become a follow-up through a later timestamp');
+assert.deepEqual(collectQualityLoopEvidence({steps:[feedbackImage,conflictingClock,timeOnlyCall]}).manualReview.visualComparison
+  .inspections[0].nextToolStep,{index:4,tool:'houdini_exec',orderEvidence:'call_time_after_observation_result'},
+  'time fallback only fills missing call sequence evidence, without overriding known order');
+assert.equal(collectQualityLoopEvidence({steps:[feedbackImage]}).manualReview.visualComparison.inspections[0].nextToolStep,null);
+assert.equal(collectQualityLoopEvidence({steps:[{...feedbackImage,time:undefined,resultSeq:undefined},
+  {...actualNextCall,callSeq:undefined,callTime:undefined}]}).manualReview.visualComparison.inspections[0].nextToolStep,null,
+  'missing call ordering cannot be replaced by result index guesses');
+const nativeFeedback=linkNativeImageResponses([
+  {index:1,delivered:true,semanticStatus:'unverified'},
+  {index:1,delivered:false,semanticStatus:'unverified'},
+],feedbackSteps,[]);
+assert.deepEqual(nativeFeedback[0].nextToolStep,feedbackReview.inspections[0].nextToolStep,
+  'render_view native image delivery retains the same actual follow-up pointer without a read_image call or assistant prose');
+assert.equal(nativeFeedback[0].followingAssistant,null);
+assert.equal(nativeFeedback[0].semanticStatus,'unverified');
+assert.equal(nativeFeedback[1].nextToolStep,undefined,'failed image delivery has no observation follow-up link');

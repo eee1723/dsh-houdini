@@ -5,7 +5,7 @@
 STYLE = """
     QDialog { background: #24272b; color: #ECEDEF; }
     QWidget { font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI'; font-size: 13px; }
-    QLabel { color: #ECEDEF; background: transparent; }
+    QLabel, QCheckBox { color: #ECEDEF; background: transparent; }
     QLabel#title { font-size: 22px; font-weight: 600; }
     QLabel#caption, QLabel#note, QLabel#column { color: #A1A6AF; font-size: 12px; }
     QLabel#version { color: #ECEDEF; font-size: 19px; font-weight: 600; }
@@ -46,7 +46,7 @@ def style_dialog(dialog, *, tool_window=True):
     topmost. Other applications can cover them; background updates do not wake
     a minimized tool. Standalone tools remain normal application windows.
     """
-    from hutil.Qt import QtCore, QtGui
+    from PySide6 import QtCore, QtGui
     if tool_window:
         # Adding a minimize hint makes Qt use explicit caption controls. A
         # QWidget created with Qt.Window then loses its implicit close button;
@@ -71,9 +71,63 @@ def show_tool_window(window):
     window.activateWindow()
 
 
+_STARTUP_PROBLEM = None
+
+
+def clear_startup_problem():
+    global _STARTUP_PROBLEM
+    current, _STARTUP_PROBLEM = _STARTUP_PROBLEM, None
+    if current is not None:
+        current.close()
+
+
+def show_startup_problem(message, detail='', parent=None):
+    global _STARTUP_PROBLEM
+    from PySide6 import QtCore, QtWidgets
+    clear_startup_problem()
+    dialog = QtWidgets.QDialog(parent)
+    style_dialog(dialog)
+    dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+    dialog.setWindowTitle('DSH-Houdini · 暂时无法打开工作区')
+    dialog.setMinimumWidth(520)
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.setContentsMargins(24, 20, 24, 20)
+    title = QtWidgets.QLabel('暂时无法打开工作区')
+    title.setObjectName('title')
+    layout.addWidget(title)
+    summary = QtWidgets.QLabel(message)
+    summary.setTextFormat(QtCore.Qt.PlainText)
+    summary.setWordWrap(True)
+    summary.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+    layout.addWidget(summary)
+    toggle = QtWidgets.QPushButton('查看技术详情')
+    toggle.setObjectName('quiet')
+    toggle.setCheckable(True)
+    details = QtWidgets.QPlainTextEdit(detail)
+    details.setReadOnly(True)
+    details.setFixedHeight(150)
+    details.hide()
+    toggle.toggled.connect(details.setVisible)
+    layout.addWidget(toggle)
+    layout.addWidget(details)
+    close = QtWidgets.QPushButton('知道了')
+    close.setObjectName('primary')
+    close.clicked.connect(dialog.close)
+    layout.addWidget(close)
+    dialog.show()
+    show_tool_window(dialog)
+    _STARTUP_PROBLEM = dialog
+    def disposed():
+        global _STARTUP_PROBLEM
+        if _STARTUP_PROBLEM is dialog:
+            _STARTUP_PROBLEM = None
+    dialog.destroyed.connect(disposed)
+    return dialog
+
+
 def confirm_dialog(parent, title, message, accept_text):
     """Explicit Chinese labels, independent of the Houdini Qt locale."""
-    from hutil.Qt import QtCore, QtWidgets
+    from PySide6 import QtCore, QtWidgets
     dialog = QtWidgets.QMessageBox(parent)
     style_dialog(dialog, tool_window=False)
     dialog.setWindowTitle(title)

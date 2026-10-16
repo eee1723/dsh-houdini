@@ -19,7 +19,7 @@ async function fixture(response='open'){
    if(action==='locate')return {status:'located',executor_id:c,checkpoint_id:null,scene_id:a,scene_epoch:b,hip_path:other,
     dirty:response!=='auto',empty_new_scene:response==='auto',dirty_reliable:true,candidates:[{scene_id:scene,checkpoint_id:checkpoint,hip_path:hip}],unavailable:[]}
    if(action==='open'){opened=true;return {...actual,status:'opened'}}
-   if(action==='assess')return opened?{...actual,status:'ready'}:{status:'different_scene',message:'wrong project'}
+   if(action==='assess')return opened?{...actual,status:'ready'}:{status:'different_scene',executor_id:c,message:'wrong project'}
    return {...actual,operation_id:input.operation_id,status:action==='activate'?'active':'prepared'}
   }
  }

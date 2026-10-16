@@ -365,6 +365,17 @@ def _native_definition_identity(node, libraries):
     return (node.type().category().name(), node.type().name(), library, libraries[library])
 
 
+def definition_edit_descendants(root):
+    """Count authored contents at the same locked-definition boundary as asCode.
+
+    A locked nested HDA is one editable node, not hundreds of authored nodes.
+    This inventory is only a work bound; ownership and identity recovery still
+    inspect every materialized descendant, including locked implementation nodes.
+    """
+    return list(root.allSubChildren(recurse_in_locked_nodes=False,
+                                    sync_delayed_definition=False))
+
+
 def snapshot_native_conversion(root):
     """Capture wholly owned, locked native subtrees BEFORE conversion.
 
@@ -374,9 +385,9 @@ def snapshot_native_conversion(root):
     owner = _OWNED_NODE_SESSIONS.get(int(root.sessionId()))
     if owner is None or owner['session'] != _ACTIVE_OWNER_SESSION:
         return []
-    candidates = list(root.allSubChildren())
-    if len(candidates) > 512:
+    if len(definition_edit_descendants(root)) > 512:
         return []
+    candidates = list(root.allSubChildren())
     libraries, captured, covered = {}, [], set()
     for anchor in candidates:
         aid = int(anchor.sessionId())

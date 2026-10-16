@@ -12,7 +12,7 @@ async function fixture(value,available=true){
  const base=Session.create('follow-test'),moves=[]
  await new ExecutorBinding().ensure(base,executor)
  const session={id:base.id,header:{cwd:old},snapshotEvents:()=>base.snapshotEvents(),append:(...args)=>base.append(...args)}
- const agent={id:base.id,session,status:'idle'},bridge=new HoudiniBridge('http://127.0.0.1:1',100,executor)
+ const agent={id:base.id,session,status:'idle',inject:message=>base.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})},bridge=new HoudiniBridge('http://127.0.0.1:1',100,executor)
  bridge.recover=async()=>value
  let service
  installSceneRecovery({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>

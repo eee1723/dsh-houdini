@@ -1,6 +1,7 @@
-"""在 Houdini GUI 里内嵌 dsh web UI（QWebEngineView 加载 http://127.0.0.1:3081）。
+"""复用 DSH 网页的 QtWebEngine 窗口。
 
-- 仅适用于带 Qt GUI 的 Houdini（hython 无 GUI，show 时会明确报错）。
+- 独立工作台使用 standalone=True，不导入hou或设置Houdini父窗口；旧内嵌检查保留默认入口。
+- 调用方必须已有Qt GUI应用；没有GUI时明确报错。
 - QWebEngineView 只能在主线程创建/操作；Houdini 菜单和 Python Shell 都在主线程，
   直接调用即可。
 - 幂等：重复调用唤起已有窗口，不重复创建。
@@ -384,7 +385,7 @@ def show_webview(
     session_id: str | None = None,
     authenticated_url: str | None = None,
     *, workspace_dir: str | None = None, force_reload: bool = False,
-    frontend_url: str | None = None,
+    frontend_url: str | None = None, standalone: bool = False,
 ) -> str:
     """唤起当前工作区页面；新导航/Repair 先认证，再由 client 选择任务。"""
     if QCoreApplication.instance() is None:
@@ -416,11 +417,13 @@ def show_webview(
 
     if _window is None:
         _register_dsh_resource_scheme()
-        import hou
         # A normal top-level window owned by Houdini stays above Houdini but
         # follows it behind other applications. Keep the independent minimize
         # and close behavior instead of making the WebView a child widget.
-        parent = hou.qt.mainWindow() if hou.isUIAvailable() else None
+        parent = None
+        if not standalone:
+            import hou
+            parent = hou.qt.mainWindow() if hou.isUIAvailable() else None
         win = QWidget(parent, Qt.Window)
         win.setWindowTitle("DSH-Houdini · 工作区")
         from dsh_ui_style import style_dialog
@@ -431,7 +434,10 @@ def show_webview(
         # cookies/cache are scoped to this one plugin window's lifetime.
         # The view is created before the profile so its page is destroyed first.
         profile = QWebEngineProfile(win)
+        import dsh_downloads
+        dsh_downloads.install(profile, win)
         view.setPage(QWebEnginePage(profile, view))
+        view.page().newWindowRequested.connect(dsh_downloads.open_issue_window)
         # DSH's shared copy helper uses navigator.clipboard.writeText. Qt
         # disables this by default: H21 rejects, H22 waits for an unanswered
         # ClipboardReadWrite request. Enable writes on our page; clipboard

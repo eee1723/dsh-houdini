@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import {execFileSync} from 'node:child_process';
+import {collectRequestTelemetry} from '../trace-session-lib.mjs';
 const root = path.resolve(import.meta.dirname,'../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(),'dsh-trace-request-'));
 try {
@@ -39,3 +40,13 @@ try {
   fs.rmSync(temp,{recursive:true,force:true});
 }
 console.log('trace original-request/quality/provider-error/usage extraction and HTML regression passed');
+const configuration=collectRequestTelemetry([
+  {type:'request/header',data:{header:{config:{provider:'selected',model:'exact',reasoningEffort:'high',headers:{Authorization:'do-not-copy'}}}}},
+  {seq:1,type:'assistant/message',data:{turn:1,step:1,usage:{inputTokens:1,outputTokens:2,totalTokens:3},message:{source:{replayState:{response:{api:'openai-completions'}}}}}},
+  {type:'request/header',data:{header:{config:{provider:'second',model:'exact'}}}},
+  {seq:2,type:'assistant/message',data:{turn:1,step:2,usage:{inputTokens:1,outputTokens:2,totalTokens:3}}},
+]);
+assert.equal(configuration.requests[0].modelConfiguration.reasoningEffort,'high');
+assert.equal(configuration.requests[0].modelConfiguration.apiReportedByAdapter,'openai-completions');
+assert.equal(configuration.requests[1].modelConfiguration.reasoningEffort,null);
+assert(!JSON.stringify(configuration).includes('do-not-copy'));

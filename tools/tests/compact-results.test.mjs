@@ -37,6 +37,39 @@ assert(render({...retained,result:unknownTop}).includes(JSON.stringify(unknownTo
 assert(render({...retained,result,details:{stored:false}}).includes(JSON.stringify(result)),
   'without a stored original, top-level data must retain the full fallback');
 assert.equal(JSON.stringify(raw),original);
+// A render's artifact/framing objects can reach the evidence and selected
+// result through different JSON producers. Member order must not force a
+// second full copy; changed facts and array ordering must remain distinct.
+const artifact={purpose:'model_visual_verification',output_policy:'managed',
+  actual_path:'E:/project/dsh-visual-checks/run/part.png',hip_relative_path:'dsh-visual-checks/run/part.png',
+  managed_root:'E:/project/dsh-visual-checks/run',role:'visual_check',project_root:'E:/project',
+  lifecycle:'visual-check',run_id:'run',capture_id:'part',frame:1};
+const framing={status:'intentional_crop',semantic_status:'unverified',
+  depth_check:{ok:true,near:.01,far:200,scope:'frozen comparison envelope'},
+  matrix:Array.from({length:16},(_,i)=>i%5===0?1:0),
+  bounds:[[-12,-8,-6],[12,8,6]],scope:'two-dimensional crop; camera and depth envelope unchanged'};
+const reversed=value=>Object.fromEntries(Object.entries(value).reverse());
+const renderValue={ok:true,stdout:'',stderr:'',details:{stored:true},
+  evidence:[{ledgerIndex:1,verb:'render_view',artifact,framing}],
+  result:{artifact:reversed(artifact),framing:{...reversed(framing),depth_check:reversed(framing.depth_check)}}};
+const renderBefore=JSON.stringify(renderValue);
+const ordered=render(renderValue);
+const orderedResult=JSON.parse(ordered.split('__result__:\n')[1].split('\n\n')[0]);
+assert.equal(orderedResult.artifact.duplicate_of,'/evidence/0/artifact');
+assert.equal(orderedResult.framing.duplicate_of,'/evidence/0/framing');
+assert.equal(JSON.stringify(renderValue),renderBefore,'comparison must not sort canonical audit payloads in place');
+for(const changed of [{...artifact,reservation_retained:null},
+  {...artifact,reservation_retained:true},{...artifact,actual_path:'E:/project/different.png'}]){
+  const changedText=render({...renderValue,result:{artifact:changed}});
+  const selected=JSON.parse(changedText.split('__result__:\n')[1].split('\n\n')[0]);
+  assert.deepEqual(selected.artifact,changed,'absent, null, retained reservation and distinct path are different facts');
+}
+const reorderedBounds={...framing,bounds:[...framing.bounds].reverse()};
+const differentBounds=render({...renderValue,result:{framing:reorderedBounds}});
+const selectedBounds=JSON.parse(differentBounds.split('__result__:\n')[1].split('\n\n')[0]);
+assert.deepEqual(selectedBounds.framing.bounds,reorderedBounds.bounds,'array order defines geometry and cannot be normalized');
+const unretained=render({...renderValue,details:{stored:false}});
+assert(unretained.includes(JSON.stringify(renderValue.result)), 'without an archive, reordered data keeps the complete fallback');
 // __result__ is chosen by the executing code. Successful unselected ledger
 // payloads are audit details; an independent failed check must remain visible.
 const selected=render({ok:true,stdout:'',stderr:'',result:{output:'/obj/a/OUT'},details:{stored:true},
@@ -158,3 +191,32 @@ assert(render({ok:true,stdout:'',stderr:'',result:{selected:'small'},details:{st
 console.log(`risk-preserving compact results ${text.length}/${render(raw).length} chars; late failure, not-run, unknown schema, help and archive fallback passed`);
 
 console.log(`top-level result projection: direct=${direct.length}, wrapped=${wrapped.length}, differing=${differing.length} chars`);
+
+// Native inventories stay addressable without hiding the actual editable scope.
+const transfers=Array.from({length:2000},(_,i)=>({node:'/obj/asset/native/n'+i,
+  previous_identity:i+10,identity:i+3000,native_anchor_identity:7}));
+const hda={node:'/obj/asset',type:'fixture::1.0',hda_file:'asset.hda',native_identity_transfers:transfers};
+const envelope=result=>({ok:true,stdout:'',stderr:'',result,details:{stored:true},
+  verbs:[{verb:'hda_create',ok:true,result:hda}]});
+const hdaText=render(envelope({asset:hda}));
+assert(hdaText.length<3000 && hdaText.includes('"count":2000') && hdaText.includes('/result/asset/native_identity_transfers'));
+assert(render({...envelope(hda),details:{stored:false}}).includes('/obj/asset/native/n1999'));
+assert(render({...envelope(hda),verbs:[]}).includes('/obj/asset/native/n1999'),'unknown provenance is not summarized');
+const unusualHda=structuredClone(hda);unusualHda.native_identity_transfers[999].error='middle-transfer-error';
+assert(render({...envelope(unusualHda),verbs:[{verb:'hda_create',ok:true,result:unusualHda}]}).includes('middle-transfer-error'));
+const descendants=Array.from({length:2000},(_,i)=>['/obj/asset/n'+i,i+10]);
+const lock={ok:true,node:'/obj/asset',action:'lock',dry_run:true,applied:false,discard_changes:true,
+  plan_sha256:'exact-plan',affected_instances:[['/obj/asset',1]],descendant_count:2000,
+  editable_descendant_count:3,discarded_descendants:descendants,
+  editable_discarded_descendants:[descendants[0],descendants[999],descendants[1999]],scope:'definition lifecycle only'};
+const lockEnvelope={ok:true,stdout:'',stderr:'',result:lock,details:{stored:true},
+  evidence:[{ledgerIndex:1,verb:'hda_edit',...lock}],verbs:[{verb:'hda_edit',ok:true,result:lock,summary:lock}]};
+const lockText=render(lockEnvelope);
+assert(lockText.length<5000 && lockText.includes('"count":2000'));
+for(const fact of ['exact-plan','affected_instances','"applied":false','/obj/asset/n999','/obj/asset/n1999','discard/rebuild scope'])assert(lockText.includes(fact),fact);
+assert(!lockText.includes('/obj/asset/n1000'),'native implementation inventory stays in canonical details');
+const oldLock=structuredClone(lock);delete oldLock.editable_discarded_descendants;
+assert(render({...lockEnvelope,result:oldLock,evidence:[],verbs:[{verb:'hda_edit',ok:true,result:oldLock}]}).includes('/obj/asset/n1000'),'historical scope cannot be guessed');
+const inconsistent=structuredClone(lock);inconsistent.editable_discarded_descendants[1]=['/obj/foreign',99999];
+assert(render({...lockEnvelope,result:inconsistent,evidence:[],verbs:[{verb:'hda_edit',ok:true,result:inconsistent}]}).includes('/obj/asset/n1000'),'inconsistent scope stays fully visible');
+console.log('HDA projection: editable scope, unusual records, historical and archive-failure fallbacks passed');

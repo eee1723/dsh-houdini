@@ -28,11 +28,14 @@ def worker(args):
     import dsh_bridge as bridge
     from dsh_managed_runtime import executor_identity
     from dsh_shared_executor import prepare_registration, publish_registration
-    hou.hipFile.setName(args.hip)  # isolated fixture only, no file loaded or saved
+    if args.load:
+        hou.hipFile.load(args.hip, suppress_save_prompt=True)
+    else:
+        hou.hipFile.setName(args.hip)
     server = bridge.start(0)
     bridge._pump_active = True
     version = hou.applicationVersionString()
-    facts = prepare_registration()
+    facts = prepare_registration(workbench=args.workbench)
     registration = []
     def publish():
         record = publish_registration(args.registry, facts)
@@ -259,6 +262,8 @@ def driver(args):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--worker',action='store_true')
+    parser.add_argument('--workbench',action='store_true')
+    parser.add_argument('--load',action='store_true')
     parser.add_argument('--registry');parser.add_argument('--hip');parser.add_argument('--task')
     parser.add_argument('--hython',action='append',default=[])
     parser.add_argument('--host-node',help='Optional Node runtime to verify shared TypeScript Host routing against both test Bridges')

@@ -156,6 +156,11 @@ def after_save(path, success):
     """Called by native afterscenesave.py and the explicit save verbs."""
     global _SAVED, _STATUS
     _main()
+    if success:
+        import sys
+        desktop = sys.modules.get('dsh_workbench_client')
+        if desktop is not None and desktop._OBSERVATIONS is not None:
+            desktop.observe_scene()
     pending = _PREPARED
     if not pending or pending['checkpoint_id'] != _checkpoint():
         return
@@ -251,8 +256,13 @@ def capture_loaded():
 
 
 def install():
-    global _CALLBACK
+    global _CALLBACK, _SCENE
     _main()
+    if _CALLBACK is None:
+        try:
+            _SCENE = store.identity(hou.node('/').userData(SCENE_KEY))
+        except ValueError:
+            pass
     if _CALLBACK is not None:
         try:
             hou.hipFile.removeEventCallback(_CALLBACK)

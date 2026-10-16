@@ -79,6 +79,7 @@ try {
   projections.register(agentPresetProjectionDefinition)
   registerExecutorIdentityProjection(ctx)
   ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
+  ctx.provide('sessions',{flush})
   const controller=new ExecutorController(ctx,router)
   assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
   const different=Session.create('not-houdini',[],{version:4,id:'not-houdini',createdAt:1,
@@ -89,7 +90,7 @@ try {
     registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
     new AbortController().signal),/restricted to Houdini tasks/)
   agents.pop()
-  assert.deepEqual(remoteMethods(controller).map(m=>m.method),['list','select'])
+  assert.deepEqual(remoteMethods(controller).map(m=>m.method),['prepareWorkspace','activity','openWorkspace','list','select'])
   assert.equal(controller.typertRemote.namespace,'houdiniTargets')
   const legacyList=await controller.list(undefined)
   assert.equal(legacyList.candidates.length,2)
@@ -123,6 +124,7 @@ try {
     else await controller.select(input,new AbortController().signal)
   }
   if(gateway) console.log('Real DSH Typert Gateway list/select dispatch passed')
+  assert.deepEqual(flushed,agents.map(agent=>agent.id),'initial selection waits for the native persistence acknowledgement')
   assert.equal(recordedExecutorIdentity(agents[0].session.snapshotEvents()),records[0].executor_id)
   const boundList=await controller.list({sessionId:agents[0].id})
   assert.equal(boundList.recovery.status,'bound_available')
@@ -205,7 +207,7 @@ try {
   await write({...records[0],runtime_id:'f'.repeat(32)})
   await assert.rejects(router.resolve(context(0)),/generation changed/)
   await write({...records[0],task_id:null,hip_path:null})
-  await assert.rejects(router.resolve(context(0)),/writer reservation/)
+  await assert.rejects(router.resolve(context(0)),/当前工程没有可核对的位置/)
   // Normal process retirement preserves recovery evidence without exhausting
   // discovery or making each bound tool enumerate the entire registry history.
   const retired=Array.from({length:256},(_,index)=>({...records[1],

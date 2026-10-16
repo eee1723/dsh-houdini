@@ -35,6 +35,9 @@ Boolean按输入的Solid/Surface前提、接缝、朝向及实际切除结果判
 
 ## 外部代码依赖
 
+维护较长的建网脚本时，用函数组织原生节点和共享接口；脚本是施工方式，不要求把最终几何集中到Python SOP。已有网络继续维护其有效编辑入口。
+代码文件与现场snippet选择一个当前编辑来源。由文件更新节点时，先用`read_parms(node,names=['snippet'])`取得现场`source_sha256`，再以`set_parms(node,{'snippet':{'expected_sha256':记录的现场hash,'source':完整文本}})`同步。文本可通过`open(path,encoding='utf-8',newline='').read()`保持原换行；回执给出前后hash，不重复整份源码。已有局部补丁仍适用。过期hash说明现场发生过变化，应先核对/合并，不能重读hash后直接覆盖来消除冲突。明确采用现场编辑时更新受影响源文件或说明旧脚本已非重建入口，不维护两份互相矛盾的权威源码。外部文件不随场景Undo恢复。
+
 普通单个HIP中的局部VEX默认保存在Wrangle内；多个消费者确需共享算法、用户要求源码库或脚本工具时可使用工程内文件。
 文件编辑负责源码，Houdini工具负责现场创建、设参、计算与检查；写文件成功不证明当前节点已经使用新代码。
 
@@ -45,6 +48,8 @@ Boolean按输入的Solid/Surface前提、接缝、朝向及实际切除结果判
   不为验证擅自重载live。文件修改不随Houdini场景Undo回滚，失败后按实际文件与场景状态继续。
 
 ## 观察与关键方法
+
+大型最终输出的`geo_check_interfaces`会按声明的primitive关系组取证。`test_controls`需要每项指标有明确`group`且关系/拓扑都有primitive组，才能使用相同的有界采集；量测仍来自最终输出，恢复核对覆盖整件bgeo，未选部件漂移也不算恢复。读取`geometry_scope`区分来源总量、实际选中量及未测范围。不要为了通过预算改测driver或换成较容易通过的指标；点到面合同和无group的整件指标仍保留原范围限制。
 
 - geo_piece_stats默认按连接性或指定身份属性统计局部extent/面积；inspect=True观察命名primitive组的Polygon边界/边连通/非流形和basis下extent；shell_orientation保留有向体积条件。半径用到轴的欧氏距离，轴向投影不是半径。observed仅量测，分组切口可有意开放。
 - geo_attrib_stats读驱动属性；复制前用unique=True检查模板P/id的精确tuple唯一性及预期基数，bbox不变不能排除重叠复制。geo_point_spacing只测有序点弦长。test_controls位移/变换误差要求稳定唯一id_attrib和相同面连接；选中件及其附属件查同一预期变换，未选中件查identity，见[模块合同](module-quality-contracts.md)。混合网格点均值不是设计中心，native/packed不靠P-only。

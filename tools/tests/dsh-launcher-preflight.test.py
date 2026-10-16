@@ -18,6 +18,13 @@ sys.modules.setdefault("hou", types.SimpleNamespace())
 import dsh_launcher
 import dsh_context
 
+with patch('dsh_executor_registry.is_shared_executor', return_value=False), \
+     patch.object(dsh_launcher.dsh_managed_runtime, 'has_owned_frontend', return_value=False), \
+     patch.object(dsh_launcher, 'open_workspace') as open_desktop, \
+     patch.object(dsh_launcher, 'repair_current_runtime', side_effect=AssertionError('fresh repair must not start a legacy Host')):
+    dsh_launcher.launch()
+    open_desktop.assert_called_once_with()
+
 # Opening diagnostics during startup can reload the launcher implementation.
 # The live preflight/worker lifetime and its UI references must survive it.
 original_tracking = (dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES,
@@ -71,7 +78,7 @@ with patch.object(dsh_launcher, '_dispatch_service_preflight', side_effect=callb
      patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\before-preflight') as current_workspace, \
      patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as delayed_open, \
      patch.object(dsh_launcher, '_report'):
-    dsh_launcher.open_workspace()
+    dsh_launcher.open_embedded_workspace()
     current_workspace.return_value = r'E:\changed-during-preflight'
     callbacks[0]({'frontend_online': True, 'bridge_online': True}, None)
     delayed_open.assert_called_once_with(r'E:\changed-during-preflight')
@@ -80,8 +87,8 @@ worker_states = []
 def startup_fixture(state):
     worker_states.append(state)
     with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test51'):
-        dsh_launcher.open_workspace()
-        dsh_launcher.open_workspace()
+        dsh_launcher.open_embedded_workspace()
+        dsh_launcher.open_embedded_workspace()
     state.update(result='ready', detail='fixture ready')
 
 with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test49'), \
@@ -90,7 +97,7 @@ with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test49'), \
      patch.object(dsh_launcher, '_start_and_wait_frontend', side_effect=startup_fixture), \
      patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as startup_open, \
      patch.object(dsh_launcher, '_report'):
-    dsh_launcher.open_workspace()
+    dsh_launcher.open_embedded_workspace()
     assert len(worker_states) == 1
     startup_open.assert_called_once_with(r'E:\test51', force_reload=True)
     assert dsh_launcher._ACTIVE_STARTUP is None
@@ -159,7 +166,7 @@ with patch.object(dsh_launcher, "_hip_dir", return_value=r"E:\fixture"), \
          "frontend_online": True, "bridge_online": True}, None)), \
      patch.object(dsh_launcher, "_report"), \
      patch.object(dsh_launcher, "open_ui", return_value="raised") as opened:
-    dsh_launcher.open_workspace()
+    dsh_launcher.open_embedded_workspace()
     opened.assert_called_once_with(r"E:\fixture")
 
 
@@ -197,6 +204,8 @@ with patch.object(dsh_launcher, "_port_open", return_value=True), \
                 dsh_launcher._service_preflight()
             except RuntimeError as exc:
                 assert "bridge port conflict" in str(exc)
+                if unknown_pid is None:
+                    assert '未能确认它属于哪个窗口' in str(exc)
             else:
                 raise AssertionError("another or unidentified Houdini must not be reused")
 
@@ -220,8 +229,8 @@ for service in ("frontend", "bridge"):
          patch.object(dsh_launcher, "restart_bridge", side_effect=AssertionError("conflict restarted bridge")), \
          patch.object(dsh_launcher, "open_ui_when_ready", side_effect=AssertionError("conflict started frontend")), \
          patch.object(dsh_launcher, "open_ui", side_effect=AssertionError("conflict opened frontend")):
-        dsh_launcher.launch()
-        dsh_launcher.open_workspace()
+        dsh_launcher.repair_current_runtime()
+        dsh_launcher.open_embedded_workspace()
     assert len(reports) == 2 and all(str(failure) in message for message in reports), reports
 
 with patch.object(dsh_launcher.dsh_managed_runtime, "stop_owned", return_value=False), \

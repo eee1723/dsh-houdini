@@ -116,17 +116,53 @@ export function jobResultTitle(action: string, result: ToolResult): string {
 
 const pointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
 
+// JSON object member order is not execution evidence. Compare values without
+// changing the original payload, array order, or absent/explicit-null fields.
+const comparisonKey = (value: unknown): string | undefined => JSON.stringify(value, (_key, item) =>
+  item !== null && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)
+
 /** Identical JSON values have one addressable copy. Never truncate arbitrary
  * result text: a diagnostic at its end is as important as one at its start. */
-function retainedProjection(stored: boolean) {
+function retainedProjection(stored: boolean, verbs: JsonValue[] = []) {
   const seen = new Map<string, string>()
+  // Only source-proven audit inventories can be abbreviated. Arbitrary selected
+  // data and future schemas stay inline; full canonical values remain archived.
+  const inventories = new Map<string, Record<string, unknown>>()
+  if (stored) for (const item of verbs) {
+    const verb = object(item), result = object(verb?.result)
+    if (verb?.ok !== true || !result) continue
+    const transfers = result.native_identity_transfers
+    if (['hda_create', 'hda_fork'].includes(String(verb.verb)) && Array.isArray(transfers)
+      && transfers.length > 8 && transfers.every(item => {
+        const row = object(item)
+        return row && Object.keys(row).length === 4 && typeof row.node === 'string'
+          && ['previous_identity', 'identity', 'native_anchor_identity'].every(key => Number.isSafeInteger(row[key]))
+      })) inventories.set(comparisonKey(transfers)!, {kind:'native_identity_transfers',count:transfers.length})
+    const discarded = result.discarded_descendants, editable = result.editable_discarded_descendants
+    const pair = (item:unknown) => Array.isArray(item) && item.length === 2
+      && typeof item[0] === 'string' && Number.isSafeInteger(item[1])
+    if (verb.verb === 'hda_edit' && result.ok === true && result.action === 'lock'
+      && result.discard_changes === true && Array.isArray(discarded) && Array.isArray(editable)
+      && discarded.length > 8 && discarded.length === result.descendant_count
+      && editable.length === result.editable_descendant_count && discarded.every(pair) && editable.every(pair)) {
+      const identities = new Set(discarded.map(item => comparisonKey(item)))
+      if (editable.every(item => identities.has(comparisonKey(item)))) inventories.set(comparisonKey(discarded)!, {
+        kind:'definition_rebuild_descendants',count:discarded.length,
+        editable_descendants:editable,
+        scope:'Editable boundaries shown in full; complete descendants including locked native internals are in details. All listed descendants are in the discard/rebuild scope.',
+      })
+    }
+  }
   const duplicate = (prior: string, pointer: string) => ({
     duplicate_of: prior, ...(stored ? { detail_pointer: pointer } : {}),
   })
   const project = (value: unknown, pointer: string): unknown => {
     if (!stored && seen.size === 0) return value
     if (value === null || (typeof value !== 'object' && typeof value !== 'string')) return value
-    const encoded = JSON.stringify(value)
+    const encoded = comparisonKey(value)!
+    const inventory = inventories.get(encoded)
+    if (inventory) return {...inventory, detail_pointer:pointer}
     if (encoded.length >= 256) {
       const prior = seen.get(encoded)
       if (prior !== undefined) return duplicate(prior, pointer)
@@ -141,13 +177,13 @@ function retainedProjection(stored: boolean) {
   // Help stays immediately executable, including long docs and nested input
   // schemas. Remember the full value so __result__ cannot repeat the same help.
   const remember = (value: unknown, pointer: string): void => {
-    const encoded = JSON.stringify(value)
+    const encoded = comparisonKey(value)
     if (encoded && encoded.length >= 256 && !seen.has(encoded)) seen.set(encoded, pointer)
     if (stored && value !== null && typeof value === 'object') Object.entries(value).forEach(([key, child]) =>
       remember(child, `${pointer}/${pointerKey(key)}`))
   }
   const help = (value: unknown, pointer: string): unknown => {
-    const encoded = JSON.stringify(value)
+    const encoded = comparisonKey(value)
     if (encoded && encoded.length >= 256) {
       const prior = seen.get(encoded)
       if (prior !== undefined) return duplicate(prior, pointer)
@@ -163,7 +199,7 @@ function renderFields(value: ExecResult): string[] {
   const retained = object(value.details)?.stored === true
   // Without an archive, only complete help values already shown in this reply
   // are shared. All other results keep their full inline fallback.
-  const projection = retainedProjection(retained)
+  const projection = retainedProjection(retained, Array.isArray(value.verbs) ? value.verbs : [])
   const project = projection.project
   const field = (label: string, key: keyof ExecResult, compact = true) => {
     if (value[key] !== undefined) parts.push(`${label}:\n${JSON.stringify(
@@ -210,7 +246,7 @@ function renderFields(value: ExecResult): string[] {
   // The code author's selected output precedes routine ledger details, while
   // independent Bridge checks and recovery facts have already been shown.
   if (value.result !== undefined && !help.some(item =>
-    JSON.stringify(item.result) === JSON.stringify(value.result))) field('__result__', 'result')
+    comparisonKey(item.result) === comparisonKey(value.result))) field('__result__', 'result')
   if (value.stdout) {
     const stdout = Array.isArray(value.verbs) && value.verbs.length
       ? value.stdout.split('\n').filter(line => !line.startsWith('[verb] ')).join('\n').trim()
@@ -228,7 +264,7 @@ function renderFields(value: ExecResult): string[] {
       const evidence = evidenceIndex >= 0 ? object((value.evidence as JsonValue[])[evidenceIndex]) : undefined
       const { ledgerIndex: _ledgerIndex, verb: _verb, ...sourceSummary } = evidence ?? {}
       const sameSummary = summary !== undefined && evidence !== undefined
-        && JSON.stringify(summary) === JSON.stringify(sourceSummary)
+        && comparisonKey(summary) === comparisonKey(sourceSummary)
       // An explicit Bridge summary or passed check supports focused output.
       // Unknown/unclassified results stay inline even when Python succeeded.
       const parameterCatalog = object(summary)?.kind === 'parameter_catalog'

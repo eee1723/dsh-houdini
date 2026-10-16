@@ -28,6 +28,8 @@ parser.add_argument('--credentials',required=True,type=Path)
 parser.add_argument('--settings',required=True,type=Path,help='Verified user settings; only the selected provider/model is copied')
 parser.add_argument('--model',required=True)
 parser.add_argument('--provider',default='deepseek-official',help='Explicit provider route copied from the verified settings')
+parser.add_argument('--reasoning-effort',choices=('off','minimal','low','medium','high','xhigh','max'),help='Explicit reasoning level on the selected route; retained with actual request evidence')
+parser.add_argument('--reasoning-wire-value',help='Explicit wire mapping for a custom PI model capability, e.g. high; isolated trial only')
 parser.add_argument('--service-profile',type=Path,help='Explicit JSON transcription route; only its selected credential reference is copied or inherited')
 parser.add_argument('--show-gui',action='store_true',help='Show only the owned GUI worker for an authorized visible-surface trial')
 parser.add_argument('--condition',required=True)
@@ -40,10 +42,11 @@ parser.add_argument('--goal-rounds',type=int,default=0,help='Use native DSH Goal
 parser.add_argument('--smoke',action='store_true',help='No model calls: verify session/model route, seed and real GUI preview')
 parser.add_argument('--scripted-smoke',action='store_true',help='With --smoke, intercept every model stream locally to exercise native Goal and followups')
 parser.add_argument('--smoke-delivery',action='store_true',help='With scripted smoke, exercise mounted capture/read_image/present/node-entry carriers without a paid model')
+parser.add_argument('--smoke-continuity',action='store_true',help='With scripted smoke, create and then modify the same owned native network across two real user turns')
 parser.add_argument('--observe-model-images',action='store_true',help='Read-only evidence of real DSH LOOP image attachments and provider completion')
 parser.add_argument('--probe-frontend',action='store_true',help='Inspect the selected real session and its delivery in the owned Houdini QtWebEngine before stop')
 parser.add_argument('--max-seconds',type=int,default=600)
-parser.add_argument('--max-output-tokens',type=int,default=32000,help='Per-request DeepSeek override; other providers retain their selected profile defaults')
+parser.add_argument('--max-output-tokens',type=int,default=32000,help='Explicit per-request output cap on the isolated selected route')
 parser.add_argument('--memory-mb',type=int,default=8192,help='Owned Houdini process-tree memory limit in MiB')
 parser.add_argument('--require-image-input',action='store_true',help='Refuse a route whose actual pinned Host model resolver does not report image input')
 parser.add_argument('--allow-paid',action='store_true')
@@ -51,6 +54,7 @@ args=parser.parse_args()
 if not args.allow_paid and not args.smoke:parser.error('explicit --allow-paid required after user authorization')
 if args.scripted_smoke and not args.smoke:parser.error('scripted-smoke requires smoke')
 if args.smoke_delivery and not args.scripted_smoke:parser.error('smoke-delivery requires scripted-smoke')
+if args.smoke_continuity and (not args.scripted_smoke or not args.followup):parser.error('smoke-continuity requires scripted-smoke and a followup')
 if args.no_feedback and args.followup:parser.error('no-feedback forbids followups')
 if args.no_feedback and args.approval_policy!='never':parser.error('no-feedback requires approval-policy never')
 if not 60<=args.max_seconds<=14400:parser.error('max-seconds must be 60..14400 for all model phases combined')
@@ -211,7 +215,8 @@ def run_trial(result: dict) -> None:
         smoke_workspace=WORKER/'workspace'
         host_env['DSH_MODELING_TRIAL_DELIVERY_SMOKE']=json.dumps({'hip':str(smoke_workspace/'final.hip'),
             'image':str(smoke_workspace/'native-ui-smoke.png'),'source':str(smoke_workspace/'task.json')})
-    if args.observe_model_images or args.require_image_input:
+    if args.smoke_continuity:host_env['DSH_MODELING_TRIAL_CONTINUITY']=str(WORKER/'workspace'/'final.hip')
+    if args.observe_model_images or args.require_image_input or args.reasoning_effort:
         host_env['DSH_MODELING_TRIAL_OBSERVER_OUT']=str(RAW/'model-image-consumption.jsonl')
         host_env['DSH_MODELING_TRIAL_MODEL_INFO_OUT']=str(RAW/'model-resolved-info.json')
         host_env['DSH_MODELING_TRIAL_PROVIDER']=PROVIDER
@@ -219,6 +224,9 @@ def run_trial(result: dict) -> None:
     run_command(str(NODE), str(DRIVER_ROOT / "tools/tests/prepare-shared-host-fixture.mjs"),
                 str(DSH), str(HOME), str(ROOT), env=host_env)
     service_arguments=['--service-profile',str(args.service_profile.resolve())] if args.service_profile else []
+    if args.reasoning_effort:service_arguments+=['--reasoning-effort',args.reasoning_effort]
+    if args.reasoning_wire_value:service_arguments+=['--reasoning-wire-value',args.reasoning_wire_value]
+    service_arguments+=['--max-tokens',str(args.max_output_tokens)]
     selected=run_command(str(NODE),str(DRIVER_ROOT/'tools/prepare-model-settings.mjs'),
                          str(SETTINGS),str(HOME),PROVIDER,MODEL,str(DSH),str(CREDENTIALS),*service_arguments,env=host_env)
     model_config=json.loads(selected.stdout.strip())
@@ -227,7 +235,7 @@ def run_trial(result: dict) -> None:
                        + "\n- id: credentials\n  config:\n    path: "
                        + (HOME/'.credentials.yaml').as_posix() + "\n    watch: false\n"
                        + (HOME/'selected-model.patch.yml').read_text(encoding='utf-8')
-                       + ("- id: llm-deepseek\n  config:\n    reasoningEffort: high\n"
+                       + ("- id: llm-deepseek\n  config:\n    reasoningEffort: "+(args.reasoning_effort or 'high')+"\n"
                           + "    maxTokens: " + str(args.max_output_tokens) + "\n"
                           if PROVIDER=='deepseek-official' else '')
                        + trial_permissions_overlay(args.approval_policy), encoding="utf-8")
@@ -323,15 +331,17 @@ def run_trial(result: dict) -> None:
         else:
             raise RuntimeError("Isolated DSH Host did not become ready")
 
-        if args.require_image_input:
+        if args.require_image_input or args.reasoning_effort:
             resolved_file=RAW/'model-resolved-info.json'
             deadline=time.monotonic()+10
             while time.monotonic()<deadline:
                 live_model=json.loads(resolved_file.read_text(encoding='utf-8')) if resolved_file.exists() else {}
                 if live_model.get('ok'):break
                 time.sleep(.1)
-            if not live_model.get('ok') or 'image' not in live_model['model'].get('inputModalities',[]):
+            if not live_model.get('ok') or (args.require_image_input and 'image' not in live_model['model'].get('inputModalities',[])):
                 raise RuntimeError('Actual pinned Host model resolver does not report image input; no model request sent')
+            if args.reasoning_effort and live_model['model'].get('reasoning',{}).get('defaultEffort')!=args.reasoning_effort:
+                raise RuntimeError('Actual selected model does not resolve the requested reasoning level; no model request sent')
             model_config['actualResolvedModel']=live_model['model']
 
         # Registration is published by a startup thread. The first queue-backed
@@ -409,8 +419,8 @@ def run_trial(result: dict) -> None:
                 "clientTimeZone":"Asia/Shanghai",
                 "dshVersion": json.loads((DSH.parent.parent/'package.json').read_text(encoding='utf-8'))['version'],
                 "houdiniVersion": record['houdini_version'], "provider": PROVIDER, "model": MODEL,
-                "reasoningEffort": "high" if PROVIDER=='deepseek-official' else 'selected_profile_default', "maxSeconds": MAX_SECONDS,
-                "maxOutputTokens":args.max_output_tokens if PROVIDER=='deepseek-official' else None,
+                "reasoningEffort": args.reasoning_effort or ("high" if PROVIDER=='deepseek-official' else model_config.get('reasoningEffort')), "maxSeconds": MAX_SECONDS,
+                "maxOutputTokens":args.max_output_tokens,
                 "showOwnedGui":args.show_gui,"toolBuildSha256":tool_digest(),
                 "noFeedback":args.no_feedback,"actualPermissions":result['actualPermissions'],
                 "modelConfiguration":model_config,"isolatedSettingsSha256":digest(HOME/'selected-model.patch.yml'),

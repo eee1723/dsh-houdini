@@ -7,15 +7,17 @@ import path from 'node:path'
 import type {} from '@deepseek-ai/dsh-workspace'
 import {HoudiniBridge} from './bridge.js'
 import {foldExecutorState,type RecoveryBinding} from './executor-identity-projection.js'
-import {houdiniSnapshot} from './dsh-adapter.js'
+import {houdiniSnapshot,recordHoudiniContext,workspaceOpeningMessage} from './dsh-adapter.js'
 import {projectExecutionState} from './execution-state.js'
 import type {HoudiniConnection} from './tool-runtime.js'
 import {literalData} from './prompt-data.js'
 import {executionHistory} from './execution-history.js'
 
 export interface SceneRecoveryService {
+  beforeTool?(agent:Agent,signal:AbortSignal):Promise<void>
   followDirectory(agent:Agent,signal:AbortSignal,probe?:boolean):Promise<void>
   beforeStep(agent:Agent,signal:AbortSignal):Promise<void>
+  inspect(agent:Agent,signal:AbortSignal):Promise<any>
   assess(agent:Agent,signal:AbortSignal):Promise<unknown>
   restore(agent:Agent,assessmentId:string,signal:AbortSignal):Promise<unknown>
   ensure(agent:Agent,signal?:AbortSignal):Promise<void>
@@ -32,14 +34,92 @@ export function recoveryMessage(value:RecoveryBinding) {
     +literalData(JSON.stringify(value))})
 }
 
+export async function relocateDirectory(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false) {
+  const current=agent.session.header.cwd
+  if(current&&(process.platform==='win32'?path.resolve(current).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(current)===path.resolve(directory)))return
+  const registry=ctx.get('workspaceRegistry')
+  if(!registry||!('relocateSession' in registry)||typeof registry.relocateSession!=='function')
+    throw new Error('当前 DSH 尚未加载会话目录接续能力；本轮未继续文件操作，原对话与工程保留。')
+  signal.throwIfAborted()
+  await registry.relocateSession(agent.id,directory)
+  recordHoudiniContext(agent,houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
+    'This conversation now follows the explicitly selected or verified saved project directory. Earlier paths remain historical references.\n'
+    +literalData(JSON.stringify({previous_directory:current,directory:agent.session.header.cwd,hip_path:hipPath,
+      executor_id:foldExecutorState(agent.session.snapshotEvents()).identity,hip_is_new:hipIsNew}))}))
+  if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程目录接续记录尚未可靠保存。')
+}
+
 export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):void {
+  if(!(connection instanceof HoudiniBridge)) {
+    const services=new WeakMap<Agent,{bridge:HoudiniBridge;service:SceneRecoveryService}>()
+    const selections=new WeakMap<Agent,Promise<void>>()
+    const workbench=()=>Boolean((ctx.get('houdiniTargets') as {workbench?:boolean}|undefined)?.workbench)
+    const serviceFor=async(agent:Agent,signal:AbortSignal,recovery=false)=>{
+      if(recovery&&!foldExecutorState(agent.session.snapshotEvents()).identity) {
+        const controller=ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined
+        if(!controller?.workbench)throw new Error('请先选择要操作的 Houdini 工程。')
+        const registry=connection.registry
+        if(!registry)throw new Error('工作台没有可用的工程登记位置。')
+        const router=controller.getRouter(registry)
+        const records=(await router.directory.list()).filter(record=>record.workbench&&record.state==='registered')
+        const questions=ctx.get('userQuestions')
+          if(!questions||!records.length)throw new Error('目前没有可用的 Houdini 工程。可以继续讨论；要操作工程，可点工程图标打开或新建，也可从已有 Houdini 的 Open Workspace 接入。')
+          const projectLabel=(record:(typeof records)[number])=>record.hip_is_new
+            ?ctx.get('workspaceRegistry')?.list?.().find(workspace=>path.resolve(workspace.path).toLowerCase()===path.resolve(record.workspace_path!).toLowerCase())?.title??'未保存工程'
+            :path.basename(record.hip_path!)
+          const names=records.map(projectLabel)
+          const labels=names.map((name,index)=>names.filter(value=>value===name).length>1?name+'（'+(index+1)+'）':name)
+        const answer=await questions.ask({agent,signal,questions:[{id:'houdini-project',header:'选择工程',
+          question:'这段新对话要操作哪份工程？',options:[...records.map((record,index)=>({label:labels[index],
+            description:(record.hip_path??'')+' · Houdini '+record.houdini_version})),{label:'只讨论，不操作工程',description:'不连接任何 Houdini。'}],multiSelect:false}]})
+        const choice=answer.answers.find(item=>item.id==='houdini-project')
+        const index=!choice?.custom&&choice?.selected?.length===1?labels.indexOf(choice.selected[0]):-1
+        if(index<0)throw new Error('本轮只讨论，没有连接或修改工程。')
+        const selected=records[index]
+        await router.selectInitial(agent,selected.executor_id,selected.registration_id,signal,selected.hip_path!,true)
+          recordHoudiniContext(agent,workspaceOpeningMessage({...selected,project_label:selected.hip_is_new?projectLabel(selected):undefined}))
+        if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
+          await relocateDirectory(ctx,agent,selected.workspace_path!,selected.hip_path!,signal,selected.hip_is_new===true)
+      }
+      const target=recovery&&connection.recoveryTarget?await connection.recoveryTarget(agent,signal):await connection.resolve({agent,signal})
+      let entry=services.get(agent)
+      if(!entry||entry.bridge.targetExecutorId!==target.targetExecutorId||entry.bridge.baseUrl!==target.baseUrl) {
+        entry={bridge:target,service:createSceneRecovery(ctx,target)}
+        services.set(agent,entry)
+      }
+      return entry.service
+    }
+    ctx.provide('houdiniRecovery',{
+      beforeTool:async(agent,signal)=>{
+        const pending=selections.get(agent)
+        if(pending){await pending;signal.throwIfAborted();return}
+        if(!workbench()||services.has(agent)||foldExecutorState(agent.session.snapshotEvents()).identity)return
+        const selection=serviceFor(agent,signal,true).then(()=>{})
+        selections.set(agent,selection)
+        try {await selection}
+        finally {if(selections.get(agent)===selection)selections.delete(agent)}
+      },
+      beforeStep:async(agent,signal)=>{if(workbench()&&foldExecutorState(agent.session.snapshotEvents()).identity)await (await serviceFor(agent,signal,true)).beforeStep(agent,signal)},
+      followDirectory:async(agent,signal,probe)=>{
+        if(!workbench()||!foldExecutorState(agent.session.snapshotEvents()).identity)return
+        try {await (await serviceFor(agent,signal)).followDirectory(agent,signal,probe)}
+        catch {signal.throwIfAborted()}
+      },
+      ensure:async(agent,signal)=>(await serviceFor(agent,signal??new AbortController().signal)).ensure(agent,signal),
+      inspect:async(agent,signal)=>(await serviceFor(agent,signal,true)).inspect(agent,signal),
+      assess:async(agent,signal)=>(await serviceFor(agent,signal,true)).assess(agent,signal),
+      restore:async(agent,id,signal)=>(await serviceFor(agent,signal,true)).restore(agent,id,signal),
+    })
+    return
+  }
+  ctx.provide('houdiniRecovery',createSceneRecovery(ctx,connection))
+}
+
+function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecoveryService {
   const plans=new WeakMap<Agent,{id:string;state:string;facts:any;previous:string;sources:string[]}>()
   const running=new WeakSet<Agent>()
   const stepPhase=new WeakSet<Agent>()
-  const bridge=()=>{
-    if(!(connection instanceof HoudiniBridge))throw new Error('共享执行端的跨进程接续尚未实现，可以继续讨论原工程和下一步。')
-    return connection
-  }
+  const bridge=()=>connection
   const persisted=async(agent:Agent)=>{
     if(await ctx.sessions.flush(agent.session)!==true)
       throw new Error('会话记录尚未可靠保存，系统没有启用新的工程连接。可以继续讨论，稍后发送消息时会重新核对。')
@@ -55,16 +135,7 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
     if(typeof value.hip_path!=='string'||!path.isAbsolute(value.hip_path)||!agent.session.header.cwd)return
     const directory=path.dirname(value.hip_path)
     if(samePath(directory,agent.session.header.cwd))return
-    const registry=ctx.get('workspaceRegistry')
-    if(!registry||!('relocateSession' in registry)||typeof registry.relocateSession!=='function')
-      throw new Error('工程已另存，但当前 DSH 尚未加载会话目录接续能力；本轮未继续文件操作，原对话与工程保留。')
-    signal.throwIfAborted()
-    const previous=agent.session.header.cwd
-    await registry.relocateSession(agent.id,directory)
-    agent.session.append('user/message',houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
-      'The saved project and this conversation now use the following working directory. Continue from the actual scene; earlier file paths remain historical references.\n'
-      +literalData(JSON.stringify({previous_directory:previous,directory:agent.session.header.cwd,hip_path:value.hip_path}))}),{surfaceOp:'append'})
-    await persisted(agent)
+    await relocateDirectory(ctx,agent,directory,value.hip_path,signal)
   }
   const locateOriginal=async(agent:Agent,signal:AbortSignal,failure:any)=>{
     const sceneId=recordedScene(agent),state=foldExecutorState(agent.session.snapshotEvents())
@@ -119,7 +190,6 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
   }
   const service:SceneRecoveryService={
     async followDirectory(agent,signal,probe=false) {
-      if(!(connection instanceof HoudiniBridge))return
       const state=foldExecutorState(agent.session.snapshotEvents())
       if(!state.identity||state.identity!==connection.targetExecutorId)return
       const anchor=executionHistory(agent.session.snapshotEvents()).anchor?.execution
@@ -140,7 +210,6 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
       if(verifiedSave||verifiedResume)await follow(agent,value,signal)
     },
     async beforeStep(agent,signal) {
-      if(!(connection instanceof HoudiniBridge))return
       const state=foldExecutorState(agent.session.snapshotEvents())
       if(!state.identity)return
       if(state.identity===connection.targetExecutorId&&!state.recovery
@@ -197,25 +266,40 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
         ||result.executor_id!==state.identity||result.checkpoint_id!==state.recovery.checkpoint_id)
         throw new Error('恢复激活回执不匹配，未确认工程连接。')
     },
-    async assess(agent,signal) {
-      if(running.has(agent))throw new Error('工程恢复正在进行，请等待结果。')
+    async inspect(agent,signal) {
       const target=bridge(),state=foldExecutorState(agent.session.snapshotEvents())
-      if(!state.identity)return {status:'unbound',message:'新任务尚无工程执行记录。'}
+      if(!state.identity||(state.identity===target.targetExecutorId&&!state.recovery
+        &&!executionHistory(agent.session.snapshotEvents()).anchor)) {
+        await target.inspectExecutor(signal)
+        return {status:'new_task',executor_id:target.targetExecutorId,message:'尚未执行过 Houdini 操作。'}
+      }
       const before=key(agent)
       const recordedHip=projectExecutionState(agent.session.snapshotEvents())?.hip_path??state.recovery?.hip_path
       const sceneId=recordedScene(agent)
       let value:any
       try {value=await target.recover('assess',{session_id:agent.id,previous_executor:state.identity,
-        source_executors:state.executors,...(typeof sceneId==='string'?{expected:{scene_id:sceneId}}:{})},signal)}
+        source_executors:state.executors,...(typeof sceneId==='string'?{expected:{scene_id:sceneId}}:{})},signal)
+        if(value.executor_id!==target.targetExecutorId)throw new Error('连接回执来自另一个 Houdini，尚未确认当前工程连接。')
+        if(value.status==='connected'&&state.identity!==target.targetExecutorId)
+          throw new Error('原对话仍记录着另一个 Houdini，当前连接尚未完成接续。')
+      }
       catch(error) {
         signal.throwIfAborted()
-        return {status:'unavailable',recorded_hip:recordedHip,message:error instanceof Error?error.message:String(error)}
+        return {status:'unavailable',executor_id:target.targetExecutorId,recorded_hip:recordedHip,message:error instanceof Error?error.message:String(error)}
       }
       value={...value,recorded_hip:recordedHip}
       if(key(agent)!==before)throw new Error('任务在检查期间发生变化，请重新检查。')
-      if(value.status!=='ready')return value
       if(sceneId&&value.scene_id!==sceneId)return {...value,status:'different_scene',
         message:'当前工程与原对话记录的工程不同。请在对话中明确要继续哪份工程；系统没有切换或修改内容。'}
+      return value
+    },
+    async assess(agent,signal) {
+      if(running.has(agent))throw new Error('工程恢复正在进行，请等待结果。')
+      const target=bridge(),state=foldExecutorState(agent.session.snapshotEvents()),before=key(agent)
+      const value=await service.inspect(agent,signal)
+      if(key(agent)!==before)throw new Error('任务在检查期间发生变化，请重新检查。')
+      if(value.status!=='ready')return value
+      if(!state.identity)throw new Error('当前任务没有可核对的原连接身份。')
       const retained=state.recovery&&state.recovery.executor_id===target.targetExecutorId
         &&state.recovery.checkpoint_id===value.checkpoint_id&&state.recovery.scene_epoch===value.scene_epoch
         ?state.recovery:undefined
@@ -264,5 +348,5 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
       } finally {running.delete(agent)}
     },
   }
-  ctx.provide('houdiniRecovery',service)
+  return service
 }

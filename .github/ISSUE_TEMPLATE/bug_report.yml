@@ -1,0 +1,29 @@
+name: Bug / 故障报告
+description: 报告 DSH-Houdini 使用中遇到的问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请从对话中的「报告问题」或 Version & Updates 窗口生成诊断包。
+        此页面公开可见。请先检查包内内容，移除密钥和客户资料；完整会话、工程和图片只在确认可以公开后附加。
+        生成诊断包不代表已经提交。可把包内 issue.md 的内容粘贴到下面。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题与复现步骤
+      description: 做了什么？预期结果与实际结果是什么？是否在重启或切换工程后发生？
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断摘要与附件
+      description: 粘贴 issue.md，拖入检查后的 ZIP。无法导出时请填写 Houdini 与插件版本、报错时间和错误文字。
+  - type: checkboxes
+    id: reviewed
+    attributes:
+      label: 内容检查
+      options:
+        - label: 我已检查文字与附件，确认其中不包含凭据或不应公开的项目资料。
+          required: true

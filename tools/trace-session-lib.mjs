@@ -139,11 +139,13 @@ export function sessionIdFromFile(file) {
 export function collectRequestTelemetry(events) {
   const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens', 'reasoningTokens'];
   const requests = new Map();
+  let configuration = {};
   let duplicateUsageEvents = 0;
   let updatedUsageEvents = 0;
   const count = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   for (const event of events) {
     const d = event.data;
+    if(event.type==='request/header')configuration=d?.header?.config??{};
     // V3 persists settled usage on the message, including interrupted messages.
     // Keep legacy chunk logs readable; mixed records share one turn/step key.
     const reportedUsage = event.type === 'assistant/message' ? d?.usage
@@ -159,7 +161,14 @@ export function collectRequestTelemetry(events) {
     const sum = usage.inputTokens == null || usage.outputTokens == null ? null
       : usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
     const arithmeticMatches = sum == null || usage.totalTokens == null ? null : sum === usage.totalTokens;
-    requests.set(key, {seq:event.seq, time:event.time, turn:d.turn ?? null, step:d.step ?? null, ...usage,
+    const source=d?.message?.source;
+    const modelConfiguration={provider:configuration.provider??source?.provider??null,
+      model:configuration.model??source?.model??null,
+      reasoningEffort:configuration.reasoningEffort??null,
+      maxTokens:configuration.maxTokens??null,
+      apiReportedByAdapter:source?.replayState?.response?.api??null,
+      scope:'Recorded request fields and adapter replay API only; unspecified reasoning is unknown, not off. Transport payload and provider behavior require separate evidence.'};
+    requests.set(key, {seq:event.seq, time:event.time, turn:d.turn ?? null, step:d.step ?? null, ...usage,modelConfiguration,
       arithmeticMatches,
       inputWithCache: arithmeticMatches === true ? sum - usage.outputTokens : null});
   }
@@ -243,6 +252,7 @@ export function collectRequestContexts(events, {includeSystemText = false} = {})
     const tools = header.tools || [];
     rows.push({seq:event.seq,time:event.time,turn:event.data?.turn ?? null,step:event.data?.step ?? null,
       boundary,projectionComplete:complete,projectionError,model:complete ? header.config?.model ?? null : null,
+      modelConfiguration:complete ? Object.fromEntries(['provider','model','reasoningEffort','maxTokens','temperature'].map(key=>[key,header.config?.[key]??null])) : null,
       systemChars:complete ? system.length : null,
       systemHash:complete ? createHash('sha256').update(system).digest('hex').slice(0,16) : null,
       systemSource:!complete ? 'unknown_invalid_surface' : systems.length ? 'surface_system_messages' : v3 ? 'no_visible_system_message' : 'legacy_header',

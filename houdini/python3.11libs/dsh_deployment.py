@@ -255,14 +255,67 @@ def verify_inventory(root: Path, manifest: dict, progress=lambda s: None):
     return inventory
 
 
+def _process_started(pid):
+    if os.name != 'nt':
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    try:
+        code = wintypes.DWORD()
+        times = [wintypes.FILETIME() for index in range(4)]
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:
+            return None
+        if not kernel.GetProcessTimes(handle, *(ctypes.byref(value) for value in times)):
+            return None
+        return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+class LeaseBusyError(RuntimeError):
+    def __init__(self, message, path):
+        super().__init__(message)
+        self.path = Path(path)
+        self.owner = None
+        try:
+            with Path(path).open('rb') as stream:
+                stream.seek(1)
+                raw = stream.read(8193)
+            value = json.loads(raw) if len(raw) <= 8192 else None
+            if isinstance(value, dict) and value.get('schema') == 1 and type(value.get('pid')) is int and 0 < value['pid'] <= 0xffffffff \
+                    and value.get('process_started') and value['process_started'] == _process_started(value['pid']):
+                self.owner = value
+        except (OSError, ValueError, RecursionError):
+            pass
+
+
+def workspace_busy_message(error):
+    owner = error.owner or {}
+    project = owner.get('hip_path')
+    label = '未保存工程' if owner.get('hip_is_new') else Path(project).name if isinstance(project, str) and project else '工程信息暂不可用'
+    identity = ('\n打开插件时的工程：' + label + ('（Houdini ' + str(owner['houdini_version']) + '）' if owner.get('houdini_version') else '')) if owner else '\n占用窗口的信息暂不可读取。'
+    return ('插件正在另一个 Houdini 窗口中使用。当前安装一次只能供一个 Houdini 使用。' + identity
+            + '\n\n可以回到那个窗口继续。若要改用当前窗口，请先保存并正常退出占用插件的 Houdini，再在这里选择 Open Workspace。'
+            + '\n仅关闭插件面板不会释放占用；不要删除锁文件或强行结束进程。')
+
+
 class FileLease:
     """OS lifetime lock: crash/reboot releases it without deleting a stale lock."""
     def __init__(self, path: Path, *, busy_message="资源正在被其他操作使用，请稍后重试。"):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.handle = path.open("a+b")
+        self.owner_recorded = False
         try:
-            self.handle.seek(0)
-            if self.handle.read(1) == b"":
+            if os.fstat(self.handle.fileno()).st_size == 0:
                 self.handle.write(b"0")
                 self.handle.flush()
             self.handle.seek(0)
@@ -274,10 +327,29 @@ class FileLease:
                 fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             self.handle.close()
-            raise RuntimeError(busy_message) from exc
+            raise LeaseBusyError(busy_message, path) from exc
+
+    def record_owner(self, value):
+        identity = {'schema': 1, 'pid': os.getpid(), 'process_started': _process_started(os.getpid())}
+        payload = json.dumps({**value, **identity}, ensure_ascii=False).encode('utf-8')
+        if len(payload) > 8192:
+            payload = json.dumps({**identity, 'details_unavailable': 'metadata_size_limit'}).encode('utf-8')
+        self.handle.seek(1)
+        self.handle.truncate()
+        self.handle.write(payload)
+        self.handle.flush()
+        self.owner_recorded = True
 
     def close(self):
-        self.handle.close()
+        if self.handle.closed:
+            return
+        try:
+            if self.owner_recorded:
+                self.handle.seek(1)
+                self.handle.truncate()
+                self.handle.flush()
+        finally:
+            self.handle.close()
 
     def __enter__(self):
         return self
@@ -356,7 +428,7 @@ class Store:
             state["pending"] = None
             atomic_json(self.root / "state.json", state)
 
-    def activate(self, pinned_id, houdini_version, progress=lambda s: None, prepare=None):
+    def activate(self, pinned_id, houdini_version, progress=lambda s: None, prepare=None, *, owner=None):
         """Worker only, called for the selection captured at Houdini startup.
 
         Returns a lifetime runtime lease; keep it alive until Houdini exits.
@@ -365,6 +437,7 @@ class Store:
         lease = FileLease(self.root / "runtime.lock", busy_message=
                           "DSH 工作区正在另一个 Houdini 中运行。请在那里继续，或退出那个 Houdini 后重试。")
         try:
+            lease.record_owner({'houdini_version': houdini_version, **(owner or {}), 'pid': os.getpid(), 'install_id': pinned_id})
             with FileLease(self.root / "install.lock", busy_message="另一项安装操作正在进行，请稍后重试。"):
                 state = self.state()
                 if pinned_id not in (state["current"], state["pending"]) or not pinned_id:
@@ -463,6 +536,8 @@ def runtime_env(context):
     env.pop("NODE_PATH", None)
     env.pop("PSModulePath", None)
     env.pop("DSH_HOUDINI_BRIDGE_URL", None)
+    if context.get('workbench'):
+        env.update(DSH_HOUDINI_EXECUTOR_REGISTRY=context['executorRegistry'], DSH_HOUDINI_WORKBENCH='1')
     if "bridgePort" in context:
         if type(context["bridgePort"]) is not int or not 1024 <= context["bridgePort"] <= 65535:
             raise ValueError("invalid managed bridge port")

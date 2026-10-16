@@ -383,8 +383,26 @@ export function nativeImageEvidence(steps) {
       delivered:!!item.attachment?.attachmentId && !item.error,error:item.error ?? null,semanticStatus:'unverified'})));
 }
 
+function nextRecordedToolStep(observation, steps) {
+  // Steps are ordered by returned result. A later result can belong to a
+  // call already submitted before the image was available; do not label it
+  // as a follow-up. Link the original step, never duplicate its execution.
+  const bySequence=Number.isFinite(observation?.resultSeq)
+    ? steps.filter(s=>Number.isFinite(s.callSeq)&&s.callSeq>observation.resultSeq)
+      .sort((a,b)=>a.callSeq-b.callSeq)[0] : null;
+  // Timestamps can fill a missing sequence, never override a known order.
+  const next=bySequence ?? (Number.isFinite(observation?.time)
+    ? steps.filter(s=>(!Number.isFinite(observation?.resultSeq)||!Number.isFinite(s.callSeq))
+      && Number.isFinite(s.callTime)&&s.callTime>observation.time)
+      .sort((a,b)=>a.callTime-b.callTime)[0] : null);
+  return next ? {index:next.index,tool:next.tool,
+    orderEvidence:bySequence?'call_seq_after_observation_result':'call_time_after_observation_result'} : null;
+}
+
 /** Link a delivered image to the next recorded assistant response, without
- * treating the model's own description as an independent semantic verdict. */
+ * treating the model's own description as an independent semantic verdict.
+ * nextToolStep references the original follow-up call; it proves neither
+ * causation, a geometry edit nor success, including image-only responses. */
 export function linkNativeImageResponses(images, steps, events) {
   const stepByIndex = new Map(steps.map(step => [step.index, step]));
   const responses = events.filter(event => event.type === 'assistant/message'
@@ -392,13 +410,14 @@ export function linkNativeImageResponses(images, steps, events) {
   return images.map(item => {
     if (!item.delivered) return item;
     const step = stepByIndex.get(item.index);
+    const nextToolStep = nextRecordedToolStep(step, steps);
     const next = responses.find(event => Number.isInteger(step?.resultSeq)
       && event.seq > step.resultSeq && (step.turn == null || event.data?.turn === step.turn));
-    if (!next) return {...item,followingAssistant:null};
+    if (!next) return {...item,followingAssistant:null,nextToolStep};
     const blocks = next.data.message.content;
     const prose = blocks.filter(block => block.type === 'reasoning' || block.type === 'text')
       .map(block => String(block.text || '')).join('\n');
-    return {...item,followingAssistant:{seq:next.seq,time:next.time,
+    return {...item,nextToolStep,followingAssistant:{seq:next.seq,time:next.time,
       proseChars:prose.length,excerpt:prose.slice(0,300),
       status:'requires_manual_image_comparison'}};
   });
@@ -923,6 +942,7 @@ function auditReviewEvidence(steps, assistantMessages) {
       followingAssistant:assistantMessages.filter(m=>Number.isFinite(step.time)&&Number.isFinite(m.time)
         && m.time>=step.time && m.time<=nextTime)
         .map(m=>({time:m.time,...excerpt(m.text)})),
+      nextToolStep:nextRecordedToolStep(step,steps),
     });
   }
   const discovered=sourceReads.some(r=>r.mode==='discovery'&&r.status==='page_returned');
@@ -932,7 +952,7 @@ function auditReviewEvidence(steps, assistantMessages) {
       scope:'Records returned source pages only. An index is discovery, not source-body retrieval; pages may be partial. Original input or injected excerpts may already be available. No inference of model consumption, requirement completeness or permission.'},
     visualComparison:{inspections,finalStatement:excerpt(assistantMessages.at(-1)?.text),
       verdict:'requires_semantic_review',
-      scope:'Compare inspection results, subsequent model interpretation and final claims manually, with image version and target scope. Access success does not mean visual correctness; conflicting, agreeing and ambiguous prose are not classified by keywords.'},
+      scope:'Compare inspection results, subsequent model interpretation, nextToolStep and final claims manually, with image version and target scope. nextToolStep only references the original timeline step whose call follows this observation result; it does not establish causation, a geometry edit or success. Null means no ordered follow-up was available. Access success does not mean visual correctness; conflicting, agreeing and ambiguous prose are not classified by keywords.'},
     probeScope:'Handwritten probes remain candidates; entity coverage, thresholds, geometry dataflow and relation correctness require source review even when a numeric result exists.',
   };
 }

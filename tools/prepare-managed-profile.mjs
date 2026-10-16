@@ -46,7 +46,10 @@ if (entries.some(entry => !entry.disabled && entry.name === 'dsh-houdini/agent')
   throw new Error('Houdini tools must stay in the preset scope')
 }
 const { interpolate } = await import(pathToFileURL(require.resolve('@deepseek-ai/cordis-plugin-loader')).href)
-if (interpolate({}, agent[0].config).bridgeUrl !== process.env.DSH_HOUDINI_BRIDGE_URL) {
+if (!context.workbench && interpolate({}, agent[0].config).bridgeUrl !== process.env.DSH_HOUDINI_BRIDGE_URL) {
   throw new Error('Scoped Houdini agent does not target this managed Bridge')
+}
+if (context.workbench && interpolate({}, agent[0].config).executorRegistry !== context.executorRegistry) {
+  throw new Error('Scoped Houdini agent does not target this workbench registry')
 }
 console.log('Isolated DSH profile is ready; the bundle registers the Houdini preset')

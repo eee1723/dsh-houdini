@@ -19,7 +19,7 @@ def show_source(*, parent=None):
     return show(source_root=Path(__file__).resolve().parents[2], parent=parent)
 
 
-def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None):
+def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None, startup_error_provider=None):
     global _WINDOW
     from hutil.Qt import QtCore, QtGui, QtWidgets
     source_root = Path(source_root).resolve() if source_root is not None else None
@@ -27,6 +27,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     if source_mode == (store is not None):
         raise ValueError("Choose either a source checkout or a managed installation store")
     if _WINDOW is not None:
+        _WINDOW._dsh_startup_error = startup_error
+        _WINDOW._dsh_startup_error_provider = startup_error_provider
         if context_provider is not None:
             _WINDOW._dsh_context_provider = context_provider
         show_tool_window(_WINDOW)
@@ -36,6 +38,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         parent = hou.qt.mainWindow()
     window = QtWidgets.QDialog(parent)
     window._dsh_context_provider = context_provider
+    window._dsh_startup_error = startup_error
+    window._dsh_startup_error_provider = startup_error_provider
     window.setWindowTitle("DSH-Houdini · 版本与更新")
     window.setMinimumWidth(560)
     style_dialog(window)
@@ -92,6 +96,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     actions.addStretch(1)
     actions.addWidget(cancel)
     layout.addLayout(actions)
+    support = QtWidgets.QPushButton("报告问题 / 导出诊断包…")
+    layout.addWidget(support)
     progress_bar = QtWidgets.QProgressBar()
     progress_bar.setTextVisible(False)
     progress_bar.hide()
@@ -402,6 +408,20 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         import dsh_manager
         dsh_manager.show_version_manager()
 
+    def support_report():
+        import dsh_support_ui
+        import sys
+        observed = window._dsh_context_provider() if window._dsh_context_provider else (pinned, loaded)
+        current_context = observed[1]
+        managed_context = current_context or ({'root': str(store.root), 'installId': observed[0]} if store else None)
+        package_root = source_root or (Path(current_context['install']) / 'app/node_modules/dsh-houdini' if current_context else None)
+        failure = window._dsh_startup_error_provider() if window._dsh_startup_error_provider else window._dsh_startup_error
+        if source_mode:
+            launcher = sys.modules.get('dsh_launcher')
+            failure = getattr(launcher, '_LAST_STARTUP_FAILURE', None) or failure
+        window._support_dialog = dsh_support_ui.show(parent=window, source_root=package_root,
+                                                   managed=managed_context, startup_error=failure)
+
     def network_diagnostics():
         try:
             import dsh_network_diagnostics
@@ -429,6 +449,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     cancel_pending.clicked.connect(lambda: run(lambda: store.cancel_pending() or "已取消下次切换，版本和数据保留。"))
     cancel.clicked.connect(request_cancel)
     diagnostics.clicked.connect(runtime_diagnostics)
+    support.clicked.connect(support_report)
     network.clicked.connect(network_diagnostics)
     shared_register.clicked.connect(lambda: shared_action())
     shared_repair.clicked.connect(lambda: shared_action(repair=True))

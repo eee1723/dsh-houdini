@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def worker(mode, folder):
     sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
     import hou
+    if mode == 'late-install':
+        hou.hipFile.load((folder / 'project.hip').as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
     import dsh_bridge as bridge
     import dsh_scene_recovery as recovery
     import dsh_ownership as ownership
@@ -84,6 +86,27 @@ def worker(mode, folder):
     def load():
         hou.hipFile.load(hip.as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
         assert recovery.facts()['loaded_checkpoint'] == original['checkpoint'], recovery.facts()
+    if mode == 'late-install':
+        initial = recovery.facts()
+        assert initial['scene_id'] == original['scene'], initial
+        assert initial['checkpoint_id'] == original['checkpoint'], initial
+        assert initial['loaded_checkpoint'] is None and recovery._PROVEN is None
+        assert not ownership.records(), 'a saved identity is not proof of live node ownership'
+        assessment = call('assess', expected={'scene_id': original['scene']})['value']
+        assert assessment['status'] == 'ready' and assessment['requires_reload'], assessment
+        assert 'error' in call('prepare', operation_id=uuid.uuid4().hex, expected=assessment)
+        hou.node('/obj/asset').createNode('null', 'unsaved_user_edit')
+        assert 'error' in call('prepare', operation_id=uuid.uuid4().hex, expected=assessment, reload_saved=True)
+        assert hou.node('/obj/asset/unsaved_user_edit') is not None and not ownership.records()
+        recovery.task_target(owner)
+        hou.node('/').setUserData(recovery.SCENE_KEY, uuid.uuid4().hex)
+        recovery.install()
+        assert recovery.facts()['scene_id'] == initial['scene_id'] and recovery.connected(owner)
+        hou.hipFile.clear(suppress_save_prompt=True)
+        assert recovery.facts()['scene_id'] != initial['scene_id'] and not recovery.connected(owner)
+        assert not ownership.records()
+        print('PASS late plugin install preserves saved scene identity without inventing load evidence or discarding edits', flush=True)
+        return
     def wait_saved():
         for _ in range(400):
             if recovery.facts()['checkpoint']['status'] == 'checkpoint_saved':
@@ -432,6 +455,7 @@ def main():
             run('alive')
             output = writer.communicate('\n', timeout=20)[0]
             assert writer.returncode == 0, output
+            run('late-install')
             run('restore')
         finally:
             if writer.poll() is None:

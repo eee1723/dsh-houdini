@@ -115,6 +115,14 @@ COP 图层构建、关系与导出由按需加载的 `houdini-cop-workflow` 维�
 只有在真实 trace 需要低成本验证图层、分辨率、数据类型、保存或 slap comp 结果时，才
 新增 COP 自省/交付动词。
 
+## 保存快照上的长渲染
+
+需要长时间渲染、又要继续观察或编辑现场时，可用随包`tools/isolated-houdini-check.py`在独立hython处理已保存的快照；短交互预览仍使用现场`render_view`。先保存获授权的有效工程，manifest放在声明输入的共同根目录，例如`{"hip":"scenes/asset.hip","files":["otls/asset.hda"],"checks":[{"id":"day","kind":"render","node":"/stage/RENDER","frame":1,"file":"day.exr"}]}`。输入按原相对结构复制，检查产物写入新的run目录，原HIP不被保存覆盖。绝对外部依赖不会自动打包/重写，加载警告与声明依赖范围需单独阅读。
+
+用所选Houdini的实际hython路径，通过DSH的后台`pwsh`运行`python <plugin>/tools/isolated-houdini-check.py --trusted --manifest <manifest> --hython <hython> --output-dir <新的run目录> --timeout 900 --memory-mb 4096`。这里的trusted沿当前用户已授权的工程计算范围；不执行未知来源的HIP回调。用DSH`job_output`收集命令终态；`--status --output-dir <run>`可独立读取已记录阶段/结果，`--cancel --output-dir <run>`只请求停止该run自有worker树。取消请求不是已取消，进度文件不是存活证明；不要因为界面安静就再提交同一任务。
+
+完成后核对`finished`、worker状态、各check、快照hash与产物；完整回执在`report.json`。结果只属于被复制的保存版本，不代表之后现场修改。按机器资源限制同时运行的重任务，优先在一个run中顺序执行有关检查；不要因多个子进程可启动就默认并发。临时依赖、Python/回调副作用和GPU资源不在快照恢复/内存上限保证内。
+
 ## 7. 官方参考
 
 - Karma materials: https://www.sidefx.com/docs/houdini/solaris/kug/materials.html

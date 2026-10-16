@@ -20,12 +20,16 @@ import json
 import math
 import operator
 import time
+import tempfile
+from pathlib import Path
 import hou
 import hjson
+import dsh_geometry_observation as observation
+from dsh_bgeo_fingerprint import WRITER_INFO_FIELDS
 
-_MAX_GEOMETRY_BYTES = 32 * 1024 * 1024
-_MAX_POINTS = 250000
-_MAX_PRIMS = 100000
+_MAX_GEOMETRY_BYTES = observation.MAX_BYTES
+_MAX_POINTS = observation.MAX_POINTS
+_MAX_PRIMS = observation.MAX_PRIMS
 _MAX_INTERFACE_PAIRS = 100000
 _BORE_MAX_PRIMS = 4000
 _BORE_SIDES = 24
@@ -192,19 +196,55 @@ def validate_interfaces(interfaces):
 
 
 def _geometry(output):
+    node,g,_=observation.geometry(output)
+    return node,g
 
-    node = dsh_node_access._resolve(output)
-    if node.type().category() != hou.sopNodeTypeCategory():
-        raise ValueError('explicit output must be a SOP')
-    from dsh_cook_control import require_evaluation
-    require_evaluation('geometry quality check')
-    g = node.geometry()
-    if g is None or node.errors():
-        raise ValueError(f'output has no healthy geometry: {node.path()}: {node.errors()}')
-    if (g.intrinsicValue('pointcount') > _MAX_POINTS or g.intrinsicValue('primitivecount') > _MAX_PRIMS
-            or g.intrinsicValue('memoryusage') > _MAX_GEOMETRY_BYTES):
-        raise ValueError('geometry evidence budget exceeded; use a smaller explicit deliverable module')
-    return node, g.freeze(read_only=True)
+
+def _canonical_attribute_values(values, count):
+    if (not isinstance(values,list) or len(values)%2 or any(not isinstance(key,str) for key in values[::2])
+            or len(set(values[::2]))!=len(values)//2):
+        return values
+    fields=dict(zip(values[::2],values[1::2]))
+    if set(fields)-{'size','storage','packing','pagesize','constantpageflags','rawpagedata'}:
+        return values
+    if not {'size','storage','pagesize','rawpagedata'}<=set(fields):
+        return values
+    size,page_size=fields['size'],fields['pagesize']
+    if (type(count) is not int or count<0 or type(size) is not int or size<1
+            or type(page_size) is not int or page_size<1):
+        raise ValueError('invalid native attribute page dimensions')
+    if count*size>_MAX_GEOMETRY_BYTES//8:
+        raise ValueError('decoded attribute page evidence budget exceeded')
+    packing=fields.get('packing',[size])
+    if not isinstance(packing,list) or not packing or any(type(width) is not int or width<1 for width in packing) or sum(packing)!=size:
+        raise ValueError('invalid native attribute page packing')
+    pages=(count+page_size-1)//page_size
+    flags=fields.get('constantpageflags',[[] for width in packing])
+    if (not isinstance(flags,list) or len(flags)!=len(packing)
+            or any(not isinstance(row,list) or len(row) not in (0,pages)
+                   or any(type(flag) not in (bool,int) or flag not in (0,1) for flag in row) for row in flags)):
+        raise ValueError('invalid native attribute constant page flags')
+    raw=fields['rawpagedata']
+    if not isinstance(raw,list):
+        raise ValueError('invalid native attribute raw page data')
+    tuples=[]
+    offset=0
+    for start in range(0,count,page_size):
+        length=min(page_size,count-start)
+        page=[[] for index in range(length)]
+        for subvector,width in enumerate(packing):
+            constant=bool(flags[subvector] and flags[subvector][start//page_size])
+            consumed=width*(1 if constant else length)
+            if offset+consumed>len(raw):
+                raise ValueError('truncated native attribute page data')
+            for index in range(length):
+                position=offset+(0 if constant else index*width)
+                page[index].extend(raw[position:position+width])
+            offset+=consumed
+        tuples.extend(page)
+    if offset!=len(raw):
+        raise ValueError('unexpected trailing native attribute page data')
+    return ['size',size,'storage',fields['storage'],'tuples',tuples]
 
 
 def _canonical_geometry_payload(data, _depth=0):
@@ -242,11 +282,24 @@ def _canonical_geometry_payload(data, _depth=0):
             # order is not an attribute value: remap the known GA rawpagedata
             # schema while preserving every element's actual string and all
             # other attribute metadata. Unknown encodings stay byte-distinct.
-            for records in value[1::2]:
+            counts={name:payload[payload.index(key)+1] for name,key in
+                    [('pointattributes','pointcount'),('vertexattributes','vertexcount'),('primitiveattributes','primitivecount')]
+                    if key in payload[::2]}
+            counts['globalattributes']=1
+            for attribute_class,records in zip(value[::2],value[1::2]):
                 if not isinstance(records,list):continue
                 for record in records:
                     if not isinstance(record,list) or len(record)!=2:continue
                     descriptor,body=record
+                    if (isinstance(descriptor,list) and len(descriptor)%2==0
+                            and all(isinstance(key,str) for key in descriptor[::2])
+                            and len(set(descriptor[::2]))==len(descriptor)//2
+                            and dict(zip(descriptor[::2],descriptor[1::2])).get('type')=='numeric'
+                            and attribute_class in counts and isinstance(body,list) and len(body)%2==0
+                            and all(isinstance(key,str) for key in body[::2]) and len(set(body[::2]))==len(body)//2
+                            and 'values' in body[::2]):
+                        index=body[::2].index('values')*2+1
+                        body[index]=_canonical_attribute_values(body[index],counts[attribute_class])
                     if (not isinstance(descriptor,list) or len(descriptor)%2
                             or any(not isinstance(k,str) for k in descriptor[::2])
                             or len(set(descriptor[::2]))!=len(descriptor)//2
@@ -275,7 +328,7 @@ def _canonical_geometry_payload(data, _depth=0):
         elif key=='info' and isinstance(value,dict):
             # Both are writer-generated descriptions, not user attributes.
             # The actual group names, membership and selection order stay above.
-            payload[i+1]={k:v for k,v in value.items() if k not in ('date','group_summary')}
+            payload[i+1]={k:v for k,v in value.items() if k.encode('utf-8') not in WRITER_INFO_FIELDS}
     if 'sharedprimitivedata' in payload[::2]:
         shared=payload[payload.index('sharedprimitivedata')+1]
         if not isinstance(shared,list) or len(shared)%2:raise ValueError('unsupported packed payload schema')
@@ -333,6 +386,8 @@ def _first_geometry_difference(before, after, limit=50000):
         if type(left) is not type(right):
             return {'path':path or '/', 'kind':'type',
                     'baseline_type':type(left).__name__,'restored_type':type(right).__name__}
+        if left==right:
+            continue
         if isinstance(left,dict):
             missing=set(left)^set(right)
             if missing:
@@ -899,7 +954,7 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
     validate_interfaces(interfaces)
     if type(max_pairs) is not int or not 1 <= max_pairs <= _MAX_INTERFACE_PAIRS:
         raise ValueError(f'max_pairs must be in 1..{_MAX_INTERFACE_PAIRS}')
-    node, g = _geometry(output)
+    node, g, selection = observation.geometry(output,observation.interface_groups(interfaces))
     from dsh_geometry_evidence import expanded_view
     try:
         observed,representation=expanded_view(g,allow_native_unknown=True)
@@ -909,6 +964,7 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
                 'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest()}
     result = _check_interfaces(observed, interfaces, max_pairs, node)
     result['representation']=representation
+    result['geometry_scope']=selection
     result['runtime_limits']=interface_limits()
     return {**result,'output':node.path(),'frame':float(hou.frame()),'checked_at':time.time(),
             'geometry_sha256':_data_signature(g),'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest(),
@@ -1195,7 +1251,7 @@ def _control_summary(result, tests, interfaces=None, topology=None, baseline_int
             'failures': failures[:8], 'failure_count': len(failures),
             **{k: result[k] for k in ('controller', 'output', 'frame', 'contract_sha256',
                                      'reason', 'case_id', 'baseline', 'expectation', 'parameter_writes',
-                                     'measurement_failure') if k in result},
+                                     'measurement_failure','geometry_scope') if k in result},
             'next_action': ('Only the declared cases and measurements passed; untested relationships remain unverified.'
                 if result['ok'] else 'Locked baseline/case captures are incomplete; inspect their framing/backend evidence. Numeric case results and restoration are reported separately; visual semantics remain unverified.'
                 if result.get('capture_status')=='unverified' else result.get('next_action',
@@ -1216,9 +1272,11 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
         declaration.update(views=views,view_bounds=view_bounds)
     contract_hash=hashlib.sha256(json.dumps(declaration,sort_keys=True).encode()).hexdigest()
     try:
-        result = _test_controls(controller, output, tests, interfaces, allow_foreign,
+        with tempfile.TemporaryDirectory(prefix='dsh-control-restore-') as snapshot_directory:
+            result = _test_controls(controller, output, tests, interfaces, allow_foreign,
                                 domain=domain, topology=topology, baseline_interfaces=baseline_interfaces,
-                                views=views, response_only=response_only, view_bounds=view_bounds)
+                                views=views, response_only=response_only, view_bounds=view_bounds,
+                                snapshot_directory=snapshot_directory)
     except dsh_errors.CheckpointError as error:
         error.evidence['contract_sha256']=contract_hash
         if isinstance(error.evidence.get('control_summary'),dict):
@@ -1232,7 +1290,7 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
 
 
 def _test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None,
-                   baseline_interfaces=None, views=None, response_only=False, view_bounds=None):
+                   baseline_interfaces=None, views=None, response_only=False, view_bounds=None, snapshot_directory=None):
     """Bounded numeric-control perturbation, declared measurement and restoration.
 
     Each test has id, numeric values dict and expectations [{metric,axis?,group?,
@@ -1323,7 +1381,9 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'results':[],'restored':True,'parameter_writes':0,
                 'reason':'baseline cook failed before any control write',
                 'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
-    node, baseline=_geometry(output)
+    groups=observation.control_groups(tests,interfaces,baseline_interfaces,topology)
+    node, baseline, selection=observation.geometry(output,groups)
+    full_snapshot=None
     from dsh_geometry_evidence import expanded_view
     try:
         measured_baseline,representation=expanded_view(baseline)
@@ -1331,12 +1391,12 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
                 'reason':str(error),'parameter_writes':0,'semantic_status':'unverified',
-                'scope':'unsupported or over-budget evidence representation; zero parameter writes'}
+                'geometry_scope':selection,'scope':'unsupported or over-budget evidence representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
     baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
     baseline_relations=_check_interfaces(measured_baseline,baseline_contracts,50000,node) if baseline_contracts else None
     baseline_topology=_check_topology(measured_baseline,topology) if topology is not None else None
-    baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,
+    baseline_checks={'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'geometry_scope':selection,
                      'baseline_domain':baseline_domain}
     if baseline_topology is not None and not baseline_topology['ok']:
         return {'ok':False,'status':baseline_topology['status'],'controller':ctrl.path(),'output':node.path(),
@@ -1367,6 +1427,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
                 'parameter_writes':0, 'measurement_failure':error.diagnostic,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
+    if selection['kind']=='selected_final_primitives':
+        full_snapshot=observation.snapshot(node.geometry(),Path(snapshot_directory)/'baseline.bgeo')
     baseline_captures=capture_views(node,views,view_bounds=view_bounds,frame=original_frame) if views else []
     capture_locks={c['view']:c['framing'] for c in baseline_captures
                    if c.get('ok') is True and not c.get('stale') and c.get('framing',{}).get('bounds')
@@ -1398,7 +1460,8 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                     raise ValueError('actual perturbed values outside declared parameter domain')
             cook=dsh_node_operations.cook_node(node,force=True)
             if not cook['ok']:raise ValueError(f'perturbed cook failed: {cook["errors"]}')
-            _,g=_geometry(node)
+            _,g,case_selection=observation.geometry(node,groups)
+            row['geometry_scope']=case_selection
             try: measured_geometry,_=expanded_view(g)
             except ValueError as error: raise UnsupportedEvidence(str(error)) from error
             measurements=[]
@@ -1413,10 +1476,13 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             measurements_pass=all(m['pass'] for m in measurements)
             checks=[r for r in (relations,topology_check) if r is not None]
             case_status='fail' if not measurements_pass or any(r['status']=='fail' for r in checks) else 'unverified' if any(r['status']=='unverified' for r in checks) else 'pass'
+            comparable=case_selection['kind']==selection['kind']
+            selected_changed=_data_signature(g)!=baseline_hash if comparable else None
             row.update({'status':case_status,'measurements':measurements,'interfaces':relations,'topology':topology_check,
-                        'geometry_changed':_data_signature(g)!=baseline_hash,'warnings':cook['warnings']})
+                        'geometry_changed':selected_changed if comparable and (selected_changed or selection['kind']=='whole_output') else None,
+                        'geometry_change_scope':selection['kind'] if comparable else 'incomparable_collections','warnings':cook['warnings']})
             if not measurements:
-                row['response_status']='responsive' if row['geometry_changed'] else 'unchanged'
+                row['response_status']='responsive' if row['geometry_changed'] else 'unverified' if row['geometry_changed'] is None else 'unchanged'
                 if row['status']=='pass':row['status']='unverified'
             if views:row['captures']=capture_views(node,views,locks=capture_locks,frame=original_frame)
         except UnsupportedEvidence as error:
@@ -1438,9 +1504,14 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 # another evaluation after the explicit attempt already failed.
                 if not cook['ok']:
                     raise ValueError(f'restoration cook failed: {cook["errors"]}')
-                _,restored=_geometry(node)
+                _,restored,_=observation.geometry(node,groups)
                 restored_hash=_data_signature(restored)
                 geometry_restore=_geometry_restore_diagnostic(baseline,restored,baseline_hash,restored_hash)
+                if full_snapshot is not None:
+                    full_restored=observation.snapshot(node.geometry(),Path(snapshot_directory)/'restored.bgeo')
+                    geometry_restore['full_output']={'baseline':full_snapshot,'restored':full_restored,
+                        'matches':full_snapshot['sha256']==full_restored['sha256']}
+                    geometry_restore['matches']=geometry_restore['matches'] and geometry_restore['full_output']['matches']
                 geometry_restored=geometry_restore['matches']
                 if not geometry_restored:errors.append('output bgeo differs from baseline; inspect geometry_restore')
             except Exception as error:
@@ -1477,4 +1548,5 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
             'parameter_restore':restoration,
             'baseline_interfaces':baseline_relations,'baseline_topology':baseline_topology,'baseline_domain':baseline_domain,'results':rows,'semantic_status':'unverified',
             'baseline_captures':baseline_captures,'capture_status':capture_status,'representation':representation,
+            'geometry_scope':selection,
             'scope':'only declared control cases and explicit-output measurements; not all combinations or unspecified relationships'}

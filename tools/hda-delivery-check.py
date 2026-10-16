@@ -284,6 +284,40 @@ def check(manifest_path, hython, timeout=120, memory_mb=4096, cancel_file=None):
         return report
 
 
+def write_report(report, output=None):
+    """Archive complete evidence before projecting CLI output for the consumer.
+
+    Only the known node inventory moves behind a JSON Pointer. Case outcomes,
+    actual measurements, callback/cleanup errors and worker diagnostics remain
+    inline, including unfamiliar fields. Without an archive return everything.
+    """
+    text = json.dumps(report, ensure_ascii=False, indent=2)
+    if output is None:
+        return text
+    output = output.resolve()
+    encoded = text.encode('utf-8')
+    output.write_bytes(encoded)
+    summary = dict(report)
+    if 'cases' in report:
+        summary['cases'] = []
+        for index, case in enumerate(report['cases']):
+            row = dict(case)
+            inventory = case.get('node_definitions')
+            if isinstance(inventory, list):
+                row['node_definitions'] = {
+                    'count': len(inventory),
+                    'detail_pointer': f'/cases/{index}/node_definitions',
+                }
+            summary['cases'].append(row)
+    summary['report'] = {
+        'path': str(output), 'bytes': len(encoded),
+        'sha256': hashlib.sha256(encoded).hexdigest(),
+        'scope': 'Complete report retained; node inventories referenced by JSON Pointer. '
+                 'Case checks establish only their declared scope, not whole-asset quality.',
+    }
+    return json.dumps(summary, ensure_ascii=False, indent=2)
+
+
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == '--worker':
         if sys.stdin.readline().strip()!='GO':return 2
@@ -291,7 +325,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--hython', type=Path, required=True)
-    parser.add_argument('--output', type=Path)
+    parser.add_argument('--output', type=Path,
+                        help='Save the complete report; stdout retains all cases and diagnostics with inventory references')
     parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--memory-mb', type=int, default=4096)
     parser.add_argument('--cancel-file', type=Path)
@@ -299,10 +334,7 @@ def main():
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     report = check(args.manifest.resolve(), args.hython.resolve(), args.timeout,args.memory_mb,args.cancel_file)
-    text = json.dumps(report, ensure_ascii=False, indent=2)
-    if args.output:
-        args.output.write_text(text, encoding='utf-8')
-    print(text)
+    print(write_report(report, args.output))
     return 0 if report['ok'] else 1
 
 

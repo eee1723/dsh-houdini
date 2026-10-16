@@ -10,9 +10,30 @@ import atexit
 
 _BUSY = False
 _TIMER = None
+if '_OBSERVATION_KEY' not in globals():
+    _OBSERVATION_KEY = None
+    _OBSERVATION_TOKEN = None
 
 
-def prepare_registration():
+def capture_scene(workspace=None):
+    global _OBSERVATION_KEY, _OBSERVATION_TOKEN
+    import dsh_bridge as bridge
+    from dsh_scene_recovery import facts
+    value = facts()
+    scene = {key: value[key] for key in ('scene_id', 'scene_epoch', 'hip_is_new')}
+    scene['workspace_path'] = workspace or str(Path(value['hip_path']).parent)
+    key = (value['hip_path'], scene['scene_id'], scene['scene_epoch'], scene['hip_is_new'],
+           scene['workspace_path'], bridge._RUNTIME_ID)
+    if key != _OBSERVATION_KEY:
+        _OBSERVATION_KEY, _OBSERVATION_TOKEN = key, object()
+    return {'hip': value['hip_path'], 'scene': scene, 'observation_token': _OBSERVATION_TOKEN}
+
+
+def observation_current(facts):
+    return facts.get('observation_token') is not None and facts['observation_token'] is _OBSERVATION_TOKEN
+
+
+def prepare_registration(*, workbench=False, workspace=None, reuse_busy=False):
     import hou
     import dsh_bridge as bridge
     from dsh_managed_runtime import has_owned_frontend
@@ -21,15 +42,24 @@ def prepare_registration():
     if has_owned_frontend():
         raise RuntimeError('当前 Houdini 已运行独立 DSH 服务。请先保存工作，再用新打开的 Houdini 登记共享执行端。')
     if bridge._request_registry.active_count() or bridge._job_activity()['activeJobs'] or not bridge._work_queue.empty():
+        if workbench and reuse_busy:
+            from dsh_executor_registry import active_registration
+            registration = active_registration()
+            if registration.workbench:
+                return {'hip': registration.registered_hip(), 'version': registration.version,
+                        'executor_id': registration.executor_id, 'runtime_id': registration._runtime_id,
+                        'port': registration._port, 'installation': registration.installation,
+                        'workbench': True, 'scene': dict(registration.scene), 'busy': True, 'session_id': registration._task}
         raise RuntimeError('请等待当前 Houdini 操作完成，再登记共享执行端。')
     hip = hou.hipFile.path()
-    if hou.hipFile.isNewFile():
+    if hou.hipFile.isNewFile() and not workbench:
         raise RuntimeError('请先保存并命名工程，再登记共享执行端。')
     # Bind directly to port zero; keep the server socket, no probe/rebind race.
     server = bridge._server or bridge.start(0)
-    return {'hip': hip, 'version': bridge._HOU_VERSION, 'executor_id': bridge._EXECUTOR_ID,
+    observed = capture_scene(workspace)
+    return {**observed, 'version': bridge._HOU_VERSION, 'executor_id': bridge._EXECUTOR_ID,
             'runtime_id': bridge._RUNTIME_ID, 'port': server.server_port,
-            'installation': str(Path(__file__).resolve().parents[2])}
+            'installation': str(Path(__file__).resolve().parents[2]), 'workbench': workbench}
 
 
 def publish_registration(root, facts):
@@ -37,18 +67,27 @@ def publish_registration(root, facts):
     root = Path(root)
     if not root.is_absolute():
         raise ValueError('请填写共享 DSH 登记目录的完整路径。')
-    if not Path(facts['hip']).is_file():
+    if not Path(facts['hip']).is_file() and not facts.get('workbench'):
         raise ValueError('工程尚未保存到磁盘。')
+    if facts.get('workbench') and not observation_current(facts):
+        raise RuntimeError('工程在连接过程中已变化，请从当前 Houdini 重新打开工作区。')
     try:
         registration = active_registration()
     except RuntimeError:
         registration = activate(root, facts['executor_id'], installation=facts['installation'],
-            version=facts['version'],port=facts['port'],runtime_id=facts['runtime_id'],hip=facts['hip'])
+            version=facts['version'],port=facts['port'],runtime_id=facts['runtime_id'],hip=facts['hip'],
+            workbench=facts.get('workbench', False),scene=facts.get('scene'))
         atexit.register(registration.close)
     else:
         if registration.root != root.resolve() or registration.executor_id != facts['executor_id']:
             raise RuntimeError('当前 Houdini 已登记到其他共享服务，无法自动切换。')
-    return registration.publish(facts['port'], facts['runtime_id'], hip=facts['hip'])
+        if registration.workbench != bool(facts.get('workbench')):
+            raise RuntimeError('当前 Houdini 已使用另一种启动方式。请保存后重开，再使用 Open Workspace。')
+    with registration._guard:
+        if registration.workbench and not registration.observe(facts['hip'], facts['scene'],
+                is_current=lambda: observation_current(facts)):
+            raise RuntimeError('工程在连接过程中已变化，请重新打开工作区。')
+        return registration.publish(facts['port'], facts['runtime_id'], hip=facts['hip'], scene=facts.get('scene'))
 
 
 def repair_registration():
@@ -56,13 +95,14 @@ def repair_registration():
     from dsh_executor_registry import active_registration
     from dsh_launcher import restart_bridge
     registration = active_registration()
-    facts = prepare_registration()
+    from dsh_launcher import _hip_dir
+    facts = prepare_registration(workbench=registration.workbench, workspace=_hip_dir())
     if registration.executor_id != facts['executor_id']:
         raise RuntimeError('共享执行端身份已变化，无法接管此进程。')
     if registration._task is not None:
         registration.require_writer(registration._task, facts['hip'])
     restart_bridge(port=facts['port'])
-    return registration.root, prepare_registration()
+    return registration.root, prepare_registration(workbench=registration.workbench, workspace=_hip_dir())
 
 
 def show_registration(*, repair=False):

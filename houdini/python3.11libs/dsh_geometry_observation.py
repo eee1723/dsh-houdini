@@ -2,6 +2,9 @@
 import math
 from collections import defaultdict
 import hou
+from pathlib import Path
+import dsh_node_access
+from dsh_cook_control import require_evaluation
 
 
 def selected_prims(g, group=None):
@@ -563,3 +566,81 @@ def point_displacement(g, reference, item):
     distances=[(a[k]*transform-b[k]).length() for k in a]
     if any(not math.isfinite(v) for v in distances):raise ValueError('nonfinite displacement')
     return max(distances) if item['metric'] in ('max_point_displacement','max_transform_error') else sum(distances)/len(distances)
+
+
+# Final-output collection and full restoration snapshots.
+MAX_BYTES = 32 * 1024 * 1024
+MAX_POINTS = 250000
+MAX_PRIMS = 100000
+MAX_SNAPSHOT_BYTES = 2 * 1024 ** 3
+
+
+def counts(g):
+    return {key:int(g.intrinsicValue(intrinsic)) for key,intrinsic in
+            [('points','pointcount'),('primitives','primitivecount'),('memory_bytes','memoryusage')]}
+
+
+def bounded(value):
+    return value['points'] <= MAX_POINTS and value['primitives'] <= MAX_PRIMS and value['memory_bytes'] <= MAX_BYTES
+
+
+def geometry(output, primitive_groups=None):
+    node=dsh_node_access._resolve(output)
+    if node.type().category()!=hou.sopNodeTypeCategory():raise ValueError('explicit output must be a SOP')
+    require_evaluation('geometry quality check')
+    source=node.geometry()
+    if source is None or node.errors():raise ValueError(f'output has no healthy geometry: {node.path()}: {node.errors()}')
+    total=counts(source)
+    scope={'kind':'whole_output','output':node.path(),'source':total}
+    if bounded(total):return node,source.freeze(read_only=True),scope
+    if not primitive_groups:
+        raise ValueError('geometry evidence budget exceeded; declare primitive groups for every measurement/relation or use a smaller explicit deliverable module')
+    groups=sorted(set(primitive_groups));selected={}
+    for name in groups:
+        group=source.findPrimGroup(name)
+        if group is None:raise ValueError('missing final-output primitive group: '+name)
+        for prim in group.prims():
+            selected[prim.number()]=prim
+            if len(selected)>MAX_PRIMS:raise ValueError('selected final-output primitive groups exceed geometry evidence budget')
+    if not selected:raise ValueError('selected final-output primitive groups are empty')
+    view=hou.Geometry()
+    view.merge(source,prims=hou.Selection(tuple(selected[k] for k in sorted(selected))))
+    measured=counts(view)
+    if not bounded(measured):raise ValueError('selected final-output geometry exceeds evidence point/memory budget')
+    return node,view.freeze(read_only=True),{'kind':'selected_final_primitives','output':node.path(),
+        'groups':groups,'source':total,'selected':measured,
+        'scope':'Exact declared primitive groups copied from the final output, with attributes/topology; omitted geometry and unspecified relationships are unverified.'}
+
+
+def interface_groups(interfaces):
+    """Point-to-surface contracts still need their original point selection."""
+    groups=set()
+    for item in interfaces or []:
+        if not item.get('method'):return None
+        groups.update(item[k] for k in ('source_group','target_group') if k in item)
+    return groups
+
+
+def control_groups(tests, interfaces, baseline_interfaces, topology):
+    contracts=list(interfaces or [])+list(baseline_interfaces or [])
+    groups=set()
+    for test in tests:
+        contracts.extend(test.get('interfaces',[]))
+        for expectation in test.get('expectations',[]):
+            if not expectation.get('group'):return None
+            groups.add(expectation['group'])
+    relational=interface_groups(contracts)
+    if relational is None:return None
+    groups.update(relational)
+    for item in topology or []:groups.update(item['groups'])
+    return groups or None
+
+
+def snapshot(g, path):
+    """Stream full native bgeo for restoration; never hash just the selected view."""
+    if counts(g)['memory_bytes']>MAX_SNAPSHOT_BYTES:raise ValueError('full output restoration snapshot exceeds 2 GiB')
+    path=Path(path);g.saveToFile(str(path))
+    if path.stat().st_size>MAX_SNAPSHOT_BYTES:raise ValueError('full output restoration file exceeds 2 GiB')
+    from dsh_bgeo_fingerprint import fingerprint
+    return {**fingerprint(path),'bytes':path.stat().st_size,
+            'scope':'Entire final output native bgeo stream, including unselected geometry. Writer metadata/token identity normalized; unsupported representation changes are not accepted as restored. External side effects excluded.'}

@@ -12,6 +12,9 @@ const gateway=new Gateway(host,{websocketHeartbeatIntervalMs:2000})
 await host.plugin(frontendHost)
 
 const source=await fs.readFile(new URL('../../client.js',import.meta.url),'utf8')
+assert(!source.includes('houdini-connection-status'),'ordinary conversation must not register a connection banner')
+assert(!source.includes('houdiniFrontend/connectionStatus'),'conversation focus and selection must not trigger UI-only scene probes')
+assert(!/['"]检查连接['"]/.test(source),'do not ask artists to maintain internal connection state')
 const fragment=source.slice(source.indexOf('    function createExecutorPicker('),source.indexOf('    function apply(ctx) {'))
 const hooks=[],effects=[];let cursor=0,task='task-a',preset='houdini',requests=[],response,hostGeneration,capabilityResponse
 const React={

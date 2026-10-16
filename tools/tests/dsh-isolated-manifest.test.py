@@ -75,4 +75,12 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
 
     package=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
     assert all(name in package['files'] for name in ('tools/isolated-houdini-check.py','tools/houdini_test_environment.py'))
+    # Status/cancel works during staging before a request file exists; it never
+    # infers liveness or mistakes a cancellation request for terminal success.
+    staging=root/'staging';staging.mkdir()
+    runner.write_json(staging/'report.json',{'ok':False,'finished':False,'phase':'staging','run_id':'a'*32})
+    state=runner.status(staging,cancel=True)
+    assert state['phase']=='staging' and state['cancel_requested'] and not state['finished']
+    runner.write_json(staging/'request.json',{'run_id':'b'*32,'inputs':[]})
+    rejects(lambda:runner.status(staging))
 print('isolated manifest, trust, path aliases, result completeness/runtime and packaging contracts passed')

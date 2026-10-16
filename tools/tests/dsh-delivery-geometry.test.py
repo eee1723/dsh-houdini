@@ -1,5 +1,5 @@
 """Dimension and all-point color checks on an actual public SOP HDA output."""
-import importlib.util,json,tempfile,sys
+import importlib.util,json,tempfile,sys,subprocess
 from pathlib import Path
 import hou
 ROOT=Path(__file__).resolve().parents[2]
@@ -17,7 +17,16 @@ with tempfile.TemporaryDirectory(prefix='delivery-geometry-') as tmp:
   {'id':'dimensions-color','expect_geometry':{'output':'.','bounds_size':[1,1,1],'point_cd':[.2,.4,.8]}}]}
  source=p/'manifest.json';source.write_text(json.dumps(manifest),encoding='utf-8-sig')
  exe=Path(hou.text.expandString('$HFS'))/'bin/hython.exe'
- r=runner.check(source,exe);assert r['ok'],r
+ # Exercise the actual CLI consumed through DSH's ordinary shell tool.
+ completed=subprocess.run([str(exe),str(ROOT/'tools/hda-delivery-check.py'),
+  '--manifest',str(source),'--hython',str(exe),'--output',str(p/'report.json')],
+  capture_output=True,text=True,encoding='utf-8',timeout=120)
+ assert completed.returncode==0,(completed.stdout,completed.stderr)
+ summary=json.loads(completed.stdout);r=json.loads((p/'report.json').read_text(encoding='utf-8'))
+ assert summary['ok'] and r['ok'],(summary,r)
+ assert summary['cases'][0]['geometry']==r['cases'][0]['geometry']
+ assert summary['cases'][0]['node_definitions']['count']==len(r['cases'][0]['node_definitions'])
+ assert summary['report']['path']==str((p/'report.json').resolve())
  manifest['cases'][0]['expect_geometry']['point_cd']=[.8,.4,.2]
  source.write_text(json.dumps(manifest),encoding='utf-8')
  r=runner.check(source,exe);assert not r['ok'] and 'point_cd differs' in json.dumps(r),r

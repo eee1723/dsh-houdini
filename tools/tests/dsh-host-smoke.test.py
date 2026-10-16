@@ -31,6 +31,8 @@ parser.add_argument('--repetition-method', action='store_true', help='Also verif
 parser.add_argument('--surface-method', action='store_true', help='Verify surface/COP skills and native/nested reference delivery at the actual provider')
 parser.add_argument('--outcome-fixture', type=Path, help='Exact receipts exported by isolated caught-failure HOM regression')
 parser.add_argument('--catalog-fixture', type=Path, help='Exact receipt exported by isolated parameter-catalog HOM regression')
+parser.add_argument('--hda-fixture', type=Path, help='Exact receipt exported by isolated HDA lifecycle regression')
+parser.add_argument('--geometry-fixture', type=Path, help='Exact large-output control receipt exported by isolated HOM')
 args = parser.parse_args()
 if args.repetition_method and not args.context_loop:
     parser.error('--repetition-method requires --context-loop')
@@ -64,6 +66,10 @@ if args.context_loop:
         env['DSH_OUTCOME_FIXTURE'] = str(args.outcome_fixture.resolve(strict=True))
     if args.catalog_fixture:
         env['DSH_CATALOG_FIXTURE'] = str(args.catalog_fixture.resolve(strict=True))
+    if args.hda_fixture:
+        env['DSH_HDA_PRESENTATION_FIXTURE'] = str(args.hda_fixture.resolve(strict=True))
+    if args.geometry_fixture:
+        env['DSH_GEOMETRY_PRESENTATION_FIXTURE'] = str(args.geometry_fixture.resolve(strict=True))
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]

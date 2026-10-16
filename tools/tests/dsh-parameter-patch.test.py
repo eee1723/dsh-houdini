@@ -67,6 +67,16 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
         assert h.cook_node(n,force=True)['ok'] and len(n.geometry().points())==2
         row=next(x for x in h.read_parms(n) if x['name']=='snippet')
         assert row['source_sha256']==sha(source)
+        # A file's complete literal content can be synchronized without blind
+        # overwrite, including initial empty sources and an idempotent repeat.
+        desired=source+'\n// $HIP remains literal; 中文源码\n'
+        synced=h.set_parm(n,'snippet',{'expected_sha256':sha(source),'source':desired})
+        assert synced['patch']['mode']=='source_sync' and synced['patch']['after_sha256']==sha(desired)
+        assert n.parm('snippet').unexpandedString()==desired
+        assert not h.set_parm(n,'snippet',{'expected_sha256':sha(desired),'source':desired})['patch']['changed']
+        rejects(lambda:h.set_parms(n,{'snippet':{'expected_sha256':sha(source),'source':'wrong'},'label':'must-not-write'}),'stale source')
+        assert n.parm('snippet').unexpandedString()==desired and n.evalParm('label')=='alpha alpha'
+        h.set_parm(n,'snippet',{'expected_sha256':sha(desired),'source':source})
         selected=h.read_parms(n,names=['label','snippet'])
         assert [r['name'] for r in selected]==['label','snippet']
         assert selected[0]['source_sha256']==sha('alpha alpha'),'explicit default-valued field must not be omitted'

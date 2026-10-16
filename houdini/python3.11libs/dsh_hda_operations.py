@@ -224,7 +224,9 @@ def hda_edit(node, action, *, dry_run=False, expected_plan=None, discard_changes
     every affected instance, restores this call's definition/library on write failure.
     promote moves the source additive spare interface into the definition while
     preserving existing root channels/keys/locks; rejects other instance overlays.
-    <=64 instances/512 descendants/32MiB library/2MiB source. No cook/GUI/semantic proof.
+    <=64 instances/512 editable descendants/32MiB library/2MiB source. Locked nested
+    HDA definitions count once for the work bound; ownership still checks full contents.
+    No cook/GUI/semantic proof.
     """
     from dsh_hda_lifecycle import edit
     return edit(node, action, dry_run=dry_run, expected_plan=expected_plan,

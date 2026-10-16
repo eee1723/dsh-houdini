@@ -96,6 +96,8 @@ export interface BridgeHealth {
   ok: boolean
   executorId?: string
   runtimeId?: string
+  activeRequests?: number
+  activeJobs?: number
   requestRef?: string
   houVersion?: string
   runtime?: HoudiniRuntimeFacts
@@ -115,7 +117,7 @@ function normalizeBaseUrl(url: string): string {
 }
 
 export class HoudiniBridge {
-  private readonly baseUrl: string
+  readonly baseUrl: string
 
   constructor(baseUrl: string, private readonly timeoutMs: number, private readonly executorId?: string,
     private readonly lifetime?:AbortSignal) {
@@ -142,9 +144,9 @@ export class HoudiniBridge {
     if(result.ok!==true)throw new Error(result.error||'工程接续未完成')
     return result
   }
-  async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal):Promise<void> {
+  async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal,initial=false):Promise<void> {
     const result=await this.post<{ok:boolean;error?:string}>('/executor/claim',{
-      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip},signal)
+      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip,...(initial?{initial:true}:{})},signal)
     if(result.ok!==true) throw new Error(result.error||'Writer reservation failed')
   }
 
@@ -289,7 +291,7 @@ export class HoudiniBridge {
       : await this.get<BridgeHealth>('/health', signal)
     const actual = health.verbCatalog
     if (this.executorId && health.executorId !== this.executorId) {
-      throw new Error('Houdini executor mismatch: no scene code was submitted. The connection belongs to another Houdini process. Restore the intended target; do not retry scene operations or automatically rebind by port/HIP path.')
+      throw new Error('当前连接指向另一个 Houdini，本次操作没有发送到工程。请从要操作的 Houdini 中重新打开 Open Workspace；同时开着多个窗口时，请先确认插件由哪个窗口使用。\n技术信息：Houdini executor mismatch: no scene code was submitted. Do not automatically rebind by port/HIP path.')
     }
     if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH
         && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) {

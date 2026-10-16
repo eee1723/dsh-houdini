@@ -38,6 +38,17 @@ assert.throws(()=>selectedModelSettings(JSON.stringify({'llm-pi-ai':{providers:{
 assert.throws(()=>selectedModelSettings(JSON.stringify({'llm-pi-ai':{providers:{p:{apiKeyEnv:'K',
   models:[{id:'m',inputModalities:['text']}],headers:{Authorization:'secret'}}}}}),'p','m'),/Inline secrets/);
 console.log('trial settings: selected provider/catalog preserved, missing route refused, unrelated settings excluded');
+const high=selectedModelSettings(pi,'selected','m',undefined,'high');
+assert.equal(high['llm-pi-ai'].providers.selected.reasoning,'high');
+assert.equal(selectedModelSettings(text,'deepseek-official','deepseek-v4-flash',undefined,'high')['llm-deepseek'].reasoningEffort,'high');
+assert.throws(()=>selectedModelSettings(pi,'selected','m',undefined,'invented'),/reasoning/);
+assert.equal(piResult['llm-pi-ai'].providers.selected.reasoning,undefined,'explicit trial choice must not mutate the user profile');
+const declared=selectedModelSettings(pi,'selected','m',undefined,'high','high');
+assert.deepEqual(declared['llm-pi-ai'].providers.selected.models[0].reasoningEfforts,{high:'high'});
+assert.equal(piResult['llm-pi-ai'].providers.selected.models[0].reasoningEfforts,undefined);
+assert.throws(()=>selectedModelSettings(pi,'selected','m',undefined,undefined,'high'),/selected level/);
+assert.equal(selectedModelSettings(pi,'selected','m',undefined,'high','high',4096)['llm-pi-ai'].providers.selected.models[0].maxTokens,4096);
+assert.throws(()=>selectedModelSettings(pi,'selected','m',undefined,undefined,undefined,-1),/positive/);
 
 const service={provider:'tutorial-speech',api:'openai-completions',baseURL:'https://speech.example/v1',apiKeyEnv:'SPEECH_KEY',model:'Exact/ASR',models:[{id:'Real/Chat',input:['text']}],python:'C:/Python/python.exe'};
 const augmented=withServiceProfile(piResult,service);

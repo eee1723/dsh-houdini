@@ -136,6 +136,8 @@ def geo_check_interfaces(output, interfaces, max_pairs: int = 50000) -> dict:
     unitlength换算毫米。尺寸归属与允许误差须先由用户/厂家图核对，不能从现有模型反推。
     缺组或超差fail；非Polygon、单位未知、非单位OBJ变换等为unverified。
     只证明所选最终组的一轴数值，不证明完整零件身份、孔径、造型或装配。
+    大型最终输出中，具名primitive关系组会先被精确提取再按原预算量测；
+    geometry_scope列出来源总量、选中量和组。未选几何不被认证；点到面旧合同仍有整件预算。
     """
     from dsh_quality_contracts import geo_check_interfaces as check
     return check(output, interfaces, max_pairs=max_pairs)
@@ -160,6 +162,9 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
     修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
+    大型输出须给每项指标明确group，所有关系/拓扑也使用具名primitive组，
+    才能按选中部件取证。geometry_scope不证明未选区域；恢复仍用整件原生bgeo字节流核对，
+    未选部件漂移也会失败。无法完整保存恢复快照时在改参数前拒绝。
     顶层interfaces在基准及每次扰动均检查；baseline_interfaces只在基准状态检查，
     case内interfaces只在该扰动状态检查，用于合盖接触与开盖分离等不同状态合同。
     三者均用geo_check_interfaces同一schema；实体禁穿插可用solid_overlap，

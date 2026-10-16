@@ -98,7 +98,8 @@ try:
         'fresh':True,'file_status':'passed','semantic_status':'unverified',
         'user_state_restored':False,'restore_errors':['frame: injected'],'errors':['restore failed']})
     assert all(shot_summary['artifact'][key]==value for key,value in artifact.items())
-    assert shot_summary['artifact']['reservation_retained'] is None and shot_summary['user_state_restored'] is False
+    assert shot_summary['artifact'] == artifact, 'summary must preserve missing fields rather than invent null facts'
+    assert shot_summary['user_state_restored'] is False
     assert shot_summary['restore_errors']==['frame: injected']
     unresolved_artifact={**artifact,'reservation_retained':True}
     unresolved_summary=bridge._operation_summary('viewport_screenshot',{
@@ -109,6 +110,9 @@ try:
     assert unresolved_summary['capture_unresolved'] is True
     assert unresolved_summary['artifact']['reservation_retained'] is True
     assert not any(key.startswith('_reservation') for key in unresolved_summary['artifact'])
+    explicit_null = bridge._operation_summary('viewport_screenshot', {
+        'ok':True,'artifact':{**artifact,'reservation_retained':None}})
+    assert explicit_null['artifact']['reservation_retained'] is None, 'explicit null remains a captured fact'
     ledger=[]
     bridge._make_tracer('verify_network',lambda: diagnostic,ledger)()
     assert ledger[0]['summary']['output'] == ctrl.path()

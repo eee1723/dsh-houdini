@@ -38,18 +38,18 @@ with dsh_ownership.execution_owner('state-restore-owner','setup'):
             assert {n:ctrl.evalParm(n) for n in actual}==actual and out.evalParm('ty')==0
         # A changed bgeo observation must identify the failing section even
         # when every controller channel and the frame were restored exactly.
-        original_geometry=q._geometry
+        original_geometry=q.observation.geometry
         reads=[]
-        def changed_restore_geometry(node):
-            resolved,geometry=original_geometry(node)
+        def changed_restore_geometry(node,*args,**kwargs):
+            resolved,geometry,scope=original_geometry(node,*args,**kwargs)
             reads.append(1)
             if len(reads)==3:
                 changed=hou.Geometry(geometry)
                 point=changed.points()[0]
                 point.setPosition(point.position()+hou.Vector3(.25,0,0))
-                return resolved,changed
-            return resolved,geometry
-        q._geometry=changed_restore_geometry
+                return resolved,changed,scope
+            return resolved,geometry,scope
+        q.observation.geometry=changed_restore_geometry
         try:
             h.test_controls(ctrl,out,tests)
             raise AssertionError('different output bgeo must fail restoration')
@@ -61,7 +61,7 @@ with dsh_ownership.execution_owner('state-restore-owner','setup'):
             assert row['geometry_restore']['differing_sections'][0]['first_difference']['path'],row
             assert error.evidence['control_summary']['case_counts']=={'pass':0,'fail':1,'unverified':0,'not_run':0}
         finally:
-            q._geometry=original_geometry
+            q.observation.geometry=original_geometry
         assert h.test_controls(ctrl,out,tests)['restored']
         def failed_baseline_cook(*args,**kwargs):
             return {'ok':False,'errors':['injected baseline failure']}

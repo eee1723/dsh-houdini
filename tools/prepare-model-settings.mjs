@@ -9,9 +9,10 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 const require=createRequire(import.meta.resolve('@deepseek-ai/dsh-agent-preset'));
 const yaml=require('js-yaml');
 
-export function selectedModelSettings(source,provider,model,defaults){
+export function selectedModelSettings(source,provider,model,defaults,reasoning,reasoningWire,maxTokens){
   if(typeof provider!=='string'||!provider.trim())throw Error('Explicit provider required');
   if(typeof model!=='string'||!model.trim())throw Error('Explicit model required');
+  if(maxTokens!==undefined&&(!Number.isSafeInteger(maxTokens)||maxTokens<1))throw Error('maxTokens must be a positive integer');
   const settings=yaml.load(source);
   const hasInlineSecret=value=>value&&typeof value==='object'&&Object.entries(value).some(([k,v])=>
     /^(apiKey|token|password|secret|authorization)$/i.test(k)||hasInlineSecret(v));
@@ -34,7 +35,13 @@ export function selectedModelSettings(source,provider,model,defaults){
     // Pinned PI configuration accepts `input`; inputModalities is a resolver
     // output. Translate only this observed older, explicit user declaration.
     const configured=structuredClone(entry);configured.input=[...input];delete configured.inputModalities;
-    const copied={...config,providers:{[provider]:{...route,models:[configured]}}};
+    if(maxTokens!==undefined)configured.maxTokens=maxTokens;
+    if(reasoningWire!==undefined){
+      if(!reasoning||typeof reasoningWire!=='string'||!/^[A-Za-z0-9_.-]{1,32}$/.test(reasoningWire))throw Error('Explicit reasoning wire value requires a selected level');
+      configured.reasoningEfforts={...(typeof configured.reasoningEfforts==='object'?configured.reasoningEfforts:{}),[reasoning]:reasoningWire};
+    }
+    if(reasoning!==undefined&&!['off','minimal','low','medium','high','xhigh','max'].includes(reasoning))throw Error('Unknown explicit reasoning level');
+    const copied={...config,providers:{[provider]:{...route,models:[configured],...(reasoning?{reasoning}:{})}}};
     if(hasInlineSecret(copied))throw Error('Inline secrets must remain in the credential store');
     return {'llm-pi-ai':copied};
   }
@@ -49,7 +56,9 @@ export function selectedModelSettings(source,provider,model,defaults){
   if(selected.length!==1)throw Error('Selected model must have exactly one configured catalog entry; no default fallback');
   if(!Array.isArray(selected[0].inputModalities)||!selected[0].inputModalities.includes('text')
     ||selected[0].inputModalities.some(x=>!['text','image'].includes(x)))throw Error('Explicit text/image modalities required');
-  const copied={...config,models:structuredClone(selected)};
+  if(reasoning!==undefined&&!['low','medium','high','max'].includes(reasoning))throw Error('Unsupported explicit DeepSeek reasoning level');
+  if(reasoningWire!==undefined)throw Error('Reasoning wire mapping applies only to custom PI profiles');
+  const copied={...config,models:structuredClone(selected),...(reasoning?{reasoningEffort:reasoning}:{}),...(maxTokens!==undefined?{maxTokens}:{})};
   if(hasInlineSecret(copied))throw Error('Inline secrets must remain in the credential store');
   return {'llm-deepseek':copied};
 }
@@ -102,12 +111,19 @@ export function trialCredentials(source,references,environment={}){
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const [source,home,provider,model,dsh,credentials,...options]=process.argv.slice(2);
-  if(options.length&&!(options.length===2&&options[0]==='--service-profile'))throw Error('Unknown trial settings arguments');
-  const service=options.length?JSON.parse(fs.readFileSync(options[1],'utf8')):undefined;
+  let service,reasoning,reasoningWire,maxTokens;
+  for(let i=0;i<options.length;i+=2){
+    if(!options[i+1])throw Error('Missing trial settings option value');
+    if(options[i]==='--service-profile')service=JSON.parse(fs.readFileSync(options[i+1],'utf8'));
+    else if(options[i]==='--reasoning-effort')reasoning=options[i+1];
+    else if(options[i]==='--reasoning-wire-value')reasoningWire=options[i+1];
+    else if(options[i]==='--max-tokens')maxTokens=Number(options[i+1]);
+    else throw Error('Unknown trial settings arguments');
+  }
   if(!source||!home||!path.isAbsolute(home)||process.env.DSH_HOME!==home)throw Error('Explicit source and isolated DSH_HOME required');
   const runtime=dsh&&provider==='deepseek-official'?await import(pathToFileURL(createRequire(dsh).resolve('@deepseek-ai/dsh-llm-deepseek-api-key'))):undefined;
   const defaults=runtime?.resolveAdapterOptions({});
-  let value=selectedModelSettings(fs.readFileSync(source,'utf8'),provider,model,defaults);
+  let value=selectedModelSettings(fs.readFileSync(source,'utf8'),provider,model,defaults,reasoning,reasoningWire,maxTokens);
   if(service)value=withServiceProfile(value,service);
   const resolved=runtime?.resolveAdapterOptions(value['llm-deepseek']);
   fs.mkdirSync(home,{recursive:true});
@@ -120,6 +136,11 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     fs.writeFileSync(path.join(home,'.credentials.yaml'),yaml.dump(copied),{flag:'wx',mode:0o600});
   }
   console.log(JSON.stringify({provider,model,catalogName:selectedRoute.models[0].name??model,
+    api:selectedRoute.api??resolved?.protocol??selectedRoute.protocol??null,
+    reasoningEffort:selectedRoute.reasoning??selectedRoute.reasoningEffort??null,
+    reasoningSource:reasoning?'explicit_trial_override':'selected_profile_or_adapter_default',
+    reasoningWireValue:reasoningWire??null,
+    maxTokens:maxTokens??selectedRoute.maxTokens??selectedRoute.models[0].maxTokens??null,
     inputModalities:id==='llm-deepseek'?selectedRoute.models[0].inputModalities:selectedRoute.models[0].input,
     baseURL:resolved?.baseURL??selectedRoute.baseURL,
     ...(service?{transcription:{provider:service.provider,model:service.model,api:service.api,baseURL:service.baseURL,

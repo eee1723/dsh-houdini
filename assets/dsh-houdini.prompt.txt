@@ -1,0 +1,5 @@
+Generated using the built-in image_gen tool with assets/deepseek-color.png as the brand reference.
+
+Design one production Windows taskbar application icon for DSH-Houdini, combining the DeepSeek whale identity in the reference with the recognizable orange spiral/curl idea of Houdini. A single coherent playful but sophisticated compact silhouette: a confident blue whale curling into or around a bold orange spiral, not two separate logos pasted together. Flat vector-like geometry, generous negative space, crisp edges, minimal shapes, optically balanced and immediately legible at 16, 24, 32 and 48 pixels. No text, no letters, no captions, no mockup, no app-window frame, no gradients, no drop shadow, no tiny decorative detail. Square composition, symbol fills about 82 percent of the image with clean padding. Truly transparent background. A polished distinctive two-colour blue-and-orange mark suited to both dark and light Windows taskbars.
+
+The PNG is the selected artwork. tools/build-workbench-icon.py encodes the Windows ICO at 16, 20, 24, 32, 40, 48, 64, 128 and 256 pixels without changing the artwork.

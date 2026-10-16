@@ -4,7 +4,15 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { ExecutorRecord, ExecutorRouter } from './executor-routing.js'
-import {projectedExecutorIdentity} from './executor-identity-projection.js'
+import {projectedExecutorIdentity,foldExecutorState} from './executor-identity-projection.js'
+import {workspaceOpeningMessage,houdiniSourceMessages,recordHoudiniContext} from './dsh-adapter.js'
+import {sectionData} from './prompt-data.js'
+import {executionHistory} from './execution-history.js'
+import {relocateDirectory} from './scene-recovery.js'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
+import type {} from '@deepseek-ai/dsh-session-query'
+import type {} from '@deepseek-ai/dsh-workspace'
+import path from 'node:path'
 
 export function executorRecoveryStatus(recorded:string|undefined,records:readonly ExecutorRecord[],conflict?:unknown):Record<string,unknown> {
   if(conflict!==undefined)return {status:'history_conflict',message:'任务历史含冲突的执行端身份；未发送live请求。请保留HIP与历史证据，当前版本不能自动恢复或换绑。',
@@ -20,7 +28,152 @@ export function executorRecoveryStatus(recorded:string|undefined,records:readonl
 }
 
 export class ExecutorController extends TypertRemoteService {
-  constructor(ctx:Context,private readonly router:ExecutorRouter) { super(ctx,'houdiniTargets') }
+  private readonly openings=new Map<string,Promise<unknown>>()
+  private unnamedSerial=0
+  constructor(ctx:Context,private readonly router:ExecutorRouter,readonly workbench=false) { super(ctx,'houdiniTargets') }
+
+  private async workspaceFor(directory:string,isNew:boolean) {
+    const same=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(value)===path.resolve(directory)
+    const existing=this.ctx.workspaceRegistry.list().find(item=>same(item.path))
+    if(existing)return existing
+    let title:string|undefined
+    if(isNew) {
+      this.unnamedSerial=Math.max(this.unnamedSerial,...this.ctx.workspaceRegistry.list().map(item=>Number(/^未保存工程 (\d+)$/.exec(item.title)?.[1]??0)))+1
+      title='未保存工程 '+this.unnamedSerial
+    }
+    return this.ctx.workspaceRegistry.create(directory,title)
+  }
+
+  @Remote
+  async prepareWorkspace(input:unknown) {
+    const data=input as {path:string;isNew:boolean;onlyIfEmpty?:boolean}
+    if(!this.workbench||!data||typeof data!=='object'||!['isNew,path','isNew,onlyIfEmpty,path'].includes(Object.keys(data).sort().join(','))
+      ||typeof data.path!=='string'||data.path.length>4096||!path.isAbsolute(data.path)||typeof data.isNew!=='boolean'
+      ||data.onlyIfEmpty!==undefined&&typeof data.onlyIfEmpty!=='boolean')throw new Error('工作区准备请求无效。')
+    const existing=this.ctx.workspaceRegistry.list()[0]
+    if(data.onlyIfEmpty&&existing)return {workspaceId:existing.id}
+    const workspace=await this.workspaceFor(data.path,data.isNew)
+    return {workspaceId:workspace.id}
+  }
+
+  @Remote
+  async activity() {
+    const agents=this.ctx.agents.list()
+    const active=new Set(agents.filter(agent=>agent.status!=='idle').map(agent=>agent.id))
+    const identifiers=new Set([...agents.map(agent=>agent.id),
+      ...(this.ctx.get('workspaceRegistry')?.list().flatMap(workspace=>workspace.sessionIds)??[])])
+    await Promise.all([...identifiers].map(async sessionId=>{
+      const activity=await this.ctx.waterfall('workspace/session-activity',{sessionId},()=>Promise.resolve([]))
+      if(activity.length)active.add(sessionId)
+    }))
+    const sessions=this.ctx.get('sessions')
+    if(!sessions||!(await Promise.all(sessions.list().map(session=>sessions.flush(session)))).every(saved=>saved===true))
+      throw new Error('最近对话尚未可靠保存，未确认可以安全退出工作台。')
+    return {activeConversations:active.size,durable:true}
+  }
+
+  @Remote
+  async openWorkspace(input:unknown,signal:AbortSignal) {
+    if(!this.workbench)throw new Error('此 Host 未启用独立工作台。')
+    const data=input as Record<string,string>
+    if(!data||typeof data!=='object'||!['executorId,expectedHip,registrationId,requestId','executorId,expectedHip,registrationId,requestId,sessionId',
+      'bindSessionId,executorId,expectedHip,registrationId,requestId'].includes(Object.keys(data).sort().join(','))
+      ||!Object.values(data).every(value=>typeof value==='string'&&value.length>0&&value.length<=4096)
+      ||!['executorId','registrationId','requestId'].every(key=>/^[0-9a-f]{32}$/.test(data[key])))throw new Error('工作区打开请求无效。')
+    const previous=this.openings.get(data.executorId)
+    const operation=(async()=>{
+      if(previous)await previous.catch(()=>{})
+      signal.throwIfAborted()
+      const record=await this.router.directory.find(data.executorId)
+      const samePath=(left:string,right:string)=>process.platform==='win32'
+        ?path.normalize(left).toLowerCase()===path.normalize(right).toLowerCase():path.normalize(left)===path.normalize(right)
+      if(!record.workbench||record.registration_id!==data.registrationId||!record.hip_path||!samePath(record.hip_path,data.expectedHip)||!record.workspace_path)
+        throw new Error('工程在打开过程中发生变化，请从对应 Houdini 重新打开工作区。')
+      const workspace=await this.workspaceFor(record.workspace_path,record.hip_is_new===true)
+      const openingMessage=()=>workspaceOpeningMessage({...record,project_label:record.hip_is_new?workspace.title:undefined})
+      let selected:string|undefined
+      if(data.bindSessionId) {
+        if(this.ctx.workspaceRegistry.archivedSessionIds.includes(data.bindSessionId as any))throw new Error('原对话已归档，未改变它的工程。')
+        const resolved=await this.ctx.sessionController.resolveAgent(data.bindSessionId as any)
+        if('error' in resolved)throw new Error('无法载入原对话。')
+        const state=foldExecutorState(resolved.agent.session.snapshotEvents())
+        if(state.identity&&state.identity!==record.executor_id)throw new Error('原对话已关联另一份工程，没有覆盖它的绑定。')
+        if(this.ctx.get('sessionProjections')?.stateOf(resolved.agent.session,'agentPreset')!=='houdini')throw new Error('请使用 Houdini 模式的对话连接工程。')
+        await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path)
+        recordHoudiniContext(resolved.agent,openingMessage())
+        await relocateDirectory(this.ctx,resolved.agent,record.workspace_path,record.hip_path,signal,record.hip_is_new===true)
+        if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
+        selected=resolved.agent.id
+      }
+      const candidates:{sessionId:(typeof workspace.sessionIds)[number];events:Parameters<typeof executionHistory>[0];hasOperations:boolean}[]=[]
+      const sessions=data.sessionId?[data.sessionId as (typeof workspace.sessionIds)[number]]:[...workspace.sessionIds]
+      if(record.task_id&&sessions.includes(record.task_id as any)) {
+        sessions.splice(sessions.indexOf(record.task_id as any),1)
+        sessions.unshift(record.task_id as any)
+      }
+      for(const sessionId of selected?[]:sessions) {
+        if(this.ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))continue
+        const history=await this.ctx.sessionQuery.readSession(sessionId)
+        if(history.session.agentPreset!=='houdini'||history.session.origin==='subagent')continue
+        const state=foldExecutorState(history.events),identity=state.identity
+        const opening=history.events.flatMap(event=>houdiniSourceMessages(event).flatMap(message=>message.source.sections??[]))
+          .filter(section=>section.name==='dsh-houdini:workspace-open').map(sectionData).at(-1)
+        const scene=executionHistory(history.events).anchor?.execution?.scene_recovery?.scene_id??opening?.scene_id
+        if(identity===record.executor_id&&(scene===record.scene_id||opening?.scene_epoch===record.scene_epoch)) {selected=sessionId;break}
+        const recordedHip=executionHistory(history.events).anchor?.execution?.hip_path??opening?.hip_path
+        if(identity&&identity!==record.executor_id&&scene&&(scene===record.scene_id
+          ||typeof recordedHip==='string'&&samePath(recordedHip,record.hip_path))) {
+          candidates.push({sessionId,events:history.events,hasOperations:state.hasOperations})
+        }
+      }
+      if(!selected)for(const candidate of candidates.sort((left,right)=>Number(right.hasOperations)-Number(left.hasOperations))) {
+        if(!candidate.hasOperations) {
+          const resolved=await this.ctx.sessionController.resolveAgent(candidate.sessionId)
+          if('error' in resolved)throw new Error('无法载入原对话。')
+          await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path,false,true)
+          recordHoudiniContext(resolved.agent,openingMessage())
+          if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
+          selected=candidate.sessionId
+          break
+        }
+        const assessment=await this.router.inspectRecovery({id:candidate.sessionId,snapshotEvents:()=>candidate.events},record.executor_id,signal)
+        signal.throwIfAborted()
+        if(assessment) {selected=candidate.sessionId;break}
+        throw new Error('已找到原对话，但当前工程尚未通过接续核对；没有创建替代对话或改变原绑定。')
+      }
+      if(!selected) {
+        if(data.sessionId)throw new Error('已打开工程，但它与原对话的工程记录不匹配；原对话没有换绑。')
+        const created=await this.ctx.sessionController.create({workspaceId:workspace.id,sessionId:data.requestId as any,agentPreset:'houdini'})
+        const resolved=await this.ctx.sessionController.resolveAgent(created.sessionId)
+        if('error' in resolved)throw new Error('无法载入新建对话。')
+        await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path!)
+        recordHoudiniContext(resolved.agent,openingMessage())
+        if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工作区对话尚未可靠保存，未确认打开成功。')
+        selected=created.sessionId
+      }
+      {
+        const resolved=await this.ctx.sessionController.resolveAgent(selected as any)
+        if('error' in resolved)throw new Error('无法读取原对话。')
+        if(foldExecutorState(resolved.agent.session.snapshotEvents()).identity!==record.executor_id) {
+          if(resolved.agent.status!=='idle')throw new Error('原对话仍在运行，请等待当前任务结束后再接续。')
+          const recovery=this.ctx.get('agentPresets')?.serviceFor(resolved.agent,'houdiniRecovery')
+          if(!recovery)throw new Error('工程已打开，当前环境没有提供原对话接续能力。')
+          const assessment=await recovery.assess(resolved.agent,signal) as any
+          if(assessment.status!=='ready'||typeof assessment.assessment_id!=='string')throw new Error('工程已打开，但原对话尚未通过保存点接续核对。')
+          if(assessment.requires_reload&&!(assessment.dirty_reliable&&!assessment.dirty))
+            throw new Error('工程已打开，但还有未保存的内容需要确认。请回到原对话继续；没有丢弃当前修改。')
+          await recovery.restore(resolved.agent,assessment.assessment_id,signal)
+          await recovery.followDirectory(resolved.agent,signal,true)
+          if(foldExecutorState(resolved.agent.session.snapshotEvents()).identity!==record.executor_id)throw new Error('工程已打开，但原对话尚未完成接续。')
+        }
+      }
+      signal.throwIfAborted()
+      return {sessionId:selected,executorId:record.executor_id,workspaceId:workspace.id}
+    })()
+    this.openings.set(data.executorId,operation)
+    try {return await operation}
+    finally {if(this.openings.get(data.executorId)===operation)this.openings.delete(data.executorId)}
+  }
 
   /** In-process consumer API, deliberately not exposed as a Remote method. */
   getRouter(registry:string):ExecutorRouter {
@@ -69,6 +222,7 @@ export class ExecutorController extends TypertRemoteService {
     const preset=projections.stateOf(agent.session,'agentPreset')
     if(preset!=='houdini') throw new Error('Target selection is restricted to Houdini tasks')
     await this.router.selectInitial(agent,data.executorId as string,data.registrationId as string,signal,data.expectedHip as string)
+    if(await this.ctx.get('sessions')?.flush(agent.session)!==true)throw new Error('工程选择尚未可靠保存，未确认连接成功。')
     return {sessionId:agent.id,executorId:data.executorId,status:'bound',scene_verification:'not_performed'}
   }
 }

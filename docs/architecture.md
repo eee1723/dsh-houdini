@@ -66,6 +66,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
+| [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
@@ -80,16 +81,21 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
-| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host候选：从当前执行器身份投影解析任务绑定、验证登记并固定调用级Bridge；按公开身份投影确认目标；持久化由DSH负责 |
-| [src/executor-controller.ts](../src/executor-controller.ts) | DSH公开Remote候选：发现列表与空闲任务首次选择，使用`agentPreset`及执行器身份投影确认当前任务，严格输入/预留/代际校验，不是模型工具 |
-| [src/executor-host.ts](../src/executor-host.ts) | 仅Host层挂载的共享服务候选；preset消费不持有服务生命周期，重复挂载拒绝，卸载撤销旧Bridge请求 |
-| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | Host专用Session投影：折叠绑定记录、原始工具回执与执行器身份；冲突/无效历史拒绝恢复，不从PID、HIP路径或只读回执查询认领执行端 |
+| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host按任务路由、持久化检查、空闲作者预留及可信恢复候选；固定调用级Bridge，不使用全局当前Houdini |
+| [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：工作台按明确启动来源定位/创建原生会话、只读接续评估和退出活动查询；保留显式共享开发入口，不是模型工具 |
+| [src/executor-host.ts](../src/executor-host.ts) | 工作台及显式共享开发入口共用的Host层服务；原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
+| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：Host折叠绑定记录与原始工具回执，客户端取得工程名称/路径和用于匹配非HOM在线观察的执行端/场景代际；绑定历史本身不是在线证明，冲突/无效历史仍拒绝恢复 |
 | [src/context.ts](../src/context.ts) | 上下文装配与接受生命周期；使用DSH原生上下文传递现场与执行事实 |
 | [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 用户输入边界的保存点评估、原工程定位与原生对话选择、DSH持久恢复事件及激活重试；成功保存/可信接续调用DSH原生目录迁移；无恢复面板或模型授权捷径 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
 | [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和正常pre-step目标绑定；DSH负责持久化，不改写旧工具交换 |
+| [src/connection-status.ts](../src/connection-status.ts) | 按目标读取DSH原生接续失败与清除记录；绑定拦截保留具体原因，不维护界面状态或授予修改权 |
+| [src/support-report.ts](../src/support-report.ts) | 精确会话的原生持久读取与诊断投影，沿root Host认证RPC收集，不启动Agent或访问HOM |
+| [dsh_support_report.py](../houdini/python3.11libs/dsh_support_report.py)、[dsh_support_ui.py](../houdini/python3.11libs/dsh_support_ui.py) | 唯一本地脱敏/ZIP收集器及独立管理器入口；worker收集已有记录，预览与分享同一份bytes，合同见[故障报告](support-reports.md) |
+| [dsh_downloads.py](../houdini/python3.11libs/dsh_downloads.py) | QtWebEngine下载接收、用户目标、进度、取消与完成/失败反馈；仅显式问题链接交给外部浏览器 |
+| [inspect-support-report.py](../tools/inspect-support-report.py) | 不可信诊断包的限额/清单/哈希检查与离线转义HTML，不解压或执行日志 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情从原生/嵌套工具回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
@@ -164,11 +170,12 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker进程树限额、超时/取消与退出回收，不接管live进程 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、原生公共Output发布/接线验收、有界Packed内容检查、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
-| [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换；同次观察复用选中点位置与面面积，不跨调用缓存 |
+| [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换；从最终SOP明确组采集有界观察，整件bgeo流核对大型控制实验恢复；同次复用、不跨调用缓存 |
 | [dsh_geometry_evidence.py](../houdini/python3.11libs/dsh_geometry_evidence.py) | 有界Packed内存展开、面候选扫描和完整命名部件表面分区；不创建场景节点、不读Packed外部文件 |
 | [dsh_modeling_units.py](../houdini/python3.11libs/dsh_modeling_units.py) | 源数量/单位到米制及显式旧场景适配的只读换算，保留源值和量纲，不改变HIP单位 |
 | [dsh_procedural_plans.py](../houdini/python3.11libs/dsh_procedural_plans.py) | 只读原生SOP构造spec及代表参数状态规划；普通build/test执行仍受现有边界约束 |
 | [dsh_quality_contracts.py](../houdini/python3.11libs/dsh_quality_contracts.py) | 实际接口、拓扑/domain和可恢复control实验 |
+| [dsh_bgeo_fingerprint.py](../houdini/python3.11libs/dsh_bgeo_fingerprint.py) | 以原生BJSON流核对完整大型几何；解析字符串引用后排除写入时间等既定元数据，不忽略用户同名属性；不支持编码明确失败 |
 | [dsh_camera_framing.py](../houdini/python3.11libs/dsh_camera_framing.py) | 八角点投影、预览取景/深度分离与镜头缩放、静态OBJ camera_fit、实际USD产品预检 |
 | [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata与统一HIP保存状态，无socket/进程探测 |
 
@@ -180,7 +187,13 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 |---|---|
 | [houdini/install.py](../houdini/install.py) | Houdini package安装、profile同步入口 |
 | [Install.cmd](../Install.cmd)、[installer/install.ps1](../installer/install.ps1) | 无外部Python/Node引导、独立管理器不可变复制、package原子注册与备份；完整离线包使用Houdini内置Python暂存 |
-| [dsh_bootstrap.py](../houdini/python3.11libs/dsh_bootstrap.py) | Houdini启动固定版本选择，后台校验/数据快照、主线程加载；未安装时仍能打开管理器 |
+| [dsh_bootstrap.py](../houdini/python3.11libs/dsh_bootstrap.py) | Houdini启动固定版本选择，worker唤起受管独立工作台，主线程加载已校验版本的Bridge；未安装时仍能打开管理器 |
+| [dsh_workbench.py](../houdini/python3.11libs/dsh_workbench.py) | 无HOM的独立桌面入口、工作台单例租约、Host进程组与Qt主窗口；认证本机唤起、退出确认和受管激活，不持有工程执行身份 |
+| [dsh_workbench_client.py](../houdini/python3.11libs/dsh_workbench_client.py) | Houdini菜单适配；主线程采集场景与原生文件事件，worker登记和唤起同一工作台；不复制DSH会话或在GUI线程等待网络 |
+| [dsh_workbench_projects.py](../houdini/python3.11libs/dsh_workbench_projects.py) | 桌面端按需原生工程对话框、受控进程启动、启动回执和共享非HOM在线观察；明确启动意图与进程创建身份绑定，不替换其他现场、不自动重放操作 |
+| [dsh_workbench_entry.py](../houdini/python3.11libs/dsh_workbench_entry.py) | 私有uiready启动钩子的Houdini侧接入；主线程捕获实际文件/场景，worker发布并回交同一次启动，不复制任务或凭路径认领节点 |
+| [dsh_houdini_installations.py](../houdini/python3.11libs/dsh_houdini_installations.py) | Windows安装目录/版本发现与跨Houdini子进程环境；保留用户路径与启动脚本，不通过启动Houdini来探测安装 |
+| [dsh_workbench_start.py](../houdini/python3.11libs/dsh_workbench_start.py)、[Open Workspace.cmd](../Open%20Workspace.cmd)、[open-workbench.ps1](../installer/open-workbench.ps1) | 不依赖运行中Houdini的源码/受管工作台入口；复用签名激活与单例租约。安装器创建带图标的本机快捷方式 |
 | [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 源码/受管共用独立Qt主面板，高级设置并排提供运行与联网诊断入口；源码仅查看/更新说明，受管安装/同版修复/校验/回退，worker队列与取消 |
 | [dsh_ui_style.py](../houdini/python3.11libs/dsh_ui_style.py) | 原生窗口共享主题与中文确认框；由独立管理器和当前运行版本各自随包交付，避免跨版本模块依赖 |
 | [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | RSA签名/资产/全量文件校验、安全解压、OS锁、旁路安装、独立数据快照和回退；无Node/hou/Qt依赖 |
@@ -189,7 +202,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_shared_executor.py](../houdini/python3.11libs/dsh_shared_executor.py) | 高级设置中的候选登记：主线程采集实际HIP/绑定Bridge动态端口，worker持久登记；不启动共享DSH、不保存HIP、不自动绑定任务 |
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |
 | [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace与Version & Updates菜单；联网诊断收在版本窗口高级设置 |
-| [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | worker启动/repair、主线程接入、模块重载与HIP目录意图；只读Host就绪、不再筛选/创建任务，preset/profile共用动态DSH_HOME |
+| [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | Open Workspace进入独立工作台；维护主线程Bridge修复、模块重载与HIP目录；保留旧内嵌诊断/隔离验证入口，不作为默认打开路线 |
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_network_diagnostics.py](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生网络探针](../houdini/python3.11libs/dsh_network_probe.mjs) | worker内复用精确DSH的系统/环境选路和抓取；只读展示来源与错误，区分新进程测试与live、搜索组件与实际搜索；不编辑代理配置 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
@@ -284,7 +297,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；GUI验收CLI可隔离开发宿主的MSIX身份，保留自有进程树清理，不改变用户进程环境 |
-| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本在新hython场景中的cook/cache/ROP检查；复用受限worker、Bridge与ownership，保留输入/结果/产物证据，不加载live HIP |
+| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本或复制的已保存HIP在独立hython中的cook/cache/ROP；复用受限worker、Bridge与ownership，提供文件化进度/结果和取消，不连接live或覆盖原HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-preview-smoke.py](../tools/camera-preview-smoke.py) | 隔离真实renderer/GUI验收；预览入口核对取景、透明几何/实体背板合成与用户状态恢复，不代替任意材质的语义识图 |
 
 程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](product-modeling-evaluation.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

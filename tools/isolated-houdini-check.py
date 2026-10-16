@@ -1,6 +1,6 @@
-"""Run a trusted builder and explicit cook/cache/ROP checks in a NEW hython scene.
+"""Run a trusted builder or copied saved HIP and explicit checks in a NEW hython.
 
-Never connects to live Houdini, loads a HIP, adopts foreign identities or retries
+Never connects to live Houdini, edits the source HIP or retries
 an uncertain run. Isolation limits our worker tree, not arbitrary script side
 effects, GPU allocations or external services. --trusted is required.
 """
@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from houdini_test_environment import isolated_environment, launch_directory
 
-SCOPE = ('New owned scene; trusted builder through Bridge/Raw Gate; explicit output checks only. '
-         'No live HIP, foreign adoption, automatic retry or visual/semantic certification. '
+SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; explicit output checks only. '
+         'No live HIP edits, automatic retry or visual/semantic certification. '
          'Absolute-path, imported-code, callback and external-service side effects are not sandboxed/restored.')
 
 
@@ -104,11 +104,13 @@ def artifact_target(directory, check):
 
 def load_manifest(path):
     data = read_json(path)
-    if not isinstance(data, dict) or set(data) - {'script', 'files', 'checks'}:
-        raise ValueError('manifest fields: script, files?, checks')
-    script = relative_file(data.get('script'))
-    if not script.endswith('.py'):
+    if not isinstance(data, dict) or set(data) - {'script', 'hip', 'files', 'checks'} or ('script' in data)==('hip' in data):
+        raise ValueError('manifest requires exactly one of script/hip, plus files? and checks')
+    script = relative_file(data.get('script',data.get('hip')))
+    if 'script' in data and not script.endswith('.py'):
         raise ValueError('script must be a trusted .py builder, not a HIP')
+    if 'hip' in data and not script.lower().endswith(('.hip','.hiplc','.hipnc')):
+        raise ValueError('hip must be an explicit saved HIP file')
     files = data.get('files', [])
     if not isinstance(files, list) or len(files) > 32:
         raise ValueError('files must contain at most 32 explicit relative files')
@@ -119,7 +121,7 @@ def load_manifest(path):
     for index, name in enumerate(inputs):
         source = regular_file(path.parent, name)
         size += source.stat().st_size
-        if index == 0 and source.stat().st_size > 1024 * 1024:
+        if index == 0 and 'script' in data and source.stat().st_size > 1024 * 1024:
             raise ValueError('builder exceeds 1 MiB')
     if size > 2 * 1024 ** 3:
         raise ValueError('declared inputs exceed 2 GiB')
@@ -196,15 +198,36 @@ def worker(request_file):
                 raise RuntimeError('worker did not start with a new scene')
             hou.hipFile.setName(str(directory / 'scene.hip'))
             manifest = request['manifest']
-            script = directory / 'inputs' / manifest['script']
+            script = directory / 'inputs' / manifest.get('script',manifest.get('hip'))
             for row in request['inputs']:
                 if digest(regular_file(directory / 'inputs', row['file'])) != row['sha256']:
                     raise ValueError('staged input digest mismatch')
             sys.path.insert(0, str(script.parent))
-            result['phase'] = 'builder'
+            result['phase'] = 'snapshot_load' if 'hip' in manifest else 'builder'
             write_json(result_file, result)
-            result['builder'] = execute(script.read_text(encoding='utf-8'), 'builder')
-            successful(result['builder'])
+            if 'hip' in manifest:
+                # Trusted driver import into this fresh disposable process only.
+                # Attribution is to identities created by this exact load, never
+                # to a path, pre-existing scene, or original user's live nodes.
+                before={int(n.sessionId()) for n in hou.node('/').allSubChildren()}
+                warnings=[]
+                try:hou.hipFile.load(str(script),suppress_save_prompt=True,ignore_load_warnings=False)
+                except hou.LoadWarning as error:
+                    from dsh_load_warnings import preview
+                    original=str(error);excerpt,omitted=preview(original)
+                    warning_file=directory/'load-warnings.txt';warning_file.write_text(original,encoding='utf-8')
+                    warnings.append({'text':excerpt,'omitted_chars':omitted,'file':str(warning_file),'sha256':digest(warning_file)})
+                if Path(hou.hipFile.path()).resolve()!=script.resolve():raise ValueError('snapshot load did not select the copied HIP')
+                with dsh_ownership.execution_owner(session,'snapshot_load'):
+                    for parent in hou.node('/').children():
+                        for node in parent.children():
+                            if int(node.sessionId()) not in before:dsh_ownership.register_owned_node(node,exclude_ids=before)
+                result['snapshot']={'path':str(script),'sha256':digest(script),'load_warnings':warnings,
+                    'scope':'Copied saved state only; unsaved live edits and undeclared external dependencies are not represented.'}
+                result['builder']=execute('__result__={"snapshot_loaded":True}', 'snapshot_loaded')
+            else:
+                result['builder'] = execute(script.read_text(encoding='utf-8'), 'builder')
+                successful(result['builder'])
             for check in manifest['checks']:
                 row = {'id': check['id'], 'kind': check['kind'], 'node': check['node'], 'frame': check['frame'], 'status': 'running'}
                 result['checks'].append(row)
@@ -270,10 +293,11 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         raise ValueError('output directory must be outside the plugin repository')
     output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
     run_id = uuid.uuid4().hex
-    report = {'ok': False, 'run_id': run_id, 'phase': 'staging', 'scope': SCOPE}
+    report = {'ok': False, 'run_id': run_id, 'phase': 'staging', 'finished':False,'scope': SCOPE}
+    write_json(output_dir / 'report.json',report)
     inputs = []
     try:
-        for name in [manifest['script'], *manifest.get('files', [])]:
+        for name in [manifest.get('script',manifest.get('hip')), *manifest.get('files', [])]:
             source = regular_file(manifest_path.parent, name)
             target = output_dir / 'inputs' / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -290,7 +314,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         from dsh_worker_limits import run_gated_worker
         process = run_gated_worker([str(hython), str(Path(__file__).resolve()), '--worker', str(request_file)],
                                   cwd=launch_directory(hython) if hython.is_file() else output_dir,
-                                  env=env, timeout=timeout, memory_mb=memory_mb, cancel_file=cancel_file)
+                                  env=env, timeout=timeout, memory_mb=memory_mb, cancel_file=cancel_file or output_dir/'cancel.request')
         report.update(phase='worker_result', worker=process)
         result_file = output_dir / 'worker-result.json'
         if result_file.exists():
@@ -307,6 +331,11 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
                     or not re.fullmatch('[0-9a-f]{32}', runtime) or builder.get('ok') is not True
                     or builder.get('execution', {}).get('runtime_id') != runtime):
                 raise ValueError('worker result lacks completed builder/runtime evidence')
+            if 'hip' in manifest:
+                snapshot=result.get('snapshot',{})
+                if (snapshot.get('sha256')!=inputs[0]['sha256']
+                    or Path(snapshot.get('path','')).resolve()!=(output_dir/'inputs'/manifest['hip']).resolve()):
+                    raise ValueError('worker snapshot source identity mismatch')
             rows = result.get('checks', [])
             if not isinstance(rows, list) or len(rows) != len(manifest['checks']):
                 raise ValueError('worker result is missing checks')
@@ -343,11 +372,35 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
     except Exception as error:
         unchanged = False
         report['input_check_error'] = str(error) or type(error).__name__
-    report.update(inputs=inputs, inputs_unchanged=unchanged)
+    report.update(inputs=inputs, inputs_unchanged=unchanged,finished=True)
     if not unchanged:
         report.update(ok=False, error='source inputs changed; external side effects are not restored')
     write_json(output_dir / 'report.json', report)
     return report
+
+
+def status(directory, cancel=False):
+    directory=Path(directory).resolve()
+    report=read_json(directory/'report.json')
+    request=(read_json(directory/'request.json') if (directory/'request.json').exists()
+             else {'run_id':report.get('run_id'),'inputs':report.get('inputs',[])})
+    if not re.fullmatch('[0-9a-f]{32}',str(report.get('run_id',''))):raise ValueError('invalid run report identity')
+    if report.get('run_id')!=request.get('run_id'):raise ValueError('run report identity mismatch')
+    if cancel and report.get('finished') is not True:
+        write_json(directory/'cancel.request',{'run_id':request['run_id'],'action':'cancel_owned_worker'})
+    progress=read_json(directory/'worker-result.json') if (directory/'worker-result.json').exists() else None
+    if progress is not None and progress.get('run_id')!=request['run_id']:raise ValueError('progress identity mismatch')
+    result=report.get('result') or progress or {}
+    return {'ok':report.get('ok') is True,'run_id':request['run_id'],'finished':report.get('finished') is True,
+        'phase':report.get('phase') if report.get('finished') else result.get('phase',report.get('phase')),
+        'worker':report.get('worker'), 'error':report.get('error'),
+        'cancel_requested':(directory/'cancel.request').exists(),
+        'inputs':report.get('inputs',request['inputs']),'inputs_unchanged':report.get('inputs_unchanged'),
+        'snapshot':result.get('snapshot'),
+        'checks':[{k:r[k] for k in ('id','kind','node','frame','status','geometry','artifact','error') if k in r}
+                  for r in result.get('checks',[])],
+        'report':str(directory/'report.json'),'progress':str(directory/'worker-result.json'),
+        'scope':'Last recorded run evidence, not a live-process liveness claim. Cancellation is a request until a terminal report confirms it. Full execution evidence is in the report.'}
 
 
 def main():
@@ -356,20 +409,26 @@ def main():
             return 2
         return worker(Path(sys.argv[2]))
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--manifest', required=True, type=Path)
-    parser.add_argument('--hython', required=True, type=Path)
+    parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--hython', type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--trusted', action='store_true')
     parser.add_argument('--timeout', type=float, default=120)
     parser.add_argument('--memory-mb', type=int, default=4096)
     parser.add_argument('--cancel-file', type=Path)
+    parser.add_argument('--status',action='store_true',help='Read durable progress/result without executing Houdini')
+    parser.add_argument('--cancel',action='store_true',help='Request cancellation of this run only; does not start or retry work')
     args = parser.parse_args()
+    if args.status or args.cancel:
+        print(json.dumps(status(args.output_dir,cancel=args.cancel),ensure_ascii=False,indent=2))
+        return 0
+    if args.manifest is None or args.hython is None:parser.error('--manifest and --hython required for execution')
     try:
         result = check(args.manifest, args.hython, args.output_dir, trusted=args.trusted,
                        timeout=args.timeout, memory_mb=args.memory_mb, cancel_file=args.cancel_file)
     except Exception as error:
         result = {'ok': False, 'phase': 'preflight', 'error': str(error) or type(error).__name__}
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, indent=2))
     return 0 if result['ok'] else 1
 
 

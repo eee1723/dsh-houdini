@@ -1,6 +1,6 @@
 """Generic HDA save/lock and definition-failure contracts; isolated hython only."""
 
-import sys, tempfile
+import sys, tempfile, os, json
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import dsh_hda_operations
@@ -308,4 +308,69 @@ with tempfile.TemporaryDirectory(prefix='dsh-hda-lifecycle-') as tmp:
     assert run(f"__result__=node_provenance({user_nested.path()!r})",query=True)['result']['status']=='foreign'
     assert 'ownership' in run(f"hda_edit({asset!r},'lock',discard_changes=True,dry_run=True)",False)['error']
     print('PASS native definition rebuild ownership, rollback and foreign boundaries')
+
+    # Standard locked SOP implementations are not authored network complexity.
+    # One COP Preview Material has >512 descendants on H22; two also exceed
+    # that old all-descendants bound on H21. Keep the default surface entry and
+    # verify the real create/save/lock/Undo/new-instance composition, not a mock.
+    preview_library=Path(tmp)/'preview.hda'
+    preview_root='/obj/preview_lifecycle'
+    preview_asset=preview_root+'/source'
+    run("g=tab_create('/obj','geo',name='preview_lifecycle'); "
+        "n=tab_create(g,'subnet',name='source'); "
+        "shape=tab_create(n,'box',name='shape'); "
+        "first=tab_create(n,'coppreviewmaterial',name='surface_a',inputs=[shape]); "
+        "second=tab_create(n,'coppreviewmaterial',name='surface_b',inputs=[first]); "
+        "tab_create(n,'output',name='out',inputs=[second]); "
+        f"hda_create(n,'contract::preview_lifecycle::1.0',hda_file={str(preview_library)!r})")
+    preview=hou.node(preview_asset)
+    from dsh_ownership import definition_edit_descendants
+    assert len(preview.allSubChildren())>512
+    assert len(definition_edit_descendants(preview))==4
+    assert_owned(preview_asset)
+    run(f"hda_set_interface({preview_asset!r},layout=[{{'type':'float','name':'width','default':2.}}]); "
+        f"set_parms({preview_asset+'/shape'!r},{{'sizex':'ch(\"../width\")'}})")
+    initial=edit(preview_asset,'save')
+    assert initial['descendant_count']>512 and initial['editable_descendant_count']==4,initial
+    # A locked child's public parameters remain in the stale-plan snapshot.
+    plan=run(f"__result__=hda_edit({preview_asset!r},'save',dry_run=True)")['result']['plan_sha256']
+    run(f"set_parms({preview_asset+'/surface_a'!r},{{'constantspecularroughness':.27}})")
+    assert 'stale' in run(f"hda_edit({preview_asset!r},'save',expected_plan={plan!r})",False)['error']
+    edit(preview_asset,'save')
+    run(f"tab_create({preview_root!r},'contract::preview_lifecycle::1.0',name='consumer')")
+    consumer=hou.node(preview_root+'/consumer')
+    assert abs(consumer.node('surface_a').evalParm('constantspecularroughness')-.27)<1e-6
+    assert consumer.geometry().intrinsicValue('pointcount')==8
+    assert abs(consumer.geometry().boundingBox().sizevec()[0]-2.)<1e-6
+    assert_owned(consumer.path())
+    lock_receipt=run(f"__result__=hda_edit({preview_asset!r},'lock',dry_run=True,discard_changes=True)")
+    lock_plan=lock_receipt['result']
+    assert [list(pair) for pair in lock_plan['editable_discarded_descendants']]==[
+        [child.path(),int(child.sessionId())] for child in definition_edit_descendants(preview)]
+    assert len(lock_plan['discarded_descendants'])>512 and len(lock_plan['editable_discarded_descendants'])==4
+    if os.environ.get('DSH_HDA_PRESENTATION_FIXTURE'):
+        Path(os.environ['DSH_HDA_PRESENTATION_FIXTURE']).write_text(json.dumps(lock_receipt),encoding='utf-8')
+    edit(preview_asset,'lock',discard_changes=True)
+    assert_owned(preview_asset)
+    edit(preview_asset,'unlock')
+    failed=run(f"p=hda_edit({preview_asset!r},'lock',dry_run=True,discard_changes=True); "
+        f"hda_edit({preview_asset!r},'lock',expected_plan=p['plan_sha256'],discard_changes=True); "
+        "raise RuntimeError('after preview definition lock')",False)
+    assert failed.get('rollback',{}).get('applied'),failed
+    assert_owned(preview_asset)
+    assert abs(preview.node('surface_a').evalParm('constantspecularroughness')-.27)<1e-6
+    # Atomic budget accounting does not exempt foreign contents or instances.
+    foreign=hou.node(preview_root).createNode('contract::preview_lifecycle::1.0','foreign_preview')
+    assert 'ownership' in run(f"hda_edit({preview_asset!r},'save',dry_run=True)",False)['error']
+    foreign.destroy()
+    foreign=preview.createNode('null','user_child')
+    assert 'ownership' in run(f"hda_edit({preview_asset!r},'lock',discard_changes=True,dry_run=True)",False)['error']
+    foreign.destroy()
+    # If the author opens native contents, those nodes become editable work and
+    # the existing 512 bound still applies. Fixture-only native UI-equivalent edits.
+    preview.node('surface_a').allowEditingOfContents(propagate=False)
+    preview.node('surface_b').allowEditingOfContents(propagate=False)
+    assert len(definition_edit_descendants(preview))>512
+    assert '512 editable descendants' in run(f"hda_edit({preview_asset!r},'save',dry_run=True)",False)['error']
+    print('PASS locked COP preview HDA lifecycle, source plans, identity recovery and unchanged foreign/work bounds')
     print('PASS lifecycle and definition write recovery',hou.applicationVersionString())

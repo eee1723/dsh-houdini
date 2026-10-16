@@ -5,7 +5,9 @@ import { ExecutorBinding } from './executor-binding.js'
 import { attachImages } from './image-output.js'
 import { retainResult } from './result-details.js'
 
-export type HoudiniConnection = HoudiniBridge | { resolve(exec: any): Promise<HoudiniBridge> }
+export type HoudiniConnection = HoudiniBridge | { resolve(exec: any): Promise<HoudiniBridge>;
+  registry?:string;
+  recoveryTarget?(agent:any,signal:AbortSignal):Promise<HoudiniBridge> }
 
 export function workspaceOf(exec: any): string | null {
   const cwd = exec?.agent?.session?.header?.cwd
@@ -36,6 +38,7 @@ export class HoudiniToolRuntime {
   /** Validate trusted provenance before resolving or contacting an executor. */
   async target(exec: any, bind = true): Promise<{ bridge: HoudiniBridge; owner: OwnershipScope }> {
     const owner = ownershipScopeOf(exec)
+    if(bind&&exec.agent)await this.ctx.get?.('houdiniRecovery')?.beforeTool?.(exec.agent,exec.signal)
     const bridge = 'resolve' in this.connection ? await this.connection.resolve(exec) : this.connection
     if (bind) {
       const session = exec?.agent?.session

@@ -91,7 +91,7 @@ node_info 读取实际 parent 下的类型、端口和参数模板，不创建 s
 
 multiparm数量修改的快照包含全部嵌套实例。失败恢复先重建数量与结构，再按原节点identity/参数名恢复值、表达式、keys和锁定状态，并回读确认；仅数量相同不构成恢复成功。render_frame的临时输出/前台参数或frame恢复失败同样进入未恢复修改处理，同批后续写入和保存停止，已写出的外部图像/缓存仍保留为独立事实。
 
-read_parms(names=[...])读取明确字段，string 返回 source_sha256。字符串 patch 使用原文 expected_sha256、old/new 与精确 count，锚点不匹配时本批参数写前拒绝；它只做 literal replace，不执行脚本或正则。set_parms 的 patch 继续 strict，写后失败恢复本批值/keys。
+read_parms(names=[...])读取明确字段，string 返回 source_sha256。字符串patch使用原文expected_sha256、old/new与精确count；完整源码同步使用同一expected_sha256与source字面文本，两者互斥。过期hash或锚点不匹配时本批参数写前拒绝；同步相同源码返回changed=False。只写指定字符串，不执行脚本/正则，不回写源文件；调用方明确文件或现场哪个是当前编辑来源。set_parms继续strict，写后失败恢复本批值/keys。
 
 connect 返回原生接线，None 保留空槽；subnet 间接输入不猜成普通 Node。disconnect 后输入可能压缩，后续读取 inputs_after。跨 subnet 使用 Object Merge 或明确端口，不猜输出口。delete/rename 返回实际影响，不因同名新节点推断引用恢复。
 
@@ -128,6 +128,10 @@ SOP subnet/HDA 的公共输出用 sop_set_output 发布原生 Output；普通 ge
 
 test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后恢复参数值、表达式、keys、frame 及完整 bgeo。顶层 interfaces 适用于基准与所有 case，baseline_interfaces 只验基准，case.interfaces 只验该扰动。具体状态应声明适用关系。
 
+大型最终输出中，primitive关系按明确组提取；control的每项指标均具名group且所有关系/拓扑可用primitive组表达时，复用同一采集。原点/面/内存预算作用于实际选中副本，不提高单次量测上限。geometry_scope保留来源总量、实际选择及未测范围；点到面旧合同和无组整件指标仍受整件预算。大型control的恢复另外以完整原生bgeo文件流核对全部输出，未选部分漂移仍失败；文件快照最多2GiB，解析后排除写入时间/group_summary并解析字符串引用，不能误删同名用户属性。完整内容指纹不一致不能标恢复成功，未知编码/不等价的表示变化保持恢复未确认。小输出继续使用原有规范化bgeo比较；外部副作用保证不扩大。
+
+小输出中的原生numeric属性按[HDK属性分页格式](https://www.sidefx.com/docs/hdk/_h_d_k__g_a__using.html)展开已知的packing、pagesize和constantpageflags，再逐元素精确比较；不同压缩方式不构成值变化，存储精度、默认值、颜色、位置及其他属性信息仍保留。不舍入、不忽略属性，非法分页拒绝，未知扩展保持原样而不推断等价。差异定位跳过完全相同的子树，避免大型无变化属性消耗定位预算；定位预算不决定恢复是否通过。
+
 基准计算失败返回 not_run；results=[] 不算通过。恢复前后回读通道和几何，任何不匹配都不能报告 restored=true。外部文件、Python 和 solver 副作用不属恢复保证。单个 case 不外推整个参数域，控制响应非零也不等于设计正确。
 
 测量方法不支持所选表示时，`measurement_failure`指出实际case、判据与选择；area额外给不支持的primitive类型、编号和开闭样本。基准失败零参数写入，所有未执行case仍标not_run；扰动后出现同类问题仍执行原恢复流程。诊断帮助选择适用方法，不自动改变测量指标或把局部支持部分冒充整个选择。
@@ -135,6 +139,8 @@ test_controls 必须 exec，声明数字控制、指标/关系和扰动；随后
 ## HDA、界面与节点整理
 
 HDA section 的写后回读/hash 只证明文本写入。PythonModule 语法检查不执行回调；真实按钮、内部函数、计算后的公共输出和新实例依赖分别观察。输入/输出上限不是接线证明；实例 spare 与定义界面分开管理。
+
+HDA定义编辑的工作量以可编辑内容为边界：锁定嵌套HDA计一个节点，其内建实现不展开计入512上限；明确解锁的内容重新计入。此边界与原生源码快照一致，不缩小ownership或恢复范围。原生容器转换仍保存并核对完整内部identity及定义来源，lock丢弃仍检查全部后代；公开参数变化仍使旧计划失效。回执的descendant_count保留全部后代数量，editable_descendant_count单独报告工作量。lock的editable_discarded_descendants由同次原生遍历明确列出可编辑范围，完整discarded_descendants继续作为全部丢弃/重建清单保留。归档成功时，模型呈现可将已知HDA原生identity迁移与内部重建清单改为计数/详情指针，全部可编辑目标、影响实例、计划hash和应用状态仍直接可读。历史回执缺少该范围、结构不一致或出现未知诊断字段时不推断精简范围；未知自选结果保持原状。
 
 HDA维护沿用实际来源库。hda_version在同库追加原生`::version`类型，保持scope/namespace/base与旧定义，失败恢复本调用的库/新增类型，不自动迁移实例或认领foreign库；Version元数据不代表类型版本。hda_switch_version只切换明确已锁定实例，原生保留共同参数通道和连线、加载新版内部内容。当前session自有实例在本次切换内展开新版内部网络，仅登记本次新建的内部identity，已有identity不因路径/父级变化被认领；foreign实例的单次切换授权不形成后代长期归属。未保存内部内容先由hda_edit处理。新建/独立衍生资产使用明确目标路径，Package、工程或用户选择的个人otls/hda目录均可；目录选择由工具开发skill按用户意图维护，不作为执行层强制Package策略。既有资产仍保留实际源库，所有作者写入继续拒绝$HFS及覆盖未授权的旧库。跨进程Package加载、任意回调外部效果和GUI菜单须分别验证，见[HDA维护](../skills/houdini-tool-development/references/hda-maintenance.md)。
 

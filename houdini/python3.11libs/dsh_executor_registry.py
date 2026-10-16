@@ -2,7 +2,8 @@
 
 No hou, process termination, credentials or DSH account copies. Records are
 discovery hints; the Host must still verify executor identity on every request.
-All methods are worker-side file operations, not Houdini GUI callbacks.
+Discovery publication uses workers. Actor-side admission and explicit saves use
+non-blocking OS leases; this module performs no network or process probes.
 """
 from pathlib import Path
 import hashlib
@@ -11,6 +12,7 @@ import os
 import re
 import threading
 import uuid
+from contextlib import contextmanager
 
 from dsh_deployment import FileLease, atomic_json
 
@@ -33,14 +35,14 @@ def is_shared_executor():
     return _ACTIVE is not None and not _ACTIVE._closed
 
 
-def activate(root, executor_id, *, installation, version, port, runtime_id, hip):
+def activate(root, executor_id, *, installation, version, port, runtime_id, hip, workbench=False, scene=None):
     """Explicit worker-side registration after the Bridge is listening."""
     global _ACTIVE
     if _ACTIVE is not None:
         raise RuntimeError('An executor registration is already active')
-    item = ExecutorRegistration(root, executor_id, installation=installation, version=version)
+    item = ExecutorRegistration(root, executor_id, installation=installation, version=version, workbench=workbench)
     try:
-        item.publish(port, runtime_id, hip=hip)
+        item.publish(port, runtime_id, hip=hip, scene=scene)
     except BaseException:
         item.close()
         raise
@@ -102,7 +104,7 @@ class ExecutorRegistration:
     This is not a liveness oracle or automatic task recovery authority.
     A registration never adopts another process's existing record or writer.
     """
-    def __init__(self, root, executor_id, *, installation, version):
+    def __init__(self, root, executor_id, *, installation, version, workbench=False):
         self.root = _absolute(root)
         self.executor_id = _identity(executor_id)
         self.installation = str(_absolute(installation))
@@ -111,6 +113,9 @@ class ExecutorRegistration:
         self.version = version
         self._guard = threading.RLock()
         self._writers = []
+        self._writer_keys = []
+        self.workbench = workbench
+        self.scene = {}
         self._task = None
         self._hip = None
         self._closed = False
@@ -134,7 +139,25 @@ class ExecutorRegistration:
             self._open()
             return self._hip or self._observed_hip
 
-    def claim_writer(self, task_id, hip):
+    def observe(self, hip, scene, *, is_current=None):
+        with self._guard:
+            self._open()
+            if is_current is not None and not is_current():
+                return False
+            if not self.workbench:
+                return False
+            if self.scene.get('scene_epoch') != scene['scene_epoch'] and self._hip != str(_absolute(hip)):
+                for lease in self._writers:
+                    lease.close()
+                self._writers, self._writer_keys = [], []
+                self._task = self._hip = None
+            elif self._hip and not scene.get('hip_is_new'):
+                with self.save_target(hip):
+                    pass
+            self.publish(self._port, self._runtime_id, hip=hip, scene=scene)
+            return True
+
+    def claim_writer(self, task_id, hip, *, replace=False):
         """Acquire before enabling mutations. Never create/save/load the HIP.
 
         Only protects participating runtimes; GUI saves and arbitrary filesystem
@@ -142,11 +165,14 @@ class ExecutorRegistration:
         """
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
             raise ValueError('invalid task identity')
-        target, keys = _hip_key(hip)
+        target, keys = (_absolute(hip), []) if self.workbench and self.scene.get('hip_is_new') else _hip_key(hip)
         with self._guard:
             self._open()
             if self._task is not None:
                 if (self._task, self._hip) == (task_id, str(target)):
+                    return
+                if replace and self.workbench and self._hip == str(target):
+                    self._task = task_id
                     return
                 raise RuntimeError('executor already has a scene author; release explicitly before changing task or HIP')
             leases = []
@@ -158,8 +184,9 @@ class ExecutorRegistration:
                     lease.close()
                 raise
             self._writers, self._task, self._hip = leases, task_id, str(target)
+            self._writer_keys = keys
 
-    def publish(self, port, runtime_id, *, hip=None):
+    def publish(self, port, runtime_id, *, hip=None, scene=None):
         """Publish an already listening Bridge, never close-and-rebind a probe port."""
         _identity(runtime_id)
         if type(port) is not int or not 1024 <= port <= 65535:
@@ -168,17 +195,23 @@ class ExecutorRegistration:
             self._open()
             if hip is not None:
                 self._observed_hip = str(_absolute(hip))
+            if scene is not None:
+                if self.scene.get('scene_epoch') and self.scene['scene_epoch'] != scene.get('scene_epoch'):
+                    self._generation = uuid.uuid4().hex
+                self.scene = dict(scene)
             record = {'schema': 1, 'executor_id': self.executor_id,
                       'registration_id': self._generation, 'runtime_id': runtime_id,
                       'pid': os.getpid(), 'installation': self.installation, 'houdini_version': self.version,
                       'bridge_url': f'http://127.0.0.1:{port}', 'state': 'registered',
                       'task_id': self._task, 'hip_path': self._hip or self._observed_hip,
                       'boundary': 'Discovery only; verify executor header and task binding before any operation'}
+            if self.workbench:
+                record.update(workbench=True, **{key: self.scene.get(key) for key in ('scene_id', 'scene_epoch', 'hip_is_new', 'workspace_path')})
             atomic_json(self._file, record)
             self._port, self._runtime_id = port, runtime_id
             return record
 
-    def claim(self, task_id, registration_id, expected_hip, actual_hip):
+    def claim(self, task_id, registration_id, expected_hip, actual_hip, *, idle=False):
         """Called after the Bridge main thread captures the actual current HIP."""
         with self._guard:
             self._open()
@@ -187,9 +220,11 @@ class ExecutorRegistration:
             expected = _absolute(expected_hip)
             if expected != _absolute(actual_hip) or str(expected) != self._observed_hip:
                 raise RuntimeError('HIP changed after discovery; refresh and confirm the actual target')
-            if not expected.is_file():
+            if not expected.is_file() and not (self.workbench and self.scene.get('hip_is_new')):
                 raise RuntimeError('Save and name this HIP before binding a shared task')
-            self.claim_writer(task_id, expected)
+            if self.workbench and self._task != task_id and not idle:
+                raise RuntimeError('当前工程仍有操作未完成，请等待完成后再切换对话。')
+            self.claim_writer(task_id, expected, replace=idle)
             # If publication fails, keep the acquired reservation. A retry by the
             # same task is safe; do not let a competing author take over unknown state.
             return self.publish(self._port, self._runtime_id)
@@ -199,6 +234,45 @@ class ExecutorRegistration:
             self._open()
             if self._task is None or self._task != task_id or os.path.normcase(self._hip) != os.path.normcase(os.path.abspath(actual_hip)):
                 raise RuntimeError('Shared executor task/HIP reservation mismatch; no scene operation allowed')
+
+    @contextmanager
+    def save_target(self, target):
+        if not self.workbench:
+            require_save_target(target)
+            yield
+            return
+        target, keys = _hip_key(target)
+        acquired = []
+        with self._guard:
+            self._open()
+            try:
+                for key in keys:
+                    if key not in self._writer_keys:
+                        acquired.append((key, FileLease(self.root / 'writers' / (key + '.lock'))))
+                yield
+            except BaseException:
+                for key, lease in acquired:
+                    lease.close()
+                raise
+            self._writer_keys.extend(key for key, lease in acquired)
+            self._writers.extend(lease for key, lease in acquired)
+            target, keys = _hip_key(target)
+            for key in keys:
+                if key not in self._writer_keys:
+                    self._writers.append(FileLease(self.root / 'writers' / (key + '.lock')))
+                    self._writer_keys.append(key)
+            self._hip = self._observed_hip = str(target)
+            self.scene['hip_is_new'] = False
+            self.scene['workspace_path'] = str(target.parent)
+            self.publish(self._port, self._runtime_id)
+            retained = []
+            for key, lease in zip(self._writer_keys, self._writers):
+                if key in keys:
+                    retained.append((key, lease))
+                else:
+                    lease.close()
+            self._writer_keys = [key for key, lease in retained]
+            self._writers = [lease for key, lease in retained]
 
 
     def close(self):
@@ -228,6 +302,15 @@ def require_active_writer(task_id, actual_hip):
 def require_save_target(path):
     if _ACTIVE is not None and os.path.normcase(os.path.abspath(path)) != os.path.normcase(_ACTIVE._hip or ''):
         raise RuntimeError('Shared executor Save As requires a new writer reservation; use the explicit handoff flow, not this scene call')
+
+
+@contextmanager
+def save_target(path):
+    if _ACTIVE is None:
+        yield
+    else:
+        with _ACTIVE.save_target(path):
+            yield
 
 
 def render_slot():

@@ -83,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 104
+_EXECUTION_CONTRACT_VERSION = 107
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -432,6 +432,7 @@ class _Handler(BaseHTTPRequestHandler):
             "ok": True, "houVersion": _HOU_VERSION, "rawGate": _raw_gate,
             "executionContractVersion": _EXECUTION_CONTRACT_VERSION, "runtimeId": _RUNTIME_ID,
             "executorId": _EXECUTOR_ID,
+            "sceneEpoch": _recovery.scene_epoch(),
             "runtime": _PYTHON_RUNTIME,
             "verbCatalog": {"hash": _VERB_CATALOG_HASH, "count": len(_VERB_NAMES), "names": list(_VERB_NAMES)},
             "activeRequests": _request_registry.active_count(),
@@ -607,13 +608,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(result)
             return
         if self.path == '/executor/claim':
-            if set(body) != {'task_id', 'registration_id', 'expected_hip'} or not all(isinstance(v,str) and v for v in body.values()):
+            if (set(body) not in ({'task_id', 'registration_id', 'expected_hip'}, {'task_id', 'registration_id', 'expected_hip', 'initial'})
+                    or not all(isinstance(body.get(key), str) and body[key] for key in ('task_id', 'registration_id', 'expected_hip'))
+                    or 'initial' in body and body['initial'] is not True):
                 self._send({'ok':False,'error':'Expected task_id, registration_id and expected_hip'},status=400)
                 return
             from dsh_executor_registry import active_registration
             registration = active_registration()
-            actual = _execute(lambda: hou.hipFile.path())
-            result = registration.claim(body['task_id'], body['registration_id'], body['expected_hip'], actual)
+            def claim():
+                idle = not _request_registry.active_count() and not _job_activity()['activeJobs'] and _work_queue.empty()
+                if registration.workbench and registration.scene.get('scene_epoch') != _recovery.scene_epoch():
+                    raise RuntimeError('工程登记正在更新，请从当前 Houdini 重新打开工作区。')
+                result = registration.claim(body['task_id'], body['registration_id'], body['expected_hip'], hou.hipFile.path(), idle=idle)
+                if body.get('initial'):
+                    _recovery.task_target(body['task_id'])
+                return result
+            result = _execute(claim)
             self._send({'ok':True,'result':result})
             return
         if self.path == '/requests/prepare':
@@ -894,7 +904,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _recover(self, body):
         """Host/UI only; no user-supplied code, file path or ownership manifest."""
-        from dsh_executor_registry import is_shared_executor
+        from dsh_executor_registry import is_shared_executor, active_registration
         def loaded(operation):
             value, warning, failure = _execute(lambda: _recovery.with_load_warning(operation), timeout=30)
             if warning is not None:
@@ -904,8 +914,7 @@ class _Handler(BaseHTTPRequestHandler):
             if failure is not None:
                 raise failure
             return value
-        if is_shared_executor():
-            raise RuntimeError('共享执行端恢复尚未开放；保留原绑定和工程。')
+        legacy_shared = is_shared_executor() and not active_registration().workbench
         rejection = _contract_error(body.get('expected_contract'))
         if rejection:
             self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
@@ -918,6 +927,8 @@ class _Handler(BaseHTTPRequestHandler):
         if set(body) - allowed:
             raise ValueError('Unexpected recovery field')
         action = self.path.removeprefix('/recovery/')
+        if legacy_shared and action != 'assess':
+            raise RuntimeError('此共享执行端只支持核对当前连接，跨进程接续尚未开放；保留原绑定和工程。')
         if action == 'activate':
             value = _execute(lambda: _recovery.activate(body['operation_id'], owner), timeout=5)
             self._send({'ok': True, **value})
@@ -932,6 +943,15 @@ class _Handler(BaseHTTPRequestHandler):
         if expected_scene is not None:
             _recovery.store.identity(expected_scene)
         current = _execute(lambda: _recovery.status(owner), timeout=2)
+        if action == 'assess' and previous == _EXECUTOR_ID and current['connected']:
+            if expected_scene is not None and current.get('scene_id') != expected_scene:
+                raise RuntimeError('当前工程与原对话的工程身份不同，未确认连接。')
+            self._send({'ok': True, **current, 'status': 'connected',
+                        'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID,
+                        'message': '当前任务仍连接此工程。'})
+            return
+        if legacy_shared:
+            raise RuntimeError('此共享执行端已不再连接原任务；跨进程接续尚未开放，保留原绑定和工程。')
         if action in ('locate', 'open'):
             if expected_scene is None:
                 raise ValueError('原工程定位需要对话中已有的工程身份，不能按目录猜测。')
@@ -962,11 +982,6 @@ class _Handler(BaseHTTPRequestHandler):
                 if checked != digest:
                     raise RuntimeError('原工程在打开期间被替换，未恢复修改权。')
             self._send({'ok': True, **value, 'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID})
-            return
-        if action == 'assess' and previous == _EXECUTOR_ID and current['connected']:
-            self._send({'ok': True, **current, 'status': 'connected',
-                        'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID,
-                        'message': '当前任务仍连接此工程。'})
             return
         if not current['checkpoint_id']:
             self._send({'ok': True, **current, 'status': 'unavailable',
@@ -1002,7 +1017,7 @@ class _Handler(BaseHTTPRequestHandler):
                     _execute(lambda: _recovery.discard_prepared(body['operation_id'], owner), timeout=2)
                     raise
         self._send({'ok': True, **value, 'status': value.get('status', 'ready'),
-                    'checkpoint_executor': record['executor_id'], 'runtime_id': _RUNTIME_ID})
+                    'checkpoint_executor': record['executor_id'], 'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID})
 
 
 _server: ThreadingHTTPServer | None = None

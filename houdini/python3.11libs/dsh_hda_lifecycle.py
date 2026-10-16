@@ -72,8 +72,10 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
     if not os.path.isfile(library) or os.path.islink(library) or os.path.getsize(library)>32*1024*1024:
         raise ValueError('hda_edit requires a regular disk library <=32 MiB')
     descendants = list(n.allSubChildren())
-    if len(descendants)>512:
-        raise ValueError('hda_edit supports at most 512 descendants')
+    editable_descendants = dsh_ownership.definition_edit_descendants(n)
+    if len(editable_descendants)>512:
+        raise ValueError('hda_edit supports at most 512 editable descendants; '
+                         'locked nested HDA definitions count once')
     affected = list(n.type().instances()) if action in ('save','promote') else [n]
     if len(affected)>64:
         raise ValueError('hda_edit supports at most 64 affected instances')
@@ -127,7 +129,10 @@ def edit(node, action, *, dry_run=False, expected_plan=None, discard_changes=Fal
     result={k:v for k,v in plan.items() if k not in ('sections','descendants')}
     result.update(ok=True,plan_sha256=revision,dry_run=dry_run,applied=False,
                   descendant_count=len(descendants),
+                  editable_descendant_count=len(editable_descendants),
                   discarded_descendants=plan['descendants'] if action=='lock' and not matches else [],
+                  editable_discarded_descendants=[(i.path(),int(i.sessionId())) for i in editable_descendants]
+                      if action=='lock' and not matches else [],
                   promoted_templates=sorted(dsh_parameter_templates._all_template_names(n.parmTemplateGroup().entries())
                       - dsh_parameter_templates._all_template_names(definition.parmTemplateGroup().entries())) if action=='promote' else [],
                   scope='definition lifecycle only; only fresh identities rebuilt for current-session owned instances are registered; no output/callback/GUI validation')

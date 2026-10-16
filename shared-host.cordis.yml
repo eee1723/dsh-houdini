@@ -6,3 +6,4 @@
       config:
         executorRegistry: !!js process.env.DSH_HOUDINI_EXECUTOR_REGISTRY
         requestTimeoutMs: 120000
+        workbench: !!js process.env.DSH_HOUDINI_WORKBENCH === '1'

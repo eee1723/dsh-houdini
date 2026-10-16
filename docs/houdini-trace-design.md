@@ -147,6 +147,8 @@ callId索引用于并行调用、父子调用和选中详情关联，UI直接消
 并发结果按原调用更新，不因返回乱序改写调用顺序；缺失结果保留pending/unknown，不能当成功或自动重试。
 
 模型usage按请求去重。同一次请求的多个工具共享输入/输出usage，不均分或重复累计为各工具独占消耗。
+
+离线请求记录保留当时header中的provider/model/reasoningEffort/maxTokens及适配器回放记录的API；缺少的推理档保持未知，不记为off，也不以当前配置回填历史。不复制任意配置对象或headers。配置声明、实际HTTP字段、模型报告用量和语义效果分开判断；相同模型名不是完整的对照条件。
 原生tool/result的meta.canonical保留完整Bridge返回（仍受Bridge原本限额约束）；UI和离线normalizer
 优先使用它恢复精确动词参数、结果和证据，resultText仍是实际模型文本，不将展开metadata算入模型字符成本。
 result_ref分页读取单独计为Host详情读取，不计新HOM调用/裸探针。旧事件仍按原文本解析；只有文件引用而无

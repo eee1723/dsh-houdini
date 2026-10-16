@@ -94,8 +94,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     if not os.path.isabs(target) or os.path.splitext(target)[1].lower() not in (".hip", ".hiplc", ".hipnc"):
         raise ValueError("path 必须是绝对路径，扩展名为 .hip/.hiplc/.hipnc")
     target = os.path.realpath(target)
-    from dsh_executor_registry import require_save_target
-    require_save_target(target)
+    from dsh_executor_registry import save_target
     repo = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
     try:
         in_repo = os.path.commonpath([repo, target]) == repo
@@ -109,26 +108,27 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     if existed and not os.path.isfile(target):
         raise ValueError(f"target is not a regular file: {target}")
     dirty_before = bool(hou.hipFile.hasUnsavedChanges())
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    if not overwrite:
-        # Reserve without a check-then-overwrite race. Only a new empty file is
-        # created; a concurrent existing target causes FileExistsError.
-        with open(target, "xb"):
-            pass
-    try:
-        # H21 file-event callbacks do not consistently escape Windows backslashes.
-        hou.hipFile.save(file_name=target.replace("\\", "/"))
-        from dsh_scene_recovery import after_save
-        after_save(target, True)
-        if os.path.normcase(os.path.realpath(hou.hipFile.path())) != os.path.normcase(target):
-            raise RuntimeError("Save As 返回后当前 HIP 路径与目标不一致")
-        stat = os.stat(target)
-        if stat.st_size == 0:
-            raise RuntimeError("Save As 返回后目标 HIP 为空")
-    except BaseException:
-        # Restoring the in-memory name is not a claim that disk I/O rolled back.
-        hou.hipFile.setName(current.replace("\\", "/"))
-        raise
+    with save_target(target):
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if not overwrite:
+            # Reserve without a check-then-overwrite race. Only a new empty file is
+            # created; a concurrent existing target causes FileExistsError.
+            with open(target, "xb"):
+                pass
+        try:
+            # H21 file-event callbacks do not consistently escape Windows backslashes.
+            hou.hipFile.save(file_name=target.replace("\\", "/"))
+            from dsh_scene_recovery import after_save
+            after_save(target, True)
+            if os.path.normcase(os.path.realpath(hou.hipFile.path())) != os.path.normcase(target):
+                raise RuntimeError("Save As 返回后当前 HIP 路径与目标不一致")
+            stat = os.stat(target)
+            if stat.st_size == 0:
+                raise RuntimeError("Save As 返回后目标 HIP 为空")
+        except BaseException:
+            # Restoring the in-memory name is not a claim that disk I/O rolled back.
+            hou.hipFile.setName(current.replace("\\", "/"))
+            raise
     reliable = bool(hou.isUIAvailable())
     dirty_after = bool(hou.hipFile.hasUnsavedChanges())
     return {"path": target, "previous_path": current, "reason": reason.strip(),

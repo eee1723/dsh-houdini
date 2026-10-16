@@ -163,7 +163,7 @@ const hinted = await run(
 );
 assert.deepEqual(hinted.injected, [[
   'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace', 'layout',
-], ['connection', 'configForms'], ['connection'], ['connection', 'uiConversation']]);
+], ['connection', 'configForms'], ['connection'], ['connection', 'uiSession'], ['connection', 'uiConversation']]);
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },

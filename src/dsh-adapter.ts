@@ -1,5 +1,6 @@
 /** DSH 0.2 message producers and native/nested execution-log adapter. */
 import type { Context } from '@deepseek-ai/cordis'
+import type {Agent} from '@deepseek-ai/dsh-agent'
 import {createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionEvent } from './execution-history.js'
@@ -25,6 +26,22 @@ export function houdiniMessage(content:readonly ContentBlock[]) {
 export function houdiniSnapshot(section:{name:string;text:string}) {
   return createUserMessage({content:[{type:'text',text:section.text}],
     source:{kind:HOUDINI_SOURCE,form:'snapshot',sections:[section]}})
+}
+
+export function workspaceOpeningMessage(record:{executor_id:string;scene_id?:string;scene_epoch?:string;hip_path:string|null;hip_is_new?:boolean;project_label?:string}) {
+  return houdiniSnapshot({name:'dsh-houdini:workspace-open',text:
+    'Explicit Open Workspace target; this is not node ownership or a saved checkpoint.\n'+JSON.stringify({
+      executor_id:record.executor_id,scene_id:record.scene_id,scene_epoch:record.scene_epoch,
+      hip_path:record.hip_path,hip_is_new:record.hip_is_new,project_label:record.project_label})})
+}
+
+export function houdiniSourceMessages(event:SessionEvent):any[] {
+  const messages=event.type==='user/message'?[event.data]:event.type==='agent/inbox/spliced'?event.data?.inserted??[]:[]
+  return messages.filter((message:any)=>isHoudiniSource(message?.source))
+}
+
+export function recordHoudiniContext(agent:Pick<Agent,'session'|'inject'>,message:ReturnType<typeof houdiniSnapshot>):void {
+  agent.inject(message)
 }
 
 const LOG_KIND='dsh-houdini/execution-v1'

@@ -7,22 +7,34 @@ import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
 import {ExecutorBinding} from './executor-binding.js'
 import {ExecutorController} from './executor-controller.js'
 import {projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
+import {recordHoudiniContext} from './dsh-adapter.js'
 
 export const name='dsh-houdini-executor-host'
 export const inject=['agents','sessionProjections']
-export interface Config {executorRegistry:string;requestTimeoutMs:number}
+export interface Config {executorRegistry:string;requestTimeoutMs:number;workbench:boolean}
 export const Config:Schema<Config>=Schema.object({
   executorRegistry:Schema.string().required(),requestTimeoutMs:Schema.number().default(120000),
+  workbench:Schema.boolean().default(false),
 })
 export function apply(ctx:Context,config:Config):void {
   if(ctx.get('houdiniTargets')) throw new Error('Shared Houdini Host service already mounted; keep exactly one Host-plane instance')
   registerExecutorIdentityProjection(ctx)
   const directory=new ExecutorDirectory(config.executorRegistry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'))
   const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBinding(session=>
-      projectedExecutorBindingState(ctx,session as Parameters<typeof projectedExecutorBindingState>[1])),session=>
-      projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]))
+      projectedExecutorBindingState(ctx,session as Parameters<typeof projectedExecutorBindingState>[1]),(session,message)=>{
+        const current=session as Parameters<typeof projectedExecutorBindingState>[1]
+        const agent=ctx.agents.get(current.id)
+        if(!agent||agent.session!==session)throw new Error('必须先打开精确的任务，再记录工程选择。')
+        recordHoudiniContext(agent,message)
+      }),session=>
+      projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]),
+    taskId=>!ctx.agents.get(taskId as any)||ctx.agents.get(taskId as any)?.status==='idle',
+    async session=>await ctx.get('sessions')?.flush(session as any)===true)
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')
-  new ExecutorController(ctx,router)
+  if(config.workbench)ctx.inject(['workspaceRegistry','sessionController','sessionQuery','sessions'],scope=>{
+    new ExecutorController(scope,router,true)
+  })
+  else new ExecutorController(ctx,router)
 }
 
 /** Resolve afresh per call so unloaded/replaced services cannot remain cached in a preset. */
@@ -33,7 +45,9 @@ export function sharedExecutorConnection(ctx:Context,registry:string) {
     return service.getRouter(registry)
   }
   return {
+    registry,
     resolve:(exec:Parameters<ExecutorRouter['resolve']>[0])=>router().resolve(exec),
+    recoveryTarget:(agent:Parameters<ExecutorRouter['recoveryTarget']>[0],signal:AbortSignal)=>router().recoveryTarget(agent,signal),
     sceneContextFor:(session:Parameters<ExecutorRouter['sceneContextFor']>[0],signal?:AbortSignal)=>router().sceneContextFor(session,signal),
   }
 }

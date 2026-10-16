@@ -48,6 +48,32 @@ try:
     # Coverage names come from actual selected final primitives, not the name
     # of the interface group or an agent-authored completeness claim.
     import dsh_quality_contracts as q
+    paged=['size',3,'storage','fpreal32','pagesize',2,'packing',[2,1],
+           'constantpageflags',[[True,False],[False,True]],
+           'rawpagedata',[1,2,3,4,5,6,7]]
+    unpacked=['size',3,'storage','fpreal32','pagesize',4,
+              'rawpagedata',[1,2,3,1,2,4,5,6,7]]
+    assert q._canonical_attribute_values(paged,3)==q._canonical_attribute_values(unpacked,3)
+    for invalid in [paged[:-1]+[[1]], paged[:-1]+[paged[-1]+[8]],
+                    ['size',3,'storage','fpreal32','pagesize',0,'rawpagedata',[]],
+                    ['size',3,'storage','fpreal32','pagesize',2,'packing',[2],'rawpagedata',[]],
+                    ['size',3,'storage','fpreal32','pagesize',2,'constantpageflags',[[True]],'rawpagedata',[]]]:
+        rejects(lambda:q._canonical_attribute_values(invalid,3),'native attribute')
+    unknown=unpacked+['unknown_encoding',True]
+    assert q._canonical_attribute_values(unknown,3)==unknown
+    numeric=hou.Geometry()
+    numeric.createPoints([(float(index),0,0) for index in range(2051)])
+    numeric.addAttrib(hou.attribType.Point,'Cd',(1.0,1.0,1.0))
+    untouched=q._data_signature(numeric)
+    numeric.points()[1024].setAttribValue('Cd',(0.0,1.0,1.0))
+    assert q._data_signature(numeric)!=untouched, 'real colors must remain restoration evidence'
+    numeric.points()[1024].setAttribValue('Cd',(1.0,1.0,1.0))
+    assert q._data_signature(numeric)==untouched, 'page expansion alone must not change geometry identity'
+    numeric.points()[2048].setPosition((2048,0.001,0))
+    assert q._data_signature(numeric)!=untouched, 'real positions must remain restoration evidence'
+    diagnostic=q._first_geometry_difference([list(range(60000)),{'Cd':[1,1,1]}],
+                                           [list(range(60000)),{'Cd':[1,0,1]}])
+    assert diagnostic['path']=='/1/Cd/1' and diagnostic['kind']=='value', diagnostic
     named=out.geometry().freeze()
     named.addAttrib(hou.attribType.Prim,'name','')
     target_ids={p.number() for p in named.findPrimGroup('b_surface').prims()}

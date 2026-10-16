@@ -390,8 +390,9 @@ def _prepare_parameter_patch(p, value):
     """Bounded sequential literal replacements, fully planned before writes."""
     def reject(message):
         raise dsh_errors.ParameterPatchError(f'{p.path()}: {message}', p.path())
-    if set(value) != {'patch', 'expected_sha256'}:
-        reject('patch object requires only patch and expected_sha256')
+    replacement='source' in value
+    if set(value) != ({'source','expected_sha256'} if replacement else {'patch', 'expected_sha256'}):
+        reject('source update requires expected_sha256 and exactly one of source or patch')
     expected = value['expected_sha256']
     if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
         reject('expected_sha256 must be the current raw UTF-8 string SHA-256')
@@ -405,8 +406,8 @@ def _prepare_parameter_patch(p, value):
     if tpl.scriptCallback() or ((tpl.menuItems() or tpl.itemGeneratorScript())
                                and tpl.menuType() == hou.menuType.Normal):
         reject('patch refuses callback and fixed-menu parameters')
-    patches = value['patch']
-    if not isinstance(patches, list) or not 1 <= len(patches) <= 32:
+    patches = value.get('patch',[])
+    if not replacement and (not isinstance(patches, list) or not 1 <= len(patches) <= 32):
         reject('patch requires 1..32 literal replacement objects')
     source = p.unexpandedString()
     if len(source) > 524288:
@@ -414,6 +415,12 @@ def _prepare_parameter_patch(p, value):
     before_hash = hashlib.sha256(source.encode('utf-8')).hexdigest()
     if before_hash != expected:
         reject(f'stale source: expected {expected}, current {before_hash}')
+    if replacement:
+        result=value['source']
+        if not isinstance(result,str) or len(result)>524288:reject('source must be literal text at most 524288 characters')
+        return {'source':source,'result':result,'evidence':{'mode':'source_sync','changed':result!=source,
+            'before_sha256':before_hash,'after_sha256':hashlib.sha256(result.encode('utf-8')).hexdigest(),
+            'before_chars':len(source),'after_chars':len(result)}}
     result, matches, text_budget = source, [], 0
     for index, edit in enumerate(patches):
         if not isinstance(edit, dict) or set(edit) != {'old', 'new', 'count'}:
@@ -443,7 +450,7 @@ def _apply_parameter_patch(p, plan):
     # this is a write-phase failure, never zero-write evidence for the batch.
     if p.keyframes() or p.unexpandedString() != plan['source']:
         raise RuntimeError(f'{p.path()}: source changed after patch preflight')
-    p.set(plan['result'], follow_parm_reference=False)
+    if plan['result'] != plan['source']:p.set(plan['result'], follow_parm_reference=False)
     if p.keyframes() or p.unexpandedString() != plan['result']:
         raise RuntimeError(f'{p.path()}: literal patch readback mismatch')
     return {'parm': p.name(), 'patch': plan['evidence'], 'value_omitted': True}
@@ -458,6 +465,8 @@ def set_parm(node, name: str, value,
     multiparm数量修改同时快照全部嵌套实例；恢复先重建数量/结构，再恢复实例通道与锁定状态。
     Data/内嵌Geometry参数在快照与写入前拒绝；按节点原生初始化流程处理，不用标量setter。
     字面string可用{"expected_sha256":原始UTF8源码hash,"patch":[{"old":锚点,"new":替换,"count":精确次数}]}。
+    完整源码同步可用{"expected_sha256":当前原始UTF8源码hash,"source":完整字面文本}；
+    现场已改变时零写入拒绝，同步相同文本返回changed=False，不读取或回写外部源文件。
     1..32项顺序替换，先验证全部锚点/版本；拒绝锁定、动画/表达式、callback和固定菜单。
     源码上限524288字符，替换文本累计131072字符，count为1..256；不执行正则或补丁脚本。
     返回patch的前后hash/字符数/替换次数，value_omitted=True；不证明VEX或几何通过，另做cook/verify_network。
@@ -471,7 +480,7 @@ def set_parm(node, name: str, value,
         validate_vex(value)
     p = n.parm(name)
     targets = (p,) if p is not None else n.parmTuple(name)
-    is_patch = isinstance(value, dict) and 'patch' in value
+    is_patch = isinstance(value, dict) and ('patch' in value or 'source' in value)
     if is_patch and p is None:
         raise dsh_errors.ParameterPatchError(f'{name}: patch requires an existing scalar string parameter', n.path())
     plan = _prepare_parameter_patch(p, value) if is_patch else None
@@ -674,7 +683,7 @@ def set_parms(node, values: dict,
     if not isinstance(strict, bool):
         raise ValueError("strict 必须是 bool")
     snapshots, patch_plans = {}, {}
-    if not strict and any(isinstance(v, dict) and 'patch' in v for v in values.values()):
+    if not strict and any(isinstance(v, dict) and ('patch' in v or 'source' in v) for v in values.values()):
         raise dsh_errors.ParameterPatchError('literal patches require strict=True', n.path())
     if strict:
         explicit_targets = {}
@@ -690,7 +699,7 @@ def set_parms(node, values: dict,
         snapshots = _parameter_snapshot(explicit_targets.values())
         # Validate EVERY patch before the first regular or patch parameter write.
         for key, value in values.items():
-            if isinstance(value, dict) and 'patch' in value:
+            if isinstance(value, dict) and ('patch' in value or 'source' in value):
                 parm = n.parm(key)
                 if parm is None:
                     raise dsh_errors.ParameterPatchError(f'{key}: patch requires a scalar string parameter', n.path())

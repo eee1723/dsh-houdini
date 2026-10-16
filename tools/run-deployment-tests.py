@@ -6,18 +6,24 @@ import subprocess
 import sys
 import tempfile
 import re
-from houdini_test_environment import isolated_environment, launch_directory
+from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
 
 ROOT = Path(__file__).resolve().parents[1]
-PURE = ["dsh-test-environment", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-release-policy", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-installer-bootstrap", "dsh-managed-preview-paths", "dsh-network-layout", "video-runtime-package"]
+PURE = ["dsh-test-environment", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-release-policy", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-installer-bootstrap", "dsh-managed-preview-paths", "dsh-network-layout", "video-runtime-package"]
 HOUDINI = ["dsh-manager-update", "dsh-launcher-preflight", "dsh-frontend-lifetime", "dsh-force-repair", "dsh-profile-sync", "dsh-install-ui", "dsh-network-ui",
            "dsh-bridge-raw-gate", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
            "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-multiparm-restoration", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-preview-backend", "dsh-render-color-management", "dsh-render-service-box", "dsh-cop-contracts",
-           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout"]
+           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout", "dsh-scoped-observation", "dsh-snapshot-worker", "dsh-shared-continuity", "dsh-parameter-patch"]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--hython", action="append", type=Path, default=[])
+parser.add_argument('--suite', action='append', choices=sorted(set(PURE + HOUDINI)))
+reexec_unpacked_test_cli()
 args = parser.parse_args()
 targets = [(sys.executable, PURE)] if not args.hython else [(str(binary), PURE + HOUDINI) for binary in args.hython]
+if args.suite:
+    if not args.hython and any(suite not in PURE for suite in args.suite):
+        parser.error('Houdini suites require --hython')
+    targets = [(binary, [suite for suite in suites if suite in args.suite]) for binary, suites in targets]
 observed_versions = set()
 for binary, suites in targets:
     if not Path(binary).is_file():
@@ -25,6 +31,7 @@ for binary, suites in targets:
     # Explicitly isolated user preferences; never inherit installed user packages.
     prefs = tempfile.mkdtemp(prefix="dsh-deployment-regression-")
     env = isolated_environment(prefs, executable=binary if args.hython else None)
+    env['DSH_HOUDINI_RECOVERY_ROOT'] = str(Path(prefs) / 'recovery')
     cwd = launch_directory(binary) if args.hython else ROOT
     if args.hython:
         probe = subprocess.run([binary, "-c", "import hou; print('DSH_TEST_HOUDINI=' + '.'.join(map(str,hou.applicationVersion()[:2])))"],

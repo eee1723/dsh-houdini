@@ -288,7 +288,7 @@ def _operation_summary(name: str, result):
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
               'baseline_interfaces','baseline_topology','baseline_domain','baseline','expectation','case_id','control_summary',
-              'baseline_captures','capture_status','representation',
+              'baseline_captures','capture_status','representation','geometry_scope',
               'pair_tests','reason','runtime_limits','parameter_writes','required_outputs','geometry_status','update_mode',
               'scene_unit_length_meters','bbox_size_sop_local_mm','handoff_output',
               'cook_details','cook_errors','geometry_restore','frame_restored')
@@ -297,10 +297,10 @@ def _operation_summary(name: str, result):
         out['geometry'] = {k:r['geometry'][k] for k in
             ('points','prims','bbox_min','bbox_max','bbox_size') if k in r['geometry']}
     if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
-        out['artifact'] = {k:r['artifact'].get(k) for k in (
+        out['artifact'] = {k:r['artifact'][k] for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
             'role','project_root','lifecycle',
-            'run_id','capture_id','frame','reservation_retained')}
+            'run_id','capture_id','frame','reservation_retained') if k in r['artifact']}
     if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']
     if 'framing_status' in r:

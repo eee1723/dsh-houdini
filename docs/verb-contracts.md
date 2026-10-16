@@ -842,7 +842,7 @@ Apply a strict parameter batch to one node, preserving actual errors and restori
     "values": {
       "type": "object",
       "minProperties": 1,
-      "description": "Parameter or tuple names to literal values, numeric expressions, explicit expression/language objects, or supported literal string patches."
+      "description": "Parameter or tuple names to literal values, numeric expressions, explicit expression/language objects, or supported literal string patches. Literal source synchronization accepts {expected_sha256: current raw UTF-8 SHA-256, source: full text}."
     },
     "allow_foreign": {
       "anyOf": [
@@ -916,11 +916,25 @@ __result__ = set_parms('/obj/example_geo/box1', {
 
 Read set/evaluations. A parameter write does not itself certify downstream geometry; cook or verify that output when needed.
 
+### Synchronize file-maintained source without overwriting a changed scene
+
+调用工具：`houdini_exec`。
+
+```python
+current = read_parms('/obj/example/shape', names=['snippet'])[0]
+# Preserve this hash while editing the authoritative file; do not refresh it to bypass a conflict.
+text = open('/explicit/project/shape.vfl', encoding='utf-8', newline='').read()
+__result__ = set_parms('/obj/example/shape', {'snippet': {'expected_sha256': current['source_sha256'], 'source': text}})
+```
+
+Read patch.before_sha256/after_sha256 and changed. Verify the affected final output; matching text alone does not prove geometry.
+
 ### 接口边界
 
 - Parameter names and menu set_value come from node_info/list_parms/read_parms. Numeric tuple literals use full components; tuple expressions use individual component names.
 - Toggle button/icon strips accept an exact integer bitmask: 0 clears all, combine declared set_value bits for multiple choices. A token selects only that entry's bit, not an incremental toggle. Writing a conditional parameter does not automatically enable its controlling mode or prove an output effect.
 - strict defaults to True. strict=False allows explicit partial diagnostic success and returns failed; it is not required for ordinary editing. Restoration covers parameter values/expressions/keys, not external callback effects.
+- Complete source synchronization uses the same atomic preflight as literal patches. Stale source rejects the entire batch before writing; equal source is a no-op. The source file remains managed by ordinary file tools.
 
 ## connect
 

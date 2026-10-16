@@ -32,9 +32,11 @@ $files = @{
     'release-trust.json' = (Join-Path $PSScriptRoot 'release-trust.json')
     'scripts/afterscenesave.py' = (Join-Path $sourceRoot 'houdini/scripts/afterscenesave.py')
 }
-foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_ui_style.py', 'dsh_deployment.py', 'dsh_release_policy.py')) {
+foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_ui_style.py', 'dsh_deployment.py', 'dsh_release_policy.py', 'dsh_support_ui.py', 'dsh_support_report.py', 'dsh_workbench.py', 'dsh_houdini_installations.py', 'dsh_workbench_start.py')) {
     $files["python/$name"] = Join-Path $sourceRoot "houdini/python3.11libs/$name"
 }
+$files['open-workbench.ps1'] = Join-Path $PSScriptRoot 'open-workbench.ps1'
+$files['dsh-houdini.ico'] = Join-Path $sourceRoot 'assets/dsh-houdini.ico'
 foreach ($file in $files.Values) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Installer file missing: $file" } }
 $parts = @($files.Keys | Sort-Object | ForEach-Object { $_ + ':' + (Get-FileHash -LiteralPath $files[$_] -Algorithm SHA256).Hash })
 $sha = [Security.Cryptography.SHA256]::Create()
@@ -96,6 +98,15 @@ try {
         Write-Output "Registered: $target"
     }
 } finally { $lock.Dispose() }
+$shortcutPath = Join-Path $installRoot 'DSH-Houdini.lnk'
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+$shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
+$shortcut.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $bootstrap 'open-workbench.ps1') + '" -Root "' + $installRoot + '"'
+$shortcut.WorkingDirectory = $installRoot
+$shortcut.IconLocation = (Join-Path $bootstrap 'dsh-houdini.ico') + ',0'
+$shortcut.WindowStyle = 7
+$shortcut.Save()
+Write-Output "Standalone workspace: $shortcutPath"
 if (Test-Path -LiteralPath (Join-Path $sourceRoot 'release.json')) {
     $interpreters = @(Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Side Effects Software/Houdini */python*/python.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)
     if ($interpreters.Count) {
