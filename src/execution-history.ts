@@ -1,10 +1,11 @@
 /** Correlate native and nested calls, results and same-runtime receipts. */
 import { executionCall,executionResult } from './dsh-adapter.js'
 import {foldExecutorState} from './executor-identity-projection.js'
+import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
 export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;surfaceOp?:string|{op:string}}
 export type ExecutionRow = {eventSeq:number;callId:string;tool:string;value:any;execution:any}
 
-const LIVE_TOOLS = new Set(['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
+const LIVE_TOOLS = HOUDINI_SCENE_TOOLS
 const RECOVERABLE_CALLS = new Set(['houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_job_submit'])
 const OBSERVED_REQUESTS = new Set(['done','not_executed','job_submitted'])
 const UNAVAILABLE_RESULTS = new Set(['result_expired','result_unavailable'])

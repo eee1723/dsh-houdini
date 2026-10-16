@@ -24,11 +24,11 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ### 多Houdini执行端与任务恢复
 
-源码已集成显式共享执行端模式：一个DSH Host、多个独立Houdini Bridge、每个任务持久绑定一个执行端。
-默认打开工作区仍是单实例，受管安装锁不自动解除；共享模式需明确启用，不能复用另一实例的端口身份。
+默认入口使用独立工作台：一个DSH Host、多个独立Houdini Bridge。对话持久关联场景身份，当前执行端记录其运行位置；重开只在保存点核对后更新连接，不授予额外节点修改权。
+工作台持有安装级运行锁；显式共享登记仅保留为开发入口，不能复用另一实例的端口身份。
 唯一设计与运维说明见[多实例与任务恢复](multi-instance.md)：身份分层、启动/选择、写入预留、Repair范围、
 退出与恢复边界及验收入口。普通单实例在用户输入的步骤边界自动接续，使用DSH持久事件及加载时的精确节点身份；
-同页工程接续设计区分目录工作区、工程分支、保存点与运行身份，规定尚未完整交付的Save As工作区跟随、分支及升级范围。
+同页工程接续设计区分目录工作区、工程分支、保存点与运行身份，说明另存目录跟随和仍待完整交付的分支、升级范围。
 不另建插件会话/工作区数据库。代码整合和隔离验证不代表当前live已加载，也不代表崩溃自动续跑完成。
 
 ### 节点片段交换
@@ -67,6 +67,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
+| [src/workbench-workspaces.ts](../src/workbench-workspaces.ts) | 已知临时目录的空工作区登记退出；复用DSH条件删除，保留目录、文件及会话，保护活动现场和用户保留项 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
@@ -177,7 +178,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_quality_contracts.py](../houdini/python3.11libs/dsh_quality_contracts.py) | 实际接口、拓扑/domain和可恢复control实验 |
 | [dsh_bgeo_fingerprint.py](../houdini/python3.11libs/dsh_bgeo_fingerprint.py) | 以原生BJSON流核对完整大型几何；解析字符串引用后排除写入时间等既定元数据，不忽略用户同名属性；不支持编码明确失败 |
 | [dsh_camera_framing.py](../houdini/python3.11libs/dsh_camera_framing.py) | 八角点投影、预览取景/深度分离与镜头缩放、静态OBJ camera_fit、实际USD产品预检 |
-| [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata与统一HIP保存状态，无socket/进程探测 |
+| [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata与统一HIP身份；GUI自动采集不探测HIP文件或真实目录，显式磁盘状态另查；无socket/进程探测 |
 
 [执行与证据契约](execution-contract.md)维护这些模块的跨层不变量，节点领域recipe在skills。
 

@@ -564,13 +564,15 @@ class ExecutionRuntime:
         self.sequence = 0
 
     def _execution_snapshot(self, sequence, owner_session, read_only, impact):
-        scene = dsh_hou_helpers.scene_info()
+        from dsh_context import hip_file_identity
+        scene = hip_file_identity()
         import dsh_scene_recovery
         return {'runtime_id': self.runtime_id, 'executor_id': self.executor_id, 'sequence': sequence,
             'scene_recovery': dsh_scene_recovery.facts(),
-            'observed_at': time.time(), 'frame': scene['frame'], 'hip_path': scene['hip_path'],
+            'observed_at': time.time(), 'frame': float(hou.frame()), 'hip_path': scene['hip_path'],
             'hip_dir': scene['hip_dir'], 'hip_is_new': scene['hip_is_new'],
-            'update_mode': scene['update_mode'], 'owner_session': owner_session, 'read_only': read_only,
+            'update_mode': {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
+            'owner_session': owner_session, 'read_only': read_only,
             'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
                 'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
                 'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}

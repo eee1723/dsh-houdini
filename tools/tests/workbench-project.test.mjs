@@ -91,7 +91,7 @@ apply('user/message',recoveryMessage({schema:2,kind:'executor_recovery',previous
 apply('tool/result',{message:{source:{callId:'old-pending'}},meta:{canonical:{execution:{executor_id:executor,hip_path:'C:/wrong/old.hip',observed_at:8}}}},8000)
 assert.equal(state.project.hipPath,'C:/reopened/rock.hip','a late old-executor result cannot relabel a recovered task')
 const view=executorIdentityProjection.wire.view(state)
-assert.deepEqual(Object.keys(view).sort(),['executorId','hipIsNew','hipPath','label','needsReview','sceneEpoch'])
+assert.deepEqual(Object.keys(view).sort(),['executorId','hipIsNew','hipPath','label','needsReview','sceneEpoch','sceneId'])
 assert.equal(executorIdentityProjection.wire.view(executorIdentityProjection.init()),null,'an unbound task has no project mark')
 assert.equal(executorIdentityProjection.wire.view({...state,conflict:true}).needsReview,true)
 

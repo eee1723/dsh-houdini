@@ -94,10 +94,11 @@ export async function imageOutputLocation(options:ImageOutputOptions,
   const managed=path.join(root,...entry.path.split('/'))
   if (scene.project_layout !== undefined) {
     const layout=scene.project_layout
+    const observedRoot=path.dirname(scene.hip_path)
     if (layout?.schema_version!==1 || layout.available!==true || typeof layout.hip_path!=='string'
         || !samePath(layout.hip_path,scene.hip_path) || typeof layout.project_root!=='string'
-        || !samePath(layout.project_root,root) || typeof layout.directories?.[role]!=='string'
-        || !samePath(layout.directories[role],managed))
+        || !samePath(layout.project_root,observedRoot) || typeof layout.directories?.[role]!=='string'
+        || !samePath(layout.directories[role],path.join(observedRoot,...entry.path.split('/'))))
       throw Error('Houdini project directory observation disagrees with the loaded directory contract; reload matching plugin components')
   }
   const extension=path.extname(label), filename=path.join(managed,

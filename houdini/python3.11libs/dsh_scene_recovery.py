@@ -74,8 +74,8 @@ def _nodes():
 
 def facts():
     _main()
-    from dsh_context import hip_file_state
-    hip = hip_file_state()
+    from dsh_context import hip_file_identity
+    hip = hip_file_identity()
     dirty = bool(hou.hipFile.hasUnsavedChanges())
     dirty_reliable = bool(hou.isUIAvailable())
     empty_new = dirty_reliable and hip['hip_is_new'] and not dirty and not any(node.children() for node in hou.node('/').children())
@@ -160,7 +160,11 @@ def after_save(path, success):
         import sys
         desktop = sys.modules.get('dsh_workbench_client')
         if desktop is not None and desktop._OBSERVATIONS is not None:
-            desktop.observe_scene()
+            # Native save hooks can run before Houdini publishes its new path.
+            # Capture the current scene after save returns to the GUI loop;
+            # a subsequent Open/New is then observed as itself, not an old save.
+            from hutil.Qt import QtCore
+            QtCore.QTimer.singleShot(0, desktop.observe_scene)
     pending = _PREPARED
     if not pending or pending['checkpoint_id'] != _checkpoint():
         return

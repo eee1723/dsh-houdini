@@ -100,7 +100,7 @@ class ProjectManager:
         atomic_json(self.folder / (value['id'] + '.json'), value)
         print('[dsh-houdini] launch ' + value['id'] + ': ' + value['phase'] + (': ' + value['error'] if value.get('error') else ''), flush=True)
 
-    def launch(self, action, hfs, hip=None, session_id=None, bind_session_id=None):
+    def launch(self, action, hfs, hip=None, session_id=None, bind_session_id=None, should_navigate=lambda: True):
         if action not in ('open', 'new', 'reopen'):
             raise ValueError('未知的工程操作。')
         selected = next((item for item in self.installations() if path_key(item['hfs']) == path_key(hfs)), None)
@@ -113,8 +113,11 @@ class ProjectManager:
                 raise ValueError('请选择现有的 Houdini 工程文件。')
         with self._lock:
             if expected:
-                matching = [record for record in self.candidates() if record.get('hip_path') and path_key(record['hip_path']) == path_key(expected)
-                            and endpoint_presence(record, self.context['executorRegistry'])['status'] == 'online']
+                located = [(record, endpoint_presence(record, self.context['executorRegistry'])['status'])
+                           for record in self.candidates() if record.get('hip_path') and path_key(record['hip_path']) == path_key(expected)]
+                if any(status == 'unknown' for record, status in located):
+                    raise RuntimeError('这份工程已有窗口暂时无法确认连接。请从对应 Houdini 的 Open Workspace 接入，或确认它已退出后重试；没有再开同一文件。')
+                matching = [record for record, status in located if status == 'online']
                 if len(matching) > 1:
                     raise RuntimeError('这份文件已在多个 Houdini 中打开，请从要使用的那个窗口打开工作台；没有猜测目标。')
                 if matching:
@@ -124,7 +127,8 @@ class ProjectManager:
                     result = self.rpc('houdiniTargets/openWorkspace', {'executorId': record['executor_id'],
                         'registrationId': record['registration_id'], 'expectedHip': record['hip_path'], 'requestId': uuid.uuid4().hex,
                         **({'sessionId': session_id} if session_id else {'bindSessionId': bind_session_id} if bind_session_id else {})})
-                    self.intents.put(result)
+                    if should_navigate():
+                        self.intents.put(result)
                     return {'id': None, 'phase': 'ready', 'result': result}
                 for filename in self.folder.glob('*.json'):
                     pending = read_json(filename)
@@ -136,7 +140,7 @@ class ProjectManager:
             Path(workspace).mkdir(parents=True, exist_ok=True)
             ticket = {'id': identifier, 'generation': self.generation, 'root': self.context['root'], 'plugin': str(self.plugin),
                       'hfs': selected['hfs'], 'hip': str(expected) if expected else None, 'workspace': workspace,
-                      'phase': 'starting', 'sessionId': session_id, 'bindSessionId': bind_session_id, 'navigate': True, 'createdAt': time.time()}
+                      'phase': 'starting', 'sessionId': session_id, 'bindSessionId': bind_session_id, 'navigate': bool(should_navigate()), 'createdAt': time.time()}
             self._write(ticket)
             ticket_path = self.folder / (identifier + '.json')
             args = [selected['executable'], '-foreground']
@@ -268,7 +272,7 @@ def show_project_dialog(manager, parent, action, hip=None, session_id=None, exec
         cancel.setText('后台打开')
         selected = versions.currentData()
         def launch_selected():
-            value = manager.launch(action, selected, state['file'], session_id, bind_session_id)
+            value = manager.launch(action, selected, state['file'], session_id, bind_session_id, should_navigate=lambda: state['alive'])
             state['id'] = value.get('id')
             if not state['alive'] and state['id']:
                 manager.detach(state['id'])

@@ -29,7 +29,10 @@ def project_layout(hip_path, *, has_named_path: bool) -> dict:
     """Observe one HIP anchor; a default/relative HIP never falls back to cwd."""
     available = (has_named_path and isinstance(hip_path, str)
                  and bool(hip_path.strip()) and os.path.isabs(hip_path))
-    root = os.path.realpath(os.path.dirname(hip_path)) if available else None
+    # Metadata is a lexical projection of the captured HIP. realpath/stat can
+    # wait indefinitely on an unavailable UNC share or mapped network drive.
+    # Writers resolve and validate the actual filesystem at their I/O boundary.
+    root = os.path.abspath(os.path.dirname(hip_path)) if available else None
     return {
         'schema_version': _LAYOUT['schemaVersion'],
         'available': bool(available),

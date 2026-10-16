@@ -7,7 +7,6 @@ import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
 import { ExecutorBinding, requireExecutorContinuityIdentity } from './executor-binding.js'
 import {foldExecutorState} from './executor-identity-projection.js'
-import {executionHistory} from './execution-history.js'
 
 export interface ExecutorRecord {
   schema:1
@@ -107,7 +106,8 @@ export class ExecutorRouter {
     private readonly binding:ExecutorBinding,
     private readonly identityOf:(session:Session)=>string|undefined,
     private readonly idleOwner:(taskId:string)=>boolean=()=>false,
-    private readonly persist?: (session:Session)=>Promise<boolean>) {}
+    private readonly persist?: (session:Session)=>Promise<boolean>,
+    private readonly chooseRecovery?: (taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
 
   private async checkpoint(session:Session):Promise<void> {
     if(this.persist&&await this.persist(session)!==true)throw new Error('对话记录尚未可靠保存，本次操作没有发送到 Houdini。')
@@ -147,34 +147,35 @@ export class ExecutorRouter {
     return bridge
   }
 
-  async recoveryTarget(agent:{id:string;session:Session},signal:AbortSignal):Promise<HoudiniBridge> {
+  async recoveryTarget(agent:{id:string;session:Session},signal:AbortSignal,preferredTarget?:string):Promise<HoudiniBridge> {
     await this.checkpoint(agent.session)
     const state=foldExecutorState(agent.session.snapshotEvents())
     if(!state.identity)throw new Error('请先从要操作的 Houdini 打开工作区，或在本轮选择工程。')
-    try {return await this.verified(state.identity,agent.id,signal)}
-    catch(error) {
-      signal.throwIfAborted()
-      const scene=executionHistory(agent.session.snapshotEvents()).anchor?.execution?.scene_recovery?.scene_id??state.recovery?.scene_id
-      if(!scene)throw error
-      const hip=executionHistory(agent.session.snapshotEvents()).anchor?.execution?.hip_path??state.recovery?.hip_path
-      const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered'
-        &&record.executor_id!==state.identity&&(record.scene_id===scene||typeof hip==='string'&&record.hip_path
-          &&canonical(record.hip_path)===canonical(hip)))
-      const verified:HoudiniBridge[]=[]
-      for(const record of candidates) {
-        try {
-          const candidate=await this.inspectRecovery(agent.session,record.executor_id,signal)
-          if(candidate)verified.push(candidate)
-        } catch {signal.throwIfAborted()}
-      }
-      if(verified.length!==1)throw new Error('原 Houdini 暂不可用，尚未找到唯一可接续的工程。请打开原工程后继续；不会自动改用其他窗口。')
-      return this.verified(verified[0].targetExecutorId!,agent.id,signal)
+    if(!preferredTarget||preferredTarget===state.identity) {
+      try {return await this.verified(state.identity,agent.id,signal)}
+      catch(error) {signal.throwIfAborted();if(!state.project?.sceneId)throw error}
     }
+    const scene=state.project?.sceneId
+    if(!scene)throw new Error('原对话缺少可验证的工程身份，请明确选择工程；没有自动认领内容。')
+    const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered'
+      &&record.executor_id!==state.identity&&record.scene_id===scene)
+    const verified:ExecutorRecord[]=[]
+    for(const record of candidates) {
+      try {
+        const candidate=await this.inspectRecovery(agent.session,record.executor_id,signal)
+        if(candidate)verified.push(record)
+      } catch {signal.throwIfAborted()}
+    }
+    if(!verified.length)throw new Error('原 Houdini 暂不可用，尚未找到可验证的原工程。请打开原工程后继续。')
+    const selected=preferredTarget??(verified.length===1?verified[0].executor_id:await this.chooseRecovery?.(agent.id,verified,signal))
+    if(!selected||!verified.some(record=>record.executor_id===selected))throw new Error('存在多份原工程，请在对话中选择要继续的窗口；本轮没有换绑。')
+    if(!await this.inspectRecovery(agent.session,selected,signal))throw new Error('选择期间工程已变化，请重新选择。')
+    return this.verified(selected,agent.id,signal)
   }
 
   async inspectRecovery(session:Pick<Session,'id'|'snapshotEvents'>,target:string,signal:AbortSignal):Promise<HoudiniBridge|undefined> {
     const state=foldExecutorState(session.snapshotEvents())
-    const scene=executionHistory(session.snapshotEvents()).anchor?.execution?.scene_recovery?.scene_id??state.recovery?.scene_id
+    const scene=state.project?.sceneId
     if(!state.identity||!scene)return
     const candidate=await this.verified(target,session.id,signal,false)
     const value=await candidate.recover('assess',{session_id:session.id,previous_executor:state.identity,

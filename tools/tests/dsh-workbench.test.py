@@ -46,6 +46,11 @@ def windows(pid):
 
 def main():
     reexec_unpacked_test_cli()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('hfs', nargs='?', default='D:/houdini')
+    parser.add_argument('--runtime-cache', type=Path, default=ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c')
+    args = parser.parse_args()
     folder = Path(tempfile.mkdtemp(prefix='workbench-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'env', gui=True)
     with socket.socket() as probe:
@@ -53,13 +58,13 @@ def main():
         debug_port = probe.getsockname()[1]
     env['DSH_WORKBENCH_TEST_ROOT'] = str(folder)
     home = env['DSH_HOME']
-    binary = ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c/node_modules/@deepseek-ai/dsh/lib/bin.js'
+    binary = args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
     node = shutil.which('node')
     subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'), str(binary), home, str(ROOT)],
                    env=env, cwd=ROOT, check=True, timeout=60)
     (Path(home) / 'profiles/web/cordis.patch.yml').write_text(json.dumps([{'insert': [{
         'id': 'workbench-fixture', 'name': (ROOT / 'tools/tests/workbench-dsh-fixture.mjs').as_uri()}]}]), encoding='utf-8')
-    desktop_hfs = Path(sys.argv[1] if len(sys.argv) > 1 else 'D:/houdini')
+    desktop_hfs = Path(args.hfs)
     desktop_python = next(desktop_hfs.glob('python3*/python.exe'))
     config = {'root': str(folder / 'desktop'), 'installation': str(ROOT), 'plugin': str(ROOT),
               'node': node, 'binary': str(binary), 'home': home, 'hfs': str(desktop_hfs),
@@ -186,8 +191,8 @@ def main():
         assert matched
         endpoints[0] = matched[0]
         empty_request = {'executorId': endpoints[0]['executor_id'], 'registrationId': endpoints[0]['registration_id'],
-            'expectedHip': endpoints[0]['hip_path'], 'requestId': uuid.uuid4().hex}
-        assert control(record, 'open', empty_request)['sessionId'] == results[0]['sessionId'], 'unexecuted conversations need no fictional recovery checkpoint'
+            'expectedHip': endpoints[0]['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[0]['sessionId']}
+        assert control(record, 'open', empty_request)['sessionId'] == results[0]['sessionId'], 'explicitly selected unexecuted conversations need no fictional recovery checkpoint'
         assert control(record, 'open', {**empty_request, 'requestId': uuid.uuid4().hex})['sessionId'] == results[0]['sessionId']
         for index, value in enumerate(results):
             session = value['sessionId']

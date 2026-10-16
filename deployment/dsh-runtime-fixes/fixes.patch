@@ -3765,11 +3765,49 @@ index a2e826f..c422b45 100644
 +## 目录接续
 +
 +`relocateSession(sessionId, path)` 规范化已有目录，复用或创建工作区，并在修改会话元数据前持久记录迁移意图。启动时通过原生持久写入器完成中断的意图，移除旧归属并将原会话唯一挂接到目标。置顶、归档、会话身份和历史保持；不搬运工程文件，不复制对话。
+diff --git a/packages/workspace/workspace/src/entity.ts b/packages/workspace/workspace/src/entity.ts
+index 1df3eac..1e33749 100644
+--- a/packages/workspace/workspace/src/entity.ts
++++ b/packages/workspace/workspace/src/entity.ts
+@@ -32,6 +32,8 @@ export class WorkspaceMoveInvalidError extends Error {
+  * index backing the `sessionIds` projection, and attach-time header reads.
+  */
+ export interface WorkspaceEntityHost {
++  /** Serialize attachment/title changes with registry removal. */
++  enqueue<T>(operation: () => Promise<T>): Promise<T>
+   /**
+    * Resolve the open `workspaces` table.
+    * @returns the table; throws while the registry has not started yet.
+@@ -103,10 +105,15 @@ export class WorkspaceEntity implements Workspace {
+   }
+ 
+   async setTitle(title: string): Promise<void> {
+-    await this.mutate(record => ({ ...record, title }))
++    await this.host.enqueue(() => this.mutate(record => ({ ...record, title })))
+   }
+ 
+   async attachSession(sessionId: SessionId): Promise<void> {
++    return this.host.enqueue(() => this.attachKnownSession(sessionId))
++  }
++
++  private async attachKnownSession(sessionId: SessionId): Promise<void> {
++    if (!this.host.table().get(this.id)) throw new Error('workspace was removed before attachment')
+     // Validation is skipped when the settled snapshot already accounts the
+     // id: the cwd fact was checked when it first attached and both inputs
+     // (stored header cwd, workspace path) are immutable. Membership itself is
 diff --git a/packages/workspace/workspace/src/index.ts b/packages/workspace/workspace/src/index.ts
-index 4b4176c..ff78756 100644
+index 4b4176c..acfaf64 100644
 --- a/packages/workspace/workspace/src/index.ts
 +++ b/packages/workspace/workspace/src/index.ts
-@@ -241,6 +241,58 @@ export class WorkspaceRegistry extends Service {
+@@ -180,6 +180,7 @@ export class WorkspaceRegistry extends Service {
+   private operationTail: Promise<void> = Promise.resolve()
+ 
+   private readonly host: WorkspaceEntityHost = {
++    enqueue: operation => this.enqueueOperation(operation),
+     table: () => this.requireTable(),
+     sessionPath: id => this.sessionPaths.get(id),
+     readSessionHeader: id => this.readSessionHeader(id),
+@@ -241,6 +242,58 @@ export class WorkspaceRegistry extends Service {
      return await this.enqueueOperation(() => this.createCanonical(canonical, title))
    }
  
@@ -3828,7 +3866,26 @@ index 4b4176c..ff78756 100644
    /**
     * Initialize the default Workspace only while both the registry and Session
     * history are empty. Repeated requests reuse its durable identity; deleting
-@@ -635,6 +687,12 @@ export class WorkspaceRegistry extends Service {
+@@ -309,6 +362,18 @@ export class WorkspaceRegistry extends Service {
+     return this.enqueueOperation(() => this.deleteKnown(id))
+   }
+ 
++  /** Remove only an unchanged, unaccounted registration. Keep directory and logs.
++   * Attachments and title edits use the same queue; hidden/archived accounts count.
++   */
++  deleteEmpty(id: WorkspaceId, expectedPath: string, expectedTitle: string): Promise<boolean> {
++    return this.enqueueOperation(async () => {
++      const record = this.requireTable().get(id)
++      if (!record || record.path !== expectedPath || record.title !== expectedTitle || record.sessionIds.length
++          || [...this.sessionPaths.values()].includes(record.path)) return false
++      return this.deleteKnown(id)
++    })
++  }
++
+   /**
+    * Move one workspace within the durable display order, DOM-insertBefore-like.
+    * With an anchor it lands before that workspace; without one it appends.
+@@ -635,6 +700,12 @@ export class WorkspaceRegistry extends Service {
      const state = this.requireState()
      const pending = state.pendingMutation
      if (pending === undefined) return

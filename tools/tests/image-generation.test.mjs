@@ -226,6 +226,24 @@ await assert.rejects(()=>generateImage(context,exec,managed(),success,connection
 assert.equal(requests.length,beforeRedirect)
 assert.deepEqual(await fs.readdir(redirectTarget),[])
 await fs.unlink(path.join(redirectedProject,'dsh-reference'))
+// A HIP root may itself be a visible alias. The GUI projects that spelling
+// without I/O; Host checks the contract there, then writes under the resolved
+// root with the same child-redirection and filesystem policy checks.
+const projectAlias=path.join(root,'project-alias')
+await fs.symlink(redirectedProject,projectAlias,process.platform==='win32'?'junction':'dir')
+hip=path.join(projectAlias,'visible.hip')
+result=await generateImage(context,exec,managed({purpose:'texture'}),success,connection)
+assert.equal(result.ok,true)
+assert.equal(path.dirname(result.output),path.join(redirectedProject,'dsh-texture'))
+assert.equal(result.artifact.hip_path,hip.replaceAll('\\','/'))
+assert.deepEqual(await fs.readFile(result.output),png)
+// Resolving the root must not authorize a redirected managed child.
+await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-reference'),process.platform==='win32'?'junction':'dir')
+const beforeAliasRedirect=requests.length
+await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/redirected/)
+assert.equal(requests.length,beforeAliasRedirect)
+await fs.unlink(path.join(redirectedProject,'dsh-reference'))
+await fs.unlink(projectAlias)
 hip=savedHip;mode='workspace-write'
 
 const registered=[];registerImageTools({...context,tools:{register:t=>registered.push(t)}})

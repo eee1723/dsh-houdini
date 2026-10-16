@@ -18,8 +18,8 @@ export interface SceneRecoveryService {
   followDirectory(agent:Agent,signal:AbortSignal,probe?:boolean):Promise<void>
   beforeStep(agent:Agent,signal:AbortSignal):Promise<void>
   inspect(agent:Agent,signal:AbortSignal):Promise<any>
-  assess(agent:Agent,signal:AbortSignal):Promise<unknown>
-  restore(agent:Agent,assessmentId:string,signal:AbortSignal):Promise<unknown>
+  assess(agent:Agent,signal:AbortSignal,target?:string):Promise<unknown>
+  restore(agent:Agent,assessmentId:string,signal:AbortSignal,target?:string):Promise<unknown>
   ensure(agent:Agent,signal?:AbortSignal):Promise<void>
 }
 declare module '@deepseek-ai/cordis' {interface Context {houdiniRecovery:SceneRecoveryService}}
@@ -47,6 +47,7 @@ export async function relocateDirectory(ctx:Context,agent:Agent,directory:string
     +literalData(JSON.stringify({previous_directory:current,directory:agent.session.header.cwd,hip_path:hipPath,
       executor_id:foldExecutorState(agent.session.snapshotEvents()).identity,hip_is_new:hipIsNew}))}))
   if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程目录接续记录尚未可靠保存。')
+  await (ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined)?.pruneEmptyWorkspaces?.([directory])
 }
 
 export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):void {
@@ -54,7 +55,7 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
     const services=new WeakMap<Agent,{bridge:HoudiniBridge;service:SceneRecoveryService}>()
     const selections=new WeakMap<Agent,Promise<void>>()
     const workbench=()=>Boolean((ctx.get('houdiniTargets') as {workbench?:boolean}|undefined)?.workbench)
-    const serviceFor=async(agent:Agent,signal:AbortSignal,recovery=false)=>{
+    const serviceFor=async(agent:Agent,signal:AbortSignal,recovery=false,preferredTarget?:string)=>{
       if(recovery&&!foldExecutorState(agent.session.snapshotEvents()).identity) {
         const controller=ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined
         if(!controller?.workbench)throw new Error('请先选择要操作的 Houdini 工程。')
@@ -81,7 +82,7 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
         if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
           await relocateDirectory(ctx,agent,selected.workspace_path!,selected.hip_path!,signal,selected.hip_is_new===true)
       }
-      const target=recovery&&connection.recoveryTarget?await connection.recoveryTarget(agent,signal):await connection.resolve({agent,signal})
+      const target=recovery&&connection.recoveryTarget?await connection.recoveryTarget(agent,signal,preferredTarget):await connection.resolve({agent,signal})
       let entry=services.get(agent)
       if(!entry||entry.bridge.targetExecutorId!==target.targetExecutorId||entry.bridge.baseUrl!==target.baseUrl) {
         entry={bridge:target,service:createSceneRecovery(ctx,target)}
@@ -102,13 +103,17 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
       beforeStep:async(agent,signal)=>{if(workbench()&&foldExecutorState(agent.session.snapshotEvents()).identity)await (await serviceFor(agent,signal,true)).beforeStep(agent,signal)},
       followDirectory:async(agent,signal,probe)=>{
         if(!workbench()||!foldExecutorState(agent.session.snapshotEvents()).identity)return
-        try {await (await serviceFor(agent,signal)).followDirectory(agent,signal,probe)}
-        catch {signal.throwIfAborted()}
+        // Endpoint absence is reported by the ordinary recovery path. A failed
+        // directory commit must propagate before file/context consumers run.
+        let service:SceneRecoveryService
+        try {service=await serviceFor(agent,signal)}
+        catch {signal.throwIfAborted();return}
+        await service.followDirectory(agent,signal,probe)
       },
       ensure:async(agent,signal)=>(await serviceFor(agent,signal??new AbortController().signal)).ensure(agent,signal),
       inspect:async(agent,signal)=>(await serviceFor(agent,signal,true)).inspect(agent,signal),
-      assess:async(agent,signal)=>(await serviceFor(agent,signal,true)).assess(agent,signal),
-      restore:async(agent,id,signal)=>(await serviceFor(agent,signal,true)).restore(agent,id,signal),
+      assess:async(agent,signal,target)=>(await serviceFor(agent,signal,true,target)).assess(agent,signal),
+      restore:async(agent,id,signal,target)=>(await serviceFor(agent,signal,true,target)).restore(agent,id,signal),
     })
     return
   }
@@ -125,8 +130,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
       throw new Error('会话记录尚未可靠保存，系统没有启用新的工程连接。可以继续讨论，稍后发送消息时会重新核对。')
   }
   const key=(agent:Agent)=>JSON.stringify(foldExecutorState(agent.session.snapshotEvents()))
-  const recordedScene=(agent:Agent)=>executionHistory(agent.session.snapshotEvents()).anchor?.execution?.scene_recovery?.scene_id
-    ??foldExecutorState(agent.session.snapshotEvents()).recovery?.scene_id
+  const recordedScene=(agent:Agent)=>foldExecutorState(agent.session.snapshotEvents()).project?.sceneId
   const samePath=(left:string,right:string)=>{
     const normalized=(value:string)=>path.resolve(value)
     return process.platform==='win32'?normalized(left).toLowerCase()===normalized(right).toLowerCase():normalized(left)===normalized(right)

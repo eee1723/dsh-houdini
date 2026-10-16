@@ -7,9 +7,10 @@ import {z} from 'zod'
 import {executionCall,executionResult,houdiniSourceMessages} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
 import {sectionData} from './prompt-data.js'
+import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
 
 const TARGET_SECTION='dsh-houdini:executor-binding'
-const LIVE=new Set(['houdini_exec','houdini_inspect','houdini_job_submit','houdini_job_status','houdini_job_cancel'])
+const LIVE=HOUDINI_SCENE_TOOLS
 const ID=/^[0-9a-f]{32}$/
 const WarningCounts={capture_id:z.string().regex(ID),original_chars:z.number().int().nonnegative(),
   omitted_chars:z.number().int().nonnegative(),truncated:z.boolean()}
@@ -30,9 +31,9 @@ const Recovery=z.object({schema:z.literal(2),kind:z.literal('executor_recovery')
   user_choice:z.record(z.string(),z.unknown()).optional()})
 export type RecoveryBinding=z.infer<typeof Recovery>
 const Project=z.object({hipPath:z.string().nullable(),hipIsNew:z.boolean().nullable(),needsReview:z.boolean(),
-  executorId:z.string().nullable(),sceneEpoch:z.string().nullable(),label:z.string().nullable()})
+  sceneId:z.string().nullable(),executorId:z.string().nullable(),sceneEpoch:z.string().nullable(),label:z.string().nullable()})
 type Project=z.infer<typeof Project>
-const REVIEW_PROJECT:Project={hipPath:null,hipIsNew:null,needsReview:true,executorId:null,sceneEpoch:null,label:null}
+const REVIEW_PROJECT:Project={hipPath:null,hipIsNew:null,needsReview:true,sceneId:null,executorId:null,sceneEpoch:null,label:null}
 const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
   invalid:z.string().nullable(),bindingRecorded:z.boolean(),pending:z.record(z.string(),z.string().nullable()),
   queuedBindings:z.record(z.string(),z.string()),
@@ -51,7 +52,7 @@ function add(state:State,id:unknown):State {
   if (typeof id!=='string'||!ID.test(id)) return {...state,invalid:'Invalid recorded Houdini executor identity'}
   if (state.identity && state.identity!==id) return {...state,conflict:true}
   return state.identity===id ? state : {...state,identity:id,executors:[...state.executors,id],
-    project:{hipPath:null,hipIsNew:null,needsReview:false,executorId:id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
+    project:{hipPath:null,hipIsNew:null,needsReview:false,sceneId:null,executorId:id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
 }
 
 function projectObservation(state:State,value:any,observedAt:number,sequence=0):State {
@@ -59,11 +60,13 @@ function projectObservation(state:State,value:any,observedAt:number,sequence=0):
     ||typeof value.hip_path!=='string'||!value.hip_path||!Number.isFinite(observedAt)||!Number.isFinite(sequence)
     ||observedAt<state.projectObservedAt||observedAt===state.projectObservedAt&&sequence<state.projectSequence)return state
   const hipIsNew=typeof value.hip_is_new==='boolean'?value.hip_is_new:null
+  const sceneId=value.scene_id??value.scene_recovery?.scene_id??state.project?.sceneId??null
+  if(sceneId!==null&&(typeof sceneId!=='string'||!ID.test(sceneId)))return state
   const sceneEpoch=value.scene_epoch??value.scene_recovery?.scene_epoch??state.project?.sceneEpoch??null
   const label=hipIsNew===true?(typeof value.project_label==='string'?value.project_label:state.project?.label??null):null
   const project=state.project&&state.project.hipPath===value.hip_path&&state.project.hipIsNew===hipIsNew
-    &&state.project.sceneEpoch===sceneEpoch&&state.project.label===label&&state.project.executorId===state.identity?state.project:
-    {hipPath:value.hip_path,hipIsNew,needsReview:false,executorId:state.identity,sceneEpoch,label}
+    &&state.project.sceneId===sceneId&&state.project.sceneEpoch===sceneEpoch&&state.project.label===label&&state.project.executorId===state.identity?state.project:
+    {hipPath:value.hip_path,hipIsNew,needsReview:false,sceneId,executorId:state.identity,sceneEpoch,label}
   return {...state,project,projectObservedAt:observedAt,projectSequence:sequence}
 }
 
@@ -85,7 +88,7 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:9,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:10,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
     executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{}}),
   wire:{viewSchema:Project.nullable(),view:(state:State)=>state.invalid||state.conflict?REVIEW_PROJECT:state.project},
@@ -131,7 +134,7 @@ export const executorIdentityProjection={
             if(next.hasOperations||next.recovery||next.identity!==value.previous_executor||!ID.test(value.executor_id))
               return {...next,invalid:'Only an unexecuted task can change its initial target'}
             next={...next,identity:value.executor_id,bindingRecorded:true,executors:[...new Set([...next.executors,value.executor_id])],
-              project:{hipPath:null,hipIsNew:null,needsReview:false,executorId:value.executor_id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
+              project:{hipPath:null,hipIsNew:null,needsReview:false,sceneId:null,executorId:value.executor_id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
             continue
           }
           next=add({...next,bindingRecorded:true},value.executor_id)
@@ -141,7 +144,7 @@ export const executorIdentityProjection={
       return next
     }
     const call=executionCall(event)
-    if(call&&(call.name==='run_code'||typeof call.name==='string'&&call.name.startsWith('houdini_')&&!['houdini_help','houdini_resource'].includes(call.name)))
+    if(call&&(call.name==='run_code'||LIVE.has(call.name)))
       state={...state,hasOperations:true}
     if (call && LIVE.has(call.name)) return {...state,pending:{...state.pending,[call.callId]:state.identity}}
     const result=executionResult(event)

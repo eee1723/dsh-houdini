@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
         for filename in ('saved.hip', 'other/renamed.hip', 'untitled.hip'):
             # Native Windows save/load paths stay valid: opening the plugin
             # must not register a callback that exposes H21's kwargs bug.
-            destination = str(pathlib.Path(temporary) / filename)
+            destination = (pathlib.Path(temporary) / filename).as_posix()
             pathlib.Path(destination).parent.mkdir(parents=True, exist_ok=True)
             hou.hipFile.save(destination)
             expected = str(pathlib.Path(destination).parent)
@@ -51,6 +51,38 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
             hou.hipFile.load(destination, suppress_save_prompt=True)
             assert c.hip_file_state()['hip_is_new'] is False
     hou.hipFile.clear(suppress_save_prompt=True)
+
+# Network outage/latency is a filesystem fact, not a reason to stall automatic
+# GUI identity, registration or receipts. No filesystem probe may run here.
+import os
+import dsh_shared_executor
+import dsh_scene_recovery
+for network_hip in ('//server/share/项目 空格/scene.hip', '//server/share/scene.hip',
+                    r'\\server\share\项目 空格\scene.hip', 'Z:/项目 空格/scene.hip'):
+    hou.hipFile.setName(network_hip.replace('\\','/'))
+    with patch.object(hou, 'isUIAvailable', return_value=True), \
+         patch.object(hou, 'ui', types.SimpleNamespace(paneTabs=lambda: []), create=True), \
+         patch.object(os.path, 'isfile', side_effect=AssertionError('GUI probed HIP existence')), \
+         patch.object(os.path, 'realpath', side_effect=AssertionError('GUI resolved a network path')):
+        observed=c.scene_context('network-gui',threading.get_ident())
+        assert observed['hip_is_new'] is False and observed['file_exists'] is None
+        assert observed['project_layout']['project_root'] == os.path.abspath(os.path.dirname(hou.hipFile.path())).replace('\\','/')
+        assert observed['project_layout']['directories']['texture'].startswith('//server/share/') or network_hip.startswith('Z:')
+        assert dsh_scene_recovery.facts()['file_exists'] is None
+        assert dsh_shared_executor.capture_scene()['hip'] == hou.hipFile.path()
+        receipt=b.run_code('__result__ = 42',read_only=True,owner_session='network-gui')
+        assert receipt['ok'], receipt
+        assert receipt['execution']['hip_path'] == hou.hipFile.path()
+        assert receipt['execution']['scene_recovery']['file_exists'] is None
+    # Explicit inspection still observes the disk, and a named but unavailable
+    # HIP must not become a claim that the scene was saved successfully.
+    with patch.object(hou, 'isUIAvailable', return_value=True), \
+         patch.object(os.path, 'isfile', return_value=False) as probe:
+        disk=h.scene_info()
+        assert disk['has_named_path'] and disk['file_exists'] is False
+        assert disk['clean_on_disk'] is False
+        probe.assert_called_once_with(hou.hipFile.path())
+hou.hipFile.clear(suppress_save_prompt=True)
 
 headless=c.scene_context('test',threading.get_ident())
 assert headless['frame']==hou.frame() and not headless['ui_available']

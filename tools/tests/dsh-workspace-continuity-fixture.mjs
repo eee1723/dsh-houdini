@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {Session} from '@deepseek-ai/dsh-session'
+import {pruneScratchWorkspaces} from '../../lib/workbench-workspaces.js'
 export const inject=['loader','llm','sessions','agents','sessionController','workspaceRegistry','sessionPersistence','sandboxPolicy']
 export function apply(ctx){
  const root=process.env.DSH_WORKSPACE_TEST_ROOT,phase=process.env.DSH_WORKSPACE_TEST_PHASE,id=process.env.DSH_WORKSPACE_TEST_TASK
@@ -93,12 +94,40 @@ export function apply(ctx){
    torn.append('turn/start',{turn:1});await repaired.append(torn.snapshotEvents());await repaired.close()
    const read=await ctx.sessionPersistence.open(torn.id,'read')
    assert.equal((await read.read()).events.length,1);assert(same(read.header.cwd,target));await read.close()
+   // Native conditional removal: only plugin scratch rows; all data stays put.
+   const scratch=path.join(root,'scratch');fs.mkdirSync(scratch)
+   const create=async(suffix,title)=>{
+    const directory=path.join(scratch,'untitled-123-'+suffix);fs.mkdirSync(directory)
+    return ctx.workspaceRegistry.create(directory,title??'未保存工程 7')
+   }
+   const empty=await create('empty'),files=await create('files'),active=await create('active'),renamed=await create('renamed','我保留的工作区')
+   fs.writeFileSync(path.join(files.path,'keep.txt'),'user material')
+   const archived=await create('archive'),archivedId=randomUUID()
+   await ctx.sessionController.create({sessionId:archivedId,workspaceId:archived.id})
+   await ctx.workspaceRegistry.archiveSession(archivedId)
+   const racing=await create('racing'),racingId=randomUUID()
+   await ctx.sessionController.create({sessionId:racingId,workspaceId:racing.id})
+   assert.equal(await ctx.workspaceRegistry.deleteEmpty(racing.id,racing.path,racing.title),false)
+   const retitled=await create('retitled'),originalTitle=retitled.title
+   const titleWrite=retitled.setTitle('需要保留')
+   const removal=ctx.workspaceRegistry.deleteEmpty(retitled.id,retitled.path,originalTitle)
+   await titleWrite;assert.equal(await removal,false,'a queued user rename wins over cleanup')
+   const removed=await pruneScratchWorkspaces(ctx,{list:async()=>[{state:'registered',workspace_path:active.path}]},[target],[scratch])
+   assert.deepEqual(removed,[empty.id])
+   assert(fs.existsSync(empty.path),'pruning never deletes the scratch directory')
+   assert(!ctx.workspaceRegistry.list().some(item=>item.id===empty.id))
+   for(const item of [files,active,renamed,archived,racing,retitled])assert(ctx.workspaceRegistry.list().some(value=>value.id===item.id))
+   assert((await ctx.sessionPersistence.stat(archivedId)).header,'archived conversation is retained')
+   fs.writeFileSync(path.join(root,'pruned-workspace.json'),JSON.stringify({id:empty.id,path:empty.path}))
   }else{
    const cold=(await ctx.sessionPersistence.stat(id)).header
    assert(same(cold.cwd,target),'cold metadata must follow the new directory')
    await ctx.sessionController.resolveAgent(id)
    before=JSON.parse(fs.readFileSync(path.join(root,'prefix.json'),'utf8'))
    assert.deepEqual(ctx.sessions.get(id).snapshotEvents().slice(0,before.length).map(event=>JSON.stringify(event)),before)
+   const pruned=JSON.parse(fs.readFileSync(path.join(root,'pruned-workspace.json'),'utf8'))
+   assert(!ctx.workspaceRegistry.list().some(item=>item.id===pruned.id),'empty registration stays removed after restart')
+   assert(fs.existsSync(pruned.path))
   }
   const membership=ctx.workspaceRegistry.list().filter(w=>w.sessionIds.includes(id))
   assert.equal(membership.length,1);assert(same(membership[0].path,target))

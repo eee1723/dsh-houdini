@@ -131,8 +131,8 @@ def _hip_dir() -> str:
     The native DSH client receives this explicit intent even with a warm Host.
     """
     global _UNSAVED_WORKSPACE
-    from dsh_context import hip_file_state
-    hip = hip_file_state()
+    from dsh_context import hip_file_identity
+    hip = hip_file_identity()
     if hip['hip_dir']:
         _UNSAVED_WORKSPACE = None
         return hip['hip_dir']

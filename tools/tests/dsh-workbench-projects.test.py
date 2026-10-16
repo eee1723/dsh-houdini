@@ -67,6 +67,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         assert not callbacks
         record['pid'] = 12345
         record['houdini_version'] = '22.0.368'
+        with patch.object(projects, 'endpoint_presence', lambda *args: {'status': 'unknown'}):
+            try:
+                manager.launch('open', runtime['hfs'], project)
+            except RuntimeError as error:
+                assert '无法确认' in str(error)
+            else:
+                raise AssertionError('an unknown existing process caused duplicate launch')
+        assert len(spawned) == 1
         with patch.object(projects, 'endpoint_presence', lambda *args: {'status': 'online'}):
             try:
                 manager.launch('open', runtime['hfs'], project)
@@ -84,6 +92,10 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         accepted = manager.attached(payload)
         assert accepted['sessionId'] == 'task' and intents.empty()
         assert manager.attached(payload) == accepted and len(callbacks) == 1
+        record['houdini_version'] = runtime['version']
+        with patch.object(projects, 'endpoint_presence', lambda *args: {'status': 'online'}):
+            background = manager.launch('open', runtime['hfs'], project, should_navigate=lambda: False)
+            assert background['phase'] == 'ready' and intents.empty(), 'background reuse must not navigate after dialog close'
         try:
             manager.attached({**payload, 'executorId': 'c' * 32})
         except RuntimeError:

@@ -33,7 +33,9 @@
 
 ## 工程锚点与显式目的地
 
-`scene_info()`和固定现场metadata返回`project_layout`：`available`、`hip_path`、`project_root`及各角色的绝对`directories`。它只表达该次观察，不创建文件、不证明写入权限，也不持续追踪Save As。
+`scene_info()`和固定现场metadata返回`project_layout`：`available`、`hip_path`、`project_root`及各角色的绝对`directories`。目录按本次HIP路径作字面投影，不解析目录链接或访问网络服务器；`available`只表示有命名的绝对HIP锚点，不证明目录在线、文件存在或可写，也不持续追踪Save As。Host与实际写入器在文件操作时解析真实目录并核对权限及子目录重定向。
+
+打开工作区、工程登记、自动metadata和执行回执只读取GUI原生HIP身份；`file_exists=null`表示没有观察磁盘，不能解释为文件存在或缺失。显式`scene_info()`、保存和输出操作仍读取真实文件状态。网络共享和映射盘使用原路径，不静默切到本地工作区；服务器不可用时文件操作仍可失败，但入口身份采集不等待网络探测。无GUI的Houdini对默认文件名的`isNewFile()`判断有歧义，只在该情况下保留磁盘核对。
 
 自动工程输出取操作开始时实际命名HIP的目录，不能把DSH session workspace或启动cwd当作HIP。长时间生成/捕获固定最初目的地，期间Save As不改变在途输出；后续操作重新取得当前工程位置。回执是实际文件位置的依据，不猜测带唯一后缀的名字。
 

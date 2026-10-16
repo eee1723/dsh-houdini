@@ -11,19 +11,33 @@ def _node(node):
     return {'path': node.path(), 'type': node.type().name()}
 
 
-def hip_file_state():
-    """Read the current HIP identity; a default $HIP is not a saved project."""
+def hip_file_identity():
+    """Capture native HIP identity without filesystem I/O in the GUI.
+
+    A named scene is not proof that its file/server is currently accessible.
+    Only headless HOM's ambiguous new-file flag needs a disk observation.
+    """
     path = hou.hipFile.path()
     is_new = bool(hou.hipFile.isNewFile())
-    file_exists = os.path.isfile(path)
+    file_exists = None
     # HOM reports a loaded/saved default-name HIP as new in hython. In a GUI
     # its native flag is authoritative, including .hiplc and .hipnc scenes.
-    if not hou.isUIAvailable() and is_new and file_exists:
-        is_new = False
+    if not hou.isUIAvailable() and is_new:
+        file_exists = os.path.isfile(path)
+        if file_exists:
+            is_new = False
     return {'hip_path': path, 'hip_is_new': is_new,
             'hip_dir': None if is_new else os.path.dirname(path),
-            'has_named_path': not is_new, 'file_exists': file_exists,
-            'project_layout': project_layout(path, has_named_path=not is_new)}
+            'has_named_path': not is_new, 'file_exists': file_exists}
+
+
+def hip_file_state():
+    """Explicit disk observation, separate from native GUI identity capture."""
+    identity = hip_file_identity()
+    if identity['file_exists'] is None:
+        identity['file_exists'] = os.path.isfile(identity['hip_path'])
+    return {**identity,
+            'project_layout': project_layout(identity['hip_path'], has_named_path=identity['has_named_path'])}
 
 
 def unit_length_meters():
@@ -44,10 +58,12 @@ def scene_context(runtime_id, owner_thread):
         raise RuntimeError('scene_context must run on the Houdini owning thread')
     start = time.monotonic()
     ui = bool(hou.isUIAvailable())
+    hip = hip_file_identity()
     result = {
         'schema_version': 1, 'runtime_id': runtime_id,
         'observed_at': time.time(), 'version': hou.applicationVersionString(),
-        **hip_file_state(), 'frame': float(hou.frame()),
+        **hip, 'project_layout': project_layout(hip['hip_path'], has_named_path=hip['has_named_path']),
+        'frame': float(hou.frame()),
         'unit_length_meters': unit_length_meters(),
         'update_mode': {hou.updateMode.AutoUpdate:'auto', hou.updateMode.Manual:'manual', hou.updateMode.OnMouseUp:'on_mouse_up'}[hou.updateModeSetting()],
         'ui_available': ui, 'dirty_reliable': ui,

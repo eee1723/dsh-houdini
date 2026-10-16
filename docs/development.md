@@ -70,6 +70,10 @@ DSH运行修复的源码、上游提交和编译包清单由[修复声明](../de
 
 ## 修改与验证
 
+HIP网络路径改动用`dsh-launcher-preflight.test.py`与隔离H21/H22的`dsh-scene-context.test.py`，把文件存在与真实路径解析替换为立即失败的探针，检查入口、工程登记、metadata与实际Bridge回执均不依赖网络I/O；覆盖UNC正反斜线、共享根目录、中文空格和映射盘。`image-generation.test.mjs`同时核对字面目录投影、Host解析后的实际输出、工程根别名与子目录重定向拒绝。注入断网只证明调用边界，实际SMB读写、服务器权限与用户加载仍须用自有网络工程另验，不能用本地路径测试代替。
+
+工程关联与空工作区改动用`workbench-association.test.mjs`核对同路径异工程、能力查询、UI回执、多窗口选择及目录提交失败。`dsh-workspace-continuity.test.py --runtime-cache <精确DSH运行时>`核对原生条件删除、归档/文件/活动现场/重命名保留及重启；`dsh-workbench.test.py <HFS> --runtime-cache <精确DSH运行时>`核对实际桌面、选中对话与另存目录消费。不连接用户live，不删除用户目录。
+
 按用户目标和实际问题选择修改范围。工具描述只讲能力和真实调用条件；persona 讲角色和知识路由；领域工作方法只放 skill；操作合同落在执行实现。同一事实不要复制到多层提示词。
 
 验证与改动相称：先构建并运行直接受影响的回归。检查通过且没有新改动或未解问题时，不继续扩大测试。基线收口运行一次现有 Node 套件与文档门；日常无需每次全跑。

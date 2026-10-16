@@ -28,7 +28,7 @@ try {
   let value
   for(let attempt=0;attempt<150;attempt++) {
     await evaluate(`(()=>{for(const button of document.querySelectorAll('button')){if(['稍后配置','以后再说'].includes(button.textContent.trim())||(document.body.innerText.includes('预览版说明')&&button.textContent.trim()==='继续'))button.click()}return true})()`)
-    value=await evaluate(`(()=>{const label=document.querySelector('[data-houdini-project-label]');return {selection:window.__dshHoudiniSelection?.(),label:label?.textContent,status:label?.dataset.houdiniPresence,entry:!!document.querySelector('[aria-label="打开或新建 Houdini 工程"]'),text:document.body.innerText}})()`)
+    value=await evaluate(`(()=>{const label=document.querySelector('[data-houdini-project-label]');return {selection:window.__dshHoudiniSelection?.(),label:label?.textContent,status:label?.dataset.houdiniPresence,entry:!!document.querySelector('[aria-label="打开或新建 Houdini 工程"]'),text:document.body?.innerText??''}})()`)
     if(action==='state'?(value.status===expectedStatus&&(!expectedSession||value.selection?.sessionId===expectedSession)):(value.label||value.entry))break
     await new Promise(resolve=>setTimeout(resolve,100))
   }

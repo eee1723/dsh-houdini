@@ -18,6 +18,19 @@ sys.modules.setdefault("hou", types.SimpleNamespace())
 import dsh_launcher
 import dsh_context
 
+# A named network HIP is already a native GUI fact. Opening its workspace must
+# reach the worker even when every filesystem probe would block on the server.
+for network_hip in ('//server/share/项目 空格/scene.hip', '//server/share/scene.hip',
+                    r'\\server\share\项目 空格\scene.hip', 'Z:/项目 空格/scene.hip'):
+    fake_hou = types.SimpleNamespace(isUIAvailable=lambda: True,
+        hipFile=types.SimpleNamespace(path=lambda: network_hip, isNewFile=lambda: False))
+    with patch.object(dsh_context, 'hou', fake_hou), \
+         patch.object(dsh_launcher, '_UNSAVED_WORKSPACE', 'old scratch'), \
+         patch.object(os.path, 'isfile', side_effect=AssertionError('GUI probed HIP existence')), \
+         patch.object(os.path, 'realpath', side_effect=AssertionError('GUI resolved a network path')):
+        assert dsh_launcher._hip_dir() == os.path.dirname(network_hip)
+        assert dsh_launcher._UNSAVED_WORKSPACE is None
+
 with patch('dsh_executor_registry.is_shared_executor', return_value=False), \
      patch.object(dsh_launcher.dsh_managed_runtime, 'has_owned_frontend', return_value=False), \
      patch.object(dsh_launcher, 'open_workspace') as open_desktop, \

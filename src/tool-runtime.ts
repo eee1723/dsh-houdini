@@ -7,7 +7,7 @@ import { retainResult } from './result-details.js'
 
 export type HoudiniConnection = HoudiniBridge | { resolve(exec: any): Promise<HoudiniBridge>;
   registry?:string;
-  recoveryTarget?(agent:any,signal:AbortSignal):Promise<HoudiniBridge> }
+  recoveryTarget?(agent:any,signal:AbortSignal,target?:string):Promise<HoudiniBridge> }
 
 export function workspaceOf(exec: any): string | null {
   const cwd = exec?.agent?.session?.header?.cwd

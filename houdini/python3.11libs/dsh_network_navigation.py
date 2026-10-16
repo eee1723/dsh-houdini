@@ -13,7 +13,7 @@ import unicodedata
 import uuid
 
 import hou
-from dsh_context import hip_file_state
+from dsh_context import hip_file_identity
 
 CONTROL_KEY = 'dsh_houdini_control'
 NODE_ID_KEY = 'dsh_houdini_node_delivery_id'
@@ -273,7 +273,7 @@ def _node_identifiers():
 
 def present_nodes(nodes, *, require_owned, allow_foreign=None):
     """Publish explicit, HIP-persistent node entry references in one execution result."""
-    if hip_file_state()['hip_is_new']:
+    if hip_file_identity()['hip_is_new']:
         raise ValueError('节点交付需要明确的工程文件，请先 Save As，再声明并保存节点入口。')
     if not isinstance(nodes, (list, tuple)) or not 1 <= len(nodes) <= 16:
         raise ValueError('nodes must contain 1..16 explicit node entries')
@@ -339,7 +339,7 @@ def resolve_reference(reference, expected_hip):
     if not isinstance(expected_hip, str) or not expected_hip.strip():
         raise ValueError('expected_hip must be the original delivered HIP')
     normalize = lambda path: os.path.normcase(os.path.abspath(path))
-    current = hip_file_state()
+    current = hip_file_identity()
     if current['hip_is_new'] or normalize(current['hip_path']) != normalize(expected_hip):
         raise ValueError('当前工程与节点交付的工程不同，请先打开对应工程；定位不会加载或覆盖文件。')
     matches = _node_identifiers().get(reference['id'], [])

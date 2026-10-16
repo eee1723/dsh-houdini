@@ -5,14 +5,13 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { ExecutorRecord, ExecutorRouter } from './executor-routing.js'
 import {projectedExecutorIdentity,foldExecutorState} from './executor-identity-projection.js'
-import {workspaceOpeningMessage,houdiniSourceMessages,recordHoudiniContext} from './dsh-adapter.js'
-import {sectionData} from './prompt-data.js'
-import {executionHistory} from './execution-history.js'
+import {workspaceOpeningMessage,recordHoudiniContext} from './dsh-adapter.js'
 import {relocateDirectory} from './scene-recovery.js'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-workspace'
 import path from 'node:path'
+import {pruneScratchWorkspaces} from './workbench-workspaces.js'
 
 export function executorRecoveryStatus(recorded:string|undefined,records:readonly ExecutorRecord[],conflict?:unknown):Record<string,unknown> {
   if(conflict!==undefined)return {status:'history_conflict',message:'任务历史含冲突的执行端身份；未发送live请求。请保留HIP与历史证据，当前版本不能自动恢复或换绑。',
@@ -32,6 +31,13 @@ export class ExecutorController extends TypertRemoteService {
   private unnamedSerial=0
   constructor(ctx:Context,private readonly router:ExecutorRouter,readonly workbench=false) { super(ctx,'houdiniTargets') }
 
+  /** Host-only lifecycle; cleanup failure never changes a successful binding. */
+  async pruneEmptyWorkspaces(keep:readonly string[]=[]) {
+    if(!this.workbench)return
+    try {await pruneScratchWorkspaces(this.ctx,this.router.directory,keep)}
+    catch(error) {this.ctx.logger.warn('空工作区登记暂未清理：'+String(error))}
+  }
+
   private async workspaceFor(directory:string,isNew:boolean) {
     const same=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(value)===path.resolve(directory)
     const existing=this.ctx.workspaceRegistry.list().find(item=>same(item.path))
@@ -50,6 +56,7 @@ export class ExecutorController extends TypertRemoteService {
     if(!this.workbench||!data||typeof data!=='object'||!['isNew,path','isNew,onlyIfEmpty,path'].includes(Object.keys(data).sort().join(','))
       ||typeof data.path!=='string'||data.path.length>4096||!path.isAbsolute(data.path)||typeof data.isNew!=='boolean'
       ||data.onlyIfEmpty!==undefined&&typeof data.onlyIfEmpty!=='boolean')throw new Error('工作区准备请求无效。')
+    await this.pruneEmptyWorkspaces([data.path])
     const existing=this.ctx.workspaceRegistry.list()[0]
     if(data.onlyIfEmpty&&existing)return {workspaceId:existing.id}
     const workspace=await this.workspaceFor(data.path,data.isNew)
@@ -105,41 +112,43 @@ export class ExecutorController extends TypertRemoteService {
         if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
         selected=resolved.agent.id
       }
-      const candidates:{sessionId:(typeof workspace.sessionIds)[number];events:Parameters<typeof executionHistory>[0];hasOperations:boolean}[]=[]
+      const candidates:{sessionId:(typeof workspace.sessionIds)[number];state:ReturnType<typeof foldExecutorState>}[]=[]
       const sessions=data.sessionId?[data.sessionId as (typeof workspace.sessionIds)[number]]:[...workspace.sessionIds]
-      if(record.task_id&&sessions.includes(record.task_id as any)) {
-        sessions.splice(sessions.indexOf(record.task_id as any),1)
-        sessions.unshift(record.task_id as any)
-      }
       for(const sessionId of selected?[]:sessions) {
         if(this.ctx.workspaceRegistry.archivedSessionIds.includes(sessionId))continue
         const history=await this.ctx.sessionQuery.readSession(sessionId)
         if(history.session.agentPreset!=='houdini'||history.session.origin==='subagent')continue
         const state=foldExecutorState(history.events),identity=state.identity
-        const opening=history.events.flatMap(event=>houdiniSourceMessages(event).flatMap(message=>message.source.sections??[]))
-          .filter(section=>section.name==='dsh-houdini:workspace-open').map(sectionData).at(-1)
-        const scene=executionHistory(history.events).anchor?.execution?.scene_recovery?.scene_id??opening?.scene_id
-        if(identity===record.executor_id&&(scene===record.scene_id||opening?.scene_epoch===record.scene_epoch)) {selected=sessionId;break}
-        const recordedHip=executionHistory(history.events).anchor?.execution?.hip_path??opening?.hip_path
-        if(identity&&identity!==record.executor_id&&scene&&(scene===record.scene_id
-          ||typeof recordedHip==='string'&&samePath(recordedHip,record.hip_path))) {
-          candidates.push({sessionId,events:history.events,hasOperations:state.hasOperations})
-        }
+        const project=state.project
+        const explicitlyUnexecuted=data.sessionId===sessionId&&identity!==record.executor_id&&!state.hasOperations&&!state.recovery
+          &&typeof project?.hipPath==='string'&&samePath(project.hipPath,record.hip_path)
+        const sameScene=record.scene_id&&project?.sceneId===record.scene_id
+        const sameLoadedScene=identity===record.executor_id&&record.scene_epoch&&project?.sceneEpoch===record.scene_epoch
+        if(identity&&(sameScene||sameLoadedScene||explicitlyUnexecuted))
+          candidates.push({sessionId,state})
       }
-      if(!selected)for(const candidate of candidates.sort((left,right)=>Number(right.hasOperations)-Number(left.hasOperations))) {
-        if(!candidate.hasOperations) {
+      if(!selected&&candidates.length>1&&!data.sessionId) {
+        const current=candidates.find(candidate=>candidate.sessionId===record.task_id&&candidate.state.identity===record.executor_id)
+        if(current)selected=current.sessionId
+        else throw new Error('这份工程关联多段对话。请先在左侧选择要继续的对话，再点「打开关联工程」；没有按历史顺序替你选择。')
+      }
+      if(!selected&&candidates.length===1) {
+        const candidate=candidates[0]
+        if(candidate.state.identity===record.executor_id)selected=candidate.sessionId
+        else if(!candidate.state.hasOperations) {
           const resolved=await this.ctx.sessionController.resolveAgent(candidate.sessionId)
           if('error' in resolved)throw new Error('无法载入原对话。')
           await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path,false,true)
           recordHoudiniContext(resolved.agent,openingMessage())
           if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
           selected=candidate.sessionId
-          break
+        } else {
+          const history=await this.ctx.sessionQuery.readSession(candidate.sessionId)
+          const assessment=await this.router.inspectRecovery({id:candidate.sessionId,snapshotEvents:()=>history.events},record.executor_id,signal)
+          signal.throwIfAborted()
+          if(!assessment)throw new Error('已找到原对话，但当前工程尚未通过接续核对；没有创建替代对话或改变原绑定。')
+          selected=candidate.sessionId
         }
-        const assessment=await this.router.inspectRecovery({id:candidate.sessionId,snapshotEvents:()=>candidate.events},record.executor_id,signal)
-        signal.throwIfAborted()
-        if(assessment) {selected=candidate.sessionId;break}
-        throw new Error('已找到原对话，但当前工程尚未通过接续核对；没有创建替代对话或改变原绑定。')
       }
       if(!selected) {
         if(data.sessionId)throw new Error('已打开工程，但它与原对话的工程记录不匹配；原对话没有换绑。')
@@ -158,16 +167,17 @@ export class ExecutorController extends TypertRemoteService {
           if(resolved.agent.status!=='idle')throw new Error('原对话仍在运行，请等待当前任务结束后再接续。')
           const recovery=this.ctx.get('agentPresets')?.serviceFor(resolved.agent,'houdiniRecovery')
           if(!recovery)throw new Error('工程已打开，当前环境没有提供原对话接续能力。')
-          const assessment=await recovery.assess(resolved.agent,signal) as any
+          const assessment=await recovery.assess(resolved.agent,signal,record.executor_id) as any
           if(assessment.status!=='ready'||typeof assessment.assessment_id!=='string')throw new Error('工程已打开，但原对话尚未通过保存点接续核对。')
           if(assessment.requires_reload&&!(assessment.dirty_reliable&&!assessment.dirty))
             throw new Error('工程已打开，但还有未保存的内容需要确认。请回到原对话继续；没有丢弃当前修改。')
-          await recovery.restore(resolved.agent,assessment.assessment_id,signal)
+          await recovery.restore(resolved.agent,assessment.assessment_id,signal,record.executor_id)
           await recovery.followDirectory(resolved.agent,signal,true)
           if(foldExecutorState(resolved.agent.session.snapshotEvents()).identity!==record.executor_id)throw new Error('工程已打开，但原对话尚未完成接续。')
         }
       }
       signal.throwIfAborted()
+      await this.pruneEmptyWorkspaces([record.workspace_path])
       return {sessionId:selected,executorId:record.executor_id,workspaceId:workspace.id}
     })()
     this.openings.set(data.executorId,operation)

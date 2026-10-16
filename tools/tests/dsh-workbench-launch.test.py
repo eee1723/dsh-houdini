@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
 from dsh_workbench import desktop_environment, running, control
-from dsh_deployment import _process_started
+from dsh_deployment import _process_started, atomic_json
 
 
 def gui_probe():
@@ -36,7 +36,7 @@ def gui_probe():
             hou.node('/obj').createNode('geo', 'native_user_geometry')
             hou.hipFile.save(filename.as_posix())
             import dsh_scene_recovery
-            (root / ('saved-' + str(os.getpid()) + '.json')).write_text(json.dumps(dsh_scene_recovery.facts()), encoding='utf-8')
+            atomic_json(root / ('saved-' + str(os.getpid()) + '.json'), dsh_scene_recovery.facts())
         if clear.exists():
             clear.unlink()
             hou.hipFile.clear(suppress_save_prompt=True)
@@ -51,10 +51,18 @@ def gui_probe():
 
 def main():
     reexec_unpacked_test_cli()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--runtime-cache', type=Path, default=ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c')
+    parser.add_argument('--standalone-only', action='store_true')
+    parser.add_argument('--cold-only', action='store_true')
+    parser.add_argument('--hfs', help='Limit cold-resume checks to one installed Houdini')
+    parser.add_argument('--save-only', action='store_true', help='Only check native save/registration and empty workspace retirement')
+    args = parser.parse_args()
     folder = Path(tempfile.mkdtemp(prefix='workbench-launch-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'environment', gui=True)
     env.update(DSH_WORKBENCH_TEST_ROOT=str(folder), DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'))
-    binary = ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c/node_modules/@deepseek-ai/dsh/lib/bin.js'
+    binary = args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
     node = shutil.which('node')
     subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'), str(binary), env['DSH_HOME'], str(ROOT)],
                    cwd=ROOT, env=env, check=True, timeout=60)
@@ -131,10 +139,12 @@ def main():
         return value
     def cold_resume():
         for installation,label in [('D:/houdini','cold-21'),('D:/Houdini22','cold-22')]:
+            if args.hfs and Path(args.hfs).resolve() != Path(installation).resolve():
+                continue
             seed,_ = launch('new', installation, label + '-seed')
             new_session = seed['result']['sessionId']
             filename = Path(project_temp.name) / label / '原生保存.hip'
-            (folder / ('save-' + str(seed['pid']) + '.json')).write_text(json.dumps({'path':str(filename)}), encoding='utf-8')
+            atomic_json(folder / ('save-' + str(seed['pid']) + '.json'), {'path':str(filename)})
             saved_marker = folder / ('saved-' + str(seed['pid']) + '.json')
             wait(saved_marker.exists)
             seed_facts = json.loads(saved_marker.read_text(encoding='utf-8'))
@@ -142,7 +152,14 @@ def main():
             saved_scene = seed_facts['scene_id']
             wait(lambda:(folder / 'recovery/checkpoints' / (seed_facts['checkpoint_id'] + '.json')).is_file())
             command(new_session, action='beforeStep')
-            browser('state', label + '-saved', 'online', new_session)
+            saved_state = browser('state', label + '-saved', 'online', new_session)
+            assert not any(Path(item['path']).resolve() == Path(seed['workspace']).resolve()
+                           for item in command(new_session, action='idle')['workspaces'])
+            assert Path(saved_state['selection']['cwd']).resolve() == filename.parent.resolve()
+            if args.save_only:
+                (folder / ('close-' + str(seed['pid']))).touch()
+                wait(lambda: _process_started(seed['pid']) != seed['processStarted'], 35)
+                continue
             saved_bytes = filename.read_bytes()
             (folder / ('close-' + str(seed['pid']))).touch()
             wait(lambda: _process_started(seed['pid']) != seed['processStarted'], 35)
@@ -175,7 +192,9 @@ def main():
             return
         if '--cold-only' in sys.argv:
             cold_resume()
-            print('PASS H21/H22 native save hook coexistence, late install identity, two cold opens, original conversation, unsaved discard and foreign nodes: ' + str(folder), flush=True)
+            print('PASS ' + (args.hfs or 'H21/H22') + ' native save hook coexistence and empty workspace retirement'
+                  + ('' if args.save_only else ', late install identity, two cold opens, original conversation, unsaved discard and foreign nodes')
+                  + ': ' + str(folder), flush=True)
             return
         discussion = browser('new-chat', 'discussion-start')['selection']['sessionId']
         talked = command(discussion)
@@ -195,6 +214,9 @@ def main():
         command(first_session, action='beforeStep')
         saved_ui = browser('state', 'save-as', 'online', first_session)
         assert Path(saved_ui['selection']['cwd']).resolve() == destination.parent.resolve()
+        migrated = command(first_session, action='idle')
+        assert not any(Path(item['path']).resolve() == Path(first['workspace']).resolve() for item in migrated['workspaces']), 'Save As must retire its empty scratch workspace'
+        assert '未保存工程 1' not in saved_ui['text'], 'the actual sidebar must drop the empty workspace row'
         second, second_ui = launch('new', 'D:/Houdini22', 'new-22')
         assert second_ui['label'] == '未保存工程 2' and second['pid'] != first['pid']
         second_session = second['result']['sessionId']
