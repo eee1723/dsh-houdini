@@ -30,7 +30,7 @@ def refused(function):
 with tempfile.TemporaryDirectory(prefix='dsh-support-') as temporary:
     root = Path(temporary)
     (root / 'package.json').write_text('{"version":"0.0.9"}')
-    (root / '.dsh-runtime.json').write_text(json.dumps({'version':'0.2.0-rc.2','pid':123,'token':'MARKER_SECRET',
+    (root / '.dsh-runtime.json').write_text(json.dumps({'version':'0.2.1-rc.2','pid':123,'token':'MARKER_SECRET',
                                                       'bin':'C:/Users/Private/cli.js','runtimeFixes':{'secret':'FIX_SECRET'}}))
     secrets = ['TOKEN_SECRET', 'HEADER_SECRET', 'JSON_SECRET', 'ESCAPED_SECRET', 'PASSWORD_SECRET', 'PEM_BODY_SECRET',
                'sk-KEY_SECRET_SENTINEL', 'ghp_GITHUB_SECRET_SENTINEL', 'URL_PASSWORD_SECRET', 'MARKER_SECRET', 'FIX_SECRET', 'NESTED_SECRET', 'FIELD_NAME_SECRET']

@@ -20,8 +20,13 @@ const specification=path.join(root,'deployment/dsh-runtime-fixes');
 const manifest=JSON.parse(fs.readFileSync(path.join(specification,'manifest.json'),'utf8'));
 const inputs=runtimeFixInputs(root,manifest);
 const sha=value=>createHash('sha256').update(value).digest('hex');
-const patchSha256=sha(fs.readFileSync(path.join(specification,manifest.patch)));
+const patchPath=path.join(specification,manifest.patch),patchBytes=fs.readFileSync(patchPath);
+const patchSha256=sha(patchBytes);
 if(patchSha256!==manifest.patchSha256)throw Error('Runtime source patch differs from its declared SHA-256');
+// `git diff` abbreviates object names by repository object count. A shallow
+// sparse clone sees fewer objects than the source tree that produced the
+// patch, so pin the width declared by the patch's first index line.
+const patchAbbrev=/^index ([0-9a-f]+)\.\./m.exec(patchBytes.toString('utf8'))?.[1].length;
 const installed=JSON.parse(fs.readFileSync(path.join(target,'node_modules/@deepseek-ai/dsh/package.json'),'utf8'));
 if(installed.version!==manifest.dshVersion)throw Error('Runtime patch requires the exact declared DSH version');
 if(!development){
@@ -33,6 +38,10 @@ if(!development){
  ])if(sha(fs.readFileSync(actual))!==inputs[expected])throw Error('Runtime dependency inputs differ from the declared build: '+expected);
  const head=spawnSync('git',['rev-parse','HEAD'],{cwd:source,encoding:'utf8',windowsHide:true});
  if(head.status!==0||head.stdout.trim()!==manifest.commit)throw Error('Build source is not the pinned upstream commit');
+ if(patchAbbrev){
+  const width=spawnSync('git',['config','core.abbrev',String(patchAbbrev)],{cwd:source,windowsHide:true});
+  if(width.status!==0)throw Error('Cannot pin the patch object-abbreviation width in the build source');
+ }
  // New files produced by git apply must participate in the exact diff, too.
  const intent=spawnSync('git',['add','-N','--','packages'],{cwd:source,windowsHide:true});
  if(intent.status!==0)throw Error('Cannot include added source files in build identity');
@@ -88,8 +97,9 @@ try{
   const config=path.join(sourceBuild,name+'.config.ts');
   const preset=pathToFileURL(path.join(source,'packages/client/tsdown.client.ts')).href;
   const entry=path.join(source,'packages',packageSource,'src/client/index.ts');
+  const packageDir=path.join(source,'packages',packageSource);
   const output=path.join(target,'node_modules/@deepseek-ai/dsh-'+name,'lib');
-  fs.writeFileSync(config,`import {clientBundle} from ${JSON.stringify(preset)};\nconst rows=clientBundle('@deepseek-ai/dsh-${name}',[])({env:{}});\nconst base=rows[rows.length-1];\nexport default {...base,inputOptions:{...base.inputOptions,onwarn(warning,handler){if(warning.code==='UNRESOLVED_IMPORT')throw new Error(warning.message);handler(warning)}},entry:{client:${JSON.stringify(entry)}},outDir:${JSON.stringify(output)}};\n`);
+  fs.writeFileSync(config,`import {clientBundle} from ${JSON.stringify(preset)};\nconst rows=clientBundle(${JSON.stringify(packageDir)},[])({env:{}});\nconst base=rows[rows.length-1];\nexport default {...base,inputOptions:{...base.inputOptions,onwarn(warning,handler){if(warning.code==='UNRESOLVED_IMPORT')throw new Error(warning.message);handler(warning)}},entry:{client:${JSON.stringify(entry)}},outDir:${JSON.stringify(output)}};\n`);
   run(process.execPath,[tsdownRequire.resolve('tsdown/run'),'--config',config],{cwd:source});
   // Locale namespaces are consumed through the installed declaration surface too.
   const locales=path.join(path.dirname(entry),'locales.ts');

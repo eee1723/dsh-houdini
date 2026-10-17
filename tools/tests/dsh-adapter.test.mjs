@@ -14,12 +14,15 @@ import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {apply as applySpillPolicy} from '@deepseek-ai/dsh-spill-policy'
 
 const ctx=new Context()
+// DSH 0.2.1 resolves run_code's working directory through this service; the
+// production Host provides it, while this fixture gets an explicit stable root.
+ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 const outcomeFixtures=process.env.DSH_OUTCOME_FIXTURE
   ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
 new SystemPrompt(ctx,{})
 const tools=new ToolRuntime(ctx,{mode:'both'})
 installHoudiniExecutionLog(ctx)
-const session=Session.create('dsh02-api'),agent={id:session.id,session,options:{provider:'fixture',model:'image'}}
+const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,options:{provider:'fixture',model:'image'}}
 if(outcomeFixtures) await new ExecutorBinding().ensure(session,outcomeFixtures.caught_read.execution.executor_id)
 let savedImages=0
 ctx.provide('llm',{async resolveModelInfo(){return {inputModalities:['text','image']}}})
@@ -64,7 +67,7 @@ function logNative(callId,name,args,result) {
 const native=await tools.execute({callId:'native',name:'houdini_exec',arguments:{code:'__result__ = "native"'},agent,signal})
 assert.equal(native.isError,false,JSON.stringify(native))
 logNative('native','houdini_exec',{code:'__result__ = "native"'},native)
-const nested=await tools.execute({callId:'program',name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"nested"})',description:'Exercise nested Houdini execution'},agent,signal})
+const nested=await tools.execute({callId:'program',name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"nested"})',description:'Exercise nested Houdini execution',workingDirectory:process.cwd()},agent,signal})
 assert.equal(nested.isError,false,JSON.stringify(nested))
 logNative('program','run_code',{},nested)
 assert.equal(nested.additionalContexts.length,1,'nested images reach the model once through DSH')
@@ -157,6 +160,7 @@ if (outcomeFixtures) {
 // Use the released middleware, not a hand-written truncator. A display spill
 // must never cut the PTC audit JSON in its middle or lose later failure facts.
 const spillCtx=new Context()
+spillCtx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(spillCtx,{})
 const spillRuntime=new ToolRuntime(spillCtx,{mode:'both'})
 const spillCopies=[]
@@ -165,7 +169,7 @@ spillCtx.provide('spillStore',{async saveText(input){spillCopies.push(input.cont
 applySpillPolicy(spillCtx,{maxInlineTokens:1000})
 installHoudiniExecutionLog(spillCtx)
 const spillSession=Session.create('dsh02-spill-audit')
-const spillAgent={id:spillSession.id,session:spillSession,options:{provider:'fixture',model:'text'}}
+const spillAgent={id:spillSession.id,session:spillSession,ctx:spillCtx,options:{provider:'fixture',model:'text'}}
 const largeReceipt={ok:false,stdout:'large process log '.repeat(12000),stderr:'',error:'FINAL_WRITE_FAILED',
   result:{kind:'houdini/node-delivery-v1',nodes:[]},outcome:{batch:'failed',operations:{failed:1}},
   execution:{owner_session:spillSession.id,executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),sequence:1,observed_at:1,hip_path:'fixture.hip'},
@@ -178,7 +182,7 @@ spillCtx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,as
 spillSession.append('tool/call',{turn:1,step:1,callId:'large-program',name:'run_code',arguments:JSON.stringify({code:'fixture'})})
 const spilled=await spillRuntime.execute({callId:'large-program',name:'run_code',
   arguments:{code:'return await tools.houdini_exec({code:"fixture"})',description:'Retain original audit facts'},agent:spillAgent,signal})
-assert.equal(spilled.isError,false)
+assert.equal(spilled.isError,false,JSON.stringify(spilled))
 assert(spillCopies.length>0&&spilled.content[0].text.includes('Full formatted result stored at:'),'the actual model display policy remains active')
 assert(!spilled.content[0].text.includes('dsh-houdini/execution-v1'),'audit framing is not model-facing text')
 assert.equal(spillExecuted,1,'retention never retries a scene operation')

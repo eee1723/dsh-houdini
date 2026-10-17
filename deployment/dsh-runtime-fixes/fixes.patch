@@ -1,44 +1,10 @@
-diff --git a/docs/architecture.md b/docs/architecture.md
-index c63a75c..0f6b59e 100644
---- a/docs/architecture.md
-+++ b/docs/architecture.md
-@@ -164,3 +164,5 @@ New behavior attaches to a documented extension point. Changing the loop itself
- | Scope a registration to one agent | use that agent's `agent.ctx` |
- 
- The [extension cookbook](cookbook/extension-cookbook.md) maps features to capabilities and indexes the step-by-step guides for [packages](cookbook/adding-a-package.md), [tools](cookbook/adding-a-tool.md), [LLM adapters](cookbook/adding-an-llm-adapter.md), and [settings pages](cookbook/adding-a-settings-card.md). The [Conversation subsystem](subsystems/conversation.md) owns Chat-node assembly.
-+
-+A native session directory relocation during `agent/pre-step` invalidates the already assembled prompt and runtime-context candidate. The driver reassembles once before request admission, retaining the accepted user messages and the same session history.
-diff --git a/packages/api/session-controller/README.md b/packages/api/session-controller/README.md
-index be3f9a0..badaffb 100644
---- a/packages/api/session-controller/README.md
-+++ b/packages/api/session-controller/README.md
-@@ -129,3 +129,7 @@ None.
- </details>
- 
- **Runtime invariant:** No companion is published. Every page and frame is checked against the addressed durable Session.
-+
-+## Directory continuation
-+
-+After a native session directory relocation commits, the controller publishes a refreshed summary for the same session id. Selection and conversation history keep their original identity.
-diff --git a/packages/api/session-controller/README.zh.md b/packages/api/session-controller/README.zh.md
-index de40067..ac02040 100644
---- a/packages/api/session-controller/README.zh.md
-+++ b/packages/api/session-controller/README.zh.md
-@@ -129,3 +129,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不
- </details>
- 
- **运行时不变式：** 不发布伴生入口。每个分页与帧都会对照其指向的持久 Session 校验。
-+
-+## 目录接续
-+
-+原生会话目录迁移提交后，控制器发布同一会话 ID 的新摘要；选中状态和对话历史保持原身份。
 diff --git a/packages/api/session-controller/src/client/sessions/manager.ts b/packages/api/session-controller/src/client/sessions/manager.ts
-index 50af09d..1db7535 100644
+index b8bec9be8a..163f286702 100644
 --- a/packages/api/session-controller/src/client/sessions/manager.ts
 +++ b/packages/api/session-controller/src/client/sessions/manager.ts
-@@ -814,7 +814,8 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
-           agentAvailable: mutation.summary.agentAvailable,
+@@ -841,7 +841,8 @@ function applyMutation(summaries: readonly SessionSummary[], mutation: SessionLi
            running: mutation.summary.running,
+           ...(mutation.summary.formatStatus === undefined ? {} : { formatStatus: mutation.summary.formatStatus }),
          } : {}),
 -        ...(existing.cwd === undefined && mutation.summary.cwd !== undefined ? { cwd: mutation.summary.cwd } : {}),
 +        ...((mutation.kind === 'upsert' || existing.cwd === undefined) && mutation.summary.cwd !== undefined
@@ -47,10 +13,10 @@ index 50af09d..1db7535 100644
            ? { parentSessionId: mutation.summary.parentSessionId } : {}),
          ...(existing.origin === undefined && mutation.summary.origin !== undefined
 diff --git a/packages/api/session-controller/src/index.ts b/packages/api/session-controller/src/index.ts
-index 3fe1522..1b34b29 100644
+index 2362bce21c..5ecee6a472 100644
 --- a/packages/api/session-controller/src/index.ts
 +++ b/packages/api/session-controller/src/index.ts
-@@ -167,6 +167,9 @@ export class SessionController extends TypertRemoteService {
+@@ -191,6 +191,9 @@ export class SessionController extends TypertRemoteService {
      ctx.on('session/created', (session) => {
        ctx.emit('api-session/added', this.listState.summaryFor(session))
      })
@@ -61,95 +27,71 @@ index 3fe1522..1b34b29 100644
        ctx.emit('api-session/removed', session.id)
      })
 diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
-index 78b26f7..23ccecd 100644
+index f1f708073b..14bb11ce2c 100644
 --- a/packages/client/ui-conversation/src/client/locales.ts
 +++ b/packages/client/ui-conversation/src/client/locales.ts
-@@ -368,6 +368,7 @@ export const zh = {
+@@ -371,6 +371,7 @@ export const zh = {
    'queue.steerFailed': '插话发送失败，请重试。',
    'terminal.signal': '信号 {signal}',
    'terminal.exitCode': '退出码 {code}',
 +  'terminal.diagnosticOutput': '有诊断输出（退出码 {code}）',
    'terminal.noExitCode': '未正常退出',
+   'terminal.commandLine': '命令第 {n} 行',
    'terminal.running': '运行中',
-   'terminal.failed': '失败',
-@@ -744,6 +745,7 @@ export const en = {
+@@ -751,6 +752,7 @@ export const en = {
    'queue.steerFailed': 'Steering failed. Try again.',
    'terminal.signal': 'signal {signal}',
    'terminal.exitCode': 'exit code {code}',
 +  'terminal.diagnosticOutput': 'Diagnostic output (exit code {code})',
    'terminal.noExitCode': 'no exit code',
+   'terminal.commandLine': 'Command line {n}',
    'terminal.running': 'Running',
-   'terminal.failed': 'Failed',
-diff --git a/packages/client/ui-tool/README.md b/packages/client/ui-tool/README.md
-index 5f42432..e3ba388 100644
---- a/packages/client/ui-tool/README.md
-+++ b/packages/client/ui-tool/README.md
-@@ -144,3 +144,9 @@ None.
- </details>
- 
- **Runtime invariant:** No companion is published. Tool composition is browser-only and contributes no events or cross-plugin mutable state; slot ownership is checked by ui-slots.
-+
-+## Shell failure summaries
-+
-+Collapsed shell rows show the actual exit code or signal. Persisted process metadata is authoritative even when stdout contains a fabricated exit marker or a spill preview. Historical text-only results retain their trailing-marker interpretation.
-+
-+Standard error is a separate process observation. A settled exit-zero shell row with hasStderr is shown with an amber diagnostic cue; stdout cannot forge this fact and stderr alone never invents a failing exit code.
-diff --git a/packages/client/ui-tool/README.zh.md b/packages/client/ui-tool/README.zh.md
-index c1b396e..654d6a7 100644
---- a/packages/client/ui-tool/README.zh.md
-+++ b/packages/client/ui-tool/README.zh.md
-@@ -144,3 +144,9 @@ terminal model 使用浏览器安全入口 `@deepseek-ai/dsh-spill-policy/notice
- </details>
- 
- **运行时不变式：** 不发布伴生入口。工具组合只存在于浏览器，不贡献事件或跨插件可变状态；slot 所有权由 ui-slots 校验。
-+
-+## 命令失败摘要
-+
-+折叠的命令行显示实际退出码或信号。持久化进程元数据优先于 stdout 中伪造的退出标记或溢出预览；只有历史纯文本结果沿用末尾标记解释。
-+
-+标准错误输出是独立执行事实。退出0且hasStderr为真时以黄色提示诊断；stdout文字不能伪造这一事实，stderr本身也不构成非零退出码。
 diff --git a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
-index d91a72d..28e3d7c 100644
+index 694ce16446..3306070b23 100644
 --- a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
 +++ b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
 @@ -13,7 +13,7 @@ import { CHAT_READ_MAX_LINES, type ReadCardModel } from '../models/read-card-mod
  import type { ImageCardModel } from '../models/image-card-model.ts'
  import { CHAT_SEARCH_MAX_LINES, type SearchCardModel } from '../models/search-card-model.ts'
  import {
--  localizeTerminalCardModel, terminalBlockLabels, type TerminalCardModel,
-+  localizeTerminalCardModel, terminalBlockLabels, terminalDiagnosticSummary, type TerminalCardModel,
+-  localizeTerminalCardModel, terminalBlockLabels, terminalExitLabel, type TerminalCardModel,
++  localizeTerminalCardModel, terminalBlockLabels, terminalExitLabel, terminalDiagnosticSummary, type TerminalCardModel,
  } from '../models/terminal-card-model.ts'
  import {
    codeToolbarLabels, diffBlockLabels, readBlockLabels, searchBlockLabels, webBlockLabels,
-@@ -181,7 +181,8 @@ export const ToolRow = memo(function ToolRow({
-   // the ordinary summary red. An interruption turns the tool-owned summary
-   // amber while retaining the business icon and hidden state announcement.
-   const failureLine = state === 'error' ? errorSummary ?? normalSummary : null
+@@ -183,8 +183,11 @@ export const ToolRow = memo(function ToolRow({
+   const exitLabel = terminalExitLabel(terminal, t)
+   // Generic failures retain their first result line; command exits keep their description.
+   const failureLine = state === 'error' && exitLabel === null ? errorSummary ?? normalSummary : null
 -  const summaryText = failureLine ?? normalSummary
+-  // Diff totals remain visible after the optional summary suffix.
++  // A stderr diagnostic turns the ordinary summary amber while keeping its business icon.
 +  const diagnosticLine = terminalDiagnosticSummary(terminal ?? null, t)
 +  const summaryText = failureLine ?? diagnosticLine ?? normalSummary
-   // The tool row keeps the diff's +/- totals visible while its body is collapsed.
-   // An explicit summarySuffix overrides the diff totals.
++  // The tool row keeps the diff's +/- totals visible while its body is collapsed.
++  // An explicit summarySuffix overrides the diff totals.
    const diffStat = useMemo(() => diffBody === null ? null : diffTotals(diffBody.card.diffs), [diffBody])
-@@ -236,7 +237,7 @@ export const ToolRow = memo(function ToolRow({
+   const settledWithCue = state === 'error' || state === 'stopped'
+   const suffix = settledWithCue ? null : summarySuffix ?? null
+@@ -238,7 +241,7 @@ export const ToolRow = memo(function ToolRow({
            className={clsx(
              css.summary,
-             state === 'error' && css.errorSummary,
--            state === 'stopped' && css.stoppedSummary,
-+            (state === 'stopped' || diagnosticLine !== null) && css.stoppedSummary,
+             exitLabel === null && state === 'error' && css.errorSummary,
+-            exitLabel === null && state === 'stopped' && css.stoppedSummary,
++            ((exitLabel === null && state === 'stopped') || diagnosticLine !== null) && css.stoppedSummary,
            )}
          >
            <TextShimmer>{summaryText}</TextShimmer>
-@@ -248,7 +249,7 @@ export const ToolRow = memo(function ToolRow({
+@@ -254,7 +257,7 @@ export const ToolRow = memo(function ToolRow({
          </TextShimmer>
        )}
      </>
--  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, summaryText])
-+  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, summaryText, diagnosticLine])
+-  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, totals, summaryText, exitLabel])
++  ), [summaryLinkKeyDown, linkHref, openFile, state, suffix, totals, summaryText, exitLabel, diagnosticLine])
    const expandedContent = useMemo(() => open ? (
      <div className={clsx(css.bodyWrap, detailsBody !== null && css.detailsBodyWrap)}>
        {askQuestionBody !== null
-@@ -354,7 +355,8 @@ export const ToolRow = memo(function ToolRow({
+@@ -371,7 +374,8 @@ export const ToolRow = memo(function ToolRow({
      variant, bodyText, cardBody, outputText, state,
    ])
    return (
@@ -160,10 +102,10 @@ index d91a72d..28e3d7c 100644
        <DisclosureRow
          rowClassName={css.row}
 diff --git a/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts b/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
-index ca77777..e2e25c3 100644
+index 468706c8e0..e0248c5da6 100644
 --- a/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
 +++ b/packages/client/ui-tool/src/client/tool/models/terminal-card-model.ts
-@@ -38,6 +38,8 @@ export function terminalBlockLabels(t: TranslateNS<'conversation'>): TerminalBlo
+@@ -40,6 +40,8 @@ export function terminalBlockLabels(t: TranslateNS<'conversation'>): TerminalBlo
   * each render site.
   */
  export interface TerminalCardModel {
@@ -172,7 +114,7 @@ index ca77777..e2e25c3 100644
    /**
     * The locale-neutral props {@link TerminalBlock} draws. The render site adds
     * `command` after resolving {@link copy} through its locale seat.
-@@ -94,7 +96,23 @@ export function localizeTerminalCardModel(
+@@ -95,7 +97,23 @@ export function localizeTerminalCardModel(
   */
  export function terminalFailed(model: TerminalCardModel): boolean {
    const { exitCode, signal, running } = model.card
@@ -197,21 +139,17 @@ index ca77777..e2e25c3 100644
  }
  
  /**
-@@ -266,7 +284,7 @@ function terminalSendCall(name: string, args: Record<string, unknown>): Terminal
- function parseExitStatus(text: string): { output: string; exitCode?: number; signal?: string } {
+@@ -293,7 +311,7 @@ function terminalSendCall(name: string, args: Record<string, unknown>): Terminal
+ function parseExitStatus(text: string): { output: string; exitCode?: number | null; signal?: string } {
    const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(text)
    if (signal?.[1] !== undefined) return { output: text.slice(0, signal.index), signal: signal[1] }
--  const exit = /\n\[exit code: (\d+)\]$/.exec(text)
-+  const exit = /\n\[exit code: (-?\d+)\]\s*$/.exec(text)
-   if (exit?.[1] !== undefined) return { output: text.slice(0, exit.index), exitCode: Number(exit[1]) }
+-  const exit = /\n\[exit code: (-?\d+|null)\]$/.exec(text)
++  const exit = /\n\[exit code: (-?\d+|null)\]\s*$/.exec(text)
+   if (exit?.[1] !== undefined) return { output: text.slice(0, exit.index), exitCode: exit[1] === 'null' ? null : Number(exit[1]) }
    return { output: text, exitCode: 0 }
  }
-@@ -306,12 +324,35 @@ export function terminalCardModel(
-       },
-     }
+@@ -346,9 +364,32 @@ export function terminalCardModel(
    }
--  if (block.isError || (call.kind === 'shell' && call.persistent) || isSpilledShellCall(block)) return null
-+  if (block.isError || (call.kind === 'shell' && call.persistent)) return null
    const output = singleResultText(block)
    if (output === undefined) return null
 -  const status = call.kind === 'terminal-send' ? { output } : parseExitStatus(output)
@@ -245,7 +183,7 @@ index ca77777..e2e25c3 100644
        cwd,
        output: status.output,
 diff --git a/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx b/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
-index bc0faac..9145fd7 100644
+index bc0faacb13..9145fd7295 100644
 --- a/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
 +++ b/packages/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx
 @@ -7,7 +7,7 @@ import type { ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
@@ -267,32 +205,32 @@ index bc0faac..9145fd7 100644
        diff={diff}
        read={read}
 diff --git a/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx b/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
-index d8fd803..cdeda8b 100644
+index 22f239a308..37166641ce 100644
 --- a/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
 +++ b/packages/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx
-@@ -14,6 +14,8 @@ import {
-   terminalBlockLabels,
+@@ -16,6 +16,8 @@ import {
    terminalCardModel,
    terminalFailed,
+   terminalExitLabel,
 +  terminalFailureSummary,
 +  terminalDiagnosticSummary,
  } from '../models/terminal-card-model.ts'
- import { formatToolBody, toolRowModel, toolTitleKey, type ToolRowState } from '../models/tool-call-model.ts'
- import { PreparingToolRow } from '../components/PreparingToolRow.tsx'
-@@ -74,9 +76,10 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
-     [genericBody, model.bodyRaw, model.variant, open],
+ import { formatToolBody, toolRowModel, type ToolRowState } from '../models/tool-call-model.ts'
+ import { CONVERSATION_NS as NS } from '../../locale.ts'
+@@ -73,9 +75,10 @@ export const BashRow = memo(function BashRow({ toolName, block, sessionId, useSe
    )
    const normalSummary = terminal?.description ?? model.summary
+   const exitLabel = terminalExitLabel(terminalModel, t)
 +  const diagnosticLine = terminalDiagnosticSummary(terminalModel, t)
-   const settlementLine = state === 'error'
+   const settlementLine = exitLabel !== null ? null : state === 'error'
 -    ? model.errorSummary ?? normalSummary
 -    : state === 'stopped' ? t('bash.stopped') : null
 +    ? terminalFailureSummary(terminalModel, t) ?? model.errorSummary ?? normalSummary
 +    : state === 'stopped' ? t('bash.stopped') : diagnosticLine
-   const running = state === 'running'
+   const running = state === 'running' || state === 'preparing'
    const toggleFromKeyboard = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
      if (!expandable || (event.key !== 'Enter' && event.key !== ' ')) return
-@@ -100,6 +103,7 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
+@@ -99,6 +102,7 @@ export const BashRow = memo(function BashRow({ toolName, block, sessionId, useSe
          data-sample="bash"
          data-variant="bash"
          data-state={state}
@@ -300,37 +238,17 @@ index d8fd803..cdeda8b 100644
          data-expandable={expandable || undefined}
          role={expandable ? 'button' : undefined}
          tabIndex={expandable ? 0 : undefined}
-@@ -115,7 +119,7 @@ const StartedBashRow = memo(function StartedBashRow({ toolName, block, sessionId
+@@ -114,7 +118,7 @@ export const BashRow = memo(function BashRow({ toolName, block, sessionId, useSe
            <span className={clsx(
              css.summary,
-             state === 'error' && css.errorSummary,
--            state === 'stopped' && css.stoppedSummary,
-+            (state === 'stopped' || diagnosticLine !== null) && css.stoppedSummary,
+             exitLabel === null && state === 'error' && css.errorSummary,
+-            exitLabel === null && state === 'stopped' && css.stoppedSummary,
++            ((exitLabel === null && state === 'stopped') || diagnosticLine !== null) && css.stoppedSummary,
            )}>
              <TextShimmer>{settlementLine ?? normalSummary}</TextShimmer>
            </span>
-diff --git a/packages/client/ui-user-questions/README.md b/packages/client/ui-user-questions/README.md
-index c8c1824..8a1f8b7 100644
---- a/packages/client/ui-user-questions/README.md
-+++ b/packages/client/ui-user-questions/README.md
-@@ -129,3 +129,5 @@ None.
- </details>
- 
- **Runtime invariant:** The Host Session projection is authoritative for durable timed questions. Browser storage only preserves unfinished input and never creates or keeps a question open. No runtime invariant companion is published because the Host validates and projects the durable state before this client package renders it.
-+
-+Question detail aligns with the title. Option descriptions are separate multiline text below their labels and wrap long paths inside the card. Single-question requests omit pagination; multi-question navigation and answer semantics are unchanged.
-diff --git a/packages/client/ui-user-questions/README.zh.md b/packages/client/ui-user-questions/README.zh.md
-index 03ed5fc..be97d27 100644
---- a/packages/client/ui-user-questions/README.zh.md
-+++ b/packages/client/ui-user-questions/README.zh.md
-@@ -129,3 +129,5 @@ Web 客户端在聊天输入框旁显示 agent（智能体）的提问。用户
- </details>
- 
- **运行时不变式：** Host 会话投影是持久计时问题的权威来源。浏览器存储只保留未完成输入，绝不会创建问题或让问题继续保持打开。此包不发布运行时不变量 companion，因为 Host 会先校验并投影持久状态，客户端随后才渲染它。
-+
-+问题补充说明与标题对齐。选项说明独立放在标签下方，保留分行，长路径在卡片内换行。单题请求不显示分页；多题导航和回答语义保持不变。
 diff --git a/packages/client/ui-user-questions/src/client/QuestionComposer.module.css b/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
-index 5f2eb47..919da10 100644
+index 1041cf7b7f..f145df8994 100644
 --- a/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
 +++ b/packages/client/ui-user-questions/src/client/QuestionComposer.module.css
 @@ -104,7 +104,9 @@
@@ -379,7 +297,7 @@ index 5f2eb47..919da10 100644
  }
  
  /* Read-only note standing in for a question the user skipped: it takes the
-@@ -453,6 +460,10 @@
+@@ -455,6 +462,10 @@
      padding: 4px 8px;
    }
  
@@ -391,7 +309,7 @@ index 5f2eb47..919da10 100644
      font-size: 15px;
      line-height: 21px;
 diff --git a/packages/client/ui-user-questions/src/client/QuestionComposer.tsx b/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
-index 33bbcbe..b1c7fed 100644
+index 8d3ad551ba..7b2be4cb38 100644
 --- a/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
 +++ b/packages/client/ui-user-questions/src/client/QuestionComposer.tsx
 @@ -527,10 +527,10 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
@@ -408,7 +326,7 @@ index 33bbcbe..b1c7fed 100644
                        </span>
                      </button>
                    )
-@@ -588,7 +588,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
+@@ -594,7 +594,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
              </div>
  
              <footer className={css.footer}>
@@ -417,7 +335,7 @@ index 33bbcbe..b1c7fed 100644
                  <button
                    type="button" className={css.iconButton} aria-label={t('nav.prev')}
                    disabled={index === 0 || busy !== null}
-@@ -604,7 +604,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
+@@ -610,7 +610,7 @@ function QuestionFlow({ pending, t, useStore, useQuestionCard, actions }: Questi
                  >
                    <IconChevronRightOutlineRegular />
                  </button>
@@ -426,70 +344,26 @@ index 33bbcbe..b1c7fed 100644
                <div className={css.feedback} role="status">
                  {error === null ? null : 'key' in error ? t(error.key) : error.text}
                </div>
-diff --git a/packages/context/file-reference-local/README.md b/packages/context/file-reference-local/README.md
-index b80f586..9425262 100644
---- a/packages/context/file-reference-local/README.md
-+++ b/packages/context/file-reference-local/README.md
-@@ -137,3 +137,7 @@ These limits define when the provider is a poor fit. They are current package co
- None.
- 
- </details>
-+
-+## Directory continuation
-+
-+After `session/relocated`, the affected agent discards its old search index. The next file mention query builds from the current session directory.
-diff --git a/packages/context/file-reference-local/README.zh.md b/packages/context/file-reference-local/README.zh.md
-index 343d095..418c395 100644
---- a/packages/context/file-reference-local/README.zh.md
-+++ b/packages/context/file-reference-local/README.zh.md
-@@ -137,3 +137,7 @@ Tokens prefixed with @ are paths the user explicitly referenced. Relative paths
- 无。
- 
- </details>
-+
-+## 目录接续
-+
-+收到 `session/relocated` 后丢弃对应 Agent 的旧文件索引，下一次文件引用查询从当前会话目录建立索引。
 diff --git a/packages/context/file-reference-local/src/index.ts b/packages/context/file-reference-local/src/index.ts
-index 0eca490..64fbef4 100644
+index a179cebafb..1641047431 100644
 --- a/packages/context/file-reference-local/src/index.ts
 +++ b/packages/context/file-reference-local/src/index.ts
-@@ -95,6 +95,10 @@ export class LocalFileReferenceService extends FileReferenceService {
+@@ -96,6 +96,10 @@ export class LocalFileReferenceService extends FileReferenceService {
        this.searches.delete(agent)
        disposePrompt(agent)
      })
 +    ctx.on('session/relocated', session => {
 +      const agent = ctx.agents.get(session.id)
-+      if (agent) { this.searches.get(agent)?.dispose(); this.searches.delete(agent) }
++      if (agent) { this.searches.get(agent)?.search.dispose(); this.searches.delete(agent) }
 +    })
      ctx.on('session/event', (session, event) => {
        if (event.type !== 'tool/result') return
        const agent = ctx.agents.get(session.id)
-diff --git a/packages/core/agent-loop/README.md b/packages/core/agent-loop/README.md
-index 19e356a..3b3d1b6 100644
---- a/packages/core/agent-loop/README.md
-+++ b/packages/core/agent-loop/README.md
-@@ -227,3 +227,5 @@ These limits define when the loop needs special care. They are current package c
- None.
- 
- </details>
-+
-+When a pre-step listener durably relocates the session directory, the driver reassembles the prompt and replaces its uncommitted runtime-context candidate before starting the model request. It does not replay pre-step listeners.
-diff --git a/packages/core/agent-loop/README.zh.md b/packages/core/agent-loop/README.zh.md
-index a6a8e87..93490fb 100644
---- a/packages/core/agent-loop/README.zh.md
-+++ b/packages/core/agent-loop/README.zh.md
-@@ -227,3 +227,5 @@ const handle = await ctx.agents.create({
- 无。
- 
- </details>
-+
-+pre-step监听器持久迁移会话目录后，驱动器在模型请求开始前重新组装提示词，并替换尚未提交的运行上下文候选；不重复执行pre-step监听器。
 diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
-index 2f68565..30544f4 100644
+index adf2e33ddc..1631ad2d87 100644
 --- a/packages/core/agent-loop/src/agent.ts
 +++ b/packages/core/agent-loop/src/agent.ts
-@@ -269,7 +269,8 @@ export class ReactLoopAgent implements Agent {
+@@ -269,13 +269,16 @@ export class ReactLoopAgent implements Agent {
      if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": pre-step outside running phase`)
      const signal = this.phase.abort.signal
      const claimed = this.inbox.claim(target, position.turn)
@@ -497,9 +371,17 @@ index 2f68565..30544f4 100644
 +    const directory = this.session.header.cwd
 +    let assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
      signal.throwIfAborted()
-     const sections = renderContextSections(assembly)
-     const context = this.runtimeContext.project(joinContextSections(sections), sections)
-@@ -282,6 +283,14 @@ export class ReactLoopAgent implements Agent {
++    let renderedContext: UserMessage | undefined
+     const decision = await this.dispatch.waterfall(
+       'agent/pre-step', { messages: claimed, ...position, signal },
+       (): Promise<PreStepDecision> => {
+         const sections = renderContextSections(assembly)
+         const context = this.runtimeContext.project(joinContextSections(sections), sections)
++        renderedContext = context
+         return Promise.resolve<PreStepDecision>({
+           kind: 'enter',
+           messages: context === undefined ? claimed : [...claimed, context],
+@@ -284,6 +287,15 @@ export class ReactLoopAgent implements Agent {
      )
      signal.throwIfAborted()
      if (decision.kind === 'reject') return decision
@@ -508,38 +390,15 @@ index 2f68565..30544f4 100644
 +      signal.throwIfAborted()
 +      const updatedSections = renderContextSections(assembly)
 +      const updated = this.runtimeContext.project(joinContextSections(updatedSections), updatedSections)
-+      const messages = context === undefined ? decision.messages : decision.messages.filter(message => message.id !== context.id)
++      const previous = renderedContext
++      const messages = previous === undefined ? decision.messages : decision.messages.filter(message => message.id !== previous.id)
 +      return { ...decision, messages: updated === undefined ? messages : [...messages, updated], assembly }
 +    }
      return { ...decision, assembly }
    }
  
-diff --git a/packages/core/session/README.md b/packages/core/session/README.md
-index 4a73a20..3e16dad 100644
---- a/packages/core/session/README.md
-+++ b/packages/core/session/README.md
-@@ -202,3 +202,7 @@ These limits define when the session store needs special care. They are current
- None.
- 
- </details>
-+
-+## Directory continuation
-+
-+`SessionStore.relocate(session, cwd)` replaces the frozen current-directory header snapshot only after its sole persistence writer commits. It requires a model/tool step boundary; session identity, creation time and event history remain. `session/relocated` invalidates current-directory consumers after commit. Callers use the workspace registry to canonicalize directories and preserve membership.
-diff --git a/packages/core/session/README.zh.md b/packages/core/session/README.zh.md
-index 7fb334c..50b7136 100644
---- a/packages/core/session/README.zh.md
-+++ b/packages/core/session/README.zh.md
-@@ -202,3 +202,7 @@ session.deriveMessages()         // the derived model history
- 无。
- 
- </details>
-+
-+## 目录接续
-+
-+`SessionStore.relocate(session, cwd)` 只在唯一持久写入器提交后替换当前目录的冻结元数据快照。它要求处于模型/工具步骤边界，保留会话身份、创建时间和历史事件；提交后通过 `session/relocated` 更新目录消费方。调用方使用工作区注册表规范化目录并维护归属。
 diff --git a/packages/core/session/src/index.ts b/packages/core/session/src/index.ts
-index b0cfa0c..46bd44f 100644
+index e1ecb920bd..da9e88e323 100644
 --- a/packages/core/session/src/index.ts
 +++ b/packages/core/session/src/index.ts
 @@ -35,6 +35,8 @@ export { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSur
@@ -551,7 +410,7 @@ index b0cfa0c..46bd44f 100644
  declare module '@deepseek-ai/cordis' {
    interface Context {
      sessions: SessionStore
-@@ -84,6 +86,18 @@ declare module '@deepseek-ai/cordis' {
+@@ -80,6 +82,18 @@ declare module '@deepseek-ai/cordis' {
       * @mode parallel
       */
      'session/flush'(this: Scoped<Session>, session: Session): Promise<void> | void
@@ -570,7 +429,7 @@ index b0cfa0c..46bd44f 100644
    }
  }
  
-@@ -402,7 +416,7 @@ function collectSessionCallbacks(ctx: Context, args: unknown[]): SessionCallback
+@@ -398,7 +412,7 @@ function collectSessionCallbacks(ctx: Context, args: unknown[]): SessionCallback
  /** Invoke one resolved observe-only listener snapshot with per-listener containment. */
  function invokeContainedSessionObservers(
    ctx: Context,
@@ -579,7 +438,7 @@ index b0cfa0c..46bd44f 100644
    id: SessionId,
    args: unknown[],
    callbacks: SessionCallback[],
-@@ -454,14 +468,30 @@ export class Session {
+@@ -530,14 +544,30 @@ export class Session {
    }
  
    /**
@@ -612,7 +471,7 @@ index b0cfa0c..46bd44f 100644
  
    /** Number of leading events inherited from this Session's fork parent. */
    readonly inheritedEventCount: SessionLogOffset
-@@ -588,7 +618,7 @@ export class Session {
+@@ -664,7 +694,7 @@ export class Session {
        }
      }
      this.firstLiveSeq = SessionLogOffset(this.log.length)
@@ -621,7 +480,7 @@ index b0cfa0c..46bd44f 100644
      if (this.header.isSeeded && seed === undefined) {
        throw new Error('seeded session requires an explicit constructor seed')
      }
-@@ -724,6 +754,7 @@ export class Session {
+@@ -800,6 +830,7 @@ export class Session {
      data: SessionEventMap[T],
      ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
    ): SessionEvent<T> {
@@ -629,7 +488,7 @@ index b0cfa0c..46bd44f 100644
      const surfaceOpts: SurfaceIntent | undefined = opts[0]
      const surfaceMetadata = {
        ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
-@@ -1210,6 +1241,25 @@ export class SessionStore extends Service {
+@@ -1335,6 +1366,25 @@ export class SessionStore extends Service {
      return callbacks.length > 0
    }
  
@@ -656,10 +515,10 @@ index b0cfa0c..46bd44f 100644
    private liveEntryFor(session: Session): SessionEntry {
      const entry = attachments.get(session)
 diff --git a/packages/core/session/src/types.ts b/packages/core/session/src/types.ts
-index 593c86d..a362b42 100644
+index e0931f2240..24d905d25c 100644
 --- a/packages/core/session/src/types.ts
 +++ b/packages/core/session/src/types.ts
-@@ -101,7 +101,7 @@ export interface SessionHeader {
+@@ -102,7 +102,7 @@ export interface SessionHeader {
    readonly id: SessionId
    /** Non-negative safe-integer Unix epoch milliseconds when the session was created. */
    readonly createdAt: number
@@ -668,32 +527,8 @@ index 593c86d..a362b42 100644
    readonly cwd?: string
    /** The session this one was forked from (seed lineage), if any. */
    readonly parentSession?: SessionId
-diff --git a/packages/fs/fs-local/README.md b/packages/fs/fs-local/README.md
-index 9c00544..1221db6 100644
---- a/packages/fs/fs-local/README.md
-+++ b/packages/fs/fs-local/README.md
-@@ -149,3 +149,7 @@ None.
- </details>
- 
- **Runtime invariant:** No companion is published. This package exposes no independent event sequence or mutable data relation beyond contracts enforced at its owning seam.
-+
-+## Binary creation
-+
-+writeBytes uses the same per-target lock, private staging, cancellation and create-if-absent publication as guarded text creation. It does not produce a text diff or decode the payload.
-diff --git a/packages/fs/fs-local/README.zh.md b/packages/fs/fs-local/README.zh.md
-index 3adc249..b45b970 100644
---- a/packages/fs/fs-local/README.zh.md
-+++ b/packages/fs/fs-local/README.zh.md
-@@ -149,3 +149,7 @@ Chokidar 通过 OS 事件观察单个文件或目录的直接子项，不使用
- </details>
- 
- **运行时不变式：** 不发布伴生入口。本包没有独立事件序列或可变数据关系，相关约定在所属 seam 强制执行。
-+
-+## 二进制文件创建
-+
-+writeBytes 复用文本受保护创建的目标锁、私有暂存、取消与仅目标不存在时发布机制，不生成文本差异或解码负载。
 diff --git a/packages/fs/fs-local/src/fsio.ts b/packages/fs/fs-local/src/fsio.ts
-index a9d97fd..6e76c2d 100644
+index a9d97fd6ac..6e76c2dc50 100644
 --- a/packages/fs/fs-local/src/fsio.ts
 +++ b/packages/fs/fs-local/src/fsio.ts
 @@ -587,7 +587,7 @@ async function throwGuardedCreateFailure(
@@ -706,7 +541,7 @@ index a9d97fd..6e76c2d 100644
    signal: AbortSignal | undefined,
    internals: FsIoInternals = {},
 diff --git a/packages/fs/fs-local/src/index.ts b/packages/fs/fs-local/src/index.ts
-index 17033e5..cb8992c 100644
+index 17033e512b..cb8992cd54 100644
 --- a/packages/fs/fs-local/src/index.ts
 +++ b/packages/fs/fs-local/src/index.ts
 @@ -254,6 +254,14 @@ export class LocalFileSystem extends FileSystem {
@@ -724,32 +559,8 @@ index 17033e5..cb8992c 100644
    override async editText(
      target: FsTarget,
      edit: FsEditRequest,
-diff --git a/packages/fs/fs-sandbox/README.md b/packages/fs/fs-sandbox/README.md
-index fde670f..2b51293 100644
---- a/packages/fs/fs-sandbox/README.md
-+++ b/packages/fs/fs-sandbox/README.md
-@@ -135,3 +135,7 @@ None.
- </details>
- 
- **Runtime invariant:** No companion is published. This stateless adapter delegates policy and filesystem relations to their owning seams.
-+
-+## Binary creation
-+
-+Binary creation resolves and checks the destination under the calling session policy immediately before delegating to the local writer. The returned target is the one actually checked and written.
-diff --git a/packages/fs/fs-sandbox/README.zh.md b/packages/fs/fs-sandbox/README.zh.md
-index ff58cd0..6638c7d 100644
---- a/packages/fs/fs-sandbox/README.zh.md
-+++ b/packages/fs/fs-sandbox/README.zh.md
-@@ -135,3 +135,7 @@ kind: "package-reference"
- </details>
- 
- **运行时不变式：** 不发布伴生入口。这个无状态适配器把策略与文件系统关系委托给各自所属的 seam。
-+
-+## 二进制文件创建
-+
-+二进制创建在交给本地写入器之前，按调用会话策略重新解析并检查目标，返回实际检查并写入的目标。
 diff --git a/packages/fs/fs-sandbox/src/index.ts b/packages/fs/fs-sandbox/src/index.ts
-index 60dd6b3..1c29ba3 100644
+index 60dd6b3bad..1c29ba3498 100644
 --- a/packages/fs/fs-sandbox/src/index.ts
 +++ b/packages/fs/fs-sandbox/src/index.ts
 @@ -87,6 +87,11 @@ export class SandboxedFileSystem extends LocalFileSystem {
@@ -764,32 +575,8 @@ index 60dd6b3..1c29ba3 100644
    /**
     * Fence the edit by the per-call policy, then delegate to the inherited
     * atomic edit. See {@link checkedTarget}.
-diff --git a/packages/fs/fs/README.md b/packages/fs/fs/README.md
-index 549da2a..ffb2d98 100644
---- a/packages/fs/fs/README.md
-+++ b/packages/fs/fs/README.md
-@@ -125,3 +125,7 @@ These limits define when the contract is a poor fit or needs special operational
- None.
- 
- </details>
-+
-+## Binary creation
-+
-+writeBytes creates a complete new binary file and returns its actual resolved target and version. It refuses an existing destination. Providers without this operation report FS_UNSUPPORTED; text writes and edits retain their existing contracts.
-diff --git a/packages/fs/fs/README.zh.md b/packages/fs/fs/README.zh.md
-index c9b9191..c656e4a 100644
---- a/packages/fs/fs/README.zh.md
-+++ b/packages/fs/fs/README.zh.md
-@@ -125,3 +125,7 @@ kind: "package-reference"
- 无。
- 
- </details>
-+
-+## 二进制文件创建
-+
-+writeBytes 创建完整的新二进制文件，返回实际解析的目标及版本，拒绝覆盖已有目标。不支持此操作的提供方返回 FS_UNSUPPORTED；文本写入和编辑合同保持原职责。
 diff --git a/packages/fs/fs/src/index.ts b/packages/fs/fs/src/index.ts
-index 1158a6d..a793ad4 100644
+index 1158a6dede..a793ad4aee 100644
 --- a/packages/fs/fs/src/index.ts
 +++ b/packages/fs/fs/src/index.ts
 @@ -271,6 +271,19 @@ export abstract class FileSystem extends Service {
@@ -813,7 +600,7 @@ index 1158a6d..a793ad4 100644
     * Atomically edit literal text. When supplied, the version guard is checked
     * before matching so stale content reports `FS_STALE_VERSION`; omission edits
 diff --git a/packages/fs/fs/src/types.ts b/packages/fs/fs/src/types.ts
-index a3464f1..74cb93e 100644
+index a3464f197c..74cb93efdc 100644
 --- a/packages/fs/fs/src/types.ts
 +++ b/packages/fs/fs/src/types.ts
 @@ -173,6 +173,7 @@ export interface FsEditOutcome {
@@ -824,36 +611,8 @@ index a3464f1..74cb93e 100644
    | 'FS_NOT_FOUND'
    | 'FS_NOT_DIRECTORY'
    | 'FS_NOT_TEXT'
-diff --git a/packages/sandbox/sandbox-windows-acl/README.md b/packages/sandbox/sandbox-windows-acl/README.md
-index dbb5fde..afc2ef3 100644
---- a/packages/sandbox/sandbox-windows-acl/README.md
-+++ b/packages/sandbox/sandbox-windows-acl/README.md
-@@ -206,3 +206,9 @@ The warn-only posture for unusually wide directories and FAT-class volumes is do
- </details>
- 
- **Runtime invariant:** No companion is published. This package exposes no independent event sequence or mutable data relation beyond the fail-closed contracts it enforces at each Win32 call boundary.
-+
-+## Owned workspace initialization
-+
-+An ordinary caller-owned directory can initialize without a standing WRITE_OWNER grant. Initialization borrows a non-inheriting owner right while holding the directory open, applies the required Low label, and restores the final capability DACL without that borrowed right. Explicit label-write denies and reparse-point bootstrap targets are refused. Failed initialization restores the original label and DACL or reports restoration failures; it never starts an unrestricted child.
-+
-+Existing ordinary owned descendants are provisioned through pinned native object handles. Reparse points, multiply linked files, protected DACLs, other owners and explicit non-Low labels are not broadened. Per-object query/set avoids Win32 automatic inheritance touching outside links; capability revocation visits the same ordinary objects. Temporary owner access never inherits and rolls back on failure.
-diff --git a/packages/sandbox/sandbox-windows-acl/README.zh.md b/packages/sandbox/sandbox-windows-acl/README.zh.md
-index bf66691..a76232e 100644
---- a/packages/sandbox/sandbox-windows-acl/README.zh.md
-+++ b/packages/sandbox/sandbox-windows-acl/README.zh.md
-@@ -208,3 +208,9 @@ Windows 上多一个目录条目：技能描述随目录进入上下文，正文
- </details>
- 
- **运行时不变式：** 不发布伴生入口。本包没有独立事件序列或可变数据关系；fail-closed 约定在每个 Win32 调用处强制。
-+
-+## 自有工作区初始化
-+
-+普通的调用者自有目录无需预先保留 WRITE_OWNER 权限。初始化在持有目录句柄期间临时取得不继承的所有者权限，设置所需的低完整性标签，再提交不包含该临时权限的能力 DACL。明确的标签写入拒绝及重解析点初始化目标会被拒绝。失败时恢复原标签和 DACL，恢复失败单独报告；不会启动不受限的子进程。
-+
-+已有普通自有内容通过固定对象句柄逐一准备权限和Low标签；跳过目录联接、多硬链接文件、受保护DACL、其他所有者及显式非Low标签。原生逐对象读写避免Win32自动传播影响外部链接；撤销遍历相同范围。临时标签写权限不继承，失败恢复原对象权限。
 diff --git a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
-index c0d9e67..e6df319 100644
+index c0d9e67312..e6df319526 100644
 --- a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
 +++ b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
 @@ -1,63 +1,23 @@
@@ -930,7 +689,7 @@ index c0d9e67..e6df319 100644
 -Report in the user's language: analyzed paths, changes, verification, recovery commands, next step. Label an authorized unconfined run as such, not as a sandbox repair.
 +Do not add FullControl, remove package ACEs, erase deny rules, change ownership, or suggest disabling the sandbox. Historical recovery remains available only through an explicit user request to restore a known backup: -Restore requires one exact -Path and -AllowRoot and verifies the saved record. It is not an automatic response to a failed operation.
 diff --git a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1 b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
-index 81c742c..913d6ce 100644
+index 81c742c233..913d6ce287 100644
 --- a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
 +++ b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/scripts/diagnose-windows-sandbox-acl.ps1
 @@ -1,59 +1,11 @@
@@ -1300,7 +1059,7 @@ index 81c742c..913d6ce 100644
    # records a reader needs survive truncation; the report file holds every record.
    $recap = [ordered]@{
 diff --git a/packages/sandbox/sandbox-windows-acl/src/acl.ts b/packages/sandbox/sandbox-windows-acl/src/acl.ts
-index 82f7030..81a9e48 100644
+index 82f7030b67..81a9e488c4 100644
 --- a/packages/sandbox/sandbox-windows-acl/src/acl.ts
 +++ b/packages/sandbox/sandbox-windows-acl/src/acl.ts
 @@ -1,31 +1,17 @@
@@ -1831,7 +1590,7 @@ index 82f7030..81a9e48 100644
 +  return false
 +}
 diff --git a/packages/sandbox/sandbox-windows-acl/src/ffi.ts b/packages/sandbox/sandbox-windows-acl/src/ffi.ts
-index 5ef39a4..45bd56d 100644
+index 5ef39a4530..45bd56dfe1 100644
 --- a/packages/sandbox/sandbox-windows-acl/src/ffi.ts
 +++ b/packages/sandbox/sandbox-windows-acl/src/ffi.ts
 @@ -3,6 +3,7 @@
@@ -1921,32 +1680,8 @@ index 5ef39a4..45bd56d 100644
      openProcess: bind(kernel32, 'OpenProcess', PVOID, ['uint32', 'int', 'uint32']),
      openProcessToken: bind(advapi32, 'OpenProcessToken', 'int', [PVOID, 'uint32', PPVOID]),
      localAlloc: bind(kernel32, 'LocalAlloc', PVOID, ['uint32', 'size_t']),
-diff --git a/packages/sandbox/sandbox/README.md b/packages/sandbox/sandbox/README.md
-index 5e089c4..7d7f498 100644
---- a/packages/sandbox/sandbox/README.md
-+++ b/packages/sandbox/sandbox/README.md
-@@ -183,3 +183,7 @@ This Dev Note is working context for maintainers: undecided directions and open
- The [sandbox decision](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.md) lists deferred phases — an optional `subagent-acp` consumer that confines child agents (unconfined default) and environment-coherent capability group examples. Neither is decided; the Windows chain that note listed as deferred has since shipped through the ACL restricted-token rung of `sandbox-local`.
- 
- </details>
-+
-+## Platform temporary roots
-+
-+Windows uses its actual system temporary directory; the Unix /tmp spelling is not resolved onto the current Windows drive. This avoids authorizing sibling projects under a drive-local tmp directory.
-diff --git a/packages/sandbox/sandbox/README.zh.md b/packages/sandbox/sandbox/README.zh.md
-index dc38008..c6f140e 100644
---- a/packages/sandbox/sandbox/README.zh.md
-+++ b/packages/sandbox/sandbox/README.zh.md
-@@ -183,3 +183,7 @@ sandbox mode "<mode>" is requested but no sandbox backend is usable on this host
- [沙箱决策](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.zh.md)列出延期阶段——可选的 `subagent-acp` 消费方（隔离子 agent（智能体），默认不隔离）与环境一致的能力组示例。两者均未决定；该笔记列为延期的 Windows 链已通过 `sandbox-local` 的 ACL 受限令牌档交付。
- 
- </details>
-+
-+## 平台临时目录
-+
-+Windows 使用实际系统临时目录，不把 Unix 的 /tmp 拼法解析到当前 Windows 盘。因此不会意外授权同盘 tmp 目录中的其他项目。
 diff --git a/packages/sandbox/sandbox/src/roots.ts b/packages/sandbox/sandbox/src/roots.ts
-index 1215f3d..6aaed66 100644
+index 1215f3dac1..6aaed66ca3 100644
 --- a/packages/sandbox/sandbox/src/roots.ts
 +++ b/packages/sandbox/sandbox/src/roots.ts
 @@ -51,5 +51,8 @@ export function canonicalPath(path: string): string {
@@ -1959,32 +1694,8 @@ index 1215f3d..6aaed66 100644
 +  const unixTemp = process.platform === 'win32' ? [] : ['/tmp']
 +  return [...new Set([policy.workspaceRoot, ...unixTemp, tmpdir()].map(canonicalPath))]
  }
-diff --git a/packages/session/session-persistence-jsonl/README.md b/packages/session/session-persistence-jsonl/README.md
-index 5846404..5cdf694 100644
---- a/packages/session/session-persistence-jsonl/README.md
-+++ b/packages/session/session-persistence-jsonl/README.md
-@@ -174,3 +174,7 @@ These limits define when this backend is a poor fit or needs special operational
- None.
- 
- </details>
-+
-+## Directory continuation
-+
-+The active writer replaces only the current header frame through a synced temporary file and atomic replacement. Event bytes and the physical session directory stay in place under the same lifetime lease. New appends use the captured writer location, independently of current cwd. Historical generations remain immutable. This qualified extension requires readers with directory-continuation support; an older reader that equates cwd with the storage path is not a supported downgrade.
-diff --git a/packages/session/session-persistence-jsonl/README.zh.md b/packages/session/session-persistence-jsonl/README.zh.md
-index b7dd646..c78c6ad 100644
---- a/packages/session/session-persistence-jsonl/README.zh.md
-+++ b/packages/session/session-persistence-jsonl/README.zh.md
-@@ -174,3 +174,7 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope 
- 无。
- 
- </details>
-+
-+## 目录接续
-+
-+活跃写入器通过已刷盘临时文件和原子替换更新当前头帧；事件字节和物理会话目录保持原位，沿用同一生命周期写锁。后续追加使用写锁捕获的位置，不随当前 cwd 改变。历史代际文件保持不可变。此精确适配要求读取器支持目录接续，不能回退到仍将 cwd 等同存储位置的旧读取器。
 diff --git a/packages/session/session-persistence-jsonl/src/index.ts b/packages/session/session-persistence-jsonl/src/index.ts
-index 1a89b76..e5158a5 100644
+index 3c3c13589f..b1b5126dab 100644
 --- a/packages/session/session-persistence-jsonl/src/index.ts
 +++ b/packages/session/session-persistence-jsonl/src/index.ts
 @@ -14,7 +14,7 @@ import {
@@ -1996,7 +1707,7 @@ index 1a89b76..e5158a5 100644
  import { dirname, join, resolve } from 'node:path'
  import { performance } from 'node:perf_hooks'
  import { scheduler } from 'node:timers/promises'
-@@ -33,7 +33,7 @@ import {
+@@ -34,7 +34,7 @@ import {
  } from '@deepseek-ai/dsh-session-persistence'
  import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
  import { SessionWriteLease } from './lease.ts'
@@ -2005,7 +1716,7 @@ index 1a89b76..e5158a5 100644
  import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
  import {
    assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath, logPath, logSuffix,
-@@ -43,7 +43,7 @@ import {
+@@ -44,7 +44,7 @@ import {
  import {
    compressZstdFrame, createZstdFrameDecoder, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames,
  } from './zstd.ts'
@@ -2014,7 +1725,7 @@ index 1a89b76..e5158a5 100644
  import { verifyCurrentGenerationInWorker } from './migration-verifier.ts'
  import { prepareCatalogFacts } from './catalog-migration.ts'
  import {
-@@ -264,6 +264,8 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -310,6 +310,8 @@ class JsonlSessionPersistence extends SessionPersistence {
     * revision guard.
     */
    private readonly coldLogMemo = new Map<SessionId, StoredLog>()
@@ -2023,7 +1734,7 @@ index 1a89b76..e5158a5 100644
    /** One joinable decode/migration operation per selected historical Session file revision. */
    private readonly migrationPreparations = new Map<SessionId, MigrationPreparation>()
  
-@@ -380,6 +382,7 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -426,6 +428,7 @@ class JsonlSessionPersistence extends SessionPersistence {
        const resolved = await this.findLog(id, options?.signal)
        if (resolved === undefined) throw new SessionPersistenceNotFoundError(id)
        lease = await this.acquireLease(id, undefined, dirname(resolved.currentPath))
@@ -2031,7 +1742,7 @@ index 1a89b76..e5158a5 100644
        const prepared = await this.requireStoredLog(id, options?.signal)
        options?.signal?.throwIfAborted()
        let stored: CurrentStoredLog
-@@ -411,6 +414,7 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -457,6 +460,7 @@ class JsonlSessionPersistence extends SessionPersistence {
          releaseFailure = raw instanceof Error ? raw : new Error(String(raw))
        }
        this.tracker.releaseClaim(id)
@@ -2039,7 +1750,7 @@ index 1a89b76..e5158a5 100644
        if (releaseFailure !== undefined) {
          throw new AggregateError([failure, releaseFailure], `session "${id}": write open failed and its lock release failed`)
        }
-@@ -671,7 +675,7 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -724,7 +728,7 @@ class JsonlSessionPersistence extends SessionPersistence {
      }
      const meta = this.currentHeader(prepared.artifact.header)
      assertStoredId(id, meta)
@@ -2048,7 +1759,7 @@ index 1a89b76..e5158a5 100644
      validateStoredEvents(meta, events, { kind: 'jsonl', path: selected.sourcePath })
      const stored: PreparedStoredLog = {
        status: 'prepared',
-@@ -881,6 +885,28 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -934,6 +938,28 @@ class JsonlSessionPersistence extends SessionPersistence {
      this.tracker.materialized(header.id)
    }
  
@@ -2077,7 +1788,7 @@ index 1a89b76..e5158a5 100644
    /**
     * Truncate a torn physical tail durably before this session's first new append.
     * @param header - the session's stored header.
-@@ -908,6 +934,7 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -961,6 +987,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     */
    releaseHandle(handle: JsonlSessionHandle, materialized: boolean): void {
      this.tracker.release(handle, materialized)
@@ -2085,7 +1796,7 @@ index 1a89b76..e5158a5 100644
    }
  
    /**
-@@ -932,7 +959,9 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -985,7 +1012,9 @@ class JsonlSessionPersistence extends SessionPersistence {
      // Refuse an opposite-encoding artifact before the lock's mkdir publishes
      // the session directory — the last moment the directory can be absent.
      await this.rejectOppositeArtifact(header.cwd, header.id)
@@ -2096,7 +1807,7 @@ index 1a89b76..e5158a5 100644
    }
  
    /** Decode complete frames and retain complete JSONL records from a torn final frame. */
-@@ -1323,7 +1352,8 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -1410,7 +1439,8 @@ class JsonlSessionPersistence extends SessionPersistence {
     */
    private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
      const content = await this.encodeEventBatch(events)
@@ -2106,7 +1817,7 @@ index 1a89b76..e5158a5 100644
      const handle = await open(path, 'a')
      let closed = false
      const closeAppendHandle = async (): Promise<void> => {
-@@ -1363,7 +1393,8 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -1450,7 +1480,8 @@ class JsonlSessionPersistence extends SessionPersistence {
  
    /** Truncate the log file to `offset` bytes and fsync (discard the crash tail). */
    private async repair(meta: SessionHeader, offset: number): Promise<void> {
@@ -2116,7 +1827,7 @@ index 1a89b76..e5158a5 100644
      await truncate(path, offset)
      const handle = await open(path, 'r+')
      try {
-@@ -1524,7 +1555,9 @@ class JsonlSessionPersistence extends SessionPersistence {
+@@ -1611,7 +1642,9 @@ class JsonlSessionPersistence extends SessionPersistence {
      }
      let expectedPath: string
      try {
@@ -2128,7 +1839,7 @@ index 1a89b76..e5158a5 100644
          meta.cwd,
          meta.id,
 diff --git a/packages/session/session-persistence-jsonl/src/storage.ts b/packages/session/session-persistence-jsonl/src/storage.ts
-index 029bb48..146ba5e 100644
+index 197dcbc270..d452dcb0d2 100644
 --- a/packages/session/session-persistence-jsonl/src/storage.ts
 +++ b/packages/session/session-persistence-jsonl/src/storage.ts
 @@ -46,6 +46,8 @@ export interface JsonlHandleStorage {
@@ -2202,20 +1913,20 @@ index 029bb48..146ba5e 100644
    }
  
    /**
-@@ -545,6 +569,11 @@ export class JsonlBackendTracker {
-         await writer.flush()
-       })()
-     })
-+    ctx.on('session/relocate', async (session, header) => {
-+      const writer = this.writers.get(session.id)
-+      if (!writer || header.cwd === undefined) throw new Error('session relocation has no active writer')
-+      await writer.relocate(header.cwd)
-+    })
-     ctx.on('session/disposed', (session: Session) => {
-       const writer = this.writers.get(session.id)
-       if (writer === null || writer === undefined) return
+@@ -559,6 +583,11 @@ export class JsonlBackendTracker {
+           await writer.flush()
+         })()
+       })
++      yield ctx.on('session/relocate', async (session, header) => {
++        const writer = writers.get(session.id)
++        if (!writer || header.cwd === undefined) throw new Error('session relocation has no active writer')
++        await writer.relocate(header.cwd)
++      })
+       yield ctx.on('session/disposed', (session: Session) => {
+         const writer = writers.get(session.id)
+         if (writer === null || writer === undefined) return
 diff --git a/packages/session/session-persistence-jsonl/src/win32.ts b/packages/session/session-persistence-jsonl/src/win32.ts
-index 2369f47..848397a 100644
+index 2369f474f2..848397a1f2 100644
 --- a/packages/session/session-persistence-jsonl/src/win32.ts
 +++ b/packages/session/session-persistence-jsonl/src/win32.ts
 @@ -137,6 +137,16 @@ export async function publishNewFileWin32(existing: string, replacement: string)
@@ -2235,32 +1946,8 @@ index 2369f47..848397a 100644
  /**
   * Acquire the session write lock as a named kernel semaphore (count 1) whose
   * name is derived from the canonical lock path. A kernel object never touches
-diff --git a/packages/session/session-persistence/README.md b/packages/session/session-persistence/README.md
-index 67ace6d..73a622e 100644
---- a/packages/session/session-persistence/README.md
-+++ b/packages/session/session-persistence/README.md
-@@ -162,3 +162,7 @@ These limits define where the seam's guarantees stop. They are current package c
- None.
- 
- </details>
-+
-+## Directory continuation
-+
-+A provider may implement `SessionHandle.relocate(cwd)` to durably replace current-directory metadata under its existing writer ownership. The operation preserves events and session identity. Providers without this capability reject workspace relocation; ordinary read/append/flush semantics are unchanged.
-diff --git a/packages/session/session-persistence/README.zh.md b/packages/session/session-persistence/README.zh.md
-index f2f5e5f..ecaea8d 100644
---- a/packages/session/session-persistence/README.zh.md
-+++ b/packages/session/session-persistence/README.zh.md
-@@ -162,3 +162,7 @@ seam 不添加提示词或 schema。恢复会将已存储的表层事件还原
- 无。
- 
- </details>
-+
-+## 目录接续
-+
-+提供方可实现 `SessionHandle.relocate(cwd)`，在原写入权下持久替换当前目录元数据，保留事件和会话身份。未实现此能力的提供方不支持工作区迁移；普通读取、追加和刷盘语义不变。
 diff --git a/packages/session/session-persistence/src/handle.ts b/packages/session/session-persistence/src/handle.ts
-index b6a194c..e0f7c69 100644
+index b6a194c87d..e0f7c69710 100644
 --- a/packages/session/session-persistence/src/handle.ts
 +++ b/packages/session/session-persistence/src/handle.ts
 @@ -61,6 +61,10 @@ export interface SessionHandle extends AsyncDisposable {
@@ -2274,28 +1961,8 @@ index b6a194c..e0f7c69 100644
    /**
     * Exact fork-inherited prefix length stored with the log; `0` when
     * `header.isSeeded` is false. Storage metadata paired with the header for
-diff --git a/packages/shell/shell/README.md b/packages/shell/shell/README.md
-index b72440a..8a3c1c5 100644
---- a/packages/shell/shell/README.md
-+++ b/packages/shell/shell/README.md
-@@ -145,3 +145,5 @@ These limits define what the seam does not provide. They are current package con
- None.
- 
- </details>
-+
-+Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
-diff --git a/packages/shell/shell/README.zh.md b/packages/shell/shell/README.zh.md
-index 272ffc8..6259e4a 100644
---- a/packages/shell/shell/README.zh.md
-+++ b/packages/shell/shell/README.zh.md
-@@ -145,3 +145,5 @@ seam 本身不是执行器：每个组合只挂载一个提供方，工具即可
- None.
- 
- </details>
-+
-+每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
 diff --git a/packages/shell/shell/src/index.ts b/packages/shell/shell/src/index.ts
-index 939aff2..1957e83 100644
+index 939aff271c..1957e833b7 100644
 --- a/packages/shell/shell/src/index.ts
 +++ b/packages/shell/shell/src/index.ts
 @@ -24,7 +24,7 @@ export type {
@@ -2308,7 +1975,7 @@ index 939aff2..1957e83 100644
  
  declare module '@deepseek-ai/cordis' {
 diff --git a/packages/shell/shell/src/render.ts b/packages/shell/shell/src/render.ts
-index 8fc924e..a08ad9b 100644
+index 8fc924ef63..a08ad9b8cb 100644
 --- a/packages/shell/shell/src/render.ts
 +++ b/packages/shell/shell/src/render.ts
 @@ -10,9 +10,18 @@
@@ -2352,36 +2019,8 @@ index 8fc924e..a08ad9b 100644
    const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(text)
    if (signal?.[1] !== undefined) return { body: text.slice(0, signal.index), signal: signal[1] }
    const exit = /\n\[exit code: (\d+)\]$/.exec(text)
-diff --git a/packages/shell/tool-bash/README.md b/packages/shell/tool-bash/README.md
-index 357fe0a..70cf67d 100644
---- a/packages/shell/tool-bash/README.md
-+++ b/packages/shell/tool-bash/README.md
-@@ -224,3 +224,9 @@ These limits define when the tool is a poor fit or needs special care. They are
- None.
- 
- </details>
-+
-+## Process outcomes
-+
-+Foreground results persist shellExit metadata independently of stdout: exit code, signal, timeout, abort and external stop facts. A nonzero command exit remains a completed tool invocation, while the UI displays the process failure explicitly.
-+
-+Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
-diff --git a/packages/shell/tool-bash/README.zh.md b/packages/shell/tool-bash/README.zh.md
-index 578e613..2039ef8 100644
---- a/packages/shell/tool-bash/README.zh.md
-+++ b/packages/shell/tool-bash/README.zh.md
-@@ -224,3 +224,9 @@ renderer 输出依数据而定的 stdout 尾部，再输出可选的 `[stderr]`
- 无。
- 
- </details>
-+
-+## 进程结果
-+
-+前台结果把退出码、信号、超时、取消和外部停止事实作为 shellExit 元数据保存，与 stdout 分开。非零命令退出仍属于已返回的工具调用，界面明确显示进程失败。
-+
-+每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
 diff --git a/packages/shell/tool-bash/src/index.ts b/packages/shell/tool-bash/src/index.ts
-index 8226ad2..90e8b4e 100644
+index 39a2a20369..db9bbb2a68 100644
 --- a/packages/shell/tool-bash/src/index.ts
 +++ b/packages/shell/tool-bash/src/index.ts
 @@ -25,7 +25,7 @@ import type {} from '@deepseek-ai/dsh-shell-env'
@@ -2393,17 +2032,27 @@ index 8226ad2..90e8b4e 100644
  import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
  import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
  import { parseExitStatus, renderJobRead, renderPromoted, renderResult } from './render.ts'
-@@ -468,6 +468,8 @@ export function apply(ctx: Context, config: Config = {}): void {
+@@ -465,6 +465,10 @@ export function apply(ctx: Context, config: Config = {}): void {
              },
            ],
          },
-+        presentationMeta: (_args, value) => value.kind === 'foreground'
-+          ? {shellExit: shellProcessOutcome(value)} : null,
++        presentationMeta: (_args, value) => {
++          const meta = { cwd: value.cwd }
++          return value.kind === 'foreground' ? { ...meta, shellExit: shellProcessOutcome(value) } : meta
++        },
          render: (_args, value) => [{
            type: 'text',
            text: value.kind === 'background'
+@@ -473,7 +477,6 @@ export function apply(ctx: Context, config: Config = {}): void {
+               ? renderPromoted(value)
+               : renderResult(value as { kind: 'foreground' } & ShellRunResult, escalationModes),
+         }],
+-        presentationMeta: (_args, value) => ({ cwd: value.cwd }),
+       },
+       async execute(args: BashToolArgs, exec) {
+         // Description is display metadata; workdir defaults to the caller's session.
 diff --git a/packages/shell/tool-bash/src/render.ts b/packages/shell/tool-bash/src/render.ts
-index 55e7609..8ffc204 100644
+index 55e7609114..8ffc204402 100644
 --- a/packages/shell/tool-bash/src/render.ts
 +++ b/packages/shell/tool-bash/src/render.ts
 @@ -4,6 +4,7 @@
@@ -2423,36 +2072,8 @@ index 55e7609..8ffc204 100644
  
    if (!body.endsWith('\n')) body += '\n'
    return body + markers.join('\n')
-diff --git a/packages/shell/tool-pwsh/README.md b/packages/shell/tool-pwsh/README.md
-index 14b9053..ab3d381 100644
---- a/packages/shell/tool-pwsh/README.md
-+++ b/packages/shell/tool-pwsh/README.md
-@@ -216,3 +216,9 @@ These limits define when the tool is a poor fit or needs special care. They are
- None.
- 
- </details>
-+
-+## Process outcomes
-+
-+Foreground results persist shellExit metadata independently of stdout: exit code, signal, timeout, abort and external stop facts. A nonzero command exit remains a completed tool invocation, while the UI displays the process failure explicitly.
-+
-+Every settled foreground result ends with a process-result JSON record, including successful exits. This retained record keeps nested calls independent of stdout text that resembles an exit marker; native calls also retain the same facts as metadata.
-diff --git a/packages/shell/tool-pwsh/README.zh.md b/packages/shell/tool-pwsh/README.zh.md
-index 54a8770..23d9168 100644
---- a/packages/shell/tool-pwsh/README.zh.md
-+++ b/packages/shell/tool-pwsh/README.zh.md
-@@ -216,3 +216,9 @@ Non-zero exits are reported as `[exit code: N]` markers; investigate failures be
- 无。
- 
- </details>
-+
-+## 进程结果
-+
-+前台结果把退出码、信号、超时、取消和外部停止事实作为 shellExit 元数据保存，与 stdout 分开。非零命令退出仍属于已返回的工具调用，界面明确显示进程失败。
-+
-+每个已结束的前台结果都以 process-result JSON 记录结尾，包括成功退出。该记录使嵌套调用不依赖 stdout 中类似退出标记的文本；原生调用还将同一事实保存为元数据。
 diff --git a/packages/shell/tool-pwsh/src/index.ts b/packages/shell/tool-pwsh/src/index.ts
-index cbebd6d..3252ee5 100644
+index 5d08a54151..8066d1bff7 100644
 --- a/packages/shell/tool-pwsh/src/index.ts
 +++ b/packages/shell/tool-pwsh/src/index.ts
 @@ -35,7 +35,7 @@ import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandb
@@ -2464,17 +2085,27 @@ index cbebd6d..3252ee5 100644
  import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
  import { renderPwshJobRead, renderPwshPromoted, renderPwshResult } from './render.ts'
  import type { RenderablePwshResult } from './render.ts'
-@@ -485,6 +485,8 @@ export function apply(ctx: Context, config: Config = {}): void {
+@@ -490,6 +490,10 @@ export function apply(ctx: Context, config: Config = {}): void {
            ],
          },
          /* jscpd:ignore-end */
-+        presentationMeta: (_args, value) => value.kind === 'foreground'
-+          ? {shellExit: shellProcessOutcome(value)} : null,
++        presentationMeta: (_args, value) => {
++          const meta = { cwd: value.cwd }
++          return value.kind === 'foreground' ? { ...meta, shellExit: shellProcessOutcome(value) } : meta
++        },
          render: (_args, value) => [{
            type: 'text',
            text: value.kind === 'background'
+@@ -498,7 +502,6 @@ export function apply(ctx: Context, config: Config = {}): void {
+               ? renderPwshPromoted(value)
+               : renderPwshResult(value as RenderablePwshResult, escalationModes),
+         }],
+-        presentationMeta: (_args, value) => ({ cwd: value.cwd }),
+       },
+       /* jscpd:ignore-start -- the execute path mirrors dsh-tool-bash's by design (see the pwsh-tool-and-executor Agent Note). */
+       async execute(args: PwshToolArgs, exec) {
 diff --git a/packages/shell/tool-pwsh/src/render.ts b/packages/shell/tool-pwsh/src/render.ts
-index f15bd1a..2e84d2e 100644
+index f15bd1abfe..2e84d2e991 100644
 --- a/packages/shell/tool-pwsh/src/render.ts
 +++ b/packages/shell/tool-pwsh/src/render.ts
 @@ -10,6 +10,7 @@
@@ -2503,299 +2134,8 @@ index f15bd1a..2e84d2e 100644
  
    if (!body.endsWith('\n')) body += '\n'
    return body + markers.join('\n')
-diff --git a/packages/util/http-proxy/README.md b/packages/util/http-proxy/README.md
-index 9b09843..ac25fe6 100644
---- a/packages/util/http-proxy/README.md
-+++ b/packages/util/http-proxy/README.md
-@@ -1,5 +1,5 @@
- ---
--description: "Outbound HTTP proxy support for the harness: how one policy resolved from the launch environment reaches every request Node's fetch would otherwise send direct."
-+description: "One outbound route for DSH HTTP requests, inherited from explicit environment settings or Windows."
- kind: "package-reference"
- ---
- 
-@@ -7,118 +7,34 @@ kind: "package-reference"
- 
- English | [中文](README.zh.md)
- 
--## Summary
-+This library installs the process-wide dispatcher used by Node fetch, model adapters, web search, and HTTP consumers. It does not expose an agent tool or edit network settings. Windows users without explicit proxy environment settings inherit the current user's system configuration. Other platforms retain environment-based routing.
- 
--Use this package to apply one outbound HTTP proxy policy to Harness requests that use Node's built-in `fetch`, including LLM, web-search, and HTTP MCP traffic. The launcher reads standard proxy environment variables once, and ordinary `fetch` callers require no extra imports or changes. Local loopback traffic stays direct, while unsupported proxy URLs are reported and skipped for the affected scheme. Public helpers let callers route transports with their own proxy settings, prepare child-process environments, or clear proxy variables for isolated replays.
-+## Routing and lifetime
- 
--## Table of Contents
-+The launcher calls installProxyFromEnvironment once. Nonempty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY or NO_PROXY (including their lowercase spellings) explicitly select the established environment policy. Environment precedence and validation stay with the launcher and policy module; a project .env cannot choose proxy settings.
- 
--- [Use this package](#use-this-package)
--- [Understand the implementation](#understand-the-implementation)
--- [Further Exploration](#further-exploration)
--- [Model Experience](#model-experience)
--- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
--- [Dev Note](#dev-note)
-+When no explicit proxy setting exists on Windows, every new request reads the system's current connection settings. Manual HTTP/HTTPS proxies, scheme-specific entries and Windows bypass patterns use one resolver. PAC/WPAD is evaluated by WinHTTP on an owned worker, outside the Host event loop. Automatic discovery finding no PAC uses the system's manual fallback; an invalid or unreachable explicit PAC reports failure. Changing system settings affects later requests without restarting the Host. Connections already selected for a request retain their route.
- 
-------
-+proxyRouteFor(url, signal) is asynchronous. Its proxied result includes the dispatcher captured for that specific route. A caller such as web-fetch-http must await it and use that dispatcher, rather than selecting the route again after checking the URL. proxyConfiguration() describes the active source without duplicating resolution in a UI. Loopback always stays direct.
- 
--<a id="use-this-package"></a>
--## Use this package
-+Ordinary fetch callers need no per-provider proxy code. The global dispatcher consults the same resolver. No failed request is automatically retried directly or on a different proxy. System settings are not copied into process environment variables: a descendant DSH reads the system itself rather than inheriting a stale port. Explicit environment mode retains proxyEnvironmentForChild's existing overlay semantics.
- 
--Nothing to mount, and nothing to configure. The `dsh` launcher resolves and installs the policy for every profile before the first plugin loads, so a user who exports `HTTPS_PROXY` is proxied everywhere. This is a library rather than a plugin because transport policy has one answer per process: there is no second implementation to swap and no scope narrower than the process to give one.
-+## Scope and diagnostics
- 
--### Writing a new outbound call
-+Houdini and other embedding applications should consume these facts, not maintain their own proxy profiles or provider/domain rules. API addresses and credentials remain service configuration; successful network transport does not prove authentication, model availability or native search support.
- 
--Plain `fetch()` is proxied, and so is any SDK that reaches `globalThis.fetch` — the MCP HTTP transport and the pi-ai provider stack both do. Verify each SDK's actual transport; exceptions belong under [Known Limitations and Deferred Work](#known-limitations-and-deferred-work).
-+Windows SOCKS-only settings fail explicitly. Authenticated enterprise proxies, private certificate authorities and PAC multi-proxy failover are not fully qualified. Non-Windows system-proxy integration is not implemented. An arbitrary child program, model-authored script or transport that does not use this dispatcher is not covered; model tools should use the Host's native network capabilities. Telemetry's existing direct transport is unchanged.
- 
--| You are writing | Use |
--|---|---|
--| A plain request, or an SDK that reaches `globalThis.fetch` | nothing — the global dispatcher already routes it |
--| A call that must branch on whether this request is proxied | `proxyRouteFor(url)` |
--| An SDK that takes a proxy URL of its own | `proxyRouteFor(url)`, and pass `route.proxy` |
--| A spawn whose environment you build yourself | apply `proxyEnvironmentForChild()` to it (`undefined` means remove) |
--| A harness that must reach its own fixture server | apply `clearedProxyEnv()` to the spawn |
--
--`proxyRouteFor` answers with the transport that answer assumed, not just the answer: its proxied arm carries the dispatcher already routing by this policy. A caller that read the policy and then built its own transport could have an unmount land between the two and send the request somewhere its branch never cleared.
--
--Constructing `new Agent(...)` and passing it as `dispatcher` overrides the global one and silently bypasses the proxy. `verify-no-bare-dispatcher` rejects that outside this package. One call site legitimately owns its transport — `web-fetch-http` pins a request to addresses it validated, which is per-request state a process-wide dispatcher cannot hold — and says so with a `proxy-exempt:` comment on the line.
--
--That gate cannot see inside an SDK, so each outbound call site carries an `egress.spec.ts` that drives its actual transport through a fake proxy and checks the observed route. Every new outbound call site must include that transport test. Telemetry asserts its direct-route exception. These tests detect dependency changes that alter routing without changing the call site.
--
--### What the policy reads
--
--`http_proxy`, `https_proxy`, `no_proxy`, and `all_proxy`, lowercase first and uppercase as the fallback, with a blank value treated as unset. `ALL_PROXY` backs both schemes, and HTTPS falls back to the HTTP proxy last — neither Node nor undici derives the first of these on its own. Values come from the launcher's snapshot: an exported variable first, then `$DSH_HOME/.env`. A project's own `.env` cannot carry these names — that file arrives with a clone, and the launcher refuses to start rather than let a repository choose where the harness sends its traffic.
--
--Loopback is always bypassed — `localhost`, the whole `127.0.0.0/8` range, `::1`, `0.0.0.0`, and the IPv4-mapped spellings of those. The harness's own Web UI, Connection transport, and every local test server would otherwise route through the proxy and loop. The published bypass list names only the four literal entries an environment reader can match; `proxyForUrl` recognises the range itself, because a list entry cannot express one.
--
--### Failures
--
--A proxy value the package cannot use — a SOCKS or PAC URL, an unparseable string, an unsupported scheme — is reported and skipped, and that scheme connects directly. The variable may have been exported for other tools, so it must not stop the agent from starting.
-+Direct public-web requests retain DNS validation and address pinning. Proxied requests let the configured proxy resolve the destination; an explicit non-public IP literal is still rejected by the web fetcher. In a Fake-IP/TUN environment, application-direct is not equivalent to physical-network-direct.
- 
-------
-+## Source and verification
- 
--<a id="understand-the-implementation"></a>
--## Understand the implementation
--
--### Design philosophy
--
--**One resolution, one matcher.** `proxyForUrl()` and the installed dispatcher must never disagree about a URL, or `dsh-web-fetch-http` would pin a connection the dispatcher meant to tunnel. The dispatcher is therefore an `Agent` whose per-origin `factory` calls `proxyForUrl()` itself, so there is no second parser to drift from the first. undici's `EnvHttpProxyAgent` cannot serve here: with no `HTTPS_PROXY` present it reuses the HTTP proxy for `https:`, which would tunnel a scheme this package keeps direct after refusing the URL the user named for it.
--
--**A child inherits the user's own values, and the resolved policy for what they left unset.** A scheme the user named in either casing reaches a child exactly as they wrote it, so a SOCKS proxy `curl` uses is never replaced by an HTTP one named for another scheme. A scheme they named in neither casing carries the resolved value instead, because otherwise the child's routing diverges from its parent's: Node's `NODE_USE_ENV_PROXY` does not read `ALL_PROXY`. The bypass list is always the resolved one — it only ever adds the loopback entries, so nothing the user wrote is lost. The cost of one routing answer for parent and child alike is that `curl` also sees the `https:` proxy this package derives from the HTTP one. One exception protects the child itself: when a value it receives is one this package refused — a SOCKS URL kept for `curl` — the `NODE_USE_ENV_PROXY` flag is withheld, because Node parses `HTTP_PROXY` and `HTTPS_PROXY` under that flag before running the program and exits on such a value. A child Node then connects directly, as this process already reported for that scheme, instead of failing to start.
--
--### Source map
--
--| File | Holds |
-+| Source | Responsibility |
- |---|---|
--| `src/policy.ts` | Resolution and bypass matching; a diagnostic names the variable, never its value. Imports no transport, so it stays loadable where undici is absent. |
--| `src/install.ts` | The global dispatcher, the active-policy record, the route, and the child environment. Imports undici dynamically. |
--| `src/index.ts` | The package face: four functions and one type. |
--
--### Bypass matching
--
--An entry names a host and matches it together with every subdomain under it: `NO_PROXY=example.com` also bypasses `api.example.com`. A leading `.` or `*.` is accepted and means the same thing. An entry may carry a `:port`, and `*` bypasses everything. A bracketed or bare IPv6 literal matches either way — a bare `::1` is *not* read as host `:` port `1`, which is how undici's own matcher fails and why the resolved list carries both `::1` and `[::1]`. CIDR is not matched: an operating system's bypass list often carries `10.0.0.0/8`, which has to be rewritten as suffixes.
--
-------
--
--<a id="further-exploration"></a>
--## Further Exploration
--
--- [Network proxy guide](../../../docs/user/guide/network-proxy.md) — what to export, and why a browser is proxied when a terminal is not.
--- [`dsh-web-fetch-http`](../../web/web-fetch-http/README.md) — the one consumer whose safety rules change under a proxy.
--
-------
--
--<a id="model-experience"></a>
--## Model Experience
--
--None, as transport policy only: it changes how bytes reach the network and registers no prompt, schema, or result text.
--
--#### KV Cache effect
--
--No direct invalidation: the package contributes no request tokens and never mutates a request prefix, so provider cache reuse is unaffected.
--
--## Known Limitations and Deferred Work
--
--<a id="known-limitations-and-deferred-work"></a>
--
--
--These limits define when the package is a poor fit. They are current package constraints.
--
--- **No SOCKS, PAC, or operating-system proxy detection** — only `http(s)://` proxy URLs from the environment. A macOS or Windows system-proxy setting is not read, so a user who only toggled it in a proxy application must still export the variables; a SOCKS URL is reported and that scheme stays direct rather than borrowing another scheme's proxy.
--- **No custom certificate authority** — a TLS-intercepting corporate proxy needs `NODE_EXTRA_CA_CERTS` set on the process before launch, which this package neither sets nor validates.
--- **A spawned child honors the policy only on a new enough runtime, and only when every value it inherits is one Node accepts** — it reads the published environment through Node's `NODE_USE_ENV_PROXY` (22.21+, 24+), and the engines range admits 22.19 and 22.20, where such a child stays direct. A user whose environment also names a SOCKS or otherwise refused proxy leaves every child Node direct: the flag is withheld so the child can start at all. A child also matches bypass entries with Node's own `NO_PROXY` rules, which differ from this package's in their separators and IPv4-range support. Nothing in this process depends on a Node version: every in-process request reaches the global dispatcher.
--- **Telemetry is direct by design** — the OTLP exporter posts through `node:http`, which no global dispatcher reaches. Routing it would need either an `http.Agent` whose `proxyEnv` option post-dates the lowest supported Node, or the SDK's `fetch` transport, which has no compression while the shipped profile enables gzip. Telemetry is the one channel whose loss costs the user nothing, so it stays where it was; `DSH_TELEMETRY_MODE=DISABLED` turns it off.
--- **Model-authored programs receive no proxy settings** — the Node ptc-runtime process and workflow worker do not inherit a proxy URL that may contain `user:password`. Their direct requests need their own configuration and remain subject to the execution sandbox.
--- **The regression gate sees source, not dependencies** — `verify-no-bare-dispatcher` parses `packages/*/*/src` and `apps/*/src`; tests, scripts, and the internals of a third-party SDK are outside it. That is why every outbound call site also carries an `egress.spec.ts`.
--
--<a id="dev-note"></a>
--### Dev Note
--
--<details>
--<summary>Working context for maintainers — click to expand</summary>
--
--Reaching Node's built-in `fetch` from a userland undici relies on both writing the legacy `Symbol.for('undici.globalDispatcher.1')` slot. That is an implicit cross-version coupling, not a contract — see [corepack#834](https://github.com/nodejs/corepack/issues/834) for it breaking. `tests/install.spec.ts` asserts a real request reaches a loopback proxy, so a version bump that breaks the coupling fails there rather than in the field.
--
--</details>
-+| src/policy.ts | Existing explicit environment resolution and NO_PROXY matching |
-+| src/install.ts | Dispatcher lifecycle, per-request selection and source facts |
-+| src/windows-native.ts | Read current-user Windows settings; WinHTTP PAC evaluation and allocation cleanup |
-+| src/windows.ts | Windows proxy/bypass interpretation and owned worker lifetime |
-+| src/windows-worker.ts | Blocking OS automatic-proxy evaluation away from the Host event loop |
- 
--**Runtime invariant:** No companion is published. The one piece of mutable state here — the active policy — is asserted against the dispatcher it installs by unit tests that dispose the registration and observe a real loopback proxy.
-+The integration checks exercise actual dispatch through local proxies, same-process setting changes, captured-route stability, explicit overrides, loopback, public-web protections, native PAC and cancellation. They inject settings snapshots instead of changing the current user's registry. Exact packaged-runtime verification belongs to the consuming distribution; source compilation alone does not establish that a running Host loaded the change.
-diff --git a/packages/util/http-proxy/README.zh.md b/packages/util/http-proxy/README.zh.md
-index 70b8142..979163f 100644
---- a/packages/util/http-proxy/README.zh.md
-+++ b/packages/util/http-proxy/README.zh.md
-@@ -1,5 +1,5 @@
- ---
--description: "Harness 的出站 HTTP 代理支持：从启动环境解析出的一份策略，如何覆盖到 Node fetch 本来会直连的每一个请求。"
-+description: "DSH HTTP请求使用统一路线，继承显式环境配置或Windows系统设置。"
- kind: "package-reference"
- ---
- 
-@@ -7,118 +7,28 @@ kind: "package-reference"
- 
- [English](README.md) | 中文
- 
--## 概述
-+本库安装Node fetch、模型适配器、网页搜索及HTTP调用共用的进程dispatcher，不提供agent工具，也不编辑网络设置。Windows下没有显式代理环境配置时，使用当前用户的系统设置；其他平台保留原有环境模式。
- 
--使用本包可为采用 Node 内置 `fetch` 的 Harness 请求应用一份出站 HTTP 代理策略，包括 LLM（大语言模型）、web 搜索与 HTTP MCP 流量。启动器只读取一次标准代理环境变量，普通 `fetch` 调用方无需额外引入或改动。loopback 流量保持直连；不受支持的代理 URL 会被报告，并针对受影响的协议跳过。公共辅助函数可让调用方路由采用自有代理设置的传输、准备子进程环境，或为隔离回放清除代理变量。
-+## 选路与生命周期
- 
--## 目录
-+启动器调用一次installProxyFromEnvironment。非空HTTP_PROXY、HTTPS_PROXY、ALL_PROXY或NO_PROXY（包括小写形式）显式选择原有环境策略，优先级和校验仍由启动器及policy模块负责；项目.env不能选择代理。
- 
--- [使用本包](#use-this-package)
--- [理解实现](#understand-the-implementation)
--- [进一步探索](#further-exploration)
--- [模型体验](#model-experience)
--- [已知限制与延期工作](#known-limitations-and-deferred-work)
--- [开发备注](#dev-note)
-+Windows系统模式中，每个新请求读取当前连接设置。手动HTTP/HTTPS代理、分协议地址及系统例外共用一个解析器。PAC/WPAD由专用worker调用WinHTTP，不阻塞Host事件循环。自动发现没有找到PAC时使用系统手动后备配置，显式PAC无效或无法下载时报告失败。系统变化影响后续请求，已选定的请求不换路，不需重启Host。
- 
-------
-+proxyRouteFor(url, signal)异步返回本次路线；代理结果同时携带已经选定的dispatcher。web-fetch-http等调用者必须await并使用该dispatcher，不能校验地址后再选一次路线。proxyConfiguration()提供实际来源，界面不重复解释配置。Loopback始终直连。
- 
--<a id="use-this-package"></a>
--## 使用本包
-+普通fetch不需要每个供应商分别配置代理，全局dispatcher使用同一解析器。失败请求不自动切到直连或其他代理。系统设置不写进进程环境，DSH子实例自行继承系统，避免固定旧端口；显式环境模式保留proxyEnvironmentForChild的原有语义。
- 
--无需挂载，也无需配置。`dsh` 启动器会在第一个插件加载之前，为每个 profile 解析并安装策略，因此导出了 `HTTPS_PROXY` 的用户在所有位置都会走代理。本包是库而非插件，因为传输策略每个进程只有一个答案：没有第二个实现可替换，也没有比进程更窄的作用域可赋予。
-+## 范围与诊断
- 
--### 编写新的出站调用
-+Houdini等宿主只消费实际来源和错误，不维护另一套代理档案或供应商/域名分流。API地址与凭据仍是服务配置，网络连通不证明鉴权、模型可用或原生搜索支持。
- 
--普通 `fetch()` 会走代理，任何使用 `globalThis.fetch` 的 SDK 也一样——MCP HTTP 传输与 pi-ai 提供方栈都使用它。应验证每个 SDK 的实际传输；例外见[已知限制与延后工作](#known-limitations-and-deferred-work)。
-+Windows SOCKS-only明确报不支持。企业认证代理、私有证书和PAC多代理故障切换尚未完整验证。未实现其他平台原生系统代理。任意子程序、模型自写脚本及不使用该dispatcher的传输不属于保证范围，联网工具应使用Host原生能力；遥测原有直连行为保持。
- 
--| 你要写的东西 | 使用 |
--|---|---|
--| 普通请求，或最终落到 `globalThis.fetch` 的 SDK | 什么都不用——全局 dispatcher 已经在路由它 |
--| 需要按“这次请求是否走代理”分支的调用 | `proxyRouteFor(url)` |
--| 接受自有代理 URL 的 SDK | `proxyRouteFor(url)`，把 `route.proxy` 传进去 |
--| 由你自己构造环境的 spawn | 把 `proxyEnvironmentForChild()` 应用到该 spawn（`undefined` 表示删除） |
--| 必须连到自带 fixture（测试前置数据）服务器的 harness | 把 `clearedProxyEnv()` 应用到该 spawn |
-+公开网页直连保留DNS校验和地址固定，代理路线由用户配置的代理解析目标，显式非公网IP字面地址仍被网页抓取器拒绝。Fake-IP/TUN环境下，应用直连不等于物理网络直连。
- 
--`proxyRouteFor` 给出的不只是答案，还有该答案所假定的传输：走代理的那一支携带着此刻正按该策略路由的 dispatcher。若调用方先读策略、再自建传输，卸载就可能落在两次读取之间，把请求发往其分支从未放行的去处。
-+## 源码与验证
- 
--构造 `new Agent(...)` 再作为 `dispatcher` 传入会覆盖全局 dispatcher，从而静默绕开代理。`verify-no-bare-dispatcher` 会在本包之外拒绝该写法。有一处调用点确实自有传输——`web-fetch-http` 会把请求钉在它已校验过的地址上，而这是进程级 dispatcher 无法承载的单次请求状态——它在该行用 `proxy-exempt:` 注释说明。
-+policy.ts维护显式环境规则；install.ts维护dispatcher与来源事实；windows-native.ts读取系统设置并释放原生资源；windows.ts解释系统返回并管理worker；windows-worker.ts隔离可能阻塞的自动代理解析。
- 
--该门禁看不进 SDK 内部，因此每个出网点都配有 `egress.spec.ts`，通过假代理驱动实际传输并检查观察到的路由。每个新的出网点必须包含该传输测试。遥测断言其直连例外。这些测试可发现调用点不变但依赖变更改变路由的情况。
--
--### 策略读取哪些值
--
--`http_proxy`、`https_proxy`、`no_proxy` 与 `all_proxy`，小写优先、大写兜底，空值视为未设置。`ALL_PROXY` 为两种协议兜底，HTTPS 最后回退到 HTTP 代理——其中第一条 Node 与 undici 都不会自行推导。取值来自启动器的快照：先看导出的环境变量，再看 `$DSH_HOME/.env`。项目自己的 `.env` 不能携带这些名字——那个文件随 clone 一起到来，启动器宁可拒绝启动，也不让一个仓库决定 Harness 把流量发往何处。
--
--loopback 始终被绕过——`localhost`、整个 `127.0.0.0/8` 段、`::1`、`0.0.0.0`，以及它们的 IPv4 映射写法。否则 Harness 自己的 Web UI、Connection 传输以及每一个本地测试服务器都会经由代理并形成回环。发布出去的绕过列表只包含读取环境的消费者能匹配的四个字面量条目；`proxyForUrl` 自行识别整个网段，因为列表条目无法表达一个范围。
--
--### 失败处理
--
--本包无法使用的代理值——SOCKS 或 PAC URL、无法解析的字符串、不受支持的协议——会被报告并跳过，该 scheme 转为直连。该变量可能是用户为其他工具导出的，不应因此阻止 agent（智能体）启动。
--
-------
--
--<a id="understand-the-implementation"></a>
--## 理解实现
--
--### 设计理念
--
--**一次解析，一个匹配器。** `proxyForUrl()` 与已安装的 dispatcher 绝不能对同一个 URL 给出不同答案，否则 `dsh-web-fetch-http` 会把 dispatcher 本打算隧道转发的连接固定到某个地址上。因此该 dispatcher 是一个 `Agent`，其按 origin 调用的 `factory` 自身调用 `proxyForUrl()`，不存在可能与第一个解析器产生漂移的第二个解析器。undici 的 `EnvHttpProxyAgent` 在此无法胜任：没有 `HTTPS_PROXY` 时它让 `https:` 复用 HTTP 代理，于是本包在拒绝用户为该 scheme 指定的 URL 后本应保持直连的 scheme 仍会被隧道转发。
--
--**子进程继承用户自己的值，以及用户未设置部分的解析结果。** 用户以任一大小写指定过的 scheme，会以他们书写的形式原样传给子进程，因此用户为 `curl` 设置的 SOCKS 代理绝不会被替换成为其他 scheme 指定的 HTTP 代理。两种大小写都未指定的 scheme 则携带解析值，否则子进程的路由会与父进程分歧：Node 的 `NODE_USE_ENV_PROXY` 不读 `ALL_PROXY`。绕过列表始终采用解析结果——它只会追加 loopback 条目，用户写下的内容不会丢失。让父子进程只有一个路由答案的代价是：`curl` 也会看到本包由 HTTP 代理推导出的 `https:` 代理。有一处例外是为了保护子进程自身：当子进程收到的某个值是本包拒绝过的——比如为 `curl` 保留的 SOCKS URL——就不再设置 `NODE_USE_ENV_PROXY`，因为 Node 在该标志下会在运行程序之前先解析 `HTTP_PROXY` 与 `HTTPS_PROXY`，遇到这类值直接退出。此时子 Node 直连（本进程已为该协议如此报告），而不是根本起不来。
--
--### 源码地图
--
--| 文件 | 承载 |
--|---|---|
--| `src/policy.ts` | 解析与绕过匹配；诊断只点名变量，从不带出它的值。不引入任何传输实现，因此在没有 undici 的环境中仍可加载。 |
--| `src/install.ts` | 全局 dispatcher、生效策略记录、路由与子进程环境。动态引入 undici。 |
--| `src/index.ts` | 本包的对外接口：四个函数与一个类型。 |
--
--### 绕过匹配
--
--一个条目写的是主机名，它连同其下所有子域名一起匹配：`NO_PROXY=example.com` 也会放行 `api.example.com`。前缀 `.` 或 `*.` 可以写，含义相同。条目可带 `:port`，`*` 则放行全部。带方括号与裸写的 IPv6 字面量都能匹配——裸写的 `::1` **不会**被读成主机 `:` 端口 `1`，而 undici 自带的匹配器正是这样出错的，这也是解析结果中同时携带 `::1` 与 `[::1]` 的原因。CIDR 不参与匹配：操作系统的绕过列表常含 `10.0.0.0/8`，必须改写成后缀形式。
--
-------
--
--<a id="further-exploration"></a>
--## 进一步探索
--
--- [网络代理指南](../../../docs/user/guide/network-proxy.zh.md)——需要导出什么，以及为什么浏览器走代理而终端不走。
--- [`dsh-web-fetch-http`](../../web/web-fetch-http/README.zh.md)——唯一一个安全规则会因代理而改变的消费方。
--
-------
--
--<a id="model-experience"></a>
--## 模型体验
--
--无。本包只承担传输策略：它改变字节如何抵达网络，不注册任何提示词、schema 或结果文本。
--
--#### KV Cache 影响
--
--不会直接失效：本包不贡献任何请求 token，也从不改变请求前缀，因此提供方缓存复用不受影响。
--
--## 已知限制与延期工作
--
--<a id="known-limitations-and-deferred-work"></a>
--
--
--这些限制界定了本包不适用的场景，属于当前的包级约束。
--
--- **不支持 SOCKS、PAC 或操作系统代理探测**——只接受来自环境的 `http(s)://` 代理 URL。不会读取 macOS 或 Windows 的系统代理设置，因此仅在代理软件里拨了开关的用户仍须导出环境变量；SOCKS URL 会被报告，且该协议保持直连，不会借用另一协议的代理。
--- **不支持自定义证书颁发机构**——做 TLS 拦截的企业代理需要在启动前为进程设置 `NODE_EXTRA_CA_CERTS`，本包既不设置也不校验它。
--- **spawn 出的子进程只在足够新的运行时上遵循策略，且仅当它继承的每个值都是 Node 接受的**——它通过 Node 的 `NODE_USE_ENV_PROXY` 读取已发布的环境（22.21+、24+），而 engines 范围允许 22.19 与 22.20，在这两个版本上这样的子进程保持直连。若用户环境里还有 SOCKS 或其他被拒的代理，所有子 Node 都保持直连：不设置该标志，子进程才起得来。子进程还会按 Node 自己的 `NO_PROXY` 规则匹配绕过条目，其分隔符与 IPv4 区间处理与本包不同。本进程内不依赖任何 Node 版本：每一次进程内请求都会落到全局 dispatcher。
--- **遥测按设计直连**——OTLP 导出器通过 `node:http` 投递，全局 dispatcher 触及不到。要让它走代理，要么依赖 `http.Agent` 的 `proxyEnv`，而该选项晚于本项目支持的最低 Node 版本；要么改用 SDK 的 `fetch` 传输，但它没有压缩能力，而随附配置启用了 gzip。遥测是唯一一条丢失后不会让用户付出任何代价的通道，因此维持原状；`DSH_TELEMETRY_MODE=DISABLED` 可关闭它。
--- **模型编写的程序不接收代理配置**——Node ptc-runtime 进程与 workflow worker 不继承可能含有 `user:password` 的代理 URL。其直接请求需要自行配置，并继续受到执行沙箱的约束。
--- **防回归门禁只看源码，看不到依赖内部**——`verify-no-bare-dispatcher` 解析 `packages/*/*/src` 与 `apps/*/src`；测试、脚本以及第三方 SDK 的内部都在其之外。这正是每个出网点还各配一份 `egress.spec.ts` 的原因。
--
--<a id="dev-note"></a>
--### 开发备注
--
--<details>
--<summary>面向维护者的工作上下文——点击展开</summary>
--
--userland undici 能触及 Node 内置的 `fetch`，依赖的是两者都会写入 legacy 的 `Symbol.for('undici.globalDispatcher.1')` 槽位。那是跨版本的隐式耦合，不是约定——参见 [corepack#834](https://github.com/nodejs/corepack/issues/834) 中它失效的实例。`tests/install.spec.ts` 断言真实请求会抵达一个 loopback 代理，因此破坏该耦合的版本升级会在那里失败，而不是流到线上。
--
--</details>
--
--**运行时不变式：** 不发布伴生入口。本包唯一的可变状态——生效中的策略——由单元测试对照它所安装的 dispatcher 断言：测试会对该注册执行 dispose（资源释放）并观察一个真实的 loopback 代理。
-+集成检查以真实本地代理验证同进程切换、已选路线保持、显式覆盖、loopback、网页保护、原生PAC和取消。设置快照注入只用于测试，不修改当前用户注册表。精确运行包资格由消费方验证，源码编译不代表正在运行的Host已经加载。
 diff --git a/packages/util/http-proxy/package.json b/packages/util/http-proxy/package.json
-index 2275e12..a43777f 100644
+index 811a445e72..2bb7423b6a 100644
 --- a/packages/util/http-proxy/package.json
 +++ b/packages/util/http-proxy/package.json
 @@ -23,6 +23,8 @@
@@ -2812,11 +2152,11 @@ index 2275e12..a43777f 100644
    },
    "dependencies": {
 +    "koffi": "3.1.1",
-     "undici": "^8.10.0"
+     "undici": "8.11.2"
    },
    "devDependencies": {
 diff --git a/packages/util/http-proxy/src/index.ts b/packages/util/http-proxy/src/index.ts
-index f12de6f..ec34a03 100644
+index f12de6f093..ec34a0369f 100644
 --- a/packages/util/http-proxy/src/index.ts
 +++ b/packages/util/http-proxy/src/index.ts
 @@ -1,16 +1,5 @@
@@ -2847,7 +2187,7 @@ index f12de6f..ec34a03 100644
  } from './install.ts'
 +export type { SystemProxySource } from './windows.ts'
 diff --git a/packages/util/http-proxy/src/install.ts b/packages/util/http-proxy/src/install.ts
-index b3aacad..be8aa0b 100644
+index b3aacad2da..be8aa0b046 100644
 --- a/packages/util/http-proxy/src/install.ts
 +++ b/packages/util/http-proxy/src/install.ts
 @@ -8,6 +8,7 @@
@@ -2979,7 +2319,7 @@ index b3aacad..be8aa0b 100644
  /**
 diff --git a/packages/util/http-proxy/src/windows-native.ts b/packages/util/http-proxy/src/windows-native.ts
 new file mode 100644
-index 0000000..6c85fd0
+index 0000000000..6c85fd0455
 --- /dev/null
 +++ b/packages/util/http-proxy/src/windows-native.ts
 @@ -0,0 +1,65 @@
@@ -3050,7 +2390,7 @@ index 0000000..6c85fd0
 +}
 diff --git a/packages/util/http-proxy/src/windows-worker.ts b/packages/util/http-proxy/src/windows-worker.ts
 new file mode 100644
-index 0000000..5724149
+index 0000000000..57241492b8
 --- /dev/null
 +++ b/packages/util/http-proxy/src/windows-worker.ts
 @@ -0,0 +1,8 @@
@@ -3064,7 +2404,7 @@ index 0000000..5724149
 +})
 diff --git a/packages/util/http-proxy/src/windows.ts b/packages/util/http-proxy/src/windows.ts
 new file mode 100644
-index 0000000..0676d11
+index 0000000000..0676d113e0
 --- /dev/null
 +++ b/packages/util/http-proxy/src/windows.ts
 @@ -0,0 +1,102 @@
@@ -3170,107 +2510,11 @@ index 0000000..0676d11
 +    async close() { closed = true; fail(new Error('System proxy resolver closed')); if (worker) await worker.terminate() },
 +  }
 +}
-diff --git a/packages/util/http-proxy/tests/install.spec.ts b/packages/util/http-proxy/tests/install.spec.ts
-index a717bec..4c6e998 100644
---- a/packages/util/http-proxy/tests/install.spec.ts
-+++ b/packages/util/http-proxy/tests/install.spec.ts
-@@ -163,10 +163,10 @@ describe('installProxyFromEnvironment', () => {
-     const beforeEnv = process.env.HTTP_PROXY
-     const { dispose } = await install(proxyAll())
-     expect(getGlobalDispatcher()).not.toBe(before)
--    expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(true)
-+    expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(true)
-     await dispose()
-     expect(getGlobalDispatcher()).toBe(before)
--    expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(false)
-+    expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(false)
-     expect(process.env.HTTP_PROXY).toBe(beforeEnv)
-     await expect((await fetch(originUrl)).text()).resolves.toBe('DIRECT')
-   })
-@@ -179,7 +179,7 @@ describe('installProxyFromEnvironment', () => {
-       expect(getGlobalDispatcher()).toBe(before)
-       expect(process.env.HTTP_PROXY).toBe('http://untouched.example')
-       expect(reported).toEqual([])
--      expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
-+      expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
-     } finally {
-       await dispose()
-       delete process.env.HTTP_PROXY
-@@ -209,7 +209,7 @@ describe('installProxyFromEnvironment', () => {
- describe('proxyRouteFor', () => {
-   it('carries the dispatcher already routing, so a branch and its request agree', async () => {
-     const { dispose } = await install(proxyAll())
--    const route = proxyRouteFor(new URL(proxyTarget))
-+    const route = (await proxyRouteFor(new URL(proxyTarget)))
-     expect(route).toMatchObject({ proxied: true, proxy: proxyUrl })
-     if (!route.proxied) throw new Error('unreachable: asserted proxied above')
-     // One transport, not a copy: a caller that branched on this route sends its request through the
-@@ -227,17 +227,17 @@ describe('proxyRouteFor', () => {
-   it('is direct for a bypassed URL, and direct with nothing installed', async () => {
-     const { dispose } = await install(proxyAll('origin.test'))
-     try {
--      expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
-+      expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
-     } finally {
-       await dispose()
-     }
--    expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
-+    expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
-   })
- 
-   it('is direct for a loopback URL under a policy that proxies everything', async () => {
-     const { dispose } = await install(proxyAll())
-     try {
--      expect(proxyRouteFor(new URL(originUrl))).toEqual({ proxied: false })
-+      expect((await proxyRouteFor(new URL(originUrl)))).toEqual({ proxied: false })
-     } finally {
-       await dispose()
-     }
-@@ -375,13 +375,13 @@ describe('installing over an existing installation', () => {
-         // launcher's agent keeps tunnelling. A direct hop needs a host that answers, so this one
-         // reaches the real origin rather than the name only the proxy can resolve.
-         await expect((await fetch(originUrl)).text()).resolves.toBe('DIRECT')
--        expect(proxyRouteFor(new URL(proxyTarget))).toEqual({ proxied: false })
-+        expect((await proxyRouteFor(new URL(proxyTarget)))).toEqual({ proxied: false })
-       } finally {
-         await off.dispose()
-       }
-       // Disposing the direct policy restores the proxy the launcher installed.
-       await expect((await fetch(proxyTarget)).text()).resolves.toBe('VIA-PROXY')
--      expect(proxyRouteFor(new URL(proxyTarget)).proxied).toBe(true)
-+      expect((await proxyRouteFor(new URL(proxyTarget))).proxied).toBe(true)
-     } finally {
-       await outer.dispose()
-     }
-diff --git a/packages/web/tool-web/README.md b/packages/web/tool-web/README.md
-index c102023..031af03 100644
---- a/packages/web/tool-web/README.md
-+++ b/packages/web/tool-web/README.md
-@@ -266,3 +266,7 @@ This Dev Note is working context for maintainers: open questions and undecided d
- Exposing `max_results` as a model argument instead of a config bound stays deferred; the seam Agent Note names it a later step. A model-facing bound would move cost control into the prompt, so the decision needs deployment experience first.
- 
- </details>
-+
-+## web_download
-+
-+When filesystem and sandbox-policy services are present, web_download saves a public resource to a new permitted path. It checks destination policy before requesting data and again at publication, preserves existing files, and reports the final URL, media type, byte count and SHA-256. Downloaded bytes remain untrusted data; use read_image to inspect an image.
-diff --git a/packages/web/tool-web/README.zh.md b/packages/web/tool-web/README.zh.md
-index eecc474..47e4fd7 100644
---- a/packages/web/tool-web/README.zh.md
-+++ b/packages/web/tool-web/README.zh.md
-@@ -266,3 +266,7 @@ schema 校验会在执行前拒绝缺失或非数组的 `queries` 字段以及
- 把 `max_results` 作为模型参数而非配置上限公开仍被推迟；seam Agent Note 将其列为后续步骤。面向模型的上限会把成本控制移入提示词，因此该决定需要先有部署经验。
- 
- </details>
-+
-+## web_download
-+
-+文件系统和沙箱策略服务存在时，web_download 将公开资源保存到允许的新路径。请求前检查目标策略，发布时再次检查，保留已有文件，并返回最终 URL、媒体类型、字节数和 SHA-256。下载内容仍是不可信数据；图片使用 read_image 检查。
 diff --git a/packages/web/tool-web/package.json b/packages/web/tool-web/package.json
-index 70796d9..964c5f4 100644
+index 08a13048d5..10a2919bdd 100644
 --- a/packages/web/tool-web/package.json
 +++ b/packages/web/tool-web/package.json
-@@ -31,7 +31,10 @@
+@@ -33,7 +33,10 @@
      "@deepseek-ai/dsh-llm": "workspace:*",
      "@deepseek-ai/dsh-system-prompt": "workspace:*",
      "@deepseek-ai/dsh-tools": "workspace:*",
@@ -3284,7 +2528,7 @@ index 70796d9..964c5f4 100644
      "@deepseek-ai/dsh-util-values": "workspace:*",
 diff --git a/packages/web/tool-web/src/download.ts b/packages/web/tool-web/src/download.ts
 new file mode 100644
-index 0000000..8586942
+index 0000000000..85869423e5
 --- /dev/null
 +++ b/packages/web/tool-web/src/download.ts
 @@ -0,0 +1,56 @@
@@ -3345,7 +2589,7 @@ index 0000000..8586942
 +  }))
 +}
 diff --git a/packages/web/tool-web/src/fetch.ts b/packages/web/tool-web/src/fetch.ts
-index f4a644d..9d1078b 100644
+index f4a644dd64..9d1078bb97 100644
 --- a/packages/web/tool-web/src/fetch.ts
 +++ b/packages/web/tool-web/src/fetch.ts
 @@ -1,3 +1,4 @@
@@ -3379,7 +2623,7 @@ index f4a644d..9d1078b 100644
      },
      presentCall: presentFetchCall,
 diff --git a/packages/web/tool-web/src/index.ts b/packages/web/tool-web/src/index.ts
-index 4145fde..e2220ad 100644
+index 4145fdeb0f..e2220adb5d 100644
 --- a/packages/web/tool-web/src/index.ts
 +++ b/packages/web/tool-web/src/index.ts
 @@ -11,6 +11,7 @@ import z from '@deepseek-ai/schemastery'
@@ -3398,7 +2642,7 @@ index 4145fde..e2220ad 100644
  }
 diff --git a/packages/web/tool-web/src/network.ts b/packages/web/tool-web/src/network.ts
 new file mode 100644
-index 0000000..0bd458d
+index 0000000000..0bd458de7e
 --- /dev/null
 +++ b/packages/web/tool-web/src/network.ts
 @@ -0,0 +1,8 @@
@@ -3410,36 +2654,8 @@ index 0000000..0bd458d
 +    proxy: {type: 'string'}, statusCode: {type: 'integer', required: true},
 +  }},
 +} as const
-diff --git a/packages/web/web-fetch-http/README.md b/packages/web/web-fetch-http/README.md
-index a3e6da0..94969fa 100644
---- a/packages/web/web-fetch-http/README.md
-+++ b/packages/web/web-fetch-http/README.md
-@@ -144,3 +144,9 @@ These limits define when the provider is unsafe or a poor fit. They are current
- None.
- 
- </details>
-+
-+## Complete resources
-+
-+download reuses the text fetcher’s URL, public-address, proxy, redirect and cancellation policy. Binary responses are returned only in full; both declared and streamed byte-limit overflow reject instead of returning a truncated file.
-+
-+Anonymous cross-origin public redirects are allowed with fresh route/address validation at every hop. Private literals, credentialed URLs, non-HTTP schemes, HTTPS downgrades and excess hops remain blocked. Results retain origin/route/proxy-origin/status observations; transport failures retain bounded machine error codes without copying credential-bearing messages.
-diff --git a/packages/web/web-fetch-http/README.zh.md b/packages/web/web-fetch-http/README.zh.md
-index d57d105..f84c9e8 100644
---- a/packages/web/web-fetch-http/README.zh.md
-+++ b/packages/web/web-fetch-http/README.zh.md
-@@ -144,3 +144,9 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
- 无。
- 
- </details>
-+
-+## 完整资源
-+
-+download 复用文本抓取的 URL、公网地址、代理、重定向与取消策略。二进制响应只完整返回；声明长度或实际流超过上限均拒绝，不返回截断文件。
-+
-+匿名公开跨域跳转逐跳重新选择路线并检查地址；仍拒绝私网字面地址、URL凭据、非HTTP协议、HTTPS降级及过多跳转。回执记录来源、实际路线、代理来源和HTTP状态；失败保留有限的底层错误码，不复制可能含凭据的异常消息。
 diff --git a/packages/web/web-fetch-http/src/policy.ts b/packages/web/web-fetch-http/src/policy.ts
-index 3d2f98b..3f56890 100644
+index 3d2f98b670..3f568904b9 100644
 --- a/packages/web/web-fetch-http/src/policy.ts
 +++ b/packages/web/web-fetch-http/src/policy.ts
 @@ -54,9 +54,8 @@ export function validateFetchUrl(input: string): URL {
@@ -3455,7 +2671,7 @@ index 3d2f98b..3f56890 100644
   * @param a - one of the two URLs to compare.
   * @param b - the other URL to compare.
 diff --git a/packages/web/web-fetch-http/src/provider.ts b/packages/web/web-fetch-http/src/provider.ts
-index a6ddbe0..63fed79 100644
+index a6ddbe03a6..63fed797a5 100644
 --- a/packages/web/web-fetch-http/src/provider.ts
 +++ b/packages/web/web-fetch-http/src/provider.ts
 @@ -1,19 +1,19 @@
@@ -3631,36 +2847,12 @@ index a6ddbe0..63fed79 100644
 +  }
 +  return [...result]
  }
-diff --git a/packages/web/web/README.md b/packages/web/web/README.md
-index 157c6d9..71814bf 100644
---- a/packages/web/web/README.md
-+++ b/packages/web/web/README.md
-@@ -167,3 +167,7 @@ This Dev Note is working context for maintainers: open questions and undecided d
- No provider-change event or capability-status query exists; consumers observe availability only by executing a call and routing the thrown code. Restoring a small observation surface is possible if a consumer needs per-provider reasons, but the archived simplification note records why the earlier one was dropped.
- 
- </details>
-+
-+## File downloads
-+
-+download selects the configured fetch provider and requests complete bytes. A provider without download support reports WEB_DOWNLOAD_UNSUPPORTED. Filesystem effects belong to the consumer; the web service does not choose a destination.
-diff --git a/packages/web/web/README.zh.md b/packages/web/web/README.zh.md
-index f937fc1..045c2d0 100644
---- a/packages/web/web/README.zh.md
-+++ b/packages/web/web/README.zh.md
-@@ -167,3 +167,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
- 没有提供方变更事件或能力状态查询；消费方只能通过执行调用并按抛出的 code 路由来观测可用性。如果消费方需要逐提供方原因，恢复一个小的观测接口是可行的，但已归档的简化笔记记录了为何放弃此前的那个接口。
- 
- </details>
-+
-+## 文件下载
-+
-+download 选择已配置的抓取提供方并请求完整字节；提供方不支持时返回 WEB_DOWNLOAD_UNSUPPORTED。文件写入由消费方负责，Web 服务不选择保存位置。
 diff --git a/packages/web/web/src/index.ts b/packages/web/web/src/index.ts
-index fe36c7a..a4c71e4 100644
+index 039c319a56..4240098247 100644
 --- a/packages/web/web/src/index.ts
 +++ b/packages/web/web/src/index.ts
 @@ -9,6 +9,7 @@
- import { Context, Service } from '@deepseek-ai/cordis'
+ import { Context, Service, type Volatile } from '@deepseek-ai/cordis'
  import z from '@deepseek-ai/schemastery'
  import type {
 +  WebDownloadResult,
@@ -3676,7 +2868,7 @@ index fe36c7a..a4c71e4 100644
    WebFetchBody,
    WebFetchProvider,
    WebFetchRequest,
-@@ -161,6 +164,19 @@ export class WebRuntime extends Service {
+@@ -165,6 +168,20 @@ export class WebRuntime extends Service {
      })
      return provider.fetch(request, signal)
    }
@@ -3688,8 +2880,9 @@ index fe36c7a..a4c71e4 100644
 +   * @returns bounded complete bytes, never a truncated file.
 +   */
 +  async download(request: WebFetchRequest, signal?: AbortSignal): Promise<WebDownloadResult> {
-+    const provider = resolveProvider({providers: this.fetchProviders,
-+      ...this.fetchProviderId !== undefined ? {configuredId: this.fetchProviderId} : {}})
++    const configuredId = this.config.fetchProvider.get() ?? this.fetchProviderEnv
++    const provider = resolveProvider({ providers: this.fetchProviders,
++      ...configuredId !== undefined ? { configuredId } : {} })
 +    if (!provider.download) throw new WebError('selected provider does not support file downloads', 'WEB_DOWNLOAD_UNSUPPORTED')
 +    return provider.download(request, signal)
 +  }
@@ -3697,7 +2890,7 @@ index fe36c7a..a4c71e4 100644
  
  interface ResolvableProvider {
 diff --git a/packages/web/web/src/types.ts b/packages/web/web/src/types.ts
-index 9e94bac..590892f 100644
+index 9e94bac46b..590892fde0 100644
 --- a/packages/web/web/src/types.ts
 +++ b/packages/web/web/src/types.ts
 @@ -65,6 +65,23 @@ export interface WebFetchRequest {
@@ -3741,32 +2934,8 @@ index 9e94bac..590892f 100644
  }
  
  /**
-diff --git a/packages/workspace/workspace/README.md b/packages/workspace/workspace/README.md
-index da2c59d..37db65d 100644
---- a/packages/workspace/workspace/README.md
-+++ b/packages/workspace/workspace/README.md
-@@ -188,3 +188,7 @@ This Dev Note is working context for maintainers: open questions and directions
- The `title` parameter has no production caller since the gateway's create-by-name branch was removed; a code TODO proposes dropping the parameter and its `@param` clause together ([note](../../../.agents/notes/archived/simplification/2026-07-31-one-route-to-add-a-workspace.md)).
- 
- </details>
-+
-+## Directory continuation
-+
-+`relocateSession(sessionId, path)` canonicalizes an existing directory, reuses or creates its workspace, and persists a relocation intent before changing session metadata. Startup completes an interrupted intent through the native persistence writer, then removes old membership and attaches the same session once. Pins, archives, session identity and history are retained. This operation neither moves project files nor clones conversations.
-diff --git a/packages/workspace/workspace/README.zh.md b/packages/workspace/workspace/README.zh.md
-index a2e826f..c422b45 100644
---- a/packages/workspace/workspace/README.zh.md
-+++ b/packages/workspace/workspace/README.zh.md
-@@ -189,3 +189,7 @@ ctx.workspaceRegistry.list() // shows the project, newest first
- 网关的按名称创建分支移除后，`title` 参数已无生产调用方；代码中的 TODO 提议把该参数与其 `@param` 子句一并移除（参见[笔记](../../../.agents/notes/archived/simplification/2026-07-31-one-route-to-add-a-workspace.md)）。
- 
- </details>
-+
-+## 目录接续
-+
-+`relocateSession(sessionId, path)` 规范化已有目录，复用或创建工作区，并在修改会话元数据前持久记录迁移意图。启动时通过原生持久写入器完成中断的意图，移除旧归属并将原会话唯一挂接到目标。置顶、归档、会话身份和历史保持；不搬运工程文件，不复制对话。
 diff --git a/packages/workspace/workspace/src/entity.ts b/packages/workspace/workspace/src/entity.ts
-index 1df3eac..1e33749 100644
+index 0d687e8c94..c76d05019e 100644
 --- a/packages/workspace/workspace/src/entity.ts
 +++ b/packages/workspace/workspace/src/entity.ts
 @@ -32,6 +32,8 @@ export class WorkspaceMoveInvalidError extends Error {
@@ -3778,7 +2947,7 @@ index 1df3eac..1e33749 100644
    /**
     * Resolve the open `workspaces` table.
     * @returns the table; throws while the registry has not started yet.
-@@ -103,10 +105,15 @@ export class WorkspaceEntity implements Workspace {
+@@ -104,10 +106,15 @@ export class WorkspaceEntity implements Workspace {
    }
  
    async setTitle(title: string): Promise<void> {
@@ -3796,18 +2965,18 @@ index 1df3eac..1e33749 100644
      // id: the cwd fact was checked when it first attached and both inputs
      // (stored header cwd, workspace path) are immutable. Membership itself is
 diff --git a/packages/workspace/workspace/src/index.ts b/packages/workspace/workspace/src/index.ts
-index 4b4176c..acfaf64 100644
+index 0f630500cb..261243e629 100644
 --- a/packages/workspace/workspace/src/index.ts
 +++ b/packages/workspace/workspace/src/index.ts
-@@ -180,6 +180,7 @@ export class WorkspaceRegistry extends Service {
+@@ -181,6 +181,7 @@ export class WorkspaceRegistry extends Service {
    private operationTail: Promise<void> = Promise.resolve()
  
    private readonly host: WorkspaceEntityHost = {
 +    enqueue: operation => this.enqueueOperation(operation),
      table: () => this.requireTable(),
-     sessionPath: id => this.sessionPaths.get(id),
+     candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
      readSessionHeader: id => this.readSessionHeader(id),
-@@ -241,6 +242,58 @@ export class WorkspaceRegistry extends Service {
+@@ -243,6 +244,58 @@ export class WorkspaceRegistry extends Service {
      return await this.enqueueOperation(() => this.createCanonical(canonical, title))
    }
  
@@ -3866,7 +3035,7 @@ index 4b4176c..acfaf64 100644
    /**
     * Initialize the default Workspace only while both the registry and Session
     * history are empty. Repeated requests reuse its durable identity; deleting
-@@ -309,6 +362,18 @@ export class WorkspaceRegistry extends Service {
+@@ -311,6 +364,18 @@ export class WorkspaceRegistry extends Service {
      return this.enqueueOperation(() => this.deleteKnown(id))
    }
  
@@ -3885,7 +3054,7 @@ index 4b4176c..acfaf64 100644
    /**
     * Move one workspace within the durable display order, DOM-insertBefore-like.
     * With an anchor it lands before that workspace; without one it appends.
-@@ -635,6 +700,12 @@ export class WorkspaceRegistry extends Service {
+@@ -637,6 +702,12 @@ export class WorkspaceRegistry extends Service {
      const state = this.requireState()
      const pending = state.pendingMutation
      if (pending === undefined) return
@@ -3899,7 +3068,7 @@ index 4b4176c..acfaf64 100644
        throw new Error(
          `workspace domain is inconsistent: pending ${pending.operation} workspace `
 diff --git a/packages/workspace/workspace/src/spec.ts b/packages/workspace/workspace/src/spec.ts
-index 9bd7922..dafdafd 100644
+index 9bd792258a..dafdafd69e 100644
 --- a/packages/workspace/workspace/src/spec.ts
 +++ b/packages/workspace/workspace/src/spec.ts
 @@ -40,6 +40,7 @@ export type WorkspaceRecord = z.infer<typeof workspaceRecord>

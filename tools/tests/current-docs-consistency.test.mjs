@@ -32,6 +32,6 @@ for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
   assert.match(readme, new RegExp(skillFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README omits ${skillFile}`)
 }
 
-assert.match(readme,/DSH 0.2.0-rc.2/);
+assert.match(readme,/DSH 0.2.1-rc.2/);
 assert.match(readme,/docs\/tools.md/);
 console.log('current documentation consistency tests passed')

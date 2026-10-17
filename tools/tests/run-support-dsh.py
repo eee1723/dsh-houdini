@@ -40,7 +40,7 @@ def main():
     runtime=folder/'runtime/123-abcdef01'
     runtime.mkdir(parents=True)
     (runtime/'frontend.log').write_text('fixture diagnostic line\n'*3000+'fixture diagnostic token=FIXTURE_RUNTIME_SECRET\n',encoding='utf-8')
-    (runtime/'runtime.json').write_text(json.dumps({'version':'0.2.0-rc.2','source':'isolated-fixture'}))
+    (runtime/'runtime.json').write_text(json.dumps({'version':'0.2.1-rc.2','source':'isolated-fixture'}))
     context=folder/'context.json'
     context.write_text(json.dumps({'schemaVersion':1,'root':str(folder),'runtimeDir':str(runtime),
                                    'install':str(folder/'unused-install'),'frontendPort':port,'bridgePort':1,'installId':'isolated-fixture'}))

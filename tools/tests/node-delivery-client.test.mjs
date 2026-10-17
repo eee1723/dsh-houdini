@@ -38,12 +38,13 @@ function assemble(events) {
 }
 const executorId='a'.repeat(32), uuid='c'.repeat(32)
 const ctx=new Context()
+ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(ctx,{})
 const runtime=new ToolRuntime(ctx,{mode:'both'})
 installHoudiniExecutionLog(ctx)
 const session=Session.create('node-delivery-client-task-a')
 await new ExecutorBinding().ensure(session,executorId)
-const agent={id:session.id,session,options:{provider:'fixture',model:'text'}}
+const agent={id:session.id,session,ctx,options:{provider:'fixture',model:'text'}}
 const receipt={ok:true,stdout:'',stderr:'',result:{kind:'houdini/node-delivery-v1',nodes:[
   {id:uuid,path:'/obj/bicycle/CTRL',label:'工程控制',role:'control',type:'null',context:'Sop',description:'调整尺寸和重复数量'},
   {id:'d'.repeat(32),path:'/obj/bicycle/OUT',label:'模型输出',role:'output',type:'null'}
@@ -71,7 +72,7 @@ async function run(callId,name,args) {
 await run('native','houdini_exec',{code:'delivery'})
 const nativeEvent=session.snapshotEvents().find(event=>event.type==='tool/result')
 receipt.verbs[0].result.nodes[0].path='/obj/bicycle/CTRL_RENAMED'
-await run('program','run_code',{code:'return await tools.houdini_exec({code:"delivery"})',description:'Deliver Houdini nodes'})
+await run('program','run_code',{code:'return await tools.houdini_exec({code:"delivery"})',description:'Deliver Houdini nodes',workingDirectory:process.cwd()})
 assert.equal(executed,2,'projection must not repeat scene operations')
 const nestedEvent=session.snapshotEvents().find(event=>event.type==='tool/ptc-dispatch')
 assert.equal(nestedEvent.data.turn,undefined,'actual PTC event has no invented turn field')
