@@ -28,6 +28,7 @@
 - 移除条件：正常入口已加载且主要使用路径可用，正式发行状态有对应结果。
 - 运行修复：Windows已有内容的逐对象权限准备、临时目录范围、只读ACL诊断、公开CDN下载、命令诊断和系统网络继承由固定DSH源码补丁交付；默认源码缓存与正式组装共用构建入口，插件只提供只读联网诊断。普通用户入口已确认windows-network-3及实际搜索、跨域下载和文件整理，包含当前修复的签名包已核对H21/H22受管安装、同版修复、认证RPC及正常GUI工作区/重开。下载提供方5,000,000字节与工具20MiB上限仍需统一，非成功HTTP回执的最终地址/路线及原因摘要还需补齐。中转模型出现过上游拒绝，具体拒绝来源与触发条件未确定，不归为沙箱或代理故障。企业认证代理、私有证书和PAC多代理故障切换未完整验证；SOCKS-only不支持，Fake-IP且无可用系统HTTP代理时保留公开网页地址校验。
 - DSH 0.2.1：运行补丁已重做到`dsh-v0.2.1-rc.2`，19个host包与4个client包编译通过，运行时常量清单经`dsh_runtime_compat.runtime_fix_identity`校验；插件Node回归62/63（`dependency-runtime`在改动前的主线同样因本机fflate解析失败）。正式签名安装、H21/H22实际加载、`deepseek-flash`（DeepSeek-V4.1-Flash/1017）真实请求及DeepSeek Search/Fetch设置仍待现场验证。网站文档已随上游0.2.1同步并完成本地`docs:build`，未发布到公网。
+- 保存钩子：当前 forwarder 会执行 HOUDINI_PATH 上全部 `afterscenesave.py`（插件自身只执行一次），避免原生只选首个匹配时吞掉其他层的保存通知。这比原生语义执行更多脚本，属于有意策略；已确认的脚本仍须按 H21/H22 实际保存路径核对副作用，若要严格原生语义应收窄为“forwarder + 下一个匹配”。
 - 入口：[安装](setup.md)、[DSH适配](dsh-update-compatibility.md)、[启动器](../houdini/python3.11libs/dsh_launcher.py)。
 
 ### H-02 工具制作自然采用与兼容交付
