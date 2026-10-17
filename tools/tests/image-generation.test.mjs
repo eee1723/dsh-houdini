@@ -178,6 +178,12 @@ await assert.rejects(()=>generateImage(context,exec,managed(),success,connection
 layoutMismatch=false
 const savedHip=hip;hip=path.join(fileURLToPath(new URL('../../',import.meta.url)),'forbidden.hip')
 await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/plugin repository/)
+const repoAlias=path.join(project,'repo-alias')
+await fs.symlink(fileURLToPath(new URL('../../',import.meta.url)),repoAlias,process.platform==='win32'?'junction':'dir')
+hip=path.join(repoAlias,'forbidden.hip')
+await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/plugin repository/,
+  'a root alias into the plugin repository must not become a managed write tree')
+await fs.rm(repoAlias,{force:true})
 hip=savedHip
 failBridge=true
 await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/selected Houdini executor unavailable/)

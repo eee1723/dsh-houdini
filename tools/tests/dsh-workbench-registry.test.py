@@ -7,6 +7,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from dsh_executor_registry import ExecutorRegistration
+from dsh_deployment import _process_started
 
 
 def refused(action):
@@ -28,7 +29,9 @@ with tempfile.TemporaryDirectory(prefix='workbench-reservations-') as temporary:
     fourth = ExecutorRegistration(folder, '9' * 32, installation=ROOT, version='22.0.368', workbench=True)
     scene = {'scene_id': 'd' * 32, 'scene_epoch': 'e' * 32, 'hip_is_new': False, 'workspace_path': str(folder)}
     try:
-        first.publish(18001, '1' * 32, hip=original, scene=scene)
+        published = first.publish(18001, '1' * 32, hip=original, scene=scene)
+        assert published['processStarted'] == _process_started(os.getpid()), \
+            'presence needs the published process birth to reject a reused pid'
         second.publish(18002, '2' * 32, hip=other, scene=scene)
         first.claim('task-a', first._generation, str(original), str(original), idle=True)
         second.claim('task-b', second._generation, str(other), str(other), idle=True)
@@ -56,6 +59,7 @@ with tempfile.TemporaryDirectory(prefix='workbench-reservations-') as temporary:
         refused(lambda: third.claim_writer('alias-task', alias))
         third.claim_writer('original-now-free', original)
         first.require_writer('task-c', str(destination))
+        first.require_writer('task-c', str(alias))
         next_target = folder / 'published-later.hip'
         with patch('dsh_executor_registry.atomic_json', side_effect=OSError('publication failed')):
             try:

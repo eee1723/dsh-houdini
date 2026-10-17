@@ -4,9 +4,11 @@ import {Session} from '@deepseek-ai/dsh-session'
 import {HoudiniBridge} from '../../lib/bridge.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {installSceneRecovery} from '../../lib/scene-recovery.js'
+import {foldExecutorState} from '../../lib/executor-identity-projection.js'
 const executor='a'.repeat(32),checkpoint='c'.repeat(32),signal=new AbortController().signal
 const old=path.resolve('tools/out/follow-old'),file=path.resolve('tools/out/follow-new/project.hip')
-const original={status:'connected',executor_id:executor,checkpoint_id:checkpoint,hip_path:file,
+const scene='d'.repeat(32),epoch='e'.repeat(32)
+const original={status:'connected',executor_id:executor,checkpoint_id:checkpoint,hip_path:file,scene_id:scene,scene_epoch:epoch,
  successful_save:{checkpoint_id:checkpoint,hip_path:file}}
 async function fixture(value,available=true){
  const base=Session.create('follow-test'),moves=[]
@@ -29,6 +31,10 @@ for(const value of [
 ]){const f=await fixture(value);await f.run();assert.equal(f.moves.length,0,'unverified paths must not relocate the conversation')}
 const valid=await fixture(original);await valid.run();await valid.run()
 assert.deepEqual(valid.moves,[{id:'follow-test',cwd:path.dirname(file)}],'one durable move, then an idempotent no-op')
+const followed=foldExecutorState(valid.session.snapshotEvents()).project
+assert.equal(followed.sceneId,scene,'a verified Save As keeps the observed scene identity')
+assert.equal(followed.sceneEpoch,epoch)
+assert.equal(followed.needsReview,false,'the plugin move is not an unobserved file replacement')
 const unavailable=await fixture(original,false)
 await assert.rejects(unavailable.run(),/尚未加载会话目录接续能力/)
 assert.equal(unavailable.session.header.cwd,old)

@@ -285,14 +285,21 @@ def install():
     hou.hipFile.addEventCallback(changed)
 
 
-def task_target(owner):
-    """Actor-side scene fence, captured once even before the first saved HIP."""
+def task_target(owner, *, allow_rebind=False):
+    """Actor-side scene fence, captured once even before the first saved HIP.
+
+    `allow_rebind` is reserved for an explicit writer claim: after the user
+    reopens the same project the epoch changes and the old binding must move to
+    the new scene. Ordinary execution keeps the strict fence.
+    """
     _main()
     expected = _BINDINGS.get(owner)
     if expected is None:
         _BINDINGS[owner] = {'scene_epoch': _EPOCH, 'binding_id': None}
     elif expected['scene_epoch'] != _EPOCH:
-        raise RuntimeError('当前打开的工程已变化，需要先核对任务与当前工程的接续关系。')
+        if not allow_rebind:
+            raise RuntimeError('当前打开的工程已变化，需要先核对任务与当前工程的接续关系。')
+        _BINDINGS[owner] = {'scene_epoch': _EPOCH, 'binding_id': None}
     return _EPOCH
 
 

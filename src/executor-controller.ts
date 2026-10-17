@@ -108,7 +108,7 @@ export class ExecutorController extends TypertRemoteService {
         if(this.ctx.get('sessionProjections')?.stateOf(resolved.agent.session,'agentPreset')!=='houdini')throw new Error('请使用 Houdini 模式的对话连接工程。')
         await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path)
         recordHoudiniContext(resolved.agent,openingMessage())
-        await relocateDirectory(this.ctx,resolved.agent,record.workspace_path,record.hip_path,signal,record.hip_is_new===true)
+        await relocateDirectory(this.ctx,resolved.agent,record.workspace_path,record.hip_path,signal,record.hip_is_new===true,record)
         if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
         selected=resolved.agent.id
       }
@@ -127,6 +127,7 @@ export class ExecutorController extends TypertRemoteService {
         const sameScene=record.scene_id&&project?.sceneId===record.scene_id
           &&typeof project?.hipPath==='string'&&samePath(project.hipPath,record.hip_path!)
         const sameLoadedScene=identity===record.executor_id&&record.scene_epoch&&project?.sceneEpoch===record.scene_epoch
+          &&typeof project?.hipPath==='string'&&samePath(project.hipPath,record.hip_path!)
         if(identity&&(sameScene||sameLoadedScene||explicitlyUnexecuted))
           candidates.push({sessionId,state})
       }
@@ -166,6 +167,16 @@ export class ExecutorController extends TypertRemoteService {
         recordHoudiniContext(resolved.agent,openingMessage())
         if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工作区对话尚未可靠保存，未确认打开成功。')
         selected=created.sessionId
+      }
+      // Selecting a conversation is an explicit claim. Returning "bound" while
+      // the Bridge lease still belongs to another task (or is unclaimed) would
+      // make the next tool fail after the user was told the project opened.
+      if(record.task_id!==selected) {
+        const resolved=await this.ctx.sessionController.resolveAgent(selected as any)
+        if('error' in resolved)throw new Error('无法读取原对话。')
+        if(resolved.agent.status!=='idle')throw new Error('原对话仍在运行，请等待当前任务结束后再接续。')
+        await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path)
+        if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
       }
       {
         const resolved=await this.ctx.sessionController.resolveAgent(selected as any)

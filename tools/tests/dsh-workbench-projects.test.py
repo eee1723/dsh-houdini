@@ -49,9 +49,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         else:
             raise AssertionError('duplicate startup accepted')
         assert len(spawned) == 1, 'a torn ticket file must be skipped, not block a legitimate open'
-        # An orphan ticket from a prior workbench generation must not lock a
-        # legitimate open. Neutralize this generation's ticket for the check,
-        # then restore its phase for the rest of the scenario.
+        # A live unfinished ticket from a prior workbench generation still owns
+        # the HIP: it must block a duplicate launch until the process is gone.
         first_ticket = manager._read(opened['id'])
         first_phase = first_ticket['phase']
         first_ticket['phase'] = 'ready'
@@ -60,8 +59,17 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
                   'hfs': runtime['hfs'], 'hip': str(project), 'phase': 'waiting', 'pid': 12345,
                   'processStarted': 'birth', 'createdAt': 0}
         (manager.folder / ('1' * 32 + '.json')).write_text(json.dumps(orphan), encoding='utf-8')
+        try:
+            manager.launch('open', runtime['hfs'], project)
+        except RuntimeError as error:
+            assert '另一个工作台' in str(error)
+        else:
+            raise AssertionError('a live prior-generation Houdini allowed a duplicate launch')
+        assert len(spawned) == 1, 'a live orphan process still owns the HIP'
+        orphan['pid'] = 999
+        (manager.folder / ('1' * 32 + '.json')).write_text(json.dumps(orphan), encoding='utf-8')
         second = manager.launch('open', runtime['hfs'], project)
-        assert len(spawned) == 2, 'a prior generation orphan ticket must not block a legitimate open'
+        assert len(spawned) == 2, 'a dead orphan ticket must not block a legitimate open'
         (manager.folder / ('1' * 32 + '.json')).unlink()
         second_ticket = manager._read(second['id'])
         second_ticket['phase'] = 'ready'

@@ -50,9 +50,7 @@ try {
   result=[{executorId:executor,status:'online',contractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION}]
   assert.equal((await frontend.projectPresence(signal))[0].status,'online')
   result=[{executorId:executor,status:'online',contractVersion:-1}]
-  assert.equal((await frontend.projectPresence(signal))[0].status,'online',
-    'the desktop endpoint_presence is the single status interpreter; the Host never re-folds contract version into a live status')
-  assert.equal((await frontend.projectPresence(signal))[0].contractVersion,-1,'contract version travels as a fact')
+  assert.equal((await frontend.projectPresence(signal))[0].status,'unknown','incompatible Bridge must not be green')
   generation='stale-desktop'
   await assert.rejects(frontend.projectAction({action:'open'},signal),/没有完成/)
 }finally {

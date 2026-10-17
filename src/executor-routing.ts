@@ -105,6 +105,7 @@ export class ExecutorRouter {
   constructor(readonly directory:ExecutorDirectory, private readonly timeoutMs:number,
     private readonly binding:ExecutorBinding,
     private readonly identityOf:(session:Session)=>string|undefined,
+    private readonly idleOwner:(taskId:string)=>boolean=()=>false,
     private readonly persist?: (session:Session)=>Promise<boolean>,
     private readonly chooseRecovery?: (taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
 
@@ -170,16 +171,19 @@ export class ExecutorRouter {
         // window (observe() resets it on a scene+HIP change). Reclaim only an
         // unclaimed or still-ours window that still shows the recorded project:
         // a window that moved to another file must not be adopted, and another
-        // task's reservation is never stolen. Reclamation is claimed through the
-        // same helper; the Bridge accepts or rejects it.
-        try {
-          const record=await this.directory.find(state.identity)
+        // task's reservation is never stolen. A missing record falls through to
+        // the candidate search; a refusal from an existing window must reach the
+        // user instead of becoming a generic "unavailable" message.
+        let record
+        try {record=await this.directory.find(state.identity)}
+        catch {signal.throwIfAborted();record=undefined}
+        if(record) {
           const sameWindow=record.task_id===null||record.task_id===agent.id
           const sameScene=Boolean(record.scene_id&&scene&&record.scene_id===scene)
           const sameHip=hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip))
           if(record.hip_path&&sameWindow&&sameScene&&sameHip)
             return await this.claim(state.identity,agent.id,record.registration_id,record.hip_path,signal)
-        } catch {signal.throwIfAborted()}
+        }
       }
     }
     if(!scene)throw new Error('原对话缺少可验证的工程身份，请明确选择工程；没有自动认领内容。')
@@ -188,7 +192,8 @@ export class ExecutorRouter {
     // only the explicit user choice below over scene-matched windows.
     const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered'
       &&record.executor_id!==state.identity&&record.scene_id===scene
-      &&(hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip))))
+      &&(hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip)))
+      &&(record.task_id==null||record.task_id===agent.id||this.idleOwner(record.task_id)))
     const verified:ExecutorRecord[]=[]
     for(const record of candidates) {
       try {
@@ -200,9 +205,15 @@ export class ExecutorRouter {
     const selected=preferredTarget??(verified.length===1&&hip?verified[0].executor_id:await this.chooseRecovery?.(agent.id,verified,signal))
     if(!selected||!verified.some(record=>record.executor_id===selected))throw new Error('存在多份原工程，请在对话中选择要继续的窗口；本轮没有换绑。')
     if(!await this.inspectRecovery(agent.session,selected,signal))throw new Error('选择期间工程已变化，请重新选择。')
+    const record=verified.find(row=>row.executor_id===selected)!
+    // A running conversation keeps its reservation even when its Bridge has no
+    // request in flight at this instant. The Host agent state is the only place
+    // that sees a model between tool calls; recovery may take over only an idle
+    // other task, never a working one.
+    if(record.task_id!=null&&record.task_id!==agent.id&&(!record.workbench||!this.idleOwner(record.task_id)))
+      throw new Error('这个工程的另一段对话仍在执行，请等待完成后再继续。')
     // Explicit claim only after the chosen window re-verifies; windows that
     // failed inspectRecovery are never claimed.
-    const record=verified.find(row=>row.executor_id===selected)!
     return this.claim(selected,agent.id,record.registration_id,record.hip_path!,signal)
   }
 
@@ -243,9 +254,11 @@ export class ExecutorRouter {
     const record=await this.directory.find(id)
     if(expectedHip!==undefined&&record.hip_path!==expectedHip) throw new Error('HIP changed after the selection was displayed; refresh and confirm again')
     if(record.registration_id!==registrationId) throw new Error('Target selection is stale; refresh before confirming')
-    // No Host-side idle/ownership pre-reject: an explicit claim below is the
-    // only takeover path and the Bridge accepts or rejects it. Verification
-    // itself never claims.
+    // A running conversation keeps its reservation even when its Bridge has no
+    // request in flight at this instant. An explicit selection may take over
+    // only an idle other task.
+    if(record.task_id!=null&&record.task_id!==agent.id&&(!record.workbench||!this.idleOwner(record.task_id)))
+      throw new Error('这个工程的另一段对话仍在执行，请等待完成后再继续。')
     signal?.throwIfAborted()
     if(agent.status!=='idle'&&!atStep) throw new Error('Agent started while selecting target; no new binding written')
     if(record.task_id!==agent.id) await this.claim(id,agent.id,registrationId,record.hip_path!,signal)

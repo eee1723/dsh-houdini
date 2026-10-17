@@ -34,7 +34,7 @@ export function recoveryMessage(value:RecoveryBinding) {
     +literalData(JSON.stringify(value))})
 }
 
-export async function relocateDirectory(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false) {
+export async function relocateDirectory(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false,scene?:{scene_id?:unknown;scene_epoch?:unknown}) {
   const current=agent.session.header.cwd
   if(current&&(process.platform==='win32'?path.resolve(current).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(current)===path.resolve(directory)))return
   const registry=ctx.get('workspaceRegistry')
@@ -42,10 +42,15 @@ export async function relocateDirectory(ctx:Context,agent:Agent,directory:string
     throw new Error('当前 DSH 尚未加载会话目录接续能力；本轮未继续文件操作，原对话与工程保留。')
   signal.throwIfAborted()
   await registry.relocateSession(agent.id,directory)
+  // A verified Save As moves the path but not the scene. Carrying the observed
+  // scene identity prevents the projection from treating the plugin's own move
+  // as an unobserved file replacement (which would disable later association).
+  const observed=scene&&typeof scene.scene_id==='string'?{scene_id:scene.scene_id}:{}
+  const epoch=scene&&typeof scene.scene_epoch==='string'?{scene_epoch:scene.scene_epoch}:{}
   recordHoudiniContext(agent,houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
     'This conversation now follows the explicitly selected or verified saved project directory. Earlier paths remain historical references.\n'
     +literalData(JSON.stringify({previous_directory:current,directory:agent.session.header.cwd,hip_path:hipPath,
-      executor_id:foldExecutorState(agent.session.snapshotEvents()).identity,hip_is_new:hipIsNew}))}))
+      executor_id:foldExecutorState(agent.session.snapshotEvents()).identity,hip_is_new:hipIsNew,...observed,...epoch}))}))
   if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程目录接续记录尚未可靠保存。')
   await (ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined)?.pruneEmptyWorkspaces?.([directory])
 }
@@ -139,7 +144,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
     if(typeof value.hip_path!=='string'||!path.isAbsolute(value.hip_path)||!agent.session.header.cwd)return
     const directory=path.dirname(value.hip_path)
     if(samePath(directory,agent.session.header.cwd))return
-    await relocateDirectory(ctx,agent,directory,value.hip_path,signal)
+    await relocateDirectory(ctx,agent,directory,value.hip_path,signal,false,value)
   }
   const locateOriginal=async(agent:Agent,signal:AbortSignal,failure:any)=>{
     const sceneId=recordedScene(agent),state=foldExecutorState(agent.session.snapshotEvents())

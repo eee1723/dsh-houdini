@@ -111,7 +111,11 @@ export async function imageOutputLocation(options:ImageOutputOptions,
   // root here would validate a different tree than the one names are built from
   // (junction/subst). Redirection is rejected at the write boundary instead.
   const root=path.dirname(scene.hip_path), repo=await fs.realpath(repository)
-  if (inside(repo,root)) throw Error('Image output cannot be written into the plugin repository; choose a project destination')
+  // A junction/subst at the project root must not turn the plugin repository into
+  // the visible write tree. Check both the spelled and resolved root.
+  const resolvedRoot=await fs.realpath(root)
+  if (inside(repo,root)||inside(repo,resolvedRoot))
+    throw Error('Image output cannot be written into the plugin repository; choose a project destination')
   const managed=path.join(root,...entry.path.split('/'))
   if (scene.project_layout !== undefined) {
     const layout=scene.project_layout

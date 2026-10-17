@@ -116,22 +116,56 @@ currentProject=null
 assert.equal(uiContext.HoudiniProjectMark(props),null)
 assert.equal(uiContext.HoudiniProjectLabel(props),null)
 assert(!fragment.includes('dangerouslySetInnerHTML'))
-assert(!fragment.includes('setInterval'),'resident presence polling is banned')
-const records={online:{[view.executorId]:{status:'online'}},offline:{[view.executorId]:{status:'offline'}},missing:{}}
-assert.equal(uiContext.houdiniEndpointState(view,records.online),'online')
-assert.equal(uiContext.houdiniEndpointState(view,records.offline),'offline')
-assert.equal(uiContext.houdiniEndpointState(view,records.missing),'unknown','absence is not proof of process exit')
-assert.equal(uiContext.houdiniEndpointState(view,{[view.executorId]:{status:'unknown'}}),'unknown')
-assert.equal(uiContext.houdiniEndpointState(view,{[view.executorId]:{status:'online',sceneEpoch:'different'}}),'changed','a live window that switched scene is not silently online')
-assert.equal(uiContext.houdiniEndpointState(view,null),null)
-assert.equal(uiContext.houdiniPresenceText('online'),'关联的 Houdini 当前可连接')
-assert.equal(uiContext.houdiniPresenceText('offline'),'关联的 Houdini 已关闭或断开')
-assert.equal(uiContext.houdiniPresenceText('changed'),'关联的 Houdini 已切换到其他场景，请核对工程')
-assert.equal(uiContext.houdiniPresenceText('unknown'),'暂时无法确认关联 Houdini 的连接')
+const live={available:true,observedAt:Date.now(),records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}}}
+assert.equal(uiContext.houdiniPresence(view,live).status,'online')
+assert.equal(uiContext.houdiniPresence(view,{...live,observedAt:Date.now()-13000}).status,'unknown','expired green must not persist')
+assert.equal(uiContext.houdiniPresence(view,{...live,records:{}}).status,'unknown','absence is not proof of process exit')
+assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:'different',observedAt:Date.now()}}}).status,'changed')
+assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'offline',observedAt:Date.now()}}}).status,'offline')
+assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()-13000}}}).status,'unknown','a fresh batch response does not freshen an old individual observation')
+const liveProps={...props,usePresence:()=>live}
+currentProject=view
+const liveMark=uiContext.HoudiniProjectMark(liveProps)
+assert.equal(liveMark.props['data-houdini-presence'],'online','the closed-state project mark paints live presence')
+assert.match(liveMark.props['aria-label'],/Houdini 在线/)
+const findNode=(node,predicate)=>{
+  if(!node||typeof node==='string')return null
+  if(Array.isArray(node)){for(const child of node){const found=findNode(child,predicate);if(found)return found}return null}
+  if(predicate(node))return node
+  for(const child of node.children??[]){const found=findNode(child,predicate);if(found)return found}
+  return null
+}
+const liveLabel=uiContext.HoudiniProjectLabel(liveProps)
+const liveLabelNode=findNode(liveLabel,node=>node.props?.['data-houdini-project-label']===true)
+assert(liveLabelNode,'the project label renders')
+assert.equal(liveLabelNode.props['data-houdini-presence'],'online','a closed project menu still exposes live presence')
+assert.match(liveLabel.props.label,/Houdini 在线/,'the tooltip explains the live state without opening the menu')
+assert.match(source,/\[data-houdini-presence="online"\][^{]*\{color:/,'online has a visible color rule')
+assert.match(source,/\[data-houdini-presence="changed"\]/,'changed is visually distinct')
+assert.match(source,/\[data-houdini-presence="offline"\][^{]*\{color:/,'offline has a visible color rule')
 assert.equal(uiContext.houdiniProjectName({hipIsNew:true,label:'未保存工程 2'}),'未保存工程 2')
 React.useSyncExternalStore=(_subscribe,get)=>get()
 React.useEffect=callback=>callback()
 Object.assign(uiContext,{AbortController,setTimeout,clearTimeout})
+const presenceCalls=[]
+let intervalCallback=null
+const lifecycleUi=uiContext.createWorkbenchUi({
+  generation:{getSnapshot:()=>1,subscribe:()=>()=>{}},
+  rpc:{call:async(_channel,method)=>{
+    presenceCalls.push(method)
+    if(method==='houdiniFrontend/capabilities')return {ok:true,value:{workbench:true}}
+    if(method==='houdiniFrontend/projectPresence')return {ok:true,value:[{executorId:view.executorId,status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
+    throw Error('unexpected '+method)
+  }},
+},{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
+uiContext.setInterval=callback=>{intervalCallback=callback;return 7}
+uiContext.clearInterval=()=>{}
+uiContext.document={visibilityState:'visible',addEventListener:()=>{},removeEventListener:()=>{}}
+lifecycleUi.Lifecycle()
+await new Promise(resolve=>setTimeout(resolve,20))
+assert(presenceCalls.includes('houdiniFrontend/projectPresence'),'the page lifecycle reads live presence without opening a menu')
+assert.equal(typeof intervalCallback,'function','a resident presence refresh is scheduled')
+React.useSyncExternalStore=(_subscribe,get)=>get()
 uiContext.require=()=>({MenuItemButton:'menuitem',Toast:'toast'})
 const generationListeners=new Set(),requests=[]
 let generation={id:1},menuClosed=false

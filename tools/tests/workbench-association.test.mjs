@@ -40,7 +40,7 @@ const directory={find:async()=>{throw Error('original retired')},list:async()=>[
   {executor_id:'3'.repeat(32),workbench:true,state:'registered',scene_id:'f'.repeat(32),hip_path:recordedHip},
   {executor_id:'4'.repeat(32),workbench:true,state:'registered',scene_id:scene,hip_path:copyHip}]}
 let answer=candidates[1].executor_id,chosen=0,assessed=[],claims=[]
-const router=new ExecutorRouter(directory,100,binding,()=>executor,async()=>true,
+const router=new ExecutorRouter(directory,100,binding,()=>executor,()=>true,async()=>true,
   async(_task,choices)=>{chosen++;assert.equal(choices.length,2);return answer})
 router.inspectRecovery=async(_session,id)=>{assessed.push(id);return new HoudiniBridge('http://127.0.0.1:1',100,id)}
 const originalVerify=router.verified.bind(router)
@@ -72,7 +72,7 @@ assert.equal(foldExecutorState(session.snapshotEvents()).identity,executor)
 
 // inspectRecovery itself binds scene_id + hip_path: the live reply must show
 // the recorded path, not only the copyable scene identity.
-const inspectRouter=new ExecutorRouter(directory,100,binding,()=>executor,async()=>true)
+const inspectRouter=new ExecutorRouter(directory,100,binding,()=>executor,()=>true,async()=>true)
 let replyHip=recordedHip
 inspectRouter.verified=async id=>({recover:async()=>({executor_id:id,status:'ready',scene_id:scene,hip_path:replyHip})})
 const inspectSession={id:session.id,snapshotEvents:()=>session.snapshotEvents()}

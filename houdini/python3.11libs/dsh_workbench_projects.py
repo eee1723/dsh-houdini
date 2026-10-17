@@ -24,6 +24,12 @@ def path_key(value):
     return None if value is None else os.path.normcase(os.path.normpath(value))
 
 
+def record_hip_key(record):
+    """Resolved key when the publisher supplied one; lexical fallback for old rows."""
+    value = record.get('hip_key') or record.get('hip_path')
+    return path_key(value)
+
+
 def dialog_request(payload):
     if not isinstance(payload, dict):
         raise ValueError('工程操作无效。')
@@ -122,7 +128,7 @@ class ProjectManager:
         with self._lock:
             if expected:
                 located = [(record, endpoint_presence(record, self.context['executorRegistry'])['status'])
-                           for record in self.candidates() if record.get('hip_path') and path_key(record['hip_path']) == path_key(expected)]
+                           for record in self.candidates() if record.get('hip_path') and record_hip_key(record) == path_key(expected)]
                 if any(status == 'unknown' for record, status in located):
                     raise RuntimeError('这份工程已有窗口暂时无法确认连接。请从对应 Houdini 的 Open Workspace 接入，或确认它已退出后重试；没有再开同一文件。')
                 matching = [record for record, status in located if status == 'online']
@@ -147,14 +153,16 @@ class ProjectManager:
                         continue
                     if not isinstance(pending, dict):
                         continue
-                    # Only this workbench generation's unfinished ticket blocks a
-                    # re-open. A prior generation's ticket is an orphan: its attach
-                    # cannot succeed against this workbench, so it must not lock
-                    # the HIP out of a legitimate open forever.
-                    if (pending.get('generation') == self.generation and pending.get('hip')
-                            and path_key(pending['hip']) == path_key(expected) and pending.get('pid')
-                            and _process_started(pending['pid']) == pending.get('processStarted') and pending.get('phase') != 'ready'):
-                        raise RuntimeError('这份工程已经在启动或等待连接。请查看对应 Houdini；没有重复启动。')
+                    # A live unfinished ticket blocks a second launch even from a
+                    # prior desktop generation: the orphan Houdini still owns the
+                    # file. A dead ticket is garbage and must not lock the HIP.
+                    if (pending.get('hip') and path_key(pending['hip']) == path_key(expected)
+                            and pending.get('pid')
+                            and _process_started(pending['pid']) == pending.get('processStarted')
+                            and pending.get('phase') != 'ready'):
+                        if pending.get('generation') == self.generation:
+                            raise RuntimeError('这份工程已经在启动或等待连接。请查看对应 Houdini；没有重复启动。')
+                        raise RuntimeError('这份工程仍由另一个工作台启动的 Houdini 打开或等待连接。请先关闭它，或从该 Houdini 打开工作区；没有重复启动。')
             identifier = uuid.uuid4().hex
             workspace = str(expected.parent) if expected else str(Path(self.context['root']) / 'workspaces' / ('unsaved-' + identifier))
             Path(workspace).mkdir(parents=True, exist_ok=True)
@@ -205,7 +213,7 @@ class ProjectManager:
             if (ticket['phase'] != 'waiting' or not record or record['pid'] != ticket.get('pid')
                     or _process_started(record['pid']) != ticket.get('processStarted')
                     or record['registration_id'] != payload['registrationId'] or path_key(record['hip_path']) != path_key(payload['expectedHip'])
-                    or ticket['hip'] and path_key(record['hip_path']) != path_key(ticket['hip'])
+                    or ticket['hip'] and record_hip_key(record) != path_key(ticket['hip'])
                     or not ticket['hip'] and record.get('hip_is_new') is not True):
                 raise RuntimeError('启动回执与选择的 Houdini 或工程不一致，未绑定其他工程。')
             result = self.rpc('houdiniTargets/openWorkspace', {'executorId': record['executor_id'],

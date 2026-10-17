@@ -14,7 +14,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 
-from dsh_deployment import FileLease, atomic_json
+from dsh_deployment import FileLease, _process_started, atomic_json
 
 if '_ACTIVE' not in globals():
     _ACTIVE = None
@@ -138,6 +138,9 @@ class ExecutorRegistration:
         self._runtime_id = None
         self._observed_hip = None
         self._hip_display = None
+        # Birth identity is published with the record so presence can reject a
+        # reused pid after a crash instead of treating the stale row as live.
+        self._process_started = _process_started(os.getpid())
 
     def _open(self):
         if self._closed:
@@ -214,11 +217,16 @@ class ExecutorRegistration:
                 if self.scene.get('scene_epoch') and self.scene['scene_epoch'] != scene.get('scene_epoch'):
                     self._generation = uuid.uuid4().hex
                 self.scene = dict(scene)
+            display = self._hip_display or self._hip or self._observed_hip
             record = {'schema': 1, 'executor_id': self.executor_id,
                       'registration_id': self._generation, 'runtime_id': runtime_id,
-                      'pid': os.getpid(), 'installation': self.installation, 'houdini_version': self.version,
+                      'pid': os.getpid(), 'processStarted': self._process_started,
+                      'installation': self.installation, 'houdini_version': self.version,
                       'bridge_url': f'http://127.0.0.1:{port}', 'state': 'registered',
-                      'task_id': self._task, 'hip_path': self._hip_display or self._hip or self._observed_hip,
+                      'task_id': self._task, 'hip_path': display,
+                      # Resolved identity for alias-aware matching; hip_path stays
+                      # the spelling the user and Houdini display.
+                      'hip_key': os.path.normcase(self._observed_hip or self._hip or str(_absolute(display))) if display else None,
                       'boundary': 'Discovery only; verify executor header and task binding before any operation'}
             if self.workbench:
                 record.update(workbench=True, **{key: self.scene.get(key) for key in ('scene_id', 'scene_epoch', 'hip_is_new', 'workspace_path')})
@@ -255,11 +263,22 @@ class ExecutorRegistration:
     def require_writer(self, task_id, actual_hip):
         with self._guard:
             self._open()
-            # Compare the published spelling on both sides; the resolved lease
-            # identity is enforced by the writer keys, not by display paths.
-            if (self._task is None or self._task != task_id
-                    or os.path.normcase(self._hip_display or self._hip) != os.path.normcase(_spelling(actual_hip))):
-                raise RuntimeError('Shared executor task/HIP reservation mismatch; no scene operation allowed')
+            # The fast path compares the published spelling. Only a spelling
+            # mismatch pays for resolution, so a junction/UNC alias does not
+            # reject a valid reservation while the common path stays I/O-free.
+            if self._task is not None and self._task == task_id:
+                if os.path.normcase(self._hip_display or self._hip) == os.path.normcase(_spelling(actual_hip)):
+                    return
+                # Resolve only on a spelling mismatch: samefile follows hard
+                # links and junctions without accepting an old path key.
+                try:
+                    if self._hip and os.path.samefile(actual_hip, self._hip):
+                        return
+                except OSError:
+                    pass
+                if self._hip and os.path.normcase(self._hip) == os.path.normcase(str(_absolute(actual_hip))):
+                    return
+            raise RuntimeError('Shared executor task/HIP reservation mismatch; no scene operation allowed')
 
     @contextmanager
     def save_target(self, target):

@@ -71,7 +71,7 @@ try {
   const flush=async s=>{flushed.push(s.id);return true}
   const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
-    new ExecutorBinding(),identityOf)
+    new ExecutorBinding(),identityOf,id=>agents.find(a=>a.id===id)?.status==='idle')
   assert.equal((await router.directory.list()).length,2,
     'the exact configured installation must retain its registry records')
   const ctx=new Context()
@@ -112,9 +112,9 @@ try {
     registrationId:records[0].registration_id,expectedHip:path.join(directory,'wrong.hip')},new AbortController().signal),/HIP changed/)
   await assert.rejects(router.resolve(context(0)),/Choose a Houdini/)
   await assert.rejects(router.sceneContextFor(agents[0].session),/No Houdini target/)
-  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/写入预留属于另一段对话/)
-  assert(calls.some(c=>c[1]==='/executor/claim'),
-    'a differently claimed target is refused only after an explicit claim attempt, never stolen inside verification')
+  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/另一段对话仍在执行/)
+  assert(!calls.some(c=>c[1]==='/executor/claim'),
+    'a shared non-workbench executor owned by another task is refused before any claim; only an idle workbench window is an explicit takeover')
   await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,'stale'),/stale/)
   agents[0].status='running'
   await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,records[0].registration_id),/idle/)

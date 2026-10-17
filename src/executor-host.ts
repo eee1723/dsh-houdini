@@ -28,6 +28,7 @@ export function apply(ctx:Context,config:Config):void {
         recordHoudiniContext(agent,message)
       }),session=>
       projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]),
+    taskId=>!ctx.agents.get(taskId as any)||ctx.agents.get(taskId as any)?.status==='idle',
     async session=>await ctx.get('sessions')?.flush(session as any)===true,
     async(taskId,candidates,signal)=>{
       const agent=ctx.agents.get(taskId as any),questions=agent?.ctx.get('userQuestions')

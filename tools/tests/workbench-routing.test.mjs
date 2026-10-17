@@ -14,7 +14,7 @@ const session=Session.create('durability-boundary')
 await new ExecutorBinding().ensure(session,identity)
 let contacted=0
 const router=new ExecutorRouter({find:async()=>{contacted++;throw Error('must not read endpoint')}},100,
-  new ExecutorBinding(),value=>recordedExecutorIdentity(value.snapshotEvents()),async()=>false)
+  new ExecutorBinding(),value=>recordedExecutorIdentity(value.snapshotEvents()),()=>true,async()=>false)
 await assert.rejects(router.resolve({agent:{id:session.id,session},signal}),/尚未可靠保存/)
 await assert.rejects(router.sceneContextFor(session,signal),/尚未可靠保存/)
 await assert.rejects(router.recoveryTarget({id:session.id,session},signal),/尚未可靠保存/)

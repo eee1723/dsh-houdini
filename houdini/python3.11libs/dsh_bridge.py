@@ -608,8 +608,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(result)
             return
         if self.path == '/executor/claim':
-            if (set(body) != {'task_id', 'registration_id', 'expected_hip'}
-                    or not all(isinstance(body.get(key), str) and body[key] for key in ('task_id', 'registration_id', 'expected_hip'))):
+            # `initial` is accepted for one compatibility window: an older Host
+            # still sends it and a helper-only reload must not break selection.
+            fields = {'task_id', 'registration_id', 'expected_hip'}
+            if (set(body) not in (fields, fields | {'initial'})
+                    or ('initial' in body and body['initial'] is not True)
+                    or not all(isinstance(body.get(key), str) and body[key] for key in fields)):
                 self._send({'ok':False,'error':'Expected task_id, registration_id and expected_hip'},status=400)
                 return
             from dsh_executor_registry import active_registration
@@ -620,10 +624,16 @@ class _Handler(BaseHTTPRequestHandler):
                     raise RuntimeError('工程登记正在更新，请从当前 Houdini 重新打开工作区。')
                 result = registration.claim(body['task_id'], body['registration_id'], body['expected_hip'], hou.hipFile.path(), idle=idle)
                 # Every successful claim (not only the first selection) establishes
-                # the scene ownership fence for the claiming task.
-                _recovery.task_target(body['task_id'])
+                # the scene ownership fence for the claiming task. An explicit
+                # claim may rebind a task after the user reopened the same project;
+                # ordinary execution keeps the strict fence.
+                _recovery.task_target(body['task_id'], allow_rebind=True)
                 return result
-            result = _execute(claim)
+            try:
+                result = _execute(claim)
+            except (ValueError, RuntimeError) as error:
+                self._send({'ok':False,'error':str(error)},status=409)
+                return
             self._send({'ok':True,'result':result})
             return
         if self.path == '/requests/prepare':
