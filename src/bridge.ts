@@ -144,9 +144,9 @@ export class HoudiniBridge {
     if(result.ok!==true)throw new Error(result.error||'工程接续未完成')
     return result
   }
-  async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal,initial=false):Promise<void> {
+  async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal):Promise<void> {
     const result=await this.post<{ok:boolean;error?:string}>('/executor/claim',{
-      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip,...(initial?{initial:true}:{})},signal)
+      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip},signal)
     if(result.ok!==true) throw new Error(result.error||'Writer reservation failed')
   }
 

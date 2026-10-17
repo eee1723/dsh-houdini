@@ -196,6 +196,9 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
     async followDirectory(agent,signal,probe=false) {
       const state=foldExecutorState(agent.session.snapshotEvents())
       if(!state.identity||state.identity!==connection.targetExecutorId)return
+      // The anchor is the last execution receipt's recovery snapshot (checkpoint
+      // facts), not the project association: a conversation can be bound to a
+      // project with no execution yet, and a receipt can outlive a rebind.
       const anchor=executionHistory(agent.session.snapshotEvents()).anchor?.execution
       let value:any=anchor?.executor_id===state.identity&&anchor.scene_recovery
         ?{...anchor.scene_recovery,status:'connected',executor_id:state.identity}:undefined

@@ -122,7 +122,10 @@ export class ExecutorController extends TypertRemoteService {
         const project=state.project
         const explicitlyUnexecuted=data.sessionId===sessionId&&identity!==record.executor_id&&!state.hasOperations&&!state.recovery
           &&typeof project?.hipPath==='string'&&samePath(project.hipPath,record.hip_path)
+        // scene_id is copyable with the HIP file; association also requires the
+        // recorded path so a copy cannot capture the original conversation.
         const sameScene=record.scene_id&&project?.sceneId===record.scene_id
+          &&typeof project?.hipPath==='string'&&samePath(project.hipPath,record.hip_path!)
         const sameLoadedScene=identity===record.executor_id&&record.scene_epoch&&project?.sceneEpoch===record.scene_epoch
         if(identity&&(sameScene||sameLoadedScene||explicitlyUnexecuted))
           candidates.push({sessionId,state})
@@ -135,13 +138,17 @@ export class ExecutorController extends TypertRemoteService {
       if(!selected&&candidates.length===1) {
         const candidate=candidates[0]
         if(candidate.state.identity===record.executor_id)selected=candidate.sessionId
-        else if(!candidate.state.hasOperations) {
+        else if(!candidate.state.hasOperations&&data.sessionId===candidate.sessionId) {
+          // An explicit sidebar choice may re-select an unexecuted conversation;
+          // an implicit scene match never re-points a different conversation.
           const resolved=await this.ctx.sessionController.resolveAgent(candidate.sessionId)
           if('error' in resolved)throw new Error('无法载入原对话。')
           await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path,false,true)
           recordHoudiniContext(resolved.agent,openingMessage())
           if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
           selected=candidate.sessionId
+        } else if(!candidate.state.hasOperations) {
+          throw new Error('这份工程关联的对话已绑定其他工程。请在左侧选择要继续的对话，再点「打开关联工程」；没有自动换绑。')
         } else {
           const history=await this.ctx.sessionQuery.readSession(candidate.sessionId)
           const assessment=await this.router.inspectRecovery({id:candidate.sessionId,snapshotEvents:()=>history.events},record.executor_id,signal)

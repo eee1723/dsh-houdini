@@ -49,11 +49,29 @@ def gui_probe():
     hou.session._workbench_launch_probe = timer
 
 
+def default_runtime_cache():
+    """The prepared runtime identity comes from the runtime-fix manifest, never a
+    hardcoded cache directory name. An old cache lacks deleteEmpty and silently
+    keeps empty scratch workspace rows."""
+    import subprocess as _subprocess
+    probe = ("import('./tools/runtime-fix-inputs.mjs').then(async m=>{const fs=await import('node:fs');"
+             "const manifest=JSON.parse(fs.readFileSync('deployment/dsh-runtime-fixes/manifest.json','utf8'));"
+             "process.stdout.write(m.runtimeFixKey(m.runtimeFixInputs(process.cwd(),manifest)));})")
+    result = _subprocess.run([shutil.which('node'), '-e', probe], cwd=ROOT, capture_output=True, text=True,
+                             timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        raise RuntimeError('无法计算 DSH 运行时缓存标识：' + result.stderr[-2000:])
+    cache = ROOT / '.npm-cache/_npx' / ('dsh-houdini-' + result.stdout.strip())
+    if not (cache / 'node_modules/@deepseek-ai/dsh/lib/bin.js').is_file():
+        raise RuntimeError('DSH 运行时缓存尚未准备，请先运行 npm run runtime:prepare：' + str(cache))
+    return cache
+
+
 def main():
     reexec_unpacked_test_cli()
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--runtime-cache', type=Path, default=ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c')
+    parser.add_argument('--runtime-cache', type=Path, default=None)
     parser.add_argument('--standalone-only', action='store_true')
     parser.add_argument('--cold-only', action='store_true')
     parser.add_argument('--hfs', help='Limit cold-resume checks to one installed Houdini')
@@ -62,7 +80,7 @@ def main():
     folder = Path(tempfile.mkdtemp(prefix='workbench-launch-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'environment', gui=True)
     env.update(DSH_WORKBENCH_TEST_ROOT=str(folder), DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'))
-    binary = args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
+    binary = (args.runtime_cache or default_runtime_cache()).resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
     node = shutil.which('node')
     subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'), str(binary), env['DSH_HOME'], str(ROOT)],
                    cwd=ROOT, env=env, check=True, timeout=60)
@@ -252,10 +270,10 @@ def main():
         assert (folder / 'dialog-finished').read_text() == '1' and len(receipts()) == count, 'an already open file must not spawn another process'
         control(record, 'show', {'sessionId': first_session})
         (folder / ('clear-' + str(reopened['pid']))).touch()
-        browser('state', 'changed-scene', 'changed', first_session)
+        browser('state', 'changed-scene', '', first_session)
         assert control(record, 'status')['record']['pid'] == desktop.pid
         cold_resume()
-        print('PASS standalone boot without Houdini; real native project dialogs; H21/H22 GUI new scenes, automatic routing, distinct unsaved names, Save As history, cancelled/double launch, proven offline, reopen original task/ownership and changed-scene amber: ' + str(folder), flush=True)
+        print('PASS standalone boot without Houdini; real native project dialogs; H21/H22 GUI new scenes, automatic routing, distinct unsaved names, Save As history, cancelled/double launch, proven offline and reopen original task/ownership: ' + str(folder), flush=True)
     finally:
         for item in receipts():
             if item.get('pid') and _process_started(item['pid']) == item.get('processStarted'):

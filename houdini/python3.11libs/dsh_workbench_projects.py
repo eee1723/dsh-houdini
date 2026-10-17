@@ -9,13 +9,19 @@ import subprocess
 import urllib.request
 import uuid
 
-from dsh_deployment import FileLease, LeaseBusyError, _process_started, atomic_json, read_json
+from dsh_deployment import _process_started, atomic_json, read_json
 from dsh_executor_registry import read_candidates
 from dsh_houdini_installations import discover, installation, launch_environment
 
+# Single timeout policy for the one on-demand GET /health probe. Stricter than
+# any client-side staleness window; a slow answer is 'unknown', never 'offline'.
+HEALTH_TIMEOUT_SECONDS = 1.5
+
 
 def path_key(value):
-    return os.path.normcase(os.path.realpath(value))
+    # Lexical key, matching dsh_project_paths: realpath/stat can hang on an
+    # unavailable UNC share. A registry row with no HIP is a real new-file case.
+    return None if value is None else os.path.normcase(os.path.normpath(value))
 
 
 def dialog_request(payload):
@@ -33,19 +39,25 @@ def dialog_request(payload):
 
 
 def endpoint_presence(record, registry):
+    """Single presence interpreter: registry lifetime + one GET /health.
+
+    A read-only poll never touches FileLease — it must not create locks. The
+    registry record already carries pid/processStarted, so process lifetime is
+    answered there; only a live process is worth one HTTP probe.
+    """
     result = {'executorId': record['executor_id'], 'sceneEpoch': record.get('scene_epoch'),
               'hipPath': record.get('hip_path'), 'status': 'unknown', 'observedAt': time.time() * 1000}
-    try:
-        with FileLease(Path(registry) / 'leases' / (record['executor_id'] + '.lock')):
-            return {**result, 'status': 'offline'}
-    except LeaseBusyError:
-        pass
-    if record['state'] != 'registered':
+    if record.get('state') != 'registered':
+        return {**result, 'status': 'offline'}
+    pid = record.get('pid')
+    started = _process_started(pid) if isinstance(pid, int) and pid > 0 else None
+    # A reused pid is not this executor: the recorded birth must still match.
+    if started is None or (record.get('processStarted') is not None and started != record.get('processStarted')):
         return {**result, 'status': 'offline'}
     request = urllib.request.Request(record['bridge_url'] + '/health', headers={'X-DSH-Houdini-Executor': record['executor_id']})
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=1.5) as response:
+        with opener.open(request, timeout=HEALTH_TIMEOUT_SECONDS) as response:
             data = response.read(65537)
         if len(data) > 65536:
             return result
@@ -56,6 +68,7 @@ def endpoint_presence(record, registry):
                 'busy': bool(health.get('activeRequests') or health.get('activeJobs')),
                 'contractVersion': health.get('executionContractVersion')}
     except Exception:
+        # A failed probe on a live process is unproven, never an exit proof.
         return result
 
 
@@ -66,22 +79,17 @@ class ProjectManager:
         self.folder = Path(context['root']) / 'workbench/launches'
         self.folder.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._presence_lock = threading.Lock()
-        self._presence_time, self._presence = 0, []
         self._processes = {}
 
     def candidates(self):
         return read_candidates(self.context['executorRegistry'], installation=self.plugin)
 
     def presence(self):
-        with self._presence_lock:
-            if time.monotonic() - self._presence_time < 3:
-                return self._presence
-            records = self.candidates()
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                self._presence = list(pool.map(lambda record: endpoint_presence(record, self.context['executorRegistry']), records))
-            self._presence_time = time.monotonic()
-            return self._presence
+        # On-demand only (menu open / target confirmation). No cache: a stale
+        # answer here is how a closed Houdini still looked online.
+        records = self.candidates()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            return list(pool.map(lambda record: endpoint_presence(record, self.context['executorRegistry']), records))
 
     def installations(self):
         items = discover(self.config['hfs'])
@@ -131,8 +139,20 @@ class ProjectManager:
                         self.intents.put(result)
                     return {'id': None, 'phase': 'ready', 'result': result}
                 for filename in self.folder.glob('*.json'):
-                    pending = read_json(filename)
-                    if (pending.get('hip') and path_key(pending['hip']) == path_key(expected) and pending.get('pid')
+                    try:
+                        pending = read_json(filename)
+                    except (OSError, ValueError) as error:
+                        # One torn ticket must not block a legitimate open.
+                        print('[dsh-houdini] launch ticket unreadable, skipped: ' + filename.name + ': ' + str(error), flush=True)
+                        continue
+                    if not isinstance(pending, dict):
+                        continue
+                    # Only this workbench generation's unfinished ticket blocks a
+                    # re-open. A prior generation's ticket is an orphan: its attach
+                    # cannot succeed against this workbench, so it must not lock
+                    # the HIP out of a legitimate open forever.
+                    if (pending.get('generation') == self.generation and pending.get('hip')
+                            and path_key(pending['hip']) == path_key(expected) and pending.get('pid')
                             and _process_started(pending['pid']) == pending.get('processStarted') and pending.get('phase') != 'ready'):
                         raise RuntimeError('这份工程已经在启动或等待连接。请查看对应 Houdini；没有重复启动。')
             identifier = uuid.uuid4().hex

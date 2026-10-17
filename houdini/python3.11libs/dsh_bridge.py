@@ -608,9 +608,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(result)
             return
         if self.path == '/executor/claim':
-            if (set(body) not in ({'task_id', 'registration_id', 'expected_hip'}, {'task_id', 'registration_id', 'expected_hip', 'initial'})
-                    or not all(isinstance(body.get(key), str) and body[key] for key in ('task_id', 'registration_id', 'expected_hip'))
-                    or 'initial' in body and body['initial'] is not True):
+            if (set(body) != {'task_id', 'registration_id', 'expected_hip'}
+                    or not all(isinstance(body.get(key), str) and body[key] for key in ('task_id', 'registration_id', 'expected_hip'))):
                 self._send({'ok':False,'error':'Expected task_id, registration_id and expected_hip'},status=400)
                 return
             from dsh_executor_registry import active_registration
@@ -620,8 +619,9 @@ class _Handler(BaseHTTPRequestHandler):
                 if registration.workbench and registration.scene.get('scene_epoch') != _recovery.scene_epoch():
                     raise RuntimeError('工程登记正在更新，请从当前 Houdini 重新打开工作区。')
                 result = registration.claim(body['task_id'], body['registration_id'], body['expected_hip'], hou.hipFile.path(), idle=idle)
-                if body.get('initial'):
-                    _recovery.task_target(body['task_id'])
+                # Every successful claim (not only the first selection) establishes
+                # the scene ownership fence for the claiming task.
+                _recovery.task_target(body['task_id'])
                 return result
             result = _execute(claim)
             self._send({'ok':True,'result':result})

@@ -10,7 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 import dsh_workbench_projects as projects
-from dsh_deployment import FileLease
+from dsh_deployment import FileLease, _process_started
 
 
 with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as directory:
@@ -41,13 +41,33 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         assert spawned[0][1]['env']['HOUDINI_PATH'].split(';')[0].endswith(opened['id'])
         assert (Path(spawned[0][1]['env']['HOUDINI_PATH'].split(';')[0]) / 'python3.11libs/uiready.py').is_file()
         assert 'after_save(globals(),' in (Path(spawned[0][1]['env']['HOUDINI_PATH'].split(';')[0]) / 'scripts/afterscenesave.py').read_text(encoding='utf-8')
+        (manager.folder / ('0' * 32 + '.json')).write_text('{"torn":', encoding='utf-8')
         try:
             manager.launch('open', runtime['hfs'], project)
         except RuntimeError as error:
             assert '已经在启动' in str(error)
         else:
             raise AssertionError('duplicate startup accepted')
-        assert len(spawned) == 1
+        assert len(spawned) == 1, 'a torn ticket file must be skipped, not block a legitimate open'
+        # An orphan ticket from a prior workbench generation must not lock a
+        # legitimate open. Neutralize this generation's ticket for the check,
+        # then restore its phase for the rest of the scenario.
+        first_ticket = manager._read(opened['id'])
+        first_phase = first_ticket['phase']
+        first_ticket['phase'] = 'ready'
+        manager._write(first_ticket)
+        orphan = {'id': '1' * 32, 'generation': 'old-desktop', 'root': str(context['root']), 'plugin': str(ROOT),
+                  'hfs': runtime['hfs'], 'hip': str(project), 'phase': 'waiting', 'pid': 12345,
+                  'processStarted': 'birth', 'createdAt': 0}
+        (manager.folder / ('1' * 32 + '.json')).write_text(json.dumps(orphan), encoding='utf-8')
+        second = manager.launch('open', runtime['hfs'], project)
+        assert len(spawned) == 2, 'a prior generation orphan ticket must not block a legitimate open'
+        (manager.folder / ('1' * 32 + '.json')).unlink()
+        second_ticket = manager._read(second['id'])
+        second_ticket['phase'] = 'ready'
+        manager._write(second_ticket)
+        first_ticket['phase'] = first_phase
+        manager._write(first_ticket)
         for action, hfs, filename in [('open', runtime['hfs'], root / 'malicious.py'), ('open', root / 'foreign', project), ('guess', runtime['hfs'], project)]:
             try:
                 manager.launch(action, hfs, filename)
@@ -67,6 +87,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         assert not callbacks
         record['pid'] = 12345
         record['houdini_version'] = '22.0.368'
+        launches = len(spawned)
         with patch.object(projects, 'endpoint_presence', lambda *args: {'status': 'unknown'}):
             try:
                 manager.launch('open', runtime['hfs'], project)
@@ -74,7 +95,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
                 assert '无法确认' in str(error)
             else:
                 raise AssertionError('an unknown existing process caused duplicate launch')
-        assert len(spawned) == 1
+        assert len(spawned) == launches, 'an unresolved existing process must not add a launch'
         with patch.object(projects, 'endpoint_presence', lambda *args: {'status': 'online'}):
             try:
                 manager.launch('open', runtime['hfs'], project)
@@ -123,11 +144,16 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         else:
             raise AssertionError('forged dialog input accepted')
     executor = 'd' * 32
-    record = {'executor_id': executor, 'scene_epoch': 'e' * 32, 'hip_path': str(project), 'state': 'registered',
-              'bridge_url': 'http://127.0.0.1:1', 'runtime_id': 'f' * 32}
-    assert projects.endpoint_presence(record, registry)['status'] == 'offline'
-    with FileLease(registry / 'leases' / (executor + '.lock')):
-        assert projects.endpoint_presence(record, registry)['status'] == 'unknown', 'timeout or failed HTTP with a live lease is not an exit proof'
+    alive = {'executor_id': executor, 'scene_epoch': 'e' * 32, 'hip_path': str(project), 'state': 'registered',
+             'bridge_url': 'http://127.0.0.1:1', 'runtime_id': 'f' * 32,
+             'pid': os.getpid(), 'processStarted': _process_started(os.getpid())}
+    assert projects.path_key(None) is None, 'a registry row with no HIP is a new-file case, not a type error'
+    assert projects.endpoint_presence(alive, registry)['status'] == 'unknown', 'a failed HTTP probe on a live process is not an exit proof'
+    assert projects.endpoint_presence({**alive, 'state': 'disconnected'}, registry)['status'] == 'offline'
+    assert projects.endpoint_presence({**alive, 'pid': 0}, registry)['status'] == 'offline', 'a missing or unstarted pid is offline without any HTTP probe'
+    assert projects.endpoint_presence({**alive, 'pid': 99999999}, registry)['status'] == 'offline'
+    assert not (registry / 'leases' / (executor + '.lock')).exists(), 'a read-only presence poll must not create locks'
+    assert projects.endpoint_presence(alive, registry)['status'] == 'unknown', 'a stable probe must not flap across identical calls'
     assert 'hou' not in sys.modules, 'desktop discovery and launch preparation must not import HOM'
     import dsh_workbench_entry as entry
     import dsh_workbench as workbench
@@ -155,26 +181,36 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         os.environ['HFS'] = str(root / 'other-version')
         entry.attach()
         assert messages[-1][0] == 'projects/failed', 'wrong launch runtime reports a failure instead of silently waiting forever'
-    first_hook, inherited_hook, user_hook, unused_hook = [root / name for name in ('first.py','inherited.py','user.py','unused.py')]
+    first_hook, inherited_hook, user_hook, extra_hook, broken_hook = [root / name for name in ('first.py','inherited.py','user.py','extra.py','broken.py')]
+    plugin_script = (Path(entry.__file__).resolve().parents[1] / 'scripts/afterscenesave.py').resolve()
     inherited_hook.write_text('from dsh_workbench_entry import after_save\nafter_save(globals(), '+repr(str(inherited_hook))+')', encoding='utf-8')
-    user_marker = root / 'user-save.json'
-    user_hook.write_text('import json\nfrom pathlib import Path\nassert native_value==42\nPath('+repr(str(user_marker))+').write_text(json.dumps(kwargs))\nkwargs["success"]=True', encoding='utf-8')
-    unused_hook.write_text('raise AssertionError("do not run additional studio hooks that native Houdini would not select")', encoding='utf-8')
+    user_marker, extra_marker, order_log = root / 'user-save.json', root / 'extra-save.json', root / 'hook-order.log'
+    user_hook.write_text('import json\nfrom pathlib import Path\nassert native_value==42\nPath('+repr(str(user_marker))+').write_text(json.dumps(kwargs))\nkwargs["success"]=True\nPath('+repr(str(order_log))+').open("a",encoding="utf-8").write("user\\n")', encoding='utf-8')
+    extra_hook.write_text('from pathlib import Path\nPath('+repr(str(extra_marker))+').write_text("ran")\nPath('+repr(str(order_log))+').open("a",encoding="utf-8").write("extra\\n")', encoding='utf-8')
+    broken_hook.write_text('raise RuntimeError("broken hook")', encoding='utf-8')
     notified = []
     arguments = {'file':'saved.hip','success':False,'autosave':True}
-    with patch.dict(sys.modules, {'hou':SimpleNamespace(findFiles=lambda pattern:tuple(map(str,[first_hook,inherited_hook,user_hook,unused_hook]))),
+    healthy = tuple(map(str, [first_hook, plugin_script, inherited_hook, user_hook, extra_hook]))
+    failing = tuple(map(str, [first_hook, plugin_script, inherited_hook, user_hook, extra_hook, broken_hook]))
+    with patch.dict(sys.modules, {'hou':SimpleNamespace(findFiles=lambda pattern:healthy),
             'dsh_scene_recovery':SimpleNamespace(after_save=lambda filename,success:notified.append((filename,success)))}):
         entry.after_save({'kwargs':arguments,'native_value':42}, first_hook)
-        assert notified == [('saved.hip',False),('saved.hip',False)]
+        assert notified == [('saved.hip',False)], 'the plugin notification must run once even when its file is also discovered'
         assert json.loads(user_marker.read_text()) == arguments and arguments['success'] is False
+        assert extra_marker.exists() and order_log.read_text(encoding='utf-8').splitlines() == ['user','extra'], \
+            'every discovered afterscenesave.py must run exactly once in findFiles order'
         assert not entry._SAVE_HOOKS, 'nested inherited launch hooks must not form a cycle or retain state'
-        with patch.dict(sys.modules, {'dsh_scene_recovery':SimpleNamespace(after_save=lambda *args:(_ for _ in ()).throw(RuntimeError('notification failed')))}):
-            user_marker.unlink()
+        user_marker.unlink(); extra_marker.unlink(); order_log.unlink()
+        with patch.dict(sys.modules, {'hou':SimpleNamespace(findFiles=lambda pattern:failing),
+                'dsh_scene_recovery':SimpleNamespace(after_save=lambda *args:(_ for _ in ()).throw(RuntimeError('notification failed')))}):
             try:
                 entry.after_save({'kwargs':arguments,'native_value':42}, first_hook)
             except RuntimeError as error:
-                assert str(error) == 'notification failed'
+                message = str(error)
+                assert 'notification failed' in message and str(plugin_script) in message, 'the report must say which save script failed'
+                assert 'broken hook' in message and str(broken_hook) in message
             else:
                 raise AssertionError('save notification failure was hidden')
-            assert user_marker.exists() and not entry._SAVE_HOOKS
+            assert user_marker.exists() and extra_marker.exists(), 'a failing save script must not swallow the others'
+            assert not entry._SAVE_HOOKS
 print('workbench launch: exact executable/file, duplicate prevention, PID birth/scene/generation fencing, replay, background hide, no implicit save, untrusted dialog payloads and unknown-versus-offline passed')

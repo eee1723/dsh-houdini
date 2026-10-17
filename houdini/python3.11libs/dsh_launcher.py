@@ -116,9 +116,13 @@ _DSH_WEB_SESSION = dsh_web_auth.shared_session(
 
 # Each Houdini process gets its own unsaved scratch workspace, never a prior
 # project's directory or the plugin checkout. Keep its files after closing.
+# One scratch root shared with the workbench desktop and its pruner.
 _FALLBACK_WORKSPACE = os.path.join(tempfile.gettempdir(), "dsh-houdini", "workspaces")
-if _MANAGED:
-    _FALLBACK_WORKSPACE = os.path.join(_MANAGED["root"], "workspaces", "unsaved")
+_workbench_root = os.environ.get("DSH_HOUDINI_WORKBENCH_ROOT")
+if _workbench_root:
+    _FALLBACK_WORKSPACE = os.path.join(_workbench_root, "workspaces")
+elif _MANAGED:
+    _FALLBACK_WORKSPACE = os.path.join(_MANAGED["root"], "workspaces")
 _UNSAVED_WORKSPACE = globals().get('_UNSAVED_WORKSPACE')
 
 

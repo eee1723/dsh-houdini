@@ -245,7 +245,11 @@ def run(config):
                     raise ValueError('未知的工作台操作。')
                 result.update(ok=True, result=value)
             except Exception as error:
-                result['error'] = str(error)
+                # Product errors carry the user-facing message; anything else
+                # surfaces its type and detail instead of an opaque fallback.
+                detail = str(error).strip()
+                result['error'] = detail if isinstance(error, (ValueError, RuntimeError)) else (
+                    type(error).__name__ + ': ' + (detail or '未知错误'))
             data = json.dumps(result).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')

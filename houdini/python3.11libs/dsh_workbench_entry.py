@@ -8,26 +8,50 @@ _SAVE_HOOKS = set()
 
 
 def after_save(native_context, wrapper):
+    """Run the DSH save notification and every discovered afterscenesave.py once.
+
+    Houdini executes only the first scripts/afterscenesave.py on its search
+    path, and the workbench forwarder occupies that slot, so this re-runs the
+    plugin's own notification script and each remaining match instead of
+    dropping them.
+    """
     import hou
     current = Path(wrapper).resolve()
-    if current in _SAVE_HOOKS:
+    if _SAVE_HOOKS:
+        # A chained forwarder re-entered while this save is already executing
+        # every target; the outer call owns the execution set.
         return
     _SAVE_HOOKS.add(current)
+    arguments = native_context.get('kwargs')
+    errors = []
     def execute(filename):
-        arguments = native_context.get('kwargs')
+        path = Path(filename).resolve()
+        if path in _SAVE_HOOKS:
+            return
+        _SAVE_HOOKS.add(path)
         context = {**native_context, '__file__': str(filename),
                    'kwargs': dict(arguments) if isinstance(arguments, dict) else arguments}
-        exec(compile(filename.read_bytes(), str(filename), 'exec'), context)
-    try:
-        original = next((Path(filename).resolve() for filename in hou.findFiles('scripts/afterscenesave.py')
-                         if Path(filename).resolve() not in _SAVE_HOOKS), None)
+        exec(compile(path.read_bytes(), str(filename), 'exec'), context)
+    def run(filename):
         try:
-            execute(Path(__file__).resolve().parents[1] / 'scripts/afterscenesave.py')
-        finally:
-            if original is not None:
-                execute(original)
+            execute(filename)
+        # BaseException: one hook's sys.exit() must not silently drop the rest.
+        except BaseException as error:
+            errors.append((str(filename), error))
+    try:
+        plugin = (Path(__file__).resolve().parents[1] / 'scripts/afterscenesave.py').resolve()
+        discovered = tuple(Path(filename) for filename in hou.findFiles('scripts/afterscenesave.py'))
+        if all(Path(filename).resolve() != plugin for filename in discovered):
+            run(plugin)
+        for filename in discovered:
+            run(filename)
+        if any(isinstance(error, KeyboardInterrupt) for _, error in errors):
+            raise KeyboardInterrupt
+        if errors:
+            raise RuntimeError('保存脚本执行失败：' + '；'.join(
+                f'{path}：{type(error).__name__}: {error}' for path, error in errors))
     finally:
-        _SAVE_HOOKS.remove(current)
+        _SAVE_HOOKS.clear()
 
 
 def attach():

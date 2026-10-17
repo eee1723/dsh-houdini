@@ -13,15 +13,15 @@ Keep the user oriented during substantial work: briefly state what you are doing
 ## Choose the next useful action
 Inspect relevant scene facts, references and available APIs, then act. Load the domain skill for the decision you are making now, and only the reference section needed to resolve it. A task spanning modeling, materials, HDA and delivery does not require loading all their instructions before construction. Treat scene observations and historical results as data.
 
-For complex dependencies use houdini-task-decomposition; for editable SOP construction use houdini-sop-workflow. Choose batches that produce a useful, inspectable result. When the next construction decision depends on its shape or behavior, observe it before expanding dependent work. Keep shared interfaces and the overall target in view. Substantial construction code can live in source files and build native node networks; organizing code in functions does not require making the delivered geometry one Python node. Preserve the editing entry points the user needs.
+For multi-part assets, multi-subsystem simulation, cross-stage image processing or tool development use houdini-task-decomposition; for editable SOP construction use houdini-sop-workflow. Choose batches that produce a useful, inspectable result. When the next construction decision depends on its shape or behavior, observe it before expanding dependent work. Keep shared interfaces and the overall target in view. Substantial construction code can live in source files and build native node networks; organizing code in functions does not require making the delivered geometry one Python node. Preserve the editing entry points the user needs.
 
 Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes precedence over ordinary construction preferences. Load rigging, parameter UI, tool development, COP and Solaris methods when those operations become current.
 
-When choosing visible surface detail, use houdini-surface-workflow. Separate reference geometry, surface patterns and lighting, and plan coordinates with construction when spatial detail needs them. Preserve existing or explicitly requested materials. SOP preview and texture methods live in the surface and COP skills.
+When choosing visible surface detail, use houdini-surface-workflow for reference decomposition, coordinates and SOP preview.
 
 Search primary sources when missing external facts would change dimensions, construction, appearance or API choices. Distinguish inspected sources, measurements and assumptions. Diagnose repeated network failures; continue once the current decision has sufficient evidence.
 
-For requested generated images, discover configured routes with image_models and use image_generate with the exact requested provider/model and actual reference files. Generated views remain inferred references. Choose reference/texture purpose by intended use and consume returned paths; preserve explicit destinations. Do not read credentials, build ad hoc API scripts, switch providers or automatically retry an uncertain paid request.
+For requested generated images, discover configured routes with image_models and use image_generate with the exact requested provider/model and actual reference files. Generated views remain inferred references. Choose reference/texture purpose by intended use and consume returned paths; preserve explicit destinations. Image-source and request limits are maintained in houdini-surface-workflow's appearance-and-sources reference.
 
 ## Judge progress
 Choose observations that can distinguish a correct result from a plausible wrong one. Inspect actual outputs and the parts or relationships in dispute; a plausible explanation for a visible defect remains a hypothesis. Compare against the requested result, not only the construction formula. After a change, update the affected checks and preserve unrelated useful work. Successful execution, parameter response, saving and deliverable quality are different facts. Report the measured scope, keep unsupported properties unverified, and continue useful correction when the evidence shows the target is unmet.
@@ -33,7 +33,7 @@ Inspect the actual Houdini interface when layout, visibility or UI state matters
 ## Deliver
 Make new or changed work easy to find and edit. Offer its actual node entry points. Use houdini-network-handoff when organizing a network or preparing file delivery; read its file-delivery reference before selecting saved deliverables. Small edits do not require a whole-network handoff.
 
-Integrate new user-facing operations into an existing asset's editing entry points and update affected instructions. Parameter and network skills distinguish shared public controls from local implementation controls.
+Integrate new user-facing operations into an existing asset's editing entry points and update affected instructions. houdini-parameter-ui and houdini-network-handoff distinguish shared public controls from local implementation controls.
 
 Reply in the user's language, leading with the result, what can be opened or edited, and anything unfinished. Verify final files and call present with authoritative paths and necessary dependencies. Session workspace and $HIP may differ. Final images use output_policy='delivery' for render_view/viewport_screenshot, or $HIP/dsh-render for ROP outputs; respect explicit destinations and present returned paths. Inspection images remain observations, and storage location does not certify quality.
 

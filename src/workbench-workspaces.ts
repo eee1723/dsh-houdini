@@ -9,13 +9,16 @@ import type {ExecutorDirectory} from './executor-routing.js'
 
 const key=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
 
+/** Single declaration of every plugin scratch root. The desktop ticket factory
+ * writes `workspaces/unsaved-<id>` here and dsh_launcher._hip_dir() writes
+ * `workspaces/untitled-<pid>-*`; both land in the same directory. */
 export async function scratchRoots():Promise<string[]> {
   const roots=[path.join(os.tmpdir(),'dsh-houdini/workspaces')]
   const filename=process.env.DSH_HOUDINI_WORKBENCH_CONTEXT
   if(filename) {
     const context=JSON.parse(await fs.readFile(filename,'utf8'))
     if(context.workbench!==true||typeof context.root!=='string'||!path.isAbsolute(context.root))throw Error('Invalid workbench scratch scope')
-    roots.push(path.join(context.root,'workspaces/unsaved'),path.join(context.root,'workspaces'))
+    roots.push(path.join(context.root,'workspaces'))
   }
   return roots
 }
@@ -27,10 +30,11 @@ export async function pruneScratchWorkspaces(ctx:Context,directory:ExecutorDirec
   if(!registry||!('deleteEmpty' in registry)||typeof registry.deleteEmpty!=='function')return []
   const scope=roots??await scratchRoots(),removed:string[]=[]
   for(const workspace of registry.list()) {
+    // Identity is the plugin's raw scratch directory name only. A UI title is
+    // presentation and never decides ownership or deletion.
     const name=path.basename(workspace.path)
     if(!scope.some(root=>key(path.dirname(workspace.path))===key(root))
       ||!/^untitled-\d+-[a-z0-9_-]+$|^unsaved-[0-9a-f]{32}$/.test(name)
-      ||!(workspace.title===name||/^未保存工程 \d+$/.test(workspace.title))
       ||workspace.sessionIds.length||keep.some(value=>key(value)===key(workspace.path)))continue
     let info
     try {info=await fs.lstat(workspace.path)}

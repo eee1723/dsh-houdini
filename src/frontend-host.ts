@@ -10,7 +10,6 @@ import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import {desktopRequest} from './workbench-desktop.js'
 import {foldExecutorState} from './executor-identity-projection.js'
-import {EXPECTED_EXECUTION_CONTRACT_VERSION} from './generated-verb-contract.js'
 
 export const name='dsh-houdini-frontend-host'
 
@@ -54,8 +53,10 @@ export class HoudiniFrontend extends TypertRemoteService {
 
   @Remote
   async projectPresence(signal:AbortSignal) {
-    const records=await desktopRequest('presence',{},signal)
-    return records.map((record:any)=>({...record,status:record.status==='online'&&record.contractVersion!==EXPECTED_EXECUTION_CONTRACT_VERSION?'unknown':record.status}))
+    // On-demand query only. The desktop's endpoint_presence is the single
+    // status interpreter; contract-version mismatch stays an error path in the
+    // Bridge connection (bridge.ts), not a live status feed.
+    return desktopRequest('presence',{},signal)
   }
 
   @Remote

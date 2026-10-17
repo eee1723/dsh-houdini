@@ -37,7 +37,7 @@ const REVIEW_PROJECT:Project={hipPath:null,hipIsNew:null,needsReview:true,sceneI
 const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
   invalid:z.string().nullable(),bindingRecorded:z.boolean(),pending:z.record(z.string(),z.string().nullable()),
   queuedBindings:z.record(z.string(),z.string()),
-  queuedProjects:z.record(z.string(),z.boolean()),
+  queuedProjects:z.record(z.string(),z.string()),
   hasOperations:z.boolean(),
   executors:z.array(z.string()),recovery:Recovery.nullable(),recoverySeq:z.number(),
   project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number()})
@@ -52,7 +52,7 @@ function add(state:State,id:unknown):State {
   if (typeof id!=='string'||!ID.test(id)) return {...state,invalid:'Invalid recorded Houdini executor identity'}
   if (state.identity && state.identity!==id) return {...state,conflict:true}
   return state.identity===id ? state : {...state,identity:id,executors:[...state.executors,id],
-    project:{hipPath:null,hipIsNew:null,needsReview:false,sceneId:null,executorId:id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
+    project:{hipPath:null,hipIsNew:null,needsReview:true,sceneId:null,executorId:id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
 }
 
 function projectObservation(state:State,value:any,observedAt:number,sequence=0):State {
@@ -60,26 +60,45 @@ function projectObservation(state:State,value:any,observedAt:number,sequence=0):
     ||typeof value.hip_path!=='string'||!value.hip_path||!Number.isFinite(observedAt)||!Number.isFinite(sequence)
     ||observedAt<state.projectObservedAt||observedAt===state.projectObservedAt&&sequence<state.projectSequence)return state
   const hipIsNew=typeof value.hip_is_new==='boolean'?value.hip_is_new:null
-  const sceneId=value.scene_id??value.scene_recovery?.scene_id??state.project?.sceneId??null
+  // Scene identity is not inheritable by file copy. Facts carry forward only
+  // while the HIP path is unchanged; a path change without an observed identity
+  // yields sceneId null (needsReview) instead of the previous file's identity.
+  const hipUnchanged=state.project?.hipPath===value.hip_path
+  const observedSceneId=value.scene_id??value.scene_recovery?.scene_id??null
+  const sceneId=observedSceneId??(hipUnchanged?state.project?.sceneId??null:null)
   if(sceneId!==null&&(typeof sceneId!=='string'||!ID.test(sceneId)))return state
-  const sceneEpoch=value.scene_epoch??value.scene_recovery?.scene_epoch??state.project?.sceneEpoch??null
+  const observedEpoch=value.scene_epoch??value.scene_recovery?.scene_epoch??null
+  const sceneEpoch=observedEpoch??(hipUnchanged?state.project?.sceneEpoch??null:null)
   const label=hipIsNew===true?(typeof value.project_label==='string'?value.project_label:state.project?.label??null):null
+  // No verified scene identity means the association is not yet trustworthy;
+  // a new unsaved file is not exempt when it still lacks an observed identity.
+  const needsReview=!sceneId
   const project=state.project&&state.project.hipPath===value.hip_path&&state.project.hipIsNew===hipIsNew
-    &&state.project.sceneId===sceneId&&state.project.sceneEpoch===sceneEpoch&&state.project.label===label&&state.project.executorId===state.identity?state.project:
-    {hipPath:value.hip_path,hipIsNew,needsReview:false,sceneId,executorId:state.identity,sceneEpoch,label}
+    &&state.project.sceneId===sceneId&&state.project.sceneEpoch===sceneEpoch&&state.project.label===label
+    &&state.project.needsReview===needsReview&&state.project.executorId===state.identity?state.project:
+    {hipPath:value.hip_path,hipIsNew,needsReview,sceneId,executorId:state.identity,sceneEpoch,label}
   return {...state,project,projectObservedAt:observedAt,projectSequence:sequence}
 }
 
 function projectMessage(state:State,message:any,event:SessionEvent):State {
   const sections=(message.source.sections??[]).filter((section:any)=>['dsh-houdini:workspace-open','dsh-houdini:workspace-directory'].includes(section.name))
   if(!sections.length)return state
-  if(state.queuedProjects[message.id]) {
+  const signature=JSON.stringify(sections.map((section:any)=>section.text))
+  const queued=state.queuedProjects[message.id]
+  if(queued!==undefined) {
+    if(queued!==signature)return {...state,invalid:'Queued Houdini project message changed before consumption'}
+    // Sections were already folded at splice time under the splice timestamp;
+    // re-applying at consume would let stale queued context override newer
+    // observations. Consumption only releases the queue entry, never the facts.
     if(event.type!=='user/message')return state
     const remaining={...state.queuedProjects};delete remaining[message.id]
     return {...state,queuedProjects:remaining}
   }
   let next=state
-  if(event.type==='agent/inbox/spliced')next={...next,queuedProjects:{...next.queuedProjects,[message.id]:true}}
+  if(event.type==='agent/inbox/spliced') {
+    if(typeof message.id!=='string'||!message.id)return {...next,invalid:'Queued Houdini project requires a native message identity'}
+    next={...next,queuedProjects:{...next.queuedProjects,[message.id]:signature}}
+  }
   for(const section of sections) {
     const value=sectionData(section)
     next=projectObservation(next,{...value,executor_id:value?.executor_id??next.identity},(event.time??0)/1000)
@@ -88,7 +107,7 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:10,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:11,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
     executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{}}),
   wire:{viewSchema:Project.nullable(),view:(state:State)=>state.invalid||state.conflict?REVIEW_PROJECT:state.project},
@@ -107,6 +126,9 @@ export const executorIdentityProjection={
             const remaining={...next.queuedBindings};delete remaining[message.id]
             next={...next,queuedBindings:remaining}
           }
+          // A message can carry both binding and workspace sections; the project
+          // side must still verify/release its own queue entry for this message.
+          next=projectMessage(next,message,event)
           continue
         }
         if(event.type==='agent/inbox/spliced') {
@@ -134,7 +156,7 @@ export const executorIdentityProjection={
             if(next.hasOperations||next.recovery||next.identity!==value.previous_executor||!ID.test(value.executor_id))
               return {...next,invalid:'Only an unexecuted task can change its initial target'}
             next={...next,identity:value.executor_id,bindingRecorded:true,executors:[...new Set([...next.executors,value.executor_id])],
-              project:{hipPath:null,hipIsNew:null,needsReview:false,sceneId:null,executorId:value.executor_id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
+              project:{hipPath:null,hipIsNew:null,needsReview:true,sceneId:null,executorId:value.executor_id,sceneEpoch:null,label:null},projectObservedAt:0,projectSequence:0}
             continue
           }
           next=add({...next,bindingRecorded:true},value.executor_id)

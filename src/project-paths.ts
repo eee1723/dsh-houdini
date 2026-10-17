@@ -55,14 +55,32 @@ function basename(value:string) {
 export async function verifyManagedImageDirectory(artifact:ProjectArtifact):Promise<void> {
   if (artifact.output_policy !== 'managed') return
   const root=artifact.project_root!, managed=artifact.managed_root!
-  if (!samePath(await fs.realpath(root),root) || !inside(root,managed))
+  if (!inside(root,managed)) throw Error('Managed image project directory changed after observation')
+  // The root may be spelled through a drive alias or junction and still be the
+  // visible HIP tree; writes follow that tree. What is rejected is a child
+  // directory replaced by a link, or a managed path that leaves the HIP's
+  // resolved tree.
+  const resolvedRoot=await fs.realpath(root)
+  // The managed directory may not exist yet (created at write time); its
+  // absence is not a redirect. Verify only the existing prefix.
+  let resolvedManaged:string|null=null
+  try {resolvedManaged=await fs.realpath(managed)}
+  catch(error:any) {
+    if(error.code!=='ENOENT')throw error
+    if(!inside(root,managed))throw Error('Managed image project directory changed after observation')
+  }
+  if(resolvedManaged!==null&&!inside(resolvedRoot,resolvedManaged))
     throw Error('Managed image project directory changed after observation')
-  let current=root
+  // Each visible child must resolve to the same place as the resolved root's
+  // own child; a link substituted mid-path is a redirect even if the root
+  // spelling itself is an alias.
+  let current=root, resolvedCurrent=resolvedRoot
   for (const part of path.relative(root,managed).split(path.sep)) {
     current=path.join(current,part)
+    resolvedCurrent=path.join(resolvedCurrent,part)
     let info
     try {info=await fs.lstat(current)} catch(error:any) {if(error.code==='ENOENT') continue;throw error}
-    if (!info.isDirectory() || info.isSymbolicLink() || !samePath(await fs.realpath(current),current))
+    if (!info.isDirectory() || info.isSymbolicLink() || !samePath(await fs.realpath(current),resolvedCurrent))
       throw Error('Managed image directory is redirected or is not a directory; use the visible HIP tree')
   }
 }
@@ -89,12 +107,15 @@ export async function imageOutputLocation(options:ImageOutputOptions,
   if (envelope?.ok!==true || !scene || scene.hip_is_new!==false
       || typeof scene.hip_path!=='string' || !path.isAbsolute(scene.hip_path))
     throw Error("Managed image output requires a current named Houdini project; use output_policy='explicit' for unsaved or offline work")
-  const root=await fs.realpath(path.dirname(scene.hip_path)), repo=await fs.realpath(repository)
+  // One lexical root for both the layout check and the write anchor: a resolved
+  // root here would validate a different tree than the one names are built from
+  // (junction/subst). Redirection is rejected at the write boundary instead.
+  const root=path.dirname(scene.hip_path), repo=await fs.realpath(repository)
   if (inside(repo,root)) throw Error('Image output cannot be written into the plugin repository; choose a project destination')
   const managed=path.join(root,...entry.path.split('/'))
   if (scene.project_layout !== undefined) {
     const layout=scene.project_layout
-    const observedRoot=path.dirname(scene.hip_path)
+    const observedRoot=root
     if (layout?.schema_version!==1 || layout.available!==true || typeof layout.hip_path!=='string'
         || !samePath(layout.hip_path,scene.hip_path) || typeof layout.project_root!=='string'
         || !samePath(layout.project_root,observedRoot) || typeof layout.directories?.[role]!=='string'

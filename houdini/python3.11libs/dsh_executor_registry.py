@@ -63,6 +63,15 @@ def _absolute(value):
     return path.resolve()
 
 
+def _spelling(value):
+    """Lexical display form of an observed path: what hou.hipFile showed.
+
+    Published as the record's hip_path so Host/conversation comparisons match
+    the recorded spelling. Lease identity keeps using the resolved form.
+    """
+    return os.path.normpath(str(value))
+
+
 def _hip_key(path):
     # Resolve case/symlink aliases; existing hard links share the filesystem ID.
     path = _absolute(path)
@@ -128,6 +137,7 @@ class ExecutorRegistration:
         self._port = None
         self._runtime_id = None
         self._observed_hip = None
+        self._hip_display = None
 
     def _open(self):
         if self._closed:
@@ -150,7 +160,7 @@ class ExecutorRegistration:
                 for lease in self._writers:
                     lease.close()
                 self._writers, self._writer_keys = [], []
-                self._task = self._hip = None
+                self._task = self._hip = self._hip_display = None
             elif self._hip and not scene.get('hip_is_new'):
                 with self.save_target(hip):
                     pass
@@ -160,8 +170,11 @@ class ExecutorRegistration:
     def claim_writer(self, task_id, hip, *, replace=False):
         """Acquire before enabling mutations. Never create/save/load the HIP.
 
-        Only protects participating runtimes; GUI saves and arbitrary filesystem
-        writes are not intercepted. Save As must acquire its new target first.
+        replace=True is the single mechanical takeover path; it is reachable
+        only through an explicit user-authorized claim (Host target selection
+        or recovery choice), never from verification or routing. Only protects
+        participating runtimes; GUI saves and arbitrary filesystem writes are
+        not intercepted. Save As must acquire its new target first.
         """
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 256:
             raise ValueError('invalid task identity')
@@ -184,6 +197,7 @@ class ExecutorRegistration:
                     lease.close()
                 raise
             self._writers, self._task, self._hip = leases, task_id, str(target)
+            self._hip_display = _spelling(hip)
             self._writer_keys = keys
 
     def publish(self, port, runtime_id, *, hip=None, scene=None):
@@ -195,6 +209,7 @@ class ExecutorRegistration:
             self._open()
             if hip is not None:
                 self._observed_hip = str(_absolute(hip))
+                self._hip_display = _spelling(hip)
             if scene is not None:
                 if self.scene.get('scene_epoch') and self.scene['scene_epoch'] != scene.get('scene_epoch'):
                     self._generation = uuid.uuid4().hex
@@ -203,7 +218,7 @@ class ExecutorRegistration:
                       'registration_id': self._generation, 'runtime_id': runtime_id,
                       'pid': os.getpid(), 'installation': self.installation, 'houdini_version': self.version,
                       'bridge_url': f'http://127.0.0.1:{port}', 'state': 'registered',
-                      'task_id': self._task, 'hip_path': self._hip or self._observed_hip,
+                      'task_id': self._task, 'hip_path': self._hip_display or self._hip or self._observed_hip,
                       'boundary': 'Discovery only; verify executor header and task binding before any operation'}
             if self.workbench:
                 record.update(workbench=True, **{key: self.scene.get(key) for key in ('scene_id', 'scene_epoch', 'hip_is_new', 'workspace_path')})
@@ -212,7 +227,13 @@ class ExecutorRegistration:
             return record
 
     def claim(self, task_id, registration_id, expected_hip, actual_hip, *, idle=False):
-        """Called after the Bridge main thread captures the actual current HIP."""
+        """Called after the Bridge main thread captures the actual current HIP.
+
+        Reaching this method means an explicit claim (user-selected target or
+        recovery choice). idle only decides whether such a claim may take over
+        an idle workbench reservation; there is no implicit takeover from
+        verification or routing.
+        """
         with self._guard:
             self._open()
             if registration_id != self._generation or self._port is None:
@@ -222,9 +243,11 @@ class ExecutorRegistration:
                 raise RuntimeError('HIP changed after discovery; refresh and confirm the actual target')
             if not expected.is_file() and not (self.workbench and self.scene.get('hip_is_new')):
                 raise RuntimeError('Save and name this HIP before binding a shared task')
-            if self.workbench and self._task != task_id and not idle:
+            if self.workbench and self._task is not None and self._task != task_id and not idle:
                 raise RuntimeError('当前工程仍有操作未完成，请等待完成后再切换对话。')
-            self.claim_writer(task_id, expected, replace=idle)
+            # Pass the original spelling: claim_writer re-resolves for lease
+            # keys and records the display form from what the user confirmed.
+            self.claim_writer(task_id, expected_hip, replace=idle and self._task is not None)
             # If publication fails, keep the acquired reservation. A retry by the
             # same task is safe; do not let a competing author take over unknown state.
             return self.publish(self._port, self._runtime_id)
@@ -232,7 +255,10 @@ class ExecutorRegistration:
     def require_writer(self, task_id, actual_hip):
         with self._guard:
             self._open()
-            if self._task is None or self._task != task_id or os.path.normcase(self._hip) != os.path.normcase(os.path.abspath(actual_hip)):
+            # Compare the published spelling on both sides; the resolved lease
+            # identity is enforced by the writer keys, not by display paths.
+            if (self._task is None or self._task != task_id
+                    or os.path.normcase(self._hip_display or self._hip) != os.path.normcase(_spelling(actual_hip))):
                 raise RuntimeError('Shared executor task/HIP reservation mismatch; no scene operation allowed')
 
     @contextmanager
@@ -241,6 +267,7 @@ class ExecutorRegistration:
             require_save_target(target)
             yield
             return
+        display = _spelling(target)
         target, keys = _hip_key(target)
         acquired = []
         with self._guard:
@@ -262,6 +289,7 @@ class ExecutorRegistration:
                     self._writers.append(FileLease(self.root / 'writers' / (key + '.lock')))
                     self._writer_keys.append(key)
             self._hip = self._observed_hip = str(target)
+            self._hip_display = display
             self.scene['hip_is_new'] = False
             self.scene['workspace_path'] = str(target.parent)
             self.publish(self._port, self._runtime_id)

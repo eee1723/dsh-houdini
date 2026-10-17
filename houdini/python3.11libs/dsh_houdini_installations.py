@@ -64,6 +64,14 @@ def discover(preferred=None):
     return result
 
 
+def _write_startup_hook(path, text):
+    """Publish a startup hook only when complete; the spawned Houdini executes it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(text, encoding='utf-8')
+    os.replace(temporary, path)
+
+
 def launch_environment(hfs, plugin, context, ticket):
     env = dict(os.environ)
     previous = env.get('HFS')
@@ -72,12 +80,10 @@ def launch_environment(hfs, plugin, context, ticket):
     startup = Path(ticket).with_suffix('')
     for version in ('3.11', '3.13'):
         hook = startup / ('python' + version + 'libs/uiready.py')
-        hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text('from hutil.Qt import QtCore\nfrom dsh_workbench_entry import attach\nQtCore.QTimer.singleShot(0, attach)\n', encoding='utf-8')
+        _write_startup_hook(hook, 'from hutil.Qt import QtCore\nfrom dsh_workbench_entry import attach\nQtCore.QTimer.singleShot(0, attach)\n')
     save_hook = startup / 'scripts/afterscenesave.py'
-    save_hook.parent.mkdir(parents=True, exist_ok=True)
-    save_hook.write_text('from dsh_workbench_entry import after_save\nafter_save(globals(), '
-                         + repr(str(save_hook)) + ')\n', encoding='utf-8')
+    _write_startup_hook(save_hook, 'from dsh_workbench_entry import after_save\nafter_save(globals(), '
+                        + repr(str(save_hook)) + ')\n')
     for key in list(env):
         if key.upper().startswith(('QT_', 'QTWEBENGINE_', 'QML', 'PYSIDE', 'SHIBOKEN')) or key in (
                 'PYTHONHOME', 'PYTHONPATH', 'HFS', 'HB', 'HH', 'HHP', 'HHC', 'HDSO',

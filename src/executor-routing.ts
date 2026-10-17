@@ -105,7 +105,6 @@ export class ExecutorRouter {
   constructor(readonly directory:ExecutorDirectory, private readonly timeoutMs:number,
     private readonly binding:ExecutorBinding,
     private readonly identityOf:(session:Session)=>string|undefined,
-    private readonly idleOwner:(taskId:string)=>boolean=()=>false,
     private readonly persist?: (session:Session)=>Promise<boolean>,
     private readonly chooseRecovery?: (taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
 
@@ -117,22 +116,31 @@ export class ExecutorRouter {
     signal=this.signal(signal)
     signal?.throwIfAborted()
     const record=await this.directory.find(id)
-    // The Python registration currently grants writer leases. Until the live
-    // claim endpoint/UI exists, refuse unclaimed or differently claimed targets.
+    // Verification never claims or steals a writer lease. An unclaimed or
+    // differently claimed target is only usable after an explicit selection
+    // (selectInitial / recoveryTarget); idle-ness alone is not ownership and
+    // is decided Bridge-side on that explicit claim.
     if(!record.hip_path) throw new Error('当前工程没有可核对的位置，请从对应 Houdini 打开工作区。')
-    if(requireWriter&&record.task_id!==taskId) {
-      if(!record.workbench||record.task_id&&!this.idleOwner(record.task_id))
-        throw new Error('这个工程的另一段对话仍在执行，请等待完成后再继续。')
-      const unclaimed=await this.verified(id,taskId,signal,false)
-      await unclaimed.claimWriter(taskId,record.registration_id,record.hip_path,signal)
-      return this.verified(id,taskId,signal)
-    }
+    if(requireWriter&&record.task_id!==taskId) throw new Error(record.task_id===null
+      ? '这个工程还没有写入预留；请明确选择/确认要继续的工程后再执行。'
+      : '这个工程的写入预留属于另一段对话；请明确选择/确认要继续的工程，没有自动接管。')
     const bridge=new HoudiniBridge(record.bridge_url,this.timeoutMs,id,this.lifetime.signal)
     const health=await bridge.inspectExecutor(signal)
     if(health.runtimeId!==record.runtime_id||health.houVersion!==record.houdini_version) throw new Error('Executor generation changed; refresh the registry and reconcile pending operations')
     const after=await this.directory.find(id)
     if(JSON.stringify(record)!==JSON.stringify(after)) throw new Error('Executor registration changed during target verification')
     return bridge
+  }
+
+  /** Explicit writer claim, used only by selectInitial and recoveryTarget.
+   * registrationId/expectedHip carry what the user confirmed (or the verified
+   * recovery window shows); the Bridge accepts or rejects the takeover. Every
+   * successful claim is followed by writer verification. */
+  private async claim(id:string, taskId:string, registrationId:string, expectedHip:string, signal?:AbortSignal):Promise<HoudiniBridge> {
+    const bridge=await this.verified(id,taskId,signal,false)
+    signal?.throwIfAborted()
+    await bridge.claimWriter(taskId,registrationId,expectedHip,signal)
+    return this.verified(id,taskId,signal)
   }
 
   async resolve(exec:{agent?:{id:string;session:Session};signal?:AbortSignal}):Promise<HoudiniBridge> {
@@ -151,14 +159,36 @@ export class ExecutorRouter {
     await this.checkpoint(agent.session)
     const state=foldExecutorState(agent.session.snapshotEvents())
     if(!state.identity)throw new Error('请先从要操作的 Houdini 打开工作区，或在本轮选择工程。')
+    const scene=state.project?.sceneId
+    const hip=state.project?.hipPath??null
     if(!preferredTarget||preferredTarget===state.identity) {
       try {return await this.verified(state.identity,agent.id,signal)}
-      catch(error) {signal.throwIfAborted();if(!state.project?.sceneId)throw error}
+      catch(error) {
+        signal.throwIfAborted()
+        if(!scene)throw error
+        // A scene change can drop this task's writer lease on its own recorded
+        // window (observe() resets it on a scene+HIP change). Reclaim only an
+        // unclaimed or still-ours window that still shows the recorded project:
+        // a window that moved to another file must not be adopted, and another
+        // task's reservation is never stolen. Reclamation is claimed through the
+        // same helper; the Bridge accepts or rejects it.
+        try {
+          const record=await this.directory.find(state.identity)
+          const sameWindow=record.task_id===null||record.task_id===agent.id
+          const sameScene=Boolean(record.scene_id&&scene&&record.scene_id===scene)
+          const sameHip=hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip))
+          if(record.hip_path&&sameWindow&&sameScene&&sameHip)
+            return await this.claim(state.identity,agent.id,record.registration_id,record.hip_path,signal)
+        } catch {signal.throwIfAborted()}
+      }
     }
-    const scene=state.project?.sceneId
     if(!scene)throw new Error('原对话缺少可验证的工程身份，请明确选择工程；没有自动认领内容。')
+    // scene_id alone is copyable with the HIP file. With a recorded path a
+    // window must show that path to qualify; without one there is no auto-match,
+    // only the explicit user choice below over scene-matched windows.
     const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered'
-      &&record.executor_id!==state.identity&&record.scene_id===scene)
+      &&record.executor_id!==state.identity&&record.scene_id===scene
+      &&(hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip))))
     const verified:ExecutorRecord[]=[]
     for(const record of candidates) {
       try {
@@ -167,20 +197,30 @@ export class ExecutorRouter {
       } catch {signal.throwIfAborted()}
     }
     if(!verified.length)throw new Error('原 Houdini 暂不可用，尚未找到可验证的原工程。请打开原工程后继续。')
-    const selected=preferredTarget??(verified.length===1?verified[0].executor_id:await this.chooseRecovery?.(agent.id,verified,signal))
+    const selected=preferredTarget??(verified.length===1&&hip?verified[0].executor_id:await this.chooseRecovery?.(agent.id,verified,signal))
     if(!selected||!verified.some(record=>record.executor_id===selected))throw new Error('存在多份原工程，请在对话中选择要继续的窗口；本轮没有换绑。')
     if(!await this.inspectRecovery(agent.session,selected,signal))throw new Error('选择期间工程已变化，请重新选择。')
-    return this.verified(selected,agent.id,signal)
+    // Explicit claim only after the chosen window re-verifies; windows that
+    // failed inspectRecovery are never claimed.
+    const record=verified.find(row=>row.executor_id===selected)!
+    return this.claim(selected,agent.id,record.registration_id,record.hip_path!,signal)
   }
 
   async inspectRecovery(session:Pick<Session,'id'|'snapshotEvents'>,target:string,signal:AbortSignal):Promise<HoudiniBridge|undefined> {
     const state=foldExecutorState(session.snapshotEvents())
     const scene=state.project?.sceneId
+    const hip=state.project?.hipPath
     if(!state.identity||!scene)return
     const candidate=await this.verified(target,session.id,signal,false)
     const value=await candidate.recover('assess',{session_id:session.id,previous_executor:state.identity,
       source_executors:state.executors,expected:{scene_id:scene}},signal)
-    if(value.executor_id===target&&value.status==='ready'&&value.scene_id===scene)return candidate
+    if(value.executor_id!==target||value.status!=='ready'||value.scene_id!==scene)return
+    // A copy shares scene identity with its original; with a recorded HIP path
+    // a window must also show that path to qualify. Without one nothing can be
+    // auto-matched (recoveryTarget never auto-picks) and the user's explicit
+    // window choice is the remaining authorization.
+    if(hip&&(typeof value.hip_path!=='string'||canonical(value.hip_path)!==canonical(hip)))return
+    return candidate
   }
 
   async sceneContextFor(session:Session,signal?:AbortSignal):Promise<unknown> {
@@ -203,15 +243,15 @@ export class ExecutorRouter {
     const record=await this.directory.find(id)
     if(expectedHip!==undefined&&record.hip_path!==expectedHip) throw new Error('HIP changed after the selection was displayed; refresh and confirm again')
     if(record.registration_id!==registrationId) throw new Error('Target selection is stale; refresh before confirming')
-    if(record.task_id!==null&&record.task_id!==agent.id&&(!record.workbench||!this.idleOwner(record.task_id))) throw new Error('Executor already has another task writer reservation')
-    const bridge=await this.verified(id,agent.id,signal,false)
+    // No Host-side idle/ownership pre-reject: an explicit claim below is the
+    // only takeover path and the Bridge accepts or rejects it. Verification
+    // itself never claims.
     signal?.throwIfAborted()
     if(agent.status!=='idle'&&!atStep) throw new Error('Agent started while selecting target; no new binding written')
     if(record.task_id!==agent.id) {
-      await bridge.claimWriter(agent.id,registrationId,record.hip_path!,signal,record.workbench===true)
-      await this.verified(id,agent.id,signal)
+      await this.claim(id,agent.id,registrationId,record.hip_path!,signal)
       if(agent.status!=='idle'&&!atStep) throw new Error('Agent started during reservation; binding not written, reservation retained for inspection')
-    }
+    } else await this.verified(id,agent.id,signal)
     if(reselect)await this.binding.reselectUnexecuted(agent.session,id,signal)
     else await this.binding.ensure(agent.session,id,signal)
     await this.checkpoint(agent.session)

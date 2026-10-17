@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import assert from 'node:assert/strict'
 import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorDirectory,ExecutorRouter} from '../lib/executor-routing.js'
-import {ExecutorBindingBarrier} from '../lib/executor-binding.js'
+import {ExecutorBinding,recordedExecutorIdentity} from '../lib/executor-binding.js'
 import {registerHoudiniTools} from '../lib/tools.js'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
@@ -22,11 +22,12 @@ const flush=async session=>{
   await fs.writeFile(path.join(registry,session.id+'-session.json'),JSON.stringify(session.snapshotEvents()))
   return true
 }
-const router=new ExecutorRouter(directory,5000,new ExecutorBindingBarrier(flush))
+const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
+const router=new ExecutorRouter(directory,5000,new ExecutorBinding(),identityOf,flush)
 for(let i=0;i<rows.length;i++) await router.selectInitial(agents[i],rows[i].executor_id,rows[i].registration_id)
 const tools=new Map()
-registerHoudiniTools({tools:{register:d=>tools.set(d.name,d)},sessions:{flush}},router)
-const results=await Promise.all(agents.map((agent,i)=>tools.get('houdini_query').execute({
+registerHoudiniTools({on(){},get:()=>undefined,tools:{register:d=>tools.set(d.name,d)},sessions:{flush}},router)
+const results=await Promise.all(agents.map((agent,i)=>tools.get('houdini_inspect').execute({
   code:'__result__=hou.applicationVersionString()'}, {agent,callId:'host-smoke-'+i})))
 for(let i=0;i<results.length;i++) {
   assert.equal(results[i].result,rows[i].houdini_version)

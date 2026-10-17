@@ -113,7 +113,9 @@ try {
     registrationId:records[0].registration_id,expectedHip:path.join(directory,'wrong.hip')},new AbortController().signal),/HIP changed/)
   await assert.rejects(router.resolve(context(0)),/Choose a Houdini/)
   await assert.rejects(router.sceneContextFor(agents[0].session),/No Houdini target/)
-  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/writer reservation/)
+  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/写入预留属于另一段对话/)
+  assert(calls.some(c=>c[1]==='/executor/claim'),
+    'a differently claimed target is refused only after an explicit claim attempt, never stolen inside verification')
   await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,'stale'),/stale/)
   agents[0].status='running'
   await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,records[0].registration_id),/idle/)
