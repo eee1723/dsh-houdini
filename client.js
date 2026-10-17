@@ -158,6 +158,11 @@ window.__ModuleLoader__.load({
       return "online";
     }
 
+    function houdiniPresenceText(current) {
+      return current === "online" ? "关联的 Houdini 当前可连接" : current === "offline" ? "关联的 Houdini 已关闭或断开"
+        : current === "changed" ? "关联的 Houdini 已切换到其他场景，请核对工程" : "暂时无法确认关联 Houdini 的连接";
+    }
+
     function HoudiniProjectMark(props) {
       var project = useHoudiniProject(props);
       return project && React.createElement("span", { className: "dsh-houdini-project-mark", role: "img",
@@ -280,9 +285,7 @@ window.__ModuleLoader__.load({
         var items = [];
         if (opened && project) {
           var current = houdiniEndpointState(project, endpoint && Object.fromEntries(endpoint.map(function (record) { return [record.executorId, record]; })));
-          if (current) items.push({ type: "label", id: "endpoint-state",
-            text: current === "online" ? "关联的 Houdini 当前可连接" : current === "offline" ? "关联的 Houdini 已关闭或断开"
-            : current === "changed" ? "关联的 Houdini 已切换到其他场景，请核对工程" : "暂时无法确认关联 Houdini 的连接" });
+          if (current) items.push({ type: "label", id: "endpoint-state", text: houdiniPresenceText(current) });
         }
         if (project && project.hipPath && project.hipIsNew === false) items.push({ id: "reopen", label: "打开关联工程" });
         items.push({ id: "open", label: "打开 Houdini 工程…" }, { id: "new", label: "新建 Houdini 工程…" });

@@ -270,7 +270,7 @@ def main():
         assert (folder / 'dialog-finished').read_text() == '1' and len(receipts()) == count, 'an already open file must not spawn another process'
         control(record, 'show', {'sessionId': first_session})
         (folder / ('clear-' + str(reopened['pid']))).touch()
-        browser('state', 'changed-scene', '', first_session)
+        browser('state', 'changed-scene', 'changed', first_session)
         assert control(record, 'status')['record']['pid'] == desktop.pid
         cold_resume()
         print('PASS standalone boot without Houdini; real native project dialogs; H21/H22 GUI new scenes, automatic routing, distinct unsaved names, Save As history, cancelled/double launch, proven offline and reopen original task/ownership: ' + str(folder), flush=True)

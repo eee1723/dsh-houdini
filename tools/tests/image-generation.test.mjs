@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
-import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generateImage,imageModels,registerImageTools} from '../../lib/image-generation.js'
+import {fixtureSession} from './fixture-session.mjs'
 
 const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-unit-')))
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8S8AAAAASUVORK5CYII=','base64')
@@ -192,7 +192,7 @@ failBridge=false
 // Managed image paths follow the same durable task target as scene tools.
 // In single-instance mode the ambient bridge must not replace an old binding.
 const firstExecutor='a'.repeat(32),otherExecutor='b'.repeat(32)
-const bindingSession=Session.create('image-bound',[],{version:4,id:'image-bound',createdAt:1,isSeeded:false,agentPreset:'houdini',cwd:root})
+const bindingSession=fixtureSession('image-bound',{agentPreset:'houdini',cwd:root})
 await new ExecutorBinding().ensure(bindingSession,firstExecutor)
 const boundEvents=structuredClone(bindingSession.snapshotEvents())
 const bindingExec={...exec,agent:{id:bindingSession.id,session:bindingSession}}
@@ -209,7 +209,7 @@ result=await generateImage(context,bindingExec,managed(),success,boundBridge)
 assert.equal(result.ok,true);assert.equal(bindingReads,1)
 assert.equal(result.artifact.observed_identity.executor_id,firstExecutor)
 assert.deepEqual(bindingSession.snapshotEvents(),boundEvents,'path resolution never appends another binding')
-const unbound=Session.create('image-unbound',[],{version:4,id:'image-unbound',createdAt:1,isSeeded:false,agentPreset:'houdini',cwd:root})
+const unbound=fixtureSession('image-unbound',{agentPreset:'houdini',cwd:root})
 const unboundEvents=structuredClone(unbound.snapshotEvents())
 await assert.rejects(()=>generateImage(context,{...exec,agent:{id:unbound.id,session:unbound}},managed(),success,boundBridge),/selected before model tool/)
 assert.deepEqual(unbound.snapshotEvents(),unboundEvents,'normal pre-step owns initial binding, not an image tool')

@@ -5,7 +5,6 @@ import os from 'node:os'
 import http from 'node:http'
 import {pathToFileURL,fileURLToPath} from 'node:url'
 import {Context} from '@deepseek-ai/cordis'
-import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
 import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-preset-registry'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
@@ -16,6 +15,7 @@ import * as executorHost from '../../lib/executor-host.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
+import {fixtureSession} from './fixture-session.mjs'
 
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-routing-'))
 const endpoints=path.join(directory,'endpoints')
@@ -26,7 +26,7 @@ const routeCounts=[{},{}]
 try {
   for(let i=0;i<2;i++) {
     const id=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='task-'+i
-    const session=Session.create(task,[],{version:4,id:task,createdAt:1,isSeeded:false,agentPreset:'houdini'})
+    const session=fixtureSession(task,{agentPreset:'houdini'})
     agents.push({id:task,status:'idle',session})
     const server=http.createServer(async(req,res)=>{
       res.setHeader('content-type','application/json')
@@ -82,8 +82,7 @@ try {
   ctx.provide('sessions',{flush})
   const controller=new ExecutorController(ctx,router)
   assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
-  const different=Session.create('not-houdini',[],{version:4,id:'not-houdini',createdAt:1,
-    isSeeded:false,agentPreset:'houdini'})
+  const different=fixtureSession('not-houdini',{agentPreset:'houdini'})
   different.append('agent-preset/selected',{agentPreset:'standard'})
   agents.push({id:'not-houdini',status:'idle',session:different})
   await assert.rejects(controller.select({sessionId:'not-houdini',executorId:records[0].executor_id,

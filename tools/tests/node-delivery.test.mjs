@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import {Context} from '@deepseek-ai/cordis'
-import {Session} from '@deepseek-ai/dsh-session'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {HoudiniBridge} from '../../lib/bridge.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
@@ -12,6 +11,7 @@ import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
 import {NODE_DELIVERY_KIND,installNodeDeliveryNavigation,nodeDeliveryCoordinates,recordedNodeDelivery} from '../../lib/node-delivery.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
+import {fixtureSession} from './fixture-session.mjs'
 
 const signal=new AbortController().signal
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-node-delivery-'))
@@ -29,7 +29,7 @@ try {
   for(let i=0;i<2;i++) {
     const executor=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='node-task-'+i
     const hip=path.join(directory,task+' "参数".hip')
-    const session=Session.create(task,[],{version:4,id:task,createdAt:1,isSeeded:false,agentPreset:'houdini'})
+    const session=fixtureSession(task,{agentPreset:'houdini'})
     await new ExecutorBinding().ensure(session,executor)
     session.append('tool/call',{turn:1,step:1,callId:'deliver-call',name:'houdini_exec',arguments:'{}'})
     session.append('tool/call',{turn:1,step:1,callId:'file-call',name:'read',arguments:'{}'})

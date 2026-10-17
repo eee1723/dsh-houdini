@@ -248,10 +248,10 @@ export class ExecutorRouter {
     // itself never claims.
     signal?.throwIfAborted()
     if(agent.status!=='idle'&&!atStep) throw new Error('Agent started while selecting target; no new binding written')
-    if(record.task_id!==agent.id) {
-      await this.claim(id,agent.id,registrationId,record.hip_path!,signal)
-      if(agent.status!=='idle'&&!atStep) throw new Error('Agent started during reservation; binding not written, reservation retained for inspection')
-    } else await this.verified(id,agent.id,signal)
+    if(record.task_id!==agent.id) await this.claim(id,agent.id,registrationId,record.hip_path!,signal)
+    else await this.verified(id,agent.id,signal)
+    // The writer reservation is already held; always finish the identity
+    // write so a race cannot leave the agent claimed but unbound.
     if(reselect)await this.binding.reselectUnexecuted(agent.session,id,signal)
     else await this.binding.ensure(agent.session,id,signal)
     await this.checkpoint(agent.session)

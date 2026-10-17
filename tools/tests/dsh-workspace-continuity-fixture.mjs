@@ -5,8 +5,8 @@ import path from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
-import {Session} from '@deepseek-ai/dsh-session'
 import {pruneScratchWorkspaces} from '../../lib/workbench-workspaces.js'
+import {fixtureSession} from './fixture-session.mjs'
 export const inject=['loader','llm','sessions','agents','sessionController','workspaceRegistry','sessionPersistence','sandboxPolicy']
 export function apply(ctx){
  const root=process.env.DSH_WORKSPACE_TEST_ROOT,phase=process.env.DSH_WORKSPACE_TEST_PHASE,id=process.env.DSH_WORKSPACE_TEST_TASK
@@ -83,7 +83,7 @@ export function apply(ctx){
    assert.deepEqual(session.snapshotEvents().map(event=>JSON.stringify(event)),before)
    await ctx.workspaceRegistry.relocateSession(id,target)
    // An interrupted final frame must be repaired using its old byte offset.
-   const tornId=randomUUID(),torn=Session.create(tornId,undefined,{version:4,id:tornId,createdAt:0,isSeeded:false,cwd:source})
+   const tornId=randomUUID(),torn=fixtureSession(tornId,{createdAt:0,cwd:source,seed:undefined})
    const writer=await ctx.sessionPersistence.create(torn.header);await writer.flush();await writer.close()
    const store=ctx.sessionPersistence.root
    const physical=fs.readdirSync(store,{recursive:true}).find(name=>name.includes(torn.id)&&name.endsWith('.jsonl.zstd'))

@@ -4,10 +4,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import assert from 'node:assert/strict'
-import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorDirectory,ExecutorRouter} from '../lib/executor-routing.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../lib/executor-binding.js'
 import {registerHoudiniTools} from '../lib/tools.js'
+import {fixtureSession} from './tests/fixture-session.mjs'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const registry=process.argv[2]
@@ -16,8 +16,7 @@ const directory=new ExecutorDirectory(registry,root)
 const rows=await directory.list()
 assert.equal(rows.length,2)
 assert.deepEqual(rows.map(r=>r.task_id).sort(),['task-0','task-1'],'Only the isolated fixture is accepted')
-const agents=rows.map(r=>({id:r.task_id,status:'idle',session:Session.create(r.task_id,[],{
-  version:3,id:r.task_id,createdAt:1,isSeeded:false,agentPreset:'houdini'})}))
+const agents=rows.map(r=>({id:r.task_id,status:'idle',session:fixtureSession(r.task_id,{agentPreset:'houdini'})}))
 const flush=async session=>{
   await fs.writeFile(path.join(registry,session.id+'-session.json'),JSON.stringify(session.snapshotEvents()))
   return true
@@ -34,4 +33,12 @@ for(let i=0;i<results.length;i++) {
   assert.equal(results[i].execution.executor_id,rows[i].executor_id)
   assert.equal(results[i].execution.owner_session,agents[i].id)
 }
+// A second conversation must never steal another task's writer reservation.
+// These Bridges are non-workbench, so claim_writer always refuses a different
+// author; workbench idle takeover is covered by dsh-workbench-registry.test.py.
+const rival={id:'task-rival',status:'idle',session:fixtureSession('task-rival',{agentPreset:'houdini'})}
+await assert.rejects(router.selectInitial(rival,rows[0].executor_id,rows[0].registration_id),
+  /already has a scene author/)
+const after=await directory.find(rows[0].executor_id)
+assert.equal(after.task_id,agents[0].id,'a refused rival claim must not steal the reservation')
 console.log('Shared Host tools -> two real Houdini main-thread Bridges passed')
