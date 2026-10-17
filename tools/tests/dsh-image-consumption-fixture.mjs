@@ -131,7 +131,7 @@ export function apply(ctx) {
         assert(!JSON.stringify(events).includes(secret),'fixture credentials must not enter durable events');
         await ctx.sessions.flush(session);
         checks.push('real mounted read_image; pi-ai HTTP capture; live native profile mutation; all reference/A/B images retained; exact restored request bytes; unchanged files and durable attachments; no offload or compaction');
-        report({ok:true,dshVersion:'0.2.0-rc.2',nodeVersion:process.version,runtimeFixRevision:JSON.parse(fs.readFileSync(path.join(runtime,'.dsh-runtime-fixes.json'),'utf8')).revision,sessionId,preset:'standard',workspace,checks,requests,transforms,network,originals,stored:storedAfter,
+        report({ok:true,dshVersion:'0.2.1-rc.2',nodeVersion:process.version,runtimeFixRevision:JSON.parse(fs.readFileSync(path.join(runtime,'.dsh-runtime-fixes.json'),'utf8')).revision,sessionId,preset:'standard',workspace,checks,requests,transforms,network,originals,stored:storedAfter,
           boundary:'Exact prepared DSH Web composition and real pi-ai adapter; loopback provider only. No paid model, user secrets, Houdini scene or GUI. Request size/bytes and retention were measured; semantic image quality, model token usage and fees were not measured.'});
       }catch(error){fail(error)}
     });
@@ -142,7 +142,7 @@ export function apply(ctx) {
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const [runtimeArg,outputArg]=process.argv.slice(2);assert(runtimeArg,'usage: node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]');
   const runtime=path.resolve(runtimeArg),outputRoot=path.resolve(outputArg??path.join(root,'tools/out/system-feedback-cost'));
-  const version=JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version;assert.equal(version,'0.2.0-rc.2');
+  const version=JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version;assert.equal(version,'0.2.1-rc.2');
   const marker=JSON.parse(fs.readFileSync(path.join(runtime,'.dsh-runtime-fixes.json'),'utf8'));assert.equal(marker.dshVersion,version);
   fs.mkdirSync(outputRoot,{recursive:true});const run=fs.mkdtempSync(path.join(outputRoot,'image-consumption-'));
   const workspace=path.join(run,'workspace'),home=path.join(run,'home'),temp=path.join(run,'temp'),output=path.join(run,'report.json');fs.mkdirSync(workspace);fs.mkdirSync(home);fs.mkdirSync(temp);

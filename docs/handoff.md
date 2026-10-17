@@ -2,7 +2,7 @@
 
 核对日期：2026-10-16
 
-当前源码使用执行合同107，节点identity由独立ownership模块维护，普通单实例保存点恢复通过DSH原生持久绑定接续；公开动词入口不持有执行状态。工程文件目录由同源角色合同维护。交付与领域判断由各skill维护。唯一Houdini模式，DSH精确版本0.2.0-rc.2。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+当前源码使用执行合同107，节点identity由独立ownership模块维护，普通单实例保存点恢复通过DSH原生持久绑定接续；公开动词入口不持有执行状态。工程文件目录由同源角色合同维护。交付与领域判断由各skill维护。唯一Houdini模式，DSH精确版本0.2.1-rc.2。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 
@@ -26,6 +26,8 @@
 - 源码交付：合同107的受管运行包交付与用户live加载尚未验证，实际模型图像路由与语义识图仍需验证。固定DSH生产依赖仍有[MCP客户端OAuth](https://github.com/advisories/GHSA-6qxp-vccf-f47h)和[HTTP缓存](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)上游告警；当前路径未触发不视为告警已消除，开启这些能力或升级DSH时须重新核对。
 - 下一步：核对普通入口当前模型路由的图像声明与语义识图结果；公开发行状态与用户当前实例实际加载分别核对。下载提供方5,000,000字节与工具20MiB上限仍需统一；企业认证代理、私有证书和PAC多代理故障切换未完整验证；SOCKS-only不支持。
 - 移除条件：正常入口已加载且主要使用路径可用，正式发行状态有对应结果。
+- 运行修复：Windows已有内容的逐对象权限准备、临时目录范围、只读ACL诊断、公开CDN下载、命令诊断和系统网络继承由固定DSH源码补丁交付；默认源码缓存与正式组装共用构建入口，插件只提供只读联网诊断。普通用户入口已确认windows-network-3及实际搜索、跨域下载和文件整理，包含当前修复的签名包已核对H21/H22受管安装、同版修复、认证RPC及正常GUI工作区/重开。下载提供方5,000,000字节与工具20MiB上限仍需统一，非成功HTTP回执的最终地址/路线及原因摘要还需补齐。中转模型出现过上游拒绝，具体拒绝来源与触发条件未确定，不归为沙箱或代理故障。企业认证代理、私有证书和PAC多代理故障切换未完整验证；SOCKS-only不支持，Fake-IP且无可用系统HTTP代理时保留公开网页地址校验。
+- DSH 0.2.1：运行补丁已重做到`dsh-v0.2.1-rc.2`，19个host包与4个client包编译通过，运行时常量清单经`dsh_runtime_compat.runtime_fix_identity`校验；插件Node回归62/63（`dependency-runtime`在改动前的主线同样因本机fflate解析失败）。正式签名安装、H21/H22实际加载、`deepseek-flash`（DeepSeek-V4.1-Flash/1017）真实请求及DeepSeek Search/Fetch设置仍待现场验证。网站文档已随上游0.2.1同步并完成本地`docs:build`，未发布到公网。
 - 入口：[安装](setup.md)、[DSH适配](dsh-update-compatibility.md)、[启动器](../houdini/python3.11libs/dsh_launcher.py)。
 
 ### H-02 工具制作自然采用与兼容交付

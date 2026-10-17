@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "revision": "workspace-association-1",
-  "dshVersion": "0.2.0-rc.2",
+  "revision": "workspace-association-2",
+  "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
-  "tag": "dsh-v0.2.0-rc.2",
-  "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+  "tag": "dsh-v0.2.1-rc.2",
+  "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
   "patch": "fixes.patch",
   "inputFiles": [
     "deployment/package.json",
@@ -22,7 +22,6 @@
       "name": "session",
       "entries": [
         "index",
-        "invariant",
         "types",
         "fork",
         "surface"
@@ -32,8 +31,7 @@
       "source": "core/agent-loop",
       "name": "agent-loop",
       "entries": [
-        "index",
-        "invariant"
+        "index"
       ]
     },
     {
@@ -55,7 +53,6 @@
       "name": "workspace",
       "entries": [
         "index",
-        "invariant",
         "types"
       ]
     },
@@ -184,5 +181,5 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "29da89b7c0392ecc59a862c7ffcac5f1d847b17696f8a60ece1a2d1dae0cba44"
+  "patchSha256": "153d31a45eb2fbf3775194c933db2dcdc3b2641827c393fae77fc6e3fdd6f427"
 }

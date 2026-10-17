@@ -1,6 +1,8 @@
 # DSH 与插件版本适配
 
-本项目通过DSH公开接口加载，当前精确目标是 **0.2.0-rc.2**。选择源为[兼容清单](../dsh-runtime-compatibility.json)，依赖锁在[package-lock](../package-lock.json)和[受管锁](../deployment/package-lock.json)。
+本项目通过DSH公开接口加载，当前精确目标是 **0.2.1-rc.2**。选择源为[兼容清单](../dsh-runtime-compatibility.json)，依赖锁在[package-lock](../package-lock.json)和[受管锁](../deployment/package-lock.json)；cordis为4.0.5，schemastery为3.18.5，zod固定4.4.3。
+
+DSH 0.2.1默认模型目录包含`deepseek-flash`（显示名`DeepSeek-V4.1-Flash`，1017快照），插件不固定模型名，按DSH当前配置选择。0.2.1还提供可选的DeepSeek Search/Fetch API提供方；`web_search`/`web_fetch`的工具schema不变，换提供方不改变模型调用方式。
 
 网络继承由DSH的http-proxy包维护，公开proxyRouteFor现在异步返回当前请求的确定路线；配套web-fetch-http与本插件探针同步消费，不能混装旧版同步调用者。
 

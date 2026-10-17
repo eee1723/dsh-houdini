@@ -42,11 +42,11 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
     (probe_plugin / "frontend.js").write_text("export function apply() {}", encoding="utf-8")
     probe_cli = probe_install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"
     probe_cli.parent.mkdir(parents=True)
-    probe_cli.write_text("console.log('0.2.0-rc.2')", encoding="utf-8")
+    probe_cli.write_text("console.log('0.2.1-rc.2')", encoding="utf-8")
     node_version = subprocess.run([NODE, "--version"], check=True, capture_output=True,
                                   text=True).stdout.strip()[1:]
     probe_context = {"install": str(probe_install), "home": str(temp / "probe-home"),
-                     "root": str(temp), "nodeVersion": node_version, "dshVersion": "0.2.0-rc.2"}
+                     "root": str(temp), "nodeVersion": node_version, "dshVersion": "0.2.1-rc.2"}
     actual_run = subprocess.run
     def run_probe(args, **kwargs):
         return actual_run([NODE, *args[1:]], **kwargs)

@@ -26,13 +26,14 @@ const React={
     hooks[i]?.dispose?.();hooks[i]={deps};effects.push(()=>hooks[i].dispose=fn())}},
 }
 const context={React,AbortController,setTimeout,clearTimeout}
+const peer={id:'picker-test',ctx:host,principal:{kind:'owner'},signal:new AbortController().signal,interactions:'answer',dispose:async()=>{}}
 vm.createContext(context);vm.runInContext(fragment+'\nthis.factory=createExecutorPicker;',context)
 const component=context.factory({generation:{getSnapshot:()=>hostGeneration,subscribe:()=>()=>{}},rpc:{call:async(channel,endpoint,payload,signal)=>{
   requests.push({channel,endpoint,payload,signal})
   if(endpoint==='houdiniFrontend/capabilities'){
     if(capabilityResponse)return capabilityResponse()
     // Browser arguments cross a JSON wire before entering the Host realm.
-    return {ok:true,value:await gateway.invoke({namespace:'houdiniFrontend',method:'capabilities',args:JSON.parse(JSON.stringify(payload.args)),signal})}
+    return {ok:true,value:await gateway.invoke({namespace:'houdiniFrontend',method:'capabilities',args:JSON.parse(JSON.stringify(payload.args)),peer,signal})}
   }
   return typeof response==='function'?response():response
 }}})
@@ -50,7 +51,7 @@ hostGeneration={id:1};assert.equal(render(),null);await settle()
 assert.equal(render(),null,'ordinary Open Workspace must not show a shared executor picker')
 assert.equal(requests[0].endpoint,'houdiniFrontend/capabilities')
 assert.equal(targetRequests().length,0,'capability discovery must not list or select Houdini targets')
-const shared=await host.plugin({apply(ctx){ctx.provide('houdiniTargets',{})}})
+const shared=await host.provide('houdiniTargets',{})
 hostGeneration={id:2};assert.equal(render(),null);await settle();tree=render()
 assert(button(tree,'Houdini 执行端'),'mounted shared Host service enables the picker')
 assert.equal(targetRequests().length,0,'enabling the picker does not silently query/select a target')
@@ -83,7 +84,7 @@ const disconnectedSignal=requests.at(-1).signal
 hostGeneration=undefined;assert.equal(render(),null,'connection loss immediately removes the picker')
 assert(disconnectedSignal.aborted,'connection loss aborts an in-flight target request')
 resolve({ok:true,value:{candidates:[record]}});await settle()
-await shared.dispose()
+host.set('houdiniTargets',undefined)
 hostGeneration={id:3};assert.equal(render(),null);await settle()
 assert.equal(render(),null,'reconnection must not reuse capabilities from a previous Host')
 capabilityResponse=()=>new Promise(r=>resolve=r)
