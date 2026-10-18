@@ -241,4 +241,4 @@ python tools/run-deployment-tests.py --hython D:/houdini/bin/hython.exe --hython
 
 这是发行/部署回归入口，日常按改动选择检查。真实安装与 Qt 页面验收在新的自有进程和临时目录中执行；当前缺口只记 handoff，不在这里积累每次尝试。
 
-[签名包部署验收](../tools/tests/dsh-deployment-e2e.test.py)使用实际离线包、独立安装与数据目录，检查精确Node/DSH、profile、认证RPC和所选H21/H22 Bridge。可选`--previous-bundle <旧受信包目录>`再覆盖旧包自身入口与profile准备、新版失败快照保留和重试、各版独立数据、回退不合并以及同版重新安装恢复损坏的私有媒体工具。测试数据只证明文件与版本选择保持，不证明DSH旧会话格式转换或模型续跑。正式Qt入口另用[发行GUI验收](../tools/tests/dsh-gui-release.test.py)，不能用源码页面检查替代签名安装。
+[签名包部署验收](../tools/tests/dsh-deployment-e2e.test.py)使用实际离线包、独立安装与数据目录，检查精确Node/DSH、profile、认证RPC和所选H21/H22 Bridge。可选`--previous-bundle <旧受信包目录>`再覆盖旧包自身入口与profile准备、新版失败快照保留和重试、各版独立数据、回退不合并以及同版重新安装恢复损坏的私有媒体工具。测试数据只证明文件与版本选择保持，不证明DSH旧会话格式转换或模型续跑。正式Qt入口另用[发行GUI验收](../tools/tests/dsh-gui-release.test.py)：从真实Houdini菜单打开独立工作台，等待工程绑定完成，以当前执行端登记的任务核对[实际Qt页面](../tools/tests/dsh-release-workbench-browser.mjs)、工作目录、认证RPC、置顶状态及重开复用，并正常退出自有工作台。每个Houdini版本使用独立工程目录；不能按同目录或上一轮会话猜测选中任务，也不能用源码页面检查替代签名安装。

@@ -1,4 +1,4 @@
-"""Actual Houdini GUI release acceptance in an isolated installation.
+"""Actual Houdini menu and standalone Qt release acceptance in an isolated installation.
 
 No user's preferences/HIP are used. No model call is made. The launched GUI
 process is owned by its Popen handle; its Node frontend has its own Job Object. This is
@@ -26,199 +26,126 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
 
 
+def close_desktop(install_root):
+    import ctypes
+    from ctypes import wintypes
+    from dsh_workbench import running
+    from dsh_deployment import _process_started
+    record=running(install_root)
+    if record is None:
+        return
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+    user.PostMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+    user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
+    callback=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+    def close(hwnd,unused):
+        pid=wintypes.DWORD()
+        user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+        if pid.value==record['pid']:
+            user.PostMessageW(hwnd,0x0010,0,0)
+        return True
+    user.EnumWindows(callback(close),0)
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline and _process_started(record['pid'])==record['processStarted']:
+        time.sleep(.1)
+    assert _process_started(record['pid'])!=record['processStarted'],'Own standalone desktop did not close normally'
+
+
 def start_gui_probe():
-    """Called by uiready.py in the newly launched Houdini, never by hython."""
-    import hou
-    from hutil.Qt import QtCore
+    import hou, socket, threading, queue
+    from hutil.Qt import QtCore, QtWidgets
     import dsh_bootstrap as bootstrap
     import dsh_deployment as deployment
-    config = json.loads(Path(os.environ["DSH_GUI_TEST_CONFIG"]).read_text(encoding="utf-8"))
-    output = Path(config["output"])
-    fixture = Path(config["root"])
-    assert hou.isUIAvailable(), "must run in the actual Houdini GUI"
-    assert bootstrap._INITIALIZED and bootstrap._PINNED == config["installId"], "real startup hook did not pin the expected installation"
-    if config.get("candidate"):
-        trust = deployment.read_json(Path(config["trust"]))
-        bootstrap.store = lambda: deployment.Store(config["managed"], trust, allow_candidate=True)
-    scene = fixture / "workspace/smoke.hip"
-    scene.parent.mkdir(parents=True, exist_ok=True)
-    if Path(hou.hipFile.path()).name.lower() != "untitled.hip":
-        raise RuntimeError("test GUI unexpectedly opened a non-fixture HIP")
-    if scene.exists():
-        hou.hipFile.load(scene.as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
-    else:
-        # H21 interpolates afterscenesave kwargs into Python; backslashes can
-        # turn a Windows path into an invalid unicode escape and leave a callback dialog.
-        hou.hipFile.save(scene.as_posix())
-    messages = queue.Queue()
-    state = {"phase": "opening", "started": time.monotonic(), "probe": False, "js": None, "first": None,
-             "lastPhase": None, "finished": False, "inflight": False, "lastPoll": None,
-             "lastCallback": None, "emptyCallbacks": 0, "parseError": None, "loads": [], "renderer": [],
-             "page": None, "lastDiagnostic": -2}
-    # Only this test instance's dialogs are intercepted to make failures finite
-    # and observable; production code and the user's Houdini are untouched.
-    original_message = hou.ui.displayMessage
-    def record_dialog(message, *args, **kwargs):
-        messages.put(("error", str(message)))
-        return 0
-    hou.ui.displayMessage = record_dialog
-    window = bootstrap.show_manager()
-    from hutil.Qt import QtWidgets
-    manager_labels = lambda: [item.text() for item in window.findChildren(QtWidgets.QLabel) if item.isVisible()]
-    assert "版本已准备好，完整重开 Houdini 后生效。" not in manager_labels(), "fresh startup already pinned this installation"
-    assert "版本已就绪，打开工作区即可使用。" in manager_labels()
-    window.move(12000, 12000)
+    import dsh_workbench as workbench
+    config=json.loads(Path(os.environ['DSH_GUI_TEST_CONFIG']).read_text(encoding='utf-8'))
+    output=Path(config['output']);fixture=Path(config['root'])
+    assert hou.isUIAvailable() and bootstrap._INITIALIZED and bootstrap._PINNED==config['installId']
+    scene=fixture/'workspace'/('h'+str(hou.applicationVersion()[0]))/'smoke.hip';scene.parent.mkdir(parents=True,exist_ok=True)
+    assert hou.hipFile.name().lower().endswith('untitled.hip')
+    hou.hipFile.save(scene.as_posix())
+    hou.qt.mainWindow().move(12000,12000)
+    window=bootstrap.show_manager();window.move(12000,12000)
+    state={'phase':'opening','started':time.monotonic(),'first':None,'busy':False,'debugPort':None}
+    messages=queue.Queue()
+    original_ensure=workbench.ensure
+    def ensure(value):
+        if state['debugPort'] is None:
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1',0));state['debugPort']=probe.getsockname()[1]
+        return original_ensure(dict(value,debugPort=state['debugPort']))
+    workbench.ensure=ensure
     bootstrap.open_workspace()
-    timer = QtCore.QTimer(hou.qt.mainWindow())
-    def observations():
-        return {"phase": state["phase"], "elapsed": round(time.monotonic()-state["started"], 2),
-                "contextReady": bootstrap._CONTEXT is not None, "inflight": state["inflight"],
-                "lastPoll": state["lastPoll"], "lastCallback": state["lastCallback"],
-                "emptyCallbacks": state["emptyCallbacks"], "parseError": state["parseError"],
-                "loads": state["loads"], "renderer": state["renderer"], "lastObserved": state["js"]}
-    def finish(ok, detail):
-        if state["finished"]:
-            return
-        state["finished"] = True
+    timer=QtCore.QTimer(hou.qt.mainWindow())
+    def finish(ok,detail):
         timer.stop()
-        hou.ui.displayMessage = original_message
-        deployment.atomic_json(output, {"ok": ok, "houdini": hou.applicationVersionString(), "gui": True,
-            "installId": config["installId"], "phase": state["phase"], "detail": detail,
-            "observed": observations()})
-        # hou.exit raises SystemExit; from a PySide timer that can finalize
-        # Python before Houdini's C++ UI destructors. Exercise the real window
-        # close route instead, then require a clean process exit in the driver.
-        QtCore.QTimer.singleShot(100, hou.qt.mainWindow().close)
-    def probe_worker():
+        deployment.atomic_json(output,{'ok':ok,'houdini':hou.applicationVersionString(),'gui':True,'standalone':True,'installId':config['installId'],'detail':detail})
+        QtCore.QTimer.singleShot(100,hou.qt.mainWindow().close)
+    def worker():
         try:
+            import ctypes
+            from ctypes import wintypes
             import dsh_launcher as launcher
-            import dsh_manager as manager
-            ctx = bootstrap._CONTEXT
-            runtime = manager._runtime_dsh_info()
-            assert runtime["verified"] and runtime["version"] == ctx["dshVersion"]
-            pid = manager._port_pid(ctx["frontendPort"])
-            assert isinstance(pid, int) and pid > 0
-            sessions = launcher._dsh_rpc_wire("session/list", {"args": {"_request": {}}}).get("items")
-            rows = [row for row in sessions
-                    if row.get("cwd") and Path(row["cwd"]).resolve() == scene.parent.resolve()
-                    and (row.get("projections") or {}).get("values", {}).get("agentPreset") == "houdini"]
-            assert len(rows) == 1, "The native client must create/reuse exactly one Houdini-preset task"
-            sid = rows[0]["sessionId"]
-            selected = state["js"]["selection"]
-            assert selected["sessionId"] == sid and selected["agentPreset"] == "houdini", "WebView selected a different task or preset"
-            assert Path(selected["cwd"]).resolve() == scene.parent.resolve(), "WebView selected a different workspace"
-            plugin = Path(ctx["install"]) / "app/node_modules/dsh-houdini"
-            script = """
-const {HoudiniBridge} = await import(process.argv[1]);
-const result = await new HoudiniBridge(process.argv[2],15000,process.argv[3]).exec("__result__ = hou.node('/obj').path()",{sessionId:'gui-release',callId:'read'},undefined,undefined,true);
-if(!result.ok || result.result!=='/obj') throw Error('readonly GUI bridge call failed');
-"""
-            subprocess.run([str(Path(ctx["install"]) / "node/node.exe"), "--input-type=module", "-e", script,
-                            (plugin / "lib/bridge.js").as_uri(), f"http://127.0.0.1:{ctx['bridgePort']}", launcher.dsh_managed_runtime.executor_identity()],
-                            env=deployment.runtime_env(ctx), capture_output=True, check=True, timeout=30,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            messages.put(("probe", {"sessionId": sid, "pid": pid, "nodeVersion": ctx["nodeVersion"],
-                                    "dshVersion": ctx["dshVersion"], "workspace": str(scene.parent), "frontendPort": ctx["frontendPort"],
-                                    "selected": selected}))
-        except Exception as exc:
-            messages.put(("error", type(exc).__name__ + ": " + str(exc)))
-    def received(value):
-        state["inflight"] = False
-        state["lastCallback"] = round(time.monotonic()-state["started"], 2)
-        if state["finished"]:
-            return
-        if not value:
-            state["emptyCallbacks"] += 1
-            return
-        try:
-            state["js"] = json.loads(urllib.parse.unquote(value))
-            state["parseError"] = None
-        except Exception as exc:
-            state["parseError"] = type(exc).__name__ + ": " + str(exc)
-    def javascript(page):
-        if state["inflight"]:
-            return
-        state["inflight"] = True
-        state["lastPoll"] = round(time.monotonic()-state["started"], 2)
-        page.runJavaScript("""
-if (!window.__releaseSmoke && window.__dshHoudiniSelection?.()?.sessionId) {
-  window.__releaseSmoke = {pending:true};
-  fetch('/api/session/list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'gui-release',method:'session/list',payload:{args:{_request:{}}}})})
-    .then(async r=>{const j=await r.json();window.__releaseSmoke={status:r.status,ok:j.result?.ok===true,count:j.result?.value?.items?.length};})
-    .catch(e=>{window.__releaseSmoke={error:String(e)}});
-}
-encodeURIComponent(JSON.stringify({ready:document.readyState,textChars:document.body?.innerText?.length||0,
-selectionFunction:typeof window.__dshHoudiniSelection,selection:window.__dshHoudiniSelection?.(),
-rpc:window.__releaseSmoke,tokenInUrl:new URL(location.href).searchParams.has('token'),
-navigationPending:new URL(location.href).searchParams.has('dsh-houdini-workspace'),
-navigationError:document.querySelector('#dsh-houdini-navigation[role="alert"]')?.textContent||null}));
-""", 0, received)
+            ctx=bootstrap._CONTEXT
+            record=workbench.running(config['managed'])
+            assert record and record['installation']==config['installId']
+            status=workbench.control(record,'status',timeout=5)
+            assert status['context']['dshVersion']=='0.2.1-rc.2'
+            user=ctypes.WinDLL('user32',use_last_error=True)
+            user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+            user.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
+            callback=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+            def move(hwnd,unused):
+                pid=wintypes.DWORD();user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+                if pid.value==record['pid']:user.SetWindowPos(hwnd,0,12000,12000,0,0,0x15)
+                return True
+            user.EnumWindows(callback(move),0)
+            rows=launcher._dsh_rpc_wire('session/list',{'args':{'_request':{}}})['items']
+            from dsh_executor_registry import active_registration
+            endpoint=deployment.read_json(active_registration()._file)
+            assert endpoint['task_id'],endpoint
+            selected=[r for r in rows if r['sessionId']==endpoint['task_id'] and r.get('cwd') and Path(r['cwd']).resolve()==scene.parent.resolve() and (r.get('projections') or {}).get('values',{}).get('agentPreset')=='houdini']
+            assert len(selected)==1,selected
+            sid=selected[0]['sessionId']
+            result=output.with_suffix('.browser.json')
+            png=output.with_suffix('.webview.png')
+            subprocess.run([str(Path(ctx['install'])/'node/node.exe'),str(ROOT/'tools/tests/dsh-release-workbench-browser.mjs'),str(state['debugPort']),sid,str(scene.parent),str(png),str(result)],check=True,capture_output=True,text=True,encoding='utf-8',timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            facts=deployment.read_json(result)
+            runtime=deployment.read_json(Path(ctx['runtimeDir'])/'runtime.json')
+            messages.put(('ready',dict(facts,sessionId=sid,desktopPid=record['pid'],hostPid=runtime['pid'],dshVersion=ctx['dshVersion'])))
+        except Exception as error:
+            import traceback
+            messages.put(('error',traceback.format_exc()+getattr(error,'stderr','')))
     def tick():
         try:
-            if time.monotonic()-state["started"]-state["lastDiagnostic"] >= 2:
-                state["lastDiagnostic"] = time.monotonic()-state["started"]
-                deployment.atomic_json(output.with_suffix(".observed.json"), observations())
-            if time.monotonic() - state["started"] > 600:
-                finish(False, "GUI acceptance timed out; inspect the isolated runtime log")
-                return
-            if state["lastPhase"] != state["phase"]:
-                state["lastPhase"] = state["phase"]
-                deployment.atomic_json(output.with_suffix(".progress.json"), {"phase": state["phase"], "elapsed": int(time.monotonic()-state["started"])})
-            while not messages.empty():
-                kind, value = messages.get_nowait()
-                if kind == "error":
-                    finish(False, value)
+            if time.monotonic()-state['started']>180:
+                raise RuntimeError('Standalone GUI probe timed out')
+            if bootstrap._LAST_OPEN_ERROR:
+                raise RuntimeError(bootstrap._LAST_OPEN_ERROR)
+            if not messages.empty():
+                kind,value=messages.get_nowait()
+                if kind=='error':raise RuntimeError(value)
+                state['busy']=False
+                if state['first'] is None:
+                    state['first']=value;state['phase']='reopening';bootstrap.open_workspace()
                     return
-                if kind == "probe":
-                    import dsh_webview as webview
-                    if state["first"] is None:
-                        state["first"] = value
-                        state.update(phase="reopening", probe=False, js=None)
-                        bootstrap.open_workspace()
-                        return
-                    assert value["sessionId"] == state["first"]["sessionId"], "reopen created a duplicate session"
-                    assert value["pid"] == state["first"]["pid"], "reopen restarted the serving runtime"
-                    assert "当前版本已加载。尚未检查更新。" in manager_labels(), "manager retained the pre-activation instruction"
-                    assert "当前运行" in manager_labels()
-                    assert webview._window.grab().save(str(output.with_suffix(".webview.png")))
-                    assert window.grab().save(str(output.with_suffix(".manager.png")))
-                    finish(True, {**value, "webRpc": True, "sameSessionOnReopen": True, "samePidOnReopen": True,
-                                  "selectedWorkspace": True, "selectedHoudiniPreset": True,
-                                  "managerTracksLoadedVersion": True})
-                    return
-            if bootstrap._CONTEXT is None:
+                assert value['sessionId']==state['first']['sessionId']
+                assert value['desktopPid']==state['first']['desktopPid']
+                assert value['hostPid']==state['first']['hostPid']
+                labels=[label.text() for label in window.findChildren(QtWidgets.QLabel) if label.isVisible()]
+                assert '当前版本已加载。尚未检查更新。' in labels,labels
+                assert window.grab().save(str(output.with_suffix('.manager.png')))
+                finish(True,dict(value,sameSessionOnReopen=True,samePidOnReopen=True,managerTracksLoadedVersion=True))
                 return
-            import dsh_webview as webview
-            if webview._view is None:
-                return
-            webview._window.move(12000, 12000)
-            page = webview._view.page()
-            if state["page"] is not page:
-                state["page"] = page
-                page.loadFinished.connect(lambda ok: state["loads"].append(bool(ok)))
-                page.renderProcessTerminated.connect(lambda status, code: state["renderer"].append({"status": str(status), "code": code}))
-            if state["renderer"]:
-                finish(False, "QtWebEngine renderer terminated")
-                return
-            javascript(page)
-            observed = state["js"]
-            if observed and observed.get("navigationError"):
-                finish(False, observed["navigationError"])
-                return
-            selected = (observed or {}).get("selection") or {}
-            if (observed and observed.get("ready") == "complete" and selected.get("sessionId")
-                    and selected.get("agentPreset") == "houdini"
-                    and selected.get("cwd") and Path(selected["cwd"]).resolve() == scene.parent.resolve()
-                    and observed.get("rpc", {}).get("ok") and observed["rpc"].get("count", 0) >= 1
-                    and not observed.get("tokenInUrl") and not observed.get("navigationPending") and not state["probe"]):
-                state["probe"] = True
-                state["phase"] = "checking-reopen" if state["first"] else "checking-workspace"
-                threading.Thread(target=probe_worker, daemon=True).start()
-        except Exception as exc:
-            finish(False, type(exc).__name__ + ": " + str(exc))
-    timer.timeout.connect(tick)
-    timer.start(500)
-    hou.session._dsh_gui_release_timer = timer
+            if bootstrap._CONTEXT and not bootstrap._BUSY and not state['busy']:
+                import dsh_workbench_client
+                if not dsh_workbench_client._BUSY:
+                    state['busy']=True
+                    threading.Thread(target=worker,daemon=True).start()
+        except Exception as error:
+            finish(False,str(error))
+    timer.timeout.connect(tick);timer.start(200)
+    hou.session._dsh_gui_release_timer=timer
 
 
 def main():
@@ -361,7 +288,8 @@ def main():
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=20)
-    print("Actual H21/H22 GUI installation, workspace, reopen and WebView acceptance passed", flush=True)
+                close_desktop(install_root)
+    print("Actual GUI installation, standalone workspace, selected task, pin and reopen acceptance passed", flush=True)
 
 
 if __name__ == "__main__":
