@@ -82,12 +82,12 @@ __result__={'u_spans':[min(spans),max(spans)],'chord_to_uv_distance':[min(ratios
             call('''
 c='/obj/sample/textures'
 for label in ['BASE','ROUGHNESS','NORMAL']:
- r=tab_create(c,'rop_image','export_'+label,parms={'coppath':c+'/OUT_'+label,'copoutput':'$HIP/dsh-texture/'+label.lower()+'.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0})
+ r=tab_create(c,'rop_image','export_'+label,parms={'coppath':c+'/OUT_'+label,'copoutput':'$HIP/dsh-artifacts/textures/'+label.lower()+'.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0})
  render_frame(r)
 __result__=True
 ''')
-            has_image=(out/'dsh-texture/generated.png').exists()
-            image_path='$HIP/dsh-texture/generated.png' if has_image else '$HIP/dsh-texture/base.exr'
+            has_image=(out/'dsh-artifacts/textures/generated.png').exists()
+            image_path='$HIP/dsh-artifacts/textures/generated.png' if has_image else '$HIP/dsh-artifacts/textures/base.exr'
             report['external_image_supplied']=has_image
             call(f'''
 c='/obj/sample/textures'
@@ -137,7 +137,7 @@ def main():
     if out.exists() or out.is_relative_to(ROOT):p.error('output must be a new external directory')
     out.mkdir(parents=True)
     if args.texture:
-        (out/'dsh-texture').mkdir();shutil.copy2(args.texture.resolve(strict=True),out/'dsh-texture/generated.png')
+        (out/'dsh-artifacts/textures').mkdir(parents=True);shutil.copy2(args.texture.resolve(strict=True),out/'dsh-artifacts/textures/generated.png')
     with tempfile.TemporaryDirectory(prefix='dsh-texture-version-') as temp:
         h=exe.with_name('hython.exe');r=subprocess.run([str(h),'-c',"import hou;print('VERSION='+hou.applicationVersionString())"],cwd=launch_directory(h),env=isolated_environment(temp,executable=h),capture_output=True,text=True,timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     import re

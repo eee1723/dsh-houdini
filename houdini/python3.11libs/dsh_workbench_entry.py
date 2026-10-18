@@ -8,19 +8,16 @@ _SAVE_HOOKS = set()
 
 
 def after_save(native_context, wrapper):
-    """Run the DSH save notification and every discovered afterscenesave.py once.
+    """Run DSH's notification and preserve the next native save script.
 
     Houdini executes only the first scripts/afterscenesave.py on its search
-    path, and the workbench forwarder occupies that slot, so this re-runs the
-    plugin's own notification script and each remaining match instead of
-    dropping them.
+    path. The workbench forwarder adds DSH's notification, then forwards to
+    the first remaining match. That script owns any further chaining; running
+    all matches here would activate normally shadowed third-party scripts.
     """
     import hou
     current = Path(wrapper).resolve()
-    if _SAVE_HOOKS:
-        # A chained forwarder re-entered while this save is already executing
-        # every target; the outer call owns the execution set.
-        return
+    outermost = not _SAVE_HOOKS
     _SAVE_HOOKS.add(current)
     arguments = native_context.get('kwargs')
     errors = []
@@ -35,23 +32,26 @@ def after_save(native_context, wrapper):
     def run(filename):
         try:
             execute(filename)
-        # BaseException: one hook's sys.exit() must not silently drop the rest.
+        # Still notify the native script if the plugin notification failed.
         except BaseException as error:
             errors.append((str(filename), error))
     try:
         plugin = (Path(__file__).resolve().parents[1] / 'scripts/afterscenesave.py').resolve()
         discovered = tuple(Path(filename) for filename in hou.findFiles('scripts/afterscenesave.py'))
-        if all(Path(filename).resolve() != plugin for filename in discovered):
-            run(plugin)
+        run(plugin)
         for filename in discovered:
+            if filename.resolve() in _SAVE_HOOKS:
+                continue
             run(filename)
+            break
         if any(isinstance(error, KeyboardInterrupt) for _, error in errors):
             raise KeyboardInterrupt
         if errors:
             raise RuntimeError('保存脚本执行失败：' + '；'.join(
                 f'{path}：{type(error).__name__}: {error}' for path, error in errors))
     finally:
-        _SAVE_HOOKS.clear()
+        if outermost:
+            _SAVE_HOOKS.clear()
 
 
 def attach():
@@ -76,7 +76,9 @@ def attach():
             module = sys.modules.get(name)
             if module and not Path(module.__file__).resolve().is_relative_to(Path(ticket['plugin']).resolve()):
                 raise RuntimeError('Houdini 已加载另一个插件版本，未混用运行环境。')
-        if not hou.isUIAvailable() or path_key(os.environ['HFS']) != path_key(ticket['hfs']):
+        # Houdini can rewrite HFS to a Windows 8.3 path. Compare the actual
+        # local installation, not its spelling; HIP path policy stays separate.
+        if not hou.isUIAvailable() or not Path(os.environ['HFS']).samefile(ticket['hfs']):
             raise RuntimeError('启动的 Houdini 与选择的版本不一致。')
         if ticket['hip'] and (hou.hipFile.isNewFile() or path_key(hou.hipFile.path()) != path_key(ticket['hip'])):
             raise RuntimeError('Houdini 没有打开所选工程；原对话未换绑。请检查文件和加载提示。')

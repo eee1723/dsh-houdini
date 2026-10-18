@@ -27,7 +27,8 @@ export async function visualCapability(exec: any, ctx: any) {
     const supported = info.inputModalities?.includes('image') === true
     return {...base,status:supported?'available':'unsupported',image_input:supported,
       attachment_channel:true,limits:attachments.imageLimits,
-      ...(supported?{}:{reason:'current model route does not declare image input'}),
+      ...(supported?{}:{reason:'current model route does not declare image input',
+        next_action:'Check the configured route input modalities or select a route that declares image input. This is a metadata refusal, not a test of the provider or the model inherent ability. Required reference matching and visual quality remain unverified until images can be inspected.'}),
       observation:'Declared model input capability. An attached image can be inspected by the model; metadata alone does not describe its content.'}
   } catch(error) {
     return {...base,status:'unavailable',image_input:null,reason:String(error),

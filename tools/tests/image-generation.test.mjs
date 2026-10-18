@@ -39,7 +39,7 @@ const context={fs:filesystem,sandboxPolicy:{resolve:()=>({mode,workspaceRoot:roo
   },
 }
 context.get=name=>context[name]
-const args=(name='output.png')=>({provider:'chosen',model:'gpt-image-2.5-sunburst',prompt:'a calibrated reference',output_policy:'explicit',output:path.join('dsh-texture',name)})
+const args=(name='output.png')=>({provider:'chosen',model:'gpt-image-2.5-sunburst',prompt:'a calibrated reference',output_policy:'explicit',output:path.join('dsh-artifacts/textures',name)})
 let requests=[]
 const success=async(url,options)=>{requests.push({url:String(url),options});assert.equal(options.headers.get('Authorization'),`Bearer ${secret}`);assert.equal(options.redirect,'error');return Response.json({data:[{b64_json:png.toString('base64')}],usage:{output_tokens:10}},{headers:{'x-request-id':'image-1'}})}
 assert.deepEqual((await imageModels(context)).routes[0].models.map(m=>m.id),['gpt-image-2.5-sunburst'])
@@ -53,7 +53,7 @@ assert.equal(result.recovery_file.attachment.id,digest(png));assert(result.attac
 await assert.rejects(()=>generateImage(context,exec,args(),success),/already exists/)
 mode='read-only';await assert.rejects(()=>generateImage(context,exec,args('read-only.png'),success),/read-only/);mode='workspace-write'
 await assert.rejects(()=>generateImage(context,exec,{...args(),output:path.join(root,'..','outside.png')},success),/outside/)
-await assert.rejects(()=>generateImage(context,exec,{...args(),output:'$HIP/dsh-texture/no.png'},success),/actual HIP/)
+await assert.rejects(()=>generateImage(context,exec,{...args(),output:'$HIP/dsh-artifacts/textures/no.png'},success),/actual HIP/)
 await assert.rejects(()=>generateImage(context,exec,{...args(),output:'transparent.jpg',background:'transparent'},success),/Transparent/)
 assert.equal(requests.length,1)
 
@@ -99,7 +99,7 @@ result=await generateImage(context,{...exec,signal:cancelled.signal},args('cance
 assert.equal(result.status,'not_sent')
 // A remote response can arrive after someone replaces the reserved destination.
 // Preserve their replacement and the billed original recovery attachment.
-const replacement=path.join(root,'dsh-texture','replacement.png')
+const replacement=path.join(root,'dsh-artifacts/textures','replacement.png')
 result=await generateImage(context,exec,args('replacement.png'),async(...request)=>{
   await fs.unlink(replacement);await fs.writeFile(replacement,'user replacement')
   return success(...request)
@@ -139,7 +139,7 @@ const managed=(overrides={})=>({provider:'chosen',model:'gpt-image-2.5-sunburst'
 const beforeManaged=requests.length
 await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/outside.*writable workspace/)
 assert.equal(requests.length,beforeManaged,'workspace/HIP conflict must be rejected before billing')
-assert.equal(await fs.stat(path.join(project,'dsh-reference')).catch(()=>null),null)
+assert.equal(await fs.stat(path.join(project,'dsh-artifacts/references')).catch(()=>null),null)
 mode='danger-full-access'
 result=await generateImage(context,exec,managed(),success,connection)
 assert.equal(result.ok,true);assert.equal(result.artifact.role,'reference_generated')
@@ -148,8 +148,8 @@ assert.equal(path.dirname(result.output),path.join(project,layout.directories.re
 assert.equal(result.artifact.hip_path,hip.replace(/\\/g,'/'))
 assert.equal(result.artifact.hip_relative_path,path.relative(project,result.output).replace(/\\/g,'/'))
 assert.deepEqual(result.artifact.observed_identity,{executor_id:null,runtime_id:'fixture-runtime',observed_at:1234})
-assert.equal(await fs.stat(path.join(root,'dsh-reference')).catch(()=>null),null)
-assert.equal(await fs.stat(path.join(project,'dsh-render')).catch(()=>null),null,'unused directories are not created')
+assert.equal(await fs.stat(path.join(root,'dsh-artifacts/references')).catch(()=>null),null)
+assert.equal(await fs.stat(path.join(project,'dsh-artifacts/renders')).catch(()=>null),null,'unused directories are not created')
 const referenceOutput=result.output
 const oneObservation=observations
 result=await generateImage(context,exec,managed({purpose:'texture',output:'透明 标志.png'}),async(...request)=>{
@@ -191,7 +191,7 @@ assert.equal(requests.length,beforeInvalid,'invalid project/path must not send p
 const beforeOffline=routes
 result=await generateImage(context,exec,args('offline.png'),success,connection)
 assert.equal(result.ok,true);assert.equal(routes,beforeOffline,'explicit offline generation must not access Houdini')
-assert.equal(path.dirname(result.output),path.join(root,'dsh-texture'))
+assert.equal(path.dirname(result.output),path.join(root,'dsh-artifacts/textures'))
 assert.equal(result.artifact.output_policy,'explicit');assert.equal(result.artifact.hip_path,null)
 failBridge=false
 
@@ -224,14 +224,15 @@ assert.equal(bindingReads,1)
 // A managed folder must remain in the visible HIP tree, including an alias
 // redirected inside that tree; following a symlink is not a managed allocation.
 const redirectedProject=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-redirect-')))
+await fs.mkdir(path.join(redirectedProject,'dsh-artifacts'))
 const redirectTarget=path.join(redirectedProject,'elsewhere');await fs.mkdir(redirectTarget)
-await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-reference'),process.platform==='win32'?'junction':'dir')
+await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-artifacts/references'),process.platform==='win32'?'junction':'dir')
 hip=path.join(redirectedProject,'redirect.hip')
 const beforeRedirect=requests.length
 await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/redirected/)
 assert.equal(requests.length,beforeRedirect)
 assert.deepEqual(await fs.readdir(redirectTarget),[])
-await fs.unlink(path.join(redirectedProject,'dsh-reference'))
+await fs.unlink(path.join(redirectedProject,'dsh-artifacts/references'))
 // A HIP root may itself be a visible alias. The GUI projects that spelling
 // without I/O; Host checks the contract there, then writes under the resolved
 // root with the same child-redirection and filesystem policy checks.
@@ -240,15 +241,15 @@ await fs.symlink(redirectedProject,projectAlias,process.platform==='win32'?'junc
 hip=path.join(projectAlias,'visible.hip')
 result=await generateImage(context,exec,managed({purpose:'texture'}),success,connection)
 assert.equal(result.ok,true)
-assert.equal(path.dirname(result.output),path.join(redirectedProject,'dsh-texture'))
+assert.equal(path.dirname(result.output),path.join(redirectedProject,'dsh-artifacts/textures'))
 assert.equal(result.artifact.hip_path,hip.replaceAll('\\','/'))
 assert.deepEqual(await fs.readFile(result.output),png)
 // Resolving the root must not authorize a redirected managed child.
-await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-reference'),process.platform==='win32'?'junction':'dir')
+await fs.symlink(redirectTarget,path.join(redirectedProject,'dsh-artifacts/references'),process.platform==='win32'?'junction':'dir')
 const beforeAliasRedirect=requests.length
 await assert.rejects(()=>generateImage(context,exec,managed(),success,connection),/redirected/)
 assert.equal(requests.length,beforeAliasRedirect)
-await fs.unlink(path.join(redirectedProject,'dsh-reference'))
+await fs.unlink(path.join(redirectedProject,'dsh-artifacts/references'))
 await fs.unlink(projectAlias)
 hip=savedHip;mode='workspace-write'
 

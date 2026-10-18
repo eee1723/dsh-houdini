@@ -45,13 +45,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     layout = project_paths.project_layout(str(hip), has_named_path=True)
     assert layout['available'] and layout['schema_version'] == 1
     assert Path(layout['project_root']).samefile(base)
-    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'cache', 'analysis', 'documentation', 'render', 'visual_check'}
-    assert Path(layout['directories']['reference_downloaded']) == base.resolve() / 'dsh-reference' / 'downloaded'
-    assert Path(layout['directories']['reference_generated']) == base.resolve() / 'dsh-reference' / 'generated'
-    assert Path(layout['directories']['texture']) == base.resolve() / 'dsh-texture'
-    assert Path(layout['directories']['cache']) == base.resolve() / 'dsh-cache'
-    assert Path(layout['directories']['analysis']) == base.resolve() / 'dsh-analysis'
-    assert Path(layout['directories']['documentation']) == base.resolve() / 'dsh-docs'
+    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'cache', 'analysis', 'documentation', 'render', 'visual_check', 'script'}
+    assert Path(layout['directories']['script']) == base.resolve() / 'dsh-artifacts/scripts'
+    assert Path(layout['directories']['reference_downloaded']) == base.resolve() / 'dsh-artifacts/references' / 'downloaded'
+    assert Path(layout['directories']['reference_generated']) == base.resolve() / 'dsh-artifacts/references' / 'generated'
+    assert Path(layout['directories']['texture']) == base.resolve() / 'dsh-artifacts/textures'
+    assert Path(layout['directories']['cache']) == base.resolve() / 'dsh-artifacts/cache'
+    assert Path(layout['directories']['analysis']) == base.resolve() / 'dsh-artifacts/analysis'
+    assert Path(layout['directories']['documentation']) == base.resolve() / 'dsh-artifacts/docs'
     assert project_paths.lifecycle('documentation') == 'user-documentation'
     assert {entry.name for entry in base.iterdir()} == {hip.name}
     for filename, named in ((str(hip), False), (None, False), ('relative.hip', True)):
@@ -64,9 +65,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     assert first['output_policy'] == 'managed'
     assert first['role'] == 'visual_check' and first['lifecycle'] == 'visual-check'
     assert first['project_root'] == layout['project_root']
-    assert Path(first['actual_path']).parent.parent.name == 'dsh-visual-checks'
+    assert Path(first['actual_path']).parent.parent == base.resolve() / 'dsh-artifacts/checks'
     assert Path(first['managed_root']) == Path(first['actual_path']).parent
-    assert first['hip_relative_path'].startswith('dsh-visual-checks/')
+    assert first['hip_relative_path'].startswith('dsh-artifacts/checks/')
     assert first['actual_path'] != second['actual_path']
     assert '0003' in Path(second['actual_path']).name
     assert first['run_id'] != third['run_id']
@@ -75,8 +76,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     another_delivery = allocate(hip, '最终交付.png', output_policy='delivery')
     # Windows CI may expose TEMP through an 8.3 alias; the allocator resolves
     # that alias to the same directory's long spelling.
-    assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-render')
-    assert delivery['output_policy'] == 'delivery' and delivery['hip_relative_path'].startswith('dsh-render/')
+    assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-artifacts/renders')
+    assert delivery['output_policy'] == 'delivery' and delivery['hip_relative_path'].startswith('dsh-artifacts/renders/')
     assert delivery['role'] == 'render' and delivery['lifecycle'] == 'render-output'
     assert delivery['project_root'] == layout['project_root']
     assert delivery['actual_path'] != another_delivery['actual_path']
@@ -153,8 +154,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     conflicting.mkdir()
     blocked_hip = conflicting / 'scene.hip'
     blocked_hip.touch()
-    for policy, folder in (('managed', 'dsh-visual-checks'), ('delivery', 'dsh-render')):
+    for policy, folder in (('managed', 'dsh-artifacts/checks'), ('delivery', 'dsh-artifacts/renders')):
         marker = conflicting / folder
+        marker.parent.mkdir(exist_ok=True)
         marker.write_text('keep', encoding='utf-8')
         reject(lambda: allocate(blocked_hip, output_policy=policy), 'not a directory')
         assert marker.read_text(encoding='utf-8') == 'keep'
@@ -183,8 +185,10 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     redirected_hip.touch()
     real_store = redirected / 'other-store'
     real_store.mkdir()
-    for policy, folder in (('managed', 'dsh-visual-checks'), ('delivery', 'dsh-render')):
+    for policy, folder in (('managed', 'dsh-artifacts'), ('delivery', 'dsh-artifacts'),
+                           ('managed', 'dsh-artifacts/checks'), ('delivery', 'dsh-artifacts/renders')):
         link = redirected / folder
+        link.parent.mkdir(exist_ok=True)
         symlink_checked = False
         try:
             link.symlink_to(real_store, target_is_directory=True)
@@ -197,10 +201,11 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
         if symlink_checked:
             visible = project_paths.project_layout(str(redirected_hip), has_named_path=True)
             role = 'visual_check' if policy == 'managed' else 'render'
-            assert Path(visible['directories'][role]) == redirected.resolve() / folder
+            assert Path(visible['directories'][role]) == redirected.resolve() / project_paths.directory_path(role)
             reject(lambda: allocate(redirected_hip, output_policy=policy), 'redirected')
+            assert not list(real_store.iterdir()), 'preflight must not create subdirectories through a redirected artifact root'
             os.rmdir(link)
-            outside_store = base / ('outside-store-' + policy)
+            outside_store = base / ('outside-store-' + policy + '-' + folder.replace('/', '-'))
             outside_store.mkdir()
             if os.name == 'nt':
                 made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(outside_store)],

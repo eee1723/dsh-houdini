@@ -234,12 +234,12 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert delivery['ok'] and delivery['fresh'] and delivery['user_state_restored']
     assert delivery['artifact']['output_policy'] == 'delivery'
     assert delivery['artifact']['purpose'] == 'viewport_diagnostic'
-    assert Path(delivery['path']).parent.resolve() == (base / 'dsh-render').resolve()
+    assert Path(delivery['path']).parent.resolve() == (base / 'dsh-artifacts/renders').resolve()
     assert delivery['artifact']['actual_path'] == delivery['path']
-    assert not list((base / 'dsh-render').glob('*.reserve'))
+    assert not list((base / 'dsh-artifacts/renders').glob('*.reserve'))
     _, _, explicit = run(Viewer(), hip, path='explicit-ui.png', output_policy='explicit')
     assert explicit['ok'] and explicit['artifact']['role'] == 'visual_check'
-    assert Path(explicit['path']) == base / 'dsh-visual-checks' / 'explicit-ui.png'
+    assert Path(explicit['path']) == base / 'dsh-artifacts/checks' / 'explicit-ui.png'
 
     linked = Viewer(linked=True); linked_camera = linked.viewport.camera()
     parms_before, keys_before = dict(linked_camera.parms), dict(linked_camera.keys)

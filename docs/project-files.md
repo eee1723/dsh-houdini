@@ -7,27 +7,31 @@
 <!-- project-layout:generated:start -->
 | 用途 | 工程相对目录 | 生命周期标识 |
 |---|---|---|
-| 下载的参考资料（`reference_downloaded`） | `dsh-reference/downloaded/` | `reference` |
-| 生成的辅助参考（`reference_generated`） | `dsh-reference/generated/` | `reference` |
-| 材质与工程依赖（`texture`） | `dsh-texture/` | `project-dependency` |
-| 几何、模拟与通道缓存（`cache`） | `dsh-cache/` | `project-dependency` |
-| 分析资料与诊断报告（`analysis`） | `dsh-analysis/` | `analysis-evidence` |
-| 供用户阅读的工程与工具说明（`documentation`） | `dsh-docs/` | `user-documentation` |
-| 供用户保留的成图与渲染输出（`render`） | `dsh-render/` | `render-output` |
-| 过程检查与诊断对照图（`visual_check`） | `dsh-visual-checks/` | `visual-check` |
+| 下载的参考资料（`reference_downloaded`） | `dsh-artifacts/references/downloaded/` | `reference` |
+| 生成的辅助参考（`reference_generated`） | `dsh-artifacts/references/generated/` | `reference` |
+| 材质与工程依赖（`texture`） | `dsh-artifacts/textures/` | `project-dependency` |
+| 几何、模拟与通道缓存（`cache`） | `dsh-artifacts/cache/` | `project-dependency` |
+| 分析资料与诊断报告（`analysis`） | `dsh-artifacts/analysis/` | `analysis-evidence` |
+| 供用户阅读的工程与工具说明（`documentation`） | `dsh-artifacts/docs/` | `user-documentation` |
+| 供用户保留的成图与渲染输出（`render`） | `dsh-artifacts/renders/` | `render-output` |
+| 过程检查与诊断对照图（`visual_check`） | `dsh-artifacts/checks/` | `visual-check` |
+| 构建源码与任务脚本（`script`） | `dsh-artifacts/scripts/` | `project-source` |
+| 原始执行回执（相对DSH工作区） | `dsh-artifacts/results/` | `execution-evidence` |
 <!-- project-layout:generated:end -->
 
-按用途选择目录：生成图片直接用于材质时属于texture；生成的多视角草图属于reference_generated。渲染是否正式交付与目录位置分开，`present`负责明确交付。目录按实际写入需要创建，不预创建整套空目录。
+默认把新产物收在一个`dsh-artifacts/`目录，HIP保留在工程根目录。按用途选择子目录：生成图片直接用于材质时属于texture；生成的多视角草图属于reference_generated。渲染是否正式交付与目录位置分开，`present`负责明确交付。目录按实际写入需要创建，不预创建整套空目录。
+
+`script`存放本任务的构建源码和维护脚本，临时探针用其`scratch/`子目录。用DSH文件工具编辑源码，再通过Bridge执行Houdini操作；不把普通文件改写塞进HOM事务，文件副作用不受Undo保证。运行时仍被HIP、表达式或回调引用的脚本属于依赖，不能作为临时文件删除。原生Package资源目录保持原生结构。
 
 `documentation`用于用户接手工程或工具所需的说明及其专用资源，与分析证据分开。工程命名、版本、直接文件交付和说明格式由[文件交付方法](../skills/houdini-network-handoff/references/file-delivery.md)维护；目录投影本身不生成文档、不转换格式或整理旧文件。
 
-`dsh-render`用于准备交给用户或作为渲染输出保留的成图，不能从目录名推断“已验收/已最终交付”。`dsh-visual-checks`用于建模过程中的观察、故障诊断和A/B对照，包含截图与测试渲染；不是只有截图才放这里。`render_view`等捕获默认选择检查用途，只有明确要保留/交付的图片才选择`delivery`。正式ROP尊重已配置的用户路径；用它做检查时明确把本次`picture`指向visual_check目录，不沿用成图目录存诊断图。相同图片也可能被重复渲染或显式写入不同目录，系统不按文件内容猜测用途或移动历史文件。
+`dsh-artifacts/renders`用于准备交给用户或作为渲染输出保留的成图，不能从目录名推断“已验收/已最终交付”。`dsh-artifacts/checks`用于建模过程中的观察、故障诊断和A/B对照，包含截图与测试渲染；不是只有截图才放这里。`render_view`等捕获默认选择检查用途，只有明确要保留/交付的图片才选择`delivery`。正式ROP尊重已配置的用户路径；用它做检查时明确把本次`picture`指向visual_check目录，不沿用成图目录存诊断图。相同图片也可能被重复渲染或显式写入不同目录，系统不按文件内容猜测用途或移动历史文件。
 
-教程切片、转录、抽帧、索引、记录和资料交接放在`dsh-analysis/<tutorial>/`，Trace分析报告也使用analysis角色。纯离线解析没有命名HIP时，按用户明确的任务工作区选择该目录；CLI仍接受显式输出，不强制保存HIP或改写用户目的地。导入媒体属于reference_downloaded，缓存属于cache。旧analysis或geo目录不自动迁移。
+教程切片、转录、抽帧、索引、记录和资料交接放在`dsh-artifacts/analysis/<tutorial>/`，Trace分析报告也使用analysis角色。纯离线解析没有命名HIP时，按用户明确的任务工作区选择该目录；CLI仍接受显式输出，不强制保存HIP或改写用户目的地。导入媒体属于reference_downloaded，缓存属于cache。旧analysis或geo目录不自动迁移。
 
-`dsh-analysis`是按需产生的分析资料，不是工程状态数据库。视频资料在各教程子目录，执行复盘在`trace/`；其中可能有当时工程路径、节点和执行状态的快照，不持续代表当前HIP。恢复标识在HIP内，可信保存材料在安装根的`recovery/checkpoints/`，对话历史由DSH持久化；`.dsh-houdini-results`保存原始执行回执，不并入analysis。复盘本身可选择独立诊断输出根，无需每次向用户工程追加报告。
+`dsh-artifacts/analysis`是按需产生的分析资料，不是工程状态数据库。视频资料在各教程子目录，执行复盘在`trace/`；其中可能有当时工程路径、节点和执行状态的快照，不持续代表当前HIP。恢复标识在HIP内，可信保存材料在安装根的`recovery/checkpoints/`，对话历史由DSH持久化。原始执行回执写入DSH工作区下的`dsh-artifacts/results/`；它独立于HIP锚点，两者不同时不会被错误搬到HIP旁。历史`.dsh-houdini-results`按已记录的原路径读取，不迁移、不重写旧回执。复盘本身可选择独立诊断输出根，无需每次向用户工程追加报告。
 
-加载警告原文属于恢复诊断，保存在同一恢复根的`load-warnings/`，按内容hash复用；对话只记录有限预览和可核验引用。它不进入`dsh-analysis`或渲染目录，也不随Save As搬动；读取沿DSH原生恢复历史定位，规则见[接续](multi-instance.md#单实例保存点恢复)。
+加载警告原文属于恢复诊断，保存在同一恢复根的`load-warnings/`，按内容hash复用；对话只记录有限预览和可核验引用。它不进入`dsh-artifacts/analysis`或渲染目录，也不随Save As搬动；读取沿DSH原生恢复历史定位，规则见[接续](multi-instance.md#单实例保存点恢复)。
 
 `visual_check`的受管捕获继续在目录下使用`run-*`分组，保留唯一capture文件名和在途reservation。它是观察证据，不是自动可删除缓存。原生截图超时或中断后可能仍有晚到写入，不能删除其预留或复用路径。
 
@@ -41,7 +45,7 @@
 
 未命名HIP没有自动工程根。资料收集、离线生图或临时截图可以明确指定目的地，不为这些操作强制Save As。显式绝对路径或含子目录的原有目的地保持，不为统一结构重写用户选择。Host仍执行DSH文件策略；HIP与可写workspace不一致时，在请求提供方之前报告，不静默扩大权限。
 
-现有`references/`、`textures/`、渲染和检查文件不自动迁移。Save As也不是依赖迁移指令；需要搬工程时显式复制所需依赖、核对引用与重开，再决定是否处理原文件。
+现有`dsh-reference/`、`dsh-texture/`、`scripts/`等目录及用户指定路径不自动迁移；旧HIP、源码和历史交付可能仍引用它们。Save As也不是依赖迁移指令；需要搬工程时显式复制所需依赖、核对引用与重开，再决定是否处理原文件。
 
 目录组织不证明工程内容连续：同工作区可有无关HIP，跨目录另存也可属于同一工程。
 任务默认跟随成功Save As、可信保存点恢复与DSH原生目录迁移见[工程接续设计](multi-instance.md#工程接续设计)；仅有当前路径观察仍不能证明工程连续或恢复成功。
@@ -51,13 +55,13 @@
 - `image_generate`默认`output_policy='managed'`、`purpose='reference'`。`output`省略或安全basename，生成到reference_generated；`purpose='texture'`进入texture。目录来自当前任务所选Houdini的实际现场，结果带角色、工程根、原HIP和观察身份。`output_policy='explicit'`必须给目的地，相对路径沿DSH workspace解释，不查询Houdini。
 - 网络资料保存先读取`project_layout.directories.reference_downloaded`，再用可用的通用下载能力明确选择该目录。精确DSH的`web_fetch`只读取网页文本，不提供二进制下载；本插件没有把它伪装成下载工具或复制一套网络安全策略。取得链接不等于图片已下载或已经看过。
 - `render_view`、`viewport_screenshot`与界面截图默认managed用于视觉检查；选择delivery生成到render。原有run-id、唯一分配、用户状态恢复和捕获验证保持不变。explicit裸文件名进入visual_check根目录；只有managed自动添加run分组。
-- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认render、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-cache`。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
+- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认render、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-artifacts/cache`。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
 
 ## 生命周期与交付
 
 参考资料和贴图保留原文件；贴图是工程依赖，不能因已渲染一次就删除。检查图只在其确为本任务创建、已无观察/恢复/交付引用且无在途写入时按明确范围处理。目录名、时间或“看过图片”都不构成清理许可。
 
-没有自动目录扫描交付、定时清理、搬运副本或独立资产账本。DSH原始附件、预览附件与`.dsh-houdini-results`继续承担各自的传输/恢复/历史职责，不迁进上述工程目录。读取成功、文件存在、颜色/通道正确、视觉效果正确与最终交付分别验证。
+没有自动目录扫描交付、定时清理、搬运副本或独立资产账本。DSH原始附件和预览附件仍由DSH管理；执行归档不是可随意清理的临时文件。读取成功、文件存在、颜色/通道正确、视觉效果正确与最终交付分别验证。
 
 ## 实现与验证
 

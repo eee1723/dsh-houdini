@@ -65,13 +65,13 @@ __result__={'color':cop_layer_stats(color),'roughness':cop_layer_stats(rough)}
     for name in ('base_color','roughness','decal_alpha'):
         written=call(f"""
 r=tab_create('/obj/calibration/textures','rop_image','export_{name}')
-set_parms(r,{{'coppath':'/obj/calibration/textures/{name}','copoutput':'$HIP/dsh-texture/{name}.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0}})
+set_parms(r,{{'coppath':'/obj/calibration/textures/{name}','copoutput':'$HIP/dsh-artifacts/textures/{name}.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0}})
 __result__=render_frame(r)
 """)
         assert written['fresh'] and not written['errors'],written
         decoded=call(f"""
 f=tab_create('/obj/calibration/textures','file','read_{name}')
-set_parms(f,{{'filename':'$HIP/dsh-texture/{name}.exr','colorspace':'raw','aovs':1}})
+set_parms(f,{{'filename':'$HIP/dsh-artifacts/textures/{name}.exr','colorspace':'raw','aovs':1}})
 set_parms(f,{{'aov1':'C','type1':{'"vector"' if name=='base_color' else '"float"'},'precision1':'file','raw1':1}})
 __result__=cop_layer_stats(f)
 """)
@@ -84,14 +84,14 @@ mat=tab_create('/stage','materiallibrary','materials',inputs=[imp])
 tab_apply(mat,'vop_karmamtlxsubnet')
 builder=mat.node('karmamaterial')
 surface=builder.node('mtlxstandard_surface')
-color=tab_create(builder,'mtlximage','base_color_texture',parms={'signature':'color3','file':'$HIP/dsh-texture/base_color.exr','filecolorspace':'Raw'})
-rough=tab_create(builder,'mtlximage','roughness_texture',parms={'signature':'default','file':'$HIP/dsh-texture/roughness.exr','filecolorspace':'Raw'})
+color=tab_create(builder,'mtlximage','base_color_texture',parms={'signature':'color3','file':'$HIP/dsh-artifacts/textures/base_color.exr','filecolorspace':'Raw'})
+rough=tab_create(builder,'mtlximage','roughness_texture',parms={'signature':'default','file':'$HIP/dsh-artifacts/textures/roughness.exr','filecolorspace':'Raw'})
 connect(color,surface,'base_color');connect(rough,surface,'specular_roughness')
 set_parms(mat,{'matnode1':'karmamaterial','matpath1':'/materials/calibration','assign1':True,'geopath1':'/calibration'})
 tab_apply(mat,'vop_karmamtlxsubnet')
 decal_builder=mat.node('karmamaterial1')
 decal_shader=decal_builder.node('mtlxstandard_surface')
-decal_alpha=tab_create(decal_builder,'mtlximage','decal_alpha_texture',parms={'signature':'color3','file':'$HIP/dsh-texture/decal_alpha.exr','filecolorspace':'Raw'})
+decal_alpha=tab_create(decal_builder,'mtlximage','decal_alpha_texture',parms={'signature':'color3','file':'$HIP/dsh-artifacts/textures/decal_alpha.exr','filecolorspace':'Raw'})
 connect(decal_alpha,decal_shader,'opacity')
 set_parms(decal_shader,{'base_color':(1,1,1),'specular_roughness':.4,'emission':.3,'emission_color':(1,1,1)})
 set_parms(mat,{'materials':2})
@@ -101,7 +101,7 @@ tab_apply('/stage','lop_karma_setup')
 settings=hou.node('/stage/karmarendersettings');rop=hou.node('/stage/usdrender_rop1')
 connect(dome,settings)
 set_parms(settings,{'camera':'/calibration_camera','engine':'cpu','pathtracedsamples':16})
-set_parms(rop,{'outputimage':'$HIP/dsh-render/material.png'})
+set_parms(rop,{'outputimage':'$HIP/dsh-artifacts/renders/material.png'})
 product=tab_create('/stage','pythonscript','product',inputs=[settings],parms={'python':"from pxr import UsdRender,UsdLux,UsdGeom,Gf\ns=hou.pwd().editableStage()\nfor p in s.Traverse():\n if p.IsA(UsdRender.Product): UsdRender.Product(p).CreateResolutionAttr(Gf.Vec2i(512,320))\nlight=UsdLux.RectLight.Define(s,'/calibration_key')\nlight.CreateIntensityAttr(8)\nlight.CreateWidthAttr(1.2)\nlight.CreateHeightAttr(.15)\nUsdGeom.Xformable(light).AddTransformOp().Set(UsdGeom.Xformable(s.GetPrimAtPath('/calibration_camera')).ComputeLocalToWorldTransform(0))\n"})
 connect(product,rop);set_parms(rop,{'loppath':product.path()})
 __result__=usd_stage_summary(product)
@@ -144,13 +144,13 @@ assert 'decal_alpha.exr' in alpha_reader['inputs']['file']['value'],alpha_reader
 light_summary=h.usd_stage_summary('/stage/product')
 assert light_summary['counts']['lights']>=1,light_summary
 
-image=directory/'dsh-render'/('material.png' if args.mode=='build' else 'material-reopened.png')
+image=directory/'dsh-artifacts/renders'/('material.png' if args.mode=='build' else 'material-reopened.png')
 if args.mode=='build':
     rendered=call(f"__result__=render_frame('/stage/usdrender_rop1',picture={str(image)!r},timeout=110)")
     assert rendered['fresh'] and not rendered['errors'],rendered
     # Change only the image driving roughness, rerender in a fresh husk, then
     # restore the authored COP and exported dependency before saving the HIP.
-    rough_control=directory/'dsh-render/roughness-control.png'
+    rough_control=directory/'dsh-artifacts/renders/roughness-control.png'
     call("set_parms('/obj/calibration/textures/roughness',{'evenr':.98,'oddr':.98}); __result__=render_frame('/obj/calibration/textures/export_roughness')")
     call(f"__result__=render_frame('/stage/usdrender_rop1',picture={str(rough_control)!r},timeout=110)")
     rough_difference=np.abs(pixels(image).astype(np.int16)-pixels(rough_control).astype(np.int16))
@@ -174,7 +174,7 @@ facts={'version':hou.applicationVersionString(),'mode':args.mode,'hip':str(hip),
     'red_pixels':int(red.sum()),'blue_pixels':int(blue.sum()),'white_decal_pixels':int(white.sum()),'render':rendered,
     'scope':'same-version native COP data, portable files, actual MaterialX bindings and Karma pixels; not a natural-model task or GUI interaction'}
 if args.mode=='reopen':
-    previous=pixels(directory/'dsh-render/material.png')
+    previous=pixels(directory/'dsh-artifacts/renders/material.png')
     diff=np.abs(rgb.astype(np.int16)-previous.astype(np.int16))
     facts['reopen_pixel_difference']={'max':int(diff.max()),'mean':float(diff.mean()),'changed_pixels':int(np.any(diff,axis=2).sum())}
     assert diff.max()<=2 and diff.mean()<=.05,facts['reopen_pixel_difference']

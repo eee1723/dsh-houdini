@@ -1,13 +1,42 @@
 {
   "schemaVersion": 1,
   "directories": {
-    "reference_downloaded": { "path": "dsh-reference/downloaded", "lifecycle": "reference" },
-    "reference_generated": { "path": "dsh-reference/generated", "lifecycle": "reference" },
-    "texture": { "path": "dsh-texture", "lifecycle": "project-dependency" },
-    "cache": { "path": "dsh-cache", "lifecycle": "project-dependency" },
-    "analysis": { "path": "dsh-analysis", "lifecycle": "analysis-evidence" },
-    "documentation": { "path": "dsh-docs", "lifecycle": "user-documentation" },
-    "render": { "path": "dsh-render", "lifecycle": "render-output" },
-    "visual_check": { "path": "dsh-visual-checks", "lifecycle": "visual-check" }
-  }
+    "reference_downloaded": {
+      "path": "dsh-artifacts/references/downloaded",
+      "lifecycle": "reference"
+    },
+    "reference_generated": {
+      "path": "dsh-artifacts/references/generated",
+      "lifecycle": "reference"
+    },
+    "texture": {
+      "path": "dsh-artifacts/textures",
+      "lifecycle": "project-dependency"
+    },
+    "cache": {
+      "path": "dsh-artifacts/cache",
+      "lifecycle": "project-dependency"
+    },
+    "analysis": {
+      "path": "dsh-artifacts/analysis",
+      "lifecycle": "analysis-evidence"
+    },
+    "documentation": {
+      "path": "dsh-artifacts/docs",
+      "lifecycle": "user-documentation"
+    },
+    "render": {
+      "path": "dsh-artifacts/renders",
+      "lifecycle": "render-output"
+    },
+    "visual_check": {
+      "path": "dsh-artifacts/checks",
+      "lifecycle": "visual-check"
+    },
+    "script": {
+      "path": "dsh-artifacts/scripts",
+      "lifecycle": "project-source"
+    }
+  },
+  "resultDirectory": "dsh-artifacts/results"
 }

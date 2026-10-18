@@ -34,7 +34,7 @@ parser.add_argument('--service-profile',type=Path,help='Explicit JSON transcript
 parser.add_argument('--show-gui',action='store_true',help='Show only the owned GUI worker for an authorized visible-surface trial')
 parser.add_argument('--condition',required=True)
 parser.add_argument('--seed-hip',type=Path,help='Explicit developer-owned input; never a live/user HIP')
-parser.add_argument('--followup',type=Path,action='append',default=[],help='Same-author next phase, sent only after the preceding phase becomes idle')
+parser.add_argument('--followup',type=Path,action='append',default=[],help='Same-author next phase, sent only after the preceding turn completes successfully')
 parser.add_argument('--no-feedback',action='store_true',help='One initial public task only; forbid followups and send no added implementation instructions')
 parser.add_argument('--approval-policy',choices=('ask','never'),default='never',help='Native DSH approval policy; the sandbox remains workspace-write')
 parser.add_argument('--cancel-file',type=Path,help='External controller can create this file to cancel; defaults to RUN/cancel')
@@ -130,6 +130,22 @@ def pending_approvals(records: list) -> list:
         if event.get('type') == 'approval/asked': pending[data['id']] = data
         if event.get('type') == 'approval/decided': pending.pop(data['id'], None)
     return list(pending.values())
+
+
+def phase_outcome(records: list, after_seq: int, *, model_prompt_sent: bool) -> dict:
+    """Use the native terminal reason; idle alone says nothing about completion."""
+    if not model_prompt_sent:
+        return {'result': 'smoke_completed', 'terminal': None}
+    terminal = None
+    for row in records:
+        event = row.get('event', {})
+        if event.get('seq', 0) <= after_seq: continue
+        if event.get('type') == 'turn/start': terminal = None
+        if event.get('type') == 'turn/end':
+            terminal = {'seq': event['seq'], **event['data']}
+    kind = terminal.get('reason', {}).get('kind') if terminal else None
+    result = 'idle_after_prompt' if kind == 'completed' else 'turn_' + (kind or 'incomplete')
+    return {'result': result, 'terminal': terminal}
 
 
 def clear_trial_credentials() -> dict:
@@ -471,7 +487,9 @@ def run_trial(result: dict) -> None:
             result['result'] = 'external_cancelled'
             result['cancelReason'] = 'external controller cancel file before model admission'
             return
-        if not args.smoke or args.scripted_smoke:
+        model_prompt_sent = not args.smoke or args.scripted_smoke
+        phase_after_seq = rpc('session/projections', {'request': {'sessionId': session_id}})['asOfSeq']
+        if model_prompt_sent:
             admit(prompt,goal=args.goal_rounds>0)
         result["result"] = "running"
         started = time.monotonic()
@@ -508,20 +526,24 @@ def run_trial(result: dict) -> None:
                 settled_listing=rpc('session/list',{'_request':{}},10)
                 item=next(row for row in settled_listing['items'] if row['sessionId']==session_id)
                 if item.get('running') is True:continue
+                baseline, records = session_audit()
+                outcome = phase_outcome(records, phase_after_seq, model_prompt_sent=model_prompt_sent)
                 phase_dir=RUN/'review'
                 phase_dir.mkdir(exist_ok=True)
                 phase_hip=phase_dir/f'phase-{phase_index+1}.hip'
                 shutil.copy2(hip,phase_hip)
                 phase_records.append({'phase':phase_index+1,'elapsedSeconds':round(time.monotonic()-phase_started,2),
-                    'hipPath':str(phase_hip),'hipSha256':digest(phase_hip),'sessionItem':item})
+                    'hipPath':str(phase_hip),'hipSha256':digest(phase_hip),'sessionItem':item, **outcome})
                 write_json(RUN/'phases.json',phase_records)
-                if phase_index<len(args.followup) and (not args.smoke or args.scripted_smoke):
+                result['result'] = outcome['result']
+                if outcome['result'] != 'idle_after_prompt':break
+                if phase_index<len(args.followup):
+                    phase_after_seq = baseline['asOfSeq']
                     admit(args.followup[phase_index].read_text(encoding='utf-8'))
                     phase_index+=1
                     phase_started=time.monotonic()
                     saw_running=False
                     continue
-                result["result"] = "idle_after_prompt"
                 break
             time.sleep(5)
         else:
@@ -558,7 +580,7 @@ def run_trial(result: dict) -> None:
                 result['result'] = 'approval_pending'
                 rpc('session/cancel', {'request': {'sessionId': session_id}}, 15)
                 result['cancelRequested'] = True
-        if args.probe_frontend and result['result']=='idle_after_prompt':
+        if args.probe_frontend and result['result'] in {'idle_after_prompt', 'smoke_completed'}:
             frontend_config=RAW/'frontend-probe-config.json'
             frontend_output=RAW/'frontend-probe-result.json'
             session_file=next((HOME/'sessions').glob('*/'+session_id+'/session.v4.jsonl.zstd'))

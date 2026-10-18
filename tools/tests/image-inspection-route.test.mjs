@@ -7,8 +7,8 @@ import {installSceneContext} from '../../lib/context.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-native-images-'));
 const value={ok:true,stdout:'',stderr:'',images:[
-  'C:/project/dsh-visual-checks/run-a/a.png',
-  'C:/project/dsh-visual-checks/run-a/b.png',
+  'C:/project/dsh-artifacts/checks/run-a/a.png',
+  'C:/project/dsh-artifacts/checks/run-a/b.png',
 ]};
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
 const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:{header:{cwd},requestHeader:()=>({config:{provider:'active',model:'native'}})}},callId:'image-call',signal:new AbortController().signal};
@@ -52,13 +52,13 @@ let model='text-only';const input={agent:{options:{provider:'stale',model:'stale
   session:{requestHeader:()=>({config:{provider:'current',model}}),snapshotEvents:()=>[],header:{}}},
   signal:new AbortController().signal};
 const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?['text','image']:['text']}}}};
-const preflightCtx={get:n=>services[n],tools:{register(){}},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f};
+const preflightCtx={get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f};
 const beforePreflight=fetched;
 assert.equal((await visualCapability(input,preflightCtx)).status,'unsupported');
 assert.equal(fetched,beforePreflight);
 installSceneContext(preflightCtx,{sceneContext(){throw Error('preflight must not render/query HOM')}});
 async function prepare(variables){
- const assembly={contexts:structuredClone(contexts),tools:[{name:'houdini_inspect'}],variables};
+ const assembly={contexts:contexts.map(c=>({name:c.name,text:c.text({agent:input.agent})})),tools:[{name:'houdini_inspect'}],variables};
  await hooks['system-prompt/assemble'](assembly,{agent:input.agent,scope:{},signal:input.signal},async()=>assembly);
  return {contexts:assembly.contexts};
 }

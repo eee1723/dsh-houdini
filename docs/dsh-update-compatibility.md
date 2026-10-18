@@ -8,9 +8,9 @@ DSH 0.2.1默认模型目录包含`deepseek-flash`（显示名`DeepSeek-V4.1-Flas
 
 当前组合还包含[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json)指定的同版本源码修复。唯一修改源为声明中的补丁，基线固定到上游提交；不覆盖正在运行的缓存，不用alpha版本或强制依赖升级代替验证。修复覆盖Windows自有目录的沙箱标签初始化、平台临时目录、只读权限诊断、Windows系统代理/PAC继承、受文件策略保护的二进制下载及命令结果呈现。
 
-会话目录接续由同一DSH补丁维护：`workspaceRegistry.relocateSession`在模型/工具步骤边界沿唯一持久写入器更新当前目录，再调整工作区归属。会话ID、创建时间、事件字节、置顶与归档保持；附件搜索丢弃旧目录索引，原生会话摘要发布新目录。步骤入口若已组装旧目录的系统提示/运行上下文，则重新组装后才准入模型请求，不重复执行步骤监听器。原日志和写锁保持原物理位置，后续追加使用该位置，不按新cwd生成第二份历史。中断的迁移意图由DSH工作区域数据恢复，不由Houdini插件另建账本。已开始的命令/工具保留启动时的范围，后续步骤使用新目录；工程依赖文件不会因此自动搬运。
+会话目录接续由同一DSH补丁维护：`workspaceRegistry.relocateSession`在模型/工具步骤边界沿唯一持久写入器更新工程目录，并在同一持久迁移意图内追加原生`working-directory/change`事件，再调整工作区归属。已加载与冷会话都保持会话ID、创建时间、已有事件字节、置顶与归档；文件工具、模型上下文和附件搜索从原生工作目录投影取得新位置，原生会话摘要发布新工程目录。步骤入口若已组装旧目录的提示/运行上下文，则重新组装后才准入模型请求，不重复执行步骤监听器。原日志和写锁保持原物理位置，后续追加使用该位置，不按新cwd生成第二份历史。中断的迁移意图由DSH工作区域数据恢复，不由Houdini插件另建账本。已开始的命令/工具保留启动时的范围，后续步骤使用新目录；工程依赖文件不会因此自动搬运。
 
-此能力改变`SessionHeader.cwd`的语义为当前目录快照，只有原生迁移操作可替换。Session事件格式仍为4，旧历史可读取；发生目录迁移的会话要求带此适配的读取器，不能将它交给仍校验“cwd必须等于物理存储目录”的旧DSH组合。正式升级/回退须按安装合同保留各版数据，不能用未打补丁的同版本包替换此运行组合。
+`SessionHeader.cwd`是当前关联工程目录，由迁移操作替换；DSH文件操作的实际cwd由原生工作目录服务维护。迁移完成后主动cd可以与工程目录不同，重复选择同一工程目录不覆盖这个选择。Session事件格式仍为4，旧历史可读取；发生目录迁移的会话要求带此适配的读取器，不能将它交给仍校验“cwd必须等于物理存储目录”的旧DSH组合。正式升级/回退须按安装合同保留各版数据，不能用未打补丁的同版本包替换此运行组合。
 
 原生提问卡沿同一源码适配维护布局：补充说明与标题对齐，选项description独立放在标签下方并保留换行，长路径在卡片内部折行。单题不显示分页，多题仍保留原导航；选项、自由文本、提交和取消沿用DSH问答协议，插件不建立第二套恢复面板或修改既有回答。
 
@@ -26,13 +26,13 @@ Windows工作区授权逐对象核对已有普通内容，补齐能力权限和L
 
 DSH负责模型调用、会话与持久化、Agent循环、任务/计划、通用工具、资源呈现和上下文生命周期。插件负责Houdini执行、信息与观察，通过[dsh-adapter](../src/dsh-adapter.ts)集中接入真实消息与工具日志接口。
 
-唯一的Houdini preset由[生成器](../tools/gen-agent-presets.mjs)使用同版web-app标准声明生成，通过插件bundle patch注册到agent-preset-registry。内置模式在该组合禁用；插件没有dev/product模式或全局重复挂载。领域方法按需读取。
+唯一的Houdini preset由[生成器](../tools/gen-agent-presets.mjs)使用同版web-app标准声明生成，通过插件bundle patch注册到agent-preset-registry。内置模式在该组合禁用；插件没有dev/product模式或全局重复挂载。领域方法按需读取。persona模板只引用DSH循环注册的`{{model}}`/`{{provider}}`；工作目录由工作目录服务作为原生用户上下文提供，不引用未注册的`{{cwd}}`（未解析会在任何模型请求前失败，[preset检查](../tools/tests/dsh-preset-parity.test.mjs)静态阻止回归）。
 
 ## 公开接口
 
 | 接入 | 当前合同 |
 |---|---|
-| 配置 | Cordis 4.0.4与精确DSH包，插件组合在package.dsh.bundle.patch声明 |
+| 配置 | Cordis 4.0.5与精确DSH包，插件组合在package.dsh.bundle.patch声明 |
 | 模式 | dsh-agent-preset声明、registry默认Houdini |
 | 消息 | 独立source.kind=dsh-houdini，使用DSH原生context |
 | 工具 | defineTool注册，原始结果供程序使用、render负责模型文本、presentationMeta供界面 |

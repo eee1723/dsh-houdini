@@ -20,7 +20,8 @@ ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 const outcomeFixtures=process.env.DSH_OUTCOME_FIXTURE
   ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
 new SystemPrompt(ctx,{})
-const tools=new ToolRuntime(ctx,{mode:'both'})
+const tools=new ToolRuntime(ctx,{mode:'native'})
+const execute=options=>{tools.defaultMode=options.name==='run_code'?'ptc':'native';return tools.execute(options)}
 installHoudiniExecutionLog(ctx)
 const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,options:{provider:'fixture',model:'image'}}
 if(outcomeFixtures) await new ExecutorBinding().ensure(session,outcomeFixtures.caught_read.execution.executor_id)
@@ -64,10 +65,10 @@ function logNative(callId,name,args,result) {
   session.append('tool/result',{turn:1,step:1,message:createToolResultMessage({callId,content:result.content,isError:result.isError}),
     ...(result.meta===undefined?{}:{meta:result.meta})},{surfaceOp:'append'})
 }
-const native=await tools.execute({callId:'native',name:'houdini_exec',arguments:{code:'__result__ = "native"'},agent,signal})
+const native=await execute({callId:'native',name:'houdini_exec',arguments:{code:'__result__ = "native"'},agent,signal})
 assert.equal(native.isError,false,JSON.stringify(native))
 logNative('native','houdini_exec',{code:'__result__ = "native"'},native)
-const nested=await tools.execute({callId:'program',name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"nested"})',description:'Exercise nested Houdini execution',workingDirectory:process.cwd()},agent,signal})
+const nested=await execute({callId:'program',name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"nested"})',description:'Exercise nested Houdini execution',workingDirectory:process.cwd()},agent,signal})
 assert.equal(nested.isError,false,JSON.stringify(nested))
 logNative('program','run_code',{},nested)
 assert.equal(nested.additionalContexts.length,1,'nested images reach the model once through DSH')
@@ -82,21 +83,21 @@ assert(!nested.content[0].text.includes('dsh-houdini/execution-v1'),'the durable
 const persisted=validateStoredEvents(session.header,JSON.parse(JSON.stringify(session.snapshotEvents())))
 const restored=Session.create(session.id,persisted,session.header)
 assert.deepEqual(executionHistory(restored.snapshotEvents()).rows.map(row=>row.value.result.box),[1,2])
-const submit=await tools.execute({callId:'job-submit',name:'houdini_job_submit',arguments:{code:'pass'},agent,signal})
+const submit=await execute({callId:'job-submit',name:'houdini_job_submit',arguments:{code:'pass'},agent,signal})
 assert.equal(submit.isError,false)
 assert.deepEqual(submit.meta.canonical,submit.value,'native admission stores the same value as nested dispatch, without invented execution success')
 logNative('job-submit','houdini_job_submit',{code:'pass'},submit)
 assert.equal(projectExecutionNotice(session.snapshotEvents()).active_jobs.length,1)
-const cancel=await tools.execute({callId:'job-cancel',name:'houdini_job_cancel',arguments:{jobId:'a'.repeat(12)},agent,signal})
+const cancel=await execute({callId:'job-cancel',name:'houdini_job_cancel',arguments:{jobId:'a'.repeat(12)},agent,signal})
 assert.equal(cancel.isError,false)
 assert.deepEqual(cancel.meta.canonical,cancel.value,'queued cancellation is retained even without an execution observation')
 logNative('job-cancel','houdini_job_cancel',{jobId:'a'.repeat(12)},cancel)
 assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'real DSH metadata clears the cancelled job from recorded active work')
-const nativeList=await tools.execute({callId:'list-native',name:'houdini_ui_list',arguments:{},agent,signal})
+const nativeList=await execute({callId:'list-native',name:'houdini_ui_list',arguments:{},agent,signal})
 assert.equal(nativeList.isError,false,JSON.stringify(nativeList))
 logNative('list-native','houdini_ui_list',{},nativeList)
 assert.equal(nativeList.value.result.surfaces[0].target,'ui:qt-fixture')
-const nestedList=await tools.execute({callId:'list-program',name:'run_code',arguments:{
+const nestedList=await execute({callId:'list-program',name:'run_code',arguments:{
   code:'return await tools.houdini_ui_list({})',description:'Discover visible UI targets'},agent,signal})
 assert.equal(nestedList.isError,false,JSON.stringify(nestedList))
 logNative('list-program','run_code',{},nestedList)
@@ -104,7 +105,7 @@ assert.equal(listsExecuted,2,'native/nested discovery dispatches only once each'
 const listRows=executionHistory(session.snapshotEvents()).rows.filter(row=>row.tool==='houdini_ui_list')
 assert.equal(listRows.length,2)
 assert(listRows.every(row=>row.value.evidence[0].operation==='ui_list'&&!row.value.images&&!row.value.verbs))
-const nativeCapture=await tools.execute({callId:'capture-native',name:'houdini_ui_screenshot',arguments:{target:'ui:qt-fixture'},agent,signal})
+const nativeCapture=await execute({callId:'capture-native',name:'houdini_ui_screenshot',arguments:{target:'ui:qt-fixture'},agent,signal})
 assert.equal(nativeCapture.isError,false,JSON.stringify(nativeCapture))
 logNative('capture-native','houdini_ui_screenshot',{target:'ui:qt-fixture'},nativeCapture)
 assert.equal(nativeCapture.meta.canonical.result.scene_writes,0)
@@ -112,7 +113,7 @@ assert.equal(nativeCapture.meta.canonical.result.semantic_status,'unverified')
 assert.equal(nativeCapture.meta.canonical.result.target,'ui:qt-fixture')
 assert.equal(nativeCapture.meta.canonical.verbs,undefined,'native UI observation has no fake Python ledger')
 assert.equal(nativeCapture.content.filter(block=>block.type==='image').length,1)
-const nestedCapture=await tools.execute({callId:'capture-program',name:'run_code',arguments:{
+const nestedCapture=await execute({callId:'capture-program',name:'run_code',arguments:{
   code:'return await tools.houdini_ui_screenshot({target:"ui:qt-fixture"})',description:'Observe visible native UI'},agent,signal})
 assert.equal(nestedCapture.isError,false,JSON.stringify(nestedCapture))
 logNative('capture-program','run_code',{},nestedCapture)
@@ -137,7 +138,7 @@ if (outcomeFixtures) {
   for (const [name,receipt] of Object.entries(outcomeFixtures)) {
     bridgeReceipt=receipt
     const callId='outcome-'+name
-    const direct=await tools.execute({callId,name:'houdini_exec',arguments:{code:'fixture'},agent,signal})
+    const direct=await execute({callId,name:'houdini_exec',arguments:{code:'fixture'},agent,signal})
     assert.equal(direct.isError,false,'caught reads and returned checks do not fail Python execution')
     assert.deepEqual(direct.meta.canonical.outcome,receipt.outcome)
     assert.deepEqual(direct.value.result,receipt.result,'fallback/check result remains available')
@@ -146,7 +147,7 @@ if (outcomeFixtures) {
     assert.doesNotMatch(text,/Executed successfully/)
     logNative(callId,'houdini_exec',{code:'fixture'},direct)
     const ptcId=callId+'-ptc'
-    const ptc=await tools.execute({callId:ptcId,name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"fixture"})',description:'Read exact Houdini outcome'},agent,signal})
+    const ptc=await execute({callId:ptcId,name:'run_code',arguments:{code:'return await tools.houdini_exec({code:"fixture"})',description:'Read exact Houdini outcome'},agent,signal})
     assert.equal(ptc.isError,false,JSON.stringify(ptc))
     assert.deepEqual(ptcBindingValue.outcome,receipt.outcome,'PTC code consumes the same wire outcome')
     assert.deepEqual(ptcBindingValue.result,receipt.result)
@@ -162,7 +163,7 @@ if (outcomeFixtures) {
 const spillCtx=new Context()
 spillCtx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(spillCtx,{})
-const spillRuntime=new ToolRuntime(spillCtx,{mode:'both'})
+const spillRuntime=new ToolRuntime(spillCtx,{mode:'ptc'})
 const spillCopies=[]
 spillCtx.provide('spillStore',{async saveText(input){spillCopies.push(input.content);return {
   locator:'fixture:retained',retrievalHint:'Read the retained fixture',bytes:Buffer.byteLength(input.content)}}})

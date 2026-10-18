@@ -141,7 +141,7 @@ def run():
                                            clean=True,frame_target=box)
             assert viewport['ok'] and viewport['fresh'] and viewport['user_state_restored'],viewport
             assert float(hou.frame())==before_frame
-            assert Path(viewport['path']).parent.parent==output/'dsh-visual-checks',viewport
+            assert Path(viewport['path']).parent.parent==output/'dsh-artifacts/checks',viewport
             assert viewport['artifact']['output_policy']=='managed'
             assert viewer.curViewport().camera()==scene_camera and viewer.curViewport().isCameraLockedToView()
             assert tuple((key.frame(),key.value()) for key in scene_camera.parm('tx').keyframes())==camera_keys

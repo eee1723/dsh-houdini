@@ -165,6 +165,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
     assert 'hou' not in sys.modules, 'desktop discovery and launch preparation must not import HOM'
     import dsh_workbench_entry as entry
     import dsh_workbench as workbench
+    runtime_directory = root / 'Houdini'
+    runtime_directory.mkdir()
+    (root / 'other-version').mkdir()
     ticket = root / 'workbench/launches' / ('1' * 32 + '.json')
     ticket.write_text(json.dumps({'id': '1' * 32, 'root': str(root), 'plugin': str(ROOT), 'generation': 'fixture',
         'hfs': str(root / 'Houdini'), 'hip': None, 'workspace': str(root / 'workspace')}), encoding='utf-8')
@@ -185,6 +188,20 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
             patch.dict(os.environ, {'DSH_HOUDINI_LAUNCH_TICKET': str(ticket), 'HFS': str(root / 'Houdini'), 'DSH_HOUDINI_EXECUTOR_REGISTRY': str(registry)}):
         entry.attach()
         assert messages[-1][0] == 'projects/attached', 'the actual entry must read the Path ticket and return its exact handshake'
+        # Windows Houdini publishes HFS in 8.3 form even when the desktop
+        # launches the exact long-path executable selected by the user.
+        import ctypes
+        short_path = ctypes.WinDLL('kernel32', use_last_error=True).GetShortPathNameW
+        short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+        short_path.restype = ctypes.c_uint
+        buffer = ctypes.create_unicode_buffer(32768)
+        assert short_path(str(runtime_directory), buffer, len(buffer)), 'fixture installation must resolve'
+        assert projects.path_key(buffer.value) != projects.path_key(runtime_directory), 'fixture needs a real Windows short alias'
+        assert runtime_directory.samefile(buffer.value)
+        os.environ['DSH_HOUDINI_LAUNCH_TICKET'] = str(ticket)
+        os.environ['HFS'] = buffer.value
+        entry.attach()
+        assert messages[-1][0] == 'projects/attached', 'the same installation under its native short path must attach'
         os.environ['DSH_HOUDINI_LAUNCH_TICKET'] = str(ticket)
         os.environ['HFS'] = str(root / 'other-version')
         entry.attach()
@@ -199,16 +216,16 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
     notified = []
     arguments = {'file':'saved.hip','success':False,'autosave':True}
     healthy = tuple(map(str, [first_hook, plugin_script, inherited_hook, user_hook, extra_hook]))
-    failing = tuple(map(str, [first_hook, plugin_script, inherited_hook, user_hook, extra_hook, broken_hook]))
+    failing = tuple(map(str, [first_hook, plugin_script, inherited_hook, broken_hook, extra_hook]))
     with patch.dict(sys.modules, {'hou':SimpleNamespace(findFiles=lambda pattern:healthy),
             'dsh_scene_recovery':SimpleNamespace(after_save=lambda filename,success:notified.append((filename,success)))}):
         entry.after_save({'kwargs':arguments,'native_value':42}, first_hook)
         assert notified == [('saved.hip',False)], 'the plugin notification must run once even when its file is also discovered'
         assert json.loads(user_marker.read_text()) == arguments and arguments['success'] is False
-        assert extra_marker.exists() and order_log.read_text(encoding='utf-8').splitlines() == ['user','extra'], \
-            'every discovered afterscenesave.py must run exactly once in findFiles order'
+        assert not extra_marker.exists() and order_log.read_text(encoding='utf-8').splitlines() == ['user'], \
+            'preserve the first native script through inherited forwarders; later shadowed scripts stay inactive'
         assert not entry._SAVE_HOOKS, 'nested inherited launch hooks must not form a cycle or retain state'
-        user_marker.unlink(); extra_marker.unlink(); order_log.unlink()
+        user_marker.unlink(); order_log.unlink()
         with patch.dict(sys.modules, {'hou':SimpleNamespace(findFiles=lambda pattern:failing),
                 'dsh_scene_recovery':SimpleNamespace(after_save=lambda *args:(_ for _ in ()).throw(RuntimeError('notification failed')))}):
             try:
@@ -219,6 +236,6 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
                 assert 'broken hook' in message and str(broken_hook) in message
             else:
                 raise AssertionError('save notification failure was hidden')
-            assert user_marker.exists() and extra_marker.exists(), 'a failing save script must not swallow the others'
+            assert not user_marker.exists() and not extra_marker.exists(), 'a failed native script does not authorize shadowed scripts'
             assert not entry._SAVE_HOOKS
 print('workbench launch: exact executable/file, duplicate prevention, PID birth/scene/generation fencing, replay, background hide, no implicit save, untrusted dialog payloads and unknown-versus-offline passed')

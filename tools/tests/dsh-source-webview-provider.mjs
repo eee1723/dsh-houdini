@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Owned loopback OpenAI HTTP fixture for the real Qt/DSH/HOM acceptance.
 // Scripted answers test transport and UI, never model quality or semantic vision.
 import fs from 'node:fs'
@@ -9,7 +10,12 @@ const write=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value,nul
 export function apply(ctx) {
   const requests=[],forwarded=[],lost=[]
   const report=()=>write(config.providerEvidence,{scripted:true,semanticVision:'unverified',requests,forwarded,lost})
-  ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+  const presentation=fixturePresentation(ctx)
+  ctx.on('agent/inbox/claimed',({agent,message})=>{
+    if(message.source?.kind!=='user')return
+    const text=message.content.filter(block=>block.type==='text').map(block=>block.text).join('\n')
+    presentation.select(agent,text.includes('GUI_CASE_DELIVER')?'ptc':'native')
+  })
   const proxy=http.createServer(async(req,res)=>{
     try {
       const chunks=[];for await(const chunk of req)chunks.push(chunk)

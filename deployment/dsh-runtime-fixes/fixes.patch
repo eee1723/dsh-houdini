@@ -26,6 +26,43 @@ index 2362bce21c..5ecee6a472 100644
      ctx.on('session/disposed', (session) => {
        ctx.emit('api-session/removed', session.id)
      })
+diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
+index e567bd1a50..ae9bc3a686 100644
+--- a/packages/client/ui-conversation/src/client/apply.ts
++++ b/packages/client/ui-conversation/src/client/apply.ts
+@@ -433,6 +433,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+       'conversation.session.header.actions': { kind: 'list', scope: 'session' },
+       'conversation.session.header.utilities': { kind: 'list', scope: 'session' },
+       'conversation.session.header.corner': { kind: 'single', scope: 'session' },
++      'conversation.session.header.controls': { kind: 'list', scope: 'session' },
+     },
+     store: conversationStore,
+     inject: (sessionId: SessionId, actions: BoundActions<typeof conversationStore>): ConversationSessionHeaderInjected => ({
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index a02f5aa662..2c3fee2d03 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -237,6 +237,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+       scope: 'session'
+       owner: ConversationHeaderActionOwnerProps
+     }
++    /** Compact window controls, also available before the first user turn. */
++    'conversation.session.header.controls': {
++      kind: 'list'
++      scope: 'session'
++      owner: ConversationHeaderActionOwnerProps
++    }
+     /** Global navigation before the Session title, available without a Session. */
+     'conversation.header.leading': {
+       kind: 'single'
+@@ -579,6 +585,7 @@ export type ConversationSessionHeaderSlotProps =
+     | 'conversation.session.header.actions'
+     | 'conversation.session.header.utilities'
+     | 'conversation.session.header.corner'
++    | 'conversation.session.header.controls'
+   >
+   & PropsStore<ConversationStore>
+   & InjectFace<ConversationSessionHeaderInjected>
 diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
 index f1f708073b..14bb11ce2c 100644
 --- a/packages/client/ui-conversation/src/client/locales.ts
@@ -46,6 +83,18 @@ index f1f708073b..14bb11ce2c 100644
    'terminal.noExitCode': 'no exit code',
    'terminal.commandLine': 'Command line {n}',
    'terminal.running': 'Running',
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
+index f1179cf32b..e1510be3f4 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationSession.tsx
+@@ -134,6 +134,7 @@ export function ConversationSessionHeader({
+           </>
+         )}
+         <div className={css.headerCorner} data-conversation-header-corner="">
++          {renderSlot('conversation.session.header.controls', {})}
+           {renderSlot('conversation.session.header.corner', {})}
+         </div>
+       </div>
 diff --git a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
 index 694ce16446..3306070b23 100644
 --- a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
@@ -2934,6 +2983,29 @@ index 9e94bac46b..590892fde0 100644
  }
  
  /**
+diff --git a/packages/workspace/workspace/package.json b/packages/workspace/workspace/package.json
+index 627a4f2f9a..aacc277754 100644
+--- a/packages/workspace/workspace/package.json
++++ b/packages/workspace/workspace/package.json
+@@ -39,7 +39,8 @@
+     "@deepseek-ai/dsh-session-persistence": "workspace:*",
+     "@deepseek-ai/dsh-storage": "workspace:*",
+     "@deepseek-ai/dsh-storage-domain": "workspace:*",
+-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
++    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
++    "@deepseek-ai/dsh-working-directory": "workspace:*"
+   },
+   "dependencies": {
+     "@deepseek-ai/dsh-brand": "workspace:*",
+@@ -51,6 +52,7 @@
+     "@deepseek-ai/dsh-session-persistence": "workspace:*",
+     "@deepseek-ai/dsh-storage": "workspace:*",
+     "@deepseek-ai/dsh-storage-domain": "workspace:*",
+-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
++    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
++    "@deepseek-ai/dsh-working-directory": "workspace:*"
+   }
+ }
 diff --git a/packages/workspace/workspace/src/entity.ts b/packages/workspace/workspace/src/entity.ts
 index 0d687e8c94..c76d05019e 100644
 --- a/packages/workspace/workspace/src/entity.ts
@@ -2965,10 +3037,20 @@ index 0d687e8c94..c76d05019e 100644
      // id: the cwd fact was checked when it first attached and both inputs
      // (stored header cwd, workspace path) are immutable. Membership itself is
 diff --git a/packages/workspace/workspace/src/index.ts b/packages/workspace/workspace/src/index.ts
-index 0f630500cb..261243e629 100644
+index 0f630500cb..53b0d67fb4 100644
 --- a/packages/workspace/workspace/src/index.ts
 +++ b/packages/workspace/workspace/src/index.ts
-@@ -181,6 +181,7 @@ export class WorkspaceRegistry extends Service {
+@@ -8,7 +8,8 @@
+ import { randomUUID } from 'node:crypto'
+ import { mkdir, stat } from 'node:fs/promises'
+ import { Context, Service } from '@deepseek-ai/cordis'
+-import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
++import { Session, type SessionHeader, type SessionId } from '@deepseek-ai/dsh-session'
++import type {} from '@deepseek-ai/dsh-working-directory'
+ import type {} from '@deepseek-ai/dsh-session-persistence'
+ import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
+ import { WorkspaceEntity } from './entity.ts'
+@@ -181,6 +182,7 @@ export class WorkspaceRegistry extends Service {
    private operationTail: Promise<void> = Promise.resolve()
  
    private readonly host: WorkspaceEntityHost = {
@@ -2976,7 +3058,7 @@ index 0f630500cb..261243e629 100644
      table: () => this.requireTable(),
      candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
      readSessionHeader: id => this.readSessionHeader(id),
-@@ -243,6 +244,58 @@ export class WorkspaceRegistry extends Service {
+@@ -243,6 +245,76 @@ export class WorkspaceRegistry extends Service {
      return await this.enqueueOperation(() => this.createCanonical(canonical, title))
    }
  
@@ -3007,12 +3089,30 @@ index 0f630500cb..261243e629 100644
 +    if (this.requireTable().get(workspaceId)?.path !== cwd) throw new Error('relocation target no longer matches its workspace')
 +    const sessions = this.ctx.get('sessions')
 +    const live = sessions?.get(sessionId)
-+    if (live) await sessions!.relocate(live, cwd)
++    if (live) {
++      await sessions!.relocate(live, cwd)
++      // DSH 0.2.1 resolves files and prompt cwd through this native projection,
++      // independently of the workspace header. Keep both in the persisted
++      // relocation intent; a crash before the event is flushed retries here.
++      if (live.snapshotEvents().findLast(event => event.type === 'working-directory/change')?.data.cwd !== cwd)
++        live.append('working-directory/change', { cwd })
++      if (await sessions!.flush(live) !== true) throw new Error('relocated working directory was not persisted')
++    }
 +    else {
 +      const handle = await this.ctx.sessionPersistence.open(sessionId, 'write')
 +      try {
 +        if (!handle.relocate) throw new Error('session persistence does not support relocation')
 +        await handle.relocate(cwd)
++        const retained = await handle.read()
++        const session = Session.fromRestore(sessionId, retained.events, handle.header,
++          handle.inheritedEventCount, retained.eventState)
++        if (session.snapshotEvents().findLast(event => event.type === 'working-directory/change')?.data.cwd !== cwd) {
++          session.append('working-directory/change', { cwd })
++          // Restore can add its native end-seed marker. Persist the complete
++          // new suffix so the next event never leaves a sequence gap.
++          await handle.append(session.snapshotEvents().slice(retained.events.length))
++        }
++        await handle.flush()
 +      } finally { await handle.close() }
 +    }
 +    const header = (await this.ctx.sessionPersistence.stat(sessionId))?.header
@@ -3035,7 +3135,7 @@ index 0f630500cb..261243e629 100644
    /**
     * Initialize the default Workspace only while both the registry and Session
     * history are empty. Repeated requests reuse its durable identity; deleting
-@@ -311,6 +364,18 @@ export class WorkspaceRegistry extends Service {
+@@ -311,6 +383,18 @@ export class WorkspaceRegistry extends Service {
      return this.enqueueOperation(() => this.deleteKnown(id))
    }
  
@@ -3054,7 +3154,7 @@ index 0f630500cb..261243e629 100644
    /**
     * Move one workspace within the durable display order, DOM-insertBefore-like.
     * With an anchor it lands before that workspace; without one it appends.
-@@ -637,6 +702,12 @@ export class WorkspaceRegistry extends Service {
+@@ -637,6 +721,12 @@ export class WorkspaceRegistry extends Service {
      const state = this.requireState()
      const pending = state.pendingMutation
      if (pending === undefined) return

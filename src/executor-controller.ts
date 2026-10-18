@@ -168,16 +168,11 @@ export class ExecutorController extends TypertRemoteService {
         if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工作区对话尚未可靠保存，未确认打开成功。')
         selected=created.sessionId
       }
-      // Selecting a conversation is an explicit claim. Returning "bound" while
-      // the Bridge lease still belongs to another task (or is unclaimed) would
-      // make the next tool fail after the user was told the project opened.
-      if(record.task_id!==selected) {
-        const resolved=await this.ctx.sessionController.resolveAgent(selected as any)
-        if('error' in resolved)throw new Error('无法读取原对话。')
-        if(resolved.agent.status!=='idle')throw new Error('原对话仍在运行，请等待当前任务结束后再接续。')
-        await this.router.selectInitial(resolved.agent,record.executor_id,record.registration_id,signal,record.hip_path)
-        if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
-      }
+      // A conversation recorded against another executor needs the recovery
+      // service first: that service verifies the checkpoint, takes the writer
+      // reservation and writes the recovery binding. Claiming it through
+      // selectInitial first would reject the identity change before recovery
+      // could run, leaving a claimed but unbound conversation.
       {
         const resolved=await this.ctx.sessionController.resolveAgent(selected as any)
         if('error' in resolved)throw new Error('无法读取原对话。')
@@ -192,6 +187,21 @@ export class ExecutorController extends TypertRemoteService {
           await recovery.restore(resolved.agent,assessment.assessment_id,signal,record.executor_id)
           await recovery.followDirectory(resolved.agent,signal,true)
           if(foldExecutorState(resolved.agent.session.snapshotEvents()).identity!==record.executor_id)throw new Error('工程已打开，但原对话尚未完成接续。')
+        }
+      }
+      // Selecting a conversation is an explicit claim. Returning "bound" while
+      // the Bridge lease still belongs to another task (or is unclaimed) would
+      // make the next tool fail after the user was told the project opened.
+      // Re-read the record after recovery: activation may have changed the
+      // scene generation and its registration id.
+      {
+        const resolved=await this.ctx.sessionController.resolveAgent(selected as any)
+        if('error' in resolved)throw new Error('无法读取原对话。')
+        if(resolved.agent.status!=='idle')throw new Error('原对话仍在运行，请等待当前任务结束后再接续。')
+        const current=await this.router.directory.find(record.executor_id)
+        if(current.task_id!==selected) {
+          await this.router.selectInitial(resolved.agent,record.executor_id,current.registration_id,signal,current.hip_path!)
+          if(await this.ctx.sessions.flush(resolved.agent.session)!==true)throw new Error('工程选择尚未可靠保存。')
         }
       }
       signal.throwIfAborted()

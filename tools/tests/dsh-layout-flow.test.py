@@ -175,6 +175,23 @@ try:
     assert blocked_result['placement_status']=='blocked' and blocked_result['position_adjusted'] is False,blocked_result
     assert bd.input(0)==bs and blocked_before==(tuple(bs.position()),tuple(bd.position()),tuple(tight.position()),tuple(tight.size()))
 
+    # Large real networks must not inherit the whole-layout planner's budget.
+    large_parent = run(f"__result__=tab_create('/obj','geo',name='__dsh_large_{suffix}').path()")
+    extra_parents.append(large_parent)
+    fixed = []
+    for i in range(520):
+        sibling = hou.node(large_parent).createNode('null', 'existing_' + str(i))
+        sibling.setPosition(hou.Vector2(i * 3, 0))
+        fixed.append((sibling, tuple(sibling.position())))
+    large_new = run(f"__result__=tab_create({large_parent!r},'null',name='new_node').path()")
+    assert len(hou.node(large_parent).children()) == 521
+    assert all(tuple(n.position()) == p for n, p in fixed)
+    assert pos(large_new)[0] > max(p[0] for _, p in fixed)
+    hou.node(large_new).setPosition(hou.Vector2(0, 0))
+    large_connect = run(f"__result__=connect({fixed[0][0].path()!r},{large_new!r})")
+    assert large_connect['position_adjusted'] and pos(large_new)[1] < 0, large_connect
+    assert all(tuple(n.position()) == p for n, p in fixed)
+
     # 10) tab_create完全被挡时原子清理；Obstacle量测失败也必须fail closed。
     creation_parent = run(f"p=tab_create('/obj','geo',name='__dsh_create_blocked_{suffix}')\n__result__=p.path()")
     extra_parents.append(creation_parent)

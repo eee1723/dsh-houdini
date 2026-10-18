@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Only the ASR endpoint and planning model are fixtures. Settings, credentials,
 // agent scopes, native/PTC transport and the Python audio worker remain real.
 import assert from 'node:assert/strict'
@@ -67,7 +68,7 @@ export function apply(ctx) {
   const ready=new Promise((resolve,reject)=>{server.once('error',reject);server.listen(Number(new URL(base).port),'127.0.0.1',resolve)})
   const text=value=>[{type:'block-start',index:0,blockType:'text'},
     {type:'block-end',index:0,block:{type:'text',text:value}},{type:'finish',reason:{kind:'stop'}}]
-  ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+  const presentation=fixturePresentation(ctx)
   async function select(model) {
     const settings=ctx.settings.describe().find(row=>row.ns==='houdini-frontend')
     assert(settings,'root frontend settings descriptor must exist')
@@ -146,6 +147,7 @@ export function apply(ctx) {
           ['video_transcribe',{work:workB,allow_upload:true,max_chunks:100}],
           ['video_transcribe',{work:workB,allow_upload:true,max_chunks:100}],
         ]
+        presentation.after('video-'+step,calls[step+1]?.[0])
         const[name,args]=calls[step];assert(options.tools.some(tool=>tool.name===name),'mounted '+name)
         yield{type:'block-start',index:0,blockType:'tool-call'}
         yield{type:'block-end',index:0,block:{type:'tool-call',id:'video-'+step,name,arguments:JSON.stringify(args)}}

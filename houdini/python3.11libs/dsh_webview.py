@@ -276,9 +276,34 @@ def _retry_renderer() -> None:
 
 
 def _bring_to_front(win: QWidget) -> None:
-    """显式打开恢复窗口；置顶规则由共享工具样式维护。"""
+    """显式打开恢复窗口，保留用户选择的置顶状态。"""
     from dsh_ui_style import show_tool_window
     show_tool_window(win)
+
+
+def window_pin(pinned: bool | None = None) -> dict:
+    """Read/set the existing Windows handle's topmost state without hiding Qt."""
+    if not _on_main_thread():
+        raise RuntimeError('窗口置顶必须在界面线程执行。')
+    if _window is None or os.name != 'nt':
+        raise RuntimeError('当前工作台窗口不可用。')
+    if pinned is not None and type(pinned) is not bool:
+        raise ValueError('pinned must be a boolean')
+    import ctypes
+    from ctypes import wintypes
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user.GetWindowLongW.restype = wintypes.LONG
+    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                 ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user.SetWindowPos.restype = wintypes.BOOL
+    hwnd = int(_window.winId())
+    current = bool(user.GetWindowLongW(hwnd, -20) & 8)  # WS_EX_TOPMOST
+    if pinned is not None and pinned != current:
+        # No hide/show, resize, move, activation or frame reconstruction.
+        if not user.SetWindowPos(hwnd, -1 if pinned else -2, 0, 0, 0, 0, 0x0213):
+            raise ctypes.WinError(ctypes.get_last_error())
+    return {'pinned': bool(user.GetWindowLongW(hwnd, -20) & 8)}
 
 
 def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | None = None) -> bool:
@@ -454,6 +479,7 @@ def show_webview(
         view.page().renderProcessTerminated.connect(_render_process_terminated)
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
         failure_panel = QFrame(win)
         failure_panel.setObjectName("rail")
         failure_layout = QHBoxLayout(failure_panel)

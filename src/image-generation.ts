@@ -245,7 +245,7 @@ export function registerImageTools(ctx:Context, connection?:HoudiniConnection) {
     parameters:{provider:{type:'string',required:true},model:{type:'string',required:true,description:'Exact requested model ID; use image_models for configured routes.'},
       prompt:{type:'string',required:true},output:{type:'string',description:'Managed: optional PNG/JPEG/WebP basename, with a unique suffix added. Explicit: required chosen path, absolute or relative to the DSH workspace. Existing files are preserved.'},
       output_policy:{type:'string',enum:['managed','explicit'],description:'Default managed observes the current named HIP once and writes under its project directory. Explicit preserves the chosen destination and needs no Houdini connection.'},
-      purpose:{type:'string',enum:['reference','texture'],description:'Default reference goes to dsh-reference/generated; texture goes to dsh-texture. This classifies the intended use, not image quality.'},
+      purpose:{type:'string',enum:['reference','texture'],description:'Default reference goes to dsh-artifacts/references/generated; texture goes to dsh-artifacts/textures. This classifies the intended use, not image quality.'},
       references:{type:'array',items:{type:'string'},description:'Optional local reference paths, up to 16. Their actual pixels are uploaded using images/edits.'},
       size:{type:'string',description:'Provider-supported WIDTHxHEIGHT or auto.'},quality:{type:'string',description:'Provider-supported quality; omitted keeps its default.'},
       background:{type:'string',enum:['auto','opaque','transparent']}},output,

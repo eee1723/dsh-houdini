@@ -40,7 +40,7 @@ const executorId='a'.repeat(32), uuid='c'.repeat(32)
 const ctx=new Context()
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(ctx,{})
-const runtime=new ToolRuntime(ctx,{mode:'both'})
+const runtime=new ToolRuntime(ctx,{mode:'native'})
 installHoudiniExecutionLog(ctx)
 const session=Session.create('node-delivery-client-task-a')
 await new ExecutorBinding().ensure(session,executorId)
@@ -63,6 +63,7 @@ session.append('turn/start',{turn:1})
 session.append('step/start',{turn:1,step:1})
 async function run(callId,name,args) {
   session.append('tool/call',{turn:1,step:1,callId,name,arguments:JSON.stringify(args)})
+  runtime.defaultMode=name==='run_code'?'ptc':'native'
   const result=await runtime.execute({callId,name,arguments:args,agent,signal})
   assert.equal(result.isError,false,JSON.stringify(result))
   session.append('tool/result',{turn:1,step:1,message:createToolResultMessage({callId,content:result.content,isError:result.isError}),

@@ -37,6 +37,8 @@ Texture Material Library；已有Karma Material Builder也可直接消费贴图�
 `op:` 引用必须确认实际输出及消费端支持；不能假设外部进程、重开或其他渲染器都能解析当前会话引用。
 可移植交付应验证依赖或使用获授权烘焙文件。SOP UV/材质绑定检查先于完整细节和最终渲染。
 
+时间变化的贴图要核对完整消费链：控制 → COP时间求值 → 导出范围 → 材质选帧 → 最终画面。循环只适用于声明周期性的层；不能为了重复一个周期，把本应逐帧变化的随机层也锁成同一短序列。改变周期后重新核对导出范围、循环接缝及范围外行为，不能把原默认周期写死在下游。缓存必须能从用户编辑入口明确更新；测试控制时也执行该更新并检查实际消费者，单独测COP上游响应不足以证明交付材质可调。
+
 法线要区分 signed 与 offset 编码，并另外核对切线/世界等坐标基底与消费端约定。
 Karma 的几何/渲染法线与 shader normal map 输入不能因同属 RGB 而直接互换；
 位移还需核对高度单位、零点与幅度，不以预览 hillshade 证明真实位移正确。
@@ -46,7 +48,7 @@ Karma 的几何/渲染法线与 shader normal map 输入不能因同属 RGB 而�
 ## 文件合同
 
 反复导出使用可复现的 Image ROP/ROP Image Output；回读源输出到文件 AOV/Port 的映射。
-新建项目的纹理使用`scene_info()['project_layout']['directories']['texture']`对应的目录（默认`$HIP/dsh-texture/`），保留原用户目的地；先确认实际HIP目录。参考、成图与检查图的分工统一由[工程文件](../../../docs/project-files.md)维护，不按来源把所有生成图都当参考图。
+新建项目的纹理使用`scene_info()['project_layout']['directories']['texture']`对应的目录（默认`$HIP/dsh-artifacts/textures/`），保留原用户目的地；先确认实际HIP目录。参考、成图与检查图的分工统一由[工程文件](../../../docs/project-files.md)维护，不按来源把所有生成图都当参考图。
 在ROP中保留可重开的`$HIP`路径，以`render_frame`执行，消费返回的实际文件后按需present，不猜文件名。
 现有通用导出可直接使用此路径，无需另一个纹理执行工具。临时图片/校准图和正式纹理分别说明用途。
 更新 AOV 列表可能替换现有配置，先看实际 multiparm，不把同名 AOV 当作端口已正确绑定。

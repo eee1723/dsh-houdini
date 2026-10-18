@@ -109,7 +109,7 @@ COP 图层构建、关系与导出由按需加载的 `houdini-cop-workflow` 维�
 - USD Render ROP Slap Comp。
 
 几何的UV/空间、图像的颜色/数据角色与shader输入需要相互对应；连续涂装边界直接在材质里采样，
-不转成逐面颜色阈值分类。只设置常量颜色/roughness时无需创建COP。写盘读回及`$HIP/dsh-texture`约定
+不转成逐面颜色阈值分类。只设置常量颜色/roughness时无需创建COP。写盘读回及`$HIP/dsh-artifacts/textures`约定
 由COP的[文件合同](../../houdini-cop-workflow/references/cache-and-delivery.md#文件合同)维护，不在此复制另一份导出流程。
 
 只有在真实 trace 需要低成本验证图层、分辨率、数据类型、保存或 slap comp 结果时，才

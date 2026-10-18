@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
 from dsh_workbench import running, control
+from dsh_runtime_compat import preferred_cached_bin
 
 
 def start_gui_probe():
@@ -72,7 +73,9 @@ def main():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
-    binary = ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c/node_modules/@deepseek-ai/dsh/lib/bin.js'
+    binary = preferred_cached_bin(ROOT / '.npm-cache')
+    if binary is None:
+        raise RuntimeError('No prepared DSH runtime matching this plugin; run npm run runtime:prepare')
     node = shutil.which('node')
     env.update(DSH_HOUDINI_DSH_BIN=str(binary), DSH_WORKBENCH_MENU_FIXTURE=str(folder),
                DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'), DSH_WORKBENCH_MENU_DEBUG_PORT=str(port))

@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
 from dsh_workbench import desktop_environment, running, control
 from dsh_deployment import _process_started, atomic_json
+from dsh_houdini_installations import discover, installation
 
 
 def gui_probe():
@@ -77,6 +78,12 @@ def main():
     parser.add_argument('--hfs', help='Limit cold-resume checks to one installed Houdini')
     parser.add_argument('--save-only', action='store_true', help='Only check native save/registration and empty workspace retirement')
     args = parser.parse_args()
+    installed = discover(args.hfs)
+    assert installed, 'This GUI check needs an installed Houdini'
+    desktop_installation = installation(args.hfs) if args.hfs else installed[0]
+    workers = {}
+    for item in installed:
+        workers.setdefault(item['series'], item['hfs'])
     folder = Path(tempfile.mkdtemp(prefix='workbench-launch-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'environment', gui=True)
     env.update(DSH_WORKBENCH_TEST_ROOT=str(folder), DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'))
@@ -98,14 +105,15 @@ def main():
         probe.bind(('127.0.0.1', 0))
         debug_port = probe.getsockname()[1]
     config = {'root': str(folder / 'desktop'), 'installation': str(ROOT), 'plugin': str(ROOT), 'node': node,
-        'binary': str(binary), 'home': env['DSH_HOME'], 'hfs': 'D:/houdini', 'python': 'D:/houdini/python311/python.exe', 'debugPort': debug_port}
+        'binary': str(binary), 'home': env['DSH_HOME'], 'hfs': desktop_installation['hfs'],
+        'python': desktop_installation['python'], 'debugPort': debug_port}
     (folder / 'config.json').write_text(json.dumps(config), encoding='utf-8')
     previous = dict(os.environ)
     os.environ.clear()
     os.environ.update(env)
     output = (folder / 'desktop.log').open('wb')
     desktop = subprocess.Popen([config['python'], str(ROOT / 'tools/tests/workbench-desktop-driver.py'), str(folder / 'config.json')],
-        cwd='D:/houdini/bin', env=desktop_environment(config['hfs'], config['python'], debug_port),
+        cwd=str(Path(config['hfs']) / 'bin'), env=desktop_environment(config['hfs'], config['python'], debug_port),
         stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
     record = None
     project_temp = tempfile.TemporaryDirectory(prefix='dsh-new-project-')
@@ -156,10 +164,11 @@ def main():
         assert value['ok'], value
         return value
     def cold_resume():
-        for installation,label in [('D:/houdini','cold-21'),('D:/Houdini22','cold-22')]:
-            if args.hfs and Path(args.hfs).resolve() != Path(installation).resolve():
+        for version, hfs in workers.items():
+            label = 'cold-' + version.split('.')[0]
+            if args.hfs and not Path(args.hfs).samefile(hfs):
                 continue
-            seed,_ = launch('new', installation, label + '-seed')
+            seed,_ = launch('new', hfs, label + '-seed')
             new_session = seed['result']['sessionId']
             filename = Path(project_temp.name) / label / '原生保存.hip'
             atomic_json(folder / ('save-' + str(seed['pid']) + '.json'), {'path':str(filename)})
@@ -181,7 +190,7 @@ def main():
             saved_bytes = filename.read_bytes()
             (folder / ('close-' + str(seed['pid']))).touch()
             wait(lambda: _process_started(seed['pid']) != seed['processStarted'], 35)
-            cold, _ = launch('reopen', installation, label + '-open')
+            cold, _ = launch('reopen', hfs, label + '-open')
             assert cold['result']['sessionId'] == new_session
             checked = command(new_session, 'houdini_inspect', {'code': '__result__=scene_info()'})['value']
             assert checked['ok'] and checked['execution']['scene_recovery']['scene_id'] == saved_scene, checked
@@ -191,7 +200,7 @@ def main():
             wait(lambda: _process_started(cold['pid']) != cold['processStarted'], 35)
             assert filename.read_bytes() == saved_bytes, 'closing without saving must not invent a checkpoint'
             control(record, 'show', {'sessionId': new_session})
-            resumed, _ = launch('reopen', installation, label + '-resume')
+            resumed, _ = launch('reopen', hfs, label + '-resume')
             assert resumed['result']['sessionId'] == new_session
             observed = command(new_session, 'houdini_inspect', {'code': "__result__=hou.node('/obj/unsaved_progress') is None"})['value']
             assert observed['ok'] and observed['result'] is True, observed
@@ -218,7 +227,7 @@ def main():
         talked = command(discussion)
         assert any(event['type'] == 'user/message' and event['data']['source']['kind'] == 'user' for event in talked['events'])
         before = command(discussion, action='idle')
-        first, first_ui = launch('new', 'D:/houdini', 'new-21')
+        first, first_ui = launch('new', workers['21.0'], 'new-21')
         first_session = first['result']['sessionId']
         assert first_session == discussion, 'creating a project from an unbound discussion must keep that exact conversation'
         assert command(first_session, action='idle')['turns'] == before['turns'], 'binding must not launch a hidden model turn'
@@ -235,7 +244,7 @@ def main():
         migrated = command(first_session, action='idle')
         assert not any(Path(item['path']).resolve() == Path(first['workspace']).resolve() for item in migrated['workspaces']), 'Save As must retire its empty scratch workspace'
         assert '未保存工程 1' not in saved_ui['text'], 'the actual sidebar must drop the empty workspace row'
-        second, second_ui = launch('new', 'D:/Houdini22', 'new-22')
+        second, second_ui = launch('new', workers['22.0'], 'new-22')
         assert second_ui['label'] == '未保存工程 2' and second['pid'] != first['pid']
         second_session = second['result']['sessionId']
         inspected = command(second_session, 'houdini_inspect', {'code': '__result__={"version":hou.applicationVersionString(),"path":hou.hipFile.path()}'})['value']
@@ -253,18 +262,18 @@ def main():
         wait(lambda: _process_started(first['pid']) != first['processStarted'], 35)
         control(record, 'show', {'sessionId': first_session})
         browser('state', 'closed-original', 'offline', first_session)
-        reopened, reopened_ui = launch('reopen', 'D:/houdini', 'reopened-original')
+        reopened, reopened_ui = launch('reopen', workers['21.0'], 'reopened-original')
         assert reopened['result']['sessionId'] == first_session and reopened['pid'] != first['pid']
         editable = command(first_session, 'houdini_exec', {'code': "__result__=set_parms('/obj/launch_owned',{'tx':2})"})['value']
         assert editable['ok'], editable
         assert command(second_session, 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']['ok']
         (folder / ('close-' + str(second['pid']))).touch()
         wait(lambda: _process_started(second['pid']) != second['processStarted'], 35)
-        opened_file, opened_ui = launch('open', 'D:/Houdini22', 'opened-file', hip=other_file)
+        opened_file, opened_ui = launch('open', workers['22.0'], 'opened-file', hip=other_file)
         assert opened_file['result']['sessionId'] == second_session, 'ordinary file opening must resume the matching saved task as well'
         count = len(receipts())
         (folder / 'dialog-finished').unlink(missing_ok=True)
-        (folder / 'dialog-choice.json').write_text(json.dumps({'hfs': str(Path('D:/Houdini22')), 'hip': str(other_file)}), encoding='utf-8')
+        (folder / 'dialog-choice.json').write_text(json.dumps({'hfs': workers['22.0'], 'hip': str(other_file)}), encoding='utf-8')
         browser('open', 'reuse-live-file')
         wait(lambda: (folder / 'dialog-finished').is_file(), 15)
         assert (folder / 'dialog-finished').read_text() == '1' and len(receipts()) == count, 'an already open file must not spawn another process'

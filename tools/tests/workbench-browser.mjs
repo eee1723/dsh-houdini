@@ -38,6 +38,28 @@ try {
   if(expectedDirectory)assert.equal(path.resolve(selection.cwd).toLowerCase(),path.resolve(expectedDirectory).toLowerCase(),
     'actual browser workspace must follow the selected project')
   assert(await evaluate(`!document.querySelector('[data-houdini-connection]')&&!Array.from(document.querySelectorAll('button')).some(button=>['检查连接','Houdini 执行端'].includes(button.textContent.trim()))`))
+  // Exercise the visible header button through real DSH -> desktop -> Win32.
+  for(let attempt=0;attempt<60;attempt++) {
+    if(await evaluate(`(()=>{const pin=document.querySelector('[data-houdini-window-pin]');return pin&&!pin.disabled&&pin.hasAttribute('aria-pressed')})()`))break
+    await new Promise(resolve=>setTimeout(resolve,100))
+  }
+  const pinBefore=await evaluate(`(()=>{const pin=document.querySelector('[data-houdini-window-pin]');
+    if(!pin||pin.disabled)throw Error('header pin unavailable');
+    const r=pin.getBoundingClientRect();if(r.width>32||r.height>32)throw Error('pin is not compact');
+    if(!pin.closest('[data-conversation-header-corner]'))throw Error('pin must reuse the existing header');
+    window.__pinDocumentMarker='same-document';return {pinned:pin.getAttribute('aria-pressed')==='true',origin:performance.timeOrigin,width:innerWidth,height:innerHeight}})()`)
+  for(const enabled of [!pinBefore.pinned,pinBefore.pinned]) {
+    await evaluate(`document.querySelector('[data-houdini-window-pin]').click()`)
+    let settled=false
+    for(let attempt=0;attempt<60;attempt++) {
+      settled=await evaluate(`(()=>{const pin=document.querySelector('[data-houdini-window-pin]');return pin&&!pin.disabled&&pin.getAttribute('aria-pressed')===${JSON.stringify(String(enabled))}})()`)
+      if(settled)break
+      await new Promise(resolve=>setTimeout(resolve,100))
+    }
+    assert(settled,'the header must show the confirmed native pin state')
+    assert.deepEqual(await evaluate(`({marker:window.__pinDocumentMarker,origin:performance.timeOrigin,width:innerWidth,height:innerHeight})`),
+      {marker:'same-document',origin:pinBefore.origin,width:pinBefore.width,height:pinBefore.height},'pin must not reload or resize the document')
+  }
   if(action==='refresh-title') {
     await evaluate(`document.querySelector('[data-row-key="session:${sessionId}"] button').click()`)
     let ready=false

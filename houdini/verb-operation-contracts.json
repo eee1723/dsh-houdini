@@ -1846,7 +1846,7 @@
               "delivery",
               "explicit"
             ],
-            "description": "managed: temporary visual checks under $HIP/dsh-visual-checks/<run-id>. delivery: requested final image under $HIP/dsh-render, safe basename only, unique filename returned. explicit: caller supplied destination."
+            "description": "managed: temporary visual checks under $HIP/dsh-artifacts/checks/<run-id>. delivery: requested final image under $HIP/dsh-artifacts/renders, safe basename only, unique filename returned. explicit: caller supplied destination."
           },
           "focus_group": {
             "anyOf": [
@@ -1985,9 +1985,9 @@
         }
       ],
       "notes": [
-        "Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-visual-checks/<run-id>; delivery images are under $HIP/dsh-render. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.",
+        "Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-artifacts/checks/<run-id>; delivery images are under $HIP/dsh-artifacts/renders. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.",
         "A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics.",
-        "过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-render，核对artifact.actual_path后再present。目录不证明已验收或已交付，不自动移动历史图片。"
+        "过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-artifacts/renders，核对artifact.actual_path后再present。目录不证明已验收或已交付，不自动移动历史图片。"
       ]
     },
     "scene_save": {
@@ -2507,7 +2507,7 @@
               "delivery",
               "explicit"
             ],
-            "description": "managed defaults to $HIP/dsh-visual-checks/<run-id>. delivery allocates under $HIP/dsh-render. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
+            "description": "managed defaults to $HIP/dsh-artifacts/checks/<run-id>. delivery allocates under $HIP/dsh-artifacts/renders. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
           }
         }
       },

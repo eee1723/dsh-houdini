@@ -124,8 +124,11 @@ def find_free_translation(subject, obstacles, *, preferred=(0, 0),
                           max_candidates=MAX_CANDIDATES):
     """Propose one deterministic translation without mutating input data."""
     source = rect(subject)
-    if not isinstance(obstacles, (list, tuple)) or len(obstacles) > MAX_OBSTACLES:
-        raise ValueError(f'obstacles must contain at most {MAX_OBSTACLES} entries')
+    # Candidate search is bounded, but the existing network is not. The
+    # quadratic whole-network planners have their own size budgets; applying
+    # that budget here prevented tab_create from adding a 514th node.
+    if not isinstance(obstacles, (list, tuple)):
+        raise ValueError('obstacles must be a list or tuple')
     fixed = []
     for row in obstacles:
         if not isinstance(row, (list, tuple)) or len(row) != 2:

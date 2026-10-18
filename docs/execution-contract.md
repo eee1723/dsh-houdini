@@ -170,7 +170,7 @@ render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复�
 
 画面检查的共用合同独立于所选原生后端。H21的OpenGL与H22的Flipbook沿用[工具设计](tool-design.md)中已验证的兼容边界；节点存在和不透明图像成功不证明几何透明、颜色接口或所有参数等价。render_view仍只支持当前GUI合同；原生Flipbook的headless能力不因此被否定，也未扩展为本接口的已验证范围。
 
-渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-visual-checks/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-render/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-artifacts/renders/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 

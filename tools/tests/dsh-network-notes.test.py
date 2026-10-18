@@ -215,6 +215,29 @@ assert p.findStickyNote('MUST_NOT_DISPATCH') is None
 
 ok(f"__result__=network_notes({parent!r},remove=['README'])")
 assert p.findStickyNote('README') is None
+
+# A native HDA initializer can create notes as well as nodes. They belong to
+# that exact creation, while later user notes in the same network stay foreign.
+native = ok("__result__=tab_create('/mat','principledshader::2.0',name='native_note_material').path()")['result']
+material = hou.node(native)
+assert material.stickyNotes(), 'the shipped shader must exercise native initializer notes'
+assert all(notes.note_provenance(note, session)['status'] == 'owned_current_session'
+           for note in material.stickyNotes())
+assert not call(f'delete_node({native!r})', owner='another-author')['ok']
+ok(f'delete_node({native!r})')
+assert hou.node(native) is None
+
+import dsh_ownership
+late = p.createStickyNote('late_user_note')
+with dsh_ownership.execution_owner(session, 'repeat-registration'):
+    dsh_ownership.register_owned_node(p)
+assert notes.note_provenance(late, session)['status'] == 'foreign'
+assert not call(f'delete_node({parent!r})')['ok'], 'owning/re-registering a parent cannot adopt later user notes'
+late.destroy()
+known_notes = set(notes._OWNED_NOTES)
+failed_native = call("tab_create('/mat','principledshader::2.0',name='failed_native_note',parms={'not_a_shader_parameter':1})")
+assert not failed_native['ok'] and hou.node('/mat/failed_native_note') is None
+assert set(notes._OWNED_NOTES) == known_notes, 'failed creation must retire native note registrations'
 print(json.dumps({'version': hou.applicationVersionString(), 'real_gui': hou.isUIAvailable(),
                   'note_create_update_list_remove': True, 'ownership_raw_gate': True,
                   'local_failure_compensation': True, 'script_failure_note_recovery': True,

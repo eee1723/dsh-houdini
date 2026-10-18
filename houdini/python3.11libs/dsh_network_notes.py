@@ -46,6 +46,26 @@ def note_provenance(note, active_owner_session=None):
             'runtime_owner': {k: v for k, v in entry.items() if k != 'native_object'} if entry else None}
 
 
+def register_created_network_notes(parent, *, active_owner_session, active_owner_call):
+    """Capture native initializer notes at the same creation boundary as nodes.
+
+    The caller supplies a newly registered network identity. This must never
+    be used later to adopt notes merely because their parent is already owned.
+    """
+    if active_owner_session is None:
+        return
+    created = []
+    for note in parent.stickyNotes():
+        if _owner(note) is not None:
+            continue
+        _OWNED_NOTES[_key(note)] = {'session': active_owner_session, 'call': active_owner_call,
+                                   'name_at_creation': note.name(), 'native_object': note}
+        created.append(int(note.sessionId()))
+    if created and _ACTIVE_JOURNAL is not None:
+        _ACTIVE_JOURNAL['entries'].append({'parent_identity': int(parent.sessionId()),
+            'parent_path': parent.path(), 'notes': [], 'created': created})
+
+
 def _require_note(note, active_owner_session, allow_foreign):
     service = _service_node_or_ancestor(note.parent())
     if service:

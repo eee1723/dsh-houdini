@@ -23,6 +23,17 @@ try {
   const before=JSON.stringify(raw);
   const value=await exec.execute({code:'set_parms(...)'},context);
   assert.equal(value.details.stored,true);
+  assert.equal(path.relative(dir,value.details.path),path.join('dsh-artifacts','results',value.details.sha256+'.json'));
+  const legacy=path.join(dir,'.dsh-houdini-results',value.details.sha256+'.json');
+  fs.mkdirSync(path.dirname(legacy));fs.copyFileSync(value.details.path,legacy);
+  assert.equal((await readResultDetail(dir,value.details.sha256,'/result/payload',0,16000,legacy)).result.text,
+    JSON.stringify(raw.result.payload,null,2).slice(0,16000),'recorded legacy paths remain readable');
+  const redirected=path.join(dir,'redirected'),outside=path.join(dir,'outside');
+  fs.mkdirSync(redirected);fs.mkdirSync(outside);
+  fs.symlinkSync(outside,path.join(redirected,'dsh-artifacts'),process.platform==='win32'?'junction':'dir');
+  assert.equal((await retainResult(raw,redirected)).details.stored,false);
+  assert.deepEqual(fs.readdirSync(outside),[],'reject a redirected artifact root before creating children');
+  fs.unlinkSync(path.join(redirected,'dsh-artifacts'));
   assert.deepEqual(JSON.parse(fs.readFileSync(value.details.path,'utf8')),raw);
   const compact=exec.output.render({},value)[0].text;
   const original=exec.output.render({},raw)[0].text;

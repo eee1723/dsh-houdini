@@ -331,7 +331,7 @@ def probe():
                     state['failures'].append({'case':'deleted_surface','error':str(error)})
                 capture.abort_ui_capture(prepared)
                 assert not Path(prepared['destination']).exists()
-                assert not list((output / 'dsh-visual-checks').rglob('*.reserve'))
+                assert not list((output / 'dsh-artifacts/checks').rglob('*.reserve'))
                 name = state['details'].name()
                 state['details'].setType(hou.paneTabType.PythonPanel)
                 state['python_panel'] = hou.ui.findPaneTab(name)

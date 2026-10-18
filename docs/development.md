@@ -36,6 +36,8 @@
 
 标题和工程标识的[定向回归](../tools/tests/workbench-project.test.mjs)核对原生自动/手动标题、显式重新命名、排队消息/晚回执、未保存与同名文件。隔离工作台另核对实际Qt页头短名/完整路径、绑定后自动标题及另存不迁移其他对话；不把历史标识解释为在线状态。
 
+工作台图钉使用原生页头的常驻controls扩展位置；[实际工作台浏览器检查](../tools/tests/workbench-browser.mjs)覆盖空白/已有对话、紧凑尺寸与点击后真实回执。[Qt窗口检查](../tools/tests/dsh-webview-navigation.test.py)的`--standalone`入口使用普通Houdini Python与Windows Qt环境，核对原生TOPMOST状态、窗口句柄、Hide/Show事件、焦点及页面/视口保持；不能仅用网页未重新请求来代替无闪烁检查。
+
 工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对自动绑定、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
 
 独立工作台使用[隔离组合验收](../tools/tests/dsh-workbench.test.py)：普通Python/Qt桌面、真实DSH持久与preset、H21/H22 Bridge、同目录不同HIP、重复打开、实际浏览器选中对话及目录、工具修改/另存、单端崩溃、手动重开原工程和工作台重启保留历史。本地脚本提供方驱动实际Agent循环生成原生/嵌套回执与可冷加载日志，不调用外部模型；不证明模型自主行为或正式签名安装组合。测试的Qt调试端口仅属于该隔离进程，正常运行不主动启用。受管安装入口仍需随新版bootstrap和签名运行包单独验收。
@@ -116,7 +118,7 @@ npm test
 
 重复细节的代码生成方法在[SOP建模资料](../skills/houdini-sop-workflow/references/modeling-methods.md#重复规律与代码生成)维护。[重复布局检查](../tools/tests/dsh-repeated-layout.test.py)在隔离H21/H22通过Bridge执行随包示例，核对模板位置与ID、Sweep后的字符串属性、参数修改、空输出回滚和foreign边界。[VEX代码生成诊断](../tools/reproduce-vex-codegen.py)以`--hython <明确版本> --form both`在各自原生新进程对照展开语句与循环，保留源计算、下游计算和进程退出事实；展开形式可能崩溃，厂商修复后也可以成功，不把旧崩溃或字符数设为永久测试预期。默认`--form loop`。示例与诊断通过不代替真实模型采用、全部资产安全或GUI观察。
 
-COP接入材质使用[dsh-cop-material-delivery](../tools/tests/dsh-cop-material-delivery.test.py)在新建隔离工程中验证曲面贴图、材质直接采样alpha、粗糙度控制、`$HIP/dsh-texture`读回与同版本独立进程重开。完整纹理网络不以数值变化代替实际图片检查。跨版本节点/算法默认值可能不同，分别验证各版消费和重开，不默认像素一致。
+COP接入材质使用[dsh-cop-material-delivery](../tools/tests/dsh-cop-material-delivery.test.py)在新建隔离工程中验证曲面贴图、材质直接采样alpha、粗糙度控制、`$HIP/dsh-artifacts/textures`读回与同版本独立进程重开。完整纹理网络不以数值变化代替实际图片检查。跨版本节点/算法默认值可能不同，分别验证各版消费和重开，不默认像素一致。
 
 SOP表面入口使用[dsh-sop-surface](../tools/tests/dsh-sop-surface.test.py)：`python tools/tests/dsh-sop-surface.test.py --houdini <明确houdini.exe> --output <新建仓库外目录>`，分别在H21/H22隔离GUI验证同一个COP Preview Material的纯色COP→图案→文件输入、vertex UV跨尺寸修改、render_view代理、用户视窗和文件依赖重开。像素标记只证明校准图案生效，不能替代自然任务外观判断；法线、透明度和正式渲染按受影响范围另验。首次显示Constant后切换纹理的刷新范围与稳定COP输入分开，不把后者通过扩大为前者已修复。表面路由与按需资料传输复用[dsh-host-smoke](../tools/tests/dsh-host-smoke.test.py)的`--context-loop --surface-method`，在精确DSH中核对实际provider收到的persona、完整skill及原生/嵌套read内容，不用源码正则断言代替消费方验证。这是受控模型传输检查，不证明自主选用。
 
@@ -207,7 +209,7 @@ python tools/isolated-houdini-check.py --trusted --manifest path/to/check.json -
 
 收费任务只在用户授权的模型与预算范围内运行 [run-modeling-trial.py](../tools/run-modeling-trial.py)。使用隔离任务目录、精确 DSH/Node/Houdini 和明确provider/model，只复制所选路由及必要credential reference，不修改用户设置或live。教程试验通过显式`--service-profile`加入单个转录服务与用途选择，不复制整个用户配置；服务说明只含provider/api/baseURL/apiKeyEnv/model/models及可选python。DSH自定义服务商需要非空的真实聊天模型目录`models`；独立的`model`填写实际转录模型，不把ASR伪装为聊天能力。密钥仍由隔离凭据引用或指定环境变量解析。时间上限不等于费用上限，按提供方实际价格/套餐边界核算；DSH observer的usage事件与未知费用分别记录。评审答案不进入生产提示词或用于未见题调参。
 
-验证自然复刻能力时使用`--no-feedback --approval-policy never`且不传followup；只提交初始用户目标、来源与环境事实，运行中不向作者补充接线、参数、截图答案或几何/效果修正。冻结初始输入与禁止外部反馈不限制作者自主调查：作者可以只读原片、回查原分析，并在自己的`dsh-analysis/`中抽取画面、补证及整理；原始资料不改写，成功音频不重复上传。任务说明不能用“启动后不补资料”同时指代外部答案介入和作者自主补证；范围有歧义时，不将该运行计作主动补证能力通过。工具缺陷在运行后回到系统维护源修复，用新快照验证，受干预运行不作为独立能力证据。复用已有分析与只给视频的冷启动分别报告。
+验证自然复刻能力时使用`--no-feedback --approval-policy never`且不传followup；只提交初始用户目标、来源与环境事实，运行中不向作者补充接线、参数、截图答案或几何/效果修正。冻结初始输入与禁止外部反馈不限制作者自主调查：作者可以只读原片、回查原分析，并在自己的`dsh-artifacts/analysis/`中抽取画面、补证及整理；原始资料不改写，成功音频不重复上传。任务说明不能用“启动后不补资料”同时指代外部答案介入和作者自主补证；范围有歧义时，不将该运行计作主动补证能力通过。工具缺陷在运行后回到系统维护源修复，用新快照验证，受干预运行不作为独立能力证据。复用已有分析与只给视频的冷启动分别报告。
 驱动保持workspace-write并核对原生权限回执；取消用运行目录的cancel文件或Ctrl+C。到期、未决审批与失败明确记录，不自动扩大权限或代替作者续跑。输入、代码、依赖身份与预算启动前固定，结束后核对；自有进程停止与隔离凭据副本清空分别确认，不能由driver退出0代替。对应[生命周期回归](../tools/tests/modeling-trial-lifecycle.test.py)不调用HOM或收费模型。
 
 可视化试验须以真实DSH `llm.resolveModelInfo` 的inputModalities确认当前路由，而非从准备配置摘要推断。锁定DSH的pi-ai模型配置使用`input`，发现/解析结果使用`inputModalities`；两者不能原样互换。原生GUI观察用`--show-gui`，`--observe-model-images`通过透明observer记录实际LOOP图像引用及供应商完成，`--probe-frontend`检查同一真实会话的QtWebEngine消费。供应商单独图像探针、模型实际收到工具图像、前端预览及工程重开分别核对，不互相代替；观察器仅用于隔离开发试验，不进入生产插件图。

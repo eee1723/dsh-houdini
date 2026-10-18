@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Scripted model and health metadata only; DSH, tool scopes, file policy and media CLI remain real.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -66,6 +67,7 @@ export function apply(ctx){
           call=['write',{file_path:indexFile,content:JSON.stringify(draft)}]}
         if(step===5)call=['video_process',{operation:'read-index',options:{index:indexFile}}]
         if(step===6)call=['video_process',{operation:'review',options:{video:source,output:path.join(path.dirname(workspace),'forbidden-output'),duration:2}}]
+        presentation.after('local-'+step,step===1?'run_code':undefined)
         const[name,args]=call;assert(options.tools.some(tool=>tool.name===name))
         yield{type:'block-start',index:0,blockType:'tool-call'}
         yield{type:'block-end',index:0,block:{type:'tool-call',id:'local-'+step,name,arguments:JSON.stringify(args)}}
@@ -74,7 +76,7 @@ export function apply(ctx){
     }
   }
   ctx.llm.registerAdapter([driver],new Driver())
-  ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+  const presentation=fixturePresentation(ctx)
   ctx.effect(()=>{queueMicrotask(async()=>{
     try{
       await ready;await ctx.loader.await()

@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Real DSH native/nested tools and a real isolated HOM Bridge; only the model is scripted.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -71,6 +72,7 @@ export function apply(ctx) {
           assert(receipts.every(r=>r.execution.owner_session===options.sessionId))
           yield*text('Native versions verified through the selected Houdini session.');return
         }
+        presentation.after('hda-'+step,calls[step+1]?.[0])
         const [name,args]=calls[step];assert(options.tools.some(t=>t.name===name))
         yield {type:'block-start',index:0,blockType:'tool-call'}
         yield {type:'block-end',index:0,block:{type:'tool-call',id:'hda-'+step,name,arguments:JSON.stringify(args)}}
@@ -79,7 +81,7 @@ export function apply(ctx) {
     }
   }
   ctx.llm.registerAdapter(['hda-fixture'],new Driver())
-  ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+  const presentation=fixturePresentation(ctx)
   ctx.effect(()=>{queueMicrotask(async()=>{
     try {
       await ctx.loader.await()

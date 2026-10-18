@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';
 const require=createRequire(process.env.DSH_FIX_CLI);
@@ -11,7 +12,7 @@ export function apply(ctx){
  const outside=path.join(path.dirname(workspace),'outside','must-not-write.jpg');
  const write=x=>fs.writeFileSync(out,JSON.stringify(x,null,2));
  const textChunks=text=>[{type:'block-start',index:0,blockType:'text'},{type:'block-end',index:0,block:{type:'text',text}},{type:'finish',reason:{kind:'stop'}}];
- ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'));
+ const presentation=fixturePresentation(ctx);
  class Fixture extends LlmAdapter{
   async listModels(){return [{provider,id:model,name:'Network chain verification',inputModalities:['text','image']}]}
   async resolveModel(route,id){return {provider:route,id,name:'Network chain verification',inputModalities:['text','image'],context:{contextWindow:200000}}}
@@ -61,6 +62,7 @@ export function apply(ctx){
     ];
     if(step===calls.length){yield*textChunks('Network chain complete: original JPEG downloaded and delivered, expected negative cases rejected.');step++;return}
     assert(step<calls.length,'scripted workflow repeated');const [name,args]=calls[step];
+    presentation.after('network-'+step,calls[step+1]?.[0]);
     assert(options.tools.some(t=>t.name===name),'missing real tool '+name);
     yield {type:'block-start',index:0,blockType:'tool-call'};
     yield {type:'block-end',index:0,block:{type:'tool-call',id:'network-'+step++,name,arguments:JSON.stringify(args)}};
@@ -89,6 +91,7 @@ export function apply(ctx){
   ctx.llm.registerAdapter([firstProvider],new PtcFirst());
   const {sessionId}=await ctx.sessionController.create({cwd:firstWorkspace,agentPreset:'houdini'});
   await ctx.sessionController.selectModel({sessionId,provider:firstProvider,model});
+  presentation.select(ctx.agents.get(sessionId),'ptc');
   await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Verify the first PTC operation in this isolated workspace.'}]},AbortSignal.timeout(60000));
   const agent=ctx.agents.get(sessionId);await agent.whenIdle();assert.equal(count,2);
   await ctx.sessions.flush(agent.session);return{sessionId,workspace:firstWorkspace,events:agent.session.snapshotEvents()};

@@ -12,11 +12,11 @@ description: 分析 dsh-houdini 与 DeepSeek Harness 的原始会话日志，定
 在仓库中先核对分支、工作树和目标分支交接；不要把当前源码或新合同当作旧运行事实。先运行证据提取，再生成导航报告：
 
 ```powershell
-node <skill-dir>/scripts/extract-trace-evidence.mjs <session-file-or-directory> --out <task-output>/dsh-analysis/trace/trace-evidence-<id>.json
-node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out <task-output>/dsh-analysis/trace/trace-session-<id>.html
+node <skill-dir>/scripts/extract-trace-evidence.mjs <session-file-or-directory> --out <task-output>/dsh-artifacts/analysis/trace/trace-evidence-<id>.json
+node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out <task-output>/dsh-artifacts/analysis/trace/trace-session-<id>.html
 ```
 
-`<skill-dir>` 是本技能实际安装目录，`<task-output>` 是本次诊断的输出根目录；新分析产物统一放在其 `dsh-analysis/trace/` 下。插件/接续故障复盘默认使用独立诊断目录（源码可用`tools/out/<case>/`，受管安装可用独立临时目录），不因被分析的HIP位于某目录就自动向该工程写报告。用户明确要求报告随工程保存时再使用其工程目录。已有或用户指定的输出路径保留。源码与受管安装使用同一入口，不依赖当前工作目录。
+`<skill-dir>` 是本技能实际安装目录，`<task-output>` 是本次诊断的输出根目录；新分析产物统一放在其 `dsh-artifacts/analysis/trace/` 下。插件/接续故障复盘默认使用独立诊断目录（源码可用`tools/out/<case>/`，受管安装可用独立临时目录），不因被分析的HIP位于某目录就自动向该工程写报告。用户明确要求报告随工程保存时再使用其工程目录。已有或用户指定的输出路径保留。源码与受管安装使用同一入口，不依赖当前工作目录。
 
 支持 `session.v4.jsonl.zstd`、v3 和历史文件；无参数选择存储中最新修改的日志。核对选中文件的会话 ID、时间、用户原话与 cwd。路径由用户明确指定时使用该路径。多会话提取可连续传多个输入。
 

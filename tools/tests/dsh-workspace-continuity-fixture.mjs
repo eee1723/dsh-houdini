@@ -40,7 +40,7 @@ export function apply(ctx){
   }
  }
  ctx.llm.registerAdapter(['workspace-fixture'],new Driver())
- ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+ ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('native'))
  ctx.effect(()=>{queueMicrotask(async()=>{try{
   await ctx.loader.await()
   let before
@@ -80,8 +80,24 @@ export function apply(ctx){
    const candidates=JSON.stringify(await references.list(agent,'target-only',AbortSignal.timeout(10000)))
    assert(candidates.includes('target-only'),'file mention search must drop its old directory cache')
    assert.equal(ctx.sessions.get(id),session);assert.equal(session.header.createdAt,createdAt)
-   assert.deepEqual(session.snapshotEvents().map(event=>JSON.stringify(event)),before)
+   assert.deepEqual(session.snapshotEvents().slice(0,before.length).map(event=>JSON.stringify(event)),before)
+   assert(same(ctx.get('workingDirectory').get(session),target),'native current directory follows the relocated workspace')
+   assert.deepEqual(session.snapshotEvents().slice(before.length).map(event=>event.type),['working-directory/change'])
+   const afterMove=session.snapshotEvents().length
    await ctx.workspaceRegistry.relocateSession(id,target)
+   assert.equal(session.snapshotEvents().length,afterMove,'repeated relocation does not duplicate directory events')
+   // A cold session may already have a native cwd event which overrides its
+   // header on replay. Relocation must append to the same history before commit.
+   const cold=fixtureSession(randomUUID(),{cwd:source,seed:undefined})
+   cold.append('working-directory/change',{cwd:source})
+   const coldWriter=await ctx.sessionPersistence.create(cold.header)
+   await coldWriter.append(cold.snapshotEvents());await coldWriter.close()
+   await ctx.workspaceRegistry.relocateSession(cold.id,target)
+   const coldReader=await ctx.sessionPersistence.open(cold.id,'read')
+   const coldEvents=(await coldReader.read()).events
+   assert.deepEqual(coldEvents.map(event=>event.type),['working-directory/change','session/end-seed','working-directory/change'])
+   assert(same(coldEvents.at(-1).data.cwd,target))
+   assert(same(coldReader.header.cwd,target));await coldReader.close()
    // An interrupted final frame must be repaired using its old byte offset.
    const tornId=randomUUID(),torn=fixtureSession(tornId,{createdAt:0,cwd:source,seed:undefined})
    const writer=await ctx.sessionPersistence.create(torn.header);await writer.flush();await writer.close()

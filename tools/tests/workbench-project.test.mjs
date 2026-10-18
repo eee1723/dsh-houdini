@@ -123,6 +123,9 @@ assert.equal(uiContext.houdiniPresence(view,{...live,records:{}}).status,'unknow
 assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:'different',observedAt:Date.now()}}}).status,'changed')
 assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'offline',observedAt:Date.now()}}}).status,'offline')
 assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()-13000}}}).status,'unknown','a fresh batch response does not freshen an old individual observation')
+const mismatch=uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now(),contractMismatch:true}}})
+assert.equal(mismatch.status,'unknown','a contract mismatch is not painted as live')
+assert.match(mismatch.label,/版本不一致/,'the user gets an actionable reload reason')
 const liveProps={...props,usePresence:()=>live}
 currentProject=view
 const liveMark=uiContext.HoudiniProjectMark(liveProps)
@@ -146,7 +149,7 @@ assert.match(source,/\[data-houdini-presence="offline"\][^{]*\{color:/,'offline 
 assert.equal(uiContext.houdiniProjectName({hipIsNew:true,label:'未保存工程 2'}),'未保存工程 2')
 React.useSyncExternalStore=(_subscribe,get)=>get()
 React.useEffect=callback=>callback()
-Object.assign(uiContext,{AbortController,setTimeout,clearTimeout})
+Object.assign(uiContext,{AbortController,AbortSignal,setTimeout,clearTimeout})
 const presenceCalls=[]
 let intervalCallback=null
 const lifecycleUi=uiContext.createWorkbenchUi({
@@ -166,6 +169,64 @@ await new Promise(resolve=>setTimeout(resolve,20))
 assert(presenceCalls.includes('houdiniFrontend/projectPresence'),'the page lifecycle reads live presence without opening a menu')
 assert.equal(typeof intervalCallback,'function','a resident presence refresh is scheduled')
 React.useSyncExternalStore=(_subscribe,get)=>get()
+// A stalled poll must expire the displayed observation and allow later polls.
+let stalled=false,deadlineCallback=null,pollCount=0
+uiContext.setTimeout=callback=>{deadlineCallback=callback;return 1}
+uiContext.clearTimeout=()=>{}
+const boundedUi=uiContext.createWorkbenchUi({
+  generation:{getSnapshot:()=>1,subscribe:()=>()=>{}},
+  rpc:{call:async(_channel,method,_payload,signal)=>{
+    if(method==='houdiniFrontend/capabilities')return {ok:true,value:{workbench:true}}
+    if(method==='houdiniFrontend/windowPin')return {ok:true,value:{pinned:false}}
+    pollCount++
+    if(stalled)return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}))
+    return {ok:true,value:[{executorId:view.executorId,status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
+  }},
+},{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
+boundedUi.Lifecycle()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'online')
+stalled=true;intervalCallback();deadlineCallback()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'unknown','timed-out polling cannot leave a green stale mark')
+stalled=false;intervalCallback()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(pollCount,3)
+assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'online')
+Object.assign(uiContext,{setTimeout,clearTimeout})
+uiContext.require=()=>({Tooltip:'tooltip',Button:'button',Toast:'toast'})
+let pinned=false,pinFailure=false
+const pinWrites=[]
+const pinUi=uiContext.createWorkbenchUi({
+  generation:{getSnapshot:()=>1,subscribe:()=>()=>{}},
+  rpc:{call:async(_channel,method,payload)=>{
+    if(method==='houdiniFrontend/capabilities')return {ok:true,value:{workbench:true}}
+    if(method==='houdiniFrontend/projectPresence')return {ok:true,value:[]}
+    assert.equal(method,'houdiniFrontend/windowPin')
+    if('pinned' in payload.args.input){
+      pinWrites.push(payload.args.input.pinned)
+      if(pinFailure)return {ok:false,error:{message:'fixture pin failure'}}
+      pinned=payload.args.input.pinned
+    }
+    return {ok:true,value:{pinned}}
+  }},
+},{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
+pinUi.Lifecycle()
+await new Promise(resolve=>setTimeout(resolve,0))
+const pinButton=()=>findNode(pinUi.Pin(),node=>node.props['data-houdini-window-pin'])
+assert.equal(pinButton().props.style.height,28,'pin reuses the compact existing header')
+assert.equal(pinButton().props['aria-pressed'],false)
+assert.deepEqual(pinWrites,[],'mount only reads the native state')
+pinButton().props.onClick();pinButton().props.onClick()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.deepEqual(pinWrites,[true],'rapid clicks cannot duplicate a pending change')
+assert.equal(pinButton().props['aria-pressed'],true)
+pinFailure=true;pinButton().props.onClick()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(pinButton().props['aria-pressed'],true,'failed native change cannot paint a false success')
+pinFailure=false;pinButton().props.onClick()
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(pinButton().props['aria-pressed'],false)
 uiContext.require=()=>({MenuItemButton:'menuitem',Toast:'toast'})
 const generationListeners=new Set(),requests=[]
 let generation={id:1},menuClosed=false

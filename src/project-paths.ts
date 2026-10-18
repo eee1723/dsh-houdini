@@ -7,9 +7,10 @@ import {fileURLToPath} from 'node:url'
 import {randomBytes} from 'node:crypto'
 
 const contract = JSON.parse(readFileSync(new URL('../houdini/project-layout.json', import.meta.url), 'utf8')) as {
-  schemaVersion: number; directories: Record<string, {path: string; lifecycle: string}>
+  schemaVersion: number; directories: Record<string, {path: string; lifecycle: string}>; resultDirectory: string
 }
 if (contract.schemaVersion !== 1) throw Error('Unsupported project directory contract')
+export const RESULT_DIRECTORY = contract.resultDirectory
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const samePath = (a:string,b:string) => process.platform === 'win32'
   ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b)

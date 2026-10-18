@@ -66,7 +66,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
-| [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
+| [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作、窗口置顶与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
 | [src/workbench-workspaces.ts](../src/workbench-workspaces.ts) | 已知临时目录的空工作区登记退出；复用DSH条件删除，保留目录、文件及会话，保护活动现场和用户保留项 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
@@ -86,7 +86,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：工作台按明确启动来源定位/创建原生会话、只读接续评估和退出活动查询；保留显式共享开发入口，不是模型工具 |
 | [src/executor-host.ts](../src/executor-host.ts) | 工作台及显式共享开发入口共用的Host层服务；原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：Host折叠绑定记录与原始工具回执，客户端取得工程名称/路径和用于匹配非HOM在线观察的执行端/场景代际；绑定历史本身不是在线证明，冲突/无效历史仍拒绝恢复 |
-| [src/context.ts](../src/context.ts) | 上下文装配与接受生命周期；使用DSH原生上下文传递现场与执行事实 |
+| [src/context.ts](../src/context.ts) | 上下文装配与请求准入；异步准备的按任务文本由原生context provider同步读取，原生/PTC共用能力注册事实，不以当前工具schema判断能力是否存在 |
 | [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 用户输入边界的保存点评估、原工程定位与原生对话选择、DSH持久恢复事件及激活重试；成功保存/可信接续调用DSH原生目录迁移；无恢复面板或模型授权捷径 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
@@ -156,7 +156,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py) | 无HOM、确定性的矩形/净距、局部避障与Box handoff规划 |
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance、handoff应用及Bridge恢复journal |
 | [dsh_network_navigation.py](../houdini/python3.11libs/dsh_network_navigation.py) | 真实节点上的控制声明、持久交付标识、无cook读取与队列内定位；注解不代替控制有效性或ownership |
-| [dsh_network_notes.py](../houdini/python3.11libs/dsh_network_notes.py) | 明确名称的Sticky Note读取/局部修改、独立运行身份归属、失败补偿与编辑事务恢复；说明不承担任务完成状态 |
+| [dsh_network_notes.py](../houdini/python3.11libs/dsh_network_notes.py) | Sticky Note读取/局部修改、独立运行身份归属、失败补偿与编辑事务恢复；在节点首次创建登记边界记录原生初始化便签，后加便签不继承父级归属；说明不承担任务完成状态 |
 | [dsh_ui_capture.py](../houdini/python3.11libs/dsh_ui_capture.py) | 当前可见pane/Qt窗口/停靠面板发现、实际对象引用与精确区域截图；Bridge显式传入本次runtime身份，捕获实现不反向导入HTTP层；只观察已有界面，不建另一登记表或认证语义 |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
@@ -208,7 +208,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
 | [dsh_network_diagnostics.py](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生网络探针](../houdini/python3.11libs/dsh_network_probe.mjs) | worker内复用精确DSH的系统/环境选路和抓取；只读展示来源与错误，区分新进程测试与live、搜索组件与实际搜索；不编辑代理配置 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；仅发现，不下载/激活资产 |
-| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、cookie、共享浮层材质/输入区背景兼容、页面剪贴板写入、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
+| [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、无隐藏/重建的原生窗口置顶、cookie、共享浮层材质/输入区背景兼容、页面剪贴板写入、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
 | [dsh_iterator_polyfill.js](../houdini/python3.11libs/dsh_iterator_polyfill.js) | 构建生成的core-js Iterator与Array.toSorted兼容实现，附MIT许可证；仅缺失/不兼容API补齐，不手改 |
 | [dsh_web_auth.py](../houdini/python3.11libs/dsh_web_auth.py) | process-token→signed cookie、RPC wire与会话请求 |
 | [dsh_profile_sync.py](../houdini/python3.11libs/dsh_profile_sync.py) | 官方CLI幂等同步当前profile声明的项目依赖 |
@@ -231,7 +231,7 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护验证与交付图片的managed/delivery/explicit路径策略、唯一capture分配
 和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
-`$HIP/dsh-visual-checks/<run-id>/`，delivery直接生成到`$HIP/dsh-render/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
+`$HIP/dsh-artifacts/checks/<run-id>/`，delivery直接生成到`$HIP/dsh-artifacts/renders/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
 [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护可直接应用的Network Box分组、可选role颜色注解、
 同批任意声明顺序的members/boxes嵌套、类型化Box provenance、presentation快照与Bridge undo核对。普通分组不要求预览hash；
@@ -276,7 +276,7 @@ Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifac
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 节点交付使用普通执行结果中的显式引用，由DSH公开Conversation回放和回复尾部插槽展示。Root导航RPC重读原事件，使用`agentPresets.serviceFor`取得该任务隔离preset内的连接；与普通工具共用执行端绑定。Bridge导航路由只接受持久节点ID和原工程身份，主线程执行固定定位动作；票据/排队取消由同一RequestRegistry负责，不扩展普通同步HOM修改的取消语义。节点ID保存在HIP节点上，原路径只作历史显示，不另写节点交付账本。
 Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata保留返回事实，
-大结果保存到workspace的.dsh-houdini-results后才精简模型文本。该目录是工具返回副本，不是HIP内容输出。
+大结果保存到workspace的`dsh-artifacts/results/`后才精简模型文本，路径来自工程目录合同；历史`.dsh-houdini-results`仍按回执原路径读取。该目录是工具返回副本，不是HIP内容输出。
 失败/警告/unsupported/恢复错误、媒体路径和权限提示保留；未知结果可通过已提供的result_ref按字段读取。
 页面信息架构、内容来源与历史快照同步规则见[Houdini Trace设计](houdini-trace-design.md)。
 该文档区分实际请求System/schema/usage、上下文事件与当前构建来源目录；逐段运行provenance和最终messages可见集合尚未提供。

@@ -58,7 +58,18 @@ export class HoudiniFrontend extends TypertRemoteService {
     // desktop owns reachability; this layer only refuses to paint a mismatched
     // execution contract as online, because commands would fail against it.
     const records=await desktopRequest('presence',{},signal)
-    return records.map((record:any)=>({...record,status:record.status==='online'&&record.contractVersion!==EXPECTED_EXECUTION_CONTRACT_VERSION?'unknown':record.status}))
+    return records.map((record:any)=>{
+      const contractMismatch=record.status==='online'&&record.contractVersion!==EXPECTED_EXECUTION_CONTRACT_VERSION
+      return {...record,contractMismatch,status:contractMismatch?'unknown':record.status}
+    })
+  }
+
+  @Remote
+  async windowPin(input:unknown,signal:AbortSignal) {
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>key!=='pinned')
+      ||Object.hasOwn(input,'pinned')&&typeof (input as any).pinned!=='boolean')
+      throw new Error('无效的窗口置顶请求。')
+    return desktopRequest('window-pin',input,signal)
   }
 
   @Remote

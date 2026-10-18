@@ -81,10 +81,10 @@ __result__=verify_network(g,output=m)
             (out/'cop-observation.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
             assert min(report['cop']['pixels'][x] for x in ('red','blue'))>200,report['cop']['pixels']
             call('''
-r=tab_create('/obj/surface/textures','rop_image','export_pattern',parms={'coppath':'/obj/surface/textures/pattern','copoutput':'$HIP/dsh-texture/pattern.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0})
+r=tab_create('/obj/surface/textures','rop_image','export_pattern',parms={'coppath':'/obj/surface/textures/pattern','copoutput':'$HIP/dsh-artifacts/textures/pattern.exr','colorconversion':'raw','size1':'float32','raw1':1,'useport1':1,'port1':0})
 __result__=render_frame(r)
 ''')
-            call("set_parms('/obj/surface/appearance',{'basecolorsource':'file','basecolorfile':'$HIP/dsh-texture/pattern.exr'});__result__=verify_network('/obj/surface',output='/obj/surface/appearance')")
+            call("set_parms('/obj/surface/appearance',{'basecolorsource':'file','basecolorfile':'$HIP/dsh-artifacts/textures/pattern.exr'});__result__=verify_network('/obj/surface',output='/obj/surface/appearance')")
             yield
             report['file']=observe('file','/obj/surface/appearance')
             assert min(report['file']['pixels'][x] for x in ('red','blue'))>200,report['file']['pixels']
@@ -104,7 +104,7 @@ __result__=render_frame(r)
             yield
         node=hou.node('/obj/surface/appearance')
         assert node.type().name()=='coppreviewmaterial'
-        assert node.evalParm('basecolorfile')==str(out/'dsh-texture/pattern.exr').replace('\\','/')
+        assert node.evalParm('basecolorfile')==str(out/'dsh-artifacts/textures/pattern.exr').replace('\\','/')
         assert len(node.geometry().prims())>0 and not node.errors(),node.errors()
         material=node.geometry().findPrimAttrib('shop_materialpath')
         assert material,'actual SOP material assignment missing'

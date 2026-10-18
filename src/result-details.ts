@@ -6,8 +6,9 @@ import path from 'node:path'
 import type { ExecResult } from './bridge.js'
 import {executionCall,executionResult,isHoudiniTool} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
+import {RESULT_DIRECTORY} from './project-paths.js'
 
-const DIRECTORY = '.dsh-houdini-results'
+const DIRECTORY = RESULT_DIRECTORY
 const policy=JSON.parse(readFileSync(new URL('../houdini/result-detail-policy.json',import.meta.url),'utf8'))
 if(policy.schemaVersion!==1||['maxArchiveBytes','detailThresholdChars','loadWarningPreviewBytes'].some(key=>
   !Number.isSafeInteger(policy[key])||policy[key]<=0)||policy.loadWarningPreviewBytes<128)throw Error('Unsupported result detail policy')
@@ -33,12 +34,21 @@ export function recordedResultPath(events:readonly SessionEvent[],ref:string):st
 
 async function directory(workspace: string, create = false): Promise<string> {
   const root = await fs.realpath(workspace)
-  const requested = path.join(root, DIRECTORY)
-  if (create) await fs.mkdir(requested, { recursive: true })
-  const actual = await fs.realpath(requested)
-  const relative = path.relative(root, actual)
-  if (relative !== DIRECTORY) throw new Error('result detail directory must remain inside the current workspace')
-  return actual
+  let current = root
+  // Check each parent before creating the next one. A redirected artifact
+  // root must not cause even an empty directory to be written elsewhere.
+  for (const part of DIRECTORY.split('/')) {
+    if (!part || part === '.' || part === '..' || /[\\:]/.test(part)) throw new Error('invalid result directory')
+    current = path.join(current, part)
+    if (create) {
+      try { await fs.mkdir(current) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+    }
+    const info = await fs.lstat(current)
+    if (!info.isDirectory() || info.isSymbolicLink() || path.relative(current, await fs.realpath(current)) !== '')
+      throw new Error('result detail directory must remain inside the current workspace')
+  }
+  return current
 }
 
 export async function retainResult<T extends ExecResult>(value: T, workspace: string | null): Promise<T> {

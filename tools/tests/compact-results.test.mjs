@@ -41,8 +41,8 @@ assert.equal(JSON.stringify(raw),original);
 // result through different JSON producers. Member order must not force a
 // second full copy; changed facts and array ordering must remain distinct.
 const artifact={purpose:'model_visual_verification',output_policy:'managed',
-  actual_path:'E:/project/dsh-visual-checks/run/part.png',hip_relative_path:'dsh-visual-checks/run/part.png',
-  managed_root:'E:/project/dsh-visual-checks/run',role:'visual_check',project_root:'E:/project',
+  actual_path:'E:/project/dsh-artifacts/checks/run/part.png',hip_relative_path:'dsh-artifacts/checks/run/part.png',
+  managed_root:'E:/project/dsh-artifacts/checks/run',role:'visual_check',project_root:'E:/project',
   lifecycle:'visual-check',run_id:'run',capture_id:'part',frame:1};
 const framing={status:'intentional_crop',semantic_status:'unverified',
   depth_check:{ok:true,near:.01,far:200,scope:'frozen comparison envelope'},

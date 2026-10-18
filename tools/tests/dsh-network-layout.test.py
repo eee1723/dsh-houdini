@@ -39,7 +39,12 @@ reject(lambda:layout.Rect(2,0,1,1),'ordered')
 reject(lambda:layout.Rect(0,0,math.inf,1),'finite')
 reject(lambda:a.padded(-1,0,0,0),'nonnegative')
 reject(lambda:layout.find_free_translation(a,[],step=(0,1)),'positive')
-reject(lambda:layout.find_free_translation(a,[['x',a]]*513),'512')
+large_obstacles = [[str(i), layout.Rect(i * 3, 10, i * 3 + 2, 11)] for i in range(600)]
+large_obstacles.append(['late blocker', a])
+large = layout.find_free_translation(a, large_obstacles, max_candidates=40)
+assert large['ok'] and large['translation'] != [0, 0]
+assert all(not layout.overlaps(large['rect'], r) for _, r in large_obstacles)
+assert layout.find_free_translation(a, large_obstacles, preferred=(0, -3))['translation'] == [0, -3]
 reject(lambda:layout.find_free_translation(a,[],max_candidates=4097),'4096')
 
 nodes=[

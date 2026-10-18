@@ -35,8 +35,8 @@ description: 解析 Houdini 视频教程，结合云端语音转录与本地画�
 
 1. **建任务边界**：视频或指定片段、解析/复现目标、输出目录、云服务和已知版本。
    单段术语核对直接处理对应时间段，不强制全片转录或长报告。
-   新任务的转录、抽帧、索引、记录和交接资料放在 `dsh-analysis/<tutorial>/` 下；
-   下载或合并的源媒体放在 `dsh-reference/downloaded/<tutorial>/`。已命名 HIP 先读
+   新任务的转录、抽帧、索引、记录和交接资料放在 `dsh-artifacts/analysis/<tutorial>/` 下；
+   下载或合并的源媒体放在 `dsh-artifacts/references/downloaded/<tutorial>/`。已命名 HIP 先读
    `scene_info()['project_layout']['directories']` 的 `analysis` / `reference_downloaded`；
    仅解析时使用明确任务根，不要求 Save As。已有或用户明确指定的路径保留，不搬移旧资料。
 2. **本地准备与目标定位**：检查输入是否完整，分别核对视频流和音频流长度，容器总长不代表全程都有画面。

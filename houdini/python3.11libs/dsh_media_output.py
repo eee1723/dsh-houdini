@@ -50,7 +50,7 @@ def report_image(path: str) -> str:
 def _resolve_output_path(path, *, frame, default_subdir=None) -> str:
     """Resolve output files BEFORE mutation; never use the process cwd.
 
-    A bare filename goes to $HIP/default_subdir (dsh-render by default); a relative subpath is $HIP
+    A bare filename goes to $HIP/default_subdir (dsh-artifacts/renders by default); a relative subpath is $HIP
     relative. Absolute paths remain explicit caller intent except repository
     paths. Relative traversal/junction escapes and extensionless files fail.
     """

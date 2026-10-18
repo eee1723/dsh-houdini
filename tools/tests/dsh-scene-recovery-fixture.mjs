@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Real persisted DSH session, ordinary browser prompt and native/nested tools. Scripted model only.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -106,6 +107,7 @@ export function apply(ctx){
      }
     }
     if(step===calls.length){yield*text(phase==='resume'?'Fixture resumed through the normal conversation.':'Fixture complete');return}
+    presentation.after(phase+'-'+step,calls[step+1]?.[0])
     const [name,args]=calls[step],id=phase+'-'+step++
     assert(options.tools.some(t=>t.name===name),name)
     yield {type:'block-start',index:0,blockType:'tool-call'}
@@ -115,7 +117,7 @@ export function apply(ctx){
   }
  }
  ctx.llm.registerAdapter(['recovery-fixture'],new Driver())
- ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('both'))
+ const presentation=fixturePresentation(ctx)
  ctx.effect(()=>{queueMicrotask(async()=>{
   try{
    await ctx.loader.await()

@@ -50,7 +50,17 @@ try {
   result=[{executorId:executor,status:'online',contractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION}]
   assert.equal((await frontend.projectPresence(signal))[0].status,'online')
   result=[{executorId:executor,status:'online',contractVersion:-1}]
-  assert.equal((await frontend.projectPresence(signal))[0].status,'unknown','incompatible Bridge must not be green')
+  const incompatible=(await frontend.projectPresence(signal))[0]
+  assert.equal(incompatible.status,'unknown','incompatible Bridge must not be green')
+  assert.equal(incompatible.contractMismatch,true,'the UI needs the actionable revision reason, not just unknown')
+  result={pinned:true}
+  assert.equal((await frontend.windowPin({pinned:true},signal)).pinned,true)
+  assert(requests.at(-1).url.endsWith('/window/pin'))
+  assert.deepEqual(requests.at(-1).payload,{pinned:true})
+  await frontend.windowPin({},signal)
+  assert.deepEqual(requests.at(-1).payload,{})
+  for(const input of [{pinned:'true'},{pinned:null},{pinned:true,hwnd:123},[],null])
+    await assert.rejects(frontend.windowPin(input,signal),/无效的窗口置顶/)
   generation='stale-desktop'
   await assert.rejects(frontend.projectAction({action:'open'},signal),/没有完成/)
 }finally {

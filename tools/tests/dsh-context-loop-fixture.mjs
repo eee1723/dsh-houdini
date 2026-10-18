@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Run the real mounted Houdini preset and DSH agent loop with a local scripted
 // provider and an owned HTTP Bridge fixture. No model API or Houdini process.
 import assert from 'node:assert/strict'
@@ -29,7 +30,7 @@ export function apply(ctx) {
     ? JSON.parse(fs.readFileSync(process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE,'utf8')) : null
   // Exercise both official DSH transports only in this owned fixture scope;
   // production Houdini stays in its configured presentation mode.
-  ctx.on('agent/created',({agent})=>{ agent.ctx.tools.presentAs('both') })
+  const presentation=fixturePresentation(ctx)
   const catalogStart = expiryStart + 4
   const repetitionMethod = process.env.DSH_REPETITION_METHOD_FIXTURE === '1'
   const repetitionStart = catalogStart + (catalogReceipt ? 6 : 0)
@@ -221,6 +222,8 @@ export function apply(ctx) {
           }
         }
         const current = snapshots.at(-1)
+        if(!current)fs.writeFileSync(output+'.missing-context.json',JSON.stringify({messages:options.messages,
+          events:ctx.sessions.get(options.sessionId).snapshotEvents()},null,2))
         assert(current, 'provider must receive the real scene context')
         assert(current.includes('Houdini image input capability'), 'provider must receive image capability')
         const runtimeEvents = ctx.sessions.get(options.sessionId).snapshotEvents()
@@ -434,6 +437,7 @@ export function apply(ctx) {
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]
+        presentation.after('context-'+step,calls[step+1]?.[0])
         assert(options.tools.some(tool => tool.name === name),'tool must come from the actual preset: '+name)
         if (name === 'houdini_request') assert(ref,'uncertain result must retain the original request reference')
         yield {type:'block-start',index:0,blockType:'tool-call'}

@@ -32,19 +32,19 @@ try:
     hou.hipFile.save(tmp+'/backend-fixture.hip')
     managed=[h.render_view(box,picture='managed.png') for _ in range(2)]
     assert len({row['output'] for row in managed})==2
-    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-visual-checks' for row in managed)
+    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks' for row in managed)
     assert all(row['artifact']['output_policy']=='managed' for row in managed)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in managed)
-    assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-artifacts/checks').rglob('*.reserve'))
     delivered=[h.render_view(box,picture='final.png',output_policy='delivery') for _ in range(2)]
     assert len({row['output'] for row in delivered})==2
-    assert all(Path(row['output']).parent.resolve()==(Path(tmp)/'dsh-render').resolve() for row in delivered)
+    assert all(Path(row['output']).parent.resolve()==(Path(tmp)/'dsh-artifacts/renders').resolve() for row in delivered)
     assert all(row['artifact']['output_policy']=='delivery' for row in delivered)
     assert all(row['artifact']['actual_path']==row['output'] for row in delivered)
-    assert all(row['artifact']['hip_relative_path'].startswith('dsh-render/') for row in delivered)
+    assert all(row['artifact']['hip_relative_path'].startswith('dsh-artifacts/renders/') for row in delivered)
     assert all(row['artifact']['purpose']==managed[0]['artifact']['purpose'] for row in delivered)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in delivered)
-    assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-artifacts/renders').rglob('*.reserve'))
     real_ensure=dsh_render_service._ensure_render_proxy
     def partial_proxy(target):
         proxy=hou.node('/obj/'+dsh_render_service._RENDER_PROXY_NAME)
@@ -66,7 +66,7 @@ try:
         except ValueError as error:assert 'injected pre-render failure' in str(error)
         else:raise AssertionError('pre-render failure should reject')
     finally:dsh_geometry_queries._geometry_fingerprint=real_fingerprint
-    assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-artifacts/checks').rglob('*.reserve'))
     dsh_render.render_frame=lambda *_args,**_kwargs:(_ for _ in ()).throw(RuntimeError('injected renderer failure'))
     try:
         for policy in ('managed','delivery'):
@@ -74,8 +74,8 @@ try:
             except RuntimeError as error:assert 'injected renderer failure' in str(error)
             else:raise AssertionError('renderer failure should propagate')
     finally:dsh_render.render_frame=render
-    assert not list((Path(tmp)/'dsh-visual-checks').rglob('*.reserve'))
-    assert not list((Path(tmp)/'dsh-render').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-artifacts/checks').rglob('*.reserve'))
+    assert not list((Path(tmp)/'dsh-artifacts/renders').rglob('*.reserve'))
     result=h.render_view(box,picture=tmp+'/first.png',output_policy='explicit')
     r=calls[-1]
     if hou.applicationVersion()[0]>=22:

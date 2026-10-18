@@ -45,8 +45,8 @@ Claim：该契约没有承诺逐句时间戳，所以本工具只标分片范围
 
 以下在 PowerShell 中执行；将路径替换为当前任务明确的绝对路径，`$videoScript` 指随包资源。
 `prepare` 无网络写入；所有目录参数要求绝对路径且不能位于本插件目录。
-新任务的派生分析资料统一进入任务根的 `dsh-analysis/<tutorial>/`，下载与合并后的源媒体
-进入 `dsh-reference/downloaded/<tutorial>/`；子目录按步骤分工，不要求子目录再次带 `dsh-`。
+新任务的派生分析资料统一进入任务根的 `dsh-artifacts/analysis/<tutorial>/`，下载与合并后的源媒体
+进入 `dsh-artifacts/references/downloaded/<tutorial>/`；子目录按步骤分工，不要求子目录再次带 `dsh-`。
 有已命名 HIP 时读取 `project_layout.directories.analysis/reference_downloaded`；只做离线解析时
 用明确任务根。脚本尊重显式 `--output` / `--work`，不改写旧目录或自动搬移用户资料。
 
@@ -55,20 +55,20 @@ Claim：该契约没有承诺逐句时间戳，所以本工具只标分片范围
 $videoPython = '<runtime.python 返回的绝对路径>'
 $videoScript = '<runtime.script 返回的绝对路径>'
 # 目录或分离轨输入：只在下载完成后导入，不修改原文件。
-& $videoPython $videoScript ingest --input 'D:/task/downloaded-tutorial' --output 'D:/task/dsh-reference/downloaded/tutorial'
-# 单个已含音轨的视频可直接 prepare；合并产物为 dsh-reference/downloaded/tutorial/media.mp4。
-& $videoPython $videoScript prepare --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/video-sample' --start 0 --duration 90
-& $videoPython $videoScript transcribe --work 'D:/task/dsh-analysis/tutorial/video-sample' --model 'qwen3-asr-flash' --endpoint 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' --protocol qwen-chat-asr --key-env DASHSCOPE_API_KEY --allow-upload --max-chunks 4
-& $videoPython $videoScript export --work 'D:/task/dsh-analysis/tutorial/video-sample' --output 'D:/task/dsh-analysis/tutorial/sample-export'
-& $videoPython $videoScript frames --work 'D:/task/dsh-analysis/tutorial/video-sample' --output 'D:/task/dsh-analysis/tutorial/sample-frames' --times 15 45 75
-& $videoPython $videoScript scan --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/overview' --interval 30
-& $videoPython $videoScript review --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-analysis/tutorial/detail' --start 120 --duration 12 --interval 1
-& $videoPython $videoScript changes --frames-dir 'D:/task/dsh-analysis/tutorial/overview' --output 'D:/task/dsh-analysis/tutorial/change-candidates'
-& $videoPython $videoScript context --frames-dir 'D:/task/dsh-analysis/tutorial/detail' --transcript 'D:/task/dsh-analysis/tutorial/sample-export/transcript.json' --start 120 --end 132 --output 'D:/task/dsh-analysis/tutorial/evidence'
-& $videoPython $videoScript check-notes --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes.json' --output 'D:/task/dsh-analysis/tutorial/checked-notes'
+& $videoPython $videoScript ingest --input 'D:/task/downloaded-tutorial' --output 'D:/task/dsh-artifacts/references/downloaded/tutorial'
+# 单个已含音轨的视频可直接 prepare；合并产物为 dsh-artifacts/references/downloaded/tutorial/media.mp4。
+& $videoPython $videoScript prepare --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-artifacts/analysis/tutorial/video-sample' --start 0 --duration 90
+& $videoPython $videoScript transcribe --work 'D:/task/dsh-artifacts/analysis/tutorial/video-sample' --model 'qwen3-asr-flash' --endpoint 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' --protocol qwen-chat-asr --key-env DASHSCOPE_API_KEY --allow-upload --max-chunks 4
+& $videoPython $videoScript export --work 'D:/task/dsh-artifacts/analysis/tutorial/video-sample' --output 'D:/task/dsh-artifacts/analysis/tutorial/sample-export'
+& $videoPython $videoScript frames --work 'D:/task/dsh-artifacts/analysis/tutorial/video-sample' --output 'D:/task/dsh-artifacts/analysis/tutorial/sample-frames' --times 15 45 75
+& $videoPython $videoScript scan --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-artifacts/analysis/tutorial/overview' --interval 30
+& $videoPython $videoScript review --video 'D:/task/tutorial.mp4' --output 'D:/task/dsh-artifacts/analysis/tutorial/detail' --start 120 --duration 12 --interval 1
+& $videoPython $videoScript changes --frames-dir 'D:/task/dsh-artifacts/analysis/tutorial/overview' --output 'D:/task/dsh-artifacts/analysis/tutorial/change-candidates'
+& $videoPython $videoScript context --frames-dir 'D:/task/dsh-artifacts/analysis/tutorial/detail' --transcript 'D:/task/dsh-artifacts/analysis/tutorial/sample-export/transcript.json' --start 120 --end 132 --output 'D:/task/dsh-artifacts/analysis/tutorial/evidence'
+& $videoPython $videoScript check-notes --context 'D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-artifacts/analysis/tutorial/notes.json' --output 'D:/task/dsh-artifacts/analysis/tutorial/checked-notes'
 ```
 
-在 DSH 中，prepare 后优先使用 `video_transcribe({work:"D:/task/dsh-analysis/tutorial/video-sample",allow_upload:true,max_chunks:2})`。
+在 DSH 中，prepare 后优先使用 `video_transcribe({work:"D:/task/dsh-artifacts/analysis/tutorial/video-sample",allow_upload:true,max_chunks:2})`。
 省略 provider/model 时使用「教程视频」的选择；显式参数可覆盖本次调用，但不能更换已有任务固定的模型/endpoint。
 `video_models` 返回配置与凭据是否存在、协议范围和诊断，不上传音频；Python/FFmpeg/ffprobe 检查入口在设置页。
 
@@ -200,12 +200,12 @@ Agent结合粗图和分批读取的原文建立索引，然后用讲解线索、
 脚本不调用LLM、不按关键词自动划定语义章节、不伪造逐句时间，也不自动发起云请求或HOM执行。
 
 ```powershell
-& $videoPython $videoScript index-init --frames-dir 'D:/task/dsh-analysis/tutorial/overview' --transcript 'D:/task/dsh-analysis/tutorial/sample-export/transcript.json' --output 'D:/task/dsh-analysis/tutorial/catalog'
-& $videoPython $videoScript read-transcript --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --offset 0 --limit 8
+& $videoPython $videoScript index-init --frames-dir 'D:/task/dsh-artifacts/analysis/tutorial/overview' --transcript 'D:/task/dsh-artifacts/analysis/tutorial/sample-export/transcript.json' --output 'D:/task/dsh-artifacts/analysis/tutorial/catalog'
+& $videoPython $videoScript read-transcript --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog/index.json' --offset 0 --limit 8
 # Agent读取原文与粗图后，在index.json填写chapters/modules；再检查及按模块读取。
-& $videoPython $videoScript check-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json'
-& $videoPython $videoScript read-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json'
-& $videoPython $videoScript read-index --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --module distribution
+& $videoPython $videoScript check-index --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog/index.json'
+& $videoPython $videoScript read-index --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog/index.json'
+& $videoPython $videoScript read-index --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog/index.json' --module distribution
 ```
 
 `index-init`从已完成的粗图索引和ffprobe建立source/overview/transcript的路径、hash及媒体时长；
@@ -246,13 +246,13 @@ duration_seconds是容器时长，video_duration_seconds是可取帧的视频跨
 
 ```json
 {
-  "context": {"path": "D:/task/dsh-analysis/tutorial/evidence/context.json", "sha256": "实际context文件hash"},
-  "notes": {"path": "D:/task/dsh-analysis/tutorial/notes.json", "sha256": "实际notes文件hash"},
+  "context": {"path": "D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json", "sha256": "实际context文件hash"},
+  "notes": {"path": "D:/task/dsh-artifacts/analysis/tutorial/notes.json", "sha256": "实际notes文件hash"},
   "step_ids": ["step-01"]
 }
 ```
 
-hash用本地SHA-256计算，例如PowerShell `(Get-FileHash -LiteralPath 'D:/task/dsh-analysis/tutorial/notes.json' -Algorithm SHA256).Hash.ToLowerInvariant()`。
+hash用本地SHA-256计算，例如PowerShell `(Get-FileHash -LiteralPath 'D:/task/dsh-artifacts/analysis/tutorial/notes.json' -Algorithm SHA256).Hash.ToLowerInvariant()`。
 notes指Agent填写的原始notes JSON，不是check-notes生成的报告。引用步骤须完整落在某个模块范围内。
 check-index重新校验视频、粗图、转录、context、notes及步骤范围；来源跨视频、转录版本不一致或内容变化均拒绝。
 新观察另存新的context/notes后更新引用，保留旧资料；不要只刷新hash来掩盖需要重新核对的内容。
@@ -387,17 +387,17 @@ network_path是视频网络，不是本地工程路径。panel_target独立记�
 #### 多入口查询与资料交接
 
 ```powershell
-& $videoPython $videoScript notes-init --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --output 'D:/task/dsh-analysis/tutorial/notes-draft'
-& $videoPython $videoScript review-packet --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --frame-ids frame-0000.png frame-0001.png --region panel:0.7:0:0.3:1 --question '面板数值是否改变？' --output 'D:/task/dsh-analysis/tutorial/focus'
+& $videoPython $videoScript notes-init --context 'D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json' --output 'D:/task/dsh-artifacts/analysis/tutorial/notes-draft'
+& $videoPython $videoScript review-packet --context 'D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json' --frame-ids frame-0000.png frame-0001.png --region panel:0.7:0:0.3:1 --question '面板数值是否改变？' --output 'D:/task/dsh-artifacts/analysis/tutorial/focus'
 # 实际核对并填写notes后：
-& $videoPython $videoScript check-notes --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes-draft/notes.json' --output 'D:/task/dsh-analysis/tutorial/checked'
-& $videoPython $videoScript index-link --index 'D:/task/dsh-analysis/tutorial/catalog/index.json' --module distribution --context 'D:/task/dsh-analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-analysis/tutorial/notes-draft/notes.json' --step-ids observation-01 --output 'D:/task/dsh-analysis/tutorial/catalog-next'
-& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --module distribution --view issues
-& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --subject source-filter --field parameter.scale --view final
-& $videoPython $videoScript query-notes --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --view references
-& $videoPython $videoScript export-brief --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --output 'D:/task/dsh-analysis/tutorial/brief'
+& $videoPython $videoScript check-notes --context 'D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-artifacts/analysis/tutorial/notes-draft/notes.json' --output 'D:/task/dsh-artifacts/analysis/tutorial/checked'
+& $videoPython $videoScript index-link --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog/index.json' --module distribution --context 'D:/task/dsh-artifacts/analysis/tutorial/evidence/context.json' --notes 'D:/task/dsh-artifacts/analysis/tutorial/notes-draft/notes.json' --step-ids observation-01 --output 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next'
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next/index.json' --module distribution --view issues
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next/index.json' --subject source-filter --field parameter.scale --view final
+& $videoPython $videoScript query-notes --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next/index.json' --view references
+& $videoPython $videoScript export-brief --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next/index.json' --output 'D:/task/dsh-artifacts/analysis/tutorial/brief'
 # 资料交接：同时回查作者方法与成品参考；需要已有成品候选时选此导出检查，不作为建网准入条件。
-& $videoPython $videoScript export-brief --index 'D:/task/dsh-analysis/tutorial/catalog-next/index.json' --require-final-reference --output 'D:/task/dsh-analysis/tutorial/effect-brief'
+& $videoPython $videoScript export-brief --index 'D:/task/dsh-artifacts/analysis/tutorial/catalog-next/index.json' --require-final-reference --output 'D:/task/dsh-artifacts/analysis/tutorial/effect-brief'
 ```
 
 示例区域仅为语法，不是默认布局。review-packet从已有context选1..12帧、一个显式归一化区域，

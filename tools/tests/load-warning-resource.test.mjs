@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {spawnSync} from 'node:child_process'
+import {resolvePython} from './python-runtime.mjs'
 import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {recoveryMessage} from '../../lib/scene-recovery.js'
@@ -10,7 +11,7 @@ import {readResource} from '../../lib/tool-query.js'
 import {literalData} from '../../lib/prompt-data.js'
 const folder=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-warning-resource-'))
 try{
- const producer=spawnSync('python',['tools/tests/load-warning.test.py','--fixture',path.join(folder,'recovery')],{encoding:'utf8',windowsHide:true})
+ const producer=spawnSync(resolvePython(),['tools/tests/load-warning.test.py','--fixture',path.join(folder,'recovery')],{encoding:'utf8',windowsHide:true})
  assert.equal(producer.status,0,producer.stderr)
  const {detail,preview}=JSON.parse(producer.stdout)
  assert(Buffer.byteLength(literalData(JSON.stringify(preview)))<=4096)

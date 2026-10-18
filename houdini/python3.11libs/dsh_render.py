@@ -110,9 +110,9 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
       ``outputimage`` 优先于 USD ``lopoutput``，Karma/Mantra/geometry 等 ROP 都覆盖。
       有 ``soho_foreground`` 时调用期临时等待渲染完成并在 finally 恢复。
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
-      裸文件名按输出用途放入$HIP/dsh-render；COP copoutput放入dsh-texture，
-      几何/模拟/通道缓存放入dsh-cache。已有含目录的ROP路径和显式绝对目的地不改写。
-      诊断/测试图显式传picture='$HIP/dsh-visual-checks/<task>/check.png'，
+      裸文件名按输出用途放入$HIP/dsh-artifacts/renders；COP copoutput放入dsh-artifacts/textures，
+      几何/模拟/通道缓存放入dsh-artifacts/cache。已有含目录的ROP路径和显式绝对目的地不改写。
+      诊断/测试图显式传picture='$HIP/dsh-artifacts/checks/<task>/check.png'，
       不把过程检查写入成图目录；目录位置本身不证明已经交付或视觉正确。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
@@ -412,9 +412,9 @@ def render_view(node, direction="iso", frame=None,
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
     - ``picture/output_policy``：默认managed，只接收省略或安全basename并写入
-      ``$HIP/dsh-visual-checks/<run-id>/``。
-      最终交付用``output_policy='delivery'``分配到``$HIP/dsh-render/``；自定路径用
-      ``output_policy='explicit'``，其中裸文件名放进``$HIP/dsh-visual-checks/``。
+      ``$HIP/dsh-artifacts/checks/<run-id>/``。
+      最终交付用``output_policy='delivery'``分配到``$HIP/dsh-artifacts/renders/``；自定路径用
+      ``output_policy='explicit'``，其中裸文件名放进``$HIP/dsh-artifacts/checks/``。
       各模式均返回``artifact``路径事实，输出位置不证明验收通过。
     - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
       detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。

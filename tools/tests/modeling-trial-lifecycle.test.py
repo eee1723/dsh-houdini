@@ -52,6 +52,34 @@ class TrialLifecycleTests(unittest.TestCase):
         self.assertEqual(self.driver.pending_approvals([asked]), [{'id': 'a', 'toolName': 'fixture'}])
         self.assertEqual(self.driver.pending_approvals([asked, self.event('approval/decided', id='a', outcome='rejected')]), [])
 
+    def turn_event(self, seq, kind, **data):
+        record = self.event(kind, **data)
+        record['event']['seq'] = seq
+        return record
+
+    def test_phase_continues_only_after_current_native_turn_completed(self):
+        records = [self.turn_event(1, 'turn/start', turn=1),
+                   self.turn_event(2, 'turn/end', turn=1, reason={'kind': 'completed'})]
+        outcome = self.driver.phase_outcome(records, 0, model_prompt_sent=True)
+        self.assertEqual(outcome['result'], 'idle_after_prompt')
+        self.assertEqual(outcome['terminal']['seq'], 2)
+        # An earlier completed turn cannot certify a new phase that never ran.
+        self.assertEqual(self.driver.phase_outcome(records, 2, model_prompt_sent=True)['result'], 'turn_incomplete')
+        for reason in [{'kind': 'error', 'error': {'message': 'provider refused'}}, {'kind': 'aborted'}]:
+            failed = [*records, self.turn_event(3, 'turn/start', turn=2),
+                      self.turn_event(4, 'turn/end', turn=2, reason=reason)]
+            outcome = self.driver.phase_outcome(failed, 2, model_prompt_sent=True)
+            self.assertEqual(outcome['result'], 'turn_' + reason['kind'])
+            self.assertEqual(outcome['terminal']['reason'], reason)
+
+    def test_idle_without_latest_terminal_is_not_success_and_smoke_is_distinct(self):
+        records = [self.turn_event(1, 'turn/end', turn=1, reason={'kind': 'completed'}),
+                   self.turn_event(2, 'turn/start', turn=2)]
+        self.assertEqual(self.driver.phase_outcome(records, 0, model_prompt_sent=True)['result'], 'turn_incomplete')
+        self.assertEqual(self.driver.phase_outcome([], 0, model_prompt_sent=True)['result'], 'turn_incomplete')
+        self.assertEqual(self.driver.phase_outcome([], 0, model_prompt_sent=False),
+                         {'result': 'smoke_completed', 'terminal': None})
+
     def test_interrupt_and_early_setup_error_preserve_inputs_write_outcome_and_clear_only_copy(self):
         source = self.run/'user-store.yaml'
         source.write_text('user-store-must-stay', encoding='utf-8')

@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.request
 import uuid
+from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dsh_deployment import FileLease, LeaseBusyError, Store, _process_started, atomic_json, read_json, runtime_env
@@ -208,6 +209,7 @@ def run(config):
     from dsh_workbench_projects import ProjectManager, show_project_dialog, dialog_request
     projects = ProjectManager(config, context, plugin, generation, rpc, intents)
     dialogs = queue.Queue()
+    window_requests = queue.Queue()
 
     class Control(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -234,6 +236,16 @@ def run(config):
                     intents.put(value)
                 elif self.path == '/projects/presence' and payload == {}:
                     value = projects.presence()
+                elif self.path == '/window/pin':
+                    if (not isinstance(payload, dict) or set(payload) - {'pinned'}
+                            or ('pinned' in payload and type(payload['pinned']) is not bool)):
+                        raise ValueError('无效的窗口置顶请求。')
+                    reply = Future()
+                    window_requests.put((payload, reply))
+                    try:
+                        value = reply.result(timeout=4)
+                    finally:
+                        reply.cancel()  # A timed-out queued command must not run later.
                 elif self.path == '/projects/dialog':
                     dialogs.put(dialog_request(payload))
                     value = {'accepted': True}
@@ -331,6 +343,13 @@ def run(config):
         project_dialog = {'value': None}
 
         def drain():
+            while not window_requests.empty():
+                request, reply = window_requests.get_nowait()
+                if reply.set_running_or_notify_cancel():
+                    try:
+                        reply.set_result(dsh_webview.window_pin(request.get('pinned')))
+                    except Exception as error:
+                        reply.set_exception(error)
             while not dialogs.empty():
                 request = dialogs.get_nowait()
                 if project_dialog['value'] is not None:

@@ -240,6 +240,7 @@ def register_owned_node(node, *, exclude_ids=()) -> None:
     for item in items:
         if int(item.sessionId()) in exclude_ids:
             continue
+        newly_registered = int(item.sessionId()) not in _OWNED_NODE_SESSIONS
         entry = {
             "session": _ACTIVE_OWNER_SESSION,
             "call": _ACTIVE_OWNER_CALL,
@@ -252,6 +253,10 @@ def register_owned_node(node, *, exclude_ids=()) -> None:
         item.setUserData(_TASK_OWNER_KEY, _ACTIVE_OWNER_SESSION)
         if _ACTIVE_OWNER_CALL:
             item.setUserData(_TASK_OWNER_CALL_KEY, _ACTIVE_OWNER_CALL)
+        if newly_registered and item.isNetwork():
+            from dsh_network_notes import register_created_network_notes
+            register_created_network_notes(item, active_owner_session=_ACTIVE_OWNER_SESSION,
+                                           active_owner_call=_ACTIVE_OWNER_CALL)
 
 
 @contextlib.contextmanager

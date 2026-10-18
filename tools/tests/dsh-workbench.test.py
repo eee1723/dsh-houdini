@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
 from dsh_workbench import ensure, control, running
+from dsh_runtime_compat import preferred_cached_bin
+from dsh_houdini_installations import discover
 
 
 def windows(pid):
@@ -49,7 +51,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('hfs', nargs='?', default='D:/houdini')
-    parser.add_argument('--runtime-cache', type=Path, default=ROOT / '.npm-cache/_npx/dsh-houdini-4e2f5452611c')
+    parser.add_argument('--runtime-cache', type=Path, default=None)
     args = parser.parse_args()
     folder = Path(tempfile.mkdtemp(prefix='workbench-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'env', gui=True)
@@ -58,7 +60,15 @@ def main():
         debug_port = probe.getsockname()[1]
     env['DSH_WORKBENCH_TEST_ROOT'] = str(folder)
     home = env['DSH_HOME']
-    binary = args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
+    binary = (preferred_cached_bin(ROOT / '.npm-cache') if args.runtime_cache is None
+              else args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+    if binary is None:
+        raise RuntimeError('No prepared DSH runtime matching this plugin; run npm run runtime:prepare')
+    workers = sorted(discover(args.hfs), key=lambda item: item['version'])
+    if len(workers) < 2:
+        raise RuntimeError('This composition needs two installed Houdini versions (H21 and H22)')
+    worker_hfs = [Path(item['hfs']) for item in workers[:2]]
+    worker_hython = [item / 'bin/hython.exe' for item in worker_hfs]
     node = shutil.which('node')
     subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'), str(binary), home, str(ROOT)],
                    env=env, cwd=ROOT, check=True, timeout=60)
@@ -79,7 +89,17 @@ def main():
         request = {'id': uuid.uuid4().hex, 'sessionId': session, 'tool': tool, 'args': args, 'action': action}
         temporary = folder / 'command.tmp'
         temporary.write_text(json.dumps(request), encoding='utf-8')
-        temporary.replace(folder / 'command.json')
+        # The fixture may have the previous command open for reading; Windows
+        # refuses the replace while that handle exists. Retry the atomic rename
+        # instead of writing the target in place.
+        for attempt in range(50):
+            try:
+                temporary.replace(folder / 'command.json')
+                break
+            except PermissionError:
+                if attempt == 49:
+                    raise
+                time.sleep(.05)
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             try:
@@ -121,7 +141,9 @@ def main():
             time.sleep(.1)
         assert len(handles) == 1, handles
         assert not user.GetWindow(handles[0], 4), 'desktop must not have a Houdini owner window'
-        user.SetWindowPos(handles[0], None, 12000, 12000, 1200, 800, 0x0010)
+        # Wide enough for the native sidebar; the conversation-row menu used by
+        # the browser probe is not rendered in the compact rail layout.
+        user.SetWindowPos(handles[0], None, 12000, 12000, 1440, 900, 0x0010)
         bad = {**record, 'token': '0' * 64}
         try:
             control(bad, 'status', timeout=5)
@@ -132,7 +154,7 @@ def main():
         registry = Path(desktop['context']['executorRegistry'])
         project = Path(project_temp.name)
         endpoints = []
-        for index, hython in enumerate(('D:/houdini/bin/hython.exe', 'D:/Houdini22/bin/hython.exe')):
+        for index, hython in enumerate(map(str, worker_hython)):
             hip = project / ('工程-' + str(index) + '.hip')
             hip.write_bytes(b'fixture path identity; not loaded')
             output = (folder / ('houdini-' + str(index) + '.log')).open('wb')
@@ -173,11 +195,12 @@ def main():
         original.wait(timeout=10)
         output = (folder / 'empty-reopen.log').open('wb')
         streams.append(output)
-        empty_env = isolated_environment(folder / 'empty-reopen-env', executable=Path('D:/houdini/bin/hython.exe'))
+        empty_hython = str(worker_hython[0])
+        empty_env = isolated_environment(folder / 'empty-reopen-env', executable=Path(empty_hython))
         empty_env['DSH_HOUDINI_RECOVERY_ROOT'] = str(folder / 'recovery')
-        empty_reopen = subprocess.Popen(['D:/houdini/bin/hython.exe', str(ROOT / 'tools/tests/dsh-multi-executor.test.py'),
+        empty_reopen = subprocess.Popen([empty_hython, str(ROOT / 'tools/tests/dsh-multi-executor.test.py'),
             '--worker', '--workbench', '--registry', str(registry), '--hip', endpoints[0]['hip_path'], '--task', 'unused'],
-            cwd='D:/houdini/bin', env=empty_env, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+            cwd=str(worker_hfs[0] / 'bin'), env=empty_env, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW)
         children[0] = empty_reopen
         deadline = time.monotonic() + 35
@@ -260,11 +283,11 @@ def main():
         assert nested['execution']['executor_id'] == endpoint['executor_id']
         output = (folder / 'replacement.log').open('wb')
         streams.append(output)
-        replacement_env = isolated_environment(folder / 'replacement-env', executable=Path('D:/houdini/bin/hython.exe'))
+        replacement_env = isolated_environment(folder / 'replacement-env', executable=Path(empty_hython))
         replacement_env['DSH_HOUDINI_RECOVERY_ROOT'] = str(folder / 'recovery')
-        replacement = subprocess.Popen(['D:/houdini/bin/hython.exe', str(ROOT / 'tools/tests/dsh-multi-executor.test.py'),
+        replacement = subprocess.Popen([empty_hython, str(ROOT / 'tools/tests/dsh-multi-executor.test.py'),
             '--worker', '--workbench', '--load', '--registry', str(registry), '--hip', endpoints[0]['hip_path'], '--task', 'unused'],
-            cwd='D:/houdini/bin', env=replacement_env, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+            cwd=str(worker_hfs[0] / 'bin'), env=replacement_env, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW)
         children.append(replacement)
         deadline = time.monotonic() + 35

@@ -60,9 +60,15 @@ assert.deepEqual(actual.get('/houdini').isolate,{houdiniNodeDelivery:true,houdin
   'navigation and recovery must both live in the selected preset isolate realm')
 assert.equal(actual.get('/houdini').config.productMode, undefined)
 assert.equal(actual.get('/present').name, '@deepseek-ai/dsh-tool-present')
-assert.equal(actual.get('/persona').config.prefix,
-  fs.readFileSync(path.join(root, 'presets/houdini/persona.md'), 'utf8').trim(),
+const personaSource = fs.readFileSync(path.join(root, 'presets/houdini/persona.md'), 'utf8')
+assert.equal(actual.get('/persona').config.prefix, personaSource.trim(),
   'the delivered persona must be the maintained source, not a second prompt copy')
+// DSH fails prompt assembly before any model request when a persona template
+// references an unregistered variable. The loop supplies only provider/model;
+// the working directory arrives as native user context.
+for (const [, name] of personaSource.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
+  assert.ok(['provider', 'model'].includes(name), `persona references an unregistered prompt variable {{${name}}}`)
+}
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.deepEqual(manifest.dsh.bundle.patch, ['./presets/houdini/cordis.patch.yml'])
 assert.equal(fs.existsSync(path.join(root, 'cordis.patch.yml')), false, 'Houdini mounts only in its preset scope')

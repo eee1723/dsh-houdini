@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-export async function desktopRequest(action:'presence'|'dialog',payload:unknown,signal:AbortSignal) {
+export async function desktopRequest(action:'presence'|'dialog'|'window-pin',payload:unknown,signal:AbortSignal) {
   const location=process.env.DSH_HOUDINI_WORKBENCH_CONTEXT
   if(!location||!path.isAbsolute(location))throw new Error('请在独立工作台中使用此入口。')
   const context=JSON.parse(await fs.readFile(location,'utf8'))
@@ -11,7 +11,8 @@ export async function desktopRequest(action:'presence'|'dialog',payload:unknown,
   const record=JSON.parse(await fs.readFile(descriptor,'utf8'))
   if(record.schema!==1||!Number.isInteger(record.controlPort)||record.controlPort<1024||record.controlPort>65535
     ||typeof record.token!=='string'||!/^[0-9a-f]{64}$/.test(record.token)||typeof record.generation!=='string')throw new Error('工作台登记无效。')
-  const response=await fetch('http://127.0.0.1:'+record.controlPort+'/projects/'+action,{method:'POST',
+  const route=action==='window-pin'?'/window/pin':'/projects/'+action
+  const response=await fetch('http://127.0.0.1:'+record.controlPort+route,{method:'POST',
     headers:{'Content-Type':'application/json',Authorization:'Bearer '+record.token},body:JSON.stringify(payload),
     signal:AbortSignal.any([signal,AbortSignal.timeout(action==='presence'?20000:5000)]),redirect:'error'})
   const data=await response.json() as any

@@ -23,14 +23,23 @@ export function apply(ctx) {
       if(events.some(event=>event.type==='tool/result'&&event.data?.message?.source?.callId===script.id)) {
         yield* textChunks('Isolated workbench operation completed.');return
       }
-      if(!options.tools.some(tool=>tool.name===script.tool))throw Error('Tool missing from actual request: '+script.tool)
+      if(!options.tools.some(tool=>tool.name===script.tool))throw Error('Tool missing from actual request: '+script.tool
+        +' (available: '+options.tools.map(tool=>tool.name).sort().join(', ')+')')
       yield {type:'block-start',index:0,blockType:'tool-call'}
       yield {type:'block-end',index:0,block:{type:'tool-call',id:script.id,name:script.tool,arguments:JSON.stringify(script.args)}}
       yield {type:'finish',reason:{kind:'tool-calls'}}
     }
   }
   ctx.llm.registerAdapter([provider],new WorkbenchFixture())
-  ctx.on('agent/created',({agent})=>{agent.ctx.tools.presentAs('both')})
+  // DSH 0.2.1 has one presentation per agent (native or PTC), not the removed
+  // 'both' mode. Direct commands use native tools; the nested run_code check
+  // switches only that agent while it runs, then restores native.
+  const presentations=new Map()
+  const present=(agent,mode)=>{
+    presentations.get(agent)?.()
+    presentations.set(agent,agent.ctx.tools.presentAs(mode))
+  }
+  ctx.on('agent/created',({agent})=>present(agent,'native'))
   let active=false,handled
   ctx.effect(()=>{
     const timer=setInterval(async()=>{
@@ -58,17 +67,22 @@ export function apply(ctx) {
           response={ok:true,cwd:agent.session.header.cwd,events:agent.session.snapshotEvents()}
         } else {
           scripts.set(agent.id,input)
+          const presentation=input.tool==='run_code'?'ptc':'native'
+          present(agent,presentation)
           await ctx.sessionController.selectModel({sessionId:agent.id,provider,model})
-          await ctx.sessionController.prompt({sessionId:agent.id,requestId:randomUUID(),mode:'queue',
+          const prompted=await ctx.sessionController.prompt({sessionId:agent.id,requestId:randomUUID(),mode:'queue',
             content:[{type:'text',text:'Perform the isolated workbench fixture operation.'}]},signal)
           await agent.whenIdle()
+          if(presentation!=='native')present(agent,'native')
           const events=agent.session.snapshotEvents()
           if(input.tool===null) {
             scripts.delete(agent.id)
             response={ok:true,events}
           } else {
           const result=events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId===input.id)
-          if(!result)throw Error('The actual agent loop produced no expected tool receipt')
+          if(!result)throw Error('The actual agent loop produced no expected tool receipt'
+            +' (prompt='+JSON.stringify(prompted)+', status='+agent.status
+            +', events='+events.map(event=>event.type).join(',')+')')
           const nested=input.tool==='run_code'?events.filter(event=>event.type==='tool/ptc-dispatch'
             &&event.data.subCallId.startsWith(input.id+':')).at(-1):undefined
           const observed=executionResult(nested??result)

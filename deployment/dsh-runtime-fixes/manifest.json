@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "workspace-association-2",
+  "revision": "workbench-header-1",
   "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.1-rc.2",
@@ -181,5 +181,5 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "153d31a45eb2fbf3775194c933db2dcdc3b2641827c393fae77fc6e3fdd6f427"
+  "patchSha256": "57e118ddbe2440a41506ed338c126579f1fc5f56794a81be48a1b53f771da814"
 }

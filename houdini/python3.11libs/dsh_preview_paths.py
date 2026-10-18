@@ -132,10 +132,11 @@ def allocate_managed(
     stem = _label(stem or default_label)
     tag = _frame_tag(frame)
 
-    # Refuse an existing file/junction at either managed directory component;
+    # Refuse an existing file/junction at every managed directory component;
     # this is checked before mkdir so invalid context produces no allocation.
-    managed_base = expected_base
-    for component in (managed_base, expected_root):
+    component = hip
+    for part in os.path.relpath(expected_root, hip).split(os.sep):
+        component = os.path.join(component, part)
         if os.path.lexists(component) and not os.path.isdir(component):
             raise ValueError(f"managed visual-check directory is not a directory: {component}")
         if os.path.lexists(component) and not _inside(hip, component):

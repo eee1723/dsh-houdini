@@ -42,8 +42,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
             layout = observed['project_layout']
             assert layout == receipt['result']['project_layout'] and layout['available'] is True
             assert pathlib.Path(layout['project_root']).samefile(expected)
-            assert pathlib.Path(layout['directories']['texture']) == pathlib.Path(expected).resolve() / 'dsh-texture'
-            assert pathlib.Path(layout['directories']['documentation']) == pathlib.Path(expected).resolve() / 'dsh-docs'
+            assert pathlib.Path(layout['directories']['texture']) == pathlib.Path(expected).resolve() / 'dsh-artifacts/textures'
+            assert pathlib.Path(layout['directories']['documentation']) == pathlib.Path(expected).resolve() / 'dsh-artifacts/docs'
             assert not any(pathlib.Path(path).exists() for path in layout['directories'].values())
             hou.hipFile.clear(suppress_save_prompt=True)
             assert c.hip_file_state()['hip_dir'] is None

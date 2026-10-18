@@ -1,3 +1,4 @@
+import {fixturePresentation} from './fixture-presentation.mjs'
 // Real DSH composition and tool transport; only the remote image provider is an
 // owned loopback HTTP fixture. No model API, Houdini process or user data.
 import assert from 'node:assert/strict'
@@ -88,7 +89,7 @@ export function apply(ctx) {
     } catch(error) {fail(error);res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'owned fixture assertion failed'}}))}
   })
   const ready=new Promise((resolve,reject)=>{server.once('error',reject);server.listen(Number(new URL(base).port),'127.0.0.1',resolve)})
-  ctx.on('agent/created',({agent})=>{agent.ctx.tools.presentAs('both')})
+  const presentation=fixturePresentation(ctx)
   const chunks=text=>[{type:'block-start',index:0,blockType:'text'},{type:'block-end',index:0,block:{type:'text',text}},{type:'finish',reason:{kind:'stop'}}]
   async function validateImages(content,label) {
     const image=content.find(block=>block.type==='image'), file=content.find(block=>block.type==='file')
@@ -145,7 +146,7 @@ export function apply(ctx) {
           assert(event,'denied managed image must return through the native tool transport')
           assert.match(JSON.stringify(event.data),/outside the current DSH writable workspace/)
           assert.equal(requests.length,0,'workspace denial must happen before any provider request')
-          assert(!fs.existsSync(path.join(projects.B,'dsh-reference')),'denial must not create managed output directories')
+          assert(!fs.existsSync(path.join(projects.B,'dsh-artifacts/references')),'denial must not create managed output directories')
           const session=ctx.sessions.get(options.sessionId)
           assert.equal(ctx.sandboxPolicy.resolve({session}).mode,'workspace-write')
           // This is an explicit test-owner change through DSH's real session
@@ -180,7 +181,7 @@ export function apply(ctx) {
             'PTC model sees actual B path even after Save As to C')
           providerReads.push({step,transport:'ptc',image:true,fileHandle:true,actualPath:artifact.actual_path})
           assert.equal(requests.length,2,'one generation and one edit, without retry')
-          assert(!fs.existsSync(path.join(projects.C,'dsh-texture')),'in-flight Save As must not retarget the generated texture')
+          assert(!fs.existsSync(path.join(projects.C,'dsh-artifacts/textures')),'in-flight Save As must not retarget the generated texture')
           checks.push('in-flight Save As preserves B destination')
         }
         if(step===5) {
@@ -195,7 +196,7 @@ export function apply(ctx) {
           const event=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='image-5')
           const value=event?.data?.meta?.canonical,artifact=value?.artifact
           assert.equal(value.status,'saved');assert.equal(artifact.output_policy,'explicit')
-          assert.equal(canonical(artifact.actual_path),canonical(path.join(workspace,'dsh-texture/explicit.png')))
+          assert.equal(canonical(artifact.actual_path),canonical(path.join(workspace,'dsh-artifacts/textures/explicit.png')))
           for(const key of ['project_root','managed_root','hip_path','hip_relative_path','observed_identity'])assert.equal(artifact[key],null)
           assert.equal(sha(fs.readFileSync(artifact.actual_path)),sha(generated))
           await validateImages(event.data.message.content,'explicit')
@@ -207,7 +208,7 @@ export function apply(ctx) {
         if(step===7) {
           const delivery=events.filter(e=>e.type==='deliverables/presented')
           assert.equal(delivery.length,1);assert.equal(delivery[0].data.files.length,artifacts.length)
-          assert.deepEqual(delivery[0].data.files.map(f=>f.path),artifacts.map(artifact=>artifact.actual_path))
+          assert.deepEqual(delivery[0].data.files.map(f=>canonical(f.path)),artifacts.map(artifact=>canonical(artifact.actual_path)))
           checks.push('real present tool delivered returned actual paths for every generated file')
           yield* chunks('Owned image fixture completed.');return
         }
@@ -218,10 +219,11 @@ export function apply(ctx) {
           ['run_code',{code:'const value = await tools.image_generate('+JSON.stringify({provider:route,model,prompt:'Edit the uploaded fixture pixels.',
             purpose:'texture',output:'edited.png',references:[sourceRelative]})+'); return {ok:value.ok,output:value.output,artifact:value.artifact,sha256:value.sha256};',description:'Exercise real managed texture edit via PTC'}],
           ['image_generate',{provider:route,model,prompt:'Generate the owned fixture image.',output:'next.png'}],
-          ['image_generate',{provider:route,model,prompt:'Generate the owned fixture image.',output_policy:'explicit',output:'dsh-texture/explicit.png'}],
+          ['image_generate',{provider:route,model,prompt:'Generate the owned fixture image.',output_policy:'explicit',output:'dsh-artifacts/textures/explicit.png'}],
           ['present',{files:artifacts.map(artifact=>({path:artifact.actual_path,description:artifact.label}))}],
         ]
         const[name,args]=calls[step];assert(options.tools.some(tool=>tool.name===name),'mounted tool '+name)
+        presentation.after('image-'+step,calls[step+1]?.[0])
         yield{type:'block-start',index:0,blockType:'tool-call'}
         yield{type:'block-end',index:0,block:{type:'tool-call',id:'image-'+step,name,arguments:JSON.stringify(args)}}
         yield{type:'finish',reason:{kind:'tool-calls'}}

@@ -6,13 +6,17 @@ Only a local fixture server is used; never connects to the user's DSH or HIP.
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
+import os
 import sys
 import threading
 import time
 import urllib.parse
 
-from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer, Qt
-from PySide6.QtWidgets import QApplication
+if '--standalone' in sys.argv and sys.platform == 'win32':
+    dll_directory = os.add_dll_directory(str(Path(os.environ['HFS']) / 'bin'))
+
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer, Qt, QObject
+from PySide6.QtWidgets import QApplication, QWidget
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
@@ -123,7 +127,8 @@ def settle():
     return rows[-1]
 
 try:
-    webview.show_webview(session_id="task /中文?&", authenticated_url=base + "/?token=" + TOKEN)
+    standalone = '--standalone' in sys.argv
+    webview.show_webview(session_id="task /中文?&", authenticated_url=base + "/?token=" + TOKEN, standalone=standalone)
     webview.show_webview()  # Reopen before the initial auth/redirect has completed.
     observed = settle()
     assert len(requests) == 1, f"auth bootstrap loaded the app {len(requests)} times: {requests}"
@@ -144,10 +149,43 @@ try:
     flags = webview._window.windowFlags()
     assert not flags & Qt.WindowStaysOnTopHint and flags & Qt.WindowMinimizeButtonHint
     assert flags & Qt.WindowCloseButtonHint and flags & Qt.WindowSystemMenuHint
-    import hou
-    owner = hou.qt.mainWindow() if hou.isUIAvailable() else None
+    owner = None
+    if not standalone:
+        import hou
+        owner = hou.qt.mainWindow() if hou.isUIAvailable() else None
     assert webview._window.isWindow() and webview._window.parentWidget() is owner
     window, view = webview._window, webview._view
+    window.move(12000, 12000)
+    assert window.findChild(QWidget, 'windowTools') is None, 'no separate native toolbar row'
+    assert view.y() == 0 and view.height() == window.height(), 'the web page uses the entire client area'
+    page, request_count = view.page(), len(requests)
+    if sys.platform == 'win32' and app.platformName() == 'windows':
+        import ctypes
+        from ctypes import wintypes
+        user = ctypes.WinDLL('user32')
+        user.GetForegroundWindow.restype = wintypes.HWND
+        events = []
+        class WindowEvents(QObject):
+            def eventFilter(self, watched, event):
+                if event.type() in (QEvent.Hide, QEvent.Show, QEvent.WinIdChange):
+                    events.append(event.type())
+                return False
+        watcher = WindowEvents(window)
+        native_id = int(window.winId())
+        window.installEventFilter(watcher); view.installEventFilter(watcher)
+        geometry, view_geometry = window.geometry(), view.geometry()
+        assert webview.window_pin() == {'pinned': False}
+        for enabled in (True, True, False):
+            foreground = user.GetForegroundWindow()
+            assert webview.window_pin(enabled) == {'pinned': enabled}
+            app.processEvents()
+            assert int(window.winId()) == native_id and not events, 'pin must not hide/show/recreate native surfaces'
+            assert user.GetForegroundWindow() == foreground, 'pin must not change focus'
+            assert window.geometry() == geometry and view.geometry() == view_geometry
+            assert window.isVisible() and window.parentWidget() is owner
+            assert webview._view is view and view.page() is page and len(requests) == request_count
+        window.removeEventFilter(watcher); view.removeEventFilter(watcher)
+    assert window.windowFlags() == flags
     window.showMinimized()
     app.processEvents()
     assert window.isMinimized()
