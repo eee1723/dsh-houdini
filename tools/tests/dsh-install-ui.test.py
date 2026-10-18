@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
     assert window.windowFlags() & QtCore.Qt.WindowCloseButtonHint
     assert window.windowFlags() & QtCore.Qt.WindowSystemMenuHint
     assert window.parentWidget() is parent and window.isWindow()
-    assert visible_buttons(window) == ["检查更新", "高级设置"], visible_buttons(window)
+    assert visible_buttons(window) == ["检查更新", "报告问题 / 导出诊断包…", "高级设置"], visible_buttons(window)
     window.showMinimized()
     app.processEvents()
     assert window.isMinimized()
@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
         wait_until(refresh.isEnabled)
         assert "7.8.9" in labels(window)
         assert "源码开发 · 磁盘版本，未核验当前运行代码" in labels(window)
-        assert visible_buttons(window) == ["检查更新", "高级设置"], visible_buttons(window)
+        assert visible_buttons(window) == ["检查更新", "报告问题 / 导出诊断包…", "高级设置"], visible_buttons(window)
         assert window.windowTitle() == "DSH-Houdini · 版本与更新"
         assert window.height() < 420, window.height()
         assert window.grab().save(str(output / f"source-ui-{suffix}.png"))
