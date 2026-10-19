@@ -37,7 +37,8 @@ def allocate(hip, requested=None, *, owner='session-a', frame=3, output_policy='
 
 
 with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
-    base = Path(tmp)
+    # Fake the observed HIP from the fixture's physical root, not TEMP's 8.3 alias.
+    base = Path(tmp).resolve()
     hip = base / '项目 scene.hip'
     hip.touch()
     # Metadata is a read-only observation of the named HIP, not a workspace
