@@ -59,6 +59,9 @@ try:
     for record in records:
         health = request(record, '/health')
         assert health['executorId'] == record['executor_id']
+        assert record['workbench'] is True
+        assert record['scene_epoch'] == health['sceneEpoch']
+        assert len(record['scene_id']) == 32
     final_record = records[1]
     initial_final_hash = hashlib.sha256(Path(final_record['hip_path']).read_bytes()).hexdigest()
     final_owner = 'final-hip-reservation-test'
@@ -82,16 +85,14 @@ try:
     assert final_hash != initial_final_hash, 'explicit save did not replace the initial empty scene'
     wrong_target = str(Path(final_record['hip_path']).with_name('unreserved.hip'))
     wrong_ticket = request(final_record, '/requests/prepare', {'owner_session': final_owner})
-    wrong_code = ("__result__=scene_save_as(path=" + repr(wrong_target)
-                  + ",expected_current_path=" + repr(final_record['hip_path'])
-                  + ",reason='isolated writer reservation negative test')")
+    wrong_code = "__result__=scene_save(expected_path=" + repr(wrong_target) + ")"
     wrong_result = request(final_record, '/exec', {'owner_session': final_owner,
         'owner_call': 'reject-unreserved-save', 'request_ref': wrong_ticket['requestRef'],
         'expected_contract': {'version': wrong_ticket['executionContractVersion'],
                               'hash': wrong_ticket['verbCatalog']['hash']},
         'code': wrong_code})
     assert not wrong_result['ok'], wrong_result
-    assert 'writer reservation' in wrong_result.get('error', '')
+    assert 'expected_path' in wrong_result.get('error', '')
     assert not Path(wrong_target).exists()
     if '--gui' in sys.argv:
         record = records[0]

@@ -42,6 +42,8 @@
 
                 For multi-part assets, multi-subsystem simulation, cross-stage image processing or tool development use houdini-task-decomposition; for editable SOP construction use houdini-sop-workflow. Work on a useful part whose output can inform the next decision. Substantial construction code can live in source files and build native node networks; organizing code in functions does not require delivering the geometry as one Python node. Preserve the user's editing entry points.
 
+                Use DSH teammates for useful independent work and continue existing members when their context remains relevant. When a part needs its own Houdini experiment or saved-snapshot computation, use houdini-isolated-execution to run, observe and correct it independently. Keep shared inputs explicit; the current live author integrates the chosen result and verifies its effect in the whole project. Delegate according to the actual dependencies, without a fixed team size or a separate review role.
+
                 Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes precedence over ordinary construction preferences. Load rigging, parameter UI, tool development, COP and Solaris methods when those operations become current.
 
                 When choosing visible surface detail, use houdini-surface-workflow for reference decomposition, coordinates and SOP preview.

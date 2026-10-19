@@ -5,6 +5,7 @@ export const HOUDINI_TOOLS = {
   houdini_request: {scene:true,label:'查回执行',purpose:'回答某个未知响应的请求是否执行、是否完成；避免重复修改。',input:'原请求的request_ref；index仅列当前所选运行实例中本会话的回执。',output:'原执行状态与可取得的原始结果；不会重发代码。',execution:'Bridge请求记录，无HOM'},
   houdini_resource: {scene:false,label:'读取资料',purpose:'按需读取原始用户资料、完整历史工具结果及已归档加载警告。',input:'kind=source/result、ref及可选分页；result可选JSON Pointer。',output:'原文或JSON分页及继续读取位置。',execution:'DSH Host，无HOM'},
   houdini_capabilities: {scene:false,label:'观察通道',purpose:'确认当前模型能否接收图片，以及附件通道是否可用。',input:'无需参数。',output:'当前模型与附件能力事实；不会渲染或判断画面。',execution:'DSH Host，无HOM'},
+  houdini_isolated: {scene:false,label:'独立Houdini执行',purpose:'按需在新hython中执行构建脚本或已保存工程副本，取得真实检查、错误和图片，供当前作者或团队成员自验证。',input:'operation=run/read、manifest、全新output_dir；可选background、timeout_seconds、memory_mb。',output:'独立运行报告、输入版本、构建结果、检查和原生图片；后台使用DSH job_output/job_kill。',execution:'Host监管的一次性独立hython，不修改当前现场、不自动合并'},
   houdini_ui_list: {scene:true,label:'发现界面',purpose:'列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。',input:'无需参数；不打开或切换界面。',output:'当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。',execution:'Bridge主线程队列，只读发现'},
   houdini_ui_screenshot: {scene:true,label:'观察界面',purpose:'截图明确的当前可见界面；目标须完整在屏内且无遮挡。',input:'target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。',output:'真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。',execution:'Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态'},
   houdini_job_submit: {scene:true,label:'提交长任务',purpose:'把渲染、模拟或长计算放入Houdini队列并立即返回。',input:'Python代码；与exec相同的操作能力。',output:'jobId及提交回执。',execution:'Houdini串行队列'},

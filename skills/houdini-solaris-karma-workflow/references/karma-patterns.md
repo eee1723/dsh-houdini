@@ -117,11 +117,11 @@ COP 图层构建、关系与导出由按需加载的 `houdini-cop-workflow` 维�
 
 ## 保存快照上的长渲染
 
-需要长时间渲染、又要继续观察或编辑现场时，可用随包`tools/isolated-houdini-check.py`在独立hython处理已保存的快照；短交互预览仍使用现场`render_view`。先保存获授权的有效工程，manifest放在声明输入的共同根目录，例如`{"hip":"scenes/asset.hip","files":["otls/asset.hda"],"checks":[{"id":"day","kind":"render","node":"/stage/RENDER","frame":1,"file":"day.exr"}]}`。输入按原相对结构复制，检查产物写入新的run目录，原HIP不被保存覆盖。绝对外部依赖不会自动打包/重写，加载警告与声明依赖范围需单独阅读。
+需要长时间渲染、又要继续观察或编辑现场时，按需加载[独立执行skill](../../houdini-isolated-execution/SKILL.md)，用`houdini_isolated`的后台运行处理已保存快照；短交互预览仍使用现场`render_view`。先保存获授权的有效工程，manifest声明该HIP、所需依赖和实际ROP输出，按原相对结构复制；原HIP不被保存覆盖。具体参数与示例由独立执行skill维护，不在此复制另一套schema。绝对外部依赖不会自动打包/重写，加载警告与声明依赖范围需单独阅读。
 
-用所选Houdini的实际hython路径，通过DSH的后台`pwsh`运行`python <plugin>/tools/isolated-houdini-check.py --trusted --manifest <manifest> --hython <hython> --output-dir <新的run目录> --timeout 900 --memory-mb 4096`。这里的trusted沿当前用户已授权的工程计算范围；不执行未知来源的HIP回调。用DSH`job_output`收集命令终态；`--status --output-dir <run>`可独立读取已记录阶段/结果，`--cancel --output-dir <run>`只请求停止该run自有worker树。取消请求不是已取消，进度文件不是存活证明；不要因为界面安静就再提交同一任务。
+工具从所选Houdini取得运行版，后台回执给出原生DSH作业身份；用`job_output`等待、`job_kill`取消，随后以`operation="read"`读取同一run的报告和图片。取消请求不是已取消，进度文件不是存活证明；不要因为界面安静就再提交同一任务。在用户已授权的工程渲染与自验证范围内无需因独立进程再次批准；任务范围和资源选择仍按原要求。开发排错时可直接使用[隔离检查CLI](../../../docs/development.md#隔离执行与开发工具)，模型正常调用优先走Host工具。
 
-完成后核对`finished`、worker状态、各check、快照hash与产物；完整回执在`report.json`。结果只属于被复制的保存版本，不代表之后现场修改。按机器资源限制同时运行的重任务，优先在一个run中顺序执行有关检查；不要因多个子进程可启动就默认并发。临时依赖、Python/回调副作用和GPU资源不在快照恢复/内存上限保证内。
+完成后核对`finished`、worker状态、各check、快照hash与产物；完整回执在`report.json`。查看PNG/JPEG原生附件；EXR作为原始产物保留，需要识图时另产本地预览。结果只属于被复制的保存版本，不代表之后现场修改。按机器资源选择同时运行的重任务，相关检查可以在同一run顺序执行。临时依赖、Python/回调副作用和GPU资源不在快照恢复/内存上限保证内。
 
 ## 7. 官方参考
 

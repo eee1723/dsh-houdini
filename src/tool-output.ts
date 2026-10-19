@@ -248,9 +248,7 @@ function renderFields(value: ExecResult): string[] {
   if (value.result !== undefined && !help.some(item =>
     comparisonKey(item.result) === comparisonKey(value.result))) field('__result__', 'result')
   if (value.stdout) {
-    const stdout = Array.isArray(value.verbs) && value.verbs.length
-      ? value.stdout.split('\n').filter(line => !line.startsWith('[verb] ')).join('\n').trim()
-      : value.stdout
+    const stdout = executionStdout(value)
     if (stdout) parts.push(`stdout:\n${stdout}`)
   }
   if (verbs.length) {
@@ -297,6 +295,13 @@ function renderFields(value: ExecResult): string[] {
   if (value.advisory) parts.push(`hint:\n${value.advisory}`)
   field('result-details', 'details', false)
   return parts
+}
+
+/** Keep authored observations while omitting logger echoes already retained in the ledger. */
+export function executionStdout(value:Pick<ExecResult,'stdout'|'verbs'>):string {
+  const stdout=value.stdout??''
+  return Array.isArray(value.verbs)&&value.verbs.length
+    ?stdout.split('\n').filter(line=>!line.startsWith('[verb] ')).join('\n').trim():stdout
 }
 
 /** These two envelope lists contain audit identities, not operation results.

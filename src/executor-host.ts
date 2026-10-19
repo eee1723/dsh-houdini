@@ -43,10 +43,11 @@ export function apply(ctx:Context,config:Config):void {
       return candidates[index]?.executor_id
     })
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')
-  if(config.workbench)ctx.inject(['workspaceRegistry','sessionController','sessions'],scope=>{
-    new ExecutorController(scope,router,true)
+  // Selecting an existing conversation also uses these public services outside
+  // the desktop workbench. Declare them on the controller's exact scope.
+  ctx.inject(['workspaceRegistry','sessionController','sessions'],scope=>{
+    new ExecutorController(scope,router,config.workbench)
   })
-  else new ExecutorController(ctx,router)
 }
 
 /** Resolve afresh per call so unloaded/replaced services cannot remain cached in a preset. */

@@ -1,6 +1,6 @@
 # Houdini 工具说明
 
-本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。Houdini参数及执行以[src/tools.ts](../src/tools.ts)为准，Host生图以[image-generation](../src/image-generation.ts)、教程离线处理以[video-process](../src/video-process.ts)、转录以[video-transcription](../src/video-transcription.ts)为准。
+本页由[src/tool-catalog.ts](../src/tool-catalog.ts)生成，代码注册与Trace工具说明共用这一份职责目录。现场工具以[src/tools.ts](../src/tools.ts)、独立hython以[isolated-execution](../src/isolated-execution.ts)为准，Host生图以[image-generation](../src/image-generation.ts)、教程离线处理以[video-process](../src/video-process.ts)、转录以[video-transcription](../src/video-transcription.ts)为准。
 
 系统提供准确的场景信息、充分的批量操作、真实反馈和观察结果。理解需求、选择方法、安排步骤与判断效果由模型负责；领域知识按任务需要读取。
 
@@ -11,6 +11,7 @@
 | `houdini_request` · 查回执行 | 回答某个未知响应的请求是否执行、是否完成；避免重复修改。 | 原请求的request_ref；index仅列当前所选运行实例中本会话的回执。 | 原执行状态与可取得的原始结果；不会重发代码。 | Bridge请求记录，无HOM |
 | `houdini_resource` · 读取资料 | 按需读取原始用户资料、完整历史工具结果及已归档加载警告。 | kind=source/result、ref及可选分页；result可选JSON Pointer。 | 原文或JSON分页及继续读取位置。 | DSH Host，无HOM |
 | `houdini_capabilities` · 观察通道 | 确认当前模型能否接收图片，以及附件通道是否可用。 | 无需参数。 | 当前模型与附件能力事实；不会渲染或判断画面。 | DSH Host，无HOM |
+| `houdini_isolated` · 独立Houdini执行 | 按需在新hython中执行构建脚本或已保存工程副本，取得真实检查、错误和图片，供当前作者或团队成员自验证。 | operation=run/read、manifest、全新output_dir；可选background、timeout_seconds、memory_mb。 | 独立运行报告、输入版本、构建结果、检查和原生图片；后台使用DSH job_output/job_kill。 | Host监管的一次性独立hython，不修改当前现场、不自动合并 |
 | `houdini_ui_list` · 发现界面 | 列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。 | 无需参数；不打开或切换界面。 | 当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。 | Bridge主线程队列，只读发现 |
 | `houdini_ui_screenshot` · 观察界面 | 截图明确的当前可见界面；目标须完整在屏内且无遮挡。 | target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。 | 真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。 | Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态 |
 | `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini队列并立即返回。 | Python代码；与exec相同的操作能力。 | jobId及提交回执。 | Houdini串行队列 |

@@ -1,4 +1,4 @@
-"""Run a trusted builder or copied saved HIP and explicit checks in a NEW hython.
+"""Run a trusted builder or copied saved HIP, with optional checks, in a NEW hython.
 
 Never connects to live Houdini, edits the source HIP or retries
 an uncertain run. Isolation limits our worker tree, not arbitrary script side
@@ -7,6 +7,7 @@ effects, GPU allocations or external services. --trusted is required.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import math
@@ -21,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from houdini_test_environment import isolated_environment, launch_directory
 
-SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; explicit output checks only. '
+SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; optional explicit output checks. '
+         'Without checks, success proves only builder execution or snapshot loading. '
          'No live HIP edits, automatic retry or visual/semantic certification. '
          'Absolute-path, imported-code, callback and external-service side effects are not sandboxed/restored.')
 
@@ -105,7 +107,7 @@ def artifact_target(directory, check):
 def load_manifest(path):
     data = read_json(path)
     if not isinstance(data, dict) or set(data) - {'script', 'hip', 'files', 'checks'} or ('script' in data)==('hip' in data):
-        raise ValueError('manifest requires exactly one of script/hip, plus files? and checks')
+        raise ValueError('manifest requires exactly one of script/hip, plus optional files/checks')
     script = relative_file(data.get('script',data.get('hip')))
     if 'script' in data and not script.endswith('.py'):
         raise ValueError('script must be a trusted .py builder, not a HIP')
@@ -125,9 +127,9 @@ def load_manifest(path):
             raise ValueError('builder exceeds 1 MiB')
     if size > 2 * 1024 ** 3:
         raise ValueError('declared inputs exceed 2 GiB')
-    checks = data.get('checks')
-    if not isinstance(checks, list) or not 1 <= len(checks) <= 16:
-        raise ValueError('checks must contain 1..16 explicit operations')
+    checks = data.get('checks', [])
+    if not isinstance(checks, list) or len(checks) > 16:
+        raise ValueError('checks must contain 0..16 explicit operations')
     ids = set()
     for check in checks:
         if not isinstance(check, dict) or set(check) - {'id', 'kind', 'node', 'frame', 'file', 'expect'}:
@@ -162,7 +164,26 @@ def load_manifest(path):
             raise ValueError('render does not certify geometry counts')
         if any(type(value) is not int or value < 0 for value in expected.values()):
             raise ValueError('expected counts must be nonnegative integers')
+    data['checks'] = checks
     return data
+
+
+def builder_source(script):
+    """Keep script metadata in the injected namespace without hiding its code."""
+    source = script.read_text(encoding='utf-8')
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source  # The Bridge retains the original syntax error/envelope.
+    index = int(bool(tree.body and isinstance(tree.body[0], ast.Expr)
+                     and isinstance(tree.body[0].value, ast.Constant)
+                     and isinstance(tree.body[0].value.value, str)))
+    while index < len(tree.body) and isinstance(tree.body[index], ast.ImportFrom) and tree.body[index].module == '__future__':
+        index += 1
+    # Future imports must precede assignments. The full authored AST remains
+    # visible to Bridge preflight/Raw Gate; do not wrap it in exec(string).
+    tree.body[index:index] = ast.parse(f'__file__ = {str(script)!r}\n__name__ = "__main__"\n').body
+    return ast.unparse(tree)
 
 
 def worker(request_file):
@@ -226,7 +247,7 @@ def worker(request_file):
                     'scope':'Copied saved state only; unsaved live edits and undeclared external dependencies are not represented.'}
                 result['builder']=execute('__result__={"snapshot_loaded":True}', 'snapshot_loaded')
             else:
-                result['builder'] = execute(script.read_text(encoding='utf-8'), 'builder')
+                result['builder'] = execute(builder_source(script), 'builder')
                 successful(result['builder'])
             for check in manifest['checks']:
                 row = {'id': check['id'], 'kind': check['kind'], 'node': check['node'], 'frame': check['frame'], 'status': 'running'}
@@ -289,11 +310,11 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         raise ValueError('explicit trusted=True/--trusted authorization is required to execute the builder and dependencies')
     manifest_path, hython, output_dir = Path(manifest_path).resolve(), Path(hython).resolve(), Path(output_dir).resolve()
     manifest = load_manifest(manifest_path)
-    if output_dir.is_relative_to(ROOT):
-        raise ValueError('output directory must be outside the plugin repository')
     output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
+    cancel_file = Path(cancel_file).resolve() if cancel_file is not None else output_dir / 'cancel.request'
     run_id = uuid.uuid4().hex
-    report = {'ok': False, 'run_id': run_id, 'phase': 'staging', 'finished':False,'scope': SCOPE}
+    report = {'ok': False, 'run_id': run_id, 'phase': 'staging', 'finished':False,
+              'cancel_file': str(cancel_file), 'scope': SCOPE}
     write_json(output_dir / 'report.json',report)
     inputs = []
     try:
@@ -314,7 +335,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         from dsh_worker_limits import run_gated_worker
         process = run_gated_worker([str(hython), str(Path(__file__).resolve()), '--worker', str(request_file)],
                                   cwd=launch_directory(hython) if hython.is_file() else output_dir,
-                                  env=env, timeout=timeout, memory_mb=memory_mb, cancel_file=cancel_file or output_dir/'cancel.request')
+                                  env=env, timeout=timeout, memory_mb=memory_mb, cancel_file=cancel_file)
         report.update(phase='worker_result', worker=process)
         result_file = output_dir / 'worker-result.json'
         if result_file.exists():
@@ -386,18 +407,27 @@ def status(directory, cancel=False):
              else {'run_id':report.get('run_id'),'inputs':report.get('inputs',[])})
     if not re.fullmatch('[0-9a-f]{32}',str(report.get('run_id',''))):raise ValueError('invalid run report identity')
     if report.get('run_id')!=request.get('run_id'):raise ValueError('run report identity mismatch')
+    cancel_file=Path(report.get('cancel_file',directory/'cancel.request'))
     if cancel and report.get('finished') is not True:
-        write_json(directory/'cancel.request',{'run_id':request['run_id'],'action':'cancel_owned_worker'})
+        write_json(cancel_file,{'run_id':request['run_id'],'action':'cancel_owned_worker'})
     progress=read_json(directory/'worker-result.json') if (directory/'worker-result.json').exists() else None
     if progress is not None and progress.get('run_id')!=request['run_id']:raise ValueError('progress identity mismatch')
     result=report.get('result') or progress or {}
+    def brief(value):
+        if not isinstance(value,str) or len(value)<=2000:return value
+        return value[:2000]+'\n[Full error retained in report.json]'
+    worker=report.get('worker')
+    if isinstance(worker,dict):
+        # The report keeps worker output and complete execution errors. Status
+        # is a small machine-readable view, not a second execution ledger.
+        worker={key:brief(value) if key=='error' else value for key,value in worker.items() if key!='output'}
     return {'ok':report.get('ok') is True,'run_id':request['run_id'],'finished':report.get('finished') is True,
         'phase':report.get('phase') if report.get('finished') else result.get('phase',report.get('phase')),
-        'worker':report.get('worker'), 'error':report.get('error'),
-        'cancel_requested':(directory/'cancel.request').exists(),
+        'worker':worker, 'error':brief(report.get('error')),
+        'cancel_requested':cancel_file.exists(),
         'inputs':report.get('inputs',request['inputs']),'inputs_unchanged':report.get('inputs_unchanged'),
         'snapshot':result.get('snapshot'),
-        'checks':[{k:r[k] for k in ('id','kind','node','frame','status','geometry','artifact','error') if k in r}
+        'checks':[{k:brief(r[k]) if k=='error' else r[k] for k in ('id','kind','node','frame','status','geometry','artifact','error') if k in r}
                   for r in result.get('checks',[])],
         'report':str(directory/'report.json'),'progress':str(directory/'worker-result.json'),
         'scope':'Last recorded run evidence, not a live-process liveness claim. Cancellation is a request until a terminal report confirms it. Full execution evidence is in the report.'}
@@ -420,7 +450,7 @@ def main():
     parser.add_argument('--cancel',action='store_true',help='Request cancellation of this run only; does not start or retry work')
     args = parser.parse_args()
     if args.status or args.cancel:
-        print(json.dumps(status(args.output_dir,cancel=args.cancel),ensure_ascii=False,indent=2))
+        print(json.dumps(status(args.output_dir,cancel=args.cancel),ensure_ascii=False,separators=(',',':')))
         return 0
     if args.manifest is None or args.hython is None:parser.error('--manifest and --hython required for execution')
     try:
@@ -428,7 +458,7 @@ def main():
                        timeout=args.timeout, memory_mb=args.memory_mb, cancel_file=args.cancel_file)
     except Exception as error:
         result = {'ok': False, 'phase': 'preflight', 'error': str(error) or type(error).__name__}
-    print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, indent=2))
+    print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, separators=(',',':')))
     return 0 if result['ok'] else 1
 
 

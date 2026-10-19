@@ -53,12 +53,23 @@ set_parms(r,{'soppath':n.path()})
     assert success['worker']['status']=='completed' and success['worker']['released']
     assert len(success['result']['checks'])==3 and success['inputs_unchanged']
     assert success['result']['builder']['transaction']['status']=='committed'
+    state=runner.status(root/'success')
+    assert state['ok'] and state['finished'] and 'output' not in state['worker'],state
+    assert 'output' in success['worker'], 'full worker output belongs to the report'
     assert script.read_text(encoding='utf-8')==code
     original_report=(root/'success/report.json').read_bytes()
     try:run('success')
     except FileExistsError:pass
     else:raise AssertionError('existing evidence was overwritten')
     assert (root/'success/report.json').read_bytes()==original_report
+
+    # A developer workspace may be the checkout. Cook/cache evidence can use
+    # its new run directory; renderer output keeps its own repository boundary.
+    (ROOT/'tools/out').mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='dsh-isolated-workspace-',dir=ROOT/'tools/out') as workspace:
+        manifest(checks[:2])
+        workspace_run=runner.check(manifest_path,hython,Path(workspace)/'run',trusted=True)
+        assert workspace_run['ok'] and workspace_run['inputs_unchanged'],workspace_run
 
     manifest([checks[0]])
     again=run('another')
@@ -105,8 +116,7 @@ set_parms(r,{'soppath':n.path()})
         path=root/'cancel-running/worker-result.json'
         while time.monotonic()<deadline:
             if path.exists() and runner.read_json(path).get('phase')=='builder':
-                observed.append(True)
-                cancel.write_text('cancel', encoding='utf-8')
+                observed.append(runner.status(root/'cancel-running',cancel=True))
                 return
             time.sleep(.05)
     thread=threading.Thread(target=cancel_when_released)
@@ -115,6 +125,9 @@ set_parms(r,{'soppath':n.path()})
     finally:thread.join(timeout=35)
     assert observed and not stopped['ok'] and stopped['worker']['status']=='cancelled',stopped
     assert stopped['worker']['released'] and stopped['result']['phase']=='builder',stopped
+    assert observed[0]['cancel_requested'] and not observed[0]['finished'],observed
+    assert runner.status(root/'cancel-running')['cancel_requested'] and cancel.exists()
+    assert not (root/'cancel-running/cancel.request').exists(), 'custom cancellation path was ignored'
     timed=run('deadline',timeout=5)
     assert not timed['ok'] and timed['worker']['status']=='timed_out',timed
 

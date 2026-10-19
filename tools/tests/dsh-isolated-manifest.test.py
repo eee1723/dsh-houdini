@@ -26,11 +26,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     def save(value):file.write_text(json.dumps(value), encoding='utf-8')
     save(valid)
     assert runner.load_manifest(file)==valid
+    for probe in ({'script':'build.py'}, {'script':'build.py','checks':[]}):
+        save(probe)
+        assert runner.load_manifest(file)=={'script':'build.py','checks':[]}
     for path in ('../escape', '/absolute', 'C:/escape', 'a\\b', 'a//b', './a', 'a/../b',
                  'a.txt:stream', 'NUL.txt', 'COM1/x', 'COM¹.txt', 'CON .txt', 'a.', 'a/ tail', '$HIP/file', 'a\x00b'):
         rejects(lambda:runner.relative_file(path))
     invalid = [{**valid,'unknown':1}, {**valid,'script':'scene.hip'}, {**valid,'files':['build.py']},
-               {**valid,'files':['../outside']}, {**valid,'checks':[]}, {**valid,'checks':valid['checks']*2}]
+               {**valid,'files':['../outside']}, {**valid,'checks':None}, {**valid,'checks':valid['checks']*2},
+               {**valid,'checks':[{**valid['checks'][0],'id':'out'+str(i)} for i in range(17)]}]
     for override in ({'id':'con'}, {'frame':True}, {'frame':float('nan')}, {'kind':'python'},
                      {'node':'/obj/../out'}, {'expect':{'points':True}}, {'expect':{'points':-1}},
                      {'expect':{'bbox':1}}, {'file':'unexpected.bgeo'}, {'kind':'cache','file':'missing.exe'},

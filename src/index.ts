@@ -17,6 +17,7 @@ import {installHoudiniExecutionLog} from './dsh-adapter.js'
 import {installNodeDeliveryNavigation} from './node-delivery.js'
 import {registerImageTools} from './image-generation.js'
 import {registerVideoTools} from './video-transcription.js'
+import {registerIsolatedTool} from './isolated-execution.js'
 
 export const name = 'dsh-houdini'
 export const inject = ['tools', 'systemPrompt', 'skills', 'sessions']
@@ -59,6 +60,7 @@ const GUIDANCE: PromptSection = {
     'Result and recovery contract:\nTool results report execution, checks, restoration and files separately. Read failed or unsupported facts and retained result details when needed. Recover uncertain execution by its original request reference before retrying. HTTP timeout does not cancel native work or establish a process crash. houdini_request reads receipts without the HOM queue; scene queries and UI discovery/capture share that queue and may wait behind running work. A shell process listing only describes what that shell can observe, not whether the bound Houdini executor has exited. Undo covers only its stated scene effects. Images use DSH native attachments; image delivery and pixel checks do not establish visual understanding. Report unavailable visual understanding accurately.',
     '',
     'Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris, tutorials or network handoff. Construction and presentation methods belong to those skills; tool contracts do not select a modeling strategy.',
+    'Independent execution and teamwork:\nDSH owns teammate creation, messages and shared tasks. The selected live scene has one active author; disjoint node paths or Team write scopes do not grant another session write access. For independent construction experiments, local checks or saved-snapshot computation, load houdini-isolated-execution and use houdini_isolated. It starts a disposable headless Houdini using the selected installation, without claiming the live writer. Teammates can inspect their actual results, fix their files and rerun; the live author integrates the chosen result and observes its consumers. Independent success applies to its recorded inputs and checks, not to later live edits or overall visual quality.',
     '',
     'Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored to the actual named HIP; the DSH workspace may differ. Use directories.script for construction source and task scripts, with scratch probes in its scratch subdirectory. These share one artifact root with the other project roles; do not scatter new scripts at the project root. Use DSH file tools to write/edit source files, then execute needed Houdini operations through Bridge. Managed image generation selects reference or texture purpose and returns its actual path; explicit destinations keep DSH filesystem semantics and need no Houdini. Use the returned reference_downloaded directory when saving network reference images. Reusable tool resources and native Package JSON keep their chosen locations. Do not migrate or clean directories implicitly. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. New conversations opened from Houdini use its project directory; choosing another scene keeps the existing conversation workspace; runtime repair and Houdini restart use the documented menu with user authorization.',
   ].join('\n'),
@@ -75,6 +77,7 @@ export function apply(ctx: Context, config: Config) {
   registerHoudiniTools(ctx, connection)
   registerImageTools(ctx,connection)
   registerVideoTools(ctx,connection)
+  registerIsolatedTool(ctx,connection)
   installNodeDeliveryNavigation(ctx,connection)
   registerBundledSkills(ctx)
   ctx.systemPrompt.section(GUIDANCE)

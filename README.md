@@ -37,6 +37,7 @@ Host/Bridge/helper重载使用 **Version & Updates → 高级设置 → 运行�
 | 资料 | 用途 |
 |---|---|
 | [任务拆分](skills/houdini-task-decomposition/SKILL.md) | 按编辑目标和依赖逐模块构建、观察与集成 |
+| [独立执行](skills/houdini-isolated-execution/SKILL.md) | 团队成员按需用一次性hython自验证构建、工程副本和渲染 |
 | [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化模型、局部修改和几何观察 |
 | [表面外观](skills/houdini-surface-workflow/SKILL.md) | 参考图分析、表面细化程度、UV与统一SOP贴图预览 |
 | [COP（按需能力）](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层；完整材质与教程交付仍待验收 |

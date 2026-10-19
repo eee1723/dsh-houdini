@@ -3,7 +3,7 @@
 ## 运行边界
 
 dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器。TypeScript Host注册
-职责明确的工具；通过HTTP驱动一个已运行的Houdini，只有Houdini侧Python使用HOM。
+职责明确的工具；现场操作通过HTTP驱动已运行的Houdini，独立计算通过一次性hython执行明确文件，只有Houdini侧Python使用HOM。
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
@@ -34,6 +34,12 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 [节点片段交换](component-collaboration.md)维护component_export/import/replace的文件与显式替换能力。它不注册子Agent或提供另一种模式。
 
+### 一次性独立执行
+
+`houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
+
+DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。独立产物不自动合并，选定模块由现场作者显式导入并观察集成后的实际输出；未保存现场与未声明依赖不属于该副本的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
+
 ### 现役分层
 
 程序化建模、HDA/工具和视频教学工程共用执行内核，不各建一套状态机、权限层或完成证书。
@@ -62,7 +68,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 |---|---|
 | [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
 | [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配；PTC原回执在公开日志middleware外层定型，避免展示spill截坏审计JSON，不改变模型展示或执行值 |
-| [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离评测进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管 |
+| [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作、窗口置顶与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
@@ -78,6 +84,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
+| [src/isolated-execution.ts](../src/isolated-execution.ts) | houdini_isolated的一次性builder/已保存HIP副本执行与结果读取；消费当前任务文件权限和所选Houdini运行版，复用隔离检查器、DSH后台作业及原生附件，不绑定常驻子执行端或自动合并 |
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
@@ -298,7 +305,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；GUI验收CLI可隔离开发宿主的MSIX身份，保留自有进程树清理，不改变用户进程环境 |
-| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本或复制的已保存HIP在独立hython中的cook/cache/ROP；复用受限worker、Bridge与ownership，提供文件化进度/结果和取消，不连接live或覆盖原HIP |
+| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本或复制的已保存HIP在独立hython中的cook/cache/ROP；供houdini_isolated及开发CLI复用，保留输入身份、实际进度/结果、产物和取消，不连接live或覆盖原HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-preview-smoke.py](../tools/camera-preview-smoke.py) | 隔离真实renderer/GUI验收；预览入口核对取景、透明几何/实体背板合成与用户状态恢复，不代替任意材质的语义识图 |
 
 程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](product-modeling-evaluation.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

@@ -189,6 +189,13 @@ if old_context is not None:
 else:
     ctx, lease = store.activate(ident, "21.0", progress, bootstrap._prepare)
 install = Path(ctx["install"])
+inventory = d.read_json(install / "inventory.json")
+isolated_files = ["lib/isolated-execution.js", "tools/isolated-houdini-check.py",
+                  "tools/houdini_test_environment.py", "houdini/python3.11libs/dsh_worker_limits.py",
+                  "skills/houdini-isolated-execution/SKILL.md"]
+for relative in isolated_files:
+    name = "app/node_modules/dsh-houdini/" + relative
+    assert (install / name).is_file() and name in inventory, "signed bundle lacks isolated execution file: " + relative
 env = d.runtime_env(ctx)
 env["DSH_HOUDINI_MANAGED_CONTEXT"] = str(Path(ctx["runtimeDir"]) / "context.json")
 # A clean PATH verifies the app uses its bundled Node. Windows system tools
@@ -275,7 +282,7 @@ try:
                 presets=facts['roster']['presets']
                 assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
                 expected={'houdini_inspect','houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
-                    'houdini_job_submit','houdini_job_status','houdini_job_cancel'}
+                    'houdini_job_submit','houdini_job_status','houdini_job_cancel','houdini_isolated'}
                 assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
                 graph_rows=facts['graph'] if isinstance(facts['graph'],list) else facts['graph']['entries']
                 assert sum(row['id']=='dsh-houdini' for row in graph_rows)==1, facts

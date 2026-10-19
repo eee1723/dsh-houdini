@@ -181,7 +181,13 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 节点交付的定向入口为[Host路由](../tools/tests/node-delivery.test.mjs)、[原生/嵌套卡片投影](../tools/tests/node-delivery-client.test.mjs)、[持久标识HOM](../tools/tests/dsh-node-delivery.test.py)及[排队取消HTTP/HOM](../tools/tests/dsh-node-navigation-cancel.test.py)。跨层修改还需在精确DSH组合和新建的隐藏GUI进程中，由真实Agent工具循环产生原生/嵌套回执，选中对应任务点击实际卡片，回读网络/参数页；重开同HIP并改名后再点击旧卡片，切HIP核对错误提示，暂停队列后切任务并恢复队列核对旧导航没有生效。局部模拟通道不能替代这条连接；测试脚本、截屏、完整结果和运行目录留在仓库外证据目录。服务框保存重开由[服务框回归](../tools/tests/dsh-render-service-box.test.py)核对标题、固定边界、真实成员与用户节点位置。
 
-## 隔离开发工具
+## 隔离执行与开发工具
+
+`houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与所选Houdini只读health，复用下述隔离检查器执行builder或已保存HIP副本，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取既有报告与图片，不连接live。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
+
+验证该入口时，先核对实际文件范围、声明依赖、输入未改、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
+
+直接入口为[Host适配](../tools/tests/isolated-execution.test.mjs)、[无输出探针](../tools/tests/dsh-isolated-probe.test.py)及[真实团队循环](../tools/tests/dsh-isolated-tool-loop.test.py)。团队循环用`--runtime-cache <精确DSH> --hython <目标hython>`启动独立Host和原生队友，覆盖预检/构建错误、真实Karma图、原生及PTC读图、DSH作业取消和同源报告；规划模型由本地夹具控制，不证明语义判断或自然采用。Windows入口复用无包身份测试CLI；外层受限令牌不支持再次创建DSH沙箱时，测试驱动需从正常桌面令牌运行，DSH内部仍保持workspace-write，不通过扩大模型权限证明默认路径。
 
 模型对照用run-modeling-trial的`--reasoning-effort`与统一的`--max-output-tokens`固定请求参数；自定义PI模型确需声明能力时，另显式传`--reasoning-wire-value`，只改隔离副本。开始模型请求前核对原生resolveModelInfo的实际defaultEffort。缺推理声明不等于后端没有推理：适配器可能只省略推理参数，不能从模型名称补造能力。回环HTTP测试[dsh-image-consumption-fixture](../tools/tests/dsh-image-consumption-fixture.mjs)核对真实reasoning_effort、附件身份及请求变体；实际模型语义另验。`--smoke --scripted-smoke --smoke-continuity --followup <文件>`通过真实DSH和Houdini跑两轮同网络创建/修改，模型流完全本地拦截；[共享连接反例](../tools/tests/dsh-shared-continuity.test.py)保留其他执行端/工程及跨进程动作拒绝。
 
@@ -199,7 +205,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json
 ```
 
-[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在独立进程执行可信builder或明确保存HIP的副本，经Bridge完成cook/cache/ROP检查。manifest在script与hip中二选一，files保留声明依赖的相对结构，checks指定实际输出；`--trusted`沿用户授权的工程/代码计算范围，不是未知HIP的沙箱。产物目录是仓库外的新目录，report.json与worker-result.json保留来源hash、实际执行、部分进度和产物。`--status --output-dir <run>`只读最后记录，不当作进程存活；`--cancel --output-dir <run>`请求停止该run自有进程树，不启动或重试任务。默认取消文件在run内，原输入保持核对，未保存现场和未声明外部依赖不包含在快照证明中。
+[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在独立进程执行可信builder或明确保存HIP的副本，经Bridge完成cook/cache/ROP检查。manifest在script与hip中二选一，files保留声明依赖的相对结构，checks可选；省略时仅证明builder执行或副本加载，额外断言和观察由builder承担。`--trusted`沿用户授权的工程/代码计算范围，不是未知HIP的沙箱。产物使用新的运行目录；渲染继续遵守媒体输出合同，不以插件源码目录为目的地。report.json与worker-result.json保留来源hash、实际执行、部分进度和产物。`--status --output-dir <run>`只读最后记录，不当作进程存活；`--cancel --output-dir <run>`请求停止该run自有进程树，不启动或重试任务。默认取消文件在run内，Host可提供本次专用标记；原输入保持核对，未保存现场和未声明外部依赖不包含在快照证明中。
 
 [快照回归](../tools/tests/dsh-snapshot-worker.test.py)在H21/H22核对真实图像/ROP、来源不变、缺输出、启动前/运行中取消；[输入回归](../tools/tests/dsh-isolated-manifest.test.py)覆盖状态身份和不完整回执。大型最终输出的[选择回归](../tools/tests/dsh-scoped-observation.test.py)使用百万面背景与明确目标组，验证正例、错尺寸、无组拒绝和未选部件漂移。整件恢复使用[流式BJSON指纹](../houdini/python3.11libs/dsh_bgeo_fingerprint.py)，按本机SideFX `UT_JSONDefines.h`读取；[指纹反例](../tools/tests/dsh-bgeo-fingerprint.test.py)验证写入时间可变化，但与日期共用字符串token的用户属性仍不能被忽略。大型流指纹不承诺任意编码/属性表布局变更等价；无法建立相同完整内容时保留恢复未确认。
 
@@ -207,7 +213,7 @@ python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D
 python tools/isolated-houdini-check.py --trusted --manifest path/to/check.json --hython D:/houdini/bin/hython.exe --output-dir D:/checks/run-001 --timeout 120 --memory-mb 4096
 ```
 
-[isolated-worker.py](../tools/isolated-worker.py)及 [Houdini worker](../houdini/python3.11libs/dsh_isolated_worker.py)是开发评测使用的自有新进程入口；[worker 回归](../tools/tests/dsh-isolated-worker.test.py)验证明确 IPC、启动与回收。[delivery-audit](../tools/delivery-audit.mjs)只在开发评测中从会话回执读取交付事实。它们不进入模型的生产工具目录。
+[isolated-worker.py](../tools/isolated-worker.py)及 [Houdini worker](../houdini/python3.11libs/dsh_isolated_worker.py)提供开发评测使用的独立Bridge进程；[worker 回归](../tools/tests/dsh-isolated-worker.test.py)验证明确IPC、启动与回收。生产的一次性Host工具调用上述checker与受限进程执行器，不为模型挂载常驻Bridge。[delivery-audit](../tools/delivery-audit.mjs)只在开发评测中从会话回执读取交付事实，不进入模型的生产工具目录。
 
 隔离工具通过自有进程句柄和 Windows Job 管理超时、取消及进程树内存。报告与退出状态都要读取；不把启动成功当作负载完成。任意 Python、回调、绝对路径文件和外部服务的副作用不属于场景恢复保证。
 

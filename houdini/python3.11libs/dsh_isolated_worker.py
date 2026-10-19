@@ -44,7 +44,9 @@ def start():
         hou.hipFile.load(seed.as_posix(), suppress_save_prompt=True, ignore_load_warnings=True)
     hou.hipFile.save(hip.as_posix())
     bridge.start(0)
-    facts = prepare_registration()
+    # Development trials use the same explicit scene identity contract as the
+    # current workspace entry, including epoch checks before model admission.
+    facts = prepare_registration(workbench=True, workspace=str(workspace))
 
     def publish():
         try:

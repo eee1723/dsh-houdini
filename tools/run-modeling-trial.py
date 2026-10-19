@@ -398,6 +398,14 @@ def run_trial(result: dict) -> None:
         result['actualPermissions'] = verify_trial_permissions(baseline, records, args.approval_policy)
         def owned_bridge_exec(code,call):
             headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']}
+            # Scene selection deliberately grants no write permission. This
+            # trusted setup acts as the exact trial session on its owned worker.
+            request=urllib.request.Request(record['bridge_url']+'/executor/claim',
+                data=json.dumps({'task_id':session_id,'registration_id':record['registration_id'],
+                    'expected_hip':str(hip)}).encode(),headers=headers)
+            with urllib.request.urlopen(request,timeout=20) as response:claim=json.load(response)
+            if claim.get('ok') is not True:
+                raise RuntimeError('Owned trial setup could not claim its writer: '+str(claim.get('error')))
             request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
                 data=json.dumps({'owner_session':session_id}).encode(),headers=headers)
             with urllib.request.urlopen(request,timeout=20) as response:ticket=json.load(response)
@@ -409,8 +417,9 @@ def run_trial(result: dict) -> None:
         setup_module=str(DRIVER_ROOT/'tools/tests/modeling-trial-gui-setup.py')
         setup=owned_bridge_exec('import runpy\n__result__=runpy.run_path('+repr(setup_module)+
             ')["dismiss_owned_start_here"]()','trial-owned-gui-setup')
+        write_json(RAW/'owned-gui-setup.json',{'request':setup})
         if not setup.get('ok') or setup['result']['pid']!=record['pid']:
-            raise RuntimeError('Owned GUI welcome setup identity failed before any model request')
+            raise RuntimeError('Owned GUI welcome setup identity failed before any model request: '+str(setup.get('error','unexpected process identity'))[:2000])
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
             observation=owned_bridge_exec('import runpy\n__result__=runpy.run_path('+repr(setup_module)+
