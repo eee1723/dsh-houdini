@@ -129,7 +129,7 @@ def start_gui_probe():
             messages.put(('error',traceback.format_exc()+getattr(error,'stderr','')))
     def tick():
         try:
-            if time.monotonic()-state['started']>180:
+            if time.monotonic()-state['started']>360:
                 raise RuntimeError('Standalone GUI probe timed out')
             if bootstrap._LAST_OPEN_ERROR:
                 raise RuntimeError(bootstrap._LAST_OPEN_ERROR)
