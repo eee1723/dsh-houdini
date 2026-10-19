@@ -1,3 +1,67 @@
+diff --git a/packages/api/gateway/src/stream-server.ts b/packages/api/gateway/src/stream-server.ts
+index ad44e0907f..cf0517483b 100644
+--- a/packages/api/gateway/src/stream-server.ts
++++ b/packages/api/gateway/src/stream-server.ts
+@@ -46,6 +46,7 @@ export class RemoteStreamMuxServer {
+   private readonly server = new WebSocketServer({ noServer: true })
+   private readonly connections = new Set<Promise<void>>()
+   private readonly missedHeartbeats = new WeakMap<WebSocket, number>()
++  private readonly heartbeatWrites = new WeakMap<WebSocket, { pending: boolean; buffered: number }>()
+   private heartbeatTimer: NodeJS.Timeout | undefined
+ 
+   /**
+@@ -76,6 +77,7 @@ export class RemoteStreamMuxServer {
+       if (release === undefined) return
+       const alive = (): void => { this.missedHeartbeats.set(websocket, 0) }
+       alive()
++      this.heartbeatWrites.set(websocket, { pending: false, buffered: 0 })
+       this.startHeartbeat()
+       const bound: BoundStreamOpener = (endpoint, payload, uplink, control, window) =>
+         this.open(endpoint, payload, uplink, peer, control, window)
+@@ -110,17 +112,42 @@ export class RemoteStreamMuxServer {
+     this.heartbeatTimer = setInterval(() => {
+       for (const socket of this.server.clients) {
+         if (socket.readyState !== WebSocket.OPEN) continue
++        const write = this.heartbeatWrites.get(socket) as { pending: boolean; buffered: number }
++        const buffered = socket.bufferedAmount
++        // A large frame may take several heartbeat periods to flush. Its
++        // decreasing send queue is real transport progress even before the
++        // frame's completion callback (or the Pong queued behind it) can run.
++        if (write.buffered > buffered) this.missedHeartbeats.set(socket, 0)
++        write.buffered = buffered
+         const missed = this.missedHeartbeats.get(socket) as number
+         if (missed >= MAX_MISSED_HEARTBEATS) {
+           setImmediate(() => {
++            if (socket.readyState !== WebSocket.OPEN) return
++            if (socket.bufferedAmount < write.buffered) {
++              write.buffered = socket.bufferedAmount
++              this.missedHeartbeats.set(socket, 0)
++              return
++            }
+             if ((this.missedHeartbeats.get(socket) as number) >= MAX_MISSED_HEARTBEATS) {
++              console.warn('[api-gateway] Remote stream heartbeat timeout', {
++                at: new Date().toISOString(), bufferedBytes: socket.bufferedAmount,
++                pingWritePending: write.pending,
++              })
+               socket.terminate()
+             }
+           })
+           continue
+         }
+         this.missedHeartbeats.set(socket, missed + 1)
+-        socket.ping()
++        // Do not pile up Pings behind a blocked data write. A stalled queue
++        // still expires through the same missed-heartbeat policy above.
++        if (!write.pending) {
++          write.pending = true
++          socket.ping(undefined, undefined, (error?: Error) => {
++            write.pending = false
++            if (error && socket.readyState === WebSocket.OPEN) socket.terminate()
++          })
++        }
+       }
+     }, this.heartbeatIntervalMs)
+     this.heartbeatTimer.unref()
 diff --git a/packages/api/session-controller/src/client/sessions/manager.ts b/packages/api/session-controller/src/client/sessions/manager.ts
 index b8bec9be8a..163f286702 100644
 --- a/packages/api/session-controller/src/client/sessions/manager.ts

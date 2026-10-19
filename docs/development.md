@@ -64,6 +64,8 @@ npm run docs:check
 
 [系统网络检查](../tools/tests/dsh-system-proxy-check.mjs)接收配套缓存根目录，使用隔离设置快照与真实Windows PAC API验证新请求切换和已选路线保持，不改当前用户注册表。
 
+[Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。完整Qt长会话重放和原故障的现场复现分别记录；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
+
 DSH运行修复的源码、上游提交和编译包清单由[修复声明](../deployment/dsh-runtime-fixes/manifest.json)维护；`npm run runtime:prepare`准备独立缓存。[运行修复反例](../tools/tests/dsh-runtime-fixes-check.mjs)接受该缓存根目录，实测Windows权限保持/回滚、内核拒绝、只读诊断、文件策略与网络边界。[网络全流程](../tools/tests/dsh-network-workflow.test.py)使用 `--runtime-cache <根目录>` 跟随Windows系统网络；可选 `--proxy <明确HTTP代理>` 仅在隔离测试数据中覆盖路线。该测试以受控回复驱动真实DSH网页取证、下载、读图和普通/嵌套调用；`--browser-module <Playwright入口>`另检查真实选中任务和命令退出状态。测试只访问公开资料，不调用收费模型；这些结果不证明自主模型选择或所有外部网站可用。
 
 [目录接续组合](../tools/tests/dsh-workspace-continuity.test.py)使用`--runtime-cache <根目录>`启动原生DSH，检查会话/历史保持、实际文件工具与附件搜索、新目录范围和写入失败；提交中断后验证原生迁移恢复。

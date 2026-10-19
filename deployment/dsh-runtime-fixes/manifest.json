@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "workbench-header-1",
+  "revision": "workbench-transport-2",
   "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.1-rc.2",
@@ -17,6 +17,14 @@
     "tools/build-dsh-runtime-fixes.mjs"
   ],
   "hostPackages": [
+    {
+      "source": "api/gateway",
+      "name": "api-gateway",
+      "entries": [
+        "index",
+        "stream-protocol"
+      ]
+    },
     {
       "source": "core/session",
       "name": "session",
@@ -181,5 +189,5 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "57e118ddbe2440a41506ed338c126579f1fc5f56794a81be48a1b53f771da814"
+  "patchSha256": "df4ae31bc8f51a9dd9397a2e1753345c721d3b593d85ae5a5a75e741913d3957"
 }
