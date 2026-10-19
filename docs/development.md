@@ -40,7 +40,11 @@
 
 启动反馈用[真实 Qt 阶段检查](../tools/tests/dsh-workbench-startup.test.py)传目标 HFS 目录，验证窗口在准备结束前显示、GUI 定时器继续运行、真实阶段/计时、后台等待与失败传递；准备函数用受控等待替代，不据此宣称正式包启动性能。登录外链用[Qt 登录窗口检查](../tools/tests/dsh-external-links-qt.test.py)重复传 `--python <Houdini普通Python>`，直接消费精确 DSH 的 BrowserLogin，核对预开空页、延迟地址、取消和主页面保持，系统浏览器交接被截获；账户授权与真实回调仍需独立验证。两者仅创建自己的临时目录与 Qt 进程，不连接用户现场。安装注册使用[安装器回归](../tools/tests/dsh-installer-bootstrap.test.py)核对跨磁盘覆盖、手删目录修复、实际偏好记录、解除注册归属和用户数据保留；版本页操作沿 `dsh-install-ui` 定向检查。
 
-工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对明确选定现场、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
+工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对明确选定现场、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。
+
+原生Houdini冷启动使用独立的240秒验收预算，可用`--native-startup-timeout`显式指定；前端、RPC及其他等待预算不随之扩大，也不改产品的启动行为。`--profile-native-startup`为测试创建的原生进程启用[SideFX启动性能记录](https://www.sidefx.com/docs/houdini/ref/commandline.html)，将性能文件、GUI就绪／连接／实际前端选中时间及等待反馈留在隔离目录；最终结果必须同时核对完整断言、退出码与自有进程清理，不能用单条工具成功代替整条入口通过。
+
+[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
 
 独立工作台使用[隔离组合验收](../tools/tests/dsh-workbench.test.py)：普通Python/Qt桌面、真实DSH持久与preset、H21/H22 Bridge、同目录不同HIP、重复打开、实际浏览器选中对话及目录、工具修改/另存、单端崩溃、手动重开原工程和工作台重启保留历史。本地脚本提供方驱动实际Agent循环生成原生/嵌套回执与可冷加载日志，不调用外部模型；不证明模型自主行为或正式签名安装组合。测试的Qt调试端口仅属于该隔离进程，正常运行不主动启用。受管安装入口仍需随新版bootstrap和签名运行包单独验收。
 

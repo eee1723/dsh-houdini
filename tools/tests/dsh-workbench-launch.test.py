@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib.util
 import json
+import math
 import os
 import shutil
 import socket
@@ -74,8 +75,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--runtime-cache', type=Path, default=None)
     parser.add_argument('--standalone-only', action='store_true')
+    # Native cold initialization may exceed the ordinary RPC/UI waits;
+    # keep its budget independent, without changing product startup behavior.
+    parser.add_argument('--native-startup-timeout', type=float, default=240, help='Native Houdini cold-start budget only; other waits are unchanged')
+    parser.add_argument('--profile-native-startup', action='store_true', help='Profile only owned native Houdini startup and sample its real Qt waiting feedback')
     parser.add_argument('--hfs', help='Use this installed Houdini for both Qt desktop and native project windows')
     args = parser.parse_args()
+    if not math.isfinite(args.native_startup_timeout) or args.native_startup_timeout <= 0:
+        parser.error('--native-startup-timeout must be a finite positive number')
     installed = discover(args.hfs)
     assert installed, 'This GUI check needs an installed Houdini'
     desktop_installation = installation(args.hfs) if args.hfs else installed[0]
@@ -92,7 +99,7 @@ def main():
         prefs = Path(env['HOUDINI_USER_PREF_DIR'].replace('__HVER__', version))
         hook = prefs / ('python' + python + 'libs/uiready.py')
         hook.parent.mkdir(parents=True)
-        hook.write_text("import importlib.util\nspec=importlib.util.spec_from_file_location('launch_probe'," + repr(str(Path(__file__).resolve())) + ")\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodule.gui_probe()\n", encoding='utf-8')
+        hook.write_text(("import os\nfrom pathlib import Path\nPath(os.environ['DSH_WORKBENCH_TEST_ROOT'],'uiready-entered-'+str(os.getpid())).touch()\n" if args.profile_native_startup else "") + "import importlib.util\nspec=importlib.util.spec_from_file_location('launch_probe'," + repr(str(Path(__file__).resolve())) + ")\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodule.gui_probe()\n", encoding='utf-8')
         save_hook = prefs / 'scripts/afterscenesave.py'
         save_hook.parent.mkdir(parents=True, exist_ok=True)
         save_hook.write_text("import os\nfrom pathlib import Path\nPath(os.environ['DSH_WORKBENCH_TEST_ROOT'],'save-hook-'+str(os.getpid())).write_text(str(kwargs.get('success')))\n", encoding='utf-8')
@@ -107,10 +114,58 @@ def main():
     os.environ.clear()
     os.environ.update(env)
     output = (folder / 'desktop.log').open('wb')
-    desktop = subprocess.Popen([config['python'], str(ROOT / 'tools/tests/workbench-desktop-driver.py'), str(folder / 'config.json')],
+    driver = ROOT / 'tools/tests/workbench-desktop-driver.py'
+    if args.profile_native_startup:
+        # Test-only instrumentation around the real driver and production launch.
+        # Profiles and GUI samples stay in this fixture; no HFS/prefs are changed.
+        wrapper = folder / 'profile-desktop-driver.py'
+        wrapper.write_text("""import json, os, runpy, subprocess, sys, time
+from pathlib import Path
+sys.path.insert(0, %r)
+import dsh_workbench_projects as projects
+folder = Path(os.environ['DSH_WORKBENCH_TEST_ROOT'])
+original_spawn, original_dialog = subprocess.Popen, projects.show_project_dialog
+samples, dialog_serial = [], 0
+def profiled_spawn(args, **kwargs):
+    if str(args[0]).lower().endswith('houdini.exe'):
+        ticket = Path(kwargs['env']['DSH_HOUDINI_LAUNCH_TICKET'])
+        args = [args[0], '-profile-startup=' + str(ticket.with_suffix('.hperf')), *args[1:]]
+    return original_spawn(args, **kwargs)
+def sampled_dialog(*args, **kwargs):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QLabel, QPushButton
+    global dialog_serial
+    dialog = original_dialog(*args, **kwargs)
+    dialog_serial += 1
+    serial, started, seen = dialog_serial, time.monotonic(), set()
+    timer = QTimer(dialog)
+    def sample():
+        elapsed = time.monotonic() - started
+        slot = int(elapsed // 10)
+        if elapsed < 50 or slot in seen or len(seen) >= 3:
+            return
+        seen.add(slot)
+        samples.append({'dialog': serial, 'elapsedSeconds': round(elapsed, 3), 'observedAt': time.time(),
+            'visible': dialog.isVisible(), 'enabled': dialog.isEnabled(),
+            'labels': [label.text() for label in dialog.findChildren(QLabel)],
+            'buttons': [{'text': button.text(), 'enabled': button.isEnabled()} for button in dialog.findChildren(QPushButton)]})
+        (folder / 'native-progress-samples.json').write_text(json.dumps(samples, ensure_ascii=False, indent=2), encoding='utf-8')
+    timer.timeout.connect(sample)
+    dialog.finished.connect(lambda *_: timer.stop())
+    timer.start(1000)
+    return dialog
+subprocess.Popen = profiled_spawn
+projects.show_project_dialog = sampled_dialog
+sys.argv = [%r, %r]
+runpy.run_path(sys.argv[0], run_name='__main__')
+""" % (str(ROOT / 'houdini/python3.11libs'), str(driver), str(folder / 'config.json')), encoding='utf-8')
+        driver = wrapper
+    desktop = subprocess.Popen([config['python'], str(driver), str(folder / 'config.json')],
         cwd=str(Path(config['hfs']) / 'bin'), env=desktop_environment(config['hfs'], config['python'], debug_port),
         stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
     record = None
+    native_timings = []
+    test_result = None
     project_temp = tempfile.TemporaryDirectory(prefix='dsh-new-project-')
     def wait(predicate, seconds=120):
         deadline = time.monotonic() + seconds
@@ -135,13 +190,19 @@ def main():
         (folder / 'dialog-choice.json').write_text(json.dumps({'hfs': str(Path(version)), **({'hip': str(hip)} if hip else {})}), encoding='utf-8')
         entry = browser(action, label + '-entry')
         try:
-            wait(lambda: any(item['id'] not in known for item in receipts()), 15)
+            first_seen = wait(lambda: next((item for item in receipts() if item['id'] not in known), None), 15)
+            timing = {'id': first_seen['id'], 'label': label, 'firstObservedAt': time.time(), 'createdAt': first_seen['createdAt'], 'budgetSeconds': args.native_startup_timeout}
+            native_timings.append(timing)
         except AssertionError as error:
             raise AssertionError(entry.get('afterText', str(error))) from error
-        value = wait(lambda: next((item for item in receipts() if item['id'] not in known and item['phase'] in ('ready', 'failed')), None))
+        value = wait(lambda: next((item for item in receipts() if item['id'] not in known and item['phase'] in ('ready', 'failed')), None), args.native_startup_timeout)
+        timing['readyObservedAt'] = time.time()
+        timing['readyElapsedSeconds'] = round(timing['readyObservedAt'] - timing['createdAt'], 3)
         assert value['phase'] == 'ready', value
         assert (folder / ('gui-ready-' + str(value['pid']))).is_file(), 'the private hook must coexist with the original GUI startup hook'
         selected = browser('state', label, 'ready', value['result']['sessionId'], value['result']['executorId'])
+        timing['consumerConfirmedAt'] = time.time()
+        timing['consumerElapsedSeconds'] = round(timing['consumerConfirmedAt'] - timing['createdAt'], 3)
         assert selected['selectedTarget']['executor_id'] == value['result']['executorId']
         assert selected['selectedTarget']['runtime_id'] == value['result']['selectedTarget']['runtime_id']
         assert len([item for item in receipts() if item['id'] not in known]) == 1, 'double submit started multiple Houdini processes'
@@ -184,6 +245,7 @@ def main():
         if initial.get('selection'):
             assert Path(initial['selection']['cwd']).resolve() != ROOT
         if args.standalone_only:
+            test_result = {'ok': True, 'standaloneOnly': True}
             print('PASS standalone native workbench and user-directory isolation: ' + str(folder), flush=True)
             return
         hfs = desktop_installation['hfs']
@@ -261,12 +323,14 @@ def main():
         changed = choose(opened_session, fresh, 'changed-scene-explicit-selection')
         assert changed['selectedTarget']['hip_is_new'] is True
         assert control(record, 'status')['record']['pid'] == desktop.pid
-        atomic_json(folder / 'result.json', {'ok': True, 'houdini': desktop_installation['version'],
+        test_result = {'ok': True, 'houdini': desktop_installation['version'],
             'nativeNew': True, 'nativeOpen': True, 'explicitReopen': True, 'selectedExactInstance': True,
             'manualRetargetPreservesCwd': True, 'clearStaysUnbound': True, 'cancelAndDoubleClick': True,
-            'reuseLiveFileWindow': True, 'sceneChangeRequiresSelection': True})
+            'reuseLiveFileWindow': True, 'sceneChangeRequiresSelection': True}
+        atomic_json(folder / 'result.json', test_result)
         print('PASS ' + series + ' actual workbench native New/Open/Reopen, exact selected targets, explicit retarget with unchanged cwd, clear, cancel/double launch, live-file window reuse and changed-scene selection: ' + str(folder), flush=True)
     finally:
+        failure = sys.exc_info()[1]
         for item in receipts():
             if item.get('pid') and _process_started(item['pid']) == item.get('processStarted'):
                 (folder / ('close-' + str(item['pid']))).touch()
@@ -289,6 +353,39 @@ def main():
                 desktop.terminate()
                 desktop.wait(timeout=10)
         output.close()
+        for timing in native_timings:
+            ticket_path = Path(config['root']) / 'workbench/launches' / (timing['id'] + '.json')
+            ticket = json.loads(ticket_path.read_text(encoding='utf-8'))
+            timing.update(pid=ticket.get('pid'), phase=ticket['phase'])
+            for key, name in [('guiHookEnteredAt', 'uiready-entered-'), ('guiReadyAt', 'gui-ready-')]:
+                marker = folder / (name + str(ticket.get('pid')))
+                if marker.is_file():
+                    timing[key] = marker.stat().st_mtime
+                    timing[key.replace('At', 'ElapsedSeconds')] = round(timing[key] - timing['createdAt'], 3)
+            if ticket.get('callback'):
+                timing['attachCallbackReceived'] = True
+            profile = ticket_path.with_suffix('.hperf')
+            if profile.is_file():
+                timing.update(profile=str(profile), profileBytes=profile.stat().st_size)
+        # Command replies share result.json while running. Only the completed
+        # scenario can mark the final report successful.
+        final_result = dict(test_result or {'ok': False})
+        if failure is not None:
+            final_result.update(ok=False, error=type(failure).__name__ + ': ' + str(failure))
+        cleanup_failures = []
+        if houdini_still_active:
+            cleanup_failures.append('owned test Houdini did not exit')
+        if crashed:
+            cleanup_failures.append('Houdini crashed')
+        if cleanup_failures:
+            final_result.update(ok=False, cleanupErrors=cleanup_failures)
+        final_result.update(nativeStartupTimings=native_timings, nativeStartupBudgetSeconds=args.native_startup_timeout,
+                            startupProfiling=args.profile_native_startup, ownedHoudiniStillActive=houdini_still_active,
+                            desktopExited=desktop.poll() is not None)
+        samples = folder / 'native-progress-samples.json'
+        if samples.is_file():
+            final_result['nativeProgressSamples'] = json.loads(samples.read_text(encoding='utf-8'))
+        atomic_json(folder / 'result.json', final_result)
         project_temp.cleanup()
         os.environ.clear()
         os.environ.update(previous)
