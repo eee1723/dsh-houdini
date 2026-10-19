@@ -19,6 +19,8 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 静态文档和构建通过不证明live已加载。查看当前/预期版本与重载要求使用[兼容设计](dsh-update-compatibility.md)
 和[安装更新](setup.md)，不要从历史日志推断部署状态。
+上游源码补丁、DSH公开接口、Qt容器、安装与纯Bridge的耦合分类、维护源及升级检查入口统一见
+[DSH耦合点与升级维护](dsh-update-compatibility.md#dsh耦合点与升级维护)；本页只维护生产模块职责与代码位置。
 
 ## 职责分层
 
@@ -95,7 +97,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/connection-status.ts](../src/connection-status.ts) | 按目标读取DSH原生接续失败与清除记录；绑定拦截保留具体原因，不维护界面状态或授予修改权 |
 | [src/support-report.ts](../src/support-report.ts) | 精确会话的原生持久读取与诊断投影，沿root Host认证RPC收集，不启动Agent或访问HOM |
 | [dsh_support_report.py](../houdini/python3.11libs/dsh_support_report.py)、[dsh_support_ui.py](../houdini/python3.11libs/dsh_support_ui.py) | 唯一本地脱敏/ZIP收集器及独立管理器入口；worker收集已有记录，预览与分享同一份bytes，合同见[故障报告](support-reports.md) |
-| [dsh_downloads.py](../houdini/python3.11libs/dsh_downloads.py) | QtWebEngine下载接收、用户目标、进度、取消与完成/失败反馈；仅显式问题链接交给外部浏览器 |
+| [dsh_downloads.py](../houdini/python3.11libs/dsh_downloads.py) | QtWebEngine下载接收、用户目标、进度、取消与完成/失败反馈；用户打开的 HTTP(S) 外链交给系统浏览器，保留账户登录预开空页直到延迟导航到达 |
 | [inspect-support-report.py](../tools/inspect-support-report.py) | 不可信诊断包的限额/清单/哈希检查与离线转义HTML，不解压或执行日志 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
@@ -187,9 +189,10 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | 源码 / 配置 | 职责 |
 |---|---|
 | [houdini/install.py](../houdini/install.py) | Houdini package安装、profile同步入口 |
-| [Install.cmd](../Install.cmd)、[installer/install.ps1](../installer/install.ps1) | 无外部Python/Node引导、独立管理器不可变复制、package原子注册与备份；完整离线包使用Houdini内置Python暂存 |
+| [Install.cmd](../Install.cmd)、[installer/install.ps1](../installer/install.ps1) | 无外部Python/Node引导、独立管理器不可变复制、package同目录原子注册、跨盘备份及注册清单；完整离线包使用Houdini内置Python暂存 |
+| [Uninstall.cmd](../Uninstall.cmd)、[installer/uninstall.ps1](../installer/uninstall.ps1) | 读取实际注册清单并核对安装根，解除自有 Houdini 注册与快捷方式，保留版本/凭据/会话；独立于 Host/模型可用性 |
 | [dsh_bootstrap.py](../houdini/python3.11libs/dsh_bootstrap.py) | Houdini启动固定版本选择，worker唤起受管独立工作台，主线程加载已校验版本的Bridge；未安装时仍能打开管理器 |
-| [dsh_workbench.py](../houdini/python3.11libs/dsh_workbench.py) | 无HOM的独立桌面入口、工作台单例租约、Host进程组与Qt主窗口；认证本机唤起、退出确认和受管激活，不持有工程执行身份 |
+| [dsh_workbench.py](../houdini/python3.11libs/dsh_workbench.py) | 无HOM的独立桌面入口、工作台单例租约、Host进程组与Qt主窗口；先显示临时阶段/计时窗口，worker准备安装与服务；认证本机唤起、退出确认和受管激活，不持有工程执行身份 |
 | [dsh_workbench_client.py](../houdini/python3.11libs/dsh_workbench_client.py) | Houdini菜单适配；主线程采集场景与原生文件事件，worker登记和唤起同一工作台；不复制DSH会话或在GUI线程等待网络 |
 | [dsh_workbench_projects.py](../houdini/python3.11libs/dsh_workbench_projects.py) | 桌面端按需原生工程对话框、受控进程启动、启动回执和共享非HOM在线观察；明确启动意图与进程创建身份绑定，不替换其他现场、不自动重放操作 |
 | [dsh_workbench_entry.py](../houdini/python3.11libs/dsh_workbench_entry.py) | 私有uiready启动钩子的Houdini侧接入；主线程捕获实际文件/场景，worker发布并回交同一次启动，不复制任务或凭路径认领节点 |

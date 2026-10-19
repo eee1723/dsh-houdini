@@ -388,6 +388,34 @@ with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), c
     button(window, "取消启动").click()
     wait_until(lambda: launcher._ACTIVE_STARTUP is None)
 
+# The managed uninstall action uses its own bootstrap and leaves the current
+# runtime alive. No real preference directory or registration is touched here.
+with tempfile.TemporaryDirectory(prefix="dsh-uninstall-ui-") as temporary:
+    import subprocess
+    root = Path(temporary)
+    bootstrap = root / "bootstrap" / "test"
+    (bootstrap / "python3.11libs").mkdir(parents=True)
+    script = bootstrap / "uninstall.ps1"
+    script.write_text("# fixture only", encoding="utf-8")
+    with patch.object(ui, "__file__", str(root / "release/houdini/python3.11libs/dsh_install_ui.py")):
+        window = ui.show(d.Store(root, {"schemaVersion": 1, "keys": []}), parent=parent, uninstall_script=script)
+    button(window, "高级设置").click()
+    remove = button(window, "卸载插件（保留数据）…")
+    assert remove.isVisible()
+    with patch.object(ui, "confirm_dialog", return_value=False), patch.object(subprocess, "run") as invoked:
+        remove.click()
+        invoked.assert_not_called()
+    with patch.object(ui, "confirm_dialog", return_value=True), \
+         patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as invoked:
+        remove.click()
+        assert not button(window, "取消操作").isVisible()
+        wait_until(remove.isEnabled)
+        argv = invoked.call_args.args[0]
+        assert argv[-4:] == ["-File", str(script), "-Root", str(root)], argv
+        assert invoked.call_args.kwargs.get("shell", False) is False
+        assert any("已解除 Houdini 注册" in text for text in labels(window))
+    close(window)
+
 # The native recovery surface must remain usable even when Chromium never
 # renders a document. This tests crash signals, not successful WebEngine load.
 import dsh_webview as webview

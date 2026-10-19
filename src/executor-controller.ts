@@ -19,9 +19,9 @@ export function executorRecoveryStatus(recorded:string|undefined,records:readonl
   const original=recorded?records.find(r=>r.executor_id===recorded):undefined
   if(!recorded)return {status:'unbound',message:'本任务尚未绑定Houdini；首次选择仍会核对HIP、代际和写入预留。'}
   if(!original)return {status:'bound_missing',executorId:recorded,
-    message:'原Houdini执行端已不在登记目录；未发送live请求。跨进程恢复尚未实现，请保留已保存/崩溃HIP与任务历史。'}
+    message:'原 Houdini 已不在运行记录中。请打开关联的已保存工程，再从原对话继续；接续前会核对保存点，未保存的修改无法自动恢复。'}
   if(original.state==='disconnected')return {status:'bound_disconnected',executorId:recorded,hipPath:original.hip_path,
-    message:'原Houdini执行端已断开；未发送live请求。新的Houdini不是原绑定，当前版本不能直接迁移此任务。'}
+    message:'原 Houdini 已断开。请在 Houdini 中打开关联工程，再从原对话继续；接续前会核对保存点，不会仅凭相同路径换绑。'}
   return {status:'bound_available',executorId:recorded,hipPath:original.hip_path,
     message:'原任务执行端仍有登记；所有现场调用仍会重新核对进程代际、HIP和写入预留，登记本身不证明在线。'}
 }

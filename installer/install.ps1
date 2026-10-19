@@ -31,6 +31,7 @@ $files = @{
     'python3.13libs/pythonrc.py' = (Join-Path $PSScriptRoot 'scripts/pythonrc.py')
     'release-trust.json' = (Join-Path $PSScriptRoot 'release-trust.json')
     'scripts/afterscenesave.py' = (Join-Path $sourceRoot 'houdini/scripts/afterscenesave.py')
+    'uninstall.ps1' = (Join-Path $PSScriptRoot 'uninstall.ps1')
 }
 foreach ($name in @('dsh_bootstrap.py', 'dsh_install_ui.py', 'dsh_ui_style.py', 'dsh_deployment.py', 'dsh_release_policy.py', 'dsh_support_ui.py', 'dsh_support_report.py', 'dsh_workbench.py', 'dsh_houdini_installations.py', 'dsh_workbench_start.py')) {
     $files["python/$name"] = Join-Path $sourceRoot "houdini/python3.11libs/$name"
@@ -80,6 +81,11 @@ try {
         }
     }
     $utf8 = New-Object Text.UTF8Encoding($false)
+    $registrationPath = Join-Path $installRoot 'registrations.json'
+    $registered = @()
+    if (Test-Path -LiteralPath $registrationPath -PathType Leaf) {
+        $registered = @((Get-Content -LiteralPath $registrationPath -Encoding UTF8 -Raw | ConvertFrom-Json).packages)
+    }
     foreach ($dir in $PackagesDir) {
         $targetDir = [IO.Path]::GetFullPath($dir)
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
@@ -88,13 +94,28 @@ try {
         if ($targetExisted) {
             $backup = Join-Path $installRoot ('package-backups/'+[guid]::NewGuid().ToString()+'.json')
             New-Item -ItemType Directory -Path (Split-Path -Parent $backup) -Force | Out-Null
+            # ReplaceFile requires its backup on the target's volume. Documents
+            # may be redirected to another drive; make the durable backup first.
+            Copy-Item -LiteralPath $target -Destination $backup
         }
         $temp = $target + '.' + [guid]::NewGuid().ToString() + '.tmp'
         [IO.File]::WriteAllText($temp, ($package | ConvertTo-Json -Depth 6), $utf8)
-        if ($targetExisted) {
-            [IO.File]::Replace($temp, $target, $backup)
-            Write-Output "Previous package preserved: $backup"
-        } else { [IO.File]::Move($temp, $target) }
+        try {
+            if ($targetExisted) {
+                [IO.File]::Replace($temp, $target, [NullString]::Value)
+                Write-Output "Previous package preserved: $backup"
+            } else { [IO.File]::Move($temp, $target) }
+        } catch {
+            throw "Could not update Houdini registration '$target'. The previous registration and backup were preserved. Check that this file is writable and not locked by another application, then run Install.cmd again. $($_.Exception.Message)"
+        } finally {
+            if (Test-Path -LiteralPath $temp -PathType Leaf) { Remove-Item -LiteralPath $temp }
+        }
+        $registered = @(@($registered) + $target | Sort-Object -Unique)
+        $registrationTemp = $registrationPath + '.' + [guid]::NewGuid().ToString() + '.tmp'
+        [IO.File]::WriteAllText($registrationTemp, (@{packages=@($registered)} | ConvertTo-Json -Depth 4), $utf8)
+        if (Test-Path -LiteralPath $registrationPath) {
+            [IO.File]::Replace($registrationTemp, $registrationPath, [NullString]::Value)
+        } else { [IO.File]::Move($registrationTemp, $registrationPath) }
         Write-Output "Registered: $target"
     }
 } finally { $lock.Dispose() }
@@ -106,11 +127,24 @@ $shortcut.WorkingDirectory = $installRoot
 $shortcut.IconLocation = (Join-Path $bootstrap 'dsh-houdini.ico') + ',0'
 $shortcut.WindowStyle = 7
 $shortcut.Save()
+$uninstallEntry = '@echo off' + "`r`n" + 'setlocal' + "`r`n" + 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap\' + (Split-Path -Leaf $bootstrap) + '\uninstall.ps1" -Root "%~dp0." %*' + "`r`n" + 'if errorlevel 1 (pause & exit /b 1)' + "`r`n" + 'pause' + "`r`n"
+[IO.File]::WriteAllText((Join-Path $installRoot 'Uninstall.cmd'), $uninstallEntry, [Text.Encoding]::ASCII)
 Write-Output "Standalone workspace: $shortcutPath"
 if (Test-Path -LiteralPath (Join-Path $sourceRoot 'release.json')) {
-    $interpreters = @(Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Side Effects Software/Houdini */python*/python.exe') -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)
+    # SideFX records the selected install directory even on another drive.
+    # Include those registered H21/H22 roots as well as standard folders.
+    $houdiniRoots = @(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\Side Effects Software' -ErrorAction SilentlyContinue |
+        Where-Object PSChildName -Match '^Houdini (21|22)\.0\.' |
+        ForEach-Object { (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).InstallPath })
+    $houdiniRoots += @(Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Side Effects Software/Houdini *') -Directory -ErrorAction SilentlyContinue |
+        Where-Object Name -Match '^Houdini (21|22)\.0\.' | ForEach-Object FullName)
+    $interpreters = @($houdiniRoots | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ 'bin/houdini.exe') -PathType Leaf) } |
+        ForEach-Object { Get-ChildItem -Path (Join-Path $_ 'python*/python.exe') -ErrorAction SilentlyContinue } |
+        Sort-Object FullName -Descending -Unique)
     if ($interpreters.Count) {
-        & $interpreters[0].FullName (Join-Path $bootstrap 'python/dsh_deployment.py') stage --root $installRoot --trust (Join-Path $bootstrap 'release-trust.json') --directory $sourceRoot
+        # The chosen interpreter must use its own standard library when this
+        # installer was launched from another Houdini/Python environment.
+        & $interpreters[0].FullName -E (Join-Path $bootstrap 'python/dsh_deployment.py') stage --root $installRoot --trust (Join-Path $bootstrap 'release-trust.json') --directory $sourceRoot
         if ($LASTEXITCODE -ne 0) { throw 'Offline package was not installed. The manager is available for diagnosis.' }
     } else {
         Write-Output 'Open Version & Updates..., expand advanced settings, and choose release.json from this folder as a local package.'

@@ -98,9 +98,53 @@ def install(profile, parent):
     parent._dsh_downloads = active
 
 
-def open_issue_window(request):
-    from PySide6.QtCore import QUrl
+def install_external_links(page, parent):
+    """Open user web links in the browser, retaining DSH's delayed login popup."""
+    from PySide6.QtCore import QTimer
     from PySide6.QtGui import QDesktopServices
-    from dsh_support_report import ISSUES_URL
-    if request.isUserInitiated() and request.requestedUrl() == QUrl(ISSUES_URL):
-        QDesktopServices.openUrl(QUrl(ISSUES_URL))
+    from PySide6.QtWebEngineCore import QWebEnginePage
+    from PySide6.QtWidgets import QMessageBox
+
+    pending = set()
+
+    def external(url):
+        return (url.isValid() and url.scheme() in ('https', 'http')
+                and bool(url.host()) and not url.userInfo())
+
+    def open_browser(url):
+        if not QDesktopServices.openUrl(url):
+            QMessageBox.information(parent, 'DSH-Houdini · 打开浏览器',
+                '未能打开系统浏览器。登录时请使用页面中的“复制登录链接”，粘贴到浏览器后完成登录。')
+
+    class PendingLink(QWebEnginePage):
+        def dispose(self):
+            pending.discard(self)
+            self.deleteLater()
+
+        def acceptNavigationRequest(self, url, _kind, main_frame):
+            if not main_frame:
+                return False
+            if url.toString() == 'about:blank':
+                return True
+            if external(url):
+                open_browser(url)
+            QTimer.singleShot(0, self.dispose)
+            return False
+
+    def requested(request):
+        if not request.isUserInitiated():
+            return
+        url = request.requestedUrl()
+        if external(url):
+            open_browser(url)
+        elif url.isEmpty() or url.toString() == 'about:blank':
+            # DSH first window.open('about:blank'), then after account RPC
+            # popup.location.replace(authorizeUrl). The opener needs a real
+            # page until that navigation arrives; it never loads remote bytes.
+            popup = PendingLink(page.profile(), page)
+            pending.add(popup)
+            popup.windowCloseRequested.connect(popup.dispose)
+            request.openIn(popup)
+
+    page.newWindowRequested.connect(requested)
+    parent._dsh_external_links = pending

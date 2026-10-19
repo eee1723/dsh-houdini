@@ -462,7 +462,7 @@ def show_webview(
         import dsh_downloads
         dsh_downloads.install(profile, win)
         view.setPage(QWebEnginePage(profile, view))
-        view.page().newWindowRequested.connect(dsh_downloads.open_issue_window)
+        dsh_downloads.install_external_links(view.page(), win)
         # DSH's shared copy helper uses navigator.clipboard.writeText. Qt
         # disables this by default: H21 rejects, H22 waits for an unanswered
         # ClipboardReadWrite request. Enable writes on our page; clipboard

@@ -19,7 +19,7 @@ def show_source(*, parent=None):
     return show(source_root=Path(__file__).resolve().parents[2], parent=parent)
 
 
-def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None, startup_error_provider=None):
+def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None, startup_error_provider=None, uninstall_script=None):
     global _WINDOW
     from hutil.Qt import QtCore, QtGui, QtWidgets
     source_root = Path(source_root).resolve() if source_root is not None else None
@@ -126,6 +126,9 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     repair = QtWidgets.QPushButton("修复当前版本")
     rollback = QtWidgets.QPushButton("回退到上一版本")
     cancel_pending = QtWidgets.QPushButton("取消下次切换")
+    uninstall = QtWidgets.QPushButton("卸载插件（保留数据）…")
+    uninstall_script = Path(uninstall_script) if uninstall_script is not None else Path(__file__).resolve().parent.parent / "uninstall.ps1"
+    uninstall.setVisible(not source_mode and uninstall_script.is_file())
     diagnostics = QtWidgets.QPushButton("运行诊断…")
     diagnostics.setToolTip("查看真实运行版本、连接状态及重启选项")
     network = QtWidgets.QPushButton("联网诊断…")
@@ -135,6 +138,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     maintenance.addWidget(repair, 1, 0)
     maintenance.addWidget(rollback, 1, 1)
     maintenance.addWidget(cancel_pending, 2, 0)
+    maintenance.addWidget(uninstall, 2, 1)
     advanced_layout.addLayout(maintenance)
     diagnostic_group = QtWidgets.QWidget()
     diagnostic_row = QtWidgets.QHBoxLayout(diagnostic_group)
@@ -165,7 +169,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     state = {"busy": False, "release": None, "checked": False, "source_version": None,
              "version": None, "pending": None, "error": bool(startup_error)}
     buttons = [online, install, local, verify_button, repair, rollback, cancel_pending, diagnostics, network,
-               shared_register, shared_repair]
+               shared_register, shared_repair, uninstall]
 
     def toggle_advanced(checked):
         advanced.setVisible(checked)
@@ -256,7 +260,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
             button.style().polish(button)
         return summary
 
-    def run(task, message="正在处理…", *, summarize=False):
+    def run(task, message="正在处理…", *, summarize=False, cancellable=True):
         if state["busy"]:
             return
         state["busy"] = True
@@ -268,7 +272,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         status.setText(message)
         cancel.setText("取消操作")
         cancel.setEnabled(True)
-        cancel.show()
+        cancel.setVisible(cancellable)
         progress_bar.setRange(0, 0)
         progress_bar.show()
 
@@ -404,6 +408,27 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                                summary if kind == "done" and state.get("summarize") and summary else value)
                 window.adjustSize()
 
+    def uninstall_action():
+        if source_mode:
+            return
+        if not confirm_dialog(window, "卸载插件（保留数据）",
+            "移除这套插件的 Houdini 注册？\n\n完整重开 Houdini 后不再显示插件菜单。当前工程不会关闭。\n"
+            "版本文件、模型配置、会话和备份都会保留，之后可重新安装继续使用。",
+            "卸载并保留数据"):
+            return
+        def task():
+            import os
+            import subprocess
+            powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+            result = subprocess.run([str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(uninstall_script), "-Root", str(store.root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "卸载未完成，请通过原安装包中的 Uninstall.cmd 重试。")
+            return "已解除 Houdini 注册，完整重开后菜单消失。版本、配置和会话仍保留，可重新安装。"
+        run(task, "正在移除 Houdini 注册，保留版本和用户数据…", cancellable=False)
+
     def runtime_diagnostics():
         import dsh_manager
         dsh_manager.show_version_manager()
@@ -450,6 +475,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     cancel.clicked.connect(request_cancel)
     diagnostics.clicked.connect(runtime_diagnostics)
     support.clicked.connect(support_report)
+    uninstall.clicked.connect(uninstall_action)
     network.clicked.connect(network_diagnostics)
     shared_register.clicked.connect(lambda: shared_action())
     shared_repair.clicked.connect(lambda: shared_action(repair=True))

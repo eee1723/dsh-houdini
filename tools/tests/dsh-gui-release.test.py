@@ -66,14 +66,14 @@ def start_gui_probe():
     hou.hipFile.save(scene.as_posix())
     hou.qt.mainWindow().move(12000,12000)
     window=bootstrap.show_manager();window.move(12000,12000)
-    state={'phase':'opening','started':time.monotonic(),'first':None,'busy':False,'debugPort':None}
+    state={'phase':'opening','started':time.monotonic(),'first':None,'reused':None,'busy':False,'debugPort':None}
     messages=queue.Queue()
     original_ensure=workbench.ensure
-    def ensure(value):
+    def ensure(value, **kwargs):
         if state['debugPort'] is None:
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1',0));state['debugPort']=probe.getsockname()[1]
-        return original_ensure(dict(value,debugPort=state['debugPort']))
+        return original_ensure(dict(value,debugPort=state['debugPort']), **kwargs)
     workbench.ensure=ensure
     bootstrap.open_workspace()
     timer=QtCore.QTimer(hou.qt.mainWindow())
@@ -100,7 +100,18 @@ def start_gui_probe():
                 if pid.value==record['pid']:user.SetWindowPos(hwnd,0,12000,12000,0,0,0x15)
                 return True
             user.EnumWindows(callback(move),0)
-            rows=launcher._dsh_rpc_wire('session/list',{'args':{'_request':{}}})['items']
+            # A restarted desktop has a new port. Query its live context.
+            import urllib.request
+            from dsh_web_auth import DshWebSession
+            ctx=status['context']
+            base='http://127.0.0.1:'+str(ctx['frontendPort'])
+            auth=DshWebSession(base,str(Path(ctx['runtimeDir'])/'frontend.log'),str(Path(ctx['runtimeDir'])/'runtime.json'))
+            auth.authorize(5)
+            request=urllib.request.Request(base+'/api/session/list',data=json.dumps({'type':'client-request','rpcId':'release-current-desktop','method':'session/list','payload':{'args':{'_request':{}}}}).encode(),headers={'Content-Type':'application/json'})
+            with auth.open(request,timeout=10) as response:
+                listed=json.load(response)['result']
+            assert listed['ok'],listed
+            rows=listed['value']['items']
             from dsh_executor_registry import active_registration
             endpoint=deployment.read_json(active_registration()._file)
             assert endpoint['task_id'],endpoint
@@ -109,7 +120,7 @@ def start_gui_probe():
             sid=selected[0]['sessionId']
             result=output.with_suffix('.browser.json')
             png=output.with_suffix('.webview.png')
-            subprocess.run([str(Path(ctx['install'])/'node/node.exe'),str(ROOT/'tools/tests/dsh-release-workbench-browser.mjs'),str(state['debugPort']),sid,str(scene.parent),str(png),str(result)],check=True,capture_output=True,text=True,encoding='utf-8',timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            subprocess.run([str(Path(ctx['install'])/'node/node.exe'),str(ROOT/'tools/tests/dsh-release-workbench-browser.mjs'),str(state['debugPort']),sid,str(scene.parent),str(png),str(result),'check-model-setup' if state['first'] is None else 'skip-model-setup'],check=True,capture_output=True,text=True,encoding='utf-8',timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             facts=deployment.read_json(result)
             runtime=deployment.read_json(Path(ctx['runtimeDir'])/'runtime.json')
             messages.put(('ready',dict(facts,sessionId=sid,desktopPid=record['pid'],hostPid=runtime['pid'],dshVersion=ctx['dshVersion'])))
@@ -125,17 +136,33 @@ def start_gui_probe():
             if not messages.empty():
                 kind,value=messages.get_nowait()
                 if kind=='error':raise RuntimeError(value)
+                if kind=='closed':
+                    state['busy']=False;state['phase']='restarting';bootstrap.open_workspace()
+                    return
                 state['busy']=False
                 if state['first'] is None:
                     state['first']=value;state['phase']='reopening';bootstrap.open_workspace()
                     return
                 assert value['sessionId']==state['first']['sessionId']
-                assert value['desktopPid']==state['first']['desktopPid']
-                assert value['hostPid']==state['first']['hostPid']
+                if state['reused'] is None:
+                    assert value['desktopPid']==state['first']['desktopPid']
+                    assert value['hostPid']==state['first']['hostPid']
+                    state['reused']=value;state['phase']='closing';state['busy']=True
+                    def close_worker():
+                        try:
+                            close_desktop(config['managed'])
+                            messages.put(('closed',None))
+                        except Exception as error:
+                            messages.put(('error',str(error)))
+                    threading.Thread(target=close_worker,daemon=True).start()
+                    return
+                assert state['phase']=='restarting'
+                assert value['desktopPid']!=state['first']['desktopPid']
+                assert value['hostPid']!=state['first']['hostPid']
                 labels=[label.text() for label in window.findChildren(QtWidgets.QLabel) if label.isVisible()]
                 assert '当前版本已加载。尚未检查更新。' in labels,labels
                 assert window.grab().save(str(output.with_suffix('.manager.png')))
-                finish(True,dict(value,sameSessionOnReopen=True,samePidOnReopen=True,managerTracksLoadedVersion=True))
+                finish(True,dict(value,sameSessionOnReopen=True,samePidOnReopen=True,newPidAfterClose=True,apiKeyEntry=state['first']['apiKeyEntry'],setupScreenshot=state['first'].get('setupScreenshot'),managerTracksLoadedVersion=True))
                 return
             if bootstrap._CONTEXT and not bootstrap._BUSY and not state['busy']:
                 import dsh_workbench_client

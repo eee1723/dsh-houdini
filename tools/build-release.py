@@ -235,6 +235,7 @@ def finalize(output, trust_path, key_id, node, *, candidate=False):
     installer = work / "installer-bundle"
     (installer / "houdini/python3.11libs").mkdir(parents=True)
     shutil.copyfile(ROOT / "Install.cmd", installer / "Install.cmd")
+    shutil.copyfile(ROOT / "Uninstall.cmd", installer / "Uninstall.cmd")
     shutil.copytree(ROOT / "installer", installer / "installer")
     shutil.copyfile(trust_path, installer / "installer/release-trust.json")
     for filename in ("dsh_bootstrap.py", "dsh_install_ui.py", "dsh_ui_style.py", "dsh_deployment.py", "dsh_release_policy.py", "dsh_support_ui.py", "dsh_support_report.py", "dsh_workbench.py", "dsh_houdini_installations.py", "dsh_workbench_start.py"):

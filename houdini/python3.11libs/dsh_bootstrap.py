@@ -15,6 +15,7 @@ import threading
 import uuid
 
 import dsh_deployment as deployment
+import dsh_install_ui
 
 _INITIALIZED = False
 _PINNED = None
@@ -54,9 +55,9 @@ def initialize():
 
 def show_manager():
     initialize()
-    import dsh_install_ui
     return dsh_install_ui.show(store(), pinned=_PINNED, loaded=_CONTEXT, startup_error=_ERROR or _LAST_OPEN_ERROR,
-                               context_provider=lambda: (_PINNED, _CONTEXT), startup_error_provider=lambda: _ERROR or _LAST_OPEN_ERROR)
+                               context_provider=lambda: (_PINNED, _CONTEXT), startup_error_provider=lambda: _ERROR or _LAST_OPEN_ERROR,
+                               uninstall_script=Path(__file__).resolve().parents[1] / "uninstall.ps1")
 
 
 def _prepare(context, progress):
@@ -117,11 +118,12 @@ def open_workspace():
         scratch.mkdir(parents=True, exist_ok=True)
         config['initialWorkspace'] = str(scratch)
     _BUSY = True
+    hou.ui.setStatusMessage('正在打开 DSH-Houdini 工作台…')
     def worker():
         try:
             os.environ['DSH_HOUDINI_WORKBENCH_ROOT'] = config['root']
             from dsh_workbench import ensure
-            desktop = ensure(config)
+            desktop = ensure(config, progress=lambda message: _EVENTS.put(('progress', message)))
             _EVENTS.put(("ready", (desktop['context'], None)))
         except Exception as exc:
             _EVENTS.put(("error", exc))

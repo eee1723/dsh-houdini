@@ -30,7 +30,7 @@ def desktop_environment(hfs, python, debug_port=None):
     for key in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH',
                 'QTWEBENGINEPROCESS_PATH', 'QTWEBENGINE_RESOURCES_PATH', 'QTWEBENGINE_LOCALES_PATH'):
         env.pop(key, None)
-    env.update(HFS=str(hfs), PYTHONDONTWRITEBYTECODE='1',
+    env.update(HFS=str(hfs), PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                QT_QPA_PLATFORM='windows',
                PYTHONPATH=str(python.parent / 'lib/site-packages-forced'),
                PATH=str(hfs / 'bin') + os.pathsep + env.get('PATH', ''),
@@ -85,7 +85,7 @@ def reject_legacy_frontend(marker):
             raise RuntimeError('旧版内嵌工作区的后台可能仍在运行。请先保存任务并正常退出原 Houdini，再打开独立工作台；没有启动第二个后台或结束原进程。')
 
 
-def ensure(config):
+def ensure(config, progress=lambda message: None):
     root = Path(config['root'])
     root.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + 150
@@ -105,8 +105,9 @@ def ensure(config):
             if config.get('managed') and config['houdiniVersion'] not in Store(root, config['trustData']).manifest(config['installation'])['houdini']:
                 raise RuntimeError('当前工作台版本不支持这个 Houdini 版本，未加载不兼容的执行端。')
             return control(record, 'status', timeout=5)
-        atomic_json(root / 'workbench/launch-config.json', config)
         attempt = uuid.uuid4().hex
+        config = {**config, 'startupId': attempt}
+        atomic_json(root / 'workbench/launch-config.json', config)
         request = root / 'workbench' / ('launch-' + attempt + '.json')
         atomic_json(request, config)
         python = Path(config['python'])
@@ -119,7 +120,16 @@ def ensure(config):
                 stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
+            last_progress = None
             while time.monotonic() < deadline:
+                status_file = root / 'workbench' / ('starting-' + attempt + '.json')
+                try:
+                    status = read_json(status_file)
+                except FileNotFoundError:
+                    status = None
+                if status and status.get('message') != last_progress:
+                    last_progress = status['message']
+                    progress(last_progress)
                 record = running(root)
                 if record and record['pid'] == process.pid:
                     return control(record, 'status', timeout=5)
@@ -131,11 +141,12 @@ def ensure(config):
             raise RuntimeError('工作台启动尚未完成。进程未被强制结束，请稍后重新打开工作区。')
         finally:
             request.unlink(missing_ok=True)
+            (root / 'workbench' / ('starting-' + attempt + '.json')).unlink(missing_ok=True)
     finally:
         lease.close()
 
 
-def prepare(config):
+def prepare(config, progress=lambda message: None):
     root = Path(config['root'])
     runtime = root / 'workbench' / uuid.uuid4().hex
     runtime.mkdir(parents=True)
@@ -145,6 +156,7 @@ def prepare(config):
     context_file = runtime / 'context.json'
 
     def prepare_managed(context, progress):
+        progress('正在准备对话配置…')
         context.update(frontendPort=port, runtimeDir=str(runtime), workbench=True,
                        executorRegistry=str(root / 'workbench/executors'))
         atomic_json(context_file, context)
@@ -156,8 +168,9 @@ def prepare(config):
             raise RuntimeError('工作台配置准备失败：' + result.stderr[-3000:])
 
     if config.get('managed'):
+        progress('正在检查安装文件…')
         store = Store(root, config['trustData'])
-        context, lease = store.activate(config['installation'], config['houdiniVersion'], prepare=prepare_managed,
+        context, lease = store.activate(config['installation'], config['houdiniVersion'], progress=progress, prepare=prepare_managed,
                                         owner={'application': 'DSH-Houdini Workbench'})
         plugin = Path(context['install']) / 'app/node_modules/dsh-houdini'
         node = Path(context['install']) / 'node/node.exe'
@@ -175,6 +188,7 @@ def prepare(config):
         env.pop('DSH_HOUDINI_MANAGED_CONTEXT', None)
         sys.path.insert(0, str(plugin / 'houdini/python3.11libs'))
         from dsh_profile_sync import sync_profile_plugins
+        progress('正在检查对话配置…')
         sync_profile_plugins([str(node), str(binary)], use_shell=False, project_root=plugin, env=env)
     env.update(DSH_HOUDINI_EXECUTOR_REGISTRY=context['executorRegistry'], DSH_HOUDINI_WORKBENCH='1')
     context['contextFile'] = str(context_file)
@@ -185,15 +199,14 @@ def prepare(config):
     return context, lease, plugin, node, binary, env
 
 
-def run(config):
-    context, lease, plugin, node, binary, env = prepare(config)
+def _start_runtime(config, progress):
+    """Disk, process and HTTP preparation only; run on the startup worker."""
+    context, lease, plugin, node, binary, env = prepare(config, progress)
     sys.path.insert(0, str(plugin / 'houdini/python3.11libs'))
     from dsh_managed_runtime import spawn_frontend, stop_owned
     from dsh_web_auth import DshWebSession
     runtime = Path(context['runtimeDir'])
     base = 'http://127.0.0.1:' + str(context['frontendPort'])
-    intents = queue.Queue()
-    generation, token = uuid.uuid4().hex, secrets.token_hex(32)
     auth = DshWebSession(base, str(runtime / 'frontend.log'), str(runtime / 'runtime.json'))
 
     def rpc(method, payload, argument='input', timeout=90):
@@ -206,6 +219,162 @@ def run(config):
             raise RuntimeError(value['error']['message'])
         return value['value']
 
+    host = None
+    try:
+        progress('正在启动对话服务…')
+        with (runtime / 'frontend.log').open('wb') as output:
+            host = spawn_frontend([str(node), str(binary), 'web', '--patch', str(plugin / 'shared-host.cordis.yml'),
+                '--port', str(context['frontendPort']), '--no-open'], node=str(node), cwd=plugin,
+                env=env, stdout=output, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        atomic_json(runtime / 'runtime.json', {'pid': host.pid, 'source': 'workbench', 'authLogOffset': 0,
+            'version': read_json(binary.parent.parent / 'package.json')['version'],
+            'startedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
+        deadline = time.monotonic() + 90
+        while True:
+            if host.poll() is not None:
+                raise RuntimeError('DSH 后台在启动时退出，请查看诊断记录。')
+            try:
+                auth.authorize(2)
+                break
+            except Exception as error:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('对话服务未在等待时间内就绪：' + str(error)) from error
+                time.sleep(.2)
+        progress('正在打开工作区…')
+        if config.get('initialWorkspace'):
+            rpc('houdiniTargets/prepareWorkspace', {'path': config['initialWorkspace'], 'isNew': config.get('initialWorkspaceIsNew') is True})
+        else:
+            workspace = Path(context['root']) / 'workspaces/工作台'
+            workspace.mkdir(parents=True, exist_ok=True)
+            rpc('houdiniTargets/prepareWorkspace', {'path': str(workspace), 'isNew': False, 'onlyIfEmpty': True})
+        return context, lease, plugin, host, base, auth, rpc
+    except BaseException:
+        if host is not None:
+            stop_owned(host)
+        lease.close()
+        raise
+
+
+def _startup_message(message):
+    for prefix, label in (
+        ('Checking files · ', '正在检查安装文件 · '),
+        ('Checking the bundled Node, DSH and plugin', '正在检查配套运行环境…'),
+        ('Copying a version-isolated snapshot of your DSH data', '正在为新版本保留对话和设置…'),
+    ):
+        if message.startswith(prefix):
+            return label + message[len(prefix):]
+    return message
+
+
+def _prepare_with_feedback(config):
+    """Display before hashing/profile/Host startup; the Qt thread only paints."""
+    started = time.monotonic()
+    if os.name == 'nt':
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('DSH.Houdini.Workbench')
+        dll_directory = os.add_dll_directory(str(Path(config['hfs']) / 'bin'))
+    from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer, Qt
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QPushButton, QVBoxLayout
+    from dsh_ui_style import style_dialog
+    if QApplication.instance() is None:
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    app = QApplication.instance() or QApplication([])
+    if os.name == 'nt':
+        app._dsh_dll_directory = dll_directory
+    app.setApplicationName('DSH-Houdini')
+    app.setQuitOnLastWindowClosed(False)
+    dialog = QDialog()
+    style_dialog(dialog)
+    dialog.setWindowTitle('DSH-Houdini · 正在打开工作台')
+    dialog.setMinimumWidth(420)
+    icon = QIcon(str(Path(__file__).resolve().parents[2] / 'assets/dsh-houdini.ico'))
+    dialog.setWindowIcon(icon)
+    app.setWindowIcon(icon)
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(24, 22, 24, 20)
+    layout.setSpacing(14)
+    phase = QLabel('正在准备工作台…')
+    phase.setWordWrap(True)
+    elapsed = QLabel('已等待 0 秒')
+    note = QLabel('关闭此窗口会继续在后台打开工作台。')
+    note.setObjectName('caption')
+    bar = QProgressBar()
+    bar.setRange(0, 0)
+    background = QPushButton('后台打开')
+    background.clicked.connect(dialog.hide)
+    for widget in (phase, elapsed, bar, note, background):
+        layout.addWidget(widget)
+    events = queue.Queue()
+    result = {}
+    startup_id = config.get('startupId')
+    status_file = Path(config['root']) / 'workbench' / ('starting-' + startup_id + '.json') if startup_id else None
+
+    def progress(message):
+        message = _startup_message(message)
+        value = {'message': message, 'elapsedSeconds': round(time.monotonic() - started, 3)}
+        events.put(value)
+        if status_file is not None:
+            try:
+                atomic_json(status_file, value)
+            except OSError as error:
+                print('[dsh-houdini/startup] 进度同步未完成：' + str(error), flush=True)
+        print('[dsh-houdini/startup] ' + json.dumps(value, ensure_ascii=False), flush=True)
+
+    def worker():
+        try:
+            result['value'] = _start_runtime(config, progress)
+            progress('正在加载工作台页面…')
+        except BaseException as error:
+            result['error'] = error
+        finally:
+            if status_file is not None:
+                try:
+                    status_file.unlink(missing_ok=True)
+                except OSError as error:
+                    print('[dsh-houdini/startup] 临时进度记录未清除：' + str(error), flush=True)
+            events.put(None)
+
+    loop = QEventLoop()
+    def tick():
+        while not events.empty():
+            value = events.get_nowait()
+            if value is None:
+                loop.quit()
+                return
+            phase.setText(value['message'])
+        elapsed.setText('已等待 ' + str(int(time.monotonic() - started)) + ' 秒')
+    timer = QTimer(dialog)
+    timer.timeout.connect(tick)
+    timer.start(100)
+    dialog.show()
+    # Queue the worker after creating the native window; Qt keeps painting.
+    QTimer.singleShot(0, lambda: threading.Thread(target=worker, daemon=True).start())
+    loop.exec()
+    timer.stop()
+    if 'error' in result:
+        dialog.close()
+        raise result['error']
+    return app, dialog, result['value']
+
+
+def run(config):
+    app, startup, ready = _prepare_with_feedback(config)
+    context, lease, plugin, host, base, auth, rpc = ready
+    from dsh_managed_runtime import stop_owned
+    try:
+        _run_window(config, app, startup, ready)
+    finally:
+        startup.close()
+        stop_owned(host)
+        lease.close()
+
+
+def _run_window(config, app, startup, ready):
+    context, lease, plugin, host, base, auth, rpc = ready
+    intents = queue.Queue()
+    generation, token = uuid.uuid4().hex, secrets.token_hex(32)
     from dsh_workbench_projects import ProjectManager, show_project_dialog, dialog_request
     projects = ProjectManager(config, context, plugin, generation, rpc, intents)
     dialogs = queue.Queue()
@@ -273,48 +442,18 @@ def run(config):
     record = {'schema': 1, 'pid': os.getpid(), 'processStarted': _process_started(os.getpid()),
               'controlPort': server.server_port, 'generation': generation, 'token': token,
               'installation': config['installation']}
-    host = None
     serving = False
     try:
-        with (runtime / 'frontend.log').open('wb') as output:
-            host = spawn_frontend([str(node), str(binary), 'web', '--patch', str(plugin / 'shared-host.cordis.yml'),
-                '--port', str(context['frontendPort']), '--no-open'], node=str(node), cwd=plugin,
-                env=env, stdout=output, stderr=subprocess.STDOUT,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        atomic_json(runtime / 'runtime.json', {'pid': host.pid, 'source': 'workbench', 'authLogOffset': 0,
-            'version': read_json(binary.parent.parent / 'package.json')['version'],
-            'startedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
-        deadline = time.monotonic() + 90
-        while True:
-            if host.poll() is not None:
-                raise RuntimeError('DSH 后台在启动时退出，请查看诊断记录。')
-            try:
-                auth.authorize(2)
-                break
-            except Exception:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError('DSH 后台未在等待时间内就绪。')
-                time.sleep(.2)
-        if os.name == 'nt':
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('DSH.Houdini.Workbench')
-            dll_directory = os.add_dll_directory(str(Path(config['hfs']) / 'bin'))
-        if config.get('initialWorkspace'):
-            rpc('houdiniTargets/prepareWorkspace', {'path': config['initialWorkspace'], 'isNew': config.get('initialWorkspaceIsNew') is True})
-        else:
-            workspace = Path(context['root']) / 'workspaces/工作台'
-            workspace.mkdir(parents=True, exist_ok=True)
-            rpc('houdiniTargets/prepareWorkspace', {'path': str(workspace), 'isNew': False, 'onlyIfEmpty': True})
         from PySide6.QtCore import QTimer, QObject, QEvent
-        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtWidgets import QMessageBox
         import dsh_webview
-        app = QApplication.instance() or QApplication([])
-        app.setApplicationName('DSH-Houdini')
         from PySide6.QtGui import QIcon
         icon = QIcon(str(plugin / 'assets/dsh-houdini.ico'))
         app.setWindowIcon(icon)
         dsh_webview.show_webview(authenticated_url=auth.launch_url(), frontend_url=base, standalone=True)
         dsh_webview._window.setWindowIcon(icon)
+        startup.close()
+        app.setQuitOnLastWindowClosed(True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         serving = True
         atomic_json(Path(config['root']) / 'workbench/desktop.json', record)
@@ -402,9 +541,6 @@ def run(config):
         if serving:
             server.shutdown()
         server.server_close()
-        if host is not None:
-            stop_owned(host)
-        lease.close()
 
 
 def main():

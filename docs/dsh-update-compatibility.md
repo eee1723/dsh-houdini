@@ -45,6 +45,26 @@ DSH负责模型调用、会话与持久化、Agent循环、任务/计划、通�
 
 图像的原始文件、持久附件和实际模型请求版本分别核对。固定pi-ai路由已提供requestImagePixelBudget、requestImageMaxBytes及maxRequestImageBytes：前两者控制每张请求图的像素预算和编码字节目标，后者限制整次请求的base64图片字节；经DSH原生provider profile设置，不能另建插件缩图或历史图片账本。调整请求版本不改源文件、持久附件和会话中的原参考/A/B；恢复配置后仍应取得原请求版本。像素减少可能伴随编码改变，不能从文件大小、请求字节或分辨率推断token费用或识图质量。通用read_image沿原生自动处理，具体路由的能力和验证入口见[开发维护](development.md)。
 
+## DSH耦合点与升级维护
+
+本表维护现役耦合边界与升级时的查找入口，不记录修复历史或复制运行修复声明中的包清单。
+精确DSH选择由[兼容清单](../dsh-runtime-compatibility.json)维护；上游基线、补丁、编译范围和缓存输入身份由
+[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json)维护。模块完整索引仍在[系统架构](architecture.md)。
+
+| 耦合类别 | 当前依赖与唯一维护源 | 升级检查入口与判断 |
+|---|---|---|
+| 同版本上游源码补丁 | 通用Windows权限/网络、下载与命令呈现、会话目录迁移和原生提问布局的修改只维护于[fixes.patch](../deployment/dsh-runtime-fixes/fixes.patch)；基线、产物范围及摘要由修复声明绑定，[准备器](../tools/prepare-dsh-runtime.mjs)与[编译器](../tools/build-dsh-runtime-fixes.mjs)共用，不直接改缓存或复制到插件实现 | 先对照新上游源码判断哪些修复已吸收，再调整剩余补丁与声明；[输入身份回归](../tools/tests/runtime-fix-inputs.test.mjs)核对缓存身份，[运行修复检查](../tools/tests/dsh-runtime-fixes-check.mjs)、[系统网络检查](../tools/tests/dsh-system-proxy-check.mjs)及[原生目录接续](../tools/tests/dsh-workspace-continuity.test.py)按受影响部分验证实际配套运行时 |
+| DSH公开Host扩展 | [dsh-adapter.ts](../src/dsh-adapter.ts)维护消息、原生/嵌套工具日志与执行事实的接入；[tools.ts](../src/tools.ts)维护工具注册；唯一preset由[生成器](../tools/gen-agent-presets.mjs)消费同版标准声明，根客户端与preset工具各守自身作用域 | [适配回归](../tools/tests/dsh-adapter.test.mjs)、[preset回归](../tools/tests/dsh-preset-parity.test.mjs)与[真实Host组合](../tools/tests/dsh-host-smoke.test.py)检查公开接口、实际加载的根客户端、preset与工具；包可导入不代替实际组合 |
+| DSH原生会话与工程消费 | [绑定投影](../src/executor-identity-projection.ts)是对话工程关联的唯一消费源；[scene-recovery.ts](../src/scene-recovery.ts)消费原生持久事件与目录迁移，[executor-controller.ts](../src/executor-controller.ts)经原生API定位精确会话；迁移能力的实现仍在上游源码补丁 | [绑定投影](../tools/tests/executor-identity-projection.test.mjs)、[路由](../tools/tests/workbench-routing.test.mjs)、[目录跟随](../tools/tests/scene-directory-follow.test.mjs)与原生目录接续检查历史、排队/晚到回执和目录保持；跨层改动再核对真实选中任务及普通/嵌套回执，不以同目录或最近任务代替身份 |
+| Qt客户端容器 | [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py)维护浏览器认证、页面生命周期和必要的容器适配；[dsh_downloads.py](../houdini/python3.11libs/dsh_downloads.py)维护下载与用户外链，保留DSH延迟登录popup；[工作台](../houdini/python3.11libs/dsh_workbench.py)维护启动阶段；浏览器补齐只由[生成器](../tools/gen-web-polyfills.mjs)生成 | [导航回归](../tools/tests/dsh-webview-navigation.test.py)、[外链/延迟登录回归](../tools/tests/dsh-external-links-qt.test.py)、[启动阶段回归](../tools/tests/dsh-workbench-startup.test.py)与[真实Qt验收](../tools/tests/dsh-source-webview.test.py)按页面改动选择；核对H21/H22实际浏览器与DSH登录/RPC行为，普通Chrome通过不证明容器可用，模拟登录不证明真实账户授权 |
+| 安装与运行生命周期 | 安装、启动和修复共用兼容清单；[dsh_runtime_compat.py](../houdini/python3.11libs/dsh_runtime_compat.py)核对精确运行修复身份，[dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py)维护签名安装/激活，[安装器](../installer/install.ps1)与[卸载器](../installer/uninstall.ps1)维护本机注册；发行合同唯一见[安装与更新](setup.md) | [版本选择](../tools/tests/dsh-runtime-compat.test.py)、[引导安装](../tools/tests/dsh-installer-bootstrap.test.py)、[部署组合](../tools/tests/dsh-deployment-e2e.test.py)和[前端生命周期](../tools/tests/dsh-frontend-lifetime.test.py)按影响验证；正式发行核对完整签名包在H21/H22的正常入口，磁盘包版本不代替实际Host/Bridge加载 |
+| 纯Houdini Bridge与执行内核 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py)维护HTTP合同、代际与主线程队列；[dsh_execution.py](../houdini/python3.11libs/dsh_execution.py)、[Raw Gate分析](../houdini/python3.11libs/dsh_code_analysis.py)和[ownership](../houdini/python3.11libs/dsh_ownership.py)维护真实执行边界；合同说明唯一见[执行契约](execution-contract.md)与[工具设计](tool-design.md)，不依赖DSH内部会话实现 | [Bridge合同](../tools/tests/bridge-contract.test.mjs)核对Host封装；只有Bridge/执行边界受到影响时，按[开发维护](development.md#修改与验证)选择隔离HOM与H21/H22检查。纯DSH界面、安装或文档修改不机械触发整套HOM/模型评测 |
+
+升级以实际受影响的消费方为准。上游补丁被吸收后，删除已无必要的差异并继续验证现役合同；
+公开接口适配、Qt容器问题和Houdini执行问题分别在所属源码处理，不用同版本号掩盖补丁身份差异。
+检查方法在本页和[开发维护](development.md)原位更新；待完成的迁移或验证仅写入[当前交接](handoff.md)，
+完成即删。变更原因与发布历史由Git和正式Release说明保存，不另建升级日志或并行交接文档。
+
 ## 新 DSH 版本的资格流程
 
 先取得实际存在的精确包，检查公开API与组合注册，更新必要适配和锁文件，再构建与运行直接受影响的回归。

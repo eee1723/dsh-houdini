@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-const [port,sessionId,cwd,png,resultFile]=process.argv.slice(2)
+const [port,sessionId,cwd,png,resultFile,setupCheck]=process.argv.slice(2)
 const pages=await (await fetch('http://127.0.0.1:'+port+'/json')).json()
 const page=pages.find(p=>p.type==='page'&&p.url.startsWith('http://127.0.0.1:'))
 assert(page,'Actual Qt page must exist')
@@ -26,12 +26,30 @@ async function evaluate(expression) {
 }
 try {
   let selected
+  let apiKeyEntry=false
+  let setupScreenshot
   for(let attempt=0;attempt<150;attempt++) {
-    await evaluate(`(()=>{for(const b of document.querySelectorAll('button'))if(['稍后配置','以后再说'].includes(b.textContent.trim())||(document.body.innerText.includes('预览版说明')&&b.textContent.trim()==='继续'))b.click();return true})()`)
+    if(setupCheck==='check-model-setup'&&!apiKeyEntry) {
+      const step=await evaluate(`(()=>{const visible=e=>e.getClientRects().length;const key=[...document.querySelectorAll('input')].find(e=>visible(e)&&e.type==='password'&&/API|密钥/i.test(e.placeholder));if(key&&!key.disabled&&!key.readOnly){key.focus();return{key:true}}const add=[...document.querySelectorAll('button')].find(b=>visible(b)&&b.textContent.trim()==='添加 API Key');if(add)add.click();return{key:false}})()`)
+      if(step.key) {
+        await call('Input.insertText',{text:'dsh-isolated-unused-key'})
+        assert.equal(await evaluate(`document.activeElement.value`),'dsh-isolated-unused-key','Native API Key input must accept typing')
+        await evaluate(`(()=>{document.activeElement.select();return true})()`)
+        await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8})
+        await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8})
+        assert.equal(await evaluate(`document.activeElement.value`),'','Fixture key must be cleared without saving')
+        setupScreenshot=png.replace(/\.png$/,'.model-setup.png')
+        const setupShot=await call('Page.captureScreenshot',{format:'png'})
+        fs.writeFileSync(setupScreenshot,Buffer.from(setupShot.data,'base64'))
+        apiKeyEntry=true
+      }
+    }
+    await evaluate(`(()=>{for(const b of document.querySelectorAll('button'))if(b.getClientRects().length&&((${setupCheck!=='check-model-setup'||apiKeyEntry}&&['稍后配置','以后再说'].includes(b.textContent.trim()))||(document.body.innerText.includes('预览版说明')&&b.textContent.trim()==='继续')))b.click();return true})()`)
     selected=await evaluate('window.__dshHoudiniSelection?.()')
-    if(selected?.sessionId===sessionId)break
+    if(selected?.sessionId===sessionId&&(setupCheck!=='check-model-setup'||apiKeyEntry))break
     await new Promise(resolve=>setTimeout(resolve,200))
   }
+  if(setupCheck==='check-model-setup')assert(apiKeyEntry,'Native first-run API Key configuration must be reachable and editable')
   assert.equal(selected.sessionId,sessionId)
   assert.equal(selected.agentPreset,'houdini')
   assert.equal(path.resolve(selected.cwd).toLowerCase(),path.resolve(cwd).toLowerCase())
@@ -54,6 +72,6 @@ try {
   assert.equal(await evaluate(`new URL(location.href).searchParams.has('token')`),false)
   const shot=await call('Page.captureScreenshot',{format:'png'})
   fs.writeFileSync(png,Buffer.from(shot.data,'base64'))
-  fs.writeFileSync(resultFile,JSON.stringify({selected,webRpc:true,pinRestored:true,sameDocument:true,screenshot:png}))
-  console.log('Actual standalone Qt selection, authenticated RPC, pin/restore and document continuity passed')
+  fs.writeFileSync(resultFile,JSON.stringify({selected,webRpc:true,pinRestored:true,sameDocument:true,apiKeyEntry,setupScreenshot,screenshot:png}))
+  console.log('Actual standalone Qt selection, native API Key entry, authenticated RPC, pin/restore and document continuity passed')
 } finally {socket.close()}

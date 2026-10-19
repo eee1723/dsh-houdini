@@ -8,7 +8,7 @@ Windows x64受管安装把插件、Node、DSH和完整依赖作为一个签名�
 1. 从[正式发行页](https://github.com/eee1723/dsh-houdini/releases/latest)下载完整 `dsh-houdini-版本-offline.zip`，解压后双击 `Install.cmd`。
 2. 安装器按用户权限注册H21/H22菜单，不修改系统Node、Python或全局PATH。
 3. 完整重开Houdini，选择 **DSH-Houdini → Open Workspace**。后台校验并准备隔离profile后启动配套DSH。
-4. 首次在DSH页面配置模型/API凭据。受管安装不自动迁移或清空既有 `~/.dsh`，此前独立DSH原样保留。
+4. 首次在 DSH 页面选择“登录 DeepSeek 账号”或“添加 API Key”。已有模型密钥的用户可直接添加 API Key；后续在“设置 → 模型”修改。账户登录与 API Key 是两条入口，Houdini 插件不另外收集密钥。受管安装不自动迁移或清空既有 `~/.dsh`，此前独立 DSH 的配置不会自动出现在专用工作台。
 
 完整包包含运行依赖，可离线安装；模型服务仍依赖用户配置与网络。
 轻量 `dsh-houdini-installer.zip`，或clone/源码ZIP中的Install.cmd，只部署管理器；在面板检查正式Release并安装完整组合。
@@ -26,11 +26,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Packa
 ```
 
 `HOUDINI_USER_PREF_DIR`优先，必须含`__HVER__`占位符，安装器分别展开为21.0/22.0后注册对应package，否则Houdini会忽略它；显式目录可用-PackagesDir。ExecutionPolicy只作用于该次引导进程，不永久改系统策略；
-企业策略禁止脚本时遵循管理员要求，不关闭安全功能绕过。此前package原子备份到安装根的package-backups。
+企业策略禁止脚本时遵循管理员要求，不关闭安全功能绕过。此前 package 先备份到安装根的 package-backups，再用 preferences 同目录临时文件原子替换注册，支持安装根与 Documents/preferences 分属不同磁盘。实际注册文件列表保存在安装根的 registrations.json，供卸载识别自定义目录。
 重复运行可信安装器可修复损坏管理器：复制到新目录再切换注册，不覆盖已加载模块。
-完整包在检测到标准Houdini安装中的内置Python时直接暂存；未检测到时，在面板选择原解压目录的release.json。
+完整包通过 SideFX 的 Windows 安装注册和标准安装目录查找 H21/H22 内置 Python，支持非默认盘安装；检测成功后直接准备运行包，未检测到时，在面板选择原解压目录的 release.json。
 已完成安装不依赖原下载解压目录，不要求系统Git、Node、额外Python或管理员权限。
 启动桩按[SideFX脚本位置](https://www.sidefx.com/docs/houdini/hom/locations)分别生成在python3.11libs/pythonrc.py和python3.13libs/pythonrc.py，共享同一份Python模块实现。
+
+### 打开工作台时的等待
+
+工作台先显示临时启动窗口，再在后台检查安装文件、准备对话配置、启动对话服务和打开工作区。窗口显示当前真实阶段及已等待秒数，不用虚构百分比；“后台打开”只隐藏等待窗口，准备继续进行。重复打开复用已有工作台，不重复启动服务。阶段耗时进入已有启动日志，失败仍由当前入口解释并提供报告问题路径。
+
+界面提前出现不代表总启动时间已缩短。性能判断须分别测量安装检查、配置准备、Host 认证、工作区定位和页面可用时间；完整签名校验和用户数据保留不因显示进度而跳过。
+
+### 首次配置与登录等待
+
+“等待登录”表示 DSH 正等浏览器中的账户授权，不表示正在安装插件或校验 API Key。工作台将用户点击打开的网页交给系统浏览器，并支持先开空白页、稍后取得登录地址的授权流程；取消登录后仍可选择“添加 API Key”。没有自动打开浏览器时，使用同一对话框中的“复制登录链接”手动打开，完成后回到原工作台。该跳转可用不代表账号服务、网络和授权回调已经验证成功；不要通过重装或删除配置尝试清除账户问题。
+
+已有 API Key 可从“设置 → 模型”配置提供方并选择模型。首次配置入口未显示、保存失败与模型请求失败需要分别诊断；故障报告不应收集明文密钥。
+
+### 部署路线与职责
+
+当前普通用户使用上面的完整签名发行包：插件与经过验证的精确 DSH、Node 和运行修复作为一个单元交付。用户不用另装全局 Node/DSH，不独立追随 DSH latest，也不同时维护两套推荐客户端。
+
+当前保持完整签名安装方案。官方 DSH 桌面端稳定后再评估“官方桌面端 + 插件”组合；届时按[兼容维护](dsh-update-compatibility.md#dsh耦合点与升级维护)逐项核对依赖、配置职责和实际用户路径，不能仅以版本号一致或插件注册成功作为迁移完成。
 
 ## Version & Updates（版本与更新）
 
@@ -193,8 +211,11 @@ WebView、菜单和package变更完整重开Houdini。构建通过、诊断存�
 
 ## 卸载与保留数据
 
-受管安装：关闭使用它的Houdini，移除目标偏好目录的packages/dsh-houdini.json；需要恢复此前注册时使用package-backups对应备份。
-数据与版本保留在安装根，删除它们须单独确认并备份，不处理用户HIP、工作区、独立DSH或其他插件。
+受管安装：在 **Version & Updates → 高级设置 → 卸载插件（保留数据）** 操作，或双击下载包/安装根中的 **Uninstall.cmd**。它移除本安装对应的 Houdini package 注册和工作台快捷方式，不停止当前进程；完整重开 Houdini 后菜单消失。卸载不要求工作台或模型配置可用。
+
+卸载保留整个安装根中的版本文件、API 配置、会话、备份和注册清单，重新运行 Install.cmd 可继续使用。它不删除用户 HIP、项目目录、独立 DSH 或其他安装的注册。需要恢复此前注册时，使用 package-backups 对应备份。物理删除保留目录需先正常关闭相关程序并单独备份，不与解除注册混为一次操作。
+
+旧版没有 registrations.json 时，卸载器会核对标准 Documents 和 HOUDINI_USER_PREF_DIR 位置。旧版任意自定义 preferences 若未留记录，可用 installer/uninstall.ps1 的 -PackagesDir 明确补充；它不会全盘寻找或猜测删除。手动删除安装目录后，可重新运行可信新版 Install.cmd 修复，或用下载包中的 Uninstall.cmd 解除残留标准注册；无需删除模型配置或工程。
 源码安装：通过所用精确DSH的官方plugin命令移除web profile中的dsh-houdini，并移除Houdini package，不连带删除共享内容。
 
 发行维护和验证命令见[开发维护](development.md#发行操作与信任配置)，兼容边界见[兼容设计](dsh-update-compatibility.md)。
