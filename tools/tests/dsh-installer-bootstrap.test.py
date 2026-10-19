@@ -26,7 +26,8 @@ def execute(args, *, env=CLEAN_BOOT_ENV):
     return result
 
 with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 العربية 空格-") as temporary:
-    temp = Path(temporary)
+    # Windows PowerShell expands 8.3 TEMP aliases when normalizing paths.
+    temp = Path(temporary).resolve()
     install, packages = temp / "managed", temp / "prefs/packages"
     args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "installer/install.ps1"), "-Root", str(install), "-PackagesDir", str(packages)]
     result = execute([*args, "-PrintOnly"])
@@ -74,7 +75,8 @@ try {
     result = execute(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", base64.b64encode(readback.encode("utf-16le")).decode("ascii")])
     facts = json.loads(next(line.removeprefix("DSH_SHORTCUT_JSON=") for line in result.stdout.decode("utf-8").splitlines() if line.startswith("DSH_SHORTCUT_JSON=")))
     assert Path(facts["target"]) == Path(facts["powershell"])
-    assert facts["arguments"] == '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + str(hosted / "open-workbench.ps1") + '" -Root "' + str(install) + '"'
+    expected_arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + str(hosted / "open-workbench.ps1") + '" -Root "' + str(install) + '"'
+    assert facts["arguments"] == expected_arguments, json.dumps({"actual": facts["arguments"], "expected": expected_arguments}, ensure_ascii=True)
     assert Path(facts["directory"]) == install
     assert Path(facts["icon"]) == hosted / "dsh-houdini.ico"
     assert facts["iconIndex"] == 0 and facts["show"] == 7
