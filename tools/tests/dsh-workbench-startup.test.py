@@ -50,15 +50,19 @@ def worker_test(folder):
         time.sleep(1.4)
         observed['workerFinished'] = round(time.monotonic() - began, 3)
         return 'ready fixture'
-    config = {'root': str(folder), 'hfs': os.environ['HFS'], 'startupId': 'fixture'}
-    with patch.object(desktop, '_start_runtime', start):
+    config = {'root': str(folder), 'hfs': os.environ['HFS']}
+    with patch.object(desktop, '_start_runtime', start), \
+         patch.object(desktop, 'atomic_json', side_effect=PermissionError('optional progress path is locked')) as write_progress, \
+         patch.object(desktop, 'read_json', side_effect=PermissionError('optional progress path is locked')) as read_progress:
         returned_app, dialog, ready = desktop._prepare_with_feedback(config)
+        write_progress.assert_not_called()
+        read_progress.assert_not_called()
     timer.stop()
     assert returned_app is app and ready == 'ready fixture'
     assert observed['ticks'] >= 15 and observed['firstPaint'] is not None, observed
     assert observed['firstPaint'] < observed['workerFinished'] and observed['phase'] and observed['elapsed'], observed
     assert not dialog.isVisible(), 'background open did not hide only the waiting window'
-    assert not (folder / 'workbench/starting-fixture.json').exists(), 'startup status was left behind after completion'
+    assert not list(folder.glob('workbench/starting-*')), 'startup must not create auxiliary progress files'
     failure = RuntimeError('fixture preparation failed')
     with patch.object(desktop, '_start_runtime', side_effect=failure):
         try:
@@ -67,6 +71,27 @@ def worker_test(folder):
             assert error is failure
         else:
             raise AssertionError('startup failure was swallowed')
+    # Opening the parent entry needs only the established desktop identity.
+    # A locked legacy progress path cannot stop a successful child activation.
+    parent_root = folder / 'parent-entry'
+    child = Mock(pid=77123)
+    record = {'pid': child.pid, 'installation': str(ROOT)}
+    progress = Mock()
+    parent_config = {'root': str(parent_root), 'installation': str(ROOT),
+                     'hfs': os.environ['HFS'], 'python': sys.executable}
+    with patch.object(desktop, 'running', side_effect=[None, record]), \
+         patch.object(desktop, 'control', return_value={'record': record}), \
+         patch.object(desktop, 'read_json', side_effect=PermissionError('optional progress path is locked')) as legacy_progress, \
+         patch.object(desktop.subprocess, 'Popen', return_value=child):
+        assert desktop.ensure(parent_config) == {'record': record}
+        legacy_progress.assert_not_called()
+    launch_config = json.loads((parent_root / 'workbench/launch-config.json').read_text(encoding='utf-8'))
+    assert 'startupId' not in launch_config
+    assert not list((parent_root / 'workbench').glob('starting-*'))
+    with patch.object(desktop, 'running', return_value=record), \
+         patch.object(desktop, 'control', return_value={'record': record}):
+        assert desktop.ensure(parent_config, progress=progress) == {'record': record}
+    progress.assert_called_once_with('正在打开 DSH-Houdini 工作台…')
     # A UI initialization failure must reclaim the already-started Host/lease.
     import dsh_managed_runtime
     lease = Mock()

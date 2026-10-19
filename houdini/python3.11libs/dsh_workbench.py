@@ -86,6 +86,7 @@ def reject_legacy_frontend(marker):
 
 
 def ensure(config, progress=lambda message: None):
+    progress('正在打开 DSH-Houdini 工作台…')
     root = Path(config['root'])
     root.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + 150
@@ -106,7 +107,6 @@ def ensure(config, progress=lambda message: None):
                 raise RuntimeError('当前工作台版本不支持这个 Houdini 版本，未加载不兼容的执行端。')
             return control(record, 'status', timeout=5)
         attempt = uuid.uuid4().hex
-        config = {**config, 'startupId': attempt}
         atomic_json(root / 'workbench/launch-config.json', config)
         request = root / 'workbench' / ('launch-' + attempt + '.json')
         atomic_json(request, config)
@@ -120,16 +120,7 @@ def ensure(config, progress=lambda message: None):
                 stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
-            last_progress = None
             while time.monotonic() < deadline:
-                status_file = root / 'workbench' / ('starting-' + attempt + '.json')
-                try:
-                    status = read_json(status_file)
-                except FileNotFoundError:
-                    status = None
-                if status and status.get('message') != last_progress:
-                    last_progress = status['message']
-                    progress(last_progress)
                 record = running(root)
                 if record and record['pid'] == process.pid:
                     return control(record, 'status', timeout=5)
@@ -141,7 +132,6 @@ def ensure(config, progress=lambda message: None):
             raise RuntimeError('工作台启动尚未完成。进程未被强制结束，请稍后重新打开工作区。')
         finally:
             request.unlink(missing_ok=True)
-            (root / 'workbench' / ('starting-' + attempt + '.json')).unlink(missing_ok=True)
     finally:
         lease.close()
 
@@ -308,18 +298,11 @@ def _prepare_with_feedback(config):
         layout.addWidget(widget)
     events = queue.Queue()
     result = {}
-    startup_id = config.get('startupId')
-    status_file = Path(config['root']) / 'workbench' / ('starting-' + startup_id + '.json') if startup_id else None
 
     def progress(message):
         message = _startup_message(message)
         value = {'message': message, 'elapsedSeconds': round(time.monotonic() - started, 3)}
         events.put(value)
-        if status_file is not None:
-            try:
-                atomic_json(status_file, value)
-            except OSError as error:
-                print('[dsh-houdini/startup] 进度同步未完成：' + str(error), flush=True)
         print('[dsh-houdini/startup] ' + json.dumps(value, ensure_ascii=False), flush=True)
 
     def worker():
@@ -329,11 +312,6 @@ def _prepare_with_feedback(config):
         except BaseException as error:
             result['error'] = error
         finally:
-            if status_file is not None:
-                try:
-                    status_file.unlink(missing_ok=True)
-                except OSError as error:
-                    print('[dsh-houdini/startup] 临时进度记录未清除：' + str(error), flush=True)
             events.put(None)
 
     loop = QEventLoop()
