@@ -11,12 +11,12 @@ const value={ok:true,stdout:'',stderr:'',images:[
   'C:/project/dsh-artifacts/checks/run-a/b.png',
 ]};
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
-const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:{header:{cwd},requestHeader:()=>({config:{provider:'active',model:'native'}})}},callId:'image-call',signal:new AbortController().signal};
+const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:{header:{cwd},snapshotEvents:()=>[{type:'tool/result',data:{message:{source:{callId:'image-submit'}},meta:{canonical:{jobId:'abcdef123456',requestReceipt:{runtime_id:'a'.repeat(32),status:'job_submitted'}}}}}],requestHeader:()=>({config:{provider:'active',model:'native'}})}},callId:'image-call',signal:new AbortController().signal};
 const refs=[];
 const attachments={imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:150},async saveImage({data,name}){saved++;const ref={attachmentId:'image-'+saved,mediaType:'image/png',bytes:data.length,width:1,height:1,name};refs.push(ref);return ref}};
 let modalities=['text','image'];
 const ctx={on(){},get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined};
-const bridge={async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
+const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
 try{
  const result=await attachImages(value,exec,bridge,ctx);
  assert.equal(result.media,undefined);assert.equal(imageBlocks(result).length,2);assert.deepEqual(fs.readdirSync(cwd),[],'no workspace media copy');

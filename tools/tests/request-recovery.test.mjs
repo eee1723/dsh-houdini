@@ -12,6 +12,7 @@ let onCaptureAdmitted;
 let receiptOverride;
 const server=http.createServer((req,res)=>{
  res.setHeader('content-type','application/json');
+ if(req.url==='/health'){res.end(JSON.stringify({ok:true,runtimeId:runtime,executionContractVersion:version,verbCatalog:{hash}}));return;}
  let text='';req.on('data',b=>text+=b);req.on('end',()=>{
   const body=JSON.parse(text);
   if(req.url==='/requests/prepare'){

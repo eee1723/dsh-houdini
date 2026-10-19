@@ -4,10 +4,12 @@ import type { ExecResult, HoudiniBridge, OwnershipScope } from './bridge.js'
 import { ExecutorBinding } from './executor-binding.js'
 import { attachImages } from './image-output.js'
 import { retainResult } from './result-details.js'
+import {recordedExecutionOrigin} from './execution-history.js'
 
-export type HoudiniConnection = HoudiniBridge | { resolve(exec: any): Promise<HoudiniBridge>;
+export type HistoricalTarget={executorId?:string;runtimeId:string}
+export type HoudiniConnection = HoudiniBridge | { resolve(exec:any,options?:{write?:boolean}):Promise<HoudiniBridge>;
   registry?:string;
-  recoveryTarget?(agent:any,signal:AbortSignal,target?:string):Promise<HoudiniBridge> }
+  resolveHistorical?(exec:any,target:HistoricalTarget):Promise<HoudiniBridge> }
 
 export function workspaceOf(exec: any): string | null {
   const cwd = exec?.agent?.session?.header?.cwd
@@ -35,18 +37,26 @@ export class HoudiniToolRuntime {
     this.binding = new ExecutorBinding()
   }
 
-  /** Validate trusted provenance before resolving or contacting an executor. */
-  async target(exec: any, bind = true): Promise<{ bridge: HoudiniBridge; owner: OwnershipScope }> {
-    const owner = ownershipScopeOf(exec)
-    if(bind&&exec.agent)await this.ctx.get?.('houdiniRecovery')?.beforeTool?.(exec.agent,exec.signal)
-    const bridge = 'resolve' in this.connection ? await this.connection.resolve(exec) : this.connection
-    if (bind) {
-      const session = exec?.agent?.session
-      if (session?.snapshotEvents) await this.binding.ensure(session, bridge.targetExecutorId, exec.signal, false)
-      else if (bridge.targetExecutorId) throw new Error('Bound Houdini operations require a durable agent session')
-      if(exec.agent)await this.ctx.get?.('houdiniRecovery')?.ensure(exec.agent,exec.signal)
-    }
-    return { bridge, owner }
+  /** Resolve a selected scene; read access never claims an author or restores nodes. */
+  async target(exec:any,access:'read'|'write'='read'):Promise<{bridge:HoudiniBridge;owner:OwnershipScope}> {
+    const owner=ownershipScopeOf(exec)
+    const bridge='resolve' in this.connection?await this.connection.resolve(exec,{write:access==='write'}):this.connection
+    const session=exec?.agent?.session
+    if(session?.snapshotEvents)await this.binding.ensure(session,bridge.targetExecutorId,exec.signal,false)
+    else if(bridge.targetExecutorId)throw new Error('Bound Houdini operations require a durable agent session')
+    if(access==='write'&&exec.agent)await this.ctx.get?.('houdiniRecovery')?.beforeWrite?.(exec.agent,exec.signal)
+    return {bridge,owner}
+  }
+
+  /** Receipt/job lookup keeps its original runtime even after the default target changes. */
+  async historicalTarget(exec:any,reference:{requestRef:string}|{jobId:string}):Promise<{bridge:HoudiniBridge;owner:OwnershipScope}> {
+    const owner=ownershipScopeOf(exec)
+    if('requestRef' in reference&&reference.requestRef==='index')return this.target(exec,'read')
+    const target=recordedExecutionOrigin(exec?.agent?.session?.snapshotEvents?.()??[],reference)
+    const bridge='resolve' in this.connection
+      ?await (this.connection.resolveHistorical?.(exec,target)??Promise.reject(new Error('当前连接没有提供原运行实例查询，未向其他工程发送请求。')))
+      :this.connection.forRuntime(target.runtimeId)
+    return {bridge,owner}
   }
 
   /** Uses this result's observation; presentation never adds a scene query. */
@@ -80,7 +90,7 @@ export class HoudiniToolRuntime {
     this.workspaceNotes.set(agent, key)
     const note = `workspace note: this session's workspace is "${cwd}"; this operation observed $HIP at "${hip}". `
       + 'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments; '
-      + 'A successful Save As follows the project directory at the next model step; check that step before using other file tools. '
+      + 'A successful Save As performed by this conversation through scene_save_as follows the project directory at the next model step; selecting a scene or reading another save does not move the workspace. '
       + 'Do not write task outputs into the plugin repository.'
     return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
   }

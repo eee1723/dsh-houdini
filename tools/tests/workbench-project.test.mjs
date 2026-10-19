@@ -5,6 +5,7 @@ import path from 'node:path'
 import {Context} from '@deepseek-ai/cordis'
 import {SessionStore} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
+import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-preset-registry'
 import {SessionTitleService} from '@deepseek-ai/dsh-session-title'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 import {ExecutorController} from '../../lib/executor-controller.js'
@@ -16,17 +17,17 @@ import {recoveryMessage} from '../../lib/scene-recovery.js'
 
 const context=new Context()
 new SessionStore(context)
-new SessionProjectionRegistry(context)
+new SessionProjectionRegistry(context).register(agentPresetProjectionDefinition)
 registerExecutorIdentityProjection(context)
 const titles=new SessionTitleService(context,{fallbackMaxWords:12,fallbackMaxBytes:80,maxTitleBytes:160})
 const executor='a'.repeat(32),replacement='b'.repeat(32),registration='c'.repeat(32)
-const record={workbench:true,executor_id:executor,registration_id:registration,scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),
+const record={workbench:true,executor_id:executor,registration_id:registration,runtime_id:'9'.repeat(32),scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),
   hip_path:path.resolve('tools/out/test103/untitled.hip'),hip_is_new:false,workspace_path:path.resolve('tools/out/test103')}
 const agents=new Map()
 context.provide('workspaceRegistry',{list:()=>[],create:async()=>({id:'workspace',title:'test103',sessionIds:[]}),archivedSessionIds:[]})
 context.provide('sessionController',{
   create:async({sessionId})=>{
-    const session=context.sessions.create(sessionId)
+    const session=context.sessions.create(sessionId,{meta:{agentPreset:'houdini',cwd:record.workspace_path}})
     agents.set(sessionId,{id:sessionId,session,status:'idle',inject:message=>session.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})})
     return {sessionId}
   },
@@ -35,14 +36,17 @@ context.provide('sessionController',{
 })
 let persisted=true
 context.sessions.flush=async()=>persisted
-const controller=new ExecutorController(context,{directory:{find:async()=>record},selectInitial:async agent=>{
-  await new ExecutorBinding(undefined,(_session,message)=>agent.inject(message)).ensure(agent.session,executor)
+const controller=new ExecutorController(context,{directory:{find:async()=>record},selectTarget:async agent=>{
+  const target={executor_id:record.executor_id,runtime_id:record.runtime_id,registration_id:record.registration_id,scene_id:record.scene_id,scene_epoch:record.scene_epoch,hip_path:record.hip_path,hip_is_new:record.hip_is_new,workspace_path:record.workspace_path}
+  await new ExecutorBinding(undefined,(_session,message)=>agent.inject(message)).select(agent.session,target)
+  return target
 }},true)
 try {
   const opened=await controller.openWorkspace({executorId:executor,registrationId:registration,expectedHip:record.hip_path,requestId:'f'.repeat(32)},new AbortController().signal)
   const session=agents.get(opened.sessionId).session
   assert.equal(titles.get(session),undefined,'project opening leaves DSH auto-title unpinned')
   assert.equal(foldExecutorState(session.snapshotEvents()).project.hipPath,record.hip_path)
+  assert.equal(executorIdentityProjection.wire.view(foldExecutorState(session.snapshotEvents())).target.executor_id,executor)
   assert.equal(foldExecutorState(session.snapshotEvents()).project.hipIsNew,false,'a real saved untitled.hip is not inferred to be unsaved')
   const human=text=>createUserMessage({source:{kind:'user'},content:[{type:'text',text}]})
   session.append('user/message',human('制作一组可调节的岩石'),{surfaceOp:'append'})
@@ -107,30 +111,31 @@ const text=element=>typeof element==='string'?element:Array.isArray(element)?ele
 assert.equal(uiContext.HoudiniProjectMark(props).props['data-houdini-project-mark'],true)
 assert.match(text(uiContext.HoudiniProjectLabel(props)),/rock.hip/)
 assert.match(text(uiContext.HoudiniProjectDetail(props)),/C:\/reopened\/rock.hip/)
-assert.match(text(uiContext.HoudiniProjectDetail(props)),/不代表 Houdini 当前在线/)
-currentProject={hipPath:'C:/folder/<img src=x>.hip',hipIsNew:false,needsReview:false}
+assert.match(text(uiContext.HoudiniProjectDetail(props)),/连接|确认/)
+currentProject={executorId:executor,hipPath:'C:/folder/<img src=x>.hip',hipIsNew:false,needsReview:false}
 assert.match(text(uiContext.HoudiniProjectLabel(props)),/<img src=x>.hip/,'untrusted filename stays React text, not HTML')
-currentProject={hipPath:'C:/untitled.hip',hipIsNew:true,needsReview:false}
+currentProject={executorId:executor,hipPath:'C:/untitled.hip',hipIsNew:true,needsReview:false}
 assert.match(text(uiContext.HoudiniProjectLabel(props)),/未保存工程/)
 currentProject=null
 assert.equal(uiContext.HoudiniProjectMark(props),null)
-assert.equal(uiContext.HoudiniProjectLabel(props),null)
+assert.match(text(uiContext.HoudiniProjectLabel(props)),/未绑定现场/)
 assert(!fragment.includes('dangerouslySetInnerHTML'))
-const live={available:true,observedAt:Date.now(),records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}}}
-assert.equal(uiContext.houdiniPresence(view,live).status,'online')
-assert.equal(uiContext.houdiniPresence(view,{...live,observedAt:Date.now()-13000}).status,'unknown','expired green must not persist')
-assert.equal(uiContext.houdiniPresence(view,{...live,records:{}}).status,'unknown','absence is not proof of process exit')
-assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:'different',observedAt:Date.now()}}}).status,'changed')
-assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'offline',observedAt:Date.now()}}}).status,'offline')
-assert.equal(uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()-13000}}}).status,'unknown','a fresh batch response does not freshen an old individual observation')
-const mismatch=uiContext.houdiniPresence(view,{...live,records:{[view.executorId]:{status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now(),contractMismatch:true}}})
+const liveView={...view,runtimeId:'8'.repeat(32),target:{executor_id:view.executorId,runtime_id:'8'.repeat(32),scene_epoch:view.sceneEpoch,hip_path:view.hipPath,hip_is_new:false}}
+const live={available:true,observedAt:Date.now(),records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now()}}}
+assert.equal(uiContext.houdiniPresence(liveView,live).status,'online')
+assert.equal(uiContext.houdiniPresence(liveView,{...live,observedAt:Date.now()-13000}).status,'unknown','expired green must not persist')
+assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{}}).status,'unknown','absence is not proof of process exit')
+assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:'different',observedAt:Date.now()}}}).status,'changed')
+assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'offline',observedAt:Date.now()}}}).status,'offline')
+assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now()-13000}}}).status,'unknown','a fresh batch response does not freshen an old individual observation')
+const mismatch=uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now(),contractMismatch:true}}})
 assert.equal(mismatch.status,'unknown','a contract mismatch is not painted as live')
-assert.match(mismatch.label,/版本不一致/,'the user gets an actionable reload reason')
+assert.match(mismatch.detail,/版本不一致/,'the user gets an actionable reload reason')
 const liveProps={...props,usePresence:()=>live}
-currentProject=view
+currentProject=liveView
 const liveMark=uiContext.HoudiniProjectMark(liveProps)
 assert.equal(liveMark.props['data-houdini-presence'],'online','the closed-state project mark paints live presence')
-assert.match(liveMark.props['aria-label'],/Houdini 在线/)
+assert.match(liveMark.props['aria-label'],/已就绪/)
 const findNode=(node,predicate)=>{
   if(!node||typeof node==='string')return null
   if(Array.isArray(node)){for(const child of node){const found=findNode(child,predicate);if(found)return found}return null}
@@ -142,7 +147,7 @@ const liveLabel=uiContext.HoudiniProjectLabel(liveProps)
 const liveLabelNode=findNode(liveLabel,node=>node.props?.['data-houdini-project-label']===true)
 assert(liveLabelNode,'the project label renders')
 assert.equal(liveLabelNode.props['data-houdini-presence'],'online','a closed project menu still exposes live presence')
-assert.match(liveLabel.props.label,/Houdini 在线/,'the tooltip explains the live state without opening the menu')
+assert.match(liveLabel.props.label,/已就绪/,'the tooltip explains the live state without opening the menu')
 assert.match(source,/\[data-houdini-presence="online"\][^{]*\{color:/,'online has a visible color rule')
 assert.match(source,/\[data-houdini-presence="changed"\]/,'changed is visually distinct')
 assert.match(source,/\[data-houdini-presence="offline"\][^{]*\{color:/,'offline has a visible color rule')
@@ -157,7 +162,7 @@ const lifecycleUi=uiContext.createWorkbenchUi({
   rpc:{call:async(_channel,method)=>{
     presenceCalls.push(method)
     if(method==='houdiniFrontend/capabilities')return {ok:true,value:{workbench:true}}
-    if(method==='houdiniFrontend/projectPresence')return {ok:true,value:[{executorId:view.executorId,status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
+    if(method==='houdiniFrontend/projectPresence')return {ok:true,value:[{executorId:view.executorId,runtimeId:'8'.repeat(32),status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
     throw Error('unexpected '+method)
   }},
 },{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
@@ -180,7 +185,7 @@ const boundedUi=uiContext.createWorkbenchUi({
     if(method==='houdiniFrontend/windowPin')return {ok:true,value:{pinned:false}}
     pollCount++
     if(stalled)return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}))
-    return {ok:true,value:[{executorId:view.executorId,status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
+    return {ok:true,value:[{executorId:view.executorId,runtimeId:'8'.repeat(32),status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}
   }},
 },{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
 boundedUi.Lifecycle()

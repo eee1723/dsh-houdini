@@ -33,17 +33,17 @@ export function apply(ctx:Context,config:Config):void {
     async(taskId,candidates,signal)=>{
       const agent=ctx.agents.get(taskId as any),questions=agent?.ctx.get('userQuestions')
       if(!agent||!questions)return
-      const labels=candidates.map((record,index)=>'工程窗口 '+(index+1))
-      const answer=await questions.ask({agent,signal,questions:[{id:'houdini-resume-window',header:'继续工程',
-        question:'原工程有多个可接续的窗口，要继续哪一个？',multiSelect:false,
+      const labels=candidates.map((record,index)=>(record.hip_is_new?'未保存工程':path.basename(record.hip_path??'工程'))+' · 窗口 '+(index+1))
+      const answer=await questions.ask({agent,signal,questions:[{id:'houdini-target-window',header:'选择现场',
+        question:'这段对话要操作哪一个 Houdini 现场？',multiSelect:false,
         options:[...candidates.map((record,index)=>({label:labels[index],description:record.hip_path+' · Houdini '+record.houdini_version})),
           {label:'暂不连接',description:'保留当前内容，本轮继续讨论。'}]}]})
-      const choice=answer.answers.find(item=>item.id==='houdini-resume-window')
+      const choice=answer.answers.find(item=>item.id==='houdini-target-window')
       const index=!choice?.custom&&choice?.selected?.length===1?labels.indexOf(choice.selected[0]):-1
       return candidates[index]?.executor_id
     })
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')
-  if(config.workbench)ctx.inject(['workspaceRegistry','sessionController','sessionQuery','sessions'],scope=>{
+  if(config.workbench)ctx.inject(['workspaceRegistry','sessionController','sessions'],scope=>{
     new ExecutorController(scope,router,true)
   })
   else new ExecutorController(ctx,router)
@@ -58,8 +58,9 @@ export function sharedExecutorConnection(ctx:Context,registry:string) {
   }
   return {
     registry,
-    resolve:(exec:Parameters<ExecutorRouter['resolve']>[0])=>router().resolve(exec),
-    recoveryTarget:(agent:Parameters<ExecutorRouter['recoveryTarget']>[0],signal:AbortSignal,target?:string)=>router().recoveryTarget(agent,signal,target),
+    resolve:(exec:Parameters<ExecutorRouter['resolve']>[0],options?:Parameters<ExecutorRouter['resolve']>[1])=>router().resolve(exec,options),
+    resolveHistorical:(exec:Parameters<ExecutorRouter['resolveHistorical']>[0],origin:Parameters<ExecutorRouter['resolveHistorical']>[1])=>router().resolveHistorical(exec,origin),
+    selectFor:(agent:Parameters<ExecutorRouter['selectFor']>[0],signal:AbortSignal)=>router().selectFor(agent,signal),
     sceneContextFor:(session:Parameters<ExecutorRouter['sceneContextFor']>[0],signal?:AbortSignal)=>router().sceneContextFor(session,signal),
   }
 }

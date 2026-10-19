@@ -207,7 +207,7 @@ const boundBridge={targetExecutorId:otherExecutor,sceneContext:async()=>{
   bindingReads++;return {ok:true,result:{hip_path:savedHip,hip_is_new:false}}
 }}
 const beforeBinding=requests.length
-await assert.rejects(()=>generateImage(context,bindingExec,managed(),success,boundBridge),/recorded executor differs/)
+await assert.rejects(()=>generateImage(context,bindingExec,managed(),success,boundBridge),/selected executor differs/)
 assert.equal(bindingReads,0);assert.equal(requests.length,beforeBinding)
 assert.deepEqual(bindingSession.snapshotEvents(),boundEvents)
 boundBridge.targetExecutorId=firstExecutor

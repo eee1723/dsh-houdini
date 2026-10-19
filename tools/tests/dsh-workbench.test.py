@@ -100,7 +100,9 @@ def main():
                 if attempt == 49:
                     raise
                 time.sleep(.05)
-        deadline = time.monotonic() + 45
+        # The real Host request may wait up to 120s; do not kill an admitted
+        # scene operation at a shorter fixture deadline during cold initialization.
+        deadline = time.monotonic() + 150
         while time.monotonic() < deadline:
             try:
                 result = json.loads((folder / 'result.json').read_text(encoding='utf-8'))
@@ -184,7 +186,7 @@ def main():
                        'expectedHip': endpoint['hip_path'], 'requestId': uuid.uuid4().hex}
             value = control(record, 'open', request)
             results.append(value)
-            assert control(record, 'open', {**request, 'requestId': uuid.uuid4().hex})['sessionId'] == value['sessionId']
+            assert control(record, 'open', request)['sessionId'] == value['sessionId'], 'same request retries remain idempotent'
             browser(value['sessionId'], 'project-' + str(len(results)), project, endpoint['hip_path'])
             idle = command(value['sessionId'], action='idle')
             assert idle['idle'] and not idle['started'], 'opening a project must not wake an Agent or call a model'
@@ -217,6 +219,10 @@ def main():
             'expectedHip': endpoints[0]['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[0]['sessionId']}
         assert control(record, 'open', empty_request)['sessionId'] == results[0]['sessionId'], 'explicitly selected unexecuted conversations need no fictional recovery checkpoint'
         assert control(record, 'open', {**empty_request, 'requestId': uuid.uuid4().hex})['sessionId'] == results[0]['sessionId']
+        # Both registered scenes can be selected without acquiring a writer.
+        for endpoint in endpoints:
+            fresh = json.loads((registry / 'endpoints' / (endpoint['executor_id'] + '.json')).read_text(encoding='utf-8'))
+            assert fresh['task_id'] is None, 'selecting a scene must not claim an author'
         for index, value in enumerate(results):
             session = value['sessionId']
             inspected = command(session, 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
@@ -240,7 +246,7 @@ def main():
             assert session in new_workspace['sessionIds'], 'same conversation follows the saved file without cloning'
             endpoints[index] = json.loads((registry / 'endpoints' / (endpoints[index]['executor_id'] + '.json')).read_text(encoding='utf-8'))
             control(record, 'open', {'executorId': endpoints[index]['executor_id'], 'registrationId': endpoints[index]['registration_id'],
-                'expectedHip': endpoints[index]['hip_path'], 'requestId': uuid.uuid4().hex})
+                'expectedHip': endpoints[index]['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': session})
             if index == 0:
                 command(session, action='pinTitle')
             browser(session, 'saved-project-' + str(index), destination.parent, str(destination).replace('\\', '/'), refresh_title=index == 0)
@@ -264,7 +270,7 @@ def main():
                 time.sleep(.1)
             live_endpoint = endpoints[1]
             control(record, 'open', {'executorId': live_endpoint['executor_id'], 'registrationId': live_endpoint['registration_id'],
-                'expectedHip': live_endpoint['hip_path'], 'requestId': uuid.uuid4().hex})
+                'expectedHip': live_endpoint['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[1]['sessionId']})
             browser(results[1]['sessionId'], 'while-other-houdini-is-busy', Path(live_endpoint['hip_path']).parent)
             children[0].kill()
             children[0].wait(timeout=10)
@@ -272,7 +278,7 @@ def main():
         assert control(record, 'status')['record']['pid'] == record['pid']
         endpoint = endpoints[1]
         assert control(record, 'open', {'executorId': endpoint['executor_id'], 'registrationId': endpoint['registration_id'],
-            'expectedHip': endpoint['hip_path'], 'requestId': uuid.uuid4().hex})['sessionId'] == results[1]['sessionId']
+            'expectedHip': endpoint['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[1]['sessionId']})['sessionId'] == results[1]['sessionId']
         browser(results[1]['sessionId'], 'after-other-houdini-crash', Path(endpoint['hip_path']).parent)
         still_live = command(results[1]['sessionId'], 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
         assert still_live['ok'] and still_live['result'] == endpoint['houdini_version']
@@ -281,6 +287,23 @@ def main():
             'description': 'Verify the same selected executor through the nested transport'})['value']
         assert nested['ok'] and nested['result'] == endpoint['houdini_version']
         assert nested['execution']['executor_id'] == endpoint['executor_id']
+        switched = results[0]['sessionId']
+        command(switched, action='clear')
+        status = command(switched, action='targets')
+        assert status['state']['status'] == 'unbound' and status['selectedTarget'] is None
+        assert any(row['executor_id'] == endpoint['executor_id'] for row in status['candidates'])
+        unbound_read = command(switched, 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
+        assert not unbound_read['ok'], 'an explicitly cleared conversation must not bind the sole surviving scene'
+        command(switched, action='select', args={'executorId':endpoint['executor_id'],
+            'registrationId':endpoint['registration_id'],'expectedHip':endpoint['hip_path'],
+            'runtimeId':endpoint['runtime_id'],'sceneEpoch':endpoint['scene_epoch']})
+        changed_read = command(switched, 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
+        assert changed_read['ok'] and changed_read['execution']['executor_id'] == endpoint['executor_id'], changed_read
+        assert command(switched, action='targets')['selectedTarget']['executor_id'] == endpoint['executor_id']
+        unchanged = command(results[1]['sessionId'], 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
+        assert unchanged['ok'], 'two conversations can read the same scene without transferring its writer'
+        control(record, 'show', {'sessionId': switched})
+        browser(switched, 'explicitly-switched-old-conversation', project / 'saved-0', endpoint['hip_path'])
         output = (folder / 'replacement.log').open('wb')
         streams.append(output)
         replacement_env = isolated_environment(folder / 'replacement-env', executable=Path(empty_hython))
@@ -301,8 +324,8 @@ def main():
         assert matched
         reopened = matched[0]
         resumed = control(record, 'open', {'executorId': reopened['executor_id'], 'registrationId': reopened['registration_id'],
-            'expectedHip': reopened['hip_path'], 'requestId': uuid.uuid4().hex})
-        assert resumed['sessionId'] == results[0]['sessionId'], 'manual reopen must retain the original conversation'
+            'expectedHip': reopened['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[0]['sessionId']})
+        assert resumed['sessionId'] == results[0]['sessionId'], 'explicitly selecting the old conversation retains its identity'
         command(resumed['sessionId'], action='beforeStep')
         not_replayed = command(resumed['sessionId'], 'houdini_inspect', {'code': "__result__=hou.node('/obj/must_not_replay') is None"})['value']
         assert not_replayed['ok'] and not_replayed['result'] is True, 'an interrupted mutation must not be replayed after recovery'
@@ -322,8 +345,8 @@ def main():
         record = desktop['record']
         assert record['generation'] != previous_generation
         retained = control(record, 'open', {'executorId': endpoint['executor_id'], 'registrationId': endpoint['registration_id'],
-            'expectedHip': endpoint['hip_path'], 'requestId': uuid.uuid4().hex})
-        assert retained['sessionId'] == results[1]['sessionId'], 'desktop restart must reuse durable original DSH history'
+            'expectedHip': endpoint['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[1]['sessionId']})
+        assert retained['sessionId'] == results[1]['sessionId'], 'explicit old-conversation selection after restart retains durable DSH history'
         browser(retained['sessionId'], 'after-workbench-restart', Path(endpoint['hip_path']).parent, endpoint['hip_path'])
         retained_result = command(retained['sessionId'], 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']
         assert retained_result['ok'] and retained_result['result'] == endpoint['houdini_version']
@@ -334,7 +357,7 @@ def main():
         while running(config['root']) and time.monotonic() < deadline:
             time.sleep(.1)
         assert running(config['root']) is None and children[1].poll() is None
-        print('PASS simultaneous launch and initiator exit, independent Python/Qt desktop, one Host, unowned taskbar window, authentication, actual Qt session/cwd, H21/H22 tools and Save As, A crash/B survives, manual original-project recovery, desktop restart retains history and live Houdini: ' + str(folder), flush=True)
+        print('PASS simultaneous launch and initiator exit, independent Python/Qt desktop, one Host, unowned taskbar window, authentication, actual Qt session/cwd, H21/H22 tools and Save As, A crash/B survives, explicit selection/clear/old-conversation switching, read without writer transfer, original node permission recovery, restart preserves history and live Houdini: ' + str(folder), flush=True)
     finally:
         for child in children:
             if child.poll() is None:

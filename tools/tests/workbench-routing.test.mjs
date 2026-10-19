@@ -17,43 +17,41 @@ const router=new ExecutorRouter({find:async()=>{contacted++;throw Error('must no
   new ExecutorBinding(),value=>recordedExecutorIdentity(value.snapshotEvents()),()=>true,async()=>false)
 await assert.rejects(router.resolve({agent:{id:session.id,session},signal}),/尚未可靠保存/)
 await assert.rejects(router.sceneContextFor(session,signal),/尚未可靠保存/)
-await assert.rejects(router.recoveryTarget({id:session.id,session},signal),/尚未可靠保存/)
 assert.equal(contacted,0,'failed durability must precede endpoint verification or scene traffic')
 
 async function chooseFixture(choice) {
   const source=Session.create('choose-project')
-  let header={cwd:path.resolve('tools/out/before-choice')},service,questions=0,selections=0
-  const selected=path.resolve('tools/out/selected-project')
+  const header={cwd:path.resolve('tools/out/before-choice')}
+  let service,hook,questions=0
+  const selected=path.resolve('tools/out/selected-project'),resolutions=[],traffic=[]
   const agent={id:source.id,status:'running',inject:message=>source.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]}),
-    session:{id:source.id,get header(){return header},snapshotEvents:()=>source.snapshotEvents(),append:(...args)=>source.append(...args)}}
-  const record={executor_id:identity,registration_id:'b'.repeat(32),state:'registered',workbench:true,
-    hip_path:path.join(selected,'project.hip'),workspace_path:selected,houdini_version:'21.0.440'}
+    session:{id:source.id,header,snapshotEvents:()=>source.snapshotEvents(),append:(...args)=>source.append(...args)}}
+  const target={executor_id:identity,runtime_id:identity,registration_id:'b'.repeat(32),scene_id:'c'.repeat(32),scene_epoch:'d'.repeat(32),
+    hip_path:path.join(selected,'project.hip'),workspace_path:selected,hip_is_new:false}
   const bridge=new HoudiniBridge('http://127.0.0.1:1',100,identity)
-  const targetRouter={directory:{list:async()=>[record]},selectInitial:async(selectedAgent,target,generation,actualSignal,hip,atStep)=>{
-    assert.equal(selectedAgent,agent);assert.equal(generation,record.registration_id);assert.equal(hip,record.hip_path)
-    assert.equal(atStep,true);actualSignal.throwIfAborted();selections++
-    await new ExecutorBinding(undefined,(_session,message)=>recordHoudiniContext(agent,message)).ensure(agent.session,target,actualSignal)
-  }}
-  installSceneRecovery({provide:(_name,value)=>service=value,sessions:{flush:async()=>true},get:name=>
-    name==='houdiniTargets'?{workbench:true,getRouter:registry=>{assert.equal(registry,'fixture');return targetRouter}}:
-    name==='workspaceRegistry'?{relocateSession:async(id,directory)=>{assert.equal(id,agent.id);header={cwd:directory}}}:
-    name==='userQuestions'?{ask:async({questions:items})=>{questions++;return {answers:[{id:items[0].id,
-      selected:choice==='select'?[items[0].options[0].label]:[],custom:choice==='custom'?'please guess':undefined}]}}}:undefined},
-    {registry:'fixture',resolve:async()=>bridge,recoveryTarget:async()=>bridge})
+  bridge.inspectExecutor=async()=>{traffic.push('health');return {executorId:identity}}
+  bridge.recover=async()=>{throw Error('ordinary read or a fresh selected scene must not restore historical ownership')}
+  installSceneRecovery({provide:(_name,value)=>service=value,on:(event,callback)=>{assert.equal(event,'agent/pre-step');hook=callback},
+    sessions:{flush:async()=>true},get:name=>name==='userQuestions'?{ask:async()=>{questions++;return {answers:[]}}}:undefined},
+    {registry:'fixture',resolve:async(exec,options)=>{assert.equal(exec.agent,agent);resolutions.push(options);return bridge}})
+  await hook({agent,signal},async()=>({kind:'continue'}))
+  assert.deepEqual(resolutions,[],'ordinary conversation resolves no endpoint')
+  assert.deepEqual(traffic,[],'ordinary conversation probes or restores no scene')
+  assert.equal(service.beforeStep,undefined)
+  assert.equal(service.beforeTool,undefined)
+  assert.equal(questions,0)
   if(choice==='select') {
-    await service.beforeStep(agent,signal)
-    assert.equal(questions,0,'ordinary conversation does not require choosing a Houdini')
-    await Promise.all([service.beforeTool(agent,signal),service.beforeTool(agent,signal)])
-    assert.equal(questions,1)
-    assert.equal(selections,1)
-    assert.equal(header.cwd,selected)
+    await new ExecutorBinding(undefined,(_session,message)=>recordHoudiniContext(agent,message)).select(agent.session,target,signal)
+    assert.deepEqual(resolutions,[],'explicit target selection itself makes no recovery call')
     assert.equal(recordedExecutorIdentity(source.snapshotEvents()),identity)
+    assert.equal((await service.inspect(agent,signal)).status,'new_task')
+    await service.beforeWrite(agent,signal)
+    assert(resolutions.every(value=>value.write===false),'read routing and recovery checks never acquire the writer; tool write admission owns that step')
+    assert.deepEqual(traffic,['health'])
   } else {
-    await assert.rejects(service.beforeTool(agent,signal),/只讨论/)
-    assert.equal(selections,0)
-    assert.equal(recordedExecutorIdentity(source.snapshotEvents()),undefined)
-    assert.notEqual(header.cwd,selected)
+    assert.equal(recordedExecutorIdentity(source.snapshotEvents()),undefined,'free text and skipped selection confer no target')
   }
+  assert.equal(header.cwd,path.resolve('tools/out/before-choice'),'target selection does not relocate a conversation')
 }
 await chooseFixture('select')
 await chooseFixture('custom')
@@ -73,4 +71,4 @@ assert.deepEqual(await controller.activity(),{activeConversations:0,durable:true
 saved=false
 await assert.rejects(controller.activity(),/尚未可靠保存/)
 assert.equal(flushes,3)
-console.log('workbench routing: durability before endpoint traffic, native explicit selection, selected directory, no repeated question, no binding from free text or skipped choice')
+console.log('workbench routing: durability before endpoint traffic, explicit read-only selection, no ordinary recovery traffic or cwd move, no binding from free text or skipped choice')

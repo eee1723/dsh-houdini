@@ -1,102 +1,118 @@
 import fs from 'node:fs/promises'
 import vm from 'node:vm'
 import assert from 'node:assert/strict'
-import {Context} from '@deepseek-ai/cordis'
-import Registry from '@deepseek-ai/dsh-typert-registry'
-import Gateway from '@deepseek-ai/dsh-api-gateway'
-import * as frontendHost from '../../lib/frontend-host.js'
-
-const host=new Context()
-new Registry(host)
-const gateway=new Gateway(host,{websocketHeartbeatIntervalMs:2000})
-await host.plugin(frontendHost)
 
 const source=await fs.readFile(new URL('../../client.js',import.meta.url),'utf8')
-assert(!source.includes('houdini-connection-status'),'ordinary conversation must not register a connection banner')
-assert(!source.includes('houdiniFrontend/connectionStatus'),'conversation focus and selection must not trigger UI-only scene probes')
-assert(!/['"]检查连接['"]/.test(source),'do not ask artists to maintain internal connection state')
-const fragment=source.slice(source.indexOf('    function createExecutorPicker('),source.indexOf('    function apply(ctx) {'))
-const hooks=[],effects=[];let cursor=0,task='task-a',preset='houdini',requests=[],response,hostGeneration,capabilityResponse
+assert(!source.includes('createExecutorPicker('),'one compact selector replaces the separate legacy dock picker')
+assert(!source.includes('houdini-executor-picker'),'no duplicate executor panel is registered')
+const fragment=source.slice(source.indexOf('    function useHoudiniProject('),source.indexOf('    function createHoudiniTitleAction('))
+const executor='a'.repeat(32),runtime='b'.repeat(32),epoch='c'.repeat(32),registration='d'.repeat(32)
+const first={executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:'e'.repeat(32),registration_id:registration,
+  hip_path:'C:/work/ship.hip',hip_is_new:false,houdini_version:'22.0.368',workspace_path:'C:/work',state:'registered',same_workspace:true,pid:9876}
+const second={...first,executor_id:'f'.repeat(32),hip_path:'D:/other/rocks.hip',same_workspace:false,pid:4321}
+let task='task-a',generation={id:1},project=null,preset='houdini',hidden=false,failPresence=false,listReply=null,listFailure=false
+const native=new Map(),requests=[],projectionRefreshes=[],intervals=[],visibility=new Set(),generationListeners=new Set()
+const componentHooks=new Map();let currentHooks=null,cursor=0,queued=[]
 const React={
-  createElement:(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity)}),
-  useRef:value=>{let i=cursor++;return hooks[i]||(hooks[i]={current:value})},
-  useState:value=>{let i=cursor++;if(!(i in hooks))hooks[i]=value;return [hooks[i],next=>hooks[i]=typeof next==='function'?next(hooks[i]):next]},
-  useSyncExternalStore:(subscribe,getSnapshot)=>getSnapshot(),
-  useEffect:(fn,deps)=>{let i=cursor++;if(!hooks[i]||deps.some((dep,j)=>!Object.is(hooks[i].deps[j],dep))){
-    hooks[i]?.dispose?.();hooks[i]={deps};effects.push(()=>hooks[i].dispose=fn())}},
+ createElement:(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity)}),
+ useState:initial=>{const i=cursor++;if(!(i in currentHooks))currentHooks[i]={value:initial};const slot=currentHooks[i];return[slot.value,next=>{slot.value=typeof next==='function'?next(slot.value):next}]},
+ useRef:initial=>{const i=cursor++;return currentHooks[i]||(currentHooks[i]={current:initial})},
+ useSyncExternalStore:(_subscribe,get)=>get(),
+ useEffect:(effect,deps)=>{const i=cursor++;if(!currentHooks[i]||deps.some((value,index)=>!Object.is(value,currentHooks[i].deps[index]))){currentHooks[i]?.dispose?.();const slot={deps};currentHooks[i]=slot;queued.push(()=>slot.dispose=effect())}}
 }
-const context={React,AbortController,setTimeout,clearTimeout}
-const peer={id:'picker-test',ctx:host,principal:{kind:'owner'},signal:new AbortController().signal,interactions:'answer',dispose:async()=>{}}
-vm.createContext(context);vm.runInContext(fragment+'\nthis.factory=createExecutorPicker;',context)
-const component=context.factory({generation:{getSnapshot:()=>hostGeneration,subscribe:()=>()=>{}},rpc:{call:async(channel,endpoint,payload,signal)=>{
-  requests.push({channel,endpoint,payload,signal})
-  if(endpoint==='houdiniFrontend/capabilities'){
-    if(capabilityResponse)return capabilityResponse()
-    // Browser arguments cross a JSON wire before entering the Host realm.
-    return {ok:true,value:await gateway.invoke({namespace:'houdiniFrontend',method:'capabilities',args:JSON.parse(JSON.stringify(payload.args)),peer,signal})}
-  }
-  return typeof response==='function'?response():response
-}}})
-function render(){cursor=0;let tree=component({sessionId:task,useSessions:fn=>fn({byId:{[task]:{projectionValues:{agentPreset:preset}}}})});while(effects.length)effects.shift()();return tree}
-function nodes(tree){return tree&&typeof tree==='object'?[tree,...tree.children.flatMap(nodes)]:[]}
-function button(tree,label){return nodes(tree).find(n=>n.tag==='button'&&n.children.includes(label))}
-const settle=()=>new Promise(resolve=>setImmediate(resolve))
-const targetRequests=()=>requests.filter(r=>r.endpoint.startsWith('houdiniTargets/'))
-const record={executor_id:'a'.repeat(32),registration_id:'b'.repeat(32),houdini_version:'22.0.368',
-  hip_path:'C:/fixture/test.hip',task_id:null,state:'registered'}
-let tree=render()
-assert.equal(tree,null,'no picker before a Host generation is ready')
-assert.equal(requests.length,0,'mount must not query a disconnected Host')
-hostGeneration={id:1};assert.equal(render(),null);await settle()
-assert.equal(render(),null,'ordinary Open Workspace must not show a shared executor picker')
-assert.equal(requests[0].endpoint,'houdiniFrontend/capabilities')
-assert.equal(targetRequests().length,0,'capability discovery must not list or select Houdini targets')
-const shared=await host.provide('houdiniTargets',{})
-hostGeneration={id:2};assert.equal(render(),null);await settle();tree=render()
-assert(button(tree,'Houdini 执行端'),'mounted shared Host service enables the picker')
-assert.equal(targetRequests().length,0,'enabling the picker does not silently query/select a target')
-response={ok:true,value:{candidates:[record],recovery:{status:'unbound',message:'本任务尚未绑定Houdini。'}}}
-button(tree,'Houdini 执行端').props.onClick();await settle();tree=render()
-assert.equal(targetRequests()[0].endpoint,'houdiniTargets/list')
-assert.equal(targetRequests()[0].payload.args.input.sessionId,'task-a')
-assert(nodes(tree).some(n=>n.children.some(c=>typeof c==='string'&&c.includes('本任务尚未绑定'))))
-assert(button(tree,'选择并绑定'))
-response={ok:true,value:{status:'bound'}}
-button(tree,'选择并绑定').props.onClick();await settle();tree=render()
-assert.equal(targetRequests().length,2,'one explicit choice submits exactly one selection')
-assert.equal(targetRequests()[1].channel,'/api')
-assert.equal(targetRequests()[1].payload.args.input.sessionId,'task-a')
-assert.equal(targetRequests()[1].payload.args.input.expectedHip,record.hip_path)
-assert(nodes(tree).some(n=>n.children.some(c=>typeof c==='string'&&c.includes('本任务已绑定'))))
-let resolve
-response=()=>new Promise(r=>resolve=r)
-button(tree,'刷新执行端').props.onClick();await settle()
-const staleSignal=requests.at(-1).signal
-task='task-b';render();assert(staleSignal.aborted)
-resolve({ok:true,value:{candidates:[record]}});await settle();tree=render()
-assert.equal(button(tree,'选择并绑定'),undefined,'late response must not populate another task')
-response={ok:true,value:{candidates:[{...record,task_id:'task-a'}],recovery:{status:'bound_disconnected',message:'原Houdini执行端已断开。'}}}
-button(tree,'Houdini 执行端').props.onClick();await settle();tree=render()
-assert.equal(button(tree,'选择并绑定').props.disabled,true,'other author reservation is not selectable')
-response=()=>new Promise(r=>resolve=r)
-button(tree,'刷新执行端').props.onClick();await settle()
-const disconnectedSignal=requests.at(-1).signal
-hostGeneration=undefined;assert.equal(render(),null,'connection loss immediately removes the picker')
-assert(disconnectedSignal.aborted,'connection loss aborts an in-flight target request')
-resolve({ok:true,value:{candidates:[record]}});await settle()
-host.set('houdiniTargets',undefined)
-hostGeneration={id:3};assert.equal(render(),null);await settle()
-assert.equal(render(),null,'reconnection must not reuse capabilities from a previous Host')
-capabilityResponse=()=>new Promise(r=>resolve=r)
-hostGeneration={id:4};render();const staleCapability=requests.at(-1).signal
-hostGeneration=undefined;render();assert(staleCapability.aborted)
-resolve({ok:true,value:{sharedExecutors:true}});await settle()
-assert.equal(render(),null,'late capabilities cannot revive a disconnected picker')
-capabilityResponse=async()=>{throw new Error('capability transport unavailable')}
-hostGeneration={id:5};render();await settle()
-assert.equal(render(),null,'failed capability lookup leaves optional UI hidden')
-const beforePreset=requests.length
-preset='standard';render();hostGeneration={id:6};render();await settle()
-assert.equal(requests.length,beforePreset,'other presets do not query Houdini capabilities')
-assert(targetRequests().every(r=>['houdiniTargets/list','houdiniTargets/select'].includes(r.endpoint)))
-console.log('executor picker: real Host capability RPC, local/shared visibility, reconnect isolation, explicit selection, captured HIP and author exclusion passed')
+const document={get visibilityState(){return hidden?'hidden':'visible'},addEventListener:(kind,fn)=>{if(kind==='visibilitychange')visibility.add(fn)},removeEventListener:(kind,fn)=>visibility.delete(fn)}
+const context={React,AbortController,AbortSignal,setTimeout,clearTimeout,setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},document,
+ require:()=>({Tooltip:'tooltip',Menu:'menu',MenuItemButton:'menuitem',Button:'button',Toast:'toast'})}
+vm.createContext(context);vm.runInContext(fragment,context)
+const observed=record=>({executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,hipPath:record.hip_path,
+ status:'online',observedAt:Date.now(),ownerSessionId:null,activeRequests:0,activeJobs:0,busy:false})
+let observations=[observed(first),observed(second)]
+const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload,signal)=>{
+ requests.push({method,payload,signal})
+ if(method==='houdiniFrontend/capabilities')return{ok:true,value:{workbench:true}}
+ if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}}
+ if(method==='houdiniFrontend/projectPresence'){if(failPresence)throw Error('connection lost');return{ok:true,value:observations}}
+ if(method==='houdiniTargets/list'){if(listReply)return listReply();if(listFailure)return{ok:false,error:{message:'fixture list failed'}};return{ok:true,value:{selectedTarget:project?.target??null,state:{status:project?'selected':'unbound'},candidates:[second,first]}}}
+ if(method==='houdiniTargets/select')return{ok:true,value:{status:'selected',sessionId:task,selectedTarget:first}}
+ if(method==='houdiniTargets/clear')return{ok:true,value:{selectedTarget:null}}
+ throw Error('unexpected RPC '+method)
+}}}
+const ui=context.createWorkbenchUi(connection,{sessionStatus:{getSnapshot:()=>native,subscribe:()=>()=>{}},adapter:{current:{getSnapshot:()=>({key:task}),subscribe:()=>()=>{}}}},
+ {refreshProjections:async id=>projectionRefreshes.push(id)})
+const props=()=>({sessionId:task,useSessions:select=>select({byId:{[task]:{id:task,cwd:'C:/work',blank:false,projectionValues:{agentPreset:preset}}},projectionsBySession:{[task]:{values:{houdiniExecutorIdentity:project}}}})})
+function render(component,parameters=props()){
+ if(!componentHooks.has(component))componentHooks.set(component,[])
+ currentHooks=componentHooks.get(component);cursor=0
+ const tree=component(parameters);while(queued.length)queued.shift()()
+ return tree
+}
+function expand(node){if(!node||typeof node!=='object')return node;if(typeof node.tag==='function')return expand(node.tag({...node.props,children:node.children}));return node}
+function nodes(tree){const n=expand(tree);return !n||typeof n!=='object'?[]:[n,...(n.props.anchor?[n.props.anchor]:[]).flatMap(nodes),...n.children.flatMap(nodes)]}
+const by=(tree,predicate)=>nodes(tree).find(predicate)
+const chip=tree=>by(tree,n=>n.props['data-houdini-project-label'])
+const text=tree=>{const n=expand(tree);return typeof n==='string'?n:n&&typeof n==='object'?n.children.map(text).join(''):''}
+const settle=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve))}
+render(ui.Lifecycle);await settle()
+const menu=ui.Label(props()).tag
+let tree=render(menu);tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'unbound')
+assert.match(text(chip(tree)),/未绑定现场/)
+assert.equal(requests.filter(r=>r.method==='houdiniTargets/list').length,0,'observing visible state never polls conversation lists')
+chip(tree).props.onClick();await settle();tree=render(menu)
+assert.equal(tree.props.open,true)
+const candidates=nodes(tree).filter(n=>n.props['data-houdini-target'])
+assert.deepEqual(candidates.map(n=>n.props['data-houdini-target']),[executor,second.executor_id],'same-workspace targets lead the list')
+assert.match(text(candidates[0]),/窗口 1 · Houdini 22/)
+assert(!text(candidates[0]).includes('9876'),'PID is confined to the optional tooltip')
+const choose=tree=>by(tree,n=>n.tag==='menuitem'&&by(n,child=>child.props['data-houdini-target']===executor))
+choose(tree).props.onSelect();await settle();tree=render(menu)
+const selectedCall=requests.find(r=>r.method==='houdiniTargets/select')
+assert.equal(selectedCall.payload.args.input.sessionId,'task-a')
+assert.equal(selectedCall.payload.args.input.runtimeId,runtime)
+assert.equal(selectedCall.payload.args.input.sceneEpoch,epoch)
+assert.equal(selectedCall.payload.args.input.expectedHip,first.hip_path)
+assert.deepEqual(projectionRefreshes,['task-a'])
+assert.equal(chip(tree).props['data-state'],'unbound','a successful RPC cannot create a second frontend binding source')
+project={target:first,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,hipPath:first.hip_path,hipIsNew:false}
+tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+native.set(task,{running:true});tree=render(menu);assert.equal(chip(tree).props['data-state'],'working');assert.match(text(chip(tree)),/对话工作中/)
+assert.equal(by(tree,n=>n.props['data-houdini-target']===second.executor_id).props['data-state'],'ready','a running current conversation cannot mark a different idle candidate as its work')
+assert.equal(by(tree,n=>n.props['data-houdini-target']===first.executor_id).props['data-state'],'working','the selected candidate retains the actual current conversation activity')
+native.set(task,{running:false});observations[0]={...observed(first),ownerSessionId:'other',busy:false}
+intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready','an idle writer reservation is not active work')
+native.set('other',{running:true});tree=render(menu);assert.equal(chip(tree).props['data-state'],'occupied')
+chip(tree).props.onClick();await settle();tree=render(menu);assert.equal(choose(tree).props.disabled,false,'another busy conversation does not prevent choosing a read-only target')
+native.set('other',{running:false});native.set('reader-b',{running:true})
+observations[0]={...observed(first),ownerSessionId:task,activeRequests:1,busy:true}
+intervals.at(-1)();await settle();tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'working');assert.match(text(chip(tree)),/现场工作中/,'an idle writer cannot claim another conversation’s read request')
+const reading=context.houdiniPresence(project,{available:true,visible:true,observedAt:Date.now(),records:{[executor]:observations[0]}},'reader-b',native)
+assert.equal(reading.state,'working');assert.equal(reading.label,'对话工作中','the running read-only conversation is not marked occupied by an idle writer')
+const unrelated=context.houdiniPresence(project,{available:true,visible:true,observedAt:Date.now(),records:{[executor]:observations[0]}},'observer-c',native)
+assert.equal(unrelated.label,'现场工作中','request ownership is unknown without a running native current/owner or writer job')
+native.set('reader-b',{running:false});observations[0]={...observed(first),ownerSessionId:task,activeJobs:1,busy:true}
+intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'working','Bridge jobs remain busy after a native agent stops')
+observations[0]={...observed(first),runtimeId:'9'.repeat(32)};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'changed')
+observations[0]={...observed(first),status:'offline'};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'offline')
+observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+hidden=true;visibility.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','hidden pages cannot retain a green reachable badge')
+hidden=false;visibility.forEach(fn=>fn());await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+failPresence=true;intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','transport failures invalidate reachable state')
+failPresence=false;observations[0]={...observed(first),observedAt:Date.now()-20000};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','a fresh response cannot refresh an old individual observation')
+observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu)
+if(!tree.props.open){chip(tree).props.onClick();await settle();tree=render(menu)}
+const clearAction=by(tree,n=>n.tag==='menuitem'&&by(n,child=>child.props['data-houdini-project-action']==='clear'))
+assert(clearAction)
+clearAction.props.onSelect();await settle();tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'ready','clearing waits for the authoritative native projection')
+project=null;tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
+let resolveList;listReply=()=>new Promise(resolve=>resolveList=resolve)
+chip(tree).props.onClick();await settle();const stale=requests.at(-1)
+task='task-b';tree=render(menu);tree=render(menu);assert.equal(stale.signal.aborted,true)
+resolveList({ok:true,value:{candidates:[first]}});await settle();tree=render(menu)
+assert.equal(tree.props.open,false,'a late list must not reopen another conversation')
+assert.equal(nodes(tree).filter(n=>n.props['data-houdini-target']).length,0)
+generation=undefined;generationListeners.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
+preset='standard';assert.equal(ui.Label(props()),null,'other presets do not mount the Houdini selector')
+assert(!source.includes('dangerouslySetInnerHTML'))
+console.log('compact Houdini selector: native projection authority, explicit choices/clear, grouped targets, native/Bridge activity, visibility/transport freshness and stale request isolation passed')

@@ -25,22 +25,22 @@
 | 领域方法 | 对应 [skills](../skills/) 的入口和 references | 按需知识；docs 链接原文，不重复 recipe |
 | Trace 解析与展示 | [Trace 设计](houdini-trace-design.md)、client/ | 使用真实请求和工具记录；按需加载诊断 |
 | 故障报告 | [诊断包合同](support-reports.md)、DSH原生会话读取、唯一Python收集器 | 精确会话/竞态、脱敏/恶意ZIP、H21/H22 Qt下载及真实DSH组合；不把诊断采集当作现场恢复 |
-| 连接与占用反馈 | [接续边界](multi-instance.md#单实例保存点恢复)、[接续诊断](../src/connection-status.ts) | [只读/身份回归](../tools/tests/connection-status.test.mjs)、[前端可见边界](../tools/tests/executor-picker.test.mjs)、[双进程锁](../tools/tests/dsh-runtime-occupancy.test.py) |
+| 目标选择与工作状态 | [选择边界](multi-instance.md)、[绑定投影](../src/executor-identity-projection.ts) | [明确选择与历史隔离](../tools/tests/executor-routing.test.mjs)、[工程组件](../tools/tests/executor-picker.test.mjs)、[原运行实例查询](../tools/tests/tool-target-selection.test.mjs)、[双进程锁](../tools/tests/dsh-runtime-occupancy.test.py) |
 | 开发评测 | [评测原则](product-modeling-evaluation.md)、evaluation/、tools/ | 公开题面与评审答案隔离；生产面不读取评审材料 |
 
-普通聊天区不增加常驻连接提示或检查按钮；[DSH报告组合](../tools/tests/run-support-dsh.py)同时核对切换会话后没有此类额外UI。真实场景恢复使用[dsh-scene-recovery.test.py](../tools/tests/dsh-scene-recovery.test.py)的隔离H21/H22入口。[原生启动提示](../tools/tests/run-support-qt.py)增加`--startup-feedback`，核对占用者说明、重试清除及报告取得当前启动原因；窗口测试使用受控启动输入，不代替正式安装包的双Houdini菜单验收。
+普通聊天区使用现有页头/输入工具行中的单一工程状态与选择组件，不增加诊断提示条或检查按钮；[DSH报告组合](../tools/tests/run-support-dsh.py)同时核对切换会话后没有此类额外UI。真实场景恢复使用[dsh-scene-recovery.test.py](../tools/tests/dsh-scene-recovery.test.py)的隔离H21/H22入口。[原生启动提示](../tools/tests/run-support-qt.py)增加`--startup-feedback`，核对占用者说明、重试清除及报告取得当前启动原因；窗口测试使用受控启动输入，不代替正式安装包的双Houdini菜单验收。
 
 新增长期生产模块必须加入架构代码地图。新增文档必须加入索引，说明它的职责及源码、验证入口。
 
 ## 构建与生成
 
-标题和工程标识的[定向回归](../tools/tests/workbench-project.test.mjs)核对原生自动/手动标题、显式重新命名、排队消息/晚回执、未保存与同名文件。隔离工作台另核对实际Qt页头短名/完整路径、绑定后自动标题及另存不迁移其他对话；不把历史标识解释为在线状态。
+标题和工程标识的[定向回归](../tools/tests/workbench-project.test.mjs)核对原生自动/手动标题、显式重新命名、排队消息/晚回执、未保存与同名文件。隔离工作台另核对实际Qt页头短名/完整路径、绑定后自动标题及另存不迁移其他对话；不把历史标识解释为在线状态。[真实组件交互](../tools/tests/executor-picker-react-browser.mjs)接受精确prepared runtime根目录，读取同版静态React/Menu SDK，在独立浏览器中核对鼠标选择/取消、七种状态、宽窄暗色和隐藏撤销就绪；不修改运行缓存、不连接模型或用户现场。
 
 工作台图钉使用原生页头的常驻controls扩展位置；[实际工作台浏览器检查](../tools/tests/workbench-browser.mjs)覆盖空白/已有对话、紧凑尺寸与点击后真实回执。[Qt窗口检查](../tools/tests/dsh-webview-navigation.test.py)的`--standalone`入口使用普通Houdini Python与Windows Qt环境，核对原生TOPMOST状态、窗口句柄、Hide/Show事件、焦点及页面/视口保持；不能仅用网页未重新请求来代替无闪烁检查。
 
 启动反馈用[真实 Qt 阶段检查](../tools/tests/dsh-workbench-startup.test.py)传目标 HFS 目录，验证窗口在准备结束前显示、GUI 定时器继续运行、真实阶段/计时、后台等待与失败传递；准备函数用受控等待替代，不据此宣称正式包启动性能。登录外链用[Qt 登录窗口检查](../tools/tests/dsh-external-links-qt.test.py)重复传 `--python <Houdini普通Python>`，直接消费精确 DSH 的 BrowserLogin，核对预开空页、延迟地址、取消和主页面保持，系统浏览器交接被截获；账户授权与真实回调仍需独立验证。两者仅创建自己的临时目录与 Qt 进程，不连接用户现场。安装注册使用[安装器回归](../tools/tests/dsh-installer-bootstrap.test.py)核对跨磁盘覆盖、手删目录修复、实际偏好记录、解除注册归属和用户数据保留；版本页操作沿 `dsh-install-ui` 定向检查。
 
-工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对自动绑定、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
+工作台主动打开/新建使用[真实图形启动组合](../tools/tests/dsh-workbench-launch.test.py)：先独立启动工作台，再通过实际网页菜单与Qt对话框启动H21/H22，核对明确选定现场、不同未保存名称、文件选择、重复打开、取消、原对话恢复修改权、在线/离线/场景切换及另存提示。脚本驱动控件而非物理键鼠，模型回复由受控提供方生成；`--standalone-only`只验证无Houdini启动及用户目录隔离。[启动边界](../tools/tests/dsh-workbench-projects.test.py)覆盖错文件/错进程/旧回执、后台隐藏与超时；[桌面RPC](../tools/tests/workbench-desktop.test.mjs)覆盖原对话读取、固定地址/凭证与非法输入。产品Logo以[选定PNG](../assets/dsh-houdini.png)为唯一原图，保留其透明底、完整鲸鱼和清晰点线轮廓；使用[编码工具](../tools/build-workbench-icon.py)生成16–256像素ICO，工作台与安装器共用该图标，运行时不依赖Pillow。
 
 独立工作台使用[隔离组合验收](../tools/tests/dsh-workbench.test.py)：普通Python/Qt桌面、真实DSH持久与preset、H21/H22 Bridge、同目录不同HIP、重复打开、实际浏览器选中对话及目录、工具修改/另存、单端崩溃、手动重开原工程和工作台重启保留历史。本地脚本提供方驱动实际Agent循环生成原生/嵌套回执与可冷加载日志，不调用外部模型；不证明模型自主行为或正式签名安装组合。测试的Qt调试端口仅属于该隔离进程，正常运行不主动启用。受管安装入口仍需随新版bootstrap和签名运行包单独验收。
 
@@ -62,13 +62,11 @@ npm run docs:check
 
 DSH运行修复的源码、上游提交和编译包清单由[修复声明](../deployment/dsh-runtime-fixes/manifest.json)维护；`npm run runtime:prepare`准备独立缓存。[运行修复反例](../tools/tests/dsh-runtime-fixes-check.mjs)接受该缓存根目录，实测Windows权限保持/回滚、内核拒绝、只读诊断、文件策略与网络边界。[网络全流程](../tools/tests/dsh-network-workflow.test.py)使用 `--runtime-cache <根目录>` 跟随Windows系统网络；可选 `--proxy <明确HTTP代理>` 仅在隔离测试数据中覆盖路线。该测试以受控回复驱动真实DSH网页取证、下载、读图和普通/嵌套调用；`--browser-module <Playwright入口>`另检查真实选中任务和命令退出状态。测试只访问公开资料，不调用收费模型；这些结果不证明自主模型选择或所有外部网站可用。
 
-[目录接续组合](../tools/tests/dsh-workspace-continuity.test.py)使用`--runtime-cache <根目录>`启动原生DSH，检查会话/历史保持、实际文件工具与附件搜索、新目录范围和写入失败；在元数据提交与工作区归属更新之间终止隔离Host，再验证启动自动完成。[Houdini接续组合](../tools/tests/dsh-scene-recovery-e2e.test.py)增加`--save-as --gui --hython <路径> --browser-module <Playwright入口>`，在H21/H22实际保存后检查下一模型步骤取得新工程说明，写文件落到新目录，重开后浏览器原会话普通输入“继续”恢复HOM与嵌套工具。测试仅终止自身创建的进程，不修改用户HIP。
+[目录接续组合](../tools/tests/dsh-workspace-continuity.test.py)使用`--runtime-cache <根目录>`启动原生DSH，检查会话/历史保持、实际文件工具与附件搜索、新目录范围和写入失败；提交中断后验证原生迁移恢复。
 
-同一组合的`--original-choice open|keep --gui`改为在同目录打开无关HIP并制造真实未保存修改，浏览器在普通“继续”后通过原生对话选择切回原工程或保留当前内容；独立HOM探针检查最终路径、参数、脏状态。`dsh-recovery-locate.test.py`核对保存链分叉、缺失/替换文件与无记录复制品；`scene-recovery-original.test.mjs`核对自由文本、绑定变化和落盘失败不能触发打开；`dsh-scene-recovery.test.py`覆盖仍活跃的原作者、过期现场、任意路径拒绝和打开前文件变化。
+现役[独立工作台组合](../tools/tests/dsh-workbench.test.py)覆盖H21/H22先登记同目录多个现场、选择不领取作者、明确旧对话换目标、取消后不自动重绑、同现场多对话只读、Save As、单端中断及原保存点节点权限恢复。使用脚本模型和独立偏好，不访问用户live或收费模型。旧的普通输入自动找窗/加载原工程验证已退役，不能用它约束明确选择方案。
 
-`--original-choice auto --gui`检查空白新场景直接接续，非空场景不能利用该入口跳过选择；原生提问另外核对宽窄屏、路径换行及单题无分页。可用`--save-hython <H22路径> --hython <H21路径> --original-choice open --gui`建立带H22 Flipbook参数的保存点，核对真实加载警告能进入同一恢复回执和模型步骤。只验证已加载场景及警告传播，不证明复杂HIP跨版本兼容。
-
-同一组合增加`--long-warning`，在真实加载后注入大段诊断，检查原生模型步骤只收到有界首尾预览，再经`houdini_resource`读出被省略的中段；后续HOM回执只能含引用。`--warning-archive-failure`只破坏诊断归档位置，验证恢复仍可继续且不回填全文。[警告边界](../tools/tests/load-warning.test.py)覆盖转义、原文无损、同内容复用、配额/存储/篡改和主线程隔离；[跨语言资源读取](../tools/tests/load-warning-resource.test.mjs)读取真实Python归档，核对换工作区、后续恢复、伪造消息及hash校验。
+[权限恢复](../tools/tests/scene-recovery.test.mjs)验证同一保存点写前恢复、新目标不恢复、当前只读回执不抹除旧归属证据；[原工程保持](../tools/tests/scene-recovery-original.test.mjs)验证不自动load/clear/提问丢内容；[原生恢复](../tools/tests/dsh-scene-recovery.test.py)验证真实文件、节点基线、活跃作者与场景代际。真实加载后警告原文/有界投影由[警告边界](../tools/tests/load-warning.test.py)和[跨语言资源读取](../tools/tests/load-warning-resource.test.mjs)验证，不把日志摘要当跨版本兼容结论。
 
 [已有工作区生命周期](../tools/tests/dsh-workspace-lifecycle-check.mjs)接受缓存根目录，核对预存文件的更新/重命名/删除、硬链接与目录联接的外部权限保持、显式保护、只读token、重复授权和撤销。[网页传输反例](../tools/tests/dsh-web-transport-check.mjs)验证公开CDN跳转、私网/凭据/降级拒绝、混合DNS答案、真实失败原因及代理凭据脱敏。全流程还验证下载到预存目录后的整理，以及退出0诊断在原生/嵌套调用和实际页面中的一致性。编译器的 `--development` 仅可写 `tools/out` 中无完成标记的试验运行目录；正式缓存必须从声明补丁与锁文件构建。客户端构建使用同版上游预设，缺失的打包依赖必须使构建失败，不能把未解析依赖发布到浏览器。
 
@@ -173,7 +171,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 执行结果应同时核对原生与Code Mode嵌套事件、取消/未知/过期回执及现场runtime身份；展示投影不得丢失无execution的真实回执。trace用真实当前版本日志校验可见内容、调用关联和解析缺口，不以旧fixture或旧session文件名证明新格式可读。用例保持针对已观察到的边界，旧策略删除后保留操作、权限和恢复检查，移除只证明策略存在的断言。
 
-普通大结果的历史引用使用原生/嵌套工具回执中记录的路径，文件仍须通过hash校验；不能因Save As改变cwd而只查新目录，也不能从用户正文取得任意文件路径。[结果详情回归](../tools/tests/result-details.test.mjs)覆盖跨目录、伪造来源和篡改拒绝；`dsh-scene-recovery-e2e --save-as`在真实DSH/浏览器/HOM组合中同时核对原目录的普通/嵌套详情在进程重开后可读。
+普通大结果的历史引用使用原生/嵌套工具回执中记录的路径，文件仍须通过hash校验；不能因Save As改变cwd而只查新目录，也不能从用户正文取得任意文件路径。[结果详情回归](../tools/tests/result-details.test.mjs)覆盖跨目录、伪造来源和篡改拒绝；独立工作台与原生目录接续组合分别核对现场消费和持久目录范围。
 
 运行缓存身份包括[修复声明](../deployment/dsh-runtime-fixes/manifest.json)中inputFiles列出的依赖锁与构建器，不能只比较补丁hash。依赖更新保持精确DSH版本，更新开发与发行两份npm锁；[输入身份回归](../tools/tests/runtime-fix-inputs.test.mjs)核对Node/Python一致和仅依赖变化时的缓存失效，[文档依赖回归](../tools/tests/dependency-runtime.test.mjs)通过实际文档组件解析的fflate检查普通ZIP与畸形ZIP64，可传新缓存根目录验证发行组合。缓存准备不更新正在运行的Host，正式安装/Qt资格验证仍单独执行。
 
@@ -243,4 +241,4 @@ python tools/run-deployment-tests.py --hython D:/houdini/bin/hython.exe --hython
 
 这是发行/部署回归入口，日常按改动选择检查。真实安装与 Qt 页面验收在新的自有进程和临时目录中执行；当前缺口只记 handoff，不在这里积累每次尝试。
 
-[签名包部署验收](../tools/tests/dsh-deployment-e2e.test.py)使用实际离线包、独立安装与数据目录，检查精确Node/DSH、profile、认证RPC和所选H21/H22 Bridge。可选`--previous-bundle <旧受信包目录>`再覆盖旧包自身入口与profile准备、新版失败快照保留和重试、各版独立数据、回退不合并以及同版重新安装恢复损坏的私有媒体工具。测试数据只证明文件与版本选择保持，不证明DSH旧会话格式转换或模型续跑。正式Qt入口另用[发行GUI验收](../tools/tests/dsh-gui-release.test.py)：从真实Houdini菜单打开独立工作台，等待工程绑定完成，以当前执行端登记的任务核对[实际Qt页面](../tools/tests/dsh-release-workbench-browser.mjs)、工作目录、认证RPC、置顶状态及重开复用，并正常退出自有工作台。每个Houdini版本使用独立工程目录；不能按同目录或上一轮会话猜测选中任务，也不能用源码页面检查替代签名安装。
+[签名包部署验收](../tools/tests/dsh-deployment-e2e.test.py)使用实际离线包、独立安装与数据目录，检查精确Node/DSH、profile、认证RPC和所选H21/H22 Bridge。可选`--previous-bundle <旧受信包目录>`再覆盖旧包自身入口与profile准备、新版失败快照保留和重试、各版独立数据、回退不合并以及同版重新安装恢复损坏的私有媒体工具。测试数据只证明文件与版本选择保持，不证明DSH旧会话格式转换或模型续跑。正式Qt入口另用[发行GUI验收](../tools/tests/dsh-gui-release.test.py)：从真实Houdini菜单打开独立工作台，等待明确选择完成，以启动回执的原生session ID和目标投影核对[实际Qt页面](../tools/tests/dsh-release-workbench-browser.mjs)、工作目录、认证RPC、置顶状态及重开后的历史保持，并正常退出自有工作台。每个Houdini版本使用独立工程目录；不能按同目录或上一轮会话猜测选中任务，也不能用源码页面检查替代签名安装。

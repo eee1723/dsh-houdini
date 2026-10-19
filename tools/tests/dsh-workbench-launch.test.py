@@ -74,16 +74,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--runtime-cache', type=Path, default=None)
     parser.add_argument('--standalone-only', action='store_true')
-    parser.add_argument('--cold-only', action='store_true')
-    parser.add_argument('--hfs', help='Limit cold-resume checks to one installed Houdini')
-    parser.add_argument('--save-only', action='store_true', help='Only check native save/registration and empty workspace retirement')
+    parser.add_argument('--hfs', help='Use this installed Houdini for both Qt desktop and native project windows')
     args = parser.parse_args()
     installed = discover(args.hfs)
     assert installed, 'This GUI check needs an installed Houdini'
     desktop_installation = installation(args.hfs) if args.hfs else installed[0]
-    workers = {}
-    for item in installed:
-        workers.setdefault(item['series'], item['hfs'])
     folder = Path(tempfile.mkdtemp(prefix='workbench-launch-', dir=ROOT / 'tools/out'))
     env = isolated_environment(folder / 'environment', gui=True)
     env.update(DSH_WORKBENCH_TEST_ROOT=str(folder), DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'))
@@ -126,9 +121,9 @@ def main():
             assert desktop.poll() is None, 'test desktop stopped: ' + str(folder)
             time.sleep(.1)
         raise AssertionError('Timed out: ' + str(folder))
-    def browser(action, label, status='', session=''):
+    def browser(action, label, status='', session='', executor=''):
         result = subprocess.run([node, str(ROOT / 'tools/tests/workbench-project-browser.mjs'), str(debug_port), action,
-            str(folder / label), status, session], env=env, cwd=ROOT, capture_output=True, text=True, errors='replace', timeout=35,
+            str(folder / label), status, session, executor], env=env, cwd=ROOT, capture_output=True, text=True, errors='replace', timeout=35,
             creationflags=subprocess.CREATE_NO_WINDOW)
         (folder / (label + '.log')).write_text(result.stdout + result.stderr, encoding='utf-8')
         result.check_returncode()
@@ -146,7 +141,9 @@ def main():
         value = wait(lambda: next((item for item in receipts() if item['id'] not in known and item['phase'] in ('ready', 'failed')), None))
         assert value['phase'] == 'ready', value
         assert (folder / ('gui-ready-' + str(value['pid']))).is_file(), 'the private hook must coexist with the original GUI startup hook'
-        selected = browser('state', label, 'online', value['result']['sessionId'])
+        selected = browser('state', label, 'ready', value['result']['sessionId'], value['result']['executorId'])
+        assert selected['selectedTarget']['executor_id'] == value['result']['executorId']
+        assert selected['selectedTarget']['runtime_id'] == value['result']['selectedTarget']['runtime_id']
         assert len([item for item in receipts() if item['id'] not in known]) == 1, 'double submit started multiple Houdini processes'
         return value, selected
     def command(session, tool=None, arguments=None, action=None):
@@ -163,126 +160,112 @@ def main():
         value = wait(result, 50)
         assert value['ok'], value
         return value
-    def cold_resume():
-        for version, hfs in workers.items():
-            label = 'cold-' + version.split('.')[0]
-            if args.hfs and not Path(args.hfs).samefile(hfs):
-                continue
-            seed,_ = launch('new', hfs, label + '-seed')
-            new_session = seed['result']['sessionId']
-            filename = Path(project_temp.name) / label / '原生保存.hip'
-            atomic_json(folder / ('save-' + str(seed['pid']) + '.json'), {'path':str(filename)})
-            saved_marker = folder / ('saved-' + str(seed['pid']) + '.json')
-            wait(saved_marker.exists)
-            seed_facts = json.loads(saved_marker.read_text(encoding='utf-8'))
-            assert (folder / ('save-hook-' + str(seed['pid']))).read_text() == 'True', 'the original save hook must still execute'
-            saved_scene = seed_facts['scene_id']
-            wait(lambda:(folder / 'recovery/checkpoints' / (seed_facts['checkpoint_id'] + '.json')).is_file())
-            command(new_session, action='beforeStep')
-            saved_state = browser('state', label + '-saved', 'online', new_session)
-            assert not any(Path(item['path']).resolve() == Path(seed['workspace']).resolve()
-                           for item in command(new_session, action='idle')['workspaces'])
-            assert Path(saved_state['selection']['cwd']).resolve() == filename.parent.resolve()
-            if args.save_only:
-                (folder / ('close-' + str(seed['pid']))).touch()
-                wait(lambda: _process_started(seed['pid']) != seed['processStarted'], 35)
-                continue
-            saved_bytes = filename.read_bytes()
-            (folder / ('close-' + str(seed['pid']))).touch()
-            wait(lambda: _process_started(seed['pid']) != seed['processStarted'], 35)
-            cold, _ = launch('reopen', hfs, label + '-open')
-            assert cold['result']['sessionId'] == new_session
-            checked = command(new_session, 'houdini_inspect', {'code': '__result__=scene_info()'})['value']
-            assert checked['ok'] and checked['execution']['scene_recovery']['scene_id'] == saved_scene, checked
-            unsaved = command(new_session, 'houdini_exec', {'code': "__result__=tab_create('/obj','geo',name='unsaved_progress').path()"})['value']
-            assert unsaved['ok'], unsaved
-            (folder / ('close-' + str(cold['pid']))).touch()
-            wait(lambda: _process_started(cold['pid']) != cold['processStarted'], 35)
-            assert filename.read_bytes() == saved_bytes, 'closing without saving must not invent a checkpoint'
-            control(record, 'show', {'sessionId': new_session})
-            resumed, _ = launch('reopen', hfs, label + '-resume')
-            assert resumed['result']['sessionId'] == new_session
-            observed = command(new_session, 'houdini_inspect', {'code': "__result__=hou.node('/obj/unsaved_progress') is None"})['value']
-            assert observed['ok'] and observed['result'] is True, observed
-            assert observed['execution']['scene_recovery']['scene_id'] == saved_scene, observed
-            foreign = command(new_session, 'houdini_exec', {'code': "set_parms('/obj/native_user_geometry',{'tx':99})"})['value']
-            assert not foreign['ok'], 'resuming a task must not adopt user-created nodes'
+    def choose(session, endpoint, label):
+        control(record, 'show', {'sessionId': session})
+        browser('snapshot', label + '-before', session=session)
+        return browser('select-target', label, executor=endpoint['executor_id'])
+    def native_save(ticket, filename):
+        atomic_json(folder / ('save-' + str(ticket['pid']) + '.json'), {'path': str(filename)})
+        marker = folder / ('saved-' + str(ticket['pid']) + '.json')
+        wait(marker.exists)
+        assert (folder / ('save-hook-' + str(ticket['pid']))).read_text() == 'True', 'the original save hook must coexist'
+        wait(lambda: Path(next(item for item in candidates() if item['pid'] == ticket['pid'])['hip_path']).resolve() == filename.resolve())
+        return next(item for item in candidates() if item['pid'] == ticket['pid'])
+    def candidates():
+        return [json.loads(file.read_text(encoding='utf-8')) for file in Path(config['root'], 'workbench/executors/endpoints').glob('*.json')]
+    def close_houdini(ticket):
+        (folder / ('close-' + str(ticket['pid']))).touch()
+        wait(lambda: _process_started(ticket['pid']) != ticket['processStarted'], 35)
     try:
         record = wait(lambda: running(config['root']))
         assert not receipts(), 'standalone workspace boot must not start Houdini'
         initial = browser('snapshot', 'standalone-start')
-        assert '工作台' in initial['text'], 'cold start must prepare a user workspace, not use the plugin source directory'
+        assert initial['entry'] or initial.get('selection'), 'native workbench must expose the compact project entry or its selected conversation'
         if initial.get('selection'):
             assert Path(initial['selection']['cwd']).resolve() != ROOT
-        if '--standalone-only' in sys.argv:
-            print('PASS standalone desktop opens without Houdini and without granting a task the plugin source directory: ' + str(folder), flush=True)
+        if args.standalone_only:
+            print('PASS standalone native workbench and user-directory isolation: ' + str(folder), flush=True)
             return
-        if '--cold-only' in sys.argv:
-            cold_resume()
-            print('PASS ' + (args.hfs or 'H21/H22') + ' native save hook coexistence and empty workspace retirement'
-                  + ('' if args.save_only else ', late install identity, two cold opens, original conversation, unsaved discard and foreign nodes')
-                  + ': ' + str(folder), flush=True)
-            return
-        discussion = browser('new-chat', 'discussion-start')['selection']['sessionId']
+        hfs = desktop_installation['hfs']
+        series = desktop_installation['series']
+        discussion_ui = browser('new-chat', 'discussion-start')
+        discussion = discussion_ui['selection']['sessionId']
+        discussion_cwd = discussion_ui['selection']['cwd']
         talked = command(discussion)
         assert any(event['type'] == 'user/message' and event['data']['source']['kind'] == 'user' for event in talked['events'])
         before = command(discussion, action='idle')
-        first, first_ui = launch('new', workers['21.0'], 'new-21')
+        first, first_ui = launch('new', hfs, 'native-new-first')
         first_session = first['result']['sessionId']
-        assert first_session == discussion, 'creating a project from an unbound discussion must keep that exact conversation'
-        assert command(first_session, action='idle')['turns'] == before['turns'], 'binding must not launch a hidden model turn'
-        assert first_ui['label'] == '未保存工程 1'
-        facts = command(first_session, 'houdini_inspect', {'code': '__result__={"version":hou.applicationVersionString(),"new":hou.hipFile.isNewFile(),"path":hou.hipFile.path()}'})['value']
-        assert facts['ok'] and facts['result']['new'] and facts['result']['version'].startswith('21.')
-        command(first_session, 'houdini_exec', {'code': "__result__=tab_create('/obj','geo',name='launch_owned').path()"})
-        destination = Path(project_temp.name) / 'test104' / '工程.hip'
-        saved = command(first_session, 'houdini_exec', {'code': 'scene_save_as(' + repr(str(destination)) + ', ' + repr(facts['result']['path']) + ", 'isolated launch fixture')"})['value']
-        assert saved['ok'] and destination.is_file(), saved
-        command(first_session, action='beforeStep')
-        saved_ui = browser('state', 'save-as', 'online', first_session)
-        assert Path(saved_ui['selection']['cwd']).resolve() == destination.parent.resolve()
-        migrated = command(first_session, action='idle')
-        assert not any(Path(item['path']).resolve() == Path(first['workspace']).resolve() for item in migrated['workspaces']), 'Save As must retire its empty scratch workspace'
-        assert '未保存工程 1' not in saved_ui['text'], 'the actual sidebar must drop the empty workspace row'
-        second, second_ui = launch('new', workers['22.0'], 'new-22')
-        assert second_ui['label'] == '未保存工程 2' and second['pid'] != first['pid']
+        assert first_session == discussion, 'new project from an unbound discussion keeps that exact native conversation'
+        assert first_ui['selection']['cwd'] == discussion_cwd, 'project selection does not move conversation file scope'
+        assert first_ui['selectedTarget']['hip_is_new'] is True
+        assert command(first_session, action='idle')['turns'] == before['turns'], 'project launch must not start a hidden model turn'
+        inspected = command(first_session, 'houdini_inspect', {'code': '__result__={"version":hou.applicationVersionString(),"new":hou.hipFile.isNewFile()}' })['value']
+        assert inspected['ok'] and inspected['execution']['executor_id'] == first['result']['executorId'], inspected
+        assert inspected['result']['version'].startswith(series), inspected
+        first_path = Path(project_temp.name) / 'first' / '原生保存.hip'
+        first_endpoint = native_save(first, first_path)
+        selected_first = choose(first_session, first_endpoint, 'native-save-explicit-reselect')
+        assert selected_first['selection']['cwd'] == discussion_cwd
+        assert Path(selected_first['selectedTarget']['hip_path']).resolve() == first_path.resolve()
+        second, second_ui = launch('new', hfs, 'native-new-second')
         second_session = second['result']['sessionId']
-        inspected = command(second_session, 'houdini_inspect', {'code': '__result__={"version":hou.applicationVersionString(),"path":hou.hipFile.path()}'})['value']
-        assert inspected['ok'] and inspected['result']['version'].startswith('22.')
-        other_file = Path(project_temp.name) / 'other-folder' / '另一个工程.hip'
-        other_saved = command(second_session, 'houdini_exec', {'code': 'scene_save_as(' + repr(str(other_file)) + ', ' + repr(inspected['result']['path']) + ", 'isolated file-picker fixture')"})['value']
-        assert other_saved['ok'], other_saved
-        command(second_session, action='beforeStep')
+        assert second['pid'] != first['pid'] and second_session != first_session, 'a bound conversation is not silently repointed by default new-project navigation'
+        assert second_ui['selectedTarget']['hip_is_new'] is True
+        second_cwd = second_ui['selection']['cwd']
+        second_path = Path(project_temp.name) / 'second' / '另一个工程.hip'
+        second_endpoint = native_save(second, second_path)
+        choose(second_session, second_endpoint, 'second-native-save-reselect')
+        switched = choose(first_session, second_endpoint, 'old-discussion-chooses-second-window')
+        assert switched['selection']['sessionId'] == first_session and switched['selection']['cwd'] == discussion_cwd
+        observed = command(first_session, 'houdini_inspect', {'code': '__result__=hou.hipFile.path()'})['value']
+        assert observed['ok'] and Path(observed['result']).resolve() == second_path.resolve(), observed
+        assert observed['execution']['executor_id'] == second_endpoint['executor_id']
+        cleared = browser('clear-target', 'explicit-clear')
+        assert cleared['selectedTarget'] is None and cleared['selection']['cwd'] == discussion_cwd
+        assert command(first_session, action='targets')['state']['status'] == 'unbound'
         count = len(receipts())
         (folder / 'dialog-choice.json').write_text(json.dumps({'cancel': True}), encoding='utf-8')
         browser('new', 'cancel-entry')
         wait(lambda: (folder / 'dialog-cancelled').exists())
-        assert len(receipts()) == count, 'cancel before launch must create no process or request'
-        (folder / ('close-' + str(first['pid']))).touch()
-        wait(lambda: _process_started(first['pid']) != first['processStarted'], 35)
-        control(record, 'show', {'sessionId': first_session})
-        browser('state', 'closed-original', 'offline', first_session)
-        reopened, reopened_ui = launch('reopen', workers['21.0'], 'reopened-original')
-        assert reopened['result']['sessionId'] == first_session and reopened['pid'] != first['pid']
-        editable = command(first_session, 'houdini_exec', {'code': "__result__=set_parms('/obj/launch_owned',{'tx':2})"})['value']
-        assert editable['ok'], editable
-        assert command(second_session, 'houdini_inspect', {'code': '__result__=hou.applicationVersionString()'})['value']['ok']
-        (folder / ('close-' + str(second['pid']))).touch()
-        wait(lambda: _process_started(second['pid']) != second['processStarted'], 35)
-        opened_file, opened_ui = launch('open', workers['22.0'], 'opened-file', hip=other_file)
-        assert opened_file['result']['sessionId'] == second_session, 'ordinary file opening must resume the matching saved task as well'
+        assert len(receipts()) == count, 'cancel before native launch creates no process or request'
+        # Bind again so default Open creates a fresh native conversation instead
+        # of reusing the unbound discussion. No scene-history matching is used.
+        choose(first_session, second_endpoint, 'before-file-open')
+        close_houdini(first)
+        opened, opened_ui = launch('open', hfs, 'native-open-saved-file', hip=first_path)
+        opened_session = opened['result']['sessionId']
+        assert opened_session not in (first_session, second_session)
+        assert Path(opened_ui['selectedTarget']['hip_path']).resolve() == first_path.resolve()
+        assert Path(opened_ui['selection']['cwd']).resolve() == first_path.parent.resolve(), 'a genuinely new conversation starts in the opened project workspace'
+        new_endpoint = next(item for item in candidates() if item['pid'] == opened['pid'])
+        rebound = choose(first_session, new_endpoint, 'executed-discussion-chooses-opened-file')
+        assert rebound['selection']['cwd'] == discussion_cwd, 'manual retarget of an executed discussion preserves its native workspace'
         count = len(receipts())
         (folder / 'dialog-finished').unlink(missing_ok=True)
-        (folder / 'dialog-choice.json').write_text(json.dumps({'hfs': workers['22.0'], 'hip': str(other_file)}), encoding='utf-8')
-        browser('open', 'reuse-live-file')
+        (folder / 'dialog-choice.json').write_text(json.dumps({'hfs': hfs, 'hip': str(first_path)}), encoding='utf-8')
+        browser('open', 'reuse-already-open-file-entry')
         wait(lambda: (folder / 'dialog-finished').is_file(), 15)
-        assert (folder / 'dialog-finished').read_text() == '1' and len(receipts()) == count, 'an already open file must not spawn another process'
-        control(record, 'show', {'sessionId': first_session})
+        assert (folder / 'dialog-finished').read_text() == '1' and len(receipts()) == count, 'opening an already live HIP reuses its actual Houdini window'
+        reused = browser('new-target', 'reuse-already-open-file', 'ready', first_session, new_endpoint['executor_id'])
+        assert reused['selectedTarget']['runtime_id'] == new_endpoint['runtime_id']
+        close_houdini(opened)
+        control(record, 'show', {'sessionId': opened_session})
+        browser('state', 'closed-saved-file', 'offline', opened_session)
+        reopened, reopened_ui = launch('reopen', hfs, 'explicit-reopen-associated-file')
+        assert reopened['result']['sessionId'] == opened_session and reopened['pid'] != opened['pid']
+        assert Path(reopened_ui['selectedTarget']['hip_path']).resolve() == first_path.resolve()
         (folder / ('clear-' + str(reopened['pid']))).touch()
-        browser('state', 'changed-scene', 'changed', first_session)
+        browser('state', 'changed-scene-awaits-selection', 'changed', opened_session)
+        fresh = next(item for item in candidates() if item['pid'] == reopened['pid'])
+        changed = choose(opened_session, fresh, 'changed-scene-explicit-selection')
+        assert changed['selectedTarget']['hip_is_new'] is True
         assert control(record, 'status')['record']['pid'] == desktop.pid
-        cold_resume()
-        print('PASS standalone boot without Houdini; real native project dialogs; H21/H22 GUI new scenes, automatic routing, distinct unsaved names, Save As history, cancelled/double launch, proven offline and reopen original task/ownership: ' + str(folder), flush=True)
+        atomic_json(folder / 'result.json', {'ok': True, 'houdini': desktop_installation['version'],
+            'nativeNew': True, 'nativeOpen': True, 'explicitReopen': True, 'selectedExactInstance': True,
+            'manualRetargetPreservesCwd': True, 'clearStaysUnbound': True, 'cancelAndDoubleClick': True,
+            'reuseLiveFileWindow': True, 'sceneChangeRequiresSelection': True})
+        print('PASS ' + series + ' actual workbench native New/Open/Reopen, exact selected targets, explicit retarget with unchanged cwd, clear, cancel/double launch, live-file window reuse and changed-scene selection: ' + str(folder), flush=True)
     finally:
         for item in receipts():
             if item.get('pid') and _process_started(item['pid']) == item.get('processStarted'):
@@ -290,9 +273,9 @@ def main():
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline and any(item.get('pid') and _process_started(item['pid']) == item.get('processStarted') for item in receipts()):
             time.sleep(.2)
-        assert not any(item.get('pid') and _process_started(item['pid']) == item.get('processStarted') for item in receipts()), 'owned test Houdini did not exit'
-        for log in (Path(config['root']) / 'workbench/launches').glob('*.log'):
-            assert 'Fatal error' not in log.read_text(encoding='utf-8', errors='replace'), 'Houdini crash is not a normal exit pass'
+        houdini_still_active = any(item.get('pid') and _process_started(item['pid']) == item.get('processStarted') for item in receipts())
+        crashed = any('Fatal error' in log.read_text(encoding='utf-8', errors='replace')
+                      for log in (Path(config['root']) / 'workbench/launches').glob('*.log'))
         if record:
             spec = importlib.util.spec_from_file_location('desktop_fixture', ROOT / 'tools/tests/dsh-workbench.test.py')
             fixture = importlib.util.module_from_spec(spec)
@@ -309,6 +292,8 @@ def main():
         project_temp.cleanup()
         os.environ.clear()
         os.environ.update(previous)
+        assert not houdini_still_active, 'owned test Houdini did not exit'
+        assert not crashed, 'Houdini crash is not a normal exit pass'
 
 
 if __name__ == '__main__':

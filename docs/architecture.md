@@ -26,12 +26,9 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 ### 多Houdini执行端与任务恢复
 
-默认入口使用独立工作台：一个DSH Host、多个独立Houdini Bridge。对话持久关联场景身份，当前执行端记录其运行位置；重开只在保存点核对后更新连接，不授予额外节点修改权。
-工作台持有安装级运行锁；显式共享登记仅保留为开发入口，不能复用另一实例的端口身份。
-唯一设计与运维说明见[多实例与任务恢复](multi-instance.md)：身份分层、启动/选择、写入预留、Repair范围、
-退出与恢复边界及验收入口。普通单实例在用户输入的步骤边界自动接续，使用DSH持久事件及加载时的精确节点身份；
-同页工程接续设计区分目录工作区、工程分支、保存点与运行身份，说明另存目录跟随和仍待完整交付的分支、升级范围。
-不另建插件会话/工作区数据库。代码整合和隔离验证不代表当前live已加载，也不代表崩溃自动续跑完成。
+默认入口使用独立工作台：一个DSH Host、多个自行登记的Houdini Bridge。对话通过DSH原生选择事件保存当前目标；用户可以更换已执行对话的现场，旧请求与历史回执保留自己的运行身份。
+工作区目录只组织文件和对话，不用于猜测工程归属；Open Workspace按明确来源创建/定位指定对话，不读取目录内全部历史。只读不领取作者预留，修改才核对单作者和节点范围；保存点恢复仅处理原节点权限，不作为连接或聊天的前提。
+工作台持有安装级运行锁；显式共享登记仅保留为开发入口，不能复用另一实例的端口身份。唯一设计与运维说明见[现场选择与工程恢复](multi-instance.md)，真实发行和用户live仍需单独验证。
 
 ### 节点片段交换
 
@@ -80,21 +77,20 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/video-process.ts](../src/video-process.ts) | 随包离线媒体/证据CLI的Host入口，消费DSH文件策略与选定执行器运行时，直接返回原JSON/退出事实；无shell/凭据/云/HOM，不另建证据记录 |
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
-| [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、执行端绑定、原生图像附件、结果留存和当前回执的工作区提示 |
+| [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
-| [src/executor-routing.ts](../src/executor-routing.ts) | 共享Host按任务路由、持久化检查、空闲作者预留及可信恢复候选；固定调用级Bridge，不使用全局当前Houdini |
-| [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：工作台按明确启动来源定位/创建原生会话、只读接续评估和退出活动查询；保留显式共享开发入口，不是模型工具 |
+| [src/executor-routing.ts](../src/executor-routing.ts) | 按对话明确选择路由、同工作区首次候选、写时作者预留和原运行实例历史查询；固定请求的runtime/scene epoch，不寻找历史替代目标 |
+| [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：按明确启动来源创建或定位指定会话，列出/选择/取消目标和退出活动查询；不扫描会话历史、不恢复节点或迁移目录 |
 | [src/executor-host.ts](../src/executor-host.ts) | 工作台及显式共享开发入口共用的Host层服务；原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
-| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：Host折叠绑定记录与原始工具回执，客户端取得工程名称/路径和用于匹配非HOM在线观察的执行端/场景代际；绑定历史本身不是在线证明，冲突/无效历史仍拒绝恢复 |
+| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：原生目标选择/取消与旧格式读取，晚到回执不能覆盖新选择；输出当前工程与目标快照，历史本身不证明在线或节点归属 |
 | [src/context.ts](../src/context.ts) | 上下文装配与请求准入；异步准备的按任务文本由原生context provider同步读取，原生/PTC共用能力注册事实，不以当前工具schema判断能力是否存在 |
 | [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
-| [src/scene-recovery.ts](../src/scene-recovery.ts) | 用户输入边界的保存点评估、原工程定位与原生对话选择、DSH持久恢复事件及激活重试；成功保存/可信接续调用DSH原生目录迁移；无恢复面板或模型授权捷径 |
+| [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As从动词回执调用DSH原生目录迁移 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
-| [src/executor-binding.ts](../src/executor-binding.ts) | 任务执行端绑定、连续性和正常pre-step目标绑定；DSH负责持久化，不改写旧工具交换 |
-| [src/connection-status.ts](../src/connection-status.ts) | 按目标读取DSH原生接续失败与清除记录；绑定拦截保留具体原因，不维护界面状态或授予修改权 |
+| [src/executor-binding.ts](../src/executor-binding.ts) | 原生目标选择/取消的记录和固定开发连接来源；DSH负责持久化，不将历史操作作为明确换目标的门槛 |
 | [src/support-report.ts](../src/support-report.ts) | 精确会话的原生持久读取与诊断投影，沿root Host认证RPC收集，不启动Agent或访问HOM |
 | [dsh_support_report.py](../houdini/python3.11libs/dsh_support_report.py)、[dsh_support_ui.py](../houdini/python3.11libs/dsh_support_ui.py) | 唯一本地脱敏/ZIP收集器及独立管理器入口；worker收集已有记录，预览与分享同一份bytes，合同见[故障报告](support-reports.md) |
 | [dsh_downloads.py](../houdini/python3.11libs/dsh_downloads.py) | QtWebEngine下载接收、用户目标、进度、取消与完成/失败反馈；用户打开的 HTTP(S) 外链交给系统浏览器，保留账户登录预开空页直到延迟导航到达 |
@@ -107,7 +103,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
 | [dsh_load_warnings.py](../houdini/python3.11libs/dsh_load_warnings.py)、[结果预算](../houdini/result-detail-policy.json) | 主线程只采集有界首尾预览，HTTP worker按既有结果格式保存完整警告；同内容复用hash文件，后续现场仅引用，失败不回填全文；预算与Host结果读取同源 |
-| [client.js](../client.js) | DSH CJS factory；普通任务导航、工作区提示和执行端选择，首次打开Trace时初始化诊断 |
+| [client.js](../client.js) | DSH CJS factory；普通任务导航、紧凑工程状态与选择组件、共享在线观察和按需Trace诊断 |
 | [client/trace-runtime.js](../client/trace-runtime.js) | 回包解析与诊断组件创建；构建进入同一个DSH客户端bundle |
 | [client/trace-model.js](../client/trace-model.js) | 公开轨迹的请求/调用索引、关系和统一统计；与React渲染分离 |
 | [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 消费轨迹投影的记录/资料/高级诊断、历史正文、结构化详情与来源路径展示 |
@@ -131,8 +127,8 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 导航由DSH公开session/workspace store提供当前任务、归档及重连状态，Python只提供HIP目录意图。
 启动意图等原生列表基线就绪后才接管layout导航信号，避免把DSH初始恢复误认成用户离开；
 后续导航取消、实际已选任务和意图消费仍取原生状态，不读取私有启动标记或另建选择缓存。
-同HIP已有页仅唤起，换目录/新页/Repair才触发一次选择；有效当前Houdini任务优先，再选同目录非归档根任务，
-确实没有才经公开Remote创建明确preset。原位重试复用同request ID，不刷新草稿；用户操作或新意图取消旧导航。
+入口只消费Host返回的精确session ID；从某个Houdini进入默认创建明确preset的原生对话，继续历史需明确指定原对话。
+不按目录和历史顺序自动找任务；原位重试复用同request ID，用户操作或新意图取消旧导航。
 
 ## Houdini执行模块
 

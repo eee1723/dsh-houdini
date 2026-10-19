@@ -5,8 +5,10 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
-import { ExecutorBinding, requireExecutorContinuityIdentity } from './executor-binding.js'
-import {foldExecutorState} from './executor-identity-projection.js'
+import { ExecutorBinding } from './executor-binding.js'
+import {foldExecutorState,targetSnapshotSchema,type TargetSnapshot} from './executor-identity-projection.js'
+import {executionHistory} from './execution-history.js'
+export type {TargetSnapshot} from './executor-identity-projection.js'
 
 export interface ExecutorRecord {
   schema:1
@@ -26,9 +28,12 @@ export interface ExecutorRecord {
   hip_is_new?:boolean
   workspace_path?:string
 }
-type Session = Parameters<ExecutorBinding['ensure']>[0] & {id:string}
+type Session = Parameters<ExecutorBinding['ensure']>[0] & {id:string;header?:{cwd?:string}}
+type Agent = {id:string;session:Session;status?:string}
+export type ResolveOptions={write?:boolean}
 const ID=/^[0-9a-f]{32}$/
 const canonical = (p:string) => process.platform==='win32' ? path.normalize(p).toLowerCase() : path.normalize(p)
+export class ExecutorUnavailableError extends Error {}
 
 export class ExecutorDirectory {
   constructor(private readonly root:string, private readonly installation:string) {
@@ -91,182 +96,205 @@ export class ExecutorDirectory {
       record=await this.read(id,canonical(await fs.realpath(path.join(this.root,'endpoints'))),
         canonical(await fs.realpath(this.installation)))
     } catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
-    if(!record||record.state!=='registered') throw new Error('Bound Houdini is disconnected or absent; no automatic target substitution')
+    if(!record||record.state!=='registered') throw new ExecutorUnavailableError('Bound Houdini is disconnected or absent; no automatic target substitution')
     return record
   }
 }
 
+export function targetSnapshot(record:ExecutorRecord):TargetSnapshot {
+  return targetSnapshotSchema.parse({executor_id:record.executor_id,runtime_id:record.runtime_id,
+    scene_epoch:record.scene_epoch,scene_id:record.scene_id??null,registration_id:record.registration_id,
+    hip_path:record.hip_path,hip_is_new:record.hip_is_new===true,workspace_path:record.workspace_path})
+}
+export function targetMatchesRecord(target:TargetSnapshot,record:ExecutorRecord):boolean {
+  return record.state==='registered'&&record.executor_id===target.executor_id&&record.runtime_id===target.runtime_id
+    &&record.scene_epoch===target.scene_epoch&&record.scene_id===target.scene_id
+}
+function sameTargetIntent(left:TargetSnapshot,right:TargetSnapshot):boolean {
+  return left.executor_id===right.executor_id&&left.runtime_id===right.runtime_id&&left.scene_epoch===right.scene_epoch
+    &&left.scene_id===right.scene_id&&canonical(left.hip_path)===canonical(right.hip_path)
+}
+
+/** Selection is per conversation. Routing never chooses a replacement for a stale target. */
 export class ExecutorRouter {
   private readonly lifetime=new AbortController()
+  private readonly selections=new WeakMap<object,Promise<void>>()
+  private readonly targetChanges=new WeakMap<object,Promise<unknown>>()
   dispose():void {this.lifetime.abort(new Error('Shared Houdini Host service was unloaded'))}
   private signal(signal?:AbortSignal):AbortSignal {
     return signal?AbortSignal.any([signal,this.lifetime.signal]):this.lifetime.signal
   }
-  constructor(readonly directory:ExecutorDirectory, private readonly timeoutMs:number,
+  constructor(readonly directory:ExecutorDirectory,private readonly timeoutMs:number,
     private readonly binding:ExecutorBinding,
     private readonly identityOf:(session:Session)=>string|undefined,
     private readonly idleOwner:(taskId:string)=>boolean=()=>false,
-    private readonly persist?: (session:Session)=>Promise<boolean>,
-    private readonly chooseRecovery?: (taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
+    private readonly persist?:(session:Session)=>Promise<boolean>,
+    private readonly chooseTarget?:(taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
 
   private async checkpoint(session:Session):Promise<void> {
     if(this.persist&&await this.persist(session)!==true)throw new Error('对话记录尚未可靠保存，本次操作没有发送到 Houdini。')
   }
+  private state(session:Session) {
+    // The registered DSH projection remains the authoritative live consumer.
+    this.identityOf(session)
+    return foldExecutorState(session.snapshotEvents())
+  }
+  private bridge(record:ExecutorRecord,expected:{runtimeId?:string;sceneEpoch?:string}) {
+    return new HoudiniBridge(record.bridge_url,this.timeoutMs,record.executor_id,this.lifetime.signal,expected)
+  }
+  private async verified(target:TargetSnapshot,signal?:AbortSignal):Promise<{record:ExecutorRecord;bridge:HoudiniBridge}> {
+    const bounded=this.signal(signal)
+    bounded.throwIfAborted()
+    const record=await this.directory.find(target.executor_id)
+    if(!targetMatchesRecord(target,record))throw new Error('所选 Houdini 的场景或运行代际已变化，请重新选择目标；没有自动改用其他窗口。')
+    const bridge=this.bridge(record,{runtimeId:target.runtime_id,sceneEpoch:target.scene_epoch})
+    const health=await bridge.inspectExecutor(bounded)
+    if(health.runtimeId!==target.runtime_id||health.houVersion!==record.houdini_version
+      ||health.sceneEpoch!==target.scene_epoch)throw new Error('所选 Houdini 现场已变化，请重新选择目标。')
+    const after=await this.directory.find(target.executor_id)
+    if(!targetMatchesRecord(target,after)||after.registration_id!==record.registration_id)
+      throw new Error('工程在核对期间发生变化，请重新选择目标。')
+    return {record:after,bridge}
+  }
 
-  private async verified(id:string, taskId:string, signal?:AbortSignal, requireWriter=true):Promise<HoudiniBridge> {
-    signal=this.signal(signal)
-    signal?.throwIfAborted()
-    const record=await this.directory.find(id)
-    // Verification never claims or steals a writer lease. An unclaimed or
-    // differently claimed target is only usable after an explicit selection
-    // (selectInitial / recoveryTarget); idle-ness alone is not ownership and
-    // is decided Bridge-side on that explicit claim.
-    if(!record.hip_path) throw new Error('当前工程没有可核对的位置，请从对应 Houdini 打开工作区。')
-    if(requireWriter&&record.task_id!==taskId) throw new Error(record.task_id===null
-      ? '这个工程还没有写入预留；请明确选择/确认要继续的工程后再执行。'
-      : '这个工程的写入预留属于另一段对话；请明确选择/确认要继续的工程，没有自动接管。')
-    const bridge=new HoudiniBridge(record.bridge_url,this.timeoutMs,id,this.lifetime.signal)
-    const health=await bridge.inspectExecutor(signal)
-    if(health.runtimeId!==record.runtime_id||health.houVersion!==record.houdini_version) throw new Error('Executor generation changed; refresh the registry and reconcile pending operations')
-    const after=await this.directory.find(id)
-    if(JSON.stringify(record)!==JSON.stringify(after)) throw new Error('Executor registration changed during target verification')
+  /** First scene use only; ordinary chat and ambient context never call this chooser. */
+  async selectFor(agent:Agent,signal:AbortSignal):Promise<void> {
+    const state=this.state(agent.session)
+    if(state.selectedTarget)return
+    if(state.selectionRecorded)throw new Error('已解除此对话的现场目标；请明确选择后再操作，不会自动重新绑定。')
+    if(state.identity&&!state.selectionRecorded)throw new Error('这段旧对话尚未选择当前现场，请从工程入口明确选择；历史归属没有改变。')
+    const rows=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered')
+    const cwd=agent.session.header?.cwd
+    const scoped=rows.filter(record=>cwd&&record.workspace_path&&canonical(record.workspace_path)===canonical(cwd))
+    const candidates=scoped.length?scoped:rows
+    if(!candidates.length)throw new Error('目前没有可用的 Houdini 现场。请从目标 Houdini 打开工作台，或打开一份工程。')
+    const selected=scoped.length===1?scoped[0].executor_id:await this.chooseTarget?.(agent.id,candidates,signal)
+    const record=candidates.find(candidate=>candidate.executor_id===selected)
+    if(!record)throw new Error('本轮没有选择 Houdini 现场，可以继续讨论；没有执行工程操作。')
+    await this.selectTarget(agent,record.executor_id,record.registration_id,signal,record.hip_path!,true)
+  }
+
+  async resolve(exec:{agent?:Agent;signal?:AbortSignal},options:ResolveOptions={}):Promise<HoudiniBridge> {
+    const signal=this.signal(exec.signal),agent=exec.agent
+    if(!agent||agent.session.id!==agent.id)throw new Error('Houdini routing requires the exact current agent session')
+    await this.checkpoint(agent.session)
+    if(!this.state(agent.session).selectedTarget) {
+      let selection=this.selections.get(agent.session)
+      if(!selection){selection=this.selectFor(agent,signal);this.selections.set(agent.session,selection)}
+      try {await selection}finally{if(this.selections.get(agent.session)===selection)this.selections.delete(agent.session)}
+    }
+    const target=this.state(agent.session).selectedTarget
+    if(!target)throw new Error('请先选择要操作的 Houdini 现场。')
+    const {record,bridge}=await this.verified(target,signal)
+    if(options.write) {
+      if(record.task_id&&record.task_id!==agent.id&&!this.idleOwner(record.task_id))
+        throw new Error('这个工程的另一段对话仍在执行，请等待完成后再修改。')
+      await bridge.claimWriter(agent.id,record.registration_id,record.hip_path!,signal)
+      const after=this.state(agent.session).selectedTarget
+      if(!after||after.executor_id!==target.executor_id||after.runtime_id!==target.runtime_id||after.scene_epoch!==target.scene_epoch)
+        throw new Error('申请写入期间目标选择已变化，本次操作未发送。')
+      await this.verified(target,signal)
+    }
     return bridge
   }
 
-  /** Explicit writer claim, used only by selectInitial and recoveryTarget.
-   * registrationId/expectedHip carry what the user confirmed (or the verified
-   * recovery window shows); the Bridge accepts or rejects the takeover. Every
-   * successful claim is followed by writer verification. */
-  private async claim(id:string, taskId:string, registrationId:string, expectedHip:string, signal?:AbortSignal):Promise<HoudiniBridge> {
-    const bridge=await this.verified(id,taskId,signal,false)
-    signal?.throwIfAborted()
-    await bridge.claimWriter(taskId,registrationId,expectedHip,signal)
-    return this.verified(id,taskId,signal)
-  }
-
-  async resolve(exec:{agent?:{id:string;session:Session};signal?:AbortSignal}):Promise<HoudiniBridge> {
+  /** Read original request/job facts at their original runtime, never at the current default. */
+  async resolveHistorical(exec:{agent?:Agent;signal?:AbortSignal},origin:{executorId?:string;runtimeId:string}):Promise<HoudiniBridge> {
     const signal=this.signal(exec.signal)
-    const agent=exec.agent
-    if(!agent||agent.session.id!==agent.id) throw new Error('Houdini routing requires the exact current agent session')
-    const target=this.identityOf(agent.session)
-    if(!target) throw new Error('Choose a Houdini executor for this task before running live tools; no first/only/latest target is selected automatically')
-    await this.checkpoint(agent.session)
-    const bridge=await this.verified(target,agent.id,signal)
-    await this.binding.ensure(agent.session,target,signal)
+    if(!exec.agent||exec.agent.id!==exec.agent.session.id)throw new Error('Historical routing requires the exact current agent session')
+    if(!ID.test(origin.runtimeId)||origin.executorId!==undefined&&!ID.test(origin.executorId))throw new Error('Invalid historical executor/runtime identity')
+    let record:ExecutorRecord
+    if(origin.executorId)record=await this.directory.find(origin.executorId)
+    else {
+      const rows=(await this.directory.list()).filter(row=>row.state==='registered'&&row.runtime_id===origin.runtimeId)
+      if(rows.length!==1)throw new Error('原请求的 Houdini 运行端不可用或不唯一；结果保持未知，没有改用当前目标。')
+      record=rows[0]
+    }
+    if(record.runtime_id!==origin.runtimeId)throw new Error('原请求所属的 Houdini 运行代际已结束；结果保持未知，没有改用当前目标。')
+    const bridge=this.bridge(record,{runtimeId:origin.runtimeId})
+    const health=await bridge.inspectExecutor(signal)
+    if(health.runtimeId!==origin.runtimeId)throw new Error('原请求所属运行端已变化；结果保持未知。')
     return bridge
-  }
-
-  async recoveryTarget(agent:{id:string;session:Session},signal:AbortSignal,preferredTarget?:string):Promise<HoudiniBridge> {
-    await this.checkpoint(agent.session)
-    const state=foldExecutorState(agent.session.snapshotEvents())
-    if(!state.identity)throw new Error('请先从要操作的 Houdini 打开工作区，或在本轮选择工程。')
-    const scene=state.project?.sceneId
-    const hip=state.project?.hipPath??null
-    if(!preferredTarget||preferredTarget===state.identity) {
-      try {return await this.verified(state.identity,agent.id,signal)}
-      catch(error) {
-        signal.throwIfAborted()
-        if(!scene)throw error
-        // A scene change can drop this task's writer lease on its own recorded
-        // window (observe() resets it on a scene+HIP change). Reclaim only an
-        // unclaimed or still-ours window that still shows the recorded project:
-        // a window that moved to another file must not be adopted, and another
-        // task's reservation is never stolen. A missing record falls through to
-        // the candidate search; a refusal from an existing window must reach the
-        // user instead of becoming a generic "unavailable" message.
-        let record
-        try {record=await this.directory.find(state.identity)}
-        catch {signal.throwIfAborted();record=undefined}
-        if(record) {
-          const sameWindow=record.task_id===null||record.task_id===agent.id
-          const sameScene=Boolean(record.scene_id&&scene&&record.scene_id===scene)
-          const sameHip=hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip))
-          if(record.hip_path&&sameWindow&&sameScene&&sameHip)
-            return await this.claim(state.identity,agent.id,record.registration_id,record.hip_path,signal)
-        }
-      }
-    }
-    if(!scene)throw new Error('原对话缺少可验证的工程身份，请明确选择工程；没有自动认领内容。')
-    // scene_id alone is copyable with the HIP file. With a recorded path a
-    // window must show that path to qualify; without one there is no auto-match,
-    // only the explicit user choice below over scene-matched windows.
-    const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered'
-      &&record.executor_id!==state.identity&&record.scene_id===scene
-      &&(hip===null||Boolean(record.hip_path&&canonical(record.hip_path)===canonical(hip)))
-      &&(record.task_id==null||record.task_id===agent.id||this.idleOwner(record.task_id)))
-    const verified:ExecutorRecord[]=[]
-    for(const record of candidates) {
-      try {
-        const candidate=await this.inspectRecovery(agent.session,record.executor_id,signal)
-        if(candidate)verified.push(record)
-      } catch {signal.throwIfAborted()}
-    }
-    if(!verified.length)throw new Error('原 Houdini 暂不可用，尚未找到可验证的原工程。请打开原工程后继续。')
-    const selected=preferredTarget??(verified.length===1&&hip?verified[0].executor_id:await this.chooseRecovery?.(agent.id,verified,signal))
-    if(!selected||!verified.some(record=>record.executor_id===selected))throw new Error('存在多份原工程，请在对话中选择要继续的窗口；本轮没有换绑。')
-    if(!await this.inspectRecovery(agent.session,selected,signal))throw new Error('选择期间工程已变化，请重新选择。')
-    const record=verified.find(row=>row.executor_id===selected)!
-    // A running conversation keeps its reservation even when its Bridge has no
-    // request in flight at this instant. The Host agent state is the only place
-    // that sees a model between tool calls; recovery may take over only an idle
-    // other task, never a working one.
-    if(record.task_id!=null&&record.task_id!==agent.id&&(!record.workbench||!this.idleOwner(record.task_id)))
-      throw new Error('这个工程的另一段对话仍在执行，请等待完成后再继续。')
-    // Explicit claim only after the chosen window re-verifies; windows that
-    // failed inspectRecovery are never claimed.
-    return this.claim(selected,agent.id,record.registration_id,record.hip_path!,signal)
-  }
-
-  async inspectRecovery(session:Pick<Session,'id'|'snapshotEvents'>,target:string,signal:AbortSignal):Promise<HoudiniBridge|undefined> {
-    const state=foldExecutorState(session.snapshotEvents())
-    const scene=state.project?.sceneId
-    const hip=state.project?.hipPath
-    if(!state.identity||!scene)return
-    const candidate=await this.verified(target,session.id,signal,false)
-    const value=await candidate.recover('assess',{session_id:session.id,previous_executor:state.identity,
-      source_executors:state.executors,expected:{scene_id:scene}},signal)
-    if(value.executor_id!==target||value.status!=='ready'||value.scene_id!==scene)return
-    // A copy shares scene identity with its original; with a recorded HIP path
-    // a window must also show that path to qualify. Without one nothing can be
-    // auto-matched (recoveryTarget never auto-picks) and the user's explicit
-    // window choice is the remaining authorization.
-    if(hip&&(typeof value.hip_path!=='string'||canonical(value.hip_path)!==canonical(hip)))return
-    return candidate
   }
 
   async sceneContextFor(session:Session,signal?:AbortSignal):Promise<unknown> {
-    const target=this.identityOf(session)
-    if(!target) throw new Error('No Houdini target selected; ambient scene inspection is disabled')
     await this.checkpoint(session)
-    const deadline=AbortSignal.timeout(2000)
-    const bounded=signal?AbortSignal.any([signal,deadline]):deadline
-    return (await this.verified(target,session.id,bounded)).sceneContext(bounded)
+    const target=this.state(session).selectedTarget
+    if(!target)throw new Error('No Houdini target selected; ambient scene inspection is disabled')
+    const bounded=AbortSignal.any([this.signal(signal),AbortSignal.timeout(2000)])
+    return (await this.verified(target,bounded)).bridge.sceneContext(bounded)
   }
 
-  /** Host/UI only. Initial bind, not a recovery/rebind or model-callable tool. */
-  async selectInitial(agent:{id:string;status:string;session:Session}, id:string, registrationId:string, signal?:AbortSignal, expectedHip?:string,atStep=false,reselect=false):Promise<void> {
-    signal=this.signal(signal)
-    if((agent.status!=='idle'&&!atStep)||agent.id!==agent.session.id) throw new Error('Select a target only for the exact idle agent')
-    if(reselect) {
-      const state=foldExecutorState(agent.session.snapshotEvents())
-      if(state.hasOperations||state.recovery)throw new Error('已有现场操作的对话不能直接换绑。')
-    } else requireExecutorContinuityIdentity(this.identityOf(agent.session),id)
+  /** An explicit choice may replace any idle conversation's target, with no writer or ownership side effect. */
+  async selectTarget(agent:Agent,id:string,registrationId:string,signal?:AbortSignal,expectedHip?:string,atStep=false,
+    expected?:{runtimeId?:string;sceneEpoch?:string}):Promise<TargetSnapshot> {
+    const bounded=this.signal(signal)
+    return this.changeTarget(agent.session,bounded,()=>this.selectNow(agent,id,registrationId,bounded,expectedHip,atStep,expected))
+  }
+  private changeTarget<T>(session:Session,signal:AbortSignal,operation:()=>Promise<T>):Promise<T> {
+    const previous=this.targetChanges.get(session)??Promise.resolve()
+    const result=previous.catch(()=>{}).then(()=>{signal.throwIfAborted();return operation()})
+    this.targetChanges.set(session,result)
+    return result.finally(()=>{if(this.targetChanges.get(session)===result)this.targetChanges.delete(session)})
+  }
+  private async selectNow(agent:Agent,id:string,registrationId:string,bounded:AbortSignal,expectedHip?:string,atStep=false,
+    expected?:{runtimeId?:string;sceneEpoch?:string}):Promise<TargetSnapshot> {
+    if((agent.status!==undefined&&agent.status!=='idle'&&!atStep)||agent.id!==agent.session.id)
+      throw new Error('Select a target only for the exact idle agent')
     const record=await this.directory.find(id)
-    if(expectedHip!==undefined&&record.hip_path!==expectedHip) throw new Error('HIP changed after the selection was displayed; refresh and confirm again')
-    if(record.registration_id!==registrationId) throw new Error('Target selection is stale; refresh before confirming')
-    // A running conversation keeps its reservation even when its Bridge has no
-    // request in flight at this instant. An explicit selection may take over
-    // only an idle other task.
-    if(record.task_id!=null&&record.task_id!==agent.id&&(!record.workbench||!this.idleOwner(record.task_id)))
-      throw new Error('这个工程的另一段对话仍在执行，请等待完成后再继续。')
-    signal?.throwIfAborted()
-    if(agent.status!=='idle'&&!atStep) throw new Error('Agent started while selecting target; no new binding written')
-    if(record.task_id!==agent.id) await this.claim(id,agent.id,registrationId,record.hip_path!,signal)
-    else await this.verified(id,agent.id,signal)
-    // The writer reservation is already held; always finish the identity
-    // write so a race cannot leave the agent claimed but unbound.
-    if(reselect)await this.binding.reselectUnexecuted(agent.session,id,signal)
-    else await this.binding.ensure(agent.session,id,signal)
+    const target=targetSnapshot(record)
+    let selected:TargetSnapshot|null=null
+    try {selected=foldExecutorState(agent.session.snapshotEvents()).selectedTarget}catch{ /* Explicit choice can replace legacy invalid routing. */ }
+    const unchanged=selected!==null&&sameTargetIntent(selected,target)
+    if(record.registration_id!==registrationId&&!unchanged||expectedHip!==undefined&&canonical(record.hip_path??'')!==canonical(expectedHip)
+      ||expected?.runtimeId!==undefined&&record.runtime_id!==expected.runtimeId
+      ||expected?.sceneEpoch!==undefined&&record.scene_epoch!==expected.sceneEpoch)
+      throw new Error('工程选择已过期，请重新选择目标。')
+    await this.assertCanChange(agent,target,bounded)
+    await this.verified(target,bounded)
+    bounded.throwIfAborted()
+    if(agent.status!==undefined&&agent.status!=='idle'&&!atStep)throw new Error('Agent started while selecting target')
+    if(unchanged) {
+      // Registration is a discovery generation, not another user intention.
+      // Reconfirming the same scene must not retire active request/job facts.
+      await this.checkpoint(agent.session)
+      return selected!
+    }
+    await this.binding.select(agent.session,target,bounded)
     await this.checkpoint(agent.session)
+    return target
+  }
+  async clear(agent:Agent,signal?:AbortSignal):Promise<void> {
+    const bounded=this.signal(signal)
+    return this.changeTarget(agent.session,bounded,async()=>{
+      if(agent.id!==agent.session.id||agent.status!==undefined&&agent.status!=='idle')throw new Error('Clear a target only for the exact idle agent')
+      await this.assertCanChange(agent,null,bounded)
+      if(agent.status!==undefined&&agent.status!=='idle')throw new Error('Agent started while clearing target; selection was retained')
+      await this.binding.select(agent.session,null,bounded)
+      await this.checkpoint(agent.session)
+    })
+  }
+  private async assertCanChange(agent:Agent,next:TargetSnapshot|null,signal:AbortSignal):Promise<void> {
+    let old:TargetSnapshot|null
+    try {old=foldExecutorState(agent.session.snapshotEvents()).selectedTarget}catch{return}
+    if(!old||next&&sameTargetIntent(old,next))return
+    const history=executionHistory(agent.session.snapshotEvents())
+    if(!history.activeJobs.length&&!history.activeRequests.length&&!history.pendingCalls.length&&!history.unresolvedCalls.length)return
+    let record:ExecutorRecord
+    try {record=await this.directory.find(old.executor_id)}
+    catch(error){if(error instanceof ExecutorUnavailableError)return;throw error}
+    if(record.runtime_id!==old.runtime_id)return
+    let health
+    try {health=await this.bridge(record,{runtimeId:old.runtime_id}).inspectExecutor(signal)}
+    catch(error){
+      signal.throwIfAborted()
+      // A crashed process may leave a registered discovery row. Only the OS's
+      // explicit ESRCH proves retirement; timeouts and access errors do not.
+      try {process.kill(record.pid,0)}
+      catch(probe){if((probe as NodeJS.ErrnoException).code==='ESRCH')return}
+      throw new Error('无法确认原目标是否仍有后台操作，暂未切换；请结束原操作后重试。',{cause:error})
+    }
+    if((health.activeJobs??0)>0||(health.activeRequests??0)>0)
+      throw new Error('这段对话在原目标仍有请求或后台任务执行，完成后才能切换或解除目标。')
   }
 }

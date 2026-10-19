@@ -1,7 +1,5 @@
-// Dual conversations on one workbench Bridge: writer reservation handover.
-// Complements multi-executor-host-smoke (two non-workbench Bridges, steal refusal).
-// Guarantees: a displaced conversation gets the explicit reservation refusal,
-// the new author keeps the reservation, and nodes keep their creating session.
+// One workbench Bridge, two conversations: selection/read and writer handover
+// are distinct. This runs only against the Python runner's disposable scene.
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -12,52 +10,42 @@ import {fixtureSession} from './tests/fixture-session.mjs'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const registry=process.argv[2]
-if(!registry||!path.isAbsolute(registry)) throw new Error('Fixture registry path required')
-const directory=new ExecutorDirectory(registry,root)
-const rows=await directory.list()
+if(!registry||!path.isAbsolute(registry))throw new Error('Fixture registry path required')
+const directory=new ExecutorDirectory(registry,root),rows=await directory.list()
 assert.equal(rows.length,1,'dual-conversation fixture uses one workbench Bridge')
-const record=rows[0]
-const flush=async session=>true
-const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
-const router=new ExecutorRouter(directory,5000,new ExecutorBinding(),identityOf,flush)
-const tools=new Map()
-registerHoudiniTools({on(){},get:()=>undefined,tools:{register:d=>tools.set(d.name,d)},sessions:{flush}},router)
-
+const record=rows[0],flush=async()=>true
 const agentB={id:'task-b',status:'idle',session:fixtureSession('task-b',{agentPreset:'houdini'})}
 const agentA={id:'task-a',status:'idle',session:fixtureSession('task-a',{agentPreset:'houdini'})}
+const agents=[agentA,agentB]
+const router=new ExecutorRouter(directory,5000,new ExecutorBinding(),session=>recordedExecutorIdentity(session.snapshotEvents()),
+  id=>agents.find(agent=>agent.id===id)?.status==='idle',flush)
+const tools=new Map()
+registerHoudiniTools({on(){},get:()=>undefined,tools:{register:definition=>tools.set(definition.name,definition)},sessions:{flush}},router)
+const exec=(agent,code,callId)=>tools.get('houdini_exec').execute({code},{agent,callId})
+const inspect=(agent,code,callId)=>tools.get('houdini_inspect').execute({code},{agent,callId})
+const select=agent=>router.selectTarget(agent,record.executor_id,record.registration_id,undefined,record.hip_path)
 
-// B is the original author and edits.
-await router.selectInitial(agentB,record.executor_id,record.registration_id)
-const created=await tools.get('houdini_exec').execute({
-  code:"__result__=tab_create('/obj','geo',name='dual_b').path()"},{agent:agentB,callId:'dual-b-create'})
+await select(agentB)
+assert.equal((await directory.find(record.executor_id)).task_id,null,'selection alone never acquires the writer')
+const created=await exec(agentB,"__result__=tab_create('/obj','geo',name='dual_b').path()",'dual-b-create')
 assert.equal(created.ok,true,created)
 assert.equal(created.execution.owner_session,'task-b')
+await assert.rejects(inspect(agentA,'__result__=hou.applicationVersionString()','dual-a-unbound'),/本轮没有选择|请选择|还没有/)
 
-// A is unbound: tools cannot silently adopt the live window.
-await assert.rejects(tools.get('houdini_inspect').execute(
-  {code:'__result__=hou.applicationVersionString()'},{agent:agentA,callId:'dual-a-unbound'}),
-  /Choose a Houdini|还没有写入预留|写入预留属于另一段对话/)
-
-// A's explicit user selection is the designed idle handover.
-await router.selectInitial(agentA,record.executor_id,record.registration_id)
-let after=await directory.find(record.executor_id)
-assert.equal(after.task_id,'task-a','explicit idle selection is the designed handover')
+await select(agentA)
 assert.equal(recordedExecutorIdentity(agentA.session.snapshotEvents()),record.executor_id)
-
-// The displaced conversation gets the explicit refusal; the reservation is not
-// stolen back by a rival operation.
-await assert.rejects(tools.get('houdini_inspect').execute(
-  {code:'__result__=hou.applicationVersionString()'},{agent:agentB,callId:'dual-b-after'}),
-  /写入预留属于另一段对话/)
-after=await directory.find(record.executor_id)
-assert.equal(after.task_id,'task-a','a displaced conversation must not steal the reservation')
-
-// The new author works; the old author's nodes stay fenced.
-const edited=await tools.get('houdini_exec').execute({
-  code:"__result__=tab_create('/obj','geo',name='dual_a').path()"},{agent:agentA,callId:'dual-a-create'})
+assert.equal((await directory.find(record.executor_id)).task_id,'task-b','selecting another chat does not transfer a writer')
+for(const agent of agents)assert.equal((await inspect(agent,'__result__=hou.applicationVersionString()',agent.id+'-read')).ok,true)
+agentB.status='running'
+await assert.rejects(exec(agentA,"tab_create('/obj','geo',name='must_not_steal')",'dual-a-busy'),/仍在执行|等待完成/)
+assert.equal((await directory.find(record.executor_id)).task_id,'task-b','a running author cannot be displaced while HOM is temporarily idle')
+agentB.status='idle'
+const edited=await exec(agentA,"__result__=tab_create('/obj','geo',name='dual_a').path()",'dual-a-create')
 assert.equal(edited.ok,true,edited)
 assert.equal(edited.execution.owner_session,'task-a')
-const foreign=await tools.get('houdini_exec').execute({
-  code:"__result__=set_parms('/obj/dual_b',{'tx':2})"},{agent:agentA,callId:'dual-a-foreign'})
-assert.equal(foreign.ok,false,'nodes keep their creating session after an explicit handover')
-console.log('Dual conversation handover: displacement refusal, idle explicit transfer, new-author fence passed')
+assert.equal((await directory.find(record.executor_id)).task_id,'task-a','the first actual write performs an idle handover')
+assert.equal((await inspect(agentB,'__result__=hou.applicationVersionString()','dual-b-read-after')).ok,true,'the previous author can still observe')
+assert.equal((await directory.find(record.executor_id)).task_id,'task-a','read-only observation does not steal the writer back')
+const foreign=await exec(agentA,"__result__=set_parms('/obj/dual_b',{'tx':2})",'dual-a-foreign')
+assert.equal(foreign.ok,false,'the former author nodes remain foreign after a writer handover')
+console.log('Dual conversation handover: selection/read without writer, busy-author refusal, write-only idle transfer and original-node ownership fence passed')

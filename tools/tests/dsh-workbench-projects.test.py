@@ -162,6 +162,24 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
     assert projects.endpoint_presence({**alive, 'pid': 99999999}, registry)['status'] == 'offline'
     assert not (registry / 'leases' / (executor + '.lock')).exists(), 'a read-only presence poll must not create locks'
     assert projects.endpoint_presence(alive, registry)['status'] == 'unknown', 'a stable probe must not flap across identical calls'
+    # A writer reservation is not evidence of running work. Presence carries
+    # the verified runtime and actual request/job counts for the selected chat.
+    class HealthResponse:
+        def __init__(self, value): self.value = value
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(self.value).encode()
+    for requests, jobs in ((0, 0), (2, 1)):
+        health = {'ok': True, 'executorId': executor, 'runtimeId': alive['runtime_id'],
+                  'sceneEpoch': alive['scene_epoch'], 'activeRequests': requests, 'activeJobs': jobs,
+                  'executionContractVersion': 110}
+        opener = SimpleNamespace(open=lambda *args, **kwargs: HealthResponse(health))
+        with patch.object(projects.urllib.request, 'build_opener', return_value=opener):
+            presence = projects.endpoint_presence({**alive, 'task_id': 'reserved-task'}, registry)
+        assert presence['status'] == 'online' and presence['runtimeId'] == alive['runtime_id']
+        assert presence['ownerSessionId'] == 'reserved-task'
+        assert presence['activeRequests'] == requests and presence['activeJobs'] == jobs
+        assert presence['busy'] == bool(requests or jobs), presence
     assert 'hou' not in sys.modules, 'desktop discovery and launch preparation must not import HOM'
     import dsh_workbench_entry as entry
     import dsh_workbench as workbench

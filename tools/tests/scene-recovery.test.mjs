@@ -22,17 +22,17 @@ class Bridge extends HoudiniBridge {
       return {ok:true,status:'active',operation_id:input.operation_id,executor_id:b,checkpoint_id:c}
     }
     const common={executor_id:this.wrong?c:b,checkpoint_id:c,scene_id:d,scene_epoch:e,runtime_id:e,
-      hip_path:'C:/fixture/project.hip',requires_reload:this.needsReload,dirty_reliable:true,dirty:this.dirty,restored_nodes:2}
-    return action==='assess'?{...common,status:this.connected?'connected':'ready'}:{...common,status:'prepared',operation_id:input.operation_id}
+      hip_path:'C:/fixture/project.hip',requires_reload:this.needsReload,dirty_reliable:true,dirty:this.dirty,owned_nodes:2,restored_nodes:2}
+    return action==='assess'?{...common,status:this.assessmentStatus??(this.connected?'connected':'ready')}:{...common,status:'prepared',operation_id:input.operation_id}
   }
 }
 function fixture(answerer){
-  let durable=true,flushes=0,service,questions=0
-  const connection=new Bridge(),session=Session.create('recovery-task'),agent={id:session.id,session,status:'idle'}
+  let durable=true,flushes=0,service,questions=0,duringFlush
+  const connection=new Bridge(),session=Session.create('recovery-task'),agent={id:session.id,session,status:'idle',inject:message=>session.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})}
   installSceneRecovery({provide:(name,value)=>{assert.equal(name,'houdiniRecovery');service=value},
     get:name=>name==='userQuestions'?{ask:async input=>{questions++;return answerer?.(input)??{answers:[]}}}:undefined,
-    sessions:{flush:async()=>{flushes++;return durable}}},connection)
-  return {connection,session,agent,get service(){return service},get questions(){return questions},get flushes(){return flushes},set durable(value){durable=value}}
+    sessions:{flush:async()=>{flushes++;await duringFlush?.();return durable}}},connection)
+  return {connection,session,agent,get service(){return service},get questions(){return questions},get flushes(){return flushes},set durable(value){durable=value},set duringFlush(value){duringFlush=value}}
 }
 const signal=new AbortController().signal
 const f=fixture()
@@ -77,31 +77,89 @@ assert.equal(recordedExecutorIdentity(wrong.session.snapshotEvents()),a)
 assert.equal(wrong.connection.requests.filter(x=>x.action==='activate').length,0)
 wrong.agent.status='running'
 await assert.rejects(wrong.service.restore(wrong.agent,plan.assessment_id,signal),/模型步骤边界/)
-// A normal running user turn automatically reconciles, without any UI action or question.
-const automatic=fixture();await new ExecutorBinding().ensure(automatic.session,a);automatic.agent.status='running'
-await automatic.service.beforeStep(automatic.agent,signal)
-assert.equal(recordedExecutorIdentity(automatic.session.snapshotEvents()),b)
-assert.equal(automatic.questions,0)
-assert.deepEqual(automatic.connection.requests.map(r=>r.action),['assess','prepare','activate'])
-await automatic.service.beforeStep(automatic.agent,signal)
-assert.equal(automatic.connection.requests.filter(r=>r.action==='prepare').length,1)
-// Clean lazy startup can reload automatically; dirty content requires a real conversation choice.
-const clean=fixture();await new ExecutorBinding().ensure(clean.session,a);clean.connection.needsReload=true
-await clean.service.beforeStep(clean.agent,signal)
-assert.equal(clean.questions,0);assert.equal(clean.connection.requests.find(r=>r.action==='prepare').input.reload_saved,true)
-for(const answer of ['keep','custom','discard']) {
- const dirty=fixture(input=>({answers:[{id:input.questions[0].id,selected:answer==='discard'?['放弃未保存修改，从保存点继续']:[],
-   ...(answer==='custom'?{custom:'已确认恢复成功'}:{})}]}))
- await new ExecutorBinding().ensure(dirty.session,a);dirty.connection.needsReload=true;dirty.connection.dirty=true
- if(answer==='discard') {
-  await dirty.service.beforeStep(dirty.agent,signal)
-  assert.equal(dirty.connection.requests.find(r=>r.action==='prepare').input.expected.discard_unsaved,true)
-  assert.equal(foldExecutorState(dirty.session.snapshotEvents()).recovery.user_choice.selected,'放弃未保存修改，从保存点继续')
- } else {
-  await assert.rejects(dirty.service.beforeStep(dirty.agent,signal),/已保留/)
-  assert.equal(dirty.connection.requests.filter(r=>r.action==='prepare').length,0)
-  assert.equal(recordedExecutorIdentity(dirty.session.snapshotEvents()),a)
- }
- assert.equal(dirty.questions,1)
+// Selecting or inspecting a target never restores ownership. Only a write to
+// the exact previously saved scene can restore original nodes without reload.
+async function selectedFixture({scene=d,reload=false,dirty=false,checkpoint=c}={}) {
+  const value=fixture();await new ExecutorBinding().ensure(value.session,a)
+  value.session.append('tool/call',{callId:'saved',name:'houdini_exec'})
+  value.session.append('tool/result',{message:{source:{callId:'saved'}},meta:{canonical:{ok:true,execution:{
+    executor_id:a,runtime_id:a,sequence:1,observed_at:1,owner_session:value.agent.id,read_only:false,
+    hip_path:'C:/fixture/project.hip',scene_recovery:{scene_id:d,scene_epoch:a,checkpoint_id:checkpoint}}}}},{surfaceOp:'append'})
+  await new ExecutorBinding().select(value.session,{executor_id:b,runtime_id:e,scene_epoch:e,scene_id:scene,
+    registration_id:b,hip_path:'C:/fixture/project.hip',hip_is_new:false})
+  value.connection.needsReload=reload;value.connection.dirty=dirty;value.agent.status='running'
+  return value
 }
-console.log('scene recovery: durable transition, retries, late receipts, forged source, wrong target and idle boundary passed')
+const direct=await selectedFixture()
+await direct.service.beforeWrite(direct.agent,signal)
+assert.deepEqual(direct.connection.requests.map(r=>r.action),['assess','prepare','activate'],'an explicit same-scene selection restores original ownership before its first write without needing a fresh read')
+// The current tool protocol stays contiguous while ownership facts enter the
+// durable native inbox. They are context, never a new user body in that pair.
+const queued=await selectedFixture()
+queued.session.append('tool/call',{callId:'current-write',name:'houdini_exec'})
+const beforeQueue=queued.session.snapshotEvents().length
+await queued.service.beforeWrite(queued.agent,signal)
+const queuedEvents=queued.session.snapshotEvents().slice(beforeQueue)
+assert.equal(queuedEvents.filter(event=>event.type==='user/message').length,0)
+const metadata=queuedEvents.find(event=>event.type==='agent/inbox/spliced')?.data.inserted[0]
+assert(metadata?.source.sections.some(section=>section.name==='dsh-houdini:executor-binding'))
+assert(foldExecutorState(queued.session.snapshotEvents()).recovery,'native splice immediately supplies the single persisted recovery fact')
+assert.equal(foldExecutorState(queued.session.snapshotEvents()).recovery.previous_work,undefined,'ownership metadata must not mislabel the current tool call as retired work')
+// Transient checkpoint readiness must not disable restoration for this epoch.
+const pending=await selectedFixture();pending.connection.assessmentStatus='unavailable'
+await pending.service.beforeWrite(pending.agent,signal)
+assert.deepEqual(pending.connection.requests.map(r=>r.action),['assess'])
+pending.connection.assessmentStatus='ready'
+await pending.service.beforeWrite(pending.agent,signal)
+await pending.service.beforeWrite(pending.agent,signal)
+assert.equal(pending.connection.requests.filter(r=>r.action==='assess').length,2,'the same target retries after pending material settles')
+assert.equal(pending.connection.requests.filter(r=>r.action==='prepare').length,1,'successful retry does not repeat preparation')
+const flushRetry=await selectedFixture();flushRetry.durable=false
+await flushRetry.service.beforeWrite(flushRetry.agent,signal)
+assert.equal(flushRetry.connection.requests.filter(r=>r.action==='activate').length,0,'queued facts grant no authority before durable flush')
+flushRetry.durable=true
+await flushRetry.service.beforeWrite(flushRetry.agent,signal)
+assert.equal(flushRetry.connection.requests.filter(r=>r.action==='assess').length,1)
+assert.equal(flushRetry.connection.requests.filter(r=>r.action==='prepare').length,1,'durability retry uses the same persisted operation')
+assert.equal(flushRetry.connection.requests.filter(r=>r.action==='activate').length,1)
+// A distinct user choice made while an explicit idle restoration flushes is
+// not overwritten by the old activation transaction.
+const choiceDuringFlush=await selectedFixture();choiceDuringFlush.agent.status='idle'
+const beforeChoice=await choiceDuringFlush.service.assess(choiceDuringFlush.agent,signal)
+choiceDuringFlush.duringFlush=async()=>{
+  choiceDuringFlush.duringFlush=undefined
+  await new ExecutorBinding().select(choiceDuringFlush.session,null,signal)
+}
+await assert.rejects(choiceDuringFlush.service.restore(choiceDuringFlush.agent,beforeChoice.assessment_id,signal),/现场选择已变化/)
+assert.equal(choiceDuringFlush.connection.requests.filter(r=>r.action==='activate').length,0)
+assert.equal(foldExecutorState(choiceDuringFlush.session.snapshotEvents()).selectedTarget,null)
+const automatic=await selectedFixture()
+assert.equal(automatic.service.beforeStep,undefined,'ordinary steps have no restoration hook')
+assert.equal(automatic.service.beforeTool,undefined,'read tools have no restoration hook')
+assert.equal(automatic.connection.requests.length,0,'selection does not contact recovery')
+// A fresh current read must not erase the old task's provenance.
+automatic.session.append('tool/call',{callId:'read-current',name:'houdini_inspect'})
+automatic.session.append('tool/result',{message:{source:{callId:'read-current'}},meta:{canonical:{ok:true,execution:{
+  executor_id:b,runtime_id:e,sequence:1,observed_at:2,owner_session:automatic.agent.id,read_only:true,
+  hip_path:'C:/fixture/project.hip',scene_recovery:{scene_id:d,scene_epoch:e,checkpoint_id:c}}}}},{surfaceOp:'append'})
+await automatic.service.beforeWrite(automatic.agent,signal)
+assert.deepEqual(automatic.connection.requests.map(r=>r.action),['assess','prepare','activate'])
+assert.equal(automatic.questions,0)
+assert.equal(automatic.connection.requests[1].input.reload_saved,false)
+await automatic.service.beforeWrite(automatic.agent,signal)
+assert.equal(automatic.connection.requests.filter(r=>r.action==='assess').length,1,'same-epoch retries do not hash the HIP again')
+assert.equal(automatic.connection.requests.filter(r=>r.action==='prepare').length,1,'same mapping is activated idempotently')
+const different=await selectedFixture({scene:c})
+await different.service.beforeWrite(different.agent,signal)
+assert.equal(different.connection.requests.length,0,'an explicitly selected new project needs no old checkpoint')
+for(const dirty of [false,true]) {
+  const reload=await selectedFixture({reload:true,dirty})
+  await reload.service.beforeWrite(reload.agent,signal)
+  await reload.service.beforeWrite(reload.agent,signal)
+  assert.deepEqual(reload.connection.requests.map(r=>r.action),['assess'],'unverified load evidence is not auto-reloaded or repeatedly hashed')
+  assert.equal(reload.questions,0,'write preflight does not ask to discard user content')
+}
+const changed=await selectedFixture({checkpoint:a})
+await changed.service.beforeWrite(changed.agent,signal)
+assert.deepEqual(changed.connection.requests.map(r=>r.action),['assess'],'different checkpoint never restores old ownership')
+console.log('scene recovery: explicit durable restore and exact same-scene write-only ownership recovery passed')

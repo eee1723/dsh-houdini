@@ -25,7 +25,8 @@ function element(tag) {
 async function run(href, options = {}) {
   let registration;
   const opened = [], replaced = [], injected = [], creates = [], workspaceCreates = [], panels = [], disposers = [], bootstrapSignals = [];
-  const registrations = {}, listeners = new Map(), timers = new Map();
+  const registrations = {}, listeners = new Map(), timers = new Map(), targetRequests=[];
+  const connection={generation:{getSnapshot:()=>1,subscribe:()=>()=>{}},rpc:{call:async(_channel,method,payload)=>{targetRequests.push({method,payload});return {ok:true,value:method==='houdiniTargets/list'?{candidates:[],state:{status:'unbound'}}:{workbench:true}};}}};
   const url = new URL(href);
   const path = url.searchParams.get('dsh-houdini-workspace') ?? 'E:\\fixture';
   const rows = options.rows ?? (url.searchParams.has('dsh-houdini-session')
@@ -123,12 +124,12 @@ async function run(href, options = {}) {
   const body = element('body');
   const document = {body, querySelector:()=>({}), createElement:element, head:element('head')};
   const scope = {
-    get: name => ({sessions,workspaces,remote,slots,uiSession,uiWorkspace,
+    get: name => ({sessions,workspaces,remote,slots,uiSession,uiWorkspace,connection,
       layout,configForms})[name],
     effect: install => { const dispose=install(); if(dispose) disposers.push(dispose); },
   };
   const api = {
-    opened,replaced,injected,registrations,creates,workspaceCreates,panels,window,body,sessionStore,workspaceStore,currentSession,sessions,uiWorkspace,publish,layout,bootstrapSignals,
+    opened,replaced,injected,registrations,creates,workspaceCreates,targetRequests,panels,window,body,sessionStore,workspaceStore,currentSession,sessions,uiWorkspace,publish,layout,bootstrapSignals,
     get refreshes(){return refreshes;},get reloads(){return reloads;},get earlyDisposed(){return earlyDisposed;},
     emit: (name,event={target:body})=>{for(const fn of [...(listeners.get(name)??[])])fn(event);},
     timeout:()=>{for(const fn of [...timers.values()])fn();},
@@ -145,8 +146,9 @@ async function run(href, options = {}) {
   const plugin = registration.factory(name=>{
     if(name==='react')return {
       createElement:(type,props,...children)=>({type,props:props??{},children}),
-      useState:value=>[value,()=>{}],useMemo:fn=>fn(),useEffect:()=>{},useRef:value=>({current:value}),
+      useState:value=>[value,()=>{}],useMemo:fn=>fn(),useEffect:()=>{},useRef:value=>({current:value}),useSyncExternalStore:(_subscribe,get)=>get(),
     };
+    if(name==='@deepseek-ai/dsh-client-ui-primitives')return {Tooltip:'tooltip',Menu:'menu',MenuItemButton:'menuitem',Button:'button',Toast:'toast'};
     throw new Error(`unexpected client dependency: ${name}`);
   });
   plugin.apply({
@@ -163,7 +165,18 @@ const hinted = await run(
 );
 assert.deepEqual(hinted.injected, [[
   'sessions', 'workspaces', 'remote', 'remote.session', 'uiSession', 'uiWorkspace', 'layout',
-], ['connection', 'configForms'], ['connection'], ['connection', 'uiSession'], ['connection', 'uiConversation']]);
+], ['connection', 'configForms'], ['connection'], ['connection', 'uiSession', 'sessions', 'uiWorkspace'], ['connection', 'uiConversation']]);
+const chipOwner=hinted.registrations['houdini-project-label'].component;
+const chipProps={sessionId:'session-target',useSessions:select=>select(hinted.sessionStore.getSnapshot())};
+const chipMenuElement=chipOwner(chipProps);
+assert(chipMenuElement,'native Houdini header registers the compact target selector');
+const chipMenu=chipMenuElement.type(chipMenuElement.props);
+const chipTooltip=chipMenu.props.anchor.type(chipMenu.props.anchor.props);
+const chipButton=chipTooltip.children[0];
+assert.equal(chipButton.props['data-state'],'unbound','the real registered UI shows an actionable unbound state');
+chipButton.props.onClick();await flush();
+assert.equal(hinted.targetRequests.at(-1).method,'houdiniTargets/list');
+assert.equal(hinted.targetRequests.at(-1).payload.args.input.sessionId,'session-target');
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },
@@ -180,6 +193,20 @@ const workspaceUrl = 'http://127.0.0.1:3081/?dsh-houdini-workspace=E%3A%5Cfixtur
 const row = (id, updatedAt = 1, preset = 'houdini', extra = {}) => ({
   id, updatedAt, cwd:'E:\\fixture', projectionValues:{agentPreset:preset}, ...extra,
 });
+// Host can create/attach/flush a new native task after the current page's
+// list became ready. The first explicit intent must refresh that same native
+// store before rejecting a missing row; no second session or workspace is made.
+const externalTask = await run('http://127.0.0.1:3081/?dsh-houdini-session=host-created', {
+  rows:[row('previous')],current:'previous',accounted:['previous','host-created'],
+  refresh:api=>api.publish({workspaceId:'w',sessionId:'host-created'}),
+});
+assert.equal(externalTask.refreshes,1);
+assert.deepEqual(externalTask.opened,['host-created']);
+assert.equal(externalTask.creates.length,0);
+assert.equal(externalTask.workspaceCreates.length,0);
+assert.equal(externalTask.notices().length,0);
+externalTask.dispose();
+
 for (const layout of [false, true]) {
   // Native current selection wins over recency; do not replace an older task
   // the user is actually viewing merely because another one ran recently.

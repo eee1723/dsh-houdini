@@ -136,13 +136,20 @@ def driver(args):
             assert a['hip_path']!=b['hip_path'] and a['task_id'] is None and b['task_id'] is None
             for i,record in enumerate(records):
                 task='task-'+str(i)
-                def submit(code,owner=task,record=record):
+                def submit(code,owner=task,record=record,read_only=False):
                     # Every HTTP execution now carries the complete admission
                     # envelope; a fresh one-time ticket per attempt.
                     _,prepared=call(record,'/requests/prepare',{'owner_session':owner})
                     body={'code':code,'owner_session':owner,'owner_call':'driver','request_ref':prepared['requestRef'],
                           'expected_contract':{'version':prepared['executionContractVersion'],'hash':prepared['verbCatalog']['hash']}}
+                    if read_only: body['read_only'] = True
                     return call(record,'/exec',body)
+                # Shared read-only execution has no author reservation and must
+                # not acquire one as a side effect of selecting the live scene.
+                status,observed=submit('__result__=hou.hipFile.path()',read_only=True)
+                assert status==200 and observed['ok'] and Path(observed['result']).resolve()==Path(record['hip_path']).resolve(),observed
+                registered=json.loads((registry/'endpoints'/(record['executor_id']+'.json')).read_text(encoding='utf-8'))
+                assert registered['task_id'] is None
                 status,blocked=submit('__result__=1')
                 assert status==200 and not blocked['ok'] and 'reservation mismatch' in blocked['error'],blocked
                 assert call(record,'/executor/claim',{'task_id':task,'registration_id':'f'*32,
@@ -165,13 +172,6 @@ def driver(args):
             assert {r['executor_id'] for r in discovered}=={a['executor_id'],b['executor_id']}
             assert all(r['connection_status']=='unverified' for r in discovered)
             assert read_candidates(registry,installation=base/'another-install')==[]
-            if args.host_node:
-                host_result=subprocess.run([str(Path(args.host_node).resolve(strict=True)),str(ROOT/'tools/multi-executor-host-smoke.mjs'),
-                    str(registry)],cwd=ROOT,env=isolated_environment(base/'host-env'),check=True,timeout=60,
-                    capture_output=True,text=True,encoding='utf-8',errors='replace',
-                    creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                assert 'two real Houdini main-thread Bridges passed' in host_result.stdout,host_result
-                print(host_result.stdout.strip(),flush=True)
             try: ExecutorRegistration(registry,a['executor_id'],installation=ROOT,version='21.0.440')
             except RuntimeError: pass
             else: raise AssertionError('duplicate live executor admitted')
@@ -266,7 +266,6 @@ if __name__=='__main__':
     parser.add_argument('--load',action='store_true')
     parser.add_argument('--registry');parser.add_argument('--hip');parser.add_argument('--task')
     parser.add_argument('--hython',action='append',default=[])
-    parser.add_argument('--host-node',help='Optional Node runtime to verify shared TypeScript Host routing against both test Bridges')
     args=parser.parse_args()
     if args.worker: worker(args)
     else:

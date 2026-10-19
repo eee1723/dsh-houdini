@@ -26,7 +26,7 @@ npm run build
 python houdini/install.py
 ```
 
-完整重开Houdini，点击 **DSH-Houdini → Open Workspace**。已保存 `.hip` 的父目录成为DSH workspace；未命名场景使用仓库外scratch。切换HIP后再次打开工作区即可选择对应任务。
+完整重开Houdini，点击 **DSH-Houdini → Open Workspace**。已保存 `.hip` 的父目录成为DSH workspace；未命名场景使用仓库外scratch。从当前Houdini打开新对话；继续历史对话时从侧栏选择，并用工程组件指定现场。多个Houdini可以先接入同一工作台，每段对话分别选择目标。
 
 本项目锁定官方 **DSH 0.2.1-rc.2**，由[兼容清单](dsh-runtime-compatibility.json)决定启动/修复版本。唯一Houdini preset通过插件bundle声明式注册，源码在[presets/houdini](presets/houdini/)。
 

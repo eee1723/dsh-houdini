@@ -28,9 +28,9 @@ const clone=value=>JSON.parse(JSON.stringify(value))
 try {
   for(let i=0;i<2;i++) {
     const executor=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='node-task-'+i
+    const scene=String(i+5).repeat(32),epoch=String(i+7).repeat(32)
     const hip=path.join(directory,task+' "参数".hip')
     const session=fixtureSession(task,{agentPreset:'houdini'})
-    await new ExecutorBinding().ensure(session,executor)
     session.append('tool/call',{turn:1,step:1,callId:'deliver-call',name:'houdini_exec',arguments:'{}'})
     session.append('tool/call',{turn:1,step:1,callId:'file-call',name:'read',arguments:'{}'})
     const ctx=new Context(),agent={id:task,status:'idle',session,ctx}
@@ -41,7 +41,7 @@ try {
       const body=text?JSON.parse(text):{}
       if(req.headers['x-dsh-houdini-executor']!==executor) {res.writeHead(409);res.end('{}');return}
       if(req.url==='/health'||req.url==='/requests/prepare') {
-        res.end(JSON.stringify({ok:true,executorId:executor,runtimeId:runtime,houVersion:'22.0.368',
+        res.end(JSON.stringify({ok:true,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,houVersion:'22.0.368',
           executionContractVersion:version,verbCatalog:{hash},requestRef:runtime+'.'+'a'.repeat(32)}));return
       }
       assert.equal(req.url,'/nodes/navigate')
@@ -61,9 +61,12 @@ try {
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
     const record={schema:1,executor_id:executor,registration_id:String(i+7).repeat(32),runtime_id:runtime,
       installation:directory,bridge_url:'http://127.0.0.1:'+server.address().port,
-      houdini_version:'22.0.368',pid:300+i,state:'registered',task_id:task,hip_path:hip}
+      houdini_version:'22.0.368',pid:300+i,state:'registered',task_id:task,hip_path:hip,
+      workbench:true,scene_id:scene,scene_epoch:epoch,hip_is_new:false,workspace_path:directory}
     records.push(record)
     await fs.writeFile(path.join(endpoints,executor+'.json'),JSON.stringify(record))
+    await new ExecutorBinding().select(session,{executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:scene,
+      registration_id:record.registration_id,hip_path:hip,hip_is_new:false,workspace_path:directory})
     const value={ok:true,stdout:'',stderr:'',outcome:{operations:{failed:0}},
       result:{kind:NODE_DELIVERY_KIND,nodes:[{id:String(i+5).repeat(32),path:'/obj/old_control_'+i,
         label:'工程控制 '+i,role:'control',type:'null'}]},

@@ -75,6 +75,13 @@ def start_gui_probe():
                 probe.bind(('127.0.0.1',0));state['debugPort']=probe.getsockname()[1]
         return original_ensure(dict(value,debugPort=state['debugPort']), **kwargs)
     workbench.ensure=ensure
+    original_control=workbench.control
+    def control(record, action, payload=None, timeout=120):
+        value=original_control(record, action, payload, timeout)
+        if action == 'open':
+            state['launch']=value  # The Host's explicit native launch result, never writer ownership.
+        return value
+    workbench.control=control
     bootstrap.open_workspace()
     timer=QtCore.QTimer(hou.qt.mainWindow())
     def finish(ok,detail):
@@ -114,10 +121,21 @@ def start_gui_probe():
             rows=listed['value']['items']
             from dsh_executor_registry import active_registration
             endpoint=deployment.read_json(active_registration()._file)
-            assert endpoint['task_id'],endpoint
-            selected=[r for r in rows if r['sessionId']==endpoint['task_id'] and r.get('cwd') and Path(r['cwd']).resolve()==scene.parent.resolve() and (r.get('projections') or {}).get('values',{}).get('agentPreset')=='houdini']
-            assert len(selected)==1,selected
-            sid=selected[0]['sessionId']
+            launch=state.get('launch')
+            assert launch and isinstance(launch.get('sessionId'),str), 'Open Workspace returned no explicit native session identity'
+            sid=launch['sessionId']
+            selected=[row for row in rows if row['sessionId']==sid]
+            assert len(selected)==1, (launch, rows)
+            row=selected[0]
+            values=(row.get('projections') or {}).get('values',{})
+            target=(values.get('houdiniExecutorIdentity') or {}).get('target')
+            assert values.get('agentPreset')=='houdini' and target, row
+            assert row.get('cwd') and Path(row['cwd']).resolve()==scene.parent.resolve(),row
+            assert all(target[key]==endpoint[key] for key in ('executor_id','runtime_id','scene_epoch','scene_id')), (target,endpoint)
+            assert launch.get('selectedTarget')==target, (launch,target)
+            assert endpoint['task_id'] is None, 'Opening/selecting a scene must not acquire its writer'
+            prior_ids=[value['sessionId'] for value in (state['first'],state['reused']) if value]
+            assert all(any(row['sessionId']==previous for row in rows) for previous in prior_ids), 'Desktop reopening must retain native conversation history'
             result=output.with_suffix('.browser.json')
             png=output.with_suffix('.webview.png')
             subprocess.run([str(Path(ctx['install'])/'node/node.exe'),str(ROOT/'tools/tests/dsh-release-workbench-browser.mjs'),str(state['debugPort']),sid,str(scene.parent),str(png),str(result),'check-model-setup' if state['first'] is None else 'skip-model-setup'],check=True,capture_output=True,text=True,encoding='utf-8',timeout=90,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -143,7 +161,7 @@ def start_gui_probe():
                 if state['first'] is None:
                     state['first']=value;state['phase']='reopening';bootstrap.open_workspace()
                     return
-                assert value['sessionId']==state['first']['sessionId']
+                assert value['sessionId']!=state['first']['sessionId'], 'Default Open Workspace creates a new explicit conversation, not a guessed historical one'
                 if state['reused'] is None:
                     assert value['desktopPid']==state['first']['desktopPid']
                     assert value['hostPid']==state['first']['hostPid']
@@ -157,12 +175,13 @@ def start_gui_probe():
                     threading.Thread(target=close_worker,daemon=True).start()
                     return
                 assert state['phase']=='restarting'
+                assert value['sessionId']!=state['reused']['sessionId'], 'A restarted desktop retains history without silently selecting an old conversation'
                 assert value['desktopPid']!=state['first']['desktopPid']
                 assert value['hostPid']!=state['first']['hostPid']
                 labels=[label.text() for label in window.findChildren(QtWidgets.QLabel) if label.isVisible()]
                 assert '当前版本已加载。尚未检查更新。' in labels,labels
                 assert window.grab().save(str(output.with_suffix('.manager.png')))
-                finish(True,dict(value,sameSessionOnReopen=True,samePidOnReopen=True,newPidAfterClose=True,apiKeyEntry=state['first']['apiKeyEntry'],setupScreenshot=state['first'].get('setupScreenshot'),managerTracksLoadedVersion=True))
+                finish(True,dict(value,newConversationOnDefaultOpen=True,historyRetained=True,samePidOnReopen=True,newPidAfterClose=True,apiKeyEntry=state['first']['apiKeyEntry'],setupScreenshot=state['first'].get('setupScreenshot'),managerTracksLoadedVersion=True))
                 return
             if bootstrap._CONTEXT and not bootstrap._BUSY and not state['busy']:
                 import dsh_workbench_client

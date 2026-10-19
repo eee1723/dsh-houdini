@@ -24,7 +24,8 @@ const tools=new ToolRuntime(ctx,{mode:'native'})
 const execute=options=>{tools.defaultMode=options.name==='run_code'?'ptc':'native';return tools.execute(options)}
 installHoudiniExecutionLog(ctx)
 const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,options:{provider:'fixture',model:'image'}}
-if(outcomeFixtures) await new ExecutorBinding().ensure(session,outcomeFixtures.caught_read.execution.executor_id)
+const fixtureExecutor=outcomeFixtures?.caught_read?.execution?.executor_id??'d'.repeat(32)
+await new ExecutorBinding().ensure(session,fixtureExecutor)
 let savedImages=0
 ctx.provide('llm',{async resolveModelInfo(){return {inputModalities:['text','image']}}})
 ctx.provide('attachments',{imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:200,maxImagesPerMessage:4},
@@ -33,7 +34,8 @@ let executed=0
 let capturesExecuted=0
 let listsExecuted=0
 let bridgeReceipt
-registerHoudiniTools(ctx,{targetExecutorId:outcomeFixtures?.caught_read?.execution?.executor_id,
+const jobRuntime='b'.repeat(32),jobExecutor=fixtureExecutor
+const fixtureBridge={targetExecutorId:fixtureExecutor,
   async listUi(owner){listsExecuted++;return {ok:true,stdout:'',stderr:'',result:{surfaces:[{target:'ui:qt-fixture',kind:'qt_window',supported:true}]},
     evidence:[{operation:'ui_list',scene_writes:0}],transaction:{status:'no_scene_change'},
     execution:{runtime_id:'capture-runtime',sequence:listsExecuted,observed_at:9},
@@ -46,8 +48,13 @@ registerHoudiniTools(ctx,{targetExecutorId:outcomeFixtures?.caught_read?.executi
     outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},transaction:{status:'no_scene_change'},
     execution:{runtime_id:'capture-runtime',sequence:capturesExecuted,observed_at:10+capturesExecuted},
     requestReceipt:{request_ref:'ui-'+capturesExecuted,owner_call:owner.callId,status:'done'}}},
-  async submitJob(){return {jobId:'a'.repeat(12),requestReceipt:{request_ref:'b'.repeat(32)+'.'+'c'.repeat(32),status:'job_submitted'}}},
-  async cancelJob(){return {jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}}})
+  async submitJob(){return {jobId:'a'.repeat(12),requestReceipt:{request_ref:jobRuntime+'.'+'c'.repeat(32),
+    runtime_id:jobRuntime,executor_id:jobExecutor,status:'job_submitted'}}},
+  async cancelJob(){return {jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}}}
+registerHoudiniTools(ctx,{resolve:async()=>fixtureBridge,resolveHistorical:async(_exec,target)=>{
+  assert.deepEqual(target,{runtimeId:jobRuntime,executorId:jobExecutor},'job control resolves its original admission provenance')
+  return fixtureBridge
+}})
 // The registry's real PTC bridge receives the provider's binding calls.
 let ptcBindingValue
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){

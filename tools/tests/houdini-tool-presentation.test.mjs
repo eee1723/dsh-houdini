@@ -84,6 +84,7 @@ function statusTextForReceipt() {
 const recoveryDefinitions = new Map();
 let recoveryReceipt;
 registerHoudiniTools({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}, {
+  forRuntime(runtimeId) { assert.equal(runtimeId,'a'.repeat(32)); return this; },
   async requestStatus() { return structuredClone(recoveryReceipt); },
 });
 const recovery = recoveryDefinitions.get('houdini_request');
@@ -260,7 +261,7 @@ const strictBridge = {
 };
 registerHoudiniTools({tools:{register:d=>strictDefs.set(d.name,d)},
   sessions:{flush:async()=>{flushed++;return true}}},
-  {resolve: async () => {resolved++;return strictBridge}});
+  {resolve: async () => {resolved++;return strictBridge},resolveHistorical:async(_exec,target)=>{assert.equal(target.runtimeId,'f'.repeat(32));return strictBridge}});
 const identity = (agentId, callId) => ({agent: agentId === undefined ? undefined : {id: agentId}, callId});
 const badIdentities = [
   identity(undefined, 'c'), identity('session', undefined), identity('session', ''),
@@ -271,6 +272,7 @@ const bindingSection = {name:'dsh-houdini:executor-binding', text:'Houdini task 
   + JSON.stringify({schema:1, kind:'executor_binding', executor_id:'e'.repeat(32)})};
 const makeStrictSession = () => ({snapshotEvents: () => [
   {seq:1, type:'user/message', data:{source:{kind:'dsh-houdini', sections:[bindingSection]}}},
+  {seq:2,type:'tool/result',data:{message:{source:{callId:'original-submit'}},meta:{canonical:{jobId:'a'.repeat(12),requestReceipt:{runtime_id:'f'.repeat(32),executor_id:'e'.repeat(32),status:'job_submitted'}}}}},
 ], append: () => {}});
 const goodExec = {agent:{id:'session-1',session:makeStrictSession()}, callId:'call-9'};
 for (const bad of badIdentities) {

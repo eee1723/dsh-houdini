@@ -3,212 +3,254 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
-import {pathToFileURL,fileURLToPath} from 'node:url'
+import {spawn} from 'node:child_process'
+import {once} from 'node:events'
+import {fileURLToPath} from 'node:url'
 import {Context} from '@deepseek-ai/cordis'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
 import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-preset-registry'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
-import {registerExecutorIdentityProjection} from '../../lib/executor-identity-projection.js'
+import {registerExecutorIdentityProjection,foldExecutorState} from '../../lib/executor-identity-projection.js'
 import * as executorHost from '../../lib/executor-host.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
-import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 import {fixtureSession} from './fixture-session.mjs'
+import {executionHistory} from '../../lib/execution-history.js'
 
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-routing-'))
-const endpoints=path.join(directory,'endpoints')
-await fs.mkdir(endpoints)
-const servers=[],records=[],agents=[],calls=[],flushed=[]
-const write=r=>fs.writeFile(path.join(endpoints,r.executor_id+'.json'),JSON.stringify(r))
-const routeCounts=[{},{}]
+const endpoints=path.join(directory,'endpoints');await fs.mkdir(endpoints)
+const installation=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
+const servers=[],records=[],agents=[],claims=[],bodies=[],health=[]
+const healthGates=[null,null]
+const healthFailures=[false,false],children=[]
+const gate=()=>{let enter,release;return {entered:new Promise(resolve=>enter=resolve),wait:new Promise(resolve=>release=resolve),
+  enter:()=>enter(),release:()=>release()}}
+const unfinished=(agent,index,callId)=>{
+  const record=records[index]
+  agent.session.append('tool/call',{callId,name:'houdini_exec',arguments:'{}'})
+  agent.session.append('tool/result',{message:{source:{callId}},meta:{canonical:{ok:false,requestReceipt:{
+    request_ref:record.runtime_id+'.'+'f'.repeat(32),runtime_id:record.runtime_id,executor_id:record.executor_id,
+    scene_epoch:record.scene_epoch,status:'unknown_transport'}}}},{surfaceOp:'append'})
+  assert.equal(executionHistory(agent.session.snapshotEvents()).unresolvedCalls.length,1)
+}
+const write=record=>fs.writeFile(path.join(endpoints,record.executor_id+'.json'),JSON.stringify(record))
+const signal=new AbortController().signal
 try {
   for(let i=0;i<2;i++) {
-    const id=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='task-'+i
-    const session=fixtureSession(task,{agentPreset:'houdini'})
-    agents.push({id:task,status:'idle',session})
+    const session=fixtureSession('task-'+i,{agentPreset:'houdini'})
+    agents.push({id:session.id,status:'idle',session})
+    health.push({activeRequests:0,activeJobs:0})
     const server=http.createServer(async(req,res)=>{
+      const record=records[i]
       res.setHeader('content-type','application/json')
-      routeCounts[i][req.url]=(routeCounts[i][req.url]||0)+1
-      if(req.headers['x-dsh-houdini-executor']!==id){res.writeHead(409);res.end('{}');return}
+      if(req.headers['x-dsh-houdini-executor']!==record.executor_id){res.writeHead(409);res.end('{}');return}
       let text='';for await(const chunk of req)text+=chunk
       const body=text?JSON.parse(text):{}
-      if(req.url==='/health'||req.url==='/requests/prepare'){
-        res.end(JSON.stringify({ok:true,executorId:id,houVersion:i?'22.0.368':'21.0.440',runtimeId:runtime,
-          executionContractVersion:version,verbCatalog:{hash},requestRef:runtime+'.'+'a'.repeat(32)}));return
+      bodies.push({executor:record.executor_id,route:req.url,body})
+      if(req.url==='/health'||req.url==='/requests/prepare') {
+        if(req.url==='/health'&&healthFailures[i]){res.statusCode=503;res.end(JSON.stringify({error:'fixture endpoint unavailable'}));return}
+        const pending=healthGates[i]
+        if(pending){healthGates[i]=null;pending.enter();await pending.wait}
+        res.end(JSON.stringify({ok:true,executorId:record.executor_id,houVersion:record.houdini_version,
+          runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,...health[i],executionContractVersion:version,
+          verbCatalog:{hash},requestRef:record.runtime_id+'.'+'a'.repeat(32)}));return
       }
-      if(req.url==='/exec'||req.url==='/jobs') {
-        assert.equal(body.owner_session,task,'a shared tool instance sent the other task to this Bridge')
+      if(req.url==='/executor/claim') {
+        claims.push({executor:record.executor_id,...body})
+        record.task_id=body.task_id;await write(record)
+        res.end(JSON.stringify({ok:true}));return
       }
-      if(req.url==='/jobs') {
-        assert.equal(body.owner_call,'submit-'+i,'job admission carries the submit call callId')
-        assert.deepEqual(body.expected_contract,{version,hash},'job admission carries the expected contract')
-      }
-      if(req.url==='/jobs/'+String(i).repeat(12)+'/status') {
-        assert.equal(body.owner_session,task,'job status must carry the owning session')
-        assert.equal(body.owner_call,'status-'+i,'job status carries THIS call, not a cached submit callId')
-        assert.deepEqual(body.expected_contract,{version,hash},'job status carries the expected contract')
-      }
-      if(req.url==='/jobs/'+String(i).repeat(12)+'/cancel') {
-        assert.equal(body.owner_session,task,'job cancel must carry the owning session')
-        assert.equal(body.owner_call,'cancel-'+i,'job cancel carries THIS call, not a cached submit callId')
-        assert.deepEqual(body.expected_contract,{version,hash},'job cancel carries the expected contract')
-      }
-      calls.push([task,req.url])
-      // Force interleaving so a mutable global target would send the wrong task.
       await new Promise(resolve=>setTimeout(resolve,i?1:15))
-      res.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{target:id},jobId:String(i).repeat(12),status:'done',
-        requestReceipt:{request_ref:runtime+'.'+'a'.repeat(32),runtime_id:runtime,status:'done'}}))
+      res.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{target:record.executor_id}}))
     })
-    servers.push(server)
-    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
-    const record={schema:1,executor_id:id,registration_id:String(i+5).repeat(32),runtime_id:runtime,
-      installation:directory,bridge_url:`http://127.0.0.1:${server.address().port}`,
-      houdini_version:i?'22.0.368':'21.0.440',pid:100+i,state:'registered',task_id:task,hip_path:path.join(directory,task+'.hip')}
+    servers.push(server);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+    const record={schema:1,executor_id:String(i+1).repeat(32),registration_id:String(i+5).repeat(32),runtime_id:String(i+3).repeat(32),
+      installation,bridge_url:`http://127.0.0.1:${server.address().port}`,houdini_version:i?'22.0.368':'21.0.440',pid:100+i,
+      state:'registered',task_id:null,workbench:true,scene_id:String(i+7).repeat(32),scene_epoch:(i?'a':'9').repeat(32),hip_is_new:false,
+      hip_path:path.join(directory,'project-'+i,'asset.hip'),workspace_path:path.join(directory,'project-'+i)}
     records.push(record);await write(record)
   }
-  const flush=async s=>{flushed.push(s.id);return true}
   const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
-  const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),1000,
-    new ExecutorBinding(),identityOf,id=>agents.find(a=>a.id===id)?.status==='idle')
-  assert.equal((await router.directory.list()).length,2,
-    'the exact configured installation must retain its registry records')
-  const ctx=new Context()
-  const projections=new SessionProjectionRegistry(ctx)
-  projections.register(agentPresetProjectionDefinition)
-  registerExecutorIdentityProjection(ctx)
-  ctx.provide('agents',{get:id=>agents.find(a=>a.id===id)})
-  ctx.provide('sessions',{flush})
+  let durable=true,questions=0,answer=records[1].executor_id
+  const router=new ExecutorRouter(new ExecutorDirectory(directory,installation),1000,new ExecutorBinding(),identityOf,
+    id=>!agents.find(agent=>agent.id===id)||agents.find(agent=>agent.id===id).status==='idle',async()=>durable,
+    async(_task,candidates)=>{questions++;return candidates.find(record=>record.executor_id===answer)?.executor_id})
+  const ctx=new Context(),projections=new SessionProjectionRegistry(ctx)
+  projections.register(agentPresetProjectionDefinition);registerExecutorIdentityProjection(ctx)
+  ctx.provide('agents',{get:id=>agents.find(agent=>agent.id===id)})
+  ctx.provide('sessions',{flush:async()=>durable})
+  ctx.provide('sessionController',{resolveAgent:async id=>({agent:agents.find(agent=>agent.id===id)})})
   const controller=new ExecutorController(ctx,router)
-  assert.equal(projections.stateOf(agents[0].session,'agentPreset'),'houdini')
-  const different=fixtureSession('not-houdini',{agentPreset:'houdini'})
-  different.append('agent-preset/selected',{agentPreset:'standard'})
-  agents.push({id:'not-houdini',status:'idle',session:different})
-  await assert.rejects(controller.select({sessionId:'not-houdini',executorId:records[0].executor_id,
-    registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
-    new AbortController().signal),/restricted to Houdini tasks/)
-  agents.pop()
-  assert.deepEqual(remoteMethods(controller).map(m=>m.method),['prepareWorkspace','activity','openWorkspace','list','select'])
-  assert.equal(controller.typertRemote.namespace,'houdiniTargets')
-  const legacyList=await controller.list(undefined)
-  assert.equal(legacyList.candidates.length,2)
-  assert.equal(legacyList.recovery.status,'session_required')
-  const initialList=await controller.list({sessionId:agents[0].id})
-  assert.equal(initialList.candidates.length,2)
-  assert.equal(initialList.recovery.status,'unbound')
-  assert(initialList.candidates.every(r=>r.binding_status==='not_confirmed'))
-  let gateway
-  if(process.env.DSH_TEST_GATEWAY_ROOT) {
-    const modules=process.env.DSH_TEST_GATEWAY_ROOT
-    const {default:Registry}=await import(pathToFileURL(path.join(modules,'dsh-typert-registry/lib/index.js')))
-    const {default:Gateway}=await import(pathToFileURL(path.join(modules,'dsh-api-gateway/lib/index.js')))
-    new Registry(ctx)
-    gateway=new Gateway(ctx,{websocketHeartbeatIntervalMs:2000})
-    assert.equal((await gateway.invoke({namespace:'houdiniTargets',method:'list',args:{input:{sessionId:agents[0].id}}})).candidates.length,2)
+  assert.deepEqual(remoteMethods(controller).map(method=>method.method),['prepareWorkspace','activity','openWorkspace','list','select','clear'])
+  const input=(agent,record)=>({sessionId:agent.id,executorId:record.executor_id,registrationId:record.registration_id,expectedHip:record.hip_path,
+    runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch})
+  const context=index=>({agent:agents[index],signal})
+  const initial=await controller.list({sessionId:agents[0].id})
+  assert.equal(initial.state.status,'unbound')
+  assert(initial.candidates.every(record=>record.connection_status==='pending'))
+  assert.equal(claims.length,0)
+  await controller.select(input(agents[0],records[0]),signal)
+  await controller.select(input(agents[1],records[1]),signal)
+  assert.equal(claims.length,0,'select does not acquire a writer')
+  assert.equal((await controller.list({sessionId:agents[0].id})).state.status,'selected')
+  const bridges=await Promise.all([router.resolve(context(0)),router.resolve(context(1))])
+  const results=await Promise.all(bridges.map((bridge,index)=>bridge.exec('pass',{sessionId:agents[index].id,callId:'read-'+index},signal,undefined,true)))
+  assert.deepEqual(results.map(result=>result.result.target),records.map(record=>record.executor_id),'interleaved calls retain their own target')
+  assert.equal(claims.length,0,'read calls never claim a writer')
+  for(const request of bodies.filter(row=>row.route==='/requests/prepare')) {
+    const record=records.find(row=>row.executor_id===request.executor)
+    assert.equal(request.body.runtime_id,record.runtime_id)
+    assert.equal(request.body.scene_epoch,record.scene_epoch)
   }
-  const context=(i,op)=>({agent:agents[i],callId:(op||'call')+'-'+i})
-  await assert.rejects(controller.select({sessionId:agents[0].id,executorId:records[0].executor_id,
-    registrationId:records[0].registration_id,expectedHip:path.join(directory,'wrong.hip')},new AbortController().signal),/HIP changed/)
-  await assert.rejects(router.resolve(context(0)),/Choose a Houdini/)
-  await assert.rejects(router.sceneContextFor(agents[0].session),/No Houdini target/)
-  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/另一段对话仍在执行/)
-  assert(!calls.some(c=>c[1]==='/executor/claim'),
-    'a shared non-workbench executor owned by another task is refused before any claim; only an idle workbench window is an explicit takeover')
-  await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,'stale'),/stale/)
+  await router.resolve(context(0),{write:true})
+  assert.equal(claims.length,1)
+  assert.equal(claims[0].runtime_id,records[0].runtime_id)
+  assert.equal(claims[0].scene_epoch,records[0].scene_epoch)
+
+  // Many conversations may select one scene. Only actual writes contend.
+  await controller.select(input(agents[1],records[0]),signal)
   agents[0].status='running'
-  await assert.rejects(router.selectInitial(agents[0],records[0].executor_id,records[0].registration_id),/idle/)
+  await router.resolve(context(1))
+  await assert.rejects(router.resolve(context(1),{write:true}),/另一段对话仍在执行/)
   agents[0].status='idle'
-  for(let i=0;i<2;i++) {
-    const input={sessionId:agents[i].id,executorId:records[i].executor_id,registrationId:records[i].registration_id,expectedHip:records[i].hip_path}
-    if(gateway) await gateway.invoke({namespace:'houdiniTargets',method:'select',args:{input},signal:new AbortController().signal})
-    else await controller.select(input,new AbortController().signal)
-  }
-  if(gateway) console.log('Real DSH Typert Gateway list/select dispatch passed')
-  assert.deepEqual(flushed,agents.map(agent=>agent.id),'initial selection waits for the native persistence acknowledgement')
-  assert.equal(recordedExecutorIdentity(agents[0].session.snapshotEvents()),records[0].executor_id)
-  const boundList=await controller.list({sessionId:agents[0].id})
-  assert.equal(boundList.recovery.status,'bound_available')
-  assert(boundList.candidates.every(r=>r.binding_status==='bound'))
-  await assert.rejects(router.selectInitial(agents[0],records[1].executor_id,records[1].registration_id),/recovery/)
-  const defs=new Map()
-  registerHoudiniTools({on(){},tools:{register:d=>defs.set(d.name,d)}},router)
-  const values=await Promise.all([0,1].map(i=>defs.get('houdini_exec').execute({code:'pass'},context(i,'exec'))))
-  assert.deepEqual(values.map(v=>v.result.target),records.map(r=>r.executor_id))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_submit').execute({code:'pass'},context(i,'submit'))))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_status').execute({jobId:String(i).repeat(12)},context(i,'status'))))
-  await Promise.all([0,1].map(i=>defs.get('houdini_job_cancel').execute({jobId:String(i).repeat(12)},context(i,'cancel'))))
-  assert(calls.some(c=>c[0]==='task-0'&&c[1]==='/jobs/000000000000/cancel'))
-  assert(calls.some(c=>c[0]==='task-1'&&c[1]==='/jobs/111111111111/cancel'))
-  // Route-count proof: every job-control branch was actually reached exactly
-  // once per session, and job control prepared no execution tickets.
-  for(let i=0;i<2;i++) {
-    const jid=String(i).repeat(12)
-    assert.equal(routeCounts[i]['/jobs/'+jid+'/status'],1,'job status route reached exactly once')
-    assert.equal(routeCounts[i]['/jobs/'+jid+'/cancel'],1,'job cancel route reached exactly once')
-    assert.equal(routeCounts[i]['/jobs'],1,'job admission route reached exactly once')
-  }
-  assert.equal(routeCounts[0]['/requests/prepare']+routeCounts[1]['/requests/prepare'],4,'exec+submit prepare tickets; job control prepares none')
-  const before=calls.length
-  // One Host-plane controller survives removal of either preset consumer.
-  const hostContext=new Context()
-  const hostProjections=new SessionProjectionRegistry(hostContext)
-  hostProjections.register(agentPresetProjectionDefinition)
-  hostContext.provide('agents',{get:id=>agents.find(a=>a.id===id)})
-  hostContext.provide('sessions',{flush})
-  // Fixture installation must be the actual candidate root used by Host apply.
-  const candidateRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
-  for(const record of records) await write({...record,installation:candidateRoot})
-  let host=await hostContext.plugin(executorHost,{executorRegistry:directory,requestTimeoutMs:1000})
-  const controller1=hostContext.get('houdiniTargets')
-  assert(controller1)
-  assert.throws(()=>executorHost.apply(hostContext,{executorRegistry:directory,requestTimeoutMs:1000}),/already mounted/)
-  await assert.rejects(async()=>executorHost.sharedExecutorConnection(hostContext,path.join(directory,'other')).resolve(context(0)),/configuration differs/)
-  let consumerA,consumerB
-  const presetA=await hostContext.plugin({apply(c){consumerA=executorHost.sharedExecutorConnection(c,directory)}})
-  const presetB=await hostContext.plugin({apply(c){consumerB=executorHost.sharedExecutorConnection(c,directory)}})
-  const stateOf=hostProjections.stateOf
-  let identityReads=0
-  hostProjections.stateOf=function(session,key){
-    if(key==='houdiniExecutorIdentity'){
-      identityReads++
-      throw new Error('fixture projection conflict')
-    }
-    return stateOf.call(this,session,key)
-  }
-  const beforeRejectedRoute=JSON.stringify(routeCounts)
-  await assert.rejects(consumerB.resolve(context(1)),/fixture projection conflict/)
-  await assert.rejects(controller1.select({sessionId:agents[0].id,executorId:records[0].executor_id,
-    registrationId:records[0].registration_id,expectedHip:records[0].hip_path},
-    new AbortController().signal),/fixture projection conflict/)
-  await assert.rejects(controller1.getRouter(directory).sceneContextFor(agents[0].session),/fixture projection conflict/)
-  assert.equal(JSON.stringify(routeCounts),beforeRejectedRoute,'projection conflict must precede Bridge traffic')
-  hostProjections.stateOf=stateOf
-  const oldBridge=await consumerB.resolve(context(1))
-  assert(identityReads>0,'Host router must consume the registered identity projection')
-  await presetA.dispose()
-  assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
-  await host.dispose()
-  assert.equal(hostProjections.stateOf(agents[0].session,'houdiniExecutorIdentity'),undefined)
-  await assert.rejects(async()=>consumerB.resolve(context(1)),/unavailable/)
-  await assert.rejects(oldBridge.exec('pass',{sessionId:agents[1].id,callId:'old'}),/unloaded|aborted/)
-  assert.equal(calls.length,before,'unloaded service cannot dispatch through a retained Bridge')
-  host=await hostContext.plugin(executorHost,{executorRegistry:directory,requestTimeoutMs:1000})
-  assert.equal(hostContext.get('houdiniTargets').typertRemote.namespace,'houdiniTargets')
-  assert.equal(hostProjections.stateOf(agents[0].session,'houdiniExecutorIdentity').identity,records[0].executor_id)
-  await consumerB.resolve(context(1))
-  await presetB.dispose();await host.dispose()
-  for(const record of records) await write(record)
-  await write({...records[0],state:'disconnected'})
-  await assert.rejects(defs.get('houdini_exec').execute({code:'pass'},context(0)),/disconnected/)
-  assert.equal(calls.length,before)
-  assert.equal((await defs.get('houdini_exec').execute({code:'pass'},context(1))).result.target,records[1].executor_id)
-  await write({...records[0],bridge_url:'http://example.com:8765'})
-  await assert.rejects(router.directory.list(),/Invalid executor record/)
-  await write({...records[0],runtime_id:'f'.repeat(32)})
-  await assert.rejects(router.resolve(context(0)),/generation changed/)
-  await write({...records[0],task_id:null,hip_path:null})
-  await assert.rejects(router.resolve(context(0)),/当前工程没有可核对的位置/)
+  await router.resolve(context(1),{write:true})
+  agents[1].session.append('tool/call',{callId:'finished-work',name:'houdini_inspect',arguments:'{}'})
+  await controller.select(input(agents[1],records[1]),signal)
+  assert.equal(foldExecutorState(agents[1].session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id,
+    'executed conversation selection does not require a checkpoint')
+
+  // A live original job/request prevents changing or clearing its task target.
+  unfinished(agents[0],0,'original-unknown-request')
+  records[0].task_id=agents[0].id;await write(records[0]);health[0].activeJobs=1
+  await assert.rejects(controller.select(input(agents[0],records[1]),signal),/后台任务执行/)
+  await assert.rejects(controller.clear({sessionId:agents[0].id},signal),/后台任务执行/)
+  health[0].activeJobs=0
+  await controller.clear({sessionId:agents[0].id},signal)
+  assert.equal((await controller.list({sessionId:agents[0].id})).selectedTarget,null)
+  const asked=questions
+  await assert.rejects(router.resolve(context(0)),/解除/)
+  assert.equal(questions,asked,'clear never auto-binds a later request')
+
+  const automatic=fixtureSession('first-use',{agentPreset:'houdini',cwd:records[0].workspace_path})
+  const automaticAgent={id:automatic.id,status:'running',session:automatic}
+  await router.resolve({agent:automaticAgent,signal})
+  assert.equal(questions,asked,'unique same-workspace target is selected only at first scene use')
+  const ambiguous=fixtureSession('choose-use',{agentPreset:'houdini',cwd:directory})
+  await router.resolve({agent:{id:ambiguous.id,status:'running',session:ambiguous},signal})
+  assert.equal(questions,asked+1)
+  assert.equal(foldExecutorState(ambiguous.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
+  answer=undefined
+  const skipped=fixtureSession('skip-use',{agentPreset:'houdini',cwd:directory})
+  await assert.rejects(router.resolve({agent:{id:skipped.id,status:'running',session:skipped},signal}),/没有选择/)
+  assert.equal(foldExecutorState(skipped.snapshotEvents()).selectedTarget,null)
+
+  // Actual delayed HTTP health responses prove choices execute in invocation
+  // order, rather than whichever endpoint happens to answer first.
+  const makeAgent=id=>{const session=fixtureSession(id,{agentPreset:'houdini'});return {id,session,status:'idle'}}
+  const choose=(agent,index,signal)=>router.selectTarget(agent,records[index].executor_id,records[index].registration_id,signal,records[index].hip_path)
+  const sameTarget=makeAgent('same-target-job');await choose(sameTarget,0)
+  const selected=foldExecutorState(sameTarget.session.snapshotEvents()).selectedTarget,jobId='b'.repeat(12)
+  sameTarget.session.append('tool/call',{callId:'active-submit',name:'houdini_job_submit',arguments:'{}'})
+  sameTarget.session.append('tool/result',{message:{source:{callId:'active-submit'}},meta:{canonical:{jobId,
+    requestReceipt:{jobId,runtime_id:records[0].runtime_id,executor_id:records[0].executor_id,status:'job_submitted'}}}},{surfaceOp:'append'})
+  const activeBoundary=foldExecutorState(sameTarget.session.snapshotEvents()).recoverySeq
+  const oldGeneration=records[0].registration_id,oldTask=records[0].task_id
+  records[0].task_id=sameTarget.id;records[0].registration_id='d'.repeat(32);await write(records[0]);health[0].activeJobs=1
+  assert.equal(executionHistory(sameTarget.session.snapshotEvents()).activeJobs.length,1)
+  await router.selectTarget(sameTarget,records[0].executor_id,selected.registration_id,signal,records[0].hip_path)
+  assert.equal(foldExecutorState(sameTarget.session.snapshotEvents()).recoverySeq,activeBoundary)
+  assert.deepEqual(executionHistory(sameTarget.session.snapshotEvents()).activeJobs,[[jobId,'queued_or_unknown']],
+    'same-scene reselect keeps the live background job visible despite a discovery-generation change')
+  await assert.rejects(router.clear(sameTarget),/后台任务执行/)
+  health[0].activeJobs=0;records[0].registration_id=oldGeneration;records[0].task_id=oldTask;await write(records[0])
+  const fifoClear=makeAgent('fifo-select-clear'),slow=gate();healthGates[0]=slow
+  const firstChoice=choose(fifoClear,0);await slow.entered
+  let clearCompleted=false
+  const laterClear=router.clear(fifoClear).then(()=>{clearCompleted=true})
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(clearCompleted,false)
+  slow.release();await Promise.all([firstChoice,laterClear])
+  assert.equal(foldExecutorState(fifoClear.session.snapshotEvents()).selectedTarget,null,'a later clear wins over an earlier slow choice')
+  const fifoTwo=makeAgent('fifo-select-select'),twoGate=gate();healthGates[0]=twoGate
+  const chooseA=choose(fifoTwo,0);await twoGate.entered
+  const chooseB=choose(fifoTwo,1);twoGate.release();await Promise.all([chooseA,chooseB])
+  assert.equal(foldExecutorState(fifoTwo.session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
+  const fifoAbort=makeAgent('fifo-clear-select-abort');await choose(fifoAbort,0)
+  unfinished(fifoAbort,0,'pending-before-queued-choice')
+  const clearGate=gate();healthGates[0]=clearGate
+  const clearing=router.clear(fifoAbort);await clearGate.entered
+  const cancellation=new AbortController()
+  const cancelled=assert.rejects(choose(fifoAbort,1,cancellation.signal),/abort/i)
+  cancellation.abort();clearGate.release();await Promise.all([clearing,cancelled])
+  assert.equal(foldExecutorState(fifoAbort.session.snapshotEvents()).selectedTarget,null,'an aborted queued choice cannot undo clear')
+  await choose(fifoAbort,1)
+  assert.equal(foldExecutorState(fifoAbort.session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
+  const queuedStale=makeAgent('fifo-registration-recheck'),registrationGate=gate();healthGates[0]=registrationGate
+  const beforeRegistration=choose(queuedStale,0);await registrationGate.entered
+  const staleChoice=assert.rejects(choose(queuedStale,1),/选择已过期/)
+  const oldRegistration=records[1].registration_id
+  records[1].registration_id='e'.repeat(32);await write(records[1])
+  registrationGate.release();await Promise.all([beforeRegistration,staleChoice])
+  assert.equal(foldExecutorState(queuedStale.session.snapshotEvents()).selectedTarget.executor_id,records[0].executor_id)
+  records[1].registration_id=oldRegistration;await write(records[1])
+  const clearStarted=makeAgent('clear-agent-recheck');await choose(clearStarted,0)
+  unfinished(clearStarted,0,'pending-before-clear-recheck')
+  const idleGate=gate();healthGates[0]=idleGate
+  const retainedClear=assert.rejects(router.clear(clearStarted),/Agent started/);await idleGate.entered
+  clearStarted.status='running';idleGate.release();await retainedClear
+  assert.equal(foldExecutorState(clearStarted.session.snapshotEvents()).selectedTarget.executor_id,records[0].executor_id)
+
+  // A dead participating process can leave its discovery row registered.
+  // A living but unresponsive process remains unknown, never inferred dead.
+  const liveUnknown=makeAgent('live-unresponsive'),oldPid=records[0].pid
+  await choose(liveUnknown,0)
+  unfinished(liveUnknown,0,'real-unresolved-live-request')
+  const settledClear=makeAgent('settled-clear-offline'),settledSelect=makeAgent('settled-select-offline')
+  await choose(settledClear,0);await choose(settledSelect,0)
+  records[0].pid=process.pid;await write(records[0]);healthFailures[0]=true
+  const oldProbes=bodies.filter(row=>row.executor===records[0].executor_id&&row.route==='/health').length
+  await router.clear(settledClear);await choose(settledSelect,1)
+  assert.equal(foldExecutorState(settledClear.session.snapshotEvents()).selectedTarget,null)
+  assert.equal(foldExecutorState(settledSelect.session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
+  assert.equal(bodies.filter(row=>row.executor===records[0].executor_id&&row.route==='/health').length,oldProbes,
+    'settled conversations can explicitly leave an unavailable old endpoint without probing it')
+  await assert.rejects(router.clear(liveUnknown),/无法确认原目标/)
+  await assert.rejects(choose(liveUnknown,1),/无法确认原目标/)
+  healthFailures[0]=false
+  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});children.push(child)
+  await once(child,'spawn')
+  records[0].pid=child.pid;await write(records[0])
+  const deadClear=makeAgent('dead-clear'),deadSelect=makeAgent('dead-select')
+  await choose(deadClear,0);await choose(deadSelect,0)
+  unfinished(deadClear,0,'dead-original-request-clear');unfinished(deadSelect,0,'dead-original-request-select')
+  const exited=once(child,'exit');child.kill();await exited
+  healthFailures[0]=true
+  await router.clear(deadClear)
+  await choose(deadSelect,1)
+  assert.equal(foldExecutorState(deadClear.session.snapshotEvents()).selectedTarget,null)
+  assert.equal(foldExecutorState(deadSelect.session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
+  assert.equal((await router.directory.find(records[0].executor_id)).state,'registered','dead-process clear does not fabricate a registry rewrite')
+  healthFailures[0]=false;records[0].pid=oldPid;await write(records[0])
+
+  await controller.select(input(agents[0],records[0]),signal)
+  const originalEpoch=records[0].scene_epoch
+  records[0].scene_epoch='f'.repeat(32);await write(records[0])
+  await assert.rejects(router.resolve(context(0)),/代际已变化/)
+  assert.equal((await controller.list({sessionId:agents[0].id})).state.status,'stale')
+  const historical=await router.resolveHistorical(context(0),{executorId:records[0].executor_id,runtimeId:records[0].runtime_id})
+  assert.equal(historical.targetExecutorId,records[0].executor_id,'historical requests remain readable after scene changes')
+  assert.equal((await router.resolveHistorical(context(1),{runtimeId:records[0].runtime_id})).targetExecutorId,records[0].executor_id)
+  await assert.rejects(router.resolveHistorical(context(0),{executorId:records[1].executor_id,runtimeId:records[0].runtime_id}),/运行代际已结束/)
+  records[0].scene_epoch=originalEpoch;await write(records[0])
+  durable=false
+  const before=bodies.length
+  await assert.rejects(router.resolve(context(0)),/尚未可靠保存/)
+  assert.equal(bodies.length,before)
+  durable=true
+  const retained=await router.resolve(context(0))
+  router.dispose()
+  await assert.rejects(retained.inspectExecutor(signal),/unloaded|aborted/)
   // Normal process retirement preserves recovery evidence without exhausting
   // discovery or making each bound tool enumerate the entire registry history.
   const retired=Array.from({length:256},(_,index)=>({...records[1],
@@ -239,8 +281,9 @@ try {
   await assert.rejects(router.directory.list(),/Registered executor discovery budget exceeded/)
   assert.equal((await router.directory.find(records[1].executor_id)).executor_id,records[1].executor_id,
     'discovery capacity cannot block an existing bound identity')
-  console.log('shared executor routing: explicit selection, concurrent tools, job isolation, disconnect and fail-closed discovery passed')
+  console.log('executor routing: read/write separation, explicit reselect/clear, first-use choice, stale fencing, original-runtime queries and registry boundaries passed')
 }finally{
-  await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))))
+  for(const child of children)if(child.exitCode===null&&child.signalCode===null)child.kill()
+  await Promise.all(servers.map(server=>new Promise(resolve=>server.close(resolve))))
   await fs.rm(directory,{recursive:true,force:true})
 }

@@ -2,7 +2,7 @@
 export const HOUDINI_TOOLS = {
   houdini_inspect: {scene:true,label:'观察现场',purpose:'读取真实Houdini场景、节点、参数和能力资料。',input:'只读Python代码；hou与动词已导入。',output:'读取结果、诊断及本次观察的场景身份。',execution:'Houdini主线程，只读'},
   houdini_exec: {scene:true,label:'执行操作',purpose:'批量创建、修改、检查、保存或出图。',input:'Python代码，可组合动词；__result__返回结构数据。',output:'结果、真实错误、操作记录、事务状态、图像和文件。',execution:'Houdini主线程，串行'},
-  houdini_request: {scene:true,label:'查回执行',purpose:'回答某个未知响应的请求是否执行、是否完成；避免重复修改。',input:'request_ref，或index列出本会话可查回请求。',output:'原执行状态与可取得的原始结果；不会重发代码。',execution:'Bridge请求记录，无HOM'},
+  houdini_request: {scene:true,label:'查回执行',purpose:'回答某个未知响应的请求是否执行、是否完成；避免重复修改。',input:'原请求的request_ref；index仅列当前所选运行实例中本会话的回执。',output:'原执行状态与可取得的原始结果；不会重发代码。',execution:'Bridge请求记录，无HOM'},
   houdini_resource: {scene:false,label:'读取资料',purpose:'按需读取原始用户资料、完整历史工具结果及已归档加载警告。',input:'kind=source/result、ref及可选分页；result可选JSON Pointer。',output:'原文或JSON分页及继续读取位置。',execution:'DSH Host，无HOM'},
   houdini_capabilities: {scene:false,label:'观察通道',purpose:'确认当前模型能否接收图片，以及附件通道是否可用。',input:'无需参数。',output:'当前模型与附件能力事实；不会渲染或判断画面。',execution:'DSH Host，无HOM'},
   houdini_ui_list: {scene:true,label:'发现界面',purpose:'列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。',input:'无需参数；不打开或切换界面。',output:'当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。',execution:'Bridge主线程队列，只读发现'},

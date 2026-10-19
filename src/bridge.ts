@@ -99,6 +99,7 @@ export interface BridgeHealth {
   activeRequests?: number
   activeJobs?: number
   requestRef?: string
+  sceneEpoch?: string
   houVersion?: string
   runtime?: HoudiniRuntimeFacts
   rawGate?: boolean
@@ -116,11 +117,14 @@ function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
+/** A call is pinned to one process and, for live work, one loaded scene. */
+export interface BridgeTargetExpectation { runtimeId?:string; sceneEpoch?:string }
+
 export class HoudiniBridge {
   readonly baseUrl: string
 
   constructor(baseUrl: string, private readonly timeoutMs: number, private readonly executorId?: string,
-    private readonly lifetime?:AbortSignal) {
+    private readonly lifetime?:AbortSignal, private readonly expectedTarget?:BridgeTargetExpectation) {
     this.baseUrl = normalizeBaseUrl(baseUrl)
     if (executorId !== undefined && !/^[0-9a-f]{32}$/.test(executorId)) throw new Error('Invalid Houdini executor identity')
   }
@@ -131,6 +135,19 @@ export class HoudiniBridge {
 
   /** Host routing identity, never a tool argument or node edit permission. */
   get targetExecutorId(): string | undefined { return this.executorId }
+  get targetRuntimeId(): string | undefined { return this.expectedTarget?.runtimeId }
+  get targetSceneEpoch(): string | undefined { return this.expectedTarget?.sceneEpoch }
+
+  /** Historical results belong to a runtime, independent of its current loaded scene. */
+  forRuntime(runtimeId:string):HoudiniBridge {
+    if(!/^[0-9a-f]{32}$/.test(runtimeId))throw new Error('Invalid historical Houdini runtime')
+    return new HoudiniBridge(this.baseUrl,this.timeoutMs,this.executorId,this.lifetime,{runtimeId})
+  }
+
+  private expectedTargetBody():Record<string,string> {
+    return {...(this.expectedTarget?.runtimeId?{runtime_id:this.expectedTarget.runtimeId}:{}),
+      ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{})}
+  }
 
   /** Non-HOM identity/contract check for an explicit target selection. */
   async inspectExecutor(signal?: AbortSignal): Promise<BridgeHealth> {
@@ -140,13 +157,13 @@ export class HoudiniBridge {
   /** Fixed Host/UI recovery protocol. No model-authored Python or file paths. */
   async recover(action:'assess'|'prepare'|'activate'|'locate'|'open',input:Record<string,unknown>,signal?:AbortSignal):Promise<any> {
     await this.checkContract(signal)
-    const result=await this.post<any>('/recovery/'+action,{...input,expected_contract:this.expectedContract()},signal)
+    const result=await this.post<any>('/recovery/'+action,{...input,expected_contract:this.expectedContract(),...this.expectedTargetBody()},signal)
     if(result.ok!==true)throw new Error(result.error||'工程接续未完成')
     return result
   }
   async claimWriter(taskId:string,registrationId:string,expectedHip:string,signal?:AbortSignal):Promise<void> {
     const result=await this.post<{ok:boolean;error?:string}>('/executor/claim',{
-      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip},signal)
+      task_id:taskId,registration_id:registrationId,expected_hip:expectedHip,...this.expectedTargetBody()},signal)
     if(result.ok!==true) throw new Error(result.error||'Writer reservation failed')
   }
 
@@ -173,6 +190,7 @@ export class HoudiniBridge {
       // HTTP status/body/JSON failures can all occur after side effects.
       return {ok:false,stdout:'',stderr:'',error:String(error),
         requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+          ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{}),
           ...(this.executorId ? {executor_id:this.executorId} : {}),
           next_action:'Use houdini_request(request_ref=...) to retrieve the admitted request. Do not resubmit the scene code.'}}
     }
@@ -227,6 +245,7 @@ export class HoudiniBridge {
     } catch(error) {
       return {ok:false,stdout:'',stderr:'',error:String(error),requestReceipt:{
         request_ref:ref!,runtime_id:runtimeId!,status:'unknown_transport',
+        ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{}),
         ...(this.executorId?{executor_id:this.executorId}:{}),
         next_action:'Use houdini_request with this original reference to recover the UI capture. Do not start another capture while its result is unknown.',
       }}
@@ -245,6 +264,7 @@ export class HoudiniBridge {
     } catch(error) {
       return {ok:false,stdout:'',stderr:'',error:String(error),requestReceipt:{
         request_ref:ref!,runtime_id:runtimeId!,status:'unknown_transport',
+        ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{}),
         ...(this.executorId?{executor_id:this.executorId}:{}),
         next_action:'Use houdini_request with this original reference to recover the UI target discovery.',
       }}
@@ -265,14 +285,19 @@ export class HoudiniBridge {
     if (allowRaw) body.allow_raw = allowRaw
     try {
       const handle = await this.post<JobHandle>('/jobs', body, signal)
-      if (handle.requestReceipt && this.executorId) {
-        handle.requestReceipt = {...handle.requestReceipt as Record<string, JsonValue>, executor_id:this.executorId}
-      }
+      // Admission provenance must survive changing this conversation's default target.
+      handle.requestReceipt = {...(handle.requestReceipt as Record<string,JsonValue>||{}),
+        request_ref:ref!,runtime_id:runtimeId!,
+        ...(!handle.requestReceipt?{status:'job_submitted'}:{}),
+        ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{}),
+        ...(this.executorId?{executor_id:this.executorId}:{})}
+
       return handle
     }
     catch (error) {
       if (!ref) throw error
       return {error:String(error),requestReceipt:{request_ref:ref,runtime_id:runtimeId!,status:'unknown_transport',
+          ...(this.expectedTarget?.sceneEpoch?{scene_epoch:this.expectedTarget.sceneEpoch}:{}),
         ...(this.executorId ? {executor_id:this.executorId} : {}),
         next_action:'Use houdini_request(request_ref=...) to recover the original jobId. Do not submit this job again.'}}
     }
@@ -287,8 +312,12 @@ export class HoudiniBridge {
     // a ticket also returns the contract, so admission costs no extra round trip.
     const health = owner
       ? await this.post<BridgeHealth>('/requests/prepare', { owner_session: owner.sessionId,
-        ...(requestKind?{request_kind:requestKind}:{}) }, signal)
+        ...(requestKind?{request_kind:requestKind}:{}),...this.expectedTargetBody() }, signal)
       : await this.get<BridgeHealth>('/health', signal)
+    if(this.expectedTarget?.runtimeId && health.runtimeId!==this.expectedTarget.runtimeId)
+      throw new Error('所选 Houdini 的运行实例已变化，请重新选择现场。本次没有发送场景操作。')
+    if(this.expectedTarget?.sceneEpoch && health.sceneEpoch!==this.expectedTarget.sceneEpoch)
+      throw new Error('所选 Houdini 已切换或重新加载工程，请重新选择当前现场。本次没有发送场景操作。')
     const actual = health.verbCatalog
     if (this.executorId && health.executorId !== this.executorId) {
       throw new Error('当前连接指向另一个 Houdini，本次操作没有发送到工程。请从要操作的 Houdini 中重新打开 Open Workspace；同时开着多个窗口时，请先确认插件由哪个窗口使用。\n技术信息：Houdini executor mismatch: no scene code was submitted. Do not automatically rebind by port/HIP path.')
@@ -336,6 +365,7 @@ export class HoudiniBridge {
       owner_session: owner.sessionId,
       owner_call: owner.callId,
       expected_contract: this.expectedContract(),
+      ...(this.expectedTarget?.runtimeId?{runtime_id:this.expectedTarget.runtimeId}:{}),
     }
     const route = `/jobs/${encodeURIComponent(jobId)}/status`
     if (!wait || wait <= 0) return this.post(route, body, signal)
@@ -361,6 +391,7 @@ export class HoudiniBridge {
       owner_session: owner.sessionId,
       owner_call: owner.callId,
       expected_contract: this.expectedContract(),
+      ...(this.expectedTarget?.runtimeId?{runtime_id:this.expectedTarget.runtimeId}:{}),
     }, signal)
   }
 
@@ -402,12 +433,15 @@ export class HoudiniBridge {
   /** Fixed, non-evaluating metadata route; old bridges degrade without executing code. */
   async sceneContext(signal?: AbortSignal): Promise<unknown> {
     const timeout = AbortSignal.timeout(2000)
-    return this.post('/context', { schema_version: 1 },
+    return this.post('/context', { schema_version: 1,...this.expectedTargetBody() },
       signal ? AbortSignal.any([signal, timeout]) : timeout)
   }
 
-  requestStatus(ref: string, owner: OwnershipScope, signal?: AbortSignal): Promise<ExecResult> {
+  async requestStatus(ref: string, owner: OwnershipScope, signal?: AbortSignal): Promise<ExecResult> {
     if (ref !== 'index' && !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(ref)) throw new Error('request_ref must be index or an execution receipt returned by Houdini')
+    assertOwnership(owner,'Houdini request status')
+    // The historical connection is pinned to its original runtime, never the current scene.
+    if(this.expectedTarget?.runtimeId)await this.checkContract(signal)
     return this.post('/requests/status',{request_ref:ref,owner_session:owner.sessionId},signal)
   }
 

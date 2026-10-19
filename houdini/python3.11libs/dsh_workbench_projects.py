@@ -51,7 +51,8 @@ def endpoint_presence(record, registry):
     registry record already carries pid/processStarted, so process lifetime is
     answered there; only a live process is worth one HTTP probe.
     """
-    result = {'executorId': record['executor_id'], 'sceneEpoch': record.get('scene_epoch'),
+    result = {'executorId': record['executor_id'], 'runtimeId': record.get('runtime_id'),
+              'sceneEpoch': record.get('scene_epoch'), 'ownerSessionId': record.get('task_id'),
               'hipPath': record.get('hip_path'), 'status': 'unknown', 'observedAt': time.time() * 1000}
     if record.get('state') != 'registered':
         return {**result, 'status': 'offline'}
@@ -70,7 +71,8 @@ def endpoint_presence(record, registry):
         health = json.loads(data)
         if health.get('ok') is not True or health.get('executorId') != record['executor_id'] or health.get('runtimeId') != record['runtime_id']:
             return result
-        return {**result, 'status': 'online', 'sceneEpoch': health.get('sceneEpoch'),
+        return {**result, 'status': 'online', 'runtimeId': health['runtimeId'], 'sceneEpoch': health.get('sceneEpoch'),
+                'activeRequests': health.get('activeRequests', 0), 'activeJobs': health.get('activeJobs', 0),
                 'busy': bool(health.get('activeRequests') or health.get('activeJobs')),
                 'contractVersion': health.get('executionContractVersion')}
     except Exception:

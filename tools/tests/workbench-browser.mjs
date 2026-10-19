@@ -80,7 +80,7 @@ try {
   if(expectedHip) {
     let label
     for(let attempt=0;attempt<80;attempt++) {
-      label=await evaluate(`document.querySelector('[data-houdini-project-label]')?.textContent`)
+      label=await evaluate(`document.querySelector('[data-houdini-project-name]')?.textContent`)
       if(label===path.basename(expectedHip))break
       await new Promise(resolve=>setTimeout(resolve,100))
     }

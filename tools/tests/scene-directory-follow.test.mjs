@@ -10,12 +10,16 @@ const old=path.resolve('tools/out/follow-old'),file=path.resolve('tools/out/foll
 const scene='d'.repeat(32),epoch='e'.repeat(32)
 const original={status:'connected',executor_id:executor,checkpoint_id:checkpoint,hip_path:file,scene_id:scene,scene_epoch:epoch,
  successful_save:{checkpoint_id:checkpoint,hip_path:file}}
-async function fixture(value,available=true){
+async function fixture(value,available=true,saveAs=true){
  const base=Session.create('follow-test'),moves=[]
- await new ExecutorBinding().ensure(base,executor)
+ await new ExecutorBinding().select(base,{executor_id:executor,runtime_id:executor,registration_id:executor,scene_id:scene,scene_epoch:epoch,hip_path:path.join(old,'project.hip'),hip_is_new:false})
  const session={id:base.id,header:{cwd:old},snapshotEvents:()=>base.snapshotEvents(),append:(...args)=>base.append(...args)}
  const agent={id:base.id,session,status:'idle',inject:message=>base.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})},bridge=new HoudiniBridge('http://127.0.0.1:1',100,executor)
- bridge.recover=async()=>value
+ bridge.recover=async()=>{throw new Error('Save As follow must consume receipts without a live probe')}
+ base.append('tool/call',{callId:'saved',name:'houdini_exec'})
+ base.append('tool/result',{message:{source:{callId:'saved'}},meta:{canonical:{verbs:saveAs?[{verb:'scene_save_as',ok:true}]:[],execution:{
+   executor_id:value.executor_id,runtime_id:executor,sequence:1,observed_at:1,owner_session:base.id,
+   hip_path:value.hip_path,hip_is_new:false,scene_recovery:value}}}},{surfaceOp:'append'})
  let service
  installSceneRecovery({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>
   name==='workspaceRegistry'&&available?{relocateSession:async(id,cwd)=>{moves.push({id,cwd});session.header={cwd}}}:undefined},bridge)
@@ -25,10 +29,12 @@ for(const value of [
  {...original,successful_save:null},
  {...original,successful_save:{checkpoint_id:'d'.repeat(32),hip_path:file}},
  {...original,successful_save:{checkpoint_id:checkpoint,hip_path:path.resolve('tools/out/backup/project.hip')}},
- {...original,status:'different_scene'},
+ {...original,scene_id:'f'.repeat(32)},
  {...original,executor_id:'b'.repeat(32)},
  {...original,hip_path:'relative.hip'},
 ]){const f=await fixture(value);await f.run();assert.equal(f.moves.length,0,'unverified paths must not relocate the conversation')}
+const observedOtherSave=await fixture(original,true,false);await observedOtherSave.run();
+assert.equal(observedOtherSave.moves.length,0,'reading a scene saved by another conversation does not authorize a workspace move')
 const valid=await fixture(original);await valid.run();await valid.run()
 assert.deepEqual(valid.moves,[{id:'follow-test',cwd:path.dirname(file)}],'one durable move, then an idempotent no-op')
 const followed=foldExecutorState(valid.session.snapshotEvents()).project

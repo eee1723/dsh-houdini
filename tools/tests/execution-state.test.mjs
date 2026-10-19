@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import {projectExecutionState,projectExecutionNotice} from '../../lib/execution-state.js'
 import {executionHistory} from '../../lib/execution-history.js'
+import {Session} from '@deepseek-ai/dsh-session'
+import {ExecutorBinding} from '../../lib/executor-binding.js'
 const events=[]
 function result(id,name,value) {
   events.push({type:'tool/call',data:{callId:id,name}},
@@ -113,3 +115,138 @@ for (const nested of [false,true]) {
   assert.equal(projectExecutionNotice(history),null,'late expiry does not erase an already collected result')
 }
 console.log('Job recovery preserves admission expiry, uncollected results and terminal unavailable outcomes')
+
+// A late lookup of a historical runtime is never current-scene state.
+const selectedSession=Session.create('history-after-selection'),binding=new ExecutorBinding()
+const targetA={executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),scene_epoch:'c'.repeat(32),scene_id:'d'.repeat(32),
+  registration_id:'e'.repeat(32),hip_path:'C:/project/a.hip',hip_is_new:false}
+const targetB={...targetA,executor_id:'f'.repeat(32),runtime_id:'1'.repeat(32),scene_epoch:'2'.repeat(32),scene_id:'3'.repeat(32),hip_path:'C:/project/b.hip'}
+const append=(id,name,value)=>{
+ selectedSession.append('tool/call',{callId:id,name})
+ selectedSession.append('tool/result',{message:{source:{callId:id}},meta:{canonical:value}},{surfaceOp:'append'})
+}
+const currentRead=(target,sequence)=>({ok:true,execution:{executor_id:target.executor_id,runtime_id:target.runtime_id,
+ scene_epoch:target.scene_epoch,hip_path:target.hip_path,sequence,observed_at:sequence}})
+await binding.select(selectedSession,targetA)
+append('old-read','houdini_inspect',currentRead(targetA,1))
+append('old-job','houdini_job_submit',{jobId:'a'.repeat(12),requestReceipt:{runtime_id:targetA.runtime_id,
+ executor_id:targetA.executor_id,scene_epoch:targetA.scene_epoch,status:'job_submitted'}})
+await binding.select(selectedSession,targetB)
+append('current-read','houdini_inspect',currentRead(targetB,2))
+append('late-receipt','houdini_request',{...currentRead(targetA,999),requestReceipt:{runtime_id:targetA.runtime_id,
+ executor_id:targetA.executor_id,request_ref:targetA.runtime_id+'.'+'a'.repeat(32),status:'done'}})
+append('late-job','houdini_job_status',{ok:true,jobId:'a'.repeat(12),status:'running'})
+assert.equal(projectExecutionState(selectedSession.snapshotEvents()).runtime_id,targetB.runtime_id)
+assert.equal(projectExecutionState(selectedSession.snapshotEvents()).last_sequence,2)
+assert.deepEqual(executionHistory(selectedSession.snapshotEvents()).activeJobs,[],'old admission must not revive work in B')
+assert(executionHistory(selectedSession.snapshotEvents(),{includeHistorical:true}).rows.some(row=>row.execution.runtime_id===targetA.runtime_id),
+ 'permission recovery and historical lookup retain original facts')
+const reloaded={...targetA,scene_epoch:'4'.repeat(32)}
+await binding.select(selectedSession,reloaded)
+append('reload-read','houdini_inspect',currentRead(reloaded,3))
+append('old-epoch-job','houdini_job_status',{ok:true,jobId:'a'.repeat(12),status:'running'})
+assert.deepEqual(executionHistory(selectedSession.snapshotEvents()).activeJobs,[],'a job from a prior scene epoch is historical even in the same runtime')
+await binding.select(selectedSession,null)
+append('cleared-old-receipt','houdini_request',currentRead(targetA,1000))
+assert.equal(projectExecutionState(selectedSession.snapshotEvents()),null,'an old receipt cannot give an unbound conversation a current scene')
+console.log('execution scope: historical native/nested results and jobs do not contaminate the selected scene or explicit clear')
+
+// Python RequestRegistry.status returns runtime/owner/ref, without repeating
+// the admitted epoch. Match the original receipt even after same-process load.
+for(const nested of [false,true])for(const change of ['reload','other','clear'])for(const status of ['unknown','running','done','result_expired']) {
+  const session=Session.create(`old-request-${nested}-${change}-${status}`),selection=new ExecutorBinding()
+  const add=(id,name,value)=>{
+    if(nested) {
+      session.append('tool/ptc-dispatch-start',{subCallId:id,name})
+      session.append('tool/ptc-dispatch',{subCallId:id,name,content:[{type:'text',text:JSON.stringify({
+        kind:'dsh-houdini/execution-v1',callId:id,tool:name,value})}]})
+    } else {
+      session.append('tool/call',{callId:id,name})
+      session.append('tool/result',{message:{source:{callId:id}},meta:{canonical:value}},{surfaceOp:'append'})
+    }
+  }
+  const ref=targetA.runtime_id+'.'+'9'.repeat(32)
+  await selection.select(session,targetA)
+  add('original-call','houdini_exec',{ok:false,requestReceipt:{request_ref:ref,runtime_id:targetA.runtime_id,
+    executor_id:targetA.executor_id,scene_epoch:targetA.scene_epoch,status:'unknown_transport'}})
+  const target=change==='clear'?null:change==='other'?targetB:{...targetA,scene_epoch:'4'.repeat(32)}
+  await selection.select(session,target)
+  if(target)add('current-call','houdini_inspect',currentRead(target,2))
+  add('historical-lookup','houdini_request',{ok:true,stdout:'',stderr:'',requestReceipt:{
+    request_ref:ref,runtime_id:targetA.runtime_id,owner_call:'original-call',status}})
+  const current=executionHistory(session.snapshotEvents())
+  assert.deepEqual(current.activeRequests,[],`${change}: old ${status} is not current work`)
+  assert.deepEqual(current.unavailableResults,[],'old retention expiry is not a current-scene outcome')
+  assert.equal(current.resolvedCalls.has('original-call'),false,'old completion does not resolve current-scene calls')
+  assert.equal(current.anchor?.execution.runtime_id,target?.runtime_id)
+  const full=executionHistory(session.snapshotEvents(),{includeHistorical:true})
+  assert.equal(full.results.get('historical-lookup').requestReceipt.status,status,'the original status response stays in raw history')
+  if(status==='unknown'||status==='running')assert.deepEqual(full.activeRequests,[[ref,status]])
+  else assert(full.resolvedCalls.has('original-call'))
+}
+console.log('request scope: original native/nested receipt epochs survive sparse status reads after reload, target change and clear')
+
+for(const nested of [false,true])for(const status of ['unknown','running','not_executed','done','result_expired']) {
+  const session=Session.create(`lost-original-${nested}-${status}`),selection=new ExecutorBinding()
+  const call=(id,name)=>session.append(nested?'tool/ptc-dispatch-start':'tool/call',nested?{subCallId:id,name}:{callId:id,name})
+  const result=(id,name,value)=>nested
+    ?session.append('tool/ptc-dispatch',{subCallId:id,name,content:[{type:'text',text:JSON.stringify({
+      kind:'dsh-houdini/execution-v1',callId:id,tool:name,value})}]})
+    :session.append('tool/result',{message:{source:{callId:id}},meta:{canonical:value}},{surfaceOp:'append'})
+  const lookup=(id,ref,owner)=>{
+    call(id,'houdini_request')
+    result(id,'houdini_request',{ok:true,requestReceipt:{request_ref:ref,runtime_id:targetA.runtime_id,status,
+      ...(owner?{owner_call:owner}:{})}})
+  }
+  await selection.select(session,targetA)
+  call('old-result-lost','houdini_exec')
+  await selection.select(session,{...targetA,scene_epoch:'4'.repeat(32)})
+  const oldRef=targetA.runtime_id+'.'+'8'.repeat(32),unattributedRef=targetA.runtime_id+'.'+'7'.repeat(32)
+  lookup('old-ref-lookup',oldRef,'old-result-lost')
+  lookup('no-owner-lookup',unattributedRef)
+  const historicalOnly=executionHistory(session.snapshotEvents())
+  assert.deepEqual(historicalOnly.activeRequests,[],'an old owner or no owner cannot assign a sparse receipt to the selected scene')
+  assert.deepEqual(historicalOnly.unavailableResults,[])
+  assert.equal(historicalOnly.resolvedCalls.has('old-result-lost'),false)
+  assert.equal(historicalOnly.results.get('old-ref-lookup').requestReceipt.status,status,'sparse historical responses remain retrievable')
+  call('current-result-lost','houdini_exec')
+  const currentRef=targetA.runtime_id+'.'+'6'.repeat(32)
+  lookup('current-ref-lookup',currentRef,'current-result-lost')
+  const current=executionHistory(session.snapshotEvents())
+  const terminal=['not_executed','done','result_expired'].includes(status)
+  assert.deepEqual(current.pendingCalls,terminal?[]:['current-result-lost'],'current lost results can settle through their original owner_call')
+  assert.equal(current.resolvedCalls.has('current-result-lost'),terminal)
+  assert.deepEqual(current.activeRequests,terminal?[]:[[currentRef,status]])
+  assert.equal(current.unavailableResults.length,Number(status==='result_expired'))
+}
+console.log('request scope: sparse receipts resolve current lost results without adopting old or unattributed requests')
+
+for(const nested of [false,true])for(const [control,status] of [['houdini_job_status','running'],['houdini_job_cancel','cancelled']]) {
+  const session=Session.create(`lost-job-${nested}-${control}`),selection=new ExecutorBinding()
+  const call=(id,name)=>session.append(nested?'tool/ptc-dispatch-start':'tool/call',nested?{subCallId:id,name}:{callId:id,name})
+  const result=(id,name,value)=>nested
+    ?session.append('tool/ptc-dispatch',{subCallId:id,name,content:[{type:'text',text:JSON.stringify({
+      kind:'dsh-houdini/execution-v1',callId:id,tool:name,value})}]})
+    :session.append('tool/result',{message:{source:{callId:id}},meta:{canonical:value}},{surfaceOp:'append'})
+  const add=(id,name,value)=>{call(id,name);result(id,name,value)}
+  const recoverJob=(id,jobId,owner)=>add(id,'houdini_request',{ok:true,result:{jobId},requestReceipt:{jobId,
+    request_ref:targetA.runtime_id+'.'+(owner==='old-job-lost'?'8':'9').repeat(32),
+    runtime_id:targetA.runtime_id,owner_call:owner,status:'job_submitted'}})
+  const oldJob='7'.repeat(12),currentJob='6'.repeat(12)
+  await selection.select(session,targetA)
+  call('old-job-lost','houdini_job_submit')
+  await selection.select(session,{...targetA,scene_epoch:'4'.repeat(32)})
+  recoverJob('recover-old-job',oldJob,'old-job-lost')
+  add('old-job-control',control,{ok:true,jobId:oldJob,status})
+  assert.deepEqual(executionHistory(session.snapshotEvents()).activeJobs,[],'an unscoped recovered old admission cannot make later job controls current')
+  call('current-job-lost','houdini_job_submit')
+  recoverJob('recover-current-job',currentJob,'current-job-lost')
+  let current=executionHistory(session.snapshotEvents())
+  assert.deepEqual(current.pendingCalls,[],'current admission recovery settles the lost submit call')
+  assert.deepEqual(current.activeJobs,[[currentJob,'queued_or_unknown']],'current owner_call can establish the recovered job in this scope')
+  add('current-job-control',control,{ok:true,jobId:currentJob,status})
+  current=executionHistory(session.snapshotEvents())
+  assert.deepEqual(current.activeJobs,status==='running'?[[currentJob,status]]:[],'sparse controls can update a job already admitted in the current scope')
+  assert.equal(current.results.get('old-job-control').status,status,'old job control responses remain in raw results')
+}
+console.log('job scope: lost historical admissions stay historical while current lost submissions can be recovered and controlled')

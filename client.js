@@ -27,6 +27,14 @@ window.__ModuleLoader__.load({
       '.dsh-houdini-project-label:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:2px}' +
       '.dsh-houdini-project-detail{font-size:12px;line-height:1.6;max-width:360px;overflow-wrap:anywhere;white-space:normal;color:var(--dsw-alias-label-secondary)}' +
       '.dsh-houdini-project-detail strong{color:var(--dsw-alias-label-primary);font-weight:500}' +
+      '.dsh-houdini-project-chip{display:inline-flex;align-items:center;gap:7px;max-width:min(360px,100%);min-width:0;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l3,#42474e);border-radius:99px;background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}' +
+      '.dsh-houdini-project-chip:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}.dsh-houdini-project-chip:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:2px}.dsh-houdini-chip-name{min-width:0;max-width:155px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}' +
+      '.dsh-houdini-chip-status{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding-left:7px;border-left:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}.dsh-houdini-project-chip>svg{flex:none}.dsh-houdini-state-icon{flex:none}' +
+      '.dsh-houdini-project-chip[data-state="ready"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-success-primary,#3da36b)}.dsh-houdini-project-chip[data-state="working"] .dsh-houdini-chip-status,[data-state="working"].dsh-houdini-project-mark{color:var(--dsw-alias-state-business-primary,#649be8)}.dsh-houdini-project-chip[data-state="occupied"] .dsh-houdini-chip-status,.dsh-houdini-project-chip[data-state="changed"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-warn-primary,#c6974c)}' +
+      '.dsh-houdini-target-menu{width:340px;max-width:calc(100vw - 24px);padding:4px!important}.dsh-houdini-target-heading{display:grid;gap:4px;padding:10px 10px 9px}.dsh-houdini-target-heading strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.dsh-houdini-target-heading>span,.dsh-houdini-target-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}' +
+      '.dsh-houdini-target-current{display:grid;gap:6px;margin:0 8px 8px;padding:9px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:12px}.dsh-houdini-target-current strong{font-weight:500}.dsh-houdini-target-current details{color:var(--dsw-alias-label-tertiary);font-size:11px}.dsh-houdini-target-current summary{cursor:pointer}.dsh-houdini-target-current details>span{display:block;margin-top:5px;overflow-wrap:anywhere;white-space:normal;line-height:1.5}' +
+      '.dsh-houdini-target-group{padding:7px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-actions{padding-bottom:5px;margin-bottom:5px;border-bottom:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-choices{height:190px;overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}' +
+      '@media(max-width:540px){.dsh-houdini-project-chip{max-width:calc(100vw - 130px);gap:5px;padding:0 7px}.dsh-houdini-chip-name{max-width:105px}.dsh-houdini-chip-status{font-size:10px;padding-left:5px}}' +
       '.dsh-houdini-window-pin[aria-pressed="true"]{color:var(--dsw-alias-state-warn-primary,#e5a263);background:var(--dsw-alias-interactive-bg-hover-solid,#343940)}' +
       '#dsh-houdini-navigation button{font:inherit;border:1px solid #68513c;border-radius:6px;background:#2d3136;color:#e5a263;padding:4px 10px;cursor:pointer;margin:6px 8px 0 0}' +
       '.dsh-support-modal{width:min(720px,100%);max-height:100%;gap:16px}' +
@@ -138,9 +146,18 @@ window.__ModuleLoader__.load({
       });
     }
 
+    function houdiniProjectTarget(project) {
+      if (!project) return null;
+      if (Object.prototype.hasOwnProperty.call(project, 'target')) return project.target;
+      return project.executorId ? { executor_id: project.executorId, runtime_id: project.runtimeId,
+        scene_epoch: project.sceneEpoch, scene_id: project.sceneId, hip_path: project.hipPath,
+        hip_is_new: project.hipIsNew, label: project.label } : null;
+    }
+
     function houdiniProjectName(project) {
-      return project.needsReview ? "工程待核对" : project.hipIsNew === true ? project.label || "未保存工程" :
-        project.hipPath ? project.hipPath.replace(/\\/g, "/").split("/").pop() : "Houdini 工程";
+      var target = houdiniProjectTarget(project) || project || {};
+      return target.hip_is_new === true || project && project.hipIsNew === true ? target.label || project && project.label || "未保存工程" :
+        (target.hip_path || project && project.hipPath || "").replace(/\\/g, "/").split("/").pop() || "Houdini 现场";
     }
 
     function HoudiniProjectIcon() {
@@ -148,61 +165,84 @@ window.__ModuleLoader__.load({
         React.createElement("path", { d: "M10 10c0-1.5 2.4-1.5 2.4.4 0 3.3-5.3 3.2-5.3-.6 0-5.3 8.1-5.2 8.1.7 0 7.3-11.7 7.2-11.7-.9 0-8.3 12.5-8.9 14.3-1.9", strokeLinecap: "round", strokeLinejoin: "round" }));
     }
 
-    function houdiniPresence(project, snapshot) {
-      if (!snapshot || !snapshot.available) return { status: "unknown", label: "尚未确认连接" };
-      if (Date.now() - snapshot.observedAt > 12000) return { status: "unknown", label: "连接状态待确认" };
-      if (project.needsReview) return { status: "changed", label: "工程需要核对" };
-      var record = snapshot.records[project.executorId];
-      if (!record) return { status: "unknown", label: "没有当前连接信息" };
-      if (!Number.isFinite(record.observedAt) || Date.now() - record.observedAt > 12000) return { status: "unknown", label: "连接状态待确认" };
-      if (record.status === "offline") return { status: "offline", label: "Houdini 已关闭或断开" };
-      if (record.contractMismatch) return { status: "unknown", label: "运行版本不一致，请重载 Houdini" };
-      if (record.status !== "online") return { status: "unknown", label: "暂时无法确认连接" };
-      if (!project.sceneEpoch || !record.sceneEpoch) return { status: "unknown", label: "工程状态待确认" };
-      if (project.sceneEpoch !== record.sceneEpoch) return { status: "changed", label: "Houdini 已切换到其他场景" };
-      return { status: "online", label: record.busy ? "Houdini 在线 · 正在操作" : "Houdini 在线" };
+    function HoudiniTargetStateIcon(props) {
+      var paths = { ready: "M10 3a7 7 0 1 1-.01 0M10 9v2", working: "M10 3v4m0 6v4M3 10h4m6 0h4M5 5l3 3m4 4 3 3M5 15l3-3m4-4 3-3",
+        occupied: "M7 6V4a3 3 0 0 1 6 0v2M5 7h10v10H5z", changed: "M10 3l8 14H2zM10 8v4m0 2v.1",
+        offline: "M6 7l-3 3 3 3m8-6 3 3-3 3M3 3l14 14", unknown: "M7 7a3 3 0 1 1 4 3c-1 .4-1 1-1 2m0 3v.1",
+        unbound: "M6 10h8M10 6v8" };
+      return React.createElement("svg", { className: "dsh-houdini-state-icon", viewBox: "0 0 20 20", width: 12, height: 12,
+        fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+        React.createElement("path", { d: paths[props.state] || paths.unknown }));
+    }
+
+    function houdiniPresence(project, snapshot, sessionId, nativeStatuses, useCurrentActivity) {
+      var target = houdiniProjectTarget(project);
+      function status(state, label, detail, presence) { return { state: state, status: presence || (state === "offline" ? "offline" : state === "changed" ? "changed" : "unknown"), label: label, detail: detail || label }; }
+      if (!target) return status("unbound", "未绑定现场", "选择一个已打开的 Houdini；每段对话可以独立选择现场。");
+      if (!snapshot || !snapshot.available || snapshot.visible === false || !snapshot.observedAt || Date.now() - snapshot.observedAt > 12000)
+        return status("unknown", "连接待确认", "暂未取得当前连接状态。可以展开选择其他现场。");
+      if (project.needsReview) return status("changed", "工程待核对", "当前场景与这段对话选择时不同，请明确选择要继续的现场。");
+      var record = snapshot.records[target.executor_id];
+      if (!record || !Number.isFinite(record.observedAt) || Date.now() - record.observedAt > 12000)
+        return status("unknown", "连接待确认", "没有新近的现场回执；登记本身不代表在线。");
+      if (record.status === "offline") return status("offline", "已断开", "这个 Houdini 已关闭或断开，可以选择其他已打开的窗口。");
+      if (record.contractMismatch) return status("unknown", "版本待更新", "运行版本不一致，请重载对应 Houdini。");
+      if (record.status !== "online") return status("unknown", "连接待确认", "暂时无法确认这个 Houdini 的连接状态。");
+      if (!target.scene_epoch || !record.sceneEpoch || !target.runtime_id || !record.runtimeId)
+        return status("unknown", "现场待确认", "现场身份信息尚未完整确认，请重新选择当前窗口。");
+      if (target.scene_epoch !== record.sceneEpoch || target.runtime_id !== record.runtimeId)
+        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的现场。");
+      var nativeCurrent = useCurrentActivity !== false && nativeStatuses && nativeStatuses.get && nativeStatuses.get(sessionId);
+      var owner = record.ownerSessionId;
+      var nativeOwner = owner && nativeStatuses && nativeStatuses.get && nativeStatuses.get(owner);
+      var activeJobs = Number(record.activeJobs) > 0;
+      var bridgeBusy = record.busy === true || Number(record.activeRequests) > 0 || activeJobs;
+      if (nativeCurrent && nativeCurrent.running === true)
+        return status("working", "对话工作中", "当前对话正在处理请求，Houdini 连接正常。", "online");
+      if (owner && owner !== sessionId && (activeJobs || nativeOwner && nativeOwner.running === true))
+        return status("occupied", "其他对话工作中", "另一个对话正在使用这个现场；可以绑定查看，修改时会等待其完成。", "online");
+      if (activeJobs && owner === sessionId)
+        return status("working", "对话工作中", "当前对话在 Houdini 中的后台操作尚未完成。", "online");
+      if (bridgeBusy) return status("working", "现场工作中", "Houdini 有操作尚未完成，当前操作归属暂未确认。", "online");
+      return status("ready", "已就绪", "目标连接正常；真正修改前仍会核对现场与写入资格。", "online");
     }
 
     function HoudiniProjectMark(props) {
-      var project = useHoudiniProject(props);
-      var presence = props.usePresence ? props.usePresence() : null;
-      var status = project && houdiniPresence(project, presence);
+      var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
+      var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
+      var status = project && houdiniPresence(project, presence, props.sessionId, statuses);
       return project && React.createElement("span", { className: "dsh-houdini-project-mark", role: "img",
-        "aria-label": "关联工程：" + houdiniProjectName(project) + " · " + status.label,
-        "data-houdini-presence": status.status, "data-houdini-project-mark": true }, React.createElement(HoudiniProjectIcon));
+        "aria-label": "关联现场：" + houdiniProjectName(project) + " · " + status.label,
+        "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-mark": true }, React.createElement(HoudiniProjectIcon));
     }
 
     function HoudiniProjectDetail(props) {
-      var project = useHoudiniProject(props);
-      var presence = props.usePresence ? props.usePresence() : null;
+      var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
+      var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
       if (!project) return null;
+      var target = houdiniProjectTarget(project), status = houdiniPresence(project, presence, props.sessionId, statuses);
       return React.createElement("div", { className: "dsh-houdini-project-detail", "data-houdini-project-detail": true },
-        React.createElement("strong", null, "关联工程 · " + houdiniProjectName(project)),
-        presence && React.createElement("div", null, houdiniPresence(project, presence).label),
-        project.hipPath && project.hipIsNew !== true && React.createElement("div", null, project.hipPath),
-        React.createElement("div", null, project.needsReview ? "发送消息时会核对工程；没有改绑到其他工程。" :
-          project.hipIsNew === true ? "尚未保存为工程文件。" : "这段对话最近确认的工程，不代表 Houdini 当前在线。"));
+        React.createElement("strong", null, "关联现场 · " + houdiniProjectName(project)),
+        React.createElement("div", null, status.label),
+        target && target.hip_path && !target.hip_is_new && React.createElement("div", null, target.hip_path),
+        React.createElement("div", null, status.detail));
     }
 
     function HoudiniProjectLabel(props) {
-      var project = useHoudiniProject(props);
-      var presence = props.usePresence ? props.usePresence() : null;
-      if (!project) return null;
-      var status = houdiniPresence(project, presence);
+      var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
+      var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
+      var status = houdiniPresence(project, presence, props.sessionId, statuses), target = houdiniProjectTarget(project);
       var ui = require("@deepseek-ai/dsh-client-ui-primitives");
-      return React.createElement(ui.Tooltip, { side: "bottom", align: "end", delayMs: 350, portal: true, maxWidth: 360, openOnClick: !props.onProjectMenuClick,
-        label: "关联工程 · " + houdiniProjectName(project) +
-          (project.hipPath && project.hipIsNew !== true ? "\n" + project.hipPath : "") +
-          (presence ? "\n" + status.label : "\n最近确认的工程，不代表 Houdini 当前在线。") },
-        React.createElement("span", { className: "dsh-houdini-project-label", tabIndex: 0,
-          role: props.onProjectMenuClick ? "button" : undefined, onClick: props.onProjectMenuClick,
-          "aria-haspopup": props.onProjectMenuClick ? "menu" : undefined, "aria-expanded": props.onProjectMenuClick ? !!props.projectMenuOpen : undefined,
-          onKeyDown: function (event) { if (props.onProjectMenuClick && ["Enter", " "].includes(event.key)) { event.preventDefault(); props.onProjectMenuClick(); } },
-          "aria-label": "关联工程：" + houdiniProjectName(project) + " · " + status.label,
-          "data-houdini-presence": status.status, "data-houdini-project-label": true },
-          React.createElement(HoudiniProjectIcon), React.createElement("span", null, houdiniProjectName(project)),
-          props.onProjectMenuClick && React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: 1.3, style: { flex: "none" }, "aria-hidden": true },
-            React.createElement("path", { d: "m3 4.5 3 3 3-3", strokeLinecap: "round", strokeLinejoin: "round" }))));
+      return React.createElement(ui.Tooltip, { side: "bottom", align: "end", delayMs: 400, portal: true, maxWidth: 360, openOnClick: false,
+        label: (target ? houdiniProjectName(project) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
+        React.createElement("button", { type: "button", className: "dsh-houdini-project-chip", onClick: props.onProjectMenuClick,
+          "aria-haspopup": "menu", "aria-expanded": !!props.projectMenuOpen,
+          "aria-label": "Houdini 现场：" + (target ? houdiniProjectName(project) + " · " : "") + status.label,
+          "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-label": true },
+          React.createElement(HoudiniProjectIcon),
+          React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(project) : "Houdini"),
+          React.createElement("span", { className: "dsh-houdini-chip-status" }, React.createElement(HoudiniTargetStateIcon, { state: status.state }), status.label),
+          React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: 1.3, "aria-hidden": true }, React.createElement("path", { d: "m3 4.5 3 3 3-3" }))));
     }
 
     function HoudiniBlankProjectLabel(props) {
@@ -210,128 +250,201 @@ window.__ModuleLoader__.load({
       return blank ? React.createElement(HoudiniProjectLabel, props) : null;
     }
 
-    function createWorkbenchUi(connection, uiSession) {
-      var state = { available: false, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
-      var pin = { pinned: null, busy: false }, pinRequest = null;
+    function createWorkbenchUi(connection, uiSession, sessions, uiWorkspace) {
+      var state = { available: false, visible: true, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
+      var pin = { pinned: null, busy: false }, pinRequest = null, refreshPresence = function () {};
+      var nativeEmpty = new Map(), nativeSource = uiSession.sessionStatus || { getSnapshot: function () { return nativeEmpty; }, subscribe: function () { return function () {}; } };
+      var openWhenSelected = false, openingTimer = null;
       function subscribe(listener) { listeners.add(listener); return function () { listeners.delete(listener); }; }
       function snapshot() { return state; }
       function publish(next) { state = next; listeners.forEach(function (listener) { listener(); }); }
       function usePresence() { return React.useSyncExternalStore(subscribe, snapshot); }
+      function useNativeStatus() { return React.useSyncExternalStore(nativeSource.subscribe, nativeSource.getSnapshot); }
       function notify(text) { notice = { id: ++serial, text: text }; publish(Object.assign({}, state)); }
       async function updatePin(input, reportError) {
         if (pinRequest) return;
         var controller = new AbortController(), generation = connection.generation.getSnapshot();
         pinRequest = controller; pin = Object.assign({}, pin, { busy: true }); publish(Object.assign({}, state));
         try {
-          var response = await connection.rpc.call("/api", "houdiniFrontend/windowPin", { args: { input: input } },
-            AbortSignal.any([controller.signal, AbortSignal.timeout(6000)]));
+          var response = await connection.rpc.call("/api", "houdiniFrontend/windowPin", { args: { input: input } }, AbortSignal.any([controller.signal, AbortSignal.timeout(6000)]));
           if (controller.signal.aborted || connection.generation.getSnapshot() !== generation) return;
-          if (!response.ok || !response.value || typeof response.value.pinned !== "boolean")
-            throw new Error(response.error && response.error.message || "暂时无法调整窗口置顶。");
+          if (!response.ok || !response.value || typeof response.value.pinned !== "boolean") throw new Error(response.error && response.error.message || "暂时无法调整窗口置顶。");
           pin = { pinned: response.value.pinned, busy: false };
-        } catch (error) {
-          if (!controller.signal.aborted && connection.generation.getSnapshot() === generation && reportError) notify(String(error.message || error));
-        } finally {
-          if (pinRequest === controller) { pinRequest = null; pin = Object.assign({}, pin, { busy: false }); publish(Object.assign({}, state)); }
-        }
+        } catch (error) { if (!controller.signal.aborted && connection.generation.getSnapshot() === generation && reportError) notify(String(error.message || error)); }
+        finally { if (pinRequest === controller) { pinRequest = null; pin = Object.assign({}, pin, { busy: false }); publish(Object.assign({}, state)); } }
       }
       function Pin() {
         if (!usePresence().available) return null;
-        var ui = require("@deepseek-ai/dsh-client-ui-primitives");
-        var label = pin.pinned ? "取消窗口置顶" : "窗口置顶";
-        return React.createElement(ui.Tooltip, { label: label, side: "bottom", portal: true },
-          React.createElement(ui.Button, { variant: "ghost", size: "sm", className: "dsh-houdini-window-pin",
-            style: { width: 28, height: 28, padding: 0, marginRight: 4, flex: "none" }, "aria-label": label,
-            "aria-pressed": pin.pinned === null ? undefined : pin.pinned, "data-houdini-window-pin": true,
-            disabled: pin.busy, onClick: function () { updatePin({ pinned: pin.pinned !== true }, true); } },
-            React.createElement("svg", { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor",
-              strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
-              React.createElement("path", { d: "M6 2h8l-1 5 3 3v2H4v-2l3-3zM10 12v6" }))));
+        var ui = require("@deepseek-ai/dsh-client-ui-primitives"), label = pin.pinned ? "取消窗口置顶" : "窗口置顶";
+        return React.createElement(ui.Tooltip, { label: label, side: "bottom", portal: true }, React.createElement(ui.Button, {
+          variant: "ghost", size: "sm", className: "dsh-houdini-window-pin", style: { width: 28, height: 28, padding: 0, marginRight: 4, flex: "none" },
+          "aria-label": label, "aria-pressed": pin.pinned === null ? undefined : pin.pinned, "data-houdini-window-pin": true,
+          disabled: pin.busy, onClick: function () { updatePin({ pinned: pin.pinned !== true }, true); } },
+          React.createElement("svg", { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.5,
+            strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, React.createElement("path", { d: "M6 2h8l-1 5 3 3v2H4v-2l3-3zM10 12v6" }))));
       }
       async function action(kind, sessionId) {
         try {
-          var response = await connection.rpc.call("/api", "houdiniFrontend/projectAction", { args: { input:
-            sessionId ? { action: kind, sessionId: sessionId } : { action: kind } } }, AbortSignal.timeout(10000));
+          var response = await connection.rpc.call("/api", "houdiniFrontend/projectAction", { args: { input: sessionId ? { action: kind, sessionId: sessionId } : { action: kind } } }, AbortSignal.timeout(10000));
           if (!response.ok) throw new Error(response.error && response.error.message || "暂时无法打开工程入口。");
         } catch (error) { notify(String(error.message || error)); }
       }
       function Lifecycle() {
         usePresence();
         React.useEffect(function () {
-          var stopped = false, pending = null, timer = null;
+          var stopped = false, pending = null;
           async function refresh() {
             if (stopped || pending) return;
-            if (document.visibilityState === "hidden") { publish(Object.assign({}, state, { records: {}, observedAt: 0 })); return; }
-            var controller = new AbortController(), generation = connection.generation.getSnapshot(); pending = controller;
+            var generation = connection.generation.getSnapshot();
+            if (!generation || document.visibilityState === "hidden") { publish(Object.assign({}, state, { visible: document.visibilityState !== "hidden", records: {}, observedAt: 0 })); return; }
+            var controller = new AbortController(); pending = controller;
             var deadline = setTimeout(function () { controller.abort(); }, 8000);
             try {
               if (!state.available) {
                 var capability = await connection.rpc.call("/api", "houdiniFrontend/capabilities", { args: {} }, controller.signal);
                 if (stopped || controller.signal.aborted || connection.generation.getSnapshot() !== generation) return;
-                if (!capability.ok || !capability.value.workbench) return;
-                // Workbench support is a capability fact, not a presence fact:
-                // keep the project menu available if the presence probe itself
-                // fails, but never invent workbench support from that failure.
-                publish(Object.assign({}, state, { available: true }));
-                updatePin({}, false);
+                if (!capability.ok || !capability.value || !capability.value.workbench) return;
+                publish(Object.assign({}, state, { available: true, visible: true })); updatePin({}, false);
               }
               var response = await connection.rpc.call("/api", "houdiniFrontend/projectPresence", { args: {} }, controller.signal);
               if (stopped || controller.signal.aborted || connection.generation.getSnapshot() !== generation) return;
-              if (!response.ok) throw new Error("presence unavailable");
-              publish({ available: true, observedAt: Date.now(), records: Object.fromEntries(response.value.map(function (record) { return [record.executorId, record]; })) });
-            } catch (_error) {
-              if (!stopped && pending === controller && connection.generation.getSnapshot() === generation)
-                publish(Object.assign({}, state, { observedAt: 0, records: {} }));
-            } finally { clearTimeout(deadline); if (pending === controller) pending = null; }
+              if (!response.ok || !Array.isArray(response.value)) throw new Error("presence unavailable");
+              publish({ available: true, visible: true, observedAt: Date.now(), records: Object.fromEntries(response.value.map(function (record) { return [record.executorId, record]; })) });
+            } catch (_error) { if (!stopped && pending === controller && connection.generation.getSnapshot() === generation) publish(Object.assign({}, state, { observedAt: 0, records: {} })); }
+            finally { clearTimeout(deadline); if (pending === controller) pending = null; }
           }
-          function changed() { if (pending) pending.abort(); pending = null;
+          function changed() {
+            if (pending) pending.abort(); pending = null;
             if (pinRequest) pinRequest.abort(); pinRequest = null; pin = { pinned: null, busy: false };
-            publish({ available: false, observedAt: 0, records: {} }); refresh(); }
+            publish({ available: false, visible: document.visibilityState !== "hidden", observedAt: 0, records: {} }); refresh();
+          }
+          refreshPresence = refresh;
           var unsubscribe = connection.generation.subscribe(changed);
           document.addEventListener("visibilitychange", changed);
-          timer = setInterval(refresh, 5000); refresh();
-          return function () { stopped = true; if (pending) pending.abort(); if (pinRequest) pinRequest.abort();
-            clearInterval(timer); unsubscribe(); document.removeEventListener("visibilitychange", changed); };
+          var timer = setInterval(refresh, 5000); refresh();
+          return function () { stopped = true; if (pending) pending.abort(); if (pinRequest) pinRequest.abort(); clearInterval(timer); unsubscribe();
+            document.removeEventListener("visibilitychange", changed); refreshPresence = function () {}; if (openingTimer) clearTimeout(openingTimer); };
         }, []);
         if (!notice) return null;
         var current = notice, ui = require("@deepseek-ai/dsh-client-ui-primitives");
         return React.createElement(ui.Toast, { key: current.id, text: current.text, onDone: function () { if (notice === current) { notice = null; publish(Object.assign({}, state)); } } });
       }
-      function decorate(Component) { return function (props) { return React.createElement(Component, Object.assign({}, props, { usePresence: usePresence })); }; }
+      function decorate(Component) { return function (props) { return React.createElement(Component, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus })); }; }
+      function startConversation() {
+        if (!uiWorkspace || !uiWorkspace.startSession) { notify("请先打开一个 Houdini 模式的对话，再选择现场。"); return; }
+        openWhenSelected = true;
+        if (openingTimer) clearTimeout(openingTimer);
+        openingTimer = setTimeout(function () { openWhenSelected = false; }, 10000);
+        uiWorkspace.startSession(undefined, { agentPreset: "houdini" });
+      }
       function Menu(props) {
-        var project = useHoudiniProject(props), presence = usePresence();
-        var menu = React.useState(false), opened = menu[0], setOpened = menu[1];
-        var cwd = props.useSessions(function (value) { return value.byId[props.sessionId] && value.byId[props.sessionId].cwd; });
-        var previous = React.useRef(null);
+        var project = useHoudiniProject(props), presence = usePresence(), nativeStatuses = useNativeStatus();
+        var row = props.useSessions(function (value) { return value.byId[props.sessionId] || null; });
+        var status = houdiniPresence(project, presence, props.sessionId, nativeStatuses), target = houdiniProjectTarget(project);
+        var menu = React.useState({ open: false, busy: false, rows: [], message: "", loaded: false }), value = menu[0], set = menu[1];
+        var pending = React.useRef(null), ticket = React.useRef(0), current = React.useRef(props.sessionId); current.current = props.sessionId;
+        var hostGeneration = React.useSyncExternalStore(connection.generation.subscribe, connection.generation.getSnapshot);
         React.useEffect(function () {
-          var before = previous.current, normalize = function (value) { return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase(); };
-          if (!before || before.sessionId !== props.sessionId) { previous.current = { sessionId: props.sessionId, cwd: cwd }; return; }
-          if (cwd && before.cwd && normalize(cwd) !== normalize(before.cwd) && project && !project.hipIsNew && project.hipPath &&
-            normalize(project.hipPath.substring(0, Math.max(project.hipPath.lastIndexOf("/"), project.hipPath.lastIndexOf("\\")))) === normalize(cwd)) {
-            previous.current = { sessionId: props.sessionId, cwd: cwd };
-            notify("对话已移至「" + cwd.replace(/\\/g, "/").split("/").pop() + "」，历史完整保留。");
+          ticket.current++; if (pending.current) pending.current.abort();
+          set({ open: false, busy: false, rows: [], message: "", loaded: false });
+          return function () { ticket.current++; if (pending.current) pending.current.abort(); };
+        }, [props.sessionId, hostGeneration]);
+        React.useEffect(function () {
+          if (openWhenSelected && props.sessionId && row && row.projectionValues && row.projectionValues.agentPreset === "houdini") {
+            openWhenSelected = false; if (openingTimer) clearTimeout(openingTimer); request("list");
           }
-        }, [props.sessionId, cwd, project && project.hipPath]);
-        var ui = require("@deepseek-ai/dsh-client-ui-primitives");
-        var anchor = props.footer ? React.createElement(ui.Button, { variant: "ghost", size: "sm", "aria-label": "打开或新建 Houdini 工程", title: "打开或新建 Houdini 工程", onClick: function () { setOpened(!opened); } }, React.createElement(HoudiniProjectIcon)) :
-          React.createElement(HoudiniProjectLabel, Object.assign({}, props, { usePresence: usePresence, projectMenuOpen: opened, onProjectMenuClick: presence.available ? function () { setOpened(!opened); } : undefined }));
-        var items = [];
-        if (project && project.hipPath && project.hipIsNew === false) items.push({ id: "reopen", label: "打开关联工程" });
-        items.push({ id: "open", label: "打开 Houdini 工程…" }, { id: "new", label: "新建 Houdini 工程…" });
-        return React.createElement(ui.Menu, { open: opened, portal: true, compact: true, align: "end", side: props.footer ? "top" : "bottom", anchor: anchor, items: items,
-          onClose: function () { setOpened(false); }, onSelect: function (kind) { setOpened(false); action(kind, props.sessionId); } });
+        }, [props.sessionId, row && row.projectionValues && row.projectionValues.agentPreset]);
+        async function request(method, candidate) {
+          var sessionId = props.sessionId, generation = connection.generation.getSnapshot();
+          if (!sessionId) { startConversation(); return; }
+          if (!generation) { set(function (old) { return Object.assign({}, old, { open: true, message: "工作台连接已断开，请稍后重试。" }); }); return; }
+          var attempt = ++ticket.current;
+          if (pending.current) pending.current.abort();
+          var controller = new AbortController(); pending.current = controller;
+          var timeout = setTimeout(function () { controller.abort(); }, 10000);
+          set(function (old) { return Object.assign({}, old, { open: true, busy: true, message: method === "list" ? "正在查看已打开的 Houdini…" : method === "clear" ? "正在取消绑定…" : "正在选择现场…" }); });
+          var input = { sessionId: sessionId };
+          if (candidate) Object.assign(input, { executorId: candidate.executor_id, registrationId: candidate.registration_id, expectedHip: candidate.hip_path,
+            runtimeId: candidate.runtime_id, sceneEpoch: candidate.scene_epoch });
+          try {
+            var response = await connection.rpc.call("/api", "houdiniTargets/" + method, { args: { input: input } }, controller.signal);
+            if (controller.signal.aborted || current.current !== sessionId || ticket.current !== attempt || connection.generation.getSnapshot() !== generation) return;
+            if (!response.ok) throw new Error(response.error && response.error.message || "没有完成现场选择。");
+            if (method === "list") {
+              if (!response.value || !Array.isArray(response.value.candidates)) throw new Error("现场列表格式无效。");
+              set({ open: true, busy: false, rows: response.value.candidates, loaded: true, message: response.value.candidates.length ? "" : "还没有已登记的 Houdini。打开 Houdini 后会自动出现在这里。" });
+            } else {
+              if (sessions && sessions.refreshProjections) await sessions.refreshProjections(sessionId);
+              if (controller.signal.aborted || current.current !== sessionId || ticket.current !== attempt || connection.generation.getSnapshot() !== generation) return;
+              set(function (old) { return Object.assign({}, old, { busy: false, open: false, message: "" }); }); refreshPresence();
+              notify(method === "clear" ? "此对话已取消现场绑定。" : "此对话已选择「" + houdiniProjectName(candidate) + "」。");
+            }
+          } catch (error) {
+            if (current.current === sessionId && ticket.current === attempt && connection.generation.getSnapshot() === generation)
+              set(function (old) { return Object.assign({}, old, { busy: false, message: controller.signal.aborted ? "等待现场响应超时，可以重试。" : String(error.message || error) }); });
+          } finally { clearTimeout(timeout); if (pending.current === controller) pending.current = null; }
+        }
+        var ui = require("@deepseek-ai/dsh-client-ui-primitives"), currentNative = nativeStatuses && nativeStatuses.get(props.sessionId);
+        var switchingDisabled = value.busy || currentNative && currentNative.running === true;
+        var rows = value.rows.slice().sort(function (left, right) { return Number(right.same_workspace === true) - Number(left.same_workspace === true); });
+        var entries = [], lastGroup = null;
+        rows.forEach(function (candidate, index) {
+          var group = candidate.same_workspace ? "同一工作区" : "其他已打开的窗口";
+          if (group !== lastGroup) { entries.push(React.createElement("div", { className: "dsh-houdini-target-group", key: "group-" + group, role: "presentation" }, group)); lastGroup = group; }
+          var selected = target && target.executor_id === candidate.executor_id && target.runtime_id === candidate.runtime_id && target.scene_epoch === candidate.scene_epoch;
+          var candidateProject = { target: candidate }, observed = houdiniPresence(candidateProject, presence, props.sessionId, nativeStatuses, !!selected);
+          var label = houdiniProjectName(candidate), version = String(candidate.houdini_version || "").split(".")[0];
+          var details = (candidate.hip_path || "未保存工程") + (candidate.pid ? "\n进程 " + candidate.pid : "");
+          entries.push(React.createElement(ui.MenuItemButton, { key: candidate.executor_id,
+            disabled: !!switchingDisabled || candidate.state === "disconnected" || observed.state === "offline" || !candidate.hip_path,
+            icon: React.createElement(HoudiniTargetStateIcon, { state: observed.state }),
+            onSelect: function () { request("select", candidate); } },
+            React.createElement("span", { className: "dsh-houdini-target-row", title: details + "\n" + observed.detail, "data-houdini-target": candidate.executor_id, "data-state": observed.state },
+              React.createElement("span", { className: "dsh-houdini-target-title" }, label, selected && React.createElement("span", { "aria-label": "当前已选现场", className: "dsh-houdini-target-selected" }, "✓")),
+              React.createElement("span", { className: "dsh-houdini-target-meta" }, "窗口 " + (index + 1) + (version ? " · Houdini " + version : ""), " · ", observed.label))));
+        });
+        var actions = [];
+        if (target) actions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
+        if (project && project.hipPath && project.hipIsNew === false) actions.push({ id: "reopen", label: "打开关联工程" });
+        actions.push({ id: "open", label: "打开 Houdini 工程…", disabled: !presence.available }, { id: "new", label: "新建 Houdini 工程…", disabled: !presence.available });
+        var anchor = props.footer ? React.createElement(ui.Button, { variant: "ghost", size: "sm", "aria-label": "打开或新建 Houdini 工程", onClick: startConversation }, React.createElement(HoudiniProjectIcon)) :
+          React.createElement(HoudiniProjectLabel, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus,
+            projectMenuOpen: value.open, onProjectMenuClick: function () { if (value.open) set(Object.assign({}, value, { open: false })); else request("list"); } }));
+        return React.createElement(ui.Menu, { open: value.open, portal: true, compact: true, align: "end", side: "bottom", anchor: anchor,
+          listClassName: "dsh-houdini-target-menu", onClose: function () { set(function (old) { return Object.assign({}, old, { open: false }); }); },
+          },
+          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 现场"),
+            React.createElement("span", null, "为当前对话选择要操作的窗口")),
+          React.createElement("div", { className: "dsh-houdini-target-actions", role: "presentation" }, actions.map(function (item) {
+            return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
+              onSelect: function () {
+                if (item.id === "clear") { request("clear"); return; }
+                ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
+                set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId);
+              } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
+          })),
+          target && React.createElement("div", { className: "dsh-houdini-target-current", role: "presentation" },
+            React.createElement("strong", null, houdiniProjectName(project) + " · " + status.label),
+            target.hip_path && React.createElement("details", null, React.createElement("summary", null, "工程路径"), React.createElement("span", null, target.hip_path))),
+          React.createElement("div", { className: "dsh-houdini-target-choices" },
+            value.message && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" }, value.message),
+            currentNative && currentNative.running === true && React.createElement("p", { className: "dsh-houdini-target-message" }, "当前对话工作完成后，可以切换或取消绑定。"),
+            React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "已登记的 Houdini 窗口" }, entries)));
+      }
+      function Label(props) {
+        var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
+        return row && !row.blank && row.projectionValues && row.projectionValues.agentPreset === "houdini" ? React.createElement(Menu, props) : null;
       }
       function Blank(props) {
-        var blank = props.useSessions(function (value) { return !!(value.byId[props.sessionId] && value.byId[props.sessionId].blank); });
-        return blank ? React.createElement(Menu, props) : null;
+        var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
+        return row && row.blank && row.projectionValues && row.projectionValues.agentPreset === "houdini" ? React.createElement(Menu, props) : null;
       }
       function Footer(props) {
-        var presence = usePresence();
+        usePresence();
         var selected = React.useSyncExternalStore(uiSession.adapter.current.subscribe, uiSession.adapter.current.getSnapshot);
-        var bound = props.useSessions(function (value) { return selected && value.projectionsBySession[selected.key] && value.projectionsBySession[selected.key].values.houdiniExecutorIdentity; });
-        return presence.available && !bound ? React.createElement(Menu, Object.assign({}, props, { sessionId: selected && selected.key, footer: true })) : null;
+        return !selected || !selected.key ? React.createElement(Menu, Object.assign({}, props, { footer: true })) : null;
       }
-      return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Menu, Pin: Pin, Blank: Blank, Footer: Footer, Lifecycle: Lifecycle };
+      return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Label, Pin: Pin, Blank: Blank, Footer: Footer, Lifecycle: Lifecycle };
     }
 
     function createHoudiniTitleAction(connection) {
@@ -659,7 +772,7 @@ function nodeDeliveryRows(value) {
     var traceView;
     function getTraceView(React) {
       if (traceView) return traceView;
-      var sources = {"guidance":{"name":"dsh-houdini:guidance","order":150,"hash":"6c9e507550d7fff3a26db92b7c02b3a7242bf594d0b6f6c6aa4667e0639528d3","bytes":4778,"paragraphStarts":["Houdini tool routing:\nUse houdini_inspect for live read-only scene and API information, ho","Execution boundary and discovery:\nCompose the injected Python verbs for edits. Raw hou is ","Current catalog: vocabulary 域: verb_help | 类型目录: search_tab_menu, search_tab_entries, reso","Result and recovery contract:\nTool results report execution, checks, restoration and files","Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, So","Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored"],"source":"src/index.ts"},"skills":[{"name":"houdini-trace-analysis","description":"分析 dsh-houdini 与 DeepSeek Harness 的原始会话日志，定位 Houdini 任务的完成差距、运行与工作区错位、工具合同、执行反馈、观察和性能问题。用户要求复盘指定或最新 trace、比较会话或据证据调整工具与审计技能时使用。","base":"skills/houdini-trace-analysis","files":[{"path":"agents/openai.yaml","hash":"334a2a7948a5fa607f4c2013deb13bf44398d75e1bf0bb1916707e4659a8ddb0","bytes":278},{"path":"references/audit-rubric.md","hash":"3cee7986662fe0e5f0bf8d94e20a1221ff2de10991e9be18aa63fca2714d534a","bytes":5727},{"path":"references/known-patterns.md","hash":"a435ede38dcc1ef4694cfaf70118561f44eecc10a443a53f5ba3290bbf51e879","bytes":2290},{"path":"scripts/evidence-helpers.mjs","hash":"7e6336b055398ad925d1d26dbc08b0fbe1f0228503d0fc664c61441e708e9783","bytes":71193},{"path":"scripts/extract-trace-evidence.mjs","hash":"322749fffca1d38421a41021fa55b1c63392c2e4474ce8114593feb7519ed994","bytes":26930},{"path":"SKILL.md","hash":"7695e5cf5be4f0be3820fa773d554528f9542c085725819a20c3f2b55b365fff","bytes":7085}]},{"name":"houdini-task-decomposition","description":"将复杂Houdini任务拆成可独立修改和观察的模块，按依赖逐个构建、检查并集成。用于多部件资产、多子系统模拟、跨阶段图像处理或工具开发；单参修改和纯查询直接处理。","base":"skills/houdini-task-decomposition","files":[{"path":"SKILL.md","hash":"a84fd202d75fd6fb178e24bd84f2e8e99fd1aff5f5761f1263c2124a5e52140d","bytes":6468}]},{"name":"houdini-sop-workflow","description":"设计、构建、修改和交付可编辑的Houdini SOP程序化网络。用于建模、散布、曲线成形、属性、VEX和SOP动画。纯场景查询直接用工具；HDA工具、rig、COP和Solaris使用对应领域技能。","base":"skills/houdini-sop-workflow","files":[{"path":"agents/openai.yaml","hash":"8628b8dfd3d0765ba6691fcaa0d168df2bcc30d4f464ac40862d86ed70c160e0","bytes":264},{"path":"references/execution-checkpoints.md","hash":"c9049d4adb4547ba8a861c2e9c63d7f7bd71c3246a4372726e5eb988493fb935","bytes":13451},{"path":"references/modeling-methods.md","hash":"1d17de353b7411691494131c4c05878055ff987a79bb3434c6312532dc68fea0","bytes":28840},{"path":"references/module-design-collaboration.md","hash":"9dc4e9c82705faa62101ff6a0f78f0ae6323008e8297cac456e9b1e787b184e4","bytes":1206},{"path":"references/module-quality-contracts.md","hash":"49ada6560cf919f4a7b8993f2c044eca33fd55482efd659de1d77c2abd79c521","bytes":19764},{"path":"references/procedural-quality-contract.md","hash":"f2a497ab80c5a7a635aeb49fd7548a286d4dc5609b1283e4b4af08b9686785c1","bytes":10078},{"path":"references/procedural-recipes.md","hash":"58f7cebf2e151abcf08107b7818c2038d90b2c1f80e598315fbffb667623e167","bytes":7122},{"path":"references/sop-patterns.md","hash":"60875ed61c38a402be1a9abcf8d7da15aa2b7c5844c08c4937f3ac990c10de41","bytes":13577},{"path":"SKILL.md","hash":"f0cafd77a278be4cfdf19d09ad44e2375709c17187977c696cd0040e547db7af","bytes":6799}]},{"name":"houdini-surface-workflow","description":"为模型与部件设计可编辑的表面外观，分析参考图中的几何与纹理分工，选择细化程度、UV、COP或生成图片，并在SOP中统一预览。用于新模型外观、涂装、贴花、微表面和已有材质修改；纯几何诊断或只生成参考图片不触发。","base":"skills/houdini-surface-workflow","files":[{"path":"references/appearance-and-sources.md","hash":"202a2f14f19807fcbae906e7031402e221a35141ac32436259919e68783af91e","bytes":3893},{"path":"references/generated-textures.md","hash":"102aa9532d16981534ca1f344470bbd4dadea6e22790ed6bdee1dd9af055da63","bytes":4198},{"path":"references/sop-preview-and-uv.md","hash":"53b635c3b106a9553e41ada6b868c0c6c347bb4cc35e7aead0b32e2d59dd51dc","bytes":9410},{"path":"SKILL.md","hash":"69d5ebfaeb230b568e3096606ec4eb6a1cc60c763519aeeb1722b50ab85c62e0","bytes":6452}]},{"name":"houdini-cop-workflow","description":"在 Houdini Copernicus 中制作、诊断和验证程序纹理与图像处理网络，包括建模中的涂装遮罩、标识/贴花、图像校正、微表面纹理、COP教程复现和文件导出。需要制作或修改图像数据时加载；纯几何建模、常量材质参数、只解析视频或仅消费已有贴图不触发。","base":"skills/houdini-cop-workflow","files":[{"path":"references/cache-and-delivery.md","hash":"2f828e0084649061dd4bb8e36072a394194abfa1a7cc79b7ceff785a49d90f73","bytes":7201},{"path":"references/evidence-and-validation.md","hash":"72978e6863271674b32abdcff27e9d34e3ea58e447c0c5ff409c01fbdb09f2c1","bytes":5661},{"path":"references/layers-and-ports.md","hash":"7adcd143eba07f73240284efea7ada0ade980fd7d200faff6fd36a4bca4d854a","bytes":3902},{"path":"references/pattern-design.md","hash":"12d2478bb7f431bbc2348175e4173873a32e49ce33fa06ca98447bd217a19c2d","bytes":7984},{"path":"references/relations-and-controls.md","hash":"4941a611b7c2fd2842c20c2d993e22fd069b9b664bad43f2473e8c909c875766","bytes":6096},{"path":"SKILL.md","hash":"71a9aa094c535394c8b3c3b65805ad8a7babdd5cbf99f60e9d110c9924d9dc42","bytes":6351}]},{"name":"houdini-tool-development","description":"开发、维护和交付Houdini HDA、Shelf/Tab、Python Panel与Viewer State工具，确定工具归属、原生入口与加载范围。普通可调模型或单独保存HIP不触发；纯参数布局使用houdini-parameter-ui。","base":"skills/houdini-tool-development","files":[{"path":"assets/tool-entry-examples/dsh_artist_example_panel.py","hash":"17312b21212b100a0952717581127c4c6b5649d7fdff71ccf33ecc0ca09723b6","bytes":3890},{"path":"assets/tool-entry-examples/dsh_artist_example_state.py","hash":"5499399d79f4dec1fd19a0cf26e6feb5a9521179a5963109a2b2dc5c547ed777","bytes":2379},{"path":"references/evidence-and-validation.md","hash":"570e92ffa41f75112307cc7e17a0c48f1d25676d8e7368a28af8e4d4b61bc399","bytes":11247},{"path":"references/hda-maintenance.md","hash":"68e854e92052848b56a81b5ca88716791d6dde98f8442b26429568c762f5142b","bytes":14245},{"path":"references/hda-ui.md","hash":"856872286a1c9acec59ac7bdd7be7e08b09986b5849b0bf4a8efcd6e9c45c248","bytes":262},{"path":"references/scripts-and-packaging.md","hash":"8ec8ad6f75bbd4da4494aeccc618b2dc24dd61940dfeceb9b9bc0cff2a6f918e","bytes":12420},{"path":"references/shelf-and-hotkeys.md","hash":"dcbe33bb694cf1990c55ad9d36602df9ed88e8d31cd8b75712852a4647d44385","bytes":6280},{"path":"references/ui-components.md","hash":"25d24be85f8a46d6db870278795c0ff68c325150071411f1d2def59bced689b4","bytes":303},{"path":"scripts/build-entry-examples.py","hash":"c025445c864028ec149c148cd36dde80bc22b68a5e9185638f1853fbff246826","bytes":4124},{"path":"SKILL.md","hash":"3f562add256ed70e3190b1f2c1fe4b4d52f597fec06c349a0fefd7a830e93bff","bytes":6373}]},{"name":"houdini-parameter-ui","description":"设计、建立和维护Houdini参数面板、程序化模型控制节点与场景总控；定义控制含义、选择spare或HDA载体、组合UI组件并规划验证参数绑定。适用于从零先做控制接口、已有场景提炼总控或改善布局；普通赋值、纯模型构建和Python Panel/WebView开发不单独触发。","base":"skills/houdini-parameter-ui","files":[{"path":"assets/ui-component-gallery.json","hash":"272efe43692fc47472f6963be238c5478a92b0ceda4f9b786074ea3be15c3fde","bytes":6684},{"path":"references/artist-ui-patterns.md","hash":"883d645e62f8fb48eda7905a21dd28a379173890efb3e99ad27d78f0518f65b7","bytes":4182},{"path":"references/control-bindings.md","hash":"f2c9ac49ffd399387c5322cb263199301e90846b9311c2fa0e2303f2a946a486","bytes":10910},{"path":"references/hda-ui.md","hash":"f0bccc16f6a1ac488ef3c14cbca9306d7d51a3830bb2d5a7f050bdcec79b2091","bytes":6786},{"path":"references/ui-components.md","hash":"1a6df78bfc1155185ca297a688fb6770b9d7c52c556ec4682ee1ed11d9b8d454","bytes":9789},{"path":"scripts/build-ui-gallery.py","hash":"11696ee776883f7daf22c4ddd3f318a36a1df9b623435a53fb3c4f60d5ab2112","bytes":3052},{"path":"SKILL.md","hash":"884f29a678396b97d07e3b6a17e80fa32ee3415d53e2a049c8b99aa2b67e0405","bytes":7315}]},{"name":"houdini-network-handoff","description":"让用户找到、理解并继续编辑Houdini成果：工程另存与文件交付、节点入口、Network Box和Sticky Note。准备保存交付成果、已明确模块编辑边界，或用户要求整理网络时加载；纯查询、单参修改、临时诊断不触发。","base":"skills/houdini-network-handoff","files":[{"path":"references/file-delivery.md","hash":"52d28991cf0931561e7d95c85f50128d2e5c0a74de8b4d3a0ce634fce479eb57","bytes":6736},{"path":"references/network-layout.md","hash":"c7fd85609c8456b726094480acbc44beafb1daefd3565ee9e08b942545118dff","bytes":4515},{"path":"SKILL.md","hash":"3255e3c4e61720b274be8219f83782fb583fa3ff518c5947fa5dbdfd67efe628","bytes":6680}]},{"name":"houdini-solaris-karma-workflow","description":"在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma 材质与渲染网络。用于用户要求最终渲染、Karma CPU/XPU、MaterialX、USD 材质绑定、Render Settings、AOV、USD Render ROP，或把 SOP/COP 结果接入 /stage；不用于仅需 render_view 的快速 SOP 视觉验证。","base":"skills/houdini-solaris-karma-workflow","files":[{"path":"references/karma-patterns.md","hash":"b43217570961693316f101a48d65f71ec686b8b1ae3d12d0c9cf0fa0b2b807e7","bytes":9678},{"path":"SKILL.md","hash":"4bdfd996fe8b89a772a43a00c7b2944f3f690e89e06864e2c17b0616b7ce4990","bytes":5430}]},{"name":"houdini-rig-animation-workflow","description":"在 Houdini 中设计、构建、调试和交付参数动画、刚体 piece 序列、机械层级、KineFX skeleton/skin 与 animator-facing rig。用于任务涉及 keyframes、绑定、FK/IK、capture/deform、非交换多步骤或可复用控制器；不用于普通静态 SOP 建模，也不把所有“绑定”默认路由到 KineFX/APEX。","base":"skills/houdini-rig-animation-workflow","files":[{"path":"references/rig-animation-patterns.md","hash":"7337f077f52b79b64fc3572ad47c1269c8a4222af7ede576d88602d6941c0d63","bytes":15476},{"path":"SKILL.md","hash":"733ee9de44a0e4591eb619bb0f94139b89fc464b2ccb1f868cf5b6d70b6f896a","bytes":8373}]},{"name":"houdini-skill-governance","description":"创建、审查、精简和维护 dsh-houdini 的领域 skills，或依据 Houdini trace、官方资料与工程修正领域知识。用于用户要求修改或评估插件 skills；普通内容制作和单纯 trace 分析不修改生产 skill。","base":"skills/houdini-skill-governance","files":[{"path":"references/eval-cases.md","hash":"088f899b3cac25229ce514fe36197a569cac65d247e6bbc7d9ba1c315f4f0a75","bytes":4959},{"path":"references/evidence-ingestion.md","hash":"d5d9fe3c3cb450e4d7cf30305b3967abbe7db5c098d33c0f9893aec5d8b4f5ca","bytes":5934},{"path":"references/maintenance-lifecycle.md","hash":"298458af78c5a2eef5ae1eb2c50666b6c0e2ab2360a9c046b9310e7cc82ecb9d","bytes":3011},{"path":"references/quality-standard.md","hash":"3a48c5e52a89af1e83c4872e788c3db1ec5a4ec5be5790a552ba974b4dca662e","bytes":7762},{"path":"scripts/audit-houdini-skills.mjs","hash":"e584e6bcabd5b39b95a47016b335049336b823df802276c1198a9daf17f04532","bytes":7129},{"path":"SKILL.md","hash":"ca962dfa217e946c2c8d3e90513af5c0d78f7719dc8d612c7869a5d3d7692b95","bytes":3936}]},{"name":"houdini-video-tutorial","description":"解析 Houdini 视频教程，结合云端语音转录与本地画面核对，提取带时间依据的步骤、设置、冲突和复现缺口。用于用户提供视频文件或要求从视频准备教学工程；不用于图文教程、普通建模、会议转录或自动知识沉淀。","base":"skills/houdini-video-tutorial","files":[{"path":"references/reconstruction.md","hash":"ae75469dc5a97b11000a0b295d1f5d2cefd882602ce1d1e86ccf617fb3b0d42b","bytes":16440},{"path":"references/video-processing.md","hash":"33b75730feaf4bb888e5310f5ab1d60ea268c7351e376a859895e971e28d16dd","bytes":47286},{"path":"scripts/video_tutorial.py","hash":"80f1b81927463c489eb0ae9459ede216069de744b58e56b34808a5690f5aa3ed","bytes":144375},{"path":"SKILL.md","hash":"bc9c8a8d33ad24cd4fc8f378de67170173b5c892721739acda8eab7df85a6c1e","bytes":16220}]}],"presets":[{"name":"houdini","file":"presets/houdini/persona.md","presetFile":"presets/houdini/cordis.patch.yml","hash":"94e10a28ebe5c20c54284ef4e8e46c83b437ef3eb4f00fa10d609ada07e14c76","bytes":7155,"paragraphStarts":["You are a Houdini automation agent powered by the ","## Goal and priorities\nTurn the user's requirements, references and tutorials into high-qu","## Own the work\nCarry the authorized task through construction, observation, correction an","Use DSH's existing plan and task continuation for substantial work. Keep the current unres","Keep the user oriented before long operations and at meaningful decisions: what you observ","## Choose the next useful action\nInspect the relevant scene, reference material and availa","For multi-part assets, multi-subsystem simulation, cross-stage image processing or tool de","Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes p","When choosing visible surface detail, use houdini-surface-workflow for reference decomposi","Search primary sources when missing external facts would change dimensions, construction, ","For requested generated images, discover configured routes with image_models and use image","## Observe, judge and revise\nCompare the actual output with the requested shape, relations","Let local feedback guide integration: resolve the source defects that would spread through","Judge completion against the original target and the last relevant observations. Parameter","When saving is authorized, preserve useful milestones before expensive simulation, texture","Inspect the actual Houdini interface when layout, visibility or UI state matters, preservi","## Deliver\nMake new or changed work easy to find and edit. Offer its actual node entry poi","Integrate new user-facing operations into an existing asset's editing entry points and upd","Reply in the user's language, leading with the result, what can be opened or edited, and a","After verifying affected public entries, clean this task's known disposable files and node"]}],"tools":{"houdini_inspect":{"scene":true,"label":"观察现场","purpose":"读取真实Houdini场景、节点、参数和能力资料。","input":"只读Python代码；hou与动词已导入。","output":"读取结果、诊断及本次观察的场景身份。","execution":"Houdini主线程，只读"},"houdini_exec":{"scene":true,"label":"执行操作","purpose":"批量创建、修改、检查、保存或出图。","input":"Python代码，可组合动词；__result__返回结构数据。","output":"结果、真实错误、操作记录、事务状态、图像和文件。","execution":"Houdini主线程，串行"},"houdini_request":{"scene":true,"label":"查回执行","purpose":"回答某个未知响应的请求是否执行、是否完成；避免重复修改。","input":"request_ref，或index列出本会话可查回请求。","output":"原执行状态与可取得的原始结果；不会重发代码。","execution":"Bridge请求记录，无HOM"},"houdini_resource":{"scene":false,"label":"读取资料","purpose":"按需读取原始用户资料、完整历史工具结果及已归档加载警告。","input":"kind=source/result、ref及可选分页；result可选JSON Pointer。","output":"原文或JSON分页及继续读取位置。","execution":"DSH Host，无HOM"},"houdini_capabilities":{"scene":false,"label":"观察通道","purpose":"确认当前模型能否接收图片，以及附件通道是否可用。","input":"无需参数。","output":"当前模型与附件能力事实；不会渲染或判断画面。","execution":"DSH Host，无HOM"},"houdini_ui_list":{"scene":true,"label":"发现界面","purpose":"列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。","input":"无需参数；不打开或切换界面。","output":"当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。","execution":"Bridge主线程队列，只读发现"},"houdini_ui_screenshot":{"scene":true,"label":"观察界面","purpose":"截图明确的当前可见界面；目标须完整在屏内且无遮挡。","input":"target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。","output":"真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。","execution":"Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态"},"houdini_job_submit":{"scene":true,"label":"提交长任务","purpose":"把渲染、模拟或长计算放入Houdini队列并立即返回。","input":"Python代码；与exec相同的操作能力。","output":"jobId及提交回执。","execution":"Houdini串行队列"},"houdini_job_status":{"scene":true,"label":"等待长任务","purpose":"读取或等待长任务状态和结果。","input":"jobId及可选wait秒数。","output":"queued/running/done/failed/cancelled及实际结果。","execution":"Bridge任务记录"},"houdini_job_cancel":{"scene":true,"label":"取消长任务","purpose":"取消尚未执行的任务，并对运行中的任务发出取消意图。","input":"jobId。","output":"实际取消状态；运行中的HOM操作不会被强杀。","execution":"Bridge任务控制"},"image_models":{"label":"发现生图模型","purpose":"读取DSH已配置的OpenAI兼容API路由和模型名称，供指定生图模型使用；不调用模型，不证明图片接口可用。","input":"可选provider和模型名称子串query，默认image。","output":"配置中的provider/model及图片接口支持尚未验证的说明；不返回凭据。","execution":"DSH Host，无HOM"},"image_generate":{"label":"生成参考或纹理图","purpose":"使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。","input":"provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。","output":"实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。","execution":"DSH Host HTTP与文件；managed只读查询所选Houdini现场"},"video_process":{"label":"处理教程资料","purpose":"在Host受控进程中导入/抽帧和查询/整理本地教程证据，复用原脚本的来源校验及唯一文件记录。","input":"operation与options；只接受随包离线命令，路径绝对，写入使用工作区内新output目录。","output":"原命令JSON、进度、实际退出状态、选定Houdini的Python/私有媒体工具与输出路径；不认证语义。","execution":"DSH Host普通Python子进程，无shell/密钥/云请求/HOM"},"video_models":{"label":"发现转录配置","purpose":"读取教程视频的转录用途配置、DSH服务商和凭据状态；不上传音频，不证明转录接口可用。","input":"可选provider和模型名称子串query。","output":"默认用途、API路由、模型建议和缺失配置诊断；不返回凭据。","execution":"DSH Host，无HOM"},"video_transcribe":{"label":"转录教程音频","purpose":"用DSH中选定服务商与转录模型并行处理已准备的教程音频，复用原任务的分片和请求记录。","input":"work、allow_upload；可选provider/model、chunks、max_chunks、concurrency、requests_per_second、术语词表、说话人分离及明确授权的重试预算。","output":"逐片进度、实际在途峰值与成功/失败、剩余/未知请求、原任务目录及准确模型；原始响应和时间戳在同源outcome中，密钥只交给受控子进程。","execution":"DSH Host Python子进程与HTTP，无HOM"}}};
+      var sources = {"guidance":{"name":"dsh-houdini:guidance","order":150,"hash":"01b87afd076adca7ac1ebf71f4fc0b1c5b8d0f900ee16060ea05448e41cb80d1","bytes":5126,"paragraphStarts":["Houdini tool routing:\nUse houdini_inspect for live read-only scene and API information, ho","Execution boundary and discovery:\nCompose the injected Python verbs for edits. Raw hou is ","Current catalog: vocabulary 域: verb_help | 类型目录: search_tab_menu, search_tab_entries, reso","Result and recovery contract:\nTool results report execution, checks, restoration and files","Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, So","Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored"],"source":"src/index.ts"},"skills":[{"name":"houdini-trace-analysis","description":"分析 dsh-houdini 与 DeepSeek Harness 的原始会话日志，定位 Houdini 任务的完成差距、运行与工作区错位、工具合同、执行反馈、观察和性能问题。用户要求复盘指定或最新 trace、比较会话或据证据调整工具与审计技能时使用。","base":"skills/houdini-trace-analysis","files":[{"path":"agents/openai.yaml","hash":"334a2a7948a5fa607f4c2013deb13bf44398d75e1bf0bb1916707e4659a8ddb0","bytes":278},{"path":"references/audit-rubric.md","hash":"3cee7986662fe0e5f0bf8d94e20a1221ff2de10991e9be18aa63fca2714d534a","bytes":5727},{"path":"references/known-patterns.md","hash":"a435ede38dcc1ef4694cfaf70118561f44eecc10a443a53f5ba3290bbf51e879","bytes":2290},{"path":"scripts/evidence-helpers.mjs","hash":"7e6336b055398ad925d1d26dbc08b0fbe1f0228503d0fc664c61441e708e9783","bytes":71193},{"path":"scripts/extract-trace-evidence.mjs","hash":"322749fffca1d38421a41021fa55b1c63392c2e4474ce8114593feb7519ed994","bytes":26930},{"path":"SKILL.md","hash":"7695e5cf5be4f0be3820fa773d554528f9542c085725819a20c3f2b55b365fff","bytes":7085}]},{"name":"houdini-task-decomposition","description":"将复杂Houdini任务拆成可独立修改和观察的模块，按依赖逐个构建、检查并集成。用于多部件资产、多子系统模拟、跨阶段图像处理或工具开发；单参修改和纯查询直接处理。","base":"skills/houdini-task-decomposition","files":[{"path":"SKILL.md","hash":"a84fd202d75fd6fb178e24bd84f2e8e99fd1aff5f5761f1263c2124a5e52140d","bytes":6468}]},{"name":"houdini-sop-workflow","description":"设计、构建、修改和交付可编辑的Houdini SOP程序化网络。用于建模、散布、曲线成形、属性、VEX和SOP动画。纯场景查询直接用工具；HDA工具、rig、COP和Solaris使用对应领域技能。","base":"skills/houdini-sop-workflow","files":[{"path":"agents/openai.yaml","hash":"8628b8dfd3d0765ba6691fcaa0d168df2bcc30d4f464ac40862d86ed70c160e0","bytes":264},{"path":"references/execution-checkpoints.md","hash":"c9049d4adb4547ba8a861c2e9c63d7f7bd71c3246a4372726e5eb988493fb935","bytes":13451},{"path":"references/modeling-methods.md","hash":"1d17de353b7411691494131c4c05878055ff987a79bb3434c6312532dc68fea0","bytes":28840},{"path":"references/module-design-collaboration.md","hash":"9dc4e9c82705faa62101ff6a0f78f0ae6323008e8297cac456e9b1e787b184e4","bytes":1206},{"path":"references/module-quality-contracts.md","hash":"49ada6560cf919f4a7b8993f2c044eca33fd55482efd659de1d77c2abd79c521","bytes":19764},{"path":"references/procedural-quality-contract.md","hash":"f2a497ab80c5a7a635aeb49fd7548a286d4dc5609b1283e4b4af08b9686785c1","bytes":10078},{"path":"references/procedural-recipes.md","hash":"58f7cebf2e151abcf08107b7818c2038d90b2c1f80e598315fbffb667623e167","bytes":7122},{"path":"references/sop-patterns.md","hash":"60875ed61c38a402be1a9abcf8d7da15aa2b7c5844c08c4937f3ac990c10de41","bytes":13577},{"path":"SKILL.md","hash":"f0cafd77a278be4cfdf19d09ad44e2375709c17187977c696cd0040e547db7af","bytes":6799}]},{"name":"houdini-surface-workflow","description":"为模型与部件设计可编辑的表面外观，分析参考图中的几何与纹理分工，选择细化程度、UV、COP或生成图片，并在SOP中统一预览。用于新模型外观、涂装、贴花、微表面和已有材质修改；纯几何诊断或只生成参考图片不触发。","base":"skills/houdini-surface-workflow","files":[{"path":"references/appearance-and-sources.md","hash":"202a2f14f19807fcbae906e7031402e221a35141ac32436259919e68783af91e","bytes":3893},{"path":"references/generated-textures.md","hash":"102aa9532d16981534ca1f344470bbd4dadea6e22790ed6bdee1dd9af055da63","bytes":4198},{"path":"references/sop-preview-and-uv.md","hash":"53b635c3b106a9553e41ada6b868c0c6c347bb4cc35e7aead0b32e2d59dd51dc","bytes":9410},{"path":"SKILL.md","hash":"69d5ebfaeb230b568e3096606ec4eb6a1cc60c763519aeeb1722b50ab85c62e0","bytes":6452}]},{"name":"houdini-cop-workflow","description":"在 Houdini Copernicus 中制作、诊断和验证程序纹理与图像处理网络，包括建模中的涂装遮罩、标识/贴花、图像校正、微表面纹理、COP教程复现和文件导出。需要制作或修改图像数据时加载；纯几何建模、常量材质参数、只解析视频或仅消费已有贴图不触发。","base":"skills/houdini-cop-workflow","files":[{"path":"references/cache-and-delivery.md","hash":"2f828e0084649061dd4bb8e36072a394194abfa1a7cc79b7ceff785a49d90f73","bytes":7201},{"path":"references/evidence-and-validation.md","hash":"72978e6863271674b32abdcff27e9d34e3ea58e447c0c5ff409c01fbdb09f2c1","bytes":5661},{"path":"references/layers-and-ports.md","hash":"7adcd143eba07f73240284efea7ada0ade980fd7d200faff6fd36a4bca4d854a","bytes":3902},{"path":"references/pattern-design.md","hash":"12d2478bb7f431bbc2348175e4173873a32e49ce33fa06ca98447bd217a19c2d","bytes":7984},{"path":"references/relations-and-controls.md","hash":"4941a611b7c2fd2842c20c2d993e22fd069b9b664bad43f2473e8c909c875766","bytes":6096},{"path":"SKILL.md","hash":"71a9aa094c535394c8b3c3b65805ad8a7babdd5cbf99f60e9d110c9924d9dc42","bytes":6351}]},{"name":"houdini-tool-development","description":"开发、维护和交付Houdini HDA、Shelf/Tab、Python Panel与Viewer State工具，确定工具归属、原生入口与加载范围。普通可调模型或单独保存HIP不触发；纯参数布局使用houdini-parameter-ui。","base":"skills/houdini-tool-development","files":[{"path":"assets/tool-entry-examples/dsh_artist_example_panel.py","hash":"17312b21212b100a0952717581127c4c6b5649d7fdff71ccf33ecc0ca09723b6","bytes":3890},{"path":"assets/tool-entry-examples/dsh_artist_example_state.py","hash":"5499399d79f4dec1fd19a0cf26e6feb5a9521179a5963109a2b2dc5c547ed777","bytes":2379},{"path":"references/evidence-and-validation.md","hash":"570e92ffa41f75112307cc7e17a0c48f1d25676d8e7368a28af8e4d4b61bc399","bytes":11247},{"path":"references/hda-maintenance.md","hash":"68e854e92052848b56a81b5ca88716791d6dde98f8442b26429568c762f5142b","bytes":14245},{"path":"references/hda-ui.md","hash":"856872286a1c9acec59ac7bdd7be7e08b09986b5849b0bf4a8efcd6e9c45c248","bytes":262},{"path":"references/scripts-and-packaging.md","hash":"8ec8ad6f75bbd4da4494aeccc618b2dc24dd61940dfeceb9b9bc0cff2a6f918e","bytes":12420},{"path":"references/shelf-and-hotkeys.md","hash":"dcbe33bb694cf1990c55ad9d36602df9ed88e8d31cd8b75712852a4647d44385","bytes":6280},{"path":"references/ui-components.md","hash":"25d24be85f8a46d6db870278795c0ff68c325150071411f1d2def59bced689b4","bytes":303},{"path":"scripts/build-entry-examples.py","hash":"c025445c864028ec149c148cd36dde80bc22b68a5e9185638f1853fbff246826","bytes":4124},{"path":"SKILL.md","hash":"3f562add256ed70e3190b1f2c1fe4b4d52f597fec06c349a0fefd7a830e93bff","bytes":6373}]},{"name":"houdini-parameter-ui","description":"设计、建立和维护Houdini参数面板、程序化模型控制节点与场景总控；定义控制含义、选择spare或HDA载体、组合UI组件并规划验证参数绑定。适用于从零先做控制接口、已有场景提炼总控或改善布局；普通赋值、纯模型构建和Python Panel/WebView开发不单独触发。","base":"skills/houdini-parameter-ui","files":[{"path":"assets/ui-component-gallery.json","hash":"272efe43692fc47472f6963be238c5478a92b0ceda4f9b786074ea3be15c3fde","bytes":6684},{"path":"references/artist-ui-patterns.md","hash":"883d645e62f8fb48eda7905a21dd28a379173890efb3e99ad27d78f0518f65b7","bytes":4182},{"path":"references/control-bindings.md","hash":"f2c9ac49ffd399387c5322cb263199301e90846b9311c2fa0e2303f2a946a486","bytes":10910},{"path":"references/hda-ui.md","hash":"f0bccc16f6a1ac488ef3c14cbca9306d7d51a3830bb2d5a7f050bdcec79b2091","bytes":6786},{"path":"references/ui-components.md","hash":"1a6df78bfc1155185ca297a688fb6770b9d7c52c556ec4682ee1ed11d9b8d454","bytes":9789},{"path":"scripts/build-ui-gallery.py","hash":"11696ee776883f7daf22c4ddd3f318a36a1df9b623435a53fb3c4f60d5ab2112","bytes":3052},{"path":"SKILL.md","hash":"884f29a678396b97d07e3b6a17e80fa32ee3415d53e2a049c8b99aa2b67e0405","bytes":7315}]},{"name":"houdini-network-handoff","description":"让用户找到、理解并继续编辑Houdini成果：工程另存与文件交付、节点入口、Network Box和Sticky Note。准备保存交付成果、已明确模块编辑边界，或用户要求整理网络时加载；纯查询、单参修改、临时诊断不触发。","base":"skills/houdini-network-handoff","files":[{"path":"references/file-delivery.md","hash":"52d28991cf0931561e7d95c85f50128d2e5c0a74de8b4d3a0ce634fce479eb57","bytes":6736},{"path":"references/network-layout.md","hash":"c7fd85609c8456b726094480acbc44beafb1daefd3565ee9e08b942545118dff","bytes":4515},{"path":"SKILL.md","hash":"3255e3c4e61720b274be8219f83782fb583fa3ff518c5947fa5dbdfd67efe628","bytes":6680}]},{"name":"houdini-solaris-karma-workflow","description":"在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma 材质与渲染网络。用于用户要求最终渲染、Karma CPU/XPU、MaterialX、USD 材质绑定、Render Settings、AOV、USD Render ROP，或把 SOP/COP 结果接入 /stage；不用于仅需 render_view 的快速 SOP 视觉验证。","base":"skills/houdini-solaris-karma-workflow","files":[{"path":"references/karma-patterns.md","hash":"b43217570961693316f101a48d65f71ec686b8b1ae3d12d0c9cf0fa0b2b807e7","bytes":9678},{"path":"SKILL.md","hash":"4bdfd996fe8b89a772a43a00c7b2944f3f690e89e06864e2c17b0616b7ce4990","bytes":5430}]},{"name":"houdini-rig-animation-workflow","description":"在 Houdini 中设计、构建、调试和交付参数动画、刚体 piece 序列、机械层级、KineFX skeleton/skin 与 animator-facing rig。用于任务涉及 keyframes、绑定、FK/IK、capture/deform、非交换多步骤或可复用控制器；不用于普通静态 SOP 建模，也不把所有“绑定”默认路由到 KineFX/APEX。","base":"skills/houdini-rig-animation-workflow","files":[{"path":"references/rig-animation-patterns.md","hash":"7337f077f52b79b64fc3572ad47c1269c8a4222af7ede576d88602d6941c0d63","bytes":15476},{"path":"SKILL.md","hash":"733ee9de44a0e4591eb619bb0f94139b89fc464b2ccb1f868cf5b6d70b6f896a","bytes":8373}]},{"name":"houdini-skill-governance","description":"创建、审查、精简和维护 dsh-houdini 的领域 skills，或依据 Houdini trace、官方资料与工程修正领域知识。用于用户要求修改或评估插件 skills；普通内容制作和单纯 trace 分析不修改生产 skill。","base":"skills/houdini-skill-governance","files":[{"path":"references/eval-cases.md","hash":"088f899b3cac25229ce514fe36197a569cac65d247e6bbc7d9ba1c315f4f0a75","bytes":4959},{"path":"references/evidence-ingestion.md","hash":"d5d9fe3c3cb450e4d7cf30305b3967abbe7db5c098d33c0f9893aec5d8b4f5ca","bytes":5934},{"path":"references/maintenance-lifecycle.md","hash":"298458af78c5a2eef5ae1eb2c50666b6c0e2ab2360a9c046b9310e7cc82ecb9d","bytes":3011},{"path":"references/quality-standard.md","hash":"3a48c5e52a89af1e83c4872e788c3db1ec5a4ec5be5790a552ba974b4dca662e","bytes":7762},{"path":"scripts/audit-houdini-skills.mjs","hash":"e584e6bcabd5b39b95a47016b335049336b823df802276c1198a9daf17f04532","bytes":7129},{"path":"SKILL.md","hash":"ca962dfa217e946c2c8d3e90513af5c0d78f7719dc8d612c7869a5d3d7692b95","bytes":3936}]},{"name":"houdini-video-tutorial","description":"解析 Houdini 视频教程，结合云端语音转录与本地画面核对，提取带时间依据的步骤、设置、冲突和复现缺口。用于用户提供视频文件或要求从视频准备教学工程；不用于图文教程、普通建模、会议转录或自动知识沉淀。","base":"skills/houdini-video-tutorial","files":[{"path":"references/reconstruction.md","hash":"ae75469dc5a97b11000a0b295d1f5d2cefd882602ce1d1e86ccf617fb3b0d42b","bytes":16440},{"path":"references/video-processing.md","hash":"33b75730feaf4bb888e5310f5ab1d60ea268c7351e376a859895e971e28d16dd","bytes":47286},{"path":"scripts/video_tutorial.py","hash":"80f1b81927463c489eb0ae9459ede216069de744b58e56b34808a5690f5aa3ed","bytes":144375},{"path":"SKILL.md","hash":"bc9c8a8d33ad24cd4fc8f378de67170173b5c892721739acda8eab7df85a6c1e","bytes":16220}]}],"presets":[{"name":"houdini","file":"presets/houdini/persona.md","presetFile":"presets/houdini/cordis.patch.yml","hash":"94e10a28ebe5c20c54284ef4e8e46c83b437ef3eb4f00fa10d609ada07e14c76","bytes":7155,"paragraphStarts":["You are a Houdini automation agent powered by the ","## Goal and priorities\nTurn the user's requirements, references and tutorials into high-qu","## Own the work\nCarry the authorized task through construction, observation, correction an","Use DSH's existing plan and task continuation for substantial work. Keep the current unres","Keep the user oriented before long operations and at meaningful decisions: what you observ","## Choose the next useful action\nInspect the relevant scene, reference material and availa","For multi-part assets, multi-subsystem simulation, cross-stage image processing or tool de","Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes p","When choosing visible surface detail, use houdini-surface-workflow for reference decomposi","Search primary sources when missing external facts would change dimensions, construction, ","For requested generated images, discover configured routes with image_models and use image","## Observe, judge and revise\nCompare the actual output with the requested shape, relations","Let local feedback guide integration: resolve the source defects that would spread through","Judge completion against the original target and the last relevant observations. Parameter","When saving is authorized, preserve useful milestones before expensive simulation, texture","Inspect the actual Houdini interface when layout, visibility or UI state matters, preservi","## Deliver\nMake new or changed work easy to find and edit. Offer its actual node entry poi","Integrate new user-facing operations into an existing asset's editing entry points and upd","Reply in the user's language, leading with the result, what can be opened or edited, and a","After verifying affected public entries, clean this task's known disposable files and node"]}],"tools":{"houdini_inspect":{"scene":true,"label":"观察现场","purpose":"读取真实Houdini场景、节点、参数和能力资料。","input":"只读Python代码；hou与动词已导入。","output":"读取结果、诊断及本次观察的场景身份。","execution":"Houdini主线程，只读"},"houdini_exec":{"scene":true,"label":"执行操作","purpose":"批量创建、修改、检查、保存或出图。","input":"Python代码，可组合动词；__result__返回结构数据。","output":"结果、真实错误、操作记录、事务状态、图像和文件。","execution":"Houdini主线程，串行"},"houdini_request":{"scene":true,"label":"查回执行","purpose":"回答某个未知响应的请求是否执行、是否完成；避免重复修改。","input":"原请求的request_ref；index仅列当前所选运行实例中本会话的回执。","output":"原执行状态与可取得的原始结果；不会重发代码。","execution":"Bridge请求记录，无HOM"},"houdini_resource":{"scene":false,"label":"读取资料","purpose":"按需读取原始用户资料、完整历史工具结果及已归档加载警告。","input":"kind=source/result、ref及可选分页；result可选JSON Pointer。","output":"原文或JSON分页及继续读取位置。","execution":"DSH Host，无HOM"},"houdini_capabilities":{"scene":false,"label":"观察通道","purpose":"确认当前模型能否接收图片，以及附件通道是否可用。","input":"无需参数。","output":"当前模型与附件能力事实；不会渲染或判断画面。","execution":"DSH Host，无HOM"},"houdini_ui_list":{"scene":true,"label":"发现界面","purpose":"列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。","input":"无需参数；不打开或切换界面。","output":"当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。","execution":"Bridge主线程队列，只读发现"},"houdini_ui_screenshot":{"scene":true,"label":"观察界面","purpose":"截图明确的当前可见界面；目标须完整在屏内且无遮挡。","input":"target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。","output":"真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。","execution":"Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态"},"houdini_job_submit":{"scene":true,"label":"提交长任务","purpose":"把渲染、模拟或长计算放入Houdini队列并立即返回。","input":"Python代码；与exec相同的操作能力。","output":"jobId及提交回执。","execution":"Houdini串行队列"},"houdini_job_status":{"scene":true,"label":"等待长任务","purpose":"读取或等待长任务状态和结果。","input":"jobId及可选wait秒数。","output":"queued/running/done/failed/cancelled及实际结果。","execution":"Bridge任务记录"},"houdini_job_cancel":{"scene":true,"label":"取消长任务","purpose":"取消尚未执行的任务，并对运行中的任务发出取消意图。","input":"jobId。","output":"实际取消状态；运行中的HOM操作不会被强杀。","execution":"Bridge任务控制"},"image_models":{"label":"发现生图模型","purpose":"读取DSH已配置的OpenAI兼容API路由和模型名称，供指定生图模型使用；不调用模型，不证明图片接口可用。","input":"可选provider和模型名称子串query，默认image。","output":"配置中的provider/model及图片接口支持尚未验证的说明；不返回凭据。","execution":"DSH Host，无HOM"},"image_generate":{"label":"生成参考或纹理图","purpose":"使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。","input":"provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。","output":"实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。","execution":"DSH Host HTTP与文件；managed只读查询所选Houdini现场"},"video_process":{"label":"处理教程资料","purpose":"在Host受控进程中导入/抽帧和查询/整理本地教程证据，复用原脚本的来源校验及唯一文件记录。","input":"operation与options；只接受随包离线命令，路径绝对，写入使用工作区内新output目录。","output":"原命令JSON、进度、实际退出状态、选定Houdini的Python/私有媒体工具与输出路径；不认证语义。","execution":"DSH Host普通Python子进程，无shell/密钥/云请求/HOM"},"video_models":{"label":"发现转录配置","purpose":"读取教程视频的转录用途配置、DSH服务商和凭据状态；不上传音频，不证明转录接口可用。","input":"可选provider和模型名称子串query。","output":"默认用途、API路由、模型建议和缺失配置诊断；不返回凭据。","execution":"DSH Host，无HOM"},"video_transcribe":{"label":"转录教程音频","purpose":"用DSH中选定服务商与转录模型并行处理已准备的教程音频，复用原任务的分片和请求记录。","input":"work、allow_upload；可选provider/model、chunks、max_chunks、concurrency、requests_per_second、术语词表、说话人分离及明确授权的重试预算。","output":"逐片进度、实际在途峰值与成功/失败、剩余/未知请求、原任务目录及准确模型；原始响应和时间戳在同源outcome中，密钥只交给受控子进程。","execution":"DSH Host Python子进程与HTTP，无HOM"}}};
       var css = ".dsh-trace {\n  --tr-bg: var(--dsw-alias-bg-layer-1, #24272b);\n  --tr-panel: var(--dsw-alias-bg-layer-2, #2d3136);\n  --tr-fg: var(--dsw-alias-label-primary, #e6e8eb);\n  --tr-muted: var(--dsw-alias-label-secondary, #a8afb8);\n  --tr-line: var(--dsw-alias-border-l2, #3d434b);\n  --tr-orange: #e5a263;\n  --tr-red: #f18b87;\n  --tr-raised: var(--dsw-alias-interactive-bg-hover-solid, #343940);\n  --tr-selected: #3b342e;\n  --tr-selected-border: #856346;\n  --tr-error-bg: #3d3030;\n  --tr-error-border: #6b4948;\n  color: var(--tr-fg);\n  background: var(--tr-bg);\n  font: 13px/1.65 \"Segoe UI\", \"Microsoft YaHei\", sans-serif;\n  height: 100%;\n  min-height: 0;\n  min-width: 0;\n  flex: 1;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  position: relative;\n  isolation: isolate;\n}\n/* DSH owns this attribute; consume its resolved theme without changing it.\n   Static state colors also work in Houdini's Chromium 108. */\nbody:not([data-ds-dark-theme]) .dsh-trace {\n  --tr-orange: #a65f27;\n  --tr-red: #b9413c;\n  --tr-selected: #fff2e6;\n  --tr-selected-border: #cfac8b;\n  --tr-error-bg: #fceeee;\n  --tr-error-border: #dca2a0;\n}\n.dsh-trace * { box-sizing: border-box; }\n.dsh-trace button,\n.dsh-trace input,\n.dsh-trace select { font: inherit; color: inherit; }\n.dsh-trace button {\n  cursor: pointer;\n  border: 1px solid var(--tr-line);\n  background: var(--tr-panel);\n  border-radius: 8px;\n  padding: 6px 11px;\n  text-align: left;\n  /* Foreground, background and selection must change in the same paint. */\n  transition: none;\n}\n.dsh-trace button:hover { background: var(--tr-raised); }\n.dsh-trace button:focus-visible,\n.dsh-trace summary:focus-visible,\n.dsh-trace select:focus-visible,\n.dsh-trace input:focus-visible {\n  outline: 2px solid var(--tr-orange);\n  outline-offset: 2px;\n}\n.dsh-trace button[aria-pressed=\"true\"] {\n  background: var(--tr-selected);\n  border-color: var(--tr-selected-border);\n  color: var(--tr-fg);\n}\n.dsh-trace button:disabled { opacity: .4; cursor: default; }\n.dsh-trace header {\n  padding: 20px 22px 10px;\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  gap: 8px 16px;\n  flex-wrap: wrap;\n  flex: none;\n}\n.dsh-trace h2 { font-size: 18px; font-weight: 600; letter-spacing: .2px; margin: 0; }\n.dsh-trace h3 { font-size: 16px; font-weight: 600; margin: 6px 0 12px; overflow-wrap: anywhere; }\n.dsh-trace h4 { font-size: 13px; margin: 18px 0 8px; font-weight: 600; }\n.dsh-trace nav {\n  display: flex;\n  gap: 4px;\n  padding: 0 22px 12px;\n  border-bottom: 1px solid var(--tr-line);\n  flex: none;\n}\n.dsh-trace nav button { border: 1px solid transparent; background: transparent; }\n.dsh-trace .tr-status { color: var(--tr-muted); font-size: 12px; }\n.dsh-trace .tr-content { overflow: auto; min-height: 0; flex: 1; overscroll-behavior: contain; }\n.dsh-trace .tr-subnav { padding: 18px 22px 0; }\n.dsh-trace .tr-board { padding: 20px 22px; }\n.dsh-trace .tr-toolbar {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  gap: 10px;\n  flex-wrap: wrap;\n  margin-bottom: 16px;\n}\n.dsh-trace .tr-toolbar h3 { margin: 0; }\n.dsh-trace .tr-buttons { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }\n.dsh-trace .tr-buttons button { font-size: 12px; }\n.dsh-trace .tr-split {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);\n  gap: 18px;\n  align-items: start;\n}\n.dsh-trace .tr-inspector { grid-template-columns: minmax(190px, .7fr) minmax(0, 1.5fr); }\n.dsh-trace .tr-detail {\n  min-width: 0;\n  background: var(--tr-panel);\n  border: 1px solid var(--tr-line);\n  padding: 18px;\n  border-radius: 8px;\n  overflow-wrap: anywhere;\n}\n.dsh-trace .tr-list { min-width: 0; }\n.dsh-trace .tr-row {\n  display: block;\n  width: 100%;\n  padding: 14px;\n  margin: 0 0 8px;\n  border: 1px solid var(--tr-line);\n  border-radius: 8px;\n  background: var(--tr-panel);\n}\n.dsh-trace .tr-row h4 { margin-top: 0; }\n.dsh-trace .tr-meta,\n.dsh-trace .tr-muted,\n.dsh-trace small { font-size: 12px; color: var(--tr-muted); overflow-wrap: anywhere; }\n.dsh-trace .tr-meta { display: block; margin-top: 4px; }\n.dsh-trace .tr-pill {\n  display: inline-block;\n  font-size: 12px;\n  background: var(--tr-raised);\n  border-radius: 5px;\n  padding: 2px 7px;\n}\n.dsh-trace .tr-bad { color: var(--tr-red); }\n.dsh-trace .tr-warning { color: var(--tr-orange); }\n.dsh-trace .tr-attention {\n  background: var(--tr-error-bg);\n  border: 1px solid var(--tr-error-border);\n  padding: 12px 14px;\n  margin: 16px 0;\n  border-radius: 8px;\n}\n.dsh-trace .tr-attention h4 { margin-top: 0; color: var(--tr-red); }\n.dsh-trace .tr-attention-warning,\n.dsh-trace .tr-attention-unknown { background: var(--tr-panel); border-color: var(--tr-line); }\n.dsh-trace .tr-attention-warning h4 { color: var(--tr-orange); }\n.dsh-trace .tr-attention-unknown h4 { color: var(--tr-muted); }\n.dsh-trace .tr-type { color: var(--tr-muted); font-size: 12px; }\n.dsh-trace table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; }\n.dsh-trace th,\n.dsh-trace td {\n  text-align: left;\n  padding: 10px 8px;\n  vertical-align: top;\n  border-bottom: 1px solid var(--tr-line);\n  overflow-wrap: anywhere;\n}\n.dsh-trace th { font-weight: 500; color: var(--tr-muted); background: var(--tr-bg); }\n.dsh-trace code { font: 12px/1.65 Consolas, monospace; overflow-wrap: anywhere; }\n.dsh-trace pre {\n  font: 12px/1.75 Consolas, monospace;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  background: var(--tr-bg);\n  padding: 12px;\n  border: 1px solid var(--tr-line);\n  border-radius: 8px;\n  margin: 10px 0;\n}\n.dsh-trace details { border-top: 1px solid var(--tr-line); padding: 11px 0; margin-top: 8px; }\n.dsh-trace summary { cursor: pointer; overflow-wrap: anywhere; font-size: 12px; color: var(--tr-muted); }\n.dsh-trace details[open] > summary { margin-bottom: 10px; color: var(--tr-fg); }\n.dsh-trace .tr-note { color: var(--tr-muted); font-size: 12px; margin: 10px 0 16px; overflow-wrap: anywhere; }\n.dsh-trace .tr-prose { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; }\n.dsh-trace .tr-prose p { margin: 8px 0; }\n.dsh-trace .tr-empty { padding: 28px 18px; color: var(--tr-muted); text-align: center; }\n.dsh-trace select,\n.dsh-trace input {\n  padding: 7px 10px;\n  background: var(--tr-bg);\n  border: 1px solid var(--tr-line);\n  border-radius: 8px;\n  max-width: 100%;\n}\n.dsh-trace input { display: block; width: 100%; margin-top: 6px; font-family: Consolas, monospace; }\n.dsh-trace .tr-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0 24px; }\n.dsh-trace .tr-metrics > div { padding: 14px; border: 1px solid var(--tr-line); border-radius: 8px; background: var(--tr-panel); }\n.dsh-trace .tr-metrics strong { display: block; font-size: 24px; font-weight: 500; margin-top: 4px; }\n.dsh-trace .tr-domains { margin-bottom: 18px; }\n.dsh-trace .tr-tree { min-width: 0; }\n.dsh-trace .tr-raw { color: var(--tr-muted); }\n.dsh-trace .tr-prompt-group { border: 1px solid var(--tr-line); border-radius: 8px; margin: 10px 0; padding: 12px 14px; background: var(--tr-panel); }\n.dsh-trace .tr-prompt-group > summary { font-weight: 600; }\n.dsh-trace .tr-prompt-section { margin-top: 12px; padding-top: 10px; }\n.dsh-trace .tr-prompt-source { display: block; margin: 5px 0 0 18px; font-weight: 400; }\n.dsh-trace .tr-prompt-raw { line-height: 1.65; font-size: 12px; }\n.dsh-trace .tr-content-timeline { overflow: hidden; }\n.dsh-trace .tr-timeline { height: 100%; min-height: 0; display: flex; flex-direction: column; }\n.dsh-trace .tr-timeline-toolbar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  flex-wrap: wrap;\n  gap: 10px;\n  padding: 12px 18px;\n  border-bottom: 1px solid var(--tr-line);\n}\n.dsh-trace .tr-timeline-toolbar button,\n.dsh-trace .tr-pager select { font-size: 12px; padding: 5px 9px; line-height: 1.5; }\n.dsh-trace .tr-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 12px; }\n.dsh-trace .tr-range { font-variant-numeric: tabular-nums; color: var(--tr-muted); margin-right: 6px; }\n.dsh-trace .tr-timeline-body {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);\n  flex: 1;\n  min-height: 0;\n  overflow: hidden;\n}\n.dsh-trace .tr-call-list,\n.dsh-trace .tr-call-detail {\n  min-width: 0;\n  min-height: 0;\n  overflow: auto;\n  overscroll-behavior: contain;\n  scrollbar-width: thin;\n  scrollbar-color: var(--tr-muted) transparent;\n}\n.dsh-trace .tr-call-list { background: var(--tr-bg); padding: 8px; }\n.dsh-trace .tr-call-detail { background: var(--tr-panel); border-left: 1px solid var(--tr-line); }\n.dsh-trace .tr-call-detail > .tr-detail { border: 0; border-radius: 0; padding: 20px; }\n.dsh-trace .tr-call-row {\n  display: block;\n  width: 100%;\n  border: 1px solid transparent;\n  border-radius: 8px;\n  margin-bottom: 4px;\n  padding: 11px 10px;\n  background: var(--tr-bg);\n  line-height: 1.5;\n}\n.dsh-trace .tr-call-row[aria-pressed=\"true\"] { background: var(--tr-selected); border-color: var(--tr-selected-border); color: var(--tr-fg); }\n.dsh-trace .tr-call-row:hover:not([aria-pressed=\"true\"]) { background: var(--tr-raised); }\n.dsh-trace .tr-call-head { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 7px; align-items: start; }\n.dsh-trace .tr-call-index { font: 11px/1.8 Consolas, monospace; color: var(--tr-muted); }\n.dsh-trace .tr-call-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }\n.dsh-trace .tr-call-state { font-size: 11px; color: var(--tr-muted); white-space: nowrap; }\n.dsh-trace .tr-call-state.tr-bad { color: var(--tr-red); }\n.dsh-trace .tr-call-time { font: 11px/1.5 Consolas, monospace; color: var(--tr-muted); white-space: nowrap; margin-left: auto; }\n.dsh-trace .tr-call-meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; padding-left: 37px; font-size: 11px; min-width: 0; }\n.dsh-trace .tr-call-kind,\n.dsh-trace .tr-call-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tr-muted); }\n.dsh-trace .tr-call-kind { max-width: 48%; flex-shrink: 0; }\n.dsh-trace .tr-call-target { flex: 1; min-width: 0; }\n.dsh-trace .tr-back-list { display: none; }\n.dsh-trace .tr-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }\n@media (max-width: 850px) {\n  .dsh-trace .tr-split { grid-template-columns: 1fr; }\n  .dsh-trace .tr-board { padding: 16px; }\n  .dsh-trace header { padding: 16px 16px 10px; }\n  .dsh-trace nav { padding-left: 16px; padding-right: 16px; }\n  .dsh-trace .tr-subnav { padding-left: 16px; padding-right: 16px; }\n  .dsh-trace .tr-timeline-toolbar { padding: 10px 12px; }\n  .dsh-trace .tr-timeline-body { display: block; position: relative; }\n  .dsh-trace .tr-call-list { height: 100%; }\n  .dsh-trace .tr-call-detail { display: none; height: 100%; border: 0; }\n  .dsh-trace .tr-detail-open .tr-call-list { display: none; }\n  .dsh-trace .tr-detail-open .tr-call-detail { display: block; }\n  .dsh-trace .tr-back-list {\n    display: block;\n    position: sticky;\n    top: 0;\n    z-index: 1;\n    width: 100%;\n    background: var(--tr-panel);\n    border-radius: 0;\n    border: 0;\n    border-bottom: 1px solid var(--tr-line);\n    padding: 12px 18px;\n  }\n}\n@media (max-width: 430px) {\n  .dsh-trace header { display: block; }\n  .dsh-trace .tr-status { display: block; margin-top: 4px; }\n  .dsh-trace nav { gap: 0; }\n  .dsh-trace nav button { padding: 6px 9px; }\n  .dsh-trace .tr-call-head { grid-template-columns: 26px minmax(0, 1fr); gap: 3px 7px; }\n  .dsh-trace .tr-call-state { grid-column: 2; }\n  .dsh-trace .tr-call-meta { padding-left: 33px; }\n  .dsh-trace .tr-pager { width: 100%; }\n}\n@media (pointer: coarse) {\n  .dsh-trace button,\n  .dsh-trace summary,\n  .dsh-trace select { min-height: 44px; }\n}\n";
       var classifyRawEffect = (function classifyRawEffect(step) {
   if (isStructuredHoudiniCall(step)) return null;
@@ -3223,7 +3336,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
           var sessionId = target.sessionId;
           var workspace = target.workspacePath ? await workspaces.create({ path: target.workspacePath }) : null;
           if (!active(attempt)) return;
-          if (refresh) await sessions.refresh();
+          if (refresh || sessionId) await sessions.refresh();
           var snapshot = await snapshotWhen(function (w, s) {
             var found = workspace && w.items.find(function (item) { return item.workspaceId === workspace.workspaceId; });
             if (found && found.sessionIds.some(function (id) { return !w.archivedSessionIds.includes(id) && !s.byId[id]; })) return;
@@ -3313,94 +3426,6 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
         start();
         return { stop: stop };
       }
-    }
-
-    // --- shared executor picker (handwritten; no direct Bridge/browser requests) ---
-    function createExecutorPicker(connection) {
-      var buttonStyle = { font: "inherit", fontSize: 12, padding: "6px 10px", border: "1px solid var(--dsw-alias-border-l2,#3d434b)",
-        borderRadius: 8, background: "var(--dsw-alias-bg-layer-2,#2d3136)", color: "var(--dsw-alias-label-primary,#e6e8eb)", cursor: "pointer", minHeight: 32, maxWidth: "100%" };
-      return function ExecutorPicker(props) {
-        var preset = props.useSessions(function (s) {
-          var row = s && s.byId && s.byId[props.sessionId];
-          return row && row.projectionValues && row.projectionValues.agentPreset || "";
-        });
-        var state = React.useState({ open: false, busy: false, rows: [], message: "" });
-        var value = state[0], set = state[1];
-        var hostGeneration = React.useSyncExternalStore(connection.generation.subscribe, connection.generation.getSnapshot);
-        var capabilities = React.useState(null), capability = capabilities[0], setCapability = capabilities[1];
-        var pending = React.useRef(null), generation = React.useRef(0), current = React.useRef(props.sessionId);
-        current.current = props.sessionId;
-        React.useEffect(function () {
-          if (!hostGeneration || preset !== "houdini") return;
-          var controller = new AbortController();
-          var timeout = setTimeout(function () { controller.abort(); }, 10000);
-          connection.rpc.call("/api", "houdiniFrontend/capabilities", { args: {} }, controller.signal).then(function (response) {
-            if (!controller.signal.aborted && connection.generation.getSnapshot() === hostGeneration && response.ok) {
-              setCapability({ generation: hostGeneration, sharedExecutors: response.value && response.value.sharedExecutors === true });
-            }
-          }).catch(function () {
-            // The optional picker stays hidden until this Host confirms the service.
-          }).finally(function () { clearTimeout(timeout); });
-          return function () { controller.abort(); clearTimeout(timeout); };
-        }, [hostGeneration, preset === "houdini"]);
-        React.useEffect(function () {
-          generation.current++;
-          if (pending.current) pending.current.abort();
-          set({ open: false, busy: false, rows: [], message: "" });
-          return function () { generation.current++; if (pending.current) pending.current.abort(); };
-        }, [props.sessionId, hostGeneration]);
-        if (preset !== "houdini" || !hostGeneration || !capability || capability.generation !== hostGeneration || !capability.sharedExecutors) return null;
-        async function request(method, input) {
-          var task = props.sessionId, ticket = ++generation.current;
-          if (pending.current) pending.current.abort();
-          var controller = new AbortController(); pending.current = controller;
-          var timeout = setTimeout(function () { controller.abort(); }, 10000);
-          set(function (old) { return Object.assign({}, old, { open: true, busy: true, message: "正在核对执行端…" }); });
-          try {
-            var response = await connection.rpc.call("/api", "houdiniTargets/" + method,
-              { args: input ? { input: input } : {} }, controller.signal);
-            if (current.current !== task || generation.current !== ticket || connection.generation.getSnapshot() !== hostGeneration) return;
-            if (!response.ok) throw new Error(response.error && response.error.message || "共享执行端服务不可用");
-            if (method === "list") {
-              var rows = response.value && response.value.candidates;
-              if (!Array.isArray(rows)) throw new Error("执行端列表格式无效");
-              var recovery = response.value && response.value.recovery;
-              var inventory = rows.length ? "登记不代表在线；绑定时会核对当前 HIP 和执行端身份。" : "没有已登记的 Houdini。请先在对应 Houdini 注册共享执行端。";
-              set({ open: true, busy: false, rows: rows,
-                message: (recovery && recovery.message ? recovery.message + " " : "") + inventory });
-            } else {
-              set(function (old) { return Object.assign({}, old, { busy: false,
-                message: "本任务已绑定所选 Houdini。未加载、保存或验证工程内容。" }); });
-            }
-          } catch (error) {
-            if (current.current === task && generation.current === ticket) set(function (old) {
-              return Object.assign({}, old, { busy: false, message: "未完成绑定：" + String(error.message || error) + "。若共享服务未启用，请勿重启正在工作的实例。" });
-            });
-          } finally { clearTimeout(timeout); }
-        }
-        function choose(row) {
-          if (value.busy || current.current !== props.sessionId) return;
-          request("select", { sessionId: props.sessionId, executorId: row.executor_id,
-            registrationId: row.registration_id, expectedHip: row.hip_path });
-        }
-        return React.createElement("section", { "aria-label": "Houdini 执行端", style: { width: "calc(100% - 32px)", margin: "0 auto", fontFamily: "system-ui, Microsoft YaHei, sans-serif", fontSize: 13, lineHeight: 1.5 } },
-          React.createElement("button", { type: "button", style: buttonStyle, disabled: value.busy, "aria-expanded": value.open,
-            onClick: function () { if (value.open) set(Object.assign({}, value, { open: false })); else request("list", { sessionId: props.sessionId }); } }, "Houdini 执行端"),
-          value.open && React.createElement("div", { style: { padding: "10px 0", borderTop: "1px solid var(--dsw-alias-border-l2,#3d434b)", marginTop: 8 } },
-            React.createElement("p", { role: "status", style: { margin: "0 0 8px", fontSize: 12 } }, value.message),
-            React.createElement("div", { style: { maxHeight: 260, overflowY: "auto" } }, value.rows.map(function (row) {
-              var other = row.task_id && row.task_id !== props.sessionId;
-              var bound = row.task_id === props.sessionId && row.binding_status === "bound";
-              var disabled = value.busy || other || bound || row.state !== "registered" || !row.hip_path;
-              return React.createElement("div", { key: row.executor_id, style: { display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: "8px 0" } },
-                React.createElement("div", { style: { minWidth: 0, flex: 1 } },
-                  React.createElement("strong", null, "Houdini " + row.houdini_version),
-                  React.createElement("div", { style: { fontFamily: "Consolas, monospace", fontSize: 12, overflowWrap: "anywhere" } }, row.hip_path || "未保存的工程"),
-                  React.createElement("small", null, row.state === "disconnected" ? "已断开" : other ? "其他任务已预留" : bound ? "本任务已绑定" : "待握手核验")),
-                React.createElement("button", { type: "button", style: buttonStyle, disabled: !!disabled, onClick: function () { choose(row); } }, bound ? "已绑定" : "选择并绑定"));
-            })),
-            React.createElement("button", { type: "button", style: buttonStyle, disabled: value.busy, onClick: function () { request("list", { sessionId: props.sessionId }); } }, "刷新执行端")));
-      };
     }
 
     // Tutorial preferences use DSH's shared form and credential registry.
@@ -3677,13 +3702,9 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
           return slots.register({ name: "conversation.session.header.utilities", id: "houdini-support-report", order: 20 },
             createSupportReporter(scope.get("connection")));
         });
-        slots.inject("conversation.input.dock", function () {
-          return slots.register({ name: "conversation.input.dock", id: "houdini-executor-picker", order: 98 },
-            createExecutorPicker(scope.get("connection")));
-        });
       });
-      if (typeof ctx.inject === "function") ctx.inject(["connection", "uiSession"], function (scope) {
-        var workbench = createWorkbenchUi(scope.get("connection"), scope.get("uiSession"));
+      if (typeof ctx.inject === "function") ctx.inject(["connection", "uiSession", "sessions", "uiWorkspace"], function (scope) {
+        var workbench = createWorkbenchUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"));
         [["sidebar.session.row.leading", "houdini-project-mark", workbench.Mark],
           ["sidebar.session.row.hover", "houdini-project-detail", workbench.Detail],
           ["conversation.input.left", "houdini-initial-project", workbench.Blank],

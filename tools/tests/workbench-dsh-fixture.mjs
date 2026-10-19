@@ -58,12 +58,17 @@ export function apply(ctx) {
             turns:agent.session.snapshotEvents().filter(event=>event.type==='turn/start').length,
             title:ctx.sessionTitle.get(agent.session)??null,
             workspaces:ctx.workspaceRegistry.list().map(workspace=>({id:workspace.id,path:workspace.path,sessionIds:workspace.sessionIds}))}
+        } else if(input.action==='targets') {
+          response={ok:true,...await ctx.houdiniTargets.list({sessionId:agent.id})}
+        } else if(input.action==='select') {
+          response={ok:true,...await ctx.houdiniTargets.select({sessionId:agent.id,...input.args},signal)}
+        } else if(input.action==='clear') {
+          response={ok:true,...await ctx.houdiniTargets.clear({sessionId:agent.id},signal)}
         } else if(input.action==='pinTitle') {
           ctx.sessionTitle.rename(agent.session,'旧工程标题.hip')
           response={ok:true}
         } else if(input.action==='beforeStep') {
           await recovery.followDirectory(agent,signal,true)
-          await recovery.beforeStep(agent,signal)
           response={ok:true,cwd:agent.session.header.cwd,events:agent.session.snapshotEvents()}
         } else {
           scripts.set(agent.id,input)

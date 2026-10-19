@@ -132,6 +132,26 @@ try:
     status, prepared = post('/requests/prepare', {'owner_session':'fixture'})
     assert status == 200 and prepared['requestRef'].startswith(prepared['runtimeId']+'.')
     assert b._work_queue.empty(), 'preparing a receipt must not run or queue HOM'
+    # An explicitly selected target is checked before issuing a ticket/context.
+    selected = {'scene_epoch': b._recovery.scene_epoch(), 'runtime_id': b._RUNTIME_ID}
+    status, ticket = post('/requests/prepare', {'owner_session': 'read-selected', **selected})
+    assert status == 200, ticket
+    assert not b._recovery.connected('read-selected'), 'read selection must not create a task/ownership binding'
+    b._recovery.require_target('read-selected', selected['scene_epoch'])
+    assert not b._recovery.connected('read-selected'), 'actor read admission must remain ownership-neutral'
+    for field in ('scene_epoch', 'runtime_id'):
+        stale = {**selected, field: '0' * 32 if selected[field] != '0' * 32 else '1' * 32}
+        assert post('/requests/prepare', {'owner_session': 'read-selected', **stale})[0] == 409
+        assert post('/context', {'schema_version': 1, **stale})[0] == 409
+    # A file may change after the HTTP check while context is queued. The actor
+    # must reject it before querying HOM in that new scene.
+    def changed_before_dispatch(callback, **kwargs):
+        with patch.object(b._recovery, 'scene_epoch', return_value='0' * 32 if selected['scene_epoch'] != '0' * 32 else '1' * 32):
+            return callback()
+    with patch.object(b, '_execute', side_effect=changed_before_dispatch):
+        status, changed = post('/context', {'schema_version': 1, **selected})
+    assert status == 200 and changed['ok'] is False and 'scene_epoch changed' in changed['reason'], changed
+    assert b._work_queue.empty(), 'selection checks must not leave scene work queued'
     assert post_rejecting('/exec', {'code': 'pass'}, {'Content-Type': 'application/json', 'Origin': 'https://untrusted.example'})[0] == 403
     assert post('/exec', [], None)[0] == 400
     assert post_rejecting('/exec', {'code': 'pass'}, {'Content-Type': 'application/json', 'Content-Length': '-1'})[0] == 413
@@ -361,6 +381,16 @@ try:
     assert post('/jobs/qa/cancel', {})[0] == 400, 'job control without identity is rejected'
     assert post('/jobs/qa/cancel', job_control(body_contract={'version': True, 'hash': b._VERB_CATALOG_HASH}))[0] == 400, 'bool version is a type error'
     assert post('/jobs/qa/cancel', job_control(body_contract={'version': 0, 'hash': 'x'}))[0] == 409
+    wrong_runtime = '0' * 32 if b._RUNTIME_ID != '0' * 32 else '1' * 32
+    for action in ('status', 'cancel'):
+        status, rejected = post('/jobs/qa/' + action, {**job_control(owner='alice'), 'runtime_id': wrong_runtime})
+        assert status == 409 and 'runtime_id changed' in rejected['error'], rejected
+        assert jobs_state() == state_before, 'a wrong runtime must not read or modify a same-ID job'
+        assert post('/jobs/qa/' + action, {**job_control(owner='alice'), 'runtime_id': 123})[0] == 400
+    with patch.object(b._recovery, 'scene_epoch', side_effect=AssertionError('historical job lookup must not inspect the current scene')):
+        status, historical = post('/jobs/qa/status', {**job_control(owner='alice'), 'runtime_id': b._RUNTIME_ID})
+    assert status == 200 and historical['status'] == 'queued', historical
+    assert jobs_state() == state_before, 'a valid historical job read preserves all state'
     # Foreign session: every state is a uniform 404 with no payload/evidence
     # leak; queued, running, done, failed and cancelled all covered.
     for jid in ('qa', 'ra', 'da', 'fa', 'ca'):

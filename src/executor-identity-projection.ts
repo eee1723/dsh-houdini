@@ -12,6 +12,10 @@ import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
 const TARGET_SECTION='dsh-houdini:executor-binding'
 const LIVE=HOUDINI_SCENE_TOOLS
 const ID=/^[0-9a-f]{32}$/
+export const targetSnapshotSchema=z.object({executor_id:z.string().regex(ID),runtime_id:z.string().regex(ID),
+  scene_epoch:z.string().regex(ID),scene_id:z.string().regex(ID).nullable(),registration_id:z.string().regex(ID),
+  hip_path:z.string().min(1),hip_is_new:z.boolean(),workspace_path:z.string().optional()})
+export type TargetSnapshot=z.infer<typeof targetSnapshotSchema>
 const WarningCounts={capture_id:z.string().regex(ID),original_chars:z.number().int().nonnegative(),
   omitted_chars:z.number().int().nonnegative(),truncated:z.boolean()}
 const WarningDetails=z.discriminatedUnion('status',[
@@ -31,7 +35,8 @@ const Recovery=z.object({schema:z.literal(2),kind:z.literal('executor_recovery')
   user_choice:z.record(z.string(),z.unknown()).optional()})
 export type RecoveryBinding=z.infer<typeof Recovery>
 const Project=z.object({hipPath:z.string().nullable(),hipIsNew:z.boolean().nullable(),needsReview:z.boolean(),
-  sceneId:z.string().nullable(),executorId:z.string().nullable(),sceneEpoch:z.string().nullable(),label:z.string().nullable()})
+  sceneId:z.string().nullable(),executorId:z.string().nullable(),sceneEpoch:z.string().nullable(),label:z.string().nullable(),
+  runtimeId:z.string().nullable().optional(),selectionExplicit:z.boolean().optional(),target:targetSnapshotSchema.nullable().optional()})
 type Project=z.infer<typeof Project>
 const REVIEW_PROJECT:Project={hipPath:null,hipIsNew:null,needsReview:true,sceneId:null,executorId:null,sceneEpoch:null,label:null}
 const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
@@ -39,6 +44,8 @@ const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
   queuedBindings:z.record(z.string(),z.string()),
   queuedProjects:z.record(z.string(),z.string()),
   hasOperations:z.boolean(),
+  selectedTarget:targetSnapshotSchema.nullable(),selectionRecorded:z.boolean(),selectionRevision:z.number(),
+  pendingSelections:z.record(z.string(),z.number()),
   executors:z.array(z.string()),recovery:Recovery.nullable(),recoverySeq:z.number(),
   project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number()})
 type State=z.infer<typeof State>
@@ -76,13 +83,14 @@ function projectObservation(state:State,value:any,observedAt:number,sequence=0):
   const project=state.project&&state.project.hipPath===value.hip_path&&state.project.hipIsNew===hipIsNew
     &&state.project.sceneId===sceneId&&state.project.sceneEpoch===sceneEpoch&&state.project.label===label
     &&state.project.needsReview===needsReview&&state.project.executorId===state.identity?state.project:
-    {hipPath:value.hip_path,hipIsNew,needsReview,sceneId,executorId:state.identity,sceneEpoch,label}
+    {...(state.project??{}),hipPath:value.hip_path,hipIsNew,needsReview,sceneId,executorId:state.identity,sceneEpoch,label}
   return {...state,project,projectObservedAt:observedAt,projectSequence:sequence}
 }
 
 function projectMessage(state:State,message:any,event:SessionEvent):State {
   const sections=(message.source.sections??[]).filter((section:any)=>['dsh-houdini:workspace-open','dsh-houdini:workspace-directory'].includes(section.name))
   if(!sections.length)return state
+  if(state.selectionRecorded)return state // Routing choices no longer come from workspace/recovery notices.
   const signature=JSON.stringify(sections.map((section:any)=>section.text))
   const queued=state.queuedProjects[message.id]
   if(queued!==undefined) {
@@ -107,9 +115,10 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:11,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:12,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
-    executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{}}),
+    executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{},
+    selectedTarget:null,selectionRecorded:false,selectionRevision:0,pendingSelections:{}}),
   wire:{viewSchema:Project.nullable(),view:(state:State)=>state.invalid||state.conflict?REVIEW_PROJECT:state.project},
   apply(state:State,event:SessionEvent):State {
     const messages=houdiniSourceMessages(event)
@@ -139,12 +148,45 @@ export const executorIdentityProjection={
           let value:any
           try {value=JSON.parse(section.text.slice(section.text.indexOf('\n')+1))}
           catch {return {...next,invalid:'Malformed recorded Houdini executor binding'}}
+          if(value?.schema===3&&value.kind==='target_selection') {
+            const parsed=targetSnapshotSchema.nullable().safeParse(value.target)
+            if(!parsed.success)return {...next,invalid:'Invalid recorded Houdini target selection'}
+            const target=parsed.data
+            const revision=next.selectionRevision+1
+            let pending=next.pending,pendingSelections=next.pendingSelections
+            if(target&&!next.selectionRecorded&&!next.identity) {
+              // First tool use selects its scene after DSH records the call.
+              // Only calls issued while truly unbound belong to this choice;
+              // an earlier bound call can never follow a later target change.
+              pending={...pending};pendingSelections={...pendingSelections}
+              for(const [callId,identity] of Object.entries(next.pending))if(identity===null
+                &&next.pendingSelections[callId]===next.selectionRevision) {
+                pending[callId]=target.executor_id;pendingSelections[callId]=revision
+              }
+            }
+            next={...next,identity:target?.executor_id??null,bindingRecorded:Boolean(target),invalid:null,conflict:false,
+              selectedTarget:target,selectionRecorded:true,selectionRevision:revision,pending,pendingSelections,recovery:null,recoverySeq:event.seq??0,
+              executors:target?[...new Set([...next.executors,target.executor_id])]:next.executors,
+              project:target?{hipPath:target.hip_path,hipIsNew:target.hip_is_new,needsReview:!target.scene_id,
+                sceneId:target.scene_id,executorId:target.executor_id,sceneEpoch:target.scene_epoch,label:null,
+                runtimeId:target.runtime_id,selectionExplicit:true,target}:null,projectObservedAt:(event.time??0)/1000,projectSequence:0}
+            continue
+          }
           if(value?.kind==='executor_recovery') {
-            if(event.type==='agent/inbox/spliced')return {...next,invalid:'Recovery transitions require a committed native message'}
             const parsed=Recovery.safeParse(value)
-            if(!parsed.success||next.invalid||next.conflict||parsed.data.previous_executor!==next.identity)
+            if(!parsed.success||next.invalid||next.conflict||(!next.selectionRecorded&&parsed.data.previous_executor!==next.identity))
               return {...next,invalid:'Invalid Houdini recovery transition'}
             const recovery=parsed.data
+            if(next.selectionRecorded) {
+              // Ownership restoration is not another target selection. It may
+              // describe only the already selected scene, never retarget it.
+              const target=next.selectedTarget
+              if(target&&next.executors.includes(recovery.previous_executor)&&target.executor_id===recovery.executor_id
+                &&target.runtime_id===recovery.runtime_id&&target.scene_epoch===recovery.scene_epoch&&target.scene_id===recovery.scene_id)
+                next={...next,recovery}
+              continue
+            }
+            if(event.type==='agent/inbox/spliced')return {...next,invalid:'Recovery transitions require a committed native message'}
             next={...next,identity:recovery.executor_id,bindingRecorded:true,recovery,recoverySeq:event.seq??0,
               executors:[...new Set([...next.executors,recovery.executor_id])],projectObservedAt:0,projectSequence:0}
             next=projectObservation(next,{...recovery,hip_is_new:false},(event.time??0)/1000)
@@ -152,6 +194,7 @@ export const executorIdentityProjection={
           }
           if (value?.schema!==1 || value?.kind!=='executor_binding')
             return {...next,invalid:'Invalid recorded Houdini executor binding'}
+          if(next.selectionRecorded)continue // Late legacy context cannot replace a choice or clear.
           if(value.previous_executor!==undefined) {
             if(next.hasOperations||next.recovery||next.identity!==value.previous_executor||!ID.test(value.executor_id))
               return {...next,invalid:'Only an unexecuted task can change its initial target'}
@@ -168,14 +211,29 @@ export const executorIdentityProjection={
     const call=executionCall(event)
     if(call&&(call.name==='run_code'||LIVE.has(call.name)))
       state={...state,hasOperations:true}
-    if (call && LIVE.has(call.name)) return {...state,pending:{...state.pending,[call.callId]:state.identity}}
+    if (call && LIVE.has(call.name)) return {...state,pending:{...state.pending,[call.callId]:state.identity},
+      pendingSelections:{...state.pendingSelections,[call.callId]:state.selectionRevision}}
     const result=executionResult(event)
     if (!result || !Object.hasOwn(state.pending,result.callId)) return state
     const expected=state.pending[result.callId]
     const pending={...state.pending}
     delete pending[result.callId]
-    const next={...state,pending}
+    const pendingSelections={...state.pendingSelections};delete pendingSelections[result.callId]
+    const next={...state,pending,pendingSelections}
     const identity=result.value?.execution?.executor_id ?? result.value?.requestReceipt?.executor_id
+    if(state.selectionRecorded) {
+      const target=state.selectedTarget,execution=result.value?.execution
+      const epoch=execution?.scene_epoch??execution?.scene_recovery?.scene_epoch
+      const scene=execution?.scene_id??execution?.scene_recovery?.scene_id
+      if(!target||state.pendingSelections[result.callId]!==state.selectionRevision||identity!==target.executor_id
+        ||execution?.runtime_id!==target.runtime_id||epoch!==target.scene_epoch||scene!==target.scene_id)return next
+      const observed=projectObservation(next,execution,execution.observed_at,execution.sequence??0)
+      if(observed===next||!observed.project)return observed
+      const updated={...target,hip_path:observed.project.hipPath??target.hip_path,
+        hip_is_new:observed.project.hipIsNew??target.hip_is_new,
+        ...(typeof execution.hip_dir==='string'?{workspace_path:execution.hip_dir}:{})}
+      return {...observed,selectedTarget:updated,project:{...observed.project,target:updated}}
+    }
     if(identity!==undefined&&expected&&expected!==state.identity)
       return identity===expected?next:{...next,conflict:true}
     return identity===undefined ? next : projectObservation(add(next,identity),result.value?.execution,

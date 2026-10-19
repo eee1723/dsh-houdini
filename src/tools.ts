@@ -39,7 +39,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     presentResult: (_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_exec.label,result),result),
     async execute(args,exec) {
       if(!args.code?.trim()) throw Error('Provide nonempty Python code')
-      const {bridge,owner}=await runtime.target(exec)
+      const {bridge,owner}=await runtime.target(exec,'write')
       return runtime.result(await bridge.exec(args.code,owner,exec.signal,args.allow_raw),exec,bridge,true)
     },
   }))
@@ -134,7 +134,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_submit.label, result), result),
     async execute(args, exec) {
-      const { bridge, owner } = await runtime.target(exec)
+      const { bridge, owner } = await runtime.target(exec,'write')
       return bridge.submitJob(args.code, owner, exec.signal, args.allow_raw)
     },
   }))
@@ -161,7 +161,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const { bridge, owner } = await runtime.target(exec)
+      const { bridge, owner } = await runtime.historicalTarget(exec,{jobId:args.jobId})
       const status = await bridge.jobStatus(args.jobId, owner, args.wait, exec.signal)
       return runtime.result(status, exec, bridge)
     },
@@ -188,7 +188,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     async execute(args, exec) {
       if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
         throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const { bridge, owner } = await runtime.target(exec)
+      const { bridge, owner } = await runtime.historicalTarget(exec,{jobId:args.jobId})
       return runtime.retain(await bridge.cancelJob(args.jobId, owner, exec.signal), exec)
     },
   }))

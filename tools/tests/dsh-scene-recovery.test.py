@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import uuid
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -125,6 +126,16 @@ def worker(mode, folder):
         located = call('locate', expected={'scene_id': original['scene']})['value']
         assert not located['candidates'] and located['unavailable'], 'do not offer a still-live author as a resumable target'
         return
+    assert not ownership.records()
+    # An explicit recovery is still pinned to the selected live target, both
+    # before queueing and at actor dispatch. It grants no ownership on mismatch.
+    selected_epoch = recovery.scene_epoch()
+    stale_epoch = '0' * 32 if selected_epoch != '0' * 32 else '1' * 32
+    assert 'error' in call('assess', scene_epoch=stale_epoch, runtime_id=bridge._RUNTIME_ID)
+    assert 'error' in call('assess', scene_epoch=selected_epoch, runtime_id='0' * 32 if bridge._RUNTIME_ID != '0' * 32 else '1' * 32)
+    with patch.object(recovery, 'scene_epoch', side_effect=[selected_epoch, stale_epoch]):
+        queued = call('assess', scene_epoch=selected_epoch, runtime_id=bridge._RUNTIME_ID)
+    assert 'scene_epoch changed' in queued['error'], queued
     assert not ownership.records()
     located = call('locate', expected={'scene_id': original['scene']})['value']
     assert [item['checkpoint_id'] for item in located['candidates']] == [original['checkpoint']], located

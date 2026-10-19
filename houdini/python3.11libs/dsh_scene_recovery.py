@@ -221,7 +221,8 @@ def invalidate():
     _PROVEN = None
     _STATUS = {'status': 'not_observed'}
     _OPERATIONS.clear()
-    # Keep task expectations so an old task cannot silently adopt the new HIP.
+    # Keep old ownership bindings as history. Live request admission is fenced
+    # by the explicitly selected scene epoch, independently of these bindings.
     dsh_ownership.clear_for_scene_load()
 
 
@@ -288,9 +289,9 @@ def install():
 def task_target(owner, *, allow_rebind=False):
     """Actor-side scene fence, captured once even before the first saved HIP.
 
-    `allow_rebind` is reserved for an explicit writer claim: after the user
-    reopens the same project the epoch changes and the old binding must move to
-    the new scene. Ordinary execution keeps the strict fence.
+    `allow_rebind` is reserved for a writer claim against an explicitly
+    selected current target. It binds the task to that scene without restoring
+    old node ownership or requiring the former project's checkpoint.
     """
     _main()
     expected = _BINDINGS.get(owner)
@@ -320,7 +321,8 @@ def require_target(owner, epoch):
     _main()
     if epoch != _EPOCH:
         raise RuntimeError('Scene changed after request preparation; no operation dispatched')
-    task_target(owner)
+    # A ticket identifies the selected scene, independently of node ownership.
+    # Read-only requests never bind the task or claim a writer.
 
 
 def preview(record, owner, previous, expected_scene=None):

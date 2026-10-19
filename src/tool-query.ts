@@ -20,7 +20,7 @@ export function readResource(args:{kind:'source'|'result';ref:string;pointer?:st
 }
 
 export async function recoverRequest(request_ref:string,exec:any,runtime:HoudiniToolRuntime):Promise<ExecResult> {
-    const { bridge, owner } = await runtime.target(exec, false)
+    const { bridge, owner } = await runtime.historicalTarget(exec,{requestRef:request_ref})
     const receipt = await bridge.requestStatus(request_ref, owner, exec.signal)
     const recovered: any = receipt.requestReceipt
     const jobId = recovered?.jobId || (recovered?.status === 'done' && recovered.result?.jobId)

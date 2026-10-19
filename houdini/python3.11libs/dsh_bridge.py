@@ -83,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 109
+_EXECUTION_CONTRACT_VERSION = 110
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -136,6 +136,28 @@ def run_code(code: str, allow_raw: str | None = None,
              read_only: bool = False) -> dict:
     """Main-thread execution entry shared by HTTP and isolated Python callers."""
     return _runtime.run_code(code, allow_raw, owner_session, owner_call, read_only, raw_gate=_raw_gate)
+
+
+def _target_error(body, *, check_scene=True):
+    """Check an explicitly selected live target without binding or claiming it."""
+    expected = [('runtime_id', _RUNTIME_ID)]
+    if check_scene:
+        expected.append(('scene_epoch', _recovery.scene_epoch()))
+    for field, current in expected:
+        if field not in body:
+            continue  # Bare diagnostic clients have no persisted selection.
+        value = body[field]
+        if not isinstance(value, str) or len(value) != 32 or any(c not in '0123456789abcdef' for c in value):
+            return 400, field + ' must be a live target identity'
+        if value != current:
+            return 409, 'Selected Houdini ' + field + ' changed; refresh the explicit target before operating'
+    return None
+
+
+def _require_selected_target(body):
+    rejection = _target_error(body)
+    if rejection:
+        raise RuntimeError(rejection[1])
 
 
 def _require_request_scene(ref, owner):
@@ -611,7 +633,7 @@ class _Handler(BaseHTTPRequestHandler):
             # `initial` is accepted for one compatibility window: an older Host
             # still sends it and a helper-only reload must not break selection.
             fields = {'task_id', 'registration_id', 'expected_hip'}
-            if (set(body) not in (fields, fields | {'initial'})
+            if (not fields <= set(body) or set(body) - fields - {'initial', 'scene_epoch', 'runtime_id'}
                     or ('initial' in body and body['initial'] is not True)
                     or not all(isinstance(body.get(key), str) and body[key] for key in fields)):
                 self._send({'ok':False,'error':'Expected task_id, registration_id and expected_hip'},status=400)
@@ -619,6 +641,7 @@ class _Handler(BaseHTTPRequestHandler):
             from dsh_executor_registry import active_registration
             registration = active_registration()
             def claim():
+                _require_selected_target(body)
                 idle = not _request_registry.active_count() and not _job_activity()['activeJobs'] and _work_queue.empty()
                 if registration.workbench and registration.scene.get('scene_epoch') != _recovery.scene_epoch():
                     raise RuntimeError('工程登记正在更新，请从当前 Houdini 重新打开工作区。')
@@ -637,14 +660,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({'ok':True,'result':result})
             return
         if self.path == '/requests/prepare':
-            if (set(body) not in ({'owner_session'}, {'owner_session', 'request_kind'})
+            if (set(body) - {'owner_session', 'request_kind', 'scene_epoch', 'runtime_id'}
                     or not isinstance(body.get('owner_session'), str) or not body['owner_session'].strip()
                     or ('request_kind' in body and body['request_kind'] != 'node_navigation')):
                 self._send({'ok': False, 'error': 'owner_session required'}, status=400)
                 return
             # Read the actor-published generation without waiting behind a cook.
             # The actor checks both task and scene again at actual dispatch.
-            epoch = _recovery.scene_epoch()
+            rejection = _target_error(body)
+            if rejection:
+                self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
+                return
+            epoch = body.get('scene_epoch', _recovery.scene_epoch())
             self._send({**self._health(), 'requestRef': _request_registry.issue(
                 body['owner_session'], body.get('request_kind', 'exec'), epoch)})
             return
@@ -657,13 +684,20 @@ class _Handler(BaseHTTPRequestHandler):
                                           else _request_status(body['request_ref'],body['owner_session']))})
             return
         if self.path == '/context':
-            if type(body.get('schema_version')) is not int or body.get('schema_version') != 1 or set(body) != {'schema_version'}:
-                self._send({'ok': False, 'error': 'context requires schema_version=1 only'}, status=400)
+            if (type(body.get('schema_version')) is not int or body.get('schema_version') != 1
+                    or set(body) - {'schema_version', 'scene_epoch', 'runtime_id'}):
+                self._send({'ok': False, 'error': 'context requires schema_version=1 and optional selected target identities'}, status=400)
+                return
+            rejection = _target_error(body)
+            if rejection:
+                self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
                 return
             from dsh_context import scene_context
+            def observe_context():
+                _require_selected_target(body)  # The actor may have loaded another HIP while queued.
+                return scene_context(_RUNTIME_ID, _HOU_THREAD_ID)
             try:
-                self._send({'ok': True, 'result': _execute(
-                    lambda: scene_context(_RUNTIME_ID, _HOU_THREAD_ID), timeout=1.5)})
+                self._send({'ok': True, 'result': _execute(observe_context, timeout=1.5)})
             except (TimeoutError, RuntimeError) as exc:
                 self._send({'ok': False, 'status': 'unavailable', 'reason': str(exc)})
             return
@@ -865,6 +899,12 @@ class _Handler(BaseHTTPRequestHandler):
             if rejection is not None:
                 self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return
+            # Historical jobs stay readable after loading another scene, but
+            # a short job ID must never cross a Bridge runtime generation.
+            rejection = _target_error(body, check_scene=False)
+            if rejection:
+                self._send({'ok': False, 'error': rejection[1]}, status=rejection[0])
+                return
             owner_session = body["owner_session"]
             if parts[2] == "cancel":
                 # Ownership check and mutation share one lock acquisition: a
@@ -915,8 +955,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _recover(self, body):
         """Host/UI only; no user-supplied code, file path or ownership manifest."""
         from dsh_executor_registry import is_shared_executor, active_registration
+        def selected(operation):
+            _require_selected_target(body)
+            return operation()
         def loaded(operation):
-            value, warning, failure = _execute(lambda: _recovery.with_load_warning(operation), timeout=30)
+            value, warning, failure = _execute(lambda: selected(lambda: _recovery.with_load_warning(operation)), timeout=30)
             if warning is not None:
                 warning.persist()  # HTTP worker; neither large hashing nor disk I/O blocks the actor.
                 if value is not None:
@@ -933,14 +976,20 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(owner, str) or not owner.strip():
             raise ValueError('Recovery requires the selected task identity')
         allowed = {'session_id', 'expected_contract', 'previous_executor', 'source_executors',
-                   'operation_id', 'expected', 'reload_saved', 'checkpoint_id'}
+                   'operation_id', 'expected', 'reload_saved', 'checkpoint_id', 'scene_epoch', 'runtime_id'}
         if set(body) - allowed:
             raise ValueError('Unexpected recovery field')
+        _require_selected_target(body)
         action = self.path.removeprefix('/recovery/')
         if legacy_shared and action != 'assess':
             raise RuntimeError('此共享执行端只支持核对当前连接，跨进程接续尚未开放；保留原绑定和工程。')
         if action == 'activate':
-            value = _execute(lambda: _recovery.activate(body['operation_id'], owner), timeout=5)
+            def activate_ownership():
+                _require_selected_target(body)
+                from dsh_executor_registry import require_active_writer
+                require_active_writer(owner, hou.hipFile.path())
+                return _recovery.activate(body['operation_id'], owner)
+            value = _execute(activate_ownership, timeout=5)
             self._send({'ok': True, **value})
             return
         if action not in ('assess', 'prepare', 'locate', 'open'):
@@ -952,8 +1001,13 @@ class _Handler(BaseHTTPRequestHandler):
         expected_scene = body.get('expected', {}).get('scene_id')
         if expected_scene is not None:
             _recovery.store.identity(expected_scene)
-        current = _execute(lambda: _recovery.status(owner), timeout=2)
-        if action == 'assess' and previous == _EXECUTOR_ID and current['connected']:
+        def current_status():
+            _require_selected_target(body)
+            return _recovery.status(owner)
+        current = _execute(current_status, timeout=2)
+        prior_epoch = body.get('expected', {}).get('scene_epoch')
+        if (action == 'assess' and previous == _EXECUTOR_ID and current['connected']
+                and (prior_epoch is None or prior_epoch == current['scene_epoch'])):
             if expected_scene is not None and current.get('scene_id') != expected_scene:
                 raise RuntimeError('当前工程与原对话的工程身份不同，未确认连接。')
             self._send({'ok': True, **current, 'status': 'connected',
@@ -1012,11 +1066,15 @@ class _Handler(BaseHTTPRequestHandler):
                 raise RuntimeError('磁盘 HIP 与任务保存点不一致，需要核对内容，不能自动恢复归属。')
             if current['loaded_checkpoint'] == current['checkpoint_id'] and tuple(current['loaded_stamp'] or ()) != stamp:
                 raise RuntimeError('HIP 在加载后被外部替换，请保留未保存修改后重新打开文件。')
-            value = _execute(lambda: _recovery.preview(record, owner, previous, expected_scene), timeout=2)
+            value = _execute(lambda: selected(lambda: _recovery.preview(record, owner, previous, expected_scene)), timeout=2)
             if action == 'prepare':
                 _recovery.store.retain_executor(_EXECUTOR_ID)
-                value = loaded(lambda: _recovery.prepare(record, owner, previous,
-                    body['operation_id'], body['expected'], body.get('reload_saved') is True, expected_scene))
+                def prepare_ownership():
+                    from dsh_executor_registry import require_active_writer
+                    require_active_writer(owner, hou.hipFile.path())
+                    return _recovery.prepare(record, owner, previous,
+                        body['operation_id'], body['expected'], body.get('reload_saved') is True, expected_scene)
+                value = loaded(prepare_ownership)
                 # Reload can run native callbacks; file replacement during it
                 # must not be mistaken for the file whose identities we mapped.
                 try:

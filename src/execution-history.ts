@@ -25,11 +25,77 @@ export function requestStatusGuidance(status:unknown):string|undefined {
   if(status==='queued')return 'The same-runtime Bridge confirms this request is admitted and waiting for main-thread dispatch. It has not started. Scene queries and UI discovery/capture also use that queue; they are not independent liveness probes. Read this original request_ref again to observe a later state; do not resubmit.'
 }
 
-export function executionHistory(events:readonly SessionEvent[]) {
-  let recoverySeq=0
-  try {recoverySeq=foldExecutorState(events).recoverySeq}
+export type HistoricalExecutionOrigin={executorId?:string;runtimeId:string;sceneEpoch?:string}
+function resultOrigin(value:any):HistoricalExecutionOrigin|undefined {
+  const receipt=value?.requestReceipt,execution=value?.execution??receipt?.result?.execution
+  const runtimeId=receipt?.runtime_id??execution?.runtime_id
+  if(typeof runtimeId!=='string'||!/^[0-9a-f]{32}$/.test(runtimeId))return
+  const executorId=receipt?.executor_id??execution?.executor_id
+  const sceneEpoch=receipt?.scene_epoch??execution?.scene_epoch??execution?.scene_recovery?.scene_epoch
+  return {runtimeId,...(typeof executorId==='string'?{executorId}:{}),...(typeof sceneEpoch==='string'?{sceneEpoch}:{})}
+}
+function resultJob(value:any):string|undefined {
+  const receipt=value?.requestReceipt
+  const id=value?.jobId??receipt?.jobId??receipt?.result?.jobId??receipt?.result?.result?.jobId
+  return typeof id==='string'?id:undefined
+}
+/** Original routing facts come from canonical native/nested receipts, never current selection. */
+export function recordedExecutionOrigin(events:readonly SessionEvent[],reference:{requestRef:string}|{jobId:string}):HistoricalExecutionOrigin {
+  const requestedRuntime='requestRef' in reference?reference.requestRef.split('.')[0]:undefined
+  const candidates=new Map<string,HistoricalExecutionOrigin>()
+  for(const event of events) {
+    const value=executionResult(event)?.value
+    const matches='requestRef' in reference?value?.requestReceipt?.request_ref===reference.requestRef:resultJob(value)===reference.jobId
+    if(!matches)continue
+    const origin=resultOrigin(value)
+    if(!origin)continue
+    if(requestedRuntime&&requestedRuntime!==origin.runtimeId)throw new Error('原请求记录的运行身份不一致，没有查询其他工程。')
+    if(origin.executorId&&!/^[0-9a-f]{32}$/.test(origin.executorId))throw new Error('原请求的执行端记录无效，没有查询其他工程。')
+    const previous=candidates.get(origin.runtimeId)
+    if(previous?.executorId&&origin.executorId&&previous.executorId!==origin.executorId)
+      throw new Error('原请求记录含多个执行端，没有猜测目标。')
+    candidates.set(origin.runtimeId,{...previous,...origin})
+  }
+  if(!candidates.size&&requestedRuntime&&/^[0-9a-f]{32}$/.test(requestedRuntime))
+    candidates.set(requestedRuntime,{runtimeId:requestedRuntime})
+  if(candidates.size!==1)throw new Error('无法从本对话唯一确定原任务的 Houdini，请使用原请求回执核对；没有向当前工程查询或重发操作。')
+  return [...candidates.values()][0]
+}
+
+export function executionHistory(events:readonly SessionEvent[],options:{includeHistorical?:boolean}={}) {
+  let recoverySeq=0,selected:ReturnType<typeof foldExecutorState>['selectedTarget']=null,selectionRecorded=false
+  try {const state=foldExecutorState(events);recoverySeq=state.recoverySeq;selected=state.selectedTarget;selectionRecorded=state.selectionRecorded}
   catch { /* Invalid bindings retire no evidence; live admission reports the conflict. */ }
-  if(recoverySeq)events=events.filter(event=>(event.seq??0)>recoverySeq)
+  // Status reads may omit the admitted scene epoch. Correlate their original
+  // native/nested receipts before filtering, so loading another scene in the
+  // same runtime cannot make an old request or job current work again.
+  const requestOrigins=new Map<string,HistoricalExecutionOrigin>()
+  const jobOrigins=new Map<string,HistoricalExecutionOrigin|null>()
+  if(selectionRecorded&&!options.includeHistorical)for(const event of events) {
+    const value=executionResult(event)?.value,id=resultJob(value),origin=resultOrigin(value)
+    if(!origin)continue
+    const ref=value?.requestReceipt?.request_ref
+    if(typeof ref==='string')requestOrigins.set(ref,{...origin,...requestOrigins.get(ref)})
+    if(!id)continue
+    const previous=jobOrigins.get(id)
+    jobOrigins.set(id,previous===null||previous&&previous.runtimeId!==origin.runtimeId?null:{...previous,...origin})
+  }
+  if(recoverySeq&&!options.includeHistorical) {
+    let cutoff=recoverySeq
+    // The very first scene choice can be answered inside the first live tool.
+    // Keep that still-pending call, while later explicit target changes retire
+    // their previous scope. This reads the same projection, not a second ledger.
+    if(selected) {
+      const prior=foldExecutorState(events.filter(event=>(event.seq??0)<recoverySeq))
+      if(!prior.identity&&!prior.selectionRecorded) {
+        for(const event of events) {
+          const call=executionCall(event)
+          if(call&&Object.hasOwn(prior.pending,call.callId)&&Number.isFinite(event.seq))cutoff=Math.min(cutoff,event.seq!-1)
+        }
+      }
+    }
+    events=events.filter(event=>(event.seq??0)>cutoff)
+  }
   const calls=new Map<string,any>(), results=new Map<string,any>()
   const rows:ExecutionRow[]=[], receipts=new Map<string,string>(), jobs=new Map<string,string>()
   const unavailableResults=new Map<string,{request_ref:string;owner_call:string|null;status:'finished_result_unavailable';retention_status:string;outcome:'unverified';job_id?:string}>()
@@ -46,6 +112,20 @@ export function executionHistory(events:readonly SessionEvent[]) {
     const value=outcome.value, name=original.name
     results.set(outcome.callId,value)
     if (!LIVE_TOOLS.has(name)) continue
+    if(selectionRecorded&&!options.includeHistorical&&value) {
+      const job=resultJob(value),direct=resultOrigin(value),request=requestOrigins.get(value.requestReceipt?.request_ref)
+      const origin=request?{...request,...direct}:direct??(job?jobOrigins.get(job):undefined)
+      const foreign=origin&&(!selected||origin.runtimeId!==selected.runtime_id
+        ||origin.executorId!==undefined&&origin.executorId!==selected.executor_id
+        ||origin.sceneEpoch!==undefined&&origin.sceneEpoch!==selected.scene_epoch)
+      // A wholly lost original result leaves no receipt epoch to correlate.
+      // Only a named call retained in this selected scope can make that sparse
+      // status current; a lookup of older/unknown work remains historical data.
+      // Sparse job controls likewise update only a job already admitted here.
+      if(foreign||job&&jobOrigins.get(job)===null&&!direct
+        ||name==='houdini_request'&&!origin?.sceneEpoch&&!calls.has(value.requestReceipt?.owner_call)
+        ||job&&['houdini_job_status','houdini_job_cancel'].includes(name)&&!origin?.sceneEpoch&&!jobs.has(job))continue
+    }
     if (outcome.isError) {
       failedCalls.push({seq:event.seq??0,callId:outcome.callId,tool:name,error:outcome.error??{code:'TOOL_FAILED'}})
       if (['ABORTED','TOOL_OUTCOME_UNKNOWN'].includes(outcome.error?.code) && RECOVERABLE_CALLS.has(name))

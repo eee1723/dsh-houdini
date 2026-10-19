@@ -11,7 +11,7 @@ import { registerBundledSkills } from './skill.js'
 import { registerHoudiniTools } from './tools.js'
 import { installSceneContext } from './context.js'
 import { sharedExecutorConnection } from './executor-host.js'
-import { installExecutorBinding } from './executor-binding.js'
+import { installFixedTargetContext } from './executor-binding.js'
 import {installSceneRecovery} from './scene-recovery.js'
 import {installHoudiniExecutionLog} from './dsh-adapter.js'
 import {installNodeDeliveryNavigation} from './node-delivery.js'
@@ -50,7 +50,7 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    'Houdini tool routing:\nUse houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_ui_list to discover visible native/Qt surfaces and houdini_ui_screenshot to observe an exact returned target. Opening nodes or changing UI layout is a separate explicit interaction. Use houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue.',
+    'Houdini tool routing:\nUse houdini_inspect for live read-only scene and API information, houdini_exec for batched operations, houdini_job_* for long work, houdini_ui_list to discover visible native/Qt surfaces and houdini_ui_screenshot to observe an exact returned target. Opening nodes or changing UI layout is a separate explicit interaction. Use houdini_request to retrieve an uncertain original execution, houdini_resource for original task material and retained results, and houdini_capabilities for model image/attachment metadata. Live HOM runs through one main-thread queue. The explicitly selected scene is the current operation target; earlier targets remain history. After a target change, inspect the actual scene before relying on prior node paths. Selecting a scene does not grant ownership or authorize replaying earlier work.',
     '',
     'Execution boundary and discovery:\nCompose the injected Python verbs for edits. Raw hou is a read/low-level escape hatch; Raw Gate and runtime node ownership apply. Foreign edits require the user to identify the intended change. verb_help(name) reads signatures and brief purpose; detail="full" adds the needed input/output contract and examples. Pass a list as name for related verbs, without rereading unrelated full catalogs. node_info(parent, type_name) reads types available in an existing parent network. Batch related operations and specify the actual output being checked.',
     '',
@@ -60,13 +60,14 @@ const GUIDANCE: PromptSection = {
     '',
     'Domain knowledge:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris, tutorials or network handoff. Construction and presentation methods belong to those skills; tool contracts do not select a modeling strategy.',
     '',
-    'Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored to the actual named HIP; the DSH workspace may differ. Use directories.script for construction source and task scripts, with scratch probes in its scratch subdirectory. These share one artifact root with the other project roles; do not scatter new scripts at the project root. Use DSH file tools to write/edit source files, then execute needed Houdini operations through Bridge. Managed image generation selects reference or texture purpose and returns its actual path; explicit destinations keep DSH filesystem semantics and need no Houdini. Use the returned reference_downloaded directory when saving network reference images. Reusable tool resources and native Package JSON keep their chosen locations. Do not migrate or clean directories implicitly. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. Open Workspace aligns the task directory; runtime repair and Houdini restart use the documented menu with user authorization.',
+    'Files and runtime:\nProject directory roles come from scene_info().project_layout, anchored to the actual named HIP; the DSH workspace may differ. Use directories.script for construction source and task scripts, with scratch probes in its scratch subdirectory. These share one artifact root with the other project roles; do not scatter new scripts at the project root. Use DSH file tools to write/edit source files, then execute needed Houdini operations through Bridge. Managed image generation selects reference or texture purpose and returns its actual path; explicit destinations keep DSH filesystem semantics and need no Houdini. Use the returned reference_downloaded directory when saving network reference images. Reusable tool resources and native Package JSON keep their chosen locations. Do not migrate or clean directories implicitly. Saving a scene to a new path requires the requested target and expected current HIP. Keep persistent render_view services. New conversations opened from Houdini use its project directory; choosing another scene keeps the existing conversation workspace; runtime repair and Houdini restart use the documented menu with user authorization.',
   ].join('\n'),
 }
 
 export function apply(ctx: Context, config: Config) {
   installHoudiniExecutionLog(ctx)
-  installExecutorBinding(ctx,config.executorRegistry ? undefined : config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)
+  const fixedTarget=config.executorId??process.env.DSH_HOUDINI_EXECUTOR_ID
+  if(!config.executorRegistry&&fixedTarget)installFixedTargetContext(ctx,fixedTarget)
   const connection = config.executorRegistry ? sharedExecutorConnection(ctx,config.executorRegistry)
     : new HoudiniBridge(config.bridgeUrl, config.requestTimeoutMs,
       config.executorId ?? process.env.DSH_HOUDINI_EXECUTOR_ID)

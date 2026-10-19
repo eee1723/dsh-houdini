@@ -19,7 +19,7 @@
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
 | [故障报告](support-reports.md) | 本地诊断包、用户预览与分享、精确会话读取、脱敏边界及离线分析 |
-| [多实例与任务恢复](multi-instance.md) | 共享Host边界、单实例自动接续与原生对话选择；工作区/工程身份及另存/分支/升级的完整目标 |
+| [多实例与任务恢复](multi-instance.md) | 独立工作台、明确现场选择、工程状态组件、只读/写入边界及按需节点恢复 |
 | [节点片段交换](component-collaboration.md) | 普通节点文件导出、导入与显式替换；无额外Agent模式 |
 | [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、DSH耦合点与唯一源码、鉴权/RPC/Qt/profile升级检查入口 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
