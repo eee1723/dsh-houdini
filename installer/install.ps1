@@ -119,14 +119,64 @@ try {
         Write-Output "Registered: $target"
     }
 } finally { $lock.Dispose() }
+# WScript.Shell converts paths and arguments through the system ANSI code page.
+# Use the native Unicode shell-link interface for every persisted shortcut field.
+if (-not ('DshHoudini.Shortcut' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+
+namespace DshHoudini {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    public class ShellLink { }
+
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+        void GetIDList(out IntPtr idList);
+        void SetIDList(IntPtr idList);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int count);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string path);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int count);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
+        void GetHotkey(out short hotkey);
+        void SetHotkey(short hotkey);
+        void GetShowCmd(out int command);
+        void SetShowCmd(int command);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, out int index);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path, int index);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
+        void Resolve(IntPtr window, uint flags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+    }
+
+    public static class Shortcut {
+        public static void Save(string path, string target, string arguments, string directory, string icon) {
+            object instance = new ShellLink();
+            try {
+                IShellLinkW link = (IShellLinkW)instance;
+                link.SetPath(target);
+                link.SetArguments(arguments);
+                link.SetWorkingDirectory(directory);
+                link.SetIconLocation(icon, 0);
+                link.SetShowCmd(7);
+                ((IPersistFile)instance).Save(path, true);
+            } finally {
+                Marshal.FinalReleaseComObject(instance);
+            }
+        }
+    }
+}
+'@
+}
 $shortcutPath = Join-Path $installRoot 'DSH-Houdini.lnk'
-$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
-$shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
-$shortcut.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $bootstrap 'open-workbench.ps1') + '" -Root "' + $installRoot + '"'
-$shortcut.WorkingDirectory = $installRoot
-$shortcut.IconLocation = (Join-Path $bootstrap 'dsh-houdini.ico') + ',0'
-$shortcut.WindowStyle = 7
-$shortcut.Save()
+$shortcutArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $bootstrap 'open-workbench.ps1') + '" -Root "' + $installRoot + '"'
+[DshHoudini.Shortcut]::Save($shortcutPath, (Join-Path $PSHOME 'powershell.exe'), $shortcutArguments, $installRoot, (Join-Path $bootstrap 'dsh-houdini.ico'))
 $uninstallEntry = '@echo off' + "`r`n" + 'setlocal' + "`r`n" + 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap\' + (Split-Path -Leaf $bootstrap) + '\uninstall.ps1" -Root "%~dp0." %*' + "`r`n" + 'if errorlevel 1 (pause & exit /b 1)' + "`r`n" + 'pause' + "`r`n"
 [IO.File]::WriteAllText((Join-Path $installRoot 'Uninstall.cmd'), $uninstallEntry, [Text.Encoding]::ASCII)
 Write-Output "Standalone workspace: $shortcutPath"

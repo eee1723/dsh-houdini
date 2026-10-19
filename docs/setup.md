@@ -17,7 +17,7 @@ GitHub自动生成的Source code.zip不是完整运行包；源码构建是下�
 
 ### 注册位置与引导修复
 
-默认安装根为 `%LOCALAPPDATA%/DSH-Houdini`，偏好目录使用Windows真实Documents文件夹，支持重定向/OneDrive。
+默认安装根为 `%LOCALAPPDATA%/DSH-Houdini`，偏好目录使用 Windows 真实 Documents 文件夹，支持重定向/OneDrive。工作台快捷方式使用 Windows 原生 Unicode 接口，安装根和启动参数不依赖当前系统的 ANSI 代码页。
 默认注册21.0和22.0；支持指定偏好目录与安装根：
 
 ```powershell

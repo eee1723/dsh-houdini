@@ -1,6 +1,7 @@
 """Exercise real PowerShell installation into isolated preferences; no live Houdini."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ def execute(args, *, env=CLEAN_BOOT_ENV):
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
     return result
 
-with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as temporary:
+with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 العربية 空格-") as temporary:
     temp = Path(temporary)
     install, packages = temp / "managed", temp / "prefs/packages"
     args = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "installer/install.ps1"), "-Root", str(install), "-PackagesDir", str(packages)]
@@ -45,6 +46,38 @@ with tempfile.TemporaryDirectory(prefix="dsh-bootstrap-中文 空格-") as tempo
     assert (hosted / "open-workbench.ps1").is_file()
     assert (hosted / "dsh-houdini.ico").read_bytes() == (ROOT / "assets/dsh-houdini.ico").read_bytes()
     assert (install / "DSH-Houdini.lnk").is_file()
+    # Read the persisted fields through native IShellLinkW, which preserves
+    # Unicode independently of the machine's ANSI code page. WScript.Shell's
+    # ANSI getters would corrupt the readback even when the link is correct.
+    quote_ps = lambda value: "'" + str(value).replace("'", "''") + "'"
+    readback = "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)\n"
+    readback += "& " + quote_ps(ROOT / "installer/install.ps1") + " -Root " + quote_ps(install) + " -PackagesDir " + quote_ps(packages) + "\n"
+    readback += """
+$instance = New-Object DshHoudini.ShellLink
+try {
+    [void][Runtime.InteropServices.ComTypes.IPersistFile].GetMethod('Load').Invoke($instance, [object[]]@('LINK_PATH', [int]0))
+    $native = [DshHoudini.IShellLinkW]
+    $target = New-Object Text.StringBuilder 32768
+    $arguments = New-Object Text.StringBuilder 32768
+    $directory = New-Object Text.StringBuilder 32768
+    $icon = New-Object Text.StringBuilder 32768
+    [void]$native.GetMethod('GetPath').Invoke($instance, [object[]]@($target.PSObject.BaseObject, [int]32768, [IntPtr]::Zero, [uint32]0))
+    [void]$native.GetMethod('GetArguments').Invoke($instance, [object[]]@($arguments.PSObject.BaseObject, [int]32768))
+    [void]$native.GetMethod('GetWorkingDirectory').Invoke($instance, [object[]]@($directory.PSObject.BaseObject, [int]32768))
+    $iconArguments = [object[]]@($icon.PSObject.BaseObject, [int]32768, [int]0)
+    [void]$native.GetMethod('GetIconLocation').Invoke($instance, $iconArguments)
+    $showArguments = [object[]]@([int]0)
+    [void]$native.GetMethod('GetShowCmd').Invoke($instance, $showArguments)
+    'DSH_SHORTCUT_JSON=' + (@{target=$target.ToString(); arguments=$arguments.ToString(); directory=$directory.ToString(); icon=$icon.ToString(); iconIndex=$iconArguments[2]; show=$showArguments[0]; powershell=(Join-Path $PSHOME 'powershell.exe')} | ConvertTo-Json -Compress)
+} finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($instance) }
+""".replace("'LINK_PATH'", quote_ps(install / "DSH-Houdini.lnk"))
+    result = execute(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", base64.b64encode(readback.encode("utf-16le")).decode("ascii")])
+    facts = json.loads(next(line.removeprefix("DSH_SHORTCUT_JSON=") for line in result.stdout.decode("utf-8").splitlines() if line.startswith("DSH_SHORTCUT_JSON=")))
+    assert Path(facts["target"]) == Path(facts["powershell"])
+    assert facts["arguments"] == '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + str(hosted / "open-workbench.ps1") + '" -Root "' + str(install) + '"'
+    assert Path(facts["directory"]) == install
+    assert Path(facts["icon"]) == hosted / "dsh-houdini.ico"
+    assert facts["iconIndex"] == 0 and facts["show"] == 7
     assert (install / "Uninstall.cmd").is_file()
     assert (hosted / "uninstall.ps1").is_file()
     assert d.read_json(install / "registrations.json")["packages"] == [str(target)]
