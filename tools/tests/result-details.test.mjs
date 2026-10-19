@@ -7,7 +7,8 @@ import {registerHoudiniTools} from '../../lib/tools.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {readResource} from '../../lib/tool-query.js';
 
-const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-result-details-'));
+// Retention canonicalizes its workspace; TEMP can use a Windows short-name alias.
+const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsh-result-details-')));
 try {
   const code='string source = "完整原始源码";\n'.repeat(2000);
   const raw={ok:true,stdout:'useful diagnostic',stderr:'',
@@ -103,7 +104,7 @@ try {
   assert.equal((await retainResult(raw,dir)).details.stored,false,'existing corrupt artifacts are not silently overwritten');
   console.log(`result details: compact ${compact.length}/${original.length} chars; canonical roundtrip, paged query, caution/failure fallback and tamper protection passed`);
 } finally {
-  assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));
+  assert.equal(path.dirname(dir),fs.realpathSync(os.tmpdir()));
   assert.ok(path.basename(dir).startsWith('dsh-result-details-'));
   fs.rmSync(dir,{recursive:true,force:true});
 }
