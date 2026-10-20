@@ -46,7 +46,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     layout = project_paths.project_layout(str(hip), has_named_path=True)
     assert layout['available'] and layout['schema_version'] == 1
     assert Path(layout['project_root']).samefile(base)
-    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'cache', 'analysis', 'documentation', 'render', 'visual_check', 'script'}
+    assert set(layout['directories']) == {'reference_downloaded', 'reference_generated', 'texture', 'cache', 'analysis', 'documentation', 'render', 'visual_check', 'execution_run', 'script'}
+    assert Path(layout['directories']['execution_run']) == base.resolve() / 'dsh-artifacts/checks/runs'
     assert Path(layout['directories']['script']) == base.resolve() / 'dsh-artifacts/scripts'
     assert Path(layout['directories']['reference_downloaded']) == base.resolve() / 'dsh-artifacts/references' / 'downloaded'
     assert Path(layout['directories']['reference_generated']) == base.resolve() / 'dsh-artifacts/references' / 'generated'
@@ -66,9 +67,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     assert first['output_policy'] == 'managed'
     assert first['role'] == 'visual_check' and first['lifecycle'] == 'visual-check'
     assert first['project_root'] == layout['project_root']
-    assert Path(first['actual_path']).parent.parent == base.resolve() / 'dsh-artifacts/checks'
+    assert Path(first['actual_path']).parent.parent == base.resolve() / 'dsh-artifacts/checks/previews'
     assert Path(first['managed_root']) == Path(first['actual_path']).parent
-    assert first['hip_relative_path'].startswith('dsh-artifacts/checks/')
+    assert first['hip_relative_path'].startswith('dsh-artifacts/checks/previews/')
     assert first['actual_path'] != second['actual_path']
     assert '0003' in Path(second['actual_path']).name
     assert first['run_id'] != third['run_id']

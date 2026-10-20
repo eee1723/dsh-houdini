@@ -30,8 +30,12 @@
       "lifecycle": "render-output"
     },
     "visual_check": {
-      "path": "dsh-artifacts/checks",
+      "path": "dsh-artifacts/checks/previews",
       "lifecycle": "visual-check"
+    },
+    "execution_run": {
+      "path": "dsh-artifacts/checks/runs",
+      "lifecycle": "execution-evidence"
     },
     "script": {
       "path": "dsh-artifacts/scripts",

@@ -7,7 +7,6 @@ effects, GPU allocations or external services. --trusted is required.
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import math
@@ -16,11 +15,16 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from houdini_test_environment import isolated_environment, launch_directory
+
+DETAIL_POLICY = json.loads((ROOT / 'houdini/result-detail-policy.json').read_text(encoding='utf-8'))
+DETAIL_THRESHOLD = DETAIL_POLICY['detailThresholdChars']
+MAX_ARCHIVE_BYTES = DETAIL_POLICY['maxArchiveBytes']
 
 SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; optional explicit output checks. '
          'Without checks, success proves only builder execution or snapshot loading. '
@@ -36,7 +40,7 @@ def digest(path):
     return value.hexdigest()
 
 
-def read_json(path):
+def read_json(path, max_bytes=4 * 1024 * 1024):
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -46,15 +50,161 @@ def read_json(path):
         return result
     def invalid(value):
         raise ValueError('nonfinite JSON value: ' + value)
-    if path.stat().st_size > 4 * 1024 * 1024:
-        raise ValueError('JSON report/manifest exceeds 4 MiB')
+    if path.stat().st_size > max_bytes:
+        raise ValueError('JSON exceeds the %d byte read limit' % max_bytes)
     return json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique, parse_constant=invalid)
 
 
 def write_json(path, value):
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+    temporary.write_text(_encoded(value), encoding='utf-8')
     os.replace(temporary, path)
+
+
+def _encoded(value):
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+
+
+def _pointer(parent, key):
+    return parent + '/' + str(key).replace('~', '~0').replace('/', '~1')
+
+
+def _bounded(value, pointer, budget=DETAIL_THRESHOLD, *, retained=True):
+    """A display projection only. The archived envelope owns omitted values."""
+    text = _encoded(value)
+    if len(text) <= budget:
+        return value
+    omitted = ({'detail_pointer': pointer, 'omitted_chars': len(text)} if retained else
+               {'unavailable_field': pointer, 'omitted_chars': len(text),
+                'reason': 'Complete execution details were not retained'})
+    if isinstance(value, dict):
+        out = dict(omitted)
+        # These are existing execution/check facts, never inferred statuses.
+        priority = ('ok', 'runtime_id', 'owner_session', 'sequence', 'nonempty', 'fresh', 'healthy',
+                    'status', 'phase', 'scope', 'semantic_status', 'restored', 'current_state_preserved',
+                    'dispatched', 'output', 'errors', 'failure_reasons', 'restore_errors', 'geometry')
+        keys = [k for k in priority if k in value] + [k for k in value if k not in priority]
+        for key in keys:
+            remaining = budget - len(_encoded(out)) - len(_encoded(key)) - 16
+            if remaining < 160:
+                break
+            out[key] = _bounded(value[key], _pointer(pointer, key), remaining, retained=retained)
+        return out
+    if isinstance(value, list):
+        out = []
+        for index, item in enumerate(value):
+            remaining = budget - len(_encoded(out)) - len(_encoded(omitted)) - 16
+            if remaining < 160:
+                break
+            out.append(_bounded(item, _pointer(pointer, index), min(remaining, 2048), retained=retained))
+        return out + [omitted]
+    return omitted
+
+
+def _brief_text(value, budget=DETAIL_THRESHOLD, *, retained=None):
+    if not isinstance(value, str) or len(value) <= budget:
+        return value
+    # Retain both the call context and final/root exception, with an explicit gap.
+    note = ('see execution details' if retained is True else 'complete execution data was not retained'
+            if retained is False else 'this field was shortened; a full source may exist separately')
+    return value[:budget // 3] + '\n[Omitted; ' + note + ']\n' + value[-budget // 2:]
+
+
+def execution_projection(directory, identifier, envelope, *, inline_budget=None):
+    """Archive a large immutable returned envelope once; retain bounded facts.
+
+    Failure to retain details must not change an already executed operation's
+    ok/error. Mutable worker progress itself is never described by this hash.
+    """
+    text = _encoded(envelope)
+    if len(text) < DETAIL_THRESHOLD:
+        return envelope
+    details = {'stored': False}
+    try:
+        data = text.encode('utf-8')
+        if len(data) > MAX_ARCHIVE_BYTES:
+            raise ValueError('returned envelope exceeds result retention budget')
+        relative = 'executions/' + relative_file(identifier + '.json')
+        target = directory / relative
+        if is_reparse(directory) or is_reparse(target.parent) or is_reparse(target):
+            raise ValueError('execution detail path contains a reparse point')
+        target.parent.mkdir(exist_ok=True)
+        with target.open('xb') as stream:
+            stream.write(data)
+        details = {'stored': True, 'path': str(target.resolve()), 'sha256': hashlib.sha256(data).hexdigest(),
+                   'bytes': len(data), 'format': 'returned_bridge_envelope_json'}
+    except Exception as error:
+        details['error'] = str(error) or type(error).__name__
+        # Retain the complete inline fallback when it fits the *remaining run*
+        # budget. Several failed archives cannot each consume a whole report.
+        budget = MAX_ARCHIVE_BYTES - 65536 if inline_budget is None else inline_budget
+        details['fallback'] = 'Full returned envelope retained inline; no separate execution archive'
+        fallback = {**envelope, 'details': details}
+        if len(_encoded(fallback).encode('utf-8')) <= budget:
+            return fallback
+        details['fallback'] = 'Complete execution data could not be retained; unavailable fields are explicit'
+        details['full_retained'] = False
+    retained = details['stored'] is True
+    out = {'ok': envelope.get('ok'), 'details': details}
+    for key in ('error', 'stderr', 'advisory'):
+        if key in envelope:
+            out[key] = _brief_text(envelope[key], retained=retained)
+    if 'stdout' in envelope:
+        out['stdout'] = _brief_text('\n'.join(line for line in envelope['stdout'].splitlines()
+                                             if not line.startswith('[verb] ')), retained=retained)
+    for key in ('outcome', 'transaction', 'execution', 'script', 'rollback', 'rawUsage', 'checks', 'result',
+                'artifactCandidates', 'scope', 'semantic_status', 'restored'):
+        if key in envelope:
+            out[key] = _bounded(envelope[key], '/' + key, retained=retained)
+    if 'evidence' in envelope:
+        evidence = envelope['evidence']
+        if len(_encoded(evidence)) > DETAIL_THRESHOLD:
+            ledger = envelope.get('verbs', [])
+            failed = {index + 1 for index, row in enumerate(ledger) if row.get('ok') is False}
+            checked = {index + 1 for index, row in enumerate(ledger) if row.get('check_status')}
+            def priority(item):
+                row = item[1]
+                if (row.get('ledgerIndex') in failed or row.get('ok') is False
+                        or 'restored' in row and row['restored'] is not True or row.get('restore_errors')):
+                    return 0
+                return 1 if row.get('ledgerIndex') in checked else 2
+            rows = sorted(enumerate(evidence), key=priority)
+            out['evidence'] = []
+            for index, row in rows:
+                remaining = DETAIL_THRESHOLD - len(_encoded(out['evidence'])) - 160
+                if remaining < 256:
+                    break
+                out['evidence'].append(_bounded(row, '/evidence/' + str(index), min(remaining, 2048), retained=retained))
+            out['evidence'].append({('detail_pointer' if retained else 'unavailable_field'): '/evidence',
+                                    'entries': len(evidence)})
+        else:
+            out['evidence'] = evidence
+    return out
+
+
+def read_execution(directory, envelope):
+    """Read an immutable detail through its recorded content identity only."""
+    details = envelope.get('details', {})
+    if details.get('stored') is not True:
+        return envelope
+    try:
+        path = Path(details['path'])
+        relative = path.relative_to(directory.resolve()).as_posix()
+        if len(Path(relative).parts) != 2 or not relative.startswith('executions/'):
+            raise ValueError('execution details must stay inside this run executions directory')
+        path = regular_file(directory, relative)
+        if (details.get('format') != 'returned_bridge_envelope_json'
+                or path.stat().st_size != details.get('bytes') or path.stat().st_size > MAX_ARCHIVE_BYTES
+                or digest(path) != details.get('sha256')):
+            raise ValueError('execution detail integrity mismatch')
+        raw = read_json(path, MAX_ARCHIVE_BYTES)
+        if (not isinstance(raw, dict) or raw.get('ok') != envelope.get('ok')
+                or raw.get('execution', {}).get('runtime_id') != envelope.get('execution', {}).get('runtime_id')):
+            raise ValueError('execution detail does not match projected execution identity')
+        return raw
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        envelope['details_error'] = str(error) or type(error).__name__
+        return envelope
 
 
 def relative_file(value):
@@ -104,26 +254,48 @@ def artifact_target(directory, check):
     return target
 
 
+def manifest_input_root(path, manifest):
+    value = manifest.get('input_root')
+    if value is None:
+        root = path.parent
+    else:
+        if not isinstance(value, str) or not value or '\x00' in value:
+            raise ValueError('input_root must be an explicit directory path')
+        root = Path(value)
+        if not root.is_absolute():
+            root = path.parent / root
+    # An explicitly selected root may itself use a junction or filesystem alias.
+    # After resolving that root, regular_file checks every child against it.
+    root = root.resolve()
+    if not root.is_dir():
+        raise ValueError('input_root must be an existing directory')
+    return root
+
+
+def manifest_inputs(manifest):
+    return [manifest[key] for key in ('hip', 'script') if key in manifest] + manifest.get('files', [])
+
+
 def load_manifest(path):
     data = read_json(path)
-    if not isinstance(data, dict) or set(data) - {'script', 'hip', 'files', 'checks'} or ('script' in data)==('hip' in data):
-        raise ValueError('manifest requires exactly one of script/hip, plus optional files/checks')
-    script = relative_file(data.get('script',data.get('hip')))
-    if 'script' in data and not script.endswith('.py'):
+    if not isinstance(data, dict) or set(data) - {'script', 'hip', 'input_root', 'files', 'checks'} or not ({'script', 'hip'} & set(data)):
+        raise ValueError('manifest requires script and/or hip, plus optional input_root/files/checks')
+    if 'script' in data and not relative_file(data['script']).endswith('.py'):
         raise ValueError('script must be a trusted .py builder, not a HIP')
-    if 'hip' in data and not script.lower().endswith(('.hip','.hiplc','.hipnc')):
+    if 'hip' in data and not relative_file(data['hip']).lower().endswith(('.hip','.hiplc','.hipnc')):
         raise ValueError('hip must be an explicit saved HIP file')
     files = data.get('files', [])
     if not isinstance(files, list) or len(files) > 32:
         raise ValueError('files must contain at most 32 explicit relative files')
-    inputs = [script, *(relative_file(value) for value in files)]
+    inputs = [relative_file(value) for value in manifest_inputs(data)]
     if len(set(value.casefold() for value in inputs)) != len(inputs):
         raise ValueError('duplicate/aliased input file')
     size = 0
-    for index, name in enumerate(inputs):
-        source = regular_file(path.parent, name)
+    input_root = manifest_input_root(path, data)
+    for name in inputs:
+        source = regular_file(input_root, name)
         size += source.stat().st_size
-        if index == 0 and 'script' in data and source.stat().st_size > 1024 * 1024:
+        if name == data.get('script') and source.stat().st_size > 1024 * 1024:
             raise ValueError('builder exceeds 1 MiB')
     if size > 2 * 1024 ** 3:
         raise ValueError('declared inputs exceed 2 GiB')
@@ -168,24 +340,6 @@ def load_manifest(path):
     return data
 
 
-def builder_source(script):
-    """Keep script metadata in the injected namespace without hiding its code."""
-    source = script.read_text(encoding='utf-8')
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return source  # The Bridge retains the original syntax error/envelope.
-    index = int(bool(tree.body and isinstance(tree.body[0], ast.Expr)
-                     and isinstance(tree.body[0].value, ast.Constant)
-                     and isinstance(tree.body[0].value.value, str)))
-    while index < len(tree.body) and isinstance(tree.body[index], ast.ImportFrom) and tree.body[index].module == '__future__':
-        index += 1
-    # Future imports must precede assignments. The full authored AST remains
-    # visible to Bridge preflight/Raw Gate; do not wrap it in exec(string).
-    tree.body[index:index] = ast.parse(f'__file__ = {str(script)!r}\n__name__ = "__main__"\n').body
-    return ast.unparse(tree)
-
-
 def worker(request_file):
     # The caller has assigned this process to its limited Job before GO.
     request = read_json(request_file)
@@ -204,8 +358,16 @@ def worker(request_file):
                              'execution_contract': bridge._EXECUTION_CONTRACT_VERSION,
                              'verb_catalog_sha256': bridge._VERB_CATALOG_HASH, 'owner_session': session}
 
-        def execute(code, call):
-            return bridge._execute(lambda: bridge.run_code(code, owner_session=session, owner_call=call))
+        def execute(code, call, *, script=None):
+            return bridge._execute(lambda: bridge.run_code(code, owner_session=session, owner_call=call, script=script))
+
+        def retain(envelope, identifier):
+            remaining = len(request['manifest']['checks']) - len(result['checks'])
+            # Reserve room for future bounded projections and the outer report.
+            # The raw fallback consumes one shared run budget, not 32 MiB per call.
+            reserve = 65536 + len(_encoded(request).encode('utf-8')) + remaining * DETAIL_THRESHOLD * 80
+            budget = MAX_ARCHIVE_BYTES - len(_encoded(result).encode('utf-8')) - reserve
+            return execution_projection(directory, identifier, envelope, inline_budget=budget)
 
         def successful(envelope):
             if not envelope['ok']:
@@ -219,11 +381,15 @@ def worker(request_file):
                 raise RuntimeError('worker did not start with a new scene')
             hou.hipFile.setName(str(directory / 'scene.hip'))
             manifest = request['manifest']
-            script = directory / 'inputs' / manifest.get('script',manifest.get('hip'))
+            input_directory = directory / 'inputs'
+            script = input_directory / manifest['script'] if 'script' in manifest else None
+            snapshot = input_directory / manifest['hip'] if 'hip' in manifest else None
             for row in request['inputs']:
                 if digest(regular_file(directory / 'inputs', row['file'])) != row['sha256']:
                     raise ValueError('staged input digest mismatch')
-            sys.path.insert(0, str(script.parent))
+            sys.path.insert(0, str(input_directory))
+            if script is not None:
+                sys.path.insert(0, str(script.parent))
             result['phase'] = 'snapshot_load' if 'hip' in manifest else 'builder'
             write_json(result_file, result)
             if 'hip' in manifest:
@@ -232,23 +398,33 @@ def worker(request_file):
                 # to a path, pre-existing scene, or original user's live nodes.
                 before={int(n.sessionId()) for n in hou.node('/').allSubChildren()}
                 warnings=[]
-                try:hou.hipFile.load(str(script),suppress_save_prompt=True,ignore_load_warnings=False)
+                try:hou.hipFile.load(str(snapshot),suppress_save_prompt=True,ignore_load_warnings=False)
                 except hou.LoadWarning as error:
                     from dsh_load_warnings import preview
                     original=str(error);excerpt,omitted=preview(original)
                     warning_file=directory/'load-warnings.txt';warning_file.write_text(original,encoding='utf-8')
                     warnings.append({'text':excerpt,'omitted_chars':omitted,'file':str(warning_file),'sha256':digest(warning_file)})
-                if Path(hou.hipFile.path()).resolve()!=script.resolve():raise ValueError('snapshot load did not select the copied HIP')
+                if Path(hou.hipFile.path()).resolve()!=snapshot.resolve():raise ValueError('snapshot load did not select the copied HIP')
                 with dsh_ownership.execution_owner(session,'snapshot_load'):
                     for parent in hou.node('/').children():
                         for node in parent.children():
                             if int(node.sessionId()) not in before:dsh_ownership.register_owned_node(node,exclude_ids=before)
-                result['snapshot']={'path':str(script),'sha256':digest(script),'load_warnings':warnings,
+                result['snapshot']={'path':str(snapshot),'sha256':digest(snapshot),'load_warnings':warnings,
                     'scope':'Copied saved state only; unsaved live edits and undeclared external dependencies are not represented.'}
-                result['builder']=execute('__result__={"snapshot_loaded":True}', 'snapshot_loaded')
+            result['phase'] = 'builder'
+            write_json(result_file, result)
+            if script is not None:
+                data = script.read_bytes()
+                source_hash = hashlib.sha256(data).hexdigest()
+                declared = next(row for row in request['inputs'] if row['file'] == manifest['script'])
+                if source_hash != declared['sha256'] or len(data) != declared['bytes']:
+                    raise ValueError('staged script changed before execution')
+                record = {'path': str(script.resolve()), 'sha256': source_hash, 'bytes': len(data)}
+                raw_builder = execute(data.decode('utf-8'), 'builder', script=record)
             else:
-                result['builder'] = execute(builder_source(script), 'builder')
-                successful(result['builder'])
+                raw_builder = execute('__result__={"snapshot_loaded":True}', 'snapshot_loaded')
+            result['builder'] = retain(raw_builder, 'builder')
+            successful(raw_builder)
             for check in manifest['checks']:
                 row = {'id': check['id'], 'kind': check['kind'], 'node': check['node'], 'frame': check['frame'], 'status': 'running'}
                 result['checks'].append(row)
@@ -263,15 +439,17 @@ def worker(request_file):
                     frame_code = f'set_timeline(current_frame={check["frame"]!r})\n'
                     if check['kind'] == 'render':
                         artifact = artifact_target(directory, check)
-                        row['execution'] = execute(frame_code + f'__result__=render_frame({node.path()!r},picture={str(artifact)!r},frame={check["frame"]!r})', check['id'])
-                        rendered = successful(row['execution'])
+                        raw_execution = execute(frame_code + f'__result__=render_frame({node.path()!r},picture={str(artifact)!r},frame={check["frame"]!r})', check['id'])
+                        row['execution'] = retain(raw_execution, 'check-' + check['id'])
+                        rendered = successful(raw_execution)
                         if rendered.get('errors') or rendered.get('fresh') is not True:
                             raise ValueError('render did not produce a fresh error-free artifact')
                     else:
                         if node.type().category() != hou.sopNodeTypeCategory():
                             raise ValueError('cook/cache require a SOP output')
-                        row['execution'] = execute(frame_code + f'__result__=verify_network({node.parent().path()!r},output={node.path()!r},nodes=[{node.path()!r}])', check['id'])
-                        geometry = successful(row['execution'])['geometry']
+                        raw_execution = execute(frame_code + f'__result__=verify_network({node.parent().path()!r},output={node.path()!r},nodes=[{node.path()!r}])', check['id'])
+                        row['execution'] = retain(raw_execution, 'check-' + check['id'])
+                        geometry = successful(raw_execution)['geometry']
                         counts = {'points': geometry['points'], 'primitives': geometry['prims']}
                         row['geometry'] = counts
                         for name, value in check.get('expect', {}).items():
@@ -293,14 +471,14 @@ def worker(request_file):
                                            'bytes': file.stat().st_size, 'sha256': digest(file)}
                     row['status'] = 'passed'
                 except Exception as error:
-                    row.update(status='failed', error=str(error) or type(error).__name__)
+                    row.update(status='failed', error=_brief_text(str(error) or type(error).__name__))
                     raise
                 finally:
                     write_json(result_file, result)
             result.update(ok=True, phase='completed')
         bridge._execute(run)
     except BaseException as error:
-        result['error'] = str(error) or type(error).__name__
+        result['error'] = _brief_text(str(error) or type(error).__name__)
     write_json(result_file, result)
     return 0 if result['ok'] else 1
 
@@ -310,6 +488,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         raise ValueError('explicit trusted=True/--trusted authorization is required to execute the builder and dependencies')
     manifest_path, hython, output_dir = Path(manifest_path).resolve(), Path(hython).resolve(), Path(output_dir).resolve()
     manifest = load_manifest(manifest_path)
+    input_root = manifest_input_root(manifest_path, manifest)
     output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
     cancel_file = Path(cancel_file).resolve() if cancel_file is not None else output_dir / 'cancel.request'
     run_id = uuid.uuid4().hex
@@ -317,9 +496,12 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
               'cancel_file': str(cancel_file), 'scope': SCOPE}
     write_json(output_dir / 'report.json',report)
     inputs = []
+    runtime_directory = None
+    runtime_identity = None
+    process = None
     try:
-        for name in [manifest.get('script',manifest.get('hip')), *manifest.get('files', [])]:
-            source = regular_file(manifest_path.parent, name)
+        for name in manifest_inputs(manifest):
+            source = regular_file(input_root, name)
             target = output_dir / 'inputs' / name
             target.parent.mkdir(parents=True, exist_ok=True)
             before = digest(source)
@@ -327,10 +509,14 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
             if digest(target) != before:
                 raise ValueError('input changed during staging')
             inputs.append({'file': name, 'sha256': before, 'bytes': target.stat().st_size})
-        request = {'run_id': run_id, 'manifest': manifest, 'inputs': inputs}
+        request = {'run_id': run_id, 'manifest': manifest, 'input_root': str(input_root), 'inputs': inputs}
         request_file = output_dir / 'request.json'
         write_json(request_file, request)
-        env = isolated_environment(output_dir / 'runtime', executable=hython if hython.is_file() else None)
+        runtime_parent = Path(tempfile.gettempdir()).resolve()
+        runtime_directory = Path(tempfile.mkdtemp(prefix='dsh-isolated-runtime-', dir=runtime_parent))
+        runtime_identity = runtime_directory.stat()
+        report['runtime_environment'] = {'path': str(runtime_directory), 'cleaned': False}
+        env = isolated_environment(runtime_directory, executable=hython if hython.is_file() else None)
         sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
         from dsh_worker_limits import run_gated_worker
         process = run_gated_worker([str(hython), str(Path(__file__).resolve()), '--worker', str(request_file)],
@@ -339,34 +525,37 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         report.update(phase='worker_result', worker=process)
         result_file = output_dir / 'worker-result.json'
         if result_file.exists():
-            result = read_json(result_file)
+            result = read_json(result_file, MAX_ARCHIVE_BYTES)
             if not isinstance(result, dict) or result.get('run_id') != run_id:
                 raise ValueError('worker result identity mismatch')
+            builder = read_execution(output_dir, result.get('builder', {}))
+            checked_executions = [read_execution(output_dir, row.get('execution', {})) if isinstance(row, dict) else {}
+                                  for row in result.get('checks', [])]
             report['result'] = result
         else:
             result = {}
         if process['status'] == 'completed' and process.get('returncode') == 0 and result.get('ok') is True:
             runtime = result.get('runtime', {}).get('runtime_id')
-            builder = result.get('builder', {})
             if (result.get('phase') != 'completed' or not isinstance(runtime, str)
                     or not re.fullmatch('[0-9a-f]{32}', runtime) or builder.get('ok') is not True
                     or builder.get('execution', {}).get('runtime_id') != runtime):
                 raise ValueError('worker result lacks completed builder/runtime evidence')
             if 'hip' in manifest:
                 snapshot=result.get('snapshot',{})
-                if (snapshot.get('sha256')!=inputs[0]['sha256']
+                hip_input = next(row for row in inputs if row['file'] == manifest['hip'])
+                if (snapshot.get('sha256')!=hip_input['sha256']
                     or Path(snapshot.get('path','')).resolve()!=(output_dir/'inputs'/manifest['hip']).resolve()):
                     raise ValueError('worker snapshot source identity mismatch')
             rows = result.get('checks', [])
             if not isinstance(rows, list) or len(rows) != len(manifest['checks']):
                 raise ValueError('worker result is missing checks')
-            for expected, row in zip(manifest['checks'], rows):
+            for expected, row, execution in zip(manifest['checks'], rows, checked_executions):
                 if (not isinstance(row, dict) or any(row.get(key) != expected[key] for key in ('id', 'kind', 'node', 'frame'))
-                        or row.get('status') != 'passed' or row.get('execution', {}).get('ok') is not True
-                        or row.get('execution', {}).get('execution', {}).get('runtime_id') != runtime):
+                        or row.get('status') != 'passed' or execution.get('ok') is not True
+                        or execution.get('execution', {}).get('runtime_id') != runtime):
                     raise ValueError('worker result has incomplete/mismatched checks')
                 if expected['kind'] != 'render':
-                    checkpoint = row['execution'].get('result', {})
+                    checkpoint = execution.get('result', {})
                     if checkpoint.get('ok') is not True or checkpoint.get('nonempty') is not True:
                         raise ValueError('geometry checkpoint did not pass')
                     for name, value in expected.get('expect', {}).items():
@@ -374,7 +563,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
                         if type(actual) is not int or actual != value:
                             raise ValueError('worker geometry expectation mismatch')
                 else:
-                    rendered = row['execution'].get('result', {})
+                    rendered = execution.get('result', {})
                     if rendered.get('fresh') is not True or rendered.get('errors'):
                         raise ValueError('render checkpoint did not pass')
                 if expected['kind'] != 'cook':
@@ -387,22 +576,43 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
         if not report['ok']:
             report['error'] = result.get('error') or process.get('error') or 'worker did not complete all checks'
     except Exception as error:
-        report.update(ok=False, error=str(error) or type(error).__name__)
+        report.update(ok=False, error=_brief_text(str(error) or type(error).__name__))
+    finally:
+        if runtime_directory is not None:
+            environment = report['runtime_environment']
+            if process is not None and process.get('tree_reaped') is True:
+                try:
+                    # Remove only this invocation's exact mkdtemp identity after
+                    # the owned Job reports zero processes, never a user run root.
+                    current = runtime_directory.lstat()
+                    if (runtime_directory.parent != runtime_parent
+                            or not runtime_directory.name.startswith('dsh-isolated-runtime-')
+                            or is_reparse(runtime_directory) or runtime_directory.resolve() != runtime_directory
+                            or (current.st_dev, current.st_ino) != (runtime_identity.st_dev, runtime_identity.st_ino)):
+                        raise ValueError('runtime temporary directory identity changed; retained')
+                    shutil.rmtree(runtime_directory)
+                    environment['cleaned'] = True
+                except Exception as error:
+                    environment['cleanup_error'] = str(error) or type(error).__name__
+            else:
+                environment['retained_reason'] = 'owned worker tree exit was not confirmed'
     try:
-        unchanged = all(digest(regular_file(manifest_path.parent, row['file'])) == row['sha256'] for row in inputs)
+        unchanged = all(digest(regular_file(input_root, row['file'])) == row['sha256'] for row in inputs)
     except Exception as error:
         unchanged = False
         report['input_check_error'] = str(error) or type(error).__name__
     report.update(inputs=inputs, inputs_unchanged=unchanged,finished=True)
     if not unchanged:
-        report.update(ok=False, error='source inputs changed; external side effects are not restored')
+        report['ok'] = False
+        report.setdefault('input_check_error', 'source inputs changed; external side effects are not restored')
+        report.setdefault('error', report['input_check_error'])
     write_json(output_dir / 'report.json', report)
     return report
 
 
 def status(directory, cancel=False):
     directory=Path(directory).resolve()
-    report=read_json(directory/'report.json')
+    report=read_json(directory/'report.json', MAX_ARCHIVE_BYTES)
     request=(read_json(directory/'request.json') if (directory/'request.json').exists()
              else {'run_id':report.get('run_id'),'inputs':report.get('inputs',[])})
     if not re.fullmatch('[0-9a-f]{32}',str(report.get('run_id',''))):raise ValueError('invalid run report identity')
@@ -410,12 +620,12 @@ def status(directory, cancel=False):
     cancel_file=Path(report.get('cancel_file',directory/'cancel.request'))
     if cancel and report.get('finished') is not True:
         write_json(cancel_file,{'run_id':request['run_id'],'action':'cancel_owned_worker'})
-    progress=read_json(directory/'worker-result.json') if (directory/'worker-result.json').exists() else None
+    progress=read_json(directory/'worker-result.json', MAX_ARCHIVE_BYTES) if (directory/'worker-result.json').exists() else None
     if progress is not None and progress.get('run_id')!=request['run_id']:raise ValueError('progress identity mismatch')
     result=report.get('result') or progress or {}
     def brief(value):
         if not isinstance(value,str) or len(value)<=2000:return value
-        return value[:2000]+'\n[Full error retained in report.json]'
+        return value[:2000]+'\n[Longer error preview retained in report.json]'
     worker=report.get('worker')
     if isinstance(worker,dict):
         # The report keeps worker output and complete execution errors. Status
@@ -430,7 +640,8 @@ def status(directory, cancel=False):
         'checks':[{k:brief(r[k]) if k=='error' else r[k] for k in ('id','kind','node','frame','status','geometry','artifact','error') if k in r}
                   for r in result.get('checks',[])],
         'report':str(directory/'report.json'),'progress':str(directory/'worker-result.json'),
-        'scope':'Last recorded run evidence, not a live-process liveness claim. Cancellation is a request until a terminal report confirms it. Full execution evidence is in the report.'}
+        'runtime_environment':report.get('runtime_environment'),
+        'scope':'Last recorded run evidence, not a live-process liveness claim. Cancellation is a request until a terminal report confirms it. Large immutable execution details are referenced from the report.'}
 
 
 def main():

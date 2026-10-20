@@ -6,6 +6,7 @@ classification into admission and result reporting.
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 
 _RAW_HOU_VERB_MAP = {
@@ -461,21 +462,255 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
     }
 
 
+def script_program(code, script):
+    """Bind the exact Host-read source to its invocation without reading files here."""
+    if script is None:
+        return code, None
+    if not isinstance(script, dict) or set(script) - {'path', 'sha256', 'bytes', 'entry'}:
+        raise ValueError('script must contain only path, sha256, bytes and optional entry')
+    filename, expected, size = (script.get(key) for key in ('path', 'sha256', 'bytes'))
+    if not isinstance(filename, str) or not os.path.isabs(filename):
+        raise ValueError('script.path must be an absolute Host-read source path')
+    if not isinstance(code, str):
+        raise ValueError('script source must be UTF-8 text')
+    encoded = code.encode('utf-8')
+    actual = hashlib.sha256(encoded).hexdigest()
+    if (not isinstance(expected, str) or expected.lower() != actual
+            or type(size) is not int or size != len(encoded)):
+        raise ValueError('script source differs from its recorded SHA-256 or byte length; no code was executed')
+    entry = script.get('entry')
+    if entry is not None and (not isinstance(entry, str) or not entry.strip()):
+        raise ValueError('script.entry must be nonempty Python code when provided')
+    source = code.removeprefix('\ufeff')
+    recorded = {'path': filename, 'sha256': actual, 'bytes': len(encoded)}
+    if entry is not None:
+        recorded['entry'] = entry
+    return source, recorded
+
+
+def _hidden_execution_message(tree):
+    """Known Python loaders cannot hide a second program from this request's AST.
+
+    This is lexical admission, not a Python sandbox or an import interceptor.
+    Ordinary compile() remains available for authoring callback/source text.
+    """
+    if tree is None:
+        return None
+    other, module, loader = frozenset(), frozenset({'module'}), frozenset({'loader'})
+
+    class Bindings(ast.NodeVisitor):
+        """Only lexical locals; nested scopes have their own bindings."""
+        def __init__(self):
+            self.names, self.outside = set(), set()
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.names.add(node.id)
+        def visit_Import(self, node):
+            self.names.update(item.asname or item.name.split('.')[0] for item in node.names)
+        def visit_ImportFrom(self, node):
+            self.names.update(item.asname or item.name for item in node.names if item.name != '*')
+        def visit_FunctionDef(self, node):
+            self.names.add(node.name)
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_ClassDef = visit_FunctionDef
+        def visit_Lambda(self, node):
+            pass
+        def visit_ListComp(self, node):
+            # Iteration targets belong to the comprehension, while assignment
+            # expressions in its expressions bind the containing function.
+            for generator in node.generators:
+                self.visit(generator.iter)
+                for value in generator.ifs:
+                    self.visit(value)
+            for key in ('elt', 'key', 'value'):
+                if hasattr(node, key):
+                    self.visit(getattr(node, key))
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+        def visit_Global(self, node):
+            self.outside.update(node.names)
+        visit_Nonlocal = visit_Global
+
+    class Scan(ast.NodeVisitor):
+        def __init__(self, parent=None, local_names=(), parameters=(), *, class_scope=False):
+            self.parent, self.locals = parent, set(local_names)
+            self.values = dict.fromkeys(parameters, other)
+            self.class_scope, self.conditional, self.blocked = class_scope, False, False
+            self.namedexpr_scope = self
+
+        def name(self, name):
+            if name in self.values:
+                return self.values[name]
+            if name in self.locals:
+                return other  # A function local never falls back to the builtin.
+            if self.parent is not None:
+                return self.parent.name(name)
+            return loader if name in ('exec', 'eval') else module if name in ('builtins', '__builtins__') else other
+
+        def kind(self, value):
+            if isinstance(value, ast.Name):
+                return self.name(value.id)
+            if isinstance(value, ast.NamedExpr):
+                return self.kind(value.value)
+            receiver, attr = _literal_attribute(value)
+            if attr in ('exec', 'eval') and 'module' in self.kind(receiver):
+                return loader
+            if attr == '__dict__' and 'module' in self.kind(receiver):
+                return module
+            if (isinstance(value, ast.Subscript) and isinstance(value.slice, ast.Constant)
+                    and value.slice.value in ('exec', 'eval') and 'module' in self.kind(value.value)):
+                return loader
+            return other
+
+        def bind(self, target, value):
+            prepared = []
+            def collect(item, initial):
+                if isinstance(item, ast.Name):
+                    prepared.append((item.id, self.kind(initial) if isinstance(initial, ast.AST) else initial))
+                elif isinstance(item, (ast.Tuple, ast.List)):
+                    values = initial.elts if isinstance(initial, (ast.Tuple, ast.List)) and len(item.elts) == len(initial.elts) else [other] * len(item.elts)
+                    for child, value in zip(item.elts, values):
+                        collect(child, value)
+            collect(target, value)
+            # Tuple RHS names resolve before any target is rebound.
+            for name, found in prepared:
+                self.values[name] = self.name(name) | found if self.conditional else found
+
+        def visit_Call(self, node):
+            self.blocked |= 'loader' in self.kind(node.func)
+            self.generic_visit(node)
+
+        def visit_Assign(self, node):
+            self.visit(node.value)
+            for target in node.targets:
+                self.bind(target, node.value)
+        def visit_AnnAssign(self, node):
+            if node.value is not None:
+                self.visit(node.value)
+                self.bind(node.target, node.value)
+        def visit_NamedExpr(self, node):
+            self.visit(node.value)
+            self.namedexpr_scope.bind(node.target, self.kind(node.value))
+
+        def visit_Import(self, node):
+            for item in node.names:
+                self.bind(ast.Name(id=item.asname or item.name.split('.')[0]), module if item.name == 'builtins' else other)
+        def visit_ImportFrom(self, node):
+            for item in node.names:
+                if item.name != '*':
+                    self.bind(ast.Name(id=item.asname or item.name), loader if node.module == 'builtins' and item.name in ('exec', 'eval') else other)
+
+        def function(self, node, body):
+            # Defaults/decorators execute in the surrounding scope. Methods do
+            # not close over their class namespace; enclosing function locals do.
+            for value in (*node.args.defaults, *node.args.kw_defaults):
+                if value is not None:
+                    self.visit(value)
+            args = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            for arg in (*args, node.args.vararg, node.args.kwarg):
+                if arg is not None and arg.annotation is not None:
+                    self.visit(arg.annotation)
+            if getattr(node, 'returns', None) is not None:
+                self.visit(node.returns)
+            parameters = [arg.arg for arg in args]
+            parameters.extend(arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None)
+            bindings = Bindings()
+            for item in body:
+                bindings.visit(item)
+            parent = self.parent if self.class_scope else self
+            child = Scan(parent, bindings.names - bindings.outside, parameters)
+            for item in body:
+                child.visit(item)
+            self.blocked |= child.blocked
+
+        def visit_FunctionDef(self, node):
+            for value in node.decorator_list:
+                self.visit(value)
+            self.bind(ast.Name(id=node.name), other)
+            self.function(node, node.body)
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_Lambda(self, node):
+            self.function(node, [node.body])
+
+        def visit_ClassDef(self, node):
+            for value in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
+                self.visit(value)
+            child = Scan(self, class_scope=True)
+            for item in node.body:
+                child.visit(item)
+            self.blocked |= child.blocked
+            self.bind(ast.Name(id=node.name), other)
+
+        def visit_ListComp(self, node):
+            self.visit(node.generators[0].iter)
+            child = Scan(self)
+            child.namedexpr_scope = self.namedexpr_scope
+            for index, generator in enumerate(node.generators):
+                if index:
+                    child.visit(generator.iter)
+                child.bind(generator.target, other)
+                for value in generator.ifs:
+                    child.visit(value)
+            for key in ('elt', 'key', 'value'):
+                if hasattr(node, key):
+                    child.visit(getattr(node, key))
+            self.blocked |= child.blocked
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+        def conditional_body(self, node):
+            previous, self.conditional = self.conditional, True
+            self.generic_visit(node)
+            self.conditional = previous
+        visit_If = conditional_body
+        visit_IfExp = conditional_body
+        visit_For = conditional_body
+        visit_AsyncFor = conditional_body
+        visit_While = conditional_body
+        visit_Try = conditional_body
+
+    scan = Scan()
+    scan.visit(tree)
+    if scan.blocked:
+        return ('Dynamic exec/eval hides executable source from Raw Gate and read-only analysis. '
+                'Submit the complete Python batch, or use houdini_exec(script=absolute_path, '
+                'code=optional_invocation, expected_sha256=optional_verified_hash); '
+                'houdini_job_submit accepts the same source inputs. compile() alone is supported. '
+                'allow_raw cannot exempt hidden executable source.')
+    return None
+
+
 class CodeAnalysis:
     """One submitted program and its single, reusable lexical analysis."""
 
-    def __init__(self, code: str):
-        self.code = code
+    def __init__(self, code: str, *, entry: str | None = None, filename: str = '<dsh-houdini>'):
+        self.code = code if entry is None else code + '\n\n' + entry
+        self.filename = filename
+        self.syntax_error = None
         try:
-            self.tree = ast.parse(code)
-        except SyntaxError:
+            self.tree = ast.parse(code, filename=filename)
+            if entry is not None:
+                # Parse each authored program before joining ASTs: an invocation
+                # must not close a broken string or consume a dangling backslash.
+                tail = ast.parse(entry, filename=filename)
+                ast.increment_lineno(tail, code.count('\n') + 2)
+                self.tree.body.extend(tail.body)
+                self.tree.type_ignores.extend(tail.type_ignores)
+        except SyntaxError as error:
             self.tree = None
+            self.syntax_error = error
         self.raw_usage = _raw_usage_from_tree(self.tree) if self.tree is not None else {}
 
     def preflight(self, *, mutating_verbs, read_only, raw_gate, allow_raw):
         error = _forbidden_hip_lifecycle_message(self) or _blocking_host_traversal_message(self)
         if error:
             return error, 'forbidden'
+        if read_only or raw_gate:
+            error = _hidden_execution_message(self.tree)
+            if error:
+                return error, 'read_only_blocked' if read_only else 'blocked'
         if read_only:
             error = _query_mutation_message(self, mutating_verbs)
             if error:
@@ -487,7 +722,9 @@ class CodeAnalysis:
         return None, 'not_applicable'
 
     def compile(self):
-        return compile(self.tree if self.tree is not None else self.code, '<dsh-houdini>', 'exec')
+        if self.syntax_error is not None:
+            raise self.syntax_error
+        return compile(self.tree, self.filename, 'exec')
 
 
 def _analysis(code):

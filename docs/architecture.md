@@ -38,7 +38,7 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 `houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
 
-DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。独立产物不自动合并，选定模块由现场作者显式导入并观察集成后的实际输出；未保存现场与未声明依赖不属于该副本的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
+DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。团队默认交付builder及输入/入口和实际检查；现场作者通过现有exec/job的script入口执行并观察实际消费者，不自动合并或重放。需保留已有节点真实状态时按需使用原生片段；未保存现场与未声明依赖不属于独立检查的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
 
 ### 现役分层
 
@@ -84,7 +84,8 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
-| [src/isolated-execution.ts](../src/isolated-execution.ts) | houdini_isolated的一次性builder/已保存HIP副本执行与结果读取；消费当前任务文件权限和所选Houdini运行版，复用隔离检查器、DSH后台作业及原生附件，不绑定常驻子执行端或自动合并 |
+| [src/isolated-execution.ts](../src/isolated-execution.ts) | houdini_isolated的一次性builder/HIP副本及受管准备操作；消费DSH输入政策、共享默认运行目录、原报告事实和详情引用，复用隔离检查器/DSH作业/附件，不建立常驻子执行端或自动合并 |
+| [src/execution-source.ts](../src/execution-source.ts) | exec/job共用的内联或文件源码读取；经DSH文件服务固定UTF-8字节和摘要、核对可选版本后提交，不选择现场、不执行HOM、不自动重放 |
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
@@ -143,7 +144,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 |---|---|
 | [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；component_replace已有显式计划与有限迁移，完整依赖迁移和质量验收不由片段往返保证 |
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP、主线程队列、job、身份与合同；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
-| [dsh_code_analysis.py](../houdini/python3.11libs/dsh_code_analysis.py) | 每请求一次AST解析，共享预检、Raw Gate、只读限制与raw使用分类；执行编译同一AST，无HOM |
+| [dsh_code_analysis.py](../houdini/python3.11libs/dsh_code_analysis.py) | 内联或脚本/尾段的同一AST、源码摘要核对、共享预检、Raw Gate、只读限制与raw使用分类；拒绝已知隐藏执行源码，编译同一AST，无HOM |
 | [dsh_execution.py](../houdini/python3.11libs/dsh_execution.py) | 动词注册、签名绑定/缓存、调用追踪、编辑事务和现场执行事实；只读不准备编辑Undo或journals |
 | [dsh_execution_results.py](../houdini/python3.11libs/dsh_execution_results.py) | 序列化、操作证据、检查和产物路径，统一编组公开结果信封 |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
@@ -173,7 +174,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_parameter_ui.py](../houdini/python3.11libs/dsh_parameter_ui.py) | 共享组件展开、布局预检/诊断、单节点spare追加及状态保留 |
 | [dsh_control_bindings.py](../houdini/python3.11libs/dsh_control_bindings.py) | 显式数值源/目标绑定、计划版本、现有驱动保护、回读与通道恢复 |
 | [dsh_cook_control.py](../houdini/python3.11libs/dsh_cook_control.py) | Manual计算边界、单次批量依赖预检与规范不终止VEX模式识别；未知控制流不认证安全，不设隐藏上游节点数门，无跨调用缓存 |
-| [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker进程树限额、超时/取消与退出回收，不接管live进程 |
+| [dsh_worker_limits.py](../houdini/python3.11libs/dsh_worker_limits.py) | 自有Windows worker树限额、截止/取消与实际Job进程归零；GO、payload结果与树退出分开，不接管live进程 |
 | [dsh_sop_contracts.py](../houdini/python3.11libs/dsh_sop_contracts.py) | build_module/verify_network、原生公共Output发布/接线验收、有界Packed内容检查、静态预检、失败清理、有序点弦长 |
 | [dsh_operation_cards.py](../houdini/python3.11libs/dsh_operation_cards.py) | [节点卡](node-operation-cards.md)加载、精确类型限制、关键参数与决策提示 |
 | [dsh_geometry_observation.py](../houdini/python3.11libs/dsh_geometry_observation.py) | Polygon边界/连通/朝向/截面、唯一性、稳定ID位移与变换；从最终SOP明确组采集有界观察，整件bgeo流核对大型控制实验恢复；同次复用、不跨调用缓存 |
@@ -237,7 +238,7 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护验证与交付图片的managed/delivery/explicit路径策略、唯一capture分配
 和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
-`$HIP/dsh-artifacts/checks/<run-id>/`，delivery直接生成到`$HIP/dsh-artifacts/renders/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
+`$HIP/dsh-artifacts/checks/previews/<run-id>/`，delivery直接生成到`$HIP/dsh-artifacts/renders/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
 [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护可直接应用的Network Box分组、可选role颜色注解、
 同批任意声明顺序的members/boxes嵌套、类型化Box provenance、presentation快照与Bridge undo核对。普通分组不要求预览hash；
@@ -305,7 +306,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |
 | [houdini_test_environment.py](../tools/houdini_test_environment.py) | 部署/GUI测试及随包作者检查器共用的偏好、包目录、Python/Qt/DSH环境隔离与厂商bin启动目录；GUI验收CLI可隔离开发宿主的MSIX身份，保留自有进程树清理，不改变用户进程环境 |
-| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 可信构建脚本或复制的已保存HIP在独立hython中的cook/cache/ROP；供houdini_isolated及开发CLI复用，保留输入身份、实际进度/结果、产物和取消，不连接live或覆盖原HIP |
+| [isolated-houdini-check.py](../tools/isolated-houdini-check.py) | 固定输入根下的builder、HIP副本及加载后的受管准备代码；共享Bridge脚本执行、单份大详情与有界报告、检查及自有临时环境回收，供Host/CLI复用，不连接live或覆盖原HIP |
 | [camera-karma-smoke.py](../tools/camera-karma-smoke.py)、[camera-preview-smoke.py](../tools/camera-preview-smoke.py) | 隔离真实renderer/GUI验收；预览入口核对取景、透明几何/实体背板合成与用户状态恢复，不代替任意材质的语义识图 |
 
 程序化产品模型的开发评测集见[evaluation/product-modeling-dev-v1](../evaluation/product-modeling-dev-v1/)，信息隔离和验收原则见[评测设计](product-modeling-evaluation.md)。一次性probe及tools/out不是生产API；退役实验由Git历史保留，不在现役树维持副本。测试入口见[开发维护](development.md)。

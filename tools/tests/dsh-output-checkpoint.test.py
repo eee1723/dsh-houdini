@@ -132,7 +132,7 @@ try:
             managed, managed_artifact, _ = dsh_media_output._preview_artifact(
                 '检查 图.$F4.png', frame=3, purpose='model_visual_verification',
                 output_policy='managed', default_label='preview', default_subdir='render')
-        assert Path(managed).parent.parent==base/'dsh-artifacts/checks'
+        assert Path(managed).parent.parent==base/'dsh-artifacts/checks/previews'
         assert managed_artifact['output_policy']=='managed' and '0003' in Path(managed).name
         assert managed_artifact['role']=='visual_check' and Path(managed_artifact['project_root'])==base
         assert dsh_media_output._release_preview_reservation(managed_artifact)==[]
@@ -147,7 +147,7 @@ try:
         explicit_name, _, _ = dsh_media_output._preview_artifact(
             'current-ui.png', frame=3, purpose='existing_ui', output_policy='explicit',
             default_label='ui', default_subdir=directory_path('visual_check'))
-        assert Path(explicit_name)==base/'dsh-artifacts/checks'/'current-ui.png'
+        assert Path(explicit_name)==base/'dsh-artifacts/checks/previews'/'current-ui.png'
         reject(lambda:dsh_media_output._preview_artifact('../bad.png',frame=1,purpose='test',
             output_policy='managed',default_label='x',default_subdir='render'),'basename')
         rop=hou.node('/out').createNode('geometry','__checkpoint_rop')

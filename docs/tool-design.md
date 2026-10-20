@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 110
+Execution contract version: 112
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -52,7 +52,7 @@ H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户F
 Flipbook没有OpenGL的旧LUT/gamma接口，不能按同名参数或不透明测试外推全部替代。
 平台依据：[Flipbook](https://www.sidefx.com/docs/houdini/nodes/out/flipbook.html)、
 [OpenGL退役说明](https://www.sidefx.com/docs/houdini/nodes/out/opengl.html)；本项目的稳定验证入口见[开发规范](development.md)。
-render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-artifacts/checks/<run-id>/`；最终交付显式选
+render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-artifacts/checks/previews/<run-id>/`；最终交付显式选
 `output_policy='delivery'`写入`$HIP/dsh-artifacts/renders/`。两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
 自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP按明确目标设置`$HIP/dsh-artifacts/renders/...`，已有用户指定输出保留。
 

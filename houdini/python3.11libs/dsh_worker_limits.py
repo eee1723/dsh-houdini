@@ -20,6 +20,12 @@ class WorkerJob:
         class Extended(ctypes.Structure):
             _fields_ = [('basic',Basic),('io',IO),('process_memory',ctypes.c_size_t),
                 ('job_memory',ctypes.c_size_t),('peak_process',ctypes.c_size_t),('peak_job',ctypes.c_size_t)]
+        class Accounting(ctypes.Structure):
+            _fields_ = [('user_time',ctypes.c_int64),('kernel_time',ctypes.c_int64),
+                ('period_user_time',ctypes.c_int64),('period_kernel_time',ctypes.c_int64),
+                ('page_faults',wintypes.DWORD),('total_processes',wintypes.DWORD),
+                ('active_processes',wintypes.DWORD),('terminated_processes',wintypes.DWORD)]
+        self.accounting = Accounting
         self.kernel=ctypes.WinDLL('kernel32',use_last_error=True)
         k=self.kernel
         k.CreateJobObjectW.restype=wintypes.HANDLE
@@ -27,6 +33,8 @@ class WorkerJob:
         k.SetInformationJobObject.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD]
         k.AssignProcessToJobObject.argtypes=[wintypes.HANDLE,wintypes.HANDLE]
         k.TerminateJobObject.argtypes=[wintypes.HANDLE,wintypes.UINT]
+        k.QueryInformationJobObject.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.c_void_p]
+        k.QueryInformationJobObject.restype=wintypes.BOOL
         k.CloseHandle.argtypes=[wintypes.HANDLE]
         self.handle=k.CreateJobObjectW(None,None)
         limits=Extended();limits.basic.flags=0x2000|0x200  # kill-on-close + aggregate committed-memory limit
@@ -45,6 +53,25 @@ class WorkerJob:
         if self.handle:
             self.kernel.CloseHandle(self.handle);self.handle=None
 
+    def reap(self, timeout=15):
+        """Confirm this owned tree is empty before callers remove its files.
+
+        Parent exit does not imply a renderer child has exited. Keep the Job
+        handle while terminating leftovers and observing its accounting count.
+        """
+        def active():
+            info = self.accounting()
+            if not self.kernel.QueryInformationJobObject(self.handle,1,ctypes.byref(info),ctypes.sizeof(info),None):
+                raise OSError(ctypes.get_last_error(),'cannot query owned worker tree')
+            return info.active_processes
+        if active():
+            self.terminate()
+        deadline = time.monotonic() + timeout
+        while active():
+            if time.monotonic() >= deadline:
+                raise TimeoutError('owned worker tree did not finish exiting')
+            time.sleep(.05)
+
 
 def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_file=None):
     """Worker must wait for a GO line before loading user assets or executing code.
@@ -52,7 +79,8 @@ def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_f
     Job caps committed memory for this tree, not GPU allocations or the whole host.
     Allocation denial may raise/crash inside worker; it is not labeled a proved OOM.
     started means a process was created; released means GO was sent, not that the
-    payload finished. Startup failures retain phase/error without releasing work.
+    payload finished. tree_reaped independently confirms no owned processes remain.
+    Startup failures retain phase/error without releasing work.
     """
     if os.name!='nt':raise RuntimeError('worker limits currently require Windows')
     if type(memory_mb) is not int or not 128<=memory_mb<=65536:raise ValueError('memory_mb must be 128..65536')
@@ -60,10 +88,10 @@ def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_f
     cancel=Path(cancel_file) if cancel_file else None
     if cancel and cancel.exists():
         return {'status':'cancelled_before_start','returncode':None,'output':'','started':False,
-                'released':False,'phase':'spawn'}
+                'released':False,'tree_reaped':True,'phase':'spawn'}
     with tempfile.TemporaryFile() as log:
         process=None;job=None;status='failed';started=time.monotonic()
-        phase='spawn';released=False;error=None
+        phase='spawn';released=False;error=None;tree_reaped=False;cleanup_error=None
         try:
             process=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.PIPE,stdout=log,stderr=log,
                                      creationflags=subprocess.CREATE_NO_WINDOW)
@@ -89,17 +117,28 @@ def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_f
         except (OSError, RuntimeError, subprocess.SubprocessError) as failure:
             status='failed';error=f'{type(failure).__name__}: {failure}'
         finally:
-            if job:job.close()  # also removes descendants after normal parent exit
+            if job:
+                try:
+                    job.reap()
+                    tree_reaped=True
+                except (OSError, RuntimeError, TimeoutError) as failure:
+                    cleanup_error=f'{type(failure).__name__}: {failure}'
+                finally:
+                    job.close()  # kill-on-close remains the final owned-tree fence
             if process is not None:
                 if process.poll() is None:process.kill();process.wait(timeout=15)
                 if process.stdin and not process.stdin.closed:
                     try:process.stdin.close()
                     except OSError:pass  # pipe may have broken before GO was flushed
+            if job is None and not released:
+                # Without GO this worker cannot start user code or descendants.
+                tree_reaped=process is None or process.returncode is not None
         log.seek(0,2);size=log.tell();log.seek(max(0,size-12000))
         output=log.read().decode('utf-8',errors='replace')
         result={'status':status,'returncode':process.returncode if process is not None else None,
-                'output':output,'started':process is not None,'released':released,'phase':phase,
+                'output':output,'started':process is not None,'released':released,'tree_reaped':tree_reaped,'phase':phase,
                 'memory_mb':memory_mb,'elapsed_seconds':round(time.monotonic()-started,3),
                 'scope':'owned Windows process tree; committed-memory cap; no GPU or external-service limit'}
         if error:result['error']=error
+        if cleanup_error:result['cleanup_error']=cleanup_error
         return result

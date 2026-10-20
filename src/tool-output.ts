@@ -24,6 +24,7 @@ const execOutputProperties = {
   execution: { type: 'json' },
   details: { type: 'json' },
   requestReceipt: { type: 'json' },
+  script: { type: 'json' },
 } as const
 
 export const execOutputSchema = {
@@ -45,8 +46,8 @@ const object = (value: unknown): PresentationMeta | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as PresentationMeta : undefined
 
-export function codePresentationInput(args: { code: string; allow_raw?: string }): unknown {
-  return args.allow_raw === undefined ? args.code : args
+export function codePresentationInput(args: { code?: string; script?:string; expected_sha256?:string; allow_raw?: string }): unknown {
+  return args.allow_raw === undefined && args.script === undefined && args.expected_sha256 === undefined ? args.code : args
 }
 
 export function execPresentationMeta(value: ExecResult): PresentationMeta {
@@ -206,6 +207,7 @@ function renderFields(value: ExecResult): string[] {
       compact ? project(value[key], `/${key}`) : value[key])}`)
   }
   field('request-receipt', 'requestReceipt', false)
+  field('script-source', 'script', false)
   field('execution-outcome', 'outcome', false)
   field('checks', 'checks', false)
   // The Host may spill large tool text. Put request, recovery and observation

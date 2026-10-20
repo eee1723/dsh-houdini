@@ -51,6 +51,9 @@ set_parms(r,{'soppath':n.path()})
     success = run('success')
     assert success['ok'], success
     assert success['worker']['status']=='completed' and success['worker']['released']
+    assert success['worker']['tree_reaped'] and success['runtime_environment']['cleaned']
+    assert not Path(success['runtime_environment']['path']).exists()
+    assert not (root/'success/runtime').exists()
     assert len(success['result']['checks'])==3 and success['inputs_unchanged']
     assert success['result']['builder']['transaction']['status']=='committed'
     state=runner.status(root/'success')
@@ -125,11 +128,13 @@ set_parms(r,{'soppath':n.path()})
     finally:thread.join(timeout=35)
     assert observed and not stopped['ok'] and stopped['worker']['status']=='cancelled',stopped
     assert stopped['worker']['released'] and stopped['result']['phase']=='builder',stopped
+    assert stopped['worker']['tree_reaped'] and stopped['runtime_environment']['cleaned'],stopped
     assert observed[0]['cancel_requested'] and not observed[0]['finished'],observed
     assert runner.status(root/'cancel-running')['cancel_requested'] and cancel.exists()
     assert not (root/'cancel-running/cancel.request').exists(), 'custom cancellation path was ignored'
     timed=run('deadline',timeout=5)
     assert not timed['ok'] and timed['worker']['status']=='timed_out',timed
+    assert timed['worker']['tree_reaped'] and timed['runtime_environment']['cleaned'],timed
 
     script.write_text(code, encoding='utf-8')
     manifest([checks[1]])

@@ -173,10 +173,10 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     """Capture the selected viewport with bounded freshness and full restoration.
 
     Managed output (the default) accepts only an omitted filename or safe
-    basename and writes under ``$HIP/dsh-artifacts/checks/<run-id>/``. Deliberate
+    basename and writes under ``$HIP/dsh-artifacts/checks/previews/<run-id>/``. Deliberate
     Delivery images use ``output_policy='delivery'`` under ``$HIP/dsh-artifacts/renders``;
     custom destinations use ``output_policy='explicit'``; an explicit bare
-    filename goes under ``$HIP/dsh-artifacts/checks/``. The capture is a user-screen
+    filename goes under ``$HIP/dsh-artifacts/checks/previews/``. The capture is a user-screen
     diagnostic: readable pixels are required, but visual semantics remain
     unverified.  H21/H22 require stashed flipbook and viewport-camera state;
     unsupported restoration combinations reject before mutation.

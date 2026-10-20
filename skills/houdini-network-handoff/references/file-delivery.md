@@ -28,7 +28,7 @@
 
 需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 
-最终图片用`output_policy='delivery'`生成到已命名HIP旁的`dsh-artifacts/renders/`，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。普通managed观察图在`dsh-artifacts/checks/<run-id>/`，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
+最终图片用`output_policy='delivery'`生成到已命名HIP旁的`dsh-artifacts/renders/`，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。普通managed观察图在`dsh-artifacts/checks/previews/<run-id>/`，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
 
 ```python
 __result__ = render_view('/obj/example/OUT', picture='overview.png', output_policy='delivery')
@@ -37,7 +37,7 @@ __result__ = render_view('/obj/example/OUT', picture='overview.png', output_poli
 
 正式ROP图片可在渲染前选择`$HIP/dsh-artifacts/renders/asset_final.png`；临时picture覆盖不证明持久ROP设置已保存。已有用户目的地和ROP优先，不为统一目录默默重设。无识图能力时不能宣称视觉通过；用户需要的图片仍可交付并注明观察范围。
 
-检查用途由意图决定：采样、法线、透明通道、显示异常和测试渲染的对照图使用visual_check。`render_frame`做诊断时显式指定`picture='$HIP/dsh-artifacts/checks/<task>/check.png'`，不要因为它叫render就写入dsh-artifacts/renders，也不要为了“稍后可能交付”提前把每张检查图声明为delivery。视频抽帧等资料仍随教程放入analysis；建模过程的图像诊断不混入教程/Trace报告。
+检查用途由意图决定：采样、法线、透明通道、显示异常和测试渲染的对照图使用visual_check。`render_frame`做诊断时显式指定`picture='$HIP/dsh-artifacts/checks/previews/<task>/check.png'`，不要因为它叫render就写入dsh-artifacts/renders，也不要为了“稍后可能交付”提前把每张检查图声明为delivery。视频抽帧等资料仍随教程放入analysis；建模过程的图像诊断不混入教程/Trace报告。
 
 图片在聊天中看起来异常，而网络或几何检查不能解释时，可先核对原文件、图像通道和实际模型输入；必要时生成同取景的不透明对照图，再决定是否修改几何。文件可读、通道正常或某次模型描述都不能单独证明几何正确。
 

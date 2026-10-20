@@ -5,6 +5,7 @@ import { readResource,recoverRequest } from './tool-query.js'
 import { visualCapability } from './image-output.js'
 import { HOUDINI_TOOLS } from './tool-catalog.js'
 import { HoudiniToolRuntime, type HoudiniConnection } from './tool-runtime.js'
+import {resolveExecutionSource} from './execution-source.js'
 import {
   codePresentationInput, execOutputSchema, execPresentationMeta, genericResult,
   jobHandleMeta, jobPresentationMeta, jobResultTitle, jobStatusOutputSchema,
@@ -20,16 +21,20 @@ const ALLOW_RAW_PARAM = {
     + 'for those and split them from the low-level batch. Exemptions are recorded in the trace.',
 } as const
 
+const EXECUTION_PARAMS = {
+  code: {type:'string',description:'Python batch with hou and verbs. With script, optional invocation after its definitions (for example __result__ = build(parent)); otherwise the complete batch.'},
+  script: {type:'string',description:'Absolute UTF-8 .py builder path. Host reads its actual source once through the current file policy; use this instead of exec(open(...).read()). This grants no extra mutation permission and does not replay, update or replace existing nodes automatically.'},
+  expected_sha256: {type:'string',description:'Optional SHA-256 of the tested script bytes; requires script. A changed file fails before selecting or restoring the target scene.'},
+  allow_raw: ALLOW_RAW_PARAM,
+} as const
+
 /** One public tool per execution, observation, recovery or resource responsibility. */
 export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection): void {
   const runtime = new HoudiniToolRuntime(ctx, connection)
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description: HOUDINI_TOOLS.houdini_exec.purpose+' Compose injected Python verbs; use __result__ for structured output. Inspect transaction/restoration after failure. Images arrive as native attachments.',
-    parameters: {
-      code: {type:'string',required:true,description:'Python batch, with hou and verbs available. Assign __result__ or print observations.'},
-      allow_raw: ALLOW_RAW_PARAM,
-    },
+    parameters: EXECUTION_PARAMS,
     output: {
       schema: execOutputSchema,
       render: (_args, value) => renderExec(value),
@@ -38,9 +43,9 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     presentCall: args=>({card:'generic',title:HOUDINI_TOOLS.houdini_exec.label,kind:'edit',rawInput:codePresentationInput(args)}),
     presentResult: (_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_exec.label,result),result),
     async execute(args,exec) {
-      if(!args.code?.trim()) throw Error('Provide nonempty Python code')
+      const source=await resolveExecutionSource(ctx,exec,args)
       const {bridge,owner}=await runtime.target(exec,'write')
-      return runtime.result(await bridge.exec(args.code,owner,exec.signal,args.allow_raw),exec,bridge,true)
+      return runtime.result(await bridge.exec(source.code,owner,exec.signal,args.allow_raw,false,source.script),exec,bridge,true)
     },
   }))
 
@@ -113,10 +118,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   ctx.tools.register(defineTool({
     name: 'houdini_job_submit',
     description: HOUDINI_TOOLS.houdini_job_submit.purpose,
-    parameters: {
-      code: { type: 'string', required: true, description: 'Long-running Python code with `hou` available' },
-      allow_raw: ALLOW_RAW_PARAM,
-    },
+    parameters: EXECUTION_PARAMS,
     output: {
       schema: {
         type: 'object',
@@ -134,8 +136,9 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_submit.label, result), result),
     async execute(args, exec) {
+      const source=await resolveExecutionSource(ctx,exec,args)
       const { bridge, owner } = await runtime.target(exec,'write')
-      return bridge.submitJob(args.code, owner, exec.signal, args.allow_raw)
+      return bridge.submitJob(source.code, owner, exec.signal, args.allow_raw,source.script)
     },
   }))
 

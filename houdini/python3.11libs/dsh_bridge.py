@@ -83,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 110
+_EXECUTION_CONTRACT_VERSION = 112
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -133,9 +133,10 @@ def set_raw_gate(on: bool) -> str:
 
 def run_code(code: str, allow_raw: str | None = None,
              owner_session: str | None = None, owner_call: str | None = None,
-             read_only: bool = False) -> dict:
+             read_only: bool = False, *, script: dict | None = None) -> dict:
     """Main-thread execution entry shared by HTTP and isolated Python callers."""
-    return _runtime.run_code(code, allow_raw, owner_session, owner_call, read_only, raw_gate=_raw_gate)
+    return _runtime.run_code(code, allow_raw, owner_session, owner_call, read_only,
+                             raw_gate=_raw_gate, script=script)
 
 
 def _target_error(body, *, check_scene=True):
@@ -342,7 +343,8 @@ def _job_activity() -> dict:
 
 def _job_body(job_id: str, code: str, allow_raw: str | None = None,
               owner_session: str | None = None,
-              owner_call: str | None = None, request_ref: str | None = None) -> dict | None:
+              owner_call: str | None = None, request_ref: str | None = None,
+              script: dict | None = None) -> dict | None:
     """Job work item, run on the main thread via `_execute`.
 
     Re-checks cancellation AT execution time: a job cancelled while waiting in
@@ -355,16 +357,17 @@ def _job_body(job_id: str, code: str, allow_raw: str | None = None,
         if job is None or job["status"] == "cancelled":
             return None
         job["status"] = "running"
-    return run_code(code, allow_raw, owner_session, owner_call)
+    return run_code(code, allow_raw, owner_session, owner_call, script=script)
 
 
 def _run_job(job_id: str, code: str, allow_raw: str | None = None,
              owner_session: str | None = None,
-             owner_call: str | None = None, request_ref: str | None = None) -> None:
+             owner_call: str | None = None, request_ref: str | None = None,
+             script: dict | None = None) -> None:
     try:
         try:
             outcome = _execute(
-                lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call, request_ref)
+                lambda: _job_body(job_id, code, allow_raw, owner_session, owner_call, request_ref, script)
             )
         except BaseException:
             outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
@@ -791,7 +794,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
                 return
             read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
-            invoke=lambda: run_code(code, allow_raw, owner_session, owner_call, read_only)
+            invoke=lambda: run_code(code, allow_raw, owner_session, owner_call, read_only, script=body.get('script'))
             try:
                 admitted=_request_registry.reserve(ref,owner_session,body)
             except ValueError as error:
@@ -861,6 +864,7 @@ class _Handler(BaseHTTPRequestHandler):
                     owner_session,
                     owner_call,
                     ref,
+                    body.get('script'),
                 ),
                 daemon=True,
             )

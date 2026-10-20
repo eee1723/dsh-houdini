@@ -16,6 +16,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 | houdini_request | 查回原 request_ref 的接收/执行回执，不重发代码 |
 | houdini_resource | 在 Host 读取用户来源或已保留结果的分页正文 |
 | houdini_capabilities | 返回当前模型与附件通道的声明能力 |
+| houdini_isolated | 新hython中的builder、HIP副本或副本加载后的受管准备操作；不修改live，不自动合并 |
 | image_models / image_generate | Host读取配置或请求图片API；managed目的地经Bridge只读观察所选HIP，explicit不查询Houdini；不修改场景、不提供几何验证 |
 
 [工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件；[资源读取](../src/tool-query.ts)只消费历史材料。结果正文或来源不成为新的现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
@@ -43,7 +44,13 @@ inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供
 
 低层逃生舱只接受单次明确用途；不隐式放开整段已覆盖修改。静态分析服务正常模型调用，不是任意 Python 沙箱。已观察的非终止 VEX 删除循环写前拒绝；其他 VEX 仍由原生编译与计算反馈判断。
 
-每次请求解析一次 Python 语法树，分类、准入和执行证据共用结果。动词签名绑定失败返回实际 signature、dispatched=false 和 scene_writes=0；内部 TypeError 保留原始原因。零写入只说明该次未派发调用，不能抵消同批此前修改。
+每个批次的分类、准入和执行证据共用同一 Python 语法树。动词签名绑定失败返回实际 signature、dispatched=false 和 scene_writes=0；内部 TypeError 保留原始原因。零写入只说明该次未派发调用，不能抵消同批此前修改。
+
+`houdini_exec`和`houdini_job_submit`接受内联`code`或绝对`script`文件；有`script`时，`code`是可选调用尾段。Host通过DSH文件服务读取一次UTF-8字节、固定摘要，并可用`expected_sha256`核对已验证版本；失败不选择写入目标。Bridge不重新读取路径，核对所收源码的摘要和字节数；文件与尾段分别解析，合成同一语法树后检查和执行，不能用尾段补齐损坏文件。原始脚本摘要、路径及实际调用尾段随同一执行回执保存，查回不重读文件或重放代码。
+
+脚本以临时Python模块作用域执行，`__file__`是所读源路径；单独执行时`__name__='__main__'`，有调用尾段时为`__dsh_builder__`。退出后恢复先前模块，不建立常驻builder注册表，不自动修改`sys.path`、清除import缓存或固定未声明依赖。摘要只绑定该文件，不能证明调用参数、外部输入、现场状态或后续改动与独立检查等价。
+
+默认Raw Gate及只读入口拒绝已知`exec/eval`加载器隐藏第二段可执行源码，并提示使用完整`code`或`script`入口；普通`compile`仍可用于生成或检查工具源码。此限制维持可见源码的执行边界，不修改Python内建函数、不递归解释import，也不声称任意动态Python或外部副作用已被沙箱保护。团队可默认交付builder和明确输入/入口，真实节点快照仍按需使用，不强制所有编辑先生成文件。
 
 原生 OBJ parent/unparent 使用 set_object_parent，普通 connect/disconnect 表达数据流。set_object_parent 的 reason 是可选自由用途说明；任务可选择 OBJ、KineFX 或其他适用表示，执行层不强制建模方法。
 
@@ -58,6 +65,10 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 文件写入、HDA 库和任意 Python/solver/外部进程副作用不属于场景 Undo 保证。参数与界面动词的内部恢复范围由各自结果说明；已成功的外部文件写入不会因后续批次失败而声称撤销。
 
 长任务仍在同一主线程串行执行，不提供并发 HOM。queued 任务可在代码运行前取消；running 任务的取消依赖原生协作检查点，不能强杀用户进程。jobId 来自实际提交结果，状态/等待/取消只接受所属会话；后台提交成功不等于计算完成。
+
+独立执行复用DSH作业与一次性worker。manifest的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
+
+worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
 
 HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
 
@@ -170,7 +181,7 @@ render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复�
 
 画面检查的共用合同独立于所选原生后端。H21的OpenGL与H22的Flipbook沿用[工具设计](tool-design.md)中已验证的兼容边界；节点存在和不透明图像成功不证明几何透明、颜色接口或所有参数等价。render_view仍只支持当前GUI合同；原生Flipbook的headless能力不因此被否定，也未扩展为本接口的已验证范围。
 
-渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-artifacts/renders/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-artifacts/renders/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 

@@ -44,7 +44,12 @@ export interface ExecResult {
   details?: JsonValue
   /** Same-runtime execution receipt, including uncertain transport outcomes. */
   requestReceipt?: JsonValue
+  /** Exact builder source identity verified and returned by the Python executor. */
+  script?: JsonValue
 }
+
+/** Frozen Host-read source. The Bridge verifies this against the transmitted code. */
+export interface ScriptSource {path:string;sha256:string;bytes:number;entry?:string}
 
 /** Handle returned when a background job is accepted by the bridge. */
 export interface JobHandle {
@@ -171,7 +176,7 @@ export class HoudiniBridge {
    *  allowRaw: one-time raw-hou exemption reason when the bridge gate is on.
    *  owner is mandatory: every HTTP execution carries the Host session
    *  identity, the per-call id and a one-time Bridge-issued ticket. */
-  async exec(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string, readOnly = false): Promise<ExecResult> {
+  async exec(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string, readOnly = false, script?:ScriptSource): Promise<ExecResult> {
     assertOwnership(owner, 'Houdini execution')
     const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
     const body: Record<string, unknown> = {
@@ -183,6 +188,7 @@ export class HoudiniBridge {
     }
     if (allowRaw) body.allow_raw = allowRaw
     if (readOnly) body.read_only = 'true'
+    if (script) body.script = script
     try {
       return await this.post<ExecResult>('/exec', body, signal)
     } catch (error) {
@@ -272,7 +278,7 @@ export class HoudiniBridge {
   }
 
   /** Queue Python code as a bridge-side background job; returns immediately. */
-  async submitJob(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string): Promise<JobHandle> {
+  async submitJob(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string, script?:ScriptSource): Promise<JobHandle> {
     assertOwnership(owner, 'Houdini job submission')
     const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
     const body: Record<string, unknown> = {
@@ -283,6 +289,7 @@ export class HoudiniBridge {
       request_ref: ref,
     }
     if (allowRaw) body.allow_raw = allowRaw
+    if (script) body.script = script
     try {
       const handle = await this.post<JobHandle>('/jobs', body, signal)
       // Admission provenance must survive changing this conversation's default target.

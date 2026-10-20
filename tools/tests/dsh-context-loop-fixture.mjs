@@ -14,7 +14,7 @@ import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTE
 
 export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController']
 const provider = 'houdini-context-fixture', model = 'scripted-local'
-const runtimeId = 'a'.repeat(32), jobId = 'b'.repeat(12)
+const defaultRuntimeId = 'a'.repeat(32), jobId = 'b'.repeat(12)
 const largePayload = 'FIXTURE_BULK_BEGIN:' + 'x'.repeat(70000) + ':FIXTURE_BULK_END'
 
 export function apply(ctx) {
@@ -28,6 +28,20 @@ export function apply(ctx) {
     ? JSON.parse(fs.readFileSync(process.env.DSH_HDA_PRESENTATION_FIXTURE,'utf8')) : null
   const geometryReceipt = process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE,'utf8')) : null
+  const scriptFixture = process.env.DSH_SCRIPT_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.DSH_SCRIPT_FIXTURE,'utf8')) : null
+  // Replay an exact receipt under its recorded target identity. Introducing a
+  // second executor here would correctly trigger production recovery before
+  // the next step; this owned HTTP server never contacts that original process.
+  const runtimeId=scriptFixture?.receipt?.execution?.runtime_id??defaultRuntimeId
+  if(scriptFixture){
+    const {source,record,receipt}=scriptFixture,bytes=fs.readFileSync(record.path)
+    assert.equal(typeof source,'string')
+    assert.equal(bytes.toString('utf8'),source,'DSH must read the exact source used by the independent HOM regression')
+    assert.equal(bytes.length,record.bytes)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'),record.sha256)
+    assert.deepEqual(receipt.script,record,'the receipt and executable source must identify the same tested version')
+  }
   // Exercise both official DSH transports only in this owned fixture scope;
   // production Houdini stays in its configured presentation mode.
   const presentation=fixturePresentation(ctx)
@@ -55,7 +69,8 @@ export function apply(ctx) {
   })
   const geometryStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
   const hdaStart = geometryStart + (geometryReceipt ? 2 : 0)
-  const receiptStart = hdaStart + (hdaReceipt ? 2 : 0)
+  const scriptStart = hdaStart + (hdaReceipt ? 2 : 0)
+  const receiptStart = scriptStart + (scriptFixture ? 4 : 0)
   const finalStep = receiptStart + 5
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
@@ -66,6 +81,10 @@ export function apply(ctx) {
   const decompositionBody = fs.readFileSync(new URL('../../skills/houdini-task-decomposition/SKILL.md',import.meta.url),'utf8')
     .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/,'').trim().replaceAll('\r\n','\n')
   const requests = [], bridgeCalls = [], receipts = new Map()
+  const scriptRejectedCalls=new Map()
+  const scriptArgs=scriptFixture?{script:scriptFixture.record.path,expected_sha256:scriptFixture.record.sha256,
+    ...(scriptFixture.record.entry!==undefined?{code:scriptFixture.record.entry}:{})}:null
+  const scriptWrongArgs=scriptArgs?{...scriptArgs,expected_sha256:(scriptArgs.expected_sha256[0]==='0'?'1':'0')+scriptArgs.expected_sha256.slice(1)}:null
   let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, busyRef, busyPolls=0, failure
   const expiredJob = 'c'.repeat(12)
   const writeReport = value => {
@@ -105,7 +124,16 @@ export function apply(ctx) {
           res.end(JSON.stringify({error:'fixture transport lost after admission'}))
           return
         }
-        value = geometryReceipt && body.code === 'fixture_geometry'
+        if(scriptFixture && body.script){
+          assert.equal(body.code,scriptFixture.source,'the Host must transmit actual Python source, never an exec/open wrapper')
+          assert.deepEqual(body.script,scriptFixture.record,'source version and invocation tail reach the actual HTTP consumer')
+          assert.equal(req.headers['x-dsh-houdini-executor'],process.env.DSH_HOUDINI_EXECUTOR_ID,'HTTP routing stays pinned to the current fixture executor')
+          assert.equal(typeof body.owner_session,'string');assert(body.owner_session.trim())
+          assert.equal(typeof body.owner_call,'string');assert(body.owner_call.trim())
+          // This is historical independent-HOM evidence. Do not overwrite its
+          // source runtime/owner identity with this HTTP fixture's routing identity.
+          value=scriptFixture.receipt
+        }else value = geometryReceipt && body.code === 'fixture_geometry'
           ? observed({...geometryReceipt,requestReceipt:receipt})
           : hdaReceipt && body.code === 'fixture_hda'
           ? observed({...hdaReceipt,requestReceipt:receipt})
@@ -216,10 +244,53 @@ export function apply(ctx) {
           assert.equal(createHash('sha256').update(archive).digest('hex'),native.details.sha256)
           assert.deepEqual(JSON.parse(archive).result,hdaReceipt.result,'HDA scope and identity facts survive archival')
           if(step>hdaStart+1){
-            const nested=ctx.sessions.get(options.sessionId).snapshotEvents().filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec').at(-1)
+            const nested=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/ptc-dispatch'
+              &&e.data?.name==='houdini_exec'&&e.data?.parentCallId==='context-'+(hdaStart+1))
             const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
             assert.deepEqual(canonical?.result,hdaReceipt.result,'nested execution retains the same complete HDA facts')
           }
+        }
+        if(scriptFixture && step>scriptStart){
+          const events=ctx.sessions.get(options.sessionId).snapshotEvents()
+          const original=scriptFixture.receipt
+          const preserve=value=>{
+            for(const key of ['script','result','transaction','rawUsage','outcome','execution','verbs'])
+              assert.deepEqual(value?.[key],original[key],`the actual DSH consumer preserves original independent HOM ${key}`)
+          }
+          const native=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+scriptStart)
+          assert.equal(native?.data?.message?.isError,false,'native script arguments must pass the actual mounted tool schema')
+          preserve(native?.data?.meta?.canonical)
+          const nativeMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+scriptStart)
+          assert(nativeMessage?.content.some(b=>b.type==='text'&&b.text.includes(scriptFixture.record.sha256)),
+            'the actual provider receives the exact native script fingerprint')
+          const sent=bridgeCalls.filter(call=>call.path==='/exec'&&call.body.script)
+          assert.equal(sent[0]?.body.owner_session,options.sessionId,'the native source is admitted with the real current DSH session')
+          assert.equal(sent[0]?.body.owner_call,'context-'+scriptStart)
+          if(step>scriptStart+1){
+            const parent=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+(scriptStart+1))
+            assert.equal(parent?.data?.message?.isError,false,'the actual nested worker must run before checking its receipt: '
+              +parent?.data?.message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'))
+            assert.equal(sent.length,2,'the successful nested program must dispatch exactly one script HTTP execution')
+            const nested=events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec'
+              &&e.data?.subCallId===sent[1]?.body.owner_call)
+            const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
+              .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+            preserve(canonical)
+            assert.equal(nested?.data?.isError,false,'nested script execution retains the original canonical envelope')
+            assert.equal(nested?.data?.parentCallId,'context-'+(scriptStart+1),'the original script receipt is attached to the matching nested parent')
+            assert.equal(sent[1]?.body.owner_session,options.sessionId,'nested source execution uses its actual DSH session')
+            assert.notEqual(sent[1]?.body.owner_call,sent[0]?.body.owner_call,'the nested call retains its own tool invocation identity')
+            const nestedMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(scriptStart+1))
+            assert(nestedMessage?.content.some(b=>b.type==='text'&&b.text.includes(scriptFixture.record.sha256)),
+              'the actual provider receives script metadata selected by the nested program')
+          }
+          if(scriptRejectedCalls.has(step-1)){
+            assert.equal(bridgeCalls.length,scriptRejectedCalls.get(step-1),'a wrong source hash must fail without any Bridge HTTP request')
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(step-1))
+            assert(message?.content.some(b=>b.type==='text'&&b.text.includes('Script SHA-256 mismatch')),
+              'native and nested model inputs receive the actual Host hash error')
+          }
+          if(step>=scriptStart+2)assert.equal(sent.length,2,'only the two version-matching calls reach HTTP execution')
         }
         const current = snapshots.at(-1)
         if(!current)fs.writeFileSync(output+'.missing-context.json',JSON.stringify({messages:options.messages,
@@ -429,6 +500,14 @@ export function apply(ctx) {
             ['houdini_exec',{code:'fixture_hda'}],
             ['run_code',{code:'const v=await tools.houdini_exec({code:"fixture_hda"}); const r=v.result; return {node:r.node, plan_sha256:r.plan_sha256, applied:r.applied, affected_instances:r.affected_instances, descendant_count:r.descendant_count, editable_discarded_descendants:r.editable_discarded_descendants, details:v.details};',description:'Select the HDA lifecycle plan through the nested tool; canonical details stay complete'}],
           ] : []),
+          ...(scriptFixture ? [
+            ['houdini_exec',scriptArgs],
+            ['run_code',{code:'const v=await tools.houdini_exec('+JSON.stringify(scriptArgs)+'); return {script:v.script,result:v.result,execution:v.execution};',
+              description:'Read exact independent HOM script evidence through the nested tool; this HTTP fixture does not execute a new scene'}],
+            ['houdini_exec',scriptWrongArgs],
+            ['run_code',{code:'return await tools.houdini_exec('+JSON.stringify(scriptWrongArgs)+');',
+              description:'Verify a changed builder version is rejected before any HTTP scene request'}],
+          ] : []),
           ['houdini_exec',{code:'fixture_busy_receipt'}],
           ['houdini_request',{request_ref:busyRef}],
           ['run_code',{code:'return await tools.houdini_request('+JSON.stringify({request_ref:busyRef})+');',description:'Read the same busy request through the nested tool'}],
@@ -437,6 +516,7 @@ export function apply(ctx) {
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]
+        if(scriptFixture&&(step===scriptStart+2||step===scriptStart+3))scriptRejectedCalls.set(step,bridgeCalls.length)
         presentation.after('context-'+step,calls[step+1]?.[0])
         assert(options.tools.some(tool => tool.name === name),'tool must come from the actual preset: '+name)
         if (name === 'houdini_request') assert(ref,'uncertain result must retain the original request reference')
@@ -463,6 +543,9 @@ export function apply(ctx) {
         assert.equal(bridgeCalls.filter(call => call.path === '/context').length,1,'capture one scene per user message')
         await ctx.sessions.flush(agent.session)
         writeReport({ok:true,sessionId,provider,model,requests:requests.map(({messages,...row})=>row),
+          ...(scriptFixture?{script_consumption:{record:scriptFixture.record,original_execution:scriptFixture.receipt.execution,
+            http_fixture_target:{runtime_id:runtimeId,executor_id:process.env.DSH_HOUDINI_EXECUTOR_ID},
+            scope:'Actual mounted DSH native/PTC schema, file read, source HTTP body and original independent-HOM receipt consumption. The HTTP fixture does not execute or verify a new Houdini scene.'}}:{}),
           bridgeCalls,events:agent.session.snapshotEvents()})
       } catch(error) {fail(error)}
     })

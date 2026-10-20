@@ -32,7 +32,7 @@ try:
     hou.hipFile.save(tmp+'/backend-fixture.hip')
     managed=[h.render_view(box,picture='managed.png') for _ in range(2)]
     assert len({row['output'] for row in managed})==2
-    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks' for row in managed)
+    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks/previews' for row in managed)
     assert all(row['artifact']['output_policy']=='managed' for row in managed)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in managed)
     assert not list((Path(tmp)/'dsh-artifacts/checks').rglob('*.reserve'))

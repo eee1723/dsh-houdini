@@ -1,14 +1,91 @@
-"""Owned worker deadline/cancel/memory tests using small disposable Python workers."""
+"""Actual owned worker trees must exit before their runtime files are removed."""
 from pathlib import Path
+import ctypes
+from ctypes import wintypes
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 from unittest.mock import patch
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
-import dsh_worker_limits as limits
-from dsh_worker_limits import run_gated_worker
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'tools'))
+sys.path.insert(0, str(ROOT/'houdini/python3.11libs'))
+
+if len(sys.argv)>1 and sys.argv[1]=='--fixture':
+    assert sys.stdin.readline().strip()=='GO'
+    if sys.argv[2]=='descendant':
+        child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])
+        print(json.dumps({'owned_child':child.pid}),flush=True)
+    elif sys.argv[2]=='wait':
+        print('OWNED_WORKER_RUNNING',flush=True)
+        time.sleep(60)
+    raise SystemExit(0)
+
+from houdini_test_environment import reexec_unpacked_test_cli
+reexec_unpacked_test_cli()
+import dsh_worker_limits as limits
+if os.name!='nt':
+    print('SKIP Windows worker ownership checks')
+    raise SystemExit(0)
+
+def alive(pid):
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+    kernel.OpenProcess.restype=wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.DWORD)]
+    kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+    handle=kernel.OpenProcess(0x1000,False,pid)
+    if not handle:
+        assert ctypes.get_last_error()==87, ctypes.get_last_error()
+        return False
+    try:
+        status=wintypes.DWORD()
+        assert kernel.GetExitCodeProcess(handle,ctypes.byref(status))
+        return status.value==259
+    finally:
+        kernel.CloseHandle(handle)
+
+with tempfile.TemporaryDirectory(prefix='dsh-worker-lifecycle-') as raw:
+    root=Path(raw)
+    command=[sys.executable,str(Path(__file__).resolve()),'--fixture']
+    def run(mode,**options):
+        return limits.run_gated_worker(command+[mode],cwd=root,env=os.environ.copy(),
+                                       timeout=options.pop('timeout',15),memory_mb=4096,**options)
+    completed=run('descendant')
+    assert completed['status']=='completed' and completed['returncode']==0,completed
+    assert completed['released'] and completed['tree_reaped'],completed
+    child=json.loads(completed['output'].strip())['owned_child']
+    assert not alive(child),'normal parent exit must not leave its renderer child running'
+
+    cancel=root/'cancel.request'
+    cancel.write_text('cancel',encoding='utf-8')
+    before=run('wait',cancel_file=cancel)
+    assert not before['started'] and not before['released'] and before['tree_reaped'],before
+    cancel.unlink()
+    timer=threading.Timer(1,lambda:cancel.write_text('cancel',encoding='utf-8'))
+    timer.start()
+    try:
+        stopped=run('wait',cancel_file=cancel)
+    finally:
+        timer.join()
+    assert stopped['status']=='cancelled' and stopped['returncode']!=0 and stopped['tree_reaped'],stopped
+    cancel.unlink()
+    expired=run('wait',timeout=1)
+    assert expired['status']=='timed_out' and expired['tree_reaped'],expired
+    with patch.object(limits.WorkerJob,'reap',side_effect=TimeoutError('injected cleanup observation failure')):
+        uncertain=run('descendant')
+    assert uncertain['status']=='completed' and not uncertain['tree_reaped'],uncertain
+    assert 'injected cleanup' in uncertain['cleanup_error'],uncertain
+    missing=limits.run_gated_worker([str(root/'missing.exe')],cwd=root,env=os.environ.copy())
+    assert not missing['started'] and missing['tree_reaped'] and missing['phase']=='spawn',missing
+print('PASS worker lifecycle: owned descendants reaped; GO, execution and cleanup facts remain distinct')
+
+# Existing deadline, admission and memory limits remain covered.
+from dsh_worker_limits import run_gated_worker
 with tempfile.TemporaryDirectory() as temp:
     def run(code,**options):
         script=Path(temp)/'worker.py'

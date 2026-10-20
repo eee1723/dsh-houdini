@@ -37,6 +37,8 @@ connect(settings,product)
 connect(product,rop)
 set_parms(rop,{'loppath':product.path()})
 set_parms(product,{'python':"from pxr import UsdRender,Gf\\ns=hou.pwd().editableStage()\\nfor p in s.Traverse():\\n    if p.GetTypeName() == 'RenderProduct':\\n        UsdRender.Product(p).CreateResolutionAttr(Gf.Vec2i(64,64))".replace('\\\\n','\\n')})
+from pathlib import Path
+scene_save_as(str(Path(__file__).parents[1]/'published.hip'),expected_current_path=scene_info()['hip_path'],reason='owned isolated integration fixture')
 __result__={'marker':'ISOLATED_TEAM_BUILT','points':len(n.geometry().points()),'primitives':len(n.geometry().prims())}
 `
 }
@@ -46,7 +48,9 @@ export function apply(ctx){
   const {workspace,output,hfs,hython,python}=config
   const checks=[],requests=[],sessions=new Set(),sessionRefs=new Map(),runtimeReads=[],images=[],runs={}
   let failure,childId,childStage=0,preflightStage=0,polls=0,childDone=false,leadId,jobId,nativeImage,ptcImage
-  const evidence=()=>({requests,checks,runtimeReads,images,runs,leadId,childId})
+  let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult
+  const layout=JSON.parse(fs.readFileSync(new URL('../../houdini/project-layout.json',import.meta.url),'utf8'))
+  const evidence=()=>({requests,checks,runtimeReads,images,runs,leadId,childId,peerResult})
   const report=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)}
   const events=id=>(sessionRefs.get(id)??ctx.sessions.get(id))?.snapshotEvents()??[]
   const native=(id,call)=>events(id).findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===call)?.data?.meta?.canonical
@@ -73,14 +77,18 @@ export function apply(ctx){
   const bad=writeManifest('failure',"raise RuntimeError('ISOLATED_TEAM_EXPECTED_FAILURE')\n")
   const good=writeManifest('success',builder(),true)
   const invalid=path.join(fixture,'invalid.json')
-  fs.writeFileSync(invalid,JSON.stringify({script:'success.py',hip:'invalid-unused.hip'}))
+  fs.writeFileSync(invalid,JSON.stringify({checks:[]}))
   const slow=writeManifest('slow',"import time\ntime.sleep(60)\ng=tab_create('/obj','geo',name='team_box')\nn=tab_create(g,'box',name='OUT')\n")
+  const setup=path.join(fixture,'setup.py'),hipSetup=path.join(fixture,'hip-setup.json')
+  fs.writeFileSync(setup,"n=hou.node('/obj/team_box/OUT')\nset_parms(n,{'sizex':2})\n__result__={'width':float(n.geometry().boundingBox().sizevec()[0]),'owner':node_provenance(n)['runtime_owner']}\n")
+  fs.writeFileSync(hipSetup,JSON.stringify({input_root:'..',hip:'native/published.hip',script:'fixtures/setup.py',
+    checks:[{id:'cook',kind:'cook',node:'/obj/team_box/OUT',frame:1,expect:{points:8,primitives:6}}]}))
   const directory=name=>path.join(workspace,name)
   const args=(manifest,name,background=false)=>({operation:'run',manifest,output_dir:directory(name),timeout_seconds:120,memory_mb:4096,background})
-  const readFull=(value,name)=>{
+  const readFull=(value,name,runDirectory=directory(name))=>{
     assert.equal(value.kind,'isolated-houdini')
     const file=value.report_path??value.report?.details?.path??value.details?.path
-    assert(file&&path.resolve(file)===path.join(directory(name),'report.json'),'authoritative report path must identify this run')
+    assert(file&&path.resolve(file)===path.join(runDirectory,'report.json'),'authoritative report path must identify this run')
     const raw=JSON.parse(fs.readFileSync(file,'utf8'));runs[name]={path:file,ok:raw.ok,finished:raw.finished,worker:raw.worker,runtime:raw.result?.runtime,builder:raw.result?.builder}
     return raw
   }
@@ -141,10 +149,10 @@ export function apply(ctx){
         if(preflightStage===1){
           const actual=native(childId,'child-preflight')
           assert.equal(actual?.kind,'isolated-houdini')
-          assert.match(actual.error,/exactly one of script\/hip/,'checker preflight cause must survive when no report was created')
+          assert.match(actual.error,/requires script and\/or hip/,'checker preflight cause must survive when no report was created')
           const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-preflight')
           const visible=(delivered?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
-          assert.match(visible,/exactly one of script\/hip/,'the next real model request must receive the actionable preflight reason')
+          assert.match(visible,/requires script and\/or hip/,'the next real model request must receive the actionable preflight reason')
           assert(!/FsError|ENOENT/.test(actual.error),'a missing report must not replace the checker diagnosis')
           assert.equal(actual.process.exit_code,1)
           assert.equal(fs.existsSync(path.join(directory('preflight'),'report.json')),false,'invalid manifest must fail before worker/report creation')
@@ -203,7 +211,73 @@ export function apply(ctx){
           assert.equal(raw.worker.status,'cancelled')
           assert(Number.isInteger(raw.worker.returncode),'terminal cancellation must include the actual worker exit')
           checks.push('native DSH job_kill cancels only this real worker; read returns its terminal evidence')
-          childStage++;yield*emit('child-report','send_message',{target:'lead',message:'ISOLATED_TOOL_CHILD_VERIFIED: actual builder error, native/PTC Karma images, read_image and native job cancellation passed. Semantic image quality remains unverified.'});return
+          snapshotSha=digest(fs.readFileSync(path.join(directory('native'),'published.hip')))
+          childStage++;presentation.after('child-hip-setup','run_code')
+          yield*emit('child-hip-setup','houdini_isolated',{manifest:hipSetup,timeout_seconds:120,memory_mb:4096});return
+        }
+        if(childStage===10){
+          setupValue=native(childId,'child-hip-setup');assert(setupValue,'native HIP+setup call must retain its canonical result')
+          setupRun=setupValue.run_directory
+          assert.equal(path.dirname(setupRun),path.join(workspace,layout.directories.execution_run.path),'the actual tool allocates its default run through the shared workspace role')
+          const raw=readFull(setupValue,'hip-setup',setupRun);assert(raw.ok&&raw.finished,'actual HIP setup must complete its declared check')
+          assert.equal(raw.result.builder.result.width,2,'post-load setup changes the real saved box dimensions')
+          assert.equal(raw.result.builder.result.owner.session,raw.result.runtime.owner_session,'loaded nodes belong to the same isolated author who runs setup')
+          assert.equal(raw.result.builder.execution.runtime_id,raw.result.runtime.runtime_id)
+          assert.equal(raw.result.builder.execution.owner_session,raw.result.runtime.owner_session)
+          assert(raw.result.checks.every(c=>c.status==='passed'&&c.execution.execution.runtime_id===raw.result.runtime.runtime_id
+            &&c.execution.execution.owner_session===raw.result.runtime.owner_session),'checks consume the setup in its actual runtime and owner scope')
+          assert.equal(raw.result.snapshot.sha256,snapshotSha)
+          assert(raw.inputs_unchanged);assert.equal(digest(fs.readFileSync(path.join(directory('native'),'published.hip'))),snapshotSha,'setup never changes the source HIP')
+          assert.equal(raw.runtime_environment.cleaned,true,'the actual supervisor removes its own runtime environment after exit')
+          assert.equal(fs.existsSync(raw.runtime_environment.path),false)
+          assert.equal(fs.existsSync(path.join(setupRun,'runtime')),false,'durable run evidence does not contain runtime preferences')
+          const original=runs.native.builder,details=original.details
+          assert(details?.stored,'the real builder envelope must retain complete immutable execution details')
+          const bytes=fs.readFileSync(details.path)
+          assert.equal(bytes.length,details.bytes);assert.equal(digest(bytes),details.sha256)
+          assert.equal(path.dirname(details.path),path.join(directory('native'),'executions'))
+          const full=JSON.parse(bytes.toString('utf8'))
+          assert.equal(full.result.marker,'ISOLATED_TEAM_BUILT')
+          assert(full.verbs.some(v=>v.verb==='scene_save_as'&&v.ok),'the archived original proves that the source HIP was saved by its actual author')
+          assert.deepEqual(full.outcome,original.outcome,'archival preserves the complete original operation outcome')
+          assert.equal(full.transaction.scope,original.transaction.scope,'the original transaction scope remains readable')
+          assert.equal(typeof full.transaction.scope,'string');assert.equal(full.execution.runtime_id,runs.native.runtime.runtime_id)
+          assert(!bytes.toString('utf8').includes('unavailable_field'),'retained details contain the original envelope, not an omission marker')
+          checks.push('native default run loads the exact HIP with input_root, applies setup under one owner, cooks it, and cleans only its runtime preferences')
+          checks.push('large real builder details are readable at their original hash and byte count with complete scope and outcome')
+          readsBeforeSetupRead=runtimeReads.length
+          childStage++;presentation.after('child-hip-setup-read','send_message')
+          yield*emit('child-hip-setup-read','run_code',{code:'return await tools.houdini_isolated('+JSON.stringify({operation:'read',output_dir:setupRun})+');',
+            description:'Read the original default HIP setup run without discovering a runtime or recomputing Houdini'});return
+        }
+        if(childStage===11){
+          const dispatch=nested(childId,'houdini_isolated')
+          assert(dispatch&&!dispatch.data.isError,'actual PTC read must dispatch successfully')
+          assert.equal(dispatch.data.parentCallId,'child-hip-setup-read')
+          const value=dispatch.data.meta?.canonical;assert(value,'PTC read retains its original canonical facts')
+          assert.equal(runtimeReads.length,readsBeforeSetupRead,'reading the recorded run never discovers a current runtime')
+          assert.equal(value.run_directory,setupRun);assert.equal(value.report_path,setupValue.report_path)
+          assert.deepEqual(value.report,setupValue.report,'PTC read returns the same complete checker facts without another computation')
+          assert.deepEqual(value.imageAttachments,setupValue.imageAttachments,'read preserves this run image attachment scope and does not manufacture images')
+          assert(resultText(dispatch).includes(setupRun.replaceAll('\\','\\\\'))||resultText(dispatch).includes(setupRun),'the durable nested receipt retains the dynamically allocated original run path')
+          const raw=readFull(value,'hip-setup',setupRun)
+          assert.equal(raw.result.snapshot.sha256,snapshotSha)
+          assert.equal(digest(fs.readFileSync(path.join(directory('native'),'published.hip'))),snapshotSha)
+          const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-hip-setup-read')
+          const visible=(delivered?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
+          // PTC renders its returned object as formatted JSON and appends its
+          // file-policy annotation. Compare actual model-facing JSON facts,
+          // not the whitespace used by native versus nested presentation.
+          const modelValue=JSON.parse(visible.split(/\n(?=File sandbox\b)/)[0])
+          assert.deepEqual(modelValue,value,'the next real model request receives the complete original PTC value')
+          assert.equal(modelValue.run_directory,setupRun)
+          assert.equal(modelValue.report.result.runtime.runtime_id,raw.result.runtime.runtime_id)
+          assert.equal(modelValue.report.result.builder.result.width,2,'the next real model request receives the source setup measurement')
+          peerResult={run_directory:setupRun,report_path:value.report_path,runtime_id:raw.result.runtime.runtime_id,
+            owner_session:raw.result.runtime.owner_session,width:raw.result.builder.result.width,source_sha256:snapshotSha,
+            builder_details_sha256:runs.native.builder.details.sha256}
+          checks.push('PTC reads the exact default run without health/HOM work and preserves canonical facts, attachment scope and model-facing measurements')
+          childStage++;yield*emit('child-report','send_message',{target:'lead',message:'ISOLATED_TOOL_CHILD_VERIFIED: actual builder error, native/PTC Karma images, cancellation, HIP+setup/default allocation/cleaned runtime and source-preserving PTC read passed. Semantic image quality remains unverified.\n'+JSON.stringify(peerResult)});return
         }
         childDone=true;yield*finish('ISOLATED_TOOL_CHILD_VERIFIED');return
       }catch(error){await fail(error);throw error}
@@ -226,6 +300,8 @@ export function apply(ctx){
       const leadEvents=events(leadId),members=leadEvents.filter(e=>e.type==='team/member'&&e.data?.member?.phase==='active')
       assert.equal(members.length,1);assert(leadEvents.some(e=>e.type==='subagent/catalog'))
       assert(leadEvents.some(e=>e.type==='user/message'&&JSON.stringify(e.data).includes('ISOLATED_TOOL_CHILD_VERIFIED')),'actual Team peer result must reach Lead')
+      const peerDelivery=leadEvents.filter(e=>e.type==='user/message').flatMap(e=>(e.data?.content??[]).filter(b=>b.type==='text').map(b=>b.text)).join('\n')
+      assert(peerDelivery.includes(JSON.stringify(peerResult)),'Lead must receive the same original run, source fingerprint and measured setup result')
       assert(runtimeReads.some(r=>r.path==='/health'),'production tool must discover runtime through the configured metadata route')
       assert(runtimeReads.every(r=>r.path==='/context'||r.path==='/health'),'no operation may be sent to live Houdini')
       // The normal subagent manager flushes and disposes a settled child.

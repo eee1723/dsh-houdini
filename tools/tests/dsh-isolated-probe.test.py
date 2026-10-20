@@ -19,8 +19,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-probe-') as raw:
     data.write_text(json.dumps({'marker':'DECLARED_DATA_COPY'}),encoding='utf-8')
     script.write_text('''"""A normal executable script with a declared adjacent dependency."""
 from __future__ import annotations
+from dataclasses import dataclass, fields
+from typing import ClassVar
 import json
 from pathlib import Path
+@dataclass
+class ProbeSettings:
+    labels: ClassVar[list[str]] = []
+    width: float = 2.0
 if __name__ == '__main__':
     data = Path(__file__).with_name('data.json')
     __result__ = {
@@ -30,6 +36,9 @@ if __name__ == '__main__':
         'script': str(Path(__file__).resolve()),
         'data_path': str(data.resolve()),
         'payload': json.loads(data.read_text(encoding='utf-8')),
+        'dataclass_width': ProbeSettings().width,
+        'dataclass_fields': [field.name for field in fields(ProbeSettings)],
+        'module_name': __name__,
     }
     assert not __result__['ui_available'], 'probe must use a headless process'
     assert __result__['objects'] == 0, 'probe must start with an empty scene'
@@ -48,6 +57,10 @@ if __name__ == '__main__':
     assert Path(builder['result']['script']) == root/'success/inputs/probe.py'
     assert Path(builder['result']['data_path']) == root/'success/inputs/data.json'
     assert builder['result']['payload'] == {'marker':'DECLARED_DATA_COPY'}
+    assert builder['result']['dataclass_width']==2.0 and builder['result']['dataclass_fields']==['width']
+    assert builder['result']['module_name']=='__main__'
+    assert builder['script']['path']==str((root/'success/inputs/probe.py').resolve())
+    assert builder['script']['sha256']==original[script] and builder['script']['bytes']==script.stat().st_size
     assert len(success['inputs']) == 2
     assert all(runner.digest(file)==digest for file,digest in original.items())
     assert 'ISOLATED_API_PROBE_COMPLETED' in builder['stdout']
@@ -78,4 +91,34 @@ if __name__ == '__main__':
     assert loaded['result']['snapshot']['sha256'] == before == runner.digest(snapshot)
     assert 'Without checks, success proves only builder execution or snapshot loading.' in loaded['scope']
 
-print('PASS staged script metadata/dependency, API probe, assertion/Raw Gate failures and snapshot load without output checks '+hou.applicationVersionString())
+    # A saved HIP plus a setup script is one disposable owner scope. The script
+    # can tune loaded nodes through verbs; it still cannot raw-load another HIP.
+    source=hou.node('/obj').createNode('geo','snapshot_source')
+    source_shape=source.createNode('box','shape')
+    source_shape.parm('sizex').set(1.0)
+    hou.hipFile.save(str(snapshot))
+    snapshot_hash=runner.digest(snapshot)
+    scripts=root/'scripts';scripts.mkdir()
+    setup=scripts/'setup.py'
+    setup.write_text("set_parms('/obj/snapshot_source/shape',{'sizex':2.0})\n"
+                     "__result__={'width':hou.node('/obj/snapshot_source/shape').parm('sizex').eval(),"
+                     "'owner':node_provenance('/obj/snapshot_source/shape')}\n",encoding='utf-8')
+    setup_hash=runner.digest(setup)
+    combined=scripts/'snapshot-check.json'
+    combined.write_text(json.dumps({'input_root':'..','hip':'saved.hip','script':'scripts/setup.py',
+                                   'checks':[{'id':'shape','kind':'cook','node':'/obj/snapshot_source/shape','frame':1}]}),encoding='utf-8')
+    tuned=runner.check(combined,hython,root/'snapshot-setup',trusted=True)
+    assert tuned['ok'] and tuned['inputs_unchanged'],tuned
+    assert tuned['result']['builder']['result']['width']==2.0
+    assert tuned['result']['snapshot']['sha256']==snapshot_hash
+    assert runner.digest(snapshot)==snapshot_hash and runner.digest(setup)==setup_hash
+    assert runner.digest(root/'snapshot-setup/inputs/saved.hip')==snapshot_hash
+    assert tuned['result']['runtime']['runtime_id']==tuned['result']['builder']['execution']['runtime_id']
+    assert tuned['runtime_environment']['cleaned'] and not (root/'snapshot-setup/runtime').exists()
+    # The source process and saved file are unchanged by setup in the worker.
+    assert source_shape.parm('sizex').eval()==1.0
+    setup.write_text("hou.hipFile.load('not-authorized.hip')\n",encoding='utf-8')
+    blocked_setup=runner.check(combined,hython,root/'snapshot-raw-load',trusted=True)
+    assert not blocked_setup['ok'] and 'forbidden' in blocked_setup['error'].lower(),blocked_setup
+
+print('PASS staged inputs, API probes, failures, snapshot load/setup and unchanged sources '+hou.applicationVersionString())

@@ -185,7 +185,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 ## 隔离执行与开发工具
 
-`houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与所选Houdini只读health，复用下述隔离检查器执行builder或已保存HIP副本，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取既有报告与图片，不连接live。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
+`houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与所选Houdini只读health，复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
 
 验证该入口时，先核对实际文件范围、声明依赖、输入未改、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
 
@@ -207,7 +207,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 python tools/hda-delivery-check.py --manifest path/to/tool-check.json --hython D:/houdini/bin/hython.exe --output path/to/report.json
 ```
 
-[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在独立进程执行可信builder或明确保存HIP的副本，经Bridge完成cook/cache/ROP检查。manifest在script与hip中二选一，files保留声明依赖的相对结构，checks可选；省略时仅证明builder执行或副本加载，额外断言和观察由builder承担。`--trusted`沿用户授权的工程/代码计算范围，不是未知HIP的沙箱。产物使用新的运行目录；渲染继续遵守媒体输出合同，不以插件源码目录为目的地。report.json与worker-result.json保留来源hash、实际执行、部分进度和产物。`--status --output-dir <run>`只读最后记录，不当作进程存活；`--cancel --output-dir <run>`请求停止该run自有进程树，不启动或重试任务。默认取消文件在run内，Host可提供本次专用标记；原输入保持核对，未保存现场和未声明外部依赖不包含在快照证明中。
+[isolated-houdini-check.py](../tools/isolated-houdini-check.py)在独立进程执行可信builder或明确保存HIP的副本，经Bridge完成cook/cache/ROP检查。manifest至少声明script/hip之一；同时提供时driver先加载副本、登记同一作者，再执行准备脚本和checks。input_root明确输入基准，files保留依赖相对结构，checks可选；省略时仅证明声明的执行，额外断言和观察由builder承担。`--trusted`沿用户授权的工程/代码计算范围，不是未知HIP的沙箱。产物使用新的运行目录；渲染继续遵守媒体输出合同，不以插件源码目录为目的地。report.json与worker-result.json保留同源有界事实；大执行详情按共享保留政策单份写入executions并返回hash/path/pointer，原失败和归档失败分别验证。独占prefs移到机器临时根，只有自有进程树退出已确认才清理；[worker边界回归](../tools/tests/dsh-worker-limits.test.py)验证GO、运行、树退出及清理事实不混用。`--status --output-dir <run>`只读最后记录，不当作进程存活；`--cancel --output-dir <run>`请求停止该run自有进程树，不启动或重试任务。默认取消文件在run内，Host可提供本次专用标记；原输入保持核对，未保存现场和未声明外部依赖不包含在快照证明中。
 
 [快照回归](../tools/tests/dsh-snapshot-worker.test.py)在H21/H22核对真实图像/ROP、来源不变、缺输出、启动前/运行中取消；[输入回归](../tools/tests/dsh-isolated-manifest.test.py)覆盖状态身份和不完整回执。大型最终输出的[选择回归](../tools/tests/dsh-scoped-observation.test.py)使用百万面背景与明确目标组，验证正例、错尺寸、无组拒绝和未选部件漂移。整件恢复使用[流式BJSON指纹](../houdini/python3.11libs/dsh_bgeo_fingerprint.py)，按本机SideFX `UT_JSONDefines.h`读取；[指纹反例](../tools/tests/dsh-bgeo-fingerprint.test.py)验证写入时间可变化，但与日期共用字符串token的用户属性仍不能被忽略。大型流指纹不承诺任意编码/属性表布局变更等价；无法建立相同完整内容时保留恢复未确认。
 

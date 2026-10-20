@@ -1,5 +1,6 @@
 /** One-shot Houdini computation. DSH owns agents/jobs; the bundled checker owns run facts. */
 import fs from 'node:fs/promises'
+import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
 import {spawn} from 'node:child_process'
@@ -15,12 +16,18 @@ import {localVideoEnvironment} from './video-process.js'
 import {visualCapability} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
 import {executionStdout} from './tool-output.js'
+import {projectDirectoryPath} from './project-paths.js'
 
 const CHECKER=fileURLToPath(new URL('../tools/isolated-houdini-check.py',import.meta.url))
 const SCOPE='Independent hython run only. Results describe the declared inputs and checks, not the current live scene or visual quality. Python/callback and external-file side effects are not a filesystem sandbox.'
+const detailPolicy=JSON.parse(readFileSync(new URL('../houdini/result-detail-policy.json',import.meta.url),'utf8'))
+if(detailPolicy.schemaVersion!==1||!Number.isSafeInteger(detailPolicy.maxArchiveBytes)||detailPolicy.maxArchiveBytes<=0)
+  throw Error('Unsupported result detail policy')
+const MAX_REPORT_BYTES:number=detailPolicy.maxArchiveBytes
+const MAX_MANIFEST_BYTES=4*1024*1024
 export interface IsolatedRuntime {python:string;hython:string;hfs:string;houdini?:string}
 export interface IsolatedArgs {
-  operation?:'run'|'read';manifest?:string;output_dir:string;background?:boolean
+  operation?:'run'|'read';manifest?:string;output_dir?:string;background?:boolean
   timeout_seconds?:number;memory_mb?:number
 }
 export interface IsolatedProcessRequest {
@@ -82,32 +89,31 @@ async function localPath(ctx:any,exec:any,filename:string,write=false) {
   return {filesystem,target,local}
 }
 
-async function readJson(ctx:any,exec:any,filename:string) {
+async function readJson(ctx:any,exec:any,filename:string,maxBytes:number) {
   const {filesystem,target}=await localPath(ctx,exec,filename)
-  return JSON.parse(Buffer.from(await filesystem.readBytes(target,exec.signal,4*1024*1024)).toString('utf8'))
+  return JSON.parse(Buffer.from(await filesystem.readBytes(target,exec.signal,maxBytes)).toString('utf8'))
 }
 
-/** Preserve errors and builder results; verbose execution inventories remain at their report path. */
+/** Display the checker's own facts and detail references, including legacy full reports. */
 function reportView(report:any) {
   const result=report.result
+  const execution=(value:any,pointer:string)=>{
+    if(!value)return undefined
+    const {verbs:_,...visible}=value
+    return {...visible,stdout:executionStdout(value),...(!value.details?{details_pointer:pointer}:{})}
+  }
   return {...report,worker:report.worker?{...report.worker,output:undefined}:undefined,
-    result:result?{...result,builder:result.builder?{
-      ok:result.builder.ok,result:result.builder.result,error:result.builder.error,
-      stdout:executionStdout(result.builder),stderr:result.builder.stderr,
-      outcome:result.builder.outcome,transaction:result.builder.transaction,details_pointer:'/result/builder',
-    }:undefined,checks:result.checks?.map((check:any)=>({...check,execution:check.execution?{
-      ok:check.execution.ok,error:check.execution.error,result:check.execution.result,
-      stdout:executionStdout(check.execution),stderr:check.execution.stderr,
-      outcome:check.execution.outcome,
-    }:undefined}))}:undefined}
+    result:result?{...result,builder:execution(result.builder,'/result/builder'),
+      checks:result.checks?.map((check:any,index:number)=>({...check,
+        execution:execution(check.execution,`/result/checks/${index}/execution`)}))}:undefined}
 }
 
 export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true) {
   const directory=await localPath(ctx,exec,output)
-  const reportPath=path.join(directory.local,'report.json'),report=await readJson(ctx,exec,reportPath)
+  const reportPath=path.join(directory.local,'report.json'),report=await readJson(ctx,exec,reportPath,MAX_REPORT_BYTES)
   let progress:any
   if(report.finished!==true){
-    try {progress=await readJson(ctx,exec,path.join(directory.local,'worker-result.json'))}
+    try {progress=await readJson(ctx,exec,path.join(directory.local,'worker-result.json'),MAX_REPORT_BYTES)}
     catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
     if(progress&&progress.run_id!==report.run_id)throw Error('Run progress identity does not match the report')
   }
@@ -142,15 +148,27 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
 
 export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtimeResolver:(exec:any)=>Promise<IsolatedRuntime>,
   runner:IsolatedOptions['runner']=runIsolatedProcess) {
-  if((args.operation??'run')==='read')return readIsolatedRun(ctx,exec,args.output_dir)
-  const output=await localPath(ctx,exec,args.output_dir,true)
+  if((args.operation??'run')==='read'){
+    if(!args.output_dir)throw Error('operation=read requires the original absolute output_dir')
+    return readIsolatedRun(ctx,exec,args.output_dir)
+  }
+  const cwd=workspaceOf(exec)
+  if(!cwd)throw Error('Isolated Houdini requires the DSH session workspace')
+  const output=await localPath(ctx,exec,args.output_dir??path.join(projectDirectoryPath(cwd,'execution_run'),randomUUID()),true)
   if(await fs.lstat(output.local).catch((error:NodeJS.ErrnoException)=>{if(error.code!=='ENOENT')throw error;return null}))throw Error('Output directory already exists; read it or select a new run directory')
   const source=await localPath(ctx,exec,args.manifest??'')
-  const manifest=await readJson(ctx,exec,source.local)
-  const inputs=[manifest.script??manifest.hip,...(manifest.files??[])]
+  const manifest=await readJson(ctx,exec,source.local,MAX_MANIFEST_BYTES)
+  if(!manifest||typeof manifest!=='object'||Array.isArray(manifest))throw Error('Manifest must be a JSON object')
+  if(manifest.input_root!==undefined&&(typeof manifest.input_root!=='string'||!manifest.input_root.trim()))
+    throw Error('input_root must name an absolute path or a path relative to the manifest')
+  if(manifest.files!==undefined&&!Array.isArray(manifest.files))throw Error('Manifest files must be an array of relative input paths')
+  const inputRoot=await localPath(ctx,exec,path.resolve(path.dirname(source.local),manifest.input_root??'.'))
+  const inputs=[...(manifest.hip!==undefined?[manifest.hip]:[]),...(manifest.script!==undefined?[manifest.script]:[]),...(manifest.files??[])]
   for(const input of inputs){
-    if(typeof input!=='string'||!input||path.isAbsolute(input)||input.split(/[\\/]/).some(part=>part==='..'))throw Error('Manifest inputs must be relative files within its directory')
-    const location=await localPath(ctx,exec,path.resolve(path.dirname(source.local),input))
+    if(typeof input!=='string'||!input||path.isAbsolute(input)||/[\\<>:"|?*\x00-\x1f$%]/.test(input)||input.split('/').some(part=>!part||part==='.'||part==='..'))
+      throw Error('Manifest inputs must be safe relative files within input_root, using / separators')
+    const location=await localPath(ctx,exec,path.resolve(inputRoot.local,input))
+    if(!location.filesystem.contains(inputRoot.target,location.target))throw Error('Manifest input resolves outside input_root')
     // Resolve through DSH's read policy before the checker copies declared inputs.
     await location.filesystem.stat(location.target,exec.signal)
   }
@@ -158,9 +176,12 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
   if(!Number.isFinite(timeout)||timeout<=0||!Number.isSafeInteger(memory)||memory<=0)throw Error('timeout_seconds and memory_mb must be positive finite budgets')
   const runtime=await runtimeResolver(exec)
   for(const binary of [runtime.python,runtime.hython])if(!path.isAbsolute(binary)||(await fs.stat(binary)).isFile()!==true)throw Error('Selected Houdini runtime executable is missing: '+binary)
-  await fs.mkdir(path.dirname(output.local),{recursive:true})
   const request={runtime,manifest:source.local,output:output.local,cancelFile:path.join(path.dirname(output.local),'.'+path.basename(output.local)+'.'+randomUUID()+'.cancel'),timeout,memory}
   const run=async(signal:AbortSignal,onOutput?:(text:string)=>void)=>{
+    signal.throwIfAborted()
+    // DSH admits a background job before this callback. The checker alone
+    // creates the exclusive run directory; rejected admissions leave no run.
+    await fs.mkdir(path.dirname(output.local),{recursive:true})
     const process=await runner!({...request,signal,onOutput})
     // A cancelled caller still receives its terminal facts after the owned tree exits.
     const resultExec={...exec,signal:undefined}
@@ -170,10 +191,16 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
     }
     catch(error){
       const lines=(process.stdout??'').split(/\r?\n/).filter(Boolean)
-      let preflight:any
-      for(const line of lines.reverse())try {const value=JSON.parse(line);if(value?.phase==='preflight'&&value.ok===false){preflight=value;break}}catch{}
+      let preflight:any,reportedStatus:any
+      for(const line of lines.reverse())try {
+        const value=JSON.parse(line)
+        if(value?.phase==='preflight'&&value.ok===false){preflight=value;break}
+        if(typeof value?.run_id==='string'&&typeof value?.report==='string'
+          &&path.resolve(value.report)===path.resolve(output.local,'report.json')){reportedStatus=value;break}
+      }catch{}
       return {kind:'isolated-houdini',ok:false,run_directory:output.local,report_path:path.join(output.local,'report.json'),process,
-        ...(preflight?{preflight}:{}),error:preflight?.error??process.error??(process.stderr.trim()||String(error)),report_error:String(error),scope:SCOPE}
+        ...(preflight?{preflight}:{}),...(reportedStatus?{reported_status:reportedStatus}:{}),
+        error:preflight?.error??reportedStatus?.error??process.error??(process.stderr.trim()||String(error)),report_error:String(error),scope:SCOPE}
     }
   }
   if(args.background){
@@ -209,8 +236,8 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
   ctx.tools.register(defineTool({name:'houdini_isolated',description:HOUDINI_TOOLS.houdini_isolated.purpose+
     ' Load houdini-isolated-execution for the manifest and examples. run starts a new headless Houdini with injected verbs; read retrieves the recorded run and native images without connecting to live. Background runs use DSH job_output/job_kill.',
     parameters:{operation:{type:'string',enum:['run','read'],description:'Default run; read only retrieves a prior output_dir.'},
-      manifest:{type:'string',description:'Absolute JSON manifest: exactly one script/hip, optional relative files and cook/cache/render checks. Omitted checks execute the builder or load the snapshot only; use builder assertions/__result__ for other experiments.'},
-      output_dir:{type:'string',required:true,description:'Absolute NEW run directory within the writable workspace; use its same path for read.'},
+      manifest:{type:'string',description:'Absolute JSON manifest with hip and/or script: a script after hip runs setup on that copied scene, then checks. Optional input_root is absolute or relative to the manifest; hip/script/files are safe relative names beneath it. Optional cook/cache/render checks; omitted checks only execute the declared input.'},
+      output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. read requires the exact directory returned by the original run. Existing or explicit paths are never moved.'},
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
       timeout_seconds:{type:'number',description:'Positive worker time budget, default 120 seconds.'},
       memory_mb:{type:'number',description:'Positive integer process-tree committed-memory budget, default 4096 MiB; not GPU memory.'}},

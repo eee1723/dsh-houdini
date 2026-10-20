@@ -14,12 +14,15 @@ from copy import deepcopy
 import difflib
 import inspect
 import json
+import linecache
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 import traceback
 import uuid
+from types import ModuleType
 
 import hou
 import dsh_hou_helpers
@@ -30,7 +33,7 @@ import dsh_network_navigation
 import dsh_tool_catalog
 import dsh_tool_packages
 import dsh_package_discovery
-from dsh_code_analysis import CodeAnalysis, _raw_hou_advisory, _repo_write_advisory
+from dsh_code_analysis import CodeAnalysis, script_program, _raw_hou_advisory, _repo_write_advisory
 from dsh_execution_results import (
     _MAX_STREAM_BYTES, _CappedStringIO, _jsonable,
     _clip, _operation_summary, project_result,
@@ -40,6 +43,34 @@ from dsh_execution_results import (
 # replacements obtain their own precise argument signature.
 _VERB_SIGNATURES = {}
 _VERB_OPERATION_CONTRACTS = None
+
+
+@contextlib.contextmanager
+def _script_namespace(module, analysis):
+    """A runpy-style temporary module, never a persistent builder registry."""
+    if module is None:
+        yield
+        return
+    name = module.__name__
+    previous = sys.modules.get(name)
+    had_module = name in sys.modules
+    prior_lines = linecache.cache.get(analysis.filename)
+    # Never let traceback formatting reopen the mutable original (or a network
+    # path) on Houdini's thread. The synthetic name only serves this execution.
+    linecache.cache[analysis.filename] = (len(analysis.code), None,
+                                          analysis.code.splitlines(keepends=True), analysis.filename)
+    sys.modules[name] = module
+    try:
+        yield
+    finally:
+        if not had_module:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
+        if prior_lines is None:
+            linecache.cache.pop(analysis.filename, None)
+        else:
+            linecache.cache[analysis.filename] = prior_lines
 
 
 def _verb_signature(name, fn):
@@ -611,7 +642,7 @@ class ExecutionRuntime:
     def run_code(self, code: str, allow_raw: str | None = None,
                  owner_session: str | None = None,
                  owner_call: str | None = None,
-                 read_only: bool = False, *, raw_gate: bool = True) -> dict:
+                 read_only: bool = False, *, raw_gate: bool = True, script: dict | None = None) -> dict:
         """Execute code with `hou` available; capture stdout/stderr and `__result__`.
 
         Must run on Houdini's main thread (see module docstring) — callers route
@@ -624,12 +655,22 @@ class ExecutionRuntime:
         """
         if threading.get_ident() != self.thread_id:
             raise RuntimeError("run_code must execute on Houdini's owning thread")
+        try:
+            code, script = script_program(code, script)
+        except (ValueError, UnicodeError) as source_error:
+            return {'ok': False, 'stdout': '', 'stderr': '', 'error': str(source_error),
+                    'transaction': {'status': 'no_scene_change',
+                                    'scope': 'Source rejected before execution; no scene writes'}}
         self.sequence += 1
         execution_sequence = self.sequence
         verb_ledger: list = []
         observed_nodes = {}
         impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
-        namespace = {"hou": hou}
+        module = ModuleType('__dsh_builder__' if 'entry' in script else '__main__') if script is not None else None
+        namespace = module.__dict__ if module is not None else {}
+        namespace['hou'] = hou
+        if script is not None:
+            namespace['__file__'] = script['path']
         for _name, _fn in _VERBS.items():
             if read_only and _name in _MUTATING_VERB_NAMES:
                 continue
@@ -638,14 +679,16 @@ class ExecutionRuntime:
         stderr = _CappedStringIO(_MAX_STREAM_BYTES)
         error = None
         rollback = None
-        analysis = CodeAnalysis(code)
+        analysis = CodeAnalysis(code, entry=script.get('entry') if script is not None else None,
+                                filename=f'<dsh-script:{script["sha256"]}:{execution_sequence}>'
+                                if script is not None else '<dsh-houdini>')
         raw_usage = analysis.raw_usage
         gate_outcome = "not_applicable"
         creation_scope = contextlib.nullcontext(set()) if read_only else dsh_ownership.track_created_nodes()
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
         control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
         note_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_notes.transaction_journal()
-        with (dsh_ownership.execution_owner(owner_session, owner_call),
+        with (_script_namespace(module, analysis), dsh_ownership.execution_owner(owner_session, owner_call),
               creation_scope as created_nodes, box_scope as box_journal,
               control_scope as control_journal, note_scope as note_journal,
               dsh_media_output.image_scope() as produced_images):
@@ -681,11 +724,13 @@ class ExecutionRuntime:
                     if error is None:
                         error = traceback.format_exc()
             images = [p for p in produced_images if os.path.isfile(p)]
-        advisories = [a for a in (_raw_hou_advisory(analysis, verb_ledger), _repo_write_advisory(code)) if a]
+        advisories = [a for a in (_raw_hou_advisory(analysis, verb_ledger), _repo_write_advisory(analysis.code)) if a]
         envelope = project_result(ledger=verb_ledger, images=images,
             stdout=stdout.getvalue(), stderr=stderr.getvalue(), error=error, rollback=rollback,
             raw_usage=raw_usage, gate_outcome=gate_outcome, allow_raw=allow_raw,
             namespace=namespace, advisories=advisories)
+        if script is not None:
+            envelope['script'] = script
         mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
             (v.get('summary') or {}).get('scene_writes') != 0 and
             (v.get('ok') or (v.get('summary') or {}).get('restored') is not True)

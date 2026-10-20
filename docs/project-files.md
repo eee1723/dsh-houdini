@@ -14,7 +14,8 @@
 | 分析资料与诊断报告（`analysis`） | `dsh-artifacts/analysis/` | `analysis-evidence` |
 | 供用户阅读的工程与工具说明（`documentation`） | `dsh-artifacts/docs/` | `user-documentation` |
 | 供用户保留的成图与渲染输出（`render`） | `dsh-artifacts/renders/` | `render-output` |
-| 过程检查与诊断对照图（`visual_check`） | `dsh-artifacts/checks/` | `visual-check` |
+| 过程检查与诊断对照图（`visual_check`） | `dsh-artifacts/checks/previews/` | `visual-check` |
+| 独立运行输入、检查与执行证据（`execution_run`） | `dsh-artifacts/checks/runs/` | `execution-evidence` |
 | 构建源码与任务脚本（`script`） | `dsh-artifacts/scripts/` | `project-source` |
 | 原始执行回执（相对DSH工作区） | `dsh-artifacts/results/` | `execution-evidence` |
 <!-- project-layout:generated:end -->
@@ -33,7 +34,11 @@
 
 加载警告原文属于恢复诊断，保存在同一恢复根的`load-warnings/`，按内容hash复用；对话只记录有限预览和可核验引用。它不进入`dsh-artifacts/analysis`或渲染目录，也不随Save As搬动；读取沿DSH原生恢复历史定位，规则见[接续](multi-instance.md#单实例保存点恢复)。
 
-`visual_check`的受管捕获继续在目录下使用`run-*`分组，保留唯一capture文件名和在途reservation。它是观察证据，不是自动可删除缓存。原生截图超时或中断后可能仍有晚到写入，不能删除其预留或复用路径。
+`visual_check`的受管捕获在`checks/previews/`下使用`run-*`分组，保留唯一capture文件名和在途reservation。`execution_run`在DSH会话工作区的`checks/runs/`下承载独立运行输入、紧凑报告和检查产物；它不为分配目录额外查询live HIP，也不改变渲染和依赖的实际锚点。显式运行位置及历史路径保持，不自动迁移。
+
+作者维护的builder、准备脚本和manifest留在`script`目录；运行器自动分配一次性运行目录。完整的大执行回执只在run的`executions/`中留档一次，报告携带同源事实投影、实际路径、内容摘要和JSON pointer；读取或归档失败不能替换原操作错误。运行prefs等机器状态放在运行器独占临时根，确认其拥有的进程树退出后再清理；用户工程、输入版本和观察证据不随环境清理。
+
+检查和运行目录是证据，不是自动可删除缓存。原生截图超时或中断后可能仍有晚到写入，不能删除其预留或复用路径。正式图片选定后按现有文件呈现方式交付，位置不自动证明通过。
 
 ## 工程锚点与显式目的地
 

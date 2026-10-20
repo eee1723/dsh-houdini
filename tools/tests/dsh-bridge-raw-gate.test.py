@@ -304,4 +304,56 @@ for operation in ('reloadPackage', 'loadPackageArchive'):
     assert denied['ok'] is False and operation in denied['error'], denied
     assert denied['rawUsage']['suspectedMutations'][0]['name'] == operation, denied
 
+# Executable source must enter this request's AST. Known builtin loaders and
+# ordinary lexical aliases cannot hide it, including through a query or an
+# allow_raw reason. Payloads are harmless even if this regression fails.
+for code in (
+    "exec('__result__=1')",
+    "eval('1+1')",
+    "run=exec\nrun('__result__=1')",
+    "run, unused = exec, None\nrun('__result__=1')",
+    "exec, run = (lambda source: None), exec\nrun('__result__=1')",
+    "(run := exec)('__result__=1')",
+    "run = (load := exec)\nrun('__result__=1')",
+    "import builtins as b\nagain=b\nrun=getattr(again,'exec')\nrun('__result__=1')",
+    "from builtins import eval as calculate\ncalculate('1+1')",
+    "run=__builtins__['exec']\nrun('__result__=1')",
+    "import builtins as b\nrun=b.__dict__['eval']\nrun('1+1')",
+    "def call():\n    run=exec\n    run('__result__=1')\ncall()",
+    "def call():\n    unused=[None for eval in ()]\n    return eval('1+1')\ncall()",
+    "unused=[(run := exec) for item in [0]]\nrun('__result__=1')",
+    "class Reader:\n    eval=lambda value: value\n    def call(self): return eval('1+1')\nReader().call()",
+):
+    for read_only in (False, True):
+        denied = dsh_bridge.run_code(code, read_only=read_only, allow_raw='cannot exempt hidden source')
+        assert not denied['ok'] and 'Dynamic exec/eval' in denied['error'], denied
+        assert denied['rawUsage']['gateOutcome'] == ('read_only_blocked' if read_only else 'blocked'), denied
+        assert denied['transaction']['status'] == 'no_scene_change', denied
+
+# Names are not builtin identity: explicit local functions, parameters and
+# ordinary object methods named eval/exec retain normal Python behavior.
+for code in (
+    "def eval(value): return value+1\n__result__=eval(1)",
+    "def call(eval): return eval(1)\n__result__=call(lambda value: value+1)",
+    "def call(exec, /): return exec(1)\n__result__=call(lambda value: value+1)",
+    "__result__=(lambda eval: eval(1))(lambda value: value+1)",
+    "def outer(eval):\n    def inner(): return eval(1)\n    return inner()\n__result__=outer(lambda value: value+1)",
+    "class Reader:\n    def call(self, eval): return eval(1)\n__result__=Reader().call(lambda value: value+1)",
+    "class Reader:\n    def eval(self, value): return value+1\n__result__=Reader().eval(1)",
+    "import types\nbuiltins=types.SimpleNamespace(eval=lambda value: value+1)\n__result__=builtins.eval(1)",
+    "eval=lambda value: value+1\nrun=eval\n__result__=run(1)",
+    "__result__=[eval(1) for eval in [lambda value: value+1]][0]",
+):
+    allowed = dsh_bridge.run_code(code, read_only=True)
+    assert allowed['ok'] and allowed['result'] == 2, allowed
+
+# Compiling authoring/callback text does not execute that text. A caught syntax
+# error in this ordinary authoring operation is also not a failed scene edit.
+compiled_only = dsh_bridge.run_code(
+    "compile(\"hou.node('/obj').createNode('geo','never_executed')\", '<authored>', 'exec')\n"
+    "try:\n    compile('invalid (', '<authored>', 'exec')\nexcept SyntaxError:\n    pass\n"
+    "__result__=2", read_only=True)
+assert compiled_only['ok'] and compiled_only['result'] == 2, compiled_only
+assert hou.node('/obj/never_executed') is None
+
 print("raw-hou gate regression passed")

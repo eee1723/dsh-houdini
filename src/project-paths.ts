@@ -43,6 +43,11 @@ function directoryRole(role:string) {
   return entry
 }
 
+/** Resolve a shared role from an explicit workspace; creates nothing and queries no Houdini state. */
+export function projectDirectoryPath(root:string,role:string):string {
+  return path.join(root,...directoryRole(role).path.split('/'))
+}
+
 function basename(value:string) {
   if (!value.trim() || value !== path.basename(value) || /[\\/:<>"|?*`$\x00-\x1f\x7f]/.test(value)
       || value==='.' || value==='..' || /[. ]$/.test(value)
