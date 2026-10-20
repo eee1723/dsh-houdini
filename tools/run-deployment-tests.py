@@ -19,21 +19,29 @@ parser.add_argument("--hython", action="append", type=Path, default=[])
 parser.add_argument('--suite', action='append', choices=sorted(set(PURE + HOUDINI)))
 reexec_unpacked_test_cli()
 args = parser.parse_args()
-targets = [(sys.executable, PURE)] if not args.hython else [(str(binary), PURE + HOUDINI) for binary in args.hython]
+# Process/memory and filesystem fixtures are ordinary Python programs, not
+# Houdini workers. Exercise them once in the CLI interpreter; each explicit
+# installation then runs only HOM checks plus the real startup-isolation probe.
+targets = [(sys.executable, PURE, False)] + [
+    (str(binary), ["dsh-test-environment", *HOUDINI], True) for binary in args.hython
+]
 if args.suite:
     if not args.hython and any(suite not in PURE for suite in args.suite):
         parser.error('Houdini suites require --hython')
-    targets = [(binary, [suite for suite in suites if suite in args.suite]) for binary, suites in targets]
+    targets = [(binary, [suite for suite in suites if suite in args.suite], hom)
+               for binary, suites, hom in targets]
 observed_versions = set()
-for binary, suites in targets:
+for binary, suites, hom in targets:
+    if not suites:
+        continue
     if not Path(binary).is_file():
         raise RuntimeError("Hython/interpreter not found: " + binary)
     # Explicitly isolated user preferences; never inherit installed user packages.
     prefs = tempfile.mkdtemp(prefix="dsh-deployment-regression-")
-    env = isolated_environment(prefs, executable=binary if args.hython else None)
+    env = isolated_environment(prefs, executable=binary if hom else None)
     env['DSH_HOUDINI_RECOVERY_ROOT'] = str(Path(prefs) / 'recovery')
-    cwd = launch_directory(binary) if args.hython else ROOT
-    if args.hython:
+    cwd = launch_directory(binary) if hom else ROOT
+    if hom:
         probe = subprocess.run([binary, "-c", "import hou; print('DSH_TEST_HOUDINI=' + '.'.join(map(str,hou.applicationVersion()[:2])))"],
                                cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
                                timeout=120, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))

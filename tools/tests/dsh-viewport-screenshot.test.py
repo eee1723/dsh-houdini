@@ -239,7 +239,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert not list((base / 'dsh-artifacts/renders').glob('*.reserve'))
     _, _, explicit = run(Viewer(), hip, path='explicit-ui.png', output_policy='explicit')
     assert explicit['ok'] and explicit['artifact']['role'] == 'visual_check'
-    assert Path(explicit['path']) == base / 'dsh-artifacts/checks' / 'explicit-ui.png'
+    assert Path(explicit['path']) == base / preview_paths.MANAGED_DIRECTORY / 'explicit-ui.png'
 
     linked = Viewer(linked=True); linked_camera = linked.viewport.camera()
     parms_before, keys_before = dict(linked_camera.parms), dict(linked_camera.keys)

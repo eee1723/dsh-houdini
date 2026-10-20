@@ -37,6 +37,42 @@ for call in calls:
     assert env['HOUDINI_LICENSE_SERVER'] == 'test-license-host'
 print('deployment runner rejects inherited Houdini/Python/Qt/DSH configuration')
 
+# The complete matrix keeps ordinary worker fixtures out of hython. In
+# particular, the 128 MiB Python memory-cap control cannot launch Houdini.
+with tempfile.TemporaryDirectory(prefix='dsh-runner-targets-') as raw:
+    versions = {}
+    for version in ('21.0', '22.0'):
+        binary = Path(raw) / version / 'bin/hython.exe'
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        versions[str(binary)] = version
+    matrix_calls = []
+    def record_matrix_run(command, **kwargs):
+        matrix_calls.append((command, kwargs))
+        stdout = 'DSH_TEST_HOUDINI=' + versions[command[0]] if command[1] == '-c' else ''
+        return subprocess.CompletedProcess(command, 0, stdout, '')
+    arguments = ['run-deployment-tests.py']
+    for binary in versions:
+        arguments.extend(['--hython', binary])
+    with patch.object(sys, 'argv', arguments), patch.object(subprocess, 'run', side_effect=record_matrix_run):
+        matrix = runpy.run_path(str(ROOT / 'tools/run-deployment-tests.py'), run_name='__main__')
+    pure_calls = [(command, options) for command, options in matrix_calls if command[0] == sys.executable]
+    assert [Path(command[1]).name for command, _ in pure_calls] == [suite + '.test.py' for suite in matrix['PURE']]
+    assert all('HFS' not in options['env'] and options['cwd'] == ROOT for _, options in pure_calls)
+    for binary in versions:
+        hom_calls = [(command, options) for command, options in matrix_calls if command[0] == binary]
+        assert hom_calls[0][0][1] == '-c'
+        assert [Path(command[1]).name for command, _ in hom_calls[1:]] == [
+            suite + '.test.py' for suite in ['dsh-test-environment', *matrix['HOUDINI']]]
+        assert all(options['env']['HFS'] == str(Path(binary).parent.parent) and
+                   options['cwd'] == Path(binary).parent for _, options in hom_calls)
+    matrix_calls.clear()
+    with patch.object(sys, 'argv', [*arguments, '--suite', 'dsh-worker-limits']), \
+         patch.object(subprocess, 'run', side_effect=record_matrix_run):
+        runpy.run_path(str(ROOT / 'tools/run-deployment-tests.py'), run_name='__main__')
+    assert len(matrix_calls) == 1 and matrix_calls[0][0][0] == sys.executable
+print('complete and selected matrices keep pure Python fixtures separate from HOM workers')
+
 from houdini_test_environment import isolated_environment, launch_directory
 with tempfile.TemporaryDirectory(prefix='dsh-env-中文 空格-') as raw:
     fixture = Path(raw)
