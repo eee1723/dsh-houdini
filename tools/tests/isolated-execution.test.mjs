@@ -6,7 +6,8 @@ import {createHash} from 'node:crypto'
 import {executeIsolated,registerIsolatedTool} from '../../lib/isolated-execution.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
-const root=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-isolated-tool-'))
+// DSH resolves local paths to their real spelling, including Windows TEMP aliases.
+const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-isolated-tool-')))
 async function canonical(filename){
   try{return await fs.realpath(filename)}catch(error){if(error.code!=='ENOENT')throw error;return path.join(await canonical(path.dirname(filename)),path.basename(filename))}
 }
@@ -174,6 +175,6 @@ try {
   console.log('PASS isolated Host: shared/default run roles, admission timing, HIP+setup input policy, legacy report budget, compact original facts, exact images and native jobs')
 }finally {
   const resolved=path.resolve(root)
-  assert.equal(path.dirname(resolved),path.resolve(os.tmpdir()));assert(path.basename(resolved).startsWith('dsh-isolated-tool-'))
+  assert.equal(path.dirname(resolved),await fs.realpath(os.tmpdir()));assert(path.basename(resolved).startsWith('dsh-isolated-tool-'))
   await fs.rm(resolved,{recursive:true,force:true})
 }
