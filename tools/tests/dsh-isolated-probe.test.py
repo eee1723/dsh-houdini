@@ -12,7 +12,7 @@ spec.loader.exec_module(runner)
 hython = Path(hou.text.expandString('$HFS'))/'bin/hython.exe'
 
 with tempfile.TemporaryDirectory(prefix='dsh-isolated-probe-') as raw:
-    root = Path(raw)
+    root = Path(raw).resolve()
     manifest = root/'probe.json'
     script = root/'probe.py'
     data = root/'data.json'

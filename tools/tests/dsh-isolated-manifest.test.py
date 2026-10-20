@@ -22,7 +22,7 @@ def rejects(call):
     raise AssertionError('invalid request was accepted')
 
 with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
-    root = Path(raw)
+    root = Path(raw).resolve()
     (root / 'build.py').write_text('raise RuntimeError("must not execute in pure tests")', encoding='utf-8')
     file = root / 'request-manifest.json'
     valid = {'script':'build.py', 'checks':[{'id':'output','kind':'cook','node':'/obj/geo/OUT','frame':1}]}

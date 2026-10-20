@@ -119,7 +119,7 @@ try:
     assert ledger[0]['summary']['failure_reasons'] == ['empty_output']
 
     with tempfile.TemporaryDirectory(prefix='dsh-checkpoint-') as tmp:
-        base=Path(tmp); hip=base/'project.hip'
+        base=Path(tmp).resolve(); hip=base/'project.hip'
         hou.hipFile.save(hip.as_posix())
         path=dsh_media_output._resolve_output_path('preview.$F4.png', frame=3, default_subdir='render')
         assert Path(path)==base/'render'/'preview.0003.png', path

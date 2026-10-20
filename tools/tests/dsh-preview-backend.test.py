@@ -29,6 +29,7 @@ assert 'cannot pass acceptance' in warning_gate['errors'][-1]
 g=hou.node('/obj').createNode('geo','backend_fixture');box=g.createNode('box')
 try:
  with tempfile.TemporaryDirectory() as tmp:
+    tmp=str(Path(tmp).resolve())
     hou.hipFile.save(tmp+'/backend-fixture.hip')
     managed=[h.render_view(box,picture='managed.png') for _ in range(2)]
     assert len({row['output'] for row in managed})==2
