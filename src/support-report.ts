@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session'
 import type {SessionHandle} from '@deepseek-ai/dsh-session-persistence'
 import {spawn} from 'node:child_process'
+import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
 import {fileURLToPath} from 'node:url'
 import {videoRuntime} from './video-runtime.js'
 import {executionCall,executionResult,houdiniSourceMessages} from './dsh-adapter.js'
@@ -142,7 +143,10 @@ export function collectSupport(payload:unknown,signal:AbortSignal) {
   if(!python)throw new Error('Host 启动环境缺少 Houdini Python；请从版本窗口导出运行诊断包。')
   signal.throwIfAborted()
   return new Promise<any>((resolve,reject)=>{
-    const processHandle=spawn(python,[SCRIPT],{cwd:ROOT,windowsHide:true,stdio:['pipe','pipe','pipe'],signal})
+    const env=scrubbedParentEnv()
+    for(const key of ['DSH_HOUDINI_MANAGED_CONTEXT','DSH_HOUDINI_WORKBENCH_CONTEXT','DSH_HOUDINI_WORKBENCH_ROOT'])
+      if(process.env[key])env[key]=process.env[key]
+    const processHandle=spawn(python,[SCRIPT],{cwd:ROOT,env,windowsHide:true,stdio:['pipe','pipe','pipe'],signal})
     const chunks:Buffer[]=[]
     let size=0,overflow=false
     const timeout=setTimeout(()=>processHandle.kill(),30000)

@@ -4,7 +4,9 @@ import type { ExecResult, HoudiniBridge, OwnershipScope } from './bridge.js'
 import { ExecutorBinding } from './executor-binding.js'
 import { attachImages } from './image-output.js'
 import { retainResult } from './result-details.js'
-import {recordedExecutionOrigin} from './execution-history.js'
+import {projectedExecutorBindingState} from './executor-identity-projection.js'
+import {requestExecutionOrigin} from './execution-facts.js'
+import {hostService} from './api-route.js'
 
 export type HistoricalTarget={executorId?:string;runtimeId:string}
 export type HoudiniConnection = HoudiniBridge | { resolve(exec:any,options?:{write?:boolean}):Promise<HoudiniBridge>;
@@ -16,7 +18,7 @@ export function workspaceOf(exec: any): string | null {
   return typeof cwd === 'string' && cwd ? cwd : null
 }
 
-function ownershipScopeOf(exec: any): OwnershipScope {
+export function ownershipScopeOf(exec: any): OwnershipScope {
   const sessionId = exec?.agent?.id
   const callId = exec?.callId
   const nonempty = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
@@ -34,7 +36,7 @@ export class HoudiniToolRuntime {
   private readonly workspaceNotes = new WeakMap<object, string>()
 
   constructor(private readonly ctx: Context, private readonly connection: HoudiniConnection) {
-    this.binding = new ExecutorBinding()
+    this.binding = new ExecutorBinding(session=>projectedExecutorBindingState(ctx,session as any))
   }
 
   /** Resolve a selected scene; read access never claims an author or restores nodes. */
@@ -49,10 +51,10 @@ export class HoudiniToolRuntime {
   }
 
   /** Receipt/job lookup keeps its original runtime even after the default target changes. */
-  async historicalTarget(exec:any,reference:{requestRef:string}|{jobId:string}):Promise<{bridge:HoudiniBridge;owner:OwnershipScope}> {
+  async historicalTarget(exec:any,reference:{requestRef:string}):Promise<{bridge:HoudiniBridge;owner:OwnershipScope}> {
     const owner=ownershipScopeOf(exec)
     if('requestRef' in reference&&reference.requestRef==='index')return this.target(exec,'read')
-    const target=recordedExecutionOrigin(exec?.agent?.session?.snapshotEvents?.()??[],reference)
+    const target=requestExecutionOrigin(reference.requestRef)
     const bridge='resolve' in this.connection
       ?await (this.connection.resolveHistorical?.(exec,target)??Promise.reject(new Error('当前连接没有提供原运行实例查询，未向其他工程发送请求。')))
       :this.connection.forRuntime(target.runtimeId)
@@ -63,11 +65,12 @@ export class HoudiniToolRuntime {
   async result<T extends ExecResult>(value: T, exec: any, bridge: HoudiniBridge, workspaceNote = false): Promise<T> {
     let attached = await attachImages(value, exec, bridge, this.ctx)
     if (workspaceNote) attached = this.withWorkspaceNote(attached, exec)
-    return retainResult(attached, workspaceOf(exec))
+    return this.retain(attached, exec)
   }
 
   async retain<T extends ExecResult>(value: T, exec: any): Promise<T> {
-    return retainResult(value, workspaceOf(exec))
+    return retainResult(value, workspaceOf(exec), () =>
+      hostService(this.ctx,'sandboxPolicy')?.resolve({session:exec?.agent?.session})?.mode)
   }
 
   private withWorkspaceNote<T extends ExecResult>(value: T, exec: any): T {

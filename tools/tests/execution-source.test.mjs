@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto'
 import {resolveExecutionSource} from '../../lib/execution-source.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {HoudiniBridge} from '../../lib/bridge.js'
+import {Context} from '@deepseek-ai/cordis'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH,EXPECTED_VERB_NAMES} from '../../lib/generated-verb-contract.js'
 
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-execution-source-'))
@@ -29,7 +30,10 @@ const definitions=new Map(),filesystem={
 const ctx={fs:filesystem,sandboxPolicy:{resolve:()=>({mode:'read-only',workspaceRoot:directory})},
   houdiniRecovery:{async beforeWrite(){recoveryCalls++}},tools:{register:definition=>definitions.set(definition.name,definition)}}
 ctx.get=name=>ctx[name]
-const exec={agent:{id:'source-owner',session:{header:{cwd:directory}}},callId:'source-call',signal:new AbortController().signal}
+const lifetime=new Context()
+ctx.effect=lifetime.effect.bind(lifetime)
+ctx.jobs={start(spec){spec.run({id:'houdini-live-source',updateProgress(){}});return 'houdini-live-source'}}
+const exec={agent:{id:'source-owner',ctx:lifetime,session:{header:{cwd:directory}}},callId:'source-call',signal:new AbortController().signal}
 const receipt={ok:true,stdout:'',stderr:'',script:{path:filename,sha256:'bridge-authoritative',bytes:0}}
 const fixture={async exec(...args){executions.push({kind:'exec',args});return structuredClone(receipt)},
   async submitJob(...args){executions.push({kind:'job',args});return {jobId:'123456abcdef'}}}
@@ -45,6 +49,11 @@ async function rejectedBeforeTarget(args,pattern,call=run,context=exec){
 
 let server
 try {
+  const beforeInvalidIdentity=[readCalls,targetCalls,recoveryCalls,executions.length]
+  for(const context of [undefined,{}, {...exec,callId:''}, {...exec,agent:{...exec.agent,id:''}}])
+    for(const call of [run,submit])await assert.rejects(call.execute({script:filename},context),/identity/)
+  assert.deepEqual([readCalls,targetCalls,recoveryCalls,executions.length],beforeInvalidIdentity,
+    'source reads and execution require the same Host identity before any file or target work')
   await fs.writeFile(filename,content)
   const digest=hash(Buffer.from(content)),entry='__result__ = build("/obj/桌子")'
   const source=await resolveExecutionSource(ctx,exec,{script:filename,expected_sha256:digest.toUpperCase(),code:entry})
@@ -94,7 +103,10 @@ try {
   assert.equal(executions.at(-1).args[5],undefined)
   await fs.writeFile(filename,content)
   assert.equal((await submit.execute({script:filename,code:entry},exec)).jobId,'123456abcdef')
-  assert.deepEqual(executions.at(-1),{kind:'job',args:[content,{sessionId:'source-owner',callId:'source-call'},exec.signal,undefined,source.script]})
+  const jobArgs=executions.at(-1).args
+  assert.deepEqual([jobArgs[0],jobArgs[1],...jobArgs.slice(3)],[content,{sessionId:'source-owner',callId:'source-call'},undefined,source.script])
+  assert(jobArgs[2] instanceof AbortSignal)
+  assert.notEqual(jobArgs[2],exec.signal,'the native job observer outlives the submitting tool wait')
   assert.equal((await resolveExecutionSource(ctx,exec,{script:filename})).script.entry,undefined,'script-only calls need no invocation tail')
 
   const received=[]

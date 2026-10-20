@@ -83,7 +83,7 @@ _PYTHON_RUNTIME = {
 }
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 112
+_EXECUTION_CONTRACT_VERSION = 113
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -885,7 +885,7 @@ class _Handler(BaseHTTPRequestHandler):
             handle={'jobId':job_id,
                     'requestReceipt':{'request_ref':ref,'runtime_id':_RUNTIME_ID,
                                       'status':'job_submitted','jobId':job_id,
-                                      'note':'Admission confirmed, not execution completion; collect with houdini_job_status.'}}
+                                      'note':'Admission confirmed, not execution completion; the Host collects this original job status/result.'}}
             _request_registry.complete(ref,handle)
             _prune_jobs()
             self._send(handle)

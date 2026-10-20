@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -6,7 +7,7 @@ import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generateImage,imageModels,registerImageTools} from '../../lib/image-generation.js'
-import {fixtureSession} from './fixture-session.mjs'
+import {fixtureSession,fixtureProjectionContext} from './fixture-session.mjs'
 
 const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-unit-')))
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8S8AAAAASUVORK5CYII=','base64')
@@ -198,8 +199,9 @@ failBridge=false
 // Managed image paths follow the same durable task target as scene tools.
 // In single-instance mode the ambient bridge must not replace an old binding.
 const firstExecutor='a'.repeat(32),otherExecutor='b'.repeat(32)
+const boundContext=fixtureProjectionContext(context)
 const bindingSession=fixtureSession('image-bound',{agentPreset:'houdini',cwd:root})
-await new ExecutorBinding().ensure(bindingSession,firstExecutor)
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(bindingSession,firstExecutor)
 const boundEvents=structuredClone(bindingSession.snapshotEvents())
 const bindingExec={...exec,agent:{id:bindingSession.id,session:bindingSession}}
 let bindingReads=0
@@ -207,17 +209,17 @@ const boundBridge={targetExecutorId:otherExecutor,sceneContext:async()=>{
   bindingReads++;return {ok:true,result:{hip_path:savedHip,hip_is_new:false}}
 }}
 const beforeBinding=requests.length
-await assert.rejects(()=>generateImage(context,bindingExec,managed(),success,boundBridge),/selected executor differs/)
+await assert.rejects(()=>generateImage(boundContext,bindingExec,managed(),success,boundBridge),/selected executor differs/)
 assert.equal(bindingReads,0);assert.equal(requests.length,beforeBinding)
 assert.deepEqual(bindingSession.snapshotEvents(),boundEvents)
 boundBridge.targetExecutorId=firstExecutor
-result=await generateImage(context,bindingExec,managed(),success,boundBridge)
+result=await generateImage(boundContext,bindingExec,managed(),success,boundBridge)
 assert.equal(result.ok,true);assert.equal(bindingReads,1)
 assert.equal(result.artifact.observed_identity.executor_id,firstExecutor)
 assert.deepEqual(bindingSession.snapshotEvents(),boundEvents,'path resolution never appends another binding')
 const unbound=fixtureSession('image-unbound',{agentPreset:'houdini',cwd:root})
 const unboundEvents=structuredClone(unbound.snapshotEvents())
-await assert.rejects(()=>generateImage(context,{...exec,agent:{id:unbound.id,session:unbound}},managed(),success,boundBridge),/selected before model tool/)
+await assert.rejects(()=>generateImage(boundContext,{...exec,agent:{id:unbound.id,session:unbound}},managed(),success,boundBridge),/selected before model tool/)
 assert.deepEqual(unbound.snapshotEvents(),unboundEvents,'normal pre-step owns initial binding, not an image tool')
 assert.equal(bindingReads,1)
 

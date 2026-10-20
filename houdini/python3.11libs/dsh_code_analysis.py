@@ -489,10 +489,12 @@ def script_program(code, script):
 
 
 def _hidden_execution_message(tree):
-    """Known Python loaders cannot hide a second program from this request's AST.
+    """Known Python loader references cannot hide a second program from the AST.
 
     This is lexical admission, not a Python sandbox or an import interceptor.
-    Ordinary compile() remains available for authoring callback/source text.
+    Reject the builtin reference itself, before containers, returned callables or
+    conditions can obscure its eventual invocation. Ordinary compile() remains
+    available for authoring callback/source text.
     """
     if tree is None:
         return None
@@ -563,11 +565,25 @@ def _hidden_execution_message(tree):
                 return loader
             return other
 
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Load):
+                self.blocked |= 'loader' in self.name(node.id)
+
+        def visit_Attribute(self, node):
+            if isinstance(node.ctx, ast.Load):
+                self.blocked |= 'loader' in self.kind(node)
+            self.generic_visit(node)
+
+        visit_Subscript = visit_Attribute
+
         def bind(self, target, value):
             prepared = []
             def collect(item, initial):
                 if isinstance(item, ast.Name):
-                    prepared.append((item.id, self.kind(initial) if isinstance(initial, ast.AST) else initial))
+                    # Loader references have already been rejected while reading
+                    # the RHS; only module aliases need propagation afterward.
+                    found = self.kind(initial) if isinstance(initial, ast.AST) else initial
+                    prepared.append((item.id, found - loader))
                 elif isinstance(item, (ast.Tuple, ast.List)):
                     values = initial.elts if isinstance(initial, (ast.Tuple, ast.List)) and len(item.elts) == len(initial.elts) else [other] * len(item.elts)
                     for child, value in zip(item.elts, values):
@@ -578,7 +594,9 @@ def _hidden_execution_message(tree):
                 self.values[name] = self.name(name) | found if self.conditional else found
 
         def visit_Call(self, node):
-            self.blocked |= 'loader' in self.kind(node.func)
+            # Literal getattr(builtins, 'exec') obtains the same forbidden
+            # reference even when its result is passed through another object.
+            self.blocked |= 'loader' in self.kind(node)
             self.generic_visit(node)
 
         def visit_Assign(self, node):
@@ -599,7 +617,8 @@ def _hidden_execution_message(tree):
         def visit_ImportFrom(self, node):
             for item in node.names:
                 if item.name != '*':
-                    self.bind(ast.Name(id=item.asname or item.name), loader if node.module == 'builtins' and item.name in ('exec', 'eval') else other)
+                    self.blocked |= node.module == 'builtins' and item.name in ('exec', 'eval')
+                    self.bind(ast.Name(id=item.asname or item.name), other)
 
         def function(self, node, body):
             # Defaults/decorators execute in the surrounding scope. Methods do
@@ -674,7 +693,7 @@ def _hidden_execution_message(tree):
     scan = Scan()
     scan.visit(tree)
     if scan.blocked:
-        return ('Dynamic exec/eval hides executable source from Raw Gate and read-only analysis. '
+        return ('Dynamic exec/eval references hide executable source from Raw Gate and read-only analysis. '
                 'Submit the complete Python batch, or use houdini_exec(script=absolute_path, '
                 'code=optional_invocation, expected_sha256=optional_verified_hash); '
                 'houdini_job_submit accepts the same source inputs. compile() alone is supported. '

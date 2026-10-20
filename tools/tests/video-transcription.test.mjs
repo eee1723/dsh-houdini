@@ -36,7 +36,19 @@ assert.equal(resolves,0,'configuration inspection must never resolve the secret'
 assert.equal(JSON.stringify(result).includes(secret),false)
 
 selected.model='qwen3-asr-flash-2026-02-10'
-result=await transcribeVideo(context,exec,args,runner)
+const ambientNames=['OPENAI_API_KEY','DEEPSEEK_API_KEY','DSH_API_TOKEN','dsh_test_identity','DSH_VIDEO_TRANSCRIPTION_KEY']
+const ambientBefore=Object.fromEntries(ambientNames.map(name=>[name,process.env[name]]))
+try {
+  for(const name of ambientNames)process.env[name]='unrelated-parent-secret'
+  result=await transcribeVideo(context,exec,args,runner)
+  for(const name of ambientNames.filter(name=>name!=='DSH_VIDEO_TRANSCRIPTION_KEY'))
+    assert.equal(lastRequest.env[name],undefined,'unrelated Host credentials/identity must not reach the ASR child')
+  assert.equal(lastRequest.env.DSH_VIDEO_TRANSCRIPTION_KEY,secret,'only the explicitly resolved operation credential is forwarded')
+  assert.equal(Object.entries(lastRequest.env).find(([name])=>name.toLowerCase()==='path')?.[1],
+    process.env.PATH,'ordinary executable lookup remains available')
+} finally {
+  for(const name of ambientNames)if(ambientBefore[name]===undefined)delete process.env[name];else process.env[name]=ambientBefore[name]
+}
 assert.equal(result.protocol,'qwen-chat-asr')
 assert.equal(result.endpoint,'https://speech.example/v1/chat/completions')
 assert.equal(lastRequest.args[lastRequest.args.indexOf('--protocol')+1],'qwen-chat-asr')

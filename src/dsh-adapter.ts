@@ -2,9 +2,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
 import {createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionEvent } from './execution-history.js'
 import { HOUDINI_TOOLS } from './tool-catalog.js'
+import {renderExec,renderJobStatus} from './tool-output.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -16,8 +16,20 @@ export const HOUDINI_SOURCE='dsh-houdini' as const
 /** DSH's released V3-to-V4 converter names external producers plugin:<name>. */
 export const isHoudiniSource=(source:any):boolean =>
   source?.kind===HOUDINI_SOURCE || source?.kind==='plugin:dsh-houdini'
-export const isHoudiniTool=(name:unknown):name is keyof typeof HOUDINI_TOOLS =>
-  typeof name==='string' && Object.hasOwn(HOUDINI_TOOLS,name)
+export const isHoudiniTool=(name:unknown):name is string => typeof name==='string'
+  &&(Object.hasOwn(HOUDINI_TOOLS,name)||name==='houdini_job_status'||name==='houdini_job_cancel')
+
+export const LIVE_JOB_KIND='houdini-live'
+export const LIVE_JOB_RESULT='dsh-houdini/live-job-result-v1'
+/** A generic DSH job read becomes a Houdini fact only through this exact producer envelope. */
+export function liveJobResult(value:any):{job_id:string;value:any}|undefined {
+  if(value?.job?.kind!==LIVE_JOB_KIND||typeof value.text!=='string')return
+  let record:any
+  try {record=JSON.parse(value.text)}catch{return}
+  if(record?.kind!==LIVE_JOB_RESULT||record.job_id!==value.job.id
+    ||!record.value||typeof record.value!=='object'||Array.isArray(record.value))return
+  return record
+}
 
 export function houdiniMessage(content:readonly ContentBlock[]) {
   return createUserMessage({content,source:{kind:HOUDINI_SOURCE}})
@@ -45,44 +57,46 @@ export function recordHoudiniContext(agent:Pick<Agent,'session'|'inject'>,messag
 }
 
 const LOG_KIND='dsh-houdini/execution-v1'
-/** DSH preserves meta for native results but only content for PTC results.
- * Shape only that durable nested copy; the program value, model summary and
- * image contexts keep DSH's ordinary execution channel. */
+/** DSH owns native/PTC canonical metadata. Only project this producer's generic
+ * job output for the model; never write another copy of the returned envelope. */
 export function installHoudiniExecutionLog(ctx:Context):void {
-  const settled = new WeakMap<object,Map<string,JsonValue>>()
-  ctx.on('tools/result',(exec,result)=>{
-    if (!exec.agent || exec.parent === undefined || !isHoudiniTool(exec.name) || result.isError) return
-    let calls = settled.get(exec.agent)
-    if (!calls) {calls=new Map();settled.set(exec.agent,calls)}
-    calls.set(exec.callId,result.value)
+  ctx.on('tools/post-execute',async(exec,result,next)=>{
+    const decision=await next()
+    if(decision.kind!=='accept'||decision.content||'value' in decision)return decision
+    const value=result.isError?undefined:result.value
+    const live=exec.name==='job_output'?liveJobResult(value):undefined
+    if(!live||decision.kind!=='accept'||decision.content)return decision
+    const native=value as any
+    const blocks=live.value.status?renderJobStatus(live.value):renderExec(live.value)
+    const ref=live.value.requestReceipt?.request_ref
+    return {...decision,content:[{type:'text' as const,text:blocks.filter(b=>b.type==='text').map(b=>b.text).join('\n\n')
+      +`\n\nDSH job ${live.job_id}: ${native.job.status}. Original images/result: houdini_request(request_ref=${JSON.stringify(ref)}).`}]}
   })
-  // Finalize the durable structure outside display policies. rc.2's spill
-  // middleware also prepends: an inner JSON wrapper is otherwise cut in its
-  // middle as ordinary text. This hook changes only the log copy, never the
-  // program value, model-facing retention or execution admission.
-  ctx.on('tools/ptc-dispatch-log',async(dispatch,next)=>{
-    const content = await next()
-    if (!dispatch.agent || !isHoudiniTool(dispatch.name)) return content
-    const calls = settled.get(dispatch.agent)
-    if (!calls?.has(dispatch.subCallId)) return content
-    const value = calls.get(dispatch.subCallId)!
-    calls.delete(dispatch.subCallId)
-    return [{type:'text',text:JSON.stringify({kind:LOG_KIND,callId:dispatch.subCallId,tool:dispatch.name,value})}]
-  }, {prepend:true})
 }
 
 /** Read the declared canonical value, never infer facts from prose. */
-export function executionResult(event:SessionEvent):{callId:string;tool?:string;value:any;isError?:boolean;error?:any}|null {
+export function executionResult(event:SessionEvent):{callId:string;tool?:string;producer?:'live-job';value:any;isError?:boolean;error?:any}|null {
   const data=event.data
-  if (event.type==='tool/result') return {callId:data?.message?.source?.callId,value:data?.meta?.canonical,
-    isError:data?.message?.isError,error:data?.error}
-  if (event.type!=='tool/ptc-dispatch' || !isHoudiniTool(data?.name)) return null
+  if (event.type==='tool/result') {
+    const value=data?.meta?.canonical,live=liveJobResult(value)
+    return {callId:data?.message?.source?.callId,value:live?.value??value,
+      ...(live?{tool:'houdini_request',producer:'live-job' as const}:{}),isError:data?.message?.isError,error:data?.error}
+  }
+  if (event.type!=='tool/ptc-dispatch' || !isHoudiniTool(data?.name)&&data?.name!=='job_output') return null
+  if(data.meta&&Object.hasOwn(data.meta,'canonical')){
+    const value=data.meta.canonical,live=data.name==='job_output'?liveJobResult(value):undefined
+    return {callId:data.subCallId,tool:live?'houdini_request':data.name,
+      ...(live?{producer:'live-job' as const}:{}),value:live?.value??value,isError:data.isError,error:data.error}
+  }
+  // Read previously committed wrappers; current producers write only DSH metadata.
   for (const block of data.content ?? []) {
     if (block.type!=='text') continue
     let record:any
     try {record=JSON.parse(block.text)} catch {continue}
-    if (record?.kind===LOG_KIND && record.callId===data.subCallId && record.tool===data.name)
-      return {callId:record.callId,tool:record.tool,value:record.value,isError:data.isError,error:data.error}
+    if (record?.kind===LOG_KIND && record.callId===data.subCallId && record.tool===data.name) {
+      const live=record.tool==='job_output'?liveJobResult(record.value):undefined
+      return {callId:record.callId,tool:live?'houdini_request':record.tool,...(live?{producer:'live-job' as const}:{}),value:live?.value??record.value,isError:data.isError,error:data.error}
+    }
   }
   return {callId:data.subCallId,tool:data.name,value:undefined,isError:data.isError,error:data.error}
 }

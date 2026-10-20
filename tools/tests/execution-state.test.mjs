@@ -1,8 +1,16 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
-import {projectExecutionState,projectExecutionNotice} from '../../lib/execution-state.js'
+import {projectExecutionState,projectExecutionNotice,executionNoticeFromFacts} from '../../lib/execution-state.js'
 import {executionHistory} from '../../lib/execution-history.js'
 import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
+import {fixtureProjectionContext} from './fixture-session.mjs'
+import {projectedExecutionFacts} from '../../lib/executor-identity-projection.js'
+const liveCtx=fixtureProjectionContext()
+function assertLiveEquivalent(session) {
+  assert.deepEqual(executionNoticeFromFacts(projectedExecutionFacts(liveCtx,session)),projectExecutionNotice(session.snapshotEvents()),
+    'DSH live outstanding state matches cold native/nested history facts')
+}
 const events=[]
 function result(id,name,value) {
   events.push({type:'tool/call',data:{callId:id,name}},
@@ -117,7 +125,7 @@ for (const nested of [false,true]) {
 console.log('Job recovery preserves admission expiry, uncollected results and terminal unavailable outcomes')
 
 // A late lookup of a historical runtime is never current-scene state.
-const selectedSession=Session.create('history-after-selection'),binding=new ExecutorBinding()
+const selectedSession=Session.create('history-after-selection'),binding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 const targetA={executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),scene_epoch:'c'.repeat(32),scene_id:'d'.repeat(32),
   registration_id:'e'.repeat(32),hip_path:'C:/project/a.hip',hip_is_new:false}
 const targetB={...targetA,executor_id:'f'.repeat(32),runtime_id:'1'.repeat(32),scene_epoch:'2'.repeat(32),scene_id:'3'.repeat(32),hip_path:'C:/project/b.hip'}
@@ -149,12 +157,13 @@ assert.deepEqual(executionHistory(selectedSession.snapshotEvents()).activeJobs,[
 await binding.select(selectedSession,null)
 append('cleared-old-receipt','houdini_request',currentRead(targetA,1000))
 assert.equal(projectExecutionState(selectedSession.snapshotEvents()),null,'an old receipt cannot give an unbound conversation a current scene')
+assertLiveEquivalent(selectedSession)
 console.log('execution scope: historical native/nested results and jobs do not contaminate the selected scene or explicit clear')
 
 // Python RequestRegistry.status returns runtime/owner/ref, without repeating
 // the admitted epoch. Match the original receipt even after same-process load.
 for(const nested of [false,true])for(const change of ['reload','other','clear'])for(const status of ['unknown','running','done','result_expired']) {
-  const session=Session.create(`old-request-${nested}-${change}-${status}`),selection=new ExecutorBinding()
+  const session=Session.create(`old-request-${nested}-${change}-${status}`),selection=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
   const add=(id,name,value)=>{
     if(nested) {
       session.append('tool/ptc-dispatch-start',{subCallId:id,name})
@@ -174,7 +183,9 @@ for(const nested of [false,true])for(const change of ['reload','other','clear'])
   if(target)add('current-call','houdini_inspect',currentRead(target,2))
   add('historical-lookup','houdini_request',{ok:true,stdout:'',stderr:'',requestReceipt:{
     request_ref:ref,runtime_id:targetA.runtime_id,owner_call:'original-call',status}})
+  assertLiveEquivalent(session)
   const current=executionHistory(session.snapshotEvents())
+  assertLiveEquivalent(session)
   assert.deepEqual(current.activeRequests,[],`${change}: old ${status} is not current work`)
   assert.deepEqual(current.unavailableResults,[],'old retention expiry is not a current-scene outcome')
   assert.equal(current.resolvedCalls.has('original-call'),false,'old completion does not resolve current-scene calls')
@@ -187,7 +198,7 @@ for(const nested of [false,true])for(const change of ['reload','other','clear'])
 console.log('request scope: original native/nested receipt epochs survive sparse status reads after reload, target change and clear')
 
 for(const nested of [false,true])for(const status of ['unknown','running','not_executed','done','result_expired']) {
-  const session=Session.create(`lost-original-${nested}-${status}`),selection=new ExecutorBinding()
+  const session=Session.create(`lost-original-${nested}-${status}`),selection=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
   const call=(id,name)=>session.append(nested?'tool/ptc-dispatch-start':'tool/call',nested?{subCallId:id,name}:{callId:id,name})
   const result=(id,name,value)=>nested
     ?session.append('tool/ptc-dispatch',{subCallId:id,name,content:[{type:'text',text:JSON.stringify({
@@ -222,7 +233,7 @@ for(const nested of [false,true])for(const status of ['unknown','running','not_e
 console.log('request scope: sparse receipts resolve current lost results without adopting old or unattributed requests')
 
 for(const nested of [false,true])for(const [control,status] of [['houdini_job_status','running'],['houdini_job_cancel','cancelled']]) {
-  const session=Session.create(`lost-job-${nested}-${control}`),selection=new ExecutorBinding()
+  const session=Session.create(`lost-job-${nested}-${control}`),selection=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
   const call=(id,name)=>session.append(nested?'tool/ptc-dispatch-start':'tool/call',nested?{subCallId:id,name}:{callId:id,name})
   const result=(id,name,value)=>nested
     ?session.append('tool/ptc-dispatch',{subCallId:id,name,content:[{type:'text',text:JSON.stringify({
@@ -241,6 +252,7 @@ for(const nested of [false,true])for(const [control,status] of [['houdini_job_st
   assert.deepEqual(executionHistory(session.snapshotEvents()).activeJobs,[],'an unscoped recovered old admission cannot make later job controls current')
   call('current-job-lost','houdini_job_submit')
   recoverJob('recover-current-job',currentJob,'current-job-lost')
+  assertLiveEquivalent(session)
   let current=executionHistory(session.snapshotEvents())
   assert.deepEqual(current.pendingCalls,[],'current admission recovery settles the lost submit call')
   assert.deepEqual(current.activeJobs,[[currentJob,'queued_or_unknown']],'current owner_call can establish the recovered job in this scope')

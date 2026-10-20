@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import {Session} from '@deepseek-ai/dsh-session'
 import {createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
@@ -10,7 +11,7 @@ for(const bad of [{...options,path:'C:/secret'}, {...options,includeContent:'tru
   {...options,description:'x'.repeat(4001)},null,[]])assert.throws(()=>supportOptions(bad))
 const selected=Session.create(options.sessionId),other=Session.create('unrelated-task')
 selected.append('user/message',createUserMessage({content:[{type:'text',text:'PRIVATE_CHAT_SENTINEL'}]}),{surfaceOp:'append'})
-await new ExecutorBinding().ensure(selected,'a'.repeat(32))
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(selected,'a'.repeat(32))
 selected.append('user/message',houdiniSnapshot({name:'dsh-houdini:recovery-required',text:'diagnostic\n'+JSON.stringify({
   executor_id:'b'.repeat(32),reason:'checkpoint unavailable; token=TOP_SECRET_TOKEN'})}),{surfaceOp:'append'})
 selected.append('tool/call',{callId:'readonly',name:'houdini_inspect',arguments:'PRIVATE_TOOL_CODE_SENTINEL'})

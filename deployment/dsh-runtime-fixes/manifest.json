@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "workbench-transport-2",
+  "revision": "native-jobs-2",
   "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.1-rc.2",
@@ -169,6 +169,20 @@
       "entries": [
         "index"
       ]
+    },
+    {
+      "source": "jobs/jobs-local",
+      "name": "jobs-local",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "jobs/tool-jobs",
+      "name": "tool-jobs",
+      "entries": [
+        "index"
+      ]
     }
   ],
   "clientPackages": [
@@ -189,5 +203,5 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "df4ae31bc8f51a9dd9397a2e1753345c721d3b593d85ae5a5a75e741913d3957"
+  "patchSha256": "8f1d75010584499f82101d1d3318e09737402bcaef84fea350bf35f37083f2f9"
 }

@@ -69,30 +69,6 @@ const descriptor = (row: Source) => ({ source_ref: row.source_ref, kind: row.kin
   event_seq: row.event_seq, message_id: row.message_id, call_id: row.call_id,
   text_chars: row.text.length, nontext_blocks: row.nontext_blocks })
 
-export function projectTaskSources(events: readonly Event[], claimed?: any, recovery = false): Record<string, unknown> | null {
-  const rows = taskSources(events, claimed)
-  if (!rows.length) return null
-  const goals = events.filter(e => e.type === 'goal/change')
-  const compacted = events.some(e => e.type.startsWith('compaction/'))
-  // A single ordinary request is already in the model input; avoid duplicate scaffolding.
-  if (rows.length === 1 && !compacted && !goals.length && !recovery) return null
-  const firstUser = Math.max(0, rows.findIndex(row => row.kind === 'user_message'))
-  const selected = rows.filter((_, i) => i === firstUser || i >= rows.length - 3)
-  const goal = goals.at(-1)
-  const objective = goal?.data?.goal?.objective
-  return { status: 'task_source_anchors', available_sources: rows.length,
-    omitted_sources: rows.length - selected.length,
-    sources: selected.map(row => ({ ...descriptor(row), excerpt: row.text.slice(0, 700),
-      text_truncated: row.text.length > 700 })),
-    latest_reported_goal: goal ? { event_seq: goal.seq ?? null,
-      operation: goal.data?.operation ?? null, phase: goal.data?.goal?.phase ?? null,
-      objective_excerpt: typeof objective === 'string' ? objective.slice(0, 500) : null,
-      text_truncated: typeof objective === 'string' && objective.length > 500,
-      provenance: 'Reported plan only; not a replacement for user requirements or proof of completion.' } : null,
-    read: 'houdini_resource(kind="source", ref="index", offset=0, limit=6000) lists available sources; ref=<hash> reads a source. Pages are JSON text. No Houdini execution.',
-    boundary: 'Available current-session sources only, not a complete requirement register. Excerpts may omit obligations. Questions are model-authored; answers are recorded tool replies, not inferred choices. Nontext content is not interpreted. Later messages may add, correct or replace work: resolve intent from originals, never from order alone. No authorization or acceptance is derived.' }
-}
-
 export function readTaskSource(events: readonly Event[], ref: string, offset = 0, limit = 6000): ExecResult {
   if (ref !== 'index' && !/^[0-9a-f]{64}$/.test(ref)) throw new Error('source_ref must be index or a source hash')
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {

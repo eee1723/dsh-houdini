@@ -8,6 +8,7 @@ import {executionCall,executionResult,houdiniSourceMessages} from './dsh-adapter
 import type {SessionEvent} from './execution-history.js'
 import {sectionData} from './prompt-data.js'
 import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
+import {transitionExecutionFacts,initExecutionFacts,executionOutstanding,executionFactsSchema} from './execution-facts.js'
 
 const TARGET_SECTION='dsh-houdini:executor-binding'
 const LIVE=HOUDINI_SCENE_TOOLS
@@ -47,8 +48,11 @@ const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
   selectedTarget:targetSnapshotSchema.nullable(),selectionRecorded:z.boolean(),selectionRevision:z.number(),
   pendingSelections:z.record(z.string(),z.number()),
   executors:z.array(z.string()),recovery:Recovery.nullable(),recoverySeq:z.number(),
-  project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number()})
+  project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number(),
+  execution:executionFactsSchema,
+  sceneObservation:z.object({lastUserKey:z.string().optional(),key:z.string().optional(),text:z.string().optional()})})
 type State=z.infer<typeof State>
+export type ExecutorIdentityState=State
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {houdiniExecutorIdentity:State}
@@ -115,12 +119,34 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:12,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:13,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
     executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{},
-    selectedTarget:null,selectionRecorded:false,selectionRevision:0,pendingSelections:{}}),
+    selectedTarget:null,selectionRecorded:false,selectionRevision:0,pendingSelections:{},execution:initExecutionFacts(),sceneObservation:{}}),
   wire:{viewSchema:Project.nullable(),view:(state:State)=>state.invalid||state.conflict?REVIEW_PROJECT:state.project},
   apply(state:State,event:SessionEvent):State {
+    return transitionExecutorState(state,event).state
+  },
+}
+
+/** The transient delta is used only by one-shot historical readers. */
+export function transitionExecutorState(state:State,event:SessionEvent) {
+    let next=applyIdentity(state,event)
+    const transition=transitionExecutionFacts(state.execution,event,state,next)
+    if(transition.facts!==next.execution)next={...next,execution:transition.facts}
+    if(event.type==='user/message') {
+      const message=event.data
+      if(message?.source?.kind==='user')next={...next,sceneObservation:{...next.sceneObservation,lastUserKey:String(message.id??event.seq??JSON.stringify(message))}}
+      if(['runtime-context','dsh-houdini','plugin:dsh-houdini'].includes(message?.source?.kind))
+        for(const section of message.source.sections??[])if(section.name==='dsh-houdini:scene-context') {
+          const value=sectionData(section)
+          if(typeof value?.user_message_id==='string')next={...next,sceneObservation:{...next.sceneObservation,key:value.user_message_id,text:section.text}}
+        }
+    }
+    return {state:next,...(transition.delta?{delta:transition.delta}:{}),...(transition.reset?{reset:transition.reset}:{})}
+}
+
+function applyIdentity(state:State,event:SessionEvent):State {
     const messages=houdiniSourceMessages(event)
     if (messages.length) {
       let next=state
@@ -211,7 +237,10 @@ export const executorIdentityProjection={
     const call=executionCall(event)
     if(call&&(call.name==='run_code'||LIVE.has(call.name)))
       state={...state,hasOperations:true}
-    if (call && LIVE.has(call.name)) return {...state,pending:{...state.pending,[call.callId]:state.identity},
+    // DSH job_output may carry a decoded original live-job execution envelope.
+    // Correlate the selected scope at dispatch exactly like a direct call;
+    // ordinary generic job output has no Houdini facts and simply clears it.
+    if (call && (LIVE.has(call.name)||call.name==='job_output')) return {...state,pending:{...state.pending,[call.callId]:state.identity},
       pendingSelections:{...state.pendingSelections,[call.callId]:state.selectionRevision}}
     const result=executionResult(event)
     if (!result || !Object.hasOwn(state.pending,result.callId)) return state
@@ -220,6 +249,7 @@ export const executorIdentityProjection={
     delete pending[result.callId]
     const pendingSelections={...state.pendingSelections};delete pendingSelections[result.callId]
     const next={...state,pending,pendingSelections}
+    if(state.execution.current.calls[result.callId]?.name==='job_output'&&result.producer!=='live-job')return next
     const identity=result.value?.execution?.executor_id ?? result.value?.requestReceipt?.executor_id
     if(state.selectionRecorded) {
       const target=state.selectedTarget,execution=result.value?.execution
@@ -238,7 +268,6 @@ export const executorIdentityProjection={
       return identity===expected?next:{...next,conflict:true}
     return identity===undefined ? next : projectObservation(add(next,identity),result.value?.execution,
       result.value?.execution?.observed_at,result.value?.execution?.sequence??0)
-  },
 }
 
 export function executorBindingState(state:State):{identity:string|undefined;bindingRecorded:boolean} {
@@ -274,10 +303,20 @@ export function registerExecutorIdentityProjection(ctx:Context):void {
 }
 
 export function projectedExecutorBindingState(ctx:Context,session:Session) {
-  const state=ctx.get('sessionProjections')?.stateOf(session,'houdiniExecutorIdentity')
-  if (!state) throw new Error('Houdini executor identity projection unavailable')
-  return executorBindingState(state)
+  return executorBindingState(projectedExecutorState(ctx,session))
 }
+
+/** DSH owns replay, cursor advancement, persistence and invalidation. */
+export function projectedExecutorState(ctx:Context,session:{snapshotEvents():readonly SessionEvent[]}):State {
+  const state=ctx.get('sessionProjections')?.stateOf(session as Session,'houdiniExecutorIdentity')
+  if (!state) throw new Error('Houdini executor identity projection unavailable')
+  executorBindingState(state)
+  return state
+}
+export function projectedExecutionFacts(ctx:Context,session:{snapshotEvents():readonly SessionEvent[]}) {
+  return executionOutstanding(projectedExecutorState(ctx,session).execution.current)
+}
+
 
 export function projectedExecutorIdentity(ctx:Context,session:Session):string|undefined {
   return projectedExecutorBindingState(ctx,session).identity

@@ -51,7 +51,7 @@ export function apply(ctx) {
         if(step===3){
           const dispatch=events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec')
           assert(dispatch&&!dispatch.data.isError,JSON.stringify(dispatch))
-          const r=dispatch.data.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          const r=dispatch.data.meta?.canonical
           assert(r?.ok,JSON.stringify(dispatch));assert.equal(r.result,'fixture::asset::1.1');receipts.push(r)
         }
         if(step===4){
@@ -63,7 +63,7 @@ export function apply(ctx) {
         if(step===6){
           const dispatch=events.filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec').at(-1)
           assert(dispatch&&!dispatch.data.isError,JSON.stringify(dispatch))
-          const r=dispatch.data.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          const r=dispatch.data.meta?.canonical
           checkOwned(r,'fixture::asset')
         }
         if(step===7){

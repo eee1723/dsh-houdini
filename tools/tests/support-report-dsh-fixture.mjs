@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -19,7 +20,7 @@ export function apply(ctx) {
           session.append('user/message',createUserMessage({content:[{type:'text',text:'older fixture event '+index}],source:{kind:'user'}}),{surfaceOp:'append'})
         }
         session.append('user/message',createUserMessage({content:[{type:'text',text}],source:{kind:'user'}}),{surfaceOp:'append'})
-        await new ExecutorBinding().ensure(session,'a'.repeat(32))
+        await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,'a'.repeat(32))
         session.append('user/message',houdiniSnapshot({name:'dsh-houdini:recovery-required',text:'diagnostic\n'+JSON.stringify({
           executor_id:'b'.repeat(32),reason:'CHECKPOINT_UNAVAILABLE token=PRIVATE_LAUNCH_TOKEN'})}),{surfaceOp:'append'})
         assert(await ctx.sessions.flush(session))

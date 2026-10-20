@@ -3,7 +3,7 @@ import path from 'node:path'
 import {createHash} from 'node:crypto'
 import {TextDecoder} from 'node:util'
 import {hostService} from './api-route.js'
-import {workspaceOf} from './tool-runtime.js'
+import {ownershipScopeOf,workspaceOf} from './tool-runtime.js'
 import type {ScriptSource} from './bridge.js'
 
 export interface ExecutionSourceArgs {code?:string;script?:string;expected_sha256?:string}
@@ -12,6 +12,7 @@ export interface ExecutionSource {code:string;script?:ScriptSource}
 const MAX_SOURCE_BYTES=4*1024*1024
 
 export async function resolveExecutionSource(ctx:any,exec:any,args:ExecutionSourceArgs):Promise<ExecutionSource> {
+  ownershipScopeOf(exec)
   exec.signal?.throwIfAborted()
   if(args.code!==undefined&&typeof args.code!=='string')throw Error('code must be Python text')
   if(args.script===undefined){

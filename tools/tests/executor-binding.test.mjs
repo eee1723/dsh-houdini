@@ -1,11 +1,13 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding,recordedExecutorIdentity,installFixedTargetContext} from '../../lib/executor-binding.js'
 import {foldExecutorState} from '../../lib/executor-identity-projection.js'
+import {fixtureProjectionContext} from './fixture-session.mjs'
 const first='a'.repeat(32),second='b'.repeat(32)
 const target=id=>({executor_id:id,runtime_id:'c'.repeat(32),scene_epoch:'d'.repeat(32),scene_id:'e'.repeat(32),
   registration_id:'f'.repeat(32),hip_path:'C:/project/scene.hip',hip_is_new:false,workspace_path:'C:/project'})
-const session=Session.create('target-selection'),binding=new ExecutorBinding()
+const session=Session.create('target-selection'),binding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 await binding.ensure(session,first)
 assert.equal(recordedExecutorIdentity(session.snapshotEvents()),first,'legacy history remains readable')
 session.append('tool/call',{callId:'executed',name:'houdini_exec',arguments:'{}'})
@@ -22,7 +24,7 @@ assert.equal(cleared.identity,null)
 assert.equal(cleared.selectedTarget,null)
 assert.equal(cleared.selectionRecorded,true,'explicit clear differs from a never-selected conversation')
 let hook
-installFixedTargetContext({on:(name,fn)=>{assert.equal(name,'agent/pre-step');hook=fn}},first)
+installFixedTargetContext(fixtureProjectionContext({on:(name,fn)=>{assert.equal(name,'agent/pre-step');hook=fn}}),first)
 const fixed=Session.create('fixed-composition')
 const decision=await hook({agent:{session:fixed},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))
 assert.equal(decision.messages.length,1)

@@ -1,7 +1,7 @@
 /** Target choices are native DSH context, independent of ownership recovery. */
 import type {Context} from '@deepseek-ai/cordis'
 import {houdiniSnapshot} from './dsh-adapter.js'
-import {foldExecutorBinding,foldExecutorState,targetSnapshotSchema,type TargetSnapshot} from './executor-identity-projection.js'
+import {foldExecutorBinding,projectedExecutorState,executorIdentityProjection,executorBindingState,targetSnapshotSchema,type TargetSnapshot} from './executor-identity-projection.js'
 import type {SessionEvent} from './execution-history.js'
 import {literalData} from './prompt-data.js'
 
@@ -28,15 +28,16 @@ export function installFixedTargetContext(ctx:Context,current:string):void {
     const decision=await next()
     signal.throwIfAborted()
     if(decision.kind==='reject')return decision
-    const state=foldExecutorState([...agent.session.snapshotEvents(),...decision.messages.map(data=>({type:'user/message',data}))])
+    let state=projectedExecutorState(ctx,agent.session)
+    for(const data of decision.messages)state=executorIdentityProjection.apply(state,{type:'user/message',data})
+    executorBindingState(state)
     if(state.bindingRecorded||state.selectionRecorded)return decision
     return {...decision,messages:[...decision.messages,legacyBindingMessage(current)]}
   })
 }
 
 export class ExecutorBinding {
-  constructor(private readonly stateOf:(session:BindingSession)=>{identity:string|undefined;bindingRecorded:boolean}
-    = session=>foldExecutorBinding(session.snapshotEvents()),
+  constructor(private readonly stateOf?:((session:BindingSession)=>{identity:string|undefined;bindingRecorded:boolean}),
     private readonly record?:(session:BindingSession,message:ReturnType<typeof houdiniSnapshot>)=>void) {}
   private append(session:BindingSession,message:ReturnType<typeof houdiniSnapshot>) {
     if(this.record)this.record(session,message)
@@ -48,6 +49,7 @@ export class ExecutorBinding {
   }
   async ensure(session:BindingSession,current?:string,signal?:AbortSignal,allowAppend=true):Promise<void> {
     signal?.throwIfAborted()
+    if(!this.stateOf)throw new Error('Executor binding requires the current DSH session projection')
     const state=this.stateOf(session)
     requireExecutorContinuityIdentity(state.identity,current)
     if(!current||state.bindingRecorded)return

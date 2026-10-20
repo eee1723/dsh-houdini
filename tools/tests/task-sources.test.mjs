@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { taskSources, projectTaskSources, readTaskSource } from '../../lib/task-sources.js';
+import { taskSources, readTaskSource } from '../../lib/task-sources.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
 
 const user = (id, text, seq=1, kind='user') => ({type:'user/message',seq,
   data:{id,source:{kind},content:[{type:'text',text}]}});
 const original = user('original','四个控制，实际连接保持；不要保存 {{HIP}}。');
-assert.equal(projectTaskSources([original]),null,'simple single request incurs no duplicate context');
 const question={type:'tool/call',seq:3,data:{name:'ask_user_question',callId:'choice',
   arguments:JSON.stringify({questions:[{question:'请选择交付形式',options:['仅网络','渲染图']}]})}};
 const answer={type:'tool/result',seq:4,data:{message:{id:'answer',source:{callId:'choice'},
@@ -24,11 +23,6 @@ assert.equal(rows[2].text,'仅网络；保持四个控制');
 assert(!JSON.stringify(rows).includes('INJECTED'));
 assert(!JSON.stringify(rows).includes('AUTHOR'));
 assert(!JSON.stringify(rows).includes('one control'));
-const state=projectTaskSources(events);
-assert.equal(state.latest_reported_goal.phase,'completed');
-assert.match(state.latest_reported_goal.provenance,/not a replacement/);
-assert.equal(state.sources[0].source_ref,rows[0].source_ref);
-assert.match(state.boundary,/never from order alone/);
 assert.equal(taskSources([{...original,seq:900}])[0].source_ref,rows[0].source_ref);
 assert.notEqual(taskSources([user('original','changed text')])[0].source_ref,rows[0].source_ref);
 
@@ -59,11 +53,6 @@ assert.equal(taskSources([original],claimed).at(-1).message_id,'claimed');
 assert.equal(taskSources([original,user('claimed','继续 {{node}}')],claimed).length,2);
 
 const longEvents=Array.from({length:40},(_,i)=>user('u'+i,'要求'+i+'\n"\\{{data}}'+ '几何🙂'.repeat(1500),i+1));
-const bounded=projectTaskSources(longEvents);
-assert.equal(bounded.sources.length,4);
-assert.equal(bounded.omitted_sources,36);
-assert(bounded.sources.every(s=>s.text_truncated));
-assert(JSON.stringify(bounded).length<6000);
 const longSource=taskSources(longEvents)[0];
 let text='',offset=0;
 do {
@@ -91,4 +80,4 @@ await assert.rejects(query.execute({kind:"source",ref:'index'},{}),/current agen
 await assert.rejects(query.execute({kind:"source",ref:rows[0].source_ref},
   {...context,agent:{session:{snapshotEvents:()=>[]}}}),/not found/);
 assert.equal(http,0,'source retrieval never enters Bridge or HOM');
-console.log('task sources: original provenance, plan separation, replay, exact pagination, session isolation, no HOM and bounded anchors passed');
+console.log('task sources: original provenance, plan separation, replay, exact pagination, session isolation, no HOM passed');

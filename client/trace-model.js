@@ -298,7 +298,8 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         (pending ? n.argsRaw : n.call?.argsRaw) ?? c?.argsRaw ?? "";
       const info = parseEntry({ ...n, call: { name, argsRaw } });
       const parts = info.parts;
-      const canonical = name.startsWith("houdini_") ? info.canonical : null;
+      const canonical = info.canonical;
+      const isHoudini = name.startsWith("houdini_") || name === 'job_output' && Boolean(canonical);
       const transaction = canonical?.transaction ?? json(parts.transaction);
       const req =
         c?.request ||
@@ -328,7 +329,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
       const receiptStatus = requestReceipt?.status;
       const jobResultUnavailable = Boolean(requestReceipt?.jobId && requestReceipt.job_finished === true && requestReceipt.job_result_available === false);
       const recoveryNeeded = jobResultUnavailable || ['unknown_transport', 'unknown_runtime', 'unknown', 'result_expired', 'result_unavailable'].includes(receiptStatus);
-      const receiptJobState = requestReceipt?.jobId
+      const receiptJobState = requestReceipt?.jobId && !canonical?.status
         ? jobResultUnavailable ? '后台任务已结束 · 结果不可用'
           : requestReceipt.job_finished === true && requestReceipt.job_result_available === true ? '后台任务已结束 · 待收集结果'
           : {queued: '后台任务排队中', running: '后台任务执行中'}[requestReceipt.job_status]
@@ -350,7 +351,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         !Array.isArray(parsedArgs)
           ? parsedArgs
           : {};
-      const analysisStep = {tool: name, isHoudini: name.startsWith('houdini_'),
+      const analysisStep = {tool: name, isHoudini,
         args, code: args.code || '', verbs, failed, canonical,
         rawUsage: info.rawUsage, resultText: info.text};
       const rawEffect = isHoudiniHostCall(analysisStep) ? null : classifyRawEffect(analysisStep);
@@ -374,7 +375,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
               ? "复核输出"
               : args.review_test
                 ? "受控复核实验"
-                : sources.tools?.[name]?.label || name;
+                : name === 'job_output' && isHoudini ? '现场长任务结果' : sources.tools?.[name]?.label || name;
       const rollback = transaction
         ? transaction.status === "rolled_back"
         : Boolean(info.rollback?.applied && !info.rollback.error);
@@ -428,6 +429,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         id,
         key: id,
         name,
+        isHoudini,
         args,
         argsRaw,
         analysisStep,
@@ -458,7 +460,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
         transaction,
         rollbackApplied: rollback,
         state,
-        kind: args.request_ref || args.result_ref || args.source_ref ? "read" : toolKind(name),
+        kind: args.request_ref || args.result_ref || args.source_ref ? "read" : name === 'job_output' && isHoudini ? 'exec' : toolKind(name),
         request: req,
         requestKey: req?.key || (c ? "assistant:" + pairKey(turn, step) : null),
         accounting: account,
@@ -594,7 +596,7 @@ function createTraceModel(catalog, sources, parseEntry, analysis) {
     };
   }
   function summarize(entries, requests) {
-    const returned = entries.filter(entry => entry.name.startsWith("houdini_") && !entry.pending);
+    const returned = entries.filter(entry => entry.isHoudini && !entry.pending);
     const used = new Set(returned.flatMap(entry => entry.verbs.map(verb => verb.verb)));
     const known = catalog.flatMap(domain => domain.verbs.map(verb => verb.name));
     const accounts = requests.map(request => request.accounting).filter(Boolean);

@@ -4,12 +4,20 @@ import {randomUUID} from 'node:crypto';
 import {HoudiniBridge} from '../../lib/bridge.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {projectExecutionState} from '../../lib/execution-state.js';
+import {executorIdentityProjection} from '../../lib/executor-identity-projection.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js';
+import {Context} from '@deepseek-ai/cordis';
+import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
 const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,uiLists=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
 let onCaptureAdmitted;
 let receiptOverride;
+let jobState='running';
+const pendingJobReplies=new Set(),observers=[];
+const host=fixtureProjectionContext(new Context());
+let nativeJobs=0;
+host.provide('jobs',{start(spec){const id='houdini-live-fixture-'+(++nativeJobs);observers.push(spec.run({id,updateProgress(){},append(){}}).done);return id;}});
 const server=http.createServer((req,res)=>{
  res.setHeader('content-type','application/json');
  if(req.url==='/health'){res.end(JSON.stringify({ok:true,runtimeId:runtime,executionContractVersion:version,verbCatalog:{hash}}));return;}
@@ -71,6 +79,12 @@ const server=http.createServer((req,res)=>{
    assert.deepEqual(body.expected_contract,{version,hash},'job admission carries the expected contract');
    assert(tickets.delete(body.request_ref));
    jobs++;records.set(body.request_ref,{jobId:'job-'+jobs});req.socket.destroy();
+  }else if(req.url==='/jobs/job-1/status'){
+   const result={jobId:'job-1',status:jobState,ok:jobState==='done',stdout:'',stderr:''};
+   if(body.wait>0&&jobState==='running'){
+    pendingJobReplies.add(res);res.on('close',()=>pendingJobReplies.delete(res));return;
+   }
+   res.end(JSON.stringify(result));
   }else if(req.url==='/requests/status'){
    if(receiptOverride && body.request_ref!=='index'){
     res.end(JSON.stringify({ok:true,stdout:'',stderr:'',requestReceipt:receiptOverride}));return;
@@ -109,8 +123,8 @@ try{
  const beforeRecovery=edits;
  assert.equal((await bridge.requestStatus(cancelled.requestReceipt.request_ref,owner)).requestReceipt.result.result,beforeRecovery);
  assert.equal(edits,beforeRecovery,'AbortSignal cancellation after dispatch must recover without executing again');
- const defs=new Map();registerHoudiniTools({tools:{register:d=>defs.set(d.name,d)}},bridge);
- const ref=[...records.keys()][0],ctx={agent:{id:'owner',session:{header:{}}},callId:'recover'};
+ const defs=new Map();host.provide('tools',{register:d=>defs.set(d.name,d)});registerHoudiniTools(host,bridge);
+ const ref=[...records.keys()][0],ctx={agent:{id:'owner',ctx:host,session:fixtureSession('owner')},callId:'recover'};
  const recovered=await defs.get('houdini_request').execute({request_ref:ref},ctx);
  assert.equal(recovered.requestReceipt.retrieved,true);assert.equal(recovered.result,1);
  const events=[{seq:1,type:'tool/call',data:{name:'houdini_exec',callId:'unknown'}},
@@ -220,30 +234,40 @@ try{
  receiptOverride=undefined;
  const lostJob=await defs.get('houdini_job_submit').execute({code:'long render'}, {...ctx,callId:'lost-job-call'});
  assert.equal(lostJob.jobId,undefined);assert.equal(lostJob.requestReceipt.status,'unknown_transport');
+ assert.match(lostJob.job_id,/^houdini-live-/,'native job identity exists even when Bridge admission response was lost');
  const jobText=defs.get('houdini_job_submit').output.render({},lostJob)[0].text;
  assert.ok(!jobText.includes('Started Houdini job undefined'));
  // Simulate Host discarding the original tool result: only call event survives.
  const index=await defs.get('houdini_request').execute({request_ref:'index'},ctx);
  const discovered=index.requestReceipt.requests.find(r=>r.owner_call==='lost-job-call');
  const jobResult=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
- assert.equal(jobResult.result.jobId,'job-1');assert.equal(jobResult.requestReceipt.status,'job_submitted');assert.equal(jobs,1);
+ assert.equal(jobResult.jobId,'job-1');assert.equal(jobResult.status,'running');assert.equal(jobResult.requestReceipt.status,'done');assert.equal(jobs,1);
+ assert.match(jobResult.job_id,/^houdini-live-/,'original execution can renew native observation without resubmitting');
  const jobEvents=[{seq:1,type:'tool/call',data:{name:'houdini_job_submit',callId:'lost-job-call'}},
   {seq:2,type:'tool/call',data:{name:'houdini_request',callId:'recover-job'}},
   {seq:3,type:'tool/result',data:{message:{source:{callId:'recover-job'}},meta:{canonical:jobResult}}}];
  assert.equal(projectExecutionState(jobEvents).pending_calls,0);
  assert.equal(projectExecutionState(jobEvents).active_jobs[0][0],'job-1');
+ let recoveredState=executorIdentityProjection.init();
+ for(const event of jobEvents)recoveredState=executorIdentityProjection.apply(recoveredState,event);
+ assert.equal(Object.hasOwn(recoveredState.execution.current.calls,'lost-job-call'),false,
+  'terminal admission recovery retires the original call even when its own result was lost');
  jobEvents.push({seq:4,type:'tool/call',data:{name:'houdini_job_status',callId:'job-done'}},
   {seq:5,type:'tool/result',data:{message:{source:{callId:'job-done'}},meta:{canonical:{ok:true,jobId:'job-1',status:'done'}}}},
   {seq:6,type:'tool/call',data:{name:'houdini_request',callId:'late-admission'}},
   {seq:7,type:'tool/result',data:{message:{source:{callId:'late-admission'}},meta:{canonical:jobResult}}});
  assert.equal(projectExecutionState(jobEvents),null,'late admission recovery does not revive a terminal job');
+ for(const event of jobEvents.slice(3))recoveredState=executorIdentityProjection.apply(recoveredState,event);
+ assert.deepEqual(recoveredState.execution.current.activeJobs,{},'online projection also rejects the late running admission');
+ assert.deepEqual(recoveredState.execution.current.calls,{},'no completed-call tombstone is needed');
  const expiredAdmission={request_ref:discovered.request_ref,runtime_id:runtime,owner_call:'lost-job-call',
   kind:'job_submit',jobId:'job-1',status:'result_expired',job_finished:false,job_status:'running',job_result_available:false};
  receiptOverride=expiredAdmission;
  const stillRunning=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
- assert.equal(stillRunning.requestReceipt.status,'result_expired');
+ assert.equal(stillRunning.requestReceipt.status,'done','available job state supersedes an expired admission body');
  assert.equal(stillRunning.requestReceipt.job_finished,false,'expired admission is not completed work');
- assert.match(stillRunning.requestReceipt.note,/Collect houdini_job_status/);
+ assert.equal(stillRunning.status,'running');
+ assert.match(stillRunning.job_id,/^houdini-live-/);
  receiptOverride={...expiredAdmission,job_finished:true};delete receiptOverride.job_status;
  const gone=await defs.get('houdini_request').execute({request_ref:discovered.request_ref},ctx);
  assert.equal(gone.requestReceipt.status,'result_expired');assert.equal(gone.requestReceipt.job_finished,true);
@@ -253,5 +277,9 @@ try{
  assert.ok(!goneText.includes('Executed successfully.'));
  receiptOverride=undefined;
  assert.equal(preparations,edits+jobs+captures+uiLists+4,'one prepare per attempted call; recovery does not prepare or resubmit');
-}finally{await new Promise(r=>server.close(r));}
+}finally{
+ await host.fiber.dispose();await Promise.all(observers);
+ for(const response of pendingJobReplies)response.destroy();
+ server.closeAllConnections();await new Promise(r=>server.close(r));
+}
 console.log('exec/UI response disconnect/timeout/invalid JSON/HTTP failure recovery and state resolution passed');

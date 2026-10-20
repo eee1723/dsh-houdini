@@ -5,6 +5,9 @@ import type { ExecResult, JobHandle, JobStatus, JsonValue } from './bridge.js'
 import { imageBlocks } from './image-output.js'
 
 const execOutputProperties = {
+  job_id: {type:'string'},
+  jobId: {type:'string'},
+  status: {type:'string',enum:['queued','running','done','failed','cancelled']},
   ok: { type: 'boolean', required: true },
   stdout: { type: 'string', required: true },
   stderr: { type: 'string', required: true },
@@ -31,16 +34,6 @@ export const execOutputSchema = {
   type: 'object', properties: execOutputProperties, additionalProperties: false,
 } as const
 
-export const jobStatusOutputSchema = {
-  type: 'object',
-  properties: {
-    jobId: { type: 'string', required: true },
-    status: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'], required: true },
-    ...execOutputProperties,
-  },
-  additionalProperties: false,
-} as const
-
 type PresentationMeta = Record<string, JsonValue>
 const object = (value: unknown): PresentationMeta | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -60,10 +53,6 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
     ...(value.outcome ? { outcome: value.outcome } : {}),
     canonical: value as unknown as JsonValue,
   }
-}
-
-export function jobPresentationMeta(value: JobStatus): PresentationMeta {
-  return { ...execPresentationMeta(value), jobId: value.jobId, status: value.status }
 }
 
 export function jobHandleMeta(value: JobHandle): PresentationMeta {
@@ -338,6 +327,8 @@ function selectedNodeCard(value: unknown, pointer: string,
 }
 
 function executionSummary(value: ExecResult): string {
+  if(value.status==='queued'||value.status==='running')return `Original Houdini job is ${value.status}. DSH observes it; use job_output for collection and job_kill to request cancellation. Running HOM completes normally.`
+  if(value.status==='cancelled')return 'Original Houdini job was cancelled before it executed.'
   const receipt = object(value.requestReceipt)
   return receipt && receipt.status !== 'done'
     ? `Request receipt status: ${receipt.status}. This reports request recovery state, not successful scene completion.${value.error ? `\n${value.error}` : ''}`
@@ -366,9 +357,8 @@ export function renderJobStatus(value: JobStatus) {
 }
 
 export function renderJobHandle(value: JobHandle) {
-  const summary = value.jobId
-    ? `Started Houdini job ${value.jobId}. Collect it with houdini_job_status(jobId, wait=<seconds>).`
-    : `Job admission uncertain; do not resubmit.\n${value.error || ''}`
+  const summary = `DSH job ${value.job_id}. Use job_output/job_kill; completion is reported in this conversation. `
+    +(value.jobId?'Houdini admission confirmed; this is not execution completion.':`Houdini admission is unconfirmed; do not resubmit. ${value.error||''}`)
   return [{ type: 'text' as const, text: summary + (value.requestReceipt
     ? `\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` : '') }]
 }

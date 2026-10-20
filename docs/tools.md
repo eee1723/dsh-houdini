@@ -14,9 +14,7 @@
 | `houdini_isolated` · 独立Houdini执行 | 按需在新hython中执行构建脚本、已保存工程副本及加载后的准备操作，取得真实检查、错误和图片，供当前作者或团队成员自验证。 | operation=run/read、manifest；run可选全新output_dir，默认在当前DSH工作区execution_run角色内分配唯一目录；read传原run路径。manifest支持hip+script与input_root；可选background、timeout_seconds、memory_mb。 | 独立运行报告、输入版本、构建结果、检查和原生图片；大型原始回执单份保留并返回details；后台使用DSH job_output/job_kill。 | Host监管的一次性独立hython，不修改当前现场、不自动合并 |
 | `houdini_ui_list` · 发现界面 | 列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。 | 无需参数；不打开或切换界面。 | 当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。 | Bridge主线程队列，只读发现 |
 | `houdini_ui_screenshot` · 观察界面 | 截图明确的当前可见界面；目标须完整在屏内且无遮挡。 | target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。 | 真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。 | Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态 |
-| `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini队列并立即返回。 | Python代码或script、expected_sha256及可选code调用尾段；与exec相同的操作能力。 | jobId及提交回执。 | Houdini串行队列 |
-| `houdini_job_status` · 等待长任务 | 读取或等待长任务状态和结果。 | jobId及可选wait秒数。 | queued/running/done/failed/cancelled及实际结果。 | Bridge任务记录 |
-| `houdini_job_cancel` · 取消长任务 | 取消尚未执行的任务，并对运行中的任务发出取消意图。 | jobId。 | 实际取消状态；运行中的HOM操作不会被强杀。 | Bridge任务控制 |
+| `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini串行队列，由DSH原生jobs跟踪、通知和收集。 | Python代码或script、expected_sha256及可选code调用尾段；与exec相同的操作能力。 | DSH job_id用于job_output/job_kill，Bridge jobId和原request_ref用于真实结果及恢复；houdini_request查回原结果和图片。 | DSH jobs观察；Houdini主线程串行执行 |
 | `image_models` · 发现生图模型 | 读取DSH已配置的OpenAI兼容API路由和模型名称，供指定生图模型使用；不调用模型，不证明图片接口可用。 | 可选provider和模型名称子串query，默认image。 | 配置中的provider/model及图片接口支持尚未验证的说明；不返回凭据。 | DSH Host，无HOM |
 | `image_generate` · 生成参考或纹理图 | 使用指定provider/model生成或编辑一张图片，实际上传参考像素；默认按当前HIP目录和用途分配文件，显式目的地支持离线工作。 | provider、model、prompt；purpose=reference/texture，output_policy=managed/explicit；可选output、references、size、quality、background。 | 实际路径、工程锚点和目录角色、来源指纹、原图恢复/预览附件及请求事实；不自动重试或更换模型。 | DSH Host HTTP与文件；managed只读查询所选Houdini现场 |
 | `video_process` · 处理教程资料 | 在Host受控进程中导入/抽帧和查询/整理本地教程证据，复用原脚本的来源校验及唯一文件记录。 | operation与options；只接受随包离线命令，路径绝对，写入使用工作区内新output目录。 | 原命令JSON、进度、实际退出状态、选定Houdini的Python/私有媒体工具与输出路径；不认证语义。 | DSH Host普通Python子进程，无shell/密钥/云请求/HOM |

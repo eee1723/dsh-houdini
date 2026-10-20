@@ -12,10 +12,13 @@ import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
-export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController']
+export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController', 'jobs']
 const provider = 'houdini-context-fixture', model = 'scripted-local'
 const defaultRuntimeId = 'a'.repeat(32), jobId = 'b'.repeat(12)
 const largePayload = 'FIXTURE_BULK_BEGIN:' + 'x'.repeat(70000) + ':FIXTURE_BULK_END'
+const nestedCanonical=event=>event?.data?.meta?.canonical??event?.data?.content
+  ?.map(block=>{try{return JSON.parse(block.text)}catch{return null}})
+  .find(value=>value?.kind==='dsh-houdini/execution-v1')?.value
 
 export function apply(ctx) {
   const output = process.env.DSH_CONTEXT_FIXTURE_OUT
@@ -85,7 +88,19 @@ export function apply(ctx) {
   const scriptArgs=scriptFixture?{script:scriptFixture.record.path,expected_sha256:scriptFixture.record.sha256,
     ...(scriptFixture.record.entry!==undefined?{code:scriptFixture.record.entry}:{})}:null
   const scriptWrongArgs=scriptArgs?{...scriptArgs,expected_sha256:(scriptArgs.expected_sha256[0]==='0'?'1':'0')+scriptArgs.expected_sha256.slice(1)}:null
-  let sequence = 0, jobPolls = 0, expiryPolls = 0, expiryRef, busyRef, busyPolls=0, failure
+  let sequence = 0, expiryRef, busyRef, busyPolls=0, failure
+  let jobState='running',expiryState='running'
+  const jobWaiters=new Map()
+  const releaseJob=id=>{for(const release of jobWaiters.get(id)??[])release();jobWaiters.delete(id)}
+  const awaitJob=async(id,body)=>{
+    if(!(body.wait>0))return
+    await new Promise(resolve=>{
+      const waiting=jobWaiters.get(id)??new Set();jobWaiters.set(id,waiting)
+      const release=()=>{clearTimeout(timer);waiting.delete(release);resolve()}
+      const timer=setTimeout(release,Math.min(body.wait,30)*1000);timer.unref()
+      waiting.add(release)
+    })
+  }
   const expiredJob = 'c'.repeat(12)
   const writeReport = value => {
     fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2))
@@ -155,8 +170,8 @@ export function apply(ctx) {
           ? {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),status:busyPolls===1?'queued':'running'}}
           : body.request_ref===expiryRef
           ? {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
-              status:'result_expired',jobId:expiredJob,job_finished:++expiryPolls>1,
-              job_result_available:false,...(expiryPolls===1?{job_status:'running'}:{})}}
+              status:'result_expired',jobId:expiredJob,job_finished:expiryState==='unavailable',
+              job_result_available:false,job_status:expiryState==='running'?'running':'done'}}
           : {ok:true,stdout:'',stderr:'',requestReceipt:{...receipts.get(body.request_ref),
               result:observed({result:{recovered:true}})}}
       } else if (req.url === '/jobs') {
@@ -166,7 +181,14 @@ export function apply(ctx) {
         receipts.set(body.request_ref,value.requestReceipt)
         if(submittedJob===expiredJob)expiryRef=body.request_ref
       } else if (req.url === '/jobs/' + jobId + '/status') {
-        value = observed({jobId,status:++jobPolls === 1 ? 'running' : 'done',result:{fixture:true}})
+        if(jobState==='running')await awaitJob(jobId,body)
+        value = observed({jobId,status:jobState,result:{fixture:true}})
+      } else if (req.url === '/jobs/' + expiredJob + '/status') {
+        if(expiryState==='running')await awaitJob(expiredJob,body)
+        if(expiryState==='unavailable'){
+          res.writeHead(404,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:'fixture result pruned'}));return
+        }
+        value=observed({jobId:expiredJob,status:'running'})
       } else throw Error('Unexpected Bridge route: ' + req.url)
       res.writeHead(200, {'Content-Type':'application/json'})
       res.end(JSON.stringify(value))
@@ -246,7 +268,7 @@ export function apply(ctx) {
           if(step>hdaStart+1){
             const nested=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/ptc-dispatch'
               &&e.data?.name==='houdini_exec'&&e.data?.parentCallId==='context-'+(hdaStart+1))
-            const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}}).find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+            const canonical=nestedCanonical(nested)
             assert.deepEqual(canonical?.result,hdaReceipt.result,'nested execution retains the same complete HDA facts')
           }
         }
@@ -273,8 +295,7 @@ export function apply(ctx) {
             assert.equal(sent.length,2,'the successful nested program must dispatch exactly one script HTTP execution')
             const nested=events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec'
               &&e.data?.subCallId===sent[1]?.body.owner_call)
-            const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
-              .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+            const canonical=nestedCanonical(nested)
             preserve(canonical)
             assert.equal(nested?.data?.isError,false,'nested script execution retains the original canonical envelope')
             assert.equal(nested?.data?.parentCallId,'context-'+(scriptStart+1),'the original script receipt is attached to the matching nested parent')
@@ -350,7 +371,7 @@ export function apply(ctx) {
           assert(!current.includes('Houdini recorded execution state.'),'completed recovery/job must clear outstanding context')
         }
         if (step === 6 || step === 7 || step === 8) {
-          assert(current.includes(jobId) && current.includes('houdini_job_status'),'active jobs must stay observable')
+          assert(current.includes(jobId) && current.includes('job_output'),'active jobs must stay observable through native jobs')
           if (step === 7) assert.equal(snapshots.length,requests[6].snapshotCount,'unrelated observation must not repeat an active job notice')
           if (step === 8) assert(current.includes('running'),'job state transition must reach provider')
         }
@@ -426,8 +447,7 @@ export function apply(ctx) {
         }
         if(catalogReceipt && step>catalogStart+1){
           const nested=currentEvents.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_inspect')
-          const canonical=nested?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
-            .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          const canonical=nestedCanonical(nested)
           assert.deepEqual(canonical?.result,catalogReceipt.result,'real PTC execution receives the selected result')
           assert.deepEqual(canonical?.verbs[0].result,catalogReceipt.verbs[0].result,'PTC durable catalog stays typed')
           const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(catalogStart+1))
@@ -450,8 +470,7 @@ export function apply(ctx) {
         }
         if(catalogReceipt && step>catalogStart+3){
           const read=currentEvents.filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_resource').at(-1)
-          const canonical=read?.data?.content.map(b=>{try{return JSON.parse(b.text)}catch{return null}})
-            .find(v=>v?.kind==='dsh-houdini/execution-v1')?.value
+          const canonical=nestedCanonical(read)
           assert.equal(JSON.parse(canonical.result.text),catalogReceipt.verbs[0].result.at(-1).name,'PTC resource read resolves the same typed leaf')
         }
         if(catalogReceipt && step===finalStep){
@@ -463,11 +482,16 @@ export function apply(ctx) {
         const uncertain = ctx.sessions.get(options.sessionId).snapshotEvents()
           .find(event => event.type === 'tool/result' && event.data?.message?.source?.callId === 'context-2')
         const ref = uncertain?.data?.meta?.canonical?.requestReceipt?.request_ref
+        const submitted=ctx.sessions.get(options.sessionId).snapshotEvents().find(event=>event.type==='tool/result'
+          &&event.data?.message?.source?.callId==='context-5')?.data?.meta?.canonical
+        if(step===8){jobState='done';releaseJob(jobId)}
+        if(step===expiryStart+2){expiryState='unavailable';releaseJob(expiredJob)}
         const calls = [
           ['houdini_exec',{code:'fixture_sync_failure'}], ['houdini_exec',{code:'fixture_sync_success'}],
           ['houdini_exec',{code:'fixture_transport_unknown'}], ['houdini_inspect',{code:'fixture_unknown_observation'}],
           ['houdini_request',{request_ref:ref}], ['houdini_job_submit',{code:'fixture_long_work'}],
-          ['houdini_inspect',{code:'fixture_job_observation'}], ['houdini_job_status',{jobId}], ['houdini_job_status',{jobId}],
+          ['houdini_inspect',{code:'fixture_job_observation'}], ['houdini_request',{request_ref:submitted?.requestReceipt?.request_ref}],
+          ['job_output',{job_id:submitted?.job_id,wait:true,timeout_ms:5000}],
           ...(outcomeReceipts ? [['houdini_inspect',{code:'fixture_outcome_caught_read'}],
             ['houdini_exec',{code:'fixture_outcome_failed_check'}]] : []),
           ['skill',{name:'houdini-sop-workflow'}],
@@ -549,6 +573,6 @@ export function apply(ctx) {
           bridgeCalls,events:agent.session.snapshotEvents()})
       } catch(error) {fail(error)}
     })
-    return () => server.close()
+    return () => {for(const id of jobWaiters.keys())releaseJob(id);server.close()}
   })
 }

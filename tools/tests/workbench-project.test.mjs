@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -38,7 +39,7 @@ let persisted=true
 context.sessions.flush=async()=>persisted
 const controller=new ExecutorController(context,{directory:{find:async()=>record},selectTarget:async agent=>{
   const target={executor_id:record.executor_id,runtime_id:record.runtime_id,registration_id:record.registration_id,scene_id:record.scene_id,scene_epoch:record.scene_epoch,hip_path:record.hip_path,hip_is_new:record.hip_is_new,workspace_path:record.workspace_path}
-  await new ExecutorBinding(undefined,(_session,message)=>agent.inject(message)).select(agent.session,target)
+  await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()),(_session,message)=>agent.inject(message)).select(agent.session,target)
   return target
 }},true)
 try {

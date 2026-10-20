@@ -447,9 +447,8 @@ for (const timeout of [false,true]) {
 assert.equal(plain.registrations['houdini-watermark'], undefined, 'content is not covered by a decorative watermark');
 assert.equal(plain.registrations.houdinitools, undefined, 'Houdini tool documentation belongs to Trace');
 assert.equal(plain.registrations.houdinitrace.options.label, '执行记录');
-assert.equal(plain.registrations['houdini-workspace-status'].options.name, 'conversation.input.dock');
+assert.equal(plain.registrations['houdini-workspace-status'], undefined, 'the compact project component owns workspace state without a second warning bar');
 
-const workspaceStatus = plain.registrations['houdini-workspace-status'].component;
 const deliveryScope = plain.registrations['houdini-delivery-scope'].component;
 assert.equal(plain.registrations['houdini-delivery-scope'].options.name,'conversation.chat.turnTail');
 for (const preset of ['houdini','standard',undefined]) {
@@ -459,48 +458,6 @@ for (const preset of ['houdini','standard',undefined]) {
     assert.equal(marker.props['data-houdini-workspace'],true);
   } else assert.equal(marker,null,'delivery appearance must remain local to Houdini tasks');
 }
-const statusProps = (hip, cwd = 'E:/work') => ({sessionId:'s',
-  useSessions:fn=>fn({byId:{s:{cwd,projectionValues:{agentPreset:'houdini'}}}}),
-  useTrajectory:fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},
-    meta:{canonical:{execution:{hip_dir:hip}}}}]})});
-const mismatch = workspaceStatus(statusProps('E:/project'));
-assert.equal(mismatch.type,'details');
-assert.equal(mismatch.props.role,'status');
-assert(JSON.stringify(mismatch).includes('E:/project') && JSON.stringify(mismatch).includes('E:/work'));
-assert.equal(workspaceStatus(statusProps('e:\\WORK\\')),null, 'matching Windows paths need no warning');
-assert.equal(workspaceStatus(statusProps(null)),null, 'unnamed HIP must not invent a mismatch');
-const newerUnnamed = workspaceStatus({sessionId:'s',
-  useSessions:fn=>fn({byId:{s:{cwd:'E:/work',projectionValues:{agentPreset:'houdini'}}}}),
-  useTrajectory:fn=>fn({eventNodes:[
-    {kind:'tool-result',call:{name:'houdini_query'},meta:{canonical:{execution:{hip_dir:'E:/old'}}}},
-    {kind:'tool-result',call:{name:'houdini_query'},meta:{canonical:{execution:{hip_dir:null}}}},
-  ]})});
-assert.equal(newerUnnamed,null, 'latest unnamed HIP clears an older mismatch');
-for (const execution of [
-  {hip_dir:'C:/Users/test',hip_is_new:true},
-  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hip'},
-  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hiplc'},
-  {hip_dir:'C:/Users/test',hip_path:'C:/Users/test/untitled.hipnc'},
-]) {
-  const props = statusProps(null);
-  props.useTrajectory=fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},meta:{canonical:{execution}}}]});
-  assert.equal(workspaceStatus(props),null,'new scene or legacy untitled receipt must not invent a mismatch');
-}
-const namedUntitled=statusProps(null);
-namedUntitled.useTrajectory=fn=>fn({eventNodes:[{kind:'tool-result',call:{name:'houdini_exec'},
-  meta:{canonical:{execution:{hip_dir:'E:/saved',hip_is_new:false,hip_path:'E:/saved/untitled.hip'}}}}]});
-assert(workspaceStatus(namedUntitled),'explicit saved-state wins over legacy filename inference');
-for (const latestHip of [null, 'E:/work']) {
-  const recoveredOld = statusProps(null);
-  recoveredOld.useTrajectory = fn => fn({eventNodes:[
-    {kind:'tool-result',seq:1,call:{name:'houdini_exec'},meta:{canonical:{execution:{hip_dir:'E:/old',observed_at:100,sequence:1}}}},
-    {kind:'tool-result',seq:2,call:{name:'houdini_inspect'},meta:{canonical:{execution:{hip_dir:latestHip,observed_at:200,sequence:2}}}},
-    {kind:'tool-result',seq:3,call:{name:'houdini_request'},meta:{canonical:{requestReceipt:{retrieved:true},execution:{hip_dir:'E:/old',observed_at:100,sequence:1}}}},
-  ]});
-  assert.equal(workspaceStatus(recoveredOld),null,'retrieving an older result cannot restore a stale workspace warning');
-}
-
-
 const view = plain.registrations.houdinitrace.component({}).type;
 const ledgerLine = '1. [ok] verb_help(["set_keyframes"]) -> '
   + '{"name":"set_keyframes","signature":"(node, channels) -> dict"} (0ms)';

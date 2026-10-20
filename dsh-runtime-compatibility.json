@@ -18,11 +18,11 @@
       "verificationStatus": "source-build-verified-live-pending",
       "verifiedOn": [
         "Plugin TypeScript build against the exact 0.2.1-rc.2 dependency set (cordis 4.0.5, schemastery 3.18.5, zod 4.4.3)",
-        "Plugin Node regression suite: 62 of 63 tests (the excluded dependency-runtime check fails identically on the pre-existing main baseline in this environment)",
-        "Runtime source patch rebased onto tag dsh-v0.2.1-rc.2; 19 host packages and 4 client bundles compiled; declared file inventory verified by dsh_runtime_compat"
+        "Plugin Node regressions against the exact declared dependency set",
+        "Runtime source patch based on tag dsh-v0.2.1-rc.2; declared Host packages and client bundles compiled with file inventory verified by dsh_runtime_compat"
       ],
       "pendingVerification": [
-        "Signed managed installation and normal user live load on H21/H22",
+        "Normal user live load of the qualified managed installation on H21/H22",
         "DeepSeek 4.1 Flash 1017 model selection and real request route in the embedded Houdini runtime",
         "Houdini-generated image route and semantic image understanding"
       ]

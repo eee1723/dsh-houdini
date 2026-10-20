@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import {Context} from '@deepseek-ai/cordis'
@@ -27,7 +28,7 @@ ctx.provide('sessionController',{resolveAgent:async id=>({agent:agents.get(id)})
   created.push(request);const session=fixtureSession(request.sessionId,{agentPreset:'houdini',cwd:record.workspace_path})
   agents.set(session.id,{id:session.id,status:'idle',session});return {sessionId:session.id}
 }})
-const binding=new ExecutorBinding()
+const binding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 const snapshot={executor_id:record.executor_id,registration_id:record.registration_id,runtime_id:record.runtime_id,
   scene_epoch:record.scene_epoch,scene_id:record.scene_id,hip_path:record.hip_path,hip_is_new:false,workspace_path:record.workspace_path}
 const controller=new ExecutorController(ctx,{directory:{find:async()=>record},selectTarget:async agent=>{

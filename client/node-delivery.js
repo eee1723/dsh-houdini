@@ -25,7 +25,7 @@ function createNodeDelivery(React, readHoudiniCanonical) {
     var canonical = readHoudiniCanonical({
       callId: callId,
       call: { name: nested ? data.name : state.callName },
-      meta: nested ? undefined : data.meta,
+      meta: data.meta,
       content: nested ? data.content : []
     });
     var rows = nodeDeliveryRows(canonical), execution = canonical && canonical.execution;

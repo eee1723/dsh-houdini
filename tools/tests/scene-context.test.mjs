@@ -1,3 +1,5 @@
+import {fixtureProjectionContext} from './fixture-session.mjs'
+import {projectedExecutorState} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import {installSceneContext} from '../../lib/context.js'
 import {SceneContextProvider} from '../../lib/scene-context.js'
@@ -10,7 +12,8 @@ const data=section=>JSON.parse(section.text.slice(section.text.indexOf('\n')+1))
 let calls=0,frame=1
 const bridge={async sceneContext(){calls++;return {ok:true,result:{frame,hip_path:'{{scene}}.hip',selection:[{path:'/obj/selected'}]}}}}
 const hooks={},registered=[]
-installSceneContext({tools:{get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>registered.push(c)},on:(n,f)=>hooks[n]=f},bridge)
+const projectionCtx=fixtureProjectionContext({tools:{get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>registered.push(c)},on:(n,f)=>hooks[n]=f})
+installSceneContext(projectionCtx,bridge)
 const session=Session.create('scene-native-context'),agent={session}
 const promptContext=new Context()
 new SystemPrompt(promptContext,{})
@@ -21,7 +24,7 @@ async function assemble(message,contexts=registered.map(c=>({name:c.name,text:c.
   await hooks['system-prompt/assemble'](assembly,{scope:{},agent},async()=>assembly)
   return promptContext.systemPrompt.refreshContext(assembly,{scope:{},agent}).contexts.filter(c=>c.text)
 }
-assert.equal((await assemble(user('greeting','你好'))).length,1)
+assert.equal((await assemble(user('greeting','你好'))).filter(section=>section.name===SCENE).length,1)
 const first=await assemble(user('selected','检查选中节点'))
 assert.equal(data(first[0]).observation.result.frame,1)
 assert(!first[0].text.includes('{{'),'scene strings cannot interpolate prompt variables')
@@ -34,7 +37,7 @@ assert.equal(hooks['agent/pre-step'],undefined,'DSH owns context acceptance, com
 session.append('user/message',user('selected','检查选中节点'),{surfaceOp:'append'})
 session.append('user/message',{role:'user',content:[{type:'text',text:first[0].text}],
   source:{kind:'runtime-context',form:'snapshot',sections:first}},{surfaceOp:'append'})
-const resumed=new SceneContextProvider(bridge)
+const resumed=new SceneContextProvider(bridge,agent=>projectedExecutorState(projectionCtx,agent.session).sceneObservation)
 assert.equal(await resumed.observe({session}),first[0].text)
 assert.equal(calls,2,'resume reuses the original selection observation')
 session.append('tool/call',{turn:1,step:1,callId:'bad',name:'houdini_exec',arguments:'{}'})

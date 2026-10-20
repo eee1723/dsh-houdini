@@ -10,6 +10,9 @@ import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECT
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
 export interface ExecResult {
+  job_id?: string
+  jobId?: string
+  status?: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   ok: boolean
   stdout: string
   stderr: string
@@ -53,6 +56,8 @@ export interface ScriptSource {path:string;sha256:string;bytes:number;entry?:str
 
 /** Handle returned when a background job is accepted by the bridge. */
 export interface JobHandle {
+  /** Native DSH observer id; the Bridge jobId remains original execution provenance. */
+  job_id?: string
   jobId?: string
   requestReceipt?: JsonValue
   error?: string

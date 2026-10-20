@@ -141,7 +141,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
     }
     var canonical = readHoudiniCanonical(node);
     info.canonical = canonical;
-    if (info.name.indexOf("houdini_") === 0 && canonical && typeof canonical.ok === "boolean") {
+    if (canonical && typeof canonical.ok === "boolean") {
       info.resultValue = canonical.result;
       info.resultText = canonical.result === undefined ? null : JSON.stringify(canonical.result, null, 2);
       info.rollback = canonical.rollback || null;

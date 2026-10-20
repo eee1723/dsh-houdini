@@ -8,9 +8,7 @@ export const HOUDINI_TOOLS = {
   houdini_isolated: {scene:false,label:'独立Houdini执行',purpose:'按需在新hython中执行构建脚本、已保存工程副本及加载后的准备操作，取得真实检查、错误和图片，供当前作者或团队成员自验证。',input:'operation=run/read、manifest；run可选全新output_dir，默认在当前DSH工作区execution_run角色内分配唯一目录；read传原run路径。manifest支持hip+script与input_root；可选background、timeout_seconds、memory_mb。',output:'独立运行报告、输入版本、构建结果、检查和原生图片；大型原始回执单份保留并返回details；后台使用DSH job_output/job_kill。',execution:'Host监管的一次性独立hython，不修改当前现场、不自动合并'},
   houdini_ui_list: {scene:true,label:'发现界面',purpose:'列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。',input:'无需参数；不打开或切换界面。',output:'当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。',execution:'Bridge主线程队列，只读发现'},
   houdini_ui_screenshot: {scene:true,label:'观察界面',purpose:'截图明确的当前可见界面；目标须完整在屏内且无遮挡。',input:'target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。',output:'真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。',execution:'Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态'},
-  houdini_job_submit: {scene:true,label:'提交长任务',purpose:'把渲染、模拟或长计算放入Houdini队列并立即返回。',input:'Python代码或script、expected_sha256及可选code调用尾段；与exec相同的操作能力。',output:'jobId及提交回执。',execution:'Houdini串行队列'},
-  houdini_job_status: {scene:true,label:'等待长任务',purpose:'读取或等待长任务状态和结果。',input:'jobId及可选wait秒数。',output:'queued/running/done/failed/cancelled及实际结果。',execution:'Bridge任务记录'},
-  houdini_job_cancel: {scene:true,label:'取消长任务',purpose:'取消尚未执行的任务，并对运行中的任务发出取消意图。',input:'jobId。',output:'实际取消状态；运行中的HOM操作不会被强杀。',execution:'Bridge任务控制'},
+  houdini_job_submit: {scene:true,label:'提交长任务',purpose:'把渲染、模拟或长计算放入Houdini串行队列，由DSH原生jobs跟踪、通知和收集。',input:'Python代码或script、expected_sha256及可选code调用尾段；与exec相同的操作能力。',output:'DSH job_id用于job_output/job_kill，Bridge jobId和原request_ref用于真实结果及恢复；houdini_request查回原结果和图片。',execution:'DSH jobs观察；Houdini主线程串行执行'},
 } as const
 
 export type HoudiniToolName=keyof typeof HOUDINI_TOOLS

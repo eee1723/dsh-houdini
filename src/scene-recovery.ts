@@ -6,12 +6,11 @@ import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import type {} from '@deepseek-ai/dsh-workspace'
 import {HoudiniBridge} from './bridge.js'
-import {foldExecutorState,type RecoveryBinding} from './executor-identity-projection.js'
+import {projectedExecutorState,projectedExecutionFacts,executorIdentityProjection,executorBindingState,type ExecutorIdentityState,type RecoveryBinding} from './executor-identity-projection.js'
 import {houdiniSnapshot,recordHoudiniContext} from './dsh-adapter.js'
-import {projectExecutionState} from './execution-state.js'
+import {executionStateFromFacts} from './execution-state.js'
 import type {HoudiniConnection} from './tool-runtime.js'
 import {literalData} from './prompt-data.js'
-import {executionHistory} from './execution-history.js'
 
 export interface SceneRecoveryService {
   beforeWrite(agent:Agent,signal:AbortSignal):Promise<void>
@@ -49,20 +48,19 @@ export async function relocateDirectory(ctx:Context,agent:Agent,directory:string
   recordHoudiniContext(agent,houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
     'This conversation now follows the explicitly selected or verified saved project directory. Earlier paths remain historical references.\n'
     +literalData(JSON.stringify({previous_directory:current,directory:agent.session.header.cwd,hip_path:hipPath,
-      executor_id:foldExecutorState(agent.session.snapshotEvents()).identity,hip_is_new:hipIsNew,...observed,...epoch}))}))
+      executor_id:projectedExecutorState(ctx,agent.session).identity,hip_is_new:hipIsNew,...observed,...epoch}))}))
   if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程目录接续记录尚未可靠保存。')
   await (ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined)?.pruneEmptyWorkspaces?.([directory])
 }
 
 async function followSavedDirectory(ctx:Context,agent:Agent,signal:AbortSignal) {
-  let state:ReturnType<typeof foldExecutorState>
-  try {state=foldExecutorState(agent.session.snapshotEvents())}
+  let state:ExecutorIdentityState
+  try {state=projectedExecutorState(ctx,agent.session)}
   catch {return} // Unverified historical identity cannot authorize a cwd change.
-  const history=executionHistory(agent.session.snapshotEvents()),execution=history.anchor?.execution
+  const history=projectedExecutionFacts(ctx,agent.session),execution=history.anchor?.execution
   // A scene-wide last-save marker also appears in other conversations' reads.
   // Only this conversation's successful Save As is authority to move its files.
-  const producer=history.rows.filter(row=>row.execution.owner_session===agent.id&&Array.isArray(row.value.verbs)
-    &&row.value.verbs.some((verb:any)=>verb?.verb==='scene_save_as'&&verb.ok===true)).at(-1)
+  const producer=history.saveAs?.execution.owner_session===agent.id?history.saveAs:undefined
   const value=execution?.scene_recovery,saved=value?.successful_save
   const produced=producer?.execution?.scene_recovery
   if(!producer||producer.execution.executor_id!==state.identity||!produced
@@ -90,7 +88,7 @@ export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):v
       // Selection belongs to the target service. Recovery never searches other
       // windows, opens a project, or substitutes a historical endpoint.
       const target=await connection.resolve({agent,signal},{write})
-      const key=JSON.stringify(foldExecutorState(agent.session.snapshotEvents()).selectedTarget)
+      const key=JSON.stringify(projectedExecutorState(ctx,agent.session).selectedTarget)
       let entry=services.get(agent)
       if(!entry||entry.key!==key||entry.bridge.targetExecutorId!==target.targetExecutorId||entry.bridge.baseUrl!==target.baseUrl) {
         entry={bridge:target,key,service:createSceneRecovery(ctx,target)}
@@ -121,15 +119,18 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
     if(await ctx.sessions.flush(agent.session)!==true)
       throw new Error('权限恢复记录尚未可靠保存，本轮未继续激活原节点权限。现场选择和内容保留，可以继续查看或讨论后再试。')
   }
-  const key=(agent:Agent)=>JSON.stringify(foldExecutorState(agent.session.snapshotEvents()))
+  const key=(agent:Agent)=>{
+    const state=projectedExecutorState(ctx,agent.session)
+    return JSON.stringify([state.identity,state.selectionRevision,state.recovery,anchor(agent)])
+  }
   const anchor=(agent:Agent)=>{
-    const state=foldExecutorState(agent.session.snapshotEvents()),selected=state.selectedTarget
-    const history=executionHistory(agent.session.snapshotEvents(),{includeHistorical:true})
-    if(!selected)return history.anchor?.execution
+    const state=projectedExecutorState(ctx,agent.session),selected=state.selectedTarget
+    const execution=state.execution
+    if(!selected)return execution.current.anchor?.execution
     // An observation in the newly selected runtime cannot prove that old
     // checkpoint nodes are already owned. Retain the latest original receipt
     // for this exact scene, excluding status retrievals and this current epoch.
-    const rows=history.rows.filter(row=>row.tool!=='houdini_request'&&row.execution.owner_session===agent.id
+    const rows=Object.values(execution.checkpoints[selected.scene_id??'']??{}).filter(row=>row.execution.owner_session===agent.id
       &&row.execution.scene_recovery?.scene_id===selected.scene_id
       &&typeof row.execution.scene_recovery?.checkpoint_id==='string'
       &&(row.execution.executor_id!==selected.executor_id||row.execution.scene_recovery.scene_epoch!==selected.scene_epoch))
@@ -138,12 +139,12 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
       ||row.execution.observed_at===last.execution.observed_at&&row.execution.sequence>last.execution.sequence?row:last,undefined)?.execution
   }
   const recordedScene=(agent:Agent)=>anchor(agent)?.scene_recovery?.scene_id
-    ??foldExecutorState(agent.session.snapshotEvents()).selectedTarget?.scene_id
-    ??foldExecutorState(agent.session.snapshotEvents()).project?.sceneId
+    ??projectedExecutorState(ctx,agent.session).selectedTarget?.scene_id
+    ??projectedExecutorState(ctx,agent.session).project?.sceneId
   const service:SceneRecoveryService={
     async followDirectory(agent,signal) {await followSavedDirectory(ctx,agent,signal)},
     async beforeWrite(agent,signal) {
-      const state=foldExecutorState(agent.session.snapshotEvents()),selected=state.selectedTarget
+      const state=projectedExecutorState(ctx,agent.session),selected=state.selectedTarget
       const previous=anchor(agent),saved=previous?.scene_recovery
       // A fresh explicitly selected project is writable without proving the
       // conversation's former project. Only exact same-scene saved provenance
@@ -185,12 +186,12 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
       } finally {writePhase.delete(agent)}
     },
     async ensure(agent,signal) {
-      const state=foldExecutorState(agent.session.snapshotEvents())
+      const state=projectedExecutorState(ctx,agent.session)
       if(!state.recovery)return
       const target=bridge(),operation=state.recovery
       if(state.identity!==target.targetExecutorId)throw new Error('恢复目标已经改变，本轮未激活原节点权限。')
       const current=()=>{
-        const value=foldExecutorState(agent.session.snapshotEvents())
+        const value=projectedExecutorState(ctx,agent.session)
         return value.identity===state.identity&&value.selectionRevision===state.selectionRevision
           &&value.recovery?.operation_id===operation.operation_id
       }
@@ -203,14 +204,14 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
         throw new Error('恢复激活回执不匹配，未确认原节点权限。')
     },
     async inspect(agent,signal) {
-      const target=bridge(),state=foldExecutorState(agent.session.snapshotEvents())
+      const target=bridge(),state=projectedExecutorState(ctx,agent.session)
       if(!state.identity||(state.identity===target.targetExecutorId&&!state.recovery
         &&!anchor(agent))) {
         await target.inspectExecutor(signal)
         return {status:'new_task',executor_id:target.targetExecutorId,message:'尚未执行过 Houdini 操作。'}
       }
       const before=key(agent),previous=anchor(agent)
-      const recordedHip=projectExecutionState(agent.session.snapshotEvents())?.hip_path??state.recovery?.hip_path
+      const recordedHip=executionStateFromFacts(projectedExecutionFacts(ctx,agent.session))?.hip_path??state.recovery?.hip_path
       const sceneId=recordedScene(agent)
       let value:any
       try {value=await target.recover('assess',{session_id:agent.id,previous_executor:previous?.executor_id??state.recovery?.previous_executor??state.identity,
@@ -232,7 +233,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
     },
     async assess(agent,signal) {
       if(running.has(agent))throw new Error('工程恢复正在进行，请等待结果。')
-      const target=bridge(),state=foldExecutorState(agent.session.snapshotEvents()),before=key(agent)
+      const target=bridge(),state=projectedExecutorState(ctx,agent.session),before=key(agent)
       const value=await service.inspect(agent,signal)
       if(key(agent)!==before)throw new Error('任务在检查期间发生变化，请重新检查。')
       if(value.status!=='ready')return value
@@ -246,7 +247,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
     },
     async restore(agent,assessmentId,signal) {
       if((agent.status!=='idle'&&!writePhase.has(agent))||running.has(agent))throw new Error('工程接续只能在当前任务的模型步骤边界进行。')
-      const target=bridge(),state=foldExecutorState(agent.session.snapshotEvents())
+      const target=bridge(),state=projectedExecutorState(ctx,agent.session)
       // An acknowledged commit may have lost its activation response. Retrying
       // the same displayed operation must flush again, then activate it once.
       if(state.recovery?.operation_id===assessmentId&&state.identity===target.targetExecutorId) {
@@ -275,7 +276,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
           load_warnings:prepared.load_warnings??[],
           ...(prepared.load_warning_details?{load_warning_details:prepared.load_warning_details}:{}),
           ...(plan.facts.user_choice?{user_choice:plan.facts.user_choice}:{}),
-          ...(!state.selectionRecorded?{previous_work:projectExecutionState(agent.session.snapshotEvents())}:{})}
+          ...(!state.selectionRecorded?{previous_work:executionStateFromFacts(projectedExecutionFacts(ctx,agent.session))}:{})}
         const message=recoveryMessage(value)
         // Same-target ownership facts are native queued context. They must not
         // insert a user body between an assistant tool call and its result or
@@ -284,10 +285,10 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
         const event=state.selectionRecorded
           ?{type:'agent/inbox/spliced',data:{target:'next-step',start:0,removedCount:0,inserted:[message]}}
           :{type:'user/message',data:message}
-        foldExecutorState([...agent.session.snapshotEvents(),event])
+        executorBindingState(executorIdentityProjection.apply(state,event))
         if(state.selectionRecorded)recordHoudiniContext(agent,message)
         else agent.session.append('user/message',message,{surfaceOp:'append'})
-        if(foldExecutorState(agent.session.snapshotEvents()).recovery?.operation_id!==value.operation_id)
+        if(projectedExecutorState(ctx,agent.session).recovery?.operation_id!==value.operation_id)
           throw new Error('权限恢复事实尚未进入 DSH 持久记录，本轮未激活原节点权限。')
         await service.ensure(agent,signal)
         plans.delete(agent)

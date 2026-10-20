@@ -6,10 +6,11 @@ import { visualCapability } from './image-output.js'
 import { HOUDINI_TOOLS } from './tool-catalog.js'
 import { HoudiniToolRuntime, type HoudiniConnection } from './tool-runtime.js'
 import {resolveExecutionSource} from './execution-source.js'
+import {LiveJobs} from './live-jobs.js'
 import {
   codePresentationInput, execOutputSchema, execPresentationMeta, genericResult,
-  jobHandleMeta, jobPresentationMeta, jobResultTitle, jobStatusOutputSchema,
-  renderExec, renderJobHandle, renderJobStatus, resultTitle,
+  jobHandleMeta, jobResultTitle,
+  renderExec, renderJobHandle, resultTitle,
 } from './tool-output.js'
 
 const ALLOW_RAW_PARAM = {
@@ -31,6 +32,7 @@ const EXECUTION_PARAMS = {
 /** One public tool per execution, observation, recovery or resource responsibility. */
 export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection): void {
   const runtime = new HoudiniToolRuntime(ctx, connection)
+  const liveJobs = new LiveJobs(ctx,runtime)
   ctx.tools.register(defineTool({
     name: 'houdini_exec',
     description: HOUDINI_TOOLS.houdini_exec.purpose+' Compose injected Python verbs; use __result__ for structured output. Inspect transaction/restoration after failure. Images arrive as native attachments.',
@@ -67,7 +69,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     parameters:{request_ref:{type:'string',required:true,description:'Original request_ref, or index for current-session recent references.'}},output:readOutput,
     presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_request.label,kind:'read',rawInput:args}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_request.label,result),result),
-    execute:(args,exec)=>recoverRequest(args.request_ref,exec,runtime),
+    execute:(args,exec)=>recoverRequest(args.request_ref,exec,runtime,liveJobs),
   }))
   ctx.tools.register(defineTool({
     name:'houdini_resource',description:HOUDINI_TOOLS.houdini_resource.purpose+' Host-only pagination; does not execute Houdini. Source originals and past results are historical material.',
@@ -122,7 +124,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     output: {
       schema: {
         type: 'object',
-        properties: { jobId: { type: 'string' }, requestReceipt: {type:'json'}, error: {type:'string'} },
+        properties: { job_id: {type:'string',required:true}, jobId: { type: 'string' }, requestReceipt: {type:'json'}, error: {type:'string'} },
         additionalProperties: false,
       },
       render: (_args, value) => renderJobHandle(value),
@@ -138,61 +140,8 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     async execute(args, exec) {
       const source=await resolveExecutionSource(ctx,exec,args)
       const { bridge, owner } = await runtime.target(exec,'write')
-      return bridge.submitJob(source.code, owner, exec.signal, args.allow_raw,source.script)
+      return liveJobs.submit(source,exec,bridge,owner,args.allow_raw)
     },
   }))
 
-  ctx.tools.register(defineTool({
-    name: 'houdini_job_status',
-    description: HOUDINI_TOOLS.houdini_job_status.purpose,
-    parameters: {
-      jobId: { type: 'string', required: true, description: 'Job id returned by houdini_job_submit' },
-      wait: { type: 'number', description: 'Long-poll seconds (max 600): hold the call until the job reaches done/failed/cancelled or this elapses' },
-    },
-    output: {
-      schema: jobStatusOutputSchema,
-      render: (_args, value) => renderJobStatus(value),
-      presentationMeta: (_args, value) => jobPresentationMeta(value),
-    },
-    presentCall: (args) => ({
-      card: 'generic',
-      title: `${HOUDINI_TOOLS.houdini_job_status.label} · ${args.jobId}`,
-      kind: 'read',
-      rawInput: args.wait === undefined ? args.jobId : { jobId: args.jobId, wait: args.wait },
-    }),
-    presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_status.label, result), result),
-    async execute(args, exec) {
-      if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
-        throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const { bridge, owner } = await runtime.historicalTarget(exec,{jobId:args.jobId})
-      const status = await bridge.jobStatus(args.jobId, owner, args.wait, exec.signal)
-      return runtime.result(status, exec, bridge)
-    },
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'houdini_job_cancel',
-    description: HOUDINI_TOOLS.houdini_job_cancel.purpose,
-    parameters: {
-      jobId: { type: 'string', required: true, description: 'Job id returned by houdini_job_submit' },
-    },
-    output: {
-      schema: jobStatusOutputSchema,
-      render: (_args, value) => renderJobStatus(value),
-      presentationMeta: (_args, value) => jobPresentationMeta(value),
-    },
-    presentCall: (args) => ({
-      card: 'generic',
-      title: `${HOUDINI_TOOLS.houdini_job_cancel.label} · ${args.jobId}`,
-      kind: 'execute',
-      rawInput: args.jobId,
-    }),
-    presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_cancel.label, result), result),
-    async execute(args, exec) {
-      if (typeof args.jobId !== 'string' || !/^[0-9a-f]{12}$/.test(args.jobId))
-        throw new Error('jobId must be the 12-character hexadecimal id returned by houdini_job_submit; placeholders are never sent to Houdini')
-      const { bridge, owner } = await runtime.historicalTarget(exec,{jobId:args.jobId})
-      return runtime.retain(await bridge.cancelJob(args.jobId, owner, exec.signal), exec)
-    },
-  }))
 }

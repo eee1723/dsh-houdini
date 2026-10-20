@@ -1,12 +1,15 @@
+import {requestExecutionOrigin} from '../../lib/execution-facts.js'
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import {Context} from '@deepseek-ai/cordis'
 import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
+import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {houdiniSnapshot,recordHoudiniContext,workspaceOpeningMessage} from '../../lib/dsh-adapter.js'
 import {recoveryMessage} from '../../lib/scene-recovery.js'
 import {executionHistory} from '../../lib/execution-history.js'
-import {executorIdentityProjection as projection,foldExecutorState,projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection}
+import {executorIdentityProjection as projection,foldExecutorState,projectedExecutorState,projectedExecutionFacts,projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection}
   from '../../lib/executor-identity-projection.js'
 const first='a'.repeat(32),second='b'.repeat(32),ctx=new Context()
 new SessionProjectionRegistry(ctx)
@@ -30,14 +33,14 @@ console.log('executor identity: shared fold covers native and declared nested fa
 const fresh=Session.create('queued-binding')
 let injected
 const freshAgent={session:fresh,inject:message=>{injected=message;fresh.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})}}
-await new ExecutorBinding(undefined,(_session,message)=>recordHoudiniContext(freshAgent,message)).ensure(fresh,first)
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()),(_session,message)=>recordHoudiniContext(freshAgent,message)).ensure(fresh,first)
 assert(fresh.snapshotEvents().every(event=>event.type!=='user/message'),'unseeded selection must not precede the protected system surface')
 assert.equal(recordedExecutorIdentity(fresh.snapshotEvents()),first,'durable pending context is already the selected binding')
 fresh.append('user/message',injected,{surfaceOp:'append'})
 assert.equal(recordedExecutorIdentity(fresh.snapshotEvents()),first,'consuming the native inbox does not create a second binding')
 const delayed=Session.create('delayed-binding')
 let queuedMessage
-await new ExecutorBinding(undefined,(_session,message)=>{
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()),(_session,message)=>{
   queuedMessage=message
   delayed.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})
 }).ensure(delayed,first)
@@ -47,7 +50,7 @@ delayed.append('user/message',recoveryMessage({schema:2,kind:'executor_recovery'
 delayed.append('user/message',queuedMessage,{surfaceOp:'append'})
 assert.equal(recordedExecutorIdentity(delayed.snapshotEvents()),second,'late consumption of an already recorded binding cannot undo a verified recovery')
 const empty=Session.create('unexecuted-reselection'),pending=[]
-const initial=new ExecutorBinding(undefined,(_session,message)=>{
+const initial=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()),(_session,message)=>{
   pending.push(message);empty.append('agent/inbox/spliced',{target:'next-step',start:pending.length-1,inserted:[message]})
 })
 await initial.ensure(empty,first)
@@ -131,7 +134,7 @@ assert.equal(cstate.invalid,null)
 console.log('executor identity: copy identity not inherited, needsReview without observed identity, queued project rewrite detected')
 
 // New choices fence observations by both the selection revision and exact scene.
-const selectionSession=Session.create('late-target-results'),select=new ExecutorBinding()
+const selectionSession=Session.create('late-target-results'),select=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 const snapshot=(id,runtime='5'.repeat(32),epoch='6'.repeat(32))=>({executor_id:id,runtime_id:runtime,
   scene_epoch:epoch,scene_id:'7'.repeat(32),registration_id:'8'.repeat(32),hip_path:'C:/selected/asset.hip',hip_is_new:false})
 await select.select(selectionSession,snapshot(first))
@@ -154,7 +157,7 @@ selectionSession.append('tool/result',{message:{source:{callId:'after-clear'}},m
 assert.equal(foldExecutorState(selectionSession.snapshotEvents()).selectedTarget,null,'receipts never bind a cleared conversation')
 console.log('target projection: explicit selection fences old receipts, follows same-scene observations, and clear stays unbound')
 
-const reordered=Session.create('same-scene-reordered-paths'),reorderedBinding=new ExecutorBinding()
+const reordered=Session.create('same-scene-reordered-paths'),reorderedBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 await reorderedBinding.select(reordered,{...snapshot(first),workspace_path:'C:/before'})
 for(const callId of ['earlier-observation','later-observation'])
   reordered.append('tool/call',{callId,name:'houdini_inspect',arguments:'{}'})
@@ -174,7 +177,7 @@ console.log('target projection: reordered same-scene receipts keep the accepted 
 
 // Restoring this scene's old node permissions is metadata inside the current
 // tool request, not another target selection or a boundary that retires it.
-const permissions=Session.create('ownership-metadata-current-request'),permissionBinding=new ExecutorBinding()
+const permissions=Session.create('ownership-metadata-current-request'),permissionBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 await permissionBinding.select(permissions,snapshot(first))
 await permissionBinding.select(permissions,snapshot(second))
 const boundary=foldExecutorState(permissions.snapshotEvents()).recoverySeq
@@ -203,7 +206,7 @@ console.log('same-target ownership metadata preserves the in-flight request and 
 // DSH records the first tool call before its resolver chooses the sole scene.
 // It is the one case where an unbound pending call belongs to the new choice.
 for(const unknown of [false,true]) {
-  const firstUse=Session.create('first-use-'+unknown),firstBinding=new ExecutorBinding(),callId='first-call'
+  const firstUse=Session.create('first-use-'+unknown),firstBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),callId='first-call'
   firstUse.append('tool/call',{callId,name:'houdini_exec',arguments:'{}'})
   assert.equal(foldExecutorState(firstUse.snapshotEvents()).pending[callId],null)
   await firstBinding.select(firstUse,snapshot(first))
@@ -229,7 +232,7 @@ for(const unknown of [false,true]) {
   }
 }
 console.log('first-use selection adopts only genuinely unbound pending calls and preserves their actual or unknown results')
-const afterClear=Session.create('cleared-call-must-not-follow'),afterClearBinding=new ExecutorBinding()
+const afterClear=Session.create('cleared-call-must-not-follow'),afterClearBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 await afterClearBinding.select(afterClear,snapshot(first))
 await afterClearBinding.select(afterClear,null)
 afterClear.append('tool/call',{callId:'issued-while-cleared',name:'houdini_inspect',arguments:'{}'})
@@ -242,3 +245,76 @@ afterClear.append('tool/result',{message:{source:{callId:'issued-while-cleared'}
 assert.equal(foldExecutorState(afterClear.snapshotEvents()).project.hipPath,'C:/selected/asset.hip')
 assert.equal(executionHistory(afterClear.snapshotEvents()).calls.has('issued-while-cleared'),false,
   'an explicit clear and later reselect keep the target-change boundary')
+
+// The actual DSH registry owns the hot cursor, not a plugin-side event cache.
+// A hydrated Host and a second selected session must keep their own facts even
+// after the log becomes large; ordinary online reads cannot reopen that log.
+const hotCtx=new Context(),hotRegistry=new SessionProjectionRegistry(hotCtx)
+let applied=0
+hotRegistry.register({...projection,apply(state,event){applied++;return projection.apply(state,event)}})
+const hot=Session.create('projection-long-history'),hotBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
+const hotTarget=snapshot(first),hotRef=hotTarget.runtime_id+'.'+'8'.repeat(32)
+await hotBinding.select(hot,hotTarget)
+for(let i=0;i<100000;i++)hot.append('step/start',{turn:1,step:i+1})
+hot.append('tool/call',{turn:1,step:1,callId:'live-submit',name:'houdini_job_submit',arguments:'{}'})
+hot.append('tool/result',{message:createToolResultMessage({callId:'live-submit',content:[],isError:false}),meta:{canonical:{jobId:'7'.repeat(12),requestReceipt:{
+  request_ref:hotRef,owner_call:'live-submit',executor_id:first,runtime_id:hotTarget.runtime_id,
+  scene_epoch:hotTarget.scene_epoch,status:'job_submitted'}}}},{surfaceOp:'append'})
+const hotState=projectedExecutorState(hotCtx,hot),afterMaterialize=applied
+const events=hot.snapshotEvents(),checkpoint=hotRegistry.checkpoint(hot)
+assert.equal('rows' in hotState.execution.current,false,'online projection retains no complete result history')
+assert(JSON.stringify(checkpoint).length<10000,'unrelated long history does not become a second stored log')
+hot.snapshotEvents=()=>{throw Error('hot online consumer attempted a full history read')}
+for(let i=0;i<100;i++) {
+  assert.equal(projectedExecutorState(hotCtx,hot),hotState)
+  assert.deepEqual(projectedExecutionFacts(hotCtx,hot).activeJobs,[['7'.repeat(12),'queued_or_unknown']])
+  assert.deepEqual(requestExecutionOrigin(hotRef),{
+    runtimeId:hotTarget.runtime_id})
+}
+assert.equal(applied,afterMaterialize,'repeated online reads do not refold even one event')
+hot.append('step/start',{turn:1,step:100001})
+assert.equal(projectedExecutorState(hotCtx,hot),hotState,'unrelated events preserve the state reference')
+assert.equal(applied,afterMaterialize+1,'only the appended tail is advanced')
+const reopened=Session.create(hot.id,events,hot.header,hot.inheritedEventCount),reopenCtx=new Context()
+const reopenRegistry=new SessionProjectionRegistry(reopenCtx)
+registerExecutorIdentityProjection(reopenCtx)
+reopenRegistry.hydrate(reopened,JSON.parse(JSON.stringify(checkpoint)),events,0)
+reopened.snapshotEvents=()=>{throw Error('hydrated online consumer attempted a full history read')}
+assert.deepEqual(projectedExecutionFacts(reopenCtx,reopened),projectedExecutionFacts(hotCtx,hot))
+const other=Session.create('other-selected-conversation')
+await hotBinding.select(other,snapshot(second))
+assert.equal(projectedExecutorState(reopenCtx,other).identity,second)
+assert.equal(projectedExecutorState(reopenCtx,reopened).identity,first,'selected conversations keep separate DSH cells')
+await hotBinding.select(reopened,snapshot(second))
+assert.deepEqual(projectedExecutionFacts(reopenCtx,reopened).activeJobs,[],'new target retires current facts')
+assert.equal(requestExecutionOrigin(hotRef).runtimeId,hotTarget.runtime_id,
+  'reopen and target changes preserve the original request runtime')
+console.log('DSH projection: 100k-event hot reads, incremental tail, JSON checkpoint hydration and per-session switching require no replay')
+
+// Settled tool calls cannot become a second execution ledger. This is a large
+// sequence of complete HOM-shaped call/result pairs, including unique refs.
+let toolState=projection.init(),firstToolState,firstToolJson
+for(let i=0;i<50000;i++) {
+  const callId='long-tool-'+i,ref='a'.repeat(32)+'.'+i.toString(16).padStart(32,'0')
+  toolState=projection.apply(toolState,{type:'tool/call',seq:i*2,data:{callId,name:'houdini_exec'}})
+  toolState=projection.apply(toolState,{type:'tool/result',seq:i*2+1,data:{message:{source:{callId}},meta:{canonical:{ok:true,
+    execution:{runtime_id:'a'.repeat(32),executor_id:first,scene_epoch:'c'.repeat(32),sequence:i,observed_at:i,hip_path:'C:/long-session.hip'},
+    requestReceipt:{request_ref:ref,runtime_id:'a'.repeat(32),executor_id:first,scene_epoch:'c'.repeat(32),owner_call:callId,status:'done'}}}}})
+  if(i===0){firstToolState=toolState;firstToolJson=JSON.stringify(toolState)}
+}
+assert.equal(JSON.stringify(firstToolState),firstToolJson,'the DSH projection remains a pure fold')
+assert(JSON.stringify(toolState).length<10000,'50k settled tool results leave only the latest facts')
+assert.equal(Object.keys(toolState.execution.current.calls).length,0,'calls must not retain settled history')
+for(const key of ['results','rows','receipts','jobs','resolved'])assert.equal(key in toolState.execution.current,false,key+' belongs to the one-shot cold reader')
+assert.deepEqual(toolState.execution.requestOrigins,{})
+assert.deepEqual(toolState.execution.jobOrigins,{})
+console.log('DSH projection: 50k complete HOM-shaped call/result pairs do not retain settled calls, results or request origins')
+
+const firstRead=Session.create('first-use-read-selection')
+firstRead.append('tool/call',{callId:'first-inspect',name:'houdini_inspect'})
+await hotBinding.select(firstRead,snapshot(first))
+firstRead.append('tool/result',{message:{source:{callId:'first-inspect'}},meta:{canonical:{ok:true,execution:{
+  executor_id:first,runtime_id:'5'.repeat(32),scene_epoch:'6'.repeat(32),scene_id:'7'.repeat(32),
+  hip_path:'C:/selected/asset.hip',hip_is_new:false,sequence:1,observed_at:1}}}},{surfaceOp:'append'})
+assert.equal(projectedExecutionFacts(hotCtx,firstRead).anchor?.callId,'first-inspect',
+  'first read-only tool facts survive selection answered inside that same dispatch')

@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -13,7 +14,7 @@ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-desktop-api-'))
 const previous=process.env.DSH_HOUDINI_WORKBENCH_CONTEXT,originalFetch=globalThis.fetch
 const context=new Context(),session=Session.create('original-project'),planning=Session.create('planning'),executor='a'.repeat(32)
 const signal=new AbortController().signal
-await new ExecutorBinding().ensure(session,executor)
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,executor)
 session.append('user/message',workspaceOpeningMessage({executor_id:executor,scene_epoch:'b'.repeat(32),hip_path:path.join(directory,'saved.hip'),hip_is_new:false}),{surfaceOp:'append'})
 context.provide('sessionQuery',{readSession:async id=>{assert([session.id,planning.id].includes(id));return {events:(id===session.id?session:planning).snapshotEvents()}}})
 let active=false

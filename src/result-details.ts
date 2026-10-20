@@ -18,13 +18,14 @@ const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).dige
 
 /** A session move changes cwd, not the location of its original returned artifacts. */
 export function recordedResultPath(events:readonly SessionEvent[],ref:string):string|undefined {
-  const calls=new Set<string>()
+  const calls=new Map<string,string>()
   let retained:string|undefined
   for(const event of events) {
     const call=executionCall(event)
-    if(call&&isHoudiniTool(call.name))calls.add(call.callId)
+    if(call&&(isHoudiniTool(call.name)||call.name==='job_output'))calls.set(call.callId,call.name)
     const result=executionResult(event)
-    if(!result||result.isError||!calls.has(result.callId))continue
+    if(!result||result.isError||!calls.has(result.callId)
+      ||calls.get(result.callId)==='job_output'&&result.producer!=='live-job')continue
     const detail=result.value?.details
     if(detail?.stored===true&&detail.sha256===ref&&detail.format==='returned_bridge_envelope_json'
       &&typeof detail.path==='string')retained=detail.path
@@ -51,11 +52,15 @@ async function directory(workspace: string, create = false): Promise<string> {
   return current
 }
 
-export async function retainResult<T extends ExecResult>(value: T, workspace: string | null): Promise<T> {
+export async function retainResult<T extends ExecResult>(value: T, workspace: string | null,
+  filePolicyMode?: () => string | undefined): Promise<T> {
   if (!workspace || value.details !== undefined) return value
   const bytes = JSON.stringify(value)
   if (bytes.length < DETAIL_THRESHOLD) return value
   try {
+    // Archival is optional presentation work, so a read-only policy (or a
+    // failed policy lookup) keeps the complete result inline without writes.
+    if (filePolicyMode?.() === 'read-only') throw new Error('DSH file policy is read-only; no workspace result archive was written')
     if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error('returned envelope exceeds result retention budget')
     const dir = await directory(workspace, true)
     const digest = hash(bytes)

@@ -1,3 +1,4 @@
+import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs'
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,12 +12,16 @@ const value={ok:true,stdout:'',stderr:'',images:[
   'C:/project/dsh-artifacts/checks/run-a/b.png',
 ]};
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
-const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:{header:{cwd},snapshotEvents:()=>[{type:'tool/result',data:{message:{source:{callId:'image-submit'}},meta:{canonical:{jobId:'abcdef123456',requestReceipt:{runtime_id:'a'.repeat(32),status:'job_submitted'}}}}}],requestHeader:()=>({config:{provider:'active',model:'native'}})}},callId:'image-call',signal:new AbortController().signal};
+const requestRef='a'.repeat(32)+'.'+'b'.repeat(32)
+const imageSession=Object.assign(fixtureSession('image-session',{cwd}),{requestHeader:()=>({config:{provider:'active',model:'native'}})})
+const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:imageSession},callId:'image-call',signal:new AbortController().signal};
 const refs=[];
 const attachments={imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:150},async saveImage({data,name}){saved++;const ref={attachmentId:'image-'+saved,mediaType:'image/png',bytes:data.length,width:1,height:1,name};refs.push(ref);return ref}};
 let modalities=['text','image'];
-const ctx={on(){},get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined};
-const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
+const ctx=fixtureProjectionContext({on(){},get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined});
+const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},
+ async requestStatus(){return {ok:true,stdout:'',stderr:'',requestReceipt:{request_ref:requestRef,runtime_id:'a'.repeat(32),status:'job_submitted',jobId:'abcdef123456'}}},
+ async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
 try{
  const result=await attachImages(value,exec,bridge,ctx);
  assert.equal(result.media,undefined);assert.equal(imageBlocks(result).length,2);assert.deepEqual(fs.readdirSync(cwd),[],'no workspace media copy');
@@ -25,8 +30,8 @@ try{
  await attachImages(value,{...exec,parent:{},deferContext:m=>deferred.push(m)},bridge,ctx);
  assert.equal(deferred.length,0,'DSH owns nested image forwarding');
  const defs=new Map();registerHoudiniTools({...ctx,tools:{register:d=>defs.set(d.name,d)}},bridge);
- for(const name of ['houdini_exec','houdini_job_status']){
-  const tool=defs.get(name);const args=name==='houdini_exec'?{code:'render'}:{jobId:'abcdef123456'};
+ for(const name of ['houdini_exec','houdini_request']){
+  const tool=defs.get(name);const args=name==='houdini_exec'?{code:'render'}:{request_ref:requestRef};
   const output=await tool.execute(args,exec);assert.equal(tool.output.render(args,output).filter(b=>b.type==='image').length,2);
  }
  assert.equal(sceneCalls,1);
@@ -49,10 +54,11 @@ console.log('native image attachments: current route, nested context, job output
 // Preflight runs before any render/HOM and before the first model request.
 const hooks={},contexts=[];let lookups=0;
 let model='text-only';const input={agent:{options:{provider:'stale',model:'stale'},
-  session:{requestHeader:()=>({config:{provider:'current',model}}),snapshotEvents:()=>[],header:{}}},
+  session:Object.assign(fixtureSession('vision-preflight'),{requestHeader:()=>({config:{provider:'current',model}})})},
   signal:new AbortController().signal};
-const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?['text','image']:['text']}}}};
-const preflightCtx={get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f};
+let visionModalities=['text','image'];
+const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?visionModalities:['text']}}}};
+const preflightCtx=fixtureProjectionContext({get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f});
 const beforePreflight=fetched;
 assert.equal((await visualCapability(input,preflightCtx)).status,'unsupported');
 assert.equal(fetched,beforePreflight);
@@ -68,6 +74,21 @@ const lookedUp=lookups;await prepare();assert.equal(lookups,lookedUp,'unchanged 
 model='vision';prepared=await prepare();
 assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')));
 assert.equal(lookups,lookedUp+1,'route changes invalidate preflight cache');
+const beforeAdapterUpdate=lookups;
+visionModalities=['text'];
+await prepare();assert.equal(lookups,beforeAdapterUpdate,'unchanged route stays cached until DSH publishes a change');
+hooks['llm/adapters-updated']();
+prepared=await prepare();
+assert(prepared.contexts.some(b=>b.text?.includes('"status":"unsupported"')),
+  'same-route adapter replacement revokes stale image capability');
+assert.equal(lookups,beforeAdapterUpdate+1);
+visionModalities=['text','image'];
+hooks['llm/adapters-updated']();
+prepared=await prepare();
+assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')),
+  'fixing image metadata on the same route refreshes a previously unsupported capability');
+assert.equal(lookups,beforeAdapterUpdate+2);
+await prepare();assert.equal(lookups,beforeAdapterUpdate+2,'stable updated metadata is cached again');
 const defs2=new Map();registerHoudiniTools({...preflightCtx,tools:{register:d=>defs2.set(d.name,d)}},{});
 assert.equal((await defs2.get('houdini_capabilities').execute({},input)).result.status,'available');
 

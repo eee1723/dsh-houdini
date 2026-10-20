@@ -457,7 +457,7 @@ function createTraceView(React, catalog, sources, trace, css) {
         e.resultValue != null
           ? fold("工具返回", structured(e.resultValue))
           : null,
-        !e.name.startsWith("houdini_") && e.text
+        !e.isHoudini && e.text
           ? fold("工具返回", structured(json(e.text) ?? e.text))
           : null,
         raw.stdout
@@ -552,7 +552,7 @@ function createTraceView(React, catalog, sources, trace, css) {
       const visible = data.entries.filter(
         (e) =>
           filter === "all" ||
-          (filter === "houdini" && e.name.startsWith("houdini_")) ||
+          (filter === "houdini" && e.isHoudini) ||
           (filter === "error" && (e.failed || e.gateBlocked || e.attention)),
       );
       const pages = Math.max(1, Math.ceil(visible.length / 50));

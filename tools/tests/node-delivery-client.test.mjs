@@ -1,3 +1,5 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
+import {fixtureProjectionContext} from './fixture-session.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -8,7 +10,7 @@ import {Session} from '@deepseek-ai/dsh-session'
 import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
-import {installHoudiniExecutionLog} from '../../lib/dsh-adapter.js'
+import {installHoudiniExecutionLog,liveJobResult,LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generatedNodeDeliveryBlock,generatedNodeDeliveryFactory} from '../gen-trace-client.mjs'
 
@@ -18,9 +20,12 @@ assert(client.includes(generatedNodeDeliveryBlock()),'production client must emb
 assert(client.includes('conversation.events.register(delivery.definition)'))
 assert(client.includes('conversation.views.register(delivery.view)'))
 assert(client.includes('name: "conversation.chat.turnTail", id: "houdini-node-delivery"'))
-const parser = client.slice(client.indexOf('    function readHoudiniCanonical('),client.indexOf('    // This is a last-observed fact'))
+const parserStart=client.indexOf('    function readHoudiniCanonical(')
+const parserEnd=client.indexOf('    // Style only the selected Houdini task',parserStart)
+assert(parserStart>=0&&parserEnd>parserStart,'canonical reader extraction must stop before delivery components')
+const parser = client.slice(parserStart,parserEnd)
 const factory = vm.runInNewContext('('+generatedNodeDeliveryFactory()+')',{AbortController,setTimeout,clearTimeout})
-const readCanonical = vm.runInNewContext(parser+'\nreadHoudiniCanonical;')
+const readCanonical = vm.runInNewContext(parser+'\nreadHoudiniCanonical;',{liveJobResult})
 const projection = factory({},readCanonical)
 
 // Execute the released public DSH assembler itself. Its browser bundle includes
@@ -37,13 +42,13 @@ function assemble(events) {
   return assembler
 }
 const executorId='a'.repeat(32), uuid='c'.repeat(32)
-const ctx=new Context()
+const ctx=fixtureProjectionContext(new Context())
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(ctx,{})
 const runtime=new ToolRuntime(ctx,{mode:'native'})
 installHoudiniExecutionLog(ctx)
 const session=Session.create('node-delivery-client-task-a')
-await new ExecutorBinding().ensure(session,executorId)
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,executorId)
 const agent={id:session.id,session,ctx,options:{provider:'fixture',model:'text'}}
 const receipt={ok:true,stdout:'',stderr:'',result:{kind:'houdini/node-delivery-v1',nodes:[
   {id:uuid,path:'/obj/bicycle/CTRL',label:'工程控制',role:'control',type:'null',context:'Sop',description:'调整尺寸和重复数量'},
@@ -99,6 +104,32 @@ assert.equal(JSON.stringify(projection.forClosing(assemble(restored.snapshotEven
   'real native and PTC delivery projection survives durable DSH replay')
 
 const fake=(type,data,seq=100,surfaceOp='append')=>({type,data,seq,time:seq,surfaceOp})
+const liveValue=structuredClone(receipt);
+liveValue.verbs[0].result.nodes[0].path='/obj/bicycle/CTRL_FROM_JOB';
+const nativeRead={job:{kind:LIVE_JOB_KIND,id:'houdini-live-delivery'},text:JSON.stringify({
+  kind:LIVE_JOB_RESULT,job_id:'houdini-live-delivery',value:liveValue})};
+for(const mode of ['native','metadata','legacy']) {
+  const nested=mode!=='native';
+  const id=nested?'job-program':'job-read',subCallId=nested?'nested-job-read':id;
+  const seq=events.at(-1).seq+1;
+  const issue=fake('tool/call',{turn:1,step:1,callId:id,name:nested?'run_code':'job_output',arguments:'{}'},seq);
+  const returned=nested?fake('tool/ptc-dispatch',{rootCallId:id,parentCallId:id,subCallId,name:'job_output',isError:false,
+    ...(mode==='metadata'?{meta:{canonical:nativeRead},content:[{type:'text',text:'[output truncated]'}]}:{
+      content:[{type:'text',text:JSON.stringify({kind:'dsh-houdini/execution-v1',callId:subCallId,tool:'job_output',value:nativeRead})}]})},seq+1)
+    :fake('tool/result',{turn:1,step:1,message:createToolResultMessage({callId:id,content:[{type:'text',text:'[output truncated]'}],isError:false}),meta:{canonical:nativeRead}},seq+1);
+  const jobEvents=[...events,issue,returned];
+  const jobOwner={...owner,seq:seq+2};
+  const jobCards=projection.forClosing(assemble(jobEvents).snapshot(projection.view.target),jobOwner);
+  assert.equal(jobCards[0].path,'/obj/bicycle/CTRL_FROM_JOB');
+  assert.equal(jobCards[0].callId,subCallId);
+  assert.equal(jobCards[0].eventSeq,returned.seq);
+  assert.equal(projection.forClosing(assemble(jobEvents).snapshot(projection.view.target),{...jobOwner,sessionId:'task-b'}).length,0);
+  const generic=structuredClone(returned);
+  if(mode==='legacy'){const record=JSON.parse(generic.data.content[0].text);record.value.job.kind='bash';generic.data.content[0].text=JSON.stringify(record)}
+  else generic.data.meta.canonical.job.kind='bash';
+  const originalCards=projection.forClosing(assemble([...events,issue,generic]).snapshot(projection.view.target),jobOwner);
+  assert.equal(originalCards[0].path,'/obj/bicycle/CTRL_RENAMED','ordinary jobs cannot introduce Houdini node delivery');
+}
 const start={event:fake('tool/call',{callId:'invalid',name:'houdini_exec'})}
 const empty=projection.definition.start({},start)
 function rejected(event) {

@@ -140,6 +140,8 @@ UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-constru
 
 忙碌请求的状态投影使用[请求查回回归](../tools/tests/request-recovery.test.mjs)、[执行状态回归](../tools/tests/execution-state.test.mjs)和[trace归一化回归](../tools/tests/normalized-trace-steps.test.mjs)，核对通信未知→queued/running→终态、过期结果分流及重复查回不增加上下文。真实DSH的`--context-loop`还通过原生/嵌套工具检查状态解释实际送到provider，且未重发原操作。此范围不证明具体COP/渲染原生阻塞已修复，也不证明模型必然正确采用诊断。
 
+现场原生jobs使用[真实live长任务组合](../tools/tests/dsh-live-job-loop.test.py)传`--runtime-cache <精确DSH> --hython <目标hython>`，启动自有DSH Host与独立Bridge，核对原生/PTC提交与完整结果、原作者完成通知、排队取消、运行中取消后真实终态、丢提交响应和Host重开原任务恢复；H21/H22分别验证。夹具记录并核对两段Host实际消费的构建摘要，期间重建lib会使验收无效。规划回复由本地夹具控制，不证明自然任务质量或用户live加载。[通用jobs通知回归](../tools/tests/dsh-job-completion-fixture.mjs)接受同一精确缓存，核对取消竞争、大结果展示限额、冷历史原值及已消费结果/终态生产者引用释放。在线投影检查必须使用真实DSH registry、长工具历史及持久恢复，不能用仅聊天事件或配置存在代替实际消费者取得的状态。
+
 资产主入口与后加模块用[dsh-asset-edit-entry](../tools/tests/dsh-asset-edit-entry.test.py)在隔离H21/H22验证：从当前模块值初始化公共控制，数值/开关单向引用，SOP主控驱动真实COP图层与最终材质消费者，两个COP容器的上层分组、原入口说明更新，以及同版本独立重开。跨进程图层对照使用完整buffer和明确元数据，不能把包含进程内identity的观察hash当跨进程内容标识。上述真实DSH的`--surface-method`同时验证参数与网络交接资料的按需消费。机制通过不证明自然模型会选对公共参数，或实际GUI布局已经验收。
 
 孔径检查的能力范围由[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)核对：几何违反条件、检查能力/预算不足、非法参数分别保留不同结果；能力不足不回滚同批正常修改。完整帮助的runtime_limits与执行来自同一维护源。目录回执导出的interface_observation由上述真实DSH循环同时核对原生/嵌套消费，不能只检查Python返回字典。

@@ -1,16 +1,14 @@
 /** One lightweight scene observation for each received user message. */
 import type {HoudiniBridge} from './bridge.js'
 import type {SessionEvent as Event} from './execution-history.js'
-import {sectionData,lastEvent as last,literalData as literal} from './prompt-data.js'
-import {isHoudiniSource} from './dsh-adapter.js'
-const NAME='dsh-houdini:scene-context'
+import {literalData as literal} from './prompt-data.js'
 export type AgentView = { session: { snapshotEvents(): readonly Event[] } }
-type Section = {name:string;text:string}
 export type SceneBridge = Pick<HoudiniBridge,'sceneContext'> | {sceneContextFor(session:any,signal?:AbortSignal):Promise<unknown>}
 export class SceneContextProvider {
   private readonly cache = new WeakMap<object, Map<string, Promise<string>>>()
   private readonly claimed = new WeakMap<object, any>()
-  constructor(private readonly bridge: SceneBridge) {}
+  constructor(private readonly bridge: SceneBridge,
+    private readonly observationOf:(agent:AgentView)=>{lastUserKey?:string;key?:string;text?:string}) {}
 
   receive(agent: AgentView, message: any): void {
     if (message?.source?.kind === 'user') void this.forMessage(agent, message)
@@ -21,23 +19,18 @@ export class SceneContextProvider {
   }
 
   async observe(agent: AgentView, signal?: AbortSignal): Promise<string> {
-    const events = agent.session.snapshotEvents()
-    // Inbox claims precede prompt assembly; user/message is logged AFTER assembly.
-    const recorded = last(events, e => e.type === 'user/message' && e.data?.source?.kind === 'user')
-    const message = this.claimed.get(agent) ?? recorded?.data
-    if (!message) return ''
+    // Inbox claims precede prompt assembly; the DSH projection supplies the
+    // persisted message/observation association when this Host is reopened.
+    const recorded=this.observationOf(agent),message=this.claimed.get(agent)
+    const key=message?String(message.id??JSON.stringify(message)):recorded.lastUserKey
+    if(!key)return ''
     signal?.throwIfAborted()
     // On host resume, reuse the original observation rather than capture the
     // user's later selection and bind it to an old message.
-    const key = String(message.id ?? recorded?.seq ?? JSON.stringify(message))
     if (!this.claimed.has(agent) && !this.cache.get(agent)?.has(key)) {
-      const sections = events.flatMap(e => e.type === 'user/message'
-        && (isHoudiniSource(e.data?.source) || e.data?.source?.kind==='runtime-context')
-        ? e.data.source.sections || [] : [])
-      return sections.filter((s: Section) => s.name === NAME && sectionData(s)?.user_message_id === key)
-        .at(-1)?.text || ''
+      return recorded.key===key?recorded.text??'':''
     }
-    const text = await this.forMessage(agent, message, recorded?.seq)
+    const text = await this.forMessage(agent, message)
     signal?.throwIfAborted()
     return text
   }

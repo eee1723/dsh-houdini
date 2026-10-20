@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { HoudiniBridge } from '../../lib/bridge.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
+import {renderJobStatus,execPresentationMeta,jobResultTitle} from '../../lib/tool-output.js';
+import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
+import {houdiniSnapshot,executionResult} from '../../lib/dsh-adapter.js';
 
 const definitions = new Map();
 const ctx = {
@@ -17,8 +20,8 @@ const ctx = {
   },
 };
 
-registerHoudiniTools(ctx, {});
-assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit','houdini_job_status','houdini_job_cancel'].sort());
+registerHoudiniTools(fixtureProjectionContext(ctx), {});
+assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit'].sort());
 
 const text = [{ type: 'text', text: 'fixture result' }];
 const execValue = {
@@ -83,22 +86,20 @@ function statusTextForReceipt() {
 // lookup success must not advertise a still-running or unavailable operation.
 const recoveryDefinitions = new Map();
 let recoveryReceipt;
-registerHoudiniTools({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}, {
+registerHoudiniTools(fixtureProjectionContext({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}), {
   forRuntime(runtimeId) { assert.equal(runtimeId,'a'.repeat(32)); return this; },
   async requestStatus() { return structuredClone(recoveryReceipt); },
+  async jobStatus(jobId) {return {jobId,status:'done',ok:true,stdout:'',stderr:''};},
 });
 const recovery = recoveryDefinitions.get('houdini_request');
 const recoveryArgs = {request_ref:'a'.repeat(32)+'.'+'b'.repeat(32)};
-const recoveryExec = {agent:{id:'receipt-owner'},callId:'receipt-lookup'};
+const recoveryExec = {agent:{id:'receipt-owner',session:fixtureSession('receipt-owner')},callId:'receipt-lookup'};
 for (const [receipt, expected] of [
   [{status:'running'},'请求执行中'],
   [{status:'not_executed'},'未执行'],
   [{status:'result_expired'},'已结束 · 结果已过期'],
   [{status:'result_unavailable'},'已结束 · 结果不可用'],
   [{status:'queued'},'请求已排队'],
-  [{status:'job_submitted',jobId:'job-7'},'后台任务已提交'],
-  [{status:'result_expired',jobId:'job-7',job_finished:false,job_status:'running',job_result_available:false},'后台任务执行中'],
-  [{status:'result_expired',jobId:'job-7',job_finished:true,job_result_available:true},'后台任务已结束 · 待收集结果'],
   [{status:'result_expired',jobId:'job-7',job_finished:true,job_result_available:false},'后台任务已结束 · 结果不可用'],
 ]) {
   recoveryReceipt = {ok:true,stdout:'',stderr:'',requestReceipt:{
@@ -161,20 +162,23 @@ assert.equal(
 );
 
 const submit = definitions.get('houdini_job_submit');
-const submitMeta = submit.output.presentationMeta({}, { jobId: 'job-7' });
-assert.deepEqual(submitMeta, { jobId: 'job-7', canonical: { jobId: 'job-7' } });
+assert(submit.output.schema.required.includes('job_id'));
+const submitHandle={job_id:'houdini-live-123',jobId:'job-7'};
+const submitMeta = submit.output.presentationMeta({}, submitHandle);
+assert.deepEqual(submitMeta, { jobId: 'job-7', canonical: submitHandle });
 assert.equal(
   submit.presentResult({ code: 'render_frame(rop)' }, { content: text, isError: false, meta: submitMeta }).title,
   '提交长任务 · job-7',
 );
 
-const status = definitions.get('houdini_job_status');
+// Historical Bridge snapshots keep their presenter, while DSH owns current controls.
+const status = {output:{render:(_args,value)=>renderJobStatus(value),presentationMeta:(_args,value)=>({...execPresentationMeta(value),jobId:value.jobId,status:value.status})},
+  presentResult:(_args,result)=>({title:jobResultTitle('等待长任务',result)})};
 const finishedCheckText = status.output.render({}, {...pendingChecks,jobId:'job-7',status:'done'})[0].text;
 assert.match(finishedCheckText,/checks failed or contain warnings/,'finished jobs share the same check-aware completion summary');
 assert.doesNotMatch(finishedCheckText,/finished successfully/);
 const caughtJobMeta=status.output.presentationMeta({}, {...caughtRead,jobId:'job-7',status:'done'});
 assert.match(status.presentResult({jobId:'job-7'}, {content:text,isError:false,meta:caughtJobMeta}).title,/批次完成，部分操作失败/);
-await assert.rejects(status.execute({jobId:'update_placeholder'},{agent:{}}),/placeholders are never sent/);
 const jobValue = {
   jobId: 'job-7',
   status: 'running',
@@ -192,41 +196,32 @@ assert.deepEqual(statusMeta, {
   imageCount: 0,
   canonical: jobValue,
 });
-assert.deepEqual(status.presentCall({ jobId: 'job-7', wait: 30 }), {
-  card: 'generic',
-  title: '等待长任务 · job-7',
-  kind: 'read',
-  rawInput: { jobId: 'job-7', wait: 30 },
-});
 assert.equal(
   status.presentResult({ jobId: 'job-7' }, { content: text, isError: false, meta: statusMeta }).title,
   '长任务 job-7 · 执行中',
 );
-
-const cancel = definitions.get('houdini_job_cancel');
-await assert.rejects(cancel.execute({jobId:'none'},{agent:{}}),/placeholders are never sent/);
-assert.deepEqual(cancel.presentCall({ jobId: 'job-7' }), {
-  card: 'generic',
-  title: '取消长任务 · job-7',
-  kind: 'execute',
-  rawInput: 'job-7',
-});
-assert.equal(
-  cancel.presentResult({ jobId: 'job-7' }, { content: text, isError: true }).title,
-  '取消长任务 · 失败',
-);
+for(const [name,state] of [['houdini_job_status','done'],['houdini_job_cancel','cancelled']]) {
+  const value={jobId:'historical-job',status:state,ok:state==='done',stdout:'',stderr:''};
+  const native={type:'tool/result',data:{message:{source:{callId:'old-native'}},meta:{canonical:value}}};
+  assert.deepEqual(executionResult(native).value,value);
+  const nested={type:'tool/ptc-dispatch',data:{name,subCallId:'old-nested',content:[{type:'text',text:JSON.stringify({
+    kind:'dsh-houdini/execution-v1',callId:'old-nested',tool:name,value,
+  })}]}};
+  assert.deepEqual(executionResult(nested),{callId:'old-nested',tool:name,value,isError:undefined,error:undefined},
+    'retiring public controls must preserve original native/nested historical results');
+}
 
 // Presentation is a replay-time pure projection: repeated calls are identical
 // and do not mutate the durable args/result payloads.
 const frozenArgs = Object.freeze({ jobId: 'job-7', wait: 1 });
-assert.deepEqual(status.presentCall(frozenArgs), status.presentCall(frozenArgs));
+assert.deepEqual(status.output.render(frozenArgs,jobValue), status.output.render(frozenArgs,jobValue));
 
 // Workspace advice uses the operation's own observation, without a hidden
 // health/exec round trip, and belongs to the agent rather than the Host process.
 const workspaceDefinitions = new Map();
 let workspaceExecutions = 0;
 let workspaceResult = {ok:true,stdout:'',stderr:'',execution:{hip_dir:'C:/project'}};
-registerHoudiniTools({tools:{register: d => workspaceDefinitions.set(d.name, d)}}, {
+registerHoudiniTools(fixtureProjectionContext({tools:{register: d => workspaceDefinitions.set(d.name, d)}}), {
   async exec() { workspaceExecutions++; return workspaceResult; },
   async hipDir() { throw new Error('presentation must not probe Houdini'); },
 });
@@ -259,8 +254,8 @@ const strictBridge = {
   async jobStatus(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'done', ok:true, stdout:'', stderr:''}; },
   async cancelJob(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'cancelled', ok:true, stdout:'', stderr:''}; },
 };
-registerHoudiniTools({tools:{register:d=>strictDefs.set(d.name,d)},
-  sessions:{flush:async()=>{flushed++;return true}}},
+registerHoudiniTools(fixtureProjectionContext({tools:{register:d=>strictDefs.set(d.name,d)},
+  sessions:{flush:async()=>{flushed++;return true}}}),
   {resolve: async () => {resolved++;return strictBridge},resolveHistorical:async(_exec,target)=>{assert.equal(target.runtimeId,'f'.repeat(32));return strictBridge}});
 const identity = (agentId, callId) => ({agent: agentId === undefined ? undefined : {id: agentId}, callId});
 const badIdentities = [
@@ -270,18 +265,17 @@ const badIdentities = [
 ];
 const bindingSection = {name:'dsh-houdini:executor-binding', text:'Houdini task target binding (routing data, not node ownership or permission).\n'
   + JSON.stringify({schema:1, kind:'executor_binding', executor_id:'e'.repeat(32)})};
-const makeStrictSession = () => ({snapshotEvents: () => [
-  {seq:1, type:'user/message', data:{source:{kind:'dsh-houdini', sections:[bindingSection]}}},
-  {seq:2,type:'tool/result',data:{message:{source:{callId:'original-submit'}},meta:{canonical:{jobId:'a'.repeat(12),requestReceipt:{runtime_id:'f'.repeat(32),executor_id:'e'.repeat(32),status:'job_submitted'}}}}},
-], append: () => {}});
+const makeStrictSession = () => {
+  const session=fixtureSession('session-1');
+  session.append('user/message',houdiniSnapshot(bindingSection),{surfaceOp:'append'});
+  return session;
+};
 const goodExec = {agent:{id:'session-1',session:makeStrictSession()}, callId:'call-9'};
 for (const bad of badIdentities) {
   await assert.rejects(strictDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_inspect').execute({code:'pass'},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_request').execute({request_ref:'index'},bad),/identity/);
   await assert.rejects(strictDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
-  await assert.rejects(strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
-  await assert.rejects(strictDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);
 }
 assert.equal(resolved, 0, 'identity failures must precede executor resolution');
 assert.equal(flushed, 0, 'identity failures must precede writer claims');
@@ -295,15 +289,13 @@ await strictDefs.get('houdini_exec').execute({code:'pass'}, goodExec);
 assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
 await strictDefs.get('houdini_inspect').execute({code:'pass'}, goodExec);
 assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
-await strictDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)}, goodExec);
-assert.deepEqual(seenOwner, {sessionId:'session-1', callId:'call-9'});
 const padded = {agent:{id:' padded id ',session:makeStrictSession()},callId:' padded call '};
 await strictDefs.get('houdini_exec').execute({code:'pass'}, padded);
 assert.deepEqual(seenOwner, {sessionId:' padded id ', callId:' padded call '}, 'legal values are sent verbatim');
 const other = {agent:{id:'session-2',session:makeStrictSession()}, callId:'call-10'};
 await strictDefs.get('houdini_exec').execute({code:'pass'}, other);
 assert.deepEqual(seenOwner, {sessionId:'session-2', callId:'call-10'}, 'no cross-session identity reuse');
-assert.equal(sent, 5);
+assert.equal(sent, 4);
 
 // The same tool-level identity rejections produce zero traffic against a REAL
 // HoudiniBridge: every endpoint (health, prepare, exec, jobs, job control)
@@ -318,14 +310,12 @@ const countingServer = http.createServer((request, response) => {
 await new Promise((resolve) => countingServer.listen(0, '127.0.0.1', resolve));
 try {
   const realBridge = new HoudiniBridge(`http://127.0.0.1:${countingServer.address().port}`, 1000);
-  registerHoudiniTools({tools:{register:d=>realDefs.set(d.name,d)}}, realBridge);
+  registerHoudiniTools(fixtureProjectionContext({tools:{register:d=>realDefs.set(d.name,d)}}), realBridge);
   for (const bad of badIdentities) {
     await assert.rejects(realDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_inspect').execute({code:'pass'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_request').execute({request_ref:'index'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_job_submit').execute({code:'pass'},bad),/identity/);
-    await assert.rejects(realDefs.get('houdini_job_status').execute({jobId:'a'.repeat(12)},bad),/identity/);
-    await assert.rejects(realDefs.get('houdini_job_cancel').execute({jobId:'a'.repeat(12)},bad),/identity/);
   }
   assert.equal(networkRequests, 0, 'identity failures must reach no real Bridge endpoint');
 } finally {

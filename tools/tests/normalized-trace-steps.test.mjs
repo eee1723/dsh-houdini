@@ -7,6 +7,7 @@ import {
   unresolvedExecutionRequests,
 } from '../normalized-trace-steps.mjs';
 import {isStructuredHoudiniCall,collectVerbAdoption,nativeImageEvidence} from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
 
 const call = (seq, callId, name, args) => ({
   seq,
@@ -77,6 +78,38 @@ assert.deepEqual(first.verbs, [{
 assert.deepEqual(first.mutatingRawMethods, ['setInput', 'setInput']);
 assert.deepEqual(first.rollback, { attempted: true, succeeded: true });
 assert.equal(first.advisory, 'prefer the verb');
+
+// Native display truncation and PTC log text must resolve through the same producer decoder.
+const actualJob={ok:true,stdout:'original HOM diagnostic',stderr:'',status:'done',jobId:'a'.repeat(12),
+  execution:{runtime_id:'b'.repeat(32),sequence:42,observed_at:42},
+  verbs:[{verb:'set_parm',ok:true,args:['/obj/part','tx',3],result:{value:3},ms:1}],
+  result:{output:'/obj/part/OUT'}};
+const jobRead={job:{kind:LIVE_JOB_KIND,id:'houdini-live-original'},text:JSON.stringify({
+  kind:LIVE_JOB_RESULT,job_id:'houdini-live-original',value:actualJob})};
+for(const mode of ['native','metadata','legacy']) {
+  const nested=mode!=='native';
+  const jobEvents=nested?[
+    {seq:1,type:'tool/ptc-dispatch-start',data:{subCallId:'collect',name:'job_output',arguments:{job_id:jobRead.job.id}}},
+    {seq:2,type:'tool/ptc-dispatch',data:{subCallId:'collect',name:'job_output',
+      ...(mode==='metadata'?{meta:{canonical:jobRead},content:[{type:'text',text:'[output truncated]'}]}:{content:[{type:'text',text:JSON.stringify({
+        kind:'dsh-houdini/execution-v1',callId:'collect',tool:'job_output',value:jobRead})}]})}},
+  ]:[call(1,'collect','job_output',{job_id:jobRead.job.id}),{...result(2,'collect','[output truncated]'),data:{
+    ...result(2,'collect','[output truncated]').data,meta:{canonical:jobRead}}}];
+  const read=normalizeTraceSteps(jobEvents);
+  assert.equal(read.steps[0].isHoudini,true);
+  assert.deepEqual(read.steps[0].canonical,actualJob);
+  assert.equal(read.steps[0].verbs[0].verb,'set_parm');
+  assert.equal(read.uniqueExecutions.length,1);
+  assert.equal(read.steps[0].resultText,nested?jobEvents[1].data.content[0].text:'[output truncated]',
+    'cost accounting retains actual visible/logged text instead of substituting audit metadata');
+  const generic=structuredClone(jobRead);generic.job.kind='bash';
+  const genericEvents=[call(1,'generic','job_output',{}),{...result(2,'generic','ordinary process output'),data:{
+    ...result(2,'generic','ordinary process output').data,meta:{canonical:generic}}}];
+  const ignored=normalizeTraceSteps(genericEvents);
+  assert.equal(ignored.steps[0].isHoudini,false);
+  assert.equal(ignored.steps[0].canonical,null);
+  assert.deepEqual(ignored.uniqueExecutions,[]);
+}
 
 assert.deepEqual(normalized.steps[1].args, { _raw: '{broken' });
 assert.equal(normalized.steps[1].failed, true);

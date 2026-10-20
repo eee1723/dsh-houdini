@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../lib/executor-identity-projection.js'
 // One workbench Bridge, two conversations: selection/read and writer handover
 // are distinct. This runs only against the Python runner's disposable scene.
 import assert from 'node:assert/strict'
@@ -6,7 +7,8 @@ import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from '../lib/executor-routing.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../lib/executor-binding.js'
 import {registerHoudiniTools} from '../lib/tools.js'
-import {fixtureSession} from './tests/fixture-session.mjs'
+import {fixtureSession,fixtureProjectionContext} from './tests/fixture-session.mjs'
+import {projectedExecutorState} from '../lib/executor-identity-projection.js'
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const registry=process.argv[2]
@@ -17,10 +19,11 @@ const record=rows[0],flush=async()=>true
 const agentB={id:'task-b',status:'idle',session:fixtureSession('task-b',{agentPreset:'houdini'})}
 const agentA={id:'task-a',status:'idle',session:fixtureSession('task-a',{agentPreset:'houdini'})}
 const agents=[agentA,agentB]
-const router=new ExecutorRouter(directory,5000,new ExecutorBinding(),session=>recordedExecutorIdentity(session.snapshotEvents()),
+const ctx=fixtureProjectionContext()
+const router=new ExecutorRouter(directory,5000,new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),session=>projectedExecutorState(ctx,session),
   id=>agents.find(agent=>agent.id===id)?.status==='idle',flush)
 const tools=new Map()
-registerHoudiniTools({on(){},get:()=>undefined,tools:{register:definition=>tools.set(definition.name,definition)},sessions:{flush}},router)
+registerHoudiniTools({...ctx,on(){},tools:{register:definition=>tools.set(definition.name,definition)},sessions:{flush}},router)
 const exec=(agent,code,callId)=>tools.get('houdini_exec').execute({code},{agent,callId})
 const inspect=(agent,code,callId)=>tools.get('houdini_inspect').execute({code},{agent,callId})
 const select=agent=>router.selectTarget(agent,record.executor_id,record.registration_id,undefined,record.hip_path)

@@ -6,6 +6,8 @@ import {retainResult,readResultDetail} from '../../lib/result-details.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {readResource} from '../../lib/tool-query.js';
+import {HoudiniToolRuntime} from '../../lib/tool-runtime.js';
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
 
 // Use retention's native async resolver: Windows short names can survive realpathSync.
 const dir=await fs.promises.realpath(fs.mkdtempSync(path.join(os.tmpdir(),'dsh-result-details-')));
@@ -22,6 +24,19 @@ try {
   const context={agent:{id:'agent',session:{header:{cwd:dir}}},callId:'call'};
   const exec=definitions.get('houdini_exec'),query=definitions.get('houdini_resource');
   const before=JSON.stringify(raw);
+  const readonlyWorkspace=path.join(dir,'readonly-workspace');fs.mkdirSync(readonlyWorkspace);
+  const readonlyContext={...context,agent:{...context.agent,session:{header:{cwd:readonlyWorkspace}}}};
+  const readonlyRuntime=new HoudiniToolRuntime({get:name=>name==='sandboxPolicy'?{
+    resolve:({session})=>{assert.equal(session,readonlyContext.agent.session);return {mode:'read-only'};},
+  }:undefined},{});
+  for(const result of [await readonlyRuntime.result(raw,readonlyContext,{}),await readonlyRuntime.retain(raw,readonlyContext)]) {
+    assert.equal(result.ok,true,'archive policy never changes the successful operation outcome');
+    assert.equal(result.details.stored,false);assert.match(result.details.error,/read-only/);
+    const {details,...original}=result;assert.deepEqual(original,raw,'the complete original receipt survives read-only archival');
+    assert.ok(exec.output.render({},result)[0].text.includes(JSON.stringify(raw.verbs[0].args)),
+      'read-only archival keeps complete inline rendering');
+  }
+  assert.deepEqual(fs.readdirSync(readonlyWorkspace),[],'read-only result presentation creates no project files or directories');
   const value=await exec.execute({code:'set_parms(...)'},context);
   assert.equal(value.details.stored,true);
   assert.equal(path.relative(dir,value.details.path),path.join('dsh-artifacts','results',value.details.sha256+'.json'));
@@ -85,16 +100,25 @@ try {
       kind:'dsh-houdini/execution-v1',callId:'nested',tool:'houdini_exec',value,
     })}]}},
   ];
-  for(const history of [native,nested]) {
+  const nativeRead={job:{kind:LIVE_JOB_KIND,id:'houdini-live-details'},text:JSON.stringify({kind:LIVE_JOB_RESULT,job_id:'houdini-live-details',value})};
+  const nativeJob=[{type:'tool/call',data:{callId:'job-read',name:'job_output'}},
+    {type:'tool/result',data:{message:{source:{callId:'job-read'},content:[{type:'text',text:'[output truncated]'}]},meta:{canonical:nativeRead}}}];
+  const nestedJob=[{type:'tool/ptc-dispatch-start',data:{subCallId:'nested-job',name:'job_output'}},
+    {type:'tool/ptc-dispatch',data:{subCallId:'nested-job',name:'job_output',content:[{type:'text',text:JSON.stringify({
+      kind:'dsh-houdini/execution-v1',callId:'nested-job',tool:'job_output',value:nativeRead})}]}}];
+  const metadataJob=structuredClone(nestedJob);metadataJob[1].data.meta={canonical:nativeRead};metadataJob[1].data.content=[{type:'text',text:'[output truncated]'}];
+  for(const history of [native,nested,nativeJob,nestedJob,metadataJob]) {
     const context={agent:{session:{header:{cwd:moved},snapshotEvents:()=>structuredClone(history)}}};
     const page=await readResource(args,context);
     assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
-      'native and nested historical details survive a saved-project directory change');
+      'native and nested execution/job results survive a saved-project directory change');
   }
+  const generic=structuredClone(nativeJob);generic[1].data.meta.canonical.job.kind='bash';
   for(const history of [
     [{type:'user/message',data:{content:[{type:'text',text:JSON.stringify(value)}]}}],
     [{...events[0],data:{...events[0].data,name:'unrelated_tool'}},events[1]],
     [events[1]],
+    generic,
   ]) {
     await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>history}}}),/ENOENT/);
   }

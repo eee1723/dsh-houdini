@@ -6,8 +6,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { HoudiniBridge } from './bridge.js'
 import { ExecutorBinding } from './executor-binding.js'
-import {foldExecutorState,targetSnapshotSchema,type TargetSnapshot} from './executor-identity-projection.js'
-import {executionHistory} from './execution-history.js'
+import {targetSnapshotSchema,executorBindingState,type TargetSnapshot,type ExecutorIdentityState} from './executor-identity-projection.js'
+import {executionOutstanding} from './execution-facts.js'
 export type {TargetSnapshot} from './executor-identity-projection.js'
 
 export interface ExecutorRecord {
@@ -126,7 +126,7 @@ export class ExecutorRouter {
   }
   constructor(readonly directory:ExecutorDirectory,private readonly timeoutMs:number,
     private readonly binding:ExecutorBinding,
-    private readonly identityOf:(session:Session)=>string|undefined,
+    private readonly stateOf:(session:Session)=>ExecutorIdentityState,
     private readonly idleOwner:(taskId:string)=>boolean=()=>false,
     private readonly persist?:(session:Session)=>Promise<boolean>,
     private readonly chooseTarget?:(taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
@@ -135,9 +135,9 @@ export class ExecutorRouter {
     if(this.persist&&await this.persist(session)!==true)throw new Error('对话记录尚未可靠保存，本次操作没有发送到 Houdini。')
   }
   private state(session:Session) {
-    // The registered DSH projection remains the authoritative live consumer.
-    this.identityOf(session)
-    return foldExecutorState(session.snapshotEvents())
+    const state=this.stateOf(session)
+    executorBindingState(state)
+    return state
   }
   private bridge(record:ExecutorRecord,expected:{runtimeId?:string;sceneEpoch?:string}) {
     return new HoudiniBridge(record.bridge_url,this.timeoutMs,record.executor_id,this.lifetime.signal,expected)
@@ -244,7 +244,7 @@ export class ExecutorRouter {
     const record=await this.directory.find(id)
     const target=targetSnapshot(record)
     let selected:TargetSnapshot|null=null
-    try {selected=foldExecutorState(agent.session.snapshotEvents()).selectedTarget}catch{ /* Explicit choice can replace legacy invalid routing. */ }
+    try {selected=this.state(agent.session).selectedTarget}catch{ /* Explicit choice can replace legacy invalid routing. */ }
     const unchanged=selected!==null&&sameTargetIntent(selected,target)
     if(record.registration_id!==registrationId&&!unchanged||expectedHip!==undefined&&canonical(record.hip_path??'')!==canonical(expectedHip)
       ||expected?.runtimeId!==undefined&&record.runtime_id!==expected.runtimeId
@@ -276,16 +276,26 @@ export class ExecutorRouter {
   }
   private async assertCanChange(agent:Agent,next:TargetSnapshot|null,signal:AbortSignal):Promise<void> {
     let old:TargetSnapshot|null
-    try {old=foldExecutorState(agent.session.snapshotEvents()).selectedTarget}catch{return}
+    try {old=this.state(agent.session).selectedTarget}catch{return}
     if(!old||next&&sameTargetIntent(old,next))return
-    const history=executionHistory(agent.session.snapshotEvents())
+    const history=executionOutstanding(this.state(agent.session).execution.current)
     if(!history.activeJobs.length&&!history.activeRequests.length&&!history.pendingCalls.length&&!history.unresolvedCalls.length)return
     let record:ExecutorRecord
     try {record=await this.directory.find(old.executor_id)}
     catch(error){if(error instanceof ExecutorUnavailableError)return;throw error}
     if(record.runtime_id!==old.runtime_id)return
-    let health
-    try {health=await this.bridge(record,{runtimeId:old.runtime_id}).inspectExecutor(signal)}
+    let active=false
+    try {
+      const result=await this.bridge(record,{runtimeId:old.runtime_id}).requestStatus('index',
+        {sessionId:agent.id,callId:'houdini-target-selection'},signal)
+      const receipt=result.requestReceipt as {status?:unknown;runtime_id?:unknown;requests?:Array<{active?:unknown}>}|undefined
+      if(result.ok!==true||receipt?.status!=='index'||receipt.runtime_id!==old.runtime_id
+        ||!Array.isArray(receipt.requests)||!receipt.requests.every(row=>row&&typeof row.active==='boolean'))
+        throw new Error('原目标未返回可核对的本对话活动索引。')
+      // The existing owner-scoped index prioritizes active requests and pinned
+      // job links. Even a truncated index includes activity when any exists.
+      active=receipt.requests.some(row=>row.active===true)
+    }
     catch(error){
       signal.throwIfAborted()
       // A crashed process may leave a registered discovery row. Only the OS's
@@ -294,7 +304,7 @@ export class ExecutorRouter {
       catch(probe){if((probe as NodeJS.ErrnoException).code==='ESRCH')return}
       throw new Error('无法确认原目标是否仍有后台操作，暂未切换；请结束原操作后重试。',{cause:error})
     }
-    if((health.activeJobs??0)>0||(health.activeRequests??0)>0)
+    if(active)
       throw new Error('这段对话在原目标仍有请求或后台任务执行，完成后才能切换或解除目标。')
   }
 }

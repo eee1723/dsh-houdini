@@ -34,6 +34,12 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 
 [节点片段交换](component-collaboration.md)维护component_export/import/replace的文件与显式替换能力。它不注册子Agent或提供另一种模式。
 
+### 现场长任务与在线状态
+
+现场长任务只通过`houdini_job_submit`启动，先取得DSH原生jobs准入，再向Bridge提交。DSH负责job_id、归属、界面、通知与job_output/job_kill；Bridge的jobId、request_ref和runtime保留真实执行身份。Host只观察原任务，不另建调度器。运行中的HOM不能强停，取消排队任务与请求取消已运行任务分别表达；Host/作者卸载只释放本机观察，不等待或终止用户Houdini。重开后houdini_request按原回执重新观察，不重发代码。队列异步不保证原生长计算期间Houdini界面可交互；适合独立副本的计算可用houdini_isolated。
+
+当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护；在线路由、上下文和恢复直接读取该投影，不在每个工具入口重扫日志。完整结果留原生日志与详情，按需历史读取和离线Trace复用同一事实转换。job/settled只表示DSH观察生命周期，不能替代HOM终态；明确的live job_output原始回执由同一个adapter解码，普通DSH作业不会改变Houdini身份。
+
 ### 一次性独立执行
 
 `houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
@@ -67,7 +73,9 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | 源码 | 维护职责 |
 |---|---|
 | [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
-| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息生产者与持久工具日志适配；PTC原回执在公开日志middleware外层定型，避免展示spill截坏审计JSON，不改变模型展示或执行值 |
+| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息与原生/嵌套持久工具日志适配；精确live job结果解码唯一源，客户端由生成器复用；日志原值与展示限额分离，不从普通作业文本猜Houdini事实 |
+| [src/live-jobs.ts](../src/live-jobs.ts) | 先原生jobs准入再提交现场任务，按原runtime观察/请求队列取消，卸载释放本机观察；不重放代码、不把断线或取消意图冒充HOM终态 |
+| [src/execution-facts.ts](../src/execution-facts.ts) | 同源增量执行事实转换；在线只维护待处理事实和必要锚点，冷历史读取可捕获原始记录；不建立任务完成账本 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
@@ -78,7 +86,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
 | [src/image-generation.ts](../src/image-generation.ts) | Host图片生成/编辑：复用DSH配置/凭据、上传参考图原字节；managed经Bridge只读观察所选HIP，原图与预览分别保存，不修改场景、不自动重试或替换模型 |
 | [src/api-route.ts](../src/api-route.ts) | 图片与转录共用的DSH显式API路由、endpoint和凭据解析；不猜测模型协议、不维护第二份账号注册表 |
-| [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，读取根配置后把单次凭据经环境传给普通Python子进程；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
+| [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，复用DSH的环境清理后仅显式传入本次凭据；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
 | [src/video-runtime.ts](../src/video-runtime.ts) | 当前任务所选Houdini健康信息中的Python与版本私有FFmpeg/ffprobe路径事实；无任务上下文时明确Host启动环境范围，不依赖全局PATH、不安装系统软件 |
 | [src/video-process.ts](../src/video-process.ts) | 随包离线媒体/证据CLI的Host入口，消费DSH文件策略与选定执行器运行时，直接返回原JSON/退出事实；无shell/凭据/云/HOM，不另建证据记录 |
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |

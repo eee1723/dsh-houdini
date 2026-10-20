@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -11,7 +12,10 @@ import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
 import {NODE_DELIVERY_KIND,installNodeDeliveryNavigation,nodeDeliveryCoordinates,recordedNodeDelivery} from '../../lib/node-delivery.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
+import {projectedExecutorState} from '../../lib/executor-identity-projection.js'
+import {fixtureProjectionContext} from './fixture-session.mjs'
 import {fixtureSession} from './fixture-session.mjs'
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js'
 
 const signal=new AbortController().signal
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-node-delivery-'))
@@ -33,7 +37,7 @@ try {
     const session=fixtureSession(task,{agentPreset:'houdini'})
     session.append('tool/call',{turn:1,step:1,callId:'deliver-call',name:'houdini_exec',arguments:'{}'})
     session.append('tool/call',{turn:1,step:1,callId:'file-call',name:'read',arguments:'{}'})
-    const ctx=new Context(),agent={id:task,status:'idle',session,ctx}
+    const ctx=fixtureProjectionContext(new Context()),agent={id:task,status:'idle',session,ctx}
     agents.push(agent)
     const server=http.createServer(async(req,res)=>{
       res.setHeader('content-type','application/json')
@@ -65,7 +69,7 @@ try {
       workbench:true,scene_id:scene,scene_epoch:epoch,hip_is_new:false,workspace_path:directory}
     records.push(record)
     await fs.writeFile(path.join(endpoints,executor+'.json'),JSON.stringify(record))
-    await new ExecutorBinding().select(session,{executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:scene,
+    await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).select(session,{executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:scene,
       registration_id:record.registration_id,hip_path:hip,hip_is_new:false,workspace_path:directory})
     const value={ok:true,stdout:'',stderr:'',outcome:{operations:{failed:0}},
       result:{kind:NODE_DELIVERY_KIND,nodes:[{id:String(i+5).repeat(32),path:'/obj/old_control_'+i,
@@ -75,8 +79,9 @@ try {
     value.result={entries:value.result,other:'wrapped business result'}
     events.set(task,native(value))
   }
-  const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),2000,new ExecutorBinding(),
-    session=>recordedExecutorIdentity(session.snapshotEvents()))
+  const projectionCtx=fixtureProjectionContext()
+  const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),2000,new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),
+    session=>projectedExecutorState(projectionCtx,session))
   for(const agent of agents) {
     const scope=await agent.ctx.plugin({apply(ctx){installNodeDeliveryNavigation(ctx,router)}})
     scopes.push(scope)
@@ -102,6 +107,31 @@ try {
   assert.equal(execs.length,2)
 
   const original=clone(events.get(agents[0].id))
+  agents[0].session.append('tool/call',{turn:1,step:1,callId:'job-read',name:'job_output',arguments:'{}'})
+  const jobValue={job:{kind:LIVE_JOB_KIND,id:'houdini-live-node-navigation'},text:JSON.stringify({
+    kind:LIVE_JOB_RESULT,job_id:'houdini-live-node-navigation',value:original.data.meta.canonical})}
+  const nativeJob=native(jobValue,'job-read')
+  events.set(agents[0].id,nativeJob)
+  assert.equal((await frontend.openNode({...coordinates(0),callId:'job-read'},signal)).path,'/obj/renamed_control_0',
+    'node navigation reads the original native job canonical result, not its display text')
+  const nestedJob=nested(jobValue,'job-child');nestedJob.data.name='job_output'
+  nestedJob.data.content[0].text=JSON.stringify({kind:'dsh-houdini/execution-v1',callId:'job-child',tool:'job_output',value:jobValue})
+  events.set(agents[0].id,nestedJob)
+  assert.equal((await frontend.openNode({...coordinates(0),eventSeq:21,callId:'job-child'},signal)).path,'/obj/renamed_control_0',
+    'nested job navigation uses the same producer decoder and original event coordinates')
+  const metadataJob=clone(nestedJob);metadataJob.data.meta={canonical:jobValue};metadataJob.data.content=[{type:'text',text:'[output truncated]'}]
+  events.set(agents[0].id,metadataJob)
+  assert.equal((await frontend.openNode({...coordinates(0),eventSeq:21,callId:'job-child'},signal)).path,'/obj/renamed_control_0')
+  for(const event of [nativeJob,nestedJob,metadataJob]) {
+    const generic=clone(event)
+    if(generic.data.meta)generic.data.meta.canonical.job.kind='bash'
+    else {const record=JSON.parse(generic.data.content[0].text);record.value.job.kind='bash';generic.data.content[0].text=JSON.stringify(record)}
+    events.set(agents[0].id,generic)
+    const before=execs.length
+    await assert.rejects(frontend.openNode({...coordinates(0),eventSeq:generic.seq},signal),/successful original batch/)
+    assert.equal(execs.length,before,'ordinary DSH jobs cannot send a node navigation request')
+  }
+  events.set(agents[0].id,clone(original))
   async function rejectEvent(change,message,input=coordinates(0)) {
     const event=clone(original);change(event)
     events.set(agents[0].id,event)

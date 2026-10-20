@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import type {Context} from '@deepseek-ai/cordis'
 import {defineTool} from '@deepseek-ai/dsh-tools'
+import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
 import {apiCredential,apiEndpoint,configuredApiRoutes,configuredProviders,hostService} from './api-route.js'
 import {HoudiniToolRuntime,workspaceOf,type HoudiniConnection} from './tool-runtime.js'
 import {VIDEO_TOOLS} from './tool-catalog.js'
@@ -191,7 +192,7 @@ export async function transcribeVideo(ctx:any,exec:any,args:VideoTranscribeArgs,
   const facts={provider,model,endpoint,protocol,work:local,max_chunks:maximum,concurrency,requests_per_second:rate,settings:SETTINGS}
   const redact=(text:string)=>text.split(key).join('[redacted]')
   try {
-    const run=await runner({executable:runtime.python,args:argv,env:{...process.env,[KEY_ENV]:key,PYTHONUTF8:'1'},cwd,work:local,signal:exec.signal})
+    const run=await runner({executable:runtime.python,args:argv,env:{...scrubbedParentEnv(),[KEY_ENV]:key,PYTHONUTF8:'1'},cwd,work:local,signal:exec.signal})
     const rows=redact(run.stdout).split(/\r?\n/).filter(Boolean).map(line=>{
       try {return JSON.parse(line)} catch {return null}
     }).filter(row=>row&&typeof row==='object'&&!Array.isArray(row))

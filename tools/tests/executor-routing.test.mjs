@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -12,7 +13,7 @@ import {agentPresetProjectionDefinition} from '@deepseek-ai/dsh-agent-preset-reg
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {ExecutorController} from '../../lib/executor-controller.js'
-import {registerExecutorIdentityProjection,foldExecutorState} from '../../lib/executor-identity-projection.js'
+import {registerExecutorIdentityProjection,foldExecutorState,projectedExecutorState} from '../../lib/executor-identity-projection.js'
 import * as executorHost from '../../lib/executor-host.js'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
@@ -25,6 +26,7 @@ const installation=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..
 const servers=[],records=[],agents=[],claims=[],bodies=[],health=[]
 const healthGates=[null,null]
 const healthFailures=[false,false],children=[]
+const requestIndexes=[new Map(),new Map()]
 const gate=()=>{let enter,release;return {entered:new Promise(resolve=>enter=resolve),wait:new Promise(resolve=>release=resolve),
   enter:()=>enter(),release:()=>release()}}
 const unfinished=(agent,index,callId)=>{
@@ -62,6 +64,11 @@ try {
         record.task_id=body.task_id;await write(record)
         res.end(JSON.stringify({ok:true}));return
       }
+      if(req.url==='/requests/status') {
+        assert.equal(body.request_ref,'index')
+        res.end(JSON.stringify({ok:true,stdout:'',stderr:'',requestReceipt:{status:'index',runtime_id:record.runtime_id,
+          requests:requestIndexes[i].get(body.owner_session)??[],omitted:0}}));return
+      }
       await new Promise(resolve=>setTimeout(resolve,i?1:15))
       res.end(JSON.stringify({ok:true,stdout:'',stderr:'',result:{target:record.executor_id}}))
     })
@@ -72,9 +79,9 @@ try {
       hip_path:path.join(directory,'project-'+i,'asset.hip'),workspace_path:path.join(directory,'project-'+i)}
     records.push(record);await write(record)
   }
-  const identityOf=session=>recordedExecutorIdentity(session.snapshotEvents())
+  const identityOf=session=>projectedExecutorState(ctx,session)
   let durable=true,questions=0,answer=records[1].executor_id
-  const router=new ExecutorRouter(new ExecutorDirectory(directory,installation),1000,new ExecutorBinding(),identityOf,
+  const router=new ExecutorRouter(new ExecutorDirectory(directory,installation),1000,new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),identityOf,
     id=>!agents.find(agent=>agent.id===id)||agents.find(agent=>agent.id===id).status==='idle',async()=>durable,
     async(_task,candidates)=>{questions++;return candidates.find(record=>record.executor_id===answer)?.executor_id})
   const ctx=new Context(),projections=new SessionProjectionRegistry(ctx)
@@ -124,9 +131,11 @@ try {
   // A live original job/request prevents changing or clearing its task target.
   unfinished(agents[0],0,'original-unknown-request')
   records[0].task_id=agents[0].id;await write(records[0]);health[0].activeJobs=1
+  requestIndexes[0].set(agents[0].id,[{status:'done',active:true}])
   await assert.rejects(controller.select(input(agents[0],records[1]),signal),/后台任务执行/)
   await assert.rejects(controller.clear({sessionId:agents[0].id},signal),/后台任务执行/)
   health[0].activeJobs=0
+  requestIndexes[0].set(agents[0].id,[{status:'done',active:false}])
   await controller.clear({sessionId:agents[0].id},signal)
   assert.equal((await controller.list({sessionId:agents[0].id})).selectedTarget,null)
   const asked=questions
@@ -150,6 +159,22 @@ try {
   // order, rather than whichever endpoint happens to answer first.
   const makeAgent=id=>{const session=fixtureSession(id,{agentPreset:'houdini'});return {id,session,status:'idle'}}
   const choose=(agent,index,signal)=>router.selectTarget(agent,records[index].executor_id,records[index].registration_id,signal,records[index].hip_path)
+  const settledWhileOtherWorks=makeAgent('settled-while-other-works');await choose(settledWhileOtherWorks,0)
+  unfinished(settledWhileOtherWorks,0,'settled-original-with-stale-history')
+  requestIndexes[0].set(settledWhileOtherWorks.id,[{status:'done',active:false}])
+  records[0].task_id=agents[1].id;await write(records[0]);health[0].activeJobs=1
+  await choose(settledWhileOtherWorks,1)
+  assert.equal(foldExecutorState(settledWhileOtherWorks.session.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id,
+    'another conversation job must not stop a settled conversation leaving its old target')
+  health[0].activeJobs=0
+  for(const status of ['queued','running']) {
+    const current=makeAgent('own-'+status);await choose(current,0)
+    unfinished(current,0,'original-'+status)
+    requestIndexes[0].set(current.id,[{status,active:true}]);health[0].activeRequests=1
+    await assert.rejects(choose(current,1),/后台任务执行/)
+    await assert.rejects(router.clear(current),/后台任务执行/)
+    requestIndexes[0].set(current.id,[]);health[0].activeRequests=0
+  }
   const sameTarget=makeAgent('same-target-job');await choose(sameTarget,0)
   const selected=foldExecutorState(sameTarget.session.snapshotEvents()).selectedTarget,jobId='b'.repeat(12)
   sameTarget.session.append('tool/call',{callId:'active-submit',name:'houdini_job_submit',arguments:'{}'})
@@ -158,6 +183,7 @@ try {
   const activeBoundary=foldExecutorState(sameTarget.session.snapshotEvents()).recoverySeq
   const oldGeneration=records[0].registration_id,oldTask=records[0].task_id
   records[0].task_id=sameTarget.id;records[0].registration_id='d'.repeat(32);await write(records[0]);health[0].activeJobs=1
+  requestIndexes[0].set(sameTarget.id,[{status:'done',active:true}])
   assert.equal(executionHistory(sameTarget.session.snapshotEvents()).activeJobs.length,1)
   await router.selectTarget(sameTarget,records[0].executor_id,selected.registration_id,signal,records[0].hip_path)
   assert.equal(foldExecutorState(sameTarget.session.snapshotEvents()).recoverySeq,activeBoundary)
@@ -165,6 +191,7 @@ try {
     'same-scene reselect keeps the live background job visible despite a discovery-generation change')
   await assert.rejects(router.clear(sameTarget),/后台任务执行/)
   health[0].activeJobs=0;records[0].registration_id=oldGeneration;records[0].task_id=oldTask;await write(records[0])
+  requestIndexes[0].set(sameTarget.id,[])
   const fifoClear=makeAgent('fifo-select-clear'),slow=gate();healthGates[0]=slow
   const firstChoice=choose(fifoClear,0);await slow.entered
   let clearCompleted=false

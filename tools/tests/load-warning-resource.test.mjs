@@ -1,3 +1,4 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -16,7 +17,7 @@ try{
  const {detail,preview}=JSON.parse(producer.stdout)
  assert(Buffer.byteLength(literalData(JSON.stringify(preview)))<=4096)
  const a='a'.repeat(32),b='b'.repeat(32),session=Session.create('warning-owner')
- await new ExecutorBinding().ensure(session,a)
+ await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,a)
  const binding={schema:2,kind:'executor_recovery',previous_executor:a,executor_id:b,operation_id:b,
   checkpoint_id:a,scene_id:b,scene_epoch:a,runtime_id:b,hip_path:'E:/project/model.hip',restored_nodes:1,
   load_warnings:preview,load_warning_details:detail}
@@ -31,7 +32,7 @@ try{
  assert(pages>1);assert.deepEqual(JSON.parse(text),JSON.parse(fs.readFileSync(detail.path,'utf8')).result.load_warnings)
  assert(JSON.parse(text)[0].includes('MIDDLE precise dependency'))
  assert(!preview.join('').includes('MIDDLE precise dependency'),'hidden middle remains available through pagination')
- const forged=Session.create('forged');await new ExecutorBinding().ensure(forged,a)
+ const forged=Session.create('forged');await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(forged,a)
  forged.append('user/message',{...recoveryMessage(binding),source:{kind:'user'}},{surfaceOp:'append'})
  await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>forged.snapshotEvents()}}}),/ENOENT/)
  const later={...binding,previous_executor:b,executor_id:a,operation_id:a,load_warnings:[],load_warning_details:undefined}

@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { generatedTraceBlock, resourceIdentity, traceSources } from "../gen-trace-client.mjs";
 import { loadCatalog } from "../catalog-lib.mjs";
 import { PLUGIN_TOOLS } from '../../lib/tool-catalog.js';
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
 
 const lfResource = Buffer.from("中文工具说明\n第二行\n");
 const crlfResource = Buffer.from("中文工具说明\r\n第二行\r\n");
@@ -585,6 +586,26 @@ const retainedEntry=View.model({eventNodes:[{...result('retained','houdini_exec'
 assert.equal(retainedEntry.resultValue.output,'/obj/retained/OUT');
 assert.ok(retainedEntry.verbs[0].argsText.includes('full canonical source'));
 assert.equal(retainedEntry.evidence[0].ok,true,'UI uses complete audit metadata, not compact placeholders');
+const liveCanonical={ok:true,stdout:'actual native computation',stderr:'',jobId:'a'.repeat(12),status:'done',
+  execution:{runtime_id:'b'.repeat(32),sequence:91,observed_at:91},
+  result:{output:'/obj/live/OUT'},verbs:[{verb:'set_parms',ok:true,args:['/obj/live',{size:3}],result:{ok:true},ms:1}],
+  requestReceipt:{request_ref:'b'.repeat(32)+'.'+'c'.repeat(32),status:'done',jobId:'a'.repeat(12),job_finished:true,job_result_available:true}};
+const nativeRead={job:{kind:LIVE_JOB_KIND,id:'houdini-live-trace'},text:JSON.stringify({kind:LIVE_JOB_RESULT,job_id:'houdini-live-trace',value:liveCanonical})};
+for(const mode of ['native','metadata','legacy']) {
+  const node={...result('live-collection','job_output',1,10,'[output truncated]'),
+    ...(mode==='legacy'?{content:t(JSON.stringify({kind:'dsh-houdini/execution-v1',callId:'live-collection',tool:'job_output',value:nativeRead}))}:{meta:{canonical:nativeRead}})};
+  const entry=View.model({eventNodes:[node]}).entries[0];
+  assert.equal(entry.isHoudini,true);
+  assert.equal(entry.resultValue.output,'/obj/live/OUT');
+  assert.equal(entry.verbs[0].verb,'set_parms');
+  assert.equal(entry.jobId,'a'.repeat(12));
+  assert.doesNotMatch(entry.state,/待收集/,'an actual job result is already collected');
+}
+const ordinary=structuredClone(nativeRead);ordinary.job.kind='bash';
+const ordinaryEntry=View.model({eventNodes:[{...result('ordinary-job','job_output',1,10,'ordinary job'),meta:{canonical:ordinary}}]}).entries[0];
+assert.equal(ordinaryEntry.isHoudini,false);
+assert.equal(ordinaryEntry.canonical,null);
+assert.equal(ordinaryEntry.verbs.length,0);
 const detailRead=View.model({eventNodes:[{...result('detail','houdini_query',2,20,'Executed successfully.'),
   call:{name:'houdini_query',argsRaw:JSON.stringify({result_ref:'a'.repeat(64)})}}]}).entries[0];
 assert.equal(detailRead.kind,'read');

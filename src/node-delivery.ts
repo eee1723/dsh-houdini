@@ -124,9 +124,10 @@ export async function openDeliveredNode(ctx:Context,input:unknown,signal:AbortSi
     throw new Error('DSH history did not return the requested task/event')
   const delivery=recordedNodeDelivery(read.target,coordinates)
   if(read.target.type==='tool/result') {
-    const callId=executionResult(read.target)!.callId
+    const outcome=executionResult(read.target)!,callId=outcome.callId
     const call=agent.session.snapshotEvents().map(event=>executionCall(event)).find(item=>item?.callId===callId)
-    if(!call||!isHoudiniTool(call.name))throw new Error('Node delivery is not a recorded Houdini tool result')
+    if(!call||!isHoudiniTool(call.name)&&!(call.name==='job_output'&&outcome.producer==='live-job'))
+      throw new Error('Node delivery is not a recorded Houdini tool result')
   }
   return navigation.open(delivery,agent,signal)
 }

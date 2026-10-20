@@ -4,7 +4,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import {targetMatchesRecord,type ExecutorRouter} from './executor-routing.js'
-import {foldExecutorState,type TargetSnapshot} from './executor-identity-projection.js'
+import {projectedExecutorState,type TargetSnapshot} from './executor-identity-projection.js'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-workspace'
 import path from 'node:path'
@@ -126,7 +126,7 @@ export class ExecutorController extends TypertRemoteService {
     const records=await this.router.directory.list()
     let selectedTarget:TargetSnapshot|null=null,state:{status:string;message?:string}
     try {
-      const binding=foldExecutorState(agent.session.snapshotEvents())
+      const binding=projectedExecutorState(this.ctx,agent.session)
       selectedTarget=binding.selectedTarget
       const record=selectedTarget?records.find(row=>row.executor_id===selectedTarget!.executor_id):undefined
       state=!selectedTarget?{status:'unbound',...(binding.selectionRecorded?{message:'已解除目标，请明确选择后再操作。'}:{})}

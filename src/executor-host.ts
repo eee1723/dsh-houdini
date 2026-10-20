@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {ExecutorDirectory,ExecutorRouter} from './executor-routing.js'
 import {ExecutorBinding} from './executor-binding.js'
 import {ExecutorController} from './executor-controller.js'
-import {projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection} from './executor-identity-projection.js'
+import {projectedExecutorBindingState,projectedExecutorState,registerExecutorIdentityProjection} from './executor-identity-projection.js'
 import {recordHoudiniContext} from './dsh-adapter.js'
 
 export const name='dsh-houdini-executor-host'
@@ -27,7 +27,7 @@ export function apply(ctx:Context,config:Config):void {
         if(!agent||agent.session!==session)throw new Error('必须先打开精确的任务，再记录工程选择。')
         recordHoudiniContext(agent,message)
       }),session=>
-      projectedExecutorIdentity(ctx,session as Parameters<typeof projectedExecutorIdentity>[1]),
+      projectedExecutorState(ctx,session),
     taskId=>!ctx.agents.get(taskId as any)||ctx.agents.get(taskId as any)?.status==='idle',
     async session=>await ctx.get('sessions')?.flush(session as any)===true,
     async(taskId,candidates,signal)=>{

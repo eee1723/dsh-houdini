@@ -1,3 +1,5 @@
+import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
+import {fixtureProjectionContext} from './fixture-session.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {Context} from '@deepseek-ai/cordis'
@@ -9,11 +11,11 @@ import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {executionHistory} from '../../lib/execution-history.js'
 import {projectExecutionNotice} from '../../lib/execution-state.js'
-import {installHoudiniExecutionLog} from '../../lib/dsh-adapter.js'
+import {installHoudiniExecutionLog,executionResult} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {apply as applySpillPolicy} from '@deepseek-ai/dsh-spill-policy'
 
-const ctx=new Context()
+const ctx=fixtureProjectionContext(new Context())
 // DSH 0.2.1 resolves run_code's working directory through this service; the
 // production Host provides it, while this fixture gets an explicit stable root.
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
@@ -24,8 +26,9 @@ const tools=new ToolRuntime(ctx,{mode:'native'})
 const execute=options=>{tools.defaultMode=options.name==='run_code'?'ptc':'native';return tools.execute(options)}
 installHoudiniExecutionLog(ctx)
 const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,options:{provider:'fixture',model:'image'}}
+ctx.provide('jobs',{start(spec){spec.run({id:'houdini-live-unit',updateProgress(){}});return 'houdini-live-unit'}})
 const fixtureExecutor=outcomeFixtures?.caught_read?.execution?.executor_id??'d'.repeat(32)
-await new ExecutorBinding().ensure(session,fixtureExecutor)
+await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,fixtureExecutor)
 let savedImages=0
 ctx.provide('llm',{async resolveModelInfo(){return {inputModalities:['text','image']}}})
 ctx.provide('attachments',{imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:200,maxImagesPerMessage:4},
@@ -36,6 +39,8 @@ let listsExecuted=0
 let bridgeReceipt
 const jobRuntime='b'.repeat(32),jobExecutor=fixtureExecutor
 const fixtureBridge={targetExecutorId:fixtureExecutor,
+  forRuntime(){return this},
+  async jobStatus(){return {jobId:'a'.repeat(12),status:'done',ok:true,stdout:'',stderr:''}},
   async listUi(owner){listsExecuted++;return {ok:true,stdout:'',stderr:'',result:{surfaces:[{target:'ui:qt-fixture',kind:'qt_window',supported:true}]},
     evidence:[{operation:'ui_list',scene_writes:0}],transaction:{status:'no_scene_change'},
     execution:{runtime_id:'capture-runtime',sequence:listsExecuted,observed_at:9},
@@ -85,8 +90,14 @@ const before=executionHistory(session.snapshotEvents())
 assert.equal(before.rows.length,2)
 assert.deepEqual(before.rows.map(row=>row.value.result.box),[1,2])
 const nestedEvent=session.snapshotEvents().find(event=>event.type==='tool/ptc-dispatch')
-assert.equal(JSON.parse(nestedEvent.data.content[0].text).kind,'dsh-houdini/execution-v1')
-assert(!nested.content[0].text.includes('dsh-houdini/execution-v1'),'the durable wrapper never enters the model summary')
+assert.deepEqual(nestedEvent.data.meta.canonical,ptcBindingValue,'released DSH persists the original nested canonical metadata')
+assert(!nestedEvent.data.content.some(block=>block.text?.includes('dsh-houdini/execution-v1')),'current dispatch logs do not duplicate canonical JSON in a plugin wrapper')
+const historical={...nestedEvent,data:{...nestedEvent.data,meta:undefined,content:[{type:'text',text:JSON.stringify({
+  kind:'dsh-houdini/execution-v1',callId:nestedEvent.data.subCallId,tool:nestedEvent.data.name,value:ptcBindingValue,
+})}]}}
+assert.deepEqual(executionResult(historical).value,ptcBindingValue,'already stored wrappers remain readable as historical facts')
+historical.data.meta={canonical:{...ptcBindingValue,result:{authoritative:'metadata'}}}
+assert.equal(executionResult(historical).value.result.authoritative,'metadata','native metadata wins over obsolete display/log copies')
 const persisted=validateStoredEvents(session.header,JSON.parse(JSON.stringify(session.snapshotEvents())))
 const restored=Session.create(session.id,persisted,session.header)
 assert.deepEqual(executionHistory(restored.snapshotEvents()).rows.map(row=>row.value.result.box),[1,2])
@@ -95,9 +106,9 @@ assert.equal(submit.isError,false)
 assert.deepEqual(submit.meta.canonical,submit.value,'native admission stores the same value as nested dispatch, without invented execution success')
 logNative('job-submit','houdini_job_submit',{code:'pass'},submit)
 assert.equal(projectExecutionNotice(session.snapshotEvents()).active_jobs.length,1)
-const cancel=await execute({callId:'job-cancel',name:'houdini_job_cancel',arguments:{jobId:'a'.repeat(12)},agent,signal})
-assert.equal(cancel.isError,false)
-assert.deepEqual(cancel.meta.canonical,cancel.value,'queued cancellation is retained even without an execution observation')
+const historicalCancel={jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}
+const cancel={content:[{type:'text',text:'Historical queued cancellation'}],isError:false,
+  meta:{canonical:historicalCancel}}
 logNative('job-cancel','houdini_job_cancel',{jobId:'a'.repeat(12)},cancel)
 assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'real DSH metadata clears the cancelled job from recorded active work')
 const nativeList=await execute({callId:'list-native',name:'houdini_ui_list',arguments:{},agent,signal})
@@ -167,7 +178,7 @@ if (outcomeFixtures) {
 }
 // Use the released middleware, not a hand-written truncator. A display spill
 // must never cut the PTC audit JSON in its middle or lose later failure facts.
-const spillCtx=new Context()
+const spillCtx=fixtureProjectionContext(new Context())
 spillCtx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(spillCtx,{})
 const spillRuntime=new ToolRuntime(spillCtx,{mode:'ptc'})
@@ -195,8 +206,9 @@ assert(spillCopies.length>0&&spilled.content[0].text.includes('Full formatted re
 assert(!spilled.content[0].text.includes('dsh-houdini/execution-v1'),'audit framing is not model-facing text')
 assert.equal(spillExecuted,1,'retention never retries a scene operation')
 const durable=spillSession.snapshotEvents().find(e=>e.type==='tool/ptc-dispatch')
-const durableValue=JSON.parse(durable.data.content[0].text).value
-assert.deepEqual(durableValue,largeReceipt,'large PTC audit JSON remains valid and complete after the released spill policy')
+const durableValue=durable.data.meta.canonical
+assert.deepEqual(durableValue,largeReceipt,'large PTC metadata remains complete after the released spill policy')
+assert(durable.data.content.some(block=>block.text?.includes('Full formatted result stored at:')),'the durable display copy actually spills')
 const spillStored=validateStoredEvents(spillSession.header,JSON.parse(JSON.stringify(spillSession.snapshotEvents())))
 assert.deepEqual(executionHistory(Session.create(spillSession.id,spillStored,spillSession.header).snapshotEvents()).rows[0].value,largeReceipt)
 console.log('DSH 0.2 API: native/nested dispatch, durable replay, exact large receipts with real display spill, one execution each passed')

@@ -6,7 +6,7 @@ import {
   processOutcomeFor,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
-import { HOUDINI_TOOLS } from '../lib/tool-catalog.js';
+import { executionResult } from '../lib/dsh-adapter.js';
 import { mergeRequestStatus, isPendingRequestStatus } from '../lib/execution-history.js';
 
 function nestedResultContent(message) {
@@ -133,20 +133,9 @@ export function normalizeTraceSteps(events) {
     const args = parseToolArguments(call.arguments);
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
-    let canonical = event.data?.meta?.canonical;
-    if (nested && Object.hasOwn(HOUDINI_TOOLS, call.name)) {
-      for (const block of event.data.content || []) {
-        if (block.type !== 'text') continue;
-        let record;
-        try {record = JSON.parse(block.text)} catch {continue}
-        if (record?.kind === 'dsh-houdini/execution-v1'
-            && record.callId === callId && record.tool === call.name) {
-          canonical = record.value;
-          break;
-        }
-      }
-    }
-    const envelope = String(call.name).startsWith('houdini_') && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
+    const outcome = executionResult(event),canonical = outcome?.value;
+    const isHoudini = String(call.name).startsWith('houdini_') || call.name === 'job_output' && outcome?.producer === 'live-job';
+    const envelope = isHoudini && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
     const observation = envelope?.execution;
     const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
       ? `${observation.runtime_id}:${observation.sequence}` : null;
@@ -177,7 +166,7 @@ export function normalizeTraceSteps(events) {
       turn: event.data?.turn ?? null,
       step: event.data?.step ?? null,
       tool: call.name || '?',
-      isHoudini: String(call.name || '').startsWith('houdini_'),
+      isHoudini,
       failed: toolResultFailed(message, resultText, call.name) || (envelope?.status ? envelope.status === 'failed' : envelope?.ok === false),
       processOutcome: processOutcomeFor(call.name, resultText, event.data?.meta),
       args,

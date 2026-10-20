@@ -6,9 +6,11 @@ DSH 0.2.1默认模型目录包含`deepseek-flash`（显示名`DeepSeek-V4.1-Flas
 
 网络继承由DSH的http-proxy包维护，公开proxyRouteFor现在异步返回当前请求的确定路线；配套web-fetch-http与本插件探针同步消费，不能混装旧版同步调用者。
 
-当前组合还包含[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json)指定的同版本源码修复。唯一修改源为声明中的补丁，基线固定到上游提交；不覆盖正在运行的缓存，不用alpha版本或强制依赖升级代替验证。修复覆盖Windows自有目录的沙箱标签初始化、平台临时目录、只读权限诊断、Windows系统代理/PAC继承、受文件策略保护的二进制下载、命令结果呈现及Gateway连接活性判断。
+当前组合还包含[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json)指定的同版本源码修复。唯一修改源为声明中的补丁，基线固定到上游提交；不覆盖正在运行的缓存，不用alpha版本或强制依赖升级代替验证。修复覆盖Windows自有目录的沙箱标签初始化、平台临时目录、只读权限诊断、Windows系统代理/PAC继承、受文件策略保护的二进制下载、命令结果呈现、Gateway连接活性及原生jobs完成通知和原值保留。
 
 Gateway心跳同时观察Pong、入站消息、等待过发送缓冲区的完整写入，以及大帧发送队列的实际减少；大帧未发完不等于传输停止。尚未写出的Ping只保留一个，不继续堆积；没有实际进展的连接仍按原心跳预算退出，立即完成的持续发包不制造对端在线证据。退出日志只记录时间、缓冲字节数和Ping写入状态，不记录请求正文或凭据。此传输状态与Houdini执行端、场景加载代际及请求是否完成分别判断。
+
+原生jobs的取消仅在实际killed后抑制完成通知；取消竞争后仍completed/failed的结果继续通知。job_output持久保留canonical原值，模型展示限额不截坏执行事实。registry在终态后释放生产者控制引用，首次消费结果后释放已交付正文，继续保留任务列表、状态和输出ring；完整回执仍由原生会话日志维护，不由Houdini插件另建回收层。
 
 会话目录接续由同一DSH补丁维护：`workspaceRegistry.relocateSession`在模型/工具步骤边界沿唯一持久写入器更新工程目录，并在同一持久迁移意图内追加原生`working-directory/change`事件，再调整工作区归属。已加载与冷会话都保持会话ID、创建时间、已有事件字节、置顶与归档；文件工具、模型上下文和附件搜索从原生工作目录投影取得新位置，原生会话摘要发布新工程目录。步骤入口若已组装旧目录的提示/运行上下文，则重新组装后才准入模型请求，不重复执行步骤监听器。原日志和写锁保持原物理位置，后续追加使用该位置，不按新cwd生成第二份历史。中断的迁移意图由DSH工作区域数据恢复，不由Houdini插件另建账本。已开始的命令/工具保留启动时的范围，后续步骤使用新目录；工程依赖文件不会因此自动搬运。
 
@@ -38,12 +40,13 @@ DSH负责模型调用、会话与持久化、Agent循环、任务/计划、通�
 | 模式 | dsh-agent-preset声明、registry默认Houdini |
 | 消息 | 独立source.kind=dsh-houdini，使用DSH原生context |
 | 工具 | defineTool注册，原始结果供程序使用、render负责模型文本、presentationMeta供界面 |
-| 嵌套工具日志 | tools/ptc-dispatch-log公开扩展点保存明确标识的执行事实；不追加DSH不支持的事件类型 |
+| 嵌套工具日志 | 直接消费DSH持久的meta.canonical；展示正文由原生保留策略处理，不再另写整份日志包装 |
 | 图像 | DSH原生附件与模型输入能力；图片展示不代替实际理解 |
+| 子进程环境 | 网络转录与诊断复用DSH的scrubbedParentEnv，仅显式转交本次凭据或诊断定位；离线媒体与hython保留更小的必要环境 |
 | 客户端 | CJS factory、公开conversation/trajectory与workspace/session接口 |
 | 运行历史 | Session格式4，native和PTC调用共用实际执行事实索引 |
 
-原生工具结果使用meta.canonical；PTC持久日志的文本记录采用精确kind、调用ID和工具名定位。适配只改变日志副本，模型文本、程序值与附件走原生通道。模型任务判断不进入这份日志。
+原生及PTC工具结果使用DSH持久的meta.canonical；展示spill不改变该原值，插件不再维护另一份PTC日志正文。已存旧文本记录仅作为历史格式读取。原生job_output通过正式live producer标识解码Houdini回执，普通DSH jobs不成为场景事实。模型任务判断不进入执行日志。
 
 图像的原始文件、持久附件和实际模型请求版本分别核对。固定pi-ai路由已提供requestImagePixelBudget、requestImageMaxBytes及maxRequestImageBytes：前两者控制每张请求图的像素预算和编码字节目标，后者限制整次请求的base64图片字节；经DSH原生provider profile设置，不能另建插件缩图或历史图片账本。调整请求版本不改源文件、持久附件和会话中的原参考/A/B；恢复配置后仍应取得原请求版本。像素减少可能伴随编码改变，不能从文件大小、请求字节或分辨率推断token费用或识图质量。通用read_image沿原生自动处理，具体路由的能力和验证入口见[开发维护](development.md)。
 

@@ -323,12 +323,33 @@ for code in (
     "def call():\n    unused=[None for eval in ()]\n    return eval('1+1')\ncall()",
     "unused=[(run := exec) for item in [0]]\nrun('__result__=1')",
     "class Reader:\n    eval=lambda value: value\n    def call(self): return eval('1+1')\nReader().call()",
+    "run = exec if True else None\nrun('__result__=1')",
+    "run = [exec][0]\nrun('__result__=1')",
+    "run = (lambda: exec)()\nrun('__result__=1')",
+    "def invoke(run): return run('1+1')\ninvoke(eval)",
+    "import builtins as b\nrun = [getattr(b,'exec')][0]\nrun('__result__=1')",
+    "import builtins as b\nrun = (lambda: b.__dict__['eval'])()\nrun('1+1')",
 ):
     for read_only in (False, True):
         denied = dsh_bridge.run_code(code, read_only=read_only, allow_raw='cannot exempt hidden source')
         assert not denied['ok'] and 'Dynamic exec/eval' in denied['error'], denied
         assert denied['rawUsage']['gateOutcome'] == ('read_only_blocked' if read_only else 'blocked'), denied
         assert denied['transaction']['status'] == 'no_scene_change', denied
+
+# These exact harmless aliases previously let a read-only request change the
+# real Houdini frame while its receipt falsely claimed no_scene_change. The
+# builtin reference must be rejected before its later invocation is obscured.
+frame_before_hidden = float(hou.frame())
+try:
+    for reference in ('exec if True else None', '[exec][0]', '(lambda: exec)()'):
+        source = f"run = {reference}\nrun('hou.setFrame({frame_before_hidden + 17!r})')"
+        for read_only in (False, True):
+            denied = dsh_bridge.run_code(source, read_only=read_only)
+            assert not denied['ok'] and 'Dynamic exec/eval' in denied['error'], denied
+            assert float(hou.frame()) == frame_before_hidden, denied
+            assert denied['transaction']['status'] == 'no_scene_change', denied
+finally:
+    hou.setFrame(frame_before_hidden)
 
 # Names are not builtin identity: explicit local functions, parameters and
 # ordinary object methods named eval/exec retain normal Python behavior.
