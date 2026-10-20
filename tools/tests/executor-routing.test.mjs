@@ -77,6 +77,8 @@ try {
       installation,bridge_url:`http://127.0.0.1:${server.address().port}`,houdini_version:i?'22.0.368':'21.0.440',pid:100+i,
       state:'registered',task_id:null,workbench:true,scene_id:String(i+7).repeat(32),scene_epoch:(i?'a':'9').repeat(32),hip_is_new:false,
       hip_path:path.join(directory,'project-'+i,'asset.hip'),workspace_path:path.join(directory,'project-'+i)}
+    record.runtime={hfs:path.join(directory,'H'+i),python:path.join(directory,'H'+i,'python.exe'),
+      pythonVersion:i?'3.13.7':'3.11.7',executable:path.join(directory,'H'+i,'houdini.exe')}
     records.push(record);await write(record)
   }
   const identityOf=session=>projectedExecutorState(ctx,session)
@@ -98,8 +100,26 @@ try {
   assert.equal(initial.state.status,'unbound')
   assert(initial.candidates.every(record=>record.connection_status==='pending'))
   assert.equal(claims.length,0)
+  await assert.rejects(router.resolveRuntime(context(0)),/houdini_installation/)
+  assert.equal(questions,0,'independent work cannot silently choose a live scene by workspace')
   await controller.select(input(agents[0],records[0]),signal)
   await controller.select(input(agents[1],records[1]),signal)
+  const requestsBeforeRuntime=bodies.length,questionsBeforeRuntime=questions
+  healthFailures.fill(true)
+  records[0].state='disconnected';await write(records[0])
+  const runtimes=await Promise.all([router.resolveRuntime(context(0)),router.resolveRuntime(context(1))])
+  assert.deepEqual(runtimes.map(value=>value.runtime),records.map(record=>record.runtime),
+    'independent runs use each session\'s exact selected installation, including disconnected records')
+  assert.equal(bodies.length,requestsBeforeRuntime,'installation resolution sends no request to unavailable live endpoints')
+  assert.equal(questions,questionsBeforeRuntime,'independent runtime selection cannot open a scene chooser')
+  const recordedRuntime=records[0].runtime;delete records[0].runtime;await write(records[0])
+  await assert.rejects(router.resolveRuntime(context(0)),/houdini_installation/,'old records require an explicit installation, never another target or Host HFS')
+  records[0].runtime=recordedRuntime;await write(records[0])
+  const invalidRuntime={...records[0],runtime:{...recordedRuntime,python:'python.exe'}};await write(invalidRuntime)
+  await assert.rejects(router.resolveRuntime(context(0)),/Invalid registered Houdini installation runtime/)
+  await write(records[0])
+  await assert.rejects(router.resolve(context(0)),/disconnected/,'offline runtime metadata cannot grant live access')
+  records[0].state='registered';await write(records[0]);healthFailures.fill(false)
   assert.equal(claims.length,0,'select does not acquire a writer')
   assert.equal((await controller.list({sessionId:agents[0].id})).state.status,'selected')
   const bridges=await Promise.all([router.resolve(context(0)),router.resolve(context(1))])

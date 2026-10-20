@@ -137,7 +137,8 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     y = −depth × 垂直间距，同深度按当前 x 排序居中，环上边兜底不断裂。
     ownership 过滤与 ``foreign_nodes_skipped`` 语义两种模式一致。
     ``mode='handoff'`` = 对显式叶子Network Box排布；comfortable保留宽松分层，
-    readable让连续主输入链竖直对齐、侧支分列，并把声明的控制/检查区分开。
+    readable保留主输入链与侧支关系，宽层按实际占用折行，独立连通部分和分组紧凑排列；
+    长链保留自然高度，声明的控制/检查区分别安排。只改位置，不创建Subnet或迁移依赖。
     ``mode='component'`` = 对显式一层组件容器布局，整体移动其叶子框及节点。
     两者可直接应用；dry_run和expected_plan供需要预览/确认状态的调用使用。
     其他网络项全部作为固定障碍。

@@ -60,6 +60,7 @@ export function sharedExecutorConnection(ctx:Context,registry:string) {
   return {
     registry,
     resolve:(exec:Parameters<ExecutorRouter['resolve']>[0],options?:Parameters<ExecutorRouter['resolve']>[1])=>router().resolve(exec,options),
+    resolveRuntime:(exec:Parameters<ExecutorRouter['resolveRuntime']>[0])=>router().resolveRuntime(exec),
     resolveHistorical:(exec:Parameters<ExecutorRouter['resolveHistorical']>[0],origin:Parameters<ExecutorRouter['resolveHistorical']>[1])=>router().resolveHistorical(exec,origin),
     selectFor:(agent:Parameters<ExecutorRouter['selectFor']>[0],signal:AbortSignal)=>router().selectFor(agent,signal),
     sceneContextFor:(session:Parameters<ExecutorRouter['sceneContextFor']>[0],signal?:AbortSignal)=>router().sceneContextFor(session,signal),

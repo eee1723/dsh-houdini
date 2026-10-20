@@ -24,8 +24,6 @@ ROLE_COLORS = {
     'output': (0.17, 0.27, 0.14),
 }
 NEUTRAL_COLOR = (0.19, 0.21, 0.24)
-MAX_BOXES = 64
-MAX_NODES = 512
 SCHEMA = 2
 RESERVED_SERVICE_NAMES = {'__dsh_houdini_render_service'}
 
@@ -408,45 +406,51 @@ def _restore(snapshot):
 def transaction_journal():
     global _ACTIVE_JOURNAL
     previous = _ACTIVE_JOURNAL
-    journal = {'entries': [], 'boxes': 0, 'nodes': 0}
+    journal = {'entries': [], 'boxes': 0, 'nodes': 0,
+               'seen_boxes': set(), 'seen_nodes': set(), 'created_boxes': set()}
     _ACTIVE_JOURNAL = journal
     try: yield journal
     finally: _ACTIVE_JOURNAL = previous
 
 
-def _check_journal_capacity(boxes, nodes):
-    if _ACTIVE_JOURNAL is None: return
-    if _ACTIVE_JOURNAL['boxes'] + boxes > MAX_BOXES or _ACTIVE_JOURNAL['nodes'] + nodes > MAX_NODES:
-        raise ValueError('box transaction journal budget exceeded; split the exec before any writes')
-
-
 def _journal(snapshot, kind):
+    """Keep one native baseline per identity; operation compensation stays local."""
     if _ACTIVE_JOURNAL is None: return
-    _ACTIVE_JOURNAL['entries'].append({'kind': kind, 'snapshot': snapshot})
-    existing = {state['identity'] for state in snapshot['boxes']}
-    created = set(snapshot.get('created_box_identities') or []) - existing
-    _ACTIVE_JOURNAL['boxes'] += len(existing | created)
-    _ACTIVE_JOURNAL['nodes'] += len(snapshot['nodes'])
+    journal=_ACTIVE_JOURNAL;parent=snapshot['parent_identity']
+    states=[];positions=[]
+    for state in snapshot['boxes']:
+        key=(parent,state['identity'])
+        if key not in journal['seen_boxes'] and key not in journal['created_boxes']:
+            states.append(state);journal['seen_boxes'].add(key)
+    for state in snapshot['nodes']:
+        key=(parent,state['identity'])
+        if key not in journal['seen_nodes']:
+            positions.append(state);journal['seen_nodes'].add(key)
+    journal['created_boxes'].update((parent,identity) for identity in snapshot.get('created_box_identities') or [])
+    journal['entries'].append({'kind':kind,'snapshot':{**snapshot,'boxes':states,'nodes':positions}})
+    journal['boxes']=len(journal['seen_boxes']|journal['created_boxes'])
+    journal['nodes']=len(journal['seen_nodes'])
 
 
 def journal_containing_boxes(nodes, kind='pre_position_boxes'):
     """Capture first-touch box state before another supported verb moves/deletes members."""
     if _ACTIVE_JOURNAL is None:return
-    grouped={}
+    grouped={};moving={}
     for node in nodes:
+        moving.setdefault(node.parent(),{})[int(node.sessionId())]=node
         box=node.parentNetworkBox()
         while box is not None:
             grouped.setdefault(box.parent(),{})[int(box.sessionId())]=box
             box=box.parentNetworkBox()
     snapshots=[]
     for parent,by_id in grouped.items():
-        box_rows=list(by_id.values())
-        member_rows={int(item.sessionId()):item for box in box_rows for item in box.items(recurse=True)
-                     if isinstance(item,hou.Node)}
-        snapshots.append(_snapshot(parent,box_rows,list(member_rows.values())))
-    box_count=sum(len(row['boxes']) for row in snapshots)
-    node_count=sum(len(row['nodes']) for row in snapshots)
-    if snapshots:_check_journal_capacity(box_count,node_count)
+        parent_id=int(parent.sessionId())
+        box_rows=[box for identity,box in by_id.items()
+                  if (parent_id,identity) not in _ACTIVE_JOURNAL['seen_boxes']
+                  and (parent_id,identity) not in _ACTIVE_JOURNAL['created_boxes']]
+        member_rows=[node for identity,node in moving[parent].items()
+                     if (parent_id,identity) not in _ACTIVE_JOURNAL['seen_nodes']]
+        if box_rows or member_rows:snapshots.append(_snapshot(parent,box_rows,member_rows))
     for snapshot in snapshots:_journal(snapshot,kind)
 
 
@@ -547,11 +551,11 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
     _validate_allow_foreign(allow_foreign)
     if type(dry_run) is not bool:
         raise ValueError('dry_run must be boolean')
-    if not isinstance(groups, (list, tuple)) or len(groups) > MAX_BOXES:
-        raise ValueError(f'groups must contain at most {MAX_BOXES} entries')
+    if not isinstance(groups, (list, tuple)):
+        raise ValueError('groups must be a list or tuple')
     if remove is None: remove = []
-    if not isinstance(remove, (list, tuple)) or len(remove) > MAX_BOXES:
-        raise ValueError(f'remove must contain at most {MAX_BOXES} exact names')
+    if not isinstance(remove, (list, tuple)):
+        raise ValueError('remove must be a list or tuple of exact names')
     remove = [_safe_name(name) for name in remove]
     if len(set(remove)) != len(remove): raise ValueError('remove names must be unique')
     if not parent.isNetwork(): raise ValueError(f'{parent.path()} is not a network')
@@ -698,10 +702,6 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
                 require_node_owned(item, 'network_boxes affected member', allow_foreign)
                 affected_nodes[int(item.sessionId())] = item
     affected_box_count = len(affected) + len([g for g in normalized if g['name'] not in existing])
-    if affected_box_count > MAX_BOXES:
-        raise ValueError(f'operation affects more than {MAX_BOXES} boxes')
-    if len(affected_nodes) > MAX_NODES:
-        raise ValueError(f'operation affects more than {MAX_NODES} nodes')
 
     state_payload = {
         'schema': SCHEMA, 'generation': _BOX_GENERATION,
@@ -760,23 +760,6 @@ def _prepare(parent, groups, remove, dry_run, expected_plan, allow_foreign,
             'plan_sha256': plan_sha, 'state_payload': state_payload}
 
 
-def _would_write(prepared):
-    if prepared['remove']: return True
-    for group in prepared['groups']:
-        box=prepared['existing'].get(group['name'])
-        if box is None:return True
-        current={int(item.sessionId()) for item in _box_items(box) if isinstance(item,hou.Node)}
-        desired={int(node.sessionId()) for node in group['members']}
-        current_boxes={int(item.sessionId()) for item in box.networkBoxes(recurse=False)}
-        desired_boxes={int(prepared['existing'][name].sessionId())
-                       for name in group['boxes'] if name in prepared['existing']}
-        if any(name not in prepared['existing'] for name in group['boxes']): return True
-        if current!=desired or current_boxes!=desired_boxes or box.comment()!=group['label']:return True
-        if group['color'] is not None and any(abs(a-b)>1e-6 for a,b in zip(_color(box),group['color'])):
-            return True
-    return False
-
-
 def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
                         expected_plan=None, allow_foreign=None,
                         active_owner_session=None, active_owner_call=None,
@@ -832,9 +815,6 @@ def apply_network_boxes(parent, groups, *, remove=None, dry_run=False,
         return {**base, 'boxes': planned_boxes,
                 'created': [], 'updated': [], 'removed': [], 'unchanged': [],
                 'protected_items': []}
-
-    if _would_write(prepared):
-        _check_journal_capacity(prepared['affected_box_count'],len(prepared['affected_nodes']))
 
     snapshot = _snapshot(parent, prepared['affected_boxes'], prepared['affected_nodes'])
     created, updated, removed, unchanged = [], [], [], []
@@ -1033,8 +1013,8 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
         _validate_allow_foreign(allow_foreign)
         if type(dry_run) is not bool:raise ValueError('dry_run must be boolean')
         if profile not in ('comfortable','readable'):raise ValueError("profile must be 'comfortable' or 'readable'")
-        if not isinstance(box_refs,(list,tuple)) or not 1<=len(box_refs)<=MAX_BOXES:
-            raise ValueError('boxes must contain 1..64 exact names or identities')
+        if not isinstance(box_refs,(list,tuple)) or not box_refs:
+            raise ValueError('boxes must contain nonempty exact names or identities')
         selected=[]
         for ref in box_refs:
             box=(parent.findNetworkBox(ref) if isinstance(ref,str) else
@@ -1059,7 +1039,6 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
                     require_node_owned(item,'handoff layout member',allow_foreign)
                 movable_nodes[int(item.sessionId())]=item
         if not movable_nodes:raise ValueError('handoff boxes contain no movable nodes')
-        if len(movable_nodes)>MAX_NODES:raise ValueError('handoff exceeds 512 movable nodes')
         node_group={int(item.sessionId()):box.name() for box in selected for item in _box_items(box) if isinstance(item,hou.Node)}
         node_rows=[{'key':str(identity),'group':node_group[identity],'rect':_node_rect(node).as_list(),
                     **({'label':node.name()} if profile=='readable' else {})}
@@ -1080,7 +1059,6 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
         dot_footprint=(max_width*.5,max_height)
         obstacles=collect_editor_obstacles(parent,excluded_node_ids=movable_nodes,
             excluded_box_ids=selected_ids,dot_footprint=dot_footprint)
-        if len(obstacles)>MAX_NODES:raise ValueError('fixed obstacle budget exceeds 512')
         from dsh_network_layout import plan_handoff
         planned=plan_handoff(node_rows,group_rows,edges,obstacles,style=profile)
         if not planned['ok']:
@@ -1111,11 +1089,9 @@ def apply_handoff_layout(parent, box_refs, *, profile='comfortable', dry_run=Fal
           'scope':'owned or individually authorized flat boxes; presentation only; no wire crossing claim'}
     if dry_run:return {**base,'layout_status':'planned','node_positions':planned['node_positions'],'box_bounds':planned['box_bounds'],
                        'moved_nodes':[],'changed_boxes':[],'restored':None,'restore_errors':[]}
-    will_write=(any(box.autoFit() or not _rect_close(_box_rect(box),Rect(*planned['box_bounds'][box.name()]),1e-4) for box in selected)
-                or any(any(abs(a-b)>1e-6 for a,b in zip(node.position(),planned['node_positions'][str(identity)]))
-                       for identity,node in movable_nodes.items()))
-    if will_write:_check_journal_capacity(len(selected),len(movable_nodes))
-    snapshot=_snapshot(parent,selected,list(movable_nodes.values()));writes=0;journaled=False
+    moving=[node for identity,node in movable_nodes.items()
+            if any(abs(a-b)>1e-6 for a,b in zip(node.position(),planned['node_positions'][str(identity)]))]
+    snapshot=_snapshot(parent,selected,moving);writes=0;journaled=False
     moved=[];changed=[]
     try:
         for box in selected:
@@ -1181,8 +1157,8 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
         _validate_allow_foreign(allow_foreign)
         if type(dry_run) is not bool:raise ValueError('dry_run must be boolean')
         if profile not in ('comfortable','readable'):raise ValueError("profile must be 'comfortable' or 'readable'")
-        if not isinstance(box_refs,(list,tuple)) or not 1<=len(box_refs)<=MAX_BOXES:
-            raise ValueError('boxes must contain 1..64 exact component container names or identities')
+        if not isinstance(box_refs,(list,tuple)) or not box_refs:
+            raise ValueError('boxes must contain nonempty exact component container names or identities')
         selected=[];leaf_boxes={};movable_nodes={};leaf_group={}
         for ref in box_refs:
             outer=(parent.findNetworkBox(ref) if isinstance(ref,str) else
@@ -1218,7 +1194,6 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
                     node_identity=int(node.sessionId())
                     if node_identity in movable_nodes:raise ValueError(f'{node.path()} appears in multiple leaf boxes')
                     movable_nodes[node_identity]=node
-        if len(movable_nodes)>MAX_NODES:raise ValueError('component layout exceeds 512 movable nodes')
         item_rows=[{'key':str(identity),'group':leaf_group[identity],'rect':_box_rect(leaf).as_list(),
                     **({'label':leaf.name()} if profile=='readable' else {})}
                    for identity,leaf in sorted(leaf_boxes.items())]
@@ -1240,10 +1215,9 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
         max_height=max(_box_rect(box).height for box in leaf_boxes.values())
         obstacles=collect_editor_obstacles(parent,excluded_node_ids=movable_nodes,
             excluded_box_ids=selected_box_ids,dot_footprint=(max_width*.25,max_height*.25))
-        if len(obstacles)>MAX_NODES:raise ValueError('fixed obstacle budget exceeds 512')
         from dsh_network_layout import plan_handoff
         planned=plan_handoff(item_rows,group_rows,sorted(edges),obstacles,style=profile,
-                             **({'item_kind':'box'} if profile=='readable' else {}))
+                             item_kind='box')
         if not planned['ok']:
             return {'ok':False,'mode':'component','dry_run':dry_run,'applied':False,'scene_writes':0,
                     'layout_status':'blocked','reason':planned.get('reason'),'fixed_obstacles':obstacles,
@@ -1275,12 +1249,11 @@ def apply_component_layout(parent, box_refs, *, profile='comfortable', dry_run=F
         return {**base,'layout_status':'planned','leaf_box_positions':planned['node_positions'],
                 'component_box_bounds':planned['box_bounds'],'moved_nodes':[],'moved_leaf_boxes':[],
                 'changed_component_boxes':[],'restored':None,'restore_errors':[]}
-    will_write=(any(any(abs(a-b)>1e-6 for a,b in zip(_box_rect(leaf).as_list()[:2],planned['node_positions'][str(identity)]))
-                    for identity,leaf in leaf_boxes.items())
-                or any(not _rect_close(_box_rect(box),Rect(*planned['box_bounds'][box.name()]),1e-4) for box in selected))
+    moving=[node for identity,leaf in leaf_boxes.items()
+            if any(abs(a-b)>1e-6 for a,b in zip(_box_rect(leaf).as_list()[:2],planned['node_positions'][str(identity)]))
+            for node in _box_items(leaf)]
     all_boxes=selected+list(leaf_boxes.values())
-    if will_write:_check_journal_capacity(len(all_boxes),len(movable_nodes))
-    snapshot=_snapshot(parent,all_boxes,list(movable_nodes.values()));writes=0;journaled=False
+    snapshot=_snapshot(parent,all_boxes,moving);writes=0;journaled=False
     moved_nodes=[];moved_leaves=[];changed_components=[]
     try:
         for identity,leaf in leaf_boxes.items():
@@ -1373,7 +1346,6 @@ def prepare_parent_deletion(node, *, active_owner_session, allow_foreign,
         current = list(parent.networkBoxes())
         for box in current:include(box,True)
     if not boxes: return None
-    _check_journal_capacity(len(boxes), len({int(item.sessionId()) for item in nodes}))
     by_parent = {}
     for box in boxes: by_parent.setdefault(box.parent(), []).append(box)
     snapshots=[]

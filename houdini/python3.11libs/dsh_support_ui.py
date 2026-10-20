@@ -9,7 +9,7 @@ import dsh_support_report as reports
 
 
 def show(*, parent=None, source_root=None, managed=None, startup_error=None):
-    from hutil.Qt import QtCore, QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     from dsh_ui_style import style_dialog
     dialog = QtWidgets.QDialog(parent)
     dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)

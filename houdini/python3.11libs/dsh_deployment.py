@@ -246,13 +246,18 @@ def verify_inventory(root: Path, manifest: dict, progress=lambda s: None):
             progress(f"Checking files · {index + 1}/{len(inventory)}")
     if set(actual) != expected:
         raise ValueError("unlisted files in installation")
+    verify_runtime_metadata(root, manifest)
+    return inventory
+
+
+def verify_runtime_metadata(root: Path, manifest: dict):
+    """Check the small runtime contract; full payload verification belongs to staging/repair."""
     if digest(root / "app/package-lock.json") != manifest["lockSha256"]:
         raise ValueError("runtime dependency lock mismatch")
     dsh = read_json(root / "app/node_modules/@deepseek-ai/dsh/package.json")
     plugin = read_json(root / "app/node_modules/dsh-houdini/package.json")
     if dsh["version"] != manifest["dshVersion"] or plugin["version"] != manifest["version"]:
         raise ValueError("installed package versions do not match the release")
-    return inventory
 
 
 def _process_started(pid):
@@ -400,6 +405,11 @@ class Store:
             extract_payload(directory / manifest["asset"]["name"], temp, manifest, progress)
             shutil.copyfile(directory / "release.json", temp / "release.json")
             shutil.copyfile(directory / "release.sig.json", temp / "release.sig.json")
+            # Only a fully verified and loadable package becomes selectable.
+            # Probe with disposable data, never the user's serving profile.
+            with tempfile.TemporaryDirectory(prefix="probe-", dir=staging) as probe_home:
+                self.probe({"root": str(self.root), "install": str(temp), "home": probe_home,
+                            "nodeVersion": manifest["nodeVersion"], "dshVersion": manifest["dshVersion"]}, progress)
             install_id = f"{manifest['version']}-{manifest['asset']['sha256'][:12]}-{uuid.uuid4().hex[:8]}"
             destination = self.installation(install_id)
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -446,7 +456,10 @@ class Store:
                 if houdini_version not in manifest["houdini"]:
                     raise ValueError("This release does not support this Houdini version")
                 install = self.installation(pinned_id)
-                verify_inventory(install, manifest, progress)
+                # stage() publishes this installation only after full inventory
+                # verification and runtime probes. Ordinary starts consume that
+                # transaction, while retaining signed identity and version checks.
+                verify_runtime_metadata(install, manifest)
                 home = checked_path(self.root, "data/" + pinned_id)
                 if home.exists() and pinned_id not in (state["current"], state["previous"]):
                     # A failed activation's snapshot must not later hide newer
@@ -470,7 +483,6 @@ class Store:
                     "install": str(install), "home": str(home), "version": manifest["version"],
                     "nodeVersion": manifest["nodeVersion"], "dshVersion": manifest["dshVersion"],
                 }
-                self.probe(context, progress)
                 if prepare is not None:
                     prepare(context, progress)
                 if pinned_id == state["pending"]:

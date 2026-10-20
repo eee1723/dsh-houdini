@@ -135,6 +135,11 @@ def driver(args):
             assert a['executor_id']!=b['executor_id'] and a['bridge_url']!=b['bridge_url']
             assert a['hip_path']!=b['hip_path'] and a['task_id'] is None and b['task_id'] is None
             for i,record in enumerate(records):
+                runtime = record['runtime']
+                assert Path(runtime['hfs']).resolve() == Path(args.hython[i]).resolve().parents[1], runtime
+                assert Path(runtime['python']).is_file() and Path(runtime['executable']).is_file(), runtime
+                assert runtime['pythonVersion'].startswith('3.11.' if record['houdini_version'].startswith('21.') else '3.13.'), runtime
+                assert call(record, '/health')[1]['runtime'] == runtime, 'registry and health must consume the same installation facts'
                 task='task-'+str(i)
                 def submit(code,owner=task,record=record,read_only=False):
                     # Every HTTP execution now carries the complete admission

@@ -10,15 +10,17 @@ DSH团队成员可以独立准备模块代码与文件，并用[独立执行skil
 
 ## 接入builder
 
-使用`houdini_exec`的`script`字段传入绝对`.py`路径，可用`expected_sha256`固定已验证文件的hash；需要调用文件中定义的构建函数时，将调用放在可选`code`尾段，例如：
+需要创建节点的builder接入已约定的父网络与共享输入，可在其中构建Subnet或同层支路；公开输出供实际消费者使用。跨OBJ、材质或LOP的构建说明其依赖，纯文件或事实脚本沿自身接口交付。容器选择见[逻辑模块](modeling-methods.md#逻辑模块与容器选择)。
+
+使用`houdini_exec`的`script`字段传入绝对`.py`路径，可用`expected_sha256`固定已验证文件的hash；需要调用文件中定义的构建函数时，将调用放在可选`code`尾段，例如在已选模块网络中构建：
 
 ```json
-{"script":"D:/project/dsh-artifacts/scripts/build_part.py","code":"parent = tab_create('/obj', 'geo', name='part')\n__result__ = build_part(parent)"}
+{"script":"D:/project/dsh-artifacts/scripts/build_part.py","code":"parent = hou.node('/obj/asset/part')\n__result__ = build_part(parent)"}
 ```
 
 只有`script`时，文件以`__name__='__main__'`运行；带`code`尾段时为`__name__='__dsh_builder__'`，尾段调用其已定义入口。`__file__`是实际源文件路径。文件源码与尾段进入同一次Bridge执行，共用当前作者、事务与执行边界；不要改用`exec`或`eval`动态执行未进入该入口的构建源码。准确字段及边界见[执行契约](../../../docs/execution-contract.md)。
 
-builder创建的是当前工程中的真实节点，独立进程报告的路径不是可直接移植的节点身份。接入可以只新增或修改当前局部，不要求整件重建、重复执行或统一包装成Subnet/HDA；简单现场编辑继续使用内联`code`。保留已有有效网络与用户修改，按实际消费者连接选定输出。
+builder若创建节点，这些是当前工程中的真实节点；独立进程报告的路径不是可直接移植的节点身份。接入可以只新增或修改当前局部，不要求整件重建、重复执行或统一包装成Subnet/HDA；简单现场编辑继续使用内联`code`。保留已有有效网络与用户修改，按实际消费者连接选定输出。
 
 ## 实际节点快照与迁移
 

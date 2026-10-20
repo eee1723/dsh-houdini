@@ -73,6 +73,12 @@ export class HoudiniFrontend extends TypertRemoteService {
   }
 
   @Remote
+  updateStatus(signal:AbortSignal) {return desktopRequest('update-status',{},signal)}
+
+  @Remote
+  openUpdates(signal:AbortSignal) {return desktopRequest('open-updates',{},signal)}
+
+  @Remote
   async projectAction(input:unknown,signal:AbortSignal) {
     const data=input as {action:string;sessionId?:string}
     if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['action','sessionId'].includes(key))

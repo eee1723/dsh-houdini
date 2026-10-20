@@ -31,14 +31,17 @@ def apply(parent,groups,plan,remove=None,allow=None):
     if allow is not None:args+=f", allow_foreign={allow!r}"
     return call(f"__result__=network_boxes({parent!r},{groups!r}{args},expected_plan={plan!r})")
 
-with boxes.transaction_journal() as budget_journal:
-    synthetic={'boxes':[],'nodes':[],'created_box_identities':list(range(33))}
-    boxes._journal(synthetic,'budget-fixture')
-    assert budget_journal['boxes']==33
-    boxes._check_journal_capacity(31,0)
-    try:boxes._check_journal_capacity(32,0)
-    except ValueError as error:assert 'budget' in str(error)
-    else:raise AssertionError('cumulative creation budget should reject before write')
+with boxes.transaction_journal() as first_touch:
+    synthetic={'parent_identity':1,'boxes':[{'identity':9,'label':'original'}],
+               'nodes':[{'identity':3,'position':[1,2]}],
+               'created_box_identities':list(range(100,133))}
+    boxes._journal(synthetic,'first-touch')
+    boxes._journal({**synthetic,'boxes':[{'identity':9,'label':'changed'}],
+                    'nodes':[{'identity':3,'position':[9,9]}]},'second-touch')
+    assert first_touch['boxes']==34 and first_touch['nodes']==1
+    assert first_touch['entries'][0]['snapshot']['boxes'][0]['label']=='original'
+    assert not first_touch['entries'][1]['snapshot']['boxes']
+    assert not first_touch['entries'][1]['snapshot']['nodes']
 
 parent=None
 try:
@@ -500,8 +503,7 @@ try:
     deleted=call(f"__result__=delete_node({delete_parent!r})")
     assert deleted['ok'] and hou.node(delete_parent) is None,deleted
 
-    # The declared 64-box boundary permits same-exec preview/no-op after
-    # creation (old accounting double-counted existing upserts).
+    # Preview/no-op does not add a second baseline after creation.
     budget_created=ok(
         f"p=tab_create('/obj','geo',name='__box_budget_{suffix}')\n"
         "items=[]\n"
@@ -533,8 +535,16 @@ try:
         f"network_boxes({overflow_parent!r},{first!r},expected_plan=a['plan_sha256'])\n"
         f"b=network_boxes({overflow_parent!r},{second!r},dry_run=True)\n"
         f"network_boxes({overflow_parent!r},{second!r},expected_plan=b['plan_sha256'])")
-    assert not overflow['ok'] and 'journal budget' in overflow['error'] and overflow['rollback']['applied']
-    assert not hou.node(overflow_parent).networkBoxes()
+    assert overflow['ok'] and len(hou.node(overflow_parent).networkBoxes())==65,overflow
+    assert overflow['transaction']['network_boxes']['entry_count']==2
+    first_box=hou.node(overflow_parent).findNetworkBox('a00')
+    first_identity=int(first_box.sessionId());first_state=boxes._state(first_box)
+    roll=call(
+        f"network_boxes({overflow_parent!r},[{{'name':'a00','label':'First update','members':[{overflow_created['items'][0]!r}]}}])\n"
+        f"network_boxes({overflow_parent!r},[{{'name':'a00','label':'Second update','members':[{overflow_created['items'][0]!r}]}}])\n"
+        "raise RuntimeError('rollback repeated native identity')")
+    assert not roll['ok'] and roll['rollback']['network_boxes']['ok'],roll
+    assert int(first_box.sessionId())==first_identity and not boxes._state_mismatches(first_state,boxes._state(first_box))
     assert call(f"__result__=delete_node({overflow_parent!r})")['ok']
 
     # A failed creation at an owned box's old name must not revoke the renamed

@@ -40,7 +40,9 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 ## 查询、修改与 Raw Gate
 
-inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。参数对象、tuple、绑定修改方法和HIP生命周期别名同样检查；Python set方法豁免只用于可确定为set且未重绑定的接收者。
+inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。普通Python调用不因方法名前缀成为HOM修改；未知对象方法保留原保守判断，不新增普通裸helper函数的命名门槛。
+
+标准库API依据解释器的模块spec与来源判断，不执行待分析import；已加载模块的实际HOM重导出仍按原方法检查。遮蔽、重绑定、显式成员覆写及可变namespace外逸会使普通API证明失效，返回值不继承模块身份。此分析不递归解释任意模块、自定义import hook或回调副作用，不能作为通用Python沙箱。
 
 低层逃生舱只接受单次明确用途；不隐式放开整段已覆盖修改。静态分析服务正常模型调用，不是任意 Python 沙箱。已观察的非终止 VEX 删除循环写前拒绝；其他 VEX 仍由原生编译与计算反馈判断。
 
@@ -66,7 +68,7 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 长任务仍在同一主线程串行执行，不提供并发 HOM。queued 任务可在代码运行前取消；running 任务的取消依赖原生协作检查点，不能强杀用户进程。jobId 来自实际提交结果，状态/等待/取消只接受所属会话；后台提交成功不等于计算完成。
 
-独立执行复用DSH作业与一次性worker。manifest的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
+独立执行复用DSH作业与一次性worker。manifest的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。安装来自当前明确选择的执行端登记，断连记录仍可提供静态安装事实；可显式指定`houdini_installation`，不从Host HFS/PATH或其他现场降级选择。无登记的固定Bridge配置保留在线安装信息入口。安装选择不授现场权限，也不证明原执行结束。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
 
 worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
 

@@ -1,6 +1,7 @@
 """Actual isolated Qt construction and interaction; never controls a live desktop."""
 from __future__ import annotations
 import os
+import builtins
 from pathlib import Path
 import sys
 import tempfile
@@ -185,9 +186,89 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
             self.data["pending"] = "1.1.0-pending"
             return "1.1.0-pending"
     store = StageStore()
+    # The workbench manager consumes the same in-memory discovery result as its
+    # header. Opening it must neither repeat network discovery nor expose HOM
+    # diagnostics that cannot run in the standalone process.
+    store.data['pending'] = None
+    discovery = {'release': release('1.2.0'), 'error': None, 'gate': None, 'calls': 0}
+    def shared_discovery():
+        assert threading.current_thread() is not threading.main_thread()
+        discovery['calls'] += 1
+        gate = discovery['gate']
+        if gate is not None:
+            assert gate.wait(3)
+        if discovery['error']:
+            raise TimeoutError(discovery['error'])
+        return discovery['release']
+    checker = ui.releases.ReleaseCheck(fetch_release=shared_discovery)
+    checker.start()
+    wait_until(lambda: checker.snapshot()['checked'])
+    original_import = builtins.__import__
+    def desktop_import(name, *args, **kwargs):
+        if name in ('hutil', 'hou') or name.startswith('hutil.'):
+            raise ModuleNotFoundError('ordinary desktop Python does not provide ' + name)
+        return original_import(name, *args, **kwargs)
+    with patch.object(builtins, '__import__', side_effect=desktop_import):
+        window = ui.show(store, loaded={'installId': '1.0.0-current', 'install': str(root / 'current')},
+                         release_check=checker, workbench=True)
+        assert window.parentWidget() is None, 'standalone Qt construction needs no implicit Houdini parent'
+        button(window, '报告问题 / 导出诊断包…').click()
+        assert window._support_dialog.windowTitle() == 'DSH-Houdini · 报告问题'
+        window._support_dialog.close()
+    check = button(window, '检查更新')
+    update = button(window, '更新至 1.2.0')
+    assert update.isVisible(), 'an already discovered update is available as soon as the panel opens'
+    assert discovery['calls'] == 1, 'opening the manager reuses the discovered release'
+    button(window, '高级设置').click()
+    for text in ('运行诊断…', '联网诊断…', '登记共享执行端…', '修复共享连接…'):
+        assert not button(window, text).isVisible(), text
+    assert '现场诊断请从 Houdini 的 Version & Updates 打开。' in labels(window)
+    discovery['error'] = 'shared offline fixture'
+    check.click()
+    wait_until(check.isEnabled)
+    assert checker.snapshot()['error'] == 'shared offline fixture'
+    assert not update.isVisible(), 'a shared retry failure clears the previously actionable release'
+    assert 'shared offline fixture' in window.findChild(QtWidgets.QPlainTextEdit).toPlainText()
+    discovery.update(error=None, gate=threading.Event(), release=release('1.3.0'))
+    check.click()
+    wait_until(lambda: checker.snapshot()['checking'])
+    button(window, '取消操作').click()
+    discovery['gate'].set()
+    wait_until(check.isEnabled)
+    assert any('操作已取消' in text for text in labels(window))
+    loop = QtCore.QEventLoop()
+    QtCore.QTimer.singleShot(250, loop.quit)
+    loop.exec()
+    assert not update.isVisible(), 'polling the shared checker cannot restore a cancelled result'
+    # Cancellation can arrive after HTTP completion but before Qt consumes its
+    # queued result. It must still dismiss that completed check.
+    discovery.update(gate=None, release=release('1.3.1'))
+    check.click()
+    deadline = time.monotonic() + 3
+    while True:
+        observed = checker.snapshot()
+        if not observed['checking'] and observed['release'] and observed['release']['version'] == '1.3.1':
+            break
+        assert time.monotonic() < deadline
+        time.sleep(.01)
+    time.sleep(.02)
+    button(window, '取消操作').click()
+    wait_until(check.isEnabled)
+    assert not update.isVisible(), 'a result queued before cancellation is not published afterward'
+    discovery.update(gate=None, release=release('1.4.0'))
+    check.click()
+    wait_until(check.isEnabled)
+    assert button(window, '更新至 1.4.0').isVisible()
+    discovery['release'] = release('1.5.0')
+    checker.start()
+    wait_until(lambda: '发现新版本 1.5.0。' in labels(window))
+    assert button(window, '更新至 1.5.0').isVisible(), 'background checks update the already open native manager'
+    close(window)
+
+    store.data['pending'] = '1.1.0-pending'
     window = ui.show(store, parent=parent, loaded={"installId": "1.0.0-current"})
     assert "1.0.0" in labels(window) and "1.1.0" in labels(window)
-    assert "版本已准备好，完整重开 Houdini 后生效。" in labels(window)
+    assert "版本已准备好，关闭工作台并重开相关 Houdini 后生效。" in labels(window)
     assert window.grab().save(str(output / f"managed-pending-ui-{suffix}.png"))
     button(window, "高级设置").click()
     assert button(window, "修复当前版本").isVisible() and button(window, "回退到上一版本").isVisible()
@@ -220,7 +301,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
             assert fetched.call_args.args[:2] == (store, release("1.1.0"))
             assert store.data["pending"] == "1.1.0-pending"
             assert not update.isVisible()
-            assert "版本已准备好，完整重开 Houdini 后生效。" in labels(window)
+            assert "版本已准备好，关闭工作台并重开相关 Houdini 后生效。" in labels(window)
     close(window)
 
     # A fresh Houdini pins the staged install before workspace activation commits
@@ -231,7 +312,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
                      context_provider=lambda: tuple(context))
     assert "本次启动" in labels(window)
     assert "版本已就绪，打开工作区即可使用。" in labels(window)
-    assert "版本已准备好，完整重开 Houdini 后生效。" not in labels(window)
+    assert "版本已准备好，关闭工作台并重开相关 Houdini 后生效。" not in labels(window)
     assert [w.text() for w in window.findChildren(QtWidgets.QLabel)
             if w.objectName() == "version" and w.isVisible()] == ["1.1.0"]
     button(window, "高级设置").click()
@@ -276,7 +357,7 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
     # Same-version repair changes installation identity and still needs restart.
     store.data.update(pending="1.1.0-repaired")
     window = ui.show(store, parent=parent, loaded=context[1])
-    assert "版本已准备好，完整重开 Houdini 后生效。" in labels(window)
+    assert "版本已准备好，关闭工作台并重开相关 Houdini 后生效。" in labels(window)
     close(window)
     store.data = {"current": "1.0.0-current", "previous": "0.9.0-previous", "pending": "1.1.0-pending"}
 

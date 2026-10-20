@@ -33,7 +33,7 @@ def rejects(call, match=None):
 with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temporary:
     temp = Path(temporary)
     # A browser carrier can import successfully while the scoped agent is
-    # missing. Exercise the actual Node resolver used by activation preflight.
+    # missing. Exercise the actual Node resolver used before stage publication.
     probe_install = temp / "preflight"
     probe_plugin = probe_install / "app/node_modules/dsh-houdini"
     probe_plugin.mkdir(parents=True)
@@ -95,6 +95,10 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         subprocess.run([NODE, str(ROOT / "tools/release-sign.mjs"), "sign", str(source / "release.json"), str(source / "release.sig.json"), "fixture"], env=env, check=True)
         return source
     first, second = bundle(), bundle("1.1.0")
+    # The signed archive fixtures deliberately contain inert Node bytes. The
+    # real bundled-runtime probe above is independent of these archive tests.
+    fixture_probe = patch.object(d.Store, "probe", return_value=None)
+    staged_probe = fixture_probe.start()
     # Finalization builds the bootstrap/installer from the signing checkout.
     # A correct unsigned artifact and tag cannot authorize dirty installer files.
     builder_spec = importlib.util.spec_from_file_location("release_builder_fixture", ROOT / "tools/build-release.py")
@@ -196,11 +200,25 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
         rejects(lambda: store.stage(first), "write failed")
     assert store.state() == initial
 
+    with patch.object(d.Store, "probe", side_effect=RuntimeError("bundled runtime cannot load")):
+        rejects(lambda: store.stage(first), "cannot load")
+    assert store.state() == initial, "failed runtime validation published an installation"
+    staged_probe.reset_mock()
     ident1 = store.stage(first)
+    staged_probe.assert_called_once()
+    staged_context = staged_probe.call_args.args[0]
+    assert Path(staged_context["install"]).parent == store.root / "staging"
+    assert not Path(staged_context["home"]).exists(), "disposable probe data was retained"
     assert store.state()["pending"] == ident1 and store.state()["current"] is None
-    # No system Node / npm is consulted by staging, hashing or selection.
-    with patch.object(d.Store, "probe", staticmethod(lambda *args: None)):
+    # Ordinary activation consumes the stage transaction, without a second
+    # payload walk or Node probe. Both first and repeated cold starts use it.
+    with patch.object(d, "verify_inventory", side_effect=AssertionError("startup scanned the payload")), \
+         patch.object(d.Store, "probe", side_effect=AssertionError("startup spawned a preflight")):
         ctx1, lease1 = store.activate(ident1, "21.0")
+        lease1.close()
+        ctx1, lease1 = store.activate(ident1, "21.0")
+    # No system Node / npm is consulted by hashing or activation.
+    with patch.object(d.Store, "probe", staticmethod(lambda *args: None)):
         assert store.state()["current"] == ident1
         d.atomic_json(Path(ctx1["home"]) / "session.json", {"value": "old data"})
         d.atomic_json(Path(ctx1["home"]) / ".agent-presets/custom/agent.json", {"name": "user preset"})
@@ -238,6 +256,23 @@ with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temp
     damaged = store.installation(ident1) / "node/node.exe"
     damaged.write_bytes(b"damaged")
     rejects(lambda: d.verify_inventory(store.installation(ident1), store.manifest(ident1)), "damaged")
+
+    lockfile = store.installation(ident1) / "app/package-lock.json"
+    original_lock = lockfile.read_bytes()
+    lockfile.write_bytes(b"changed lock")
+    rejects(lambda: store.activate(ident1, "21.0"), "lock mismatch")
+    lockfile.write_bytes(original_lock)
+    package_file = store.installation(ident1) / "app/node_modules/@deepseek-ai/dsh/package.json"
+    original_package = package_file.read_bytes()
+    d.atomic_json(package_file, {"version": "99.0.0"})
+    rejects(lambda: store.activate(ident1, "21.0"), "versions do not match")
+    package_file.write_bytes(original_package)
+    signed_file = store.installation(ident1) / "release.json"
+    original_signed = signed_file.read_bytes()
+    signed_file.write_bytes(original_signed + b" ")
+    rejects(lambda: store.activate(ident1, "21.0"), "signature mismatch")
+    signed_file.write_bytes(original_signed)
+    fixture_probe.stop()
 
     # Kernel-backed lock excludes a separate process and recovers after close.
     lock = temp / "process.lock"

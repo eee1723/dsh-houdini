@@ -233,6 +233,72 @@ assert.equal(pinButton().props['aria-pressed'],true,'failed native change cannot
 pinFailure=false;pinButton().props.onClick()
 await new Promise(resolve=>setTimeout(resolve,0))
 assert.equal(pinButton().props['aria-pressed'],false)
+// Update discovery stays on the desktop's cached source; the client only shows
+// a confirmed available update and opens the existing version manager.
+const updateRequests=[],updateGenerations=new Set(),updateVisibility=new Set()
+let updateGeneration={id:1},updatePoll=null,updateCleanup=null
+uiContext.setInterval=(callback,delay)=>{assert.equal(delay,60000);updatePoll=callback;return 9}
+uiContext.document={visibilityState:'visible',addEventListener:(name,listener)=>{
+  assert.equal(name,'visibilitychange');updateVisibility.add(listener)
+},removeEventListener:(_name,listener)=>updateVisibility.delete(listener)}
+React.useEffect=callback=>{updateCleanup=callback()}
+const updatesUi=uiContext.createWorkbenchUpdates({generation:{getSnapshot:()=>updateGeneration,subscribe:listener=>{
+  updateGenerations.add(listener);return ()=>updateGenerations.delete(listener)
+}},rpc:{call:(_channel,method,payload,signal)=>new Promise((resolve,reject)=>{
+  updateRequests.push({method,payload,signal,resolve})
+  signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true})
+})}})
+const updateButton=()=>findNode(updatesUi.Button(),node=>node.props['data-houdini-update'])
+assert.equal(updatesUi.Button(),null,'unknown update state leaves the normal header untouched')
+assert.equal(updatesUi.Lifecycle(),null)
+React.useEffect=()=>{}
+assert.equal(updateRequests[0].method,'houdiniFrontend/updateStatus')
+updateRequests[0].resolve({ok:true,value:{available:false,version:'99.0'}})
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(updatesUi.Button(),null,'version text alone cannot claim that an update is available')
+updatePoll()
+updateRequests[1].resolve({ok:true,value:{available:true,version:'0.0.13'}})
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(text(updateButton()),'有更新','the header uses a compact action instead of an update panel')
+assert.match(updateButton().props['aria-label'],/0\.0\.13.*版本与更新/)
+const openingUpdates=updateButton().props.onClick()
+updateButton().props.onClick()
+assert.equal(updateButton().props.disabled,true)
+assert.equal(updateRequests.length,3,'rapid clicks open the native manager once')
+assert.equal(updateRequests[2].method,'houdiniFrontend/openUpdates')
+assert.deepEqual(Object.keys(updateRequests[2].payload.args),[],'opening the manager cannot request installation')
+updateRequests[2].resolve({ok:false,error:{message:'fixture updates unavailable'}})
+await openingUpdates
+assert.equal(updatesUi.Lifecycle().props.text,'fixture updates unavailable','only an explicit open failure produces feedback')
+updatesUi.Lifecycle().props.onDone()
+assert.equal(updatesUi.Lifecycle(),null)
+const reopeningUpdates=updateButton().props.onClick()
+updateRequests[3].resolve({ok:true,value:{opened:true}})
+await reopeningUpdates
+assert.equal(updatesUi.Lifecycle(),null,'opening the manager needs no success toast')
+updatePoll()
+updateRequests[4].resolve({ok:false,error:{message:'background discovery failed'}})
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(updatesUi.Button(),null,'failed status reads silently hide the update action')
+assert.equal(updatesUi.Lifecycle(),null)
+uiContext.document.visibilityState='hidden'
+updateVisibility.forEach(listener=>listener());updatePoll()
+assert.equal(updateRequests.length,5,'hidden pages do not poll update state')
+uiContext.document.visibilityState='visible'
+updateVisibility.forEach(listener=>listener())
+assert.equal(updateRequests.length,6,'returning to the page reads the shared status again')
+updateGeneration={id:2};updateGenerations.forEach(listener=>listener())
+assert.equal(updateRequests[5].signal.aborted,true)
+updateRequests[5].resolve({ok:true,value:{available:true,version:'stale'}})
+updateRequests[6].resolve({ok:true,value:{available:true,version:'0.0.14'}})
+await new Promise(resolve=>setTimeout(resolve,0))
+assert.equal(updateButton().props['data-houdini-update-version'],'0.0.14','old-generation replies cannot restore a stale notice')
+updatePoll();updateCleanup()
+assert.equal(updateRequests[7].signal.aborted,true)
+assert.equal(updateVisibility.size,0)
+assert.equal(updateGenerations.size,0)
+assert.match(source,/name: "conversation\.session\.header\.controls", id: "houdini-update", order: 10/)
+React.useEffect=callback=>callback()
 uiContext.require=()=>({MenuItemButton:'menuitem',Toast:'toast'})
 const generationListeners=new Set(),requests=[]
 let generation={id:1},menuClosed=false

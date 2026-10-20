@@ -60,6 +60,14 @@ try {
   assert.deepEqual(requests.at(-1).payload,{pinned:true})
   await frontend.windowPin({},signal)
   assert.deepEqual(requests.at(-1).payload,{})
+  result={available:true,version:'0.1.0'}
+  assert.deepEqual(await frontend.updateStatus(signal),result)
+  assert(requests.at(-1).url.endsWith('/updates/status'))
+  assert.deepEqual(requests.at(-1).payload,{})
+  result={opened:true}
+  assert.deepEqual(await frontend.openUpdates(signal),result)
+  assert(requests.at(-1).url.endsWith('/updates/open'))
+  assert.deepEqual(requests.at(-1).payload,{})
   for(const input of [{pinned:'true'},{pinned:null},{pinned:true,hwnd:123},[],null])
     await assert.rejects(frontend.windowPin(input,signal),/无效的窗口置顶/)
   generation='stale-desktop'

@@ -4,7 +4,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { HoudiniBridge } from './bridge.js'
+import { HoudiniBridge,type HoudiniRuntimeFacts } from './bridge.js'
 import { ExecutorBinding } from './executor-binding.js'
 import {targetSnapshotSchema,executorBindingState,type TargetSnapshot,type ExecutorIdentityState} from './executor-identity-projection.js'
 import {executionOutstanding} from './execution-facts.js'
@@ -27,6 +27,7 @@ export interface ExecutorRecord {
   scene_epoch?:string
   hip_is_new?:boolean
   workspace_path?:string
+  runtime?:HoudiniRuntimeFacts
 }
 type Session = Parameters<ExecutorBinding['ensure']>[0] & {id:string;header?:{cwd?:string}}
 type Agent = {id:string;session:Session;status?:string}
@@ -60,6 +61,10 @@ export class ExecutorDirectory {
       ||!(r.hip_path===null||typeof r.hip_path==='string'&&path.isAbsolute(r.hip_path))) throw new Error('Invalid executor record')
     if(r.workbench===true&&(!ID.test(r.scene_id)||!ID.test(r.scene_epoch)||typeof r.hip_is_new!=='boolean'
       ||typeof r.workspace_path!=='string'||!path.isAbsolute(r.workspace_path)))throw new Error('Invalid workbench scene registration')
+    if(r.runtime!==undefined&&(!r.runtime||typeof r.runtime!=='object'
+      ||!['hfs','python','executable'].every(key=>typeof r.runtime[key]==='string'&&path.isAbsolute(r.runtime[key]))
+      ||typeof r.runtime.pythonVersion!=='string'||!/^\d+\.\d+\.\d+$/.test(r.runtime.pythonVersion)))
+      throw new Error('Invalid registered Houdini installation runtime')
     const port=Number(new URL(r.bridge_url).port)
     if(port<1024||port>65535) throw new Error('Invalid registered Bridge port')
     // Accept the configured spelling or its resolved installation identity;
@@ -89,14 +94,21 @@ export class ExecutorDirectory {
     }
     return records
   }
-  async find(id:string):Promise<ExecutorRecord> {
+  /** Static installation facts remain useful after a process disconnects.
+   * This is not live routing or proof of an execution's terminal state. */
+  async recorded(id:string):Promise<ExecutorRecord> {
     if(!ID.test(id)) throw new Error('Invalid executor identity')
     let record:ExecutorRecord|undefined
     try {
       record=await this.read(id,canonical(await fs.realpath(path.join(this.root,'endpoints'))),
         canonical(await fs.realpath(this.installation)))
     } catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}
-    if(!record||record.state!=='registered') throw new ExecutorUnavailableError('Bound Houdini is disconnected or absent; no automatic target substitution')
+    if(!record) throw new ExecutorUnavailableError('Bound Houdini is disconnected or absent; no automatic target substitution')
+    return record
+  }
+  async find(id:string):Promise<ExecutorRecord> {
+    const record=await this.recorded(id)
+    if(record.state!=='registered')throw new ExecutorUnavailableError('Bound Houdini is disconnected or absent; no automatic target substitution')
     return record
   }
 }
@@ -130,6 +142,18 @@ export class ExecutorRouter {
     private readonly idleOwner:(taskId:string)=>boolean=()=>false,
     private readonly persist?:(session:Session)=>Promise<boolean>,
     private readonly chooseTarget?:(taskId:string,candidates:readonly ExecutorRecord[],signal:AbortSignal)=>Promise<string|undefined>) {}
+
+  /** Independent workers consume the explicitly selected installation, not
+   * endpoint availability. Do not select a scene or claim its writer here. */
+  async resolveRuntime(exec:{agent?:Agent;signal?:AbortSignal}):Promise<{runtime:HoudiniRuntimeFacts;houdiniVersion:string}> {
+    this.signal(exec.signal).throwIfAborted()
+    if(!exec.agent||exec.agent.session.id!==exec.agent.id)throw new Error('Houdini runtime selection requires the exact current agent session')
+    const target=this.state(exec.agent.session).selectedTarget
+    if(!target)throw new Error('独立执行尚无明确的 Houdini 安装；请指定 houdini_installation，或先选择现场。')
+    const record=await this.directory.recorded(target.executor_id)
+    if(!record.runtime)throw new Error('所选 Houdini 的旧登记未记录安装信息；请指定 houdini_installation，或从该 Houdini 重新打开工作区。')
+    return {runtime:record.runtime,houdiniVersion:record.houdini_version}
+  }
 
   private async checkpoint(session:Session):Promise<void> {
     if(this.persist&&await this.persist(session)!==true)throw new Error('对话记录尚未可靠保存，本次操作没有发送到 Houdini。')

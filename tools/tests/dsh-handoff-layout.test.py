@@ -16,7 +16,17 @@ def call(code):return bridge.run_code(code,owner_session=session,owner_call=uuid
 def ok(code):
  r=call(code);assert r['ok'],r;return r
 
-parent=None
+def wiring(node):
+ rows=[]
+ for connection in node.inputConnections():
+  source=connection.inputNode()
+  indirect=connection.subnetIndirectInput() if source is None else None
+  rows.append((connection.inputIndex(),connection.outputIndex(),
+   ('node',source.sessionId()) if source is not None else
+   ('indirect',indirect.sessionId()) if indirect is not None else None))
+ return rows
+
+parent=None;large_parent=None;subnet_parent=None
 try:
  parent=ok(f"p=tab_create('/obj','geo',name='__handoff_{suffix}')\n__result__=p.path()")['result']
  paths=[]
@@ -88,6 +98,120 @@ try:
  assert {path:(hou.node(path).isDisplayFlagSet(),hou.node(path).isRenderFlagSet(),hou.node(path).needsToCook()) for path in paths}==flags
  stable=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},profile='readable')")
  assert not stable['result']['applied'] and stable['transaction']['status']=='no_scene_change',stable
+ # More than the old 512-node and 512-obstacle thresholds: one explicit owned
+ # scope, complete unselected geometry, and a blocker appended after all others.
+ large=ok(
+  f"p=tab_create('/obj','geo',name='__large_handoff_{suffix}')\n"
+  "paths=[];previous=None\n"
+  "for i in range(620):\n"
+  " n=tab_create(p,'null',name='n%04d'%i,inputs=[] if previous is None else [previous]);paths.append(n.path());previous=n\n"
+  "network_boxes(p,[{'name':'model','members':paths}])\n"
+  "__result__={'parent':p.path(),'paths':paths}")['result']
+ large_parent=large['parent'];large_network=hou.node(large_parent)
+ with boxes.transaction_journal() as journal:
+  for path in large['paths']:boxes.journal_containing_boxes([hou.node(path)])
+  assert journal['boxes']==1 and journal['nodes']==620
+  snapshots=[row['snapshot'] for row in journal['entries']]
+  assert sum(len(row['boxes']) for row in snapshots)==1
+  assert sum(len(row['nodes']) for row in snapshots)==620
+  assert sum(len(state['members']) for row in snapshots for state in row['boxes'])==620
+ for index in range(700):
+  fixed=large_network.createNode('null','fixed%04d'%index)
+  fixed.setPosition(hou.Vector2(index*3,10000))
+ before=ok(f"__result__=layout_nodes({large_parent!r},mode='handoff',boxes=['model'],dry_run=True)")['result']
+ blocker=large_network.createStickyNote('late_blocker')
+ bounds=before['box_bounds']['model'];blocker.setPosition(hou.Vector2(bounds[0],bounds[1]));blocker.setSize(hou.Vector2(bounds[2]-bounds[0],bounds[3]-bounds[1]))
+ obstacle_state=boxes.collect_editor_obstacles(large_network,excluded_node_ids=[int(hou.node(path).sessionId()) for path in large['paths']],
+   excluded_box_ids=[int(large_network.findNetworkBox('model').sessionId())],dot_footprint=(1,1))
+ large_applied=ok(f"__result__=layout_nodes({large_parent!r},mode='handoff',boxes=['model'])")['result']
+ assert large_applied['layout_status']=='passed' and large_applied['movable_node_count']==620,large_applied
+ assert len(large_applied['fixed_obstacles'])==701 and not large_applied['obstacle_overlap_count']
+ assert boxes.collect_editor_obstacles(large_network,excluded_node_ids=[int(hou.node(path).sessionId()) for path in large['paths']],
+   excluded_box_ids=[int(large_network.findNetworkBox('model').sessionId())],dot_footprint=(1,1))==obstacle_state
+ # A real default-profile grouped DAG may return to the first presentation box.
+ cyclic=ok(f"__result__=network_boxes({parent!r},[{{'name':'back','members':[{paths[1]!r},{paths[10]!r}]}},{{'name':'middle','members':[{paths[6]!r}]}}])")
+ assert cyclic['result']['applied']
+ cycle_layout=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes=['back','middle'])")['result']
+ assert cycle_layout['layout_status']=='passed',cycle_layout
+ # Failure after hundreds of successful moves restores only the written node
+ # positions and the explicit boxes; foreign obstacles remain exactly fixed.
+ for path in large['paths']:hou.node(path).setPosition(hou.node(path).position()+hou.Vector2(20,0))
+ position_before={path:tuple(hou.node(path).position()) for path in large['paths']}
+ bounds_before=boxes._state(large_network.findNetworkBox('model'))
+ original_position=boxes._set_node_position;calls={'n':0}
+ def late_failure(node,target):
+  calls['n']+=1
+  if calls['n']==550:raise RuntimeError('injected late large layout failure')
+  return original_position(node,target)
+ boxes._set_node_position=late_failure
+ try:failed=call(f"layout_nodes({large_parent!r},mode='handoff',boxes=['model'])")
+ finally:boxes._set_node_position=original_position
+ assert not failed['ok'] and failed['evidence'][0]['restored'],failed
+ assert {path:tuple(hou.node(path).position()) for path in large['paths']}==position_before
+ assert not boxes._state_mismatches(bounds_before,boxes._state(large_network.findNetworkBox('model')))
+ # Component layout translates explicitly selected leaf boxes as units; the
+ # total node count is independent from the small rectangle planning problem.
+ regroup=[{'name':'part_a','members':large['paths'][:310]},
+          {'name':'part_b','members':large['paths'][310:]},
+          {'name':'asset','boxes':['part_a','part_b']}]
+ ok(f"network_boxes({large_parent!r},{regroup!r},remove=['model'])")
+ component=ok(f"__result__=layout_nodes({large_parent!r},mode='component',boxes=['asset'],profile='readable')")['result']
+ assert component['layout_status']=='passed' and component['movable_node_count']==620
+ assert component['leaf_box_count']==2 and component['obstacle_overlap_count']==0,component
+ # Explicit semantic nesting belongs to the author. Layout of either level
+ # preserves the other level, public wiring, parameter references and the
+ # actual consumer after a source control changes.
+ nested=ok(
+  f"p=tab_create('/obj','geo',name='__subnet_handoff_{suffix}')\n"
+  "ctrl=tab_create(p,'null',name='CTRL')\n"
+  "create_spare_parms(ctrl,spec=[{'type':'float','name':'width','default':2}])\n"
+  "source=tab_create(p,'box',name='SOURCE')\n"
+  "module=tab_create(p,'subnet',name='MODULE',inputs=[source])\n"
+  "entry=tab_create(module,'null',name='IN_SOURCE')\n"
+  "branches=[];inside=[entry.path()]\n"
+  "for i in range(48):\n"
+  " a=tab_create(module,'null',name='branch%02d_a'%i,inputs=[entry])\n"
+  " b=tab_create(module,'null',name='branch%02d_b'%i,inputs=[a])\n"
+  " branches.append(b);inside.extend([a.path(),b.path()])\n"
+  "merged=tab_create(module,'merge',name='ASSEMBLE',inputs=branches)\n"
+  "published=sop_set_output(merged,output_index=0)['public_output']['node']\n"
+  "inside.extend([merged.path(),published])\n"
+  "consumer=tab_create(p,'null',name='OUT',inputs=[module])\n"
+  "network_boxes(module,[{'name':'model','members':inside}])\n"
+  "network_boxes(p,[{'name':'controls','members':[ctrl.path()],'role':'controls'},"
+  "{'name':'assembly','members':[source.path(),module.path()]},"
+  "{'name':'output','members':[consumer.path()],'role':'output'}])\n"
+  "__result__={'parent':p.path(),'module':module.path(),'source':source.path(),"
+  "'ctrl':ctrl.path(),'consumer':consumer.path(),'inside':inside}")['result']
+ subnet_parent=nested['parent'];network=hou.node(subnet_parent);module=hou.node(nested['module'])
+ # Native indirect input initialization is fixture setup, not an escape from
+ # production ownership or a path-based source recovery rule.
+ module.node('IN_SOURCE').setInput(0,module.indirectInputs()[0])
+ expression='ch("../CTRL/width")';hou.node(nested['source']).parm('sizex').setExpression(expression,hou.exprLanguage.Hscript)
+ consumer=hou.node(nested['consumer'])
+ assert abs(consumer.geometry().boundingBox().sizevec()[0]-2)<1e-6
+ outside_positions={node.path():tuple(node.position()) for node in network.children()}
+ outside_wires={node.path():tuple(item.path() if item else None for item in node.inputs()) for node in network.children()}
+ inside_ids={node.sessionId() for node in module.children()}
+ inside_connections={node.path():wiring(node) for node in module.children()}
+ inner=ok(f"__result__=layout_nodes({module.path()!r},mode='handoff',boxes=['model'],profile='readable')")['result']
+ assert inner['layout_status']=='passed' and not inner['clearance_failures'],inner
+ bounds=boxes._box_rect(module.findNetworkBox('model')).as_list();assert bounds[2]-bounds[0]<200,bounds
+ assert {node.path():tuple(node.position()) for node in network.children()}==outside_positions
+ assert {node.path():tuple(item.path() if item else None for item in node.inputs()) for node in network.children()}==outside_wires
+ assert {node.sessionId() for node in module.children()}==inside_ids
+ assert {node.path():wiring(node) for node in module.children()}==inside_connections
+ inside_positions={node.path():tuple(node.position()) for node in module.children()}
+ outer=ok(f"__result__=layout_nodes({network.path()!r},mode='handoff',boxes=['controls','assembly','output'],profile='readable')")['result']
+ assert outer['layout_status']=='passed' and not outer['clearance_failures'],outer
+ assert {node.path():tuple(node.position()) for node in module.children()}==inside_positions
+ assert {node.path():wiring(node) for node in module.children()}==inside_connections
+ assert hou.node(nested['source']).parm('sizex').expression()==expression
+ ok(f"set_parms({nested['ctrl']!r},{{'width':4}})\ncook_node({nested['consumer']!r})")
+ assert abs(consumer.geometry().boundingBox().sizevec()[0]-4)<1e-6
+ assert not consumer.errors() and {node.sessionId() for node in module.children()}==inside_ids
  print('handoff layout contract passed on '+hou.applicationVersionString())
 finally:
+ if subnet_parent and hou.node(subnet_parent) is not None:hou.node(subnet_parent).destroy()
+ if large_parent and hou.node(large_parent) is not None:hou.node(large_parent).destroy()
  if parent and hou.node(parent) is not None:hou.node(parent).destroy()

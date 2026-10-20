@@ -49,6 +49,7 @@ def prepare_registration(*, workbench=False, workspace=None, reuse_busy=False):
                 return {'hip': registration.registered_hip(), 'version': registration.version,
                         'executor_id': registration.executor_id, 'runtime_id': registration._runtime_id,
                         'port': registration._port, 'installation': registration.installation,
+                        'runtime': registration.runtime,
                         'workbench': True, 'scene': dict(registration.scene), 'busy': True, 'session_id': registration._task}
         raise RuntimeError('请等待当前 Houdini 操作完成，再登记共享执行端。')
     hip = hou.hipFile.path()
@@ -59,6 +60,7 @@ def prepare_registration(*, workbench=False, workspace=None, reuse_busy=False):
     observed = capture_scene(workspace)
     return {**observed, 'version': bridge._HOU_VERSION, 'executor_id': bridge._EXECUTOR_ID,
             'runtime_id': bridge._RUNTIME_ID, 'port': server.server_port,
+            'runtime': dict(bridge._PYTHON_RUNTIME),
             'installation': str(Path(__file__).resolve().parents[2]), 'workbench': workbench}
 
 
@@ -76,7 +78,7 @@ def publish_registration(root, facts):
     except RuntimeError:
         registration = activate(root, facts['executor_id'], installation=facts['installation'],
             version=facts['version'],port=facts['port'],runtime_id=facts['runtime_id'],hip=facts['hip'],
-            workbench=facts.get('workbench', False),scene=facts.get('scene'))
+            workbench=facts.get('workbench', False),scene=facts.get('scene'),runtime=facts.get('runtime'))
         atexit.register(registration.close)
     else:
         if registration.root != root.resolve() or registration.executor_id != facts['executor_id']:

@@ -31,14 +31,19 @@ if(!args.length){
   const sandboxMode=values['sandbox-mode']??'workspace-write'
   assert(['workspace-write','danger-full-access'].includes(sandboxMode),'Unsupported fixture sandbox mode')
   const pythonVersion=spawnSync(python,['--version'],{encoding:'utf8',windowsHide:true}).stdout.trim().replace(/^Python /,'')
+  const houProbe=spawnSync(hython,['-c','import hou; print(hou.applicationVersionString())'],{encoding:'utf8',windowsHide:true,timeout:30000})
+  assert.equal(houProbe.status,0,houProbe.stderr||'Cannot identify the explicit Houdini installation')
+  const houdiniVersion=houProbe.stdout.trim().split(/\r?\n/).find(line=>/^\d+\.\d+\.\d+$/.test(line))
+  assert(houdiniVersion,'Actual Houdini version was not returned')
   assert(/^3\.(11|13)\./.test(pythonVersion),'Use the selected supported Houdini Python runtime')
   const reserved=net.createServer();await new Promise((resolve,reject)=>{reserved.once('error',reject);reserved.listen(0,'127.0.0.1',resolve)})
   const bridgePort=reserved.address().port;await new Promise(resolve=>reserved.close(resolve))
-  const config={root,runtime,workspace,output,hfs,hython,python,pythonVersion,sandboxMode,bridgePort}
+  const executorRegistry=path.join(run,'executor-registry')
+  const config={root,runtime,workspace,output,hfs,hython,python,pythonVersion,houdiniVersion,sandboxMode,bridgePort,executorRegistry}
   const configFile=path.join(run,'fixture.json');fs.writeFileSync(configFile,JSON.stringify(config,null,2))
   const env=Object.fromEntries(['PATH','Path','SystemRoot','WINDIR','USERPROFILE','APPDATA','LOCALAPPDATA','COMSPEC','PATHEXT'].filter(name=>process.env[name]!==undefined).map(name=>[name,process.env[name]]))
   Object.assign(env,{TEMP:temp,TMP:temp,DSH_HOME:home,DSH_ISOLATED_TOOL_FIXTURE:configFile,
-    DSH_HOUDINI_BRIDGE_URL:'http://127.0.0.1:'+bridgePort})
+    DSH_HOUDINI_BRIDGE_URL:'http://127.0.0.1:'+bridgePort,DSH_HOUDINI_EXECUTOR_REGISTRY:executorRegistry})
   const prepare=`import fs from 'node:fs';import path from 'node:path';import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';
 const [bin,plugin]=process.argv.slice(1);const require=createRequire(bin);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));
 const profile=boot.resolveProfileDir('web');boot.initProfile(profile,[...boot.PROFILE_TEMPLATES.web.bundles,'dsh-houdini','@deepseek-ai/dsh-experimental-agent-team-profile'],boot.PROFILE_TEMPLATES.web.patchReload);
@@ -48,7 +53,7 @@ boot.loadProfile('dsh','web',path.join(path.dirname(path.dirname(bin)),'package.
   assert.equal(prepared.status,0,prepared.stderr||prepared.stdout)
   const fixture=fileURLToPath(new URL('./dsh-isolated-tool-loop-fixture.mjs',import.meta.url))
   const patch=path.join(run,'fixture.patch.yml')
-  fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(run,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: isolated-tool-loop-fixture\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n')
+  fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(run,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: isolated-executor-host\n      name: dsh-houdini/executor-host\n      config:\n        executorRegistry: '+JSON.stringify(executorRegistry.replaceAll('\\','/'))+'\n    - id: isolated-tool-loop-fixture\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n')
   const logPath=path.join(run,'host.log'),log=fs.openSync(logPath,'w')
   const host=spawn(process.execPath,[cli,'web','--patch',patch,'--host','127.0.0.1','--port','0','--no-open'],{cwd:workspace,env,stdio:['ignore',log,log],windowsHide:true})
   let exited;host.on('exit',code=>{exited=code})

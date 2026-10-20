@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {createHash} from 'node:crypto'
-import {executeIsolated,registerIsolatedTool} from '../../lib/isolated-execution.js'
+import {executeIsolated,registerIsolatedTool,isolatedInstallationRuntime} from '../../lib/isolated-execution.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
@@ -45,6 +45,16 @@ try {
   const manifest=path.join(root,'manifest.json')
   await fs.writeFile(path.join(root,'build.py'),'__result__={"width":5}')
   await fs.writeFile(manifest,JSON.stringify({script:'build.py',checks:[{id:'geometry',kind:'cook',node:'/obj/a/OUT',frame:1}]}))
+  await assert.rejects(isolatedInstallationRuntime('relative-hfs'),/absolute Houdini installation/)
+  const ambiguousHfs=path.join(root,'ambiguous-HFS')
+  await fs.mkdir(ambiguousHfs)
+  if(process.platform==='win32'){
+    for(const folder of ['python311','python313']){
+      await fs.mkdir(path.join(ambiguousHfs,folder));await fs.writeFile(path.join(ambiguousHfs,folder,'python.exe'),'not executed')
+    }
+    await assert.rejects(isolatedInstallationRuntime(ambiguousHfs),/exactly one bundled Python.*found 2/,
+      'an explicit installation cannot silently choose a Python version when its layout is ambiguous')
+  }
   const output=path.join(root,'run')
   const result=await executeIsolated(ctx,exec,{manifest,output_dir:output},runtimeResolver,runner)
   assert.equal(result.kind,'isolated-houdini');assert.equal(result.report.result.builder.result.width,5)

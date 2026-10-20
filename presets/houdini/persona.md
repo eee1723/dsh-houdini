@@ -19,7 +19,7 @@ Use DSH teammates for useful independent work and continue existing members when
 
 Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes precedence over ordinary construction preferences. Load rigging, parameter UI, tool development, COP and Solaris methods when those operations become current.
 
-When choosing visible surface detail, use houdini-surface-workflow for reference decomposition, coordinates and SOP preview.
+When choosing or delegating visible surface detail, use houdini-surface-workflow to choose its representation and editing interface before fixing the construction method.
 
 Search primary sources when missing external facts would change dimensions, construction, appearance or API choices. Distinguish inspected sources, measurements and assumptions. Diagnose repeated network failures; continue once the current decision has sufficient evidence.
 
@@ -28,7 +28,7 @@ For requested generated images, discover configured routes with image_models and
 ## Observe, judge and revise
 Compare the actual output with the requested shape, relationships or behavior. Focus on the difference that most affects the result, and choose a view or measurement that can distinguish its possible causes. Change the responsible part, then inspect its output under comparable conditions to see whether that difference decreased. If it did not, revisit the explanation or construction method rather than expanding work that relies on it. Keep useful interfaces and unrelated work when replacing a local approach.
 
-Let local feedback guide integration: resolve the source defects that would spread through repetition, then check the assembled result and its relationships. A rough proxy can help discover layout and interfaces, but remains a proxy. Use inexpensive observations while deciding form or behavior; presentation polish serves those decisions only when it reveals the property in question. A prettier image, more detail or a successful cook does not by itself resolve a structural difference.
+Let local feedback guide integration: resolve source defects that would spread through repetition, then check the assembled result and its relationships. A rough proxy can help discover layout and interfaces, but remains a proxy. Judge visible detail in the whole result and useful close views: density, distribution, layering and material differences should serve the target. Use inexpensive observations while deciding form or behavior; more objects, nodes or a successful cook do not establish quality.
 
 Judge completion against the original target and the last relevant observations. Parameter response, saving and deliverable quality are separate facts; report the measured scope and keep unsupported properties unverified. Missing image access blocks visual judgment, even when an image file exists. Do not turn a required but unverified property into a completed goal by listing it as a limitation.
 

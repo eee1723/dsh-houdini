@@ -97,7 +97,7 @@ npm test
 
 | 能力 | 验证入口 |
 |---|---|
-| Raw Gate | [dsh-bridge-raw-gate](../tools/tests/dsh-bridge-raw-gate.test.py) |
+| Raw Gate | [纯词法反例](../tools/tests/dsh-code-analysis.test.py)、[dsh-bridge-raw-gate](../tools/tests/dsh-bridge-raw-gate.test.py)：内建值／标准库API来源、遮蔽／重绑定／成员覆写、HOM重导出与绑定方法分别核对 |
 | 节点归属 | [dsh-node-ownership](../tools/tests/dsh-node-ownership.test.py) |
 | 捕获失败与回滚 | [dsh-bridge-caught-failure](../tools/tests/dsh-bridge-caught-failure.test.py) |
 | 创建失败清理 | [dsh-tab-create-failure](../tools/tests/dsh-tab-create-failure.test.py) |
@@ -115,6 +115,8 @@ npm test
 [图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP图片。它在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。受控响应不证明真实模型识图或token费用下降；比较像素和编码字节时分别记录格式变化，不把较小分辨率当成较小传输。记录实际Node/DSH/运行修复身份，标准preset通过不扩大为Houdini preset、GUI或正式发行验证。实际模型的预算对照仍沿下述授权试验入口。
 
 任务拆分与完整源组件的方法改动，先用[skill审计](../skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs)、preset组合与下述`--context-loop`验证注册、资料路由和实际模型输入。自然采用另用同模型、同要求、同预算的独立工程对照：观察源组件的局部检查是否影响后续构建，再执行换源、改布局、局部细化或共享尺寸变化，检查最终消费者与修改范围；用另一类任务验证领域外适用性。源本来应为Box、共享连续表面和先代理后细化都是合法反例，不按节点数、截图数或技能关键词评分。审查需包含能推翻自报成功的情况，例如实际开口被封堵但模板未变、同包围范围的错误形状和局部遮挡；模板或生成公式通过不能升级为最终实体关系通过。trace的原生图片与显式读图记录通过nextToolStep定位观察返回后提交的下一动作，引用原时间线而不推断修改、因果或成功；并发中先提交后返回的动作不算后续决策。受控模型能取到技能不证明自主分治或质量提升，保留质量、返工及计算成本的实际证据，过程产物留会话/临时目录。
+
+网络布局用[纯规划回归](../tools/tests/dsh-network-layout.test.py)核对宽支路、长链、分组、完整障碍与确定性，H21/H22的[handoff回归](../tools/tests/dsh-handoff-layout.test.py)核对原生盒、恢复及Subnet内外位置边界，并由原有公共输入／控制修改验证实际消费者。规划不自动迁移节点或修改引用；净距通过不代替用户界面和语义质量判断。
 
 执行模块重构保持公开动词签名与结果合同；节点归属回归同时核对不可变快照、嵌套创建记录和作者作用域恢复，execution-runtime核对请求图片隔离及组件快照。HDA界面回归将故障注入实际实现模块，验证修复重载后公开导出与执行分派使用新函数，不能只改facade上的别名来模拟下游失败。真实GUI捕获夹具只调整自有临时窗口的显示顺序，不放宽生产捕获的遮挡/屏内要求。
 
@@ -187,9 +189,9 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 ## 隔离执行与开发工具
 
-`houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与所选Houdini只读health，复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
+`houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与明确所选登记的静态安装事实，或显式HFS；登记断连不要求live健康。无登记的固定Bridge配置保留在线安装信息入口。复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
 
-验证该入口时，先核对实际文件范围、声明依赖、输入未改、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
+验证该入口时，先核对实际文件范围、声明依赖、输入未改、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。将所选登记置为断连、健康接口设为不可用后，默认及显式安装的新worker仍应运行，read不得重新发现运行时。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
 
 直接入口为[Host适配](../tools/tests/isolated-execution.test.mjs)、[无输出探针](../tools/tests/dsh-isolated-probe.test.py)及[真实团队循环](../tools/tests/dsh-isolated-tool-loop.test.py)。团队循环用`--runtime-cache <精确DSH> --hython <目标hython>`启动独立Host和原生队友，覆盖预检/构建错误、真实Karma图、原生及PTC读图、DSH作业取消和同源报告；规划模型由本地夹具控制，不证明语义判断或自然采用。Windows入口复用无包身份测试CLI；外层受限令牌不支持再次创建DSH沙箱时，测试驱动需从正常桌面令牌运行，DSH内部仍保持workspace-write，不通过扩大模型权限证明默认路径。
 
@@ -256,3 +258,7 @@ python tools/run-deployment-tests.py --hython D:/houdini/bin/hython.exe --hython
 这是发行/部署回归入口，日常按改动选择检查。真实安装与 Qt 页面验收在新的自有进程和临时目录中执行；当前缺口只记 handoff，不在这里积累每次尝试。
 
 [签名包部署验收](../tools/tests/dsh-deployment-e2e.test.py)使用实际离线包、独立安装与数据目录，检查精确Node/DSH、profile、认证RPC和所选H21/H22 Bridge。可选`--previous-bundle <旧受信包目录>`再覆盖旧包自身入口与profile准备、新版失败快照保留和重试、各版独立数据、回退不合并以及同版重新安装恢复损坏的私有媒体工具。测试数据只证明文件与版本选择保持，不证明DSH旧会话格式转换或模型续跑。正式Qt入口另用[发行GUI验收](../tools/tests/dsh-gui-release.test.py)：从真实Houdini菜单打开独立工作台，等待明确选择完成，以启动回执的原生session ID和目标投影核对[实际Qt页面](../tools/tests/dsh-release-workbench-browser.mjs)、工作目录、认证RPC、置顶状态及重开后的历史保持，并正常退出自有工作台。每个Houdini版本使用独立工程目录；不能按同目录或上一轮会话猜测选中任务，也不能用源码页面检查替代签名安装。
+
+启动与更新改动先运行[部署事务反例](../tools/tests/dsh-deployment.test.py)、[正式版发现与共享查询](../tools/tests/dsh-release-policy.test.py)、[Qt版本面板](../tools/tests/dsh-install-ui.test.py)和[启动反馈](../tools/tests/dsh-workbench-startup.test.py)。安装事务必须在完整校验与运行预检成功后发布 pending；已暂存版本反复启动不得重新全盘扫描或运行安装探针，小型签名/依赖锁/包版本与实际服务、现场身份仍须核对。媒体工具损坏由显式完整检查及同版修复覆盖，不将它重新设成打开普通工作区的前提。
+
+[工作台更新贯通](../tools/tests/dsh-workbench-updates.test.py)以精确准备缓存启动隔离真实DSH与Qt页面，仅在测试工作台进程替换GitHub发现边界，覆盖慢查询不挡启动、页头提示、同一版本面板、失败/取消、原生选中对话与未发送草稿保持；可用 `--hfs <Houdini安装目录>`选择H21/H22的Qt运行时。它不调用模型、HOM或用户服务，不证明GitHub可达、正式签名运行包已交付或用户live已加载。

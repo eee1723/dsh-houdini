@@ -29,10 +29,11 @@ if (fs.existsSync(pluginLink)) {
 } else {
   fs.symlinkSync(pluginTarget, pluginLink, 'junction')
 }
-const fromProfile = createRequire(path.join(profile, 'package.json')).resolve('dsh-houdini')
-await import(pathToFileURL(fromProfile).href)
-const agentFromProfile = createRequire(path.join(profile, 'package.json')).resolve('dsh-houdini/agent')
-await import(pathToFileURL(agentFromProfile).href)
+// Resolve the current profile's entries here; the serving Host imports them
+// once. Staging already exercised both exports before selecting this package.
+const profileRequire = createRequire(path.join(profile, 'package.json'))
+profileRequire.resolve('dsh-houdini')
+profileRequire.resolve('dsh-houdini/agent')
 const loaded = boot.loadProfile('dsh', 'web', path.join(app, 'node_modules/@deepseek-ai/dsh/package.json'))
 if (loaded.skippedBundles.length) throw new Error('Managed profile skipped bundles: ' + JSON.stringify(loaded.skippedBundles))
 const entries = boot.composeEntries([...loaded.layers.map(layer => layer.patches), loaded.patches])

@@ -65,6 +65,7 @@ export function apply(ctx) {
     ['skill','houdini-network-handoff','houdini-network-handoff/SKILL.md'],
     ['read',null,'houdini-network-handoff/references/network-layout.md'],
     ['nested',null,'houdini-network-handoff/references/file-delivery.md'],
+    ['read',null,'houdini-sop-workflow/references/module-design-collaboration.md'],
   ].map(([kind,name,relative])=>{
     const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
     const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
@@ -413,6 +414,9 @@ export function apply(ctx) {
           const componentSection=methodText.split('### 完整源组件与布局')[1].split('### 重复规律与代码生成')[0]
           assert(componentSection.split('\n').filter(line=>line.trim()).every(line=>visible?.includes(line)),
             'the actual provider must receive the complete component-source reference through the mounted read tool')
+          const containerSection=methodText.split('### 逻辑模块与容器选择')[1].split('## 2. 选择先于倒角与局部操作')[0]
+          assert(containerSection.split('\n').filter(line=>line.trim()).every(line=>visible?.includes(line)),
+            'the actual provider receives the complete container and dependency guidance, not just its link')
         }
         if(repetitionMethod && step===finalStep){
           const events=normalizeTraceSteps(currentEvents).steps.filter(s=>s.tool==='read')

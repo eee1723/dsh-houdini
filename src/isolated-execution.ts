@@ -3,7 +3,8 @@ import fs from 'node:fs/promises'
 import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
-import {spawn} from 'node:child_process'
+import {spawn,execFile} from 'node:child_process'
+import {promisify} from 'node:util'
 import {fileURLToPath} from 'node:url'
 import type {Context} from '@deepseek-ai/cordis'
 import type {ContentBlock} from '@deepseek-ai/dsh-llm'
@@ -28,6 +29,7 @@ const MAX_MANIFEST_BYTES=4*1024*1024
 export interface IsolatedRuntime {python:string;hython:string;hfs:string;houdini?:string}
 export interface IsolatedArgs {
   operation?:'run'|'read';manifest?:string;output_dir?:string;background?:boolean
+  houdini_installation?:string
   timeout_seconds?:number;memory_mb?:number
 }
 export interface IsolatedProcessRequest {
@@ -36,8 +38,29 @@ export interface IsolatedProcessRequest {
 }
 export interface IsolatedProcessResult {exit_code:number|null;cancel_requested:boolean;stdout?:string;stderr:string;error?:string}
 export interface IsolatedOptions {
-  runtimeResolver?:(exec:any)=>Promise<IsolatedRuntime>
+  runtimeResolver?:(exec:any,args:IsolatedArgs)=>Promise<IsolatedRuntime>
   runner?:(request:IsolatedProcessRequest)=>Promise<IsolatedProcessResult>
+}
+
+/** Explicit HFS selection for unbound/legacy sessions. Enumerate the supplied
+ * installation only; ambiguity never chooses a different interpreter version. */
+export async function isolatedInstallationRuntime(hfs:string,signal?:AbortSignal):Promise<IsolatedRuntime> {
+  signal?.throwIfAborted()
+  if(typeof hfs!=='string'||!path.isAbsolute(hfs))throw Error('houdini_installation must be an absolute Houdini installation directory (HFS)')
+  const names=await fs.readdir(hfs,{withFileTypes:true})
+  const candidates=process.platform==='win32'
+    ?names.filter(item=>item.isDirectory()&&/^python\d+$/.test(item.name)).map(item=>path.join(hfs,item.name,'python.exe'))
+    :[path.join(hfs,'python/bin/python3')]
+  const available=[]
+  for(const filename of candidates)if(await fs.stat(filename).then(stat=>stat.isFile(),()=>false))available.push(filename)
+  if(available.length!==1)throw Error('The explicit Houdini installation must contain exactly one bundled Python executable; found '+available.length)
+  const python=available[0]
+  const {stdout,stderr}=await promisify(execFile)(python,['--version'],{
+    windowsHide:true,timeout:10000,maxBuffer:65536,env:localVideoEnvironment(),cwd:hfs,signal})
+  const version=(stdout||stderr).trim().match(/^Python (\d+)\.(\d+)\.\d+$/)
+  if(!version||Number(version[1])<3||Number(version[1])===3&&Number(version[2])<11)
+    throw Error('The selected Houdini installation requires bundled Python 3.11 or newer')
+  return {python,hfs,hython:path.join(hfs,'bin',process.platform==='win32'?'hython.exe':'hython')}
 }
 
 /** Cancellation reaches the checker first; its Windows Job reaps the exact owned worker tree. */
@@ -146,7 +169,7 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
   return {...value,imageAttachments:images}
 }
 
-export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtimeResolver:(exec:any)=>Promise<IsolatedRuntime>,
+export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtimeResolver:(exec:any,args:IsolatedArgs)=>Promise<IsolatedRuntime>,
   runner:IsolatedOptions['runner']=runIsolatedProcess) {
   if((args.operation??'run')==='read'){
     if(!args.output_dir)throw Error('operation=read requires the original absolute output_dir')
@@ -174,7 +197,7 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
   }
   const timeout=args.timeout_seconds??120,memory=args.memory_mb??4096
   if(!Number.isFinite(timeout)||timeout<=0||!Number.isSafeInteger(memory)||memory<=0)throw Error('timeout_seconds and memory_mb must be positive finite budgets')
-  const runtime=await runtimeResolver(exec)
+  const runtime=await runtimeResolver(exec,args)
   for(const binary of [runtime.python,runtime.hython])if(!path.isAbsolute(binary)||(await fs.stat(binary)).isFile()!==true)throw Error('Selected Houdini runtime executable is missing: '+binary)
   const request={runtime,manifest:source.local,output:output.local,cancelFile:path.join(path.dirname(output.local),'.'+path.basename(output.local)+'.'+randomUUID()+'.cancel'),timeout,memory}
   const run=async(signal:AbortSignal,onOutput?:(text:string)=>void)=>{
@@ -228,7 +251,18 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
 }
 
 export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,options:IsolatedOptions={}) {
-  const runtimeResolver=options.runtimeResolver??(async(exec:any)=>{
+  const runtimeResolver=options.runtimeResolver??(async(exec:any,args:IsolatedArgs)=>{
+    if(args.houdini_installation!==undefined)return isolatedInstallationRuntime(args.houdini_installation,exec.signal)
+    if('resolve' in connection){
+      if(!connection.resolveRuntime)throw Error('This Houdini connection has no recorded installation; specify houdini_installation')
+      const {runtime,houdiniVersion}=await connection.resolveRuntime(exec)
+      const version=runtime.pythonVersion.match(/^(\d+)\.(\d+)\.\d+$/)
+      if(!version||Number(version[1])<3||Number(version[1])===3&&Number(version[2])<11)
+        throw Error('The selected Houdini installation requires bundled Python 3.11 or newer')
+      return {python:runtime.python,hfs:runtime.hfs,hython:path.join(runtime.hfs,'bin',process.platform==='win32'?'hython.exe':'hython'),houdini:houdiniVersion}
+    }
+    // Legacy fixed-Bridge configuration has no registry. Its ordinary online
+    // metadata route remains available; explicit HFS above needs no live endpoint.
     const {bridge}=await new HoudiniToolRuntime(ctx,connection).target(exec,'read')
     const runtime=await resolveVideoRuntime('',{bridge,signal:exec.signal})
     return {python:runtime.python,hfs:runtime.hfs,hython:path.join(runtime.hfs,'bin',process.platform==='win32'?'hython.exe':'hython'),houdini:('houVersion'in runtime?String(runtime.houVersion):undefined)}
@@ -238,6 +272,7 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
     parameters:{operation:{type:'string',enum:['run','read'],description:'Default run; read only retrieves a prior output_dir.'},
       manifest:{type:'string',description:'Absolute JSON manifest with hip and/or script: a script after hip runs setup on that copied scene, then checks. Optional input_root is absolute or relative to the manifest; hip/script/files are safe relative names beneath it. Optional cook/cache/render checks; omitted checks only execute the declared input.'},
       output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. read requires the exact directory returned by the original run. Existing or explicit paths are never moved.'},
+      houdini_installation:{type:'string',description:'Optional explicit absolute Houdini installation directory (HFS). Otherwise use the selected scene\'s recorded installation even if live is offline; legacy fixed-Bridge connections obtain installation metadata online. No Host HFS or PATH fallback.'},
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
       timeout_seconds:{type:'number',description:'Positive worker time budget, default 120 seconds.'},
       memory_mb:{type:'number',description:'Positive integer process-tree committed-memory budget, default 4096 MiB; not GPU memory.'}},

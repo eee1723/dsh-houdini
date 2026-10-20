@@ -124,11 +124,11 @@ def rollback_and_repair(store, context, bundle, old_context=None, expected_old=N
     media[1].unlink()  # Only this test-created installation's explicit file.
     state = store.state()
     try:
-        store.activate(context["installId"], "21.0", progress, bootstrap._prepare)
+        d.verify_inventory(install, store.manifest(context["installId"]), progress)
     except ValueError as error:
         assert "damaged" in str(error) or "missing" in str(error), str(error)
     else:
-        raise AssertionError("damaged private media installation was accepted")
+        raise AssertionError("explicit installation verification missed damaged private media")
     assert store.state() == state
     assert_data(home, newer)
     repair_id = store.stage(bundle, progress)
@@ -184,10 +184,13 @@ if args.previous_bundle is not None:
     old_context, old_lease = store.activate(previous_id, "21.0", progress, bootstrap._prepare)
     old_lease.close()
 ident = store.stage(args.bundle, progress)
+activation_started = time.monotonic()
 if old_context is not None:
     ctx, lease, expected_old, retained_snapshot = failure_snapshot(store, ident, old_context)
 else:
     ctx, lease = store.activate(ident, "21.0", progress, bootstrap._prepare)
+activation_seconds = round(time.monotonic() - activation_started, 3)
+print("Managed activation after verified staging: " + str(activation_seconds) + " seconds", flush=True)
 install = Path(ctx["install"])
 inventory = d.read_json(install / "inventory.json")
 isolated_files = ["lib/isolated-execution.js", "tools/isolated-houdini-check.py",
@@ -219,6 +222,14 @@ if (entries.some(x=>!x.disabled && x.name==='dsh-houdini/agent')) throw Error('H
 """
 subprocess.run([str(install / "node/node.exe"), "--input-type=module", "-e", binding_script],
                cwd=install / "app", env=env, capture_output=True, check=True, timeout=60)
+# Exercise the current profile preparer against the real signed app tree,
+# including fresh workbench registry interpolation, without changing payloads.
+profile_context = dict(ctx, workbench=True, executorRegistry=str(store.root / "workbench/executors"))
+profile_context_file = Path(ctx["runtimeDir"]) / "workbench-profile-check.json"
+d.atomic_json(profile_context_file, profile_context)
+subprocess.run([str(install / "node/node.exe"), str(ROOT / "tools/prepare-managed-profile.mjs"), str(profile_context_file)],
+               cwd=install / "app", env=d.runtime_env(profile_context), capture_output=True,
+               text=True, encoding="utf-8", errors="replace", check=True, timeout=60)
 cwd = test_root / "workspace"
 cwd.mkdir()
 log = Path(ctx["runtimeDir"]) / "frontend.log"
@@ -346,6 +357,7 @@ assert process.returncode is not None
 print("Owned frontend terminated; no external process or user HIP was touched", flush=True)
 recovery = rollback_and_repair(store, ctx, args.bundle, old_context, expected_old)
 d.atomic_json(test_root / "lifecycle-evidence.json", {"currentVersion": ctx["version"],
+    "activationSeconds": activation_seconds,
     "previousVersion": old_context["version"] if old_context else None,
     "incompleteSnapshot": retained_snapshot, "recovery": recovery, "state": store.state()})
 print("Real signed same-version repair restored private FFmpeg/ffprobe and preserved independent data", flush=True)

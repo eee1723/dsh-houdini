@@ -27,7 +27,11 @@ description: 用houdini_isolated在一次性独立hython中构建或检查明确
 
 ## 调用入口
 
-`operation="run"`（默认）需要绝对`manifest`路径；省略`output_dir`时，工具在当前DSH工作区的`execution_run`目录中分配唯一运行目录，不查询现场HIP来决定目录。可显式指定新的绝对`output_dir`，已有位置不会被搬动或覆盖。运行版从当前选中的Houdini只读health取得，不自行挑另一个安装版本。`timeout_seconds`默认120，`memory_mb`默认4096；依据本次计算选择，内存上限不约束GPU或外部服务。`background=true`沿DSH原生作业运行，适合超过一轮交互等待的计算。
+`operation="run"`（默认）需要绝对`manifest`路径；省略`output_dir`时，工具在当前DSH工作区的`execution_run`目录中分配唯一运行目录，不查询现场HIP来决定目录。可显式指定新的绝对`output_dir`，已有位置不会被搬动或覆盖。
+
+默认消费当前明确选择的Houdini所登记的安装信息，现场离线仍可运行。也可用`houdini_installation`指定绝对安装根目录（HFS），用于未选现场或旧登记缺少安装信息的情况；不按PATH或Host环境猜版本。无登记的固定Bridge配置仍需在线读取安装信息，离线时使用显式HFS。安装选择不修改现场目标、节点归属或旧请求状态。
+
+`timeout_seconds`默认120，`memory_mb`默认4096；依据本次计算选择，内存上限不约束GPU或外部服务。`background=true`沿DSH原生作业运行，适合超过一轮交互等待的计算。
 
 manifest至少声明`script`或`hip`之一。两者同时存在时，driver先加载声明的HIP副本并登记该次节点身份，再以同一隔离作者执行脚本作为准备操作，最后运行checks；脚本不自行load/clear。`hip/script/files`是输入根下的安全相对路径；输入根默认manifest目录，也可用`input_root`明确指定绝对目录或相对manifest的目录。这样HIP可留在工程根，准备脚本和manifest留在源码目录；不必为路径绕行复制源文件或把控制文件散放工程根。
 

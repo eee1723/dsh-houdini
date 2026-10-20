@@ -19,9 +19,9 @@ def show_source(*, parent=None):
     return show(source_root=Path(__file__).resolve().parents[2], parent=parent)
 
 
-def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None, startup_error_provider=None, uninstall_script=None):
+def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_error=None, parent=None, context_provider=None, startup_error_provider=None, uninstall_script=None, release_check=None, workbench=False):
     global _WINDOW
-    from hutil.Qt import QtCore, QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     source_root = Path(source_root).resolve() if source_root is not None else None
     source_mode = source_root is not None
     if source_mode == (store is not None):
@@ -31,15 +31,18 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         _WINDOW._dsh_startup_error_provider = startup_error_provider
         if context_provider is not None:
             _WINDOW._dsh_context_provider = context_provider
+        if release_check is not None:
+            _WINDOW._dsh_release_check = release_check
         show_tool_window(_WINDOW)
         return _WINDOW
-    if parent is None:
+    if parent is None and not workbench:
         import hou
         parent = hou.qt.mainWindow()
     window = QtWidgets.QDialog(parent)
     window._dsh_context_provider = context_provider
     window._dsh_startup_error = startup_error
     window._dsh_startup_error_provider = startup_error_provider
+    window._dsh_release_check = release_check
     window.setWindowTitle("DSH-Houdini · 版本与更新")
     window.setMinimumWidth(560)
     style_dialog(window)
@@ -118,7 +121,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     location.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
     advanced_layout.addWidget(location)
     source_help = ("在源码目录依次执行 git pull --ff-only、npm install、npm run build。\n"
-                   "随后在运行诊断中修复并重启运行环境；菜单、安装配置或内嵌网页窗口有改动时，需要完整重开 Houdini。\n"
+                   "随后关闭工作台并重开相关 Houdini；构建结果在下次打开工作区时加载。\n"
                    "构建通过不代表当前 Houdini 已加载新版本。")
     maintenance = QtWidgets.QGridLayout()
     local = QtWidgets.QPushButton("源码更新说明" if source_mode else "安装本地包…")
@@ -146,6 +149,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     diagnostic_row.addWidget(diagnostics)
     diagnostic_row.addWidget(network)
     advanced_layout.addWidget(diagnostic_group)
+    if workbench:
+        advanced_layout.addWidget(label("现场诊断请从 Houdini 的 Version & Updates 打开。", "caption"))
     shared_label = label("实验功能 · 将当前 Houdini 连接到共享服务", "caption")
     shared_buttons = QtWidgets.QHBoxLayout()
     shared_register = QtWidgets.QPushButton("登记共享执行端…")
@@ -167,7 +172,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
     events = queue.Queue()
     cancelled = threading.Event()
     state = {"busy": False, "release": None, "checked": False, "source_version": None,
-             "version": None, "pending": None, "error": bool(startup_error)}
+             "version": None, "pending": None, "error": bool(startup_error),
+             "release_revision": -1, "checking_updates": False}
     buttons = [online, install, local, verify_button, repair, rollback, cancel_pending, diagnostics, network,
                shared_register, shared_repair, uninstall]
 
@@ -186,7 +192,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         install.hide()
         online.setObjectName("primary")
         if state["pending"]:
-            return "版本已准备好，完整重开 Houdini 后生效。"
+            return "版本已准备好，关闭工作台并重开相关 Houdini 后生效。"
         if not state["checked"]:
             if loaded is not None:
                 return "当前版本已加载。尚未检查更新。"
@@ -222,7 +228,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
             button.setEnabled(not state["busy"])
         for button in (repair, rollback, cancel_pending):
             button.hide()
-        runtime_available = source_mode or loaded is not None
+        runtime_available = not workbench and (source_mode or loaded is not None)
         diagnostic_group.setVisible(runtime_available)
         shared_label.setVisible(runtime_available)
         shared_register.setVisible(runtime_available)
@@ -287,12 +293,22 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         threading.Thread(target=worker, daemon=True).start()
 
     def check_updates():
+        if state["busy"]:
+            return
         # A failed retry must never keep an older actionable release result.
         state["checked"] = False
         state["release"] = None
+        state["checking_updates"] = True
         install.hide()
         def check():
-            value = releases.latest_stable_release()
+            checker = window._dsh_release_check
+            if checker is None:
+                value = releases.latest_stable_release()
+            else:
+                snapshot = checker.check()
+                if snapshot['error']:
+                    raise RuntimeError(snapshot['error'])
+                value = snapshot['release']
             report("更新检查已响应。")
             events.put(("release", value))
             return "更新检查完成。"
@@ -308,13 +324,13 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                 details.appendPlainText(release["url"])
             return
         answer = confirm_dialog(
-            window, "准备安装", "下载并校验完整发行包？\n\n新版本将在完整重开 Houdini 后启用，当前版本和数据会保留。",
+            window, "准备安装", "下载并校验完整发行包？\n\n准备好后，关闭工作台并重开相关 Houdini 后生效，当前版本和数据会保留。",
             "下载并准备安装")
         if answer:
             def install_task():
                 directory = deployment.fetch_release(store, release, report)
                 store.stage(directory, report)
-                return "版本已准备好，完整重开 Houdini 后生效。"
+                return "版本已准备好，关闭工作台并重开相关 Houdini 后生效。"
             run(install_task, "正在下载并校验发行包…")
 
     def local_action():
@@ -324,7 +340,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
             window, "选择与安装包及签名放在一起的 release.json", "", "发行清单 (release.json)")
         if filename:
-            run(lambda: store.stage(Path(filename).parent, report) and "本地版本已准备好，完整重开 Houdini 后生效。", "正在检查本地发行包…")
+            run(lambda: store.stage(Path(filename).parent, report) and "本地版本已准备好，关闭工作台并重开相关 Houdini 后生效。", "正在检查本地发行包…")
 
     def verify():
         if source_mode:
@@ -349,7 +365,7 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
             window, "回退到上一版本", "下次启动恢复上一版本和它的数据快照？\n\n新版会话会单独保留，不会合并到旧版。",
             "准备回退")
         if answer:
-            run(lambda: store.rollback(report) and "已准备回退，完整重开 Houdini 后生效。新版数据单独保留。")
+            run(lambda: store.rollback(report) and "已准备回退，关闭工作台并重开相关 Houdini 后生效。新版数据单独保留。")
 
     def repair_current():
         def task():
@@ -361,11 +377,27 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                 raise ValueError("修复包与当前版本不一致")
             directory = deployment.fetch_release(store, release, report)
             store.stage(directory, report)
-            return "同版本修复包已准备好，完整重开 Houdini 后生效。"
+            return "同版本修复包已准备好，关闭工作台并重开相关 Houdini 后生效。"
         run(task, "正在准备当前版本的修复包…")
 
     def tick():
         nonlocal loaded, pinned
+        checker = window._dsh_release_check
+        if checker is not None and not state['busy']:
+            snapshot = checker.snapshot()
+            if snapshot['revision'] != state['release_revision']:
+                state['release_revision'] = snapshot['revision']
+                state['checked'] = snapshot['checked'] and not snapshot['error']
+                state['release'] = snapshot['release'] if state['checked'] else None
+                state['error'] = bool(snapshot['error'])
+                summary = refresh()
+                if snapshot['error']:
+                    details.appendPlainText(snapshot['error'])
+                    status.setText("暂时无法检查更新，请展开高级设置查看原因。")
+                elif snapshot['checking']:
+                    status.setText("正在后台检查正式版本…")
+                elif summary and not window._dsh_startup_error:
+                    status.setText(summary)
         provider = window._dsh_context_provider
         if provider is not None:
             new_pinned, new_loaded = provider()
@@ -384,9 +416,12 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                 state["source_version"] = value
                 continue
             if kind == "release":
-                state["release"] = value
-                state["checked"] = True
+                if not cancelled.is_set():
+                    state["release"] = value
+                    state["checked"] = True
                 continue
+            if kind in ('done', 'error') and state['checking_updates'] and cancelled.is_set():
+                kind, value = 'cancelled', '操作已取消。当前运行版本不变，已下载的文件保留。'
             if kind != "progress" or not details.toPlainText().endswith(value):
                 details.appendPlainText(value)
             if kind == "progress":
@@ -394,6 +429,14 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
                 # status retains the concise description of the operation.
                 continue
             if kind in ("done", "error", "cancelled"):
+                if state['checking_updates']:
+                    if checker is not None:
+                        # A cancelled shared request may finish its HTTP read;
+                        # consuming that revision keeps its result dismissed.
+                        state['release_revision'] = checker.snapshot()['revision']
+                    state['checking_updates'] = False
+                    if kind != 'done':
+                        state['checked'], state['release'] = False, None
                 state["busy"] = False
                 state["error"] = kind == "error"
                 cancel.hide()
@@ -500,6 +543,8 @@ def show(store=None, *, source_root=None, pinned=None, loaded=None, startup_erro
         status.setText("无法读取安装状态，请展开高级设置查看原因。")
         details.appendPlainText(str(exc))
     _WINDOW = window
+    if release_check is not None:
+        tick()
     window.show()
     if source_mode:
         verify()

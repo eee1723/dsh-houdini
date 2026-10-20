@@ -231,6 +231,46 @@ mixed_usage = dsh_bridge._raw_usage_analysis(
 )
 assert mixed_usage['suspectedMutations'] == [{'name':'addAttrib', 'count':1}], mixed_usage
 
+# Method ownership, rather than a mutating spelling, distinguishes Python
+# bookkeeping from HOM writes in both exec and inspect. Bound methods and HOM
+# getter results use the same classification as direct literal receivers.
+for read_only in (False, True):
+    bookkeeping = dsh_bridge.run_code(
+        "pieces=[hou.node('/obj'), 1]; remove=pieces.remove; remove(1)\n"
+        "names=[n.name().removesuffix('_surface') for n in hou.node('/').children()]\n"
+        "__result__=[len(pieces), hou.node('/obj').path().removeprefix('/'), len(names)>0]",
+        read_only=read_only)
+    assert bookkeeping['ok'] and bookkeeping['result'] == [1, 'obj', True], bookkeeping
+
+# Stdlib API provenance is independent of spelling and direct/from/bound call
+# syntax. Return values do not inherit that provenance. A known module export
+# replaced with HOM must retain the covered write, including allow_raw.
+for read_only in (False, True):
+    ordinary = dsh_bridge.run_code(
+        "import math, copy\nfrom math import copysign as sign\n"
+        "bound=math.copysign\n__result__=[math.copysign(2,-1),sign(3,-1),bound(4,-1),copy.copy([5])]",
+        read_only=read_only)
+    assert ordinary['ok'] and ordinary['result'] == [-2, -3, -4, [5]], ordinary
+
+import math
+original_sign = math.copysign
+module_fixture = hou.node('/obj').createNode('geo', '__gate_module_export')
+try:
+    math.copysign = module_fixture.setName
+    for source in (
+        "import math; math.copysign('__not_renamed')",
+        "from math import copysign as rename; rename('__not_renamed')",
+        "import math; getter=getattr; rename=getter(math,'copysign'); rename('__not_renamed')",
+    ):
+        for read_only in (False, True):
+            rejected = dsh_bridge.run_code(source, read_only=read_only, allow_raw='cannot exempt re-exported HOM')
+            assert not rejected['ok'], rejected
+            assert rejected['rawUsage']['coveredMutations'] == [{'name':'setName','count':1,'verb':'rename_node'}], rejected
+            assert module_fixture.name() == '__gate_module_export'
+finally:
+    math.copysign = original_sign
+    module_fixture.destroy()
+
 # A prior set initializer is not receiver identity after a rebinding. Exercise
 # actual HOM PointGroup.add against a persistent, mutable geometry fixture.
 mutable = hou.Geometry()
@@ -252,6 +292,27 @@ try:
         assert not selection.points(), result
 finally:
     del hou.session._dsh_adversarial_geometry
+
+# A Python container may hold a HOM object; mutating that element is still a
+# scene/geometry operation. Shadowed constructors cannot prove builtin values.
+selection.add(mutable.point(0))
+hou.session._dsh_adversarial_group = selection
+try:
+    for code in (
+        "pieces=[hou.session._dsh_adversarial_group]; pieces[0].remove(hou.session._dsh_adversarial_group.geometry().point(0))",
+        "list=lambda: hou.session._dsh_adversarial_group; list().remove(hou.session._dsh_adversarial_group.geometry().point(0))",
+        "pieces=[]; pieces=hou.session._dsh_adversarial_group; remove=pieces.remove; remove(hou.session._dsh_adversarial_group.geometry().point(0))",
+    ):
+        denied = dsh_bridge.run_code(code, read_only=True)
+        assert not denied['ok'] and 'remove' in denied['error'], denied
+        assert len(selection.points()) == 1
+    safe_container = dsh_bridge.run_code(
+        "pieces=[hou.session._dsh_adversarial_group]; pieces.remove(hou.session._dsh_adversarial_group); __result__=len(pieces)",
+        read_only=True)
+    assert safe_container['ok'] and safe_container['result'] == 0, safe_container
+    assert len(selection.points()) == 1
+finally:
+    del hou.session._dsh_adversarial_group
 
 # Uncovered low-level mutation is blocked first, then allowed as an isolated,
 # trace-visible vocabulary-gap exemption.

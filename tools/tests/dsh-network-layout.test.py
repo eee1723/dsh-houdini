@@ -1,6 +1,6 @@
 """Pure rectangle core regression; no Houdini dependency."""
 from pathlib import Path
-import math,sys
+import math,random,sys,time,tracemalloc
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 import dsh_network_layout as layout
@@ -68,18 +68,22 @@ reordered=layout.plan_handoff(list(reversed(nodes)),list(reversed(groups)),[['c'
 assert reordered==planned
 reject(lambda:layout.plan_handoff(nodes,groups,[['a','c'],['c','a']],[]),'cycle')
 
-# Declared planner boundary: 512 movable nodes across 64 boxes remains bounded.
+# Network size is not a layout admission rule. Hierarchical evidence covers
+# complete large scopes while only descending into nearby rectangle clusters.
 boundary_nodes=[];boundary_groups=[]
-for group_index in range(64):
+for group_index in range(70):
     members=[]
-    for member_index in range(8):
+    for member_index in range(16):
         key=f'n{group_index:02d}_{member_index:02d}';members.append(key)
         boundary_nodes.append({'key':key,'group':f'g{group_index:02d}','rect':[member_index*2,0,member_index*2+1,1]})
     boundary_groups.append({'key':f'g{group_index:02d}','members':members,'rect':[0,0,16,2]})
 boundary=layout.plan_handoff(boundary_nodes,boundary_groups,[],[])
-assert boundary['ok'] and len(boundary['node_positions'])==512 and len(boundary['box_bounds'])==64
-reject(lambda:layout.plan_handoff(boundary_nodes,boundary_groups+[{'key':'too_many','members':[],'rect':[0,0,1,1]}],[],[]),'64')
-reject(lambda:layout.plan_handoff(nodes,groups,[],[['fixed',[0,0,1,1]]]*510),'512 rectangle budget')
+assert boundary['ok'] and len(boundary['node_positions'])==1120 and len(boundary['box_bounds'])==70
+late_obstacles=[[f'far{i}',[i*5,10000,i*5+2,10002]] for i in range(700)]
+late_obstacles.append(['late blocker',boundary['box_bounds']['g00']])
+blocked_boundary=layout.plan_handoff(boundary_nodes,boundary_groups,[],late_obstacles)
+assert blocked_boundary['ok'] and not blocked_boundary['obstacle_overlap_pairs']
+assert blocked_boundary['box_bounds']['g00']!=boundary['box_bounds']['g00']
 
 # Readable layout follows connections, not the previous row or input list order.
 def readable_fixture(names, edges, *, labels=None):
@@ -120,10 +124,39 @@ assert sum('root' in chain for family in fork['readability']['model']['families'
 
 separate=readable_fixture(['a','b','c','d'],[['a','b'],['c','d']])
 families=separate['readability']['model']['families']
-assert len(families)==2 and families[0]['right']<families[1]['left']
+assert len(families)==2
+assert not layout.overlaps(
+    [families[0][key] for key in ('left','bottom','right','top')],
+    [families[1][key] for key in ('left','bottom','right','top')])
 assert {tuple(family['members']) for family in families}=={('a','b'),('c','d')}
 assert separate['node_positions']['a'][0]==separate['node_positions']['b'][0]
 assert separate['node_positions']['c'][0]==separate['node_positions']['d'][0]
+
+# Short pipelines should remain readable as pipelines, not become an unbounded
+# horizontal catalogue. Connected fanout also wraps without reversing a wire.
+pipeline_names=[];pipeline_edges=[]
+for index in range(96):
+    chain=[f'branch{index:03d}_{step}' for step in range(3)]
+    pipeline_names.extend(chain);pipeline_edges.extend(zip(chain,chain[1:]))
+disconnected=readable_fixture(pipeline_names,pipeline_edges)
+disconnected_bounds=layout.rect(disconnected['box_bounds']['model'])
+assert disconnected_bounds.width<200 and disconnected_bounds.height<200,disconnected_bounds
+for index in range(96):
+    xs={disconnected['node_positions'][f'branch{index:03d}_{step}'][0] for step in range(3)}
+    assert max(xs)-min(xs)<layout.TOLERANCE
+connected_edges=pipeline_edges+[[f'branch{index:03d}_2','out',index] for index in range(96)]
+fanout=readable_fixture(pipeline_names+['out'],connected_edges)
+fanout_bounds=layout.rect(fanout['box_bounds']['model'])
+assert fanout_bounds.width<200 and fanout_bounds.height<200,fanout_bounds
+for result,edges in ((disconnected,pipeline_edges),(fanout,connected_edges)):
+    for source,target,*_ in edges:
+        assert result['node_positions'][source][1]>result['node_positions'][target][1],(source,target)
+# Contracting primary paths can introduce a grouping cycle in a valid DAG.
+# Packing must still use actual ranks rather than inventing a path-block order.
+cross=readable_fixture(['a','b','c','side','tail'],
+    [['a','b',0],['b','c',0],['a','side',0],['side','c',1],['c','tail',0]])
+for source,target in (('a','b'),('b','c'),('a','side'),('side','c'),('c','tail')):
+    assert cross['node_positions'][source][1]>cross['node_positions'][target][1]
 
 plain=readable_fixture(['a','b'],[])
 long_label=readable_fixture(['a','b'],[],labels={'a':'a_very_long_human_readable_source_geometry_label'})
@@ -151,8 +184,11 @@ grouped_boxes=[{'key':'left','members':['a','c'],'rect':[0,0,4,4]},
                {'key':'right','members':['b'],'rect':[0,0,4,4]}]
 grouped_edges=[['a','b',0],['b','c',0]]
 assert layout.plan_handoff(grouped_nodes,grouped_boxes,grouped_edges,[],style='readable')['ok']
-reject(lambda:layout.plan_handoff(grouped_nodes,grouped_boxes,grouped_edges,[]),'cycle')
+assert layout.plan_handoff(grouped_nodes,grouped_boxes,grouped_edges,[])['ok']
 reject(lambda:readable_fixture(['a','b'],[['a','b',0],['b','a',0]]),'cycle')
+for style in ('comfortable','readable'):
+    reject(lambda:layout.plan_handoff([{'key':'a','group':'g','rect':[0,0,2,1]}],
+        [{'key':'g','members':['a'],'rect':[0,0,2,1]}],[['a','a']],[],style=style),'cycle')
 reject(lambda:layout.plan_handoff(nodes,groups,[],[],style='invented'),'style')
 reject(lambda:layout.plan_handoff(nodes,groups,[['a','c',-1]],[],style='readable'),'input_index')
 
@@ -187,6 +223,10 @@ assert parallel['ok'] and not parallel['clearance_failures'],parallel
 canvas=layout.union(parallel['box_bounds'].values())
 assert canvas.width<150 and .5<canvas.width/canvas.height<2.5,canvas
 assert len({bounds[3] for bounds in parallel['box_bounds'].values()})>1
+node_groups=layout.plan_handoff(parallel_items,parallel_groups,[],[],style='readable')
+assert node_groups['ok'] and not node_groups['clearance_failures'],node_groups
+node_canvas=layout.union(node_groups['box_bounds'].values())
+assert node_canvas.width<400 and len({bounds[3] for bounds in node_groups['box_bounds'].values()})>1,node_canvas
 
 box_roles=layout.plan_handoff(role_nodes,role_groups,[],[],style='readable',item_kind='box')
 assert box_roles['ok'],box_roles
@@ -195,4 +235,44 @@ assert boxes['begin'][1]>boxes['build'][3]
 assert boxes['finish'][3]<boxes['build'][1]
 assert boxes['inspect'][0]>boxes['build'][2]
 reject(lambda:layout.plan_handoff(nodes,groups,[],[],item_kind='text'),'item_kind')
+
+# The spatial proof must match brute force, including contained, coincident,
+# broad and late rectangles. Every pair is accounted for, never sampled.
+rng=random.Random(31)
+for count in (1,9,65):
+    values=[]
+    for index in range(count):
+        x,y=rng.uniform(-30,30),rng.uniform(-30,30)
+        values.append((str(index),layout.Rect(x,y,x+rng.uniform(.1,20),y+rng.uniform(.1,20))))
+    for other in (None,list(reversed(values))):
+        evidence=layout._separation_evidence(values,required_x=.75,required_y=1.5,right_items=other)
+        pairs=[(a,b) for i,a in enumerate(values) for b in (values[i+1:] if other is None else other)]
+        expected={tuple(sorted((a[0],b[0]))) for a,b in pairs
+                  if layout.axis_clearance(a[1],b[1],'x')<.75-layout.TOLERANCE
+                  and layout.axis_clearance(a[1],b[1],'y')<1.5-layout.TOLERANCE}
+        actual={tuple(sorted((row['left'],row['right']))) for row in evidence['failures']}
+        assert actual==expected
+        assert evidence['pair_count']==len(pairs)
+        assert evidence['horizontal_pair_count']+evidence['vertical_pair_count']+len(evidence['failures'])==len(pairs)
+budget=layout.MAX_RELATION_VISITS
+layout.MAX_RELATION_VISITS=32
+try:
+    reject(lambda:layout._separation_evidence([(str(i),[0,0,2,1]) for i in range(100)],
+        required_x=.75,required_y=1.5),'relation budget')
+finally:layout.MAX_RELATION_VISITS=budget
+
+# Long valid wires exceed Python's recursion depth. Sparse verification should
+# not allocate or visit all 4.5 million node pairs in this chain.
+count=3000
+chain_nodes=[{'key':f'n{i:04d}','group':'chain','rect':[0,0,2,1]} for i in range(count)]
+chain_groups=[{'key':'chain','members':[row['key'] for row in chain_nodes],'rect':[0,0,2,1]}]
+chain_edges=[[chain_nodes[i]['key'],chain_nodes[i+1]['key'],0] for i in range(count-1)]
+tracemalloc.start();started=time.monotonic()
+for style in ('comfortable','readable'):
+    large_chain=layout.plan_handoff(chain_nodes,chain_groups,chain_edges,[],style=style)
+    assert large_chain['ok'] and len(large_chain['node_positions'])==count
+    assert large_chain['achieved_clearances']['node_pairs']['pair_count']==count*(count-1)//2
+_current,peak=tracemalloc.get_traced_memory();tracemalloc.stop()
+assert peak<64*1024*1024,peak
+print(f'3000-node layouts: {time.monotonic()-started:.3f}s, peak {peak/1024/1024:.1f} MiB')
 print('pure network layout rectangle core passed')

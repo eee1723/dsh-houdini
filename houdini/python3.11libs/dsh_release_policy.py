@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import datetime
 import urllib.error
 import urllib.request
@@ -92,3 +93,68 @@ def latest_stable_release(fetch_json=None) -> dict | None:
             raise ValueError("could not confirm the official release repository") from exc
         return None
     return validate_published_release(data)
+
+
+class ReleaseCheck:
+    """One in-memory discovery result shared by the workbench and its manager.
+
+    No installation state is written. Concurrent readers never perform I/O;
+    concurrent checks join the same request rather than race old results.
+    """
+    def __init__(self, fetch_release=None):
+        self._fetch_release = fetch_release or latest_stable_release
+        self._condition = threading.Condition()
+        self._state = dict(checking=False, checked=False, release=None, error=None, revision=0)
+
+    def snapshot(self):
+        with self._condition:
+            return {**self._state, 'release': dict(self._state['release']) if self._state['release'] else None}
+
+    def _begin(self):
+        self._state.update(checking=True, checked=False, release=None, error=None,
+                           revision=self._state['revision'] + 1)
+
+    def _fetch(self):
+        try:
+            release, error = self._fetch_release(), None
+        except Exception as exc:
+            release, error = None, str(exc).strip() or type(exc).__name__
+        with self._condition:
+            self._state.update(checking=False, checked=True, release=release, error=error,
+                               revision=self._state['revision'] + 1)
+            self._condition.notify_all()
+
+    def check(self):
+        """Worker-only refresh. Errors remain explicit in the shared snapshot."""
+        with self._condition:
+            if self._state['checking']:
+                self._condition.wait_for(lambda: not self._state['checking'])
+                return self.snapshot()
+            self._begin()
+        self._fetch()
+        return self.snapshot()
+
+    def start(self):
+        """Start discovery without blocking Qt, startup or a status request."""
+        with self._condition:
+            if self._state['checking']:
+                return
+            self._begin()
+        threading.Thread(target=self._fetch, daemon=True).start()
+
+
+def update_notice(snapshot, versions):
+    """Only a confirmed release newer than every selected version is offered."""
+    quiet = {'available': False}
+    if snapshot.get('checking') or not snapshot.get('checked') or snapshot.get('error'):
+        return quiet
+    release = snapshot.get('release')
+    if not release or not versions:
+        return quiet
+    try:
+        latest = stable_version(release['version'])
+        if latest <= max(stable_version(version) for version in versions):
+            return quiet
+    except (ValueError, TypeError, KeyError):
+        return quiet
+    return {'available': True, 'version': release['version']}

@@ -20,8 +20,9 @@ const tool=(id,name,args)=>[{type:'block-start',index:0,blockType:'tool-call'},
 
 function builder(){
   // The small image is rendered by actual Karma CPU, never replaced by a PNG fixture.
-  return `g=tab_create('/obj','geo',name='team_box')
-n=tab_create(g,'box',name='OUT')
+  return `import math, copy
+g=tab_create('/obj','geo',name='team_box')
+n=tab_create(g,'box',name='OUT',parms={'sizex':math.copysign(copy.copy(-1.0),1.0)})
 c=tab_create('/obj','cam',name='team_camera')
 camera_fit(c,n,width=64,height=64)
 imp=tab_create('/stage','sceneimport',name='scene')
@@ -49,6 +50,14 @@ export function apply(ctx){
   const checks=[],requests=[],sessions=new Set(),sessionRefs=new Map(),runtimeReads=[],images=[],runs={}
   let failure,childId,childStage=0,preflightStage=0,polls=0,childDone=false,leadId,jobId,nativeImage,ptcImage
   let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult
+  let liveOffline=false
+  const record={schema:1,executor_id:'b'.repeat(32),registration_id:'c'.repeat(32),runtime_id:'a'.repeat(32),
+    installation:config.root,bridge_url:'http://127.0.0.1:'+config.bridgePort,houdini_version:config.houdiniVersion,
+    pid:process.pid,state:'registered',task_id:null,hip_path:path.join(workspace,'unused-fixture.hip'),
+    workbench:true,scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),hip_is_new:true,workspace_path:workspace,
+    runtime:{hfs,python,pythonVersion:config.pythonVersion,executable:hython}}
+  const recordFile=path.join(config.executorRegistry,'endpoints',record.executor_id+'.json')
+  fs.mkdirSync(path.dirname(recordFile),{recursive:true});fs.writeFileSync(recordFile,JSON.stringify(record))
   const layout=JSON.parse(fs.readFileSync(new URL('../../houdini/project-layout.json',import.meta.url),'utf8'))
   const evidence=()=>({requests,checks,runtimeReads,images,runs,leadId,childId,peerResult})
   const report=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)}
@@ -112,8 +121,10 @@ export function apply(ctx){
   const server=http.createServer((req,res)=>{
     runtimeReads.push({method:req.method,path:req.url})
     res.setHeader('content-type','application/json')
+    if(liveOffline){res.writeHead(503);res.end(JSON.stringify({error:'Live Houdini is deliberately unavailable for every independent run'}));return}
     if(req.method==='GET'&&req.url==='/health'){
       res.end(JSON.stringify({ok:true,runtimeId:'a'.repeat(32),executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
+        executorId:record.executor_id,sceneEpoch:record.scene_epoch,houVersion:record.houdini_version,
         verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH,names:EXPECTED_VERB_NAMES,count:EXPECTED_VERB_NAMES.length},
         runtime:{hfs,python,pythonVersion:config.pythonVersion}}));return
     }
@@ -145,6 +156,13 @@ export function apply(ctx){
           yield*finish('Actual isolated Team child completed all transport checks. Image semantics remain unverified.');return
         }
         childId=options.sessionId;assert.equal(own.header.parentSession,leadId)
+        if(!liveOffline){
+          const router=ctx.get('houdiniTargets').getRouter(config.executorRegistry)
+          await router.selectTarget(ctx.agents.get(childId),record.executor_id,record.registration_id,
+            undefined,record.hip_path,true)
+          record.state='disconnected';fs.writeFileSync(recordFile,JSON.stringify(record));liveOffline=true
+          checks.push('the actual Team child explicitly selects this runtime before live goes offline; disconnected metadata grants no live execution')
+        }
         if(preflightStage===0){preflightStage++;yield*emit('child-preflight','houdini_isolated',args(invalid,'preflight'));return}
         if(preflightStage===1){
           const actual=native(childId,'child-preflight')
@@ -176,7 +194,7 @@ export function apply(ctx){
         }
         if(childStage===3){
           await observeImages(options,'native-read-image');checks.push('real native read_image exposes rendered bytes to the next model request')
-          childStage++;yield*emit('child-ptc','run_code',{code:'return await tools.houdini_isolated('+JSON.stringify(args(good,'ptc'))+');',description:'Run the same isolated builder through native PTC dispatch'});return
+          childStage++;yield*emit('child-ptc','run_code',{code:'return await tools.houdini_isolated('+JSON.stringify({...args(good,'ptc'),houdini_installation:hfs})+');',description:'Run the same isolated builder through PTC with an explicit installation while live is offline'});return
         }
         if(childStage===4){
           const dispatch=nested(childId,'houdini_isolated');assert(dispatch&&!dispatch.data.isError,'real PTC sub-dispatch settled successfully')
@@ -302,13 +320,14 @@ export function apply(ctx){
       assert(leadEvents.some(e=>e.type==='user/message'&&JSON.stringify(e.data).includes('ISOLATED_TOOL_CHILD_VERIFIED')),'actual Team peer result must reach Lead')
       const peerDelivery=leadEvents.filter(e=>e.type==='user/message').flatMap(e=>(e.data?.content??[]).filter(b=>b.type==='text').map(b=>b.text)).join('\n')
       assert(peerDelivery.includes(JSON.stringify(peerResult)),'Lead must receive the same original run, source fingerprint and measured setup result')
-      assert(runtimeReads.some(r=>r.path==='/health'),'production tool must discover runtime through the configured metadata route')
+      assert(liveOffline&&record.state==='disconnected','all independent computation must succeed after live disconnects')
+      assert(runtimeReads.some(r=>r.path==='/health'),'explicit target selection verifies its original live metadata')
       assert(runtimeReads.every(r=>r.path==='/context'||r.path==='/health'),'no operation may be sent to live Houdini')
       // The normal subagent manager flushes and disposes a settled child.
       // Flush only residents; retained immutable Session handles supply evidence.
       for(const id of sessions){const resident=ctx.sessions.get(id);if(resident)await ctx.sessions.flush(resident)}
       recordEvents();checks.push('real Team creation, independent child session, persisted native/PTC events and peer result delivery')
-      report({ok:true,realTeamChildren:members.length,sandboxMode:config.sandboxMode??'workspace-write',...evidence(),boundary:'Exact DSH Team/Agent/tool/job/attachment loop with inherited production tool registration, actual disposable hython and Karma CPU. Only health/context metadata and model planning are controlled fixtures. Sandbox mode: '+(config.sandboxMode??'workspace-write')+'. No user live Houdini/HIP, external model API, GUI or semantic visual quality claim.'})
+      report({ok:true,realTeamChildren:members.length,sandboxMode:config.sandboxMode??'workspace-write',...evidence(),boundary:'Exact DSH Team/Agent/tool/job/attachment loop with inherited production tool registration, selected disconnected runtime records, explicit installation, actual disposable hython and Karma CPU. Live is deliberately unavailable before all isolated computation. Only initial health/context metadata and model planning are controlled fixtures. Sandbox mode: '+(config.sandboxMode??'workspace-write')+'. No user live Houdini/HIP, external model API, GUI or semantic visual quality claim.'})
     }catch(error){await fail(error)}
   });return()=>server.close()})
 }

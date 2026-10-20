@@ -89,13 +89,13 @@ def ensure(config, progress=lambda message: None):
     progress('正在打开 DSH-Houdini 工作台…')
     root = Path(config['root'])
     root.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 150
+    lock_deadline = time.monotonic() + 150
     while True:
         try:
             lease = FileLease(root / 'workbench/start.lock')
             break
         except LeaseBusyError:
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= lock_deadline:
                 raise RuntimeError('工作台仍在启动，请稍后重试；没有重复启动后台。')
             time.sleep(.1)
     try:
@@ -120,7 +120,10 @@ def ensure(config, progress=lambda message: None):
                 stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
-            while time.monotonic() < deadline:
+            # The child owns preparation and its phase timeouts. Keep observing
+            # its real ready/exit state instead of reporting a second timeout
+            # while it is still starting in the visible progress window.
+            while True:
                 record = running(root)
                 if record and record['pid'] == process.pid:
                     return control(record, 'status', timeout=5)
@@ -129,7 +132,6 @@ def ensure(config, progress=lambda message: None):
                     error = read_json(failure)['error'] if failure.exists() else '启动程序退出，代码 ' + str(process.returncode) + '。请通过报告问题查看启动记录。'
                     raise RuntimeError('独立工作台未启动：' + error)
                 time.sleep(.1)
-            raise RuntimeError('工作台启动尚未完成。进程未被强制结束，请稍后重新打开工作区。')
         finally:
             request.unlink(missing_ok=True)
     finally:
@@ -158,7 +160,7 @@ def prepare(config, progress=lambda message: None):
             raise RuntimeError('工作台配置准备失败：' + result.stderr[-3000:])
 
     if config.get('managed'):
-        progress('正在检查安装文件…')
+        progress('正在读取工作台配置…')
         store = Store(root, config['trustData'])
         context, lease = store.activate(config['installation'], config['houdiniVersion'], progress=progress, prepare=prepare_managed,
                                         owner={'application': 'DSH-Houdini Workbench'})
@@ -357,6 +359,16 @@ def _run_window(config, app, startup, ready):
     projects = ProjectManager(config, context, plugin, generation, rpc, intents)
     dialogs = queue.Queue()
     window_requests = queue.Queue()
+    from dsh_release_policy import ReleaseCheck, update_notice
+    release_check = ReleaseCheck()
+    manager_requests = queue.Queue()
+
+    def update_status():
+        versions = [context['version']] if config.get('managed') else [read_json(plugin / 'package.json')['version']]
+        if config.get('managed'):
+            selected = Store(config['root'], config['trustData']).state()
+            versions.extend(ident.split('-')[0] for ident in (selected['current'], selected['pending']) if ident)
+        return update_notice(release_check.snapshot(), versions)
 
     class Control(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -383,6 +395,15 @@ def _run_window(config, app, startup, ready):
                     intents.put(value)
                 elif self.path == '/projects/presence' and payload == {}:
                     value = projects.presence()
+                elif self.path == '/updates/status' and payload == {}:
+                    value = update_status()
+                elif self.path == '/updates/open' and payload == {}:
+                    reply = Future()
+                    manager_requests.put(reply)
+                    try:
+                        value = reply.result(timeout=4)
+                    finally:
+                        reply.cancel()
                 elif self.path == '/window/pin':
                     if (not isinstance(payload, dict) or set(payload) - {'pinned'}
                             or ('pinned' in payload and type(payload['pinned']) is not bool)):
@@ -436,6 +457,12 @@ def _run_window(config, app, startup, ready):
         serving = True
         atomic_json(Path(config['root']) / 'workbench/desktop.json', record)
         closing = queue.Queue()
+        # Discovery never participates in startup/connection readiness. The
+        # same in-memory result is consumed by the header and version manager.
+        release_check.start()
+        update_timer = QTimer(dsh_webview._window)
+        update_timer.timeout.connect(release_check.start)
+        update_timer.start(6 * 60 * 60 * 1000)
 
         class CloseGuard(QObject):
             allowed = False
@@ -460,6 +487,22 @@ def _run_window(config, app, startup, ready):
         project_dialog = {'value': None}
 
         def drain():
+            while not manager_requests.empty():
+                reply = manager_requests.get_nowait()
+                if not reply.set_running_or_notify_cancel():
+                    continue
+                try:
+                    import dsh_install_ui
+                    if config.get('managed'):
+                        dsh_install_ui.show(Store(config['root'], config['trustData']),
+                            pinned=config['installation'], loaded=context, parent=dsh_webview._window,
+                            release_check=release_check, workbench=True)
+                    else:
+                        dsh_install_ui.show(source_root=plugin, parent=dsh_webview._window,
+                            release_check=release_check, workbench=True)
+                    reply.set_result({'opened': True})
+                except Exception as error:
+                    reply.set_exception(error)
             while not window_requests.empty():
                 request, reply = window_requests.get_nowait()
                 if reply.set_running_or_notify_cancel():

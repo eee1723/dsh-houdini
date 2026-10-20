@@ -85,6 +85,15 @@ def worker_test(folder):
          patch.object(desktop.subprocess, 'Popen', return_value=child):
         assert desktop.ensure(parent_config) == {'record': record}
         legacy_progress.assert_not_called()
+    # Once the child owns startup, a slow preparation is still pending rather
+    # than a parent timeout followed by an unexpected window opening later.
+    child.poll.return_value = None
+    with patch.object(desktop, 'running', side_effect=[None, None, record]), \
+         patch.object(desktop, 'control', return_value={'record': record}), \
+         patch.object(desktop.time, 'monotonic', side_effect=[0, 151]), \
+         patch.object(desktop.time, 'sleep'), \
+         patch.object(desktop.subprocess, 'Popen', return_value=child):
+        assert desktop.ensure(parent_config) == {'record': record}
     launch_config = json.loads((parent_root / 'workbench/launch-config.json').read_text(encoding='utf-8'))
     assert 'startupId' not in launch_config
     assert not list((parent_root / 'workbench').glob('starting-*'))

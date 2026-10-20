@@ -8,6 +8,10 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
+import sys
+import sysconfig
+import types
+from importlib.machinery import BuiltinImporter, FrozenImporter, ModuleSpec, PathFinder
 
 _RAW_HOU_VERB_MAP = {
     "saveItemsToFile": "component_export",
@@ -85,9 +89,6 @@ _GATE_MUTATING_PREFIXES = (
     "save", "cook", "render", "bake", "lock", "unlock", "install",
     "copy", "move", "enable", "disable", "press", "reloadPackage", "loadPackageArchive",
 )
-
-
-_GATE_SAFE_PYTHON_METHODS = {"setdefault"}
 
 
 _GATE_READ_ONLY_PREFIX_COLLISIONS = {"displayNode", "renderNode"}
@@ -243,66 +244,426 @@ def _call_path(node: ast.AST) -> str | None:
     return ".".join(["hou", *reversed(parts)])
 
 
-def _python_set_names(tree: ast.AST) -> set[str]:
-    """Find set receivers whose bindings all prove a Python set initializer."""
-    names: set[str] = set()
-    proven_bindings = set()
-    rebound = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-               and isinstance(node.ctx, (ast.Store, ast.Del))}
-    rebound.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
-    rebound.update(node.name for node in ast.walk(tree)
-                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
-    rebound.update(item.asname or item.name.split('.')[0] for node in ast.walk(tree)
-                   if isinstance(node, (ast.Import, ast.ImportFrom)) for item in node.names)
-    def bind(target, value):
-        if (isinstance(target, (ast.Tuple, ast.List))
-                and isinstance(value, (ast.Tuple, ast.List))
-                and len(target.elts) == len(value.elts)):
-            for item, initial in zip(target.elts, value.elts):
-                bind(item, initial)
-            return
-        is_set = isinstance(value, ast.Set) or (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id == "set"
-            and 'set' not in rebound
-        )
-        if is_set and isinstance(target, ast.Name):
-            names.add(target.id)
-            proven_bindings.add(id(target))
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            bind(target, node.value)
-    # A later assignment, loop binding, argument or import can replace the set
-    # with a HOM group. An exemption based on any earlier initializer would
-    # then let group.add mutate geometry through the read-only query path.
-    unknown_bindings = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-                        and isinstance(node.ctx, (ast.Store, ast.Del))
-                        and id(node) not in proven_bindings}
-    unknown_bindings.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
-    unknown_bindings.update(node.name for node in ast.walk(tree)
-                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
-    unknown_bindings.update(item.asname or item.name.split('.')[0] for node in ast.walk(tree)
-                            if isinstance(node, (ast.Import, ast.ImportFrom)) for item in node.names)
-    return names - unknown_bindings
+def _standard_module_resolver():
+    """Resolve interpreter stdlib API origins without executing an import.
 
+    Third-party/project modules can re-export HOM, so their names never confer
+    Python provenance. For the interpreter's own stdlib API, a direct callable
+    is Python; its result remains unknown. This does not promise purity of
+    callbacks/imports or sandbox arbitrary Python. Existing module attributes
+    are checked separately so a known monkeypatch cannot retain this proof.
+    """
+    roots = {os.path.normcase(os.path.realpath(path)) for path in (
+        sysconfig.get_path('stdlib'), sysconfig.get_path('platstdlib'),
+        os.path.join(sys.base_prefix, 'DLLs'),
+        os.path.join(sys.base_prefix, f'python{sys.version_info.major}{sys.version_info.minor}.zip'),
+    ) if path}
+    cache = {}
 
-def _is_safe_python_method(node: ast.Call, python_sets: set[str]) -> bool:
-    if not isinstance(node.func, ast.Attribute):
+    def trusted(spec):
+        if type(spec) is not ModuleSpec or type(spec.name) is not str:
+            return False
+        if spec.loader is BuiltinImporter or spec.loader is FrozenImporter:
+            return spec.name.split('.')[0] in sys.stdlib_module_names
+        if type(spec.origin) is not str:
+            return False
+        origin = os.path.normcase(os.path.realpath(spec.origin))
+        if {'site-packages', 'dist-packages'} & set(origin.replace('\\', '/').split('/')):
+            return False
+        for root in roots:
+            try:
+                if os.path.commonpath((origin, root)) == root:
+                    return True
+            except ValueError:
+                pass
         return False
-    if node.func.attr in _GATE_SAFE_PYTHON_METHODS or node.func.attr in _GATE_READ_ONLY_PREFIX_COLLISIONS:
-        return True
-    # Real trace: ``names = set(); names.add(...)`` is read-only scene
-    # aggregation.  Treat only receivers statically proven to be Python sets as
-    # safe; ``hou.Geometry.addAttrib`` and other HOM ``add*`` calls remain gated.
-    return (
-        node.func.attr == "add"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id in python_sets
-    )
+
+    def resolve(module_name):
+        if type(module_name) is not str or not module_name or module_name.split('.')[0] not in sys.stdlib_module_names:
+            return None
+        if module_name in cache:
+            return cache[module_name]
+        module = sys.modules.get(module_name)
+        if module is not None:
+            spec = vars(module).get('__spec__') if type(module) is types.ModuleType else None
+        else:
+            parent_name, _, _ = module_name.rpartition('.')
+            parent = resolve(parent_name) if parent_name else None
+            if parent_name and parent is None:
+                return None
+            search = parent.submodule_search_locations if parent_name else None
+            if parent_name and (type(search) not in (list, tuple) or any(type(item) is not str for item in search)):
+                return None
+            spec = (BuiltinImporter.find_spec(module_name) or FrozenImporter.find_spec(module_name)
+                    or PathFinder.find_spec(module_name, search))
+        cache[module_name] = spec if trusted(spec) and spec.name == module_name else None
+        return cache[module_name]
+
+    return resolve
+
+
+def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
+    """One lexical provenance for Python, HOM and unknown callable references.
+
+    Every binding in the lexical scope must prove the same value kind. This
+    intentionally loses precision after an unknown reassignment, including one
+    in a closure or a conditional. Containers never confer their kind on their
+    elements. No authored expression, import or descriptor is executed here.
+    Imported module names do not prove safe members or safe return values.
+    """
+    builtin_types = {value.__name__: value for value in
+                     (str, bytes, bytearray, list, tuple, dict, set, frozenset)}
+    literals = {ast.List: list, ast.Tuple: tuple, ast.Set: set, ast.Dict: dict,
+                ast.ListComp: list, ast.SetComp: set, ast.DictComp: dict, ast.JoinedStr: str}
+    scopes, escaped, writes = {}, set(), []
+    standard_module = _standard_module_resolver()
+
+    class Scope:
+        def __init__(self, parent=None, *, class_scope=False):
+            self.parent, self.class_scope, self.bindings = parent, class_scope, {}
+            self.wildcard = False
+
+        def bind(self, target, value):
+            if isinstance(target, ast.Name):
+                self.bindings.setdefault(target.id, []).append(value)
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                values = (value.elts if isinstance(value, (ast.Tuple, ast.List))
+                          and len(target.elts) == len(value.elts) else [None] * len(target.elts))
+                for item, initial in zip(target.elts, values):
+                    self.bind(item, initial)
+
+    class Collect(ast.NodeVisitor):
+        def __init__(self, scope):
+            self.scope, self.namedexpr_scope = scope, scope
+
+        def visit(self, node):
+            scopes[id(node)] = self.scope
+            return super().visit(node)
+
+        def closure_parent(self):
+            parent = self.scope
+            while parent.class_scope:
+                parent = parent.parent
+            return parent
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                self.scope.bind(node, None)
+
+        def target(self, node):
+            # Store targets can contain executable receiver/index expressions.
+            # Index them in their real scope without inventing another binding
+            # for the simple names already handled by Scope.bind.
+            scopes[id(node)] = self.scope
+            if isinstance(node, (ast.Tuple, ast.List)):
+                for item in node.elts:
+                    self.target(item)
+            elif isinstance(node, ast.Starred):
+                self.target(node.value)
+            elif isinstance(node, (ast.Attribute, ast.Subscript)):
+                self.visit(node.value)
+                if isinstance(node, ast.Subscript):
+                    self.visit(node.slice)
+
+        def write(self, target, value):
+            if isinstance(target, ast.Starred):
+                self.write(target.value, None)
+                return
+            if isinstance(target, (ast.Tuple, ast.List)):
+                values = (value.elts if isinstance(value, (ast.Tuple, ast.List))
+                          and len(target.elts) == len(value.elts) else [None] * len(target.elts))
+                for item, initial in zip(target.elts, values):
+                    self.write(item, initial)
+                return
+            self.scope.bind(target, value)
+            if isinstance(target, (ast.Attribute, ast.Subscript)):
+                writes.append((target, value))
+            self.target(target)
+
+        def visit_Delete(self, node):
+            for target in node.targets:
+                self.write(target, None)
+
+        def visit_Assign(self, node):
+            self.visit(node.value)
+            for target in node.targets:
+                self.write(target, node.value)
+        def visit_AnnAssign(self, node):
+            self.visit(node.annotation)
+            if node.value is not None:
+                self.visit(node.value)
+            self.write(node.target, node.value)
+        def visit_AugAssign(self, node):
+            self.visit(node.value)
+            self.write(node.target, None)
+        def visit_NamedExpr(self, node):
+            self.visit(node.value)
+            self.namedexpr_scope.bind(node.target, node.value)
+            self.target(node.target)
+
+        def visit_Import(self, node):
+            for item in node.names:
+                imported = item.name if item.asname else item.name.split('.')[0]
+                value = (imported,) if imported in ('hou', 'builtins') else ('module', imported)
+                self.scope.bind(ast.Name(id=item.asname or item.name.split('.')[0]), value)
+        def visit_ImportFrom(self, node):
+            for item in node.names:
+                if item.name == '*':
+                    # Star imports can replace any builtin or inferred value.
+                    self.scope.wildcard = True
+                    continue
+                value = ('constructor', builtin_types[item.name]) if node.module == 'builtins' and item.name in builtin_types else (
+                    (item.name,) if node.module == 'builtins' and item.name in ('getattr', 'setattr', 'delattr', 'vars') else (
+                        ('hom_method', 'hou', item.name) if node.module == 'hou' and not node.level else (
+                            'imported_member', node.module if not node.level else None, item.name)))
+                self.scope.bind(ast.Name(id=item.asname or item.name), value)
+
+        def function(self, node, body):
+            for value in (*node.args.defaults, *node.args.kw_defaults):
+                if value is not None:
+                    self.visit(value)
+            for value in getattr(node, 'decorator_list', ()):
+                self.visit(value)
+            child = Collect(Scope(self.closure_parent()))
+            args = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
+                    node.args.vararg, node.args.kwarg)
+            for arg in args:
+                if arg is not None:
+                    if arg.annotation is not None:
+                        self.visit(arg.annotation)
+                    child.scope.bind(ast.Name(id=arg.arg), None)
+            if getattr(node, 'returns', None) is not None:
+                self.visit(node.returns)
+            for item in body:
+                child.visit(item)
+        def visit_FunctionDef(self, node):
+            self.scope.bind(ast.Name(id=node.name), None)
+            self.function(node, node.body)
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_Lambda(self, node):
+            self.function(node, [node.body])
+
+        def visit_ClassDef(self, node):
+            self.scope.bind(ast.Name(id=node.name), None)
+            for value in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
+                self.visit(value)
+            child = Collect(Scope(self.closure_parent(), class_scope=True))
+            for item in node.body:
+                child.visit(item)
+
+        def visit_For(self, node):
+            self.visit(node.iter)
+            self.write(node.target, ('iteration', node.iter))
+            for item in (*node.body, *node.orelse):
+                self.visit(item)
+        visit_AsyncFor = visit_For
+
+        def visit_With(self, node):
+            for item in node.items:
+                self.visit(item.context_expr)
+                if item.optional_vars is not None:
+                    self.write(item.optional_vars, None)
+            for item in node.body:
+                self.visit(item)
+        visit_AsyncWith = visit_With
+
+        def visit_ListComp(self, node):
+            self.visit(node.generators[0].iter)
+            child = Collect(Scope(self.closure_parent()))
+            child.namedexpr_scope = self.namedexpr_scope
+            for index, generator in enumerate(node.generators):
+                if index:
+                    child.visit(generator.iter)
+                child.write(generator.target, ('iteration', generator.iter))
+                for value in generator.ifs:
+                    child.visit(value)
+            for key in ('elt', 'key', 'value'):
+                if hasattr(node, key):
+                    child.visit(getattr(node, key))
+        visit_SetComp = visit_ListComp
+        visit_DictComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+        def visit_Global(self, node):
+            escaped.update(node.names)
+        visit_Nonlocal = visit_Global
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                self.scope.bind(ast.Name(id=node.name), None)
+            self.generic_visit(node)
+        def visit_MatchAs(self, node):
+            if node.name:
+                self.scope.bind(ast.Name(id=node.name), None)
+            self.generic_visit(node)
+        visit_MatchStar = visit_MatchAs
+        def visit_MatchMapping(self, node):
+            if node.rest:
+                self.scope.bind(ast.Name(id=node.rest), None)
+            self.generic_visit(node)
+
+    root = Scope()
+    Collect(root).visit(tree)
+    resolving, cache = set(), {}
+
+    def name(scope, key):
+        if key in escaped or scope.wildcard:
+            return None
+        identity = (id(scope), key)
+        if identity in cache:
+            return cache[identity]
+        if identity in resolving:
+            return None
+        resolving.add(identity)
+        if key in scope.bindings:
+            values = [kind(value) for value in scope.bindings[key]]
+            result = values[0] if values and all(value == values[0] for value in values) else (
+                ('uncertain_callable', tuple(value for value in values if value and value[0] in
+                    ('hom_method', 'unknown_method', 'uncertain_callable'))) if any(
+                        value and value[0] in ('hom_method', 'unknown_method', 'uncertain_callable') for value in values) else None)
+        elif scope.parent is not None:
+            result = name(scope.parent, key)
+        else:
+            result = ('constructor', builtin_types[key]) if key in builtin_types else (
+                (key,) if key in ('hou', 'getattr', 'setattr', 'delattr', 'vars') else None)
+        resolving.remove(identity)
+        cache[identity] = result
+        return result
+
+    def kind(value):
+        if isinstance(value, tuple):
+            if value[0] == 'iteration':
+                return ('node',) if kind(value[1]) == ('nodes',) else None
+            if value[0] == 'imported_member':
+                found = module_member(value[1], value[2])
+                # A bare helper import is not a receiver method. Preserve its
+                # unknown source instead of imposing HOM naming rules on every
+                # Python function (including ordinary project builders).
+                return ('unknown_callable',) if found[0] == 'unknown_method' else found
+            return value
+        if value is None:
+            return None
+        if isinstance(value, ast.Name):
+            return name(scopes.get(id(value), root), value.id)
+        if type(value) in literals:
+            return ('value', literals[type(value)])
+        if isinstance(value, ast.Constant) and type(value.value) in builtin_types.values():
+            return ('value', type(value.value))
+        if isinstance(value, ast.NamedExpr):
+            return kind(value.value)
+        if isinstance(value, ast.Subscript) and isinstance(value.slice, ast.Slice):
+            base = kind(value.value)
+            return base if base and base[0] == 'value' and base[1] in (str, bytes, bytearray, list, tuple) else None
+        receiver, attr = _literal_attribute(value)
+        if (isinstance(value, ast.Call) and len(value.args) >= 2
+                and kind(value.func) == ('getattr',) and isinstance(value.args[1], ast.Constant)
+                and isinstance(value.args[1].value, str)):
+            receiver, attr = value.args[0], value.args[1].value
+        if attr is not None:
+            if isinstance(value, ast.Call) and kind(value.func) != ('getattr',):
+                return ('unknown_method', attr)
+            owner = kind(receiver)
+            if owner and owner[0] in ('value', 'constructor') and callable(getattr(owner[1], attr, None)):
+                return ('python_method', owner[1], attr)
+            if owner and owner[0] in ('hou', 'node', 'node_type'):
+                return ('hom_method', owner[0], attr)
+            if owner == ('builtins',) and attr in builtin_types:
+                return ('constructor', builtin_types[attr])
+            if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars'):
+                return (attr,)
+            if owner and owner[0] == 'module':
+                if attr == '__dict__':
+                    return ('module_dict', owner[1])
+                return module_member(owner[1], attr)
+            return ('unknown_method', attr)
+        if isinstance(value, ast.Call):
+            callable_kind = kind(value.func)
+            if callable_kind and callable_kind[0] == 'constructor':
+                return ('value', callable_kind[1])
+            if callable_kind == ('vars',) and len(value.args) == 1:
+                owner = kind(value.args[0])
+                if owner and owner[0] == 'module':
+                    return ('module_dict', owner[1])
+            # Explicit read-only HOM return facts; unknown .name() methods do
+            # not become strings merely because they share the spelling.
+            if callable_kind and callable_kind[0] == 'hom_method':
+                _, owner, method = callable_kind
+                if (owner == 'hou' and method in ('node', 'pwd', 'nodeBySessionId')
+                        or owner == 'node' and method in ('node', 'parent')):
+                    return ('node',)
+                if owner == 'node' and method in ('children', 'allSubChildren', 'inputs', 'outputs'):
+                    return ('nodes',)
+                if owner == 'node' and method == 'type':
+                    return ('node_type',)
+                if (owner in ('node', 'node_type') and method == 'name'
+                        or owner == 'node' and method == 'path'):
+                    return ('value', str)
+        return None
+
+    modified, resolving_members, exposed_namespaces = {}, set(), set()
+
+    def imported_reference(value, fallback):
+        if type(value) is types.ModuleType:
+            module_name = vars(value).get('__name__')
+            return ('module', module_name) if standard_module(module_name) else ('unknown_method', fallback)
+        if type(value) in (types.FunctionType, types.BuiltinFunctionType, types.MethodType, type):
+            module_name = value.__module__
+            if type(module_name) is not str:
+                return ('unknown_method', fallback)
+            if module_name in ('hou', '_hou'):
+                return ('hom_method', 'hou', value.__name__)
+            if (spec := standard_module(module_name)) is not None:
+                function = value.__func__ if isinstance(value, types.MethodType) else value
+                if isinstance(function, types.FunctionType):
+                    origin = function.__code__.co_filename
+                    if origin != spec.origin and origin != f'<frozen {module_name}>':
+                        return ('unknown_method', fallback)
+                return ('python_method', module_name, fallback)
+        return ('unknown_method', fallback)
+
+    def module_member(module_name, member):
+        key = (module_name, member)
+        if key in resolving_members:
+            return ('unknown_method', member)
+        writes = [*modified.get(key, ()), *modified.get((module_name, None), ())]
+        if writes:
+            resolving_members.add(key)
+            values = [kind(value) for value in writes]
+            resolving_members.remove(key)
+            return ('uncertain_callable', tuple(value or ('unknown_method', member) for value in values))
+        if module_name in exposed_namespaces:
+            return ('unknown_method', member)
+        module = sys.modules.get(module_name)
+        if type(module) is types.ModuleType:
+            found = imported_reference(vars(module).get(member), member)
+            if found[0] == 'hom_method' or standard_module(module_name):
+                return found
+        if standard_module(module_name):
+            return ('python_method', module_name, member)
+        return ('unknown_method', member)
+
+    # Resolve writes through the same lexical aliases as calls. Explicit module
+    # monkeypatches cannot inherit the original stdlib member's provenance.
+    # Once its mutable namespace is exposed, there is no ordinary-API proof to
+    # preserve. Do not grow a second interpreter for every possible dict call.
+    for node in ast.walk(tree):
+        if (found := kind(node)) and found[0] == 'module_dict':
+            exposed_namespaces.add(found[1])
+    cache.clear()
+    for target, value in writes:
+        owner = kind(target.value)
+        if owner and ((isinstance(target, ast.Attribute) and owner[0] == 'module')
+                      or (isinstance(target, ast.Subscript) and owner[0] == 'module_dict')):
+            member = target.attr if isinstance(target, ast.Attribute) else (
+                target.slice.value if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str) else None)
+            modified.setdefault((owner[1], member), []).append(value)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and kind(node.func) in (('setattr',), ('delattr',)) and len(node.args) >= 2:
+            if (owner := kind(node.args[0])) and owner[0] == 'module':
+                member = node.args[1].value if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str) else None
+                modified.setdefault((owner[1], member), []).append(
+                    node.args[2] if len(node.args) >= 3 else None)
+    cache.clear()
+    return {id(node): kind(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
 
 
 def _parameter_write_calls(tree):
@@ -344,43 +705,12 @@ def _parameter_write_calls(tree):
     return {id(node) for node in ast.walk(tree) if isinstance(node, ast.Call) and setter(node.func)}
 
 
-def _bound_mutation_calls(tree, python_sets):
-    """Keep known raw methods classified after binding them to local names."""
-    aliases, assignments = {}, []
-    def bind(target, value):
-        if isinstance(target, ast.Name):
-            assignments.append((target.id, value))
-        elif (isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List))
-                and len(target.elts) == len(value.elts)):
-            for item, initial in zip(target.elts, value.elts):
-                bind(item, initial)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                bind(target, node.value)
-        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-            bind(node.target, node.value)
-    def classify(value):
-        if isinstance(value, ast.Name):
-            return aliases.get(value.id)
-        receiver, attr = _literal_attribute(value)
-        if attr in _RAW_HOU_VERB_MAP:
-            return 'coveredMutations', attr
-        if (attr is None or attr in _GATE_SAFE_PYTHON_METHODS or attr in _GATE_READ_ONLY_PREFIX_COLLISIONS
-                or attr == 'add' and isinstance(receiver, ast.Name) and receiver.id in python_sets):
-            return None
-        if attr.startswith(_GATE_MUTATING_PREFIXES):
-            return 'suspectedMutations', attr
-        return None
-    for _ in range(len(assignments) + 1):
-        previous = len(aliases)
-        for name, value in assignments:
-            if mutation := classify(value):
-                aliases[name] = mutation
-        if len(aliases) == previous:
-            break
-    return {id(node): mutation for node in ast.walk(tree) if isinstance(node, ast.Call)
-            and (mutation := classify(node.func)) is not None}
+def _referenced_methods(reference):
+    if not reference or reference[0] == 'python_method':
+        return set()
+    if reference[0] == 'uncertain_callable':
+        return set().union(*(_referenced_methods(value) for value in reference[1]))
+    return {reference[-1]} if reference[0] in ('hom_method', 'unknown_method') else set()
 
 
 def _raw_usage_from_tree(tree: ast.AST) -> dict:
@@ -390,12 +720,11 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
     the same covered/suspected mutation rules as the Raw Gate so the client can
     distinguish harmless reads, blocked writes and audited exemptions.
     """
-    python_sets = _python_set_names(tree)
+    callables = _callable_references(tree)
     parameter_writes = _parameter_write_calls(tree)
     box_writes = _network_box_mutation_calls(tree)
     note_writes = _network_note_mutation_calls(tree)
     hip_calls = _hip_file_calls(tree)
-    bound_mutations = _bound_mutation_calls(tree, python_sets)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
@@ -418,34 +747,17 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
             if path is not None:
                 direct[path] = direct.get(path, 0) + 1
             continue
-        if id(node) in bound_mutations and not isinstance(node.func, ast.Attribute):
-            kind, key = bound_mutations[id(node)]
-            target = covered if kind == 'coveredMutations' else suspected
-            target[key] = target.get(key, 0) + 1
-            continue
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        if not isinstance(node, ast.Call):
             continue
         path = _call_path(node.func)
         if path is not None:
             direct[path] = direct.get(path, 0) + 1
-        attr = node.func.attr
-        if path in ("hou.hipFile.save", "hou.hipFile.setName"):
-            key = path.removeprefix("hou.")
-            covered[key] = covered.get(key, 0) + 1
-        elif attr in _RAW_HOU_VERB_MAP:
-            covered[attr] = covered.get(attr, 0) + 1
-        elif (
-            attr == "set"
-            and isinstance(node.func.value, ast.Call)
-            and isinstance(node.func.value.func, ast.Attribute)
-            and node.func.value.func.attr in ("parm", "parmTuple")
-        ):
-            covered["parm().set"] = covered.get("parm().set", 0) + 1
-        elif (
-            not _is_safe_python_method(node, python_sets)
-            and attr.startswith(_GATE_MUTATING_PREFIXES)
-        ):
-            suspected[attr] = suspected.get(attr, 0) + 1
+        for attr in _referenced_methods(callables.get(id(node))):
+            if attr in _RAW_HOU_VERB_MAP:
+                covered[attr] = covered.get(attr, 0) + 1
+            elif (attr not in _GATE_READ_ONLY_PREFIX_COLLISIONS
+                  and attr.startswith(_GATE_MUTATING_PREFIXES)):
+                suspected[attr] = suspected.get(attr, 0) + 1
     return {
         "directCalls": [
             {"name": name, "count": count}

@@ -1,6 +1,6 @@
 /** Host provenance, executor routing and result attachment for tool calls. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ExecResult, HoudiniBridge, OwnershipScope } from './bridge.js'
+import type { ExecResult, HoudiniBridge, OwnershipScope,HoudiniRuntimeFacts } from './bridge.js'
 import { ExecutorBinding } from './executor-binding.js'
 import { attachImages } from './image-output.js'
 import { retainResult } from './result-details.js'
@@ -11,6 +11,7 @@ import {hostService} from './api-route.js'
 export type HistoricalTarget={executorId?:string;runtimeId:string}
 export type HoudiniConnection = HoudiniBridge | { resolve(exec:any,options?:{write?:boolean}):Promise<HoudiniBridge>;
   registry?:string;
+  resolveRuntime?(exec:any):Promise<{runtime:HoudiniRuntimeFacts;houdiniVersion:string}>;
   resolveHistorical?(exec:any,target:HistoricalTarget):Promise<HoudiniBridge> }
 
 export function workspaceOf(exec: any): string | null {
