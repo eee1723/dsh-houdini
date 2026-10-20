@@ -42,7 +42,7 @@ print('deployment runner rejects inherited Houdini/Python/Qt/DSH configuration')
 with tempfile.TemporaryDirectory(prefix='dsh-runner-targets-') as raw:
     versions = {}
     for version in ('21.0', '22.0'):
-        binary = Path(raw) / version / 'bin/hython.exe'
+        binary = Path(raw).resolve() / version / 'bin/hython.exe'
         binary.parent.mkdir(parents=True)
         binary.touch()
         versions[str(binary)] = version
