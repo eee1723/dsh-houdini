@@ -30,8 +30,105 @@ def rejects(call, match=None):
         return
     raise AssertionError("unsafe operation accepted")
 
+
+def json_publication_cases(folder):
+    record = folder / "publication.json"
+    first = {"generation": "first", "text": "完整中文"}
+    second = {"generation": "second", "text": "完整中文"}
+    d.atomic_json(record, first)
+    assert d.read_json(record) == first
+    assert not list(folder.glob("publication.json.*.tmp"))
+    with d._json_snapshot(record) as snapshot:
+        # Publication while a reader is live is deterministic, not a stress
+        # test that succeeds only when a scheduling race happens to be absent.
+        d.atomic_json(record, second)
+        assert json.load(snapshot) == first
+        assert d.read_json(record) == second
+    rejects(lambda: d.read_json(record, limit=4), "JSON too large")
+    record.write_bytes(b"invalid JSON")
+    rejects(lambda: d.read_json(record), "Expecting value")
+    record.unlink()
+    rejects(lambda: d.read_json(record))
+
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
+    kernel.GetFileAttributesW.restype = wintypes.DWORD
+    kernel.SetFileAttributesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+    kernel.SetFileAttributesW.restype = wintypes.BOOL
+    d.atomic_json(record, first)
+    attributes = kernel.GetFileAttributesW(str(record))
+    try:
+        assert kernel.SetFileAttributesW(str(record), attributes | 1)
+        rejects(lambda: d.atomic_json(record, second))
+        assert d.read_json(record) == first, "readonly publication changed the target"
+    finally:
+        assert kernel.SetFileAttributesW(str(record), attributes)
+
+    # An unrelated reader that denies deletion is a real permission conflict.
+    # The protocol must report it rather than retry, truncate or remove state.
+    with record.open("rb") as denied_snapshot:
+        rejects(lambda: d.atomic_json(record, second))
+        assert json.load(denied_snapshot) == first
+        assert d.read_json(record) == first
+
+    # A distinct protected DACL must survive replacement rather than being
+    # replaced by the temporary file's inherited permissions.
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.DWORD)]
+    security.SetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID]
+    security.GetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    kernel.LocalFree.argtypes = [wintypes.HLOCAL]
+    descriptor = wintypes.LPVOID()
+    assert security.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        "D:P(A;;FA;;;SY)(A;;FA;;;OW)", 1, ctypes.byref(descriptor), None)
+    try:
+        assert security.SetFileSecurityW(str(record), 0x80000004, descriptor)
+    finally:
+        kernel.LocalFree(descriptor)
+    def dacl():
+        length = wintypes.DWORD()
+        security.GetFileSecurityW(str(record), 4, None, 0, ctypes.byref(length))
+        buffer = ctypes.create_string_buffer(length.value)
+        assert security.GetFileSecurityW(str(record), 4, buffer, len(buffer), ctypes.byref(length))
+        raw = buffer.raw[:length.value]
+        # ReplaceFile may mark the new descriptor AUTO_INHERITED (0x400).
+        # Preserve the actual ACEs and protection bit, not that bookkeeping.
+        control = int.from_bytes(raw[2:4], "little") & ~0x400
+        return raw[:2] + control.to_bytes(2, "little") + raw[4:]
+    original_dacl = dacl()
+    with d._json_snapshot(record) as snapshot:
+        d.atomic_json(record, second)
+        assert json.load(snapshot) == first
+    assert dacl() == original_dacl, "atomic publication changed existing state permissions"
+    assert d.read_json(record) == second
+
+    # First creation may race another publisher; do not mistake a subsequent
+    # real permission conflict for a missing file or claim that it succeeded.
+    record.unlink()
+    original_replace = d.os.replace
+    held = []
+    def concurrent_first_writer(source, destination):
+        destination.write_text(json.dumps(first), encoding="utf8")
+        held.append(destination.open("rb"))
+        return original_replace(source, destination)
+    try:
+        with patch.object(d.os, "replace", side_effect=concurrent_first_writer):
+            rejects(lambda: d.atomic_json(record, second))
+        assert d.read_json(record) == first
+    finally:
+        for snapshot in held:
+            snapshot.close()
+
 with tempfile.TemporaryDirectory(prefix="dsh-deployment-中文 空格-") as temporary:
     temp = Path(temporary)
+    json_publication_cases(temp)
     # A browser carrier can import successfully while the scoped agent is
     # missing. Exercise the actual Node resolver used before stage publication.
     probe_install = temp / "preflight"

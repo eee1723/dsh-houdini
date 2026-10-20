@@ -293,8 +293,9 @@ try:
                 presets=facts['roster']['presets']
                 assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
                 expected={'houdini_inspect','houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
-                    'houdini_job_submit','houdini_job_status','houdini_job_cancel','houdini_isolated'}
+                    'houdini_job_submit','houdini_isolated'}
                 assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
+                assert {'job_output','job_list','job_kill'} <= set(facts['tools']), facts
                 graph_rows=facts['graph'] if isinstance(facts['graph'],list) else facts['graph']['entries']
                 assert sum(row['id']=='dsh-houdini' for row in graph_rows)==1, facts
                 break

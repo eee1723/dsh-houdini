@@ -36,8 +36,65 @@ _DIGEST_INFO = bytes.fromhex("3031300d060960864801650304020105000420")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _json_snapshot(path: Path):
+    """Readers retain a snapshot without blocking an atomic state publication."""
+    if os.name != "nt":
+        return path.open("rb")
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    # GENERIC_READ, FILE_SHARE_READ|WRITE|DELETE, OPEN_EXISTING. Sharing permits
+    # publication; the handle itself grants no write or delete access.
+    handle = kernel.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        error = ctypes.WinError(ctypes.get_last_error())
+        error.filename = str(path)
+        raise error
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        kernel.CloseHandle(handle)
+        raise
+    try:
+        return os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _publish_json(temp: Path, path: Path):
+    if os.name != "nt":
+        os.replace(temp, path)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.ReplaceFileW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR,
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID, wintypes.LPVOID]
+    kernel.ReplaceFileW.restype = wintypes.BOOL
+    # State publication reproduced a MoveFileEx (os.replace) conflict despite
+    # shared deletion. ReplaceFile supports the old reader snapshots while
+    # retaining the existing state's access-control list.
+    if kernel.ReplaceFileW(str(path), str(temp), None, 0, None, None):
+        return
+    code = ctypes.get_last_error()
+    if code == 2:  # No existing destination: publish the first generation.
+        os.replace(temp, path)
+        return
+    error = ctypes.WinError(code)
+    error.filename, error.filename2 = str(temp), str(path)
+    raise error
+
+
 def read_json(path: Path, limit=8 * 1024**2):
-    with path.open("rb") as handle:
+    with _json_snapshot(path) as handle:
         raw = handle.read(limit + 1)
     if len(raw) > limit:
         raise ValueError(f"JSON too large: {path.name}")
@@ -51,7 +108,7 @@ def atomic_json(path: Path, data):
         json.dump(data, handle, ensure_ascii=False, indent=2)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temp, path)
+    _publish_json(temp, path)
 
 
 def digest(path: Path):
