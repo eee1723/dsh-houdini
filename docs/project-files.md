@@ -13,8 +13,8 @@
 | 几何、模拟与通道缓存（`cache`） | `dsh-artifacts/cache/` | `project-dependency` |
 | 分析资料与诊断报告（`analysis`） | `dsh-artifacts/analysis/` | `analysis-evidence` |
 | 供用户阅读的工程与工具说明（`documentation`） | `dsh-artifacts/docs/` | `user-documentation` |
-| 供用户保留的成图与渲染输出（`render`） | `dsh-artifacts/renders/` | `render-output` |
-| 过程检查与诊断对照图（`visual_check`） | `dsh-artifacts/checks/previews/` | `visual-check` |
+| 供用户保留的成图与渲染输出（`render`） | `dsh-artifacts/renders/<HIPNAME>/` | `render-output` |
+| 过程检查与诊断对照图（`visual_check`） | `dsh-artifacts/checks/previews/<HIPNAME>/` | `visual-check` |
 | 独立运行输入、检查与执行证据（`execution_run`） | `dsh-artifacts/checks/runs/` | `execution-evidence` |
 | 构建源码与任务脚本（`script`） | `dsh-artifacts/scripts/` | `project-source` |
 | 原始执行回执（相对DSH工作区） | `dsh-artifacts/results/` | `execution-evidence` |
@@ -34,7 +34,9 @@
 
 加载警告原文属于恢复诊断，保存在同一恢复根的`load-warnings/`，按内容hash复用；对话只记录有限预览和可核验引用。它不进入`dsh-artifacts/analysis`或渲染目录，也不随Save As搬动；读取沿DSH原生恢复历史定位，规则见[接续](multi-instance.md#单实例保存点恢复)。
 
-`visual_check`的受管捕获在`checks/previews/`下使用`run-*`分组，保留唯一capture文件名和在途reservation。`execution_run`在DSH会话工作区的`checks/runs/`下承载独立运行输入、紧凑报告和检查产物；它不为分配目录额外查询live HIP，也不改变渲染和依赖的实际锚点。显式运行位置及历史路径保持，不自动迁移。
+`render`和`visual_check`在各自目录下按实际HIP的`HIPNAME`分组；它只去掉`.hip/.hiplc/.hipnc`扩展（忽略扩展大小写），保留版本后缀、Unicode、空格和点号，不猜测哪些版本属于同一工程。同stem的不同许可扩展共享命名组，精确来源以回执`hip_path`为准；目录名不作为工程身份。`visual_check`的受管捕获再使用`run-*`分组，保留唯一capture文件名和在途reservation。Save As只改变后续默认输出，不搬旧文件。
+
+`execution_run`在DSH会话工作区的`checks/runs/`下承载独立运行输入、紧凑报告和检查产物；它不为分配目录额外查询live HIP，也不改变渲染和依赖的实际锚点。显式运行位置及历史路径保持，不自动迁移。
 
 作者维护的builder、准备脚本和manifest留在`script`目录；运行器自动分配一次性运行目录。完整的大执行回执只在run的`executions/`中留档一次，报告携带同源事实投影、实际路径、内容摘要和JSON pointer；读取或归档失败不能替换原操作错误。运行prefs等机器状态放在运行器独占临时根，确认其拥有的进程树退出后再清理；用户工程、输入版本和观察证据不随环境清理。
 
@@ -59,8 +61,8 @@
 
 - `image_generate`默认`output_policy='managed'`、`purpose='reference'`。`output`省略或安全basename，生成到reference_generated；`purpose='texture'`进入texture。目录来自当前任务所选Houdini的实际现场，结果带角色、工程根、原HIP和观察身份。`output_policy='explicit'`必须给目的地，相对路径沿DSH workspace解释，不查询Houdini。
 - 网络资料保存先读取`project_layout.directories.reference_downloaded`，再用可用的通用下载能力明确选择该目录。精确DSH的`web_fetch`只读取网页文本，不提供二进制下载；本插件没有把它伪装成下载工具或复制一套网络安全策略。取得链接不等于图片已下载或已经看过。
-- `render_view`、`viewport_screenshot`与界面截图默认managed用于视觉检查；选择delivery生成到render。原有run-id、唯一分配、用户状态恢复和捕获验证保持不变。explicit裸文件名进入visual_check根目录；只有managed自动添加run分组。
-- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认render、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-artifacts/cache`。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
+- `render_view`、`viewport_screenshot`与界面截图默认managed用于视觉检查；选择delivery生成到render。图像先按HIPNAME分组；只有managed继续添加run分组，explicit裸文件名进入visual_check的HIPNAME目录。原有run-id、唯一分配、用户状态恢复和捕获验证保持不变。
+- `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认进入render的HIPNAME目录、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-artifacts/cache`。新建Karma Render Settings（含Karma Setup）的picture与checkpoint使用同源render目录和原生`$HIPNAME`，可随Save As继续求值；已有ROP的含目录路径不重写。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
 
 ## 生命周期与交付
 

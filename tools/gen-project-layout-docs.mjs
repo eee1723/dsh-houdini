@@ -6,13 +6,14 @@ const rows=Object.entries(contract.directories)
 if(rows.length!==Object.keys(labels).length || rows.some(([role])=>!Object.hasOwn(labels,role)))throw Error('Project layout roles do not match the documented interface')
 const paths=new Set()
 for(const [role,item] of rows){
-  if(typeof item.path!=='string'||!/^dsh-artifacts\/[a-z-]+(?:\/[a-z-]+)*$/.test(item.path)||paths.has(item.path)||typeof item.lifecycle!=='string')throw Error('Invalid directory role '+role)
+  if(typeof item.path!=='string'||!/^dsh-artifacts\/[a-z-]+(?:\/[a-z-]+)*$/.test(item.path)||paths.has(item.path)||typeof item.lifecycle!=='string'
+    || (item.scope!==undefined&&item.scope!=='hip_name'))throw Error('Invalid directory role '+role)
   paths.add(item.path)
 }
 if(!/^dsh-artifacts\/[a-z-]+$/.test(contract.resultDirectory)||paths.has(contract.resultDirectory))throw Error('Invalid result directory')
 const begin='<!-- project-layout:generated:start -->', end='<!-- project-layout:generated:end -->'
 const table=begin+'\n| 用途 | 工程相对目录 | 生命周期标识 |\n|---|---|---|\n'
-  +rows.map(([role,item])=>`| ${labels[role]}（\`${role}\`） | \`${item.path}/\` | \`${item.lifecycle}\` |`).join('\n')
+  +rows.map(([role,item])=>`| ${labels[role]}（\`${role}\`） | \`${item.path}/${item.scope==='hip_name'?'<HIPNAME>/':''}\` | \`${item.lifecycle}\` |`).join('\n')
   +`\n| 原始执行回执（相对DSH工作区） | \`${contract.resultDirectory}/\` | \`execution-evidence\` |\n`+end
 const file=new URL('../docs/project-files.md',import.meta.url), source=fs.readFileSync(file,'utf8')
 if(!source.includes(begin)||!source.includes(end))throw Error('Missing project layout documentation markers')

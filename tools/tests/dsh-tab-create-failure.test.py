@@ -22,6 +22,7 @@ import dsh_hou_helpers
 
 
 parent = hou.node("/obj").createNode("geo", f"__dsh_tab_failure_{uuid.uuid4().hex[:8]}")
+render_settings = []
 original = dsh_node_creation._run_shelf_tool
 
 
@@ -62,9 +63,29 @@ try:
     assert repr(parent.path()) in not_network['error'], not_network
     assert not_network['verbs'][0]['summary']['scene_writes'] == 0, not_network
     assert not_network['transaction']['status'] == 'no_scene_change', not_network
+    # tab_create/build_module and the multi-node recipe share new-node render
+    # defaults. Explicit authored artistic choices are applied afterwards.
+    settings = dsh_bridge.run_code(
+        "n=tab_create('/stage','karmarendersettings',name='clear_settings')\n__result__=n.path()",
+        owner_session='tab-create-failure-test')
+    assert settings['ok'], settings
+    clear = hou.node(settings['result']); render_settings.append(clear)
+    assert clear.evalParm('enabledof') == 0
+    assert clear.parm('picture').unexpandedString() == '$HIP/dsh-artifacts/renders/$HIPNAME/$HIPNAME.$OS.$F4.exr'
+    artistic = dsh_bridge.run_code(
+        "n=tab_create('/stage','karmarendersettings',name='artistic_settings',"
+        "parms={'enabledof':1,'picture':'$HIP/artist/beauty.$F4.exr'})\n__result__=n.path()",
+        owner_session='tab-create-failure-test')
+    assert artistic['ok'], artistic
+    art = hou.node(artistic['result']); render_settings.append(art)
+    assert art.evalParm('enabledof') == 1
+    assert art.parm('picture').unexpandedString() == '$HIP/artist/beauty.$F4.exr'
+    assert clear.evalParm('enabledof') == 0, 'new defaults never rewrite another settings node'
 finally:
     dsh_node_creation._run_shelf_tool = original
     if parent is not None:
         parent.destroy()
+    for node in render_settings:
+        node.destroy()
 
 print("tab_create failure regression passed")

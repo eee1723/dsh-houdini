@@ -1102,11 +1102,14 @@ def _measure(g, item, reference=None):
         return sum(float(p.position()[item['axis']]) for p in points.values())/len(points)
     if group is not None and not prims:
         raise ValueError('measurement selection is empty')
-    if not prims and metric != 'point_count':
-        raise ValueError('measurement selection is empty')
+    # Whole-output counts can legitimately reach zero (for example visibility
+    # switches). An explicit named selection must still exist and be nonempty;
+    # absence is not evidence that the intended part was measured.
     if metric == 'primitive_count':return len(prims)
     if metric == 'point_count':
         return len({p.number() for prim in prims for p in prim.points()}) if group is not None else int(g.intrinsicValue('pointcount'))
+    if not prims:
+        raise ValueError('measurement selection is empty')
     # Bounds are explicitly spatial response metrics, not proof of connectivity.
     if metric.startswith('bounds_'):
         # The default hou.BoundingBox contains the origin; it is not an empty

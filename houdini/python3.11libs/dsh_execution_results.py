@@ -165,7 +165,15 @@ def _artifact_candidates(ledger, images, execution_ok):
         elif name == 'tool_package_create':
             add(result.get('package_file'), 'tool-package', role, name)
         elif name == 'render_frame':
-            add(result.get('output'), 'render', role, name)
+            outputs = result.get('outputs')
+            if isinstance(outputs, list):
+                for output in outputs:
+                    if len(found) >= 16:
+                        break
+                    if isinstance(output, dict):
+                        add(output.get('output'), 'render', role if output.get('fresh') else 'diagnostic', name)
+            else:
+                add(result.get('output'), 'render', role, name)
         elif name in ('render_view', 'viewport_screenshot'):
             artifact = result.get('artifact')
             policy = artifact.get('output_policy') if isinstance(artifact, dict) else None
@@ -293,13 +301,16 @@ def _operation_summary(name: str, result):
               'scene_unit_length_meters','bbox_size_sop_local_mm','handoff_output',
               'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}
+    if name == 'render_frame' and isinstance(r.get('outputs'), list):
+        out['outputs'] = r['outputs']
+        out['inherited_products'] = r.get('inherited_products')
     if name == 'verify_network' and isinstance(r.get('geometry'), dict):
         out['geometry'] = {k:r['geometry'][k] for k in
             ('points','prims','bbox_min','bbox_max','bbox_size') if k in r['geometry']}
     if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
         out['artifact'] = {k:r['artifact'][k] for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
-            'role','project_root','lifecycle',
+            'role','project_root','lifecycle','hip_path','hip_name',
             'run_id','capture_id','frame','reservation_retained') if k in r['artifact']}
     if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']

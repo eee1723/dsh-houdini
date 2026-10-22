@@ -4,6 +4,7 @@ from __future__ import annotations
 import dsh_view_state
 
 import functools
+import contextlib
 import hashlib
 import math
 import os
@@ -11,7 +12,6 @@ import re
 import time
 import hou
 import dsh_cook_control as _cook_control
-from dsh_project_paths import directory_path as _project_directory
 import dsh_errors
 import dsh_geometry_queries
 import dsh_image_pixels
@@ -33,6 +33,36 @@ def _with_render_slot(fn):
         finally:
             dsh_executor_registry.release_render_slot(slot)
     return wrapper
+
+
+def _restore_render_frame(frame):
+    errors = []
+    if float(hou.frame()) != frame:
+        try:
+            hou.setFrame(frame)
+        except Exception as error:
+            errors.append(f'frame: {error}')
+    if float(hou.frame()) != frame:
+        errors.append('frame: restoration readback differs')
+    return errors
+
+
+@contextlib.contextmanager
+def _render_preflight_frame(frame, node):
+    original = float(hou.frame())
+    try:
+        if original != frame:
+            hou.setFrame(frame)
+        yield
+    finally:
+        errors = _restore_render_frame(original)
+        if errors:
+            raise dsh_errors.CheckpointError('render_frame preflight frame restoration failed', {
+                'ok': False, 'phase': 'render_restore', 'restored': False,
+                'restore_errors': errors, 'frame_restored': False,
+                'path': node.path(), 'frame': frame, 'render_started': False,
+                'scope': 'Temporary frame used to inspect composed USD output/framing',
+            })
 
 
 def _preserve_render_service_on_undo(fn):
@@ -110,9 +140,12 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
       ``outputimage`` 优先于 USD ``lopoutput``，Karma/Mantra/geometry 等 ROP 都覆盖。
       有 ``soho_foreground`` 时调用期临时等待渲染完成并在 finally 恢复。
     - picture：输出路径（含 $F 变量可直接传）；None = 用 ROP 当前设置。
-      裸文件名按输出用途放入$HIP/dsh-artifacts/renders；COP copoutput放入dsh-artifacts/textures，
+      USD Render ROP未设outputimage时读取实际RenderSettings的磁盘raster产品，不写入覆盖项；
+      多产品逐个检查并返回outputs，此时output为None。delegate/checkpoint产品单独列为未验证。
+      继承路径按原生Husk展开；相对产品路径、RenderPass与未明确选择的settings不推测。
+      裸文件名按输出用途放入$HIP/dsh-artifacts/renders/<HIPNAME>；COP copoutput放入dsh-artifacts/textures，
       几何/模拟/通道缓存放入dsh-artifacts/cache。已有含目录的ROP路径和显式绝对目的地不改写。
-      诊断/测试图显式传picture='$HIP/dsh-artifacts/checks/previews/<task>/check.png'，
+      诊断/测试图显式传picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/<task>/check.png'，
       不把过程检查写入成图目录；目录位置本身不证明已经交付或视觉正确。
     - frame：帧号；None = 当前帧。
     - timeout：等产物的上限（秒）。超过 ~110s 的渲染请走 houdini_job_submit
@@ -154,27 +187,30 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     # Resolving before any parameter/frame write also rejects extensionless
     # outputs and relative files outside the project with zero scene effects.
     original_output = p.unexpandedString()
-    output_subdir = (_project_directory('cache') if p.name() in ('sopoutput', 'dopoutput', 'choutput') else
-                     _project_directory('texture') if p.name() == 'copoutput' else
-                     _project_directory('render'))
-    target = dsh_media_output._resolve_output_path(original_output if picture is None else picture, frame=f,
-                                  default_subdir=output_subdir)
+    output_role = ('cache' if p.name() in ('sopoutput', 'dopoutput', 'choutput') else
+                   'texture' if p.name() == 'copoutput' else 'render')
     original_frame = float(hou.frame())
+    inherited = None
+    if n.type().name() == 'usdrender_rop' and picture is None and not p.evalAtFrame(f).strip():
+        from dsh_usd_inspection import _render_product_files
+        with _render_preflight_frame(f, n):
+            inherited = _render_product_files(n, f)
+        outputs = [{**row, 'output': dsh_media_output._resolve_output_path(row['output'], frame=f, expand_variables=False)}
+                   for row in inherited['products']]
+    else:
+        outputs = [{'output': dsh_media_output._resolve_output_path(
+            original_output if picture is None else picture, frame=f, default_role=output_role)}]
+    target = outputs[0]['output'] if len(outputs) == 1 else None
     foreground_parm = n.parm("soho_foreground")
-    original_foreground = foreground_parm.eval() if foreground_parm is not None else None
-    parameter_state = dsh_parameter_values._parameter_snapshot([p] + ([foreground_parm] if foreground_parm is not None else []))
+    parameter_state = dsh_parameter_values._parameter_snapshot(
+        ([] if inherited is not None else [p]) + ([foreground_parm] if foreground_parm is not None else []))
     framing_evidence = None
     if framing is not None:
         from dsh_camera_framing import usd_check
-        try:
-            if float(hou.frame()) != f:
-                hou.setFrame(f)
+        with _render_preflight_frame(f, n):
             framing_evidence = usd_check(n, framing, f)
             if not framing_evidence['ok']:
                 raise dsh_errors.CheckpointError('USD framing failed before renderer start; fit the explicit camera or revise the intentional crop', framing_evidence)
-        finally:
-            if float(hou.frame()) != original_frame:
-                hou.setFrame(original_frame)
     t0 = time.time()
     render_err = None
     file_bytes = None
@@ -193,21 +229,27 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
                 digest.update(handle.read(64 * 1024))
         return {
             "bytes": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
+            "mtime_ns": str(stat.st_mtime_ns),
             "sample_sha256": digest.hexdigest(),
         }
 
     try:
-        dsh_parameter_values._clear_animation(p)
-        p.set(target, follow_parm_reference=False)
+        if inherited is None:
+            dsh_parameter_values._clear_animation(p)
+            p.set(target, follow_parm_reference=False)
         hou.setFrame(f)
         if foreground_parm is not None:
             dsh_parameter_values._clear_animation(foreground_parm)
             foreground_parm.set(1, follow_parm_reference=False)
-        pre_fingerprint = fingerprint(target)
-        out_dir = os.path.dirname(target)
-        if out_dir and not os.path.isdir(out_dir):
-            os.makedirs(out_dir, exist_ok=True)
+        for output in outputs:
+            output['pre_fingerprint'] = fingerprint(output['output'])
+            output['post_fingerprint'] = None
+            output['preexisting'] = output['pre_fingerprint'] is not None
+            output['fresh'] = False
+            output['file_bytes'] = None
+            out_dir = os.path.dirname(output['output'])
+            if out_dir and not os.path.isdir(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
         try:
             if framing_evidence is not None:
                 framing_evidence['render_started'] = True
@@ -219,24 +261,24 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
         # Native render() is synchronous and can exceed the file-wait budget.
         # Always inspect the output once after it returns before reporting absence.
         while not render_err:
-            post_fingerprint = fingerprint(target)
-            if post_fingerprint is not None and post_fingerprint['bytes'] > 0 and post_fingerprint != pre_fingerprint:
-                file_bytes = post_fingerprint["bytes"]
+            for output in outputs:
+                post = output['post_fingerprint'] = fingerprint(output['output'])
+                output['fresh'] = bool(post is not None and post['bytes'] > 0 and post != output['pre_fingerprint'])
+                output['file_bytes'] = post['bytes'] if output['fresh'] else None
+            if all(output['fresh'] for output in outputs):
+                file_bytes = sum(output['file_bytes'] for output in outputs)
                 break
             remaining = deadline - time.time()
             if remaining <= 0:
                 break
             time.sleep(min(1, remaining))
     finally:
+        if len(outputs) == 1:
+            pre_fingerprint = outputs[0].get('pre_fingerprint')
+            post_fingerprint = outputs[0].get('post_fingerprint')
         restore_errors = dsh_parameter_values._restore_parameters(parameter_state)
         # 渲染帧属于 agent 验证状态，不占用用户 playbar；即使 ROP 失败也还原。
-        if float(hou.frame()) != original_frame:
-            try:
-                hou.setFrame(original_frame)
-            except Exception as error:
-                restore_errors.append(f'frame: {error}')
-        if float(hou.frame()) != original_frame:
-            restore_errors.append('frame: restoration readback differs')
+        restore_errors.extend(_restore_render_frame(original_frame))
         if restore_errors:
             # Failed image/output checks are ordinary returned diagnostics.
             # An unrecovered temporary scene write is different: retain its
@@ -249,6 +291,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
                 'path': n.path(), 'output': target, 'frame': f,
                 'fresh': file_bytes is not None, 'file_bytes': file_bytes,
                 'pre_fingerprint': pre_fingerprint, 'post_fingerprint': post_fingerprint,
+                **({'outputs': outputs, 'inherited_products': inherited} if inherited is not None else {}),
                 'errors': ([render_err] if render_err else []) +
                           [f'restore failed: {error}' for error in restore_errors],
                 'scope': 'snapshotted output/foreground parameters and frame only; '
@@ -264,19 +307,25 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
                 errors.append(e)
     except Exception:
         pass
-    if not render_err and file_bytes is None:
-        errors.append(f"render() 未报错但产物缺失、为空或与渲染前指纹相同：{target}")
-    if file_bytes:
-        dsh_media_output.report_image(target)
+    if not render_err:
+        for output in outputs:
+            if not output.get('fresh'):
+                errors.append(f"render() 未报错但产物缺失、为空或与渲染前指纹相同：{output['output']}")
+    for output in outputs:
+        if output.get('fresh'):
+            dsh_media_output.report_image(output['output'])
     return {
         "path": n.path(),
         "output": target,
         "frame": f,
         "file_bytes": file_bytes,
-        "preexisting": pre_fingerprint is not None,
+        "preexisting": any(output.get('preexisting') for output in outputs),
         "fresh": file_bytes is not None,
         "pre_fingerprint": pre_fingerprint,
         "post_fingerprint": post_fingerprint,
+        **({'outputs': outputs, 'inherited_products': inherited,
+            'scope': 'File freshness for the listed disk raster products only; delegate/checkpoint products and visual semantics remain unverified'}
+           if inherited is not None else {}),
         **({'framing': framing_evidence} if framing_evidence is not None else {}),
         "errors": errors,
         "ms": int((time.time() - t0) * 1000),
@@ -412,9 +461,9 @@ def render_view(node, direction="iso", frame=None,
       是意图，向量是实现）。
     - ``frame``：帧号；None = 当前帧。
     - ``picture/output_policy``：默认managed，只接收省略或安全basename并写入
-      ``$HIP/dsh-artifacts/checks/previews/<run-id>/``。
-      最终交付用``output_policy='delivery'``分配到``$HIP/dsh-artifacts/renders/``；自定路径用
-      ``output_policy='explicit'``，其中裸文件名放进``$HIP/dsh-artifacts/checks/previews/``。
+      ``$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/``。
+      最终交付用``output_policy='delivery'``分配到``$HIP/dsh-artifacts/renders/<HIPNAME>/``；自定路径用
+      ``output_policy='explicit'``，其中裸文件名放进``$HIP/dsh-artifacts/checks/previews/<HIPNAME>/``。
       各模式均返回``artifact``路径事实，输出位置不证明验收通过。
     - ``framing``：``full`` 完整入镜；``detail`` 缩小画幅（正交宽度/透视视角），不推进相机。
       detail仅允许画框外裁切，near/far深度裁切始终拒绝；不以拓扑正确排除相机切断。
@@ -473,7 +522,6 @@ def render_view(node, direction="iso", frame=None,
         purpose='model_visual_verification',
         output_policy=output_policy,
         default_label=f'{target.name()}_{direction_label}',
-        default_subdir=_project_directory('visual_check'),
     )
     try:
         image_ext = os.path.splitext(picture)[1].lower()
@@ -637,6 +685,7 @@ def render_view(node, direction="iso", frame=None,
             "forcelights": "",
             "excludelights": "*",
             "shadingmode": "smooth",
+            "dof": False,
             "usegeocolor": True,
             "tres": True,
             "override_camerares": True,

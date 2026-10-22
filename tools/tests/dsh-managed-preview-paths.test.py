@@ -61,13 +61,32 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
         missing = project_paths.project_layout(filename, has_named_path=named)
         assert missing['available'] is False and missing['directories'] == {}
         assert missing['hip_path'] is None and missing['project_root'] is None
+    assert layout['hip_name'] == hip.stem
+    assert Path(layout['directories']['render']) == base / 'dsh-artifacts/renders' / hip.stem
+    assert Path(layout['directories']['visual_check']) == base / 'dsh-artifacts/checks/previews' / hip.stem
+    assert project_paths.directory_expression('render') == '$HIP/dsh-artifacts/renders/$HIPNAME'
+    assert project_paths.directory_expression('texture') == '$HIP/dsh-artifacts/textures'
+    # Names are native HIPNAME groups, not guessed project continuity. Keep
+    # versions and spelling; license extensions of the same stem share a group.
+    for filename, expected in (('Forest_v003.hip', 'Forest_v003'), ('Forest.v004.HIPLC', 'Forest.v004'),
+                               ('Forest_v003.hipnc', 'Forest_v003'), ('Forest.hips', 'Forest.hips'),
+                               ('\u68ee\u6797 \u573a\u666f_v007.hip', '\u68ee\u6797 \u573a\u666f_v007')):
+        assert project_paths.hip_name(str(base / filename)) == expected
     first = allocate(hip)
+    other_hip_same_directory = base / 'other_v002.hip'
+    other_capture = allocate(other_hip_same_directory)
+    assert other_capture['run_id'] == first['run_id']
+    assert Path(other_capture['managed_root']).parent != Path(first['managed_root']).parent
+    assert other_capture['hip_path'] == other_hip_same_directory.as_posix()
+    assert other_capture['hip_name'] == 'other_v002'
+    assert paths.release_reservation(other_capture) == []
     second = allocate(hip, '中文 wide view.$F4.png')
     third = allocate(hip, owner='session-b')
     assert first['output_policy'] == 'managed'
     assert first['role'] == 'visual_check' and first['lifecycle'] == 'visual-check'
     assert first['project_root'] == layout['project_root']
-    assert Path(first['actual_path']).parent.parent == base.resolve() / 'dsh-artifacts/checks/previews'
+    assert first['hip_path'] == hip.as_posix() and first['hip_name'] == hip.stem
+    assert Path(first['actual_path']).parent.parent == base.resolve() / 'dsh-artifacts/checks/previews' / hip.stem
     assert Path(first['managed_root']) == Path(first['actual_path']).parent
     assert first['hip_relative_path'].startswith('dsh-artifacts/checks/previews/')
     assert first['actual_path'] != second['actual_path']
@@ -78,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     another_delivery = allocate(hip, '最终交付.png', output_policy='delivery')
     # Windows CI may expose TEMP through an 8.3 alias; the allocator resolves
     # that alias to the same directory's long spelling.
-    assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-artifacts/renders')
+    assert Path(delivery['actual_path']).parent.samefile(base / 'dsh-artifacts/renders' / hip.stem)
     assert delivery['output_policy'] == 'delivery' and delivery['hip_relative_path'].startswith('dsh-artifacts/renders/')
     assert delivery['role'] == 'render' and delivery['lifecycle'] == 'render-output'
     assert delivery['project_root'] == layout['project_root']
@@ -203,7 +222,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
         if symlink_checked:
             visible = project_paths.project_layout(str(redirected_hip), has_named_path=True)
             role = 'visual_check' if policy == 'managed' else 'render'
-            assert Path(visible['directories'][role]) == redirected.resolve() / project_paths.directory_path(role)
+            assert Path(visible['directories'][role]) == redirected.resolve() / project_paths.directory_for_hip(role, str(redirected_hip))
             reject(lambda: allocate(redirected_hip, output_policy=policy), 'redirected')
             assert not list(real_store.iterdir()), 'preflight must not create subdirectories through a redirected artifact root'
             os.rmdir(link)

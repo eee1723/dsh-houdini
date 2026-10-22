@@ -255,13 +255,12 @@ def _close(state):
 def prepare_ui_capture(target, path=None, *, output_policy='managed', runtime_id) -> dict:
     """Admit an exact displayed surface and yield to the ordinary GUI loop."""
 
-    from dsh_project_paths import directory_path
     _gui()
     surface, pane, widget, area = _resolve_surface(target, runtime_id)
     frame = float(hou.frame())
     destination, artifact, hip_path = dsh_media_output._preview_artifact(
         path, frame=frame, purpose='existing_ui', output_policy=output_policy,
-        default_label='ui_' + surface['kind'], default_subdir=directory_path('visual_check'), allowed_extensions={'.png'})
+        default_label='ui_' + surface['kind'], allowed_extensions={'.png'})
     state = {'runtime_id': runtime_id, 'surface': surface, 'pane': pane, 'widget': widget,
         'node_path': surface.get('node'), 'view': 'existing',
         'width': area.width(), 'height': area.height(), 'destination': destination,

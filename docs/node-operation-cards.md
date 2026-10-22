@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944bc4f1308cb31c40df9ebef3f7eeb`
+Schema: 2 · Cards: 29 · Source SHA-256: `535d8b73458a531019e10e705d2a94320023b7b8073d702ad3acacf5967911d3`
 
 ## 数据与设计契约
 
@@ -20,6 +20,12 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 
 ## 卡片目录
 
+- [add](#add)
+- [curve](#curve)
+- [fit](#fit)
+- [resample](#resample)
+- [circlespline](#circlespline)
+- [orientalongcurve](#orientalongcurve)
 - [fractalnoise](#fractalnoise)
 - [coppreviewmaterial](#coppreviewmaterial)
 - [mirror](#mirror)
@@ -43,6 +49,100 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 - [cam](#cam)
 - [karmarendersettings](#karmarendersettings)
 - [boolean](#boolean)
+
+## add
+
+标识：`add-editable-control-polygon-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/add.html)。
+
+精确类型：`add`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`points`、`prims`、`prim0`、`closed0`。
+
+### 操作与边界
+
+- The points multiparm creates editable point fields usept0/pt0/weight0, and so on, starting at zero. Set the count before addressing the generated fields; build_module orders declared counts before their instances. A point list alone does not create a connected path: prim0 gives its explicit point sequence and closed0 selects open/closed for that primitive.
+- For a sparse path source, retain these point controls and an optional downstream Curve 2.0 editing entry before fitting or dense sampling. Point coordinates, spline control vertices and interpolated on-curve anchors have different roles. Preserve input order and recheck consumers after changing count or connectivity.
+- Isolated evidence covers an open sparse Polygon through build_module and point edits reaching Curve 2.0, interpolation and Sweep; it does not certify arbitrary curve routing or GUI handles.
+
+## curve
+
+标识：`curve2-input-editing-and-reinterpretation-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/curve.html)。
+
+精确类型：`curve::2.0`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`outputtype`、`order`、`convertcurves`、`updatefrominput`、`mode`。
+
+### 操作与边界
+
+- Input 0 supplies existing curves for the native interactive editor. An Add control polygon or fitted curve can seed this editable entry through normal connections; do not guess the legacy Curve coords field or write Data parameters such as parmpoints/stashgeo with scalar setters.
+- outputtype/order choose the representation for new curves; convertcurves also reinterprets existing input vertices as that representation. Reinterpretation is not a fit through every input point. A two-span open cubic Bezier uses seven control vertices: endpoints and the shared anchor are on-curve; the other vertices are tangent handles. For sparse mandatory on-curve anchors use an explicit interpolating method instead.
+- updatefrominput keeps upstream edits live; disabling it freezes input updates. Keep a sparse editing source before dense sampling and recheck native edits after input topology/order changes. Scalar current-operation fields can express a local transform, but replacing the current operation is not appending an edit history.
+- Isolated evidence covers input Polygon-to-Bezier reinterpretation, fitted NURBS passthrough, upstream point edits and a current-operation anchor transform that also moves its adjacent Bezier handles. It does not certify native GUI interaction, arbitrary edit-history replay or geometric clearance.
+
+## fit
+
+标识：`fit-interpolation-versus-approximation-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/fit.html)。
+
+精确类型：`fit`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`method`、`type`、`orderu`、`scope`、`dataparmu`、`tol`、`smooth`、`closeu`。
+
+### 操作与边界
+
+- Input primitive control vertices are treated as data points; the input spline basis is not the fitted shape. method=interp passes through the data points; method=approx follows them within its fitting policy and can reduce controls. Select the intended meaning before adjusting tolerance or sampling density.
+- For curve interpolation, scope and dataparmu control the fit; do not confuse fitted CVs with input mandatory anchors. Uniform, chord-length and centripetal parameterization are distinct choices. The node may use float attributes beyond P when constructing an interpolation basis, so inspect unintended input data if the fit behaves unexpectedly.
+- Retain editable sparse anchors upstream, or place Curve 2.0 after Fit when the user needs to edit the resulting spline CVs. Check endpoints, shape deviation and downstream clearance after edits; interpolation/approximation is not obstacle avoidance.
+- Isolated evidence covers an open cubic NURBS global interpolation with chord-length parameterization, endpoint preservation and upstream anchor edits. Approximation, arbitrary attributes, closed curves and surface fitting are not certified by that fixture.
+
+## resample
+
+标识：`resample-shape-interpretation-and-sampling-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/resample.html)。
+
+精确类型：`resample`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`treatpolysas`、`dolength`、`length`、`dosegs`、`segs`、`lod`、`last`、`onlypoints`、`useattribs`。
+
+### 操作与边界
+
+- treatpolysas=straight preserves the Polygon path interpretation; increasing sample count alone does not remove a designed corner. subd/interp explicitly reinterpret Polygon inputs as smooth curves and can change the silhouette or overshoot the original control polygon. Recheck anchors, endpoints and clearance after choosing a smoothing interpretation.
+- For native NURBS/Bezier inputs, samples lie on the input curve while lod controls the polygonal approximation used to estimate arc length. dolength/dosegs enable the corresponding length/count limits; useattribs allows segment_length/num_segments primitive attributes to override them. Inspect the effective input and endpoint/equal-segment policy when exact attachment endpoints matter.
+- onlypoints removes the connecting curve primitive, which is appropriate for a point consumer but not automatically a Sweep backbone. Preserve the sparse editable source; choose sample spacing for curvature and output scale rather than using a fixed large count as a smoothness claim.
+- Isolated evidence compares straight and interpolating interpretations of one open control polygon, including interpolation overshoot, and samples editable Bezier/NURBS inputs. It does not bound arbitrary curves or certify continuous collision clearance.
+
+## circlespline
+
+标识：`circle-spline-sparse-anchor-shape-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/circlespline.html)。
+
+精确类型：`circlespline`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`splinetype`、`usesplinetypeattrib`、`reparmstrength`、`segmentdivision`、`pseudoarclength`。
+
+### 操作与边界
+
+- Input 0 is one or more control polygons. Hybrid blends circular/elliptical interpolation for smooth paths through sparse anchors; it is an option for rounded design curves, not a mandatory replacement for tangent-controlled Bezier or measured-data fitting. Keep an editable control polygon upstream rather than exposing only the dense output.
+- The documented C2 parameter continuity requires nonzero reparmstrength. segmentdivision controls output sampling per segment; pseudoarclength adjusts sample placement toward even spacing without increasing the total count. usesplinetypeattrib can select a different spline type from the input splinetype attribute, so inspect the effective segment types.
+- The official bounded/generally non-self-intersecting description is not a control-point convex-hull guarantee, whole-curve self-intersection certificate or obstacle-clearance guarantee. Check the shaped path and its swept profile against actual scene geometry; circle/ellipse/helix variants have their own shape behavior.
+- Isolated evidence covers Hybrid interpolation of an open sparse Polygon, anchor retention and upstream edits on H21/H22. It does not prove analytic C2 continuity, arbitrary mixed types, degenerate anchors, GUI appearance or collision freedom.
+
+## orientalongcurve
+
+标识：`curve-frame-and-sweep-consumer-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/orientalongcurve.html)。
+
+精确类型：`orientalongcurve`。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`tangenttype`、`transformbyattribs`、`upvectortype`、`upvectoratstart`、`useendupvector`、`continuousclosed`、`outputquaternion`、`outputyaxis`、`outputzaxis`、`applyroll`、`roll`。
+
+### 操作与边界
+
+- Computes path reference frames for copying or sweeping. A path tangent alone leaves roll undetermined; choose a suitable up/start/end policy and any intended twist. continuousclosed distributes accumulated closed-curve roll rather than concentrating it at the seam; this is distinct from changing path shape or fixing a kink.
+- Choose outputquaternion or the required N/up axes explicitly and verify that the downstream node consumes them. transformbyattribs on this node chooses whether existing point transforms influence its frame; Sweep has a separate Transform Using Curve Point Attributes switch for consuming the result. Avoid applying the same roll twice.
+- A circular cross-section may conceal orientation errors. Isolated evidence uses an asymmetric rectangular profile along a planar XZ path: an explicit 90-degree orient roll changes the actual swept width/height only when Sweep consumes point transforms. General spatial torsion, closed seams and GUI appearance remain outside that fixture.
 
 ## fractalnoise
 
@@ -71,9 +171,10 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 ### 操作与边界
 
 - SOP geometry is input 0; Group limits primitive assignment. One entry supports constant, file and COP sources independently per channel. Pure constant surfaces need no image, COP network or UV; preserve existing user materials instead of migrating them merely for consistency.
+- Writes selected primitives' shop_materialpath to a preview shader inside this SOP; unselected primitives retain their assignment. Existing Solaris imports or ROPs may consume that attribute. Trace actual geometry material identities and downstream consumers before adding preview assignment; an empty /mat does not establish that the project has no materials.
 - Source menu tokens are file/cop/constant. basecolor and roughness are UI headings, not the writable values: constantbasecolor is the RGB tuple and constantspecularroughness is the scalar. basecolorfile/basecolorpath select file/COP input. Discover current menus and writable parameter types before setting other channels.
 - Spatial textures require suitable UVs and normal maps require matching tangent/encoding conventions. Tint With Cd multiplies base color; keep intentional tinting but avoid accidental multiplication by upstream diagnostic colors. Check the actual final SOP and viewport after upstream resizing, copying or deformation.
-- The version list covers native parameter discovery. SOP preview, file dependencies, renderer support and visual quality have separate validation scopes; consult the surface workflow and development checks.
+- The version list covers native parameter discovery and isolated primitive material-path assignment, including Group selection and unchanged upstream values. SOP display, file dependencies, USD material binding, renderer shader support and visual quality have separate validation scopes; consult the surface workflow and development checks.
 
 ## mirror
 
@@ -145,7 +246,7 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 精确类型：`sweep::2.0`。
 已测版本：`21.0.440`、`22.0.368`。
 
-关键运行时参数：`surfaceshape`、`endcaptype`、`radius`、`cols`、`primtype`。
+关键运行时参数：`surfaceshape`、`endcaptype`、`radius`、`cols`、`primtype`、`transformbyattribs`、`upvectortype`、`applyroll`。
 
 ### 构建前决策
 
@@ -158,6 +259,7 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 - When input 0 contains no backbone curve, Sweep can use an implicit backbone with one vertex per input-1 cross-section, all at the origin. An unconnected input 0 with multiple sections on input 1 is supported when surfaceshape=input; it does not infer a spatial path from section centers. closeifnocurveinput closes that section sequence, not the cross-sections themselves or end caps. Inspect section order/correspondence and the actual generated surface for this input arrangement.
 - For a circular cable, feed the open centerline to input 0 and use the built-in tube with explicit radius/columns/endcaptype; a second input is only for a custom cross-section. In VEX addprim(..., "poly", points) makes a closed path; use "polyline" for a free-ended cable. A closed path can Sweep to a clean watertight shell while adding a wrong return segment. Reversed input order can cook a surface with the wrong shape. The centerline's loose end must meet the preceding tangent smoothly; Sweep cannot remove an upstream sharp turn. For custom sections explicitly establish section plane and path frame/up. tab_create with explicit input 1 reconciles the shipped Sweep 2.0 initializer to surfaceshape=input after wiring; explicit build parms may override this.
 - A non-XY section may be intentional with Pitch/Yaw or upstream pre-rotation; do not rotate it blindly. Inspect local section extents and actual end boundaries; world bbox alone cannot prove a tube.
+- Upstream orient or N/up only affects the surface when transformbyattribs consumes the curve point transforms. For non-circular sections, choose the path up/frame and intended roll explicitly, then inspect the actual cross-section orientation. A smooth centerline can still have an unwanted frame flip; changing sampling density does not choose the intended roll. Isolated H21/H22 evidence covers a planar path with an asymmetric rectangle and a 90-degree upstream orient roll, including the disabled-consumer counterexample.
 - On the listed tested versions, isolated Bridge evidence covers Tab-visible Sweep 2.0 with input 0 unconnected and two equal-count open polylines on input 1: input sections, default section order, quadrilateral surfaces and no caps produced the corresponding open quad strip. tab_create and build_module both preserved the None input slot. This scope does not certify unequal-count or other curve representations, implicit loop closure, arbitrary section correspondence, self-intersections, GUI appearance or artistic quality.
 
 ## polyextrude
@@ -350,6 +452,7 @@ Schema: 2 · Cards: 23 · Source SHA-256: `aeec0edddfb84a4d6fe415f66f66bbc30944b
 ### 操作与边界
 
 - Input 0 is the source unit, input 1 the destination points. Establish the unit local axes and destination P/orient/scale before copying.
+- Arbitrary destination attributes follow the node's target-attribute transfer rules. Inspect those settings and the actual output attribute class before reading or promoting an attribute; its presence on the destination input does not prove it exists on copied geometry.
 - Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison.
 
 ## object_merge

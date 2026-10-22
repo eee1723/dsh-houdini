@@ -65,7 +65,7 @@ def scene_save(expected_path: str | None = None) -> dict:
         "dirty_reliable": dirty_reliable,
         "clean_on_disk": not dirty_after if dirty_reliable else None,
         "bytes": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
+        "mtime_ns": str(stat.st_mtime_ns),
     }
 
 
@@ -134,7 +134,7 @@ def scene_save_as(path: str, expected_current_path: str, reason: str,
     return {"path": target, "previous_path": current, "reason": reason.strip(),
             "overwrote": existed, "dirty_before": dirty_before, "dirty_after": dirty_after,
             "dirty_reliable": reliable, "clean_on_disk": not dirty_after if reliable else None,
-            "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "bytes": stat.st_size, "mtime_ns": str(stat.st_mtime_ns),
             "workspace_changed": os.path.normcase(os.path.dirname(current)) != os.path.normcase(os.path.dirname(target)),
             "note": "文件写入不能撤销。当前对话会在下一模型步骤接续成功另存后的工程目录。"}
 

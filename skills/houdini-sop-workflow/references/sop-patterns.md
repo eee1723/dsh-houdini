@@ -75,6 +75,8 @@ VEX重载函数的返回类型在赋属性前显式确定，例如用`vector4 q 
 - 同名不同 class/size/type 是否冲突。
 - 部件身份、side、局部坐标或下游使用的分组是否仍可追踪。
 
+VEX的`point()`在点或属性不存在时会返回0，这个值不证明属性存在。跨class读取或在Copy/Clip后转移属性时，先核对实际输入的owner、属性和成员；需要区分缺失与合法零值时用`haspointattrib`等存在性查询。已有primitive颜色不能因猜测point颜色存在而被零覆盖。接口事实见[point](https://www.sidefx.com/docs/houdini/vex/functions/point.html)与[haspointattrib](https://www.sidefx.com/docs/houdini/vex/functions/haspointattrib.html)。
+
 Merge的属性不一致warning影响取决于属性用途。先读具体节点、属性和下游消费者，
 再选择统一class/type、重命名不同含义的属性，或给不适用的分支初始化明确默认值。
 例如只在支架分支有`part_id`，合并时可保留其身份并用约定的非成员值/组标识其他分支；

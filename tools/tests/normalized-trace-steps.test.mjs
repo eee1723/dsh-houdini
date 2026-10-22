@@ -6,7 +6,7 @@ import {
   toolResultText,
   unresolvedExecutionRequests,
 } from '../normalized-trace-steps.mjs';
-import {isStructuredHoudiniCall,collectVerbAdoption,nativeImageEvidence} from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
+import {isStructuredHoudiniCall,collectVerbAdoption,nativeImageEvidence,linkNativeImageResponses} from '../../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
 
 const call = (seq, callId, name, args) => ({
@@ -217,3 +217,44 @@ const recoveredCapture={index:2,tool:'houdini_request',canonical:{...captureValu
 assert.equal(unresolvedExecutionRequests([unknownCapture]).length,1);
 assert.equal(unresolvedExecutionRequests([unknownCapture,recoveredCapture]).length,0);
 console.log('UI capture trace: native/nested canonical images, structured non-Python classification and recovery passed');
+
+// Real isolated-read shape from refinement-surfaces seq 725/910: unlike the
+// initial run response it has no top-level ok, while DSH retains both canonical
+// imageAttachments and native image blocks. Compaction later replays the call.
+const isolatedImages=(names)=>({kind:'isolated-houdini',run_directory:'C:/fixture/run',
+  report_path:'C:/fixture/run/report.json',report:{ok:true,finished:true,checks:[]},scope:'Independent run only',
+  imageAttachments:names.map(name=>({from:'C:/fixture/run/'+name+'.png',
+    attachment:{attachmentId:'sha256:fixture-'+name,mediaType:'image/jpeg',width:512,height:512,bytes:100,name:name+'.png'},
+    semantic_status:'unverified'}))});
+const isolatedRead=isolatedImages(['wood','screen','document','ruler','deskmat']);
+const isolatedFollowup=isolatedImages(['coin','normal','phone']);
+const readNative=result(54,'read-isolated',JSON.stringify(isolatedRead));
+readNative.data.meta={canonical:isolatedRead};
+readNative.data.message.content.push(...isolatedRead.imageAttachments.map(i=>({type:'image',attachment:i.attachment})));
+const nestedRead={seq:62,time:1062,type:'tool/ptc-dispatch',data:{subCallId:'program:read-isolated',parentCallId:'program',
+  name:'houdini_isolated',meta:{canonical:isolatedFollowup},content:[{type:'text',text:JSON.stringify(isolatedFollowup)},
+    ...isolatedFollowup.imageAttachments.map(i=>({type:'image',attachment:i.attachment}))]}};
+const isolatedTrace=normalizeTraceSteps([
+  call(50,'read-isolated','houdini_isolated',{operation:'read',output_dir:'C:/fixture/run'}),
+  call(51,'already-pending','read',{file_path:'other.json'}),readNative,
+  result(55,'already-pending','Earlier unrelated call returned after the image'),
+  call(56,'after-images','grep',{pattern:'resolution'}),result(57,'after-images','result'),
+  {seq:60,time:1060,type:'tool/ptc-dispatch-start',data:{subCallId:'program:read-isolated',parentCallId:'program',
+    name:'houdini_isolated',arguments:{operation:'read',output_dir:'C:/fixture/run'}}},nestedRead,
+  call(63,'after-nested','read',{file_path:'followup.json'}),result(64,'after-nested','result'),
+  {...readNative,seq:70,time:1070},{...nestedRead,seq:72,time:1072},
+]);
+assert.equal(isolatedTrace.replayedResults.length,2);
+assert.equal(isolatedTrace.uniqueExecutions.length,0,'isolated report content must not be counted as a live HOM execution');
+assert.deepEqual(isolatedTrace.steps[0].canonical,isolatedRead);
+assert.deepEqual(isolatedTrace.steps[3].canonical,isolatedFollowup);
+assert.equal(isolatedTrace.steps[3].canonicalStatus,'retained_in_dispatch');
+const isolatedObservations=linkNativeImageResponses(nativeImageEvidence(isolatedTrace.steps),isolatedTrace.steps,[]);
+assert.equal(isolatedObservations.length,8,'five native plus three nested images, without compaction replay duplication');
+assert(isolatedObservations.every(row=>row.delivered&&row.semanticStatus==='unverified'));
+assert(isolatedObservations.slice(0,5).every(row=>row.nextToolStep.index===3&&row.nextToolStep.tool==='grep'),
+  'a pending call that returns later is not a response to the images');
+assert(isolatedObservations.slice(5).every(row=>row.nextToolStep.index===5&&row.nextToolStep.tool==='read'));
+const proseOnly=normalizeTraceSteps([call(80,'unretained','houdini_isolated',{}),result(81,'unretained',JSON.stringify(isolatedRead))]);
+assert.equal(nativeImageEvidence(proseOnly.steps).length,0,'do not reconstruct canonical image facts from rendered text');
+console.log('Isolated read images: native/nested public wrappers, replay deduplication and subsequent-call links passed');

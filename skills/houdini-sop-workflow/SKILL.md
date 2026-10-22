@@ -30,6 +30,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 | 复杂任务如何拆分、逐个观察并集成 | 按名加载[任务拆分skill](../houdini-task-decomposition/SKILL.md) |
 | 完整重复组件、内部细化与布局的边界 | [完整源组件与布局](references/modeling-methods.md#完整源组件与布局) |
 | 路径、截面、重复源如何组合 | [建模方法](references/modeling-methods.md#1-从表示和构造选方法) |
+| 曲线不平滑、穿插、贴附偏离或扫掠扭转；需要可手调路径 | [可编辑路径与曲线](references/curves-and-routing.md)，分别选择造型、走向、采样和截面朝向 |
 | 重复细节数量增长、VEX代码生成和下游编译失败 | [重复规律与代码生成](references/modeling-methods.md#重复规律与代码生成) |
 | 大量复制前验源；闭合却反向；同源错误扩散 | [源构件与成形检查](references/modeling-methods.md#源构件与成形检查)；Revolve先读`node_info(parent,'revolve')`的方向说明 |
 | 倒角、细节、表面表示 | [局部操作](references/modeling-methods.md#2-选择先于倒角与局部操作)、[分层细化](references/modeling-methods.md#3-一个模块分层细化)、[表面表示](references/modeling-methods.md#表面表示与外观制作) |

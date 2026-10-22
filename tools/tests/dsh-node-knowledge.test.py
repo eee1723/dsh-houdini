@@ -57,11 +57,13 @@ try:
         assert asset.path() in h.find_nodes(root=root, node_type='DISCOVERY_FIXTURE::INSPECTION_ASSET::1.0')
         assert asset.path() not in h.find_nodes(root=root, node_type='discovery_fixture')
         asset.destroy()
+        hou.hda.uninstallFile(str(Path(asset_dir) / 'inspection.hda'))
     done('namespaced asset discovery uses the native base type name')
 
     # Critical fields survive unrelated filters and limit=1; no scratch/cook.
     before = set(root.children())
-    families = ('sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
+    families = ('add', 'curve', 'fit', 'resample', 'circlespline', 'orientalongcurve',
+                'sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
                 'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge', 'boolean',
                 'mirror', 'bend', 'skin', 'pathdeform')
     for family in families:
@@ -367,6 +369,112 @@ try:
     assert abs(sweep.geometry().boundingBox().sizevec()[0] - .2) < 1e-5
     assert observed(sweep)['boundary_edges'] > 0, 'intentional open built-in tube'
     done('Sweep external/built-in section and cap/open geometry')
+
+    # Sparse native controls must be writable through the same public entries
+    # an author uses, without a Data parameter or a dense generated source.
+    def path_points(node):
+        values = [tuple(float(x) for x in p.position()) for p in node.geometry().points()]
+        assert not node.errors() and values, (node.path(), node.errors())
+        return values
+    def close_point(a, b, tolerance=1e-5):
+        return sum((x-y)**2 for x, y in zip(a, b)) ** .5 < tolerance
+    def editable_point_parms(values, closed=False):
+        parms = {'points': len(values), 'prim0': ' '.join(map(str, range(len(values)))),
+                 'closed0': closed}
+        parms.update({'pt%d' % i: list(p) for i, p in enumerate(values)})
+        return parms
+
+    anchors = [(0, 0, 0), (0, 0, 1), (1, 0, 1), (1, 0, 2)]
+    built_path = h.build_module(root, [
+        {'name': 'path_anchors', 'type': 'add', 'parms': editable_point_parms(anchors)},
+        {'name': 'EDIT_PATH', 'type': 'curve', 'inputs': ['path_anchors'],
+         'parms': {'outputtype': 'polygon', 'convertcurves': True, 'updatefrominput': True}},
+        {'name': 'hybrid_path', 'type': 'circlespline', 'inputs': ['EDIT_PATH'],
+         'parms': {'splinetype': 'hybrid', 'reparmstrength': .1, 'segmentdivision': 32}},
+    ], output='hybrid_path')
+    assert built_path['validation']['ok']
+    anchor_source, editable_path, hybrid = (root.node(name) for name in ('path_anchors', 'EDIT_PATH', 'hybrid_path'))
+    hybrid_before = path_points(hybrid)
+    assert all(any(close_point(a, p) for p in hybrid_before) for a in anchors)
+    h.set_parm(anchor_source, 'pt1', [.1, 0, 1])
+    assert path_points(hybrid) != hybrid_before, 'native point edit did not reach Hybrid output'
+    h.set_parm(anchor_source, 'pt1', list(anchors[1]))
+    assert path_points(hybrid) == hybrid_before
+    h.set_parms(editable_path, {'optype': 'transform', 'activepoints': '1', 'translate': [.15, 0, 0]})
+    assert close_point(path_points(editable_path)[1], (.15, 0, 1))
+    assert path_points(hybrid) != hybrid_before, 'Curve current operation did not reach its consumer'
+    h.set_parms(editable_path, {'optype': 'nop', 'activepoints': '', 'translate': [0, 0, 0]})
+    assert path_points(hybrid) == hybrid_before
+    done('editable sparse Add/Curve 2.0 controls reach Circle Spline through public build/set entries')
+
+    controls = [(0, 0, 0), (0, 0, 1), (1, 0, 1), (1, 0, 2),
+                (1, 0, 3), (2, 0, 3), (2, 0, 4)]
+    h.build_module(root, [
+        {'name': 'bezier_controls', 'type': 'add', 'parms': editable_point_parms(controls)},
+        {'name': 'EDIT_BEZIER', 'type': 'curve', 'inputs': ['bezier_controls'],
+         'parms': {'outputtype': 'bezier', 'order': 4, 'convertcurves': True,
+                   'updatefrominput': True, 'optype': 'nop'}},
+        {'name': 'sampled_bezier', 'type': 'resample', 'inputs': ['EDIT_BEZIER'],
+         'parms': {'treatpolysas': 'straight', 'dolength': True, 'length': .03, 'last': True}},
+    ], output='sampled_bezier')
+    bezier, sampled_bezier = root.node('EDIT_BEZIER'), root.node('sampled_bezier')
+    assert bezier.geometry().prims()[0].type() == hou.primType.BezierCurve
+    assert len(bezier.geometry().prims()[0].vertices()) == 7
+    samples = path_points(sampled_bezier)
+    assert close_point(samples[0], controls[0]) and close_point(samples[-1], controls[-1])
+    before = path_points(bezier)
+    h.set_parms(bezier, {'optype': 'transform', 'activepoints': '3', 'translate': [.15, 0, 0]})
+    after = path_points(bezier)
+    assert [i for i, (a, b) in enumerate(zip(before, after)) if not close_point(a, b)] == [2, 3, 4]
+    assert path_points(sampled_bezier) != samples
+    h.set_parms(bezier, {'optype': 'nop', 'activepoints': '', 'translate': [0, 0, 0]})
+    assert path_points(sampled_bezier) == samples
+
+    fit_anchors = [(0, 0, 0), (0, 0, .8), (.8, 0, 1.7), (1.8, 0, 2.1), (2, 0, 4)]
+    h.build_module(root, [
+        {'name': 'fit_anchors', 'type': 'add', 'parms': editable_point_parms(fit_anchors)},
+        {'name': 'fit_path', 'type': 'fit', 'inputs': ['fit_anchors'],
+         'parms': {'method': 'interp', 'type': 'nurbs', 'orderu': 4, 'scope': 'global',
+                   'dataparmu': 'chrdlen', 'closeu': 'nonewu'}},
+        {'name': 'EDIT_FITTED_PATH', 'type': 'curve', 'inputs': ['fit_path'],
+         'parms': {'convertcurves': False, 'updatefrominput': True, 'optype': 'nop'}},
+        {'name': 'sampled_fit', 'type': 'resample', 'inputs': ['EDIT_FITTED_PATH'],
+         'parms': {'dolength': True, 'length': .005, 'last': True}},
+    ], output='sampled_fit')
+    assert root.node('EDIT_FITTED_PATH').geometry().prims()[0].type() == hou.primType.NURBSCurve
+    fit_before = path_points(root.node('sampled_fit'))
+    assert all(min(sum((x-y)**2 for x, y in zip(a, p))**.5 for p in fit_before) < .003 for a in fit_anchors)
+    h.set_parm(root.node('fit_anchors'), 'pt2', [1.1, 0, 1.7])
+    assert path_points(root.node('sampled_fit')) != fit_before
+    done('Curve 2.0 Bezier handles and fitted NURBS inputs preserve actual editable consumers')
+
+    resample_straight = h.tab_create(root, 'resample', name='resample_straight', inputs=[editable_path],
+        parms={'treatpolysas': 'straight', 'length': .02, 'last': True})
+    resample_interp = h.tab_create(root, 'resample', name='resample_interp', inputs=[editable_path],
+        parms={'treatpolysas': 'interp', 'length': .02, 'last': True})
+    def envelope_overshoot(node):
+        return max(max(-p[0], p[0]-1, -p[2], p[2]-2, 0) for p in path_points(node))
+    assert envelope_overshoot(resample_straight) < 1e-6
+    assert envelope_overshoot(resample_interp) > .001, 'smooth interpretation must retain its overshoot counterexample'
+    done('Resample straight versus smooth interpretation has an actual clearance-relevant counterexample')
+
+    section_points = [(-.2, -.03, 0), (.2, -.03, 0), (.2, .03, 0), (-.2, .03, 0)]
+    h.build_module(root, [
+        {'name': 'asymmetric_section', 'type': 'add', 'parms': editable_point_parms(section_points, True)},
+        {'name': 'curve_frame', 'type': 'orientalongcurve', 'inputs': ['sampled_bezier'],
+         'parms': {'upvectortype': 'y', 'outputquaternion': True, 'outputyaxis': False,
+                   'outputzaxis': False, 'applyroll': True, 'roll': 90}},
+        {'name': 'framed_sweep', 'type': 'sweep', 'inputs': ['curve_frame', 'asymmetric_section'],
+         'parms': {'surfaceshape': 'input', 'endcaptype': 'none', 'primtype': 'poly',
+                   'transformbyattribs': False, 'upvectortype': 'y', 'applyroll': False}},
+    ], output='framed_sweep')
+    framed_sweep = root.node('framed_sweep')
+    assert abs(framed_sweep.geometry().boundingBox().sizevec()[1] - .06) < 1e-5
+    h.set_parm(framed_sweep, 'transformbyattribs', True)
+    assert abs(framed_sweep.geometry().boundingBox().sizevec()[1] - .4) < 1e-5
+    h.set_parm(root.node('curve_frame'), 'roll', 0)
+    assert abs(framed_sweep.geometry().boundingBox().sizevec()[1] - .06) < 1e-5
+    done('Orientation along Curve changes the final asymmetric Sweep only when its consumer uses point transforms')
 
     # Cable counterexample: a sampled helix that abruptly switches to a
     # straight end produced a sharp corner and a 90-degree hand-built ring

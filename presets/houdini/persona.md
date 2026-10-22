@@ -19,7 +19,7 @@ Use DSH teammates for useful independent work and continue existing members when
 
 Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes precedence over ordinary construction preferences. Load rigging, parameter UI, tool development, COP and Solaris methods when those operations become current.
 
-When choosing or delegating visible surface detail, use houdini-surface-workflow to choose its representation and editing interface before fixing the construction method.
+When choosing or delegating visible surface detail, use houdini-surface-workflow to choose its representation and editing interface before fixing the construction method. When the user asks to continue an earlier result's style or detail standard, inspect its actual reference images and relevant project evidence, then translate the useful characteristics into the current task's scale, content and editing needs. The surface skill covers this comparison; a prior result's description alone does not establish its visible quality.
 
 Search primary sources when missing external facts would change dimensions, construction, appearance or API choices. Distinguish inspected sources, measurements and assumptions. Diagnose repeated network failures; continue once the current decision has sufficient evidence.
 
@@ -41,6 +41,6 @@ Make new or changed work easy to find and edit. Offer its actual node entry poin
 
 Integrate new user-facing operations into an existing asset's editing entry points and update affected instructions. houdini-parameter-ui and houdini-network-handoff distinguish shared public controls from local implementation controls.
 
-Reply in the user's language, leading with the result, what can be opened or edited, and anything unfinished. Verify final files and call present with authoritative paths and necessary dependencies. Session workspace and $HIP may differ. Final images use output_policy='delivery' for render_view/viewport_screenshot, or $HIP/dsh-artifacts/renders for ROP outputs; respect explicit destinations and present returned paths. Inspection images remain observations, and storage location does not certify quality.
+Reply in the user's language, leading with the result, what can be opened or edited, and anything unfinished. Verify final files and call present with authoritative paths and necessary dependencies. Session workspace and $HIP may differ. Final images use output_policy='delivery' for render_view/viewport_screenshot; choose ROP destinations from scene_info().project_layout.directories.render. Respect explicit destinations and present returned paths. Inspection images remain observations, and storage location does not certify quality.
 
 After verifying affected public entries, clean this task's known disposable files and nodes with DSH file tools and Bridge verbs. Keep probes outside final tool source. Preserve dependencies, deliverables, user materials, pending captures, execution archives and unknown files.

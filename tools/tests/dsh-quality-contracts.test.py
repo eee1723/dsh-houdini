@@ -307,6 +307,7 @@ try:
     from dsh_quality_contracts import _measure
     empty_geometry=hou.Geometry(out.geometry());empty_geometry.createPrimGroup('empty')
     rejects(lambda:_measure(empty_geometry,{'metric':'point_count','group':'empty'}),'empty')
+    rejects(lambda:_measure(empty_geometry,{'metric':'primitive_count','group':'empty'}),'empty')
     ctrl.parm('length').lock(True)
     rejects(lambda:h.test_controls(ctrl,out,tests),'锁定')
     ctrl.parm('length').lock(False)

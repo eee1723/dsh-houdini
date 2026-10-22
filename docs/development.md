@@ -187,6 +187,10 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 节点交付的定向入口为[Host路由](../tools/tests/node-delivery.test.mjs)、[原生/嵌套卡片投影](../tools/tests/node-delivery-client.test.mjs)、[持久标识HOM](../tools/tests/dsh-node-delivery.test.py)及[排队取消HTTP/HOM](../tools/tests/dsh-node-navigation-cancel.test.py)。跨层修改还需在精确DSH组合和新建的隐藏GUI进程中，由真实Agent工具循环产生原生/嵌套回执，选中对应任务点击实际卡片，回读网络/参数页；重开同HIP并改名后再点击旧卡片，切HIP核对错误提示，暂停队列后切任务并恢复队列核对旧导航没有生效。局部模拟通道不能替代这条连接；测试脚本、截屏、完整结果和运行目录留在仓库外证据目录。服务框保存重开由[服务框回归](../tools/tests/dsh-render-service-box.test.py)核对标题、固定边界、真实成员与用户节点位置。
 
+曲线的脆弱接口由既有[node-knowledge](../tools/tests/dsh-node-knowledge.test.py)核对Add/Curve输入、Bezier与Fit、Resample过冲、Circle Spline及Sweep实际消费朝向；[参数目录](../tools/tests/dsh-parameter-catalog.test.py)导出其真实操作卡，再沿上述DSH原生/嵌套目录消费验证。曲线资料、Karma技能与质量交接仍沿`--surface-method`检查实际提供方输入；资料送达不证明自然作者采用或美术质量。
+
+USD继承输出用[camera-framing](../tools/tests/dsh-camera-framing.test.py)在H21/H22核对实际stage/settings选择、Husk文件名、多个磁盘raster、部分缺失、checkpoint未验证、显式覆盖和预检帧恢复；只替换原生render方法来控制文件产出，不据此宣称Karma出图。需要验证真实渲染时显式运行[isolated-render](../tools/tests/dsh-isolated-render.test.py)，覆盖低分辨率Karma CPU的显式图片和原生RenderProduct继承，分别保留进程、文件与像素事实；不加载用户HIP或连接live，不认证场景美术效果。
+
 ## 隔离执行与开发工具
 
 `houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与明确所选登记的静态安装事实，或显式HFS；登记断连不要求live健康。无登记的固定Bridge配置保留在线安装信息入口。复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。

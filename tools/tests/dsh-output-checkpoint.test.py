@@ -124,32 +124,31 @@ try:
         path=dsh_media_output._resolve_output_path('preview.$F4.png', frame=3, default_subdir='render')
         assert Path(path)==base/'render'/'preview.0003.png', path
         assert Path(dsh_media_output._resolve_output_path('render/preview.png', frame=1, default_subdir='render'))==base/'render'/'preview.png'
-        assert Path(dsh_media_output._resolve_output_path('preview.png', frame=1)) == base/'dsh-artifacts/renders'/'preview.png'
+        assert Path(dsh_media_output._resolve_output_path('preview.png', frame=1)) == base/'dsh-artifacts/renders'/'project'/'preview.png'
         reject(lambda:dsh_media_output._resolve_output_path('../outside.png',frame=1,default_subdir='render'), 'outside')
         reject(lambda:dsh_media_output._resolve_output_path('no_extension',frame=1,default_subdir='render'), 'extension')
         reject(lambda:dsh_media_output._resolve_output_path(str(Path(__file__).resolve().parents[2]/'bad.png'),frame=1,default_subdir='render'), 'repository')
         with dsh_ownership.execution_owner('managed-checkpoint-session','capture'):
             managed, managed_artifact, _ = dsh_media_output._preview_artifact(
                 '检查 图.$F4.png', frame=3, purpose='model_visual_verification',
-                output_policy='managed', default_label='preview', default_subdir='render')
-        assert Path(managed).parent.parent==base/'dsh-artifacts/checks/previews'
+                output_policy='managed', default_label='preview')
+        assert Path(managed).parent.parent==base/'dsh-artifacts/checks/previews'/'project'
         assert managed_artifact['output_policy']=='managed' and '0003' in Path(managed).name
         assert managed_artifact['role']=='visual_check' and Path(managed_artifact['project_root'])==base
         assert dsh_media_output._release_preview_reservation(managed_artifact)==[]
         explicit, explicit_artifact, _ = dsh_media_output._preview_artifact(
             (base/'delivery'/'preview.png').as_posix(), frame=3,
             purpose='model_visual_verification', output_policy='explicit',
-            default_label='preview', default_subdir='render')
+            default_label='preview')
         assert Path(explicit)==base/'delivery'/'preview.png'
         assert explicit_artifact['managed_root'] is None
         assert explicit_artifact['role']=='visual_check' and explicit_artifact['lifecycle']=='visual-check'
-        from dsh_project_paths import directory_path
         explicit_name, _, _ = dsh_media_output._preview_artifact(
             'current-ui.png', frame=3, purpose='existing_ui', output_policy='explicit',
-            default_label='ui', default_subdir=directory_path('visual_check'))
-        assert Path(explicit_name)==base/'dsh-artifacts/checks/previews'/'current-ui.png'
+            default_label='ui')
+        assert Path(explicit_name)==base/'dsh-artifacts/checks/previews'/'project'/'current-ui.png'
         reject(lambda:dsh_media_output._preview_artifact('../bad.png',frame=1,purpose='test',
-            output_policy='managed',default_label='x',default_subdir='render'),'basename')
+            output_policy='managed',default_label='x'),'basename')
         rop=hou.node('/out').createNode('geometry','__checkpoint_rop')
         try:
             rop.parm('soppath').set(source.path())
@@ -174,7 +173,7 @@ try:
             before=image_rop.parm('picture').unexpandedString()
             with patch.object(dsh_media_output,'_resolve_output_path',observe_path):
                 reject(lambda:h.render_frame(image_rop,picture='beauty.$F4.png',frame=3),'resolved before rendering')
-            assert Path(resolved[0])==base/'dsh-artifacts/renders'/'beauty.0003.png'
+            assert Path(resolved[0])==base/'dsh-artifacts/renders'/'project'/'beauty.0003.png'
             assert image_rop.parm('picture').unexpandedString()==before
         finally:image_rop.destroy()
         # The native USD export ROP uses the same declared render directory
@@ -184,7 +183,7 @@ try:
             before=usd_rop.parm('lopoutput').unexpandedString()
             with patch.object(dsh_media_output,'_resolve_output_path',observe_path):
                 reject(lambda:h.render_frame(usd_rop,picture='stage.$F4.usd',frame=3),'resolved before rendering')
-            assert Path(resolved[-1])==base/'dsh-artifacts/renders'/'stage.0003.usd'
+            assert Path(resolved[-1])==base/'dsh-artifacts/renders'/'project'/'stage.0003.usd'
             assert usd_rop.parm('lopoutput').unexpandedString()==before
         finally:usd_rop.destroy()
         # A tiny real COP export proves the distinct dependency default and

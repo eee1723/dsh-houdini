@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 115
+Execution contract version: 116
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 

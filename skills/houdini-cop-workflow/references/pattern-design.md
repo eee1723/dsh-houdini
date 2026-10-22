@@ -11,12 +11,15 @@
 | 图案关系 | 可组合的思路 | 核对对象 |
 |---|---|---|
 | 重复单元 | 单元形状→重复／散布→受控变化 | 单元间距、方向、边界、种子稳定性 |
+| 印字、标签、界面文字 | Font COP或可控字体栅格化→按布局合成 | 正确字形、实际字高、笔画、字距与内容；目标观察尺度下的可读性 |
 | 连续条带／流向 | 坐标或坡度→周期／噪声→定向变换 | 两维采样、方向和相位；不是只增加噪声频率 |
 | 材质覆盖与分层 | 基底→共享覆盖mask→颜色／粗糙度等混合 | 同一mask对应同一物理区域；只改变需要改变的通道 |
 | 表面起伏 | 主高度形态→局部加工→微细节→必要法线 | 高度零点与单位、幅度、频率及法线方向 |
 | 磨损／积尘 | 有依据的位置／接触／曲率等驱动→局部mask→细节 | 几何驱动需真实导入／烘焙；噪声不证明接触或边缘磨损 |
 
 从大尺度结构到中尺度变化、微细节逐步观察；不是所有材料都必须走三层。高度主导的材料可先高度，平面印刷以颜色／mask为主，金属拉丝可能以方向与粗糙度为主，不强制“高度先行”。
+
+文字作为贴图时，优先保留原生字体的字形与抗锯齿；H21/H22均可发现Copernicus的Font节点，精确参数与图层接口仍按当前节点读取。像素字库适合明确的像素风等设计目标；放大粗点阵不会变成真实印刷。先按实际字高和UV覆盖判断采样，再选择图像尺寸，交付时核对字体与目标字符依赖。
 
 ## 复杂图案的组合
 
@@ -58,6 +61,7 @@
 
 - [SideFX：面向Substance Designer用户的Copernicus](https://www.sidefx.com/docs/houdini/copernicus/substance_designer.html)：概念对照，不保证两个软件节点一一等价。
 - [SideFX：Blend](https://www.sidefx.com/docs/houdini/nodes/cop/blend.html)与[Spaces](https://www.sidefx.com/docs/houdini/copernicus/spaces.html)：图层混合、法线组合的区别与采样坐标。
+- [SideFX：Font](https://www.sidefx.com/docs/houdini/nodes/cop/font.html)：可控字体栅格化、Unicode、mask/SDF与平滑；节点发现不证明某个字体或具体图层已正确消费。
 - [Adobe：Designer入门课程](https://www.adobe.com/learn/substance-3d-designer/web/getting-started-with-substance-3d-designer)：展示结构、图层、通道及可调子图的组织；这里提取方法，不复制其具体材质配方。
 - [Adobe：性能指导](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/best-practices/performance-optimization-guidelines)：分辨率、数据体积与末端调整的依赖成本。COP性能仍测本机cook，不能照搬Substance缓存策略。
 - [DCC-MCP的Designer适配说明](https://dcc-mcp.github.io/control/substance-3d-designer)：发现真实工具／参数、执行可检查变化、核对输出。它是第三方适配项目，不是Adobe质量保证，也不是本插件的新依赖。

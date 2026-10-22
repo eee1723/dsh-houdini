@@ -55,7 +55,7 @@ try:
         f"'rop':[p for p in list_parms({rop.path()!r}) if p['name']=='renderer'],"
         f"'conditions':{{'static':node_info({copnet.path()!r},'fractalnoise',parm_filter='element'),"
         f"'live':[p for p in list_parms({noise.path()!r}) if p['name'].startswith('element')]}},"
-        f"'surface_cards':{{t:{{k:v for k,v in node_info({geometry.path()!r},t).items() if k in ('operation_card','usage_notes','operation_parameters')}} for t in ('polybevel','boolean')}},"
+        f"'surface_cards':{{t:{{k:v for k,v in node_info({geometry.path()!r},t).items() if k in ('operation_card','usage_notes','operation_parameters')}} for t in ('polybevel','boolean','curve','circlespline','resample','coppreviewmaterial')}},"
         "'interface_limits':verb_help('geo_check_interfaces',detail='full')['runtime_limits'],"
         f"'interface_observation':geo_check_interfaces({tag.path()!r},[{{'id':'clearance','method':'bore_clearance','target_group':'solid','axis':1,'start':[0,-1,0],'end':[0,1,0],'radius':.1}}],max_pairs=100000)}}", read_only=True)
     assert result['ok'], result
@@ -72,6 +72,8 @@ try:
     assert static['elementsizetype']['menu'][0]['set_value']==1
     for card in result['result']['surface_cards'].values():
         assert card['usage_notes'] and card['operation_card']['source']
+        assert card['operation_parameters'], card
+    assert set(result['result']['surface_cards']) == {'polybevel','boolean','curve','circlespline','resample','coppreviewmaterial'}
     observation=result['result']['interface_observation']
     assert observation['status']=='unverified' and observation['runtime_limits']==result['result']['interface_limits']
     assert observation['results'][0]['reason']=='target_primitive_limit_exceeded'

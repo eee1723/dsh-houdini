@@ -31,6 +31,8 @@
 
 [任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域的模块粒度、依赖、逐模块观察与集成；[完整源组件](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护SOP的组件内部构造、布局与装配分工。由preset按需路由，注册入口为[src/skill.ts](../src/skill.ts)，上下文与方法验证见[开发维护](development.md)。
 
+[曲线方法](../skills/houdini-sop-workflow/references/curves-and-routing.md)维护稀疏锚点、原生编辑、平滑、绕行与截面朝向的选择；节点事实由同源操作卡提供，[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)核对实际修改及最终消费者，任意避障和自然造型质量不由这些机制检查认证。
+
 [独立执行skill](../skills/houdini-isolated-execution/SKILL.md)维护作者与DSH团队成员按需使用一次性hython的输入、依赖、检查、原生图片和结果接入；工具由[isolated-execution](../src/isolated-execution.ts)提供，复用现有Python检查器及DSH作业，验证入口见[开发维护](development.md)。
 
 [网络交接skill](../skills/houdini-network-handoff/SKILL.md)维护跨SOP/COP/LOP/rig/工具的主动节点入口、Network Box、Sticky Note和布局判断；参数布局判断由参数UI skill负责，通用已有界面的发现/捕获方法由[工具开发证据指导](../skills/houdini-tool-development/references/evidence-and-validation.md)维护，功能验收留在各领域。注册入口为[src/skill.ts](../src/skill.ts)，执行与验证入口见[开发维护](development.md)。

@@ -162,6 +162,8 @@ def test_controls(controller, output, tests, interfaces=None, allow_foreign=None
     bounds/count通过不证明连接或均匀变换；输出变化而所选指标失败不等于控制未接线。
     修正判据后复跑，不能用文字解释替代新结果。
     group为实际output内命名primitive group。delta是变化前后的有符号允许区间。
+    不指定group时point_count/primitive_count允许显隐后的合法0；显式命名组仍须存在且非空，
+    bounds、表面及实体关系等指标继续要求其实际可测选择，不把空输出视为关系通过。
     大型输出须给每项指标明确group，所有关系/拓扑也使用具名primitive组，
     才能按选中部件取证。geometry_scope不证明未选区域；恢复仍用整件原生bgeo字节流核对，
     未选部件漂移也会失败。无法完整保存恢复快照时在改参数前拒绝。

@@ -1,6 +1,6 @@
 ---
 name: houdini-surface-workflow
-description: 为模型与部件设计可编辑的表面外观，分析参考图中的几何与纹理分工，选择细化程度、UV、COP或生成图片，并在SOP中统一预览。用于新模型外观、涂装、贴花、微表面和已有材质修改；纯几何诊断或只生成参考图片不触发。
+description: 为模型与部件设计可编辑的表面外观，分析参考图中的几何与纹理分工，延续已有成果的风格与细节标准，选择细化程度、UV、COP或生成图片，并在SOP中统一预览。用于新模型外观、涂装、贴花、微表面和已有材质修改；纯几何诊断或只生成参考图片不触发。
 ---
 
 # Houdini Surface Workflow
@@ -10,11 +10,11 @@ description: 为模型与部件设计可编辑的表面外观，分析参考图�
 按最终观察距离和后续编辑选择表示，再约定构造与分工。结构、图案和材质响应分别可编辑；原生SOP、COP和材质均可承担交付。依赖能否随工程携带与是否使用图案分开判断，内嵌COP也可产生贴图。
 新建SOP资产默认用 **COP Preview Material SOP** 统一承载表面，接入实际几何输出。颜色从稳定的COP输出开始：简单表面用小分辨率常量图层，复杂表面逐步接入程序图案或文件素材，预览入口保持一致。
 纯色无需UV或外部图片文件；已有常量材质可以保留。相同表面共享图层与材质，独立外观用明确primitive组或源组件区分；不要求一部件一文件或一套网络，也不预建用不到的通道。
-已有有效材质、用户指定方法和教程来源优先，局部修改不迁移整套材质。正式渲染按需联用Solaris/Karma；普通SOP预览不要求建立/stage或/mat。
+已有有效材质、用户指定方法和教程来源优先，局部修改不迁移整套材质。已有工程接入预览前，沿[既有材质与预览赋值](references/sop-preview-and-uv.md#既有材质与预览赋值)核对真实消费者。正式渲染按需联用Solaris/Karma；普通SOP预览不要求建立/stage或/mat。
 
 ## 决策顺序
 
-1. **观察目标**：读取用户参考和当前模型。在实际能看清的范围内区分结构、表面图案、微表面和光照；保留未知。参考图任务先读[参考分析与来源选择](references/appearance-and-sources.md)。
+1. **观察目标**：读取用户参考和当前模型。在实际能看清的范围内区分结构、表面图案、微表面和光照；保留未知。参考图任务先读[参考分析与来源选择](references/appearance-and-sources.md)；沿用先前成果时，按其中的[跨场景基准](references/appearance-and-sources.md#跨场景的风格与质量基准)确定当前任务要延续的性质。
 2. **确定细化程度**：按最终观察距离与后续编辑需求，为相关部件选择下表中的程度。复杂任务在现有任务笔记中简记“部位／可见特征／表示与来源／坐标与尺度／要改的量”；不是新账本或执行前置门。
 3. **安排坐标**：需要空间变化时，在大量复制、形变或纹理细化之前确定UV分区、方向及尺度规则，读[SOP应用与UV](references/sop-preview-and-uv.md)。Boolean或倒角前后按原表面与新增面选择映射位置；纯色跳过坐标制作。
 4. **构建与观察**：先在代表性源上用可辨方向图案打通实际表面，检查端面/侧面、尺度和接缝，再扩大到重复或装配。纯色COP与接入步骤见SOP应用资料；需要制作／加工图案时加载houdini-cop-workflow及其设计资料。已有图片可直接引用或接到稳定COP输出；需要生图素材时读[生成贴图与混合使用](references/generated-textures.md)，沿现有image_models/image_generate路线制作。
@@ -47,8 +47,9 @@ description: 为模型与部件设计可编辑的表面外观，分析参考图�
 | 当前问题 | 读取位置 |
 |---|---|
 | 从参考图分解表面；COP／生图／混合的选择 | [参考分析与来源选择](references/appearance-and-sources.md) |
+| 将已有成果作为新场景的风格或细节标准 | [跨场景的风格与质量基准](references/appearance-and-sources.md#跨场景的风格与质量基准) |
 | 生成可用于材质的图片、平铺检查及COP加工 | [生成贴图与混合使用](references/generated-textures.md) |
-| SOP统一入口、UV、文件／COP采样及预览排错 | [SOP应用与UV](references/sop-preview-and-uv.md) |
+| SOP统一入口、UV、文件／COP采样及清晰度排错 | [SOP应用与UV](references/sop-preview-and-uv.md) |
 | 制作图案、关联多通道、可编辑程序材质 | houdini-cop-workflow → [图案设计方法](../houdini-cop-workflow/references/pattern-design.md) |
 | 正式USD／Karma材质与渲染 | houdini-solaris-karma-workflow |
 

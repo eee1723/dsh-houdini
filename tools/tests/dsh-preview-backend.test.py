@@ -33,13 +33,13 @@ try:
     hou.hipFile.save(tmp+'/backend-fixture.hip')
     managed=[h.render_view(box,picture='managed.png') for _ in range(2)]
     assert len({row['output'] for row in managed})==2
-    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks/previews' for row in managed)
+    assert all(Path(row['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks/previews'/'backend-fixture' for row in managed)
     assert all(row['artifact']['output_policy']=='managed' for row in managed)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in managed)
     assert not list((Path(tmp)/'dsh-artifacts/checks').rglob('*.reserve'))
     delivered=[h.render_view(box,picture='final.png',output_policy='delivery') for _ in range(2)]
     assert len({row['output'] for row in delivered})==2
-    assert all(Path(row['output']).parent.resolve()==(Path(tmp)/'dsh-artifacts/renders').resolve() for row in delivered)
+    assert all(Path(row['output']).parent.resolve()==(Path(tmp)/'dsh-artifacts/renders'/'backend-fixture').resolve() for row in delivered)
     assert all(row['artifact']['output_policy']=='delivery' for row in delivered)
     assert all(row['artifact']['actual_path']==row['output'] for row in delivered)
     assert all(row['artifact']['hip_relative_path'].startswith('dsh-artifacts/renders/') for row in delivered)
@@ -95,6 +95,9 @@ try:
         assert result['preview_backend']=='opengl_legacy'
         assert r.evalParm('gamma')==1
     assert r.evalParm('forceobjects')==result['proxy']
+    r.parm('dof').set(1)
+    h.render_view(box,picture=tmp+'/clear-again.png',output_policy='explicit')
+    assert r.evalParm('dof')==0, 'diagnostic previews never inherit service depth of field'
     assert r.evalParm('alights')=='' and r.evalParm('excludelights')=='*'
     tagged=g.createNode('attribwrangle','tagged')
     tagged.setInput(0,box);tagged.parm('class').set('point');tagged.parm('snippet').set('s@test_id="tagged";')

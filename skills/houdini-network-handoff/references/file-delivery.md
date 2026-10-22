@@ -22,22 +22,28 @@
 
 后续版本以当前成果能独立接手为目标：主入口说明、必要依赖和最终消费者对应本次保存状态。新增模块可以有专项说明，但用户应能从当前主说明找到全部常用操作，无需拼接旧版本说明。仅维护本次需要的文档，不把过程记录和旧版本全部追加到交付中。
 
+## 作为后续任务的基准
+
+用户要把当前成果作为以后场景的风格或细节标准时，将对应HIP版本、用于判断的实际图片及稳定设计说明接入已有交付说明或任务材料；短说明足够时直接使用，不强制新文档。如何区分可迁移特征、当前对象内容和观察尺度，见[跨场景的风格与质量基准](../../houdini-surface-workflow/references/appearance-and-sources.md#跨场景的风格与质量基准)。
+
+图片保留权威路径，说明指出相关部位及用途；有用的材质、COP或源组件提供实际入口及依赖。接收任务按当前判断读取所需原图和源资料，文字摘要不能替代图像。基准引用对应一个明确成果版本，后续优化要改用新版本时同步更新当前说明；保留历史回执，不将所有工程和过程图片复制为新的参考全集。
+
 ## 路径、图片与清理
 
 工程目录按用途统一，实际位置读取`scene_info()['project_layout']['directories']`：网络参考使用`reference_downloaded`，生成辅助参考使用`reference_generated`，材质依赖使用`texture`，几何/模拟/通道缓存使用`cache`，教程与任务分析使用`analysis`，使用说明使用`documentation`，成图使用`render`，过程检查使用`visual_check`。目录角色与生命周期合同见[工程文件](../../../docs/project-files.md)，不要另建资料清单来替代原始来源或DSH回执。自动输出返回实际路径后再交付；不因另存为而移动历史图片或重写旧卡片。
 
 需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 
-最终图片用`output_policy='delivery'`生成到已命名HIP旁的`dsh-artifacts/renders/`，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。普通managed观察图在`dsh-artifacts/checks/previews/<run-id>/`，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
+最终图片用`output_policy='delivery'`生成到已命名HIP对应的render目录，默认`dsh-artifacts/renders/<HIPNAME>/`；普通managed观察图默认`dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`，不自动全部交付。工程区分由实际产图HIP确定，读取`project_layout`和回执的真实路径；不按聊天目录或图片标签猜工程。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
 
 ```python
 __result__ = render_view('/obj/example/OUT', picture='overview.png', output_policy='delivery')
 # 核对返回的实际文件及图片内容后，通过DSH present声明该路径。
 ```
 
-正式ROP图片可在渲染前选择`$HIP/dsh-artifacts/renders/asset_final.png`；临时picture覆盖不证明持久ROP设置已保存。已有用户目的地和ROP优先，不为统一目录默默重设。无识图能力时不能宣称视觉通过；用户需要的图片仍可交付并注明观察范围。
+正式ROP图片可在渲染前从`project_layout.directories.render`选择带后缀的目的地；持久表达式可用`$HIP/dsh-artifacts/renders/$HIPNAME/asset_final.png`。临时picture覆盖不证明持久ROP设置已保存。已有用户目的地和ROP优先，不为统一目录默默重设。无识图能力时不能宣称视觉通过；用户需要的图片仍可交付并注明观察范围。
 
-检查用途由意图决定：采样、法线、透明通道、显示异常和测试渲染的对照图使用visual_check。`render_frame`做诊断时显式指定`picture='$HIP/dsh-artifacts/checks/previews/<task>/check.png'`，不要因为它叫render就写入dsh-artifacts/renders，也不要为了“稍后可能交付”提前把每张检查图声明为delivery。视频抽帧等资料仍随教程放入analysis；建模过程的图像诊断不混入教程/Trace报告。
+检查用途由意图决定：采样、法线、透明通道、显示异常和测试渲染的对照图使用visual_check。`render_frame`做诊断时从`project_layout.directories.visual_check`选择本次检查路径并显式传picture，例如该目录下的`<task>/check.png`；不因工具名称把检查图写进render，也不为了“稍后可能交付”提前声明delivery。视频抽帧等资料仍随教程放入analysis；建模过程的图像诊断不混入教程/Trace报告。
 
 图片在聊天中看起来异常，而网络或几何检查不能解释时，可先核对原文件、图像通道和实际模型输入；必要时生成同取景的不透明对照图，再决定是否修改几何。文件可读、通道正常或某次模型描述都不能单独证明几何正确。
 

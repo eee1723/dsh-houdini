@@ -135,7 +135,11 @@ export function normalizeTraceSteps(events) {
     const resultText = toolResultText(message);
     const outcome = executionResult(event),canonical = outcome?.value;
     const isHoudini = String(call.name).startsWith('houdini_') || call.name === 'job_output' && outcome?.producer === 'live-job';
-    const envelope = isHoudini && canonical && typeof canonical === 'object' && typeof canonical.ok === 'boolean' ? canonical : null;
+    // Isolated operation=read returns the same retained report/images without
+    // the run response's top-level ok. Keep its exact public wrapper; nested
+    // report executions remain independent and are not flattened into live HOM.
+    const envelope = isHoudini && canonical && typeof canonical === 'object'
+      && (typeof canonical.ok === 'boolean' || canonical.kind === 'isolated-houdini') ? canonical : null;
     const observation = envelope?.execution;
     const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
       ? `${observation.runtime_id}:${observation.sequence}` : null;

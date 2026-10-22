@@ -5,7 +5,7 @@ import os
 import contextlib
 import time
 import hou
-from dsh_project_paths import directory_path as _project_directory
+from dsh_project_paths import directory_for_hip as _project_directory
 import dsh_errors
 import dsh_ownership
 import dsh_scene
@@ -47,25 +47,27 @@ def report_image(path: str) -> str:
     return p
 
 
-def _resolve_output_path(path, *, frame, default_subdir=None) -> str:
+def _resolve_output_path(path, *, frame, default_subdir=None, default_role='render', expand_variables=True) -> str:
     """Resolve output files BEFORE mutation; never use the process cwd.
 
-    A bare filename goes to $HIP/default_subdir (dsh-artifacts/renders by default); a relative subpath is $HIP
+    A bare filename goes to its role's HIP directory (renders/<HIPNAME> by default);
+    default_subdir is an explicit internal override. A relative subpath is $HIP
     relative. Absolute paths remain explicit caller intent except repository
     paths. Relative traversal/junction escapes and extensionless files fail.
     """
-    default_subdir = _project_directory('render') if default_subdir is None else default_subdir
     raw = os.fspath(path)
     if not isinstance(raw, str) or not raw.strip() or '\x00' in raw:
         raise ValueError('output path must be a nonempty file path')
-    expanded = hou.expandStringAtFrame(raw, float(frame)).replace('\\', '/')
+    expanded = (hou.expandStringAtFrame(raw, float(frame)) if expand_variables else raw).replace('\\', '/')
     if not os.path.splitext(os.path.basename(expanded))[1]:
         raise ValueError('output extension is required; use .png for previews, .exr for linear images or the intended cache extension')
     if not os.path.isabs(expanded):
         if os.path.splitdrive(expanded)[0] or not dsh_scene.scene_info()['has_named_path']:
             raise ValueError('relative output requires a named HIP; confirm a project and use scene_save_as first')
-        hip = os.path.realpath(os.path.dirname(hou.hipFile.path()))
-        relative = expanded if '/' in expanded else os.path.join(default_subdir, expanded)
+        hip_path = hou.hipFile.path()
+        hip = os.path.realpath(os.path.dirname(hip_path))
+        directory = default_subdir if default_subdir is not None else _project_directory(default_role, hip_path)
+        relative = expanded if '/' in expanded else os.path.join(directory, expanded)
         target = os.path.realpath(os.path.join(hip, relative))
         if os.path.commonpath([hip, target]) != hip:
             raise ValueError(f'relative output is outside $HIP: {raw!r}')
@@ -82,7 +84,7 @@ def _resolve_output_path(path, *, frame, default_subdir=None) -> str:
 
 
 def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
-                      default_subdir, allowed_extensions=_PREVIEW_IMAGE_EXTS):
+                      allowed_extensions=_PREVIEW_IMAGE_EXTS):
     """Resolve preview output policy before renderer/viewer state changes."""
     if output_policy not in ("managed", "delivery", "explicit"):
         raise ValueError("output_policy must be 'managed', 'delivery' or 'explicit'")
@@ -118,7 +120,7 @@ def _preview_artifact(path, *, frame, purpose, output_policy, default_label,
     if path is None:
         frame_tag = str(float(frame)).replace('-', 'm').replace('.', 'p')
         path = f"{default_label}_{time.time_ns()}_f{frame_tag}.png"
-    target = _resolve_output_path(path, frame=frame, default_subdir=default_subdir)
+    target = _resolve_output_path(path, frame=frame, default_role='visual_check')
     extension = os.path.splitext(target)[1].lower()
     if allowed_extensions and extension not in allowed_extensions:
         raise ValueError(f"unsupported preview image extension: {extension}; use PNG or EXR")

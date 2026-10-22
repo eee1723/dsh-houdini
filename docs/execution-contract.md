@@ -183,11 +183,15 @@ render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复�
 
 画面检查的共用合同独立于所选原生后端。H21的OpenGL与H22的Flipbook沿用[工具设计](tool-design.md)中已验证的兼容边界；节点存在和不透明图像成功不证明几何透明、颜色接口或所有参数等价。render_view仍只支持当前GUI合同；原生Flipbook的headless能力不因此被否定，也未扩展为本接口的已验证范围。
 
-渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<run-id>/`；最终图片可选 delivery，直接分配到 `$HIP/dsh-artifacts/renders/`。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，用户已有指定路径优先。Save As 只影响后续 capture，不迁移或删除旧图。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`；最终图片可选 delivery，分配到 `$HIP/dsh-artifacts/renders/<HIPNAME>/`。HIPNAME保留版本与原名，只去掉标准HIP扩展；命名组不是工程身份，精确来源由artifact的hip_path记录。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit，裸文件名仍进入visual_check的HIPNAME目录。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，已有含目录的用户路径优先；新建Karma Render Settings（含Karma Setup）默认关闭景深，picture与checkpoint使用同源render目录和原生$HIPNAME。后续渲染不暗改已配置的景深。Save As只影响后续默认输出，不迁移或删除旧图。
+
+USD Render ROP的outputimage留空时，render_frame沿当前ROP的实际输入和RenderSettings观察磁盘raster产品，保留原生多产品设置；多文件逐个保留freshness，output仅单文件时为路径，多文件使用outputs。delegate/deep/checkpoint及非磁盘产品明确保留未验证，不以周期checkpoint缺失判成图失败。Husk文件名使用原生expandHuskFilePath，不二次执行backticks；相对产品位置、未明确的settings选择与RenderPass不推断。显式picture仍为本次覆盖并恢复。USD预检与渲染期的frame恢复失败同样产生render_restore事实。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 
 scene_save 只写当前明确路径；scene_save_as 需要用户授权的目标、expected_current_path 和用途说明。raw load/clear 不开放。保存回执是当时文件事实，重开检查、可编辑性与最终结果由对应观察确认。
+
+文件回执的mtime_ns以十进制字符串保留纳秒原值，避免Python整数经过JavaScript JSON数字后舍入；只作指纹比较，不转换为Number计算。历史数字回执沿原记录读取，不补造已经丢失的末位。
 
 ## 验证入口
 

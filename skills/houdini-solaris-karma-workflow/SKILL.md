@@ -26,6 +26,9 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
    `tab_apply('/stage', 'lop_karma_setup')`，保留它生成的 Karma Render Settings 与
    USD Render ROP 及二者表达式。普通 `karma` LOP 或传统 Principled 能出图不代表这是
    当前默认架构。
+   `tab_create`、`build_module`新建Karma Render Settings与setup共用默认：关闭景深，picture与checkpoint按当前HIPNAME写入`project_layout`的render目录；显式parms可覆盖。
+   标准展示和材质检查以细节清晰为默认；未要求景深时保持关闭。复用已有艺术镜头或教程明确要求景深时保留其意图，
+   检查实际启用状态、焦点距离和光圈；不靠移动相机或增加纹理分辨率掩盖失焦，render_frame也不会代改这些设置。
 6. 用 `usd_stage_summary` 验证 geometry/material/light/camera/RenderSettings/Product/Var，
    用 `usd_prim_info` 验证 primvar、material binding 和 time samples；warning 必须解释。
 7. 整物构图先用 `camera_fit(正式OBJ相机,显式SOP)`，经Scene Import导入；不复用preview服务相机。对setup的USD Render ROP用 `render_frame(...,framing={'target':实际USD资产路径})` 在渲染前检查最终产品；长渲染走job。有意裁切/特殊lens另声明范围，不偷偷改用户相机，普通LOP不是ROP。

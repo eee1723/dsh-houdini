@@ -33,10 +33,12 @@ export function apply(ctx) {
     ? JSON.parse(fs.readFileSync(process.env.DSH_GEOMETRY_PRESENTATION_FIXTURE,'utf8')) : null
   const scriptFixture = process.env.DSH_SCRIPT_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_SCRIPT_FIXTURE,'utf8')) : null
+  const renderReceipt = process.env.DSH_RENDER_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.DSH_RENDER_FIXTURE,'utf8')) : null
   // Replay an exact receipt under its recorded target identity. Introducing a
   // second executor here would correctly trigger production recovery before
   // the next step; this owned HTTP server never contacts that original process.
-  const runtimeId=scriptFixture?.receipt?.execution?.runtime_id??defaultRuntimeId
+  const runtimeId=scriptFixture?.receipt?.execution?.runtime_id??renderReceipt?.execution?.runtime_id??defaultRuntimeId
   if(scriptFixture){
     const {source,record,receipt}=scriptFixture,bytes=fs.readFileSync(record.path)
     assert.equal(typeof source,'string')
@@ -54,6 +56,8 @@ export function apply(ctx) {
   const surfaceMethod = process.env.DSH_SURFACE_METHOD_FIXTURE === '1'
   const surfaceStart = repetitionStart + (repetitionMethod ? 2 : 0) + 1
   const surfaceResources = [
+    ['skill','houdini-isolated-execution','houdini-isolated-execution/SKILL.md'],
+    ['nested',null,'houdini-sop-workflow/references/sop-patterns.md'],
     ['skill','houdini-surface-workflow','houdini-surface-workflow/SKILL.md'],
     ['read',null,'houdini-surface-workflow/references/appearance-and-sources.md'],
     ['read',null,'houdini-surface-workflow/references/generated-textures.md'],
@@ -66,6 +70,9 @@ export function apply(ctx) {
     ['read',null,'houdini-network-handoff/references/network-layout.md'],
     ['nested',null,'houdini-network-handoff/references/file-delivery.md'],
     ['read',null,'houdini-sop-workflow/references/module-design-collaboration.md'],
+    ['read',null,'houdini-sop-workflow/references/curves-and-routing.md'],
+    ['skill','houdini-solaris-karma-workflow','houdini-solaris-karma-workflow/SKILL.md'],
+    ['nested',null,'houdini-solaris-karma-workflow/references/karma-patterns.md'],
   ].map(([kind,name,relative])=>{
     const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
     const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
@@ -74,7 +81,8 @@ export function apply(ctx) {
   const geometryStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
   const hdaStart = geometryStart + (geometryReceipt ? 2 : 0)
   const scriptStart = hdaStart + (hdaReceipt ? 2 : 0)
-  const receiptStart = scriptStart + (scriptFixture ? 4 : 0)
+  const renderStart = scriptStart + (scriptFixture ? 4 : 0)
+  const receiptStart = renderStart + (renderReceipt ? 2 : 0)
   const finalStep = receiptStart + 5
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
@@ -107,9 +115,10 @@ export function apply(ctx) {
     fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2))
     fs.renameSync(output+'.tmp',output)
   }
-  const fail = error => {
+  const fail = (error,failedProviderRequest) => {
     failure ??= String(error.stack || error)
-    writeReport({error:failure, requests, bridgeCalls})
+    writeReport({error:failure, requests, bridgeCalls,
+      ...(failedProviderRequest?{failedProviderRequest}:{})})
   }
   const health = () => ({ok:true, runtimeId, executorId:process.env.DSH_HOUDINI_EXECUTOR_ID,
     executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
@@ -149,7 +158,9 @@ export function apply(ctx) {
           // This is historical independent-HOM evidence. Do not overwrite its
           // source runtime/owner identity with this HTTP fixture's routing identity.
           value=scriptFixture.receipt
-        }else value = geometryReceipt && body.code === 'fixture_geometry'
+        }else value = renderReceipt && body.code === 'fixture_render'
+          ? renderReceipt
+          : geometryReceipt && body.code === 'fixture_geometry'
           ? observed({...geometryReceipt,requestReceipt:receipt})
           : hdaReceipt && body.code === 'fixture_hda'
           ? observed({...hdaReceipt,requestReceipt:receipt})
@@ -314,6 +325,35 @@ export function apply(ctx) {
           }
           if(step>=scriptStart+2)assert.equal(sent.length,2,'only the two version-matching calls reach HTTP execution')
         }
+        if(renderReceipt && step>renderStart){
+          const events=ctx.sessions.get(options.sessionId).snapshotEvents()
+          for(let offset=0;offset<Math.min(2,step-renderStart);offset++){
+            const callId='context-'+(renderStart+offset)
+            const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId===callId)
+            const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            // Native presentation exposes the execution-owned evidence; PTC
+            // pretty-prints the selected JSON before its sandbox status footer.
+            // Compare parsed provider values, not a compact serialization.
+            let shown
+            if(offset===0){
+              const section=visible.split('\n\n').find(part=>part.startsWith('operation-evidence:\n'))
+              assert(section,'native provider input includes operation evidence')
+              shown=JSON.parse(section.slice('operation-evidence:\n'.length)).find(item=>item.verb==='render_frame')
+            }else{
+              const end=visible.lastIndexOf('}')+1
+              assert(end>0&&visible.trimStart().startsWith('{'),'nested provider input includes the selected JSON object')
+              shown=JSON.parse(visible.slice(0,end))
+            }
+            for(const key of ['output','outputs','fresh','inherited_products','scope'])assert.deepEqual(shown?.[key],renderReceipt.result[key],
+              `actual provider receives original multi-product render ${key}, including file freshness and unverified products`)
+            const event=offset===0
+              ? events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===callId)
+              : events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec'&&e.data?.parentCallId===callId)
+            const canonical=offset===0?event?.data?.meta?.canonical:nestedCanonical(event)
+            for(const [key,value] of Object.entries(renderReceipt))assert.deepEqual(canonical?.[key],value,
+              `native/PTC render consumption preserves the original Bridge ${key}`)
+          }
+        }
         const current = snapshots.at(-1)
         if(!current)fs.writeFileSync(output+'.missing-context.json',JSON.stringify({messages:options.messages,
           events:ctx.sessions.get(options.sessionId).snapshotEvents()},null,2))
@@ -440,7 +480,10 @@ export function apply(ctx) {
             'actual provider text retains native parameter conditions and strip semantics')
           for(const card of Object.values(catalogReceipt.result.surface_cards??{})){
             assert(card.usage_notes.every(note=>visible.includes(note)),
-              'actual provider receives the current Boolean/PolyBevel operation knowledge')
+              'actual provider receives the current native node operation knowledge')
+            assert(visible.includes(card.operation_card.id),'native provider text retains the operation-card identity')
+            assert(card.operation_parameters.every(parameter=>visible.includes(JSON.stringify(parameter.name))),
+              'native provider text retains the critical operation parameter names')
           }
           if(catalogReceipt.result.interface_observation){
             assert(visible.includes('target_primitive_limit_exceeded')&&visible.includes('required_pairs')&&visible.includes('runtime_limits'),
@@ -461,7 +504,10 @@ export function apply(ctx) {
             'nested selected values retain parameter conditions and strip semantics at the actual provider')
           for(const card of Object.values(catalogReceipt.result.surface_cards??{})){
             assert(card.usage_notes.every(note=>visible.includes(note)),
-              'nested selected values retain complete Boolean/PolyBevel operation knowledge')
+              'nested selected values retain complete native node operation knowledge')
+            assert(visible.includes(card.operation_card.id),'nested provider text retains the operation-card identity')
+            assert(card.operation_parameters.every(parameter=>visible.includes(JSON.stringify(parameter.name))),
+              'nested provider text retains the critical operation parameter names')
           }
           if(catalogReceipt.result.interface_observation){
             assert(visible.includes('target_primitive_limit_exceeded')&&visible.includes('Increasing max_pairs cannot remove'),
@@ -519,7 +565,7 @@ export function apply(ctx) {
           ...(surfaceMethod ? surfaceResources.map(resource=>resource.kind==='skill'
             ? ['skill',{name:resource.name}]
             : resource.kind==='read' ? ['read',{file_path:resource.file}]
-            : ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:resource.file})+');',description:'Read the relevant surface method through the mounted tool'}]) : []),
+            : ['run_code',{code:'return await tools.read('+JSON.stringify({file_path:resource.file})+');',description:'Read the relevant Houdini method through the mounted tool'}]) : []),
           ...(geometryReceipt ? [
             ['houdini_exec',{code:'fixture_geometry'}],
             ['run_code',{code:'const v=await tools.houdini_exec({code:"fixture_geometry"}); return {control_summary:v.result.control_summary,geometry_scope:v.result.geometry_scope,restored:v.result.restored,full_output:v.result.results[0].geometry_restore.full_output};',description:'Read exact selection and complete restoration evidence'}],
@@ -536,6 +582,11 @@ export function apply(ctx) {
             ['run_code',{code:'return await tools.houdini_exec('+JSON.stringify(scriptWrongArgs)+');',
               description:'Verify a changed builder version is rejected before any HTTP scene request'}],
           ] : []),
+          ...(renderReceipt ? [
+            ['houdini_exec',{code:'fixture_render'}],
+            ['run_code',{code:'const v=await tools.houdini_exec({code:"fixture_render"}); const r=v.result; return {output:r.output,outputs:r.outputs,fresh:r.fresh,inherited_products:r.inherited_products,scope:r.scope};',
+              description:'Read the exact historical multi-product render receipt; no new rendering or image inspection'}],
+          ] : []),
           ['houdini_exec',{code:'fixture_busy_receipt'}],
           ['houdini_request',{request_ref:busyRef}],
           ['run_code',{code:'return await tools.houdini_request('+JSON.stringify({request_ref:busyRef})+');',description:'Read the same busy request through the nested tool'}],
@@ -551,7 +602,7 @@ export function apply(ctx) {
         yield {type:'block-start',index:0,blockType:'tool-call'}
         yield {type:'block-end',index:0,block:{type:'tool-call',id:'context-'+step,name,arguments:JSON.stringify(args)}}
         yield {type:'finish',reason:{kind:'tool-calls'}}
-      } catch(error) {fail(error); throw error}
+      } catch(error) {fail(error,{step:requests.length,messages:options.messages}); throw error}
     }
   }
   ctx.llm.registerAdapter([provider],new ContextFixture())
@@ -574,6 +625,10 @@ export function apply(ctx) {
           ...(scriptFixture?{script_consumption:{record:scriptFixture.record,original_execution:scriptFixture.receipt.execution,
             http_fixture_target:{runtime_id:runtimeId,executor_id:process.env.DSH_HOUDINI_EXECUTOR_ID},
             scope:'Actual mounted DSH native/PTC schema, file read, source HTTP body and original independent-HOM receipt consumption. The HTTP fixture does not execute or verify a new Houdini scene.'}}:{}),
+          ...(renderReceipt?{render_consumption:{outputs:renderReceipt.result.outputs,
+            unverified_products:renderReceipt.result.inherited_products.unverified_products,
+            original_execution:renderReceipt.execution,
+            scope:'Actual mounted DSH native/PTC provider inputs and unchanged original Bridge multi-product receipt. Historical mocked output files are not reopened; this does not verify Karma pixels or checkpoint/delegate completion.'}}:{}),
           bridgeCalls,events:agent.session.snapshotEvents()})
       } catch(error) {fail(error)}
     })

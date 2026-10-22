@@ -28,10 +28,9 @@ H21.0.440 本机 shipped shelf：
 工具 id 可能随版本变化；每次用 `search_tab_entries(actual_parent, query)` 发现，不能把
 本节当作跳过运行时查询的理由。`tab_apply` allowlist 暂只覆盖上述两个已回归意图。
 
-H22.0.368 的 shipped shelf 仍登记同名 `lop_karma_setup` / `vop_karmamtlxsubnet` 与相同 label，
-但当前完整 setup/material-builder 状态恢复和 USD Render ROP 出图回归只在 H21 GUI 执行过。
-因此“入口仍存在”是 H21/H22 已确认事实，“H22 完整 recipe 已通过”仍是未验证项；H22 任务
-必须先运行 parent-aware discovery 和最小 GUI 验收，不能由 shelf 文本直接外推。
+H22.0.368 的 shipped shelf 仍登记同名 `lop_karma_setup` / `vop_karmamtlxsubnet` 与相同 label。
+当前父网络和工具入口由实际发现与`tab_apply`校验；原生recipe结构不证明具体shader消费、
+用户界面状态或最终图像质量。需要判断界面时再观察实际GUI，不为纯数据构建增加固定GUI验收步骤。
 
 ## 2. 材质 render context
 
@@ -72,8 +71,12 @@ LOP scene chain -> Karma Render Settings
   Slap Comp 等交付行为。
 - `render_frame` 接收可执行 ROP；普通 LopNode 即便有 `execute` 按钮也不应被当作
   `render()` 对象。
+- 新建Karma Render Settings（含Karma Setup）采用插件的清晰图像默认：`enabledof=0`，picture与checkpoint写入同源render目录下的`$HIPNAME`分组。
+  保留原生变量和ROP表达式，Save As后继续求值；已有含目录路径不重写。目录是输出组织，不是工程身份。
 - AOV/denoiser 不在简单 beauty 测试时强制开启；用户要求合成、深度、Cryptomatte、
   去噪或生产 EXR 时才配置并用 stage summary 检查 RenderVar/Product。
+
+CPU收敛模式与XPU使用的有效采样字段可能不同；读取当前engine、模式及参数条件，再设置实际参与计算的采样。核对最终RenderSettings与各Product的分辨率和相机，不能以写入某个采样或尺寸字段证明实际渲染已经采用。
 
 查看EXR的颜色与材质前，确认实际scene-linear空间及显示变换。不要直接把线性通道裁到8位，或固定猜测另一个OCIO版本的display/view名字；这种转换可能把正确的材质看成过暗或过饱和。Houdini侧可以只读`PyOpenColorIO.GetCurrentConfig()`，用`getColorSpace('scene_linear').getName()`、`getDisplays()`及`getViews(display)`读取当前事实，`hou.getenv('OCIO')`确认本进程配置。再查当前随Houdini的`iconvert --help`，以同一配置中真实存在的输入空间和display/view转成可读PNG；记录这些转换条件。终端返回或工具外层成功不能覆盖转换进程非零退出，也不重复渲染来处理纯显示转换问题。
 
@@ -84,10 +87,9 @@ Scene Import后用render_frame的framing={target:实际USD资产路径,coverage:
 override/外部USD/前置脚本/lens/Volume/PointInstancer明确拒绝，不暗中更改镜头或增加重渲染。
 此fast path适用于当前帧普通透视/正交包络，不用于艺术裁切、动画相机、位移/快门包络或语义质量认证。
 诊断材质细节时另查景深启用状态、焦点距离和光圈；camera_fit不设置焦点，包络通过不证明画面清晰。
-移动相机或改变焦距后重新检查清晰度。仅在自有诊断镜头且不要求景深时临时关闭景深；
-艺术镜头保留原意并校准焦点，不把失焦误诊为纹理分辨率或继续增加细节。此项有H22单任务对照，
-跨版本默认值与未见任务采用仍待验，不固定某个版本的默认焦点/参数token。
-技术版本与回归状态见development的v14记录；未见任务自然采用仍待验。
+H21/H22的原生Karma Render Settings启用景深参数为`enabledof`，原生默认开启；插件只在新建设置节点时关闭，显式parms可覆盖该默认。
+标准展示和自有诊断镜头未要求景深时保持关闭；艺术镜头按意图开启并校准焦点，移动相机或改变焦距后重新检查清晰度。
+正式render_frame保留已有设置，不把失焦误诊为纹理分辨率或继续增加细节。
 
 ## 5. 灯光
 

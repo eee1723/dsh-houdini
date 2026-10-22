@@ -1,9 +1,12 @@
 """Real HOM camera geometry assertions. No live HIP and no renderer required."""
 
 import math
+import json
+import os
 import pathlib
 import sys
 import tempfile
+from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import dsh_errors
 import dsh_ownership
@@ -12,6 +15,7 @@ import hou
 import dsh_hou_helpers as h
 import dsh_bridge as bridge
 import dsh_camera_framing as f
+import dsh_usd_inspection as usd
 
 
 def rejected(fn, needle):
@@ -158,6 +162,163 @@ try:
         assert not picture.parent.exists() and hou.frame()==frame_before
     py.parm('python').set(scene_code+"\np.CreateCameraRel().SetTargets(['/missing'])\n")
     rejected(lambda:f.usd_check(rop,{'target':'/asset'},1),'missing')
+
+    # The authored stage, requested time and native ROP selection determine
+    # inherited products. Only rendering is replaced; this fixture never starts
+    # Karma, and its byte files make no image/semantic quality claim.
+    from pxr import Usd, UsdRender
+    with tempfile.TemporaryDirectory(prefix='dsh-inherited-products-') as tmp:
+        base=pathlib.Path(tmp)
+        first=base/'beauty.<F4>.exr'
+        second=base/'second.%04d.exr'
+        multi_code=scene_code+f'''
+p.CreateProductNameAttr().Set({(base/'old-beauty.exr').as_posix()!r},1)
+p.GetProductNameAttr().Set({first.as_posix()!r}.replace('beauty.','beauty.'+chr(96)+'1+1'+chr(96)+'.'),3)
+p2=UsdRender.Product.Define(s,'/Render/product2')
+p2.CreateProductNameAttr().Set({(base/'old-second.exr').as_posix()!r},1)
+p2.GetProductNameAttr().Set({second.as_posix()!r},3)
+checkpoint=UsdRender.Product.Define(s,'/Render/checkpoint')
+checkpoint.CreateProductTypeAttr('karma:checkpoint')
+checkpoint.CreateProductNameAttr({(base/'optional.checkpoint').as_posix()!r})
+null=UsdRender.Product.Define(s,'/Render/null')
+null.CreateProductNameAttr('husk:null_raster')
+r.CreateProductsRel().SetTargets(['/Render/product','/Render/product2','/Render/checkpoint','/Render/null'])
+'''
+        py.parm('python').set(multi_code)
+        rop.parm('loppath').set('../'+py.name())
+        rop.parm('rendersettings').set('settings')  # native /Render shorthand
+        rop.parm('outputimage').set('')
+        assert py.stage() is not None,py.errors()
+        selected=usd._render_product_files(rop,3)
+        expected=[base/'beauty.`1+1`.0003.exr',base/'second.0003.exr']
+        assert [pathlib.Path(row['output']) for row in selected['products']]==expected,selected
+        assert len(selected['unverified_products'])==2,selected
+        assert usd._render_settings(rop)[0]==py
+
+        # No metadata does not authorize selecting the sole discoverable prim.
+        rop.parm('rendersettings').set('')
+        assert not UsdRender.Settings.GetStageRenderSettings(py.stage())
+        rejected(lambda:usd._render_settings(rop),'no explicit or stage-default')
+        rejected(lambda:f.usd_check(rop,{'target':'/asset'},3),'no explicit or stage-default')
+        before_rejection=hou.frame()
+        with patch.object(hou.RopNode,'render',side_effect=AssertionError('unexpected renderer dispatch')) as no_render:
+            rejected(lambda:h.render_frame(rop,frame=3),'no explicit or stage-default')
+            no_render.assert_not_called()
+        assert hou.frame()==before_rejection
+        metadata_code=multi_code+"\nfrom pxr import Usd\nwith Usd.EditContext(s,s.GetSessionLayer()):\n s.SetMetadata('renderSettingsPrimPath','/Render/settings')\n"
+        py.parm('python').set(metadata_code)
+        assert py.stage() is not None,py.errors()
+        assert usd._render_settings(rop)[2].GetPath()=='/Render/settings'
+        py.parm('python').set(metadata_code.replace("s.SetMetadata('renderSettingsPrimPath','/Render/settings')",
+                                                    "s.SetMetadata('renderSettingsPrimPath','settings')"))
+        rejected(lambda:usd._render_settings(rop),'one absolute')
+        py.parm('python').set(metadata_code)
+        if rop.parm('dorenderexisting') is not None:
+            rop.parm('dorenderexisting').set(1)
+            rejected(lambda:usd._render_product_files(rop,3),'existing USD file')
+            rop.parm('dorenderexisting').set(0)
+
+        calls=[]
+        omitted=set()
+        def render_fixture(render_rop,frame_range):
+            assert render_rop==rop and frame_range==(3.0,3.0)
+            assert hou.frame()==3
+            override=render_rop.evalParm('outputimage')
+            calls.append({'override':override,'frame':hou.frame()})
+            if override:
+                pathlib.Path(override).write_bytes(('override-'+str(len(calls))).encode())
+                return
+            # Independently consume the real composed USD, without using the
+            # output-discovery helper that is under test.
+            composed=py.stage()
+            settings=composed.GetPrimAtPath(composed.GetMetadata('renderSettingsPrimPath'))
+            for target in settings.GetRelationship('products').GetForwardedTargets():
+                product=UsdRender.Product(composed.GetPrimAtPath(target))
+                name=product.GetProductNameAttr().Get(Usd.TimeCode(hou.frame()))
+                if str(target) in omitted or product.GetProductTypeAttr().Get()!='raster' or name=='husk:null_raster':
+                    continue
+                actual=hou.text.expandHuskFilePath(name,3,1,0)
+                pathlib.Path(actual).write_bytes(('product-'+str(target)+'-'+str(len(calls))).encode())
+
+        saved_frame=hou.frame()
+        try:
+            with patch.object(hou.RopNode,'render',render_fixture):
+                inherited=h.render_frame(rop,frame=3,timeout=.01)
+                assert inherited['fresh'] and not inherited['errors'],inherited
+                assert inherited['output'] is None and len(inherited['outputs'])==2,inherited
+                assert all(row['fresh'] and row['file_bytes'] for row in inherited['outputs'])
+                for row in inherited['outputs']:
+                    for key in ('pre_fingerprint','post_fingerprint'):
+                        if row[key] is None:
+                            continue
+                        nanos=row[key]['mtime_ns']
+                        assert isinstance(nanos,str) and str(int(nanos))==nanos,row
+                    assert row['post_fingerprint']['mtime_ns']==str(pathlib.Path(row['output']).stat().st_mtime_ns),row
+                assert len(inherited['inherited_products']['unverified_products'])==2
+                assert calls[-1]['override']=='' and rop.evalParm('outputimage')==''
+                assert hou.frame()==saved_frame
+
+                # One stale file remains on disk; the other output's success
+                # cannot certify the whole multi-product render.
+                omitted.add('/Render/product2')
+                partial=h.render_frame(rop,frame=3,timeout=.01)
+                assert not partial['fresh'] and partial['errors'],partial
+                assert [row['fresh'] for row in partial['outputs']]==[True,False],partial
+                assert hou.frame()==saved_frame and rop.evalParm('outputimage')==''
+                omitted.clear()
+
+                py.parm('python').set(metadata_code+"\nr.CreateProductsRel().SetTargets(['/Render/product'])\n")
+                single=h.render_frame(rop,frame=3,timeout=.01)
+                assert single['fresh'] and pathlib.Path(single['output'])==expected[0],single
+                assert single['file_bytes']==single['outputs'][0]['file_bytes']
+                assert single['post_fingerprint']==single['outputs'][0]['post_fingerprint']
+                assert single['preexisting'] and hou.frame()==saved_frame
+                py.parm('python').set(metadata_code)
+
+                explicit=h.render_frame(rop,picture=str(base/'override.exr'),frame=3,timeout=.01)
+                assert explicit['fresh'] and pathlib.Path(explicit['output'])==base/'override.exr',explicit
+                assert 'outputs' not in explicit and calls[-1]['override']==str(base/'override.exr').replace('\\','/')
+                assert rop.evalParm('outputimage')=='' and hou.frame()==saved_frame
+                assert not (base/'optional.checkpoint').exists()
+
+                with dsh_ownership.execution_owner('inherited-product-test','register'):
+                    dsh_ownership.register_owned_node(rop)
+                response=bridge.run_code(f'__result__=render_frame({rop.path()!r},frame=3,timeout=.01)',
+                                         owner_session='inherited-product-test',owner_call='render-products')
+                assert response['ok'] and response['result']['fresh'],response
+                summary=response['verbs'][0]['summary']
+                assert len(summary['outputs'])==2 and summary['output'] is None,summary
+                assert len(summary['inherited_products']['unverified_products'])==2,summary
+                candidates=response['artifactCandidates']
+                assert {pathlib.Path(row['path']) for row in candidates}==set(expected),candidates
+                assert all(row['role']=='delivery-candidate' for row in candidates),candidates
+                assert hou.frame()==saved_frame and rop.evalParm('outputimage')==''
+                if os.environ.get('DSH_RENDER_FIXTURE_OUT'):
+                    receipt_path=pathlib.Path(os.environ['DSH_RENDER_FIXTURE_OUT'])
+                    receipt_path.parent.mkdir(parents=True,exist_ok=True)
+                    receipt_path.write_text(json.dumps(response,ensure_ascii=False,indent=2),encoding='utf-8')
+
+                # Failure to restore the discovery frame is an unrecovered
+                # temporary write, even when author code catches the error.
+                real_set_frame=hou.setFrame
+                def fail_frame_restore(value):
+                    if value==saved_frame and hou.frame()!=saved_frame:
+                        raise RuntimeError('injected preflight frame restoration failure')
+                    return real_set_frame(value)
+                render_count=len(calls)
+                with patch.object(hou,'setFrame',fail_frame_restore):
+                    poisoned=bridge.run_code(
+                        f'try:\n render_frame({rop.path()!r},frame=3,timeout=.01)\nexcept Exception:\n pass\n'
+                        'try:\n scene_save()\nexcept Exception:\n pass\n'
+                        f'__result__=describe({rop.path()!r})',owner_session='inherited-product-test',owner_call='failed-frame-restore')
+                real_set_frame(saved_frame)
+                assert not poisoned['ok'] and len(calls)==render_count,poisoned
+                failed=poisoned['verbs'][0]['summary']
+                assert failed['phase']=='render_restore' and failed['restored'] is False,poisoned
+                assert poisoned['verbs'][1]['summary']['dispatched'] is False,poisoned
+                assert poisoned['verbs'][2]['ok'] and hou.frame()==saved_frame,poisoned
+        finally:
+            hou.setFrame(saved_frame)
 finally:
     rop.destroy();py.destroy()
 

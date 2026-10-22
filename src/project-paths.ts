@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url'
 import {randomBytes} from 'node:crypto'
 
 const contract = JSON.parse(readFileSync(new URL('../houdini/project-layout.json', import.meta.url), 'utf8')) as {
-  schemaVersion: number; directories: Record<string, {path: string; lifecycle: string}>; resultDirectory: string
+  schemaVersion: number; directories: Record<string, {path: string; lifecycle: string; scope?: 'hip_name'}>; resultDirectory: string
 }
 if (contract.schemaVersion !== 1) throw Error('Unsupported project directory contract')
 export const RESULT_DIRECTORY = contract.resultDirectory
@@ -37,15 +37,22 @@ export interface ProjectArtifact {
 function directoryRole(role:string) {
   const entry=contract.directories[role]
   if (!entry || typeof entry.path !== 'string' || typeof entry.lifecycle !== 'string'
+      || (entry.scope !== undefined && entry.scope !== 'hip_name')
       || !entry.path || path.isAbsolute(entry.path) || entry.path.includes('\\')
       || entry.path.split('/').some(part=>!part || part==='.' || part==='..' || part.includes(':')))
     throw Error('Invalid project directory role: '+role)
   return entry
 }
 
-/** Resolve a shared role from an explicit workspace; creates nothing and queries no Houdini state. */
-export function projectDirectoryPath(root:string,role:string):string {
-  return path.join(root,...directoryRole(role).path.split('/'))
+/** Resolve a role without probing Houdini. HIP-scoped roles require its explicit filename. */
+export function projectDirectoryPath(root:string,role:string,hipPath?:string):string {
+  const entry=directoryRole(role), base=path.join(root,...entry.path.split('/'))
+  if(entry.scope!=='hip_name')return base
+  if(!hipPath || !path.isAbsolute(hipPath))throw Error('HIP-scoped output requires a named absolute HIP')
+  const filename=path.basename(hipPath), extension=path.extname(filename)
+  const name=['.hip','.hiplc','.hipnc'].includes(extension.toLowerCase())
+    ? filename.slice(0,-extension.length) : filename
+  return path.join(base,name)
 }
 
 function basename(value:string) {

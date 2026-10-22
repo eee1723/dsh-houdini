@@ -21,10 +21,34 @@ with dsh_ownership.execution_owner('state-restore-owner','setup'):
     out=root.node('surface')
     tests=[{'id':'width','values':{'width':2,'mode':5,'visible':0},
             'expectations':[{'metric':'bounds_size','axis':0,'delta':[.99,1.01]}]}]
+    empty=h.tab_create(root,'null','hidden_empty')
+    visible=h.tab_create(root,'switch','visible_output',inputs=[empty,out],parms={'input':'ch("../CTRL/visible")'})
+    hide_tests=[{'id':'hide','values':{'visible':0},'expectations':[
+        {'metric':'point_count','delta':[-8,-8],'range':[0,8]},
+        {'metric':'primitive_count','delta':[-6,-6],'range':[0,6]}]}]
     original_restore=dsh_parameter_values._restore_parameters
     original_cook=dsh_node_operations.cook_node
     saved_frame=hou.frame()
     try:
+        # A visibility control's expected empty output is a measured zero,
+        # while the same parameter/geometry restoration guarantee still holds.
+        hidden=h.test_controls(ctrl,visible,hide_tests)
+        assert hidden['ok'] and hidden['restored'] and ctrl.evalParm('visible')==1,hidden
+        assert [m['measured'] for m in hidden['results'][0]['measurements']]==[0,0],hidden
+        assert hidden['results'][0]['geometry_restore']['matches'] and hou.frame()==saved_frame
+        h.set_parm(ctrl,'visible',0)
+        try:
+            shown=h.test_controls(ctrl,visible,[{'id':'show','values':{'visible':1},'expectations':[
+                {'metric':'point_count','delta':[8,8],'range':[0,8]},
+                {'metric':'primitive_count','delta':[6,6],'range':[0,6]}]}])
+            assert shown['ok'] and shown['restored'] and ctrl.evalParm('visible')==0,shown
+            assert visible.geometry().intrinsicValue('pointcount')==0
+        finally:h.set_parm(ctrl,'visible',1)
+        bounds_empty=h.test_controls(ctrl,visible,[{'id':'hide_bounds','values':{'visible':0},'expectations':[
+            {'metric':'primitive_count','delta':[-6,-6]},
+            {'metric':'bounds_size','axis':0,'delta':[-1,-1]}]}])
+        assert not bounds_empty['ok'] and bounds_empty['restored'],bounds_empty
+        assert 'empty' in bounds_empty['results'][0]['reason'] and ctrl.evalParm('visible')==1
         # Stable success across repeated tests, later ordinary edits and an
         # independent failed transaction. A final undo must not cross calls.
         def run(code):return b.run_code(code,owner_session='state-restore-owner')
@@ -49,19 +73,21 @@ with dsh_ownership.execution_owner('state-restore-owner','setup'):
                 point.setPosition(point.position()+hou.Vector3(.25,0,0))
                 return resolved,changed,scope
             return resolved,geometry,scope
-        q.observation.geometry=changed_restore_geometry
-        try:
-            h.test_controls(ctrl,out,tests)
-            raise AssertionError('different output bgeo must fail restoration')
-        except dsh_errors.CheckpointError as error:
-            row=error.evidence['results'][-1]
-            assert row['status']=='pass' and row['parameter_restore']['ok'],row
-            assert row['restored'] is False and row['geometry_restore']['matches'] is False,row
-            assert row['geometry_restore']['differing_section_count']>0,row
-            assert row['geometry_restore']['differing_sections'][0]['first_difference']['path'],row
-            assert error.evidence['control_summary']['case_counts']=={'pass':0,'fail':1,'unverified':0,'not_run':0}
-        finally:
-            q.observation.geometry=original_geometry
+        for measured_output,cases in ((out,tests),(visible,hide_tests)):
+            reads.clear()
+            q.observation.geometry=changed_restore_geometry
+            try:
+                h.test_controls(ctrl,measured_output,cases)
+                raise AssertionError('different output bgeo must fail restoration')
+            except dsh_errors.CheckpointError as error:
+                row=error.evidence['results'][-1]
+                assert row['status']=='pass' and row['parameter_restore']['ok'],row
+                assert row['restored'] is False and row['geometry_restore']['matches'] is False,row
+                assert row['geometry_restore']['differing_section_count']>0,row
+                assert row['geometry_restore']['differing_sections'][0]['first_difference']['path'],row
+                assert error.evidence['control_summary']['case_counts']=={'pass':0,'fail':1,'unverified':0,'not_run':0}
+            finally:
+                q.observation.geometry=original_geometry
         assert h.test_controls(ctrl,out,tests)['restored']
         def failed_baseline_cook(*args,**kwargs):
             return {'ok':False,'errors':['injected baseline failure']}

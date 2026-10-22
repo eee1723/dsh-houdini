@@ -183,12 +183,12 @@ def render_check(path: str, ref=None) -> dict:
     （``identical`` / ``mean_abs_diff``），用于循环帧一致性、A/B 对比。
 
     解码优先 PySide6 QImage（PNG/JPEG/BMP/TGA），hython 无 GUI 时退回纯
-    Python PNG 解码（8-bit）；EXR 等 HDR 格式不在覆盖范围（裸 hou 逃生舱）。
+    Python PNG 解码（8-bit）；EXR 等 HDR 格式不在覆盖范围，需先按实际色管制作可读预览。
     """
     result = _read_pixels(path)
     if result is None:
         raise ValueError(
-            f"无法解码 '{path}'（支持 PNG/JPEG/BMP/TGA，EXR 等请裸写 hou.image）"
+            f"无法解码 '{path}'（支持 PNG/JPEG/BMP/TGA；EXR/HDR请先按实际色管转换为可读预览）"
         )
     w, h, pixels = result
     out: dict = {

@@ -343,26 +343,9 @@ def usd_check(rop, spec, frame):
     coverage = finite(spec.get('coverage', .82), 'coverage')
     if not .1 <= coverage <= .95:
         raise ValueError('framing coverage must be in .1.. .95')
-    path = rop.evalParm('loppath')
-    node = hou.node(path) if path else rop.input(0)
-    if node is None or not isinstance(node, hou.LopNode):
-        raise ValueError('USD ROP has no resolvable input LOP')
-    stage = node.stage()
-    if stage is None or node.errors():
-        raise ValueError('USD render stage has cook errors or is missing')
-    settings_path = rop.evalParm('rendersettings') or stage.GetMetadata('renderSettingsPrimPath')
-    if not settings_path:
-        candidates = []
-        for i, p in enumerate(stage.Traverse()):
-            if i >= 4096:
-                raise ValueError('USD settings discovery budget exceeded; set rendersettings explicitly')
-            if p.GetTypeName() == 'RenderSettings': candidates.append(str(p.GetPath()))
-        if len(candidates) != 1:
-            raise ValueError('USD ROP must resolve one explicit RenderSettings')
-        settings_path = candidates[0]
-    settings = stage.GetPrimAtPath(settings_path)
-    if not settings or settings.GetTypeName() != 'RenderSettings':
-        raise ValueError('USD ROP RenderSettings path is invalid')
+    from dsh_usd_inspection import _render_settings
+    node, stage, settings = _render_settings(rop)
+    settings_path = settings.GetPath()
     from pxr import Sdf
     target_path = Sdf.Path(spec['target'])
     if not target_path.IsAbsolutePath() or not target_path.IsPrimPath():

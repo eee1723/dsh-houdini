@@ -8,7 +8,6 @@ import re
 import time
 import hou
 import dsh_cook_control as _cook_control
-from dsh_project_paths import directory_path as _project_directory
 import dsh_errors
 import dsh_image_pixels
 import dsh_media_output
@@ -173,10 +172,10 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     """Capture the selected viewport with bounded freshness and full restoration.
 
     Managed output (the default) accepts only an omitted filename or safe
-    basename and writes under ``$HIP/dsh-artifacts/checks/previews/<run-id>/``. Deliberate
-    Delivery images use ``output_policy='delivery'`` under ``$HIP/dsh-artifacts/renders``;
+    basename and writes under ``$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/``. Deliberate
+    Delivery images use ``output_policy='delivery'`` under ``$HIP/dsh-artifacts/renders/<HIPNAME>``;
     custom destinations use ``output_policy='explicit'``; an explicit bare
-    filename goes under ``$HIP/dsh-artifacts/checks/previews/``. The capture is a user-screen
+    filename goes under ``$HIP/dsh-artifacts/checks/previews/<HIPNAME>/``. The capture is a user-screen
     diagnostic: readable pixels are required, but visual semantics remain
     unverified.  H21/H22 require stashed flipbook and viewport-camera state;
     unsupported restoration combinations reject before mutation.
@@ -236,7 +235,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
 
     path, artifact, artifact_hip_path = dsh_media_output._preview_artifact(
         path, frame=f, purpose='viewport_diagnostic', output_policy=output_policy,
-        default_label='viewport', default_subdir=_project_directory('visual_check'),
+        default_label='viewport',
         allowed_extensions={'.png', '.jpg', '.jpeg', '.bmp', '.tga'})
 
     import glob as _glob

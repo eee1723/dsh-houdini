@@ -34,6 +34,7 @@ parser.add_argument('--catalog-fixture', type=Path, help='Exact receipt exported
 parser.add_argument('--hda-fixture', type=Path, help='Exact receipt exported by isolated HDA lifecycle regression')
 parser.add_argument('--geometry-fixture', type=Path, help='Exact large-output control receipt exported by isolated HOM')
 parser.add_argument('--script-fixture', type=Path, help='Exact script source, identity and complete receipt exported by isolated execution-runtime HOM')
+parser.add_argument('--render-fixture', type=Path, help='Exact multi-product Bridge receipt exported by isolated camera-framing HOM')
 args = parser.parse_args()
 if args.repetition_method and not args.context_loop:
     parser.error('--repetition-method requires --context-loop')
@@ -41,6 +42,8 @@ if args.surface_method and not args.context_loop:
     parser.error('--surface-method requires --context-loop')
 if args.script_fixture and not args.context_loop:
     parser.error('--script-fixture requires --context-loop')
+if args.render_fixture and not args.context_loop:
+    parser.error('--render-fixture requires --context-loop')
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
 assert node
@@ -59,7 +62,10 @@ env['DSH_HOUDINI_BRIDGE_URL'] = f'http://127.0.0.1:{bridge_socket.getsockname()[
 # inventing another identity would create contradictory successful history.
 # The local fixture still owns the HTTP endpoint and never contacts live HOM.
 script_receipt = json.loads(args.script_fixture.resolve(strict=True).read_text(encoding='utf-8')) if args.script_fixture else None
-env['DSH_HOUDINI_EXECUTOR_ID'] = script_receipt['receipt']['execution']['executor_id'] if script_receipt else uuid.uuid4().hex
+render_receipt = json.loads(args.render_fixture.resolve(strict=True).read_text(encoding='utf-8')) if args.render_fixture else None
+recorded_execution = (script_receipt['receipt']['execution'] if script_receipt else
+                      render_receipt['execution'] if render_receipt else None)
+env['DSH_HOUDINI_EXECUTOR_ID'] = recorded_execution['executor_id'] if recorded_execution else uuid.uuid4().hex
 context_output = fixture / 'context-loop.json'
 if args.context_loop:
     # The fixture plugin owns this port and never opens or executes a real HIP.
@@ -79,6 +85,8 @@ if args.context_loop:
         env['DSH_GEOMETRY_PRESENTATION_FIXTURE'] = str(args.geometry_fixture.resolve(strict=True))
     if args.script_fixture:
         env['DSH_SCRIPT_FIXTURE'] = str(args.script_fixture.resolve(strict=True))
+    if args.render_fixture:
+        env['DSH_RENDER_FIXTURE'] = str(args.render_fixture.resolve(strict=True))
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
@@ -194,6 +202,10 @@ with log.open('wb') as output:
             if args.script_fixture:
                 assert context_facts.get('script_consumption', {}).get('record'), context_facts
                 print('Exact DSH script consumer: native/PTC source bytes, version rejection, current Host ownership and original independent-HOM canonical receipt passed; HTTP fixture executes no new scene', flush=True)
+            if args.render_fixture:
+                assert context_facts.get('render_consumption', {}).get('outputs') == render_receipt['result']['outputs'], (
+                    'Original render output values changed in the DSH report; inspect ' + str(context_output))
+                print('Exact DSH render consumer: native/PTC multi-product paths, freshness and unverified checkpoint/delegate facts preserved; historical mock receipt does not verify Karma pixels', flush=True)
         if args.browser_module:
             first, second = fixture / 'test49', fixture / 'test51'
             first.mkdir(); second.mkdir()

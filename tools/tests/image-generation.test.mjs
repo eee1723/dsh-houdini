@@ -8,8 +8,15 @@ import {createHash} from 'node:crypto'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generateImage,imageModels,registerImageTools} from '../../lib/image-generation.js'
 import {fixtureSession,fixtureProjectionContext} from './fixture-session.mjs'
+import {projectDirectoryPath} from '../../lib/project-paths.js'
 
 const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-image-unit-')))
+assert.throws(()=>projectDirectoryPath(root,'render'),/named absolute HIP/)
+assert.equal(projectDirectoryPath(root,'render',path.join(root,'Forest.v003.HIPLC')),
+  path.join(root,'dsh-artifacts/renders','Forest.v003'))
+assert.equal(projectDirectoryPath(root,'visual_check',path.join(root,'森林 场景_v007.hip')),
+  path.join(root,'dsh-artifacts/checks/previews','森林 场景_v007'))
+assert.equal(projectDirectoryPath(root,'execution_run'),path.join(root,'dsh-artifacts/checks/runs'))
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z8S8AAAAASUVORK5CYII=','base64')
 const secret='test-secret-never-present-in-result'
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex')

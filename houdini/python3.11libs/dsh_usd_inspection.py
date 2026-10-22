@@ -1,6 +1,7 @@
 """Houdini usd inspection. Executed on the Bridge owning thread."""
 from __future__ import annotations
 
+import os
 import hou
 import dsh_node_access
 
@@ -13,6 +14,76 @@ def _lop_stage(node):
     if stage is None:
         raise ValueError(f"{node.path()} 没有可用的 USD stage")
     return node, stage
+
+
+def _render_settings(rop):
+    """Read the ROP's composed stage and selected RenderSettings without edits."""
+    from pxr import Sdf
+    path = rop.evalParm('loppath')
+    node = rop.node(path) if path else rop.inputFollowingOutputs(0)
+    while node is not None and not isinstance(node, hou.LopNode):
+        node = node.inputFollowingOutputs(0)
+    if node is None or not isinstance(node, hou.LopNode):
+        raise ValueError('USD ROP has no resolvable input LOP')
+    node, stage = _lop_stage(node)
+    if node.errors():
+        raise ValueError('USD render stage has cook errors')
+    selector = str(rop.evalParm('rendersettings')).strip()
+    settings_path = selector or stage.GetMetadata('renderSettingsPrimPath')
+    # /Render shorthand is a husk command selector convention. Stage metadata
+    # must itself identify an absolute prim; do not repair malformed metadata.
+    if selector and not selector.startswith('/'):
+        settings_path = '/Render/' + selector
+    if not settings_path:
+        # A discoverable settings prim is not a renderer selection. OpenUSD's
+        # GetStageRenderSettings likewise returns invalid without this metadata;
+        # husk may use defaults rather than the sole prim we happen to find.
+        raise ValueError('USD ROP has no explicit or stage-default RenderSettings; '
+                         'set rendersettings or stage renderSettingsPrimPath to identify the rendered products')
+    settings_path = Sdf.Path(str(settings_path))
+    if not settings_path.IsAbsolutePath() or not settings_path.IsPrimPath():
+        raise ValueError('USD output observation requires one absolute RenderSettings prim path after ROP shorthand expansion; '
+                         'settings lists and patterns remain unverified')
+    settings = stage.GetPrimAtPath(settings_path)
+    if not settings or settings.GetTypeName() != 'RenderSettings':
+        raise ValueError('USD ROP RenderSettings path is invalid')
+    return node, stage, settings
+
+
+def _render_product_files(rop, frame):
+    """Observe inherited disk raster outputs; leave delegate products explicit."""
+    from pxr import Usd
+    if str(rop.evalParm('renderpass')).strip():
+        raise ValueError('Inherited render output observation does not resolve RenderPass selection; specify the intended output explicitly')
+    if rop.parm('dorenderexisting') is not None and rop.evalParm('dorenderexisting'):
+        raise ValueError('Inherited render output observation does not resolve an existing USD file; '
+                         'the input LOP is not authoritative for that render')
+    node, stage, settings = _render_settings(rop)
+    products, unverified = [], []
+    for path in settings.GetRelationship('products').GetForwardedTargets():
+        prim = stage.GetPrimAtPath(path)
+        if not prim or prim.GetTypeName() != 'RenderProduct':
+            raise ValueError(f'Invalid RenderProduct: {path}')
+        time_code = Usd.TimeCode(frame)
+        product_type = str(prim.GetAttribute('productType').Get(time_code) or 'raster')
+        name = str(prim.GetAttribute('productName').Get(time_code) or '')
+        row = {'product': str(path), 'product_type': product_type, 'product_name': name}
+        expanded = hou.text.expandHuskFilePath(name, frame_start=frame, frame_inc=1, frame_idx=0)
+        if product_type != 'raster' or expanded in ('ip', 'husk:null_raster'):
+            unverified.append({**row, 'status': 'unverified',
+                               'reason': 'Delegate/checkpoint or non-disk products are not disk raster completion evidence'})
+            continue
+        name = expanded
+        # productName is a token, not an asset path. Relative names depend on
+        # husk's working directory; resolving them against $HIP would observe
+        # a different file while leaving the native render unchanged.
+        if not name or not os.path.isabs(name):
+            raise ValueError(f'Inherited raster product has no absolute disk output: {path} ({name!r}); author its productName or pass picture explicitly')
+        products.append({**row, 'output': name})
+    if not products:
+        raise ValueError('USD RenderSettings has no observable disk raster products; author a productName or pass picture explicitly')
+    return {'stage': node.path(), 'settings': str(settings.GetPath()),
+            'products': products, 'unverified_products': unverified}
 
 
 def _usd_value_preview(value, limit: int = 8):

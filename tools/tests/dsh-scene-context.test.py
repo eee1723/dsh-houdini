@@ -42,6 +42,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
             layout = observed['project_layout']
             assert layout == receipt['result']['project_layout'] and layout['available'] is True
             assert pathlib.Path(layout['project_root']).samefile(expected)
+            assert layout['hip_name'] == pathlib.Path(destination).stem
+            assert pathlib.Path(layout['directories']['render']) == pathlib.Path(expected) / 'dsh-artifacts/renders' / pathlib.Path(destination).stem
             assert pathlib.Path(layout['directories']['texture']) == pathlib.Path(expected).resolve() / 'dsh-artifacts/textures'
             assert pathlib.Path(layout['directories']['documentation']) == pathlib.Path(expected).resolve() / 'dsh-artifacts/docs'
             assert not any(pathlib.Path(path).exists() for path in layout['directories'].values())
@@ -57,13 +59,22 @@ with tempfile.TemporaryDirectory(prefix='dsh-hip-workspace-') as temporary:
 import os
 import dsh_shared_executor
 import dsh_scene_recovery
+original_realpath = os.path.realpath
 for network_hip in ('//server/share/项目 空格/scene.hip', '//server/share/scene.hip',
                     r'\\server\share\项目 空格\scene.hip', 'Z:/项目 空格/scene.hip'):
     hou.hipFile.setName(network_hip.replace('\\','/'))
+    network_root = os.path.dirname(hou.hipFile.path()).replace('\\', '/').rstrip('/').lower()
+    def reject_network_realpath(path, *args, **kwargs):
+        candidate = os.fspath(path).replace('\\', '/').rstrip('/').lower()
+        if candidate == network_root or candidate.startswith(network_root + '/'):
+            raise AssertionError('GUI resolved a network HIP path')
+        # Code analysis also inspects the interpreter's local stdlib origins;
+        # that is independent of the selected HIP and may resolve normally.
+        return original_realpath(path, *args, **kwargs)
     with patch.object(hou, 'isUIAvailable', return_value=True), \
          patch.object(hou, 'ui', types.SimpleNamespace(paneTabs=lambda: []), create=True), \
          patch.object(os.path, 'isfile', side_effect=AssertionError('GUI probed HIP existence')), \
-         patch.object(os.path, 'realpath', side_effect=AssertionError('GUI resolved a network path')):
+         patch.object(os.path, 'realpath', side_effect=reject_network_realpath):
         observed=c.scene_context('network-gui',threading.get_ident())
         assert observed['hip_is_new'] is False and observed['file_exists'] is None
         assert observed['project_layout']['project_root'] == os.path.abspath(os.path.dirname(hou.hipFile.path())).replace('\\','/')

@@ -218,9 +218,28 @@ def search_tab_entries(parent, query: str = "") -> dict:
     }
 
 
+def _initialize_created_render_settings(settings: hou.Node) -> None:
+    """Shared defaults for newly authored Karma settings, before explicit parms."""
+    if settings.type().name().split('::', 1)[0] != 'karmarendersettings':
+        return
+    from dsh_project_paths import directory_expression
+    # Newly authored renders start clear and use the shared image directory.
+    # Native variables preserve portability and follow later Save As operations.
+    # render_frame never changes these persistent artistic settings.
+    render_directory = directory_expression('render')
+    for name, value in {'enabledof': 0,
+                        'picture': render_directory + '/$HIPNAME.$OS.$F4.exr',
+                        'productName': render_directory + '/$HIPNAME.$OS.$F4.checkpoint'}.items():
+        parm = settings.parm(name)
+        if parm is None:
+            raise RuntimeError(f'Karma Setup parameter unavailable: {name}')
+        parm.set(value)
+
+
 def _apply_karma_setup_recipe(parent: hou.Node) -> list:
     """Non-interactive adapter for SideFX ``lop_karma_setup`` semantics."""
     settings = parent.createNode("karmarendersettings", node_name="karmarendersettings")
+    _initialize_created_render_settings(settings)
     rop = parent.createNode("usdrender_rop")
     rop.setInput(0, settings)
     settings_name = settings.name()
@@ -513,6 +532,7 @@ def tab_create(
     - ``parms``：可选非空严格参数批次，创建/接线后通过set_parms应用；
       任一字段失败会连同新节点一起清理。复杂模块仍优先build_module。
       Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
+      新建Karma Render Settings默认关闭景深、按HIPNAME分组输出；显式parms可覆盖。
     - 有对应 shelf tool 且其带额外初始化时走 tool；否则回退 createNode(latest)
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
     - 落位：连完 inputs 后自动摆放——有输入时以下游均值为首选；无输入时以父网络
@@ -551,6 +571,7 @@ def tab_create(
         # second input is connected. Reconcile this known input-dependent
         # initializer after wiring. build_module applies explicit parms later.
         _initialize_created_inputs(node, input_nodes)
+        _initialize_created_render_settings(node)
         if parms is not None:
             dsh_parameter_values.set_parms(node, parms)
         dsh_node_layout._place_created_node(node)

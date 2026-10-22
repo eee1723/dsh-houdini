@@ -172,7 +172,11 @@ try:
     with tempfile.TemporaryDirectory(prefix="dsh-scene-contract-") as tmp:
         tmp_path = Path(tmp)
         hip_path = tmp_path / "scene_contract.hip"
-        hou.hipFile.save(file_name=hip_path.as_posix())
+        save_as = dsh_bridge.run_code(
+            f"__result__=scene_save_as({hip_path.as_posix()!r}, {hou.hipFile.path()!r}, 'isolated scene fixture')",
+            owner_session=session, owner_call='save-as')
+        assert save_as['ok'], save_as
+        assert save_as['result']['mtime_ns'] == str(hip_path.stat().st_mtime_ns), save_as
         hou.node(source_path).parm("sizex").set(1.25)
         saved = dsh_bridge.run_code(
             f"__result__ = scene_save({hip_path.as_posix()!r})",
@@ -185,6 +189,29 @@ try:
         assert saved["result"]["dirty_reliable"] is False, saved
         assert saved["result"]["clean_on_disk"] is None, saved
         assert saved["result"]["bytes"] > 0, saved
+        assert saved['result']['mtime_ns'] == str(hip_path.stat().st_mtime_ns), saved
+
+        # New Karma setups carry clear-image and directory defaults. The
+        # persistent native expression follows Save As without plugin code.
+        setup = dsh_bridge.run_code("__result__=tab_apply('/stage','lop_karma_setup')", owner_session=session)
+        assert setup['ok'], setup
+        settings = next(hou.node(row['path']) for row in setup['result']['created'] if row['type'] == 'karmarendersettings')
+        usd_rop = next(hou.node(row['path']) for row in setup['result']['created'] if row['type'] == 'usdrender_rop')
+        try:
+            assert settings.evalParm('enabledof') == 0
+            assert settings.parm('picture').unexpandedString() == '$HIP/dsh-artifacts/renders/$HIPNAME/$HIPNAME.$OS.$F4.exr'
+            assert settings.parm('productName').unexpandedString() == '$HIP/dsh-artifacts/renders/$HIPNAME/$HIPNAME.$OS.$F4.checkpoint'
+            assert usd_rop.parm('outputimage').unexpandedString() == '', 'native RenderProduct inheritance stays intact'
+            assert '/renders/scene_contract/' in settings.evalParm('picture')
+            hou.hipFile.setName((tmp_path / 'renamed_v002.hiplc').as_posix())
+            assert '/renders/renamed_v002/' in settings.evalParm('picture')
+            assert '/renders/renamed_v002/' in settings.evalParm('productName')
+            settings.parm('enabledof').set(1)  # Existing artistic intent is persistent.
+            assert settings.evalParm('enabledof') == 1
+        finally:
+            hou.hipFile.setName(hip_path.as_posix())
+            usd_rop.destroy()
+            settings.destroy()
 
         mismatch = dsh_bridge.run_code(
             f"scene_save({(tmp_path / 'wrong.hip').as_posix()!r})",

@@ -27,10 +27,12 @@
     },
     "render": {
       "path": "dsh-artifacts/renders",
+      "scope": "hip_name",
       "lifecycle": "render-output"
     },
     "visual_check": {
       "path": "dsh-artifacts/checks/previews",
+      "scope": "hip_name",
       "lifecycle": "visual-check"
     },
     "execution_run": {

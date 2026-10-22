@@ -11,11 +11,9 @@ import os
 import re
 import secrets
 import unicodedata
-from dsh_project_paths import directory_path, lifecycle, project_layout
+from dsh_project_paths import directory_for_hip, hip_name, lifecycle, project_layout
 
 
-MANAGED_DIRECTORY = directory_path('visual_check')
-DELIVERY_DIRECTORY = directory_path('render')
 _PROCESS_PID = os.getpid()
 if globals().get("_PROCESS_NONCE_PID") != _PROCESS_PID:
     _PROCESS_NONCE_PID = _PROCESS_PID
@@ -107,7 +105,7 @@ def allocate_managed(
     repo = _real(repository_root)
     run_id = _run_id(owner_session)
     role = 'visual_check' if output_policy == 'managed' else 'render'
-    directory = MANAGED_DIRECTORY if output_policy == 'managed' else DELIVERY_DIRECTORY
+    directory = directory_for_hip(role, hip_path)
     expected_base = os.path.abspath(os.path.join(hip, directory))
     expected_root = os.path.abspath(os.path.join(expected_base, run_id)) if output_policy == 'managed' else expected_base
     root = _real(expected_root)
@@ -186,6 +184,8 @@ def allocate_managed(
                 "purpose": str(purpose),
                 "role": role,
                 "project_root": hip.replace("\\", "/"),
+                "hip_path": os.path.abspath(hip_path).replace("\\", "/"),
+                "hip_name": hip_name(hip_path),
                 "lifecycle": lifecycle(role),
                 "output_policy": output_policy,
                 "actual_path": target.replace("\\", "/"),
@@ -245,6 +245,8 @@ def explicit_artifact(hip_path, target, *, frame, purpose: str, role='visual_che
         "purpose": str(purpose),
         "role": role,
         "project_root": project_layout(hip_path, has_named_path=bool(hip_path))['project_root'],
+        "hip_path": os.path.abspath(hip_path).replace('\\', '/') if hip_path else None,
+        "hip_name": hip_name(hip_path) if hip_path else None,
         "lifecycle": lifecycle(role),
         "output_policy": "explicit",
         "actual_path": actual.replace("\\", "/"),
