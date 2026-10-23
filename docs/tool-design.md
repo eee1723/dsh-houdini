@@ -52,9 +52,9 @@ H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户F
 Flipbook没有OpenGL的旧LUT/gamma接口，不能按同名参数或不透明测试外推全部替代。
 平台依据：[Flipbook](https://www.sidefx.com/docs/houdini/nodes/out/flipbook.html)、
 [OpenGL退役说明](https://www.sidefx.com/docs/houdini/nodes/out/opengl.html)；本项目的稳定验证入口见[开发规范](development.md)。
-render_view与viewport_screenshot默认把验证图分配到`$HIP/dsh-artifacts/checks/previews/<run-id>/`；最终交付显式选
-`output_policy='delivery'`写入`$HIP/dsh-artifacts/renders/`。两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
-自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP按明确目标设置`$HIP/dsh-artifacts/renders/...`，已有用户指定输出保留。
+render_view与viewport_screenshot默认把验证图分配到同源`visual_check`角色下的HIPNAME及run-id目录；最终交付显式选
+`output_policy='delivery'`写入该HIP的`render`目录。实际路径见[工程文件](project-files.md)，两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
+自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP从`scene_info().project_layout.directories.render`取得目的地，已有用户指定输出保留。
 
 顶层工具的作用、输入和返回见[工具说明](tools.md)，由[src/tool-catalog.ts](../src/tool-catalog.ts)生成。现场读取、执行、请求查回、资源读取、视觉能力与长任务控制各有独立接口；任务记录使用DSH已有能力。
 
@@ -305,14 +305,14 @@ Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的
 |---|---|---|
 | `camera_fit(camera, target, direction='iso', coverage=0.82, width=None, height=None, frame=None, *, dry_run=False, allow_foreign=None)` | 将正式静态OBJ cam拟合到显式SOP世界包络；保留焦距，清lookatpath，求距离/正交宽度，实际矩阵投影回验；无渲染/视口改变。尺寸默认相机值，当前frame。拒绝动画/约束/窗口偏移/自定义lens，失败恢复。ownership与单次allow_foreign适用，持久preview服务永不豁免；dry_run仍exec。Solaris需导入并按实际RenderProduct预检 | dict |
 | `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
-| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed用于验证；delivery分配最终图到`$HIP/dsh-artifacts/renders/`，两者picture省略或仅安全basename、唯一不覆盖；路径值选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
+| `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed用于验证；delivery分配最终图到`$HIP/dsh-artifacts/renders/<HIPNAME>/`，两者picture省略或仅安全basename、唯一不覆盖；路径值选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
 
 ### viewport 域（视口/UI）
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed')` | **用户屏幕诊断工具**：managed/delivery/explicit路径和artifact合同同render_view；delivery直接生成到`$HIP/dsh-artifacts/renders/`，无命名HIP时两种分配拒绝。PNG/JPEG/BMP/TGA为支持截图格式。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
+| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed')` | **用户屏幕诊断工具**：managed/delivery/explicit路径和artifact合同同render_view；delivery直接生成到`$HIP/dsh-artifacts/renders/<HIPNAME>/`，无命名HIP时两种分配拒绝。PNG/JPEG/BMP/TGA为支持截图格式。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
 
 ## 自省、帮助与追踪
 

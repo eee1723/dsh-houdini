@@ -1,7 +1,8 @@
 """Run a trusted builder or copied saved HIP, with optional checks, in a NEW hython.
 
-Never connects to live Houdini, edits the source HIP or retries
-an uncertain run. Isolation limits our worker tree, not arbitrary script side
+Never connects to live Houdini, automatically edits the source HIP or retries
+an uncertain run. Trusted scripts may save to explicitly authorized destinations.
+Isolation limits our worker tree, not arbitrary script side
 effects, GPU allocations or external services. --trusted is required.
 """
 from __future__ import annotations
@@ -38,6 +39,29 @@ def digest(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             value.update(chunk)
     return value.hexdigest()
+
+
+def _observe_source_inputs(input_root, inputs, declared_inputs):
+    """Observe original sources after execution, independently of its outcome."""
+    observations = []
+    staged = {row['file']: row for row in inputs}
+    for name in declared_inputs:
+        row = staged.get(name)
+        observation = {'file': name, 'source_path': str(input_root / name),
+                       'before_sha256': row['sha256'] if row else None, 'after_sha256': None,
+                       'status': 'unavailable'}
+        if row is None:
+            observation['error'] = 'Input was not fully staged; no verified initial source hash'
+            observations.append(observation)
+            continue
+        try:
+            after = digest(regular_file(input_root, row['file']))
+            observation.update(after_sha256=after,
+                               status='unchanged' if after == row['sha256'] else 'changed')
+        except Exception as error:
+            observation['error'] = _brief_text(str(error) or type(error).__name__)
+        observations.append(observation)
+    return observations
 
 
 def read_json(path, max_bytes=4 * 1024 * 1024):
@@ -496,11 +520,12 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
               'cancel_file': str(cancel_file), 'scope': SCOPE}
     write_json(output_dir / 'report.json',report)
     inputs = []
+    declared_inputs = manifest_inputs(manifest)
     runtime_directory = None
     runtime_identity = None
     process = None
     try:
-        for name in manifest_inputs(manifest):
+        for name in declared_inputs:
             source = regular_file(input_root, name)
             target = output_dir / 'inputs' / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -596,16 +621,15 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
                     environment['cleanup_error'] = str(error) or type(error).__name__
             else:
                 environment['retained_reason'] = 'owned worker tree exit was not confirmed'
-    try:
-        unchanged = all(digest(regular_file(input_root, row['file'])) == row['sha256'] for row in inputs)
-    except Exception as error:
-        unchanged = False
-        report['input_check_error'] = str(error) or type(error).__name__
-    report.update(inputs=inputs, inputs_unchanged=unchanged,finished=True)
-    if not unchanged:
-        report['ok'] = False
-        report.setdefault('input_check_error', 'source inputs changed; external side effects are not restored')
-        report.setdefault('error', report['input_check_error'])
+    observations = _observe_source_inputs(input_root, inputs, declared_inputs)
+    statuses = {row['status'] for row in observations}
+    unchanged = (False if 'changed' in statuses else
+                 None if 'unavailable' in statuses or not observations else True)
+    # The worker consumed the verified staged bytes. A source can subsequently
+    # change, including an authorized save by this script; that is separate
+    # evidence, not a replacement for the worker/checks' execution result.
+    report.update(inputs=inputs, inputs_unchanged=unchanged,
+                  input_observations=observations, finished=True)
     write_json(output_dir / 'report.json', report)
     return report
 
@@ -636,6 +660,7 @@ def status(directory, cancel=False):
         'worker':worker, 'error':brief(report.get('error')),
         'cancel_requested':cancel_file.exists(),
         'inputs':report.get('inputs',request['inputs']),'inputs_unchanged':report.get('inputs_unchanged'),
+        'input_observations':report.get('input_observations'),
         'snapshot':result.get('snapshot'),
         'checks':[{k:brief(r[k]) if k=='error' else r[k] for k in ('id','kind','node','frame','status','geometry','artifact','error') if k in r}
                   for r in result.get('checks',[])],

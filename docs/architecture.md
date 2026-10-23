@@ -246,7 +246,7 @@ python3.11libs是目录名，通过PYTHONPATH共享纯Python实现，支持矩�
 
 [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py)只维护验证与交付图片的managed/delivery/explicit路径策略、唯一capture分配
 和artifact元数据；渲染、像素检查、Host原生附件及保留/清理策略仍由既有层负责。默认managed root为
-`$HIP/dsh-artifacts/checks/previews/<run-id>/`，delivery直接生成到`$HIP/dsh-artifacts/renders/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
+`$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`，delivery直接生成到`$HIP/dsh-artifacts/renders/<HIPNAME>/`；消费实际返回路径，不建立第二条图片复制管线，也不自动移动旧交付。
 [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py)是无HOM的矩形/间距、局部避障与Box handoff规划核心；
 [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py)维护可直接应用的Network Box分组、可选role颜色注解、
 同批任意声明顺序的members/boxes嵌套、类型化Box provenance、presentation快照与Bridge undo核对。普通分组不要求预览hash；

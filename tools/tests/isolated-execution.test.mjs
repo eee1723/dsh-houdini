@@ -91,6 +91,42 @@ try {
   const terminal=await hooks.done
   assert.equal(terminal.status,'completed');assert.equal(processRequests.length,before+1)
   assert.match(terminal.result,/operation=.?read|operation=\\?"read/)
+  for(const sourceStatus of ['changed','unavailable']){
+    const observation={file:'saved.hip',source_path:path.join(root,'saved.hip'),before_sha256:'a'.repeat(64),
+      after_sha256:sourceStatus==='changed'?'b'.repeat(64):null,status:sourceStatus,
+      ...(sourceStatus==='unavailable'?{error:'source is no longer readable'}:{})}
+    const sourceRunner=async request=>{
+      const process=await runner(request),filename=path.join(request.output,'report.json')
+      const report=JSON.parse(await fs.readFile(filename,'utf8'))
+      report.inputs_unchanged=sourceStatus==='changed'?false:null
+      report.input_observations=[observation,{file:'build.py',status:'unchanged',before_sha256:'c',after_sha256:'c'}]
+      await fs.writeFile(filename,JSON.stringify(report))
+      return process
+    }
+    const sourceRun=await executeIsolated(ctx,exec,{manifest,output_dir:path.join(root,'source-'+sourceStatus),background:true},runtimeResolver,sourceRunner)
+    const sourceTerminal=await spec.run({updateProgress(){}}).done
+    assert.equal(sourceTerminal.status,'completed','source observation cannot replace successful execution')
+    const summary=JSON.parse(sourceTerminal.result)
+    assert.equal(summary.ok,true);assert.equal(summary.error,null)
+    assert.equal(summary.inputs_unchanged,sourceStatus==='changed'?false:null)
+    assert.deepEqual(summary.input_observations,[observation],'compact output keeps exceptional source facts from the report')
+    assert.match(summary.next_action,/declared staged inputs/)
+    const sourceRead=await executeIsolated(ctx,exec,{operation:'read',output_dir:sourceRun.run_directory},runtimeResolver,sourceRunner)
+    assert.deepEqual(sourceRead.report.input_observations,[observation,{file:'build.py',status:'unchanged',before_sha256:'c',after_sha256:'c'}])
+  }
+  const failedSourceRunner=async request=>{
+    const process=await runner(request),filename=path.join(request.output,'report.json')
+    const report=JSON.parse(await fs.readFile(filename,'utf8'))
+    Object.assign(report,{ok:false,error:'actual script failure',inputs_unchanged:false,
+      input_observations:[{file:'saved.hip',status:'changed',before_sha256:'a',after_sha256:'b'}]})
+    await fs.writeFile(filename,JSON.stringify(report))
+    return {...process,exit_code:1}
+  }
+  await executeIsolated(ctx,exec,{manifest,output_dir:path.join(root,'failed-and-changed'),background:true},runtimeResolver,failedSourceRunner)
+  const failedSource=await spec.run({updateProgress(){}}).done
+  assert.equal(failedSource.status,'failed')
+  assert.equal(JSON.parse(failedSource.result).error,'actual script failure')
+  assert.equal(JSON.parse(failedSource.result).inputs_unchanged,false)
   const failureRunner=async request=>({...await runner(request),exit_code:1})
   await executeIsolated(ctx,exec,{manifest,output_dir:path.join(root,'late-process-failure'),background:true},runtimeResolver,failureRunner)
   const failed=await spec.run({updateProgress(){}}).done

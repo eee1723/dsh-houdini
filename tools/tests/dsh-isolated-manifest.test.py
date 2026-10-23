@@ -243,25 +243,76 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
             shutil.rmtree(result['runtime_environment']['path'])
     save(valid)
 
-    # Input-root copying is version-pinned even if the source changes while the
-    # worker runs; that finding must not hide an independent execution error.
+    # Input-root copying is version-pinned even if a source changes while the
+    # worker runs. Original-source observations never replace execution facts.
     nested.write_text(json.dumps(combined),encoding='utf-8')
     snapshot_bytes=(root/'saved.hip').read_bytes()
-    directory=root/'changed-source'
-    def fake_changed_source(command, **kwargs):
-        request=runner.read_json(Path(command[-1]))
-        assert [row['file'] for row in request['inputs']]==['saved.hip','build.py']
+    for mode in ('success','failed','deleted','unreadable'):
+        (root/'saved.hip').write_bytes(snapshot_bytes)
+        directory=root/('source-'+mode)
+        def fake_changed_source(command, **kwargs):
+            request=runner.read_json(Path(command[-1]));runtime='e'*32
+            assert [row['file'] for row in request['inputs']]==['saved.hip','build.py']
+            assert (directory/'inputs/saved.hip').read_bytes()==snapshot_bytes
+            assert (directory/'inputs/build.py').read_bytes()==(root/'build.py').read_bytes()
+            if mode=='deleted':(root/'saved.hip').unlink()
+            else:(root/'saved.hip').write_bytes(b'new source version during execution')
+            result={'run_id':request['run_id'],'ok':mode!='failed','phase':'completed',
+                    'runtime':{'runtime_id':runtime},'checks':[],
+                    'snapshot':{'sha256':request['inputs'][0]['sha256'],
+                                'path':str(directory/'inputs/saved.hip')},
+                    'builder':{'ok':mode!='failed','execution':{'runtime_id':runtime}}}
+            if mode=='failed':result.update(error=original_error)
+            runner.write_json(directory/'worker-result.json',result)
+            return {'status':'failed' if mode=='failed' else 'completed','returncode':1 if mode=='failed' else 0,
+                    'started':True,'released':True,'tree_reaped':True,'output':''}
+        original_digest=runner.digest
+        def unreadable_source(path):
+            if Path(path)==root/'saved.hip' and (directory/'worker-result.json').exists():
+                raise PermissionError('source read unavailable after execution')
+            return original_digest(path)
+        with patch.object(limits,'run_gated_worker',side_effect=fake_changed_source):
+            if mode=='unreadable':
+                with patch.object(runner,'digest',side_effect=unreadable_source):
+                    changed=runner.check(nested,Path(sys.executable),directory,trusted=True)
+            else:changed=runner.check(nested,Path(sys.executable),directory,trusted=True)
+        assert changed['ok'] is (mode!='failed'),changed
+        observation=changed['input_observations'][0]
+        assert observation['before_sha256']==original_digest(directory/'inputs/saved.hip')
+        assert observation['source_path']==str(root/'saved.hip')
+        assert changed['inputs_unchanged'] is (None if mode in ('deleted','unreadable') else False)
+        if mode in ('deleted','unreadable'):
+            assert observation['status']=='unavailable' and observation['after_sha256'] is None and observation['error']
+        else:
+            assert observation['status']=='changed' and observation['after_sha256']==original_digest(root/'saved.hip')
+        if mode=='failed':assert changed['error']==original_error
+        else:assert not changed.get('error'),changed
         assert (directory/'inputs/saved.hip').read_bytes()==snapshot_bytes
-        assert (directory/'inputs/build.py').read_bytes()==(root/'build.py').read_bytes()
-        (root/'saved.hip').write_bytes(b'new source version during execution')
-        runner.write_json(directory/'worker-result.json',{'run_id':request['run_id'],'ok':False,
-            'phase':'builder','error':original_error,'checks':[],'builder':{'ok':False,'error':original_error}})
-        return {'status':'failed','returncode':1,'started':True,'released':True,'tree_reaped':True,'output':''}
-    with patch.object(limits,'run_gated_worker',side_effect=fake_changed_source):
-        changed=runner.check(nested,Path(sys.executable),directory,trusted=True)
-    assert not changed['ok'] and not changed['inputs_unchanged']
-    assert changed['error']==original_error and changed['input_check_error']
-    assert (directory/'inputs/saved.hip').read_bytes()==snapshot_bytes
+        state=runner.status(directory)
+        assert state['input_observations']==changed['input_observations'] and state['inputs_unchanged']==changed['inputs_unchanged']
+
+    # Staging integrity still fails before a worker can consume altered bytes.
+    (root/'saved.hip').write_bytes(snapshot_bytes)
+    original_copy=runner.shutil.copy2
+    def corrupt_copy(source,target):
+        original_copy(source,target)
+        Path(target).write_bytes(b'corrupted during staging')
+    with patch.object(runner.shutil,'copy2',side_effect=corrupt_copy), \
+         patch.object(limits,'run_gated_worker',side_effect=AssertionError('worker must not be started')):
+        corrupted=runner.check(nested,Path(sys.executable),root/'corrupt-staging',trusted=True)
+    assert not corrupted['ok'] and 'input changed during staging' in corrupted['error'],corrupted
+    def second_copy_failed(source,target):
+        if Path(target).name=='build.py':raise OSError('second source staging failed')
+        return original_copy(source,target)
+    with patch.object(runner.shutil,'copy2',side_effect=second_copy_failed), \
+         patch.object(limits,'run_gated_worker',side_effect=AssertionError('worker must not be started')):
+        partial=runner.check(nested,Path(sys.executable),root/'partial-staging',trusted=True)
+    assert not partial['ok'] and partial['error']=='second source staging failed',partial
+    assert partial['inputs_unchanged'] is None
+    assert len(partial['inputs'])==1 and len(partial['input_observations'])==2
+    pending=partial['input_observations'][1]
+    assert pending['file']=='build.py' and pending['status']=='unavailable'
+    assert pending['before_sha256'] is None and pending['after_sha256'] is None and 'not fully staged' in pending['error']
 
     package=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
     assert all(name in package['files'] for name in ('tools/isolated-houdini-check.py','tools/houdini_test_environment.py'))

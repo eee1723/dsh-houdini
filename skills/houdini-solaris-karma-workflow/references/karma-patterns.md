@@ -47,6 +47,15 @@ H22.0.368 的 shipped shelf 仍登记同名 `lop_karma_setup` / `vop_karmamtlxsu
 reader 显式读取。薄片植物的双面行为应由 MaterialX/Karma 几何或材质设置明确控制，
 不要依赖旧 Principled 的单一 toggle 名跨版本迁移。
 
+增建SOP内容、改变name或分件后，检查导入所得的实际USD路径与最终材质绑定。
+Material Library中固定枚举的Geometry Path不会因材质身份相同而自动包含新图元；新增材质身份还需对应有效USD材质。
+保留当前有效着色器，按任务选择范围清楚的规则／集合，或更新实际目标列表；材质定义与赋值可用Assign Material／Material Linker分开维护。
+需要从SOP subset身份映射时读取Custom Data的`partitionValue`，不从合法化后的prim名称反解原属性值。
+核对最终Mesh及GeomSubset的有效绑定和面覆盖；绑定关系存在、材质数量或SOP属性齐全都不单独证明全表面被正确消费。
+依据：[Material Library](https://www.sidefx.com/docs/houdini/nodes/lop/materiallibrary.html)、
+[SOP Import](https://www.sidefx.com/docs/houdini/nodes/lop/sopimport.html#parameters)、
+[Assign Material](https://www.sidefx.com/docs/houdini/nodes/lop/assignmaterial.html)。
+
 ## 3. SOP/USD 动画
 
 - SOP Import 的 Author Time Samples 控制 authoring 策略，但某次 cook 只看到一个 sample

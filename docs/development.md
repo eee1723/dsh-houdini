@@ -195,7 +195,7 @@ USD继承输出用[camera-framing](../tools/tests/dsh-camera-framing.test.py)在
 
 `houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与明确所选登记的静态安装事实，或显式HFS；登记断连不要求live健康。无登记的固定Bridge配置保留在线安装信息入口。复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
 
-验证该入口时，先核对实际文件范围、声明依赖、输入未改、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。将所选登记置为断连、健康接口设为不可用后，默认及显式安装的新worker仍应运行，read不得重新发现运行时。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
+验证该入口时，先核对实际文件范围、声明依赖、开始执行时的复制版本、builder/副本选择、成功与失败回执、原生附件、取消后自有进程清理；跨层检查必须由真实DSH Agent调用产生原生/嵌套工具结果，并确认选中任务收到同一产物。`inputs_unchanged`仅观察运行后的原来源，`input_observations`逐文件保留前后hash、改变/不可读与原错误，不覆盖执行终态。受影响的[纯入口回归](../tools/tests/dsh-isolated-manifest.test.py)核对来源变化/不可读与执行错误并存、staging损坏拒绝；[真实副本回归](../tools/tests/dsh-isolated-probe.test.py)在H21/H22核对授权保存回自产来源、并发改/删来源和载入前复制件hash检查。将所选登记置为断连、健康接口设为不可用后，默认及显式安装的新worker仍应运行，read不得重新发现运行时。独立执行结果只属于本次输入，未保存live修改、未声明依赖和当前用户GUI状态另行判断。自然团队成员自验证及主作者接入的效果，不能由固定脚本夹具通过外推。
 
 直接入口为[Host适配](../tools/tests/isolated-execution.test.mjs)、[无输出探针](../tools/tests/dsh-isolated-probe.test.py)及[真实团队循环](../tools/tests/dsh-isolated-tool-loop.test.py)。团队循环用`--runtime-cache <精确DSH> --hython <目标hython>`启动独立Host和原生队友，覆盖预检/构建错误、真实Karma图、原生及PTC读图、DSH作业取消和同源报告；规划模型由本地夹具控制，不证明语义判断或自然采用。Windows入口复用无包身份测试CLI；外层受限令牌不支持再次创建DSH沙箱时，测试驱动需从正常桌面令牌运行，DSH内部仍保持workspace-write，不通过扩大模型权限证明默认路径。
 

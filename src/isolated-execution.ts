@@ -238,8 +238,12 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
           status:value.report?.worker?.status==='cancelled'||value.report?.worker?.status==='cancelled_before_start'?'killed':value.ok===true?'completed':'failed',
           result:JSON.stringify({run_directory:output.local,report_path:path.join(output.local,'report.json'),
             ok:value.ok??false,error:value.process?.error??value.report?.error??value.error??(value.process?.exit_code!==0?'Checker exit code: '+value.process?.exit_code:null),
+            inputs_unchanged:value.report?.inputs_unchanged??null,
+            input_observations:value.report?.input_observations?.filter((row:any)=>row.status!=='unchanged'),
             next_action:value.preflight?'Input was rejected before a run report was created. Correct the stated preflight error before a new run.':
-              'Use houdini_isolated(operation="read", output_dir=...) for full results and native images.'}),
+              'Use houdini_isolated(operation="read", output_dir=...) for full results and native images. '
+                +(value.report?.inputs_unchanged===false||value.report?.inputs_unchanged===null
+                  ? 'Original input sources changed or could not be observed; read input_observations. Any execution result concerns the declared staged inputs; external effects are not restored.' : '')}),
         }),error=>({status:'failed',detail:String(error)}))
         job.updateProgress('独立 hython 执行中')
         return {done,cancel:()=>controller.abort()}

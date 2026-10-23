@@ -31,7 +31,8 @@ tab_apply('/stage','lop_karma_setup')
 settings=hou.node('/stage/karmarendersettings')
 rop=hou.node('/stage/usdrender_rop1')
 connect(imp,settings)
-set_parms(settings,{'camera':'/team_camera','pathtracedsamples':2,'engine':'cpu'})
+set_parms(settings,{'camera':'/team_camera','pathtracedsamples':2,'engine':'cpu',
+                    'convergence_mode':'Path Traced','res_mode':'autoheight','resolutionx':64})
 set_parms(rop,{'husk_enable_headlight':1,'husk_headlight':'distant'})
 product=tab_create('/stage','pythonscript',name='product')
 connect(settings,product)
@@ -49,7 +50,7 @@ export function apply(ctx){
   const {workspace,output,hfs,hython,python}=config
   const checks=[],requests=[],sessions=new Set(),sessionRefs=new Map(),runtimeReads=[],images=[],runs={}
   let failure,childId,childStage=0,preflightStage=0,polls=0,childDone=false,leadId,jobId,nativeImage,ptcImage
-  let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult
+  let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult,sourceJob,sourceRun,sourceBefore
   let liveOffline=false
   const record={schema:1,executor_id:'b'.repeat(32),registration_id:'c'.repeat(32),runtime_id:'a'.repeat(32),
     installation:config.root,bridge_url:'http://127.0.0.1:'+config.bridgePort,houdini_version:config.houdiniVersion,
@@ -91,6 +92,14 @@ export function apply(ctx){
   const setup=path.join(fixture,'setup.py'),hipSetup=path.join(fixture,'hip-setup.json')
   fs.writeFileSync(setup,"n=hou.node('/obj/team_box/OUT')\nset_parms(n,{'sizex':2})\n__result__={'width':float(n.geometry().boundingBox().sizevec()[0]),'owner':node_provenance(n)['runtime_owner']}\n")
   fs.writeFileSync(hipSetup,JSON.stringify({input_root:'..',hip:'native/published.hip',script:'fixtures/setup.py',
+    checks:[{id:'cook',kind:'cook',node:'/obj/team_box/OUT',frame:1,expect:{points:8,primitives:6}}]}))
+  const sourceSave=path.join(fixture,'source-save.json')
+  const sourcePath=path.join(workspace,'native','published.hip').replaceAll('\\','/')
+  fs.writeFileSync(path.join(fixture,'source-save.py'),
+    "n=hou.node('/obj/team_box/OUT')\nset_parms(n,{'sizex':3})\n"+
+    'saved=scene_save_as('+JSON.stringify(sourcePath)+",expected_current_path=scene_info()['hip_path'],overwrite=True,reason='Update this integration task-owned saved output; user fixture authorizes replacement')\n"+
+    "__result__={'width':float(n.geometry().boundingBox().sizevec()[0]),'saved':saved}\n")
+  fs.writeFileSync(sourceSave,JSON.stringify({input_root:'..',hip:'native/published.hip',script:'fixtures/source-save.py',
     checks:[{id:'cook',kind:'cook',node:'/obj/team_box/OUT',frame:1,expect:{points:8,primitives:6}}]}))
   const directory=name=>path.join(workspace,name)
   const args=(manifest,name,background=false)=>({operation:'run',manifest,output_dir:directory(name),timeout_seconds:120,memory_mb:4096,background})
@@ -144,7 +153,7 @@ export function apply(ctx){
         const own=ctx.sessions.get(options.sessionId),isChild=Boolean(own.header.parentSession)
         requests.push({sessionId:options.sessionId,parent:own.header.parentSession??null,stage:isChild?childStage:'lead',tools:options.tools.map(t=>t.name)})
         fs.writeFileSync(output+'.progress.json',JSON.stringify(evidence(),null,2))
-        assert(requests.length<35,'scripted integration must converge')
+        assert(requests.length<45,'scripted integration must converge')
         const emit=(id,name,value)=>{assert(options.tools.some(t=>t.name===name),'actual presentation must expose '+name);return tool(id,name,value)}
         if(!isChild){
           leadId=options.sessionId
@@ -296,6 +305,48 @@ export function apply(ctx){
             builder_details_sha256:runs.native.builder.details.sha256}
           checks.push('PTC reads the exact default run without health/HOM work and preserves canonical facts, attachment scope and model-facing measurements')
           childStage++;yield*emit('child-report','send_message',{target:'lead',message:'ISOLATED_TOOL_CHILD_VERIFIED: actual builder error, native/PTC Karma images, cancellation, HIP+setup/default allocation/cleaned runtime and source-preserving PTC read passed. Semantic image quality remains unverified.\n'+JSON.stringify(peerResult)});return
+        }
+        if(childStage===12){
+          sourceBefore=digest(fs.readFileSync(sourcePath))
+          childStage++;yield*emit('child-source-save','houdini_isolated',args(sourceSave,'source-save',true));return
+        }
+        if(childStage===13){
+          const submitted=native(childId,'child-source-save');sourceJob=submitted?.job_id;sourceRun=submitted?.run_directory
+          assert(sourceJob&&sourceRun,'source save must enter the actual DSH job lifecycle')
+          childStage++;presentation.after('child-source-job-end','run_code')
+          yield*emit('child-source-job-end','job_output',{job_id:sourceJob,wait:true,timeout_ms:20000});return
+        }
+        if(childStage===14){
+          const job=ctx.jobs.get(sourceJob,childId)
+          assert.equal(job.status,'completed','authorized source replacement cannot turn a successful copied-input execution into a failed job')
+          const received=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-source-job-end')
+          const visible=(received?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
+          assert.match(visible,/"inputs_unchanged"\s*:\s*false/,'the actual model-facing job result must expose changed source facts')
+          assert.match(visible,/"status"\s*:\s*"changed"/)
+          assert(visible.includes(sourceBefore),'job summary retains the input version, not just a completed label')
+          childStage++;presentation.after('child-source-read','send_message')
+          yield*emit('child-source-read','run_code',{code:'return await tools.houdini_isolated('+JSON.stringify({operation:'read',output_dir:sourceRun})+');',
+            description:'Read successful copied-input execution and the separate changed original source evidence'});return
+        }
+        if(childStage===15){
+          const dispatch=nested(childId,'houdini_isolated')
+          assert.equal(dispatch.data.parentCallId,'child-source-read')
+          const value=dispatch.data.meta?.canonical;assert(value)
+          const raw=readFull(value,'source-save',sourceRun)
+          assert(raw.ok&&raw.finished);assert.equal(raw.inputs_unchanged,false)
+          assert.equal(raw.result.snapshot.sha256,sourceBefore)
+          assert.equal(raw.result.builder.result.width,3)
+          const observation=raw.input_observations.find(row=>row.file==='native/published.hip')
+          assert.equal(observation.status,'changed');assert.equal(observation.before_sha256,sourceBefore)
+          assert.equal(observation.after_sha256,digest(fs.readFileSync(sourcePath)))
+          assert.equal(digest(fs.readFileSync(raw.result.snapshot.path)),sourceBefore,'the runner retains the original copied input without a caller-created scratch HIP')
+          const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-source-read')
+          const visible=(delivered?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
+          const modelValue=JSON.parse(visible.split(/\n(?=File sandbox\b)/)[0])
+          assert.deepEqual(modelValue.report.input_observations,raw.input_observations)
+          assert.equal(modelValue.report.ok,true);assert.equal(modelValue.report.inputs_unchanged,false)
+          checks.push('authorized source replacement succeeds through real DSH background job, job_output and PTC/model read while retaining exact before/after source hashes and the original copied HIP')
+          childStage++;yield*emit('child-source-report','send_message',{target:'lead',message:'Copied-input source-save evidence verified: '+JSON.stringify({run_directory:sourceRun,ok:raw.ok,inputs_unchanged:raw.inputs_unchanged,input_observations:raw.input_observations})});return
         }
         childDone=true;yield*finish('ISOLATED_TOOL_CHILD_VERIFIED');return
       }catch(error){await fail(error);throw error}
