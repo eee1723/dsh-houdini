@@ -221,7 +221,12 @@ try {
             "root = pathlib.Path(sys.argv[sys.argv.index('--root') + 1])\n"
             "(root / 'stage-invocation.json').write_text(json.dumps({'python': sys.executable, 'argv': sys.argv[1:]}), encoding='utf-8')\n", encoding="utf-8")
         staged_root = temp / "offline-managed"
-        stage_env = dict(CLEAN_BOOT_ENV, ProgramFiles=str(temp / "no-standard-houdini"))
+        # Windows names are case-insensitive, and this PowerShell host restores
+        # ProgramFiles from ProgramW6432. Replace both in this isolated fixture.
+        stage_env = {key: value for key, value in CLEAN_BOOT_ENV.items()
+                     if key.upper() not in ('PROGRAMFILES', 'PROGRAMW6432')}
+        for name in ('ProgramFiles', 'ProgramW6432'):
+            stage_env[name] = str(temp / "no-standard-houdini")
         stage_env.pop("HFS", None)
         poison = temp / "unrelated-python-modules"
         poison.mkdir()
@@ -233,7 +238,8 @@ try {
         registered_roots = json.loads(registry_probe.stdout)
         if isinstance(registered_roots, str):
             registered_roots = [registered_roots]
-        assert any(Path(invocation["python"]).resolve().is_relative_to(Path(location).resolve()) for location in registered_roots)
+        assert any(Path(invocation["python"]).resolve().is_relative_to(Path(location).resolve()) for location in registered_roots), {
+            'python': invocation['python'], 'registered_roots': registered_roots}
         assert invocation["argv"][0] == "stage" and "--directory" in invocation["argv"]
     else:
         print("Registered-Houdini offline stage not exercised: no H21/H22 installation is registered")

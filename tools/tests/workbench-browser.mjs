@@ -28,13 +28,26 @@ async function evaluate(expression) {
 try {
   let selection
   for(let attempt=0;attempt<120;attempt++) {
-    await evaluate(`(()=>{for(const button of document.querySelectorAll('button')){if(['稍后配置','以后再说'].includes(button.textContent.trim())||(document.body.innerText.includes('预览版说明')&&button.textContent.trim()==='继续'))button.click()}return true})()`)
+    await evaluate(`(()=>{for(const button of document.querySelectorAll('button')){if(['稍后配置','以后再说'].includes(button.textContent.trim())||(document.body.innerText.includes('预览版说明')&&button.textContent.trim()==='继续'))button.click()}for(const dialog of document.querySelectorAll('[role=dialog]'))if(dialog.getClientRects().length&&dialog.textContent.includes('添加 API Key'))dialog.querySelector('button[aria-label="关闭"]')?.click();return true})()`)
     selection=await evaluate('window.__dshHoudiniSelection?.()')
-    if(selection?.sessionId===sessionId)break
+    if(selection?.sessionId===sessionId&&!await evaluate(`[...document.querySelectorAll('[role=dialog]')].some(e=>e.getClientRects().length)`))break
     await new Promise(resolve=>setTimeout(resolve,100))
   }
   assert.equal(selection?.sessionId,sessionId,'actual selected DSH task must match menu activation')
   assert.equal(selection.agentPreset,'houdini')
+  if(action==='maintenance-draft') {
+    await evaluate(`(()=>{const input=[...document.querySelectorAll('[contenteditable=true]')].find(e=>e.getClientRects().length);if(!input)throw Error('composer unavailable');input.focus()})()`)
+    await call('Input.insertText',{text:'Unsent maintenance draft 中文'})
+  }
+  if(action==='maintenance-draft'||action==='maintenance-restored') {
+    let draft=''
+    for(let attempt=0;attempt<80;attempt++) {
+      draft=await evaluate(`[...document.querySelectorAll('[contenteditable=true]')].map(e=>e.textContent).join('|')`)
+      if(draft.includes('Unsent maintenance draft 中文'))break
+      await new Promise(resolve=>setTimeout(resolve,100))
+    }
+    assert(draft.includes('Unsent maintenance draft 中文'),'native DSH draft did not survive ordinary desktop restart')
+  }
   if(expectedDirectory)assert.equal(path.resolve(selection.cwd).toLowerCase(),path.resolve(expectedDirectory).toLowerCase(),
     'actual browser workspace must follow the selected project')
   assert(await evaluate(`!document.querySelector('[data-houdini-connection]')&&!Array.from(document.querySelectorAll('button')).some(button=>['检查连接','Houdini 执行端'].includes(button.textContent.trim()))`))

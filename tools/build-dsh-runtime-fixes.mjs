@@ -7,6 +7,7 @@ import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {build} from 'esbuild';
 import {runtimeFixInputs} from './runtime-fix-inputs.mjs';
+import {buildDependencyFixes} from './build-dsh-dependency-fixes.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const [sourceArg,targetArg,buildToolsArg,mode]=process.argv.slice(2);
@@ -72,6 +73,7 @@ for(const name of fs.readdirSync(path.join(buildTools,'node_modules'))){
 }
 const files={};
 try{
+ buildDependencyFixes({root,source,target,manifest,files});
  for(const pkg of manifest.hostPackages){
   const location=path.join(source,'packages',pkg.source),output=path.join(target,'node_modules/@deepseek-ai/dsh-'+pkg.name,'lib');
   const config=path.join(sourceBuild,pkg.name+'.json');

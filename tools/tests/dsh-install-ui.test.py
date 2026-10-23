@@ -419,16 +419,14 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-ui-") as temporary:
 # and restarts are mocked; Qt event delivery and the user action path are real.
 import hou
 import dsh_manager as manager
+import dsh_executor_registry as registry
 with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), create=True), \
      patch.dict(sys.modules, {"dsh_install_ui": types.ModuleType("old_bootstrap_ui")}), \
-     patch.object(manager, "_runtime_dsh_info", return_value={"online": True, "verified": True,
-                      "version": manager.dsh_runtime_compat.preferred_version(), "fixes_current": True, "note": "fixture runtime"}), \
-     patch.object(manager, "_selected_cached_dsh_version", return_value=manager.dsh_runtime_compat.preferred_version()), \
-     patch.object(manager, "_dsh_launch_override", return_value=None), \
-     patch.object(manager, "_port_open", return_value=True):
+     patch.object(registry, 'is_shared_executor', return_value=False):
     manager.show_version_manager()
     window = manager._WINDOW
-    wait_until(lambda: button(window, "刷新状态").isEnabled() and "运行环境与配套版本一致。" in labels(window))
+    wait_until(lambda: button(window, '打开工作台').isVisible())
+    assert '当前 Houdini 尚未连接工作台' in labels(window)
     window.showMinimized()
     app.processEvents()
     assert window.isMinimized()
@@ -441,6 +439,23 @@ with patch.object(hou, "qt", types.SimpleNamespace(mainWindow=lambda: parent), c
     window.close()
     app.processEvents()
     assert manager._WINDOW is None
+
+workbench_status = {'desktop': {'context': {'frontendPort': 5011, 'runtimeDir': str(output)},
+                               'runtime': {'version': '0.2.1-rc.2', 'startedAt': 'fixture startup'}},
+                    'health': {'executionContractVersion': 115, 'runtimeId': 'fixture-current-runtime'},
+                    'expected': 116, 'bridgePort': 5012}
+with patch.object(hou, 'qt', types.SimpleNamespace(mainWindow=lambda: parent), create=True), \
+     patch.object(registry, 'is_shared_executor', return_value=True), \
+     patch.object(registry, 'active_registration', return_value=types.SimpleNamespace(workbench=True)), \
+     patch.object(manager, '_workbench_runtime_status', return_value=workbench_status):
+    manager.show_version_manager()
+    window = manager._WINDOW
+    wait_until(lambda: button(window, '刷新状态').isEnabled() and any('115 → 116' in value for value in labels(window)))
+    assert '重新加载本机更新…' in visible_buttons(window)
+    assert '修复并重启运行环境…' not in visible_buttons(window)
+    assert window.grab().save(str(output / f'workbench-runtime-ui-{suffix}.png'))
+    window.close()
+    app.processEvents()
 
 import dsh_launcher as launcher
 def startup_fixture(state):

@@ -47,7 +47,8 @@
     "deployment/package-lock.json",
     "tools/runtime-fix-inputs.mjs",
     "tools/prepare-dsh-runtime.mjs",
-    "tools/build-dsh-runtime-fixes.mjs"
+    "tools/build-dsh-runtime-fixes.mjs",
+    "tools/build-dsh-dependency-fixes.mjs"
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",

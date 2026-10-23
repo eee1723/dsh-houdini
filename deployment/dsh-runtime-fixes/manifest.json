@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "native-jobs-2",
+  "revision": "native-chatgpt-1",
   "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.1-rc.2",
@@ -14,7 +14,9 @@
     "deployment/dsh-runtime-fixes/build-package-lock.json",
     "tools/runtime-fix-inputs.mjs",
     "tools/prepare-dsh-runtime.mjs",
-    "tools/build-dsh-runtime-fixes.mjs"
+    "tools/build-dsh-runtime-fixes.mjs",
+    "tools/build-dsh-dependency-fixes.mjs",
+    "deployment/dsh-runtime-fixes/pi-ai.patch"
   ],
   "hostPackages": [
     {
@@ -183,6 +185,28 @@
       "entries": [
         "index"
       ]
+    },
+    {
+      "source": "credentials/credentials",
+      "name": "credentials",
+      "entries": [
+        "index",
+        "types"
+      ]
+    },
+    {
+      "source": "credentials/credentials-local",
+      "name": "credentials-local",
+      "entries": [
+        "index"
+      ]
+    },
+    {
+      "source": "llm/llm-pi-ai",
+      "name": "llm-pi-ai",
+      "entries": [
+        "index"
+      ]
     }
   ],
   "clientPackages": [
@@ -203,5 +227,27 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "8f1d75010584499f82101d1d3318e09737402bcaef84fea350bf35f37083f2f9"
+  "patchSha256": "eae04e2789102282f5dc26e82c05e091fbf3dd4d173be35249d9e61c29f2cd2f",
+  "dependencyPatches": [
+    {
+      "id": "pi-ai",
+      "name": "@earendil-works/pi-ai",
+      "version": "1.3.0",
+      "integrity": "sha512-KaBI8x7q7sPoFUXICNGD9efHzDG+oRNwVvkA9jdIsSQWH1RjFssOlEGsbLtewUPPgCrvmz0l2KTgSLXTyj3acw==",
+      "repository": "https://github.com/earendil-works/pi.git",
+      "tag": "v1.3.0",
+      "commit": "71023aec1546d6d677a65669c5665c0927ce0dd0",
+      "source": "packages/ai",
+      "patch": "pi-ai.patch",
+      "patchSha256": "f44e676f90909d4e529f1d4a9723ca4f37afbfb4f346b14e60939e6ab7a61fab",
+      "entries": [
+        "auth/types",
+        "auth/helpers",
+        "auth/oauth/openai-chatgpt"
+      ],
+      "additionalDependencies": [
+        "jose"
+      ]
+    }
+  ]
 }

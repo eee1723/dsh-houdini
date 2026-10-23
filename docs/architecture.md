@@ -79,6 +79,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
+| [src/chatgpt-account.ts](../src/chatgpt-account.ts) | 订阅设置的薄UI适配：消费DSH原生授权、凭据描述、模型目录、配置和默认模型服务；只保留当前交互的临时展示状态，OAuth、身份验证、续期与撤销留在固定提供方，凭据不进入浏览器或模型上下文 |
 | [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作、窗口置顶与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
 | [src/workbench-workspaces.ts](../src/workbench-workspaces.ts) | 已知临时目录的空工作区登记退出；复用DSH条件删除，保留目录、文件及会话，保护活动现场和用户保留项 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
@@ -220,7 +221,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |
 | [MainMenuCommon.xml](../houdini/MainMenuCommon.xml) | Open Workspace与Version & Updates菜单；联网诊断收在版本窗口高级设置 |
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | Open Workspace进入独立工作台；维护主线程Bridge修复、模块重载与HIP目录；保留旧内嵌诊断/隔离验证入口，不作为默认打开路线 |
-| [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 版本诊断、配套DSH安装/修复、正式Release只读发现；更新等空闲，Repair显式确认强制DSH退出并交由launcher核验进程/Bridge空闲，不拉取或构建Git源码 |
+| [dsh_manager.py](../houdini/python3.11libs/dsh_manager.py) | 当前登记工作台与Houdini的真实运行诊断、同安装本机更新入口；复用工作台关闭/启动及Bridge空闲重载，安装和版本修复统一由install_ui/deployment负责 |
 | [dsh_network_diagnostics.py](../houdini/python3.11libs/dsh_network_diagnostics.py)、[原生网络探针](../houdini/python3.11libs/dsh_network_probe.mjs) | worker内复用精确DSH的系统/环境选路和抓取；只读展示来源与错误，区分新进程测试与live、搜索组件与实际搜索；不编辑代理配置 |
 | [dsh_release_policy.py](../houdini/python3.11libs/dsh_release_policy.py) | 无hou/Node的官方稳定Release元数据验证、语义版本比较和受限大小查询；工作台与版本面板共用单份内存发现结果和在途检查，仅发现，不下载/激活资产 |
 | [dsh_webview.py](../houdini/python3.11libs/dsh_webview.py) | QtWebEngine窗口、无隐藏/重建的原生窗口置顶、cookie、共享浮层材质/输入区背景兼容、页面剪贴板写入、`dsh-resource` Host语法注册与旧WebEngine先初始化时的窄URL兼容补丁；文件内容仍走Host RPC |
@@ -312,6 +313,7 @@ Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host
 | [build-release.py](../tools/build-release.py)、[finalize-release.py](../tools/finalize-release.py)、[release-sign.mjs](../tools/release-sign.mjs) | 冻结npm依赖/组装与隔离签名分开、文件/许可证清单及候选隔离；不发布Release |
 | [prepare-dsh-runtime.mjs](../tools/prepare-dsh-runtime.mjs)、[build-dsh-runtime-fixes.mjs](../tools/build-dsh-runtime-fixes.mjs)、[runtime-fix-inputs.mjs](../tools/runtime-fix-inputs.mjs)、[运行修复声明](../deployment/dsh-runtime-fixes/manifest.json) | 固定上游提交、完整补丁摘要及依赖锁；声明的inputFiles共同决定缓存身份，Node构建与Python启动核对同一份输入摘要，依赖或构建器变化须生成新缓存。记录产物摘要与许可；api-gateway维护WebSocket心跳与发送进展，排队Ping不重复堆积，传输状态不替代Houdini现场事实；Windows系统网络继承由http-proxy维护，原生PAC在专用worker解析；sandbox-windows-acl逐对象准备工作区，web-fetch-http提供实际路线，shell提供进程事实，ui-tool/Trace消费同源结果；session/persistence/workspace维护原生目录迁移，agent-loop与session-controller同步模型上下文及前端当前目录；不手改活动Host，不在Houdini插件重复实现这些通用能力 |
 | [prepare-video-runtime.py](../tools/prepare-video-runtime.py) | 源码开发的私有媒体工具准备；复用正式发行的锁定来源与SHA校验，不修改系统PATH或用户全局工具 |
+| [build-dsh-dependency-fixes.mjs](../tools/build-dsh-dependency-fixes.mjs) | 按同一运行修复声明准备固定依赖源码、核对commit/patch/npm integrity并编译限定入口；源码缓存和正式运行包共用。ChatGPT协议修复留在pi-ai提供方，不复制到插件或活动node_modules |
 | [build-video-runtime.py](../tools/build-video-runtime.py) | 发行端从固定源码与工具链构建FFmpeg/zlib/FreeType/HarfBuzz/dav1d共享库，提供CPU AV1解码与PNG；保留七份对应源码、原始许可、实际Windows对象响应文件补丁、命令、DLL依赖与文件摘要，不进入普通用户安装步骤 |
 | [prepare-managed-profile.mjs](../tools/prepare-managed-profile.mjs) | 使用锁定DSH的正式API初始化隔离profile，复制preset并绑定本Houdini的动态Bridge端口；无包管理器 |
 | [run-deployment-tests.py](../tools/run-deployment-tests.py) | 离线安装故障与H21/H22隔离矩阵；真实包RPC入口见[部署测试](../tools/tests/dsh-deployment-e2e.test.py) |

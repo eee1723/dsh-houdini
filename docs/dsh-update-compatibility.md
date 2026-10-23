@@ -20,6 +20,10 @@ Gateway心跳同时观察Pong、入站消息、等待过发送缓冲区的完整
 
 源码使用 `npm run runtime:prepare` 从受管依赖锁安装独立缓存，再从固定上游提交应用补丁、编译并记录文件摘要。构建入口为[准备器](../tools/prepare-dsh-runtime.mjs)和[编译器](../tools/build-dsh-runtime-fixes.mjs)；发行组装复用同一入口。默认启动只选择匹配修复声明的缓存，完整文件检查在启动worker执行，界面选择只读小型元数据。运行记录保留本次启动实际验证的修复身份；包版本号相同不能代替修复已加载。
 
+ChatGPT订阅沿DSH原生authorization、credentials和llm-pi-ai接入；当前固定组合补充提供方的安装身份、登录提交、账户安全描述和退出能力。插件通过已加载的`piAiAccounts`服务消费它，不从源码目录动态导入另一份同版本依赖。OAuth协议实现只维护于[pi-ai源码差异](../deployment/dsh-runtime-fixes/pi-ai.patch)，DSH接线继续在[原生差异](../deployment/dsh-runtime-fixes/fixes.patch)；固定来源、包integrity和编译范围由同一manifest声明，[依赖编译器](../tools/build-dsh-dependency-fixes.mjs)供源码缓存及正式组装共用。不能直接修改运行中的node_modules，或仅启用登录按钮却省略配套协议修复。
+
+提供方验证ID token的签名、issuer/audience、有效期、nonce及返回账户，使用已保存的client/host身份重新授权；续期与退出沿原生凭据锁，取消后的迟到登录不提交凭据。退出分别返回服务端撤销与本机清除事实，保留不含token的注册身份以便后续登录。设置界面仅消费账户白名单与授权交互，不读取或保存access/refresh token；临时授权链接和返回信息不进入模型上下文。机制依据见[OpenAI登录合同](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)与[账户和会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)。真实账户权限和网络回调仍须独立于离线协议测试验证。
+
 `web_fetch`负责网页文本，`web_download`经同一个网络提供方取得完整字节，再由DSH文件系统检查当前会话范围并原子创建新文件。它拒绝已有文件、只读/范围外目标、非成功HTTP和截断下载；图片仍须解码和实际观察。公开跨域重定向逐跳重新验证地址和路线，拒绝私网目标、URL凭据、非HTTP(S)、HTTPS降级和过长跳转；每跳实际来源、直连/代理和HTTP状态进入回执，代理凭据不进入这些诊断。传输失败保留底层错误码，不自动换路。
 
 Windows工作区授权逐对象核对已有普通内容，补齐能力权限和Low安全等级；使用固定对象句柄读写原生安全描述符，避免目录级自动传播影响外部硬链接。已有链接、多硬链接文件、受保护权限、其他所有者及显式非Low标签保持边界；临时标签写权限不继承，失败恢复原权限，撤销按对象移除对应能力。新内容继承所在目录，已初始化工作区的授权由Host缓存；运行中从外部搬入且保留原权限的内容需重新准备，不监控整盘文件事件。

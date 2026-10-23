@@ -94,8 +94,19 @@ def _publish_json(temp: Path, path: Path):
 
 
 def read_json(path: Path, limit=8 * 1024**2):
-    with _json_snapshot(path) as handle:
-        raw = handle.read(limit + 1)
+    # ReplaceFileW can briefly reject a new reader (or hide the destination)
+    # even when existing snapshots share deletion. Bound only these observed
+    # publication races; missing files and real errors still propagate.
+    deadline = time.monotonic() + .05
+    while True:
+        try:
+            with _json_snapshot(path) as handle:
+                raw = handle.read(limit + 1)
+            break
+        except OSError as error:
+            if os.name != 'nt' or getattr(error, 'winerror', None) not in (2, 32, 33) or time.monotonic() >= deadline:
+                raise
+            time.sleep(.002)
     if len(raw) > limit:
         raise ValueError(f"JSON too large: {path.name}")
     return json.loads(raw)

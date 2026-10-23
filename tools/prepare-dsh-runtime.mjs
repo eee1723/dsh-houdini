@@ -16,7 +16,8 @@ const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex'
 if(fs.existsSync(marker)){
  const data=JSON.parse(fs.readFileSync(marker,'utf8'));
  const required=manifest.hostPackages.flatMap(p=>[...p.entries.map(e=>`node_modules/@deepseek-ai/dsh-${p.name}/lib/${e}.js`),...(p.assets??[]).map(a=>`node_modules/@deepseek-ai/dsh-${p.name}/${a}`)])
-  .concat(manifest.clientPackages.map(pkg=>`node_modules/@deepseek-ai/dsh-${pkg.name}/lib/client.js`));
+  .concat(manifest.clientPackages.map(pkg=>`node_modules/@deepseek-ai/dsh-${pkg.name}/lib/client.js`))
+  .concat((manifest.dependencyPatches??[]).flatMap(fix=>[`node_modules/${fix.name}/package.json`,...fix.entries.flatMap(entry=>['.js','.js.map','.d.ts'].map(suffix=>`node_modules/${fix.name}/dist/${entry}${suffix}`))]));
  if(data.patchSha256!==patchSha256||data.revision!==manifest.revision||data.dshVersion!==manifest.dshVersion||JSON.stringify(data.inputs)!==JSON.stringify(inputs)||!data.files||!required.every(name=>name in data.files)||!Object.entries(data.files).every(([name,value])=>fs.existsSync(path.join(target,name))&&hash(path.join(target,name))===value))throw Error('Prepared runtime integrity mismatch; preserve it and build in a new revision directory');
  console.log('Verified prepared runtime:',path.join(target,'node_modules/@deepseek-ai/dsh/lib/bin.js'));process.exit(0);
 }

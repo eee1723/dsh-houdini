@@ -246,7 +246,11 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 ## 运行与发行
 
-Host/Bridge/helper 变更通过 `Version & Updates → 高级设置 → 运行诊断 → 修复并重启运行环境` 加载；package/menu/WebView 变更需要完整重开 Houdini。源码构建通过与 live 已加载分别判断；只有实际版本、握手和用户路径验证后才声明运行更新生效。重启用户进程和修改用户 HIP 需要当前授权。
+同安装的Host/Bridge/helper变更通过 `Version & Updates → 高级设置 → 运行诊断 → 重新加载本机更新` 加载：先检查DSH原生活动与持久化状态，正常关闭旧Host并确认退出，再核对Bridge队列空闲、重载当前连接并启动新工作台；关闭时再次核对活动状态。旧实例不支持关闭协议时提示手动正常退出，不强杀。跨安装包及package/menu/Houdini内WebView变更需要完整重开对应Houdini。源码构建、磁盘预期、接口匹配与实际进程加载分别判断；只有实际Host代际、Bridge回执和用户路径验证后才声明运行更新生效。重启用户进程和修改用户HIP需要当前授权。
+
+[订阅控制器回归](../tools/tests/chatgpt-account.test.mjs)检查原生授权交互、取消竞争、配置冲突、凭据未知、精确模型和连接探针边界；[浏览器状态回归](../tools/tests/chatgpt-client.test.mjs)检查晚到响应、Host重连与秘密输入撤回。[实际Qt订阅界面](../tools/tests/dsh-chatgpt-ui.test.py)复用隔离DSH与H21/H22，验证设置入口、RPC消费、模型选择、失败恢复和宽窄布局；其中账号回执明确为人工夹具，不证明真实账户登录。OAuth协议的离线验证属于固定提供方运行修复；真实授权、套餐权限与签名发行安装需分别核对。
+
+[原生订阅协议](../tools/tests/dsh-chatgpt-native.mjs)以精确prepared runtime为参数，使用离线签名身份服务、真实loopback回调及原生DSH凭据/授权/模型适配器核对验签、注册复用、刷新、退出与取消竞争，不请求真实账户或推理。[实际订阅组合](../tools/tests/dsh-chatgpt-composition.test.py)通过`--runtime-cache`启动隔离Host和源插件，从认证RPC验证当前Host服务、状态查询无写入、原生设置及默认模型保存、指定记录退出和其他凭据保持；synthetic grant不能当作正式授权。原生输入行缩放的测量由DSH按下一动画帧合并，回归同时核对dispose取消和H21/H22实际Qt，不能全局忽略ResizeObserver错误。
 
 ### 发行操作与信任配置
 

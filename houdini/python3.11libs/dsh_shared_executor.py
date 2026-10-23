@@ -101,8 +101,9 @@ def repair_registration():
     facts = prepare_registration(workbench=registration.workbench, workspace=_hip_dir())
     if registration.executor_id != facts['executor_id']:
         raise RuntimeError('共享执行端身份已变化，无法接管此进程。')
-    if registration._task is not None:
-        registration.require_writer(registration._task, facts['hip'])
+    # This native maintenance action changes no scene nodes. A stale task/HIP
+    # reservation must not prevent reloading the user's current connection;
+    # scene authorship is checked again by every subsequent mutation.
     restart_bridge(port=facts['port'])
     return registration.root, prepare_registration(workbench=registration.workbench, workspace=_hip_dir())
 

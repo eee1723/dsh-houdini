@@ -159,6 +159,102 @@ index f1179cf32b..e1510be3f4 100644
            {renderSlot('conversation.session.header.corner', {})}
          </div>
        </div>
+diff --git a/packages/client/ui-conversation/src/client/skeleton/control-row-layout.ts b/packages/client/ui-conversation/src/client/skeleton/control-row-layout.ts
+index 7196e79e50..eba950b20b 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/control-row-layout.ts
++++ b/packages/client/ui-conversation/src/client/skeleton/control-row-layout.ts
+@@ -3,7 +3,8 @@
+ /**
+  * Collapse the model text only when the expanded controls cannot share a line.
+  * The model seat consumes the row's inherited display variables; wrapping remains
+- * available when even the icon cannot fit. Each notification is measured synchronously.
++ * available when even the icon cannot fit. Resize measurements run in the next
++ * animation frame, outside the delivery that observes the controls they change.
+  * @param row - Composer control row with its leading and trailing groups.
+  * @returns Disconnect the layout observers and font listener.
+  */
+@@ -20,7 +21,13 @@ export function observeControlRow(row: HTMLElement): () => void {
+       + Math.max(0, widths.length - 1) * parseFloat(style.columnGap)
+     row.toggleAttribute('data-model-compact', needed > available)
+   }
+-  const resize = new ResizeObserver(measure)
++  let frame: number | undefined
++  const resize = new ResizeObserver(() => {
++    frame ??= requestAnimationFrame(() => {
++      frame = undefined
++      measure()
++    })
++  })
+   resize.observe(row)
+   for (const child of row.children) resize.observe(child)
+   const mutation = new MutationObserver(measure)
+@@ -33,6 +40,7 @@ export function observeControlRow(row: HTMLElement): () => void {
+   measure()
+   return () => {
+     resize.disconnect()
++    if (frame !== undefined) cancelAnimationFrame(frame)
+     mutation.disconnect()
+     fonts.removeEventListener('loadingdone', measure)
+   }
+diff --git a/packages/client/ui-conversation/tests/control-row-layout.client.spec.ts b/packages/client/ui-conversation/tests/control-row-layout.client.spec.ts
+index 53acce0c35..b316a0338e 100644
+--- a/packages/client/ui-conversation/tests/control-row-layout.client.spec.ts
++++ b/packages/client/ui-conversation/tests/control-row-layout.client.spec.ts
+@@ -23,6 +23,18 @@ function fixture() {
+     row.hasAttribute('data-model-compact') ? 70 : sizes.trailing, 28)
+   const observe = vi.fn()
+   const disconnect = vi.fn()
++  const frames = new Map<number, FrameRequestCallback>()
++  let frameId = 0
++  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
++    frames.set(++frameId, callback)
++    return frameId
++  })
++  vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id) })
++  const flushFrames = (): void => {
++    const pending = [...frames.values()]
++    frames.clear()
++    for (const callback of pending) callback(0)
++  }
+   let resized: () => void = () => {}
+   vi.stubGlobal('ResizeObserver', class {
+     constructor(callback: () => void) { resized = callback }
+@@ -31,10 +43,34 @@ function fixture() {
+   })
+   const dispose = observeControlRow(row)
+   onTestFinished(dispose)
+-  return { row, tools, label, sizes, observe, disconnect, dispose, resize: () => { resized() } }
++  return { row, tools, label, sizes, observe, disconnect, dispose, frames, flushFrames,
++    notifyResize: () => { resized() }, resize: () => { resized(); flushFrames() } }
+ }
+ 
+ describe('composer control row measurement', () => {
++  it('does not resize observed controls inside delivery and coalesces a burst', () => {
++    const { row, sizes, frames, notifyResize, flushFrames } = fixture()
++    expect(row.hasAttribute('data-model-compact')).toBe(true)
++    sizes.row = 428
++    notifyResize()
++    notifyResize()
++    expect(row.hasAttribute('data-model-compact')).toBe(true)
++    expect(frames.size).toBe(1)
++    flushFrames()
++    expect(row.hasAttribute('data-model-compact')).toBe(false)
++  })
++
++  it('cancels a pending resize measurement on disposal', () => {
++    const { row, sizes, frames, notifyResize, flushFrames, dispose } = fixture()
++    sizes.row = 428
++    notifyResize()
++    expect(frames.size).toBe(1)
++    dispose()
++    expect(frames.size).toBe(0)
++    flushFrames()
++    expect(row.hasAttribute('data-model-compact')).toBe(true)
++  })
++
+   it('collapses on expanded demand and remains stable across resize deliveries', () => {
+     const { row, sizes, observe, resize } = fixture()
+     expect(observe).toHaveBeenCalledTimes(3)
 diff --git a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx b/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
 index 694ce16446..3306070b23 100644
 --- a/packages/client/ui-tool/src/client/tool/components/ToolRow.tsx
@@ -640,6 +736,68 @@ index e0931f2240..24d905d25c 100644
    readonly cwd?: string
    /** The session this one was forked from (seed lineage), if any. */
    readonly parentSession?: SessionId
+diff --git a/packages/credentials/credentials-local/src/index.ts b/packages/credentials/credentials-local/src/index.ts
+index 48ae487c6d..03b91bc40e 100644
+--- a/packages/credentials/credentials-local/src/index.ts
++++ b/packages/credentials/credentials-local/src/index.ts
+@@ -40,6 +40,7 @@ import z from '@deepseek-ai/schemastery'
+ import { watch as chokidarWatch } from 'chokidar'
+ import { mkdir, readFile, stat } from 'node:fs/promises'
+ import { dirname, join, resolve } from 'node:path'
++import { isDeepStrictEqual } from 'node:util'
+ import { Document, isMap, isScalar, parseDocument, type YAMLError } from 'yaml'
+ import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+ import { canonicalizeWatchPath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+@@ -711,20 +712,30 @@ export class LocalCredentialProvider extends CredentialProvider {
+   }
+ 
+   override async deleteRecord(key: CredentialKey): Promise<void> {
++    await this.removeRecord(key)
++  }
++
++  override deleteRecordIfCurrent(key: CredentialKey, expected: CredentialRecord): Promise<boolean> {
++    return this.removeRecord(key, expected)
++  }
++
++  private async removeRecord(key: CredentialKey, expected?: CredentialRecord): Promise<boolean> {
+     if (this.isClosed()) throw new Error(`credentials-local is disposed: cannot delete "${key}"`)
+-    await this.enqueue(async () => {
++    return this.enqueue(async () => {
+       if (this.isClosed()) {
+         throw new Error(`credentials-local was disposed before the queued "${key}" delete ran`)
+       }
+       await mkdir(dirname(this.spec.filename), { recursive: true, mode: 0o700 })
+-      await withFileLock(this.spec.filename, async () => {
++      return withFileLock(this.spec.filename, async () => {
+         await this.reconcileFromDisk()
+-        if (!this.records.has(key)) return
++        if (!this.records.has(key)) return true
++        if (expected !== undefined && !isDeepStrictEqual(this.records.get(key), expected)) return false
+         const nextText = renderRecord(this.text, key, undefined)
+         await writeFileAtomic(this.spec.filename, nextText, { mode: 0o600, dirMode: 0o700 })
+         this.text = nextText
+         this.records.delete(key)
+         this.notifyRecordUpdated(key)
++        return true
+       }, { waitMs: DOCUMENT_LOCK_WAIT_MS })
+     })
+   }
+diff --git a/packages/credentials/credentials/src/index.ts b/packages/credentials/credentials/src/index.ts
+index 2e0b56931a..c3025c2d30 100644
+--- a/packages/credentials/credentials/src/index.ts
++++ b/packages/credentials/credentials/src/index.ts
+@@ -255,6 +255,11 @@ export abstract class CredentialProvider extends Service {
+    */
+   abstract deleteRecord(key: CredentialKey): Promise<void>
+ 
++  /** Atomically remove only the record observed by a sign-out operation. */
++  async deleteRecordIfCurrent(_key: CredentialKey, _expected: CredentialRecord): Promise<boolean> {
++    throw new Error('This credential store does not support conditional record deletion')
++  }
++
+   /**
+    * Fan `credentials/reference-updated` out with contained listener failures: every
+    * listener runs, and a sync throw or async rejection is logged without
 diff --git a/packages/fs/fs-local/src/fsio.ts b/packages/fs/fs-local/src/fsio.ts
 index a9d97fd6ac..6e76c2dc50 100644
 --- a/packages/fs/fs-local/src/fsio.ts
@@ -770,6 +928,489 @@ index 3cba9475a6..c21d23309f 100644
        render: (_args, value) => {
          const body = value.text.length > 0 ? value.text : '(no new output)'
          const separator = body.endsWith('\n') ? '' : '\n'
+diff --git a/packages/llm/llm-pi-ai/README.md b/packages/llm/llm-pi-ai/README.md
+index af66591776..1a45d5432e 100644
+--- a/packages/llm/llm-pi-ai/README.md
++++ b/packages/llm/llm-pi-ai/README.md
+@@ -92,7 +92,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
+ 
+ ### Sign in to a provider
+ 
+-A provider pi-ai ships a login for can be signed into through the harness authorization seam: the flow offers OAuth or an interactive key prompt (a key is typed into pi-ai's own login prompt, not into the settings form), and the resulting credential is stored in the harness credential store at `llm-pi-ai/<provider id>`. The stored sign-in authenticates its route beneath any `apiKeyEnv` override and refreshes itself under the store's cross-process lock; signing out deletes the stored record. A hand-declared route key outside the record grammar — a lowercase hyphenated identifier — cannot be signed into, because a record write for it refuses with `LlmError('UNSTORABLE_PROVIDER_ID')`; such a route authenticates through `apiKeyEnv` or ambient provider settings instead.
++A provider pi-ai ships a login for can be signed into through the harness authorization seam: the flow offers OAuth or an interactive key prompt (a key is typed into pi-ai's own login prompt, not into the settings form), and the resulting credential is stored in the harness credential store at `llm-pi-ai/<provider id>`. The stored sign-in authenticates its route beneath any `apiKeyEnv` override and refreshes itself under the store's cross-process lock. `ctx.piAiAccounts.disconnect(provider)` cancels pending authorization, attempts the provider's remote revocation, retains its token-free registration, and conditionally deletes only the account record it observed; the result distinguishes unconfirmed revocation and a concurrent replacement. A hand-declared route key outside the record grammar — a lowercase hyphenated identifier — cannot be signed into, because a record write for it refuses with `LlmError('UNSTORABLE_PROVIDER_ID')`; such a route authenticates through `apiKeyEnv` or ambient provider settings instead.
+ 
+ ### Resolve the model catalog
+ 
+@@ -241,8 +241,8 @@ Recorded response content appends to the next request and does not invalidate it
+ These limits define where the adapter stops and future work begins. They are current package constraints, not a general pi-ai comparison or a task backlog.
+ 
+ - **`maxRequestImageBytes` counts base64 image payload only** — text, tools, descriptors, and JSON structure ride outside the bound, so it must sit below the gateway's request-body cap with headroom.
+-- **A sign-in lives only in the process that started it** — an authorization attempt is not durable, so reloading the page mid-login abandons it and the human starts over. Signing out is `deleteRecord` on the stored record, which forgets it locally without telling the issuer.
+-- **OpenAI offers no ChatGPT sign-in** — pi-ai's Sign in with ChatGPT identifies the installation to OpenAI with a stable UUID the app supplies, and the harness keeps no installation ID meant for a third-party account sign-in; the `openai` route signs in with an API key.
++- **A sign-in lives only in the process that started it** — an authorization attempt is not durable, so reloading the page mid-login abandons it and the human starts over. Account surfaces call `piAiAccounts.disconnect`, not a direct record deletion that skips revocation and concurrency checks. A provider without a revocation implementation explicitly returns `not-supported`.
++- **Account surfaces consume the loaded adapter** — `ctx.piAiAccounts` exposes `ensureInstallationId(provider, { previousId }?)`, `describe(provider)` and `disconnect(provider)`. It binds to this Host's adapter and native authorization/credential services; a plugin must not import a different same-version adapter copy from its own dependency directory. The OpenAI flow uses one persistent installation UUID, retains the issued client/account mapping after sign-out, and leaves protocol verification, refresh and revocation to the paired pi-ai implementation. Account descriptions never refresh tokens or send HTTP; an old grant without a verified identity displays no account identity. Disconnect distinguishes confirmed remote revocation from unconfirmed revocation and never deletes a concurrent replacement. Explicit legacy identity adoption fills an absent native identity only and does not discover application-specific files. Catalog availability is not account entitlement; successful inference verifies one request.
+ - **Provider-native discovery answers through this plugin's ambient context** — a route naming no credential defers to the catalog provider's own resolution, which asks for environment values (`AZURE_OPENAI_API_KEY`, `AWS_PROFILE`, and each provider's own set) and for local credential files. Both questions are answered here: the credential seam is consulted before the process environment, and file existence is checked against the host process's filesystem with `~` expanded. What it cannot do is *read* a credential file's contents — a provider that parses `~/.aws/credentials` itself does so directly, outside the seam.
+ - **Reset restores inherited configuration** — resetting a route supplied by a lower profile layer restores that route.
+ - **Complete Config replacement can remove inherited dictionary entries** — a field reset instead restores its inherited value.
+diff --git a/packages/llm/llm-pi-ai/README.zh.md b/packages/llm/llm-pi-ai/README.zh.md
+index b5e79c14a2..97b482b8c6 100644
+--- a/packages/llm/llm-pi-ai/README.zh.md
++++ b/packages/llm/llm-pi-ai/README.zh.md
+@@ -92,7 +92,7 @@ kind: "package-reference"
+ 
+ ### 登录提供方
+ 
+-pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新；退出登录即删除存储记录。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。
++pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新。`ctx.piAiAccounts.disconnect(provider)` 取消待定授权、尝试提供方的远端撤销、保留不含令牌的注册信息，并仅删除本次观察到的账号记录；结果区分远端撤销未确认与并发凭据替换。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。
+ 
+ ### 解析模型目录
+ 
+@@ -241,8 +241,8 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish
+ 这些限制说明适配器在哪里停止、由未来工作接续。它们是当前包约束，不是通用 pi-ai 对比或任务积压。
+ 
+ - **`maxRequestImageBytes` 只计算 base64 图片载荷**，文本、工具、描述符与 JSON 结构在该上限之外，因此它必须留有余量地低于网关请求体上限。
+-- **登录只存在于发起它的进程中**——授权尝试不持久，因此登录中途刷新页面会放弃它，用户需要重新开始。退出登录是对已存储记录执行 `deleteRecord`，只在本地忘记它，不会告知签发方。
+-- **OpenAI 不提供 ChatGPT 登录**——pi-ai 的 Sign in with ChatGPT 用应用提供的稳定 UUID 向 OpenAI 标识安装实例，而 harness 没有用于第三方账号登录的安装 ID；`openai` 路由改用 API key 登录。
++- **登录只存在于发起它的进程中**——授权尝试不持久，因此登录中途刷新页面会放弃它，用户需要重新开始。账号界面使用 `piAiAccounts.disconnect`，不能直接删除记录跳过提供方撤销与并发检查；未提供撤销接口的提供方会明确返回 `not-supported`。
++- **账号界面消费当前已加载的适配器**——`ctx.piAiAccounts` 提供 `ensureInstallationId(provider, { previousId }?)`、`describe(provider)` 和 `disconnect(provider)`，绑定本 Host 的适配器及原生授权/凭据服务。插件不得从自己的依赖目录导入另一份同版本适配器。OpenAI 登录使用稳定安装 UUID，退出后保留已签发的客户端/账号映射；协议验证、刷新和撤销由配套 pi-ai 实现负责。账号状态查询不刷新凭据或发送 HTTP，缺少已验证身份的旧 grant 不显示账号身份。退出明确区分远端撤销已确认/未确认，且不删除并发替换的新凭据。显式迁移旧安装身份只填补尚不存在的原生身份，不发现应用专属文件。模型目录不代表账号权限，成功推理只验证当次请求。
+ - **提供方原生发现经本插件的 ambient context 回答**——不点名凭据的路由交由目录提供方自身解析，它会询问环境值（`AZURE_OPENAI_API_KEY`、`AWS_PROFILE` 及各提供方自有集合）与本地凭据文件。两个问题都在这里得到回答：凭据 seam 先于进程环境被查询，文件存在性则针对宿主进程的文件系统以 `~` 展开后检查。它做不到的是*读取*凭据文件内容——自行解析 `~/.aws/credentials` 的提供方会直接读取，不经该 seam。
+ - **重置恢复继承配置**——重置下层 profile 提供的路由会恢复该路由。
+ - **完整替换 Config 可以移除继承的字典条目**——字段重置则恢复其继承值。
+diff --git a/packages/llm/llm-pi-ai/src/accounts.ts b/packages/llm/llm-pi-ai/src/accounts.ts
+new file mode 100644
+index 0000000000..5a0ceb41b0
+--- /dev/null
++++ b/packages/llm/llm-pi-ai/src/accounts.ts
+@@ -0,0 +1,141 @@
++/** Native account projection and disconnect; provider protocols remain in pi-ai. */
++import type { Context } from '@deepseek-ai/cordis'
++import type { OAuthCredential, OAuthRegistration, LoginOptions } from '@earendil-works/pi-ai'
++import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
++import { credentialKey } from '@deepseek-ai/dsh-credentials'
++import { LlmError } from '@deepseek-ai/dsh-llm'
++import type {} from '@deepseek-ai/dsh-authorization'
++import { catalogProvider } from './catalog.ts'
++import { recordKeyFor } from './auth.ts'
++import { ensurePiAiInstallationId } from './installation.ts'
++
++const disconnects = new WeakMap<object, Set<string>>()
++const accountRequests = new WeakMap<object, Map<string, AbortController>>()
++const registrationKey = (provider: string) => credentialKey('llm-pi-ai-registration', provider)
++function grant(record: CredentialRecord | undefined): OAuthCredential | undefined {
++  if (record?.kind !== 'grant' || typeof record.payload !== 'object' || record.payload === null
++    || Array.isArray(record.payload) || Reflect.get(record.payload, 'type') !== 'oauth') return undefined
++  return record.payload as unknown as OAuthCredential
++}
++function storedRegistration(record: CredentialRecord | undefined): OAuthRegistration | undefined {
++  if (record === undefined) return undefined
++  const value = record.kind === 'grant' ? record.payload : undefined
++  if (typeof value !== 'object' || value === null || Array.isArray(value) || typeof Reflect.get(value, 'clientId') !== 'string') {
++    throw new LlmError('Saved OAuth registration is invalid; preserve it for repair', 'INVALID_REGISTRATION')
++  }
++  return value as unknown as OAuthRegistration
++}
++export function isPiAiDisconnecting(ctx: Context, provider: string): boolean {
++  return disconnects.get(ctx.root)?.has(provider) ?? false
++}
++/** Connect account sign-out to the adapter's existing stream cancellation signal. */
++export function piAiAccountSignal(ctx: Context, provider: string): AbortSignal {
++  if (isPiAiDisconnecting(ctx, provider)) throw new LlmError('This account is signing out', 'ACCOUNT_DISCONNECTING')
++  let controllers = accountRequests.get(ctx.root)
++  if (!controllers) { controllers = new Map(); accountRequests.set(ctx.root, controllers) }
++  let controller = controllers.get(provider)
++  if (!controller) { controller = new AbortController(); controllers.set(provider, controller) }
++  return controller.signal
++}
++/** Read-only account facts: no HTTP, token refresh, or credential values leave this projection. */
++export async function describePiAiAccount(ctx: Context, provider: string) {
++  const credentials = ctx.get('credentials')
++  if (credentials === undefined) throw new LlmError('Account credential store is unavailable', 'NO_CREDENTIAL_STORE')
++  const key = recordKeyFor(provider)
++  const status = await credentials.describeRecord(key)
++  const current = grant(await credentials.readRecord(key))
++  const oauth = catalogProvider(provider)?.auth.oauth
++  const registration = (current && await oauth?.registration?.(current))
++    || storedRegistration(await credentials.readRecord(registrationKey(provider)))
++  return { ...status, registrationAvailable: registration !== undefined, disconnecting: isPiAiDisconnecting(ctx, provider),
++    ...(registration?.identity ? { account: { ...registration.identity } } : {}) }
++}
++/** The selected registration stays separate from a pending login until pi-ai validates the new identity. */
++export async function piAiLoginOptions(ctx: Context, provider: string): Promise<LoginOptions | undefined> {
++  if (isPiAiDisconnecting(ctx, provider)) throw new LlmError('This account is signing out; try again after it finishes', 'ACCOUNT_DISCONNECTING')
++  if (provider !== 'openai') return undefined
++  const deviceId = await ensurePiAiInstallationId(ctx, provider)
++  const credentials = ctx.get('credentials')
++  if (!credentials) throw new LlmError('Account credential store is unavailable', 'NO_CREDENTIAL_STORE')
++  const current = grant(await credentials.readRecord(recordKeyFor(provider)))
++  const oauth = catalogProvider(provider)?.auth.oauth
++  const registration = (current && await oauth?.registration?.(current))
++    || storedRegistration(await credentials.readRecord(registrationKey(provider)))
++  return { getDeviceId: () => deviceId, agentName: 'DeepSeek Harness',
++    ...(registration ? { registration } : {}), ...(current ? { credential: current } : {}) }
++}
++/** Cancel a native authorization before deleting its grant; admitted commits settle first. */
++async function stopAuthorization(ctx: Context, provider: string): Promise<void> {
++  const authorization = ctx.get('authorization'), key = recordKeyFor(provider)
++  if (!authorization?.describe(key)?.inFlight) return
++  await new Promise<void>((resolve, reject) => {
++    const timer = setTimeout(() => { dispose(); reject(new LlmError('Authorization did not finish cancelling; credentials were preserved', 'AUTHORIZATION_BUSY')) }, 30_000)
++    const dispose = ctx.on('authorization/settled', settledKey => {
++      if (settledKey !== key) return
++      clearTimeout(timer); dispose(); resolve()
++    })
++    authorization.cancel(key)
++  })
++}
++/** Revoke the renewable session, retain only registration metadata, and clear the exact observed grant. */
++export async function disconnectPiAiAccount(ctx: Context, provider: string): Promise<{
++  revocation: 'confirmed' | 'unconfirmed' | 'not-supported'; localCleared: boolean
++}> {
++  const credentials = ctx.get('credentials'), owner = ctx.get('authorization')
++  if (!credentials || !owner) throw new LlmError('Account services are unavailable', 'NO_CREDENTIAL_STORE')
++  if ((await credentials.describeRecord(recordKeyFor(provider))).kind === 'api-key') {
++    throw new LlmError('This record is not an OAuth account; its API key was preserved', 'NOT_OAUTH_ACCOUNT')
++  }
++  let active = disconnects.get(ctx.root)
++  if (!active) { active = new Set(); disconnects.set(ctx.root, active) }
++  if (active.has(provider)) throw new LlmError('This account is already signing out', 'ACCOUNT_DISCONNECTING')
++  active.add(provider)
++  accountRequests.get(ctx.root)?.get(provider)?.abort(new DOMException('Account signed out', 'AbortError'))
++  try {
++    await stopAuthorization(ctx, provider)
++    const key = recordKeyFor(provider), oauth = catalogProvider(provider)?.auth.oauth
++    let observed: CredentialRecord | undefined, registration: OAuthRegistration | undefined
++    let revocation: 'confirmed' | 'unconfirmed' | 'not-supported' = 'not-supported'
++    // Native record lock also serializes a rotating refresh token. No other
++    // process can refresh this record while revocation uses the current token.
++    await credentials.modifyRecord(key, async record => {
++      if (record === undefined) return undefined
++      const current = grant(record)
++      if (!current) throw new LlmError('This record is not an OAuth account; its API key was preserved', 'NOT_OAUTH_ACCOUNT')
++      observed = record
++      registration = await oauth?.registration?.(current)
++      try {
++        const result = await oauth?.revoke?.(current, AbortSignal.timeout(10_000))
++        if (result !== undefined) revocation = result.confirmed ? 'confirmed' : 'unconfirmed'
++      } catch { revocation = 'unconfirmed' }
++      return undefined
++    })
++    if (!observed) return { revocation, localCleared: true }
++    if (registration) await credentials.modifyRecord(registrationKey(provider), async () => ({ kind: 'grant', payload: JSON.parse(JSON.stringify(registration)) }))
++    // A different process may have signed in after revocation released its
++    // lock. Never delete those new credentials or report them as signed out.
++    const localCleared = await credentials.deleteRecordIfCurrent(key, observed)
++    return { revocation, localCleared }
++  } finally { active.delete(provider); accountRequests.get(ctx.root)?.delete(provider) }
++}
++
++/** Account operations bound to the adapter actually loaded by this Host. */
++export interface PiAiAccounts {
++  ensureInstallationId(provider: string, options?: { previousId?: string }): Promise<string>
++  describe(provider: string): ReturnType<typeof describePiAiAccount>
++  disconnect(provider: string): ReturnType<typeof disconnectPiAiAccount>
++}
++declare module '@deepseek-ai/cordis' {
++  interface Context { piAiAccounts: PiAiAccounts }
++}
++export function providePiAiAccounts(ctx: Context): void {
++  ctx.provide('piAiAccounts', {
++    ensureInstallationId: (provider, options) => ensurePiAiInstallationId(ctx, provider, options),
++    describe: provider => describePiAiAccount(ctx, provider),
++    disconnect: provider => disconnectPiAiAccount(ctx, provider),
++  })
++  ctx.effect(() => () => {
++    for (const controller of accountRequests.get(ctx.root)?.values() ?? []) controller.abort()
++    accountRequests.delete(ctx.root)
++  }, 'pi-ai account request cancellation')
++}
+diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
+index a912fff69f..09433f90d3 100644
+--- a/packages/llm/llm-pi-ai/src/adapter.ts
++++ b/packages/llm/llm-pi-ai/src/adapter.ts
+@@ -83,6 +83,8 @@ interface PiAiSnapshot {
+ 
+ /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
+ export interface PiAiAdapterOptions {
++  /** Native account sign-out cancels active requests through the existing stream signal. */
++  accountSignal?: (provider: string) => AbortSignal
+   /** Current validated profiles by provider route; called once per operation. */
+   profiles: () => ReadonlyMap<string, ResolvedPiAiProviderProfile>
+   /**
+@@ -357,6 +359,7 @@ export class PiAiAdapter extends LlmAdapter {
+     options: GenerateOptions,
+     snapshot: PiAiSnapshot,
+   ): AsyncIterable<StreamChunk> {
++    const accountSignal = this.config.accountSignal?.(options.provider)
+     if (options.stop !== undefined) {
+       throw new LlmError('llm-pi-ai does not support GenerateOptions.stop', 'UNSUPPORTED_OPTION')
+     }
+@@ -384,9 +387,7 @@ export class PiAiAdapter extends LlmAdapter {
+     const apiKey = await this.config.resolveApiKey(options.provider, profile)
+ 
+     const consumer = new AbortController()
+-    const upstream = options.signal === undefined
+-      ? consumer.signal
+-      : AbortSignal.any([options.signal, consumer.signal])
++    const upstream = AbortSignal.any([consumer.signal, ...(options.signal ? [options.signal] : []), ...(accountSignal ? [accountSignal] : [])])
+     const streamIdleTimeoutMs = profile.streamIdleTimeoutMs
+     using watchdog = idleWatchdog(upstream, streamIdleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
+ 
+diff --git a/packages/llm/llm-pi-ai/src/auth.ts b/packages/llm/llm-pi-ai/src/auth.ts
+index 3d70de9815..7351afb4bb 100644
+--- a/packages/llm/llm-pi-ai/src/auth.ts
++++ b/packages/llm/llm-pi-ai/src/auth.ts
+@@ -19,6 +19,7 @@ import {
+ import type { CredentialKey, CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
+ import { LlmError } from '@deepseek-ai/dsh-llm'
++import type { AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+ 
+ /**
+  * The record scope every credential this adapter family stores is written
+@@ -185,6 +186,24 @@ export function credentialStoreFrom(ctx: Context): CredentialStore {
+   }
+ }
+ 
++/** Login uses the authorization seam's commit admission, including cancellation races. */
++export function loginCredentialStoreFrom(ctx: Context, session: AuthorizationSession, provider: string): CredentialStore {
++  const base = credentialStoreFrom(ctx)
++  return {
++    ...base,
++    async modify(providerId, mutate, options) {
++      if (providerId !== provider) throw new LlmError('Login attempted to change another provider credential', 'WRONG_LOGIN_PROVIDER')
++      options?.signal?.throwIfAborted()
++      session.signal.throwIfAborted()
++      const next = await mutate(await base.read(providerId))
++      options?.signal?.throwIfAborted()
++      session.signal.throwIfAborted()
++      if (next !== undefined) await session.commit(toRecord(next))
++      return next
++    },
++  }
++}
++
+ /**
+  * A pi-ai `AuthContext` over the harness credential plane and the host
+  * filesystem.
+diff --git a/packages/llm/llm-pi-ai/src/catalog.ts b/packages/llm/llm-pi-ai/src/catalog.ts
+index 6ccd0cae05..b210309574 100644
+--- a/packages/llm/llm-pi-ai/src/catalog.ts
++++ b/packages/llm/llm-pi-ai/src/catalog.ts
+@@ -287,6 +287,7 @@ const RESPONSES_COMPAT_GATE = {
+   supportsToolSearch: 'withhold',
+   supportsExplicitPromptCacheMode: 'withhold',
+   supportsMidConvoSystemMessages: 'withhold',
++  supportsMidConvoEffort: 'withhold',
+ } as const satisfies Record<keyof OpenAIResponsesCompat, CompatDisposition>
+ 
+ /** Disposition of every `AnthropicMessagesCompat` field; a drift gate like the one above. */
+diff --git a/packages/llm/llm-pi-ai/src/index.ts b/packages/llm/llm-pi-ai/src/index.ts
+index a7b00faa79..3486c6b39f 100644
+--- a/packages/llm/llm-pi-ai/src/index.ts
++++ b/packages/llm/llm-pi-ai/src/index.ts
+@@ -72,6 +72,7 @@ import type { ResolvedPiAiProviderProfile } from './config.ts'
+ import { discoverModels } from './discovery.ts'
+ import type { StoredModelDiscoveryProfile } from './discovery.ts'
+ import { registerPiAiFlows } from './login.ts'
++import { providePiAiAccounts, piAiAccountSignal } from './accounts.ts'
+ import { providerDefaultsOf } from './provider-data.ts'
+ 
+ export { PiAiAdapter } from './adapter.ts'
+@@ -89,6 +90,9 @@ export type {
+   ResolvedPiAiProviderProfile,
+ } from './config.ts'
+ export { recordKeyFor } from './auth.ts'
++export { ensurePiAiInstallationId } from './installation.ts'
++export { describePiAiAccount, disconnectPiAiAccount } from './accounts.ts'
++export type { PiAiAccounts } from './accounts.ts'
+ export { supportedProtocols } from './provider.ts'
+ 
+ export const name = 'llm-pi-ai'
+@@ -152,6 +156,7 @@ function directoryEntries(
+ 
+ /** Register one generic pi-ai adapter for all configured provider routes. */
+ export function apply(ctx: Context, config: Config): void {
++  providePiAiAccounts(ctx)
+   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
+   const settingsNs = ctx.fiber.entry?.options.id ?? NS
+   let lastRaw: ReturnType<Config['providers']['get']> | undefined
+@@ -216,6 +221,7 @@ export function apply(ctx: Context, config: Config): void {
+   const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
+   const adapter = new PiAiAdapter({
+     profiles,
++    accountSignal: provider => piAiAccountSignal(ctx, provider),
+     resolveApiKey,
+     auth,
+     resolveAttachments: () => ctx.get('attachments'),
+diff --git a/packages/llm/llm-pi-ai/src/installation.ts b/packages/llm/llm-pi-ai/src/installation.ts
+new file mode 100644
+index 0000000000..ab2a7f148c
+--- /dev/null
++++ b/packages/llm/llm-pi-ai/src/installation.ts
+@@ -0,0 +1,52 @@
++/** Stable, provider-scoped OAuth installation identity in the native credential store. */
++import { randomUUID } from 'node:crypto'
++import type { Context } from '@deepseek-ai/cordis'
++import { credentialKey } from '@deepseek-ai/dsh-credentials'
++import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
++import { LlmError } from '@deepseek-ai/dsh-llm'
++
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
++
++/** Decode only this package's installation record, never an account credential. */
++function installationId(record: CredentialRecord): string {
++  const payload = record.kind === 'grant' ? record.payload : undefined
++  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)
++    || Reflect.get(payload, 'version') !== 1 || typeof Reflect.get(payload, 'deviceId') !== 'string' || !UUID.test(Reflect.get(payload, 'deviceId') as string)) {
++    throw new LlmError('llm-pi-ai: stored OAuth installation identity is invalid; preserve it for repair', 'INVALID_INSTALLATION_ID')
++  }
++  return Reflect.get(payload, 'deviceId') as string
++}
++
++/**
++ * Reuse or create the identity a provider requires for an explicit OAuth login.
++ * The native store owns the cross-process lock. Signing out removes only the
++ * account grant; this identity survives future logins. An explicitly supplied
++ * previous identity is adopted only when no native identity exists, allowing a
++ * caller that owns a legacy format to migrate it without teaching this adapter
++ * application-specific filenames. No account credential is read or replaced.
++ */
++export async function ensurePiAiInstallationId(
++  ctx: Context,
++  provider: string,
++  options: { previousId?: string } = {},
++): Promise<string> {
++  if (options.previousId !== undefined && !UUID.test(options.previousId)) {
++    throw new LlmError('llm-pi-ai: previous OAuth installation identity is not a UUID', 'INVALID_INSTALLATION_ID')
++  }
++  const credentials = ctx.get('credentials')
++  if (credentials === undefined) throw new LlmError('llm-pi-ai: OAuth login requires the credential store', 'NO_CREDENTIAL_STORE')
++  // Separate scope: pi-ai's account enumeration must not treat this identity
++  // as another provider's OAuth credential.
++  const key = credentialKey('llm-pi-ai-installation', provider)
++  const current = await credentials.readRecord(key)
++  if (current !== undefined) return installationId(current)
++  const stored = await credentials.modifyRecord(key, async record => {
++    if (record !== undefined) {
++      installationId(record)
++      return record
++    }
++    return { kind: 'grant', payload: { version: 1, deviceId: options.previousId ?? randomUUID() } }
++  })
++  if (stored === undefined) throw new LlmError('llm-pi-ai: OAuth installation identity was not stored', 'NO_INSTALLATION_ID')
++  return installationId(stored)
++}
+diff --git a/packages/llm/llm-pi-ai/src/login.ts b/packages/llm/llm-pi-ai/src/login.ts
+index f7f055dab6..60602f44f5 100644
+--- a/packages/llm/llm-pi-ai/src/login.ts
++++ b/packages/llm/llm-pi-ai/src/login.ts
+@@ -12,25 +12,18 @@ import type { Context } from '@deepseek-ai/cordis'
+ import type { AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+ import { isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
+ import { catalogProvider, catalogProviderIds } from './catalog.ts'
+-import { recordKeyFor } from './auth.ts'
++import { recordKeyFor, loginCredentialStoreFrom } from './auth.ts'
+ import type { PiAiAuthInjection } from './adapter.ts'
+ import { createModels } from './models.ts'
+-
+-/**
+- * Catalog providers whose OAuth login this adapter does not offer. pi-ai's Sign
+- * in with ChatGPT (`openai`) identifies the installation to OpenAI with a
+- * stable UUID that the app supplies through `LoginOptions.getDeviceId`, and it
+- * refuses to start without one. The harness keeps no installation ID meant for
+- * a third-party account sign-in, so the route signs in with an API key.
+- */
+-const UNSERVED_OAUTH: ReadonlySet<string> = new Set(['openai'])
++import { piAiLoginOptions, isPiAiDisconnecting } from './accounts.ts'
++import { LlmError } from '@deepseek-ai/dsh-llm'
+ 
+ /**
+  * The login methods one catalog provider offers.
+  *
+  * A method appears only when pi-ai can actually run it: `oauth` carries a
+- * `login` that runs without app-supplied login options except for the
+- * providers in {@link UNSERVED_OAUTH}, while an api-key method has one only
++ * `login`, with this adapter supplying any required installation identity,
++ * while an api-key method has one only
+  * when the provider collects its key interactively — which every installed one
+  * currently does, so a key is typed into pi-ai's own prompt rather than into
+  * the settings form.
+@@ -39,7 +32,7 @@ const UNSERVED_OAUTH: ReadonlySet<string> = new Set(['openai'])
+  */
+ function loginMethods(provider: Provider | undefined): AuthorizationMethod[] {
+   const methods: AuthorizationMethod[] = []
+-  const oauth = provider === undefined || UNSERVED_OAUTH.has(provider.id) ? undefined : provider.auth.oauth
++  const oauth = provider?.auth.oauth
+   if (oauth !== undefined) methods.push({ id: 'oauth', label: oauth.loginLabel ?? oauth.name })
+   const apiKey = provider?.auth.apiKey
+   if (apiKey?.login !== undefined) methods.push({ id: 'api-key', label: apiKey.name })
+@@ -154,18 +147,21 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
+         // A collection of its own, holding only the provider being signed
+         // into: login is not serving requests, and the credential it produces
+         // lands in the shared store either way.
+-        const models = createModels(auth)
++        if (isPiAiDisconnecting(ctx, providerId)) throw new LlmError('This account is signing out', 'ACCOUNT_DISCONNECTING')
++        const models = createModels({ ...auth, credentials: loginCredentialStoreFrom(ctx, session, providerId) })
+         models.setProvider(provider)
+         // Total over the two ids declared above, and the seam only ever hands
+         // back one a flow declared.
+         const type: AuthType = session.method === 'oauth' ? 'oauth' : 'api_key'
++        const options = type === 'oauth' ? await piAiLoginOptions(ctx, providerId) : undefined
++        session.signal.throwIfAborted()
+         // pi-ai persists what the login returns through that same store, which
+         // is what makes it the single writer of this record.
+         await models.login(providerId, type, {
+           signal: session.signal,
+           notify: (event) => { relay(event, session) },
+           prompt: prompt => session.prompt(restate(prompt)),
+-        })
++        }, options)
+       },
+     })
+   }
+diff --git a/packages/llm/llm-pi-ai/tests/login.spec.ts b/packages/llm/llm-pi-ai/tests/login.spec.ts
+index a719bd027a..0c58c1aee7 100644
+--- a/packages/llm/llm-pi-ai/tests/login.spec.ts
++++ b/packages/llm/llm-pi-ai/tests/login.spec.ts
+@@ -97,21 +97,33 @@ describe('pi-ai login flows', () => {
+     // through its own prompt rather than leaving it to the settings form.
+     expect(offered.find(entry => entry.key === recordKeyFor('deepseek'))?.methods.map(one => one.id))
+       .toEqual(['api-key'])
+-    // pi-ai ships Sign in with ChatGPT for `openai`, which needs an
+-    // installation ID the harness does not supply; only the key login is offered.
++    // The native credential store supplies the stable installation identity
++    // required by Sign in with ChatGPT. Both authentication methods remain.
+     expect(catalogProvider('openai')?.auth.oauth?.loginLabel).toBe('Sign in with ChatGPT')
+     expect(offered.find(entry => entry.key === recordKeyFor('openai'))?.methods.map(one => one.id))
+-      .toEqual(['api-key'])
++      .toEqual(['oauth', 'api-key'])
+   })
+ 
+   it('runs the pi-ai auth type the chosen method names', async () => {
+     const ctx = await harness()
+ 
+     await attempt(ctx, () => Promise.resolve())
+-    expect(login).toHaveBeenLastCalledWith('openai-codex', 'oauth', expect.anything())
++    expect(login).toHaveBeenLastCalledWith('openai-codex', 'oauth', expect.anything(), undefined)
+ 
+     await attempt(ctx, () => Promise.resolve(), { key: recordKeyFor('anthropic'), method: 'api-key' })
+-    expect(login).toHaveBeenLastCalledWith('anthropic', 'api_key', expect.anything())
++    expect(login).toHaveBeenLastCalledWith('anthropic', 'api_key', expect.anything(), undefined)
++  })
++
++  it('passes one persistent installation identity to repeated OpenAI OAuth logins', async () => {
++    const ctx = await harness()
++    await attempt(ctx, () => Promise.resolve(), { key: recordKeyFor('openai'), method: 'oauth' })
++    const first = login.mock.lastCall?.[3] as { getDeviceId: () => string; agentName: string }
++    expect(first.getDeviceId()).toMatch(/^[0-9a-f-]{36}$/)
++    expect(first.agentName).toBe('DeepSeek Harness')
++    await attempt(ctx, () => Promise.resolve(), { key: recordKeyFor('openai'), method: 'oauth' })
++    const second = login.mock.lastCall?.[3] as typeof first
++    expect(second.getDeviceId()).toBe(first.getDeviceId())
++    expect((await credentialStoreFrom(ctx).list?.())?.map(entry => entry.providerId)).toEqual(['openai'])
+   })
+ 
+   it('commits what the login produced, where the adapter reads it back', async () => {
 diff --git a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md b/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md
 index c0d9e67312..e6df319526 100644
 --- a/packages/sandbox/sandbox-windows-acl/assets/diagnose-windows-sandbox-acl/SKILL.md

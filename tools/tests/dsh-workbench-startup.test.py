@@ -2,11 +2,13 @@
 from pathlib import Path
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import types
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +20,50 @@ from dsh_workbench import desktop_environment
 
 def worker_test(folder):
     import dsh_workbench as desktop
+    # A new bootstrap can start an older installed webview during rollback.
+    # Its strict original signature accepts no new keyword arguments; newer
+    # webviews obtain persistent storage through the same existing context.
+    observed_browser = []
+    def legacy_show(*, authenticated_url=None, frontend_url=None, standalone=False):
+        observed_browser.append((authenticated_url, frontend_url, standalone,
+                                 os.environ['DSH_HOUDINI_WORKBENCH_CONTEXT']))
+    legacy_view = types.SimpleNamespace(show_webview=legacy_show)
+    context_file = str(folder / 'new-context.json')
+    with patch.dict(sys.modules, {'dsh_webview': legacy_view}), patch.dict(os.environ):
+        assert desktop.open_browser({'contextFile': context_file}, 'http://127.0.0.1:5101',
+            types.SimpleNamespace(launch_url=lambda: 'authenticated-local-url')) is legacy_view
+    assert observed_browser == [('authenticated-local-url', 'http://127.0.0.1:5101', True, context_file)]
+    for invalid in (None, {}, {'activeConversations': 0}, {'activeConversations': False, 'durable': True},
+                    {'activeConversations': 0, 'durable': False}, {'activeConversations': 1, 'durable': True}):
+        try:
+            desktop.require_idle(invalid)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('unknown, unsaved or running work accepted for restart: ' + repr(invalid))
+    assert desktop.require_idle({'activeConversations': 0, 'durable': True})['durable']
+    port, storage = desktop.browser_origin(folder, 'installation', folder / 'home')
+    assert desktop.browser_origin(folder, 'installation', folder / 'home') == (port, storage)
+    assert desktop.browser_origin(folder, 'another-installation', folder / 'home')[1] != storage
+    assert desktop.browser_origin(folder, 'installation', folder / 'another-home')[1] != storage
+    with socket.socket() as occupied:
+        occupied.bind(('127.0.0.1', port))
+        occupied.listen()
+        try:
+            desktop.browser_origin(folder, 'installation', folder / 'home')
+        except RuntimeError as error:
+            assert '被其他程序占用' in str(error)
+        else:
+            raise AssertionError('a foreign listener was adopted or the draft origin silently changed')
+    record = {'installation': 'installation', 'pid': 77123, 'processStarted': 'original'}
+    with patch.object(desktop, 'control', side_effect=RuntimeError('still running')), \
+         patch.object(desktop, 'ensure', side_effect=AssertionError('rejected close started another Host')):
+        try:
+            desktop.close_when_idle({'installation': 'installation'}, record)
+        except RuntimeError as error:
+            assert str(error) == 'still running'
+        else:
+            raise AssertionError('active desktop restart accepted')
     dll_directory = os.add_dll_directory(str(Path(os.environ['HFS']) / 'bin'))
     from PySide6.QtCore import QCoreApplication, QThread, QTimer, Qt
     from PySide6.QtWidgets import QApplication, QLabel, QPushButton

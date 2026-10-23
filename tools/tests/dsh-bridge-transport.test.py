@@ -188,7 +188,8 @@ try:
     assert post('/exec', admission('pass', read_only='tru'))[0] == 400
     assert post('/exec', admission('pass', body_contract={'version': 0, 'hash': 'stale'}))[0] == 409
     status, error = post('/exec', admission('raise Exception("must not execute")'))
-    assert status == 500 and 'pump is unavailable' in error['error'], error
+    assert status == 200 and 'pump is unavailable' in error['error'], error
+    assert error['requestReceipt']['status'] == 'not_executed', error
 
     # The fixed UI route owns the same one-use receipt, without executing a
     # caller-supplied Python batch. An unavailable pump proves no preparation
@@ -505,4 +506,59 @@ finally:
     with b._jobs_lock:
         b._jobs.clear(); b._job_meta.clear()
 
-print('bridge transport/thread/job regressions passed')
+# A request can enter the queue between an idle observation and native stop.
+# Real HTTP handlers are non-daemon: stop must release their queue wait before
+# server_close joins them. The watchdog makes the former deadlock fail promptly.
+server = b.start(0)
+b._pump_active = True
+stopped, timed_out = threading.Event(), threading.Event()
+queued_reply, queued_error = [], []
+body = admission('raise AssertionError("queued code must never start")', read_only=True)
+def queued_client():
+    try:
+        queued_reply.append(post('/exec', body))
+    except Exception as error:
+        queued_error.append(repr(error))
+client = threading.Thread(target=queued_client)
+client.start()
+deadline = time.monotonic() + 2
+while b._work_queue.empty():
+    assert time.monotonic() < deadline, 'real HTTP request never reached the main-thread queue'
+    time.sleep(.01)
+def rescue_deadlock():
+    if not stopped.wait(2):
+        timed_out.set()
+        b._pump_active = False
+watchdog = threading.Thread(target=rescue_deadlock)
+watchdog.start()
+try:
+    with patch.object(b, 'run_code', side_effect=AssertionError('stop executed queued code')) as execution:
+        b.stop()
+        execution.assert_not_called()
+finally:
+    stopped.set()
+    watchdog.join(3)
+    client.join(3)
+assert not timed_out.is_set(), 'main-thread stop waited for an HTTP handler which was waiting for that same main thread'
+assert not client.is_alive() and not queued_error, queued_error
+assert queued_reply[0][0] == 200 and 'stopped' in queued_reply[0][1]['error'], queued_reply
+assert queued_reply[0][1]['requestReceipt']['status'] == 'not_executed', queued_reply
+assert b._request_registry.status(body['request_ref'], body['owner_session'])['status'] == 'not_executed'
+assert b._work_queue.empty() and b._request_registry.active_count() == 0
+
+# Native reload still refuses an admitted operation before it calls stop. The
+# queue-release fix is not permission to cancel live work during maintenance.
+import dsh_launcher as launcher
+late = b._request_registry.issue('late-maintenance-request')
+b._request_registry.reserve(late, 'late-maintenance-request', {'code': 'pass'})
+with patch.object(b, 'stop', side_effect=AssertionError('reload stopped admitted work')), \
+     patch.object(launcher.importlib, 'reload', side_effect=AssertionError('reload replaced active modules')):
+    try:
+        launcher.restart_bridge(port=server.server_port)
+    except RuntimeError as error:
+        assert 'arrived after preflight' in str(error), error
+    else:
+        raise AssertionError('an admitted operation did not prevent reload')
+b._request_registry.fail_before_dispatch(late, 'test finished without execution')
+
+print('bridge transport/thread/job/idle-stop regressions passed')

@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
 sys.modules.setdefault("hou", types.SimpleNamespace())
 import dsh_runtime_compat as compat
 import dsh_launcher as launcher
-import dsh_manager as manager
 
 spec = importlib.util.spec_from_file_location("install_fixture", ROOT / "houdini" / "install.py")
 installer = importlib.util.module_from_spec(spec)
@@ -56,6 +55,10 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
     names.update(f"node_modules/@deepseek-ai/dsh-{p['name']}/{asset}"
                  for p in definition['hostPackages'] for asset in p.get('assets', []))
     names.update(f"node_modules/@deepseek-ai/dsh-{item['name']}/lib/client.js" for item in definition['clientPackages'])
+    for dependency in definition.get('dependencyPatches', []):
+        names.add(f"node_modules/{dependency['name']}/package.json")
+        names.update(f"node_modules/{dependency['name']}/dist/{entry}{suffix}"
+                     for entry in dependency['entries'] for suffix in ('.js', '.js.map', '.d.ts'))
     inventory = {}
     for name in names:
         file = runtime_root / name
@@ -100,19 +103,16 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
          patch.object(launcher, "NODE", str(node)), \
          patch.object(launcher, "DSH_BIN_ENV", ""), \
          patch.object(launcher, "SHELL", True), \
-         patch.object(launcher, "DSH_SPEC", launcher.DEFAULT_DSH_SPEC), \
-         patch.object(manager, "_NPM_CACHE", str(cache)):
+         patch.object(launcher, "DSH_SPEC", launcher.DEFAULT_DSH_SPEC):
         assert installer.dsh_command_prefix() == ([str(node), str(required)], False)
         assert launcher._resolve_cached_dsh_bin() == (str(required), "cached-cli")
         assert launcher._frontend_command()[0][:2] == [str(node), str(required)]
-        assert manager._selected_cached_dsh_version() == target
         before = required.stat().st_mtime
-        manager._require_cached_dsh(target)
+        assert compat.runtime_fix_identity(required, verify_files=True)['filesVerified']
         assert required.stat().st_mtime == before
 
         with patch.object(installer, "NPM_CACHE", root / "empty"), \
-             patch.object(launcher, "NPM_CACHE", str(root / "empty")), \
-             patch.object(manager, "_NPM_CACHE", str(root / "empty")):
+             patch.object(launcher, "NPM_CACHE", str(root / "empty")):
             for select in (installer.dsh_command_prefix, launcher._frontend_command):
                 try:
                     select()
@@ -120,7 +120,6 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
                     assert "npm run runtime:prepare" in str(exc)
                 else:
                     raise AssertionError("unpatched upstream runtime was accepted for default startup")
-            assert manager._selected_cached_dsh_version() is None
 
         # Explicit developer overrides are preserved, not silently substituted.
         with patch.dict(os.environ, {"DSH_HOUDINI_DSH_SPEC": "@deepseek-ai/dsh@9.8.7"}):

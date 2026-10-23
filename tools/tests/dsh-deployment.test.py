@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zipfile
 from unittest.mock import patch
 
@@ -48,12 +50,62 @@ def json_publication_cases(folder):
     record.write_bytes(b"invalid JSON")
     rejects(lambda: d.read_json(record), "Expecting value")
     record.unlink()
-    rejects(lambda: d.read_json(record))
+    started = time.monotonic()
+    try:
+        d.read_json(record)
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError('a genuinely absent record was replaced with default state')
+    assert time.monotonic() - started < .5, 'a missing record caused an unbounded wait'
 
     if os.name != "nt":
         return
     import ctypes
     from ctypes import wintypes
+
+    # Only native publication-window errors retry, under one total deadline.
+    for code in (2, 32, 33):
+        with patch.object(d, '_json_snapshot', side_effect=[ctypes.WinError(code), io.BytesIO(json.dumps(first).encode())]), \
+             patch.object(d.time, 'sleep') as delay:
+            assert d.read_json(record) == first
+            delay.assert_called_once_with(.002)
+    denied = ctypes.WinError(5)
+    with patch.object(d, '_json_snapshot', side_effect=denied) as reads, \
+         patch.object(d.time, 'sleep', side_effect=AssertionError('permanent access denial retried')):
+        rejects(lambda: d.read_json(record))
+        reads.assert_called_once()
+    with patch.object(d, '_json_snapshot', side_effect=ctypes.WinError(32)) as reads, \
+         patch.object(d.time, 'monotonic', side_effect=[0, .01, .051]), patch.object(d.time, 'sleep') as delay:
+        rejects(lambda: d.read_json(record))
+        assert reads.call_count == 2 and delay.call_count == 1, 'retry deadline restarted or was ignored'
+
+    # Shared-delete handles alone do not cover readers which open during the
+    # actual ReplaceFileW window. Exercise both sides concurrently, retaining
+    # complete data rather than translating a transient miss to offline state.
+    concurrent = folder / 'concurrent-publication.json'
+    d.atomic_json(concurrent, {'serial': -1, 'text': first['text']})
+    done, errors = threading.Event(), []
+    def publish():
+        try:
+            for serial in range(250):
+                d.atomic_json(concurrent, {'serial': serial, 'text': first['text']})
+        except Exception as error:
+            errors.append(repr(error))
+        finally:
+            done.set()
+    writer = threading.Thread(target=publish)
+    writer.start()
+    reads = 0
+    try:
+        while not done.is_set():
+            value = d.read_json(concurrent)
+            assert -1 <= value['serial'] < 250 and value['text'] == first['text'], value
+            reads += 1
+    finally:
+        writer.join(10)
+    assert reads and not errors and not writer.is_alive(), errors
+    assert d.read_json(concurrent)['serial'] == 249
 
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]

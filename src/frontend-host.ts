@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import {desktopRequest} from './workbench-desktop.js'
 import {foldExecutorState} from './executor-identity-projection.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION} from './generated-verb-contract.js'
+import {ChatGptAccountController} from './chatgpt-account.js'
 
 export const name='dsh-houdini-frontend-host'
 
@@ -27,7 +28,33 @@ export const Config = Schema.object({
 })
 
 export class HoudiniFrontend extends TypertRemoteService {
-  constructor(ctx:Context, private readonly config:Config) {super(ctx,'houdiniFrontend')}
+  private readonly chatgpt:ChatGptAccountController
+  constructor(ctx:Context, private readonly config:Config) {
+    super(ctx,'houdiniFrontend')
+    this.chatgpt=new ChatGptAccountController(ctx)
+    ctx.effect(()=>()=>this.chatgpt.dispose())
+  }
+
+  @Remote
+  chatgptStatus(signal:AbortSignal) {return this.chatgpt.status(signal)}
+
+  @Remote
+  chatgptStart() {return this.chatgpt.start()}
+
+  @Remote
+  chatgptCancel(input:unknown) {return this.chatgpt.cancel(input)}
+
+  @Remote
+  chatgptPrompt(input:unknown) {return this.chatgpt.submitPrompt(input)}
+
+  @Remote
+  chatgptSelect(input:unknown) {return this.chatgpt.select(input)}
+
+  @Remote
+  chatgptSignout() {return this.chatgpt.signout()}
+
+  @Remote
+  chatgptProbe(input:unknown,signal:AbortSignal) {return this.chatgpt.probe(input,signal)}
 
   videoSelection() {
     return {provider:this.config.videoProvider.get(),model:this.config.videoModel.get(),

@@ -3471,6 +3471,190 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
       }
     }
 
+    // Account presentation only. Authorization, credentials and model choices
+    // remain in DSH; no token or OAuth callback is written to browser storage.
+    function createChatGptSettings(connection) {
+      var ui = require("@deepseek-ai/dsh-client-ui-primitives");
+      var h = React.createElement;
+      var css = ".dsh-chatgpt{max-width:720px;padding:8px 4px 28px;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.6}.dsh-chatgpt h2{font-size:22px;line-height:1.3;margin:0 0 8px;font-weight:600}.dsh-chatgpt h3{font-size:15px;margin:0;font-weight:600}.dsh-chatgpt p{margin:8px 0}.dsh-chatgpt .cg-muted{color:var(--dsw-alias-label-tertiary);font-size:13px}.dsh-chatgpt .cg-card{border:1px solid var(--dsw-alias-settings-card-stroke);background:var(--dsw-alias-settings-card-fill);border-radius:12px;padding:18px;margin-top:20px}.dsh-chatgpt .cg-head,.dsh-chatgpt .cg-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.dsh-chatgpt .cg-actions{justify-content:flex-start;margin-top:16px}.dsh-chatgpt .cg-step{display:flex;align-items:center;gap:10px}.dsh-chatgpt .cg-step>span{display:inline-grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);font:12px 'Cascadia Code',Consolas,monospace}.dsh-chatgpt .cg-status{font-size:12px;white-space:nowrap}.dsh-chatgpt .cg-good{color:var(--dsw-alias-state-success-primary)}.dsh-chatgpt .cg-warn{color:var(--dsw-alias-state-warn-label)}.dsh-chatgpt .cg-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(120px,1fr);gap:12px;margin-top:16px}.dsh-chatgpt label{display:grid;gap:6px;font-size:13px}.dsh-chatgpt select,.dsh-chatgpt input{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:9px 10px;color:inherit;background:var(--dsw-alias-bg-layer-1);font:inherit}.dsh-chatgpt input:focus-visible,.dsh-chatgpt select:focus-visible,.dsh-chatgpt a:focus-visible,.dsh-chatgpt summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#526de8);outline-offset:3px}.dsh-chatgpt code{font:12px 'Cascadia Code',Consolas,monospace;overflow-wrap:anywhere}.dsh-chatgpt .cg-notice{padding:12px 14px;border-left:3px solid var(--dsw-alias-border-l2);margin-top:12px;background:var(--dsw-alias-bg-layer-1);overflow-wrap:anywhere}.dsh-chatgpt .cg-notice p:first-child{margin-top:0}.dsh-chatgpt details{margin-top:16px}.dsh-chatgpt summary{cursor:pointer;font-size:13px}.dsh-chatgpt a{color:inherit;text-decoration:underline;text-underline-offset:3px}.dsh-chatgpt .cg-facts{display:grid;grid-template-columns:100px minmax(0,1fr);gap:8px 12px;margin:16px 0 0;font-size:13px}.dsh-chatgpt dt{color:var(--dsw-alias-label-tertiary)}.dsh-chatgpt dd{margin:0;overflow-wrap:anywhere}.dsh-chatgpt .cg-login{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base,#fff)}@media(max-width:720px){.dsh-chatgpt .cg-grid{grid-template-columns:1fr}.dsh-chatgpt .cg-card{padding:14px}.dsh-chatgpt .cg-actions>button{max-width:100%;white-space:normal}.dsh-chatgpt .cg-facts{grid-template-columns:84px minmax(0,1fr)}}";
+      return function ChatGptSettings() {
+        var generation = React.useSyncExternalStore(connection.generation.subscribe, connection.generation.getSnapshot);
+        var factsState = React.useState(null), facts = factsState[0] && factsState[0].generation === generation ? factsState[0].value : null, setFacts = factsState[1];
+        var messageState = React.useState(""), message = messageState[0], setMessage = messageState[1];
+        var busyState = React.useState(""), busy = busyState[0], setBusy = busyState[1];
+        var modelState = React.useState(""), model = modelState[0], setModel = modelState[1];
+        var effortState = React.useState(""), effort = effortState[0], setEffort = effortState[1];
+        var answerState = React.useState(""), answer = answerState[0], setAnswer = answerState[1];
+        var checkState = React.useState(null), check = checkState[0], setCheck = checkState[1];
+        var disconnectState = React.useState(false), disconnecting = disconnectState[0], setDisconnecting = disconnectState[1];
+        var active = React.useRef(null), read = React.useRef(null), epoch = React.useRef(0), popup = React.useRef(null), navigated = React.useRef("");
+        var login = facts && facts.login, pending = login && login.status === "pending", prompt = pending && login.prompt;
+        var connected = facts && facts.credential.stored && facts.credential.kind === "grant";
+        var conflicts = facts && facts.route.conflicts || [], models = facts && facts.models || [];
+        var selected = models.find(function (item) { return item.id === model; });
+        var canUse = connected && !conflicts.length && !!selected;
+        var defaultModel = facts && facts.defaultSelection;
+        var loginUrl = pending && login.notice && login.notice.url;
+        function acceptedUrl(value) {
+          try { var url = new URL(value); return url.protocol === "https:" && url.hostname === "auth.openai.com" && !url.username && !url.password ? url.href : null; }
+          catch (_) { return null; }
+        }
+        function receivedFacts(value) { setFacts({ generation: generation, value: value }); }
+        async function call(method, input, signal) {
+          var response = await connection.rpc.call("/api", "houdiniFrontend/" + method,
+            { args: input === undefined ? {} : { input: input } }, signal);
+          if (!response.ok) throw new Error(response.error && response.error.message || "暂时无法完成，请重试。");
+          return response.value;
+        }
+        async function refresh() {
+          if (read.current || active.current) return;
+          var controller = new AbortController(), at = epoch.current; read.current = controller;
+          var timeout = setTimeout(function () { controller.abort(); }, 20000);
+          try {
+            var result = await call("chatgptStatus", undefined, controller.signal);
+            if (!controller.signal.aborted && at === epoch.current && generation === connection.generation.getSnapshot()) receivedFacts(result);
+          } catch (_) { if (!controller.signal.aborted && at === epoch.current) setMessage("暂时无法读取连接状态。请检查工作台连接后刷新。"); }
+          finally { clearTimeout(timeout); if (read.current === controller) read.current = null; }
+        }
+        React.useEffect(function () {
+          epoch.current++; setFacts(null); setCheck(null); setMessage(""); setModel(""); setEffort(""); setDisconnecting(false); setBusy("");
+          if (generation) refresh();
+          return function () { epoch.current++; if (active.current) active.current.abort(); active.current = null;
+            if (read.current) read.current.abort(); read.current = null;
+            if (popup.current && !navigated.current) popup.current.close(); popup.current = null; };
+        }, [generation]);
+        React.useEffect(function () {
+          if (!pending || busy) return;
+          var timer = setInterval(refresh, 1000);
+          return function () { clearInterval(timer); };
+        }, [pending, login && login.attemptId, busy, generation]);
+        React.useEffect(function () { setAnswer(""); }, [prompt && prompt.id]);
+        React.useEffect(function () {
+          if (!model && models.length) {
+            var initial = defaultModel && defaultModel.provider === "openai" && models.some(function (item) { return item.id === defaultModel.model; }) ? defaultModel.model : models[0].id;
+            setModel(initial); setEffort(defaultModel && defaultModel.model === initial ? defaultModel.reasoningEffort || "" : "");
+          }
+        }, [facts]);
+        React.useEffect(function () {
+          var url = acceptedUrl(loginUrl);
+          if (url && popup.current && navigated.current !== url) {
+            try { popup.current.location.href = url; navigated.current = url; } catch (_) { popup.current = null; }
+          }
+        }, [loginUrl]);
+        React.useEffect(function () {
+          if (login && login.status !== "pending" && popup.current && !navigated.current) { popup.current.close(); popup.current = null; }
+        }, [login && login.status]);
+        async function action(name, input) {
+          if (active.current) return;
+          var controller = new AbortController(); active.current = controller;
+          var at = ++epoch.current; if (read.current) read.current.abort(); read.current = null;
+          setBusy(name); setMessage("");
+          var timeout = setTimeout(function () { controller.abort(); }, name === "Probe" ? 90000 : 30000);
+          try {
+            var result = await call("chatgpt" + name, input, controller.signal);
+            if (controller.signal.aborted || at !== epoch.current || generation !== connection.generation.getSnapshot()) return;
+            if (name === "Probe") setCheck(Object.assign({}, result, { selection: model + "/" + effort }));
+            else receivedFacts(result);
+            if (name === "Select") setMessage("已设为新对话的默认模型。已有对话可在输入框旁的模型菜单切换。");
+            if (name === "Signout") { setDisconnecting(false); setCheck(null); setMessage(result.signout && result.signout.localCleared === false
+              ? "操作期间账户已发生变化，当前授权仍保留。请刷新状态后确认。"
+              : result.signout && result.signout.revocation !== "confirmed"
+                ? "本机 ChatGPT 授权已清除；服务端撤销尚未确认，可在 ChatGPT 设置中移除应用授权。"
+                : "本机 ChatGPT 授权已断开。其他模型配置保持原样。"); }
+          } catch (error) {
+            if (at === epoch.current) setMessage(controller.signal.aborted ? "等待已结束，请刷新确认当前状态后重试。" : String(error.message || "暂时无法完成，请重试。"));
+            if (name === "Start" && popup.current && !navigated.current) { popup.current.close(); popup.current = null; }
+          } finally {
+            clearTimeout(timeout);
+            if (active.current === controller) { active.current = null; setBusy(""); }
+          }
+        }
+        function button(label, name, input, disabled, variant) {
+          return h(ui.Button, { type: "button", variant: variant || "outline", disabled: !!busy || disabled,
+            onClick: function () { return action(name, input); } }, busy === name ? "处理中…" : label);
+        }
+        function selection() { return { model: model, ...(effort ? { reasoningEffort: effort } : {}) }; }
+        var verification = check && check.selection === model + "/" + effort ? check : null;
+        var defaultText = defaultModel ? (defaultModel.provider === "openai" && connected && !conflicts.length ? "ChatGPT · " : defaultModel.provider + " · ") + defaultModel.model : "尚未选择";
+        return h("section", { className: "dsh-chatgpt", "data-houdini-chatgpt-settings": true },
+          h("style", null, css),
+          h("h2", null, "ChatGPT 订阅"),
+          h("p", { className: "cg-muted" }, "用已有的 ChatGPT 账户驱动 Houdini 助手。符合条件的请求使用你的 ChatGPT 套餐或额度，无需填写 API Key。"),
+          h("section", { className: "cg-card" },
+            h("div", { className: "cg-head" },
+              h("h3", { className: "cg-step" }, h("span", { "aria-hidden": true }, "1"), "连接账户"),
+              h("span", { className: "cg-status" + (connected ? " cg-good" : "") }, !facts ? "正在读取…" : facts.credential.stored === null ? "状态暂不可用" : connected ? "授权已保存" : "尚未连接")),
+            h("p", { className: "cg-muted" }, connected ? "由 DSH 保存和续期本机授权。授权状态不代表当前模型已经通过请求验证。" : "点击后在浏览器中登录，并允许使用 ChatGPT 套餐。完成后回到这里继续。"),
+            connected && facts.account && h("p", null, facts.account.name || "ChatGPT 账户", facts.account.email ? " · " + facts.account.email : ""),
+            facts && !facts.nativeFlowAvailable && h("div", { className: "cg-notice cg-warn" }, "当前运行环境尚未提供 ChatGPT 登录。请在「Version & Updates」应用配套更新，再重新打开工作台。"),
+            facts && facts.credential.error && h("p", { role: "status", className: "cg-warn" }, facts.credential.error.message),
+            facts && facts.credential.kind === "api-key" && h("div", { className: "cg-notice cg-warn" }, "OpenAI 当前使用 API Key。请先在「模型」设置处理现有 API 配置，再连接订阅。"),
+            h("div", { className: "cg-actions" },
+              !pending && h(ui.Button, { className: connected ? undefined : "cg-login", variant: connected ? "outline" : "primary", disabled: !!busy || !facts || !facts.nativeFlowAvailable || !facts.credential.writable || facts.credential.kind === "api-key" || facts.disconnecting,
+                onClick: function () {
+                  if (active.current) return;
+                  navigated.current = ""; popup.current = window.open("", "_blank");
+                  return action("Start");
+                } }, busy === "Start" ? "正在开始…" : connected ? "重新登录" : "使用 ChatGPT 登录"),
+              pending && button("取消登录", "Cancel", { attemptId: login.attemptId }, false),
+              h(ui.Button, { variant: "ghost", disabled: !!busy, onClick: function () { setMessage(""); return refresh(); } }, "刷新状态"),
+              connected && h(ui.Button, { variant: "ghost", disabled: !!busy || pending, onClick: function () { setDisconnecting(!disconnecting); } }, "断开连接")),
+            pending && h("div", { className: "cg-notice", role: "status" },
+              h("p", null, "正在等待浏览器授权。完成后此页面会自动更新。"),
+              acceptedUrl(loginUrl) && h("a", { href: acceptedUrl(loginUrl), target: "_blank", rel: "noopener noreferrer" }, "打开授权页面"),
+              login.notice && login.notice.code && h("p", null, "验证码：", h("code", null, login.notice.code)),
+              prompt && h("details", null, h("summary", null, "浏览器没有自动返回？"),
+                h("p", { className: "cg-muted" }, "可在下面提交授权页面要求的返回信息。内容仅用于本次登录，不进入聊天。"),
+                h("label", null, prompt.kind === "select" ? prompt.message : "授权返回信息",
+                  prompt.kind === "select" ? h("select", { value: answer, onChange: function (event) { setAnswer(event.target.value); } },
+                    h("option", { value: "" }, "请选择"), prompt.options.map(function (option) { return h("option", { key: option.id, value: option.id }, option.label); })) :
+                    h("input", { value: answer, type: "password", autoComplete: "off", spellCheck: false, placeholder: prompt.placeholder || "粘贴浏览器最终的返回地址",
+                      onChange: function (event) { setAnswer(event.target.value); } })),
+                h("div", { className: "cg-actions" }, button("提交返回信息", "Prompt", { attemptId: login.attemptId, promptId: prompt.id, value: answer }, !answer.trim())))),
+            login && login.status === "failed" && h("p", { role: "alert", className: "cg-warn" }, login.error && login.error.message || "登录未完成，请重试。"),
+            login && login.status === "cancelled" && h("p", { className: "cg-muted" }, "本次登录已取消。"),
+            disconnecting && h("div", { className: "cg-notice" },
+              h("p", null, "断开后，使用此授权的后续请求将无法继续。可随时重新登录。需要结束正在进行的任务时，请先使用对话的停止按钮。"),
+              h("div", { className: "cg-actions" }, button("确认断开本机授权", "Signout", undefined, false),
+                h(ui.Button, { variant: "ghost", disabled: !!busy, onClick: function () { setDisconnecting(false); } }, "保留连接")))),
+          h("section", { className: "cg-card" },
+            h("h3", { className: "cg-step" }, h("span", { "aria-hidden": true }, "2"), "选择模型"),
+            h("p", { className: "cg-muted" }, "模型目录来自 DSH。套餐是否支持所选模型，以一次成功请求为准。"),
+            conflicts.length > 0 && h("div", { className: "cg-notice cg-warn", role: "status" },
+              h("strong", null, "现有 OpenAI 配置需要先处理"), h("ul", null, conflicts.map(function (item) { return h("li", { key: item.field }, item.message); })),
+              h("p", null, "请在「模型」中检查对应配置。这里不会覆盖 API 地址、密钥或自定义模型。")),
+            h("div", { className: "cg-grid" },
+              h("label", null, "模型", h("select", { "aria-label": "ChatGPT 模型", value: model, disabled: !!busy || !models.length,
+                onChange: function (event) { setModel(event.target.value); setEffort(""); setCheck(null); setMessage(""); } },
+                !models.length && h("option", { value: "" }, connected ? "模型目录暂不可用" : "连接后读取模型"),
+                models.map(function (item) { return h("option", { key: item.id, value: item.id }, item.name === item.id ? item.id : item.name + " · " + item.id); }))),
+              h("label", null, "思考程度", h("select", { "aria-label": "ChatGPT 思考程度", value: effort,
+                disabled: !!busy || !selected || !selected.reasoning,
+                onChange: function (event) { setEffort(event.target.value); setCheck(null); } },
+                h("option", { value: "" }, "模型默认"), selected && selected.reasoning && selected.reasoning.efforts.map(function (item) { return h("option", { key: item.id, value: item.id }, item.name); })))),
+            selected && h("p", { className: "cg-muted" },
+              (selected.inputModalities && selected.inputModalities.includes("image") ? "支持接收参考图与渲染图" : "图片能力以当前模型配置为准") +
+              (selected.contextWindow ? " · 上下文 " + selected.contextWindow.toLocaleString() + " tokens" : "")),
+            facts && facts.catalogError && h("p", { className: "cg-warn", role: "status" }, facts.catalogError.message),
+            h("div", { className: "cg-actions" }, button("设为新对话默认", "Select", selection(), !canUse, "primary"),
+              button("测试模型连接", "Probe", selection(), !canUse || !facts.route.configured)),
+            h("p", { className: "cg-muted" }, "测试会发送一条简短消息，消耗少量套餐额度，不附带工程或聊天内容。"),
+            verification && h("div", { className: "cg-notice" + (verification.ok ? " cg-good" : " cg-warn"), role: "status" },
+              h("strong", null, verification.ok ? "这次模型请求成功" : "这次模型请求未成功"), h("p", null, verification.message),
+              !verification.ok && h("a", { href: "https://chatgpt.com/settings/usage", target: "_blank", rel: "noopener noreferrer" }, "查看 ChatGPT 用量与权限")),
+            h("dl", { className: "cg-facts" }, h("dt", null, "新对话默认"), h("dd", null, h("code", null, defaultText)),
+              h("dt", null, "已有对话"), h("dd", null, "继续使用各自选择的模型，在输入框旁可切换。"))),
+          h("p", { role: "status", "aria-live": "polite" }, message),
+          h("div", { className: "cg-head", style: { marginTop: 20 } }, h("h3", null, "用量与适用范围"),
+            h("a", { href: "https://chatgpt.com/settings/usage", target: "_blank", rel: "noopener noreferrer" }, "管理 ChatGPT 用量 ↗")),
+          h("p", { className: "cg-muted" }, "这里暂不读取剩余额度。套餐、应用用量限制和额外额度以 ChatGPT 设置为准；本插件不自动切换到 API 计费。"),
+          h("details", null, h("summary", null, "订阅能用于哪些功能？"),
+            h("p", { className: "cg-muted" }, "此连接用于助手对话和规划。Houdini 建模与渲染仍在你的电脑执行。图片生成、教程语音转录沿各自的服务配置，不自动复用这份订阅授权。"),
+            h("p", { className: "cg-muted" }, "登录不会导入你在 ChatGPT 中的历史对话。浏览器负责账户登录，DSH 管理本机凭据。"),
+            h("a", { href: "https://developers.openai.com/siwc/quickstart", target: "_blank", rel: "noopener noreferrer" }, "查看 OpenAI 官方说明")));
+      };
+    }
+
     // Tutorial preferences use DSH's shared form and credential registry.
     function createVideoSettings(connection, forms) {
       var form = forms.get("houdini-frontend");
@@ -3732,6 +3916,10 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
         }); });
       });
       if (typeof ctx.inject === "function") ctx.inject(["connection"], function (scope) {
+        slots.inject("settings.section", function () {
+          return slots.register({ name: "settings.section", id: "houdini-chatgpt", order: 12, label: "ChatGPT 订阅" },
+            createChatGptSettings(scope.get("connection")));
+        });
         var titleActions = createHoudiniTitleAction(scope.get("connection"));
         var updates = createWorkbenchUpdates(scope.get("connection"));
         scope.effect(function () { return titleActions.dispose; });

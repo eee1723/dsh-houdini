@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -62,9 +63,7 @@ def control(record, action, payload=None, timeout=120):
 def running(root):
     filename = Path(root) / 'workbench/desktop.json'
     try:
-        if filename.stat().st_size > 32768:
-            raise ValueError('工作台登记超过读取范围。')
-        record = read_json(filename)
+        record = read_json(filename, limit=32768)
     except FileNotFoundError:
         return None
     if (record.get('schema') != 1 or type(record.get('pid')) is not int
@@ -75,6 +74,31 @@ def running(root):
     if _process_started(record['pid']) != record['processStarted']:
         return None
     return record
+
+
+def require_idle(activity):
+    """One native DSH activity/durability result authorizes an ordinary close."""
+    if not isinstance(activity, dict) or activity.get('durable') is not True:
+        raise RuntimeError('最近对话尚未确认可靠保存，请稍后重试。')
+    count = activity.get('activeConversations')
+    if type(count) is not int or count < 0:
+        raise RuntimeError('无法确认工作台任务状态，未关闭运行环境。')
+    if count:
+        raise RuntimeError('还有对话或后台任务正在运行，请等待完成后再重新加载。')
+    return activity
+
+
+def close_when_idle(config, record, progress=lambda message: None):
+    """Worker-only close; wait for the exact old desktop to release its Host."""
+    if record['installation'] != config['installation']:
+        raise RuntimeError('工作台安装已变化，请从对应版本的入口重新打开。')
+    progress('正在保存对话并关闭工作台…')
+    control(record, 'close', timeout=15)
+    deadline = time.monotonic() + 30
+    while _process_started(record['pid']) == record['processStarted']:
+        if time.monotonic() >= deadline:
+            raise RuntimeError('工作台尚未退出，请正常关闭后重新打开；没有强制结束进程。')
+        time.sleep(.1)
 
 
 def reject_legacy_frontend(marker):
@@ -138,18 +162,38 @@ def ensure(config, progress=lambda message: None):
         lease.close()
 
 
+def browser_origin(root, installation, home):
+    """Keep DSH's native browser stores on one origin within one data identity.
+
+    Called on the startup worker with the installation lease already held.
+    The stored port is a browser preference, never evidence of process ownership.
+    """
+    identity = json.dumps([str(installation), str(Path(home).resolve())], ensure_ascii=False).encode('utf-8')
+    storage = Path(root) / 'workbench' / 'browser' / hashlib.sha256(identity).hexdigest()[:24]
+    filename = storage / 'origin.json'
+    port = read_json(filename).get('port') if filename.exists() else 0
+    if type(port) is not int or port != 0 and not 1024 <= port <= 65535:
+        raise RuntimeError('工作台浏览器地址配置损坏，请通过报告问题提供诊断。')
+    with socket.socket() as probe:
+        try:
+            probe.bind(('127.0.0.1', port))
+        except OSError as error:
+            raise RuntimeError(f'工作台地址 127.0.0.1:{port} 被其他程序占用。请关闭占用程序后重试；没有接管或终止它，输入草稿仍保留。') from error
+        port = probe.getsockname()[1]
+    atomic_json(filename, {'port': port})
+    return port, str(storage)
+
+
 def prepare(config, progress=lambda message: None):
     root = Path(config['root'])
     runtime = root / 'workbench' / uuid.uuid4().hex
     runtime.mkdir(parents=True)
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
     context_file = runtime / 'context.json'
 
     def prepare_managed(context, progress):
         progress('正在准备对话配置…')
-        context.update(frontendPort=port, runtimeDir=str(runtime), workbench=True,
+        port, storage = browser_origin(root, config['installation'], context['home'])
+        context.update(frontendPort=port, browserStorage=storage, runtimeDir=str(runtime), workbench=True,
                        executorRegistry=str(root / 'workbench/executors'))
         atomic_json(context_file, context)
         install = Path(context['install'])
@@ -172,19 +216,29 @@ def prepare(config, progress=lambda message: None):
         os.environ['DSH_HOUDINI_MANAGED_CONTEXT'] = str(context_file)
     else:
         lease = FileLease(root / 'runtime.lock')
-        plugin, node, binary = Path(config['plugin']), Path(config['node']), Path(config['binary'])
-        context = {'root': str(root), 'home': config['home'], 'frontendPort': port,
-                   'runtimeDir': str(runtime), 'workbench': True,
-                   'executorRegistry': str(root / 'workbench/executors')}
-        env = dict(os.environ, DSH_HOME=config['home'])
-        env.pop('DSH_HOUDINI_MANAGED_CONTEXT', None)
-        sys.path.insert(0, str(plugin / 'houdini/python3.11libs'))
-        from dsh_profile_sync import sync_profile_plugins
-        progress('正在检查对话配置…')
-        sync_profile_plugins([str(node), str(binary)], use_shell=False, project_root=plugin, env=env)
+        try:
+            plugin, node, binary = Path(config['plugin']), Path(config['node']), Path(config['binary'])
+            port, storage = browser_origin(root, config['installation'], config['home'])
+            context = {'root': str(root), 'home': config['home'], 'frontendPort': port,
+                       'browserStorage': storage,
+                       'runtimeDir': str(runtime), 'workbench': True,
+                       'executorRegistry': str(root / 'workbench/executors')}
+            env = dict(os.environ, DSH_HOME=config['home'])
+            env.pop('DSH_HOUDINI_MANAGED_CONTEXT', None)
+            sys.path.insert(0, str(plugin / 'houdini/python3.11libs'))
+            from dsh_profile_sync import sync_profile_plugins
+            progress('正在检查对话配置…')
+            sync_profile_plugins([str(node), str(binary)], use_shell=False, project_root=plugin, env=env)
+        except BaseException:
+            lease.close()
+            raise
     env.update(DSH_HOUDINI_EXECUTOR_REGISTRY=context['executorRegistry'], DSH_HOUDINI_WORKBENCH='1')
     context['contextFile'] = str(context_file)
-    atomic_json(context_file, context)
+    try:
+        atomic_json(context_file, context)
+    except BaseException:
+        lease.close()
+        raise
     env['DSH_HOUDINI_WORKBENCH_CONTEXT'] = str(context_file)
     env.pop('DSH_HOUDINI_EXECUTOR_ID', None)
     env.pop('DSH_HOUDINI_BRIDGE_URL', None)
@@ -221,6 +275,7 @@ def _start_runtime(config, progress):
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         atomic_json(runtime / 'runtime.json', {'pid': host.pid, 'source': 'workbench', 'authLogOffset': 0,
             'version': read_json(binary.parent.parent / 'package.json')['version'],
+            'pluginVersion': read_json(plugin / 'package.json')['version'],
             'startedAt': time.strftime('%Y-%m-%dT%H:%M:%S%z')})
         deadline = time.monotonic() + 90
         while True:
@@ -351,6 +406,14 @@ def run(config):
         lease.close()
 
 
+def open_browser(context, base, auth):
+    """Carry desktop state through the existing context, including on rollback."""
+    os.environ['DSH_HOUDINI_WORKBENCH_CONTEXT'] = context['contextFile']
+    import dsh_webview
+    dsh_webview.show_webview(authenticated_url=auth.launch_url(), frontend_url=base, standalone=True)
+    return dsh_webview
+
+
 def _run_window(config, app, startup, ready):
     context, lease, plugin, host, base, auth, rpc = ready
     intents = queue.Queue()
@@ -362,6 +425,8 @@ def _run_window(config, app, startup, ready):
     from dsh_release_policy import ReleaseCheck, update_notice
     release_check = ReleaseCheck()
     manager_requests = queue.Queue()
+    close_requests = queue.Queue()
+    close_results = queue.Queue()
 
     def update_status():
         versions = [context['version']] if config.get('managed') else [read_json(plugin / 'package.json')['version']]
@@ -385,7 +450,20 @@ def _run_window(config, app, startup, ready):
                     raise ValueError('工作台请求过大。')
                 payload = json.loads(self.rfile.read(length) or b'{}')
                 if self.path == '/status' and payload == {}:
-                    value = {'record': record, 'context': context, 'plugin': str(plugin)}
+                    value = {'record': record, 'context': context, 'plugin': str(plugin),
+                             'runtime': read_json(Path(context['runtimeDir']) / 'runtime.json')}
+                elif self.path == '/activity' and payload == {}:
+                    value = rpc('houdiniTargets/activity', {}, timeout=5)
+                elif self.path == '/close' and payload == {}:
+                    require_idle(rpc('houdiniTargets/activity', {}, timeout=5))
+                    reply = Future()
+                    expired = threading.Event()
+                    close_requests.put((reply, expired))
+                    try:
+                        value = reply.result(timeout=8)
+                    finally:
+                        expired.set()
+                        reply.cancel()
                 elif self.path == '/open':
                     value = rpc('houdiniTargets/openWorkspace', payload)
                     intents.put(value)
@@ -445,11 +523,10 @@ def _run_window(config, app, startup, ready):
     try:
         from PySide6.QtCore import QTimer, QObject, QEvent
         from PySide6.QtWidgets import QMessageBox
-        import dsh_webview
         from PySide6.QtGui import QIcon
         icon = QIcon(str(plugin / 'assets/dsh-houdini.ico'))
         app.setWindowIcon(icon)
-        dsh_webview.show_webview(authenticated_url=auth.launch_url(), frontend_url=base, standalone=True)
+        dsh_webview = open_browser(context, base, auth)
         dsh_webview._window.setWindowIcon(icon)
         startup.close()
         app.setQuitOnLastWindowClosed(True)
@@ -487,6 +564,34 @@ def _run_window(config, app, startup, ready):
         project_dialog = {'value': None}
 
         def drain():
+            while not close_requests.empty():
+                reply, expired = close_requests.get_nowait()
+                if reply.set_running_or_notify_cancel():
+                    if guard.checking:
+                        reply.set_exception(RuntimeError('工作台正在核对退出状态，请稍后重试。'))
+                        continue
+                    guard.checking = True
+                    dsh_webview._window.setEnabled(False)
+                    def check_close(reply=reply, expired=expired):
+                        error = None
+                        try:
+                            require_idle(rpc('houdiniTargets/activity', {}, timeout=5))
+                        except Exception as failure:
+                            error = failure
+                        close_results.put((reply, expired, error))
+                    threading.Thread(target=check_close, daemon=True).start()
+            while not close_results.empty():
+                reply, expired, error = close_results.get_nowait()
+                guard.checking = False
+                if expired.is_set() or error is not None:
+                    dsh_webview._window.setEnabled(True)
+                    if not expired.is_set():
+                        reply.set_exception(error)
+                else:
+                    guard.allowed = True
+                    reply.set_result({'closing': True})
+                    QTimer.singleShot(0, dsh_webview._window.close)
+                    return
             while not manager_requests.empty():
                 reply = manager_requests.get_nowait()
                 if not reply.set_running_or_notify_cancel():
@@ -522,7 +627,11 @@ def _run_window(config, app, startup, ready):
             if not closing.empty():
                 activity = closing.get_nowait()
                 guard.checking = False
-                accepted = activity is not None and activity.get('activeConversations') == 0
+                try:
+                    require_idle(activity)
+                    accepted = True
+                except RuntimeError:
+                    accepted = False
                 if not accepted:
                     dialog = QMessageBox(dsh_webview._window)
                     from dsh_ui_style import style_dialog

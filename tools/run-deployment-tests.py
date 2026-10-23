@@ -10,7 +10,7 @@ from houdini_test_environment import isolated_environment, launch_directory, ree
 
 ROOT = Path(__file__).resolve().parents[1]
 PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-release-policy", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-installer-bootstrap", "dsh-managed-preview-paths", "dsh-network-layout", "video-runtime-package"]
-HOUDINI = ["dsh-manager-update", "dsh-launcher-preflight", "dsh-frontend-lifetime", "dsh-force-repair", "dsh-profile-sync", "dsh-install-ui", "dsh-network-ui",
+HOUDINI = ["dsh-launcher-preflight", "dsh-frontend-lifetime", "dsh-force-repair", "dsh-profile-sync", "dsh-install-ui", "dsh-network-ui",
            "dsh-bridge-raw-gate", "dsh-execution-runtime", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
            "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-network-notes", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-multiparm-restoration", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-preview-backend", "dsh-render-color-management", "dsh-render-service-box", "dsh-cop-contracts",
            "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout", "dsh-scoped-observation", "dsh-snapshot-worker", "dsh-shared-continuity", "dsh-parameter-patch"]

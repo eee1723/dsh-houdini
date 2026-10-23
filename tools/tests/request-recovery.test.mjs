@@ -11,6 +11,7 @@ import {Context} from '@deepseek-ai/cordis';
 import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
 const runtime='a'.repeat(32),records=new Map(),sourceCalls=new Map(),tickets=new Set();let edits=0,jobs=0,captures=0,uiLists=0,preparations=0,mode='disconnect',ticketMode='valid';
 let onExecAdmitted;
+let notExecuted=0;
 let onCaptureAdmitted;
 let receiptOverride;
 let jobState='running';
@@ -33,6 +34,11 @@ const server=http.createServer((req,res)=>{
   if(body.request_ref && body.owner_call)sourceCalls.set(body.request_ref,body.owner_call);
   if(req.url==='/exec'){
    assert(tickets.delete(body.request_ref),'Host must submit the prepared Bridge ticket exactly once');
+   if(mode==='not-executed'){
+    notExecuted++;
+    res.end(JSON.stringify({ok:false,stdout:'',stderr:'',error:'Bridge stopped before queued work executed',
+      requestReceipt:{request_ref:body.request_ref,runtime_id:runtime,status:'not_executed'}}));return;
+   }
    edits++;
    const value={ok:true,stdout:'executed once',stderr:'',result:edits,transaction:{status:'committed',nodes:[]},
     execution:{runtime_id:runtime,sequence:edits,observed_at:edits,impact:{attempted:true,global:true,nodes:[]}},
@@ -107,6 +113,11 @@ try{
   assert.equal(captures,0,'invalid or wrong-runtime ticket never prepares a native pane');
  }
  ticketMode='valid';
+ mode='not-executed';
+ const undispatched=await bridge.exec('must_not_start()',owner);
+ assert.equal(undispatched.ok,false);
+ assert.equal(undispatched.requestReceipt.status,'not_executed','a confirmed queue rejection must reach the Host unchanged');
+ assert.equal(edits,0);
  for(const failure of ['disconnect','bad-json','delay','http-error']){
   mode=failure;
   const unknown=await bridge.exec('mutate()',owner);
@@ -276,7 +287,7 @@ try{
  assert.ok(goneText.startsWith('Request receipt status: result_expired'));
  assert.ok(!goneText.includes('Executed successfully.'));
  receiptOverride=undefined;
- assert.equal(preparations,edits+jobs+captures+uiLists+4,'one prepare per attempted call; recovery does not prepare or resubmit');
+ assert.equal(preparations,edits+jobs+captures+uiLists+notExecuted+4,'one prepare per attempted call; recovery does not prepare or resubmit');
 }finally{
  await host.fiber.dispose();await Promise.all(observers);
  for(const response of pendingJobReplies)response.destroy();

@@ -24,15 +24,14 @@ import dsh_webview as webview
 
 for module in (launcher, manager, bridge, webview):
     assert Path(module.__file__).resolve().is_relative_to(plugin.resolve()), module.__file__
-assert launcher.FRONTEND_PORT == manager._FRONTEND_PORT == webview.FRONTEND_PORT == ctx["frontendPort"]
-assert launcher.BRIDGE_PORT == manager._BRIDGE_PORT == ctx["bridgePort"]
+assert launcher.FRONTEND_PORT == webview.FRONTEND_PORT == ctx["frontendPort"]
+assert launcher.BRIDGE_PORT == ctx["bridgePort"]
 assert not Path(launcher._FALLBACK_WORKSPACE).is_relative_to(Path(ctx["install"]))
 assert launcher._frontend_command()[2] == "managed-cli"
 assert launcher.ensure_dependencies() == "managed dependencies ok (no package manager)"
-runtime = manager._runtime_dsh_info()
 # The parent already checked its bundled version and authenticated RPC. This
 # new Houdini process must observe that Host without claiming its parent Job.
-assert runtime["online"] and not runtime["verified"] and runtime["version"] is None, runtime
+assert launcher._port_open(ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend()
 try:
     launcher._service_preflight()
 except RuntimeError as exc:
@@ -65,7 +64,6 @@ finally:
         process.kill()
         process.wait(timeout=10)
     bridge.stop()
-runtime = manager._runtime_dsh_info()
-assert runtime["online"] and not runtime["verified"] and runtime["version"] is None, \
+assert launcher._port_open(ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend(), \
     "the bridge smoke must not stop or adopt the independent frontend"
 print("Installed managed bindings and readonly transport passed on", hou.applicationVersionString())

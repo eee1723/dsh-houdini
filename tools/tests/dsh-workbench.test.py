@@ -268,6 +268,13 @@ def main():
                     break
                 assert time.monotonic() < deadline, 'fixture operation never became active'
                 time.sleep(.1)
+            try:
+                control(record, 'close', timeout=7)
+            except RuntimeError as error:
+                assert '正在运行' in str(error), error
+            else:
+                raise AssertionError('maintenance closed a desktop with an actual active DSH turn')
+            assert control(record, 'status')['record']['generation'] == record['generation']
             live_endpoint = endpoints[1]
             control(record, 'open', {'executorId': live_endpoint['executor_id'], 'registrationId': live_endpoint['registration_id'],
                 'expectedHip': live_endpoint['hip_path'], 'requestId': uuid.uuid4().hex, 'sessionId': results[1]['sessionId']})

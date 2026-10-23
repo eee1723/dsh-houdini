@@ -823,6 +823,9 @@ class _Handler(BaseHTTPRequestHandler):
                 # Only a still queued receipt proves that HOM never began.
                 if _request_registry.status(ref,owner_session)['status']=='queued':
                     _request_registry.fail_before_dispatch(ref,error)
+                    self._send({'ok': False, 'stdout': '', 'stderr': '', 'error': str(error),
+                                'requestReceipt': _request_registry.status(ref, owner_session)})
+                    return
                 raise
             self._send(result)
             return
@@ -1100,17 +1103,11 @@ def stop() -> None:
     global _server, _pump_active, _pump_timer
     server = _server
     _server = None
-    if server is not None:
-        try:
-            server.shutdown()
-        except Exception:
-            pass
-        try:
-            server.server_close()
-        except Exception:
-            pass
     timer = _pump_timer
     _pump_timer = None
+    # Release queued handlers before joining the HTTP server. Otherwise a
+    # handler waiting for this owning thread and server_close waiting for the
+    # handler deadlock. Running HOM is never interrupted by this queue cleanup.
     _pump_active = False
     while True:
         try:
@@ -1123,6 +1120,15 @@ def stop() -> None:
     if timer is not None:
         try:
             timer.stop()
+        except Exception:
+            pass
+    if server is not None:
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        try:
+            server.server_close()
         except Exception:
             pass
 

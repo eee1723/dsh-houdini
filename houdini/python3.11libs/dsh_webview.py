@@ -454,11 +454,26 @@ def show_webview(
         from dsh_ui_style import style_dialog
         style_dialog(win)
         view = QWebEngineView(win)
-        # Never share Houdini's disk-based default browser profile between
-        # processes/versions. Server-side DSH data remains persistent; browser
-        # cookies/cache are scoped to this one plugin window's lifetime.
-        # The view is created before the profile so its page is destroyed first.
-        profile = QWebEngineProfile(win)
+        # The independent desktop owns one installation/data-scoped profile.
+        # DSH retains its own drafts/selection in native browser storage; the
+        # plugin never copies composer state. Embedded views stay temporary.
+        browser_storage = None
+        context_file = os.environ.get('DSH_HOUDINI_WORKBENCH_CONTEXT') if standalone else None
+        if context_file:
+            from dsh_deployment import read_json
+            context = read_json(Path(context_file))
+            browser_storage = context.get('browserStorage')
+            if browser_storage is not None and context.get('frontendPort') != parsed.port:
+                raise ValueError('工作台浏览器上下文与当前服务地址不一致，请重新打开工作台。')
+        if browser_storage is not None:
+            if not standalone or not Path(browser_storage).is_absolute():
+                raise ValueError('Persistent browser storage requires an absolute standalone workbench path')
+            profile = QWebEngineProfile('dsh-houdini-workbench', win)
+            profile.setPersistentStoragePath(str(Path(browser_storage) / 'storage'))
+            profile.setCachePath(str(Path(browser_storage) / 'cache'))
+            profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        else:
+            profile = QWebEngineProfile(win)
         import dsh_downloads
         dsh_downloads.install(profile, win)
         view.setPage(QWebEnginePage(profile, view))

@@ -196,10 +196,11 @@ try:
     except ValueError as e:assert 'consumed or unknown' in str(e)
     b._pump_active=False;token3=ref();failures=[]
     def unavailable():
-        try:handler('/exec',lambda *a,**k:None)._route(body(token3,'raise RuntimeError("must not execute")'))
-        except RuntimeError:failures.append(1)
+        handler('/exec',lambda value,status=200:failures.append((status,value)))._route(
+            body(token3,'raise RuntimeError("must not execute")'))
     down=threading.Thread(target=unavailable);down.start();down.join(3)
-    assert failures and b._request_registry.status(token3,owner)['status']=='not_executed'
+    assert failures[0][0]==200 and failures[0][1]['requestReceipt']['status']=='not_executed',failures
+    assert b._request_registry.status(token3,owner)['status']=='not_executed'
 finally:
     b._pump_active=original
     for n in created:n.destroy()
