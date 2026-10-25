@@ -243,7 +243,10 @@ composition_file = Path(ctx["runtimeDir"]) / "composition.json"
 inspector = Path(ctx["runtimeDir"]) / "inspect.mjs"
 inspector.write_text("""
 import fs from 'node:fs';
-export const inject=['loader','tools','agentPresets','clientModules'];
+import {createRequire} from 'node:module';
+import {pathToFileURL} from 'node:url';
+import {randomUUID} from 'node:crypto';
+export const inject=['loader','tools','agentPresets','clientModules','workspaceRegistry','sessionController'];
 export function apply(ctx) {
   ctx.effect(() => {
     let disposed=false;
@@ -254,8 +257,18 @@ export function apply(ctx) {
         const lease=await ctx.agentPresets.acquireScope('houdini');
         try {
           const tools=ctx.tools.schemas(lease.key).map(tool=>tool.name);
+          let teamTools;
+          if(process.env.DSH_MANAGED_NATIVE_TEAM==='1'){
+            const require=createRequire(process.env.DSH_MANAGED_COMPOSITION_INSTALL+'/app/package.json');
+            const {scopeOf}=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-scope')));
+            const workspace=await ctx.workspaceRegistry.create(process.env.DSH_MANAGED_COMPOSITION_WORKSPACE);
+            const created=await ctx.sessionController.create({workspaceId:workspace.id,sessionId:randomUUID().replaceAll('-',''),agentPreset:'houdini'});
+            const resolved=await ctx.sessionController.resolveAgent(created.sessionId);
+            if(!resolved.agent)throw Error('Native Houdini agent was not created');
+            teamTools=ctx.tools.schemas(scopeOf(resolved.agent.ctx)).map(tool=>tool.name);
+          }
           const graph=ctx.clientModules.graph();
-          if(!disposed)fs.writeFileSync(process.env.DSH_MANAGED_COMPOSITION_OUT,JSON.stringify({roster,tools,graph}));
+          if(!disposed)fs.writeFileSync(process.env.DSH_MANAGED_COMPOSITION_OUT,JSON.stringify({roster,tools,graph,teamTools}));
         } finally {await lease[Symbol.asyncDispose]();}
       } catch(error) {
         if(!disposed)fs.writeFileSync(process.env.DSH_MANAGED_COMPOSITION_OUT,JSON.stringify({error:String(error.stack||error)}));
@@ -268,6 +281,10 @@ export function apply(ctx) {
 overlay = Path(ctx["runtimeDir"]) / "inspect.patch.yml"
 overlay.write_text('- insert:\n    - id: managed-composition-inspector\n      name: ' + inspector.as_uri() + '\n', encoding="utf-8")
 env["DSH_MANAGED_COMPOSITION_OUT"] = str(composition_file)
+env['DSH_MANAGED_COMPOSITION_INSTALL'] = str(install)
+env['DSH_MANAGED_COMPOSITION_WORKSPACE'] = str(cwd)
+if args.native_team:
+    env['DSH_MANAGED_NATIVE_TEAM'] = '1'
 try:
     with log.open("wb") as output:
         process = managed.spawn_frontend([str(install / "node/node.exe"), str(install / "app/node_modules/@deepseek-ai/dsh/lib/bin.js"), "web", "--patch", str(overlay), "--port", str(ctx["frontendPort"]), "--no-open"],
@@ -301,7 +318,7 @@ try:
                 assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
                 assert {'job_output','job_list','job_kill'} <= set(facts['tools']), facts
                 if args.native_team:
-                    assert {'spawn_teammate','send_message','team_task_create'} <= set(facts['tools']), facts
+                    assert {'spawn_teammate','send_message','team_task_create'} <= set(facts['teamTools']), facts
                 graph_rows=facts['graph'] if isinstance(facts['graph'],list) else facts['graph']['entries']
                 assert sum(row['id']=='dsh-houdini' for row in graph_rows)==1, facts
                 break
