@@ -24,6 +24,8 @@ ChatGPT订阅沿DSH原生authorization、credentials和llm-pi-ai接入；当前�
 
 提供方验证ID token的签名、issuer/audience、有效期、nonce及返回账户，使用已保存的client/host身份重新授权；续期与退出沿原生凭据锁，取消后的迟到登录不提交凭据。退出分别返回服务端撤销与本机清除事实，保留不含token的注册身份以便后续登录。设置界面仅消费账户白名单与授权交互，不读取或保存access/refresh token；临时授权链接和返回信息不进入模型上下文。机制依据见[OpenAI登录合同](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)与[账户和会话](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions)。真实账户权限和网络回调仍须独立于离线协议测试验证。
 
+订阅目录由同一个原生账户服务使用推理授权读取官方`/v1/models`，只采用`visibility=list`且保持服务端顺序。原生差异中的`llm-pi-ai/src/account-models.ts`负责目录的短期缓存、授权变更失效及原生选择器通知，`accounts.ts`提供已加载服务；HTTP和响应解码在pi-ai提供方维护。订阅设置与原生聊天模型菜单消费同源目录；有效模型资料与用户显式配置仍由原有LLM注册表解析，历史ID不因展示筛选而删除。手动刷新强制重读；失败不回退历史全集，新ID缺少配套模型资料时明确提示更新。普通API Key与显式API发现保持各自的目录行为。合同见[官方模型与推理说明](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)，直接验证见[原生账号回归](../tools/tests/dsh-chatgpt-native.mjs)和[真实Host组合](../tools/tests/dsh-chatgpt-composition.test.py)。
+
 `web_fetch`负责网页文本，`web_download`经同一个网络提供方取得完整字节，再由DSH文件系统检查当前会话范围并原子创建新文件。它拒绝已有文件、只读/范围外目标、非成功HTTP和截断下载；图片仍须解码和实际观察。公开跨域重定向逐跳重新验证地址和路线，拒绝私网目标、URL凭据、非HTTP(S)、HTTPS降级和过长跳转；每跳实际来源、直连/代理和HTTP状态进入回执，代理凭据不进入这些诊断。传输失败保留底层错误码，不自动换路。
 
 Windows工作区授权逐对象核对已有普通内容，补齐能力权限和Low安全等级；使用固定对象句柄读写原生安全描述符，避免目录级自动传播影响外部硬链接。已有链接、多硬链接文件、受保护权限、其他所有者及显式非Low标签保持边界；临时标签写权限不继承，失败恢复原权限，撤销按对象移除对应能力。新内容继承所在目录，已初始化工作区的授权由Host缓存；运行中从外部搬入且保留原权限的内容需重新准备，不监控整盘文件事件。

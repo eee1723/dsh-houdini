@@ -21,7 +21,7 @@ async function call(method,params={}) {
   return result.result
 }
 async function evaluate(expression) {
-  const result=await call('Runtime.evaluate',{expression,returnByValue:true})
+  const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true})
   if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails))
   return result.result.value
 }
@@ -109,6 +109,17 @@ try {
     }
     assert(containsPath(detail),'native hover detail must expose the exact recorded HIP path')
   }
+  const liveIds=await evaluate(`fetch('/api/houdiniFrontend/projectPresence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'window-menu-'+crypto.randomUUID(),method:'houdiniFrontend/projectPresence',payload:{args:{}}})}).then(r=>r.json()).then(body=>{if(!body.result?.ok)throw Error('presence RPC failed');return body.result.value.filter(r=>r.status!=='offline'&&r.candidate?.workbench===true&&r.candidate.state==='registered').map(r=>r.executorId).sort()})`)
+  await evaluate(`document.querySelector('[data-houdini-project-label]').click()`)
+  let menuIds=[]
+  for(let attempt=0;attempt<80;attempt++) {
+    menuIds=await evaluate(`[...document.querySelectorAll('[data-houdini-target]')].map(e=>e.getAttribute('data-houdini-target')).sort()`)
+    if(JSON.stringify(menuIds)===JSON.stringify(liveIds))break
+    await new Promise(resolve=>setTimeout(resolve,100))
+  }
+  assert.deepEqual(menuIds,liveIds,'the actual Qt menu must show all current window observations and exclude exited history')
+  assert.equal((await evaluate('window.__dshHoudiniSelection?.()')).sessionId,selection.sessionId,'opening the window menu cannot replace the selected conversation')
+  await evaluate(`document.querySelector('[data-houdini-project-label]').click()`)
   const screenshot=await call('Page.captureScreenshot',{format:'png'})
   await fs.writeFile(output,Buffer.from(screenshot.data,'base64'))
   console.log('PASS actual Qt/DSH selected task and no connection/picker panel')

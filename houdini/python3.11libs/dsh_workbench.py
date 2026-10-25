@@ -101,12 +101,39 @@ def close_when_idle(config, record, progress=lambda message: None):
         time.sleep(.1)
 
 
-def reject_legacy_frontend(marker):
+def reject_legacy_frontend(marker, *, home, cli_roots, port, listener_pid):
+    """Worker-only: a diagnostic PID is a hint, never a live Host identity.
+
+    Old records lack the data home and native creation time. They can only
+    establish a still-running legacy entry from this installation, after its
+    exact DSH command and actual listener have both been identified.
+    """
     marker = Path(marker)
-    if marker.is_file():
+    try:
         record = read_json(marker)
-        if type(record.get('pid')) is int and _process_started(record['pid']) is not None:
-            raise RuntimeError('旧版内嵌工作区的后台可能仍在运行。请先保存任务并正常退出原 Houdini，再打开独立工作台；没有启动第二个后台或结束原进程。')
+    except (OSError, ValueError):
+        return  # Missing/damaged diagnostic history cannot identify a live Host.
+    if not isinstance(record, dict):
+        return
+    pid = record.get('pid')
+    if type(pid) is not int or pid <= 0:
+        return
+    started = _process_started(pid)
+    if started is None or (record.get('processStarted') is not None and record['processStarted'] != started):
+        return
+    if (isinstance(record.get('home'), str)
+            and os.path.normcase(os.path.realpath(record['home'])) != os.path.normcase(os.path.realpath(home))):
+        return
+    legacy_port = record.get('frontendPort', port)
+    if type(legacy_port) is not int or not 1024 <= legacy_port <= 65535 or listener_pid(legacy_port) != pid:
+        return
+    from dsh_managed_runtime import inspect_frontend
+    try:
+        inspect_frontend(pid, cli_roots=cli_roots, port=legacy_port)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        return  # Another program or an unconfirmed identity is not an old Host.
+    if _process_started(pid) == started and listener_pid(legacy_port) == pid:
+        raise RuntimeError('此安装的旧版内嵌工作区后台仍在运行。请先保存任务并正常退出原 Houdini，再打开独立工作台；没有启动第二个后台或结束原进程。')
 
 
 def ensure(config, progress=lambda message: None):
@@ -657,7 +684,7 @@ def _run_window(config, app, startup, ready):
                 session_id = latest.get('sessionId')
                 if session_id:
                     target = dsh_webview._navigation_url(None, session_id, base)
-                    dsh_webview._view.page().runJavaScript(dsh_webview._launch_intent_js(target))
+                    dsh_webview._issue_launch_intent(target)
                 dsh_webview._window.showNormal()
                 dsh_webview._window.raise_()
                 dsh_webview._window.activateWindow()

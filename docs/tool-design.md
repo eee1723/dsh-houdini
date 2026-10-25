@@ -126,7 +126,7 @@ Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入和参数形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理并报告恢复结果；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时放到所有输入下游（x = 输入 x 均值，y = min(输入 y) − 垂直间距）；无输入时放到父网络现有内容右侧新列（x = max(现有 x) + 水平间距，y = 现有最顶部 y，空网络落原点）；间距由节点实际网络尺寸（`Node.size()`）推导，不用拍脑袋常量 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入和参数形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理并报告恢复结果；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时以输入下游均值位置为首选；无输入时以父网络现有节点右侧新列、最顶部y为首选，空网络落原点。对完整节点/Box/Note/Dot障碍做局部有界避让；无所属Box且附近候选耗尽时跳到完整障碍包络右侧，保留首选y，不移动既有内容。已有所属Box边界仍保持；间距由节点实际网络尺寸（`Node.size()`）推导 | `hou.Node` |
 | `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
@@ -142,7 +142,7 @@ Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用�
 | `set_object_parent(child, parent, keep_world=True, reason='', index=0, allow_foreign=None)` | 显式 OBJ parenting/unparent（`parent=None`），自然参数序为 child→parent；普通父级用 input 0，Blend 等明确多输入对象可指定 index。`reason` 为可选自由用途说明，表示与方法由当前任务决定。拒绝非 OBJ、自环/层级环；mutation/ownership 边界在 child；默认恢复 child 原世界变换并回读 parent、local/world delta | dict |
 | `disconnect_input(dst, index=0, *, allow_foreign=None)` | 断开普通网络 destination 输入；权限理由keyword-only非空字符串；OBJ unparent 拒绝并指向 `set_object_parent(child,None,...)`；ownership 边界在 dst，返回原 source path（若本来为空则为 null） | dict |
 | `rename_node(node, name, allow_foreign=None)` | 重命名 | 新 path |
-| `delete_node(node, allow_foreign=None)` | 删除前核对全部后代身份；返回外部参数引用及最多64项affected_connections（目标输入、原源输出及inputs_after），提示原生删除可能旁路重接，同名新节点不继承接线。拒绝删除owner-tagged render_view会话级基础设施。创建时同步新HDA的延迟定义后登记原生后代；不收养后来加入的foreign子节点 | dict |
+| `delete_node(node, allow_foreign=None)` | 删除前核对全部后代身份；原生Network Box中的Sticky Note按独立便签权限检查，删除与恢复保留成员身份，不支持的其他编辑项明确拒绝。返回外部参数引用及最多64项affected_connections（目标输入、原源输出及inputs_after），提示原生删除可能旁路重接，同名新节点不继承接线。拒绝删除owner-tagged render_view会话级基础设施。创建时同步新HDA的延迟定义后登记原生后代；不收养后来加入的foreign子节点 | dict |
 | `cook_node(node, force=False, timeout_ms=30000)` | cook + error/warning，timeout_ms为1..120000的协作预算，仅原生中断检查点可响应，不保证强制停止/内存安全。Manual返回ok=False/status=not_cooked_manual，不自动切Auto；预检输入计数恒条件、平直删除语句组成的已知无界VEX循环，未知控制流不作安全认证。依赖规模本身不拒绝；verify_network的内部只读批次共享一次完整上游预检，不跨调用缓存。warning未解释不得当完成 | dict |
 | `sop_set_output(node, render=True, allow_foreign=None, *, output_index=None)` | 默认仅移动SOP display/render旗标。显式output_index=0..63复用/创建同父网络原生Output并接线，将旗标设到它；重复索引/循环/foreign接口写入拒绝，逐层发布不猜祖先。返回public_output接线事实，不cook/保存HDA，须另验几何、新实例与根显示；不是render_view前置条件 | dict |
 | `sop_output_node(parent)` | 报告 SOP 网络 display/render 输出；旗标不在链尾时提醒 | dict |

@@ -13,7 +13,7 @@ const {openaiChatGPTOAuth:oauth}=await import(pathToFileURL(path.join(cache,'nod
 const {Context}=await load('@deepseek-ai/cordis');
 const {LocalCredentialProvider}=await load('@deepseek-ai/dsh-credentials-local');
 const {AuthorizationService}=await load('@deepseek-ai/dsh-authorization');
-const {credentialKey}=await load('@deepseek-ai/dsh-credentials');
+const {credentialKey,credentialRef}=await load('@deepseek-ai/dsh-credentials');
 const pi=await load('@deepseek-ai/dsh-llm-pi-ai');
 const {default:LlmRuntime}=await load('@deepseek-ai/dsh-llm');
 const pair=await generateKeyPair('RS256'),otherPair=await generateKeyPair('RS256');
@@ -33,6 +33,12 @@ async function signed(extra={}) {
 globalThis.fetch=async(input,options={})=>{
   const url=String(input);requests.push({url,body:options.body});
   if(url.startsWith('http://127.0.0.1:'))return originalFetch(input,options);
+  if(url==='https://api.openai.com/v1/models'){
+    requests.at(-1).authorization=options.headers.authorization;
+    if(scenario.catalogDeferred)return scenario.catalogDeferred(options);
+    if(scenario.catalogFailure)return new Response('',{status:503});
+    return Response.json(scenario.catalogMalformed?{data:[]}:{models:scenario.modelRows??[]});
+  }
   if(url.startsWith('https://api.openai.com/v1/responses')){assert(scenario.pendingInference);scenario.inferenceStarted();return new Promise((resolve,reject)=>{const abort=()=>{scenario.inferenceAborted=true;reject(new DOMException('Account signed out','AbortError'))};if(options.signal.aborted)abort();else options.signal.addEventListener('abort',abort,{once:true})})}
   assert(url.startsWith(issuer+'/'),'no test request may leave the fake issuer');
   if(url.endsWith('/.well-known/openid-configuration'))return Response.json({issuer,jwks_uri:scenario.badJwks?'https://untrusted.invalid/keys':issuer+'/.well-known/jwks.json',revocation_endpoint:issuer+'/api/accounts/oauth/revoke'});
@@ -91,6 +97,92 @@ try{
     const consuming=(async()=>{try{for await(const chunk of stream){void chunk}}catch{}})();
     await Promise.race([entry,new Promise((_,reject)=>setTimeout(()=>reject(Error('fixture inference did not reach fake transport')),3000))]);
     assert.equal((await ctx.get('piAiAccounts').disconnect('openai')).localCleared,true);await consuming;assert.equal(scenario.inferenceAborted,true);
+  });
+  const accountRows=[
+    {slug:'gpt-6-sol',display_name:'Account first',description:'From server',visibility:'list'},
+    {slug:'gpt-4o',display_name:'Hidden legacy',visibility:'hidden'},
+    {slug:'gpt-6.1-sol',display_name:'Account second',visibility:'list'},
+    {slug:'future-account-model',display_name:'New server model',visibility:'list'},
+  ];
+  async function catalogHarness(name,profile={}){
+    const ctx=await harness(name);let fiber=ctx.plugin(LlmRuntime);await fiber.await();fibers.push(fiber);
+    fiber=ctx.plugin(pi,{providers:profile===null?{}:{openai:profile}});await fiber.await();fibers.push(fiber);
+    await ctx.credentials.modifyRecord(accountKey,async()=>({kind:'grant',payload:credential}));return ctx;
+  }
+  await test('subscription directory honors visibility, server order and display names',async()=>{
+    scenario.modelRows=accountRows;
+    const rows=await oauth.listModels({apiKey:'fixture-catalog-token'},new AbortController().signal);
+    assert.deepEqual(rows.map(row=>row.id),['gpt-6-sol','gpt-6.1-sol','future-account-model']);
+    assert.equal(rows[0].name,'Account first');assert.equal(rows[0].description,'From server');
+    assert.equal(requests[0].authorization,'Bearer fixture-catalog-token');
+    scenario.catalogMalformed=true;await assert.rejects(oauth.listModels({apiKey:'fixture'},new AbortController().signal),{code:'MODEL_CATALOG_INVALID'});
+  });
+  await test('native catalogue shares one fetch, refreshes explicitly, and preserves unknown rows safely',async()=>{
+    scenario.modelRows=accountRows;const ctx=await catalogHarness('catalog'),service=ctx.get('piAiAccounts');
+    let invalidations=0;ctx.on('llm/adapters-updated',()=>{invalidations++});
+    const [first,second]=await Promise.all([service.catalog('openai'),service.catalog('openai')]);
+    assert.deepEqual(first,second);assert.equal(first.models.at(-1).supported,false);
+    await service.catalog('openai');assert.equal(requests.filter(r=>r.url.endsWith('/v1/models')).length,1);
+    assert.equal(invalidations,0,'the initial read and cache hits do not recursively invalidate the picker');
+    assert.deepEqual((await ctx.llm.listModels('openai')).map(row=>row.id),['gpt-6-sol','gpt-6.1-sol']);
+    assert.equal((await ctx.llm.listModels('openai'))[0].name,'Account first');
+    const discovered=await ctx.llm.discoverModels('llm-pi-ai',{provider:'openai'});
+    assert.deepEqual(discovered.map(row=>row.id),['gpt-6-sol','gpt-6.1-sol']);
+    await service.catalog('openai',{refresh:true});assert.equal(requests.filter(r=>r.url.endsWith('/v1/models')).length,2);
+    assert.equal(invalidations,0,'an unchanged refresh emits no model change');
+    scenario.modelRows=[];await service.catalog('openai',{refresh:true});assert.deepEqual(await ctx.llm.listModels('openai'),[]);
+    assert.equal(invalidations,1,'a changed directory reaches the native picker through its existing invalidation');
+    assert.equal((await ctx.llm.resolveModelInfo('openai','gpt-6-sol')).id,'gpt-6-sol','historical metadata remains resolvable');
+  });
+  await test('native catalog respects explicit profile subsets and leaves API credentials unchanged',async()=>{
+    scenario.modelRows=accountRows;const narrowed=await catalogHarness('narrowed',{models:[{id:'gpt-6.1-sol'}]});
+    const account=await narrowed.get('piAiAccounts').catalog('openai');
+    assert.equal(account.models.find(row=>row.id==='gpt-6-sol').supported,false);
+    assert.deepEqual((await narrowed.llm.listModels('openai')).map(row=>row.id),['gpt-6.1-sol']);
+    const api=await catalogHarness('api-override',{apiKeyEnv:'FIXTURE_OPENAI_KEY'});
+    await api.credentials.set(credentialRef('FIXTURE_OPENAI_KEY'),'fixture-explicit-key');
+    const before=requests.length;assert((await api.llm.listModels('openai')).length>3);
+    assert((await api.llm.discoverModels('llm-pi-ai',{provider:'openai'})).length>3);assert.equal(requests.length,before);
+    await api.credentials.modifyRecord(accountKey,async()=>({kind:'api-key',key:'fixture-key'}));
+    assert((await api.llm.listModels('openai')).length>3);assert.equal(requests.length,before);
+  });
+  await test('a signed-in account can discover the same supported choices before any route is configured',async()=>{
+    scenario.modelRows=accountRows;const ctx=await catalogHarness('catalog-before-route',null);
+    assert.equal(ctx.llm.listProviders().some(row=>row.id==='openai'),false);
+    const account=await ctx.get('piAiAccounts').catalog('openai');assert.equal(account.models.at(-1).supported,false);
+    const discovered=await ctx.llm.discoverModels('llm-pi-ai',{provider:'openai'});
+    assert.deepEqual(discovered.map(row=>row.id),['gpt-6-sol','gpt-6.1-sol']);assert.equal(discovered[0].name,'Account first');
+  });
+  await test('explicit metadata for a new account slug is shared by listing and discovery',async()=>{
+    scenario.modelRows=accountRows;const ctx=await catalogHarness('catalog-explicit-new',{models:[{id:'future-account-model',contextWindow:32000,maxTokens:1000,input:['text']}]});
+    assert.equal((await ctx.get('piAiAccounts').catalog('openai')).models.at(-1).supported,true);
+    assert.deepEqual((await ctx.llm.listModels('openai')).map(row=>row.id),['future-account-model']);
+    const discovered=await ctx.llm.discoverModels('llm-pi-ai',{provider:'openai'});
+    assert.deepEqual(discovered.map(row=>row.id),['future-account-model']);assert.equal(discovered[0].contextWindow,32000);
+  });
+  await test('account model requests refresh expired tokens under the native credential owner',async()=>{
+    scenario.modelRows=accountRows;const ctx=await catalogHarness('catalog-refresh');
+    await ctx.credentials.modifyRecord(accountKey,async()=>({kind:'grant',payload:{...credential,access:'expired-fixture-token',expires:0}}));
+    await ctx.get('piAiAccounts').catalog('openai');
+    assert.equal(requests.filter(r=>r.url.endsWith('/oauth/token')).length,1);
+    assert.equal(requests.find(r=>r.url.endsWith('/v1/models')).authorization,'Bearer fixture-access');
+  });
+  await test('account replacement invalidates the catalog and rejects late old-account responses',async()=>{
+    const ctx=await catalogHarness('catalog-account-change'),service=ctx.get('piAiAccounts');let started,release;
+    const entry=new Promise(r=>started=r);scenario.catalogDeferred=()=>{started();return new Promise(r=>release=r)};
+    const old=service.catalog('openai');void old.catch(()=>{});await entry;
+    await ctx.credentials.modifyRecord(accountKey,async()=>({kind:'grant',payload:{...credential,clientId:'oaiapp_second',access:'second-account-token'}}));
+    delete scenario.catalogDeferred;scenario.modelRows=[accountRows[2]];
+    const current=await service.catalog('openai');assert.deepEqual(current.models.map(row=>row.id),['gpt-6.1-sol']);
+    release(Response.json({models:[accountRows[0]]}));await assert.rejects(old);
+    assert.deepEqual((await service.catalog('openai')).models.map(row=>row.id),['gpt-6.1-sol']);
+  });
+  await test('catalog failure stays explicit without a static fallback and retry is caller controlled',async()=>{
+    scenario.catalogFailure=true;const ctx=await catalogHarness('catalog-failure'),service=ctx.get('piAiAccounts');
+    await assert.rejects(service.catalog('openai'),{code:'NETWORK'});await assert.rejects(ctx.llm.listModels('openai'));
+    assert.equal(requests.filter(r=>r.url.endsWith('/v1/models')).length,1,'pending-page polling shares bounded failure state');
+    scenario.catalogFailure=false;scenario.modelRows=accountRows;await service.catalog('openai',{refresh:true});
+    assert.equal((await ctx.llm.listModels('openai')).length,2);
   });
   console.log(JSON.stringify({ok:true,tests:resultRows.length,scope:'offline fake OIDC + exact native DSH/pi-ai + isolated credentials'}));
 }finally{globalThis.fetch=originalFetch;for(const fiber of fibers.reverse())await fiber.dispose();assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));assert(path.basename(root).startsWith('dsh-chatgpt-native-'));await fs.rm(root,{recursive:true,force:true})}

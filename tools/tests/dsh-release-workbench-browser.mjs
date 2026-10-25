@@ -69,9 +69,23 @@ try {
     assert(settled,'Native window pin must settle')
     assert.deepEqual(await evaluate(`({marker:window.__releaseDocumentMarker,origin:performance.timeOrigin,width:innerWidth,height:innerHeight})`),{marker:'retained',origin:initial.origin,width:initial.width,height:initial.height})
   }
+  await evaluate(`document.querySelector('[data-houdini-project-label]').click()`)
+  let targets=[]
+  for(let attempt=0;attempt<80;attempt++) {
+    targets=await evaluate(`[...document.querySelectorAll('[data-houdini-target]')].map(e=>({id:e.getAttribute('data-houdini-target'),state:e.getAttribute('data-state')}))`)
+    if(targets.length===1&&targets[0].state==='ready')break
+    await new Promise(resolve=>setTimeout(resolve,100))
+  }
+  assert.equal(targets.length,1,'the signed menu must show the one live window, excluding both crashed and cleanly closed history')
+  assert.equal(targets[0].state,'ready')
+  assert(!['e'.repeat(32),'f'.repeat(32)].includes(targets[0].id))
+  const targetScreenshot=png.replace(/\.png$/,'.targets.png')
+  const targetShot=await call('Page.captureScreenshot',{format:'png'})
+  fs.writeFileSync(targetScreenshot,Buffer.from(targetShot.data,'base64'))
+  await evaluate(`document.querySelector('[data-houdini-project-label]').click()`)
   assert.equal(await evaluate(`new URL(location.href).searchParams.has('token')`),false)
   const shot=await call('Page.captureScreenshot',{format:'png'})
   fs.writeFileSync(png,Buffer.from(shot.data,'base64'))
-  fs.writeFileSync(resultFile,JSON.stringify({selected,webRpc:true,pinRestored:true,sameDocument:true,apiKeyEntry,setupScreenshot,screenshot:png}))
+  fs.writeFileSync(resultFile,JSON.stringify({selected,webRpc:true,pinRestored:true,sameDocument:true,apiKeyEntry,setupScreenshot,liveTargets:targets,targetScreenshot,screenshot:png}))
   console.log('Actual standalone Qt selection, native API Key entry, authenticated RPC, pin/restore and document continuity passed')
 } finally {socket.close()}

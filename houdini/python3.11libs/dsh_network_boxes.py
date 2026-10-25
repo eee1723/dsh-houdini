@@ -197,7 +197,7 @@ def _unsupported_box_reason(box):
 
 
 def _network_group_box_reason(box):
-    """Snapshots currently cover nodes and boxes, not other editor item types."""
+    """Group editing covers nodes and boxes; note membership is deletion-only."""
     unsupported = [item.path() for item in _box_items(box)
                    if not isinstance(item, (hou.Node, hou.NetworkBox))]
     if unsupported: return f'unsupported non-node/non-box items: {unsupported[:8]}'
@@ -206,7 +206,7 @@ def _network_group_box_reason(box):
 
 def _state(box):
     items = _box_items(box)
-    if any(not isinstance(item, (hou.Node, hou.NetworkBox)) for item in items):
+    if any(not isinstance(item, (hou.Node, hou.NetworkBox, hou.StickyNote)) for item in items):
         raise ValueError(f'{box.path()} contains unsupported editor items')
     owner = _live_owner(box)
     parent_box = box.parentNetworkBox()
@@ -219,6 +219,10 @@ def _state(box):
                     for item in items if isinstance(item, hou.Node)],
         'nested_boxes': [{'identity': int(item.sessionId()), 'name': item.name()}
                          for item in box.networkBoxes(recurse=False)],
+        # Note content and ownership remain in dsh_network_notes. A node delete
+        # must preserve/read back this known editor item's box membership too.
+        'notes': [{'identity': int(item.sessionId()), 'path': item.path()}
+                  for item in items if isinstance(item, hou.StickyNote)],
         'parent_box': ({'identity': int(parent_box.sessionId()), 'name': parent_box.name()}
                        if parent_box is not None else None),
         'owner': ({key:value for key,value in owner.items()
@@ -238,6 +242,8 @@ def _state_mismatches(expected, actual, *, check_identity=True):
         failures.append('membership')
     if {row['identity'] for row in expected.get('nested_boxes',[])} != {row['identity'] for row in actual.get('nested_boxes',[])}:
         failures.append('nested_boxes')
+    if {row['identity'] for row in expected.get('notes',[])} != {row['identity'] for row in actual.get('notes',[])}:
+        failures.append('note_membership')
     if expected.get('parent_box') != actual.get('parent_box'):
         failures.append('parent_box')
     if any(abs(a-b) > 1e-5 for a,b in zip(expected['color'],actual['color'])):
@@ -331,6 +337,11 @@ def _restore(snapshot):
             if isinstance(item, hou.Node) and int(item.sessionId()) not in wanted:
                 try: box.removeItem(item)
                 except Exception as error: errors.append(f"{state['name']} remove extra {item.path()}: {error}")
+        wanted_notes = {item['identity'] for item in state.get('notes',[])}
+        for item in _box_items(box):
+            if isinstance(item, hou.StickyNote) and int(item.sessionId()) not in wanted_notes:
+                try: box.removeItem(item)
+                except Exception as error: errors.append(f"{state['name']} remove extra note {item.path()}: {error}")
         wanted_boxes = {item['identity'] for item in state.get('nested_boxes',[])}
         for child in list(box.networkBoxes(recurse=False)):
             if int(child.sessionId()) not in wanted_boxes:
@@ -350,6 +361,17 @@ def _restore(snapshot):
             if member['identity'] not in current:
                 try: box.addItem(node)
                 except Exception as error: errors.append(f"{state['name']} add {member['path']}: {error}")
+        current_notes = {int(item.sessionId()) for item in _box_items(box)
+                         if isinstance(item, hou.StickyNote)}
+        notes_by_identity = {int(note.sessionId()):note for note in parent.stickyNotes()}
+        for member in state.get('notes',[]):
+            note = notes_by_identity.get(member['identity'])
+            if note is None or note.path() != member['path']:
+                errors.append(f"{state['name']} note identity missing: {member['path']}")
+                continue
+            if member['identity'] not in current_notes:
+                try: box.addItem(note)
+                except Exception as error: errors.append(f"{state['name']} add note {member['path']}: {error}")
         current_boxes = {int(item.sessionId()) for item in box.networkBoxes(recurse=False)}
         remap_by_old = {row['old_identity']:row['new_identity'] for row in remapped}
         for child_state in state.get('nested_boxes',[]):
@@ -1324,8 +1346,10 @@ def prepare_parent_deletion(node, *, active_owner_session, allow_foreign,
             return
         seen.add(key)
         if will_destroy:destroyed.add(key)
-        reason = _network_group_box_reason(box)
-        if reason: raise ValueError(f'{box.path()} blocks deletion: {reason}')
+        unsupported = [item.path() for item in _box_items(box)
+                       if not isinstance(item,(hou.Node,hou.NetworkBox,hou.StickyNote))]
+        if unsupported:
+            raise ValueError(f'{box.path()} blocks deletion: unsupported editor items: {unsupported[:8]}')
         if is_service_box(box):
             raise ValueError(f'{box.path()} belongs to the persistent render service')
         _require_box(box, 'delete_node containing Network Box', active_owner_session, allow_foreign)

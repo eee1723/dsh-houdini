@@ -61,6 +61,7 @@ def endpoint_presence(record, registry):
     # A reused pid is not this executor: the recorded birth must still match.
     if started is None or (record.get('processStarted') is not None and started != record.get('processStarted')):
         return {**result, 'status': 'offline'}
+    result['candidate'] = record
     request = urllib.request.Request(record['bridge_url'] + '/health', headers={'X-DSH-Houdini-Executor': record['executor_id']})
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

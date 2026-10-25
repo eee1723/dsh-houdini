@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -17,6 +18,72 @@ sys.modules.setdefault("hou", types.SimpleNamespace())
 
 import dsh_launcher
 import dsh_context
+import dsh_workbench
+import dsh_managed_runtime
+import dsh_workbench_start
+
+# Historical diagnostic PIDs are not ownership. Reused PIDs, a different data
+# home and a listener that changes during inspection must not block startup.
+with tempfile.TemporaryDirectory(prefix='dsh-legacy-preflight-') as temporary:
+    marker = Path(temporary) / 'runtime.json'
+    home = str(Path(temporary) / 'home')
+    def check_legacy():
+        dsh_workbench.reject_legacy_frontend(marker, home=home, cli_roots=[temporary],
+            port=3081, listener_pid=lambda port: os.getpid())
+    check_legacy()
+    for damaged in ('{damaged', '[]'):
+        marker.write_text(damaged, encoding='utf-8')
+        check_legacy()
+    old = {'pid': os.getpid(), 'source': 'cached-cli', 'startedAt': '2026-10-07T00:00:00+0800'}
+    marker.write_text(json.dumps(old), encoding='utf-8')
+    before = marker.read_bytes()
+    # Real OS identity/command lookup, even with a matching listener PID: this
+    # Python/hython process cannot be identified as a DSH Host or terminated.
+    with patch.object(dsh_managed_runtime, 'stop_owned', side_effect=AssertionError('preflight stopped a process')), \
+         patch.object(dsh_managed_runtime, 'stop_verified_frontend', side_effect=AssertionError('preflight force-repaired')):
+        check_legacy()
+    assert marker.read_bytes() == before
+    for update in ({'processStarted': 'old-native-birth'}, {'home': str(Path(temporary) / 'other-home')}):
+        marker.write_text(json.dumps({**old, **update}), encoding='utf-8')
+        with patch.object(dsh_workbench, '_process_started', return_value='current-native-birth'), \
+             patch.object(dsh_managed_runtime, 'inspect_frontend', side_effect=AssertionError('stale identity was inspected')):
+            check_legacy()
+    current = {**old, 'processStarted': 'current-native-birth', 'home': home, 'frontendPort': 3081}
+    marker.write_text(json.dumps(current), encoding='utf-8')
+    with patch.object(dsh_workbench, '_process_started', side_effect=['current-native-birth', 'successor-birth']), \
+         patch.object(dsh_managed_runtime, 'inspect_frontend', return_value={'pid': os.getpid()}):
+        check_legacy()
+    with patch.object(dsh_workbench, '_process_started', return_value='current-native-birth'), \
+         patch.object(dsh_managed_runtime, 'inspect_frontend', return_value={'pid': os.getpid()}):
+        try:
+            check_legacy()
+        except RuntimeError as error:
+            assert '旧版内嵌工作区后台仍在运行' in str(error)
+        else:
+            raise AssertionError('confirmed current legacy Host was accepted')
+    # The standalone shortcut consumes the same historical-record policy.
+    marker.rename(Path(temporary) / '.dsh-runtime.json')
+    (Path(temporary) / '.dsh-runtime.json').write_text(json.dumps(old), encoding='utf-8')
+    with patch.dict(os.environ, {'DSH_HOME': home, 'DSH_HOUDINI_DSH_BIN': str(Path(temporary) / 'bin.js')}), \
+         patch.object(dsh_workbench_start, 'installation', return_value={'hfs': temporary, 'python': sys.executable}), \
+         patch.object(dsh_workbench_start.shutil, 'which', return_value='node.exe'), \
+         patch.object(dsh_workbench_start, 'ensure', return_value={'record': {'pid': 123}}) as ensure, \
+         patch.object(dsh_workbench_start, 'control') as control:
+        dsh_workbench_start.launch(temporary, source=temporary)
+    assert ensure.call_args.args[0]['home'] == home
+    control.assert_called_once_with({'pid': 123}, 'show')
+
+# New diagnostics preserve the native process birth, actual data home and port;
+# readers can reject a stale PID before inspecting another program.
+with tempfile.TemporaryDirectory(prefix='dsh-frontend-identity-') as temporary:
+    marker = Path(temporary) / 'runtime.json'
+    with patch.object(dsh_launcher, 'FRONTEND_RUNTIME_STATE', str(marker)), \
+         patch.dict(os.environ, {'DSH_HOME': temporary}):
+        dsh_launcher._write_frontend_runtime_state(os.getpid())
+    record = json.loads(marker.read_text(encoding='utf-8'))
+    assert record['processStarted'] == dsh_workbench._process_started(os.getpid())
+    assert record['home'] == os.path.realpath(temporary)
+    assert record['frontendPort'] == dsh_launcher.FRONTEND_PORT
 
 # A named network HIP is already a native GUI fact. Opening its workspace must
 # reach the worker even when every filesystem probe would block on the server.

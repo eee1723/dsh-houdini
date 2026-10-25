@@ -160,6 +160,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
     assert projects.endpoint_presence({**alive, 'state': 'disconnected'}, registry)['status'] == 'offline'
     assert projects.endpoint_presence({**alive, 'pid': 0}, registry)['status'] == 'offline', 'a missing or unstarted pid is offline without any HTTP probe'
     assert projects.endpoint_presence({**alive, 'pid': 99999999}, registry)['status'] == 'offline'
+    assert projects.endpoint_presence({**alive, 'processStarted': 'an-old-process'}, registry)['status'] == 'offline', 'a reused PID cannot keep a historical window selectable'
+    assert projects.endpoint_presence(alive, registry)['candidate'] == alive, 'membership and presence must carry the same registration observation'
     assert not (registry / 'leases' / (executor + '.lock')).exists(), 'a read-only presence poll must not create locks'
     assert projects.endpoint_presence(alive, registry)['status'] == 'unknown', 'a stable probe must not flap across identical calls'
     # A writer reservation is not evidence of running work. Presence carries
@@ -180,6 +182,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-launch-中文 空格-') as director
         assert presence['ownerSessionId'] == 'reserved-task'
         assert presence['activeRequests'] == requests and presence['activeJobs'] == jobs
         assert presence['busy'] == bool(requests or jobs), presence
+        assert presence['candidate']['task_id'] == 'reserved-task'
+        assert presence['candidate']['hip_path'] == str(project)
     assert 'hou' not in sys.modules, 'desktop discovery and launch preparation must not import HOM'
     import dsh_workbench_entry as entry
     import dsh_workbench as workbench

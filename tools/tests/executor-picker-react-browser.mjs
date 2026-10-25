@@ -29,18 +29,17 @@ let selected=null,session='chat-a',hidden=false,mode='ready',listGate=null,relea
 const listeners=new Set(),nativeListeners=new Set(),calls=[];
 const ids={executor:'a'.repeat(32),runtime:'b'.repeat(32),epoch:'c'.repeat(32),registration:'d'.repeat(32)};
 const rows=[{executor_id:ids.executor,runtime_id:ids.runtime,scene_epoch:ids.epoch,registration_id:ids.registration,scene_id:'e'.repeat(32),
-hip_path:'C:/项目/旋转船体/船体.hip',hip_is_new:false,workspace_path:'C:/项目/旋转船体',houdini_version:'22.0.368',pid:8234,state:'registered',same_workspace:true},
+hip_path:'C:/项目/旋转船体/船体.hip',hip_is_new:false,workspace_path:'C:/项目/旋转船体',houdini_version:'22.0.368',pid:8234,state:'registered',same_workspace:true,workbench:true},
 {executor_id:'f'.repeat(32),runtime_id:'1'.repeat(32),scene_epoch:'2'.repeat(32),registration_id:'3'.repeat(32),scene_id:'4'.repeat(32),
-hip_path:'D:/岩石实验/石群.hip',hip_is_new:false,workspace_path:'D:/岩石实验',houdini_version:'21.0.440',pid:5678,state:'registered',same_workspace:false}];
+hip_path:'D:/岩石实验/石群.hip',hip_is_new:false,workspace_path:'D:/岩石实验',houdini_version:'21.0.440',pid:5678,state:'registered',same_workspace:false,workbench:true}];
 let native=new Map(),projection={byId:{[session]:{id:session,cwd:rows[0].workspace_path,blank:false,projectionValues:{agentPreset:'houdini'}}},projectionsBySession:{}};
 function publish(){projection={...projection,projectionsBySession:{[session]:{values:{houdiniExecutorIdentity:selected?{target:selected,executorId:selected.executor_id,runtimeId:selected.runtime_id,sceneEpoch:selected.scene_epoch,hipPath:selected.hip_path,hipIsNew:false}:null}}}};listeners.forEach(fn=>fn());}
 function presence(row){return{executorId:row.executor_id,runtimeId:mode==='changed'&&row===rows[0]?'9'.repeat(32):row.runtime_id,sceneEpoch:row.scene_epoch,
-status:mode==='offline'?'offline':'online',observedAt:Date.now(),ownerSessionId:row===rows[0]?(mode==='occupied'?'chat-b':session):null,busy:mode==='jobs'&&row===rows[0],activeJobs:mode==='jobs'&&row===rows[0]?1:0,activeRequests:0};}
+status:mode==='offline'?'offline':'online',observedAt:Date.now(),candidate:row,ownerSessionId:row===rows[0]?(mode==='occupied'?'chat-b':session):null,busy:mode==='jobs'&&row===rows[0],activeJobs:mode==='jobs'&&row===rows[0]?1:0,activeRequests:0};}
 const connection={generation:{getSnapshot:()=>1,subscribe:()=>()=>{}},rpc:{call:async(_channel,method,payload)=>{calls.push({method,input:payload.args?.input});
 if(method==='houdiniFrontend/capabilities')return{ok:true,value:{workbench:true}};
 if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}};
-if(method==='houdiniFrontend/projectPresence')return{ok:true,value:rows.map(presence)};
-if(method==='houdiniTargets/list'){if(listGate)await listGate;return{ok:true,value:{candidates:[rows[1],rows[0]],selectedTarget:selected,state:{status:selected?'selected':'unbound'}}};}
+if(method==='houdiniFrontend/projectPresence'){if(listGate)await listGate;return{ok:true,value:rows.map(presence)};}
 if(method==='houdiniTargets/select'){selected=rows.find(row=>row.executor_id===payload.args.input.executorId);return{ok:true,value:{status:'selected',selectedTarget:selected}};}
 if(method==='houdiniTargets/clear'){selected=null;return{ok:true,value:{selectedTarget:null}};}
 return{ok:true,value:{}};}}};

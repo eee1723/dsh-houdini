@@ -312,7 +312,6 @@ def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | Non
     True means the existing WebView accepted the request. DSH's actual selected
     session confirms completion in the client; Python keeps no selected-cwd cache.
     """
-    global _after_auth_url
     if _window is None or _view is None:
         return False
     if _active_frontend_url != (frontend_url or FRONTEND_URL):
@@ -320,15 +319,21 @@ def raise_workspace(workspace_dir: str | None = None, *, frontend_url: str | Non
     _bring_to_front(_window)
     if workspace_dir is not None:
         target_url = _navigation_url(workspace_dir, None, frontend_url)
-        # If auth/app initialization is still in flight, the next document must
-        # receive the newest intent. A loaded app consumes the same intent now.
-        _install_launch_session_hint(_view, target_url if _page_loading or _load_failed else None)
-        if _after_auth_url is not None:
-            _after_auth_url = target_url
-        _view.page().runJavaScript(_launch_intent_js(target_url))
+        _issue_launch_intent(target_url)
     if _load_failed and not _renderer_failed and _retry_timer is not None and not _retry_timer.isActive():
         _retry_timer.start(0)
     return True
+
+
+def _issue_launch_intent(target_url: str) -> None:
+    """Keep the latest explicit target through an in-flight auth redirect."""
+    global _after_auth_url
+    if _view is None:
+        return
+    _install_launch_session_hint(_view, target_url if _page_loading or _load_failed else None)
+    if _after_auth_url is not None:
+        _after_auth_url = target_url
+    _view.page().runJavaScript(_launch_intent_js(target_url))
 
 
 def _navigation_url(workspace_dir: str | None, session_id: str | None, frontend_url: str | None = None) -> str:

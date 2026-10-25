@@ -114,8 +114,29 @@ def owns_pid(pid):
             kernel.CloseHandle(process)
 
 
+def listener_pid(port):
+    """Worker-only listener lookup, shared by Houdini and standalone startup."""
+    if os.name != 'nt':
+        return None
+    try:
+        result = subprocess.run(['netstat', '-ano'], capture_output=True, timeout=10,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # Only ASCII columns are needed, including on Windows with a GBK locale.
+    for line in (result.stdout or b'').decode('utf-8', errors='replace').splitlines():
+        parts = line.split()
+        if (len(parts) >= 5 and parts[0].upper() == 'TCP'
+                and parts[1].endswith(':' + str(port)) and 'LISTENING' in parts):
+            try:
+                return int(parts[-1])
+            except ValueError:
+                continue
+    return None
+
+
 def _frontend_identity(record, argv, cli_roots, port):
-    """Explicit force-repair classification, not automatic process ownership."""
+    """Classify an exact DSH web command; this never grants process ownership."""
     executable = Path(record.get('ExecutablePath') or '').resolve()
     if executable.name.lower() != 'node.exe' or not argv or Path(argv[0]).resolve() != executable:
         raise RuntimeError('Force repair refused: listener is not an identified Node executable')
@@ -159,6 +180,28 @@ def _process_record(pid):
     return json.loads(result.stdout.lstrip('\ufeff'))
 
 
+def inspect_frontend(pid, *, cli_roots, port):
+    """Read a DSH command without acquiring ownership or termination rights."""
+    import ctypes
+    from ctypes import wintypes
+    record = _process_record(pid)
+    if record.get('ProcessId') != pid:
+        raise RuntimeError('Listener identity changed during inspection')
+    shell = ctypes.WinDLL('shell32', use_last_error=True)
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    count = ctypes.c_int()
+    args = shell.CommandLineToArgvW(record.get('CommandLine') or '', ctypes.byref(count))
+    if not args:
+        raise RuntimeError('Cannot parse listener command')
+    try:
+        return _frontend_identity(record, [args[i] for i in range(count.value)], cli_roots, port)
+    finally:
+        kernel.LocalFree(args)
+
+
 def stop_verified_frontend(pid, *, cli_roots, port, listener_pid):
     """Explicit repair only; retain a native handle so PID reuse cannot kill a successor.
 
@@ -170,33 +213,20 @@ def stop_verified_frontend(pid, *, cli_roots, port, listener_pid):
     import ctypes
     from ctypes import wintypes
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    shell = ctypes.WinDLL('shell32', use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
     kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel.LocalFree.argtypes = [ctypes.c_void_p]
-    shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
-    shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
     handle = kernel.OpenProcess(0x1000 | 0x100000 | 1, False, pid)
     if not handle:
         raise RuntimeError('Cannot open verified listener handle; no process was stopped')
     try:
-        record = _process_record(pid)
-        count = ctypes.c_int()
-        args = shell.CommandLineToArgvW(record.get('CommandLine') or '', ctypes.byref(count))
-        if not args:
-            raise RuntimeError('Cannot parse listener command')
-        try:
-            identity = _frontend_identity(record, [args[i] for i in range(count.value)], cli_roots, port)
-        finally:
-            kernel.LocalFree(args)
+        identity = inspect_frontend(pid, cli_roots=cli_roots, port=port)
         buffer = ctypes.create_unicode_buffer(32768)
         size = wintypes.DWORD(len(buffer))
-        if (record.get('ProcessId') != pid or
-                not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) or
+        if (not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) or
                 Path(buffer.value).resolve() != Path(identity['executable']).resolve() or
                 kernel.WaitForSingleObject(handle, 0) != 258 or listener_pid() != pid):
             raise RuntimeError('Listener identity changed during repair; no process was stopped')

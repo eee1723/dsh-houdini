@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "native-chatgpt-1",
+  "revision": "native-chatgpt-catalog-1",
   "dshVersion": "0.2.1-rc.2",
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "tag": "dsh-v0.2.1-rc.2",
@@ -227,7 +227,7 @@
       "name": "client-ui-user-questions"
     }
   ],
-  "patchSha256": "eae04e2789102282f5dc26e82c05e091fbf3dd4d173be35249d9e61c29f2cd2f",
+  "patchSha256": "525ec0be32cdb6ae0edb94873d369fbadc643ee14a9d53b7448c0afd52dc5002",
   "dependencyPatches": [
     {
       "id": "pi-ai",
@@ -239,7 +239,7 @@
       "commit": "71023aec1546d6d677a65669c5665c0927ce0dd0",
       "source": "packages/ai",
       "patch": "pi-ai.patch",
-      "patchSha256": "f44e676f90909d4e529f1d4a9723ca4f37afbfb4f346b14e60939e6ab7a61fab",
+      "patchSha256": "11342a3272e25e4ba09c2e22252dc56749efad96a6ae8654b4ea80c34f509154",
       "entries": [
         "auth/types",
         "auth/helpers",

@@ -79,7 +79,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
-| [src/chatgpt-account.ts](../src/chatgpt-account.ts) | 订阅设置的薄UI适配：消费DSH原生授权、凭据描述、模型目录、配置和默认模型服务；只保留当前交互的临时展示状态，OAuth、身份验证、续期与撤销留在固定提供方，凭据不进入浏览器或模型上下文 |
+| [src/chatgpt-account.ts](../src/chatgpt-account.ts) | 订阅设置的薄UI适配：消费DSH原生授权、凭据描述、账号可见模型目录、配置和默认模型服务；模型能力仍读原生注册表，保留旧选择并按需展开；只保留当前交互的临时展示状态，OAuth、身份验证、续期与撤销留在固定提供方，凭据不进入浏览器或模型上下文 |
 | [src/workbench-desktop.ts](../src/workbench-desktop.ts) | 认证DSH前端到当前独立桌面的固定工程动作、窗口置顶与非HOM在线观察；启动凭证不下发浏览器，不接受任意URL、命令或可执行路径 |
 | [src/workbench-workspaces.ts](../src/workbench-workspaces.ts) | 已知临时目录的空工作区登记退出；复用DSH条件删除，保留目录、文件及会话，保护活动现场和用户保留项 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
@@ -215,7 +215,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_install_ui.py](../houdini/python3.11libs/dsh_install_ui.py) | 源码/受管共用Qt版本面板，工作台页头消费同一发现结果；Houdini菜单保留现场运行/联网诊断；安装/同版修复/校验/回退使用同一worker队列与取消 |
 | [dsh_ui_style.py](../houdini/python3.11libs/dsh_ui_style.py) | 原生窗口共享主题与中文确认框；由独立管理器和当前运行版本各自随包交付，避免跨版本模块依赖 |
 | [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | 安装/升级/修复事务的RSA签名、资产/全量文件校验及运行预检；启动仅核对小型签名元数据，保留OS锁、独立数据快照和回退；无hou/Qt依赖 |
-| [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径/环境与共用Windows前端生命周期；先建立Job再放行CLI，reload保留句柄。普通路径只收自有树；显式强制Repair可按安装/主入口/原生进程句柄核验并终止旧DSH监听者，不按端口自动认领 |
+| [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 受管路径/环境与共用Windows前端生命周期；先建立Job再放行CLI，reload保留句柄。Houdini菜单与独立入口共用只读监听者/精确DSH命令识别；普通路径只收自有树，显式强制Repair另持原生进程句柄核验并终止旧DSH监听者，不按端口自动认领 |
 | [dsh_executor_registry.py](../houdini/python3.11libs/dsh_executor_registry.py) | 多执行端登记、同源静态安装事实与协作HIP单写租约候选；独立记录、原生文件身份、崩溃释放，不自动路由/重开或截获GUI保存 |
 | [dsh_shared_executor.py](../houdini/python3.11libs/dsh_shared_executor.py) | 高级设置中的候选登记：主线程采集实际HIP/绑定Bridge动态端口，worker持久登记；不启动共享DSH、不保存HIP、不自动绑定任务 |
 | [installer/release-trust.json](../installer/release-trust.json)、[deployment/runtime.json](../deployment/runtime.json)、[deployment/package-lock.json](../deployment/package-lock.json) | 发布公钥、固定Node分发摘要和完整依赖锁；不含私钥，公钥未配置时拒绝安装 |

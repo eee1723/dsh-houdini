@@ -175,8 +175,7 @@ const chipTooltip=chipMenu.props.anchor.type(chipMenu.props.anchor.props);
 const chipButton=chipTooltip.children[0];
 assert.equal(chipButton.props['data-state'],'unbound','the real registered UI shows an actionable unbound state');
 chipButton.props.onClick();await flush();
-assert.equal(hinted.targetRequests.at(-1).method,'houdiniTargets/list');
-assert.equal(hinted.targetRequests.at(-1).payload.args.input.sessionId,'session-target');
+assert.equal(hinted.targetRequests.length,0,'opening the selector uses the shared presence lifecycle, without a second per-conversation target list or binding change');
 assert.deepEqual(hinted.opened, ['session-target']);
 assert.deepEqual(hinted.replaced.slice(-1), [{
   state: { retained: true },

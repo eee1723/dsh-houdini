@@ -128,9 +128,10 @@ with tempfile.TemporaryDirectory(prefix="dsh-install-中文 空格-") as tempora
             assert installer.dsh_command_prefix() == ([str(node), str(newest.resolve())], False)
         with patch.object(launcher, "DSH_SPEC", "@deepseek-ai/dsh@9.8.7"), \
              patch.object(launcher, "FRONTEND_RUNTIME_STATE", str(root / "runtime.json")), \
+             patch.dict(os.environ, {"DSH_HOME": str(root / "data")}), \
              patch.dict(launcher._PENDING, {"frontend_source": "npx-cold"}, clear=True):
             launcher._write_frontend_runtime_state(42)
-            assert json.loads((root / "runtime.json").read_text())["version"] is None
+            assert json.loads((root / "runtime.json").read_text(encoding="utf-8"))["version"] is None
         with patch.dict(os.environ, {"DSH_HOUDINI_DSH_SPEC": " "}):
             try:
                 installer.dsh_command_prefix()

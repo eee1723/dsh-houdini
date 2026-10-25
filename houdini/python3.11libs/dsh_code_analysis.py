@@ -315,13 +315,23 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                      (str, bytes, bytearray, list, tuple, dict, set, frozenset)}
     literals = {ast.List: list, ast.Tuple: tuple, ast.Set: set, ast.Dict: dict,
                 ast.ListComp: list, ast.SetComp: set, ast.DictComp: dict, ast.JoinedStr: str}
-    scopes, escaped, writes = {}, set(), []
+    scopes, escaped, writes, classes = {}, set(), [], {}
     standard_module = _standard_module_resolver()
 
+    def ordinary_class(node):
+        # Only source-defined ordinary classes have Python's known method
+        # lookup. Inheritance, decorators and custom lookup/allocation do not.
+        return (not node.bases and not node.keywords and not node.decorator_list
+                and not any((isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                             and item.name in ('__getattribute__', '__getattr__', '__new__'))
+                            or (isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store)
+                                and item.id in ('__getattribute__', '__getattr__', '__new__'))
+                            for item in ast.walk(node)))
+
     class Scope:
-        def __init__(self, parent=None, *, class_scope=False):
+        def __init__(self, parent=None, *, class_scope=False, class_node=None):
             self.parent, self.class_scope, self.bindings = parent, class_scope, {}
-            self.wildcard = False
+            self.wildcard, self.class_node = False, class_node
 
         def bind(self, target, value):
             if isinstance(target, ast.Name):
@@ -427,27 +437,34 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             child = Collect(Scope(self.closure_parent()))
             args = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
                     node.args.vararg, node.args.kwarg)
+            positional = (*node.args.posonlyargs, *node.args.args)
             for arg in args:
                 if arg is not None:
                     if arg.annotation is not None:
                         self.visit(arg.annotation)
-                    child.scope.bind(ast.Name(id=arg.arg), None)
+                    initial = ('value', tuple) if arg is node.args.vararg else (
+                        ('value', dict) if arg is node.args.kwarg else None)
+                    if (self.scope.class_node is not None and positional and arg is positional[0]
+                            and not getattr(node, 'decorator_list', ()) and ordinary_class(self.scope.class_node)):
+                        initial = ('local_instance', self.scope.class_node)
+                    child.scope.bind(ast.Name(id=arg.arg), initial)
             if getattr(node, 'returns', None) is not None:
                 self.visit(node.returns)
             for item in body:
                 child.visit(item)
         def visit_FunctionDef(self, node):
-            self.scope.bind(ast.Name(id=node.name), None)
+            self.scope.bind(ast.Name(id=node.name), ('local_function', node) if not node.decorator_list else None)
             self.function(node, node.body)
         visit_AsyncFunctionDef = visit_FunctionDef
         def visit_Lambda(self, node):
             self.function(node, [node.body])
 
         def visit_ClassDef(self, node):
-            self.scope.bind(ast.Name(id=node.name), None)
+            self.scope.bind(ast.Name(id=node.name), ('local_class', node) if ordinary_class(node) else None)
             for value in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
                 self.visit(value)
-            child = Collect(Scope(self.closure_parent(), class_scope=True))
+            child = Collect(Scope(self.closure_parent(), class_scope=True, class_node=node))
+            classes[id(node)] = child.scope
             for item in node.body:
                 child.visit(item)
 
@@ -570,6 +587,16 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                 return ('constructor', builtin_types[attr])
             if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars'):
                 return (attr,)
+            if owner and owner[0] in ('local_class', 'local_instance'):
+                if attr == '__dict__':
+                    return ('local_dict', owner[1])
+                member = local_member(owner[1], attr)
+                return ('local_method', owner[1], member[1], owner[0] == 'local_instance') if member[0] == 'local_function' else member
+            if owner and owner[0] == 'local_method':
+                # Exposing a bound method's function/receiver permits lookup
+                # changes that no longer follow the source class definition.
+                return ('local_dict', owner[1]) if attr in (
+                    '__self__', '__func__', '__dict__', '__code__', '__globals__') else ('unknown_method', attr)
             if owner and owner[0] == 'module':
                 if attr == '__dict__':
                     return ('module_dict', owner[1])
@@ -579,10 +606,14 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             callable_kind = kind(value.func)
             if callable_kind and callable_kind[0] == 'constructor':
                 return ('value', callable_kind[1])
+            if callable_kind and callable_kind[0] == 'local_class':
+                return ('local_instance', callable_kind[1])
             if callable_kind == ('vars',) and len(value.args) == 1:
                 owner = kind(value.args[0])
                 if owner and owner[0] == 'module':
                     return ('module_dict', owner[1])
+                if owner and owner[0] in ('local_class', 'local_instance'):
+                    return ('local_dict', owner[1])
             # Explicit read-only HOM return facts; unknown .name() methods do
             # not become strings merely because they share the spelling.
             if callable_kind and callable_kind[0] == 'hom_method':
@@ -600,6 +631,42 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
         return None
 
     modified, resolving_members, exposed_namespaces = {}, set(), set()
+
+    def local_member(class_node, member):
+        identity = ('local', id(class_node))
+        key = (identity, member)
+        if key in resolving_members:
+            return ('unknown_method', member)
+        changes = [*modified.get(key, ()), *modified.get((identity, None), ())]
+        resolving_members.add(key)
+        if changes:
+            values = [kind(value) or ('unknown_method', member) for value in changes]
+            result = values[0] if all(value == values[0] for value in values) else ('uncertain_callable', tuple(values))
+        elif (identity in exposed_namespaces or any(modified.get((identity, hook))
+              for hook in ('__class__', '__getattribute__', '__getattr__', '__new__'))):
+            result = ('unknown_method', member)
+        else:
+            # A missing class attribute cannot fall through into its closure.
+            result = name(classes[id(class_node)], member) if member in classes[id(class_node)].bindings else None
+        resolving_members.remove(key)
+        if result and result[0] in ('local_class', 'local_instance', 'unknown_callable'):
+            # An authored object stored in a class can be a descriptor. Its
+            # lookup result (or an unknown imported callable) is not a proven
+            # ordinary Python method.
+            result = None
+        if result and result[0] == 'uncertain_callable':
+            result = ('uncertain_callable', tuple(
+                ('unknown_method', member) if not value or value[0] in (
+                    'local_class', 'local_instance', 'unknown_callable') else value
+                for value in result[1]))
+        return result or ('unknown_method', member)
+
+    def namespace(owner):
+        if owner and owner[0] in ('module', 'module_dict'):
+            return owner[1]
+        if owner and owner[0] in ('local_class', 'local_instance', 'local_method', 'local_dict'):
+            return ('local', id(owner[1]))
+        return None
 
     def imported_reference(value, fallback):
         if type(value) is types.ModuleType:
@@ -646,21 +713,34 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
     # Once its mutable namespace is exposed, there is no ordinary-API proof to
     # preserve. Do not grow a second interpreter for every possible dict call.
     for node in ast.walk(tree):
-        if (found := kind(node)) and found[0] == 'module_dict':
-            exposed_namespaces.add(found[1])
+        if (found := kind(node)) and found[0] in ('module_dict', 'local_dict'):
+            exposed_namespaces.add(namespace(found))
+        if isinstance(node, ast.Call):
+            target = kind(node.func)
+            if target in (('getattr',), ('setattr',), ('delattr',), ('vars',)):
+                continue  # Literal reflection and writes use the same resolver.
+            for index, value in enumerate([*node.args, *(item.value for item in node.keywords)]):
+                found = kind(value)
+                if found and found[0] in ('local_class', 'local_instance', 'local_method'):
+                    if (index == 0 and target and target[0] == 'local_method' and not target[3]
+                            and found == ('local_instance', target[1])):
+                        continue  # Explicit self in a source-defined unbound call.
+                    exposed_namespaces.add(namespace(found))
     cache.clear()
     for target, value in writes:
         owner = kind(target.value)
-        if owner and ((isinstance(target, ast.Attribute) and owner[0] == 'module')
-                      or (isinstance(target, ast.Subscript) and owner[0] == 'module_dict')):
+        if owner and owner[0] == 'local_method':
+            exposed_namespaces.add(namespace(owner))
+        if owner and ((isinstance(target, ast.Attribute) and owner[0] in ('module', 'local_class', 'local_instance'))
+                      or (isinstance(target, ast.Subscript) and owner[0] in ('module_dict', 'local_dict'))):
             member = target.attr if isinstance(target, ast.Attribute) else (
                 target.slice.value if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str) else None)
-            modified.setdefault((owner[1], member), []).append(value)
+            modified.setdefault((namespace(owner), member), []).append(value)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and kind(node.func) in (('setattr',), ('delattr',)) and len(node.args) >= 2:
-            if (owner := kind(node.args[0])) and owner[0] == 'module':
+            if (owner := kind(node.args[0])) and owner[0] in ('module', 'local_class', 'local_instance'):
                 member = node.args[1].value if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str) else None
-                modified.setdefault((owner[1], member), []).append(
+                modified.setdefault((namespace(owner), member), []).append(
                     node.args[2] if len(node.args) >= 3 else None)
     cache.clear()
     return {id(node): kind(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}

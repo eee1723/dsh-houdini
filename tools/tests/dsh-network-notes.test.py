@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 import hou
 import dsh_bridge as bridge
 import dsh_network_notes as notes
+import dsh_network_boxes as boxes
 from dsh_code_analysis import CodeAnalysis
 from dsh_network_layout import Rect, overlaps
 
@@ -80,22 +81,43 @@ assert notes.note_provenance(foreign, session)['status'] == 'foreign'
 # Deleting an owned containing node cannot bypass independent note authority.
 delete_parent = ok("__result__=tab_create('/obj','geo',name='notes_delete_parent').path()")['result']
 dp = hou.node(delete_parent)
+ok(f"n=tab_create({delete_parent!r},'null',name='source')\nnetwork_boxes({delete_parent!r},[{{'name':'with_notes','label':'Notes and source','members':[n.path()]}}])")
 ok(f"network_notes({delete_parent!r},[{{'name':'owned','text':'Owned note'}}])")
 owned_id = int(dp.findStickyNote('owned').sessionId())
 foreign_child = dp.createStickyNote('foreign'); foreign_child.setText('Artist note')
 foreign_id = int(foreign_child.sessionId())
+note_box = dp.findNetworkBox('with_notes')
+note_box.addItem(dp.findStickyNote('owned')); note_box.addItem(foreign_child)
+box_before = boxes._state(note_box)
 delete_denied = call(f'delete_node({delete_parent!r})')
 assert not delete_denied['ok'] and 'foreign Sticky Note' in delete_denied['error'], delete_denied
 assert hou.node(delete_parent) == dp and foreign_child.text() == 'Artist note'
+# Recognizing Sticky Notes must not admit arbitrary editor item types.
+unknown_item = dp.createNetworkDot(); note_box.addItem(unknown_item)
+unknown_denied = call(f"delete_node({delete_parent!r},allow_foreign='User requested the whole container')")
+assert not unknown_denied['ok'] and 'unsupported editor items' in unknown_denied['error'], unknown_denied
+assert hou.node(delete_parent) == dp and foreign_child.parentNetworkBox() == note_box
+unknown_item.destroy()
 parent_undo = call(f"delete_node({delete_parent!r},allow_foreign='User explicitly requested this container including its notes')\nraise RuntimeError('after container deletion')")
 assert not parent_undo['ok'] and parent_undo['rollback']['network_notes']['ok'], parent_undo
+assert parent_undo['rollback']['network_boxes']['ok'], parent_undo
 dp = hou.node(delete_parent)
 assert dp is not None and dp.findStickyNote('owned').text() == 'Owned note'
 assert notes.note_provenance(dp.findStickyNote('owned'), session)['status'] == 'owned_current_session'
 assert notes.note_provenance(dp.findStickyNote('foreign'), session)['status'] == 'foreign'
+assert not boxes._state_mismatches(box_before, boxes._state(dp.findNetworkBox('with_notes')))
+assert all(dp.findStickyNote(name).parentNetworkBox() == dp.findNetworkBox('with_notes')
+           for name in ('owned', 'foreign'))
 ok(f"delete_node({delete_parent!r},allow_foreign='User explicitly requested this container including its notes')")
 assert hou.node(delete_parent) is None
 assert not any(key[2] in (owned_id, foreign_id) for key in notes._OWNED_NOTES)
+
+# An entirely owned box/note container needs no foreign-node exemption.
+owned_parent = ok("p=tab_create('/obj','geo',name='notes_owned_box_delete')\nn=tab_create(p,'null',name='source')\nnetwork_boxes(p,[{'name':'owned_box','label':'Owned','members':[n.path()]}])\nnetwork_notes(p,[{'name':'owned','text':'Owned boxed note'}])\n__result__=p.path()")['result']
+owned_network = hou.node(owned_parent)
+owned_network.findNetworkBox('owned_box').addItem(owned_network.findStickyNote('owned'))
+ok(f'delete_node({owned_parent!r})')
+assert hou.node(owned_parent) is None
 
 # Neither parent nor same native name can adopt a replacement or copied note.
 b.destroy(); replacement = p.createStickyNote('INPUTS'); replacement.setText('replacement')
@@ -226,6 +248,15 @@ assert all(notes.note_provenance(note, session)['status'] == 'owned_current_sess
 assert not call(f'delete_node({native!r})', owner='another-author')['ok']
 ok(f'delete_node({native!r})')
 assert hou.node(native) is None
+
+# The shipped Karma HDA includes a Sticky Note inside a native Network Box,
+# the exact shape that used to reject authorized deletion in test65.
+karma = ok("__result__=tab_create('/stage','karmarendersettings',name='native_boxed_note_settings').path()")['result']
+settings = hou.node(karma)
+assert any(isinstance(item, hou.StickyNote) for box in settings.networkBoxes()
+           for item in box.items(recurse=False)), 'native Karma must exercise boxed initializer notes'
+ok(f"delete_node({karma!r},allow_foreign='User explicitly requested this Karma setup and its native documentation')")
+assert hou.node(karma) is None
 
 import dsh_ownership
 late = p.createStickyNote('late_user_note')

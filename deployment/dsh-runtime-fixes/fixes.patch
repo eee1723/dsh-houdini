@@ -976,12 +976,117 @@ index b5e79c14a2..97b482b8c6 100644
  - **提供方原生发现经本插件的 ambient context 回答**——不点名凭据的路由交由目录提供方自身解析，它会询问环境值（`AZURE_OPENAI_API_KEY`、`AWS_PROFILE` 及各提供方自有集合）与本地凭据文件。两个问题都在这里得到回答：凭据 seam 先于进程环境被查询，文件存在性则针对宿主进程的文件系统以 `~` 展开后检查。它做不到的是*读取*凭据文件内容——自行解析 `~/.aws/credentials` 的提供方会直接读取，不经该 seam。
  - **重置恢复继承配置**——重置下层 profile 提供的路由会恢复该路由。
  - **完整替换 Config 可以移除继承的字典条目**——字段重置则恢复其继承值。
+diff --git a/packages/llm/llm-pi-ai/src/account-models.ts b/packages/llm/llm-pi-ai/src/account-models.ts
+new file mode 100644
+index 0000000000..ca9f0e6b21
+--- /dev/null
++++ b/packages/llm/llm-pi-ai/src/account-models.ts
+@@ -0,0 +1,99 @@
++/** One account directory shared by native pickers and account configuration UI. */
++import { createHash } from 'node:crypto'
++import type { Context } from '@deepseek-ai/cordis'
++import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
++import type { OAuthModelInfo } from '@earendil-works/pi-ai'
++import { LlmError } from '@deepseek-ai/dsh-llm'
++import type {} from '@deepseek-ai/dsh-llm'
++import { authContextFrom, credentialStoreFrom, recordKeyFor } from './auth.ts'
++import { catalogProvider } from './catalog.ts'
++import { createModels } from './models.ts'
++
++export interface PiAiAccountCatalog {
++  source: 'account'
++  fetchedAt: string
++  models: Array<OAuthModelInfo & { supported: boolean }>
++}
++export interface AccountCatalogOptions { refresh?: boolean; signal?: AbortSignal }
++type Data = { fetchedAt: string; models: readonly OAuthModelInfo[] }
++type Entry = { key: string; controller: AbortController; pending?: Promise<Data>; value?: Data; error?: unknown; expires: number }
++const MAX_AGE = 60_000
++const FAILURE_AGE = 10_000
++function oauthRecord(record: CredentialRecord | undefined): boolean {
++  return record?.kind === 'grant' && typeof record.payload === 'object' && record.payload !== null
++    && Reflect.get(record.payload, 'type') === 'oauth'
++}
++const identity = (record: CredentialRecord) => createHash('sha256').update(JSON.stringify(record)).digest('hex')
++const changed = () => new LlmError('The account changed while its model directory was loading; refresh the directory', 'ACCOUNT_CHANGED')
++function wait<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
++  if (!signal) return pending
++  if (signal.aborted) return Promise.reject(signal.reason)
++  return new Promise<T>((resolve, reject) => {
++    const abort = () => reject(signal.reason)
++    signal.addEventListener('abort', abort, { once: true })
++    pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {})
++  })
++}
++
++/** Memory-only freshness and in-flight coalescing, owned by the loaded adapter. */
++export function createAccountCatalog(ctx: Context, accountSignal: (provider: string) => AbortSignal, changedCatalog: () => void) {
++  const entries = new Map<string, Entry>()
++  ctx.effect(() => () => { for (const entry of entries.values()) entry.controller.abort(); entries.clear() }, 'pi-ai account model directory')
++  const read = async (provider: string) => {
++    const credentials = ctx.get('credentials')
++    if (!credentials) throw new LlmError('Account credential store is unavailable', 'NO_CREDENTIAL_STORE')
++    const record = await credentials.readRecord(recordKeyFor(provider))
++    if (!oauthRecord(record)) throw new LlmError('Sign in to load this account model directory', 'AUTH')
++    return record!
++  }
++  const supported = async (provider: string, model: string): Promise<boolean> => {
++    const llm = ctx.get('llm')
++    if (llm?.listProviders().some(item => item.id === provider)) {
++      try { await llm.resolveModelInfo(provider, model); return true } catch { return false }
++    }
++    return catalogProvider(provider)?.getModels().some(item => item.id === model) ?? false
++  }
++  return async (provider: string, options: AccountCatalogOptions = {}): Promise<PiAiAccountCatalog> => {
++    options.signal?.throwIfAborted()
++    const record = await read(provider), key = identity(record)
++    let entry = entries.get(provider)
++    if (!entry || options.refresh || entry.key !== key || !entry.pending && Date.now() >= entry.expires) {
++      entry?.controller.abort()
++      entry = { key, controller: new AbortController(), expires: 0,
++        ...(entry?.key === key && entry.value ? { value: entry.value } : {}) }
++      entries.set(provider, entry)
++      const current = entry
++      current.pending = (async (): Promise<Data> => {
++        const native = catalogProvider(provider), list = native?.auth.oauth?.listModels
++        if (!native || !list) throw new LlmError('This provider has no account model directory', 'MODEL_CATALOG_UNAVAILABLE')
++        const signal = AbortSignal.any([current.controller.signal, accountSignal(provider), AbortSignal.timeout(20_000)])
++        const models = createModels({ credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) })
++        models.setProvider(native)
++        // The existing pi-ai credential owner refreshes under its native lock.
++        const auth = await models.getAuth(provider, { signal })
++        const refreshed = await read(provider)
++        if (entries.get(provider) !== current || typeof auth?.auth.apiKey !== 'string'
++          || refreshed.kind !== 'grant' || typeof refreshed.payload !== 'object' || refreshed.payload === null
++          || Reflect.get(refreshed.payload, 'access') !== auth.auth.apiKey) throw changed()
++        current.key = identity(refreshed)
++        const rows = await list(auth.auth, signal)
++        if (rows === undefined) throw new LlmError('This provider has no account model directory', 'MODEL_CATALOG_UNAVAILABLE')
++        if (entries.get(provider) !== current || identity(await read(provider)) !== current.key) throw changed()
++        const value = { fetchedAt: new Date().toISOString(), models: rows }
++        const previous = current.value
++        current.value = value; current.expires = Date.now() + MAX_AGE
++        // Use the same native invalidation consumed by the standard model
++        // picker. Cache hits and unchanged refreshes emit nothing.
++        if (previous && JSON.stringify(previous.models) !== JSON.stringify(value.models)) changedCatalog()
++        return value
++      })().catch(error => { current.error = error; current.expires = Date.now() + FAILURE_AGE; throw error })
++        .finally(() => { current.pending = undefined })
++    }
++    if (!entry.pending && entry.error !== undefined) throw entry.error
++    const data = entry.pending ? await wait(entry.pending, options.signal) : entry.value
++    if (!data) throw entry.error ?? new LlmError('Account model directory is unavailable', 'MODEL_CATALOG_UNAVAILABLE')
++    options.signal?.throwIfAborted()
++    return { source: 'account', fetchedAt: data.fetchedAt,
++      models: await Promise.all(data.models.map(async model => ({ ...model, supported: await supported(provider, model.id) }))) }
++  }
++}
 diff --git a/packages/llm/llm-pi-ai/src/accounts.ts b/packages/llm/llm-pi-ai/src/accounts.ts
 new file mode 100644
-index 0000000000..5a0ceb41b0
+index 0000000000..82caf7e7f6
 --- /dev/null
 +++ b/packages/llm/llm-pi-ai/src/accounts.ts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,147 @@
 +/** Native account projection and disconnect; provider protocols remain in pi-ai. */
 +import type { Context } from '@deepseek-ai/cordis'
 +import type { OAuthCredential, OAuthRegistration, LoginOptions } from '@earendil-works/pi-ai'
@@ -992,6 +1097,8 @@ index 0000000000..5a0ceb41b0
 +import { catalogProvider } from './catalog.ts'
 +import { recordKeyFor } from './auth.ts'
 +import { ensurePiAiInstallationId } from './installation.ts'
++import { createAccountCatalog } from './account-models.ts'
++import type { PiAiAccountCatalog, AccountCatalogOptions } from './account-models.ts'
 +
 +const disconnects = new WeakMap<object, Set<string>>()
 +const accountRequests = new WeakMap<object, Map<string, AbortController>>()
@@ -1105,6 +1212,7 @@ index 0000000000..5a0ceb41b0
 +
 +/** Account operations bound to the adapter actually loaded by this Host. */
 +export interface PiAiAccounts {
++  catalog(provider: string, options?: AccountCatalogOptions): Promise<PiAiAccountCatalog>
 +  ensureInstallationId(provider: string, options?: { previousId?: string }): Promise<string>
 +  describe(provider: string): ReturnType<typeof describePiAiAccount>
 +  disconnect(provider: string): ReturnType<typeof disconnectPiAiAccount>
@@ -1112,31 +1220,60 @@ index 0000000000..5a0ceb41b0
 +declare module '@deepseek-ai/cordis' {
 +  interface Context { piAiAccounts: PiAiAccounts }
 +}
-+export function providePiAiAccounts(ctx: Context): void {
-+  ctx.provide('piAiAccounts', {
++export function providePiAiAccounts(ctx: Context, changedCatalog: () => void = () => {}): PiAiAccounts {
++  const service: PiAiAccounts = {
++    catalog: createAccountCatalog(ctx, provider => piAiAccountSignal(ctx, provider), changedCatalog),
 +    ensureInstallationId: (provider, options) => ensurePiAiInstallationId(ctx, provider, options),
 +    describe: provider => describePiAiAccount(ctx, provider),
 +    disconnect: provider => disconnectPiAiAccount(ctx, provider),
-+  })
++  }
++  ctx.provide('piAiAccounts', service)
 +  ctx.effect(() => () => {
 +    for (const controller of accountRequests.get(ctx.root)?.values() ?? []) controller.abort()
 +    accountRequests.delete(ctx.root)
 +  }, 'pi-ai account request cancellation')
++  return service
 +}
 diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
-index a912fff69f..09433f90d3 100644
+index a912fff69f..4118b9d642 100644
 --- a/packages/llm/llm-pi-ai/src/adapter.ts
 +++ b/packages/llm/llm-pi-ai/src/adapter.ts
-@@ -83,6 +83,8 @@ interface PiAiSnapshot {
+@@ -83,6 +83,10 @@ interface PiAiSnapshot {
  
  /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
  export interface PiAiAdapterOptions {
++  /** Account availability is distinct from the complete metadata used by old calls. */
++  accountModels?: (provider: string, profile: ResolvedPiAiProviderProfile, apiKey: string | undefined) => Promise<readonly Pick<LlmModelInfo, 'id' | 'name' | 'description'>[] | undefined>
 +  /** Native account sign-out cancels active requests through the existing stream signal. */
 +  accountSignal?: (provider: string) => AbortSignal
    /** Current validated profiles by provider route; called once per operation. */
    profiles: () => ReadonlyMap<string, ResolvedPiAiProviderProfile>
    /**
-@@ -357,6 +359,7 @@ export class PiAiAdapter extends LlmAdapter {
+@@ -296,13 +300,21 @@ export class PiAiAdapter extends LlmAdapter {
+     return Promise.resolve().then(async () => {
+       const snapshot = this.current()
+       const profile = this.profileOf(snapshot, provider)
+-      try { await this.config.resolveApiKey(provider, profile) }
++      let apiKey: string | undefined
++      try { apiKey = await this.config.resolveApiKey(provider, profile) }
+       catch (error) {
+         // A route whose named key does not resolve cannot serve a request, so it offers no models until the key is stored.
+         if (error instanceof LlmError && error.code === 'MISSING_CREDENTIAL') return []
+         throw error
+       }
+-      return snapshot.models.getModels(provider).map(model => ({
++      const known = snapshot.models.getModels(provider)
++      const account = await this.config.accountModels?.(provider, profile, apiKey)
++      if (account !== undefined) return account.flatMap(row => {
++        const model = known.find(item => item.id === row.id)
++        return model ? [{ provider, id: row.id, name: row.name,
++          ...(row.description ? { description: row.description } : {}), inputModalities: [...model.input] }] : []
++      })
++      return known.map(model => ({
+         provider,
+         id: model.id,
+         name: model.name,
+@@ -357,6 +369,7 @@ export class PiAiAdapter extends LlmAdapter {
      options: GenerateOptions,
      snapshot: PiAiSnapshot,
    ): AsyncIterable<StreamChunk> {
@@ -1144,7 +1281,7 @@ index a912fff69f..09433f90d3 100644
      if (options.stop !== undefined) {
        throw new LlmError('llm-pi-ai does not support GenerateOptions.stop', 'UNSUPPORTED_OPTION')
      }
-@@ -384,9 +387,7 @@ export class PiAiAdapter extends LlmAdapter {
+@@ -384,9 +397,7 @@ export class PiAiAdapter extends LlmAdapter {
      const apiKey = await this.config.resolveApiKey(options.provider, profile)
  
      const consumer = new AbortController()
@@ -1205,10 +1342,18 @@ index 6ccd0cae05..b210309574 100644
  
  /** Disposition of every `AnthropicMessagesCompat` field; a drift gate like the one above. */
 diff --git a/packages/llm/llm-pi-ai/src/index.ts b/packages/llm/llm-pi-ai/src/index.ts
-index a7b00faa79..3486c6b39f 100644
+index a7b00faa79..08f3e57556 100644
 --- a/packages/llm/llm-pi-ai/src/index.ts
 +++ b/packages/llm/llm-pi-ai/src/index.ts
-@@ -72,6 +72,7 @@ import type { ResolvedPiAiProviderProfile } from './config.ts'
+@@ -65,13 +65,14 @@ import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigu
+ import type {} from '@deepseek-ai/dsh-fs'
+ import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
+ import { PiAiAdapter } from './adapter.ts'
+-import { authContextFrom, credentialStoreFrom } from './auth.ts'
++import { authContextFrom, credentialStoreFrom, recordKeyFor } from './auth.ts'
+ import { catalogProvider, catalogProviderIds } from './catalog.ts'
+ import { assertServiceable, Config, resolveProfiles } from './config.ts'
+ import type { ResolvedPiAiProviderProfile } from './config.ts'
  import { discoverModels } from './discovery.ts'
  import type { StoredModelDiscoveryProfile } from './discovery.ts'
  import { registerPiAiFlows } from './login.ts'
@@ -1230,18 +1375,53 @@ index a7b00faa79..3486c6b39f 100644
  
  /** Register one generic pi-ai adapter for all configured provider routes. */
  export function apply(ctx: Context, config: Config): void {
-+  providePiAiAccounts(ctx)
++  const accounts = providePiAiAccounts(ctx, () => registration?.replace([...profiles().keys()]))
    ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
    const settingsNs = ctx.fiber.entry?.options.id ?? NS
    let lastRaw: ReturnType<Config['providers']['get']> | undefined
-@@ -216,6 +221,7 @@ export function apply(ctx: Context, config: Config): void {
+@@ -214,8 +219,16 @@ export function apply(ctx: Context, config: Config): void {
+   // through `ctx` per call, so they stay correct across the collection rebuilds
+   // a configuration change causes, and a sign-in survives one.
    const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
++  const usesSubscription = async (provider: string, profile?: ResolvedPiAiProviderProfile): Promise<boolean> => {
++    if (provider !== 'openai' || profile?.apiKeyEnv !== undefined
++      || Object.keys(profile?.headers ?? {}).some(name => /^(authorization|x-api-key|api-key)$/i.test(name))) return false
++    return (await ctx.get('credentials')?.describeRecord(recordKeyFor(provider)))?.kind === 'grant'
++  }
    const adapter = new PiAiAdapter({
      profiles,
 +    accountSignal: provider => piAiAccountSignal(ctx, provider),
++    accountModels: async (provider, profile, apiKey) => apiKey !== undefined || !await usesSubscription(provider, profile)
++      ? undefined : (await accounts.catalog(provider)).models.filter(model => model.supported),
      resolveApiKey,
      auth,
      resolveAttachments: () => ctx.get('attachments'),
+@@ -277,10 +290,21 @@ export function apply(ctx: Context, config: Config): void {
+   // except the stored credential and deployment-owned headers: the curated UI
+   // accepts neither, so an already-configured route supplies both inside the
+   // Host rather than widening the discovery request.
+-  ctx.llm.registerModelDiscovery(settingsNs, (request, signal) => discoverModels(
+-    { ...request, ...signal === undefined ? {} : { signal } },
+-    () => storedDiscoveryProfile(request.provider),
+-  ))
++  ctx.llm.registerModelDiscovery(settingsNs, async (request, signal) => {
++    const baseline = () => discoverModels({ ...request, ...signal === undefined ? {} : { signal } }, () => storedDiscoveryProfile(request.provider))
++    if (request.provider && request.apiKey === undefined && request.baseURL === undefined && request.api === undefined
++      && await usesSubscription(request.provider, profiles().get(request.provider))) {
++      const account = await accounts.catalog(request.provider, { signal })
++      const configured = profiles().get(request.provider)?.piProvider?.getModels()
++      const known = configured?.map(model => ({ id: model.id, name: model.name,
++        contextWindow: model.contextWindow, maxTokens: model.maxTokens, inputModalities: [...model.input] })) ?? await baseline()
++      return account.models.filter(model => model.supported).flatMap(model => {
++        const metadata = known.find(item => item.id === model.id)
++        return metadata ? [{ ...metadata, name: model.name }] : []
++      })
++    }
++    return baseline()
++  })
+   // Route effects bind to this apply fiber via the stable `ctx` reference,
+   // even when a swap runs inside the scoped settings callback below. A bare
+   // mount (zero routes) is the dormant posture: nothing registers until a
 diff --git a/packages/llm/llm-pi-ai/src/installation.ts b/packages/llm/llm-pi-ai/src/installation.ts
 new file mode 100644
 index 0000000000..ab2a7f148c

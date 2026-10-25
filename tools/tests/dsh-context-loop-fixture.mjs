@@ -56,6 +56,7 @@ export function apply(ctx) {
   const surfaceMethod = process.env.DSH_SURFACE_METHOD_FIXTURE === '1'
   const surfaceStart = repetitionStart + (repetitionMethod ? 2 : 0) + 1
   const surfaceResources = [
+    ['skill','houdini-task-decomposition','houdini-task-decomposition/SKILL.md'],
     ['skill','houdini-isolated-execution','houdini-isolated-execution/SKILL.md'],
     ['nested',null,'houdini-sop-workflow/references/sop-patterns.md'],
     ['skill','houdini-surface-workflow','houdini-surface-workflow/SKILL.md'],

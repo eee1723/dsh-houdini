@@ -13,14 +13,21 @@ def launch(hfs, source=None, root=None):
     if source:
         from dsh_profile_sync import dsh_home
         from dsh_runtime_compat import preferred_cached_bin
+        from dsh_managed_runtime import listener_pid
         source = Path(source).resolve()
-        reject_legacy_frontend(source / '.dsh-runtime.json')
+        home = dsh_home()
+        roots = [source / '.npm-cache/_npx']
+        override = os.environ.get('DSH_HOUDINI_DSH_BIN')
+        if override:
+            roots.append(Path(override).resolve().parent.parent)
+        reject_legacy_frontend(source / '.dsh-runtime.json', home=str(home), cli_roots=roots,
+                               port=3081, listener_pid=listener_pid)
         binary = os.environ.get('DSH_HOUDINI_DSH_BIN') or preferred_cached_bin(source / '.npm-cache')
         node = shutil.which('node')
         if not binary or not node:
             raise RuntimeError('源码运行环境尚未准备，请先运行 npm run runtime:prepare。')
-        config = {'root': str(dsh_home() / 'houdini-workbench'), 'installation': str(source), 'plugin': str(source),
-                  'node': node, 'binary': str(binary), 'home': str(dsh_home())}
+        config = {'root': str(home / 'houdini-workbench'), 'installation': str(source), 'plugin': str(source),
+                  'node': node, 'binary': str(binary), 'home': str(home)}
     else:
         from dsh_deployment import Store, read_json
         root = Path(root or Path(os.environ['LOCALAPPDATA']) / 'DSH-Houdini').resolve()

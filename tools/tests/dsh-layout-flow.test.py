@@ -192,13 +192,43 @@ try:
     assert large_connect['position_adjusted'] and pos(large_new)[1] < 0, large_connect
     assert all(tuple(n.position()) == p for n, p in fixed)
 
-    # 10) tab_create完全被挡时原子清理；Obstacle量测失败也必须fail closed。
+    # 10) A finite local search cannot turn presentation congestion into a
+    # semantic creation failure. Escape the complete editor footprint without
+    # moving an existing box, even when it covers every nearby candidate.
     creation_parent = run(f"p=tab_create('/obj','geo',name='__dsh_create_blocked_{suffix}')\n__result__=p.path()")
     extra_parents.append(creation_parent)
     huge=hou.node(creation_parent).createNetworkBox('huge_obstacle');huge.setBounds(hou.BoundingRect(-1000,-1000,1000,1000))
-    creation_failed=dsh_bridge.run_code(f"tab_create({creation_parent!r},'null',name='must_not_remain')",owner_session=session,owner_call='blocked-create')
-    assert not creation_failed['ok'] and hou.node(creation_parent+'/must_not_remain') is None,creation_failed
+    huge_before=(tuple(huge.position()),tuple(huge.size()))
+    escaped=run(f"__result__=tab_create({creation_parent!r},'font',name='editable_text',parms={{'text':'EDITABLE'}}).path()")
+    assert hou.node(escaped).evalParm('text')=='EDITABLE'
+    assert pos(escaped)[0]>1000 and pos(escaped)[1]==0,pos(escaped)
+    assert huge_before==(tuple(huge.position()),tuple(huge.size()))
     huge.destroy()
+
+    # A large organised network also leaves its nodes and 18 boxes fixed.
+    # The preferred downstream position is surrounded by complete box rows;
+    # the bounded nearby search cannot reach an edge of their union.
+    crowded_parent=run(f"__result__=tab_create('/obj','geo',name='__dsh_crowded_{suffix}').path()")
+    extra_parents.append(crowded_parent)
+    crowded_network=hou.node(crowded_parent);crowded_nodes=[];crowded_boxes=[]
+    for i in range(810):
+        existing=crowded_network.createNode('null','existing_'+str(i))
+        existing.setPosition(hou.Vector2((i%45)*1.5,-(i//45)*3.0))
+        crowded_nodes.append(existing)
+    for row in range(18):
+        box=crowded_network.createNetworkBox('module_'+str(row))
+        for existing in crowded_nodes[row*45:(row+1)*45]:box.addItem(existing)
+        box.setBounds(hou.BoundingRect(-2,-row*3.0-2.5,70,-row*3.0+.5))
+        crowded_boxes.append(box)
+    crowded_before=[(item,tuple(item.position()),tuple(item.size())) for item in [*crowded_nodes,*crowded_boxes]]
+    source=crowded_nodes[9*45+22]
+    downstream=run(f"__result__=tab_create({crowded_parent!r},'null',name='local_revision',inputs=[{source.path()!r}]).path()")
+    assert hou.node(downstream).input(0)==source
+    assert pos(downstream)[0]>70 and pos(downstream)[1]<float(source.position().y()),pos(downstream)
+    assert all((tuple(item.position()),tuple(item.size()))==(position,size) for item,position,size in crowded_before)
+
+    # Invalid/unmeasurable editor geometry is distinct from an exhausted
+    # local search. Preserve the existing explicit measurement-failure path.
     bad_note=hou.node(creation_parent).createStickyNote('bad_measurement');bad_note.setSize(hou.Vector2(2,1))
     measured_source=run(f"__result__=tab_create({creation_parent!r},'null',name='measured_source').path()")
     measured_destination=run(f"__result__=tab_create({creation_parent!r},'null',name='measured_destination').path()")

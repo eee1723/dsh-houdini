@@ -283,6 +283,17 @@ try:
     assert webview.raise_workspace(workspace_a, frontend_url=base)
     assert not webview.raise_workspace(workspace_a)
     webview.FRONTEND_URL = base
+    # Desktop activation can arrive before the authentication redirect creates
+    # the application document. Preserve the latest target for that document,
+    # rather than dropping it when the current URL still contains the token.
+    webview.show_webview(session_id='startup-old', authenticated_url=base+'/?token='+TOKEN, force_reload=True)
+    webview._issue_launch_intent(webview._navigation_url(None,'startup-first',base))
+    webview._issue_launch_intent(webview._navigation_url(None,'startup-latest',base))
+    pending_launch=settle()
+    assert len(requests)==11 and pending_launch['done']
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(pending_launch['urlAtBoot']).query)['dsh-houdini-session']==['startup-latest']
+    assert 'token=' not in pending_launch['urlAtBoot']
+    assert not webview._view.page().scripts().find('dsh-launch-session-hint')
     print("Qt WebView: one auth bootstrap, hidden-page reuse, HIP switch, Repair and native-client workspace hints passed")
 finally:
     if webview._retry_timer is not None:

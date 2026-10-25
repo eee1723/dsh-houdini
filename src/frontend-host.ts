@@ -36,7 +36,7 @@ export class HoudiniFrontend extends TypertRemoteService {
   }
 
   @Remote
-  chatgptStatus(signal:AbortSignal) {return this.chatgpt.status(signal)}
+  chatgptStatus(input:{refreshModels?:boolean}|undefined,signal:AbortSignal) {return this.chatgpt.status(signal,input)}
 
   @Remote
   chatgptStart() {return this.chatgpt.start()}

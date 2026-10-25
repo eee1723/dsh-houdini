@@ -121,6 +121,13 @@ def start_gui_probe():
             rows=listed['value']['items']
             from dsh_executor_registry import active_registration
             endpoint=deployment.read_json(active_registration()._file)
+            # Historical records survive both clean exit and crash. Neither is
+            # another open window, even if a crash left state='registered'.
+            registry=Path(ctx['executorRegistry'])/'endpoints'
+            for retired,state_name in (('f'*32,'registered'),('e'*32,'disconnected')):
+                deployment.atomic_json(registry/(retired+'.json'),dict(endpoint,executor_id=retired,
+                    pid=99999999,processStarted='retired-fixture-process',state=state_name,
+                    hip_path=str(scene.parent/('closed-'+retired[0]+'.hip'))))
             launch=state.get('launch')
             assert launch and isinstance(launch.get('sessionId'),str), 'Open Workspace returned no explicit native session identity'
             sid=launch['sessionId']

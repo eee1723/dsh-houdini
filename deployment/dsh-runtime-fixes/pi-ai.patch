@@ -11,22 +11,23 @@ index 07f546f970..d3f56d7b35 100644
  		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
  		"@earendil-works/pi-telemetry": "1.3.0",
 diff --git a/packages/ai/src/auth/helpers.ts b/packages/ai/src/auth/helpers.ts
-index 980963e790..3e6f6d6139 100644
+index 980963e790..5364f35d22 100644
 --- a/packages/ai/src/auth/helpers.ts
 +++ b/packages/ai/src/auth/helpers.ts
-@@ -55,5 +55,7 @@ export function lazyOAuth(input: {
+@@ -55,5 +55,8 @@ export function lazyOAuth(input: {
  		login: async (interaction, options) => (await loaded()).login(interaction, options),
  		refresh: async (credential, signal) => (await loaded()).refresh(credential, signal),
  		toAuth: async (credential) => (await loaded()).toAuth(credential),
 +		registration: async (credential) => (await loaded()).registration?.(credential),
 +		revoke: async (credential, signal) => (await loaded()).revoke?.(credential, signal),
++		listModels: async (auth, signal) => (await loaded()).listModels?.(auth, signal),
  	};
  }
 diff --git a/packages/ai/src/auth/oauth/openai-chatgpt.ts b/packages/ai/src/auth/oauth/openai-chatgpt.ts
-index 65e0371353..72be04d14f 100644
+index 65e0371353..677e6a84ae 100644
 --- a/packages/ai/src/auth/oauth/openai-chatgpt.ts
 +++ b/packages/ai/src/auth/oauth/openai-chatgpt.ts
-@@ -1,309 +1,253 @@
+@@ -1,309 +1,272 @@
 -/**
 - * OpenAI Responses API token sharing through Sign in with ChatGPT.
 - *
@@ -41,7 +42,7 @@ index 65e0371353..72be04d14f 100644
  import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 -import { getProviderEnvValue } from "../../utils/provider-env.ts";
 -import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
-+import type { LoginOptions, OAuthAuth, OAuthCredential, OAuthRegistration, ProviderAuthInteraction } from "../types.ts";
++import type { LoginOptions, ModelAuth, OAuthAuth, OAuthCredential, OAuthRegistration, OAuthModelInfo, ProviderAuthInteraction } from "../types.ts";
  import { generatePKCE } from "./pkce.ts";
  
 -// every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
@@ -560,11 +561,30 @@ index 65e0371353..72be04d14f 100644
 -		return { apiKey: credential.access };
 -	},
 +    name: "OpenAI (ChatGPT subscription)", isSubscription: true, loginLabel: "Sign in with ChatGPT",
-+    login, refresh, registration: async credential => registrationOf(credential), revoke,
++    login, refresh, registration: async credential => registrationOf(credential), revoke, listModels,
 +    async toAuth(credential) { return { apiKey: credential.access }; },
  };
++
++/** The subscription endpoint uses `models`, not the API-key endpoint's `data` shape. */
++async function listModels(auth: ModelAuth, signal: AbortSignal): Promise<readonly OAuthModelInfo[]> {
++    const token = required(auth.apiKey, "account access token");
++    const response = await safeFetch(`${RESOURCE}/models`, { signal, redirect: "error", headers: { authorization: `Bearer ${token}`, accept: "application/json" } });
++    if (!response.ok) throw httpError(`OpenAI account model directory failed (${response.status})`, response.status);
++    const data: unknown = await response.json();
++    if (!object(data) || !Array.isArray(data.models)) throw authError("OpenAI account model directory has an unsupported response", "MODEL_CATALOG_INVALID");
++    const rows: OAuthModelInfo[] = [], ids = new Set<string>();
++    for (const item of data.models) {
++        if (!object(item)) throw authError("OpenAI account model directory contains an invalid model", "MODEL_CATALOG_INVALID");
++        if (item.visibility !== "list") continue;
++        const id = required(item.slug, "model slug"), name = required(item.display_name, "model display name");
++        if (ids.has(id)) throw authError("OpenAI account model directory contains duplicate model identifiers", "MODEL_CATALOG_INVALID");
++        ids.add(id);
++        rows.push({ id, name, ...(typeof item.description === "string" && item.description ? { description: item.description } : {}) });
++    }
++    return rows;
++}
 diff --git a/packages/ai/src/auth/types.ts b/packages/ai/src/auth/types.ts
-index 60fe4ff853..823b0d3e92 100644
+index 60fe4ff853..edf5b9f7bd 100644
 --- a/packages/ai/src/auth/types.ts
 +++ b/packages/ai/src/auth/types.ts
 @@ -200,6 +200,10 @@ export interface ApiKeyAuth {
@@ -578,7 +598,7 @@ index 60fe4ff853..823b0d3e92 100644
  	/**
  	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
  	 * agent host ID. Called only by login flows that need it, so apps can create
-@@ -213,12 +217,21 @@ export interface LoginOptions {
+@@ -213,12 +217,23 @@ export interface LoginOptions {
  	agentName?: string;
  }
  
@@ -595,8 +615,24 @@ index 60fe4ff853..823b0d3e92 100644
   * auth from whatever credential ends up stored.
   */
  export interface OAuthAuth {
++    /** Current account-specific choices; this does not perform inference. */
++    listModels?(auth: ModelAuth, signal: AbortSignal): Promise<readonly OAuthModelInfo[] | undefined>;
 +    registration?(credential: OAuthCredential): Promise<OAuthRegistration | undefined>;
 +    revoke?(credential: OAuthCredential, signal: AbortSignal): Promise<{ confirmed: boolean } | undefined>;
  	/** Display name, e.g. "Anthropic (Claude Pro/Max)". */
  	name: string;
  
+@@ -244,6 +259,13 @@ export interface OAuthAuth {
+ 	toAuth(credential: OAuthCredential): Promise<ModelAuth>;
+ }
+ 
++/** Provider-advertised account model identity; capabilities come from model metadata. */
++export interface OAuthModelInfo {
++    id: string;
++    name: string;
++    description?: string;
++}
++
+ /**
+  * Provider auth. At least one of `apiKey`/`oauth` must be present: even
+  * ambient-credential providers and keyless local servers provide `apiKey`

@@ -23,7 +23,7 @@ def _flow_gaps(nodes):
 
 
 def _local_free_position(node, preferred):
-    from dsh_network_layout import Rect, find_free_translation
+    from dsh_network_layout import Rect, find_free_translation, union
     from dsh_network_boxes import _effective_box_rect,collect_editor_obstacles
     parent=node.parent();size=node.size();width,height=float(size.x()),float(size.y())
     source=Rect(0,0,width,height);current_box=node.parentNetworkBox()
@@ -31,9 +31,17 @@ def _local_free_position(node, preferred):
         excluded_box_ids=[] if current_box is None else [int(current_box.sessionId())],
         dot_footprint=(width*.5,height))
     container=None if current_box is None else _effective_box_rect(current_box)
+    clearance=(width*.5,height*.75)
     result=find_free_translation(source,obstacles,preferred=preferred,
         step=(max(width*1.5,1e-3),max(height*2.0,1e-3)),
-        clearance=(width*.5,height*.75),container=container,max_candidates=512)
+        clearance=clearance,container=container,max_candidates=512)
+    if not result['ok'] and container is None and obstacles:
+        # Exhausting nearby candidates says nothing about the unbounded editor.
+        # Jump past the complete fixed footprint, preserving the preferred y
+        # (and therefore downstream flow), without moving any existing item.
+        outside=(union(item[1] for item in obstacles).max_x+clearance[0],preferred[1])
+        result=find_free_translation(source,obstacles,preferred=outside,
+            clearance=clearance,max_candidates=1)
     return {'ok':result['ok'],'status':'adjusted' if result['ok'] else 'blocked',
             'position':result.get('translation'),'blockers':result.get('blocked_by') or []}
 

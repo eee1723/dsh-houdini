@@ -537,8 +537,9 @@ def tab_create(
       （避免对 box/grid 这类纯节点做昂贵的 pane 导航）。
     - 落位：连完 inputs 后自动摆放——有输入时以下游均值为首选；无输入时以父网络
       右侧新列为首选（空网络落原点）。再对兄弟节点、其他Network Box、Sticky Note和
-      Network Dot做有界避障；找不到安全位置则创建失败并由调用事务清理。间距由节点
-      实际尺寸推导，见``_place_created_node``。
+      Network Dot做局部有界避障；无所属Box且附近候选耗尽时放到完整障碍包络右侧，
+      不移动既有内容。已有所属Box的边界仍保持；间距由节点实际尺寸推导，
+      见``_place_created_node``。
     """
     try:
         parent, ctx, latest, input_nodes = _prepare_tab_create(parent, type_name, inputs, parms)

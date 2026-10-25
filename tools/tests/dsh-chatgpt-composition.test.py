@@ -25,11 +25,10 @@ from houdini_test_environment import isolated_environment,reexec_unpacked_test_c
 from dsh_web_auth import DshWebSession
 import dsh_managed_runtime as managed
 from dsh_runtime_compat import runtime_fix_identity
+from dsh_deployment import atomic_json,read_json
 
 def write(filename,value):
-    temporary=Path(str(filename)+'.tmp')
-    temporary.write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
-    temporary.replace(filename)
+    atomic_json(Path(filename),value)
 
 def main():
     reexec_unpacked_test_cli()
@@ -65,14 +64,14 @@ def main():
         while time.monotonic()<deadline:
             assert host.poll() is None,'Owned Host exited before completing the fixture'
             try:
-                value=json.loads(Path(filename).read_text(encoding='utf-8'))
+                value=read_json(Path(filename))
                 if predicate(value):return value
             except FileNotFoundError:pass
             time.sleep(.05)
         raise AssertionError('Fixture response timed out: '+Path(filename).name)
     def command(action):
         ident=uuid.uuid4().hex;write(config['command'],{'id':ident,'action':action})
-        value=wait_file(config['response'],lambda value:value.get('id')==ident)
+        value=wait_file(config['response']+'.'+ident,lambda value:value.get('id')==ident)
         assert value['ok'],value
         return value
     log=folder/'host.log'
@@ -81,7 +80,7 @@ def main():
             host=managed.spawn_frontend([node,str(binary),'web','--patch',str(overlay),'--port',str(port),'--no-open'],
                 node=node,cwd=folder,env=env,stdout=stdout,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             ready=wait_file(config['ready']);assert ready['ok'],ready
-            assert ready['nativeService'] and sorted(ready['nativeMethods'])==['describe','disconnect','ensureInstallationId'],ready
+            assert ready['nativeService'] and sorted(ready['nativeMethods'])==['catalog','describe','disconnect','ensureInstallationId'],ready
             assert 'oauth' in ready['flow'],ready
             auth=DshWebSession(base,str(log),str(folder/'runtime.json'))
             deadline=time.monotonic()+15
@@ -90,7 +89,7 @@ def main():
                 time.sleep(.1)
             auth.authorize(timeout=10)
             def rpc(name,input=None,expect_error=False):
-                method='houdiniFrontend/'+name
+                method=name if '/' in name else 'houdiniFrontend/'+name
                 body={'type':'client-request','rpcId':uuid.uuid4().hex,'method':method,'payload':{'args':{} if input is None else {'input':input}}}
                 request=urllib.request.Request(base+'/api/'+method,data=json.dumps(body).encode(),headers={'Content-Type':'application/json'},method='POST')
                 with auth.open(request,timeout=20) as response:result=json.load(response)['result']
@@ -104,24 +103,27 @@ def main():
             after=command('snapshot')
             assert blank['nativeFlowAvailable'] and blank['credential']['stored'] is False and blank['credential']['kind'] is None,blank
             assert not blank['route']['configured'] and not blank['route']['conflicts'],blank['route']
-            assert blank['models'] and any(row['id'].startswith('gpt-') for row in blank['models'])
+            assert blank['models']==[],'No subscription catalog is shown before sign-in'
             assert before['credentialDigest']==after['credentialDigest'] and before['patchDigest']==after['patchDigest']
             assert after['counts']['describe']>=before['counts']['describe']+2,'RPC must consume the already-loaded native account service'
             assert after['counts']['ensureInstallationId']==0 and after['counts']['disconnect']==0
             assert not after['blockedExternal']
-            checks.extend(['actual-root-service-and-oauth-flow','authenticated-production-status-rpc','native-catalog-with-no-account','status-read-only-and-no-network','same-host-native-account-method'])
+            checks.extend(['actual-root-service-and-oauth-flow','authenticated-production-status-rpc','no-subscription-catalog-before-sign-in','signed-out-status-read-only-and-no-network','same-host-native-account-method'])
             seeded=command('seed-grant')
             signed=rpc('chatgptStatus')
             assert signed['credential']['stored'] and signed['credential']['kind']=='grant'
             assert 'account' not in signed,'Unverified synthetic legacy grant cannot invent a verified identity'
             assert not signed['route']['configured'],'Grant presence must not configure a model route'
+            assert [row['id'] for row in signed['models']]==['gpt-6.1-sol','gpt-6-luna','future-fixture-model'],'Account visibility and order must own choices'
+            assert signed['models'][0]['name']=='Account main model' and signed['models'][0]['description']=='Synthetic account description'
+            assert signed['models'][-1]['supported'] is False,'New unknown models remain honest about missing metadata'
             model=next(row['id'] for row in signed['models'] if row['id'].startswith('gpt-'))
             selected=rpc('chatgptSelect',{'model':model})
             selection_state=command('snapshot')
             assert selected['route']['configured'] and selected['route']['registered']
             assert selected['defaultSelection']['provider']=='openai' and selected['defaultSelection']['model']==model
             assert selection_state['userProfile']=={'displayName':'ChatGPT'},selection_state['userProfile']
-            assert [row['id'] for row in selected['models']]==[row['id'] for row in blank['models']],'Settings must preserve the native model catalog'
+            assert [row['id'] for row in selected['models']]==[row['id'] for row in signed['models']],'Settings must preserve the account model catalog'
             assert selection_state['counts']['ensureInstallationId']==0,'Selecting a model must not start or migrate a login'
             assert not selection_state['blockedExternal']
             reasoning=next(row for row in selected['models'] if row.get('reasoning',{}).get('efforts'))
@@ -130,6 +132,21 @@ def main():
             assert picked['defaultSelection']=={'provider':'openai','model':reasoning['id'],'reasoningEffort':effort}
             selection_state=command('snapshot')
             checks.extend(['synthetic-grant-has-no-unverified-identity','native-settings-mutate-preserves-catalog','native-default-model-selection-without-request'])
+            picker=command('picker')
+            assert [row['id'] for row in picker['models']]==['gpt-6.1-sol','gpt-6-luna'],'Conversation picker must use the same supported account choices'
+            native_picker=rpc('session/modelCatalog')
+            native_group=next(group for group in native_picker['groups'] if group['id']=='openai')
+            assert [row['id'] for row in native_group['models']]==['gpt-6.1-sol','gpt-6-luna'],'Actual conversation catalog RPC must consume account choices'
+            assert native_group['models'][0]['name']=='Account main model' and native_group['models'][0]['description']=='Synthetic account description'
+            assert len(picker['catalogRequests'])==1,'Repeated status, selection and picker share one native catalog cache'
+            command('catalog-failure')
+            failed=rpc('chatgptStatus',{'refreshModels':True})
+            assert failed['models']==[] and failed.get('catalogError'),'A failed refresh must not show the bundled historical catalog'
+            assert 'synthetic-private-provider-body' not in json.dumps(failed),'Raw provider bodies cannot cross status RPC'
+            command('catalog-recover')
+            restored=rpc('chatgptStatus',{'refreshModels':True})
+            assert [row['id'] for row in restored['models']]==[row['id'] for row in signed['models']]
+            checks.extend(['same-account-catalog-in-native-picker','actual-native-conversation-catalog-rpc','account-catalog-cache-reuse','failed-catalog-no-historical-fallback','explicit-catalog-refresh-recovery'])
             disconnected=rpc('chatgptSignout')
             cleared=command('snapshot')
             assert disconnected['credential']['stored'] is False and disconnected['signout']['localCleared'] is True
@@ -145,7 +162,7 @@ def main():
             assert api['counts']['disconnect']==cleared['counts']['disconnect'],'API-key refusal must precede native disconnect'
             assert not api['blockedExternal']
             checks.extend(['native-disconnect-exact-account','unconfirmed-revocation-honest','unrelated-record-and-model-settings-preserved','api-key-record-not-deleted'])
-            report.update(ok=True,model=model,initialModelCount=len(blank['models']),finalCounts=api['counts'],blockedExternal=api['blockedExternal'],
+            report.update(ok=True,model=model,initialModelCount=len(blank['models']),accountModelCount=len(signed['models']),finalCounts=api['counts'],blockedExternal=api['blockedExternal'],
                           limitation='Synthetic grant and real native settings/RPC only; no real OAuth consent, model request, subscription entitlement or provider revocation is verified here.')
     except Exception as error:
         report['error']=str(error)

@@ -208,6 +208,44 @@ container_query = dsh_bridge.run_code(
 assert container_query["ok"] is True, container_query
 assert container_query["result"] == {"body": [1]}, container_query
 
+# Python guarantees the container types of variadic parameters, including in
+# nested authorization helpers. Their methods do not require raw exemptions.
+for query in (False, True):
+    variadic = dsh_bridge.run_code(
+        "def dispatch(*args, **kwargs):\n"
+        "    kwargs.setdefault('mode', 'edit'); return [args.count(2), kwargs['mode']]\n"
+        "__result__=dispatch(2, 2)", read_only=query)
+    assert variadic['ok'] and variadic['result'] == [2, 'edit'], variadic
+
+# A source-defined ordinary method is analyzed through its body. Calling the
+# verb wrapper is legal; renaming the wrapper is not a prerequisite for work.
+local_builder = dsh_bridge.run_code(
+    "class Module:\n"
+    "    def copy_complete(self): return tab_create('/obj', 'geo', name='__gate_local_wrapper')\n"
+    "m=Module(); duplicate=m.copy_complete; __result__=duplicate().path()")
+assert local_builder['ok'], local_builder
+local_node = hou.node(local_builder['result'])
+assert local_node is not None
+local_node.destroy()
+
+local_fixture = hou.node('/obj').createNode('geo', '__gate_local_source')
+try:
+    for source, operation in (
+        ("class Module:\n    def copy(self): return hou.node('/obj').createNode('geo','__gate_bad_local')\nModule().copy()", 'createNode'),
+        ("class Module:\n    def __init__(self): self.node=hou.node('/obj/__gate_local_source')\n    def copy(self): self.node.setName('__changed')\nModule().copy()", 'setName'),
+        ("class Module:\n    def copy(self): return 1\nm=Module(); m.copy=hou.node('/obj/__gate_local_source').setName; m.copy('__changed')", 'setName'),
+        ("class Module:\n    def copy(self): return 1\nAlias=Module; setattr(Alias,'copy',hou.node('/obj/__gate_local_source').setName); Module().copy('__changed')", 'setName'),
+        ("class Module:\n    def copy(self): return 1\nm=Module(); d=vars(m); d['copy']=hou.node('/obj/__gate_local_source').setName; m.copy('__changed')", 'setName'),
+    ):
+        for query in (False, True):
+            rejected = dsh_bridge.run_code(source, read_only=query, allow_raw='cannot exempt source-wrapped HOM')
+            assert not rejected['ok'] and ('read-only' if query else 'allow_raw cannot exempt') in rejected['error'], rejected
+            assert operation in {row['name'] for row in rejected['rawUsage']['coveredMutations']}, rejected
+            assert local_fixture.name() == '__gate_local_source'
+            assert hou.node('/obj/__gate_bad_local') is None
+finally:
+    local_fixture.destroy()
+
 # Python set.add caused a false Raw Gate block in the K3 bicycle trace.  Only
 # receivers statically initialized as Python sets are exempted; HOM add* calls
 # remain gated as low-level mutations.

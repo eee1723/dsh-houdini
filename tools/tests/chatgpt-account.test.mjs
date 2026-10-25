@@ -6,6 +6,13 @@ import {ChatGptAccountController,chatGptRouteConflicts} from '../../lib/chatgpt-
 
 const key='llm-pi-ai/openai'
 const tick=()=>new Promise(resolve=>setTimeout(resolve,0))
+async function waitFor(check){
+  const deadline=Date.now()+5000
+  while(!await check()){
+    assert(Date.now()<deadline,'asynchronous login preparation did not settle')
+    await tick()
+  }
+}
 function fixture({profile,kind,configured=Boolean(kind),timeout=10000}={}){
   let stored=configured,recordKind=kind,registered=Boolean(profile),active=false,resolveLogin,request
   const writes=[],defaults=[],probes=[],preparations=[],disconnects=[]
@@ -37,6 +44,7 @@ function fixture({profile,kind,configured=Boolean(kind),timeout=10000}={}){
   }
   ctx.get=name=>ctx[name]
   ctx.piAiAccounts={
+    async catalog(provider,options={}){assert.equal(provider,'openai');options.signal?.throwIfAborted();return {source:'account',fetchedAt:new Date().toISOString(),models:[{id:'model-a',name:'Account Model A',description:'Account description',supported:true}]}},
     async ensureInstallationId(provider){assert.equal(provider,'openai');return '11111111-2222-3333-4444-555555555555'},
     async describe(provider){assert.equal(provider,'openai');return {...await ctx.credentials.describeRecord(key),registrationAvailable:true,disconnecting:false,
       ...(stored&&recordKind==='grant'?{account:{issuer:'https://auth.openai.com',subject:'verified-subject',email:'user@example.com',name:'User',token:'must-not-escape'}}:{})}},
@@ -52,7 +60,7 @@ const first=fixture()
 try{
   const state=await first.controller.status()
   assert.equal(state.nativeFlowAvailable,true);assert.equal(state.credential.stored,false)
-  assert.equal(state.route.configured,false);assert.equal(state.models[0].id,'model-a')
+  assert.equal(state.route.configured,false);assert.deepEqual(state.models,[],'no account has no subscription catalog')
   assert.equal(first.request(),undefined);assert.deepEqual(first.preparations,[]);assert.deepEqual(first.writes,[]);assert.deepEqual(first.probes,[])
   const login=await first.controller.start();await tick()
   assert.equal(login.login.status,'pending');assert.equal(first.preparations.length,1)
@@ -79,6 +87,8 @@ try{
   assert.deepEqual(first.writes,[[{op:'set',path:['providers','openai'],value:{displayName:'ChatGPT'}}]])
   assert.deepEqual(first.defaults,[{provider:'openai',model:'model-a',reasoningEffort:'low'}])
   assert.equal(selected.models[0].reasoning.defaultEffort,'low')
+  assert.equal(selected.models[0].name,'Account Model A','account display name wins over generic metadata')
+  assert.equal(selected.models[0].description,'Account description')
   const verified=await first.controller.probe({model:'model-a',reasoningEffort:'high'})
   assert.equal(verified.ok,true);assert.equal(first.probes.length,1)
   assert.deepEqual(first.probes[0].messages,[{role:'user',content:[{type:'text',text:'Reply with only OK.'}]}])
@@ -105,6 +115,30 @@ try{
   const unknown=await existing.controller.status();assert.equal(unknown.credential.stored,null)
   assert.equal(unknown.credential.error.code,'CREDENTIAL_UNAVAILABLE');assert(!JSON.stringify(unknown).includes('must-not-escape'))
 }finally{await existing.controller.dispose()}
+
+// Account visibility and order own the choices; the bundled metadata only enriches exact ids.
+const accountCatalog=fixture({profile:{displayName:'ChatGPT'},kind:'grant'}),catalogCalls=[]
+accountCatalog.ctx.piAiAccounts.catalog=async(provider,options={})=>{
+  assert.equal(provider,'openai');catalogCalls.push(options)
+  return {source:'account',fetchedAt:new Date().toISOString(),models:[
+    {id:'new-account-model',name:'New model',supported:false},
+    {id:'model-a',name:'Account display name',description:'Account-provided description',supported:true},
+  ]}
+}
+try{
+  const state=await accountCatalog.controller.status(undefined,{refreshModels:true})
+  assert.equal(catalogCalls[0].refresh,true,'explicit UI refresh reaches the one native catalog owner')
+  assert.deepEqual(state.models.map(row=>row.id),['new-account-model','model-a'])
+  assert.equal(state.models[0].supported,false);assert.equal(state.models[0].contextWindow,undefined,'unknown ids never borrow another model capabilities')
+  assert.equal(state.models[1].name,'Account display name');assert.equal(state.models[1].description,'Account-provided description')
+  await rejectsCode(()=>accountCatalog.controller.select({model:'new-account-model'}),'MODEL_UNAVAILABLE')
+  accountCatalog.ctx.piAiAccounts.catalog=async()=>{throw {code:'NETWORK',message:'private token must-not-escape'}}
+  const failed=await accountCatalog.controller.status()
+  assert.deepEqual(failed.models,[],'a failed account request does not fall back to the generic catalog')
+  assert.equal(failed.catalogError.code,'NETWORK');assert(!JSON.stringify(failed).includes('must-not-escape'))
+  await rejectsCode(()=>accountCatalog.controller.select({model:'model-a'}),'NETWORK')
+  assert.deepEqual(accountCatalog.defaults,[]);assert.deepEqual(accountCatalog.probes,[])
+}finally{await accountCatalog.controller.dispose()}
 
 for(const profile of [
   {apiKeyEnv:'PRIVATE_KEY'}, {headers:{Authorization:'secret'}}, {baseURL:'https://api.openai.com.evil.example/v1'},
@@ -177,16 +211,16 @@ try{
   await fs.writeFile(legacyFile,JSON.stringify({schemaVersion:1,app:'DSH-Houdini',deviceId}))
   try{
     await controller.status();assert.equal(pathReads,0);assert.deepEqual(nativeCalls,[])
-    const initial=await controller.start();await tick();await tick()
+    const initial=await controller.start();await waitFor(()=>nativeCalls.length===1)
     assert.deepEqual(nativeCalls,[{previousId:deviceId}]);assert.equal(JSON.parse(await fs.readFile(legacyFile,'utf8')).deviceId,deviceId)
     await controller.cancel({attemptId:initial.login.attemptId})
     await fs.writeFile(legacyFile,'invalid old record')
-    const next=await controller.start();await tick();await tick()
+    const next=await controller.start();await waitFor(()=>nativeCalls.length===2)
     assert.equal(nativeCalls.length,2);assert.equal(nativeCalls[1],undefined,'a native installation record wins over obsolete old files')
     assert.equal(pathReads,1)
     await controller.cancel({attemptId:next.login.attemptId})
     installed=false
-    await controller.start();await tick();await tick()
+    await controller.start();await waitFor(async()=>(await controller.status()).login.status!=='pending')
     const failed=await controller.status();assert.equal(failed.login.status,'failed');assert.equal(failed.login.error.code,'MIGRATION_INVALID')
     assert.equal(nativeCalls.length,2,'a broken old device identity is not silently replaced')
   }finally{await controller.dispose();await migration.controller.dispose()}

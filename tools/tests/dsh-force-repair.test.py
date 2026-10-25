@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 sys.modules.setdefault('hou', types.SimpleNamespace())
 import dsh_launcher as launcher
 import dsh_managed_runtime as runtime
+from dsh_deployment import _process_started
+from dsh_workbench import reject_legacy_frontend
 
 def rejects(action, text):
     try:
@@ -92,6 +94,25 @@ with tempfile.TemporaryDirectory(prefix='dsh-force-repair-中文 空格-') as di
                              creationflags=subprocess.CREATE_NO_WINDOW)
     try:
         assert process.stdout.readline().strip()==b'ready'
+        assert runtime.inspect_frontend(process.pid,cli_roots=roots,port=port)['bin']==str(cli.resolve())
+        marker=root/'legacy-runtime.json'
+        legacy={'pid':process.pid,'bin':str(cli),'source':'cached-cli'}
+        def legacy_check():
+            reject_legacy_frontend(marker,home=str(root/'home'),cli_roots=roots,
+                port=port,listener_pid=launcher._port_pid)
+        # A real exact old-format DSH entry remains protected. A new-format
+        # record for a different home does not impose the old install boundary.
+        marker.write_text(json.dumps(legacy),encoding='utf-8')
+        rejects(legacy_check,'旧版内嵌工作区后台仍在运行')
+        assert process.poll() is None, 'inspection terminated the legacy Host'
+        marker.write_text(json.dumps({**legacy,'processStarted':_process_started(process.pid),
+            'home':str(root/'home'),'frontendPort':port}),encoding='utf-8')
+        rejects(legacy_check,'旧版内嵌工作区后台仍在运行')
+        marker.write_text(json.dumps({**legacy,'processStarted':_process_started(process.pid),
+            'home':str(root/'other-home'),'frontendPort':port}),encoding='utf-8')
+        legacy_check()
+        marker.write_text(json.dumps({**legacy,'processStarted':'previous-birth'}),encoding='utf-8')
+        legacy_check()
         # Exact identity but listener changed: do not terminate even our fixture.
         rejects(lambda: runtime.stop_verified_frontend(process.pid,cli_roots=roots,port=port,
                   listener_pid=lambda: process.pid+1),'identity changed')

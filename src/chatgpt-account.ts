@@ -31,6 +31,7 @@ const MESSAGES:Record<string,string>={
   RATE_LIMIT:'当前账户的请求频率或额度受限，请稍后重试或查看 ChatGPT 套餐与用量。',
   FORBIDDEN:'当前账户未获准使用所选模型，请检查账户权限或选择其他模型。',
   MODEL_UNAVAILABLE:'所选模型不在当前可用目录中，请刷新后重新选择。',
+  CATALOG_UNAVAILABLE:'暂时无法读取当前账户的模型清单，请刷新状态或重新登录后再试。',
   NETWORK:'暂时无法连接授权或模型服务，请检查网络后重试。',
   CANCELLED:'操作已取消。',
   TIMEOUT:'等待超时，请重新发起操作。',
@@ -132,10 +133,12 @@ export class ChatGptAccountController {
     return {entry,descriptor,profile,configured:object(profile),registered:Boolean(llm?.listProviders().some((row:any)=>row.id===PROVIDER)),
       writable:settings?.writable===true,conflicts:chatGptRouteConflicts(profile)}
   }
-  async status(signal?:AbortSignal){
-    try{return await this.readStatus(signal)}catch(error){throw new ChatGptAccountError(safeError(error).code)}
+  async status(signal?:AbortSignal,input?:{refreshModels?:boolean}){
+    if(input!==undefined&&(!object(input)||Object.keys(input).some(key=>key!=='refreshModels')
+      ||input.refreshModels!==undefined&&typeof input.refreshModels!=='boolean'))fail('INVALID_INPUT')
+    try{return await this.readStatus(signal,input?.refreshModels===true)}catch(error){throw new ChatGptAccountError(safeError(error).code)}
   }
-  private async readStatus(signal?:AbortSignal){
+  private async readStatus(signal?:AbortSignal,refreshModels=false){
     signal?.throwIfAborted()
     const auth=hostService(this.ctx,'authorization'),flow=auth?.describe(KEY)
     const native=hostService(this.ctx,'piAiAccounts')
@@ -153,17 +156,22 @@ export class ChatGptAccountController {
     catch{credential.error={code:'CREDENTIAL_UNAVAILABLE',message:MESSAGES.CREDENTIAL_UNAVAILABLE}}
     const route=this.route(),models:any[]=[]
     let catalogError:SafeError|undefined
-    if(route.entry&&route.conflicts.length===0)try{
+    if(credential.stored&&credential.kind==='grant'&&route.entry&&route.conflicts.length===0)try{
+      if(typeof native?.catalog!=='function')fail('UNAVAILABLE')
+      const accountCatalog=await native.catalog(PROVIDER,{signal,refresh:refreshModels})
       const llm=this.service('llm'),catalog=route.registered?await llm.listModels(PROVIDER):await llm.discoverModels(route.entry.settingsNs,{provider:PROVIDER},signal)
       const resolved=await Promise.all(catalog.map(async(row:any)=>route.registered?llm.resolveModelInfo(PROVIDER,row.id,signal):row))
-      for(const row of resolved)models.push({id:row.id,name:row.name??row.id,...(row.inputModalities?{inputModalities:[...row.inputModalities]}:{}),
+      for(const item of accountCatalog.models){
+        const row=resolved.find((row:any)=>row.id===item.id)??{}
+        models.push({id:item.id,name:item.name,supported:item.supported===true,...(item.description?{description:item.description}:{}),...(row.inputModalities?{inputModalities:[...row.inputModalities]}:{}),
         ...(row.context?.contextWindow??row.contextWindow?{contextWindow:row.context?.contextWindow??row.contextWindow}:{}),
         ...(row.reasoning?{reasoning:{efforts:row.reasoning.efforts.map((effort:any)=>({id:effort.id,name:effort.name,...(effort.description?{description:effort.description}:{})})),
           ...(row.reasoning.defaultEffort?{defaultEffort:row.reasoning.defaultEffort}:{})}}:{})})
-    }catch(error){catalogError=safeError(error)}
+      }
+    }catch(error){const safe=safeError(error);catalogError=safe.code==='FAILED'?{code:'CATALOG_UNAVAILABLE',message:MESSAGES.CATALOG_UNAVAILABLE}:safe}
     const current=hostService(this.ctx,'agentDefaultModel')?.currentSelection()
     return {nativeFlowAvailable:Boolean(flow?.methods.some((method:any)=>method.id==='oauth')
-        &&typeof native?.ensureInstallationId==='function'&&typeof native?.describe==='function'&&typeof native?.disconnect==='function'),
+        &&typeof native?.ensureInstallationId==='function'&&typeof native?.describe==='function'&&typeof native?.disconnect==='function'&&typeof native?.catalog==='function'),
       credential,route:{configured:route.configured,registered:route.registered,writable:route.writable,conflicts:route.conflicts},models,
       defaultSelection:current?{provider:current.provider,model:current.model,...(current.reasoningEffort?{reasoningEffort:current.reasoningEffort}:{})}:null,
       login:this.attempt?structuredClone(this.attempt.view):null,...(catalogError?{catalogError}:{}),...(account?{account}:{}),
@@ -179,8 +187,8 @@ export class ChatGptAccountController {
     if(this.closed)fail('UNAVAILABLE')
     if(this.pending())fail('BUSY')
     const auth=this.service('authorization'),flow=auth.describe(KEY)
-    this.service('piAiAccounts')
-    if(!flow?.methods.some((method:any)=>method.id==='oauth'))fail('UNAVAILABLE')
+    const native=this.service('piAiAccounts')
+    if(!flow?.methods.some((method:any)=>method.id==='oauth')||typeof native.catalog!=='function')fail('UNAVAILABLE')
     if(flow.inFlight)fail('BUSY')
     const info=await this.service('credentials').describeRecord(KEY)
     if(!info.writable)fail('READ_ONLY')
@@ -242,14 +250,16 @@ export class ChatGptAccountController {
   }
   private async ready(input:unknown,enable:boolean,signal?:AbortSignal){
     const picked=selection(input),credentials=this.service('credentials'),info=await credentials.describeRecord(KEY)
-    this.service('piAiAccounts')
+    const native=this.service('piAiAccounts')
     if(info.kind==='api-key')fail('API_KEY_CONFLICT')
     if(!info.configured||info.kind!=='grant')fail('AUTH')
     const route=this.route()
     if(!route.entry||route.entry.nativeAuth?.oauth!==true)fail('UNAVAILABLE')
     if(route.conflicts.length)fail('ROUTE_CONFLICT')
-    const llm=this.service('llm'),catalog=route.registered?await llm.listModels(PROVIDER):await llm.discoverModels(route.entry.settingsNs,{provider:PROVIDER},signal)
-    if(!catalog.some((row:any)=>row.id===picked.model))fail('MODEL_UNAVAILABLE')
+    if(typeof native.catalog!=='function')fail('UNAVAILABLE')
+    const catalog=await native.catalog(PROVIDER,{signal})
+    if(!catalog.models.some((row:any)=>row.id===picked.model&&row.supported===true))fail('MODEL_UNAVAILABLE')
+    const llm=this.service('llm')
     if(!route.configured){
       if(!enable)fail('UNAVAILABLE')
       if(!route.writable||!route.descriptor)fail('READ_ONLY')

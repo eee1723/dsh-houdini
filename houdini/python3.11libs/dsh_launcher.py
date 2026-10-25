@@ -256,33 +256,7 @@ def _port_open(host: str, port: int) -> bool:
 
 def _port_pid(port: int) -> int | None:
     """PID of the process listening on :port (any local address), or None."""
-    if os.name != "nt":
-        return None
-    try:
-        proc = subprocess.run(
-            ["netstat", "-ano"],
-            capture_output=True, timeout=10,
-            creationflags=_CREATE_NO_WINDOW,
-        )
-    except Exception:
-        return None
-    raw = proc.stdout or b""
-    # 中文 Windows 的 netstat 输出可能是 GBK；我们只解析 ASCII 列（TCP/地址/状态/PID），
-    # 用 errors="replace" 容错解码即可。
-    text = raw.decode("utf-8", errors="replace")
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) < 5 or parts[0].upper() != "TCP":
-            continue
-        if not parts[1].endswith(f":{port}"):
-            continue
-        if "LISTENING" not in parts:
-            continue
-        try:
-            return int(parts[-1])
-        except ValueError:
-            continue
-    return None
+    return dsh_managed_runtime.listener_pid(port)
 
 
 def _frontend_online() -> bool:
@@ -430,6 +404,8 @@ def _write_frontend_runtime_state(pid: int | None) -> None:
     """Publish the verified listener identity for the diagnostics panel."""
     if pid is None:
         return
+    from dsh_deployment import _process_started
+    home = dsh_managed_runtime.environment().get('DSH_HOME') or str(dsh_profile_sync.dsh_home())
     bin_path = _PENDING.get("frontend_bin")
     version = _PENDING.get("frontend_version")
     if (not version and _PENDING.get("frontend_source") == "npx-cold"
@@ -442,6 +418,9 @@ def _write_frontend_runtime_state(pid: int | None) -> None:
             version = _dsh_version_for_bin(bin_path)
     payload = {
         "pid": pid,
+        "processStarted": _process_started(pid),
+        "home": os.path.realpath(os.path.expanduser(home)),
+        "frontendPort": FRONTEND_PORT,
         "version": version,
         "source": _PENDING.get("frontend_source", "unknown"),
         "bin": bin_path,

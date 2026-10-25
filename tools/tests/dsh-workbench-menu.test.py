@@ -32,7 +32,16 @@ def start_gui_probe():
         if key.upper().startswith(('QT_', 'QTWEBENGINE_', 'QML', 'PYSIDE', 'SHIBOKEN'))}), encoding='utf-8')
     source_config = dsh_workbench_client.source_config
     dsh_workbench_client.source_config = lambda launcher: {**source_config(launcher), 'debugPort': int(os.environ['DSH_WORKBENCH_MENU_DEBUG_PORT'])}
-    dsh_launcher.FRONTEND_RUNTIME_STATE = str(folder / 'unused-legacy.json')
+    # A historical marker can name a PID now owned by an unrelated live Python
+    # process. Exercise the actual menu path with the old, birth-time-free format.
+    legacy_marker = folder / 'legacy-runtime.json'
+    legacy_marker.write_text(json.dumps({
+        'pid': int(os.environ['DSH_WORKBENCH_MENU_LEGACY_PID']),
+        'source': 'cached-cli', 'bin': os.environ['DSH_HOUDINI_DSH_BIN'],
+        'startedAt': '2026-10-07T00:00:00+0800',
+    }), encoding='utf-8')
+    legacy_marker_bytes = legacy_marker.read_bytes()
+    dsh_launcher.FRONTEND_RUNTIME_STATE = str(legacy_marker)
     dsh_launcher._FALLBACK_WORKSPACE = str(folder / 'projects')
     node = hou.node('/obj').createNode('geo', 'maintenance_preserved')
     hou.hipFile.save(str(folder / 'maintenance.hip'))
@@ -68,6 +77,7 @@ def start_gui_probe():
         try:
             if dsh_launcher._LAST_STARTUP_FAILURE:
                 raise RuntimeError(dsh_launcher._LAST_STARTUP_FAILURE)
+            assert legacy_marker.read_bytes() == legacy_marker_bytes, 'opening/reloading rewrote the historical marker'
             if not state.get('edited'):
                 node.parm('tx').set(2)
                 state['edited'] = True
@@ -103,6 +113,7 @@ def main():
         raise RuntimeError('No prepared DSH runtime matching this plugin; run npm run runtime:prepare')
     node = shutil.which('node')
     env.update(DSH_HOUDINI_DSH_BIN=str(binary), DSH_WORKBENCH_MENU_FIXTURE=str(folder),
+               DSH_WORKBENCH_MENU_LEGACY_PID=str(os.getpid()),
                DSH_HOUDINI_RECOVERY_ROOT=str(folder / 'recovery'), DSH_WORKBENCH_MENU_DEBUG_PORT=str(port))
     subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'), str(binary), env['DSH_HOME'], str(ROOT)],
                    cwd=ROOT, env=env, check=True, timeout=60)

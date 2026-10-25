@@ -55,14 +55,19 @@ def install_observation():
 def source_config(launcher):
     from dsh_profile_sync import dsh_home
     from dsh_workbench import reject_legacy_frontend
-    reject_legacy_frontend(launcher.FRONTEND_RUNTIME_STATE)
+    home = dsh_home()
+    roots = [Path(launcher.NPM_CACHE) / '_npx']
+    if launcher.DSH_BIN_ENV:
+        roots.append(Path(launcher.DSH_BIN_ENV).resolve().parent.parent)
+    reject_legacy_frontend(launcher.FRONTEND_RUNTIME_STATE, home=str(home), cli_roots=roots,
+                           port=launcher.FRONTEND_PORT, listener_pid=launcher._port_pid)
     binary = launcher.DSH_BIN_ENV or launcher.dsh_runtime_compat.preferred_cached_bin(launcher.NPM_CACHE)
     if not binary:
         raise RuntimeError('源码运行环境尚未准备，请运行 npm run runtime:prepare。')
     python = Path(sys.prefix) / 'python.exe'
-    return {'root': str(dsh_home() / 'houdini-workbench'), 'installation': str(Path(launcher._PROJECT_ROOT).resolve()),
+    return {'root': str(home / 'houdini-workbench'), 'installation': str(Path(launcher._PROJECT_ROOT).resolve()),
             'plugin': launcher._PROJECT_ROOT, 'node': launcher.NODE, 'binary': str(binary),
-            'home': str(dsh_home()), 'hfs': os.environ['HFS'], 'python': str(python)}
+            'home': str(home), 'hfs': os.environ['HFS'], 'python': str(python)}
 
 
 def open_workspace(launcher, *, reload=False):

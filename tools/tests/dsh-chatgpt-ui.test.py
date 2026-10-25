@@ -18,8 +18,10 @@ driver.HOST_FIXTURE = driver.HOST_FIXTURE.replace("'clientModules','agents'", "'
         const front=ctx.get('houdiniFrontend');
         const status={nativeFlowAvailable:true,credential:{stored:true,kind:'grant',writable:true},
           route:{configured:true,registered:true,writable:true,conflicts:[]},
-          models:[{id:'fixture-model',name:'测试模型',inputModalities:['text','image'],contextWindow:262144,
-            reasoning:{efforts:[{id:'low',name:'低'},{id:'high',name:'高'}]}}],
+          models:[{id:'fixture-model',name:'测试模型',supported:true,description:'用于隔离界面验证的首个账户模型。',inputModalities:['text','image'],contextWindow:262144,
+            reasoning:{efforts:[{id:'low',name:'低'},{id:'high',name:'高'}]}},
+            ...Array.from({length:24},(_,index)=>({id:'account-model-'+(index+1),name:'账户模型 '+(index+1),supported:true,
+              description:'仅用于界面验证的账户目录项目 '+(index+1)+'。',inputModalities:['text','image']}))],
           defaultSelection:{provider:'existing-provider',model:'existing-model'},login:null};
         front.chatgptStatus=async()=>structuredClone(status);
         front.chatgptSelect=async(input)=>{status.defaultSelection={provider:'openai',...input};return structuredClone(status)};
@@ -61,6 +63,25 @@ driver.PAGE_ACCEPTANCE = r"""
     await wait(()=>field('ChatGPT 模型')?.value==='fixture-model','RPC account catalog');
     check(panel().innerText.includes('授权已保存'),'stored credential distinction absent');
     check(panel().innerText.includes('existing-provider · existing-model'),'native default fact absent');
+    const modelOptions=()=>[...field('ChatGPT 模型').options];
+    const optionIds=()=>modelOptions().map(option=>option.value);
+    check(JSON.stringify(optionIds())===JSON.stringify(['fixture-model','account-model-1','account-model-2']),'initial catalog must preserve only the first three account rows');
+    check(modelOptions()[0].text==='测试模型','friendly model label must not repeat its technical id');
+    check(panel().innerText.includes('首个账户模型'),'selected account description absent');
+    button('显示全部 25 个模型').click();
+    await wait(()=>modelOptions().length===25,'expanded account catalog');
+    check(optionIds()[24]==='account-model-24','expanded catalog reordered the account rows');
+    setValue(field('ChatGPT 模型'),'account-model-20');
+    await wait(()=>field('ChatGPT 模型').value==='account-model-20'&&panel().innerText.includes('目录项目 20。'),'manual advanced model selection');
+    button('收起更多模型').click();
+    await wait(()=>modelOptions().length===4,'collapsed catalog with retained selection');
+    check(field('ChatGPT 模型').value==='account-model-20','collapse silently replaced the selected model');
+    check(optionIds().includes('account-model-20'),'collapsed catalog lost the selected option');
+    check(field('ChatGPT 模型').querySelector('optgroup[label="当前选择"] option')?.value==='account-model-20','retained selection is not distinguishable');
+    check(!button('设为新对话默认').disabled&&!button('测试模型连接').disabled,'retained valid model became unusable');
+    state.facts.catalog={accountCount:25,initialCount:3,expandedCount:25,collapsedWithSelectionCount:4,retainedModel:'account-model-20'};
+    setValue(field('ChatGPT 模型'),'fixture-model');
+    await wait(()=>field('ChatGPT 模型').value==='fixture-model'&&modelOptions().length===3&&field('ChatGPT 思考程度').options.length===3,'restore original model for selection and probe checks');
     setValue(field('ChatGPT 思考程度'),'high');await sleep(100);
     button('设为新对话默认').click();
     await wait(()=>panel().innerText.includes('已设为新对话的默认模型'),'selection action result');
