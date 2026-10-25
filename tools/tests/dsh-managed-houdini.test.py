@@ -31,7 +31,7 @@ assert launcher._frontend_command()[2] == "managed-cli"
 assert launcher.ensure_dependencies() == "managed dependencies ok (no package manager)"
 # The parent already checked its bundled version and authenticated RPC. This
 # new Houdini process must observe that Host without claiming its parent Job.
-assert launcher._port_open(ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend()
+assert launcher._port_open('127.0.0.1', ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend()
 try:
     launcher._service_preflight()
 except RuntimeError as exc:
@@ -64,6 +64,6 @@ finally:
         process.kill()
         process.wait(timeout=10)
     bridge.stop()
-assert launcher._port_open(ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend(), \
+assert launcher._port_open('127.0.0.1', ctx['frontendPort']) and not launcher.dsh_managed_runtime.has_owned_frontend(), \
     "the bridge smoke must not stop or adopt the independent frontend"
 print("Installed managed bindings and readonly transport passed on", hou.applicationVersionString())
