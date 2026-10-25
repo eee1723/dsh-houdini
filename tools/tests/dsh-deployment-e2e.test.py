@@ -164,6 +164,7 @@ parser.add_argument("--trust", type=Path, required=True)
 parser.add_argument("--previous-bundle", type=Path,
                     help="also verify real signed previous activation, failed snapshot retry and rollback")
 parser.add_argument("--hython", action="append", type=Path, default=[])
+parser.add_argument('--native-team', action='store_true', help='Retain an enabled native team profile through preparation and repair')
 args = parser.parse_args()
 trust = d.read_json(args.trust)
 # Persistent test output is intentionally outside user data; retain failure evidence.
@@ -192,6 +193,9 @@ else:
 activation_seconds = round(time.monotonic() - activation_started, 3)
 print("Managed activation after verified staging: " + str(activation_seconds) + " seconds", flush=True)
 install = Path(ctx["install"])
+if args.native_team:
+    subprocess.run([str(install/'node/node.exe'),str(ROOT/'tools/tests/dsh-managed-profile.mjs'),str(install),
+        '--enable-native-team',ctx['home']],check=True,timeout=30,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
 inventory = d.read_json(install / "inventory.json")
 isolated_files = ["lib/isolated-execution.js", "tools/isolated-houdini-check.py",
                   "tools/houdini_test_environment.py", "houdini/python3.11libs/dsh_worker_limits.py",
@@ -296,6 +300,8 @@ try:
                     'houdini_job_submit','houdini_isolated'}
                 assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
                 assert {'job_output','job_list','job_kill'} <= set(facts['tools']), facts
+                if args.native_team:
+                    assert {'spawn_teammate','send_message','team_task_create'} <= set(facts['tools']), facts
                 graph_rows=facts['graph'] if isinstance(facts['graph'],list) else facts['graph']['entries']
                 assert sum(row['id']=='dsh-houdini' for row in graph_rows)==1, facts
                 break

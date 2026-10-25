@@ -207,6 +207,7 @@ def main():
     parser.add_argument("--trust", type=Path, required=True)
     parser.add_argument("--houdini", type=Path, action="append", required=True)
     parser.add_argument("--candidate", action="store_true")
+    parser.add_argument('--native-team', action='store_true', help='Exercise cold startup with the native team feature already enabled')
     parser.add_argument("--reuse-fixture", type=Path,
                         help="Reuse only this test's verified installation; GUI preferences and HIP remain new")
     args = parser.parse_args()
@@ -268,6 +269,15 @@ def main():
         print("Exact signed installation reverified:", ident, len(inventory), "files", flush=True)
     else:
         ident = store.stage(args.bundle, lambda text: None)
+    if args.native_team:
+        import dsh_bootstrap as bootstrap
+        context, lease = store.activate(ident, '21.0', prepare=bootstrap._prepare)
+        try:
+            subprocess.run([str(Path(context['install'])/'node/node.exe'),str(ROOT/'tools/tests/dsh-managed-profile.mjs'),
+                context['install'],'--enable-native-team',context['home']],check=True,timeout=30,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        finally:
+            lease.close()
     for executable in args.houdini:
         executable = executable.resolve(strict=True)
         # Installation folder names are user-selected; query the paired HOM

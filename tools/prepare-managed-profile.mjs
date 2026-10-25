@@ -15,8 +15,25 @@ const profile = boot.resolveProfileDir('web')
 const bundles = [...boot.PROFILE_TEMPLATES.web.bundles, 'dsh-houdini']
 boot.initProfile(profile, bundles)
 const manifest = boot.readProfileManifest('dsh', profile)
-if (JSON.stringify(manifest.dsh?.profile?.bundles) !== JSON.stringify(bundles) || Object.keys(manifest.dependencies || {}).length) {
-  throw new Error('The managed profile was changed outside the installer. Preserve its data and restore the profile before starting.')
+const selected = manifest.dsh?.profile?.bundles
+if (!Array.isArray(selected)) throw new Error('受管配置的组件列表格式无效，原配置已保留。')
+const missing = bundles.filter(bundle => !selected.includes(bundle))
+if (missing.length) throw new Error('受管配置缺少必要组件：' + missing.join(', ') + '。原配置已保留。')
+const dependencies = Object.keys(manifest.dependencies || {})
+if (dependencies.length) throw new Error('受管配置包含发行包外的依赖：' + dependencies.join(', ') + '。原配置已保留，未安装或移除依赖。')
+// Native feature toggles legitimately add profile bundles. Resolve their
+// declarations through DSH against the frozen installation, rather than
+// comparing the user's choices with the initial defaults or a second catalog.
+const installAnchor = path.join(app, 'node_modules/@deepseek-ai/dsh/package.json')
+const modulesRoot = fs.realpathSync(path.join(app, 'node_modules'))
+for (const bundle of selected) {
+  let directory
+  try { directory = fs.realpathSync(boot.resolveBundleDir('dsh', bundle, installAnchor, profile)) }
+  catch { throw new Error('当前发行包无法加载配置组件：' + bundle + '。原配置已保留。') }
+  const relative = path.relative(modulesRoot, directory)
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    throw new Error('配置组件未从当前受管发行包加载：' + bundle + '。原配置已保留。')
+  }
 }
 // DSH's public bundle resolver finds installation siblings, but its runtime
 // loader resolves bundle entries from the profile. Project only this signed

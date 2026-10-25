@@ -258,6 +258,8 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 正式发布前覆盖 H21/H22 必要执行和安装入口。发布使用 [build-release](../tools/build-release.py)、独立 [finalize-release](../tools/finalize-release.py)和受信公钥；私钥只存在于签名环境。main push、tag、Draft 均不构成正式发布。
 
+受管profile准备使用[实际DSH配置回归](../tools/tests/dsh-managed-profile.mjs)，参数为已验证的安装或payload根目录，检查默认配置、已启用原生组件、重复准备及具体不支持的配置边界，原设置保持。签名部署与GUI验收的`--native-team`覆盖已启用团队功能后的实际工具目录、冷启动、重开和同版修复；默认新配置通过不能替代这类已有配置。
+
 ```powershell
 python tools/run-deployment-tests.py
 python tools/run-deployment-tests.py --hython D:/houdini/bin/hython.exe --hython D:/Houdini22/bin/hython.exe
