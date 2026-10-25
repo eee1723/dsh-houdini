@@ -57,6 +57,13 @@ try {
   assert.equal(rpc.status,200)
   assert.equal(rpc.value.result.ok,true)
   assert(rpc.value.result.value.items.some(item=>item.sessionId===sessionId))
+  let pinReady=false
+  for(let attempt=0;attempt<80;attempt++) {
+    pinReady=await evaluate(`(()=>{const p=document.querySelector('[data-houdini-window-pin]');return p&&!p.disabled&&p.hasAttribute('aria-pressed')})()`)
+    if(pinReady)break
+    await new Promise(resolve=>setTimeout(resolve,100))
+  }
+  assert(pinReady,'The asynchronous desktop capability and pin state must become ready')
   const initial=await evaluate(`(()=>{const p=document.querySelector('[data-houdini-window-pin]');if(!p||p.disabled)throw Error('Window pin unavailable');window.__releaseDocumentMarker='retained';return{pinned:p.getAttribute('aria-pressed')==='true',origin:performance.timeOrigin,width:innerWidth,height:innerHeight}})()`)
   for(const pinned of [!initial.pinned,initial.pinned]) {
     await evaluate(`document.querySelector('[data-houdini-window-pin]').click()`)
