@@ -8,6 +8,12 @@ import tempfile
 import re
 from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
 
+# GitHub's Windows Python can default its redirected console to cp1252. Child
+# diagnostics are UTF-8; reporting their original failure must not fail again
+# merely because a fixture path or a Houdini message contains Unicode.
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(encoding='utf-8', errors='backslashreplace')
+
 ROOT = Path(__file__).resolve().parents[1]
 PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-desktop-client", "dsh-connection-operation", "dsh-launcher-preflight", "dsh-native-hooks", "dsh-frontend-lifetime", "dsh-managed-preview-paths", "dsh-network-layout", "video-runtime-package"]
 HOUDINI = [

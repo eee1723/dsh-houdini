@@ -24,7 +24,9 @@ import dsh_deployment
 
 
 with tempfile.TemporaryDirectory(prefix='dsh-connection-operation-') as temporary:
-    folder = Path(temporary)
+    # The production launch identity canonicalizes HFS. Use that same existing
+    # root spelling when TEMP is a Windows 8.3 alias, without weakening identity.
+    folder = Path(temporary).resolve()
     descriptor = folder / 'desktop.json'
     launches = folder / 'launches'
     launches.mkdir()
