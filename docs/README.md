@@ -8,7 +8,7 @@
 | 文档 | 职责 / 对应实现 |
 |---|---|
 | [当前交接](handoff.md) | 未完成动作的优先级、依赖、验证缺口与移除条件；完成即删，不积累历史 |
-| [系统架构](architecture.md) | Host、Bridge、启动器、UI、视觉和所有生产模块的代码索引 |
+| [系统架构](architecture.md) | 官方Desktop插件的目标产品形态、两条用户入口及当前Host、Bridge、启动器、UI等生产模块索引 |
 | [主要开发方向](development-directions.md) | 三项主要方向、COP按需能力边界、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
 | [Houdini Trace设计](houdini-trace-design.md) | 记录/资料/诊断信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
 | [工具说明](tools.md) | 工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
@@ -19,19 +19,21 @@
 | [节点操作卡](node-operation-cards.md) | JSON同源生成的全部节点卡、schema与维护约定 |
 | [安装与更新](setup.md) | 当前源码安装与正式受管安装合同、机器态、工作区、启动、重载和卸载 |
 | [故障报告](support-reports.md) | 本地诊断包、用户预览与分享、精确会话读取、脱敏边界及离线分析 |
-| [多实例与任务恢复](multi-instance.md) | 独立工作台、明确现场选择、工程状态组件、只读/写入边界及按需节点恢复 |
+| [多实例与任务恢复](multi-instance.md) | Desktop与Houdini菜单接入、明确现场选择、工程状态组件、只读/写入边界及按需节点恢复 |
 | [节点片段交换](component-collaboration.md) | 普通节点文件导出、导入与显式替换；无额外Agent模式 |
-| [DSH兼容设计](dsh-update-compatibility.md) | 正式发行组合/发布门、精确版本清单、DSH耦合点与唯一源码、鉴权/RPC/Qt/profile升级检查入口 |
+| [DSH兼容设计](dsh-update-compatibility.md) | 宿主与数据所有权、标准插件/工作台边界、正式发行组合/发布门、精确版本与DSH耦合点、升级验证入口 |
 | [Rig与动画设计](rig-animation-design.md) | 领域路由、driver→evaluation→deliverable和动画完成门 |
 | [程序化产品模型开发评测](product-modeling-evaluation.md) | 产品细节、连接、可编辑性和交付的验收原则；公开任务与评审材料隔离，不保存批次结果 |
-| [开发维护规范](development.md) | 代码/文档同步、生成门禁、测试入口、发布及文档生命周期 |
+| [开发维护规范](development.md) | 插件职责与替代方案比较、官方DSH不受影响的纪律、代码/文档同步、生成门禁、测试与发布 |
 | [控制参数、界面与绑定设计](parameter-controls.md) | 跨建模/场景总控/HDA的分层职责、多种推进顺序与实施完成门 |
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
 [任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域的模块粒度、依赖、逐模块观察与集成；[完整源组件](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护SOP的组件内部构造、布局与装配分工。由preset按需路由，注册入口为[src/skill.ts](../src/skill.ts)，上下文与方法验证见[开发维护](development.md)。
 
-[曲线方法](../skills/houdini-sop-workflow/references/curves-and-routing.md)维护稀疏锚点、原生编辑、平滑、绕行与截面朝向的选择；节点事实由同源操作卡提供，[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)核对实际修改及最终消费者，任意避障和自然造型质量不由这些机制检查认证。
+[曲线方法](../skills/houdini-sop-workflow/references/curves-and-routing.md)维护稀疏锚点、原生编辑、平滑、绕行、截面朝向与折线净空反馈的选择；`curve_path`与`geo_curve_clearance`由[dsh_curve_paths.py](../houdini/python3.11libs/dsh_curve_paths.py)实现，[曲线回归](../tools/tests/dsh-curve-paths.test.py)核对其声明范围。节点事实由同源操作卡提供，[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)核对实际修改及最终消费者，任意避障和自然造型质量不由这些机制检查认证。
+
+[参考工程与质量迁移](../skills/houdini-task-decomposition/references/reference-transfer.md)维护变体／迁移任务中的原始图像、可观察精度、控制意图和消费方证据；沿现有DSH任务与文件传递，不建立插件质量账本。
 
 [独立执行skill](../skills/houdini-isolated-execution/SKILL.md)维护作者与DSH团队成员按需使用一次性hython的输入、依赖、检查、原生图片和结果接入；工具由[isolated-execution](../src/isolated-execution.ts)提供，复用现有Python检查器及DSH作业，验证入口见[开发维护](development.md)。
 
@@ -41,6 +43,7 @@
 [复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)，由video skill进入复现阶段时读取。
 视频资料分层、章节/模块索引、定向取证、原文分页与真实测试方法唯一维护在
 [视频运行与证据契约](../skills/houdini-video-tutorial/references/video-processing.md)；原始材料和单次结果不进入docs。
+首次语音服务设置按[教程引导设置](../skills/houdini-video-tutorial/references/transcription-setup.md)只补缺项，使用原生settings/credentials，验证入口为[配置边界](../tools/tests/video-configuration.test.mjs)与[真实Host媒体链](../tools/tests/dsh-video-transcription-smoke.test.py)。
 
 [COP workflow](../skills/houdini-cop-workflow/SKILL.md)维护 Copernicus 图层、关系验证与纹理交付，
 由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其

@@ -12,12 +12,14 @@ export function configuredProviders(ctx:any) {
   const declared=new Map<string,any>(llm.listConfigurableProviders().map((entry:any)=>[entry.provider,entry]))
   return [...new Set([...declared.keys(),...registered.keys()])].flatMap(provider=>{
     const entry=declared.get(provider),active=registered.get(provider)
-    let profile=entry?descriptors.find((d:any)=>d.ns===entry.settingsNs)?.value:undefined
+    const descriptor=entry?descriptors.find((d:any)=>d.ns===entry.settingsNs):undefined
+    let profile=descriptor?.value
     for (const field of entry?.settingsPath??[]) profile=profile?.[field]
     const configured=Boolean(profile && typeof profile==='object' && !Array.isArray(profile))
     if (!configured && !active) return []
     return [{provider,displayName:entry?.displayName??active?.name??provider,
-      registered:Boolean(active),configured,...(configured?{profile:structuredClone(profile)}:{}),
+      registered:Boolean(active),configured,defaultBaseURL:entry?.defaultBaseURL,...(configured?{profile:structuredClone(profile)}:{}),
+      ...(descriptor?{settingsSource:{ns:descriptor.ns,revision:descriptor.revision}}:{}),
       ...(entry?.error?{error:entry.error}:{})}]
   })
 }

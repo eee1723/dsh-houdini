@@ -92,7 +92,7 @@ try {
   ctx.provide('sessions',{flush:async()=>durable})
   ctx.provide('sessionController',{resolveAgent:async id=>({agent:agents.find(agent=>agent.id===id)})})
   const controller=new ExecutorController(ctx,router)
-  assert.deepEqual(remoteMethods(controller).map(method=>method.method),['prepareWorkspace','activity','openWorkspace','list','select','clear'])
+  assert.deepEqual(remoteMethods(controller).map(method=>method.method),['openWorkspace','list','select','clear'])
   const input=(agent,record)=>({sessionId:agent.id,executorId:record.executor_id,registrationId:record.registration_id,expectedHip:record.hip_path,
     runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch})
   const context=index=>({agent:agents[index],signal})
@@ -162,13 +162,14 @@ try {
   await assert.rejects(router.resolve(context(0)),/解除/)
   assert.equal(questions,asked,'clear never auto-binds a later request')
 
-  const automatic=fixtureSession('first-use',{agentPreset:'houdini',cwd:records[0].workspace_path})
-  const automaticAgent={id:automatic.id,status:'running',session:automatic}
-  await router.resolve({agent:automaticAgent,signal})
-  assert.equal(questions,asked,'unique same-workspace target is selected only at first scene use')
+  const firstUse=fixtureSession('first-use',{agentPreset:'houdini',cwd:records[0].workspace_path})
+  await router.resolve({agent:{id:firstUse.id,status:'running',session:firstUse},signal})
+  assert.equal(questions,asked+1,'a matching workspace never substitutes for an explicit user target choice')
+  assert.equal(foldExecutorState(firstUse.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id,
+    'the user can choose another scene even when the workspace has exactly one matching candidate')
   const ambiguous=fixtureSession('choose-use',{agentPreset:'houdini',cwd:directory})
   await router.resolve({agent:{id:ambiguous.id,status:'running',session:ambiguous},signal})
-  assert.equal(questions,asked+1)
+  assert.equal(questions,asked+2)
   assert.equal(foldExecutorState(ambiguous.snapshotEvents()).selectedTarget.executor_id,records[1].executor_id)
   answer=undefined
   const skipped=fixtureSession('skip-use',{agentPreset:'houdini',cwd:directory})

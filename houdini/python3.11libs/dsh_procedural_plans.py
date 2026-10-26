@@ -5,6 +5,7 @@ quality certificates. The recipe never owns or adopts its input nodes.
 """
 
 import dsh_node_access
+from copy import deepcopy
 import itertools
 import math
 import re
@@ -23,7 +24,9 @@ def _number(value,label):
 
 
 def sop_recipe(kind,spec=None):
+    from dsh_curve_paths import CURVE_PATH_EXAMPLE, curve_path_plan
     schemas={
+        'curve_path': deepcopy(CURVE_PATH_EXAMPLE),
         'hinge':{'name':'joint','inputs':['body','accessory'],'controller':'CTRL','parameter':'angle','origin':[0,0,0],'axis':[0,1,0]},
         'slider':{'name':'move','inputs':['body','accessory'],'controller':'CTRL','parameter':'travel','origin':[0,0,0],'axis':[1,0,0]},
         'repeat':{'name':'ribs','inputs':['rib_source'],'controller':'CTRL','parameter':'count','origin':[0,0,0],'axis':[1,0,0],'spacing':0.01},
@@ -37,7 +40,7 @@ def sop_recipe(kind,spec=None):
         'fastener':{'name':'bolt','controller':'CTRL','shaft_radius':0.002,'shaft_length':0.008,
                     'head_radius':0.004,'head_height':0.003,'segments':24}}
     if kind=='catalog':
-        return {'recipes':['hinge','slider','guided_slider','surface_attach','gusset','fastener','repeat','sweep_tube','profile_shell'],
+        return {'recipes':['hinge','slider','guided_slider','surface_attach','gusset','fastener','repeat','curve_path','sweep_tube','profile_shell'],
                 'structural_schemas':{k:schemas[k] for k in ('guided_slider','surface_attach','gusset','fastener')},
                 'examples':schemas,
                 'schema':{'name':'unique prefix','inputs':['existing direct source child'],
@@ -46,6 +49,8 @@ def sop_recipe(kind,spec=None):
                 'scope':'read-only specs for build_module; origin is shared attachment position, source geometry must be modeled relative to its local pivot. Numeric scalar or {parm:name} origins/dimensions read a single controller. No implicit local/world conversion.'}
     if kind not in schemas:raise ValueError('unknown recipe; use catalog')
     if spec is None:return {'kind':kind,'example':schemas[kind],'scope':'example schema only, lengths in scene units; quantities may reference {parm:name} on the single CTRL'}
+    if kind == 'curve_path':
+        return curve_path_plan(spec)
     if kind in ('guided_slider','surface_attach','gusset','fastener'):
         return _structural_recipe(kind,spec)
     allowed={'name','inputs','controller'}|({'parameter','origin','axis','spacing'} if kind=='repeat' else

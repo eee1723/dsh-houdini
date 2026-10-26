@@ -583,7 +583,11 @@ def tab_create(
         partials = [partial for partial in reversed(parent.children()) if partial not in before]
         for partial in partials:
             try:
+                parent_identities = [int(item.sessionId()) for item in (partial,*partial.allSubChildren())
+                                     if item.isNetwork()]
                 partial.destroy()
+                from dsh_network_boxes import retire_destroyed_parent_boxes
+                retire_destroyed_parent_boxes(parent_identities)
             except BaseException as restore_error:
                 restore_errors.append(str(restore_error))
         dsh_ownership.restore(provenance)

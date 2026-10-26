@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import uuid
@@ -22,7 +23,7 @@ def prepare(args):
     scratch_parent = ROOT / "tools/out"
     scratch_parent.mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="private-video-runtime-", dir=scratch_parent))
-    config = builder.deployment.read_json(ROOT / "deployment/runtime.json")
+    config = json.loads((ROOT / "deployment/runtime.json").read_text(encoding="utf-8"))
     staged = work / "video"
     notice = builder.stage_video_runtime(staged, work / "build", config,
         cache=args.cache, prepared=args.runtime)

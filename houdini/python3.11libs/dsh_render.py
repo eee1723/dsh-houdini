@@ -236,7 +236,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     try:
         if inherited is None:
             dsh_parameter_values._clear_animation(p)
-            p.set(target, follow_parm_reference=False)
+            p.set(dsh_media_output._literal_houdini_path(target), follow_parm_reference=False)
         hou.setFrame(f)
         if foreground_parm is not None:
             dsh_parameter_values._clear_animation(foreground_parm)
@@ -735,7 +735,9 @@ def render_view(node, direction="iso", frame=None,
             "ocio_colorspace": rop.parm("ociocolorspace").eval(),
         }
 
-        rendered = render_frame(rop, picture=picture, frame=f)
+        # Allocation already returned a concrete file, not a new caller
+        # template. Protect literal HIP-name characters at this second entry.
+        rendered = render_frame(rop, picture=dsh_media_output._literal_houdini_path(picture), frame=f)
         check = None
         if rendered.get("file_bytes"):
             try:

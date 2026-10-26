@@ -1,15 +1,9 @@
 {
-  "name": "dsh-houdini-managed-runtime",
+  "name": "dsh-houdini-official-host-fixture",
   "version": "1.0.0",
   "private": true,
+  "description": "Development and regression fixture only; the distributable plugin uses the Desktop runtime.",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.2",
-    "koffi": "3.1.1"
-  },
-  "overrides": {
-    "@deepseek-ai/libreoffice-kit": {
-      "fflate": "0.8.3"
-    },
-    "zod": "4.4.3"
+    "@deepseek-ai/dsh": "0.2.1-rc.3"
   }
 }

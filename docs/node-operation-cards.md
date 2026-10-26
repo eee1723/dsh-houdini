@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 29 · Source SHA-256: `535d8b73458a531019e10e705d2a94320023b7b8073d702ad3acacf5967911d3`
+Schema: 2 · Cards: 29 · Source SHA-256: `5061d477142761411934633b77705727f4ec2849e0048889430132085d15d78e`
 
 ## 数据与设计契约
 
@@ -520,15 +520,19 @@ Schema: 2 · Cards: 29 · Source SHA-256: `535d8b73458a531019e10e705d2a94320023b
 
 ## karmarendersettings
 
-标识：`karma-product-resolution-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/lop/karmarendersettings.html)。
+标识：`karma-product-resolution-and-focus-v2`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/lop/karmarendersettings.html)。
 
 精确类型：未另限定（按family匹配）。
-已测版本：此卡未列出，不外推版本保证。
+已测版本：`21.0.440`、`22.0.368`。
+
+关键运行时参数：`enabledof`。
 
 ### 操作与边界
 
 - Karma Setup may derive and lock resolution components. Inspect list_parms locked_components and the actual RenderProduct before assigning both dimensions; do not unlock a recipe expression to suppress a strict-setting failure.
 - Keep settings/product/camera paths explicit. Use render_frame's optional framing preflight for full-asset images; intentional crops and unsupported lens effects are separate contracts.
+- DSH tab_create and Karma Setup initialize a new Karma Render Settings with enabledof off for a sharp general asset view. Explicit creation parameters or later set_parms can enable depth of field for an intentional shot; existing settings and render_frame preserve the artist's choice. Motion blur and denoising are separate controls.
+- Karma's enabledof authors RenderSettings karma:global:enable_dof. The generic USD disableDepthOfField value alone does not report this Karma switch. With DOF enabled, inspect the composed camera fStop and focusDistance after import and after moving the camera; camera_fit solves framing, not focus.
 
 ## boolean
 

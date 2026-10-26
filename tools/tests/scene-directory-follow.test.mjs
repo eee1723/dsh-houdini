@@ -22,9 +22,10 @@ async function fixture(value,available=true,saveAs=true){
  base.append('tool/result',{message:{source:{callId:'saved'}},meta:{canonical:{verbs:saveAs?[{verb:'scene_save_as',ok:true}]:[],execution:{
    executor_id:value.executor_id,runtime_id:executor,sequence:1,observed_at:1,owner_session:base.id,
    hip_path:value.hip_path,hip_is_new:false,scene_recovery:value}}}},{surfaceOp:'append'})
- let service
+ let service,effective=old
  installSceneRecovery(fixtureProjectionContext({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>
-  name==='workspaceRegistry'&&available?{relocateSession:async(id,cwd)=>{moves.push({id,cwd});session.header={cwd}}}:undefined}),bridge)
+  name==='workspaceRegistry'?{relocateSession(){throw Error('native session metadata must never move')}}:
+  name==='workingDirectory'&&available?{get:()=>effective,set:async(agent,cwd)=>{moves.push({id:agent.id,cwd});effective=cwd;return cwd}}:undefined}),bridge)
  return {moves,session,run:()=>service.followDirectory(agent,signal,true)}
 }
 for(const value of [
@@ -38,12 +39,18 @@ for(const value of [
 const observedOtherSave=await fixture(original,true,false);await observedOtherSave.run();
 assert.equal(observedOtherSave.moves.length,0,'reading a scene saved by another conversation does not authorize a workspace move')
 const valid=await fixture(original);await valid.run();await valid.run()
-assert.deepEqual(valid.moves,[{id:'follow-test',cwd:path.dirname(file)}],'one durable move, then an idempotent no-op')
+assert.deepEqual(valid.moves,[],'a cross-project HIP does not silently change file authority or native session project')
+assert.equal(valid.session.header.cwd,old)
 const followed=foldExecutorState(valid.session.snapshotEvents()).project
 assert.equal(followed.sceneId,scene,'a verified Save As keeps the observed scene identity')
 assert.equal(followed.sceneEpoch,epoch)
 assert.equal(followed.needsReview,false,'the plugin move is not an unobserved file replacement')
 const unavailable=await fixture(original,false)
-await assert.rejects(unavailable.run(),/尚未加载会话目录接续能力/)
+await unavailable.run()
 assert.equal(unavailable.session.header.cwd,old)
-console.log('scene directory follow: saved facts only, unrelated/failed/backup paths refused, original identity retained')
+const nested=path.join(old,'versions','project.hip')
+const inside=await fixture({...original,hip_path:nested,successful_save:{checkpoint_id:checkpoint,hip_path:nested}})
+await inside.run();await inside.run()
+assert.deepEqual(inside.moves,[{id:'follow-test',cwd:path.dirname(nested)}],'native cd handles a subdirectory without mutating storage identity')
+assert.equal(inside.session.header.cwd,old)
+console.log('HIP Save As: verified scene facts, native subdirectory cd, immutable original project and no cross-root permission change passed')

@@ -10,8 +10,8 @@
   does not replace it. Re-run install.py after upgrading Houdini: the package
   lives in the per-version pref dir (e.g. Documents/houdini22.0/packages).
 
-  Opening a healthy workspace preserves its frontend/session. Restart controls
-  live in the diagnostics panel so the top-level menu stays compact.
+  The shortcut activates official DSH Desktop and selects this Houdini target.
+  It never owns a separate Host or browser window.
 -->
 <mainMenu>
   <menuBar>
@@ -29,8 +29,8 @@ dsh_launcher.open_workspace()
       <scriptItem id="dsh.version_manager">
         <label>Version &amp; Updates...</label>
         <scriptCode><![CDATA[
-import dsh_install_ui
-dsh_install_ui.show_source()
+import dsh_launcher
+dsh_launcher.show_plugin_info()
 ]]></scriptCode>
       </scriptItem>
 

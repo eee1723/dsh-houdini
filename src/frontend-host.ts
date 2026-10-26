@@ -3,15 +3,14 @@ import type {Context, Volatile} from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import {Remote,TypertRemoteService} from '@deepseek-ai/dsh-typert-protocol'
 import {openDeliveredNode} from './node-delivery.js'
-import {videoModels} from './video-transcription.js'
+import {videoModels,tutorialRuntime} from './video-transcription.js'
 import {videoDiagnostics} from './video-runtime.js'
 import {createSupportReport} from './support-report.js'
-import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
-import {desktopRequest} from './workbench-desktop.js'
-import {foldExecutorState} from './executor-identity-projection.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION} from './generated-verb-contract.js'
-import {ChatGptAccountController} from './chatgpt-account.js'
+import {DesktopIntegration} from './desktop-integration.js'
+import type {ExecutorController} from './executor-controller.js'
+import {VIDEO_DEFAULTS} from './video-configuration.js'
 
 export const name='dsh-houdini-frontend-host'
 
@@ -19,58 +18,51 @@ export interface Config {
   videoProvider: Volatile<string>
   videoModel: Volatile<string>
   videoPython: Volatile<string>
+  videoProtocol: Volatile<string>
+  videoEndpoint: Volatile<string>
+  videoAuthentication: Volatile<string>
+  videoCredentialRef: Volatile<string>
+  videoConcurrency: Volatile<number>
+  videoRequestsPerSecond: Volatile<number>
 }
 
 export const Config = Schema.object({
   videoProvider: Schema.string().default('').volatile(),
   videoModel: Schema.string().default('').volatile(),
   videoPython: Schema.string().default('').volatile(),
+  videoProtocol: Schema.string().default('').volatile(),
+  videoEndpoint: Schema.string().default('').volatile(),
+  videoAuthentication: Schema.string().default('bearer').volatile(),
+  videoCredentialRef: Schema.string().default('').volatile(),
+  videoConcurrency: Schema.number().default(VIDEO_DEFAULTS.concurrency).volatile(),
+  videoRequestsPerSecond: Schema.number().default(VIDEO_DEFAULTS.requestsPerSecond).volatile(),
 })
 
 export class HoudiniFrontend extends TypertRemoteService {
-  private readonly chatgpt:ChatGptAccountController
   constructor(ctx:Context, private readonly config:Config) {
     super(ctx,'houdiniFrontend')
-    this.chatgpt=new ChatGptAccountController(ctx)
-    ctx.effect(()=>()=>this.chatgpt.dispose())
   }
-
-  @Remote
-  chatgptStatus(input:{refreshModels?:boolean}|undefined,signal:AbortSignal) {return this.chatgpt.status(signal,input)}
-
-  @Remote
-  chatgptStart() {return this.chatgpt.start()}
-
-  @Remote
-  chatgptCancel(input:unknown) {return this.chatgpt.cancel(input)}
-
-  @Remote
-  chatgptPrompt(input:unknown) {return this.chatgpt.submitPrompt(input)}
-
-  @Remote
-  chatgptSelect(input:unknown) {return this.chatgpt.select(input)}
-
-  @Remote
-  chatgptSignout() {return this.chatgpt.signout()}
-
-  @Remote
-  chatgptProbe(input:unknown,signal:AbortSignal) {return this.chatgpt.probe(input,signal)}
 
   videoSelection() {
     return {provider:this.config.videoProvider.get(),model:this.config.videoModel.get(),
-      python:this.config.videoPython.get()}
+      python:this.config.videoPython.get(),protocol:this.config.videoProtocol.get(),endpoint:this.config.videoEndpoint.get(),
+      authentication:this.config.videoAuthentication.get(),credentialRef:this.config.videoCredentialRef.get(),
+      concurrency:this.config.videoConcurrency.get(),requestsPerSecond:this.config.videoRequestsPerSecond.get()}
   }
 
   @Remote
   videoSettings() {return videoModels(this.ctx)}
 
   @Remote
-  videoDiagnostics() {return videoDiagnostics(this.videoSelection().python)}
+  async videoDiagnostics() {
+    const runtime=await tutorialRuntime(this.ctx,this.videoSelection().python)
+    const result=await videoDiagnostics(runtime.python)
+    return {...result,runtime,note:'使用自动发现或明确选择的普通 Houdini Python 与插件私有媒体程序；未执行HOM、未上传音频。服务实际支持以短段试转录为准。'}
+  }
 
   @Remote
   capabilities() {
-    const targets=this.ctx.get('houdiniTargets') as {workbench?:boolean}|undefined
-    return {sharedExecutors:Boolean(targets)&&!targets?.workbench,nodeDeliveries:true,workbench:Boolean(targets?.workbench)}
+    return {sharedExecutors:Boolean(this.ctx.get('houdiniTargets')),nodeDeliveries:true,desktop:Boolean(this.ctx.get('houdiniDesktop'))}
   }
 
   @Remote
@@ -84,7 +76,8 @@ export class HoudiniFrontend extends TypertRemoteService {
     // Single live projection for the bound-project icon, menu and detail. The
     // desktop owns reachability; this layer only refuses to paint a mismatched
     // execution contract as online, because commands would fail against it.
-    const records=await desktopRequest('presence',{},signal)
+    signal.throwIfAborted()
+    const records=await this.desktop().presence()
     return records.map((record:any)=>{
       const contractMismatch=record.status==='online'&&record.contractVersion!==EXPECTED_EXECUTION_CONTRACT_VERSION
       return {...record,contractMismatch,status:contractMismatch?'unknown':record.status}
@@ -92,71 +85,39 @@ export class HoudiniFrontend extends TypertRemoteService {
   }
 
   @Remote
-  async windowPin(input:unknown,signal:AbortSignal) {
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>key!=='pinned')
-      ||Object.hasOwn(input,'pinned')&&typeof (input as any).pinned!=='boolean')
-      throw new Error('无效的窗口置顶请求。')
-    return desktopRequest('window-pin',input,signal)
+  projectInstallations() {return this.desktop().listInstallations()}
+  @Remote
+  prepareBridge(input:unknown) {return this.desktop().prepareBridge(input)}
+
+  private desktop(){const service=this.ctx.get('houdiniDesktop');if(!service)throw Error('Houdini 插件接入服务尚未就绪。');return service}
+
+  @Remote
+  projectAction(input:unknown,signal:AbortSignal) {return this.desktop().project(input,signal)}
+  @Remote
+  projectLaunchStatus(input:unknown) {return this.desktop().status(input)}
+  @Remote
+  projectLaunchDetach(input:unknown) {return this.desktop().detach(input)}
+  @Remote
+  projectLaunchResume(input:unknown) {return this.desktop().resume(input)}
+  @Remote
+  desktopIntent(input:{after:number},signal:AbortSignal) {
+    if(!input||Object.keys(input).join(',')!=='after'||!Number.isSafeInteger(input.after)||input.after<0)throw Error('Invalid navigation cursor')
+    return this.desktop().intent(input.after,signal)
   }
-
   @Remote
-  updateStatus(signal:AbortSignal) {return desktopRequest('update-status',{},signal)}
-
-  @Remote
-  openUpdates(signal:AbortSignal) {return desktopRequest('open-updates',{},signal)}
-
-  @Remote
-  async projectAction(input:unknown,signal:AbortSignal) {
-    const data=input as {action:string;sessionId?:string}
-    if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['action','sessionId'].includes(key))
-      ||!['open','new','reopen'].includes(data.action)||data.sessionId!==undefined&&(typeof data.sessionId!=='string'||!data.sessionId||data.sessionId.length>256))
-      throw new Error('请选择打开或新建工程。')
-    if(data.action==='reopen') {
-      if(!data.sessionId)throw new Error('请先选择要继续的对话。')
-      const query=this.ctx.get('sessionQuery')
-      if(!query)throw new Error('当前工作台暂时无法读取对话，请稍后重试。')
-      const history=await query.readSession(data.sessionId as any)
-      const state=foldExecutorState(history.events),project=state.project
-      if(!project?.hipPath||project.hipIsNew!==false)throw new Error('这段对话没有可直接打开的已保存工程，请选择已有 HIP 文件。')
-      return desktopRequest('dialog',{action:'reopen',hip:project.hipPath,sessionId:data.sessionId,executorId:state.identity},signal)
-    }
-    let bindSessionId:string|undefined
-    if(data.sessionId) {
-      const query=this.ctx.get('sessionQuery')
-      if(!query)throw new Error('当前工作台暂时无法读取对话，请稍后重试。')
-      const history=await query.readSession(data.sessionId as any)
-      if(!foldExecutorState(history.events).identity) {
-        const agent=this.ctx.get('agents')?.get(data.sessionId as any)
-        if(agent&&agent.status!=='idle')throw new Error('当前对话还在运行，请等本轮结束或停止后，再把工程接到这段对话。')
-        bindSessionId=data.sessionId
-      }
-    }
-    return desktopRequest('dialog',{action:data.action,...(bindSessionId?{bindSessionId}:{})},signal)
-  }
-
-  @Remote
-  async refreshTitle(input:unknown,signal:AbortSignal) {
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).join(',')!=='sessionId'
-      ||typeof (input as any).sessionId!=='string'||!(input as any).sessionId.length||(input as any).sessionId.length>256)
-      throw new Error('请选择需要重新命名的对话。')
-    const controller=this.ctx.get('sessionController'),titles=this.ctx.get('sessionTitle'),sessions=this.ctx.get('sessions')
-    if(!controller||!titles||!sessions)throw new Error('当前环境没有提供自动命名能力。')
-    signal.throwIfAborted()
-    const resolved=await controller.resolveAgent((input as any).sessionId)
-    if('error' in resolved)throw new Error('无法读取这段对话。')
-    const session=resolved.agent.session,events=session.snapshotEvents()
-    if(!events.some(event=>event.type==='user/message'&&event.data.source.kind==='user'
-      &&event.data.content.some(block=>block.type==='text'&&block.text.trim())))throw new Error('先发送一条消息，系统就能根据内容命名。')
-    const title=await titles.refresh(session,signal)
-    if(await sessions.flush(session)!==true)throw new Error('新标题尚未可靠保存，请稍后重试。')
-    return {title:title?.title??null}
+  desktopIntentAck(input:{sequence:number}) {
+    if(!input||Object.keys(input).join(',')!=='sequence'||!Number.isSafeInteger(input.sequence)||input.sequence<0)throw Error('Invalid navigation acknowledgement')
+    this.desktop().intents.acknowledge(input.sequence);return {ok:true}
   }
 
 }
 
 export function apply(ctx:Context,config:Config):void {
   new HoudiniFrontend(ctx,config)
-  ctx.inject(['settings'],child => {
-    child.effect(() => (child as any).settings.configure({auto:false},ctx.fiber))
+  ctx.inject(['houdiniTargets','workspaceRegistry','sessionController','sessions','sessionProjections'],async child => {
+    const service=new DesktopIntegration(child,child.get('houdiniTargets') as ExecutorController)
+    child.effect(()=>()=>service.dispose())
+    await service.start()
+    child.provide('houdiniDesktop',service)
   })
 }

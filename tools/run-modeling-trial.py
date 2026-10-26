@@ -44,7 +44,6 @@ parser.add_argument('--scripted-smoke',action='store_true',help='With --smoke, i
 parser.add_argument('--smoke-delivery',action='store_true',help='With scripted smoke, exercise mounted capture/read_image/present/node-entry carriers without a paid model')
 parser.add_argument('--smoke-continuity',action='store_true',help='With scripted smoke, create and then modify the same owned native network across two real user turns')
 parser.add_argument('--observe-model-images',action='store_true',help='Read-only evidence of real DSH LOOP image attachments and provider completion')
-parser.add_argument('--probe-frontend',action='store_true',help='Inspect the selected real session and its delivery in the owned Houdini QtWebEngine before stop')
 parser.add_argument('--max-seconds',type=int,default=600)
 parser.add_argument('--max-output-tokens',type=int,default=32000,help='Explicit per-request output cap on the isolated selected route')
 parser.add_argument('--memory-mb',type=int,default=8192,help='Owned Houdini process-tree memory limit in MiB')
@@ -589,33 +588,6 @@ def run_trial(result: dict) -> None:
                 result['result'] = 'approval_pending'
                 rpc('session/cancel', {'request': {'sessionId': session_id}}, 15)
                 result['cancelRequested'] = True
-        if args.probe_frontend and result['result'] in {'idle_after_prompt', 'smoke_completed'}:
-            frontend_config=RAW/'frontend-probe-config.json'
-            frontend_output=RAW/'frontend-probe-result.json'
-            session_file=next((HOME/'sessions').glob('*/'+session_id+'/session.v4.jsonl.zstd'))
-            run_command(str(NODE),str(DRIVER_ROOT/'tools/tests/modeling-trial-ui-artifacts.mjs'),
-                str(session_file),str(RAW/'frontend-artifacts.json'),str(workspace),session_id)
-            write_json(frontend_config,{'base':base,'authenticatedUrl':auth.launch_url(),
-                'sessionId':session_id,'output':str(frontend_output),
-                'modelRunKind':'scripted-no-paid-carrier' if args.smoke else 'paid-agent-task'})
-            request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
-                data=json.dumps({'owner_session':session_id}).encode(),
-                headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']})
-            with urllib.request.urlopen(request,timeout=30) as response:ticket=json.load(response)
-            code=("import runpy\n__result__=runpy.run_path("+repr(str(DRIVER_ROOT/'tools/tests/modeling-trial-frontend-probe.py'))
-                +")[\"start\"]("+repr(str(frontend_config))+")")
-            request=urllib.request.Request(record['bridge_url']+'/exec',
-                data=json.dumps({'owner_session':session_id,'owner_call':'trial-frontend-observation',
-                  'request_ref':ticket['requestRef'],'expected_contract':{'version':ticket['executionContractVersion'],
-                  'hash':ticket['verbCatalog']['hash']},'code':code}).encode(),
-                headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']})
-            with urllib.request.urlopen(request,timeout=45) as response:admission=json.load(response)
-            write_json(RAW/'frontend-probe-admission.json',admission)
-            deadline=time.monotonic()+120
-            while admission.get('ok') and not frontend_output.exists() and time.monotonic()<deadline:
-                if supervisor.poll() is not None:break
-                time.sleep(.25)
-            result['frontendProbe']=json.loads(frontend_output.read_text(encoding='utf-8')) if frontend_output.exists() else {'ok':False,'error':'Frontend probe did not finish; see admission'}
         result["hipSha256BeforeStop"] = digest(hip) if hip.is_file() else None
         result["hipChangedFromInitial"] = (result["hipSha256BeforeStop"] is not None
                                             and result["hipSha256BeforeStop"] != initial_hash)

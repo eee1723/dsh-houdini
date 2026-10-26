@@ -315,7 +315,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                      (str, bytes, bytearray, list, tuple, dict, set, frozenset)}
     literals = {ast.List: list, ast.Tuple: tuple, ast.Set: set, ast.Dict: dict,
                 ast.ListComp: list, ast.SetComp: set, ast.DictComp: dict, ast.JoinedStr: str}
-    scopes, escaped, writes, classes = {}, set(), [], {}
+    scopes, escaped, writes, classes, function_scopes = {}, set(), [], {}, {}
     standard_module = _standard_module_resolver()
 
     def ordinary_class(node):
@@ -423,7 +423,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                     self.scope.wildcard = True
                     continue
                 value = ('constructor', builtin_types[item.name]) if node.module == 'builtins' and item.name in builtin_types else (
-                    (item.name,) if node.module == 'builtins' and item.name in ('getattr', 'setattr', 'delattr', 'vars') else (
+                    (item.name,) if node.module == 'builtins' and item.name in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'type') else (
                         ('hom_method', 'hou', item.name) if node.module == 'hou' and not node.level else (
                             'imported_member', node.module if not node.level else None, item.name)))
                 self.scope.bind(ast.Name(id=item.asname or item.name), value)
@@ -435,6 +435,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             for value in getattr(node, 'decorator_list', ()):
                 self.visit(value)
             child = Collect(Scope(self.closure_parent()))
+            function_scopes[id(node)] = child.scope
             args = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
                     node.args.vararg, node.args.kwarg)
             positional = (*node.args.posonlyargs, *node.args.args)
@@ -541,7 +542,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             result = name(scope.parent, key)
         else:
             result = ('constructor', builtin_types[key]) if key in builtin_types else (
-                (key,) if key in ('hou', 'getattr', 'setattr', 'delattr', 'vars') else None)
+                (key,) if key in ('hou', 'getattr', 'setattr', 'delattr', 'vars', 'locals', 'type') else None)
         resolving.remove(identity)
         cache[identity] = result
         return result
@@ -581,15 +582,19 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             owner = kind(receiver)
             if owner and owner[0] in ('value', 'constructor') and callable(getattr(owner[1], attr, None)):
                 return ('python_method', owner[1], attr)
-            if owner and owner[0] in ('hou', 'node', 'node_type'):
+            if owner and owner[0] in ('hou', 'node', 'node_type', 'parm'):
                 return ('hom_method', owner[0], attr)
             if owner == ('builtins',) and attr in builtin_types:
                 return ('constructor', builtin_types[attr])
-            if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars'):
+            if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'type'):
                 return (attr,)
             if owner and owner[0] in ('local_class', 'local_instance'):
                 if attr == '__dict__':
                     return ('local_dict', owner[1])
+                if attr == '__class__' and owner[0] == 'local_instance':
+                    return ('local_class', owner[1])
+                if attr in ('__setattr__', '__delattr__'):
+                    return ('local_attribute_writer', owner[1], int(owner[0] == 'local_class'))
                 member = local_member(owner[1], attr)
                 return ('local_method', owner[1], member[1], owner[0] == 'local_instance') if member[0] == 'local_function' else member
             if owner and owner[0] == 'local_method':
@@ -608,6 +613,16 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                 return ('value', callable_kind[1])
             if callable_kind and callable_kind[0] == 'local_class':
                 return ('local_instance', callable_kind[1])
+            if callable_kind and callable_kind[0] in ('local_function', 'local_method'):
+                return local_return(callable_kind[1] if callable_kind[0] == 'local_function' else callable_kind[2])
+            if callable_kind == ('type',) and len(value.args) == 1:
+                owner = kind(value.args[0])
+                if owner and owner[0] == 'local_instance':
+                    return ('local_class', owner[1])
+            if callable_kind in (('locals',), ('vars',)) and not value.args and not value.keywords:
+                scope = scopes.get(id(value), root)
+                if scope.class_node is not None:
+                    return ('local_dict', scope.class_node)
             if callable_kind == ('vars',) and len(value.args) == 1:
                 owner = kind(value.args[0])
                 if owner and owner[0] == 'module':
@@ -625,12 +640,41 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                     return ('nodes',)
                 if owner == 'node' and method == 'type':
                     return ('node_type',)
+                if owner in ('hou', 'node') and method in ('parm', 'parmTuple'):
+                    return ('parm',)
                 if (owner in ('node', 'node_type') and method == 'name'
                         or owner == 'node' and method == 'path'):
                     return ('value', str)
         return None
 
-    modified, resolving_members, exposed_namespaces = {}, set(), set()
+    modified, resolving_members, exposed_namespaces, resolving_returns = {}, set(), set(), set()
+
+    def local_return(node):
+        # Preserve explicitly returned callable origins, not general execution
+        # or argument inference. A local wrapper must not erase a HOM setter.
+        if isinstance(node, ast.AsyncFunctionDef) or id(node) in resolving_returns:
+            return None
+        class Returns(ast.NodeVisitor):
+            def __init__(self): self.values, self.generator = [], False
+            def visit_Return(self, value): self.values.append(value.value)
+            def visit_Yield(self, value): self.generator = True
+            visit_YieldFrom = visit_Yield
+            def visit_FunctionDef(self, value): pass
+            visit_AsyncFunctionDef = visit_FunctionDef
+            visit_Lambda = visit_FunctionDef
+            visit_ClassDef = visit_FunctionDef
+        returns = Returns()
+        for item in node.body:
+            returns.visit(item)
+        if returns.generator:
+            return None
+        resolving_returns.add(id(node))
+        values = [kind(value) for value in returns.values]
+        resolving_returns.remove(id(node))
+        retained = [value for value in values if value and value[0] in (
+            'hom_method', 'unknown_method', 'uncertain_callable', 'local_function', 'local_method')]
+        return (retained[0] if len(retained) == len(values) and retained and all(value == retained[0] for value in retained)
+                else ('uncertain_callable', tuple(retained)) if retained else None)
 
     def local_member(class_node, member):
         identity = ('local', id(class_node))
@@ -667,6 +711,64 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
         if owner and owner[0] in ('local_class', 'local_instance', 'local_method', 'local_dict'):
             return ('local', id(owner[1]))
         return None
+
+    def callback_parameters():
+        # Only retain known HOM/unknown method callback provenance at explicit
+        # local call sites. Do not infer safe receiver/return types for arbitrary
+        # parameters or execute a helper to discover what it does.
+        for _ in range(len(function_scopes) + 1):
+            changed = False
+            cache.clear()
+            for call in ast.walk(tree):
+                if not isinstance(call, ast.Call):
+                    continue
+                function = kind(call.func)
+                if function and function[0] == 'local_class':
+                    initializer = name(classes[id(function[1])], '__init__')
+                    function = (*initializer[:2], 1) if initializer and initializer[0] == 'local_function' else None
+                if function and function[0] == 'local_method':
+                    function = ('local_function', function[2], int(function[3]))
+                if not function or function[0] != 'local_function':
+                    continue
+                node = function[1]
+                params = (*node.args.posonlyargs, *node.args.args)
+                offset = function[2] if len(function) > 2 else 0
+                arguments = local_arguments(call)
+                if arguments is None:
+                    continue
+                positional, keywords = arguments
+                supplied = [(arg.arg, value) for arg, value in zip(params[offset:], positional)]
+                supplied.extend(keywords)
+                supplied.extend((arg.arg, value) for arg, value in zip(params[-len(node.args.defaults):], node.args.defaults))
+                supplied.extend((arg.arg, value) for arg, value in zip(node.args.kwonlyargs, node.args.kw_defaults) if value is not None)
+                scope = function_scopes[id(node)]
+                for key, value in supplied:
+                    found = kind(value)
+                    if key in scope.bindings and _referenced_methods(found) and not any(existing is value for existing in scope.bindings[key]):
+                        scope.bindings[key].append(value)
+                        changed = True
+            if not changed:
+                break
+        cache.clear()
+
+    def local_arguments(call):
+        """Unpack only explicit literal argument lists/dicts, never evaluate data."""
+        positional, keywords = [], []
+        for value in call.args:
+            if isinstance(value, ast.Starred):
+                if not isinstance(value.value, (ast.List, ast.Tuple)) or any(isinstance(item, ast.Starred) for item in value.value.elts):
+                    return None
+                positional.extend(value.value.elts)
+            else:
+                positional.append(value)
+        for item in call.keywords:
+            if item.arg is not None:
+                keywords.append((item.arg, item.value))
+            elif isinstance(item.value, ast.Dict) and all(isinstance(key, ast.Constant) and isinstance(key.value, str) for key in item.value.keys):
+                keywords.extend((key.value, value) for key, value in zip(item.value.keys, item.value.values))
+            else:
+                return None
+        return positional, keywords
 
     def imported_reference(value, fallback):
         if type(value) is types.ModuleType:
@@ -712,12 +814,14 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
     # monkeypatches cannot inherit the original stdlib member's provenance.
     # Once its mutable namespace is exposed, there is no ordinary-API proof to
     # preserve. Do not grow a second interpreter for every possible dict call.
+    callback_parameters()
     for node in ast.walk(tree):
         if (found := kind(node)) and found[0] in ('module_dict', 'local_dict'):
             exposed_namespaces.add(namespace(found))
         if isinstance(node, ast.Call):
             target = kind(node.func)
-            if target in (('getattr',), ('setattr',), ('delattr',), ('vars',)):
+            if target in (('getattr',), ('setattr',), ('delattr',), ('vars',), ('type',)) or (
+                    target and target[0] == 'local_attribute_writer'):
                 continue  # Literal reflection and writes use the same resolver.
             for index, value in enumerate([*node.args, *(item.value for item in node.keywords)]):
                 found = kind(value)
@@ -742,8 +846,40 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                 member = node.args[1].value if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str) else None
                 modified.setdefault((namespace(owner), member), []).append(
                     node.args[2] if len(node.args) >= 3 else None)
+        if isinstance(node, ast.Call):
+            writer = kind(node.func)
+            offset = writer[2] if writer and writer[0] == 'local_attribute_writer' else None
+            key = ('local', id(writer[1])) if offset is not None else None
+            if offset is None and _literal_attribute(node.func)[1] in ('__setattr__', '__delattr__') and node.args:
+                owner = kind(node.args[0])
+                if owner and owner[0] in ('local_class', 'local_instance'):
+                    key, offset = namespace(owner), 1
+            if offset is not None and len(node.args) > offset:
+                field = node.args[offset]
+                member = field.value if isinstance(field, ast.Constant) and isinstance(field.value, str) else None
+                modified.setdefault((key, member), []).append(
+                    node.args[offset + 1] if len(node.args) > offset + 1 else None)
     cache.clear()
-    return {id(node): kind(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    callback_parameters()
+    result = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        found = kind(node.func)
+        if found and found[0] in ('local_function', 'local_method'):
+            function = found[1] if found[0] == 'local_function' else found[2]
+            offset = int(found[3]) if found[0] == 'local_method' else 0
+            arguments = local_arguments(node)
+            if arguments is not None:
+                params = (*function.args.posonlyargs, *function.args.args)
+                positional, keywords = arguments
+                known = {arg.arg for arg in (*params[offset:], *function.args.kwonlyargs)}
+                unbound = [*positional[len(params) - offset:], *(value for key, value in keywords if key not in known)]
+                callbacks = [kind(value) for value in unbound if _referenced_methods(kind(value))]
+                if callbacks:
+                    found = ('uncertain_callable', (found, *callbacks))
+        result[id(node)] = found
+    return result
 
 
 def _parameter_write_calls(tree):
@@ -790,6 +926,8 @@ def _referenced_methods(reference):
         return set()
     if reference[0] == 'uncertain_callable':
         return set().union(*(_referenced_methods(value) for value in reference[1]))
+    if reference == ('hom_method', 'parm', 'set'):
+        return {'parm().set'}
     return {reference[-1]} if reference[0] in ('hom_method', 'unknown_method') else set()
 
 

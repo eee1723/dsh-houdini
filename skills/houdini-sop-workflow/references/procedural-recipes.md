@@ -44,6 +44,7 @@ FRAME是驱动证据，不是接点证明；非零角查最终实际表面接口
 | slider | parameter位移、origin、axis | 同一FRAME位移；查行程端点、附件、导向间隙 |
 | guided_slider | inputs移动件/附件，guide直属Polygon输出，parameter、travel_min/max、clearance、origin、axis | 实际源/导轨点投影推导相对行程，源最小投影对齐导轨起点+clearance；全范围不容纳时cook失败。投影不是槽面接合证明，仍查真实接口 |
 | surface_attach | inputs细节源，receiver/receiver_group，origin、tangent、max_distance | 投影到真实指定面组，以法线和切线构造FRAME；源脚面Y=0，+Y向外。缺组/超距/退化方向拒绝，脚面整体另验 |
+| curve_path | 2..32个具名anchors：position/handle三分量，controller、segment_length | 原生Add控制点→三次Bézier Curve 2.0→Resample；共享位置和对称handle保留C1接缝，返回锚点/柄点号和编辑节点。数值或既有{parm:name}引用，不查询/绑定几何锚点，不自动布线/避障；见[可编辑路径与曲线](curves-and-routing.md) |
 | gusset | length/height/thickness | 三角轮廓→原生厚化→命名脚面点组{name}_foot；源局部Y=0，需另装配到真实表面 |
 | fastener | shaft_radius/shaft_length/head_radius/head_height，segments可选 | 原生封口Tube的头杆共享接合面；无螺纹/受力认证，接收件开孔和插入深度另验 |
 | repeat | parameter整数1..256、origin、axis、spacing | 一份源→带id模板→Copy；查期望数量、间距、源替换和碰撞 |

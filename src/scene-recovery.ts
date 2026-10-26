@@ -32,25 +32,26 @@ export function recoveryMessage(value:RecoveryBinding) {
     +literalData(JSON.stringify(value))})
 }
 
-export async function relocateDirectory(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false,scene?:{scene_id?:unknown;scene_epoch?:unknown}) {
+export async function observeSavedProject(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false,scene?:{scene_id?:unknown;scene_epoch?:unknown}) {
   const current=agent.session.header.cwd
-  if(current&&(process.platform==='win32'?path.resolve(current).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(current)===path.resolve(directory)))return
-  const registry=ctx.get('workspaceRegistry')
-  if(!registry||!('relocateSession' in registry)||typeof registry.relocateSession!=='function')
-    throw new Error('当前 DSH 尚未加载会话目录接续能力；本轮未继续文件操作，原对话与工程保留。')
+  const normalize=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
+  const observed=projectedExecutorState(ctx,agent.session).project
   signal.throwIfAborted()
-  await registry.relocateSession(agent.id,directory)
-  // A verified Save As moves the path but not the scene. Carrying the observed
-  // scene identity prevents the projection from treating the plugin's own move
-  // as an unobserved file replacement (which would disable later association).
-  const observed=scene&&typeof scene.scene_id==='string'?{scene_id:scene.scene_id}:{}
+  // SessionHeader.cwd identifies the native creation project. A HIP Save As
+  // changes neither that identity nor the sandbox grant. Only use native cd
+  // within the original project; an external HIP remains an explicit path.
+  const relative=current?path.relative(normalize(current),normalize(directory)):undefined
+  const inside=relative!==undefined&&!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)
+  const working=ctx.get('workingDirectory') as {get(session:any):string;set(agent:any,directory:string,signal:AbortSignal):Promise<string>}|undefined
+  if(inside&&working&&normalize(working.get(agent.session))!==normalize(directory))await working.set(agent,directory,signal)
+  if(observed?.hipPath&&normalize(observed.hipPath)===normalize(hipPath))return
+  const sceneIdentity=scene&&typeof scene.scene_id==='string'?{scene_id:scene.scene_id}:{}
   const epoch=scene&&typeof scene.scene_epoch==='string'?{scene_epoch:scene.scene_epoch}:{}
   recordHoudiniContext(agent,houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
-    'This conversation now follows the explicitly selected or verified saved project directory. Earlier paths remain historical references.\n'
-    +literalData(JSON.stringify({previous_directory:current,directory:agent.session.header.cwd,hip_path:hipPath,
-      executor_id:projectedExecutorState(ctx,agent.session).identity,hip_is_new:hipIsNew,...observed,...epoch}))}))
-  if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程目录接续记录尚未可靠保存。')
-  await (ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined)?.pruneEmptyWorkspaces?.([directory])
+    'The selected Houdini scene was saved at the observed HIP path. Native session project and file permissions remain unchanged. Use the actual HIP paths for project outputs; paths outside the original workspace require the native file permission flow. Earlier paths remain historical references.\n'
+    +literalData(JSON.stringify({previous_directory:current,directory:working?.get(agent.session)??current,hip_path:hipPath,
+      executor_id:projectedExecutorState(ctx,agent.session).identity,hip_is_new:hipIsNew,...sceneIdentity,...epoch}))}))
+  if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程保存观察尚未可靠记录。')
 }
 
 async function followSavedDirectory(ctx:Context,agent:Agent,signal:AbortSignal) {
@@ -72,12 +73,12 @@ async function followSavedDirectory(ctx:Context,agent:Agent,signal:AbortSignal) 
   if(state.selectedTarget&&state.selectedTarget.scene_id!==value.scene_id)return
   const normalize=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
   if(normalize(saved.hip_path)!==normalize(value.hip_path))return
-  await relocateDirectory(ctx,agent,path.dirname(value.hip_path),value.hip_path,signal,false,value)
+  await observeSavedProject(ctx,agent,path.dirname(value.hip_path),value.hip_path,signal,false,value)
 }
 
 export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):void {
-  // Successful Save As is already explicit authority to follow its directory.
-  // This hook consumes current receipts only: no endpoint lookup or recovery.
+  // Consume this session's current Save As receipt without moving native
+  // history or changing permissions. There is no endpoint lookup or recovery.
   ctx.on?.('agent/pre-step',async({agent,signal},next)=>{
     await followSavedDirectory(ctx,agent,signal)
     return next()

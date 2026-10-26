@@ -213,6 +213,7 @@ _VERBS: dict[str, object] = {
     "hda_set_interface": dsh_hou_helpers.hda_set_interface,
     "geo_attrib_stats": dsh_hou_helpers.geo_attrib_stats,
     "geo_point_spacing": dsh_hou_helpers.geo_point_spacing,
+    "geo_curve_clearance": dsh_hou_helpers.geo_curve_clearance,
     "geo_check_interfaces": dsh_hou_helpers.geo_check_interfaces,
     "test_controls": dsh_hou_helpers.test_controls,
     "sop_recipe": dsh_hou_helpers.sop_recipe,

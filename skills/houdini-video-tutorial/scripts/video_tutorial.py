@@ -25,10 +25,10 @@ import urllib.parse
 import urllib.request
 import uuid
 
-ENDPOINT = "https://api.siliconflow.cn/v1/audio/transcriptions"
 PACKAGE = Path(__file__).resolve().parents[3]
 BASIS = "audio_chunk_bounds_not_sentence_or_word_alignment"
 _READ_VALIDATION = ContextVar("video_read_validation", default=None)
+TRANSCRIPTION_POLICY = json.loads(Path(__file__).with_name("transcription-policy.json").read_text(encoding="utf-8"))
 
 
 class Failure(Exception):
@@ -360,33 +360,41 @@ def asr_endpoint(value, protocol="openai-transcriptions"):
     check(parsed.hostname and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
           and (parsed.scheme == "https" or parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")),
           "ASR endpoint requires HTTPS (HTTP only for local loopback), without credentials, query or fragment")
-    suffix = {"openai-transcriptions": "/audio/transcriptions", "qwen-chat-asr": "/chat/completions",
-              "dashscope-asr": "/api/v1/services/aigc/multimodal-generation/generation"}.get(protocol)
-    check(suffix is not None, "Unsupported ASR protocol")
-    check(parsed.path.rstrip("/").endswith(suffix), f"ASR endpoint must end in {suffix}")
+    check(protocol in ("openai-transcriptions", "qwen-chat-asr", "dashscope-asr"),
+          "Unsupported ASR protocol; this worker accepts complete-recording file protocols only. "
+          "Realtime streams and asynchronous file jobs require a separate adapter")
     return value
 
 
-def config(work, model=None, endpoint=None, protocol=None, request_options=None):
+def config(work, model=None, endpoint=None, protocol=None, request_options=None, authentication="bearer"):
     path = work / "asr-config.json"
-    expected = {"endpoint": endpoint or ENDPOINT, "model": model, "manifest_sha256": sha(work / "manifest.json")}
+    check(authentication in ("bearer", "none"), "ASR authentication must be bearer or none")
+    expected = {"endpoint": endpoint, "model": model, "manifest_sha256": sha(work / "manifest.json"),
+                "authentication": authentication}
     if protocol and protocol != "openai-transcriptions":
         expected["protocol"] = protocol
     if request_options:
         expected["request_options"] = request_options
     if path.exists():
         actual = read(path)
+        # Existing tasks predate explicit authentication and used Bearer only.
+        # Compare that identity without rewriting the original configuration.
+        actual_authentication = actual.get("authentication", "bearer")
+        check(actual_authentication in ("bearer", "none"), "Invalid saved ASR authentication")
         if model is None:
             expected["model"] = actual["model"]
+            expected["authentication"] = actual_authentication
             if "protocol" in actual:
                 expected["protocol"] = actual["protocol"]
             if "request_options" in actual:
                 expected["request_options"] = actual["request_options"]
             if endpoint is None:
                 expected["endpoint"] = asr_endpoint(actual["endpoint"], actual.get("protocol", "openai-transcriptions"))
-        check(actual == expected, "ASR configuration/source changed; do not mix models or evidence")
+        check({**actual, "authentication": actual_authentication} == expected,
+              "ASR configuration/source changed; do not mix models, authentication or evidence")
         return actual
     if model is not None:
+        asr_endpoint(endpoint, protocol or "openai-transcriptions")
         save(path, expected)
         return expected
     return None
@@ -416,7 +424,7 @@ def latest(work, item):
     return len(attempts), outcome
 
 
-def key_from_environment(name="SILICONFLOW_API_KEY"):
+def key_from_environment(name="DSH_VIDEO_TRANSCRIPTION_KEY"):
     check(isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name), "Invalid credential environment variable name")
     key = os.environ.get(name, "").strip()
     if not key and os.name == "nt" and name == "SILICONFLOW_API_KEY":
@@ -529,11 +537,14 @@ def validate_asr_options(value, model, protocol):
     return value
 
 
-def post(audio, model, key, endpoint=ENDPOINT, protocol="openai-transcriptions", request_options=None):
+def post(audio, model, key, endpoint, protocol="openai-transcriptions", request_options=None, authentication="bearer"):
     """Upload the immutable, manifest-checked bytes supplied by transcribe."""
     check(isinstance(audio, bytes), "ASR upload requires prepared audio bytes, not a path")
     request_options = validate_asr_options({} if request_options is None else request_options, model, protocol)
-    headers = {"Authorization": f"Bearer {key}"}
+    check(authentication in ("bearer", "none"), "ASR authentication must be bearer or none")
+    if authentication == "none":
+        key = None
+    headers = {"Authorization": f"Bearer {key}"} if authentication == "bearer" else {}
     if protocol in ("qwen-chat-asr", "dashscope-asr"):
         encoded = base64.b64encode(audio).decode("ascii")
         check(len(encoded) <= 10_000_000, "Qwen ASR Base64 audio exceeds 10 MB; prepare smaller chunks")
@@ -611,10 +622,12 @@ def concurrency_failure(error):
 
 
 def transcribe(args, sender=None, get_key=None):
-    check(args.allow_upload, "Cloud upload requires explicit user authorization and --allow-upload")
+    check(args.allow_upload, "Sending prepared audio requires explicit user authorization and --allow-upload")
     check(re.fullmatch(r"[A-Za-z0-9_.:/-]{1,160}", args.model), "Invalid model identifier")
+    authentication = getattr(args, "authentication", "bearer")
+    check(authentication in ("bearer", "none"), "ASR authentication must be bearer or none")
     protocol = getattr(args, "protocol", "openai-transcriptions")
-    endpoint = asr_endpoint(getattr(args, "endpoint", ENDPOINT), protocol)
+    endpoint = asr_endpoint(getattr(args, "endpoint", ""), protocol)
     options_file = getattr(args, "asr_options_file", None)
     request_options = None
     if options_file is not None:
@@ -622,14 +635,15 @@ def transcribe(args, sender=None, get_key=None):
         check(path.is_absolute() and path.is_file() and not path.is_symlink(), "Absolute ASR options JSON file required")
         check(path.stat().st_size <= 1_000_000, "ASR options file exceeds 1 MB")
         request_options = validate_asr_options(read(path), args.model, protocol)
-    key_env = getattr(args, "key_env", "SILICONFLOW_API_KEY")
-    check(isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key_env), "Invalid credential environment variable name")
-    sender = sender or (lambda audio, model, key: post(audio, model, key, endpoint, protocol, request_options))
+    key_env = getattr(args, "key_env", "DSH_VIDEO_TRANSCRIPTION_KEY")
+    if authentication == "bearer":
+        check(isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key_env), "Invalid credential environment variable name")
+    sender = sender or (lambda audio, model, key: post(audio, model, key, endpoint, protocol, request_options, authentication))
     get_key = get_key or (lambda: key_from_environment(key_env))
     check(type(args.max_chunks) is int and 1 <= args.max_chunks <= 100, "max-chunks must be 1..100")
-    concurrency = getattr(args, "concurrency", 64)
+    concurrency = getattr(args, "concurrency", TRANSCRIPTION_POLICY["concurrency"])
     check(type(concurrency) is int and 1 <= concurrency <= 64, "concurrency must be 1..64")
-    requests_per_second = getattr(args, "requests_per_second", 8)
+    requests_per_second = getattr(args, "requests_per_second", TRANSCRIPTION_POLICY["requestsPerSecond"])
     check(requests_per_second is None or type(requests_per_second) in (int, float)
           and math.isfinite(requests_per_second) and 0 < requests_per_second <= 100,
           "requests-per-second must be greater than 0 and at most 100")
@@ -653,7 +667,7 @@ def transcribe(args, sender=None, get_key=None):
         check(not any(count for _, count, _ in states) or (work / "asr-config.json").is_file(),
               "Missing ASR config for existing attempts; restore the original asr-config.json from a known backup, "
               "or start a separately authorized new task without changing this history. Cannot reconstruct model identity")
-        config(work, args.model, endpoint, protocol, request_options)
+        config(work, args.model, endpoint, protocol, request_options, authentication)
         queue, planned_retries = [], 0
         for item, count, outcome in states:
             if item["id"] not in selected or outcome and outcome["status"] == "success":
@@ -721,10 +735,10 @@ def transcribe(args, sender=None, get_key=None):
                 next_dispatch = time.monotonic()
                 while True:
                     if stopped.is_set() and not active:
-                        if (local_failure or not wave_failures or current_concurrency <= 16
+                        if (local_failure or not wave_failures or current_concurrency <= 1
                                 or any(not row["concurrency_related"] for row in wave_failures)):
                             break
-                        lower = 32 if current_concurrency > 32 else 16
+                        lower = 32 if current_concurrency > 32 else 16 if current_concurrency > 16 else 1
                         transitions.append({"from": current_concurrency, "to": lower,
                                             "after_submitted": submitted, "after_completed": completed,
                                             "causes": wave_failures})
@@ -755,7 +769,7 @@ def transcribe(args, sender=None, get_key=None):
                             if protocol in ("qwen-chat-asr", "dashscope-asr"):
                                 check(item["end"] - item["start"] <= 300 and 4 * ((len(audio) + 2) // 3) <= 10_000_000,
                                       "Qwen ASR accepts at most 5 minutes and 10 MB Base64 audio; prepare smaller chunks; not submitted")
-                            if key is None:
+                            if authentication == "bearer" and key is None:
                                 key = get_key()
                             with dispatch_guard:
                                 if stopped.is_set():
@@ -811,7 +825,7 @@ def transcribe(args, sender=None, get_key=None):
                 unsubmitted.append(item["id"])
             elif outcome["status"] != "success":
                 deferred.append({"id": item["id"], "status": outcome["status"], "attempts": count})
-        result = {"work": str(work), "endpoint": endpoint, "model": args.model, "protocol": protocol,
+        result = {"work": str(work), "endpoint": endpoint, "model": args.model, "protocol": protocol, "authentication": authentication,
                   "submitted": submitted, "completed": completed, "succeeded": succeeded, "failed": failed,
                   "concurrency": concurrency, "peak_inflight": peak_inflight,
                   "final_concurrency": current_concurrency, "concurrency_transitions": transitions,
@@ -2210,16 +2224,19 @@ def main():
     t = commands.add_parser("transcribe")
     t.add_argument("--work", required=True)
     t.add_argument("--model", required=True)
-    t.add_argument("--endpoint", default=ENDPOINT, help="Exact ASR HTTPS endpoint for the selected protocol")
-    t.add_argument("--protocol", choices=["openai-transcriptions", "qwen-chat-asr", "dashscope-asr"], default="openai-transcriptions")
-    t.add_argument("--key-env", default="SILICONFLOW_API_KEY", help="Credential environment variable name, never the credential itself")
+    t.add_argument("--endpoint", required=True, help="Explicit complete HTTP(S) endpoint; protocol is not inferred from its path")
+    t.add_argument("--protocol", choices=["openai-transcriptions", "qwen-chat-asr", "dashscope-asr"], default="openai-transcriptions",
+                   help="Complete-recording file protocol; realtime streams and asynchronous file jobs require a separate adapter")
+    t.add_argument("--authentication", choices=["bearer", "none"], default="bearer",
+                   help="bearer resolves only --key-env; none reads no credential and sends no Authorization header")
+    t.add_argument("--key-env", default="DSH_VIDEO_TRANSCRIPTION_KEY", help="Credential environment variable name, never the credential itself")
     t.add_argument("--allow-upload", action="store_true")
     t.add_argument("--retry-failed", action="store_true")
     t.add_argument("--max-chunks", type=int, default=100, help="Total submissions this invocation, default 100, 1..100")
-    t.add_argument("--concurrency", type=int, default=64,
-                   help="Concurrent HTTP requests, default 64, 1..64; overload/transport failure drains then lowers to 32/16 for new chunks; never retries failed chunks")
-    t.add_argument("--requests-per-second", type=float, default=8,
-                   help="Dispatch rate limit, default 8 requests/second, greater than 0 and at most 100")
+    t.add_argument("--concurrency", type=int, default=TRANSCRIPTION_POLICY["concurrency"],
+                   help=f"Concurrent HTTP requests, default {TRANSCRIPTION_POLICY['concurrency']}, 1..64; overload/transport failure drains then lowers through 32/16/1 for new chunks; never retries failed chunks")
+    t.add_argument("--requests-per-second", type=float, default=TRANSCRIPTION_POLICY["requestsPerSecond"],
+                   help=f"Dispatch rate limit, default {TRANSCRIPTION_POLICY['requestsPerSecond']} requests/second, greater than 0 and at most 100")
     t.add_argument("--asr-options-file", help="Absolute JSON file for model-specific ASR options; no credentials")
     t.add_argument("--max-retries", type=int,
                    help="Retry requests authorized for this invocation, default 1 with --retry-failed, otherwise 0")

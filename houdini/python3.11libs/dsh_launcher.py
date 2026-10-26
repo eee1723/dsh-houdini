@@ -1,130 +1,25 @@
-"""Launcher and runtime-refresh paths for dsh-houdini.
+"""Houdini-side Bridge maintenance and official DSH Desktop menu shortcuts.
 
-``open_workspace()`` registers this Houdini with the independent workbench and
-opens its exact native DSH conversation. Desktop/Host lifetime is not owned by
-this Houdini. ``launch()`` repairs the current Bridge when already registered,
-or opens the workbench when nothing is running. It never replaces another
-Houdini's Host. Reloading Host code requires closing/reopening the workbench.
-
-The embedded startup helpers remain for explicit legacy-runtime repair and
-isolated compatibility checks; they are not the normal Open Workspace route.
-
-Use it from Houdini's Python Shell (after installing the package):
-
-    import dsh_launcher
-    dsh_launcher.launch()
-
-The menu wiring is defined in ``MainMenuCommon.xml``.
+This process never owns a DSH Host or a browser shell. The in-process Bridge
+continues to serialize all HOM work on Houdini's main thread.
 """
-
 from __future__ import annotations
-
 import importlib
 import json
 import os
-import shutil
-import socket
-import subprocess
+from pathlib import Path
 import sys
-import threading
-import time
-import traceback
 import tempfile
-import urllib.error
-import urllib.request
-import uuid
-import webbrowser
-
 import hou
 
-# --- editable configuration --------------------------------------------------
-
-# This repository's root, derived from THIS file's own location so the package
-# works from any checkout path (no hardcoded drive letters or usernames).
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-BRIDGE_HOST = "127.0.0.1"
-BRIDGE_PORT = 8765
-
-FRONTEND_HOST = "127.0.0.1"
-FRONTEND_PORT = 3081
-FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
-DSH_RPC_TIMEOUT = 20
-
-# Where the frontend process writes its stdout/stderr.
-FRONTEND_LOG = os.path.join(_PROJECT_ROOT, ".dsh-web.log")
-FRONTEND_RUNTIME_STATE = os.path.join(_PROJECT_ROOT, ".dsh-runtime.json")
-
-# The frontend boots the `web` profile without a patch overlay — the `houdini`
-# agent preset mounts dsh-houdini. (The old `--patch cordis.dev.yml` file://
-# A patch overlay is not used because the client half must resolve this package through the profile.)
-
-# How to boot the dsh web frontend.
-#   * Default: directly execute the plugin-required CLI in the project-local
-#     npx cache. This avoids a warm launch blocking on npm registry resolution.
-#   * With no matching cache, fall back to npx for that exact version.
-#   * Set DSH_HOUDINI_DSH_SPEC to test/update a specific CLI release through
-#     npx, or DSH_HOUDINI_DSH_BIN to pin an already-installed bin.js.
-#   * SHELL=False + DSH_BIN remains as a source-compatible developer override.
-SHELL = True
-DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
-DSH_SPEC = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC).strip()
-FRONTEND_SHELL_CMD = 'npx --yes {spec} web --port {port} --no-open'
-
-# npm cache for npx. The default cache is write-blocked on sandboxed machines
-# (EPERM), so point npm at a project-local cache — works everywhere.
-NPM_CACHE = os.path.join(_PROJECT_ROOT, ".npm-cache")
-
-# Warm starts execute a known local CLI and should fail quickly. Only the cold
-# npx fallback is allowed enough time to download the CLI and its dependency
-# graph. Both waits happen on a worker thread, never Houdini's GUI thread.
-FRONTEND_WARM_WAIT_TIMEOUT = 60
-FRONTEND_COLD_WAIT_TIMEOUT = 600
-
-# Local-install overrides:
-NODE = shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
-DSH_BIN = ""
-DSH_BIN_ENV = os.environ.get("DSH_HOUDINI_DSH_BIN", "")
-
-# Required profile bundles are declared once at the package root and reconciled
-# through the official `dsh plugin` command before the frontend starts.
-PROFILE_REQUIREMENTS = os.path.join(_PROJECT_ROOT, "dsh-profile.requirements.json")
-
-_module_dir = os.path.dirname(os.path.abspath(__file__))
-if _module_dir not in sys.path:
-    sys.path.append(_module_dir)
-import dsh_web_auth
-import dsh_runtime_compat
-import dsh_managed_runtime
-importlib.reload(dsh_managed_runtime)  # implementation refresh preserves Job/lock/Popen
-import dsh_profile_sync
-
-_MANAGED = dsh_managed_runtime.context(_PROJECT_ROOT)
-if _MANAGED:
-    NODE = os.path.join(_MANAGED["install"], "node", "node.exe")
-    FRONTEND_PORT = _MANAGED["frontendPort"]
-    BRIDGE_PORT = _MANAGED.get("bridgePort", 0)
-    FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
-    FRONTEND_LOG = os.path.join(_MANAGED["runtimeDir"], "frontend.log")
-    FRONTEND_RUNTIME_STATE = os.path.join(_MANAGED["runtimeDir"], "runtime.json")
-    NPM_CACHE = os.path.join(_MANAGED["root"], "cache")
-
-_DSH_WEB_SESSION = dsh_web_auth.shared_session(
-    FRONTEND_URL, FRONTEND_LOG, FRONTEND_RUNTIME_STATE,
-)
-
-
-# Each Houdini process gets its own unsaved scratch workspace, never a prior
-# project's directory or the plugin checkout. Keep its files after closing.
-# One scratch root shared with the workbench desktop and its pruner.
-_FALLBACK_WORKSPACE = os.path.join(tempfile.gettempdir(), "dsh-houdini", "workspaces")
-_workbench_root = os.environ.get("DSH_HOUDINI_WORKBENCH_ROOT")
-if _workbench_root:
-    _FALLBACK_WORKSPACE = os.path.join(_workbench_root, "workspaces")
-elif _MANAGED:
-    _FALLBACK_WORKSPACE = os.path.join(_MANAGED["root"], "workspaces")
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+BRIDGE_HOST = '127.0.0.1'
+BRIDGE_PORT = 0
+_FALLBACK_WORKSPACE = str(Path(tempfile.gettempdir()) / 'dsh-houdini/workspaces')
 _UNSAVED_WORKSPACE = globals().get('_UNSAVED_WORKSPACE')
-
+_PROBLEM_WINDOW = None
+_LAST_STARTUP_FAILURE = None
+_HELPER_SWITCH_TIMER = None
 
 def _hip_dir() -> str:
     """Resolve the current scene's workspace on Houdini's main thread.
@@ -146,135 +41,6 @@ def _hip_dir() -> str:
             prefix=f"untitled-{os.getpid()}-", dir=_FALLBACK_WORKSPACE)
     return _UNSAVED_WORKSPACE
 
-# Helper processes (netstat / frontend tree) must never pop a
-# visible terminal window when launched from Houdini's GUI.
-_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-def _read_json(path: str) -> dict:
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            value = json.load(handle)
-        return value if isinstance(value, dict) else {}
-    except Exception:
-        return {}
-
-
-def _plugin_runtime_probe() -> tuple[bool, str]:
-    """Actually import the compiled plugin using Node's real ESM resolver."""
-    if not NODE or not os.path.exists(NODE):
-        return False, f"node executable not found: {NODE}"
-    try:
-        proc = subprocess.run(
-            [
-                NODE, "--input-type=module", "-e",
-                "await import('./lib/index.js')",
-            ],
-            cwd=_PROJECT_ROOT, capture_output=True, timeout=30,
-            creationflags=_CREATE_NO_WINDOW,
-            env=dict(dsh_managed_runtime.environment(), NPM_CONFIG_CACHE=NPM_CACHE),
-        )
-        raw = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
-        output = raw.decode("utf-8", errors="replace").strip()
-        if proc.returncode == 0:
-            return True, output
-        return False, output or f"node import exited with code {proc.returncode}"
-    except Exception:
-        return False, traceback.format_exc()
-
-
-def _append_dependency_failure(message: str) -> None:
-    try:
-        with open(FRONTEND_LOG, "ab") as log:
-            diagnostic = (
-                "\n[dsh-houdini] plugin dependency restore failed\n"
-                + message[-12000:] + "\n"
-            )
-            log.write(diagnostic.encode("utf-8", errors="replace"))
-    except Exception:
-        pass
-
-
-def _is_module_resolution_failure(output: str) -> bool:
-    markers = (
-        "ERR_MODULE_NOT_FOUND",
-        "Cannot find package",
-        "Cannot find module",
-        "MODULE_NOT_FOUND",
-    )
-    return any(marker in output for marker in markers)
-
-
-def ensure_dependencies(on_install=None) -> str:
-    """Make sure the compiled plugin is resolvable, not merely present on disk."""
-    if _MANAGED:
-        ok, message = _plugin_runtime_probe()
-        if not ok:
-            _append_dependency_failure(message)
-            return "managed dependency check FAILED; use DSH-Houdini > Version & Updates... > 高级设置 to install / repair the signed package"
-        return "managed dependencies ok (no package manager)"
-    probe_ok, probe_output = _plugin_runtime_probe()
-    if probe_ok:
-        return "dependencies ok"
-    if not _is_module_resolution_failure(probe_output):
-        _append_dependency_failure(probe_output)
-        return "dependency check FAILED (compiled plugin import error)"
-    if on_install is not None:
-        on_install(["runtime module resolution"])
-    try:
-        proc = subprocess.run(
-            "npm install --no-audit --no-fund --loglevel=error",
-            cwd=_PROJECT_ROOT, capture_output=True, timeout=600, shell=True,
-            creationflags=_CREATE_NO_WINDOW,
-            env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
-        )
-        if proc.returncode != 0:
-            raw = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
-            _append_dependency_failure(raw.decode("utf-8", errors="replace"))
-            return "dependency restore FAILED (runtime import failed)"
-    except Exception:
-        _append_dependency_failure(traceback.format_exc())
-        return "dependency restore FAILED (runtime import failed)"
-    probe_ok, probe_output = _plugin_runtime_probe()
-    if not probe_ok:
-        _append_dependency_failure(probe_output)
-        return "dependency restore FAILED (compiled plugin still cannot be imported)"
-    return "dependencies restored"
-
-
-def _port_open(host: str, port: int) -> bool:
-    """Return True when something is already listening on host:port."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(0.3)
-        sock.connect((host, port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
-
-
-def _port_pid(port: int) -> int | None:
-    """PID of the process listening on :port (any local address), or None."""
-    return dsh_managed_runtime.listener_pid(port)
-
-
-def _frontend_online() -> bool:
-    """Check readiness without borrowing another Houdini/process's listener."""
-    if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        return False
-    pid = _port_pid(FRONTEND_PORT)
-    if not dsh_managed_runtime.owns_pid(pid):
-        raise RuntimeError(
-            ("插件的工作区地址已有服务，但未能确认它属于哪个窗口，当前窗口暂不接管。\n" if pid is None else
-             "插件的工作区地址正被另一个进程使用，当前窗口不能接管它。\n")
-            +
-            "如果另一个 Houdini 已打开插件，请在那里继续；若要切换，先保存并正常退出那个 Houdini，再重试 Open Workspace。"
-            "仅关闭插件面板不会释放占用。无法确认占用者时，请把技术详情交给开发者。\n技术信息："
-            f"frontend port conflict on {FRONTEND_URL}: listener PID {pid or 'unknown'} is not owned by this Houdini."
-        )
-    return True
-
 
 def _module_path_on_syspath() -> None:
     here = os.path.dirname(os.path.abspath(__file__))
@@ -286,7 +52,7 @@ def restart_bridge(*, port=None) -> str:
     """Main thread: stop/reload/start the in-process bridge without probing ports."""
     _module_path_on_syspath()
     target_port = BRIDGE_PORT if port is None else port
-    if type(target_port) is not int or not 1024 <= target_port <= 65535:
+    if type(target_port) is not int or not (target_port == 0 or 1024 <= target_port <= 65535):
         raise ValueError('Invalid Bridge restart port')
     import dsh_bridge
 
@@ -361,6 +127,7 @@ def restart_bridge(*, port=None) -> str:
         'dsh_cop_contracts',
         'dsh_node_inspection',
         'dsh_quality_contracts',
+        'dsh_curve_paths',
         'dsh_procedural_plans',
         'dsh_sop_contracts',
         'dsh_component_contracts',
@@ -369,958 +136,203 @@ def restart_bridge(*, port=None) -> str:
     ):
         importlib.reload(importlib.import_module(module_name))
     importlib.reload(dsh_bridge)           # 拾取最新 bridge
-    dsh_bridge.start(target_port, BRIDGE_HOST)
-    return f"bridge restarted on {BRIDGE_HOST}:{target_port}"
-
-
-def restart_frontend() -> str:
-    """Restart only our frontend tree; an unrelated listener is a conflict."""
-    _frontend_online()  # Check conflicts before stopping even our own Job.
-    if _terminate_pending_frontend():
-        time.sleep(0.5)  # 让端口释放，避免 TIME_WAIT 影响重启
-        return f"frontend stopped (port {FRONTEND_PORT})"
-    return "frontend not running"
-
-
-def _dsh_version_for_bin(bin_path: str | None) -> str | None:
-    """Read the CLI package version owning one dsh/lib/bin.js path."""
-    if not bin_path:
-        return None
-    package = _read_json(os.path.join(os.path.dirname(os.path.dirname(bin_path)), "package.json"))
-    version = package.get("version")
-    return str(version) if version else None
-
-
-def _clear_frontend_runtime_state() -> None:
-    try:
-        os.remove(FRONTEND_RUNTIME_STATE)
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
-
-
-def _write_frontend_runtime_state(pid: int | None) -> None:
-    """Publish the verified listener identity for the diagnostics panel."""
-    if pid is None:
-        return
-    from dsh_deployment import _process_started
-    home = dsh_managed_runtime.environment().get('DSH_HOME') or str(dsh_profile_sync.dsh_home())
-    bin_path = _PENDING.get("frontend_bin")
-    version = _PENDING.get("frontend_version")
-    if (not version and _PENDING.get("frontend_source") == "npx-cold"
-            and DSH_SPEC == DEFAULT_DSH_SPEC and not DSH_BIN_ENV):
-        # Only the default exact cold command can be identified by its required
-        # cache. A developer override must never borrow the default's identity.
-        cached = _preferred_cached_dsh_bin()
-        if cached is not None:
-            bin_path = cached[0]
-            version = _dsh_version_for_bin(bin_path)
-    payload = {
-        "pid": pid,
-        "processStarted": _process_started(pid),
-        "home": os.path.realpath(os.path.expanduser(home)),
-        "frontendPort": FRONTEND_PORT,
-        "version": version,
-        "source": _PENDING.get("frontend_source", "unknown"),
-        "bin": bin_path,
-        "authLogOffset": _PENDING.get("auth_log_offset", 0),
-        "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    }
-    payload['runtimeFixes'] = _PENDING.get('runtime_fixes')
-    temporary = FRONTEND_RUNTIME_STATE + ".tmp"
-    try:
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-        os.replace(temporary, FRONTEND_RUNTIME_STATE)
-    except OSError:
-        try:
-            os.remove(temporary)
-        except OSError:
-            pass
-
-
-def _preferred_cached_dsh_bin() -> tuple[str, str] | None:
-    """Return only the plugin-required cached CLI; cache recency has no authority."""
-    cached = dsh_runtime_compat.preferred_cached_bin(NPM_CACHE)
-    return (str(cached), "cached-cli") if cached is not None else None
-
-
-def _resolve_cached_dsh_bin() -> tuple[str, str] | None:
-    """Return the default launch candidate, respecting explicit spec pins."""
-    # A custom spec means the caller explicitly asked npx to resolve/update a
-    # version. Do not silently substitute an unrelated cached default version.
-    if DSH_SPEC != DEFAULT_DSH_SPEC:
-        return None
-    return _preferred_cached_dsh_bin()
-
-
-def _frontend_command() -> tuple[list[str] | str, bool, str, int]:
-    """Choose a deterministic warm command or the explicit cold npx path."""
-    if not NODE or not os.path.exists(NODE):
-        raise RuntimeError(f"node executable not found: {NODE}")
-
-    if _MANAGED:
-        binary = os.path.join(_MANAGED["install"], "app", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
-        if not os.path.isfile(binary):
-            raise RuntimeError("Managed DSH is missing. Install / repair the signed package.")
-        dsh_runtime_compat.runtime_fix_identity(binary)
-        return [NODE, binary, "web", "--port", str(FRONTEND_PORT), "--no-open"], False, "managed-cli", FRONTEND_WARM_WAIT_TIMEOUT
-
-    if DSH_BIN_ENV:
-        explicit = os.path.abspath(os.path.expanduser(DSH_BIN_ENV))
-        if not os.path.isfile(explicit):
-            raise RuntimeError(
-                "DSH_HOUDINI_DSH_BIN does not point to a file: " + explicit
-            )
-        return (
-            [NODE, explicit, "web", "--port", str(FRONTEND_PORT), "--no-open"],
-            False, "explicit-cli", FRONTEND_WARM_WAIT_TIMEOUT,
-        )
-
-    if not SHELL:
-        if not DSH_BIN or not os.path.isfile(DSH_BIN):
-            raise RuntimeError(
-                "frontend command not found:\n"
-                f"  NODE={NODE}\n  DSH_BIN={DSH_BIN}\n"
-                "Set SHELL=True or fix DSH_BIN in dsh_launcher.py"
-            )
-        return (
-            [NODE, DSH_BIN, "web", "--port", str(FRONTEND_PORT), "--no-open"],
-            False, "configured-cli", FRONTEND_WARM_WAIT_TIMEOUT,
-        )
-
-    cached = _resolve_cached_dsh_bin()
-    if cached is not None:
-        bin_path, source = cached
-        return (
-            [NODE, bin_path, "web", "--port", str(FRONTEND_PORT), "--no-open"],
-            False, source, FRONTEND_WARM_WAIT_TIMEOUT,
-        )
-
-    if DSH_SPEC == DEFAULT_DSH_SPEC and dsh_runtime_compat.load_manifest().get('runtimeFixes'):
-        raise RuntimeError('Compatible DSH runtime fixes are not prepared. Run npm run runtime:prepare in the plugin source, then reopen the workspace.')
-
-    if not DSH_SPEC.strip():
-        raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
-    cold_spec = DSH_SPEC
-    if DSH_SPEC == DEFAULT_DSH_SPEC:
-        cold_spec = dsh_runtime_compat.preferred_spec()
-    return (
-        FRONTEND_SHELL_CMD.format(port=FRONTEND_PORT, spec=cold_spec),
-        True, "npx-cold", FRONTEND_COLD_WAIT_TIMEOUT,
-    )
-
-
-def _profile_sync_command() -> tuple[list[str] | str, bool, str, int]:
-    """Choose the same DSH CLI source as frontend startup, without `web`."""
-    frontend, use_shell, source, timeout = _frontend_command()
-    if isinstance(frontend, list):
-        return frontend[:-4], use_shell, source, timeout
-    suffix = f" web --port {FRONTEND_PORT} --no-open"
-    if not frontend.endswith(suffix):
-        raise RuntimeError(f"cannot derive DSH CLI command from: {frontend}")
-    return frontend[:-len(suffix)], use_shell, source, timeout
-
-
-def sync_profile_plugins(on_install=None) -> str:
-    """Install/activate every required web-profile bundle, only when needed."""
-    if _MANAGED:
-        return "managed profile initialized through the bundled DSH API (no package manager)"
-    _module_path_on_syspath()
-    prefix, use_shell, _source, timeout = _profile_sync_command()
-    return dsh_profile_sync.sync_profile_plugins(
-        prefix,
-        use_shell=use_shell,
-        project_root=dsh_profile_sync.PROJECT_ROOT,
-        env=dict(os.environ, NPM_CONFIG_CACHE=NPM_CACHE),
-        timeout=max(timeout, dsh_profile_sync.SYNC_TIMEOUT_SECONDS),
-        on_install=on_install,
-    )
-
-
-def _command_text(cmd: list[str] | str) -> str:
-    if isinstance(cmd, str):
-        return cmd
-    return subprocess.list2cmdline(cmd)
-
-
-def _write_frontend_attempt_header(
-    log, *, source: str, cwd: str, cmd: list[str] | str, timeout: int,
-) -> None:
-    header = (
-        "\n\n===== dsh-houdini frontend attempt "
-        + time.strftime("%Y-%m-%d %H:%M:%S %z")
-        + " =====\n"
-        + f"source: {source}\n"
-        + f"cwd: {cwd}\n"
-        + f"timeout: {timeout}s\n"
-        + f"command: {_command_text(cmd)}\n"
-        + "----- frontend output -----\n"
-    )
-    log.write(header.encode("utf-8", errors="replace"))
-    log.flush()
-
-
-def start_frontend(workspace_dir: str | None = None, *, attempt: dict | None = None) -> str:
-    """Boot the dsh web frontend if it is not already up; returns status text.
-
-    workspace_dir = 前端进程 cwd = dsh 默认工作区根（应对准 $HIP 目录，
-    由调用方在主线程用 _hip_dir() 解析后传入；None 回退项目根）。
-    """
-    if _frontend_online():
-        return f"frontend already running on {FRONTEND_URL}"
-
-    cwd = workspace_dir or (_FALLBACK_WORKSPACE if _MANAGED else _PROJECT_ROOT)
-    if _MANAGED:
-        os.makedirs(cwd, exist_ok=True)
-    # A failed command-selection attempt must never reuse the process handle
-    # from an earlier launch and misreport it as the newly created frontend.
-    for key in (
-        "proc", "frontend_source", "frontend_bin", "frontend_version",
-        "wait_timeout", "auth_log_offset", "runtime_fixes",
-    ):
-        _PENDING.pop(key, None)
-
-    try:
-        cmd, use_shell, source, wait_timeout = _frontend_command()
-        if not use_shell and source in ('cached-cli', 'managed-cli'):
-            _PENDING['runtime_fixes'] = dsh_runtime_compat.runtime_fix_identity(cmd[1], verify_files=True)
-    except RuntimeError as exc:
-        return str(exc)
-
-    kwargs: dict = {
-        "stderr": subprocess.STDOUT,
-        "cwd": cwd,
-        "close_fds": True,
-        "env": dict(dsh_managed_runtime.environment(), NPM_CONFIG_CACHE=NPM_CACHE,
-                    DSH_HOUDINI_BRIDGE_URL=f"http://{BRIDGE_HOST}:{BRIDGE_PORT}",
-                    DSH_HOUDINI_EXECUTOR_ID=dsh_managed_runtime.executor_identity()),
-    }
-    if os.name == "nt":
-        # DETACHED_PROCESS would leave the cmd/npx/node tree console-less, and
-        # every console-subsystem child then allocates its OWN visible terminal
-        # window. CREATE_NO_WINDOW gives the whole tree a single hidden console.
-        kwargs["creationflags"] = _CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-
-    with open(FRONTEND_LOG, "ab") as log:
-        _write_frontend_attempt_header(
-            log, source=source, cwd=cwd, cmd=cmd, timeout=wait_timeout,
-        )
-        auth_log_offset = log.tell()
-        _PENDING["auth_log_offset"] = auth_log_offset
-        _DSH_WEB_SESSION.reset(log_offset=auth_log_offset)
-        kwargs["stdout"] = log
-        if os.name == "nt":
-            process = dsh_managed_runtime.spawn_frontend(
-                cmd, node=NODE, shell=use_shell, **kwargs,
-            )
-        else:
-            process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, shell=use_shell, **kwargs)
-        if attempt is not None:
-            attempt["proc"] = process
-        _PENDING["proc"] = process
-    _PENDING["frontend_source"] = source
-    bin_path = cmd[1] if isinstance(cmd, list) and len(cmd) > 1 else None
-    _PENDING["frontend_bin"] = bin_path
-    _PENDING["frontend_version"] = _dsh_version_for_bin(bin_path)
-    _PENDING["wait_timeout"] = wait_timeout
-    return (
-        f"frontend starting on {FRONTEND_URL} "
-        f"(source: {source}; workspace: {cwd}; log: {FRONTEND_LOG})"
-    )
-
-
-def _dsh_rpc_wire(method: str, payload: dict, timeout: int = DSH_RPC_TIMEOUT) -> dict:
-    """Call one exact DSH Host RPC wire endpoint and return its value object."""
-    body = json.dumps({
-        "type": "client-request",
-        "rpcId": "dsh-houdini-" + uuid.uuid4().hex,
-        "method": method,
-        "payload": payload,
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        f"{FRONTEND_URL}/api/{method}",
-        data=body,
-        headers={"content-type": "application/json"},
-        method="POST",
-    )
-    try:
-        try:
-            response = _DSH_WEB_SESSION.open(request, timeout=timeout)
-        except urllib.error.HTTPError as exc:
-            if exc.code != 401:
-                raise
-            # Every current Host RPC uses the browser-session cookie.
-            # The first 401 triggers the documented root-token exchange;
-            # older DSH releases continue to succeed on the first request.
-            exc.close()
-            _DSH_WEB_SESSION.authorize(timeout)
-            response = _DSH_WEB_SESSION.open(request, timeout=timeout)
-        with response:
-            decoded = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"DSH RPC {method} failed over HTTP {exc.code}: {detail[-2000:]}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"DSH RPC {method} transport failed: {exc}") from exc
-
-    result = decoded.get("result") if isinstance(decoded, dict) else None
-    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
-        raise RuntimeError(f"DSH RPC {method} returned an invalid envelope")
-    if not result["ok"]:
-        error = result.get("error")
-        if isinstance(error, dict):
-            code = error.get("code", "unknown")
-            message = error.get("message", "unknown error")
-            raise RuntimeError(f"DSH RPC {method} failed: {code}: {message}")
-        raise RuntimeError(f"DSH RPC {method} failed without a structured error")
-    value = result.get("value")
-    if not isinstance(value, dict):
-        raise RuntimeError(f"DSH RPC {method} returned a non-object value")
-    return value
-
-
-def _host_rpc_not_ready(exc: RuntimeError) -> bool:
-    """True when an RPC failure means the frontend is still warming up.
-
-    The port accepts TCP before dsh mounts its /api routes, so an early
-    session/list answers 404; a mid-restart call can also hit a refused
-    connection. Structured RPC errors (validation, unknown session) are real
-    failures and must not be retried.
-    """
-    message = str(exc)
-    return "over HTTP 404" in message or "transport failed" in message
-
-
-def _check_host_ready() -> None:
-    """Read-only startup probe; the browser owns workspace/session navigation."""
-    sessions = _dsh_rpc_wire(
-        "session/list", {"args": {"_request": {}}},
-    ).get("items")
-    if not isinstance(sessions, list):
-        raise RuntimeError("session/list returned invalid items")
-
-
-def open_ui(workspace_dir: str, *, force_reload: bool = False) -> str:
-    """Request selection of the current HIP directory in the native DSH client."""
-    _module_path_on_syspath()
-    try:
-        import dsh_webview
-        if not force_reload and dsh_webview.raise_workspace(workspace_dir):
-            return "Houdini workspace selection requested"
-        return dsh_webview.show_webview(
-            workspace_dir=workspace_dir,
-            authenticated_url=_DSH_WEB_SESSION.launch_url(),
-            force_reload=force_reload,
-        )
-    except Exception as exc:
-        message = f"Could not open the embedded DSH workspace: {exc}"
-        _report(message)
-        try:
-            hou.ui.displayMessage(
-                message + "\n可打开 DSH-Houdini > Version & Updates... > 高级设置 > 运行诊断，查看日志。",
-                severity=hou.severityType.Error,
-                title="DSH-Houdini",
-            )
-        except Exception:
-            pass
-        return message
-
-
-# --- wait-for-readiness ------------------------------------------------------
-
-# A first-ever launch downloads the whole dsh CLI into NPM_CACHE and can take
-# many minutes; opening the UI before the port listens shows
-# ERR_CONNECTION_REFUSED. The external npm/npx process can hang on a broken
-# network without exiting, so cap the wait at a diagnosable terminal state.
-FRONTEND_WAIT_INTERVAL = 0.5     # seconds (headless poll cadence)
-DIALOG_TICK_MS = 100             # GUI tick — elapsed time + worker state refresh
-
-# Keeps the spawned frontend process / QTimer / QProgressDialog alive across
-# event-loop turns (GC would kill them).
-# Runtime repair reloads this module. Preserve the existing operation/timers so
-# a second menu action cannot create a competing preflight or lose its dialog.
-_PENDING: dict = globals().get("_PENDING", {})
-_MAIN_DISPATCHES: list = globals().get("_MAIN_DISPATCHES", [])
-_SERVICE_PREFLIGHT_ACTIVE = globals().get("_SERVICE_PREFLIGHT_ACTIVE", False)
-_LAST_STARTUP_FAILURE = globals().get('_LAST_STARTUP_FAILURE')
-try:
-    _ACTIVE_STARTUP
-except NameError:
-    _ACTIVE_STARTUP = None
-
-
-def _finish_startup(state):
-    global _ACTIVE_STARTUP
-    if state.get('canceled') and not state.get('worker_done'):
-        return
-    if _ACTIVE_STARTUP is state:
-        _ACTIVE_STARTUP = None
-
-
-def _require_bridge_idle():
-    """Worker-only guard: forcing DSH shutdown never authorizes live HOM reload."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(f'http://{BRIDGE_HOST}:{BRIDGE_PORT}/health', timeout=5) as response:
-        health = json.loads(response.read().decode('utf-8'))
-    if (not isinstance(health, dict) or health.get('ok') is not True or
-            any(type(health.get(key)) is not int or health[key] != 0 for key in ('activeJobs', 'activeRequests'))):
-        raise RuntimeError('Force repair deferred: Houdini execution is active or unknown; stop/wait for scene work before retrying. Houdini was not terminated.')
-
-
-def _force_frontend_repair():
-    if not _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        return
-    pid = _port_pid(FRONTEND_PORT)
-    if dsh_managed_runtime.owns_pid(pid):
-        _terminate_pending_frontend()
-        _report(f'Force repair stopped owned DSH frontend tree (listener PID {pid})')
-    else:
-        roots = [os.path.join(_PROJECT_ROOT, '.npm-cache', '_npx')]
-        if _MANAGED:
-            roots = [os.path.join(_MANAGED['install'], 'app', 'node_modules')]
-        identity = dsh_managed_runtime.stop_verified_frontend(
-            pid, cli_roots=roots, port=FRONTEND_PORT, listener_pid=lambda: _port_pid(FRONTEND_PORT))
-        _clear_frontend_runtime_state()
-        _report(f"Force repair stopped verified stale DSH listener PID {identity['pid']}; session files were not deleted")
-    deadline = time.monotonic() + 5
-    while _port_open(FRONTEND_HOST, FRONTEND_PORT):
-        if time.monotonic() >= deadline:
-            raise RuntimeError('Frontend port is still occupied after force repair; no new runtime started')
-        time.sleep(.1)
-
-
-def _service_preflight(*, force_frontend=False) -> dict:
-    """Worker only: reject unrelated listeners before any service is changed."""
-    bridge_online = _port_open(BRIDGE_HOST, BRIDGE_PORT)
-    bridge_pid = _port_pid(BRIDGE_PORT) if bridge_online else None
-    if bridge_online and bridge_pid != os.getpid():
-        raise RuntimeError(
-            ("Houdini 的连接地址已有服务，但未能确认它属于哪个窗口，当前窗口暂不连接。\n" if bridge_pid is None else
-             "Houdini 的连接地址正被另一个进程使用，当前窗口尚未连接插件。\n")
-            +
-            "如果另一个 Houdini 已打开插件，请在那里继续；若要切换，先保存并正常退出那个 Houdini，再重试 Open Workspace。"
-            "仅关闭插件面板不会释放占用。无法确认占用者时，请把技术详情交给开发者。\n技术信息："
-            f"bridge port conflict on {BRIDGE_HOST}:{BRIDGE_PORT}: listener PID {bridge_pid or 'unknown'} is not this Houdini process."
-        )
-    if force_frontend:
-        if bridge_online:
-            _require_bridge_idle()
-        _force_frontend_repair()
-        # A request may have been admitted between the first check and shutdown.
-        if bridge_online:
-            _require_bridge_idle()
-    frontend_online = _frontend_online()
-    return {
-        "frontend_online": frontend_online,
-        "bridge_online": bridge_online,
-    }
-
-
-def _dispatch_service_preflight(callback, *, force_frontend=False) -> None:
-    """Run blocking listener/process checks off-GUI, then invoke callback on main."""
-    global _SERVICE_PREFLIGHT_ACTIVE, _LAST_STARTUP_FAILURE
-    from dsh_ui_style import clear_startup_problem
-    clear_startup_problem()
-    _LAST_STARTUP_FAILURE = None
-    if _ACTIVE_STARTUP is not None:
-        _ACTIVE_STARTUP['frontend_cwd'] = _hip_dir()
-        dialog = _PENDING.get('dialog')
-        if dialog is not None:
-            from dsh_ui_style import show_tool_window
-            show_tool_window(dialog)
-        _report('正在取消启动，请稍候。' if _ACTIVE_STARTUP.get('canceled') else
-                '工作区正在启动，请稍候。')
-        return
-    if _SERVICE_PREFLIGHT_ACTIVE:
-        _report("正在检查运行环境，请稍候。")
-        return
-    _SERVICE_PREFLIGHT_ACTIVE = True
-    preflight = (lambda: _service_preflight(force_frontend=True)) if force_frontend else _service_preflight
-    try:
-        ui_available = bool(hou.isUIAvailable())
-    except Exception:
-        ui_available = False
-    if not ui_available:
-        try:
-            callback(preflight(), None)
-        except Exception as exc:
-            _report(f"service startup failed: {exc}")
-        finally:
-            _SERVICE_PREFLIGHT_ACTIVE = False
-        return
-    try:
-        from hutil.Qt import QtCore
-        parent = hou.qt.mainWindow()
-    except Exception as exc:
-        _SERVICE_PREFLIGHT_ACTIVE = False
-        _report(f"cannot schedule non-blocking service preflight: {exc}")
-        return
-
-    state: dict = {"done": False, "result": None, "error": None}
-    timer = QtCore.QTimer(parent)
-
-    def worker() -> None:
-        try:
-            state["result"] = preflight()
-        except Exception as error:
-            state["error"] = str(error) + '\n技术信息：' + traceback.format_exc()
-        finally:
-            state["done"] = True
-
-    def tick() -> None:
-        global _SERVICE_PREFLIGHT_ACTIVE
-        if not state["done"]:
-            return
-        timer.stop()
-        if timer in _MAIN_DISPATCHES:
-            _MAIN_DISPATCHES.remove(timer)
-        try:
-            callback(state["result"], state["error"])
-        except Exception as exc:
-            _report(f"service startup failed: {exc}")
-        finally:
-            _SERVICE_PREFLIGHT_ACTIVE = False
-
-    timer.timeout.connect(tick)
-    _MAIN_DISPATCHES.append(timer)
-    threading.Thread(target=worker, daemon=True).start()
-    timer.start(50)
-
-
-def _report(detail: str) -> None:
-    """最终状态只输出到 Houdini 控制台（右下角），不再弹模态窗口。"""
-    print("[dsh-houdini] " + detail.replace("\n", "; "))
+    server = dsh_bridge.start(target_port, BRIDGE_HOST)
+    return f"bridge restarted on {BRIDGE_HOST}:{server.server_port}"
+
+
+def _report(detail):
+    print('[dsh-houdini] ' + str(detail).replace('\n', '; '))
+
+
+def require_local_modules():
+    """An already loaded helper generation cannot be hot-mixed with another."""
+    root = Path(__file__).resolve().parent
+    for name in ('dsh_deployment', 'dsh_managed_runtime', 'dsh_executor_registry', 'dsh_bridge',
+                 'dsh_execution', 'dsh_scene_recovery', 'dsh_workbench_client', 'dsh_workbench_entry'):
+        module = sys.modules.get(name)
+        filename = getattr(module, '__file__', None)
+        if filename and not Path(filename).resolve().is_relative_to(root):
+            raise RuntimeError('当前 Houdini 已加载另一版本的连接模块。请先保存工程并完整退出此 Houdini，再重新打开；未混用或重载原模块。')
+    state = sys.modules.get('dsh_deployment')
+    if state is not None and any(not callable(getattr(state, name, None))
+                                 for name in ('FileLease', 'atomic_json', '_process_started')):
+        raise RuntimeError('当前 Houdini 仍保留旧版连接模块。请先保存并重开此 Houdini；不能在同一进程内混合升级或回退。')
 
 
 def _startup_failure(error):
     global _PROBLEM_WINDOW, _LAST_STARTUP_FAILURE
-    detail = str(error)
-    _LAST_STARTUP_FAILURE = detail
-    _report('service preflight failed: ' + detail)
-    if not hou.isUIAvailable():
-        return
-    from dsh_ui_style import show_startup_problem
-    message = detail.split('\n技术信息：', 1)[0]
-    if message.startswith('Traceback'):
-        message = '工作区暂时无法启动。可以查看技术详情，并通过「报告问题」把运行记录交给开发者。'
-    _PROBLEM_WINDOW = show_startup_problem(message, detail, hou.qt.mainWindow())
+    _LAST_STARTUP_FAILURE = str(error)
+    _report(error)
+    if hou.isUIAvailable():
+        from dsh_ui_style import show_startup_problem
+        _PROBLEM_WINDOW = show_startup_problem(str(error), str(error), hou.qt.mainWindow())
 
 
-def _set_startup_state(
-    state: dict, progress: int, phase: int, title: str, message: str,
-) -> None:
-    """Publish one startup snapshot from the worker thread."""
-    state.update(
-        progress=max(0, min(100, progress)),
-        phase=phase,
-        title=title,
-        message=message,
-    )
-
-
-def _terminate_pending_frontend(**ownership) -> bool:
-    """Stop the owned Job (including npx descendants), never a port-selected PID."""
-    if os.name == "nt":
-        stopped = dsh_managed_runtime.stop_owned(**ownership)
-    else:
-        proc = _PENDING.get("proc")
-        stopped = proc is not None and ownership.get("expected_process", proc) is proc and proc.poll() is None
-        if stopped:
-            proc.terminate()
-            proc.wait(timeout=10)
-    if stopped:
-        _clear_frontend_runtime_state()
-    return stopped
-
-
-def _cancel_startup(state: dict) -> None:
-    """A delayed UI callback can stop its own attempt, never a newer frontend."""
-    state["canceled"] = True
-    process = state.get("proc")
-    if process is not None:
-        threading.Thread(
-            target=_terminate_pending_frontend, kwargs={"expected_process": process}, daemon=True,
-        ).start()
-
-
-def _start_and_wait_frontend(state: dict) -> None:
-    """Worker thread: restart the frontend, then poll until it listens or dies.
-
-    MUST run off the main thread: on this machine a connect() to a closed
-    localhost port blocks until the timeout (~300ms — no instant RST), so
-    probing on the GUI thread freezes Houdini's event loop between ticks.
-    Writes stage snapshots and `result` (ready/dead/timeout/error) into state.
-    Exits early when state["canceled"] is set.
-    """
+def open_workspace():
     try:
-        details = []
-        _set_startup_state(state, 12, 1, "正在检查插件环境", "检查本地依赖")
-
-        def on_install(missing: list[str]) -> None:
-            _set_startup_state(
-                state, 18, 1, "正在安装插件依赖",
-                "首次安装可能需要几分钟：" + ", ".join(missing),
-            )
-
-        dependency_status = ensure_dependencies(on_install)
-        details.append(dependency_status)
-        if "FAILED" in dependency_status:
-            raise RuntimeError(dependency_status)
-        if state["canceled"]:
-            return
-
-        _set_startup_state(state, 28, 2, "正在准备服务", f"释放当前服务连接")
-        details.append(restart_frontend())
-
-        _set_startup_state(
-            state, 38, 2, "正在准备插件", "检查 Houdini 工作配置",
-        )
-
-        def on_plugin_install(specs: list[str]) -> None:
-            _set_startup_state(
-                state, 42, 2, "正在安装所需插件",
-                "首次安装可能需要几分钟：" + ", ".join(specs),
-            )
-
-        details.append(sync_profile_plugins(on_plugin_install))
-        if state["canceled"]:
-            return
-
-        _set_startup_state(
-            state, 52, 2, "正在启动 DSH", f"启动工作区服务",
-        )
-        details.append(start_frontend(state.get("frontend_cwd"), attempt=state))
-        if state["canceled"]:
-            _terminate_pending_frontend(expected_process=state.get("proc"))
-            return
-        state["detail"] = "\n".join(details)
-        proc = state.get("proc")
-        if proc is None:
-            raise RuntimeError("frontend process was not created")
-        wait_timeout = int(_PENDING.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
-        source = str(_PENDING.get("frontend_source", "unknown"))
-        state["wait_timeout"] = wait_timeout
-        state["frontend_source"] = source
-
-        started_at = time.monotonic()
-        _set_startup_state(
-            state, 62, 3, "正在连接 DSH",
-            f"等待本地服务就绪…",
-        )
-        while not state["canceled"]:
-            if _frontend_online():
-                _write_frontend_runtime_state(_port_pid(FRONTEND_PORT) or proc.pid)
-                _set_startup_state(
-                    state, 82, 4, "正在检查连接", "等待对话服务就绪…",
-                )
-                try:
-                    _check_host_ready()
-                except RuntimeError as exc:
-                    # Warmup race: the port listens before /api is mounted.
-                    # Keep polling within the same readiness budget; a
-                    # persistent failure surfaces as the original error.
-                    if not _host_rpc_not_ready(exc) or (
-                        time.monotonic() - started_at >= wait_timeout
-                    ):
-                        raise
-                    time.sleep(FRONTEND_WAIT_INTERVAL)
-                    continue
-                _set_startup_state(
-                    state, 90, 4, "正在打开工作区",
-                    "即将打开当前工程的对话",
-                )
-                state["result"] = "ready"
-                return
-            if proc is not None and proc.poll() is not None:
-                state["detail"] += f"\nfrontend exit code: {proc.returncode}"
-                state["result"] = "dead"  # died without ever listening
-                return
-            if time.monotonic() - started_at >= wait_timeout:
-                state["result"] = "timeout"
-                _terminate_pending_frontend(expected_process=proc)
-                return
-            time.sleep(FRONTEND_WAIT_INTERVAL)
-    except Exception:
-        state["error"] = traceback.format_exc()
-        state["result"] = "error"
-    finally:
-        state['worker_done'] = True
-        if state.get('canceled'):
-            _finish_startup(state)
-
-
-def open_ui_when_ready(detail: str, frontend_cwd: str | None = None) -> None:
-    """Restart the frontend, then open the UI once it listens on FRONTEND_PORT.
-
-    The frontend restart AND the port polling run on a worker thread (the
-    connect-to-closed-port probe blocks ~300ms on this machine — on the GUI
-    thread it froze the dialog animation and even window dragging). The main
-    thread only refreshes the staged progress snapshot and checks a state flag.
-    A timeout prevents a stalled npm/network operation from spinning forever.
-
-    frontend_cwd = 前端进程 cwd（= dsh 默认工作区根），由调用方在主线程经
-    _hip_dir() 解析（worker 线程禁止碰 hou）。
-    """
-    global _ACTIVE_STARTUP
-    if _ACTIVE_STARTUP is not None:
-        _ACTIVE_STARTUP['frontend_cwd'] = frontend_cwd
-        _report('工作区正在启动，请稍候。')
-        return
-    state = {"canceled": False, "result": None, "detail": "", "frontend_cwd": frontend_cwd}
-    _ACTIVE_STARTUP = state
-    try:
-        from hutil.Qt import QtCore, QtWidgets
-        parent = hou.qt.mainWindow()
-    except Exception:
-        # hython: run the same worker inline; the UI reports its own availability.
-        headless = state
-        try:
-            _start_and_wait_frontend(headless)
-            detail += "\n" + headless["detail"]
-            if headless["result"] == "ready":
-                _report(detail + "\n" + open_ui(state["frontend_cwd"], force_reload=True))
-            else:
-                _report(
-                    detail
-                    + "\n" + (headless["error"].splitlines()[-1] if headless.get("error")
-                               else f"frontend exited without listening on {FRONTEND_URL}") + "; "
-                    + f"see log: {FRONTEND_LOG}"
-                )
-        finally:
-            _finish_startup(state)
-        return
-
-    dialog = QtWidgets.QDialog(parent)
-    dialog.setWindowTitle("DSH-Houdini · 打开工作区")
-    dialog.setWindowModality(QtCore.Qt.NonModal)
-    dialog.setMinimumWidth(440)
-    from dsh_ui_style import style_dialog
-    style_dialog(dialog)
-
-    main_label = QtWidgets.QLabel("正在准备工作区")
-    main_label.setObjectName("version")
-    progress_bar = QtWidgets.QProgressBar()
-    # These are startup stages, not measurable download/build percentages.
-    progress_bar.setRange(0, 0)
-    progress_bar.setTextVisible(False)
-    sub_label = QtWidgets.QLabel("正在初始化环境…")
-    sub_label.setObjectName("summary")
-    sub_label.setWordWrap(True)
-    elapsed_label = QtWidgets.QLabel("已用时 00:00")
-    elapsed_label.setObjectName("caption")
-    log_btn = QtWidgets.QPushButton("查看日志")
-    log_btn.setVisible(False)
-    cancel_btn = QtWidgets.QPushButton("取消启动")
-
-    buttons = QtWidgets.QHBoxLayout()
-    buttons.addWidget(elapsed_label)
-    buttons.addStretch(1)
-    buttons.addWidget(log_btn)
-    buttons.addWidget(cancel_btn)
-    layout = QtWidgets.QVBoxLayout(dialog)
-    layout.setContentsMargins(24, 24, 24, 20)
-    layout.setSpacing(16)
-    layout.addWidget(main_label)
-    layout.addWidget(sub_label)
-    layout.addWidget(progress_bar)
-    layout.addLayout(buttons)
-    dialog.show()
-
-    # 主线程只刷新 worker 快照；前端重启和端口探测全在 worker 线程。
-    state.update(phase=0, title="正在准备工作区", message="正在初始化环境…")
-    launched_at = time.monotonic()
-
-    def open_log() -> None:
-        try:
-            if os.name == "nt":
-                os.startfile(FRONTEND_LOG)  # type: ignore[attr-defined]
-            else:
-                webbrowser.open("file://" + os.path.abspath(FRONTEND_LOG))
-        except Exception as exc:
-            _report(f"cannot open log: {exc}; {FRONTEND_LOG}")
-
-    def cancel() -> None:
-        _cancel_startup(state)
-
-    def cleanup_dialog(_code: int) -> None:
-        # Closing the window while startup is still running means cancel.
-        # A successful close must leave the now-serving frontend alive.
-        if state.get("result") != "ready":
-            _cancel_startup(state)
-        _PENDING.clear()
-        _finish_startup(state)
-
-    log_btn.clicked.connect(open_log)
-    cancel_btn.clicked.connect(cancel)
-    dialog.finished.connect(cleanup_dialog)
-    threading.Thread(target=_start_and_wait_frontend, args=(state,), daemon=True).start()
-
-    def finish(status: str) -> None:
-        timer.stop()
-        dialog.close()
-        _PENDING.clear()
-        _finish_startup(state)
-        _report(detail + "\n" + state["detail"] + "\n" + status)
-
-    def fail(message: str) -> None:
-        timer.stop()
-        main_label.setText("工作区未能启动")
-        sub_label.setText(message + "\n可查看日志，了解连接或依赖配置的具体问题。")
-        progress_bar.setRange(0, 1)
-        progress_bar.setValue(0)
-        progress_bar.setStyleSheet(
-            "QProgressBar::chunk { background: #e85d55; border-radius: 3px; }"
-        )
-        log_btn.setVisible(True)
-        cancel_btn.setText("关闭")
-        try:
-            cancel_btn.clicked.disconnect(cancel)
-        except Exception:
-            pass
-        cancel_btn.clicked.connect(dialog.close)
-        _report(
-            detail + "\n" + state.get("detail", "") + "\n" + message
-            + "\nlog: " + FRONTEND_LOG
-        )
-
-    def tick() -> None:
-        elapsed = int(time.monotonic() - launched_at)
-        elapsed_label.setText(f"已用时 {elapsed // 60:02d}:{elapsed % 60:02d}")
-        main_label.setText(state.get("title", "正在启动"))
-        message = state.get("message", "")
-        wait_timeout = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
-        source = state.get("frontend_source", "unknown")
-        warning_after = 90 if source == "npx-cold" else 30
-        if elapsed >= warning_after and state.get("phase") == 3:
-            if source == "npx-cold":
-                message += (
-                    "\n首次下载耗时较长，请检查网络。"
-                    f"本次尝试将在 {wait_timeout} 秒后停止。"
-                )
-            else:
-                message += (
-                    f"\n启动耗时较长，本次尝试将在 {wait_timeout} 秒后停止；可查看日志了解原因。"
-                )
-        sub_label.setText(message)
-        if state["canceled"]:
-            timer.stop()
-            dialog.close()
-            _PENDING.clear()
-            _finish_startup(state)
-            print("[dsh-houdini] startup cancelled")
-            return
-        result = state["result"]
-        if result == "ready":
-            progress_bar.setRange(0, 1)
-            progress_bar.setValue(1)
-            finish(open_ui(state["frontend_cwd"], force_reload=True))
-        elif result == "dead":
-            fail("DSH 服务在连接就绪前退出。")
-        elif result == "timeout":
-            seconds = int(state.get("wait_timeout", FRONTEND_WARM_WAIT_TIMEOUT))
-            source = state.get("frontend_source", "unknown")
-            fail(
-                f"DSH 在 {seconds} 秒内未能就绪，已停止本次启动。"
-            )
-        elif result == "error":
-            error_tail = state.get("error", "unknown").splitlines()[-1]
-            fail("启动遇到问题：" + error_tail)
-
-    timer = QtCore.QTimer(parent)
-    timer.timeout.connect(tick)
-    _PENDING["timer"] = timer
-    _PENDING["dialog"] = dialog
-    timer.start(DIALOG_TICK_MS)
-
-
-def repair_current_runtime(*, force_frontend=False) -> None:
-    """Restart the bridge, then restart the frontend and open the UI when ready.
-
-    The frontend restart/poll happens on a worker thread inside
-    open_ui_when_ready (blocking probes must not touch the GUI thread);
-    only the bridge restart — which touches `hou` — runs here. The frontend
-    cwd is resolved here too (main thread): it seeds the dsh default
-    workspace, which must track the current hip directory.
-    """
-    from dsh_executor_registry import is_shared_executor
-    if is_shared_executor():
-        from dsh_executor_registry import active_registration
-        if active_registration().workbench:
-            from dsh_shared_executor import show_registration
-            show_registration(repair=True)
-            return
-        _report('当前为共享执行端。请使用 Version & Updates... > 高级设置 > 修复共享连接；重启共享 DSH 服务会影响所有任务，须单独操作。')
-        return
-    def after_preflight(preflight: dict | None, error: str | None) -> None:
-        if error:
-            _startup_failure(error)
-            return
-        detail = restart_bridge()
-        print("[dsh-houdini] " + detail.replace("\n", "; "))
-        open_ui_when_ready(detail, _hip_dir())
-
-    if force_frontend:
-        _dispatch_service_preflight(after_preflight, force_frontend=True)
-    else:
-        _dispatch_service_preflight(after_preflight)
-
-
-def open_embedded_workspace() -> None:
-    """Open the embedded workspace without restarting a healthy frontend.
-
-    If the web service is absent, fall back to the full launch path. Keeping
-    "open" separate from "restart" avoids destroying a live dsh session just
-    because the user wants to bring its Houdini window to the front.
-    """
-    from dsh_executor_registry import is_shared_executor
-    if is_shared_executor():
-        _report('当前 Houdini 已登记到共享服务。请在共享 DSH 的「Houdini 执行端」中选择当前工程；如需修复，使用 Version & Updates... > 高级设置 > 修复共享连接。')
-        return
-    def after_preflight(preflight: dict | None, error: str | None) -> None:
-        if error:
-            _startup_failure(error)
-            return
-        # Preflight performs slow port/process checks. The user can switch HIP
-        # while it runs, so read the actual scene again on this GUI callback.
-        frontend_cwd = _hip_dir()
-        facts = preflight or {}
-        if not facts.get("frontend_online"):
-            bridge_status = (
-                f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}"
-                if facts.get("bridge_online") else restart_bridge()
-            )
-            detail = bridge_status
-            print("[dsh-houdini] " + detail.replace("\n", "; "))
-            open_ui_when_ready(detail, frontend_cwd)
-            return
-
-        details = []
-        if facts.get("bridge_online"):
-            details.append(f"bridge already running on {BRIDGE_HOST}:{BRIDGE_PORT}")
-        else:
-            details.append(restart_bridge())
-        details.append(open_ui(frontend_cwd))
-        _report("\n".join(details))
-
-    _dispatch_service_preflight(after_preflight)
-
-
-def open_workspace() -> None:
-    from dsh_workbench_client import open_workspace as open_desktop
-    try:
+        require_local_modules()
+        from dsh_workbench_client import open_workspace as open_desktop
         open_desktop(sys.modules[__name__])
     except Exception as error:
-        _startup_failure(str(error))
+        _startup_failure(error)
 
 
-def launch(*, force_frontend=False) -> None:
-    from dsh_executor_registry import is_shared_executor
-    if is_shared_executor() or dsh_managed_runtime.has_owned_frontend():
-        return repair_current_runtime(force_frontend=force_frontend)
-    return open_workspace()
+def repair_current_runtime():
+    try:
+        require_local_modules()
+        from dsh_workbench_client import open_workspace as open_desktop
+        open_desktop(sys.modules[__name__], reload=True)
+    except Exception as error:
+        _startup_failure(error)
 
 
-if __name__ == "__main__":
-    launch()
+def show_plugin_info():
+    manifest = Path(_PROJECT_ROOT) / 'package.json'
+    try:
+        version = json.loads(manifest.read_text(encoding='utf-8')).get('version', 'unknown')
+    except (OSError, ValueError):
+        version = 'unknown'
+    selected = hou.ui.displayMessage(
+        'Houdini 连接插件 ' + version + '\n\n'
+        '对话、模型、工作区和插件更新由官方 DSH Desktop 管理。\n'
+        'Houdini 已加载的 Python 代码保持到退出；更新菜单或 Package 后请保存并重开本端。\n'
+        '“修复当前连接”只重新加载本 Houdini 的 Bridge，不重启 Desktop 或其他工程。\n'
+        '已安装的连接版本可以明确切换或回退，保存并重开 Houdini 后生效。\n'
+        '卸载时可先移除本机组件，再到 Desktop 插件页卸载插件；当前工程和全部用户数据保留。',
+        title='DSH-Houdini', buttons=('打开 Desktop', '修复当前连接', '切换连接版本…', '移除本机组件…', '关闭'),
+        default_choice=4, close_choice=4,
+        details='当前 helper：' + _PROJECT_ROOT)
+    if selected == 0:
+        open_workspace()
+    elif selected == 1:
+        repair_current_runtime()
+    elif selected == 2:
+        select_helper_version()
+    elif selected == 3:
+        remove_local_components()
+
+
+def _begin_helper_maintenance(script_name, state, on_ready):
+    """One bounded worker and a native idle timer for local helper maintenance."""
+    global _HELPER_SWITCH_TIMER
+    if _HELPER_SWITCH_TIMER is not None:
+        return None
+    root = os.environ.get('DSH_HOUDINI_INSTALL_ROOT')
+    script = Path(_PROJECT_ROOT) / 'installer' / script_name
+    if not root or not Path(root).is_absolute():
+        _startup_failure('当前窗口没有已安装组件的登记信息。请在 Desktop 的 Houdini 模式准备组件，再保存并重开本窗口。')
+        return None
+    import subprocess
+    import threading
+    from hutil.Qt import QtCore
+    powershell = str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
+    active = True
+
+    def execute(arguments):
+        try:
+            if not script.is_file():
+                raise RuntimeError('当前 helper 缺少维护脚本。请在 Desktop 的 Houdini 模式重新准备组件。')
+            if script_name == 'uninstall.ps1':
+                import re
+                helper = Path(_PROJECT_ROOT).resolve()
+                if helper.parent != Path(root).resolve() / 'helpers' or not re.fullmatch('[0-9a-f]{16}', helper.name):
+                    raise RuntimeError('当前窗口没有从该安装根的不可变 helper 加载；未移除任何组件。请保存并重开安装后的 Houdini。')
+            result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-File', str(script), '-Root', root, *arguments], cwd=_PROJECT_ROOT,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if result.returncode:
+                raise RuntimeError((result.stderr or result.stdout).strip())
+            state['output'] = result.stdout
+        except Exception as error:
+            state['error'] = str(error)
+        finally:
+            state['ready'] = True
+
+    def close():
+        nonlocal active
+        global _HELPER_SWITCH_TIMER
+        active = False
+        timer.stop()
+        if callable(getattr(timer, 'deleteLater', None)):
+            timer.deleteLater()
+        if _HELPER_SWITCH_TIMER is timer:
+            _HELPER_SWITCH_TIMER = None
+
+    def submit(arguments):
+        state.update(ready=False)
+        state.pop('error', None)
+        threading.Thread(target=lambda: execute(arguments), daemon=True).start()
+
+    def tick():
+        if not active or not state.get('ready'):
+            return
+        if state.get('error'):
+            close()
+            _startup_failure(state['error'])
+            return
+        try:
+            on_ready(state, submit, close)
+        except Exception as error:
+            close()
+            _startup_failure(error)
+
+    timer = QtCore.QTimer(hou.qt.mainWindow())
+    _HELPER_SWITCH_TIMER = timer
+    timer.timeout.connect(tick)
+    timer.start(100)
+    return submit
+
+
+def select_helper_version():
+    """Explicitly select retained helpers for the next Houdini start, never hot-swap."""
+    def ready(state, submit, close):
+        if state['phase'] == 'list':
+            rows = [row for row in json.loads(state['output']) if row.get('valid')]
+            if not rows:
+                raise RuntimeError('没有可选择的完整 helper 快照。请在 Desktop 的 Houdini 模式重新准备组件。')
+            labels = [str(row.get('version') or '未知版本') + ('（当前加载）' if Path(row['path']) == Path(_PROJECT_ROOT) else '') for row in rows]
+            chosen = hou.ui.selectFromList(labels, exclusive=True, title='选择下次启动使用的 Houdini 连接版本',
+                message='此操作仅切换本端连接。请保存并重开 Houdini，不在当前进程内混合升级或回退。')
+            if not chosen:
+                close()
+                return
+            state['phase'] = 'select'
+            submit(['-SelectHelper', rows[chosen[0]]['id']])
+        else:
+            close()
+            hou.ui.displayMessage('已选择连接版本。请先保存工程，再完整退出并重开此 Houdini。当前已加载的模块、工程和 Desktop 会话均保持不变。', title='DSH-Houdini')
+
+    submit = _begin_helper_maintenance('install.ps1', {'phase': 'list'}, ready)
+    if submit is not None:
+        submit(['-ListHelpers'])
+
+
+def remove_local_components():
+    """Unregister this installed helper only; the current process keeps running."""
+    if _HELPER_SWITCH_TIMER is not None:
+        return
+    selected = hou.ui.displayMessage(
+        '移除本机 Houdini 组件？\n\n'
+        '仅停用本插件的菜单和连接登记，下次启动 Houdini 后生效。\n'
+        '当前 Houdini、工程、Bridge 和 Desktop 继续运行；旧运行包、凭据、会话和 HIP 全部保留。\n'
+        '之后可到 Desktop 插件页卸载插件。若继续从 Desktop 新开 Houdini，组件会按正常流程重新准备。',
+        title='DSH-Houdini', buttons=('移除组件', '取消'), default_choice=1, close_choice=1,
+        details='当前 helper：' + _PROJECT_ROOT)
+    if selected != 0:
+        return
+
+    def ready(state, submit, close):
+        close()
+        hou.ui.displayMessage(
+            '本机组件已解除登记。当前窗口与工程保持不变；保存并重新打开后菜单移除。\n'
+            '可继续到 Desktop 插件页卸载插件，所有 helper、旧数据、会话和 HIP 均保留。',
+            title='DSH-Houdini', details=state['output'])
+
+    submit = _begin_helper_maintenance('uninstall.ps1', {}, ready)
+    if submit is not None:
+        submit([])
+
+
+def launch():
+    open_workspace()

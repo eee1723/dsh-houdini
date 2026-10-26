@@ -10,7 +10,7 @@ const PACKAGE=fileURLToPath(new URL('../',import.meta.url))
 const execute=promisify(execFile)
 export type RuntimeOptions={packageRoot?:string;environment?:NodeJS.ProcessEnv;exists?:(filename:string)=>boolean;
   bridge?:Pick<HoudiniBridge,'inspectExecutor'>;signal?:AbortSignal}
-type PythonScope='explicit'|'selected-executor'|'host-launch'|'unavailable'
+type PythonScope='explicit'|'selected-executor'|'selected-installation'|'installed-houdini'|'host-launch'|'unavailable'
 
 /** Without a task/executor context this only describes the Host launch environment. */
 export function videoRuntime(pythonOverride='',options:RuntimeOptions={}) {
@@ -22,17 +22,18 @@ export function videoRuntime(pythonOverride='',options:RuntimeOptions={}) {
   const candidates=env.HFS ? ['python313','python311'].map(folder=>path.join(env.HFS!,folder,'python.exe')) : []
   const python=explicit ? override : candidates.find(exists)??''
   const media=path.join(root,'runtime','video','ffmpeg','bin')
-  const managed=Boolean(env.DSH_HOUDINI_MANAGED_CONTEXT)
-  const repair:Record<string,string>=managed ? {kind:'managed-version',label:'修复当前版本',
-      detail:'在 Version & Updates → 高级设置中选择「修复当前版本」，重新安装当前版本的完整依赖；随后完整重开 Houdini。'}
-      : {kind:'source-private',label:'准备源码私有依赖',
+  const preparation=path.join(root,'tools','prepare-video-runtime.py')
+  const source=exists(preparation)
+  const repair:Record<string,string>=source ? {kind:'source-private',label:'准备源码私有依赖',
         detail:'源码开发在插件目录运行 tools/prepare-video-runtime.py；它只准备本目录的锁定依赖。Python 由 Houdini 提供。',
-        script:path.join(root,'tools','prepare-video-runtime.py')}
+        script:preparation}
+      : {kind:'desktop-plugin',label:'重新安装 Houdini 插件',
+        detail:'在 DSH Desktop 的插件管理中重新安装或更新完整的 Houdini 插件包；媒体资源随插件交付，不需要替换 DSH 或安装系统程序。'}
   return {python,ffmpeg:path.join(media,'ffmpeg.exe'),ffprobe:path.join(media,'ffprobe.exe'),
     pythonSource:explicit?'explicit':python?'houdini':'unavailable',mediaSource:'private',
     pythonScope:(explicit?'explicit':python?'host-launch':'unavailable') as PythonScope,
     hfs:explicit?'':env.HFS??'',
-    mode:managed?'managed':'source',repair}
+    mode:source?'source':'desktop-plugin',repair}
 }
 
 /** Consume the already selected target; routing and session binding remain with
@@ -46,7 +47,7 @@ export async function resolveVideoRuntime(pythonOverride='',options:RuntimeOptio
   if (!facts || typeof facts.python!=='string' || !path.isAbsolute(facts.python)
       || typeof facts.hfs!=='string' || !path.isAbsolute(facts.hfs)
       || typeof facts.pythonVersion!=='string')
-    throw Error('所选 Houdini 未提供 Python 运行时路径；请通过 Version & Updates → 高级设置 → 运行诊断修复并重启运行环境，或填写 Python 3.11+ 的完整路径。')
+    throw Error('所选 Houdini 未提供 Python 运行时路径；请从该 Houdini 菜单重新连接 Desktop，或填写 Python 3.11+ 的完整路径。')
   const version=facts.pythonVersion.match(/^(\d+)\.(\d+)\.\d+$/)
   if (!version || Number(version[1])<3 || Number(version[1])===3 && Number(version[2])<11)
     throw Error(`所选 Houdini 的 Python 版本不受支持：${facts.pythonVersion}；需要 Python 3.11 或更新版本。`)

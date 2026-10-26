@@ -12,7 +12,7 @@ import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
-export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController', 'jobs']
+export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController', 'jobs','workspaceRegistry','houdiniTargets']
 const provider = 'houdini-context-fixture', model = 'scripted-local'
 const defaultRuntimeId = 'a'.repeat(32), jobId = 'b'.repeat(12)
 const largePayload = 'FIXTURE_BULK_BEGIN:' + 'x'.repeat(70000) + ':FIXTURE_BULK_END'
@@ -39,6 +39,20 @@ export function apply(ctx) {
   // second executor here would correctly trigger production recovery before
   // the next step; this owned HTTP server never contacts that original process.
   const runtimeId=scriptFixture?.receipt?.execution?.runtime_id??renderReceipt?.execution?.runtime_id??defaultRuntimeId
+  assert(process.env.DSH_HOME&&path.isAbsolute(process.env.DSH_HOME),'owned DSH_HOME is required')
+  const executorId=process.env.DSH_HOUDINI_EXECUTOR_ID,registrationId=randomUUID().replaceAll('-','')
+  const originalExecution=scriptFixture?.receipt?.execution??renderReceipt?.execution
+  const sceneEpoch=originalExecution?.scene_epoch??'d'.repeat(32),sceneId=originalExecution?.scene_id??'e'.repeat(32)
+  const hipPath=originalExecution?.hip_path&&path.isAbsolute(originalExecution.hip_path)?originalExecution.hip_path:path.join(path.dirname(output),'context-fixture.hip')
+  const registry=path.join(process.env.DSH_HOME,'dsh-houdini','executors')
+  assert.equal(path.resolve(ctx.houdiniTargets.registry),path.resolve(registry),'fixture uses the shared Desktop target registry')
+  const endpoint=path.join(registry,'endpoints',executorId+'.json')
+  const record={schema:1,executor_id:executorId,registration_id:registrationId,runtime_id:runtimeId,
+    installation:fileURLToPath(new URL('../../',import.meta.url)),bridge_url:process.env.DSH_HOUDINI_BRIDGE_URL,
+    houdini_version:'22.0.368',pid:process.pid,state:'registered',task_id:null,hip_path:hipPath,
+    workbench:true,scene_id:sceneId,scene_epoch:sceneEpoch,hip_is_new:originalExecution?.hip_is_new??true,
+    workspace_path:path.dirname(output)}
+  const publish=()=>{fs.mkdirSync(path.dirname(endpoint),{recursive:true});fs.writeFileSync(endpoint+'.tmp',JSON.stringify(record));fs.renameSync(endpoint+'.tmp',endpoint)}
   if(scriptFixture){
     const {source,record,receipt}=scriptFixture,bytes=fs.readFileSync(record.path)
     assert.equal(typeof source,'string')
@@ -74,6 +88,7 @@ export function apply(ctx) {
     ['read',null,'houdini-sop-workflow/references/curves-and-routing.md'],
     ['skill','houdini-solaris-karma-workflow','houdini-solaris-karma-workflow/SKILL.md'],
     ['nested',null,'houdini-solaris-karma-workflow/references/karma-patterns.md'],
+    ['read',null,'houdini-task-decomposition/references/reference-transfer.md'],
   ].map(([kind,name,relative])=>{
     const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
     const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
@@ -84,7 +99,8 @@ export function apply(ctx) {
   const scriptStart = hdaStart + (hdaReceipt ? 2 : 0)
   const renderStart = scriptStart + (scriptFixture ? 4 : 0)
   const receiptStart = renderStart + (renderReceipt ? 2 : 0)
-  const finalStep = receiptStart + 5
+  const nestedLargeStep=receiptStart+5
+  const finalStep = nestedLargeStep+1
   const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
   const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
@@ -122,21 +138,27 @@ export function apply(ctx) {
       ...(failedProviderRequest?{failedProviderRequest}:{})})
   }
   const health = () => ({ok:true, runtimeId, executorId:process.env.DSH_HOUDINI_EXECUTOR_ID,
+    houVersion:record.houdini_version,sceneEpoch,
     executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
     verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH, names:EXPECTED_VERB_NAMES, count:EXPECTED_VERB_NAMES.length}})
   const observed = extra => ({ok:true, stdout:'', stderr:'', ...extra,
     execution:{...extra?.execution, runtime_id:runtimeId, executor_id:process.env.DSH_HOUDINI_EXECUTOR_ID,
-      hip_path:'context-fixture.hip', sequence:++sequence, observed_at:sequence}})
+      hip_path:hipPath,hip_is_new:record.hip_is_new,scene_id:sceneId,scene_epoch:sceneEpoch,sequence:++sequence, observed_at:sequence}})
   const server = http.createServer(async (req,res) => {
     try {
       let raw = ''
       for await (const chunk of req) raw += chunk
+      assert.equal(req.headers['x-dsh-houdini-executor'],executorId,'all live requests must explicitly target this owned fixture')
       const body = raw ? JSON.parse(raw) : {}
       bridgeCalls.push({method:req.method, path:req.url, body})
       let value
-      if (req.url === '/context') value = {ok:true, result:{hip_path:'context-fixture.hip', frame:1,
+      if (req.url === '/context') value = {ok:true, result:{hip_path:hipPath,hip_is_new:record.hip_is_new, frame:1,
         selection:[{path:'/obj/context_fixture',type:'geo'}], fixture_marker:'initial-scene-once'}}
       else if (req.url === '/health') value = health()
+      else if(req.url==='/executor/claim') {
+        assert.equal(body.registration_id,registrationId);assert.equal(body.expected_hip,hipPath)
+        record.task_id=body.task_id;publish();value={ok:true}
+      }
       else if (req.url === '/requests/prepare') {
         const requestRef = runtimeId + '.' + randomUUID().replaceAll('-','')
         receipts.set(requestRef,{owner_session:body.owner_session})
@@ -252,6 +274,27 @@ export function apply(ctx) {
             .flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n')
           assert(skillResult.replaceAll('\r\n','\n').includes(skillBody),'on-demand skill reaches the actual provider intact')
           assert(skillResult.replaceAll('\r\n','\n').includes(decompositionBody),'registered decomposition skill reaches the actual provider intact')
+          const events=ctx.sessions.get(options.sessionId).snapshotEvents()
+          const nativeJob=events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='context-8')
+          const jobCanonical=nativeJob?.data?.meta?.canonical
+          assert.equal(jobCanonical?.job?.kind,'houdini-live','the official loop persists this producer\'s native job output metadata')
+          const originalJob=JSON.parse(jobCanonical.text)
+          assert.equal(originalJob.kind,'dsh-houdini/live-job-result-v1')
+          assert.equal(originalJob.value.status,'done')
+          assert.equal(originalJob.value.jobId,jobId)
+          const visibleJob=options.messages.find(message=>message.role==='tool'&&message.toolCallId==='context-8')
+            ?.content.filter(block=>block.type==='text').map(block=>block.text).join('\n')??''
+          assert(visibleJob.includes('DSH job')&&visibleJob.includes('completed'),'the final provider retains the actual native job completion')
+          const nestedLarge=events.find(event=>event.type==='tool/ptc-dispatch'&&event.data?.name==='houdini_exec'
+            &&event.data?.parentCallId==='context-'+nestedLargeStep)
+          const canonical=nestedCanonical(nestedLarge)
+          assert.equal(canonical?.result?.payload,largePayload,'the real nested dispatch retains the complete large failure envelope')
+          const nestedVisible=options.messages.find(message=>message.role==='tool'&&message.toolCallId==='context-'+nestedLargeStep)
+            ?.content.filter(block=>block.type==='text').map(block=>block.text).join('\n')??''
+          assert(nestedVisible.includes('FIXTURE_UNKNOWN_PARAMETER')&&nestedVisible.includes(canonical.details.sha256),
+            'the final provider receives the nested actionable error and its exact original detail reference')
+          const nativeLarge=events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='context-0')
+          assert.equal(nativeLarge?.data?.meta?.canonical?.result?.payload,largePayload,'later native and PTC steps preserve earlier full canonical values')
         }
         const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
           .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
@@ -359,6 +402,8 @@ export function apply(ctx) {
         if(!current)fs.writeFileSync(output+'.missing-context.json',JSON.stringify({messages:options.messages,
           events:ctx.sessions.get(options.sessionId).snapshotEvents()},null,2))
         assert(current, 'provider must receive the real scene context')
+        assert(current.includes('initial-scene-once')&&current.includes('/obj/context_fixture'),
+          'the provider must receive the explicitly selected fixture scene, not an unavailable or unrelated observation')
         assert(current.includes('Houdini image input capability'), 'provider must receive image capability')
         const runtimeEvents = ctx.sessions.get(options.sessionId).snapshotEvents()
           .filter(event => event.type === 'user/message' && event.data?.source?.kind === 'runtime-context')
@@ -369,7 +414,7 @@ export function apply(ctx) {
         fs.writeFileSync(output+'.requests.json',JSON.stringify(requests,null,2))
         if(step>=receiptStart+2){
           const expected=step===receiptStart+2?'queued':'running'
-          if(step<finalStep)assert(current.includes(JSON.stringify([busyRef,expected])),
+          if(step<=receiptStart+4)assert(current.includes(JSON.stringify([busyRef,expected])),
             'latest same-runtime receipt state reaches the real provider')
           for(let offset=1;offset<=Math.min(step-receiptStart-1,3);offset++){
             const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(receiptStart+offset))
@@ -593,6 +638,8 @@ export function apply(ctx) {
           ['run_code',{code:'return await tools.houdini_request('+JSON.stringify({request_ref:busyRef})+');',description:'Read the same busy request through the nested tool'}],
           ['houdini_request',{request_ref:busyRef}],
           ['houdini_request',{request_ref:busyRef}],
+          ['run_code',{code:'const value=await tools.houdini_exec({code:"fixture_sync_failure"}); return {ok:value.ok,error:value.error,details:value.details};',
+            description:'Retain the complete nested failure envelope while returning only its error and original detail reference'}],
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]
@@ -611,8 +658,11 @@ export function apply(ctx) {
     queueMicrotask(async () => {
       try {
         await ready
+        publish()
         await ctx.loader.await()
-        const {sessionId} = await ctx.sessionController.create({cwd:path.dirname(output),agentPreset:'houdini'})
+        const workspace=await ctx.workspaceRegistry.create(path.dirname(output),'Owned context fixture')
+        const {sessionId} = await ctx.sessionController.create({workspaceId:workspace.id,agentPreset:'houdini'})
+        await ctx.houdiniTargets.select({sessionId,executorId,registrationId,expectedHip:hipPath,runtimeId,sceneEpoch},AbortSignal.timeout(5000))
         await ctx.sessionController.selectModel({sessionId,provider,model})
         await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',
           content:[{type:'text',text:'Run the isolated Houdini execution context fixture.'}]},AbortSignal.timeout(60000))
@@ -622,7 +672,9 @@ export function apply(ctx) {
         assert.equal(requests.length,finalStep+1,'real loop must complete all scripted phases')
         assert.equal(bridgeCalls.filter(call => call.path === '/context').length,1,'capture one scene per user message')
         await ctx.sessions.flush(agent.session)
-        writeReport({ok:true,sessionId,provider,model,requests:requests.map(({messages,...row})=>row),
+        writeReport({ok:true,sessionId,provider,model,consumer_checks:['explicit-shared-target','current-scene-context','settled-error-no-reprobe',
+          'uncertain-original-request-recovery','native-jobs-result-in-final-model-input','native-and-PTC-lossless-canonical',
+          'nested-actionable-error-and-detail-in-final-model-input'],requests:requests.map(({messages,...row})=>row),
           ...(scriptFixture?{script_consumption:{record:scriptFixture.record,original_execution:scriptFixture.receipt.execution,
             http_fixture_target:{runtime_id:runtimeId,executor_id:process.env.DSH_HOUDINI_EXECUTOR_ID},
             scope:'Actual mounted DSH native/PTC schema, file read, source HTTP body and original independent-HOM receipt consumption. The HTTP fixture does not execute or verify a new Houdini scene.'}}:{}),

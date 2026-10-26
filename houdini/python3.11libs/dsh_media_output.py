@@ -47,6 +47,16 @@ def report_image(path: str) -> str:
     return p
 
 
+def _literal_houdini_path(path: str) -> str:
+    """Quote a resolved filename before a Houdini string parameter evaluates it.
+
+    Caller templates expand once in _resolve_output_path. Literal dollar signs
+    and backticks from the actual HIP tree must survive subsequent parameter
+    assignment and flipbook capture without being evaluated as new expressions.
+    """
+    return path.replace('$', r'\$').replace('`', r'\`')
+
+
 def _resolve_output_path(path, *, frame, default_subdir=None, default_role='render', expand_variables=True) -> str:
     """Resolve output files BEFORE mutation; never use the process cwd.
 

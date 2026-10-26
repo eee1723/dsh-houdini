@@ -1,9 +1,7 @@
-"""Managed paths/environment and shared source/managed frontend ownership."""
+"""Houdini process identity and owned test-driver process trees; no Desktop ownership."""
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 import base64
 import subprocess
 import threading
@@ -51,25 +49,8 @@ child.on('exit', code => process.exit(code ?? 1));
 """
 
 
-def context(project_root=None):
-    filename = os.environ.get("DSH_HOUDINI_MANAGED_CONTEXT")
-    if not filename:
-        return None
-    with open(filename, encoding="utf-8") as handle:
-        data = json.load(handle)
-    if data.get("schemaVersion") != 1:
-        raise RuntimeError("Unsupported managed runtime context")
-    if project_root and Path(project_root).resolve() != (Path(data["install"]) / "app/node_modules/dsh-houdini").resolve():
-        raise RuntimeError("Source and managed runtime paths are mixed; restart Houdini")
-    return data
 
 
-def environment():
-    data = context()
-    if data is None:
-        return dict(os.environ)
-    from dsh_deployment import runtime_env
-    return runtime_env(data)
 
 
 def stop_owned(expected_process=_STOP_CURRENT):
@@ -114,129 +95,14 @@ def owns_pid(pid):
             kernel.CloseHandle(process)
 
 
-def listener_pid(port):
-    """Worker-only listener lookup, shared by Houdini and standalone startup."""
-    if os.name != 'nt':
-        return None
-    try:
-        result = subprocess.run(['netstat', '-ano'], capture_output=True, timeout=10,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    # Only ASCII columns are needed, including on Windows with a GBK locale.
-    for line in (result.stdout or b'').decode('utf-8', errors='replace').splitlines():
-        parts = line.split()
-        if (len(parts) >= 5 and parts[0].upper() == 'TCP'
-                and parts[1].endswith(':' + str(port)) and 'LISTENING' in parts):
-            try:
-                return int(parts[-1])
-            except ValueError:
-                continue
-    return None
 
 
-def _frontend_identity(record, argv, cli_roots, port):
-    """Classify an exact DSH web command; this never grants process ownership."""
-    executable = Path(record.get('ExecutablePath') or '').resolve()
-    if executable.name.lower() != 'node.exe' or not argv or Path(argv[0]).resolve() != executable:
-        raise RuntimeError('Force repair refused: listener is not an identified Node executable')
-    matches = []
-    for index, arg in enumerate(argv[1:], 1):
-        if index != 1 and not (index == 3 and argv[1:3] == ['--import', _NODE_START_GATE]):
-            continue  # a script-looking argument to node -e/another entry is not the main CLI
-        path = Path(arg)
-        if not path.is_absolute() or path.name != 'bin.js':
-            continue
-        path = path.resolve()
-        if not any(path.is_relative_to(Path(root).resolve()) for root in cli_roots):
-            continue
-        if tuple(part.lower() for part in path.parts[-4:]) != ('@deepseek-ai', 'dsh', 'lib', 'bin.js'):
-            continue
-        try:
-            package = json.loads((path.parent.parent / 'package.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            continue
-        if package.get('name') != '@deepseek-ai/dsh':
-            continue
-        if argv[index + 1:] != ['web', '--port', str(port), '--no-open']:
-            continue
-        matches.append(path)
-    if len(matches) != 1:
-        raise RuntimeError('Force repair refused: listener is not the exact DSH web command from this installation')
-    return {'pid': record['ProcessId'], 'executable': str(executable), 'bin': str(matches[0])}
 
 
-def _process_record(pid):
-    if type(pid) is not int or pid <= 0:
-        raise RuntimeError('Cannot identify listener PID')
-    powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
-    # PID is an integer, never interpolate a path/command or authentication data.
-    result = subprocess.run([str(powershell), '-NoProfile', '-NonInteractive', '-Command',
-        f"[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"],
-        capture_output=True, encoding='utf-8', errors='strict', timeout=10,
-        creationflags=subprocess.CREATE_NO_WINDOW)
-    if result.returncode or not result.stdout.strip():
-        raise RuntimeError('Cannot inspect listener identity; no process was stopped')
-    return json.loads(result.stdout.lstrip('\ufeff'))
 
 
-def inspect_frontend(pid, *, cli_roots, port):
-    """Read a DSH command without acquiring ownership or termination rights."""
-    import ctypes
-    from ctypes import wintypes
-    record = _process_record(pid)
-    if record.get('ProcessId') != pid:
-        raise RuntimeError('Listener identity changed during inspection')
-    shell = ctypes.WinDLL('shell32', use_last_error=True)
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
-    shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
-    kernel.LocalFree.argtypes = [ctypes.c_void_p]
-    count = ctypes.c_int()
-    args = shell.CommandLineToArgvW(record.get('CommandLine') or '', ctypes.byref(count))
-    if not args:
-        raise RuntimeError('Cannot parse listener command')
-    try:
-        return _frontend_identity(record, [args[i] for i in range(count.value)], cli_roots, port)
-    finally:
-        kernel.LocalFree(args)
 
 
-def stop_verified_frontend(pid, *, cli_roots, port, listener_pid):
-    """Explicit repair only; retain a native handle so PID reuse cannot kill a successor.
-
-    Stale verified listener only: unregistered descendants are not inferred from a port.
-    Owned process trees continue to use stop_owned instead.
-    """
-    if os.name != 'nt' or type(pid) is not int or pid <= 0 or pid == os.getpid():
-        raise RuntimeError('Force repair cannot target this process or an unknown listener')
-    import ctypes
-    from ctypes import wintypes
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
-    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    handle = kernel.OpenProcess(0x1000 | 0x100000 | 1, False, pid)
-    if not handle:
-        raise RuntimeError('Cannot open verified listener handle; no process was stopped')
-    try:
-        identity = inspect_frontend(pid, cli_roots=cli_roots, port=port)
-        buffer = ctypes.create_unicode_buffer(32768)
-        size = wintypes.DWORD(len(buffer))
-        if (not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) or
-                Path(buffer.value).resolve() != Path(identity['executable']).resolve() or
-                kernel.WaitForSingleObject(handle, 0) != 258 or listener_pid() != pid):
-            raise RuntimeError('Listener identity changed during repair; no process was stopped')
-        if not kernel.TerminateProcess(handle, 1):
-            raise OSError(ctypes.get_last_error(), 'Could not stop verified DSH listener')
-        if kernel.WaitForSingleObject(handle, 10000) != 0:
-            raise RuntimeError('DSH termination not confirmed; do not start a second runtime')
-        return identity
-    finally:
-        kernel.CloseHandle(handle)
 
 
 def spawn_frontend(command, *, node, shell=False, replace_existing=True, **kwargs):

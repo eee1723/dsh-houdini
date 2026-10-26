@@ -15,7 +15,7 @@ hou.isUIAvailable=lambda:True
 calls=[]
 def render(rop,picture=None,frame=None,**kwargs):
     calls.append(rop)
-    return {'fresh':True,'file_bytes':1,'errors':[],'output':picture}
+    return {'fresh':True,'file_bytes':1,'errors':[],'output':hou.expandStringAtFrame(picture,frame)}
 dsh_render.render_frame=render
 dsh_image_pixels.render_check=lambda *a,**kw:{'presentation':{'needs_review':False}}
 warning_gate=dsh_render._render_validation(
@@ -46,6 +46,15 @@ try:
     assert all(row['artifact']['purpose']==managed[0]['artifact']['purpose'] for row in delivered)
     assert all(not any(key.startswith('_reservation') for key in row['artifact']) for row in delivered)
     assert not list((Path(tmp)/'dsh-artifacts/renders').rglob('*.reserve'))
+    import dsh_media_output
+    previous_hip=hou.hipFile.path()
+    literal_hip=Path(tmp)/'variant.$F literal.hip'
+    try:
+        hou.hipFile.setName(dsh_media_output._literal_houdini_path(literal_hip.as_posix()))
+        literal=h.render_view(box,picture='literal.png')
+        assert literal['output']==literal['artifact']['actual_path']
+        assert Path(literal['output']).parent.parent==Path(tmp)/'dsh-artifacts/checks/previews'/literal_hip.stem
+    finally:hou.hipFile.setName(previous_hip)
     real_ensure=dsh_render_service._ensure_render_proxy
     def partial_proxy(target):
         proxy=hou.node('/obj/'+dsh_render_service._RENDER_PROXY_NAME)

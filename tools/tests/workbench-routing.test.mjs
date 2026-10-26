@@ -8,9 +8,7 @@ import {ExecutorRouter} from '../../lib/executor-routing.js'
 import {HoudiniBridge} from '../../lib/bridge.js'
 import {installSceneRecovery} from '../../lib/scene-recovery.js'
 import {recordHoudiniContext} from '../../lib/dsh-adapter.js'
-import {Context} from '@deepseek-ai/cordis'
 import {projectedExecutorState} from '../../lib/executor-identity-projection.js'
-import {ExecutorController} from '../../lib/executor-controller.js'
 
 const identity='a'.repeat(32),signal=new AbortController().signal
 const session=Session.create('durability-boundary')
@@ -60,19 +58,4 @@ async function chooseFixture(choice) {
 await chooseFixture('select')
 await chooseFixture('custom')
 await chooseFixture('skip')
-const host=new Context()
-let saved=true,jobs=true,flushes=0
-host.provide('agents',{list:()=>[{id:session.id,status:'idle'}]})
-host.provide('sessions',{list:()=>[session],flush:async()=>{flushes++;return saved}})
-host.on('workspace/session-activity',async({sessionId},next)=>{
-  assert.equal(sessionId,session.id)
-  return [...await next(),...(jobs?[{kind:'job',items:[{id:'fixture-job'}]}]:[])]
-})
-const controller=new ExecutorController(host,router,true)
-assert.equal((await controller.activity()).activeConversations,1,'native background activity matters even when the Agent is idle')
-jobs=false
-assert.deepEqual(await controller.activity(),{activeConversations:0,durable:true})
-saved=false
-await assert.rejects(controller.activity(),/尚未可靠保存/)
-assert.equal(flushes,3)
-console.log('workbench routing: durability before endpoint traffic, explicit read-only selection, no ordinary recovery traffic or cwd move, no binding from free text or skipped choice')
+console.log('Desktop routing: durability before endpoint traffic, explicit read-only selection, no ordinary recovery traffic or cwd move, no binding from free text or skipped choice')

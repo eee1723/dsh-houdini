@@ -12,24 +12,24 @@ FFmpeg/ffprobe默认位于插件的`runtime/video/ffmpeg/bin/`，不自动回退
 缩略图标签需要 FFmpeg 的 drawtext/scale/pad/tile 滤镜和可用字体；默认查找系统常见字体，
 找不到时传 `--font-file` 的绝对 TTF 路径，不自动安装字体。原分辨率证据不加文字或裁切。
 
-正常插件入口使用 `video_models` / `video_process` / `video_transcribe`：根级「教程视频」设置只存默认 provider/model/Python，
-Host 从 DSH 同一模型路由和凭据服务解析账户，将密钥仅传入子进程环境；Agent 看不到密钥，Python
-继续维护唯一的 manifest/attempt/outcome，不另建 Host 转录状态账本。保存设置与本机依赖检查不会上传媒体。
-任务内自动运行时从所选Houdini健康信息取得实际Python、版本与身份，不受共享Host父环境HFS影响；显式Python完整路径优先。
-没有任务上下文的设置页检查只描述Host启动环境，不能证明选中任务的运行时。旧Bridge缺少运行时事实时如实诊断，不猜另一版本。
+正常入口使用 video_models / video_configure / video_process / video_transcribe。缺配置按[引导设置](transcription-setup.md)收集非秘密选择，
+DSH原生settings保存教程用途字段、credentials保存key；Agent不读取或接收key。已有提供方可明确复用，ASR-only服务不需要聊天模型目录项。
+文件协议与model ID分别声明，不从名称推断；页面只描述配置/存在状态，实际短片结果才证明该次接口调用。Python继续拥有唯一manifest/attempt/outcome。
+普通Python明确设置优先；任务已选安装使用静态登记，即使场景离线也可处理媒体；无现场时可使用发现的Houdini安装，不先弹场景选择。
+没有可用Python时只诊断本机依赖，不混为服务/key失败，也不自动安装全局程序。
 本地处理优先用`video_process`，options使用对应CLI的下划线参数名：`review`的`video/output/start/duration/interval`，
 `read-index`的`index/module/section/offset/limit/max_chars`，`query-notes`的`index/subject/field/view`等；路径必须绝对。
 Host只调用随包离线命令和私有媒体工具；读取直接返回原JSON，写入限定当前DSH策略允许的新output目录。它不经shell，不获取凭据、不调用云、不执行HOM；
 实际退出码、错误和部分进度分别返回，失败不自动重试，不修改ACL或放宽策略。原CLI继续维护全部hash/格式/索引与文件，不另建记录。
 独立CLI所有ingest/prepare/scan/export等命令必须使用`video_models.runtime`返回的`python`和`script`绝对路径；不以裸`python`从全局PATH启动。CLI默认从同一插件根定位私有FFmpeg，显式媒体工具覆盖仍使用绝对路径。
-设置完整读取已配置供应商，转录模型下拉来自所选供应商当前模型目录；目录不认证转录协议。语音用途模型未进入聊天目录时，通过「其他转录模型」填准确ID，不把它注册成对话模型。
-支持显式OpenAI兼容`/audio/transcriptions`，以及`qwen3-asr-flash`及日期快照的`/chat/completions + input_audio`协议。后者从同一已校验WAV bytes构造Data URL、`stream=false`、自动识别语种、关闭逆文本规范化以保留原话；要求完整`finish_reason=stop`结果。单片不超过5分钟和10MB Base64，超限在提交前拒绝。MiMo、实时语音及云厂商异步Filetrans仍未接入。服务的`api/baseURL/apiKeyEnv`配置和凭据仍在DSH「模型」维护。
+状态页展示当前配置、凭据状态和缺项；Agent用video_configure写入明确协议与准确模型，不从聊天目录推断语音支持。
+支持显式OpenAI兼容`/audio/transcriptions`，以及`qwen3-asr-flash`及日期快照的`/chat/completions + input_audio`协议。后者从同一已校验WAV bytes构造Data URL、`stream=false`、自动识别语种、关闭逆文本规范化以保留原话；要求完整`finish_reason=stop`结果。单片不超过5分钟和10MB Base64，超限在提交前拒绝。MiMo、实时语音及云厂商异步Filetrans仍未接入。既有提供方配置仍由DSH维护；独立ASR端点在教程用途设置中，key仍只在DSH原生凭据服务。
 
 `qwen-audio-3.0-asr-flash`与`qwen-audio-3.1-asr-flash`使用`dashscope-asr`原生同步协议：同域名`/api/v1/services/aigc/multimodal-generation/generation`、`input.messages`、WAV/16kHz参数及`X-DashScope-SSE: disable`。Host只从供应商明确的`/compatible-mode/v1`或`/api/v1`基址映射该路径，不猜其它网关，不切换模型或域名。完整正文读取`output.text`，缺累计正文不以当前句代替全片。成功原始响应、usage与request_id保存在唯一outcome，原生句词时间从音频毫秒转为秒，再加原片起点；只导出稳定且界内的词。句文本/词文本与累计正文分别核覆盖，不以收到时间字段就宣称全文对齐或准确。
 
 3.1可显式传`speaker_diarization=true`取得提供方的句数组；不会替用户隐式开启该选项。原生词表用`vocabulary:[{word:"Houdini",weight:3}]`，权重按官方为1..5或50，未知节点名不能强推成“纠错”。选项与模型/endpoint固定进任务配置，续跑不得混配。接口见[原生HTTP参考](https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api)。
 
-独立 CLI 保留 SiliconFlow 默认值：密钥从进程环境变量 `SILICONFLOW_API_KEY` 获取；Windows 也支持同名用户环境变量。
+独立CLI必须明确endpoint与model，不带厂商端点默认；默认凭据环境名是DSH_VIDEO_TRANSCRIPTION_KEY，可用--key-env明确覆盖。authentication=bearer需要key；none不读取任何key、不发Authorization。
 `transcribe --endpoint <完整转录URL> --protocol openai-transcriptions|qwen-chat-asr|dashscope-asr --key-env <环境变量名>`可指定路由，endpoint/model/非默认protocol一起固定到任务。省略protocol的既有任务仍按兼容audio/transcriptions读取，不静默重写历史。
 不接受命令行密钥，不打印密钥、鉴权头或原始异常正文。Host 不把当前聊天模型自动替换成转录模型。
 
@@ -69,8 +69,8 @@ $videoScript = '<runtime.script 返回的绝对路径>'
 ```
 
 在 DSH 中，prepare 后优先使用 `video_transcribe({work:"D:/task/dsh-artifacts/analysis/tutorial/video-sample",allow_upload:true,max_chunks:2})`。
-省略 provider/model 时使用「教程视频」的选择；显式参数可覆盖本次调用，但不能更换已有任务固定的模型/endpoint。
-`video_models` 返回配置与凭据是否存在、协议范围和诊断，不上传音频；Python/FFmpeg/ffprobe 检查入口在设置页。
+省略 provider/model/protocol 时使用教程用途的明确选择；显式参数可覆盖本次调用，但不能更换已有任务固定的模型/endpoint。
+`video_models` 返回配置与凭据是否存在、协议范围和诊断，不上传音频；Python/FFmpeg/ffprobe 检查入口在状态页。
 
 `ingest` 支持 `--input` 目录，或明确 `--video` 与可选 `--audio`。按 ffprobe 实际流类型找唯一配对，
 不依赖扩展名；多个候选明确要求指定路径。H.264/AAC等MP4支持的编码使用 stream-copy，不重编码改变画面。
@@ -81,13 +81,13 @@ $videoScript = '<runtime.script 返回的绝对路径>'
 `prepare` 默认每片 30 秒、重叠 1 秒；`--duration` 必填，限制默认全片处理。
 优先准备完整授权范围并先提交少量片，成功后在同一任务继续；局部问题才单独准备短段。不要重新提交成功音频来取文本。
 `transcribe --max-chunks` 限制本次网络请求总数（包括重试），CLI与Host均缺省100，最大100；少量试转录应明确使用更小预算。
-`--concurrency`限制同时在途请求，范围1..64，CLI与Host均默认64；`--requests-per-second`独立控制启动节奏，均默认8。429、5xx、实际传输断联或超时、临时DNS查询失败会立即暂停新派发；保存这一轮全部在途结果后，并发从64降32再降16，在本次预算内继续尚未尝试的新片。显式选择其它并发时，只向更低的32/16档降级；16及以下再次失败则停止。认证、证书/地址/永久DNS错误、模型/响应语义错误或本地文件错误直接停止，不降级掩盖；未分类的OS错误不推断成并发问题。已失败/未知片即使有本次重试预算也不会在降级阶段自动再发；所有结果按原片与尝试序号保留，最终仍报告本次失败。报告含实际submitted/completed/succeeded/failed/peak_inflight、final_concurrency、concurrency_transitions和逐项failure_details，不能把上限当实际峰值。强制取消仍可能留下已计费的unknown。
+`--concurrency`限制同时在途请求，范围1..64，CLI与Host默认来自同源transcription-policy.json，当前为2；`--requests-per-second`独立控制启动节奏，均默认1。429、5xx、实际传输断联或超时、临时DNS查询失败会立即暂停新派发；保存这一轮全部在途结果后，高级并发按32、16档下降，低档继续降至1，在本次预算内继续尚未尝试的新片。显式选择其它并发时，只向更低的32/16/1档降级；1再次失败则停止。认证、证书/地址/永久DNS错误、模型/响应语义错误或本地文件错误直接停止，不降级掩盖；未分类的OS错误不推断成并发问题。已失败/未知片即使有本次重试预算也不会在降级阶段自动再发；所有结果按原片与尝试序号保留，最终仍报告本次失败。报告含实际submitted/completed/succeeded/failed/peak_inflight、final_concurrency、concurrency_transitions和逐项failure_details，不能把上限当实际峰值。强制取消仍可能留下已计费的unknown。
 可用 `--chunks 00002 00005` 只处理指定 manifest 片 ID；实际按源时间顺序执行，不重传成功片。
 未知/重复 ID、无效预算在读取凭据和发请求前拒绝。同一任务第一次请求固定模型；改模型应明确说明并
 新建任务，不混合来源。已有尝试记录却丢失 asr-config.json 时拒绝猜补其模型身份。
 应从已知备份恢复原配置；无法恢复时，只能另获授权后建新任务，保留原历史，不删除 attempt/outcome 解锁重发。
 
-用户批准上传是运行 `--allow-upload` 的前提，标志本身不能制造授权。
+网络端点须已有上传授权；本机端点不再问一次外传确认，但不能由loopback推断其后端隐私。独立CLI的 `--allow-upload` 只表示本次明确允许请求，不能制造用户授权。
 确认价格后才提交；无余额、无模型或不支持的响应停止本次批处理。429、5xx或传输断联/超时仅按上述调度降级处理，不后台重试失败片。
 使用相同命令可继续尚未尝试的片；失败/未知片默认记为 deferred，不重发，也不阻断其他未提交片。
 只有用户已有授权覆盖可能的重复处理/费用才用 `--retry-failed`，不为预算内已授权重试反复询问；`--max-retries N` 是本次获授权的重试请求数，
@@ -178,7 +178,7 @@ JSON 保留 PTS 精度。一般获得请求点之后的第一张可解码帧，�
 
 - `manifest.json`：版本、源路径/hash、视频时长与流、解析区间、音频片 id/时间/hash。
 - `source-manifest.json`：ingest的原始轨道与合并媒体身份；原件保持不变。
-- `asr-config.json`：固定endpoint、模型、非默认协议、明确模型选项与manifest hash；不含密钥，并发/启动速率是本次调度参数。
+- `asr-config.json`：固定endpoint、模型、协议、认证方式、明确模型选项与manifest hash；不含密钥，并发/启动速率是本次调度参数。
 - `attempt-*.json`：先于请求写入，记录片 id/尝试次数；未有 outcome 的请求为未知。
 - `outcome-*.json`：HTTP/传输状态或成功原文与 hash；不保存服务端错误正文或鉴权头。
 - `export` 输出 `transcript.json`、`transcript.md`、`validation.json`：缺失区间、空文本片、

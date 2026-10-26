@@ -26,7 +26,9 @@
 
 `documentation`用于用户接手工程或工具所需的说明及其专用资源，与分析证据分开。工程命名、版本、直接文件交付和说明格式由[文件交付方法](../skills/houdini-network-handoff/references/file-delivery.md)维护；目录投影本身不生成文档、不转换格式或整理旧文件。
 
-`dsh-artifacts/renders`用于准备交给用户或作为渲染输出保留的成图，不能从目录名推断“已验收/已最终交付”。`dsh-artifacts/checks`用于建模过程中的观察、故障诊断和A/B对照，包含截图与测试渲染；不是只有截图才放这里。`render_view`等捕获默认选择检查用途，只有明确要保留/交付的图片才选择`delivery`。正式ROP尊重已配置的用户路径；用它做检查时明确把本次`picture`指向visual_check目录，不沿用成图目录存诊断图。相同图片也可能被重复渲染或显式写入不同目录，系统不按文件内容猜测用途或移动历史文件。
+`render`用于准备交给用户或作为渲染输出保留的成图，不能从目录名推断“已验收/已最终交付”。`visual_check`用于建模过程中的观察、故障诊断和A/B对照，包含截图与测试渲染；不是只有截图才放这里。两类目录按本次明确命名的HIP文件再分组：例如`atelier_v003.hip`与`repair_v003.hip`分别使用`renders/atelier_v003/`与`renders/repair_v003/`，检查图也各有对应子目录。不从历史会话或所在目录推断归属；命名和Save As行为见下文。消费者直接使用`scene_info().project_layout.directories`，不自行复制命名算法。
+
+`render_view`等捕获默认选择检查用途，只有明确要保留/交付的图片才选择`delivery`。正式ROP尊重已配置的用户路径；新图片给`render_frame`传裸文件名时按角色分配到本次HIP的目录。用正式ROP做检查时，把本次`picture`指向投影返回的`visual_check`目录，不沿用成图目录存诊断图。显式子路径、绝对路径和已有ROP设置保持原样；系统不移动历史文件，也不按文件内容猜测用途。
 
 教程切片、转录、抽帧、索引、记录和资料交接放在`dsh-artifacts/analysis/<tutorial>/`，Trace分析报告也使用analysis角色。纯离线解析没有命名HIP时，按用户明确的任务工作区选择该目录；CLI仍接受显式输出，不强制保存HIP或改写用户目的地。导入媒体属于reference_downloaded，缓存属于cache。旧analysis或geo目录不自动迁移。
 
@@ -34,9 +36,9 @@
 
 加载警告原文属于恢复诊断，保存在同一恢复根的`load-warnings/`，按内容hash复用；对话只记录有限预览和可核验引用。它不进入`dsh-artifacts/analysis`或渲染目录，也不随Save As搬动；读取沿DSH原生恢复历史定位，规则见[接续](multi-instance.md#单实例保存点恢复)。
 
-`render`和`visual_check`在各自目录下按实际HIP的`HIPNAME`分组；它只去掉`.hip/.hiplc/.hipnc`扩展（忽略扩展大小写），保留版本后缀、Unicode、空格和点号，不猜测哪些版本属于同一工程。同stem的不同许可扩展共享命名组，精确来源以回执`hip_path`为准；目录名不作为工程身份。`visual_check`的受管捕获再使用`run-*`分组，保留唯一capture文件名和在途reservation。Save As只改变后续默认输出，不搬旧文件。
+`render`和`visual_check`在各自目录下按实际HIP的`HIPNAME`分组；它只去掉`.hip/.hiplc/.hipnc`扩展（忽略扩展大小写），保留版本后缀、Unicode、空格和点号，不猜测哪些版本属于同一工程。同名的不同许可扩展共享命名组，精确来源以回执`hip_path`为准；目录名不作为工程身份。`visual_check`的受管捕获再使用`run-*`分组，保留唯一capture文件名和在途reservation。Save As只改变后续默认输出，在途捕获保留原锚点，不搬旧文件。未命名HIP不分配受管图像目录；临时观察可指定explicit绝对路径。
 
-`execution_run`在DSH会话工作区的`checks/runs/`下承载独立运行输入、紧凑报告和检查产物；它不为分配目录额外查询live HIP，也不改变渲染和依赖的实际锚点。显式运行位置及历史路径保持，不自动迁移。
+`execution_run`在DSH会话工作区的`checks/runs/`下承载独立运行输入、紧凑报告和检查产物；它不为分配目录额外查询live HIP。隔离加载的HIP副本以副本的实际路径投影目录，保留源文件名的HIPNAME；不把副本的默认图片写回源工程。manifest中显式声明的检查产物仍在本次run的`artifacts/`，builder没有加载HIP时只使用运行器命名的临时HIP，不推断源工程。显式运行位置及历史路径保持，不自动迁移。
 
 作者维护的builder、准备脚本和manifest留在`script`目录；运行器自动分配一次性运行目录。完整的大执行回执只在run的`executions/`中留档一次，报告携带同源事实投影、实际路径、内容摘要和JSON pointer；读取或归档失败不能替换原操作错误。运行prefs等机器状态放在运行器独占临时根，确认其拥有的进程树退出后再清理；用户工程、输入版本和观察证据不随环境清理。
 

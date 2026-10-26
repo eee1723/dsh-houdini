@@ -442,11 +442,15 @@
       ]
     },
     "karmarendersettings": {
-      "id": "karma-product-resolution-v1",
+      "id": "karma-product-resolution-and-focus-v2",
+      "tested_versions": ["21.0.440", "22.0.368"],
+      "critical_parameters": ["enabledof"],
       "source": "https://www.sidefx.com/docs/houdini/nodes/lop/karmarendersettings.html",
       "notes": [
         "Karma Setup may derive and lock resolution components. Inspect list_parms locked_components and the actual RenderProduct before assigning both dimensions; do not unlock a recipe expression to suppress a strict-setting failure.",
-        "Keep settings/product/camera paths explicit. Use render_frame's optional framing preflight for full-asset images; intentional crops and unsupported lens effects are separate contracts."
+        "Keep settings/product/camera paths explicit. Use render_frame's optional framing preflight for full-asset images; intentional crops and unsupported lens effects are separate contracts.",
+        "DSH tab_create and Karma Setup initialize a new Karma Render Settings with enabledof off for a sharp general asset view. Explicit creation parameters or later set_parms can enable depth of field for an intentional shot; existing settings and render_frame preserve the artist's choice. Motion blur and denoising are separate controls.",
+        "Karma's enabledof authors RenderSettings karma:global:enable_dof. The generic USD disableDepthOfField value alone does not report this Karma switch. With DOF enabled, inspect the composed camera fStop and focusDistance after import and after moving the camera; camera_fit solves framing, not focus."
       ]
     },
     "boolean": {

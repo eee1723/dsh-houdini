@@ -6,13 +6,17 @@ dsh-houdini是DeepSeek Harness插件：Host工具与上下文 → HTTP →
 Houdini主线程执行队列 → 动词能力库及领域模块。
 hou只存在于Houdini侧，Node Host不直接调用HOM。
 
+产品是在官方DSH Desktop安装的标准插件：Houdini模式内绑定/打开现场并完成任务，Houdini菜单是进入同一宿主、对话与现场的快捷入口。不另维护Qt聊天窗口、DSH Host或第二套会话；产品边界与未完成验收分别见[架构](docs/architecture.md#目标产品形态)和[交接](docs/handoff.md#h-06-官方dsh共存与插件边界)。
+
 ## 设计与重构原则
 
 - 从产品目标和平台事实出发：帮助用户在真实Houdini中完成高质量、可编辑、可继续修改的工程与工具，充分发挥LLM的理解、规划和操作能力。
 - 已完成的实现、工具数量、目录结构和历史测试不是设计约束。可以删除、合并或替换不再服务目标的功能；在当前项目中直接重构，继续使用DSH提供的会话、模型与通用Agent能力。
+- 涉及重做DSH已有能力或修改其核心前，必须从用户目标比较公开接口、插件扩展、窄上游改进与核心补丁，说明为何选择当前最小充分方案及其宿主影响、维护成本和退出条件；记录在变更说明，现役边界原位更新，未完成动作只进handoff。不以已有投入或测试数量证明方案最佳。职责与方案选择见[开发规范](docs/development.md#插件职责与方案选择)。
 - 执行层负责准确操作和真实反馈；任务策略与领域方法按需加载。不要把模型的一次失败写成永久执行门槛，产品计划不作为操作Houdini的准入条件。
 - 同一事实只有一个维护源；结果、上下文和界面消费同一份执行事实。避免重复状态解释器、兼容补丁和猜测来源的逻辑。
-- 只提供Houdini一种模式，使用DSH的preset注册和通用任务能力。工具各有清楚职责；不建立插件自己的产品完成账本、强制建模流程或会话压缩系统。
+- 插件只新增Houdini一种模式，使用DSH的preset注册和通用任务能力，不关闭宿主其他模式或改变默认选择。工具各有清楚职责；不建立插件自己的产品完成账本、强制建模流程或会话压缩系统。
+- 每次开发都必须保持官方DSH Desktop正常使用：遵守其原生会话与持久化合同，不越权改写宿主安装、通用配置或共享依赖解析，不干预其他模式；自身安装与配置沿官方管理接口。开发/测试使用自有数据根；含不兼容核心补丁的过渡Host不得读写官方共享数据。标准插件可使用宿主原生会话，不以永久拆分用户历史代替修正接口边界。具体纪律与消费方验证见[开发规范](docs/development.md#dsh宿主不受影响的开发纪律)。
 - 通用调度、通知、取消和原值保留优先消费精确DSH公开合同。现场长任务先取得原生jobs准入再提交Bridge；DSH job_id只标识本机观察，Bridge回执才证明真实执行。取消意图、停止本机观察、HOM实际终态分别表达；重开只恢复原任务观察，不重发代码。
 - 在线目标、活动执行及恢复摘要直接消费DSH session projection，以同源增量规则维护待处理事实；不在每次工具/提示词组装时重扫历史，也不永久复制已结算调用形成第二份账本。完整原值留DSH原生/嵌套canonical与详情，按需历史和客户端复用同一解码源。
 - 避免过度防御：只处理真实接口条件和已观察到的失败，不因假想风险增加审批、拦截、回退或层层校验。
@@ -32,11 +36,10 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
   正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
 - Houdini原生菜单标签仅使用ASCII英文（中文在部分安装中无法显示）；Qt窗口与网页界面使用中文。
-- 启动：DSH-Houdini → Open Workspace。重载Host/Bridge/helper用Version & Updates → 高级设置 →
-  运行诊断；独立工作台关闭并重开加载Host，单端修复只重载当前Houdini Bridge/helper，不重启其他工程。menu/package变更完整重启对应Houdini。
+- 启动：官方Desktop内选择Houdini模式，或从Houdini的DSH-Houdini → Open Workspace进入同一宿主。版本信息/本端修复只维护当前Bridge/helper，不管理Desktop生命周期、不重启其他工程；menu/package或helper版本切换须重开对应Houdini。
   不未经用户授权重启live或修改HIP；构建通过不等于live已加载。
-- 部署：main push/tag/Draft不算正式发布；安装/启动/修复默认共用兼容清单preferred精确DSH。
-  正式受管安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。
+- 部署：main push/tag/Draft不算正式发布；兼容清单与engines.dsh声明经过验证的官方宿主版本，不替换其运行时。交付标准插件与Houdini/媒体资源，本端安装不改profile、会话或账户。
+  安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。
 - trace先按houdini-trace-analysis skill跑extract-trace-evidence.mjs，再跑tools/trace-report.mjs；
   区分目录广度、调用含动词率、动词密度、只读裸探针、Gate拦截与成功裸修改。
 

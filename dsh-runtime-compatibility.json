@@ -1,32 +1,31 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.2.1-rc.2",
+  "preferredVersion": "0.2.1-rc.3",
+  "host": "official-dsh-desktop",
+  "runtimeOwnership": "host",
   "releases": [
     {
-      "dshVersion": "0.2.1-rc.2",
+      "dshVersion": "0.2.1-rc.3",
       "rpcWire": "slash-generated-args-v1",
-      "browserAuth": "process-token-signed-cookie-v1",
-      "qtWebEngineMinimum": "6.5.3 / Chromium 108",
-      "requiredPolyfills": [
-        "AbortSignal.any",
-        "Promise.withResolvers",
-        "Iterator",
-        "Array.prototype.toSorted"
-      ],
+      "browserAuth": "process-token-api-peer-signed-cookie-v2",
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
-      "verificationStatus": "source-build-verified-live-pending",
+      "verificationStatus": "official-native-desktop-isolated-plugin-distribution-verified",
       "verifiedOn": [
-        "Plugin TypeScript build against the exact 0.2.1-rc.2 dependency set (cordis 4.0.5, schemastery 3.18.5, zod 4.4.3)",
-        "Plugin Node regressions against the exact declared dependency set",
-        "Runtime source patch based on tag dsh-v0.2.1-rc.2; declared Host packages and client bundles compiled with file inventory verified by dsh_runtime_compat"
+        "Unmodified official 0.2.1-rc.3 Host and scoped Houdini tools; native default and other presets preserved",
+        "Official client browser: selected Session/workspace/preset, history reload, mode-only UI and navigation acknowledgement",
+        "Real isolated Houdini 21.0.440 and 22.0.368 GUI new/open, main-thread Bridge and authenticated native-menu handoff; installed immutable helper Package new/open also verified on H22",
+        "Scripted provider receives actual scene context, native/PTC canonical originals and request/job recovery facts",
+        "Issue #4 exact dependency-name fixtures survive two official Host starts with native Session/profile/settings preserved",
+        "Standard tgz installed through native Electron plugin UI in new isolated profiles: local and owned HTTP URLs, explicit enable, disable/re-enable and uninstall; original modes/defaults/models and Desktop/protocol unchanged",
+        "Actual native Electron app.quit during pending H22 startup, same Houdini OS birth survives, successor Host completes the original ticket and selects the original native Session without another launch",
+        "OS-only process birth and canonical-root lifetime exclusion; detached resume, commit cancellation and transient identity regressions use native Session events",
+        "Tutorial setup uses original settings/credentials and native password Modal; scripted guide plus actual Python/FFmpeg ASR native/PTC results, origin isolation and same-task restart without duplicate upload; no paid cloud or recognition-quality claim"
       ],
       "pendingVerification": [
-        "Normal user live load of the qualified managed installation on H21/H22",
-        "DeepSeek 4.1 Flash 1017 model selection and real request route in the embedded Houdini runtime",
-        "Houdini-generated image route and semantic image understanding"
+        "System dsh:// activation into the end-user Desktop profile, existing user configuration and plugin upgrade/disable/uninstall",
+        "Recovery of legacy shared Sessions written with the removed private relocation semantics"
       ]
     }
-  ],
-  "runtimeFixes": "deployment/dsh-runtime-fixes/manifest.json"
+  ]
 }

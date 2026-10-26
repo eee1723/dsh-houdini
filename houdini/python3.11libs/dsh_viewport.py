@@ -36,36 +36,8 @@ def _display_bbox(n):
     return n.geometry().boundingBox()
 
 
-def _webview_was_minimized():
-    """Return the pre-capture minimized state when the optional WebView exists."""
-    try:
-        import dsh_webview
-        win = getattr(dsh_webview, "_window", None)
-        return None if win is None else bool(win.isMinimized())
-    except Exception:
-        return None
 
 
-def _restore_webview_window(was_minimized=None) -> None:
-    """截图后还原被最小化的内嵌 web UI 窗口（dsh_webview）。
-
-    用户报告（2026-08-18）：agent 截图时 agent 窗口会最小化，要手动从
-    任务栏点回。只在确实处于最小化状态时还原——用户只是切去 Houdini
-    干活（失焦/被遮）时不抢焦点。可选依赖：webview 未开过/导入失败就静默。
-    """
-    try:
-        import dsh_webview
-    except Exception:
-        return
-    win = getattr(dsh_webview, "_window", None)
-    if win is None:
-        return
-    try:
-        if was_minimized is not True and win.isMinimized():
-            win.showNormal()
-            dsh_webview._bring_to_front(win)
-    except Exception:
-        pass
 
 
 def _viewport_camera_state(camera) -> tuple:
@@ -277,7 +249,6 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         return (int(stat.st_size), int(stat.st_mtime_ns), digest.hexdigest())
 
     original_frame = float(hou.frame())
-    webview_was_minimized = _webview_was_minimized()
     before_files = {}
     actual = None
     capture_error = None
@@ -343,7 +314,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         if target_node is not None:
             vp.frameBoundingBox(_display_bbox(target_node))
 
-        settings.output(path)
+        settings.output(dsh_media_output._literal_houdini_path(path))
         settings.outputToMPlay(False)
         settings.frameRange((f, f))
         leave_at_end = getattr(settings, 'leaveFrameAtEnd', None)
@@ -464,7 +435,6 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
                 raise RuntimeError('interactive flipbook settings changed')
         except Exception as error:
             restore_errors.append(f'flipbook settings: {error}')
-        _restore_webview_window(webview_was_minimized)
 
     from dsh_preview_paths import retain_reservation, with_actual_path
     validated_artifact = None

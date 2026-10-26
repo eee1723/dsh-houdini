@@ -97,8 +97,9 @@ try {
     return {session:{id:request.sessionId},target:event}
   }})
   const frontend=new HoudiniFrontend(root)
-  assert.deepEqual(remoteMethods(frontend).map(method=>method.method),['chatgptStatus','chatgptStart','chatgptCancel','chatgptPrompt','chatgptSelect','chatgptSignout','chatgptProbe',
-    'videoSettings','videoDiagnostics','capabilities','openNode','supportReport','projectPresence','windowPin','updateStatus','openUpdates','projectAction','refreshTitle'])
+  assert.deepEqual(remoteMethods(frontend).map(method=>method.method),[
+    'videoSettings','videoDiagnostics','capabilities','openNode','supportReport','projectPresence','projectInstallations','prepareBridge',
+    'projectAction','projectLaunchStatus','projectLaunchDetach','projectLaunchResume','desktopIntent','desktopIntentAck'])
   assert.equal(frontend.capabilities().nodeDeliveries,true)
   const coordinates=i=>({sessionId:agents[i].id,eventSeq:20,index:0})
   assert.deepEqual(await Promise.all([0,1].map(i=>frontend.openNode(coordinates(i),signal))),

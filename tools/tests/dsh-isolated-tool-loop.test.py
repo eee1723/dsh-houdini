@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import reexec_unpacked_test_cli
-from dsh_runtime_compat import runtime_fix_identity
+from dsh_runtime_compat import official_runtime_identity
 
 reexec_unpacked_test_cli()
 if '--runtime-cache' in sys.argv:
     runtime = Path(sys.argv[sys.argv.index('--runtime-cache') + 1]).resolve()
-    runtime_fix_identity(runtime / 'node_modules/@deepseek-ai/dsh/lib/bin.js', verify_files=True)
+    official_runtime_identity(runtime / 'node_modules/@deepseek-ai/dsh/lib/bin.js')
 node = shutil.which('node')
 if not node:
     raise RuntimeError('Node.js is required for the pinned DSH integration')

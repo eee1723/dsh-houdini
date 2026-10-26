@@ -104,6 +104,30 @@ with tempfile.TemporaryDirectory(prefix='dsh-managed-preview-') as tmp:
     assert delivery['actual_path'] != another_delivery['actual_path']
     assert paths.with_actual_path(delivery, delivery['actual_path'], str(hip))['output_policy'] == 'delivery'
     assert paths.release_reservation(delivery) == [] and paths.release_reservation(another_delivery) == []
+    # Each explicitly named HIP keeps its complete stem, including versions,
+    # spaces and literal Houdini-variable characters. Same-session run ids do
+    # not merge two variants, and an isolated copied HIP stays in its own tree.
+    for name in ('atelier_v003.hip', 'repair_v003.hiplc', 'repair_v004.hipnc', 'variant.$F literal.hip'):
+        variant = base / name
+        variant.touch()
+        variant_layout = project_paths.project_layout(str(variant), has_named_path=True)
+        captured = allocate(variant)
+        final = allocate(variant, output_policy='delivery')
+        assert Path(captured['managed_root']).parent == Path(variant_layout['directories']['visual_check'])
+        assert Path(final['managed_root']) == Path(variant_layout['directories']['render'])
+        assert Path(final['managed_root']).name == variant.stem
+        assert captured['run_id'] == first['run_id']
+        assert captured['managed_root'] != first['managed_root']
+        assert Path(captured['hip_path']) == variant
+        assert paths.release_reservation(captured) == [] and paths.release_reservation(final) == []
+    copied_hip = base / 'isolated-run' / 'inputs' / hip.name
+    copied_hip.parent.mkdir(parents=True)
+    copied_hip.touch()
+    copied = allocate(copied_hip)
+    assert Path(copied['project_root']) == copied_hip.parent
+    assert Path(copied['managed_root']).parent.name == hip.stem
+    assert not Path(copied['actual_path']).is_relative_to(Path(first['managed_root']))
+    assert paths.release_reservation(copied) == []
     with ThreadPoolExecutor(max_workers=8) as pool:
         concurrent = list(pool.map(lambda _index: allocate(hip, 'parallel.png'), range(24)))
     assert len({row['actual_path'] for row in concurrent}) == 24

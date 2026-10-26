@@ -18,8 +18,7 @@ const ui={Button:'button',Checkbox:props=>React.createElement('label',{},props.l
   type:'checkbox',checked:props.checked,onChange:event=>props.onChange(event.target.checked)})),
   Modal:props=>props.open?React.createElement('div',{'aria-label':props.title},
     React.createElement('button',{'aria-label':props.closeLabel,onClick:props.onClose},'header-close'),props.children,props.footer):null}
-const context={React,document:{body:{appendChild(){}},createElement:()=>({click(){downloads.push(this.download)},remove(){}})},
-  require:name=>{assert.equal(name,'@deepseek-ai/dsh-client-ui-primitives');return ui},
+const context={React,ui,document:{createElement:()=>({click(){downloads.push(this.download)},remove(){}})},
   AbortController,setTimeout:()=>1,clearTimeout(){},atob,Uint8Array,Blob,URL:{createObjectURL:()=> 'blob:fixture',revokeObjectURL(){}}}
 vm.createContext(context)
 vm.runInContext(fragment+'\nthis.factory=createSupportReporter;',context)

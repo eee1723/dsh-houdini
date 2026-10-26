@@ -97,7 +97,7 @@ def allocate_managed(
     """
     if output_policy not in ('managed', 'delivery'):
         raise ValueError('allocated output_policy must be managed or delivery')
-    if not isinstance(hip_path, str) or not hip_path.strip():
+    if not isinstance(hip_path, str) or not hip_path.strip() or not os.path.isabs(hip_path):
         raise ValueError("managed visual checks require a named HIP; use scene_save_as with an authorized target first")
     hip = _real(os.path.dirname(hip_path))
     if not hip or not os.path.isdir(hip):

@@ -176,6 +176,30 @@ try:
             assert Path(resolved[0])==base/'dsh-artifacts/renders'/'project'/'beauty.0003.png'
             assert image_rop.parm('picture').unexpandedString()==before
         finally:image_rop.destroy()
+        # HIP stems are literal filenames. Houdini string parameters evaluate
+        # $variables/backticks again, so concrete paths must survive that seam;
+        # caller filename templates still expand at the requested frame.
+        image_rop=hou.node('/out').createNode('opengl','__checkpoint_literal_path')
+        saved_hip_name=hou.hipFile.path()
+        try:
+            before=image_rop.parm('picture').unexpandedString()
+            for name in ('variant.$F literal.hip', 'variant.`1+2` literal.hip'):
+                literal_hip=base/name
+                hou.hipFile.setName(dsh_media_output._literal_houdini_path(literal_hip.as_posix()))
+                assert hou.hipFile.path()==literal_hip.as_posix()
+                expected=base/'dsh-artifacts/renders'/literal_hip.stem/'literal.0007.png'
+                def write_resolved_output(node, **kwargs):
+                    actual=Path(node.parm('picture').evalAtFrame(7))
+                    assert actual==expected,(actual,expected)
+                    actual.write_bytes(b'literal output path probe')
+                with patch.object(hou.RopNode,'render',write_resolved_output):
+                    literal=h.render_frame(image_rop,picture='literal.$F4.png',frame=7,timeout=2)
+                assert literal['fresh'] and not literal['errors'],literal
+                assert Path(literal['output'])==expected and expected.is_file()
+                assert image_rop.parm('picture').unexpandedString()==before
+        finally:
+            image_rop.destroy()
+            hou.hipFile.setName(saved_hip_name)
         # The native USD export ROP uses the same declared render directory
         # for a bare output; its existing explicit path remains untouched.
         usd_rop=hou.node('/out').createNode('usd','__checkpoint_usd_rop')

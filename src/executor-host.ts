@@ -8,18 +8,20 @@ import {ExecutorBinding} from './executor-binding.js'
 import {ExecutorController} from './executor-controller.js'
 import {projectedExecutorBindingState,projectedExecutorState,registerExecutorIdentityProjection} from './executor-identity-projection.js'
 import {recordHoudiniContext} from './dsh-adapter.js'
+import {desktopPaths} from './desktop-paths.js'
 
 export const name='dsh-houdini-executor-host'
 export const inject=['agents','sessionProjections']
 export interface Config {executorRegistry:string;requestTimeoutMs:number;workbench:boolean}
 export const Config:Schema<Config>=Schema.object({
-  executorRegistry:Schema.string().required(),requestTimeoutMs:Schema.number().default(120000),
-  workbench:Schema.boolean().default(false),
+  executorRegistry:Schema.string().default(''),requestTimeoutMs:Schema.number().default(120000),
+  workbench:Schema.boolean().default(true),
 })
 export function apply(ctx:Context,config:Config):void {
   if(ctx.get('houdiniTargets')) throw new Error('Shared Houdini Host service already mounted; keep exactly one Host-plane instance')
   registerExecutorIdentityProjection(ctx)
-  const directory=new ExecutorDirectory(config.executorRegistry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'))
+  const registry=config.executorRegistry||desktopPaths().registry
+  const directory=new ExecutorDirectory(registry,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),true)
   const router=new ExecutorRouter(directory,config.requestTimeoutMs,new ExecutorBinding(session=>
       projectedExecutorBindingState(ctx,session as Parameters<typeof projectedExecutorBindingState>[1]),(session,message)=>{
         const current=session as Parameters<typeof projectedExecutorBindingState>[1]
@@ -45,8 +47,8 @@ export function apply(ctx:Context,config:Config):void {
   ctx.effect(()=>()=>router.dispose(),'Houdini shared executor lifetime')
   // Selecting an existing conversation also uses these public services outside
   // the desktop workbench. Declare them on the controller's exact scope.
-  ctx.inject(['workspaceRegistry','sessionController','sessions'],scope=>{
-    new ExecutorController(scope,router,config.workbench)
+  ctx.inject(['agents','sessionProjections','workspaceRegistry','sessionController','sessions'],scope=>{
+    new ExecutorController(scope,router,true,registry)
   })
 }
 

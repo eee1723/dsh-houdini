@@ -26,6 +26,7 @@ import dsh_managed_runtime as runtime
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime-cache', type=Path, required=True)
 parser.add_argument('--browser-module', type=Path)
+parser.add_argument('--browser', action='store_true', help='Verify the official browser and native mode/session navigation')
 parser.add_argument('--context-loop', action='store_true', help='Run a scripted provider through the real DSH loop and local Bridge fixture')
 parser.add_argument('--repetition-method', action='store_true', help='Also verify native/nested reference delivery to the scripted provider')
 parser.add_argument('--surface-method', action='store_true', help='Verify surface/COP skills and native/nested reference delivery at the actual provider')
@@ -93,7 +94,9 @@ with socket.socket() as sock:
 output_file = fixture / 'composition.json'
 env['DSH_COMPOSITION_FIXTURE_OUT'] = str(output_file)
 inspector = fixture / 'inspect.mjs'
-inspector.write_text("""
+inspector.write_text("import {createUserMessage,createToolResultMessage} from "
+    +json.dumps((cache / 'node_modules/@deepseek-ai/dsh-llm/lib/index.js').as_uri())+";\n"
+    +"import {auditStartupEntries} from "+json.dumps((cache / 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js').as_uri())+";\n"+"""
 import fs from 'node:fs';
 export const inject=['loader','tools','agentPresets','clientModules','agents'];
 export function apply(ctx) {
@@ -108,7 +111,10 @@ export function apply(ctx) {
           const tools=ctx.tools.schemas(lease.key).map(tool=>tool.name);
           const graph=ctx.clientModules.graph();
           const rootEntries=[...ctx.loader.entries()].map(entry=>({name:entry.options.name,disabled:entry.disabled}));
-          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({roster,tools,graph,rootEntries}));
+          const activation=await auditStartupEntries(ctx,'owned-smoke',()=>{});
+          const services={workspaceRegistry:ctx.get('workspaceRegistry')!==undefined,workspaceController:ctx.get('workspaceController')!==undefined,
+            houdiniTargets:ctx.get('houdiniTargets')!==undefined,houdiniFrontend:ctx.get('houdiniFrontend')!==undefined};
+          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({roster,tools,graph,rootEntries,activation,services}));
         } finally {await lease[Symbol.asyncDispose]();}
       } catch(error) {
         if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({error:String(error.stack||error)}));
@@ -118,14 +124,29 @@ export function apply(ctx) {
     // the official nonempty conversation surface visible without a model call.
     let seedDone=false;
     const seedFile=process.env.DSH_COMPOSITION_FIXTURE_OUT+'.seed';
-    const seedTimer=setInterval(() => {
+    const seedTimer=setInterval(async () => {
+      const sidebarFile=process.env.DSH_COMPOSITION_FIXTURE_OUT+'.sidebar';
+      if(fs.existsSync(sidebarFile)) {
+        const ids=JSON.parse(fs.readFileSync(sidebarFile,'utf8'));
+        if(ids.every(id=>ctx.agents.get(id))) {
+          for(const id of ids) {
+            const session=ctx.agents.get(id).session;
+            session.append('turn/start',{turn:1});
+            session.append('user/message',createUserMessage({source:{kind:'user'},
+              content:[{type:'text',text:'Owned mode fixture '+id}]}),{surfaceOp:'append'});
+            session.append('turn/end',{turn:1,reason:{kind:'completed'}});
+          }
+          fs.unlinkSync(sidebarFile);
+        }
+      }
       if(seedDone||!fs.existsSync(seedFile))return;
       try {
         const id=fs.readFileSync(seedFile,'utf8').trim();
         const agent=ctx.agents.get(id);
         if(!agent)return;
-        agent.session.append('user/message',{role:'user',source:{kind:'user'},
-          content:[{type:'text',text:'Isolated UI fixture: inspect Trace and tool documentation.'}]},{surfaceOp:'append'});
+        agent.session.append('turn/start',{turn:2});
+        agent.session.append('user/message',createUserMessage({source:{kind:'user'},
+          content:[{type:'text',text:'Isolated UI fixture: inspect Trace and tool documentation.'}]}),{surfaceOp:'append'});
         for (const [callId,name,args,result] of [
           ['ui-inspect','houdini_inspect',{code:'__result__ = scene_info()'},{ok:true,result:{objects:[]},execution:{hip_dir:null,hip_is_new:true}}],
           ['ui-create','houdini_exec',{code:'tab_create("/obj", "geo", "asset")'},{ok:true,verbs:[{verb:'tab_create',ms:5,args:['/obj','geo','asset'],ok:true,result:'/obj/asset'}],execution:{hip_dir:null,hip_is_new:true}}],
@@ -135,11 +156,13 @@ export function apply(ctx) {
              verbs:[{verb:'verify_network',ok:true,check_status:'warning',args:['/obj/asset'],ms:1,
                result:{output:'/obj/asset/OUT',warnings:['夹具：输出存在属性警告']}}],execution:{hip_dir:null,hip_is_new:true}}],
         ]) {
-          agent.session.append('tool/call',{turn:1,step:1,callId,name,arguments:JSON.stringify(args)});
-          agent.session.append('tool/result',{turn:1,step:1,message:{role:'tool',source:{kind:'tool',callId},
-            content:[{type:'text',text:JSON.stringify(result)}],isError:!result.ok},meta:{canonical:result}},{surfaceOp:'append'});
+          agent.session.append('tool/call',{turn:2,step:1,callId,name,arguments:JSON.stringify(args)});
+          agent.session.append('tool/result',{turn:2,step:1,message:createToolResultMessage({callId,
+            content:[{type:'text',text:JSON.stringify(result)}],isError:!result.ok}),meta:{canonical:result}},{surfaceOp:'append'});
         }
+        agent.session.append('turn/end',{turn:2,reason:{kind:'completed'}});
         seedDone=true;
+        await ctx.get('sessions').flush(agent.session);
         fs.writeFileSync(seedFile+'.done','ok');
       } catch(error) {fs.writeFileSync(seedFile+'.error',String(error.stack||error));}
     },100);
@@ -175,8 +198,11 @@ with log.open('wb') as output:
         facts=json.loads(output_file.read_text(encoding='utf-8'))
         assert 'error' not in facts, facts
         presets=facts['roster']['presets']
-        assert len(presets)==1 and presets[0]['id']=='houdini' and presets[0]['isDefault'], facts
-        assert 'broken' not in presets[0], facts
+        houdini = next(row for row in presets if row['id'] == 'houdini')
+        standard = next(row for row in presets if row['id'] == 'standard')
+        assert standard['isDefault'] and not houdini['isDefault'], facts
+        assert 'broken' not in houdini and 'broken' not in standard, facts
+        assert len(presets) >= 4, facts
         expected={'houdini_inspect','houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities',
             'houdini_job_submit','houdini_isolated'}
         assert {name for name in facts['tools'] if name.startswith('houdini_')} == expected, facts
@@ -187,9 +213,12 @@ with log.open('wb') as output:
         assert sum(row['id'] == 'dsh-houdini' for row in graph_rows) == 1, [row['id'] for row in graph_rows]
         auth.authorize(timeout=5)
         assert rpc('agentPresets/list', {}) == facts['roster']
-        created=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'cwd':str(fixture)}})
+        default_workspace=rpc('workspace/create', {'request': {'path': str(fixture)}})['workspace']
+        default=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'workspaceId':default_workspace['workspaceId']}})
+        assert default['agentPreset']=='standard', default
+        created=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'cwd':str(fixture),'agentPreset':'houdini'}})
         assert created['agentPreset']=='houdini', created
-        print('Exact DSH Web: browser module delivered, one Houdini preset, scoped tools and default session passed', flush=True)
+        print('Official DSH Web: native default/other presets preserved, additive Houdini preset, scoped tools and explicit session passed', flush=True)
         if args.context_loop:
             deadline=time.monotonic()+90
             while not context_output.exists():
@@ -206,18 +235,31 @@ with log.open('wb') as output:
                 assert context_facts.get('render_consumption', {}).get('outputs') == render_receipt['result']['outputs'], (
                     'Original render output values changed in the DSH report; inspect ' + str(context_output))
                 print('Exact DSH render consumer: native/PTC multi-product paths, freshness and unverified checkpoint/delegate facts preserved; historical mock receipt does not verify Karma pixels', flush=True)
-        if args.browser_module:
+        desktop_deadline=time.monotonic()+10
+        while not rpc('houdiniFrontend/capabilities', {})['desktop']:
+            assert time.monotonic()<desktop_deadline, 'Root plugin Desktop integration did not become available'
+            time.sleep(.1)
+        if args.browser_module or args.browser:
             first, second = fixture / 'test49', fixture / 'test51'
             first.mkdir(); second.mkdir()
+            browser_sessions = []
+            for directory in [first, second]:
+                workspace = rpc('workspace/create', {'request': {'path': str(directory)}})['workspace']
+                browser_session=rpc('session/create', {'request': {'sessionId': uuid.uuid4().hex,
+                    'workspaceId': workspace['workspaceId'], 'agentPreset': 'houdini'}})
+                assert browser_session['agentPreset']=='houdini', browser_session
+                browser_sessions.append(browser_session['sessionId'])
+            Path(str(output_file)+'.sidebar').write_text(json.dumps([default['sessionId'],*browser_sessions]), encoding='utf-8')
             browser_config = fixture / 'browser-config.json'
             browser_config.write_text(json.dumps({'base': f'http://127.0.0.1:{port}/',
                 'first': str(first), 'second': str(second), 'output': str(fixture),
+                'firstSession': browser_sessions[0], 'secondSession': browser_sessions[1], 'standardSession': default['sessionId'],
                 'seedFile': str(output_file)+'.seed',
                 'browser': r'C:\Program Files\Google\Chrome\Application\chrome.exe',
                 'cookies': [{'name': cookie.name, 'value': cookie.value,
                     'url': f'http://127.0.0.1:{port}/', 'httpOnly': True} for cookie in auth._cookies]}), encoding='utf-8')
             subprocess.run([node, str(ROOT / 'tools/tests/dsh-client-navigation.mjs'),
-                str(args.browser_module.resolve()), str(browser_config)], cwd=ROOT, env=env, check=True, timeout=90)
+                str(browser_config)], cwd=ROOT, env=env, check=True, timeout=120)
     finally:
         runtime.stop_owned(process)
         process.wait(timeout=15)

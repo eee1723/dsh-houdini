@@ -6,5 +6,6 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo DSH-Houdini is ready to manage from Houdini. Restart Houdini to load the menu.
+echo Houdini helpers are registered. Restart Houdini to load the menu.
+echo Install and update the dsh-houdini plugin through official DSH Desktop.
 pause

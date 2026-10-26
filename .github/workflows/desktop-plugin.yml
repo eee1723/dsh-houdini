@@ -1,0 +1,61 @@
+name: Build Desktop plugin candidate (no release)
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Existing branch, commit or tag to verify
+        required: true
+        default: main
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-plugin-candidate
+  cancel-in-progress: false
+env:
+  H21_HYTHON: ${{ vars.H21_HYTHON }}
+  H22_HYTHON: ${{ vars.H22_HYTHON }}
+  DSH_DESKTOP_ROOT: ${{ vars.DSH_DESKTOP_ROOT || 'D:/dshdesktop' }}
+jobs:
+  build:
+    # This manually selected candidate build never creates a tag or Release.
+    runs-on: [self-hosted, Windows, X64, houdini]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.17.0'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Validate candidate environment
+        shell: pwsh
+        run: |
+          git rev-parse --verify HEAD
+          $policy = Get-Content dsh-runtime-compatibility.json -Raw | ConvertFrom-Json
+          if ($policy.runtimeOwnership -ne 'host') { throw 'Select a standard Desktop plugin ref; legacy private runtime refs are not candidate inputs' }
+          if (!(Test-Path -LiteralPath $env:H21_HYTHON) -or !(Test-Path -LiteralPath $env:H22_HYTHON)) { throw 'Configure both licensed interpreters' }
+          if (!(Test-Path -LiteralPath (Join-Path $env:DSH_DESKTOP_ROOT 'DeepSeek Harness.exe'))) { throw 'Set DSH_DESKTOP_ROOT to the official Desktop installation used only for isolated verification' }
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run docs:check
+      - shell: pwsh
+        run: python tools/run-deployment-tests.py --hython "$env:H21_HYTHON" --hython "$env:H22_HYTHON"
+      - name: Assemble standard plugin and source-complete media
+        shell: pwsh
+        run: python tools/build-release.py --output tools/out/plugin-release --media-cache "$env:RUNNER_TEMP/dsh-media-cache"
+      - name: Verify the exact artifact with bundled CLI and isolated Host
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem -LiteralPath tools/out/plugin-release -File -Filter '*.tgz')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one standard plugin package' }
+          python tools/tests/dsh-packaged-plugin-install.test.py --artifact $artifacts[0].FullName --desktop-root "$env:DSH_DESKTOP_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw 'The exact plugin package failed bundled CLI installation or isolated Host composition' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-plugin-candidate
+          path: tools/out/plugin-release/*.tgz
+          retention-days: 7

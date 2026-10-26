@@ -330,6 +330,7 @@ import dsh_geometry_observation as observation
 import dsh_preview_paths as preview_paths
 import dsh_network_layout as network_layout
 import dsh_network_boxes as network_boxes_module
+import dsh_curve_paths as curve_paths
 real_reload=importlib.reload
 real_stop,real_start=bridge.stop,bridge.start
 expected_wrangle_card=cards.operation_card('attribwrangle')
@@ -344,11 +345,14 @@ try:
     network_layout.union=None
     box_registry=network_boxes_module._OWNED_BOXES
     network_boxes_module.apply_network_boxes=None
+    curve_paths.curve_path_plan=None
+    curve_paths.geo_curve_clearance=None
     cards._cards=lambda:{'cards':{}}
     launcher.restart_bridge()
     assert callable(f.solve) and callable(observation.attribute_uniqueness)
     assert callable(preview_paths.allocate_managed)
     assert callable(network_layout.union) and callable(network_boxes_module.apply_network_boxes)
+    assert callable(curve_paths.curve_path_plan) and callable(curve_paths.geo_curve_clearance)
     assert network_boxes_module._OWNED_BOXES is box_registry
     assert cards.operation_card('attribwrangle')==expected_wrangle_card
     assert len(started)==1

@@ -245,7 +245,11 @@ def rename_node(node, name: str, allow_foreign: str | None = None) -> str:
 
 
 def delete_node(node, allow_foreign: str | None = None) -> dict:
-    """删除前检查节点及所有后代权限；持久render_view服务始终受保护。"""
+    """删除前检查节点、后代及框/便签的独立权限；持久render_view服务始终受保护。
+
+    新节点原生初始化的编辑物件随该次创建登记；后加用户物件不继承父级归属。
+    整根删除可包含已授权的Sticky Note；普通框布局能力不因此放宽。
+    """
     n = dsh_node_access._resolve(node)
     if n.userData(dsh_service_constants._RENDER_OWNER_KEY) == dsh_service_constants._RENDER_OWNER_VALUE:
         raise ValueError(

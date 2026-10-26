@@ -217,6 +217,18 @@ for query in (False, True):
         "__result__=dispatch(2, 2)", read_only=query)
     assert variadic['ok'] and variadic['result'] == [2, 'edit'], variadic
 
+# A proven ordinary callable stays Python when its argument expansion is not
+# statically unpacked. The source body still supplies any actual HOM writes.
+for source in (
+    "def copy(value): return value + 1\nargs=(3,)\n__result__=copy(*args)",
+    "class Module:\n    def copy(self, value): return value + 1\n"
+    "args=(3,)\n__result__=Module().copy(*args)",
+):
+    for query in (False, True):
+        expanded = dsh_bridge.run_code(source, read_only=query)
+        assert expanded['ok'] and expanded['result'] == 4, expanded
+        assert 'rawUsage' not in expanded, expanded
+
 # A source-defined ordinary method is analyzed through its body. Calling the
 # verb wrapper is legal; renaming the wrapper is not a prerequisite for work.
 local_builder = dsh_bridge.run_code(
@@ -475,5 +487,76 @@ compiled_only = dsh_bridge.run_code(
     "__result__=2", read_only=True)
 assert compiled_only['ok'] and compiled_only['result'] == 2, compiled_only
 assert hou.node('/obj/never_executed') is None
+
+# Ordinary local builder methods are Python helpers, independent of spelling.
+# The exact class/function body is still analyzed for actual HOM writes.
+for read_only in (False, True):
+    local = dsh_bridge.run_code(
+        "class Mod:\n"
+        "    def copy(self,value): return value+1\n"
+        "    def set(self,value): return value+2\n"
+        "m=Mod(); copy=m.copy; __result__=[copy(1),getattr(m,'set')(1)]",
+        read_only=read_only)
+    assert local['ok'] and local['result']==[2,3],local
+    assert 'rawUsage' not in local,local
+
+builder = dsh_bridge.run_code(
+    "def build(api):\n"
+    "    C=api['tab_create']\n"
+    "    root=C('/obj','geo',name='__gate_local_builder')\n"
+    "    class Mod:\n"
+    "        def __init__(self,name): self.p=C(root,'subnet',name=name)\n"
+    "        def copy(self,name,source): return C(self.p,'xform',name=name,inputs=[source])\n"
+    "    m=Mod('PARTS'); source=C(m.p,'box',name='source'); duplicate=m.copy('duplicate',source)\n"
+    "    return {'root':root.path(),'output':duplicate.path()}\n"
+    "__result__=build({'tab_create':tab_create})",owner_session='local-builder-gate')
+assert builder['ok'],builder
+root=hou.node(builder['result']['root'])
+try:
+    assert len(hou.node(builder['result']['output']).geometry().points())==8
+finally:
+    root.destroy()
+
+target=hou.node('/obj').createNode('geo','__local_gate_target')
+try:
+    path=repr(target.path())
+    unsafe_sources=[
+        f"hou.node({path}).copyTo(hou.node('/obj'))",
+        f"hou.node({path}).parm('tx').set(9)",
+        "class Mod:\n    def copy(self,value): return value\n"
+        f"m=Mod();m.copy=hou.node({path}).setName;m.copy('never_renamed')",
+        "class Mod:\n    def copy(self): return hou.node("+path+").setName\n"
+        "write=Mod().copy();write('never_renamed')",
+        "class Mod:\n    def copy(self,fn): return fn('never_renamed')\n"
+        f"Mod().copy(*[hou.node({path}).setName])",
+        "class Mod:\n    def copy(self,fn): return fn('never_renamed')\n"
+        "Mod().copy(**{'fn':hou.node("+path+").setName})",
+        "class Mod:\n    def copy(self,*args): return args[0]('never_renamed')\n"
+        f"Mod().copy(hou.node({path}).setName)",
+        "class Mod:\n    def copy(self,**kwargs): return kwargs['fn']('never_renamed')\n"
+        f"Mod().copy(fn=hou.node({path}).setName)",
+        "def copy(*args): return args[0]('never_renamed')\n"
+        f"copy(hou.node({path}).setName)",
+        "class Mod:\n    def copy(self,value): return value\n"
+        f"    def __init__(self): type(self).copy=hou.node({path}).setName\n"
+        "Mod().copy('never_renamed')",
+        "class Mod:\n    def copy(self,value): return value\n"
+        "def replace(target,value): target.copy=value\n"
+        f"m=Mod();replace(m,hou.node({path}).setName);m.copy('never_renamed')",
+    ]
+    for source in unsafe_sources:
+        for read_only in (False,True):
+            count=len(hou.node('/obj').children())
+            rejected=dsh_bridge.run_code(source,read_only=read_only)
+            assert not rejected['ok'] and rejected['transaction']['status']=='no_scene_change',rejected
+            assert target.name()=='__local_gate_target' and target.parm('tx').eval()==0
+            assert len(hou.node('/obj').children())==count
+    # A known covered setter returned/passed through a helper remains covered
+    # even when a caller supplies an allow_raw vocabulary-gap explanation.
+    for source in unsafe_sources[1:-1]:
+        rejected=dsh_bridge.run_code(source,allow_raw='local helper must not mask a covered HOM setter')
+        assert not rejected['ok'] and 'allow_raw cannot exempt' in rejected['error'],rejected
+finally:
+    target.destroy()
 
 print("raw-hou gate regression passed")

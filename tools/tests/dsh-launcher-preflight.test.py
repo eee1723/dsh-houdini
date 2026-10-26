@@ -1,401 +1,217 @@
-"""Pure regression for launcher listener preflight and external-process policy."""
-
-from __future__ import annotations
-
-from pathlib import Path
+"""The menu owns only its local Bridge; no DSH Host or unrelated process."""
 import importlib
-import json
 import os
+from pathlib import Path
+import queue
 import sys
 import tempfile
-import types
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "houdini" / "python3.11libs"))
-sys.modules.setdefault("hou", types.SimpleNamespace())
+sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
+sys.modules.setdefault('hou', SimpleNamespace())
+import dsh_launcher as launcher
 
-import dsh_launcher
-import dsh_context
-import dsh_workbench
-import dsh_managed_runtime
-import dsh_workbench_start
+with tempfile.TemporaryDirectory(prefix='desktop-menu-local-') as temporary:
+    current = {'hip_dir': None}
+    context = SimpleNamespace(hip_file_identity=lambda: current)
+    with patch.dict(sys.modules, {'dsh_context': context}), \
+         patch.object(launcher, '_FALLBACK_WORKSPACE', temporary), \
+         patch.object(launcher, '_UNSAVED_WORKSPACE', None):
+        first = launcher._hip_dir()
+        assert Path(first).parent == Path(temporary)
+        assert launcher._hip_dir() == first
+        current['hip_dir'] = str(Path(temporary) / 'named')
+        assert launcher._hip_dir() == current['hip_dir']
+        current['hip_dir'] = None
+        assert launcher._hip_dir() != first
 
-# Historical diagnostic PIDs are not ownership. Reused PIDs, a different data
-# home and a listener that changes during inspection must not block startup.
-with tempfile.TemporaryDirectory(prefix='dsh-legacy-preflight-') as temporary:
-    marker = Path(temporary) / 'runtime.json'
-    home = str(Path(temporary) / 'home')
-    def check_legacy():
-        dsh_workbench.reject_legacy_frontend(marker, home=home, cli_roots=[temporary],
-            port=3081, listener_pid=lambda port: os.getpid())
-    check_legacy()
-    for damaged in ('{damaged', '[]'):
-        marker.write_text(damaged, encoding='utf-8')
-        check_legacy()
-    old = {'pid': os.getpid(), 'source': 'cached-cli', 'startedAt': '2026-10-07T00:00:00+0800'}
-    marker.write_text(json.dumps(old), encoding='utf-8')
-    before = marker.read_bytes()
-    # Real OS identity/command lookup, even with a matching listener PID: this
-    # Python/hython process cannot be identified as a DSH Host or terminated.
-    with patch.object(dsh_managed_runtime, 'stop_owned', side_effect=AssertionError('preflight stopped a process')), \
-         patch.object(dsh_managed_runtime, 'stop_verified_frontend', side_effect=AssertionError('preflight force-repaired')):
-        check_legacy()
-    assert marker.read_bytes() == before
-    for update in ({'processStarted': 'old-native-birth'}, {'home': str(Path(temporary) / 'other-home')}):
-        marker.write_text(json.dumps({**old, **update}), encoding='utf-8')
-        with patch.object(dsh_workbench, '_process_started', return_value='current-native-birth'), \
-             patch.object(dsh_managed_runtime, 'inspect_frontend', side_effect=AssertionError('stale identity was inspected')):
-            check_legacy()
-    current = {**old, 'processStarted': 'current-native-birth', 'home': home, 'frontendPort': 3081}
-    marker.write_text(json.dumps(current), encoding='utf-8')
-    with patch.object(dsh_workbench, '_process_started', side_effect=['current-native-birth', 'successor-birth']), \
-         patch.object(dsh_managed_runtime, 'inspect_frontend', return_value={'pid': os.getpid()}):
-        check_legacy()
-    with patch.object(dsh_workbench, '_process_started', return_value='current-native-birth'), \
-         patch.object(dsh_managed_runtime, 'inspect_frontend', return_value={'pid': os.getpid()}):
-        try:
-            check_legacy()
-        except RuntimeError as error:
-            assert '旧版内嵌工作区后台仍在运行' in str(error)
-        else:
-            raise AssertionError('confirmed current legacy Host was accepted')
-    # The standalone shortcut consumes the same historical-record policy.
-    marker.rename(Path(temporary) / '.dsh-runtime.json')
-    (Path(temporary) / '.dsh-runtime.json').write_text(json.dumps(old), encoding='utf-8')
-    with patch.dict(os.environ, {'DSH_HOME': home, 'DSH_HOUDINI_DSH_BIN': str(Path(temporary) / 'bin.js')}), \
-         patch.object(dsh_workbench_start, 'installation', return_value={'hfs': temporary, 'python': sys.executable}), \
-         patch.object(dsh_workbench_start.shutil, 'which', return_value='node.exe'), \
-         patch.object(dsh_workbench_start, 'ensure', return_value={'record': {'pid': 123}}) as ensure, \
-         patch.object(dsh_workbench_start, 'control') as control:
-        dsh_workbench_start.launch(temporary, source=temporary)
-    assert ensure.call_args.args[0]['home'] == home
-    control.assert_called_once_with({'pid': 123}, 'show')
+calls = []
+shortcut = SimpleNamespace(open_workspace=lambda actual, **kwargs: calls.append((actual, kwargs)))
+with patch.dict(sys.modules, {'dsh_workbench_client': shortcut}):
+    launcher.open_workspace()
+    launcher.repair_current_runtime()
+    launcher.launch()
+assert [kwargs for actual, kwargs in calls] == [{}, {'reload': True}, {}]
+assert all(actual is launcher for actual, kwargs in calls)
 
-# New diagnostics preserve the native process birth, actual data home and port;
-# readers can reject a stale PID before inspecting another program.
-with tempfile.TemporaryDirectory(prefix='dsh-frontend-identity-') as temporary:
-    marker = Path(temporary) / 'runtime.json'
-    with patch.object(dsh_launcher, 'FRONTEND_RUNTIME_STATE', str(marker)), \
-         patch.dict(os.environ, {'DSH_HOME': temporary}):
-        dsh_launcher._write_frontend_runtime_state(os.getpid())
-    record = json.loads(marker.read_text(encoding='utf-8'))
-    assert record['processStarted'] == dsh_workbench._process_started(os.getpid())
-    assert record['home'] == os.path.realpath(temporary)
-    assert record['frontendPort'] == dsh_launcher.FRONTEND_PORT
-
-# A named network HIP is already a native GUI fact. Opening its workspace must
-# reach the worker even when every filesystem probe would block on the server.
-for network_hip in ('//server/share/项目 空格/scene.hip', '//server/share/scene.hip',
-                    r'\\server\share\项目 空格\scene.hip', 'Z:/项目 空格/scene.hip'):
-    fake_hou = types.SimpleNamespace(isUIAvailable=lambda: True,
-        hipFile=types.SimpleNamespace(path=lambda: network_hip, isNewFile=lambda: False))
-    with patch.object(dsh_context, 'hou', fake_hou), \
-         patch.object(dsh_launcher, '_UNSAVED_WORKSPACE', 'old scratch'), \
-         patch.object(os.path, 'isfile', side_effect=AssertionError('GUI probed HIP existence')), \
-         patch.object(os.path, 'realpath', side_effect=AssertionError('GUI resolved a network path')):
-        assert dsh_launcher._hip_dir() == os.path.dirname(network_hip)
-        assert dsh_launcher._UNSAVED_WORKSPACE is None
-
-with patch('dsh_executor_registry.is_shared_executor', return_value=False), \
-     patch.object(dsh_launcher.dsh_managed_runtime, 'has_owned_frontend', return_value=False), \
-     patch.object(dsh_launcher, 'open_workspace') as open_desktop, \
-     patch.object(dsh_launcher, 'repair_current_runtime', side_effect=AssertionError('fresh repair must not start a legacy Host')):
-    dsh_launcher.launch()
-    open_desktop.assert_called_once_with()
-
-# Opening diagnostics during startup can reload the launcher implementation.
-# The live preflight/worker lifetime and its UI references must survive it.
-original_tracking = (dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES,
-                     dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP)
-try:
-    pending, dispatches, active = {"dialog": object()}, [object()], {"canceled": False}
-    dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES = pending, dispatches
-    dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP = True, active
-    importlib.reload(dsh_launcher)
-    assert dsh_launcher._PENDING is pending and dsh_launcher._MAIN_DISPATCHES is dispatches
-    assert dsh_launcher._SERVICE_PREFLIGHT_ACTIVE and dsh_launcher._ACTIVE_STARTUP is active
-finally:
-    (dsh_launcher._PENDING, dsh_launcher._MAIN_DISPATCHES,
-     dsh_launcher._SERVICE_PREFLIGHT_ACTIVE, dsh_launcher._ACTIVE_STARTUP) = original_tracking
-
-# Unsaved scenes must never reopen the last saved project. Their scratch
-# workspace remains stable until a named project is selected in this process.
-with tempfile.TemporaryDirectory(prefix='dsh-unsaved-workspace-') as temporary:
-    current = {'path': str(Path(temporary) / 'untitled.hiplc'), 'new': True}
-    hip_file = types.SimpleNamespace(path=lambda: current['path'], isNewFile=lambda: current['new'])
-    fake_hou = types.SimpleNamespace(hipFile=hip_file, isUIAvailable=lambda: True)
-    with patch.object(dsh_launcher, 'hou', fake_hou), patch.object(dsh_context, 'hou', fake_hou), \
-         patch.object(dsh_launcher, '_FALLBACK_WORKSPACE', str(Path(temporary) / 'workspaces')), \
-         patch.object(dsh_launcher, '_UNSAVED_WORKSPACE', None):
-        first = dsh_launcher._hip_dir()
-        assert Path(first).is_dir() and Path(first).parent == Path(temporary) / 'workspaces'
-        assert first != str(Path(current['path']).parent)
-        assert dsh_launcher._hip_dir() == first
-        # Distinct default extensions and even an unrelated existing default
-        # filename do not override the authoritative GUI new-file flag.
-        for suffix in ('.hip', '.hiplc', '.hipnc'):
-            current['path'] = str(Path(temporary) / ('untitled' + suffix))
-            Path(current['path']).touch()
-            assert dsh_launcher._hip_dir() == first
-            assert dsh_context.hip_file_state()['hip_dir'] is None
-        # A saved file named untitled is still a real project in the GUI.
-        current['new'] = False
-        assert dsh_launcher._hip_dir() == temporary
-        assert dsh_launcher._UNSAVED_WORKSPACE is None
-        current['path'] = str(Path(temporary) / 'other-project' / 'saved.hip')
-        assert dsh_launcher._hip_dir() == str(Path(temporary) / 'other-project')
-        current.update(path=str(Path(temporary) / 'untitled.hip'), new=True)
-        second = dsh_launcher._hip_dir()
-        assert second != first and Path(first).is_dir()
-
-
-# Preflight and the worker are one startup lifetime. Repeated menu actions
-# select the latest HIP intent rather than spawn a second frontend.
-callbacks = []
-with patch.object(dsh_launcher, '_dispatch_service_preflight', side_effect=callbacks.append), \
-     patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\before-preflight') as current_workspace, \
-     patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as delayed_open, \
-     patch.object(dsh_launcher, '_report'):
-    dsh_launcher.open_embedded_workspace()
-    current_workspace.return_value = r'E:\changed-during-preflight'
-    callbacks[0]({'frontend_online': True, 'bridge_online': True}, None)
-    delayed_open.assert_called_once_with(r'E:\changed-during-preflight')
-
-worker_states = []
-def startup_fixture(state):
-    worker_states.append(state)
-    with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test51'):
-        dsh_launcher.open_embedded_workspace()
-        dsh_launcher.open_embedded_workspace()
-    state.update(result='ready', detail='fixture ready')
-
-with patch.object(dsh_launcher, '_hip_dir', return_value=r'E:\test49'), \
-     patch.object(dsh_launcher, '_service_preflight', return_value={'frontend_online': False, 'bridge_online': True}), \
-     patch.object(dsh_launcher.hou, 'isUIAvailable', return_value=False, create=True), \
-     patch.object(dsh_launcher, '_start_and_wait_frontend', side_effect=startup_fixture), \
-     patch.object(dsh_launcher, 'open_ui', return_value='fixture selected') as startup_open, \
-     patch.object(dsh_launcher, '_report'):
-    dsh_launcher.open_embedded_workspace()
-    assert len(worker_states) == 1
-    startup_open.assert_called_once_with(r'E:\test51', force_reload=True)
-    assert dsh_launcher._ACTIVE_STARTUP is None
-    assert dsh_launcher._SERVICE_PREFLIGHT_ACTIVE is False
-
-# Closing the dialog is a cancellation intent. The same startup stays active
-# until its worker exits, so its dependency/restart stages cannot race a retry.
-canceled_state = {'canceled': True, 'worker_done': False}
-with patch.object(dsh_launcher, '_ACTIVE_STARTUP', canceled_state):
-    dsh_launcher._finish_startup(canceled_state)
-    assert dsh_launcher._ACTIVE_STARTUP is canceled_state
-    canceled_state['worker_done'] = True
-    dsh_launcher._finish_startup(canceled_state)
-    assert dsh_launcher._ACTIVE_STARTUP is None
-
-
-# Startup checks one read-only native RPC. Session creation, preset selection and
-# archive handling belong to the client navigation tests, not a Python mirror.
-with patch.object(dsh_launcher, "_dsh_rpc_wire", return_value={"items": []}) as rpc:
-    dsh_launcher._check_host_ready()
-    rpc.assert_called_once_with("session/list", {"args": {"_request": {}}})
-for detail in ("failed over HTTP 404: not found", "failed over HTTP 503: unavailable",
-               "failed: gateway/bad-request: invalid request", "transport failed: offline"):
-    failure = RuntimeError("DSH RPC session/list " + detail)
-    with patch.object(dsh_launcher, "_dsh_rpc_wire", side_effect=failure) as rpc:
-        try:
-            dsh_launcher._check_host_ready()
-        except RuntimeError as exc:
-            assert exc is failure
-        else:
-            raise AssertionError("RPC failure was swallowed")
-        assert rpc.call_count == 1
-for invalid_items in (None, {}, "unknown"):
-    with patch.object(dsh_launcher, "_dsh_rpc_wire", return_value={"items": invalid_items}):
-        try:
-            dsh_launcher._check_host_ready()
-        except RuntimeError as exc:
-            assert "session/list returned invalid items" in str(exc)
-        else:
-            raise AssertionError("invalid readiness response was accepted")
-
-
-# Raising a healthy same-HIP page performs no auth, RPC or browser reload.
-shown = []
-webview = types.ModuleType('dsh_webview')
-webview.raise_workspace = lambda path: True
-webview.show_webview = lambda **kwargs: shown.append(kwargs) or "shown"
-with patch.dict(sys.modules, {"dsh_webview": webview}), \
-     patch.object(dsh_launcher._DSH_WEB_SESSION, "launch_url", side_effect=AssertionError("same-page auth")), \
-     patch.object(dsh_launcher, "_dsh_rpc_wire", side_effect=AssertionError("same-page session IO")):
-    assert dsh_launcher.open_ui(r"E:\fixture") == "Houdini workspace selection requested"
-assert shown == []
-with patch.dict(sys.modules, {"dsh_webview": webview}), \
-     patch.object(dsh_launcher._DSH_WEB_SESSION, "launch_url", return_value="fixture-auth"):
-    dsh_launcher.open_ui(r"E:\fixture", force_reload=True)
-    webview.raise_workspace = lambda path: False
-    dsh_launcher.open_ui(r"E:\different")
-assert shown == [
-    {"workspace_dir": r"E:\fixture", "authenticated_url": "fixture-auth", "force_reload": True},
-    {"workspace_dir": r"E:\different", "authenticated_url": "fixture-auth", "force_reload": False},
-]
-
-# The normal menu path only opens an existing UI; presets are bundle declarations.
-with patch.object(dsh_launcher, "_hip_dir", return_value=r"E:\fixture"), \
-     patch.object(dsh_launcher, "_dispatch_service_preflight", side_effect=lambda callback: callback({
-         "frontend_online": True, "bridge_online": True}, None)), \
-     patch.object(dsh_launcher, "_report"), \
-     patch.object(dsh_launcher, "open_ui", return_value="raised") as opened:
-    dsh_launcher.open_embedded_workspace()
-    opened.assert_called_once_with(r"E:\fixture")
-
-
-# Real module resolution is the one dependency check. No restoration from a
-# previous package manager's .ignored tree, no npm for syntax/runtime errors.
-with patch.object(dsh_launcher, "_MANAGED", None), \
-     patch.object(dsh_launcher.shutil, "move", side_effect=AssertionError("legacy package move")), \
-     patch.object(dsh_launcher, "_append_dependency_failure"):
-    with patch.object(dsh_launcher, "_plugin_runtime_probe", return_value=(True, "")), \
-         patch.object(dsh_launcher.subprocess, "run", side_effect=AssertionError("unnecessary npm")):
-        assert dsh_launcher.ensure_dependencies() == "dependencies ok"
-    with patch.object(dsh_launcher, "_plugin_runtime_probe", return_value=(False, "SyntaxError: fixture")), \
-         patch.object(dsh_launcher.subprocess, "run", side_effect=AssertionError("npm cannot repair code")):
-        assert "FAILED" in dsh_launcher.ensure_dependencies()
-    with patch.object(dsh_launcher, "_plugin_runtime_probe", side_effect=[(False, "ERR_MODULE_NOT_FOUND"), (True, "")]), \
-         patch.object(dsh_launcher.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")) as install:
-        assert dsh_launcher.ensure_dependencies() == "dependencies restored"
-        assert install.call_count == 1 and install.call_args.args[0].startswith("npm install ")
-    with patch.object(dsh_launcher, "_MANAGED", {"fixture": True}), \
-         patch.object(dsh_launcher, "_plugin_runtime_probe", return_value=(False, "ERR_MODULE_NOT_FOUND")), \
-         patch.object(dsh_launcher.subprocess, "run", side_effect=AssertionError("managed npm")):
-        assert "managed dependency check FAILED" in dsh_launcher.ensure_dependencies()
-
-
-# Unknown listeners are conflicts, never permission to kill or reuse them.
-with patch.object(dsh_launcher, "_port_open", return_value=True), \
-     patch.object(dsh_launcher, "_port_pid", return_value=os.getpid()), \
-     patch.object(dsh_launcher.dsh_managed_runtime, "owns_pid", return_value=True), \
-     patch.object(dsh_launcher.dsh_managed_runtime, "stop_owned", side_effect=AssertionError("preflight must not stop processes")):
-    assert dsh_launcher._service_preflight() == {"frontend_online": True, "bridge_online": True}
-
-    for unknown_pid in (os.getpid() + 100, None):
-        with patch.object(dsh_launcher, "_port_pid", return_value=unknown_pid):
-            try:
-                dsh_launcher._service_preflight()
-            except RuntimeError as exc:
-                assert "bridge port conflict" in str(exc)
-                if unknown_pid is None:
-                    assert '未能确认它属于哪个窗口' in str(exc)
-            else:
-                raise AssertionError("another or unidentified Houdini must not be reused")
-
-    with patch.object(dsh_launcher.dsh_managed_runtime, "owns_pid", return_value=False):
-        for operation in (dsh_launcher._service_preflight, dsh_launcher.restart_frontend,
-                          dsh_launcher.start_frontend):
-            try:
-                operation()
-            except RuntimeError as exc:
-                assert "frontend port conflict" in str(exc)
-            else:
-                raise AssertionError("an unrelated frontend listener was reused or stopped")
-
-# The real menu dispatch must surface conflicts before syncing/restarting anything.
-for service in ("frontend", "bridge"):
-    reports = []
-    failure = RuntimeError(f"{service} port conflict: no external process was stopped")
-    with patch.object(dsh_launcher, "_hip_dir", return_value=r"E:\fixture"), \
-         patch.object(dsh_launcher, "_service_preflight", side_effect=failure), \
-         patch.object(dsh_launcher, "_report", side_effect=reports.append), \
-         patch.object(dsh_launcher, "restart_bridge", side_effect=AssertionError("conflict restarted bridge")), \
-         patch.object(dsh_launcher, "open_ui_when_ready", side_effect=AssertionError("conflict started frontend")), \
-         patch.object(dsh_launcher, "open_ui", side_effect=AssertionError("conflict opened frontend")):
-        dsh_launcher.repair_current_runtime()
-        dsh_launcher.open_embedded_workspace()
-    assert len(reports) == 2 and all(str(failure) in message for message in reports), reports
-
-with patch.object(dsh_launcher.dsh_managed_runtime, "stop_owned", return_value=False), \
-     patch.object(dsh_launcher, "_clear_frontend_runtime_state", side_effect=AssertionError("unowned marker removed")):
-    assert dsh_launcher._terminate_pending_frontend() is False
-
-# UI cancellation captures its own Popen before queuing work, not the mutable
-# _PENDING global. No process yet means flag cancellation without a stop request.
-scheduled = []
-class DelayedThread:
-    def __init__(self, *, target, kwargs, daemon):
-        self.target, self.kwargs = target, kwargs
-    def start(self):
-        scheduled.append((self.target, self.kwargs))
-
-old_process, newer_process = object(), object()
-with patch.object(dsh_launcher.threading, "Thread", DelayedThread), \
-     patch.object(dsh_launcher, "_terminate_pending_frontend") as terminate, \
-     patch.dict(dsh_launcher._PENDING, {}, clear=True):
-    early = {}
-    dsh_launcher._cancel_startup(early)
-    assert early["canceled"] and scheduled == []
-    prior = {"proc": old_process}
-    dsh_launcher._cancel_startup(prior)
-    dsh_launcher._cancel_startup(prior)
-    dsh_launcher._PENDING["proc"] = newer_process
-    for target, kwargs in scheduled:
-        target(**kwargs)
-    assert terminate.call_count == 2
-    assert all(call.kwargs == {"expected_process": old_process} for call in terminate.call_args_list)
-
-# Cancellation during dependency/profile work prevents a later spawn; if it
-# arrives while spawn is publishing its handle, the worker stops that attempt.
-for cancel_stage in ("dependencies", "profile", "spawn"):
-    state = {"canceled": False, "result": None, "detail": "", "frontend_cwd": r"E:\fixture"}
-    calls = []
-    process = object()
-    def stage(name):
-        calls.append(name)
-        if cancel_stage == name:
-            dsh_launcher._cancel_startup(state)
-        if name == "spawn":
-            dsh_launcher._PENDING["proc"] = process
-            state["proc"] = process
-        return name + " ok"
-    with patch.dict(dsh_launcher._PENDING, {}, clear=True), \
-         patch.object(dsh_launcher, "ensure_dependencies", side_effect=lambda callback: stage("dependencies")), \
-         patch.object(dsh_launcher, "restart_frontend", side_effect=lambda: stage("stop previous")), \
-         patch.object(dsh_launcher, "sync_profile_plugins", side_effect=lambda callback: stage("profile")), \
-         patch.object(dsh_launcher, "start_frontend", side_effect=lambda cwd, attempt: stage("spawn")), \
-         patch.object(dsh_launcher, "_frontend_online", side_effect=AssertionError("cancelled startup polled")), \
-         patch.object(dsh_launcher, "_terminate_pending_frontend") as terminate:
-        dsh_launcher._start_and_wait_frontend(state)
-    assert state["canceled"] and not state.get("error"), state
-    if cancel_stage == "spawn":
-        terminate.assert_called_once_with(expected_process=process)
+# Issue #3: a newer registry imported an older cached dsh_deployment without
+# _process_started. Refuse that generation before any Bridge reload/import.
+old_state = SimpleNamespace(__file__=str(ROOT / 'houdini/python3.11libs/dsh_deployment.py'),
+                            FileLease=lambda *args: None, atomic_json=lambda *args: None)
+with patch.dict(sys.modules, {'dsh_deployment': old_state}):
+    try:
+        launcher.require_local_modules()
+    except RuntimeError as error:
+        assert '重开' in str(error) and '旧版连接模块' in str(error)
     else:
-        terminate.assert_not_called()
-        assert "spawn" not in calls
+        raise AssertionError('mixed helper APIs were accepted')
+with patch.dict(sys.modules, {'dsh_deployment': SimpleNamespace(__file__=str(ROOT / 'tools/out/old-helper/dsh_deployment.py'))}):
+    try:
+        launcher.require_local_modules()
+    except RuntimeError as error:
+        assert '另一版本' in str(error)
+    else:
+        raise AssertionError('foreign helper path was accepted')
 
-# Exact publication race: GUI cleanup clears _PENDING and cancels while the
-# process creator is returning. start_frontend must publish directly to state.
-with tempfile.TemporaryDirectory(prefix="dsh-cancel-publication-") as temporary:
-    state = {"canceled": False, "result": None, "detail": "", "frontend_cwd": temporary}
-    process = object()
-    def spawn_before_gui_cleanup(*args, **kwargs):
-        assert kwargs['env']['DSH_HOUDINI_EXECUTOR_ID'] == dsh_launcher.dsh_managed_runtime.executor_identity()
-        dsh_launcher._PENDING.clear()
-        dsh_launcher._cancel_startup(state)
-        return process
-    with patch.dict(dsh_launcher._PENDING, {}, clear=True), \
-         patch.object(dsh_launcher, "FRONTEND_LOG", str(Path(temporary) / "frontend.log")), \
-         patch.object(dsh_launcher, "_frontend_online", return_value=False), \
-         patch.object(dsh_launcher, "_frontend_command", return_value=(
-             [dsh_launcher.NODE, str(Path(temporary) / "fixture.js"), "web", "--port", "3081", "--no-open"],
-             False, "fixture-cli", 60)), \
-         patch.object(dsh_launcher._DSH_WEB_SESSION, "reset"), \
-         patch.object(dsh_launcher, "ensure_dependencies", return_value="dependencies ok"), \
-         patch.object(dsh_launcher, "restart_frontend", return_value="frontend stopped"), \
-         patch.object(dsh_launcher, "sync_profile_plugins", return_value="profile ok"), \
-         patch.object(dsh_launcher.dsh_managed_runtime, "spawn_frontend", side_effect=spawn_before_gui_cleanup), \
-         patch.object(dsh_launcher, "_terminate_pending_frontend") as terminate:
-        dsh_launcher._start_and_wait_frontend(state)
-    assert state["proc"] is process and state["canceled"] and not state.get("error"), state
-    terminate.assert_called_once_with(expected_process=process)
+busy = [True]
+bridge = SimpleNamespace(
+    _request_registry=SimpleNamespace(active_count=lambda: 1 if busy[0] else 0),
+    _job_activity=lambda: {'activeJobs': 0}, _work_queue=queue.Queue(),
+    stop=lambda: calls.append('stop'), start=lambda port, host: SimpleNamespace(server_port=45678))
+loaded = []
+with patch.dict(sys.modules, {'dsh_bridge': bridge}), \
+     patch.object(launcher.importlib, 'reload', lambda module: module), \
+     patch.object(launcher.importlib, 'import_module', lambda name: loaded.append(name) or SimpleNamespace()):
+    try:
+        launcher.restart_bridge(port=0)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('Bridge was reloaded while a request was active')
+    assert not loaded and 'stop' not in calls
+    busy[0] = False
+    assert '45678' in launcher.restart_bridge(port=0)
+assert 'dsh_curve_paths' in loaded, 'preserve current Houdini helper reload coverage'
+assert loaded[-1] == 'dsh_execution'
 
+# Helper selection is a maintenance action for the next process. Disk/process
+# work stays on a worker, cancellation performs no selection, and no module reloads.
+with tempfile.TemporaryDirectory(prefix='helper-selection-') as temporary:
+    folder = Path(temporary)
+    (folder / 'installer').mkdir()
+    (folder / 'installer/install.ps1').write_text('# trusted fixture', encoding='utf-8')
+    lane, timers, executions, displays = ['main'], [], [], []
+    rows = [{'id': 'a' * 16, 'version': 'first', 'path': str(folder), 'valid': True},
+            {'id': 'b' * 16, 'version': 'second', 'path': str(folder / 'second'), 'valid': True}]
 
-print("launcher preflight regression passed")
+    class Thread:
+        def __init__(self, target, **kwargs): self.target = target
+        def start(self):
+            lane[0] = 'worker'
+            try: self.target()
+            finally: lane[0] = 'main'
+
+    class Timer:
+        def __init__(self, *args): self.timeout = self; timers.append(self)
+        def connect(self, callback): self.callback = callback
+        def start(self, interval): pass
+        def stop(self): pass
+
+    def process(arguments, **kwargs):
+        import json
+        assert lane[0] == 'worker'
+        executions.append(arguments)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(rows) if '-ListHelpers' in arguments else '', stderr='')
+
+    qt = ModuleType('hutil.Qt')
+    qt.QtCore = SimpleNamespace(QTimer=Timer)
+    hou = SimpleNamespace(qt=SimpleNamespace(mainWindow=lambda: None), ui=SimpleNamespace(
+        selectFromList=lambda *args, **kwargs: (), displayMessage=lambda *args, **kwargs: displays.append(args)))
+    with patch.object(launcher, '_PROJECT_ROOT', str(folder)), patch.object(launcher, 'hou', hou), \
+         patch.dict(sys.modules, {'hutil': ModuleType('hutil'), 'hutil.Qt': qt}), \
+         patch.dict(os.environ, {'DSH_HOUDINI_INSTALL_ROOT': str(folder / 'installation'), 'SystemRoot': 'C:/Windows'}), \
+         patch('threading.Thread', Thread), patch('subprocess.run', process):
+        launcher.select_helper_version()
+        timers[-1].callback()
+        assert launcher._HELPER_SWITCH_TIMER is None and len(executions) == 1
+        hou.ui.selectFromList = lambda *args, **kwargs: (1,)
+        launcher.select_helper_version()
+        timers[-1].callback()
+        timers[-1].callback()
+    assert executions[-1][-2:] == ['-SelectHelper', 'b' * 16]
+    assert len(displays) == 1 and '重开' in displays[0][0]
+    assert launcher._HELPER_SWITCH_TIMER is None
+# Component removal is an explicit, local, next-start action. Confirmation and
+# completion stay on the native thread; file discovery and the bounded PS call
+# run only on the worker. The current Bridge/Houdini/Host are never stopped.
+with tempfile.TemporaryDirectory(prefix='helper-removal-') as temporary:
+    installation = Path(temporary) / 'installation'
+    helper = installation / 'helpers' / ('c' * 16)
+    (helper / 'installer').mkdir(parents=True)
+    script = helper / 'installer/uninstall.ps1'
+    script.write_text('# installed helper fixture', encoding='utf-8')
+    source_checkout = installation.parent / 'source-checkout'
+    (source_checkout / 'installer').mkdir(parents=True)
+    (source_checkout / 'installer/uninstall.ps1').write_text('# source script must not be executed', encoding='utf-8')
+    lane, timers, executions, displays, failures = ['main'], [], [], [], []
+    confirm, fail = [1], [False]
+
+    class Timer:
+        def __init__(self, *args):
+            self.timeout = self
+            self.stopped = self.deleted = False
+            timers.append(self)
+        def connect(self, callback): self.callback = callback
+        def start(self, interval): assert lane[0] == 'main'
+        def stop(self): self.stopped = True
+        def deleteLater(self): self.deleted = True
+
+    def display(message, **kwargs):
+        assert lane[0] == 'main'
+        displays.append((message, kwargs))
+        return confirm[0] if kwargs.get('buttons') == ('移除组件', '取消') else None
+
+    def process(arguments, **kwargs):
+        assert lane[0] == 'worker'
+        executions.append(arguments)
+        assert arguments[arguments.index('-File') + 1] == str(script)
+        assert arguments[arguments.index('-Root') + 1] == str(installation)
+        assert kwargs['timeout'] == 30 and kwargs['encoding'] == 'utf-8'
+        return SimpleNamespace(returncode=1 if fail[0] else 0,
+                               stdout='Reversible unregister report: fixture-report', stderr='fixture failure' if fail[0] else '')
+
+    original_is_file, original_resolve = Path.is_file, Path.resolve
+    def worker_file(path):
+        assert lane[0] == 'worker', 'maintenance file checks must not block the GUI'
+        return original_is_file(path)
+    def worker_resolve(path, **kwargs):
+        assert lane[0] == 'worker', 'maintenance path resolution must not block the GUI'
+        return original_resolve(path, **kwargs)
+    def failure(error):
+        assert lane[0] == 'main'
+        failures.append(str(error))
+
+    qt.QtCore = SimpleNamespace(QTimer=Timer)
+    hou = SimpleNamespace(qt=SimpleNamespace(mainWindow=lambda: None),
+                          ui=SimpleNamespace(displayMessage=display))
+    with patch.object(launcher, '_PROJECT_ROOT', str(helper)), patch.object(launcher, 'hou', hou), \
+         patch.object(launcher, '_startup_failure', failure), \
+         patch.dict(sys.modules, {'hutil': ModuleType('hutil'), 'hutil.Qt': qt}), \
+         patch.dict(os.environ, {'DSH_HOUDINI_INSTALL_ROOT': str(installation), 'SystemRoot': 'C:/Windows'}), \
+         patch('threading.Thread', Thread), patch('subprocess.run', process), \
+         patch.object(Path, 'is_file', worker_file), patch.object(Path, 'resolve', worker_resolve), \
+         patch.object(launcher, 'restart_bridge', side_effect=AssertionError('removal must not restart Bridge')):
+        launcher.remove_local_components()
+        assert not executions and not timers, 'cancel must not create a worker or timer'
+        confirm[0] = 0
+        launcher.remove_local_components()
+        assert len(executions) == 1 and launcher._HELPER_SWITCH_TIMER is timers[-1]
+        assert len(displays) == 2, 'worker may not display completion directly'
+        launcher.remove_local_components()
+        assert len(executions) == 1 and len(displays) == 2, 'one local maintenance action at a time'
+        timer = timers[-1]
+        timer.callback()
+        assert timer.stopped and timer.deleted and launcher._HELPER_SWITCH_TIMER is None
+        assert '解除登记' in displays[-1][0] and 'fixture-report' in displays[-1][1]['details']
+        timer.callback()
+        assert len(displays) == 3, 'retired timer cannot report completion twice'
+        fail[0] = True
+        launcher.remove_local_components()
+        timers[-1].callback()
+        assert failures == ['fixture failure'] and launcher._HELPER_SWITCH_TIMER is None
+        with patch.object(launcher, '_PROJECT_ROOT', str(source_checkout)):
+            launcher.remove_local_components()
+            timers[-1].callback()
+        assert len(executions) == 2 and len(failures) == 2, 'uninstall cannot execute a source or other installation script'
+        assert '不可变 helper' in failures[-1]
+        assert launcher._HELPER_SWITCH_TIMER is None
+
+# The existing ASCII native menu opens this Chinese information dialog; its new
+# removal button routes to the same explicit action without building another UI.
+with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *args, **kwargs: 3), create=True), \
+     patch.object(launcher, 'remove_local_components') as remove:
+    launcher.show_plugin_info()
+    remove.assert_called_once_with()
+print('Desktop menu routing, idle-only repair, helper version selection and confirmed worker-only component removal passed')

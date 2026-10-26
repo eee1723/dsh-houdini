@@ -12,7 +12,6 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 import dsh_support_report as reports
-import dsh_downloads
 
 spec = importlib.util.spec_from_file_location('inspect_support', ROOT / 'tools/inspect-support-report.py')
 inspector = importlib.util.module_from_spec(spec)
@@ -119,7 +118,4 @@ with tempfile.TemporaryDirectory(prefix='workbench-support-') as temporary:
     archive_path.write_bytes(base64.b64decode(report['archiveBase64']))
     inspector.inspect_report(archive_path)
 
-for name in ['../file.zip','C:\\secret\\file.zip','<script>.zip','CON','..','a:b.zip']:
-    safe = dsh_downloads.safe_filename(name)
-    assert '/' not in safe and '\\' not in safe and ':' not in safe and '<' not in safe and safe not in ('..','CON')
 print('support report: exact preview/archive, secrets, escaped JSON, private keys, opt-in, damaged/missing files, truncation, tamper and hostile ZIP passed')

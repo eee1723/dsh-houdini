@@ -1,17 +1,14 @@
-"""Exact DSH runtime selection shared by installation, startup and repair.
+"""Official DSH compatibility metadata and isolated development fixture lookup.
 
-``dsh-runtime-compatibility.json`` names the supported runtime and records
-remaining live checks. Manifest admission describes the source combination;
-it does not claim a running Houdini has loaded it.
+Desktop owns its runtime and update lifecycle. These helpers inspect exact
+package metadata; they never patch DSH, install it, or activate a user profile.
 """
-
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
-import hashlib
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = PROJECT_ROOT / "dsh-runtime-compatibility.json"
@@ -23,21 +20,18 @@ _EXACT_VERSION = re.compile(
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != 1:
+    if not isinstance(data, dict) or data.get("schemaVersion") != 1:
         raise RuntimeError(f"unsupported DSH compatibility schema: {path}")
-    preferred = data.get("preferredVersion")
-    releases = data.get("releases")
-    if not isinstance(preferred, str) or not preferred:
-        raise RuntimeError(f"preferredVersion must be a non-empty string: {path}")
+    preferred, releases = data.get("preferredVersion"), data.get("releases")
+    if not isinstance(preferred, str) or not _EXACT_VERSION.fullmatch(preferred):
+        raise RuntimeError(f"preferredVersion must be an exact package version: {path}")
     if not isinstance(releases, list) or not releases:
         raise RuntimeError(f"releases must be a non-empty list: {path}")
     versions = []
     for release in releases:
-        if not isinstance(release, dict):
-            raise RuntimeError(f"invalid DSH compatibility release: {release!r}")
-        version = release.get("dshVersion")
-        if not isinstance(version, str) or not version:
-            raise RuntimeError(f"compatibility release has no dshVersion: {release!r}")
+        version = release.get("dshVersion") if isinstance(release, dict) else None
+        if not isinstance(version, str) or not _EXACT_VERSION.fullmatch(version):
+            raise RuntimeError(f"compatibility release has no exact dshVersion: {release!r}")
         versions.append(version)
     if len(versions) != len(set(versions)):
         raise RuntimeError(f"duplicate DSH compatibility release: {path}")
@@ -47,95 +41,72 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
 
 
 def verified_versions(path: Path = MANIFEST_PATH) -> set[str]:
-    return {str(item["dshVersion"]) for item in load_manifest(path)["releases"]}
+    return {item["dshVersion"] for item in load_manifest(path)["releases"]}
 
 
 def preferred_version(path: Path = MANIFEST_PATH) -> str:
-    version = str(load_manifest(path)["preferredVersion"])
-    if not _EXACT_VERSION.fullmatch(version):
-        raise RuntimeError(f"preferredVersion must be an exact package version: {path}")
-    return version
+    return load_manifest(path)["preferredVersion"]
 
 
 def preferred_spec(path: Path = MANIFEST_PATH) -> str:
     return f"@deepseek-ai/dsh@{preferred_version(path)}"
 
 
-def preferred_cached_bin(cache_root: Path | str, path: Path = MANIFEST_PATH) -> Path | None:
-    """Select only this plugin's required DSH, never cache recency or npm latest.
-
-    This is a transitional source-install cache lookup, not a full dependency
-    integrity check or the future managed release store.
-    """
-    required = preferred_version(path)
-    for manifest in sorted(Path(cache_root).glob(
-        "_npx/*/node_modules/@deepseek-ai/dsh/package.json"
-    )):
-        try:
-            package = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(package, dict) or package.get("name") != "@deepseek-ai/dsh":
-            continue
-        binary = manifest.parent / "lib" / "bin.js"
-        if package.get("version") == required and binary.is_file():
-            try:
-                runtime_fix_identity(binary, path)
-            except (OSError, ValueError, RuntimeError):
-                continue
-            return binary
-    return None
-
-
-def runtime_fix_identity(binary: Path | str, path: Path = MANIFEST_PATH, *, verify_files=False) -> dict | None:
-    """Read revision metadata; only the startup worker requests full file verification."""
-    location = load_manifest(path).get('runtimeFixes')
-    if location is None:
-        return None
-    definition_path = path.parent / location
-    definition = json.loads(definition_path.read_text(encoding='utf8'))
-    expected_patch = definition['patchSha256']
-    runtime_root = Path(binary).resolve().parents[4]
-    applied = json.loads((runtime_root / '.dsh-runtime-fixes.json').read_text(encoding='utf8'))
-    if (not isinstance(applied, dict) or applied.get('schemaVersion') != 1 or applied.get('revision') != definition['revision']
-            or applied.get('dshVersion') != preferred_version(path) or applied.get('patchSha256') != expected_patch
-            or applied.get('inputs') != runtime_fix_inputs(path, definition)):
-        raise RuntimeError('DSH runtime fixes do not match this plugin source; run npm run runtime:prepare')
-    files = applied.get('files')
-    if not isinstance(files, dict) or not files:
-        raise RuntimeError('DSH runtime fix file inventory is missing')
-    required = {f"node_modules/@deepseek-ai/dsh-{package['name']}/lib/{entry}.js"
-                for package in definition['hostPackages'] for entry in package['entries']}
-    required.update(f"node_modules/@deepseek-ai/dsh-{package['name']}/{asset}"
-                    for package in definition['hostPackages'] for asset in package.get('assets', []))
-    required.update(f"node_modules/@deepseek-ai/dsh-{item['name']}/lib/client.js" for item in definition['clientPackages'])
-    for dependency in definition.get('dependencyPatches', []):
-        required.add(f"node_modules/{dependency['name']}/package.json")
-        required.update(f"node_modules/{dependency['name']}/dist/{entry}{suffix}"
-                        for entry in dependency['entries'] for suffix in ('.js', '.js.map', '.d.ts'))
-    if not required.issubset(files):
-        raise RuntimeError('DSH runtime fix inventory omits a required implementation or asset')
-    if verify_files:
-        for relative, expected in files.items():
-            target = (runtime_root / relative).resolve()
-            if not target.is_relative_to(runtime_root) or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
-                raise RuntimeError('DSH runtime fix file differs from its prepared inventory: ' + str(relative))
-    return {'revision': applied['revision'], 'patchSha256': applied['patchSha256'], 'filesVerified': verify_files}
-
-
-def runtime_fix_inputs(path: Path = MANIFEST_PATH, definition: dict | None = None) -> dict:
-    """The manifest names the same dependency/build inputs used by the Node builder."""
-    if definition is None:
-        definition = json.loads((path.parent / load_manifest(path)['runtimeFixes']).read_text(encoding='utf8'))
-    return {name: hashlib.sha256((path.parent / name).read_bytes()).hexdigest()
-            for name in definition['inputFiles']}
-
-
 def require_verified(version: str, path: Path = MANIFEST_PATH) -> None:
-    if version not in verified_versions(path):
-        raise RuntimeError(
-            f"DSH {version} is downloaded but not compatibility-verified; "
-            f"the serving runtime was not changed. Qualify it across Host RPC, "
-            "QtWebEngine, Houdini Trace, profile bundles, and workspace/session "
-            f"lifecycle, then add the exact release to {path}."
-        )
+    if not isinstance(version, str) or version not in verified_versions(path):
+        raise RuntimeError(f"DSH {version} is not declared compatible with this plugin. "
+                           "Use a compatible plugin in Desktop; its serving runtime was not changed. "
+                           f"Qualify the exact official package and Desktop integration before updating {path}.")
+
+
+def _fixture_inputs(directory: Path) -> str:
+    digest = hashlib.sha256()
+    for name in ("package.json", "package-lock.json"):
+        digest.update(name.encode("utf-8"))
+        digest.update((directory / name).read_bytes())
+    return digest.hexdigest()
+
+
+def official_runtime_identity(binary: Path | str, path: Path = MANIFEST_PATH) -> dict:
+    """Read supported package/fixture metadata, not live state or a file-integrity claim."""
+    binary = Path(binary).resolve(strict=True)
+    package = json.loads((binary.parent.parent / "package.json").read_text(encoding="utf-8"))
+    if (not binary.is_file() or binary.name != "bin.js" or binary.parent.name != "lib"
+            or not isinstance(package, dict) or package.get("name") != "@deepseek-ai/dsh"):
+        raise RuntimeError("The fixture entry is not the official dsh package bin")
+    version = package.get("version")
+    require_verified(version, path)
+    runtime = binary.parents[4]
+    if (runtime / ".dsh-runtime-fixes.json").exists():
+        raise RuntimeError("A private patched runtime is not an official Desktop compatibility fixture")
+    marker = runtime / ".dsh-official-host.json"
+    ownership = "official-package-metadata"
+    if marker.is_file():
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        if (not isinstance(record, dict) or record.get("schemaVersion") != 1 or record.get("runtimeOwnership") != "development-fixture"
+                or record.get("dshVersion") != version or record.get("inputsSha256") != _fixture_inputs(runtime)):
+            raise RuntimeError("Official Host fixture does not match its npm lock inputs; run npm run runtime:prepare")
+        ownership = "development-fixture"
+    return {"dshVersion": version, "runtimeOwnership": ownership, "binary": str(binary)}
+
+
+def preferred_cached_bin(cache_root: Path | str, path: Path = MANIFEST_PATH) -> Path | None:
+    """Find the prepared official fixture; do not choose arbitrary npx cache installs."""
+    required = preferred_version(path)
+    definition = path.parent / "deployment"
+    expected = _fixture_inputs(definition) if all((definition / name).is_file()
+                   for name in ("package.json", "package-lock.json")) else None
+    for marker in sorted(Path(cache_root).glob(f"_npx/dsh-houdini-official-{required}-*/.dsh-official-host.json")):
+        try:
+            record = json.loads(marker.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                continue
+            if expected is not None and record.get("inputsSha256") != expected:
+                continue
+            binary = marker.parent / "node_modules/@deepseek-ai/dsh/lib/bin.js"
+            identity = official_runtime_identity(binary, path)
+            if identity["dshVersion"] == required:
+                return binary
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            continue
+    return None

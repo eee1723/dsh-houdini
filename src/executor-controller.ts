@@ -3,24 +3,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import {targetMatchesRecord,type ExecutorRouter} from './executor-routing.js'
+import {targetMatchesRecord,targetSnapshot,type ExecutorRouter} from './executor-routing.js'
 import {projectedExecutorState,type TargetSnapshot} from './executor-identity-projection.js'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-workspace'
 import path from 'node:path'
-import {pruneScratchWorkspaces} from './workbench-workspaces.js'
 
 export class ExecutorController extends TypertRemoteService {
   private readonly openings=new Map<string,Promise<unknown>>()
   private unnamedSerial=0
-  constructor(ctx:Context,private readonly router:ExecutorRouter,readonly workbench=false) { super(ctx,'houdiniTargets') }
-
-  /** Host-only lifecycle; cleanup failure never changes a successful binding. */
-  async pruneEmptyWorkspaces(keep:readonly string[]=[]) {
-    if(!this.workbench)return
-    try {await pruneScratchWorkspaces(this.ctx,this.router.directory,keep)}
-    catch(error) {this.ctx.logger.warn('空工作区登记暂未清理：'+String(error))}
-  }
+  constructor(ctx:Context,private readonly router:ExecutorRouter,readonly workbench=false,readonly registry='') { super(ctx,'houdiniTargets') }
 
   private async workspaceFor(directory:string,isNew:boolean) {
     const same=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase()===path.resolve(directory).toLowerCase():path.resolve(value)===path.resolve(directory)
@@ -34,35 +26,6 @@ export class ExecutorController extends TypertRemoteService {
     return this.ctx.workspaceRegistry.create(directory,title)
   }
 
-  @Remote
-  async prepareWorkspace(input:unknown) {
-    const data=input as {path:string;isNew:boolean;onlyIfEmpty?:boolean}
-    if(!this.workbench||!data||typeof data!=='object'||!['isNew,path','isNew,onlyIfEmpty,path'].includes(Object.keys(data).sort().join(','))
-      ||typeof data.path!=='string'||data.path.length>4096||!path.isAbsolute(data.path)||typeof data.isNew!=='boolean'
-      ||data.onlyIfEmpty!==undefined&&typeof data.onlyIfEmpty!=='boolean')throw new Error('工作区准备请求无效。')
-    await this.pruneEmptyWorkspaces([data.path])
-    const existing=this.ctx.workspaceRegistry.list()[0]
-    if(data.onlyIfEmpty&&existing)return {workspaceId:existing.id}
-    const workspace=await this.workspaceFor(data.path,data.isNew)
-    return {workspaceId:workspace.id}
-  }
-
-  @Remote
-  async activity() {
-    const agents=this.ctx.agents.list()
-    const active=new Set(agents.filter(agent=>agent.status!=='idle').map(agent=>agent.id))
-    const identifiers=new Set([...agents.map(agent=>agent.id),
-      ...(this.ctx.get('workspaceRegistry')?.list().flatMap(workspace=>workspace.sessionIds)??[])])
-    await Promise.all([...identifiers].map(async sessionId=>{
-      const activity=await this.ctx.waterfall('workspace/session-activity',{sessionId},()=>Promise.resolve([]))
-      if(activity.length)active.add(sessionId)
-    }))
-    const sessions=this.ctx.get('sessions')
-    if(!sessions||!(await Promise.all(sessions.list().map(session=>sessions.flush(session)))).every(saved=>saved===true))
-      throw new Error('最近对话尚未可靠保存，未确认可以安全退出工作台。')
-    return {activeConversations:active.size,durable:true}
-  }
-
   private async agentFor(sessionId:string) {
     if(this.ctx.workspaceRegistry?.archivedSessionIds.includes(sessionId as any))throw new Error('原对话已归档，未改变其现场目标。')
     const resolved=await this.ctx.sessionController.resolveAgent(sessionId as any)
@@ -74,8 +37,8 @@ export class ExecutorController extends TypertRemoteService {
   }
 
   @Remote
-  async openWorkspace(input:unknown,signal:AbortSignal) {
-    if(!this.workbench)throw new Error('此 Host 未启用独立工作台。')
+  async openWorkspace(input:unknown,signal:AbortSignal,expectedSelectionRevision?:number,beforeCommit?:()=>void) {
+    if(!this.workbench)throw new Error('此 Host 未启用 Houdini 现场接入。')
     const data=input as Record<string,string>
     if(!data||typeof data!=='object'||!['executorId,expectedHip,registrationId,requestId','executorId,expectedHip,registrationId,requestId,sessionId',
       'bindSessionId,executorId,expectedHip,registrationId,requestId'].includes(Object.keys(data).sort().join(','))
@@ -86,11 +49,48 @@ export class ExecutorController extends TypertRemoteService {
       if(previous)await previous.catch(()=>{})
       signal.throwIfAborted()
       const record=await this.router.directory.find(data.executorId)
-      if(!record.workbench||!record.workspace_path)throw new Error('此 Houdini 尚未登记工作台现场。')
+      if(!record.workbench||!record.workspace_path)throw new Error('此 Houdini 尚未登记完整现场。请在目标 Houdini 中连接 Desktop。')
       const requested=data.sessionId??data.bindSessionId
       const key=(value:string)=>process.platform==='win32'?path.normalize(value).toLowerCase():path.normalize(value)
       if(!requested&&record.registration_id!==data.registrationId||!record.hip_path||key(record.hip_path)!==key(data.expectedHip))
         throw new Error('工程在打开期间发生变化，请从目标 Houdini 重新打开工作台。')
+      // The registered writer is an exact native Session identity. A menu
+      // reconnect may reveal that conversation, but never select a different
+      // target, adopt ownership, or infer one from the HIP directory/history.
+      if(!requested&&record.task_id&&!this.ctx.workspaceRegistry.archivedSessionIds.includes(record.task_id as any)) {
+        const resolved=await this.ctx.sessionController.resolveAgent(record.task_id as any)
+        const receiptTarget=targetSnapshot(record)
+        const requireSameReceipt=(current:typeof record)=>{
+          if(current.registration_id!==record.registration_id||current.task_id!==record.task_id
+            ||!targetMatchesRecord(receiptTarget,current)
+            ||!current.hip_path||key(current.hip_path)!==key(data.expectedHip))
+            throw new Error('工程或原对话在接入期间已变化，请从当前 Houdini 重新打开。')
+        }
+        requireSameReceipt(await this.router.directory.find(record.executor_id))
+        if(this.ctx.workspaceRegistry.archivedSessionIds.includes(record.task_id as any))
+          throw new Error('原对话在接入期间已归档，请从当前 Houdini 重新打开。')
+        if('error' in resolved) {
+          if(resolved.error.code!=='session/not-found')throw resolved.error
+        } else {
+          const agent=resolved.agent
+          const target=projectedExecutorState(this.ctx,agent.session).selectedTarget
+          if(agent.id===record.task_id&&agent.session.id===agent.id
+            &&this.ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')==='houdini'
+            &&target&&targetMatchesRecord(target,record)) {
+            const verified=await this.router.inspectSelectedTarget(target,signal)
+            requireSameReceipt(verified)
+            const current=projectedExecutorState(this.ctx,agent.session).selectedTarget
+            if(this.ctx.workspaceRegistry.archivedSessionIds.includes(agent.id)
+              ||this.ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')!=='houdini'
+              ||!current||!targetMatchesRecord(current,verified))
+              throw new Error('原对话在接入期间已改选或归档，请从当前 Houdini 重新打开。')
+            const workspace=this.ctx.workspaceRegistry.list().find(item=>item.sessionIds.includes(agent.id))
+            return {sessionId:agent.id,executorId:current.executor_id,selectedTarget:current,
+              ...(workspace?{workspaceId:workspace.id}:{})}
+          }
+        }
+      }
+      signal.throwIfAborted()
       // Only default new conversations use the selected scene's directory.
       // An explicit existing conversation keeps its native workspace and history.
       let workspace:Awaited<ReturnType<ExecutorController['workspaceFor']>>|undefined
@@ -101,7 +101,8 @@ export class ExecutorController extends TypertRemoteService {
         sessionId=created.sessionId
       }
       const agent=await this.agentFor(sessionId)
-      const selectedTarget=await this.router.selectTarget(agent,record.executor_id,data.registrationId,signal,data.expectedHip)
+      const selectedTarget=await this.router.selectTarget(agent,record.executor_id,data.registrationId,signal,data.expectedHip,false,
+        expectedSelectionRevision===undefined?undefined:{selectionRevision:expectedSelectionRevision,beforeCommit})
       const ownerWorkspace=workspace??this.ctx.workspaceRegistry.list().find(item=>item.sessionIds.includes(agent.id))
       return {sessionId:agent.id,executorId:selectedTarget.executor_id,selectedTarget,
         ...(ownerWorkspace?{workspaceId:ownerWorkspace.id}:{})}

@@ -22,51 +22,12 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 
 PACKAGE_ROOT = Path(__file__).resolve().parent  # houdini/
 PROJECT_ROOT = PACKAGE_ROOT.parent
 PYTHON_LIB = PACKAGE_ROOT / "python3.11libs"
-NPM_CACHE = PROJECT_ROOT / ".npm-cache"
-DEFAULT_DSH_SPEC = "@deepseek-ai/dsh"
 sys.path.insert(0, str(PYTHON_LIB))
-import dsh_runtime_compat
-
-
-def dsh_command_prefix() -> tuple[list[str] | str, bool]:
-    """Use the launcher's exact default release, or an explicit developer pin."""
-    node = shutil.which("node")
-    explicit = os.environ.get("DSH_HOUDINI_DSH_BIN", "").strip()
-    if explicit:
-        target = Path(explicit).expanduser().resolve()
-        if not target.is_file():
-            raise RuntimeError(f"DSH_HOUDINI_DSH_BIN does not point to a file: {target}")
-        if not node:
-            raise RuntimeError("Node.js is required to run DSH_HOUDINI_DSH_BIN")
-        return [node, str(target)], False
-
-    dsh_spec = os.environ.get("DSH_HOUDINI_DSH_SPEC", DEFAULT_DSH_SPEC).strip()
-    if not dsh_spec:
-        raise RuntimeError("DSH_HOUDINI_DSH_SPEC is empty")
-    if dsh_spec == DEFAULT_DSH_SPEC:
-        cached = dsh_runtime_compat.preferred_cached_bin(NPM_CACHE) if node else None
-        if cached is not None:
-            return [node, str(cached)], False
-        if node and dsh_runtime_compat.load_manifest().get("runtimeFixes"):
-            raise RuntimeError("配套 DSH 修复尚未准备；请先在源码目录运行 npm run runtime:prepare，再重新安装。")
-        dsh_spec = dsh_runtime_compat.preferred_spec()
-
-    npx = shutil.which("npx")
-    if not npx:
-        raise RuntimeError(
-            "Node.js/npx 未安装；无法同步完整 DSH profile。"
-            "安装 Node.js 后重跑，或显式使用 --skip-dsh-profile。"
-        )
-    if os.name == "nt":
-        return subprocess.list2cmdline([npx, "--yes", dsh_spec]), True
-    return [npx, "--yes", dsh_spec], False
 
 
 def build_package() -> dict:
@@ -108,10 +69,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packages-dir", type=Path, default=None, help="覆盖安装目标目录")
     parser.add_argument("--print", action="store_true", help="只打印生成内容，不写文件")
-    parser.add_argument(
-        "--skip-dsh-profile", action="store_true",
-        help="只安装 Houdini package，不同步 DSH web profile 依赖",
-    )
     args = parser.parse_args()
 
     package = build_package()
@@ -126,21 +83,7 @@ def main() -> int:
         out.write_text(json.dumps(package, indent=2), encoding="utf-8")
         print(f"已写入 {out}")
 
-    if not args.skip_dsh_profile:
-        sys.path.insert(0, str(PYTHON_LIB))
-        import dsh_profile_sync
-
-        prefix, use_shell = dsh_command_prefix()
-        status = dsh_profile_sync.sync_profile_plugins(
-            prefix,
-            use_shell=use_shell,
-            project_root=PROJECT_ROOT,
-            env=dict(
-                os.environ,
-                NPM_CONFIG_CACHE=str(NPM_CACHE),
-            ),
-        )
-        print(status)
+    print("仅登记 Houdini 连接插件；请在官方 DSH Desktop 安装并启用 dsh-houdini。")
     print(f"houdini 目录已烘焙：{PACKAGE_ROOT.as_posix()}")
     print("重开 Houdini 后，菜单栏应出现顶级菜单 dsh。")
     return 0

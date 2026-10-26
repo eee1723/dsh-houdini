@@ -1,6 +1,6 @@
 {
   "name": "dsh-houdini",
-  "version": "0.0.15",
+  "version": "0.1.0",
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "type": "module",
@@ -20,15 +20,23 @@
       "types": "./lib/executor-host.d.ts",
       "default": "./lib/executor-host.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./icon": "./assets/dsh-houdini-plugin.png",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib",
     "client.js",
-    "shared-host.cordis.yml",
-    "dsh-profile.requirements.json",
     "dsh-runtime-compatibility.json",
     "houdini",
+    "installer/install.ps1",
+    "installer/legacy-migration.ps1",
+    "installer/uninstall.ps1",
+    "installer/open-desktop.ps1",
+    "Install.cmd",
+    "Uninstall.cmd",
+    "Open Workspace.cmd",
+    "locale",
     "assets",
     "skills",
     "presets",
@@ -42,16 +50,10 @@
     "tools/isolated-houdini-check.py",
     "tools/houdini_test_environment.py",
     "tools/isolated-worker.py",
-    "deployment/dsh-runtime-fixes",
-    "deployment/package.json",
-    "deployment/package-lock.json",
-    "tools/runtime-fix-inputs.mjs",
-    "tools/prepare-dsh-runtime.mjs",
-    "tools/build-dsh-runtime-fixes.mjs",
-    "tools/build-dsh-dependency-fixes.mjs"
+    "runtime/video"
   ],
   "scripts": {
-    "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/gen-web-polyfills.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
+    "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
     "docs:generate": "node tools/gen-project-layout-docs.mjs && node tools/gen-node-card-docs.mjs && node tools/gen-verb-contract-docs.mjs && node tools/gen-agent-presets.mjs && node tools/gen-tool-docs.mjs",
     "docs:check": "node tools/gen-project-layout-docs.mjs --check && node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-verb-contract-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
@@ -77,36 +79,43 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
+    "@deepseek-ai/schemastery": "3.18.5"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-agent-preset": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-jobs": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-spill-policy": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-web-app": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent-preset": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-spill-policy": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-web-app": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3",
     "@deepseek-ai/schemastery": "3.18.5",
     "@types/node": "^22",
-    "core-js": "3.45.1",
     "esbuild": "0.25.9",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@deepseek-ai/dsh": "0.2.1-rc.3"
   },
   "dependencies": {
     "zod": "4.4.3"
   },
   "overrides": {
-    "@deepseek-ai/libreoffice-kit": {
-      "fflate": "0.8.3"
-    },
     "zod": "4.4.3"
+  },
+  "engines": {
+    "dsh": "0.2.1-rc.3"
   }
 }

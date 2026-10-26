@@ -28,9 +28,11 @@ H21.0.440 本机 shipped shelf：
 工具 id 可能随版本变化；每次用 `search_tab_entries(actual_parent, query)` 发现，不能把
 本节当作跳过运行时查询的理由。`tab_apply` allowlist 暂只覆盖上述两个已回归意图。
 
-H22.0.368 的 shipped shelf 仍登记同名 `lop_karma_setup` / `vop_karmamtlxsubnet` 与相同 label。
-当前父网络和工具入口由实际发现与`tab_apply`校验；原生recipe结构不证明具体shader消费、
-用户界面状态或最终图像质量。需要判断界面时再观察实际GUI，不为纯数据构建增加固定GUI验收步骤。
+H21/H22 保留同名入口；H22 原生 shelf 的 Karma Setup 还会创建中间 Render Pass。
+DSH adapter 使用 Render Settings 直接接 USD Render ROP 的路径，ROP 表达式引用明确的
+settings、engine 与 motion blur；该路径在隔离 H21/H22 中通过实际 USD 相机/产品与 Karma
+出图检查，不需要仅为对齐 shelf 节点数量添加 Render Pass。需要多 render pass 的任务按实际
+接口另行构建。隔离出图不证明 GUI 焦点/选择恢复或其他 Render Pass 组合已经验证。
 
 ## 2. 材质 render context
 
@@ -95,10 +97,16 @@ Scene Import后用render_frame的framing={target:实际USD资产路径,coverage:
 检查包括全部产品的camera、resolution/pixelAspect、aspectRatioConformPolicy与dataWindowNDC；不支持的ROP
 override/外部USD/前置脚本/lens/Volume/PointInstancer明确拒绝，不暗中更改镜头或增加重渲染。
 此fast path适用于当前帧普通透视/正交包络，不用于艺术裁切、动画相机、位移/快门包络或语义质量认证。
-诊断材质细节时另查景深启用状态、焦点距离和光圈；camera_fit不设置焦点，包络通过不证明画面清晰。
-H21/H22的原生Karma Render Settings启用景深参数为`enabledof`，原生默认开启；插件只在新建设置节点时关闭，显式parms可覆盖该默认。
-标准展示和自有诊断镜头未要求景深时保持关闭；艺术镜头按意图开启并校准焦点，移动相机或改变焦距后重新检查清晰度。
-正式render_frame保留已有设置，不把失焦误诊为纹理分辨率或继续增加细节。
+普通新建资产镜头默认全清晰：DSH 的 `tab_create(...,'karmarendersettings')` 和
+`tab_apply(...,'lop_karma_setup')` 在创建时关闭 `enabledof`；显式创建参数或后续 `set_parms`
+可开启用户要求的景深。已有设置、艺术镜头和每次 `render_frame` 都保留用户选择，不自动关景深。
+H21/H22 原生 Karma 默认开启景深，OBJ 相机导入时又保留非零光圈和独立焦点距离；构图正确仍可失焦。
+诊断时检查最终 RenderSettings 的 `karma:global:enable_dof` 与相机 `fStop`、`focusDistance`，
+不能只看通用 `disableDepthOfField`。景深、运动模糊和去噪是三个独立设置。
+`camera_fit` 不设置焦点，包络通过不证明画面清晰；移动相机或改变焦距后，开启景深的艺术镜头
+需重新校准焦点。不要把失焦误诊为贴图分辨率不足或继续堆细节。
+创建默认、显式景深和已有设置保持由[景深回归](../../../tools/tests/dsh-karma-defaults.test.py)覆盖；
+加 `--render` 可在一次性场景核对两张小幅 Karma 图。该机制检查不认证自然任务的镜头审美。
 
 ## 5. 灯光
 

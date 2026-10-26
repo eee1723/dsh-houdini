@@ -13,11 +13,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
+import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli
+from dsh_web_auth import DshWebSession
 import dsh_managed_runtime as runtime
 reexec_unpacked_test_cli()
 
@@ -66,19 +69,22 @@ cli = cache / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 command([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'),
          str(cli), env['DSH_HOME'], str(ROOT)], env)
 api_port, host_port = unused_port(), unused_port()
-env.update(DSH_VIDEO_FIXTURE_WORKSPACE=str(workspace), DSH_VIDEO_FIXTURE_PYTHON=sys.executable,
-           DSH_VIDEO_FIXTURE_PYTHON_VERSION='.'.join(map(str,sys.version_info[:3])),
+credential_signal=fixture/'native-credential-request.json'
+secret='fixture-only-'+uuid.uuid4().hex
+env.update(DSH_VIDEO_FIXTURE_WORKSPACE=str(workspace),DSH_VIDEO_FIXTURE_PYTHON=sys.executable,
            DSH_VIDEO_FIXTURE_BASE=f'http://127.0.0.1:{api_port}',
-           DSH_HOUDINI_BRIDGE_URL=f'http://127.0.0.1:{api_port}',
-           DSH_HOUDINI_EXECUTOR_ID='a' * 32)
+           DSH_VIDEO_FIXTURE_CREDENTIAL_SIGNAL=str(credential_signal))
 overlay = fixture / 'video-fixture.patch.yml'
-overlay.write_text(json.dumps([{'insert': [{'id': 'video-transcription-fixture',
+overlay.write_text(json.dumps([{'id':'workspace-controller','config':{'documentsDirectory':str(fixture/'documents')}},
+    {'insert': [{'id': 'video-transcription-fixture',
     'name': (ROOT / 'tools/tests/dsh-video-transcription-fixture.mjs').as_uri()}]}]), encoding='utf-8')
 results = []
 for phase in ('initial', 'restart'):
     result_path = fixture / (phase + '-result.json')
     env.update(DSH_VIDEO_FIXTURE_OUT=str(result_path), DSH_VIDEO_FIXTURE_PHASE=phase)
     log = fixture / (phase + '-host.log')
+    auth=DshWebSession(f'http://127.0.0.1:{host_port}',str(log),str(fixture/(phase+'-runtime.json')))
+    credential_written=False
     with log.open('wb') as output:
         process = runtime.spawn_frontend([node, str(cli), 'web', '--patch', str(overlay),
             '--port', str(host_port), '--no-open'], node=node, cwd=workspace, env=env,
@@ -88,14 +94,38 @@ for phase in ('initial', 'restart'):
             while not result_path.exists():
                 assert process.poll() is None, 'Host exited; inspect ' + str(log)
                 assert time.monotonic() < deadline, 'ASR loop timed out; inspect ' + str(log)
+                if phase=='initial' and credential_signal.exists() and not credential_written:
+                    signal=json.loads(credential_signal.read_text(encoding='utf-8'))
+                    expected_endpoint=f'http://127.0.0.1:{api_port}/custom-asr'
+                    expected_origin=f'http://127.0.0.1:{api_port}'
+                    expected_ref='DSH_HOUDINI_ASR_'+__import__('hashlib').sha256(expected_origin.encode()).hexdigest()[:16].upper()+'_API_KEY'
+                    assert signal['ref']==expected_ref and signal['endpoint']==expected_endpoint and signal['origin']==expected_origin
+                    if auth.launch_url() is not None:
+                        auth.authorize(timeout=5)
+                        def rpc(method,arguments):
+                            body=json.dumps({'type':'client-request','rpcId':uuid.uuid4().hex,'method':method,'payload':{'args':arguments}}).encode()
+                            request=urllib.request.Request(f'http://127.0.0.1:{host_port}/api/'+method,data=body,headers={'content-type':'application/json'},method='POST')
+                            with auth.open(request,timeout=10) as response:value=json.load(response)['result']
+                            assert value['ok'],value
+                            assert secret not in json.dumps(value)
+                            return value.get('value')
+                        rpc('credentials/set',{'ref':expected_ref,'value':secret})
+                        assert rpc('credentials/describe',{'refs':[expected_ref]})[expected_ref]['configured']
+                        credential_written=True
                 time.sleep(.2)
             result = json.loads(result_path.read_text(encoding='utf-8'))
             assert result.get('ok'), result.get('error', result)
+            assert secret not in json.dumps(result)
+            if phase=='initial':
+                assert credential_written,'Fixture must consume the native authenticated credential RPC'
+                env['DSH_VIDEO_FIXTURE_SESSION']=result['sessionId']
+            else:assert result['sessionId']==results[0]['sessionId'],'Restart must continue the original native Session'
             results.append(result)
         finally:
             runtime.stop_owned(process)
             process.wait(timeout=15)
     print(phase + ': ' + '; '.join(result['checks']), flush=True)
+    assert secret not in log.read_text(encoding='utf-8',errors='replace'),'Secret must not be emitted in Host logs'
 assert len(results[0]['requests']) == 4 and not results[1]['requests']
 for name, expected in [('prepared-a', 1), ('prepared-b', 3)]:
     work = workspace / name

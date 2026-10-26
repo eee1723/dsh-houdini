@@ -24,7 +24,7 @@ sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli
 from dsh_web_auth import DshWebSession
 import dsh_managed_runtime as managed
-from dsh_runtime_compat import runtime_fix_identity
+from dsh_runtime_compat import official_runtime_identity
 from dsh_deployment import atomic_json,read_json
 
 def write(filename,value):
@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--runtime-cache',type=Path,required=True)
     args=parser.parse_args()
     binary=args.runtime_cache.resolve(strict=True)/'node_modules/@deepseek-ai/dsh/lib/bin.js'
-    runtime=runtime_fix_identity(binary,verify_files=True)
+    runtime=official_runtime_identity(binary)
     node=shutil.which('node')
     assert node,'Node is required'
     folder=Path(tempfile.mkdtemp(prefix='dsh-chatgpt-composition-'))

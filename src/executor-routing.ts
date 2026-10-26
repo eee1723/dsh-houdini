@@ -19,6 +19,7 @@ export interface ExecutorRecord {
   bridge_url:string
   houdini_version:string
   pid:number
+  processStarted?:string|null
   state:'registered'|'disconnected'
   task_id:string|null
   hip_path:string|null
@@ -37,7 +38,7 @@ const canonical = (p:string) => process.platform==='win32' ? path.normalize(p).t
 export class ExecutorUnavailableError extends Error {}
 
 export class ExecutorDirectory {
-  constructor(private readonly root:string, private readonly installation:string) {
+  constructor(private readonly root:string, private readonly installation:string, private readonly compatibleInstallations=false) {
     if (!path.isAbsolute(root)||!path.isAbsolute(installation)) throw new Error('Executor registry and installation paths must be absolute')
   }
   requireRoot(root:string):void {
@@ -56,6 +57,7 @@ export class ExecutorDirectory {
       ||typeof r.installation!=='string'||!path.isAbsolute(r.installation)
       ||typeof r.bridge_url!=='string'||!/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/.test(r.bridge_url)
       ||!Number.isInteger(r.pid)||r.pid<=0||!['registered','disconnected'].includes(r.state)
+      ||r.processStarted!==undefined&&r.processStarted!==null&&(typeof r.processStarted!=='string'||!/^\d+$/.test(r.processStarted))
       ||typeof r.houdini_version!=='string'||!/^\d+\.\d+\.\d+$/.test(r.houdini_version)
       ||!(r.task_id===null||typeof r.task_id==='string'&&r.task_id.length>0)
       ||!(r.hip_path===null||typeof r.hip_path==='string'&&path.isAbsolute(r.hip_path))) throw new Error('Invalid executor record')
@@ -70,7 +72,10 @@ export class ExecutorDirectory {
     // Accept the configured spelling or its resolved installation identity;
     // a foreign installation is never loaded to resolve an endpoint record.
     const recordedInstall=canonical(r.installation)
-    if(recordedInstall!==canonical(this.installation)&&recordedInstall!==expectedInstall)return undefined
+    // Desktop's Node plugin and its Houdini Package may have different roots.
+    // Neither root is imported from discovery. Admission still verifies the
+    // selected endpoint's executor/runtime/scene and execution contract.
+    if(!this.compatibleInstallations&&recordedInstall!==canonical(this.installation)&&recordedInstall!==expectedInstall)return undefined
     return r
   }
   async list(): Promise<ExecutorRecord[]> {
@@ -181,18 +186,21 @@ export class ExecutorRouter {
     return {record:after,bridge}
   }
 
+  /** Navigation observes the exact selected endpoint without checkpointing,
+   * changing a binding, or claiming its writer while work may still run. */
+  async inspectSelectedTarget(target:TargetSnapshot,signal?:AbortSignal):Promise<ExecutorRecord> {
+    return (await this.verified(target,signal)).record
+  }
+
   /** First scene use only; ordinary chat and ambient context never call this chooser. */
   async selectFor(agent:Agent,signal:AbortSignal):Promise<void> {
     const state=this.state(agent.session)
     if(state.selectedTarget)return
     if(state.selectionRecorded)throw new Error('已解除此对话的现场目标；请明确选择后再操作，不会自动重新绑定。')
     if(state.identity&&!state.selectionRecorded)throw new Error('这段旧对话尚未选择当前现场，请从工程入口明确选择；历史归属没有改变。')
-    const rows=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered')
-    const cwd=agent.session.header?.cwd
-    const scoped=rows.filter(record=>cwd&&record.workspace_path&&canonical(record.workspace_path)===canonical(cwd))
-    const candidates=scoped.length?scoped:rows
-    if(!candidates.length)throw new Error('目前没有可用的 Houdini 现场。请从目标 Houdini 打开工作台，或打开一份工程。')
-    const selected=scoped.length===1?scoped[0].executor_id:await this.chooseTarget?.(agent.id,candidates,signal)
+    const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered')
+    if(!candidates.length)throw new Error('目前没有可用的 Houdini 现场。请从目标 Houdini 连接 Desktop，或打开一份工程。')
+    const selected=await this.chooseTarget?.(agent.id,candidates,signal)
     const record=candidates.find(candidate=>candidate.executor_id===selected)
     if(!record)throw new Error('本轮没有选择 Houdini 现场，可以继续讨论；没有执行工程操作。')
     await this.selectTarget(agent,record.executor_id,record.registration_id,signal,record.hip_path!,true)
@@ -251,7 +259,7 @@ export class ExecutorRouter {
 
   /** An explicit choice may replace any idle conversation's target, with no writer or ownership side effect. */
   async selectTarget(agent:Agent,id:string,registrationId:string,signal?:AbortSignal,expectedHip?:string,atStep=false,
-    expected?:{runtimeId?:string;sceneEpoch?:string}):Promise<TargetSnapshot> {
+    expected?:{runtimeId?:string;sceneEpoch?:string;selectionRevision?:number;beforeCommit?:()=>void}):Promise<TargetSnapshot> {
     const bounded=this.signal(signal)
     return this.changeTarget(agent.session,bounded,()=>this.selectNow(agent,id,registrationId,bounded,expectedHip,atStep,expected))
   }
@@ -262,7 +270,12 @@ export class ExecutorRouter {
     return result.finally(()=>{if(this.targetChanges.get(session)===result)this.targetChanges.delete(session)})
   }
   private async selectNow(agent:Agent,id:string,registrationId:string,bounded:AbortSignal,expectedHip?:string,atStep=false,
-    expected?:{runtimeId?:string;sceneEpoch?:string}):Promise<TargetSnapshot> {
+    expected?:{runtimeId?:string;sceneEpoch?:string;selectionRevision?:number;beforeCommit?:()=>void}):Promise<TargetSnapshot> {
+    const checkRevision=()=>{
+      if(expected?.selectionRevision!==undefined&&this.state(agent.session).selectionRevision!==expected.selectionRevision)
+        throw new Error('等待启动时现场选择已变化；迟到回执未覆盖新选择。')
+    }
+    checkRevision()
     if((agent.status!==undefined&&agent.status!=='idle'&&!atStep)||agent.id!==agent.session.id)
       throw new Error('Select a target only for the exact idle agent')
     const record=await this.directory.find(id)
@@ -278,6 +291,8 @@ export class ExecutorRouter {
     await this.verified(target,bounded)
     bounded.throwIfAborted()
     if(agent.status!==undefined&&agent.status!=='idle'&&!atStep)throw new Error('Agent started while selecting target')
+    checkRevision()
+    expected?.beforeCommit?.()
     if(unchanged) {
       // Registration is a discovery generation, not another user intention.
       // Reconfirming the same scene must not retire active request/job facts.

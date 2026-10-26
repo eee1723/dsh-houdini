@@ -10,7 +10,7 @@
 - **明确的临时名称**：未命名场景或结合任务可确定无业务含义的占位名，可改成简短、能辨认成果的名称并追加版本。不确定含义时保留原名；名称短、含数字或使用中文都不是改名理由。
 - 核对同一工程的已有版本，选择下一个未占用的版本路径，保持当前许可对应的HIP扩展名，不为取名覆盖已有文件。同一轮选定新版本后，过程保存继续写入该版本；不是每次保存或每条消息都生成一个版本。
 
-另存用`scene_save_as`，`expected_current_path`来自最新`scene_info().hip_path`，`reason`记录实际任务授权与目标；保存本轮版本用`scene_save`。消费真实保存回执再发布文件。跨目录另存后，等下一模型步骤接续工程目录，再重新读取`project_layout`用于后续文件；Save As不自动搬运贴图或缓存，需要迁移时核对实际依赖与引用。
+另存用`scene_save_as`，`expected_current_path`来自最新`scene_info().hip_path`，`reason`记录实际任务授权与目标；保存本轮版本用`scene_save`。消费真实保存回执再发布文件。跨目录另存后，按新的真实保存回执和现场观察重新读取`project_layout`；Save As只改变实际HIP及其目录角色，不迁移原会话工作区或文件权限，也不自动搬运贴图、缓存，需要迁移时核对实际依赖与引用。
 
 ## 直接交付与使用说明
 
@@ -34,14 +34,14 @@
 
 需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 
-最终图片用`output_policy='delivery'`生成到已命名HIP对应的render目录，默认`dsh-artifacts/renders/<HIPNAME>/`；普通managed观察图默认`dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`，不自动全部交付。工程区分由实际产图HIP确定，读取`project_layout`和回执的真实路径；不按聊天目录或图片标签猜工程。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
+最终图片用`output_policy='delivery'`生成到本次命名HIP的`render`目录，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。目录使用`scene_info().project_layout.directories`的同源投影，成图和检查图按各自HIP文件分组；普通managed观察图在`visual_check`目录内继续按run分组，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
 
 ```python
 __result__ = render_view('/obj/example/OUT', picture='overview.png', output_policy='delivery')
 # 核对返回的实际文件及图片内容后，通过DSH present声明该路径。
 ```
 
-正式ROP图片可在渲染前从`project_layout.directories.render`选择带后缀的目的地；持久表达式可用`$HIP/dsh-artifacts/renders/$HIPNAME/asset_final.png`。临时picture覆盖不证明持久ROP设置已保存。已有用户目的地和ROP优先，不为统一目录默默重设。无识图能力时不能宣称视觉通过；用户需要的图片仍可交付并注明观察范围。
+正式ROP的新图片可给`render_frame`传`picture='asset_final.png'`，由目录合同选择本次HIP的成图目录；持久ROP表达式可用`$HIP/dsh-artifacts/renders/$HIPNAME/asset_final.png`。临时picture覆盖不证明持久ROP设置已保存。已有用户目的地和ROP优先，不为统一目录默默重设。无识图能力时不能宣称视觉通过；用户需要的图片仍可交付并注明观察范围。
 
 检查用途由意图决定：采样、法线、透明通道、显示异常和测试渲染的对照图使用visual_check。`render_frame`做诊断时从`project_layout.directories.visual_check`选择本次检查路径并显式传picture，例如该目录下的`<task>/check.png`；不因工具名称把检查图写进render，也不为了“稍后可能交付”提前声明delivery。视频抽帧等资料仍随教程放入analysis；建模过程的图像诊断不混入教程/Trace报告。
 

@@ -34,6 +34,8 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [focus_node](#focus_node)
 - [network_boxes](#network_boxes)
 - [cook_node](#cook_node)
+- [sop_recipe](#sop_recipe)
+- [geo_curve_clearance](#geo_curve_clearance)
 - [geo_piece_stats](#geo_piece_stats)
 - [create_spare_parms](#create_spare_parms)
 - [sop_set_output](#sop_set_output)
@@ -1655,6 +1657,252 @@ path identifies the node. ok covers errors; healthy also requires no warnings. M
 ### 接口边界
 
 - timeout_ms is cooperative native interruption, not an immediate kill. A successful cook does not assert nonempty geometry or visual quality.
+
+## sop_recipe
+
+Plan ordinary editable SOP construction; curve_path turns named anchors and symmetric handle offsets into native Add, cubic Bezier Curve and Resample specs.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "catalog",
+        "hinge",
+        "slider",
+        "guided_slider",
+        "surface_attach",
+        "gusset",
+        "fastener",
+        "repeat",
+        "curve_path",
+        "sweep_tube",
+        "profile_shell"
+      ]
+    },
+    "spec": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Call sop_recipe(kind) for the exact example. curve_path accepts name/controller/segment_length and 2..32 anchors, each exactly {name, position:[x,y,z], handle:[x,y,z]}. Components accept numbers or {parm:name} referencing the single existing controller. handle is an outgoing control-point displacement, not a unit tangent. Shared symmetric handles give C1 joins before native edits; no geometry binding, automatic routing or obstacle avoidance."
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "additionalProperties": false
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "output": {
+      "type": "string"
+    },
+    "required_outputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "anchors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "curve_path anchor names mapped to native Add anchor/in/out point numbers."
+    },
+    "edit_nodes": {
+      "type": "object",
+      "description": "curve_path source control points, native Curve 2.0 and sampled polyline node names."
+    },
+    "scope": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}
+```
+
+### Create an editable smooth path from two anchors
+
+调用工具：`houdini_exec`。
+
+```python
+plan=sop_recipe('curve_path', {'name':'lead','segment_length':0.005,'anchors':[{'name':'start','position':[0,0,0],'handle':[0,0.1,0]},{'name':'end','position':[0.3,0,0],'handle':[0,-0.1,0]}]})
+__result__=build_module('/obj/example_geo',plan['nodes'],output=plan['output'],required_outputs=plan['required_outputs'])
+```
+
+The planning call writes nothing. Build uses native Add control points -> Curve 2.0 Bezier -> Resample. Inspect plan.anchors/edit_nodes for local editing. Path shape, collisions and downstream swept surfaces require separate evidence.
+
+### 接口边界
+
+- curve_path is an open smooth cubic path. Zero handles have no regular tangent; native edits may change continuity. Resample is an approximation to the Bezier, and sampled envelopes do not certify the smooth curve. Other recipes retain their existing exact schemas from sop_recipe(kind).
+
+## geo_curve_clearance
+
+Measure finite polyline segment/radius-envelope gaps, with explicit local self exclusions and bounded complete pair coverage; no final Sweep or obstacle certification.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "radius": {
+      "anyOf": [
+        {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Positive SOP-local constant radius, or exact scalar numeric primitive radius attribute name; one constant radius per curve."
+    },
+    "group": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "One exact primitive group; omitted means every primitive. Unselected primitives remain unverified."
+    },
+    "clearance": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0
+    },
+    "self_exclusion": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Exclude only same-curve point pairs within this arc distance by clipping each segment-pair parameter domain; long adjacent and backtracking segments retain nonlocal regions. None uses pi*(that_curve_radius+clearance/2), a half-circle arc at the effective radius. Explicit zero keeps joint envelopes and can flag their expected local overlap. Exact repeated endpoints identify a geometric loop and its seam neighborhood."
+    },
+    "max_segments": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192,
+      "default": 2048
+    },
+    "max_pairs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2000000,
+      "default": 500000,
+      "description": "Candidate pairs before local exclusion; exceeded budget returns unverified with measured_pairs=0."
+    },
+    "max_results": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "default": 16
+    }
+  },
+  "required": [
+    "node",
+    "radius"
+  ],
+  "additionalProperties": false
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unverified"
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "min_envelope_gap": {
+      "type": "number"
+    },
+    "violation_pairs": {
+      "type": "integer"
+    },
+    "worst_pairs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Bounded smallest gaps with primitive/segment indices, segment_u, actual closest positions and path_distance on each side; gap=finite-segment distance minus both radii."
+    },
+    "scope": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "ok",
+    "scope"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Check the actual sampled centerlines and declared radius
+
+调用工具：`houdini_inspect`。
+
+```python
+__result__=geo_curve_clearance('/obj/example_geo/lead_SAMPLED',0.002,clearance=0.0005)
+```
+
+Read status, coverage.curves/self_exclusion, measured_pairs and worst_pairs. Pass covers only eligible actual polyline segment envelopes. Smooth Bezier input, closed Polygon faces, unsupported primitives, degeneracy and budgets remain unverified; no silent sampling.
+
+### 接口边界
+
+- Read-only, SOP-local, no scene nodes or viewport changes. No local curvature, connector contact, obstacle, smooth-curve or final swept Polygon mesh certification. Radius is constant per selected curve. Loop endpoints must be exactly equal; near-equal endpoints are not inferred as a seam.
 
 ## geo_piece_stats
 

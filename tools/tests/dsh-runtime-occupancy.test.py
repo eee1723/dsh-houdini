@@ -42,8 +42,7 @@ else:
                 time.sleep(.03)
             error=blocked(lock)
             assert error.owner and error.owner['pid']==process.pid, error.owner
-            text=deployment.workspace_busy_message(error)
-            assert '中文工程.hip' in text and '仅关闭插件面板不会释放占用' in text
+            assert error.owner['hip_path'].endswith('中文工程.hip')
             with patch.object(deployment,'_process_started',return_value='different-process-birth'):
                 assert blocked(lock).owner is None,'reused PID or stale identity cannot name the occupant'
             (folder/'release').touch()
@@ -53,7 +52,7 @@ else:
                 next_lease.record_owner({'hip_is_new':True,'houdini_version':'22.0.368'})
                 error=blocked(lock)
                 assert error.owner['pid']==os.getpid()
-                assert '未保存工程' in deployment.workspace_busy_message(error)
+                assert error.owner['hip_is_new'] is True
                 next_lease.record_owner({'hip_path':'字'*9000})
                 oversized=blocked(lock)
                 assert oversized.owner['pid']==os.getpid() and oversized.owner['details_unavailable']=='metadata_size_limit'

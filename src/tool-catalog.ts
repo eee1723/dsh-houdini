@@ -26,7 +26,8 @@ export const IMAGE_TOOLS = {
 
 export const VIDEO_TOOLS = {
   video_process:{label:'处理教程资料',purpose:'在Host受控进程中导入/抽帧和查询/整理本地教程证据，复用原脚本的来源校验及唯一文件记录。',input:'operation与options；只接受随包离线命令，路径绝对，写入使用工作区内新output目录。',output:'原命令JSON、进度、实际退出状态、选定Houdini的Python/私有媒体工具与输出路径；不认证语义。',execution:'DSH Host普通Python子进程，无shell/密钥/云请求/HOM'},
-  video_models:{label:'发现转录配置',purpose:'读取教程视频的转录用途配置、DSH服务商和凭据状态；不上传音频，不证明转录接口可用。',input:'可选provider和模型名称子串query。',output:'默认用途、API路由、模型建议和缺失配置诊断；不返回凭据。',execution:'DSH Host，无HOM'},
+  video_models:{label:'检查教程配置',purpose:'检查教程专用转录协议、准确模型、DSH凭据状态和本机依赖；不以聊天模型目录证明语音能力。',input:'可选provider/名称过滤。',output:'非秘密配置、缺项、能力边界与真实运行路径；不上传音频或返回密钥。',execution:'DSH Host，无HOM'},
+  video_configure:{label:'配置教程服务',purpose:'按用户选择保存教程专用非秘密设置，复用DSH原生设置与凭据；不改聊天模型或接收密钥。',input:'明确的文件协议、已有服务商或完整端点、模型ID；可选认证/并发/速率。',output:'实际生效配置、缺项和安全录入密钥的下一步；旧任务仍绑定原服务。',execution:'DSH Host，仅本插件设置，无HOM'},
   video_transcribe:{label:'转录教程音频',purpose:'用DSH中选定服务商与转录模型并行处理已准备的教程音频，复用原任务的分片和请求记录。',input:'work、allow_upload；可选provider/model、chunks、max_chunks、concurrency、requests_per_second、术语词表、说话人分离及明确授权的重试预算。',output:'逐片进度、实际在途峰值与成功/失败、剩余/未知请求、原任务目录及准确模型；原始响应和时间戳在同源outcome中，密钥只交给受控子进程。',execution:'DSH Host Python子进程与HTTP，无HOM'},
 } as const
 

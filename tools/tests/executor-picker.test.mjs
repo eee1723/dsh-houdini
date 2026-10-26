@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 const source=await fs.readFile(new URL('../../client.js',import.meta.url),'utf8')
 assert(!source.includes('createExecutorPicker('),'one compact selector replaces the separate legacy dock picker')
 assert(!source.includes('houdini-executor-picker'),'no duplicate executor panel is registered')
-const fragment=source.slice(source.indexOf('    function useHoudiniProject('),source.indexOf('    function createHoudiniTitleAction('))
+const fragment=source.slice(source.indexOf('    function Button('),source.indexOf('    // >>> houdini-node-delivery'))
 const executor='a'.repeat(32),runtime='b'.repeat(32),epoch='c'.repeat(32),registration='d'.repeat(32)
 const first={executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:'e'.repeat(32),registration_id:registration,
   hip_path:'C:/work/ship.hip',hip_is_new:false,houdini_version:'22.0.368',workspace_path:'C:/work',state:'registered',same_workspace:true,pid:9876,workbench:true}
@@ -29,14 +29,14 @@ const observed=record=>({executorId:record.executor_id,runtimeId:record.runtime_
 let observations=[observed(first),observed(second)]
 const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload,signal)=>{
  requests.push({method,payload,signal})
- if(method==='houdiniFrontend/capabilities')return{ok:true,value:{workbench:true}}
+ if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true}}
  if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}}
  if(method==='houdiniFrontend/projectPresence'){if(presenceReply)return presenceReply();if(failPresence)throw Error('connection lost');return{ok:true,value:observations}}
  if(method==='houdiniTargets/select')return{ok:true,value:{status:'selected',sessionId:task,selectedTarget:first}}
  if(method==='houdiniTargets/clear')return{ok:true,value:{selectedTarget:null}}
  throw Error('unexpected RPC '+method)
 }}}
-const ui=context.createWorkbenchUi(connection,{sessionStatus:{getSnapshot:()=>native,subscribe:()=>()=>{}},adapter:{current:{getSnapshot:()=>({key:task}),subscribe:()=>()=>{}}}},
+const ui=context.createHoudiniDesktopUi(connection,{sessionStatus:{getSnapshot:()=>native,subscribe:()=>()=>{}},adapter:{current:{getSnapshot:()=>({key:task}),subscribe:()=>()=>{}}}},
  {refreshProjections:async id=>projectionRefreshes.push(id)})
 const props=()=>({sessionId:task,useSessions:select=>select({byId:{[task]:{id:task,cwd:'C:/work',blank:false,projectionValues:{agentPreset:preset}}},projectionsBySession:{[task]:{values:{houdiniExecutorIdentity:project}}}})})
 function render(component,parameters=props()){
@@ -58,13 +58,13 @@ assert.equal(chip(tree).props['data-state'],'unbound')
 assert.match(text(chip(tree)),/未绑定现场/)
 assert.equal(requests.filter(r=>r.method==='houdiniTargets/list').length,0,'observing visible state never polls conversation lists')
 chip(tree).props.onClick();await settle();tree=render(menu)
-assert.equal(tree.props.open,true)
+assert.equal(Boolean(by(tree,n=>n.props.role==='menu')),true)
 const candidates=nodes(tree).filter(n=>n.props['data-houdini-target'])
 assert.deepEqual(candidates.map(n=>n.props['data-houdini-target']),[executor,second.executor_id],'same-workspace targets lead the list')
 assert.match(text(candidates[0]),/窗口 1 · Houdini 22/)
 assert(!text(candidates[0]).includes('9876'),'PID is confined to the optional tooltip')
-const choose=tree=>by(tree,n=>n.tag==='menuitem'&&by(n,child=>child.props['data-houdini-target']===executor))
-choose(tree).props.onSelect();await settle();tree=render(menu)
+const choose=tree=>by(tree,n=>n.props.role==='menuitem'&&by(n,child=>child.props['data-houdini-target']===executor))
+choose(tree).props.onClick();await settle();tree=render(menu)
 const selectedCall=requests.find(r=>r.method==='houdiniTargets/select')
 assert.equal(selectedCall.payload.args.input.sessionId,'task-a')
 assert.equal(selectedCall.payload.args.input.runtimeId,runtime)
@@ -75,12 +75,14 @@ assert.equal(chip(tree).props['data-state'],'unbound','a successful RPC cannot c
 project={target:first,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,hipPath:first.hip_path,hipIsNew:false}
 tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
 native.set(task,{running:true});tree=render(menu);assert.equal(chip(tree).props['data-state'],'working');assert.match(text(chip(tree)),/对话工作中/)
+if(!Boolean(by(tree,n=>n.props.role==='menu'))){chip(tree).props.onClick();await settle();tree=render(menu)}
 assert.equal(by(tree,n=>n.props['data-houdini-target']===second.executor_id).props['data-state'],'ready','a running current conversation cannot mark a different idle candidate as its work')
 assert.equal(by(tree,n=>n.props['data-houdini-target']===first.executor_id).props['data-state'],'working','the selected candidate retains the actual current conversation activity')
 native.set(task,{running:false});observations[0]={...observed(first),ownerSessionId:'other',busy:false}
 intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready','an idle writer reservation is not active work')
 native.set('other',{running:true});tree=render(menu);assert.equal(chip(tree).props['data-state'],'occupied')
-chip(tree).props.onClick();await settle();tree=render(menu);assert.equal(choose(tree).props.disabled,false,'another busy conversation does not prevent choosing a read-only target')
+if(!Boolean(by(tree,n=>n.props.role==='menu'))){chip(tree).props.onClick();await settle();tree=render(menu)}
+assert.equal(choose(tree).props.disabled,false,'another busy conversation does not prevent choosing a read-only target')
 native.set('other',{running:false});native.set('reader-b',{running:true})
 observations[0]={...observed(first),ownerSessionId:task,activeRequests:1,busy:true}
 intervals.at(-1)();await settle();tree=render(menu)
@@ -111,24 +113,24 @@ hidden=false;visibility.forEach(fn=>fn());await settle();tree=render(menu);asser
 failPresence=true;intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','transport failures invalidate reachable state')
 failPresence=false;observations[0]={...observed(first),observedAt:Date.now()-20000};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','a fresh response cannot refresh an old individual observation')
 observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu)
-if(!tree.props.open){chip(tree).props.onClick();await settle();tree=render(menu)}
-const clearAction=by(tree,n=>n.tag==='menuitem'&&by(n,child=>child.props['data-houdini-project-action']==='clear'))
+if(!Boolean(by(tree,n=>n.props.role==='menu'))){chip(tree).props.onClick();await settle();tree=render(menu)}
+const clearAction=by(tree,n=>n.props.role==='menuitem'&&by(n,child=>child.props['data-houdini-project-action']==='clear'))
 assert(clearAction)
-clearAction.props.onSelect();await settle();tree=render(menu)
+clearAction.props.onClick();await settle();tree=render(menu)
 assert.equal(chip(tree).props['data-state'],'ready','clearing waits for the authoritative native projection')
 project=null;tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
 let resolveList;presenceReply=()=>new Promise(resolve=>resolveList=resolve)
 chip(tree).props.onClick();await settle();const stale=requests.at(-1)
 task='task-b';tree=render(menu);tree=render(menu);assert.equal(stale.signal.aborted,false,'the shared read-only presence is independent of the selected conversation')
 resolveList({ok:true,value:[observed(first)]});await settle();tree=render(menu)
-assert.equal(tree.props.open,false,'a late list must not reopen another conversation')
+assert.equal(Boolean(by(tree,n=>n.props.role==='menu')),false,'a late list must not reopen another conversation')
 assert.equal(chip(tree).props['data-state'],'unbound')
 presenceReply=null
-chip(tree).props.onClick();await settle();tree=render(menu);tree.props.onClose();tree=render(menu)
+chip(tree).props.onClick();await settle();tree=render(menu);chip(tree).props.onClick();tree=render(menu)
 let finishClosed;presenceReply=()=>new Promise(resolve=>finishClosed=resolve)
-chip(tree).props.onClick();await settle();tree=render(menu);tree.props.onClose()
+chip(tree).props.onClick();await settle();tree=render(menu);chip(tree).props.onClick()
 finishClosed({ok:true,value:[observed(first)]});await settle();tree=render(menu)
-assert.equal(tree.props.open,false,'a slow refresh cannot reopen a dismissed menu')
+assert.equal(Boolean(by(tree,n=>n.props.role==='menu')),false,'a slow refresh cannot reopen a dismissed menu')
 generation=undefined;generationListeners.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
 preset='standard';assert.equal(ui.Label(props()),null,'other presets do not mount the Houdini selector')
 assert(!source.includes('dangerouslySetInnerHTML'))

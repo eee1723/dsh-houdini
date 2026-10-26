@@ -1,5 +1,6 @@
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {nativeSessionSelector} from './browser-selection.mjs';
 const config=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const {chromium}=await import(pathToFileURL(config.playwright));
 const browser=await chromium.launch({headless:true,executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe'});
@@ -28,7 +29,7 @@ try{
  const entry=page.getByText('Network reference verification',{exact:true});
  if(!await entry.first().isVisible())await page.getByText('未分组',{exact:true}).click();
  await entry.first().waitFor({state:'visible',timeout:15000});await entry.first().click();
- await page.waitForFunction(id=>window.__dshHoudiniSelection?.()?.sessionId===id,config.sessionId,{timeout:30000});
+ await page.waitForSelector(nativeSessionSelector(config.sessionId),{timeout:30000});
  await page.getByRole('button',{name:/已完成.*用时/}).click();
  await page.getByRole('button',{name:/^(?=.*已调用工具)(?=.*执行了命令).*运行了代码等$/}).click();
  const failure=page.locator('[data-tool="pwsh"][data-state="error"]').filter({hasText:/退出码 7|exit code 7/});

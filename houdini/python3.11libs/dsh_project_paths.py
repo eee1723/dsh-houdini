@@ -31,8 +31,8 @@ def directory_for_hip(role: str, hip_path: str) -> str:
     """Project-relative destination for one captured HIP; creates nothing."""
     entry = _LAYOUT['directories'][role]
     if entry.get('scope') == 'hip_name':
-        if not isinstance(hip_path, str) or not hip_path.strip():
-            raise ValueError('HIP-scoped output requires a named HIP')
+        if not isinstance(hip_path, str) or not hip_path.strip() or not os.path.isabs(hip_path):
+            raise ValueError('HIP-scoped output requires a named absolute HIP')
         return os.path.join(entry['path'], hip_name(hip_path)).replace('\\', '/')
     return entry['path']
 

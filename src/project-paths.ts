@@ -129,14 +129,14 @@ export async function imageOutputLocation(options:ImageOutputOptions,
   const resolvedRoot=await fs.realpath(root)
   if (inside(repo,root)||inside(repo,resolvedRoot))
     throw Error('Image output cannot be written into the plugin repository; choose a project destination')
-  const managed=path.join(root,...entry.path.split('/'))
+  const managed=projectDirectoryPath(root,role,scene.hip_path)
   if (scene.project_layout !== undefined) {
     const layout=scene.project_layout
     const observedRoot=root
     if (layout?.schema_version!==1 || layout.available!==true || typeof layout.hip_path!=='string'
         || !samePath(layout.hip_path,scene.hip_path) || typeof layout.project_root!=='string'
         || !samePath(layout.project_root,observedRoot) || typeof layout.directories?.[role]!=='string'
-        || !samePath(layout.directories[role],path.join(observedRoot,...entry.path.split('/'))))
+        || !samePath(layout.directories[role],projectDirectoryPath(observedRoot,role,scene.hip_path)))
       throw Error('Houdini project directory observation disagrees with the loaded directory contract; reload matching plugin components')
   }
   const extension=path.extname(label), filename=path.join(managed,

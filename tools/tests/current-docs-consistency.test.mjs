@@ -11,7 +11,7 @@ const currentSurfaces = [
   'docs/setup.md',
   'houdini/install.py',
   'houdini/python3.11libs/dsh_launcher.py',
-  'houdini/python3.11libs/dsh_webview.py',
+  'houdini/python3.11libs/dsh_desktop_client.py',
   'presets/houdini/cordis.patch.yml',
   'src/tools.ts',
   'client.js',
@@ -32,6 +32,7 @@ for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
   assert.match(readme, new RegExp(skillFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README omits ${skillFile}`)
 }
 
-assert.match(readme,/DSH 0.2.1-rc.2/);
+const preferred=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).preferredVersion
+assert.ok(readme.includes('DSH '+preferred));
 assert.match(readme,/docs\/tools.md/);
 console.log('current documentation consistency tests passed')

@@ -140,7 +140,7 @@ class Viewer:
     def name(self): return 'fake-viewer'
     def flipbook(self, *, viewport, settings):
         assert viewport is self.viewport
-        self.calls += 1; target = Path(settings.output())
+        self.calls += 1; target = Path(hou.expandStringAtFrame(settings.output(),settings.frameRange()[0]))
         if self.mode == 'raise': raise RuntimeError('injected flipbook failure')
         if self.mode == 'raise-late':
             self.writer_thread = threading.Thread(
@@ -187,17 +187,15 @@ class FakeHou:
 def installed(viewer, hip):
     fake = FakeHou(viewer); bbox_frames = []
     fake.hipFile = SimpleNamespace(path=lambda: str(hip))
-    old = (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window,
+    old = (dsh_viewport.hou, dsh_scene.scene_info,
            dsh_node_access._resolve, dsh_viewport._display_bbox)
     dsh_viewport.hou = dsh_media_output.hou = fake
     dsh_scene.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
-    dsh_viewport._webview_was_minimized = lambda: False
-    dsh_viewport._restore_webview_window = lambda _was=None: None
     dsh_node_access._resolve = lambda value: SimpleNamespace(path=lambda: str(value))
     dsh_viewport._display_bbox = lambda _node: (bbox_frames.append(fake.frame()) or object())
     try: yield fake, bbox_frames
     finally:
-        (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window,
+        (dsh_viewport.hou, dsh_scene.scene_info,
          dsh_node_access._resolve, dsh_viewport._display_bbox) = old
         dsh_media_output.hou = dsh_viewport.hou
 
@@ -421,9 +419,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     else: raise AssertionError('flipbook failure should propagate')
 
     viewer = Viewer(); fake = FakeHou(viewer); fake.fail_restore = True
-    old = (dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window)
+    old = (dsh_viewport.hou, dsh_scene.scene_info)
     dsh_viewport.hou = dsh_media_output.hou = fake; dsh_scene.scene_info = lambda: {'has_named_path': True, 'hip_path': str(hip)}
-    dsh_viewport._webview_was_minimized = lambda: False; dsh_viewport._restore_webview_window = lambda _was=None: None
     dsh_media_output._PRODUCED_IMAGES.clear()
     try:
         try: h.viewport_screenshot('restore.png', frame=5, clean=False)
@@ -434,7 +431,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
             assert not Path(error.evidence['path'] + '.reserve').exists()
         else: raise AssertionError('restore failure should reject success')
     finally:
-        dsh_viewport.hou, dsh_scene.scene_info, dsh_viewport._webview_was_minimized, dsh_viewport._restore_webview_window = old
+        dsh_viewport.hou, dsh_scene.scene_info = old
         dsh_media_output.hou = dsh_viewport.hou
 
 print('viewport screenshot lifecycle, decode, requested-frame and failure simulation passed (no GUI claim)')

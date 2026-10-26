@@ -1,48 +1,44 @@
-/** Prepare a patched runtime separately; never rewrite a running DSH installation. */
-import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
-import {spawnSync} from 'node:child_process';import {createHash,randomUUID} from 'node:crypto';
-import {runtimeFixInputs,runtimeFixKey} from './runtime-fix-inputs.mjs';
+/** Prepare an unmodified official Host for isolated development, never for distribution. */
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const specification=path.join(root,'deployment/dsh-runtime-fixes');
-const manifest=JSON.parse(fs.readFileSync(path.join(specification,'manifest.json'),'utf8'));
-const patch=path.join(specification,manifest.patch),patchSha256=createHash('sha256').update(fs.readFileSync(patch)).digest('hex');
-if(patchSha256!==manifest.patchSha256)throw Error('Runtime source patch differs from its declared SHA-256');
-const args=process.argv.slice(2);const apply=args.indexOf('--apply-to');
-if(args.length && (apply!==0||args.length!==2))throw Error('usage: npm run runtime:prepare, or --apply-to <new release app directory>');
-const inputs=runtimeFixInputs(root,manifest),cacheKey=runtimeFixKey(inputs);
-const target=apply===0?path.resolve(args[1]):path.join(root,'.npm-cache/_npx/dsh-houdini-'+cacheKey);
-const marker=path.join(target,'.dsh-runtime-fixes.json');
-const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-if(fs.existsSync(marker)){
- const data=JSON.parse(fs.readFileSync(marker,'utf8'));
- const required=manifest.hostPackages.flatMap(p=>[...p.entries.map(e=>`node_modules/@deepseek-ai/dsh-${p.name}/lib/${e}.js`),...(p.assets??[]).map(a=>`node_modules/@deepseek-ai/dsh-${p.name}/${a}`)])
-  .concat(manifest.clientPackages.map(pkg=>`node_modules/@deepseek-ai/dsh-${pkg.name}/lib/client.js`))
-  .concat((manifest.dependencyPatches??[]).flatMap(fix=>[`node_modules/${fix.name}/package.json`,...fix.entries.flatMap(entry=>['.js','.js.map','.d.ts'].map(suffix=>`node_modules/${fix.name}/dist/${entry}${suffix}`))]));
- if(data.patchSha256!==patchSha256||data.revision!==manifest.revision||data.dshVersion!==manifest.dshVersion||JSON.stringify(data.inputs)!==JSON.stringify(inputs)||!data.files||!required.every(name=>name in data.files)||!Object.entries(data.files).every(([name,value])=>fs.existsSync(path.join(target,name))&&hash(path.join(target,name))===value))throw Error('Prepared runtime integrity mismatch; preserve it and build in a new revision directory');
- console.log('Verified prepared runtime:',path.join(target,'node_modules/@deepseek-ai/dsh/lib/bin.js'));process.exit(0);
+const args=process.argv.slice(2);
+if(args.some(arg=>arg!=='--json'))throw Error('usage: npm run runtime:prepare [-- --json]; this prepares a development fixture, not a distributable runtime');
+const source=path.join(root,'deployment');
+const manifest=JSON.parse(fs.readFileSync(path.join(source,'package.json'),'utf8'));
+const policy=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8'));
+const version=manifest.dependencies?.['@deepseek-ai/dsh'];
+if(version!==policy.preferredVersion)throw Error('Official Host fixture differs from the tested plugin compatibility target');
+const digest=createHash('sha256');
+for(const name of ['package.json','package-lock.json'])digest.update(name).update(fs.readFileSync(path.join(source,name)));
+const inputsSha256=digest.digest('hex');
+const target=path.join(root,'.npm-cache','_npx','dsh-houdini-official-'+version+'-'+inputsSha256.slice(0,16));
+const marker=path.join(target,'.dsh-official-host.json');
+const bin=path.join(target,'node_modules','@deepseek-ai','dsh','lib','bin.js');
+if(!fs.existsSync(marker)) {
+  if(fs.existsSync(target)&&fs.readdirSync(target).length)throw Error('Incomplete official Host fixture exists; preserve and inspect it: '+target);
+  fs.mkdirSync(target,{recursive:true});
+  for(const name of ['package.json','package-lock.json'])fs.copyFileSync(path.join(source,name),path.join(target,name));
+  const npm=process.env.npm_execpath??path.join(path.dirname(process.execPath),'node_modules','npm','bin','npm-cli.js');
+  if(!fs.existsSync(npm))throw Error('Run this preparation through npm or select a Node installation containing npm');
+  const result=spawnSync(process.execPath,[npm,'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund',
+    '--registry=https://registry.npmjs.org','--cache='+path.join(root,'.npm-cache')],
+    {cwd:target,stdio:args.includes('--json')?['ignore','ignore','inherit']:'inherit',windowsHide:true});
+  if(result.error)throw result.error;
+  if(result.status!==0)throw Error('Official npm fixture installation failed with exit '+result.status);
+  fs.writeFileSync(marker,JSON.stringify({schemaVersion:1,runtimeOwnership:'development-fixture',dshVersion:version,inputsSha256},null,2)+'\n');
 }
-function run(program,argv,cwd=root){const r=spawnSync(program,argv,{cwd,stdio:'inherit',windowsHide:true});if(r.error)throw r.error;if(r.status!==0)throw Error(`${program} failed with exit ${r.status}`);}
-const npm=path.join(path.dirname(process.execPath),'node_modules/npm/bin/npm-cli.js');
-if(!fs.existsSync(npm))throw Error('The selected Node must include its npm CLI');
-const work=path.join(root,'tools/out/runtime-fixes',cacheKey+'-'+randomUUID().slice(0,8));fs.mkdirSync(work,{recursive:true});
-if(apply!==0){
- if(fs.existsSync(target)&&fs.readdirSync(target).length)throw Error('Incomplete runtime directory exists: '+target+'; preserve it and inspect before retrying');
- fs.mkdirSync(target,{recursive:true});
- for(const name of ['package.json','package-lock.json'])fs.copyFileSync(path.join(root,'deployment',name),path.join(target,name));
- run(process.execPath,[npm,'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],target);
+const record=JSON.parse(fs.readFileSync(marker,'utf8'));
+const installed=JSON.parse(fs.readFileSync(path.join(target,'node_modules','@deepseek-ai','dsh','package.json'),'utf8'));
+if(record.runtimeOwnership!=='development-fixture'||record.dshVersion!==version||record.inputsSha256!==inputsSha256
+  ||installed.version!==version||!fs.existsSync(bin))throw Error('Official Host fixture identity differs from its npm lock; preserve it and prepare a new fixture');
+const prepared={runtime:target,bin,dshVersion:version,home:path.join(target,'test-home')};
+if(args.includes('--json'))console.log(JSON.stringify(prepared));
+else {
+  console.log('Official development Host:',bin);
+  console.log('Set an explicit disposable DSH_HOME before running it. The plugin package contains no DSH runtime.');
 }
-const source=path.join(work,'source');
-run('git',['clone','--filter=blob:none','--no-checkout','--depth','1','--branch',manifest.tag,manifest.repository,source]);
-run('git',['sparse-checkout','init','--cone'],source);
-run('git',['sparse-checkout','set',...new Set([...manifest.hostPackages,...manifest.clientPackages].map(pkg=>'packages/'+pkg.source)),'packages/client/modules','packages/client/web','docs','scripts'],source);
-run('git',['checkout'],source);
-const commit=spawnSync('git',['rev-parse','HEAD'],{cwd:source,encoding:'utf8',windowsHide:true});
-if(commit.status!==0||commit.stdout.trim()!==manifest.commit)throw Error('Upstream tag did not resolve to the pinned source commit');
-run('git',['apply','--check',patch],source);run('git',['apply',patch],source);
-const buildTools=path.join(work,'build-tools');fs.mkdirSync(buildTools);
-fs.copyFileSync(path.join(specification,'build-package.json'),path.join(buildTools,'package.json'));
-fs.copyFileSync(path.join(specification,'build-package-lock.json'),path.join(buildTools,'package-lock.json'));
-run(process.execPath,[npm,'ci','--ignore-scripts','--no-audit','--no-fund'],buildTools);
-run(process.execPath,[path.join(root,'tools/build-dsh-runtime-fixes.mjs'),source,target,buildTools]);
-console.log('Prepared runtime:',path.join(target,'node_modules/@deepseek-ai/dsh/lib/bin.js'));
-console.log('Existing Host and Houdini processes were not restarted.');

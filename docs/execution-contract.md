@@ -40,7 +40,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 ## 查询、修改与 Raw Gate
 
-inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。普通Python调用不因方法名前缀成为HOM修改；未知对象方法保留原保守判断，不新增普通裸helper函数的命名门槛。
+inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。源码内明确传入或返回的HOM回调保留其修改来源；普通Python函数与方法不因名称或参数无法静态展开成为HOM修改。未知对象方法保留原保守判断，不新增普通裸helper函数的命名门槛。
 
 标准库API依据解释器的模块spec与来源判断，不执行待分析import；已加载模块的实际HOM重导出仍按原方法检查。遮蔽、重绑定、显式成员覆写及可变namespace外逸会使普通API证明失效，返回值不继承模块身份。此分析不递归解释任意模块、自定义import hook或回调副作用，不能作为通用Python沙箱。
 
@@ -130,6 +130,7 @@ SOP subnet/HDA 的公共输出用 sop_set_output 发布原生 Output；普通 ge
 | center-axis surface hits | bbox中心轴与实际平面多边形边界的交点，覆盖凹面；非平面估算及共面射线保留unverified，不以扇形覆盖空洞证明表面存在 |
 | planar face crossings | 单个近似平面 Polygon 非相邻边的严格内部交叉；不外推三维面间自交 |
 | attrib unique / point spacing | 精确属性唯一性或显式有序点相邻弦长；不替代容差焊接或曲面接触 |
+| curve clearance | 选定开放Polygon曲线的实际有限线段及逐曲线常量半径包络；按点对真实弧距排除局部邻域并保留未测范围，不认证局部弯管、平滑源、障碍物或最终Sweep实体 |
 | named surface / section proximity | 声明实际表面及截面的距离与部件覆盖；不证明连续全表面关系 |
 | axis_gap | 实际 primitive 组的轴向投影间隙及横向重叠 |
 | solid_overlap | 完整闭合朝外 Polygon 操作数的实际 Boolean 交集体积；零交集不证明轴穿孔或接触 |
@@ -185,7 +186,7 @@ render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复�
 
 渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`；最终图片可选 delivery，分配到 `$HIP/dsh-artifacts/renders/<HIPNAME>/`。HIPNAME保留版本与原名，只去掉标准HIP扩展；命名组不是工程身份，精确来源由artifact的hip_path记录。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit，裸文件名仍进入visual_check的HIPNAME目录。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，已有含目录的用户路径优先；新建Karma Render Settings（含Karma Setup）默认关闭景深，picture与checkpoint使用同源render目录和原生$HIPNAME。后续渲染不暗改已配置的景深。Save As只影响后续默认输出，不迁移或删除旧图。
 
-USD Render ROP的outputimage留空时，render_frame沿当前ROP的实际输入和RenderSettings观察磁盘raster产品，保留原生多产品设置；多文件逐个保留freshness，output仅单文件时为路径，多文件使用outputs。delegate/deep/checkpoint及非磁盘产品明确保留未验证，不以周期checkpoint缺失判成图失败。Husk文件名使用原生expandHuskFilePath，不二次执行backticks；相对产品位置、未明确的settings选择与RenderPass不推断。显式picture仍为本次覆盖并恢复。USD预检与渲染期的frame恢复失败同样产生render_restore事实。
+USD Render ROP的outputimage留空时，render_frame沿当前ROP的实际输入和RenderSettings观察磁盘raster产品，保留原生多产品设置；多文件逐个保留freshness，output仅单文件时为路径，多文件使用outputs。delegate/deep/checkpoint及非磁盘产品明确保留未验证，不以周期checkpoint缺失判成图失败。Husk文件名使用原生expandHuskFilePath，不二次执行backticks；相对产品位置、未明确的settings选择与RenderPass不推断。显式picture仍为本次覆盖并恢复。用户明确模板先展开；已分配实际路径写入Houdini参数时保留字面美元与反引号，不二次求值。USD预检与渲染期的frame恢复失败同样产生render_restore事实。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 

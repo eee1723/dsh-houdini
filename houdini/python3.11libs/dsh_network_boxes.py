@@ -99,6 +99,34 @@ def _live_owner(box):
     except Exception: return None
 
 
+def register_created_network_boxes(parent, *, active_owner_session, active_owner_call):
+    """Attribute native initializer boxes only at a newly created network boundary."""
+    if active_owner_session is None:
+        return
+    created = []
+    for box in parent.networkBoxes():
+        if _live_owner(box) is not None:
+            continue
+        _OWNED_BOXES[_box_key(box)] = {
+            'session': active_owner_session, 'call': active_owner_call,
+            'parent_identity': int(parent.sessionId()),
+            'name_at_creation': box.name(), 'role': None, 'native_object': box}
+        created.append(int(box.sessionId()))
+    if created:
+        _journal({'parent_identity': int(parent.sessionId()), 'parent_path': parent.path(),
+                  'boxes': [], 'nodes': [], 'created_box_identities': created},
+                 'native_initializer_boxes')
+
+
+def retire_destroyed_parent_boxes(parent_identities):
+    """Retire typed registrations after confirmed native subtree destruction."""
+    parents = set(parent_identities)
+    for registry in (_OWNED_BOXES, _SERVICE_BOXES):
+        for key in list(registry):
+            if key[1] in parents:
+                registry.pop(key, None)
+
+
 def _layout_role(box):
     """Use explicit runtime annotations or the node's persistent control label."""
     from dsh_network_navigation import CONTROL_KEY
@@ -242,7 +270,7 @@ def _state_mismatches(expected, actual, *, check_identity=True):
         failures.append('membership')
     if {row['identity'] for row in expected.get('nested_boxes',[])} != {row['identity'] for row in actual.get('nested_boxes',[])}:
         failures.append('nested_boxes')
-    if {row['identity'] for row in expected.get('notes',[])} != {row['identity'] for row in actual.get('notes',[])}:
+    if {(row['identity'],row['path']) for row in expected.get('notes',[])} != {(row['identity'],row['path']) for row in actual.get('notes',[])}:
         failures.append('note_membership')
     if expected.get('parent_box') != actual.get('parent_box'):
         failures.append('parent_box')

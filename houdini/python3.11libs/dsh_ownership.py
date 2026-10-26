@@ -254,6 +254,9 @@ def register_owned_node(node, *, exclude_ids=()) -> None:
         if _ACTIVE_OWNER_CALL:
             item.setUserData(_TASK_OWNER_CALL_KEY, _ACTIVE_OWNER_CALL)
         if newly_registered and item.isNetwork():
+            from dsh_network_boxes import register_created_network_boxes
+            register_created_network_boxes(item, active_owner_session=_ACTIVE_OWNER_SESSION,
+                                           active_owner_call=_ACTIVE_OWNER_CALL)
             from dsh_network_notes import register_created_network_notes
             register_created_network_notes(item, active_owner_session=_ACTIVE_OWNER_SESSION,
                                            active_owner_call=_ACTIVE_OWNER_CALL)

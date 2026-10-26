@@ -3,6 +3,8 @@ import importlib.util
 from collections import Counter
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
+from email.parser import BytesParser
+from email import policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -19,6 +21,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+ASR_TEST_ENDPOINT = 'https://speech.example.test/v1/audio/transcriptions'
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("video_tutorial", ROOT / "skills/houdini-video-tutorial/scripts/video_tutorial.py")
 video = importlib.util.module_from_spec(spec)
@@ -49,7 +52,7 @@ class VideoTests(unittest.TestCase):
              "timestamp_basis": video.BASIS, "chunks": self.chunks}
         video.save(self.work / "manifest.json", self.manifest)
         self.args = Args(work=str(self.work), model="test/asr", allow_upload=True, max_chunks=2, retry_failed=False,
-                         concurrency=1, requests_per_second=None)
+                         endpoint=ASR_TEST_ENDPOINT, concurrency=1, requests_per_second=None)
         self.calls = []
 
     def sender(self, audio, model, key):
@@ -89,7 +92,7 @@ class VideoTests(unittest.TestCase):
         return server
 
     def seed_attempts(self, chunk_index, count):
-        video.config(self.work, self.args.model)
+        video.config(self.work, self.args.model, self.args.endpoint)
         item = self.chunks[chunk_index]
         for number in range(1, count + 1):
             video.save(self.work / f"attempt-{item['id']}-{number}.json",
@@ -109,8 +112,8 @@ class VideoTests(unittest.TestCase):
 
     def test_resume_skips_success(self):
         self.assertEqual(self.transcribe()["submitted"], 2)
-        self.assertEqual(self.transcribe(), {"work": str(self.work), "endpoint": video.ENDPOINT, "model": self.args.model,
-                                           "protocol": "openai-transcriptions",
+        self.assertEqual(self.transcribe(), {"work": str(self.work), "endpoint": ASR_TEST_ENDPOINT, "model": self.args.model,
+                                           "protocol": "openai-transcriptions", "authentication": "bearer",
                                            "submitted": 1, "retried": 0, "retry_budget": 0,
                                            "completed": 1, "succeeded": 1, "failed": 0,
                                            "concurrency": 1, "peak_inflight": 1, "requests_per_second": None,
@@ -345,9 +348,9 @@ class VideoTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=3)
 
-    def test_default_cli_http_overload_drains_64_then_32_and_preserves_budget_and_failed_facts(self):
+    def test_explicit_advanced_cli_overload_drains_64_then_32_and_preserves_budget_and_failed_facts(self):
         # Real requests are held until each wave fills. This checks actual peaks,
-        # worker draining, two separate provider errors, and the CLI defaults.
+        # worker draining, two separate provider errors, and explicit high concurrency.
         self.many_chunks(101)
         work = self.work
         barriers = [threading.Barrier(64), threading.Barrier(32)]
@@ -388,7 +391,7 @@ class VideoTests(unittest.TestCase):
         env = dict(os.environ, LOCAL_ASR_TEST="local-only-credential", PYTHONUTF8="1")
         run = subprocess.run([sys.executable, str(Path(video.__file__)), "transcribe", "--work", str(self.work),
                               "--model", self.args.model, "--endpoint", self.args.endpoint,
-                              "--allow-upload", "--key-env", "LOCAL_ASR_TEST"],
+                              "--allow-upload", "--key-env", "LOCAL_ASR_TEST", "--concurrency", "64", "--requests-per-second", "8"],
                              env=env, capture_output=True, text=True, timeout=45)
         report = json.loads(run.stdout.splitlines()[-1])
         self.assertEqual(run.returncode, 1, "Recovered throughput cannot hide the failed chunk facts")
@@ -491,7 +494,7 @@ class VideoTests(unittest.TestCase):
                 self.assertEqual((report["submitted"], report["completed"], report["remaining_unsubmitted"]), (3, 3, 1))
                 self.assertFalse((self.work / "attempt-00003-1.json").exists())
 
-    def test_failure_at_16_drains_then_stops_new_dispatch(self):
+    def test_failure_at_16_drains_then_uses_one_for_only_untouched_chunks(self):
         self.many_chunks(20)
         work = self.work
         guard, barrier = threading.Lock(), threading.Barrier(16)
@@ -503,8 +506,9 @@ class VideoTests(unittest.TestCase):
                 with guard:
                     ordinal = len(calls)
                     calls.append(body)
-                barrier.wait(timeout=3)
-                if ordinal:
+                if ordinal < 16:
+                    barrier.wait(timeout=3)
+                if 0 < ordinal < 16:
                     deadline = time.monotonic() + 3
                     while not (work / "outcome-00000-1.json").exists() and time.monotonic() < deadline:
                         time.sleep(.005)
@@ -518,11 +522,13 @@ class VideoTests(unittest.TestCase):
         with self.assertRaises(video.Failure) as failure:
             video.transcribe(self.args, get_key=lambda: "local-test-key")
         report = failure.exception.report
-        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (16, 16, 15, 1))
-        self.assertEqual((report["final_concurrency"], report["concurrency_transitions"]), (16, []))
-        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (5, 4))
+        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (20, 20, 19, 1))
+        self.assertEqual(report["final_concurrency"], 1)
+        self.assertEqual([(row['from'], row['to']) for row in report['concurrency_transitions']], [(16, 1)])
+        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (1, 0))
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 1)
 
-    def test_concurrent_failure_drains_inflight_success_without_dispatching_next_and_retries_explicitly(self):
+    def test_concurrent_failure_drains_inflight_before_lowering_to_one_and_retries_only_explicitly(self):
         second_started, fail_first, release_second = threading.Event(), threading.Event(), threading.Event()
         self.args.concurrency, self.args.max_chunks = 2, 3
         started = []
@@ -560,22 +566,68 @@ class VideoTests(unittest.TestCase):
             with self.assertRaisesRegex(video.Failure, "no automatic retry") as failure:
                 future.result(timeout=3)
         report = failure.exception.report
-        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (2, 2, 1, 1))
+        self.assertEqual((report["submitted"], report["completed"], report["succeeded"], report["failed"]), (3, 3, 2, 1))
         self.assertEqual(report["peak_inflight"], 2)
-        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (2, 1))
+        self.assertEqual((report["remaining"], report["remaining_unsubmitted"]), (1, 0))
+        self.assertEqual([(row['from'], row['to']) for row in report['concurrency_transitions']], [(2, 1)])
         self.assertEqual(video.latest(self.work, self.chunks[1])[1]["text"], "preserved inflight transcript")
         self.assertEqual(video.latest(self.work, self.chunks[0])[1]["http_status"], 429)
         self.assertNotIn("test-only-secret", json.dumps(report))
         self.assertFalse((self.work / ".lock").exists())
-        self.assertEqual(set(started), {"audio-00000.wav", "audio-00001.wav"})
+        self.assertEqual(set(started), {"audio-00000.wav", "audio-00001.wav", "audio-00002.wav"})
         resumed = self.transcribe()
-        self.assertEqual((resumed["submitted"], resumed["remaining"], resumed["remaining_unsubmitted"]), (1, 1, 0))
-        self.assertEqual(self.calls, ["audio-00002.wav"])
+        self.assertEqual((resumed["submitted"], resumed["remaining"], resumed["remaining_unsubmitted"]), (0, 1, 0))
+        self.assertEqual(self.calls, [])
         self.args.retry_failed, self.args.max_retries = True, 1
         retried = self.transcribe()
         self.assertEqual((retried["submitted"], retried["retried"], retried["remaining"]), (1, 1, 0))
         self.assertEqual(video.latest(self.work, self.chunks[0])[0], 2)
-        self.assertEqual(self.calls, ["audio-00002.wav", "audio-00000.wav"])
+        self.assertEqual(self.calls, ["audio-00000.wav"])
+
+    def test_default_cli_policy_limits_http_to_two_then_one_and_stops_at_one_without_retries(self):
+        self.many_chunks(4)
+        work = self.work
+        barrier, guard = threading.Barrier(2), threading.Lock()
+        state = {'starts': [], 'active': 0, 'peak': 0, 'errors': []}
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                with guard:
+                    ordinal = len(state['starts'])
+                    state['starts'].append(time.monotonic())
+                    state['active'] += 1
+                    state['peak'] = max(state['peak'], state['active'])
+                    if ordinal == 2 and state['active'] != 1:state['errors'].append('previous wave was not drained')
+                try:
+                    if ordinal < 2:barrier.wait(timeout=5)
+                    if ordinal == 1:
+                        deadline = time.monotonic()+3
+                        while not (work/'outcome-00000-1.json').exists() and time.monotonic()<deadline:time.sleep(.005)
+                    payload = b'{"text":"retained local HTTP transcript"}'
+                    self.send_response(429 if ordinal == 0 else 503 if ordinal == 2 else 200)
+                    self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+                except Exception as error:
+                    with guard:state['errors'].append(type(error).__name__)
+                finally:
+                    with guard:state['active'] -= 1
+        self.local_server(Handler)
+        command = [sys.executable,str(Path(video.__file__)),'transcribe','--work',str(work),'--model',self.args.model,
+            '--endpoint',self.args.endpoint,'--authentication','none','--allow-upload','--max-chunks','4']
+        result = subprocess.run(command,env=dict(os.environ,SILICONFLOW_API_KEY='fixture-only-unused-key'),
+            capture_output=True,text=True,encoding='utf-8',timeout=15)
+        self.assertEqual(result.returncode,1)
+        report = json.loads(result.stdout.splitlines()[-1])
+        policy = json.loads(Path(video.__file__).with_name('transcription-policy.json').read_text())
+        self.assertEqual((report['concurrency'],report['requests_per_second']), (policy['concurrency'],policy['requestsPerSecond']))
+        self.assertEqual((report['concurrency'],report['requests_per_second'],report['final_concurrency']), (2,1,1))
+        self.assertEqual((report['submitted'],report['completed'],report['succeeded'],report['failed'],report['retried']), (3,3,1,2,0))
+        self.assertEqual([(row['from'],row['to']) for row in report['concurrency_transitions']], [(2,1)])
+        self.assertEqual((state['peak'],len(state['starts']),state['errors']), (2,3,[]))
+        self.assertTrue(all(right-left>=.9 for left,right in zip(state['starts'],state['starts'][1:])),state['starts'])
+        self.assertFalse((work/'attempt-00003-1.json').exists())
+        self.assertFalse((work/'attempt-00000-2.json').exists())
+        self.assertFalse((work/'attempt-00002-2.json').exists())
 
     def test_dispatch_rate_uses_spacing_without_delaying_inflight_completion(self):
         self.args.concurrency, self.args.max_chunks, self.args.requests_per_second = 3, 3, 20
@@ -642,7 +694,7 @@ class VideoTests(unittest.TestCase):
         def change_then_post(audio, model, key):
             self.assertEqual(audio, original)
             target.write_bytes(b"replacement file contents")
-            return video.post(audio, model, key)
+            return video.post(audio, model, key, self.args.endpoint)
         with patch.object(video.urllib.request, "build_opener", return_value=Args(open=open_request)):
             result = self.transcribe(change_then_post)
         self.assertEqual(result["submitted"], 1)
@@ -687,6 +739,157 @@ class VideoTests(unittest.TestCase):
         with self.assertRaisesRegex(video.Failure, "configuration/source changed"):
             self.transcribe()
         self.assertEqual(len(self.calls), 2)
+
+    def test_local_noauth_uses_real_multipart_without_resolving_or_sending_ambient_keys(self):
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers['Content-Length']))
+                message = BytesParser(policy=policy.default).parsebytes(
+                    ('Content-Type: '+self.headers['Content-Type']+'\r\nMIME-Version: 1.0\r\n\r\n').encode()+body)
+                parts = {part.get_param('name', header='content-disposition'): part for part in message.iter_parts()}
+                received.append({'path': self.path, 'authorization': self.headers.get('Authorization'),
+                    'model': parts['model'].get_payload(decode=True).decode(),
+                    'filename': parts['file'].get_filename(), 'audio': parts['file'].get_payload(decode=True), 'body': body})
+                reply = json.dumps({'text': '本机识别完整文本', 'segments': [{'text': '保留原值', 'start': .1, 'end': .8}]}).encode()
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(reply)
+        self.local_server(Handler)
+        self.args.authentication = 'none'
+        self.args.endpoint = self.args.endpoint.replace('/v1/audio/transcriptions','/custom-asr')
+        self.args.key_env = 'IGNORED INVALID NAME'
+        self.args.max_chunks = 1
+        ambient = {'SILICONFLOW_API_KEY': 'ambient-silicon-test-key', 'OPENAI_API_KEY': 'ambient-openai-test-key',
+                   'DSH_VIDEO_TRANSCRIPTION_KEY': 'ambient-selected-test-key'}
+        with patch.dict(os.environ, ambient), patch.object(video, 'key_from_environment', side_effect=AssertionError('ambient key lookup')):
+            result = video.transcribe(self.args, get_key=lambda: self.fail('none must not ask for a key'))
+        self.assertEqual((result['submitted'], result['succeeded'], result['authentication']), (1, 1, 'none'))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]['path'], '/custom-asr')
+        self.assertIsNone(received[0]['authorization'])
+        self.assertEqual(received[0]['model'], self.args.model)
+        self.assertEqual(received[0]['filename'], 'audio.wav')
+        self.assertEqual(received[0]['audio'], (self.work/'audio-00000.wav').read_bytes())
+        self.assertTrue(all(value.encode() not in received[0]['body'] for value in ambient.values()))
+        outcome = video.read(self.work/'outcome-00000-1.json')
+        self.assertEqual(outcome['text'], '本机识别完整文本')
+        self.assertEqual(outcome['provider_evidence']['raw_response']['segments'], [{'text': '保留原值', 'start': .1, 'end': .8}])
+        saved = video.read(self.work/'asr-config.json')
+        self.assertEqual(saved['authentication'], 'none')
+        video.export(Args(work=str(self.work), output=str(self.root/'noauth-export')))
+        self.assertEqual(video.read(self.root/'noauth-export/transcript.json')['asr'], saved)
+        self.assertTrue(all(value not in json.dumps(saved) for value in ambient.values()))
+
+    def test_real_noauth_http_preserves_both_qwen_protocols_without_an_authorization_header(self):
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                received.append((self.path, self.headers.get('Authorization'), payload, self.headers.get('X-DashScope-SSE')))
+                reply = ({'choices': [{'finish_reason': 'stop', 'message': {'content': 'chat protocol transcript'}}]}
+                    if self.path.endswith('/chat/completions') else {'output': {'text': 'native protocol transcript'}})
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(json.dumps(reply).encode())
+        server = self.local_server(Handler)
+        cases = [('qwen-chat-asr', '/v1/chat/completions', 'chat protocol transcript'),
+                 ('dashscope-asr', '/api/v1/services/aigc/multimodal-generation/generation', 'native protocol transcript')]
+        for protocol, suffix, text in cases:
+            with self.subTest(protocol=protocol):
+                reply = video.post(b'prepared wav bytes', 'explicit-relay-model-id', 'must-not-be-sent',
+                    f'http://127.0.0.1:{server.server_port}'+suffix, protocol, authentication='none')
+                self.assertEqual(reply[0], text)
+                self.assertIsNone(received[-1][1])
+                self.assertEqual(received[-1][2]['model'], 'explicit-relay-model-id')
+                self.assertNotIn('must-not-be-sent', json.dumps(received[-1][2]))
+        self.assertEqual(received[-1][3], 'disable')
+
+    def test_noauth_failure_retry_and_authentication_changes_preserve_the_existing_ledger(self):
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                received.append(self.headers.get('Authorization'))
+                if len(received) == 1:
+                    self.send_response(503); self.end_headers(); self.wfile.write(b'not logged provider error')
+                else:
+                    self.send_response(200); self.end_headers(); self.wfile.write(b'{"text":"explicit retry completed"}')
+        self.local_server(Handler)
+        self.args.authentication = 'none'
+        self.args.chunks = ['00000']
+        with self.assertRaises(video.Failure):
+            video.transcribe(self.args, get_key=lambda: self.fail('none key lookup'))
+        originals = {file.name: file.read_bytes() for file in self.work.glob('*.json')}
+        self.args.authentication = 'bearer'
+        self.args.retry_failed = True
+        with self.assertRaisesRegex(video.Failure, 'configuration/source changed'):
+            video.transcribe(self.args, sender=lambda *a: self.fail('changed authentication submitted'), get_key=lambda: self.fail('changed authentication resolved key'))
+        self.assertTrue(all((self.work/name).read_bytes() == data for name, data in originals.items()))
+        self.assertFalse((self.work/'attempt-00000-2.json').exists())
+        self.args.authentication = 'none'
+        self.args.retry_failed = False
+        self.assertEqual(video.transcribe(self.args, get_key=lambda: self.fail('none key lookup'))['submitted'], 0)
+        self.assertEqual(len(received), 1)
+        self.args.retry_failed = True
+        retried = video.transcribe(self.args, get_key=lambda: self.fail('none key lookup'))
+        self.assertEqual((retried['submitted'], retried['retried']), (1, 1))
+        self.assertEqual(received, [None, None])
+        self.assertEqual(video.read(self.work/'outcome-00000-2.json')['text'], 'explicit retry completed')
+        self.assertTrue(all((self.work/name).read_bytes() == data for name, data in originals.items()))
+
+    def test_legacy_bearer_identity_is_not_rewritten_or_silently_changed_to_noauth(self):
+        self.args.endpoint = 'https://api.siliconflow.cn/v1/audio/transcriptions'
+        legacy = {'endpoint': self.args.endpoint, 'model': self.args.model, 'manifest_sha256': video.sha(self.work/'manifest.json')}
+        video.save(self.work/'asr-config.json', legacy)
+        self.seed_attempts(0, 1)
+        original = (self.work/'asr-config.json').read_bytes()
+        self.args.chunks = ['00000']
+        self.args.retry_failed = True
+        self.assertEqual(self.transcribe()['retried'], 1)
+        self.assertEqual((self.work/'asr-config.json').read_bytes(), original)
+        self.args.authentication = 'none'
+        with self.assertRaisesRegex(video.Failure, 'configuration/source changed'):
+            video.transcribe(self.args, sender=lambda *a: self.fail('network'), get_key=lambda: self.fail('key'))
+        self.assertEqual((self.work/'asr-config.json').read_bytes(), original)
+        self.assertEqual(video.latest(self.work, self.chunks[0])[0], 2)
+
+    def test_noauth_still_requires_explicit_audio_permission_and_secure_endpoint(self):
+        self.args.authentication = 'none'
+        self.args.allow_upload = False
+        with self.assertRaisesRegex(video.Failure, 'explicit user authorization'):
+            video.transcribe(self.args, sender=lambda *a: self.fail('network'), get_key=lambda: self.fail('key'))
+        self.args.allow_upload = True
+        self.args.endpoint = 'http://remote.example.test/v1/audio/transcriptions'
+        with self.assertRaisesRegex(video.Failure, 'requires HTTPS'):
+            video.transcribe(self.args, sender=lambda *a: self.fail('network'), get_key=lambda: self.fail('key'))
+        self.args.endpoint = 'http://127.0.0.1:3131/v1/realtime'
+        self.args.protocol = 'openai-realtime'
+        with self.assertRaisesRegex(video.Failure, 'Realtime streams and asynchronous file jobs require a separate adapter'):
+            video.transcribe(self.args, sender=lambda *a: self.fail('network'), get_key=lambda: self.fail('key'))
+        self.assertFalse((self.work/'asr-config.json').exists())
+        self.assertFalse(list(self.work.glob('attempt-*.json')))
+
+    def test_cli_none_uses_the_real_loopback_sender_without_any_credential(self):
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_POST(self):
+                received.append((self.headers.get('Authorization'), self.rfile.read(int(self.headers['Content-Length']))))
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b'{"text":"CLI local transcript"}')
+        self.local_server(Handler)
+        environment = dict(os.environ)
+        environment.pop('DSH_ASR_TEST_MUST_STAY_UNSET', None)
+        command = [sys.executable, str(ROOT/'skills/houdini-video-tutorial/scripts/video_tutorial.py'), 'transcribe',
+            '--work', str(self.work), '--model', self.args.model, '--endpoint', self.args.endpoint,
+            '--authentication', 'none', '--key-env', 'DSH_ASR_TEST_MUST_STAY_UNSET', '--allow-upload',
+            '--chunks', '00000', '--max-chunks', '1', '--concurrency', '1']
+        result = subprocess.run(command, env=environment, capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual((report['authentication'], report['succeeded']), ('none', 1))
+        self.assertEqual(len(received), 1)
+        self.assertIsNone(received[0][0])
+        self.assertEqual(video.read(self.work/'asr-config.json')['authentication'], 'none')
 
     def test_qwen_protocol_resume_and_export_preserve_chunk_timing(self):
         self.args.protocol = "qwen-chat-asr"
@@ -853,7 +1056,7 @@ class VideoTests(unittest.TestCase):
             def read(self, limit):
                 return b'{"choices":[{"finish_reason":"length","message":{"content":"partial text"}}]}'
         with patch.object(video.urllib.request, "build_opener", return_value=Args(open=lambda *a, **kw: Response())), \
-                patch.dict(os.environ, {"SILICONFLOW_API_KEY": "test-only-secret"}):
+                patch.dict(os.environ, {"DSH_VIDEO_TRANSCRIPTION_KEY": "test-only-secret"}):
             with self.assertRaisesRegex(video.Failure, "evidence retained"):
                 video.transcribe(self.args)
         outcome = video.read(self.work / "outcome-00000-1.json")
@@ -863,7 +1066,7 @@ class VideoTests(unittest.TestCase):
 
     def test_endpoint_and_credential_reference_reject_invalid_input_before_network(self):
         for endpoint in ("http://remote.example/v1/audio/transcriptions", "https://key@asr.example/audio/transcriptions",
-                         "https://asr.example/audio/transcriptions?api_key=private", "https://asr.example/v1/chat/completions",
+                         "https://asr.example/audio/transcriptions?api_key=private", "https://asr.example/inference#fragment",
                          "https://asr.example:bad/v1/audio/transcriptions"):
             self.args.endpoint = endpoint
             with self.assertRaises(video.Failure):
@@ -877,9 +1080,21 @@ class VideoTests(unittest.TestCase):
 
     def test_custom_credential_comes_only_from_selected_process_environment(self):
         with patch.dict(os.environ, {"DSH_VIDEO_TRANSCRIPTION_KEY": "selected-test-key", "SILICONFLOW_API_KEY": "other-key"}):
+            self.assertEqual(video.key_from_environment(), "selected-test-key")
             self.assertEqual(video.key_from_environment("DSH_VIDEO_TRANSCRIPTION_KEY"), "selected-test-key")
             with self.assertRaisesRegex(video.Failure, "DSH_MISSING_TEST_KEY missing"):
                 video.key_from_environment("DSH_MISSING_TEST_KEY")
+
+    def test_cli_requires_an_explicit_endpoint_and_model_before_any_request_or_config(self):
+        for fields, missing in [(['--model', self.args.model], '--endpoint'),
+                                (['--endpoint', 'http://127.0.0.1:3131/custom-asr'], '--model')]:
+            with self.subTest(missing=missing):
+                result = subprocess.run([sys.executable,str(Path(video.__file__)),'transcribe','--work',str(self.work),
+                    '--authentication','none','--allow-upload',*fields],capture_output=True,text=True,encoding='utf-8',timeout=10)
+                self.assertEqual(result.returncode,2)
+                self.assertIn(missing,result.stderr)
+        self.assertFalse((self.work/'asr-config.json').exists())
+        self.assertFalse(list(self.work.glob('attempt-*.json')))
 
     def test_default_transport_uses_custom_endpoint_and_injected_environment(self):
         self.args.endpoint = "https://asr.example.test/v1/audio/transcriptions"

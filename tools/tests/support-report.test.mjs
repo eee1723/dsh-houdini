@@ -1,8 +1,9 @@
 import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import {Session} from '@deepseek-ai/dsh-session'
 import {createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
-import {supportOptions,supportPayload,supportEvent} from '../../lib/support-report.js'
+import {supportOptions,supportPayload,supportEvent,supportPython} from '../../lib/support-report.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {houdiniSnapshot} from '../../lib/dsh-adapter.js'
 
@@ -68,4 +69,16 @@ const discovered=await supportPayload(ctx,options,signal)
 assert.equal(discovered.session.total_events,selected.snapshotEvents().length)
 assert(JSON.stringify(discovered).includes('LATEST_FAILURE'),'backends without eventCount must still export the latest failure')
 assert.equal(new Set(discovered.timeline.map(event=>event.seq)).size,discovered.timeline.length)
+const installation=path.resolve('owned-fixture-hfs'),python=path.join(installation,'python313','python.exe')
+let discoveries=0
+const staticHost={get(name){assert.equal(name,'houdiniDesktop','diagnostics must not contact Bridge, activate an Agent or read credentials');
+  return {listInstallations:async()=>{discoveries++;return [{hfs:installation,version:'22.0.368'}]}}}}
+assert.equal(await supportPython(staticHost,signal,{environment:{},exists:filename=>filename===python}),python,
+  'Desktop without HFS uses an exact executable from static Houdini installation facts')
+assert.equal(discoveries,1)
+const older=path.join(installation,'python311','python.exe')
+assert.equal(await supportPython(staticHost,signal,{environment:{},exists:filename=>filename===older}),older)
+assert.equal(await supportPython({get:()=>undefined},signal,{environment:{HFS:installation},exists:filename=>filename===older}),older)
+await assert.rejects(supportPython(staticHost,signal,{environment:{PATH:'unrelated-system-python'},exists:()=>false}),/未找到 Houdini 安装内/)
+await assert.rejects(supportPython(staticHost,AbortSignal.abort(),{environment:{},exists:()=>true}),/abort/i)
 console.log('support report: exact session, native messages, nested results, opt-in content, corruption, cancellation and bounded history passed')

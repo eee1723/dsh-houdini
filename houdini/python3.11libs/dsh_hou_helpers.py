@@ -40,7 +40,7 @@ def modeling_dimensions(quantities, require_meter_scene=True) -> dict:
 
 
 def sop_recipe(kind, spec=None) -> dict:
-    """Read-only ordinary SOP specs; kind=catalog/hinge/slider/guided_slider/surface_attach/gusset/fastener/repeat/sweep_tube/profile_shell.
+    """Read-only ordinary SOP specs; includes curve_path, sweep_tube and structural recipes.
 
     Read catalog or sop_recipe(kind) for examples of every recipe. guided_slider bounds
     travel against actual polygon source/guide projections. surface_attach projects
@@ -53,6 +53,9 @@ def sop_recipe(kind, spec=None) -> dict:
     slider translates along axis; repeat uses integer count 1..256 and spacing.
     Numeric origin/dimensions or {parm:name} reference one shared controller.
     No automatic interfaces, world-space conversion, HDA, ownership or acceptance.
+    curve_path uses named anchors/handle offsets to plan native Add -> Curve 2.0
+    cubic Bezier -> Resample; shared symmetric handles retain C1 joins. It does
+    not route, project onto geometry, avoid obstacles or certify swept surfaces.
     """
     from dsh_procedural_plans import sop_recipe as plan
     return plan(kind, spec)
@@ -244,6 +247,32 @@ def geo_point_spacing(node, expected: float, tolerance: float, closed: bool = Fa
     """
     from dsh_sop_contracts import geo_point_spacing as check
     return check(node, expected, tolerance, closed=closed, order_attrib=order_attrib, max_points=max_points)
+
+
+def geo_curve_clearance(node, radius, *, group=None, clearance=0.0, self_exclusion=None,
+                        max_segments=2048, max_pairs=500000, max_results=16) -> dict:
+    """Check all selected polyline segment/radius envelopes with explicit local exclusions.
+
+    radius: positive scalar or scalar primitive radius attribute name. group:
+    exact primitive group. Only actual open Polygon primitives are supported;
+    smooth/native/packed/closed-face input is unverified without approximation.
+    A geometric loop may repeat its endpoint. Computes closest finite segment
+    points, including interior crossings, and gap=distance-radius_a-radius_b.
+    clearance is the required nonnegative envelope gap in SOP local units.
+    Same-curve point pairs within self_exclusion arc distance are omitted by
+    clipping the segment-pair parameter domain, including a geometric loop's
+    seam; long adjacent/backtracking segments retain their nonlocal parts.
+    None uses pi*(curve_radius+clearance/2), a half-circle arc at the effective
+    radius. Explicit zero omits no local neighborhood and can flag joint envelopes.
+    max_pairs bounds candidate pairs BEFORE exclusion; budgets return unverified
+    without measuring any pair. Read coverage/omissions and worst_pairs, not
+    only ok. Pass covers eligible segment envelopes; it never proves local bend
+    validity, smooth-curve intervals, final Sweep mesh or obstacle clearance.
+    Does not modify curves, viewport or input geometry.
+    """
+    from dsh_curve_paths import geo_curve_clearance as check
+    return check(node, radius, group=group, clearance=clearance, self_exclusion=self_exclusion,
+                 max_segments=max_segments, max_pairs=max_pairs, max_results=max_results)
 
 # Public verb vocabulary; implementation modules never import this facade.
 from dsh_geometry_queries import (

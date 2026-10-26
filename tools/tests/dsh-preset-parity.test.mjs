@@ -22,10 +22,12 @@ const frontend = patch.flatMap(row => row.insert || []).filter(row => row.name =
 assert.equal(frontend.length, 1, 'browser delivery has one root entry')
 assert.equal(declarations.length, 1)
 assert.equal(declarations[0].config.id, 'houdini')
-assert.equal(patch.find(row => row.id === 'agent-preset-registry').config.default, 'houdini')
+assert.equal(patch.find(row => row.id === 'agent-preset-registry'), undefined, 'the host owns its default preset')
 for (const id of ['standard', 'ptc', 'minimal', 'cordis']) {
-  assert.equal(patch.find(row => row.id === 'preset-' + id).disabled, true)
+  assert.equal(patch.find(row => row.id === 'preset-' + id), undefined, 'plugin cannot change another preset')
 }
+assert.equal(patch.flatMap(row=>row.insert||[]).filter(row=>row.name==='dsh-houdini/executor-host').length,1,
+  'the Desktop plugin owns one root executor discovery service')
 function rows(entries) {
   const found = new Map()
   function visit(entries, parent = '') {

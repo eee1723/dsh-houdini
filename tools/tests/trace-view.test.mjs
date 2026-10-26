@@ -48,7 +48,14 @@ const catalog = loadCatalog(
 assert(catalog.every((d) => d.verbs.every((v) => v.returns)));
 let registration;
 let View;
-const viewIds=[];
+const viewIds=new Set();
+let selectedPreset='standard';
+const selectionListeners=new Set(),rowListeners=new Set();
+const sessionRows={getSnapshot:()=>({byId:{fixture:{projectionValues:{agentPreset:selectedPreset}}}}),
+  subscribe:fn=>{rowListeners.add(fn);return()=>rowListeners.delete(fn)}};
+const currentSession={getSnapshot:()=>({key:'fixture'}),subscribe:fn=>{selectionListeners.add(fn);return()=>selectionListeners.delete(fn)}};
+const scope={get:name=>({connection:{generation:{subscribe:()=>()=>{},getSnapshot:()=>1}},sessions:{list:sessionRows},uiSession:{adapter:{current:currentSession}},uiWorkspace:{},
+  configForms:{whileServed:(_names,register)=>register(),get:()=>({})}})[name],effect:register=>register()};
 let hooks = [];
 let cursor = 0;
 let elements = 0;
@@ -77,6 +84,7 @@ const React = {
   useEffect: () => {},
 };
 vm.runInNewContext(source, {
+  setTimeout,clearTimeout,
   window: {
     __ModuleLoader__: {
       load: (r) => {
@@ -91,6 +99,8 @@ registration
     return React;
   })
   .apply({
+    effect:(register)=>register(),
+    inject:(dependencies,callback)=>{if(dependencies.includes('uiWorkspace')&&!dependencies.includes('layout'))callback(scope)},
     get: (name) =>
       name === "slots"
         ? {
@@ -99,14 +109,24 @@ registration
             entriesOfSlot: () => [],
             subscribe: () => () => {},
             register: (config, component) => {
-              if(config.name==='conversation.view')viewIds.push(config.id);
+              if(config.name==='conversation.view')viewIds.add(config.id);
               if (config.id === "houdinitrace") View = component;
+              return ()=>viewIds.delete(config.id);
             },
           }
         : undefined,
   });
 assert.equal(elements, 0, 'registration does not render or initialize Trace');
-assert.deepEqual(viewIds,['houdinitrace'],'Houdini has one conversation view; tool information lives in Trace');
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual([...viewIds],[],'other modes have no Houdini view tab');
+selectedPreset='houdini';rowListeners.forEach(fn=>fn());
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual([...viewIds],['houdinitrace'],'selected Houdini mode has one conversation view');
+selectedPreset='standard';rowListeners.forEach(fn=>fn());
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual([...viewIds],[],'switching to another mode removes Trace from the actual slot roster');
+selectedPreset='houdini';rowListeners.forEach(fn=>fn());
+await new Promise(resolve=>setTimeout(resolve,0));
 View = View({}).type; // Materialize the diagnostic runtime when its view opens.
 const t = (text) => [{ type: "text", text }];
 // Group the selected request without substituting new source text or dropping unknowns.

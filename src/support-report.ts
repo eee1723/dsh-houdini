@@ -3,9 +3,10 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session'
 import type {SessionHandle} from '@deepseek-ai/dsh-session-persistence'
 import {spawn} from 'node:child_process'
+import path from 'node:path'
 import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
 import {fileURLToPath} from 'node:url'
-import {videoRuntime} from './video-runtime.js'
+import {videoRuntime,type RuntimeOptions} from './video-runtime.js'
 import {executionCall,executionResult,houdiniSourceMessages} from './dsh-adapter.js'
 import {sectionData} from './prompt-data.js'
 import type {SessionEvent} from './execution-history.js'
@@ -138,14 +139,29 @@ export async function supportPayload(ctx:Context,input:unknown,signal:AbortSigna
   } finally {await handle.close()}
 }
 
-export function collectSupport(payload:unknown,signal:AbortSignal) {
-  const python=videoRuntime().python
-  if(!python)throw new Error('Host 启动环境缺少 Houdini Python；请从版本窗口导出运行诊断包。')
+/** Diagnostics need a local interpreter, not a live scene. Desktop owns no HFS
+ * environment, so use its discovered installation's exact Python executable. */
+export async function supportPython(ctx:Context,signal:AbortSignal,
+  options:Pick<RuntimeOptions,'environment'|'exists'>={}):Promise<string> {
+  signal.throwIfAborted()
+  const desktop=ctx.get('houdiniDesktop')
+  if(desktop) {
+    for(const installation of await desktop.listInstallations()) {
+      signal.throwIfAborted()
+      const candidate=videoRuntime('',{...options,environment:{HFS:installation.hfs}}).python
+      if(candidate)return candidate
+    }
+  }
+  const candidate=videoRuntime('',options).python
+  if(candidate)return candidate
+  throw new Error('未找到 Houdini 安装内的 Python 3.11+；请检查本机 Houdini 安装后重新导出诊断包。此操作不要求连接或启动场景。')
+}
+
+export function collectSupport(payload:unknown,signal:AbortSignal,python:string) {
+  if(!python||!path.isAbsolute(python))throw new Error('诊断收集需要 Houdini 安装内 Python 的完整路径。')
   signal.throwIfAborted()
   return new Promise<any>((resolve,reject)=>{
     const env=scrubbedParentEnv()
-    for(const key of ['DSH_HOUDINI_MANAGED_CONTEXT','DSH_HOUDINI_WORKBENCH_CONTEXT','DSH_HOUDINI_WORKBENCH_ROOT'])
-      if(process.env[key])env[key]=process.env[key]
     const processHandle=spawn(python,[SCRIPT],{cwd:ROOT,env,windowsHide:true,stdio:['pipe','pipe','pipe'],signal})
     const chunks:Buffer[]=[]
     let size=0,overflow=false
@@ -168,5 +184,6 @@ export function collectSupport(payload:unknown,signal:AbortSignal) {
 }
 
 export async function createSupportReport(ctx:Context,input:unknown,signal:AbortSignal) {
-  return collectSupport(await supportPayload(ctx,input,signal),signal)
+  const payload=await supportPayload(ctx,input,signal)
+  return collectSupport(payload,signal,await supportPython(ctx,signal))
 }
