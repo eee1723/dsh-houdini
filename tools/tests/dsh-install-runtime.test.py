@@ -19,7 +19,10 @@ with patch.dict(os.environ, {'HOUDINI_USER_PREF_DIR': 'D:/Fixture/houdini__HVER_
 
 if os.name == 'nt':
     with tempfile.TemporaryDirectory(prefix='dsh-helper-install-中文 空格-') as temporary:
-        folder = Path(temporary)
+        # Windows CI can expose TEMP through an 8.3 user-directory alias.
+        # Derive every fixture argument/expectation from the same existing,
+        # canonical root before PowerShell applies its path normalization.
+        folder = Path(temporary).resolve()
         home, helpers, packages = folder / 'official-home', folder / 'helpers', folder / 'prefs/packages'
         home.mkdir()
         preserved = home / 'settings.yaml'
@@ -65,7 +68,9 @@ if os.name == 'nt':
         environment_preview = subprocess.run([*command[:7], '-Root', str(folder / 'uncreated-env-install'), '-PrintOnly'],
                                              env=package_environment, check=True, capture_output=True,
                                              text=True, encoding='utf-8', timeout=30)
-        assert json.loads(environment_preview.stdout)['targets'] == list(map(str, package_directories))
+        actual_targets = json.loads(environment_preview.stdout)['targets']
+        expected_targets = list(map(str, package_directories))
+        assert actual_targets == expected_targets, {'actual': ascii(actual_targets), 'expected': ascii(expected_targets)}
         assert not (folder / 'uncreated-env-install').exists()
         assert not any(path.exists() for path in package_directories)
         relative_environment = dict(package_environment, HOUDINI_PACKAGE_DIR=str(package_directories[0]) + os.pathsep + 'C:relative')
