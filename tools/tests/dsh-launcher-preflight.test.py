@@ -44,14 +44,14 @@ with patch.dict(sys.modules, {'dsh_deployment': old_state}):
     try:
         launcher.require_local_modules()
     except RuntimeError as error:
-        assert '重开' in str(error) and '旧版连接模块' in str(error)
+        assert '保存' in str(error) and '重新打开' in str(error) and '旧版连接模块' in str(error)
     else:
         raise AssertionError('mixed helper APIs were accepted')
 with patch.dict(sys.modules, {'dsh_deployment': SimpleNamespace(__file__=str(ROOT / 'tools/out/old-helper/dsh_deployment.py'))}):
     try:
         launcher.require_local_modules()
     except RuntimeError as error:
-        assert '另一版本' in str(error)
+        assert '不同位置' in str(error)
     else:
         raise AssertionError('foreign helper path was accepted')
 
@@ -194,7 +194,7 @@ with tempfile.TemporaryDirectory(prefix='helper-removal-') as temporary:
         timer = timers[-1]
         timer.callback()
         assert timer.stopped and timer.deleted and launcher._HELPER_SWITCH_TIMER is None
-        assert '解除登记' in displays[-1][0] and 'fixture-report' in displays[-1][1]['details']
+        assert '已停用' in displays[-1][0] and 'fixture-report' in displays[-1][1]['details']
         timer.callback()
         assert len(displays) == 3, 'retired timer cannot report completion twice'
         fail[0] = True
@@ -214,4 +214,14 @@ with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *arg
      patch.object(launcher, 'remove_local_components') as remove:
     launcher.show_plugin_info()
     remove.assert_called_once_with()
+
+# Keep the useful failure reason in the normal dialog; technical context stays
+# intact in details and the support diagnostic, rather than being swallowed.
+presented = []
+problem_ui = SimpleNamespace(show_startup_problem=lambda message, detail, parent: presented.append((message, detail)) or None)
+with patch.object(launcher, 'hou', SimpleNamespace(isUIAvailable=lambda: True, qt=SimpleNamespace(mainWindow=lambda: None))), \
+     patch.dict(sys.modules, {'dsh_ui_style': problem_ui}):
+    launcher._startup_failure(RuntimeError('fixture: actual failure reason\ninternal operation identity and path'))
+assert presented[-1] == ('fixture: actual failure reason', 'fixture: actual failure reason\ninternal operation identity and path')
+assert launcher._LAST_STARTUP_FAILURE == presented[-1][1]
 print('Desktop menu routing, idle-only repair, helper version selection and confirmed worker-only component removal passed')

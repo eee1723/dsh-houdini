@@ -106,7 +106,7 @@ execFile(powershell,['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy'
                                    str(environment_install_root)], env=package_environment, check=True,
                                   capture_output=True, text=True, encoding='utf-8', timeout=75)
         native_receipt = json.loads(consumed.stdout)
-        assert native_receipt['ok'] and native_receipt['message'].startswith('Houdini 组件已安装。')
+        assert native_receipt['ok'] and native_receipt['message'].startswith('Houdini 组件已安装或更新。')
         assert Path(native_receipt['helperRoot']).is_relative_to(environment_install_root)
         assert all((path / 'dsh-houdini.json').is_file() for path in package_directories)
         assert not (folder / 'fallback-houdini21.0').exists(), 'HOUDINI_PACKAGE_DIR must precede the fallback preferences'
@@ -209,6 +209,7 @@ execFile(powershell,['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy'
         assert receipt['migration']['disabledCount'] == 6
         assert receipt['migration']['reviewCount'] == 3
         assert Path(receipt['migration']['reportPath']).is_file()
+        assert receipt['message'] == native_receipt['message'], 'ordinary install feedback does not expose migration internals'
         package = json.loads(target.read_text(encoding='utf-8'))
         values = {key: value for item in package['env'] for key, value in item.items()}
         installed = Path(values['DSH_HOUDINI_PATH'])

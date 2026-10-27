@@ -20,8 +20,8 @@ export class ExecutorController extends TypertRemoteService {
     if(existing)return existing
     let title:string|undefined
     if(isNew) {
-      this.unnamedSerial=Math.max(this.unnamedSerial,...this.ctx.workspaceRegistry.list().map(item=>Number(/^未保存工程 (\d+)$/.exec(item.title)?.[1]??0)))+1
-      title='未保存工程 '+this.unnamedSerial
+      this.unnamedSerial=Math.max(this.unnamedSerial,...this.ctx.workspaceRegistry.list().map(item=>Number(/^(?:临时工作区|未保存工程) (\d+)$/.exec(item.title)?.[1]??0)))+1
+      title='临时工作区 '+this.unnamedSerial
     }
     return this.ctx.workspaceRegistry.create(directory,title)
   }

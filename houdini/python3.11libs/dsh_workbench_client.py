@@ -64,7 +64,7 @@ def _admitted_ticket(value, identifier):
             or any(not isinstance(value.get(field), str) or not Path(value[field]).is_absolute()
                    for field in ('workspace', 'hfs'))
             or value.get('hip') is not None and (not isinstance(value['hip'], str) or not Path(value['hip']).is_absolute())):
-        raise RuntimeError('Desktop 没有返回有效的原启动准入信息。')
+        raise RuntimeError('Desktop 未能确认这次 Houdini 启动，请在 Desktop 中重试连接。\n原因：启动准入信息格式无效。')
     return value
 
 
@@ -80,7 +80,7 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
             # This is one explicit user intention, not an inferred new writer.
             _PENDING_MENU = {'reload': reload or bool((_PENDING_MENU or {}).get('reload'))}
             import hou
-            hou.ui.setStatusMessage('正在连接 Houdini；接入完成后会打开同一 Desktop。')
+            hou.ui.setStatusMessage('正在连接，请稍候；完成后会打开 Desktop。')
         return False
     import hou
     if not hou.isUIAvailable():
@@ -97,7 +97,7 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
     initial = _scene_snapshot(hou)
     state = {'phase': 'connecting', 'initial': initial, 'requestId': uuid.uuid4().hex}
     _BUSY = True
-    hou.ui.setStatusMessage('正在连接官方 DSH Desktop…')
+    hou.ui.setStatusMessage('正在连接 DSH Desktop…')
 
     def local_failure(error):
         state['error'] = str(error)
@@ -124,7 +124,7 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
                 state['operationId'] = ticket['id']
                 birth = _process_started(os.getpid())
                 if not birth:
-                    raise RuntimeError('无法确认本 Houdini 的进程出生身份，尚未登记；请从此窗口的 Open Workspace 接入。')
+                    raise RuntimeError('尚未确认这个 Houdini 窗口，连接未完成。请从本窗口的 Open Workspace 重试。\n原因：无法读取进程创建身份。')
                 identity = {'id': ticket['id'], 'pid': os.getpid(), 'processStarted': birth,
                             'hfs': str(Path(initial['hfs']).resolve()),
                             'hipPath': initial['hipPath'], 'hipIsNew': initial['hipIsNew']}
@@ -183,7 +183,7 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
                 try:
                     from dsh_shared_executor import prepare_registration
                     if _scene_snapshot(hou) != initial:
-                        raise RuntimeError('工程在连接期间已变化；本次没有登记或换绑，请从当前窗口重新接入。')
+                        raise RuntimeError('工程在连接时发生了变化，本次未连接到对话。请从当前窗口重新打开 Open Workspace。')
                     launcher.require_local_modules()
                     ticket = state.get('ticket')
                     if ticket and initial['hipIsNew']:
@@ -203,8 +203,8 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
         phase = state.get('phase')
         if phase != state.get('shownPhase') and not state.get('done'):
             state['shownPhase'] = phase
-            hou.ui.setStatusMessage({'connecting': '正在连接官方 DSH Desktop…', 'capturing': '正在读取当前 Houdini…',
-                                    'registering': '正在登记当前 Houdini…', 'binding': '正在连接 Houdini 对话…'}[phase])
+            hou.ui.setStatusMessage({'connecting': '正在连接 DSH Desktop…', 'capturing': '正在确认当前工程…',
+                                    'registering': '正在连接当前 Houdini…', 'binding': '正在打开工程对话…'}[phase])
         if not state.get('done'):
             return
         pending_menu, _PENDING_MENU = _PENDING_MENU, None
@@ -235,10 +235,10 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
         if state.get('error'):
             launcher._startup_failure(state['error'])
         else:
-            hou.ui.setStatusMessage('已打开 DSH Desktop；当前操作继续由原对话观察。' if state.get('busy') else
-                                   'Houdini 已接入；启动回执已保留，当前对话没有换绑。' if result.get('phase') == 'detached' else
-                                   'Houdini 启动回执已保留；当前连接仍在等待确认。' if result.get('phase') == 'waiting' else
-                                   '已在官方 DSH Desktop 打开 Houdini 对话。')
+            hou.ui.setStatusMessage('已打开 Desktop。Houdini 正在执行操作，可在原对话查看进度。' if state.get('busy') else
+                                   'Houdini 已就绪，当前对话的现场选择未改变。可在 Desktop 中继续选择。' if result.get('phase') == 'detached' else
+                                   'Houdini 已就绪，Desktop 尚未确认连接。请到 Desktop 查看。' if result.get('phase') == 'waiting' else
+                                   '当前 Houdini 已连接，可在 Desktop 中继续。')
 
     _TIMER = QtCore.QTimer(hou.qt.mainWindow())
     _TIMER.timeout.connect(finish)

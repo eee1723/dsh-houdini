@@ -54,7 +54,7 @@ function fixture(){
 {
  const f=fixture();await f.ready()
  assert(!f.nodes(f.render()).some(node=>['input','select','textarea'].includes(node.tag)),'normal page is status, not a duplicate provider configuration form')
- assert.match(f.text(),/2 个分片 \/ 每秒 1 次请求/);assert.match(f.text(),/等待安全录入密钥/)
+ assert.match(f.text(),/同时最多 2 个 \/ 每秒最多 1 次/);assert.match(f.text(),/等待安全录入密钥/)
  f.find('data-houdini-video-key').props.onClick()
  const field=f.nodes(f.render()).find(node=>node.tag==='input')
  assert.equal(field.props.type,'password');assert.equal(field.props.autoComplete,'new-password');assert.equal(field.props.value,undefined)
@@ -166,7 +166,7 @@ function fixture(){
  f.events.get('credentials/reference-updated')();await settle();assert.match(f.text(),/服务配置已保存/,'native credential events refresh presence without copying values')
  metadata.service.authentication='none';metadata.service.credentialRef='';metadata.service.credential={configured:true,writable:false,required:false}
  f.metadata(metadata);await f.find('data-houdini-video-refresh').props.onClick();await settle()
- assert.match(f.text(),/此服务无需密钥/);assert.equal(f.find('data-houdini-video-key').props.disabled,true)
+ assert.match(f.text(),/当前配置不使用密钥/);assert.equal(f.find('data-houdini-video-key').props.disabled,true)
  f.cleanup()
 }
 

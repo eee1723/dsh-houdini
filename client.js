@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
       function select(event) { if (!props.disabled && props.onSelect) props.onSelect(event); }
       return React.createElement("button", { type: "button", role: "menuitem",
         className: "dsh-houdini-menuitem", disabled: !!props.disabled,
-        onClick: select,
+        onClick: select, onPointerDown: props.onPointerDown,
         onKeyDown: function (event) {
           if (event.key === "Enter") { event.preventDefault(); select(event); }
           else if (event.key === " ") event.preventDefault();
@@ -58,18 +58,24 @@ window.__ModuleLoader__.load({
           var width = panel.current && panel.current.offsetWidth || 340;
           var left = Math.max(12, Math.min(viewportWidth - width - 12, rect.right - width));
           var below = viewportHeight - rect.bottom - 12;
-          var next = { left: left, maxHeight: Math.max(120, viewportHeight - 24), visibility: "visible" };
-          if (below >= 320 || rect.top < 320) next.top = rect.bottom + 4;
-          else next.bottom = viewportHeight - rect.top + 4;
+          var above = rect.top - 12, useBelow = below >= Math.min(320, above);
+          var height = panel.current && panel.current.scrollHeight || 320;
+          // Pin the top while observations refresh. A user disclosure/resize
+          // may place again; incoming windows never move a pending click.
+          var top = useBelow ? rect.bottom + 4 : Math.max(12, rect.top - Math.min(height, above) - 4);
+          var next = { left: left, top: top, maxHeight: Math.max(80, viewportHeight - top - 12), visibility: "visible" };
           setPosition(next);
         }
         function outside(event) {
           if (root.current && !root.current.contains(event.target)) props.onClose();
         }
         function keydown(event) {
-          if (event.key === "Escape") { props.onClose(); return; }
+          if (event.key === "Escape") { event.preventDefault(); props.onClose(); var anchor = root.current && root.current.querySelector('[aria-haspopup="menu"]'); if (anchor) anchor.focus(); return; }
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-          var items = panel.current ? Array.from(panel.current.querySelectorAll("[role='menuitem']:not(:disabled)")) : [];
+          var items = panel.current ? Array.from(panel.current.querySelectorAll("[role='menuitem']:not(:disabled),summary")).filter(function (item) {
+            var folded = item.closest("details:not([open])");
+            return (!folded || folded.firstElementChild === item) && item.getClientRects().length > 0;
+          }) : [];
           if (!items.length) return;
           event.preventDefault();
           var current = items.indexOf(document.activeElement), index = current;
@@ -80,6 +86,8 @@ window.__ModuleLoader__.load({
           items[index].focus();
         }
         place();
+        var surface = panel.current;
+        if (surface) surface.addEventListener("toggle", place, true);
         document.addEventListener("mousedown", outside);
         document.addEventListener("keydown", keydown);
         if (typeof window !== "undefined") {
@@ -89,6 +97,7 @@ window.__ModuleLoader__.load({
         return function () {
           document.removeEventListener("mousedown", outside);
           document.removeEventListener("keydown", keydown);
+          if (surface) surface.removeEventListener("toggle", place, true);
           if (typeof window !== "undefined") {
             window.removeEventListener("resize", place);
             window.removeEventListener("scroll", place, true);
@@ -163,9 +172,9 @@ window.__ModuleLoader__.load({
       '.dsh-houdini-project-chip:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}.dsh-houdini-project-chip:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:2px}.dsh-houdini-chip-name{min-width:0;max-width:155px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}' +
       '.dsh-houdini-chip-status{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding-left:7px;border-left:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}.dsh-houdini-project-chip>svg{flex:none}.dsh-houdini-state-icon{flex:none}' +
       '.dsh-houdini-project-chip[data-state="ready"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-success-primary,#3da36b)}.dsh-houdini-project-chip[data-state="working"] .dsh-houdini-chip-status,[data-state="working"].dsh-houdini-project-mark{color:var(--dsw-alias-state-business-primary,#649be8)}.dsh-houdini-project-chip[data-state="occupied"] .dsh-houdini-chip-status,.dsh-houdini-project-chip[data-state="changed"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-warn-primary,#c6974c)}' +
-      '.dsh-houdini-target-menu{width:340px;max-width:calc(100vw - 24px);padding:4px!important}.dsh-houdini-target-heading{display:grid;gap:4px;padding:10px 10px 9px}.dsh-houdini-target-heading strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.dsh-houdini-target-heading>span,.dsh-houdini-target-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}' +
-      '.dsh-houdini-target-current{display:grid;gap:6px;margin:0 8px 8px;padding:9px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:12px}.dsh-houdini-target-current strong{font-weight:500}.dsh-houdini-target-current details{color:var(--dsw-alias-label-tertiary);font-size:11px}.dsh-houdini-target-current summary{cursor:pointer}.dsh-houdini-target-current details>span{display:block;margin-top:5px;overflow-wrap:anywhere;white-space:normal;line-height:1.5}' +
-      '.dsh-houdini-target-group{padding:7px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-actions{padding-bottom:5px;margin-bottom:5px;border-bottom:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-choices{height:190px;overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}' +
+      '.dsh-houdini-target-menu{width:320px;max-width:calc(100vw - 24px);padding:4px!important}.dsh-houdini-target-heading{display:grid;gap:4px;padding:10px 10px 9px}.dsh-houdini-target-heading strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.dsh-houdini-target-heading>span,.dsh-houdini-target-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}' +
+      '.dsh-houdini-target-current{margin:0 0 4px}.dsh-houdini-target-current [role="menuitem"],.dsh-houdini-target-unavailable{min-height:48px}.dsh-houdini-target-unavailable{display:flex;align-items:center;gap:8px;padding:7px 10px;box-sizing:border-box}.dsh-houdini-target-section{border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-section>summary{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;min-height:36px;padding:7px 10px;list-style:none;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}.dsh-houdini-target-section>summary::-webkit-details-marker{display:none}.dsh-houdini-target-section>summary::after{content:"›";font-size:16px;line-height:12px}.dsh-houdini-target-section[open]>summary::after{transform:rotate(90deg)}.dsh-houdini-target-section>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-target-section>summary:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}.dsh-houdini-target-info{display:grid;gap:3px;margin:2px 10px 8px;font-size:11px;line-height:1.5}.dsh-houdini-target-info dt{color:var(--dsw-alias-label-tertiary)}.dsh-houdini-target-info dd{margin:0 0 5px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}' +
+      '.dsh-houdini-target-group{padding:8px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-choices{max-height:min(240px,40vh);overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-error{margin:0 10px 8px;color:var(--dsw-alias-label-secondary);font-size:11px}.dsh-houdini-target-error summary{cursor:pointer}.dsh-houdini-target-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:11px/1.5 Consolas,monospace}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}@media(pointer:coarse){.dsh-houdini-target-menu [role="menuitem"],.dsh-houdini-target-section>summary{min-height:44px}}' +
       '@media(max-width:540px){.dsh-houdini-project-chip{max-width:calc(100vw - 130px);gap:5px;padding:0 7px}.dsh-houdini-chip-name{max-width:105px}.dsh-houdini-chip-status{font-size:10px;padding-left:5px}}' +
       '.dsh-support-modal{width:min(720px,100%);max-height:100%;gap:16px}' +
       '.dsh-support-content{min-height:0;overflow:hidden;flex:1}' +
@@ -189,7 +198,7 @@ window.__ModuleLoader__.load({
       '.dsh-support-sharing{border-top:1px solid var(--dsw-alias-border-l3);padding-top:12px;margin-top:16px;font-size:13px;color:var(--dsw-alias-label-secondary)}' +
       '.dsh-support-sharing summary{cursor:pointer;padding:6px 0}.dsh-support-sharing p{margin:8px 0}.dsh-support-sharing a{color:var(--dsw-alias-label-primary);text-decoration:underline}' +
       '.dsh-houdini-tooltip{display:inline-flex}.dsh-houdini-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}.dsh-houdini-button[data-size="sm"]{min-height:26px;padding:3px 9px;font-size:11px}.dsh-houdini-button[data-variant="primary"]{border-color:var(--dsw-alias-button-primary-fill);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}.dsh-houdini-button[data-variant="ghost"]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary)}.dsh-houdini-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-button[data-variant="primary"]:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}.dsh-houdini-button:focus-visible,.dsh-houdini-menuitem:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}.dsh-houdini-button:disabled{opacity:.5;cursor:default}.dsh-houdini-checkbox{display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-primary);font-size:13px}.dsh-houdini-checkbox input{width:16px;height:16px;margin:0}' +
-      '.dsh-houdini-menu-root{display:inline-flex;position:relative}.dsh-houdini-menu-surface{position:fixed;z-index:1000;box-sizing:border-box;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg);background:var(--dsw-menu-surface-fill,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent)}.dsh-houdini-menuitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;min-height:34px;padding:7px 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}.dsh-houdini-menuitem:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-menuitem:disabled{opacity:.5;cursor:default}' +
+      '.dsh-houdini-menu-root{display:inline-flex;position:relative}.dsh-houdini-menu-surface{position:fixed;z-index:1000;box-sizing:border-box;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent)}.dsh-houdini-menuitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;min-height:34px;padding:7px 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}.dsh-houdini-menuitem:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-menuitem:disabled{opacity:.5;cursor:default}' +
       '.dsh-houdini-modal-backdrop{position:fixed;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:24px;background:var(--dsw-alias-overlay-backdrop,#0008)}.dsh-houdini-modal{display:flex;flex-direction:column;width:min(520px,100%);max-height:calc(100vh - 48px);box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent);outline:none}.dsh-houdini-modal-header,.dsh-houdini-modal-footer{display:flex;align-items:center;gap:8px;padding:12px 16px}.dsh-houdini-modal-header{justify-content:space-between;border-bottom:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-modal-header>strong{font-size:15px}.dsh-houdini-modal-footer{justify-content:flex-end;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-modal-body{min-height:0;overflow:auto;padding:14px 16px}' +
       '.dsh-houdini-toast{position:fixed;top:16px;right:16px;z-index:1200;display:flex;align-items:center;gap:10px;max-width:min(440px,calc(100vw - 32px));box-sizing:border-box;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent);font-size:12px;line-height:1.6}.dsh-houdini-toast>span{min-width:0;overflow-wrap:anywhere}' +
       '@media(max-width:540px){.dsh-support-modal{gap:8px}.dsh-support-options{gap:12px}.dsh-support-option p{line-height:1.5}.dsh-support-input{margin-bottom:14px}.dsh-support-file>button{gap:8px}.dsh-houdini-modal-backdrop{padding:12px}.dsh-houdini-modal{max-height:calc(100vh - 24px)}}';
@@ -239,8 +248,32 @@ window.__ModuleLoader__.load({
 
     function houdiniProjectName(project) {
       var target = houdiniProjectTarget(project) || project || {};
-      return target.hip_is_new === true || project && project.hipIsNew === true ? target.label || project && project.label || "未保存工程" :
+      var isNew = typeof target.hip_is_new === "boolean" ? target.hip_is_new : project && project.hipIsNew;
+      return isNew === true ? target.label || project && project.label || "未保存工程" :
         (target.hip_path || project && project.hipPath || "").replace(/\\/g, "/").split("/").pop() || "Houdini 现场";
+    }
+
+    function houdiniSameTarget(target, candidate) {
+      return !!(target && candidate && target.executor_id && target.runtime_id && target.scene_epoch && target.scene_id &&
+        target.executor_id === candidate.executor_id && target.runtime_id === candidate.runtime_id &&
+        target.scene_epoch === candidate.scene_epoch && target.scene_id === candidate.scene_id);
+    }
+
+    // Save As changes the file, not the selected scene. Fresh matching presence
+    // supplies presentation only; it never rewrites the native selection.
+    function houdiniDisplayProject(project, snapshot) {
+      var target = houdiniProjectTarget(project);
+      if (!target || project.needsReview || !snapshot || !snapshot.available || snapshot.visible === false ||
+        !snapshot.observedAt || Date.now() - snapshot.observedAt > 12000) return project;
+      var record = snapshot.records && snapshot.records[target.executor_id], candidate = record && record.candidate;
+      if (!record || record.status !== "online" || record.contractMismatch || !Number.isFinite(record.observedAt) ||
+        Date.now() - record.observedAt > 12000 || record.executorId !== target.executor_id ||
+        record.runtimeId !== target.runtime_id || record.sceneEpoch !== target.scene_epoch ||
+        typeof record.sceneId === "string" && record.sceneId.length > 0 && record.sceneId !== target.scene_id ||
+        !houdiniSameTarget(target, candidate) || typeof candidate.hip_path !== "string" || !candidate.hip_path ||
+        typeof candidate.hip_is_new !== "boolean") return project;
+      return Object.assign({}, project, { hipPath: candidate.hip_path, hipIsNew: candidate.hip_is_new,
+        target: Object.assign({}, target, { hip_path: candidate.hip_path, hip_is_new: candidate.hip_is_new, label: candidate.label }) });
     }
 
     function HoudiniProjectIcon() {
@@ -263,13 +296,16 @@ window.__ModuleLoader__.load({
       function status(state, label, detail, presence) { return { state: state, status: presence || (state === "offline" ? "offline" : state === "changed" ? "changed" : "unknown"), label: label, detail: detail || label }; }
       if (!target) return status("unbound", "未绑定现场", "选择一个已打开的 Houdini；每段对话可以独立选择现场。");
       if (!snapshot || !snapshot.available || snapshot.visible === false || !snapshot.observedAt || Date.now() - snapshot.observedAt > 12000)
-        return status("unknown", "连接待确认", "暂未取得当前连接状态。可以展开选择其他现场。");
+        return status("unknown", "连接待确认", "暂时无法确认连接。可以展开查看其他 Houdini 窗口。");
       if (project.needsReview) return status("changed", "工程待核对", "当前场景与这段对话选择时不同，请明确选择要继续的现场。");
       var record = snapshot.records[target.executor_id];
       if (!record || !Number.isFinite(record.observedAt) || Date.now() - record.observedAt > 12000)
-        return status("unknown", "连接待确认", "没有新近的现场回执；登记本身不代表在线。");
+        return status("unknown", "连接待确认", "尚未收到这个 Houdini 的最新状态，请稍后再试。");
       if (record.status === "offline") return status("offline", "已断开", "这个 Houdini 已关闭或断开，可以选择其他已打开的窗口。");
-      if (record.contractMismatch) return status("unknown", "版本待更新", "运行版本不一致，请重载对应 Houdini。");
+      if (record.contractMismatch) return status("unknown", "版本待更新", "这个 Houdini 加载的插件版本不一致。请先保存工程，再重新打开这个 Houdini。");
+      if (record.status === "changed" || typeof record.sceneId === "string" && record.sceneId.length > 0 &&
+        typeof target.scene_id === "string" && target.scene_id.length > 0 && record.sceneId !== target.scene_id)
+        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的现场。");
       if (record.status !== "online") return status("unknown", "连接待确认", "暂时无法确认这个 Houdini 的连接状态。");
       if (!target.scene_epoch || !record.sceneEpoch || !target.runtime_id || !record.runtimeId)
         return status("unknown", "现场待确认", "现场身份信息尚未完整确认，请重新选择当前窗口。");
@@ -286,16 +322,17 @@ window.__ModuleLoader__.load({
         return status("occupied", "其他对话工作中", "另一个对话正在使用这个现场；可以绑定查看，修改时会等待其完成。", "online");
       if (activeJobs && owner === sessionId)
         return status("working", "对话工作中", "当前对话在 Houdini 中的后台操作尚未完成。", "online");
-      if (bridgeBusy) return status("working", "现场工作中", "Houdini 有操作尚未完成，当前操作归属暂未确认。", "online");
-      return status("ready", "已就绪", "目标连接正常；真正修改前仍会核对现场与写入资格。", "online");
+      if (bridgeBusy) return status("working", "现场工作中", "Houdini 有操作尚未完成，可以继续查看当前场景。", "online");
+      return status("ready", "已就绪", "连接正常。可以查看场景，或告诉 Agent 你想完成的任务。", "online");
     }
 
     function HoudiniProjectMark(props) {
       var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
       var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
       var status = project && houdiniPresence(project, presence, props.sessionId, statuses);
+      var display = houdiniDisplayProject(project, presence);
       return project && React.createElement("span", { className: "dsh-houdini-project-mark", role: "img",
-        "aria-label": "关联现场：" + houdiniProjectName(project) + " · " + status.label,
+        "aria-label": "关联现场：" + houdiniProjectName(display) + " · " + status.label,
         "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-mark": true }, React.createElement(HoudiniProjectIcon));
     }
 
@@ -303,9 +340,9 @@ window.__ModuleLoader__.load({
       var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
       var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
       if (!project) return null;
-      var target = houdiniProjectTarget(project), status = houdiniPresence(project, presence, props.sessionId, statuses);
+      var display = houdiniDisplayProject(project, presence), target = houdiniProjectTarget(display), status = houdiniPresence(project, presence, props.sessionId, statuses);
       return React.createElement("div", { className: "dsh-houdini-project-detail", "data-houdini-project-detail": true },
-        React.createElement("strong", null, "关联现场 · " + houdiniProjectName(project)),
+        React.createElement("strong", null, "关联现场 · " + houdiniProjectName(display)),
         React.createElement("div", null, status.label),
         target && target.hip_path && !target.hip_is_new && React.createElement("div", null, target.hip_path),
         React.createElement("div", null, status.detail));
@@ -314,15 +351,15 @@ window.__ModuleLoader__.load({
     function HoudiniProjectLabel(props) {
       var project = useHoudiniProject(props), presence = props.usePresence ? props.usePresence() : null;
       var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
-      var status = houdiniPresence(project, presence, props.sessionId, statuses), target = houdiniProjectTarget(project);
+      var status = houdiniPresence(project, presence, props.sessionId, statuses), display = houdiniDisplayProject(project, presence), target = houdiniProjectTarget(display);
             return React.createElement(ui.Tooltip, { side: "bottom", align: "end", delayMs: 400, portal: true, maxWidth: 360, openOnClick: false,
-        label: (target ? houdiniProjectName(project) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
+        label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
         React.createElement("button", { type: "button", className: "dsh-houdini-project-chip", onClick: props.onProjectMenuClick,
           "aria-haspopup": "menu", "aria-expanded": !!props.projectMenuOpen,
-          "aria-label": "Houdini 现场：" + (target ? houdiniProjectName(project) + " · " : "") + status.label,
+          "aria-label": "Houdini 现场：" + (target ? houdiniProjectName(display) + " · " : "") + status.label,
           "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-label": true },
           React.createElement(HoudiniProjectIcon),
-          React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(project) : "Houdini"),
+          React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(display) : "Houdini"),
           React.createElement("span", { className: "dsh-houdini-chip-status" }, React.createElement(HoudiniTargetStateIcon, { state: status.state }), status.label),
           React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: 1.3, "aria-hidden": true }, React.createElement("path", { d: "m3 4.5 3 3 3-3" }))));
     }
@@ -466,13 +503,13 @@ window.__ModuleLoader__.load({
     }
 
     function launchTicketMessage(ticket) {
-      if (!ticket) return "正在提交打开请求，等待原启动回执…";
+      if (!ticket) return "正在确认本次打开请求…";
       if (ticket.message) return ticket.message;
       if (ticket.phase === "preparing") return "正在准备 Houdini 启动请求…";
-      if (ticket.phase === "detached") return "已停止等待，原 Houdini 窗口保持打开。可以继续连接原窗口。";
-      if (ticket.phase === "error") return "Houdini 尚未完成接入。";
-      return { launching: "正在启动 Houdini…", capturing: "正在读取启动窗口的场景…",
-        registering: "正在登记当前 Houdini 窗口…", binding: "正在连接原对话与场景…" }[ticket.stage] || "正在等待 Houdini 的真实接入回执…";
+      if (ticket.phase === "detached") return "已停止等待，不会取消启动或关闭 Houdini。需要时可继续连接。";
+      if (ticket.phase === "error") return "暂时无法连接 Houdini，请查看具体原因。";
+      return { launching: "正在启动 Houdini…", capturing: "正在读取这个 Houdini 的场景…",
+        registering: "正在连接 Houdini 与 Desktop…", binding: "正在将当前对话连接到 Houdini…" }[ticket.stage] || "正在等待 Houdini 完成连接…";
     }
 
     function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace) {
@@ -486,15 +523,15 @@ window.__ModuleLoader__.load({
       function usePresence() { return React.useSyncExternalStore(subscribe, snapshot); }
       function useNativeStatus() { return React.useSyncExternalStore(nativeSource.subscribe, nativeSource.getSnapshot); }
       function notify(text) { notice = { id: ++serial, text: text }; publish(Object.assign({}, state)); }
-      function action(kind, sessionId) {
-        dialog = { action: kind, sessionId: sessionId, token: ++serial };
+      function action(kind, sessionId, hip) {
+        dialog = { action: kind === "reopen" ? "open" : kind, sessionId: sessionId, hip: hip || "", token: ++serial };
         publish(Object.assign({}, state));
       }
       function ProjectDialog(props) {
         var request = props.request;
         var installationsState = React.useState([]), installations = installationsState[0], setInstallations = installationsState[1];
         var hfsState = React.useState(""), hfs = hfsState[0], setHfs = hfsState[1];
-        var hipState = React.useState(""), hip = hipState[0], setHip = hipState[1];
+        var hipState = React.useState(request.hip), hip = hipState[0], setHip = hipState[1];
         var loadingState = React.useState(true), loading = loadingState[0], setLoading = loadingState[1];
         var installErrorState = React.useState(""), installError = installErrorState[0], setInstallError = installErrorState[1];
         var viewState = React.useState({ pending: false, ticket: null, error: "", disconnected: false, submitted: false }), view = viewState[0], setView = viewState[1];
@@ -538,17 +575,18 @@ window.__ModuleLoader__.load({
           return value;
         }
         var same = observer.current.sameRequest(parameters()), detached = same && view.ticket && view.ticket.phase === "detached";
-        var message = view.error || (view.disconnected ? "Desktop 连接已中断；恢复后会查询原启动请求，不会重新打开 Houdini。" :
+        var message = view.error || (view.disconnected ? "Desktop 连接已中断；恢复后会继续查看这次打开的结果，不会再打开一个窗口。" :
           view.submitted ? launchTicketMessage(view.ticket) : loading ? "正在查找已安装的 Houdini…" : installError);
         var elapsed = view.ticket && Number.isFinite(view.ticket.elapsedMs) ? Math.floor(view.ticket.elapsedMs / 1000) : 0;
         var fieldStyle = { width: "100%", boxSizing: "border-box", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 8,
           padding: "9px 10px", background: "var(--dsw-alias-bg-layer-1)", color: "inherit", font: "inherit" };
         return React.createElement(ui.Modal, { open: true, onClose: close, title: request.action === "new" ? "新建 Houdini 工程" : "打开 Houdini 工程",
-          closeLabel: "关闭工程窗口", footer: React.createElement(React.Fragment, null,
-            React.createElement(Button, { variant: "ghost", onClick: close }, view.submitted ? "停止等待" : "取消"),
+          closeLabel: "关闭打开工程对话框", footer: React.createElement(React.Fragment, null,
+            React.createElement(Button, { variant: "ghost", onClick: close,
+              title: view.submitted ? "不会取消启动或关闭 Houdini，只停止等待本次连接。" : undefined }, view.submitted ? "停止等待" : "取消"),
             React.createElement(Button, { disabled: view.pending || !generation || !hfs || request.action === "open" && !hip.trim(),
               onClick: function () { if (detached) observer.current.resume(); else observer.current.submit(parameters()); } },
-              view.pending ? "等待现场连接…" : detached ? "继续连接原窗口" : same && view.submitted ? "重试本次请求" : "打开并绑定")) },
+              view.pending ? "等待现场连接…" : detached ? "继续连接原窗口" : same && view.submitted ? "重试本次请求" : request.action === "new" ? "新建并绑定" : "打开并绑定")) },
           React.createElement("div", { style: { display: "grid", gap: 16, padding: "8px 0", minWidth: 260, maxWidth: 520 }, "data-houdini-project-dialog": true },
             React.createElement("label", null, "Houdini 版本", React.createElement("select", { style: fieldStyle, value: hfs, disabled: view.pending,
               "aria-label": "Houdini 版本", onChange: function (event) { setHfs(event.target.value); } }, installations.map(function (item) {
@@ -615,8 +653,10 @@ window.__ModuleLoader__.load({
         var project = useHoudiniProject(props), presence = usePresence(), nativeStatuses = useNativeStatus();
         var row = props.useSessions(function (value) { return value.byId[props.sessionId] || null; });
         var status = houdiniPresence(project, presence, props.sessionId, nativeStatuses), target = houdiniProjectTarget(project);
+        var display = houdiniDisplayProject(project, presence), displayTarget = houdiniProjectTarget(display);
         var menu = React.useState({ open: false, busy: false, message: "", loaded: false }), value = menu[0], set = menu[1];
         var pending = React.useRef(null), ticket = React.useRef(0), current = React.useRef(props.sessionId); current.current = props.sessionId;
+        var windowOrder = React.useRef([]), pressedCandidate = React.useRef(null);
         var hostGeneration = React.useSyncExternalStore(connection.generation.subscribe, connection.generation.getSnapshot);
         React.useEffect(function () {
           ticket.current++; if (pending.current) pending.current.abort();
@@ -626,12 +666,12 @@ window.__ModuleLoader__.load({
         async function request(method, candidate) {
           var sessionId = props.sessionId, generation = connection.generation.getSnapshot();
           if (!sessionId) return;
-          if (!generation) { set(function (old) { return Object.assign({}, old, { open: true, message: "Desktop 连接已断开，请稍后重试。" }); }); return; }
+          if (!generation) { set(function (old) { return Object.assign({}, old, { open: true, details: "", message: "Desktop 连接已断开，请稍后重试。" }); }); return; }
           var attempt = ++ticket.current;
           if (pending.current) pending.current.abort();
           var controller = new AbortController(); pending.current = controller;
           var timeout = setTimeout(function () { controller.abort(); }, method === "prepareBridge" ? 125000 : 10000);
-          set(function (old) { return Object.assign({}, old, { open: true, busy: true, message: method === "list" ? "正在查看已打开的 Houdini…" : method === "prepareBridge" ? "正在安装或更新 Houdini 组件…" : method === "clear" ? "正在取消绑定…" : "正在选择现场…" }); });
+          set(function (old) { return Object.assign({}, old, { open: true, busy: true, details: "", message: method === "list" ? "正在查看已打开的 Houdini…" : method === "prepareBridge" ? "正在安装或更新 Houdini 组件…" : method === "clear" ? "正在取消绑定…" : "正在选择现场…" }); });
           var input = { sessionId: sessionId };
           if (candidate) Object.assign(input, { executorId: candidate.executor_id, registrationId: candidate.registration_id, expectedHip: candidate.hip_path,
             runtimeId: candidate.runtime_id, sceneEpoch: candidate.scene_epoch });
@@ -654,68 +694,100 @@ window.__ModuleLoader__.load({
             set(function (old) { return Object.assign({}, old, { busy: false, open: false, message: "" }); }); refreshPresence();
             notify(method === "clear" ? "此对话已取消现场绑定。" : "此对话已选择「" + houdiniProjectName(candidate) + "」。");
           } catch (error) {
-            if (current.current === sessionId && ticket.current === attempt && connection.generation.getSnapshot() === generation)
-              set(function (old) { return Object.assign({}, old, { busy: false, message: controller.signal.aborted ? "等待现场响应超时，可以重试。" : String(error.message || error) }); });
+            if (current.current === sessionId && ticket.current === attempt && connection.generation.getSnapshot() === generation) {
+              var reason = String(error.message || error), folded = method === "prepareBridge" || /[\r\n]/.test(reason);
+              var summary = controller.signal.aborted ? "等待响应超时，尚未确认操作结果。可以稍后重试。" :
+                method === "prepareBridge" ? "未能确认 Houdini 组件安装完成，请查看原因。" :
+                method === "clear" ? "尚未确认取消绑定结果，请查看原因。" : method === "list" ? "暂时无法读取窗口列表，请查看原因。" : "尚未确认现场选择结果，请查看原因。";
+              set(function (old) { return Object.assign({}, old, { busy: false, message: folded || controller.signal.aborted ? summary : reason, details: folded ? reason : "" }); });
+            }
           } finally { clearTimeout(timeout); if (pending.current === controller) pending.current = null; }
         }
         var currentNative = nativeStatuses && nativeStatuses.get(props.sessionId);
-        var switchingDisabled = value.busy || currentNative && currentNative.running === true;
+        var nativeRunning = currentNative && currentNative.running === true;
+        var switchingDisabled = value.busy || nativeRunning;
         // The same fresh desktop observation owns both membership and status.
         // A registry hint is never another list of supposedly open windows.
         var freshPresence = presence.available && presence.visible !== false && presence.observedAt && Date.now() - presence.observedAt <= 12000;
-        function workspaceKey(path) { return String(path || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase(); }
         var rows = freshPresence ? Object.values(presence.records).filter(function (observed) {
           return observed.status !== "offline" && Number.isFinite(observed.observedAt) && Date.now() - observed.observedAt <= 12000
             && observed.candidate && observed.candidate.workbench === true && observed.candidate.state === "registered";
-        }).map(function (observed) { return Object.assign({}, observed.candidate, {
-          same_workspace: !!(row && row.cwd && workspaceKey(row.cwd) === workspaceKey(observed.candidate.workspace_path))
-        }); }).sort(function (left, right) { return Number(right.same_workspace === true) - Number(left.same_workspace === true); }) : [];
-        var entries = [], lastGroup = null;
-        rows.forEach(function (candidate, index) {
-          var group = candidate.same_workspace ? "同一工作区" : "其他工作区";
-          if (group !== lastGroup) { entries.push(React.createElement("div", { className: "dsh-houdini-target-group", key: "group-" + group, role: "presentation" }, group)); lastGroup = group; }
-          var selected = target && target.executor_id === candidate.executor_id && target.runtime_id === candidate.runtime_id && target.scene_epoch === candidate.scene_epoch;
-          var candidateProject = { target: candidate }, observed = houdiniPresence(candidateProject, presence, props.sessionId, nativeStatuses, !!selected);
-          var label = houdiniProjectName(candidate), version = String(candidate.houdini_version || "").split(".")[0];
-          var details = (candidate.hip_path || "未保存工程") + (candidate.pid ? "\n进程 " + candidate.pid : "");
-          entries.push(React.createElement(ui.MenuItemButton, { key: candidate.executor_id,
+        }).map(function (observed) { return observed.candidate; }) : [];
+        // Keep existing windows in place while this menu is open. New windows
+        // append; only live presence supplies their content and action inputs.
+        if (!value.open) windowOrder.current = [];
+        rows.forEach(function (candidate) { if (!windowOrder.current.includes(candidate.executor_id)) windowOrder.current.push(candidate.executor_id); });
+        rows.sort(function (left, right) { return windowOrder.current.indexOf(left.executor_id) - windowOrder.current.indexOf(right.executor_id); });
+        var selectedCandidate = rows.find(function (candidate) { return houdiniSameTarget(target, candidate); });
+        function candidateItem(candidate, index) {
+          var selected = houdiniSameTarget(target, candidate);
+          var candidateProject = { target: candidate }, observed = selected ? status : houdiniPresence(candidateProject, presence, props.sessionId, nativeStatuses, false);
+          var label = houdiniProjectName(selected ? display : candidate), details = (selected ? displayTarget.hip_path : candidate.hip_path) || "未保存工程";
+          var folders = String(candidate.hip_path || "").replace(/\\/g, "/").split("/"), folder = folders.length > 1 ? folders[folders.length - 2] : "";
+          var version = String(candidate.houdini_version || "").split(".")[0];
+          var context = selected ? "当前现场" : [folder, version ? "Houdini " + version : ""].filter(Boolean).join(" · ") || "Houdini 窗口";
+          if (candidate.houdini_version) details += "\nHoudini " + candidate.houdini_version;
+          if (candidate.pid) details += "\n进程 " + candidate.pid;
+          return React.createElement(ui.MenuItemButton, { key: candidate.executor_id,
             disabled: !!switchingDisabled || candidate.state === "disconnected" || observed.state === "offline" || !candidate.hip_path,
             icon: React.createElement(HoudiniTargetStateIcon, { state: observed.state }),
-            onSelect: function () { request("select", candidate); } },
+            onPointerDown: function () { pressedCandidate.current = candidate; },
+            onSelect: function (event) {
+              var pressed = pressedCandidate.current; pressedCandidate.current = null;
+              if (event && event.type === "click" && event.detail > 0 && pressed) {
+                if (pressed.executor_id !== candidate.executor_id) { set(function (old) { return Object.assign({}, old, { message: "窗口列表已变化，请重新选择。" }); }); return; }
+                candidate = pressed;
+              }
+              request("select", candidate);
+            } },
             React.createElement("span", { className: "dsh-houdini-target-row", title: details + "\n" + observed.detail, "data-houdini-target": candidate.executor_id, "data-state": observed.state },
               React.createElement("span", { className: "dsh-houdini-target-title" }, label, selected && React.createElement("span", { "aria-label": "当前已选现场", className: "dsh-houdini-target-selected" }, "✓")),
-              React.createElement("span", { className: "dsh-houdini-target-meta" }, "窗口 " + (index + 1) + (version ? " · Houdini " + version : ""), " · ", observed.label))));
-        });
-        var actions = [];
-        if (target) actions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
-        if (project && project.hipPath && project.hipIsNew === false) actions.push({ id: "reopen", label: "打开关联工程" });
-        actions.push({ id: "open", label: "打开 Houdini 工程…", disabled: !presence.available }, { id: "new", label: "新建 Houdini 工程…", disabled: !presence.available },
-          { id: "prepareBridge", label: "安装 / 更新 Houdini 组件", disabled: !presence.available || !!switchingDisabled });
+              React.createElement("span", { className: "dsh-houdini-target-meta" }, context, " · ", observed.label)));
+        }
+        var otherCandidates = rows.filter(function (candidate) { return candidate !== selectedCandidate; });
+        var projectActions = [{ id: "open", label: "打开工程…", disabled: !presence.available || !!nativeRunning },
+          { id: "new", label: "新建工程…", disabled: !presence.available || !!nativeRunning }];
+        if (displayTarget && displayTarget.hip_path && displayTarget.hip_is_new === false) projectActions.push({ id: "reopen", label: "打开关联工程…", disabled: !presence.available || !!nativeRunning });
+        var managementActions = [];
+        if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
+        managementActions.push({ id: "prepareBridge", label: "安装 / 更新 Houdini 组件", disabled: !presence.available || !!switchingDisabled });
+        function actionItem(item) {
+          return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
+            onSelect: function () {
+              if (item.id === "clear") { request("clear"); return; }
+              if (item.id === "prepareBridge") { request("prepareBridge"); return; }
+              ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
+              set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId, item.id === "reopen" ? displayTarget.hip_path : "");
+            } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
+        }
         var anchor = React.createElement(HoudiniProjectLabel, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus,
             projectMenuOpen: value.open, onProjectMenuClick: function () { if (value.open) { ticket.current++; if (pending.current) pending.current.abort(); set(Object.assign({}, value, { open: false, busy: false })); } else request("list"); } }));
         return React.createElement(ui.Menu, { open: value.open, portal: true, compact: true, align: "end", side: "bottom", anchor: anchor,
           listClassName: "dsh-houdini-target-menu", onClose: function () { ticket.current++; if (pending.current) pending.current.abort(); set(function (old) { return Object.assign({}, old, { open: false, busy: false }); }); },
           },
-          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 现场"),
-            React.createElement("span", null, "为当前对话选择要操作的窗口")),
-          React.createElement("div", { className: "dsh-houdini-target-actions", role: "presentation" }, actions.map(function (item) {
-            return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
-              onSelect: function () {
-                if (item.id === "clear") { request("clear"); return; }
-                if (item.id === "prepareBridge") { request("prepareBridge"); return; }
-                ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
-                set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId);
-              } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
-          })),
-          target && React.createElement("div", { className: "dsh-houdini-target-current", role: "presentation" },
-            React.createElement("strong", null, houdiniProjectName(project) + " · " + status.label),
-            target.hip_path && React.createElement("details", null, React.createElement("summary", null, "工程路径"), React.createElement("span", null, target.hip_path))),
+          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 现场")),
+          target && React.createElement("div", { className: "dsh-houdini-target-current", "data-houdini-current-scene": true },
+            selectedCandidate ? candidateItem(selectedCandidate, 0) : React.createElement("div", { className: "dsh-houdini-target-unavailable", title: status.detail },
+              React.createElement(HoudiniTargetStateIcon, { state: status.state }), React.createElement("div", { className: "dsh-houdini-target-row", "data-houdini-selected-snapshot": true },
+                React.createElement("span", { className: "dsh-houdini-target-title" }, houdiniProjectName(display)),
+                React.createElement("span", { className: "dsh-houdini-target-meta" }, status.label)))),
+          React.createElement("details", { className: "dsh-houdini-target-section", open: !target, "data-houdini-menu-section": "project" },
+            React.createElement("summary", { "data-houdini-menu-toggle": "project" }, "工程"),
+            target && React.createElement("dl", { className: "dsh-houdini-target-info" },
+              displayTarget.hip_path && React.createElement(React.Fragment, null, React.createElement("dt", null, "工程文件"), React.createElement("dd", { "data-houdini-project-info": "hip" }, displayTarget.hip_path)),
+              row && row.cwd && React.createElement(React.Fragment, null, React.createElement("dt", null, "对话文件夹"), React.createElement("dd", { "data-houdini-project-info": "cwd" }, row.cwd)),
+              selectedCandidate && selectedCandidate.houdini_version && React.createElement(React.Fragment, null, React.createElement("dt", null, "Houdini"), React.createElement("dd", { "data-houdini-project-info": "version" }, selectedCandidate.houdini_version))),
+            projectActions.map(actionItem)),
+          React.createElement("details", { className: "dsh-houdini-target-section", "data-houdini-menu-section": "management" },
+            React.createElement("summary", { "data-houdini-menu-toggle": "management" }, "管理"), managementActions.map(actionItem)),
           React.createElement("div", { className: "dsh-houdini-target-choices" },
             value.message && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" }, value.message),
-            value.loaded && !value.busy && !value.message && !rows.length && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" },
+            value.details && React.createElement("details", { className: "dsh-houdini-target-error" }, React.createElement("summary", null, "查看原因"), React.createElement("pre", null, value.details)),
+            value.loaded && !value.busy && !value.message && !target && !rows.length && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" },
               freshPresence ? "还没有可选现场。在目标 Houdini 中选择 DSH-Houdini → Open Workspace 后，会显示在这里。" : "暂时无法确认现场列表，连接恢复后会自动更新。"),
-            currentNative && currentNative.running === true && React.createElement("p", { className: "dsh-houdini-target-message" }, "当前对话工作完成后，可以切换或取消绑定。"),
-            React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "已登记的 Houdini 窗口" }, entries)));
+            nativeRunning && React.createElement("p", { className: "dsh-houdini-target-message" }, "对话工作中，完成后可以切换窗口或取消绑定。"),
+            otherCandidates.length > 0 && React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "可切换的 Houdini 窗口" },
+              React.createElement("div", { className: "dsh-houdini-target-group", role: "presentation" }, target ? "其他现场" : "可选现场"), otherCandidates.map(candidateItem))));
       }
       function Label(props) {
         var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
@@ -3749,9 +3821,9 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
           React.createElement("dl", { style: { display: "grid", gridTemplateColumns: "minmax(88px,auto) minmax(0,1fr)", gap: "8px 18px", margin: "12px 0 20px" } },
             fact("转录服务", service && service.displayName || selected.provider || "未选择"),
             fact("转录模型", service && service.model || selected.model || "未选择"),
-            fact("接口协议", adapter && adapter.label || service && service.protocol || selected.protocol || "未选择"),
-            fact("并发 / 速率", (defaults.concurrency || selected.concurrency || 2) + " 个分片 / 每秒 " + (defaults.requestsPerSecond || selected.requestsPerSecond || 1) + " 次请求"),
-            fact("凭据状态", noKey ? "此服务无需密钥" : credential && credential.configured ? "已配置（不读取密钥内容）" : "未配置")),
+            fact("接口类型", adapter && adapter.label || service && service.protocol || selected.protocol || "未选择"),
+            fact("转录请求", "同时最多 " + (defaults.concurrency || selected.concurrency || 2) + " 个 / 每秒最多 " + (defaults.requestsPerSecond || selected.requestsPerSecond || 1) + " 次"),
+            fact("密钥状态", noKey ? "当前配置不使用密钥" : credential && credential.configured ? "已配置（不显示密钥内容）" : "未配置")),
           service && React.createElement("p", { style: { fontSize: 12, overflowWrap: "anywhere", opacity: .8 } },
             "音频去向：" + (service.dataLocation === "loopback" ? "本机服务" : "网络服务") + " · " + service.endpoint),
           React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 10, margin: "20px 0 12px" } },
@@ -3772,7 +3844,7 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
             checks && React.createElement("ul", { style: { fontSize: 12 } }, (checks.dependencies || []).map(function (item) { return React.createElement("li", { key: item.name, title: item.path || "" }, item.name + "：" + (item.available ? item.version : item.error)); })),
             checks && React.createElement("p", { style: { fontSize: 12 } }, checks.note),
             checks && checks.repair && React.createElement("p", { style: { fontSize: 12 } }, checks.repair.label + "：" + checks.repair.detail)),
-          React.createElement("p", { style: { fontSize: 12, opacity: .7, marginTop: 22 } }, "此页只检查配置与凭据是否存在，不上传音频。已存配置不代表转录接口已验证；首次上传和试转录由你在对话中确认。"),
+          React.createElement("p", { style: { fontSize: 12, opacity: .7, marginTop: 22 } }, "此页只检查配置与密钥是否存在，不上传音频。保存配置不代表转录服务已经可用；需要转录时，请在对话中提交视频或提出任务。"),
           credentialTarget && React.createElement(CredentialDialog, { key: credentialTarget.ref, target: credentialTarget, call: call,
             isCurrent: function () { return credentialCurrent(credentialTarget); }, close: function () { setCredentialTarget(null); }, saved: function () {
               setCredentialTarget(null); setMessage("密钥已保存到 DSH 凭据服务。"); refresh();

@@ -444,11 +444,11 @@ export class DesktopIntegration {
         await this.complete(ticket)
         return this.status({id:ticket.id})
       }
-      ticket.message='正在准备本机 Houdini 组件，检查并迁移已确认的旧入口…'
+      ticket.message='正在准备 Houdini 连接组件…'
       await this.saveTicket(ticket)
       const preparation=await this.installHelper()
       signal.throwIfAborted()
-      ticket.message=preparation.migration.disabledCount?'已迁移旧入口并保留恢复备份，正在打开 Houdini…':undefined
+      ticket.message='正在打开 Houdini…'
       const startup=path.join(this.paths.launches,identifier)
       for(const version of ['3.11','3.13']) {
         const directory=path.join(startup,'python'+version+'libs');await fs.mkdir(directory,{recursive:true})
@@ -606,7 +606,7 @@ export class DesktopIntegration {
     this.lifetime.signal.throwIfAborted()
     const ticket=this.requireTicket(input)
     let process:ProcessState|undefined,message=ticket.message
-    if(ticket.phase==='preparing'||ticket.phase==='waiting'||ticket.phase==='detached') {
+    if(ticket.pid&&(ticket.phase==='preparing'||ticket.phase==='waiting'||ticket.phase==='detached')) {
       process=await this.ticketProcessState(ticket)
       this.lifetime.signal.throwIfAborted()
       if(process==='exited'||process==='reused') {

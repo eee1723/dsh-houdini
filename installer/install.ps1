@@ -170,9 +170,7 @@ Write-Output 'Save and reopen any Houdini already running the old version. No ru
 Write-Output 'Install and update dsh-houdini through official DSH Desktop. This installer did not change its application, profiles, Sessions, credentials, or dependencies.'
 $disabledCount = @($migration.actions | Where-Object { $_.operation -eq 'disable' -or $_.retiredLegacy }).Count
 $reviewCount = @($migration.preserved).Count
-$message = 'Houdini 组件已安装。请保存并重新打开需要加载新菜单的 Houdini。'
-if ($disabledCount) { $message = 'Houdini 组件已安装，旧版入口已停用并保留可恢复备份。请保存并重新打开旧版 Houdini 窗口。' }
-if ($reviewCount) { $message += ' 自定义入口保持原样，请查看安装详情。' }
+$message = 'Houdini 组件已安装或更新。新打开的 Houdini 会加载此版本；已打开的窗口需要更新时，请保存工程后重开。'
 $result = @{ok=$true; helperId=$helperId; helperRoot=$helper; requiresRestart=$true;
     migration=@{reportPath=$migrationReport; disabledCount=$disabledCount; reviewCount=$reviewCount}; message=$message}
 Write-Output ('DSH_HOUDINI_INSTALL_RESULT='+($result | ConvertTo-Json -Depth 6 -Compress))

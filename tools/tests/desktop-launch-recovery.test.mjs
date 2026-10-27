@@ -99,6 +99,16 @@ try{
  await new ExecutorBinding().select(s.session,{...s.record,executor_id:'f'.repeat(32)});s.state.available=true
  assert.equal((await request(s,'/launch-attached',s.callback(st))).status,400);assert.equal(s.state.bindings,0)
  assert.equal((await ss.status({id:st.id})).phase,'error');await ss.dispose()
+ const preparing=await fixture('preparing-message'),preparingService=preparing.create();await preparingService.start()
+ const helperGate=gate(),prepareHelper=preparingService.installHelper
+ preparingService.installHelper=async()=>{helperGate.enter();await helperGate.wait;return prepareHelper.call(preparingService)}
+ const preparingSubmit=preparingService.project(preparing.action(),new AbortController().signal)
+ await helperGate.entered
+ const preparingStatus=await preparingService.status({id:preparing.action().requestId})
+ assert.equal(preparingStatus.phase,'preparing');assert.equal(preparingStatus.process,undefined)
+ assert.match(preparingStatus.message,/正在准备 Houdini 连接组件/,'component setup must not describe a window that has not launched')
+ assert.equal(preparing.state.spawns,0)
+ helperGate.release();await preparingSubmit;await preparingService.dispose()
  const u=await fixture('unload'),us=u.create();await us.start()
  const discovering=gate(),installations=us.installations
  us.installations=async()=>{discovering.enter();await discovering.wait;return installations()}

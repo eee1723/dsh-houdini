@@ -53,7 +53,7 @@ def restart_bridge(*, port=None) -> str:
     _module_path_on_syspath()
     target_port = BRIDGE_PORT if port is None else port
     if type(target_port) is not int or not (target_port == 0 or 1024 <= target_port <= 65535):
-        raise ValueError('Invalid Bridge restart port')
+        raise ValueError('连接端口无效，请检查组件设置。')
     import dsh_bridge
 
     # Recheck on the owning thread: the worker's HTTP snapshot may already be old.
@@ -61,12 +61,12 @@ def restart_bridge(*, port=None) -> str:
     registry = getattr(dsh_bridge, '_request_registry', None)
     activity = getattr(dsh_bridge, '_job_activity', None)
     if registry is None or not callable(activity):
-        raise RuntimeError('Bridge cannot verify restart safety; fully reopen Houdini after saving your work')
+        raise RuntimeError('当前连接无法安全修复。请先保存工程，再关闭并重新打开这个 Houdini 窗口。\n原因：连接未提供修复所需的活动状态。')
     jobs = activity().get('activeJobs')
     requests = registry.active_count()
     if (type(jobs) is not int or type(requests) is not int or jobs != 0 or requests != 0
             or not dsh_bridge._work_queue.empty()):
-        raise RuntimeError('Bridge restart deferred: scene work arrived after preflight; no modules were reloaded')
+        raise RuntimeError('Houdini 仍有操作未完成，请等操作结束后再修复连接。\n本次未重启连接或重载模块。')
     dsh_bridge.stop()                      # 停进程内旧 server（线程）
     # Dependency order is explicit; helpers is the public export facade and
     # execution binds its functions only after every implementation is refreshed.
@@ -152,20 +152,21 @@ def require_local_modules():
         module = sys.modules.get(name)
         filename = getattr(module, '__file__', None)
         if filename and not Path(filename).resolve().is_relative_to(root):
-            raise RuntimeError('当前 Houdini 已加载另一版本的连接模块。请先保存工程并完整退出此 Houdini，再重新打开；未混用或重载原模块。')
+            raise RuntimeError('当前窗口的连接组件来自不同位置。请先保存工程，再关闭并重新打开这个 Houdini 窗口。\n模块：' + name + '\n加载位置：' + str(filename) + '\n预期位置：' + str(root))
     state = sys.modules.get('dsh_deployment')
     if state is not None and any(not callable(getattr(state, name, None))
                                  for name in ('FileLease', 'atomic_json', '_process_started')):
-        raise RuntimeError('当前 Houdini 仍保留旧版连接模块。请先保存并重开此 Houdini；不能在同一进程内混合升级或回退。')
+        raise RuntimeError('当前窗口仍在使用旧版连接组件。请先保存工程，再关闭并重新打开这个 Houdini 窗口。\n原因：旧版连接模块 dsh_deployment 缺少当前接口；未重载原模块。')
 
 
 def _startup_failure(error):
     global _PROBLEM_WINDOW, _LAST_STARTUP_FAILURE
-    _LAST_STARTUP_FAILURE = str(error)
+    detail = str(error) or repr(error)
+    _LAST_STARTUP_FAILURE = detail
     _report(error)
     if hou.isUIAvailable():
         from dsh_ui_style import show_startup_problem
-        _PROBLEM_WINDOW = show_startup_problem(str(error), str(error), hou.qt.mainWindow())
+        _PROBLEM_WINDOW = show_startup_problem(detail.splitlines()[0], detail, hou.qt.mainWindow())
 
 
 def open_workspace():
@@ -193,15 +194,12 @@ def show_plugin_info():
     except (OSError, ValueError):
         version = 'unknown'
     selected = hou.ui.displayMessage(
-        'Houdini 连接插件 ' + version + '\n\n'
-        '对话、模型、工作区和插件更新由官方 DSH Desktop 管理。\n'
-        'Houdini 已加载的 Python 代码保持到退出；更新菜单或 Package 后请保存并重开本端。\n'
-        '“修复当前连接”只重新加载本 Houdini 的 Bridge，不重启 Desktop 或其他工程。\n'
-        '已安装的连接版本可以明确切换或回退，保存并重开 Houdini 后生效。\n'
-        '卸载时可先移除本机组件，再到 Desktop 插件页卸载插件；当前工程和全部用户数据保留。',
-        title='DSH-Houdini', buttons=('打开 Desktop', '修复当前连接', '切换连接版本…', '移除本机组件…', '关闭'),
+        'Houdini 连接组件 ' + version + '\n\n'
+        '“修复当前连接”只重启这个窗口的连接，工程保持不变。\n'
+        '更新或切换组件版本后，请保存并重开这个 Houdini 窗口。',
+        title='DSH-Houdini', buttons=('打开对话', '修复当前连接', '切换组件版本…', '移除本机组件…', '关闭'),
         default_choice=4, close_choice=4,
-        details='当前 helper：' + _PROJECT_ROOT)
+        details='当前加载位置：' + _PROJECT_ROOT + '\n对话、模型和插件更新在 DSH Desktop 中管理。\n组件版本切换在下次打开 Houdini 时生效，不替换当前已加载的 Python 模块。\n移除本机组件会停用菜单登记，保留组件文件和用户数据；完整卸载还需在 Desktop 插件页卸载插件。')
     if selected == 0:
         open_workspace()
     elif selected == 1:
@@ -220,7 +218,7 @@ def _begin_helper_maintenance(script_name, state, on_ready):
     root = os.environ.get('DSH_HOUDINI_INSTALL_ROOT')
     script = Path(_PROJECT_ROOT) / 'installer' / script_name
     if not root or not Path(root).is_absolute():
-        _startup_failure('当前窗口没有已安装组件的登记信息。请在 Desktop 的 Houdini 模式准备组件，再保存并重开本窗口。')
+        _startup_failure('当前窗口没有组件安装信息。请在 Desktop 的 Houdini 模式安装组件，再保存并重开这个窗口。')
         return None
     import subprocess
     import threading
@@ -231,12 +229,12 @@ def _begin_helper_maintenance(script_name, state, on_ready):
     def execute(arguments):
         try:
             if not script.is_file():
-                raise RuntimeError('当前 helper 缺少维护脚本。请在 Desktop 的 Houdini 模式重新准备组件。')
+                raise RuntimeError('组件维护文件不完整。请在 Desktop 的 Houdini 模式重新安装组件。\n缺少文件：' + str(script))
             if script_name == 'uninstall.ps1':
                 import re
                 helper = Path(_PROJECT_ROOT).resolve()
                 if helper.parent != Path(root).resolve() / 'helpers' or not re.fullmatch('[0-9a-f]{16}', helper.name):
-                    raise RuntimeError('当前窗口没有从该安装根的不可变 helper 加载；未移除任何组件。请保存并重开安装后的 Houdini。')
+                    raise RuntimeError('无法确认这个窗口的组件安装位置，未移除任何组件。请先保存并重开 Houdini，再试一次。\n诊断：当前目录不属于该安装根的不可变 helper。\n当前目录：' + str(helper) + '\n安装根：' + root)
             result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                 '-File', str(script), '-Root', root, *arguments], cwd=_PROJECT_ROOT,
                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30,
@@ -290,10 +288,10 @@ def select_helper_version():
         if state['phase'] == 'list':
             rows = [row for row in json.loads(state['output']) if row.get('valid')]
             if not rows:
-                raise RuntimeError('没有可选择的完整 helper 快照。请在 Desktop 的 Houdini 模式重新准备组件。')
+                raise RuntimeError('没有可切换的完整组件版本。请先在 Desktop 的 Houdini 模式重新安装组件。')
             labels = [str(row.get('version') or '未知版本') + ('（当前加载）' if Path(row['path']) == Path(_PROJECT_ROOT) else '') for row in rows]
             chosen = hou.ui.selectFromList(labels, exclusive=True, title='选择下次启动使用的 Houdini 连接版本',
-                message='此操作仅切换本端连接。请保存并重开 Houdini，不在当前进程内混合升级或回退。')
+                message='选择后在下次打开 Houdini 时生效。当前工程保持不变，完成后请保存并重开这个窗口。')
             if not chosen:
                 close()
                 return
@@ -301,7 +299,7 @@ def select_helper_version():
             submit(['-SelectHelper', rows[chosen[0]]['id']])
         else:
             close()
-            hou.ui.displayMessage('已选择连接版本。请先保存工程，再完整退出并重开此 Houdini。当前已加载的模块、工程和 Desktop 会话均保持不变。', title='DSH-Houdini')
+            hou.ui.displayMessage('已选择组件版本。保存工程并重开这个 Houdini 窗口后生效。', title='DSH-Houdini', details=state['output'])
 
     submit = _begin_helper_maintenance('install.ps1', {'phase': 'list'}, ready)
     if submit is not None:
@@ -314,19 +312,18 @@ def remove_local_components():
         return
     selected = hou.ui.displayMessage(
         '移除本机 Houdini 组件？\n\n'
-        '仅停用本插件的菜单和连接登记，下次启动 Houdini 后生效。\n'
-        '当前 Houdini、工程、Bridge 和 Desktop 继续运行；旧运行包、凭据、会话和 HIP 全部保留。\n'
-        '之后可到 Desktop 插件页卸载插件。若继续从 Desktop 新开 Houdini，组件会按正常流程重新准备。',
+        '下次打开 Houdini 后不再显示本插件菜单。当前窗口继续使用，组件文件、工程和历史均保留。\n'
+        '完整卸载还需到 Desktop 插件页卸载插件；从仍启用插件的 Desktop 新开 Houdini 会重新安装组件。',
         title='DSH-Houdini', buttons=('移除组件', '取消'), default_choice=1, close_choice=1,
-        details='当前 helper：' + _PROJECT_ROOT)
+        details='当前加载位置：' + _PROJECT_ROOT + '\n此操作只解除本机 Package 登记，不结束 Houdini 或 Desktop，不删除凭据、会话、HIP、旧运行包或组件版本。')
     if selected != 0:
         return
 
     def ready(state, submit, close):
         close()
         hou.ui.displayMessage(
-            '本机组件已解除登记。当前窗口与工程保持不变；保存并重新打开后菜单移除。\n'
-            '可继续到 Desktop 插件页卸载插件，所有 helper、旧数据、会话和 HIP 均保留。',
+            '本机组件已停用。下次打开 Houdini 后不再显示菜单，当前工程可继续使用。\n'
+            '如需完整卸载，请到 Desktop 插件页卸载插件。',
             title='DSH-Houdini', details=state['output'])
 
     submit = _begin_helper_maintenance('uninstall.ps1', {}, ready)

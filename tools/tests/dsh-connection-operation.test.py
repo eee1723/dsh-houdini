@@ -235,7 +235,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-connection-operation-') as temporar
 
         counts, errors, messages, log, result = run('launch', detached=True)
         assert not errors and counts['capture'] == counts['publish'] == result['stored'] == 1
-        assert result['bindings'] == 0 and '没有换绑' in messages[-1]
+        assert result['bindings'] == 0 and '现场选择未改变' in messages[-1]
 
         counts, errors, messages, log, result = run('launch', refusal=True)
         assert errors == ['fixture: original launch was not admitted']

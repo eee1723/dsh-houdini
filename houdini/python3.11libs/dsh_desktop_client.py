@@ -120,7 +120,7 @@ class DesktopConnection:
     def _remaining(self, maximum=15):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise DesktopUnavailable('DSH Desktop 接入结果尚未确认。请确认插件已启用，或从此 Houdini 的 Open Workspace 重新接入；没有重发场景操作。')
+            raise DesktopUnavailable('连接结果尚未确认。请在 DSH Desktop 中确认 Houdini 插件已启用，再从当前窗口的 Open Workspace 重试。\n此次等待已结束；没有重复执行场景操作。')
         return min(maximum, remaining)
 
     def _wait(self):

@@ -12,6 +12,7 @@
 - 现状：标准bundle只新增Houdini；官方原包承载会话、账户、其他模式和应用更新，独立Qt聊天壳及核心补丁构建已移除。菜单、模式内现场选择、打开/启动与原生导航通过插件窄通道连接；实际消费方及并发/取消反例仍按下述入口验收。
 - 下一步：回访用户默认profile与系统dsh://菜单唤起；独立资料下的原生窗口、工作区和启动中重开不代替这一真实用户路径。用户自己的多窗口、已有模型/账号配置、复杂工程和长期任务仍须正式入口回访。用户默认profile中的插件更新/停用/卸载、旧helper加载及正式发布仍须验收，不将临时数据根中的最终tgz安装通过写成用户已经部署。
 - 已有共享记录：6条旧私有Host生成的v4会话头与物理项目目录不一致；已按用户确认在Desktop退出后完整备份并原值暂存至默认数据根的recovery目录，工作区入口已由用户回访确认恢复。暂存清单与字节备份保留，6条暂不在侧栏显示；每条仅有一个generation，不能从有损目录名猜回原始cwd。仍须单独核对原始来源、当前目录事件及详情/附件引用后恢复这些历史，不自动改header或合并整库，不将其余会话头可列出当作全部旧正文已完成迁移。
+- 订阅登录缺口：旧ChatGPT订阅页依赖已移除的`piAiAccounts`核心扩展，官方0.2.1-rc.3的`openai`OAuth被明确排除；账号页仅DeepSeek，通用授权后端没有设置消费入口。需按[账户能力边界](dsh-update-compatibility.md#账户能力与入口验收)独立处理薄授权入口及原SiWC提供方的窄上游缺口；`openai-codex`不能冒充原路线。尚未恢复登录、账号目录及真实请求，不读取或迁移现有用户授权来证明可用。
 - 入口：[Desktop通道](../tools/tests/desktop-integration.test.mjs)、[真实官方组合](../tools/tests/dsh-host-smoke.test.py)、[真实页面](../tools/tests/dsh-client-navigation.mjs)、[本端接入](../tools/tests/dsh-desktop-client.test.py)、[安装](../tools/tests/dsh-install-runtime.test.py)、[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)、[原生插件页面](../tools/tests/dsh-distribution-ui.test.py)、[原生窗口生命周期](../tools/tests/dsh-desktop-window.test.py)。
 - 移除条件：两条实际入口、模式隔离、插件启停、真实H21/H22及已有共享历史处置均有完整消费者证据，未交付部分不再混在源码完成状态中。
 

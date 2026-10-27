@@ -25,6 +25,7 @@ function fixture(){
   close(...observers){observers.forEach(value=>value.dispose());ownership.dispose()}}
 }
 const parameters={action:'new',sessionId:'native-houdini',hfs:'D:/Houdini22'}
+assert.match(context.launchTicketMessage({phase:'detached'}),/不会取消启动或关闭 Houdini/,'stop observation never claims an unconfirmed process already exists or was stopped')
 
 {
  const f=fixture(),observer=f.observer();let ticket
